@@ -1023,7 +1023,7 @@ void Scr_GetWeaponModel()
         {
             if (I_stricmp(pszWeaponName, "none"))
             {
-                Com_Printf(17, va("unknown weapon '%s' in getWeaponModel\n", pszWeaponName));
+                Com_Printf(17, "unknown weapon '%s' in getWeaponModel\n", pszWeaponName);
             }
         }
         Scr_AddString((char *)"");

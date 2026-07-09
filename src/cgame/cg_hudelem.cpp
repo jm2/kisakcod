@@ -230,7 +230,6 @@ void __cdecl CG_TranslateHudElemMessage(
     const char *messageType,
     char *hudElemString)
 {
-    const char *v4; // eax
     char *translatedString; // [esp+10h] [ebp-Ch]
     uint32_t stringLen; // [esp+14h] [ebp-8h] BYREF
     uint32_t searchPos; // [esp+18h] [ebp-4h] BYREF
@@ -251,8 +250,7 @@ void __cdecl CG_TranslateHudElemMessage(
     }
     else
     {
-        v4 = va("Translated message too long to process: %s\n", message);
-        Com_Error(ERR_DROP, v4);
+        Com_Error(ERR_DROP, "Translated message too long to process: %s\n", message);
     }
 }
 
@@ -260,9 +258,6 @@ char __cdecl ReplaceDirective(int32_t localClientNum, uint32_t *searchPos, uint3
 {
     const char *v4; // eax
     const char *v6; // eax
-    const char *v7; // eax
-    const char *v8; // eax
-    const char *v9; // eax
     int32_t directiveLen; // [esp+34h] [ebp-324h]
     const char *startTokenPos; // [esp+38h] [ebp-320h]
     int32_t newStringLen; // [esp+3Ch] [ebp-31Ch]
@@ -324,22 +319,19 @@ char __cdecl ReplaceDirective(int32_t localClientNum, uint32_t *searchPos, uint3
             }
             else
             {
-                v9 = va("String too long to add key binding: %s\n", dstString);
-                Com_Error(ERR_DROP, v9);
+                Com_Error(ERR_DROP, "String too long to add key binding: %s\n", dstString);
                 return 0;
             }
         }
         else
         {
-            v8 = va("Directive empty in string '%s'", dstString);
-            Com_Error(ERR_DROP, v8);
+            Com_Error(ERR_DROP, "Directive empty in string '%s'", dstString);
             return 0;
         }
     }
     else
     {
-        v7 = va("No end token to match begin token in string '%s'", dstString);
-        Com_Error(ERR_DROP, v7);
+        Com_Error(ERR_DROP, "No end token to match begin token in string '%s'", dstString);
         return 0;
     }
 }
@@ -1091,7 +1083,6 @@ void __cdecl ConsolidateHudElemText(cg_hudelem_t *cghe, char *hudElemString)
 void __cdecl CopyStringToHudElemString(char *string, char *hudElemString)
 {
     int32_t v2; // ecx
-    const char *v3; // eax
     int32_t stringLen; // [esp+10h] [ebp-4h]
 
     iassert(string);
@@ -1107,8 +1098,7 @@ void __cdecl CopyStringToHudElemString(char *string, char *hudElemString)
     }
     else
     {
-        v3 = va("Hud elem string too long, %s", string);
-        Com_Error(ERR_DROP, v3);
+        Com_Error(ERR_DROP, "Hud elem string too long, %s", string);
     }
 }
 
@@ -1880,4 +1870,3 @@ float __cdecl HudElemWaypointHeight(int32_t localClientNum, const hudelem_s *ele
             1.0f);
     return (height - fromHeight) * lerp + fromHeight;
 }
-

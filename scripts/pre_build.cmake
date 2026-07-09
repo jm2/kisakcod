@@ -12,10 +12,16 @@ if (KISAK_EXTENDED)
     target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_EXTENDED)
 endif()
 
-# Steam identity/auth is a capability, not a platform assumption: when it is off the
-# engine compiles win_steam.cpp to an empty translation unit and uses the cl_guid
-# fallback, so no Steamworks link input is referenced.
-if (KISAK_ENABLE_STEAM)
+# Steam identity/auth is a capability, not a platform assumption. A genuinely
+# headless dedicated target must never depend on the desktop Steam client API;
+# it uses the cl_guid identity backend even when the client target in the same
+# configure enables Steam.
+set(KISAK_TARGET_ENABLE_STEAM ${KISAK_ENABLE_STEAM})
+if (KISAK_DEDI_HEADLESS AND PROJECT_NAME STREQUAL "KisakCOD-dedi")
+    set(KISAK_TARGET_ENABLE_STEAM OFF)
+endif()
+
+if (KISAK_TARGET_ENABLE_STEAM)
     target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_STEAM)
 endif()
 
@@ -55,7 +61,7 @@ if (WIN32)
         target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC "${DXSDK_INC_DIR}")
         target_link_directories(${PROJECT_NAME} PUBLIC "${DXSDK_LIB_DIR}")
     endif()
-    if (KISAK_ENABLE_STEAM)
+    if (KISAK_TARGET_ENABLE_STEAM)
         target_link_directories(${PROJECT_NAME} PUBLIC
             "${DEPS_DIR}/steamsdk"
         )
@@ -90,7 +96,7 @@ if (WIN32)
         odbc32.lib
         odbccp32.lib
     )
-    if (KISAK_ENABLE_STEAM)
+    if (KISAK_TARGET_ENABLE_STEAM)
         target_link_libraries(${PROJECT_NAME} PUBLIC steam_api.lib)
     endif()
     if (KISAK_TARGET_NEEDS_CLIENT_MEDIA)

@@ -112,7 +112,7 @@ void __cdecl Com_LoadBsp(char *filename)
         comBspGlob.fileSize = FS_FOpenFileRead(filename, &h);
         if (!h)
         {
-            Com_Error(ERR_DROP, va("EXE_ERR_COULDNT_LOAD %s", filename));
+            Com_Error(ERR_DROP, "EXE_ERR_COULDNT_LOAD %s", filename);
         }
         comBspGlob.header = (BspHeader *)Z_MallocGarbage(comBspGlob.fileSize, "Com_LoadBsp", 10);
         bytesRead = FS_Read((uint8_t *)comBspGlob.header, comBspGlob.fileSize, h);
@@ -120,7 +120,7 @@ void __cdecl Com_LoadBsp(char *filename)
         if (bytesRead != comBspGlob.fileSize)
         {
             Z_Free((char *)comBspGlob.header, 10);
-            Com_Error(ERR_DROP, va("EXE_ERR_COULDNT_LOAD %s", filename));
+            Com_Error(ERR_DROP, "EXE_ERR_COULDNT_LOAD %s", filename);
         }
 
         {
@@ -132,7 +132,7 @@ void __cdecl Com_LoadBsp(char *filename)
         {
             Z_Free((char *)comBspGlob.header, 10);
             comBspGlob.header = 0;
-            Com_Error(ERR_DROP, va("EXE_ERR_WRONG_MAP_VERSION_NUM %s", filename));
+            Com_Error(ERR_DROP, "EXE_ERR_WRONG_MAP_VERSION_NUM %s", filename);
         }
     }
 

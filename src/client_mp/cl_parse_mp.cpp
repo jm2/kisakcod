@@ -366,7 +366,6 @@ char parseDownloadData[2048];
 void __cdecl CL_ParseDownload(int localClientNum, msg_t *msg)
 {
     const char *String; // eax
-    const char *v3; // eax
     const char *v4; // eax
     const char *v5; // eax
     int block; // [esp+0h] [ebp-Ch]
@@ -396,8 +395,7 @@ void __cdecl CL_ParseDownload(int localClientNum, msg_t *msg)
             if (cls.downloadSize < 0)
             {
                 String = MSG_ReadString(msg);
-                v3 = va("%s", String);
-                Com_Error(ERR_DROP, v3);
+                Com_Error(ERR_DROP, "%s", String);
                 return;
             }
         }

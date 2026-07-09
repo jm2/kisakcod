@@ -4,6 +4,7 @@
 
 #include "server_mp.h"
 #include <qcommon/cmd.h>
+#include <qcommon/identity.h>
 #include <universal/com_files.h>
 #include <universal/q_parse.h>
 #include <game_mp/g_public_mp.h>
@@ -166,13 +167,16 @@ void __cdecl SV_GetChallenge(netadr_t from)
     clientSteamTicketBase64 = (char *)SV_Cmd_Argv(2);
     // Arg 3 is the client identity: a SteamID64 (Steam clients) or a persistent cl_guid
     // (no-Steam clients). It is both the ban key and the server-side GUID in either case.
-    char *clientSteamID64 = (char *)SV_Cmd_Argv(3);
+    char *clientIdentity = (char *)SV_Cmd_Argv(3);
     unsigned char decodedSteamTicket[1024 + 128]{ 0 };
     bool haveTicket = clientSteamTicketBase64[0] != 0;
+    uint64_t steamID64 = 0;
+    const bool steamIdentity = kisak::identity::ParseSteamId(clientIdentity, &steamID64);
+    const bool guidIdentity = kisak::identity::IsHexGuid(clientIdentity);
 
-    if (!clientSteamID64[0])
+    if (!clientIdentity[0])
     {
-        iassert(0); // guy didn't send an identity
+        NET_OutOfBandPrint(NS_SERVER, from, "error\xA\x15A client identity is required");
         return;
     }
 
@@ -182,25 +186,41 @@ void __cdecl SV_GetChallenge(netadr_t from)
         return;
     }
 
-    //if (SV_IsBannedGuid(cdkeyHash))
-    if (SV_IsBannedGuid(clientSteamID64))
+#ifdef KISAK_STEAM
+    // A verified Steam ticket uses the decimal SteamID64 namespace. Ticketless
+    // clients use a separate 32-hex GUID namespace, so they cannot impersonate a
+    // Steam user or make SV_DropClient end another user's auth session.
+    if ((haveTicket && !steamIdentity) || (!haveTicket && !guidIdentity))
+#else
+    // A no-Steam server cannot validate a presented ticket, but accepts the normal
+    // decimal Steam identity for cross-play. Ticketless clients must use cl_guid.
+    if ((haveTicket && !steamIdentity && !guidIdentity) || (!haveTicket && !guidIdentity))
+#endif
     {
-        Com_Printf(15, "rejected connection from permanently banned GUID \"%s\"\n", clientSteamID64);
+        NET_OutOfBandPrint(NS_SERVER, from, "error\xA\x15Invalid client identity format");
+        memset(&svs.challenges[i], 0, sizeof(svs.challenges[i]));
+        return;
+    }
+
+    //if (SV_IsBannedGuid(cdkeyHash))
+    if (SV_IsBannedGuid(clientIdentity))
+    {
+        Com_Printf(15, "rejected connection from permanently banned GUID \"%s\"\n", clientIdentity);
         NET_OutOfBandPrint(NS_SERVER, svs.challenges[i].adr, "error\xA\x15You are permanently banned from this server");
         memset(&svs.challenges[i], 0, sizeof(svs.challenges[i]));
         return;
     }
     //if (SV_IsTempBannedGuid(cdkeyHash))
-    if (SV_IsTempBannedGuid(clientSteamID64))
+    if (SV_IsTempBannedGuid(clientIdentity))
     {
-        Com_Printf(15, "rejected connection from temporarily banned GUID \"%s\"\n", clientSteamID64);
+        Com_Printf(15, "rejected connection from temporarily banned GUID \"%s\"\n", clientIdentity);
         NET_OutOfBandPrint(NS_SERVER, svs.challenges[i].adr, "error\xA\x15You are temporarily banned from this server");
         memset(&svs.challenges[i], 0, sizeof(svs.challenges[i]));
         return;
     }
 
     //I_strncpyz(svs.challenges[i].cdkeyHash, cdkeyHash, 33);
-    I_strncpyz(svs.challenges[i].cdkeyHash, clientSteamID64, 33);
+    I_strncpyz(svs.challenges[i].cdkeyHash, clientIdentity, 33);
 
     bool authorized = false;
 
@@ -210,8 +230,6 @@ void __cdecl SV_GetChallenge(netadr_t from)
         // A ticket was presented: it MUST validate, else reject. This prevents a client
         // from claiming (and getting banned/identified as) an arbitrary SteamID64.
         uint32 decodedLen = b64_decode((unsigned char*)clientSteamTicketBase64, strlen(clientSteamTicketBase64), decodedSteamTicket);
-        char *endptr;
-        uint64_t steamID64 = strtoull(clientSteamID64, &endptr, 10);
         //if (!SV_ShouldAuthorizeAddress(from))
         if (Steam_CheckClientTicket(decodedSteamTicket, decodedLen, steamID64))
         {
@@ -219,7 +237,7 @@ void __cdecl SV_GetChallenge(netadr_t from)
         }
         else
         {
-            Com_Printf(15, "rejected connection from invalid Steam GUID \"%s\"\n", clientSteamID64);
+            Com_Printf(15, "rejected connection from invalid Steam GUID \"%s\"\n", clientIdentity);
             NET_OutOfBandPrint(NS_SERVER, svs.challenges[i].adr, "error\xA\x15Your Steam Client Ticket was Invalid");
             memset(&svs.challenges[i], 0, sizeof(svs.challenges[i]));
             return;
@@ -238,7 +256,7 @@ void __cdecl SV_GetChallenge(netadr_t from)
         // accept unless the operator explicitly requires Steam authentication.
         if (sv_requireSteam && sv_requireSteam->current.enabled)
         {
-            Com_Printf(15, "rejected connection from \"%s\": sv_requireSteam is set\n", clientSteamID64);
+            Com_Printf(15, "rejected connection from \"%s\": sv_requireSteam is set\n", clientIdentity);
             NET_OutOfBandPrint(NS_SERVER, svs.challenges[i].adr, "error\xA\x15This server requires Steam authentication");
             memset(&svs.challenges[i], 0, sizeof(svs.challenges[i]));
             return;
@@ -935,11 +953,10 @@ void __cdecl SV_DropClient(client_t *drop, const char *reason, bool tellThem)
 #ifdef KISAK_STEAM
     if (com_dedicated->current.integer)
     {
-        char *endptr;
-        uint64_t steamID64 = strtoull(drop->cdkeyHash, &endptr, 10);
-        // Only end a Steam auth session for a genuine all-digit SteamID64. A ticketless
-        // cl_guid client (hex identity) never had BeginAuthSession called for it.
-        if (steamID64 && endptr && !*endptr)
+        uint64_t steamID64 = 0;
+        // Ticketless identities are required to be 32-hex GUIDs, so a valid decimal
+        // identity here necessarily passed Steam ticket validation at challenge time.
+        if (kisak::identity::ParseSteamId(drop->cdkeyHash, &steamID64))
             Steam_OnClientDropped(steamID64);
     }
 #endif
@@ -1321,8 +1338,6 @@ void __cdecl SV_UpdateUserinfo_f(client_t *cl)
 
 void __cdecl SV_ClientThink(client_t *cl, usercmd_s *cmd)
 {
-    char *v2; // eax
-
     if (cmd->serverTime - svs.time <= 20000)
     {
         memcpy(&cl->lastUsercmd, cmd, sizeof(cl->lastUsercmd));
@@ -1342,8 +1357,12 @@ void __cdecl SV_ClientThink(client_t *cl, usercmd_s *cmd)
     }
     else
     {
-        v2 = va("Invalid command time %i from client %s, current server time is %i", cmd->serverTime, cl->name, svs.time);
-        Com_PrintError(15, v2);
+        Com_PrintError(
+            15,
+            "Invalid command time %i from client %s, current server time is %i",
+            cmd->serverTime,
+            cl->name,
+            svs.time);
     }
 }
 

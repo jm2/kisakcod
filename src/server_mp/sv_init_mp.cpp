@@ -725,9 +725,18 @@ void __cdecl SV_Init()
         DVAR_SYSTEMINFO,
         "If true, clients will synthesize tracers and bullet impacts");
     sv_punkbuster = Dvar_RegisterBool("sv_punkbuster", 1, 0x15u, "Enable PunkBuster on this server");
-    // When set, clients must present a valid Steam authentication ticket; ticketless
-    // (cl_guid-only) clients are rejected. Default off so headless/ARM servers are joinable.
-    sv_requireSteam = Dvar_RegisterBool("sv_requireSteam", 0, DVAR_ARCHIVE, "Require clients to authenticate with a valid Steam ticket");
+    // Preserve authenticated identity by default whenever this target has Steam support.
+    // Headless/ARM targets compile without KISAK_STEAM and accept the cl_guid fallback.
+#ifdef KISAK_STEAM
+    constexpr bool requireSteamDefault = true;
+#else
+    constexpr bool requireSteamDefault = false;
+#endif
+    sv_requireSteam = Dvar_RegisterBool(
+        "sv_requireSteam",
+        requireSteamDefault,
+        DVAR_ARCHIVE,
+        "Require clients to authenticate with a valid Steam ticket");
     sv_maxRate = Dvar_RegisterInt("sv_maxRate", 5000, (DvarLimits)0x61A800000000LL, 5u, "Maximum bit rate");
     sv_minPing = Dvar_RegisterInt("sv_minPing", 0, (DvarLimits)0x3E700000000LL, 5u, "Minimum ping allowed on the server");
     sv_maxPing = Dvar_RegisterInt("sv_maxPing", 0, (DvarLimits)0x3E700000000LL, 5u, "Maximum ping allowed on the server");

@@ -811,7 +811,7 @@ void __cdecl G_PrintFastFileErrors(const char *fastfile)
     if (rawfile->len)
     {
         Com_PrintError(1, "There were errors when building fast file '%s'\n", fastfile);
-        Com_PrintError(1, (char *)rawfile->buffer);
+        Com_PrintError(1, "%s", (char *)rawfile->buffer);
     }
 }
 

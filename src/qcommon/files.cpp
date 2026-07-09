@@ -42,16 +42,12 @@ char *__cdecl FS_GetMapBaseName(char *mapname)
 
 BOOL __cdecl FS_serverPak(const char *pak)
 {
-    char v2; // [esp+3h] [ebp-55h]
-    char *v3; // [esp+8h] [ebp-50h]
     char szFile[68]; // [esp+10h] [ebp-48h] BYREF
 
-    v3 = szFile;
-    do
-    {
-        v2 = *pak;
-        *v3++ = *pak++;
-    } while (v2);
+    if (!pak || strlen(pak) >= sizeof(szFile))
+        return 0;
+
+    I_strncpyz(szFile, pak, sizeof(szFile));
     I_strlwr(szFile);
     return strstr(szFile, "_svr_") != 0;
 }
@@ -60,16 +56,14 @@ int __cdecl FS_iwIwd(char *iwd, char *base)
 {
     const char *v2; // eax
     const char *v4; // eax
-    char v5; // [esp+3h] [ebp-71h]
-    char *v6; // [esp+8h] [ebp-6Ch]
     const char *v7; // [esp+Ch] [ebp-68h]
-    char v8; // [esp+13h] [ebp-61h]
-    char *v9; // [esp+18h] [ebp-5Ch]
-    char *v10; // [esp+1Ch] [ebp-58h]
     char *str2; // [esp+20h] [ebp-54h]
     char szFile[68]; // [esp+24h] [ebp-50h] BYREF
     const char *pszLoc; // [esp+6Ch] [ebp-8h]
     int i; // [esp+70h] [ebp-4h]
+
+    if (!iwd || !base || strlen(iwd) >= sizeof(szFile))
+        return 0;
 
     for (i = 0; i < 25; ++i)
     {
@@ -80,24 +74,13 @@ int __cdecl FS_iwIwd(char *iwd, char *base)
     pszLoc = strstr(iwd, "localized_");
     if (pszLoc)
     {
-        v10 = iwd;
-        v9 = szFile;
-        do
-        {
-            v8 = *v10;
-            *v9++ = *v10++;
-        } while (v8);
+        I_strncpyz(szFile, iwd, sizeof(szFile));
         szFile[pszLoc - iwd + 10] = 0;
         v4 = va("%s/localized_", base);
         if (!FS_FilenameCompare(szFile, v4))
         {
             v7 = pszLoc + 10;
-            v6 = szFile;
-            do
-            {
-                v5 = *v7;
-                *v6++ = *v7++;
-            } while (v5);
+            I_strncpyz(szFile, v7, sizeof(szFile));
             I_strlwr(szFile);
             for (i = 0; i < 25; ++i)
             {
@@ -179,6 +162,7 @@ int __cdecl FS_CompareIwds(char *needediwds, int len, int dlstring)
 int fs_numServerReferencedFFs;
 const char *fs_serverReferencedFFNames[32];
 int fs_serverReferencedFFCheckSums[32];
+static_assert(ARRAY_COUNT(fs_serverReferencedFFNames) == ARRAY_COUNT(fs_serverReferencedFFCheckSums));
 int __cdecl FS_CompareFFs(char *neededFFs, int len, int dlstring)
 {
     int v4; // eax
@@ -297,14 +281,19 @@ int __cdecl FS_ServerSetReferencedFiles(
     int i; // [esp+8h] [ebp-4h]
     int ia; // [esp+8h] [ebp-4h]
 
-    iassert( fileSums );
-    iassert( fileNames );
-    iassert( maxFiles );
-    iassert( fs_sums );
+    if (!fileSums || !fileNames || maxFiles <= 0 || !fs_sums || !fs_names)
+    {
+        Com_Error(ERR_DROP, "Invalid referenced-file list");
+        return 0;
+    }
     Cmd_TokenizeString(fileSums);
     c = Cmd_Argc();
     if (c > maxFiles)
-        c = maxFiles;
+    {
+        Cmd_EndTokenizedString();
+        Com_Error(ERR_DROP, "Too many referenced-file checksums (%d > %d)", c, maxFiles);
+        return 0;
+    }
     for (i = 0; i < c; ++i)
     {
         v5 = Cmd_Argv(i);
@@ -316,9 +305,17 @@ int __cdecl FS_ServerSetReferencedFiles(
         Cmd_TokenizeString(fileNames);
         d = Cmd_Argc();
         if (d > maxFiles)
-            d = maxFiles;
+        {
+            Cmd_EndTokenizedString();
+            Com_Error(ERR_DROP, "Too many referenced-file names (%d > %d)", d, maxFiles);
+            return 0;
+        }
         if (c != d)
+        {
+            Cmd_EndTokenizedString();
             Com_Error(ERR_DROP, "file sum/name mismatch");
+            return 0;
+        }
         for (ia = 0; ia < d; ++ia)
         {
             v6 = (char *)Cmd_Argv(ia);
@@ -355,7 +352,7 @@ void __cdecl FS_ServerSetReferencedFFs(char *FFSums, char *FFNames)
     fs_numServerReferencedFFs = FS_ServerSetReferencedFiles(
         FFSums,
         FFNames,
-        1024,
+        ARRAY_COUNT(fs_serverReferencedFFCheckSums),
         fs_serverReferencedFFCheckSums,
         fs_serverReferencedFFNames);
 }

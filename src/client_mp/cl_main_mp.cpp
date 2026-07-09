@@ -32,6 +32,7 @@
 #include <server_mp/server_mp.h>
 #include <universal/profile.h>
 #include <qcommon/com_bsp.h>
+#include <qcommon/identity.h>
 
 #include <ui_mp/ui_mp.h>
 
@@ -51,7 +52,7 @@ static const char *CL_EnsureGuid()
 {
     if (!cl_guid)
         return "";
-    if (cl_guid->current.string && cl_guid->current.string[0])
+    if (kisak::identity::IsHexGuid(cl_guid->current.string))
         return cl_guid->current.string;
 
     char guid[33];
@@ -1203,7 +1204,7 @@ void __cdecl CL_DisconnectError(char *message)
     v3 = SEH_SafeTranslateString(message);
     v1 = SEH_SafeTranslateString((char*)"EXE_SERVERDISCONNECTREASON");
     v2 = UI_ReplaceConversionString(v1, v3);
-    Com_Error(ERR_SERVERDISCONNECT, v2);
+    Com_Error(ERR_SERVERDISCONNECT, "%s", v2);
 }
 
 char __cdecl CL_ConnectionlessPacket(netsrc_t localClientNum, netadr_t from, msg_t *msg, int32_t time)
@@ -2065,7 +2066,7 @@ void __cdecl CL_WWWDownload()
             error = va("Download failure while getting %s", cls.downloadName);
             cls.wwwDlDisconnected = 0;
             CL_ClearStaticDownload();
-            Com_Error(ERR_DROP, error);
+            Com_Error(ERR_DROP, "%s", error);
         }
         else
         {
@@ -2988,7 +2989,7 @@ void __cdecl CL_PlayDemo_f()
             if (!clc->demofile)
             {
                 v1 = va("EXE_ERR_NOT_FOUND %s", name);
-                Com_Error(ERR_DROP, v1);
+                Com_Error(ERR_DROP, "%s", v1);
             }
             v2 = Cmd_Argv(1);
             I_strncpyz(clc->demoName, v2, 64);
@@ -3322,7 +3323,7 @@ void __cdecl CL_UpdateLevelHunkUsage()
         if (!handle)
         {
             v1 = va("EXE_ERR_CANT_CREATE %s", memlistfile);
-            Com_Error(ERR_DROP, v1);
+            Com_Error(ERR_DROP, "%s", v1);
         }
         len = strlen(outbuf);
         v2 = FS_Write(outbuf, len, handle);

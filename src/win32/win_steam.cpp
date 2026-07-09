@@ -151,7 +151,7 @@ void Steam_CheckClients()
 // callback hook for debug text emitted from the Steam API
 extern "C" void __cdecl SteamAPIDebugTextHook(int nSeverity, const char *pchDebugText)
 {
-	Com_Printf(0, pchDebugText);
+	Com_Printf(0, "%s", pchDebugText);
 }
 
 // This Creates a "steam_appid.txt" next to the executable for the Steam API to read

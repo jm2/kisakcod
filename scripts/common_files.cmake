@@ -412,6 +412,7 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/graph.h"
     "${SRC_DIR}/qcommon/huffman.cpp"
     "${SRC_DIR}/qcommon/huffman.h"
+    "${SRC_DIR}/qcommon/identity.h"
     "${SRC_DIR}/qcommon/md4.cpp"
     "${SRC_DIR}/qcommon/md4.h"
     "${SRC_DIR}/qcommon/mem_track.cpp"

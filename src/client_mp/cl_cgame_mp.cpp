@@ -239,7 +239,6 @@ int32_t __cdecl CL_CGameNeedsServerCommand(int32_t localClientNum, int32_t serve
     const char *v3; // eax
     char *v4; // eax
     char *v5; // eax
-    const char *v6; // eax
     char *v7; // eax
     const char *v8; // eax
     const char *v9; // [esp-4h] [ebp-9Ch]
@@ -292,8 +291,7 @@ int32_t __cdecl CL_CGameNeedsServerCommand(int32_t localClientNum, int32_t serve
                 v9 = Cmd_Argv(1);
                 v4 = SEH_SafeTranslateString((char*)"EXE_SERVERDISCONNECTREASON");
                 v5 = UI_ReplaceConversionString(v4, v9);
-                v6 = va("%s", v5);
-                Com_Error(ERR_SERVERDISCONNECT, v6);
+                Com_Error(ERR_SERVERDISCONNECT, "%s", v5);
             }
             else if (argc >= 2)
             {   
@@ -1390,4 +1388,3 @@ BOOL __cdecl CL_IsCgameInitialized(int32_t localClientNum)
             localClientNum);
     return clientUIActives[0].cgameInitialized;
 }
-

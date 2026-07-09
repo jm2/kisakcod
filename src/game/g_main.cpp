@@ -1037,7 +1037,7 @@ void __cdecl G_PrintFastFileErrors(const char *fastfile)
     if (rawfile->len)
     {
         Com_PrintError(1, "There were errors when building fast file '%s'\n", fastfile);
-        Com_PrintError(1, rawfile->buffer);
+        Com_PrintError(1, "%s", rawfile->buffer);
     }
 }
 
@@ -2639,4 +2639,3 @@ void __cdecl G_LoadLevel()
         G_SendClientMessages();
     }
 }
-
