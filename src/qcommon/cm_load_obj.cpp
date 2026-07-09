@@ -3,7 +3,6 @@
 #include <universal/com_memory.h>
 #include "com_bsp.h"
 #include <universal/q_parse.h>
-#include <DynEntity/DynEntity_client.h>
 #include <game/game_public.h>
 #include <universal/profile.h>
 
