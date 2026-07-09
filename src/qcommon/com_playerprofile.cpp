@@ -137,7 +137,9 @@ void __cdecl Com_SetPlayerProfile(int localClientNum, char *profileName)
     name = Dvar_GetVariantString("name");
     if (!name || !*name)
         Dvar_SetStringByName("name", profileName);
+#ifndef KISAK_DEDI_HEADLESS
     LiveStorage_NewUser();
+#endif
 }
 
 char __cdecl Com_SetInitialPlayerProfile(int localClientNum)
@@ -651,7 +653,7 @@ void __cdecl Com_ChangePlayerProfile(int localClientNum, char *profileName)
             Cmd_ExecuteSingleCommand(localClientNum, 0, (char*)"disconnect");
             Dvar_ResetDvars(0xFFFFu, DVAR_SOURCE_EXTERNAL);
             Com_SetPlayerProfile(localClientNum, cachedName);
-#ifdef KISAK_MP 
+#if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)
             LiveStorage_ReadStats();
 #endif
             Com_CheckSetRecommended(localClientNum);

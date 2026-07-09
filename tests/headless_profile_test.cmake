@@ -33,6 +33,7 @@ foreach(_excluded
     "${SRC_DIR}/win32/win_input.h"
     "${SRC_DIR}/win32/win_wndproc.cpp"
     "${SRC_DIR}/win32/win_voice.cpp"
+    "${SRC_DIR}/win32/win_storage.cpp"
 )
     if (_excluded IN_LIST _dedi_sources)
         message(FATAL_ERROR "Headless dedicated source profile still contains client-only Win32 source ${_excluded}")

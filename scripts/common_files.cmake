@@ -596,7 +596,6 @@ set(PLATFORM_WIN32_DEDI_HEADLESS
     "${SRC_DIR}/win32/win_net.h"
     "${SRC_DIR}/win32/win_net_debug.cpp"
     "${SRC_DIR}/win32/win_net_debug.h"
-    "${SRC_DIR}/win32/win_storage.cpp"
     "${SRC_DIR}/win32/win_storage.h"
     "${SRC_DIR}/win32/win_syscon.cpp"
     "${SRC_DIR}/win32/win_steam.cpp"

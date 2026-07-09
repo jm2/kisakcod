@@ -1295,7 +1295,7 @@ void __cdecl Com_Init_Try_Block_Function(char* commandLine)
     CL_InitKeyCommands();
     FS_InitFilesystem();
     Con_InitChannels();
-#ifdef KISAK_MP
+#if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)
     LiveStorage_Init();
 #endif
     for (localClientNum = 0; localClientNum < 1; ++localClientNum)

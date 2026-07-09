@@ -116,7 +116,6 @@ universal/dvar_cmds.cpp|#include <client_mp/client_mp.h>
 universal/fft.h|#include <gfx_d3d/r_material.h>
 universal/q_shared.cpp|#include <EffectsCore/fx_system.h>
 universal/q_shared.cpp|#include <gfx_d3d/r_model.h>
-win32/win_storage.cpp|#include <client_mp/client_mp.h>
 win32/win_syscon.cpp|#include "../client/client.h"
 xanim/dobj_utils.cpp|#include <gfx_d3d/r_utils.h>
 xanim/xanim.cpp|#include <cgame_mp/cg_local_mp.h>
