@@ -261,7 +261,7 @@ int __cdecl Sys_GetPacket(netadr_t *net_from, msg_t *net_message)
 	int ret; // [esp+20h] [ebp-10h]
 	int protocol; // [esp+24h] [ebp-Ch]
 	int fromlen; // [esp+28h] [ebp-8h] BYREF
-	uint32_t net_socket; // [esp+2Ch] [ebp-4h]
+	SOCKET net_socket; // [esp+2Ch] [ebp-4h]
 
 	for (protocol = 0; protocol < 2; ++protocol)
 	{
@@ -396,7 +396,7 @@ char __cdecl Sys_SendPacket(int length, unsigned __int8 *data, netadr_t to)
 	int err; // [esp+0h] [ebp-20h]
 	sockaddr addr; // [esp+4h] [ebp-1Ch] BYREF
 	int ret; // [esp+14h] [ebp-Ch]
-	uint32_t net_socket; // [esp+18h] [ebp-8h]
+	SOCKET net_socket; // [esp+18h] [ebp-8h]
 
 	net_socket = 0;
 	switch (to.type)
@@ -519,7 +519,7 @@ void Sys_ShowIP(void) {
 NET_IPSocket
 ====================
 */
-uint32_t __cdecl NET_IPSocket(const char *net_interface, int port)
+SOCKET __cdecl NET_IPSocket(const char *net_interface, int port)
 {
 	const char *v2; // eax
 	const char *v4; // eax
@@ -528,7 +528,7 @@ uint32_t __cdecl NET_IPSocket(const char *net_interface, int port)
 	sockaddr address; // [esp+0h] [ebp-24h] BYREF
 	int _true; // [esp+18h] [ebp-Ch] BYREF
 	int i; // [esp+1Ch] [ebp-8h] BYREF
-	uint32_t newsocket; // [esp+20h] [ebp-4h]
+	SOCKET newsocket; // [esp+20h] [ebp-4h]
 
 	_true = 1;
 	i = 1;
@@ -537,7 +537,7 @@ uint32_t __cdecl NET_IPSocket(const char *net_interface, int port)
 	else
 		Com_Printf(16, "Opening IP socket: localhost:%i\n", port);
 	newsocket = socket(2, 2, 17);
-	if (newsocket == -1)
+	if (newsocket == INVALID_SOCKET)
 	{
 		if (WSAGetLastError() != 10047)
 		{
@@ -608,7 +608,7 @@ void __cdecl NET_OpenSocks(u_short port)
 	usingSocks = 0;
 	Com_Printf(16, "Opening connection to SOCKS server.\n");
 	socks_socket = socket(2, 1, 6);
-	if (socks_socket == -1)
+	if (socks_socket == INVALID_SOCKET)
 	{
 		WSAGetLastError();
 		v1 = NET_ErrorString();
@@ -631,7 +631,7 @@ void __cdecl NET_OpenSocks(u_short port)
 	address.sa_family = 2;
 	*(_DWORD*)address.sa_data[2] = **(_DWORD**)h->h_addr_list;
 	*(_WORD*)address.sa_data = htons(net_socksPort->current.unsignedInt);
-	if (connect(socks_socket, &address, 16) == -1)
+	if (connect(socks_socket, &address, 16) == SOCKET_ERROR)
 	{
 		WSAGetLastError();
 		v3 = NET_ErrorString();
@@ -653,10 +653,10 @@ void __cdecl NET_OpenSocks(u_short port)
 	buf[2] = 0;
 	if (rfc1929)
 		buf[2] = 2;
-	if (send(socks_socket, (const char*)buf, len, 0) == -1)
+	if (send(socks_socket, (const char*)buf, len, 0) == SOCKET_ERROR)
 		goto LABEL_19;
 	len = recv(socks_socket, (char*)buf, 64, 0);
-	if (len == -1)
+	if (len == SOCKET_ERROR)
 		goto LABEL_43;
 	if (len != 2 || buf[0] != 5)
 		goto LABEL_46;
@@ -676,7 +676,7 @@ void __cdecl NET_OpenSocks(u_short port)
 		buf[v8 + 2] = v7;
 		if (v7)
 			memcpy(&buf[v8 + 3], (const void*)net_socksPassword->current.integer, v7);
-		if (send(socks_socket, (const char*)buf, v8 + v7 + 3, 0) == -1)
+		if (send(socks_socket, (const char*)buf, v8 + v7 + 3, 0) == SOCKET_ERROR)
 		{
 		LABEL_19:
 			WSAGetLastError();
@@ -685,7 +685,7 @@ void __cdecl NET_OpenSocks(u_short port)
 			return;
 		}
 		len = recv(socks_socket, (char*)buf, 64, 0);
-		if (len == -1)
+		if (len == SOCKET_ERROR)
 			goto LABEL_43;
 		if (len != 2 || buf[0] != 1)
 		{
@@ -705,14 +705,14 @@ void __cdecl NET_OpenSocks(u_short port)
 	buf[3] = 1;
 	*(_DWORD*)&buf[4] = 0;
 	*(_WORD*)&buf[8] = htons(port);
-	if (send(socks_socket, (const char*)buf, 10, 0) == -1)
+	if (send(socks_socket, (const char*)buf, 10, 0) == SOCKET_ERROR)
 	{
 		WSAGetLastError();
 		v5 = NET_ErrorString();
 		Com_PrintError(16, "NET_OpenSocks: send: %s\n", v5);
 	}
 	len = recv(socks_socket, (char*)buf, 64, 0);
-	if (len == -1)
+	if (len == SOCKET_ERROR)
 	{
 	LABEL_43:
 		WSAGetLastError();
@@ -863,7 +863,7 @@ NET_IPXSocket
 ====================
 */
 // NOTE(mrsteyk): who the fuck has IPX in 21st century? @Cleanup
-uint32_t __cdecl NET_IPXSocket(int port)
+SOCKET __cdecl NET_IPXSocket(int port)
 {
 	const char *v1; // eax
 	const char *v3; // eax
@@ -871,11 +871,11 @@ uint32_t __cdecl NET_IPXSocket(int port)
 	const char *v5; // eax
 	struct sockaddr address; // [esp+0h] [ebp-20h] BYREF
 	int _true; // [esp+18h] [ebp-8h] BYREF
-	uint32_t newsocket; // [esp+1Ch] [ebp-4h]
+	SOCKET newsocket; // [esp+1Ch] [ebp-4h]
 
 	_true = 1;
 	newsocket = socket(6, 2, NSPROTO_IPX);
-	if (newsocket == -1)
+	if (newsocket == INVALID_SOCKET)
 	{
 		if (WSAGetLastError() != 10047)
 		{
@@ -1010,17 +1010,17 @@ void __cdecl NET_Config(int enableNetworking)
 		}
 		if (stop)
 		{
-			if (ip_socket && ip_socket != -1)
+			if (ip_socket && ip_socket != INVALID_SOCKET)
 			{
 				closesocket(ip_socket);
 				ip_socket = 0;
 			}
-			if (socks_socket && socks_socket != -1)
+			if (socks_socket && socks_socket != INVALID_SOCKET)
 			{
 				closesocket(socks_socket);
 				socks_socket = 0;
 			}
-			if (ipx_socket && ipx_socket != -1)
+			if (ipx_socket && ipx_socket != INVALID_SOCKET)
 			{
 				closesocket(ipx_socket);
 				ipx_socket = 0;
@@ -1107,7 +1107,7 @@ void __cdecl TRACK_win_net()
 	track_static_alloc_internal(&winsockdata, 400, "winsockdata", 9);
 }
 
-int __cdecl NET_Select(uint32_t socket)
+int __cdecl NET_Select(SOCKET socket)
 {
 	const char* v2; // eax
 	fd_set readfds; // [esp+0h] [ebp-220h] BYREF
@@ -1142,7 +1142,7 @@ int __cdecl NET_Select(uint32_t socket)
 	}
 }
 
-uint32_t __cdecl NET_TCPIPSocket(const char* net_interface, int port, int type)
+SOCKET __cdecl NET_TCPIPSocket(const char* net_interface, int port, int type)
 {
 	const char* v3; // eax
 	const char* v5; // eax
@@ -1151,7 +1151,7 @@ uint32_t __cdecl NET_TCPIPSocket(const char* net_interface, int port, int type)
 	sockaddr_in address; // [esp+4h] [ebp-20h] BYREF
 	int err; // [esp+18h] [ebp-Ch]
 	int _true; // [esp+1Ch] [ebp-8h] BYREF
-	uint32_t newsocket; // [esp+20h] [ebp-4h]
+	SOCKET newsocket; // [esp+20h] [ebp-4h]
 
 	_true = 1;
 	if (net_interface)
@@ -1159,7 +1159,7 @@ uint32_t __cdecl NET_TCPIPSocket(const char* net_interface, int port, int type)
 	else
 		Com_Printf(16, "Opening IP socket: localhost:%i\n", port);
 	newsocket = socket(2, 1, 6);
-	if (newsocket == -1)
+	if (newsocket == INVALID_SOCKET)
 	{
 		if (WSAGetLastError() != 10047)
 		{

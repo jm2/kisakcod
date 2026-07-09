@@ -14,8 +14,8 @@ static int g_debugReadBytesRemote;
 static int g_debugReadBytesSent;
 static int g_debugWriteBytes;
 
-uint32_t ip_debugSocket[2];
-uint32_t ip_debugServerSocket[2];
+SOCKET ip_debugSocket[2];
+SOCKET ip_debugServerSocket[2];
 
 char *g_debugReadBytes;
 
@@ -299,7 +299,7 @@ int __cdecl Sys_UpdateDebugSocket()
 			if (!ip_debugServerSocket[i])
 				return 0;
 			ip_debugSocket[i] = accept(ip_debugServerSocket[i], 0, 0);
-			if (ip_debugSocket[i] == -1)
+			if (ip_debugSocket[i] == INVALID_SOCKET)
 			{
 				ip_debugSocket[i] = 0;
 				if (WSAGetLastError() != 10035)

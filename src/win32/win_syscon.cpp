@@ -228,7 +228,7 @@ void __cdecl Sys_CreateConsole(HMODULE hInstance)
 	SendMessageA(s_wcd.hwndBuffer, 0x30u, reinterpret_cast<WPARAM>(s_wcd.hfBufferFont), 0);
 
 	s_wcd.SysInputLineWndProc = reinterpret_cast<WNDPROC>(
-		SetWindowLongA(s_wcd.hwndInputLine, -4, reinterpret_cast<LONG>(InputLineWndProc)));
+		SetWindowLongPtrA(s_wcd.hwndInputLine, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(InputLineWndProc)));
 
 	SendMessageA(s_wcd.hwndInputLine, 0x30u, reinterpret_cast<WPARAM>(s_wcd.hfBufferFont), 0);
 
