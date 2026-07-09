@@ -52,7 +52,6 @@ script/scr_debugger.h|#include <ui/ui_shared.h>
 script/scr_vm.cpp|#include <client/client.h>
 script/scr_vm.cpp|#include <gfx_d3d/r_dvars.h>
 universal/com_sndalias.h|#include <sound/snd_public.h>
-universal/fft.h|#include <gfx_d3d/r_material.h>
 xanim/xanim.cpp|#include <cgame_mp/cg_local_mp.h>
 xanim/xanim.h|#include <gfx_d3d/r_bsp.h>
 xanim/xanim.h|#include <gfx_d3d/r_font.h>

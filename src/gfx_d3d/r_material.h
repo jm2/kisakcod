@@ -3,6 +3,7 @@
 #include <d3d9.h>
 
 #include "r_gfx.h"
+#include <universal/fft.h>
 
 #define SAMPLER_INDEX_INVALID 255
 
@@ -314,11 +315,6 @@ struct WaterWritable // sizeof=0x4
     float floatTime;
 };
 
-struct complex_s // sizeof=0x8
-{                                       // ...
-    float real;                         // ...
-    float imag;                         // ...
-};
 struct water_t // sizeof=0x44
 {                                       // ...
     WaterWritable writable;
