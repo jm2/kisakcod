@@ -33,3 +33,11 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/headless_profile_test.cmake
 )
+
+add_test(
+    NAME dedi-headless-client-media-include-debt
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DALLOWLIST=${CMAKE_CURRENT_SOURCE_DIR}/headless_include_debt.allow
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/headless_include_debt_test.cmake
+)
