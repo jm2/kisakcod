@@ -121,8 +121,6 @@ win32/win_input.cpp|#include <client/cl_input.h>
 win32/win_input.cpp|#include <client_mp/client_mp.h>
 win32/win_input.cpp|#include <gfx_d3d/r_dvars.h>
 win32/win_input.h|#include "../ui/keycodes.h"
-win32/win_main.cpp|#include <client/client.h>
-win32/win_main.cpp|#include <gfx_d3d/r_init.h>
 win32/win_storage.cpp|#include <client_mp/client_mp.h>
 win32/win_syscon.cpp|#include "../client/client.h"
 win32/win_voice.cpp|#include <groupvoice/directsound.h>

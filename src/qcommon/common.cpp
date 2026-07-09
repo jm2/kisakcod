@@ -266,7 +266,9 @@ void __cdecl Debug_Frame(int localClientNum)
     bgs_t *oldBgs = bgs;
     bgs = 0;
 #endif
+#ifndef KISAK_DEDI_HEADLESS
     IN_Frame();
+#endif
     if (Sys_IsRemoteDebugClient())
     {
         minMsec = 33;
@@ -2173,16 +2175,20 @@ void __cdecl Com_Frame()
 void Com_StartHunkUsers()
 {
     void* Value; // eax
+#ifndef KISAK_DEDI_HEADLESS
     int MenuScreen; // eax
+#endif
 
     Value = Sys_GetValue(2);
 
     if (setjmp(*(jmp_buf *)Value))
         Sys_Error("Error during initialization:\n%s\n", com_errorMessage);
+#ifndef KISAK_DEDI_HEADLESS
     Com_AssetLoadUI();
     MenuScreen = UI_GetMenuScreen();
     UI_SetActiveMenu(0, (uiMenuCommand_t)MenuScreen);
     IN_Frame();
+#endif
     Com_EventLoop();
 }
 

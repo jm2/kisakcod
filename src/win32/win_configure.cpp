@@ -1,4 +1,6 @@
+#ifndef KISAK_DEDI_HEADLESS
 #include <d3d9.h>
+#endif
 
 #include <qcommon/qcommon.h>
 
@@ -7,6 +9,10 @@
 
 void Sys_DetectVideoCard(int descLimit, char* description)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)descLimit;
+    strcpy(description, "Headless dedicated server");
+#else
     _D3DADAPTER_IDENTIFIER9 id;
     vassert(descLimit  == sizeof(id.Description), "descLimit = %d", descLimit);
 
@@ -18,6 +24,7 @@ void Sys_DetectVideoCard(int descLimit, char* description)
             strcpy_s(description, descLimit - 1, id.Description);
         d3d9->Release();
     }
+#endif
 }
 
 uint32_t __cdecl Sys_AddApicIdIfUnique(

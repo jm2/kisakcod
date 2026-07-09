@@ -20,7 +20,9 @@
 #include <Windows.h>
 #include <tlhelp32.h>
 
+#ifndef KISAK_DEDI_HEADLESS
 #include <client/client.h>
+#endif
 
 #include <qcommon/qcommon.h>
 #include <qcommon/cmd.h>
@@ -31,7 +33,9 @@
 #include <universal/q_parse.h>
 #include <universal/timing.h>
 
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_init.h>
+#endif
 #include <universal/profile.h>
 
 //#include "../qcommon/stringed_ingame.h"
@@ -68,6 +72,7 @@ static void PrintWorkingDir()
 	Com_Printf(16, "Working directory: %s\n", cwd);
 }
 
+#ifndef KISAK_DEDI_HEADLESS
 static void Win_RegisterClass()
 {
 	tagWNDCLASSEXA wce{};
@@ -83,6 +88,7 @@ static void Win_RegisterClass()
 	if (!RegisterClassExA(&wce))
 		Com_Error(ERR_FATAL, "EXE_ERR_COULDNT_REGISTER_WINDOW");
 }
+#endif
 
 sysEvent_t* __cdecl Win_GetEvent(sysEvent_t* result)
 {
@@ -397,8 +403,10 @@ void __cdecl  Sys_Quit()
 	Sys_EnterCriticalSection(CRITSECT_COM_ERROR);
 	timeEndPeriod(1);
 	Sys_SpawnQuitProcess();
+#ifndef KISAK_DEDI_HEADLESS
 	IN_Shutdown();
 	Key_Shutdown();
+#endif
 	Sys_DestroyConsole();
 	Sys_NormalExit();
 	Win_ShutdownLocalization();
@@ -530,7 +538,9 @@ void __cdecl Sys_LoadingKeepAlive()
 		v1 = *Win_GetEvent(&result);
 		ev = v1;
 	} while (v1.evType);
+#ifndef KISAK_DEDI_HEADLESS
 	R_CheckLostDevice();
+#endif
 }
 
 sysEvent_t *__cdecl Sys_GetEvent(sysEvent_t *result)
@@ -584,13 +594,17 @@ void __cdecl Sys_Init()
 	else
 		Com_Printf(16, "Streaming SIMD Extensions (SSE) %ssupported\n", "not ");
 	Com_Printf(16, "\n");
+#ifndef KISAK_DEDI_HEADLESS
 	IN_Init();
+#endif
 }
 
 void Sys_In_Restart_f()
 {
+#ifndef KISAK_DEDI_HEADLESS
 	IN_Shutdown();
 	IN_Init();
+#endif
 }
 
 #ifdef KISAK_MP
@@ -797,9 +811,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			Sys_FindInfo();
 			g_wv.hInstance = hInstance;
 			I_strncpyz(sys_cmdline, lpCmdLine, 1024);
+#ifndef KISAK_DEDI_HEADLESS
 			Sys_CreateSplashWindow();
 			Sys_ShowSplashWindow();
 			Win_RegisterClass();
+#endif
 			SetErrorMode(1);
 			Sys_Milliseconds();
 			Profile_Init();
@@ -828,7 +844,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			//	Com_SetErrorMessage("MPUI_NOPUNKBUSTER");
 			//}
 
+#ifndef KISAK_DEDI_HEADLESS
 			SetFocus(g_wv.hWnd);
+#endif
 
 			// main game loop
 			while (1) {
