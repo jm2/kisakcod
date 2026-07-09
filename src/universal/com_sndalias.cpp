@@ -3,13 +3,41 @@
 #ifndef KISAK_DEDI_HEADLESS
 #include <devgui/devgui.h>
 #endif
+#ifndef KISAK_DEDI_HEADLESS
 #include <sound/snd_local.h>
+#endif
 #include "com_files.h"
 #include <qcommon/cmd.h>
 #include <database/database.h>
 #include "q_parse.h"
 
 SoundAliasGlobals g_sa;
+
+static bool __cdecl Com_SoundAliasIsMultiChannel()
+{
+#ifdef KISAK_DEDI_HEADLESS
+    return false;
+#else
+    return SND_IsMultiChannel();
+#endif
+}
+
+static int __cdecl Com_GetLoadedSoundFileSize(uint32_t *pSoundFile)
+{
+#ifdef KISAK_DEDI_HEADLESS
+    (void)pSoundFile;
+    return 0;
+#else
+    return SND_GetSoundFileSize(pSoundFile);
+#endif
+}
+
+static void __cdecl Com_StopSoundsForAliasUnload()
+{
+#ifndef KISAK_DEDI_HEADLESS
+    SND_StopSounds(SND_STOP_ALL);
+#endif
+}
 
 char __cdecl Com_LoadVolumeFalloffCurve(const char *name, SndCurve *curve)
 {
@@ -201,7 +229,7 @@ MSSChannelMap *__cdecl Com_GetSpeakerMap(SpeakerMap *speakerMap, int sourceChann
             "%s\n\t(sourceChannelCount) = %i",
             "(sourceChannelCount == 1 || sourceChannelCount == 2)",
             sourceChannelCount);
-    return &speakerMap->channelMaps[sourceChannelCount == 2][SND_IsMultiChannel()];
+    return &speakerMap->channelMaps[sourceChannelCount == 2][Com_SoundAliasIsMultiChannel()];
 }
 
 uint32_t __cdecl Com_HashAliasName(const char *name)
@@ -512,7 +540,7 @@ void __cdecl Com_LoadedSoundList(snd_alias_system_t system)
                 Com_GetSoundFileName(&aliases[i], filename, 128);
                 if (aliases[i].soundFile->exists)
                 {
-                    fileMem = SND_GetSoundFileSize((uint32_t*)&aliases[i].soundFile->u.loadSnd->sound.info.format);
+                    fileMem = Com_GetLoadedSoundFileSize((uint32_t*)&aliases[i].soundFile->u.loadSnd->sound.info.format);
                     totalMem += fileMem;
                     Com_Printf(9, "%-64s %7.1f KB\n", filename, fileMem * (1.0f / 1024.0f));
                 }
@@ -668,7 +696,7 @@ void __cdecl Com_UnloadSoundAliasSounds(snd_alias_system_t system)
             "%s\n\t(system) = %i",
             "(system == SASYS_UI || system == SASYS_CGAME)",
             system);
-    SND_StopSounds(SND_STOP_ALL);
+    Com_StopSoundsForAliasUnload();
     aliases = (snd_alias_t *)*(&g_sa.soundFileInfo[-4].count + 3 * system);
     for (i = 0; i < g_sa.aliasInfo[system].count; ++i)
     {
