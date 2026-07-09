@@ -32,7 +32,6 @@ database/db_registry.cpp|#include <gfx_d3d/rb_uploadshaders.h>
 game/bullet.cpp|#include <cgame/cg_local.h>
 game/bullet.cpp|#include <cgame_mp/cg_local_mp.h>
 game/bullet.cpp|#include <client/client.h>
-game/enthandle.cpp|#include <cgame/cg_local.h>
 game/enthandle.cpp|#include <cgame_mp/cg_local_mp.h>
 game/g_debug.cpp|#include <cgame/cg_public.h>
 game/g_debug.cpp|#include <client/client.h>
@@ -40,7 +39,6 @@ game/g_missile.cpp|#include <cgame/cg_local.h>
 game/g_weapon.cpp|#include <DynEntity/DynEntity_client.h>
 game/game_public.h|#include <cgame_mp/cg_local_mp.h>
 game/game_public.h|#include <client_mp/client_mp.h>
-game/pathnode.h|#include <client/client.h>
 game_mp/g_utils_mp.cpp|#include <client_mp/client_mp.h>
 game_mp/g_vehicles_mp.cpp|#include <EffectsCore/fx_system.h>
 physics/phys_coll_boxbrush.cpp|#include <cgame/cg_local.h>
@@ -49,7 +47,6 @@ physics/phys_coll_cylinderbrush.cpp|#include <EffectsCore/fx_system.h>
 physics/phys_coll_cylinderbrush.cpp|#include <cgame/cg_local.h>
 physics/phys_contacts.cpp|#include <cgame/cg_local.h>
 physics/phys_ode.cpp|#include <DynEntity/DynEntity_client.h>
-physics/phys_ode.cpp|#include <cgame/cg_main.h>
 physics/phys_ode.cpp|#include <cgame_mp/cg_local_mp.h>
 physics/phys_ode.cpp|#include <gfx_d3d/r_dpvs.h>
 physics/phys_world_collision.cpp|#include <cgame/cg_local.h>
@@ -60,8 +57,6 @@ qcommon/cm_mesh.cpp|#include <EffectsCore/fx_system.h>
 qcommon/cm_staticmodel.cpp|#include <cgame/cg_local.h>
 qcommon/com_profilemapload.cpp|#include <client/client.h>
 qcommon/common.cpp|#include <EffectsCore/fx_system.h>
-qcommon/common.cpp|#include <client/cl_demo.h>
-qcommon/common.cpp|#include <client/cl_scrn.h>
 qcommon/common.cpp|#include <client/client.h>
 qcommon/common.cpp|#include <client_mp/client_mp.h>
 qcommon/common.cpp|#include <devgui/devgui.h>
@@ -71,18 +66,15 @@ qcommon/common.cpp|#include <gfx_d3d/r_rendercmds.h>
 qcommon/common.cpp|#include <gfx_d3d/r_scene.h>
 qcommon/common.cpp|#include <gfx_d3d/r_workercmds.h>
 qcommon/common.cpp|#include <sound/snd_local.h>
-qcommon/common.cpp|#include <ui/ui.h>
 qcommon/files.cpp|#include <sound/snd_public.h>
 qcommon/graph.cpp|#include <devgui/devgui.h>
 qcommon/msg_mp.cpp|#include <cgame/cg_local.h>
 qcommon/msg_mp.cpp|#include <client_mp/client_mp.h>
 qcommon/net_chan_mp.cpp|#include <cgame_mp/cg_local_mp.h>
 qcommon/net_chan_mp.cpp|#include <client_mp/client_mp.h>
-qcommon/statmonitor.cpp|#include <client/client.h>
 qcommon/statmonitor.cpp|#include <client_mp/client_mp.h>
 qcommon/statmonitor.cpp|#include <gfx_d3d/r_material.h>
 qcommon/sv_msg_write_mp.cpp|#include <cgame/cg_local.h>
-qcommon/threads.cpp|#include <client/client.h>
 qcommon/threads.cpp|#include <client_mp/client_mp.h>
 qcommon/threads.cpp|#include <gfx_d3d/r_init.h>
 qcommon/threads.cpp|#include <gfx_d3d/rb_backend.h>
@@ -96,9 +88,6 @@ script/scr_stringlist.cpp|#include <client_mp/client_mp.h>
 script/scr_vm.cpp|#include <client/client.h>
 script/scr_vm.cpp|#include <gfx_d3d/r_dvars.h>
 script/scr_yacc2.cpp|#include <client_mp/client_mp.h>
-server/sv_game.cpp|#include <client/cl_demo.h>
-server/sv_game.cpp|#include <client/cl_input.h>
-server/sv_game.h|#include <cgame/cg_local.h>
 server/sv_game.h|#include <cgame_mp/cg_local_mp.h>
 server_mp/server_mp.h|#include <client_mp/client_mp.h>
 server_mp/sv_archive_mp.cpp|#include <cgame_mp/cg_local_mp.h>
