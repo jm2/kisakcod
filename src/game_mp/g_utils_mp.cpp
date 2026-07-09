@@ -5,7 +5,6 @@
 #include "g_utils_mp.h"
 #include <qcommon/mem_track.h>
 #include <universal/com_constantconfigstrings.h>
-#include <client_mp/client_mp.h>
 #include <server_mp/server_mp.h>
 
 #include <xanim/dobj.h>
@@ -1475,4 +1474,3 @@ float __cdecl G_crandom()
 {
     return G_random() * 2.0f - 1.0f;
 }
-

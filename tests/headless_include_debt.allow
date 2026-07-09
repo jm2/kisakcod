@@ -37,7 +37,6 @@ game/g_missile.cpp|#include <cgame/cg_local.h>
 game/g_weapon.cpp|#include <DynEntity/DynEntity_client.h>
 game/game_public.h|#include <cgame_mp/cg_local_mp.h>
 game/game_public.h|#include <client_mp/client_mp.h>
-game_mp/g_utils_mp.cpp|#include <client_mp/client_mp.h>
 game_mp/g_vehicles_mp.cpp|#include <EffectsCore/fx_system.h>
 physics/phys_coll_boxbrush.cpp|#include <cgame/cg_local.h>
 physics/phys_coll_capsulebrush.cpp|#include <cgame/cg_local.h>
