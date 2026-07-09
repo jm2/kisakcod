@@ -1,5 +1,10 @@
 #include "phys_local.h"
+#ifndef KISAK_DEDI_HEADLESS
 #include <cgame/cg_local.h>
+#else
+#define CG_DebugBox(...) ((void)0)
+#define CG_DebugLine(...) ((void)0)
+#endif
 
 #include <physics/ode/collision_kernel.h>
 #include <universal/profile.h>
@@ -785,4 +790,3 @@ void __cdecl Phys_AddCollisionContact(PhysWorld worldId, const PhysContact *phys
     p_contactList->contacts[0].surfFlags = 0;
     Phys_CreateJointForEachContact(&contactList, obj0, obj1, &surfParms, worldId);
 }
-

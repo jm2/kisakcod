@@ -1,5 +1,9 @@
 #include "phys_local.h"
+#ifndef KISAK_DEDI_HEADLESS
 #include <cgame/cg_local.h>
+#else
+#define CG_DebugLine(...) ((void)0)
+#endif
 #include "ode/collision_trimesh_KISAK.h"
 #include <universal/profile.h>
 

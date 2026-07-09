@@ -6,7 +6,11 @@
 #include <universal/assertive.h>
 #include <qcommon/qcommon.h>
 #include <qcommon/threads.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <cgame/cg_local.h>
+#else
+#define CG_DebugLine(...) ((void)0)
+#endif
 #include "ode/odeext.h"
 #include <universal/profile.h>
 
@@ -17,7 +21,6 @@
 
 #ifdef KISAK_MP
 #include <game_mp/g_main_mp.h>
-#include <cgame_mp/cg_local_mp.h>
 #elif KISAK_SP
 #include <game/g_main.h>
 #endif
@@ -1040,4 +1043,3 @@ dxGeom *__cdecl Phys_CreateCapsuleGeom(dxSpace *space, dxBody *body, const GeomS
     ClassData->halfHeight = cyl->halfHeight;
     return geom;
 }
-

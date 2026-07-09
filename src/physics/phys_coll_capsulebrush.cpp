@@ -1,6 +1,5 @@
 #include "phys_local.h"
 #include "phys_coll_local.h"
-#include <cgame/cg_local.h>
 
 int numLocalContacts;
 LocalContactData localContacts[32];
@@ -995,4 +994,3 @@ void __cdecl Phys_CollideCapsuleWithTriangleList(
         Phys_CapsuleOptimizeLocalResults(results);
     }
 }
-
