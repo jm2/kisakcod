@@ -1,7 +1,5 @@
 #include "phys_local.h"
 #include "phys_coll_local.h"
-#include <cgame/cg_local.h>
-#include <EffectsCore/fx_system.h>
 
 void __cdecl Phys_CollideCylinderWithBrush(const cbrush_t *brush, const objInfo *info, Results *results)
 {
@@ -1166,4 +1164,3 @@ void __cdecl Phys_CollideCylinderWithTriangleList(
             Phys_CollideCylinderWithFace(triPlane, &triPoly, info, surfaceFlags, results);
     }
 }
-
