@@ -1523,7 +1523,7 @@ void Com_InitDvars()
     #endif
 #endif
 
-    com_maxfps = Dvar_RegisterInt("com_maxfps", 85, 0, 1000, DVAR_ARCHIVE, "Cap frames per second");
+    com_maxfps = Dvar_RegisterInt("com_maxfps", 250, 0, 1000, DVAR_ARCHIVE, "Cap frames per second");
     useFastFile = Dvar_RegisterBool(
         "useFastFile",
         1,
