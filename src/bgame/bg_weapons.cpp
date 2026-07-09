@@ -9,7 +9,11 @@
 
 #ifdef KISAK_MP
 #include <game_mp/g_main_mp.h>
+#ifndef KISAK_DEDI_HEADLESS
+#ifndef DEDICATED
 #include <cgame_mp/cg_local_mp.h>
+#endif
+#endif
 #elif KISAK_SP
 #include <game/g_local.h>
 #endif
@@ -2573,7 +2577,7 @@ void __cdecl PM_Weapon_FireWeapon(playerState_s *ps, int32_t delayedAction)
         {
             if (PM_WeaponAmmoAvailable(ps) != -1 && (ps->eFlags & 0x300) == 0)
             {
-#ifndef DEDICATED
+#if !defined(DEDICATED) && !defined(KISAK_DEDI_HEADLESS)
                 LocalClientActiveCount = CL_GetLocalClientActiveCount();
                 PM_WeaponUseAmmo(ps, ps->weapon, LocalClientActiveCount);
 #else
@@ -2622,8 +2626,10 @@ void __cdecl PM_WeaponUseAmmo(playerState_s *ps, uint32_t wp, int32_t amount)
 
 #if KISAK_SP
     if (!player_sustainAmmo->current.enabled )// || !WeaponValidForSustainAmmoCheat(wp))
-#else
+#elif !defined(DEDICATED) && !defined(KISAK_DEDI_HEADLESS)
     if (!player_sustainAmmo->current.enabled || !CG_ShouldPlaySoundOnLocalClient())
+#else
+    if (!player_sustainAmmo->current.enabled)
 #endif
     {
         idx = BG_ClipForWeapon(wp);
@@ -2710,7 +2716,7 @@ int __cdecl PM_Weapon_CheckFiringAmmo(playerState_s *ps)
 
     weapDef = BG_GetWeaponDef(ps->weapon);
 
-#ifndef DEDICATED
+#if !defined(DEDICATED) && !defined(KISAK_DEDI_HEADLESS)
     ammoNeeded = CL_GetLocalClientActiveCount();
 #else
     ammoNeeded = 1;
