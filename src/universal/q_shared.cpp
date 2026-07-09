@@ -4,13 +4,18 @@
 #include <qcommon/mem_track.h>
 #include <qcommon/threads.h>
 
-#include <EffectsCore/fx_system.h>
-
 #include <string.h>
+#ifndef KISAK_DEDI_HEADLESS
+#include <EffectsCore/fx_system.h>
 #include <gfx_d3d/r_model.h>
+#endif
 #include "com_sndalias.h"
 
 #include <setjmp.h>
+
+struct FxEffectDef;
+struct Material;
+struct XModel;
 
 //Line 53466:  0006 : 02bc009c       int marker_q_shared      8537009c     q_shared.obj
 //Line 53467 : 0006 : 02bc58d0       struct TraceThreadInfo *g_traceThreadInfo 853758d0     q_shared.obj
@@ -1029,6 +1034,10 @@ bool __cdecl ParseConfigStringToStructCustomSize(
                     *(uint32_t *)&pStruct[v20->iOffset] = (int)(v15 * 1000.0);
                     break;
                 case 8:
+#ifdef KISAK_DEDI_HEADLESS
+                    v9 = NULL;
+                    *(uint32_t *)&pStruct[v20->iOffset] = (uint32_t)v9;
+#else
 #ifdef KISAK_MP
                     if (!com_dedicated->current.integer)
 #endif
@@ -1036,15 +1045,25 @@ bool __cdecl ParseConfigStringToStructCustomSize(
                         v9 = FX_Register(src);
                         *(uint32_t *)&pStruct[v20->iOffset] = (uint32_t)v9;
                     }
+#endif
                     break;
                 case 9:
+#ifdef KISAK_DEDI_HEADLESS
+                    v22 = NULL;
+                    *(uint32_t *)&pStruct[v20->iOffset] = (uint32_t)v22;
+#else
                     I_strncpyz(dest, src, 0x2000);
                     v22 = R_RegisterModel(dest);
                     *(uint32_t *)&pStruct[v20->iOffset] = (uint32_t)v22;
                     if (!v22)
                         v18 = 1;
+#endif
                     break;
                 case 0xA:
+#ifdef KISAK_DEDI_HEADLESS
+                    v10 = NULL;
+                    *(uint32_t *)&pStruct[v20->iOffset] = (uint32_t)v10;
+#else
 #ifdef KISAK_MP
                     if (!com_dedicated->current.integer)
 #endif
@@ -1052,6 +1071,7 @@ bool __cdecl ParseConfigStringToStructCustomSize(
                         v10 = Material_RegisterHandle(src, 0);
                         *(uint32_t *)&pStruct[v20->iOffset] = (uint32_t)v10;
                     }
+#endif
                     break;
                 case 0xB:
                     SoundAlias = Com_FindSoundAlias(src);
@@ -1131,4 +1151,3 @@ uint32_t __cdecl LongNoSwap(uint32_t color)
 {
     return color;
 }
-
