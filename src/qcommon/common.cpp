@@ -31,7 +31,9 @@
 #include <sound/snd_local.h>
 #endif
 #include <script/scr_animtree.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_scene.h>
+#endif
 #include <ragdoll/ragdoll.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <devgui/devgui.h>
@@ -171,6 +173,22 @@ static void __cdecl Com_UnregisterEffects()
 {
 #ifndef KISAK_DEDI_HEADLESS
     FX_UnregisterAll();
+#endif
+}
+
+static void __cdecl Com_SetRenderEndTime(int endTime)
+{
+#ifndef KISAK_DEDI_HEADLESS
+    R_SetEndTime(endTime);
+#else
+    (void)endTime;
+#endif
+}
+
+static void __cdecl Com_WaitRenderEndTime()
+{
+#ifndef KISAK_DEDI_HEADLESS
+    R_WaitEndTime();
 #endif
 }
 
@@ -1960,7 +1978,7 @@ void __cdecl Com_Frame_Try_Block_Function()
     if (!com_dedicated->current.integer)
 #endif
     {
-        R_SetEndTime(com_lastFrameTime[lastFrameIndex]);
+        Com_SetRenderEndTime(com_lastFrameTime[lastFrameIndex]);
 
         {
             PROF_SCOPED("pre frame");
@@ -2011,7 +2029,7 @@ void __cdecl Com_Frame_Try_Block_Function()
         deltaTime = cls.frametime * EQUAL_EPSILON;
         Com_UpdateDevGuiFrame(0, deltaTime);
         Com_Statmon();
-        R_WaitEndTime();
+        Com_WaitRenderEndTime();
     }
 
 #ifdef KISAK_SP
