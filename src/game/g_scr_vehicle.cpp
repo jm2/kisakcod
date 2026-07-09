@@ -3614,7 +3614,7 @@ void G_UpdateVehicleTags(gentity_s *ent)
     {
         BoneIndex = SV_DObjGetBoneIndex(ent, **v4++);
         *flash++ = BoneIndex;
-    } while ((int)v4 < (int)&s_flashTags[5]);
+    } while ((uintptr_t)v4 < (uintptr_t)&s_flashTags[5]);
 
     wheel = veh->boneIndex.wheel;
     v7 = s_wheelTags;
@@ -3622,7 +3622,7 @@ void G_UpdateVehicleTags(gentity_s *ent)
     {
         v8 = SV_DObjGetBoneIndex(ent, **v7++);
         *wheel++ = v8;
-    } while ((int)v7 < (int)&s_wheelTags[6]);
+    } while ((uintptr_t)v7 < (uintptr_t)&s_wheelTags[6]);
 }
 
 int VEH_ParseSpecificField(uint8_t *pStruct, const char *pValue, int fieldType)

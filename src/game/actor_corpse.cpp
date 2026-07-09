@@ -42,7 +42,7 @@ int __cdecl G_GetActorCorpseIndex(gentity_s *ent)
     {
         p_entnum += 8;
         ++result;
-        if ((int)p_entnum >= (int)&g_scr_data.actorBackup)
+        if ((uintptr_t)p_entnum >= (uintptr_t)&g_scr_data.actorBackup)
         {
             if (!alwaysfails)
                 MyAssertHandler(
@@ -335,7 +335,7 @@ void __cdecl G_PruneLoadedCorpses()
         }
         p_entnum += 8;
         ++v3;
-    } while ((int)p_entnum < (int)&g_scr_data.actorBackup);
+    } while ((uintptr_t)p_entnum < (uintptr_t)&g_scr_data.actorBackup);
     if (v2 > 6)
     {
         ent = G_Find(0, 284, scr_const.player);

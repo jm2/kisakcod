@@ -66,7 +66,7 @@ void __cdecl Actor_ClearThreatBiasGroups()
         if (v0->groupName[0])
             Scr_SetString(v0->groupName, 0);
         v0 = (threat_bias_t *)((char *)v0 + 2);
-    } while ((int)v0 < (int)g_threatBias.threatTable);
+    } while ((uintptr_t)v0 < (uintptr_t)g_threatBias.threatTable);
     memset(&g_threatBias, 0, sizeof(g_threatBias));
 }
 

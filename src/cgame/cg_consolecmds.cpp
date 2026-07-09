@@ -331,7 +331,7 @@ void __cdecl CG_SetViewPos_f()
                 v2 = Cmd_Argv(++v0);
                 v3 = atof(v2);
                 *origin++ = *(double *)&v3;
-            } while ((int)origin < (int)cgArray[0].predictedPlayerState.velocity);
+            } while ((uintptr_t)origin < (uintptr_t)cgArray[0].predictedPlayerState.velocity);
             nesting = cmd_args.nesting;
             if (cmd_args.nesting >= 8u)
             {

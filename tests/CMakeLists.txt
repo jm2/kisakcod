@@ -41,3 +41,11 @@ add_test(
         -DALLOWLIST=${CMAKE_CURRENT_SOURCE_DIR}/headless_include_debt.allow
         -P ${CMAKE_CURRENT_SOURCE_DIR}/headless_include_debt_test.cmake
 )
+
+add_test(
+    NAME pointer-truncation-tripwire
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DALLOWLIST=${CMAKE_CURRENT_SOURCE_DIR}/pointer_truncation.allow
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/pointer_truncation_test.cmake
+)

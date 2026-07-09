@@ -1843,7 +1843,7 @@ void __cdecl G_FreeAllEntityRefs()
     droppedWeaponCue = level.droppedWeaponCue;
     do
         droppedWeaponCue++->setEnt(0);
-    while ((int)droppedWeaponCue < (int)&level.droppedWeaponCue[32]);
+    while ((uintptr_t)droppedWeaponCue < (uintptr_t)&level.droppedWeaponCue[32]);
     Targ_RemoveAll();
 }
 

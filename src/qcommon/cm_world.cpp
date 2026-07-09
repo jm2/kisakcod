@@ -1223,7 +1223,7 @@ int CM_SaveWorld(uint8_t *buf)
             memcpy(v1, p_tree, 0xCu);
             p_tree = (worldTree_s *)((char *)p_tree + 28);
             v1 += 12;
-        } while ((int)p_tree < (int)&cmd_args.localClientNum[2]);
+        } while ((uintptr_t)p_tree < (uintptr_t)&cmd_args.localClientNum[2]);
     }
     return 12290;
 }
@@ -1253,7 +1253,7 @@ void CM_LoadWorld(uint8_t *buf)
         v4 = memcpy(p_tree, v2, sizeof(worldTree_s));
         p_tree = (worldTree_s *)((char *)p_tree + 28);
         v2 += 12;
-    } while ((int)p_tree < (int)&cmd_args.localClientNum[2]);
+    } while ((uintptr_t)p_tree < (uintptr_t)&cmd_args.localClientNum[2]);
     cm_world.lockTree = 1; // KISAKTODOSP more lockTree xref?
     CM_LinkAllStaticModels();
 }

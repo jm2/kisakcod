@@ -81,7 +81,7 @@ uint8_t *__cdecl DB_GetStreamPos()
 uint8_t *__cdecl DB_AllocStreamPos(int32_t alignment)
 {
     iassert(g_streamPos);
-    g_streamPos = (uint8_t *)(~alignment & (uint32_t)&g_streamPos[alignment]);
+    g_streamPos = (uint8_t *)(~(uintptr_t)alignment & (uintptr_t)&g_streamPos[alignment]);
     return g_streamPos;
 }
 

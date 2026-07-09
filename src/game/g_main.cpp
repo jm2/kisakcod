@@ -1968,7 +1968,7 @@ void __cdecl G_SendClientMessages()
         ++cgData_actorProneInfo;
         ++v0;
         ++v1;
-    } while ((int)cgData_actorProneInfo < (int)&level.cgData_actorProneInfo[32]);
+    } while ((uintptr_t)cgData_actorProneInfo < (uintptr_t)&level.cgData_actorProneInfo[32]);
     v10 = 33;
     v11 = &level.cgData_actorProneInfo[33];
     p_entnum = &g_scr_data.actorCorpseInfo[0].entnum;

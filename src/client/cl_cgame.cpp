@@ -274,7 +274,7 @@ void __cdecl CL_Restart()
         if (*configstrings)
             MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\client\\cl_cgame.cpp", 279, 0, "%s", "!cl->configstrings[i]");
         *configstrings++ = SL_GetString_("", 0, 19);
-    } while ((int)configstrings < (int)clients[0].mapname);
+    } while ((uintptr_t)configstrings < (uintptr_t)clients[0].mapname);
     Con_ClearNotify(0);
     Con_ClearErrors(0);
     Con_InitMessageBuffer();

@@ -5032,7 +5032,7 @@ int SND_FindPlaybackId(const snd_alias_t *sndEnt, const char *aliasName)
     LABEL_18:
         p_alias0 += 35;
         ++v4;
-        if ((int)p_alias0 >= (int)&g_sndPhysics.info[4].org[2])
+        if ((uintptr_t)p_alias0 >= (uintptr_t)&g_sndPhysics.info[4].org[2])
             return -1;
     }
     if (!*p_alias0 || I_stricmp((*p_alias0)->aliasName, aliasName))

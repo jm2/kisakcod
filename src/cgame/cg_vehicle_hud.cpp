@@ -609,7 +609,7 @@ void __cdecl CG_DrawVehicleTargets(int localClientNum, rectDef_s *rect, float *c
             }
         }
         v6 += 7;
-    } while ((int)v6 < (int)&cgArray[0].shellshock.loopEndTime);
+    } while ((uintptr_t)v6 < (uintptr_t)&cgArray[0].shellshock.loopEndTime);
 }
 
 void __cdecl CG_DrawJavelinTargets(int localClientNum, rectDef_s *rect, float *color, Material *defaultMaterial)
@@ -702,7 +702,7 @@ void __cdecl CG_DrawJavelinTargets(int localClientNum, rectDef_s *rect, float *c
             }
             v10 += 4;
             v9 += 4;
-            if ((int)v10 >= (int)&cgArray[0].shellshock.hasSavedScreen)
+            if ((uintptr_t)v10 >= (uintptr_t)&cgArray[0].shellshock.hasSavedScreen)
                 break;
         }
         if (v9 != 32)
@@ -975,7 +975,7 @@ int __cdecl CG_GetTargetPos(int localClientNum, int targetEntNum, float *outPos)
     {
         ++targets;
         ++v6;
-        if ((int)targets >= (int)&cgArray[0].shellshock)
+        if ((uintptr_t)targets >= (uintptr_t)&cgArray[0].shellshock)
             return 0;
     }
     Entity = CG_GetEntity(localClientNum, targetEntNum);

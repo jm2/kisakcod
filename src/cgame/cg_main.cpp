@@ -1031,7 +1031,7 @@ void __cdecl CG_RegisterGraphics(int localClientNum, const char *mapname)
             MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_main.cpp", 1026, 0, "%s", "cgs->fxs[i]");
         ++v7;
         ++v6;
-    } while ((int)v7 < (int)&cgsArray[0].holdBreathParams);
+    } while ((uintptr_t)v7 < (uintptr_t)&cgsArray[0].holdBreathParams);
     ProfLoad_End();
     ProfLoad_Begin("Register shellshocks");
     for (j = 1; j < 16; ++j)

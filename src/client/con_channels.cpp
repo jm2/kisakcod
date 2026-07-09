@@ -409,7 +409,7 @@ void Con_SaveChannels(MemoryFile *memFile)
         if (v3[2].name[0])
             ++v2;
         v3 += 4;
-    } while ((int)v3 < (int)((char *)&pcGlob.filters[1][0] + 1));
+    } while ((uintptr_t)v3 < (uintptr_t)((char *)&pcGlob.filters[1][0] + 1));
     v9[0] = v2;
     MemFile_WriteData(memFile, 4, v9);
     v4 = 0;
@@ -433,7 +433,7 @@ void Con_SaveChannels(MemoryFile *memFile)
         }
         v5 = (PrintChannelGlob *)((char *)v5 + 33);
         ++v4;
-    } while ((int)v5 < (int)pcGlob.filters);
+    } while ((uintptr_t)v5 < (uintptr_t)pcGlob.filters);
 }
 
 void Con_RestoreChannels(MemoryFile *memFile)

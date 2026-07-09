@@ -114,7 +114,7 @@ void __cdecl SV_ClearServer()
         if (*configstrings)
             SL_RemoveRefToString(*configstrings);
         ++configstrings;
-    } while ((int)configstrings < (int)&sv.svEntities[0].worldSector);
+    } while ((uintptr_t)configstrings < (uintptr_t)&sv.svEntities[0].worldSector);
     if (sv.emptyConfigString)
         SL_RemoveRefToString(sv.emptyConfigString);
     Com_Memset(&sv, 0, sizeof(server_t));

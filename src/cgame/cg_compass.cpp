@@ -2217,7 +2217,7 @@ void CG_CompassDrawPlayerPointers_SP(
                 } while (v19);
             }
             ++objectives;
-        } while ((int)objectives < (int)cgArray[0].targets);
+        } while ((uintptr_t)objectives < (uintptr_t)cgArray[0].targets);
     }
 }
 #endif

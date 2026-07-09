@@ -376,7 +376,7 @@ void __cdecl CG_DrawObjectiveList(
                 break;
             }
             p_icon += 284;
-        } while ((int)p_icon < (int)&cgArray[0].visionSetPreLoaded[0].filmLightTint[2]);
+        } while ((uintptr_t)p_icon < (uintptr_t)&cgArray[0].visionSetPreLoaded[0].filmLightTint[2]);
         if (textY != 0.0)
         {
             height = (float)((float)textY - (float)y);

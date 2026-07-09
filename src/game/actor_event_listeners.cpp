@@ -61,7 +61,7 @@ void __cdecl Actor_EventListener_Init()
         *(p_events - 1) = ENTITYNUM_NONE;
         *p_events = 0;
         p_events += 2;
-    } while ((int)p_events < (int)&g_AIEVlisteners[32]);
+    } while ((uintptr_t)p_events < (uintptr_t)&g_AIEVlisteners[32]);
 }
 
 void __cdecl Actor_EventListener_SetCount(int listenerCount)
@@ -87,7 +87,7 @@ int __cdecl Actor_FindEventFromString(unsigned __int16 eventString)
     {
         ++v2;
         ++v1;
-        if ((int)v2 >= (int)&g_AIEV_scrConst_table[23])
+        if ((uintptr_t)v2 >= (uintptr_t)&g_AIEV_scrConst_table[23])
         {
             v3 = SL_ConvertToString(eventString);
             v4 = va("Unable to find AI event for [%s]", v3);

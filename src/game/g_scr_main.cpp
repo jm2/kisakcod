@@ -10032,7 +10032,7 @@ void GScr_OpenFile()
         {
             ++openScriptIOFileHandles;
             ++v2;
-            if ((int)openScriptIOFileHandles >= (int)level.openScriptIOFileBuffers)
+            if ((uintptr_t)openScriptIOFileHandles >= (uintptr_t)level.openScriptIOFileBuffers)
                 goto LABEL_7;
         }
         v4 = v2;

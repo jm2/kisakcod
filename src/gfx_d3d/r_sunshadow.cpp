@@ -467,7 +467,7 @@ void __cdecl R_SetupSunShadowMapProjection(
             viewOrgInPixels[1][0] = (float)(farShadowBegin + 1) + (viewOrgInSunProj[0] - minsInSunProj[0][0]) * scaleToFitUsable * farShadowSizeRatio;
             float v12 = floor(scaleToFitUsable * (minsInSunProj[1][0] - minsInSunProj[0][0]) + (float)farShadowBegin);
 
-            if ((int)farShadowBegin < (int)v12)
+            if ((uintptr_t)farShadowBegin < (uintptr_t)v12)
                 partitionFar->viewport.x = (int)v12;
             else
                 partitionFar->viewport.x = farShadowBegin;
@@ -514,7 +514,7 @@ void __cdecl R_SetupSunShadowMapProjection(
             viewOrgInPixels[1][1] = (float)(farShadowBegin + 1)
                 + (maxsInSunProj[0][1] - viewOrgInSunProj[1]) * scaleToFitUsable * farShadowSizeRatio;
             float v8 = floor(scaleToFitUsable * (maxsInSunProj[0][1] - maxsInSunProj[1][1]) + (float)farShadowBegin);
-            if ((int)farShadowBegin < (int)v8)
+            if ((uintptr_t)farShadowBegin < (uintptr_t)v8)
                 partitionFar->viewport.y = (int)v8;
             else
                 partitionFar->viewport.y = farShadowBegin;
