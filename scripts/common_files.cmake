@@ -585,6 +585,24 @@ set(PLATFORM_WIN32
     "${SRC_DIR}/win32/win_steam.h"
 )
 
+set(PLATFORM_WIN32_DEDI_HEADLESS
+    "${SRC_DIR}/win32/win_configure.cpp"
+    "${SRC_DIR}/win32/win_configure.h"
+    "${SRC_DIR}/win32/win_local.h"
+    "${SRC_DIR}/win32/win_localize.cpp"
+    "${SRC_DIR}/win32/win_localize.h"
+    "${SRC_DIR}/win32/win_main.cpp"
+    "${SRC_DIR}/win32/win_net.cpp"
+    "${SRC_DIR}/win32/win_net.h"
+    "${SRC_DIR}/win32/win_net_debug.cpp"
+    "${SRC_DIR}/win32/win_net_debug.h"
+    "${SRC_DIR}/win32/win_storage.cpp"
+    "${SRC_DIR}/win32/win_storage.h"
+    "${SRC_DIR}/win32/win_syscon.cpp"
+    "${SRC_DIR}/win32/win_steam.cpp"
+    "${SRC_DIR}/win32/win_steam.h"
+)
+
 set(XANIM
     "${SRC_DIR}/xanim/dobj.cpp"
     "${SRC_DIR}/xanim/dobj.h"

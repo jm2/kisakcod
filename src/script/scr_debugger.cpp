@@ -16,7 +16,9 @@
 #include <win32/win_net_debug.h>
 #include "scr_evaluate.h"
 #include <client/client.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <win32/win_input.h>
+#endif
 #include <qcommon/threads.h>
 #include <gfx_d3d/r_rendercmds.h>
 #include <qcommon/cmd.h>
@@ -481,8 +483,10 @@ void __cdecl Scr_KeyEvent(int key)
 
     if (!scrDebuggerGlob.debugger_inited_system)
         return;
+#ifndef KISAK_DEDI_HEADLESS
     if (UI_Component::g.hideCursor)
         IN_ActivateMouse(1);
+#endif
     if (!Key_IsCatcherActive(0, 2))
         MyAssertHandler(
             ".\\script\\scr_debugger.cpp",
@@ -1735,7 +1739,9 @@ void __cdecl Scr_ShutdownDebuggerSystem(int restart)
         if (!restart && Key_IsCatcherActive(0, 2))
         {
             Key_RemoveCatcher(0, -3);
+#ifndef KISAK_DEDI_HEADLESS
             IN_ActivateMouse(1);
+#endif
         }
         if (scrDebuggerGlob.debugger_inited_system)
         {
@@ -1791,10 +1797,14 @@ void __cdecl Scr_RunDebuggerRemote()
             "!Key_IsCatcherActive( ONLY_LOCAL_CLIENT_NUM, KEYCATCH_SCRIPT )");
     Con_CloseConsole(0);
     Key_AddCatcher(0, 2);
+#ifndef KISAK_DEDI_HEADLESS
     IN_ActivateMouse(1);
+#endif
     while (Key_IsCatcherActive(0, 2))
         Debug_Frame(0);
+#ifndef KISAK_DEDI_HEADLESS
     IN_ActivateMouse(1);
+#endif
 }
 
 void __cdecl Scr_RunDebugger()
@@ -1880,14 +1890,18 @@ Scr_WatchElement_s *Scr_DisplayDebugger()
         startTime = cls.realtime;
         keyCatchers = clientUIActives[0].keyCatchers & 0xFFFFFFFC;
         clientUIActives[0].keyCatchers &= 3u;
+#ifndef KISAK_DEDI_HEADLESS
         IN_ActivateMouse(1);
+#endif
         remoteScreenUpdateNesting = R_PopRemoteScreenUpdate();
 
         while ((clientUIActives[0].keyCatchers & KEYCATCH_SCRIPT) != 0)
             Debug_Frame(0);
 
         R_PushRemoteScreenUpdate(remoteScreenUpdateNesting);
+#ifndef KISAK_DEDI_HEADLESS
         IN_ActivateMouse(1);
+#endif
         clientUIActives[0].keyCatchers = keyCatchers | clientUIActives[0].keyCatchers & 3;
         CL_EndScriptDebugger(cls.realtime - startTime);
     }
@@ -2919,6 +2933,7 @@ void __cdecl Scr_UpdateDebugger()
         MyAssertHandler(".\\script\\scr_debugger.cpp", 9463, 0, "%s", "Scr_IsStackClear()");
     if (!Scr_AllowBreakpoint(0))
         return;
+#ifndef KISAK_DEDI_HEADLESS
     if (scrDebuggerGlob.gainFocusTime)
     {
         IN_SetForegroundWindow();
@@ -2926,6 +2941,9 @@ void __cdecl Scr_UpdateDebugger()
         if (scrDebuggerGlob.atBreakpoint || (int)(Sys_Milliseconds() - scrDebuggerGlob.gainFocusTime) >= 0)
             scrDebuggerGlob.gainFocusTime = 0;
     }
+#else
+    scrDebuggerGlob.gainFocusTime = 0;
+#endif
     if (scrVarPub.evaluate)
         MyAssertHandler(".\\script\\scr_debugger.cpp", 9483, 0, "%s", "!scrVarPub.evaluate");
     scrVarPub.evaluate = 1;
@@ -3325,11 +3343,14 @@ void Scr_DrawCurrentFilename()
 
 void __cdecl Scr_DrawScript()
 {
+#ifndef KISAK_DEDI_HEADLESS
     BOOL isForegroundWindow; // [esp+18h] [ebp-4h]
+#endif
 
     iassert(scrDebuggerGlob.debugger_inited_system);
     iassert(!scrDebuggerGlob.scriptWatch.dirty);
 
+#ifndef KISAK_DEDI_HEADLESS
     if (scrDebuggerGlob.gainFocusTime)
     {
         isForegroundWindow = IN_IsForegroundWindow();
@@ -3339,6 +3360,9 @@ void __cdecl Scr_DrawScript()
         if (!scrDebuggerGlob.atBreakpoint || (int)(Sys_Milliseconds() - scrDebuggerGlob.gainFocusTime) >= 0)
             scrDebuggerGlob.gainFocusTime = 0;
     }
+#else
+    scrDebuggerGlob.gainFocusTime = 0;
+#endif
     if (!scrDebuggerGlob.scriptList.scriptWindows)
         MyAssertHandler((char *)".\\script\\scr_debugger.cpp", 7727, 0, "%s", "scrDebuggerGlob.scriptList.scriptWindows");
     if (scrDebuggerGlob.scriptList.selectedLine < 0)

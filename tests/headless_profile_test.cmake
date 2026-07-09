@@ -27,3 +27,14 @@ foreach(_required
         message(FATAL_ERROR "Headless dedicated source profile is missing ${_required}")
     endif()
 endforeach()
+
+foreach(_excluded
+    "${SRC_DIR}/win32/win_input.cpp"
+    "${SRC_DIR}/win32/win_input.h"
+    "${SRC_DIR}/win32/win_wndproc.cpp"
+    "${SRC_DIR}/win32/win_voice.cpp"
+)
+    if (_excluded IN_LIST _dedi_sources)
+        message(FATAL_ERROR "Headless dedicated source profile still contains client-only Win32 source ${_excluded}")
+    endif()
+endforeach()

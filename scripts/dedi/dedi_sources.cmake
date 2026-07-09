@@ -1,4 +1,10 @@
 function(kisakcod_get_dedi_sources OUT_VAR)
+    if (KISAK_DEDI_HEADLESS)
+        set(_platform_sources ${PLATFORM_WIN32_DEDI_HEADLESS})
+    else()
+        set(_platform_sources ${PLATFORM_WIN32})
+    endif()
+
     set(_sources
         ${SRCROOT}
         ${BGAME}
@@ -16,7 +22,7 @@ function(kisakcod_get_dedi_sources OUT_VAR)
         ${SPEEX}
         ${STRINGED}
         ${UNIVERSAL}
-        ${PLATFORM_WIN32}
+        ${_platform_sources}
         ${XANIM}
         ${ZLIB}
         ${STEAM_HEADERS}
