@@ -17,7 +17,9 @@
 #include <gfx_d3d/r_rendercmds.h>
 #include <script/scr_vm.h>
 #include <gfx_d3d/r_init.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <EffectsCore/fx_system.h>
+#endif
 #include <database/database.h>
 #include <universal/com_constantconfigstrings.h>
 #include <universal/physicalmemory.h>
@@ -162,6 +164,13 @@ static void __cdecl Com_ShutdownSoundChannels()
 {
 #ifndef KISAK_DEDI_HEADLESS
     SND_ShutdownChannels();
+#endif
+}
+
+static void __cdecl Com_UnregisterEffects()
+{
+#ifndef KISAK_DEDI_HEADLESS
+    FX_UnregisterAll();
 #endif
 }
 
@@ -1192,7 +1201,7 @@ void Com_ErrorCleanup()
         DB_Cleanup();
     Com_ClearTempMemory();
     if (!IsFastFileLoad())
-        FX_UnregisterAll();
+        Com_UnregisterEffects();
     if (ProfLoad_IsActive())
         ProfLoad_Deactivate();
     Dvar_SetIntByName("cl_paused", 0);
