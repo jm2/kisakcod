@@ -37,8 +37,6 @@ qcommon/common.cpp|#include <gfx_d3d/r_rendercmds.h>
 qcommon/common.cpp|#include <gfx_d3d/r_scene.h>
 qcommon/common.cpp|#include <gfx_d3d/r_workercmds.h>
 qcommon/common.cpp|#include <sound/snd_local.h>
-qcommon/msg_mp.cpp|#include <cgame/cg_local.h>
-qcommon/msg_mp.cpp|#include <client_mp/client_mp.h>
 script/scr_debugger.cpp|#include <client/client.h>
 script/scr_debugger.cpp|#include <gfx_d3d/r_rendercmds.h>
 script/scr_debugger.h|#include <ui/ui_shared.h>

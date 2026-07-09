@@ -5,10 +5,61 @@
 #include <bgame/bg_local.h>
 #include "sv_msg_write_mp.h"
 #include <server_mp/server_mp.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <client_mp/client_mp.h>
 #include <cgame/cg_local.h>
+#endif
 
 #define NETF_OBJ(x) NETF_BASE(objective_t, x)
+
+static int __cdecl MSG_GetClientShownet()
+{
+#ifdef KISAK_DEDI_HEADLESS
+    return 0;
+#else
+    return cl_shownet ? cl_shownet->current.integer : 0;
+#endif
+}
+
+static bool __cdecl MSG_ShouldPrintClientNetDebug(int exactValue)
+{
+    const int shownet = MSG_GetClientShownet();
+    return shownet >= 2 || shownet == exactValue;
+}
+
+static bool __cdecl MSG_IsClientShownet(int value)
+{
+    return MSG_GetClientShownet() == value;
+}
+
+static float __cdecl MSG_GetMapCenterAxis(int axis)
+{
+#ifdef KISAK_DEDI_HEADLESS
+    (void)axis;
+    return 0.0f;
+#else
+    return (*CL_GetMapCenter())[axis];
+#endif
+}
+
+static bool __cdecl MSG_RestorePredictedOriginForServerTime(int localClientNum, playerState_s *to)
+{
+#ifdef KISAK_DEDI_HEADLESS
+    (void)localClientNum;
+    (void)to;
+    return true;
+#else
+    clientActive_t *client = CL_GetLocalClientGlobals(localClientNum);
+    return CL_GetPredictedOriginForServerTime(
+        client,
+        to->commandTime,
+        to->origin,
+        to->velocity,
+        to->viewangles,
+        &to->bobCycle,
+        &to->movementDir);
+#endif
+}
 
 static const NetField objectiveFields[6] =
 {
@@ -1231,7 +1282,7 @@ double __cdecl MSG_ReadOriginFloat(int bits, msg_t *msg, float oldValue)
             iassert( bits == MSG_FIELD_ORIGINY );
             index = 1;
         }
-        roundedCenter = (int)((*CL_GetMapCenter())[index] + 0.5);
+        roundedCenter = (int)(MSG_GetMapCenterAxis(index) + 0.5f);
         return (float)(roundedCenter + (((int)oldValue + 0x8000 - roundedCenter) ^ MSG_ReadBits(msg, 0x10u)) - 0x8000);
     }
     else
@@ -1246,7 +1297,7 @@ double __cdecl MSG_ReadOriginZFloat(msg_t *msg, float oldValue)
 
     if (MSG_ReadBit(msg))
     {
-        roundedCenter = (int)((*CL_GetMapCenter())[2] + 0.5);
+        roundedCenter = (int)(MSG_GetMapCenterAxis(2) + 0.5f);
         return (float)(roundedCenter + (((int)oldValue + 0x8000 - roundedCenter) ^ MSG_ReadBits(msg, 0x10u)) - 0x8000);
     }
     else
@@ -1275,14 +1326,14 @@ int __cdecl MSG_ReadDeltaEntityStruct(msg_t *msg, int time, char *from, char *to
     iassert( number < (1 << GENTITYNUM_BITS) );
     if (MSG_ReadBit(msg) == 1)
     {
-        if (cl_shownet && (cl_shownet->current.integer >= 2 || cl_shownet->current.integer == -1))
+        if (MSG_ShouldPrintClientNetDebug(-1))
             Com_Printf(16, "%3i: #%-3i remove\n", msg->readcount, number);
         return 1;
     }
     else if (MSG_ReadBit(msg))
     {
         lc = MSG_ReadLastChangedField(msg, 61);
-        if (cl_shownet && (cl_shownet->current.integer >= 2 || cl_shownet->current.integer == -1))
+        if (MSG_ShouldPrintClientNetDebug(-1))
         {
             print = 1;
             Com_Printf(16, "%3i: #%-3i ", msg->readcount, *(uint32_t *)to);
@@ -1409,7 +1460,7 @@ int __cdecl MSG_ReadDeltaStruct(
     iassert( number < (1u << indexBits) );
     if (MSG_ReadBit(msg) == 1)
     {
-        if (cl_shownet && (cl_shownet->current.integer >= 2 || cl_shownet->current.integer == -1))
+        if (MSG_ShouldPrintClientNetDebug(-1))
             Com_Printf(16, "%3i: #%-3i remove\n", msg->readcount, number);
         return 1;
     }
@@ -1418,7 +1469,7 @@ int __cdecl MSG_ReadDeltaStruct(
         lc = MSG_ReadLastChangedField(msg, totalFields);
         if (lc <= numFields)
         {
-            if (cl_shownet && (cl_shownet->current.integer >= 2 || cl_shownet->current.integer == -1))
+            if (MSG_ShouldPrintClientNetDebug(-1))
             {
                 print = 1;
                 Com_Printf(16, "%3i: #%-3i ", msg->readcount, *(uint32_t *)to);
@@ -1572,7 +1623,6 @@ void __cdecl MSG_ReadDeltaPlayerstate(
     int v7; // eax
     objectiveState_t v8; // eax
     uint8_t Byte; // al
-    clientActive_t *LocalClientGlobals; // [esp+1Ch] [ebp-2F9Ch]
     int i; // [esp+20h] [ebp-2F98h]
     int k; // [esp+20h] [ebp-2F98h]
     int print; // [esp+24h] [ebp-2F94h]
@@ -1592,7 +1642,7 @@ void __cdecl MSG_ReadDeltaPlayerstate(
     // Copy entire `from` into `to`
     memcpy(to, from, sizeof(playerState_s));
 
-    if (cl_shownet && (cl_shownet->current.integer >= 2 || cl_shownet->current.integer == -2))
+    if (MSG_ShouldPrintClientNetDebug(-2))
     {
         print = 1;
         Com_Printf(16, "%3i: playerstate ", msg->readcount);
@@ -1639,16 +1689,7 @@ void __cdecl MSG_ReadDeltaPlayerstate(
 
     if (!lc)
     {
-        LocalClientGlobals = CL_GetLocalClientGlobals(localClientNum);
-
-        if (!CL_GetPredictedOriginForServerTime(
-            LocalClientGlobals,
-            to->commandTime,
-            to->origin,
-            to->velocity,
-            to->viewangles,
-            &to->bobCycle,
-            &to->movementDir))
+        if (!MSG_RestorePredictedOriginForServerTime(localClientNum, to))
         {
             Com_PrintError(14, "Unable to find the origin we sent, delta is not going to work");
             // LWSS: if the above function returns false, there is no data set in `to`. 
@@ -1669,7 +1710,7 @@ void __cdecl MSG_ReadDeltaPlayerstate(
 
     if (MSG_ReadBit(msg))
     {
-        if (cl_shownet && cl_shownet->current.integer == 4)
+        if (MSG_IsClientShownet(4))
             Com_Printf(16, "%s ", "PS_STATS");
         Bits = MSG_ReadBits(msg, 5u);
         if ((Bits & 1) != 0)
@@ -1690,7 +1731,7 @@ void __cdecl MSG_ReadDeltaPlayerstate(
         {
             if (MSG_ReadBit(msg))
             {
-                if (cl_shownet && cl_shownet->current.integer == 4)
+                if (MSG_IsClientShownet(4))
                     Com_Printf(16, "%s ", "PS_AMMO");
                 Bits = MSG_ReadShort(msg);
                 for (int j = 0; j < 16; ++j)
@@ -1709,7 +1750,7 @@ void __cdecl MSG_ReadDeltaPlayerstate(
     {
         if (MSG_ReadBit(msg))
         {
-            if (cl_shownet && cl_shownet->current.integer == 4)
+            if (MSG_IsClientShownet(4))
                 Com_Printf(16, "%s ", "PS_AMMOCLIP");
             Bits = MSG_ReadShort(msg);
             for (int j = 0; j < 16; ++j)
