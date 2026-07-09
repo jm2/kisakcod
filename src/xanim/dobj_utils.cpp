@@ -1,8 +1,30 @@
 #include "dobj_utils.h"
 #include "xmodel.h"
 #include <universal/assertive.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_utils.h>
+#endif
 #include <universal/profile.h>
+
+static double __cdecl DObj_GetBaseLodDist(const float *origin)
+{
+#ifdef KISAK_DEDI_HEADLESS
+    (void)origin;
+    return 0.0;
+#else
+    return R_GetBaseLodDist(origin);
+#endif
+}
+
+static double __cdecl DObj_GetAdjustedLodDist(float dist, XModelLodRampType lodRampType)
+{
+#ifdef KISAK_DEDI_HEADLESS
+    (void)lodRampType;
+    return dist;
+#else
+    return R_GetAdjustedLodDist(dist, lodRampType);
+#endif
+}
 
 DObjAnimMat *__cdecl DObjGetRotTransArray(const DObj_s *obj)
 {
@@ -110,7 +132,7 @@ void __cdecl DObjGetSurfaceData(const DObj_s *obj, const float *origin, float sc
     iassert(modelCount <= DOBJ_MAX_SUBMODELS);
     iassert(scale != 0.0);
 
-    baseDist = R_GetBaseLodDist(origin) * (1.0 / scale);
+    baseDist = DObj_GetBaseLodDist(origin) * (1.0 / scale);
 
     iassert(!IS_NAN(scale));
     iassert(!IS_NAN(baseDist));
@@ -119,7 +141,7 @@ void __cdecl DObjGetSurfaceData(const DObj_s *obj, const float *origin, float sc
     {
         model = DObjGetModel(obj, modelIndex);
         lodRampType = XModelGetLodRampType(model);
-        adjustedDist = R_GetAdjustedLodDist(baseDist, lodRampType);
+        adjustedDist = DObj_GetAdjustedLodDist(baseDist, lodRampType);
         lods[modelIndex] = DObjGetLodForDist(obj, modelIndex, adjustedDist);
     }
 }
