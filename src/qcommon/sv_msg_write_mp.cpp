@@ -7,7 +7,6 @@
 #include "net_chan_mp.h"
 #include <server_mp/server_mp.h>
 #include <universal/profile.h>
-#include <cgame/cg_local.h>
 
 netFieldOrderInfo_t orderInfo;
 
@@ -2755,4 +2754,3 @@ void __cdecl MSG_WriteDeltaHudElems(
         }
     }
 }
-
