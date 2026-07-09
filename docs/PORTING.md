@@ -282,8 +282,13 @@ Wire-safe (§1), but gated on the 32-bit-ABI rewrite (§2). Order of operations:
      size asserts. Cleaner runtime, but abandons retail assets (must re-bake all content) — usually a
      non-starter for a mod-focused project.
    Recommend **(A)**.
-4. **Script VM value representation (§2 item 2):** store handles/indices, never raw pointers, in
-   `VariableUnion`; re-audit every opcode and the stack format. Touches all of `src/script`.
+4. **Script VM value representation (§2 item 2, detailed in §8):** widen `VariableUnion` to a native
+   8-byte union rather than going handle-based. The VM is pure-runtime (never serialized to a `.ff`;
+   its savegame path already decomposes values by type — `scr_readwrite.cpp`), only three of its
+   members are real pointers, and the ~215 deref sites in `src/script` then compile unchanged — the
+   cost is regenerating ~7 `scr_vm.h` size asserts and a 32 KB→64 KB value stack. (Handle/index
+   representation is the higher-touch, higher-risk fallback, kept only if the value-stack footprint
+   ever becomes a measured problem.)
 5. **Win64 compile breaks (§2 item 6):** MMX→SSE2 skinner, inline-asm removal, `_WIN32`→`_M_IX86`
    guards, `SOCKET`/`SetWindowLongPtr` fixes.
 6. **Build:** x64 configuration — drop `/machine:x86` (`pre_build.cmake:78`), switch generator
@@ -404,6 +409,138 @@ questionable to ship in a public repo. The three source-drop deps are portabilit
 4. **The decompile is fragile:** many hot paths are flagged by the original authors as unverified
    (`KISAKTODO`, disabled asserts, "sus cast"). Any 64-bit re-layout will surface latent bugs the
    32-bit layout was accidentally hiding. Budget for it; keep the round-trip/parity tests close.
+
+---
+
+## 7. Milestone plan (M0–M14): dependency graph & critical path
+
+The phases above map onto 15 milestones. The dominant fact: **one mandatory shared foundation
+(M4+M5) gates all five targets** — there is no cheap first target, because even win64 on its
+friendliest toolchain requires the full ABI conversion, the fast-file mirror/relocation rewrite, and
+an audio-backend replacement (Miles is 32-bit-only). The good news is the pre-foundation work
+(M0–M2) and the entire platform layer (M3) are **validated on the existing 32-bit Windows build**
+before any struct widens.
+
+| ID | Milestone | Effort | Depends on | Exit criterion (abridged) |
+|---|---|---|---|---|
+| **M0** | Build-system foundation & CI scaffolding (still 32-bit Win) | M | — | CMake produces byte-identical 32-bit mp/sp/dedi; `KISAK_TARGET_OS/ARCH` auto-detect; a Linux preset configures |
+| **M1** | Cross-compiler hygiene: `kisak_abi.h`, calling-conv & atomics headers | L | M0 | MSVC x86 build unchanged; GCC/Clang syntax-parse of the new headers passes; **fixed-width `sys_atomic.h`** replaces the `long` Interlocked shim |
+| **M2** | Pointer-truncation sweep + UBSan/ASan/tidy gate + Huffman fix | L | M1 | 32-bit build + map-load + demo-playback run **clean under ASan/UBSan**; Huffman table byte-identical to retail; CI tripwire fails new `(int)&`/`&0xFFFFF000` |
+| **M3** | Platform-abstraction layer (`Sys_*`/threads/net/fs/time + SDL3) | XL | M0, M1 *(parallel with M2/M4/M5)* | 32-bit Windows client+dedi run on the refactored layer with input/timer/net parity; POSIX backend dir compiles under GCC/Clang |
+| **M4** | 64-bit ABI conversion: runtime structs, GSC VM union, zone/hunk | XL | M2, M1 | win64 links; **dual asserts** live (ILP32 value on 32-bit AND LP64 value on 64-bit); GSC VM runs a script-heavy save/load correctly at 64-bit |
+| **M5** | Fast-file split: packed 32-bit mirrors + widening relocation loader | XL | M4 | an **unmodified retail `.ff`** loads on win64 and every runtime asset hash-matches the 32-bit reference dump; 32-bit build still loads it |
+| **M6** | win64 client + dedi bring-up (first native 64-bit target) | XL | M5, M4 (M3 rec.) | win64 client boots, loads a retail map, golden-image render match, **OpenAL** audio/voice; win64 dedi passes demo/replay parity |
+| **M7** | linux_amd64 **dedicated server** (headless) — first cross-platform runnable | L | M3, M5, M4, M1 | linux dedi compiles under GCC+Clang, loads a map **without GFX_D3D/Miles/Bink**, runs a match, demo-parity hashes bit-identical to win64 |
+| **M8** | dxvk-native render backend + SDL3 client surface (shared Linux/macOS) | XL | M6, M3, M5 | linux full client renders a retail map through **dxvk-native/Vulkan**, golden-image match to win64; retail DX9 shader bytecode runs unmodified |
+| **M9** | linux_amd64 **full client** — second native target | L | M8, M7, M6 | linux client fully playable; a **win64↔linux cross-play** demo-parity test shows bit-identical movement/physics; establishes the x86-64 FP baseline |
+| **M10** | ARM64 determinism & arch layer (OS-agnostic) | L | M9, M1 | an aarch64 build produces **bit-identical** movement + demo hashes to the x86-64 baseline; no `__rdtsc`/`__cpuid`/x87/`__m64`/inline-asm remain |
+| **M11** | win_arm64 — first ARM target (native D3D9on12 + Win32) | M | M10, M6, M4, M5 | win_arm64 client boots on Windows-11-ARM, renders via **D3D9on12**, cross-arch demo-parity vs win64 |
+| **M12** | linux_arm64 — cross-compiled Linux ARM | M | M9, M10 | runs on **real ARM hardware** (not emulated), cross-arch parity vs linux_amd64 & win64 |
+| **M13** | macos_arm64 — MoltenVK + bundle/codesign/notarize (final) | L | M9, M10 | **signed & notarized `.app`** renders via MoltenVK (feature-gap fallbacks verified), cross-arch parity vs win64/linux |
+| **M14** | Full 5-target CI matrix, packaging & required gates | L | M6, M9, M11, M12, M13 | all 5 targets green as required gates; ASan/UBSan required on linux_amd64; cross-arch parity harness runs in CI; artifacts published |
+
+**Critical path:** `M0 → M1 → M2 → M4 → M5 → M6 → M8 → M9 → M10 → M13 → M14`. The long pole is the
+contiguous **M4→M5→M6** block (ABI conversion → fast-file rewrite → first win64 bring-up); it cannot
+be parallelized away because every later target consumes its output. **M3 runs off the critical path**
+in parallel with M2/M4/M5 and only becomes blocking at M7/M8 — if it slips, it joins the critical path.
+
+```
+M0 → M1 → M2 → M4 → M5 → M6 → M8 → M9 → M10 ┬→ M11 ┐
+      └──→ M3 ─────────────┘   │    │       ├→ M12 ┼→ M14
+                    M7 ────────┘    │       └→ M13 ┘
+      (M3 feeds M7 & M8; M7 is the linux dedi beachhead off M5)
+```
+
+**Target order & why:** (1) **win64** — cheapest beachhead: exercises the entire mandatory ABI +
+fast-file crux while holding every other variable constant (same MSVC, native x64 D3D9 needs zero
+render rewrite, existing Win32 layer). (2) **linux_amd64**, entered via the **headless dedicated
+server** — forces GCC/Clang + POSIX + the 64-bit crux together but needs no render/audio/input
+(null-RHI stub), so it's the cheapest cross-platform runnable, the ASan/UBSan gate host, and the
+highest-value real artifact (Linux game servers); the full client then layers dxvk+SDL3+OpenAL.
+(3) **win_arm64** — cheapest ARM: the OS routes D3D9 through D3D9on12 so render "just works," the
+Win32 layer is reused, adding essentially only the ARM determinism layer. (4) **linux_arm64** — a
+near-pure matrix extension of the finished linux client + the ARM layer (main new cost: cross-compile
+toolchain + real-ARM CI). (5) **macos_arm64** — last: it needs the whole Linux client stack **and**
+the ARM layer **and** its own novel MoltenVK feature-gap + notarization work.
+
+---
+
+## 8. ABI conversion — the three-layout-class strategy *(deepens §2)*
+
+Do **not** convert file-by-file. Classify every asserted/serialized struct into one of three layout
+classes and drive the conversion class-by-class. This keeps the on-disk/wire contract a live tripwire
+even under a 64-bit compiler.
+
+1. **ON-DISK / WIRE structs** (fast-file assets; networked POD) — *keep frozen at 32-bit.* Re-express
+   each as a **packed mirror** type whose pointer fields become `Ptr32<T> = uint32_t`, and pin the
+   mirror with the **original** `sizeof`/`offsetof` asserts (`ONDISK_SIZE`). Detect them by which
+   structs are the target of a `Load_*` walker in `src/database` (assets) or appear in
+   `MSG_Read/WriteBits` POD paths (wire). Networked POD stays bit-identical, preserving retail wire
+   compat.
+2. **RUNTIME-ONLY structs** (`scrVmPub_t` 0x4328, `XZoneMemory` 0x58, hunk bookkeeping) — *widen
+   pointers to native* and **regenerate the assert under a width switch** (`RUNTIME_SIZE(T,n32,n64)`:
+   assert the 32-bit value on ILP32, the 64-bit value on LP64/LLP64) so drift is still caught on both
+   builds.
+3. **ASSET runtime structs** — *use native 8-byte pointers* and convert the loader from **in-place
+   relocation to a load-time widening/relocation pass**: read the 32-bit mirror image into the stream
+   buffer, allocate the widened runtime struct from the zone, copy field-by-field, and set pointer
+   fields from the packed offset via the existing block math (`block=(off-1)>>28`,
+   `byteoff=(off-1)&0xFFFFFFF`). Touchpoints: `db_stream_load.cpp:45-57`, `db_stream.cpp:81-105`,
+   `db_load.cpp:552-1652` (all `Load_*` + convert call sites), `db_memory.cpp`.
+
+**GSC VM decision — widen the union, do *not* go handle-based** (refines §Phase 1 item 4): change
+`codePosValue`/`vectorValue`/`stackValue` (`scr_variable.h:100-140`) to native pointers; leave
+`intValue`/`floatValue`/`stringValue`/`pointerValue`/`entityOffset` at 32 bits. `VariableValue`
+becomes 0x10; regenerate `function_stack_t` (0x14→0x28), `scrVmPub_t`, and the 2048-entry value
+stack. The ~215 deref sites compile unchanged. This is lower-risk than handle-based because the VM is
+never serialized and its savegame path already decomposes by type.
+
+**Do the pure-bug pointer-truncation sweep first, on the 32-bit build, UBSan-gated** (M2, before any
+struct widens): every `(int)&`/`(uint32_t)&` cast-of-address and `& 0xFFFFF000` page mask →
+`uintptr_t` + `~(uintptr_t)0xFFF`; the ~80 pointer-as-int loops (e.g. `sentient.cpp:441`'s `i+=116`
+stride, `g_utils.cpp:1846`, `cm_world.cpp:1226`) → typed pointer arithmetic so the compiler recomputes
+strides. Key sites: `com_memory.cpp:431-695`, `scr_parsetree.cpp:332`, `cl_main.cpp:625`,
+`sv_game.cpp:558`. **`long` note:** harmless on Win64/WinARM64 (LLP64, `long`=32) but **bites on
+Linux/macOS LP64** (`long`=64) — replace type-significant `long`/`unsigned long` with fixed-width
+`int32_t`/`int64_t`, especially in the atomics shim (M1's `sys_atomic.h`).
+
+---
+
+## 9. Correctness & parity strategy *(the safety net for the whole port)*
+
+The decompile's 32-bit layout was *accidentally hiding* bugs; widening will surface them. These gates
+are not optional — several failure modes (pointer truncation, cross-arch FP desync) pass every test on
+a dev box and corrupt only in production.
+
+- **Dual-assert tripwire:** never blindly regenerate the 249 `sizeof`/200 `offsetof` asserts to 64-bit
+  values — that removes the only defense during the riskiest refactor. On-disk mirrors keep the
+  *original* 32-bit asserts; runtime structs assert both widths. A CI grep **fails** on any bare
+  `sizeof(...)==0x..` outside `layout_asserts.h`.
+- **Sanitizer gate (M2 onward):** a Linux clang build with `-fsanitize=undefined,address`
+  (pointer-overflow, alignment, cast) as a **required** gate, plus clang-tidy for reinterpret-cast /
+  portability. Lands on the 32-bit build first so truncation bugs are caught before widening.
+- **>4 GB allocation test:** pointer truncation only manifests when an allocation lands above 4 GB.
+  Run the asset-load harness in a config that reserves a low guard region to force high addresses, so
+  ASan poisons the truncation instead of it silently corrupting in production.
+- **Retail-asset golden hash (gates M5→M6):** load a real retail `.ff` in CI and hash each resolved
+  runtime asset's field values + pointers against a 32-bit reference dump — per-asset-type, before the
+  loader is enabled globally. This is the mitigation for the single biggest quality risk on the
+  critical path (the M5 relocation rewrite touches the least-testable code in the engine).
+- **Cross-arch demo-parity determinism harness (gates M9→M14):** play back a recorded demo and diff
+  per-frame movement/physics/entity state against a 32-bit reference, then across win64 ↔ linux ↔ ARM.
+  This catches VM widening *and* FP determinism regressions before they ship as MP desyncs. Pin FP to
+  round-to-nearest with **`-ffp-contract=off`** / `/fp:precise`; require the SSE2 and NEON skinning
+  paths to bit-match the reference. **`KISAK_PURE` x87 bit-exactness is physically impossible on ARM**
+  (no `fistp` analog) — hard-disable it off x86 and rely on the harness for parity.
+- **Real ARM hardware runners are mandatory** (`ubuntu-24.04-arm`, `windows-11-arm`, `macos-15`):
+  cross-compiled ARM cannot run on x64 builders, so compile-only jobs give false confidence for exactly
+  the runtime-only bugs (truncation, `__m64`, memory ordering).
+
+**Up-front blockers to resolve before the build is even exercised:** the repo is GPLv3 while
+Miles/Bink/Steam/DXSDK redistributables are proprietary and 32-bit-only; macOS/ARM lose Miles and Bink
+entirely, Steam ships no ARM lib, and the June-2010 DXSDK has no ARM64 import lib. Stub audio/cinematic
+behind the platform layer early (so those targets link) and treat the Miles→OpenAL / Bink→FFmpeg
+replacement as a dependency track that gates M6, not M4/M5.
 
 ---
 
