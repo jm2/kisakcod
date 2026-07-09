@@ -1,6 +1,10 @@
 #pragma once
 #include <universal/com_math.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_material.h>
+#else
+struct Material;
+#endif
 //#include <physics/phys_local.h>
 
 #define MAX_LODS 4
