@@ -1,7 +1,11 @@
 #include "bullet.h"
 
 #include "game_public.h"
+#ifndef KISAK_DEDI_HEADLESS
 #include <client/client.h>
+#else
+#define CL_AddDebugStar(...) ((void)0)
+#endif
 #include <xanim/xanim.h>
 
 #ifdef KISAK_MP
@@ -16,8 +20,6 @@
 #include <script/scr_const.h>
 #include <qcommon/ent.h>
 #endif
-
-#include <cgame/cg_local.h>
 
 char __cdecl Bullet_Trace(
     const BulletFireParams *bp,
