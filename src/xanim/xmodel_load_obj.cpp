@@ -5,12 +5,23 @@
 #include <qcommon/qcommon.h>
 #include <qcommon/com_pack.h>
 #include <universal/aabbtree.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_dvars.h>
+#endif
 #include "xanim.h"
 #include <physics/phys_local.h>
 
 XModelDefault g_default;
 Material *g_materials[1];
+
+static bool __cdecl XModel_UseModelVertColor()
+{
+#ifdef KISAK_DEDI_HEADLESS
+    return false;
+#else
+    return r_modelVertColor->current.enabled;
+#endif
+}
 
 void __cdecl TRACK_xmodel()
 {
@@ -553,7 +564,7 @@ void __cdecl XModelReadSurface(XModel *model, unsigned char **pos, void *(__cdec
         verts->normal[1] = Buf_Read<float>(pos);
         verts->normal[2] = Buf_Read<float>(pos);
 
-        if (r_modelVertColor->current.enabled)
+        if (XModel_UseModelVertColor())
             Byte4CopyBgraToVertexColor(*pos, verts->color);
         else
             *(_DWORD *)verts->color = -1;
