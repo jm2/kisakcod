@@ -11,7 +11,7 @@
 #include <universal/com_files.h>
 #include <win32/win_local.h>
 
-#ifdef KISAK_MP
+#if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)
 #include <cgame_mp/cg_local_mp.h>
 #elif KISAK_SP
 
