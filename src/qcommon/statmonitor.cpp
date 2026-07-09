@@ -2,12 +2,14 @@
 #include "mem_track.h"
 #include <win32/win_local.h>
 
+#ifndef KISAK_DEDI_HEADLESS
 #ifdef KISAK_MP
 #include <client_mp/client_mp.h>
 #elif KISAK_SP
 #include <client/client.h>
 #endif
 #include <gfx_d3d/r_material.h>
+#endif
 
 statmonitor_s stats[7];
 int statCount;
@@ -31,8 +33,12 @@ void __cdecl StatMon_Warning(int type, int duration, const char *materialName)
                 7);
         Sys_EnterCriticalSection(CRITSECT_STATMON);
         stats[type].endtime = duration + Sys_Milliseconds();
+#ifndef KISAK_DEDI_HEADLESS
         if (!stats[type].material && cls.rendererStarted)
             stats[type].material = Material_RegisterHandle(materialName, 1);
+#else
+        (void)materialName;
+#endif
         if (type >= statCount)
             statCount = type + 1;
         Sys_LeaveCriticalSection(CRITSECT_STATMON);
@@ -50,4 +56,3 @@ void __cdecl StatMon_Reset()
     memset((uint8_t *)stats, 0, sizeof(stats));
     statCount = 0;
 }
-
