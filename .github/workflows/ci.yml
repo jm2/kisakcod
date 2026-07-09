@@ -94,3 +94,47 @@ jobs:
           path: bin/${{ matrix.config }}/
           if-no-files-found: error
           retention-days: 14
+
+  windows-x86-nosteam:
+    # Compile-checks the KISAK_ENABLE_STEAM=OFF fallback path (cl_guid identity,
+    # sv_requireSteam, empty win_steam.cpp TU). Windows x86 is the only target that can
+    # build the engine today, so it stands in for the ARM/no-Steam configuration until
+    # the POSIX/Vulkan platform layers land. Compile only; no artifact.
+    name: Windows x86 (no Steam)
+    runs-on: windows-2022
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
+      DXSDK_VERSION: 9.29.952.8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Restore DirectX SDK
+        shell: pwsh
+        run: |
+          dotnet new classlib -o dxsdk-temp
+          dotnet add dxsdk-temp package Microsoft.DXSDK.D3DX --version $env:DXSDK_VERSION
+          $native = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\$env:DXSDK_VERSION\build\native"
+          "DXSDK_NATIVE=$native" >> $env:GITHUB_ENV
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build-nosteam `
+            -G "Visual Studio 17 2022" -A Win32 `
+            -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE" `
+            -DKISAK_BUILD_MP=ON `
+            -DKISAK_BUILD_DEDICATED=ON `
+            -DKISAK_BUILD_SP=OFF `
+            -DKISAK_ENABLE_STEAM=OFF
+
+      - name: Build
+        shell: pwsh
+        run: >
+          cmake --build build-nosteam
+          --config Release
+          --target KisakCOD-mp KisakCOD-dedi
+          --parallel

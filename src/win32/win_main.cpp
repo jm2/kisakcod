@@ -6,7 +6,9 @@
 #include "win_localize.h"
 #include "win_net.h"
 #include "win_net_debug.h"
+#ifdef KISAK_STEAM
 #include "win_steam.h"
+#endif
 
 //#include "resource.h"
 #include <errno.h>
@@ -822,7 +824,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			Profile_InitContext(0);
 			KISAK_NULLSUB();
 			// LWSS ADD: Steam Init
+			// KISAK: guarded so a no-Steam build (and headless dedicated servers, which
+			// otherwise depended on a desktop Steam client being logged in) still start.
+#ifdef KISAK_STEAM
 			Steam_Init();
+#endif
 			// LWSS END
 			Com_Init(sys_cmdline);
 

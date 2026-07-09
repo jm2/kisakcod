@@ -21,10 +21,8 @@
 #include <script/scr_debugger.h>
 #include <universal/profile.h>
 
-#ifdef WIN32
+#ifdef KISAK_STEAM
 #include <win32/win_steam.h>
-#else
-#error Steam auth for Arch(Server)
 #endif
 
 
@@ -1259,10 +1257,12 @@ void SV_PostFrame()
     SV_MasterHeartbeat("COD-4");
 
     // LWSS ADD: Steam Periodic Auth Check
+#ifdef KISAK_STEAM
     if (com_dedicated->current.integer)
     {
         Steam_CheckClients();
     }
+#endif
     // LWSS END
     
     {

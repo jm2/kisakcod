@@ -17,10 +17,8 @@
 #include <script/scr_memorytree.h>
 #include <database/database.h>
 
-#ifdef WIN32
+#ifdef KISAK_STEAM
 #include <win32/win_steam.h>
-#else
-#error Steam auth for Arch(Server)
 #endif
 #include <qcommon/com_bsp.h>
 
@@ -337,7 +335,9 @@ void __cdecl SV_AddOperatorCommands()
         {
             SV_AddDedicatedCommands();
             // LWSS ADD
+#ifdef KISAK_STEAM
             Steam_SV_AddTestCommands();
+#endif
             // LWSS END
         }
         Cmd_AddCommandInternal("scriptUsage", Cbuf_AddServerText_f, &SV_ScriptUsage_f_VAR);

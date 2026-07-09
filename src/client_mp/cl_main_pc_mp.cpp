@@ -10,10 +10,8 @@
 #include <client/client.h>
 #include <cgame_mp/cg_local_mp.h>
 
-#ifdef WIN32
+#ifdef KISAK_STEAM
 #include <win32/win_steam.h>
-#else
-#error Steam Auth for Arch
 #endif
 
 bool s_playerMute[64];
@@ -385,11 +383,13 @@ void __cdecl CL_Connect_f()
 // This is called by the Client to see if the Auth is even valid before sending to the Server.
 bool __cdecl CL_CDKeyValidate(netadr_t addr)
 {
-#ifdef WIN32
+#ifdef KISAK_STEAM
     return Steam_UpdateClientAuthTicket(addr);
 #else
-#error Steam Auth for Arch
-    return false;
+    // No Steam: there is no client-side ticket to prepare. The persistent cl_guid is the
+    // identity and is sent directly in the getchallenge packet, so validation is a no-op.
+    (void)addr;
+    return true;
 #endif
 }
 

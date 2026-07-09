@@ -12,6 +12,13 @@ if (KISAK_EXTENDED)
     target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_EXTENDED)
 endif()
 
+# Steam identity/auth is a capability, not a platform assumption: when it is off the
+# engine compiles win_steam.cpp to an empty translation unit and uses the cl_guid
+# fallback, so no Steamworks link input is referenced.
+if (KISAK_ENABLE_STEAM)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_STEAM)
+endif()
+
 if (WIN32)
     if (NOT DEFINED KISAK_TARGET_NEEDS_CLIENT_MEDIA)
         set(KISAK_TARGET_NEEDS_CLIENT_MEDIA ON)
@@ -48,9 +55,11 @@ if (WIN32)
         target_include_directories(${PROJECT_NAME} SYSTEM PUBLIC "${DXSDK_INC_DIR}")
         target_link_directories(${PROJECT_NAME} PUBLIC "${DXSDK_LIB_DIR}")
     endif()
-    target_link_directories(${PROJECT_NAME} PUBLIC
-        "${DEPS_DIR}/steamsdk"
-    )
+    if (KISAK_ENABLE_STEAM)
+        target_link_directories(${PROJECT_NAME} PUBLIC
+            "${DEPS_DIR}/steamsdk"
+        )
+    endif()
     if (KISAK_TARGET_NEEDS_CLIENT_MEDIA)
         target_link_directories(${PROJECT_NAME} PUBLIC
             "${DEPS_DIR}/msslib"
@@ -80,8 +89,10 @@ if (WIN32)
         uuid.lib
         odbc32.lib
         odbccp32.lib
-        steam_api.lib
     )
+    if (KISAK_ENABLE_STEAM)
+        target_link_libraries(${PROJECT_NAME} PUBLIC steam_api.lib)
+    endif()
     if (KISAK_TARGET_NEEDS_CLIENT_MEDIA)
         target_link_libraries(${PROJECT_NAME} PUBLIC
             mss32.lib

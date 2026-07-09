@@ -5,6 +5,11 @@
 // You can try to disable this code, but you really shouldn't since Server GUID's are set to the SteamID64
 // An added benefit of Steam is that their SteamID can't be changed without them spending another 20$
 
+// KISAK: Steam is now a build capability (KISAK_ENABLE_STEAM -> KISAK_STEAM). When it is
+// off (e.g. the ARM targets, which have no Steamworks library) this whole file compiles to
+// an empty translation unit and the engine uses the persistent cl_guid identity fallback.
+#ifdef KISAK_STEAM
+
 #include "win_steam.h"
 
 #include <Windows.h>
@@ -294,3 +299,5 @@ void Steam_SV_AddTestCommands()
 	Cmd_AddCommandInternal("steam_testkick", Cbuf_AddServerText_f, &Steam_SV_TestSteamKick);
 	Cmd_AddServerCommandInternal("steam_testkick", Steam_SV_TestKick, &Steam_SV_TestSteamKick_SERVER);
 }
+
+#endif // KISAK_STEAM

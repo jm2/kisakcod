@@ -937,6 +937,7 @@ extern serverStatic_t svs;
 extern int com_inServerFrame;
 
 extern const dvar_t *sv_punkbuster;
+extern const dvar_t *sv_requireSteam;
 extern const dvar_t *sv_allowAnonymous;
 extern const dvar_t *sv_privatePassword;
 extern const dvar_t *sv_allowDownload;

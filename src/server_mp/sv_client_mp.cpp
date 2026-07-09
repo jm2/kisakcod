@@ -13,11 +13,9 @@
 #include <universal/com_constantconfigstrings.h>
 #include <universal/profile.h>
 
-#ifdef WIN32
+#ifdef KISAK_STEAM
 #include <win32/win_steam.h>
 #include <universal/base64.h>
-#else
-#error Steam auth for Arch (Server)
 #endif
 
 struct ucmd_t // sizeof=0xC
@@ -166,12 +164,15 @@ void __cdecl SV_GetChallenge(netadr_t from)
     }
     //cdkeyHash = (char *)SV_Cmd_Argv(2);
     clientSteamTicketBase64 = (char *)SV_Cmd_Argv(2);
+    // Arg 3 is the client identity: a SteamID64 (Steam clients) or a persistent cl_guid
+    // (no-Steam clients). It is both the ban key and the server-side GUID in either case.
     char *clientSteamID64 = (char *)SV_Cmd_Argv(3);
     unsigned char decodedSteamTicket[1024 + 128]{ 0 };
+    bool haveTicket = clientSteamTicketBase64[0] != 0;
 
-    if (!clientSteamTicketBase64[0] || !clientSteamID64[0])
+    if (!clientSteamID64[0])
     {
-        iassert(0); // guy didn't send enough information
+        iassert(0); // guy didn't send an identity
         return;
     }
 
@@ -180,8 +181,6 @@ void __cdecl SV_GetChallenge(netadr_t from)
         iassert(0);
         return;
     }
-
-    uint32 decodedLen = b64_decode((unsigned char*)clientSteamTicketBase64, strlen(clientSteamTicketBase64), decodedSteamTicket);
 
     //if (SV_IsBannedGuid(cdkeyHash))
     if (SV_IsBannedGuid(clientSteamID64))
@@ -202,24 +201,53 @@ void __cdecl SV_GetChallenge(netadr_t from)
 
     //I_strncpyz(svs.challenges[i].cdkeyHash, cdkeyHash, 33);
     I_strncpyz(svs.challenges[i].cdkeyHash, clientSteamID64, 33);
-    
-    char *endptr;
-    uint64_t steamID64 = strtoull(clientSteamID64, &endptr, 10);
 
-    //if (!SV_ShouldAuthorizeAddress(from))
-    if (Steam_CheckClientTicket(decodedSteamTicket, decodedLen, steamID64))
+    bool authorized = false;
+
+#ifdef KISAK_STEAM
+    if (haveTicket)
     {
-        challenge->pingTime = svs.time;
-        NET_OutOfBandPrint(NS_SERVER, from, va("challengeResponse %i", challenge->challenge));
-        return;
+        // A ticket was presented: it MUST validate, else reject. This prevents a client
+        // from claiming (and getting banned/identified as) an arbitrary SteamID64.
+        uint32 decodedLen = b64_decode((unsigned char*)clientSteamTicketBase64, strlen(clientSteamTicketBase64), decodedSteamTicket);
+        char *endptr;
+        uint64_t steamID64 = strtoull(clientSteamID64, &endptr, 10);
+        //if (!SV_ShouldAuthorizeAddress(from))
+        if (Steam_CheckClientTicket(decodedSteamTicket, decodedLen, steamID64))
+        {
+            authorized = true;
+        }
+        else
+        {
+            Com_Printf(15, "rejected connection from invalid Steam GUID \"%s\"\n", clientSteamID64);
+            NET_OutOfBandPrint(NS_SERVER, svs.challenges[i].adr, "error\xA\x15Your Steam Client Ticket was Invalid");
+            memset(&svs.challenges[i], 0, sizeof(svs.challenges[i]));
+            return;
+        }
     }
-    else
+#else
+    // This build cannot verify Steam tickets, so any presented ticket is ignored and the
+    // client is treated as identity-only (its SteamID64/GUID still serves as the ban key).
+    (void)haveTicket;
+    (void)decodedSteamTicket;
+#endif
+
+    if (!authorized)
     {
-        Com_Printf(15, "rejected connection from invalid Steam GUID \"%s\"\n", clientSteamID64);
-        NET_OutOfBandPrint(NS_SERVER, svs.challenges[i].adr, "error\xA\x15Your Steam Client Ticket was Invalid");
-        memset(&svs.challenges[i], 0, sizeof(svs.challenges[i]));
-        return;
+        // No verified ticket (a ticketless cl_guid client, or a build without Steam):
+        // accept unless the operator explicitly requires Steam authentication.
+        if (sv_requireSteam && sv_requireSteam->current.enabled)
+        {
+            Com_Printf(15, "rejected connection from \"%s\": sv_requireSteam is set\n", clientSteamID64);
+            NET_OutOfBandPrint(NS_SERVER, svs.challenges[i].adr, "error\xA\x15This server requires Steam authentication");
+            memset(&svs.challenges[i], 0, sizeof(svs.challenges[i]));
+            return;
+        }
     }
+
+    challenge->pingTime = svs.time;
+    NET_OutOfBandPrint(NS_SERVER, from, va("challengeResponse %i", challenge->challenge));
+    return;
 
     //if (!svs.authorizeAddress.ip[0] && svs.authorizeAddress.type != NA_BAD)
     //{
@@ -904,12 +932,17 @@ void __cdecl SV_DropClient(client_t *drop, const char *reason, bool tellThem)
     int i; // [esp+38h] [ebp-4h]
 
     // LWSS ADD
+#ifdef KISAK_STEAM
     if (com_dedicated->current.integer)
     {
         char *endptr;
         uint64_t steamID64 = strtoull(drop->cdkeyHash, &endptr, 10);
-        Steam_OnClientDropped(steamID64);
+        // Only end a Steam auth session for a genuine all-digit SteamID64. A ticketless
+        // cl_guid client (hex identity) never had BeginAuthSession called for it.
+        if (steamID64 && endptr && !*endptr)
+            Steam_OnClientDropped(steamID64);
     }
+#endif
     // LWSS END
 
     if (!drop->header.state)

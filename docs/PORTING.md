@@ -600,7 +600,7 @@ field-by-field writes (killing the `46104` magic), or declare saves version-bump
 with a `saveVersion` + arch/width tag; add a save round-trip + cross-width load test. **Not milestone
 gating for MP/dedi.**
 
-**H2 — Steam auth: capability-gate it (and doing so fixes an existing dedi defect).**
+**H2 (IMPLEMENTED) — Steam auth: capability-gated; the existing dedi defect is fixed.**
 
 *Why it exists (it is not retail behavior):* retail COD4 ran with no Steam. KisakCOD removed the CD-key
 scheme and PunkBuster, losing its stable player identity and ban primitive, so contributor LWSS grafted
@@ -628,23 +628,29 @@ when the process isn't Steam-initialized (`win_steam.cpp:238-242`) — so a **he
 unjoinable unless its operator is logged into a desktop Steam client that owns appid 7940**. Absurd for
 a Linux server; making Steam optional *fixes* this.
 
-*Plan (~3–4 focused days).* Introduce a `KISAK_STEAM` capability macro **decoupled from `WIN32`** and
-replace the three `#ifdef WIN32 … #else #error` guards (`cl_main_mp.cpp:38-43`,
-`sv_client_mp.cpp:16-21`, `cl_main_pc_mp.cpp:388-393`) with `#if KISAK_STEAM`. Add a **2-backend
-identity provider** behind the four connect call sites: STEAM = real ticket + `SteamID64` (today's
-path); NO-STEAM = empty ticket + a **persistent self-generated md5 `cl_guid`** — the Quake3-style
-scaffolding already sits commented at the exact emit site (`cl_main_mp.cpp:1053-1054`
-`//CL_BuildMd5StrFromCDKey`). Add **`sv_requireSteam` (default 0)** gating only the empty-ticket
-`iassert` (`:172-175`) and `Steam_CheckClientTicket` (`:210`); leave the GUID ban path
-(`:187/:195/:204`) untouched (identity-agnostic). Stub `Steam_Init`/`Steam_CheckClients`/
-`Steam_OnClientDropped` to no-ops when off and guard `Steam_Init` (`win_main.cpp:825`). *Cross-play
-contract:* a server picks one mode — `sv_requireSteam=1` accepts only real-ticket Steam clients;
-`sv_requireSteam=0` is an open/LAN/community server that records whatever GUID arrives but validates no
-ticket; a no-Steam client cannot join a require-Steam server (correct, not a regression). Format
-self-gen GUIDs distinctly from 17-digit `SteamID64` so ban entries can't collide. What's genuinely lost
-with Steam off — VAC-style async kick, the implicit ownership check, friends/browser (already unwired)
-— is all non-connect-critical and costs zero code to disable; document it as the open-server security
-posture, and keep `sv_requireSteam=1` available wherever a `steam_api` lib is committed.
+*What landed (commit on `master`).* A `KISAK_ENABLE_STEAM` CMake option (default **ON** everywhere a
+Steamworks lib exists, **OFF** on ARM — Valve ships no aarch64 library) defines a `KISAK_STEAM`
+capability macro **decoupled from `WIN32`**. All three `#ifdef WIN32 … #else #error` blocks are gone;
+every one of the eight Steam call sites is `#ifdef KISAK_STEAM`-guarded (verified programmatically) and
+`win_steam.cpp` compiles to an **empty translation unit** when off; `steam_api.lib`/`steam_api.dll` are
+linked/copied only when enabled. The no-Steam identity is a **persistent self-generated `cl_guid`**
+(`DVAR_ARCHIVE | DVAR_USERINFO`, seeded from `Sys_MillisecondsRaw()` folded with the srand-seeded
+`rand()` stream), sent as `getchallenge 0 "" "<cl_guid>"`; `CL_CDKeyValidate` becomes a no-op when off.
+**`sv_requireSteam` (default 0)** was added. Server accept policy in `SV_GetChallenge`: an identity
+(arg 3) is always required and always runs the ban path (`SV_IsBannedGuid`/`SV_IsTempBannedGuid`); if a
+ticket (arg 2) is present **on a `KISAK_STEAM` build it must validate** (anti-spoof preserved, same
+reject as before); a ticketless client is accepted unless `sv_requireSteam` is set; a **non-`KISAK_STEAM`
+server ignores any presented ticket** and treats the client as identity-only, so a Windows Steam client
+can still join an ARM server (**cross-play preserved**). The **headless-dedi-unjoinable defect is fixed**
+— `Steam_Init` is guarded, so a dedicated server no longer needs a logged-in desktop Steam client.
+`SV_DropClient` only ends a Steam session for a genuine all-digit `SteamID64` (not a hex `cl_guid`). A
+`windows-x86-nosteam` CI leg compiles the fallback path (the only buildable engine target today).
+*Adversarial review* (4 lenses, per-finding verification) confirmed the default Windows build is
+byte-identical and found one low-severity item — the `cl_guid` RNG was strengthened in response.
+*Follow-ups:* `steam_api64`/`libsteam_api.so`/`.dylib` still need committing for native Steam on
+win64/linux-amd64/macOS (works today via the same SDK); format self-gen GUIDs distinctly from 17-digit
+`SteamID64` if ban-namespace collisions ever matter. What's lost with Steam off — VAC-style async kick,
+the implicit ownership check, friends/browser (already unwired) — is all non-connect-critical.
 
 **H3 — Testing strategy must be reconciled with reality; "retail parity" is a non-goal.** The
 existing 5-target CI matrix builds with `KISAK_BUILD_MP/DEDICATED/SP=OFF`, so it exercises **zero game

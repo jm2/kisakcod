@@ -17,6 +17,15 @@ if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM|ar
     set(_KISAK_DEFAULT_X86_MMX_SKINNING ON)
 endif()
 option(KISAK_ENABLE_X86_MMX_SKINNING "Compile the legacy x86/MMX renderer skinning implementation" ${_KISAK_DEFAULT_X86_MMX_SKINNING})
+# Steam is an optional identity/anti-spoof layer (not an ownership gate). Valve ships no
+# aarch64 Steamworks library, so the ARM targets default it off and fall back to a
+# self-generated persistent cl_guid. Everywhere else it defaults on to preserve the
+# existing ticket-based client<->dedicated handshake.
+set(_KISAK_DEFAULT_STEAM ON)
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM|arm|aarch|AARCH)")
+    set(_KISAK_DEFAULT_STEAM OFF)
+endif()
+option(KISAK_ENABLE_STEAM "Link the Steamworks SDK for client<->server identity/auth" ${_KISAK_DEFAULT_STEAM})
 include(CTest)
 
 if (WIN32)
@@ -62,6 +71,13 @@ if (KISAK_ENABLE_X86_MMX_SKINNING
         "KISAK_ENABLE_X86_MMX_SKINNING is only valid for 32-bit x86 builds. "
         "64-bit and ARM targets must use the scalar path until SSE2/NEON "
         "skinning replacements land.")
+endif()
+
+if (KISAK_ENABLE_STEAM AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM|arm|aarch|AARCH)")
+    message(FATAL_ERROR
+        "KISAK_ENABLE_STEAM is set but Valve ships no aarch64 Steamworks library. "
+        "Configure with -DKISAK_ENABLE_STEAM=OFF on ARM targets; the engine falls "
+        "back to a self-generated persistent cl_guid identity.")
 endif()
 
 # Set Address Sanitizer

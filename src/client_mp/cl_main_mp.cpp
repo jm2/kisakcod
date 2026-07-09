@@ -35,11 +35,43 @@
 
 #include <ui_mp/ui_mp.h>
 
-#ifdef WIN32
+#ifdef KISAK_STEAM
 #include <win32/win_steam.h>
 #include <universal/base64.h>
-#else
-#error Steam Auth for Arch
+#endif
+
+#ifndef KISAK_STEAM
+// No-Steam identity fallback: a persistent, self-generated GUID stored in the archived
+// cl_guid dvar. This is an identity / ban key (the server GUID) rather than a cryptographic
+// credential, matching the ioquake3 cl_guid model that replaced CD-key hashing. Registered
+// in CL_InitOnceForAllClients alongside the other cl_ dvars.
+static const dvar_t *cl_guid;
+
+static const char *CL_EnsureGuid()
+{
+    if (!cl_guid)
+        return "";
+    if (cl_guid->current.string && cl_guid->current.string[0])
+        return cl_guid->current.string;
+
+    char guid[33];
+    static const char hex[] = "0123456789abcdef";
+    // Mix the uptime clock with the rand() stream (already srand-seeded in
+    // CL_InitOnceForAllClients) and fold a fresh rand() into every nibble, so two fresh
+    // installs don't collide on a shared Sys_Milliseconds() value and the value isn't
+    // trivially enumerable. This GUID is the no-Steam ban key, so per-install uniqueness
+    // matters; it is not a cryptographic credential.
+    unsigned int state = Sys_MillisecondsRaw() ^ ((unsigned int)rand() ^ ((unsigned int)rand() << 16));
+    for (int i = 0; i < 32; ++i)
+    {
+        state = state * 1664525u + 1013904223u + (unsigned int)rand();
+        guid[i] = hex[(state >> 24) & 0xFu];
+    }
+    guid[32] = 0;
+
+    Dvar_SetString(cl_guid, guid);
+    return cl_guid->current.string;
+}
 #endif
 
 const dvar_t *cl_conXOffset;
@@ -499,7 +531,9 @@ void __cdecl CL_Disconnect(int32_t localClientNum)
             clientUIActives[0].keyCatchers &= 1u;
         KISAK_NULLSUB();
         // LWSS ADD
+#ifdef KISAK_STEAM
         Steam_CancelClientTicket();
+#endif
         // LWSS END
         if (CL_AllLocalClientsDisconnected())
         {
@@ -1053,11 +1087,17 @@ void __cdecl CL_CheckForResend(netsrc_t localClientNum)
                 //CL_BuildMd5StrFromCDKey(md5Str);
                 //v2 = va("getchallenge 0 \"%s\"", md5Str);
 
+#ifdef KISAK_STEAM
                 got = Steam_GetRawClientTicket(&pSteamClientTicket, &steamClientTicketSize);
                 iassert(got);
                 b64_encode(pSteamClientTicket, steamClientTicketSize, steamTicketBase64);
                 iassert(b64_decode(steamTicketBase64, strlen((char *)steamTicketBase64), steamTicketDecodeBuf) == steamClientTicketSize);
                 v2 = va("getchallenge 0 \"%s\" \"%llu\"", steamTicketBase64, Steam_GetClientSteamID64());
+#else
+                // No Steam: send an empty ticket slot and the persistent GUID as the
+                // identity in arg 3. The server accepts this unless sv_requireSteam is set.
+                v2 = va("getchallenge 0 \"\" \"%s\"", CL_EnsureGuid());
+#endif
 
                 NET_OutOfBandPrint(localClientNum, clc->serverAddress, v2);
                 break;
@@ -3622,6 +3662,11 @@ void __cdecl CL_InitOnceForAllClients()
         (DvarLimits)0x7FFFFFFF00000000LL,
         DVAR_NOFLAG,
         "Maximum number of connection attempts before aborting");
+#ifndef KISAK_STEAM
+    // Persistent identity used in place of a Steam ticket. DVAR_ARCHIVE so it survives
+    // restarts; DVAR_USERINFO so it travels with the connection like the old CD-key hash.
+    cl_guid = Dvar_RegisterString("cl_guid", "", DVAR_ARCHIVE | DVAR_USERINFO, "Persistent client identity (used when Steam auth is unavailable)");
+#endif
     cl_shownet = Dvar_RegisterInt("cl_shownet", 0, (DvarLimits)0x4FFFFFFFELL, DVAR_NOFLAG, "Display network debugging information");
     cl_shownuments = Dvar_RegisterBool("cl_shownuments", false, DVAR_NOFLAG, "Show the number of entities");
     cl_showServerCommands = Dvar_RegisterBool(
