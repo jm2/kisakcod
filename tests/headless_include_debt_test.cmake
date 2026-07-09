@@ -20,10 +20,49 @@ foreach(_source ${_dedi_sources})
         continue()
     endif()
 
-    file(STRINGS "${_source}" _matches REGEX "${_debt_include_regex}")
-    foreach(_match ${_matches})
+    file(STRINGS "${_source}" _lines)
+    set(_preproc_depth 0)
+    set(_skip_until_depth -1)
+    foreach(_line ${_lines})
+        string(STRIP "${_line}" _stripped)
+
+        if (_stripped MATCHES "^#[ \t]*ifndef[ \t]+KISAK_DEDI_HEADLESS([ \t]*($|//|/\\*)|$)")
+            math(EXPR _preproc_depth "${_preproc_depth} + 1")
+            set(_skip_until_depth ${_preproc_depth})
+            continue()
+        endif()
+
+        if (_stripped MATCHES "^#[ \t]*(if|ifdef|ifndef)([ \t(]|$)")
+            math(EXPR _preproc_depth "${_preproc_depth} + 1")
+            continue()
+        endif()
+
+        if (_skip_until_depth GREATER -1
+            AND _preproc_depth EQUAL _skip_until_depth
+            AND _stripped MATCHES "^#[ \t]*(else|elif)([ \t(]|$)")
+            set(_skip_until_depth -1)
+            continue()
+        endif()
+
+        if (_stripped MATCHES "^#[ \t]*endif([ \t]*($|//|/\\*)|$)")
+            if (_skip_until_depth GREATER -1
+                AND _preproc_depth EQUAL _skip_until_depth)
+                set(_skip_until_depth -1)
+            endif()
+            math(EXPR _preproc_depth "${_preproc_depth} - 1")
+            continue()
+        endif()
+
+        if (_skip_until_depth GREATER -1)
+            continue()
+        endif()
+
+        if (NOT _line MATCHES "${_debt_include_regex}")
+            continue()
+        endif()
+
         file(RELATIVE_PATH _rel "${SRC_DIR}" "${_source}")
-        string(STRIP "${_match}" _include)
+        string(STRIP "${_line}" _include)
         list(APPEND _found "${_rel}|${_include}")
     endforeach()
 endforeach()
