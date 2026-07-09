@@ -2,7 +2,9 @@
 #include "mem_track.h"
 #include "threads.h"
 #include <universal/timing.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <client/client.h>
+#endif
 
 #include <universal/com_math.h>
 
@@ -12,9 +14,11 @@ mapLoadProfile_t mapLoadProfile;
 
 const dvar_t *com_profileLoading;
 
+#ifndef KISAK_DEDI_HEADLESS
 static const float PROFLOAD_FONT_SCALE = 0.36f;
 static const float PROFLOAD_TEXT_COLOR[4] = { 0.0f, 1.0f, 0.0f, 1.0f };
 static const float PROFLOAD_BACKGROUND_COLOR[4] = { 0.0f, 0.0f, 0.0f, 0.8f };
+#endif
 
 void __cdecl TRACK_com_profilemapload()
 {
@@ -387,6 +391,7 @@ void __cdecl ProfLoad_End()
 
 void __cdecl ProfLoad_DrawOverlay(rectDef_s *rect)
 {
+#ifndef KISAK_DEDI_HEADLESS
     MapProfileEntry *v1; // eax
     int fileReadCount; // [esp+7Ch] [ebp-128h]
     Font_s *profileFont; // [esp+88h] [ebp-11Ch]
@@ -526,10 +531,14 @@ void __cdecl ProfLoad_DrawOverlay(rectDef_s *rect)
             PROFLOAD_TEXT_COLOR,
             0);
     }
+#else
+    (void)rect;
+#endif
 }
 
 int ProfLoad_DrawTree()
 {
+#ifndef KISAK_DEDI_HEADLESS
     int result; // eax
     int v1; // [esp+24h] [ebp-124h]
     float textx; // [esp+2Ch] [ebp-11Ch]
@@ -557,5 +566,7 @@ int ProfLoad_DrawTree()
         result = profileIndex + 1;
     }
     return result;
+#else
+    return 0;
+#endif
 }
-
