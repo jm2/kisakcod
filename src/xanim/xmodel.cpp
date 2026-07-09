@@ -8,7 +8,6 @@
 #include <universal/com_memory.h>
 #include <universal/com_files.h>
 #include <database/database.h>
-#include <devgui/devgui.h>
 #include <physics/phys_local.h>
 
 void __cdecl XModelPartsFree(XModelPartsLoad *modelParts)
