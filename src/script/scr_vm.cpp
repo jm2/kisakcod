@@ -23,13 +23,11 @@
 #include <universal/com_files.h>
 #include <win32/win_net_debug.h>
 #include <win32/win_input.h>
-#include <client/client.h>
 #include <qcommon/mem_track.h>
 #include "scr_evaluate.h"
 #include "scr_memorytree.h"
 #include "scr_parsetree.h"
 #include <universal/profile.h>
-#include <gfx_d3d/r_dvars.h>
 #include <qcommon/threads.h>
 #include "scr_compiler.h"
 
