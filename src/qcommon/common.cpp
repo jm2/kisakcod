@@ -25,7 +25,9 @@
 #include <buildnumber.h>
 #include <win32/win_net.h>
 #include <xanim/dobj.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <sound/snd_local.h>
+#endif
 #include <script/scr_animtree.h>
 #include <gfx_d3d/r_scene.h>
 #include <ragdoll/ragdoll.h>
@@ -136,6 +138,30 @@ static void __cdecl Com_WaitRendererWorkerCmds()
 {
 #ifndef KISAK_DEDI_HEADLESS
     R_WaitWorkerCmds();
+#endif
+}
+
+static void __cdecl Com_SoundErrorCleanup()
+{
+#ifndef KISAK_DEDI_HEADLESS
+    SND_ErrorCleanup();
+#endif
+}
+
+static void __cdecl Com_InitSound()
+{
+#ifndef KISAK_DEDI_HEADLESS
+    SND_InitDriver();
+    iassert(!cls.soundStarted);
+    cls.soundStarted = 1;
+    SND_Init();
+#endif
+}
+
+static void __cdecl Com_ShutdownSoundChannels()
+{
+#ifndef KISAK_DEDI_HEADLESS
+    SND_ShutdownChannels();
 #endif
 }
 
@@ -1199,7 +1225,7 @@ void Com_ErrorCleanup()
     }
     if (fs_debug && fs_debug->current.integer == 2)
         Dvar_SetInt((dvar_s*)fs_debug, 0);
-    SND_ErrorCleanup();
+    Com_SoundErrorCleanup();
     Com_CleanupBsp();
     KISAK_NULLSUB();
     Com_ResetParseSessions();
@@ -1400,14 +1426,11 @@ void __cdecl Com_Init_Try_Block_Function(char* commandLine)
     if (!com_dedicated->current.integer)
 #endif
     {
-        SND_InitDriver();
         R_InitThreads();
         //KISAK_NULLSUB();
         CL_InitRenderer();
         //KISAK_NULLSUB();
-        iassert(!cls.soundStarted);
-        cls.soundStarted = 1;
-        SND_Init();
+        Com_InitSound();
     }
 
 #ifdef KISAK_SP
@@ -2233,7 +2256,7 @@ void __cdecl Com_Close()
     XAnimShutdown();
     Com_ShutdownWorld();
     CM_Shutdown();
-    SND_ShutdownChannels();
+    Com_ShutdownSoundChannels();
     Hunk_Clear();
     if (IsFastFileLoad())
         DB_ShutdownXAssets();
@@ -2259,7 +2282,7 @@ void __cdecl Com_Restart()
     XAnimShutdown();
     Com_ShutdownWorld();
     CM_Shutdown();
-    SND_ShutdownChannels();
+    Com_ShutdownSoundChannels();
     Hunk_Clear();
     Hunk_ResetDebugMem();
     if (IsFastFileLoad())
