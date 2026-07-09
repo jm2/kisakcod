@@ -1,6 +1,12 @@
 #include "game_public.h"
+#ifndef KISAK_DEDI_HEADLESS
 #include <client/client.h>
 #include <cgame/cg_public.h>
+#else
+#define CL_AddDebugLine(...) ((void)0)
+#define CL_AddDebugStar(...) ((void)0)
+#define CL_AddDebugStarWithText(...) ((void)0)
+#endif
 
 #include <universal/com_math.h>
 #include <qcommon/qcommon.h>
