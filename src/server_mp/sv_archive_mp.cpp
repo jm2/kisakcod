@@ -4,7 +4,6 @@
 
 #include "server_mp.h"
 
-#include <cgame_mp/cg_local_mp.h>
 #include <universal/profile.h>
 
 #include <bgame/bg_public.h>
@@ -361,4 +360,3 @@ int __cdecl GetFollowPlayerStateLocal(int clientNum, playerState_s *ps)
         return 0;
     }
 }
-

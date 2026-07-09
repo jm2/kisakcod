@@ -5,7 +5,6 @@
 #include "server_mp.h"
 #include <qcommon/cmd.h>
 
-#include <cgame_mp/cg_local_mp.h>
 #include <game_mp/g_main_mp.h>
 
 netadr_t adr;
@@ -333,4 +332,3 @@ void __cdecl SV_VoicePacket(netadr_t from, msg_t *msg)
         }
     }
 }
-

@@ -4,7 +4,6 @@
 
 #include "server_mp.h"
 #include <game_mp/g_main_mp.h>
-#include <cgame_mp/cg_local_mp.h>
 
 #include <bgame/bg_public.h>
 
