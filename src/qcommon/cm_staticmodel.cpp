@@ -1,7 +1,6 @@
 #include "qcommon.h"
 #include <xanim/xmodel.h>
 #include <xanim/xanim.h>
-#include <cgame/cg_local.h>
 
 void __cdecl CM_TraceStaticModel(
     cStaticModel_s *sm,
@@ -46,4 +45,3 @@ bool __cdecl CM_TraceStaticModelComplete(cStaticModel_s *sm, const float *start,
     results.fraction = 1.0;
     return XModelTraceLine(sm->xmodel, &results, localStart, localEnd, contentmask) < 0;
 }
-
