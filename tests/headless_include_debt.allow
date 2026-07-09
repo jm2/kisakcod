@@ -74,7 +74,6 @@ qcommon/threads.cpp|#include <gfx_d3d/r_init.h>
 qcommon/threads.cpp|#include <gfx_d3d/rb_backend.h>
 qcommon/threads.cpp|#include <gfx_d3d/rb_drawprofile.h>
 qcommon/threads.h|#include <gfx_d3d/rb_backend.h> // THREAD_CONTEXT_COUNT
-qcommon/unzip.cpp|#include "../client/client.h"
 script/scr_debugger.cpp|#include <client/client.h>
 script/scr_debugger.cpp|#include <gfx_d3d/r_rendercmds.h>
 script/scr_debugger.h|#include <ui/ui_shared.h>
