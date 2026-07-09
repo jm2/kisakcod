@@ -6,7 +6,6 @@
 #ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_scene.h>
 #endif
-#include <EffectsCore/fx_system.h>
 #include <xanim/dobj.h>
 #include <xanim/dobj_utils.h>
 #include "g_utils_mp.h"

@@ -25,7 +25,6 @@ database/db_registry.cpp|#include <gfx_d3d/r_init.h>
 database/db_registry.cpp|#include <gfx_d3d/r_staticmodelcache.h>
 database/db_registry.cpp|#include <gfx_d3d/rb_shade.h>
 database/db_registry.cpp|#include <gfx_d3d/rb_uploadshaders.h>
-game_mp/g_vehicles_mp.cpp|#include <EffectsCore/fx_system.h>
 qcommon/common.cpp|#include <EffectsCore/fx_system.h>
 qcommon/common.cpp|#include <client/client.h>
 qcommon/common.cpp|#include <client_mp/client_mp.h>
