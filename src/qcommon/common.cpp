@@ -33,7 +33,9 @@
 #include <devgui/devgui.h>
 #endif
 #include <server/sv_game.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_workercmds.h>
+#endif
 #include <universal/com_convexhull.h>
 #include "mem_track.h"
 #include <universal/profile.h>
@@ -127,6 +129,13 @@ static void __cdecl Com_UpdateDevGuiFrame(int localClientNum, float deltaTime)
     (void)deltaTime;
 #else
     DevGui_Update(localClientNum, deltaTime);
+#endif
+}
+
+static void __cdecl Com_WaitRendererWorkerCmds()
+{
+#ifndef KISAK_DEDI_HEADLESS
+    R_WaitWorkerCmds();
 #endif
 }
 
@@ -2368,7 +2377,7 @@ void __cdecl Com_SyncThreads()
     iassert( Sys_IsMainThread() );
 #endif
     R_SyncRenderThread();
-    R_WaitWorkerCmds();
+    Com_WaitRendererWorkerCmds();
 }
 
 void __cdecl Com_FreeEvent(char* ptr)
