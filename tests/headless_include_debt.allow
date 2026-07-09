@@ -63,7 +63,6 @@ qcommon/common.cpp|#include <gfx_d3d/r_rendercmds.h>
 qcommon/common.cpp|#include <gfx_d3d/r_scene.h>
 qcommon/common.cpp|#include <gfx_d3d/r_workercmds.h>
 qcommon/common.cpp|#include <sound/snd_local.h>
-qcommon/files.cpp|#include <sound/snd_public.h>
 qcommon/msg_mp.cpp|#include <cgame/cg_local.h>
 qcommon/msg_mp.cpp|#include <client_mp/client_mp.h>
 qcommon/net_chan_mp.cpp|#include <cgame_mp/cg_local_mp.h>

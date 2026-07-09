@@ -5,7 +5,9 @@
 #include "qcommon.h"
 #include <database/database.h>
 #include "cmd.h"
+#ifndef KISAK_DEDI_HEADLESS
 #include <sound/snd_public.h>
+#endif
 
 int fs_numServerReferencedIwds;
 char basename[64];
@@ -421,7 +423,9 @@ void __cdecl FS_PureServerSetLoadedIwds(char *iwdSums, char *iwdNames)
             }
         }
     }
+#ifndef KISAK_DEDI_HEADLESS
     SND_StopSounds(SND_STOP_STREAMED);
+#endif
     FS_ShutdownServerIwdNames();
     fs_numServerIwds = v7;
     if (v7)
