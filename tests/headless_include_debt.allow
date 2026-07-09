@@ -31,7 +31,6 @@ game/game_public.h|#include <client_mp/client_mp.h>
 game_mp/g_vehicles_mp.cpp|#include <EffectsCore/fx_system.h>
 qcommon/cm_load.cpp|#include <gfx_d3d/rb_backend.h>
 qcommon/cm_load_obj.cpp|#include <DynEntity/DynEntity_client.h>
-qcommon/cm_mesh.cpp|#include <EffectsCore/fx_system.h>
 qcommon/common.cpp|#include <EffectsCore/fx_system.h>
 qcommon/common.cpp|#include <client/client.h>
 qcommon/common.cpp|#include <client_mp/client_mp.h>

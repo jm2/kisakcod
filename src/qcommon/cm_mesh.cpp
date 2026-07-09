@@ -1,5 +1,4 @@
 #include "qcommon.h"
-#include <EffectsCore/fx_system.h>
 #include <xanim/xanim.h>
 
 void __cdecl CM_TraceThroughAabbTree(const traceWork_t *tw, const CollisionAabbTree *aabbTree, trace_t *trace)
@@ -1401,4 +1400,3 @@ t1_is_clamped_to_1:
         return (float)(a11 - (b1 + b1) + c);
     }
 }
-
