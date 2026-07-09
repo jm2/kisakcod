@@ -29,6 +29,8 @@ build/
 build-dedi/
 build-mp/
 build-sp/
+/build-*/
+/dist/
 [Oo]bj/
 [Oo]ut/
 [Ll]og/

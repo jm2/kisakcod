@@ -1,0 +1,289 @@
+# KisakCOD Codebase Audit — Security / Logic / Functionality / Build
+
+**Basis:** whole-tree analysis of `master`. Security findings were run through an adversarial
+verification pass (each finding a reviewer *tried to refute*); the eight top security items below all
+**survived and were confirmed at high confidence**. Line numbers are as of the analyzed tree.
+
+**Counts:** 3 critical · 10 high · 15 medium · 19 low (47 total, after noting duplicates).
+
+---
+
+## Remediation status (July 8, 2026)
+
+Fixed in the initial porting implementation:
+
+- C1/C3: Huffman decoding now has explicit input/output bounds; malformed or
+  oversized messages are rejected by both client and server.
+- C2: download blocks are range-checked before the 2 KB copy.
+- H1: stats packets accept only indices 0–6 and use unconditional range checks.
+- H5/H6/H7: CMake no longer shadows `WIN32`, platform selection is explicit,
+  unsupported targets fail clearly, and CI uses the actual DirectX NuGet layout.
+- Fast-file offset fixups now validate block indices and byte spans before
+  dereferencing zone memory.
+
+Still open: the broader release-disabled assertion audit (H2), reflection/rate
+limiting, HTTP downloads, dependency replacement/upgrades, genuine headless
+dedicated server separation, and the remaining medium/low findings.
+
+The first H2 parser conversions are complete: invalid entity references,
+24-bit flag indices, last-changed field indices, and HUD field counts now set
+message overflow unconditionally instead of relying on release-disabled
+assertions. Huffman compression output is also capacity-checked, and internal
+tree nodes no longer write past the `loc[257]` table during construction.
+
+---
+
+## 0. Current state
+
+KisakCOD is a **Hex-Rays decompile-and-reconstruct** of the retail COD4 (2007) multiplayer `.exe`,
+~632k LOC, **32-bit x86 / MSVC / DirectX 9 / Windows only**. It is a *buildable, MP-first, playable*
+reimplementation — **not feature-complete**. Maturity markers:
+
+- The renderer (`gfx_d3d`, ~96k LOC) is a near-1:1 decompile; 95 files still carry `[esp+..]`/`[ebp-..]`
+  register-slot comments, and ~249 `static_assert(sizeof==N)` freeze the 32-bit struct layout.
+- SP (single-player) lags MP: save/load uses admittedly-wrong sizing (`g_save.cpp:2488`), AI/gameplay
+  has unresolved flag-decode gaps (`g_active.cpp:241`), LiveStorage stat writing is broken
+  (`win_storage.cpp:634`).
+- Anti-cheat (PunkBuster) is removed, replaced by rudimentary Steam-ticket auth
+  (`cl_main_mp.cpp:1051`).
+- The README's own warning — *"~20 year old game with some known exploits … non-zero chance of binary
+  exploitation … use a sandbox"* — is accurate. The findings below make it concrete.
+
+---
+
+## 1. CRITICAL — remotely exploitable memory corruption (fix before anything else)
+
+These are reachable from the network by an ordinary peer, corrupt memory with attacker-controlled
+bytes, and are one-line-to-a-few-lines to fix. They are independent of the port.
+
+### C1. Server: Huffman decompression overflows a 2 KB global (client → server RCE)
+`src/server_mp/sv_client_mp.cpp:1583` (buffer declared `:1575`)
+
+**Status: fixed.** The decoder is bounded by compressed bits and destination
+capacity, the server buffer is `MAX_MSGLEN`-sized, and overflow drops the client.
+
+`SV_ExecuteClientMessage()` decompresses attacker-controlled packet data into a fixed
+`uint8_t msgCompressed_buf_0[2048]`:
+```cpp
+MSG_Init(&msgCompressed, msgCompressed_buf_0, 2048);
+msgCompressed.cursize = MSG_ReadBitsCompress(&msg->data[msg->readcount],
+                                             msgCompressed_buf_0,
+                                             msg->cursize - msg->readcount);
+```
+`MSG_ReadBitsCompress()` (`src/qcommon/msg_mp.cpp:239`) takes only the **input** size and has **no
+output bound** — its loop `while (bit < bits)` writes one output byte per decoded symbol
+(`*data++ = get;`). Because frequent Huffman symbols are only a few bits, output can be many times the
+input. The incoming `msg` lives in `serverCommonMsgBuf[0x20000]` (`common.cpp:942`), so
+`msg->cursize - msg->readcount` can be tens of KB. Unlike the client path, there is **no input-size
+check at all** here, and the destination is only 2048 bytes.
+
+**Impact:** a connected (or qport/address-matching) client sends one crafted UDP packet; the
+decompressed stream walks past `msgCompressed_buf_0` into adjacent BSS with attacker-influenced bytes →
+server crash / likely RCE. Even a ~300-byte payload of the shortest symbol exceeds 2048 output bytes.
+This is the classic idTech3/CoD Huffman-decompress overflow, here with a *smaller* buffer and *no*
+guard.
+
+**Fix:** give `MSG_ReadBitsCompress` an explicit output-buffer-size parameter and stop (set
+`overflowed`) when output reaches it; size `msgCompressed_buf_0` to `MAX_MSGLEN` (0x20000) like the
+rest of the code; reject client messages whose decompressed length would exceed `MAX_MSGLEN`. Also add
+a bounds check inside `get_bit`/`Huff_offsetReceive` (`huffman.cpp:7-35`) against the input length.
+
+### C2. Client: `CL_ParseDownload` copies attacker length into a 2 KB global (server → client RCE)
+`src/client_mp/cl_parse_mp.cpp:404` (buffer `char parseDownloadData[2048]` declared `:365`)
+
+**Status: fixed.** Negative and oversized blocks now produce `ERR_DROP`.
+
+```cpp
+size = MSG_ReadShort(msg);            // sign-extended __int16 -> up to 32767
+if (size > 0)
+    MSG_ReadData(msg, (uint8_t *)parseDownloadData, size);
+```
+There is **no `size <= sizeof(parseDownloadData)` check** — upstream Quake3/ioquake3 has exactly this
+guard (`if (size < 0 || size > sizeof(data)) Com_Error(...)`) and it is missing. `MSG_ReadData`
+(`msg_mp.cpp:523`) writes `size` bytes in all paths (including `memset(data,0xFF,len)` on the
+short-packet path), so the overflow happens regardless of how much real data is present. The client
+message buffer is 128 KB, so real attacker bytes can be supplied.
+
+**Impact:** a malicious/MITM server sends an `svc_download` block with `size` 2049..32767 and overflows
+the client global by up to ~30 KB of chosen bytes → client RCE/crash, triggered during a normal
+map/mod download when joining a hostile server.
+
+**Fix:**
+```cpp
+if (size < 0 || size > (int)sizeof(parseDownloadData)) {
+    Com_Error(ERR_DROP, "CL_ParseDownload: invalid block size %d", size);
+    return;
+}
+```
+
+### C3. Client: `CL_ParseServerMessage` Huffman decompression can exceed the 128 KB buffer
+`src/client_mp/cl_parse_mp.cpp:485` (buffer `msgCompressed_buf[0x20000]` declared `:464`)
+
+**Status: fixed.** The same bounded decoder rejects output larger than the
+message buffer.
+
+```cpp
+if ((uint32_t)(msg->cursize - msg->readcount) > sizeof(msgCompressed_buf))
+    Com_Error(ERR_DROP, "Compressed msg overflow in CL_ParseServerMessage");
+msgCompressed.cursize = MSG_ReadBitsCompress(&msg->data[msg->readcount], msgCompressed_buf,
+                                             msg->cursize - msg->readcount);
+```
+The guard bounds the **input** to 0x20000, but the buffer is *also* 0x20000 and the decompressor
+expands ~3–4×. A ~64 KB unfragmented UDP datagram of minimal-length symbols decodes to ~190 KB into a
+128 KB buffer.
+
+**Impact:** malicious server → client overflow/RCE. Lower likelihood than C2 (needs a large packet),
+same corruption primitive. **Fix:** bound by **output** bytes written, not input bits consumed — pass
+`sizeof(msgCompressed_buf)` into `MSG_ReadBitsCompress` and stop/flag on reaching it. (This is the
+same root cause as C1; fix `MSG_ReadBitsCompress` once and both call sites are covered.)
+
+---
+
+## 2. HIGH
+
+### H1. `SV_ReceiveStats` accepts `packetNum == 7` → OOB write + ~4 GB memcpy
+`src/server_mp/sv_client_mp.cpp:304`
+
+**Status: fixed.** Packet 7 is rejected and range validation is unconditional.
+
+Reads `packetNum = MSG_ReadByte(msg)` and gates on `packetNum < 8`, but the valid range is 0..6
+(`MAX_STATPACKETS == 7`, `stats[8192]`, chunk 1240). For `packetNum == 7`: `start = 1240*7 = 8680`
+(already past the 8192-byte array) and remaining `= 0x2000 - 8680 = -488`. The only guards for
+`size <= 0` / `start+size > 0x2000` are `MyAssertHandler()` calls (`:313,:317`) — **no-ops in
+release/dedicated builds** (see H3). Execution reaches `MSG_ReadData(msg, &cl->stats[8680], -488)`;
+the negative length is used as `size_t` in `memcpy` (`msg_mp.cpp:552`) → ~4 GB copy.
+
+**Impact:** a client holding a netchan slot (reachable during the connect handshake via the
+connectionless `stats` packet, `SV_ConnectionlessPacket:724`) guarantees a remote server crash and an
+OOB write. **Fix:** gate `packetNum < MAX_STATPACKETS` (< 7) and replace the assert guards with real
+runtime checks that drop the packet.
+
+### H2. Security-relevant validation relies on asserts that are compiled out in shipped builds
+`src/universal/assertive.h:26`
+
+`USE_ASSERTS` is defined only under `_DEBUG` or `RELEASE_ASSERTS` (`assertive.h:3-5`). The MP target
+(`scripts/mp/CMakeLists.txt:60`) and dedi target (`scripts/dedi/CMakeLists.txt:59`) define **neither**,
+and `KISAK_PURE` is unset — so `iassert/vassert/bcassert` expand to nothing and `MyAssertHandler()` is
+an empty body (`assertive.cpp:685`). Numerous **network-input** validations depend solely on these:
+`MSG_ReadEntityIndex` `lastEntityRef >= 0` (`msg_mp.cpp:912`), `MSG_ReadLastChangedField`
+`lastChanged <= totalFields` (`:1373`), `MSG_Read24BitFlag` `bitChanged <= 24` (`:1230`), and the
+`SV_ReceiveStats` guards (H1).
+
+**Impact:** conditions the original devs treated as "can't happen" are silently skipped in production,
+turning trusted-length/index parser assumptions into exploitable OOB reads/writes under hostile input.
+**Fix:** audit every `MyAssertHandler`/`iassert` used on network-derived lengths/indices and convert
+the security-relevant ones to unconditional runtime checks present in all build configs. *(This is the
+systemic root cause behind H1 and several medium items — highest-leverage single fix.)*
+
+### H3. Master/auth server hardcoded to defunct `cod4master.activision.com`
+`src/qcommon/common.cpp:1539` (`:1541,:1546`)
+
+`com_masterServerName`/`com_authServerName` default to Activision's long-dead master. The internet
+browser's `getservers` (`cl_main_pc_mp.cpp:447`) goes nowhere. Both are `DVAR_CHEAT`, so nothing points
+them at a live replacement out of the box.
+
+**Impact:** the public server browser returns nothing; discovery works only via LAN / Steam / manual
+direct-connect. **Fix:** default to a maintained community master (dpmaster-style) or route discovery
+through Steam.
+
+### H4. HTTP/www-redirect download subsystem is fully stubbed
+`src/qcommon/dl_main.cpp:111`
+
+`DL_BeginDownload` hardcodes `return 0` (real body under `#if 0`), `DL_InitDownload`/`DL_DownloadLoop`/
+`DL_InProgress`/`DL_CancelDownload` are stubs. It's still wired into connect: a server redirect calls
+`DL_BeginDownload` (`cl_parse_mp.cpp:284`), which always fails → `wwwdl fail`.
+
+**Impact:** clients cannot www-download missing custom maps/mods; joining modded servers without
+pre-installed content fails at the download step. **Fix:** reimplement against libcurl/WinHTTP (the
+original libwww is gone), or document that only in-band UDP downloads + pre-installed content work.
+
+### H5. `set(WIN32 …)` clobbers CMake's built-in `WIN32`, defeating every `if(WIN32)` guard
+`scripts/common_files.cmake:558`
+
+The source-file list is named `WIN32`, shadowing CMake's reserved boolean. `common_files.cmake` is
+included before `pre_build.cmake`, whose entire DirectX/SDK/link block is wrapped in `if(WIN32)`
+(`:2,:28`). Since `WIN32` now holds a non-empty list, **`if(WIN32)` is true on all platforms** — the
+Windows-only path runs unconditionally, and on Windows it works only by accident.
+
+**Impact:** silently breaks any future non-Windows build; a foundational bug for the port. **Fix:**
+rename to `WIN32_SRC` (update `source_groups.cmake` and the three `add_executable` lists). Never name a
+CMake var `WIN32/UNIX/APPLE/MSVC`.
+
+### H6. No functional non-Windows build; linux `platform.cmake` is empty and `KISAK_PLATFORM` is hardcoded
+`scripts/platform/linux/platform.cmake:1`, `CMakeLists.txt:10`
+
+`set(KISAK_PLATFORM win32)` is hardcoded; `win32/platform.cmake` `FATAL_ERROR`s otherwise; the linux
+file is 0 bytes; `src/_platform/` (the override root) doesn't exist. The README's "fully-buildable" is
+Windows/MSVC/DX9-only in practice.
+
+**Impact:** zero Linux/macOS build capability behind scaffolding that implies otherwise. **Fix:** detect
+from `CMAKE_SYSTEM_NAME`, populate or delete the linux stub, gate DirectX behind the platform.
+
+### H7. CI Debug matrix job points at a nonexistent DXSDK lib path
+`scripts/pre_build.cmake:45`
+
+CI extracts `build\native\release\lib\x86` into `GITHUB_ENV` but never passes it; `pre_build.cmake:45`
+independently derives `${DXSDK_DIR}/${CMAKE_BUILD_TYPE}/lib/x86` → `build/native/Debug/lib/x86` for the
+Debug entry, and selects `d3dx9d.lib` (`:55`). The NuGet package ships only a lowercase `release` lib
+dir and **no** debug import lib.
+
+**Impact:** the Debug half of CI cannot link; the workflow's `libDir`/`incDir` extraction is dead code
+masking that the real logic lives in `pre_build.cmake`. **Fix:** point `DXSDK_LIB_DIR` at the actual
+NuGet layout regardless of config; link the release `d3dx9.lib` for both configs; drop the dead env
+extraction.
+
+*(H-level duplicates C1–C3 from a second reviewer are folded in above.)*
+
+---
+
+## 3. MEDIUM (selected)
+
+- **Spoofed reflection/amplification DoS** — unauthenticated `getstatus`/`getinfo`
+  (`sv_main_mp.cpp:691`) reply to a spoofed source with a larger response. Add per-source rate limiting
+  / challenge, cap response size.
+- **Dedicated server is not headless** — `dedi` links the full client incl. D3D9 + Miles
+  (`scripts/dedi/CMakeLists.txt:40`). Wastes deps and blocks a clean Linux server port; carve out a
+  true headless target.
+- **VS multi-config vs `CMAKE_BUILD_TYPE`** — lib selection and DLL copy key off `CMAKE_BUILD_TYPE`
+  under a multi-config generator (`post_build.cmake:6`); should use `$<CONFIG>` /
+  `$<TARGET_FILE_DIR:..>`. (`build-win.ps1` already passes `--config` to compensate.)
+- **`/we4700` warnings-as-error applied globally** to vendored third-party code
+  (`platform/win32/platform.cmake:18`).
+- **`target_compile_definitions(KISAK_EXTENDED)` missing scope keyword** — enabling the feature flag
+  breaks configure (`pre_build.cmake:18`).
+- **SP correctness debt** — save/load wrong array sizing/typing (`g_save.cpp:2488`); AI flag-decode
+  gaps (`g_active.cpp:241`); broken LiveStorage stat writing (`win_storage.cpp:634`); many decompiled
+  hot paths flagged unverified (union fields, arg counts, casts — `scr_evaluate.cpp:945`).
+- **Mic mixer setup fails** → voice capture unconfigured (`win_voice.cpp:124`).
+- **Hardcoded absolute dev paths** in `milesEq/build.bat:5`.
+- **Dev-experience/CI gaps** — single Windows job, no tests/lint/format, stale README build steps,
+  throwaway 1-day artifacts (`.github/workflows/build-kisarcod-win.yaml:78`).
+
+## 4. LOW (selected)
+
+- `muteplayer`/`unmuteplayer` off-by-one OOB write into `client_t` (`ucmds.cpp:33`).
+- `rcon` uses non-constant-time password compare + single global throttle
+  (`sv_main_pc_mp.cpp:260`) — timing/brute-force exposure.
+- `Info_NextPair` copies key/value with no destination bounds (latent overflow) (`q_shared.cpp:627`).
+- Team-chat color guarded by an always-false pointer comparison (`cg_draw_mp.cpp:292`).
+- Control-detail buffers leaked on voice mixer error paths (`win_voice.cpp:149`).
+- Gamepad/rumble disabled (`cl_main.cpp:655`); `R_ResolveSection` unimplemented (`rb_backend.cpp:907`).
+- Auto-config fatally aborts on unrecognized CPU/GPU (`com_playerprofile.cpp:546`).
+- zlib pinned to 1.1.4 (2002) with known post-1.1.4 CVEs — upgrade to 1.3.1 (DEFLATE output unchanged,
+  so `.iwd`/`.ff` compat preserved).
+- Build hygiene: dead `/intentionallbreakthisshit` flag, undefined `MSVC_WARNING_DISABLES`, ASAN wiring
+  only in MP, redundant `CMAKE_GENERATOR_PLATFORM` after `project()`, build-number increment path dead,
+  `.gitignore` misses `build-Debug/`-style dirs, Tracy duplicated across subprojects.
+
+---
+
+## 5. Recommended fix order
+
+1. **C1–C3, H1, H2** — the remote RCE/DoS set. Small diffs, port-independent; fixing
+   `MSG_ReadBitsCompress` (output bound) + `CL_ParseDownload` (size check) + `SV_ReceiveStats` (range) +
+   converting security asserts to runtime checks closes the exploitable surface. Ship first.
+2. **H5, H6** — the CMake `WIN32` collision and platform selectability. Prerequisites for the port
+   (Phase 0 in `docs/PORTING.md`).
+3. **H3, H4** — make multiplayer usable out of the box (server discovery + downloads).
+4. **H7 + medium build items** — green, trustworthy CI (add a Linux job once H6 lands).
+5. **Medium/low correctness + SP debt** — ongoing; prioritize anything on a network-reachable path.

@@ -288,7 +288,6 @@ int __cdecl SV_IsBannedGuid(const char *cdkeyHash)
 
 void __cdecl SV_ReceiveStats(netadr_t from, msg_t *msg)
 {
-    const char *v2; // eax
     const char *v3; // eax
     int v4; // [esp+0h] [ebp-20h]
     client_t *ClientByAddress; // [esp+8h] [ebp-18h]
@@ -301,7 +300,7 @@ void __cdecl SV_ReceiveStats(netadr_t from, msg_t *msg)
     if (ClientByAddress)
     {
         packetNum = MSG_ReadByte(msg);
-        if (packetNum < 8)
+        if (packetNum < 7)
         {
             Com_Printf(15, "Received packet %i of stats data\n", packetNum);
             start = 1240 * packetNum;
@@ -309,18 +308,10 @@ void __cdecl SV_ReceiveStats(netadr_t from, msg_t *msg)
                 v4 = 1240;
             else
                 v4 = 0x2000 - 1240 * packetNum;
-            if (v4 <= 0)
-                MyAssertHandler(".\\server_mp\\sv_client_mp.cpp", 320, 0, "%s\n\t(size) = %i", "(size > 0)", v4);
-            if (v4 + start > 0x2000)
+            if (v4 <= 0 || start < 0 || v4 + start > 0x2000)
             {
-                v2 = va("start is %i, size is %i", start, v4);
-                MyAssertHandler(
-                    ".\\server_mp\\sv_client_mp.cpp",
-                    321,
-                    0,
-                    "%s\n\t%s",
-                    "start + size <= PERSISTENT_STATS_SIZE",
-                    v2);
+                Com_PrintWarning(15, "Invalid stat packet range: packet %u, start %i, size %i\n", packetNum, start, v4);
+                return;
             }
             MSG_ReadData(msg, &ClientByAddress->stats[start], v4);
             ClientByAddress->statPacketsReceived |= 1 << packetNum;
@@ -1572,18 +1563,32 @@ int __cdecl SV_ProcessClientCommands(client_t *cl, msg_t *msg, int fromOldServer
     return 0;
 }
 
-uint8_t msgCompressed_buf_0[2048];
+uint8_t msgCompressed_buf_0[0x20000];
 void __cdecl SV_ExecuteClientMessage(client_t *cl, msg_t *msg)
 {
     msg_t v2; // [esp+60h] [ebp-54h] BYREF
     int c; // [esp+88h] [ebp-2Ch] BYREF
     msg_t msgCompressed; // [esp+8Ch] [ebp-28h] BYREF
 
-    MSG_Init(&msgCompressed, msgCompressed_buf_0, 2048);
+    if (msg->readcount < 0 || msg->readcount > msg->cursize)
+    {
+        Com_PrintWarning(15, "Invalid compressed message range from client %s\n", cl->name);
+        SV_DropClient(cl, "Corrupted network messaging detected", 1);
+        return;
+    }
+
+    MSG_Init(&msgCompressed, msgCompressed_buf_0, sizeof(msgCompressed_buf_0));
     msgCompressed.cursize = MSG_ReadBitsCompress(
         &msg->data[msg->readcount],
+        msg->cursize - msg->readcount,
         msgCompressed_buf_0,
-        msg->cursize - msg->readcount);
+        sizeof(msgCompressed_buf_0));
+    if (msgCompressed.cursize < 0)
+    {
+        Com_PrintWarning(15, "Invalid or oversized compressed message from client %s\n", cl->name);
+        SV_DropClient(cl, "Corrupted network messaging detected", 1);
+        return;
+    }
     if (cl->serverId == sv_serverId_value || cl->downloading || cl->downloadingWWW || cl->clientDownloadingWWW)
     {
         if (SV_ProcessClientCommands(cl, &msgCompressed, 0, &c))
@@ -1759,4 +1764,3 @@ gentity_s *__cdecl SV_AddTestClient()
     SV_ClientEnterWorld(clienta, &nullcmd);
     return SV_GentityNum(i);
 }
-

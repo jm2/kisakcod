@@ -402,6 +402,11 @@ void __cdecl CL_ParseDownload(int localClientNum, msg_t *msg)
             }
         }
         size = MSG_ReadShort(msg);
+        if (size < 0 || size > static_cast<int>(sizeof(parseDownloadData)))
+        {
+            Com_Error(ERR_DROP, "CL_ParseDownload: invalid block size %d", size);
+            return;
+        }
         if (size > 0)
             MSG_ReadData(msg, (uint8_t *)parseDownloadData, size);
         if (cls.downloadBlock == block)
@@ -479,13 +484,23 @@ void __cdecl CL_ParseServerMessage(netsrc_t localClientNum, msg_t *msg)
 
     MSG_Init(&msgCompressed, msgCompressed_buf, sizeof(msgCompressed_buf));
 
-    if ((uint32_t)(msg->cursize - msg->readcount) > sizeof(msgCompressed_buf))
+    if (msg->readcount < 0 || msg->readcount > msg->cursize ||
+        msg->cursize - msg->readcount > static_cast<int>(sizeof(msgCompressed_buf)))
+    {
         Com_Error(ERR_DROP, "Compressed msg overflow in CL_ParseServerMessage");
+        return;
+    }
 
     msgCompressed.cursize = MSG_ReadBitsCompress(
         &msg->data[msg->readcount],
+        msg->cursize - msg->readcount,
         msgCompressed_buf,
-        msg->cursize - msg->readcount);
+        sizeof(msgCompressed_buf));
+    if (msgCompressed.cursize < 0)
+    {
+        Com_Error(ERR_DROP, "Invalid or oversized compressed server message");
+        return;
+    }
 
     while (2)
     {
@@ -1166,4 +1181,3 @@ void __cdecl CL_ParseCommandString(int localClientNum, msg_t *msg)
         I_strncpyz(clc->serverCommands[seq & 0x7F], s, 1024);
     }
 }
-

@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable-tests:
+    name: Portable tests / ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux amd64
+            runner: ubuntu-24.04
+          - platform: Linux arm64
+            runner: ubuntu-24.04-arm
+          - platform: Windows amd64
+            runner: windows-2025
+          - platform: Windows arm64
+            runner: windows-11-arm
+          - platform: macOS arm64
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-tests
+          -DKISAK_BUILD_MP=OFF
+          -DKISAK_BUILD_DEDICATED=OFF
+          -DKISAK_BUILD_SP=OFF
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=ON
+
+      - name: Build and test
+        run: |
+          cmake --build build-tests --config Release --parallel
+          ctest --test-dir build-tests -C Release --output-on-failure
+
+  windows-x86:
+    name: Windows x86 / ${{ matrix.config }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, Release]
+    env:
+      NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
+      DXSDK_VERSION: 9.29.952.8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Restore DirectX SDK
+        shell: pwsh
+        run: |
+          dotnet new classlib -o dxsdk-temp
+          dotnet add dxsdk-temp package Microsoft.DXSDK.D3DX --version $env:DXSDK_VERSION
+          $native = Join-Path $env:NUGET_PACKAGES "microsoft.dxsdk.d3dx\$env:DXSDK_VERSION\build\native"
+          "DXSDK_NATIVE=$native" >> $env:GITHUB_ENV
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B "build-${{ matrix.config }}" `
+            -G "Visual Studio 17 2022" -A Win32 `
+            -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE" `
+            -DKISAK_BUILD_MP=ON `
+            -DKISAK_BUILD_DEDICATED=ON `
+            -DKISAK_BUILD_SP=OFF
+
+      - name: Build
+        shell: pwsh
+        run: >
+          cmake --build "build-${{ matrix.config }}"
+          --config "${{ matrix.config }}"
+          --target KisakCOD-mp KisakCOD-dedi
+          --parallel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KisakCOD-windows-x86-${{ matrix.config }}
+          path: bin/${{ matrix.config }}/
+          if-no-files-found: error
+          retention-days: 14

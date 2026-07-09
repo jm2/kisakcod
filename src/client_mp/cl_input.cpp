@@ -282,9 +282,15 @@ void __cdecl CL_WritePacket(int localClientNum)
         compressedSize = MSG_WriteBitsCompress(
             0,
             (const uint8_t *)buf.data + 9,
+            buf.cursize - 9,
             &(*compressedBuf)[9],
-            buf.cursize - 9)
-            + 9;
+            sizeof(*compressedBuf) - 9);
+        if (compressedSize < 0)
+        {
+            Com_Error(ERR_DROP, "Client message did not fit the compressed buffer");
+            return;
+        }
+        compressedSize += 9;
         packetNum = clc->netchan.outgoingSequence & 0x1F;
         LocalClientGlobals->outPackets[packetNum].p_realtime = cls.realtime;
         LocalClientGlobals->outPackets[packetNum].p_serverTime = oldcmd->serverTime;
@@ -1757,4 +1763,3 @@ void __cdecl CL_ClearKeys(int localClientNum)
 {
     memset((uint8_t *)playersKb[localClientNum], 0, sizeof(kbutton_t[30]));
 }
-

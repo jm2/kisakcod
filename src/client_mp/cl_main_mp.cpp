@@ -391,7 +391,8 @@ void __cdecl CL_ResetSkeletonCache(int32_t localClientNum)
     v1 = &clients[localClientNum];
     if (!++v1->skelTimeStamp)
         ++v1->skelTimeStamp;
-    v1->skelMemoryStart = (char *)((uint32_t)&v1->skelMemory[15] & 0xFFFFFFF0);
+    v1->skelMemoryStart = reinterpret_cast<char *>(
+        reinterpret_cast<uintptr_t>(&v1->skelMemory[15]) & ~uintptr_t(15));
     v1->skelMemPos = 0;
 }
 
@@ -2844,9 +2845,15 @@ void __cdecl CL_Record_f()
                 compressedSize = MSG_WriteBitsCompress(
                     0,
                     (const uint8_t *)buf.data + 4,
+                    buf.cursize - 4,
                     &(*compressedBuf)[4],
-                    buf.cursize - 4)
-                    + 4;
+                    sizeof(*compressedBuf) - 4);
+                if (compressedSize < 0)
+                {
+                    Com_Error(ERR_DROP, "Demo message did not fit the compressed buffer");
+                    return;
+                }
+                compressedSize += 4;
                 type = 0;
                 FS_Write((char *)&type, 1u, clc->demofile);
                 len = clc->serverMessageSequence;

@@ -97,6 +97,7 @@ set(COMMON
 
 set(DATABASE
     "${SRC_DIR}/database/database.h"
+    "${SRC_DIR}/database/db_disk32.h"
     "${SRC_DIR}/database/db_assetnames.cpp"
     "${SRC_DIR}/database/db_auth.cpp"
     "${SRC_DIR}/database/db_file_load.cpp"
@@ -508,6 +509,7 @@ set(UI
 )
 
 set(UNIVERSAL
+    "${SRC_DIR}/universal/platform_compat.h"
     "${SRC_DIR}/universal/aabbtree.cpp"
     "${SRC_DIR}/universal/aabbtree.h"
     "${SRC_DIR}/universal/assertive.cpp"
@@ -555,7 +557,7 @@ set(UNIVERSAL
     "${SRC_DIR}/universal/win_shared.cpp"
 )
 
-set(WIN32
+set(PLATFORM_WIN32
     "${SRC_DIR}/win32/win_configure.cpp"
     "${SRC_DIR}/win32/win_configure.h"
     "${SRC_DIR}/win32/win_input.cpp"

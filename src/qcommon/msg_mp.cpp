@@ -215,45 +215,26 @@ int __cdecl MSG_ReadBit(msg_t *msg)
     return (Byte >> bit) & 1;
 }
 
-int __cdecl MSG_WriteBitsCompress(bool trainHuffman, const uint8_t *from, uint8_t *to, int size)
+int __cdecl MSG_WriteBitsCompress(bool trainHuffman, const uint8_t *from, int fromSize, uint8_t *to, int toSize)
 {
-    int bit; // [esp+0h] [ebp-8h] BYREF
     int i; // [esp+4h] [ebp-4h]
+
+    const int compressedSize =
+        Huff_Compress(&msgHuff.compressDecompress, from, fromSize, to, toSize);
+    if (compressedSize < 0)
+        return -1;
 
     if (trainHuffman)
     {
-        for (i = 0; i < size; ++i)
+        for (i = 0; i < fromSize; ++i)
             ++huffBytesSeen[from[i]];
     }
-    bit = 0;
-    i = size;
-    while (i)
-    {
-        Huff_offsetTransmit(&msgHuff.compressDecompress, *from, to, &bit);
-        --i;
-        ++from;
-    }
-    return (bit + 7) >> 3;
+    return compressedSize;
 }
 
-int __cdecl MSG_ReadBitsCompress(const uint8_t *from, uint8_t *to, int size)
+int __cdecl MSG_ReadBitsCompress(const uint8_t *from, int fromSize, uint8_t *to, int toSize)
 {
-    int bit; // [esp+0h] [ebp-14h] BYREF
-    uint8_t *data; // [esp+4h] [ebp-10h]
-    int bits; // [esp+8h] [ebp-Ch]
-    int i; // [esp+Ch] [ebp-8h]
-    int get; // [esp+10h] [ebp-4h] BYREF
-
-    bits = 8 * size;
-    i = 0;
-    data = to;
-    bit = 0;
-    while (bit < bits)
-    {
-        Huff_offsetReceive(msgHuff.compressDecompress.tree, &get, from, &bit);
-        *data++ = get;
-    }
-    return data - to;
+    return Huff_Decompress(msgHuff.compressDecompress.tree, from, fromSize, to, toSize);
 }
 
 void __cdecl MSG_WriteByte(msg_t *msg, uint8_t c)
@@ -910,13 +891,10 @@ int __cdecl MSG_ReadEntityIndex(msg_t *msg, uint32_t indexBits)
     if (msg_printEntityNums->current.enabled)
         Com_Printf(16, "Read entity num %i\n", msg->lastEntityRef);
     if (msg->lastEntityRef < 0)
-        MyAssertHandler(
-            ".\\qcommon\\msg_mp.cpp",
-            1309,
-            0,
-            "%s\n\t(msg->lastEntityRef) = %i",
-            "(msg->lastEntityRef >= 0)",
-            msg->lastEntityRef);
+    {
+        msg->overflowed = 1;
+        return 0;
+    }
     return msg->lastEntityRef;
 }
 
@@ -1228,13 +1206,10 @@ int __cdecl MSG_Read24BitFlag(msg_t *msg, int oldFlags)
     {
         bitChanged = MSG_ReadBits(msg, 5u);
         if (bitChanged > 0x18)
-            MyAssertHandler(
-                ".\\qcommon\\msg_mp.cpp",
-                1189,
-                0,
-                "%s\n\t(bitChanged) = %i",
-                "(bitChanged >= 0 && bitChanged <= 24)",
-                bitChanged);
+        {
+            msg->overflowed = 1;
+            return oldFlags;
+        }
         return oldFlags ^ (1 << bitChanged);
     }
     return value;
@@ -1364,16 +1339,15 @@ int __cdecl MSG_ReadDeltaEntityStruct(msg_t *msg, int time, char *from, char *to
 
 int __cdecl MSG_ReadLastChangedField(msg_t *msg, int totalFields)
 {
-    const char *v2; // eax
     int lastChanged; // [esp+0h] [ebp-8h]
     uint32_t idealBits; // [esp+4h] [ebp-4h]
 
     idealBits = GetMinBitCountForNum(totalFields);
     lastChanged = MSG_ReadBits(msg, idealBits);
-    if (lastChanged > totalFields)
+    if (lastChanged < 0 || lastChanged > totalFields)
     {
-        v2 = va("lastChanged was %i, totalFields is %i\n", lastChanged, totalFields);
-        MyAssertHandler(".\\qcommon\\msg_mp.cpp", 1321, 0, "%s\n\t%s", "lastChanged <= totalFields", v2);
+        msg->overflowed = 1;
+        return 0;
     }
     return lastChanged;
 }
@@ -1545,6 +1519,11 @@ static void __cdecl MSG_ReadDeltaHudElems(msg_t *msg, int time, const hudelem_s 
     for (int i = 0; i < inuse; ++i)
     {
         lc = MSG_ReadBits(msg, 6);
+        if (lc >= static_cast<uint32_t>(numHudElemFields))
+        {
+            msg->overflowed = 1;
+            return;
+        }
 
         for (j = 0; j <= lc; ++j)
             MSG_ReadDeltaField(msg, time, (const char *)&from[i], (char *)&to[i], &hudElemFields[j], 0, 0);
@@ -2101,4 +2080,3 @@ void __cdecl MSG_DumpNetFieldChanges_f()
     Com_Printf(0, "========================================\n");
     Com_Printf(0, "========================================\n");
 }
-

@@ -1,6 +1,8 @@
 #include "huffman.h"
 #include <universal/assertive.h>
-#include <universal/q_shared.h>
+#include <climits>
+#include <cstdlib>
+#include <cstring>
 
 int bloc;
 
@@ -13,25 +15,66 @@ int __cdecl get_bit(const uint8_t *fin)
     return t;
 }
 
-void __cdecl Huff_offsetReceive(nodetype *node, int *ch, const uint8_t *fin, int *offset)
+bool __cdecl Huff_offsetReceive(nodetype *node, int *ch, const uint8_t *fin, int *offset, int maxoffset)
 {
-    bloc = *offset;
+    int bit = *offset;
+
     while (node && node->symbol == 257)
     {
-        if (get_bit(fin))
+        if (bit >= maxoffset)
+            return false;
+        if ((fin[bit >> 3] >> (bit & 7)) & 1)
             node = node->right;
         else
             node = node->left;
+        ++bit;
     }
     if (node)
     {
         *ch = node->symbol;
-        *offset = bloc;
+        *offset = bit;
+        return true;
     }
-    else
+    return false;
+}
+
+int __cdecl Huff_Decompress(nodetype *tree, const uint8_t *from, int fromSize, uint8_t *to, int toSize)
+{
+    if (!tree || !from || !to || fromSize < 0 || toSize < 0 || fromSize > INT_MAX / 8)
+        return -1;
+
+    const int maxoffset = 8 * fromSize;
+    int offset = 0;
+    int written = 0;
+    while (offset < maxoffset)
     {
-        *ch = 0;
+        int symbol;
+        if (!Huff_offsetReceive(tree, &symbol, from, &offset, maxoffset))
+            break;
+        if (symbol < 0 || symbol > 255 || written == toSize)
+            return -1;
+        to[written++] = static_cast<uint8_t>(symbol);
     }
+    return written;
+}
+
+int __cdecl Huff_Compress(huff_t *huff, const uint8_t *from, int fromSize, uint8_t *to, int toSize)
+{
+    if (!huff || !from || !to || fromSize < 0 || toSize < 0)
+        return -1;
+
+    uint64_t requiredBits = 0;
+    for (int i = 0; i < fromSize; ++i)
+    {
+        requiredBits += Huff_bitCount(huff, from[i]);
+        if (requiredBits > static_cast<uint64_t>(toSize) * 8)
+            return -1;
+    }
+
+    int bit = 0;
+    for (int i = 0; i < fromSize; ++i)
+        Huff_offsetTransmit(huff, from[i], to, &bit);
+    return (bit + 7) >> 3;
 }
 
 void __cdecl huffman_send(nodetype *node, nodetype *child, uint8_t *fout)
@@ -85,8 +128,7 @@ void __cdecl Huff_offsetTransmit(huff_t *huff, int ch, uint8_t *fout, int *offse
 
 void __cdecl Huff_Init(huffman_t *huff)
 {
-    //Com_Memset((uint32_t *)huff, 0, 19476);
-    Com_Memset((uint32_t *)huff, 0, sizeof(huffman_t));
+    std::memset(huff, 0, sizeof(*huff));
     huff->compressDecompress.loc[256] = &huff->compressDecompress.nodeList[huff->compressDecompress.blocNode++];
     huff->compressDecompress.tree = huff->compressDecompress.loc[256];
     huff->compressDecompress.tree->symbol = 256;
@@ -106,13 +148,21 @@ nodetype *__cdecl Huff_initNode(huff_t *huff, int ch, int weight)
     tnode->left = 0;
     tnode->right = 0;
     tnode->parent = 0;
-    huff->loc[ch] = tnode;
+    if (ch >= 0 && ch < static_cast<int>(sizeof(huff->loc) / sizeof(huff->loc[0])))
+        huff->loc[ch] = tnode;
     return tnode;
 }
 
 int __cdecl nodeCmp(const void *left, const void *right)
 {
-    return *(uint32_t *)(*(uint32_t *)left + 12) - *(uint32_t *)(*(uint32_t *)right + 12);
+    const nodetype *leftNode = *static_cast<nodetype *const *>(left);
+    const nodetype *rightNode = *static_cast<nodetype *const *>(right);
+
+    if (leftNode->weight < rightNode->weight)
+        return -1;
+    if (leftNode->weight > rightNode->weight)
+        return 1;
+    return 0;
 }
 
 void __cdecl Huff_BuildFromData(huff_t *huff, const int *msg_hData)
@@ -132,7 +182,7 @@ void __cdecl Huff_BuildFromData(huff_t *huff, const int *msg_hData)
         inited = Huff_initNode(huff, i, msg_hData[i]);
         heap[i] = inited;
     }
-    qsort(heap, 0x100u, 4u, nodeCmp);
+    qsort(heap, 0x100u, sizeof(heap[0]), nodeCmp);
     v3 = Huff_initNode(huff, 257, 1);
     v3->left = huff->tree;
     v3->right = heap[0];
@@ -142,7 +192,7 @@ void __cdecl Huff_BuildFromData(huff_t *huff, const int *msg_hData)
     heap[0] = v3;
     while (numNodes > 1)
     {
-        qsort(&heap[heapHead], 256 - heapHead, 4u, nodeCmp);
+        qsort(&heap[heapHead], 256 - heapHead, sizeof(heap[0]), nodeCmp);
         v4 = Huff_initNode(huff, 257, 1);
         v4->left = heap[heapHead];
         v4->right = heap[heapHead + 1];
@@ -154,4 +204,3 @@ void __cdecl Huff_BuildFromData(huff_t *huff, const int *msg_hData)
     }
     huff->tree = heap[heapHead];
 }
-

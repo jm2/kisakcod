@@ -329,7 +329,9 @@ sval_u __cdecl debugger_buffer(Enum_t type, char *buf, uint32_t size, int alignm
         MyAssertHandler((char *)".\\script\\scr_parsetree.cpp", 594, 0, "%s", "IsPowerOf2( alignment )");
     alignmenta = alignment - 1;
     result = Scr_AllocDebugExpr(type, size + alignmenta + 8, "debugger_buffer");
-    bufCopy = (uint8_t *)(~alignmenta & ((uint32_t)&result[2] + alignmenta));
+    bufCopy = reinterpret_cast<uint8_t *>(
+        ~static_cast<uintptr_t>(alignmenta) &
+        (reinterpret_cast<uintptr_t>(&result[2]) + alignmenta));
     memcpy(bufCopy, (uint8_t *)buf, size);
     result[1].intValue = (int)bufCopy;
     return *result; // sus deref
@@ -339,4 +341,3 @@ sval_u __cdecl debugger_string(Enum_t type, char *s)
 {
     return debugger_buffer(type, s, strlen(s) + 1, 1);
 }
-

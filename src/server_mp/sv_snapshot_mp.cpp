@@ -1326,9 +1326,15 @@ void __cdecl SV_SendMessageToClient(msg_t *msg, client_t *client)
     compressedSize = MSG_WriteBitsCompress(
         client->header.state == 4,
         (const uint8_t *)msg->data + 4,
+        msg->cursize - 4,
         svCompressedBuf + 4,
-        msg->cursize - 4)
-        + 4;
+        sizeof(svCompressedBuf) - 4);
+    if (compressedSize < 0)
+    {
+        Com_Error(ERR_DROP, "Server message did not fit the compressed buffer");
+        return;
+    }
+    compressedSize += 4;
     if (client->header.netchan.remoteAddress.type != NA_LOOPBACK)
         SV_TrackPacketCompression(client - svs.clients, msg->cursize, compressedSize);
     if (client->dropReason)
@@ -2035,4 +2041,3 @@ void __cdecl SV_SendClientMessages()
     if (sv_debugPacketContents->current.enabled || net_showprofile->current.integer)
         SV_EnablePacketData();
 }
-

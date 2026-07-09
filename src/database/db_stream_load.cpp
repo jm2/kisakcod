@@ -1,4 +1,19 @@
 #include "database.h"
+#include "db_disk32.h"
+#include <qcommon/qcommon.h>
+
+#include <cstring>
+
+namespace
+{
+bool DB_DecodeOffset(uint32_t value, uint32_t requiredBytes, disk32::DecodedOffset *decoded)
+{
+    uint32_t blockSizes[9];
+    for (uint32_t i = 0; i < 9; ++i)
+        blockSizes[i] = g_streamZoneMem->blocks[i].size;
+    return disk32::DecodeOffset({value}, blockSizes, 9, requiredBytes, decoded);
+}
+}
 
 
 void __cdecl Load_Stream(bool atStreamStart, uint8_t *ptr, int32_t size)
@@ -44,16 +59,45 @@ void __cdecl Load_DelayStream()
 
 void __cdecl DB_ConvertOffsetToAlias(uint32_t *data)
 {
-    uint32_t offset; // [esp+0h] [ebp-8h]
-
-    offset = *data;
-    iassert((offset && (offset != -1) && (offset != -2)));
-    *data = *(uint32_t *)&g_streamZoneMem->blocks[(offset - 1) >> 28].data[(offset - 1) & 0xFFFFFFF];
+    disk32::DecodedOffset decoded{};
+    if (!data || !g_streamZoneMem || !DB_DecodeOffset(*data, sizeof(uint32_t), &decoded))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file alias offset");
+        return;
+    }
+    if (!g_streamZoneMem->blocks[decoded.block].data)
+    {
+        Com_Error(ERR_DROP, "Fast-file alias references an unloaded block");
+        return;
+    }
+    std::memcpy(
+        data,
+        &g_streamZoneMem->blocks[decoded.block].data[decoded.offset],
+        sizeof(*data));
 }
 
 void __cdecl DB_ConvertOffsetToPointer(uint32_t *data)
 {
-    *data = (uint32_t)&g_streamZoneMem->blocks[(uint32_t)(*data - 1) >> 28].data[(*data - 1) & 0xFFFFFFF];
+    disk32::DecodedOffset decoded{};
+    if (!data || !g_streamZoneMem || !DB_DecodeOffset(*data, 1, &decoded))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file pointer offset");
+        return;
+    }
+    if (!g_streamZoneMem->blocks[decoded.block].data)
+    {
+        Com_Error(ERR_DROP, "Fast-file pointer references an unloaded block");
+        return;
+    }
+
+    const uintptr_t pointer = reinterpret_cast<uintptr_t>(
+        &g_streamZoneMem->blocks[decoded.block].data[decoded.offset]);
+    if (pointer > UINT32_MAX)
+    {
+        Com_Error(ERR_DROP, "Fast-file pointer does not fit the 32-bit runtime");
+        return;
+    }
+    *data = static_cast<uint32_t>(pointer);
 }
 
 void __cdecl Load_XStringCustom(char **str)
@@ -82,4 +126,3 @@ void __cdecl Load_TempStringCustom(char **str)
         string= 0;
     *str = (char *)string;
 }
-

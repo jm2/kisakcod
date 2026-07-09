@@ -17,7 +17,7 @@ void __cdecl SV_UnmutePlayer_f(client_t *cl)
 
     v1 = SV_Cmd_Argv(1);
     otherClient = atoi(v1);
-    if (otherClient <= 0x40)
+    if (otherClient < ARRAY_COUNT(cl->muteList))
         cl->muteList[otherClient] = 0;
     else
         Com_Printf(0, "Invalid unmute client %i\n", otherClient);
@@ -30,7 +30,7 @@ void __cdecl SV_MutePlayer_f(client_t *cl)
 
     v1 = SV_Cmd_Argv(1);
     otherClient = atoi(v1);
-    if (otherClient <= 0x40)
+    if (otherClient < ARRAY_COUNT(cl->muteList))
         cl->muteList[otherClient] = 1;
     else
         Com_Printf(0, "Invalid mute client %i\n", otherClient);

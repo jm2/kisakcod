@@ -56,13 +56,13 @@ void __cdecl FreeString(const char* str);
 void Com_InitHunkMemory();
 void __cdecl Com_Meminfo_f();
 
-struct HunkUser // sizeof=0x24
+struct HunkUser // x86 retail layout was sizeof=0x24; runtime pointers widen on 64-bit
 {
     HunkUser* current;
     HunkUser* next;
     int maxSize;
-    int end;
-    int pos;
+    uintptr_t end;
+    uintptr_t pos;
     const char* name;
     bool fixed;
     bool tempMem;
@@ -93,7 +93,7 @@ void Hunk_Clear();
 int __cdecl Hunk_Used();
 uint8_t* __cdecl Hunk_Alloc(uint32_t size, const char* name, int type);
 uint8_t* __cdecl Hunk_AllocAlign(uint32_t size, int alignment, const char* name, int type);
-uint32_t __cdecl Hunk_AllocateTempMemoryHigh(int size, const char* name);
+void* __cdecl Hunk_AllocateTempMemoryHigh(int size, const char* name);
 void Hunk_ClearTempMemoryHigh();
 uint8_t* __cdecl Hunk_AllocLow(uint32_t size, const char* name, int type);
 uint8_t* __cdecl Hunk_AllocLowAlign(uint32_t size, int alignment, const char* name, int type);

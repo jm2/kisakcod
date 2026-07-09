@@ -1,13 +1,54 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(KisakCOD)
+project(KisakCOD LANGUAGES C CXX)
 
 # Set the default C++ standard
 set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Set this to match the folder name in scripts/platform
-# This will handle the path overrides if needed
-set(KISAK_PLATFORM win32)
+option(KISAK_BUILD_MP "Build the multiplayer client" ON)
+option(KISAK_BUILD_DEDICATED "Build the multiplayer dedicated server" ON)
+option(KISAK_BUILD_SP "Build the incomplete single-player client" OFF)
+option(KISAK_ALLOW_UNSUPPORTED_64BIT "Allow configuration of the in-progress 64-bit ABI port" OFF)
+include(CTest)
+
+if (WIN32)
+    set(_KISAK_DEFAULT_PLATFORM win32)
+elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(_KISAK_DEFAULT_PLATFORM linux)
+elseif (APPLE)
+    set(_KISAK_DEFAULT_PLATFORM macos)
+else()
+    message(FATAL_ERROR "Unsupported host platform: ${CMAKE_SYSTEM_NAME}")
+endif()
+set(KISAK_PLATFORM "${_KISAK_DEFAULT_PLATFORM}" CACHE STRING "KisakCOD platform backend")
+set_property(CACHE KISAK_PLATFORM PROPERTY STRINGS win32 linux macos)
+
+if (NOT KISAK_PLATFORM STREQUAL _KISAK_DEFAULT_PLATFORM)
+    message(FATAL_ERROR
+        "KISAK_PLATFORM='${KISAK_PLATFORM}' does not match host platform "
+        "'${_KISAK_DEFAULT_PLATFORM}'. Cross-compilation toolchains must set "
+        "CMAKE_SYSTEM_NAME consistently.")
+endif()
+
+if (NOT KISAK_PLATFORM STREQUAL "win32"
+    AND (KISAK_BUILD_MP OR KISAK_BUILD_DEDICATED OR KISAK_BUILD_SP))
+    message(FATAL_ERROR
+        "The ${KISAK_PLATFORM} backend is not buildable yet. The platform selection "
+        "and source override infrastructure is present, but the headless source split, "
+        "POSIX system services, and client Vulkan renderer must land before engine "
+        "targets can compile.")
+endif()
+
+if (CMAKE_SIZEOF_VOID_P EQUAL 8
+    AND (KISAK_BUILD_MP OR KISAK_BUILD_DEDICATED OR KISAK_BUILD_SP)
+    AND NOT KISAK_ALLOW_UNSUPPORTED_64BIT)
+    message(FATAL_ERROR
+        "The runtime still embeds the 32-bit ABI in fast-file and script VM layouts. "
+        "Use a Win32 generator today. Set KISAK_ALLOW_UNSUPPORTED_64BIT=ON only when "
+        "working on the disk32/runtime64 conversion.")
+endif()
 
 # Set Address Sanitizer
 # NOTE: If you use this you will need to copy to the game's directory
@@ -34,7 +75,16 @@ include(${SCRIPTS_DIR}/platform_override.cmake)
 # Log out the KISAK_PLATFORM
 message("Building KISAK_PLATFORM: ${KISAK_PLATFORM}")
 
-# Include the subprojects
-add_subdirectory(${SCRIPTS_DIR}/mp)
-add_subdirectory(${SCRIPTS_DIR}/sp)
-add_subdirectory(${SCRIPTS_DIR}/dedi)
+# Include the requested subprojects.
+if (KISAK_BUILD_MP)
+    add_subdirectory(${SCRIPTS_DIR}/mp)
+endif()
+if (KISAK_BUILD_DEDICATED)
+    add_subdirectory(${SCRIPTS_DIR}/dedi)
+endif()
+if (KISAK_BUILD_SP)
+    add_subdirectory(${SCRIPTS_DIR}/sp)
+endif()
+if (BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

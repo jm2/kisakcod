@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <universal/platform_compat.h>
 
 struct nodetype // sizeof=0x14
 {                                       // ...
@@ -27,7 +28,9 @@ struct huffman_t // sizeof=0x4C14
 };
 
 int __cdecl get_bit(const uint8_t *fin);
-void __cdecl Huff_offsetReceive(nodetype *node, int *ch, const uint8_t *fin, int *offset);
+bool __cdecl Huff_offsetReceive(nodetype *node, int *ch, const uint8_t *fin, int *offset, int maxoffset);
+int __cdecl Huff_Decompress(nodetype *tree, const uint8_t *from, int fromSize, uint8_t *to, int toSize);
+int __cdecl Huff_Compress(huff_t *huff, const uint8_t *from, int fromSize, uint8_t *to, int toSize);
 void __cdecl huffman_send(nodetype *node, nodetype *child, uint8_t *fout);
 void __cdecl add_bit(char bit, uint8_t *fout);
 int __cdecl huffman_bitCountForNode(nodetype *node, nodetype *child);

@@ -10,6 +10,13 @@ Aimed towards mod developers and COD4 enthusiasts.
 ### Development Blog
 Learn about the Development of KisakCOD here: [https://lwss.github.io/Duty-Of-Kisak/](https://lwss.github.io/Duty-Of-Kisak/)
 
+## Current build support
+
+The engine currently produces Windows x86 multiplayer client and dedicated
+server binaries. Win64, Windows ARM64, Linux amd64/arm64, and macOS arm64 are
+active port targets; they are not yet runnable engine builds. See
+[the porting plan](docs/PORTING.md) and [codebase audit](docs/CODEBASE_AUDIT.md).
+
 ## Current Requirements
 - Windows OS
 - Visual Studio 2022
@@ -19,14 +26,26 @@ Learn about the Development of KisakCOD here: [https://lwss.github.io/Duty-Of-Ki
 
 
 ## How to build
-1) Install the above requirements and Clone repo
-2) Open a terminal and run `generate-project.bat`
-3) Open .sln projects that are generated in `build-sp`, `build-mp`, and `build-dedi` respectively. 
-4) Copy COD4 Game files to `bin/(BUILD_TYPE)/*` (Don't try to cherry-pick them, small files like localization.txt are needed)
-5) Copy `deps/binklib/binkw32.dll` as well ^^
-6) Copy all files in `deps/msslib/dlls/*` ^^ 
-7) Copy `deps/steamsdk/steam_api.dll`  ^^
-8) Run the game via Visual Studio play button or just the .exe
+
+1. Install the requirements and clone the repository.
+2. From PowerShell in the repository root, run `.\build-win.ps1`.
+3. Copy the complete licensed COD4 data installation beside the binaries in
+   `bin\Debug` or set up the equivalent game base path. Do not omit support
+   files such as `localization.txt`.
+4. Run `KisakCOD-mp.exe` or `KisakCOD-dedi.exe`.
+
+The build copies the required Miles and Steam runtime DLLs automatically.
+Use `Get-Help .\build-win.ps1 -Detailed` for configuration, target, and clean
+build options. Single-player is excluded by default because it is incomplete.
+
+Portable utility tests can be built on Linux without licensed game data:
+
+```sh
+cmake -S . -B build-tests \
+  -DKISAK_BUILD_MP=OFF -DKISAK_BUILD_DEDICATED=OFF -DKISAK_BUILD_SP=OFF
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
+```
 
 
 ```
