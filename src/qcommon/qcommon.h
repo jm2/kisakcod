@@ -1582,7 +1582,7 @@ inline T Buf_Read(unsigned char **pos)
 // IDA shows inline `fistp` with no nearby `_ftol2_sse` call.
 inline int SnapFloatToInt(float x)
 {
-#if defined(KISAK_PURE) && defined(_WIN32)
+#if defined(KISAK_PURE) && defined(_MSC_VER) && defined(_M_IX86)
     int i;
     __asm fld x;
     __asm fistp i;
@@ -1591,7 +1591,7 @@ inline int SnapFloatToInt(float x)
 
     int retval = _mm_cvtss_si32(_mm_set_ss(x));
 
-#if defined(_DEBUG) && defined(_WIN32)
+#if defined(_DEBUG) && defined(_MSC_VER) && defined(_M_IX86)
     const float input = x;
     int32_t output{};
 
