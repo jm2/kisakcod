@@ -3,9 +3,13 @@
 #include <universal/q_shared.h>
 
 #ifdef KISAK_MP
+#ifndef KISAK_DEDI_HEADLESS
 #include <cgame_mp/cg_local_mp.h>
+#endif
 #include <game_mp/g_main_mp.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <client_mp/client_mp.h>
+#endif
 #elif KISAK_SP
 #include <server/server.h>
 #include <bgame/bg_local.h>
