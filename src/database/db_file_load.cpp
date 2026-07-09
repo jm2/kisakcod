@@ -1,4 +1,5 @@
 #include "database.h"
+#include "db_validation.h"
 
 #include <qcommon/threads.h>
 #include <win32/win_local.h>
@@ -32,35 +33,147 @@ LONG g_loadedExternalBytes;
 volatile int32_t g_totalSize;
 volatile int32_t g_totalExternalBytes;
 int32_t g_trackLoadProgress;
+volatile LONG g_fileReadComplete;
+volatile LONG g_fileReadError;
+volatile LONG g_fileReadBytes;
+bool g_fileReadEof;
+bool g_inflateInitialized;
+bool g_inflateStreamEnded;
 
 XAssetList g_varXAssetList;
 
+static int32_t DB_WaitXFileStageInternal();
+
 void __cdecl DB_CancelLoadXFile()
 {
-    if (g_load.compressBufferStart)
+    while (g_load.outstandingReads > 0)
+        DB_WaitXFileStageInternal();
+
+    if (g_inflateInitialized)
     {
-        while (g_load.outstandingReads)
-            DB_WaitXFileStage();
         DB_AuthLoad_InflateEnd(&g_load.stream);
-        if (!g_load.f)
-            MyAssertHandler(".\\database\\db_file_load.cpp", 165, 0, "%s", "g_load.f");
-        CloseHandle(g_load.f);
+        g_inflateInitialized = false;
     }
+    if (g_load.f)
+    {
+        CloseHandle(g_load.f);
+        g_load.f = nullptr;
+    }
+    g_load.compressBufferStart = nullptr;
+    g_load.compressBufferEnd = nullptr;
+    g_load.stream.next_in = nullptr;
+    g_load.stream.avail_in = 0;
+    g_load.stream.next_out = nullptr;
+    g_load.stream.avail_out = 0;
+    g_fileReadEof = false;
+    g_inflateStreamEnded = false;
+}
+
+static int32_t DB_WaitXFileStageInternal()
+{
+    if (!g_load.f || g_load.f == INVALID_HANDLE_VALUE || g_load.outstandingReads <= 0)
+    {
+        g_load.outstandingReads = 0;
+        return 0;
+    }
+
+    bool cancelRequested = false;
+    while (!InterlockedCompareExchange(&g_fileReadComplete, 0, 0))
+    {
+        const DWORD waitResult = SleepEx(30000u, TRUE);
+        if (InterlockedCompareExchange(&g_fileReadComplete, 0, 0))
+            break;
+
+        if (waitResult == 0)
+        {
+            if (cancelRequested)
+            {
+                g_load.outstandingReads = 0;
+                Com_Error(
+                    ERR_FATAL,
+                    "Timed out cancelling fast-file read for '%s' (error %lu)",
+                    g_load.filename,
+                    static_cast<unsigned long>(ERROR_TIMEOUT));
+                return 0;
+            }
+            if (!CancelIo(g_load.f))
+            {
+                const DWORD cancelError = GetLastError();
+                g_load.outstandingReads = 0;
+                Com_Error(
+                    ERR_FATAL,
+                    "Could not cancel fast-file read for '%s' (error %lu)",
+                    g_load.filename,
+                    cancelError);
+                return 0;
+            }
+            cancelRequested = true;
+        }
+        else if (waitResult == WAIT_FAILED)
+        {
+            const DWORD waitError = GetLastError();
+            g_load.outstandingReads = 0;
+            Com_Error(
+                ERR_FATAL,
+                "Fast-file read wait failed for '%s' (error %lu)",
+                g_load.filename,
+                waitError);
+            return 0;
+        }
+    }
+
+    --g_load.outstandingReads;
+    const LONG readError = InterlockedCompareExchange(&g_fileReadError, 0, 0);
+    const LONG readBytes = InterlockedCompareExchange(&g_fileReadBytes, 0, 0);
+    if (readError != ERROR_SUCCESS && readError != ERROR_HANDLE_EOF)
+    {
+        g_fileReadEof = true;
+        return 0;
+    }
+    if (readBytes < 0 || readBytes > 0x40000
+        || !db::validation::CanAppendBytes(
+            g_load.stream.avail_in,
+            static_cast<uint32_t>(readBytes),
+            0x80000u))
+    {
+        g_fileReadEof = true;
+        return 0;
+    }
+
+    if (readBytes)
+        InterlockedIncrement(&g_loadedSize);
+    g_load.stream.avail_in += static_cast<uint32_t>(readBytes);
+
+    if (readError == ERROR_HANDLE_EOF || readBytes < 0x40000)
+    {
+        g_fileReadEof = true;
+    }
+    else
+    {
+        ULARGE_INTEGER fileOffset;
+        fileOffset.LowPart = g_load.overlapped.Offset;
+        fileOffset.HighPart = g_load.overlapped.OffsetHigh;
+        fileOffset.QuadPart += 0x40000;
+        g_load.overlapped.Offset = fileOffset.LowPart;
+        g_load.overlapped.OffsetHigh = fileOffset.HighPart;
+    }
+    return readBytes;
 }
 
 int32_t DB_WaitXFileStage()
 {
-    int32_t result; // eax
-
-    if (!g_load.f)
-        MyAssertHandler(".\\database\\db_file_load.cpp", 278, 0, "%s", "g_load.f");
-    if (g_load.outstandingReads <= 0)
-        MyAssertHandler(".\\database\\db_file_load.cpp", 280, 0, "%s", "g_load.outstandingReads > 0");
-    --g_load.outstandingReads;
-    SleepEx(0xFFFFFFFF, 1);
-    result = InterlockedIncrement(&g_loadedSize);
-    g_load.stream.avail_in += 0x40000;
-    return result;
+    const int32_t readBytes = DB_WaitXFileStageInternal();
+    if (readBytes <= 0)
+    {
+        const LONG readError = InterlockedCompareExchange(&g_fileReadError, 0, 0);
+        DB_CancelLoadXFile();
+        if (readError != ERROR_SUCCESS && readError != ERROR_HANDLE_EOF)
+            Com_Error(ERR_DROP, "Read error %ld for fast-file '%s'", readError, g_load.filename);
+        else
+            Com_Error(ERR_DROP, "Fast-file '%s' ended unexpectedly", g_load.filename);
+        return 0;
+    }
+    return readBytes;
 }
 
 void __cdecl DB_LoadedExternalData(int32_t size)
@@ -92,59 +205,115 @@ double __cdecl DB_GetLoadedFraction()
 
 void __cdecl DB_LoadXFileData(uint8_t *pos, uint32_t size)
 {
-    const char *v2; // eax
-    uint32_t err; // [esp+0h] [ebp-4h]
-
-    iassert(size);
-    iassert(g_load.f);
-    iassert(!g_load.stream.avail_out);
+    if (!pos || !size || !g_load.f || !g_inflateInitialized
+        || g_inflateStreamEnded || g_load.stream.avail_out)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file output request for zone '%s'", g_load.filename);
+        return;
+    }
 
     g_load.stream.next_out = pos;
     g_load.stream.avail_out = size;
-    while (1)
+    while (g_load.stream.avail_out)
     {
         if (!g_load.stream.avail_in)
-            goto LABEL_19;
-        err = DB_AuthLoad_Inflate(&g_load.stream, 2);
-        if (err >= 2)
+        {
+            if (g_load.outstandingReads <= 0 || DB_WaitXFileStageInternal() <= 0)
+            {
+                const LONG readError = InterlockedCompareExchange(&g_fileReadError, 0, 0);
+                DB_CancelLoadXFile();
+                if (readError != ERROR_SUCCESS && readError != ERROR_HANDLE_EOF)
+                    Com_Error(ERR_DROP, "Read error %ld for fast-file '%s'", readError, g_load.filename);
+                else
+                    Com_Error(ERR_DROP, "Fastfile for zone '%s' ended unexpectedly.", g_load.filename);
+                return;
+            }
+            DB_ReadXFileStage();
+        }
+
+        const uintptr_t bufferStart = reinterpret_cast<uintptr_t>(g_load.compressBufferStart);
+        const uintptr_t bufferEnd = reinterpret_cast<uintptr_t>(g_load.compressBufferEnd);
+        const uintptr_t nextIn = reinterpret_cast<uintptr_t>(g_load.stream.next_in);
+        if (!bufferStart || bufferEnd < bufferStart || bufferEnd - bufferStart != 0x80000u
+            || !db::validation::SpanWithinBlock(
+                bufferStart,
+                0x80000u,
+                nextIn,
+                g_load.stream.avail_in))
+        {
+            DB_CancelLoadXFile();
+            Com_Error(ERR_DROP, "Fast-file input span escaped its read buffer");
+            return;
+        }
+
+        const uint32_t previousAvailIn = g_load.stream.avail_in;
+        const uint32_t previousAvailOut = g_load.stream.avail_out;
+        const int32_t err = static_cast<int32_t>(DB_AuthLoad_Inflate(&g_load.stream, 2));
+        if (err != Z_OK && err != Z_STREAM_END)
         {
             KISAK_NULLSUB();
             DB_CancelLoadXFile();
-            Com_Error(ERR_DROP, "Fastfile for zone '%s' appears corrupt or unreadable (code %i.)", g_load.filename, err + 110);
+            Com_Error(
+                ERR_DROP,
+                "Fastfile for zone '%s' appears corrupt or unreadable (code %i.)",
+                g_load.filename,
+                err);
+            return;
         }
+
         if (g_load.f)
         {
-            if ((uint32_t)(g_load.stream.next_in - g_load.compressBufferStart) > 0x80000)
-                MyAssertHandler(
-                    ".\\database\\db_file_load.cpp",
-                    392,
-                    0,
-                    "%s",
-                    "static_cast< unsigned >( g_load.stream.next_in - g_load.compressBufferStart ) <= FILE_BUFFER_SIZE * 2");
+            const uintptr_t updatedNextIn = reinterpret_cast<uintptr_t>(g_load.stream.next_in);
+            if (!db::validation::SpanWithinBlock(bufferStart, 0x80000u, updatedNextIn, 0))
+            {
+                DB_CancelLoadXFile();
+                Com_Error(ERR_DROP, "Fast-file input cursor escaped its read buffer");
+                return;
+            }
             if (g_load.stream.next_in == g_load.compressBufferEnd)
                 g_load.stream.next_in = g_load.compressBufferStart;
         }
-        if (!g_load.stream.avail_out)
-            break;
-        if (err)
+
+        if (err == Z_STREAM_END && g_load.stream.avail_out)
         {
-            v2 = va("Invalid fast file '%s' (%d != Z_OK)", g_load.filename, err);
-            MyAssertHandler(".\\database\\db_file_load.cpp", 402, 0, "%s\n\t%s", "err == Z_OK", v2);
+            DB_CancelLoadXFile();
+            Com_Error(ERR_DROP, "Fastfile for zone '%s' has truncated output.", g_load.filename);
+            return;
         }
-    LABEL_19:
-        DB_WaitXFileStage();
-        DB_ReadXFileStage();
+        if (err == Z_STREAM_END)
+            g_inflateStreamEnded = true;
+        else if (g_load.stream.avail_in == previousAvailIn
+            && g_load.stream.avail_out == previousAvailOut)
+        {
+            DB_CancelLoadXFile();
+            Com_Error(ERR_DROP, "Fastfile for zone '%s' made no decompression progress.", g_load.filename);
+            return;
+        }
     }
 }
 
 void DB_ReadXFileStage()
 {
-    if (g_load.f)
+    if (g_load.f && !g_fileReadEof)
     {
         if (g_load.outstandingReads)
-            MyAssertHandler(".\\database\\db_file_load.cpp", 254, 0, "%s", "!g_load.outstandingReads");
-        if (!DB_ReadData() && GetLastError() != 38)
-            Com_Error(ERR_DROP, "Read error of file '%s'", g_load.filename);
+        {
+            DB_CancelLoadXFile();
+            Com_Error(ERR_DROP, "Fast-file read already outstanding for zone '%s'", g_load.filename);
+            return;
+        }
+        if (!DB_ReadData())
+        {
+            const DWORD readError = GetLastError();
+            if (readError == ERROR_HANDLE_EOF)
+            {
+                g_fileReadEof = true;
+                return;
+            }
+            DB_CancelLoadXFile();
+            Com_Error(ERR_DROP, "Read error %lu of file '%s'", readError, g_load.filename);
+            return;
+        }
     }
 }
 
@@ -152,18 +321,27 @@ int32_t __cdecl DB_ReadData()
 {
     uint8_t *fileBuffer; // [esp+0h] [ebp-4h]
 
-    if (!g_load.compressBufferStart)
-        MyAssertHandler(".\\database\\db_file_load.cpp", 188, 0, "%s", "g_load.compressBufferStart");
-    if (!g_load.f)
-        MyAssertHandler(".\\database\\db_file_load.cpp", 189, 0, "%s", "g_load.f");
+    if (!g_load.compressBufferStart || !g_load.compressBufferEnd
+        || !g_load.f || g_load.f == INVALID_HANDLE_VALUE)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
     if (g_load.interrupt)
         g_load.interrupt();
+    if (!g_load.f)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return 0;
+    }
     fileBuffer = &g_load.compressBufferStart[g_load.overlapped.Offset % 0x80000];
     Sys_WaitDatabaseThread();
+    InterlockedExchange(&g_fileReadComplete, FALSE);
+    InterlockedExchange(&g_fileReadError, ERROR_SUCCESS);
+    InterlockedExchange(&g_fileReadBytes, 0);
     if (!ReadFileEx(g_load.f, fileBuffer, 0x40000u, &g_load.overlapped, (LPOVERLAPPED_COMPLETION_ROUTINE)DB_FileReadCompletion))
         return 0;
     ++g_load.outstandingReads;
-    g_load.overlapped.Offset += 0x40000;
     return 1;
 }
 
@@ -172,7 +350,17 @@ void __stdcall DB_FileReadCompletion(
     uint32_t dwNumberOfBytesTransfered,
     _OVERLAPPED *lpOverlapped)
 {
-    ;
+    if (lpOverlapped != &g_load.overlapped || dwNumberOfBytesTransfered > 0x40000)
+    {
+        InterlockedExchange(&g_fileReadError, ERROR_INVALID_DATA);
+        InterlockedExchange(&g_fileReadBytes, 0);
+    }
+    else
+    {
+        InterlockedExchange(&g_fileReadError, static_cast<LONG>(dwErrorCode));
+        InterlockedExchange(&g_fileReadBytes, static_cast<LONG>(dwNumberOfBytesTransfered));
+    }
+    InterlockedExchange(&g_fileReadComplete, TRUE);
 }
 
 void __cdecl DB_LoadDelayedImages()
@@ -207,50 +395,72 @@ void __cdecl DB_LoadXFileInternal()
     bool fileIsSecure; // [esp+Fh] [ebp-45h]
     uint32_t version; // [esp+10h] [ebp-44h]
     XFile file; // [esp+14h] [ebp-40h] BYREF
-    int32_t fileSize; // [esp+40h] [ebp-14h]
     const char *failureReason; // [esp+44h] [ebp-10h]
     char magic[8]; // [esp+48h] [ebp-Ch] BYREF
 
-    iassert(g_load.f);
+    if (!g_load.f || g_load.f == INVALID_HANDLE_VALUE || !g_load.filename)
+    {
+        Com_Error(ERR_DROP, "Fast-file loader was not initialized");
+        return;
+    }
     DB_ReadXFileStage();
     if (!g_load.outstandingReads)
+    {
+        DB_CancelLoadXFile();
         Com_Error(ERR_DROP, "Fastfile for zone '%s' is empty.", g_load.filename);
-    DB_WaitXFileStage();
+        return;
+    }
+    const int32_t initialReadSize = DB_WaitXFileStageInternal();
+    if (initialReadSize < 12)
+    {
+        const LONG readError = InterlockedCompareExchange(&g_fileReadError, 0, 0);
+        DB_CancelLoadXFile();
+        if (readError != ERROR_SUCCESS && readError != ERROR_HANDLE_EOF)
+            Com_Error(ERR_DROP, "Read error %ld for fast-file '%s'", readError, g_load.filename);
+        else
+            Com_Error(ERR_DROP, "Fastfile for zone '%s' has a truncated header.", g_load.filename);
+        return;
+    }
     DB_ReadXFileStage();
-    if (g_load.stream.avail_in < 8)
-        MyAssertHandler(".\\database\\db_file_load.cpp", 598, 0, "%s", "sizeof( magic ) <= g_load.stream.avail_in");
-    *(uint32_t *)magic = *(uint32_t *)g_load.stream.next_in;
-    *(uint32_t *)&magic[4] = *((uint32_t *)g_load.stream.next_in + 1);
+    memcpy(magic, g_load.stream.next_in, sizeof(magic));
     g_load.stream.next_in += 8;
     g_load.stream.avail_in -= 8;
     if (memcmp(magic, "IWff0100", 8u) && memcmp(magic, "IWffu100", 8u))
     {
         KISAK_NULLSUB();
+        DB_CancelLoadXFile();
         Com_Error(ERR_DROP, "Fastfile for zone '%s' is corrupt or unreadable.", g_load.filename);
+        return;
     }
-    iassert(sizeof(version) <= g_load.stream.avail_in);
-    version = *(uint32_t *)g_load.stream.next_in;
+    memcpy(&version, g_load.stream.next_in, sizeof(version));
     g_load.stream.next_in += 4;
     g_load.stream.avail_in -= 4;
     if (version != 5)
     {
+        DB_CancelLoadXFile();
         if (version >= 5)
+        {
             Com_Error(
                 ERR_DROP,
                 "Fastfile for zone '%s' is newer than client executable (version %d, expecting %d)",
                 g_load.filename,
                 version,
                 5);
+        }
         else
+        {
             Com_Error(
                 ERR_DROP,
                 "Fastfile for zone '%s' is out of date (version %d, expecting %d)",
                 g_load.filename,
                 version,
                 5);
+        }
+        return;
     }
     fileIsSecure = memcmp(magic, "IWffu100", 8u) != 0;
     err = DB_AuthLoad_InflateInit(&g_load.stream, fileIsSecure);
+    g_inflateInitialized = err == Z_OK;
     failureReason = 0;
     if (fileIsSecure)
         failureReason = "authenticated file not supported";
@@ -261,18 +471,28 @@ void __cdecl DB_LoadXFileInternal()
         KISAK_NULLSUB();
         DB_CancelLoadXFile();
         Com_Error(ERR_DROP, "Fastfile for zone '%s' could not be loaded (%s)", g_load.filename, failureReason);
+        return;
     }
     
     DB_LoadXFileData((uint8_t *)&file, sizeof(XFile));
     if (g_trackLoadProgress)
     {
-        fileSize = GetFileSize(g_load.f, 0);
-        if (file.externalSize + fileSize >= 0x100000)
+        LARGE_INTEGER nativeFileSize{};
+        if (GetFileSizeEx(g_load.f, &nativeFileSize) && nativeFileSize.QuadPart >= 0)
         {
-            g_totalSize = (fileSize + 0x3FFFF) / 0x40000 - g_loadedSize;
-            g_loadedSize = 0;
-            g_totalExternalBytes = file.externalSize - g_loadedExternalBytes;
-            g_loadedExternalBytes = 0;
+            const uint64_t fileSize = static_cast<uint64_t>(nativeFileSize.QuadPart);
+            const uint64_t totalSize = fileSize + file.externalSize;
+            const uint64_t fileChunks = (fileSize + 0x3FFFFu) / 0x40000u;
+            if (totalSize >= 0x100000u && fileChunks <= INT32_MAX
+                && file.externalSize <= INT32_MAX)
+            {
+                const int32_t remainingChunks = static_cast<int32_t>(fileChunks) - g_loadedSize;
+                const int32_t remainingExternal = static_cast<int32_t>(file.externalSize) - g_loadedExternalBytes;
+                g_totalSize = remainingChunks > 0 ? remainingChunks : 0;
+                g_loadedSize = 0;
+                g_totalExternalBytes = remainingExternal > 0 ? remainingExternal : 0;
+                g_loadedExternalBytes = 0;
+            }
         }
     }
     DB_AllocXZoneMemory(file.blockSize, g_load.filename, g_load.zoneMem, g_load.allocType);
@@ -307,8 +527,27 @@ void Load_XAssetListCustom()
     varXAssetList = &g_varXAssetList;
     
     DB_LoadXFileData((uint8_t *)&g_varXAssetList, sizeof(XAssetList));
-    DB_PushStreamPos(4);
+    if (varXAssetList->assetCount < 0 || varXAssetList->assetCount > 32768)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file asset count %d", varXAssetList->assetCount);
+        return;
+    }
+    if ((varXAssetList->assetCount != 0) != (varXAssetList->assets != nullptr))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file asset list pointer/count combination");
+        return;
+    }
     varScriptStringList = &varXAssetList->stringList;
+    if (varScriptStringList->count < 0 || varScriptStringList->count > 65536
+        || (varScriptStringList->count != 0) != (varScriptStringList->strings != nullptr))
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid fast-file script-string list count %d",
+            varScriptStringList->count);
+        return;
+    }
+    DB_PushStreamPos(4);
     Load_ScriptStringList(0);
     DB_PopStreamPos();
 }
@@ -317,8 +556,14 @@ void __cdecl Load_XAssetArrayCustom(int32_t count)
 {
     XAsset *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
+    int32_t byteCount = 0;
 
-    Load_Stream(1, (uint8_t *)varXAsset, 8 * count);
+    if (count > 32768 || !db::validation::CheckedArrayBytes(count, 8, &byteCount))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file asset array count %d", count);
+        return;
+    }
+    Load_Stream(1, (uint8_t *)varXAsset, byteCount);
     var = varXAsset;
     for (i = 0; i < count; ++i)
     {
@@ -346,23 +591,34 @@ void __cdecl DB_LoadXFile(
     uint8_t *buf,
     int32_t allocType)
 {
-    if (((uintptr_t)buf & 3) != 0)
-        MyAssertHandler(".\\database\\db_file_load.cpp", 749, 0, "%s", "!(reinterpret_cast< psize_int >( buf ) & 3)");
+    (void)path;
+    if (!f || f == INVALID_HANDLE_VALUE || !filename || !*filename || !zoneMem || !buf
+        || (reinterpret_cast<uintptr_t>(buf) & 3) != 0
+        || (allocType != 0 && allocType != 1))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file loader initialization");
+        return;
+    }
+    if (g_load.f || g_load.outstandingReads || g_load.compressBufferStart)
+    {
+        Com_Error(ERR_DROP, "Attempted to replace an active fast-file load");
+        return;
+    }
+
     memset((uint8_t *)&g_load, 0, sizeof(g_load));
+    g_fileReadEof = false;
+    g_inflateInitialized = false;
+    g_inflateStreamEnded = false;
+    InterlockedExchange(&g_fileReadComplete, FALSE);
+    InterlockedExchange(&g_fileReadError, ERROR_SUCCESS);
+    InterlockedExchange(&g_fileReadBytes, 0);
     g_load.f = f;
     g_load.filename = filename;
     g_load.zoneMem = zoneMem;
     g_load.interrupt = interrupt;
     g_load.allocType = allocType;
-    if (g_load.compressBufferStart)
-        MyAssertHandler(".\\database\\db_file_load.cpp", 762, 0, "%s", "!g_load.compressBufferStart");
-    if (!g_load.f)
-        MyAssertHandler(".\\database\\db_file_load.cpp", 764, 0, "%s", "g_load.f");
-    if (!buf)
-        MyAssertHandler(".\\database\\db_file_load.cpp", 766, 0, "%s", "buf");
     g_load.compressBufferStart = buf;
     g_load.compressBufferEnd = buf + 0x80000;
     g_load.stream.next_in = buf;
     g_load.stream.avail_in = 0;
 }
-

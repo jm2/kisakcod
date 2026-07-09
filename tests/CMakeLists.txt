@@ -36,6 +36,15 @@ set_target_properties(kisakcod-identity-tests PROPERTIES
 )
 add_test(NAME identity-format-and-overflow COMMAND kisakcod-identity-tests)
 
+add_executable(kisakcod-db-validation-tests db_validation_tests.cpp)
+target_include_directories(kisakcod-db-validation-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-db-validation-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-db-validation-tests)
+set_target_properties(kisakcod-db-validation-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(NAME database-checked-arithmetic COMMAND kisakcod-db-validation-tests)
+
 add_executable(kisakcod-abi-atomics-tests abi_atomics_tests.cpp)
 target_include_directories(kisakcod-abi-atomics-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-abi-atomics-tests PRIVATE cxx_std_20)

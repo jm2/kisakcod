@@ -8,25 +8,27 @@ BspGlob comBspGlob;
 
 uint32_t __cdecl Com_GetBspVersion()
 {
-    iassert( Com_IsBspLoaded() );
+    if (!Com_IsBspLoaded())
+    {
+        Com_Error(ERR_DROP, "BSP version requested before a map was loaded");
+        return 0;
+    }
     return comBspGlob.header->version;
 }
 
 char __cdecl Com_CheckVersionLumpCountError(int version)
 {
     if (version < 6 || version > 22)
-        MyAssertHandler(
-            ".\\qcommon\\com_bsp_load_obj.cpp",
-            269,
-            0,
-            "version not in [OLDEST_BSP_VERSION, BSP_VERSION]\n\t%i not in [%i, %i]",
-            version,
-            6,
-            22);
-    if (comBspGlob.header->version > 0x12)
+        return 1;
+
+    if (version > 0x12)
     {
-        if (comBspGlob.fileSize < 8 * comBspGlob.header->chunkCount + 12)
+        if (comBspGlob.fileSize < 12
+            || comBspGlob.header->chunkCount > ARRAY_COUNT(comBspGlob.header->chunks)
+            || comBspGlob.header->chunkCount > (comBspGlob.fileSize - 12) / sizeof(BspChunk))
+        {
             return 1;
+        }
     }
     else if (comBspGlob.fileSize < 8 * Com_GetBspLumpCountForVersion(version) + 8)
     {
@@ -64,15 +66,34 @@ char *__cdecl Com_GetBspLump(LumpType type, uint32_t elemSize, uint32_t *count)
     uint32_t chunkIter; // [esp+0h] [ebp-10h]
     uint32_t offset; // [esp+4h] [ebp-Ch]
 
-    iassert( Com_IsBspLoaded() );
+    if (!Com_IsBspLoaded() || !count || !elemSize)
+    {
+        Com_Error(ERR_DROP, "Invalid BSP lump request");
+        return nullptr;
+    }
     if (comBspGlob.header->version > 0x12)
     {
-        offset = 8 * comBspGlob.header->chunkCount + 12;
+        offset = static_cast<uint32_t>(sizeof(BspChunk)) * comBspGlob.header->chunkCount + 12;
         for (chunkIter = 0; chunkIter < comBspGlob.header->chunkCount; ++chunkIter)
         {
+            const uint32_t length = comBspGlob.header->chunks[chunkIter].length;
+            if (offset > comBspGlob.fileSize
+                || length > comBspGlob.fileSize - offset
+                || length > UINT32_MAX - 3)
+            {
+                Com_Error(ERR_DROP, "LoadMap: malformed lump %u", chunkIter);
+                return nullptr;
+            }
             if (comBspGlob.header->chunks[chunkIter].type == type)
-                return Com_ValidateBspLumpData(type, offset, comBspGlob.header->chunks[chunkIter].length, elemSize, count);
-            offset += (comBspGlob.header->chunks[chunkIter].length + 3) & 0xFFFFFFFC;
+                return Com_ValidateBspLumpData(type, offset, length, elemSize, count);
+
+            const uint32_t alignedLength = (length + 3) & ~UINT32_C(3);
+            if (alignedLength > comBspGlob.fileSize - offset)
+            {
+                Com_Error(ERR_DROP, "LoadMap: aligned lump %u extends past end of file", chunkIter);
+                return nullptr;
+            }
+            offset += alignedLength;
         }
         *count = 0;
         return 0;
@@ -101,26 +122,59 @@ bool __cdecl Com_IsBspLoaded()
 void __cdecl Com_LoadBsp(char *filename)
 {
     uint32_t bytesRead; // [esp+18h] [ebp-Ch]
-    uint32_t len; // [esp+1Ch] [ebp-8h]
     int h; // [esp+20h] [ebp-4h] BYREF
 
-    iassert( filename );
-    iassert( !Com_IsBspLoaded() );
-    iassert( comBspGlob.loadedLumpData == NULL );
+    if (!filename || !*filename || strlen(filename) >= sizeof(comBspGlob.name))
+    {
+        Com_Error(ERR_DROP, "Invalid BSP filename");
+        return;
+    }
+    if (Com_IsBspLoaded() || comBspGlob.loadedLumpData)
+    {
+        Com_Error(ERR_DROP, "Attempted to load a BSP while another BSP is active");
+        return;
+    }
     {
         PROFLOAD_SCOPED("Load bsp file");
         comBspGlob.fileSize = FS_FOpenFileRead(filename, &h);
         if (!h)
         {
             Com_Error(ERR_DROP, "EXE_ERR_COULDNT_LOAD %s", filename);
+            return;
         }
-        comBspGlob.header = (BspHeader *)Z_MallocGarbage(comBspGlob.fileSize, "Com_LoadBsp", 10);
+        if (comBspGlob.fileSize < 8)
+        {
+            FS_FCloseFile(h);
+            comBspGlob.fileSize = 0;
+            Com_Error(ERR_DROP, "EXE_ERR_WRONG_MAP_VERSION_NUM %s", filename);
+            return;
+        }
+        if (comBspGlob.fileSize > INT32_MAX)
+        {
+            FS_FCloseFile(h);
+            comBspGlob.fileSize = 0;
+            Com_Error(ERR_DROP, "BSP file is too large: %s", filename);
+            return;
+        }
+        comBspGlob.header = (BspHeader *)Z_MallocGarbage(
+            static_cast<int32_t>(comBspGlob.fileSize),
+            "Com_LoadBsp",
+            10);
+        if (!comBspGlob.header)
+        {
+            FS_FCloseFile(h);
+            comBspGlob.fileSize = 0;
+            Com_Error(ERR_DROP, "Could not allocate BSP data for %s", filename);
+            return;
+        }
         bytesRead = FS_Read((uint8_t *)comBspGlob.header, comBspGlob.fileSize, h);
         FS_FCloseFile(h);
         if (bytesRead != comBspGlob.fileSize)
         {
             Z_Free((char *)comBspGlob.header, 10);
+            comBspGlob.header = nullptr;
             Com_Error(ERR_DROP, "EXE_ERR_COULDNT_LOAD %s", filename);
+            return;
         }
 
         {
@@ -133,12 +187,11 @@ void __cdecl Com_LoadBsp(char *filename)
             Z_Free((char *)comBspGlob.header, 10);
             comBspGlob.header = 0;
             Com_Error(ERR_DROP, "EXE_ERR_WRONG_MAP_VERSION_NUM %s", filename);
+            return;
         }
     }
 
-    len = strlen(filename);
-    iassert((len < (sizeof(comBspGlob.name) / (sizeof(comBspGlob.name[0]) * (sizeof(comBspGlob.name) != 4 || sizeof(comBspGlob.name[0]) <= 4)))));
-    memcpy((uint8_t *)&comBspGlob, (uint8_t *)filename, len + 1);
+    I_strncpyz(comBspGlob.name, filename, static_cast<int>(sizeof(comBspGlob.name)));
     iassert( Com_IsBspLoaded() );
 }
 
@@ -162,14 +215,10 @@ uint32_t lumpsForVersion[13] =
 uint32_t __cdecl Com_GetBspLumpCountForVersion(int version)
 {
     if (version < 6 || version > 18)
-        MyAssertHandler(
-            ".\\qcommon\\com_bsp_load_obj.cpp",
-            58,
-            0,
-            "version not in [OLDEST_BSP_VERSION, 18]\n\t%i not in [%i, %i]",
-            version,
-            6,
-            18);
+    {
+        Com_Error(ERR_DROP, "Unsupported BSP version %d", version);
+        return 0;
+    }
     //return WeaponStateNames[version + 21];
     return lumpsForVersion[version - 6];
 }
@@ -181,14 +230,24 @@ char *__cdecl Com_ValidateBspLumpData(
     uint32_t elemSize,
     uint32_t *count)
 {
-    iassert( count );
+    if (!count || !elemSize)
+    {
+        Com_Error(ERR_DROP, "Invalid BSP lump metadata");
+        return nullptr;
+    }
     if (length)
     {
-        if (length + offset > comBspGlob.fileSize)
+        if (offset > comBspGlob.fileSize || length > comBspGlob.fileSize - offset)
+        {
             Com_Error(ERR_DROP, "LoadMap: lump %i extends past end of file", type);
+            return nullptr;
+        }
         *count = length / elemSize;
         if (elemSize * *count != length)
+        {
             Com_Error(ERR_DROP, "LoadMap: lump %i has funny size", type);
+            return nullptr;
+        }
         return (char *)comBspGlob.header + offset;
     }
     else

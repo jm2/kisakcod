@@ -83,9 +83,19 @@ void __cdecl DB_AllocXZoneMemory(
     uint8_t *buf; // [esp+2Ch] [ebp-8h]
     uint32_t size; // [esp+30h] [ebp-4h]
 
+    if (!blockSize || !filename || !zoneMem)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file zone allocation request");
+        return;
+    }
+
     for (blockIndex = 0; blockIndex < 9; ++blockIndex)
     {
-        iassert(zoneMem->blocks[blockIndex].size == 0);
+        if (zoneMem->blocks[blockIndex].size || zoneMem->blocks[blockIndex].data)
+        {
+            Com_Error(ERR_DROP, "Fast-file zone block %u was already allocated", blockIndex);
+            return;
+        }
         size = blockSize[blockIndex];
         if (size)
         {
@@ -100,6 +110,7 @@ void __cdecl DB_AllocXZoneMemory(
                     g_block_mem_name[blockIndex],
                     filename,
                     (double)OverAllocatedSize * 0.00000095367431640625);
+                return;
             }
             zoneMem->blocks[blockIndex].size = size;
             zoneMem->blocks[blockIndex].data = buf;
@@ -122,8 +133,12 @@ void __cdecl DB_AllocXZoneMemory(
 uint8_t *__cdecl DB_MemAlloc(uint32_t size, uint32_t type, uint32_t allocType)
 {
     if (type <= 1)
-        return PMem_Alloc(size + 15, 0x1000u, 4, allocType);
-    iassert(type == DM_MEMORY_PHYSICAL);
-    return PMem_Alloc(size, 0x1000u, 0x404u, allocType);
+    {
+        if (size > UINT32_MAX - 15)
+            return nullptr;
+        return PMem_TryAlloc(size + 15, 0x1000u, 4, allocType);
+    }
+    if (type != DM_MEMORY_PHYSICAL)
+        return nullptr;
+    return PMem_TryAlloc(size, 0x1000u, 0x404u, allocType);
 }
-

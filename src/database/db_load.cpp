@@ -430,12 +430,12 @@ void __cdecl Load_int(bool atStreamStart)
 
 void __cdecl Load_intArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varint, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varint, count, 4);
 }
 
 void __cdecl Load_uintArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (unsigned char*)varuint, 4 * count);
+    Load_StreamArray(atStreamStart, (unsigned char*)varuint, count, 4);
 }
 
 void __cdecl Load_uint(bool atStreamStart)
@@ -450,12 +450,12 @@ void __cdecl Load_float(bool atStreamStart)
 
 void __cdecl Load_floatArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varfloat, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varfloat, count, 4);
 }
 
 void __cdecl Load_raw_uintArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varraw_uint, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varraw_uint, count, 4);
 }
 
 uint8_t *__cdecl AllocLoad_raw_uint128()
@@ -465,7 +465,7 @@ uint8_t *__cdecl AllocLoad_raw_uint128()
 
 void __cdecl Load_raw_uint128Array(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varraw_uint128, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varraw_uint128, count, 4);
 }
 
 void __cdecl Load_raw_byteArray(bool atStreamStart, int32_t count)
@@ -480,7 +480,7 @@ void __cdecl Load_raw_byte16Array(bool atStreamStart, int32_t count)
 
 void __cdecl Load_vec2_tArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varvec2_t, 8 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varvec2_t, count, 8);
 }
 
 void __cdecl Load_vec3_t(bool atStreamStart)
@@ -490,17 +490,17 @@ void __cdecl Load_vec3_t(bool atStreamStart)
 
 void __cdecl Load_vec3_tArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varvec3_t, 12 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varvec3_t, count, 12);
 }
 
 void __cdecl Load_shortArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varshort, 2 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varshort, count, 2);
 }
 
 void __cdecl Load_ushortArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varushort, 2 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varushort, count, 2);
 }
 
 void __cdecl Load_XQuat2(bool atStreamStart)
@@ -510,7 +510,7 @@ void __cdecl Load_XQuat2(bool atStreamStart)
 
 void __cdecl Load_XQuat2Array(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varXQuat2, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varXQuat2, count, 4);
 }
 
 uint8_t *__cdecl AllocLoad_XBlendInfo()
@@ -520,7 +520,7 @@ uint8_t *__cdecl AllocLoad_XBlendInfo()
 
 void __cdecl Load_UnsignedShortArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varUnsignedShort, 2 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varUnsignedShort, count, 2);
 }
 
 void __cdecl Load_ScriptString(bool atStreamStart)
@@ -534,7 +534,7 @@ void __cdecl Load_ScriptStringArray(bool atStreamStart, int32_t count)
     uint16_t *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varScriptString, 2 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varScriptString, count, 2);
     var = varScriptString;
     for (i = 0; i < count; ++i)
     {
@@ -577,7 +577,7 @@ void __cdecl Load_TempStringArray(bool atStreamStart, int32_t count)
     const char **var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varTempString, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varTempString, count, 4);
     var = varTempString;
     for (i = 0; i < count; ++i)
     {
@@ -610,7 +610,7 @@ void __cdecl Load_XStringArray(bool atStreamStart, int32_t count)
     const char **var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varXString, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varXString, count, 4);
     var = varXString;
     for (i = 0; i < count; ++i)
     {
@@ -653,12 +653,12 @@ void __cdecl Load_ScriptStringList(bool atStreamStart)
 
 void __cdecl Load_complex_tArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varcomplex_t, 8 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varcomplex_t, count, 8);
 }
 
 void __cdecl Load_dmaterial_tArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)vardmaterial_t, 72 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)vardmaterial_t, count, 72);
 }
 
 void __cdecl Mark_ScriptString()
@@ -813,12 +813,12 @@ void __cdecl Load_XAnimDynamicIndicesTrans(bool atStreamStart)
 
 void __cdecl Load_ByteVecArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varByteVec, 3 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varByteVec, count, 3);
 }
 
 void __cdecl Load_UShortVecArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varUShortVec, 6 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varUShortVec, count, 6);
 }
 
 void __cdecl Load_XAnimDynamicFrames()
@@ -906,7 +906,7 @@ void __cdecl Load_XAnimNotifyInfoArray(bool atStreamStart, int32_t count)
     XAnimNotifyInfo *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varXAnimNotifyInfo, 8 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varXAnimNotifyInfo, count, 8);
     var = varXAnimNotifyInfo;
     for (i = 0; i < count; ++i)
     {
@@ -1058,12 +1058,12 @@ void __cdecl Mark_XAnimPartsPtr()
 
 void __cdecl Load_XBoneInfoArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varXBoneInfo, 40 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varXBoneInfo, count, 40);
 }
 
 void __cdecl Load_DObjAnimMatArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varDObjAnimMat, 32 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varDObjAnimMat, count, 32);
 }
 
 void __cdecl Load_StreamFileNameRaw(bool atStreamStart)
@@ -1287,7 +1287,7 @@ void __cdecl Load_snd_alias_tArray(bool atStreamStart, int32_t count)
     snd_alias_t *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varsnd_alias_t, 92 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varsnd_alias_t, count, 92);
     var = varsnd_alias_t;
     for (i = 0; i < count; ++i)
     {
@@ -1357,7 +1357,10 @@ void __cdecl Load_SndAliasCustom(snd_alias_list_t **var)
         varXStringPtr = (const char ***)var;
         Load_XStringPtr(0);
         if (!*varXStringPtr)
-            MyAssertHandler(".\\universal\\com_sndalias.cpp", 696, 0, "%s", "*varXStringPtr");
+        {
+            Com_Error(ERR_DROP, "Fast-file sound alias reference has no name");
+            return;
+        }
         *(XAssetHeader *)var = DB_FindXAssetHeader(ASSET_TYPE_SOUND, **varXStringPtr);
     }
 }
@@ -1373,7 +1376,7 @@ void __cdecl Load_snd_alias_list_nameArray(bool atStreamStart, int32_t count)
     snd_alias_list_t **var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varsnd_alias_list_name, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varsnd_alias_list_name, count, 4);
     var = varsnd_alias_list_name;
     for (i = 0; i < count; ++i)
     {
@@ -1488,22 +1491,22 @@ void __cdecl Load_MaterialInfo(bool atStreamStart)
 
 void __cdecl Load_GfxWorldVertex0Array(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxWorldVertex0, 44 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxWorldVertex0, count, 44);
 }
 
 void __cdecl Load_GfxPackedVertex0Array(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxPackedVertex0, 32 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxPackedVertex0, count, 32);
 }
 
 void __cdecl Load_GfxBrushModelArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxBrushModel, 56 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxBrushModel, count, 56);
 }
 
 void __cdecl Load_XSurfaceCollisionLeafArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varXSurfaceCollisionLeaf, 2 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varXSurfaceCollisionLeaf, count, 2);
 }
 
 cbrush_t *__cdecl AllocLoad_GfxPackedVertex0()
@@ -1513,7 +1516,7 @@ cbrush_t *__cdecl AllocLoad_GfxPackedVertex0()
 
 void __cdecl Load_XSurfaceCollisionNodeArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varXSurfaceCollisionNode, 16 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varXSurfaceCollisionNode, count, 16);
 }
 
 void __cdecl Load_XSurfaceCollisionTree(bool atStreamStart)
@@ -1556,7 +1559,7 @@ void __cdecl Load_XRigidVertListArray(bool atStreamStart, int32_t count)
     XRigidVertList *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varXRigidVertList, 12 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varXRigidVertList, count, 12);
     var = varXRigidVertList;
     for (i = 0; i < count; ++i)
     {
@@ -1573,7 +1576,7 @@ void __cdecl Load_GfxVertexBuffer(bool atStreamStart)
 
 void __cdecl Load_XBlendInfoArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varXBlendInfo, 2 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varXBlendInfo, count, 2);
 }
 
 void __cdecl Load_XSurfaceVertexInfo(bool atStreamStart)
@@ -1601,12 +1604,12 @@ void __cdecl Load_XSurfaceVertexInfo(bool atStreamStart)
 
 void __cdecl Load_r_index_tArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varr_index_t, 2 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varr_index_t, count, 2);
 }
 
 void __cdecl Load_r_index16_tArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varr_index16_t, 2 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varr_index16_t, count, 2);
 }
 
 void __cdecl Load_XZoneHandle(bool atStreamStart)
@@ -1674,7 +1677,7 @@ void __cdecl Load_XSurfaceArray(bool atStreamStart, int32_t count)
     XSurface *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, &varXSurface->tileMode, 56 * count);
+    Load_StreamArray(atStreamStart, &varXSurface->tileMode, count, 56);
     var = varXSurface;
     for (i = 0; i < count; ++i)
     {
@@ -1718,7 +1721,7 @@ void __cdecl Load_GfxTextureLoad(bool atStreamStart)
 
 void __cdecl Load_GfxRawTextureArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxRawTexture, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxRawTexture, count, 4);
 }
 
 void __cdecl Load_GfxImageLoadDef(bool atStreamStart)
@@ -1816,7 +1819,7 @@ void __cdecl Mark_water_t()
 
 void __cdecl Load_DWORDArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varDWORD, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varDWORD, count, 4);
 }
 
 void __cdecl Load_GfxVertexShaderLoadDef(bool atStreamStart)
@@ -1978,7 +1981,7 @@ void __cdecl Load_MaterialShaderArgumentArray(bool atStreamStart, int32_t count)
     MaterialShaderArgument *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varMaterialShaderArgument, 8 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varMaterialShaderArgument, count, 8);
     var = varMaterialShaderArgument;
     for (i = 0; i < count; ++i)
     {
@@ -1990,7 +1993,7 @@ void __cdecl Load_MaterialShaderArgumentArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_GfxStateBitsArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxStateBits, 8 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxStateBits, count, 8);
 }
 
 void __cdecl Load_MaterialPass(bool atStreamStart)
@@ -2029,7 +2032,7 @@ void __cdecl Load_MaterialPassArray(bool atStreamStart, int32_t count)
     MaterialPass *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varMaterialPass, 20 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varMaterialPass, count, 20);
     var = (MaterialPass *)varMaterialPass;
     for (i = 0; i < count; ++i)
     {
@@ -2095,7 +2098,7 @@ void __cdecl Load_MaterialTextureDefArray(bool atStreamStart, int32_t count)
     MaterialTextureDef *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varMaterialTextureDef, 12 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varMaterialTextureDef, count, 12);
     var = varMaterialTextureDef;
     for (i = 0; i < count; ++i)
     {
@@ -2107,7 +2110,7 @@ void __cdecl Load_MaterialTextureDefArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_MaterialConstantDefArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varMaterialConstantDef, 32 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varMaterialConstantDef, count, 32);
 }
 
 void __cdecl Load_MaterialTechniquePtr(bool atStreamStart)
@@ -2133,7 +2136,7 @@ void __cdecl Load_MaterialTechniquePtrArray(bool atStreamStart, int32_t count)
     MaterialTechnique **var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varMaterialTechniquePtr, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varMaterialTechniquePtr, count, 4);
     var = varMaterialTechniquePtr;
     for (i = 0; i < count; ++i)
     {
@@ -2271,7 +2274,7 @@ void __cdecl Load_MaterialHandleArray(bool atStreamStart, int32_t count)
     Material **var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varMaterialHandle, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varMaterialHandle, count, 4);
     var = varMaterialHandle;
     for (i = 0; i < count; ++i)
     {
@@ -2458,7 +2461,7 @@ void __cdecl Load_GfxSurfaceArray(bool atStreamStart, int32_t count)
     GfxSurface *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varGfxSurface, 48 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxSurface, count, 48);
     var = varGfxSurface;
     for (i = 0; i < count; ++i)
     {
@@ -2482,7 +2485,7 @@ void __cdecl Load_GfxLightmapArrayArray(bool atStreamStart, int32_t count)
     GfxLightmapArray *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varGfxLightmapArray, 8 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxLightmapArray, count, 8);
     var = varGfxLightmapArray;
     for (i = 0; i < count; ++i)
     {
@@ -2592,7 +2595,7 @@ void __cdecl Load_cplane_t(bool atStreamStart)
 
 void __cdecl Load_cplane_tArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varcplane_t, 20 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varcplane_t, count, 20);
 }
 
 void __cdecl Load_cbrushside_t(bool atStreamStart)
@@ -2623,7 +2626,7 @@ void __cdecl Load_cbrushside_tArray(bool atStreamStart, int32_t count)
     cbrushside_t *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varcbrushside_t, 12 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varcbrushside_t, count, 12);
     var = varcbrushside_t;
     for (i = 0; i < count; ++i)
     {
@@ -2645,7 +2648,7 @@ void __cdecl Load_cbrushedge_tArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_XModelCollTriArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (unsigned char*)varXModelCollTri, 48 * count);
+    Load_StreamArray(atStreamStart, (unsigned char*)varXModelCollTri, count, 48);
 }
 
 void __cdecl Load_XModelCollSurf(bool atStreamStart)
@@ -2664,7 +2667,7 @@ void __cdecl Load_XModelCollSurfArray(bool atStreamStart, int32_t count)
     XModelCollSurf_s *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varXModelCollSurf, 44 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varXModelCollSurf, count, 44);
     var = varXModelCollSurf;
     for (i = 0; i < count; ++i)
     {
@@ -2727,7 +2730,7 @@ void __cdecl Load_PhysGeomInfoArray(bool atStreamStart, int32_t count)
     PhysGeomInfo *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varPhysGeomInfo, 68 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varPhysGeomInfo, count, 68);
     var = varPhysGeomInfo;
     for (i = 0; i < count; ++i)
     {
@@ -2910,7 +2913,7 @@ void __cdecl Load_XModelPtrArray(bool atStreamStart, int32_t count)
     XModel **var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varXModelPtr, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varXModelPtr, count, 4);
     var = varXModelPtr;
     for (i = 0; i < count; ++i)
     {
@@ -2932,7 +2935,7 @@ void __cdecl Load_XModelPieceArray(bool atStreamStart, int32_t count)
     XModelPiece *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varXModelPiece, 16 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varXModelPiece, count, 16);
     var = varXModelPiece;
     for (i = 0; i < count; ++i)
     {
@@ -3053,7 +3056,7 @@ void __cdecl Mark_XModelPiecesPtr()
 
 void __cdecl Load_pathlink_tArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varpathlink_t, 12 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varpathlink_t, count, 12);
 }
 
 void __cdecl Load_pathnode_constant_t(bool atStreamStart)
@@ -3089,7 +3092,7 @@ void __cdecl Load_pathnode_tArray(bool atStreamStart, int32_t count)
     pathnode_t *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varpathnode_t, count * 128);
+    Load_StreamArray(atStreamStart, (uint8_t *)varpathnode_t, count, 128);
     var = varpathnode_t;
     for (i = 0; i < count; ++i)
     {
@@ -3101,7 +3104,7 @@ void __cdecl Load_pathnode_tArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_pathbasenode_tArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varpathbasenode_t, 16 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varpathbasenode_t, count, 16);
 }
 
 void __cdecl Load_pathnode_tree_nodes_t(bool atStreamStart)
@@ -3138,7 +3141,7 @@ void __cdecl Load_pathnode_tree_ptrArray(bool atStreamStart, int32_t count)
     pathnode_tree_t **var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varpathnode_tree_ptr, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varpathnode_tree_ptr, count, 4);
     var = varpathnode_tree_ptr;
     for (i = 0; i < count; ++i)
     {
@@ -3174,7 +3177,7 @@ void __cdecl Load_pathnode_tree_tArray(bool atStreamStart, int32_t count)
     pathnode_tree_t *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varpathnode_tree_t, 16 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varpathnode_tree_t, count, 16);
     var = varpathnode_tree_t;
     for (i = 0; i < count; ++i)
     {
@@ -3413,7 +3416,7 @@ void __cdecl Load_FxEffectDefHandleArray(bool atStreamStart, int32_t count)
     const FxEffectDef **var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varFxEffectDefHandle, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varFxEffectDefHandle, count, 4);
     var = varFxEffectDefHandle;
     for (i = 0; i < count; ++i)
     {
@@ -3442,7 +3445,7 @@ void __cdecl Load_FxElemMarkVisualsArray(bool atStreamStart, int32_t count)
     FxElemMarkVisuals *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varFxElemMarkVisuals, 8 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varFxElemMarkVisuals, count, 8);
     var = varFxElemMarkVisuals;
     for (i = 0; i < count; ++i)
     {
@@ -3483,7 +3486,7 @@ void __cdecl Load_FxElemVisualsArray(bool atStreamStart, int32_t count)
     FxElemVisuals *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varFxElemVisuals, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varFxElemVisuals, count, 4);
     var = varFxElemVisuals;
     for (i = 0; i < count; ++i)
     {
@@ -3495,12 +3498,12 @@ void __cdecl Load_FxElemVisualsArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_FxElemVisStateSampleArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, varFxElemVisStateSample->base.color, 48 * count);
+    Load_StreamArray(atStreamStart, varFxElemVisStateSample->base.color, count, 48);
 }
 
 void __cdecl Load_FxElemVelStateSampleArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varFxElemVelStateSample, 96 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varFxElemVelStateSample, count, 96);
 }
 
 void __cdecl Load_FxElemDefVisuals(bool atStreamStart)
@@ -3532,7 +3535,7 @@ void __cdecl Load_FxElemDefVisuals(bool atStreamStart)
 
 void __cdecl Load_FxTrailVertexArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varFxTrailVertex, 20 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varFxTrailVertex, count, 20);
 }
 
 void __cdecl Load_FxTrailDef(bool atStreamStart)
@@ -3588,7 +3591,7 @@ void __cdecl Load_FxElemDefArray(bool atStreamStart, int32_t count)
     FxElemDef *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varFxElemDef, 252 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varFxElemDef, count, 252);
     var = varFxElemDef;
     for (i = 0; i < count; ++i)
     {
@@ -3763,7 +3766,7 @@ void __cdecl Load_DynEntityDefArray(bool atStreamStart, int32_t count)
     DynEntityDef *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varDynEntityDef, 96 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varDynEntityDef, count, 96);
     var = varDynEntityDef;
     for (i = 0; i < count; ++i)
     {
@@ -3775,17 +3778,17 @@ void __cdecl Load_DynEntityDefArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_DynEntityCollArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varDynEntityColl, 20 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varDynEntityColl, count, 20);
 }
 
 void __cdecl Load_DynEntityPoseArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varDynEntityPose, 32 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varDynEntityPose, count, 32);
 }
 
 void __cdecl Load_DynEntityClientArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varDynEntityClient, 12 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varDynEntityClient, count, 12);
 }
 
 void __cdecl Mark_DynEntityDef()
@@ -3881,7 +3884,7 @@ void __cdecl Load_cStaticModel_tArray(bool atStreamStart, int32_t count)
     cStaticModel_s *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varcStaticModel_t, 80 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varcStaticModel_t, count, 80);
     var = varcStaticModel_t;
     for (i = 0; i < count; ++i)
     {
@@ -3914,7 +3917,7 @@ void __cdecl Load_cNode_tArray(bool atStreamStart, int32_t count)
     cNode_t *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varcNode_t, 8 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varcNode_t, count, 8);
     var = varcNode_t;
     for (i = 0; i < count; ++i)
     {
@@ -3926,7 +3929,7 @@ void __cdecl Load_cNode_tArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_cLeaf_tArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varcLeaf_t, 44 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varcLeaf_t, count, 44);
 }
 
 void __cdecl Load_cLeafBrushNodeLeaf_t(bool atStreamStart)
@@ -3981,7 +3984,7 @@ void __cdecl Load_cLeafBrushNode_tArray(bool atStreamStart, int32_t count)
     cLeafBrushNode_s *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, &varcLeafBrushNode_t->axis, 20 * count);
+    Load_StreamArray(atStreamStart, &varcLeafBrushNode_t->axis, count, 20);
     var = varcLeafBrushNode_t;
     for (i = 0; i < count; ++i)
     {
@@ -3998,7 +4001,7 @@ void __cdecl Load_CollisionBorder(bool atStreamStart)
 
 void __cdecl Load_CollisionBorderArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varCollisionBorder, 28 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varCollisionBorder, count, 28);
 }
 
 void __cdecl Load_CollisionPartition(bool atStreamStart)
@@ -4024,7 +4027,7 @@ void __cdecl Load_CollisionPartitionArray(bool atStreamStart, int32_t count)
     CollisionPartition *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, &varCollisionPartition->triCount, 12 * count);
+    Load_StreamArray(atStreamStart, &varCollisionPartition->triCount, count, 12);
     var = varCollisionPartition;
     for (i = 0; i < count; ++i)
     {
@@ -4036,12 +4039,12 @@ void __cdecl Load_CollisionPartitionArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_CollisionAabbTreeArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varCollisionAabbTree, 32 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varCollisionAabbTree, count, 32);
 }
 
 void __cdecl Load_cmodel_tArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varcmodel_t, 72 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varcmodel_t, count, 72);
 }
 
 void __cdecl Load_cbrush_t(bool atStreamStart)
@@ -4080,7 +4083,7 @@ void __cdecl Load_cbrush_tArray(bool atStreamStart, int32_t count)
     cbrush_t *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varcbrush_t, 80 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varcbrush_t, count, 80);
     var = varcbrush_t;
     for (i = 0; i < count; ++i)
     {
@@ -4092,7 +4095,7 @@ void __cdecl Load_cbrush_tArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_LeafBrushArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varLeafBrush, 2 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varLeafBrush, count, 2);
 }
 
 void __cdecl Load_clipMap_t(bool atStreamStart)
@@ -4394,7 +4397,7 @@ void __cdecl Load_ComPrimaryLightArray(bool atStreamStart, int32_t count)
     ComPrimaryLight *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, &varComPrimaryLight->type, 68 * count);
+    Load_StreamArray(atStreamStart, &varComPrimaryLight->type, count, 68);
     var = varComPrimaryLight;
     for (i = 0; i < count; ++i)
     {
@@ -4533,7 +4536,7 @@ void __cdecl Load_expressionEntry_ptrArray(bool atStreamStart, int32_t count)
     expressionEntry **var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varexpressionEntry_ptr, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varexpressionEntry_ptr, count, 4);
     var = varexpressionEntry_ptr;
     for (i = 0; i < count; ++i)
     {
@@ -4752,7 +4755,7 @@ void __cdecl Load_itemDef_ptrArray(bool atStreamStart, int32_t count)
     itemDef_s **var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varitemDef_ptr, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varitemDef_ptr, count, 4);
     var = varitemDef_ptr;
     for (i = 0; i < count; ++i)
     {
@@ -4837,7 +4840,7 @@ void __cdecl Load_menuDef_ptrArray(bool atStreamStart, int32_t count)
     menuDef_t **var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varmenuDef_ptr, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varmenuDef_ptr, count, 4);
     var = varmenuDef_ptr;
     for (i = 0; i < count; ++i)
     {
@@ -5081,7 +5084,7 @@ void __cdecl Load_FxImpactEntryArray(bool atStreamStart, int32_t count)
     FxImpactEntry *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varFxImpactEntry, 132 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varFxImpactEntry, count, 132);
     var = varFxImpactEntry;
     for (i = 0; i < count; ++i)
     {
@@ -5748,7 +5751,7 @@ void __cdecl Load_GfxStaticModelDrawInstArray(bool atStreamStart, int32_t count)
     GfxStaticModelDrawInst *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varGfxStaticModelDrawInst, 76 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxStaticModelDrawInst, count, 76);
     var = varGfxStaticModelDrawInst;
     for (i = 0; i < count; ++i)
     {
@@ -5760,7 +5763,7 @@ void __cdecl Load_GfxStaticModelDrawInstArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_GfxStaticModelInstArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxStaticModelInst, 28 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxStaticModelInst, count, 28);
 }
 
 void __cdecl Mark_GfxStaticModelDrawInst()
@@ -5812,7 +5815,7 @@ void __cdecl Load_GfxReflectionProbeArray(bool atStreamStart, int32_t count)
     GfxReflectionProbe *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varGfxReflectionProbe, 16 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxReflectionProbe, count, 16);
     var = varGfxReflectionProbe;
     for (i = 0; i < count; ++i)
     {
@@ -5844,7 +5847,7 @@ void __cdecl Mark_GfxReflectionProbeArray(int32_t count)
 
 void __cdecl Load_StaticModelIndexArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varStaticModelIndex, 2 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varStaticModelIndex, count, 2);
 }
 
 void __cdecl Load_GfxAabbTree(bool atStreamStart)
@@ -5870,7 +5873,7 @@ void __cdecl Load_GfxAabbTreeArray(bool atStreamStart, int32_t count)
     GfxAabbTree *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varGfxAabbTree, 44 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxAabbTree, count, 44);
     var = varGfxAabbTree;
     for (i = 0; i < count; ++i)
     {
@@ -5914,7 +5917,7 @@ void __cdecl Load_GfxCellArray(bool atStreamStart, int32_t count)
     GfxCell *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varGfxCell, 56 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxCell, count, 56);
     var = varGfxCell;
     for (i = 0; i < count; ++i)
     {
@@ -5953,7 +5956,7 @@ void __cdecl Load_GfxPortalArray(bool atStreamStart, int32_t count)
     GfxPortal *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varGfxPortal, 68 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxPortal, count, 68);
     var = varGfxPortal;
     for (i = 0; i < count; ++i)
     {
@@ -5965,17 +5968,17 @@ void __cdecl Load_GfxPortalArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_GfxCullGroupArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxCullGroup, 32 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxCullGroup, count, 32);
 }
 
 void __cdecl Load_GfxLightGridEntryArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxLightGridEntry, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxLightGridEntry, count, 4);
 }
 
 void __cdecl Load_GfxLightGridColorsArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxLightGridColors, 168 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxLightGridColors, count, 168);
 }
 
 void __cdecl Load_MaterialMemory(bool atStreamStart)
@@ -5990,7 +5993,7 @@ void __cdecl Load_MaterialMemoryArray(bool atStreamStart, int32_t count)
     MaterialMemory *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varMaterialMemory, 8 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varMaterialMemory, count, 8);
     var = varMaterialMemory;
     for (i = 0; i < count; ++i)
     {
@@ -6064,17 +6067,17 @@ void __cdecl Load_GfxLightGrid(bool atStreamStart)
 
 void __cdecl Load_GfxSceneDynModelArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxSceneDynModel, 6 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxSceneDynModel, count, 6);
 }
 
 void __cdecl Load_GfxSceneDynBrushArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxSceneDynBrush, 4 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxSceneDynBrush, count, 4);
 }
 
 void __cdecl Load_GfxDrawSurfArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxDrawSurf, 8 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxDrawSurf, count, 8);
 }
 
 void __cdecl Load_GfxShadowGeometry(bool atStreamStart)
@@ -6099,7 +6102,7 @@ void __cdecl Load_GfxShadowGeometryArray(bool atStreamStart, int32_t count)
     GfxShadowGeometry *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varGfxShadowGeometry, 12 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxShadowGeometry, count, 12);
     var = varGfxShadowGeometry;
     for (i = 0; i < count; ++i)
     {
@@ -6111,7 +6114,7 @@ void __cdecl Load_GfxShadowGeometryArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_GfxLightRegionAxisArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxLightRegionAxis, 20 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxLightRegionAxis, count, 20);
 }
 
 void __cdecl Load_GfxLightRegionHull(bool atStreamStart)
@@ -6130,7 +6133,7 @@ void __cdecl Load_GfxLightRegionHullArray(bool atStreamStart, int32_t count)
     GfxLightRegionHull *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varGfxLightRegionHull, 80 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxLightRegionHull, count, 80);
     var = varGfxLightRegionHull;
     for (i = 0; i < count; ++i)
     {
@@ -6156,7 +6159,7 @@ void __cdecl Load_GfxLightRegionArray(bool atStreamStart, int32_t count)
     GfxLightRegion *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_Stream(atStreamStart, (uint8_t *)varGfxLightRegion, 8 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGfxLightRegion, count, 8);
     var = varGfxLightRegion;
     for (i = 0; i < count; ++i)
     {
@@ -6665,7 +6668,7 @@ void __cdecl Mark_GfxWorldPtr()
 
 void __cdecl Load_GlyphArray(bool atStreamStart, int32_t count)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGlyph, 24 * count);
+    Load_StreamArray(atStreamStart, (uint8_t *)varGlyph, count, 24);
 }
 
 void __cdecl Load_Font(bool atStreamStart)
@@ -6745,6 +6748,12 @@ void __cdecl Mark_FontHandle()
 
 void __cdecl Load_XAssetHeader(bool atStreamStart)
 {
+    if (varXAsset->type < 0 || varXAsset->type >= ASSET_TYPE_COUNT)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file asset type %d", varXAsset->type);
+        return;
+    }
+
     switch (varXAsset->type)
     {
     case ASSET_TYPE_PHYSPRESET:
@@ -6847,6 +6856,9 @@ void __cdecl Load_XAssetHeader(bool atStreamStart)
     case ASSET_TYPE_STRINGTABLE:
         varStringTablePtr = (StringTable **)varXAssetHeader;
         Load_StringTablePtr(atStreamStart);
+        break;
+    default:
+        Com_Error(ERR_DROP, "Unsupported fast-file asset type %d", varXAsset->type);
         break;
     }
 }
@@ -7027,7 +7039,3 @@ void __cdecl DB_LoadDObjs()
             DObjUnarchive(obja);
     }
 }
-
-
-
-

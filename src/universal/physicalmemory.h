@@ -35,5 +35,10 @@ uint8_t *__cdecl PMem_Alloc(
     uint32_t alignment,
     uint32_t type,
     uint32_t allocType);
+uint8_t *__cdecl PMem_TryAlloc(
+    uint32_t size,
+    uint32_t alignment,
+    uint32_t type,
+    uint32_t allocType);
 uint32_t __cdecl PMem_GetFreeAmount();
 void __cdecl PMem_DumpMemStats();

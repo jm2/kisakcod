@@ -8,14 +8,16 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: security hardening of fast-file/BSP parsing before continuing M1/M2.
-- Last completed batch: remote file-list/IWD bounds, network-facing format strings,
-  Steam/GUID identity separation, authenticated Steam defaults, and Steam-free
-  headless target configuration.
-- Portable validation: 8/8 tests passed locally after the completed security batch.
-- Windows validation: the 2026-07-09 run passed all five portable jobs but failed
-  the three x86 engine builds on two MSVC-only syntax issues; the focused fixes
-  are committed and the rerun is pending.
+- Active work: checked derived-count arithmetic and relocation provenance after
+  completing the first fast-file/BSP boundary-hardening pass.
+- Last completed batch: checked generated array byte counts, unconditional stream
+  and BSP spans, actual asynchronous read results, short/corrupt compressed input,
+  bounded asset/script-string metadata, and overflow-safe fail-closed zone allocations.
+- Portable validation: 9/9 tests pass locally, including checked database arithmetic
+  and security source invariants. These tests do not execute the Windows loader.
+- Windows validation: CI run 29058084282 passed x86 Debug, Release, no-Steam,
+  and all five portable target jobs on 2026-07-09. The current loader batch still
+  requires its own Windows CI run after push.
 
 ## Milestone status
 
@@ -23,7 +25,7 @@ work item changes. Do not create session-specific handoff files.
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 builds; five native utility-test runners; engine runtime smoke and release workflows remain unexercised. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, and portable compile tests exist; engine atomics/platform integration remains. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, and first remote-input hardening batches landed; sanitizers and remaining pointer debt remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, and the first loader/BSP boundary pass landed; sanitizers, derived-count arithmetic, and relocation provenance remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed only | `disk32::PointerToken` exists; checked packed-mirror/widening loader does not. |
@@ -42,16 +44,20 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Finish unconditional fast-file/BSP stream, count, and span validation with portable arithmetic tests.
+1. Replace pre-overflowed fast-file products, sums, shifts, and increments with checked derived-count helpers.
 2. Integrate or discard the unfinished bare-hex-sizeof tripwire left by the previous implementation session.
-3. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
-4. Finish M1 fixed-width atomics integration, then resume the M2 pointer-debt burndown.
-5. Begin M3 with a minimal platform-services interface for headless process, console, time, filesystem, threads, and sockets.
+3. Design M5 typed relocation/alias validation, then add malformed production-path loader/BSP harnesses.
+4. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
+5. Finish M1 fixed-width atomics integration, then begin the M3 headless platform-services interface.
 
 ## Known release blockers
 
 - Headless source composition is not compile/link-tested and retains 33 allowlisted client/media includes.
-- Fast-file loading still contains assert-only validation and unchecked generated array-size expressions.
+- Fast-file loading still has unchecked derived count expressions and lacks a
+  production-path malformed-input test harness.
+- Database-thread `Com_Error` handling is still process-fatal, so malformed
+  fast-file rejection remains a denial-of-service boundary until zone rollback
+  and recoverable database-thread error propagation are implemented.
 - Fast-file offset aliases are not provenance-tracked, and typed relocations only
   prove that one destination byte is in-bounds; full relocation-table validation
   remains an M5 requirement.

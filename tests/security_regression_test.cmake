@@ -20,6 +20,43 @@ require_source_contains(
     "qcommon/files.cpp"
     "strlen(iwd) >= sizeof(szFile)"
     "IWD names must be bounded before copying")
+require_source_contains(
+    "database/db_stream_load.cpp"
+    "CheckedArrayBytes(count, stride, &byteCount)"
+    "generated fast-file arrays must use checked count multiplication")
+require_source_contains(
+    "database/db_file_load.cpp"
+    "InterlockedExchange(&g_fileReadBytes, static_cast<LONG>(dwNumberOfBytesTransfered))"
+    "asynchronous fast-file reads must preserve the actual completion byte count")
+require_source_contains(
+    "database/db_file_load.cpp"
+    "initialReadSize < 12"
+    "fast-file magic and version reads must reject truncated headers")
+require_source_contains(
+    "database/db_file_load.cpp"
+    "db::validation::CanAppendBytes"
+    "fast-file ring-buffer accounting must reject invalid accumulated input")
+require_source_contains(
+    "database/db_stringtable_load.cpp"
+    "*var >= static_cast<uint32_t>(varXAssetList->stringList.count)"
+    "script-string tokens must be range-checked before indexing")
+require_source_contains(
+    "qcommon/com_bsp_load_obj.cpp"
+    "comBspGlob.fileSize > INT32_MAX"
+    "BSP allocation sizes must fit the signed zone allocator")
+require_source_contains(
+    "universal/physicalmemory.cpp"
+    "PMem_TryAlloc"
+    "zone allocations must report checked failure before generic fatal PMem OOM handling")
+
+file(STRINGS
+    "${SOURCE_ROOT}/src/database/db_load.cpp"
+    _raw_array_loads
+    REGEX "Load_Stream\\(atStreamStart,.*([0-9]+[ \t]*\\*[ \t]*count|count[ \t]*\\*[ \t]*[0-9]+)\\)")
+if (_raw_array_loads)
+    message(FATAL_ERROR
+        "Unchecked generated fast-file array loads remain in db_load.cpp; use Load_StreamArray")
+endif()
 
 set(_format_sensitive_sources
     "cgame/cg_hudelem.cpp"

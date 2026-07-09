@@ -259,12 +259,15 @@ void __cdecl DB_PushStreamPos(uint32_t index);
 void __cdecl DB_SetStreamIndex(uint32_t index);
 void __cdecl DB_PopStreamPos();
 uint8_t *__cdecl DB_GetStreamPos();
+bool __cdecl DB_IsStreamRangeValid(const void *ptr, uint32_t size);
+bool __cdecl DB_IsZoneRangeValid(const void *ptr, uint32_t size);
 uint8_t *__cdecl DB_AllocStreamPos(int32_t alignment);
 void __cdecl DB_IncStreamPos(int32_t size);
 const void **__cdecl DB_InsertPointer();
 
 // db_stream_load
 void __cdecl Load_Stream(bool atStreamStart, uint8_t *ptr, int32_t size);
+void __cdecl Load_StreamArray(bool atStreamStart, uint8_t *ptr, int32_t count, uint32_t stride);
 void __cdecl Load_DelayStream();
 void __cdecl DB_ConvertOffsetToAlias(uint32_t *data);
 void __cdecl DB_ConvertOffsetToPointer(uint32_t *data);

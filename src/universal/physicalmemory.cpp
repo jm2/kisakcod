@@ -196,44 +196,96 @@ uint8_t *__cdecl PMem_Alloc(
     uint32_t type,
     uint32_t allocType)
 {
-    PhysicalMemoryPrim *prim; // [esp+10h] [ebp-Ch]
-    uint32_t lowPos; // [esp+14h] [ebp-8h]
-    uint32_t alignmenta; // [esp+28h] [ebp+Ch]
+    if (!g_mem.buf || allocType >= ARRAY_COUNT(g_mem.prim) || !size
+        || !alignment || (alignment & (alignment - 1)) != 0)
+    {
+        Com_Error(ERR_FATAL, "Invalid physical-memory allocation request");
+        return nullptr;
+    }
 
-    prim = &g_mem.prim[allocType];
+    PhysicalMemoryPrim *prim = &g_mem.prim[allocType];
     if (!prim->allocName)
-        MyAssertHandler(".\\universal\\physicalmemory.cpp", 536, 0, "%s", "prim->allocName");
-    if (!size)
-        MyAssertHandler(".\\universal\\physicalmemory.cpp", 537, 0, "%s", "size");
-    if (!alignment)
-        MyAssertHandler(".\\universal\\physicalmemory.cpp", 539, 0, "%s", "alignment");
-    alignmenta = alignment - 1;
+    {
+        Com_Error(ERR_FATAL, "Physical-memory allocation is outside an allocation scope");
+        return nullptr;
+    }
+
+    uint8_t *result = PMem_TryAlloc(size, alignment, type, allocType);
+    if (!result)
+    {
+        Sys_OutOfMemErrorInternal(".\\universal\\physicalmemory.cpp", 0);
+        return nullptr;
+    }
+    return result;
+}
+
+uint8_t *__cdecl PMem_TryAlloc(
+    uint32_t size,
+    uint32_t alignment,
+    uint32_t type,
+    uint32_t allocType)
+{
+    (void)type;
+    if (!g_mem.buf || allocType >= ARRAY_COUNT(g_mem.prim) || !size
+        || !alignment || (alignment & (alignment - 1)) != 0
+        || !g_mem.prim[allocType].allocName
+        || g_mem.prim[0].pos > g_mem.prim[1].pos)
+    {
+        g_overAllocatedSize = INT32_MAX;
+        return nullptr;
+    }
+
+    PhysicalMemoryPrim *prim = &g_mem.prim[allocType];
+    uint32_t lowPos = 0;
+    const uint32_t alignmentMask = alignment - 1;
+    uint64_t missing = 0;
+
     if (allocType)
     {
-        if (allocType != 1)
-            MyAssertHandler(".\\universal\\physicalmemory.cpp", 633, 0, "%s", "allocType == PHYS_ALLOC_HIGH");
-        lowPos = ~alignmenta & (g_mem.prim[allocType].pos - size);
-        g_overAllocatedSize = g_mem.prim[0].pos - lowPos;
-        if (g_overAllocatedSize > 0)
-            Sys_OutOfMemErrorInternal(".\\universal\\physicalmemory.cpp", 641);
-        g_mem.prim[allocType].pos = lowPos;
+        const uint64_t highPos = g_mem.prim[1].pos;
+        if (size > highPos)
+        {
+            missing = static_cast<uint64_t>(g_mem.prim[0].pos) + size - highPos;
+        }
+        else
+        {
+            lowPos = static_cast<uint32_t>((highPos - size) & ~static_cast<uint64_t>(alignmentMask));
+            if (lowPos < g_mem.prim[0].pos)
+                missing = static_cast<uint64_t>(g_mem.prim[0].pos) - lowPos;
+        }
     }
     else
     {
-        lowPos = ~alignmenta & (alignmenta + prim->pos);
-        g_overAllocatedSize = size + lowPos - g_mem.prim[1].pos;
-        if (g_overAllocatedSize > 0)
+        const uint64_t aligned = (static_cast<uint64_t>(prim->pos) + alignmentMask)
+            & ~static_cast<uint64_t>(alignmentMask);
+        const uint64_t newPos = aligned + size;
+        if (newPos > g_mem.prim[1].pos)
         {
-            Com_PrintError(16, "Need %i more bytes of ram for alloc to succeed\n", g_overAllocatedSize);
-            Sys_OutOfMemErrorInternal(".\\universal\\physicalmemory.cpp", 608);
+            missing = newPos - g_mem.prim[1].pos;
         }
-        g_mem.prim[allocType].pos = size + lowPos;
+        else
+        {
+            lowPos = static_cast<uint32_t>(aligned);
+        }
     }
+
+    if (missing)
+    {
+        g_overAllocatedSize = missing > INT32_MAX ? INT32_MAX : static_cast<int>(missing);
+        return nullptr;
+    }
+
+    if (allocType)
+        prim->pos = lowPos;
+    else
+        prim->pos = lowPos + size;
+    g_overAllocatedSize = 0;
     return &g_mem.buf[lowPos];
 }
 
 uint32_t __cdecl PMem_GetFreeAmount()
 {
+    if (g_mem.prim[0].pos > g_mem.prim[1].pos)
+        return 0;
     return g_mem.prim[1].pos - g_mem.prim[0].pos;
 }
-

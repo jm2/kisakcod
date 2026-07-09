@@ -98,6 +98,7 @@ set(COMMON
 set(DATABASE
     "${SRC_DIR}/database/database.h"
     "${SRC_DIR}/database/db_disk32.h"
+    "${SRC_DIR}/database/db_validation.h"
     "${SRC_DIR}/database/db_assetnames.cpp"
     "${SRC_DIR}/database/db_auth.cpp"
     "${SRC_DIR}/database/db_file_load.cpp"
