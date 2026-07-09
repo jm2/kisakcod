@@ -35,7 +35,6 @@
 #include <server/sv_game.h>
 #include <gfx_d3d/r_workercmds.h>
 #include <universal/com_convexhull.h>
-#include <gfx_d3d/r_dvars.h>
 #include "mem_track.h"
 #include <universal/profile.h>
 

@@ -28,7 +28,6 @@ database/db_registry.cpp|#include <gfx_d3d/rb_uploadshaders.h>
 qcommon/common.cpp|#include <EffectsCore/fx_system.h>
 qcommon/common.cpp|#include <client/client.h>
 qcommon/common.cpp|#include <client_mp/client_mp.h>
-qcommon/common.cpp|#include <gfx_d3d/r_dvars.h>
 qcommon/common.cpp|#include <gfx_d3d/r_init.h>
 qcommon/common.cpp|#include <gfx_d3d/r_rendercmds.h>
 qcommon/common.cpp|#include <gfx_d3d/r_scene.h>
