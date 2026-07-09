@@ -473,7 +473,9 @@ even under a 64-bit compiler.
 
 1. **ON-DISK / WIRE structs** (fast-file assets; networked POD) — *keep frozen at 32-bit.* Re-express
    each as a **packed mirror** type whose pointer fields become `Ptr32<T> = uint32_t`, and pin the
-   mirror with the **original** `sizeof`/`offsetof` asserts (`ONDISK_SIZE`). Detect them by which
+   mirror with the **original** `sizeof`/`offsetof` asserts (`ONDISK_SIZE`). **Build this on the
+   existing `src/database/db_disk32.h`** (`disk32::PointerToken` + bounds-checked `DecodeOffset`
+   block/offset math), which is already the packed-mirror seed — do not stand up a parallel `Ptr32<T>`. Detect them by which
    structs are the target of a `Load_*` walker in `src/database` (assets) or appear in
    `MSG_Read/WriteBits` POD paths (wire). Networked POD stays bit-identical, preserving retail wire
    compat.
@@ -541,6 +543,85 @@ Miles/Bink/Steam/DXSDK redistributables are proprietary and 32-bit-only; macOS/A
 entirely, Steam ships no ARM lib, and the June-2010 DXSDK has no ARM64 import lib. Stub audio/cinematic
 behind the platform layer early (so those targets link) and treat the Miles→OpenAL / Bink→FFmpeg
 replacement as a dependency track that gates M6, not M4/M5.
+
+---
+
+## 10. Gaps surfaced by adversarial review
+
+An adversarial completeness pass over §1–§9 found the following gaps and corrections. They are
+tracked here so the milestone work accounts for them.
+
+**H1 — Save-games are an unclassified 4th serialization surface (SP target).** `g_save.cpp`
+raw-dumps whole runtime structs (`gentity_s`, `gclient_s`, `level_locals`) via
+`SaveMemory_SaveWrite` — e.g. `WriteClient` passes the hardcoded magic size `46104`, keyed only by
+`header.saveVersion = 287`. The three-layout-class model (§8) routes these structs to "runtime →
+widen," which **silently changes the on-disk save layout with no migration**, and LLP64 (Windows)
+vs LP64 (Linux/macOS) widths make saves **non-portable across targets** even at equal pointer width.
+The save walkers also contain pointer-as-int loop bounds (`g_save.cpp:1614/1747/1790`, now widened by
+the M2 sweep) and a `// KISAKTODO: pointer type on ps`. *Add a 4th layout class "SERIALIZED-RUNTIME
+(save-game)":* either replace the raw memcpy with descriptor-driven field-by-field writes (killing the
+`46104` magic), or declare saves version-bumped and non-portable, gated by a `saveVersion` + arch/width
+tag. Add a save round-trip test and a cross-width (LLP64↔LP64) load test.
+
+**H2 — Steam auth is a hard `#error` on every non-Windows target, in the MP connect path.**
+`cl_main_mp.cpp:42` and `sv_client_mp.cpp:20` are `#ifdef WIN32 … #else #error Steam Auth for Arch`.
+Because they guard on bare `WIN32` (defined everywhere today), Phase 0's plan to gate `WIN32` off for
+POSIX **will trigger these `#error`s on all four non-Windows targets** — including Linux/macOS, which
+*do* ship `steam_api` `.so`/`.dylib`. `SteamID64` **is** the server GUID and ban identity
+(`sv_client_mp.cpp:187/195/204`), and the `KISAK_NO_STEAM` stub does nothing for a `#ifdef WIN32`
+guard. *Re-guard Steam behind a `KISAK_STEAM` capability macro (not `WIN32`) in both files, and design
+a non-Steam persistent-GUID identity/ban scheme.* State the interop contract explicitly: can a
+no-Steam ARM client join a Steam-authenticated dedicated server at all? Windows-ARM64 is a distinct
+case — `WIN32` is defined so it compiles Steam **on**, but there is no ARM64 `steam_api` lib, so it
+fails at **link**.
+
+**H3 — Testing strategy must be reconciled with reality; "retail parity" is a non-goal.** The
+existing 5-target CI matrix builds with `KISAK_BUILD_MP/DEDICATED/SP=OFF`, so it exercises **zero game
+code** (green-but-empty). "Wire parity vs retail" is infeasible/mis-framed — the protocol is pinned to
+`1` (not retail) and a retail `.ff` cannot live in a GPLv3 repo. *Corrected testing plan:* the goal is
+**self-consistency across the five builds**, not retail parity. Pin **x86-64 (linux_amd64 or win64) as
+the golden reference**; commit a golden vector set for `Sys_SnapVector`/`PM_` movement plus a short
+recorded demo; gate the three ARM legs **bit-exact** against it via **demo playback** (the wire-neutral
+`cl_demo.cpp` MSG stream is the right determinism oracle). Produce the asset-load oracle from a
+**self-generated `.ff`** built by the (Windows-only) asset tool in CI. Attach the **ASan/UBSan gate to
+a leg that actually builds the game (linux_amd64)**, not the portable-only legs.
+
+**M1 — MMX/SSE skinning is dead code, not a render prerequisite (correction).** §Phase-3/render
+framing implied porting `r_model_skin_sse.cpp` (`__m64`) is a render blocker. It is not: the SSE call
+at `r_model_skin.cpp:158` is commented out, the scalar `R_SkinXSurfaceSkinned` (`:163`) is live, and
+`KISAK_ENABLE_X86_MMX_SKINNING` already defaults **OFF** on 64-bit/ARM. Treat the SSE file as dead code
+to **drop** in the ARM step; NEON skinning is an optional perf item, never a bring-up blocker.
+
+**M2 — Several "to-do" items are already done; rebase estimates on HEAD.** `KISAK_PLATFORM`
+auto-detects (`CMakeLists.txt:22-32`), the `set(WIN32)` collision is fixed (renamed `PLATFORM_WIN32`),
+`db_disk32.h` already seeds the packed mirror (§8), the headless-dedi split and the 5-target portable
+CI matrix exist, and the M2 pointer-truncation sweep + tripwire have now landed. `platform_compat.h`
+covers calling-convention/`KISAK_ALIGNAS` but is barely wired in; the **`sys_atomic.h` fixed-width
+shim (209 `Interlocked`/`long` sites) and `kisak_abi.h` are the main open M1 items.**
+
+**M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
+`r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),
+which **D3D9on12 does not provide** any more than dxvk does — so Windows-ARM64 hits the same failure as
+Linux/macOS. *Move the `IDirectDraw7` replacement into an all-target step*, and validate the D3D9on12
+device-create + VRAM-query + double-`Direct3DCreate9` seam on the `windows-11-arm` runner.
+
+**M4 — Fatal-error thread suspend needs a per-OS mechanism.** `Sys_SuspendOtherThreads`/`Sys_Error`
+freeze all threads to walk stacks (`threads.cpp:168-181/326-336`); there is no portable equivalent.
+*Specify:* Linux `tgkill`+`SIGRTMIN` handler that only sets a flag and parks on a semaphore; macOS
+`mach thread_suspend`/`thread_get_state`. The crashing thread's stack walk must read the suspended
+thread's context and **never call libc heap** (async-signal-safety), and must interlock with the ARM
+step's `backtrace()`/`CaptureStackBackTrace` replacement. Add a deliberate worker-thread-assert test
+on all five targets.
+
+**L1 — Non-headless dedicated server is Windows-only.** `scripts/dedi/dedi_sources.cmake` links
+Bink/GFX_D3D/Miles/Speex unless `KISAK_DEDI_HEADLESS=ON`. State that **headless is the only supported
+dedi on the four non-Windows targets** (CI builds those legs with `KISAK_DEDI_HEADLESS=ON`); keep
+non-headless dedi as a Windows-only legacy config.
+
+**L2 — Localized-string assets ride the fast-file path.** `SE_GetString_LoadObj`
+(`stringed_ingame.cpp:15-18`, `IsFastFileLoad()`) loads the `localizedString` asset through the same
+`DB_ConvertOffsetToPointer` 32-bit-zone machinery — add it to the M5 mirror/relocation inventory. The
+text `.str` path (`SE_LoadFileData` → `FS_ReadFile`) is bitness-neutral and needs no work.
 
 ---
 
