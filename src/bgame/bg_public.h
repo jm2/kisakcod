@@ -1,6 +1,12 @@
 #pragma once
 #include <server/sv_world.h>
 
+// Neutral home for the shared surface-type count (also #defined in the client-only
+// cg_local.h). Shared bgame code (e.g. bg_pmove.cpp) must not depend on client headers.
+#ifndef SURF_TYPECOUNT
+#define SURF_TYPECOUNT 29
+#endif
+
 #ifdef KISAK_MP
 #include <qcommon/msg_mp.h>
 #elif KISAK_SP

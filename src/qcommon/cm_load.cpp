@@ -4,6 +4,7 @@
 #include <database/database.h>
 #include <win32/win_local.h>
 #include "com_bsp.h"
+#include <qcommon/thread_context.h>
 
 //Line 53199 : 0006 : 006e75b8       struct clipMap_t cm        82e975b8     cm_load.obj
 clipMap_t cm;

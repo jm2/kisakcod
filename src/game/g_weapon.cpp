@@ -12,6 +12,10 @@
 #include "g_local.h"
 #endif
 
+// Melee trace corner offsets. Mirrors the definition in the client-only
+// DynEntity_client.h; kept local so shared game code needs no client header.
+static const float traceOffsets[5][2] = { { 0.0, 0.0 }, { 1.0, 1.0 }, { -1.0, 1.0 }, { 1.0, -1.0 }, { -1.0, -1.0 } };
+
 
 #ifdef KISAK_MP
 void __cdecl G_AntiLagRewindClientPos(int gameTime, AntilagClientStore *antilagStore)

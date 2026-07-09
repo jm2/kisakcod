@@ -262,6 +262,16 @@ bool __cdecl Vec3Compare(const float *a, const float *b);
 float __cdecl Vec3Length(const vec3r v);
 void Vec2Copy(const vec2r from, vec2r to);
 void __cdecl Vec3Copy(const vec3r from, vec3r to);
+// Defined in com_math.cpp; declared here so shared (non-client) TUs can use them
+// without pulling in client/EffectsCore headers.
+void __cdecl Vec4Copy(const float *from, float *to);
+void __cdecl Vec3MadMad(
+    const float *start,
+    float scale0,
+    const float *dir0,
+    float scale1,
+    const float *dir1,
+    float *result);
 #define VectorCopy(...) \
     typedef char VectorCopy_From_Quake_Is_Vec3Copy_same_args_though[-1]
 

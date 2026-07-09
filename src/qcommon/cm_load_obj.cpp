@@ -390,6 +390,9 @@ void __cdecl CM_LoadMapData_LoadObj(const char *name)
         {
             PROFLOAD_SCOPED("Load dynamic entities");
 #ifdef KISAK_MP
+            // Forward-declared here to avoid pulling the client-only DynEntity header
+            // into shared collision code (see commit "Remove stale collision DynEntity include").
+            void __cdecl DynEnt_LoadEntities();
             DynEnt_LoadEntities();
 #else
             iassert(0);

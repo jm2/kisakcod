@@ -16,6 +16,10 @@
 #include <conio.h>
 #include <qcommon/threads.h>
 
+// Defined in client/cl_console.cpp; forward-declared here so the Win32 GUI console
+// does not pull the full client.h into the win32 layer.
+void __cdecl Con_GetTextCopy(char *text, int32_t maxSize);
+
 #define COPY_ID			1
 #define QUIT_ID			2
 #define CLEAR_ID		3
