@@ -176,7 +176,7 @@ void __cdecl SV_GetChallenge(netadr_t from)
 
     if (!clientIdentity[0])
     {
-        NET_OutOfBandPrint(NS_SERVER, from, "error\xA\x15A client identity is required");
+        NET_OutOfBandPrint(NS_SERVER, from, "error\xA\x15" "A client identity is required");
         return;
     }
 

@@ -36,7 +36,7 @@ inline bool ParseSteamId(const char *identity, std::uint64_t *steamId)
             return false;
 
         const std::uint64_t digit = static_cast<std::uint64_t>(*ch - '0');
-        if (value > (std::numeric_limits<std::uint64_t>::max() - digit) / 10)
+        if (value > ((std::numeric_limits<std::uint64_t>::max)() - digit) / 10)
             return false;
         value = value * 10 + digit;
     }
