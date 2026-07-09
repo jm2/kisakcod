@@ -5,7 +5,6 @@
 
 #ifdef KISAK_MP
 #include <server_mp/server_mp.h>
-#include <client_mp/client_mp.h>
 #elif KISAK_SP
 
 #endif
@@ -717,4 +716,3 @@ void __cdecl Dvar_SetToTime_f()
         Com_Printf(0, "USAGE: set <variable>\n");
     }
 }
-
