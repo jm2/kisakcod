@@ -29,7 +29,9 @@
 #include <script/scr_animtree.h>
 #include <gfx_d3d/r_scene.h>
 #include <ragdoll/ragdoll.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <devgui/devgui.h>
+#endif
 #include <server/sv_game.h>
 #include <gfx_d3d/r_workercmds.h>
 #include <universal/com_convexhull.h>
@@ -118,6 +120,16 @@ const dvar_t *useFastFile;
 
 int		com_argc;
 char *com_argv[MAX_NUM_ARGVS + 1];
+
+static void __cdecl Com_UpdateDevGuiFrame(int localClientNum, float deltaTime)
+{
+#ifdef KISAK_DEDI_HEADLESS
+    (void)localClientNum;
+    (void)deltaTime;
+#else
+    DevGui_Update(localClientNum, deltaTime);
+#endif
+}
 
 static char* rd_buffer = NULL;
 static void(QDECL* rd_flush)(char*) = NULL;
@@ -1957,7 +1969,7 @@ void __cdecl Com_Frame_Try_Block_Function()
         //SCR_UpdateRumble(); // KISAKTODO
 #endif
         deltaTime = cls.frametime * EQUAL_EPSILON;
-        DevGui_Update(0, deltaTime);
+        Com_UpdateDevGuiFrame(0, deltaTime);
         Com_Statmon();
         R_WaitEndTime();
     }
