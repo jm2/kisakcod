@@ -13,7 +13,7 @@
 #include "scr_yacc_structs.h"
 #include "scr_vm.h"
 
-#ifdef KISAK_MP
+#if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)
 #include <client_mp/client_mp.h>
 #endif
 
@@ -988,12 +988,14 @@ int __cdecl yylex()
 					continue;
 				}
 				yy_did_buffer_switch_on_eof = 0;
+#if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)
 				if (CL_GetLocalClientActiveCount())
 				{
 					yy_c_buf_p = yytext;
 					yy_act = (yy_start - 1) / 2 + 96;
 					goto do_action;
 				}
+#endif
 				if (!yy_did_buffer_switch_on_eof)
 					yyrestart();
 				break;

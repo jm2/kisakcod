@@ -11,10 +11,6 @@
 #include <universal/com_constantconfigstrings.h>
 #include "scr_variable.h"
 
-#ifdef KISAK_MP
-#include <client_mp/client_mp.h>
-#endif
-
 scrStringDebugGlob_t* scrStringDebugGlob;
 static scrStringDebugGlob_t scrStringDebugGlobBuf;
 static scrStringGlob_t scrStringGlob; // 0x244E300

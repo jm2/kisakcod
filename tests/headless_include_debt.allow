@@ -76,10 +76,8 @@ qcommon/threads.h|#include <gfx_d3d/rb_backend.h> // THREAD_CONTEXT_COUNT
 script/scr_debugger.cpp|#include <client/client.h>
 script/scr_debugger.cpp|#include <gfx_d3d/r_rendercmds.h>
 script/scr_debugger.h|#include <ui/ui_shared.h>
-script/scr_stringlist.cpp|#include <client_mp/client_mp.h>
 script/scr_vm.cpp|#include <client/client.h>
 script/scr_vm.cpp|#include <gfx_d3d/r_dvars.h>
-script/scr_yacc2.cpp|#include <client_mp/client_mp.h>
 server_mp/server_mp.h|#include <client_mp/client_mp.h>
 universal/com_sndalias.cpp|#include <sound/snd_local.h>
 universal/com_sndalias.h|#include <sound/snd_public.h>
