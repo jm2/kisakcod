@@ -16,7 +16,9 @@
 #include "files.h"
 #include <gfx_d3d/r_rendercmds.h>
 #include <script/scr_vm.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_init.h>
+#endif
 #ifndef KISAK_DEDI_HEADLESS
 #include <EffectsCore/fx_system.h>
 #endif
@@ -142,6 +144,20 @@ static void __cdecl Com_WaitRendererWorkerCmds()
 {
 #ifndef KISAK_DEDI_HEADLESS
     R_WaitWorkerCmds();
+#endif
+}
+
+static void __cdecl Com_InitRendererThreads()
+{
+#ifndef KISAK_DEDI_HEADLESS
+    R_InitThreads();
+#endif
+}
+
+static void __cdecl Com_RendererErrorCleanup()
+{
+#ifndef KISAK_DEDI_HEADLESS
+    R_ComErrorCleanup();
 #endif
 }
 
@@ -1211,7 +1227,7 @@ void Com_ErrorCleanup()
     if (!com_dedicated->current.enabled)
 #endif
     {
-        R_ComErrorCleanup();
+        Com_RendererErrorCleanup();
     }
     Cmd_ComErrorCleanup();
     Dvar_SetInAutoExec(0);
@@ -1453,7 +1469,7 @@ void __cdecl Com_Init_Try_Block_Function(char* commandLine)
     if (!com_dedicated->current.integer)
 #endif
     {
-        R_InitThreads();
+        Com_InitRendererThreads();
         //KISAK_NULLSUB();
         CL_InitRenderer();
         //KISAK_NULLSUB();
