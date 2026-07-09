@@ -5,9 +5,7 @@
 #
 # This is an allowlist, not a desired state. CI should fail when new entries are
 # introduced or when an entry is removed but the debt manifest is not updated.
-bgame/bg_misc.cpp|#include <cgame/cg_local.h>
 bgame/bg_misc.cpp|#include <sound/snd_public.h>
-bgame/bg_pmove.cpp|#include <cgame/cg_local.h>
 bgame/bg_weapons.cpp|#include <cgame_mp/cg_local_mp.h>
 database/db_file_load.cpp|#include <gfx_d3d/r_buffers.h>
 database/db_file_load.cpp|#include <gfx_d3d/r_image.h>

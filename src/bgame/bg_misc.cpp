@@ -6,7 +6,6 @@
 #include <game/game_public.h>
 #include <universal/com_files.h>
 #include <xanim/xanim.h>
-#include <cgame/cg_local.h>
 
 const char *bgShockDvarNames[27] =
 {
@@ -2150,4 +2149,3 @@ int __cdecl BG_GetMaxSprintTime(const playerState_s *ps)
     else
         return (int)maxSprintTime;
 }
-

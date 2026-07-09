@@ -8,7 +8,6 @@
 #elif KISAK_SP
 
 #endif
-#include <cgame/cg_local.h>
 
 const scriptAnimMoveTypes_t moveAnimTable[6][2][2] =
 {
