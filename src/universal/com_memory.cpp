@@ -14,7 +14,9 @@
 #include <database/database.h>
 #include "com_files.h"
 #include <qcommon/cmd.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_dvars.h>
+#endif
 #include "physicalmemory.h"
 
 #include <cstdint>
@@ -284,9 +286,11 @@ void Com_InitHunkMemory()
     {
         s_hunkTotal = 0xA00000;
     }
+#ifndef KISAK_DEDI_HEADLESS
     R_ReflectionProbeRegisterDvars();
     if (r_reflectionProbeGenerate->current.enabled)
         s_hunkTotal = 0x20000000;
+#endif
     s_hunkData = (unsigned char*)Z_VirtualReserve(s_hunkTotal);
     if (!s_hunkData)
         Sys_OutOfMemErrorInternal(".\\universal\\com_memory.cpp", 1318);
