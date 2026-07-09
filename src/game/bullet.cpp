@@ -5,7 +5,6 @@
 #include <xanim/xanim.h>
 
 #ifdef KISAK_MP
-#include <cgame_mp/cg_local_mp.h>
 #include <game_mp/g_main_mp.h>
 #include <game_mp/g_public_mp.h>
 #include <server_mp/server_mp.h>
@@ -962,4 +961,3 @@ void __cdecl Bullet_FirePenetrate(BulletFireParams *bp, const WeaponDef *weapDef
         }
     }
 }
-
