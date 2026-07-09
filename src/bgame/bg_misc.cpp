@@ -2,7 +2,9 @@
 #include "bg_local.h"
 
 #include <qcommon/threads.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <sound/snd_public.h>
+#endif
 #include <game/game_public.h>
 #include <universal/com_files.h>
 #include <xanim/xanim.h>
@@ -200,8 +202,18 @@ const char *bg_soundRoomTypes[27] =
 
 char bgShockChannelNames[64][80];
 
+static int __cdecl BG_GetSoundEntChannelCount()
+{
+#ifdef KISAK_DEDI_HEADLESS
+    return 0;
+#else
+    return SND_GetEntChannelCount();
+#endif
+}
+
 void __cdecl BG_RegisterShockVolumeDvars()
 {
+#ifndef KISAK_DEDI_HEADLESS
     DvarLimits min; // [esp+4h] [ebp-28h]
     snd_entchannel_info_t *channelName; // [esp+24h] [ebp-8h]
     int i; // [esp+28h] [ebp-4h]
@@ -218,6 +230,7 @@ void __cdecl BG_RegisterShockVolumeDvars()
         min.value.min = 0.0;
         bg_shock_volume[i] = Dvar_RegisterFloat(bgShockChannelNames[i], 0.5, min, DVAR_CHEAT, "");
     }
+#endif
 }
 
 void __cdecl BG_RegisterDvars()
@@ -1986,9 +1999,9 @@ int __cdecl BG_LoadShellShockDvars(const char *name)
     {
         for (i = 0; i < 27; ++i)
             bg_shock_dvar_names[i] = bgShockDvarNames[i];
-        for (i = 0; i < SND_GetEntChannelCount(); ++i)
+        for (i = 0; i < BG_GetSoundEntChannelCount(); ++i)
             bg_shock_dvar_names[i + 27] = bgShockChannelNames[i];
-        EntChannelCount = SND_GetEntChannelCount();
+        EntChannelCount = BG_GetSoundEntChannelCount();
         success = Com_LoadDvarsFromBuffer(bg_shock_dvar_names, EntChannelCount + 27, filebuf, fullpath);
         Com_UnloadRawTextFile(filebuf);
         return success;
@@ -2057,7 +2070,7 @@ void __cdecl BG_SetShellShockParmsFromDvars(shellshock_parms_t *parms)
     parms->sound.drylevel = bg_shock_soundDryLevel->current.value;
     parms->sound.wetlevel = bg_shock_soundWetLevel->current.value;
     parms->sound.modEndDelay = SnapFloatToInt(bg_shock_soundModEndDelay->current.value * 1000.0f);
-    for (i = 0; i < SND_GetEntChannelCount(); ++i)
+    for (i = 0; i < BG_GetSoundEntChannelCount(); ++i)
     {
         v9 = bg_shock_volume[i]->current.value;
         v4 = 0.0 - v9;
@@ -2101,9 +2114,9 @@ int __cdecl BG_SaveShellShockDvars(const char *name)
 
     for (i = 0; i < 27; ++i)
         bg_shock_dvar_names[i] = bgShockDvarNames[i];
-    for (i = 0; i < SND_GetEntChannelCount(); ++i)
+    for (i = 0; i < BG_GetSoundEntChannelCount(); ++i)
         bg_shock_dvar_names[i + 27] = bgShockChannelNames[i];
-    EntChannelCount = SND_GetEntChannelCount();
+    EntChannelCount = BG_GetSoundEntChannelCount();
     if (!Com_SaveDvarsToBuffer(bg_shock_dvar_names, EntChannelCount + 27, filebuf, 0x10000u))
         return 0;
     fullpath = va("shock/%s.shock", name);
