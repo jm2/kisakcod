@@ -8,9 +8,13 @@
 ## Implementation status (July 8, 2026)
 
 Target policy is fixed: preserve retail assets and wire interoperability; use a
-shared Vulkan RHI (MoltenVK on macOS), OpenAL Soft, and FFmpeg; publish portable
-packages for Linux; and require native CI plus licensed gameplay smoke tests.
-Single-player is outside this port.
+shared **native Vulkan RHI** (MoltenVK on macOS) that replaces D3D9, OpenAL Soft,
+and FFmpeg; publish portable packages for Linux; and require native CI plus
+licensed gameplay smoke tests.
+
+**Committed scope is the MP client + the (headless) dedicated server. Single-player
+is deferred** — SP-only serialization surfaces (save-games) and SP subsystems are
+documented for completeness but are off the current critical path.
 
 Completed foundation work:
 
@@ -321,9 +325,16 @@ plumbing.
 - **Filesystem/time/console:** `_findfirst`→`opendir`/`readdir`/`fnmatch`; `GetModuleFileName`→
   `/proc/self/exe`; `timeGetTime`/QPC→`clock_gettime(CLOCK_MONOTONIC)`; `VirtualAlloc`→`mmap`; the
   Win32 GUI system console → termios/ANSI (critical for the dedicated server).
-- **Rendering:** either **dxvk-native/vkd3d-proton** (keep the D3D9 renderer, link against a native
-  Vulkan translation) — much cheaper — or a from-scratch Vulkan/OpenGL RHI behind a new abstraction
-  (331+ direct `IDirect3DDevice9` calls to reroute; effectively a renderer rewrite).
+- **Rendering (committed: native Vulkan RHI, not a translation layer):** land a thin in-tree RHI
+  (`src/gfx/kisak_rhi.h`) covering seven state groups (device/swapchain, context, pipeline collapsing
+  `r_state.cpp` render+sampler state, buffers, textures, shader modules + constant binding,
+  query/fence, render-target + caps/VRAM). Implement **`RhiD3D9` as a passthrough first** and reroute
+  the **~400 device call sites** (308 `device->` + 79 `dx.device->`) to `rhi->` so Windows keeps
+  shipping on D3D9 at every commit; put **SDL3** under the surface; then add the **Vulkan backend**
+  behind the identical interface (MoltenVK gives macOS for free; the same backend serves linux
+  amd64/arm64 and win-arm64). **dxvk-native is demoted to an optional *intermediate* runtime** used to
+  stay demoable on Linux/macOS while the native backend is written — not the shipping endpoint. See
+  the shader subsection below and §9 for the D3D9-semantics risks.
 - **Audio:** rewrite `snd_mss.cpp` (54 `AIL_*` calls) against **OpenAL Soft**; gate Bink cinematics
   off or decode via **FFmpeg** (has bink/binkaudio decoders).
 
@@ -337,6 +348,22 @@ The release target is Linux amd64. A 32-bit Linux build is not part of the
 supported matrix.
 
 ---
+
+### Shader pipeline: DX9 bytecode → SPIR-V
+
+The runtime consumes **precompiled DX9 (SM3) bytecode baked into fast-files**
+(`CreatePixelShader`/`CreateVertexShader` over `loadDef->program`); the asset/tool path uses D3DX
+(`Material_GenerateShaderString` → `D3DXCompileShader`). The native Vulkan backend needs SPIR-V, and
+**there is no turnkey DX9-SM3-bytecode→SPIR-V compiler** — DXBC SM4/5 is solved (vkd3d), but DX9 uses
+the older token-stream ISA. Strategy:
+
+- **Bring-up:** an **offline re-baker** (`tools/shader_rebake`) that emits a SPIR-V-carrying shader
+  load-def variant (`loadForRenderer` already multi-targets, `r_gfx.h:649,656`). The only
+  production-grade DX9→SPIR-V compiler that exists is **dxvk's DXSO module** — lift it as a standalone
+  offline tool (note: reusing it even offline partially reintroduces the translation code the native
+  goal wants gone; writing a DX9 lifter from scratch is a multi-month subproject).
+- **Long-term source of truth:** migrate the in-tree HLSL generator to **HLSL→SPIR-V via DXC** once the
+  RHI is stable.
 
 ## Phase 3 — Windows ARM64 and Linux ARM64
 
@@ -369,7 +396,7 @@ Treat macOS as "after Win64 + Linux land."
 | Netcode / wire format | S (Huffman only) | S | S | Wire is bitness/endian-neutral; see §1 |
 | 32-bit ABI (structs/VM/fast-file) | **XL** | **XL** | **XL** | The gating item; avoidable only by staying 32-bit |
 | Memory mgmt pointer truncation | M | M | M | `uintptr_t` sweep |
-| Rendering (DX9) | S (relink x64) | XL native / S via dxvk | XL / S via MoltenVK | D3D9 works on Win64 as-is |
+| Rendering (native Vulkan RHI) | XL (RHI + Vulkan rewrite, ~400 device sites) | XL native (S via dxvk-native *interim*) | XL / free via MoltenVK under same RHI | D3D9 kept only as the `RhiD3D9` passthrough for parity, not the endpoint |
 | Platform layer (win32/) | S | XL | XL | SDL + POSIX; `HWND` couples window/render/audio/input |
 | Threading | S | L | L | No POSIX `SuspendThread` |
 | Audio (Miles) | L (need x64 lib) | XL (OpenAL rewrite) | XL | 32-bit-only proprietary blob |
@@ -431,7 +458,7 @@ before any struct widens.
 | **M5** | Fast-file split: packed 32-bit mirrors + widening relocation loader | XL | M4 | an **unmodified retail `.ff`** loads on win64 and every runtime asset hash-matches the 32-bit reference dump; 32-bit build still loads it |
 | **M6** | win64 client + dedi bring-up (first native 64-bit target) | XL | M5, M4 (M3 rec.) | win64 client boots, loads a retail map, golden-image render match, **OpenAL** audio/voice; win64 dedi passes demo/replay parity |
 | **M7** | linux_amd64 **dedicated server** (headless) — first cross-platform runnable | L | M3, M5, M4, M1 | linux dedi compiles under GCC+Clang, loads a map **without GFX_D3D/Miles/Bink**, runs a match, demo-parity hashes bit-identical to win64 |
-| **M8** | dxvk-native render backend + SDL3 client surface (shared Linux/macOS) | XL | M6, M3, M5 | linux full client renders a retail map through **dxvk-native/Vulkan**, golden-image match to win64; retail DX9 shader bytecode runs unmodified |
+| **M8** | native Vulkan RHI: `kisak_rhi.h` + `RhiD3D9` passthrough (reroute ~400 device sites, Windows stays green) → Vulkan backend + SDL3 surface + offline shader re-bake | XL | M6, M3, M5 | linux full client renders a retail map through the **native Vulkan backend** (re-baked SPIR-V shaders), golden-image match to win64; dxvk-native may serve as an interim backend feeding M9/M13 but is not the M8 deliverable |
 | **M9** | linux_amd64 **full client** — second native target | L | M8, M7, M6 | linux client fully playable; a **win64↔linux cross-play** demo-parity test shows bit-identical movement/physics; establishes the x86-64 FP baseline |
 | **M10** | ARM64 determinism & arch layer (OS-agnostic) | L | M9, M1 | an aarch64 build produces **bit-identical** movement + demo hashes to the x86-64 baseline; no `__rdtsc`/`__cpuid`/x87/`__m64`/inline-asm remain |
 | **M11** | win_arm64 — first ARM target (native D3D9on12 + Win32) | M | M10, M6, M4, M5 | win_arm64 client boots on Windows-11-ARM, renders via **D3D9on12**, cross-arch demo-parity vs win64 |
@@ -537,6 +564,16 @@ a dev box and corrupt only in production.
 - **Real ARM hardware runners are mandatory** (`ubuntu-24.04-arm`, `windows-11-arm`, `macos-15`):
   cross-compiled ARM cannot run on x64 builders, so compile-only jobs give false confidence for exactly
   the runtime-only bugs (truncation, `__m64`, memory ordering).
+- **Native-Vulkan-RHI render risks:** (a) no turnkey DX9→SPIR-V compiler — DXSO reuse reintroduces a
+  translation-code dependency the native goal wants gone; (b) **D3D9 semantics are baked into assets and
+  engine math** (half-texel offset, Y-flip, clip-Z range, row- vs column-major, BGRA, D3DPOOL/lost-device)
+  and render subtly wrong if not replicated; (c) the `SetVertex/PixelShaderConstantF` register writes →
+  push-constants/UBOs must **byte-match `R_HW_SetVertexShaderConstant`** or it is silent corruption;
+  (d) the 249 `sizeof` static-asserts + `GfxCmdBufPrimState`/`GfxTexture` are read by `.ff` byte-parsers
+  (`db_memory.cpp`), so RHI-ifying `DxGlobals` must not break fast-file compat; (e) `db_memory.cpp`
+  allocates GPU buffers during `.ff` load, so **headless/dedi needs a null-RHI stub**; (f) the
+  `IDirectDraw7` VRAM query (`r_texturemem.cpp`) and D3DX have no Vulkan analog and become the RHI
+  caps query (all-target, incl. Win-ARM64 under D3D9on12 — it does not provide DirectDraw7 either).
 
 **Up-front blockers to resolve before the build is even exercised:** the repo is GPLv3 while
 Miles/Bink/Steam/DXSDK redistributables are proprietary and 32-bit-only; macOS/ARM lose Miles and Bink
@@ -551,29 +588,63 @@ replacement as a dependency track that gates M6, not M4/M5.
 An adversarial completeness pass over §1–§9 found the following gaps and corrections. They are
 tracked here so the milestone work accounts for them.
 
-**H1 — Save-games are an unclassified 4th serialization surface (SP target).** `g_save.cpp`
-raw-dumps whole runtime structs (`gentity_s`, `gclient_s`, `level_locals`) via
-`SaveMemory_SaveWrite` — e.g. `WriteClient` passes the hardcoded magic size `46104`, keyed only by
-`header.saveVersion = 287`. The three-layout-class model (§8) routes these structs to "runtime →
-widen," which **silently changes the on-disk save layout with no migration**, and LLP64 (Windows)
-vs LP64 (Linux/macOS) widths make saves **non-portable across targets** even at equal pointer width.
-The save walkers also contain pointer-as-int loop bounds (`g_save.cpp:1614/1747/1790`, now widened by
-the M2 sweep) and a `// KISAKTODO: pointer type on ps`. *Add a 4th layout class "SERIALIZED-RUNTIME
-(save-game)":* either replace the raw memcpy with descriptor-driven field-by-field writes (killing the
-`46104` magic), or declare saves version-bumped and non-portable, gated by a `saveVersion` + arch/width
-tag. Add a save round-trip test and a cross-width (LLP64↔LP64) load test.
+**H1 (DEFERRED — SP-only) — Save-games are an unclassified 4th serialization surface.** Because
+single-player is deferred (see scope), this is **off the MP/dedi critical path** and is recorded for
+when SP is picked up. `g_save.cpp` raw-dumps whole runtime structs (`gentity_s`, `gclient_s`,
+`level_locals`) via `SaveMemory_SaveWrite` — e.g. `WriteClient` passes the hardcoded magic size
+`46104`, keyed only by `header.saveVersion = 287`. The three-layout-class model (§8) routes these
+structs to "runtime → widen," which **silently changes the on-disk save layout with no migration**, and
+LLP64 vs LP64 widths make saves **non-portable across targets**. *When SP is resumed:* add a 4th layout
+class "SERIALIZED-RUNTIME (save-game)" — either replace the raw memcpy with descriptor-driven
+field-by-field writes (killing the `46104` magic), or declare saves version-bumped and non-portable
+with a `saveVersion` + arch/width tag; add a save round-trip + cross-width load test. **Not milestone
+gating for MP/dedi.**
 
-**H2 — Steam auth is a hard `#error` on every non-Windows target, in the MP connect path.**
-`cl_main_mp.cpp:42` and `sv_client_mp.cpp:20` are `#ifdef WIN32 … #else #error Steam Auth for Arch`.
-Because they guard on bare `WIN32` (defined everywhere today), Phase 0's plan to gate `WIN32` off for
-POSIX **will trigger these `#error`s on all four non-Windows targets** — including Linux/macOS, which
-*do* ship `steam_api` `.so`/`.dylib`. `SteamID64` **is** the server GUID and ban identity
-(`sv_client_mp.cpp:187/195/204`), and the `KISAK_NO_STEAM` stub does nothing for a `#ifdef WIN32`
-guard. *Re-guard Steam behind a `KISAK_STEAM` capability macro (not `WIN32`) in both files, and design
-a non-Steam persistent-GUID identity/ban scheme.* State the interop contract explicitly: can a
-no-Steam ARM client join a Steam-authenticated dedicated server at all? Windows-ARM64 is a distinct
-case — `WIN32` is defined so it compiles Steam **on**, but there is no ARM64 `steam_api` lib, so it
-fails at **link**.
+**H2 — Steam auth: capability-gate it (and doing so fixes an existing dedi defect).**
+
+*Why it exists (it is not retail behavior):* retail COD4 ran with no Steam. KisakCOD removed the CD-key
+scheme and PunkBuster, losing its stable player identity and ban primitive, so contributor LWSS grafted
+Steam in (commit `fc43d360`, 2025-06-23 — **not** the original decompile, **not** the recent porting
+work) to fill exactly that hole: `SteamID64` is substituted verbatim for the old `cdkeyHash` and
+becomes the server GUID (`sv_client_mp.cpp:204`, with the original `//…cdkeyHash` line commented right
+above), keeping `SV_IsBannedGuid`/`SV_IsTempBannedGuid` alive as string compares; a session ticket
+(`GetAuthSessionTicket`→`BeginAuthSession`) adds login-time anti-spoof auth. It is **not** an
+ownership/license gate (no `UserHasLicenseForApp`/`BIsSubscribedApp` anywhere in `src/`) and **not**
+matchmaking (persona name fetched but unused; master browser already dead).
+
+*Steam is portable, with one gap.* The layer uses the standard cross-platform Steamworks API; the only
+Windows include in `win_steam.cpp` is `<Windows.h>`. Valve ships `steam_api64`/`libsteam_api.so`/
+`.dylib` free in the same SDK, so Steam links natively on **win64, linux-amd64, macOS-arm64** with
+minimal fixup (guard refactor + `<Windows.h>` decouple + commit the per-target libs). **There is no
+ARM64 Steam library** (the SDK ships `linux32/linux64/osx/win64` only), so **win-arm64 and linux-arm64
+cannot link Steam** — that, not portability, is what mandates a fallback.
+
+*Current state is a hard gate on both ends.* The client refuses to send a challenge without a real
+ticket (`cl_main_mp.cpp:1056-1060`); the server rejects an empty ticket/ID (`sv_client_mp.cpp:172-175`)
+and only issues `challengeResponse` if `Steam_CheckClientTicket` passes (`:210`, else *"Your Steam
+Client Ticket was Invalid"*). **Critical defect:** the dedicated server uses the *client*
+`SteamAPI_Init`, **not `SteamGameServer`** (none in tree), and `Steam_CheckClientTicket` returns false
+when the process isn't Steam-initialized (`win_steam.cpp:238-242`) — so a **headless dedi is presently
+unjoinable unless its operator is logged into a desktop Steam client that owns appid 7940**. Absurd for
+a Linux server; making Steam optional *fixes* this.
+
+*Plan (~3–4 focused days).* Introduce a `KISAK_STEAM` capability macro **decoupled from `WIN32`** and
+replace the three `#ifdef WIN32 … #else #error` guards (`cl_main_mp.cpp:38-43`,
+`sv_client_mp.cpp:16-21`, `cl_main_pc_mp.cpp:388-393`) with `#if KISAK_STEAM`. Add a **2-backend
+identity provider** behind the four connect call sites: STEAM = real ticket + `SteamID64` (today's
+path); NO-STEAM = empty ticket + a **persistent self-generated md5 `cl_guid`** — the Quake3-style
+scaffolding already sits commented at the exact emit site (`cl_main_mp.cpp:1053-1054`
+`//CL_BuildMd5StrFromCDKey`). Add **`sv_requireSteam` (default 0)** gating only the empty-ticket
+`iassert` (`:172-175`) and `Steam_CheckClientTicket` (`:210`); leave the GUID ban path
+(`:187/:195/:204`) untouched (identity-agnostic). Stub `Steam_Init`/`Steam_CheckClients`/
+`Steam_OnClientDropped` to no-ops when off and guard `Steam_Init` (`win_main.cpp:825`). *Cross-play
+contract:* a server picks one mode — `sv_requireSteam=1` accepts only real-ticket Steam clients;
+`sv_requireSteam=0` is an open/LAN/community server that records whatever GUID arrives but validates no
+ticket; a no-Steam client cannot join a require-Steam server (correct, not a regression). Format
+self-gen GUIDs distinctly from 17-digit `SteamID64` so ban entries can't collide. What's genuinely lost
+with Steam off — VAC-style async kick, the implicit ownership check, friends/browser (already unwired)
+— is all non-connect-critical and costs zero code to disable; document it as the open-server security
+posture, and keep `sv_requireSteam=1` available wherever a `steam_api` lib is committed.
 
 **H3 — Testing strategy must be reconciled with reality; "retail parity" is a non-goal.** The
 existing 5-target CI matrix builds with `KISAK_BUILD_MP/DEDICATED/SP=OFF`, so it exercises **zero game
