@@ -4,16 +4,20 @@
 
 #include <universal/assertive.h>
 
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/rb_drawprofile.h>
 #include <gfx_d3d/r_init.h>
+#endif
 #include <win32/win_local.h>
 
-#ifdef KISAK_MP
+#if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)
 #include <client_mp/client_mp.h>
 #elif KISAK_SP
 #include <client/client.h>
 #endif
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/rb_backend.h>
+#endif
 
 uint32_t Win_InitThreads();
 
@@ -65,6 +69,24 @@ static void *backendEvent[2];
 static void *ackendEvent;
 static void *updateSpotLightEffectEvent;
 static void *updateEffectsEvent;
+
+static bool __cdecl Sys_IsUsingAnyRenderProfile()
+{
+#ifdef KISAK_DEDI_HEADLESS
+    return false;
+#else
+    return RB_IsUsingAnyProfile();
+#endif
+}
+
+static bool __cdecl Sys_IsUsingAdaptiveGpuSync()
+{
+#ifdef KISAK_DEDI_HEADLESS
+    return false;
+#else
+    return R_IsUsingAdaptiveGpuSync();
+#endif
+}
 
 #ifdef KISAK_MP
 static const char* s_threadNames[THREAD_CONTEXT_COUNT] =
@@ -703,14 +725,14 @@ void Win_UpdateThreadLock()
     {
         s_threadLock = THREAD_LOCK_ALL;
     }
-    else if (RB_IsUsingAnyProfile())
+    else if (Sys_IsUsingAnyRenderProfile())
     {
         Win_SetThreadLock(THREAD_LOCK_ALL);
     }
     else
     {
         WinThreadLock threadLock = (WinThreadLock)sys_lockThreads->current.integer;
-        if (threadLock == THREAD_LOCK_NONE && R_IsUsingAdaptiveGpuSync())
+        if (threadLock == THREAD_LOCK_NONE && Sys_IsUsingAdaptiveGpuSync())
             threadLock = THREAD_LOCK_MINIMAL;
         Win_SetThreadLock(threadLock);
     }
