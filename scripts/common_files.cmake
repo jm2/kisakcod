@@ -268,7 +268,6 @@ set(GFX_D3D
     "${SRC_DIR}/gfx_d3d/r_model_pose.h"
     "${SRC_DIR}/gfx_d3d/r_model_skin.cpp"
     "${SRC_DIR}/gfx_d3d/r_model_skin.h"
-    "${SRC_DIR}/gfx_d3d/r_model_skin_sse.cpp"
     "${SRC_DIR}/gfx_d3d/r_outdoor.cpp"
     "${SRC_DIR}/gfx_d3d/r_outdoor.h"
     "${SRC_DIR}/gfx_d3d/r_pixelcost_load_obj.cpp"
@@ -322,6 +321,12 @@ set(GFX_D3D
     "${SRC_DIR}/gfx_d3d/r_xsurface.cpp"
     "${SRC_DIR}/gfx_d3d/r_xsurface.h"
 )
+
+if (KISAK_ENABLE_X86_MMX_SKINNING)
+    list(APPEND GFX_D3D
+        "${SRC_DIR}/gfx_d3d/r_model_skin_sse.cpp"
+    )
+endif()
 
 set(PHYSICS
     "${SRC_DIR}/physics/physpreset_load_obj.cpp"

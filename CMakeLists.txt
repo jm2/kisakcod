@@ -12,6 +12,11 @@ option(KISAK_BUILD_DEDICATED "Build the multiplayer dedicated server" ON)
 option(KISAK_BUILD_SP "Build the incomplete single-player client" OFF)
 option(KISAK_DEDI_HEADLESS "Build the dedicated server without client/render/audio/cinema source groups" OFF)
 option(KISAK_ALLOW_UNSUPPORTED_64BIT "Allow configuration of the in-progress 64-bit ABI port" OFF)
+set(_KISAK_DEFAULT_X86_MMX_SKINNING OFF)
+if (CMAKE_SIZEOF_VOID_P EQUAL 4 AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM|arm|aarch|AARCH)")
+    set(_KISAK_DEFAULT_X86_MMX_SKINNING ON)
+endif()
+option(KISAK_ENABLE_X86_MMX_SKINNING "Compile the legacy x86/MMX renderer skinning implementation" ${_KISAK_DEFAULT_X86_MMX_SKINNING})
 include(CTest)
 
 if (WIN32)
@@ -49,6 +54,14 @@ if (CMAKE_SIZEOF_VOID_P EQUAL 8
         "The runtime still embeds the 32-bit ABI in fast-file and script VM layouts. "
         "Use a Win32 generator today. Set KISAK_ALLOW_UNSUPPORTED_64BIT=ON only when "
         "working on the disk32/runtime64 conversion.")
+endif()
+
+if (KISAK_ENABLE_X86_MMX_SKINNING
+    AND (NOT CMAKE_SIZEOF_VOID_P EQUAL 4 OR CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM|arm|aarch|AARCH)"))
+    message(FATAL_ERROR
+        "KISAK_ENABLE_X86_MMX_SKINNING is only valid for 32-bit x86 builds. "
+        "64-bit and ARM targets must use the scalar path until SSE2/NEON "
+        "skinning replacements land.")
 endif()
 
 # Set Address Sanitizer
