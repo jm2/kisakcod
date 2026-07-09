@@ -1,7 +1,10 @@
 #include "xanim.h"
 #include "xmodel.h"
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_model.h>
+#endif
 #include <universal/com_files.h>
+#include <universal/com_memory.h>
 #include <qcommon/qcommon.h>
 
 enum $69AF8E44C9D6025F282D494F15F1F016 : __int32
@@ -47,6 +50,18 @@ HunkUser *g_animUser;
 XAnimPartQuatPtr *g_partQuatArray;
 XAnimPartTransPtr *g_partTransArray;
 char *g_simpleQuatBits;
+
+static XModel *__cdecl XAnim_RegisterModelPiece(const char *name)
+{
+#ifdef KISAK_DEDI_HEADLESS
+    return XModelPrecache(
+        (char *)name,
+        (void *(__cdecl *)(int))Hunk_AllocXModelPrecache,
+        (void *(__cdecl *)(int))Hunk_AllocXModelPrecacheColl);
+#else
+    return R_RegisterModel(name);
+#endif
+}
 
 uint32_t __cdecl XAnimGetPartQuatType(uint32_t animPartIndex)
 {
@@ -275,7 +290,7 @@ XModelPieces *__cdecl XModelPiecesLoadFile(const char *name, void *(__cdecl *All
             } while (v3);
             pos = &pos[len];
 
-            piece->model = R_RegisterModel(piecename);
+            piece->model = XAnim_RegisterModelPiece(piecename);
             if (!piece->model)
             {
                 Com_PrintError(1, "ERROR: xmodel piece '%s' missing from pieces model 's%'\n", piecename, filename);

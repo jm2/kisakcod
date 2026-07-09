@@ -59,5 +59,4 @@ xanim/xanim.h|#include <gfx_d3d/r_gfx.h>
 xanim/xanim.h|#include <gfx_d3d/r_material.h>
 xanim/xanim.h|#include <sound/snd_public.h>
 xanim/xanim.h|#include <ui/ui_shared.h>
-xanim/xanim_load_obj.cpp|#include <gfx_d3d/r_model.h>
 xanim/xmodel_load_obj.cpp|#include <gfx_d3d/r_dvars.h>
