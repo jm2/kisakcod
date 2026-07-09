@@ -6,7 +6,9 @@
 #include <universal/com_files.h>
 #include <win32/win_local.h>
 #include <universal/q_parse.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <devgui/devgui.h>
+#endif
 
 void __cdecl GraphFloat_Load(GraphFloat *graph, char *fileName, float scale)
 {
@@ -61,6 +63,7 @@ void __cdecl GraphFloat_ParseBuffer(GraphFloat *graph, const char *buffer, char 
 
 void __cdecl GraphFloat_CreateDevGui(GraphFloat *graph, const char *devguiPath)
 {
+#ifndef KISAK_DEDI_HEADLESS
     iassert( graph );
     iassert( devguiPath );
     graph->devguiGraph.knotCountMax = 32;
@@ -70,6 +73,10 @@ void __cdecl GraphFloat_CreateDevGui(GraphFloat *graph, const char *devguiPath)
     graph->devguiGraph.textCallback = (void(__cdecl *)(const DevGraph *, const float, const float, char *, const int))GraphFloat_DevGuiCB_Text;
     graph->devguiGraph.data = graph;
     DevGui_AddGraph(devguiPath, &graph->devguiGraph);
+#else
+    (void)graph;
+    (void)devguiPath;
+#endif
 }
 
 void __cdecl GraphFloat_DevGuiCB_Event(const DevGraph *graph, DevEventType event)
@@ -118,4 +125,3 @@ void __cdecl GraphFloat_DevGuiCB_Text(const DevGraph *devGuiGraph, float inputX,
     inputYa = inputY * *((float *)devGuiGraph->data + 81);
     sprintf(text, "Fraction: %.3f, Value: %.3f", inputX, inputYa);
 }
-

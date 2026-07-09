@@ -1,6 +1,8 @@
 #include "com_sndalias.h"
 #include "com_memory.h"
+#ifndef KISAK_DEDI_HEADLESS
 #include <devgui/devgui.h>
+#endif
 #include <sound/snd_local.h>
 #include "com_files.h"
 #include <qcommon/cmd.h>
@@ -109,10 +111,12 @@ double __cdecl Com_GetVolumeFalloffCurveValue(SndCurve *volumeFalloffCurve, floa
 
 void __cdecl Com_InitSoundDevGuiGraphs()
 {
+#ifndef KISAK_DEDI_HEADLESS
     if (IsFastFileLoad())
         ((void(__cdecl *)(void (*)()))Com_InitSoundDevGuiGraphs_FastFile)(Com_InitSoundDevGuiGraphs_FastFile);
     else
         ((void(__cdecl *)(void (*)()))Com_InitSoundDevGuiGraphs_LoadObj)(Com_InitSoundDevGuiGraphs_LoadObj);
+#endif
 }
 
 void __cdecl Com_VolumeFalloffCurveGraphEventCallback(const DevGraph *graph, DevEventType event, int i)
@@ -147,14 +151,17 @@ void __cdecl Com_VolumeFalloffCurveGraphEventCallback(const DevGraph *graph, Dev
 
 void Com_InitSoundDevGuiGraphs_FastFile()
 {
+#ifndef KISAK_DEDI_HEADLESS
     int counter; // [esp+0h] [ebp-4h] BYREF
 
     counter = 0;
     DB_EnumXAssets(ASSET_TYPE_SOUND_CURVE, (void(__cdecl *)(XAssetHeader, void *))Com_GetGraphList, &counter, 0);
+#endif
 }
 
 void __cdecl Com_GetGraphList(XAssetHeader header, int *data)
 {
+#ifndef KISAK_DEDI_HEADLESS
     char devguiPath[256]; // [esp+0h] [ebp-110h] BYREF
     DevGraph *graph; // [esp+104h] [ebp-Ch]
     int index; // [esp+108h] [ebp-8h]
@@ -178,6 +185,10 @@ void __cdecl Com_GetGraphList(XAssetHeader header, int *data)
             ++*count;
         }
     }
+#else
+    (void)header;
+    (void)data;
+#endif
 }
 
 MSSChannelMap *__cdecl Com_GetSpeakerMap(SpeakerMap *speakerMap, int sourceChannelCount)

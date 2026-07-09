@@ -65,7 +65,6 @@ qcommon/common.cpp|#include <gfx_d3d/r_scene.h>
 qcommon/common.cpp|#include <gfx_d3d/r_workercmds.h>
 qcommon/common.cpp|#include <sound/snd_local.h>
 qcommon/files.cpp|#include <sound/snd_public.h>
-qcommon/graph.cpp|#include <devgui/devgui.h>
 qcommon/msg_mp.cpp|#include <cgame/cg_local.h>
 qcommon/msg_mp.cpp|#include <client_mp/client_mp.h>
 qcommon/net_chan_mp.cpp|#include <cgame_mp/cg_local_mp.h>
@@ -86,12 +85,9 @@ script/scr_vm.cpp|#include <gfx_d3d/r_dvars.h>
 script/scr_yacc2.cpp|#include <client_mp/client_mp.h>
 server_mp/server_mp.h|#include <client_mp/client_mp.h>
 universal/com_memory.cpp|#include <gfx_d3d/r_dvars.h>
-universal/com_sndalias.cpp|#include <devgui/devgui.h>
 universal/com_sndalias.cpp|#include <sound/snd_local.h>
 universal/com_sndalias.h|#include <sound/snd_public.h>
-universal/com_sndalias_load_obj.cpp|#include <devgui/devgui.h>
 universal/dvar.cpp|#include <client_mp/client_mp.h>
-universal/dvar.cpp|#include <devgui/devgui.h>
 universal/dvar.cpp|#include <gfx_d3d/r_dvars.h>
 universal/dvar_cmds.cpp|#include <client_mp/client_mp.h>
 universal/fft.h|#include <gfx_d3d/r_material.h>

@@ -3,7 +3,9 @@
 #include "com_files.h"
 #include <qcommon/cmd.h>
 #include "com_memory.h"
+#ifndef KISAK_DEDI_HEADLESS
 #include <devgui/devgui.h>
+#endif
 
 SoundAliasLoadGlobals saLoadObjGlob;
 
@@ -1760,6 +1762,7 @@ void __cdecl Com_SetChannelMapEntry(
 
 void Com_InitSoundDevGuiGraphs_LoadObj()
 {
+#ifndef KISAK_DEDI_HEADLESS
     char devguiPath[256]; // [esp+0h] [ebp-108h] BYREF
     int i; // [esp+104h] [ebp-4h]
 
@@ -1782,6 +1785,7 @@ void Com_InitSoundDevGuiGraphs_LoadObj()
             DevGui_AddGraph(devguiPath, &g_sa.curveDevGraphs[i]);
         }
     }
+#endif
 }
 
 void __cdecl Com_PreLoadSpkrMapFile(SpeakerMapInfo *info)
