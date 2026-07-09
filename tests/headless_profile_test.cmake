@@ -1,3 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+
 set(SRC_DIR "${SOURCE_ROOT}/src")
 set(DEPS_DIR "${SOURCE_ROOT}/deps")
 set(SCRIPTS_DIR "${SOURCE_ROOT}/scripts")
