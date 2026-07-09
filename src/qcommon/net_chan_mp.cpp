@@ -4,13 +4,17 @@
 
 #include "net_chan_mp.h"
 #include "qcommon.h"
+#ifndef KISAK_DEDI_HEADLESS
 #include <client_mp/client_mp.h>
+#endif
 #include <win32/win_local.h>
 #include "cmd.h"
 #include <universal/com_files.h>
 #include <server_mp/server_mp.h>
 #include <win32/win_net.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <cgame_mp/cg_local_mp.h>
+#endif
 #include <universal/profile.h>
 
 
@@ -50,6 +54,35 @@ const char *netsrcString[2] =
     "server"
 };
 
+static bool __cdecl Net_AnyLocalClientsRunning()
+{
+#ifdef KISAK_DEDI_HEADLESS
+    return false;
+#else
+    return CL_AnyLocalClientsRunning();
+#endif
+}
+
+static void __cdecl Net_PrintClientProfileStats(int localClientNum, int bPrintToConsole)
+{
+#ifndef KISAK_DEDI_HEADLESS
+    CL_Netchan_PrintProfileStats(localClientNum, bPrintToConsole);
+#else
+    (void)localClientNum;
+    (void)bPrintToConsole;
+#endif
+}
+
+static void __cdecl Net_AddClientOOBProfilePacket(netsrc_t sock, int length)
+{
+#ifndef KISAK_DEDI_HEADLESS
+    CL_Netchan_AddOOBProfilePacket(sock, length);
+#else
+    (void)sock;
+    (void)length;
+#endif
+}
+
 const char *NET_AdrToString(netadr_t a)
 {
     static	char	s[64];
@@ -84,7 +117,7 @@ void __cdecl NetProf_PrepProfiling(netProfileInfo_t *prof)
     {
         if (!net_iProfilingOn)
         {
-            if (!com_sv_running->current.enabled || CL_AnyLocalClientsRunning() && net_profile->current.integer == 2)
+            if (!com_sv_running->current.enabled || Net_AnyLocalClientsRunning() && net_profile->current.integer == 2)
                 net_iProfilingOn = 1;
             else
                 net_iProfilingOn = 2;
@@ -238,7 +271,7 @@ void __cdecl Net_DisplayProfile(int localClientNum)
     {
         if (net_iProfilingOn == 1)
         {
-            CL_Netchan_PrintProfileStats(localClientNum, 0);
+            Net_PrintClientProfileStats(localClientNum, 0);
         }
         else
         {
@@ -710,7 +743,7 @@ void __cdecl Net_DumpProfile_f()
   {
     if (net_iProfilingOn == 1)
     {
-      CL_Netchan_PrintProfileStats(0, 1);
+      Net_PrintClientProfileStats(0, 1);
     }
     else
     {
@@ -1176,7 +1209,7 @@ bool __cdecl NET_OutOfBandPrint(netsrc_t sock, netadr_t adr, const char *data)
         if (sock == NS_SERVER)
             SV_Netchan_AddOOBProfilePacket(v6);
         else
-            CL_Netchan_AddOOBProfilePacket(sock, v6);
+            Net_AddClientOOBProfilePacket(sock, v6);
         return res > 0;
     }
     else
@@ -1211,7 +1244,7 @@ bool __cdecl NET_OutOfBandData(netsrc_t sock, netadr_t adr, const uint8_t *forma
     if (sock == NS_SERVER)
         SV_Netchan_AddOOBProfilePacket(mbuf_20);
     else
-        CL_Netchan_AddOOBProfilePacket(sock, mbuf_20);
+        Net_AddClientOOBProfilePacket(sock, mbuf_20);
     return res > 0;
 }
 
@@ -1238,7 +1271,7 @@ bool __cdecl NET_OutOfBandVoiceData(netsrc_t sock, netadr_t adr, uint8_t *format
     if (sock == NS_SERVER)
         SV_Netchan_AddOOBProfilePacket(mbuf_20);
     else
-        CL_Netchan_AddOOBProfilePacket(sock, mbuf_20);
+        Net_AddClientOOBProfilePacket(sock, mbuf_20);
     return res > 0;
 }
 
@@ -1296,4 +1329,3 @@ int __cdecl NET_StringToAdr(char *s, netadr_t *a)
         }
     }
 }
-
