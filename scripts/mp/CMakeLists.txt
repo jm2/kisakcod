@@ -58,6 +58,7 @@ add_executable(${PROJECT_NAME}
 
 # Add multiplayer flag
 target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_MP CINEMA USE_SEPARATE_BLIT_TEXTURE)
+set(KISAK_TARGET_NEEDS_CLIENT_MEDIA ON)
 
 # We need all of the pre/post-build commands
 include(${SCRIPTS_DIR}/pre_build.cmake)

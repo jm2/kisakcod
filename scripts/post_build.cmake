@@ -1,4 +1,4 @@
-if (WIN32)
+if (WIN32 AND KISAK_TARGET_NEEDS_CLIENT_MEDIA)
     add_custom_command(
         TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -7,6 +7,9 @@ if (WIN32)
         COMMENT "Copying Miles dependencies"
     )
 
+endif()
+
+if (WIN32)
     add_custom_command(
         TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

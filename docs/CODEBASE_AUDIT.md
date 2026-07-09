@@ -20,6 +20,9 @@ Fixed in the initial porting implementation:
   unsupported targets fail clearly, and CI uses the actual DirectX NuGet layout.
 - Fast-file offset fixups now validate block indices and byte spans before
   dereferencing zone memory.
+- Dedicated server source composition now has an experimental headless profile
+  and test guard, but the legacy client-backed profile remains default until
+  remaining client/render/audio references are stubbed or guarded.
 
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, genuine headless

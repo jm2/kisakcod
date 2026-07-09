@@ -20,6 +20,9 @@ Completed foundation work:
   by the current fast-file offset fixup path and covered by portable tests;
 - pointer-width-safe hunk allocator alignment/accounting, temporary allocation
   return types, parse-tree alignment, and client/server skeleton alignment;
+- an experimental `KISAK_DEDI_HEADLESS` CMake source profile that excludes
+  client/cgame/UI/D3D/audio/cinema/proprietary media groups, plus a CTest guard
+  that prevents those paths from re-entering the headless source list;
 - download-block and stats-packet runtime bounds checks;
 - host platform detection, target build switches, and an explicit 64-bit ABI gate;
 - platform source override plumbing for Windows, Linux, and macOS;
@@ -29,7 +32,8 @@ Completed foundation work:
 
 Remaining gates, in implementation order:
 
-1. Split dedicated server sources from renderer, client, UI, audio, and cinema.
+1. Burn down the remaining client/render/audio symbol references that prevent
+   `KISAK_DEDI_HEADLESS=ON` from becoming the default dedicated-server build.
 2. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 3. Widen the script VM value representation and remove pointer-to-32-bit casts.

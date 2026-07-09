@@ -26,3 +26,10 @@ set_target_properties(kisakcod-disk32-tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 add_test(NAME disk32-pointer-token-bounds COMMAND kisakcod-disk32-tests)
+
+add_test(
+    NAME dedi-headless-source-profile
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/headless_profile_test.cmake
+)

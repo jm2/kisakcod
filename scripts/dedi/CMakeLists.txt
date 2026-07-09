@@ -8,6 +8,7 @@ include(${SCRIPTS_DIR}/common_files.cmake)
 # Include all files specific to mp
 include(${SCRIPTS_DIR}/mp/mp_files.cmake)
 include(dedi_files.cmake)
+include(dedi_sources.cmake)
 
 # Create the source groups
 include(${SCRIPTS_DIR}/source_groups.cmake)
@@ -15,48 +16,23 @@ include(${SCRIPTS_DIR}/source_groups.cmake)
 # Handle platform configs and overrides
 include (${PLATFORM_DIR}/${KISAK_PLATFORM}/platform.cmake)
 
+if (KISAK_DEDI_HEADLESS)
+    message(STATUS "Configuring experimental headless dedicated server source profile")
+    set(KISAK_TARGET_NEEDS_CLIENT_MEDIA OFF)
+else()
+    set(KISAK_TARGET_NEEDS_CLIENT_MEDIA ON)
+endif()
+
+kisakcod_get_dedi_sources(KISAK_DEDI_SOURCES)
+kisakcod_assert_headless_dedi_sources(${KISAK_DEDI_SOURCES})
+
 # Add the new executable
-add_executable(${PROJECT_NAME} 
-    ${SRCROOT} 
-    ${DYNENTITY} 
-    ${EFFECTSCORE} 
-    ${AIM_ASSIST} 
-    ${BGAME} 
-    ${BINKLIB} 
-    ${CGAME} 
-    ${CGAME_MP} 
-    ${CLIENT} 
-    ${CLIENT_MP} 
-    ${COMMON} 
-    ${DATABASE} 
-    ${DEVGUI} 
-    ${GAME} 
-    ${GAME_MP} 
-    ${GFX_D3D} 
-    ${GROUPVOICE} 
-    ${GROUPVOICE_SPEEX} 
-    ${MSSLIB} 
-    ${ODE} 
-    ${PHYSICS} 
-    ${PHYSICS_ODE} 
-    ${QCOMMON} 
-    ${RAGDOLL} 
-    ${SCRIPT} 
-    ${SERVER} 
-    ${SERVER_MP} 
-    ${SOUND} 
-    ${SPEEX} 
-    ${STRINGED} 
-    ${UI} 
-    ${UI_MP} 
-    ${UNIVERSAL} 
-    ${PLATFORM_WIN32}
-    ${XANIM} 
-    ${ZLIB} 
-    ${STEAM_HEADERS}
-)
+add_executable(${PROJECT_NAME} ${KISAK_DEDI_SOURCES})
 
 target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_MP KISAK_DEDICATED DEDICATED)
+if (KISAK_DEDI_HEADLESS)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_DEDI_HEADLESS)
+endif()
 
 # We need all of the pre/post-build commands
 include(${SCRIPTS_DIR}/pre_build.cmake)

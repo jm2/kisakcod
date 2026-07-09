@@ -10,6 +10,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(KISAK_BUILD_MP "Build the multiplayer client" ON)
 option(KISAK_BUILD_DEDICATED "Build the multiplayer dedicated server" ON)
 option(KISAK_BUILD_SP "Build the incomplete single-player client" OFF)
+option(KISAK_DEDI_HEADLESS "Build the dedicated server without client/render/audio/cinema source groups" OFF)
 option(KISAK_ALLOW_UNSUPPORTED_64BIT "Allow configuration of the in-progress 64-bit ABI port" OFF)
 include(CTest)
 

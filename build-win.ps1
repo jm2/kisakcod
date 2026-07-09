@@ -48,6 +48,11 @@
     Allows x64 or ARM64 configuration while the runtime ABI conversion is incomplete.
     These targets are expected to expose compile/link work and are not release builds.
 
+.PARAMETER HeadlessDedi
+    Configures the experimental dedicated-server source profile that excludes
+    client, renderer, audio, UI, Bink, and Miles source groups. This is a port
+    burn-down target and is not the default dedicated server build yet.
+
 .EXAMPLE
     .\build-win.ps1
     Reproduces build-win.bat: Debug, Win32, builds KisakCOD-mp and KisakCOD-dedi.
@@ -81,6 +86,8 @@ param(
     [switch]$NoConfigure,
 
     [switch]$Experimental64Bit,
+
+    [switch]$HeadlessDedi,
 
     [ValidateRange(1, 1024)]
     [int]$Jobs = [Environment]::ProcessorCount
@@ -162,7 +169,8 @@ if (-not $NoConfigure) {
         "-DCMAKE_BUILD_TYPE=$Config",
         "-DKISAK_BUILD_MP=$([int]($Targets -contains 'KisakCOD-mp'))",
         "-DKISAK_BUILD_DEDICATED=$([int]($Targets -contains 'KisakCOD-dedi'))",
-        "-DKISAK_BUILD_SP=$([int]($Targets -contains 'KisakCOD-sp'))"
+        "-DKISAK_BUILD_SP=$([int]($Targets -contains 'KisakCOD-sp'))",
+        "-DKISAK_DEDI_HEADLESS=$([int]$HeadlessDedi)"
     )
     if ($Experimental64Bit) {
         $configureArguments += '-DKISAK_ALLOW_UNSUPPORTED_64BIT=ON'
