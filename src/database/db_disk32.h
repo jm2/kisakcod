@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <universal/kisak_abi.h>
+
 namespace disk32
 {
 constexpr uint32_t kInline = UINT32_MAX;
@@ -18,7 +20,20 @@ struct PointerToken
     constexpr bool isSharedInline() const { return value == kSharedInline; }
     constexpr bool isOffset() const { return !isNull() && !isInline() && !isSharedInline(); }
 };
-static_assert(sizeof(PointerToken) == 4);
+ONDISK_SIZE(PointerToken, 4);
+
+// The single canonical Ptr32 in the tree (docs/PORTING.md section 8: "do not stand
+// up a parallel Ptr32<T>"). A 32-bit packed pointer FIELD for on-disk / wire mirror
+// structs: it carries a phantom pointee type for readability and never dereferences
+// itself - resolution goes through DecodeOffset + the zone block table. Widening to
+// a native runtime pointer happens in the load-time relocation pass (M5), never here.
+template <class T>
+struct Ptr32
+{
+    PointerToken token;
+    using pointee = T;
+};
+ONDISK_SIZE(Ptr32<void>, 4);
 
 struct DecodedOffset
 {

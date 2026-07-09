@@ -32,7 +32,15 @@ Completed foundation work:
 - platform source override plumbing for Windows, Linux, and macOS;
 - corrected Win32 multi-config DirectX paths and post-build output handling;
 - `build-win.ps1`, Windows CI, tagged release archives/checksums, and protected
-  licensed dedicated-server smoke infrastructure.
+  licensed dedicated-server smoke infrastructure;
+- Steam decoupled from `WIN32` behind `KISAK_ENABLE_STEAM`/`KISAK_STEAM` with a
+  persistent `cl_guid` fallback and `sv_requireSteam`, fixing the unjoinable
+  headless-dedi defect (see §10 H2);
+- the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
+  the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
+  fixed-width, MSVC-byte-identical atomics shim), reconciled with
+  `disk32::Ptr32<T>` and covered by a portable atomics/layout compile-check that
+  rides all five CI legs (see §10 M1).
 
 Remaining gates, in implementation order:
 
@@ -673,8 +681,25 @@ to **drop** in the ARM step; NEON skinning is an optional perf item, never a bri
 auto-detects (`CMakeLists.txt:22-32`), the `set(WIN32)` collision is fixed (renamed `PLATFORM_WIN32`),
 `db_disk32.h` already seeds the packed mirror (§8), the headless-dedi split and the 5-target portable
 CI matrix exist, and the M2 pointer-truncation sweep + tripwire have now landed. `platform_compat.h`
-covers calling-convention/`KISAK_ALIGNAS` but is barely wired in; the **`sys_atomic.h` fixed-width
-shim (209 `Interlocked`/`long` sites) and `kisak_abi.h` are the main open M1 items.**
+covers calling-convention/`KISAK_ALIGNAS`.
+
+**M1 (headers landed) — `kisak_abi.h` + `sys_atomic.h` + the portable compile-check are in.**
+`src/universal/kisak_abi.h` (compile-time only: OS/arch/`KISAK_PTR_BITS` from compiler predefineds +
+`UINTPTR_MAX`, the `ONDISK_SIZE`/`RUNTIME_SIZE`/`*_OFFSET` layout-freeze macros, includes
+`platform_compat.h`) and `src/universal/sys_atomic.h` (the fixed-width atomics shim) have landed, with
+`db_disk32.h` reconciled onto `ONDISK_SIZE` + the single canonical `disk32::Ptr32<T>`, and a new
+`tests/abi_atomics_tests.cpp` ctest that rides all five portable-CI legs (verified locally under g++ 16
+and clang++ 22 on both ILP32 and LP64). **Atomics design decision:** the shim maps the six `Interlocked`
+names onto `__atomic_*` seq-cst builtins under `#if !defined(_MSC_VER)` (MSVC keeps its intrinsics →
+byte-identical, zero call-site edits). The critical contract — `Increment`/`Decrement` return the *new*
+value, `ExchangeAdd`/`Exchange`/`CompareExchange` return the *old*; `CompareExchange` keeps Win32
+`(dest,exchange,comparand)` order — is asserted by the test. Corrected census: **197** real
+`Interlocked` calls (the earlier 209 double-counted 12 assertion-message string literals). *M1 open
+tail (deferred, intentionally):* wiring the ~32 atomics TUs to include `sys_atomic.h` rides M3's
+`<Windows.h>` decouple (a no-op on MSVC and non-buildable off-MSVC until then); retyping the ~30
+`volatile long` counter members + 3 `long` globals + the 23 `(LONG*)` casts to `int32_t` (byte-identical
+on Win, prevents LP64 layout divergence) is folded into M4 alongside the struct widening; the bare
+`sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now and burned down in M4.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),
