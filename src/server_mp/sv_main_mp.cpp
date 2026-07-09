@@ -13,7 +13,9 @@
 #include <universal/com_files.h>
 #include <qcommon/threads.h>
 #include <script/scr_variable.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <client/client.h>
+#endif
 #include <script/scr_vm.h>
 #include <universal/timing.h>
 #include <script/scr_debugger.h>
@@ -960,13 +962,17 @@ void __cdecl SV_RunFrame()
         start = (int)Sys_MillisecondsRaw();
     SV_ResetSkeletonCache();
 
+#ifndef KISAK_DEDI_HEADLESS
     CL_FlushDebugServerData();
+#endif
     G_RunFrame(svs.time);
     //Scr_ProfileUpdate();
     //Scr_ProfileBuiltinUpdate();
     //Profile_ResetCounters(1);
     //Profile_ResetScriptCounters();
+#ifndef KISAK_DEDI_HEADLESS
     CL_UpdateDebugServerData();
+#endif
 
     if (Win_GetThreadLock() == THREAD_LOCK_ALL)
         v0 = __rdtsc();
@@ -1367,4 +1373,3 @@ char __cdecl SV_CheckOverflow()
         return 1;
     }
 }
-

@@ -7,7 +7,9 @@
 #include <server/sv_game.h>
 #include <database/database.h>
 #include <game_mp/g_public_mp.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_rendercmds.h>
+#endif
 #include <universal/com_files.h>
 #include <win32/win_net.h>
 #include <universal/com_constantconfigstrings.h>
@@ -16,7 +18,9 @@
 #include <universal/com_sndalias.h>
 #include <qcommon/cmd.h>
 #include <stringed/stringed_hooks.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <client/client.h>
+#endif
 #include <universal/profile.h>
 
 
@@ -414,7 +418,13 @@ void __cdecl SV_SpawnServer(char *mapname)
     SV_SetGametype();
 
     if (!mapIsPreloaded)
+    {
+#ifndef KISAK_DEDI_HEADLESS
         CL_InitLoad(mapname, sv_gametype->current.string);
+#else
+        Com_Printf(15, "Headless dedicated loading map '%s' (%s)\n", mapname, sv_gametype->current.string);
+#endif
+    }
 
     if (IsFastFileLoad() && !mapIsPreloaded)
     {
@@ -422,7 +432,9 @@ void __cdecl SV_SpawnServer(char *mapname)
         DB_UpdateDebugZone();
     }
 
+#ifndef KISAK_DEDI_HEADLESS
     R_BeginRemoteScreenUpdate();
+#endif
     if (fs_debug->current.integer == 2)
         Dvar_SetInt((dvar_s *)fs_debug, 0);
 
@@ -456,14 +468,18 @@ void __cdecl SV_SpawnServer(char *mapname)
     {
         PROF_SCOPED("Shutdown systems");
 
+#ifndef KISAK_DEDI_HEADLESS
         R_EndRemoteScreenUpdate();
+#endif
 
         if (!mapIsPreloaded)
         {
+#ifndef KISAK_DEDI_HEADLESS
             CL_MapLoading(mapname);
             R_BeginRemoteScreenUpdate();
             R_EndRemoteScreenUpdate();
             CL_ShutdownAll(false);
+#endif
         }
 
         SV_ShutdownGameProgs();
@@ -505,7 +521,9 @@ void __cdecl SV_SpawnServer(char *mapname)
     {
         {
             PROF_SCOPED("start loading client");
+#ifndef KISAK_DEDI_HEADLESS
             CL_StartLoading();
+#endif
         }
 
         if (IsFastFileLoad())
@@ -518,12 +536,20 @@ void __cdecl SV_SpawnServer(char *mapname)
             iassert(sv_loadMyChanges);
             if (sv_loadMyChanges->current.enabled)
             {
-                Cbuf_ExecuteBuffer(0, CL_ControllerIndexFromClientNum(0), "loadzone mychanges\n");
+                Cbuf_ExecuteBuffer(0,
+#ifndef KISAK_DEDI_HEADLESS
+                    CL_ControllerIndexFromClientNum(0),
+#else
+                    0,
+#endif
+                    "loadzone mychanges\n");
             }
         }
     }
 
+#ifndef KISAK_DEDI_HEADLESS
     R_BeginRemoteScreenUpdate();
+#endif
 
     {
         PROF_SCOPED("allocate empty config strings");
@@ -639,7 +665,9 @@ void __cdecl SV_SpawnServer(char *mapname)
     //    EnablePbSv();
     //else
     //    DisablePbSv();
+#ifndef KISAK_DEDI_HEADLESS
     R_EndRemoteScreenUpdate();
+#endif
     Sys_EndLoadThreadPriorities();
 }
 
@@ -865,11 +893,13 @@ void __cdecl SV_Shutdown(const char *finalmsg)
         SV_FreeClients();
         SV_ClearServer();
         Dvar_SetBool((dvar_s *)com_sv_running, 0);
+#ifndef KISAK_DEDI_HEADLESS
         for (client = 0; client < 1; ++client)
         {
             if (CL_IsLocalClientActive(client))
                 CL_Disconnect(client);
         }
+#endif
         memset(&svs, 0, sizeof(svs));
         bgs = 0;
         Com_Printf(15, "---------------------------\n");
@@ -914,5 +944,3 @@ void __cdecl SV_CheckThread()
     if (!Sys_IsMainThread())
         MyAssertHandler(".\\server_mp\\sv_init_mp.cpp", 1663, 0, "%s", "Sys_IsMainThread()");
 }
-
-

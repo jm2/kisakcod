@@ -4,7 +4,9 @@
 #include <xanim/dobj.h>
 #include <xanim/dobj_utils.h>
 #include "sv_world.h"
+#ifndef KISAK_DEDI_HEADLESS
 #include <client/client.h>
+#endif
 #include <universal/com_files.h>
 #include <universal/com_sndalias.h>
 #include <qcommon/com_bsp.h>
@@ -352,6 +354,10 @@ int boxVerts_0[24][3] =
 
 void __cdecl SV_XModelDebugBoxes(gentity_s *ent)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)ent;
+    return;
+#else
     const XModel *Model; // eax
     float v2; // [esp+24h] [ebp-2F0h]
     float v3; // [esp+28h] [ebp-2ECh]
@@ -471,6 +477,8 @@ void __cdecl SV_XModelDebugBoxes(gentity_s *ent)
         }
     }
 }
+#endif
+
 bool __cdecl SV_DObjExists(gentity_s *ent)
 {
     return Com_GetServerDObj(ent->s.number) != 0;

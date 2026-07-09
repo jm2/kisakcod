@@ -17,7 +17,9 @@
 #include <xanim/xanim.h>
 #include <universal/profile.h>
 #include <qcommon/threads.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <client/client.h>
+#endif
 
 hudelem_s g_dummyHudCurrent;
 
@@ -1339,7 +1341,9 @@ void __cdecl ClientEndFrame(gentity_s *ent)
                         level_bgs.clientinfo[clientNum].legs.yawAngle,
                         level_bgs.clientinfo[clientNum].torso.yawAngle,
                         level_bgs.clientinfo[clientNum].playerAngles[1]);
+#ifndef KISAK_DEDI_HEADLESS
                     CL_AddDebugStarWithText(ent->r.currentOrigin, colorYellow, colorYellow, v5, 0.25, 1, 1);
+#endif
                 }
                 ent->client->buttonsSinceLastFrame = 0;
             }
@@ -1489,4 +1493,3 @@ void __cdecl G_PlayerEvent(int32_t clientNum, int32_t event)
     if (event >= 26 && (event <= 27 || event == 38))
         BG_WeaponFireRecoil(&client->ps, client->vGunSpeed, kickAVel);
 }
-

@@ -6,8 +6,10 @@
 
 #include "g_utils_mp.h"
 
+#ifndef KISAK_DEDI_HEADLESS
 #include <client/client.h>
 #include <client_mp/client_mp.h>
+#endif
 
 #include <database/database.h>
 
@@ -804,7 +806,9 @@ void GScr_line()
         Scr_Error("illegal call to line()");
         break;
     }
+#ifndef KISAK_DEDI_HEADLESS
     CL_AddDebugLine(start, end, color, depthTest, duration.intValue, 1);
+#endif
 }
 
 void assertCmd()

@@ -9,7 +9,9 @@
 
 #include <bgame/bg_local.h>
 
+#ifndef KISAK_DEDI_HEADLESS
 #include <client/client.h>
+#endif
 
 #include <database/database.h>
 
@@ -1441,10 +1443,14 @@ const dvar_s *ShowEntityInfo()
                     origin[2] = ent->r.currentOrigin[2];
                     EntityTypeName = G_GetEntityTypeName(ent);
                     text = va("#%i; \"%s\"", i, EntityTypeName);
+#ifndef KISAK_DEDI_HEADLESS
                     CL_AddDebugString(origin, colorWhiteFaded, 0.5, (char *)text, 1, 1);
+#endif
                     origin[2] = origin[2] - 10.0;
                     text = va("ground: #%i", ent->s.groundEntityNum);
+#ifndef KISAK_DEDI_HEADLESS
                     CL_AddDebugString(origin, colorWhiteFaded, 0.5, (char *)text, 1, 1);
+#endif
                 }
             }
             ++i;
@@ -1477,7 +1483,9 @@ void __cdecl ShowEntityInfo_Items(gentity_s *ent)
         {
             weapDef = BG_GetWeaponDef(ent->item[idx].index);
             text = va("%s (%i + %i)", weapDef->szInternalName, ent->item[idx].clipAmmoCount, ent->item[idx].ammoCount);
+#ifndef KISAK_DEDI_HEADLESS
             CL_AddDebugString(origin, colorRedFaded, 0.30000001f, text, 1, 1);
+#endif
             origin[2] = origin[2] + -4.0f;
         }
     }
@@ -1672,7 +1680,15 @@ void __cdecl G_SightTrace(int32_t *hitNum, float *start, float *end, int32_t pas
 
 void __cdecl G_AddDebugString(const float *xyz, const float *color, float scale, const char *text, int32_t duration)
 {
+#ifndef KISAK_DEDI_HEADLESS
     CL_AddDebugString(xyz, color, scale, text, 1, duration);
+#else
+    (void)xyz;
+    (void)color;
+    (void)scale;
+    (void)text;
+    (void)duration;
+#endif
 }
 
 bool __cdecl OnSameTeam(struct gentity_s *ent1, struct gentity_s *ent2)

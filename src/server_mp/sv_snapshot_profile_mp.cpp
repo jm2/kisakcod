@@ -4,7 +4,9 @@
 
 #include "server_mp.h"
 #include <universal/com_files.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <cgame_mp/cg_local_mp.h>
+#endif
 #include <universal/profile.h>
 
 
@@ -1270,6 +1272,11 @@ void __cdecl SV_Netchan_PrintProfileStats(int bPrintToConsole)
 
 void __cdecl SV_ProfDraw(int y, char *string, bool showHighlight)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)y;
+    (void)string;
+    (void)showHighlight;
+#else
     float color[4]; // [esp+Ch] [ebp-10h] BYREF
 
     if (showHighlight)
@@ -1281,5 +1288,5 @@ void __cdecl SV_ProfDraw(int y, char *string, bool showHighlight)
         CL_DrawRect(12, y, 1024, cl_profileTextHeight->current.integer - 6, color);
     }
     CL_DrawString(12, y, string, 0, cl_profileTextHeight->current.integer);
+#endif
 }
-
