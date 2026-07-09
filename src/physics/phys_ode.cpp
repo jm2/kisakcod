@@ -1,5 +1,4 @@
 #include "phys_local.h"
-#include <DynEntity/DynEntity_client.h>
 #include <qcommon/mem_track.h>
 #include <aim_assist/aim_assist.h>
 #include <qcommon/cmd.h>
@@ -8,15 +7,22 @@
 #include <ode/objects.h>
 #include <physics/ode/collision_kernel.h>
 #include <win32/win_local.h>
-#include <gfx_d3d/r_dpvs.h>
 #include "ode/odeext.h"
 #include <universal/profile.h>
 #include "ode/collision_transform.h"
 
+#ifdef KISAK_DEDI_HEADLESS
+#define CG_DrawStringExt(...) ((void)0)
+#define CG_DebugBox(...) ((void)0)
+#define CG_DebugBoxOriented(...) ((void)0)
+#define CG_DebugLine(...) ((void)0)
+#define CG_DebugCircle(...) ((void)0)
+#else
 #ifdef KISAK_MP
 #include <cgame_mp/cg_local_mp.h>
 #elif KISAK_SP
 #include <cgame/cg_main.h>
+#endif
 #endif
 
 //int *g_phys_msecStep    827c0304     phys_ode.obj
