@@ -3,7 +3,6 @@
 #include <server/sv_world.h>
 #include <script/scr_vm.h>
 #include "bullet.h"
-#include <cgame/cg_local.h>
 
 #ifdef KISAK_MP
 #include <game_mp/g_utils_mp.h>

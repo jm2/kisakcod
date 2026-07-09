@@ -1,6 +1,5 @@
 #include "game_public.h"
 #include <server/sv_world.h>
-#include <DynEntity/DynEntity_client.h>
 #include <script/scr_const.h>
 #include <server/sv_game.h>
 #include "bullet.h"
@@ -749,4 +748,3 @@ void __cdecl G_SetEquippedOffHand(int clientNum, uint32_t offHandIndex)
     SV_GameSendServerCommand(clientNum, va("offhand %i", offHandIndex));
 #endif
 }
-
