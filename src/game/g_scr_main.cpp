@@ -3,6 +3,7 @@
 #endif
 
 #include <script/scr_animtree.h>
+#include <qcommon/sys_time.h>
 
 #include "g_scr_main.h"
 #include "g_public.h"

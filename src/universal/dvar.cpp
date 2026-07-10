@@ -1,7 +1,7 @@
 #include <qcommon/qcommon.h>
 
 #include <Windows.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_sync.h>
 #include <qcommon/cmd.h>
 #include "com_files.h"
 #include "com_memory.h"

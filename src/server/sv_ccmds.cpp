@@ -3,6 +3,7 @@
 #endif
 
 #include "server.h"
+#include <qcommon/sys_time.h>
 #include <qcommon/cmd.h>
 #include <game/g_local.h>
 #include <game/savememory.h>
@@ -1184,4 +1185,3 @@ void __cdecl SV_AddOperatorCommands()
         Cmd_AddServerCommandInternal("replay_info", SV_DemoInfo_f, &SV_DemoInfo_f_VAR_SERVER);
     }
 }
-

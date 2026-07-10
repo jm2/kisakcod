@@ -758,9 +758,6 @@ struct trace_t // sizeof=0x2C
 	// padding byte
 };
 
-// win_shared
-uint32_t __cdecl Sys_Milliseconds();
-uint32_t __cdecl Sys_MillisecondsRaw();
 void __cdecl Sys_SnapVector(float *v);
 
 // com_shared

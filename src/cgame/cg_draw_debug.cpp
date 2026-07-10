@@ -1,4 +1,5 @@
 #include "cg_local.h"
+#include <qcommon/sys_time.h>
 #include "cg_public.h"
 #include <universal/physicalmemory.h>
 #include <physics/phys_local.h>

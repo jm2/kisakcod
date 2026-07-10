@@ -1,4 +1,5 @@
 #include "phys_local.h"
+#include <qcommon/sys_time.h>
 #include <qcommon/mem_track.h>
 #include <aim_assist/aim_assist.h>
 #include <qcommon/cmd.h>

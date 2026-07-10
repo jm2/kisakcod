@@ -3,6 +3,7 @@
 #endif
 
 #include "cg_modelpreviewer.h"
+#include <qcommon/sys_time.h>
 #include <game/g_local.h>
 #include <qcommon/cmd.h>
 #include "cg_main.h"

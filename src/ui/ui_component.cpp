@@ -1,4 +1,6 @@
 #include "ui_shared.h"
+#include <qcommon/sys_time.h>
+#include <win32/win_local.h>
 #include <win32/win_net_debug.h>
 #include <script/scr_parser.h>
 #include <script/scr_main.h>

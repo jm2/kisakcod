@@ -32,6 +32,10 @@ Completed foundation work:
 - download-block and stats-packet runtime bounds checks;
 - host platform detection, target build switches, and an explicit 64-bit ABI gate;
 - platform source override plumbing for Windows, Linux, and macOS;
+- target-owned engine/headless/service source selection that preserves the exact Win32 lists while
+  keeping Linux/macOS lists explicitly empty and incomplete until native backends land;
+- portable `sys_sync.h`/`sys_time.h` contracts, including fixed-width MP/SP critical-section IDs
+  and `FastCriticalSection` layout checks wired into all five utility-CI targets;
 - corrected Win32 multi-config DirectX paths and post-build output handling;
 - `build-win.ps1`, Windows CI, tagged release archives/checksums, and separately
   protected legacy/headless licensed dedicated-server smoke definitions;
@@ -48,8 +52,8 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Extract platform-neutral synchronization/time contracts and add native
-   Win32/POSIX backends exercised on every portable CI leg.
+2. Add native Win32/POSIX time and recursive-lock backends behind the extracted contracts and
+   exercise them on every portable CI leg.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -704,6 +708,19 @@ tail (deferred, intentionally):* wiring the ~32 atomics TUs to include `sys_atom
 `volatile long` counter members + 3 `long` globals + the 23 `(LONG*)` casts to `int32_t` (byte-identical
 on Win, prevents LP64 layout divergence) is folded into M4 alongside the struct widening; the bare
 `sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now and burned down in M4.
+
+**M3 (contracts/source seam landed) — platform ownership is explicit, but POSIX backends are not.**
+`src/qcommon/sys_sync.h` now owns the exact fixed-width MP/SP `CriticalSection` IDs, the 8-byte
+`FastCriticalSection` contract, and the existing lock API; `src/qcommon/sys_time.h` owns the clock
+API (with sleep still SP-only until its native backend lands). The database public header no longer
+imports `win_local.h` or exposes the private `_OVERLAPPED` callback, and the platform-neutral
+`Sys_SnapVector` implementation no longer lives in the Windows timing translation unit. CMake now
+selects target-neutral engine, headless, and service source variables: Win32 republishes its exact
+working lists, while Linux/macOS publish explicit empty lists marked incomplete. Tests freeze both
+profile ABIs, require one-copy source composition, reject Win32 sources in non-Windows sets, and
+retain the top-level POSIX engine gate. This is a composition boundary, **not** a claim that a POSIX
+engine target builds. Next: monotonic clocks/sleep plus recursive critical sections for Win32 and
+POSIX, then opaque thread/event handles, filesystem/virtual memory, console/process, and BSD sockets.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),

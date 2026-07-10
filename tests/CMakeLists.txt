@@ -78,6 +78,23 @@ set_target_properties(kisakcod-abi-atomics-tests PROPERTIES
 )
 add_test(NAME abi-atomics-and-layout-macros COMMAND kisakcod-abi-atomics-tests)
 
+foreach(_profile mp sp)
+    set(_target "kisakcod-platform-service-${_profile}-tests")
+    string(TOUPPER "${_profile}" _profile_upper)
+    add_executable(${_target} platform_service_contract_tests.cpp)
+    target_include_directories(${_target} PRIVATE ${SRC_DIR})
+    target_compile_features(${_target} PRIVATE cxx_std_20)
+    target_compile_definitions(${_target} PRIVATE "KISAK_${_profile_upper}")
+    kisakcod_test_warnings(${_target})
+    set_target_properties(${_target} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(
+        NAME "platform-service-${_profile}-contracts"
+        COMMAND ${_target}
+    )
+endforeach()
+
 add_test(
     NAME dedi-headless-source-profile
     COMMAND ${CMAKE_COMMAND}

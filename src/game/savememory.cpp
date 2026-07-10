@@ -3,6 +3,7 @@
 #endif
 
 #include "savememory.h"
+#include <qcommon/sys_time.h>
 #include <qcommon/com_bsp.h>
 #include <buildnumber.h>
 #include "g_main.h"
@@ -744,4 +745,3 @@ void __cdecl SaveMemory_CleanupSaveMemory()
     if (saveMemoryGlob.demo.saveState)
         SaveMemory_FreeMemory(&saveMemoryGlob.demo);
 }
-

@@ -5,6 +5,7 @@
 // KISAKTODO: Cleanup SP UI after 'client/` is done
 
 #include "ui.h"
+#include <qcommon/sys_time.h>
 #include <qcommon/cmd.h>
 #include <game/savedevice.h>
 #include <gfx_d3d/r_cinematic.h>

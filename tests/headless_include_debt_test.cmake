@@ -4,10 +4,13 @@ set(SRC_DIR "${SOURCE_ROOT}/src")
 set(DEPS_DIR "${SOURCE_ROOT}/deps")
 set(SCRIPTS_DIR "${SOURCE_ROOT}/scripts")
 set(KISAK_DEDI_HEADLESS ON)
+set(KISAK_PLATFORM win32)
 
+include("${SCRIPTS_DIR}/platform_override.cmake")
 include("${SCRIPTS_DIR}/common_files.cmake")
 include("${SCRIPTS_DIR}/mp/mp_files.cmake")
 include("${SCRIPTS_DIR}/dedi/dedi_files.cmake")
+include("${SCRIPTS_DIR}/platform/win32/platform.cmake")
 include("${SCRIPTS_DIR}/dedi/dedi_sources.cmake")
 
 kisakcod_get_dedi_sources(_dedi_sources)

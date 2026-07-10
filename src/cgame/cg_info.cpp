@@ -1,4 +1,5 @@
 #include "cg_local.h"
+#include <qcommon/sys_time.h>
 #include <sound/snd_public.h>
 #include <client/client.h>
 #include <database/database.h>

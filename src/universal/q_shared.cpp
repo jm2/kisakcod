@@ -17,6 +17,13 @@ struct FxEffectDef;
 struct Material;
 struct XModel;
 
+void __cdecl Sys_SnapVector(float *v)
+{
+    v[0] = SnapFloat(v[0]);
+    v[1] = SnapFloat(v[1]);
+    v[2] = SnapFloat(v[2]);
+}
+
 //Line 53466:  0006 : 02bc009c       int marker_q_shared      8537009c     q_shared.obj
 //Line 53467 : 0006 : 02bc58d0       struct TraceThreadInfo *g_traceThreadInfo 853758d0     q_shared.obj
 //Line 14278 : 0001 : 0006fb0c       struct orientation_t const orIdentity 8207010c     q_shared.obj

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Windows.h> // literally just for some of the extern types at the bottom
+#include <qcommon/sys_time.h>
 #include <qcommon/thread_context.h>
 
 enum ThreadOwner : __int32
@@ -99,7 +100,6 @@ int Sys_ServerTimeout();
 void Sys_WakeServer();
 void Sys_SleepServer();
 bool Sys_WaitServer();
-void Sys_Sleep(uint32_t msec);
 void Sys_SetServerTimeout(int timeout);
 bool Sys_WaitForSaveHistoryDone();
 int Sys_SpawnServerDemoThread(void(*function)(uint32_t));

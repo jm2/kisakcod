@@ -1,5 +1,6 @@
 #ifdef KISAK_MP
 #include "win_local.h"
+#include <qcommon/sys_time.h>
 #include <groupvoice/directsound.h>
 
 #include <server_mp/server_mp.h>

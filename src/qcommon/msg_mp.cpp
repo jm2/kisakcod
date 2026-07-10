@@ -1,5 +1,6 @@
 #include "msg_mp.h"
 #include "huffman.h"
+#include "sys_time.h"
 
 #include <Windows.h>
 #include <bgame/bg_local.h>

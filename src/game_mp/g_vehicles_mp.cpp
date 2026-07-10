@@ -3,6 +3,7 @@
 #endif
 
 #include "g_public_mp.h"
+#include <qcommon/sys_time.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_scene.h>
 #endif

@@ -3,6 +3,7 @@
 #endif
 
 #include "client.h"
+#include <qcommon/sys_time.h>
 #include <qcommon/cmd.h>
 #include <gfx_d3d/r_fog.h>
 #include <gfx_d3d/r_cinematic.h>
@@ -1204,4 +1205,3 @@ bool __cdecl CL_IsCgameInitialized(int localClientNum)
             localClientNum);
     return clientUIActives[0].cgameInitialized;
 }
-

@@ -40,7 +40,7 @@ char *__cdecl FS_GetMapBaseName(char *mapname)
     return basename;
 }
 
-BOOL __cdecl FS_serverPak(const char *pak)
+int __cdecl FS_serverPak(const char *pak)
 {
     char szFile[68]; // [esp+10h] [ebp-48h] BYREF
 

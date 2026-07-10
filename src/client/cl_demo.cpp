@@ -3,6 +3,7 @@
 #endif
 
 #include "cl_demo.h"
+#include <qcommon/sys_time.h>
 #include <xanim/xmodel.h>
 #include <xanim/dobj.h>
 #include <script/scr_stringlist.h>
@@ -877,4 +878,3 @@ void __cdecl CL_StartPlayingDemo()
     com_time = clients[0].snap.serverTime - 50;
     cls.timeDemoFrames = 0;
 }
-

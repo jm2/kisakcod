@@ -3,6 +3,7 @@
 #endif
 
 #include "cg_draw.h"
+#include <qcommon/sys_time.h>
 #include <stringed/stringed_hooks.h>
 #include "cg_main.h"
 #include "cg_servercmds.h"
@@ -1277,4 +1278,3 @@ void __cdecl CG_GenerateSceneVerts(int localClientNum)
 {
     CG_AddDrawSurfsFor3dHudElems(localClientNum);
 }
-

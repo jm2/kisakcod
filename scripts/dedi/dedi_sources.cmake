@@ -1,8 +1,10 @@
 function(kisakcod_get_dedi_sources OUT_VAR)
+    kisakcod_require_platform_source_sets()
+
     if (KISAK_DEDI_HEADLESS)
-        set(_platform_sources ${PLATFORM_WIN32_DEDI_HEADLESS})
+        set(_platform_sources ${KISAK_PLATFORM_DEDI_HEADLESS_SOURCES})
     else()
-        set(_platform_sources ${PLATFORM_WIN32})
+        set(_platform_sources ${KISAK_PLATFORM_SOURCES})
     endif()
 
     set(_sources
@@ -23,6 +25,7 @@ function(kisakcod_get_dedi_sources OUT_VAR)
         ${STRINGED}
         ${UNIVERSAL}
         ${_platform_sources}
+        ${KISAK_PLATFORM_SERVICE_SOURCES}
         ${XANIM}
         ${ZLIB}
         ${STEAM_HEADERS}

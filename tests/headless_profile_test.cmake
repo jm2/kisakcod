@@ -4,14 +4,148 @@ set(SRC_DIR "${SOURCE_ROOT}/src")
 set(DEPS_DIR "${SOURCE_ROOT}/deps")
 set(SCRIPTS_DIR "${SOURCE_ROOT}/scripts")
 set(KISAK_DEDI_HEADLESS ON)
+set(KISAK_PLATFORM win32)
 
+include("${SCRIPTS_DIR}/platform_override.cmake")
 include("${SCRIPTS_DIR}/common_files.cmake")
 include("${SCRIPTS_DIR}/mp/mp_files.cmake")
 include("${SCRIPTS_DIR}/dedi/dedi_files.cmake")
+include("${SCRIPTS_DIR}/platform/win32/platform.cmake")
 include("${SCRIPTS_DIR}/dedi/dedi_sources.cmake")
+
+kisakcod_require_platform_source_sets()
+
+function(kisakcod_assert_source_lists_equal ACTUAL_VAR EXPECTED_VAR DESCRIPTION)
+    list(JOIN ${ACTUAL_VAR} "|" _actual_sources)
+    list(JOIN ${EXPECTED_VAR} "|" _expected_sources)
+    if (NOT "${_actual_sources}" STREQUAL "${_expected_sources}")
+        message(FATAL_ERROR "${DESCRIPTION} changed")
+    endif()
+endfunction()
+
+set(_expected_win32_platform_sources
+    "${SRC_DIR}/win32/win_configure.cpp"
+    "${SRC_DIR}/win32/win_configure.h"
+    "${SRC_DIR}/win32/win_input.cpp"
+    "${SRC_DIR}/win32/win_input.h"
+    "${SRC_DIR}/win32/win_local.h"
+    "${SRC_DIR}/win32/win_localize.cpp"
+    "${SRC_DIR}/win32/win_localize.h"
+    "${SRC_DIR}/win32/win_main.cpp"
+    "${SRC_DIR}/win32/win_net.cpp"
+    "${SRC_DIR}/win32/win_net.h"
+    "${SRC_DIR}/win32/win_net_debug.cpp"
+    "${SRC_DIR}/win32/win_net_debug.h"
+    "${SRC_DIR}/win32/win_storage.cpp"
+    "${SRC_DIR}/win32/win_storage.h"
+    "${SRC_DIR}/win32/win_syscon.cpp"
+    "${SRC_DIR}/win32/win_voice.cpp"
+    "${SRC_DIR}/win32/win_wndproc.cpp"
+    "${SRC_DIR}/win32/win_steam.cpp"
+    "${SRC_DIR}/win32/win_steam.h"
+)
+set(_expected_win32_headless_sources
+    "${SRC_DIR}/win32/win_configure.cpp"
+    "${SRC_DIR}/win32/win_configure.h"
+    "${SRC_DIR}/win32/win_local.h"
+    "${SRC_DIR}/win32/win_localize.cpp"
+    "${SRC_DIR}/win32/win_localize.h"
+    "${SRC_DIR}/win32/win_main.cpp"
+    "${SRC_DIR}/win32/win_net.cpp"
+    "${SRC_DIR}/win32/win_net.h"
+    "${SRC_DIR}/win32/win_net_debug.cpp"
+    "${SRC_DIR}/win32/win_net_debug.h"
+    "${SRC_DIR}/win32/win_storage.h"
+    "${SRC_DIR}/win32/win_syscon.cpp"
+    "${SRC_DIR}/win32/win_steam.cpp"
+    "${SRC_DIR}/win32/win_steam.h"
+)
+
+if (NOT KISAK_PLATFORM_SOURCE_SETS_COMPLETE)
+    message(FATAL_ERROR "The selected Win32 platform source sets must be complete")
+endif()
+kisakcod_assert_source_lists_equal(
+    KISAK_PLATFORM_SOURCES
+    _expected_win32_platform_sources
+    "Win32 engine platform source composition"
+)
+kisakcod_assert_source_lists_equal(
+    KISAK_PLATFORM_DEDI_HEADLESS_SOURCES
+    _expected_win32_headless_sources
+    "Win32 headless platform source composition"
+)
+if (KISAK_PLATFORM_SERVICE_SOURCES)
+    message(FATAL_ERROR
+        "Win32 platform services must remain empty until extracted backends are selected explicitly")
+endif()
 
 kisakcod_get_dedi_sources(_dedi_sources)
 kisakcod_assert_headless_dedi_sources(${_dedi_sources})
+
+foreach(_platform_source IN LISTS _expected_win32_headless_sources)
+    set(_platform_source_count 0)
+    foreach(_dedi_source IN LISTS _dedi_sources)
+        if ("${_dedi_source}" STREQUAL "${_platform_source}")
+            math(EXPR _platform_source_count "${_platform_source_count} + 1")
+        endif()
+    endforeach()
+    if (NOT _platform_source_count EQUAL 1)
+        message(FATAL_ERROR
+            "Win32 headless platform source must occur exactly once: ${_platform_source}")
+    endif()
+endforeach()
+
+foreach(_contract_header
+    "${SRC_DIR}/qcommon/sys_sync.h"
+    "${SRC_DIR}/qcommon/sys_time.h"
+)
+    set(_contract_header_count 0)
+    foreach(_dedi_source IN LISTS _dedi_sources)
+        if ("${_dedi_source}" STREQUAL "${_contract_header}")
+            math(EXPR _contract_header_count "${_contract_header_count} + 1")
+        endif()
+    endforeach()
+    if (NOT _contract_header_count EQUAL 1)
+        message(FATAL_ERROR
+            "Platform contract header must occur exactly once: ${_contract_header}")
+    endif()
+endforeach()
+
+function(kisakcod_assert_incomplete_platform_source_sets PLATFORM_NAME)
+    set(KISAK_PLATFORM "${PLATFORM_NAME}")
+    include("${SCRIPTS_DIR}/platform/${PLATFORM_NAME}/platform.cmake")
+    kisakcod_require_platform_source_sets()
+
+    if (KISAK_PLATFORM_SOURCE_SETS_COMPLETE)
+        message(FATAL_ERROR
+            "${PLATFORM_NAME} platform source sets must remain marked incomplete")
+    endif()
+    foreach(_source_set
+        KISAK_PLATFORM_SOURCES
+        KISAK_PLATFORM_DEDI_HEADLESS_SOURCES
+        KISAK_PLATFORM_SERVICE_SOURCES
+    )
+        if (NOT "${${_source_set}}" STREQUAL "")
+            message(FATAL_ERROR
+                "${PLATFORM_NAME} ${_source_set} must remain explicitly empty until its backend lands")
+        endif()
+    endforeach()
+endfunction()
+
+kisakcod_assert_incomplete_platform_source_sets(linux)
+kisakcod_assert_incomplete_platform_source_sets(macos)
+
+file(READ "${SOURCE_ROOT}/CMakeLists.txt" _root_cmake_source)
+string(FIND "${_root_cmake_source}"
+    "if (NOT KISAK_PLATFORM STREQUAL \"win32\""
+    _non_windows_engine_gate)
+string(FIND "${_root_cmake_source}"
+    "backend is not buildable yet."
+    _non_windows_engine_gate_message)
+if (_non_windows_engine_gate EQUAL -1 OR _non_windows_engine_gate_message EQUAL -1)
+    message(FATAL_ERROR
+        "Linux/macOS engine targets must remain configuration-gated while their source sets are incomplete")
+endif()
 
 list(LENGTH _dedi_sources _source_count)
 if (_source_count LESS 1)

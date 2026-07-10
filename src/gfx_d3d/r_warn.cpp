@@ -1,4 +1,5 @@
 #include "r_debug.h"
+#include <qcommon/sys_time.h>
 #include "r_init.h"
 
 const dvar_s *r_warningRepeatDelay;
@@ -76,4 +77,3 @@ void __cdecl R_WarnInitDvars()
         DVAR_NOFLAG,
         "Number of seconds after displaying a \"per-frame\" warning before it will display again");
 }
-

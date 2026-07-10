@@ -45,6 +45,10 @@ bool g_inflateStreamEnded;
 XAssetList g_varXAssetList;
 
 static int32_t DB_WaitXFileStageInternal();
+static void __stdcall DB_FileReadCompletion(
+    uint32_t dwErrorCode,
+    uint32_t dwNumberOfBytesTransfered,
+    _OVERLAPPED *lpOverlapped);
 
 void __cdecl DB_CancelLoadXFile()
 {
@@ -360,7 +364,7 @@ int32_t __cdecl DB_ReadData()
     return 1;
 }
 
-void __stdcall DB_FileReadCompletion(
+static void __stdcall DB_FileReadCompletion(
     uint32_t dwErrorCode,
     uint32_t dwNumberOfBytesTransfered,
     _OVERLAPPED *lpOverlapped)

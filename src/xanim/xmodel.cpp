@@ -9,6 +9,7 @@
 #include <universal/com_files.h>
 #include <database/database.h>
 #include <physics/phys_local.h>
+#include <win32/win_local.h>
 
 void __cdecl XModelPartsFree(XModelPartsLoad *modelParts)
 {

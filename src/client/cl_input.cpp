@@ -3,6 +3,7 @@
 #endif
 
 #include "cl_input.h"
+#include <qcommon/sys_time.h>
 #include <qcommon/mem_track.h>
 #include <qcommon/cmd.h>
 #include <cgame/cg_main.h>

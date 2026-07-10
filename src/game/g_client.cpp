@@ -3,6 +3,7 @@
 #endif
 
 #include "g_local.h"
+#include <qcommon/sys_time.h>
 #include "g_main.h"
 #include <script/scr_const.h>
 #include <universal/com_math.h>
@@ -723,4 +724,3 @@ void __cdecl ClientBegin(int clientNum)
     level.clients[clientNum].pers.connected = CON_CONNECTED;
     ClientSpawn(&g_entities[clientNum]);
 }
-

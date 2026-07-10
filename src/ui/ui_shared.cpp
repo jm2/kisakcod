@@ -1,4 +1,5 @@
 #include "ui_shared.h"
+#include <qcommon/sys_time.h>
 #include <universal/q_parse.h>
 #include <client/client.h>
 #include <qcommon/cmd.h>
@@ -6807,4 +6808,3 @@ MenuList *__cdecl UI_LoadMenus_FastFile(const char *menuFile)
 {
     return DB_FindXAssetHeader(ASSET_TYPE_MENULIST, menuFile).menuList;
 }
-

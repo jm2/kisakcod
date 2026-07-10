@@ -3,6 +3,7 @@
 #endif
 
 #include "server_mp.h"
+#include <qcommon/sys_time.h>
 #include <qcommon/cmd.h>
 
 #include <game_mp/g_main_mp.h>

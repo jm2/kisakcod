@@ -31,7 +31,11 @@ source_group("stringed" FILES ${STRINGED})
 source_group("ui" FILES ${UI})
 source_group("ui_mp" FILES ${UI_MP})
 source_group("universal" FILES ${UNIVERSAL})
-source_group("win32" FILES ${PLATFORM_WIN32})
+source_group("${KISAK_PLATFORM}" FILES
+    ${KISAK_PLATFORM_SOURCES}
+    ${KISAK_PLATFORM_DEDI_HEADLESS_SOURCES}
+    ${KISAK_PLATFORM_SERVICE_SOURCES}
+)
 source_group("xanim" FILES ${XANIM})
 source_group("zlib" FILES ${ZLIB})
 source_group("steamsdk/steam" FILES ${STEAM_HEADERS})

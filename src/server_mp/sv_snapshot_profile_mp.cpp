@@ -3,6 +3,7 @@
 #endif
 
 #include "server_mp.h"
+#include <qcommon/sys_time.h>
 #include <bgame/bg_public.h>
 #include <universal/com_files.h>
 #ifndef KISAK_DEDI_HEADLESS

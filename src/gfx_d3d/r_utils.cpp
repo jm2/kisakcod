@@ -1,4 +1,5 @@
 #include "r_utils.h"
+#include <qcommon/sys_time.h>
 #include <universal/com_memory.h>
 #include <aim_assist/aim_assist.h>
 #include "r_dvars.h"
@@ -156,4 +157,3 @@ void __cdecl Byte4UnpackBgra(const uint8_t *from, float *to)
     to[2] = (double)*from * 0.003921568859368563;
     to[3] = (double)from[3] * 0.003921568859368563;
 }
-

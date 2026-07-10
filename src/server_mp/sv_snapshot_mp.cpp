@@ -3,6 +3,7 @@
 #endif
 
 #include "server_mp.h"
+#include <qcommon/sys_time.h>
 #include <game_mp/g_public_mp.h>
 #include <server/sv_game.h>
 #include <win32/win_local.h>

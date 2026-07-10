@@ -3,6 +3,7 @@
 #endif
 
 #include "client_mp.h"
+#include <qcommon/sys_time.h>
 #include <qcommon/cmd.h>
 #include <qcommon/com_playerprofile.h>
 #include <sound/snd_public.h>
@@ -606,4 +607,3 @@ void __cdecl CL_ClearMutedList()
 {
     memset((uint8_t *)s_playerMute, 0, sizeof(s_playerMute));
 }
-

@@ -3,6 +3,7 @@
 #endif
 
 #include "ui_mp.h"
+#include <qcommon/sys_time.h>
 #include <qcommon/cmd.h>
 #include <qcommon/mem_track.h>
 #include <client_mp/client_mp.h>
@@ -6112,4 +6113,3 @@ bool __cdecl UI_ShouldDrawCrosshair()
 {
     return ui_drawCrosshair->current.enabled;
 }
-

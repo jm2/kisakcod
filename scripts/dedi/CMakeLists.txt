@@ -10,11 +10,12 @@ include(${SCRIPTS_DIR}/mp/mp_files.cmake)
 include(dedi_files.cmake)
 include(dedi_sources.cmake)
 
-# Create the source groups
-include(${SCRIPTS_DIR}/source_groups.cmake)
-
 # Handle platform configs and overrides
 include (${PLATFORM_DIR}/${KISAK_PLATFORM}/platform.cmake)
+
+# Create source groups after platform selection so they reflect overrides and
+# the active platform-owned source sets.
+include(${SCRIPTS_DIR}/source_groups.cmake)
 
 if (KISAK_DEDI_HEADLESS)
     message(STATUS "Configuring experimental headless dedicated server source profile")

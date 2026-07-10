@@ -3,6 +3,7 @@
 #endif
 
 #include "client_mp.h"
+#include <qcommon/sys_time.h>
 
 #include <cgame_mp/cg_local_mp.h>
 #include <client/client.h>

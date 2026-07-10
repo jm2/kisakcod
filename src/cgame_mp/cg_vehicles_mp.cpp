@@ -3,6 +3,7 @@
 #endif
 
 #include "cg_local_mp.h"
+#include <qcommon/sys_time.h>
 #include "cg_public_mp.h"
 #include <script/scr_const.h>
 #include <gfx_d3d/r_scene.h>
@@ -773,4 +774,3 @@ void __cdecl CG_Veh_Init()
 {
     memset((uint8_t *)vehEffects, 0, sizeof(vehEffects));
 }
-

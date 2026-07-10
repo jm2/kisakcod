@@ -9,6 +9,7 @@
 #include <universal/q_parse.h>
 #include <client/client.h>
 #include <universal/profile.h>
+#include <win32/win_local.h>
 
 #ifdef KISAK_MP
 #include <cgame_mp/cg_local_mp.h>

@@ -9,7 +9,7 @@
 
 #include <xanim/xanim.h>
 #include <xanim/xmodel.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_sync.h>
 #
 
 static_assert(static_cast<int32_t>(ASSET_TYPE_CLIPMAP) == db::asset_mode::kClipMap);
@@ -264,10 +264,6 @@ double __cdecl DB_GetLoadedFraction();
 void __cdecl DB_LoadXFileData(uint8_t *pos, uint32_t size);
 void DB_ReadXFileStage();
 int32_t __cdecl DB_ReadData();
-void __stdcall DB_FileReadCompletion(
-    uint32_t dwErrorCode,
-    uint32_t dwNumberOfBytesTransfered,
-    _OVERLAPPED *lpOverlapped);
 void __cdecl DB_LoadXFileInternal();
 void Load_XAssetListCustom();
 void __cdecl Load_XAssetArrayCustom(int32_t count);

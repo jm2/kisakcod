@@ -9,11 +9,13 @@ include(${SCRIPTS_DIR}/common_files.cmake)
 # Include all files specific to mp
 include(mp_files.cmake)
 
-# Create the source groups
-include(${SCRIPTS_DIR}/source_groups.cmake)
-
 # message(${SRC_DIR})
 include (${PLATFORM_DIR}/${KISAK_PLATFORM}/platform.cmake)
+
+# Create source groups after platform selection so they reflect overrides and
+# the active platform-owned source sets.
+include(${SCRIPTS_DIR}/source_groups.cmake)
+kisakcod_require_platform_source_sets()
 
 # Add the new executable
 add_executable(${PROJECT_NAME} 
@@ -50,7 +52,8 @@ add_executable(${PROJECT_NAME}
     ${UI} 
     ${UI_MP} 
     ${UNIVERSAL} 
-    ${PLATFORM_WIN32}
+    ${KISAK_PLATFORM_SOURCES}
+    ${KISAK_PLATFORM_SERVICE_SOURCES}
     ${XANIM} 
     ${ZLIB} 
     ${STEAM_HEADERS}
