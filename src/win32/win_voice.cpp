@@ -3,6 +3,7 @@
 #include <groupvoice/directsound.h>
 
 #include <server_mp/server_mp.h>
+#include <client_mp/client_mp.h>
 
 
 const dvar_t *winvoice_mic_mute;

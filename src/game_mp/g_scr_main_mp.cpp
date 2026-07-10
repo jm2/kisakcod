@@ -474,8 +474,12 @@ void GScr_CreatePrintChannel()
 
     name = Scr_GetString(0);
 
+#ifndef KISAK_DEDI_HEADLESS
     if (!Con_OpenChannel((char*)name, 1))
         Scr_Error("Unable to create new channel.  Maximum number of channels exeeded.");
+#else
+    (void)name;
+#endif
 }
 
 void GScr_printChannelSet()
@@ -492,6 +496,12 @@ void GScr_printChannelSet()
         return;
     }
     oldChannel = level.scriptPrintChannel;
+#ifdef KISAK_DEDI_HEADLESS
+    // Headless output has no client console filter graph. Keep the script API
+    // successful while retaining the default script channel selected at init.
+    Scr_AddInt(oldChannel);
+    return;
+#else
     Type = Scr_GetType(0);
     if (Type == 2)
     {
@@ -516,6 +526,7 @@ void GScr_printChannelSet()
     {
         Scr_ParamError(0, "Script does not have permission to print to this channel");
     }
+#endif
 }
 
 void print()

@@ -125,7 +125,7 @@ sysEvent_t* __cdecl Win_GetEvent(sysEvent_t* result)
 			{
 				v2 = strlen(s);
 				b = (char *)Com_AllocEvent(v2 + 1);
-				I_strncpyz(b, s, v2);
+				I_strncpyz(b, s, static_cast<int32_t>(v2 + 1));
 				Sys_QueEvent(0, SE_CONSOLE, 0, 0, v2 + 1, b);
 			}
 		}

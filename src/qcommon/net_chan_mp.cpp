@@ -16,6 +16,7 @@
 #include <cgame_mp/cg_local_mp.h>
 #endif
 #include <universal/profile.h>
+#include <universal/com_math.h>
 
 
 const dvar_t *showpackets;
@@ -357,7 +358,7 @@ uint32_t __cdecl FakeLag_SendPacket(netsrc_t sock, int length, uint8_t *data, ne
     int v8; // [esp+14h] [ebp-20h]
     int jitter; // [esp+1Ch] [ebp-18h]
     uint32_t slot; // [esp+20h] [ebp-14h]
-    DWORD now; // [esp+24h] [ebp-10h]
+    uint32_t now; // [esp+24h] [ebp-10h]
     int change; // [esp+28h] [ebp-Ch]
 
     iassert( length > 0 );
@@ -410,9 +411,9 @@ uint32_t __cdecl FakeLag_SendPacket(netsrc_t sock, int length, uint8_t *data, ne
                 v7 = v6;
             }
             if (laggedPackets[slot].loopback)
-                Com_Printf(16, "[%i] adding outbound %s packet for %s\n", now, "loopback", v7);
+                Com_Printf(16, "[%u] adding outbound %s packet for %s\n", now, "loopback", v7);
             else
-                Com_Printf(16, "[%i] adding outbound %s packet for %s\n", now, "network", v7);
+                Com_Printf(16, "[%u] adding outbound %s packet for %s\n", now, "network", v7);
         }
         lastCall = now;
         return slot;
@@ -437,7 +438,7 @@ uint32_t __cdecl FakeLag_QueueIncomingPacket(bool loopback, netsrc_t sock, netad
     int v8; // [esp+1Ch] [ebp-1Ch]
     int jitter; // [esp+24h] [ebp-14h]
     uint32_t slot; // [esp+28h] [ebp-10h]
-    DWORD now; // [esp+2Ch] [ebp-Ch]
+    uint32_t now; // [esp+2Ch] [ebp-Ch]
     int change; // [esp+30h] [ebp-8h]
 
     iassert( msg->cursize > 0 );
@@ -489,9 +490,9 @@ uint32_t __cdecl FakeLag_QueueIncomingPacket(bool loopback, netsrc_t sock, netad
             v7 = v6;
         }
         if (loopback)
-            Com_Printf(16, "[%i] adding incoming %s packet for %s\n", now, "loopback", v7);
+            Com_Printf(16, "[%u] adding incoming %s packet for %s\n", now, "loopback", v7);
         else
-            Com_Printf(16, "[%i] adding incoming %s packet for %s\n", now, "network", v7);
+            Com_Printf(16, "[%u] adding incoming %s packet for %s\n", now, "network", v7);
     }
     lastCall_0 = now;
     return slot;
@@ -584,9 +585,9 @@ void __cdecl FakeLag_Frame()
 
 int __cdecl FakeLag_SendLaggedPackets()
 {
-    DWORD v1; // eax
+    uint32_t v1; // eax
     int startTime; // [esp-8h] [ebp-24h]
-    DWORD v3; // [esp-4h] [ebp-20h]
+    uint32_t v3; // [esp-4h] [ebp-20h]
     const char *v4; // [esp+0h] [ebp-1Ch]
     const char *v5; // [esp+4h] [ebp-18h]
     const char *v6; // [esp+8h] [ebp-14h]
@@ -631,7 +632,7 @@ int __cdecl FakeLag_SendLaggedPackets()
                 v3 = Sys_Milliseconds() - laggedPackets[packet].startTime;
                 startTime = laggedPackets[packet].startTime;
                 v1 = Sys_Milliseconds();
-                Com_Printf(16, "[%i] delivering outbound %s packet for %s (from %i) (%ims delay)\n", v1, v4, v6, startTime, v3);
+                Com_Printf(16, "[%u] delivering outbound %s packet for %s (from %i) (%ums delay)\n", v1, v4, v6, startTime, v3);
             }
             FakeLag_SendPacket_Real(packet);
             ++numSent;

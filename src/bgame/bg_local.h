@@ -1673,6 +1673,7 @@ bool __cdecl BG_IsKnifeMeleeAnim(const clientInfo_t *ci, int32_t animNum);
 void __cdecl BG_LerpOffset(float *offset_goal, float maxOffsetChange, float *offset);
 void __cdecl BG_Player_DoControllersSetup(const entityState_s *es, clientInfo_t *ci, int32_t frametime);
 void __cdecl BG_Player_DoControllersInternal(const entityState_s *es, const clientInfo_t *ci, controller_info_t *info);
+void __cdecl BG_Player_DoControllers(const CEntPlayerInfo *player, const DObj_s *obj, int32_t *partBits);
 uint32_t __cdecl BG_GetConditionValue(const clientInfo_t *ci, uint32_t condition);
 void __cdecl BG_LerpAngles(float *angles_goal, float maxAngleChange, float *angles);
 void __cdecl BG_PlayerAnimation(int32_t localClientNum, const entityState_s *es, clientInfo_t *ci);

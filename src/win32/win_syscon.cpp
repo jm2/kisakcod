@@ -14,11 +14,14 @@
 #include <direct.h>
 #include <io.h>
 #include <conio.h>
+#include <cstring>
 #include <qcommon/threads.h>
 
 // Defined in client/cl_console.cpp; forward-declared here so the Win32 GUI console
 // does not pull the full client.h into the win32 layer.
+#ifndef KISAK_DEDI_HEADLESS
 void __cdecl Con_GetTextCopy(char *text, int32_t maxSize);
+#endif
 
 #define COPY_ID			1
 #define QUIT_ID			2
@@ -48,6 +51,11 @@ struct WinConData // sizeof=0x620
 
 static WinConData s_wcd;
 uint32_t s_totalChars;
+
+#ifdef KISAK_DEDI_HEADLESS
+static char s_headlessConsoleHistory[0x4000];
+static size_t s_headlessConsoleHistoryLength;
+#endif
 
 LRESULT __stdcall ConWndProc(HWND__ *hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
@@ -86,6 +94,21 @@ LRESULT __stdcall ConWndProc(HWND__ *hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 
 extern	void CompleteCommand( void ) ;
 
+static void Conbuf_QueueInput(const char *input)
+{
+	constexpr size_t capacity = sizeof(s_wcd.consoleText) - 1;
+	const size_t currentLength = std::strlen(s_wcd.consoleText);
+	if (currentLength >= capacity)
+		return;
+
+	const size_t inputCapacity = capacity - currentLength - 1;
+	const size_t inputLength = std::strlen(input);
+	const size_t copyLength = inputLength < inputCapacity ? inputLength : inputCapacity;
+	std::memcpy(&s_wcd.consoleText[currentLength], input, copyLength);
+	s_wcd.consoleText[currentLength + copyLength] = '\n';
+	s_wcd.consoleText[currentLength + copyLength + 1] = 0;
+}
+
 LRESULT __stdcall InputLineWndProc(HWND__ *hWnd, UINT uMsg, HWND__ *wParam, LPARAM lParam)
 {
 	char displayBuffer[1024]; // [esp+20h] [ebp-808h] BYREF
@@ -102,8 +125,7 @@ LRESULT __stdcall InputLineWndProc(HWND__ *hWnd, UINT uMsg, HWND__ *wParam, LPAR
 	else if (uMsg == 258 && (int)wParam == 13)
 	{
 		GetWindowTextA(s_wcd.hwndInputLine, inputBuffer, 1024);
-		strncat(s_wcd.consoleText, inputBuffer, 512 - strlen(s_wcd.consoleText) - 5);
-		strcat(s_wcd.consoleText, "\n");
+		Conbuf_QueueInput(inputBuffer);
 		SetWindowTextA(s_wcd.hwndInputLine, "");
 		Com_sprintf(displayBuffer, 0x400u, "]%s\n", inputBuffer);
 		Sys_Print(displayBuffer);
@@ -114,12 +136,20 @@ LRESULT __stdcall InputLineWndProc(HWND__ *hWnd, UINT uMsg, HWND__ *wParam, LPAR
 
 uint32_t __cdecl Conbuf_CleanText(const char *source, char *target, int sizeofTarget)
 {
+	if (!target || sizeofTarget <= 0)
+		return 0;
+
+	target[0] = 0;
+	if (!source || sizeofTarget < 3)
+		return 0;
+
 	const char* start = target;
 	const char* last = &target[sizeofTarget - 3];
 
 	while (*source && target <= last)
 	{
-		if (source[0] == '\n' && source[1] == '\r')
+		if ((source[0] == '\n' && source[1] == '\r')
+			|| (source[0] == '\r' && source[1] == '\n'))
 		{
 			target[0] = '\r';
 			target[1] = '\n';
@@ -133,7 +163,7 @@ uint32_t __cdecl Conbuf_CleanText(const char *source, char *target, int sizeofTa
 			target += 2;
 			++source;
 		}
-		else if (source && source[0] == '^' && source[1] && source[1] != '^' && source[1] >= 48 && source[1] <= 57)
+		else if (source[0] == '^' && source[1] && source[1] != '^' && source[1] >= 48 && source[1] <= 57)
 		{
 			source += 2;
 		}
@@ -147,6 +177,36 @@ uint32_t __cdecl Conbuf_CleanText(const char *source, char *target, int sizeofTa
 	return target - start;
 }
 
+#ifdef KISAK_DEDI_HEADLESS
+static void Conbuf_AppendHeadlessHistory(const char *msg)
+{
+	char cleaned[0x8004];
+	const size_t messageLength = std::strlen(msg);
+	const char *source = messageLength <= 0x3FFF ? msg : &msg[messageLength - 0x3FFF];
+	const size_t cleanedLength = Conbuf_CleanText(source, cleaned, static_cast<int>(sizeof(cleaned)));
+	constexpr size_t capacity = sizeof(s_headlessConsoleHistory) - 1;
+	const size_t copyLength = cleanedLength < capacity ? cleanedLength : capacity;
+	const char *copyStart = &cleaned[cleanedLength - copyLength];
+
+	if (s_headlessConsoleHistoryLength > capacity - copyLength)
+	{
+		const size_t discard = s_headlessConsoleHistoryLength - (capacity - copyLength);
+		std::memmove(
+			s_headlessConsoleHistory,
+			&s_headlessConsoleHistory[discard],
+			s_headlessConsoleHistoryLength - discard);
+		s_headlessConsoleHistoryLength -= discard;
+	}
+
+	std::memcpy(
+		&s_headlessConsoleHistory[s_headlessConsoleHistoryLength],
+		copyStart,
+		copyLength);
+	s_headlessConsoleHistoryLength += copyLength;
+	s_headlessConsoleHistory[s_headlessConsoleHistoryLength] = 0;
+}
+#endif
+
 /*
 ** Sys_CreateConsole
 */
@@ -154,7 +214,9 @@ void __cdecl Sys_CreateConsole(HMODULE hInstance)
 {
 	tagRECT Rect;
 
+#ifndef KISAK_DEDI_HEADLESS
 	char text[16388];
+#endif
 	char target[16384];
 
 	static const DWORD dwStyle = 0x80CA0000;
@@ -236,8 +298,13 @@ void __cdecl Sys_CreateConsole(HMODULE hInstance)
 	SendMessageA(s_wcd.hwndInputLine, 0x30u, reinterpret_cast<WPARAM>(s_wcd.hfBufferFont), 0);
 
 	SetFocus(s_wcd.hwndInputLine);
+#ifdef KISAK_DEDI_HEADLESS
+	I_strncpyz(target, s_headlessConsoleHistory, static_cast<int>(sizeof(target)));
+#else
 	Con_GetTextCopy(text, 0x4000);
 	Conbuf_CleanText(text, target, 0x4000);
+#endif
+	s_totalChars = static_cast<uint32_t>(std::strlen(target));
 	SetWindowTextA(s_wcd.hwndBuffer, target);
 }
 
@@ -338,9 +405,12 @@ void __cdecl Sys_SetErrorText(const char *buf)
 
 void __cdecl Conbuf_AppendTextInMainThread(const char* msg)
 {
+	if (!msg || !Sys_IsMainThread())
+		return;
+
+#ifdef KISAK_DEDI_HEADLESS
+	Conbuf_AppendHeadlessHistory(msg);
+#endif
 	if (s_wcd.hwndBuffer)
-	{
-		if (Sys_IsMainThread())
-			Conbuf_AppendText(msg);
-	}
+		Conbuf_AppendText(msg);
 }

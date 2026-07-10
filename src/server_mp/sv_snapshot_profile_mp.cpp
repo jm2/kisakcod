@@ -3,6 +3,7 @@
 #endif
 
 #include "server_mp.h"
+#include <bgame/bg_public.h>
 #include <universal/com_files.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <cgame_mp/cg_local_mp.h>
@@ -480,7 +481,7 @@ float s_avgSnapshotSize;
 void __cdecl SV_AnalyzePacketData(int clientNum, const msg_t *msg)
 {
     const char *PacketDataTypeName; // eax
-    DWORD v3; // eax
+    uint32_t v3; // eax
     const char *EntityTypeString; // eax
     int cursize; // [esp-8h] [ebp-2Ch]
     int v6; // [esp-4h] [ebp-28h]
@@ -1029,7 +1030,11 @@ void __cdecl SV_Netchan_PrintProfileStats(int bPrintToConsole)
     iTotalMinSent = 9999;
     iTotalMaxRecieved = 0;
     iTotalMinRecieved = 9999;
+#ifdef KISAK_DEDI_HEADLESS
+    iYPos = 0;
+#else
     iYPos = cl_profileTextY->current.integer;
+#endif
     iYStep = 10;
     if (!net_profile->current.integer)
         MyAssertHandler(".\\server_mp\\sv_snapshot_profile_mp.cpp", 1185, 0, "%s", "net_profile->current.integer");
@@ -1262,7 +1267,11 @@ void __cdecl SV_Netchan_PrintProfileStats(int bPrintToConsole)
             else
             {
                 iYPos += 10;
+#ifdef KISAK_DEDI_HEADLESS
+                SV_ProfDraw(iYPos, szLine, false);
+#else
                 SV_ProfDraw(iYPos, szLine, i == cg_packetAnalysisClient->current.integer);
+#endif
             }
         }
         ++i;

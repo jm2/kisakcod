@@ -15,12 +15,14 @@
 
 #include <win32/win_net_debug.h>
 #include "scr_evaluate.h"
-#include <client/client.h>
 #ifndef KISAK_DEDI_HEADLESS
+#include <client/client.h>
 #include <win32/win_input.h>
 #endif
 #include <qcommon/threads.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_rendercmds.h>
+#endif
 #include <qcommon/cmd.h>
 #include <win32/win_net.h>
 #include "scr_compiler.h"
@@ -42,6 +44,9 @@ void __cdecl TRACK_scr_debugger()
 
 void __cdecl Scr_AddDebugText(char *text)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)text;
+#else
     if (UI_Component::g.consoleReason == 1)
     {
         I_strncpyz(UI_Component::g.findText, text, 128);
@@ -56,10 +61,14 @@ void __cdecl Scr_AddDebugText(char *text)
     {
         UI_Component::selectionComp->AddText(text);
     }
+#endif
 }
 
 void __thiscall Scr_ScriptWindow::FindPrev()
 {
+#ifdef KISAK_DEDI_HEADLESS
+    return;
+#else
     int i; // eax
     int numLines; // [esp+0h] [ebp-24h]
     int currentLine; // [esp+18h] [ebp-Ch]
@@ -103,10 +112,14 @@ void __thiscall Scr_ScriptWindow::FindPrev()
             this->selectedLine = -1;
         }
     }
+#endif
 }
 
 void __thiscall Scr_ScriptWindow::FindNext()
 {
+#ifdef KISAK_DEDI_HEADLESS
+    return;
+#else
     int v1; // kr00_4
     int currentLine; // [esp+14h] [ebp-Ch]
     const char *s; // [esp+1Ch] [ebp-4h]
@@ -135,6 +148,7 @@ void __thiscall Scr_ScriptWindow::FindNext()
             this->selectedLine = -1;
         }
     }
+#endif
 }
 
 void __thiscall Scr_ScriptWindow::GetSourcePos(uint32_t *start, uint32_t *end)
@@ -457,6 +471,9 @@ void __thiscall Scr_ScriptWindow::SetCurrentLine(int line)
 
 void __cdecl Scr_SetMiscScrollPaneComp(struct UI_LinesComponent *comp)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)comp;
+#else
     if (!comp)
         MyAssertHandler(".\\script\\scr_debugger.cpp", 7762, 0, "%s", "comp");
     scrDebuggerGlob.miscScrollPane.comp = comp;
@@ -469,10 +486,14 @@ void __cdecl Scr_SetMiscScrollPaneComp(struct UI_LinesComponent *comp)
             "comp->selectionParent == &scrDebuggerGlob.miscScrollPane");
     Scr_SetSelectionComp(&scrDebuggerGlob.miscScrollPane);
     comp->SetSelectedLineFocus(comp->selectedLine, 0);
+#endif
 }
 
 void __cdecl Scr_KeyEvent(int key)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)key;
+#else
     float v1; // [esp+0h] [ebp-34h]
     float v2; // [esp+4h] [ebp-30h]
     float v3; // [esp+1Ch] [ebp-18h]
@@ -643,6 +664,7 @@ void __cdecl Scr_KeyEvent(int key)
         //Scr_ScriptWindow::FindPrev(scrDebuggerGlob.scriptScrollPane.comp);
         ((Scr_ScriptWindow *)(scrDebuggerGlob.scriptScrollPane.comp))->FindPrev();
     }
+#endif
 }
 
 void __cdecl Scr_AddManualBreakpoint(uint8_t *codePos)
@@ -1581,12 +1603,14 @@ void __cdecl Scr_InitDebuggerMain()
             scrDebuggerGlob.assignHeadCodePos = 0;
             scrDebuggerGlob.disableBreakpoints = 0;
         }
+#ifndef KISAK_DEDI_HEADLESS
         //UI_ScrollPane::Init(&scrDebuggerGlob.scriptScrollPane);
         scrDebuggerGlob.scriptScrollPane.Init();
         //UI_ScrollPane::Init(&scrDebuggerGlob.miscScrollPane);
         scrDebuggerGlob.miscScrollPane.Init();
         //UI_VerticalDivider::Init(&scrDebuggerGlob.mainWindow);
         scrDebuggerGlob.mainWindow.Init();
+#endif
         scrDebuggerGlob.debugger_inited_main = 1;
     }
 }
@@ -1667,12 +1691,16 @@ void __cdecl Scr_ShutdownDebugger()
 
 void __cdecl Scr_SetSelectionComp(UI_Component *comp)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)comp;
+#else
     UI_Component::selectionComp = comp;
     if (comp == &scrDebuggerGlob.scriptScrollPane && scrDebuggerGlob.scriptList.selectedLine >= 0)
     {
         //Scr_AbstractScriptList::AddEntry(&scrDebuggerGlob.openScriptList, scrDebuggerGlob.scriptList.scriptWindows[scrDebuggerGlob.scriptList.selectedLine], 0);
         scrDebuggerGlob.openScriptList.AddEntry(scrDebuggerGlob.scriptList.scriptWindows[scrDebuggerGlob.scriptList.selectedLine], 0);
     }
+#endif
 }
 
 void __cdecl Scr_InitDebuggerSystem()
@@ -1712,6 +1740,7 @@ void __cdecl Scr_InitDebuggerSystem()
             scrVarPub.evaluate = 0;
         }
         scrDebuggerGlob.debugger_inited_system = 1;
+#ifndef KISAK_DEDI_HEADLESS
         if (scrDebuggerGlob.mainWindow.posY == 0.0)
             scrDebuggerGlob.mainWindow.posY = UI_Component::g.screenHeight - 120.0;
         scrDebuggerGlob.miscScrollPane.comp = &scrDebuggerGlob.scriptWatch;
@@ -1720,6 +1749,7 @@ void __cdecl Scr_InitDebuggerSystem()
         scrDebuggerGlob.scriptWatch.selectionParent = &scrDebuggerGlob.miscScrollPane;
         scrDebuggerGlob.scriptCallStack.selectionParent = &scrDebuggerGlob.miscScrollPane;
         Scr_SetSelectionComp(&scrDebuggerGlob.miscScrollPane);
+#endif
         if (!Sys_IsRemoteDebugClient())
         {
             scrDebuggerGlob.scriptWatch.UpdateBreakpoints(1);
@@ -1747,13 +1777,15 @@ void __cdecl Scr_ShutdownDebuggerSystem(int restart)
 {
     if (scrVarPub.developer)
     {
+#ifndef KISAK_DEDI_HEADLESS
         if (!restart && Key_IsCatcherActive(0, 2))
         {
             Key_RemoveCatcher(0, -3);
-#ifndef KISAK_DEDI_HEADLESS
             IN_ActivateMouse(1);
-#endif
         }
+#else
+        (void)restart;
+#endif
         if (scrDebuggerGlob.debugger_inited_system)
         {
             scrDebuggerGlob.debugger_inited_system = 0;
@@ -1799,6 +1831,9 @@ void __cdecl Scr_RunDebuggerRemote()
 {
     if (!Sys_IsRemoteDebugClient())
         MyAssertHandler(".\\script\\scr_debugger.cpp", 8623, 0, "%s", "Sys_IsRemoteDebugClient()");
+#ifdef KISAK_DEDI_HEADLESS
+    Scr_UpdateDebugSocket();
+#else
     if (Key_IsCatcherActive(0, 2))
         MyAssertHandler(
             ".\\script\\scr_debugger.cpp",
@@ -1808,12 +1843,9 @@ void __cdecl Scr_RunDebuggerRemote()
             "!Key_IsCatcherActive( ONLY_LOCAL_CLIENT_NUM, KEYCATCH_SCRIPT )");
     Con_CloseConsole(0);
     Key_AddCatcher(0, 2);
-#ifndef KISAK_DEDI_HEADLESS
     IN_ActivateMouse(1);
-#endif
     while (Key_IsCatcherActive(0, 2))
         Debug_Frame(0);
-#ifndef KISAK_DEDI_HEADLESS
     IN_ActivateMouse(1);
 #endif
 }
@@ -1948,9 +1980,11 @@ void __cdecl Scr_WatchElementHitBreakpoint(Scr_WatchElement_s *element, bool ena
 
 void __cdecl Scr_ShowConsole()
 {
+#ifndef KISAK_DEDI_HEADLESS
     Con_OpenConsole(0);
     Con_OpenConsoleOutput(0);
     scrDebuggerGlob.showConsole = 1;
+#endif
 }
 
 void __cdecl Scr_ClearElementChanged(Scr_WatchElement_s *element)
@@ -2473,7 +2507,9 @@ int __cdecl Scr_UpdateDebugSocket()
             Sys_ConsolePrintRemote(0);
             goto LABEL_46;
         case 43:
+#ifndef KISAK_DEDI_HEADLESS
             CL_ConsoleFixPosition();
+#endif
             goto LABEL_46;
         case 44:
             Cbuf_AddText(0, "toggle cl_paused\n");
@@ -2930,12 +2966,20 @@ void __cdecl Sys_ConsolePrintRemote(int localClientNum)
     char *msg; // [esp+0h] [ebp-4h]
 
     msg = Sys_ReadDebugSocketString();
+#ifdef KISAK_DEDI_HEADLESS
+    (void)localClientNum;
+    Com_Printf(23, "%s", msg);
+#else
     CL_ConsolePrint(localClientNum, 23, msg, 0, 0, 0);
+#endif
     FreeString(msg);
 }
 
 void __cdecl Scr_UpdateDebugger()
 {
+#ifdef KISAK_DEDI_HEADLESS
+    return;
+#else
     int hitBreakpoint; // [esp+0h] [ebp-18h]
     bool updateBreakpoints; // [esp+7h] [ebp-11h]
     Scr_WatchElement_s *element; // [esp+Ch] [ebp-Ch]
@@ -3025,6 +3069,7 @@ retry_14:
         scrDebuggerGlob.run_debugger = 0;
         goto LABEL_46;
     }
+#endif
 }
 
 char __cdecl Scr_WatchElementHasSameValue(Scr_WatchElement_s *element, VariableValue *newValue)
@@ -3381,14 +3426,14 @@ void Scr_DrawCurrentFilename()
 
 void __cdecl Scr_DrawScript()
 {
-#ifndef KISAK_DEDI_HEADLESS
+#ifdef KISAK_DEDI_HEADLESS
+    return;
+#else
     BOOL isForegroundWindow; // [esp+18h] [ebp-4h]
-#endif
 
     iassert(scrDebuggerGlob.debugger_inited_system);
     iassert(!scrDebuggerGlob.scriptWatch.dirty);
 
-#ifndef KISAK_DEDI_HEADLESS
     if (scrDebuggerGlob.gainFocusTime)
     {
         isForegroundWindow = IN_IsForegroundWindow();
@@ -3398,9 +3443,6 @@ void __cdecl Scr_DrawScript()
         if (!scrDebuggerGlob.atBreakpoint || (int)(Sys_Milliseconds() - scrDebuggerGlob.gainFocusTime) >= 0)
             scrDebuggerGlob.gainFocusTime = 0;
     }
-#else
-    scrDebuggerGlob.gainFocusTime = 0;
-#endif
     if (!scrDebuggerGlob.scriptList.scriptWindows)
         MyAssertHandler((char *)".\\script\\scr_debugger.cpp", 7727, 0, "%s", "scrDebuggerGlob.scriptList.scriptWindows");
     if (scrDebuggerGlob.scriptList.selectedLine < 0)
@@ -3421,6 +3463,7 @@ void __cdecl Scr_DrawScript()
         0.0f);
     Scr_DrawCurrentFilename();
     Con_DrawConsole(0);
+#endif
 }
 
 void Scr_UpdateRemoteDebugger()

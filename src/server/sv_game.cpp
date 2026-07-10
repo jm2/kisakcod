@@ -476,8 +476,8 @@ void __cdecl SV_XModelDebugBoxes(gentity_s *ent)
             }
         }
     }
-}
 #endif
+}
 
 bool __cdecl SV_DObjExists(gentity_s *ent)
 {

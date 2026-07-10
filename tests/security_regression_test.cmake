@@ -60,6 +60,54 @@ require_source_not_contains(
     "ITEM_WEAPMODEL"
     "legacy weapon-model macro could multiply the item-table stride twice")
 require_source_contains(
+    "win32/win_syscon.cpp"
+    "const size_t inputCapacity = capacity - currentLength - 1;"
+    "console input must reserve space for its command separator and terminator")
+require_source_not_contains(
+    "win32/win_syscon.cpp"
+    "strncat("
+    "console input must not use underflow-prone remaining-size concatenation")
+require_source_contains(
+    "win32/win_syscon.cpp"
+    "static char s_headlessConsoleHistory[0x4000];"
+    "headless startup diagnostics must remain available when the console is created late")
+require_source_contains(
+    "win32/win_syscon.cpp"
+    "Conbuf_AppendHeadlessHistory(msg);"
+    "headless diagnostics must enter bounded history before console-window creation")
+require_source_contains(
+    "win32/win_main.cpp"
+    "I_strncpyz(b, s, static_cast<int32_t>(v2 + 1));"
+    "console events must preserve their final character and trailing terminator")
+require_source_contains(
+    "cgame_mp/dedicated_cgame.cpp"
+    "{ \"code_post_gfx_mp\", 2, 0 }"
+    "headless startup must load authoritative MP code assets")
+require_source_contains(
+    "cgame_mp/dedicated_cgame.cpp"
+    "{ \"localized_code_post_gfx_mp\", 0, 0 }"
+    "headless startup must load localized MP code assets")
+require_source_contains(
+    "cgame_mp/dedicated_cgame.cpp"
+    "{ \"common_mp\", 4, 0 }"
+    "headless startup must load authoritative MP common assets")
+require_source_contains(
+    "cgame_mp/dedicated_cgame.cpp"
+    "{ \"localized_common_mp\", 1, 0 }"
+    "headless startup must load localized MP common assets")
+require_source_not_contains(
+    "cgame_mp/dedicated_cgame.cpp"
+    "ui_mp"
+    "headless startup must not load client UI assets")
+require_source_contains(
+    "qcommon/sv_msg_write_mp.cpp"
+    "checkValue = ~static_cast<uint32_t>(value);"
+    "signed bit-width checks must handle INT_MIN without negation overflow")
+require_source_not_contains(
+    "qcommon/sv_msg_write_mp.cpp"
+    "_BitScanReverse"
+    "shared message serialization must not depend on a Win32 compiler intrinsic")
+require_source_contains(
     "qcommon/files.cpp"
     "ARRAY_COUNT(fs_serverReferencedFFCheckSums)"
     "fast-file reference capacity must be derived from the destination array")

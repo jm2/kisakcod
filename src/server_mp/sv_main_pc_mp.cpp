@@ -175,7 +175,7 @@ void __cdecl SV_AuthorizeIpPacket(netadr_t from)
             {
                 if (r && *r)
                 {
-                    snprintf(ret, ARRAYSIZE(ret), "error\n%s", r);
+                    snprintf(ret, ARRAY_COUNT(ret), "error\n%s", r);
                     NET_OutOfBandPrint(NS_SERVER, svs.challenges[i].adr, ret);
                 }
                 else

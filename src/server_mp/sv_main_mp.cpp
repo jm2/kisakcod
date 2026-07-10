@@ -993,7 +993,7 @@ void __cdecl SV_UpdatePerformanceFrame(float time)
     float v2; // [esp+4h] [ebp-24h]
     float v3; // [esp+8h] [ebp-20h]
     float v4; // [esp+Ch] [ebp-1Ch]
-    DWORD wallClockEndTime; // [esp+14h] [ebp-14h]
+    uint32_t wallClockEndTime; // [esp+14h] [ebp-14h]
     ServerProfileTimes *profile; // [esp+18h] [ebp-10h]
     float maxTime; // [esp+1Ch] [ebp-Ch]
     float minTime; // [esp+20h] [ebp-8h]

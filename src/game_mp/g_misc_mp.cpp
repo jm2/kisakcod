@@ -5,10 +5,18 @@
 #include "g_public_mp.h"
 #include "g_utils_mp.h"
 #include <server/sv_world.h>
+#include <qcommon/com_bsp.h>
 #include <script/scr_vm.h>
 #include <xanim/dobj.h>
 #include <xanim/dobj_utils.h>
 #include <game/bullet.h>
+
+static const ComPrimaryLight *G_GetPrimaryLight(uint32_t primaryLightIndex)
+{
+    iassert(comWorld.isInUse);
+    bcassert(primaryLightIndex, comWorld.primaryLightCount);
+    return &comWorld.primaryLights[primaryLightIndex];
+}
 
 
 void __cdecl SP_info_notnull(gentity_s *self)
@@ -28,7 +36,7 @@ void __cdecl SP_light(gentity_s *self)
 
     if (G_SpawnInt("pl#", "0", &primaryLightIndex))
     {
-        light = Com_GetPrimaryLight(primaryLightIndex);
+        light = G_GetPrimaryLight(primaryLightIndex);
 
         self->s.index.primaryLight = (uint16_t)primaryLightIndex;
 
@@ -1171,4 +1179,3 @@ void __cdecl SP_turret(gentity_s *self)
         Com_Error(ERR_DROP, "no weaponinfo specified for turret");
     G_SpawnTurret(self, weaponinfoname);
 }
-

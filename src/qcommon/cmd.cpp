@@ -14,6 +14,14 @@
 #include <server/sv_game.h>
 #include <universal/profile.h>
 
+#ifndef KISAK_DEDI_HEADLESS
+#ifdef KISAK_MP
+#include <client_mp/client_mp.h>
+#else
+#include <client/client.h>
+#endif
+#endif
+
 static cmd_function_s* cmd_functions = NULL;
 
 

@@ -6,7 +6,12 @@
 
 #include "net_chan_mp.h"
 #include <server_mp/server_mp.h>
+#include <universal/com_math.h>
 #include <universal/profile.h>
+
+#ifndef KISAK_DEDI_HEADLESS
+#include <client_mp/client_mp.h>
+#endif
 
 netFieldOrderInfo_t orderInfo;
 
@@ -1391,8 +1396,10 @@ void __cdecl MSG_WriteEntityRemoval(
 {
     iassert( from );
     iassert( !msg->readOnly );
+#ifndef KISAK_DEDI_HEADLESS
     if (cl_shownet && (cl_shownet->current.integer >= 2 || cl_shownet->current.integer == -1))
         Com_Printf(16, "W|%3i: #%-3i remove\n", msg->cursize, *(uint32_t *)from);
+#endif
     if (sv_debugPacketContents->current.enabled)
         Com_Printf(16, "Entity was removed\n");
     SV_PacketDataIsOverhead(snapInfo->clientNum, msg);
@@ -1988,13 +1995,13 @@ void __cdecl MSG_WriteGroundEntityNum(int clientNum, msg_t *msg, int groundEntit
 
 bool __cdecl MSG_CheckWritingEnoughBits(int value, uint32_t bits)
 {
-    DWORD v3; // eax
     uint32_t checkBits; // [esp+4h] [ebp-8h]
     uint32_t checkValue; // [esp+8h] [ebp-4h]
+    uint32_t requiredBits;
 
     if (value < 0)
     {
-        checkValue = -value - 1;
+        checkValue = ~static_cast<uint32_t>(value);
         checkBits = bits - 1;
     }
     else
@@ -2002,9 +2009,13 @@ bool __cdecl MSG_CheckWritingEnoughBits(int value, uint32_t bits)
         checkValue = value;
         checkBits = bits;
     }
-    if (!_BitScanReverse(&v3, checkValue))
-        v3 = 63; // `CountLeadingZeros'::`2': : notFound;
-    return checkBits >= 32 - (v3 ^ 0x1Fu);
+    requiredBits = 0;
+    while (checkValue)
+    {
+        ++requiredBits;
+        checkValue >>= 1;
+    }
+    return checkBits >= requiredBits;
 }
 
 void __cdecl MSG_WriteDeltaArchivedEntity(

@@ -28,7 +28,7 @@
 
 void	IN_MouseEvent (int mstate);
 
-void	Sys_CreateConsole( void );
+void __cdecl Sys_CreateConsole(HMODULE hInstance);
 void	Sys_DestroyConsole( void );
 void __cdecl Sys_ShowConsole();
 
