@@ -138,3 +138,33 @@ jobs:
           --config Release
           --target KisakCOD-mp KisakCOD-dedi
           --parallel
+
+  windows-x86-headless:
+    # This is the first real compile/link gate for the portable dedicated-server
+    # source profile. Keep it independent of the legacy Windows client/media
+    # build so headless cannot silently regain DirectX, Miles, Bink, or Steam.
+    name: Windows x86 (headless dedicated)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build-headless `
+            -G "Visual Studio 17 2022" -A Win32 `
+            -DKISAK_BUILD_MP=OFF `
+            -DKISAK_BUILD_DEDICATED=ON `
+            -DKISAK_BUILD_SP=OFF `
+            -DKISAK_DEDI_HEADLESS=ON `
+            -DKISAK_ENABLE_STEAM=OFF `
+            -DKISAK_ENABLE_X86_MMX_SKINNING=OFF `
+            -DBUILD_TESTING=OFF
+
+      - name: Build
+        shell: pwsh
+        run: >
+          cmake --build build-headless
+          --config Release
+          --target KisakCOD-dedi
+          --parallel

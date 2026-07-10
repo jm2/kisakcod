@@ -8,8 +8,8 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: add a Windows x86 headless compile/link CI leg, then begin the platform-services
-  boundary needed by the Linux dedicated server.
+- Active work: make the new Windows x86 headless compile/link CI leg green by removing its remaining
+  client/media symbol dependencies, then begin the Linux platform-services boundary.
 - Last completed batch: fast-file dispatch now enforces the build-mode asset contract before payload
   loading or marking. MP rejects SP clipmaps/worlds and SP rejects MP PVS clipmaps/worlds; the same
   policy guards registry publication and allocation before a mode-null singleton pool can be called.
@@ -29,13 +29,14 @@ work item changes. Do not create session-specific handoff files.
   error in the Windows-only surface validator. Physics/repair run 29102757297 then passed all eight
   jobs, confirming the parameterized model-bone-count repair and exact physics graph batch. Clipmap
   brush-graph run 29105491437, portal/cell run 29108651064, and path-data/tree run 29110801804
-  also passed all eight jobs.
+  also passed all eight jobs. Asset-admission run 29111550531 then passed all eight jobs with the
+  new 13-test portable suite.
 
 ## Milestone status
 
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
-| M0 build/CI foundation | Partial | Windows x86 builds; five native utility-test runners; engine runtime smoke and release workflows remain unexercised. |
+| M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a Release headless-dedicated compile/link gate, and five native utility-test runners exist; the new headless gate still needs its first result, while runtime smoke and release workflows remain unexercised. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
@@ -56,7 +57,7 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
+1. Make the Windows x86 headless compile/link CI leg green and burn down its unresolved client/media dependencies.
 2. Begin the M3 headless platform-services interface.
 3. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
 4. Classify and burn down the 255 direct and four formula-based ABI layout assertions.
@@ -64,7 +65,8 @@ work item changes. Do not create session-specific handoff files.
 
 ## Known release blockers
 
-- Headless source composition is not compile/link-tested and retains 33 allowlisted client/media includes.
+- Headless source composition has a new compile/link gate awaiting its first result and retains 34
+  allowlisted client/media includes.
 - Fast-file loading lacks a production-path malformed-input test harness and
   completed-object/type provenance for direct offsets.
 - Inline material declarations, techniques, passes, and arguments receive pre-use
