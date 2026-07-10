@@ -11,6 +11,15 @@ constexpr uint32_t kInline = UINT32_MAX;
 constexpr uint32_t kSharedInline = UINT32_MAX - 1;
 constexpr uint32_t kOffsetMask = 0x0FFFFFFF;
 
+// Material fast-file layout constants. Keep these separate from native
+// sizeof: every corresponding runtime type widens when pointer fields become
+// native-width on 64-bit hosts.
+constexpr uint32_t kMaterialVertexDeclarationBytes = 100;
+constexpr uint32_t kMaterialTechniqueHeaderBytes = 8;
+constexpr uint32_t kMaterialPassBytes = 20;
+constexpr uint32_t kMaterialTechniqueSchema =
+    (kMaterialTechniqueHeaderBytes << 16) | kMaterialPassBytes;
+
 struct PointerToken
 {
     uint32_t value;

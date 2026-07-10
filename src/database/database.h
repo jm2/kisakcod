@@ -277,6 +277,12 @@ void __cdecl DB_SetInsertedPointer(
     DBAliasKind expectedKind,
     const void *pointer,
     uint32_t metadata = 0);
+bool __cdecl DB_CompleteObject(
+    DBAliasHandle handle,
+    DBAliasKind expectedKind,
+    const void *pointer,
+    uint32_t metadata,
+    uint32_t materializedBytes);
 db::relocation::Status __cdecl DB_ResolveInsertedPointer(
     disk32::PointerToken token,
     DBAliasKind expectedKind,
@@ -459,16 +465,16 @@ void __cdecl Load_MaterialArgumentDef(bool atStreamStart);
 void __cdecl Load_MaterialShaderArgument(bool atStreamStart);
 void __cdecl Load_MaterialShaderArgumentArray(bool atStreamStart, int32_t count);
 void __cdecl Load_GfxStateBitsArray(bool atStreamStart, int32_t count);
-void __cdecl Load_MaterialPass(bool atStreamStart);
-void __cdecl Load_MaterialPassArray(bool atStreamStart, int32_t count);
-void __cdecl Load_MaterialTechnique(bool atStreamStart);
+bool __cdecl Load_MaterialPass(bool atStreamStart);
+bool __cdecl Load_MaterialPassArray(bool atStreamStart, int32_t count);
+bool __cdecl Load_MaterialTechnique(bool atStreamStart);
 void __cdecl Load_MaterialTextureDefInfo(bool atStreamStart);
 void __cdecl Load_MaterialTextureDef(bool atStreamStart);
 void __cdecl Load_MaterialTextureDefArray(bool atStreamStart, int32_t count);
 void __cdecl Load_MaterialConstantDefArray(bool atStreamStart, int32_t count);
-void __cdecl Load_MaterialTechniquePtr(bool atStreamStart);
-void __cdecl Load_MaterialTechniquePtrArray(bool atStreamStart, int32_t count);
-void __cdecl Load_MaterialTechniqueSet(bool atStreamStart);
+bool __cdecl Load_MaterialTechniquePtr(bool atStreamStart);
+bool __cdecl Load_MaterialTechniquePtrArray(bool atStreamStart, int32_t count);
+bool __cdecl Load_MaterialTechniqueSet(bool atStreamStart);
 void __cdecl Load_MaterialTechniqueSetPtr(bool atStreamStart);
 void __cdecl Load_Material(bool atStreamStart);
 void __cdecl Load_MaterialHandle(bool atStreamStart);

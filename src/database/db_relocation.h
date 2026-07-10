@@ -11,10 +11,6 @@ namespace db::relocation
 {
 constexpr std::size_t kBlockCount = 9;
 constexpr std::uint32_t kAliasBlock = 4;
-// Serialized MaterialVertexDeclaration extent in the 32-bit fast-file schema.
-// This is deliberately not sizeof(MaterialVertexDeclaration): the native type
-// grows when its D3D pointer array is widened on 64-bit hosts.
-constexpr std::uint32_t kMaterialVertexDeclarationDiskBytes = 100;
 using BlockMask = std::uint16_t;
 
 constexpr BlockMask BlockBit(std::uint32_t block)
@@ -68,8 +64,22 @@ enum class AliasKind : std::uint8_t
     Font,
     XStringPointerSlot,
     MaterialVertexDeclaration,
+    MaterialTechnique,
     Count,
 };
+
+constexpr bool RequiresExactStartPublication(AliasKind kind)
+{
+    switch (kind)
+    {
+    case AliasKind::XStringPointerSlot:
+    case AliasKind::MaterialVertexDeclaration:
+    case AliasKind::MaterialTechnique:
+        return true;
+    default:
+        return false;
+    }
+}
 
 enum class Status : std::uint8_t
 {

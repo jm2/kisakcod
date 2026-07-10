@@ -183,7 +183,7 @@ void TestDirectResolver()
     ExpectStatus(
         adjacentResolver.ValidateAddress(
             adjacentBlocks[4].base,
-            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            disk32::kMaterialVertexDeclarationBytes,
             4,
             BlockBit(4)),
         Status::Ok,
@@ -192,8 +192,8 @@ void TestDirectResolver()
         adjacentResolver.ValidateAddress(
             adjacentBlocks[4].base
                 + adjacentBlocks[4].size
-                - db::relocation::kMaterialVertexDeclarationDiskBytes,
-            db::relocation::kMaterialVertexDeclarationDiskBytes,
+                - disk32::kMaterialVertexDeclarationBytes,
+            disk32::kMaterialVertexDeclarationBytes,
             4,
             BlockBit(4)),
         Status::Ok,
@@ -202,9 +202,9 @@ void TestDirectResolver()
         adjacentResolver.ValidateAddress(
             adjacentBlocks[4].base
                 + adjacentBlocks[4].size
-                - db::relocation::kMaterialVertexDeclarationDiskBytes
+                - disk32::kMaterialVertexDeclarationBytes
                 + 1,
-            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            disk32::kMaterialVertexDeclarationBytes,
             1,
             BlockBit(4)),
         Status::OutOfRange,
@@ -630,6 +630,18 @@ int main()
     TestDirectResolver();
     TestDirectCString();
 
+    Expect(
+        db::relocation::RequiresExactStartPublication(
+            AliasKind::MaterialVertexDeclaration),
+        "material vertex declarations require exact completed starts");
+    Expect(
+        db::relocation::RequiresExactStartPublication(
+            AliasKind::MaterialTechnique),
+        "material techniques require exact completed starts");
+    Expect(
+        !db::relocation::RequiresExactStartPublication(AliasKind::Material),
+        "redirectable asset aliases do not require their slot address");
+
     BlockView blocks[db::relocation::kBlockCount];
     FillBlocks(blocks);
 
@@ -852,14 +864,14 @@ int main()
             declaration,
             AliasKind::MaterialVertexDeclaration,
             blocks[4].base + 4,
-            db::relocation::kMaterialVertexDeclarationDiskBytes),
+            disk32::kMaterialVertexDeclarationBytes),
         Status::MetadataMismatch,
         "completed material vertex declaration must publish its own start");
     ExpectStatus(
         registry.Resolve(
             Token(4, 0),
             AliasKind::MaterialVertexDeclaration,
-            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            disk32::kMaterialVertexDeclarationBytes,
             &resolved),
         Status::PendingSlot,
         "wrong declaration publication leaves provenance pending");
@@ -868,7 +880,7 @@ int main()
             declaration,
             AliasKind::MaterialVertexDeclaration,
             blocks[4].base,
-            db::relocation::kMaterialVertexDeclarationDiskBytes),
+            disk32::kMaterialVertexDeclarationBytes),
         Status::Ok,
         "publish exact completed material vertex declaration start");
     ExpectStatus(
@@ -883,7 +895,7 @@ int main()
         registry.Resolve(
             Token(4, 0),
             AliasKind::Material,
-            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            disk32::kMaterialVertexDeclarationBytes,
             &resolved),
         Status::KindMismatch,
         "material vertex declaration cannot resolve as another object type");
@@ -891,7 +903,7 @@ int main()
         registry.Resolve(
             Token(4, 4),
             AliasKind::MaterialVertexDeclaration,
-            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            disk32::kMaterialVertexDeclarationBytes,
             &resolved),
         Status::UnregisteredSlot,
         "interior material vertex declaration address is not an object start");
@@ -899,7 +911,7 @@ int main()
         registry.Resolve(
             Token(4, 0),
             AliasKind::MaterialVertexDeclaration,
-            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            disk32::kMaterialVertexDeclarationBytes,
             &resolved),
         Status::Ok,
         "resolve exact completed material vertex declaration start");
@@ -910,7 +922,7 @@ int main()
     AliasHandle secondDeclaration;
     ExpectStatus(
         registry.RegisterSlot(
-            blocks[4].base + db::relocation::kMaterialVertexDeclarationDiskBytes,
+            blocks[4].base + disk32::kMaterialVertexDeclarationBytes,
             AliasKind::MaterialVertexDeclaration,
             &secondDeclaration),
         Status::Ok,
@@ -919,22 +931,113 @@ int main()
         registry.Publish(
             secondDeclaration,
             AliasKind::MaterialVertexDeclaration,
-            blocks[4].base + db::relocation::kMaterialVertexDeclarationDiskBytes,
-            db::relocation::kMaterialVertexDeclarationDiskBytes),
+            blocks[4].base + disk32::kMaterialVertexDeclarationBytes,
+            disk32::kMaterialVertexDeclarationBytes),
         Status::Ok,
         "publish distinct completed declaration start");
     ExpectStatus(
         registry.Resolve(
-            Token(4, db::relocation::kMaterialVertexDeclarationDiskBytes),
+            Token(4, disk32::kMaterialVertexDeclarationBytes),
             AliasKind::MaterialVertexDeclaration,
-            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            disk32::kMaterialVertexDeclarationBytes,
             &resolved),
         Status::Ok,
         "resolve second completed declaration independently");
     Expect(
         resolved == blocks[4].base
-            + db::relocation::kMaterialVertexDeclarationDiskBytes,
+            + disk32::kMaterialVertexDeclarationBytes,
         "identical declarations retain distinct serialized identities");
+
+    registry.Reset(blocks, db::relocation::kBlockCount);
+    AliasHandle technique;
+    AliasHandle nestedDeclaration;
+    ExpectStatus(
+        registry.RegisterSlot(
+            blocks[4].base,
+            AliasKind::MaterialTechnique,
+            &technique),
+        Status::Ok,
+        "register completed material technique start");
+    ExpectStatus(
+        registry.RegisterSlot(
+            blocks[4].base + 28,
+            AliasKind::MaterialVertexDeclaration,
+            &nestedDeclaration),
+        Status::Ok,
+        "register nested declaration after material technique parent");
+    ExpectStatus(
+        registry.Publish(
+            nestedDeclaration,
+            AliasKind::MaterialVertexDeclaration,
+            blocks[4].base + 28,
+            disk32::kMaterialVertexDeclarationBytes),
+        Status::Ok,
+        "nested declaration may complete before technique parent");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 28),
+            AliasKind::MaterialVertexDeclaration,
+            disk32::kMaterialVertexDeclarationBytes,
+            &resolved),
+        Status::Ok,
+        "completed nested declaration resolves while parent is pending");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialTechnique,
+            disk32::kMaterialTechniqueSchema,
+            &resolved),
+        Status::PendingSlot,
+        "material technique remains pending until its graph is complete");
+    ExpectStatus(
+        registry.Publish(
+            technique,
+            AliasKind::MaterialTechnique,
+            blocks[4].base + 4,
+            disk32::kMaterialTechniqueSchema),
+        Status::MetadataMismatch,
+        "completed material technique must publish its own start");
+    ExpectStatus(
+        registry.Publish(
+            technique,
+            AliasKind::MaterialTechnique,
+            blocks[4].base,
+            disk32::kMaterialTechniqueSchema),
+        Status::Ok,
+        "publish exact completed material technique start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialTechnique,
+            0,
+            &resolved),
+        Status::MetadataMismatch,
+        "material technique layout metadata is exact");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialVertexDeclaration,
+            disk32::kMaterialTechniqueSchema,
+            &resolved),
+        Status::KindMismatch,
+        "material technique cannot resolve as a vertex declaration");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, disk32::kMaterialTechniqueHeaderBytes),
+            AliasKind::MaterialTechnique,
+            disk32::kMaterialTechniqueSchema,
+            &resolved),
+        Status::UnregisteredSlot,
+        "material technique pass-array interior is not an object start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialTechnique,
+            disk32::kMaterialTechniqueSchema,
+            &resolved),
+        Status::Ok,
+        "resolve exact completed material technique start");
+    Expect(resolved == blocks[4].base, "completed material technique address is exact");
 
     BlockView wideBlocks[db::relocation::kBlockCount];
     FillBlocks(wideBlocks);

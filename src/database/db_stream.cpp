@@ -305,6 +305,14 @@ void __cdecl DB_SetInsertedPointer(
     const void *pointer,
     uint32_t metadata)
 {
+    if (expectedKind != DBAliasKind::XStringPointerSlot
+        && db::relocation::RequiresExactStartPublication(expectedKind))
+    {
+        Com_Error(
+            ERR_DROP,
+            "Completed fast-file objects require DB_CompleteObject validation");
+        return;
+    }
     if (expectedKind == DBAliasKind::SoundData
         && !DB_IsZoneRangeValid(pointer, metadata))
     {
@@ -340,29 +348,6 @@ void __cdecl DB_SetInsertedPointer(
             return;
         }
     }
-    if (expectedKind == DBAliasKind::MaterialVertexDeclaration)
-    {
-        if (metadata != db::relocation::kMaterialVertexDeclarationDiskBytes)
-        {
-            Com_Error(ERR_DROP, "Invalid completed material vertex declaration schema");
-            return;
-        }
-        const db::relocation::Status declarationStatus =
-            g_directResolver.ValidateAddress(
-                reinterpret_cast<uintptr_t>(pointer),
-                metadata,
-                4,
-                db::relocation::BlockBit(db::relocation::kAliasBlock));
-        if (declarationStatus != db::relocation::Status::Ok)
-        {
-            Com_Error(
-                ERR_DROP,
-                "Fast-file completed material vertex declaration is invalid: %s",
-                db::relocation::StatusName(declarationStatus));
-            return;
-        }
-    }
-
     const db::relocation::Status status = g_aliasRegistry.Publish(
         handle,
         expectedKind,
@@ -375,6 +360,108 @@ void __cdecl DB_SetInsertedPointer(
             "Cannot publish fast-file alias slot: %s",
             db::relocation::StatusName(status));
     }
+}
+
+bool __cdecl DB_CompleteObject(
+    DBAliasHandle handle,
+    DBAliasKind expectedKind,
+    const void *pointer,
+    uint32_t metadata,
+    uint32_t materializedBytes)
+{
+    if (!db::relocation::RequiresExactStartPublication(expectedKind)
+        || expectedKind == DBAliasKind::XStringPointerSlot)
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file object kind");
+        return false;
+    }
+
+    uint32_t headerBytes = 0;
+    switch (expectedKind)
+    {
+    case DBAliasKind::MaterialVertexDeclaration:
+        if (metadata != disk32::kMaterialVertexDeclarationBytes
+            || materializedBytes != disk32::kMaterialVertexDeclarationBytes)
+        {
+            Com_Error(ERR_DROP, "Invalid completed material vertex declaration schema");
+            return false;
+        }
+        headerBytes = disk32::kMaterialVertexDeclarationBytes;
+        break;
+    case DBAliasKind::MaterialTechnique:
+        if (metadata != disk32::kMaterialTechniqueSchema)
+        {
+            Com_Error(ERR_DROP, "Invalid completed material technique schema");
+            return false;
+        }
+        headerBytes = disk32::kMaterialTechniqueHeaderBytes;
+        break;
+    default:
+        Com_Error(ERR_DROP, "Unsupported completed fast-file object schema");
+        return false;
+    }
+
+    const db::relocation::BlockMask aliasBlock =
+        db::relocation::BlockBit(db::relocation::kAliasBlock);
+    db::relocation::Status completionStatus =
+        g_directResolver.ValidateAddress(
+            reinterpret_cast<uintptr_t>(pointer),
+            headerBytes,
+            4,
+            aliasBlock);
+    if (completionStatus != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Fast-file completed object header is invalid: %s",
+            db::relocation::StatusName(completionStatus));
+        return false;
+    }
+
+    if (expectedKind == DBAliasKind::MaterialTechnique)
+    {
+        uint16_t passCount = 0;
+        memcpy(
+            &passCount,
+            static_cast<const uint8_t *>(pointer) + 6,
+            sizeof(passCount));
+        uint32_t expectedBytes = 0;
+        if (!db::validation::MaterialTechniqueDiskBytes(passCount, &expectedBytes)
+            || materializedBytes != expectedBytes)
+        {
+            Com_Error(ERR_DROP, "Invalid completed material technique extent");
+            return false;
+        }
+    }
+
+    completionStatus = g_directResolver.ValidateAddress(
+        reinterpret_cast<uintptr_t>(pointer),
+        materializedBytes,
+        4,
+        aliasBlock);
+    if (completionStatus != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Fast-file completed object span is invalid: %s",
+            db::relocation::StatusName(completionStatus));
+        return false;
+    }
+
+    completionStatus = g_aliasRegistry.Publish(
+        handle,
+        expectedKind,
+        reinterpret_cast<uintptr_t>(pointer),
+        metadata);
+    if (completionStatus != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Cannot publish completed fast-file object: %s",
+            db::relocation::StatusName(completionStatus));
+        return false;
+    }
+    return true;
 }
 
 db::relocation::Status __cdecl DB_ResolveInsertedPointer(

@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <limits>
 
+#include "db_disk32.h"
+
 namespace db::validation
 {
 // Script strings allocate byteCount + 4 bytes from a 65,536-node memory tree;
@@ -28,6 +30,20 @@ constexpr bool CountInRange(
 {
     return minimum >= 0 && minimum <= maximum
         && count >= minimum && count <= maximum;
+}
+
+constexpr bool MaterialTechniqueDiskBytes(
+    std::uint32_t passCount,
+    std::uint32_t *bytes)
+{
+    if (bytes)
+        *bytes = 0;
+    if (!bytes || !CountInRange(passCount, 1, 4))
+        return false;
+
+    *bytes = disk32::kMaterialTechniqueHeaderBytes
+        + passCount * disk32::kMaterialPassBytes;
+    return true;
 }
 
 constexpr bool OptionalMirroredCountInRange(

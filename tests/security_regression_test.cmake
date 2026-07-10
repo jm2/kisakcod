@@ -170,7 +170,7 @@ require_source_contains(
 require_source_contains(
     "database/db_load.cpp"
     "if (!Load_MaterialVertexDeclaration(1))
-                return;
+                return false;
             Load_BuildVertexDecl"
     "material vertex declarations must validate before D3D construction")
 require_source_contains(
@@ -330,12 +330,35 @@ require_source_contains(
     "DB_ConvertOffsetToAlias(
                 (uint32_t*)&varMaterialPass->vertexDecl,
                 DBAliasKind::MaterialVertexDeclaration,
-                db::relocation::kMaterialVertexDeclarationDiskBytes)"
+                disk32::kMaterialVertexDeclarationBytes)"
     "shared material vertex declarations must resolve through exact typed provenance")
 require_source_contains(
     "database/db_load.cpp"
-    "db::relocation::kMaterialVertexDeclarationDiskBytes"
+    "disk32::kMaterialVertexDeclarationBytes"
     "material vertex declaration provenance must use its fixed disk32 extent")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_ConvertOffsetToAlias(
+                (uint32_t*)varMaterialTechniquePtr,
+                DBAliasKind::MaterialTechnique,
+                disk32::kMaterialTechniqueSchema)"
+    "shared material techniques must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_validation.h"
+    "MaterialTechniqueDiskBytes("
+    "material technique extents must be derived from their bounded pass count")
+require_source_contains(
+    "database/db_stream.cpp"
+    "expectedKind == DBAliasKind::MaterialTechnique"
+    "completed material techniques must recheck their serialized pass count")
+require_source_contains(
+    "database/db_stream.cpp"
+    "Completed fast-file objects require DB_CompleteObject validation"
+    "generic alias publication must reject completed material object kinds")
+require_source_contains(
+    "database/db_load.cpp"
+    "disk32::kMaterialPassBytes"
+    "material pass stream reads must use their fixed disk32 layout")
 require_source_contains(
     "database/db_file_load.cpp"
     "DB_MarkStreamRangeMaterialized(pos, size)"
@@ -433,9 +456,9 @@ string(FIND
     _material_vertex_declaration_build)
 string(FIND
     "${_db_load_source}"
-    "DB_SetInsertedPointer(
-                completed,
-                DBAliasKind::MaterialVertexDeclaration"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::MaterialVertexDeclaration"
     _material_vertex_declaration_completion)
 if (_material_vertex_declaration_registration EQUAL -1
     OR _material_vertex_declaration_load EQUAL -1
@@ -447,14 +470,38 @@ if (_material_vertex_declaration_registration EQUAL -1
     message(FATAL_ERROR
         "Material vertex declaration provenance must begin before loading and publish after construction")
 endif()
+string(FIND
+    "${_db_load_source}"
+    "DB_RegisterPointerSlot(
+                *varMaterialTechniquePtr,
+                DBAliasKind::MaterialTechnique)"
+    _material_technique_registration)
+string(FIND
+    "${_db_load_source}"
+    "if (!Load_MaterialTechnique(1))"
+    _material_technique_load)
+string(FIND
+    "${_db_load_source}"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::MaterialTechnique"
+    _material_technique_completion)
+if (_material_technique_registration EQUAL -1
+    OR _material_technique_load EQUAL -1
+    OR _material_technique_completion EQUAL -1
+    OR _material_technique_registration GREATER _material_technique_load
+    OR _material_technique_load GREATER _material_technique_completion)
+    message(FATAL_ERROR
+        "Material technique provenance must begin before loading and publish after completion")
+endif()
 file(STRINGS
     "${SOURCE_ROOT}/src/database/db_load.cpp"
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 27)
+if (NOT _legacy_direct_offset_count EQUAL 26)
     message(FATAL_ERROR
-        "Expected exactly 27 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 26 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 string(REGEX MATCH

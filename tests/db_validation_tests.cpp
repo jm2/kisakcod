@@ -89,6 +89,27 @@ int main()
     Expect(db::validation::CountInRange(4, 1, 4), "maximum material technique pass count accepted");
     Expect(!db::validation::CountInRange(0, 1, 4), "empty material technique rejected");
     Expect(!db::validation::CountInRange(5, 1, 4), "oversized material technique rejected");
+    std::uint32_t techniqueBytes = UINT32_MAX;
+    Expect(
+        db::validation::MaterialTechniqueDiskBytes(1, &techniqueBytes)
+            && techniqueBytes == 28,
+        "one-pass material technique disk extent accepted");
+    Expect(
+        db::validation::MaterialTechniqueDiskBytes(4, &techniqueBytes)
+            && techniqueBytes == 88,
+        "four-pass material technique disk extent accepted");
+    Expect(
+        !db::validation::MaterialTechniqueDiskBytes(0, &techniqueBytes)
+            && techniqueBytes == 0,
+        "empty material technique disk extent rejected");
+    techniqueBytes = UINT32_MAX;
+    Expect(
+        !db::validation::MaterialTechniqueDiskBytes(5, &techniqueBytes)
+            && techniqueBytes == 0,
+        "oversized material technique disk extent rejected");
+    Expect(
+        !db::validation::MaterialTechniqueDiskBytes(1, nullptr),
+        "null material technique disk extent output rejected");
     Expect(db::validation::MaterialVertexRoutingFollows(0, 1, 0, 2), "ordered material vertex destination accepted");
     Expect(db::validation::MaterialVertexRoutingFollows(0, 11, 1, 0), "ordered material vertex source accepted");
     Expect(!db::validation::MaterialVertexRoutingFollows(1, 0, 0, 11), "decreasing material vertex route rejected");

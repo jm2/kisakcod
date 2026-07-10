@@ -19,17 +19,6 @@ bool SpanContains(const BlockView &block, std::uintptr_t address, std::uint32_t 
     return offset <= block.size && size <= block.size - offset;
 }
 
-bool RequiresExactStartPublication(AliasKind kind)
-{
-    switch (kind)
-    {
-    case AliasKind::XStringPointerSlot:
-    case AliasKind::MaterialVertexDeclaration:
-        return true;
-    default:
-        return false;
-    }
-}
 }
 
 DirectResolver::DirectResolver(

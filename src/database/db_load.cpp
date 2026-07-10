@@ -2322,7 +2322,7 @@ bool __cdecl Load_MaterialVertexDeclaration(bool atStreamStart)
     Load_Stream(
         atStreamStart,
         &varMaterialVertexDeclaration->streamCount,
-        db::relocation::kMaterialVertexDeclarationDiskBytes);
+        disk32::kMaterialVertexDeclarationBytes);
     if (!DB_ValidateMaterialVertexDeclaration(varMaterialVertexDeclaration))
         return false;
     varMaterialVertexDeclaration->hasOptionalSource = false;
@@ -2421,9 +2421,12 @@ void __cdecl Load_GfxStateBitsArray(bool atStreamStart, int32_t count)
     Load_StreamArray(atStreamStart, (uint8_t *)varGfxStateBits, count, 8);
 }
 
-void __cdecl Load_MaterialPass(bool atStreamStart)
+bool __cdecl Load_MaterialPass(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (unsigned char*)varMaterialPass, 20);
+    Load_Stream(
+        atStreamStart,
+        (unsigned char*)varMaterialPass,
+        disk32::kMaterialPassBytes);
     const uint32_t argumentCount = static_cast<uint32_t>(varMaterialPass->perPrimArgCount)
         + varMaterialPass->perObjArgCount
         + varMaterialPass->stableArgCount;
@@ -2438,7 +2441,7 @@ void __cdecl Load_MaterialPass(bool atStreamStart)
             varMaterialPass->customSamplerFlags))
     {
         Com_Error(ERR_DROP, "Invalid fast-file material pass header");
-        return;
+        return false;
     }
     if (varMaterialPass->vertexDecl)
     {
@@ -2449,23 +2452,27 @@ void __cdecl Load_MaterialPass(bool atStreamStart)
                 varMaterialPass->vertexDecl,
                 DBAliasKind::MaterialVertexDeclaration);
             if (!completed)
-                return;
+                return false;
             varMaterialVertexDeclaration = varMaterialPass->vertexDecl;
             if (!Load_MaterialVertexDeclaration(1))
-                return;
+                return false;
             Load_BuildVertexDecl(&varMaterialPass->vertexDecl);
-            DB_SetInsertedPointer(
-                completed,
-                DBAliasKind::MaterialVertexDeclaration,
-                varMaterialPass->vertexDecl,
-                db::relocation::kMaterialVertexDeclarationDiskBytes);
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::MaterialVertexDeclaration,
+                    varMaterialPass->vertexDecl,
+                    disk32::kMaterialVertexDeclarationBytes,
+                    disk32::kMaterialVertexDeclarationBytes))
+            {
+                return false;
+            }
         }
         else
         {
             DB_ConvertOffsetToAlias(
                 (uint32_t*)&varMaterialPass->vertexDecl,
                 DBAliasKind::MaterialVertexDeclaration,
-                db::relocation::kMaterialVertexDeclarationDiskBytes);
+                disk32::kMaterialVertexDeclarationBytes);
         }
     }
     varMaterialVertexShaderPtr = &varMaterialPass->vertexShader;
@@ -2478,46 +2485,63 @@ void __cdecl Load_MaterialPass(bool atStreamStart)
         varMaterialShaderArgument = varMaterialPass->args;
         Load_MaterialShaderArgumentArray(1, static_cast<int32_t>(argumentCount));
         if (!DB_ValidateMaterialPassArguments(varMaterialPass, argumentCount))
-            return;
+            return false;
     }
+    return true;
 }
 
-void __cdecl Load_MaterialPassArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_MaterialPassArray(bool atStreamStart, int32_t count)
 {
     MaterialPass *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varMaterialPass, count, 20);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varMaterialPass,
+        count,
+        disk32::kMaterialPassBytes);
     var = (MaterialPass *)varMaterialPass;
     for (i = 0; i < count; ++i)
     {
         varMaterialPass = (MaterialPass*)&var->vertexDecl;
-        Load_MaterialPass(0);
+        if (!Load_MaterialPass(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
-void __cdecl Load_MaterialTechnique(bool atStreamStart)
+bool __cdecl Load_MaterialTechnique(bool atStreamStart)
 {
     if (!atStreamStart)
     {
         Com_Error(ERR_DROP, "Invalid fast-file material technique stream start");
-        return;
+        return false;
     }
-    Load_Stream(1, (uint8_t *)varMaterialTechnique, 8); // 0x2668
+    Load_Stream(
+        1,
+        (uint8_t *)varMaterialTechnique,
+        disk32::kMaterialTechniqueHeaderBytes); // 0x2668
     if (!varMaterialTechnique->name
         || !db::validation::CountInRange(varMaterialTechnique->passCount, 1, 4)
         || (varMaterialTechnique->flags & ~UINT16_C(0x803F))
         || DB_GetStreamPos() != (uint8_t *)varMaterialTechnique->passArray)
     {
         Com_Error(ERR_DROP, "Invalid fast-file material technique header");
-        return;
+        return false;
     }
     varMaterialTechnique->flags &= UINT16_C(0x3F);
     varMaterialPass = (MaterialPass*)&varMaterialTechnique->passArray[0].vertexDecl;
-    Load_MaterialPassArray(1, varMaterialTechnique->passCount); // 0x2990
+    if (!Load_MaterialPassArray(1, varMaterialTechnique->passCount)) // 0x2990
+        return false;
     varXString = &varMaterialTechnique->name;
     Load_XString(0); // 0x29A1
+    if (!varMaterialTechnique->name || !*varMaterialTechnique->name)
+    {
+        Com_Error(ERR_DROP, "Fast-file material technique has no name");
+        return false;
+    }
+    return true;
 }
 
 void __cdecl Load_MaterialTextureDefInfo(bool atStreamStart)
@@ -2573,7 +2597,7 @@ void __cdecl Load_MaterialConstantDefArray(bool atStreamStart, int32_t count)
     Load_StreamArray(atStreamStart, (uint8_t *)varMaterialConstantDef, count, 32);
 }
 
-void __cdecl Load_MaterialTechniquePtr(bool atStreamStart)
+bool __cdecl Load_MaterialTechniquePtr(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varMaterialTechniquePtr, 4);
     if (*varMaterialTechniquePtr)
@@ -2581,17 +2605,40 @@ void __cdecl Load_MaterialTechniquePtr(bool atStreamStart)
         if (*varMaterialTechniquePtr == (MaterialTechnique *)-1)
         {
             *varMaterialTechniquePtr = (MaterialTechnique *)AllocLoad_FxElemVisStateSample();
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                *varMaterialTechniquePtr,
+                DBAliasKind::MaterialTechnique);
+            if (!completed)
+                return false;
             varMaterialTechnique = *varMaterialTechniquePtr;
-            Load_MaterialTechnique(1);
+            if (!Load_MaterialTechnique(1))
+                return false;
+            uint32_t techniqueBytes = 0;
+            if (!db::validation::MaterialTechniqueDiskBytes(
+                    varMaterialTechnique->passCount,
+                    &techniqueBytes)
+                || !DB_CompleteObject(
+                    completed,
+                    DBAliasKind::MaterialTechnique,
+                    *varMaterialTechniquePtr,
+                    disk32::kMaterialTechniqueSchema,
+                    techniqueBytes))
+            {
+                return false;
+            }
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varMaterialTechniquePtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)varMaterialTechniquePtr,
+                DBAliasKind::MaterialTechnique,
+                disk32::kMaterialTechniqueSchema);
         }
     }
+    return true;
 }
 
-void __cdecl Load_MaterialTechniquePtrArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_MaterialTechniquePtrArray(bool atStreamStart, int32_t count)
 {
     MaterialTechnique **var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
@@ -2601,12 +2648,14 @@ void __cdecl Load_MaterialTechniquePtrArray(bool atStreamStart, int32_t count)
     for (i = 0; i < count; ++i)
     {
         varMaterialTechniquePtr = var;
-        Load_MaterialTechniquePtr(0);
+        if (!Load_MaterialTechniquePtr(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
-void __cdecl Load_MaterialTechniqueSet(bool atStreamStart)
+bool __cdecl Load_MaterialTechniqueSet(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varMaterialTechniqueSet, 148);
     if (!varMaterialTechniqueSet->name
@@ -2616,7 +2665,7 @@ void __cdecl Load_MaterialTechniqueSet(bool atStreamStart)
             11))
     {
         Com_Error(ERR_DROP, "Invalid fast-file material technique set header");
-        return;
+        return false;
     }
     varMaterialTechniqueSet->hasBeenUploaded = false;
     varMaterialTechniqueSet->remappedTechniqueSet = nullptr;
@@ -2624,8 +2673,18 @@ void __cdecl Load_MaterialTechniqueSet(bool atStreamStart)
     varXString = &varMaterialTechniqueSet->name;
     Load_XString(0);
     varMaterialTechniquePtr = varMaterialTechniqueSet->techniques;
-    Load_MaterialTechniquePtrArray(0, 34);
+    if (!Load_MaterialTechniquePtrArray(0, 34))
+    {
+        DB_PopStreamPos();
+        return false;
+    }
     DB_PopStreamPos();
+    if (!varMaterialTechniqueSet->name || !*varMaterialTechniqueSet->name)
+    {
+        Com_Error(ERR_DROP, "Fast-file material technique set has no name");
+        return false;
+    }
+    return true;
 }
 
 void __cdecl Load_MaterialTechniqueSetPtr(bool atStreamStart)
@@ -2646,7 +2705,11 @@ void __cdecl Load_MaterialTechniqueSetPtr(bool atStreamStart)
                 inserted = DB_InsertPointer(DBAliasKind::MaterialTechniqueSet);
             else
                 inserted = {};
-            Load_MaterialTechniqueSet(1);
+            if (!Load_MaterialTechniqueSet(1))
+            {
+                DB_PopStreamPos();
+                return;
+            }
             Load_MaterialTechniqueSetAsset((XAssetHeader *)varMaterialTechniqueSetPtr);
             if (inserted)
                 DB_SetInsertedPointer(
