@@ -24,6 +24,24 @@ int main()
     Expect(db::validation::CanInternString(65531), "maximum script-memory string can be interned");
     Expect(!db::validation::CanInternString(0), "zero-byte string extent rejected");
     Expect(!db::validation::CanInternString(65532), "script-memory allocation ceiling enforced");
+    Expect(db::validation::PointerCountConsistent(false, 0), "null zero-count span is consistent");
+    Expect(db::validation::PointerCountConsistent(true, 0), "present zero-count span is consistent");
+    Expect(db::validation::PointerCountConsistent(true, 1), "present nonempty span is consistent");
+    Expect(!db::validation::PointerCountConsistent(false, 1), "missing nonempty span rejected");
+    Expect(!db::validation::PointerCountConsistent(false, -1), "negative span count rejected");
+    Expect(!db::validation::PointerCountConsistent(true, -1), "present negative span count rejected");
+    Expect(db::validation::CountInRange(96, 96, 65536), "minimum font glyph count accepted");
+    Expect(db::validation::CountInRange(65536, 96, 65536), "maximum font glyph count accepted");
+    Expect(!db::validation::CountInRange(95, 96, 65536), "short font glyph table rejected");
+    Expect(!db::validation::CountInRange(65537, 96, 65536), "oversized font glyph table rejected");
+    Expect(!db::validation::CountInRange(1, 2, 1), "invalid count range rejected");
+
+    const std::uint16_t validIndices[] = {0, 2, 3};
+    const std::uint16_t invalidIndices[] = {0, 4};
+    Expect(db::validation::AllU16Below(validIndices, 3, 4), "bounded uint16 indices accepted");
+    Expect(!db::validation::AllU16Below(invalidIndices, 2, 4), "out-of-range uint16 index rejected");
+    Expect(db::validation::AllU16Below(nullptr, 0, 0), "empty uint16 index list accepted");
+    Expect(!db::validation::AllU16Below(nullptr, 1, 4), "missing uint16 index list rejected");
 
     std::uint32_t spanBytes = UINT32_MAX;
     Expect(db::validation::CheckedSpanBytes(0, 20, &spanBytes) && spanBytes == 0, "zero span size");

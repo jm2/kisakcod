@@ -14,6 +14,37 @@ constexpr bool CanInternString(std::uint32_t byteCount)
     return byteCount != 0 && byteCount <= kMaxInternedStringBytes;
 }
 
+constexpr bool PointerCountConsistent(bool hasPointer, std::int64_t count)
+{
+    // Present empty spans are legal in the disk32 format. The direct resolver
+    // still requires their token to identify at least one materialized byte.
+    return count >= 0 && (count == 0 || hasPointer);
+}
+
+constexpr bool CountInRange(
+    std::int64_t count,
+    std::int64_t minimum,
+    std::int64_t maximum)
+{
+    return minimum >= 0 && minimum <= maximum
+        && count >= minimum && count <= maximum;
+}
+
+constexpr bool AllU16Below(
+    const std::uint16_t *values,
+    std::uint32_t count,
+    std::uint32_t limit)
+{
+    if (!values && count)
+        return false;
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        if (values[index] >= limit)
+            return false;
+    }
+    return true;
+}
+
 constexpr bool CheckedSpanBytes(
     std::uint64_t count,
     std::uint32_t stride,

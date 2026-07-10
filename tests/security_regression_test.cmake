@@ -58,6 +58,76 @@ require_source_contains(
     "inline and direct temporary strings must enforce the allocation ceiling")
 require_source_contains(
     "database/db_load.cpp"
+    "varMaterial->constantCount,
+            \"material constants\")"
+    "material constants must reject missing nonempty spans")
+require_source_contains(
+    "database/db_load.cpp"
+    "varMaterial->stateBitsCount,
+            \"material state bits\")"
+    "material state bits must reject missing nonempty spans")
+require_source_contains(
+    "database/db_load.cpp"
+    "varGfxAabbTree->smodelIndexCount,
+            \"world AABB static-model indices\")"
+    "world AABB indices must reject missing nonempty spans")
+require_source_contains(
+    "database/db_load.cpp"
+    "varGfxWorld->planeCount,
+            \"world planes\")"
+    "world planes must reject missing nonempty spans")
+require_source_contains(
+    "database/db_load.cpp"
+    "db::validation::AllU16Below"
+    "world AABB static-model indices must be bounded before runtime use")
+require_source_contains(
+    "database/db_load.cpp"
+    "db::validation::CountInRange(varFont->glyphCount, 96, 65536)"
+    "font glyph tables must cover direct ASCII indexing without oversized counts")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varMaterialArgumentDef->literalConst,
+                16,
+                4,
+                kDirectBlock4"
+    "literal material constants must use their full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varMaterial->constantTable,
+                constantByteCount,
+                16,
+                kDirectBlock4"
+    "material constant tables must use their full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varMaterial->stateBitsTable,
+                stateBitsByteCount,
+                4,
+                kDirectBlock4"
+    "material state-bit tables must use their full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varGfxAabbTree->smodelIndexes,
+                smodelIndexByteCount,
+                2,
+                kDirectBlock4"
+    "world AABB indices must use their full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varGfxWorldDpvsPlanes->planes,
+                planeByteCount,
+                4,
+                kDirectBlock4"
+    "world planes must use their full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varFont->glyphs,
+                glyphByteCount,
+                4,
+                kDirectBlock4"
+    "font glyphs must use their full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
     "DBAliasKind::XStringPointerSlot"
     "direct string-holder references must use completed-object provenance")
 require_source_contains(
@@ -112,9 +182,9 @@ file(STRINGS
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 38)
+if (NOT _legacy_direct_offset_count EQUAL 32)
     message(FATAL_ERROR
-        "Expected exactly 38 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 32 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 string(REGEX MATCH

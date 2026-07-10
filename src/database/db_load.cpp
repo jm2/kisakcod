@@ -45,6 +45,19 @@ uint32_t DB_CheckedDirectSpanBytes(
     return result;
 }
 
+bool DB_ValidatePointerCount(
+    const void *pointer,
+    int64_t count,
+    const char *description)
+{
+    if (!db::validation::PointerCountConsistent(pointer != nullptr, count))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file pointer/count for %s", description);
+        return false;
+    }
+    return true;
+}
+
 int32_t DB_CheckedCountSum(int64_t left, int64_t right, const char *description)
 {
     int32_t result = 0;
@@ -2121,18 +2134,24 @@ void __cdecl Load_MaterialArgumentDef(bool atStreamStart)
     {
     case 1u:
     case 7u:
-        if (varMaterialArgumentDef->codeSampler)
+        if (!varMaterialArgumentDef->literalConst)
         {
-            if (varMaterialArgumentDef->codeSampler == -1)
-            {
-                varMaterialArgumentDef->codeSampler = (MaterialTextureSource)(uint32_t)AllocLoad_FxElemVisStateSample();
-                varfloat = (float *)varMaterialArgumentDef->codeSampler;
-                Load_floatArray(1, 4);
-            }
-            else
-            {
-                DB_ConvertOffsetToPointerLegacy((uint32_t*)varMaterialArgumentDef);
-            }
+            Com_Error(ERR_DROP, "Fast-file literal shader constant has no value");
+            return;
+        }
+        if (varMaterialArgumentDef->literalConst == (const float *)-1)
+        {
+            varfloat = (float *)AllocLoad_FxElemVisStateSample();
+            varMaterialArgumentDef->literalConst = varfloat;
+            Load_floatArray(1, 4);
+        }
+        else
+        {
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varMaterialArgumentDef->literalConst,
+                16,
+                4,
+                kDirectBlock4);
         }
         break;
     case 3u:
@@ -2393,6 +2412,25 @@ void __cdecl Load_MaterialTechniqueSetPtr(bool atStreamStart)
 void __cdecl Load_Material(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varMaterial, 80);
+    if (!DB_ValidatePointerCount(
+            varMaterial->constantTable,
+            varMaterial->constantCount,
+            "material constants")
+        || !DB_ValidatePointerCount(
+            varMaterial->stateBitsTable,
+            varMaterial->stateBitsCount,
+            "material state bits"))
+    {
+        return;
+    }
+    const uint32_t constantByteCount = DB_CheckedDirectSpanBytes(
+        varMaterial->constantCount,
+        32,
+        "material constants");
+    const uint32_t stateBitsByteCount = DB_CheckedDirectSpanBytes(
+        varMaterial->stateBitsCount,
+        8,
+        "material state bits");
     DB_PushStreamPos(4);
     varMaterialInfo = &varMaterial->info;
     Load_MaterialInfo(0);
@@ -2421,7 +2459,11 @@ void __cdecl Load_Material(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varMaterial->constantTable);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varMaterial->constantTable,
+                constantByteCount,
+                16,
+                kDirectBlock4);
         }
     }
     if (varMaterial->stateBitsTable)
@@ -2434,7 +2476,11 @@ void __cdecl Load_Material(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varMaterial->stateBitsTable);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varMaterial->stateBitsTable,
+                stateBitsByteCount,
+                4,
+                kDirectBlock4);
         }
     }
     DB_PopStreamPos();
@@ -6241,6 +6287,17 @@ void __cdecl Load_StaticModelIndexArray(bool atStreamStart, int32_t count)
 void __cdecl Load_GfxAabbTree(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varGfxAabbTree, 44);
+    if (!DB_ValidatePointerCount(
+            varGfxAabbTree->smodelIndexes,
+            varGfxAabbTree->smodelIndexCount,
+            "world AABB static-model indices"))
+    {
+        return;
+    }
+    const uint32_t smodelIndexByteCount = DB_CheckedDirectSpanBytes(
+        varGfxAabbTree->smodelIndexCount,
+        2,
+        "world AABB static-model indices");
     if (varGfxAabbTree->smodelIndexes)
     {
         if (varGfxAabbTree->smodelIndexes == (uint16_t *)-1)
@@ -6251,8 +6308,20 @@ void __cdecl Load_GfxAabbTree(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varGfxAabbTree->smodelIndexes);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varGfxAabbTree->smodelIndexes,
+                smodelIndexByteCount,
+                2,
+                kDirectBlock4);
         }
+    }
+    if (!db::validation::AllU16Below(
+            varGfxAabbTree->smodelIndexes,
+            varGfxAabbTree->smodelIndexCount,
+            varGfxWorld->dpvs.smodelCount))
+    {
+        Com_Error(ERR_DROP, "Fast-file world AABB has an invalid static-model index");
+        return;
     }
 }
 
@@ -6785,6 +6854,17 @@ void __cdecl Load_GfxWorldDpvsStatic(bool atStreamStart)
 void __cdecl Load_GfxWorldDpvsPlanes(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varGfxWorldDpvsPlanes, 16);
+    if (!DB_ValidatePointerCount(
+            varGfxWorldDpvsPlanes->planes,
+            varGfxWorld->planeCount,
+            "world planes"))
+    {
+        return;
+    }
+    const uint32_t planeByteCount = DB_CheckedDirectSpanBytes(
+        varGfxWorld->planeCount,
+        20,
+        "world planes");
     const int32_t sceneEntityCellBitCount = DB_CheckedCountProduct(
         varGfxWorldDpvsPlanes->cellCount,
         256,
@@ -6799,7 +6879,11 @@ void __cdecl Load_GfxWorldDpvsPlanes(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varGfxWorldDpvsPlanes->planes);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varGfxWorldDpvsPlanes->planes,
+                planeByteCount,
+                4,
+                kDirectBlock4);
         }
     }
     if (varGfxWorldDpvsPlanes->nodes)
@@ -7160,6 +7244,16 @@ void __cdecl Load_GlyphArray(bool atStreamStart, int32_t count)
 void __cdecl Load_Font(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varFont, 24);
+    if (!db::validation::CountInRange(varFont->glyphCount, 96, 65536)
+        || !varFont->glyphs)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file font glyph table");
+        return;
+    }
+    const uint32_t glyphByteCount = DB_CheckedDirectSpanBytes(
+        varFont->glyphCount,
+        24,
+        "font glyphs");
     DB_PushStreamPos(4);
     varXString = &varFont->fontName;
     Load_XString(0);
@@ -7177,7 +7271,11 @@ void __cdecl Load_Font(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varFont->glyphs);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varFont->glyphs,
+                glyphByteCount,
+                4,
+                kDirectBlock4);
         }
     }
     DB_PopStreamPos();
