@@ -24,6 +24,39 @@ constexpr bool PointerCountConsistent(bool hasPointer, std::int64_t count)
     return count >= 0 && (count == 0 || hasPointer);
 }
 
+constexpr bool SoundFileHeaderValid(
+    std::uint32_t type,
+    std::uint32_t exists)
+{
+    return (type == 1 || type == 2) && exists <= 1;
+}
+
+constexpr std::uint32_t SpeakerMapExpectedSpeakerCount(
+    std::uint32_t outputConfiguration)
+{
+    return outputConfiguration == 0 ? 2u
+        : outputConfiguration == 1 ? 6u
+        : 0u;
+}
+
+inline bool SpeakerMapEntryValid(
+    std::uint32_t speakerIndex,
+    std::int64_t speaker,
+    std::int64_t levelCount,
+    std::uint32_t expectedLevelCount,
+    float level0,
+    float level1)
+{
+    return speaker == static_cast<std::int64_t>(speakerIndex)
+        && levelCount == static_cast<std::int64_t>(expectedLevelCount)
+        && std::isfinite(level0)
+        && std::isfinite(level1)
+        && level0 >= 0.0f
+        && level0 <= 1.0f
+        && level1 >= 0.0f
+        && level1 <= 1.0f;
+}
+
 constexpr bool AssetOutputCapacityValid(std::int64_t capacity)
 {
     return capacity >= 0

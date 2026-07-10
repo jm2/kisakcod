@@ -97,6 +97,50 @@ int main()
         "count-only asset enumeration performs no output writes");
 
     Expect(
+        db::validation::SoundFileHeaderValid(1, 1),
+        "loaded sound-file header accepted");
+    Expect(
+        db::validation::SoundFileHeaderValid(2, 0),
+        "missing streamed sound-file header accepted");
+    Expect(
+        !db::validation::SoundFileHeaderValid(0, 1),
+        "unknown sound-file type rejected");
+    Expect(
+        !db::validation::SoundFileHeaderValid(3, 1),
+        "out-of-range sound-file type rejected");
+    Expect(
+        !db::validation::SoundFileHeaderValid(1, 2),
+        "invalid sound-file existence flag rejected");
+    Expect(
+        db::validation::SpeakerMapExpectedSpeakerCount(0) == 2u
+            && db::validation::SpeakerMapExpectedSpeakerCount(1) == 6u,
+        "speaker-map output configurations use their fixed capacities");
+    Expect(
+        db::validation::SpeakerMapExpectedSpeakerCount(2) == 0u,
+        "unknown speaker-map output configuration rejected");
+    Expect(
+        db::validation::SpeakerMapEntryValid(1, 1, 2, 2, 0.25f, 0.75f),
+        "valid stereo speaker-map entry accepted");
+    Expect(
+        !db::validation::SpeakerMapEntryValid(1, 2, 2, 2, 0.25f, 0.75f),
+        "misidentified speaker-map entry rejected");
+    Expect(
+        !db::validation::SpeakerMapEntryValid(1, 1, 3, 2, 0.25f, 0.75f),
+        "oversized speaker-map level count rejected");
+    Expect(
+        !db::validation::SpeakerMapEntryValid(1, 1, 2, 2, -0.1f, 0.75f),
+        "negative speaker-map level rejected");
+    Expect(
+        !db::validation::SpeakerMapEntryValid(
+            1,
+            1,
+            2,
+            2,
+            (std::numeric_limits<float>::quiet_NaN)(),
+            0.75f),
+        "non-finite speaker-map level rejected");
+
+    Expect(
         db::validation::WorldAabbTreePresenceValid(false, 0),
         "empty world AABB tree is represented by a null pointer");
     Expect(

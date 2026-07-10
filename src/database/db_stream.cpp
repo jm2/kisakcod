@@ -434,6 +434,22 @@ bool __cdecl DB_CompleteObject(
         }
         headerBytes = metadata;
         break;
+    case DBAliasKind::SoundFile:
+    case DBAliasKind::SpeakerMap:
+    case DBAliasKind::SndAliasArray:
+    case DBAliasKind::WeaponBounceSoundTable:
+    case DBAliasKind::GfxLight:
+    case DBAliasKind::StringTable:
+        if (!db::relocation::CompletedSharedObjectSchemaValid(
+                expectedKind,
+                metadata,
+                materializedBytes,
+                &headerBytes))
+        {
+            Com_Error(ERR_DROP, "Invalid completed shared-object schema");
+            return false;
+        }
+        break;
     default:
         Com_Error(ERR_DROP, "Unsupported completed fast-file object schema");
         return false;

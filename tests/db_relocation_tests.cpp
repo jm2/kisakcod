@@ -655,11 +655,216 @@ int main()
             AliasKind::MaterialTextureTable),
         "material texture tables require exact completed starts");
     Expect(
+        db::relocation::RequiresExactStartPublication(AliasKind::SoundFile),
+        "sound files require exact completed starts");
+    Expect(
+        db::relocation::RequiresExactStartPublication(AliasKind::SpeakerMap),
+        "speaker maps require exact completed starts");
+    Expect(
+        db::relocation::RequiresExactStartPublication(AliasKind::SndAliasArray),
+        "sound-alias arrays require exact completed starts");
+    Expect(
+        db::relocation::RequiresExactStartPublication(
+            AliasKind::WeaponBounceSoundTable),
+        "weapon bounce-sound tables require exact completed starts");
+    Expect(
+        db::relocation::RequiresExactStartPublication(AliasKind::GfxLight),
+        "graphics lights require exact completed starts");
+    Expect(
+        db::relocation::RequiresExactStartPublication(AliasKind::StringTable),
+        "string tables require exact completed starts");
+    Expect(
         !db::relocation::RequiresExactStartPublication(AliasKind::Material),
         "redirectable asset aliases do not require their slot address");
+    Expect(
+        disk32::kSoundFileBytes == 12u
+            && disk32::kSpeakerMapBytes == 408u
+            && disk32::kSndAliasBytes == 92u
+            && disk32::kWeaponBounceSoundCount == 29u
+            && disk32::kWeaponBounceSoundTableBytes == 116u
+            && disk32::kGfxLightBytes == 64u
+            && disk32::kStringTableBytes == 16u,
+        "completed shared-object disk32 schemas remain fixed");
+
+    struct CompletedSchemaCase
+    {
+        AliasKind kind;
+        std::uint32_t bytes;
+    };
+    constexpr CompletedSchemaCase completedSchemas[] = {
+        {AliasKind::SoundFile, disk32::kSoundFileBytes},
+        {AliasKind::SpeakerMap, disk32::kSpeakerMapBytes},
+        {AliasKind::SndAliasArray, 2 * disk32::kSndAliasBytes},
+        {AliasKind::WeaponBounceSoundTable,
+            disk32::kWeaponBounceSoundTableBytes},
+        {AliasKind::GfxLight, disk32::kGfxLightBytes},
+        {AliasKind::StringTable, disk32::kStringTableBytes},
+    };
+    for (const CompletedSchemaCase &schema : completedSchemas)
+    {
+        std::uint32_t headerBytes = UINT32_MAX;
+        Expect(
+            db::relocation::CompletedSharedObjectSchemaValid(
+                schema.kind,
+                schema.bytes,
+                schema.bytes,
+                &headerBytes)
+                && headerBytes == schema.bytes,
+            "completed shared-object schema accepts its exact disk extent");
+        headerBytes = UINT32_MAX;
+        Expect(
+            !db::relocation::CompletedSharedObjectSchemaValid(
+                schema.kind,
+                schema.bytes - 1,
+                schema.bytes,
+                &headerBytes)
+                && headerBytes == 0,
+            "completed shared-object schema rejects wrong metadata");
+        headerBytes = UINT32_MAX;
+        Expect(
+            !db::relocation::CompletedSharedObjectSchemaValid(
+                schema.kind,
+                schema.bytes,
+                schema.bytes - 1,
+                &headerBytes)
+                && headerBytes == 0,
+            "completed shared-object schema rejects a short materialized span");
+    }
+    std::uint32_t schemaHeader = UINT32_MAX;
+    const std::uint32_t maximumAliasBytes =
+        static_cast<std::uint32_t>(
+            (std::numeric_limits<std::int32_t>::max)())
+        / disk32::kSndAliasBytes
+        * disk32::kSndAliasBytes;
+    Expect(
+        db::relocation::CompletedSharedObjectSchemaValid(
+            AliasKind::SndAliasArray,
+            maximumAliasBytes,
+            maximumAliasBytes,
+            &schemaHeader)
+            && schemaHeader == maximumAliasBytes,
+        "largest int32-representable sound-alias array accepted");
+    Expect(
+        !db::relocation::CompletedSharedObjectSchemaValid(
+            AliasKind::SndAliasArray,
+            0,
+            0,
+            &schemaHeader),
+        "empty completed sound-alias array rejected");
+    Expect(
+        !db::relocation::CompletedSharedObjectSchemaValid(
+            AliasKind::SndAliasArray,
+            disk32::kSndAliasBytes + 1,
+            disk32::kSndAliasBytes + 1,
+            &schemaHeader),
+        "non-integral completed sound-alias array rejected");
+    Expect(
+        !db::relocation::CompletedSharedObjectSchemaValid(
+            AliasKind::SndAliasArray,
+            maximumAliasBytes + disk32::kSndAliasBytes,
+            maximumAliasBytes + disk32::kSndAliasBytes,
+            &schemaHeader),
+        "oversized completed sound-alias array rejected");
+    Expect(
+        !db::relocation::CompletedSharedObjectSchemaValid(
+            AliasKind::Material,
+            4,
+            4,
+            &schemaHeader)
+            && schemaHeader == 0,
+        "unsupported shared-object schema rejected");
+    Expect(
+        !db::relocation::CompletedSharedObjectSchemaValid(
+            AliasKind::SoundFile,
+            disk32::kSoundFileBytes,
+            disk32::kSoundFileBytes,
+            nullptr),
+        "completed shared-object schema requires an extent output");
 
     BlockView blocks[db::relocation::kBlockCount];
     FillBlocks(blocks);
+
+    for (const CompletedSchemaCase &schema : completedSchemas)
+    {
+        AliasRegistry completedRegistry;
+        completedRegistry.Reset(blocks, db::relocation::kBlockCount);
+        AliasHandle completedHandle;
+        ExpectStatus(
+            completedRegistry.RegisterSlot(
+                blocks[4].base,
+                schema.kind,
+                &completedHandle),
+            Status::Ok,
+            "register completed shared-object start");
+        std::uintptr_t completedAddress = Address(0x55);
+        ExpectStatus(
+            completedRegistry.Resolve(
+                Token(4, 0),
+                schema.kind,
+                schema.bytes,
+                &completedAddress),
+            Status::PendingSlot,
+            "completed shared object remains pending before publication");
+        ExpectStatus(
+            completedRegistry.Publish(
+                completedHandle,
+                schema.kind,
+                blocks[4].base + 4,
+                schema.bytes),
+            Status::MetadataMismatch,
+            "completed shared object rejects a shifted publication");
+        ExpectStatus(
+            completedRegistry.Resolve(
+                Token(4, 0),
+                schema.kind,
+                schema.bytes,
+                &completedAddress),
+            Status::PendingSlot,
+            "failed shared-object publication preserves pending state");
+        ExpectStatus(
+            completedRegistry.Publish(
+                completedHandle,
+                schema.kind,
+                blocks[4].base,
+                schema.bytes),
+            Status::Ok,
+            "publish exact completed shared-object start");
+        ExpectStatus(
+            completedRegistry.Resolve(
+                Token(4, 0),
+                AliasKind::Material,
+                schema.bytes,
+                &completedAddress),
+            Status::KindMismatch,
+            "completed shared object rejects a different type");
+        ExpectStatus(
+            completedRegistry.Resolve(
+                Token(4, 0),
+                schema.kind,
+                schema.bytes - 1,
+                &completedAddress),
+            Status::MetadataMismatch,
+            "completed shared object rejects different metadata");
+        ExpectStatus(
+            completedRegistry.Resolve(
+                Token(4, 4),
+                schema.kind,
+                schema.bytes,
+                &completedAddress),
+            Status::UnregisteredSlot,
+            "completed shared-object interior is not a registered start");
+        ExpectStatus(
+            completedRegistry.Resolve(
+                Token(4, 0),
+                schema.kind,
+                schema.bytes,
+                &completedAddress),
+            Status::Ok,
+            "resolve exact completed shared-object start");
+        Expect(
+            completedAddress == blocks[4].base,
+            "completed shared-object address preserves serialized identity");
+    }
 
     AliasRegistry registry;
     AliasHandle handle;

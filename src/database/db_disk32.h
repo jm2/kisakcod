@@ -26,6 +26,18 @@ constexpr uint32_t kMaterialShaderLoadDefBytes = 8;
 constexpr uint32_t kMaterialWaterBytes = 68;
 constexpr uint32_t kMaterialTextureDefBytes = 12;
 
+// Pointer-bearing non-asset objects which may be shared by direct block-4
+// offsets. These remain fixed disk32 extents even after their runtime structs
+// widen on 64-bit hosts.
+constexpr uint32_t kSoundFileBytes = 12;
+constexpr uint32_t kSpeakerMapBytes = 408;
+constexpr uint32_t kSndAliasBytes = 92;
+constexpr uint32_t kWeaponBounceSoundCount = 29;
+constexpr uint32_t kWeaponBounceSoundTableBytes =
+    kWeaponBounceSoundCount * sizeof(uint32_t);
+constexpr uint32_t kGfxLightBytes = 64;
+constexpr uint32_t kStringTableBytes = 16;
+
 struct PointerToken
 {
     uint32_t value;

@@ -21,6 +21,7 @@
 #include <game/g_bsp.h>
 
 #include <cstdlib>
+#include <cstring>
 
 namespace
 {
@@ -55,6 +56,93 @@ bool DB_ValidatePointerCount(
     if (!db::validation::PointerCountConsistent(pointer != nullptr, count))
     {
         Com_Error(ERR_DROP, "Invalid fast-file pointer/count for %s", description);
+        return false;
+    }
+    return true;
+}
+
+bool DB_ValidateSpeakerMap(const SpeakerMap *speakerMap)
+{
+    if (!speakerMap || !speakerMap->name)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file speaker-map identity");
+        return false;
+    }
+
+    uint8_t isDefault = 0;
+    std::memcpy(&isDefault, &speakerMap->isDefault, sizeof(isDefault));
+    if (isDefault > 1)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file speaker-map default flag");
+        return false;
+    }
+    if (!isDefault && !*speakerMap->name)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file speaker-map name");
+        return false;
+    }
+
+    for (uint32_t source = 0; source < 2; ++source)
+    {
+        for (uint32_t output = 0; output < 2; ++output)
+        {
+            const MSSChannelMap &channelMap =
+                speakerMap->channelMaps[source][output];
+            const uint32_t expectedSpeakers =
+                db::validation::SpeakerMapExpectedSpeakerCount(output);
+            if (channelMap.speakerCount
+                != static_cast<int32_t>(expectedSpeakers))
+            {
+                Com_Error(ERR_DROP, "Invalid fast-file speaker-map channel count");
+                return false;
+            }
+            for (uint32_t speaker = 0;
+                 speaker < expectedSpeakers;
+                 ++speaker)
+            {
+                const MSSSpeakerLevels &levels = channelMap.speakers[speaker];
+                if (!db::validation::SpeakerMapEntryValid(
+                        speaker,
+                        levels.speaker,
+                        levels.numLevels,
+                        source + 1,
+                        levels.levels[0],
+                        levels.levels[1]))
+                {
+                    Com_Error(ERR_DROP, "Invalid fast-file speaker-map levels");
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+bool DB_ValidateSoundAlias(const snd_alias_t *alias)
+{
+    if (!alias
+        || !alias->aliasName
+        || !*alias->aliasName
+        || !alias->soundFile
+        || !alias->volumeFalloffCurve
+        || !alias->speakerMap
+        || static_cast<uint32_t>(alias->soundFile->type)
+            != (static_cast<uint32_t>(alias->flags) >> 6 & 3u))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file sound alias");
+        return false;
+    }
+    return true;
+}
+
+bool DB_ValidateSunLight(const GfxLight *light)
+{
+    if (!light
+        || light->type != GFX_LIGHT_TYPE_DIR
+        || light->canUseShadowMap > 1
+        || !db::validation::FiniteFloatArray(light->color, 12))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file sun light");
         return false;
     }
     return true;
@@ -1970,20 +2058,42 @@ void __cdecl Load_SoundFileRef(bool atStreamStart)
     }
 }
 
-void __cdecl Load_SoundFile(bool atStreamStart)
+bool __cdecl Load_SoundFile(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, &varSoundFile->type, 12);
+    Load_Stream(
+        atStreamStart,
+        &varSoundFile->type,
+        disk32::kSoundFileBytes);
+    if (!db::validation::SoundFileHeaderValid(
+            varSoundFile->type,
+            varSoundFile->exists))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file sound-file header");
+        return false;
+    }
     varSoundFileRef = &varSoundFile->u;
     Load_SoundFileRef(0);
+    return true;
 }
 
-void __cdecl Load_SndCurve(bool atStreamStart)
+bool __cdecl Load_SndCurve(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varSndCurve, 72);
     DB_PushStreamPos(4);
     varXString = &varSndCurve->filename;
     Load_XString(0);
+    if (!varSndCurve->filename
+        || !db::validation::CountInRange(varSndCurve->knotCount, 2, 8)
+        || !db::validation::NormalizedGraphKnots(
+            varSndCurve->knots,
+            static_cast<uint32_t>(varSndCurve->knotCount)))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file sound falloff curve");
+        DB_PopStreamPos();
+        return false;
+    }
     DB_PopStreamPos();
+    return true;
 }
 
 void __cdecl Load_SndCurvePtr(bool atStreamStart)
@@ -2004,7 +2114,11 @@ void __cdecl Load_SndCurvePtr(bool atStreamStart)
                 inserted = DB_InsertPointer(DBAliasKind::SndCurve);
             else
                 inserted = {};
-            Load_SndCurve(1);
+            if (!Load_SndCurve(1))
+            {
+                DB_PopStreamPos();
+                return;
+            }
             Load_SndCurveAsset((XAssetHeader *)varSndCurvePtr);
             if (inserted)
                 DB_SetInsertedPointer(
@@ -2022,16 +2136,25 @@ void __cdecl Load_SndCurvePtr(bool atStreamStart)
     DB_PopStreamPos();
 }
 
-void __cdecl Load_SpeakerMap(bool atStreamStart)
+bool __cdecl Load_SpeakerMap(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varSpeakerMap, 408);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varSpeakerMap,
+        disk32::kSpeakerMapBytes);
     varXString = &varSpeakerMap->name;
     Load_XString(0);
+    if (!DB_ValidateSpeakerMap(varSpeakerMap))
+        return false;
+    return true;
 }
 
-void __cdecl Load_snd_alias_t(bool atStreamStart)
+bool __cdecl Load_snd_alias_t(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varsnd_alias_t, 92);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varsnd_alias_t,
+        disk32::kSndAliasBytes);
     varXString = &varsnd_alias_t->aliasName;
     Load_XString(0);
     varXString = &varsnd_alias_t->subtitle;
@@ -2045,12 +2168,30 @@ void __cdecl Load_snd_alias_t(bool atStreamStart)
         if (varsnd_alias_t->soundFile == (SoundFile *)-1)
         {
             varsnd_alias_t->soundFile = (SoundFile *)AllocLoad_FxElemVisStateSample();
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                varsnd_alias_t->soundFile,
+                DBAliasKind::SoundFile);
+            if (!completed)
+                return false;
             varSoundFile = varsnd_alias_t->soundFile;
-            Load_SoundFile(1);
+            if (!Load_SoundFile(1))
+                return false;
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::SoundFile,
+                    varsnd_alias_t->soundFile,
+                    disk32::kSoundFileBytes,
+                    disk32::kSoundFileBytes))
+            {
+                return false;
+            }
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varsnd_alias_t->soundFile);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)&varsnd_alias_t->soundFile,
+                DBAliasKind::SoundFile,
+                disk32::kSoundFileBytes);
         }
     }
     varSndCurvePtr = &varsnd_alias_t->volumeFalloffCurve;
@@ -2060,48 +2201,122 @@ void __cdecl Load_snd_alias_t(bool atStreamStart)
         if (varsnd_alias_t->speakerMap == (SpeakerMap *)-1)
         {
             varsnd_alias_t->speakerMap = (SpeakerMap *)AllocLoad_FxElemVisStateSample();
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                varsnd_alias_t->speakerMap,
+                DBAliasKind::SpeakerMap);
+            if (!completed)
+                return false;
             varSpeakerMap = varsnd_alias_t->speakerMap;
-            Load_SpeakerMap(1);
+            if (!Load_SpeakerMap(1))
+                return false;
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::SpeakerMap,
+                    varsnd_alias_t->speakerMap,
+                    disk32::kSpeakerMapBytes,
+                    disk32::kSpeakerMapBytes))
+            {
+                return false;
+            }
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varsnd_alias_t->speakerMap);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)&varsnd_alias_t->speakerMap,
+                DBAliasKind::SpeakerMap,
+                disk32::kSpeakerMapBytes);
         }
     }
+    if (!DB_ValidateSoundAlias(varsnd_alias_t))
+        return false;
+    return true;
 }
 
-void __cdecl Load_snd_alias_tArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_snd_alias_tArray(bool atStreamStart, int32_t count)
 {
     snd_alias_t *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varsnd_alias_t, count, 92);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varsnd_alias_t,
+        count,
+        disk32::kSndAliasBytes);
     var = varsnd_alias_t;
     for (i = 0; i < count; ++i)
     {
         varsnd_alias_t = var;
-        Load_snd_alias_t(0);
+        if (!Load_snd_alias_t(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
 void __cdecl Load_snd_alias_list_t(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varsnd_alias_list_t, 12);
+    const uint32_t aliasByteCount = DB_CheckedDirectSpanBytes(
+        varsnd_alias_list_t->count,
+        disk32::kSndAliasBytes,
+        "sound-alias entries");
+    if (!DB_ValidatePointerCount(
+            varsnd_alias_list_t->head,
+            varsnd_alias_list_t->count,
+            "sound-alias entries"))
+    {
+        return;
+    }
+    if (varsnd_alias_list_t->count == 0 && varsnd_alias_list_t->head)
+    {
+        Com_Error(ERR_DROP, "Invalid present-empty fast-file sound-alias list");
+        return;
+    }
     DB_PushStreamPos(4);
     varXString = &varsnd_alias_list_t->aliasName;
     Load_XString(0);
+    if (!varsnd_alias_list_t->aliasName || !*varsnd_alias_list_t->aliasName)
+    {
+        Com_Error(ERR_DROP, "Fast-file sound-alias list has no name");
+        DB_PopStreamPos();
+        return;
+    }
     if (varsnd_alias_list_t->head)
     {
         if (varsnd_alias_list_t->head == (snd_alias_t *)-1)
         {
             varsnd_alias_list_t->head = (snd_alias_t *)AllocLoad_FxElemVisStateSample();
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                varsnd_alias_list_t->head,
+                DBAliasKind::SndAliasArray);
+            if (!completed)
+            {
+                DB_PopStreamPos();
+                return;
+            }
             varsnd_alias_t = varsnd_alias_list_t->head;
-            Load_snd_alias_tArray(1, varsnd_alias_list_t->count);
+            if (!Load_snd_alias_tArray(1, varsnd_alias_list_t->count))
+            {
+                DB_PopStreamPos();
+                return;
+            }
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::SndAliasArray,
+                    varsnd_alias_list_t->head,
+                    aliasByteCount,
+                    aliasByteCount))
+            {
+                DB_PopStreamPos();
+                return;
+            }
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varsnd_alias_list_t->head);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)&varsnd_alias_list_t->head,
+                DBAliasKind::SndAliasArray,
+                aliasByteCount);
         }
     }
     DB_PopStreamPos();
@@ -3852,7 +4067,10 @@ void __cdecl Load_GfxLightDefPtr(bool atStreamStart)
 
 void __cdecl Load_GfxLight(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, &varGfxLight->type, 64);
+    Load_Stream(
+        atStreamStart,
+        &varGfxLight->type,
+        disk32::kGfxLightBytes);
     varGfxLightDefPtr = &varGfxLight->def;
     Load_GfxLightDefPtr(0);
 }
@@ -6937,12 +7155,35 @@ void __cdecl Load_WeaponDef(bool atStreamStart)
         if (varWeaponDef->bounceSound == (snd_alias_list_t **)-1)
         {
             varWeaponDef->bounceSound = (snd_alias_list_t **)AllocLoad_FxElemVisStateSample();
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                varWeaponDef->bounceSound,
+                DBAliasKind::WeaponBounceSoundTable);
+            if (!completed)
+            {
+                DB_PopStreamPos();
+                return;
+            }
             varsnd_alias_list_name = varWeaponDef->bounceSound;
-            Load_snd_alias_list_nameArray(1, 29);
+            Load_snd_alias_list_nameArray(
+                1,
+                disk32::kWeaponBounceSoundCount);
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::WeaponBounceSoundTable,
+                    varWeaponDef->bounceSound,
+                    disk32::kWeaponBounceSoundTableBytes,
+                    disk32::kWeaponBounceSoundTableBytes))
+            {
+                DB_PopStreamPos();
+                return;
+            }
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varWeaponDef->bounceSound);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)&varWeaponDef->bounceSound,
+                DBAliasKind::WeaponBounceSoundTable,
+                disk32::kWeaponBounceSoundTableBytes);
         }
     }
     varFxEffectDefHandle = &varWeaponDef->viewShellEjectEffect;
@@ -7365,21 +7606,42 @@ void __cdecl Mark_RawFilePtr()
     }
 }
 
-void __cdecl Load_StringTable(bool atStreamStart)
+bool __cdecl Load_StringTable(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varStringTable, sizeof(StringTable));
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varStringTable,
+        disk32::kStringTableBytes);
+    const int32_t valueCount = DB_CheckedCountProduct(
+        varStringTable->rowCount,
+        varStringTable->columnCount,
+        "string-table values");
+    if (!DB_ValidatePointerCount(
+            varStringTable->values,
+            valueCount,
+            "string-table values"))
+    {
+        return false;
+    }
+    if (valueCount == 0 && varStringTable->values)
+    {
+        Com_Error(ERR_DROP, "Invalid present-empty fast-file string table");
+        return false;
+    }
     varXString = &varStringTable->name;
     Load_XString(0);
+    if (!varStringTable->name || !*varStringTable->name)
+    {
+        Com_Error(ERR_DROP, "Fast-file string table has no name");
+        return false;
+    }
     if (varStringTable->values)
     {
         varStringTable->values = (const char **)AllocLoad_FxElemVisStateSample();
         varXString = varStringTable->values;
-        const int32_t valueCount = DB_CheckedCountProduct(
-            varStringTable->rowCount,
-            varStringTable->columnCount,
-            "string-table values");
         Load_XStringArray(1, valueCount);
     }
+    return true;
 }
 
 void __cdecl Load_StringTablePtr(bool atStreamStart)
@@ -7390,13 +7652,37 @@ void __cdecl Load_StringTablePtr(bool atStreamStart)
         if (*varStringTablePtr == (StringTable *)-1)
         {
             *varStringTablePtr = (StringTable *)AllocLoad_FxElemVisStateSample();
-            varStringTable = *varStringTablePtr;
-            Load_StringTable(1);
+            StringTable * const serializedStringTable = *varStringTablePtr;
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                serializedStringTable,
+                DBAliasKind::StringTable);
+            if (!completed)
+                return;
+            varStringTable = serializedStringTable;
+            if (!Load_StringTable(1))
+                return;
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::StringTable,
+                    serializedStringTable,
+                    disk32::kStringTableBytes,
+                    disk32::kStringTableBytes))
+            {
+                return;
+            }
             Load_StringTableAsset((XAssetHeader *)varStringTablePtr);
+            if (!*varStringTablePtr)
+            {
+                Com_Error(ERR_DROP, "Fast-file string table was not registered");
+                return;
+            }
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varStringTablePtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)varStringTablePtr,
+                DBAliasKind::StringTable,
+                disk32::kStringTableBytes);
         }
     }
 }
@@ -8252,12 +8538,38 @@ void __cdecl Load_GfxWorld(bool atStreamStart)
         if (varGfxWorld->sunLight == (GfxLight *)-1)
         {
             varGfxWorld->sunLight = (GfxLight *)AllocLoad_FxElemVisStateSample();
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                varGfxWorld->sunLight,
+                DBAliasKind::GfxLight);
+            if (!completed)
+            {
+                DB_PopStreamPos();
+                return;
+            }
             varGfxLight = varGfxWorld->sunLight;
             Load_GfxLight(1);
+            if (!DB_ValidateSunLight(varGfxWorld->sunLight))
+            {
+                DB_PopStreamPos();
+                return;
+            }
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::GfxLight,
+                    varGfxWorld->sunLight,
+                    disk32::kGfxLightBytes,
+                    disk32::kGfxLightBytes))
+            {
+                DB_PopStreamPos();
+                return;
+            }
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varGfxWorld->sunLight);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)&varGfxWorld->sunLight,
+                DBAliasKind::GfxLight,
+                disk32::kGfxLightBytes);
         }
     }
     if (varGfxWorld->reflectionProbes)

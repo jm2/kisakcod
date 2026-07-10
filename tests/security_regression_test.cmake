@@ -16,6 +16,18 @@ function(require_source_not_contains RELATIVE_PATH NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+function(require_source_ordered RELATIVE_PATH FIRST SECOND DESCRIPTION)
+    file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
+    string(FIND "${_source}" "${FIRST}" _first_position)
+    string(FIND "${_source}" "${SECOND}" _second_position)
+    if (_first_position EQUAL -1
+        OR _second_position EQUAL -1
+        OR _first_position GREATER _second_position)
+        message(FATAL_ERROR
+            "Missing or unordered security invariant (${DESCRIPTION}) in src/${RELATIVE_PATH}")
+    endif()
+endfunction()
+
 file(GLOB_RECURSE _callback_sources "${SOURCE_ROOT}/src/*.cpp")
 foreach(_callback_source IN LISTS _callback_sources)
     file(READ "${_callback_source}" _callback_text)
@@ -489,6 +501,173 @@ require_source_contains(
     "database/db_load.cpp"
     "DBAliasKind::XStringPointerSlot"
     "direct string-holder references must use completed-object provenance")
+require_source_contains(
+    "database/db_relocation.h"
+    "CompletedSharedObjectSchemaValid("
+    "completed shared objects must use a portable tested disk32 schema")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varsnd_alias_t->soundFile,
+                DBAliasKind::SoundFile,
+                disk32::kSoundFileBytes"
+    "shared sound files must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varsnd_alias_t->speakerMap,
+                DBAliasKind::SpeakerMap,
+                disk32::kSpeakerMapBytes"
+    "shared speaker maps must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varsnd_alias_list_t->head,
+                DBAliasKind::SndAliasArray,
+                aliasByteCount"
+    "shared sound-alias arrays must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varWeaponDef->bounceSound,
+                DBAliasKind::WeaponBounceSoundTable,
+                disk32::kWeaponBounceSoundTableBytes"
+    "weapon bounce-sound tables must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varGfxWorld->sunLight,
+                DBAliasKind::GfxLight,
+                disk32::kGfxLightBytes"
+    "shared world sun lights must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)varStringTablePtr,
+                DBAliasKind::StringTable,
+                disk32::kStringTableBytes"
+    "shared string tables must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "db::validation::SoundFileHeaderValid("
+    "sound-file union tags and existence flags must validate before dispatch")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_ValidateSpeakerMap(varSpeakerMap)"
+    "speaker-map fixed arrays and levels must validate before completion")
+require_source_contains(
+    "database/db_load.cpp"
+    "CountInRange(varSndCurve->knotCount, 2, 8)"
+    "sound falloff curves must fit their fixed knot array")
+require_source_contains(
+    "database/db_load.cpp"
+    "NormalizedGraphKnots(
+            varSndCurve->knots"
+    "sound falloff curves must be finite, normalized, and strictly ordered")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!DB_ValidateSoundAlias(varsnd_alias_t))"
+    "sound aliases must validate required completed children before array publication")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!varsnd_alias_list_t->aliasName || !*varsnd_alias_list_t->aliasName)"
+    "sound-alias lists must have a completed name before asset publication")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!varStringTable->name || !*varStringTable->name)"
+    "string tables must have a completed name before asset publication")
+require_source_contains(
+    "database/db_load.cpp"
+    "varStringTable->values,
+            valueCount,
+            \"string-table values\""
+    "string-table values must match their validated dimensions")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!DB_ValidateSunLight(varGfxWorld->sunLight))"
+    "world sun-light values must validate before exact completion")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_RegisterPointerSlot(
+                varsnd_alias_t->soundFile,
+                DBAliasKind::SoundFile)"
+    "if (!Load_SoundFile(1))"
+    "sound-file provenance must register before child fixups")
+require_source_ordered(
+    "database/db_load.cpp"
+    "if (!Load_SoundFile(1))"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::SoundFile"
+    "sound-file provenance must publish after child fixups")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_RegisterPointerSlot(
+                varsnd_alias_t->speakerMap,
+                DBAliasKind::SpeakerMap)"
+    "if (!Load_SpeakerMap(1))"
+    "speaker-map provenance must register before child fixups")
+require_source_ordered(
+    "database/db_load.cpp"
+    "if (!Load_SpeakerMap(1))"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::SpeakerMap"
+    "speaker-map provenance must publish after validation")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_RegisterPointerSlot(
+                varsnd_alias_list_t->head,
+                DBAliasKind::SndAliasArray)"
+    "if (!Load_snd_alias_tArray(1, varsnd_alias_list_t->count))"
+    "sound-alias array provenance must register before element fixups")
+require_source_ordered(
+    "database/db_load.cpp"
+    "if (!Load_snd_alias_tArray(1, varsnd_alias_list_t->count))"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::SndAliasArray"
+    "sound-alias array provenance must publish after element fixups")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_RegisterPointerSlot(
+                varWeaponDef->bounceSound,
+                DBAliasKind::WeaponBounceSoundTable)"
+    "Load_snd_alias_list_nameArray(
+                1,
+                disk32::kWeaponBounceSoundCount)"
+    "bounce-sound provenance must register before holder fixups")
+require_source_ordered(
+    "database/db_load.cpp"
+    "Load_snd_alias_list_nameArray(
+                1,
+                disk32::kWeaponBounceSoundCount)"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::WeaponBounceSoundTable"
+    "bounce-sound provenance must publish after holder fixups")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_RegisterPointerSlot(
+                serializedStringTable,
+                DBAliasKind::StringTable)"
+    "Load_StringTable(1)"
+    "string-table provenance must register before child fixups")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::StringTable"
+    "Load_StringTableAsset((XAssetHeader *)varStringTablePtr)"
+    "string tables must publish their serialized identity before asset canonicalization")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_RegisterPointerSlot(
+                varGfxWorld->sunLight,
+                DBAliasKind::GfxLight)"
+    "Load_GfxLight(1)"
+    "sun-light provenance must register before child fixups")
+require_source_ordered(
+    "database/db_load.cpp"
+    "if (!DB_ValidateSunLight(varGfxWorld->sunLight))"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::GfxLight"
+    "sun-light provenance must publish after semantic validation")
 require_source_contains(
     "database/db_stream.cpp"
     "DB_ValidateStreamCString"
@@ -1488,9 +1667,9 @@ file(STRINGS
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 17)
+if (NOT _legacy_direct_offset_count EQUAL 11)
     message(FATAL_ERROR
-        "Expected exactly 17 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 11 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 

@@ -69,6 +69,12 @@ enum class AliasKind : std::uint8_t
     MaterialPixelShader,
     MaterialWater,
     MaterialTextureTable,
+    SoundFile,
+    SpeakerMap,
+    SndAliasArray,
+    WeaponBounceSoundTable,
+    GfxLight,
+    StringTable,
     Count,
 };
 
@@ -83,10 +89,65 @@ constexpr bool RequiresExactStartPublication(AliasKind kind)
     case AliasKind::MaterialPixelShader:
     case AliasKind::MaterialWater:
     case AliasKind::MaterialTextureTable:
+    case AliasKind::SoundFile:
+    case AliasKind::SpeakerMap:
+    case AliasKind::SndAliasArray:
+    case AliasKind::WeaponBounceSoundTable:
+    case AliasKind::GfxLight:
+    case AliasKind::StringTable:
         return true;
     default:
         return false;
     }
+}
+
+constexpr bool CompletedSharedObjectSchemaValid(
+    AliasKind kind,
+    std::uint32_t metadata,
+    std::uint32_t materializedBytes,
+    std::uint32_t *headerBytes)
+{
+    if (!headerBytes)
+        return false;
+    *headerBytes = 0;
+
+    std::uint32_t fixedBytes = 0;
+    switch (kind)
+    {
+    case AliasKind::SoundFile:
+        fixedBytes = disk32::kSoundFileBytes;
+        break;
+    case AliasKind::SpeakerMap:
+        fixedBytes = disk32::kSpeakerMapBytes;
+        break;
+    case AliasKind::WeaponBounceSoundTable:
+        fixedBytes = disk32::kWeaponBounceSoundTableBytes;
+        break;
+    case AliasKind::GfxLight:
+        fixedBytes = disk32::kGfxLightBytes;
+        break;
+    case AliasKind::StringTable:
+        fixedBytes = disk32::kStringTableBytes;
+        break;
+    case AliasKind::SndAliasArray:
+        if (metadata != materializedBytes
+            || metadata < disk32::kSndAliasBytes
+            || metadata > static_cast<std::uint32_t>(
+                (std::numeric_limits<std::int32_t>::max)())
+            || metadata % disk32::kSndAliasBytes != 0)
+        {
+            return false;
+        }
+        *headerBytes = metadata;
+        return true;
+    default:
+        return false;
+    }
+
+    if (metadata != fixedBytes || materializedBytes != fixedBytes)
+        return false;
+    *headerBytes = fixedBytes;
+    return true;
 }
 
 enum class Status : std::uint8_t
