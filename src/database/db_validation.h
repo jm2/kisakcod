@@ -896,7 +896,8 @@ inline WorldAabbTopologyStatus ValidateWorldAabbTopology(
         || nodeDepthCapacity < static_cast<std::uint64_t>(nodeCount)
         || maximumDepth == 0
         || maximumDepth
-            > (std::numeric_limits<std::uint8_t>::max)() / 2)
+            > static_cast<std::uint32_t>(
+                (std::numeric_limits<std::uint8_t>::max)()) / 2u)
     {
         return WorldAabbTopologyStatus::InvalidWorkBuffer;
     }

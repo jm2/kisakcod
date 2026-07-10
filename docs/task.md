@@ -22,9 +22,11 @@ work item changes. Do not create session-specific handoff files.
   pass locally with leak detection disabled because LeakSanitizer cannot run under the
   command-runner ptrace environment. Portable tests do not execute the Windows stream
   adapter or media ownership paths.
-- Windows validation: asset-enumeration CI run 29073048478 passed all five portable target jobs
-  but its three x86 engine jobs found one missing callback declaration. Repair commit 593c149 is
-  in CI run 29074533150; the world-AABB batch requires its own Windows run after push.
+- Windows validation: callback-repair CI run 29074533150 passed all eight jobs. World-AABB CI
+  run 29075042200 passed all three x86 engine builds plus Linux amd64/arm64 and macOS arm64;
+  its two Windows portable jobs rejected one signed/unsigned depth-limit comparison under
+  warnings-as-errors. This batch makes that comparison explicitly unsigned; its follow-up CI
+  run is the current gate.
 
 ## Milestone status
 
