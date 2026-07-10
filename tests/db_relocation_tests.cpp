@@ -685,6 +685,12 @@ int main()
             AliasKind::XRigidVertListArray),
         "rigid-vertex lists require exact completed starts");
     Expect(
+        db::relocation::RequiresExactStartPublication(AliasKind::BrushWrapper),
+        "physics brush wrappers require exact completed starts");
+    Expect(
+        db::relocation::RequiresExactStartPublication(AliasKind::PhysGeomList),
+        "physics geometry lists require exact completed starts");
+    Expect(
         !db::relocation::RequiresExactStartPublication(AliasKind::Material),
         "redirectable asset aliases do not require their slot address");
     Expect(
@@ -700,7 +706,12 @@ int main()
             && disk32::kXSurfaceCollisionTreeBytes == 40u
             && disk32::kXSurfaceCollisionNodeBytes == 16u
             && disk32::kXSurfaceCollisionLeafBytes == 2u
-            && disk32::kXRigidVertListBytes == 12u,
+            && disk32::kXRigidVertListBytes == 12u
+            && disk32::kBrushWrapperBytes == 80u
+            && disk32::kPhysGeomInfoBytes == 68u
+            && disk32::kPhysGeomListBytes == 44u
+            && disk32::kCBrushSideBytes == 12u
+            && disk32::kCPlaneBytes == 20u,
         "completed shared-object disk32 schemas remain fixed");
 
     struct CompletedSchemaCase
@@ -721,6 +732,8 @@ int main()
             disk32::kXSurfaceCollisionTreeBytes},
         {AliasKind::XRigidVertListArray,
             2 * disk32::kXRigidVertListBytes},
+        {AliasKind::BrushWrapper, disk32::kBrushWrapperBytes},
+        {AliasKind::PhysGeomList, disk32::kPhysGeomListBytes},
     };
     for (const CompletedSchemaCase &schema : completedSchemas)
     {

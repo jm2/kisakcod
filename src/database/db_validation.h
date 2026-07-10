@@ -1418,6 +1418,254 @@ constexpr bool CheckedArrayBytes(std::int32_t count, std::uint32_t stride, std::
     return true;
 }
 
+constexpr std::uint32_t kMaxBrushNonaxialSides = 26;
+constexpr std::uint32_t kMaxBrushWindingEdges = 12;
+constexpr std::int32_t kMaxBrushAdjacencyEntries = 32 * 12;
+
+constexpr bool BrushWrapperLayoutValid(
+    bool hasSides,
+    bool hasPlanes,
+    std::uint32_t sideCount,
+    bool hasAdjacency,
+    std::int64_t adjacencyCount,
+    std::int32_t *sideBytes,
+    std::int32_t *planeBytes,
+    std::int32_t *adjacencyBytes)
+{
+    if (sideBytes)
+        *sideBytes = 0;
+    if (planeBytes)
+        *planeBytes = 0;
+    if (adjacencyBytes)
+        *adjacencyBytes = 0;
+    if (!sideBytes || !planeBytes || !adjacencyBytes
+        || sideCount > kMaxBrushNonaxialSides
+        || adjacencyCount < 0
+        || adjacencyCount > kMaxBrushAdjacencyEntries
+        || !PointerCountConsistent(hasSides, sideCount)
+        || !PointerCountConsistent(hasPlanes, sideCount)
+        || !PointerCountConsistent(hasAdjacency, adjacencyCount))
+    {
+        return false;
+    }
+
+    const std::int32_t signedSideCount =
+        static_cast<std::int32_t>(sideCount);
+    const std::int32_t signedAdjacencyCount =
+        static_cast<std::int32_t>(adjacencyCount);
+    return CheckedArrayBytes(
+            signedSideCount,
+            disk32::kCBrushSideBytes,
+            sideBytes)
+        && CheckedArrayBytes(
+            signedSideCount,
+            disk32::kCPlaneBytes,
+            planeBytes)
+        && CheckedArrayBytes(
+            signedAdjacencyCount,
+            1,
+            adjacencyBytes);
+}
+
+constexpr bool BrushAdjacencySpanValid(
+    std::int64_t offset,
+    std::uint64_t count,
+    std::int64_t totalCount)
+{
+    if (offset < 0 || totalCount < 0 || offset > totalCount)
+        return false;
+    return count <= static_cast<std::uint64_t>(totalCount - offset);
+}
+
+template <typename Brush>
+inline bool BrushMaterialIndex(
+    const Brush *brush,
+    std::uint32_t brushSideIndex,
+    std::uint32_t materialCount,
+    std::uint32_t *materialIndex)
+{
+    if (materialIndex)
+        *materialIndex = 0;
+    if (!brush || !materialIndex || !materialCount)
+        return false;
+
+    if (brushSideIndex >= 6)
+    {
+        const std::uint32_t sideIndex = brushSideIndex - 6;
+        if (!brush->sides || sideIndex >= brush->numsides)
+            return false;
+        if (brush->sides[sideIndex].materialNum >= materialCount)
+            return false;
+        *materialIndex = brush->sides[sideIndex].materialNum;
+        return true;
+    }
+
+    const std::int64_t axialMaterial =
+        brush->axialMaterialNum[brushSideIndex & 1][brushSideIndex >> 1];
+    if (axialMaterial < 0
+        || static_cast<std::uint64_t>(axialMaterial) >= materialCount)
+    {
+        return false;
+    }
+    *materialIndex = static_cast<std::uint32_t>(axialMaterial);
+    return true;
+}
+
+template <typename Brush>
+inline bool BrushWrapperRuntimeValid(const Brush &brush)
+{
+    std::int32_t sideBytes = 0;
+    std::int32_t planeBytes = 0;
+    std::int32_t adjacencyBytes = 0;
+    if (!BrushWrapperLayoutValid(
+            brush.sides != nullptr,
+            brush.planes != nullptr,
+            brush.numsides,
+            brush.baseAdjacentSide != nullptr,
+            brush.totalEdgeCount,
+            &sideBytes,
+            &planeBytes,
+            &adjacencyBytes)
+        || !FiniteFloatArray(brush.mins, 3)
+        || !FiniteFloatArray(brush.maxs, 3))
+    {
+        return false;
+    }
+
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        if (brush.mins[axis] > brush.maxs[axis])
+            return false;
+        for (std::uint32_t direction = 0; direction < 2; ++direction)
+        {
+            if (brush.axialMaterialNum[direction][axis] != 0
+                || static_cast<std::uint32_t>(
+                    brush.edgeCount[direction][axis])
+                    > kMaxBrushWindingEdges
+                || !BrushAdjacencySpanValid(
+                    brush.firstAdjacentSideOffsets[direction][axis],
+                    brush.edgeCount[direction][axis],
+                    brush.totalEdgeCount))
+            {
+                return false;
+            }
+        }
+    }
+
+    for (std::uint32_t sideIndex = 0;
+        sideIndex < brush.numsides;
+        ++sideIndex)
+    {
+        const auto &side = brush.sides[sideIndex];
+        const auto &plane = brush.planes[sideIndex];
+        if (side.plane != &brush.planes[sideIndex]
+            || side.materialNum != 0
+            || static_cast<std::uint32_t>(side.edgeCount)
+                > kMaxBrushWindingEdges
+            || !BrushAdjacencySpanValid(
+                side.firstAdjacentSideOffset,
+                side.edgeCount,
+                brush.totalEdgeCount)
+            || !FiniteFloatArray(plane.normal, 3)
+            || !std::isfinite(plane.dist))
+        {
+            return false;
+        }
+    }
+
+    const std::uint32_t sideReferenceLimit = brush.numsides + 6;
+    for (std::uint32_t edgeIndex = 0;
+        edgeIndex < static_cast<std::uint32_t>(brush.totalEdgeCount);
+        ++edgeIndex)
+    {
+        if (static_cast<std::uint32_t>(
+                brush.baseAdjacentSide[edgeIndex]) >= sideReferenceLimit)
+            return false;
+    }
+    return true;
+}
+
+constexpr bool PhysGeomListLayoutValid(
+    bool hasGeoms,
+    std::uint32_t count,
+    std::int32_t *geomBytes)
+{
+    if (geomBytes)
+        *geomBytes = 0;
+    if (!geomBytes
+        || count == 0
+        || count
+            > static_cast<std::uint32_t>(
+                (std::numeric_limits<std::int32_t>::max)())
+        || !PointerCountConsistent(hasGeoms, count))
+    {
+        return false;
+    }
+    return CheckedArrayBytes(
+        static_cast<std::int32_t>(count),
+        disk32::kPhysGeomInfoBytes,
+        geomBytes);
+}
+
+template <typename Mass>
+inline bool PhysMassFinite(const Mass &mass)
+{
+    return FiniteFloatArray(mass.centerOfMass, 3)
+        && FiniteFloatArray(mass.momentsOfInertia, 3)
+        && FiniteFloatArray(mass.productsOfInertia, 3);
+}
+
+template <typename Geom>
+inline bool PhysGeomInfoRuntimeValid(const Geom &geom)
+{
+    if (!FiniteFloatArray(&geom.orientation[0][0], 9)
+        || !FiniteFloatArray(geom.offset, 3)
+        || !FiniteFloatArray(geom.halfLengths, 3))
+    {
+        return false;
+    }
+
+    switch (geom.type)
+    {
+    case 0:
+        return geom.brush != nullptr
+            && BrushWrapperRuntimeValid(*geom.brush);
+    case 1:
+        return geom.brush == nullptr
+            && geom.halfLengths[0] > 0.0f
+            && geom.halfLengths[1] > 0.0f
+            && geom.halfLengths[2] > 0.0f;
+    case 4:
+        // The source parser stores half-height then radius in the first two
+        // elements and leaves the third zero-initialized.
+        return geom.brush == nullptr
+            && geom.halfLengths[0] > 0.0f
+            && geom.halfLengths[1] > 0.0f;
+    default:
+        return false;
+    }
+}
+
+template <typename List>
+inline bool PhysGeomListRuntimeValid(const List &list)
+{
+    std::int32_t geomBytes = 0;
+    if (!PhysGeomListLayoutValid(
+            list.geoms != nullptr,
+            list.count,
+            &geomBytes)
+        || !PhysMassFinite(list.mass))
+    {
+        return false;
+    }
+    for (std::uint32_t index = 0; index < list.count; ++index)
+    {
+        if (!PhysGeomInfoRuntimeValid(list.geoms[index]))
+            return false;
+    }
+    return true;
+}
+
 constexpr bool XModelPiecesLayoutValid(
     bool hasName,
     bool hasPieces,

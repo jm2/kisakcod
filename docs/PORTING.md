@@ -2,6 +2,7 @@
 
 **Status:** implementation in progress · **Scope:** MP client + headless dedicated server
 **Basis:** whole-tree analysis of the current `master` (see `docs/CODEBASE_AUDIT.md` for the health report).
+**Live checkpoint:** [`docs/task.md`](task.md) tracks the current batch, CI evidence, debt counts, and next queue.
 
 ---
 

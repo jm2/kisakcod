@@ -443,6 +443,8 @@ bool __cdecl DB_CompleteObject(
     case DBAliasKind::XModelPieces:
     case DBAliasKind::XSurfaceCollisionTree:
     case DBAliasKind::XRigidVertListArray:
+    case DBAliasKind::BrushWrapper:
+    case DBAliasKind::PhysGeomList:
         if (!db::relocation::CompletedSharedObjectSchemaValid(
                 expectedKind,
                 metadata,

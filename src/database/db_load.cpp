@@ -61,6 +61,65 @@ bool DB_ValidatePointerCount(
     return true;
 }
 
+template <typename T>
+bool DB_ResolveCompletedPointer(
+    T **field,
+    DBAliasKind kind,
+    uint32_t metadata,
+    const char *description)
+{
+    if (!field)
+    {
+        Com_Error(ERR_DROP, "Missing fast-file completed-object field for %s", description);
+        return false;
+    }
+
+    uint32_t tokenValue = 0;
+    memcpy(&tokenValue, field, sizeof(tokenValue));
+    uintptr_t pointer = 0;
+    const db::relocation::Status status = DB_ResolveInsertedPointer(
+        {tokenValue},
+        kind,
+        metadata,
+        &pointer);
+    if (status != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid fast-file completed-object reference for %s: %s",
+            description,
+            db::relocation::StatusName(status));
+        return false;
+    }
+    *field = reinterpret_cast<T *>(pointer);
+    return true;
+}
+
+bool DB_ValidateMaterializedPhysicsSpan(
+    const void *pointer,
+    uint32_t bytes,
+    size_t alignment,
+    const char *description)
+{
+    if (!bytes)
+        return true;
+    const db::relocation::Status status = DB_ValidateStreamAddress(
+        pointer,
+        bytes,
+        alignment,
+        kDirectBlock4);
+    if (status != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid completed fast-file physics span for %s: %s",
+            description,
+            db::relocation::StatusName(status));
+        return false;
+    }
+    return true;
+}
+
 bool DB_ValidateXModelPiecesHeader(
     const XModelPieces *pieces,
     int32_t *pieceBytes)
@@ -255,7 +314,8 @@ bool DB_ValidateXSurfaceCollisionTreeGraph(
 
 bool DB_ValidateLoadedXSurface(
     const XSurface *surface,
-    uint8_t deformed)
+    uint8_t deformed,
+    uint32_t modelBoneCount)
 {
     if (!surface)
         return false;
@@ -320,7 +380,7 @@ bool DB_ValidateLoadedXSurface(
         return false;
     }
 
-    if (!varXModel || !varXModel->numBones)
+    if (!modelBoneCount)
     {
         Com_Error(ERR_DROP, "Rigid fast-file surface has no model bones");
         return false;
@@ -329,7 +389,7 @@ bool DB_ValidateLoadedXSurface(
     {
         const XRigidVertList &rigid = surface->vertList[index];
         if ((rigid.boneOffset & 63u) != 0
-            || (rigid.boneOffset >> 6) >= varXModel->numBones)
+            || (rigid.boneOffset >> 6) >= modelBoneCount)
         {
             Com_Error(ERR_DROP, "Invalid fast-file rigid-surface bone offset");
             return false;
@@ -3159,7 +3219,10 @@ bool __cdecl Load_XSurface(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
-    if (!DB_ValidateLoadedXSurface(varXSurface, deformed))
+    if (!DB_ValidateLoadedXSurface(
+            varXSurface,
+            deformed,
+            varXModel ? varXModel->numBones : 0))
         return false;
     if (completedRigidLists
         && !DB_CompleteObject(
@@ -4708,17 +4771,27 @@ void __cdecl Mark_PhysPresetPtr()
 
 void __cdecl Load_cplane_t(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varcplane_t, 20);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varcplane_t,
+        disk32::kCPlaneBytes);
 }
 
 void __cdecl Load_cplane_tArray(bool atStreamStart, int32_t count)
 {
-    Load_StreamArray(atStreamStart, (uint8_t *)varcplane_t, count, 20);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varcplane_t,
+        count,
+        disk32::kCPlaneBytes);
 }
 
 void __cdecl Load_cbrushside_t(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varcbrushside_t, 12);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varcbrushside_t,
+        disk32::kCBrushSideBytes);
     if (varcbrushside_t->plane)
     {
         if (varcbrushside_t->plane == (cplane_s *)-1)
@@ -4729,7 +4802,11 @@ void __cdecl Load_cbrushside_t(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)(uint32_t*)varcbrushside_t);
+            DB_ConvertOffsetToPointer(
+                (uint32_t *)&varcbrushside_t->plane,
+                disk32::kCPlaneBytes,
+                4,
+                kDirectBlock4);
         }
     }
 }
@@ -4744,7 +4821,11 @@ void __cdecl Load_cbrushside_tArray(bool atStreamStart, int32_t count)
     cbrushside_t *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varcbrushside_t, count, 12);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varcbrushside_t,
+        count,
+        disk32::kCBrushSideBytes);
     var = varcbrushside_t;
     for (i = 0; i < count; ++i)
     {
@@ -4795,22 +4876,99 @@ void __cdecl Load_XModelCollSurfArray(bool atStreamStart, int32_t count)
     }
 }
 
-void __cdecl Load_BrushWrapper(bool atStreamStart)
+bool __cdecl Load_BrushWrapper(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varBrushWrapper, 80);
-    const uint32_t planeByteCount = DB_CheckedDirectSpanBytes(
-        varBrushWrapper->numsides,
-        20,
-        "physics brush planes");
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varBrushWrapper,
+        disk32::kBrushWrapperBytes);
+
+    int32_t sideBytes = 0;
+    int32_t planeBytes = 0;
+    int32_t adjacencyBytes = 0;
+    if (!db::validation::BrushWrapperLayoutValid(
+            varBrushWrapper->sides != nullptr,
+            varBrushWrapper->planes != nullptr,
+            varBrushWrapper->numsides,
+            varBrushWrapper->baseAdjacentSide != nullptr,
+            varBrushWrapper->totalEdgeCount,
+            &sideBytes,
+            &planeBytes,
+            &adjacencyBytes))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file physics brush header");
+        return false;
+    }
+
+    disk32::PointerToken sidePlaneTokens[
+        db::validation::kMaxBrushNonaxialSides] = {};
     if (varBrushWrapper->sides)
     {
-        varBrushWrapper->sides = (cbrushside_t *)AllocLoad_FxElemVisStateSample();
+        varBrushWrapper->sides =
+            (cbrushside_t *)AllocLoad_FxElemVisStateSample();
+        if (!varBrushWrapper->sides
+            || !DB_IsStreamRangeValid(
+                varBrushWrapper->sides,
+                static_cast<uint32_t>(sideBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file physics brush sides exceed block 4");
+            return false;
+        }
         varcbrushside_t = varBrushWrapper->sides;
-        Load_cbrushside_tArray(1, varBrushWrapper->numsides);
+        Load_StreamArray(
+            1,
+            (uint8_t *)varcbrushside_t,
+            static_cast<int32_t>(varBrushWrapper->numsides),
+            disk32::kCBrushSideBytes);
+
+        for (uint32_t sideIndex = 0;
+            sideIndex < varBrushWrapper->numsides;
+            ++sideIndex)
+        {
+            cbrushside_t &side = varBrushWrapper->sides[sideIndex];
+            memcpy(
+                &sidePlaneTokens[sideIndex].value,
+                &side.plane,
+                sizeof(sidePlaneTokens[sideIndex].value));
+            const disk32::PointerToken token = sidePlaneTokens[sideIndex];
+            if (token.isNull() || token.isSharedInline())
+            {
+                Com_Error(ERR_DROP, "Invalid fast-file physics brush-side plane token");
+                return false;
+            }
+            if (token.isInline())
+            {
+                side.plane = (cplane_s *)AllocLoad_FxElemVisStateSample();
+                if (!side.plane
+                    || !DB_IsStreamRangeValid(
+                        side.plane,
+                        disk32::kCPlaneBytes))
+                {
+                    Com_Error(ERR_DROP, "Fast-file inline brush-side plane exceeds block 4");
+                    return false;
+                }
+                varcplane_t = side.plane;
+                Load_cplane_t(1);
+            }
+            else
+            {
+                // Preserve the disk token separately so native pointer values
+                // cannot be confused with unresolved 32-bit offsets on x86.
+                side.plane = nullptr;
+            }
+        }
     }
     if (varBrushWrapper->baseAdjacentSide)
     {
         varBrushWrapper->baseAdjacentSide = AllocLoad_raw_byte();
+        if (!varBrushWrapper->baseAdjacentSide
+            || !DB_IsStreamRangeValid(
+                varBrushWrapper->baseAdjacentSide,
+                static_cast<uint32_t>(adjacencyBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file physics brush adjacency exceeds block 4");
+            return false;
+        }
         varcbrushedge_t = varBrushWrapper->baseAdjacentSide;
         Load_cbrushedge_tArray(1, varBrushWrapper->totalEdgeCount);
     }
@@ -4818,63 +4976,199 @@ void __cdecl Load_BrushWrapper(bool atStreamStart)
     {
         if (varBrushWrapper->planes == (cplane_s *)-1)
         {
-            varBrushWrapper->planes = (cplane_s *)AllocLoad_FxElemVisStateSample();
+            varBrushWrapper->planes =
+                (cplane_s *)AllocLoad_FxElemVisStateSample();
+            if (!varBrushWrapper->planes
+                || !DB_IsStreamRangeValid(
+                    varBrushWrapper->planes,
+                    static_cast<uint32_t>(planeBytes)))
+            {
+                Com_Error(ERR_DROP, "Fast-file physics brush planes exceed block 4");
+                return false;
+            }
             varcplane_t = varBrushWrapper->planes;
-            Load_cplane_tArray(1, varBrushWrapper->numsides);
+            Load_cplane_tArray(
+                1,
+                static_cast<int32_t>(varBrushWrapper->numsides));
         }
         else
         {
             DB_ConvertOffsetToPointer(
                 (uint32_t*)&varBrushWrapper->planes,
-                planeByteCount,
+                static_cast<uint32_t>(planeBytes),
                 4,
                 kDirectBlock4);
         }
     }
+
+    for (uint32_t sideIndex = 0;
+        sideIndex < varBrushWrapper->numsides;
+        ++sideIndex)
+    {
+        const disk32::PointerToken token = sidePlaneTokens[sideIndex];
+        if (!token.isOffset())
+            continue;
+        uintptr_t pointer = 0;
+        const db::relocation::Status status = DB_ResolveOffsetBytes(
+            token,
+            disk32::kCPlaneBytes,
+            4,
+            kDirectBlock4,
+            &pointer);
+        if (status != db::relocation::Status::Ok)
+        {
+            Com_Error(
+                ERR_DROP,
+                "Invalid deferred fast-file brush-side plane: %s",
+                db::relocation::StatusName(status));
+            return false;
+        }
+        varBrushWrapper->sides[sideIndex].plane =
+            reinterpret_cast<cplane_s *>(pointer);
+    }
+
+    if (!DB_ValidateMaterializedPhysicsSpan(
+            varBrushWrapper->sides,
+            static_cast<uint32_t>(sideBytes),
+            4,
+            "brush sides")
+        || !DB_ValidateMaterializedPhysicsSpan(
+            varBrushWrapper->baseAdjacentSide,
+            static_cast<uint32_t>(adjacencyBytes),
+            1,
+            "brush adjacency")
+        || !DB_ValidateMaterializedPhysicsSpan(
+            varBrushWrapper->planes,
+            static_cast<uint32_t>(planeBytes),
+            4,
+            "brush planes")
+        || !db::validation::BrushWrapperRuntimeValid(*varBrushWrapper))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file physics brush graph");
+        return false;
+    }
+    return true;
 }
 
-void __cdecl Load_PhysGeomInfo(bool atStreamStart)
+bool __cdecl Load_PhysGeomInfo(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varPhysGeomInfo, 68);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varPhysGeomInfo,
+        disk32::kPhysGeomInfoBytes);
     if (varPhysGeomInfo->brush)
     {
         if (varPhysGeomInfo->brush == (BrushWrapper *)-1)
         {
-            varPhysGeomInfo->brush = (BrushWrapper *)AllocLoad_FxElemVisStateSample();
+            varPhysGeomInfo->brush =
+                (BrushWrapper *)AllocLoad_FxElemVisStateSample();
+            if (!varPhysGeomInfo->brush)
+            {
+                Com_Error(ERR_DROP, "Cannot allocate fast-file physics brush");
+                return false;
+            }
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                varPhysGeomInfo->brush,
+                DBAliasKind::BrushWrapper);
+            if (!completed)
+                return false;
             varBrushWrapper = varPhysGeomInfo->brush;
-            Load_BrushWrapper(1);
+            if (!Load_BrushWrapper(1))
+                return false;
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::BrushWrapper,
+                    varPhysGeomInfo->brush,
+                    disk32::kBrushWrapperBytes,
+                    disk32::kBrushWrapperBytes))
+            {
+                return false;
+            }
         }
-        else
+        else if (!DB_ResolveCompletedPointer(
+                &varPhysGeomInfo->brush,
+                DBAliasKind::BrushWrapper,
+                disk32::kBrushWrapperBytes,
+                "physics brush"))
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varPhysGeomInfo);
+            return false;
         }
     }
+    if (!db::validation::PhysGeomInfoRuntimeValid(*varPhysGeomInfo))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file physics geometry");
+        return false;
+    }
+    return true;
 }
 
-void __cdecl Load_PhysGeomInfoArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_PhysGeomInfoArray(bool atStreamStart, int32_t count)
 {
     PhysGeomInfo *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varPhysGeomInfo, count, 68);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varPhysGeomInfo,
+        count,
+        disk32::kPhysGeomInfoBytes);
     var = varPhysGeomInfo;
     for (i = 0; i < count; ++i)
     {
         varPhysGeomInfo = var;
-        Load_PhysGeomInfo(0);
+        if (!Load_PhysGeomInfo(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
-void __cdecl Load_PhysGeomList(bool atStreamStart)
+bool __cdecl Load_PhysGeomList(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varPhysGeomList, 44);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varPhysGeomList,
+        disk32::kPhysGeomListBytes);
+    int32_t geomBytes = 0;
+    if (!db::validation::PhysGeomListLayoutValid(
+            varPhysGeomList->geoms != nullptr,
+            varPhysGeomList->count,
+            &geomBytes))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file physics geometry-list header");
+        return false;
+    }
     if (varPhysGeomList->geoms)
     {
-        varPhysGeomList->geoms = (PhysGeomInfo *)AllocLoad_FxElemVisStateSample();
+        varPhysGeomList->geoms =
+            (PhysGeomInfo *)AllocLoad_FxElemVisStateSample();
+        if (!varPhysGeomList->geoms
+            || !DB_IsStreamRangeValid(
+                varPhysGeomList->geoms,
+                static_cast<uint32_t>(geomBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file physics geometry list exceeds block 4");
+            return false;
+        }
         varPhysGeomInfo = varPhysGeomList->geoms;
-        Load_PhysGeomInfoArray(1, varPhysGeomList->count);
+        if (!Load_PhysGeomInfoArray(
+                1,
+                static_cast<int32_t>(varPhysGeomList->count)))
+        {
+            return false;
+        }
     }
+    if (!DB_ValidateMaterializedPhysicsSpan(
+            varPhysGeomList->geoms,
+            static_cast<uint32_t>(geomBytes),
+            4,
+            "physics geometry list")
+        || !db::validation::PhysGeomListRuntimeValid(*varPhysGeomList))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file physics geometry list");
+        return false;
+    }
+    return true;
 }
 
 bool __cdecl Load_XModel(bool atStreamStart)
@@ -5052,12 +5346,44 @@ bool __cdecl Load_XModel(bool atStreamStart)
         if (varXModel->physGeoms == (PhysGeomList *)-1)
         {
             varXModel->physGeoms = (PhysGeomList *)AllocLoad_FxElemVisStateSample();
+            if (!varXModel->physGeoms)
+            {
+                Com_Error(ERR_DROP, "Cannot allocate fast-file physics geometry list");
+                DB_PopStreamPos();
+                return false;
+            }
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                varXModel->physGeoms,
+                DBAliasKind::PhysGeomList);
+            if (!completed)
+            {
+                varXModel->physGeoms = nullptr;
+                DB_PopStreamPos();
+                return false;
+            }
             varPhysGeomList = varXModel->physGeoms;
-            Load_PhysGeomList(1);
+            if (!Load_PhysGeomList(1)
+                || !DB_CompleteObject(
+                    completed,
+                    DBAliasKind::PhysGeomList,
+                    varXModel->physGeoms,
+                    disk32::kPhysGeomListBytes,
+                    disk32::kPhysGeomListBytes))
+            {
+                varXModel->physGeoms = nullptr;
+                DB_PopStreamPos();
+                return false;
+            }
         }
-        else
+        else if (!DB_ResolveCompletedPointer(
+                &varXModel->physGeoms,
+                DBAliasKind::PhysGeomList,
+                disk32::kPhysGeomListBytes,
+                "model physics geometry list"))
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varXModel->physGeoms);
+            varXModel->physGeoms = nullptr;
+            DB_PopStreamPos();
+            return false;
         }
     }
     DB_PopStreamPos();

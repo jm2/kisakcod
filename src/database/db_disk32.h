@@ -43,6 +43,11 @@ constexpr uint32_t kXSurfaceCollisionTreeBytes = 40;
 constexpr uint32_t kXSurfaceCollisionNodeBytes = 16;
 constexpr uint32_t kXSurfaceCollisionLeafBytes = 2;
 constexpr uint32_t kXRigidVertListBytes = 12;
+constexpr uint32_t kBrushWrapperBytes = 80;
+constexpr uint32_t kPhysGeomInfoBytes = 68;
+constexpr uint32_t kPhysGeomListBytes = 44;
+constexpr uint32_t kCBrushSideBytes = 12;
+constexpr uint32_t kCPlaneBytes = 20;
 
 struct PointerToken
 {

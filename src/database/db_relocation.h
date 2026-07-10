@@ -78,6 +78,8 @@ enum class AliasKind : std::uint8_t
     XModelPieces,
     XSurfaceCollisionTree,
     XRigidVertListArray,
+    BrushWrapper,
+    PhysGeomList,
     Count,
 };
 
@@ -101,6 +103,8 @@ constexpr bool RequiresExactStartPublication(AliasKind kind)
     case AliasKind::XModelPieces:
     case AliasKind::XSurfaceCollisionTree:
     case AliasKind::XRigidVertListArray:
+    case AliasKind::BrushWrapper:
+    case AliasKind::PhysGeomList:
         return true;
     default:
         return false;
@@ -140,6 +144,12 @@ constexpr bool CompletedSharedObjectSchemaValid(
         break;
     case AliasKind::XSurfaceCollisionTree:
         fixedBytes = disk32::kXSurfaceCollisionTreeBytes;
+        break;
+    case AliasKind::BrushWrapper:
+        fixedBytes = disk32::kBrushWrapperBytes;
+        break;
+    case AliasKind::PhysGeomList:
+        fixedBytes = disk32::kPhysGeomListBytes;
         break;
     case AliasKind::XRigidVertListArray:
         if (metadata != materializedBytes

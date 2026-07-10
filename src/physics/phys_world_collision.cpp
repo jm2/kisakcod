@@ -1,4 +1,5 @@
 #include "phys_local.h"
+#include <database/db_validation.h>
 
 #include "ode/common.h"
 #include "ode/collision_kernel.h"
@@ -39,34 +40,18 @@ int __cdecl Phys_GetSurfaceFlagsFromBrush(const cbrush_t *brush, uint32_t brushS
 {
     if (!brush)
         MyAssertHandler(".\\physics\\phys_world_collision.cpp", 37, 0, "%s", "brush");
-    if (brushSideIndex >= brush->numsides + 6)
-        MyAssertHandler(
-            ".\\physics\\phys_world_collision.cpp",
-            38,
-            0,
-            "brushSideIndex doesn't index brush->numsides + 6\n\t%i not in [0, %i)",
+
+    uint32_t materialIndex = 0;
+    if (!cm.materials
+        || !db::validation::BrushMaterialIndex(
+            brush,
             brushSideIndex,
-            brush->numsides + 6);
-    if ((int)brushSideIndex >= 6)
-        return cm.materials[brush->sides[brushSideIndex - 6].materialNum].surfaceFlags;
-    if (brushSideIndex >= 6)
+            cm.numMaterials,
+            &materialIndex))
     {
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\physics\\phys_coll_local.h",
-            154,
-            0,
-            "axialSide doesn't index 6\n\t%i not in [0, %i)",
-            brushSideIndex,
-            6);
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\physics\\phys_coll_local.h",
-            161,
-            0,
-            "axialSide doesn't index 6\n\t%i not in [0, %i)",
-            brushSideIndex,
-            6);
+        return 0;
     }
-    return cm.materials[brush->axialMaterialNum[brushSideIndex & 1][brushSideIndex >> 1]].surfaceFlags;
+    return cm.materials[materialIndex].surfaceFlags;
 }
 
 void __cdecl CM_ForEachBrushInLeafBrushNode_r(

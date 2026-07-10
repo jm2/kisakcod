@@ -70,6 +70,136 @@ struct TestSurfaceCollisionTree
     std::array<TestSurfaceCollisionLeaf, 4> leafs = {};
 };
 
+struct TestBrushPlane
+{
+    float normal[3] = {};
+    float dist = 0.0f;
+};
+
+struct TestBrushSide
+{
+    TestBrushPlane *plane = nullptr;
+    std::uint32_t materialNum = 0;
+    std::int16_t firstAdjacentSideOffset = 0;
+    std::uint8_t edgeCount = 0;
+};
+
+struct TestBrushWrapper
+{
+    float mins[3] = {};
+    float maxs[3] = {};
+    std::uint32_t numsides = 0;
+    TestBrushSide *sides = nullptr;
+    std::int16_t axialMaterialNum[2][3] = {};
+    std::uint8_t *baseAdjacentSide = nullptr;
+    std::int16_t firstAdjacentSideOffsets[2][3] = {};
+    std::uint8_t edgeCount[2][3] = {};
+    std::int32_t totalEdgeCount = 0;
+    TestBrushPlane *planes = nullptr;
+};
+
+struct TestPhysMass
+{
+    float centerOfMass[3] = {};
+    float momentsOfInertia[3] = {};
+    float productsOfInertia[3] = {};
+};
+
+struct TestPhysGeomInfo
+{
+    TestBrushWrapper *brush = nullptr;
+    std::int32_t type = 0;
+    float orientation[3][3] = {};
+    float offset[3] = {};
+    float halfLengths[3] = {};
+};
+
+struct TestPhysGeomList
+{
+    std::uint32_t count = 0;
+    TestPhysGeomInfo *geoms = nullptr;
+    TestPhysMass mass = {};
+};
+
+struct TestPhysicsFixture
+{
+    std::array<TestBrushPlane, 2> planes = {};
+    std::array<TestBrushSide, 2> sides = {};
+    std::array<std::uint8_t, 8> adjacency = {};
+    TestBrushWrapper brush = {};
+    std::array<TestPhysGeomInfo, 3> geoms = {};
+    TestPhysGeomList list = {};
+};
+
+void PopulateValidPhysicsFixture(TestPhysicsFixture *fixture)
+{
+    *fixture = {};
+    fixture->brush.mins[0] = -1.0f;
+    fixture->brush.mins[1] = -2.0f;
+    fixture->brush.mins[2] = -3.0f;
+    fixture->brush.maxs[0] = 1.0f;
+    fixture->brush.maxs[1] = 2.0f;
+    fixture->brush.maxs[2] = 3.0f;
+    fixture->brush.numsides =
+        static_cast<std::uint32_t>(fixture->sides.size());
+    fixture->brush.sides = fixture->sides.data();
+    fixture->brush.baseAdjacentSide = fixture->adjacency.data();
+    fixture->brush.totalEdgeCount =
+        static_cast<std::int32_t>(fixture->adjacency.size());
+    fixture->brush.planes = fixture->planes.data();
+
+    std::uint8_t edgeIndex = 0;
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        for (std::uint32_t direction = 0; direction < 2; ++direction)
+        {
+            fixture->brush.firstAdjacentSideOffsets[direction][axis] =
+                edgeIndex;
+            fixture->brush.edgeCount[direction][axis] = 1;
+            fixture->adjacency[edgeIndex] = edgeIndex;
+            ++edgeIndex;
+        }
+    }
+    for (std::size_t sideIndex = 0;
+        sideIndex < fixture->sides.size();
+        ++sideIndex)
+    {
+        fixture->planes[sideIndex].normal[sideIndex] = 1.0f;
+        fixture->planes[sideIndex].dist =
+            1.0f + static_cast<float>(sideIndex);
+        fixture->sides[sideIndex].plane = &fixture->planes[sideIndex];
+        fixture->sides[sideIndex].firstAdjacentSideOffset = edgeIndex;
+        fixture->sides[sideIndex].edgeCount = 1;
+        fixture->adjacency[edgeIndex] = edgeIndex;
+        ++edgeIndex;
+    }
+
+    fixture->geoms[0].type = 0;
+    fixture->geoms[0].brush = &fixture->brush;
+    fixture->geoms[1].type = 1;
+    fixture->geoms[1].halfLengths[0] = 1.0f;
+    fixture->geoms[1].halfLengths[1] = 2.0f;
+    fixture->geoms[1].halfLengths[2] = 3.0f;
+    fixture->geoms[2].type = 4;
+    fixture->geoms[2].halfLengths[0] = 2.0f;
+    fixture->geoms[2].halfLengths[1] = 4.0f;
+    for (TestPhysGeomInfo &geom : fixture->geoms)
+    {
+        geom.orientation[0][0] = 1.0f;
+        geom.orientation[1][1] = 1.0f;
+        geom.orientation[2][2] = 1.0f;
+    }
+
+    fixture->list.count =
+        static_cast<std::uint32_t>(fixture->geoms.size());
+    fixture->list.geoms = fixture->geoms.data();
+    fixture->list.mass.centerOfMass[0] = 0.5f;
+    fixture->list.mass.momentsOfInertia[0] = 1.0f;
+    fixture->list.mass.momentsOfInertia[1] = 2.0f;
+    fixture->list.mass.momentsOfInertia[2] = 3.0f;
+    fixture->list.mass.productsOfInertia[0] = 0.25f;
+}
+
 TestSurfaceCollisionTree ValidTestSurfaceCollisionTree()
 {
     TestSurfaceCollisionTree tree = {};
@@ -1844,6 +1974,522 @@ int main()
     Expect(!db::validation::AllU16Below(invalidIndices, 2, 4), "out-of-range uint16 index rejected");
     Expect(db::validation::AllU16Below(nullptr, 0, 0), "empty uint16 index list accepted");
     Expect(!db::validation::AllU16Below(nullptr, 1, 4), "missing uint16 index list rejected");
+
+    std::int32_t brushSideBytes = -1;
+    std::int32_t brushPlaneBytes = -1;
+    std::int32_t brushAdjacencyBytes = -1;
+    Expect(
+        db::validation::BrushWrapperLayoutValid(
+            true,
+            true,
+            2,
+            true,
+            8,
+            &brushSideBytes,
+            &brushPlaneBytes,
+            &brushAdjacencyBytes)
+            && brushSideBytes == 24
+            && brushPlaneBytes == 40
+            && brushAdjacencyBytes == 8,
+        "bounded brush child layout accepted");
+    Expect(
+        db::validation::BrushWrapperLayoutValid(
+            true,
+            true,
+            db::validation::kMaxBrushNonaxialSides,
+            false,
+            0,
+            &brushSideBytes,
+            &brushPlaneBytes,
+            &brushAdjacencyBytes)
+            && brushSideBytes == 312
+            && brushPlaneBytes == 520,
+        "largest source-compatible brush side layout accepted");
+    Expect(
+        db::validation::BrushWrapperLayoutValid(
+            false,
+            false,
+            0,
+            true,
+            db::validation::kMaxBrushAdjacencyEntries,
+            &brushSideBytes,
+            &brushPlaneBytes,
+            &brushAdjacencyBytes)
+            && brushAdjacencyBytes
+                == db::validation::kMaxBrushAdjacencyEntries,
+        "largest source-compatible brush adjacency layout accepted");
+    Expect(
+        db::validation::BrushWrapperLayoutValid(
+            false,
+            false,
+            0,
+            false,
+            0,
+            &brushSideBytes,
+            &brushPlaneBytes,
+            &brushAdjacencyBytes),
+        "empty brush child layout accepted");
+    Expect(
+        db::validation::BrushWrapperLayoutValid(
+            true,
+            true,
+            0,
+            true,
+            0,
+            &brushSideBytes,
+            &brushPlaneBytes,
+            &brushAdjacencyBytes),
+        "present empty brush child spans accepted");
+    Expect(
+        !db::validation::BrushWrapperLayoutValid(
+            false,
+            true,
+            1,
+            true,
+            8,
+            &brushSideBytes,
+            &brushPlaneBytes,
+            &brushAdjacencyBytes),
+        "missing nonempty brush sides rejected");
+    Expect(
+        !db::validation::BrushWrapperLayoutValid(
+            true,
+            false,
+            1,
+            true,
+            8,
+            &brushSideBytes,
+            &brushPlaneBytes,
+            &brushAdjacencyBytes),
+        "missing nonempty brush planes rejected");
+    Expect(
+        !db::validation::BrushWrapperLayoutValid(
+            true,
+            true,
+            1,
+            false,
+            1,
+            &brushSideBytes,
+            &brushPlaneBytes,
+            &brushAdjacencyBytes),
+        "missing nonempty brush adjacency rejected");
+    Expect(
+        !db::validation::BrushWrapperLayoutValid(
+            true,
+            true,
+            1,
+            true,
+            -1,
+            &brushSideBytes,
+            &brushPlaneBytes,
+            &brushAdjacencyBytes),
+        "negative brush adjacency count rejected");
+    Expect(
+        !db::validation::BrushWrapperLayoutValid(
+            true,
+            true,
+            db::validation::kMaxBrushNonaxialSides + 1,
+            true,
+            1,
+            &brushSideBytes,
+            &brushPlaneBytes,
+            &brushAdjacencyBytes),
+        "brush side count beyond the source builder limit rejected");
+    Expect(
+        !db::validation::BrushWrapperLayoutValid(
+            true,
+            true,
+            1,
+            true,
+            db::validation::kMaxBrushAdjacencyEntries + 1,
+            &brushSideBytes,
+            &brushPlaneBytes,
+            &brushAdjacencyBytes),
+        "brush adjacency count beyond the source builder limit rejected");
+    Expect(
+        !db::validation::BrushWrapperLayoutValid(
+            true,
+            true,
+            1,
+            true,
+            1,
+            nullptr,
+            &brushPlaneBytes,
+            &brushAdjacencyBytes),
+        "brush layout requires every extent output");
+
+    Expect(
+        db::validation::BrushAdjacencySpanValid(3, 5, 8),
+        "brush adjacency span ending at the extent accepted");
+    Expect(
+        db::validation::BrushAdjacencySpanValid(0, 0, 0),
+        "empty brush adjacency span accepted");
+    Expect(
+        !db::validation::BrushAdjacencySpanValid(-1, 1, 8),
+        "negative brush adjacency offset rejected");
+    Expect(
+        !db::validation::BrushAdjacencySpanValid(9, 0, 8),
+        "brush adjacency offset beyond the extent rejected");
+    Expect(
+        !db::validation::BrushAdjacencySpanValid(7, 2, 8),
+        "brush adjacency span beyond the extent rejected");
+
+    std::array<TestBrushPlane,
+        db::validation::kMaxBrushNonaxialSides> maximumBrushPlanes = {};
+    std::array<TestBrushSide,
+        db::validation::kMaxBrushNonaxialSides> maximumBrushSides = {};
+    std::array<std::uint8_t,
+        db::validation::kMaxBrushAdjacencyEntries> maximumBrushAdjacency = {};
+    TestBrushWrapper maximumBrush = {};
+    maximumBrush.numsides = db::validation::kMaxBrushNonaxialSides;
+    maximumBrush.sides = maximumBrushSides.data();
+    maximumBrush.baseAdjacentSide = maximumBrushAdjacency.data();
+    maximumBrush.totalEdgeCount =
+        db::validation::kMaxBrushAdjacencyEntries;
+    maximumBrush.planes = maximumBrushPlanes.data();
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        for (std::uint32_t direction = 0; direction < 2; ++direction)
+        {
+            const std::uint32_t axialSide = axis * 2 + direction;
+            maximumBrush.firstAdjacentSideOffsets[direction][axis] =
+                static_cast<std::int16_t>(
+                    axialSide * db::validation::kMaxBrushWindingEdges);
+            maximumBrush.edgeCount[direction][axis] =
+                static_cast<std::uint8_t>(
+                    db::validation::kMaxBrushWindingEdges);
+        }
+    }
+    for (std::size_t sideIndex = 0;
+        sideIndex < maximumBrushSides.size();
+        ++sideIndex)
+    {
+        maximumBrushSides[sideIndex].plane = &maximumBrushPlanes[sideIndex];
+        maximumBrushSides[sideIndex].firstAdjacentSideOffset =
+            static_cast<std::int16_t>(
+                (sideIndex + 6) * db::validation::kMaxBrushWindingEdges);
+        maximumBrushSides[sideIndex].edgeCount =
+            static_cast<std::uint8_t>(
+                db::validation::kMaxBrushWindingEdges);
+        maximumBrushPlanes[sideIndex].normal[sideIndex % 3] = 1.0f;
+    }
+    for (std::size_t edgeIndex = 0;
+        edgeIndex < maximumBrushAdjacency.size();
+        ++edgeIndex)
+    {
+        maximumBrushAdjacency[edgeIndex] =
+            static_cast<std::uint8_t>(edgeIndex % 32);
+    }
+    Expect(
+        db::validation::BrushWrapperRuntimeValid(maximumBrush),
+        "largest source-compatible brush runtime graph accepted");
+    maximumBrushAdjacency.back() = 32;
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(maximumBrush),
+        "largest brush graph still enforces its final adjacency identity");
+
+    TestPhysicsFixture physics = {};
+    PopulateValidPhysicsFixture(&physics);
+    std::uint32_t brushMaterialIndex = UINT32_MAX;
+    Expect(
+        db::validation::BrushMaterialIndex(
+            &physics.brush,
+            0,
+            1,
+            &brushMaterialIndex)
+            && brushMaterialIndex == 0,
+        "bounded axial brush material accepted");
+    Expect(
+        db::validation::BrushMaterialIndex(
+            &physics.brush,
+            6,
+            1,
+            &brushMaterialIndex)
+            && brushMaterialIndex == 0,
+        "bounded nonaxial brush material accepted");
+    Expect(
+        !db::validation::BrushMaterialIndex(
+            &physics.brush,
+            8,
+            1,
+            &brushMaterialIndex),
+        "out-of-range brush side rejected before material access");
+    Expect(
+        !db::validation::BrushMaterialIndex(
+            &physics.brush,
+            0,
+            0,
+            &brushMaterialIndex),
+        "missing brush material table rejected");
+    Expect(
+        !db::validation::BrushMaterialIndex(
+            &physics.brush,
+            0,
+            1,
+            nullptr),
+        "brush material lookup requires an output");
+    physics.brush.axialMaterialNum[0][0] = -1;
+    Expect(
+        !db::validation::BrushMaterialIndex(
+            &physics.brush,
+            0,
+            1,
+            &brushMaterialIndex),
+        "negative axial brush material rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.brush.axialMaterialNum[0][0] = 1;
+    Expect(
+        !db::validation::BrushMaterialIndex(
+            &physics.brush,
+            0,
+            1,
+            &brushMaterialIndex),
+        "oversized axial brush material rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.sides[0].materialNum = 1;
+    Expect(
+        !db::validation::BrushMaterialIndex(
+            &physics.brush,
+            6,
+            1,
+            &brushMaterialIndex),
+        "oversized nonaxial brush material rejected");
+    PopulateValidPhysicsFixture(&physics);
+    Expect(
+        db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "valid brush runtime graph accepted");
+    Expect(
+        db::validation::PhysGeomListRuntimeValid(physics.list),
+        "valid brush, box, and cylinder geometry list accepted");
+
+    PopulateValidPhysicsFixture(&physics);
+    physics.brush.mins[0] = physics.brush.maxs[0];
+    Expect(
+        db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "zero-width but ordered brush bound accepted");
+    PopulateValidPhysicsFixture(&physics);
+    physics.brush.mins[0] = physics.brush.maxs[0] + 1.0f;
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "inverted brush bound rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.brush.maxs[1] =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "non-finite brush bound rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.sides[1].plane = &physics.planes[0];
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "brush side pointing at the wrong owned plane rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.planes[0].normal[2] =
+        (std::numeric_limits<float>::infinity)();
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "non-finite brush plane rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.brush.axialMaterialNum[1][2] = -1;
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "nonzero axial model-brush material rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.sides[0].materialNum = 1;
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "nonzero nonaxial model-brush material rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.brush.firstAdjacentSideOffsets[0][0] = -1;
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "negative axial adjacency offset rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.brush.firstAdjacentSideOffsets[1][2] = 8;
+    physics.brush.edgeCount[1][2] = 1;
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "axial adjacency span beyond the table rejected");
+    PopulateValidPhysicsFixture(&physics);
+    std::array<std::uint8_t, 13> longAxialAdjacency = {};
+    physics.brush.baseAdjacentSide = longAxialAdjacency.data();
+    physics.brush.totalEdgeCount =
+        static_cast<std::int32_t>(longAxialAdjacency.size());
+    physics.brush.edgeCount[0][1] =
+        static_cast<std::uint8_t>(
+            db::validation::kMaxBrushWindingEdges + 1);
+    physics.brush.firstAdjacentSideOffsets[0][1] = 0;
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "axial winding beyond the source edge limit rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.sides[0].firstAdjacentSideOffset = -1;
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "negative nonaxial adjacency offset rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.sides[1].firstAdjacentSideOffset = 8;
+    physics.sides[1].edgeCount = 1;
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "nonaxial adjacency span beyond the table rejected");
+    PopulateValidPhysicsFixture(&physics);
+    std::array<std::uint8_t, 20> longSideAdjacency = {};
+    physics.brush.baseAdjacentSide = longSideAdjacency.data();
+    physics.brush.totalEdgeCount =
+        static_cast<std::int32_t>(longSideAdjacency.size());
+    physics.sides[0].edgeCount =
+        static_cast<std::uint8_t>(
+            db::validation::kMaxBrushWindingEdges + 1);
+    physics.sides[0].firstAdjacentSideOffset = 0;
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "nonaxial winding beyond the source edge limit rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.adjacency[7] = 8;
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "adjacent side outside the axial and nonaxial side set rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.brush.baseAdjacentSide = nullptr;
+    Expect(
+        !db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "missing nonempty brush adjacency table rejected");
+
+    PopulateValidPhysicsFixture(&physics);
+    physics.brush.totalEdgeCount = 0;
+    physics.brush.baseAdjacentSide = nullptr;
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        for (std::uint32_t direction = 0; direction < 2; ++direction)
+        {
+            physics.brush.firstAdjacentSideOffsets[direction][axis] = 0;
+            physics.brush.edgeCount[direction][axis] = 0;
+        }
+    }
+    for (TestBrushSide &side : physics.sides)
+    {
+        side.firstAdjacentSideOffset = 0;
+        side.edgeCount = 0;
+    }
+    Expect(
+        db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "brush with consistently empty edge spans accepted");
+
+    PopulateValidPhysicsFixture(&physics);
+    physics.brush.numsides = 0;
+    physics.brush.sides = nullptr;
+    physics.brush.planes = nullptr;
+    physics.brush.totalEdgeCount = 6;
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        for (std::uint32_t direction = 0; direction < 2; ++direction)
+        {
+            const std::uint32_t index = axis * 2 + direction;
+            physics.brush.firstAdjacentSideOffsets[direction][axis] =
+                static_cast<std::int16_t>(index);
+            physics.brush.edgeCount[direction][axis] = 1;
+            physics.adjacency[index] = static_cast<std::uint8_t>(index);
+        }
+    }
+    Expect(
+        db::validation::BrushWrapperRuntimeValid(physics.brush),
+        "axial-only brush graph accepted");
+
+    std::int32_t physGeomBytes = -1;
+    Expect(
+        db::validation::PhysGeomListLayoutValid(
+            true,
+            3,
+            &physGeomBytes)
+            && physGeomBytes == 204,
+        "bounded physics geometry list accepted");
+    Expect(
+        !db::validation::PhysGeomListLayoutValid(
+            false,
+            0,
+            &physGeomBytes),
+        "empty physics geometry list rejected");
+    Expect(
+        !db::validation::PhysGeomListLayoutValid(
+            false,
+            1,
+            &physGeomBytes),
+        "missing nonempty physics geometry list rejected");
+    Expect(
+        !db::validation::PhysGeomListLayoutValid(
+            true,
+            (std::numeric_limits<std::uint32_t>::max)(),
+            &physGeomBytes),
+        "oversized physics geometry list rejected");
+    Expect(
+        !db::validation::PhysGeomListLayoutValid(true, 1, nullptr),
+        "physics geometry layout requires an extent output");
+
+    PopulateValidPhysicsFixture(&physics);
+    physics.geoms[0].type = 1;
+    Expect(
+        !db::validation::PhysGeomInfoRuntimeValid(physics.geoms[0]),
+        "primitive geometry carrying a brush rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.geoms[0].brush = nullptr;
+    Expect(
+        !db::validation::PhysGeomInfoRuntimeValid(physics.geoms[0]),
+        "brush geometry missing its brush rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.geoms[1].type = 2;
+    Expect(
+        !db::validation::PhysGeomInfoRuntimeValid(physics.geoms[1]),
+        "unknown physics geometry type rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.geoms[1].halfLengths[2] = 0.0f;
+    Expect(
+        !db::validation::PhysGeomInfoRuntimeValid(physics.geoms[1]),
+        "non-positive used box dimension rejected");
+    PopulateValidPhysicsFixture(&physics);
+    Expect(
+        physics.geoms[2].halfLengths[2] == 0.0f
+            && db::validation::PhysGeomInfoRuntimeValid(physics.geoms[2]),
+        "unused zero cylinder dimension accepted");
+    physics.geoms[2].halfLengths[0] = -1.0f;
+    Expect(
+        !db::validation::PhysGeomInfoRuntimeValid(physics.geoms[2]),
+        "non-positive cylinder half-height rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.geoms[1].orientation[2][0] =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        !db::validation::PhysGeomInfoRuntimeValid(physics.geoms[1]),
+        "non-finite primitive orientation rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.geoms[1].offset[1] =
+        (std::numeric_limits<float>::infinity)();
+    Expect(
+        !db::validation::PhysGeomInfoRuntimeValid(physics.geoms[1]),
+        "non-finite primitive offset rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.geoms[1].halfLengths[0] =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        !db::validation::PhysGeomInfoRuntimeValid(physics.geoms[1]),
+        "non-finite primitive dimensions rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.list.mass.productsOfInertia[2] =
+        (std::numeric_limits<float>::infinity)();
+    Expect(
+        !db::validation::PhysGeomListRuntimeValid(physics.list),
+        "non-finite physics mass rejected");
+    PopulateValidPhysicsFixture(&physics);
+    physics.brush.planes[0].dist =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        !db::validation::PhysGeomListRuntimeValid(physics.list),
+        "invalid nested brush rejects the physics geometry list");
+
+    TestPhysGeomList emptyPhysList = {};
+    Expect(
+        !db::validation::PhysGeomListRuntimeValid(emptyPhysList),
+        "empty physics geometry runtime list rejected");
 
     std::uint32_t spanBytes = UINT32_MAX;
     Expect(db::validation::CheckedSpanBytes(0, 20, &spanBytes) && spanBytes == 0, "zero span size");

@@ -627,6 +627,97 @@ require_source_contains(
     "database/db_load.cpp"
     "XSurfaceTriangleIndicesValid("
     "surface triangle indices must remain inside the completed vertex span")
+require_source_contains(
+    "database/db_validation.h"
+    "kMaxBrushNonaxialSides = 26"
+    "model physics brushes must retain the source builder side budget")
+require_source_contains(
+    "database/db_validation.h"
+    "kMaxBrushAdjacencyEntries = 32 * 12"
+    "model physics brush adjacency must retain the source builder edge budget")
+require_source_contains(
+    "database/db_validation.h"
+    "side.plane != &brush.planes[sideIndex]"
+    "completed physics brush sides must reference their indexed owned planes")
+require_source_contains(
+    "database/db_validation.h"
+    "brush.axialMaterialNum[direction][axis] != 0"
+    "model physics brushes must retain their source-generated zero axial materials")
+require_source_contains(
+    "database/db_validation.h"
+    "side.materialNum != 0"
+    "model physics brush sides must retain their source-generated zero materials")
+require_source_contains(
+    "database/db_validation.h"
+    "BrushMaterialIndex("
+    "runtime brush materials must use a portable bounds-checked selector")
+require_source_contains(
+    "physics/phys_world_collision.cpp"
+    "if (!cm.materials
+        || !db::validation::BrushMaterialIndex("
+    "physics collision must validate brush and material indices before table access")
+require_source_contains(
+    "database/db_validation.h"
+    "PhysGeomInfoRuntimeValid("
+    "physics geometry tags, primitive dimensions, and nested brushes must validate")
+require_source_contains(
+    "database/db_validation.h"
+    "PhysMassFinite(list.mass)"
+    "physics mass properties must be finite before publication")
+require_source_contains(
+    "database/db_load.cpp"
+    "disk32::PointerToken sidePlaneTokens["
+    "physics brush-side forward tokens must be preserved outside native pointer fields")
+require_source_ordered(
+    "database/db_load.cpp"
+    "Load_cplane_tArray(
+                1,
+                static_cast<int32_t>(varBrushWrapper->numsides));"
+    "const db::relocation::Status status = DB_ResolveOffsetBytes(
+            token,"
+    "physics brush-side forward references must wait for the wrapper plane array")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_RegisterPointerSlot(
+                varPhysGeomInfo->brush,
+                DBAliasKind::BrushWrapper)"
+    "if (!Load_BrushWrapper(1))"
+    "physics brush provenance must register before child fixups")
+require_source_ordered(
+    "database/db_load.cpp"
+    "if (!Load_BrushWrapper(1))"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::BrushWrapper"
+    "physics brush provenance must publish after graph validation")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_ResolveCompletedPointer(
+                &varPhysGeomInfo->brush,
+                DBAliasKind::BrushWrapper,
+                disk32::kBrushWrapperBytes"
+    "shared physics brushes must resolve through exact typed provenance")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_RegisterPointerSlot(
+                varXModel->physGeoms,
+                DBAliasKind::PhysGeomList)"
+    "if (!Load_PhysGeomList(1)"
+    "physics geometry-list provenance must register before nested brush loading")
+require_source_ordered(
+    "database/db_load.cpp"
+    "if (!Load_PhysGeomList(1)"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::PhysGeomList"
+    "physics geometry lists must publish only after nested validation")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_ResolveCompletedPointer(
+                &varXModel->physGeoms,
+                DBAliasKind::PhysGeomList,
+                disk32::kPhysGeomListBytes"
+    "shared physics geometry lists must resolve through exact typed provenance")
 require_source_ordered(
     "xanim/xmodel.cpp"
     "if (nextNodeQueueEnd == locals->nodeQueueBegin)"
@@ -779,11 +870,17 @@ require_source_ordered(
 require_source_ordered(
     "database/db_load.cpp"
     "Load_r_index16_tArray(1, indexCount)"
-    "if (!DB_ValidateLoadedXSurface(varXSurface, deformed))"
+    "if (!DB_ValidateLoadedXSurface(
+            varXSurface,
+            deformed,
+            varXModel ? varXModel->numBones : 0))"
     "rigid-list validation must wait for surface triangle loading")
 require_source_ordered(
     "database/db_load.cpp"
-    "if (!DB_ValidateLoadedXSurface(varXSurface, deformed))"
+    "if (!DB_ValidateLoadedXSurface(
+            varXSurface,
+            deformed,
+            varXModel ? varXModel->numBones : 0))"
     "DB_CompleteObject(
             completedRigidLists,
             DBAliasKind::XRigidVertListArray"
@@ -1792,9 +1889,9 @@ file(STRINGS
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 8)
+if (NOT _legacy_direct_offset_count EQUAL 5)
     message(FATAL_ERROR
-        "Expected exactly 8 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 5 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 
