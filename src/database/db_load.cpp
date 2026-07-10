@@ -2375,31 +2375,39 @@ void __cdecl Load_XBlendInfoArray(bool atStreamStart, int32_t count)
 void __cdecl Load_XSurfaceVertexInfo(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varXSurfaceVertexInfo, 12);
+    const int32_t blend7 = DB_CheckedCountProduct(
+        7, varXSurfaceVertexInfo->vertCount[3], "surface blend weights");
+    const int32_t blend5 = DB_CheckedCountProduct(
+        5, varXSurfaceVertexInfo->vertCount[2], "surface blend weights");
+    const int32_t blend3 = DB_CheckedCountProduct(
+        3, varXSurfaceVertexInfo->vertCount[1], "surface blend weights");
+    const int32_t blendHigh = DB_CheckedCountSum(
+        blend7, blend5, "surface blend weights");
+    const int32_t blendNonRigid = DB_CheckedCountSum(
+        blendHigh, blend3, "surface blend weights");
+    const int32_t blendCount = DB_CheckedCountSum(
+        blendNonRigid,
+        varXSurfaceVertexInfo->vertCount[0],
+        "surface blend weights");
+    const uint32_t blendByteCount = DB_CheckedDirectSpanBytes(
+        blendCount,
+        2,
+        "surface blend weights");
     if (varXSurfaceVertexInfo->vertsBlend)
     {
         if (varXSurfaceVertexInfo->vertsBlend == (uint16_t *)-1)
         {
             varXSurfaceVertexInfo->vertsBlend = (uint16_t *)AllocLoad_XBlendInfo();
             varXBlendInfo = varXSurfaceVertexInfo->vertsBlend;
-            const int32_t blend7 = DB_CheckedCountProduct(
-                7, varXSurfaceVertexInfo->vertCount[3], "surface blend weights");
-            const int32_t blend5 = DB_CheckedCountProduct(
-                5, varXSurfaceVertexInfo->vertCount[2], "surface blend weights");
-            const int32_t blend3 = DB_CheckedCountProduct(
-                3, varXSurfaceVertexInfo->vertCount[1], "surface blend weights");
-            const int32_t blendHigh = DB_CheckedCountSum(
-                blend7, blend5, "surface blend weights");
-            const int32_t blendNonRigid = DB_CheckedCountSum(
-                blendHigh, blend3, "surface blend weights");
-            const int32_t blendCount = DB_CheckedCountSum(
-                blendNonRigid,
-                varXSurfaceVertexInfo->vertCount[0],
-                "surface blend weights");
             Load_XBlendInfoArray(1, blendCount);
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varXSurfaceVertexInfo->vertsBlend);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varXSurfaceVertexInfo->vertsBlend,
+                blendByteCount,
+                2,
+                kDirectBlock4);
         }
     }
 }
@@ -4223,6 +4231,10 @@ void __cdecl Load_XModel(bool atStreamStart)
         varXModel->numBones,
         32,
         "model base matrices");
+    const uint32_t boneNameByteCount = DB_CheckedDirectSpanBytes(
+        varXModel->numBones,
+        2,
+        "model bone names");
     DB_PushStreamPos(4);
     varXString = &varXModel->name;
     Load_XString(0);
@@ -4236,7 +4248,11 @@ void __cdecl Load_XModel(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varXModel->boneNames);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varXModel->boneNames,
+                boneNameByteCount,
+                2,
+                kDirectBlock4);
         }
     }
     if (varXModel->parentList)
@@ -5438,7 +5454,11 @@ void __cdecl Load_cNode_t(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varcNode_t);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varcNode_t->plane,
+                20,
+                4,
+                kDirectBlock4);
         }
     }
 }
@@ -5466,6 +5486,10 @@ void __cdecl Load_cLeaf_tArray(bool atStreamStart, int32_t count)
 void __cdecl Load_cLeafBrushNodeLeaf_t(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varcLeafBrushNodeLeaf_t, 4);
+    const uint32_t brushIndexByteCount = DB_CheckedDirectSpanBytes(
+        varcLeafBrushNode_t->leafBrushCount,
+        2,
+        "leaf-brush node indices");
     if (varcLeafBrushNodeLeaf_t->brushes)
     {
         if (varcLeafBrushNodeLeaf_t->brushes == (uint16_t *)-1)
@@ -5476,7 +5500,11 @@ void __cdecl Load_cLeafBrushNodeLeaf_t(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varcLeafBrushNodeLeaf_t);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varcLeafBrushNodeLeaf_t->brushes,
+                brushIndexByteCount,
+                2,
+                kDirectBlock4);
         }
     }
 }
@@ -5538,17 +5566,25 @@ void __cdecl Load_CollisionBorderArray(bool atStreamStart, int32_t count)
 void __cdecl Load_CollisionPartition(bool atStreamStart)
 {
     Load_Stream(atStreamStart, &varCollisionPartition->triCount, 12);
+    const uint32_t borderByteCount = DB_CheckedDirectSpanBytes(
+        varCollisionPartition->borderCount,
+        28,
+        "collision partition borders");
     if (varCollisionPartition->borders)
     {
         if (varCollisionPartition->borders == (CollisionBorder *)-1)
         {
             varCollisionPartition->borders = (CollisionBorder *)AllocLoad_FxElemVisStateSample();
             varCollisionBorder = varCollisionPartition->borders;
-            Load_CollisionBorder(1);
+            Load_CollisionBorderArray(1, varCollisionPartition->borderCount);
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varCollisionPartition->borders);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varCollisionPartition->borders,
+                borderByteCount,
+                4,
+                kDirectBlock4);
         }
     }
 }

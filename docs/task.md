@@ -8,15 +8,14 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: resume the remaining 22 legacy direct references, then add a Windows x86
+- Active work: resume the remaining 17 legacy direct references, then add a Windows x86
   headless compile/link CI leg.
-- Last completed batch: fast-file and raw-BSP graphics-world AABB trees now receive iterative,
-  linear-time validation before renderer traversal. Child byte offsets, exact ownership,
-  forward topology, depth, finite/nonempty bounds, parent/child surface partitions, cell-root
-  coverage, sorted indices, brush-model ranges, and static-model index/count widths are bounded.
-  Raw no-decal output is preflighted before writing. Load-object producers now use one canonical
-  byte-offset accessor/setter and native node sizes, fixing the prior byte-versus-element unit
-  mismatch while bounding dynamic subdivision and flattening.
+- Last completed batch: five more direct fast-file references now require their complete
+  materialized block-4 span: surface blend weights, model bone-name handles, collision-node
+  planes, leaf-brush indices, and collision-partition borders. Inline collision partitions now
+  load all `borderCount` borders instead of only the first. The brush-side plane reference remains
+  explicitly legacy because physics brush wrappers contain an authentic forward reference to
+  their later plane array; that site needs deferred fixups rather than an eager bounded resolver.
 - Portable validation: 12/12 tests pass locally. The production relocation registry is
   also strict-warning clean under GCC/Clang and GCC ILP32 syntax checking; ASan/UBSan
   pass locally with leak detection disabled because LeakSanitizer cannot run under the
@@ -25,8 +24,8 @@ work item changes. Do not create session-specific handoff files.
 - Windows validation: callback-repair CI run 29074533150 passed all eight jobs. World-AABB CI
   run 29075042200 passed all three x86 engine builds plus Linux amd64/arm64 and macOS arm64;
   its two Windows portable jobs rejected one signed/unsigned depth-limit comparison under
-  warnings-as-errors. This batch makes that comparison explicitly unsigned; its follow-up CI
-  run is the current gate.
+  warnings-as-errors. Repair run 29096212752 now passes all five portable targets; its three x86
+  engine builds are still running, and the direct-reference batch requires its own run after push.
 
 ## Milestone status
 
@@ -34,10 +33,10 @@ work item changes. Do not create session-specific handoff files.
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 builds; five native utility-test runners; engine runtime smoke and release workflows remain unexercised. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 28/50 bounded direct references, pre-publication material graph/state validation, bounded runtime material consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures and 22 direct relocations remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 33/50 bounded direct references, pre-publication material graph/state validation, bounded runtime material consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures and 17 direct relocations remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
-| M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, 19 full-span raw/POD fields, exact registered direct strings, and six exact completed material object types exist; packed mirrors, 22 direct offsets, broader completed-object relocation, and runtime widening remain. |
+| M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings, and six exact completed material object types exist; packed mirrors, 17 direct offsets, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
 ## Target matrix
@@ -53,7 +52,8 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Resume the remaining 22 raw/completed-object relocations.
+1. Resume the remaining 17 raw/completed-object relocations, starting with exact completion
+   provenance for sound objects, weapon bounce-sound tables, the world sun light, and string tables.
 2. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
 3. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
 4. Classify and burn down the 255 direct and four formula-based ABI layout assertions.
@@ -100,10 +100,12 @@ work item changes. Do not create session-specific handoff files.
 - Weapon registration still protects the 128-entry `bg_weaponDefs` table only with a
   release-disabled assertion after incrementing the index. Single-player's 128-entry
   editable accuracy-graph registry has the same assertion-only overflow pattern.
-- Twenty-two explicitly labeled legacy direct fast-file relocations still prove only
-  one destination byte is in-bounds. Nineteen raw/POD fields, three string/holder fields,
-  and six completed material object types now enforce bounded materialization or exact typed
-  completion, but broader object/type provenance plus runtime widening remain M5 requirements.
+- Seventeen explicitly labeled legacy direct fast-file relocations still prove only
+  one destination byte is in-bounds. Twenty-three raw/POD fields, three string/holder fields,
+  six completed material object types, and one completed-but-not-yet-typed bone-name array now
+  enforce bounded materialization or exact typed completion, but broader object/type provenance
+  plus runtime widening remain M5 requirements. Physics brush-side plane tokens include a known
+  forward reference and therefore need a deferred-fixup design before bounded resolution.
   Already-materialized and registered-start enforcement intentionally rejects
   raw/string/completed-object forward references;
   compatibility still needs retail fast-file fixtures. Alias and direct provenance also

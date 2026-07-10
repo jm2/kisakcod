@@ -266,6 +266,45 @@ require_source_contains(
     "world planes must use their full aligned block-4 span")
 require_source_contains(
     "database/db_load.cpp"
+    "(uint32_t*)&varXSurfaceVertexInfo->vertsBlend,
+                blendByteCount,
+                2,
+                kDirectBlock4"
+    "surface blend weights must use their full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varXModel->boneNames,
+                boneNameByteCount,
+                2,
+                kDirectBlock4"
+    "model bone names must use their full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varcNode_t->plane,
+                20,
+                4,
+                kDirectBlock4"
+    "collision-node planes must use their full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varcLeafBrushNodeLeaf_t->brushes,
+                brushIndexByteCount,
+                2,
+                kDirectBlock4"
+    "leaf-brush indices must use their full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
+    "Load_CollisionBorderArray(1, varCollisionPartition->borderCount)"
+    "inline collision partitions must load their complete border array")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varCollisionPartition->borders,
+                borderByteCount,
+                4,
+                kDirectBlock4"
+    "collision partition borders must use their full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
     "(uint32_t*)&varFont->glyphs,
                 glyphByteCount,
                 4,
@@ -1449,9 +1488,9 @@ file(STRINGS
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 22)
+if (NOT _legacy_direct_offset_count EQUAL 17)
     message(FATAL_ERROR
-        "Expected exactly 22 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 17 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 
