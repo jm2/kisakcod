@@ -440,6 +440,7 @@ bool __cdecl DB_CompleteObject(
     case DBAliasKind::WeaponBounceSoundTable:
     case DBAliasKind::GfxLight:
     case DBAliasKind::StringTable:
+    case DBAliasKind::XModelPieces:
         if (!db::relocation::CompletedSharedObjectSchemaValid(
                 expectedKind,
                 metadata,

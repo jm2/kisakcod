@@ -37,6 +37,8 @@ constexpr uint32_t kWeaponBounceSoundTableBytes =
     kWeaponBounceSoundCount * sizeof(uint32_t);
 constexpr uint32_t kGfxLightBytes = 64;
 constexpr uint32_t kStringTableBytes = 16;
+constexpr uint32_t kXModelPieceBytes = 16;
+constexpr uint32_t kXModelPiecesBytes = 12;
 
 struct PointerToken
 {

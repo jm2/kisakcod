@@ -112,7 +112,10 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
     float worldOffset[3]; // [esp+60h] [ebp-Ch] BYREF
 
     if (!model)
+    {
         MyAssertHandler(".\\DynEntity\\DynEntity_pieces.cpp", 131, 0, "%s", "model");
+        return false;
+    }
     XModelGetBounds(model, mins, maxs);
     if (maxs[0] == mins[0] || maxs[1] == mins[1] || maxs[2] == mins[2])
     {
@@ -121,6 +124,14 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
     }
     else
     {
+        if (!model->physPreset)
+        {
+            Com_PrintWarning(
+                1,
+                "Failed to spawn pieces model '%s'.  It is missing a physics preset.\n",
+                model->name ? model->name : "<unnamed>");
+            return false;
+        }
         MatrixTransformVector(offset, *(const mat3x3*)axis, worldOffset);
         Vec3Add(worldOffset, origin, worldOffset);
         AxisToQuat(axis, quat);
@@ -215,4 +226,3 @@ void __cdecl DynEntPieces_CalcForceDir(const float *hitDir, float spreadFraction
     outDir[2] = (double)v3 / 32767.0 + (double)v3 / 32767.0 - 1.0;
     Vec3Lerp(hitDir, outDir, spreadFraction, forceDir);
 }
-

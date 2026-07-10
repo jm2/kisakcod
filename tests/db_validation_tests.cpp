@@ -111,6 +111,26 @@ int main()
     Expect(
         !db::validation::SoundFileHeaderValid(1, 2),
         "invalid sound-file existence flag rejected");
+    const float finitePieceOffset[] = {1.0f, -2.0f, 3.0f};
+    const float nanPieceOffset[] = {
+        0.0f,
+        (std::numeric_limits<float>::quiet_NaN)(),
+        0.0f};
+    Expect(
+        db::validation::XModelPieceRuntimeValid(
+            true,
+            finitePieceOffset),
+        "usable model-piece runtime dependencies accepted");
+    Expect(
+        !db::validation::XModelPieceRuntimeValid(
+            false,
+            finitePieceOffset),
+        "missing model-piece model rejected");
+    Expect(
+        !db::validation::XModelPieceRuntimeValid(
+            true,
+            nanPieceOffset),
+        "non-finite model-piece offset rejected");
     Expect(
         db::validation::SpeakerMapExpectedSpeakerCount(0) == 2u
             && db::validation::SpeakerMapExpectedSpeakerCount(1) == 6u,
@@ -1357,6 +1377,38 @@ int main()
     Expect(!db::validation::CheckedArrayBytes(1, 0, &bytes), "zero stride rejected");
     Expect(!db::validation::CheckedArrayBytes((std::numeric_limits<std::int32_t>::max)(), 8, &bytes), "multiplication overflow rejected");
     Expect(!db::validation::CheckedArrayBytes(1, 8, nullptr), "null byte result rejected");
+
+    Expect(
+        db::validation::XModelPiecesLayoutValid(true, true, 1, &bytes)
+            && bytes == 16,
+        "single model-piece layout accepted");
+    Expect(
+        db::validation::XModelPiecesLayoutValid(true, true, UINT16_MAX, &bytes)
+            && bytes == 1048560,
+        "largest source-format model-piece layout accepted");
+    Expect(
+        db::validation::XModelPiecesLayoutValid(true, true, 0, &bytes)
+            && bytes == 0,
+        "present empty model-pieces layout accepted");
+    Expect(
+        db::validation::XModelPiecesLayoutValid(true, false, 0, &bytes)
+            && bytes == 0,
+        "null empty model-pieces layout accepted");
+    Expect(
+        !db::validation::XModelPiecesLayoutValid(true, true, -1, &bytes),
+        "negative model-pieces count rejected");
+    Expect(
+        !db::validation::XModelPiecesLayoutValid(true, true, 65536, &bytes),
+        "model-pieces count beyond the source format rejected");
+    Expect(
+        !db::validation::XModelPiecesLayoutValid(false, true, 1, &bytes),
+        "nameless model-pieces layout rejected");
+    Expect(
+        !db::validation::XModelPiecesLayoutValid(true, false, 1, &bytes),
+        "missing model-pieces array rejected");
+    Expect(
+        !db::validation::XModelPiecesLayoutValid(true, true, 1, nullptr),
+        "model-pieces layout requires an extent output");
 
     std::int32_t count = -1;
     Expect(db::validation::CheckedCountSum(12, 30, &count) && count == 42, "count sum");

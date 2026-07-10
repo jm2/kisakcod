@@ -543,6 +543,12 @@ require_source_contains(
     "shared string tables must resolve through exact typed provenance")
 require_source_contains(
     "database/db_load.cpp"
+    "(uint32_t*)varXModelPiecesPtr,
+                DBAliasKind::XModelPieces,
+                disk32::kXModelPiecesBytes"
+    "shared model-pieces headers must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_load.cpp"
     "db::validation::SoundFileHeaderValid("
     "sound-file union tags and existence flags must validate before dispatch")
 require_source_contains(
@@ -580,6 +586,28 @@ require_source_contains(
     "database/db_load.cpp"
     "if (!DB_ValidateSunLight(varGfxWorld->sunLight))"
     "world sun-light values must validate before exact completion")
+require_source_contains(
+    "database/db_load.cpp"
+    "XModelPiecesLayoutValid(
+            pieces->name != nullptr,
+            pieces->pieces != nullptr,
+            pieces->numpieces"
+    "model-pieces arrays must preserve pointer/count and fit the uint16 source-format extent")
+require_source_contains(
+    "database/db_load.cpp"
+    "XModelPieceRuntimeValid("
+    "model pieces must have finite offsets and completed model pointers")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_IsStreamRangeValid(
+            varXModelPiece,
+            static_cast<uint32_t>(pieceBytes))"
+    "model-pieces child spans must fit before element fixups begin")
+require_source_ordered(
+    "DynEntity/DynEntity_pieces.cpp"
+    "if (!model->physPreset)"
+    "model->physPreset->piecesUpwardVelocity"
+    "piece spawning must reject missing physics presets before dereference")
 require_source_ordered(
     "database/db_load.cpp"
     "DB_RegisterPointerSlot(
@@ -668,6 +696,32 @@ require_source_ordered(
                     completed,
                     DBAliasKind::GfxLight"
     "sun-light provenance must publish after semantic validation")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_RegisterPointerSlot(
+                *varXModelPiecesPtr,
+                DBAliasKind::XModelPieces)"
+    "if (!Load_XModelPieces(1))"
+    "model-pieces provenance must register before child fixups")
+require_source_ordered(
+    "database/db_load.cpp"
+    "if (!Load_XModelPieces(1))"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::XModelPieces"
+    "model-pieces provenance must publish after child validation")
+require_source_ordered(
+    "database/db_load.cpp"
+    "return DB_ValidateXModelPieces("
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::XModelPieces"
+    "model-pieces semantic validation must precede publication")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!Load_XModelPiecesPtr(0))
+        return;"
+    "dynamic-entity loading must stop after model-pieces rejection")
 require_source_contains(
     "database/db_stream.cpp"
     "DB_ValidateStreamCString"
@@ -1667,9 +1721,9 @@ file(STRINGS
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 11)
+if (NOT _legacy_direct_offset_count EQUAL 10)
     message(FATAL_ERROR
-        "Expected exactly 11 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 10 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 

@@ -61,6 +61,67 @@ bool DB_ValidatePointerCount(
     return true;
 }
 
+bool DB_ValidateXModelPiecesHeader(
+    const XModelPieces *pieces,
+    int32_t *pieceBytes)
+{
+    if (!pieces
+        || !pieceBytes
+        || !db::validation::XModelPiecesLayoutValid(
+            pieces->name != nullptr,
+            pieces->pieces != nullptr,
+            pieces->numpieces,
+            pieceBytes))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file model-pieces header");
+        return false;
+    }
+    return true;
+}
+
+bool DB_ValidateXModelPieces(const XModelPieces *pieces, uint32_t pieceBytes)
+{
+    if (!pieces || !pieces->name || !*pieces->name)
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file model-pieces identity");
+        return false;
+    }
+    if (!pieceBytes)
+        return true;
+    if (!pieces->pieces)
+    {
+        Com_Error(ERR_DROP, "Missing completed fast-file model-pieces array");
+        return false;
+    }
+
+    const db::relocation::Status materialized = DB_ValidateStreamAddress(
+        pieces->pieces,
+        pieceBytes,
+        4,
+        kDirectBlock4);
+    if (materialized != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid fast-file model-pieces array: %s",
+            db::relocation::StatusName(materialized));
+        return false;
+    }
+
+    for (int32_t index = 0; index < pieces->numpieces; ++index)
+    {
+        const XModelPiece &piece = pieces->pieces[index];
+        if (!db::validation::XModelPieceRuntimeValid(
+                piece.model != nullptr,
+                piece.offset))
+        {
+            Com_Error(ERR_DROP, "Invalid completed fast-file model piece");
+            return false;
+        }
+    }
+    return true;
+}
+
 bool DB_ValidateSpeakerMap(const SpeakerMap *speakerMap)
 {
     if (!speakerMap || !speakerMap->name)
@@ -4653,17 +4714,37 @@ void __cdecl Load_XModelPtrArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_XModelPiece(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varXModelPiece, 16);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varXModelPiece,
+        disk32::kXModelPieceBytes);
     varXModelPtr = &varXModelPiece->model;
     Load_XModelPtr(0);
 }
 
-void __cdecl Load_XModelPieceArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_XModelPieceArray(bool atStreamStart, int32_t count)
 {
     XModelPiece *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varXModelPiece, count, 16);
+    int32_t pieceBytes = 0;
+    if (!db::validation::CheckedArrayBytes(
+            count,
+            disk32::kXModelPieceBytes,
+            &pieceBytes)
+        || !DB_IsStreamRangeValid(
+            varXModelPiece,
+            static_cast<uint32_t>(pieceBytes)))
+    {
+        Com_Error(ERR_DROP, "Fast-file model-pieces array exceeds its stream block");
+        return false;
+    }
+
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varXModelPiece,
+        count,
+        disk32::kXModelPieceBytes);
     var = varXModelPiece;
     for (i = 0; i < count; ++i)
     {
@@ -4671,22 +4752,39 @@ void __cdecl Load_XModelPieceArray(bool atStreamStart, int32_t count)
         Load_XModelPiece(0);
         ++var;
     }
+    return true;
 }
 
-void __cdecl Load_XModelPieces(bool atStreamStart)
+bool __cdecl Load_XModelPieces(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varXModelPieces, 12);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varXModelPieces,
+        disk32::kXModelPiecesBytes);
+    int32_t pieceBytes = 0;
+    if (!DB_ValidateXModelPiecesHeader(varXModelPieces, &pieceBytes))
+        return false;
+    const bool hasPieceArray = varXModelPieces->pieces != nullptr;
     varXString = &varXModelPieces->name;
     Load_XString(0);
-    if (varXModelPieces->pieces)
+    if (hasPieceArray)
     {
         varXModelPieces->pieces = (XModelPiece *)AllocLoad_FxElemVisStateSample();
+        if (!varXModelPieces->pieces)
+        {
+            Com_Error(ERR_DROP, "Cannot allocate fast-file model pieces");
+            return false;
+        }
         varXModelPiece = varXModelPieces->pieces;
-        Load_XModelPieceArray(1, varXModelPieces->numpieces);
+        if (!Load_XModelPieceArray(1, varXModelPieces->numpieces))
+            return false;
     }
+    return DB_ValidateXModelPieces(
+        varXModelPieces,
+        static_cast<uint32_t>(pieceBytes));
 }
 
-void __cdecl Load_XModelPiecesPtr(bool atStreamStart)
+bool __cdecl Load_XModelPiecesPtr(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varXModelPiecesPtr, 4);
     if (*varXModelPiecesPtr)
@@ -4694,14 +4792,38 @@ void __cdecl Load_XModelPiecesPtr(bool atStreamStart)
         if (*varXModelPiecesPtr == (XModelPieces *)-1)
         {
             *varXModelPiecesPtr = (XModelPieces *)AllocLoad_FxElemVisStateSample();
+            if (!*varXModelPiecesPtr)
+            {
+                Com_Error(ERR_DROP, "Cannot allocate fast-file model-pieces header");
+                return false;
+            }
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                *varXModelPiecesPtr,
+                DBAliasKind::XModelPieces);
+            if (!completed)
+                return false;
             varXModelPieces = *varXModelPiecesPtr;
-            Load_XModelPieces(1);
+            if (!Load_XModelPieces(1))
+                return false;
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::XModelPieces,
+                    *varXModelPiecesPtr,
+                    disk32::kXModelPiecesBytes,
+                    disk32::kXModelPiecesBytes))
+            {
+                return false;
+            }
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varXModelPiecesPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)varXModelPiecesPtr,
+                DBAliasKind::XModelPieces,
+                disk32::kXModelPiecesBytes);
         }
     }
+    return true;
 }
 
 void __cdecl Mark_XModel()
@@ -5516,7 +5638,8 @@ void __cdecl Load_DynEntityDef(bool atStreamStart)
     varFxEffectDefHandle = &varDynEntityDef->destroyFx;
     Load_FxEffectDefHandle(0);
     varXModelPiecesPtr = &varDynEntityDef->destroyPieces;
-    Load_XModelPiecesPtr(0);
+    if (!Load_XModelPiecesPtr(0))
+        return;
     varPhysPresetPtr = &varDynEntityDef->physPreset;
     Load_PhysPresetPtr(0);
 }

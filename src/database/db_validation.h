@@ -316,6 +316,14 @@ inline bool FiniteFloatArray(const float *values, std::uint32_t count)
     return true;
 }
 
+inline bool XModelPieceRuntimeValid(
+    bool hasModel,
+    const float *offset)
+{
+    return hasModel
+        && FiniteFloatArray(offset, 3);
+}
+
 constexpr std::int32_t WaterPicmipDimension(
     std::int32_t dimension,
     std::int32_t picmipLevel)
@@ -1092,6 +1100,20 @@ constexpr bool CheckedArrayBytes(std::int32_t count, std::uint32_t stride, std::
 
     *bytes = static_cast<std::int32_t>(product);
     return true;
+}
+
+constexpr bool XModelPiecesLayoutValid(
+    bool hasName,
+    bool hasPieces,
+    std::int32_t count,
+    std::int32_t *bytes)
+{
+    if (bytes)
+        *bytes = 0;
+    return hasName
+        && PointerCountConsistent(hasPieces, count)
+        && count <= static_cast<std::int32_t>(UINT16_MAX)
+        && CheckedArrayBytes(count, disk32::kXModelPieceBytes, bytes);
 }
 
 constexpr bool CheckedCountSum(std::int64_t left, std::int64_t right, std::int32_t *result)

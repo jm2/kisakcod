@@ -75,6 +75,7 @@ enum class AliasKind : std::uint8_t
     WeaponBounceSoundTable,
     GfxLight,
     StringTable,
+    XModelPieces,
     Count,
 };
 
@@ -95,6 +96,7 @@ constexpr bool RequiresExactStartPublication(AliasKind kind)
     case AliasKind::WeaponBounceSoundTable:
     case AliasKind::GfxLight:
     case AliasKind::StringTable:
+    case AliasKind::XModelPieces:
         return true;
     default:
         return false;
@@ -128,6 +130,9 @@ constexpr bool CompletedSharedObjectSchemaValid(
         break;
     case AliasKind::StringTable:
         fixedBytes = disk32::kStringTableBytes;
+        break;
+    case AliasKind::XModelPieces:
+        fixedBytes = disk32::kXModelPiecesBytes;
         break;
     case AliasKind::SndAliasArray:
         if (metadata != materializedBytes

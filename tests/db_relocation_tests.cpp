@@ -674,6 +674,9 @@ int main()
         db::relocation::RequiresExactStartPublication(AliasKind::StringTable),
         "string tables require exact completed starts");
     Expect(
+        db::relocation::RequiresExactStartPublication(AliasKind::XModelPieces),
+        "model-pieces headers require exact completed starts");
+    Expect(
         !db::relocation::RequiresExactStartPublication(AliasKind::Material),
         "redirectable asset aliases do not require their slot address");
     Expect(
@@ -683,7 +686,9 @@ int main()
             && disk32::kWeaponBounceSoundCount == 29u
             && disk32::kWeaponBounceSoundTableBytes == 116u
             && disk32::kGfxLightBytes == 64u
-            && disk32::kStringTableBytes == 16u,
+            && disk32::kStringTableBytes == 16u
+            && disk32::kXModelPieceBytes == 16u
+            && disk32::kXModelPiecesBytes == 12u,
         "completed shared-object disk32 schemas remain fixed");
 
     struct CompletedSchemaCase
@@ -699,6 +704,7 @@ int main()
             disk32::kWeaponBounceSoundTableBytes},
         {AliasKind::GfxLight, disk32::kGfxLightBytes},
         {AliasKind::StringTable, disk32::kStringTableBytes},
+        {AliasKind::XModelPieces, disk32::kXModelPiecesBytes},
     };
     for (const CompletedSchemaCase &schema : completedSchemas)
     {
