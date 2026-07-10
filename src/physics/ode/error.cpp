@@ -83,7 +83,7 @@ static void printMessage (int num, const char *msg1, const char *msg2,
 //****************************************************************************
 // unix
 
-#ifndef _WIN32
+#if !defined(_WIN32) || defined(KISAK_DEDI_HEADLESS)
 
 extern "C" void dError (int num, const char *msg, ...)
 {
@@ -119,7 +119,7 @@ extern "C" void dMessage (int num, const char *msg, ...)
 //****************************************************************************
 // windows
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(KISAK_DEDI_HEADLESS)
 
 #include "windows.h"
 

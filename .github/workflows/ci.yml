@@ -168,3 +168,10 @@ jobs:
           --config Release
           --target KisakCOD-dedi
           --parallel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KisakCOD-windows-x86-headless-Release
+          path: bin/Release/KisakCOD-dedi.exe
+          if-no-files-found: error
+          retention-days: 14

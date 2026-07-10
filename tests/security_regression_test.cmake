@@ -76,9 +76,49 @@ require_source_contains(
     "Conbuf_AppendHeadlessHistory(msg);"
     "headless diagnostics must enter bounded history before console-window creation")
 require_source_contains(
+    "win32/win_syscon.cpp"
+    "Conbuf_WriteProcessHandle(STD_OUTPUT_HANDLE, msg);"
+    "headless diagnostics must reach inherited process output")
+require_source_contains(
+    "win32/win_syscon.cpp"
+    "#ifdef KISAK_DEDI_HEADLESS
+	// Headless servers keep inherited standard handles"
+    "headless console display must remain non-interactive")
+require_source_contains(
     "win32/win_main.cpp"
     "I_strncpyz(b, s, static_cast<int32_t>(v2 + 1));"
     "console events must preserve their final character and trailing terminator")
+require_source_contains(
+    "win32/win_main.cpp"
+    "ExitProcess(EXIT_FAILURE);"
+    "headless fatal errors must terminate unattended servers with a failure code")
+require_source_contains(
+    "win32/win_main.cpp"
+    "#ifndef KISAK_DEDI_HEADLESS
+	if (!Win_IsRedirectedHandle(STD_OUTPUT_HANDLE)"
+    "headless startup must preserve inherited standard handles instead of reopening CONOUT")
+require_source_contains(
+    "win32/win_main.cpp"
+    "if (Win_IsRedirectedHandle(STD_ERROR_HANDLE))
+		Win_TerminateOnFatalError(string);"
+    "redirected Windows fatal errors must not enter the modal GUI path")
+require_source_contains(
+    "win32/win_main.cpp"
+    "if (com_dedicated && com_dedicated->current.integer)
+		Win_TerminateOnFatalError(string);"
+    "legacy dedicated fatal errors must also be non-modal and fail the process")
+require_source_contains(
+    "win32/win_main.cpp"
+    "Sys_Error(\"Out of memory: filename '%s', line %d\", filename, line);"
+    "headless allocation failure must not open a modal dialog")
+require_source_contains(
+    "win32/win_main.cpp"
+    "Sys_Error(\"Less than 128 MB of virtual address space remains\");"
+    "headless low-memory startup must fail without a modal prompt")
+require_source_contains(
+    "physics/ode/error.cpp"
+    "#if !defined(_WIN32) || defined(KISAK_DEDI_HEADLESS)"
+    "headless ODE failures must use the stderr/nonzero-exit backend")
 require_source_contains(
     "cgame_mp/dedicated_cgame.cpp"
     "{ \"code_post_gfx_mp\", 2, 0 }"
@@ -1998,6 +2038,19 @@ require_source_contains(
     "database/db_registry.cpp"
     "techniqueSet->remappedTechniqueSet = techniqueSet;"
     "headless technique sets must retain a canonical self-remap for material validation")
+require_source_contains(
+    "database/db_registry.cpp"
+    "if (fs_basepath && fs_basepath->current.string && *fs_basepath->current.string)
+        return fs_basepath->current.string;"
+    "fast-file lookup must honor the configured filesystem base path")
+require_source_contains(
+    "database/db_registry.cpp"
+    "Com_sprintf(filename, size, \"%s\\\\%s\\\\%s.ff\", DB_GetFastFileBasePath(), string, zoneName);"
+    "mod fast-file lookup must use the configured filesystem base path")
+require_source_contains(
+    "database/db_registry.cpp"
+    "Com_sprintf(filename, size, \"%s\\\\zone\\\\%s\\\\%s.ff\", DB_GetFastFileBasePath(), Language, zoneName);"
+    "base fast-file lookup must use the configured filesystem base path")
 require_source_contains(
     "database/db_load.cpp"
     "#ifndef KISAK_DEDI_HEADLESS

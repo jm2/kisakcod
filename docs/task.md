@@ -8,17 +8,16 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: publish the database-scoped headless null-resource backend, inspect the resulting
-  Windows linker/runtime gate, and continue from the next concrete failure boundary.
-- Last completed batch: headless fast-file loading now retains CPU asset graphs, validation,
-  relocation, publication, alias provenance, and byte-progress accounting while representing D3D
-  textures, shaders, declarations, geometry buffers, and Miles playback allocations with canonical
-  null runtime handles. Technique sets use a validated self-remap, water retains its source CPU
-  contract, delayed and immediate external image sizes are checked and accounted exactly once, and
-  CPU zone blocks 0-8 remain allocated without renderer lock aliases. Headless-only adapters also
-  remove the remaining client trace, dynamic-entity, sound/load-object, shutdown-audio, and raw-sound
-  dump link seams without changing non-headless source behavior. Seven database renderer/audio
-  includes were retired, leaving 21 tracked client/media includes.
+- Active work: make the newly linked headless binary observable and smoke-testable on the protected
+  licensed runner, then begin the M3 portable system-contract and time/synchronization extraction.
+- Last completed batch: the Windows x86 headless target now links with a database-scoped null
+  GPU/audio backend while retaining validated CPU asset graphs and exact progress/ownership rules.
+  The runtime follow-up honors `fs_basepath` for core and mod fast-files, preserves inherited output
+  handles, suppresses GUI console/error paths, exits fatally with a nonzero status, retains the linked
+  binary as a CI artifact, and adds a separately protected headless map/`getstatus` smoke alongside
+  the legacy dedicated smoke. The smoke now requires the requested map in the status response, and
+  its self-hosted jobs run only from `master` and check out the immutable dispatched SHA. Twenty-one
+  client/media includes remain.
 - Portable validation: 13/13 tests pass locally under GCC, Clang, and GCC ASan/UBSan, with leak
   detection disabled because LeakSanitizer cannot run under the command-runner ptrace environment.
   The production relocation registry is also strict-warning clean under GCC/Clang and GCC ILP32
@@ -45,13 +44,15 @@ work item changes. Do not create session-specific handoff files.
   adapters as the remaining confirmed linker seams. Script-boundary run 29127753640 then passed all
   eight established jobs and reduced the headless link failure from 106 to 45 unresolved externals;
   every remaining symbol belongs to those exact database and small-adapter families now covered by
-  the local null-resource batch.
+  the local null-resource batch. Null-resource run 29128702142 then passed all nine jobs: five
+  portable targets, three established Windows x86 builds, and the first complete Windows x86
+  headless dedicated compile and link. The observed linker debt is now 106 -> 45 -> 0.
 
 ## Milestone status
 
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
-| M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a Release headless-dedicated compile/link gate, and five native utility-test runners exist; the headless target configures and compiles fully without client SDK setup, and its unresolved link set has fallen from 106 to 45. This batch targets all 45; CI confirmation, runtime smoke, and release workflows remain. |
+| M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
@@ -63,7 +64,7 @@ work item changes. Do not create session-specific handoff files.
 
 | Target | Engine status |
 |---|---|
-| Windows x86 | MP and legacy dedicated compile in Debug/Release; gameplay smoke still pending. |
+| Windows x86 | MP and legacy dedicated compile in Debug/Release; dependency-free headless dedicated also links in Release; licensed gameplay smoke still pending. |
 | Windows amd64 | Utility tests only; engine gated by ABI/asset/dependency work. |
 | Windows ARM64 | Utility tests only; engine gated by ABI, ARM, renderer, and dependency work. |
 | Linux amd64 | Utility tests only; engine configuration intentionally blocked pending POSIX/headless work. |
@@ -72,20 +73,19 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Confirm the database null-resource and small-adapter batch links in the Windows x86 headless gate.
-2. Add a licensed-content headless startup/map-load smoke workflow once the binary links.
-3. Begin the M3 headless platform-services interface and extract Windows-independent system contracts.
+1. Validate the protected licensed-content headless startup/map/`getstatus` workflow on its runner.
+2. Extract the M3 system synchronization/time contracts from Win32-owned headers and source lists.
+3. Add native Win32 and POSIX time/recursive-lock backends exercised on all five portable CI targets.
 4. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
 
 ## Known release blockers
 
-- Headless source composition now configures and compiles fully. Run 29121929895 reached link with
-  106 unresolved externals; script-boundary run 29127753640 removed the entire debugger/UI family
-  and left 45 database GPU/audio plus small collision, dynamic-entity, sound, and load-object symbols.
-  The local null-resource batch addresses that complete observed set while retaining fast-file CPU
-  graphs and ownership rules, but Windows CI has not yet confirmed the link and no licensed-content
-  startup/map-load smoke has run. Twenty-one client/media includes remain allowlisted. Headless
-  script-created console channels currently retain the
+- Headless source composition now configures, compiles, and links. Runs 29121929895, 29127753640,
+  and 29128702142 reduced unresolved symbols from 106 to 45 to zero while keeping all established
+  jobs green. The binary is not release-ready until the protected licensed-content startup/map-load
+  smoke succeeds; the local runtime batch fixes its known base-path, redirected-output, GUI-error,
+  and exit-status blockers, but that protected workflow has not yet run. Twenty-one client/media
+  includes remain allowlisted. Headless script-created console channels currently retain the
   default script channel because the client console filter graph is absent; extract a shared channel
   registry if per-channel filtering is required for dedicated administration.
 - Fast-file loading lacks a production-path malformed-input test harness and

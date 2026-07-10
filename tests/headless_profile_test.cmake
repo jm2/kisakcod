@@ -213,6 +213,58 @@ if (_db_registry_technique_publish_order EQUAL -1
         "Headless database media wrappers must preserve publication, archive, DObj, and gameplay ordering")
 endif()
 
+file(READ "${SOURCE_ROOT}/.github/workflows/ci.yml" _ci_workflow)
+string(FIND "${_ci_workflow}"
+    "name: KisakCOD-windows-x86-headless-Release"
+    _headless_artifact_name)
+string(FIND "${_ci_workflow}"
+    "path: bin/Release/KisakCOD-dedi.exe"
+    _headless_artifact_path)
+
+file(READ "${SOURCE_ROOT}/.github/workflows/licensed-smoke.yml" _licensed_smoke_workflow)
+string(FIND "${_licensed_smoke_workflow}"
+    "name: Windows x86 headless dedicated"
+    _headless_smoke_job)
+string(FIND "${_licensed_smoke_workflow}"
+    "-HeadlessDedi -BuildDir build-headless -Clean"
+    _headless_smoke_build)
+string(FIND "${_licensed_smoke_workflow}"
+    "-Executable ./bin/Release/KisakCOD-dedi.exe -Port 28962"
+    _headless_smoke_probe)
+string(FIND "${_licensed_smoke_workflow}"
+    "if: github.ref == 'refs/heads/master'"
+    _headless_smoke_trusted_ref)
+string(FIND "${_licensed_smoke_workflow}"
+    "ref: \${{ github.sha }}"
+    _headless_smoke_immutable_ref)
+
+file(READ "${SOURCE_ROOT}/scripts/ci/smoke-dedicated.ps1" _dedicated_smoke_script)
+foreach(_required_smoke_boundary
+    "[Guid]::NewGuid().ToString('N')"
+    "$expectedIdentity = \"\\sv_hostname\\$serverIdentity\""
+    "$text.Contains($expectedMap)"
+    "$text.Contains($expectedIdentity)"
+    "$reservation.Client.ExclusiveAddressUse = $true"
+    "Remove-Item -LiteralPath $homePath -Recurse -Force"
+)
+    string(FIND "${_dedicated_smoke_script}" "${_required_smoke_boundary}" _smoke_boundary_pos)
+    if (_smoke_boundary_pos EQUAL -1)
+        message(FATAL_ERROR
+            "Headless gameplay smoke is missing isolation boundary: ${_required_smoke_boundary}")
+    endif()
+endforeach()
+
+if (_headless_artifact_name EQUAL -1
+    OR _headless_artifact_path EQUAL -1
+    OR _headless_smoke_job EQUAL -1
+    OR _headless_smoke_build EQUAL -1
+    OR _headless_smoke_probe EQUAL -1
+    OR _headless_smoke_trusted_ref EQUAL -1
+    OR _headless_smoke_immutable_ref EQUAL -1)
+    message(FATAL_ERROR
+        "A linked headless binary must be retained and covered by a trusted protected map/getstatus smoke gate")
+endif()
+
 foreach(_excluded
     "${SRC_DIR}/win32/win_input.cpp"
     "${SRC_DIR}/win32/win_input.h"

@@ -6,7 +6,7 @@
 
 ---
 
-## Implementation status (July 8, 2026)
+## Implementation status (July 10, 2026)
 
 Target policy is fixed: preserve retail assets and wire interoperability; use a
 shared **native Vulkan RHI** (MoltenVK on macOS) that replaces D3D9, OpenAL Soft,
@@ -25,15 +25,16 @@ Completed foundation work:
   by the current fast-file offset fixup path and covered by portable tests;
 - pointer-width-safe hunk allocator alignment/accounting, temporary allocation
   return types, parse-tree alignment, and client/server skeleton alignment;
-- an experimental `KISAK_DEDI_HEADLESS` CMake source profile that excludes
-  client/cgame/UI/D3D/audio/cinema/proprietary media groups, plus a CTest guard
-  that prevents those paths from re-entering the headless source list;
+- a green Windows x86 `KISAK_DEDI_HEADLESS` compile/link profile that excludes
+  client/cgame/UI/D3D/audio/cinema/proprietary media groups, parses common
+  fast-files through a validated null GPU/audio backend, retains its binary as
+  a CI artifact, and has source/dependency guards against media re-entry;
 - download-block and stats-packet runtime bounds checks;
 - host platform detection, target build switches, and an explicit 64-bit ABI gate;
 - platform source override plumbing for Windows, Linux, and macOS;
 - corrected Win32 multi-config DirectX paths and post-build output handling;
-- `build-win.ps1`, Windows CI, tagged release archives/checksums, and protected
-  licensed dedicated-server smoke infrastructure;
+- `build-win.ps1`, Windows CI, tagged release archives/checksums, and separately
+  protected legacy/headless licensed dedicated-server smoke definitions;
 - Steam decoupled from `WIN32` behind `KISAK_ENABLE_STEAM`/`KISAK_STEAM` with a
   persistent `cl_guid` fallback and `sv_requireSteam`, fixing the unjoinable
   headless-dedi defect (see §10 H2);
@@ -45,17 +46,19 @@ Completed foundation work:
 
 Remaining gates, in implementation order:
 
-1. Burn down the remaining client/render/audio symbol references that prevent
-   `KISAK_DEDI_HEADLESS=ON` from becoming the default dedicated-server build.
-2. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
+1. Run the protected licensed headless startup/map/network smoke and repair any
+   runtime-only lifecycle gaps it exposes.
+2. Extract platform-neutral synchronization/time contracts and add native
+   Win32/POSIX backends exercised on every portable CI leg.
+3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
-3. Widen the script VM value representation and remove pointer-to-32-bit casts.
-4. Implement platform services (threads/events, sockets, filesystem, time,
+4. Widen the script VM value representation and remove pointer-to-32-bit casts.
+5. Implement the remaining platform services (threads/events, sockets, filesystem,
    virtual memory, console) for Windows/POSIX.
-5. Introduce the Vulkan RHI, retaining D3D9 temporarily on Windows during parity
+6. Introduce the Vulkan RHI, retaining D3D9 temporarily on Windows during parity
    testing; add OpenAL Soft and FFmpeg backends.
-6. Add scalar/SSE2/NEON dispatch and remove x86 inline assembly/MMX.
-7. Enable and gate Windows amd64/ARM64, Linux amd64/arm64, then macOS arm64
+7. Add scalar/SSE2/NEON dispatch and remove x86 inline assembly/MMX.
+8. Enable and gate Windows amd64/ARM64, Linux amd64/arm64, then macOS arm64
    packaging only after native build, synthetic tests, and licensed gameplay
    smoke tests pass.
 
@@ -718,7 +721,8 @@ on all five targets.
 
 **L1 — Non-headless dedicated server is Windows-only.** `scripts/dedi/dedi_sources.cmake` links
 Bink/GFX_D3D/Miles/Speex unless `KISAK_DEDI_HEADLESS=ON`. State that **headless is the only supported
-dedi on the four non-Windows targets** (CI builds those legs with `KISAK_DEDI_HEADLESS=ON`); keep
+dedi on the four non-Windows targets**; future engine CI must build those legs with
+`KISAK_DEDI_HEADLESS=ON`, while the current five target legs are utility tests only. Keep
 non-headless dedi as a Windows-only legacy config.
 
 **L2 — Localized-string assets ride the fast-file path.** `SE_GetString_LoadObj`

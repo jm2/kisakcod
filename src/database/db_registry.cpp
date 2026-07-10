@@ -657,16 +657,24 @@ void __cdecl DB_GetVertexBufferAndOffset(uint8_t zoneHandle, _BYTE *verts, void 
     *vb = g_zones[zoneHandle].mem.vertexBuffer;
 }
 
+static const char *DB_GetFastFileBasePath()
+{
+    if (fs_basepath && fs_basepath->current.string && *fs_basepath->current.string)
+        return fs_basepath->current.string;
+
+    // Preserve the legacy bootstrap fallback for callers that reach the
+    // database before the filesystem dvars have been registered.
+    return Sys_DefaultInstallPath();
+}
+
 void __cdecl DB_BuildOSPath_Mod(const char *zoneName, uint32_t size, char *filename)
 {
-    char *v3; // eax
     const char *string; // [esp-8h] [ebp-8h]
 
     if (!*(_BYTE *)fs_gameDirVar->current.integer)
         MyAssertHandler(".\\database\\db_registry.cpp", 3204, 0, "%s", "IsUsingMods()");
     string = fs_gameDirVar->current.string;
-    v3 = Sys_DefaultInstallPath();
-    Com_sprintf(filename, size, "%s\\%s\\%s.ff", v3, string, zoneName);
+    Com_sprintf(filename, size, "%s\\%s\\%s.ff", DB_GetFastFileBasePath(), string, zoneName);
 }
 
 bool __cdecl DB_ModFileExists()
@@ -2902,12 +2910,10 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
 
 void __cdecl DB_BuildOSPath(const char *zoneName, uint32_t size, char *filename)
 {
-    char *v3; // eax
     char *Language; // [esp-8h] [ebp-8h]
 
     Language = Win_GetLanguage();
-    v3 = Sys_DefaultInstallPath();
-    Com_sprintf(filename, size, "%s\\zone\\%s\\%s.ff", v3, Language, zoneName);
+    Com_sprintf(filename, size, "%s\\zone\\%s\\%s.ff", DB_GetFastFileBasePath(), Language, zoneName);
 }
 
 int32_t __cdecl DB_GetZoneAllocType(int32_t zoneFlags)

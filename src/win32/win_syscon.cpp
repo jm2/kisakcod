@@ -52,6 +52,45 @@ struct WinConData // sizeof=0x620
 static WinConData s_wcd;
 uint32_t s_totalChars;
 
+#ifndef KISAK_DEDI_HEADLESS
+static bool Conbuf_IsRedirectedHandle(DWORD stream)
+{
+	HANDLE output = GetStdHandle(stream);
+	if (!output || output == INVALID_HANDLE_VALUE)
+		return false;
+
+	const DWORD type = GetFileType(output);
+	return type == FILE_TYPE_DISK || type == FILE_TYPE_PIPE;
+}
+#endif
+
+static void Conbuf_WriteProcessHandle(DWORD stream, const char *msg)
+{
+	if (!msg)
+		return;
+
+	HANDLE output = GetStdHandle(stream);
+	if (!output || output == INVALID_HANDLE_VALUE)
+	{
+		OutputDebugStringA(msg);
+		return;
+	}
+
+	const char *cursor = msg;
+	size_t remaining = std::strlen(msg);
+	while (remaining)
+	{
+		const DWORD request = remaining > MAXDWORD
+			? MAXDWORD
+			: static_cast<DWORD>(remaining);
+		DWORD written = 0;
+		if (!WriteFile(output, cursor, request, &written, nullptr) || !written)
+			break;
+		cursor += written;
+		remaining -= written;
+	}
+}
+
 #ifdef KISAK_DEDI_HEADLESS
 static char s_headlessConsoleHistory[0x4000];
 static size_t s_headlessConsoleHistoryLength;
@@ -327,6 +366,11 @@ void __cdecl Sys_DestroyConsole()
 */
 void __cdecl Sys_ShowConsole()
 {
+#ifdef KISAK_DEDI_HEADLESS
+	// Headless servers keep inherited standard handles so service managers and
+	// CI runners can capture output without creating an interactive window.
+	return;
+#else
 	HMODULE module;
 
 	if (!s_wcd.hWnd)
@@ -340,6 +384,7 @@ void __cdecl Sys_ShowConsole()
 
 	ShowWindow(s_wcd.hWnd, 1);
 	SendMessageA(s_wcd.hwndBuffer, 0xB6u, 0, 0xFFFF);
+#endif
 }
 
 /*
@@ -394,6 +439,10 @@ void __cdecl Conbuf_AppendText(const char *pMsg)
 */
 void __cdecl Sys_SetErrorText(const char *buf)
 {
+#ifdef KISAK_DEDI_HEADLESS
+	Conbuf_WriteProcessHandle(STD_ERROR_HANDLE, buf);
+	Conbuf_WriteProcessHandle(STD_ERROR_HANDLE, "\n");
+#else
 	HWND ActiveWindow; // eax
 
 	I_strncpyz(s_wcd.errorString, buf, 512);
@@ -401,6 +450,7 @@ void __cdecl Sys_SetErrorText(const char *buf)
 	s_wcd.hwndInputLine = 0;
 	ActiveWindow = GetActiveWindow();
 	MessageBoxA(ActiveWindow, buf, "Error", 0x10u);
+#endif
 }
 
 void __cdecl Conbuf_AppendTextInMainThread(const char* msg)
@@ -409,7 +459,11 @@ void __cdecl Conbuf_AppendTextInMainThread(const char* msg)
 		return;
 
 #ifdef KISAK_DEDI_HEADLESS
+	Conbuf_WriteProcessHandle(STD_OUTPUT_HANDLE, msg);
 	Conbuf_AppendHeadlessHistory(msg);
+#else
+	if (Conbuf_IsRedirectedHandle(STD_OUTPUT_HANDLE))
+		Conbuf_WriteProcessHandle(STD_OUTPUT_HANDLE, msg);
 #endif
 	if (s_wcd.hwndBuffer)
 		Conbuf_AppendText(msg);

@@ -4,30 +4,20 @@ name: Licensed gameplay smoke
 # a self-hosted runner that has licensed COD4 data.
 on:
   workflow_dispatch:
-    inputs:
-      ref:
-        description: Trusted branch or v* tag to test
-        required: true
-        default: master
 
 permissions:
   contents: read
 
 jobs:
   windows-x86:
+    name: Windows x86 legacy dedicated
+    if: github.ref == 'refs/heads/master'
     environment: licensed-game-data
     runs-on: [self-hosted, kisakcod, windows, x86]
     steps:
-      - name: Validate trusted ref
-        shell: pwsh
-        run: |
-          if ('${{ inputs.ref }}' -ne 'master' -and '${{ inputs.ref }}' -notmatch '^v[0-9]') {
-            throw 'Licensed runners only accept master or version tags.'
-          }
-
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.sha }}
 
       - name: Build dedicated server
         shell: pwsh
@@ -38,3 +28,27 @@ jobs:
         env:
           KISAKCOD_GAME_DIR: ${{ secrets.KISAKCOD_GAME_DIR }}
         run: ./scripts/ci/smoke-dedicated.ps1 -Executable ./bin/Release/KisakCOD-dedi.exe
+
+  windows-x86-headless:
+    name: Windows x86 headless dedicated
+    if: github.ref == 'refs/heads/master'
+    environment: licensed-game-data
+    runs-on: [self-hosted, kisakcod, windows, x86]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Build headless dedicated server
+        shell: pwsh
+        run: >
+          ./build-win.ps1 -Config Release -Targets KisakCOD-dedi
+          -HeadlessDedi -BuildDir build-headless -Clean
+
+      - name: Start headless server and query getstatus
+        shell: pwsh
+        env:
+          KISAKCOD_GAME_DIR: ${{ secrets.KISAKCOD_GAME_DIR }}
+        run: >
+          ./scripts/ci/smoke-dedicated.ps1
+          -Executable ./bin/Release/KisakCOD-dedi.exe -Port 28962

@@ -39,7 +39,9 @@ Use `Get-Help .\build-win.ps1 -Detailed` for configuration, target, and clean
 build options. Single-player is excluded by default because it is incomplete.
 The dedicated server still defaults to the legacy client-backed source profile;
 `.\build-win.ps1 -Targets KisakCOD-dedi -HeadlessDedi` opts into the
-experimental headless profile used for the native port burn-down.
+dependency-free headless profile used for the native port. That profile now
+compiles and links in CI without DirectX, Miles, Bink, or Steam; licensed map
+startup and network-response validation remain a protected manual workflow.
 
 Portable utility tests can be built on Linux without licensed game data:
 

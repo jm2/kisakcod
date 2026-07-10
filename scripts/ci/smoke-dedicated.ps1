@@ -23,7 +23,8 @@ if ([string]::IsNullOrWhiteSpace($GameDirectory) -or -not (Test-Path -LiteralPat
 
 $Executable = (Resolve-Path -LiteralPath $Executable).Path
 $GameDirectory = (Resolve-Path -LiteralPath $GameDirectory).Path
-$homePath = Join-Path ([IO.Path]::GetTempPath()) "kisakcod-smoke-$PID"
+$serverIdentity = "kisakcod-smoke-$([Guid]::NewGuid().ToString('N'))"
+$homePath = Join-Path ([IO.Path]::GetTempPath()) $serverIdentity
 $stdout = Join-Path $homePath 'server.stdout.log'
 $stderr = Join-Path $homePath 'server.stderr.log'
 New-Item -ItemType Directory -Force -Path $homePath | Out-Null
@@ -34,17 +35,36 @@ $arguments = @(
     '+set', 'net_port', "$Port",
     '+set', 'fs_basepath', "`"$GameDirectory`"",
     '+set', 'fs_homepath', "`"$homePath`"",
+    '+set', 'sv_hostname', $serverIdentity,
+    '+set', 'logfile', '2',
     '+map', $Map
 )
 
-$process = Start-Process -FilePath $Executable -ArgumentList $arguments `
-    -WorkingDirectory $GameDirectory -PassThru `
-    -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-
+$process = $null
 try {
+    $reservation = [Net.Sockets.UdpClient]::new()
+    try {
+        $reservation.Client.ExclusiveAddressUse = $true
+        $reservation.Client.Bind(
+            [Net.IPEndPoint]::new([Net.IPAddress]::Loopback, $Port))
+    }
+    catch [Net.Sockets.SocketException] {
+        throw "UDP port $Port is not available for an isolated smoke test."
+    }
+    finally {
+        $reservation.Dispose()
+    }
+
+    $process = Start-Process -FilePath $Executable -ArgumentList $arguments `
+        -WorkingDirectory $GameDirectory -PassThru `
+        -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     $request = [byte[]](0xff, 0xff, 0xff, 0xff) +
         [Text.Encoding]::ASCII.GetBytes("getstatus`n")
+    $expectedMap = "\mapname\$Map"
+    $expectedIdentity = "\sv_hostname\$serverIdentity"
+    $passed = $false
 
     while ([DateTime]::UtcNow -lt $deadline) {
         if ($process.HasExited) {
@@ -59,9 +79,11 @@ try {
             $remote = [Net.IPEndPoint]::new([Net.IPAddress]::Any, 0)
             $response = $udp.Receive([ref]$remote)
             $text = [Text.Encoding]::ASCII.GetString($response)
-            if ($text.Contains('statusResponse')) {
-                Write-Host "Dedicated server smoke test passed on UDP port $Port."
-                exit 0
+            if ($text.Contains('statusResponse') -and
+                $text.Contains($expectedMap) -and
+                $text.Contains($expectedIdentity)) {
+                $passed = $true
+                break
             }
         }
         catch [Net.Sockets.SocketException] {
@@ -73,10 +95,13 @@ try {
         Start-Sleep -Milliseconds 500
     }
 
-    throw "Dedicated server did not answer getstatus within $TimeoutSeconds seconds."
+    if (-not $passed) {
+        throw "Dedicated server did not return this run's map and identity within $TimeoutSeconds seconds."
+    }
+    Write-Host "Dedicated server smoke test passed for map '$Map' on UDP port $Port."
 }
 finally {
-    if (-not $process.HasExited) {
+    if ($null -ne $process -and -not $process.HasExited) {
         Stop-Process -Id $process.Id -Force
         $process.WaitForExit()
     }
@@ -85,5 +110,13 @@ finally {
     }
     if (Test-Path -LiteralPath $stderr) {
         Get-Content -LiteralPath $stderr -Tail 200
+    }
+    if (Test-Path -LiteralPath $homePath) {
+        Get-ChildItem -LiteralPath $homePath -Filter console_mp.log -File -Recurse `
+            -ErrorAction SilentlyContinue | ForEach-Object {
+                Write-Host "Tail of $($_.FullName):"
+                Get-Content -LiteralPath $_.FullName -Tail 200
+            }
+        Remove-Item -LiteralPath $homePath -Recurse -Force -ErrorAction SilentlyContinue
     }
 }

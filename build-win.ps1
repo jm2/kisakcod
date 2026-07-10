@@ -131,7 +131,12 @@ if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
     throw "cmake was not found on PATH. Install CMake and reopen your shell."
 }
 
-if ([string]::IsNullOrEmpty($env:DXSDK_DIR)) {
+$needsClientMedia =
+    ($Targets -contains 'KisakCOD-mp') -or
+    ($Targets -contains 'KisakCOD-sp') -or
+    (($Targets -contains 'KisakCOD-dedi') -and -not $HeadlessDedi)
+
+if ($needsClientMedia -and [string]::IsNullOrEmpty($env:DXSDK_DIR)) {
     Write-Warning "DXSDK_DIR is not set. A local (non-CI) build needs the DirectX SDK (June 2010); the CMake configure will fail without it."
 }
 

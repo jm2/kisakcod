@@ -66,6 +66,63 @@ WinVars_t	g_wv;
 
 static char sys_processSemaphoreFile[0x20];
 
+#ifndef KISAK_DEDI_HEADLESS
+static bool Win_IsRedirectedHandle(DWORD stream)
+{
+	HANDLE output = GetStdHandle(stream);
+	if (!output || output == INVALID_HANDLE_VALUE)
+		return false;
+
+	const DWORD type = GetFileType(output);
+	return type == FILE_TYPE_DISK || type == FILE_TYPE_PIPE;
+}
+#endif
+
+static void Win_WriteProcessHandle(DWORD stream, const char *msg)
+{
+	if (!msg)
+		return;
+
+	HANDLE output = GetStdHandle(stream);
+	if (!output || output == INVALID_HANDLE_VALUE)
+	{
+		OutputDebugStringA(msg);
+		return;
+	}
+
+	const char *cursor = msg;
+	size_t remaining = strlen(msg);
+	while (remaining)
+	{
+		const DWORD request = remaining > MAXDWORD
+			? MAXDWORD
+			: static_cast<DWORD>(remaining);
+		DWORD written = 0;
+		if (!WriteFile(output, cursor, request, &written, nullptr) || !written)
+			break;
+		cursor += written;
+		remaining -= written;
+	}
+}
+
+static void Win_TerminateOnFatalError(const char *message)
+{
+	const char prefix[] = "\nKisakCOD fatal error: ";
+	const char newline[] = "\n";
+	Win_WriteProcessHandle(STD_ERROR_HANDLE, prefix);
+	Win_WriteProcessHandle(STD_ERROR_HANDLE, message);
+	Win_WriteProcessHandle(STD_ERROR_HANDLE, newline);
+
+	HANDLE stderrHandle = GetStdHandle(STD_ERROR_HANDLE);
+	if (stderrHandle && stderrHandle != INVALID_HANDLE_VALUE)
+		FlushFileBuffers(stderrHandle);
+
+	OutputDebugStringA(prefix);
+	OutputDebugStringA(message);
+	OutputDebugStringA(newline);
+	ExitProcess(EXIT_FAILURE);
+}
+
 static void PrintWorkingDir()
 {
 	char cwd[260];
@@ -195,17 +252,23 @@ void __cdecl Sys_NormalExit()
 
 void __cdecl Sys_OutOfMemErrorInternal(const char* filename, int line)
 {
+#ifndef KISAK_DEDI_HEADLESS
 	HWND ActiveWindow; // eax
 	char* v3; // [esp-Ch] [ebp-Ch]
 	char* v4; // [esp-8h] [ebp-8h]
+#endif
 
 	Sys_EnterCriticalSection(CRITSECT_FATAL_ERROR);
 	Com_Printf(16, "Out of memory: filename '%s', line %d\n", filename, line);
+#ifdef KISAK_DEDI_HEADLESS
+	Sys_Error("Out of memory: filename '%s', line %d", filename, line);
+#else
 	v4 = Win_LocalizeRef("WIN_OUT_OF_MEM_TITLE");
 	v3 = Win_LocalizeRef("WIN_OUT_OF_MEM_BODY");
 	ActiveWindow = GetActiveWindow();
 	MessageBoxA(ActiveWindow, v3, v4, 0x10u);
 	exit(-1);
+#endif
 }
 
 int __cdecl Sys_IsGameProcess(DWORD id)
@@ -251,21 +314,27 @@ LABEL_15:
 
 void Sys_NoFreeFilesError()
 {
+#ifndef KISAK_DEDI_HEADLESS
 	HWND ActiveWindow; // eax
 	char* v1; // [esp-Ch] [ebp-Ch]
 	char* v2; // [esp-8h] [ebp-8h]
+#endif
 
 	Sys_EnterCriticalSection(CRITSECT_FATAL_ERROR);
+#ifdef KISAK_DEDI_HEADLESS
+	Sys_Error("Insufficient disk space for KisakCOD runtime files");
+#else
 	v2 = Win_LocalizeRef("WIN_DISK_FULL_TITLE");
 	v1 = Win_LocalizeRef("WIN_DISK_FULL_BODY");
 	ActiveWindow = GetActiveWindow();
 	MessageBoxA(ActiveWindow, v1, v2, 0x10u);
 	exit(-1);
+#endif
 }
 
 int __cdecl Sys_CheckCrashOrRerun()
 {
-#ifdef KISAK_PURE
+#if defined(KISAK_PURE) && !defined(KISAK_DEDI_HEADLESS)
 	HWND ActiveWindow; // eax
 	char* v2; // [esp-Ch] [ebp-20h]
 	char* v3; // [esp-8h] [ebp-1Ch]
@@ -321,7 +390,9 @@ int __cdecl Sys_CheckCrashOrRerun()
 
 void Sys_Error(const char *error, ...)
 {
+#ifndef KISAK_DEDI_HEADLESS
 	tagMSG Msg; // [esp+4h] [ebp-1024h] BYREF
+#endif
 	char string[4100]; // [esp+20h] [ebp-1008h] BYREF
 	va_list va; // [esp+1034h] [ebp+Ch] BYREF
 
@@ -329,8 +400,19 @@ void Sys_Error(const char *error, ...)
 	Sys_EnterCriticalSection(CRITSECT_COM_ERROR);
 	Com_PrintStackTrace();
 	com_errorEntered = 1;
-	Sys_SuspendOtherThreads();
 	vsnprintf_s(string, 0x1000u, error, va);
+	va_end(va);
+
+#ifdef KISAK_DEDI_HEADLESS
+	Win_TerminateOnFatalError(string);
+#else
+	if (Win_IsRedirectedHandle(STD_ERROR_HANDLE))
+		Win_TerminateOnFatalError(string);
+	#ifdef KISAK_MP
+	if (com_dedicated && com_dedicated->current.integer)
+		Win_TerminateOnFatalError(string);
+	#endif
+	Sys_SuspendOtherThreads();
 	
 	// random gamma crap we don't care about
 	// FixWindowsDesktop();
@@ -359,6 +441,7 @@ void Sys_Error(const char *error, ...)
 
 	Sys_SetErrorText(string);
 	exit(0);
+#endif
 }
 
 void __cdecl Sys_OpenURL(const char *url, int doexit)
@@ -695,12 +778,14 @@ void __cdecl Sys_ShowSplashWindow()
 
 int __cdecl Sys_SystemMemoryMB()
 {
+#ifndef KISAK_DEDI_HEADLESS
 	HWND ActiveWindow; // eax
 	HWND v2; // eax
 	char* v3; // [esp-Ch] [ebp-C8h]
 	char* v4; // [esp-Ch] [ebp-C8h]
 	char* v5; // [esp-8h] [ebp-C4h]
 	char* v6; // [esp-8h] [ebp-C4h]
+#endif
 	float v7; // [esp+30h] [ebp-8Ch]
 	float v8; // [esp+40h] [ebp-7Ch]
 	int sysMB; // [esp+50h] [ebp-6Ch]
@@ -717,6 +802,9 @@ int __cdecl Sys_SystemMemoryMB()
 		MemStatEx(&statusEx);
 		if (statusEx.ullAvailVirtual < 0x8000000)
 		{
+#ifdef KISAK_DEDI_HEADLESS
+			Sys_Error("Less than 128 MB of virtual address space remains");
+#else
 			v5 = Win_LocalizeRef("WIN_LOW_MEMORY_TITLE");
 			v3 = Win_LocalizeRef("WIN_LOW_MEMORY_BODY");
 			ActiveWindow = GetActiveWindow();
@@ -725,6 +813,7 @@ int __cdecl Sys_SystemMemoryMB()
 				Sys_NormalExit();
 				exit(0);
 			}
+#endif
 		}
 		v8 = (double)statusEx.ullTotalPhys * 0.00000095367431640625;
 		sysMB = (int)(v8 + 0.4999999990686774);
@@ -738,6 +827,9 @@ int __cdecl Sys_SystemMemoryMB()
 		GlobalMemoryStatus(&status);
 		if (status.dwAvailVirtual < 0x8000000)
 		{
+#ifdef KISAK_DEDI_HEADLESS
+			Sys_Error("Less than 128 MB of virtual address space remains");
+#else
 			v6 = Win_LocalizeRef("WIN_LOW_MEMORY_TITLE");
 			v4 = Win_LocalizeRef("WIN_LOW_MEMORY_BODY");
 			v2 = GetActiveWindow();
@@ -746,6 +838,7 @@ int __cdecl Sys_SystemMemoryMB()
 				Sys_NormalExit();
 				exit(0);
 			}
+#endif
 		}
 		v7 = (double)status.dwTotalPhys * 0.00000095367431640625;
 		sysMBa = (int)(v7 + 0.4999999990686774);
@@ -776,22 +869,26 @@ WinMain
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
 
 	// KISAK: make a pretty console in debug mode, redirect in/out/err stream
-#if 1 || defined(KISAK_DEBUG)
-	AllocConsole();
+#ifndef KISAK_DEDI_HEADLESS
+	if (!Win_IsRedirectedHandle(STD_OUTPUT_HANDLE)
+		&& !Win_IsRedirectedHandle(STD_ERROR_HANDLE))
+	{
+		AllocConsole();
 
-	SetConsoleTitleA("KisakCOD");
-	DeleteMenu(GetSystemMenu(GetConsoleWindow(), FALSE), SC_CLOSE, MF_BYCOMMAND);
+		SetConsoleTitleA("KisakCOD");
+		DeleteMenu(GetSystemMenu(GetConsoleWindow(), FALSE), SC_CLOSE, MF_BYCOMMAND);
 
-	SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE),
-		ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT |
-		ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN |
-		ENABLE_LVB_GRID_WORLDWIDE);
+		SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE),
+			ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT |
+			ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN |
+			ENABLE_LVB_GRID_WORLDWIDE);
 
-	SetConsoleCtrlHandler(nullptr, true);
+		SetConsoleCtrlHandler(nullptr, true);
 
-	freopen("CONIN$", "r", stdin);
-	freopen("CONOUT$", "w", stdout);
-	freopen("CONOUT$", "w", stderr);
+		freopen("CONIN$", "r", stdin);
+		freopen("CONOUT$", "w", stdout);
+		freopen("CONOUT$", "w", stderr);
+	}
 #endif
 
 	Sys_InitializeCriticalSections();
