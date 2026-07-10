@@ -128,6 +128,93 @@ require_source_contains(
     "font glyphs must use their full aligned block-4 span")
 require_source_contains(
     "database/db_load.cpp"
+    "OptionalMirroredCountInRange(count, originalCount, 2, 16)"
+    "weapon accuracy graphs must fit fixed runtime buffers and use matching counts")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!DB_ValidateWeaponAccuracyGraph(
+                varWeaponDef,"
+    "weapon definitions must run accuracy-graph validation before loading payloads")
+require_source_contains(
+    "database/db_load.cpp"
+    "db::validation::NormalizedGraphKnots("
+    "weapon accuracy graphs must validate normalized interpolation inputs")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!DB_ValidateWeaponAccuracyGraphKnots(varWeaponDef, 0))"
+    "first weapon accuracy graph must be validated after materialization")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!DB_ValidateWeaponAccuracyGraphKnots(varWeaponDef, 1))"
+    "second weapon accuracy graph must be validated after materialization")
+require_source_contains(
+    "database/db_load.cpp"
+    "Load_vec2_tArray(1, varWeaponDef->originalAccuracyGraphKnotCount[0])"
+    "first original accuracy graph must load with the count used by its runtime consumer")
+require_source_contains(
+    "database/db_load.cpp"
+    "Load_vec2_tArray(1, varWeaponDef->originalAccuracyGraphKnotCount[1])"
+    "second original accuracy graph must load with the count used by its runtime consumer")
+require_source_contains(
+    "bgame/bg_weapons_load_obj.cpp"
+    "CountInRange(declaredKnotCount, 2, 16)"
+    "load-object weapon graphs must reject counts outside their stack-buffer capacity")
+require_source_contains(
+    "bgame/bg_weapons_load_obj.cpp"
+    "if (knotCountIndex >= 16)"
+    "load-object weapon graphs must check capacity before storing a knot")
+require_source_contains(
+    "bgame/bg_weapons_load_obj.cpp"
+    "db::validation::NormalizedGraphKnots("
+    "load-object weapon graphs must enforce runtime interpolation invariants")
+
+file(READ
+    "${SOURCE_ROOT}/src/bgame/bg_weapons_load_obj.cpp"
+    _weapon_graph_load_obj_source)
+string(FIND
+    "${_weapon_graph_load_obj_source}"
+    "if (knotCountIndex >= 16)"
+    _weapon_graph_capacity_check)
+string(FIND
+    "${_weapon_graph_load_obj_source}"
+    "knots[knotCountIndex][0] = x"
+    _weapon_graph_first_store)
+if (_weapon_graph_capacity_check EQUAL -1
+    OR _weapon_graph_first_store EQUAL -1
+    OR _weapon_graph_capacity_check GREATER _weapon_graph_first_store)
+    message(FATAL_ERROR
+        "Load-object weapon graph capacity must be checked before the first knot store")
+endif()
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varWeaponDef->accuracyGraphKnots[0],
+                accuracyGraphByteCount[0],
+                4,
+                kDirectBlock4"
+    "first working accuracy graph must use its full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varWeaponDef->originalAccuracyGraphKnots[0],
+                accuracyGraphByteCount[0],
+                4,
+                kDirectBlock4"
+    "first original accuracy graph must use its full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varWeaponDef->accuracyGraphKnots[1],
+                accuracyGraphByteCount[1],
+                4,
+                kDirectBlock4"
+    "second working accuracy graph must use its full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varWeaponDef->originalAccuracyGraphKnots[1],
+                accuracyGraphByteCount[1],
+                4,
+                kDirectBlock4"
+    "second original accuracy graph must use its full aligned block-4 span")
+require_source_contains(
+    "database/db_load.cpp"
     "DBAliasKind::XStringPointerSlot"
     "direct string-holder references must use completed-object provenance")
 require_source_contains(
@@ -182,9 +269,9 @@ file(STRINGS
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 32)
+if (NOT _legacy_direct_offset_count EQUAL 28)
     message(FATAL_ERROR
-        "Expected exactly 32 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 28 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 string(REGEX MATCH

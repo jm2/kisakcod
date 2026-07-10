@@ -58,6 +58,55 @@ bool DB_ValidatePointerCount(
     return true;
 }
 
+bool DB_ValidateWeaponAccuracyGraph(
+    const WeaponDef *weapon,
+    uint32_t graphIndex,
+    uint32_t *byteCount)
+{
+    if (!weapon || !byteCount || graphIndex >= WEAP_ACCURACY_COUNT)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file weapon accuracy graph index");
+        return false;
+    }
+
+    const int32_t count = weapon->accuracyGraphKnotCount[graphIndex];
+    const int32_t originalCount = weapon->originalAccuracyGraphKnotCount[graphIndex];
+    // Runtime interpolation needs at least two knots, while the editable
+    // accuracy-graph backup slots contain exactly sixteen knots per graph.
+    if (!db::validation::OptionalMirroredCountInRange(count, originalCount, 2, 16)
+        || !db::validation::PointerCountConsistent(
+            weapon->accuracyGraphKnots[graphIndex] != nullptr,
+            count)
+        || !db::validation::PointerCountConsistent(
+            weapon->originalAccuracyGraphKnots[graphIndex] != nullptr,
+            originalCount))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file weapon accuracy graph %u", graphIndex);
+        return false;
+    }
+
+    *byteCount = DB_CheckedDirectSpanBytes(count, 8, "weapon accuracy graph knots");
+    return true;
+}
+
+bool DB_ValidateWeaponAccuracyGraphKnots(const WeaponDef *weapon, uint32_t graphIndex)
+{
+    const int32_t count = weapon->accuracyGraphKnotCount[graphIndex];
+    if (!count)
+        return true;
+    if (!db::validation::NormalizedGraphKnots(
+            weapon->accuracyGraphKnots[graphIndex],
+            static_cast<uint32_t>(count))
+        || !db::validation::NormalizedGraphKnots(
+            weapon->originalAccuracyGraphKnots[graphIndex],
+            static_cast<uint32_t>(count)))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file weapon accuracy graph knots %u", graphIndex);
+        return false;
+    }
+    return true;
+}
+
 int32_t DB_CheckedCountSum(int64_t left, int64_t right, const char *description)
 {
     int32_t result = 0;
@@ -5600,6 +5649,17 @@ void __cdecl Mark_FxImpactTablePtr()
 void __cdecl Load_WeaponDef(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varWeaponDef, 2168);
+    uint32_t accuracyGraphByteCount[WEAP_ACCURACY_COUNT] = {};
+    for (uint32_t graphIndex = 0; graphIndex < WEAP_ACCURACY_COUNT; ++graphIndex)
+    {
+        if (!DB_ValidateWeaponAccuracyGraph(
+                varWeaponDef,
+                graphIndex,
+                &accuracyGraphByteCount[graphIndex]))
+        {
+            return;
+        }
+    }
     DB_PushStreamPos(4);
     varXString = &varWeaponDef->szInternalName;
     Load_XString(0);
@@ -5798,7 +5858,11 @@ void __cdecl Load_WeaponDef(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varWeaponDef->accuracyGraphKnots);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varWeaponDef->accuracyGraphKnots[0],
+                accuracyGraphByteCount[0],
+                4,
+                kDirectBlock4);
         }
     }
     if (varWeaponDef->originalAccuracyGraphKnots[0])
@@ -5807,13 +5871,19 @@ void __cdecl Load_WeaponDef(bool atStreamStart)
         {
             varWeaponDef->originalAccuracyGraphKnots[0] = (float (*)[2])AllocLoad_FxElemVisStateSample();
             varvec2_t = varWeaponDef->originalAccuracyGraphKnots[0];
-            Load_vec2_tArray(1, varWeaponDef->accuracyGraphKnotCount[0]);
+            Load_vec2_tArray(1, varWeaponDef->originalAccuracyGraphKnotCount[0]);
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varWeaponDef->originalAccuracyGraphKnots);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varWeaponDef->originalAccuracyGraphKnots[0],
+                accuracyGraphByteCount[0],
+                4,
+                kDirectBlock4);
         }
     }
+    if (!DB_ValidateWeaponAccuracyGraphKnots(varWeaponDef, 0))
+        return;
     varXString = &varWeaponDef->accuracyGraphName[1];
     Load_XString(0);
     if (varWeaponDef->accuracyGraphKnots[1])
@@ -5826,7 +5896,11 @@ void __cdecl Load_WeaponDef(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varWeaponDef->accuracyGraphKnots[1]);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varWeaponDef->accuracyGraphKnots[1],
+                accuracyGraphByteCount[1],
+                4,
+                kDirectBlock4);
         }
     }
     if (varWeaponDef->originalAccuracyGraphKnots[1])
@@ -5835,13 +5909,19 @@ void __cdecl Load_WeaponDef(bool atStreamStart)
         {
             varWeaponDef->originalAccuracyGraphKnots[1] = (float (*)[2])AllocLoad_FxElemVisStateSample();
             varvec2_t = varWeaponDef->originalAccuracyGraphKnots[1];
-            Load_vec2_tArray(1, varWeaponDef->accuracyGraphKnotCount[1]);
+            Load_vec2_tArray(1, varWeaponDef->originalAccuracyGraphKnotCount[1]);
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varWeaponDef->originalAccuracyGraphKnots[1]);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varWeaponDef->originalAccuracyGraphKnots[1],
+                accuracyGraphByteCount[1],
+                4,
+                kDirectBlock4);
         }
     }
+    if (!DB_ValidateWeaponAccuracyGraphKnots(varWeaponDef, 1))
+        return;
     varXString = &varWeaponDef->szUseHintString;
     Load_XString(0);
     varXString = &varWeaponDef->dropHintString;

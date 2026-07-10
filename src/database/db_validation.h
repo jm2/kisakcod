@@ -30,6 +30,34 @@ constexpr bool CountInRange(
         && count >= minimum && count <= maximum;
 }
 
+constexpr bool OptionalMirroredCountInRange(
+    std::int64_t count,
+    std::int64_t mirroredCount,
+    std::int64_t minimum,
+    std::int64_t maximum)
+{
+    return count == mirroredCount
+        && (count == 0 || CountInRange(count, minimum, maximum));
+}
+
+inline bool NormalizedGraphKnots(const float (*knots)[2], std::uint32_t count)
+{
+    if (!knots || count < 2 || knots[0][0] != 0.0f || knots[count - 1][0] != 1.0f)
+        return false;
+
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        const float x = knots[index][0];
+        const float y = knots[index][1];
+        // Positive comparisons reject NaN as well as infinities/out-of-range values.
+        if (!(x >= 0.0f && x <= 1.0f && y >= 0.0f && y <= 1.0f))
+            return false;
+        if (index && !(knots[index - 1][0] < x))
+            return false;
+    }
+    return true;
+}
+
 constexpr bool AllU16Below(
     const std::uint16_t *values,
     std::uint32_t count,

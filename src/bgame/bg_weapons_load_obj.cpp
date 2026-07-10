@@ -2,6 +2,7 @@
 #include "bg_public.h"
 #include <qcommon/mem_track.h>
 #include <database/database.h>
+#include <database/db_validation.h>
 #include <universal/q_parse.h>
 #include <universal/com_memory.h>
 #include <universal/com_files.h>
@@ -707,63 +708,62 @@ char __cdecl G_ParseAIWeaponAccurayGraphFile(
     float (*knots)[2],
     int *knotCount)
 {
-    int v4; // eax
-    long double v5; // st7
-    long double v6; // st7
-    int knotCountIndex; // [esp+0h] [ebp-8h]
-    parseInfo_t *tokenb; // [esp+4h] [ebp-4h]
-    parseInfo_t *token; // [esp+4h] [ebp-4h]
-    parseInfo_t *tokena; // [esp+4h] [ebp-4h]
-
-    iassert(buffer);
-    iassert(fileName);
-    iassert(knots);
-    iassert(knotCount);
+    if (!buffer || !fileName || !knots || !knotCount)
+        return 0;
+    *knotCount = 0;
 
     Com_BeginParseSession(fileName);
-    tokenb = Com_Parse(&buffer);
-    v4 = atoi(tokenb->token);
-    *knotCount = v4;
-    knotCountIndex = 0;
+    parseInfo_t *token = Com_Parse(&buffer);
+    const int declaredKnotCount = atoi(token->token);
+    if (!db::validation::CountInRange(declaredKnotCount, 2, 16))
+    {
+        Com_EndParseSession();
+        Com_PrintError(15, "ERROR: \"%s\" graph knot count must be between 2 and 16\n", fileName);
+        return 0;
+    }
+
+    int knotCountIndex = 0;
     while (1)
     {
         token = Com_Parse(&buffer);
-        if (!token->token[0])
+        if (!token->token[0] || token->token[0] == 125)
             break;
-        if (token->token[0] == 125)
-            break;
-        v5 = atof(token->token);
-        (*knots)[2 * knotCountIndex] = v5;
-        tokena = Com_Parse(&buffer);
-        if (!tokena->token[0] || tokena->token[0] == 125)
-            break;
-        v6 = atof(tokena->token);
-        (*knots)[2 * knotCountIndex++ + 1] = v6;
         if (knotCountIndex >= 16)
         {
             Com_PrintWarning(15, "WARNING: \"%s\" has too many graph knots\n", fileName);
             Com_EndParseSession();
             return 0;
         }
-    }
-    Com_EndParseSession();
-    if (knotCountIndex == *knotCount)
-    {
-        if ((*knots)[2 * knotCountIndex - 2] == 1.0)
+
+        const float x = static_cast<float>(atof(token->token));
+        token = Com_Parse(&buffer);
+        if (!token->token[0] || token->token[0] == 125)
         {
-            return 1;
-        }
-        else
-        {
-            Com_PrintError(15, "ERROR: \"%s\" Range must be 0.0 to 1.0\n", fileName);
+            Com_EndParseSession();
+            Com_PrintError(15, "ERROR: \"%s\" graph knot is missing its value\n", fileName);
             return 0;
         }
+        const float y = static_cast<float>(atof(token->token));
+        knots[knotCountIndex][0] = x;
+        knots[knotCountIndex][1] = y;
+        ++knotCountIndex;
     }
-    else
+    Com_EndParseSession();
+    if (knotCountIndex != declaredKnotCount)
     {
         Com_PrintError(15, "ERROR: \"%s\" Error in parsing an ai weapon accuracy file\n", fileName);
         return 0;
     }
+    if (!db::validation::NormalizedGraphKnots(
+            knots,
+            static_cast<uint32_t>(knotCountIndex)))
+    {
+        Com_PrintError(15, "ERROR: \"%s\" has invalid normalized graph knots\n", fileName);
+        return 0;
+    }
+
+    *knotCount = knotCountIndex;
+    return 1;
 }
 
 char __cdecl G_ParseWeaponAccurayGraphInternal(

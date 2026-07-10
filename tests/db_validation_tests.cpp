@@ -35,6 +35,47 @@ int main()
     Expect(!db::validation::CountInRange(95, 96, 65536), "short font glyph table rejected");
     Expect(!db::validation::CountInRange(65537, 96, 65536), "oversized font glyph table rejected");
     Expect(!db::validation::CountInRange(1, 2, 1), "invalid count range rejected");
+    Expect(db::validation::OptionalMirroredCountInRange(0, 0, 2, 16), "empty mirrored graph accepted");
+    Expect(db::validation::OptionalMirroredCountInRange(2, 2, 2, 16), "minimum mirrored graph accepted");
+    Expect(db::validation::OptionalMirroredCountInRange(16, 16, 2, 16), "maximum mirrored graph accepted");
+    Expect(!db::validation::OptionalMirroredCountInRange(1, 1, 2, 16), "short mirrored graph rejected");
+    Expect(!db::validation::OptionalMirroredCountInRange(17, 17, 2, 16), "oversized mirrored graph rejected");
+    Expect(!db::validation::OptionalMirroredCountInRange(4, 5, 2, 16), "mismatched mirrored graph rejected");
+    Expect(!db::validation::OptionalMirroredCountInRange(-1, -1, 2, 16), "negative mirrored graph rejected");
+
+    const float minimumGraph[][2] = {{0.0f, 0.2f}, {1.0f, 0.4f}};
+    const float validGraph[][2] = {{0.0f, 0.2f}, {0.5f, 0.8f}, {1.0f, 0.4f}};
+    const float missingStart[][2] = {{0.1f, 0.2f}, {1.0f, 0.4f}};
+    const float missingEnd[][2] = {{0.0f, 0.2f}, {0.9f, 0.4f}};
+    const float duplicateX[][2] = {{0.0f, 0.2f}, {0.5f, 0.8f}, {0.5f, 0.4f}, {1.0f, 0.3f}};
+    const float decreasingX[][2] = {{0.0f, 0.2f}, {0.7f, 0.8f}, {0.5f, 0.4f}, {1.0f, 0.3f}};
+    const float invalidY[][2] = {{0.0f, -0.1f}, {1.0f, 0.4f}};
+    const float nanGraph[][2] = {
+        {0.0f, 0.2f},
+        {(std::numeric_limits<float>::quiet_NaN)(), 0.8f},
+        {1.0f, 0.4f}};
+    const float infiniteGraph[][2] = {
+        {0.0f, 0.2f},
+        {0.5f, (std::numeric_limits<float>::infinity)()},
+        {1.0f, 0.4f}};
+    float maximumGraph[16][2] = {};
+    for (std::uint32_t index = 0; index < 16; ++index)
+    {
+        maximumGraph[index][0] = static_cast<float>(index) / 15.0f;
+        maximumGraph[index][1] = 0.5f;
+    }
+    Expect(db::validation::NormalizedGraphKnots(minimumGraph, 2), "two-knot graph accepted");
+    Expect(db::validation::NormalizedGraphKnots(validGraph, 3), "normalized graph accepted");
+    Expect(db::validation::NormalizedGraphKnots(maximumGraph, 16), "sixteen-knot graph accepted");
+    Expect(!db::validation::NormalizedGraphKnots(nullptr, 3), "missing graph rejected");
+    Expect(!db::validation::NormalizedGraphKnots(validGraph, 1), "single-knot graph rejected");
+    Expect(!db::validation::NormalizedGraphKnots(missingStart, 2), "graph missing zero endpoint rejected");
+    Expect(!db::validation::NormalizedGraphKnots(missingEnd, 2), "graph missing one endpoint rejected");
+    Expect(!db::validation::NormalizedGraphKnots(duplicateX, 4), "duplicate graph coordinate rejected");
+    Expect(!db::validation::NormalizedGraphKnots(decreasingX, 4), "decreasing graph coordinate rejected");
+    Expect(!db::validation::NormalizedGraphKnots(invalidY, 2), "out-of-range graph value rejected");
+    Expect(!db::validation::NormalizedGraphKnots(nanGraph, 3), "NaN graph coordinate rejected");
+    Expect(!db::validation::NormalizedGraphKnots(infiniteGraph, 3), "infinite graph value rejected");
 
     const std::uint16_t validIndices[] = {0, 2, 3};
     const std::uint16_t invalidIndices[] = {0, 4};
