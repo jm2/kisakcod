@@ -445,6 +445,7 @@ bool __cdecl DB_CompleteObject(
     case DBAliasKind::XRigidVertListArray:
     case DBAliasKind::BrushWrapper:
     case DBAliasKind::PhysGeomList:
+    case DBAliasKind::ClipMapBoxBrush:
         if (!db::relocation::CompletedSharedObjectSchemaValid(
                 expectedKind,
                 metadata,

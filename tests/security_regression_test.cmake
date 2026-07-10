@@ -718,6 +718,80 @@ require_source_contains(
                 DBAliasKind::PhysGeomList,
                 disk32::kPhysGeomListBytes"
     "shared physics geometry lists must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_validation.h"
+    "kMaxClipMapBrushNonaxialSides = 250"
+    "clipmap brushes must fit fixed 256-plane collision workspaces")
+require_source_contains(
+    "database/db_validation.h"
+    "ClipMapPlaneValid("
+    "clipmap plane metadata and finite values must validate before use")
+require_source_contains(
+    "database/db_validation.h"
+    "ClipMapBrushGraphValid("
+    "clipmap brush sides and adjacency must form an exact global partition")
+require_source_ordered(
+    "database/db_load.cpp"
+    "ClipMapBrushLayoutValid(
+            *varclipMap_t,
+            &brushExtents)"
+    "varXString = &varclipMap_t->name;"
+    "clipmap array extents must validate before child materialization")
+require_source_contains(
+    "database/db_load.cpp"
+    "Invalid inline fast-file clipmap brush sides"
+    "clipmap brush sides must use bounded global direct references")
+require_source_ordered(
+    "database/db_load.cpp"
+    "ClipMapBrushAdjacencyPrefixExtent(
+            *varcbrush_t,
+            &adjacencyBytes)"
+    "DB_ResolveDirectPointer(
+                &varcbrush_t->baseAdjacentSide"
+    "clipmap adjacency extents must be derived before resolving their token")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_ResolveDirectPointer(
+                &varcbrush_t->baseAdjacentSide"
+    "if (!DB_GetClipBrushAdjacencyBytes(
+            varcbrush_t,
+            &validatedAdjacencyBytes)"
+    "clipmap adjacency contents must not be read before bounded resolution")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_RegisterPointerSlot(
+                varclipMap_t->box_brush,
+                DBAliasKind::ClipMapBoxBrush)"
+    "if (!Load_cbrush_t(1))"
+    "clipmap box-brush provenance must register before child fixups")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_ResolveCompletedPointer(
+                &varclipMap_t->box_brush,
+                DBAliasKind::ClipMapBoxBrush,
+                disk32::kCBrushBytes"
+    "shared clipmap box brushes must resolve through exact typed provenance")
+require_source_ordered(
+    "database/db_load.cpp"
+    "ClipMapBrushGraphValid(*varclipMap_t)"
+    "DB_CompleteObject(
+            completedBoxBrush,
+            DBAliasKind::ClipMapBoxBrush"
+    "clipmap box brushes must publish only after whole-graph validation")
+require_source_ordered(
+    "database/db_load.cpp"
+    "if (!Load_clipMap_t(1))"
+    "Load_ClipMapAsset((XAssetHeader *)varclipMap_ptr)"
+    "invalid clipmap graphs must stop asset publication")
+foreach(_clipmap_collision_source
+    "physics/phys_coll_boxbrush.cpp"
+    "physics/phys_coll_capsulebrush.cpp"
+    "physics/phys_coll_cylinderbrush.cpp")
+    require_source_contains(
+        "${_clipmap_collision_source}"
+        "db::validation::kMaxClipMapBrushNonaxialSides"
+        "clipmap collision workspaces must reject oversized brush graphs")
+endforeach()
 require_source_ordered(
     "xanim/xmodel.cpp"
     "if (nextNodeQueueEnd == locals->nodeQueueBegin)"
@@ -1889,9 +1963,9 @@ file(STRINGS
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 5)
+if (NOT _legacy_direct_offset_count EQUAL 2)
     message(FATAL_ERROR
-        "Expected exactly 5 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 2 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 

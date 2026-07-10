@@ -1,5 +1,6 @@
 #include "phys_local.h"
 #include "phys_coll_local.h"
+#include <database/db_validation.h>
 
 void __cdecl Phys_CollideCylinderWithBrush(const cbrush_t *brush, const objInfo *info, Results *results)
 {
@@ -23,15 +24,28 @@ void __cdecl Phys_CollideCylinderWithBrush(const cbrush_t *brush, const objInfo 
     uint32_t i; // [esp+CF4h] [ebp-64h]
     float axialPlanes[6][4]; // [esp+CF8h] [ebp-60h] BYREF
 
+    if (!brush || !info || !results)
+    {
+        MyAssertHandler("c:\\trees\\cod3\\src\\physics\\phys_coll_local.h", 175, 0, "%s", "brush && info && results");
+        return;
+    }
     if (results->contactCount >= results->maxContacts)
+    {
         MyAssertHandler(
             ".\\physics\\phys_coll_cylinderbrush.cpp",
             801,
             0,
             "%s",
             "results->contactCount < results->maxContacts");
-    if (!brush)
-        MyAssertHandler("c:\\trees\\cod3\\src\\physics\\phys_coll_local.h", 175, 0, "%s", "brush");
+        return;
+    }
+    if (brush->numsides
+            > db::validation::kMaxClipMapBrushNonaxialSides
+        || (brush->numsides != 0 && !brush->sides))
+    {
+        MyAssertHandler("c:\\trees\\cod3\\src\\physics\\phys_coll_local.h", 175, 0, "%s", "valid brush side span");
+        return;
+    }
     brushPlane[0] = 0.0;
     brushPlane[1] = 0.0;
     brushPlane[2] = 0.0;

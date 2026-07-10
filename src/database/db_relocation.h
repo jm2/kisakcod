@@ -80,6 +80,7 @@ enum class AliasKind : std::uint8_t
     XRigidVertListArray,
     BrushWrapper,
     PhysGeomList,
+    ClipMapBoxBrush,
     Count,
 };
 
@@ -105,6 +106,7 @@ constexpr bool RequiresExactStartPublication(AliasKind kind)
     case AliasKind::XRigidVertListArray:
     case AliasKind::BrushWrapper:
     case AliasKind::PhysGeomList:
+    case AliasKind::ClipMapBoxBrush:
         return true;
     default:
         return false;
@@ -150,6 +152,9 @@ constexpr bool CompletedSharedObjectSchemaValid(
         break;
     case AliasKind::PhysGeomList:
         fixedBytes = disk32::kPhysGeomListBytes;
+        break;
+    case AliasKind::ClipMapBoxBrush:
+        fixedBytes = disk32::kCBrushBytes;
         break;
     case AliasKind::XRigidVertListArray:
         if (metadata != materializedBytes

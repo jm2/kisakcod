@@ -95,7 +95,43 @@ bool DB_ResolveCompletedPointer(
     return true;
 }
 
-bool DB_ValidateMaterializedPhysicsSpan(
+template <typename T>
+bool DB_ResolveDirectPointer(
+    T **field,
+    uint64_t requiredBytes,
+    size_t alignment,
+    db::relocation::BlockMask allowedBlocks,
+    const char *description)
+{
+    if (!field)
+    {
+        Com_Error(ERR_DROP, "Missing fast-file direct-pointer field for %s", description);
+        return false;
+    }
+
+    uint32_t tokenValue = 0;
+    memcpy(&tokenValue, field, sizeof(tokenValue));
+    uintptr_t pointer = 0;
+    const db::relocation::Status status = DB_ResolveOffsetBytes(
+        {tokenValue},
+        requiredBytes ? requiredBytes : 1,
+        alignment,
+        allowedBlocks,
+        &pointer);
+    if (status != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid fast-file direct reference for %s: %s",
+            description,
+            db::relocation::StatusName(status));
+        return false;
+    }
+    *field = reinterpret_cast<T *>(pointer);
+    return true;
+}
+
+bool DB_ValidateMaterializedBlock4Span(
     const void *pointer,
     uint32_t bytes,
     size_t alignment,
@@ -112,12 +148,27 @@ bool DB_ValidateMaterializedPhysicsSpan(
     {
         Com_Error(
             ERR_DROP,
-            "Invalid completed fast-file physics span for %s: %s",
+            "Invalid completed fast-file block-4 span for %s: %s",
             description,
             db::relocation::StatusName(status));
         return false;
     }
     return true;
+}
+
+bool DB_GetClipBrushAdjacencyBytes(
+    const cbrush_t *brush,
+    uint32_t *adjacencyBytes)
+{
+    return brush
+        && db::validation::ClipMapBrushAdjacencyExtentValid(
+            *brush,
+            adjacencyBytes);
+}
+
+bool DB_ValidateClipMapBoxBrush(const cbrush_t *brush)
+{
+    return brush && db::validation::ClipMapBoxBrushValid(*brush);
 }
 
 bool DB_ValidateXModelPiecesHeader(
@@ -4786,29 +4837,25 @@ void __cdecl Load_cplane_tArray(bool atStreamStart, int32_t count)
         disk32::kCPlaneBytes);
 }
 
-void __cdecl Load_cbrushside_t(bool atStreamStart)
+bool __cdecl Load_cbrushside_t(bool atStreamStart)
 {
     Load_Stream(
         atStreamStart,
         (uint8_t *)varcbrushside_t,
         disk32::kCBrushSideBytes);
-    if (varcbrushside_t->plane)
+    if (!varcbrushside_t->plane
+        || varcbrushside_t->plane == (cplane_s *)-1
+        || varcbrushside_t->plane == (cplane_s *)-2)
     {
-        if (varcbrushside_t->plane == (cplane_s *)-1)
-        {
-            varcbrushside_t->plane = (cplane_s *)AllocLoad_FxElemVisStateSample();
-            varcplane_t = varcbrushside_t->plane;
-            Load_cplane_t(1);
-        }
-        else
-        {
-            DB_ConvertOffsetToPointer(
-                (uint32_t *)&varcbrushside_t->plane,
-                disk32::kCPlaneBytes,
-                4,
-                kDirectBlock4);
-        }
+        Com_Error(ERR_DROP, "Invalid fast-file clipmap brush-side plane token");
+        return false;
     }
+    return DB_ResolveDirectPointer(
+        &varcbrushside_t->plane,
+        disk32::kCPlaneBytes,
+        4,
+        kDirectBlock4,
+        "clipmap brush-side plane");
 }
 
 XAsset *__cdecl AllocLoad_FxElemVisStateSample()
@@ -4816,7 +4863,7 @@ XAsset *__cdecl AllocLoad_FxElemVisStateSample()
     return (XAsset *)DB_AllocStreamPos(3);
 }
 
-void __cdecl Load_cbrushside_tArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_cbrushside_tArray(bool atStreamStart, int32_t count)
 {
     cbrushside_t *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
@@ -4830,9 +4877,11 @@ void __cdecl Load_cbrushside_tArray(bool atStreamStart, int32_t count)
     for (i = 0; i < count; ++i)
     {
         varcbrushside_t = var;
-        Load_cbrushside_t(0);
+        if (!Load_cbrushside_t(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
 void __cdecl Load_cbrushedge_t(bool atStreamStart)
@@ -5027,17 +5076,17 @@ bool __cdecl Load_BrushWrapper(bool atStreamStart)
             reinterpret_cast<cplane_s *>(pointer);
     }
 
-    if (!DB_ValidateMaterializedPhysicsSpan(
+    if (!DB_ValidateMaterializedBlock4Span(
             varBrushWrapper->sides,
             static_cast<uint32_t>(sideBytes),
             4,
             "brush sides")
-        || !DB_ValidateMaterializedPhysicsSpan(
+        || !DB_ValidateMaterializedBlock4Span(
             varBrushWrapper->baseAdjacentSide,
             static_cast<uint32_t>(adjacencyBytes),
             1,
             "brush adjacency")
-        || !DB_ValidateMaterializedPhysicsSpan(
+        || !DB_ValidateMaterializedBlock4Span(
             varBrushWrapper->planes,
             static_cast<uint32_t>(planeBytes),
             4,
@@ -5158,7 +5207,7 @@ bool __cdecl Load_PhysGeomList(bool atStreamStart)
             return false;
         }
     }
-    if (!DB_ValidateMaterializedPhysicsSpan(
+    if (!DB_ValidateMaterializedBlock4Span(
             varPhysGeomList->geoms,
             static_cast<uint32_t>(geomBytes),
             4,
@@ -6689,50 +6738,104 @@ void __cdecl Load_cmodel_tArray(bool atStreamStart, int32_t count)
     Load_StreamArray(atStreamStart, (uint8_t *)varcmodel_t, count, 72);
 }
 
-void __cdecl Load_cbrush_t(bool atStreamStart)
+bool __cdecl Load_cbrush_t(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varcbrush_t, 80);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varcbrush_t,
+        disk32::kCBrushBytes);
+    if (varcbrush_t->numsides
+            > db::validation::kMaxClipMapBrushNonaxialSides
+        || (varcbrush_t->numsides != 0) != (varcbrush_t->sides != nullptr))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file clipmap brush side count");
+        return false;
+    }
     if (varcbrush_t->sides)
     {
-        if (varcbrush_t->sides == (cbrushside_t *)-1)
+        const uint32_t sideBytes = DB_CheckedDirectSpanBytes(
+            varcbrush_t->numsides,
+            disk32::kCBrushSideBytes,
+            "clipmap brush sides");
+        if (varcbrush_t->sides == (cbrushside_t *)-1
+            || varcbrush_t->sides == (cbrushside_t *)-2)
         {
-            varcbrush_t->sides = (cbrushside_t *)AllocLoad_FxElemVisStateSample();
-            varcbrushside_t = varcbrush_t->sides;
-            Load_cbrushside_t(1);
+            Com_Error(ERR_DROP, "Invalid inline fast-file clipmap brush sides");
+            return false;
         }
-        else
+        if (!DB_ResolveDirectPointer(
+                &varcbrush_t->sides,
+                sideBytes,
+                4,
+                kDirectBlock4,
+                "clipmap brush sides"))
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varcbrush_t->sides);
+            return false;
         }
+    }
+
+    uint32_t adjacencyBytes = 0;
+    if (!db::validation::ClipMapBrushAdjacencyPrefixExtent(
+            *varcbrush_t,
+            &adjacencyBytes))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file clipmap brush adjacency layout");
+        return false;
+    }
+    if ((adjacencyBytes != 0) && !varcbrush_t->baseAdjacentSide)
+    {
+        Com_Error(ERR_DROP, "Missing fast-file clipmap brush adjacency");
+        return false;
     }
     if (varcbrush_t->baseAdjacentSide)
     {
-        if (varcbrush_t->baseAdjacentSide == (uint8_t *)-1)
+        if (varcbrush_t->baseAdjacentSide == (uint8_t *)-1
+            || varcbrush_t->baseAdjacentSide == (uint8_t *)-2)
         {
-            varcbrush_t->baseAdjacentSide = AllocLoad_raw_byte();
-            varcbrushedge_t = varcbrush_t->baseAdjacentSide;
-            Load_cbrushedge_t(1);
+            Com_Error(ERR_DROP, "Invalid inline fast-file clipmap brush adjacency");
+            return false;
         }
-        else
+        if (!DB_ResolveDirectPointer(
+                &varcbrush_t->baseAdjacentSide,
+                adjacencyBytes,
+                1,
+                kDirectBlock4,
+                "clipmap brush adjacency"))
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varcbrush_t->baseAdjacentSide);
+            return false;
         }
     }
+    uint32_t validatedAdjacencyBytes = 0;
+    if (!DB_GetClipBrushAdjacencyBytes(
+            varcbrush_t,
+            &validatedAdjacencyBytes)
+        || validatedAdjacencyBytes != adjacencyBytes)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file clipmap brush adjacency data");
+        return false;
+    }
+    return true;
 }
 
-void __cdecl Load_cbrush_tArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_cbrush_tArray(bool atStreamStart, int32_t count)
 {
     cbrush_t *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varcbrush_t, count, 80);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varcbrush_t,
+        count,
+        disk32::kCBrushBytes);
     var = varcbrush_t;
     for (i = 0; i < count; ++i)
     {
         varcbrush_t = var;
-        Load_cbrush_t(0);
+        if (!Load_cbrush_t(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
 void __cdecl Load_LeafBrushArray(bool atStreamStart, int32_t count)
@@ -6740,9 +6843,17 @@ void __cdecl Load_LeafBrushArray(bool atStreamStart, int32_t count)
     Load_StreamArray(atStreamStart, (uint8_t *)varLeafBrush, count, 2);
 }
 
-void __cdecl Load_clipMap_t(bool atStreamStart)
+bool __cdecl Load_clipMap_t(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varclipMap_t, 284);
+    db::validation::ClipMapBrushLayoutExtents brushExtents = {};
+    if (!db::validation::ClipMapBrushLayoutValid(
+            *varclipMap_t,
+            &brushExtents))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file clipmap brush layout");
+        return false;
+    }
     // These dimensions remain runtime invariants even when an optional payload is absent.
     const int32_t triangleIndexCount = DB_CheckedCountProduct(
         3,
@@ -6760,10 +6871,8 @@ void __cdecl Load_clipMap_t(bool atStreamStart)
         varclipMap_t->numClusters,
         varclipMap_t->clusterBytes,
         "clipmap visibility");
-    const uint32_t planeByteCount = DB_CheckedDirectSpanBytes(
-        varclipMap_t->planeCount,
-        20,
-        "clipmap planes");
+    const uint32_t planeByteCount =
+        static_cast<uint32_t>(brushExtents.planeBytes);
     DB_PushStreamPos(4);
     varXString = &varclipMap_t->name;
     Load_XString(0);
@@ -6772,16 +6881,27 @@ void __cdecl Load_clipMap_t(bool atStreamStart)
         if (varclipMap_t->planes == (cplane_s *)-1)
         {
             varclipMap_t->planes = (cplane_s *)AllocLoad_FxElemVisStateSample();
+            if (!varclipMap_t->planes
+                || !DB_IsStreamRangeValid(
+                    varclipMap_t->planes,
+                    planeByteCount))
+            {
+                Com_Error(ERR_DROP, "Fast-file clipmap planes exceed block 4");
+                DB_PopStreamPos();
+                return false;
+            }
             varcplane_t = varclipMap_t->planes;
             Load_cplane_tArray(1, varclipMap_t->planeCount);
         }
-        else
-        {
-            DB_ConvertOffsetToPointer(
-                (uint32_t*)&varclipMap_t->planes,
+        else if (!DB_ResolveDirectPointer(
+                &varclipMap_t->planes,
                 planeByteCount,
                 4,
-                kDirectBlock4);
+                kDirectBlock4,
+                "clipmap planes"))
+        {
+            DB_PopStreamPos();
+            return false;
         }
     }
     if (varclipMap_t->staticModelList)
@@ -6793,20 +6913,57 @@ void __cdecl Load_clipMap_t(bool atStreamStart)
     if (varclipMap_t->materials)
     {
         varclipMap_t->materials = (dmaterial_t *)AllocLoad_FxElemVisStateSample();
+        if (!varclipMap_t->materials
+            || !DB_IsStreamRangeValid(
+                varclipMap_t->materials,
+                static_cast<uint32_t>(brushExtents.materialBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file clipmap materials exceed block 4");
+            DB_PopStreamPos();
+            return false;
+        }
         vardmaterial_t = varclipMap_t->materials;
-        Load_dmaterial_tArray(1, varclipMap_t->numMaterials);
+        Load_dmaterial_tArray(
+            1,
+            static_cast<int32_t>(varclipMap_t->numMaterials));
     }
     if (varclipMap_t->brushsides)
     {
         varclipMap_t->brushsides = (cbrushside_t *)AllocLoad_FxElemVisStateSample();
+        if (!varclipMap_t->brushsides
+            || !DB_IsStreamRangeValid(
+                varclipMap_t->brushsides,
+                static_cast<uint32_t>(brushExtents.brushSideBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file clipmap brush sides exceed block 4");
+            DB_PopStreamPos();
+            return false;
+        }
         varcbrushside_t = varclipMap_t->brushsides;
-        Load_cbrushside_tArray(1, varclipMap_t->numBrushSides);
+        if (!Load_cbrushside_tArray(
+                1,
+                static_cast<int32_t>(varclipMap_t->numBrushSides)))
+        {
+            DB_PopStreamPos();
+            return false;
+        }
     }
     if (varclipMap_t->brushEdges)
     {
         varclipMap_t->brushEdges = AllocLoad_raw_byte();
+        if (!varclipMap_t->brushEdges
+            || !DB_IsStreamRangeValid(
+                varclipMap_t->brushEdges,
+                static_cast<uint32_t>(brushExtents.brushEdgeBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file clipmap brush edges exceed block 4");
+            DB_PopStreamPos();
+            return false;
+        }
         varcbrushedge_t = varclipMap_t->brushEdges;
-        Load_cbrushedge_tArray(1, varclipMap_t->numBrushEdges);
+        Load_cbrushedge_tArray(
+            1,
+            static_cast<int32_t>(varclipMap_t->numBrushEdges));
     }
     if (varclipMap_t->nodes)
     {
@@ -6883,8 +7040,21 @@ void __cdecl Load_clipMap_t(bool atStreamStart)
     if (varclipMap_t->brushes)
     {
         varclipMap_t->brushes = AllocLoad_GfxPackedVertex0();
+        if (!varclipMap_t->brushes
+            || !DB_IsStreamRangeValid(
+                varclipMap_t->brushes,
+                static_cast<uint32_t>(brushExtents.brushBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file clipmap brushes exceed block 4");
+            DB_PopStreamPos();
+            return false;
+        }
         varcbrush_t = varclipMap_t->brushes;
-        Load_cbrush_tArray(1, varclipMap_t->numBrushes);
+        if (!Load_cbrush_tArray(1, varclipMap_t->numBrushes))
+        {
+            DB_PopStreamPos();
+            return false;
+        }
     }
     if (varclipMap_t->visibility)
     {
@@ -6894,18 +7064,95 @@ void __cdecl Load_clipMap_t(bool atStreamStart)
     }
     varMapEntsPtr = &varclipMap_t->mapEnts;
     Load_MapEntsPtr(0);
+    DBAliasHandle completedBoxBrush;
     if (varclipMap_t->box_brush)
     {
         if (varclipMap_t->box_brush == (cbrush_t *)-1)
         {
             varclipMap_t->box_brush = AllocLoad_GfxPackedVertex0();
+            if (!varclipMap_t->box_brush
+                || !DB_IsStreamRangeValid(
+                    varclipMap_t->box_brush,
+                    disk32::kCBrushBytes))
+            {
+                Com_Error(ERR_DROP, "Cannot allocate fast-file clipmap box brush");
+                DB_PopStreamPos();
+                return false;
+            }
+            completedBoxBrush = DB_RegisterPointerSlot(
+                varclipMap_t->box_brush,
+                DBAliasKind::ClipMapBoxBrush);
+            if (!completedBoxBrush)
+            {
+                DB_PopStreamPos();
+                return false;
+            }
             varcbrush_t = varclipMap_t->box_brush;
-            Load_cbrush_t(1);
+            if (!Load_cbrush_t(1))
+            {
+                DB_PopStreamPos();
+                return false;
+            }
         }
-        else
+        else if (!DB_ResolveCompletedPointer(
+                &varclipMap_t->box_brush,
+                DBAliasKind::ClipMapBoxBrush,
+                disk32::kCBrushBytes,
+                "clipmap box brush"))
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varclipMap_t->box_brush);
+            DB_PopStreamPos();
+            return false;
         }
+    }
+    uint64_t ordinaryBoxIndex = 0;
+    if (!DB_ValidateMaterializedBlock4Span(
+            varclipMap_t->planes,
+            static_cast<uint32_t>(brushExtents.planeBytes),
+            4,
+            "clipmap planes")
+        || !DB_ValidateMaterializedBlock4Span(
+            varclipMap_t->materials,
+            static_cast<uint32_t>(brushExtents.materialBytes),
+            4,
+            "clipmap materials")
+        || !DB_ValidateMaterializedBlock4Span(
+            varclipMap_t->brushsides,
+            static_cast<uint32_t>(brushExtents.brushSideBytes),
+            4,
+            "clipmap brush sides")
+        || !DB_ValidateMaterializedBlock4Span(
+            varclipMap_t->brushEdges,
+            static_cast<uint32_t>(brushExtents.brushEdgeBytes),
+            1,
+            "clipmap brush edges")
+        || !DB_ValidateMaterializedBlock4Span(
+            varclipMap_t->brushes,
+            static_cast<uint32_t>(brushExtents.brushBytes),
+            16,
+            "clipmap brushes")
+        || !db::validation::ClipMapBrushGraphValid(*varclipMap_t)
+        || !DB_ValidateClipMapBoxBrush(varclipMap_t->box_brush)
+        || db::validation::ExactArrayElementIndex(
+            varclipMap_t->brushes,
+            varclipMap_t->numBrushes,
+            varclipMap_t->box_brush,
+            &ordinaryBoxIndex))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file clipmap brush graph");
+        DB_PopStreamPos();
+        return false;
+    }
+    if (completedBoxBrush
+        && !DB_CompleteObject(
+            completedBoxBrush,
+            DBAliasKind::ClipMapBoxBrush,
+            varclipMap_t->box_brush,
+            disk32::kCBrushBytes,
+            disk32::kCBrushBytes))
+    {
+        varclipMap_t->box_brush = nullptr;
+        DB_PopStreamPos();
+        return false;
     }
     if (varclipMap_t->dynEntDefList[0])
     {
@@ -6968,6 +7215,7 @@ void __cdecl Load_clipMap_t(bool atStreamStart)
     }
     DB_PopStreamPos();
     DB_PopStreamPos();
+    return true;
 }
 
 void __cdecl Load_clipMap_ptr(bool atStreamStart)
@@ -6983,12 +7231,23 @@ void __cdecl Load_clipMap_ptr(bool atStreamStart)
         if (value == -1 || value == -2)
         {
             *varclipMap_ptr = (clipMap_t *)AllocLoad_FxElemVisStateSample();
+            if (!*varclipMap_ptr)
+            {
+                Com_Error(ERR_DROP, "Cannot allocate fast-file clipmap header");
+                DB_PopStreamPos();
+                return;
+            }
             varclipMap_t = *varclipMap_ptr;
             if (value == -2)
                 inserted = DB_InsertPointer(DBAliasKind::ClipMap);
             else
                 inserted = {};
-            Load_clipMap_t(1);
+            if (!Load_clipMap_t(1))
+            {
+                *varclipMap_ptr = nullptr;
+                DB_PopStreamPos();
+                return;
+            }
             Load_ClipMapAsset((XAssetHeader *)varclipMap_ptr);
             if (inserted)
                 DB_SetInsertedPointer(

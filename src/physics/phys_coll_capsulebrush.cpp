@@ -1,5 +1,6 @@
 #include "phys_local.h"
 #include "phys_coll_local.h"
+#include <database/db_validation.h>
 
 int numLocalContacts;
 LocalContactData localContacts[32];
@@ -145,10 +146,27 @@ void __cdecl Phys_CollideCapsuleWithBrush(const cbrush_t *brush, const objInfo *
     float brushVerts[256][3]; // [esp+128h] [ebp-C60h] BYREF
     float axialPlanes[6][4]; // [esp+D28h] [ebp-60h] BYREF
 
-    vassert(results->contactCount < results->maxContacts, "results->contactCount = %d, results->maxContacts = %d", results->contactCount, results->maxContacts);
+    if (!brush || !info || !results)
+    {
+        iassert(brush && info && results);
+        return;
+    }
+    if (results->contactCount >= results->maxContacts)
+    {
+        vassert(results->contactCount < results->maxContacts, "results->contactCount = %d, results->maxContacts = %d", results->contactCount, results->maxContacts);
+        return;
+    }
+    if (brush->numsides
+            > db::validation::kMaxClipMapBrushNonaxialSides
+        || (brush->numsides != 0 && !brush->sides))
+    {
+        iassert(brush->numsides
+                <= db::validation::kMaxClipMapBrushNonaxialSides
+            && (brush->numsides == 0 || brush->sides));
+        return;
+    }
     numLocalContacts = 0;
     Phys_InfoToCapsule(info, &capsule);
-    iassert(brush);
     brushPlane[0] = 0.0;
     brushPlane[1] = 0.0;
     brushPlane[2] = 0.0;

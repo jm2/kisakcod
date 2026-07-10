@@ -1,4 +1,5 @@
 #include "phys_local.h"
+#include <database/db_validation.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <cgame/cg_local.h>
 #else
@@ -541,8 +542,17 @@ void __cdecl Phys_CollideBoxWithBrush(const cbrush_t *brush, const objInfo *info
         MyAssertHandler(".\\physics\\phys_coll_boxbrush.cpp", 1234, 0, "%s", "info");
     if (!results)
         MyAssertHandler(".\\physics\\phys_coll_boxbrush.cpp", 1235, 0, "%s", "results");
+    if (!brush || !info || !results)
+        return;
     if (results->contactCount >= results->maxContacts)
+    {
         MyAssertHandler(".\\physics\\phys_coll_boxbrush.cpp", 1236, 0, "%s", "results->contactCount < results->maxContacts");
+        return;
+    }
+    if (brush->numsides
+            > db::validation::kMaxClipMapBrushNonaxialSides
+        || (brush->numsides != 0 && !brush->sides))
+        return;
     if (Phys_TestBoxAgainstEachBrushPlane(brush, info, outBrushPlane, &outSideIndex, &outMaxSeparation))
     {
         PROF_SCOPED("BldWndingsForBrsh");
@@ -1303,16 +1313,24 @@ void __cdecl Phys_CollideOrientedBrushWithBrush(
     float outMaxSeparation; // [esp+39C0h] [ebp-8h] BYREF
     int fixedBrushSideIndex; // [esp+39C4h] [ebp-4h]
 
+    if (!orientedBrush
+        || !fixedBrush
+        || !input
+        || !results
+        || orientedBrush->numsides
+            > db::validation::kMaxClipMapBrushNonaxialSides
+        || fixedBrush->numsides
+            > db::validation::kMaxClipMapBrushNonaxialSides
+        || (orientedBrush->numsides != 0 && !orientedBrush->sides)
+        || (fixedBrush->numsides != 0 && !fixedBrush->sides))
+    {
+        return;
+    }
     if (results->contactCount >= results->maxContacts)
+    {
         MyAssertHandler(".\\physics\\phys_coll_boxbrush.cpp", 1562, 0, "%s", "results->contactCount < results->maxContacts");
-    if (orientedBrush->numsides >= 0x100)
-        MyAssertHandler(
-            ".\\physics\\phys_coll_boxbrush.cpp",
-            1565,
-            0,
-            "orientedBrush->numsides doesn't index ARRAY_COUNT( transformedPlanes )\n\t%i not in [0, %i)",
-            orientedBrush->numsides,
-            256);
+        return;
+    }
     CM_BuildAxialPlanes(orientedBrush, (float (*)[6][4])axialPlanes);
     for (i = 0; i < 6; ++i)
         Phys_TransformPlane(axialPlanes[i], axialPlanes[i][3], input->pos, input->R, outPlane[i]);
@@ -1540,8 +1558,21 @@ uint32_t __cdecl Phys_BuildWindingsForBrush(
 
     iassert(planes);
 
-    CM_BuildAxialPlanes(brush, &axialPlanes);
-    if (brush->numsides + 6 > maxPolys)
+    if (!brush || !planes || !outPolys || !outVerts)
+    {
+        MyAssertHandler(
+            ".\\physics\\phys_coll_boxbrush.cpp",
+            938,
+            0,
+            "%s",
+            "brush && planes && outPolys && outVerts");
+        return 0;
+    }
+    if (brush->numsides
+            > db::validation::kMaxClipMapBrushNonaxialSides
+        || (brush->numsides != 0 && !brush->sides)
+        || brush->numsides + 6 > maxPolys)
+    {
         MyAssertHandler(
             ".\\physics\\phys_coll_boxbrush.cpp",
             938,
@@ -1549,6 +1580,9 @@ uint32_t __cdecl Phys_BuildWindingsForBrush(
             "brush->numsides + 6 <= maxPolys\n\t%i, %i",
             brush->numsides + 6,
             maxPolys);
+        return 0;
+    }
+    CM_BuildAxialPlanes(brush, &axialPlanes);
     vertCount = 0;
     for (sideIndex = 0; sideIndex < brush->numsides + 6; ++sideIndex)
     {
@@ -1780,8 +1814,21 @@ uint32_t __cdecl Phys_BuildWindingsForBrush2(
 
     PROF_SCOPED("BldWndingsForBrsh");
 
-    CM_BuildAxialPlanes(brush, &axialPlanes);
-    if (brush->numsides + 6 > maxPolys)
+    if (!brush || !outPolys || !outVerts)
+    {
+        MyAssertHandler(
+            ".\\physics\\phys_coll_boxbrush.cpp",
+            963,
+            0,
+            "%s",
+            "brush && outPolys && outVerts");
+        return 0;
+    }
+    if (brush->numsides
+            > db::validation::kMaxClipMapBrushNonaxialSides
+        || (brush->numsides != 0 && !brush->sides)
+        || brush->numsides + 6 > maxPolys)
+    {
         MyAssertHandler(
             ".\\physics\\phys_coll_boxbrush.cpp",
             963,
@@ -1789,6 +1836,9 @@ uint32_t __cdecl Phys_BuildWindingsForBrush2(
             "brush->numsides + 6 <= maxPolys\n\t%i, %i",
             brush->numsides + 6,
             maxPolys);
+        return 0;
+    }
+    CM_BuildAxialPlanes(brush, &axialPlanes);
     vertCount = 0;
     for (sideIndex = 0; sideIndex < brush->numsides + 6; ++sideIndex)
     {

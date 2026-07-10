@@ -1418,6 +1418,427 @@ constexpr bool CheckedArrayBytes(std::int32_t count, std::uint32_t stride, std::
     return true;
 }
 
+constexpr std::uint32_t kMaxClipMapBrushNonaxialSides = 250;
+constexpr std::uint32_t kClipMapMaterialDiskBytes = 72;
+
+struct ClipMapBrushLayoutExtents
+{
+    std::int32_t planeBytes = 0;
+    std::int32_t materialBytes = 0;
+    std::int32_t brushSideBytes = 0;
+    std::int32_t brushEdgeBytes = 0;
+    std::int32_t brushBytes = 0;
+};
+
+constexpr bool ClipMapBrushLayoutValid(
+    bool hasPlanes,
+    std::int64_t planeCount,
+    bool hasMaterials,
+    std::uint64_t materialCount,
+    bool hasBrushSides,
+    std::uint64_t brushSideCount,
+    bool hasBrushEdges,
+    std::uint64_t brushEdgeCount,
+    bool hasBrushes,
+    std::uint64_t brushCount,
+    ClipMapBrushLayoutExtents *extents)
+{
+    if (!extents)
+        return false;
+    *extents = {};
+
+    constexpr std::uint64_t maximumCount =
+        static_cast<std::uint64_t>(
+            (std::numeric_limits<std::int32_t>::max)());
+    if (planeCount < 1 || planeCount > 65536 || !hasPlanes
+        || materialCount == 0 || materialCount > maximumCount
+        || !hasMaterials
+        || brushSideCount > maximumCount
+        || (brushSideCount != 0 && !hasBrushSides)
+        || brushEdgeCount > maximumCount
+        || (brushEdgeCount != 0 && !hasBrushEdges)
+        || brushCount > maximumCount
+        || (brushCount != 0 && !hasBrushes))
+    {
+        return false;
+    }
+
+    return CheckedArrayBytes(
+            static_cast<std::int32_t>(planeCount),
+            disk32::kCPlaneBytes,
+            &extents->planeBytes)
+        && CheckedArrayBytes(
+            static_cast<std::int32_t>(materialCount),
+            kClipMapMaterialDiskBytes,
+            &extents->materialBytes)
+        && CheckedArrayBytes(
+            static_cast<std::int32_t>(brushSideCount),
+            disk32::kCBrushSideBytes,
+            &extents->brushSideBytes)
+        && CheckedArrayBytes(
+            static_cast<std::int32_t>(brushEdgeCount),
+            1,
+            &extents->brushEdgeBytes)
+        && CheckedArrayBytes(
+            static_cast<std::int32_t>(brushCount),
+            disk32::kCBrushBytes,
+            &extents->brushBytes);
+}
+
+template <typename ClipMap>
+inline bool ClipMapBrushLayoutValid(
+    const ClipMap &map,
+    ClipMapBrushLayoutExtents *extents)
+{
+    return ClipMapBrushLayoutValid(
+        map.planes != nullptr,
+        static_cast<std::int64_t>(map.planeCount),
+        map.materials != nullptr,
+        static_cast<std::uint64_t>(map.numMaterials),
+        map.brushsides != nullptr,
+        static_cast<std::uint64_t>(map.numBrushSides),
+        map.brushEdges != nullptr,
+        static_cast<std::uint64_t>(map.numBrushEdges),
+        map.brushes != nullptr,
+        static_cast<std::uint64_t>(map.numBrushes),
+        extents);
+}
+
+template <typename Plane>
+inline bool ClipMapPlaneValid(const Plane &plane)
+{
+    if (!FiniteFloatArray(plane.normal, 3) || !std::isfinite(plane.dist))
+        return false;
+
+    std::uint8_t expectedSignbits = 0;
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        if (plane.normal[axis] < 0.0f)
+            expectedSignbits |= static_cast<std::uint8_t>(1u << axis);
+    }
+    const std::uint8_t expectedType = plane.normal[0] == 1.0f ? 0
+        : plane.normal[1] == 1.0f ? 1
+        : plane.normal[2] == 1.0f ? 2
+        : 3;
+    return static_cast<std::uint32_t>(plane.type) == expectedType
+        && static_cast<std::uint32_t>(plane.signbits)
+            == expectedSignbits;
+}
+
+template <typename Element>
+inline bool ExactArrayElementIndex(
+    const Element *base,
+    std::uint64_t count,
+    const Element *candidate,
+    std::uint64_t *index)
+{
+    if (index)
+        *index = 0;
+    if (!index || !base || !candidate || count == 0)
+        return false;
+
+    const std::uintptr_t baseAddress =
+        reinterpret_cast<std::uintptr_t>(base);
+    const std::uintptr_t candidateAddress =
+        reinterpret_cast<std::uintptr_t>(candidate);
+    constexpr std::uintptr_t elementBytes = sizeof(Element);
+    const std::uintptr_t maximumAddress =
+        (std::numeric_limits<std::uintptr_t>::max)();
+    if (count > (maximumAddress - baseAddress) / elementBytes)
+        return false;
+    const std::uintptr_t endAddress = baseAddress
+        + static_cast<std::uintptr_t>(count) * elementBytes;
+    if (candidateAddress < baseAddress || candidateAddress >= endAddress)
+        return false;
+    const std::uintptr_t relativeAddress = candidateAddress - baseAddress;
+    if (relativeAddress % elementBytes != 0)
+        return false;
+    *index = relativeAddress / elementBytes;
+    return true;
+}
+
+template <typename Element>
+inline bool ExactArrayBoundaryPosition(
+    const Element *base,
+    std::uint64_t count,
+    const Element *candidate,
+    std::uint64_t position)
+{
+    if (position > count)
+        return false;
+    if (!base)
+        return count == 0 && position == 0 && !candidate;
+    if (!candidate)
+        return false;
+
+    const std::uintptr_t baseAddress =
+        reinterpret_cast<std::uintptr_t>(base);
+    constexpr std::uintptr_t elementBytes = sizeof(Element);
+    const std::uintptr_t maximumAddress =
+        (std::numeric_limits<std::uintptr_t>::max)();
+    if (position > (maximumAddress - baseAddress) / elementBytes)
+        return false;
+    return reinterpret_cast<std::uintptr_t>(candidate)
+        == baseAddress + static_cast<std::uintptr_t>(position) * elementBytes;
+}
+
+constexpr bool ClipMapBrushAdjacencySlotValid(
+    std::int64_t offset,
+    std::uint32_t count,
+    std::uint32_t *runningCount)
+{
+    if (!runningCount || offset < 0
+        || static_cast<std::uint64_t>(offset) != *runningCount
+        || count > (std::numeric_limits<std::uint32_t>::max)()
+            - *runningCount)
+    {
+        return false;
+    }
+    *runningCount += count;
+    return true;
+}
+
+template <typename Brush>
+inline bool ClipMapBrushAdjacencyPrefixExtent(
+    const Brush &brush,
+    std::uint32_t *edgeCount)
+{
+    if (edgeCount)
+        *edgeCount = 0;
+    if (!edgeCount || brush.numsides > kMaxClipMapBrushNonaxialSides
+        || (brush.numsides != 0) != (brush.sides != nullptr))
+    {
+        return false;
+    }
+
+    std::uint32_t runningCount = 0;
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        for (std::uint32_t direction = 0; direction < 2; ++direction)
+        {
+            if (!ClipMapBrushAdjacencySlotValid(
+                    brush.firstAdjacentSideOffsets[direction][axis],
+                    brush.edgeCount[direction][axis],
+                    &runningCount))
+            {
+                return false;
+            }
+        }
+    }
+    for (std::uint32_t sideIndex = 0;
+        sideIndex < brush.numsides;
+        ++sideIndex)
+    {
+        if (!ClipMapBrushAdjacencySlotValid(
+                brush.sides[sideIndex].firstAdjacentSideOffset,
+                brush.sides[sideIndex].edgeCount,
+                &runningCount))
+        {
+            return false;
+        }
+    }
+    *edgeCount = runningCount;
+    return true;
+}
+
+template <typename Brush>
+inline bool ClipMapBrushAdjacencyExtentValid(
+    const Brush &brush,
+    std::uint32_t *edgeCount)
+{
+    std::uint32_t derivedCount = 0;
+    if (edgeCount)
+        *edgeCount = 0;
+    if (!edgeCount
+        || !ClipMapBrushAdjacencyPrefixExtent(brush, &derivedCount)
+        || (derivedCount != 0 && !brush.baseAdjacentSide))
+    {
+        return false;
+    }
+
+    const std::uint32_t sideIdentityLimit = brush.numsides + 6;
+    for (std::uint32_t edgeIndex = 0; edgeIndex < derivedCount; ++edgeIndex)
+    {
+        if (static_cast<std::uint32_t>(
+                brush.baseAdjacentSide[edgeIndex]) >= sideIdentityLimit)
+        {
+            return false;
+        }
+    }
+    *edgeCount = derivedCount;
+    return true;
+}
+
+template <typename Brush>
+inline bool ClipMapOrdinaryBrushValid(
+    const Brush &brush,
+    std::uint32_t materialCount,
+    std::uint32_t *edgeCount)
+{
+    if (edgeCount)
+        *edgeCount = 0;
+    if (!edgeCount || materialCount == 0
+        || !FiniteFloatArray(brush.mins, 3)
+        || !FiniteFloatArray(brush.maxs, 3)
+        || !ClipMapBrushAdjacencyExtentValid(brush, edgeCount))
+    {
+        return false;
+    }
+
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        if (brush.mins[axis] > brush.maxs[axis])
+            return false;
+        for (std::uint32_t direction = 0; direction < 2; ++direction)
+        {
+            const std::int64_t material =
+                brush.axialMaterialNum[direction][axis];
+            if (material < 0
+                || static_cast<std::uint64_t>(material) >= materialCount)
+            {
+                return false;
+            }
+        }
+    }
+    for (std::uint32_t sideIndex = 0;
+        sideIndex < brush.numsides;
+        ++sideIndex)
+    {
+        const auto &side = brush.sides[sideIndex];
+        if (!side.plane || side.materialNum >= materialCount)
+            return false;
+    }
+    return true;
+}
+
+template <typename Brush>
+inline bool ClipMapBoxBrushValid(const Brush &brush)
+{
+    if (brush.numsides != 0 || brush.sides || brush.baseAdjacentSide
+        || brush.contents != -1
+        || !FiniteFloatArray(brush.mins, 3)
+        || !FiniteFloatArray(brush.maxs, 3))
+    {
+        return false;
+    }
+
+    bool sourceSentinel = true;
+    bool orderedBounds = true;
+    const float maximumFloat = (std::numeric_limits<float>::max)();
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        sourceSentinel = sourceSentinel
+            && brush.mins[axis] == maximumFloat
+            && brush.maxs[axis] == -maximumFloat;
+        orderedBounds = orderedBounds
+            && brush.mins[axis] <= brush.maxs[axis];
+        for (std::uint32_t direction = 0; direction < 2; ++direction)
+        {
+            if (brush.axialMaterialNum[direction][axis] != -1
+                || brush.firstAdjacentSideOffsets[direction][axis] != 0
+                || brush.edgeCount[direction][axis] != 0)
+            {
+                return false;
+            }
+        }
+    }
+    return sourceSentinel || orderedBounds;
+}
+
+template <typename ClipMap>
+inline bool ClipMapBrushGraphValid(const ClipMap &map)
+{
+    ClipMapBrushLayoutExtents extents = {};
+    if (!ClipMapBrushLayoutValid(map, &extents))
+        return false;
+
+    const std::uint32_t planeCount =
+        static_cast<std::uint32_t>(map.planeCount);
+    const std::uint32_t materialCount =
+        static_cast<std::uint32_t>(map.numMaterials);
+    const std::uint64_t brushSideCount = map.numBrushSides;
+    const std::uint64_t brushEdgeCount = map.numBrushEdges;
+    for (std::uint32_t planeIndex = 0;
+        planeIndex < planeCount;
+        ++planeIndex)
+    {
+        if (!ClipMapPlaneValid(map.planes[planeIndex]))
+            return false;
+    }
+
+    std::uint64_t consumedSides = 0;
+    std::uint64_t consumedEdges = 0;
+    for (std::uint32_t brushIndex = 0;
+        brushIndex < static_cast<std::uint32_t>(map.numBrushes);
+        ++brushIndex)
+    {
+        const auto &brush = map.brushes[brushIndex];
+        if (brush.numsides > kMaxClipMapBrushNonaxialSides)
+            return false;
+        if (brush.numsides == 0)
+        {
+            if (brush.sides)
+                return false;
+        }
+        else
+        {
+            std::uint64_t sideIndex = 0;
+            if (brush.numsides > brushSideCount - consumedSides
+                || !ExactArrayElementIndex(
+                    map.brushsides,
+                    brushSideCount,
+                    brush.sides,
+                    &sideIndex)
+                || sideIndex != consumedSides)
+            {
+                return false;
+            }
+        }
+
+        std::uint32_t derivedEdgeCount = 0;
+        if (!ClipMapBrushAdjacencyPrefixExtent(
+                brush,
+                &derivedEdgeCount)
+            || derivedEdgeCount > brushEdgeCount - consumedEdges
+            || !ExactArrayBoundaryPosition(
+                map.brushEdges,
+                brushEdgeCount,
+                brush.baseAdjacentSide,
+                consumedEdges))
+        {
+            return false;
+        }
+
+        std::uint32_t validatedEdgeCount = 0;
+        if (!ClipMapOrdinaryBrushValid(
+                brush,
+                materialCount,
+                &validatedEdgeCount)
+            || validatedEdgeCount != derivedEdgeCount)
+        {
+            return false;
+        }
+        for (std::uint32_t sideOffset = 0;
+            sideOffset < brush.numsides;
+            ++sideOffset)
+        {
+            std::uint64_t planeIndex = 0;
+            if (!ExactArrayElementIndex(
+                    map.planes,
+                    planeCount,
+                    brush.sides[sideOffset].plane,
+                    &planeIndex))
+            {
+                return false;
+            }
+        }
+        consumedSides += brush.numsides;
+        consumedEdges += derivedEdgeCount;
+    }
+    return consumedSides == brushSideCount
+        && consumedEdges == brushEdgeCount;
+}
+
 constexpr std::uint32_t kMaxBrushNonaxialSides = 26;
 constexpr std::uint32_t kMaxBrushWindingEdges = 12;
 constexpr std::int32_t kMaxBrushAdjacencyEntries = 32 * 12;

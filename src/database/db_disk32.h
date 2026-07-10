@@ -46,6 +46,7 @@ constexpr uint32_t kXRigidVertListBytes = 12;
 constexpr uint32_t kBrushWrapperBytes = 80;
 constexpr uint32_t kPhysGeomInfoBytes = 68;
 constexpr uint32_t kPhysGeomListBytes = 44;
+constexpr uint32_t kCBrushBytes = 80;
 constexpr uint32_t kCBrushSideBytes = 12;
 constexpr uint32_t kCPlaneBytes = 20;
 

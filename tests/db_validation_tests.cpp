@@ -131,6 +131,140 @@ struct TestPhysicsFixture
     TestPhysGeomList list = {};
 };
 
+struct TestClipPlane
+{
+    float normal[3] = {};
+    float dist = 0.0f;
+    std::uint8_t type = 0;
+    std::uint8_t signbits = 0;
+    std::uint8_t pad[2] = {};
+};
+
+struct TestClipBrushSide
+{
+    TestClipPlane *plane = nullptr;
+    std::uint32_t materialNum = 0;
+    std::int16_t firstAdjacentSideOffset = 0;
+    std::uint8_t edgeCount = 0;
+};
+
+struct TestClipBrush
+{
+    float mins[3] = {};
+    std::int32_t contents = 0;
+    float maxs[3] = {};
+    std::uint32_t numsides = 0;
+    TestClipBrushSide *sides = nullptr;
+    std::int16_t axialMaterialNum[2][3] = {};
+    std::uint8_t *baseAdjacentSide = nullptr;
+    std::int16_t firstAdjacentSideOffsets[2][3] = {};
+    std::uint8_t edgeCount[2][3] = {};
+};
+
+struct TestClipMaterial
+{
+    std::array<std::uint8_t, 72> bytes = {};
+};
+
+struct TestClipMap
+{
+    std::int32_t planeCount = 0;
+    TestClipPlane *planes = nullptr;
+    std::uint32_t numMaterials = 0;
+    TestClipMaterial *materials = nullptr;
+    std::uint32_t numBrushSides = 0;
+    TestClipBrushSide *brushsides = nullptr;
+    std::uint32_t numBrushEdges = 0;
+    std::uint8_t *brushEdges = nullptr;
+    std::uint16_t numBrushes = 0;
+    TestClipBrush *brushes = nullptr;
+};
+
+struct TestClipMapFixture
+{
+    std::array<TestClipPlane, 4> planes = {};
+    std::array<TestClipMaterial, 3> materials = {};
+    std::array<TestClipBrushSide, 4> sides = {};
+    std::array<std::uint8_t, 5> edges = {};
+    std::array<TestClipBrush, 2> brushes = {};
+    TestClipMap map = {};
+};
+
+void PopulateValidClipMapFixture(TestClipMapFixture *fixture)
+{
+    *fixture = {};
+    fixture->planes[0].normal[0] = 1.0f;
+    fixture->planes[0].type = 0;
+    fixture->planes[1].normal[0] = -1.0f;
+    fixture->planes[1].type = 3;
+    fixture->planes[1].signbits = 1;
+    fixture->planes[2].normal[1] = 1.0f;
+    fixture->planes[2].type = 1;
+
+    TestClipBrush &first = fixture->brushes[0];
+    first.mins[0] = first.mins[1] = first.mins[2] = -2.0f;
+    first.maxs[0] = first.maxs[1] = first.maxs[2] = 2.0f;
+    first.contents = 1;
+    first.numsides = 2;
+    first.sides = fixture->sides.data();
+    first.baseAdjacentSide = fixture->edges.data();
+    first.edgeCount[0][0] = 1;
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        for (std::uint32_t direction = 0; direction < 2; ++direction)
+        {
+            if (axis != 0 || direction != 0)
+                first.firstAdjacentSideOffsets[direction][axis] = 1;
+        }
+    }
+    fixture->sides[0].plane = &fixture->planes[0];
+    fixture->sides[0].materialNum = 1;
+    fixture->sides[0].firstAdjacentSideOffset = 1;
+    fixture->sides[0].edgeCount = 1;
+    fixture->sides[1].plane = &fixture->planes[0];
+    fixture->sides[1].firstAdjacentSideOffset = 2;
+    fixture->edges[0] = 0;
+    fixture->edges[1] = 7;
+
+    TestClipBrush &second = fixture->brushes[1];
+    second.mins[0] = second.mins[1] = second.mins[2] = -1.0f;
+    second.maxs[0] = second.maxs[1] = second.maxs[2] = 1.0f;
+    second.contents = 2;
+    second.numsides = 1;
+    second.sides = &fixture->sides[2];
+    second.baseAdjacentSide = &fixture->edges[2];
+    fixture->sides[2].plane = &fixture->planes[2];
+    fixture->sides[2].firstAdjacentSideOffset = 0;
+    fixture->sides[2].edgeCount = 1;
+    fixture->edges[2] = 6;
+
+    fixture->map.planeCount = 3;
+    fixture->map.planes = fixture->planes.data();
+    fixture->map.numMaterials = 2;
+    fixture->map.materials = fixture->materials.data();
+    fixture->map.numBrushSides = 3;
+    fixture->map.brushsides = fixture->sides.data();
+    fixture->map.numBrushEdges = 3;
+    fixture->map.brushEdges = fixture->edges.data();
+    fixture->map.numBrushes = 2;
+    fixture->map.brushes = fixture->brushes.data();
+}
+
+TestClipBrush ValidClipMapBoxBrush(bool sourceSentinel)
+{
+    TestClipBrush brush = {};
+    brush.contents = -1;
+    const float maximumFloat = (std::numeric_limits<float>::max)();
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        brush.mins[axis] = sourceSentinel ? maximumFloat : -1.0f;
+        brush.maxs[axis] = sourceSentinel ? -maximumFloat : 1.0f;
+        for (std::uint32_t direction = 0; direction < 2; ++direction)
+            brush.axialMaterialNum[direction][axis] = -1;
+    }
+    return brush;
+}
+
 void PopulateValidPhysicsFixture(TestPhysicsFixture *fixture)
 {
     *fixture = {};
@@ -2490,6 +2624,391 @@ int main()
     Expect(
         !db::validation::PhysGeomListRuntimeValid(emptyPhysList),
         "empty physics geometry runtime list rejected");
+
+    TestClipMapFixture clipMap = {};
+    PopulateValidClipMapFixture(&clipMap);
+    db::validation::ClipMapBrushLayoutExtents clipExtents = {};
+    Expect(
+        db::validation::ClipMapBrushLayoutValid(
+            clipMap.map,
+            &clipExtents)
+            && clipExtents.planeBytes == 60
+            && clipExtents.materialBytes == 144
+            && clipExtents.brushSideBytes == 36
+            && clipExtents.brushEdgeBytes == 3
+            && clipExtents.brushBytes == 160,
+        "checked clipmap brush global extents accepted");
+    Expect(
+        db::validation::ClipMapBrushLayoutValid(
+            true, 65536,
+            true, 1,
+            false, 0,
+            false, 0,
+            false, 0,
+            &clipExtents)
+            && clipExtents.planeBytes == 1310720,
+        "maximum source clipmap plane count accepted");
+    Expect(
+        !db::validation::ClipMapBrushLayoutValid(
+            true, 0,
+            true, 1,
+            false, 0,
+            false, 0,
+            false, 0,
+            &clipExtents),
+        "empty clipmap plane table rejected");
+    Expect(
+        !db::validation::ClipMapBrushLayoutValid(
+            true, 65537,
+            true, 1,
+            false, 0,
+            false, 0,
+            false, 0,
+            &clipExtents),
+        "clipmap plane count beyond 65536 rejected");
+    Expect(
+        !db::validation::ClipMapBrushLayoutValid(
+            false, 1,
+            true, 1,
+            false, 0,
+            false, 0,
+            false, 0,
+            &clipExtents),
+        "missing required clipmap plane table rejected");
+    Expect(
+        !db::validation::ClipMapBrushLayoutValid(
+            true, 1,
+            false, 0,
+            false, 0,
+            false, 0,
+            false, 0,
+            &clipExtents),
+        "empty clipmap material table rejected");
+    Expect(
+        !db::validation::ClipMapBrushLayoutValid(
+            true, 1,
+            false, 1,
+            false, 0,
+            false, 0,
+            false, 0,
+            &clipExtents),
+        "missing nonempty clipmap material table rejected");
+    Expect(
+        !db::validation::ClipMapBrushLayoutValid(
+            true, 1,
+            true,
+                static_cast<std::uint64_t>(INT32_MAX) / 72u + 1u,
+            false, 0,
+            false, 0,
+            false, 0,
+            &clipExtents),
+        "overflowing clipmap material extent rejected");
+    Expect(
+        !db::validation::ClipMapBrushLayoutValid(
+            true, 1,
+            true, 1,
+            true,
+                static_cast<std::uint64_t>(INT32_MAX) / 12u + 1u,
+            false, 0,
+            false, 0,
+            &clipExtents),
+        "overflowing clipmap brush-side extent rejected");
+    Expect(
+        !db::validation::ClipMapBrushLayoutValid(
+            true, 1,
+            true, 1,
+            false, 0,
+            true, static_cast<std::uint64_t>(INT32_MAX) + 1u,
+            false, 0,
+            &clipExtents),
+        "overflowing clipmap brush-edge extent rejected");
+    Expect(
+        !db::validation::ClipMapBrushLayoutValid(
+            true, 1,
+            true, 1,
+            false, 0,
+            false, 0,
+            true,
+                static_cast<std::uint64_t>(INT32_MAX) / 80u + 1u,
+            &clipExtents),
+        "overflowing clipmap brush extent rejected");
+    Expect(
+        !db::validation::ClipMapBrushLayoutValid(
+            true, 1,
+            true, 1,
+            false, 1,
+            false, 0,
+            false, 0,
+            &clipExtents),
+        "missing nonempty clipmap brush-side table rejected");
+    Expect(
+        !db::validation::ClipMapBrushLayoutValid(
+            true, 1,
+            true, 1,
+            false, 0,
+            false, 1,
+            false, 0,
+            &clipExtents),
+        "missing nonempty clipmap brush-edge table rejected");
+    Expect(
+        !db::validation::ClipMapBrushLayoutValid(
+            true, 1,
+            true, 1,
+            false, 0,
+            false, 0,
+            false, 1,
+            &clipExtents),
+        "missing nonempty clipmap brush table rejected");
+    Expect(
+        !db::validation::ClipMapBrushLayoutValid(
+            true, 1,
+            true, 1,
+            false, 0,
+            false, 0,
+            false, 0,
+            nullptr),
+        "clipmap brush layout requires extent output");
+
+    Expect(
+        db::validation::ClipMapPlaneValid(clipMap.planes[0]),
+        "consistent positive axial clipmap plane accepted");
+    Expect(
+        db::validation::ClipMapPlaneValid(clipMap.planes[1]),
+        "consistent negative nonaxial clipmap plane accepted");
+    clipMap.planes[0].type = 3;
+    Expect(
+        !db::validation::ClipMapPlaneValid(clipMap.planes[0]),
+        "clipmap plane type inconsistent with its normal rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.planes[1].signbits = 0;
+    Expect(
+        !db::validation::ClipMapPlaneValid(clipMap.planes[1]),
+        "clipmap plane sign bits inconsistent with its normal rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.planes[2].dist =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        !db::validation::ClipMapPlaneValid(clipMap.planes[2]),
+        "non-finite clipmap plane rejected");
+
+    PopulateValidClipMapFixture(&clipMap);
+    std::uint64_t clipElementIndex = UINT64_MAX;
+    Expect(
+        db::validation::ExactArrayElementIndex(
+            clipMap.planes.data(),
+            3,
+            &clipMap.planes[2],
+            &clipElementIndex)
+            && clipElementIndex == 2,
+        "exact clipmap array element membership accepted");
+    const auto misalignedClipPlane = reinterpret_cast<TestClipPlane *>(
+        reinterpret_cast<std::uintptr_t>(clipMap.planes.data()) + 1u);
+    Expect(
+        !db::validation::ExactArrayElementIndex(
+            clipMap.planes.data(),
+            3,
+            misalignedClipPlane,
+            &clipElementIndex),
+        "misaligned interior clipmap array pointer rejected");
+    Expect(
+        !db::validation::ExactArrayElementIndex(
+            clipMap.planes.data(),
+            3,
+            &clipMap.planes[3],
+            &clipElementIndex),
+        "one-past clipmap array pointer rejected");
+    Expect(
+        !db::validation::ExactArrayElementIndex(
+            clipMap.planes.data(),
+            3,
+            &clipMap.planes[0],
+            nullptr),
+        "exact clipmap membership requires index output");
+
+    std::array<TestClipBrushSide,
+        db::validation::kMaxClipMapBrushNonaxialSides + 1>
+        maximumClipSides = {};
+    TestClipBrush maximumClipBrush = {};
+    maximumClipBrush.numsides =
+        db::validation::kMaxClipMapBrushNonaxialSides;
+    maximumClipBrush.sides = maximumClipSides.data();
+    std::uint32_t clipBrushEdgeCount = UINT32_MAX;
+    Expect(
+        db::validation::ClipMapBrushAdjacencyExtentValid(
+            maximumClipBrush,
+            &clipBrushEdgeCount)
+            && clipBrushEdgeCount == 0,
+        "250-side clipmap brush adjacency accepted");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.brushes[0].baseAdjacentSide =
+        reinterpret_cast<std::uint8_t *>(static_cast<std::uintptr_t>(1));
+    Expect(
+        db::validation::ClipMapBrushAdjacencyPrefixExtent(
+            clipMap.brushes[0],
+            &clipBrushEdgeCount)
+            && clipBrushEdgeCount == 2,
+        "clipmap adjacency extent derivation does not read an unresolved token");
+    maximumClipBrush.numsides =
+        db::validation::kMaxClipMapBrushNonaxialSides + 1;
+    Expect(
+        !db::validation::ClipMapBrushAdjacencyExtentValid(
+            maximumClipBrush,
+            &clipBrushEdgeCount),
+        "251-side clipmap brush adjacency rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.brushes[0].firstAdjacentSideOffsets[0][0] = -1;
+    Expect(
+        !db::validation::ClipMapBrushAdjacencyExtentValid(
+            clipMap.brushes[0],
+            &clipBrushEdgeCount),
+        "negative clipmap brush adjacency prefix rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.sides[0].firstAdjacentSideOffset = 2;
+    Expect(
+        !db::validation::ClipMapBrushAdjacencyExtentValid(
+            clipMap.brushes[0],
+            &clipBrushEdgeCount),
+        "gap in clipmap brush adjacency prefix rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.sides[0].firstAdjacentSideOffset = 0;
+    Expect(
+        !db::validation::ClipMapBrushAdjacencyExtentValid(
+            clipMap.brushes[0],
+            &clipBrushEdgeCount),
+        "overlap in clipmap brush adjacency prefix rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.edges[0] = 8;
+    Expect(
+        !db::validation::ClipMapBrushAdjacencyExtentValid(
+            clipMap.brushes[0],
+            &clipBrushEdgeCount),
+        "clipmap brush adjacency side identity at the limit rejected");
+
+    PopulateValidClipMapFixture(&clipMap);
+    Expect(
+        db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "complete clipmap brush graph with a shared plane accepted");
+    clipMap.map.numBrushSides = 4;
+    clipMap.brushes[1].sides = &clipMap.sides[3];
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "gap between clipmap brush side slices rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.brushes[1].sides = &clipMap.sides[1];
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "overlap between clipmap brush side slices rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.map.numBrushSides = 4;
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "leftover global clipmap brush side rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.map.numBrushEdges = 4;
+    clipMap.brushes[1].baseAdjacentSide = &clipMap.edges[3];
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "gap between clipmap brush edge slices rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.brushes[1].baseAdjacentSide = &clipMap.edges[1];
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "overlap between clipmap brush edge slices rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.map.numBrushEdges = 4;
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "leftover global clipmap brush edge rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.brushes[0].axialMaterialNum[0][0] = 2;
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "out-of-range axial clipmap brush material rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.sides[0].materialNum = 2;
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "out-of-range nonaxial clipmap brush material rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.brushes[0].mins[0] = 3.0f;
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "inverted ordinary clipmap brush bounds rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.brushes[0].maxs[1] =
+        (std::numeric_limits<float>::infinity)();
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "non-finite ordinary clipmap brush bounds rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.planes[0].signbits = 4;
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "invalid plane metadata rejects the complete clipmap brush graph");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.sides[0].plane = misalignedClipPlane;
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "misaligned clipmap brush plane reference rejected");
+    PopulateValidClipMapFixture(&clipMap);
+    clipMap.sides[0].plane = &clipMap.planes[3];
+    Expect(
+        !db::validation::ClipMapBrushGraphValid(clipMap.map),
+        "one-past clipmap brush plane reference rejected");
+
+    TestClipBrush clipBox = ValidClipMapBoxBrush(true);
+    Expect(
+        db::validation::ClipMapBoxBrushValid(clipBox),
+        "source FLT_MAX clipmap box-brush sentinel accepted");
+    clipBox = ValidClipMapBoxBrush(false);
+    Expect(
+        db::validation::ClipMapBoxBrushValid(clipBox),
+        "ordered runtime clipmap box-brush bounds accepted");
+    clipBox.numsides = 1;
+    Expect(
+        !db::validation::ClipMapBoxBrushValid(clipBox),
+        "box brush with a nonaxial side count rejected");
+    clipBox = ValidClipMapBoxBrush(false);
+    clipBox.sides = clipMap.sides.data();
+    Expect(
+        !db::validation::ClipMapBoxBrushValid(clipBox),
+        "box brush with a side pointer rejected");
+    clipBox = ValidClipMapBoxBrush(false);
+    clipBox.baseAdjacentSide = clipMap.edges.data();
+    Expect(
+        !db::validation::ClipMapBoxBrushValid(clipBox),
+        "box brush with an adjacency pointer rejected");
+    clipBox = ValidClipMapBoxBrush(false);
+    clipBox.firstAdjacentSideOffsets[1][2] = 1;
+    Expect(
+        !db::validation::ClipMapBoxBrushValid(clipBox),
+        "box brush with a nonzero adjacency offset rejected");
+    clipBox = ValidClipMapBoxBrush(false);
+    clipBox.edgeCount[0][1] = 1;
+    Expect(
+        !db::validation::ClipMapBoxBrushValid(clipBox),
+        "box brush with a nonzero adjacency count rejected");
+    clipBox = ValidClipMapBoxBrush(false);
+    clipBox.axialMaterialNum[0][0] = 0;
+    Expect(
+        !db::validation::ClipMapBoxBrushValid(clipBox),
+        "box brush with a material rejected");
+    clipBox = ValidClipMapBoxBrush(false);
+    clipBox.contents = 0;
+    Expect(
+        !db::validation::ClipMapBoxBrushValid(clipBox),
+        "box brush without sentinel contents rejected");
+    clipBox = ValidClipMapBoxBrush(false);
+    clipBox.maxs[2] =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        !db::validation::ClipMapBoxBrushValid(clipBox),
+        "box brush with a non-finite bound rejected");
+    clipBox = ValidClipMapBoxBrush(false);
+    clipBox.mins[0] = 2.0f;
+    Expect(
+        !db::validation::ClipMapBoxBrushValid(clipBox),
+        "box brush with nonsentinel inverted bounds rejected");
 
     std::uint32_t spanBytes = UINT32_MAX;
     Expect(db::validation::CheckedSpanBytes(0, 20, &spanBytes) && spanBytes == 0, "zero span size");

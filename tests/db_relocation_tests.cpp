@@ -691,6 +691,10 @@ int main()
         db::relocation::RequiresExactStartPublication(AliasKind::PhysGeomList),
         "physics geometry lists require exact completed starts");
     Expect(
+        db::relocation::RequiresExactStartPublication(
+            AliasKind::ClipMapBoxBrush),
+        "clipmap box brushes require exact completed starts");
+    Expect(
         !db::relocation::RequiresExactStartPublication(AliasKind::Material),
         "redirectable asset aliases do not require their slot address");
     Expect(
@@ -710,6 +714,7 @@ int main()
             && disk32::kBrushWrapperBytes == 80u
             && disk32::kPhysGeomInfoBytes == 68u
             && disk32::kPhysGeomListBytes == 44u
+            && disk32::kCBrushBytes == 80u
             && disk32::kCBrushSideBytes == 12u
             && disk32::kCPlaneBytes == 20u,
         "completed shared-object disk32 schemas remain fixed");
@@ -734,6 +739,7 @@ int main()
             2 * disk32::kXRigidVertListBytes},
         {AliasKind::BrushWrapper, disk32::kBrushWrapperBytes},
         {AliasKind::PhysGeomList, disk32::kPhysGeomListBytes},
+        {AliasKind::ClipMapBoxBrush, disk32::kCBrushBytes},
     };
     for (const CompletedSchemaCase &schema : completedSchemas)
     {
