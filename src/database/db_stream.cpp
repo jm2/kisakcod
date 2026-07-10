@@ -396,6 +396,24 @@ bool __cdecl DB_CompleteObject(
         }
         headerBytes = disk32::kMaterialTechniqueHeaderBytes;
         break;
+    case DBAliasKind::MaterialVertexShader:
+        if (metadata != disk32::kMaterialVertexShaderBytes
+            || materializedBytes != disk32::kMaterialVertexShaderBytes)
+        {
+            Com_Error(ERR_DROP, "Invalid completed material vertex shader schema");
+            return false;
+        }
+        headerBytes = disk32::kMaterialVertexShaderBytes;
+        break;
+    case DBAliasKind::MaterialPixelShader:
+        if (metadata != disk32::kMaterialPixelShaderBytes
+            || materializedBytes != disk32::kMaterialPixelShaderBytes)
+        {
+            Com_Error(ERR_DROP, "Invalid completed material pixel shader schema");
+            return false;
+        }
+        headerBytes = disk32::kMaterialPixelShaderBytes;
+        break;
     default:
         Com_Error(ERR_DROP, "Unsupported completed fast-file object schema");
         return false;
@@ -483,6 +501,19 @@ db::relocation::Status __cdecl DB_MarkStreamRangeMaterialized(
     return g_directResolver.MarkMaterialized(
         reinterpret_cast<uintptr_t>(pointer),
         size);
+}
+
+db::relocation::Status __cdecl DB_ValidateStreamAddress(
+    const void *pointer,
+    uint64_t requiredBytes,
+    size_t alignment,
+    db::relocation::BlockMask allowedBlocks)
+{
+    return g_directResolver.ValidateAddress(
+        reinterpret_cast<uintptr_t>(pointer),
+        requiredBytes,
+        alignment,
+        allowedBlocks);
 }
 
 db::relocation::Status __cdecl DB_RegisterStreamCString(

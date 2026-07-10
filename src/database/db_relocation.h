@@ -65,6 +65,8 @@ enum class AliasKind : std::uint8_t
     XStringPointerSlot,
     MaterialVertexDeclaration,
     MaterialTechnique,
+    MaterialVertexShader,
+    MaterialPixelShader,
     Count,
 };
 
@@ -75,6 +77,8 @@ constexpr bool RequiresExactStartPublication(AliasKind kind)
     case AliasKind::XStringPointerSlot:
     case AliasKind::MaterialVertexDeclaration:
     case AliasKind::MaterialTechnique:
+    case AliasKind::MaterialVertexShader:
+    case AliasKind::MaterialPixelShader:
         return true;
     default:
         return false;

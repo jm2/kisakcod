@@ -285,34 +285,124 @@ uint8_t *__cdecl Material_Alloc(uint32_t size)
     return Hunk_Alloc(size, "Material_Alloc", 22);
 }
 
-void __cdecl Load_CreateMaterialPixelShader(GfxPixelShaderLoadDef *loadDef, MaterialPixelShader *mtlShader)
+bool __cdecl Load_CreateMaterialPixelShader(
+    GfxPixelShaderLoadDef *loadDef,
+    MaterialPixelShader *mtlShader)
 {
-    iassert( loadDef == &mtlShader->prog.loadDef );
-    if (r_loadForRenderer->current.enabled && loadDef->loadForRenderer == r_rendererInUse->current.integer)
+    if (!loadDef || !mtlShader || loadDef != &mtlShader->prog.loadDef
+        || !db::validation::MaterialShaderLoadDefValid(
+            loadDef->program != nullptr,
+            loadDef->programSize,
+            loadDef->loadForRenderer)
+        || !r_loadForRenderer
+        || mtlShader->prog.ps)
     {
-        ProfLoad_Begin("Create pixel shader");
-        dx.device->CreatePixelShader((DWORD*)loadDef->program, (IDirect3DPixelShader9 **)&mtlShader->prog);
-        ProfLoad_End();
+        Com_Error(ERR_DROP, "Invalid material pixel shader creation state");
+        return false;
     }
-    else
+
+    mtlShader->prog.ps = nullptr;
+    if (!r_loadForRenderer->current.enabled)
     {
-        mtlShader->prog.ps = 0;
+        return true;
     }
+    if (!r_rendererInUse
+        || !db::validation::CountInRange(
+            r_rendererInUse->current.integer,
+            0,
+            1))
+    {
+        Com_Error(ERR_DROP, "Invalid active renderer for material pixel shader");
+        return false;
+    }
+    if (loadDef->loadForRenderer != r_rendererInUse->current.integer)
+        return true;
+    if (!dx.device)
+    {
+        Com_Error(ERR_DROP, "Cannot create material pixel shader without a D3D device");
+        return false;
+    }
+
+    ProfLoad_Begin("Create pixel shader");
+    const HRESULT result = dx.device->CreatePixelShader(
+        static_cast<const DWORD *>(loadDef->program),
+        &mtlShader->prog.ps);
+    ProfLoad_End();
+    if (result < 0 || !mtlShader->prog.ps)
+    {
+        IDirect3DPixelShader9 *partialShader = mtlShader->prog.ps;
+        mtlShader->prog.ps = nullptr;
+        if (partialShader)
+            partialShader->Release();
+        const HRESULT errorResult = result < 0 ? result : E_FAIL;
+        Com_Error(
+            ERR_DROP,
+            "Failed to create material pixel shader '%s': %s",
+            mtlShader->name ? mtlShader->name : "<unnamed>",
+            R_ErrorDescription(errorResult));
+        return false;
+    }
+    return true;
 }
 
-void __cdecl Load_CreateMaterialVertexShader(GfxVertexShaderLoadDef *loadDef, MaterialVertexShader *mtlShader)
+bool __cdecl Load_CreateMaterialVertexShader(
+    GfxVertexShaderLoadDef *loadDef,
+    MaterialVertexShader *mtlShader)
 {
-    iassert( loadDef == &mtlShader->prog.loadDef );
-    if (r_loadForRenderer->current.enabled && loadDef->loadForRenderer == r_rendererInUse->current.integer)
+    if (!loadDef || !mtlShader || loadDef != &mtlShader->prog.loadDef
+        || !db::validation::MaterialShaderLoadDefValid(
+            loadDef->program != nullptr,
+            loadDef->programSize,
+            loadDef->loadForRenderer)
+        || !r_loadForRenderer
+        || mtlShader->prog.vs)
     {
-        ProfLoad_Begin("Create vertex shader");
-        dx.device->CreateVertexShader((DWORD*)loadDef->program, (IDirect3DVertexShader9 **)&mtlShader->prog);
-        ProfLoad_End();
+        Com_Error(ERR_DROP, "Invalid material vertex shader creation state");
+        return false;
     }
-    else
+
+    mtlShader->prog.vs = nullptr;
+    if (!r_loadForRenderer->current.enabled)
     {
-        mtlShader->prog.vs = 0;
+        return true;
     }
+    if (!r_rendererInUse
+        || !db::validation::CountInRange(
+            r_rendererInUse->current.integer,
+            0,
+            1))
+    {
+        Com_Error(ERR_DROP, "Invalid active renderer for material vertex shader");
+        return false;
+    }
+    if (loadDef->loadForRenderer != r_rendererInUse->current.integer)
+        return true;
+    if (!dx.device)
+    {
+        Com_Error(ERR_DROP, "Cannot create material vertex shader without a D3D device");
+        return false;
+    }
+
+    ProfLoad_Begin("Create vertex shader");
+    const HRESULT result = dx.device->CreateVertexShader(
+        static_cast<const DWORD *>(loadDef->program),
+        &mtlShader->prog.vs);
+    ProfLoad_End();
+    if (result < 0 || !mtlShader->prog.vs)
+    {
+        IDirect3DVertexShader9 *partialShader = mtlShader->prog.vs;
+        mtlShader->prog.vs = nullptr;
+        if (partialShader)
+            partialShader->Release();
+        const HRESULT errorResult = result < 0 ? result : E_FAIL;
+        Com_Error(
+            ERR_DROP,
+            "Failed to create material vertex shader '%s': %s",
+            mtlShader->name ? mtlShader->name : "<unnamed>",
+            R_ErrorDescription(errorResult));
+        return false;
+    }
+    return true;
 }
 
 void __cdecl AssertValidVertexDeclOffsets(const stream_source_info_t *streamTable)
@@ -794,11 +884,21 @@ void __cdecl Material_ReleaseTechniqueSetResources(MaterialTechniqueSet *techniq
 void __cdecl Material_ReloadPassResources(MaterialPass *pass)
 {
     iassert( pass->pixelShader );
-    if (!pass->pixelShader->prog.ps)
-        Load_CreateMaterialPixelShader(&pass->pixelShader->prog.loadDef, pass->pixelShader);
+    if (!pass->pixelShader->prog.ps
+        && !Load_CreateMaterialPixelShader(
+            &pass->pixelShader->prog.loadDef,
+            pass->pixelShader))
+    {
+        return;
+    }
     iassert( pass->vertexShader );
-    if (!pass->vertexShader->prog.vs)
-        Load_CreateMaterialVertexShader(&pass->vertexShader->prog.loadDef, pass->vertexShader);
+    if (!pass->vertexShader->prog.vs
+        && !Load_CreateMaterialVertexShader(
+            &pass->vertexShader->prog.loadDef,
+            pass->vertexShader))
+    {
+        return;
+    }
     iassert( pass->vertexDecl );
     if (!pass->vertexDecl->isLoaded)
     {

@@ -58,6 +58,66 @@ bool DB_ValidatePointerCount(
     return true;
 }
 
+bool DB_ValidateMaterialShaderLoadDef(
+    const void *program,
+    uint32_t programDwordCount,
+    uint32_t loadForRenderer,
+    const char *description)
+{
+    if (!db::validation::MaterialShaderLoadDefValid(
+            program != nullptr,
+            programDwordCount,
+            loadForRenderer))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file %s load definition", description);
+        return false;
+    }
+    return true;
+}
+
+bool DB_ValidateMaterialShaderProgram(
+    const void *program,
+    uint32_t programDwordCount,
+    db::validation::D3D9ShaderStage stage,
+    uint32_t loadForRenderer,
+    const char *description)
+{
+    uint32_t programBytes = 0;
+    if (!db::validation::CheckedSpanBytes(
+            programDwordCount,
+            static_cast<uint32_t>(sizeof(uint32_t)),
+            &programBytes))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file %s program size", description);
+        return false;
+    }
+
+    const db::relocation::Status materialized = DB_ValidateStreamAddress(
+        program,
+        programBytes,
+        alignof(uint32_t),
+        kDirectBlock4);
+    if (materialized != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid fast-file %s program span: %s",
+            description,
+            db::relocation::StatusName(materialized));
+        return false;
+    }
+    if (!db::validation::D3D9ShaderBytecodeValid(
+            static_cast<const uint32_t *>(program),
+            programDwordCount,
+            stage,
+            loadForRenderer))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file %s bytecode", description);
+        return false;
+    }
+    return true;
+}
+
 bool DB_ValidateWeaponAccuracyGraph(
     const WeaponDef *weapon,
     uint32_t graphIndex,
@@ -2225,54 +2285,114 @@ void __cdecl Load_DWORDArray(bool atStreamStart, int32_t count)
     Load_StreamArray(atStreamStart, (uint8_t *)varDWORD, count, 4);
 }
 
-void __cdecl Load_GfxVertexShaderLoadDef(bool atStreamStart)
+bool __cdecl Load_GfxVertexShaderLoadDef(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxVertexShaderLoadDef, 8);
-    if (varGfxVertexShaderLoadDef->program)
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varGfxVertexShaderLoadDef,
+        disk32::kMaterialShaderLoadDefBytes);
+    if (!DB_ValidateMaterialShaderLoadDef(
+            varGfxVertexShaderLoadDef->program,
+            varGfxVertexShaderLoadDef->programSize,
+            varGfxVertexShaderLoadDef->loadForRenderer,
+            "vertex shader"))
     {
-        varGfxVertexShaderLoadDef->program = (uint32_t *)AllocLoad_FxElemVisStateSample();
-        varDWORD = varGfxVertexShaderLoadDef->program;
-        Load_DWORDArray(1, varGfxVertexShaderLoadDef->programSize);
+        return false;
     }
+
+    varGfxVertexShaderLoadDef->program = (uint32_t *)AllocLoad_FxElemVisStateSample();
+    if (!varGfxVertexShaderLoadDef->program)
+        return false;
+    varDWORD = static_cast<uint32_t *>(varGfxVertexShaderLoadDef->program);
+    Load_DWORDArray(1, varGfxVertexShaderLoadDef->programSize);
+    return DB_ValidateMaterialShaderProgram(
+        varGfxVertexShaderLoadDef->program,
+        varGfxVertexShaderLoadDef->programSize,
+        db::validation::D3D9ShaderStage::Vertex,
+        varGfxVertexShaderLoadDef->loadForRenderer,
+        "vertex shader");
 }
 
-void __cdecl Load_GfxPixelShaderLoadDef(bool atStreamStart)
+bool __cdecl Load_GfxPixelShaderLoadDef(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxPixelShaderLoadDef, 8);
-    if (varGfxPixelShaderLoadDef->program)
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varGfxPixelShaderLoadDef,
+        disk32::kMaterialShaderLoadDefBytes);
+    if (!DB_ValidateMaterialShaderLoadDef(
+            varGfxPixelShaderLoadDef->program,
+            varGfxPixelShaderLoadDef->programSize,
+            varGfxPixelShaderLoadDef->loadForRenderer,
+            "pixel shader"))
     {
-        varGfxPixelShaderLoadDef->program = (uint32_t *)AllocLoad_FxElemVisStateSample();
-        varDWORD = varGfxPixelShaderLoadDef->program;
-        Load_DWORDArray(1, varGfxPixelShaderLoadDef->programSize);
+        return false;
     }
+
+    varGfxPixelShaderLoadDef->program = (uint32_t *)AllocLoad_FxElemVisStateSample();
+    if (!varGfxPixelShaderLoadDef->program)
+        return false;
+    varDWORD = static_cast<uint32_t *>(varGfxPixelShaderLoadDef->program);
+    Load_DWORDArray(1, varGfxPixelShaderLoadDef->programSize);
+    return DB_ValidateMaterialShaderProgram(
+        varGfxPixelShaderLoadDef->program,
+        varGfxPixelShaderLoadDef->programSize,
+        db::validation::D3D9ShaderStage::Pixel,
+        varGfxPixelShaderLoadDef->loadForRenderer,
+        "pixel shader");
 }
 
-void __cdecl Load_MaterialVertexShaderProgram(bool atStreamStart)
+bool __cdecl Load_MaterialVertexShaderProgram(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varMaterialVertexShaderProgram, 12);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varMaterialVertexShaderProgram,
+        disk32::kMaterialShaderProgramBytes);
     varGfxVertexShaderLoadDef = &varMaterialVertexShaderProgram->loadDef;
-    Load_GfxVertexShaderLoadDef(0);
-    Load_CreateMaterialVertexShader(&varMaterialVertexShaderProgram->loadDef, varMaterialVertexShader);
+    if (!Load_GfxVertexShaderLoadDef(0))
+        return false;
+    return Load_CreateMaterialVertexShader(
+        &varMaterialVertexShaderProgram->loadDef,
+        varMaterialVertexShader);
 }
 
-void __cdecl Load_MaterialPixelShaderProgram(bool atStreamStart)
+bool __cdecl Load_MaterialPixelShaderProgram(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varMaterialPixelShaderProgram, 12);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varMaterialPixelShaderProgram,
+        disk32::kMaterialShaderProgramBytes);
     varGfxPixelShaderLoadDef = &varMaterialPixelShaderProgram->loadDef;
-    Load_GfxPixelShaderLoadDef(0);
-    Load_CreateMaterialPixelShader(&varMaterialPixelShaderProgram->loadDef, varMaterialPixelShader);
+    if (!Load_GfxPixelShaderLoadDef(0))
+        return false;
+    return Load_CreateMaterialPixelShader(
+        &varMaterialPixelShaderProgram->loadDef,
+        varMaterialPixelShader);
 }
 
-void __cdecl Load_MaterialVertexShader(bool atStreamStart)
+bool __cdecl Load_MaterialVertexShader(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varMaterialVertexShader, 16);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varMaterialVertexShader,
+        disk32::kMaterialVertexShaderBytes);
+    varMaterialVertexShader->prog.vs = nullptr;
+    if (!varMaterialVertexShader->name)
+    {
+        Com_Error(ERR_DROP, "Fast-file vertex shader has no name");
+        return false;
+    }
     varXString = &varMaterialVertexShader->name;
     Load_XString(0);
+    if (!varMaterialVertexShader->name || !*varMaterialVertexShader->name)
+    {
+        Com_Error(ERR_DROP, "Fast-file vertex shader has no completed name");
+        return false;
+    }
     varMaterialVertexShaderProgram = &varMaterialVertexShader->prog;
-    Load_MaterialVertexShaderProgram(0);
+    return Load_MaterialVertexShaderProgram(0);
 }
 
-void __cdecl Load_MaterialVertexShaderPtr(bool atStreamStart)
+bool __cdecl Load_MaterialVertexShaderPtr(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varMaterialVertexShaderPtr, 4);
     if (*varMaterialVertexShaderPtr)
@@ -2280,26 +2400,64 @@ void __cdecl Load_MaterialVertexShaderPtr(bool atStreamStart)
         if (*varMaterialVertexShaderPtr == (MaterialVertexShader *)-1)
         {
             *varMaterialVertexShaderPtr = (MaterialVertexShader *)AllocLoad_FxElemVisStateSample();
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                *varMaterialVertexShaderPtr,
+                DBAliasKind::MaterialVertexShader);
+            if (!completed)
+                return false;
             varMaterialVertexShader = *varMaterialVertexShaderPtr;
-            Load_MaterialVertexShader(1);
+            if (!Load_MaterialVertexShader(1))
+                return false;
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::MaterialVertexShader,
+                    *varMaterialVertexShaderPtr,
+                    disk32::kMaterialVertexShaderBytes,
+                    disk32::kMaterialVertexShaderBytes))
+            {
+                if ((*varMaterialVertexShaderPtr)->prog.vs)
+                {
+                    (*varMaterialVertexShaderPtr)->prog.vs->Release();
+                    (*varMaterialVertexShaderPtr)->prog.vs = nullptr;
+                }
+                return false;
+            }
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varMaterialVertexShaderPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)varMaterialVertexShaderPtr,
+                DBAliasKind::MaterialVertexShader,
+                disk32::kMaterialVertexShaderBytes);
         }
     }
+    return true;
 }
 
-void __cdecl Load_MaterialPixelShader(bool atStreamStart)
+bool __cdecl Load_MaterialPixelShader(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varMaterialPixelShader, 16);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varMaterialPixelShader,
+        disk32::kMaterialPixelShaderBytes);
+    varMaterialPixelShader->prog.ps = nullptr;
+    if (!varMaterialPixelShader->name)
+    {
+        Com_Error(ERR_DROP, "Fast-file pixel shader has no name");
+        return false;
+    }
     varXString = &varMaterialPixelShader->name;
     Load_XString(0);
+    if (!varMaterialPixelShader->name || !*varMaterialPixelShader->name)
+    {
+        Com_Error(ERR_DROP, "Fast-file pixel shader has no completed name");
+        return false;
+    }
     varMaterialPixelShaderProgram = &varMaterialPixelShader->prog;
-    Load_MaterialPixelShaderProgram(0);
+    return Load_MaterialPixelShaderProgram(0);
 }
 
-void __cdecl Load_MaterialPixelShaderPtr(bool atStreamStart)
+bool __cdecl Load_MaterialPixelShaderPtr(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varMaterialPixelShaderPtr, 4);
     if (*varMaterialPixelShaderPtr)
@@ -2307,14 +2465,38 @@ void __cdecl Load_MaterialPixelShaderPtr(bool atStreamStart)
         if (*varMaterialPixelShaderPtr == (MaterialPixelShader *)-1)
         {
             *varMaterialPixelShaderPtr = (MaterialPixelShader *)AllocLoad_FxElemVisStateSample();
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                *varMaterialPixelShaderPtr,
+                DBAliasKind::MaterialPixelShader);
+            if (!completed)
+                return false;
             varMaterialPixelShader = *varMaterialPixelShaderPtr;
-            Load_MaterialPixelShader(1);
+            if (!Load_MaterialPixelShader(1))
+                return false;
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::MaterialPixelShader,
+                    *varMaterialPixelShaderPtr,
+                    disk32::kMaterialPixelShaderBytes,
+                    disk32::kMaterialPixelShaderBytes))
+            {
+                if ((*varMaterialPixelShaderPtr)->prog.ps)
+                {
+                    (*varMaterialPixelShaderPtr)->prog.ps->Release();
+                    (*varMaterialPixelShaderPtr)->prog.ps = nullptr;
+                }
+                return false;
+            }
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varMaterialPixelShaderPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)varMaterialPixelShaderPtr,
+                DBAliasKind::MaterialPixelShader,
+                disk32::kMaterialPixelShaderBytes);
         }
     }
+    return true;
 }
 
 bool __cdecl Load_MaterialVertexDeclaration(bool atStreamStart)
@@ -2476,9 +2658,17 @@ bool __cdecl Load_MaterialPass(bool atStreamStart)
         }
     }
     varMaterialVertexShaderPtr = &varMaterialPass->vertexShader;
-    Load_MaterialVertexShaderPtr(0);
+    if (!Load_MaterialVertexShaderPtr(0))
+        return false;
     varMaterialPixelShaderPtr = &varMaterialPass->pixelShader;
-    Load_MaterialPixelShaderPtr(0);
+    if (!Load_MaterialPixelShaderPtr(0))
+        return false;
+    if (varMaterialPass->vertexShader->prog.loadDef.loadForRenderer
+        != varMaterialPass->pixelShader->prog.loadDef.loadForRenderer)
+    {
+        Com_Error(ERR_DROP, "Fast-file material pass mixes renderer shader variants");
+        return false;
+    }
     if (varMaterialPass->args)
     {
         varMaterialPass->args = (MaterialShaderArgument*)AllocLoad_FxElemVisStateSample();
@@ -2534,6 +2724,21 @@ bool __cdecl Load_MaterialTechnique(bool atStreamStart)
     varMaterialPass = (MaterialPass*)&varMaterialTechnique->passArray[0].vertexDecl;
     if (!Load_MaterialPassArray(1, varMaterialTechnique->passCount)) // 0x2990
         return false;
+    const uint16_t loadForRenderer =
+        varMaterialTechnique->passArray[0].pixelShader->prog.loadDef.loadForRenderer;
+    for (uint32_t passIndex = 1;
+         passIndex < varMaterialTechnique->passCount;
+         ++passIndex)
+    {
+        const MaterialPass &pass = varMaterialTechnique->passArray[passIndex];
+        if (pass.pixelShader->prog.loadDef.loadForRenderer != loadForRenderer)
+        {
+            Com_Error(
+                ERR_DROP,
+                "Fast-file material technique mixes renderer shader variants");
+            return false;
+        }
+    }
     varXString = &varMaterialTechnique->name;
     Load_XString(0); // 0x29A1
     if (!varMaterialTechnique->name || !*varMaterialTechnique->name)
@@ -2677,6 +2882,28 @@ bool __cdecl Load_MaterialTechniqueSet(bool atStreamStart)
     {
         DB_PopStreamPos();
         return false;
+    }
+    int32_t loadForRenderer = -1;
+    for (uint32_t techniqueIndex = 0; techniqueIndex < 34; ++techniqueIndex)
+    {
+        const MaterialTechnique *technique =
+            varMaterialTechniqueSet->techniques[techniqueIndex];
+        if (!technique)
+            continue;
+        const uint16_t techniqueRenderer =
+            technique->passArray[0].pixelShader->prog.loadDef.loadForRenderer;
+        if (loadForRenderer < 0)
+        {
+            loadForRenderer = techniqueRenderer;
+        }
+        else if (static_cast<uint32_t>(loadForRenderer) != techniqueRenderer)
+        {
+            Com_Error(
+                ERR_DROP,
+                "Fast-file material technique set mixes renderer variants");
+            DB_PopStreamPos();
+            return false;
+        }
     }
     DB_PopStreamPos();
     if (!varMaterialTechniqueSet->name || !*varMaterialTechniqueSet->name)

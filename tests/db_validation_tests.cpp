@@ -110,6 +110,214 @@ int main()
     Expect(
         !db::validation::MaterialTechniqueDiskBytes(1, nullptr),
         "null material technique disk extent output rejected");
+
+    Expect(
+        db::validation::MaterialShaderLoadDefValid(true, 2, 0),
+        "minimum shader load definition accepted");
+    Expect(
+        db::validation::MaterialShaderLoadDefValid(true, UINT16_MAX, 1),
+        "maximum shader load definition accepted");
+    Expect(
+        !db::validation::MaterialShaderLoadDefValid(false, 2, 0),
+        "missing shader program rejected");
+    Expect(
+        !db::validation::MaterialShaderLoadDefValid(true, 1, 0),
+        "one-DWORD shader program rejected");
+    Expect(
+        !db::validation::MaterialShaderLoadDefValid(
+            true,
+            UINT32_C(65536),
+            0),
+        "oversized shader program rejected");
+    Expect(
+        !db::validation::MaterialShaderLoadDefValid(true, 2, 2),
+        "unknown shader renderer rejected");
+
+    using db::validation::D3D9ShaderStage;
+    const std::uint32_t validVertexShader[] = {
+        UINT32_C(0xFFFE0200),
+        UINT32_C(0x02000001),
+        UINT32_C(0x800F0000),
+        UINT32_C(0x90E40000),
+        UINT32_C(0x0000FFFF)};
+    const std::uint32_t validPixelShader[] = {
+        UINT32_C(0xFFFF0300),
+        UINT32_C(0x0001FFFE),
+        UINT32_C(0x0000FFFF),
+        UINT32_C(0x0000FFFF)};
+    Expect(
+        db::validation::D3D9ShaderBytecodeValid(
+            validVertexShader,
+            5,
+            D3D9ShaderStage::Vertex,
+            0),
+        "bounded shader-model-2 vertex bytecode accepted");
+    Expect(
+        db::validation::D3D9ShaderBytecodeValid(
+            validPixelShader,
+            4,
+            D3D9ShaderStage::Pixel,
+            1),
+        "bounded shader-model-3 pixel bytecode and comment accepted");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            validVertexShader,
+            5,
+            D3D9ShaderStage::Pixel,
+            0),
+        "vertex bytecode rejected for pixel stage");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            validPixelShader,
+            4,
+            D3D9ShaderStage::Vertex,
+            1),
+        "pixel bytecode rejected for vertex stage");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            validVertexShader,
+            5,
+            D3D9ShaderStage::Vertex,
+            1),
+        "shader-model-2 bytecode rejected for renderer 1");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            validPixelShader,
+            4,
+            D3D9ShaderStage::Pixel,
+            0),
+        "shader-model-3 bytecode rejected for renderer 0");
+
+    const std::uint32_t invalidMajor[] = {
+        UINT32_C(0xFFFE0400),
+        UINT32_C(0x0000FFFF)};
+    const std::uint32_t invalidMinor[] = {
+        UINT32_C(0xFFFE0201),
+        UINT32_C(0x0000FFFF)};
+    const std::uint32_t shaderMissingEnd[] = {
+        UINT32_C(0xFFFE0200),
+        UINT32_C(0x00000000)};
+    const std::uint32_t earlyEnd[] = {
+        UINT32_C(0xFFFE0200),
+        UINT32_C(0x0000FFFF),
+        UINT32_C(0x00000000)};
+    const std::uint32_t truncatedInstruction[] = {
+        UINT32_C(0xFFFE0200),
+        UINT32_C(0x03000001),
+        UINT32_C(0x800F0000),
+        UINT32_C(0x0000FFFF)};
+    const std::uint32_t truncatedComment[] = {
+        UINT32_C(0xFFFF0300),
+        UINT32_C(0x0002FFFE),
+        UINT32_C(0x0000FFFF)};
+    const std::uint32_t nonExactEnd[] = {
+        UINT32_C(0xFFFE0200),
+        UINT32_C(0x0100FFFF),
+        UINT32_C(0x00000000),
+        UINT32_C(0x0000FFFF)};
+    const std::uint32_t reservedInstruction[] = {
+        UINT32_C(0xFFFF0300),
+        UINT32_C(0x80000000),
+        UINT32_C(0x0000FFFF)};
+    const std::uint32_t reservedComment[] = {
+        UINT32_C(0xFFFF0300),
+        UINT32_C(0x8000FFFE),
+        UINT32_C(0x0000FFFF)};
+    const std::uint32_t unknownOpcode[] = {
+        UINT32_C(0xFFFF0300),
+        UINT32_C(0x00000031),
+        UINT32_C(0x0000FFFF)};
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            invalidMajor,
+            2,
+            D3D9ShaderStage::Vertex,
+            0),
+        "unsupported shader model rejected");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            invalidMinor,
+            2,
+            D3D9ShaderStage::Vertex,
+            0),
+        "unsupported shader minor version rejected");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            shaderMissingEnd,
+            2,
+            D3D9ShaderStage::Vertex,
+            0),
+        "shader missing END token rejected");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            earlyEnd,
+            3,
+            D3D9ShaderStage::Vertex,
+            0),
+        "shader trailing data after END rejected");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            truncatedInstruction,
+            4,
+            D3D9ShaderStage::Vertex,
+            0),
+        "truncated shader instruction rejected");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            truncatedComment,
+            3,
+            D3D9ShaderStage::Pixel,
+            1),
+        "truncated shader comment rejected");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            nonExactEnd,
+            4,
+            D3D9ShaderStage::Vertex,
+            0),
+        "END opcode with instruction bits rejected");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            reservedInstruction,
+            3,
+            D3D9ShaderStage::Pixel,
+            1),
+        "reserved shader instruction bits rejected");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            reservedComment,
+            3,
+            D3D9ShaderStage::Pixel,
+            1),
+        "reserved shader comment bit rejected");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            unknownOpcode,
+            3,
+            D3D9ShaderStage::Pixel,
+            1),
+        "unknown shader opcode rejected");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            nullptr,
+            2,
+            D3D9ShaderStage::Vertex,
+            0),
+        "null shader bytecode rejected");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            validVertexShader,
+            5,
+            static_cast<D3D9ShaderStage>(2),
+            0),
+        "unknown shader stage rejected");
+    Expect(
+        !db::validation::D3D9ShaderBytecodeValid(
+            validVertexShader,
+            5,
+            D3D9ShaderStage::Vertex,
+            2),
+        "unknown shader renderer rejected by bytecode validation");
     Expect(db::validation::MaterialVertexRoutingFollows(0, 1, 0, 2), "ordered material vertex destination accepted");
     Expect(db::validation::MaterialVertexRoutingFollows(0, 11, 1, 0), "ordered material vertex source accepted");
     Expect(!db::validation::MaterialVertexRoutingFollows(1, 0, 0, 11), "decreasing material vertex route rejected");

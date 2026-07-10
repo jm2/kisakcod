@@ -357,6 +357,56 @@ require_source_contains(
     "generic alias publication must reject completed material object kinds")
 require_source_contains(
     "database/db_load.cpp"
+    "D3D9ShaderBytecodeValid("
+    "material shader bytecode must be structurally bounded before D3D creation")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_ValidateStreamAddress("
+    "material shader bytecode must cover a fully materialized stream span")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_ConvertOffsetToAlias(
+                (uint32_t*)varMaterialVertexShaderPtr,
+                DBAliasKind::MaterialVertexShader,
+                disk32::kMaterialVertexShaderBytes)"
+    "shared material vertex shaders must resolve through stage-specific provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_ConvertOffsetToAlias(
+                (uint32_t*)varMaterialPixelShaderPtr,
+                DBAliasKind::MaterialPixelShader,
+                disk32::kMaterialPixelShaderBytes)"
+    "shared material pixel shaders must resolve through stage-specific provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "Fast-file material pass mixes renderer shader variants"
+    "material passes must pair vertex and pixel shaders for the same renderer")
+require_source_contains(
+    "database/db_load.cpp"
+    "Fast-file material technique mixes renderer shader variants"
+    "all material technique passes must target the same renderer")
+require_source_contains(
+    "database/db_load.cpp"
+    "Fast-file material technique set mixes renderer variants"
+    "all techniques in a set must target the same renderer")
+require_source_contains(
+    "database/db_validation.h"
+    "major != loadForRenderer + 2"
+    "material shader bytecode models must match their renderer variant")
+require_source_contains(
+    "gfx_d3d/r_material.cpp"
+    "const HRESULT result = dx.device->CreateVertexShader("
+    "material vertex shader creation must inspect the D3D result")
+require_source_contains(
+    "gfx_d3d/r_material.cpp"
+    "const HRESULT result = dx.device->CreatePixelShader("
+    "material pixel shader creation must inspect the D3D result")
+require_source_contains(
+    "gfx_d3d/r_material.cpp"
+    "partialShader->Release()"
+    "failed material shader creation must release a partial COM output")
+require_source_contains(
+    "database/db_load.cpp"
     "disk32::kMaterialPassBytes"
     "material pass stream reads must use their fixed disk32 layout")
 require_source_contains(
@@ -494,15 +544,156 @@ if (_material_technique_registration EQUAL -1
     message(FATAL_ERROR
         "Material technique provenance must begin before loading and publish after completion")
 endif()
+string(FIND
+    "${_db_load_source}"
+    "varMaterialVertexShader->prog.vs = nullptr"
+    _material_vertex_shader_scrub)
+string(FIND
+    "${_db_load_source}"
+    "Load_Stream(
+        atStreamStart,
+        (uint8_t *)varMaterialVertexShader,
+        disk32::kMaterialVertexShaderBytes)"
+    _material_vertex_shader_header_load)
+string(FIND
+    "${_db_load_source}"
+    "varXString = &varMaterialVertexShader->name"
+    _material_vertex_shader_name_load)
+string(FIND
+    "${_db_load_source}"
+    "DB_RegisterPointerSlot(
+                *varMaterialVertexShaderPtr,
+                DBAliasKind::MaterialVertexShader)"
+    _material_vertex_shader_registration)
+string(FIND
+    "${_db_load_source}"
+    "if (!Load_MaterialVertexShader(1))"
+    _material_vertex_shader_load)
+string(FIND
+    "${_db_load_source}"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::MaterialVertexShader"
+    _material_vertex_shader_completion)
+if (_material_vertex_shader_header_load EQUAL -1
+    OR _material_vertex_shader_scrub EQUAL -1
+    OR _material_vertex_shader_name_load EQUAL -1
+    OR _material_vertex_shader_registration EQUAL -1
+    OR _material_vertex_shader_load EQUAL -1
+    OR _material_vertex_shader_completion EQUAL -1
+    OR _material_vertex_shader_header_load GREATER _material_vertex_shader_scrub
+    OR _material_vertex_shader_scrub GREATER _material_vertex_shader_name_load
+    OR _material_vertex_shader_registration GREATER _material_vertex_shader_load
+    OR _material_vertex_shader_load GREATER _material_vertex_shader_completion)
+    message(FATAL_ERROR
+        "Material vertex shaders must scrub runtime state and publish only after completion")
+endif()
+string(FIND
+    "${_db_load_source}"
+    "varMaterialPixelShader->prog.ps = nullptr"
+    _material_pixel_shader_scrub)
+string(FIND
+    "${_db_load_source}"
+    "Load_Stream(
+        atStreamStart,
+        (uint8_t *)varMaterialPixelShader,
+        disk32::kMaterialPixelShaderBytes)"
+    _material_pixel_shader_header_load)
+string(FIND
+    "${_db_load_source}"
+    "varXString = &varMaterialPixelShader->name"
+    _material_pixel_shader_name_load)
+string(FIND
+    "${_db_load_source}"
+    "DB_RegisterPointerSlot(
+                *varMaterialPixelShaderPtr,
+                DBAliasKind::MaterialPixelShader)"
+    _material_pixel_shader_registration)
+string(FIND
+    "${_db_load_source}"
+    "if (!Load_MaterialPixelShader(1))"
+    _material_pixel_shader_load)
+string(FIND
+    "${_db_load_source}"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::MaterialPixelShader"
+    _material_pixel_shader_completion)
+if (_material_pixel_shader_header_load EQUAL -1
+    OR _material_pixel_shader_scrub EQUAL -1
+    OR _material_pixel_shader_name_load EQUAL -1
+    OR _material_pixel_shader_registration EQUAL -1
+    OR _material_pixel_shader_load EQUAL -1
+    OR _material_pixel_shader_completion EQUAL -1
+    OR _material_pixel_shader_header_load GREATER _material_pixel_shader_scrub
+    OR _material_pixel_shader_scrub GREATER _material_pixel_shader_name_load
+    OR _material_pixel_shader_registration GREATER _material_pixel_shader_load
+    OR _material_pixel_shader_load GREATER _material_pixel_shader_completion)
+    message(FATAL_ERROR
+        "Material pixel shaders must scrub runtime state and publish only after completion")
+endif()
+string(FIND
+    "${_db_load_source}"
+    "const db::relocation::Status materialized = DB_ValidateStreamAddress("
+    _material_shader_program_materialization)
+string(FIND
+    "${_db_load_source}"
+    "if (!db::validation::D3D9ShaderBytecodeValid("
+    _material_shader_bytecode_validation)
+string(FIND
+    "${_db_load_source}"
+    "db::validation::D3D9ShaderStage::Vertex,
+        varGfxVertexShaderLoadDef->loadForRenderer"
+    _material_vertex_program_validation)
+string(FIND
+    "${_db_load_source}"
+    "return Load_CreateMaterialVertexShader("
+    _material_vertex_shader_creation)
+string(FIND
+    "${_db_load_source}"
+    "db::validation::D3D9ShaderStage::Pixel,
+        varGfxPixelShaderLoadDef->loadForRenderer"
+    _material_pixel_program_validation)
+string(FIND
+    "${_db_load_source}"
+    "return Load_CreateMaterialPixelShader("
+    _material_pixel_shader_creation)
+if (_material_shader_program_materialization EQUAL -1
+    OR _material_shader_bytecode_validation EQUAL -1
+    OR _material_vertex_program_validation EQUAL -1
+    OR _material_vertex_shader_creation EQUAL -1
+    OR _material_pixel_program_validation EQUAL -1
+    OR _material_pixel_shader_creation EQUAL -1
+    OR _material_shader_program_materialization GREATER _material_shader_bytecode_validation
+    OR _material_vertex_program_validation GREATER _material_vertex_shader_creation
+    OR _material_pixel_program_validation GREATER _material_pixel_shader_creation)
+    message(FATAL_ERROR
+        "Material shader programs must be materialized and validated before D3D creation")
+endif()
 file(STRINGS
     "${SOURCE_ROOT}/src/database/db_load.cpp"
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 26)
+if (NOT _legacy_direct_offset_count EQUAL 24)
     message(FATAL_ERROR
-        "Expected exactly 26 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 24 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
+endif()
+
+file(READ "${SOURCE_ROOT}/src/gfx_d3d/r_material.cpp" _material_runtime_source)
+string(FIND
+    "${_material_runtime_source}"
+    "(IDirect3DVertexShader9 **)&mtlShader->prog"
+    _untyped_vertex_shader_output)
+string(FIND
+    "${_material_runtime_source}"
+    "(IDirect3DPixelShader9 **)&mtlShader->prog"
+    _untyped_pixel_shader_output)
+if (NOT _untyped_vertex_shader_output EQUAL -1
+    OR NOT _untyped_pixel_shader_output EQUAL -1)
+    message(FATAL_ERROR
+        "Material shader creation must use typed COM output fields")
 endif()
 string(REGEX MATCH
     "(\\*inserted[ \\t]*=|inserted->)"

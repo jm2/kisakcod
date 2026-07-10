@@ -639,6 +639,14 @@ int main()
             AliasKind::MaterialTechnique),
         "material techniques require exact completed starts");
     Expect(
+        db::relocation::RequiresExactStartPublication(
+            AliasKind::MaterialVertexShader),
+        "material vertex shaders require exact completed starts");
+    Expect(
+        db::relocation::RequiresExactStartPublication(
+            AliasKind::MaterialPixelShader),
+        "material pixel shaders require exact completed starts");
+    Expect(
         !db::relocation::RequiresExactStartPublication(AliasKind::Material),
         "redirectable asset aliases do not require their slot address");
 
@@ -1038,6 +1046,101 @@ int main()
         Status::Ok,
         "resolve exact completed material technique start");
     Expect(resolved == blocks[4].base, "completed material technique address is exact");
+
+    registry.Reset(blocks, db::relocation::kBlockCount);
+    AliasHandle vertexShader;
+    AliasHandle pixelShader;
+    ExpectStatus(
+        registry.RegisterSlot(
+            blocks[4].base,
+            AliasKind::MaterialVertexShader,
+            &vertexShader),
+        Status::Ok,
+        "register completed material vertex shader start");
+    ExpectStatus(
+        registry.RegisterSlot(
+            blocks[4].base + disk32::kMaterialVertexShaderBytes,
+            AliasKind::MaterialPixelShader,
+            &pixelShader),
+        Status::Ok,
+        "register completed material pixel shader start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialVertexShader,
+            disk32::kMaterialVertexShaderBytes,
+            &resolved),
+        Status::PendingSlot,
+        "material vertex shader is pending before completion");
+    ExpectStatus(
+        registry.Publish(
+            vertexShader,
+            AliasKind::MaterialVertexShader,
+            blocks[4].base + 4,
+            disk32::kMaterialVertexShaderBytes),
+        Status::MetadataMismatch,
+        "completed vertex shader must publish its own start");
+    ExpectStatus(
+        registry.Publish(
+            vertexShader,
+            AliasKind::MaterialVertexShader,
+            blocks[4].base,
+            disk32::kMaterialVertexShaderBytes),
+        Status::Ok,
+        "publish exact completed material vertex shader start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialPixelShader,
+            disk32::kMaterialPixelShaderBytes,
+            &resolved),
+        Status::KindMismatch,
+        "vertex shader cannot resolve as pixel shader despite equal extent");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 4),
+            AliasKind::MaterialVertexShader,
+            disk32::kMaterialVertexShaderBytes,
+            &resolved),
+        Status::UnregisteredSlot,
+        "material vertex shader interior is not an object start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialVertexShader,
+            disk32::kMaterialVertexShaderBytes,
+            &resolved),
+        Status::Ok,
+        "resolve exact completed material vertex shader start");
+    Expect(resolved == blocks[4].base, "completed vertex shader address is exact");
+
+    ExpectStatus(
+        registry.Publish(
+            pixelShader,
+            AliasKind::MaterialPixelShader,
+            blocks[4].base + disk32::kMaterialVertexShaderBytes,
+            disk32::kMaterialPixelShaderBytes),
+        Status::Ok,
+        "publish exact completed material pixel shader start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, disk32::kMaterialVertexShaderBytes),
+            AliasKind::MaterialPixelShader,
+            0,
+            &resolved),
+        Status::MetadataMismatch,
+        "material pixel shader disk metadata is exact");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, disk32::kMaterialVertexShaderBytes),
+            AliasKind::MaterialPixelShader,
+            disk32::kMaterialPixelShaderBytes,
+            &resolved),
+        Status::Ok,
+        "resolve exact completed material pixel shader start");
+    Expect(
+        resolved == blocks[4].base + disk32::kMaterialVertexShaderBytes,
+        "completed pixel shader address is exact");
 
     BlockView wideBlocks[db::relocation::kBlockCount];
     FillBlocks(wideBlocks);

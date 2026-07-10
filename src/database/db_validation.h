@@ -46,6 +46,100 @@ constexpr bool MaterialTechniqueDiskBytes(
     return true;
 }
 
+enum class D3D9ShaderStage : std::uint8_t
+{
+    Vertex,
+    Pixel,
+};
+
+constexpr bool MaterialShaderLoadDefValid(
+    bool hasProgram,
+    std::uint32_t programDwordCount,
+    std::uint32_t loadForRenderer)
+{
+    return hasProgram
+        && programDwordCount >= 2
+        && programDwordCount <= (std::numeric_limits<std::uint16_t>::max)()
+        && loadForRenderer < 2;
+}
+
+inline bool D3D9ShaderBytecodeValid(
+    const std::uint32_t *program,
+    std::uint32_t dwordCount,
+    D3D9ShaderStage expectedStage,
+    std::uint32_t loadForRenderer)
+{
+    if (!program || dwordCount < 2
+        || dwordCount > (std::numeric_limits<std::uint16_t>::max)()
+        || loadForRenderer >= 2
+        || (expectedStage != D3D9ShaderStage::Vertex
+            && expectedStage != D3D9ShaderStage::Pixel))
+    {
+        return false;
+    }
+
+    constexpr std::uint32_t kVersionTypeMask = UINT32_C(0xFFFF0000);
+    constexpr std::uint32_t kVertexVersionType = UINT32_C(0xFFFE0000);
+    constexpr std::uint32_t kPixelVersionType = UINT32_C(0xFFFF0000);
+    constexpr std::uint32_t kOpcodeMask = UINT32_C(0x0000FFFF);
+    constexpr std::uint32_t kCommentOpcode = UINT32_C(0x0000FFFE);
+    constexpr std::uint32_t kEndOpcode = UINT32_C(0x0000FFFF);
+    constexpr std::uint32_t kEndToken = UINT32_C(0x0000FFFF);
+    constexpr std::uint32_t kInstructionLengthMask = UINT32_C(0x0F000000);
+    constexpr std::uint32_t kInstructionLengthShift = 24;
+    constexpr std::uint32_t kInstructionReservedMask = UINT32_C(0xE0000000);
+    constexpr std::uint32_t kCommentLengthMask = UINT32_C(0x7FFF0000);
+    constexpr std::uint32_t kCommentLengthShift = 16;
+    constexpr std::uint32_t kCommentReservedMask = UINT32_C(0x80000000);
+
+    const std::uint32_t version = program[0];
+    const std::uint32_t expectedVersionType =
+        expectedStage == D3D9ShaderStage::Vertex
+        ? kVertexVersionType
+        : kPixelVersionType;
+    const std::uint32_t major = (version >> 8) & UINT32_C(0xFF);
+    const std::uint32_t minor = version & UINT32_C(0xFF);
+    if ((version & kVersionTypeMask) != expectedVersionType
+        || major != loadForRenderer + 2
+        || minor != 0)
+    {
+        return false;
+    }
+
+    std::uint32_t cursor = 1;
+    while (cursor < dwordCount)
+    {
+        const std::uint32_t token = program[cursor];
+        if (token == kEndToken)
+            return cursor + 1 == dwordCount;
+
+        const std::uint32_t opcode = token & kOpcodeMask;
+        if (opcode == kEndOpcode)
+            return false;
+
+        std::uint32_t payloadDwords = 0;
+        if (opcode == kCommentOpcode)
+        {
+            if (token & kCommentReservedMask)
+                return false;
+            payloadDwords = (token & kCommentLengthMask) >> kCommentLengthShift;
+        }
+        else
+        {
+            const bool knownOpcode = opcode <= 48
+                || (opcode >= 64 && opcode <= 96);
+            if (!knownOpcode || (token & kInstructionReservedMask))
+                return false;
+            payloadDwords =
+                (token & kInstructionLengthMask) >> kInstructionLengthShift;
+        }
+        if (payloadDwords > dwordCount - cursor - 1)
+            return false;
+        cursor += payloadDwords + 1;
+    }
+    return false;
+}
+
 constexpr bool OptionalMirroredCountInRange(
     std::int64_t count,
     std::int64_t mirroredCount,

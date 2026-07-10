@@ -291,6 +291,11 @@ db::relocation::Status __cdecl DB_ResolveInsertedPointer(
 db::relocation::Status __cdecl DB_MarkStreamRangeMaterialized(
     const void *pointer,
     uint32_t size);
+db::relocation::Status __cdecl DB_ValidateStreamAddress(
+    const void *pointer,
+    uint64_t requiredBytes,
+    size_t alignment,
+    db::relocation::BlockMask allowedBlocks);
 db::relocation::Status __cdecl DB_RegisterStreamCString(
     const void *pointer,
     uint32_t byteCount);
@@ -451,14 +456,14 @@ void __cdecl Load_GfxImagePtr(bool atStreamStart);
 void __cdecl Mark_GfxImagePtr();
 void __cdecl Load_water_t(bool atStreamStart);
 void __cdecl Mark_water_t();
-void __cdecl Load_GfxVertexShaderLoadDef(bool atStreamStart);
-void __cdecl Load_GfxPixelShaderLoadDef(bool atStreamStart);
-void __cdecl Load_MaterialVertexShaderProgram(bool atStreamStart);
-void __cdecl Load_MaterialPixelShaderProgram(bool atStreamStart);
-void __cdecl Load_MaterialVertexShader(bool atStreamStart);
-void __cdecl Load_MaterialVertexShaderPtr(bool atStreamStart);
-void __cdecl Load_MaterialPixelShader(bool atStreamStart);
-void __cdecl Load_MaterialPixelShaderPtr(bool atStreamStart);
+bool __cdecl Load_GfxVertexShaderLoadDef(bool atStreamStart);
+bool __cdecl Load_GfxPixelShaderLoadDef(bool atStreamStart);
+bool __cdecl Load_MaterialVertexShaderProgram(bool atStreamStart);
+bool __cdecl Load_MaterialPixelShaderProgram(bool atStreamStart);
+bool __cdecl Load_MaterialVertexShader(bool atStreamStart);
+bool __cdecl Load_MaterialVertexShaderPtr(bool atStreamStart);
+bool __cdecl Load_MaterialPixelShader(bool atStreamStart);
+bool __cdecl Load_MaterialPixelShaderPtr(bool atStreamStart);
 bool __cdecl Load_MaterialVertexDeclaration(bool atStreamStart);
 void __cdecl Load_MaterialArgumentCodeConst(bool atStreamStart);
 void __cdecl Load_MaterialArgumentDef(bool atStreamStart);

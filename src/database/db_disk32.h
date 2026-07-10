@@ -19,6 +19,10 @@ constexpr uint32_t kMaterialTechniqueHeaderBytes = 8;
 constexpr uint32_t kMaterialPassBytes = 20;
 constexpr uint32_t kMaterialTechniqueSchema =
     (kMaterialTechniqueHeaderBytes << 16) | kMaterialPassBytes;
+constexpr uint32_t kMaterialVertexShaderBytes = 16;
+constexpr uint32_t kMaterialPixelShaderBytes = 16;
+constexpr uint32_t kMaterialShaderProgramBytes = 12;
+constexpr uint32_t kMaterialShaderLoadDefBytes = 8;
 
 struct PointerToken
 {

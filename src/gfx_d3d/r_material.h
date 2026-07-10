@@ -604,8 +604,12 @@ bool __cdecl IsValidMaterialHandle(Material* const handle);
 void __cdecl TRACK_r_material();
 
 uint8_t *__cdecl Material_Alloc(uint32_t size);
-void __cdecl Load_CreateMaterialPixelShader(GfxPixelShaderLoadDef *loadDef, MaterialPixelShader *mtlShader);
-void __cdecl Load_CreateMaterialVertexShader(GfxVertexShaderLoadDef *loadDef, MaterialVertexShader *mtlShader);
+bool __cdecl Load_CreateMaterialPixelShader(
+    GfxPixelShaderLoadDef *loadDef,
+    MaterialPixelShader *mtlShader);
+bool __cdecl Load_CreateMaterialVertexShader(
+    GfxVertexShaderLoadDef *loadDef,
+    MaterialVertexShader *mtlShader);
 void __cdecl AssertValidVertexDeclOffsets(const stream_source_info_t *streamTable);
 void __cdecl Load_BuildVertexDecl(MaterialVertexDeclaration **mtlVertDecl);
 IDirect3DVertexDeclaration9 *__cdecl Material_BuildVertexDecl(
