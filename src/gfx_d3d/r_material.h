@@ -118,6 +118,7 @@ enum MaterialWorldVertexFormat : __int32
     MTL_WORLDVERT_TEX_5_NRM_1 = 0x9,    // ...
     MTL_WORLDVERT_TEX_5_NRM_2 = 0xA,
     MTL_WORLDVERT_TEX_5_NRM_3 = 0xB,
+    MTL_WORLDVERT_COUNT = 0xC,
 };
 
 enum MaterialUpdateFrequency : __int32

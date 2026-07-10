@@ -1022,19 +1022,27 @@ void __cdecl Material_UpdatePicmipForTexdef(const MaterialTextureDef *texdef)
 }
 
 
-void __cdecl Material_UpdatePicmipSingle(XAssetHeader header)
+void __cdecl Material_UpdatePicmipSingle(XAssetHeader header, void *)
 {
     int textureIndex; // [esp+4h] [ebp-4h]
+    const Material *material = header.material;
 
-    for (textureIndex = 0; textureIndex < BYTE2(header.xmodelPieces[4].pieces); ++textureIndex)
-        Material_UpdatePicmipForTexdef((MaterialTextureDef*)header.xmodelPieces[5].pieces + textureIndex);
+    if (!material)
+        return;
+    if (material->textureCount && !material->textureTable)
+    {
+        Com_PrintError(8, "Material picmip update has no texture table\n");
+        return;
+    }
+    for (textureIndex = 0; textureIndex < material->textureCount; ++textureIndex)
+        Material_UpdatePicmipForTexdef(&material->textureTable[textureIndex]);
 }
 
 void __cdecl Material_UpdatePicmipAll()
 {
     R_SyncRenderThread();
     R_SetPicmip();
-    DB_EnumXAssets(ASSET_TYPE_MATERIAL, (void(__cdecl *)(XAssetHeader, void *))Material_UpdatePicmipSingle, 0, 1);
+    DB_EnumXAssets(ASSET_TYPE_MATERIAL, Material_UpdatePicmipSingle, 0, 1);
 }
 
 Material *__cdecl Material_Find(const char *name)

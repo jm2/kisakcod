@@ -8,6 +8,14 @@ function(require_source_contains RELATIVE_PATH NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+function(require_source_not_contains RELATIVE_PATH NEEDLE DESCRIPTION)
+    file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
+    string(FIND "${_source}" "${NEEDLE}" _position)
+    if (NOT _position EQUAL -1)
+        message(FATAL_ERROR "Forbidden security regression (${DESCRIPTION}) in src/${RELATIVE_PATH}")
+    endif()
+endfunction()
+
 require_source_contains(
     "qcommon/files.cpp"
     "ARRAY_COUNT(fs_serverReferencedFFCheckSums)"
@@ -553,6 +561,159 @@ require_source_contains(
     "gfx_d3d/r_material_override.cpp"
     "(void)Material_ValidateRemappedTechniqueSet(techSet);"
     "initial renderer remaps must remain visible to material graph validation")
+require_source_contains(
+    "gfx_d3d/r_shade.cpp"
+    "texDef = db::validation::FindSortedNameHash(
+        material->textureTable,
+        material->textureCount,
+        arg->u.nameHash);
+    if (!texDef)"
+    "runtime named texture lookup must fail within its material table")
+require_source_contains(
+    "gfx_d3d/r_shade.cpp"
+    "constDef = db::validation::FindSortedNameHash(
+            material->constantTable,
+            material->constantCount,
+            arg->u.nameHash);
+        if (!constDef)"
+    "runtime named shader constants must fail within their material table")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "constDef = db::validation::FindSortedNameHash(
+                mtl->constantTable,
+                mtl->constantCount,
+                arg->u.nameHash);
+            if (!constDef)"
+    "material sorting must bound named pixel-constant lookup")
+require_source_not_contains(
+    "gfx_d3d/r_shade.cpp"
+    "while (texDef->nameHash !="
+    "runtime texture lookup must not walk beyond the material table")
+require_source_not_contains(
+    "gfx_d3d/r_shade.cpp"
+    "while (constDef->nameHash !="
+    "runtime constant lookup must not walk beyond the material table")
+require_source_not_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "while (constDef->nameHash !="
+    "material sorting must not walk beyond the constant table")
+require_source_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "if (texdef->semantic == TS_WATER_MAP)
+            {
+                Com_Error("
+    "sky water rejection must occur before interpreting the texture union as an image")
+require_source_not_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "texdef->u.image->name"
+    "sky errors must not dereference a water payload as an image")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "mtl->textureTable[texIndex].semantic != TS_NORMAL_MAP
+        || !mtl->textureTable[texIndex].u.image
+        || !mtl->textureTable[texIndex].u.image->name"
+    "normal-map inspection must validate the image union member before use")
+require_source_contains(
+    "gfx_d3d/r_shade.cpp"
+    "R_UploadWaterTexture(texDef->u.water, floatTime);
+        image = texDef->u.water->image;"
+    "runtime water validation must precede image dereference")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "material->textureTable[texIndex].u.water =
+                    Material_RegisterWaterImage("
+    "raw water construction must use the active water union member")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "newTexEntry->u = v5->u;"
+    "layered material texture payloads must copy the complete union")
+require_source_contains(
+    "gfx_d3d/r_material.cpp"
+    "const Material *material = header.material;"
+    "material picmip enumeration must use the typed asset-header member")
+require_source_contains(
+    "gfx_d3d/r_material.cpp"
+    "material->textureCount && !material->textureTable"
+    "material picmip enumeration must validate pointer/count consistency")
+require_source_contains(
+    "gfx_d3d/r_material.cpp"
+    "DB_EnumXAssets(ASSET_TYPE_MATERIAL, Material_UpdatePicmipSingle, 0, 1);"
+    "material picmip enumeration must use a native-width callback")
+require_source_not_contains(
+    "gfx_d3d/r_material.cpp"
+    "header.xmodelPieces["
+    "material picmip enumeration must not depend on 32-bit header layout tricks")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "worldVertFormat = s_worldVertFormatForLayerCount[layerCount - 1];"
+    "layered world vertex formats must use their dedicated bounded table")
+require_source_not_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "s_stateMapDstStencilBitGroup[9].stateBitsMask[layerCount + 1]"
+    "layered world vertex formats must not read beyond an unrelated stencil table")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "worldVertFormatIndex >= MTL_WORLDVERT_COUNT"
+    "layered material world vertex formats must fit the renderer table")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "normalMapCount > 3"
+    "layered material normal maps must fit the world vertex declarations")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "CheckedMaterialTableCountSum("
+    "layered texture and constant counts must reject uint8 overflow")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "layerMtl[layerIndex]->textureCount
+                && !layerMtl[layerIndex]->textureTable"
+    "layered materials must validate source texture pointer/count consistency")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "layerMtl[layerIndex]->constantCount
+                && !layerMtl[layerIndex]->constantTable"
+    "layered materials must validate source constant pointer/count consistency")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "return (hash0 > hash1) - (hash0 < hash1);"
+    "material hash comparators must report equality")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "if (mtl0 == mtl1)
+        return 0;"
+    "material qsort comparison must report equality for identical entries")
+require_source_not_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "return comparison < 0;"
+    "material qsort comparison must return a three-way result")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "StrictlyIncreasingNameHashes(
+            newMtl->textureTable"
+    "layered material tables must reject ambiguous duplicate hashes")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "memset(material, 0, sizeof(*material));"
+    "raw runtime materials must initialize absent tables to null")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "StrictlyIncreasingNameHashes(
+            material->textureTable"
+    "raw material tables must reject ambiguous duplicate hashes")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "static_cast<uint64_t>(sizeof(Material))"
+    "layered allocation layout must use native object size with checked arithmetic")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "stateBitsTable + *stateBitsCount,
+        stateBitsForPass + partialMatchCount,
+        sizeof(*stateBitsTable)"
+    "layered render-state merging must use row-pointer arithmetic")
+require_source_not_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "&(*stateBitsTable)[2 *"
+    "layered render-state merging must not index beyond an inner row")
 require_source_contains(
     "database/db_load.cpp"
     "DB_ConvertOffsetToAlias(

@@ -93,13 +93,13 @@ inline bool StrictlyIncreasingNameHashes(
 }
 
 template <typename Entry>
-inline bool SortedNameHashContains(
+inline const Entry *FindSortedNameHash(
     const Entry *entries,
     std::uint32_t count,
     std::uint32_t target)
 {
     if (!entries)
-        return false;
+        return nullptr;
     std::uint32_t first = 0;
     std::uint32_t remaining = count;
     while (remaining)
@@ -116,7 +116,33 @@ inline bool SortedNameHashContains(
             remaining = half;
         }
     }
-    return first < count && entries[first].nameHash == target;
+    return first < count && entries[first].nameHash == target
+        ? &entries[first]
+        : nullptr;
+}
+
+template <typename Entry>
+inline bool SortedNameHashContains(
+    const Entry *entries,
+    std::uint32_t count,
+    std::uint32_t target)
+{
+    return FindSortedNameHash(entries, count, target) != nullptr;
+}
+
+constexpr bool CheckedMaterialTableCountSum(
+    std::uint32_t current,
+    std::uint32_t added,
+    std::uint32_t *result)
+{
+    if (!result
+        || current > UINT32_C(255)
+        || added > UINT32_C(255) - current)
+    {
+        return false;
+    }
+    *result = current + added;
+    return true;
 }
 
 constexpr bool MaterialTechniqueStateSpanValid(

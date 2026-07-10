@@ -4754,13 +4754,16 @@ bool __cdecl Material_HasNormalMap(const Material *mtl)
     }
     iassert( mtl->textureTable[texIndex].nameStart == 'n' );
     iassert( mtl->textureTable[texIndex].nameEnd == 'p' );
-    if (mtl->textureTable[texIndex].semantic != 5)
-        MyAssertHandler(
-            ".\\r_material_load_obj.cpp",
-            6404,
-            0,
-            "%s",
-            "mtl->textureTable[texIndex].semantic == TS_NORMAL_MAP");
+    if (mtl->textureTable[texIndex].semantic != TS_NORMAL_MAP
+        || !mtl->textureTable[texIndex].u.image
+        || !mtl->textureTable[texIndex].u.image->name)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Material '%s' has an invalid normalMap texture",
+            mtl->info.name);
+        return false;
+    }
     return strcmp(mtl->textureTable[texIndex].u.image->name, "$identitynormalmap") != 0;
 }
 
@@ -4824,9 +4827,17 @@ const LayeredTechniqueSetName *__cdecl Material_GetLayeredTechniqueSetName(const
     return 0;
 }
 
+const MaterialWorldVertexFormat s_worldVertFormatForLayerCount[MTL_LAYER_LIMIT] =
+{
+    MTL_WORLDVERT_TEX_1_NRM_1,
+    MTL_WORLDVERT_TEX_2_NRM_1,
+    MTL_WORLDVERT_TEX_3_NRM_1,
+    MTL_WORLDVERT_TEX_4_NRM_1,
+    MTL_WORLDVERT_TEX_5_NRM_1
+};
+
 MaterialTechniqueSet *__cdecl Material_RegisterLayeredTechniqueSet(const Material **mtl, uint32_t layerCount)
 {
-    const char *v3; // eax
     uint32_t newTechSetNameLen; // [esp+0h] [ebp-64h]
     MaterialWorldVertexFormat worldVertFormat; // [esp+4h] [ebp-60h]
     char layerToken; // [esp+Bh] [ebp-59h]
@@ -4836,19 +4847,27 @@ MaterialTechniqueSet *__cdecl Material_RegisterLayeredTechniqueSet(const Materia
     uint32_t layerIndex; // [esp+5Ch] [ebp-8h]
     const LayeredTechniqueSetName *lyrTechSetName; // [esp+60h] [ebp-4h]
 
-    if (layerCount - 1 >= 5)
-        MyAssertHandler(
-            ".\\r_material_load_obj.cpp",
-            6480,
-            0,
-            "layerCount - 1 doesn't index ARRAY_COUNT( s_worldVertFormatForLayerCount )\n\t%i not in [0, %i)",
-            layerCount - 1,
-            5);
-    worldVertFormat = (MaterialWorldVertexFormat)s_stateMapDstStencilBitGroup[9].stateBitsMask[layerCount + 1];
+    if (!mtl
+        || !db::validation::CountInRange(
+            layerCount,
+            1,
+            ARRAY_COUNT(s_worldVertFormatForLayerCount)))
+    {
+        Com_PrintError(8, "Invalid layered material layer count\n");
+        return nullptr;
+    }
+    worldVertFormat = s_worldVertFormatForLayerCount[layerCount - 1];
     normalMapCount = 0;
     newTechSetNameLen = 0;
     for (layerIndex = 0; layerIndex < layerCount; ++layerIndex)
     {
+        if (!mtl[layerIndex]
+            || !mtl[layerIndex]->techniqueSet
+            || !mtl[layerIndex]->techniqueSet->name)
+        {
+            Com_PrintError(8, "Invalid layered material technique set\n");
+            return nullptr;
+        }
         lyrTechSetName = Material_GetLayeredTechniqueSetName(mtl[layerIndex]->techniqueSet->name);
         if (!lyrTechSetName)
         {
@@ -4885,30 +4904,40 @@ MaterialTechniqueSet *__cdecl Material_RegisterLayeredTechniqueSet(const Materia
             (char*)lyrTechSetName->nameChunk,
             layerToken);
     }
+    if (normalMapCount > 3)
+    {
+        Com_PrintError(
+            8,
+            "Layered material '%s' requires more than 3 normal maps\n",
+            newTechSetName);
+        return nullptr;
+    }
     techSet = Material_RegisterTechniqueSet(newTechSetName);
     if (techSet)
     {
-        if (normalMapCount > 1)
-            worldVertFormat = (MaterialWorldVertexFormat)(worldVertFormat + normalMapCount - 1);
+        const uint32_t worldVertFormatIndex =
+            static_cast<uint32_t>(worldVertFormat)
+            + (normalMapCount > 1 ? normalMapCount - 1 : 0);
+        if (worldVertFormatIndex >= MTL_WORLDVERT_COUNT)
+        {
+            Com_PrintError(
+                8,
+                "Layered material '%s' has an invalid world vertex format\n",
+                newTechSetName);
+            return nullptr;
+        }
+        worldVertFormat =
+            static_cast<MaterialWorldVertexFormat>(worldVertFormatIndex);
         if (techSet->worldVertFormat && techSet->worldVertFormat != worldVertFormat)
         {
-            v3 = va("%i, %i", techSet->worldVertFormat, worldVertFormat);
-            MyAssertHandler(
-                ".\\r_material_load_obj.cpp",
-                6513,
-                0,
-                "%s\n\t%s",
-                "techSet->worldVertFormat == MTL_WORLDVERT_TEX_1_NRM_1 || techSet->worldVertFormat == worldVertFormat",
-                v3);
-        }
-        if (worldVertFormat != worldVertFormat)
-            MyAssertHandler(
-                "c:\\trees\\cod3\\src\\qcommon\\../universal/assertive.h",
-                281,
-                0,
-                "i == static_cast< Type >( i )\n\t%i, %i",
-                worldVertFormat,
+            Com_PrintError(
+                8,
+                "Layered technique set '%s' has vertex format %i; expected %i\n",
+                techSet->name,
+                techSet->worldVertFormat,
                 worldVertFormat);
+            return nullptr;
+        }
         techSet->worldVertFormat = worldVertFormat;
     }
     return techSet;
@@ -4987,13 +5016,16 @@ uint8_t __cdecl Material_AddStateBitsArrayToTable(
             break;
         if (partialMatchCount > passCount)
             partialMatchCount = passCount;
-        if (!memcmp(&(*stateBitsTable)[2 * scan], stateBitsForPass, 8 * partialMatchCount))
+        if (!memcmp(
+                stateBitsTable + scan,
+                stateBitsForPass,
+                sizeof(*stateBitsTable) * partialMatchCount))
             break;
     }
     memcpy(
-        &(*stateBitsTable)[2 * *stateBitsCount],
-        &(*stateBitsForPass)[2 * partialMatchCount],
-        8 * (passCount - partialMatchCount));
+        stateBitsTable + *stateBitsCount,
+        stateBitsForPass + partialMatchCount,
+        sizeof(*stateBitsTable) * (passCount - partialMatchCount));
     *stateBitsCount += passCount - partialMatchCount;
     iassert(scan == static_cast<byte>(scan));
     return scan;
@@ -5067,9 +5099,13 @@ void __cdecl Material_AppendCharToConstName(char *name, char ch)
     }
 }
 
-int __cdecl CompareHashedMaterialTextures(_DWORD *e0, _DWORD *e1)
+int __cdecl CompareHashedMaterialEntries(const void *e0, const void *e1)
 {
-    return *e0 < *e1 ? -1 : 1;
+    uint32_t hash0;
+    uint32_t hash1;
+    memcpy(&hash0, e0, sizeof(hash0));
+    memcpy(&hash1, e1, sizeof(hash1));
+    return (hash0 > hash1) - (hash0 < hash1);
 }
 
 Material *__cdecl Material_CreateLayered(
@@ -5078,12 +5114,11 @@ Material *__cdecl Material_CreateLayered(
     uint32_t layerCount,
     MaterialTechniqueSet *techSet)
 {
-    uint8_t *v4; // edi
     const MaterialTextureDef *v5; // eax
     char v7; // [esp+Bh] [ebp-1ADh]
     MaterialConstantDef *v8; // [esp+Ch] [ebp-1ACh]
     MaterialTextureDef *v9; // [esp+10h] [ebp-1A8h]
-    uint32_t v10; // [esp+14h] [ebp-1A4h]
+    uint32_t allocationSize; // [esp+14h] [ebp-1A4h]
     float *literal; // [esp+24h] [ebp-194h]
     uint8_t *memory; // [esp+28h] [ebp-190h]
     uint32_t oredSurfaceTypeBits; // [esp+2Ch] [ebp-18Ch]
@@ -5098,15 +5133,24 @@ Material *__cdecl Material_CreateLayered(
     uint32_t tintConstNameHash; // [esp+168h] [ebp-50h]
     MaterialConstantDef *newConstEntry; // [esp+16Ch] [ebp-4Ch]
     bool isTintSpecified; // [esp+172h] [ebp-46h]
-    uint8_t constantCount; // [esp+173h] [ebp-45h]
+    uint32_t constantCount; // [esp+173h] [ebp-45h]
     const MaterialTextureDef *oldTexTable; // [esp+174h] [ebp-44h]
     uint8_t stateBitsEntry[34]; // [esp+178h] [ebp-40h] BYREF
     Material *newMtl; // [esp+1A0h] [ebp-18h]
     uint32_t layerIndex; // [esp+1A4h] [ebp-14h]
     uint32_t constIndex; // [esp+1A8h] [ebp-10h]
-    uint8_t textureCount; // [esp+1AFh] [ebp-9h]
+    uint32_t textureCount; // [esp+1AFh] [ebp-9h]
     uint32_t stateBitsCount; // [esp+1B0h] [ebp-8h]
     char layerChar; // [esp+1B7h] [ebp-1h]
+
+    if (!name
+        || !layerMtl
+        || !techSet
+        || !db::validation::CountInRange(layerCount, 1, MTL_LAYER_LIMIT))
+    {
+        Com_Error(ERR_DROP, "Invalid layered material construction input");
+        return nullptr;
+    }
 
     andedGameFlags = -1;
     oredGameFlags = 0;
@@ -5116,42 +5160,71 @@ Material *__cdecl Material_CreateLayered(
     tintConstNameHash = R_HashString("colorTint");
     for (layerIndex = 0; layerIndex < layerCount; ++layerIndex)
     {
+        if (!layerMtl[layerIndex]
+            || !layerMtl[layerIndex]->techniqueSet
+            || (layerMtl[layerIndex]->textureCount
+                && !layerMtl[layerIndex]->textureTable)
+            || (layerMtl[layerIndex]->constantCount
+                && !layerMtl[layerIndex]->constantTable)
+            || (layerMtl[layerIndex]->stateBitsCount
+                && !layerMtl[layerIndex]->stateBitsTable)
+            || !db::validation::CheckedMaterialTableCountSum(
+                textureCount,
+                layerMtl[layerIndex]->textureCount,
+                &textureCount)
+            || !db::validation::CheckedMaterialTableCountSum(
+                constantCount,
+                static_cast<uint32_t>(layerMtl[layerIndex]->constantCount)
+                    + (Material_HasConstant(
+                        layerMtl[layerIndex],
+                        tintConstNameHash) ? 0u : 1u),
+                &constantCount))
+        {
+            Com_Error(ERR_DROP, "Invalid or oversized layered material tables");
+            return nullptr;
+        }
         andedGameFlags &= layerMtl[layerIndex]->info.gameFlags;
         oredGameFlags |= layerMtl[layerIndex]->info.gameFlags;
-        textureCount += layerMtl[layerIndex]->textureCount;
-        constantCount += layerMtl[layerIndex]->constantCount;
         oredSurfaceTypeBits |= layerMtl[layerIndex]->info.surfaceTypeBits;
-        if (!Material_HasConstant(layerMtl[layerIndex], tintConstNameHash))
-            ++constantCount;
     }
     stateBitsCount = Material_CreateLayeredStateBitsTable(layerMtl, layerCount, techSet, stateBitsEntry, stateBitsTable);
-    v10 = strlen(name);
-    texTableSize = 12 * textureCount;
-    constTableSize = 32 * constantCount;
-    memory = Material_Alloc(v10 + 1 + texTableSize + constTableSize + 80);
-    memset(memory, 0, v10 + 1 + texTableSize + constTableSize + 80);
+    texTableSize = sizeof(MaterialTextureDef) * textureCount;
+    constTableSize = sizeof(MaterialConstantDef) * constantCount;
+    const size_t nameLength = strlen(name);
+    const uint64_t allocationSize64 = static_cast<uint64_t>(sizeof(Material))
+        + texTableSize
+        + constTableSize
+        + nameLength
+        + 1;
+    if (allocationSize64 > UINT32_MAX)
+    {
+        Com_Error(ERR_DROP, "Layered material allocation is too large");
+        return nullptr;
+    }
+    allocationSize = static_cast<uint32_t>(allocationSize64);
+    memory = Material_Alloc(allocationSize);
+    memset(memory, 0, allocationSize);
     newMtl = (Material*)memory;
     if (texTableSize)
-        v9 = (MaterialTextureDef*)(memory + 80);
+        v9 = (MaterialTextureDef*)(memory + sizeof(Material));
     else
         v9 = 0;
     newMtl->textureTable = v9;
     if (constTableSize)
-        v8 = (MaterialConstantDef*)&memory[texTableSize + 80];
+        v8 = (MaterialConstantDef*)&memory[sizeof(Material) + texTableSize];
     else
         v8 = 0;
     newMtl->constantTable = v8;
     newMtl->techniqueSet = techSet;
-    newMtl->info.name = (const char*)&memory[texTableSize + 80 + constTableSize];
-    memcpy((void*)newMtl->info.name, name, v10 + 1);
+    newMtl->info.name = (const char*)&memory[
+        sizeof(Material) + texTableSize + constTableSize];
+    memcpy((void*)newMtl->info.name, name, nameLength + 1);
     newMtl->info.gameFlags = oredGameFlags & 0xFB | andedGameFlags & 4;
     newMtl->info.sortKey = (*layerMtl)->info.sortKey;
     newMtl->info.surfaceTypeBits = oredSurfaceTypeBits;
-    newMtl->textureCount = textureCount;
-    newMtl->constantCount = constantCount;
-    v4 = newMtl->stateBitsEntry;
-    qmemcpy(newMtl->stateBitsEntry, stateBitsEntry, 0x20u);
-    *((_WORD *)v4 + 16) = *(_WORD *)&stateBitsEntry[32];
+    newMtl->textureCount = static_cast<uint8_t>(textureCount);
+    newMtl->constantCount = static_cast<uint8_t>(constantCount);
+    memcpy(newMtl->stateBitsEntry, stateBitsEntry, sizeof(stateBitsEntry));
     Material_SetStateBits(newMtl, stateBitsTable, stateBitsCount);
     newTexEntry = newMtl->textureTable;
     newConstEntry = newMtl->constantTable;
@@ -5171,7 +5244,7 @@ Material *__cdecl Material_CreateLayered(
             newTexEntry->nameEnd = v5->nameEnd;
             newTexEntry->samplerState= v5->samplerState;
             newTexEntry->semantic= v5->semantic;
-            newTexEntry->u.image = v5->u.image;
+            newTexEntry->u = v5->u;
             if ((newTexEntry->samplerState & 0x18) == 8 && (newTexEntry->semantic == 2 || newTexEntry->semantic == 5))
             {
                 newTexEntry->samplerState &= 0xE7u;
@@ -5215,24 +5288,54 @@ Material *__cdecl Material_CreateLayered(
             ++newConstEntry;
         }
     }
-    if (newTexEntry - newMtl->textureTable != newMtl->textureCount)
+    const uint32_t writtenTextureCount = newMtl->textureTable
+        ? static_cast<uint32_t>(newTexEntry - newMtl->textureTable)
+        : 0;
+    if (writtenTextureCount != newMtl->textureCount)
         MyAssertHandler(
             ".\\r_material_load_obj.cpp",
             6368,
             0,
             "newTexEntry - newMtl->textureTable == newMtl->textureCount\n\t%i, %i",
-            newTexEntry - newMtl->textureTable,
+            writtenTextureCount,
             newMtl->textureCount);
-    if (newConstEntry - newMtl->constantTable != newMtl->constantCount)
+    const uint32_t writtenConstantCount = newMtl->constantTable
+        ? static_cast<uint32_t>(newConstEntry - newMtl->constantTable)
+        : 0;
+    if (writtenConstantCount != newMtl->constantCount)
         MyAssertHandler(
             ".\\r_material_load_obj.cpp",
             6369,
             0,
             "newConstEntry - newMtl->constantTable == newMtl->constantCount\n\t%i, %i",
-            newConstEntry - newMtl->constantTable,
+            writtenConstantCount,
             newMtl->constantCount);
-    qsort(newMtl->textureTable, newMtl->textureCount, 0xCu, (int(*)(const void*, const void*))CompareHashedMaterialTextures);
-    qsort(newMtl->constantTable, newMtl->constantCount, 0x20u, (int(*)(const void *, const void *))CompareHashedMaterialTextures);
+    if (newMtl->textureCount > 1)
+    {
+        qsort(
+            newMtl->textureTable,
+            newMtl->textureCount,
+            sizeof(*newMtl->textureTable),
+            CompareHashedMaterialEntries);
+    }
+    if (newMtl->constantCount > 1)
+    {
+        qsort(
+            newMtl->constantTable,
+            newMtl->constantCount,
+            sizeof(*newMtl->constantTable),
+            CompareHashedMaterialEntries);
+    }
+    if (!db::validation::StrictlyIncreasingNameHashes(
+            newMtl->textureTable,
+            newMtl->textureCount)
+        || !db::validation::StrictlyIncreasingNameHashes(
+            newMtl->constantTable,
+            newMtl->constantCount))
+    {
+        Com_Error(ERR_DROP, "Layered material contains duplicate name hashes");
+        return nullptr;
+    }
     Material_SetMaterialDrawRegion(newMtl);
     if (Material_Validate(newMtl))
         return newMtl;
@@ -5478,14 +5581,17 @@ water_t *__cdecl Material_RegisterWaterImage(const MaterialWaterDef *water)
     return R_LoadWaterSetup(&setup);
 }
 
-int __cdecl CompareRawMaterialTextures(_DWORD *e0, _DWORD *e1)
+int __cdecl CompareRawMaterialEntries(const void *e0, const void *e1)
 {
-    uint32_t v2; // esi
-    const char *name_4; // [esp+8h] [ebp-4h]
-
-    name_4 = (const char*)mtlLoadGlob.sortMtlRaw + *e1;
-    v2 = R_HashString((const char*)mtlLoadGlob.sortMtlRaw + *e0);
-    return v2 < R_HashString(name_4) ? -1 : 1;
+    uint32_t nameOffset0;
+    uint32_t nameOffset1;
+    memcpy(&nameOffset0, e0, sizeof(nameOffset0));
+    memcpy(&nameOffset1, e1, sizeof(nameOffset1));
+    const uint32_t hash0 = R_HashString(
+        (const char*)mtlLoadGlob.sortMtlRaw + nameOffset0);
+    const uint32_t hash1 = R_HashString(
+        (const char*)mtlLoadGlob.sortMtlRaw + nameOffset1);
+    return (hash0 > hash1) - (hash0 < hash1);
 }
 
 BOOL __cdecl Material_RegisterImage(
@@ -5549,7 +5655,14 @@ bool __cdecl Material_FinishLoadingInstance(
             return 0;
     }
     mtlLoadGlob.sortMtlRaw = mtlRaw;
-    qsort(textureTable, mtlRaw->textureCount, 0xCu, (int(*)(const void*, const void*))CompareRawMaterialTextures);
+    if (mtlRaw->textureCount > 1)
+    {
+        qsort(
+            textureTable,
+            mtlRaw->textureCount,
+            sizeof(*textureTable),
+            CompareRawMaterialEntries);
+    }
     mtlLoadGlob.sortMtlRaw = 0;
     constantTable = (MaterialConstantDefRaw*)((char*)mtlRaw + mtlRaw->constantTableOffset);
     for (constantIndex = 0; constantIndex < mtlRaw->constantCount; ++constantIndex)
@@ -5558,7 +5671,14 @@ bool __cdecl Material_FinishLoadingInstance(
             return 0;
     }
     mtlLoadGlob.sortMtlRaw = mtlRaw;
-    qsort(constantTable, mtlRaw->constantCount, 0x14u, (int(*)(const void *, const void *))CompareRawMaterialTextures);
+    if (mtlRaw->constantCount > 1)
+    {
+        qsort(
+            constantTable,
+            mtlRaw->constantCount,
+            sizeof(*constantTable),
+            CompareRawMaterialEntries);
+    }
     mtlLoadGlob.sortMtlRaw = 0;
     Com_sprintf(techniqueSetName, 0x100u, "%s%s", techniqueSetVertDeclPrefix, (char*) mtlRaw + mtlRaw->techSetNameOffset);
     *techniqueSet = Material_RegisterTechniqueSet(techniqueSetName);
@@ -5910,6 +6030,7 @@ Material *__cdecl Material_LoadRaw(const MaterialRaw *mtlRaw, uint32_t materialT
     prefixLen = g_materialTypeInfo[materialType].prefixLen;
     materialMem = Material_Alloc(prefixLen + strlen(name) + 1 + sizeof(Material));
     material = (Material*)materialMem;
+    memset(material, 0, sizeof(*material));
     strDest = (char*)materialMem + sizeof(Material);
     memcpy(strDest, g_materialTypeInfo[materialType].prefix, prefixLen);
     memcpy(&strDest[prefixLen], name, strlen(name) + 1);
@@ -5944,7 +6065,8 @@ Material *__cdecl Material_LoadRaw(const MaterialRaw *mtlRaw, uint32_t materialT
     material->techniqueSet = techniqueSet;
     if (mtlRaw->textureCount)
     {
-        material->textureTable = (MaterialTextureDef*)Material_Alloc(12 * mtlRaw->textureCount);
+        material->textureTable = (MaterialTextureDef*)Material_Alloc(
+            sizeof(*material->textureTable) * mtlRaw->textureCount);
         textureTableRaw = (const MaterialTextureDefRaw*)((char*)mtlRaw + mtlRaw->textureTableOffset);
         for (texIndex = 0; texIndex < mtlRaw->textureCount; ++texIndex)
         {
@@ -5963,12 +6085,12 @@ Material *__cdecl Material_LoadRaw(const MaterialRaw *mtlRaw, uint32_t materialT
             material->textureTable[texIndex].semantic = textureTableRaw[texIndex].semantic;
             if (material->textureTable[texIndex].semantic == 11)
             {
-                material->textureTable[texIndex].u.image =
-                    (GfxImage*)Material_RegisterWaterImage(
+                material->textureTable[texIndex].u.water =
+                    Material_RegisterWaterImage(
                         (const MaterialWaterDef*)(
                             (const char*)mtlRaw
                             + textureTableRaw[texIndex].u.waterDefOffset));
-                if (!material->textureTable[texIndex].u.image)
+                if (!material->textureTable[texIndex].u.water)
                     return nullptr;
             }
             else
@@ -5980,7 +6102,8 @@ Material *__cdecl Material_LoadRaw(const MaterialRaw *mtlRaw, uint32_t materialT
     }
     if (mtlRaw->constantCount)
     {
-        material->constantTable = (MaterialConstantDef*)Material_Alloc(32 * mtlRaw->constantCount);
+        material->constantTable = (MaterialConstantDef*)Material_Alloc(
+            sizeof(*material->constantTable) * mtlRaw->constantCount);
         constantTableRaw = (const MaterialConstantDefRaw*)((char*)mtlRaw + mtlRaw->constantTableOffset);
         for (constIndex = 0; constIndex < mtlRaw->constantCount; ++constIndex)
         {
@@ -5995,6 +6118,19 @@ Material *__cdecl Material_LoadRaw(const MaterialRaw *mtlRaw, uint32_t materialT
             literal[2] = v8[2];
             literal[3] = v8[3];
         }
+    }
+    if (!db::validation::StrictlyIncreasingNameHashes(
+            material->textureTable,
+            material->textureCount)
+        || !db::validation::StrictlyIncreasingNameHashes(
+            material->constantTable,
+            material->constantCount))
+    {
+        Com_PrintError(
+            8,
+            "Material '%s' contains duplicate name hashes\n",
+            material->info.name);
+        return nullptr;
     }
     Material_BuildStateBitsTable(material, mtlRaw->info.toolFlags, mtlRaw->refStateBits);
     Material_SetMaterialDrawRegion(material);
@@ -6244,8 +6380,7 @@ void __cdecl R_GetPixelLiteralConsts(
     const MaterialPass *pass,
     GfxShaderConstantBlock *pixelLiteralConsts)
 {
-    const char *v3; // eax
-    MaterialConstantDef *constDef; // [esp+0h] [ebp-Ch]
+    const MaterialConstantDef *constDef; // [esp+0h] [ebp-Ch]
     uint32_t argCount; // [esp+4h] [ebp-8h]
     const MaterialShaderArgument *arg; // [esp+8h] [ebp-4h]
 
@@ -6258,22 +6393,19 @@ void __cdecl R_GetPixelLiteralConsts(
             if (!--argCount)
                 return;
         }
-        constDef = mtl->constantTable;
         while (arg->type == 6)
         {
-            while (constDef->nameHash != arg->u.codeSampler)
+            constDef = db::validation::FindSortedNameHash(
+                mtl->constantTable,
+                mtl->constantCount,
+                arg->u.nameHash);
+            if (!constDef)
             {
-                if (++constDef == &mtl->constantTable[mtl->constantCount])
-                {
-                    v3 = va("material '%s' is missing a required named constant", mtl->info.name);
-                    MyAssertHandler(
-                        ".\\r_material_consts.cpp",
-                        59,
-                        0,
-                        "%s\n\t%s",
-                        "constDef != &mtl->constantTable[mtl->constantCount]",
-                        v3);
-                }
+                Com_Error(
+                    ERR_DROP,
+                    "Material '%s' is missing a required named constant",
+                    mtl->info.name);
+                return;
             }
             R_RegisterShaderConst(arg->dest, constDef->literal, pixelLiteralConsts);
             ++arg;
@@ -6404,6 +6536,8 @@ INT __cdecl Material_Compare(const void *arg0, const void *arg1)
 
     iassert( mtl0 );
     iassert( mtl1 );
+    if (mtl0 == mtl1)
+        return 0;
     techSet[0] = Material_GetTechniqueSet(mtl0);
     techSet[1] = Material_GetTechniqueSet(mtl1);
     iassert( techSet[0] && techSet[1] );
@@ -6413,7 +6547,7 @@ INT __cdecl Material_Compare(const void *arg0, const void *arg1)
     hasTechniqueLit[1] = techniqueLit_4 != 0;
     comparison = hasTechniqueLit[1] - hasTechniqueLit[0];
     if (hasTechniqueLit[1] != hasTechniqueLit[0])
-        return comparison < 0;
+        return comparison;
     hasLightmap[0] = (mtl0->info.gameFlags & 2) != 0;
     hasLightmap[1] = (mtl1->info.gameFlags & 2) != 0;
     techniqueEmissive = Material_GetTechnique(mtl0, TECHNIQUE_EMISSIVE);
@@ -6426,10 +6560,10 @@ INT __cdecl Material_Compare(const void *arg0, const void *arg1)
         iassert( !hasTechniqueEmissive[1] );
         comparison = mtl0->info.sortKey - mtl1->info.sortKey;
         if (comparison)
-            return comparison < 0;
+            return comparison;
         comparison = hasLightmap[1] - hasLightmap[0];
         if (hasLightmap[1] != hasLightmap[0])
-            return comparison < 0;
+            return comparison;
     }
     else
     {
@@ -6437,37 +6571,37 @@ INT __cdecl Material_Compare(const void *arg0, const void *arg1)
         iassert( !hasLightmap[1] );
         comparison = hasTechniqueEmissive[1] - hasTechniqueEmissive[0];
         if (hasTechniqueEmissive[1] != hasTechniqueEmissive[0])
-            return comparison < 0;
+            return comparison;
         comparison = mtl0->info.sortKey - mtl1->info.sortKey;
         if (comparison)
-            return comparison < 0;
+            return comparison;
     }
     prepass[0] = R_DrawSurfStandardPrepassSortKey(mtl0);
     prepass[1] = R_DrawSurfStandardPrepassSortKey(mtl1);
     comparison = prepass[0] - prepass[1];
     if (prepass[0] != prepass[1])
-        return comparison < 0;
+        return comparison;
     writesDepth = (mtl0->stateFlags & 8) != 0;
     writesDepth_4 = (mtl1->stateFlags & 8) != 0;
     comparison = writesDepth_4 - writesDepth;
     if (writesDepth_4 != writesDepth)
-        return comparison < 0;
+        return comparison;
     if (hasTechniqueLit[0])
     {
         comparison = strcmp(techniqueLit->passArray[0].pixelShader->name, techniqueLit_4->passArray[0].pixelShader->name);
         if (comparison)
-            return comparison < 0;
+            return comparison;
         if (writesDepth)
         {
             comparison = Material_ComparePixelConsts(mtl0, mtl1, TECHNIQUE_LIT_BEGIN);
             if (comparison)
-                return comparison < 0;
+                return comparison;
         }
         Material_GetVertexShaderName(name0, techniqueLit->passArray, 128);
         Material_GetVertexShaderName(name1, techniqueLit_4->passArray, 128);
         comparison = strcmp(name0, name1);
         if (comparison)
-            return comparison < 0;
+            return comparison;
     }
     else if (hasTechniqueEmissive[0])
     {
@@ -6475,23 +6609,21 @@ INT __cdecl Material_Compare(const void *arg0, const void *arg1)
             techniqueEmissive->passArray[0].pixelShader->name,
             techniqueEmissive_4->passArray[0].pixelShader->name);
         if (comparison)
-            return comparison < 0;
+            return comparison;
         comparison = Material_ComparePixelConsts(mtl0, mtl1, TECHNIQUE_EMISSIVE);
         if (comparison)
-            return comparison < 0;
+            return comparison;
         Material_GetVertexShaderName(name0, techniqueEmissive->passArray, 128);
         Material_GetVertexShaderName(name1, techniqueEmissive_4->passArray, 128);
         comparison = strcmp(name0, name1);
         if (comparison)
-            return comparison < 0;
+            return comparison;
     }
     comparison = strcmp(techSet[0]->name, techSet[1]->name);
     if (comparison)
-        return comparison < 0;
-    iassert( mtl0 != mtl1 );
+        return comparison;
     comparison = strcmp(mtl0->info.name, mtl1->info.name);
-    iassert( comparison );
-    return comparison < 0;
+    return comparison;
 }
 
 uint32_t __cdecl R_DrawSurfPrimarySortKey(const Material *material)

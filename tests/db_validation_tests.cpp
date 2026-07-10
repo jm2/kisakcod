@@ -205,6 +205,52 @@ int main()
     Expect(
         !db::validation::SortedNameHashContains<HashEntry>(nullptr, 0, 1),
         "material name hash lookup rejects an empty table");
+    Expect(
+        db::validation::FindSortedNameHash(sortedHashes, 3, 2)
+            == &sortedHashes[1],
+        "sorted material name-hash lookup returns the matching entry");
+    Expect(
+        db::validation::FindSortedNameHash(sortedHashes, 3, 1)
+            == &sortedHashes[0],
+        "sorted material name-hash lookup returns the first entry");
+    Expect(
+        db::validation::FindSortedNameHash(sortedHashes, 3, UINT32_MAX)
+            == &sortedHashes[2],
+        "sorted material name-hash lookup returns the last entry");
+    Expect(
+        db::validation::FindSortedNameHash(sortedHashes, 3, 3) == nullptr,
+        "sorted material name-hash lookup returns null for a missing entry");
+    Expect(
+        db::validation::FindSortedNameHash<HashEntry>(nullptr, 0, 1)
+            == nullptr,
+        "sorted material name-hash lookup rejects a null table");
+
+    uint32_t materialTableCount = 0;
+    Expect(
+        db::validation::CheckedMaterialTableCountSum(
+            250,
+            5,
+            &materialTableCount)
+            && materialTableCount == 255,
+        "maximum layered material table count accepted");
+    Expect(
+        !db::validation::CheckedMaterialTableCountSum(
+            255,
+            1,
+            &materialTableCount),
+        "layered material table count overflow rejected");
+    Expect(
+        !db::validation::CheckedMaterialTableCountSum(
+            256,
+            0,
+            &materialTableCount),
+        "already-oversized layered material table count rejected");
+    Expect(
+        !db::validation::CheckedMaterialTableCountSum(
+            0,
+            0,
+            nullptr),
+        "missing layered material table count result rejected");
 
     Expect(
         db::validation::MaterialTechniqueStateSpanValid(false, 0, 255, 0),

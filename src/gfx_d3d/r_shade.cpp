@@ -7,6 +7,7 @@
 #include "r_buffers.h"
 #include "r_utils.h"
 #include "r_water.h"
+#include <database/db_validation.h>
 
 
 int __cdecl R_ReserveIndexData(GfxCmdBufPrimState *state, int triCount)
@@ -502,27 +503,32 @@ const MaterialTextureDef *__cdecl R_SetPixelSamplerFromMaterial(
     const MaterialShaderArgument *arg,
     const MaterialTextureDef *texDef)
 {
-    const char *v3; // eax
     float floatTime; // [esp+4h] [ebp-10h]
     GfxImage *image; // [esp+8h] [ebp-Ch] BYREF
     const Material *material; // [esp+Ch] [ebp-8h]
 
     material = context.state->material;
-    while (texDef->nameHash != arg->u.codeSampler)
+    (void)texDef;
+    texDef = db::validation::FindSortedNameHash(
+        material->textureTable,
+        material->textureCount,
+        arg->u.nameHash);
+    if (!texDef)
     {
-        if (++texDef == &material->textureTable[material->textureCount])
-        {
-            iassert(texDef != &material->textureTable[material->textureCount]); // material is missing a required named texture", 
-        }
+        Com_Error(
+            ERR_DROP,
+            "Material '%s' is missing a required named texture",
+            material->info.name);
+        return nullptr;
     }
     if (texDef->semantic == 11)
     {
-        image = texDef->u.water->image;
         if (r_drawWater->current.enabled)
             floatTime = context.source->sceneDef.floatTime;
         else
             floatTime = rg.waterFloatTime;
         R_UploadWaterTexture(texDef->u.water, floatTime);
+        image = texDef->u.water->image;
     }
     else
     {
@@ -586,7 +592,6 @@ void __cdecl R_SetPassPixelShaderStableArguments(
     uint32_t argCount,
     const MaterialShaderArgument *arg)
 {
-    const char *v3; // eax
     const Material *material; // [esp+Ch] [ebp-8h]
     const MaterialConstantDef *constDef; // [esp+10h] [ebp-4h]
 
@@ -605,22 +610,19 @@ void __cdecl R_SetPassPixelShaderStableArguments(
         if (!--argCount)
             return;
     }
-    constDef = material->constantTable;
     while (arg->type == 6)
     {
-        while (constDef->nameHash != arg->u.codeSampler)
+        constDef = db::validation::FindSortedNameHash(
+            material->constantTable,
+            material->constantCount,
+            arg->u.nameHash);
+        if (!constDef)
         {
-            if (++constDef == &material->constantTable[material->constantCount])
-            {
-                v3 = va("material '%s' is missing a required named constant", material->info.name);
-                MyAssertHandler(
-                    ".\\r_shade.cpp",
-                    287,
-                    0,
-                    "%s\n\t%s",
-                    "constDef != &material->constantTable[material->constantCount]",
-                    v3);
-            }
+            Com_Error(
+                ERR_DROP,
+                "Material '%s' is missing a required named constant",
+                material->info.name);
+            return;
         }
         R_SetPixelShaderConstantFromLiteral(context.state, arg->dest, constDef->literal);
         ++arg;
@@ -663,7 +665,6 @@ void __cdecl R_SetPassShaderStableArguments(
     uint32_t argCount,
     const MaterialShaderArgument *arg)
 {
-    const char *v3; // eax
     const GfxImage *image; // [esp+14h] [ebp-14h]
     const Material *material; // [esp+18h] [ebp-10h]
     const MaterialTextureDef *texDef; // [esp+1Ch] [ebp-Ch]
@@ -671,22 +672,19 @@ void __cdecl R_SetPassShaderStableArguments(
     const MaterialConstantDef *constDef; // [esp+24h] [ebp-4h]
 
     material = context.state->material;
-    constDef = material->constantTable;
     while (!arg->type)
     {
-        while (constDef->nameHash != arg->u.codeSampler)
+        constDef = db::validation::FindSortedNameHash(
+            material->constantTable,
+            material->constantCount,
+            arg->u.nameHash);
+        if (!constDef)
         {
-            if (++constDef == &material->constantTable[material->constantCount])
-            {
-                v3 = va("material '%s' is missing a required named constant", material->info.name);
-                MyAssertHandler(
-                    ".\\r_shade.cpp",
-                    530,
-                    0,
-                    "%s\n\t%s",
-                    "constDef != &material->constantTable[material->constantCount]",
-                    v3);
-            }
+            Com_Error(
+                ERR_DROP,
+                "Material '%s' is missing a required named constant",
+                material->info.name);
+            return;
         }
         R_SetVertexShaderConstantFromLiteral(context.state, arg->dest, constDef->literal);
         ++arg;
@@ -704,6 +702,8 @@ void __cdecl R_SetPassShaderStableArguments(
     while (arg->type == 2)
     {
         texDef = R_SetPixelSamplerFromMaterial(context, arg++, texDef);
+        if (!texDef)
+            return;
         if (!--argCount)
             return;
     }

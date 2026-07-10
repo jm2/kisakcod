@@ -1202,6 +1202,7 @@ void __cdecl R_SetSkyImage(const Material *skyMaterial)
     uint32_t colorMapHash; // [esp+0h] [ebp-Ch]
     int textureIndex; // [esp+4h] [ebp-8h]
     const MaterialTextureDef *texdef; // [esp+8h] [ebp-4h]
+    GfxImage *image;
 
     colorMapHash = R_HashString("colorMap");
     for (textureIndex = 0; textureIndex < skyMaterial->textureCount; ++textureIndex)
@@ -1209,13 +1210,25 @@ void __cdecl R_SetSkyImage(const Material *skyMaterial)
         texdef = &skyMaterial->textureTable[textureIndex];
         if (texdef->nameHash == colorMapHash)
         {
-            if (texdef->semantic == 11 || texdef->u.image->mapType != MAPTYPE_CUBE)
+            if (texdef->semantic == TS_WATER_MAP)
+            {
+                Com_Error(
+                    ERR_DROP,
+                    "Water colorMap for sky material '%s' is not a cubemap\n",
+                    skyMaterial->info.name);
+                return;
+            }
+            image = texdef->u.image;
+            if (!image || !image->name || image->mapType != MAPTYPE_CUBE)
+            {
                 Com_Error(
                     ERR_DROP,
                     "colorMap '%s' for sky material '%s' is not a cubemap\n",
-                    texdef->u.image->name,
+                    image && image->name ? image->name : "<invalid>",
                     skyMaterial->info.name);
-            s_world.skyImage = texdef->u.image;
+                return;
+            }
+            s_world.skyImage = image;
             s_world.skySamplerState = texdef->samplerState;
             return;
         }
