@@ -5,8 +5,6 @@
 #
 # This is an allowlist, not a desired state. CI should fail when new entries are
 # introduced or when an entry is removed but the debt manifest is not updated.
-database/db_file_load.cpp|#include <gfx_d3d/r_buffers.h>
-database/db_file_load.cpp|#include <gfx_d3d/r_image.h>
 database/db_load.cpp|#include <DynEntity/DynEntity_client.h>
 database/db_load.cpp|#include <gfx_d3d/fxprimitives.h>
 database/db_load.cpp|#include <gfx_d3d/r_buffers.h>
@@ -17,14 +15,9 @@ database/db_load.cpp|#include <gfx_d3d/r_primarylights.h>
 database/db_load.cpp|#include <gfx_d3d/r_sky.h>
 database/db_load.cpp|#include <gfx_d3d/r_water.h>
 database/db_load.cpp|#include <sound/snd_local.h>
-database/db_memory.cpp|#include <gfx_d3d/r_buffers.h>
-database/db_registry.cpp|#include <cgame/cg_local.h>
 database/db_registry.cpp|#include <gfx_d3d/r_bsp.h>
 database/db_registry.cpp|#include <gfx_d3d/r_image.h>
 database/db_registry.cpp|#include <gfx_d3d/r_init.h>
-database/db_registry.cpp|#include <gfx_d3d/r_staticmodelcache.h>
-database/db_registry.cpp|#include <gfx_d3d/rb_shade.h>
-database/db_registry.cpp|#include <gfx_d3d/rb_uploadshaders.h>
 qcommon/cmd.cpp|#include <sound/snd_local.h>
 universal/com_sndalias.h|#include <sound/snd_public.h>
 xanim/xanim.h|#include <gfx_d3d/r_bsp.h>

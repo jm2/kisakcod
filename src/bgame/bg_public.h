@@ -1006,7 +1006,11 @@ void __cdecl CG_TraceCapsule(
     int contentMask);
 
 #ifdef KISAK_MP
+#ifdef KISAK_DEDI_HEADLESS
+static const pmoveHandler_t pmoveHandlers[2] = { { G_TraceCapsule, NULL}, {G_TraceCapsule, G_PlayerEvent} };
+#else
 static const pmoveHandler_t pmoveHandlers[2] = { { CG_TraceCapsule, NULL}, {G_TraceCapsule, G_PlayerEvent} }; // idb
+#endif
 #elif KISAK_SP
 static const pmoveHandler_t pmoveHandlers[2] = { { CG_TraceCapsule }, { G_TraceCapsule } };
 #endif

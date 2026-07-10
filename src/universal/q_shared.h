@@ -868,7 +868,9 @@ extern const dvar_t *useFastFile;
 
 inline bool IsFastFileLoad()
 {
-#ifdef KISAK_NO_FASTFILES
+#ifdef KISAK_DEDI_HEADLESS
+	return true;
+#elif defined(KISAK_NO_FASTFILES)
 	return false;
 #endif
 	return useFastFile->current.enabled;

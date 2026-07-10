@@ -100,6 +100,64 @@ require_source_not_contains(
     "ui_mp"
     "headless startup must not load client UI assets")
 require_source_contains(
+    "universal/q_shared.h"
+    "#ifdef KISAK_DEDI_HEADLESS
+\treturn true;"
+    "headless builds must be compile-time fast-file-only")
+require_source_contains(
+    "qcommon/common.cpp"
+    "#ifdef KISAK_DEDI_HEADLESS
+        DVAR_ROM,
+#else
+        DVAR_INIT,"
+    "headless useFastFile must not be disabled from the command line")
+require_source_contains(
+    "bgame/bg_public.h"
+    "static const pmoveHandler_t pmoveHandlers[2] = { { G_TraceCapsule, NULL}, {G_TraceCapsule, G_PlayerEvent} };"
+    "headless movement tables must not retain a client collision callback")
+require_source_contains(
+    "universal/com_files.cpp"
+    "#ifndef KISAK_DEDI_HEADLESS
+    SND_StopSounds(SND_STOP_STREAMED);
+#endif"
+    "headless filesystem shutdown must not link the sound backend")
+require_source_contains(
+    "qcommon/cmd.cpp"
+    "dumpraw is unavailable because headless builds do not realize media resources"
+    "headless media extraction must not dereference canonical null audio resources")
+require_source_contains(
+    "qcommon/cmd.cpp"
+    "#ifndef KISAK_DEDI_HEADLESS
+    Cmd_AddCommandInternal(\"dumpraw\", Cmd_Dumpraw_f, &Cmd_Dumpraw_f_VAR);
+#endif"
+    "headless builds must not advertise the unsupported media extraction command")
+require_source_contains(
+    "qcommon/cm_load_obj.cpp"
+    "#if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)"
+    "headless load-object collision code must not link client dynamic entities")
+require_source_contains(
+    "universal/com_sndalias.cpp"
+    "Load-object sound aliases are unavailable in a headless fast-file build"
+    "headless builds must explicitly reject the load-object sound path")
+require_source_contains(
+    "universal/com_sndalias_load_obj.cpp"
+    "void __cdecl Com_AddLoadedSoundFile(SoundFile *soundFile, char *fileName)
+{
+#ifdef KISAK_DEDI_HEADLESS"
+    "headless load-object sound construction must compile out SND_LoadSoundFile")
+require_source_contains(
+    "universal/com_sndalias_load_obj.cpp"
+    "int __cdecl Com_LoadSoundAliasSounds(SoundFileInfo *soundFileInfo)
+{
+#ifdef KISAK_DEDI_HEADLESS"
+    "headless load-object sound verification must compile out sound dvars")
+require_source_contains(
+    "xanim/xmodel_load_obj.cpp"
+    "XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(__cdecl *AllocColl)(int))
+{
+#ifdef KISAK_DEDI_HEADLESS"
+    "headless load-object model construction must compile out renderer dependencies")
+require_source_contains(
     "qcommon/sv_msg_write_mp.cpp"
     "checkValue = ~static_cast<uint32_t>(value);"
     "signed bit-width checks must handle INT_MIN without negation overflow")
@@ -670,9 +728,8 @@ require_source_contains(
 require_source_contains(
     "database/db_load.cpp"
     "if (!Load_MaterialVertexDeclaration(1))
-                return false;
-            Load_BuildVertexDecl"
-    "material vertex declarations must validate before D3D construction")
+                return false;"
+    "material vertex declarations must validate before runtime realization")
 require_source_contains(
     "gfx_d3d/r_material.cpp"
     "db::validation::MaterialVertexRoutingValid"
@@ -1884,6 +1941,129 @@ require_source_contains(
     "universal/physicalmemory.cpp"
     "PMem_TryAlloc"
     "zone allocations must report checked failure before generic fatal PMem OOM handling")
+require_source_contains(
+    "database/db_load.cpp"
+    "#ifndef KISAK_DEDI_HEADLESS
+    SND_SetData(mssSound, *data);
+#else
+    (void)data;"
+    "headless loaded sounds must not link the playback data realizer")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::SoundData,
+                    sharedData,
+                    sharedDataSize);"
+    "headless loaded sounds must retain raw sound alias provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_ClearHeadlessSoundRuntimeData(varMssSound);"
+    "headless loaded sounds must canonicalize playback-owned pointers before publication")
+require_source_contains(
+    "database/db_load.cpp"
+    "#ifndef KISAK_DEDI_HEADLESS
+            Load_Texture(varGfxTextureLoad, varGfxImage);
+#else"
+    "headless image loading must not link the D3D texture realizer")
+require_source_contains(
+    "database/db_load.cpp"
+    "varGfxTextureLoad->basemap = nullptr;"
+    "headless images must publish a canonical absent runtime texture")
+require_source_contains(
+    "database/db_load.cpp"
+    "else if (!image->delayLoadPixels)"
+    "headless non-delayed external images must be finalized immediately")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_LoadedExternalData(externalDataSize);"
+    "headless immediate external image loads must advance progress accounting")
+require_source_contains(
+    "database/db_file_load.cpp"
+    "if (externalDataSize < 0)
+    {
+        if (imageLoadFailed)
+            *imageLoadFailed = true;"
+    "headless delayed external images must reject negative progress sizes")
+require_source_contains(
+    "database/db_file_load.cpp"
+    "if (imageLoadFailed)
+        Com_Error(ERR_DROP, \"Invalid headless delayed image size\");"
+    "headless delayed image failures must be raised after database enumeration")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!DB_FinalizeHeadlessTextureLoad(varGfxImageLoadDef, varGfxImage))"
+    "headless texture loading must select embedded, delayed, or immediate data-only realization")
+require_source_contains(
+    "database/db_registry.cpp"
+    "techniqueSet->remappedTechniqueSet = techniqueSet;"
+    "headless technique sets must retain a canonical self-remap for material validation")
+require_source_contains(
+    "database/db_load.cpp"
+    "#ifndef KISAK_DEDI_HEADLESS
+    return Load_CreateMaterialVertexShader("
+    "headless material loading must not link vertex-shader creation")
+require_source_contains(
+    "database/db_load.cpp"
+    "#ifndef KISAK_DEDI_HEADLESS
+    return Load_CreateMaterialPixelShader("
+    "headless material loading must not link pixel-shader creation")
+require_source_contains(
+    "database/db_load.cpp"
+    "varMaterialVertexShaderProgram->vs = nullptr;"
+    "headless vertex shaders must retain bytecode with an absent runtime handle")
+require_source_contains(
+    "database/db_load.cpp"
+    "varMaterialPixelShaderProgram->ps = nullptr;"
+    "headless pixel shaders must retain bytecode with an absent runtime handle")
+require_source_contains(
+    "database/db_load.cpp"
+    "#ifndef KISAK_DEDI_HEADLESS
+            Load_BuildVertexDecl(&varMaterialPass->vertexDecl);
+#endif"
+    "headless material loading must not link vertex-declaration construction")
+require_source_contains(
+    "database/db_load.cpp"
+    "sizeof(varMaterialVertexDeclaration->routing.decl));"
+    "headless vertex declarations must clear serialized COM handles")
+require_source_contains(
+    "database/db_load.cpp"
+    "varMaterialVertexDeclaration->isLoaded = true;"
+    "headless vertex declarations must record completed data-only realization")
+require_source_contains(
+    "database/db_load.cpp"
+    "#ifndef KISAK_DEDI_HEADLESS
+            if (!Load_PicmipWater(varMaterialTextureDefInfo))
+                return false;
+#else
+            // Dedicated simulation keeps the validated source-resolution CPU
+            // grids; renderer picmip would destructively compact both arrays.
+            if (!DB_ValidateHeadlessWaterContract(*varMaterialTextureDefInfo))"
+    "headless water must validate its CPU/image contract without renderer picmip")
+require_source_contains(
+    "database/db_load.cpp"
+    "water->image->width != water->M
+        || water->image->height != water->N"
+    "headless water must preserve source-resolution image dimensions")
+require_source_contains(
+    "database/db_load.cpp"
+    "#ifndef KISAK_DEDI_HEADLESS
+    Load_VertexBuffer("
+    "headless world loading must not link vertex-buffer realization")
+require_source_contains(
+    "database/db_load.cpp"
+    "varGfxWorldVertexData->worldVb = nullptr;"
+    "headless world vertices must retain CPU data with an absent runtime buffer")
+require_source_contains(
+    "database/db_load.cpp"
+    "#ifndef KISAK_DEDI_HEADLESS
+    Load_VertexBuffer(&varGfxWorldVertexLayerData->layerVb, varGfxWorld->vld.data, layerDataSize);
+#else"
+    "headless world vertex layers must not link vertex-buffer realization")
+require_source_contains(
+    "database/db_load.cpp"
+    "varGfxWorldVertexLayerData->layerVb = nullptr;"
+    "headless world vertex layers must retain CPU data with an absent runtime buffer")
 
 file(STRINGS
     "${SOURCE_ROOT}/src/database/db_load.cpp"

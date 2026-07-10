@@ -597,6 +597,12 @@ cmd_function_s Com_SoundList_f_VAR;
 
 void __cdecl Com_LoadSoundAliases(const char *loadspec, const char *loadspecCurGame, snd_alias_system_t system)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)loadspec;
+    (void)loadspecCurGame;
+    (void)system;
+    Com_Error(ERR_FATAL, "Load-object sound aliases are unavailable in a headless fast-file build");
+#else
     int mark; // [esp+10h] [ebp-5Ch]
     char trimspec[68]; // [esp+14h] [ebp-58h] BYREF
     int numMissing; // [esp+5Ch] [ebp-10h]
@@ -683,6 +689,7 @@ void __cdecl Com_LoadSoundAliases(const char *loadspec, const char *loadspecCurG
             }
         }
     }
+#endif
 }
 
 void __cdecl Com_UnloadSoundAliasSounds(snd_alias_system_t system)

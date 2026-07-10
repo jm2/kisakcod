@@ -5,8 +5,10 @@
 #include <win32/win_local.h>
 #include <universal/com_files.h>
 
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_image.h>
 #include <gfx_d3d/r_buffers.h>
+#endif
 
 //uint32_t volatile g_loadingAssets      828e3f3c     db_file_load.obj
 //int32_t marker_db_file_load  828e3f40     db_file_load.obj
@@ -376,8 +378,59 @@ void __stdcall DB_FileReadCompletion(
     InterlockedExchange(&g_fileReadComplete, TRUE);
 }
 
+#ifdef KISAK_DEDI_HEADLESS
+namespace
+{
+void __cdecl DB_FinalizeHeadlessDelayedImage(XAssetHeader header, void *data)
+{
+    bool *imageLoadFailed = static_cast<bool *>(data);
+    GfxImage *image = header.image;
+    if (!image)
+        return;
+
+    // The fast-file texture load definition is never a live texture in the
+    // null-resource backend, including when this image is visited twice via a
+    // copied asset entry.
+    image->texture.basemap = nullptr;
+    if (!image->delayLoadPixels)
+        return;
+
+    const int32_t externalDataSize = image->cardMemory.platform[0];
+    if (externalDataSize < 0)
+    {
+        if (imageLoadFailed)
+            *imageLoadFailed = true;
+        return;
+    }
+    image->delayLoadPixels = false;
+    image->cardMemory.platform[0] = 0;
+    image->cardMemory.platform[1] = 0;
+    DB_LoadedExternalData(externalDataSize);
+}
+}
+#endif
+
 void __cdecl DB_LoadDelayedImages()
 {
+#ifdef KISAK_DEDI_HEADLESS
+    bool imageLoadFailed = false;
+    DB_EnumXAssets(
+        ASSET_TYPE_IMAGE,
+        DB_FinalizeHeadlessDelayedImage,
+        &imageLoadFailed,
+        0);
+    for (uint32_t copyIter = 0; copyIter < g_copyInfoCount; ++copyIter)
+    {
+        if (g_copyInfo[copyIter]->asset.type == ASSET_TYPE_IMAGE)
+        {
+            DB_FinalizeHeadlessDelayedImage(
+                g_copyInfo[copyIter]->asset.header,
+                &imageLoadFailed);
+        }
+    }
+    if (imageLoadFailed)
+        Com_Error(ERR_DROP, "Invalid headless delayed image size");
+#else
     uint32_t copyIter; // [esp+0h] [ebp-4h]
     bool imageLoadFailed = false;
 
@@ -395,10 +448,21 @@ void __cdecl DB_LoadDelayedImages()
     }
     if (imageLoadFailed)
         Com_Error(ERR_DROP, "One or more delayed images could not be loaded");
+#endif
 }
 
 void __cdecl DB_FinishGeometryBlocks(XZoneMemory *zoneMem)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    iassert(zoneMem);
+
+    // The CPU blocks remain owned by the zone.  Renderer handles and their
+    // transient mapped pointers must never be synthesized from those blocks.
+    zoneMem->lockedVertexData = nullptr;
+    zoneMem->lockedIndexData = nullptr;
+    zoneMem->vertexBuffer = nullptr;
+    zoneMem->indexBuffer = nullptr;
+#else
     if (zoneMem->lockedVertexData)
     {
         R_FinishStaticVertexBuffer((IDirect3DVertexBuffer9*)zoneMem->vertexBuffer);
@@ -409,6 +473,7 @@ void __cdecl DB_FinishGeometryBlocks(XZoneMemory *zoneMem)
         R_FinishStaticIndexBuffer((IDirect3DIndexBuffer9*)zoneMem->indexBuffer);
         zoneMem->lockedIndexData = 0;
     }
+#endif
 }
 
 void __cdecl DB_LoadXFileInternal()

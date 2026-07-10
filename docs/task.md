@@ -8,14 +8,17 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: commit and validate the headless script-debugger boundary, then implement the
-  database-scoped null GPU/audio resource backend exposed by the first successful headless link.
-- Last completed batch: headless script execution no longer instantiates the legacy graphical
-  debugger global or its UI-derived objects and vtables. Interactive and remote script debugging are
-  explicitly unavailable in this profile, VM hooks remain inert and linkable, debugger opcodes
-  degrade to `OP_NOP`, remote sessions are closed, and developer-mode thread termination retains the
-  normal non-debugger behavior. Non-headless preprocessed source/header output is unchanged. The last
-  direct script-debugger UI include was retired, leaving 28 tracked client/media includes.
+- Active work: publish the database-scoped headless null-resource backend, inspect the resulting
+  Windows linker/runtime gate, and continue from the next concrete failure boundary.
+- Last completed batch: headless fast-file loading now retains CPU asset graphs, validation,
+  relocation, publication, alias provenance, and byte-progress accounting while representing D3D
+  textures, shaders, declarations, geometry buffers, and Miles playback allocations with canonical
+  null runtime handles. Technique sets use a validated self-remap, water retains its source CPU
+  contract, delayed and immediate external image sizes are checked and accounted exactly once, and
+  CPU zone blocks 0-8 remain allocated without renderer lock aliases. Headless-only adapters also
+  remove the remaining client trace, dynamic-entity, sound/load-object, shutdown-audio, and raw-sound
+  dump link seams without changing non-headless source behavior. Seven database renderer/audio
+  includes were retired, leaving 21 tracked client/media includes.
 - Portable validation: 13/13 tests pass locally under GCC, Clang, and GCC ASan/UBSan, with leak
   detection disabled because LeakSanitizer cannot run under the command-runner ptrace environment.
   The production relocation registry is also strict-warning clean under GCC/Clang and GCC ILP32
@@ -39,13 +42,16 @@ work item changes. Do not create session-specific handoff files.
   repairs, and the headless target compiled every translation unit before failing at link with 106
   unresolved externals. The local script-debugger boundary removes the largest UI/vtable family;
   database GPU/audio realization and smaller collision, dynamic-entity, sound-alias, and load-object
-  adapters are the remaining confirmed linker seams.
+  adapters as the remaining confirmed linker seams. Script-boundary run 29127753640 then passed all
+  eight established jobs and reduced the headless link failure from 106 to 45 unresolved externals;
+  every remaining symbol belongs to those exact database and small-adapter families now covered by
+  the local null-resource batch.
 
 ## Milestone status
 
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
-| M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a Release headless-dedicated compile/link gate, and five native utility-test runners exist; the headless target configures and compiles fully without client SDK setup, while linker burn-down, runtime smoke, and release workflows remain. |
+| M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a Release headless-dedicated compile/link gate, and five native utility-test runners exist; the headless target configures and compiles fully without client SDK setup, and its unresolved link set has fallen from 106 to 45. This batch targets all 45; CI confirmation, runtime smoke, and release workflows remain. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
@@ -66,24 +72,20 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Land and rerun the headless script-debugger/UI linker separation.
-2. Implement a database-scoped headless resource backend that preserves fast-file parsing,
-   validation, aliasing, and CPU data while suppressing GPU/audio realization.
-3. Repair the remaining server collision, dynamic-entity, sound-alias, and load-object link seams.
-4. Begin the M3 headless platform-services interface.
-5. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
+1. Confirm the database null-resource and small-adapter batch links in the Windows x86 headless gate.
+2. Add a licensed-content headless startup/map-load smoke workflow once the binary links.
+3. Begin the M3 headless platform-services interface and extract Windows-independent system contracts.
+4. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
 
 ## Known release blockers
 
-- Headless source composition now configures and compiles fully. Run 29121929895 reached link and
-  reported 106 unresolved externals. The local headless script backend removes the graphical
-  debugger/UI family without restoring client UI code; 28 client/media includes remain allowlisted.
-  The largest remaining family is database resource realization: common MP fast-files legitimately
-  contain images, materials, shaders, geometry buffers, and loaded sounds, so the server must still
-  parse, validate, relocate, and publish those asset graphs while a database-scoped null backend
-  suppresses D3D/Miles handles and preserves stream consumption and ownership. Smaller confirmed
-  seams remain for `CG_TraceCapsule`, `DynEnt_LoadEntities`, object-file material/model bounds,
-  sound aliases, and shutdown audio. Headless script-created console channels currently retain the
+- Headless source composition now configures and compiles fully. Run 29121929895 reached link with
+  106 unresolved externals; script-boundary run 29127753640 removed the entire debugger/UI family
+  and left 45 database GPU/audio plus small collision, dynamic-entity, sound, and load-object symbols.
+  The local null-resource batch addresses that complete observed set while retaining fast-file CPU
+  graphs and ownership rules, but Windows CI has not yet confirmed the link and no licensed-content
+  startup/map-load smoke has run. Twenty-one client/media includes remain allowlisted. Headless
+  script-created console channels currently retain the
   default script channel because the client console filter graph is absent; extract a shared channel
   registry if per-channel filtering is required for dedicated administration.
 - Fast-file loading lacks a production-path malformed-input test harness and

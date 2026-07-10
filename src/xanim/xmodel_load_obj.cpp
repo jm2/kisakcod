@@ -1212,6 +1212,13 @@ void __cdecl XModelCopyXModelParts(const XModelPartsLoad *modelParts, XModel *mo
 
 XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(__cdecl *AllocColl)(int))
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)name;
+    (void)Alloc;
+    (void)AllocColl;
+    Com_Error(ERR_FATAL, "Load-object models are unavailable in a headless fast-file build");
+    return nullptr;
+#else
     double v4; // st7
     int *partBits; // edx
     Material *v6; // eax
@@ -1416,6 +1423,7 @@ XModel *__cdecl XModelLoadFile(char *name, void *(__cdecl *Alloc)(int), void *(_
         FS_FreeFile((char *)buf);
         return 0;
     }
+#endif
 }
 
 void __cdecl XModelCalcBasePose(XModelPartsLoad *modelParts)
@@ -1660,7 +1668,11 @@ static void __cdecl XModelMakeDefault(XModel *model)
     model->name = "DEFAULT";
     model->surfs = 0;
     model->materialHandles = g_materials;
+#ifdef KISAK_DEDI_HEADLESS
+    g_materials[0] = nullptr;
+#else
     g_materials[0] = Material_RegisterHandle("mc/$default", 8);
+#endif
     g_default.boneInfo.bounds[0][0] = -16.0;
     g_default.boneInfo.bounds[0][1] = -16.0;
     g_default.boneInfo.bounds[0][2] = -16.0;
@@ -1690,6 +1702,13 @@ static XModel *__cdecl XModelDefaultModel(const char *name, void *(__cdecl *Allo
 
 XModel *__cdecl XModelPrecache_LoadObj(char *name, void *(__cdecl *Alloc)(int), void *(__cdecl *AllocColl)(int))
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)name;
+    (void)Alloc;
+    (void)AllocColl;
+    Com_Error(ERR_FATAL, "Load-object models are unavailable in a headless fast-file build");
+    return nullptr;
+#else
     XModel *model; // [esp+0h] [ebp-4h]
     XModel *modela; // [esp+0h] [ebp-4h]
 
@@ -1709,4 +1728,5 @@ XModel *__cdecl XModelPrecache_LoadObj(char *name, void *(__cdecl *Alloc)(int), 
         Com_PrintError(19, "ERROR: Cannot find xmodel '%s'.\n", name);
         return XModelDefaultModel(name, Alloc);
     }
+#endif
 }

@@ -1405,6 +1405,11 @@ void __cdecl Com_AddSoundAlias(
 
 void __cdecl Com_AddLoadedSoundFile(SoundFile *soundFile, char *fileName)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)soundFile;
+    (void)fileName;
+    Com_Error(ERR_FATAL, "Load-object sound files are unavailable in a headless fast-file build");
+#else
     I_strlwr(fileName);
     soundFile->u.loadSnd = SND_LoadSoundFile(fileName);
     if (soundFile->u.loadSnd)
@@ -1417,6 +1422,7 @@ void __cdecl Com_AddLoadedSoundFile(SoundFile *soundFile, char *fileName)
         soundFile->u.loadSnd = (LoadedSound*)CM_Hunk_Alloc(0x2Cu, "_loaded", 15);
         soundFile->u.loadSnd->name = fileName;
     }
+#endif
 }
 
 void __cdecl Com_AddStreamedSoundFile(SoundFile *soundFile, char *fileName)
@@ -1628,6 +1634,11 @@ void __cdecl Com_MakeSoundAliasesPermanent(snd_alias_list_t *aliasInfo, SoundFil
 
 int __cdecl Com_LoadSoundAliasSounds(SoundFileInfo *soundFileInfo)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)soundFileInfo;
+    Com_Error(ERR_FATAL, "Load-object sound files are unavailable in a headless fast-file build");
+    return 0;
+#else
     uint8_t v1; // al
     char filepath[256]; // [esp+0h] [ebp-110h] BYREF
     int numMissing; // [esp+104h] [ebp-Ch]
@@ -1675,6 +1686,7 @@ int __cdecl Com_LoadSoundAliasSounds(SoundFileInfo *soundFileInfo)
         }
     }
     return numMissing;
+#endif
 }
 
 void __cdecl Com_ParseEntChannelFile(const char *buffer)

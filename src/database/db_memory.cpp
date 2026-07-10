@@ -2,7 +2,9 @@
 
 #include <universal/physicalmemory.h>
 #include <qcommon/qcommon.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_buffers.h>
+#endif
 
 int32_t g_block_mem_type[9] =
 { 0, 1, 1, 2, 1, 1, 2, 2, 2 };
@@ -20,8 +22,28 @@ const char *g_block_mem_name[9] =
   "index"
 };
 
+#ifdef KISAK_DEDI_HEADLESS
+namespace
+{
+void DB_ClearHeadlessGeometryBufferState(XZoneMemory *zoneMem)
+{
+    iassert(zoneMem);
+
+    zoneMem->lockedVertexData = nullptr;
+    zoneMem->lockedIndexData = nullptr;
+    zoneMem->vertexBuffer = nullptr;
+    zoneMem->indexBuffer = nullptr;
+}
+}
+#endif
+
 void __cdecl DB_RecoverGeometryBuffers(XZoneMemory *zoneMem)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    // Blocks 7 and 8 remain ordinary CPU-backed zone streams.  A headless
+    // process never creates a second GPU copy when renderer state is rebuilt.
+    DB_ClearHeadlessGeometryBufferState(zoneMem);
+#else
     uint8_t *lockedData; // [esp+4h] [ebp-4h]
     uint8_t *lockedDataa; // [esp+4h] [ebp-4h]
 
@@ -47,10 +69,16 @@ void __cdecl DB_RecoverGeometryBuffers(XZoneMemory *zoneMem)
         else
             R_FinishStaticIndexBuffer((IDirect3DIndexBuffer9 *)zoneMem->indexBuffer);
     }
+#endif
 }
 
 void __cdecl DB_ReleaseGeometryBuffers(XZoneMemory *zoneMem)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    // CPU zone blocks are released by the physical-memory owner.  Only clear
+    // the renderer-facing state here so no stale lock marker can survive.
+    DB_ClearHeadlessGeometryBufferState(zoneMem);
+#else
     IDirect3DVertexBuffer9 *vb; // [esp+0h] [ebp-8h]
     IDirect3DIndexBuffer9 *ib; // [esp+4h] [ebp-4h]
 
@@ -70,6 +98,7 @@ void __cdecl DB_ReleaseGeometryBuffers(XZoneMemory *zoneMem)
         R_FreeStaticIndexBuffer(ib);
         zoneMem->indexBuffer = 0;
     }
+#endif
 }
 
 void __cdecl DB_AllocXZoneMemory(
@@ -116,6 +145,12 @@ void __cdecl DB_AllocXZoneMemory(
             zoneMem->blocks[blockIndex].data = buf;
         }
     }
+#ifdef KISAK_DEDI_HEADLESS
+    // Do not alias the renderer lock pointers to blocks 7 or 8.  Stream loads
+    // still materialize those blocks; DB_CloneStreamData(nullptr) deliberately
+    // skips the absent GPU mirror.
+    DB_ClearHeadlessGeometryBufferState(zoneMem);
+#else
     if (zoneMem->vertexBuffer)
         MyAssertHandler(".\\database\\db_memory.cpp", 104, 0, "%s", "zoneMem->vertexBuffer == NULL");
     if (zoneMem->lockedVertexData)
@@ -128,6 +163,7 @@ void __cdecl DB_AllocXZoneMemory(
         MyAssertHandler(".\\database\\db_memory.cpp", 111, 0, "%s", "zoneMem->lockedIndexData == NULL");
     if (zoneMem->blocks[8].size)
         zoneMem->lockedIndexData = (uint8_t *)R_AllocStaticIndexBuffer((IDirect3DIndexBuffer9 **)&zoneMem->indexBuffer, zoneMem->blocks[8].size);
+#endif
 }
 
 uint8_t *__cdecl DB_MemAlloc(uint32_t size, uint32_t type, uint32_t allocType)

@@ -1792,7 +1792,11 @@ void Com_InitDvars()
     useFastFile = Dvar_RegisterBool(
         "useFastFile",
         1,
+#ifdef KISAK_DEDI_HEADLESS
+        DVAR_ROM,
+#else
         DVAR_INIT,
+#endif
         "Enables loading data from fast files. Only tools can run without fast files.");
     sys_lockThreads = Dvar_RegisterEnum(
         "sys_lockThreads",

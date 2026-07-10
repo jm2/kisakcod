@@ -690,6 +690,73 @@ bool DB_ValidateWaterHeader(const water_t *water, int32_t *sampleCount)
     return true;
 }
 
+#ifdef KISAK_DEDI_HEADLESS
+bool DB_ValidateHeadlessWaterContract(const water_t *water)
+{
+    if (!water
+        || !db::validation::WaterGridValid(water->M, water->N)
+        || !water->H0
+        || !water->wTerm
+        || !water->image
+        || water->image->mapType != MAPTYPE_2D
+        || water->image->semantic != TS_WATER_MAP
+        || water->image->category != IMG_CATEGORY_WATER
+        || water->image->depth != 1
+        || water->image->width != water->M
+        || water->image->height != water->N)
+    {
+        Com_Error(ERR_DROP, "Invalid headless material water image contract");
+        return false;
+    }
+    return true;
+}
+
+void DB_ClearHeadlessSoundRuntimeData(MssSoundCOD4 *sound)
+{
+    if (!sound)
+        return;
+
+    sound->data = nullptr;
+    sound->info.data_ptr = nullptr;
+    sound->info.initial_ptr = nullptr;
+}
+
+bool DB_FinalizeHeadlessTextureLoad(const GfxImageLoadDef *loadDef, GfxImage *image)
+{
+    if (!loadDef || !image || image->texture.loadDef != loadDef || loadDef->resourceSize < 0)
+    {
+        Com_Error(ERR_DROP, "Invalid headless image resource state");
+        return false;
+    }
+
+    // Embedded pixels were consumed from the zone stream; water has no
+    // external payload. Neither case owns a runtime GPU allocation.
+    if (loadDef->resourceSize > 0 || image->category == IMG_CATEGORY_WATER)
+    {
+        image->delayLoadPixels = false;
+        image->cardMemory.platform[0] = 0;
+        image->cardMemory.platform[1] = 0;
+    }
+    else if (!image->delayLoadPixels)
+    {
+        const int32_t externalDataSize = image->cardMemory.platform[0];
+        if (externalDataSize < 0)
+        {
+            Com_Error(ERR_DROP, "Invalid headless external image size");
+            return false;
+        }
+        image->cardMemory.platform[0] = 0;
+        image->cardMemory.platform[1] = 0;
+        DB_LoadedExternalData(externalDataSize);
+    }
+
+    // Delayed external images retain their flag and byte count until
+    // DB_LoadDelayedImages drains and accounts them exactly once.
+    image->texture.basemap = nullptr;
+    return true;
+}
+#endif
+
 bool DB_ValidateMaterialNamedInputs(
     const Material *material,
     const MaterialTechniqueSet *techniqueSet)
@@ -2397,7 +2464,12 @@ void __cdecl Load_StreamFileName(bool atStreamStart)
 
 void __cdecl Load_SetSoundData(uint8_t **data, MssSoundCOD4 *mssSound)
 {
+#ifndef KISAK_DEDI_HEADLESS
     SND_SetData(mssSound, *data);
+#else
+    (void)data;
+    (void)mssSound;
+#endif
 }
 
 void __cdecl Load_MssSound(bool atStreamStart)
@@ -2443,6 +2515,11 @@ void __cdecl Load_MssSound(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+#ifdef KISAK_DEDI_HEADLESS
+    // Raw payloads remain in zone memory for typed alias resolution, but a
+    // headless LoadedSound owns no playback allocation for DB_RemoveLoadedSound.
+    DB_ClearHeadlessSoundRuntimeData(varMssSound);
+#endif
 }
 
 void __cdecl Load_LoadedSound(bool atStreamStart)
@@ -3341,7 +3418,14 @@ void __cdecl Load_GfxTextureLoad(bool atStreamStart)
             else
                 inserted = {};
             Load_GfxImageLoadDef(1);
+#ifndef KISAK_DEDI_HEADLESS
             Load_Texture(varGfxTextureLoad, varGfxImage);
+#else
+            // The load definition and pixels have been consumed and validated
+            // as zone data; publish the canonical absent runtime texture.
+            if (!DB_FinalizeHeadlessTextureLoad(varGfxImageLoadDef, varGfxImage))
+                return;
+#endif
             if (inserted)
                 DB_SetInsertedPointer(
                     inserted,
@@ -3355,11 +3439,15 @@ void __cdecl Load_GfxTextureLoad(bool atStreamStart)
                 (uint32_t*)varGfxTextureLoad,
                 DBAliasKind::GfxTexture,
                 static_cast<uint32_t>(varGfxImage->mapType));
+#ifndef KISAK_DEDI_HEADLESS
             if (varGfxTextureLoad->basemap)
             {
                 // Image_Release drops one COM reference for every GfxImage.
                 varGfxTextureLoad->basemap->AddRef();
             }
+#else
+            varGfxTextureLoad->basemap = nullptr;
+#endif
         }
     }
     DB_PopStreamPos();
@@ -3593,9 +3681,14 @@ bool __cdecl Load_MaterialVertexShaderProgram(bool atStreamStart)
     varGfxVertexShaderLoadDef = &varMaterialVertexShaderProgram->loadDef;
     if (!Load_GfxVertexShaderLoadDef(0))
         return false;
+#ifndef KISAK_DEDI_HEADLESS
     return Load_CreateMaterialVertexShader(
         &varMaterialVertexShaderProgram->loadDef,
         varMaterialVertexShader);
+#else
+    varMaterialVertexShaderProgram->vs = nullptr;
+    return true;
+#endif
 }
 
 bool __cdecl Load_MaterialPixelShaderProgram(bool atStreamStart)
@@ -3607,9 +3700,14 @@ bool __cdecl Load_MaterialPixelShaderProgram(bool atStreamStart)
     varGfxPixelShaderLoadDef = &varMaterialPixelShaderProgram->loadDef;
     if (!Load_GfxPixelShaderLoadDef(0))
         return false;
+#ifndef KISAK_DEDI_HEADLESS
     return Load_CreateMaterialPixelShader(
         &varMaterialPixelShaderProgram->loadDef,
         varMaterialPixelShader);
+#else
+    varMaterialPixelShaderProgram->ps = nullptr;
+    return true;
+#endif
 }
 
 bool __cdecl Load_MaterialVertexShader(bool atStreamStart)
@@ -3752,6 +3850,17 @@ bool __cdecl Load_MaterialVertexDeclaration(bool atStreamStart)
         return false;
     varMaterialVertexDeclaration->hasOptionalSource = false;
     varMaterialVertexDeclaration->isLoaded = false;
+#ifdef KISAK_DEDI_HEADLESS
+    // Serialized declaration pointers are runtime-only COM handles. Keep the
+    // validated CPU routing table and canonicalize every unrealized handle.
+    memset(
+        varMaterialVertexDeclaration->routing.decl,
+        0,
+        sizeof(varMaterialVertexDeclaration->routing.decl));
+    // The data-only realization is complete; prevent renderer reload paths from
+    // repeatedly trying to construct the intentionally absent COM declarations.
+    varMaterialVertexDeclaration->isLoaded = true;
+#endif
     for (uint32_t index = 0; index < varMaterialVertexDeclaration->streamCount; ++index)
     {
         if (varMaterialVertexDeclaration->routing.data[index].source >= 5)
@@ -3881,7 +3990,9 @@ bool __cdecl Load_MaterialPass(bool atStreamStart)
             varMaterialVertexDeclaration = varMaterialPass->vertexDecl;
             if (!Load_MaterialVertexDeclaration(1))
                 return false;
+#ifndef KISAK_DEDI_HEADLESS
             Load_BuildVertexDecl(&varMaterialPass->vertexDecl);
+#endif
             if (!DB_CompleteObject(
                     completed,
                     DBAliasKind::MaterialVertexDeclaration,
@@ -4015,8 +4126,15 @@ bool __cdecl Load_MaterialTextureDefInfo(bool atStreamStart)
             varwater_t = *varMaterialTextureDefInfo;
             if (!Load_water_t(1))
                 return false;
+#ifndef KISAK_DEDI_HEADLESS
             if (!Load_PicmipWater(varMaterialTextureDefInfo))
                 return false;
+#else
+            // Dedicated simulation keeps the validated source-resolution CPU
+            // grids; renderer picmip would destructively compact both arrays.
+            if (!DB_ValidateHeadlessWaterContract(*varMaterialTextureDefInfo))
+                return false;
+#endif
             if (!DB_CompleteObject(
                     completed,
                     DBAliasKind::MaterialWater,
@@ -9596,10 +9714,14 @@ void __cdecl Load_GfxWorldVertexData(bool atStreamStart)
     }
     varGfxVertexBuffer = &varGfxWorldVertexData->worldVb;
     Load_GfxVertexBuffer(0);
+#ifndef KISAK_DEDI_HEADLESS
     Load_VertexBuffer(
         &varGfxWorldVertexData->worldVb,
         (uint8_t *)varGfxWorld->vd.vertices,
         vertexDataSize);
+#else
+    varGfxWorldVertexData->worldVb = nullptr;
+#endif
 }
 
 void __cdecl Load_GfxWorldVertexLayerData(bool atStreamStart)
@@ -9617,7 +9739,11 @@ void __cdecl Load_GfxWorldVertexLayerData(bool atStreamStart)
     }
     varGfxVertexBuffer = &varGfxWorldVertexLayerData->layerVb;
     Load_GfxVertexBuffer(0);
+#ifndef KISAK_DEDI_HEADLESS
     Load_VertexBuffer(&varGfxWorldVertexLayerData->layerVb, varGfxWorld->vld.data, layerDataSize);
+#else
+    varGfxWorldVertexLayerData->layerVb = nullptr;
+#endif
 }
 
 void __cdecl Load_GfxLightGrid(bool atStreamStart)

@@ -2891,7 +2891,9 @@ void __cdecl FS_RemoveCommands()
 void __cdecl FS_Shutdown()
 {
     int i; // [esp+0h] [ebp-4h]
+#ifndef KISAK_DEDI_HEADLESS
     SND_StopSounds(SND_STOP_STREAMED);
+#endif
     SEH_Shutdown_StringEd();
     for (i = 1; i < 65; ++i)
     {

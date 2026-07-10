@@ -277,6 +277,10 @@ static void WriteWAVHeader(FILE *f, uint32_t dataSize, uint32_t sampleRate, uint
 
 void Cmd_Dumpraw_f(void)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    Com_PrintError(16, "dumpraw is unavailable because headless builds do not realize media resources\n");
+    return;
+#else
     auto DumpFileType = [](XAssetType type) -> void
     {
 		auto rawDir = std::format("{}\\raw\\", (char*)fs_basepath->current.integer);
@@ -439,6 +443,7 @@ void Cmd_Dumpraw_f(void)
 
     //DumpFileType(ASSET_TYPE_RAWFILE);
     //DumpFileType(ASSET_TYPE_MENU);
+#endif
 }
 // avail end
 
@@ -449,9 +454,11 @@ void Cmd_Init()
 	Cmd_AddCommandInternal("cmdlist", Cmd_List_f, &Cmd_List_f_VAR);
 	Cmd_AddCommandInternal("exec", Cmd_Exec_f, &Cmd_Exec_f_VAR);
 	Cmd_AddCommandInternal("vstr", Cmd_Vstr_f, &Cmd_Vstr_f_VAR);
-	Cmd_AddCommandInternal("wait", Cmd_Wait_f, &Cmd_Wait_f_VAR);
+    Cmd_AddCommandInternal("wait", Cmd_Wait_f, &Cmd_Wait_f_VAR);
     // avail add
+#ifndef KISAK_DEDI_HEADLESS
     Cmd_AddCommandInternal("dumpraw", Cmd_Dumpraw_f, &Cmd_Dumpraw_f_VAR);
+#endif
     // avail end
 }
 

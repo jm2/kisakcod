@@ -10,7 +10,9 @@
 #include <qcommon/com_bsp.h>
 #include <gfx_d3d/r_init.h>
 #include <win32/win_local.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/rb_uploadshaders.h>
+#endif
 #include <gfx_d3d/r_image.h>
 #include <universal/com_files.h>
 #include <universal/com_memory.h>
@@ -19,8 +21,10 @@
 #include <stringed/stringed_hooks.h>
 #include <qcommon/cmd.h>
 #include <universal/physicalmemory.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/rb_shade.h>
 #include <gfx_d3d/r_staticmodelcache.h>
+#endif
 #include <win32/win_localize.h>
 #include <universal/profile.h>
 
@@ -28,12 +32,77 @@
 
 #include <setjmp.h>
 #include <game/g_bsp.h>
+#ifndef KISAK_DEDI_HEADLESS
 #include <cgame/cg_local.h>
+#endif
 
 GfxWorld s_world;
 MaterialGlobals materialGlobals;
 ImgGlobals imageGlobals;
 r_globals_t rg{ 0 };
+
+#ifdef KISAK_DEDI_HEADLESS
+namespace
+{
+void DB_MediaRemapTechniqueSet(MaterialTechniqueSet *techniqueSet)
+{
+    if (!techniqueSet
+        || !techniqueSet->name
+        || !*techniqueSet->name
+        || techniqueSet->worldVertFormat >= 12)
+    {
+        Com_Error(ERR_DROP, "Invalid headless material technique set");
+        return;
+    }
+
+    // A headless server has no renderer feature remap.  Preserve the canonical
+    // relationship consumed by material graph validation and runtime lookups.
+    techniqueSet->remappedTechniqueSet = techniqueSet;
+}
+void DB_MediaUploadShaders(MaterialTechniqueSet *) {}
+void DB_MediaDirtyMaterialSort() {}
+void DB_MediaUnloadGfxWorld() {}
+bool DB_MediaIsProgramImage(const GfxImage *) { return false; }
+void DB_MediaReleaseThreadOwnership() {}
+bool DB_MediaIsInRemoteScreenUpdate() { return false; }
+void DB_MediaBeginRemoteScreenUpdate() {}
+void DB_MediaEndRemoteScreenUpdate() {}
+int32_t DB_MediaPopRemoteScreenUpdate() { return 0; }
+void DB_MediaPushRemoteScreenUpdate(int32_t) {}
+void DB_MediaDirtyTechniqueSetOverrides() {}
+void DB_MediaOverrideTechniqueSets() {}
+void DB_MediaRefreshVision() {}
+void DB_MediaClearShaderUploadList() {}
+void DB_MediaReleaseTechniqueSet(XAssetHeader, void *) {}
+void DB_MediaFreeImage(GfxImage *) {}
+void DB_MediaSyncRenderThread() {}
+void DB_MediaClearStaticModelCacheRefs() {}
+void DB_MediaSaveSounds() {}
+void DB_MediaLoadSounds() {}
+}
+#else
+#define DB_MediaRemapTechniqueSet Material_OriginalRemapTechniqueSet
+#define DB_MediaUploadShaders Material_UploadShaders
+#define DB_MediaDirtyMaterialSort Material_DirtySort
+#define DB_MediaUnloadGfxWorld R_UnloadWorld
+#define DB_MediaIsProgramImage Image_IsProg
+#define DB_MediaReleaseThreadOwnership R_ReleaseThreadOwnership
+#define DB_MediaIsInRemoteScreenUpdate R_IsInRemoteScreenUpdate
+#define DB_MediaBeginRemoteScreenUpdate R_BeginRemoteScreenUpdate
+#define DB_MediaEndRemoteScreenUpdate R_EndRemoteScreenUpdate
+#define DB_MediaPopRemoteScreenUpdate R_PopRemoteScreenUpdate
+#define DB_MediaPushRemoteScreenUpdate R_PushRemoteScreenUpdate
+#define DB_MediaDirtyTechniqueSetOverrides Material_DirtyTechniqueSetOverrides
+#define DB_MediaOverrideTechniqueSets Material_OverrideTechniqueSets
+#define DB_MediaRefreshVision CG_VisionSetMyChanges
+#define DB_MediaClearShaderUploadList Material_ClearShaderUploadList
+#define DB_MediaReleaseTechniqueSet Material_ReleaseTechniqueSet
+#define DB_MediaFreeImage Image_Free
+#define DB_MediaSyncRenderThread R_SyncRenderThread
+#define DB_MediaClearStaticModelCacheRefs R_ClearAllStaticModelCacheRefs
+#define DB_MediaSaveSounds DB_SaveSounds
+#define DB_MediaLoadSounds DB_LoadSounds
+#endif
 
 struct DBReorderAssetEntry // sizeof=0x10
 {                                       // ...
@@ -717,8 +786,8 @@ void __cdecl Mark_MaterialAsset(Material *material)
 void __cdecl Load_MaterialTechniqueSetAsset(XAssetHeader *techniqueSet)
 {
     techniqueSet->xmodelPieces = DB_AddXAsset(ASSET_TYPE_TECHNIQUE_SET, (XAssetHeader)techniqueSet->xmodelPieces).xmodelPieces;
-    Material_OriginalRemapTechniqueSet(techniqueSet->techniqueSet);
-    Material_UploadShaders(techniqueSet->techniqueSet);
+    DB_MediaRemapTechniqueSet(techniqueSet->techniqueSet);
+    DB_MediaUploadShaders(techniqueSet->techniqueSet);
 }
 
 void __cdecl Mark_MaterialTechniqueSetAsset(MaterialTechniqueSet *techniqueSet)
@@ -852,7 +921,7 @@ void __cdecl Mark_GfxWorldAsset(GfxWorld *gfxWorld)
 
 void __cdecl DB_RemoveGfxWorld(XAssetHeader ass)
 {
-    R_UnloadWorld();
+    DB_MediaUnloadGfxWorld();
 }
 
 void __cdecl Load_LightDefAsset(XAssetHeader *lightDef)
@@ -1008,14 +1077,14 @@ void __cdecl Mark_StringTableAsset(StringTable *stringTable)
 XAssetHeader __cdecl DB_AllocMaterial(void *arg)
 {
     XAssetHeader *pool = (XAssetHeader*)arg;
-    Material_DirtySort();
+    DB_MediaDirtyMaterialSort();
     return DB_AllocXAsset_StringTable_(pool);
 }
 
 void __cdecl DB_FreeMaterial(void* arg, XAssetHeader header)
 {
     XAssetPoolEntry<StringTable> **pool = (XAssetPoolEntry<StringTable> **)arg;
-    Material_DirtySort();
+    DB_MediaDirtyMaterialSort();
     DB_FreeXAssetHeader_StringTable_(pool, header);
 }
 
@@ -1170,7 +1239,7 @@ void __cdecl R_EnumImages(DBEnumXAssetCallback func, void *data)
         header = imageGlobals.imageHashTable[imageIndex];
         if (header)
         {
-            if (!Image_IsProg(header))
+            if (!DB_MediaIsProgramImage(header))
             {
                 XAssetHeader asset;
                 asset.image = header;
@@ -1274,13 +1343,13 @@ XAssetHeader __cdecl DB_FindXAssetHeader(XAssetType type, const char *name)
             if (!Sys_IsDatabaseReady2())
             {
                 if (Sys_IsMainThread())
-                    R_ReleaseThreadOwnership();
+                    DB_MediaReleaseThreadOwnership();
                 break;
             }
         }
         if (Sys_IsDatabaseReady2() || DB_IsMinimumFastFileLoaded() && DB_GetInitializing())
             break;
-        if (Sys_IsDatabaseReady() && (Sys_IsMainThread() || Sys_IsRenderThread() && R_IsInRemoteScreenUpdate() && g_mainThreadBlocked))
+        if (Sys_IsDatabaseReady() && (Sys_IsMainThread() || Sys_IsRenderThread() && DB_MediaIsInRemoteScreenUpdate() && g_mainThreadBlocked))
         {
             DB_PostLoadXZone();
         }
@@ -1341,9 +1410,9 @@ LABEL_39:
 
 void __cdecl DB_Sleep(uint32_t msec)
 {
-    R_BeginRemoteScreenUpdate();
+    DB_MediaBeginRemoteScreenUpdate();
     NET_Sleep(msec);
-    R_EndRemoteScreenUpdate();
+    DB_MediaEndRemoteScreenUpdate();
 }
 
 void __cdecl DB_LogMissingAsset(XAssetType type, const char *name)
@@ -2216,7 +2285,7 @@ void DB_PostLoadXZone()
             remoteScreenUpdateNesting = 0;
             if (!Sys_IsMainThread()
                 || (++g_mainThreadBlocked,
-                    remoteScreenUpdateNesting = R_PopRemoteScreenUpdate(),
+                    remoteScreenUpdateNesting = DB_MediaPopRemoteScreenUpdate(),
                     --g_mainThreadBlocked,
                     g_copyInfoCount))
 
@@ -2227,16 +2296,16 @@ void DB_PostLoadXZone()
                     DB_LinkXAssetEntry((XAssetEntryPoolEntry *)g_copyInfo[i], 1);
                 g_copyInfoCount = 0;
                 Sys_UnlockWrite(&db_hashCritSect);
-                Material_DirtyTechniqueSetOverrides();
-                Material_OverrideTechniqueSets();
+                DB_MediaDirtyTechniqueSetOverrides();
+                DB_MediaOverrideTechniqueSets();
                 DB_UnarchiveAssets();
                 if (Sys_IsMainThread())
-                    R_PushRemoteScreenUpdate(remoteScreenUpdateNesting);
+                    DB_MediaPushRemoteScreenUpdate(remoteScreenUpdateNesting);
                 Sys_DatabaseCompleted2();
             }
             else
             {
-                R_PushRemoteScreenUpdate(remoteScreenUpdateNesting);
+                DB_MediaPushRemoteScreenUpdate(remoteScreenUpdateNesting);
             }
         }
         else
@@ -2261,7 +2330,7 @@ void __cdecl DB_UpdateDebugZone()
         zoneInfo[1].allocFlags = 64;
         zoneInfo[1].freeFlags = 64;
         DB_LoadXAssets(zoneInfo, 2u, 1);
-        CG_VisionSetMyChanges();
+        DB_MediaRefreshVision();
     }
 }
 
@@ -2269,9 +2338,9 @@ void __cdecl DB_SyncXAssets()
 {
     if (!Sys_IsMainThread())
         MyAssertHandler(".\\database\\db_registry.cpp", 3386, 0, "%s", "Sys_IsMainThread()");
-    R_BeginRemoteScreenUpdate();
+    DB_MediaBeginRemoteScreenUpdate();
     Sys_SyncDatabase();
-    R_EndRemoteScreenUpdate();
+    DB_MediaEndRemoteScreenUpdate();
     DB_PostLoadXZone();
 }
 
@@ -2296,7 +2365,7 @@ void __cdecl DB_LoadXAssets(XZoneInfo *zoneInfo, uint32_t zoneCount, int32_t syn
     }
 
     unloadedZone = 0;
-    Material_ClearShaderUploadList();
+    DB_MediaClearShaderUploadList();
     DB_SyncXAssets();
     
     iassert(!g_archiveBuf);
@@ -2977,13 +3046,13 @@ LABEL_4:
 void __cdecl DB_RemoveTechniqueSetAsset(XAssetHeader header)
 {
     if (header.techniqueSet)
-        Material_ReleaseTechniqueSet(header, nullptr);
+        DB_MediaReleaseTechniqueSet(header, nullptr);
 }
 
 void __cdecl DB_RemoveImageAsset(XAssetHeader header)
 {
     if (header.image)
-        Image_Free(header.image);
+        DB_MediaFreeImage(header.image);
 }
 
 void(__cdecl *DB_RemoveXAssetHandler[ASSET_TYPE_COUNT])(XAssetHeader) =
@@ -3174,7 +3243,7 @@ void __cdecl DB_CloneXAsset(const XAsset *from, XAsset *to)
 void DB_SyncExternalAssets()
 {
 #ifndef DEDICATED
-    R_SyncRenderThread();
+    DB_MediaSyncRenderThread();
     RB_UnbindAllImages();
     R_ShutdownStreams();
     RB_ClearPixelShader();
@@ -3188,9 +3257,9 @@ void DB_ArchiveAssets()
     if (!g_archiveBuf)
     {
         g_archiveBuf = 1;
-        R_SyncRenderThread();
-        R_ClearAllStaticModelCacheRefs();
-        DB_SaveSounds();
+        DB_MediaSyncRenderThread();
+        DB_MediaClearStaticModelCacheRefs();
+        DB_MediaSaveSounds();
         DB_SaveDObjs();
     }
 }
@@ -3254,7 +3323,7 @@ void DB_FreeUnusedResources()
 
 void DB_ExternalInitAssets()
 {
-    Material_DirtyTechniqueSetOverrides();
+    DB_MediaDirtyTechniqueSetOverrides();
     BG_FillInAllWeaponItems();
 }
 
@@ -3262,13 +3331,13 @@ void DB_UnarchiveAssets()
 {
     iassert(g_archiveBuf);
     g_archiveBuf = 0;
-    DB_LoadSounds();
+    DB_MediaLoadSounds();
     DB_LoadDObjs();
     DB_ExternalInitAssets();
     iassert(Sys_IsMainThread() || Sys_IsRenderThread());
 
     if (Sys_IsMainThread())
-        R_ReleaseThreadOwnership();
+        DB_MediaReleaseThreadOwnership();
 }
 
 void __cdecl DB_Cleanup()
