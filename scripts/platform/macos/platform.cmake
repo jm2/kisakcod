@@ -11,7 +11,10 @@ endforeach()
 # configuration gate remains in force.
 set(PLATFORM_MACOS "")
 set(PLATFORM_MACOS_DEDI_HEADLESS "")
-set(PLATFORM_MACOS_SERVICES "")
+set(PLATFORM_MACOS_SERVICES
+    "${SRC_DIR}/_platform/posix/sys_sync.cpp"
+    "${SRC_DIR}/_platform/posix/sys_time.cpp"
+)
 kisakcod_select_platform_source_sets(
     PLATFORM macos
     ENGINE_VAR PLATFORM_MACOS

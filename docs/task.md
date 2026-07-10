@@ -8,13 +8,19 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: add native Win32/POSIX time and recursive-lock backends behind the extracted M3
-  contracts and exercise them on every portable CI target.
-- Last completed batch: `sys_sync.h` now owns the exact MP/SP critical-section IDs and fixed-width
+- Active work: migrate the remaining `FastCriticalSection` reader paths to the shared atomic
+  contract, then extract opaque thread/event handles without relaxing the POSIX engine gate.
+- Last completed batch: the first native M3 service backends now implement wrap-compatible
+  monotonic clocks, yield/sleep, recursive critical sections, and the common fast write lock.
+  Windows uses `timeGetTime`/`Sleep`, `INIT_ONCE`, and `CRITICAL_SECTION`; Linux/macOS use
+  `CLOCK_MONOTONIC`, EINTR-safe `nanosleep`, `pthread_once`, and recursive pthread mutexes. A
+  race-safe runtime test covers concurrent first initialization, recursive entry, contention,
+  fast-lock balance, and timing on the selected host backend.
+- Previous M3 batch: `sys_sync.h` now owns the exact MP/SP critical-section IDs and fixed-width
   `FastCriticalSection` ABI, while `sys_time.h` owns the clock declarations without importing
   Win32. The database public header no longer imports `win_local.h` or exposes `_OVERLAPPED`.
   Platform CMake files publish explicit engine/headless/service source sets; Windows retains its
-  exact working composition, while Linux/macOS intentionally publish empty, incomplete sets and
+  exact working composition, while Linux/macOS keep empty, incomplete engine/headless sets and
   cannot inherit Win32 files. MP/SP contract tests and source-composition invariants cover the seam.
 - Previous completed batch: the Windows x86 headless target now links with a database-scoped null
   GPU/audio backend while retaining validated CPU asset graphs and exact progress/ownership rules.
@@ -24,7 +30,7 @@ work item changes. Do not create session-specific handoff files.
   the legacy dedicated smoke. The smoke now requires the requested map in the status response, and
   its self-hosted jobs run only from `master` and check out the immutable dispatched SHA. Twenty-one
   client/media includes remain.
-- Portable validation: 15/15 tests pass locally under GCC, Clang, and GCC ASan/UBSan, with leak
+- Portable validation: 16/16 tests pass locally under GCC, Clang, and GCC ASan/UBSan, with leak
   detection disabled because LeakSanitizer cannot run under the command-runner ptrace environment.
   The production relocation registry is also strict-warning clean under GCC/Clang and GCC ILP32
   syntax checking. Portable tests do not execute the Windows stream adapter or media ownership paths.
@@ -53,8 +59,9 @@ work item changes. Do not create session-specific handoff files.
   the local null-resource batch. Null-resource run 29128702142 then passed all nine jobs: five
   portable targets, three established Windows x86 builds, and the first complete Windows x86
   headless dedicated compile and link. Runtime-hardening run 29129630878 subsequently passed all
-  nine jobs and retained the hardened headless artifact. The observed linker debt is now
-  106 -> 45 -> 0.
+  nine jobs and retained the hardened headless artifact. Platform-contract run 29130295757 also
+  passed all nine jobs, including the two new ABI contract tests on all five portable targets.
+  The observed linker debt is now 106 -> 45 -> 0.
 
 ## Milestone status
 
@@ -63,7 +70,7 @@ work item changes. Do not create session-specific handoff files.
 | M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
-| M3 platform services | In progress: contracts/source seam | Portable time/synchronization headers, exact critical-section ABI tests, and target-owned engine/headless/service source sets exist. Linux/macOS sets remain explicitly empty and engine-gated; native clock/recursive-lock, thread/event, filesystem, process/console, and socket backends remain. |
+| M3 platform services | In progress: time/sync native | Portable contracts and target-owned source sets now select tested native Win32/POSIX clock, sleep/yield, recursive-lock, and common fast-write-lock implementations. Linux/macOS engine/headless sets remain empty and engine-gated; fast-lock reader atomics, thread/event, filesystem, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, all legacy direct references migrated to bounded resolution, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush, portal/cell, and path-tree spans, and 18 exact completed object types exist; packed mirrors, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
@@ -82,9 +89,10 @@ work item changes. Do not create session-specific handoff files.
 ## Immediate queue
 
 1. Validate the protected licensed-content headless startup/map/`getstatus` workflow on its runner.
-2. Add native Win32 and POSIX time/recursive-lock backends exercised on all five portable CI targets.
+2. Replace direct volatile `FastCriticalSection` reader polling/RMW sites with shared fixed-width
+   atomic helpers so POSIX and ARM64 have a defined ordering contract.
 3. Extract opaque thread/event handles, followed by filesystem/virtual-memory, process/console, and
-   BSD-socket backends; keep recursive critical-section semantics exact.
+   BSD-socket backends.
 4. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
 
 ## Known release blockers
@@ -99,9 +107,14 @@ work item changes. Do not create session-specific handoff files.
   registry if per-channel filtering is required for dedicated administration.
 - The exact headless closure still contains 182 C++ and 19 C translation units. Twenty-six files
   directly include 36 Windows-only headers, and the remaining service surface is concentrated in
-  thread/atomics, filesystem/database I/O, sockets, console/process, timing, and virtual memory.
+  thread/atomics, filesystem/database I/O, sockets, console/process, and virtual memory.
   The extracted source sets are intentionally incomplete on Linux/macOS; do not relax the engine
   gate until real POSIX backends populate them.
+- Native time and recursive critical-section services are now selected and runtime-tested, and the
+  fast writer uses sequentially consistent atomic loads/RMW. Existing readers in `dvar.cpp` and
+  `db_registry.cpp` still combine Interlocked RMW with direct volatile counter polling; that is a
+  C++ data race on POSIX and insufficient ordering on ARM64. Migrate those sites to shared atomic
+  reader helpers before compiling a non-Windows engine target.
 - Fast-file loading lacks a production-path malformed-input test harness and
   completed-object/type provenance for direct offsets.
 - Inline material declarations, techniques, passes, and arguments receive pre-use

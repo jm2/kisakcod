@@ -51,9 +51,9 @@ if (NOT KISAK_PLATFORM STREQUAL "win32"
     AND (KISAK_BUILD_MP OR KISAK_BUILD_DEDICATED OR KISAK_BUILD_SP))
     message(FATAL_ERROR
         "The ${KISAK_PLATFORM} backend is not buildable yet. The platform selection "
-        "and source override infrastructure is present, but the headless source split, "
-        "POSIX system services, and client Vulkan renderer must land before engine "
-        "targets can compile.")
+        "and native time/synchronization services are present, but 64-bit runtime/fast-file "
+        "widening, the remaining POSIX services, portable headless source composition, and "
+        "the client Vulkan renderer must land before engine targets can compile.")
 endif()
 
 if (CMAKE_SIZEOF_VOID_P EQUAL 8

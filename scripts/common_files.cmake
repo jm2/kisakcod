@@ -423,6 +423,7 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/mem_track.h"
     "${SRC_DIR}/qcommon/qcommon.h"
     "${SRC_DIR}/qcommon/statmonitor.cpp"
+    "${SRC_DIR}/qcommon/sys_sync.cpp"
     "${SRC_DIR}/qcommon/sys_sync.h"
     "${SRC_DIR}/qcommon/sys_time.h"
     "${SRC_DIR}/qcommon/threads.cpp"
@@ -566,7 +567,6 @@ set(UNIVERSAL
     "${SRC_DIR}/universal/timing.cpp"
     "${SRC_DIR}/universal/timing.h"
     "${SRC_DIR}/universal/win_common.cpp"
-    "${SRC_DIR}/universal/win_shared.cpp"
 )
 
 set(PLATFORM_WIN32

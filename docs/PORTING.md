@@ -36,6 +36,8 @@ Completed foundation work:
   keeping Linux/macOS lists explicitly empty and incomplete until native backends land;
 - portable `sys_sync.h`/`sys_time.h` contracts, including fixed-width MP/SP critical-section IDs
   and `FastCriticalSection` layout checks wired into all five utility-CI targets;
+- native Win32/POSIX monotonic-clock, sleep/yield, and recursive-critical-section backends plus a
+  common fixed-width fast write lock, with concurrent runtime coverage on utility targets;
 - corrected Win32 multi-config DirectX paths and post-build output handling;
 - `build-win.ps1`, Windows CI, tagged release archives/checksums, and separately
   protected legacy/headless licensed dedicated-server smoke definitions;
@@ -52,13 +54,13 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Add native Win32/POSIX time and recursive-lock backends behind the extracted contracts and
-   exercise them on every portable CI leg.
+2. Finish shared atomic reader semantics, then extract opaque thread/event handles behind the M3
+   platform contracts and exercise them on every portable CI leg.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
-5. Implement the remaining platform services (threads/events, sockets, filesystem,
-   virtual memory, console) for Windows/POSIX.
+5. Implement the remaining platform services (sockets, filesystem,
+   virtual memory, console/process) for Windows/POSIX.
 6. Introduce the Vulkan RHI, retaining D3D9 temporarily on Windows during parity
    testing; add OpenAL Soft and FFmpeg backends.
 7. Add scalar/SSE2/NEON dispatch and remove x86 inline assembly/MMX.
@@ -709,18 +711,22 @@ tail (deferred, intentionally):* wiring the ~32 atomics TUs to include `sys_atom
 on Win, prevents LP64 layout divergence) is folded into M4 alongside the struct widening; the bare
 `sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now and burned down in M4.
 
-**M3 (contracts/source seam landed) — platform ownership is explicit, but POSIX backends are not.**
+**M3 (native time/synchronization landed) — platform ownership is explicit, but the engine remains gated.**
 `src/qcommon/sys_sync.h` now owns the exact fixed-width MP/SP `CriticalSection` IDs, the 8-byte
 `FastCriticalSection` contract, and the existing lock API; `src/qcommon/sys_time.h` owns the clock
-API (with sleep still SP-only until its native backend lands). The database public header no longer
-imports `win_local.h` or exposes the private `_OVERLAPPED` callback, and the platform-neutral
+and sleep/yield API. The database public header no longer imports `win_local.h` or exposes the
+private `_OVERLAPPED` callback, and the platform-neutral
 `Sys_SnapVector` implementation no longer lives in the Windows timing translation unit. CMake now
 selects target-neutral engine, headless, and service source variables: Win32 republishes its exact
-working lists, while Linux/macOS publish explicit empty lists marked incomplete. Tests freeze both
-profile ABIs, require one-copy source composition, reject Win32 sources in non-Windows sets, and
-retain the top-level POSIX engine gate. This is a composition boundary, **not** a claim that a POSIX
-engine target builds. Next: monotonic clocks/sleep plus recursive critical sections for Win32 and
-POSIX, then opaque thread/event handles, filesystem/virtual memory, console/process, and BSD sockets.
+working engine lists plus native `timeGetTime`/`Sleep` and `INIT_ONCE`/`CRITICAL_SECTION` services;
+Linux/macOS retain empty engine/headless lists but select `CLOCK_MONOTONIC`/`nanosleep` and
+`pthread_once`/recursive-pthread services. Tests freeze both profile ABIs and calling conventions,
+require one-copy source composition, reject Win32 sources in non-Windows sets, and exercise
+concurrent first initialization, recursion, contention, and time progress. This is a working native
+service slice, **not** a claim that a POSIX engine target builds. The immediate correctness gate is
+the remaining direct volatile `FastCriticalSection` reader polling in `dvar.cpp`/`db_registry.cpp`:
+move it behind shared atomics before POSIX/ARM64 engine compilation. Then extract opaque
+thread/event handles, filesystem/virtual memory, console/process, and BSD sockets.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),

@@ -9,9 +9,12 @@ foreach(_source_set CLIENT_MP PLATFORM_WIN32 SOUND GFX_D3D GROUPVOICE)
     apply_platform_overrides(${_source_set} "${PLATFORM_OVERRIDE_DIR}")
 endforeach()
 
-# Keep the currently buildable Windows lists exact.  Platform service backends
-# will move into the explicit service set as their contracts are extracted.
-set(PLATFORM_WIN32_SERVICES "")
+# Keep the currently buildable Windows engine lists exact while selecting the
+# native synchronization and time implementations explicitly.
+set(PLATFORM_WIN32_SERVICES
+    "${SRC_DIR}/_platform/win32/sys_sync.cpp"
+    "${SRC_DIR}/_platform/win32/sys_time.cpp"
+)
 kisakcod_select_platform_source_sets(
     PLATFORM win32
     ENGINE_VAR PLATFORM_WIN32

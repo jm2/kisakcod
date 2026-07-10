@@ -6,6 +6,14 @@ function(kisakcod_test_warnings target)
     endif()
 endfunction()
 
+# Utility-only configurations do not enter an engine subdirectory, so select
+# the host platform source sets here before compiling the service backends.
+include("${SCRIPTS_DIR}/platform_override.cmake")
+include("${SCRIPTS_DIR}/common_files.cmake")
+include("${PLATFORM_DIR}/${KISAK_PLATFORM}/platform.cmake")
+kisakcod_require_platform_source_sets()
+find_package(Threads REQUIRED)
+
 add_executable(kisakcod-huffman-tests
     huffman_tests.cpp
     ${SRC_DIR}/qcommon/huffman.cpp
@@ -94,6 +102,28 @@ foreach(_profile mp sp)
         COMMAND ${_target}
     )
 endforeach()
+
+add_executable(kisakcod-platform-service-runtime-tests
+    platform_service_runtime_tests.cpp
+    ${SRC_DIR}/qcommon/sys_sync.cpp
+    ${KISAK_PLATFORM_SERVICE_SOURCES}
+)
+target_include_directories(kisakcod-platform-service-runtime-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-platform-service-runtime-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-platform-service-runtime-tests PRIVATE KISAK_MP)
+target_link_libraries(kisakcod-platform-service-runtime-tests PRIVATE Threads::Threads)
+if (KISAK_PLATFORM STREQUAL "win32")
+    target_link_libraries(kisakcod-platform-service-runtime-tests PRIVATE winmm)
+endif()
+kisakcod_test_warnings(kisakcod-platform-service-runtime-tests)
+set_target_properties(kisakcod-platform-service-runtime-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME platform-service-runtime-contracts
+    COMMAND kisakcod-platform-service-runtime-tests
+)
+set_tests_properties(platform-service-runtime-contracts PROPERTIES TIMEOUT 20)
 
 add_test(
     NAME dedi-headless-source-profile

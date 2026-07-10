@@ -11,7 +11,10 @@ endforeach()
 # configuration gate remains in force.
 set(PLATFORM_LINUX "")
 set(PLATFORM_LINUX_DEDI_HEADLESS "")
-set(PLATFORM_LINUX_SERVICES "")
+set(PLATFORM_LINUX_SERVICES
+    "${SRC_DIR}/_platform/posix/sys_sync.cpp"
+    "${SRC_DIR}/_platform/posix/sys_time.cpp"
+)
 kisakcod_select_platform_source_sets(
     PLATFORM linux
     ENGINE_VAR PLATFORM_LINUX

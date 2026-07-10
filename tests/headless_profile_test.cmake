@@ -60,6 +60,14 @@ set(_expected_win32_headless_sources
     "${SRC_DIR}/win32/win_steam.cpp"
     "${SRC_DIR}/win32/win_steam.h"
 )
+set(_expected_win32_service_sources
+    "${SRC_DIR}/_platform/win32/sys_sync.cpp"
+    "${SRC_DIR}/_platform/win32/sys_time.cpp"
+)
+set(_expected_posix_service_sources
+    "${SRC_DIR}/_platform/posix/sys_sync.cpp"
+    "${SRC_DIR}/_platform/posix/sys_time.cpp"
+)
 
 if (NOT KISAK_PLATFORM_SOURCE_SETS_COMPLETE)
     message(FATAL_ERROR "The selected Win32 platform source sets must be complete")
@@ -74,10 +82,11 @@ kisakcod_assert_source_lists_equal(
     _expected_win32_headless_sources
     "Win32 headless platform source composition"
 )
-if (KISAK_PLATFORM_SERVICE_SOURCES)
-    message(FATAL_ERROR
-        "Win32 platform services must remain empty until extracted backends are selected explicitly")
-endif()
+kisakcod_assert_source_lists_equal(
+    KISAK_PLATFORM_SERVICE_SOURCES
+    _expected_win32_service_sources
+    "Win32 platform service source composition"
+)
 
 kisakcod_get_dedi_sources(_dedi_sources)
 kisakcod_assert_headless_dedi_sources(${_dedi_sources})
@@ -95,21 +104,39 @@ foreach(_platform_source IN LISTS _expected_win32_headless_sources)
     endif()
 endforeach()
 
-foreach(_contract_header
+foreach(_service_source IN LISTS _expected_win32_service_sources)
+    set(_service_source_count 0)
+    foreach(_dedi_source IN LISTS _dedi_sources)
+        if ("${_dedi_source}" STREQUAL "${_service_source}")
+            math(EXPR _service_source_count "${_service_source_count} + 1")
+        endif()
+    endforeach()
+    if (NOT _service_source_count EQUAL 1)
+        message(FATAL_ERROR
+            "Win32 platform service source must occur exactly once: ${_service_source}")
+    endif()
+endforeach()
+
+foreach(_contract_source
+    "${SRC_DIR}/qcommon/sys_sync.cpp"
     "${SRC_DIR}/qcommon/sys_sync.h"
     "${SRC_DIR}/qcommon/sys_time.h"
 )
-    set(_contract_header_count 0)
+    set(_contract_source_count 0)
     foreach(_dedi_source IN LISTS _dedi_sources)
-        if ("${_dedi_source}" STREQUAL "${_contract_header}")
-            math(EXPR _contract_header_count "${_contract_header_count} + 1")
+        if ("${_dedi_source}" STREQUAL "${_contract_source}")
+            math(EXPR _contract_source_count "${_contract_source_count} + 1")
         endif()
     endforeach()
-    if (NOT _contract_header_count EQUAL 1)
+    if (NOT _contract_source_count EQUAL 1)
         message(FATAL_ERROR
-            "Platform contract header must occur exactly once: ${_contract_header}")
+            "Common platform contract source must occur exactly once: ${_contract_source}")
     endif()
 endforeach()
+
+if ("${SRC_DIR}/universal/win_shared.cpp" IN_LIST _dedi_sources)
+    message(FATAL_ERROR "Retired universal/win_shared.cpp remains in dedicated composition")
+endif()
 
 function(kisakcod_assert_incomplete_platform_source_sets PLATFORM_NAME)
     set(KISAK_PLATFORM "${PLATFORM_NAME}")
@@ -123,13 +150,17 @@ function(kisakcod_assert_incomplete_platform_source_sets PLATFORM_NAME)
     foreach(_source_set
         KISAK_PLATFORM_SOURCES
         KISAK_PLATFORM_DEDI_HEADLESS_SOURCES
-        KISAK_PLATFORM_SERVICE_SOURCES
     )
         if (NOT "${${_source_set}}" STREQUAL "")
             message(FATAL_ERROR
                 "${PLATFORM_NAME} ${_source_set} must remain explicitly empty until its backend lands")
         endif()
     endforeach()
+    kisakcod_assert_source_lists_equal(
+        KISAK_PLATFORM_SERVICE_SOURCES
+        _expected_posix_service_sources
+        "${PLATFORM_NAME} platform service source composition"
+    )
 endfunction()
 
 kisakcod_assert_incomplete_platform_source_sets(linux)

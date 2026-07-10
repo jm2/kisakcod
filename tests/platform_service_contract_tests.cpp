@@ -13,11 +13,17 @@ static_assert(offsetof(FastCriticalSection, readCount) == 0);
 static_assert(offsetof(FastCriticalSection, writeCount) == 4);
 
 using MillisecondsFunction = std::uint32_t (KISAK_CDECL *)();
-using CriticalSectionFunction = void (*)(int);
-using FastCriticalSectionFunction = void (*)(FastCriticalSection *);
+using SleepFunction = void (KISAK_CDECL *)(std::uint32_t);
+using InitializeCriticalSectionsFunction = void (KISAK_CDECL *)();
+using CriticalSectionFunction = void (KISAK_CDECL *)(int);
+using FastCriticalSectionFunction = void (KISAK_CDECL *)(FastCriticalSection *);
 
 static_assert(std::is_same_v<decltype(&Sys_Milliseconds), MillisecondsFunction>);
 static_assert(std::is_same_v<decltype(&Sys_MillisecondsRaw), MillisecondsFunction>);
+static_assert(std::is_same_v<decltype(&Sys_Sleep), SleepFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_InitializeCriticalSections),
+    InitializeCriticalSectionsFunction>);
 static_assert(std::is_same_v<decltype(&Sys_EnterCriticalSection), CriticalSectionFunction>);
 static_assert(std::is_same_v<decltype(&Sys_LeaveCriticalSection), CriticalSectionFunction>);
 static_assert(std::is_same_v<decltype(&Sys_LockWrite), FastCriticalSectionFunction>);
@@ -31,8 +37,6 @@ static_assert(CRITSECT_CINEMATIC_TARGET_CHANGE == 0x13);
 static_assert(CRITSECT_CBUF == 0x15);
 static_assert(CRITSECT_COUNT == 0x16);
 #elif defined(KISAK_SP)
-using SleepFunction = void (*)(std::uint32_t);
-static_assert(std::is_same_v<decltype(&Sys_Sleep), SleepFunction>);
 static_assert(CRITSECT_CONSOLE == 0x0);
 static_assert(CRITSECT_SOUND_ALLOC == 0x4);
 static_assert(CRITSECT_SCRIPT_STRING == 0x13);

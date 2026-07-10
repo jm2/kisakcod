@@ -84,8 +84,8 @@ struct FastCriticalSection
 
 RUNTIME_SIZE(FastCriticalSection, 8, 8);
 
-void Sys_InitializeCriticalSections();
-void Sys_EnterCriticalSection(int critSect);
-void Sys_LeaveCriticalSection(int critSect);
-void Sys_LockWrite(FastCriticalSection *critSect);
-void Sys_UnlockWrite(FastCriticalSection *critSect);
+void KISAK_CDECL Sys_InitializeCriticalSections();
+void KISAK_CDECL Sys_EnterCriticalSection(int critSect);
+void KISAK_CDECL Sys_LeaveCriticalSection(int critSect);
+void KISAK_CDECL Sys_LockWrite(FastCriticalSection *critSect);
+void KISAK_CDECL Sys_UnlockWrite(FastCriticalSection *critSect);

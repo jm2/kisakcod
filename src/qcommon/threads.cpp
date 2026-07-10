@@ -896,10 +896,6 @@ void Sys_SleepServer()
         Sys_LeaveCriticalSection(CRITSECT_START_SERVER);
     }
 }
-void Sys_Sleep(uint32_t msec)
-{
-    Sleep(msec);
-}
 void Sys_SetServerTimeout(int timeout)
 {
     int timeMS; // r3
