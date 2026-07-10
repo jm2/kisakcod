@@ -76,7 +76,6 @@ void __cdecl R_ModelList_f()
     const char *Name; // eax
     const char *v1; // [esp+Ch] [ebp-212Ch]
     const char *fmt; // [esp+10h] [ebp-2128h]
-    int inData; // [esp+108h] [ebp-2030h] BYREF
     XModel *v4[2050]; // [esp+10Ch] [ebp-202Ch] BYREF
     XModel *model; // [esp+2114h] [ebp-24h]
     int v6; // [esp+2118h] [ebp-20h]
@@ -84,22 +83,22 @@ void __cdecl R_ModelList_f()
     int XModelUsageCount; // [esp+2120h] [ebp-18h]
     int MemoryUsage; // [esp+2124h] [ebp-14h]
     int MemUsage; // [esp+2128h] [ebp-10h]
-    int i; // [esp+212Ch] [ebp-Ch]
+    uint32_t i; // [esp+212Ch] [ebp-Ch]
     float v12; // [esp+2130h] [ebp-8h]
     int modelCount; // [esp+2134h] [ebp-4h] BYREF
 
     v7 = 0;
     v6 = 0;
-    inData = 0;
-    DB_EnumXAssets(ASSET_TYPE_XMODEL, (void(__cdecl *)(XAssetHeader, void *))R_GetModelList, &inData, 1);
+    ModelListContext context = {v4, 0, ARRAY_COUNT(v4)};
+    DB_EnumXAssets(ASSET_TYPE_XMODEL, R_GetModelList, &context, 1);
     //std::_Sort<XModel **, int, bool(__cdecl *)(XModel *&, XModel *&)>(v4, &v4[inData], (4 * inData) >> 2, R_ModelSort);
-    std::sort(&v4[0], &v4[inData], R_ModelSort);
+    std::sort(&v4[0], &v4[context.count], R_ModelSort);
     Com_Printf(8, "---------------------------\n");
     Com_Printf(8, "SM# is the number of static model instances\n");
     Com_Printf(8, "instKB is static model instance usage\n");
     Com_Printf(8, "DE# is the number of dyn entity instances\n");
     Com_Printf(8, "   SM#  instKB   DE#   geoKB  name\n");
-    for (i = 0; i < inData; ++i)
+    for (i = 0; i < context.count; ++i)
     {
         model = v4[i];
         MemUsage = XModelGetMemUsage(model);
@@ -141,10 +140,17 @@ void __cdecl R_ModelList_f()
     Com_Printf(8, "Related commands: meminfo, imagelist, gfx_world, gfx_model, cg_drawfps, com_statmon, tempmeminfo\n");
 }
 
-void __cdecl R_GetModelList(XAssetHeader header, XAssetHeader *data)
+void __cdecl R_GetModelList(XAssetHeader header, void *data)
 {
-    //iassert( modelList->count < ARRAY_COUNT( modelList->sorted ) ); // KISAKTODO
-    data[(int)data->xmodelPieces++ + 1] = header;
+    ModelListContext *context = static_cast<ModelListContext *>(data);
+    if (!context || !context->entries || !header.model)
+        return;
+    if (context->count >= context->capacity)
+    {
+        Com_PrintError(8, "Model enumeration exceeds its capacity\n");
+        return;
+    }
+    context->entries[context->count++] = header.model;
 }
 
 XModel *__cdecl R_RegisterModel(const char *name)

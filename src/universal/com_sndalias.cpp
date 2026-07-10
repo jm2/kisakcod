@@ -183,11 +183,11 @@ void Com_InitSoundDevGuiGraphs_FastFile()
     int counter; // [esp+0h] [ebp-4h] BYREF
 
     counter = 0;
-    DB_EnumXAssets(ASSET_TYPE_SOUND_CURVE, (void(__cdecl *)(XAssetHeader, void *))Com_GetGraphList, &counter, 0);
+    DB_EnumXAssets(ASSET_TYPE_SOUND_CURVE, Com_GetGraphList, &counter, 0);
 #endif
 }
 
-void __cdecl Com_GetGraphList(XAssetHeader header, int *data)
+void __cdecl Com_GetGraphList(XAssetHeader header, void *data)
 {
 #ifndef KISAK_DEDI_HEADLESS
     char devguiPath[256]; // [esp+0h] [ebp-110h] BYREF
@@ -195,17 +195,20 @@ void __cdecl Com_GetGraphList(XAssetHeader header, int *data)
     int index; // [esp+108h] [ebp-8h]
     int *count; // [esp+10Ch] [ebp-4h]
 
-    count = data;
-    index = *data;
+    count = static_cast<int *>(data);
+    SndCurve *curve = header.sndCurve;
+    if (!count || !curve)
+        return;
+    index = *count;
     if (index < 16)
     {
         graph = &g_sa.curveDevGraphs[index];
-        if (header.xmodelPieces->name)
+        if (curve->filename)
         {
-            snprintf(devguiPath, ARRAYSIZE(devguiPath), "Main:1/Snd:6/Volume Falloff Curves/%s:%d", header.xmodelPieces->name, index);
+            snprintf(devguiPath, ARRAYSIZE(devguiPath), "Main:1/Snd:6/Volume Falloff Curves/%s:%d", curve->filename, index);
             graph->knotCountMax = 8;
-            graph->knots = (float (*)[2]) & header.xmodelPieces->pieces;
-            graph->knotCount = &header.xmodelPieces->numpieces;
+            graph->knots = curve->knots;
+            graph->knotCount = &curve->knotCount;
             graph->eventCallback = Com_VolumeFalloffCurveGraphEventCallback;
             graph->data = (void *)index;
             graph->disableEditingEndPoints = 1;

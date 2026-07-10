@@ -55,17 +55,37 @@ void __cdecl Material_GetRemappedFeatures_RunTime(uint32_t *mask, uint32_t *valu
         *mask |= 0x20u;
 }
 
-void __cdecl Material_ForEachTechniqueSet_FastFile(void(__cdecl *callback)(MaterialTechniqueSet *))
+void __cdecl Material_ForEachTechniqueSet_FastFile(
+    void(__cdecl *callback)(MaterialTechniqueSet *),
+    bool includeOverride)
 {
     TechniqueSetList inData; // [esp+0h] [ebp-1008h] BYREF
 
     inData.count = 0;
-    DB_EnumXAssets(ASSET_TYPE_TECHNIQUE_SET, (void(*)(XAssetHeader, void*))Material_CollateTechniqueSets, &inData, 0);
-    while (inData.count)
-        callback(inData.hashTable[--inData.count]); // Material_CollateTechniqueSets()
+    DB_EnumXAssets(
+        ASSET_TYPE_TECHNIQUE_SET,
+        Material_CollateTechniqueSets,
+        &inData,
+        includeOverride);
+    if (includeOverride)
+    {
+        for (int techniqueSetIndex = 0;
+             techniqueSetIndex < inData.count;
+             ++techniqueSetIndex)
+        {
+            callback(inData.hashTable[techniqueSetIndex]);
+        }
+    }
+    else
+    {
+        while (inData.count)
+            callback(inData.hashTable[--inData.count]);
+    }
 }
 
-void __cdecl Material_ForEachTechniqueSet_LoadObj(void(__cdecl *callback)(MaterialTechniqueSet *))
+void __cdecl Material_ForEachTechniqueSet_LoadObj(
+    void(__cdecl *callback)(MaterialTechniqueSet *),
+    bool)
 {
     uint32_t hashIndex; // [esp+0h] [ebp-8h]
     MaterialTechniqueSet *techSet; // [esp+4h] [ebp-4h]
@@ -78,12 +98,14 @@ void __cdecl Material_ForEachTechniqueSet_LoadObj(void(__cdecl *callback)(Materi
     }
 }
 
-void __cdecl Material_ForEachTechniqueSet(void(__cdecl *callback)(MaterialTechniqueSet *))
+void __cdecl Material_ForEachTechniqueSet(
+    void(__cdecl *callback)(MaterialTechniqueSet *),
+    bool includeOverride)
 {
     if (IsFastFileLoad())
-        Material_ForEachTechniqueSet_FastFile(callback);
+        Material_ForEachTechniqueSet_FastFile(callback, includeOverride);
     else
-        Material_ForEachTechniqueSet_LoadObj(callback);
+        Material_ForEachTechniqueSet_LoadObj(callback, includeOverride);
 }
 
 const GfxMtlFeatureMap *__cdecl Material_FindFeature(

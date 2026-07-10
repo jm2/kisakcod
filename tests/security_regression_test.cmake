@@ -16,6 +16,21 @@ function(require_source_not_contains RELATIVE_PATH NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+file(GLOB_RECURSE _callback_sources "${SOURCE_ROOT}/src/*.cpp")
+foreach(_callback_source IN LISTS _callback_sources)
+    file(READ "${_callback_source}" _callback_text)
+    foreach(_forbidden_cast
+        "(void(__cdecl *)(XAssetHeader, void *))"
+        "(void(__cdecl*)(XAssetHeader, void*))"
+        "(void(*)(XAssetHeader, void*))")
+        string(FIND "${_callback_text}" "${_forbidden_cast}" _callback_cast)
+        if (NOT _callback_cast EQUAL -1)
+            message(FATAL_ERROR
+                "XAsset enumeration callback cast remains in ${_callback_source}")
+        endif()
+    endforeach()
+endforeach()
+
 require_source_contains(
     "qcommon/files.cpp"
     "ARRAY_COUNT(fs_serverReferencedFFCheckSums)"
@@ -714,6 +729,141 @@ require_source_not_contains(
     "gfx_d3d/r_material_load_obj.cpp"
     "&(*stateBitsTable)[2 *"
     "layered render-state merging must not index beyond an inner row")
+require_source_contains(
+    "database/database.h"
+    "using DBEnumXAssetCallback = void(__cdecl *)(XAssetHeader, void *);"
+    "database enumeration must use one native-width callback type")
+require_source_contains(
+    "database/db_registry.cpp"
+    "DB_EnumXAssets_LoadObj(type, func, inData);"
+    "load-object enumeration must preserve the canonical callback signature")
+require_source_contains(
+    "database/db_registry.cpp"
+    "asset.material = header;"
+    "load-object material enumeration must activate the typed header member")
+require_source_contains(
+    "database/db_registry.cpp"
+    "asset.techniqueSet = header;"
+    "load-object technique enumeration must activate the typed header member")
+require_source_contains(
+    "database/db_registry.cpp"
+    "asset.image = header;"
+    "load-object image enumeration must activate the typed header member")
+require_source_contains(
+    "database/db_registry.cpp"
+    "asset.model = static_cast<XModel *>(fileData->data);"
+    "load-object model enumeration must activate the typed header member")
+require_source_contains(
+    "database/db_registry.cpp"
+    "asset.parts = static_cast<XAnimParts *>(fileData->data);"
+    "load-object animation enumeration must activate the typed header member")
+require_source_not_contains(
+    "database/db_registry.cpp"
+    "(void(*)(void *, void *))func"
+    "load-object enumeration must not cast canonical callbacks")
+require_source_contains(
+    "universal/com_memory.cpp"
+    "AssetList *assetList = static_cast<AssetList *>(data);"
+    "Hunk asset enumeration must use the typed native-width context")
+require_source_contains(
+    "universal/com_memory.cpp"
+    "assetList->assets[assetList->assetCount] = header;"
+    "Hunk asset enumeration must use native array indexing")
+require_source_contains(
+    "universal/com_memory.cpp"
+    "++assetList->assetCount;"
+    "count-only Hunk asset enumeration must retain the required count")
+require_source_not_contains(
+    "universal/com_memory.cpp"
+    "_DWORD *data"
+    "Hunk asset enumeration must not reinterpret its context as 32-bit words")
+require_source_not_contains(
+    "universal/com_memory.cpp"
+    "data[2]"
+    "Hunk asset enumeration must not truncate the output pointer")
+require_source_contains(
+    "database/db_registry.cpp"
+    "AssetOutputWriteAllowed(
+                        assets != nullptr,
+                        assetCount,
+                        maxCount)"
+    "fast-file asset enumeration must bound every output write")
+require_source_contains(
+    "database/db_registry.cpp"
+    "InterlockedDecrement(&db_hashCritSect.readCount);
+    if (assets && assetCount > maxCount)"
+    "asset capacity failure must occur after releasing the database read lock")
+require_source_contains(
+    "database/db_registry.cpp"
+    "DB_RemoveTechniqueSetAsset"
+    "technique-set removal must use an exact one-argument adapter")
+require_source_contains(
+    "database/db_registry.cpp"
+    "DB_RemoveImageAsset"
+    "image removal must use an exact one-argument adapter")
+require_source_contains(
+    "universal/com_sndalias.cpp"
+    "SndCurve *curve = header.sndCurve;"
+    "sound-curve enumeration must use its typed asset member")
+require_source_contains(
+    "gfx_d3d/r_image.cpp"
+    "GfxImage *image = header.image;"
+    "delayed image enumeration must use its typed asset member")
+require_source_not_contains(
+    "gfx_d3d/r_image.cpp"
+    "header.xmodelPieces["
+    "image enumeration must not depend on x86 header layout")
+require_source_contains(
+    "cgame/cg_visionsets.cpp"
+    "header.rawfile->name"
+    "vision-set enumeration must use the raw-file asset member")
+require_source_contains(
+    "cgame/cg_modelpreviewer.cpp"
+    "context->type == ASSET_TYPE_XMODEL && header.model"
+    "model-preview enumeration must discriminate model headers")
+require_source_contains(
+    "cgame/cg_modelpreviewer.cpp"
+    "context->type == ASSET_TYPE_XANIMPARTS && header.parts"
+    "model-preview enumeration must discriminate animation headers")
+require_source_contains(
+    "cgame/cg_modelpreviewer.cpp"
+    "alignof(const char *)"
+    "model-preview name tables must use native pointer alignment")
+require_source_contains(
+    "gfx_d3d/r_model.cpp"
+    "context->entries[context->count++] = header.model;"
+    "model enumeration must use an explicit bounded context")
+require_source_contains(
+    "gfx_d3d/r_material.cpp"
+    "entry.material = header.material;"
+    "material enumeration must use an explicit native-width context")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "XAssetHeader materialHeaders[ARRAY_COUNT(rgp.sortedMaterials)];"
+    "material sorting must not alias a Material pointer array as asset headers")
+require_source_contains(
+    "gfx_d3d/r_material.cpp"
+    "Material_ForEachTechniqueSet(Material_ReloadTechniqueSetResources, true);"
+    "technique reloads must occur after database enumeration releases its read count")
+require_source_contains(
+    "gfx_d3d/r_material.cpp"
+    "Material_ForEachTechniqueSet(Material_ReleaseTechniqueSetResources, true);"
+    "technique releases must occur after database enumeration releases its read count")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "Material_ForEachTechniqueSet(Material_ReleaseTechniqueSetResources, true);"
+    "load-object technique cleanup must occur after database enumeration")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "memFile->errorOnOverflow = false;
+    DB_EnumXAssets("
+    "FX archive overflow must be deferred during database enumeration")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "memFile->errorOnOverflow = errorOnOverflow;
+    if (errorOnOverflow && memFile->memoryOverflow)
+        Com_Error("
+    "FX archive overflow must drop only after database enumeration")
 require_source_contains(
     "database/db_load.cpp"
     "DB_ConvertOffsetToAlias(

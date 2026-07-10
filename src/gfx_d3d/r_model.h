@@ -5,7 +5,14 @@
 
 void __cdecl TRACK_r_model();
 void __cdecl R_ModelList_f();
-void __cdecl R_GetModelList(XAssetHeader header, XAssetHeader *data);
+struct ModelListContext
+{
+    XModel **entries;
+    uint32_t count;
+    uint32_t capacity;
+};
+
+void __cdecl R_GetModelList(XAssetHeader header, void *data);
 XModel *__cdecl R_RegisterModel(const char *name);
 void __cdecl R_XModelDebug(const DObj_s *obj, int *partBits);
 void __cdecl R_XModelDebugBoxes(const DObj_s *obj, int *partBits);

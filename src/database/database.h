@@ -39,6 +39,8 @@ struct AssetList // sizeof=0xC
     XAssetHeader *assets;               // ...
 };
 
+using DBEnumXAssetCallback = void(__cdecl *)(XAssetHeader, void *);
+
 // db_registry
 void __cdecl TRACK_db_registry();
 char *__cdecl DB_ReferencedFFChecksums();
@@ -109,7 +111,7 @@ XAssetHeader __cdecl DB_AllocMaterial(void *arg);
 void __cdecl DB_FreeMaterial(void *pool, XAssetHeader header);
 void __cdecl DB_EnumXAssets_FastFile(
     XAssetType type,
-    void(__cdecl *func)(XAssetHeader, void *),
+    DBEnumXAssetCallback func,
     void *inData,
     bool includeOverride);
 bool __cdecl DB_IsMinimumFastFileLoaded();
@@ -122,7 +124,7 @@ uint32_t __cdecl DB_HashForName(const char *name, XAssetType type);
 XAssetEntry *__cdecl DB_CreateDefaultEntry(XAssetType type, char *name);
 XAssetEntryPoolEntry *__cdecl DB_AllocXAssetEntry(XAssetType type, uint8_t zoneIndex);
 XAssetHeader __cdecl DB_AllocXAssetHeader(XAssetType type);
-void __cdecl DB_PrintAssetName(XAssetHeader header, int32_t *data);
+void __cdecl DB_PrintAssetName(XAssetHeader header, void *data);
 void __cdecl DB_CloneXAssetInternal(const XAsset *from, XAsset *to);
 XAssetHeader __cdecl DB_FindXAssetDefaultHeaderInternal(XAssetType type);
 void __cdecl PrintWaitedError(XAssetType type, const char *name, int32_t waitedMsec);
@@ -172,28 +174,24 @@ void DB_ExternalInitAssets();
 void DB_UnarchiveAssets();
 void __cdecl DB_Cleanup();
 
-void __cdecl DB_EnumXAssets_FastFile(
-    XAssetType type,
-    void(__cdecl* func)(XAssetHeader, void*),
-    void* inData,
-    bool includeOverride);
-
-int32_t __cdecl DB_GetAllXAssetOfType_FastFile(XAssetType type, XAssetHeader* assets, int32_t maxCount);
 int32_t __cdecl DB_GetAllXAssetOfType(XAssetType type, XAssetHeader* assets, int32_t maxCount);
 int32_t __cdecl DB_GetAllXAssetOfType_LoadObj(XAssetType type, XAssetHeader* assets, int32_t maxCount);
 
 struct fileData_s;
 void __cdecl DB_EnumXAssets(
     XAssetType type,
-    void(__cdecl* func)(XAssetHeader, void*),
+    DBEnumXAssetCallback func,
     void* inData,
     bool includeOverride);
-void __cdecl DB_EnumXAssets_LoadObj(XAssetType type, void(* func)(void*, void*), void* inData);
+void __cdecl DB_EnumXAssets_LoadObj(
+    XAssetType type,
+    DBEnumXAssetCallback func,
+    void *inData);
 
 void __cdecl DB_EnumXAssetsFor(
     fileData_s* fileData,
     int32_t fileDataType,
-    void(* func)(void*, void*),
+    DBEnumXAssetCallback func,
     void* inData);
 
 int32_t __cdecl DB_FileSize(const char *zoneName, int32_t isMod);

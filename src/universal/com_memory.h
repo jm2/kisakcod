@@ -16,7 +16,7 @@ struct TempMemInfo // sizeof=0x28
     mem_track_t data;                   // ...
 };
 
-void __cdecl Hunk_AddAsset(XAssetHeader header, _DWORD *data);
+void __cdecl Hunk_AddAsset(XAssetHeader header, void *data);
 
 void Com_TouchMemory();
 

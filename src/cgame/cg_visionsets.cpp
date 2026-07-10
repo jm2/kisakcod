@@ -73,10 +73,10 @@ void __cdecl CG_RegisterVisionSetsDvars()
 
 void __cdecl CG_InitVisionSetsMenu()
 {
-    DB_EnumXAssets(ASSET_TYPE_RAWFILE, (void(__cdecl *)(XAssetHeader, void *))CG_AddVisionSetMenuItem, 0, 0);
+    DB_EnumXAssets(ASSET_TYPE_RAWFILE, CG_AddVisionSetMenuItem, 0, 0);
 }
 
-void __cdecl CG_AddVisionSetMenuItem(XAssetHeader header)
+void __cdecl CG_AddVisionSetMenuItem(XAssetHeader header, void *)
 {
     char devguiPath[260]; // [esp+0h] [ebp-310h] BYREF
     const char *visionSetNameEnd; // [esp+104h] [ebp-20Ch]
@@ -84,12 +84,12 @@ void __cdecl CG_AddVisionSetMenuItem(XAssetHeader header)
     char command[256]; // [esp+208h] [ebp-108h] BYREF
     const char *visionSetNameBegin; // [esp+30Ch] [ebp-4h]
 
-    iassert(header.rawfile);
-    iassert(header.rawfile->name);
-    visionSetNameEnd = I_stristr(header.xmodelPieces->name, ".vision");
+    if (!header.rawfile || !header.rawfile->name)
+        return;
+    visionSetNameEnd = I_stristr(header.rawfile->name, ".vision");
     if (visionSetNameEnd)
     {
-        visionSetNameBegin = I_stristr(header.xmodelPieces->name, "/");
+        visionSetNameBegin = I_stristr(header.rawfile->name, "/");
         iassert(visionSetNameBegin);
         ++visionSetNameBegin;
         iassert(visionSetNameEnd - visionSetNameBegin < static_cast<int>( sizeof( visionSetName ) ));
@@ -806,4 +806,3 @@ void __cdecl FadeRefDef(refdef_s *rd, float brightness)
     rd->film.tintLight[1] = brightness * rd->film.tintLight[1] + (1.0 - brightness) * 0.0;
     rd->film.tintLight[2] = brightness * rd->film.tintLight[2] + (1.0 - brightness) * 0.0;
 }
-

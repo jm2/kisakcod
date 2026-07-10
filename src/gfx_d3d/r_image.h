@@ -113,7 +113,7 @@ struct GfxImageFileHeader // sizeof=0x1C
 };
 
 void __cdecl TRACK_r_image();
-void __cdecl R_DelayLoadImage(XAssetHeader header);
+void __cdecl R_DelayLoadImage(XAssetHeader header, void *data);
 void __cdecl R_ShutdownImages();
 void __cdecl Image_SetupAndLoad(
     GfxImage *image,
@@ -129,7 +129,7 @@ GfxImage *__cdecl Image_Alloc(
     uint8_t imageTrack);
 void __cdecl Image_Free(GfxImage *image);
 void __cdecl R_GetImageList(ImageList *imageList);
-void __cdecl R_AddImageToList(XAssetHeader header, ImageList *data);
+void __cdecl R_AddImageToList(XAssetHeader header, void *data);
 void __cdecl R_SumOfUsedImages(Image_MemUsage *usage);
 void __cdecl Image_Release(GfxImage *image);
 GfxImage *__cdecl Image_AllocProg(int imageProgType, uint8_t category, uint8_t semantic);
@@ -209,8 +209,6 @@ void __cdecl Image_Create2DTexture_PC(
 
 void __cdecl RB_UnbindAllImages();
 void __cdecl R_SetPicmip();
-
-void __cdecl R_DelayLoadImage(XAssetHeader header);
 
 // r_image_utils
 void __cdecl R_DownsampleMipMapBilinear(

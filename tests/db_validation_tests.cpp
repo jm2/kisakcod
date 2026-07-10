@@ -20,6 +20,28 @@ void Expect(bool condition, const char *message)
 
 int main()
 {
+    Expect(
+        db::validation::AssetOutputCapacityValid(0),
+        "zero asset output capacity accepted");
+    Expect(
+        !db::validation::AssetOutputCapacityValid(-1),
+        "negative asset output capacity rejected");
+    Expect(
+        db::validation::AssetOutputCountCanIncrement(INT32_MAX - 1),
+        "asset output count below int32 maximum can increment");
+    Expect(
+        !db::validation::AssetOutputCountCanIncrement(INT32_MAX),
+        "asset output count cannot overflow int32");
+    Expect(
+        db::validation::AssetOutputWriteAllowed(true, 4, 5),
+        "asset output writes the last in-capacity entry");
+    Expect(
+        !db::validation::AssetOutputWriteAllowed(true, 5, 5),
+        "asset output rejects one-past-capacity writes");
+    Expect(
+        !db::validation::AssetOutputWriteAllowed(false, 0, 0),
+        "count-only asset enumeration performs no output writes");
+
     Expect(db::validation::CanInternString(1), "empty terminated string can be interned");
     Expect(db::validation::CanInternString(65531), "maximum script-memory string can be interned");
     Expect(!db::validation::CanInternString(0), "zero-byte string extent rejected");

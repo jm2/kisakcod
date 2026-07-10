@@ -379,13 +379,22 @@ void __stdcall DB_FileReadCompletion(
 void __cdecl DB_LoadDelayedImages()
 {
     uint32_t copyIter; // [esp+0h] [ebp-4h]
+    bool imageLoadFailed = false;
 
-    DB_EnumXAssets(ASSET_TYPE_IMAGE, (void(__cdecl *)(XAssetHeader, void *))R_DelayLoadImage, 0, 0);
+    DB_EnumXAssets(
+        ASSET_TYPE_IMAGE,
+        R_DelayLoadImage,
+        &imageLoadFailed,
+        0);
     for (copyIter = 0; copyIter < g_copyInfoCount; ++copyIter)
     {
         if (g_copyInfo[copyIter]->asset.type == ASSET_TYPE_IMAGE)
-            R_DelayLoadImage(g_copyInfo[copyIter]->asset.header);
+            R_DelayLoadImage(
+                g_copyInfo[copyIter]->asset.header,
+                &imageLoadFailed);
     }
+    if (imageLoadFailed)
+        Com_Error(ERR_DROP, "One or more delayed images could not be loaded");
 }
 
 void __cdecl DB_FinishGeometryBlocks(XZoneMemory *zoneMem)

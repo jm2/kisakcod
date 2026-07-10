@@ -6299,7 +6299,7 @@ void Material_FreeAllStateMaps()
 }
 void __cdecl Material_FreeAllTechniqueSets()
 {
-    DB_EnumXAssets(ASSET_TYPE_TECHNIQUE_SET, Material_ReleaseTechniqueSet, 0, 1);
+    Material_ForEachTechniqueSet(Material_ReleaseTechniqueSetResources, true);
     if (!IsFastFileLoad())
         memset(materialGlobals.techniqueSetHashTable, 0, sizeof(materialGlobals.techniqueSetHashTable));
 }
@@ -6673,6 +6673,19 @@ void __cdecl Material_SortInternal(Material **sortedMaterials, uint32_t material
 void __cdecl Material_Sort()
 {
     if (IsFastFileLoad())
-        rgp.materialCount = DB_GetAllXAssetOfType(ASSET_TYPE_MATERIAL, (XAssetHeader *)&rgp, 2048);
+    {
+        XAssetHeader materialHeaders[ARRAY_COUNT(rgp.sortedMaterials)];
+        rgp.materialCount = DB_GetAllXAssetOfType(
+            ASSET_TYPE_MATERIAL,
+            materialHeaders,
+            ARRAY_COUNT(materialHeaders));
+        for (int32_t materialIndex = 0;
+             materialIndex < rgp.materialCount;
+             ++materialIndex)
+        {
+            rgp.sortedMaterials[materialIndex] =
+                materialHeaders[materialIndex].material;
+        }
+    }
     Material_SortInternal(rgp.sortedMaterials, rgp.materialCount);
 }

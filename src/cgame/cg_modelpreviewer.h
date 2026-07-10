@@ -218,7 +218,7 @@ void *__cdecl CG_ModPrvAlloc(int size);
 void __cdecl CG_ModPrvFree(void *allocated, int size);
 void CG_ModPrvResetGlobals();
 bool __cdecl CG_ModPrvCompareString(const char *string1, const char *string2);
-void __cdecl CG_ModPrvGetAssetName(const XModel *header, unsigned int *data);
+void __cdecl CG_ModPrvGetAssetName(XAssetHeader header, void *data);
 void CG_ModPrvUnloadModel();
 void CG_ModPrvShutdown();
 void __cdecl CG_ModPrvDrawViewAxis(const float *centerPos);

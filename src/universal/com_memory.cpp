@@ -12,6 +12,7 @@
 #include <win32/win_local.h>
 #include <win32/win_net.h>
 #include <database/database.h>
+#include <database/db_validation.h>
 #include "com_files.h"
 #include <qcommon/cmd.h>
 #ifndef KISAK_DEDI_HEADLESS
@@ -66,13 +67,33 @@ uint8_t *PageCeil(const void *pointer)
 uint8_t *s_origHunkData;
 int32_t s_hunkTotal;
 
-void __cdecl Hunk_AddAsset(XAssetHeader header, _DWORD *data)
+void __cdecl Hunk_AddAsset(XAssetHeader header, void *data)
 {
-    if (!data)
+    AssetList *assetList = static_cast<AssetList *>(data);
+    if (!assetList)
+    {
         MyAssertHandler(".\\universal\\com_memory.cpp", 1731, 0, "%s", "data");
-    if (*data >= data[1])
-        MyAssertHandler(".\\universal\\com_memory.cpp", 1735, 0, "%s", "assetList->assetCount < assetList->maxCount");
-    *(XAssetHeader *)(data[2] + 4 * (*data)++) = header;
+        return;
+    }
+    if (!db::validation::AssetOutputCountCanIncrement(
+            assetList->assetCount))
+    {
+        MyAssertHandler(
+            ".\\universal\\com_memory.cpp",
+            1733,
+            0,
+            "%s",
+            "assetList->assetCount >= 0 && assetList->assetCount < INT32_MAX");
+        return;
+    }
+    if (db::validation::AssetOutputWriteAllowed(
+            assetList->assets != nullptr,
+            assetList->assetCount,
+            assetList->maxCount))
+    {
+        assetList->assets[assetList->assetCount] = header;
+    }
+    ++assetList->assetCount;
 }
 
 void Com_TouchMemory()

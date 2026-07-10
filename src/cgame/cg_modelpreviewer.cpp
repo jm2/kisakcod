@@ -529,19 +529,35 @@ bool __cdecl CG_ModPrvCompareString(const char *string1, const char *string2)
     return v3 != 0;
 }
 
-void __cdecl CG_ModPrvGetAssetName(const XModel *header, unsigned int *data)
+struct ModPrvAssetNameContext
 {
-    const char *Name; // r3
+    uint32_t count;
+    XAssetType type;
+    uint32_t capacity;
+};
 
-    iassert(data);
-
-    if (data[1] == 3)
+void __cdecl CG_ModPrvGetAssetName(XAssetHeader header, void *data)
+{
+    ModPrvAssetNameContext *context =
+        static_cast<ModPrvAssetNameContext *>(data);
+    if (!context || context->count >= context->capacity)
     {
-        Name = XModelGetName(header);
-        g_mdlprv.system.modelNames[(*data)++] = Hunk_CopyString(*((HunkUser **)g_mdlprv.system.modelNames - 1), Name);
+        Com_PrintError(8, "Model-preview asset enumeration exceeds its capacity\n");
+        return;
     }
-    if (data[1] == 2)
-        g_mdlprv.system.animNames[(*data)++] = Hunk_CopyString(*((HunkUser **)g_mdlprv.system.animNames - 1), header->name);
+    if (context->type == ASSET_TYPE_XMODEL && header.model)
+    {
+        const char *name = XModelGetName(header.model);
+        g_mdlprv.system.modelNames[context->count++] = Hunk_CopyString(
+            *((HunkUser **)g_mdlprv.system.modelNames - 1),
+            name);
+    }
+    else if (context->type == ASSET_TYPE_XANIMPARTS && header.parts)
+    {
+        g_mdlprv.system.animNames[context->count++] = Hunk_CopyString(
+            *((HunkUser **)g_mdlprv.system.animNames - 1),
+            header.parts->name);
+    }
 }
 
 void CG_ModPrvUnloadModel()
@@ -3426,7 +3442,7 @@ void __cdecl CG_ModelPreviewerFrame(const cg_s *cgameGlob)
 void CG_ModPrvEnumerateModels_FastFile()
 {
     HunkUser *v0; // r29
-    unsigned int v1[12]; // [sp+50h] [-30h] BYREF
+    ModPrvAssetNameContext context;
 
     if (g_mdlprv.system.modelNames)
         Dvar_UpdateEnumDomain((dvar_s*)modPrvLoadModel, g_emptyEnumList);
@@ -3434,17 +3450,29 @@ void CG_ModPrvEnumerateModels_FastFile()
     if (g_mdlprv.system.modelCount)
     {
         v0 = Hunk_UserCreate(0x20000, "CG_ModPrvEnumerateModels", 0, 0, 0);
-        g_mdlprv.system.modelNames = (const char **)Hunk_UserAlloc(v0, 4 * (g_mdlprv.system.modelCount + 2), 4);
+        const uint64_t allocationBytes = sizeof(*g_mdlprv.system.modelNames)
+            * (static_cast<uint64_t>(g_mdlprv.system.modelCount) + 2);
+        if (allocationBytes > UINT32_MAX)
+        {
+            Com_Error(ERR_DROP, "Model-preview name table is too large");
+            return;
+        }
+        g_mdlprv.system.modelNames = (const char **)Hunk_UserAlloc(
+            v0,
+            static_cast<uint32_t>(allocationBytes),
+            alignof(const char *));
         *g_mdlprv.system.modelNames = (const char *)v0;
         ++g_mdlprv.system.modelNames;
-        v1[2] = (int)"CG_ModPrvEnumerateModels";
-        v1[1] = 3;
-        v1[0] = 0;
+        context.count = 0;
+        context.type = ASSET_TYPE_XMODEL;
+        context.capacity = static_cast<uint32_t>(g_mdlprv.system.modelCount);
         DB_EnumXAssets(
             ASSET_TYPE_XMODEL,
-            (void(__cdecl *)(XAssetHeader, void *))CG_ModPrvGetAssetName,
-            v1,
+            CG_ModPrvGetAssetName,
+            &context,
             0);
+        g_mdlprv.system.modelCount = context.count;
+        g_mdlprv.system.modelNames[context.count] = nullptr;
 
         //std::_Sort<int *, int, bool(__cdecl *)(int, int)>(
         //    (Material **)g_mdlprv.system.modelNames,
@@ -3464,7 +3492,7 @@ void CG_ModPrvEnumerateModels()
 void CG_ModPrvEnumerateAnimations_FastFile()
 {
     HunkUser *v0; // r29
-    unsigned int v1[12]; // [sp+50h] [-30h] BYREF
+    ModPrvAssetNameContext context;
 
     if (g_mdlprv.system.animNames)
     {
@@ -3475,17 +3503,29 @@ void CG_ModPrvEnumerateAnimations_FastFile()
     if (g_mdlprv.system.animCount)
     {
         v0 = Hunk_UserCreate(0x20000, "CG_ModPrvEnumerateAnimations", 0, 0, 0);
-        g_mdlprv.system.animNames = (const char **)Hunk_UserAlloc(v0, 4 * (g_mdlprv.system.animCount + 2), 4);
+        const uint64_t allocationBytes = sizeof(*g_mdlprv.system.animNames)
+            * (static_cast<uint64_t>(g_mdlprv.system.animCount) + 2);
+        if (allocationBytes > UINT32_MAX)
+        {
+            Com_Error(ERR_DROP, "Model-preview animation table is too large");
+            return;
+        }
+        g_mdlprv.system.animNames = (const char **)Hunk_UserAlloc(
+            v0,
+            static_cast<uint32_t>(allocationBytes),
+            alignof(const char *));
         *g_mdlprv.system.animNames = (const char *)v0;
-        v1[2] = (int)"CG_ModPrvEnumerateAnimations";
         ++g_mdlprv.system.animNames;
-        v1[1] = 2;
-        v1[0] = 0;
+        context.count = 0;
+        context.type = ASSET_TYPE_XANIMPARTS;
+        context.capacity = static_cast<uint32_t>(g_mdlprv.system.animCount);
         DB_EnumXAssets(
             ASSET_TYPE_XANIMPARTS,
-            (void(__cdecl *)(XAssetHeader, void *))CG_ModPrvGetAssetName,
-            v1,
+            CG_ModPrvGetAssetName,
+            &context,
             0);
+        g_mdlprv.system.animCount = context.count;
+        g_mdlprv.system.animNames[context.count] = nullptr;
         //std::_Sort<int *, int, bool(__cdecl *)(int, int)>(
         //    (Material **)g_mdlprv.system.animNames,
         //    (Material **)&g_mdlprv.system.animNames[g_mdlprv.system.animCount],
@@ -3537,4 +3577,3 @@ void __cdecl CG_ModelPreviewerCreateDevGui(int localClientNum)
     CG_ModPrvResetGlobals();
     Cbuf_InsertText(localClientNum, "exec devgui_modelpreviewer\n");
 }
-

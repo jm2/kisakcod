@@ -1,4 +1,5 @@
 #include "database.h"
+#include "db_validation.h"
 
 #include <qcommon/files.h>
 #include <qcommon/mem_track.h>
@@ -12,6 +13,7 @@
 #include <gfx_d3d/rb_uploadshaders.h>
 #include <gfx_d3d/r_image.h>
 #include <universal/com_files.h>
+#include <universal/com_memory.h>
 #include <game/game_public.h>
 #include <gfx_d3d/r_bsp.h>
 #include <stringed/stringed_hooks.h>
@@ -1019,7 +1021,7 @@ void __cdecl DB_FreeMaterial(void* arg, XAssetHeader header)
 
 void __cdecl DB_EnumXAssets_FastFile(
     XAssetType type,
-    void(__cdecl *func)(XAssetHeader, void *),
+    DBEnumXAssetCallback func,
     void *inData,
     bool includeOverride)
 {
@@ -1063,36 +1065,68 @@ void __cdecl DB_EnumXAssets_FastFile(
 
 int32_t __cdecl DB_GetAllXAssetOfType(XAssetType type, XAssetHeader* assets, int32_t maxCount)
 {
+    if (!db::validation::AssetOutputCapacityValid(maxCount))
+    {
+        Com_Error(ERR_DROP, "Invalid negative XAsset output capacity");
+        return 0;
+    }
+
+    int32_t assetCount;
     if (IsFastFileLoad())
-        return DB_GetAllXAssetOfType_FastFile(type, assets, maxCount);
+        assetCount = DB_GetAllXAssetOfType_FastFile(type, assets, maxCount);
     else
-        return DB_GetAllXAssetOfType_LoadObj(type, assets, maxCount);
+        assetCount = DB_GetAllXAssetOfType_LoadObj(type, assets, maxCount);
+
+    if (assets && assetCount > maxCount)
+    {
+        Com_Error(
+            ERR_DROP,
+            "XAsset output capacity %d is smaller than required count %d",
+            maxCount,
+            assetCount);
+        return maxCount;
+    }
+    return assetCount;
 }
 
 int32_t __cdecl DB_GetAllXAssetOfType_LoadObj(XAssetType type, XAssetHeader* assets, int32_t maxCount)
 {
+    if (!db::validation::AssetOutputCapacityValid(maxCount))
+    {
+        Com_Error(ERR_DROP, "Invalid negative XAsset output capacity");
+        return 0;
+    }
     AssetList assetList; // [esp+0h] [ebp-Ch] BYREF
 
     assetList.assets = assets;
     assetList.assetCount = 0;
     assetList.maxCount = maxCount;
-    DB_EnumXAssets(type, (void(__cdecl*)(XAssetHeader, void*))Hunk_AddAsset, &assetList, 0);
+    DB_EnumXAssets(type, Hunk_AddAsset, &assetList, 0);
+    if (assets && assetList.assetCount > maxCount)
+    {
+        Com_Error(
+            ERR_DROP,
+            "XAsset output capacity %d is smaller than required count %d",
+            maxCount,
+            assetList.assetCount);
+        return maxCount;
+    }
     return assetList.assetCount;
 }
 
 void __cdecl DB_EnumXAssets(
     XAssetType type,
-    void(__cdecl* func)(XAssetHeader, void*),
+    DBEnumXAssetCallback func,
     void* inData,
     bool includeOverride)
 {
     if (IsFastFileLoad())
         DB_EnumXAssets_FastFile(type, func, inData, includeOverride);
     else
-        DB_EnumXAssets_LoadObj(type, (void(*)(void *, void *))func, inData);
+        DB_EnumXAssets_LoadObj(type, func, inData);
 }
 
-void __cdecl R_EnumMaterials(void(__cdecl *func)(Material *, void *), void *data)
+void __cdecl R_EnumMaterials(DBEnumXAssetCallback func, void *data)
 {
     Material *header; // [esp+0h] [ebp-8h]
     uint32_t hashIndex; // [esp+4h] [ebp-4h]
@@ -1101,11 +1135,15 @@ void __cdecl R_EnumMaterials(void(__cdecl *func)(Material *, void *), void *data
     {
         header = rg.materialHashTable[hashIndex];
         if (header)
-            func(header, data);
+        {
+            XAssetHeader asset;
+            asset.material = header;
+            func(asset, data);
+        }
     }
 }
 
-void __cdecl R_EnumTechniqueSets(void(__cdecl *func)(MaterialTechniqueSet *, void *), void *data)
+void __cdecl R_EnumTechniqueSets(DBEnumXAssetCallback func, void *data)
 {
     MaterialTechniqueSet *header; // [esp+0h] [ebp-8h]
     uint32_t hashIndex; // [esp+4h] [ebp-4h]
@@ -1114,11 +1152,15 @@ void __cdecl R_EnumTechniqueSets(void(__cdecl *func)(MaterialTechniqueSet *, voi
     {
         header = materialGlobals.techniqueSetHashTable[hashIndex];
         if (header)
-            func(header, data);
+        {
+            XAssetHeader asset;
+            asset.techniqueSet = header;
+            func(asset, data);
+        }
     }
 }
 
-void __cdecl R_EnumImages(void(__cdecl *func)(GfxImage *, void *), void *data)
+void __cdecl R_EnumImages(DBEnumXAssetCallback func, void *data)
 {
     GfxImage *header; // [esp+0h] [ebp-8h]
     uint32_t imageIndex; // [esp+4h] [ebp-4h]
@@ -1129,29 +1171,40 @@ void __cdecl R_EnumImages(void(__cdecl *func)(GfxImage *, void *), void *data)
         if (header)
         {
             if (!Image_IsProg(header))
-                func(header, data);
+            {
+                XAssetHeader asset;
+                asset.image = header;
+                func(asset, data);
+            }
         }
     }
 }
 
-void __cdecl DB_EnumXAssets_LoadObj(XAssetType type, void(* func)(void*, void*), void* inData)
+void __cdecl DB_EnumXAssets_LoadObj(
+    XAssetType type,
+    DBEnumXAssetCallback func,
+    void *inData)
 {
     uint32_t hash; // [esp+4h] [ebp-Ch]
 
     switch (type)
     {
+    case ASSET_TYPE_XANIMPARTS:
+        for (hash = 0; hash < 0x400; ++hash)
+            DB_EnumXAssetsFor(com_fileDataHashTable[hash], 6, func, inData);
+        break;
     case ASSET_TYPE_XMODEL:
         for (hash = 0; hash < 0x400; ++hash)
             DB_EnumXAssetsFor(com_fileDataHashTable[hash], 5, func, inData);
         break;
     case ASSET_TYPE_MATERIAL:
-        R_EnumMaterials((void(__cdecl*)(Material*, void*))func, inData);
+        R_EnumMaterials(func, inData);
         break;
     case ASSET_TYPE_TECHNIQUE_SET:
-        R_EnumTechniqueSets((void(__cdecl*)(MaterialTechniqueSet*, void*))func, inData);
+        R_EnumTechniqueSets(func, inData);
         break;
     case ASSET_TYPE_IMAGE:
-        R_EnumImages((void(__cdecl*)(GfxImage*, void*))func, inData);
+        R_EnumImages(func, inData);
         break;
     default:
         return;
@@ -1161,13 +1214,23 @@ void __cdecl DB_EnumXAssets_LoadObj(XAssetType type, void(* func)(void*, void*),
 void __cdecl DB_EnumXAssetsFor(
     fileData_s* fileData,
     int32_t fileDataType,
-    void(__cdecl* func)(void*, void*),
+    DBEnumXAssetCallback func,
     void* inData)
 {
     while (fileData)
     {
-        if (fileData->type == fileDataType && fileData->type == 5)
-            func(fileData->data, inData);
+        if (fileData->type == fileDataType)
+        {
+            XAssetHeader asset;
+            if (fileDataType == 5)
+                asset.model = static_cast<XModel *>(fileData->data);
+            else if (fileDataType == 6)
+                asset.parts = static_cast<XAnimParts *>(fileData->data);
+            else
+                asset.data = nullptr;
+            if (asset.data)
+                func(asset, inData);
+        }
         fileData = fileData->next;
     }
 }
@@ -1623,17 +1686,20 @@ XAssetHeader __cdecl DB_AllocXAssetHeader(XAssetType type)
     {
         Sys_UnlockWrite(&db_hashCritSect);
         Com_PrintError(1, "Exceeded limit of %d '%s' assets.\n", g_poolSize[type], g_assetNames[type]);
-        DB_EnumXAssets(type, (void(__cdecl *)(XAssetHeader, void *))DB_PrintAssetName, &type, 1);
+        DB_EnumXAssets(type, DB_PrintAssetName, &type, 1);
         Com_Error(ERR_DROP, "Exceeded limit of %d '%s' assets.\n", g_poolSize[type], g_assetNames[type]);
     }
     return header;
 }
 
-void __cdecl DB_PrintAssetName(XAssetHeader header, int32_t *data)
+void __cdecl DB_PrintAssetName(XAssetHeader header, void *data)
 {
     const char *XAssetHeaderName; // eax
+    XAssetType *type = static_cast<XAssetType *>(data);
 
-    XAssetHeaderName = DB_GetXAssetHeaderName(*data, &header);
+    if (!type)
+        return;
+    XAssetHeaderName = DB_GetXAssetHeaderName(*type, &header);
     Com_Printf(0, "%s\n", XAssetHeaderName);
 }
 
@@ -1773,6 +1839,11 @@ int32_t __cdecl DB_GetAllXAssetOfType_FastFile(XAssetType type, XAssetHeader *as
     int32_t assetCount; // [esp+Ch] [ebp-8h]
     XAssetEntryPoolEntry *assetEntry; // [esp+10h] [ebp-4h]
 
+    if (!db::validation::AssetOutputCapacityValid(maxCount))
+    {
+        Com_Error(ERR_DROP, "Invalid negative XAsset output capacity");
+        return 0;
+    }
     assetCount = 0;
     InterlockedIncrement(&db_hashCritSect.readCount);
     while (db_hashCritSect.writeCount)
@@ -1784,10 +1855,11 @@ int32_t __cdecl DB_GetAllXAssetOfType_FastFile(XAssetType type, XAssetHeader *as
             assetEntry = &g_assetEntryPool[assetEntryIndex];
             if (assetEntry->entry.asset.type == type)
             {
-                if (assets)
+                if (db::validation::AssetOutputWriteAllowed(
+                        assets != nullptr,
+                        assetCount,
+                        maxCount))
                 {
-                    if (assetCount >= maxCount)
-                        MyAssertHandler(".\\database\\db_registry.cpp", 2877, 0, "%s", "assetCount < maxCount");
                     assets[assetCount] = assetEntry->entry.asset.header;
                 }
                 ++assetCount;
@@ -1802,6 +1874,15 @@ int32_t __cdecl DB_GetAllXAssetOfType_FastFile(XAssetType type, XAssetHeader *as
             "%s",
             "critSect->readCount > 0");
     InterlockedDecrement(&db_hashCritSect.readCount);
+    if (assets && assetCount > maxCount)
+    {
+        Com_Error(
+            ERR_DROP,
+            "XAsset output capacity %d is smaller than required count %d",
+            maxCount,
+            assetCount);
+        return maxCount;
+    }
     return assetCount;
 }
 
@@ -2866,6 +2947,18 @@ LABEL_4:
     }
 }
 
+void __cdecl DB_RemoveTechniqueSetAsset(XAssetHeader header)
+{
+    if (header.techniqueSet)
+        Material_ReleaseTechniqueSet(header, nullptr);
+}
+
+void __cdecl DB_RemoveImageAsset(XAssetHeader header)
+{
+    if (header.image)
+        Image_Free(header.image);
+}
+
 void(__cdecl *DB_RemoveXAssetHandler[ASSET_TYPE_COUNT])(XAssetHeader) =
 {
   NULL,
@@ -2873,8 +2966,8 @@ void(__cdecl *DB_RemoveXAssetHandler[ASSET_TYPE_COUNT])(XAssetHeader) =
   NULL,
   NULL,
   NULL,
-  (void(*)(XAssetHeader)) & Material_ReleaseTechniqueSet,
-  (void(*)(XAssetHeader)) & Image_Free,
+  &DB_RemoveTechniqueSetAsset,
+  &DB_RemoveImageAsset,
   NULL,
   NULL,
   &DB_RemoveLoadedSound,

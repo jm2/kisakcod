@@ -8,33 +8,31 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: canonicalize database asset-enumeration callbacks and remove the native-width
-  `Hunk_AddAsset` layout dependency, then implement linear-time world AABB topology validation
-  and resume the remaining 22 legacy direct references.
-- Last completed batch: renderer material consumers now perform bounded binary searches for
-  named textures/constants and fail closed if a later dynamic technique remap requests a
-  missing binding. Sky, normal-map, sampler, raw-material, and layered-material paths preserve
-  and validate the water/image union discriminator before dereferencing it. Layered materials
-  reject byte-count overflow, use native object/entry sizes, compare equal hashes correctly,
-  and select world vertex formats from the recovered bounded table instead of an unrelated
-  stencil-table overread. Global material sorting again supplies qsort a three-way comparator
-  rather than a boolean predicate. Picmip enumeration now uses `XAssetHeader::material` and the
-  canonical two-argument callback shape rather than x86-only header indexing.
+- Active work: implement linear-time world AABB topology validation, then resume the remaining
+  22 legacy direct references and add a Windows x86 headless compile/link CI leg.
+- Last completed batch: database asset enumeration now uses one exact
+  `(XAssetHeader, void *)` callback type in FastFile and load-object modes. Load-object adapters
+  activate typed union members, `Hunk_AddAsset` uses a native `AssetList`, count-only queries no
+  longer dereference null output, and undersized buffers stop writing and fail only after the
+  database read lock is released. All active enumeration callsites are uncast; explicit bounded
+  contexts replace x86 stack/layout tricks in material, model, image, sound-curve, vision-set,
+  FX, and model-preview consumers. Delayed/lost-image failures are deferred until enumeration
+  releases the read lock, and removal callbacks now use exact one-argument adapters.
 - Portable validation: 12/12 tests pass locally. The production relocation registry is
   also strict-warning clean under GCC/Clang and GCC ILP32 syntax checking; ASan/UBSan
   pass locally with leak detection disabled because LeakSanitizer cannot run under the
   command-runner ptrace environment. Portable tests do not execute the Windows stream
   adapter or media ownership paths.
-- Windows validation: cross-material-semantics CI run 29071253617 passed x86 Debug, Release,
-  no-Steam, and all five portable target jobs on 2026-07-10. The runtime-consumer batch
-  requires its own Windows CI run after push.
+- Windows validation: runtime-material-consumer CI run 29072016695 passed x86 Debug, Release,
+  no-Steam, and all five portable target jobs on 2026-07-10. The asset-enumeration callback
+  batch requires its own Windows CI run after push.
 
 ## Milestone status
 
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 builds; five native utility-test runners; engine runtime smoke and release workflows remain unexercised. |
-| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, and an exact 259-site ABI debt ledger exist; engine atomics/platform integration remains. |
+| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 28/50 bounded direct references, pre-publication material graph/state validation, and bounded runtime material consumers landed; production-path fuzz fixtures and 22 direct relocations remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
@@ -54,9 +52,8 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Canonicalize database enumeration callbacks end-to-end, fix native-width/count-only
-   `Hunk_AddAsset`, then implement the linear-time world AABB topology validator and resume
-   the remaining 22 raw/completed-object relocations.
+1. Implement the linear-time world AABB topology validator, then resume the remaining 22
+   raw/completed-object relocations.
 2. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
 3. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
 4. Classify and burn down the 255 direct and four formula-based ABI layout assertions.
@@ -95,6 +92,10 @@ work item changes. Do not create session-specific handoff files.
 - Database-thread `Com_Error` handling is still process-fatal, so malformed
   fast-file rejection remains a denial-of-service boundary until zone rollback
   and recoverable database-thread error propagation are implemented.
+- Fast-file enumeration still invokes arbitrary consumers while holding the database read
+  count. Known image failures now defer their drop until after enumeration, but remaining
+  callbacks must not longjmp; snapshot enumeration or add a general deferred-error mechanism
+  before treating callbacks as recoverable failure boundaries.
 - Weapon registration still protects the 128-entry `bg_weaponDefs` table only with a
   release-disabled assertion after incrementing the index. Single-player's 128-entry
   editable accuracy-graph registry has the same assertion-only overflow pattern.

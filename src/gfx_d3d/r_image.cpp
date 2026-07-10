@@ -82,26 +82,33 @@ void __cdecl TRACK_r_image()
     track_static_alloc_internal(imageTypeName, 40, "imageTypeName", 18);
 }
 
-void __cdecl R_DelayLoadImage(XAssetHeader header)
+void __cdecl R_DelayLoadImage(XAssetHeader header, void *data)
 {
     LONG externalDataSize; // [esp+4h] [ebp-8h]
     HRESULT hr; // [esp+8h] [ebp-4h]
 
-    if (HIBYTE(header.xmodelPieces[2].numpieces))
+    GfxImage *image = header.image;
+    if (!image)
+        return;
+    if (image->delayLoadPixels)
     {
-        HIBYTE(header.xmodelPieces[2].numpieces) = 0;
-        externalDataSize = header.xmodelPieces[1].numpieces;
-        header.xmodelPieces[1].numpieces = 0;
-        header.xmodelPieces[1].pieces = 0;
+        image->delayLoadPixels = false;
+        externalDataSize = image->cardMemory.platform[0];
+        image->cardMemory.platform[0] = 0;
+        image->cardMemory.platform[1] = 0;
         if (r_loadForRenderer->current.enabled && !dx.deviceLost)
         {
-            if (!Image_LoadFromFile(header.image))
-                Image_AssignDefaultTexture(header.image);
-            if (!header.xmodelPieces->numpieces)
+            if (!Image_LoadFromFile(image))
+                Image_AssignDefaultTexture(image);
+            if (!image->texture.basemap)
             {
                 hr = dx.device->TestCooperativeLevel();
                 if (hr != 0x88760868 && hr != 0x88760869)
-                    Com_Error(ERR_DROP, "Couldn't load image '%s'\n", header.xmodelPieces[2].pieces);
+                {
+                    Com_PrintError(8, "Couldn't load image '%s'\n", image->name);
+                    if (data)
+                        *static_cast<bool *>(data) = true;
+                }
             }
         }
         DB_LoadedExternalData(externalDataSize);
@@ -110,14 +117,20 @@ void __cdecl R_DelayLoadImage(XAssetHeader header)
 
 void __cdecl R_GetImageList(ImageList *imageList)
 {
-    iassert( imageList );
+    if (!imageList)
+        return;
     imageList->count = 0;
-    DB_EnumXAssets(ASSET_TYPE_IMAGE, (void(__cdecl *)(XAssetHeader, void *))R_AddImageToList, imageList, 1);
+    DB_EnumXAssets(ASSET_TYPE_IMAGE, R_AddImageToList, imageList, 1);
 }
 
-void __cdecl R_AddImageToList(XAssetHeader header, ImageList* imageList)
+void __cdecl R_AddImageToList(XAssetHeader header, void *data)
 {
-    iassert( imageList->count < ARRAY_COUNT( imageList->image ) );
+    ImageList *imageList = static_cast<ImageList *>(data);
+    if (!imageList || imageList->count >= ARRAY_COUNT(imageList->image))
+    {
+        Com_PrintError(8, "Image enumeration exceeds the image-list capacity\n");
+        return;
+    }
     imageList->image[imageList->count++] = header.image;
 }
 
@@ -967,7 +980,7 @@ bool __cdecl imagecompare(GfxImage *image1, GfxImage *image2)
     return 1;
 }
 
-void __cdecl R_FreeLostImage(XAssetHeader header)
+void __cdecl R_FreeLostImage(XAssetHeader header, void *)
 {
     GfxImage *image = header.image;
     iassert( image );
@@ -1029,7 +1042,7 @@ void __cdecl Image_Rebuild(GfxImage *image)
     }
 }
 
-void __cdecl R_RebuildLostImage(XAssetHeader header)
+void __cdecl R_RebuildLostImage(XAssetHeader header, void *data)
 {
     GfxImage *image = header.image;
 
@@ -1043,11 +1056,17 @@ void __cdecl R_RebuildLostImage(XAssetHeader header)
             if (image->category == 3)
             {
                 if (!image->delayLoadPixels && !Image_ReloadFromFile(image) && !Image_AssignDefaultTexture(image))
-                    Com_Error(ERR_DROP, "Couldn't load image '%s' to recover from a lost device", image->name);
+                {
+                    Com_PrintError(8, "Couldn't load image '%s' to recover from a lost device\n", image->name);
+                    if (data)
+                        *static_cast<bool *>(data) = true;
+                }
             }
             else
             {
-                Com_Error(ERR_DROP, "No way to recover image '%s' from a lost device", image->name);
+                Com_PrintError(8, "No way to recover image '%s' from a lost device\n", image->name);
+                if (data)
+                    *static_cast<bool *>(data) = true;
             }
         }
         else if (!Image_IsProg(image))
@@ -1059,13 +1078,20 @@ void __cdecl R_RebuildLostImage(XAssetHeader header)
 
 void __cdecl R_ReloadLostImages()
 {
-    DB_EnumXAssets(ASSET_TYPE_IMAGE, (void(__cdecl *)(XAssetHeader, void *))R_RebuildLostImage, 0, 1);
+    bool imageRecoveryFailed = false;
+    DB_EnumXAssets(
+        ASSET_TYPE_IMAGE,
+        R_RebuildLostImage,
+        &imageRecoveryFailed,
+        1);
+    if (imageRecoveryFailed)
+        Com_Error(ERR_DROP, "One or more images could not be recovered");
 }
 
 void __cdecl R_ReleaseLostImages()
 {
     rg.waterFloatTime = rg.waterFloatTime + 1.0;
-    DB_EnumXAssets(ASSET_TYPE_IMAGE, (void(__cdecl *)(XAssetHeader, void *))R_FreeLostImage, 0, 1);
+    DB_EnumXAssets(ASSET_TYPE_IMAGE, R_FreeLostImage, 0, 1);
 }
 
 _D3DFORMAT __cdecl R_ImagePixelFormat(const GfxImage *image)

@@ -595,7 +595,12 @@ void __cdecl Material_ReleaseAll();
 void __cdecl Material_Init();
 void __cdecl Material_Shutdown();
 void __cdecl Material_LoadBuiltIn(const BuiltInMaterialTable* mtlTable, int mtlTableCount);
-void __cdecl Material_ForEachTechniqueSet_FastFile(void(__cdecl* callback)(MaterialTechniqueSet*));
+void __cdecl Material_ForEachTechniqueSet_FastFile(
+    void(__cdecl *callback)(MaterialTechniqueSet *),
+    bool includeOverride = false);
+void __cdecl Material_ForEachTechniqueSet(
+    void(__cdecl *callback)(MaterialTechniqueSet *),
+    bool includeOverride = false);
 bool __cdecl IsValidMaterialHandle(Material* const handle);
 
 //void __cdecl R_GetMaterialList(XAssetHeader header, char *data);

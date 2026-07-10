@@ -217,27 +217,46 @@ void __cdecl FX_SaveEffectDefTable(FxSystem *system, MemoryFile *memFile)
     MemFile_WriteCString(memFile, "");
 }
 
-void __cdecl FX_SaveEffectDefTableEntry_FileLoadObj(const FxEffectDef* effectDef, MemoryFile* data)
+void __cdecl FX_SaveEffectDefTableEntry_FileLoadObj(
+    const FxEffectDef *effectDef,
+    void *data)
 {
     const FxEffectDef* p; // [esp+0h] [ebp-4h] BYREF
+    MemoryFile *memFile = static_cast<MemoryFile *>(data);
 
-    MemFile_WriteCString(data, (char*)effectDef->name);
+    if (!effectDef || !memFile)
+        return;
+    MemFile_WriteCString(memFile, (char*)effectDef->name);
     p = effectDef;
-    MemFile_WriteData(data, 4, &p);
+    MemFile_WriteData(memFile, 4, &p);
+}
+
+void __cdecl FX_SaveEffectDefTableEntry_FastFile(
+    XAssetHeader header,
+    void *data)
+{
+    FX_SaveEffectDefTableEntry_FileLoadObj(header.fx, data);
 }
 
 void __cdecl FX_SaveEffectDefTable_LoadObj(MemoryFile* memFile)
 {
-    FX_ForEachEffectDef((void(__cdecl*)(const FxEffectDef*, void*))FX_SaveEffectDefTableEntry_FileLoadObj, memFile);
+    FX_ForEachEffectDef(FX_SaveEffectDefTableEntry_FileLoadObj, memFile);
 }
 
 void __cdecl FX_SaveEffectDefTable_FastFile(MemoryFile *memFile)
 {
+    if (!memFile)
+        return;
+    const bool errorOnOverflow = memFile->errorOnOverflow;
+    memFile->errorOnOverflow = false;
     DB_EnumXAssets(
         ASSET_TYPE_FX,
-        (void(__cdecl *)(XAssetHeader, void *))FX_SaveEffectDefTableEntry_FileLoadObj,
+        FX_SaveEffectDefTableEntry_FastFile,
         memFile,
         0);
+    memFile->errorOnOverflow = errorOnOverflow;
+    if (errorOnOverflow && memFile->memoryOverflow)
+        Com_Error(ERR_DROP, "FX effect table archive ran out of memory");
 }
 
 void __cdecl FX_SavePhysicsData(FxSystem *system, MemoryFile *memFile)
@@ -276,4 +295,3 @@ void __cdecl FX_Archive(int32_t clientIndex, MemoryFile *memFile)
     else
         FX_Restore(clientIndex, memFile);
 }
-

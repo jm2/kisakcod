@@ -24,6 +24,29 @@ constexpr bool PointerCountConsistent(bool hasPointer, std::int64_t count)
     return count >= 0 && (count == 0 || hasPointer);
 }
 
+constexpr bool AssetOutputCapacityValid(std::int64_t capacity)
+{
+    return capacity >= 0
+        && capacity <= (std::numeric_limits<std::int32_t>::max)();
+}
+
+constexpr bool AssetOutputCountCanIncrement(std::int64_t count)
+{
+    return count >= 0
+        && count < (std::numeric_limits<std::int32_t>::max)();
+}
+
+constexpr bool AssetOutputWriteAllowed(
+    bool hasOutput,
+    std::int64_t count,
+    std::int64_t capacity)
+{
+    return hasOutput
+        && AssetOutputCapacityValid(capacity)
+        && count >= 0
+        && count < capacity;
+}
+
 constexpr bool CountInRange(
     std::int64_t count,
     std::int64_t minimum,

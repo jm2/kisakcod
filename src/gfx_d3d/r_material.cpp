@@ -723,6 +723,14 @@ bool __cdecl R_MaterialCompare(const MaterialMemory &material0, const MaterialMe
 {
     return material0.memory < material1.memory;
 }
+
+struct MaterialListContext
+{
+    MaterialMemory *entries;
+    uint32_t count;
+    uint32_t capacity;
+};
+
 void __cdecl R_MaterialList_f()
 {
     const char *fmt; // [esp+8h] [ebp-4150h]
@@ -730,22 +738,21 @@ void __cdecl R_MaterialList_f()
     Material *material; // [esp+13Ch] [ebp-401Ch]
     int v3; // [esp+140h] [ebp-4018h]
     MaterialMemory *v4; // [esp+144h] [ebp-4014h]
-    uint32_t inData; // [esp+148h] [ebp-4010h] BYREF
     MaterialMemory v6[2049]; // [esp+14Ch] [ebp-400Ch] BYREF
     float v7; // [esp+4154h] [ebp-4h]
 
     v3 = 0;
     Com_Printf(8, "-----------------------\n");
-    inData = 0;
-    DB_EnumXAssets(ASSET_TYPE_MATERIAL, (void(__cdecl *)(XAssetHeader, void*))R_GetMaterialList, &inData, 0);
+    MaterialListContext context = {v6, 0, ARRAY_COUNT(v6)};
+    DB_EnumXAssets(ASSET_TYPE_MATERIAL, R_GetMaterialList, &context, 0);
     // std::_Sort<ShadowCandidate *, int, bool(__cdecl *)(ShadowCandidate const &, ShadowCandidate const &)>(
     //     (ShadowCandidate *)v6,
     //     (ShadowCandidate *)&v6[inData],
     //     (int)(8 * inData) >> 3,
     //     R_MaterialCompare);
-    std::sort(&v6[0], &v6[inData], R_MaterialCompare);
+    std::sort(&v6[0], &v6[context.count], R_MaterialCompare);
     Com_Printf(8, "geo KB   name\n");
-    for (i = 0; i < inData; ++i)
+    for (i = 0; i < context.count; ++i)
     {
         v4 = &v6[i];
         material = v4->material;
@@ -761,24 +768,28 @@ void __cdecl R_MaterialList_f()
     }
     Com_Printf(8, "-----------------------\n");
     Com_Printf(8, "current total  %5.1f MB\n", (double)v3 / 1048576.0);
-    Com_Printf(8, "%i total geometry materials\n", inData);
+    Com_Printf(8, "%u total geometry materials\n", context.count);
     Com_Printf(8, "Related commands: meminfo, imagelist, gfx_world, gfx_model, cg_drawfps, com_statmon, tempmeminfo\n");
 }
 
-void __cdecl R_GetMaterialList(XAssetHeader header, char *data)
+void __cdecl R_GetMaterialList(XAssetHeader header, void *data)
 {
     int memory; // [esp+0h] [ebp-Ch]
-    XAssetHeader *materialMemory; // [esp+4h] [ebp-8h]
+    MaterialListContext *context = static_cast<MaterialListContext *>(data);
 
+    if (!context || !context->entries || !header.material)
+        return;
     memory = R_GetMaterialMemory(header.material);
-    if (memory)
+    if (!memory)
+        return;
+    if (context->count >= context->capacity)
     {
-        //iassert( materialList->count < ARRAY_COUNT( materialList->sorted ) ); // KISAKTODO
-        materialMemory = (XAssetHeader *)&data[8 * *(uint32_t *)data + 4];
-        materialMemory->xmodelPieces = header.xmodelPieces;
-        materialMemory[1].xmodelPieces = (XModelPieces *)memory;
-        ++*(uint32_t *)data;
+        Com_PrintError(8, "Material enumeration exceeds its capacity\n");
+        return;
     }
+    MaterialMemory &entry = context->entries[context->count++];
+    entry.material = header.material;
+    entry.memory = memory;
 }
 
 int __cdecl R_GetMaterialMemory(Material *material)
@@ -924,11 +935,6 @@ void __cdecl Material_ReloadTechniqueSetResources(MaterialTechniqueSet *techniqu
     }
 }
 
-void __cdecl Material_ReloadTechniqueSet(XAssetHeader header)
-{
-    Material_ReloadTechniqueSetResources(header.techniqueSet);
-}
-
 void __cdecl Material_ReleaseTechniqueSet(XAssetHeader header, void* crap)
 {
     Material_ReleaseTechniqueSetResources(header.techniqueSet);
@@ -936,12 +942,12 @@ void __cdecl Material_ReleaseTechniqueSet(XAssetHeader header, void* crap)
 
 void __cdecl Material_ReloadAll()
 {
-    DB_EnumXAssets(ASSET_TYPE_TECHNIQUE_SET, (void(__cdecl *)(XAssetHeader, void *))Material_ReloadTechniqueSet, 0, 1);
+    Material_ForEachTechniqueSet(Material_ReloadTechniqueSetResources, true);
 }
 
 void __cdecl Material_ReleaseAll()
 {
-    DB_EnumXAssets(ASSET_TYPE_TECHNIQUE_SET, (void(__cdecl *)(XAssetHeader, void *))Material_ReleaseTechniqueSet, 0, 1);
+    Material_ForEachTechniqueSet(Material_ReleaseTechniqueSetResources, true);
 }
 
 const Material *__cdecl Material_FromHandle(Material *handle)
@@ -985,19 +991,19 @@ void __cdecl Material_LoadBuiltIn(const BuiltInMaterialTable *mtlTable, int mtlT
     }
 }
 
-void __cdecl Material_CollateTechniqueSets(XAssetHeader header, TechniqueSetList *techSetList)
+void __cdecl Material_CollateTechniqueSets(XAssetHeader header, void *data)
 {
-    iassert(techSetList->count < 1024);
-    //if (userData[1024] >= 0x400)
-    //    MyAssertHandler(
-    //        ".\\r_material.cpp",
-    //        1744,
-    //        0,
-    //        "techSetList->count doesn't index MAX_TECHNIQUE_SETS\n\t%i not in [0, %i)",
-    //        userData[1024],
-    //        1024);
+    TechniqueSetList *techSetList = static_cast<TechniqueSetList *>(data);
+    if (!techSetList
+        || !header.techniqueSet
+        || techSetList->count < 0
+        || techSetList->count
+            >= static_cast<int>(ARRAY_COUNT(techSetList->hashTable)))
+    {
+        Com_PrintError(8, "Technique-set enumeration exceeds its capacity\n");
+        return;
+    }
     techSetList->hashTable[techSetList->count++] = header.techniqueSet;
-    //userData[userData[1024]++] = (DWORD)header.xmodelPieces;
 }
 
 bool __cdecl IsValidMaterialHandle(Material *const handle)
