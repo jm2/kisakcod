@@ -8,22 +8,24 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: add bounded cross-material texture/constant/state-table semantics, then
-  implement linear-time world AABB topology validation and resume the remaining 22 legacy
-  direct references.
-- Last completed batch: nonempty material texture tables now register their exact aligned
-  block-4 starts before loading and publish only after their count-derived 12-byte entry span
-  and every nested image/water payload complete. Entries require a decodable sampler, bounded
-  semantic, nonnull payload, and strictly increasing unique name hash; direct references must
-  match the completed table kind, exact start, and exact byte extent. Present-empty serialized
-  tables are explicitly canonicalized to null instead of retaining a meaningless relocation.
+- Active work: harden material runtime named lookups, water-union consumers, and native-width
+  callbacks, then implement linear-time world AABB topology validation and resume the
+  remaining 22 legacy direct references.
+- Last completed batch: complete material graphs now validate before asset publication.
+  Texture and constant hashes must be strictly ordered and unique; constants and inline
+  shader literals must be finite; every named type-0/2/6 shader argument must resolve within
+  its bounded table. All 34 technique slots must map their full 1–4 pass span inside at most
+  136 state entries, and blend fields must stay inside the engine's D3D decode tables.
+  Present-empty constant/state tables are validated, alignment-preserved, and canonicalized
+  to null. Initial and later runtime technique remaps may remove or shorten slots but cannot
+  add/expand them or change world vertex format; invalid remaps fall back to the original set.
 - Portable validation: 12/12 tests pass locally. The production relocation registry is
   also strict-warning clean under GCC/Clang and GCC ILP32 syntax checking; ASan/UBSan
   pass locally with leak detection disabled because LeakSanitizer cannot run under the
   command-runner ptrace environment. Portable tests do not execute the Windows stream
   adapter or media ownership paths.
-- Windows validation: completed-water CI run 29070256032 passed x86 Debug, Release,
-  no-Steam, and all five portable target jobs on 2026-07-10. The completed-texture-table
+- Windows validation: completed-texture-table CI run 29070734193 passed x86 Debug, Release,
+  no-Steam, and all five portable target jobs on 2026-07-10. The cross-material semantics
   batch requires its own Windows CI run after push.
 
 ## Milestone status
@@ -32,7 +34,7 @@ work item changes. Do not create session-specific handoff files.
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 builds; five native utility-test runners; engine runtime smoke and release workflows remain unexercised. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, and an exact 259-site ABI debt ledger exist; engine atomics/platform integration remains. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 28/50 bounded direct references, and pre-use material structure/argument validation landed; production-path fuzz fixtures and 22 direct relocations remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 28/50 bounded direct references, and pre-publication material graph/state validation landed; production-path fuzz fixtures and 22 direct relocations remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, 19 full-span raw/POD fields, exact registered direct strings, and six exact completed material object types exist; packed mirrors, 22 direct offsets, broader completed-object relocation, and runtime widening remain. |
@@ -51,9 +53,9 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Add bounded cross-material texture/constant/state-table semantics, then implement the
-   linear-time world AABB topology validator and resume the remaining 22 raw/completed-object
-   relocations.
+1. Harden material runtime named lookups, water-union consumers, native-width callbacks,
+   and layered count arithmetic; then implement the linear-time world AABB topology validator
+   and resume the remaining 22 raw/completed-object relocations.
 2. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
 3. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
 4. Classify and burn down the 255 direct and four formula-based ABI layout assertions.
@@ -66,9 +68,11 @@ work item changes. Do not create session-specific handoff files.
   completed-object/type provenance for direct offsets.
 - Inline material declarations, techniques, passes, and arguments receive pre-use
   structural validation, and shared vertex declarations, techniques, both shader stages,
-  nested water, and texture tables now require exact completed-object provenance. Require
-  sorted constant tables, bounded named-hash membership,
-  `stateBitsEntry + passCount` spans, and safe remapped-technique relationships.
+  nested water, and texture tables now require exact completed-object provenance. Complete
+  graphs additionally enforce ordered tables, bounded named-hash membership,
+  `stateBitsEntry + passCount` spans, decode-safe render states, and structurally safe current
+  and future remaps. Runtime named lookups remain assert-then-OOB if a later dynamic remap
+  introduces a material-specific hash; make those searches independently bounded.
   Material `cameraRegion`, `sortKey`, and other derived
   runtime fields also need bounds or recomputation before asset publication.
 - Techniques can be shared across technique sets, while their pass shaders and declarations

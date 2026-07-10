@@ -4,6 +4,7 @@
 #include "r_init.h"
 #include "r_rendercmds.h"
 #include <database/database.h>
+#include <database/db_validation.h>
 #include "rb_uploadshaders.h"
 
 $4ABF24606230B73E4E420CE33A1F14B1 mtlOverrideGlob;
@@ -213,47 +214,42 @@ void __cdecl Material_RemapTechniqueSetName(
     }
 }
 
-void __cdecl AssertValidRemappedTechniqueSet(MaterialTechniqueSet *techSet)
+bool __cdecl Material_ValidateRemappedTechniqueSet(MaterialTechniqueSet *techSet)
 {
-    const char *v1; // eax
-    const char *name; // [esp+4h] [ebp-8h]
-    uint32_t techTypeIter; // [esp+8h] [ebp-4h]
-
-    iassert( techSet );
-    iassert( techSet->remappedTechniqueSet );
-    if (techSet->remappedTechniqueSet != techSet)
+    if (!techSet || !techSet->remappedTechniqueSet)
+        return false;
+    MaterialTechniqueSet *candidate = techSet->remappedTechniqueSet;
+    if (candidate->worldVertFormat != techSet->worldVertFormat)
     {
-        for (techTypeIter = 0; techTypeIter < 0x22; ++techTypeIter)
+        Com_PrintError(
+            8,
+            "ERROR: material technique remap changes vertex format: %s -> %s\n",
+            techSet->name,
+            candidate->name);
+        return false;
+    }
+    for (uint32_t techniqueIndex = 0; techniqueIndex < 34; ++techniqueIndex)
+    {
+        const MaterialTechnique *originalTechnique =
+            techSet->techniques[techniqueIndex];
+        const MaterialTechnique *candidateTechnique =
+            candidate->techniques[techniqueIndex];
+        if (!db::validation::MaterialRemapSlotValid(
+                originalTechnique != nullptr,
+                originalTechnique ? originalTechnique->passCount : 0,
+                candidateTechnique != nullptr,
+                candidateTechnique ? candidateTechnique->passCount : 0))
         {
-            if (!techSet->techniques[techTypeIter] && techSet->remappedTechniqueSet->techniques[techTypeIter])
-            {
-                name = techSet->remappedTechniqueSet->techniques[techTypeIter]->name;
-                if (techSet->techniques[techTypeIter])
-                    v1 = va(
-                        "%i: %s:%s -> %s:%s",
-                        techTypeIter,
-                        techSet->name,
-                        techSet->techniques[techTypeIter]->name,
-                        techSet->remappedTechniqueSet->name,
-                        name);
-                else
-                    v1 = va(
-                        "%i: %s:%s -> %s:%s",
-                        techTypeIter,
-                        techSet->name,
-                        "(null)",
-                        techSet->remappedTechniqueSet->name,
-                        name);
-                MyAssertHandler(
-                    ".\\r_material_override.cpp",
-                    333,
-                    0,
-                    "%s\n\t%s",
-                    "techSet->techniques[techTypeIter] != NULL || techSet->remappedTechniqueSet->techniques[techTypeIter] == NULL",
-                    v1);
-            }
+            Com_PrintError(
+                8,
+                "ERROR: incompatible material technique remap slot %u: %s -> %s\n",
+                techniqueIndex,
+                techSet->name,
+                candidate->name);
+            return false;
         }
     }
+    return true;
 }
 
 void __cdecl Material_RemapTechniqueSet(MaterialTechniqueSet *techSet)
@@ -273,9 +269,9 @@ void __cdecl Material_RemapTechniqueSet(MaterialTechniqueSet *techSet)
     {
         techSet->remappedTechniqueSet = techSet;
     }
-    else
+    else if (!Material_ValidateRemappedTechniqueSet(techSet))
     {
-        AssertValidRemappedTechniqueSet(techSet);
+        techSet->remappedTechniqueSet = techSet;
     }
 }
 
@@ -315,7 +311,11 @@ void __cdecl Material_OriginalRemapTechniqueSet(MaterialTechniqueSet *techSet)
         strncpy(&remapName[4], techSet->name, 0x3Cu);
         remapName[63] = 0;
         techSet->remappedTechniqueSet = Material_FindTechniqueSet(remapName, MTL_TECHSET_NOT_FOUND_RETURN_DEFAULT);
-        AssertValidRemappedTechniqueSet(techSet);
+        // Keep the selected SM2/default set even when it is incompatible.  Materials
+        // that reference this set will reject the relationship during graph
+        // validation; falling back to the SM3 original here would select shaders for
+        // the wrong renderer in release builds.
+        (void)Material_ValidateRemappedTechniqueSet(techSet);
     }
 }
 

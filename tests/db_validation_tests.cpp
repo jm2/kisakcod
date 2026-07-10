@@ -162,6 +162,157 @@ int main()
         !db::validation::MaterialTextureHeaderValid(1, 0, true, 'a', 0),
         "material texture without a name end rejected");
 
+    struct HashEntry
+    {
+        uint32_t nameHash;
+    };
+    const HashEntry sortedHashes[] = {
+        {1},
+        {2},
+        {UINT32_MAX}};
+    const HashEntry duplicateHashes[] = {{1}, {1}};
+    const HashEntry descendingHashes[] = {{2}, {1}};
+    Expect(
+        db::validation::StrictlyIncreasingNameHashes<HashEntry>(nullptr, 0),
+        "empty material name-hash table accepted");
+    Expect(
+        !db::validation::StrictlyIncreasingNameHashes<HashEntry>(nullptr, 1),
+        "missing material name-hash table rejected");
+    Expect(
+        db::validation::StrictlyIncreasingNameHashes(sortedHashes, 3),
+        "strictly increasing material name hashes accepted");
+    Expect(
+        !db::validation::StrictlyIncreasingNameHashes(duplicateHashes, 2),
+        "duplicate material name hashes rejected");
+    Expect(
+        !db::validation::StrictlyIncreasingNameHashes(descendingHashes, 2),
+        "descending material name hashes rejected");
+    Expect(
+        db::validation::SortedNameHashContains(sortedHashes, 3, 1),
+        "first sorted material name hash found");
+    Expect(
+        db::validation::SortedNameHashContains(sortedHashes, 3, 2),
+        "middle sorted material name hash found");
+    Expect(
+        db::validation::SortedNameHashContains(sortedHashes, 3, UINT32_MAX),
+        "last sorted material name hash found");
+    Expect(
+        !db::validation::SortedNameHashContains(sortedHashes, 3, 0),
+        "material name hash below the table rejected");
+    Expect(
+        !db::validation::SortedNameHashContains(sortedHashes, 3, 3),
+        "missing material name hash between entries rejected");
+    Expect(
+        !db::validation::SortedNameHashContains<HashEntry>(nullptr, 0, 1),
+        "material name hash lookup rejects an empty table");
+
+    Expect(
+        db::validation::MaterialTechniqueStateSpanValid(false, 0, 255, 0),
+        "absent material technique uses the state sentinel");
+    Expect(
+        db::validation::MaterialTechniqueStateSpanValid(true, 4, 132, 136),
+        "maximum material technique state span accepted");
+    Expect(
+        db::validation::MaterialTechniqueStateSpanValid(true, 4, 0, 4),
+        "material technique state span at the table start accepted");
+    Expect(
+        !db::validation::MaterialTechniqueStateSpanValid(true, 1, 0, 137),
+        "oversized material state table rejected");
+    Expect(
+        !db::validation::MaterialTechniqueStateSpanValid(true, 1, 255, 4),
+        "present material technique cannot use the state sentinel");
+    Expect(
+        !db::validation::MaterialTechniqueStateSpanValid(true, 0, 0, 4),
+        "material technique without a pass rejected from state mapping");
+    Expect(
+        !db::validation::MaterialTechniqueStateSpanValid(true, 5, 0, 5),
+        "material technique with too many passes rejected from state mapping");
+    Expect(
+        !db::validation::MaterialTechniqueStateSpanValid(true, 1, 4, 4),
+        "material technique state entry at table end rejected");
+    Expect(
+        !db::validation::MaterialTechniqueStateSpanValid(
+            true,
+            4,
+            UINT32_MAX,
+            4),
+        "overflow-shaped material technique state entry rejected");
+    Expect(
+        !db::validation::MaterialTechniqueStateSpanValid(false, 0, 0, 0),
+        "absent material technique requires the state sentinel");
+
+    Expect(
+        db::validation::MaterialRemapSlotValid(false, 0, false, 0),
+        "both empty material remap slots accepted");
+    Expect(
+        db::validation::MaterialRemapSlotValid(true, 4, false, 0),
+        "empty remapped material technique slot accepted");
+    Expect(
+        db::validation::MaterialRemapSlotValid(true, 4, true, 4),
+        "equal material remap pass counts accepted");
+    Expect(
+        db::validation::MaterialRemapSlotValid(true, 4, true, 1),
+        "smaller material remap pass span accepted");
+    Expect(
+        !db::validation::MaterialRemapSlotValid(false, 0, true, 1),
+        "additional remapped material technique rejected");
+    Expect(
+        !db::validation::MaterialRemapSlotValid(true, 1, true, 4),
+        "expanded material remap pass span rejected");
+    Expect(
+        !db::validation::MaterialRemapSlotValid(true, 0, true, 0),
+        "present zero-pass material remap slots rejected");
+    Expect(
+        !db::validation::MaterialRemapSlotValid(true, 5, true, 5),
+        "present oversized material remap slots rejected");
+
+    constexpr uint32_t validRgbBlend = UINT32_C(10)
+        | (UINT32_C(10) << 4)
+        | (UINT32_C(5) << 8);
+    constexpr uint32_t validSeparateBlend = validRgbBlend
+        | (UINT32_C(10) << 16)
+        | (UINT32_C(10) << 20)
+        | (UINT32_C(5) << 24);
+    Expect(
+        db::validation::MaterialStateBitsDecodeSafe(0),
+        "disabled material blend state accepted");
+    Expect(
+        db::validation::MaterialStateBitsDecodeSafe(validRgbBlend),
+        "maximum material RGB blend indexes accepted");
+    Expect(
+        db::validation::MaterialStateBitsDecodeSafe(validSeparateBlend),
+        "maximum separate-alpha blend indexes accepted");
+    Expect(
+        !db::validation::MaterialStateBitsDecodeSafe(UINT32_C(6) << 8),
+        "out-of-range material RGB blend operation rejected");
+    Expect(
+        !db::validation::MaterialStateBitsDecodeSafe(
+            (UINT32_C(11)) | (UINT32_C(1) << 8)),
+        "out-of-range material RGB source blend rejected");
+    Expect(
+        !db::validation::MaterialStateBitsDecodeSafe(
+            (UINT32_C(11) << 4) | (UINT32_C(1) << 8)),
+        "out-of-range material RGB destination blend rejected");
+    Expect(
+        !db::validation::MaterialStateBitsDecodeSafe(UINT32_C(1) << 24),
+        "alpha blend without RGB blend rejected");
+    Expect(
+        !db::validation::MaterialStateBitsDecodeSafe(
+            (UINT32_C(1) << 8) | (UINT32_C(6) << 24)),
+        "out-of-range material alpha blend operation rejected");
+    Expect(
+        !db::validation::MaterialStateBitsDecodeSafe(
+            (UINT32_C(1) << 8)
+            | (UINT32_C(11) << 16)
+            | (UINT32_C(1) << 24)),
+        "out-of-range material alpha source blend rejected");
+    Expect(
+        !db::validation::MaterialStateBitsDecodeSafe(
+            (UINT32_C(1) << 8)
+            | (UINT32_C(11) << 20)
+            | (UINT32_C(1) << 24)),
+        "out-of-range material alpha destination blend rejected");
+
     Expect(db::validation::WaterGridValid(4, 4), "minimum water FFT grid accepted");
     Expect(db::validation::WaterGridValid(8, 8), "power-of-two water FFT grid accepted");
     Expect(db::validation::WaterGridValid(64, 64), "maximum water FFT grid accepted");
@@ -266,12 +417,24 @@ int main()
     const float nanConstants[] = {
         0.0f,
         (std::numeric_limits<float>::quiet_NaN)()};
+    const float infiniteConstants[] = {
+        0.0f,
+        (std::numeric_limits<float>::infinity)()};
     Expect(
         db::validation::FiniteFloatArray(finiteConstants, 4),
         "finite water code constants accepted");
     Expect(
         !db::validation::FiniteFloatArray(nanConstants, 2),
         "non-finite water code constant rejected");
+    Expect(
+        !db::validation::FiniteFloatArray(infiniteConstants, 2),
+        "infinite material constant rejected");
+    Expect(
+        db::validation::FiniteFloatArray(nullptr, 0),
+        "empty finite-float array accepted");
+    Expect(
+        !db::validation::FiniteFloatArray(nullptr, 1),
+        "missing finite-float array rejected");
     Expect(
         db::validation::WaterPicmipDimension(8, 0) == 8,
         "water picmip zero preserves its dimension");

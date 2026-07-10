@@ -77,6 +77,94 @@ constexpr bool MaterialTextureHeaderValid(
         && semantic <= 11;
 }
 
+template <typename Entry>
+inline bool StrictlyIncreasingNameHashes(
+    const Entry *entries,
+    std::uint32_t count)
+{
+    if (!entries)
+        return count == 0;
+    for (std::uint32_t index = 1; index < count; ++index)
+    {
+        if (entries[index - 1].nameHash >= entries[index].nameHash)
+            return false;
+    }
+    return true;
+}
+
+template <typename Entry>
+inline bool SortedNameHashContains(
+    const Entry *entries,
+    std::uint32_t count,
+    std::uint32_t target)
+{
+    if (!entries)
+        return false;
+    std::uint32_t first = 0;
+    std::uint32_t remaining = count;
+    while (remaining)
+    {
+        const std::uint32_t half = remaining / 2;
+        const std::uint32_t middle = first + half;
+        if (entries[middle].nameHash < target)
+        {
+            first = middle + 1;
+            remaining -= half + 1;
+        }
+        else
+        {
+            remaining = half;
+        }
+    }
+    return first < count && entries[first].nameHash == target;
+}
+
+constexpr bool MaterialTechniqueStateSpanValid(
+    bool hasTechnique,
+    std::uint32_t passCount,
+    std::uint32_t stateEntry,
+    std::uint32_t stateCount)
+{
+    if (stateCount > 136)
+        return false;
+    if (!hasTechnique)
+        return stateEntry == UINT32_C(255);
+    return CountInRange(passCount, 1, 4)
+        && stateEntry != UINT32_C(255)
+        && stateEntry <= stateCount
+        && passCount <= stateCount - stateEntry;
+}
+
+constexpr bool MaterialRemapSlotValid(
+    bool originalPresent,
+    std::uint32_t originalPassCount,
+    bool candidatePresent,
+    std::uint32_t candidatePassCount)
+{
+    return !candidatePresent
+        || (originalPresent
+            && CountInRange(originalPassCount, 1, 4)
+            && CountInRange(candidatePassCount, 1, originalPassCount));
+}
+
+constexpr bool MaterialStateBitsDecodeSafe(std::uint32_t bits0)
+{
+    const std::uint32_t rgbOperation = (bits0 >> 8) & UINT32_C(0x7);
+    const std::uint32_t alphaOperation = (bits0 >> 24) & UINT32_C(0x7);
+    if (rgbOperation > 5 || alphaOperation > 5)
+        return false;
+    if (!rgbOperation)
+        return alphaOperation == 0;
+    if ((bits0 & UINT32_C(0xF)) > 10
+        || ((bits0 >> 4) & UINT32_C(0xF)) > 10)
+    {
+        return false;
+    }
+    return !alphaOperation
+        || (((bits0 >> 16) & UINT32_C(0xF)) <= 10
+            && ((bits0 >> 20) & UINT32_C(0xF)) <= 10);
+}
+
 constexpr bool WaterGridValid(std::int64_t width, std::int64_t height)
 {
     return width == height

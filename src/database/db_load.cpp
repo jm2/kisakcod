@@ -145,6 +145,170 @@ bool DB_ValidateWaterHeader(const water_t *water, int32_t *sampleCount)
     return true;
 }
 
+bool DB_ValidateMaterialNamedInputs(
+    const Material *material,
+    const MaterialTechniqueSet *techniqueSet)
+{
+    if (!material || !techniqueSet)
+        return false;
+
+    for (uint32_t techniqueIndex = 0; techniqueIndex < 34; ++techniqueIndex)
+    {
+        const MaterialTechnique *technique =
+            techniqueSet->techniques[techniqueIndex];
+        if (!technique)
+            continue;
+        if (!db::validation::CountInRange(technique->passCount, 1, 4))
+        {
+            Com_Error(ERR_DROP, "Invalid material technique pass count");
+            return false;
+        }
+        for (uint32_t passIndex = 0;
+             passIndex < technique->passCount;
+             ++passIndex)
+        {
+            const MaterialPass &pass = technique->passArray[passIndex];
+            const uint32_t argumentCount =
+                static_cast<uint32_t>(pass.perPrimArgCount)
+                + pass.perObjArgCount
+                + pass.stableArgCount;
+            if (!db::validation::MaterialPassLayoutValid(
+                    pass.perPrimArgCount,
+                    pass.perObjArgCount,
+                    pass.stableArgCount,
+                    pass.args != nullptr,
+                    pass.customSamplerFlags)
+                || argumentCount > 64)
+            {
+                Com_Error(ERR_DROP, "Invalid material pass argument span");
+                return false;
+            }
+            for (uint32_t argumentIndex = 0;
+                 argumentIndex < argumentCount;
+                 ++argumentIndex)
+            {
+                const MaterialShaderArgument &argument =
+                    pass.args[argumentIndex];
+                if (argument.type == 2)
+                {
+                    if (!db::validation::SortedNameHashContains(
+                            material->textureTable,
+                            material->textureCount,
+                            argument.u.nameHash))
+                    {
+                        Com_Error(
+                            ERR_DROP,
+                            "Material technique requires a missing named texture");
+                        return false;
+                    }
+                }
+                else if (argument.type == 0 || argument.type == 6)
+                {
+                    if (!db::validation::SortedNameHashContains(
+                            material->constantTable,
+                            material->constantCount,
+                            argument.u.nameHash))
+                    {
+                        Com_Error(
+                            ERR_DROP,
+                            "Material technique requires a missing named constant");
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+bool DB_ValidateMaterialSemantics(const Material *material)
+{
+    if (!material
+        || !material->info.name
+        || !*material->info.name
+        || material->info.sortKey >= 64
+        || !material->techniqueSet
+        || !material->techniqueSet->remappedTechniqueSet
+        || !db::validation::StrictlyIncreasingNameHashes(
+            material->textureTable,
+            material->textureCount)
+        || !db::validation::StrictlyIncreasingNameHashes(
+            material->constantTable,
+            material->constantCount)
+        || material->stateBitsCount > 136)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file material semantics");
+        return false;
+    }
+
+    for (uint32_t constantIndex = 0;
+         constantIndex < material->constantCount;
+         ++constantIndex)
+    {
+        if (!db::validation::FiniteFloatArray(
+                material->constantTable[constantIndex].literal,
+                4))
+        {
+            Com_Error(ERR_DROP, "Non-finite fast-file material constant");
+            return false;
+        }
+    }
+    for (uint32_t stateIndex = 0;
+         stateIndex < material->stateBitsCount;
+         ++stateIndex)
+    {
+        if (!db::validation::MaterialStateBitsDecodeSafe(
+                material->stateBitsTable[stateIndex].loadBits[0]))
+        {
+            Com_Error(ERR_DROP, "Unsafe fast-file material render state");
+            return false;
+        }
+    }
+
+    const MaterialTechniqueSet *original = material->techniqueSet;
+    const MaterialTechniqueSet *candidate = original->remappedTechniqueSet;
+    if (candidate->worldVertFormat != original->worldVertFormat)
+    {
+        Com_Error(ERR_DROP, "Material technique remap changes vertex format");
+        return false;
+    }
+    for (uint32_t techniqueIndex = 0; techniqueIndex < 34; ++techniqueIndex)
+    {
+        const MaterialTechnique *originalTechnique =
+            original->techniques[techniqueIndex];
+        const MaterialTechnique *candidateTechnique =
+            candidate->techniques[techniqueIndex];
+        const uint32_t originalPassCount = originalTechnique
+            ? originalTechnique->passCount
+            : 0;
+        const uint32_t candidatePassCount = candidateTechnique
+            ? candidateTechnique->passCount
+            : 0;
+        if (!db::validation::MaterialTechniqueStateSpanValid(
+                originalTechnique != nullptr,
+                originalPassCount,
+                material->stateBitsEntry[techniqueIndex],
+                material->stateBitsCount)
+            || !db::validation::MaterialRemapSlotValid(
+                originalTechnique != nullptr,
+                originalPassCount,
+                candidateTechnique != nullptr,
+                candidatePassCount))
+        {
+            Com_Error(ERR_DROP, "Invalid fast-file material technique state mapping");
+            return false;
+        }
+    }
+
+    if (!DB_ValidateMaterialNamedInputs(material, original)
+        || (candidate != original
+            && !DB_ValidateMaterialNamedInputs(material, candidate)))
+    {
+        return false;
+    }
+    return true;
+}
+
 bool DB_ValidateWeaponAccuracyGraph(
     const WeaponDef *weapon,
     uint32_t graphIndex,
@@ -280,7 +444,10 @@ bool DB_ValidateMaterialPassArguments(const MaterialPass *pass, uint32_t argumen
                     sourceIndex,
                     segment))
             || ((argument.type == 1 || argument.type == 7)
-                && !argument.u.literalConst))
+                && (!argument.u.literalConst
+                    || !db::validation::FiniteFloatArray(
+                        argument.u.literalConst,
+                        4))))
         {
             Com_Error(ERR_DROP, "Invalid fast-file material shader argument");
             return false;
@@ -3206,7 +3373,33 @@ bool __cdecl Load_Material(bool atStreamStart)
     }
     if (varMaterial->constantTable)
     {
-        if (varMaterial->constantTable == (MaterialConstantDef *)-1)
+        if (!varMaterial->constantCount)
+        {
+            uint32_t constantToken = 0;
+            memcpy(
+                &constantToken,
+                &varMaterial->constantTable,
+                sizeof(constantToken));
+            if (constantToken == disk32::kInline)
+            {
+                if (!AllocLoad_GfxPackedVertex0())
+                {
+                    Com_Error(ERR_DROP, "Could not align empty material constant table");
+                    DB_PopStreamPos();
+                    return false;
+                }
+            }
+            else
+            {
+                DB_ConvertOffsetToPointer(
+                    (uint32_t*)&varMaterial->constantTable,
+                    0,
+                    16,
+                    kDirectBlock4);
+            }
+            varMaterial->constantTable = nullptr;
+        }
+        else if (varMaterial->constantTable == (MaterialConstantDef *)-1)
         {
             varMaterial->constantTable = (MaterialConstantDef *)AllocLoad_GfxPackedVertex0();
             varMaterialConstantDef = varMaterial->constantTable;
@@ -3223,7 +3416,33 @@ bool __cdecl Load_Material(bool atStreamStart)
     }
     if (varMaterial->stateBitsTable)
     {
-        if (varMaterial->stateBitsTable == (GfxStateBits *)-1)
+        if (!varMaterial->stateBitsCount)
+        {
+            uint32_t stateToken = 0;
+            memcpy(
+                &stateToken,
+                &varMaterial->stateBitsTable,
+                sizeof(stateToken));
+            if (stateToken == disk32::kInline)
+            {
+                if (!AllocLoad_FxElemVisStateSample())
+                {
+                    Com_Error(ERR_DROP, "Could not align empty material state table");
+                    DB_PopStreamPos();
+                    return false;
+                }
+            }
+            else
+            {
+                DB_ConvertOffsetToPointer(
+                    (uint32_t*)&varMaterial->stateBitsTable,
+                    0,
+                    4,
+                    kDirectBlock4);
+            }
+            varMaterial->stateBitsTable = nullptr;
+        }
+        else if (varMaterial->stateBitsTable == (GfxStateBits *)-1)
         {
             varMaterial->stateBitsTable = (GfxStateBits *)AllocLoad_FxElemVisStateSample();
             varGfxStateBits = varMaterial->stateBitsTable;
@@ -3237,6 +3456,11 @@ bool __cdecl Load_Material(bool atStreamStart)
                 4,
                 kDirectBlock4);
         }
+    }
+    if (!DB_ValidateMaterialSemantics(varMaterial))
+    {
+        DB_PopStreamPos();
+        return false;
     }
     DB_PopStreamPos();
     return true;

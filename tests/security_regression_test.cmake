@@ -473,6 +473,88 @@ require_source_contains(
     "material water marking must test the payload rather than its holder")
 require_source_contains(
     "database/db_load.cpp"
+    "StrictlyIncreasingNameHashes(
+            material->constantTable"
+    "material constant tables must be strictly hash ordered")
+require_source_contains(
+    "database/db_load.cpp"
+    "FiniteFloatArray(
+                material->constantTable[constantIndex].literal"
+    "material constants must contain only finite values")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (argument.type == 2)
+                {
+                    if (!db::validation::SortedNameHashContains(
+                            material->textureTable,
+                            material->textureCount,
+                            argument.u.nameHash))"
+    "named material sampler arguments must resolve within the texture table")
+require_source_contains(
+    "database/db_load.cpp"
+    "else if (argument.type == 0 || argument.type == 6)
+                {
+                    if (!db::validation::SortedNameHashContains(
+                            material->constantTable,
+                            material->constantCount,
+                            argument.u.nameHash))"
+    "named material constant arguments must resolve within the constant table")
+require_source_contains(
+    "database/db_load.cpp"
+    "MaterialTechniqueStateSpanValid("
+    "material technique pass states must fit the state table")
+require_source_contains(
+    "database/db_load.cpp"
+    "MaterialRemapSlotValid("
+    "material technique remaps must preserve occupied pass spans")
+require_source_contains(
+    "database/db_load.cpp"
+    "MaterialStateBitsDecodeSafe("
+    "material render states must not index beyond D3D decode tables")
+require_source_contains(
+    "database/db_load.cpp"
+    "!db::validation::FiniteFloatArray(
+                        argument.u.literalConst,
+                        4)"
+    "inline material shader literals must be finite")
+require_source_contains(
+    "database/db_load.cpp"
+    "varMaterial->stateBitsTable = nullptr"
+    "present-empty material state tables must be canonicalized")
+require_source_contains(
+    "database/db_load.cpp"
+    "varMaterial->constantTable = nullptr"
+    "present-empty material constant tables must be canonicalized")
+require_source_contains(
+    "database/db_load.cpp"
+    "material->info.sortKey >= 64"
+    "material sort keys must fit the renderer's fixed tables")
+require_source_contains(
+    "database/db_load.cpp"
+    "candidate->worldVertFormat != original->worldVertFormat"
+    "loaded material remaps must preserve the world vertex format")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!DB_ValidateMaterialNamedInputs(material, original)
+        || (candidate != original
+            && !DB_ValidateMaterialNamedInputs(material, candidate)))"
+    "both original and initially remapped techniques must resolve named inputs")
+require_source_contains(
+    "gfx_d3d/r_material_override.cpp"
+    "bool __cdecl Material_ValidateRemappedTechniqueSet"
+    "runtime material technique remaps must use release-build validation")
+require_source_contains(
+    "gfx_d3d/r_material_override.cpp"
+    "else if (!Material_ValidateRemappedTechniqueSet(techSet))
+    {
+        techSet->remappedTechniqueSet = techSet;"
+    "invalid dynamic material remaps must fall back to the original set")
+require_source_contains(
+    "gfx_d3d/r_material_override.cpp"
+    "(void)Material_ValidateRemappedTechniqueSet(techSet);"
+    "initial renderer remaps must remain visible to material graph validation")
+require_source_contains(
+    "database/db_load.cpp"
     "DB_ConvertOffsetToAlias(
                 (uint32_t*)&varMaterial->textureTable,
                 DBAliasKind::MaterialTextureTable,
@@ -861,6 +943,40 @@ if (_material_texture_table_registration EQUAL -1
     OR _material_texture_table_load GREATER _material_texture_table_completion)
     message(FATAL_ERROR
         "Material texture-table provenance must begin before child loading and publish after completion")
+endif()
+string(FIND
+    "${_db_load_source}"
+    "DB_ConvertOffsetToPointer(
+                (uint32_t*)&varMaterial->stateBitsTable,
+                stateBitsByteCount"
+    _material_state_table_resolution)
+string(FIND
+    "${_db_load_source}"
+    "if (!DB_ValidateMaterialSemantics(varMaterial))
+    {
+        DB_PopStreamPos();
+        return false;
+    }
+    DB_PopStreamPos();
+    return true;
+}"
+    _material_semantic_validation)
+string(FIND
+    "${_db_load_source}"
+    "if (!Load_Material(1))"
+    _material_graph_load)
+string(FIND
+    "${_db_load_source}"
+    "Load_MaterialAsset((XAssetHeader *)varMaterialHandle)"
+    _material_asset_publication)
+if (_material_state_table_resolution EQUAL -1
+    OR _material_semantic_validation EQUAL -1
+    OR _material_graph_load EQUAL -1
+    OR _material_asset_publication EQUAL -1
+    OR _material_state_table_resolution GREATER _material_semantic_validation
+    OR _material_graph_load GREATER _material_asset_publication)
+    message(FATAL_ERROR
+        "Complete material graphs must pass semantic validation before asset publication")
 endif()
 string(FIND
     "${_db_load_source}"
