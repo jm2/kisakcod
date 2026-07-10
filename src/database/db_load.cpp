@@ -122,6 +122,273 @@ bool DB_ValidateXModelPieces(const XModelPieces *pieces, uint32_t pieceBytes)
     return true;
 }
 
+bool DB_GetXSurfaceCollisionTreeExtents(
+    const XSurfaceCollisionTree *tree,
+    uint32_t *nodeBytes,
+    uint32_t *leafBytes)
+{
+    if (nodeBytes)
+        *nodeBytes = 0;
+    if (leafBytes)
+        *leafBytes = 0;
+    if (!tree
+        || !nodeBytes
+        || !leafBytes
+        || !tree->nodes
+        || !tree->leafs
+        || !tree->nodeCount
+        || !tree->leafCount
+        || tree->nodeCount > db::validation::kMaxXSurfaceCollisionEntries
+        || tree->leafCount > db::validation::kMaxXSurfaceCollisionEntries
+        || !db::validation::CheckedSpanBytes(
+            tree->nodeCount,
+            disk32::kXSurfaceCollisionNodeBytes,
+            nodeBytes)
+        || !db::validation::CheckedSpanBytes(
+            tree->leafCount,
+            disk32::kXSurfaceCollisionLeafBytes,
+            leafBytes))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file surface collision-tree layout");
+        return false;
+    }
+    return true;
+}
+
+bool DB_GetXSurfaceLayout(
+    const XSurface *surface,
+    uint8_t *deformed,
+    uint32_t *rigidListBytes)
+{
+    if (deformed)
+        *deformed = 0;
+    if (rigidListBytes)
+        *rigidListBytes = 0;
+    if (!surface || !deformed || !rigidListBytes)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file surface layout output");
+        return false;
+    }
+
+    std::memcpy(deformed, &surface->deformed, sizeof(*deformed));
+    constexpr uint32_t maximumRigidLists = 128;
+    const bool rigidLayoutValid = *deformed
+        ? surface->vertListCount == 0 && !surface->vertList
+        : surface->vertListCount >= 1
+            && surface->vertListCount <= maximumRigidLists
+            && surface->vertList;
+    if (*deformed > 1
+        || !surface->vertCount
+        || !surface->triCount
+        || !surface->verts0
+        || !surface->triIndices
+        || !rigidLayoutValid
+        || !db::validation::CheckedSpanBytes(
+            surface->vertListCount,
+            disk32::kXRigidVertListBytes,
+            rigidListBytes))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file surface pointer/count layout");
+        return false;
+    }
+    return true;
+}
+
+bool DB_ValidateXSurfaceCollisionTreeGraph(
+    const XSurfaceCollisionTree *tree,
+    uint32_t nodeBytes,
+    uint32_t leafBytes)
+{
+    if (!tree)
+        return false;
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        if (!std::isfinite(tree->trans[axis])
+            || std::isnan(tree->scale[axis])
+            || tree->scale[axis] <= 0.0f)
+        {
+            Com_Error(ERR_DROP, "Invalid fast-file surface collision transform");
+            return false;
+        }
+    }
+
+    const db::relocation::Status nodeSpan = DB_ValidateStreamAddress(
+        tree->nodes,
+        nodeBytes,
+        16,
+        kDirectBlock4);
+    const db::relocation::Status leafSpan = DB_ValidateStreamAddress(
+        tree->leafs,
+        leafBytes,
+        2,
+        kDirectBlock4);
+    if (nodeSpan != db::relocation::Status::Ok
+        || leafSpan != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid fast-file surface collision child span: %s / %s",
+            db::relocation::StatusName(nodeSpan),
+            db::relocation::StatusName(leafSpan));
+        return false;
+    }
+
+    const db::validation::XSurfaceCollisionTopologyStatus topology =
+        db::validation::ValidateXSurfaceCollisionTopology(
+            tree->nodes,
+            tree->nodeCount,
+            tree->leafs,
+            tree->leafCount,
+            0,
+            UINT16_MAX,
+            UINT16_MAX);
+    if (topology != db::validation::XSurfaceCollisionTopologyStatus::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid fast-file surface collision topology: %s",
+            db::validation::XSurfaceCollisionTopologyStatusName(topology));
+        return false;
+    }
+    return true;
+}
+
+bool DB_ValidateLoadedXSurface(
+    const XSurface *surface,
+    uint8_t deformed)
+{
+    if (!surface)
+        return false;
+
+    uint32_t vertexBytes = 0;
+    uint32_t indexBytes = 0;
+    uint32_t rigidListBytes = 0;
+    if (!db::validation::CheckedSpanBytes(
+            surface->vertCount,
+            32,
+            &vertexBytes)
+        || !db::validation::CheckedSpanBytes(
+            surface->triCount,
+            6,
+            &indexBytes)
+        || !db::validation::CheckedSpanBytes(
+            surface->vertListCount,
+            disk32::kXRigidVertListBytes,
+            &rigidListBytes))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file surface extent");
+        return false;
+    }
+
+    const db::relocation::Status vertexSpan = DB_ValidateStreamAddress(
+        surface->verts0,
+        vertexBytes,
+        16,
+        kDirectBlock7);
+    const db::relocation::Status indexSpan = DB_ValidateStreamAddress(
+        surface->triIndices,
+        indexBytes,
+        16,
+        kDirectBlock8);
+    if (vertexSpan != db::relocation::Status::Ok
+        || indexSpan != db::relocation::Status::Ok
+        || !db::validation::XSurfaceTriangleIndicesValid(
+            surface->triIndices,
+            surface->triCount,
+            surface->vertCount))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file surface geometry");
+        return false;
+    }
+    if (deformed)
+        return true;
+
+    const db::relocation::Status rigidSpan = DB_ValidateStreamAddress(
+        surface->vertList,
+        rigidListBytes,
+        4,
+        kDirectBlock4);
+    if (rigidSpan != db::relocation::Status::Ok
+        || !db::validation::XSurfaceRigidPartitionValid(
+            surface->vertList,
+            surface->vertListCount,
+            surface->vertCount,
+            surface->triCount,
+            surface->triIndices))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file rigid surface partition");
+        return false;
+    }
+
+    if (!varXModel || !varXModel->numBones)
+    {
+        Com_Error(ERR_DROP, "Rigid fast-file surface has no model bones");
+        return false;
+    }
+    for (uint32_t index = 0; index < surface->vertListCount; ++index)
+    {
+        const XRigidVertList &rigid = surface->vertList[index];
+        if ((rigid.boneOffset & 63u) != 0
+            || (rigid.boneOffset >> 6) >= varXModel->numBones)
+        {
+            Com_Error(ERR_DROP, "Invalid fast-file rigid-surface bone offset");
+            return false;
+        }
+
+        const db::relocation::Status treeHeader = DB_ValidateStreamAddress(
+            rigid.collisionTree,
+            disk32::kXSurfaceCollisionTreeBytes,
+            4,
+            kDirectBlock4);
+        uint32_t nodeBytes = 0;
+        uint32_t leafBytes = 0;
+        if (treeHeader != db::relocation::Status::Ok
+            || !DB_GetXSurfaceCollisionTreeExtents(
+                rigid.collisionTree,
+                &nodeBytes,
+                &leafBytes))
+        {
+            Com_Error(ERR_DROP, "Invalid completed surface collision-tree header");
+            return false;
+        }
+        const db::relocation::Status nodeSpan = DB_ValidateStreamAddress(
+            rigid.collisionTree->nodes,
+            nodeBytes,
+            16,
+            kDirectBlock4);
+        const db::relocation::Status leafSpan = DB_ValidateStreamAddress(
+            rigid.collisionTree->leafs,
+            leafBytes,
+            2,
+            kDirectBlock4);
+        if (nodeSpan != db::relocation::Status::Ok
+            || leafSpan != db::relocation::Status::Ok)
+        {
+            Com_Error(ERR_DROP, "Invalid completed surface collision-tree children");
+            return false;
+        }
+
+        const db::validation::XSurfaceCollisionTopologyStatus topology =
+            db::validation::ValidateXSurfaceCollisionTopology(
+                rigid.collisionTree->nodes,
+                rigid.collisionTree->nodeCount,
+                rigid.collisionTree->leafs,
+                rigid.collisionTree->leafCount,
+                rigid.triOffset,
+                rigid.triCount,
+                surface->triCount);
+        if (topology != db::validation::XSurfaceCollisionTopologyStatus::Ok)
+        {
+            Com_Error(
+                ERR_DROP,
+                "Invalid rigid surface collision relationship: %s",
+                db::validation::XSurfaceCollisionTopologyStatusName(topology));
+            return false;
+        }
+    }
+    return true;
+}
+
 bool DB_ValidateSpeakerMap(const SpeakerMap *speakerMap)
 {
     if (!speakerMap || !speakerMap->name)
@@ -2575,7 +2842,11 @@ void __cdecl Load_GfxBrushModelArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_XSurfaceCollisionLeafArray(bool atStreamStart, int32_t count)
 {
-    Load_StreamArray(atStreamStart, (uint8_t *)varXSurfaceCollisionLeaf, count, 2);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varXSurfaceCollisionLeaf,
+        count,
+        disk32::kXSurfaceCollisionLeafBytes);
 }
 
 cbrush_t *__cdecl AllocLoad_GfxPackedVertex0()
@@ -2585,57 +2856,141 @@ cbrush_t *__cdecl AllocLoad_GfxPackedVertex0()
 
 void __cdecl Load_XSurfaceCollisionNodeArray(bool atStreamStart, int32_t count)
 {
-    Load_StreamArray(atStreamStart, (uint8_t *)varXSurfaceCollisionNode, count, 16);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varXSurfaceCollisionNode,
+        count,
+        disk32::kXSurfaceCollisionNodeBytes);
 }
 
-void __cdecl Load_XSurfaceCollisionTree(bool atStreamStart)
+bool __cdecl Load_XSurfaceCollisionTree(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varXSurfaceCollisionTree, 40);
-    if (varXSurfaceCollisionTree->nodes)
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varXSurfaceCollisionTree,
+        disk32::kXSurfaceCollisionTreeBytes);
+    uint32_t nodeBytes = 0;
+    uint32_t leafBytes = 0;
+    if (!DB_GetXSurfaceCollisionTreeExtents(
+            varXSurfaceCollisionTree,
+            &nodeBytes,
+            &leafBytes))
     {
-        varXSurfaceCollisionTree->nodes = (XSurfaceCollisionNode *)AllocLoad_GfxPackedVertex0();
-        varXSurfaceCollisionNode = varXSurfaceCollisionTree->nodes;
-        Load_XSurfaceCollisionNodeArray(1, varXSurfaceCollisionTree->nodeCount);
+        return false;
     }
-    if (varXSurfaceCollisionTree->leafs)
+
+    varXSurfaceCollisionTree->nodes =
+        (XSurfaceCollisionNode *)AllocLoad_GfxPackedVertex0();
+    if (!varXSurfaceCollisionTree->nodes
+        || !DB_IsStreamRangeValid(
+            varXSurfaceCollisionTree->nodes,
+            nodeBytes))
     {
-        varXSurfaceCollisionTree->leafs = (XSurfaceCollisionLeaf *)AllocLoad_XBlendInfo();
-        varXSurfaceCollisionLeaf = varXSurfaceCollisionTree->leafs;
-        Load_XSurfaceCollisionLeafArray(1, varXSurfaceCollisionTree->leafCount);
+        Com_Error(ERR_DROP, "Fast-file surface collision nodes exceed block 4");
+        return false;
     }
+    varXSurfaceCollisionNode = varXSurfaceCollisionTree->nodes;
+    Load_XSurfaceCollisionNodeArray(
+        1,
+        static_cast<int32_t>(varXSurfaceCollisionTree->nodeCount));
+
+    varXSurfaceCollisionTree->leafs =
+        (XSurfaceCollisionLeaf *)AllocLoad_XBlendInfo();
+    if (!varXSurfaceCollisionTree->leafs
+        || !DB_IsStreamRangeValid(
+            varXSurfaceCollisionTree->leafs,
+            leafBytes))
+    {
+        Com_Error(ERR_DROP, "Fast-file surface collision leaves exceed block 4");
+        return false;
+    }
+    varXSurfaceCollisionLeaf = varXSurfaceCollisionTree->leafs;
+    Load_XSurfaceCollisionLeafArray(
+        1,
+        static_cast<int32_t>(varXSurfaceCollisionTree->leafCount));
+
+    return DB_ValidateXSurfaceCollisionTreeGraph(
+        varXSurfaceCollisionTree,
+        nodeBytes,
+        leafBytes);
 }
 
-void __cdecl Load_XRigidVertList(bool atStreamStart)
+bool __cdecl Load_XRigidVertList(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varXRigidVertList, 12);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varXRigidVertList,
+        disk32::kXRigidVertListBytes);
     if (varXRigidVertList->collisionTree)
     {
         if (varXRigidVertList->collisionTree == (XSurfaceCollisionTree *)-1)
         {
             varXRigidVertList->collisionTree = (XSurfaceCollisionTree *)AllocLoad_FxElemVisStateSample();
+            if (!varXRigidVertList->collisionTree)
+            {
+                Com_Error(ERR_DROP, "Cannot allocate fast-file surface collision tree");
+                return false;
+            }
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                varXRigidVertList->collisionTree,
+                DBAliasKind::XSurfaceCollisionTree);
+            if (!completed)
+                return false;
             varXSurfaceCollisionTree = varXRigidVertList->collisionTree;
-            Load_XSurfaceCollisionTree(1);
+            if (!Load_XSurfaceCollisionTree(1))
+                return false;
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::XSurfaceCollisionTree,
+                    varXRigidVertList->collisionTree,
+                    disk32::kXSurfaceCollisionTreeBytes,
+                    disk32::kXSurfaceCollisionTreeBytes))
+            {
+                return false;
+            }
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varXRigidVertList->collisionTree);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)&varXRigidVertList->collisionTree,
+                DBAliasKind::XSurfaceCollisionTree,
+                disk32::kXSurfaceCollisionTreeBytes);
         }
     }
+    return true;
 }
 
-void __cdecl Load_XRigidVertListArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_XRigidVertListArray(bool atStreamStart, int32_t count)
 {
     XRigidVertList *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varXRigidVertList, count, 12);
+    int32_t rigidListBytes = 0;
+    if (!db::validation::CheckedArrayBytes(
+            count,
+            disk32::kXRigidVertListBytes,
+            &rigidListBytes)
+        || !DB_IsStreamRangeValid(
+            varXRigidVertList,
+            static_cast<uint32_t>(rigidListBytes)))
+    {
+        Com_Error(ERR_DROP, "Fast-file rigid-vertex lists exceed block 4");
+        return false;
+    }
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varXRigidVertList,
+        count,
+        disk32::kXRigidVertListBytes);
     var = varXRigidVertList;
     for (i = 0; i < count; ++i)
     {
         varXRigidVertList = var;
-        Load_XRigidVertList(0);
+        if (!Load_XRigidVertList(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
 void __cdecl Load_GfxVertexBuffer(bool atStreamStart)
@@ -2706,9 +3061,18 @@ void __cdecl Load_XZoneHandle(bool atStreamStart)
     Load_GetCurrentZoneHandle(varXZoneHandle);
 }
 
-void __cdecl Load_XSurface(bool atStreamStart)
+bool __cdecl Load_XSurface(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (unsigned char*)varXSurface, 56);
+    uint8_t deformed = 0;
+    uint32_t rigidListBytes = 0;
+    if (!DB_GetXSurfaceLayout(
+            varXSurface,
+            &deformed,
+            &rigidListBytes))
+    {
+        return false;
+    }
     const uint32_t vertexByteCount = DB_CheckedDirectSpanBytes(
         varXSurface->vertCount,
         32,
@@ -2744,17 +3108,36 @@ void __cdecl Load_XSurface(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+    DBAliasHandle completedRigidLists;
     if (varXSurface->vertList)
     {
         if (varXSurface->vertList == (XRigidVertList *)-1)
         {
             varXSurface->vertList = (XRigidVertList *)AllocLoad_FxElemVisStateSample();
+            if (!varXSurface->vertList)
+            {
+                Com_Error(ERR_DROP, "Cannot allocate fast-file rigid-vertex lists");
+                return false;
+            }
+            completedRigidLists = DB_RegisterPointerSlot(
+                varXSurface->vertList,
+                DBAliasKind::XRigidVertListArray);
+            if (!completedRigidLists)
+                return false;
             varXRigidVertList = varXSurface->vertList;
-            Load_XRigidVertListArray(1, varXSurface->vertListCount);
+            if (!Load_XRigidVertListArray(
+                    1,
+                    static_cast<int32_t>(varXSurface->vertListCount)))
+            {
+                return false;
+            }
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varXSurface->vertList);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)&varXSurface->vertList,
+                DBAliasKind::XRigidVertListArray,
+                rigidListBytes);
         }
     }
     DB_PushStreamPos(8);
@@ -2776,9 +3159,22 @@ void __cdecl Load_XSurface(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+    if (!DB_ValidateLoadedXSurface(varXSurface, deformed))
+        return false;
+    if (completedRigidLists
+        && !DB_CompleteObject(
+            completedRigidLists,
+            DBAliasKind::XRigidVertListArray,
+            varXSurface->vertList,
+            rigidListBytes,
+            rigidListBytes))
+    {
+        return false;
+    }
+    return true;
 }
 
-void __cdecl Load_XSurfaceArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_XSurfaceArray(bool atStreamStart, int32_t count)
 {
     XSurface *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
@@ -2788,9 +3184,11 @@ void __cdecl Load_XSurfaceArray(bool atStreamStart, int32_t count)
     for (i = 0; i < count; ++i)
     {
         varXSurface = var;
-        Load_XSurface(0);
+        if (!Load_XSurface(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
 void __cdecl Load_GfxTextureLoad(bool atStreamStart)
@@ -4479,7 +4877,7 @@ void __cdecl Load_PhysGeomList(bool atStreamStart)
     }
 }
 
-void __cdecl Load_XModel(bool atStreamStart)
+bool __cdecl Load_XModel(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varXModel, 220);
     const int32_t nonRootBoneCount = DB_CheckedCountDifference(
@@ -4623,7 +5021,11 @@ void __cdecl Load_XModel(bool atStreamStart)
     {
         varXModel->surfs = (XSurface *)AllocLoad_FxElemVisStateSample();
         varXSurface = varXModel->surfs;
-        Load_XSurfaceArray(1, varXModel->numsurfs);
+        if (!Load_XSurfaceArray(1, varXModel->numsurfs))
+        {
+            DB_PopStreamPos();
+            return false;
+        }
     }
     if (varXModel->materialHandles)
     {
@@ -4659,6 +5061,7 @@ void __cdecl Load_XModel(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+    return true;
 }
 
 void __cdecl Load_XModelPtr(bool atStreamStart)
@@ -4679,7 +5082,12 @@ void __cdecl Load_XModelPtr(bool atStreamStart)
                 inserted = DB_InsertPointer(DBAliasKind::XModel);
             else
                 inserted = {};
-            Load_XModel(1);
+            if (!Load_XModel(1))
+            {
+                *varXModelPtr = nullptr;
+                DB_PopStreamPos();
+                return;
+            }
             Load_XModelAsset((XAssetHeader *)varXModelPtr);
             if (inserted)
                 DB_SetInsertedPointer(

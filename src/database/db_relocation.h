@@ -76,6 +76,8 @@ enum class AliasKind : std::uint8_t
     GfxLight,
     StringTable,
     XModelPieces,
+    XSurfaceCollisionTree,
+    XRigidVertListArray,
     Count,
 };
 
@@ -97,6 +99,8 @@ constexpr bool RequiresExactStartPublication(AliasKind kind)
     case AliasKind::GfxLight:
     case AliasKind::StringTable:
     case AliasKind::XModelPieces:
+    case AliasKind::XSurfaceCollisionTree:
+    case AliasKind::XRigidVertListArray:
         return true;
     default:
         return false;
@@ -134,6 +138,20 @@ constexpr bool CompletedSharedObjectSchemaValid(
     case AliasKind::XModelPieces:
         fixedBytes = disk32::kXModelPiecesBytes;
         break;
+    case AliasKind::XSurfaceCollisionTree:
+        fixedBytes = disk32::kXSurfaceCollisionTreeBytes;
+        break;
+    case AliasKind::XRigidVertListArray:
+        if (metadata != materializedBytes
+            || metadata < disk32::kXRigidVertListBytes
+            || metadata > static_cast<std::uint32_t>(
+                (std::numeric_limits<std::int32_t>::max)())
+            || metadata % disk32::kXRigidVertListBytes != 0)
+        {
+            return false;
+        }
+        *headerBytes = metadata;
+        return true;
     case AliasKind::SndAliasArray:
         if (metadata != materializedBytes
             || metadata < disk32::kSndAliasBytes

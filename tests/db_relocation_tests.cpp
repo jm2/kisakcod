@@ -677,6 +677,14 @@ int main()
         db::relocation::RequiresExactStartPublication(AliasKind::XModelPieces),
         "model-pieces headers require exact completed starts");
     Expect(
+        db::relocation::RequiresExactStartPublication(
+            AliasKind::XSurfaceCollisionTree),
+        "surface collision trees require exact completed starts");
+    Expect(
+        db::relocation::RequiresExactStartPublication(
+            AliasKind::XRigidVertListArray),
+        "rigid-vertex lists require exact completed starts");
+    Expect(
         !db::relocation::RequiresExactStartPublication(AliasKind::Material),
         "redirectable asset aliases do not require their slot address");
     Expect(
@@ -688,7 +696,11 @@ int main()
             && disk32::kGfxLightBytes == 64u
             && disk32::kStringTableBytes == 16u
             && disk32::kXModelPieceBytes == 16u
-            && disk32::kXModelPiecesBytes == 12u,
+            && disk32::kXModelPiecesBytes == 12u
+            && disk32::kXSurfaceCollisionTreeBytes == 40u
+            && disk32::kXSurfaceCollisionNodeBytes == 16u
+            && disk32::kXSurfaceCollisionLeafBytes == 2u
+            && disk32::kXRigidVertListBytes == 12u,
         "completed shared-object disk32 schemas remain fixed");
 
     struct CompletedSchemaCase
@@ -705,6 +717,10 @@ int main()
         {AliasKind::GfxLight, disk32::kGfxLightBytes},
         {AliasKind::StringTable, disk32::kStringTableBytes},
         {AliasKind::XModelPieces, disk32::kXModelPiecesBytes},
+        {AliasKind::XSurfaceCollisionTree,
+            disk32::kXSurfaceCollisionTreeBytes},
+        {AliasKind::XRigidVertListArray,
+            2 * disk32::kXRigidVertListBytes},
     };
     for (const CompletedSchemaCase &schema : completedSchemas)
     {
@@ -771,6 +787,40 @@ int main()
             maximumAliasBytes + disk32::kSndAliasBytes,
             &schemaHeader),
         "oversized completed sound-alias array rejected");
+    const std::uint32_t maximumRigidListBytes =
+        static_cast<std::uint32_t>(
+            (std::numeric_limits<std::int32_t>::max)())
+        / disk32::kXRigidVertListBytes
+        * disk32::kXRigidVertListBytes;
+    Expect(
+        db::relocation::CompletedSharedObjectSchemaValid(
+            AliasKind::XRigidVertListArray,
+            maximumRigidListBytes,
+            maximumRigidListBytes,
+            &schemaHeader)
+            && schemaHeader == maximumRigidListBytes,
+        "largest int32-representable rigid-vertex list accepted");
+    Expect(
+        !db::relocation::CompletedSharedObjectSchemaValid(
+            AliasKind::XRigidVertListArray,
+            0,
+            0,
+            &schemaHeader),
+        "empty completed rigid-vertex list rejected");
+    Expect(
+        !db::relocation::CompletedSharedObjectSchemaValid(
+            AliasKind::XRigidVertListArray,
+            disk32::kXRigidVertListBytes + 1,
+            disk32::kXRigidVertListBytes + 1,
+            &schemaHeader),
+        "non-integral completed rigid-vertex list rejected");
+    Expect(
+        !db::relocation::CompletedSharedObjectSchemaValid(
+            AliasKind::XRigidVertListArray,
+            maximumRigidListBytes + disk32::kXRigidVertListBytes,
+            maximumRigidListBytes + disk32::kXRigidVertListBytes,
+            &schemaHeader),
+        "oversized completed rigid-vertex list rejected");
     Expect(
         !db::relocation::CompletedSharedObjectSchemaValid(
             AliasKind::Material,

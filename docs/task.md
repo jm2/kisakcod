@@ -8,14 +8,15 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: resume the remaining 10 legacy direct references, then add a Windows x86
+- Active work: resume the remaining 8 legacy direct references, then add a Windows x86
   headless compile/link CI leg.
-- Last completed batch: embedded model-pieces headers now register their exact 12-byte serialized
-  block-4 start, load and validate their bounded `uint16 × 16` child array, and publish only after
-  all model fixups complete. Direct references require that exact completed type and extent.
-  Oversized, nameless, non-finite, and model-less piece graphs are rejected; the runtime now also
-  declines models without physics presets instead of dereferencing them. Top-level
-  `ASSET_TYPE_XMODELPIECES` registration remains a separate unsupported path.
+- Last completed batch: surface collision trees and rigid-vertex-list arrays now register exact
+  block-4 starts and publish only after nested fixups and consumer-specific validation. Loading
+  bounds node/leaf/list spans before signed array calls; rejects disconnected, cyclic, shared,
+  out-of-range, inverted, queue-unsafe, and triangle-unsafe collision graphs; checks rigid vertex,
+  triangle, bone, and index partitions; and preserves the source format's one trailing padding
+  triangle. Runtime traversal also refuses a full 64-slot node ring before overwriting live work,
+  and its no-op prefetch stubs no longer truncate native-width addresses.
 - Portable validation: 12/12 tests pass locally. The production relocation registry is
   also strict-warning clean under GCC/Clang and GCC ILP32 syntax checking; ASan/UBSan
   pass locally with leak detection disabled because LeakSanitizer cannot run under the
@@ -23,7 +24,8 @@ work item changes. Do not create session-specific handoff files.
   adapter or media ownership paths.
 - Windows validation: AABB warning repair run 29096212752, bounded-direct-reference run
   29096704210, and exact shared-object run 29098235207 each passed all eight jobs: five portable
-  targets and three Windows x86 engine builds. The model-pieces batch requires its own run after push.
+  targets and three Windows x86 engine builds. Model-pieces run 29099309312 also passed all eight
+  jobs. The surface collision batch requires its own run after push.
 
 ## Milestone status
 
@@ -31,10 +33,10 @@ work item changes. Do not create session-specific handoff files.
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 builds; five native utility-test runners; engine runtime smoke and release workflows remain unexercised. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 40/50 bounded direct references, pre-publication material/sound/world/model-pieces graph and state validation, bounded runtime material consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures and 10 direct relocations remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 42/50 bounded direct references, pre-publication material/sound/world/model/surface graph and state validation, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures and 8 direct relocations remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
-| M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, and 13 exact completed object types exist; packed mirrors, 10 direct offsets, broader completed-object relocation, and runtime widening remain. |
+| M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, and 15 exact completed object types exist; packed mirrors, 8 direct offsets, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
 ## Target matrix
@@ -50,7 +52,7 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Resume the remaining 10 graph/composite relocations. Add deferred typed fixups for authentic
+1. Resume the remaining 8 graph/composite relocations. Add deferred typed fixups for authentic
    forward references and derived adjacency extents rather than weakening materialization checks.
 2. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
 3. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
@@ -88,6 +90,10 @@ work item changes. Do not create session-specific handoff files.
   budget identical spans. The separate clipmap `CollisionAabbTree` still needs material,
   child/partition, leaf-owner, finite-bounds, acyclic-topology, and depth validation before its
   recursive collision/physics consumers can treat untrusted maps as safe.
+- Rigid model-surface collision topology is validated, but deformed-surface blend bucket totals,
+  bone-offset records, and weight semantics still need a pre-publication pass. Collision-tree
+  scales intentionally allow positive infinity because the legacy source builder divides by zero
+  on planar axes; fix and fixture-test degenerate-axis encoding before requiring finite scales.
 - Database-thread `Com_Error` handling is still process-fatal, so malformed
   fast-file rejection remains a denial-of-service boundary until zone rollback
   and recoverable database-thread error propagation are implemented.
@@ -98,9 +104,9 @@ work item changes. Do not create session-specific handoff files.
 - Weapon registration still protects the 128-entry `bg_weaponDefs` table only with a
   release-disabled assertion after incrementing the index. Single-player's 128-entry
   editable accuracy-graph registry has the same assertion-only overflow pattern.
-- Ten explicitly labeled legacy direct fast-file relocations still prove only
+- Eight explicitly labeled legacy direct fast-file relocations still prove only
   one destination byte is in-bounds. Twenty-three raw/POD fields, three string/holder fields,
-  thirteen exact completed object types, and one completed-but-not-yet-typed bone-name array now
+  fifteen exact completed object types, and one completed-but-not-yet-typed bone-name array now
   enforce bounded materialization or exact typed completion, but broader graph/type provenance
   plus runtime widening remain M5 requirements. Physics brush-side plane, path-tree, and portal-cell
   tokens include known or plausible forward references and therefore need a deferred-fixup design

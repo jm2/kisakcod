@@ -441,6 +441,8 @@ bool __cdecl DB_CompleteObject(
     case DBAliasKind::GfxLight:
     case DBAliasKind::StringTable:
     case DBAliasKind::XModelPieces:
+    case DBAliasKind::XSurfaceCollisionTree:
+    case DBAliasKind::XRigidVertListArray:
         if (!db::relocation::CompletedSharedObjectSchemaValid(
                 expectedKind,
                 metadata,

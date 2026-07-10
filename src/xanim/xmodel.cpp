@@ -327,14 +327,11 @@ void __cdecl XModelTraceLineAnimatedPartBits(
 
 void __cdecl PrefetchArray_XSurfaceCollisionNode_(const XSurfaceCollisionNode *mem, uint32_t elementCount)
 {
-    const unsigned __int8 *memIter; // [esp+0h] [ebp-8h]
-
-    if (!elementCount)
+    if (!mem || !elementCount)
+    {
         MyAssertHandler(".\\xanim\\xmodel.cpp", 883, 0, "%s", "elementCount");
-    for (memIter = (const unsigned __int8 *)((uintptr_t)mem & 0xFFFFFF80); 
-        memIter <= (const unsigned __int8 *)(((uintptr_t) & mem[elementCount - 1].childCount + 1) & 0xFFFFFF80);
-        memIter += 128)
-        ;
+        return;
+    }
 }
 
 char __cdecl XSurfaceVisitTrianglesInAabb(
@@ -348,9 +345,15 @@ char __cdecl XSurfaceVisitTrianglesInAabb(
     XSurfaceGetTriCandidatesLocals locals; // [esp+6Ch] [ebp-2B0h] BYREF
     XRigidVertList *vertList; // [esp+318h] [ebp-4h]
 
+    if (!surface || !aabbMins || !aabbMaxs || !visitorFunc)
+        return 0;
     if (surface->deformed)
+    {
         MyAssertHandler(".\\xanim\\xmodel.cpp", 1093, 0, "%s", "!surface->deformed");
-    if (vertListIndex >= surface->vertListCount)
+        return 0;
+    }
+    if (!surface->vertList || vertListIndex >= surface->vertListCount)
+    {
         MyAssertHandler(
             ".\\xanim\\xmodel.cpp",
             1095,
@@ -358,10 +361,19 @@ char __cdecl XSurfaceVisitTrianglesInAabb(
             "%s\n\t(vertListIndex) = %i",
             "(vertListIndex >= 0 && vertListIndex < surface->vertListCount)",
             vertListIndex);
+        return 0;
+    }
     vertList = &surface->vertList[vertListIndex];
     locals.tree = vertList->collisionTree;
-    if (!locals.tree)
+    if (!locals.tree
+        || !locals.tree->nodes
+        || !locals.tree->leafs
+        || !surface->triIndices
+        || !surface->verts0)
+    {
         MyAssertHandler(".\\xanim\\xmodel.cpp", 1098, 0, "%s", "locals.tree");
+        return 0;
+    }
     PrefetchArray_XSurfaceCollisionNode_(locals.tree->nodes, 1u);
     locals.visitorFunc = visitorFunc;
     locals.visitorContext = visitorContext;
@@ -438,14 +450,11 @@ bool __cdecl XSurfaceVisitTrianglesInAabb_ProcessVertices(XSurfaceGetTriCandidat
 
 void __cdecl PrefetchArray_GfxPackedVertex_(const GfxPackedVertex *mem, uint32_t elementCount)
 {
-    const unsigned __int8 *memIter; // [esp+0h] [ebp-8h]
-
-    if (!elementCount)
+    if (!mem || !elementCount)
+    {
         MyAssertHandler(".\\xanim\\xmodel.cpp", 883, 0, "%s", "elementCount");
-    for (memIter = (const unsigned __int8*)((uintptr_t)mem & 0xFFFFFF80); 
-        memIter <= (const unsigned __int8*)(((uintptr_t) & mem[elementCount - 1].tangent + 3) & 0xFFFFFF80);
-        memIter += 128)
-        ;
+        return;
+    }
 }
 char __cdecl XSurfaceVisitTrianglesInAabb_ProcessTriangles(XSurfaceGetTriCandidatesLocals *locals)
 {
@@ -479,15 +488,10 @@ char __cdecl XSurfaceVisitTrianglesInAabb_ProcessTriangles(XSurfaceGetTriCandida
 
 void __cdecl PrefetchArray_XSurfaceCollisionLeaf_(const XSurfaceCollisionLeaf *mem, uint32_t elementCount)
 {
-    const unsigned __int8 *memIter; // [esp+0h] [ebp-8h]
-
-    if (!elementCount)
-        MyAssertHandler(".\\xanim\\xmodel.cpp", 883, 0, "%s", "elementCount");
-    for (memIter = (const unsigned __int8*)((uintptr_t)mem & 0xFFFFFF80);
-        memIter <= (const unsigned __int8*)(((uintptr_t) & mem[elementCount - 1].triangleBeginIndex + 1) & 0xFFFFFF80);
-        memIter += 128)
+    if (!mem || !elementCount)
     {
-        ;
+        MyAssertHandler(".\\xanim\\xmodel.cpp", 883, 0, "%s", "elementCount");
+        return;
     }
 }
 
@@ -540,6 +544,7 @@ char __cdecl XSurfaceVisitTrianglesInAabb_ProcessNode(XSurfaceGetTriCandidatesLo
     uint32_t nodeIndex; // [esp+58h] [ebp-Ch]
     uint32_t nodeEndIndex; // [esp+5Ch] [ebp-8h]
     uint32_t nodeBeginIndex; // [esp+60h] [ebp-4h]
+    uint32_t nextNodeQueueEnd;
 
     nodeBeginIndex = locals->nodeQueue[locals->nodeQueueBegin].beginIndex;
     nodeEndIndex = locals->nodeQueue[locals->nodeQueueBegin].count + nodeBeginIndex;
@@ -556,14 +561,17 @@ char __cdecl XSurfaceVisitTrianglesInAabb_ProcessNode(XSurfaceGetTriCandidatesLo
         {
             childBeginIndex = node->childBeginIndex;
             childCount = node->childCount;
+            if (!(childCount & 0x7FFF))
+                return 0;
             if (childCount < 0x8000)
             {
+                nextNodeQueueEnd = (locals->nodeQueueEnd + 1) & 0x3F;
+                if (nextNodeQueueEnd == locals->nodeQueueBegin)
+                    return 0;
                 PrefetchArray_XSurfaceCollisionNode_(&locals->tree->nodes[childBeginIndex], childCount);
                 locals->nodeQueue[locals->nodeQueueEnd].beginIndex = childBeginIndex;
                 locals->nodeQueue[locals->nodeQueueEnd].count = childCount;
-                locals->nodeQueueEnd = ((unsigned __int8)locals->nodeQueueEnd + 1) & 0x3F;
-                if (locals->nodeQueueBegin == locals->nodeQueueEnd)
-                    MyAssertHandler(".\\xanim\\xmodel.cpp", 1079, 0, "%s", "locals.nodeQueueBegin != locals.nodeQueueEnd");
+                locals->nodeQueueEnd = nextNodeQueueEnd;
             }
             else
             {

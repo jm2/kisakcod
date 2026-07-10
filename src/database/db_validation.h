@@ -1,8 +1,11 @@
 #pragma once
 
+#include <cstddef>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <new>
+#include <vector>
 
 #include "db_disk32.h"
 
@@ -646,6 +649,319 @@ constexpr bool AllU16Below(
             return false;
     }
     return true;
+}
+
+constexpr bool UnsignedSpanWithinPartition(
+    std::uint64_t start,
+    std::uint64_t count,
+    std::uint64_t partitionStart,
+    std::uint64_t partitionCount);
+
+inline bool CoverageComplete(
+    const std::uint8_t *coverage,
+    std::uint64_t coverageCount);
+
+inline bool XSurfaceTriangleIndicesValid(
+    const std::uint16_t *indices,
+    std::uint32_t triangleCount,
+    std::uint32_t vertexCount)
+{
+    if (triangleCount
+        > (std::numeric_limits<std::uint32_t>::max)() / 3u)
+    {
+        return false;
+    }
+    return AllU16Below(indices, triangleCount * 3u, vertexCount);
+}
+
+inline bool XSurfaceTrailingPaddingTriangleValid(
+    const std::uint16_t *indices,
+    std::uint32_t coveredTriangleCount,
+    std::uint32_t surfaceTriangleCount)
+{
+    if (!indices
+        || surfaceTriangleCount < 2
+        || (surfaceTriangleCount & 1u) != 0
+        || coveredTriangleCount != surfaceTriangleCount - 1
+        || surfaceTriangleCount
+            > (std::numeric_limits<std::uint32_t>::max)() / 3u)
+    {
+        return false;
+    }
+
+    const std::uint32_t tail = 3u * (surfaceTriangleCount - 1);
+    return indices[tail] == indices[tail - 1]
+        && indices[tail + 1] == indices[tail]
+        && indices[tail + 2] == indices[tail];
+}
+
+template <typename RigidVertList>
+inline bool XSurfaceRigidPartitionValid(
+    const RigidVertList *lists,
+    std::size_t listCount,
+    std::uint32_t surfaceVertexCount,
+    std::uint32_t surfaceTriangleCount,
+    const std::uint16_t *triangleIndices)
+{
+    if ((!lists && listCount)
+        || !XSurfaceTriangleIndicesValid(
+            triangleIndices,
+            surfaceTriangleCount,
+            surfaceVertexCount))
+    {
+        return false;
+    }
+
+    std::uint32_t coveredVertices = 0;
+    std::uint32_t coveredTriangles = 0;
+    for (std::size_t index = 0; index < listCount; ++index)
+    {
+        const RigidVertList &list = lists[index];
+        const std::uint32_t vertexCount = list.vertCount;
+        const std::uint32_t triangleOffset = list.triOffset;
+        const std::uint32_t triangleCount = list.triCount;
+        if (!list.collisionTree
+            || vertexCount == 0
+            || triangleCount == 0
+            || triangleOffset != coveredTriangles
+            || coveredVertices > surfaceVertexCount
+            || vertexCount > surfaceVertexCount - coveredVertices
+            || coveredTriangles > surfaceTriangleCount
+            || triangleCount > surfaceTriangleCount - coveredTriangles)
+        {
+            return false;
+        }
+        coveredVertices += vertexCount;
+        coveredTriangles += triangleCount;
+    }
+
+    return coveredVertices == surfaceVertexCount
+        && (coveredTriangles == surfaceTriangleCount
+            || XSurfaceTrailingPaddingTriangleValid(
+                triangleIndices,
+                coveredTriangles,
+                surfaceTriangleCount));
+}
+
+// A 16-bit begin plus the 15-bit decoded count can address [0, 98,302).
+constexpr std::uint32_t kMaxXSurfaceCollisionEntries = UINT32_C(98302);
+constexpr std::uint32_t kXSurfaceCollisionNodeRangeQueueCapacity = 64;
+
+enum class XSurfaceCollisionTopologyStatus : std::uint8_t
+{
+    Ok,
+    InvalidTree,
+    InvalidBounds,
+    InvalidChildSpan,
+    InvalidTopology,
+    InvalidTriangleSpan,
+    NodeRangeQueueCapacityExceeded,
+    AllocationFailure,
+};
+
+constexpr const char *XSurfaceCollisionTopologyStatusName(
+    XSurfaceCollisionTopologyStatus status)
+{
+    switch (status)
+    {
+    case XSurfaceCollisionTopologyStatus::Ok:
+        return "ok";
+    case XSurfaceCollisionTopologyStatus::InvalidTree:
+        return "invalid tree pointer/count";
+    case XSurfaceCollisionTopologyStatus::InvalidBounds:
+        return "invalid node bounds";
+    case XSurfaceCollisionTopologyStatus::InvalidChildSpan:
+        return "invalid child span";
+    case XSurfaceCollisionTopologyStatus::InvalidTopology:
+        return "disconnected or multiply-owned tree entry";
+    case XSurfaceCollisionTopologyStatus::InvalidTriangleSpan:
+        return "leaf triangle outside its rigid partition";
+    case XSurfaceCollisionTopologyStatus::NodeRangeQueueCapacityExceeded:
+        return "node range queue capacity exceeded";
+    case XSurfaceCollisionTopologyStatus::AllocationFailure:
+        return "topology work allocation failed";
+    }
+    return "unknown";
+}
+
+struct XSurfaceCollisionNodeRange
+{
+    std::uint32_t begin;
+    std::uint32_t count;
+};
+
+template <typename Node, typename Leaf>
+inline XSurfaceCollisionTopologyStatus ValidateXSurfaceCollisionTopology(
+    const Node *nodes,
+    std::size_t nodeCount,
+    const Leaf *leafs,
+    std::size_t leafCount,
+    std::uint32_t rigidTriangleOffset,
+    std::uint32_t rigidTriangleCount,
+    std::uint32_t surfaceTriangleCount)
+{
+    if (!nodes
+        || !leafs
+        || nodeCount == 0
+        || leafCount == 0
+        || nodeCount > static_cast<std::size_t>(kMaxXSurfaceCollisionEntries)
+        || leafCount > static_cast<std::size_t>(kMaxXSurfaceCollisionEntries))
+    {
+        return XSurfaceCollisionTopologyStatus::InvalidTree;
+    }
+    if (!UnsignedSpanWithinPartition(
+            rigidTriangleOffset,
+            rigidTriangleCount,
+            0,
+            surfaceTriangleCount))
+    {
+        return XSurfaceCollisionTopologyStatus::InvalidTriangleSpan;
+    }
+
+    try
+    {
+        const std::uint32_t nodeEntryCount =
+            static_cast<std::uint32_t>(nodeCount);
+        const std::uint32_t leafEntryCount =
+            static_cast<std::uint32_t>(leafCount);
+        std::vector<std::uint8_t> nodeOwners(nodeCount, UINT8_C(0));
+        std::vector<std::uint8_t> leafOwners(leafCount, UINT8_C(0));
+        std::vector<XSurfaceCollisionNodeRange> ranges;
+        ranges.reserve(nodeCount);
+        ranges.push_back({0, 1});
+        nodeOwners[0] = 1;
+
+        std::size_t rangeIndex = 0;
+        while (rangeIndex < ranges.size())
+        {
+            const XSurfaceCollisionNodeRange range = ranges[rangeIndex++];
+            const std::uint32_t rangeEnd = range.begin + range.count;
+            for (std::uint32_t nodeIndex = range.begin;
+                nodeIndex < rangeEnd;
+                ++nodeIndex)
+            {
+                const Node &node = nodes[nodeIndex];
+                for (std::uint32_t axis = 0; axis < 3; ++axis)
+                {
+                    if (node.aabb.mins[axis] > node.aabb.maxs[axis])
+                    {
+                        return XSurfaceCollisionTopologyStatus::InvalidBounds;
+                    }
+                }
+
+                const std::uint64_t rawChildCount =
+                    static_cast<std::uint64_t>(node.childCount);
+                const std::uint64_t rawChildBegin =
+                    static_cast<std::uint64_t>(node.childBeginIndex);
+                if (rawChildCount
+                        > (std::numeric_limits<std::uint16_t>::max)()
+                    || rawChildBegin
+                        > (std::numeric_limits<std::uint16_t>::max)())
+                {
+                    return XSurfaceCollisionTopologyStatus::InvalidChildSpan;
+                }
+
+                const bool hasLeafChildren =
+                    (rawChildCount & UINT64_C(0x8000)) != 0;
+                const std::uint32_t childCount = static_cast<std::uint32_t>(
+                    rawChildCount & UINT64_C(0x7FFF));
+                const std::uint32_t childBegin =
+                    static_cast<std::uint32_t>(rawChildBegin);
+                const std::uint32_t childLimit =
+                    hasLeafChildren ? leafEntryCount : nodeEntryCount;
+                if (childCount == 0
+                    || !UnsignedSpanWithinPartition(
+                        childBegin,
+                        childCount,
+                        0,
+                        childLimit))
+                {
+                    return XSurfaceCollisionTopologyStatus::InvalidChildSpan;
+                }
+
+                if (!hasLeafChildren)
+                {
+                    for (std::uint32_t child = 0;
+                        child < childCount;
+                        ++child)
+                    {
+                        const std::uint32_t childIndex = childBegin + child;
+                        if (nodeOwners[childIndex])
+                        {
+                            return XSurfaceCollisionTopologyStatus::InvalidTopology;
+                        }
+                        nodeOwners[childIndex] = 1;
+                    }
+
+                    const std::size_t pendingRangeCount =
+                        ranges.size() - rangeIndex;
+                    if (pendingRangeCount
+                        >= kXSurfaceCollisionNodeRangeQueueCapacity - 1u)
+                    {
+                        return XSurfaceCollisionTopologyStatus::
+                            NodeRangeQueueCapacityExceeded;
+                    }
+                    ranges.push_back({childBegin, childCount});
+                    continue;
+                }
+
+                for (std::uint32_t child = 0;
+                    child < childCount;
+                    ++child)
+                {
+                    const std::uint32_t leafIndex = childBegin + child;
+                    if (leafOwners[leafIndex])
+                    {
+                        return XSurfaceCollisionTopologyStatus::InvalidTopology;
+                    }
+                    leafOwners[leafIndex] = 1;
+
+                    const std::uint64_t encodedTriangle =
+                        static_cast<std::uint64_t>(
+                            leafs[leafIndex].triangleBeginIndex);
+                    if (encodedTriangle
+                        > (std::numeric_limits<std::uint16_t>::max)())
+                    {
+                        return XSurfaceCollisionTopologyStatus::
+                            InvalidTriangleSpan;
+                    }
+                    const std::uint32_t triangleBegin =
+                        static_cast<std::uint32_t>(
+                            encodedTriangle & UINT64_C(0x7FFF));
+                    const std::uint32_t triangleCount =
+                        (encodedTriangle & UINT64_C(0x8000)) != 0 ? 2u : 1u;
+                    if (!UnsignedSpanWithinPartition(
+                            triangleBegin,
+                            triangleCount,
+                            rigidTriangleOffset,
+                            rigidTriangleCount)
+                        || !UnsignedSpanWithinPartition(
+                            triangleBegin,
+                            triangleCount,
+                            0,
+                            surfaceTriangleCount))
+                    {
+                        return XSurfaceCollisionTopologyStatus::
+                            InvalidTriangleSpan;
+                    }
+                }
+            }
+        }
+
+        if (!CoverageComplete(nodeOwners.data(), nodeCount)
+            || !CoverageComplete(leafOwners.data(), leafCount))
+        {
+            return XSurfaceCollisionTopologyStatus::InvalidTopology;
+        }
+    }
+    catch (const std::bad_alloc &)
+    {
+        return XSurfaceCollisionTopologyStatus::AllocationFailure;
+    }
+
+    // The trans/scale floats are intentionally outside this integer-topology
+    // check for compatibility with legacy source assets.
+    return XSurfaceCollisionTopologyStatus::Ok;
 }
 
 constexpr bool WorldAabbTreePresenceValid(

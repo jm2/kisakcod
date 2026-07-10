@@ -39,6 +39,10 @@ constexpr uint32_t kGfxLightBytes = 64;
 constexpr uint32_t kStringTableBytes = 16;
 constexpr uint32_t kXModelPieceBytes = 16;
 constexpr uint32_t kXModelPiecesBytes = 12;
+constexpr uint32_t kXSurfaceCollisionTreeBytes = 40;
+constexpr uint32_t kXSurfaceCollisionNodeBytes = 16;
+constexpr uint32_t kXSurfaceCollisionLeafBytes = 2;
+constexpr uint32_t kXRigidVertListBytes = 12;
 
 struct PointerToken
 {

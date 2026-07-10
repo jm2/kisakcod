@@ -549,6 +549,18 @@ require_source_contains(
     "shared model-pieces headers must resolve through exact typed provenance")
 require_source_contains(
     "database/db_load.cpp"
+    "(uint32_t*)&varXRigidVertList->collisionTree,
+                DBAliasKind::XSurfaceCollisionTree,
+                disk32::kXSurfaceCollisionTreeBytes"
+    "shared surface collision trees must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "(uint32_t*)&varXSurface->vertList,
+                DBAliasKind::XRigidVertListArray,
+                rigidListBytes"
+    "shared rigid-vertex lists must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_load.cpp"
     "db::validation::SoundFileHeaderValid("
     "sound-file union tags and existence flags must validate before dispatch")
 require_source_contains(
@@ -603,6 +615,27 @@ require_source_contains(
             varXModelPiece,
             static_cast<uint32_t>(pieceBytes))"
     "model-pieces child spans must fit before element fixups begin")
+require_source_contains(
+    "database/db_load.cpp"
+    "ValidateXSurfaceCollisionTopology("
+    "surface collision nodes, leaves, and triangle spans must validate before publication")
+require_source_contains(
+    "database/db_load.cpp"
+    "XSurfaceRigidPartitionValid("
+    "rigid surface partitions must validate against completed geometry")
+require_source_contains(
+    "database/db_load.cpp"
+    "XSurfaceTriangleIndicesValid("
+    "surface triangle indices must remain inside the completed vertex span")
+require_source_ordered(
+    "xanim/xmodel.cpp"
+    "if (nextNodeQueueEnd == locals->nodeQueueBegin)"
+    "locals->nodeQueue[locals->nodeQueueEnd].beginIndex = childBeginIndex"
+    "surface collision traversal must reject a full node queue before writing")
+require_source_not_contains(
+    "xanim/xmodel.cpp"
+    "0xFFFFFF80"
+    "surface prefetch stubs must not truncate native-width addresses")
 require_source_ordered(
     "DynEntity/DynEntity_pieces.cpp"
     "if (!model->physPreset)"
@@ -722,6 +755,44 @@ require_source_contains(
     "if (!Load_XModelPiecesPtr(0))
         return;"
     "dynamic-entity loading must stop after model-pieces rejection")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_RegisterPointerSlot(
+                varXRigidVertList->collisionTree,
+                DBAliasKind::XSurfaceCollisionTree)"
+    "if (!Load_XSurfaceCollisionTree(1))"
+    "surface collision-tree provenance must register before child loading")
+require_source_ordered(
+    "database/db_load.cpp"
+    "if (!Load_XSurfaceCollisionTree(1))"
+    "DB_CompleteObject(
+                    completed,
+                    DBAliasKind::XSurfaceCollisionTree"
+    "surface collision trees must publish after topology validation")
+require_source_ordered(
+    "database/db_load.cpp"
+    "completedRigidLists = DB_RegisterPointerSlot(
+                varXSurface->vertList,
+                DBAliasKind::XRigidVertListArray)"
+    "if (!Load_XRigidVertListArray("
+    "rigid-list provenance must register before nested tree loading")
+require_source_ordered(
+    "database/db_load.cpp"
+    "Load_r_index16_tArray(1, indexCount)"
+    "if (!DB_ValidateLoadedXSurface(varXSurface, deformed))"
+    "rigid-list validation must wait for surface triangle loading")
+require_source_ordered(
+    "database/db_load.cpp"
+    "if (!DB_ValidateLoadedXSurface(varXSurface, deformed))"
+    "DB_CompleteObject(
+            completedRigidLists,
+            DBAliasKind::XRigidVertListArray"
+    "rigid lists must publish only after consumer-specific validation")
+require_source_ordered(
+    "database/db_load.cpp"
+    "if (!Load_XModel(1))"
+    "Load_XModelAsset((XAssetHeader *)varXModelPtr)"
+    "invalid surface graphs must stop model asset publication")
 require_source_contains(
     "database/db_stream.cpp"
     "DB_ValidateStreamCString"
@@ -1721,9 +1792,9 @@ file(STRINGS
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 10)
+if (NOT _legacy_direct_offset_count EQUAL 8)
     message(FATAL_ERROR
-        "Expected exactly 10 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 8 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 

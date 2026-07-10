@@ -38,6 +38,56 @@ struct TestDiskWorldAabbNode
     std::uint32_t childCount = 0;
 };
 
+struct TestSurfaceCollisionAabb
+{
+    std::uint16_t mins[3] = {};
+    std::uint16_t maxs[3] = {};
+};
+
+struct TestSurfaceCollisionNode
+{
+    TestSurfaceCollisionAabb aabb;
+    std::uint16_t childBeginIndex = 0;
+    std::uint16_t childCount = 0;
+};
+
+struct TestSurfaceCollisionLeaf
+{
+    std::uint16_t triangleBeginIndex = 0;
+};
+
+struct TestRigidVertList
+{
+    std::uint16_t vertCount = 0;
+    std::uint16_t triOffset = 0;
+    std::uint16_t triCount = 0;
+    const void *collisionTree = nullptr;
+};
+
+struct TestSurfaceCollisionTree
+{
+    std::array<TestSurfaceCollisionNode, 4> nodes = {};
+    std::array<TestSurfaceCollisionLeaf, 4> leafs = {};
+};
+
+TestSurfaceCollisionTree ValidTestSurfaceCollisionTree()
+{
+    TestSurfaceCollisionTree tree = {};
+    tree.nodes[0].childBeginIndex = 1;
+    tree.nodes[0].childCount = 2;
+    tree.nodes[1].childBeginIndex = 0;
+    tree.nodes[1].childCount = UINT16_C(0x8002);
+    tree.nodes[2].childBeginIndex = 3;
+    tree.nodes[2].childCount = 1;
+    tree.nodes[3].childBeginIndex = 2;
+    tree.nodes[3].childCount = UINT16_C(0x8002);
+    tree.leafs[0].triangleBeginIndex = 2;
+    tree.leafs[1].triangleBeginIndex = UINT16_C(0x8003);
+    tree.leafs[2].triangleBeginIndex = 5;
+    tree.leafs[3].triangleBeginIndex = UINT16_C(0x8006);
+    return tree;
+}
+
 template <std::size_t Count>
 void SetTestWorldAabbChildren(
     std::array<TestWorldAabbNode, Count> *nodes,
@@ -131,6 +181,441 @@ int main()
             true,
             nanPieceOffset),
         "non-finite model-piece offset rejected");
+
+    {
+        const std::uint16_t validSurfaceIndices[] = {
+            0, 1, 2,
+            2, 3, 4,
+            1, 2, 3,
+            4, 3, 0,
+        };
+        const std::uint16_t invalidSurfaceIndices[] = {0, 1, 5};
+        Expect(
+            db::validation::XSurfaceTriangleIndicesValid(
+                validSurfaceIndices,
+                4,
+                5),
+            "surface triangle indices inside the vertex array accepted");
+        Expect(
+            !db::validation::XSurfaceTriangleIndicesValid(
+                invalidSurfaceIndices,
+                1,
+                5),
+            "surface triangle index at the vertex-array end rejected");
+        Expect(
+            db::validation::XSurfaceTriangleIndicesValid(nullptr, 0, 0),
+            "empty surface triangle-index array accepted");
+        Expect(
+            !db::validation::XSurfaceTriangleIndicesValid(nullptr, 1, 5),
+            "missing nonempty surface triangle-index array rejected");
+        Expect(
+            !db::validation::XSurfaceTriangleIndicesValid(
+                nullptr,
+                (std::numeric_limits<std::uint32_t>::max)() / 3u + 1u,
+                1),
+            "surface triangle-index count multiplication overflow rejected");
+
+        const auto collisionTree = ValidTestSurfaceCollisionTree();
+        const TestRigidVertList validRigidLists[] = {
+            {3, 0, 2, &collisionTree},
+            {2, 2, 2, &collisionTree},
+        };
+        Expect(
+            db::validation::XSurfaceRigidPartitionValid(
+                validRigidLists,
+                2,
+                5,
+                4,
+                validSurfaceIndices),
+            "ordered rigid vertex and triangle partitions accepted");
+        Expect(
+            db::validation::XSurfaceRigidPartitionValid<TestRigidVertList>(
+                nullptr,
+                0,
+                0,
+                0,
+                nullptr),
+            "empty rigid partition covers an empty surface");
+
+        auto invalidRigidLists = std::array<TestRigidVertList, 2>{
+            validRigidLists[0],
+            validRigidLists[1],
+        };
+        invalidRigidLists[0].vertCount = 0;
+        Expect(
+            !db::validation::XSurfaceRigidPartitionValid(
+                invalidRigidLists.data(),
+                invalidRigidLists.size(),
+                5,
+                4,
+                validSurfaceIndices),
+            "zero-length rigid vertex partition rejected");
+        invalidRigidLists = {validRigidLists[0], validRigidLists[1]};
+        invalidRigidLists[1].triCount = 0;
+        Expect(
+            !db::validation::XSurfaceRigidPartitionValid(
+                invalidRigidLists.data(),
+                invalidRigidLists.size(),
+                5,
+                4,
+                validSurfaceIndices),
+            "zero-length rigid triangle partition rejected");
+        invalidRigidLists = {validRigidLists[0], validRigidLists[1]};
+        invalidRigidLists[1].triOffset = 3;
+        Expect(
+            !db::validation::XSurfaceRigidPartitionValid(
+                invalidRigidLists.data(),
+                invalidRigidLists.size(),
+                5,
+                4,
+                validSurfaceIndices),
+            "gapped rigid triangle partition rejected");
+        invalidRigidLists = {validRigidLists[0], validRigidLists[1]};
+        invalidRigidLists[1].vertCount = 1;
+        Expect(
+            !db::validation::XSurfaceRigidPartitionValid(
+                invalidRigidLists.data(),
+                invalidRigidLists.size(),
+                5,
+                4,
+                validSurfaceIndices),
+            "incomplete rigid vertex coverage rejected");
+        invalidRigidLists = {validRigidLists[0], validRigidLists[1]};
+        invalidRigidLists[1].collisionTree = nullptr;
+        Expect(
+            !db::validation::XSurfaceRigidPartitionValid(
+                invalidRigidLists.data(),
+                invalidRigidLists.size(),
+                5,
+                4,
+                validSurfaceIndices),
+            "rigid partition without a collision tree rejected");
+        Expect(
+            !db::validation::XSurfaceRigidPartitionValid<TestRigidVertList>(
+                nullptr,
+                1,
+                5,
+                4,
+                validSurfaceIndices),
+            "missing rigid partition array rejected");
+
+        const std::uint16_t paddedSurfaceIndices[] = {
+            0, 1, 2,
+            2, 3, 4,
+            1, 2, 3,
+            3, 3, 3,
+        };
+        const TestRigidVertList paddedRigidLists[] = {
+            {3, 0, 2, &collisionTree},
+            {2, 2, 1, &collisionTree},
+        };
+        Expect(
+            db::validation::XSurfaceRigidPartitionValid(
+                paddedRigidLists,
+                2,
+                5,
+                4,
+                paddedSurfaceIndices),
+            "source-generated trailing surface padding triangle accepted");
+        auto invalidPaddingIndices = std::array<std::uint16_t, 12>{};
+        for (std::size_t index = 0; index < invalidPaddingIndices.size(); ++index)
+            invalidPaddingIndices[index] = paddedSurfaceIndices[index];
+        invalidPaddingIndices[11] = 2;
+        Expect(
+            !db::validation::XSurfaceRigidPartitionValid(
+                paddedRigidLists,
+                2,
+                5,
+                4,
+                invalidPaddingIndices.data()),
+            "malformed trailing surface padding triangle rejected");
+        const TestRigidVertList shortRigidLists[] = {
+            {3, 0, 1, &collisionTree},
+            {2, 1, 1, &collisionTree},
+        };
+        Expect(
+            !db::validation::XSurfaceRigidPartitionValid(
+                shortRigidLists,
+                2,
+                5,
+                4,
+                paddedSurfaceIndices),
+            "more than one uncovered surface triangle rejected");
+        const std::uint16_t oddPaddingIndices[] = {
+            0, 1, 2,
+            2, 3, 4,
+            4, 4, 4,
+        };
+        Expect(
+            !db::validation::XSurfaceRigidPartitionValid(
+                shortRigidLists,
+                2,
+                5,
+                3,
+                oddPaddingIndices),
+            "odd-count surface cannot claim a source padding triangle");
+    }
+
+    {
+        const auto validCollisionTree = ValidTestSurfaceCollisionTree();
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                validCollisionTree.nodes.data(),
+                validCollisionTree.nodes.size(),
+                validCollisionTree.leafs.data(),
+                validCollisionTree.leafs.size(),
+                2,
+                6,
+                8)
+                == db::validation::XSurfaceCollisionTopologyStatus::Ok,
+            "valid surface collision topology accepted");
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology<
+                TestSurfaceCollisionNode,
+                TestSurfaceCollisionLeaf>(
+                nullptr,
+                0,
+                nullptr,
+                0,
+                0,
+                0,
+                0)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidTree,
+            "empty surface collision tree rejected before root access");
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                validCollisionTree.nodes.data(),
+                db::validation::kMaxXSurfaceCollisionEntries + 1u,
+                validCollisionTree.leafs.data(),
+                validCollisionTree.leafs.size(),
+                2,
+                6,
+                8)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidTree,
+            "unaddressable surface collision node count rejected");
+
+        auto invalidCollisionTree = ValidTestSurfaceCollisionTree();
+        invalidCollisionTree.nodes[2].aabb.mins[1] = 2;
+        invalidCollisionTree.nodes[2].aabb.maxs[1] = 1;
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                invalidCollisionTree.nodes.data(),
+                invalidCollisionTree.nodes.size(),
+                invalidCollisionTree.leafs.data(),
+                invalidCollisionTree.leafs.size(),
+                2,
+                6,
+                8)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidBounds,
+            "inverted surface collision node bounds rejected");
+        invalidCollisionTree = ValidTestSurfaceCollisionTree();
+        invalidCollisionTree.nodes[1].childCount = 0;
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                invalidCollisionTree.nodes.data(),
+                invalidCollisionTree.nodes.size(),
+                invalidCollisionTree.leafs.data(),
+                invalidCollisionTree.leafs.size(),
+                2,
+                6,
+                8)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidChildSpan,
+            "zero surface collision child count rejected");
+        invalidCollisionTree = ValidTestSurfaceCollisionTree();
+        invalidCollisionTree.nodes[1].childCount = UINT16_C(0x8000);
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                invalidCollisionTree.nodes.data(),
+                invalidCollisionTree.nodes.size(),
+                invalidCollisionTree.leafs.data(),
+                invalidCollisionTree.leafs.size(),
+                2,
+                6,
+                8)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidChildSpan,
+            "zero decoded surface collision leaf count rejected");
+        invalidCollisionTree = ValidTestSurfaceCollisionTree();
+        invalidCollisionTree.nodes[0].childBeginIndex = 3;
+        invalidCollisionTree.nodes[0].childCount = 2;
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                invalidCollisionTree.nodes.data(),
+                invalidCollisionTree.nodes.size(),
+                invalidCollisionTree.leafs.data(),
+                invalidCollisionTree.leafs.size(),
+                2,
+                6,
+                8)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidChildSpan,
+            "overflowing surface collision node span rejected");
+        invalidCollisionTree = ValidTestSurfaceCollisionTree();
+        invalidCollisionTree.nodes[1].childBeginIndex = 3;
+        invalidCollisionTree.nodes[1].childCount = UINT16_C(0x8002);
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                invalidCollisionTree.nodes.data(),
+                invalidCollisionTree.nodes.size(),
+                invalidCollisionTree.leafs.data(),
+                invalidCollisionTree.leafs.size(),
+                2,
+                6,
+                8)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidChildSpan,
+            "overflowing surface collision leaf span rejected");
+
+        invalidCollisionTree = ValidTestSurfaceCollisionTree();
+        invalidCollisionTree.nodes[1].childBeginIndex = 3;
+        invalidCollisionTree.nodes[1].childCount = 1;
+        invalidCollisionTree.nodes[2].childBeginIndex = 3;
+        invalidCollisionTree.nodes[2].childCount = 1;
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                invalidCollisionTree.nodes.data(),
+                invalidCollisionTree.nodes.size(),
+                invalidCollisionTree.leafs.data(),
+                invalidCollisionTree.leafs.size(),
+                2,
+                6,
+                8)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidTopology,
+            "multiply-owned surface collision node rejected");
+        const std::array<TestSurfaceCollisionNode, 2> cyclicNodes = {{
+            {{}, 1, 1},
+            {{}, 0, 1},
+        }};
+        const std::array<TestSurfaceCollisionLeaf, 1> cyclicLeafs = {{{2}}};
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                cyclicNodes.data(),
+                cyclicNodes.size(),
+                cyclicLeafs.data(),
+                cyclicLeafs.size(),
+                2,
+                1,
+                3)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidTopology,
+            "surface collision node cycle rejected");
+        invalidCollisionTree = ValidTestSurfaceCollisionTree();
+        invalidCollisionTree.nodes[0].childCount = 1;
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                invalidCollisionTree.nodes.data(),
+                invalidCollisionTree.nodes.size(),
+                invalidCollisionTree.leafs.data(),
+                invalidCollisionTree.leafs.size(),
+                2,
+                6,
+                8)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidTopology,
+            "unreachable surface collision entries rejected");
+        invalidCollisionTree = ValidTestSurfaceCollisionTree();
+        invalidCollisionTree.nodes[3].childCount = UINT16_C(0x8001);
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                invalidCollisionTree.nodes.data(),
+                invalidCollisionTree.nodes.size(),
+                invalidCollisionTree.leafs.data(),
+                invalidCollisionTree.leafs.size(),
+                2,
+                6,
+                8)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidTopology,
+            "unreachable surface collision leaf rejected");
+
+        invalidCollisionTree = ValidTestSurfaceCollisionTree();
+        invalidCollisionTree.leafs[0].triangleBeginIndex = 1;
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                invalidCollisionTree.nodes.data(),
+                invalidCollisionTree.nodes.size(),
+                invalidCollisionTree.leafs.data(),
+                invalidCollisionTree.leafs.size(),
+                2,
+                6,
+                8)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidTriangleSpan,
+            "collision leaf triangle below its rigid partition rejected");
+        invalidCollisionTree = ValidTestSurfaceCollisionTree();
+        invalidCollisionTree.leafs[3].triangleBeginIndex = UINT16_C(0x8007);
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                invalidCollisionTree.nodes.data(),
+                invalidCollisionTree.nodes.size(),
+                invalidCollisionTree.leafs.data(),
+                invalidCollisionTree.leafs.size(),
+                2,
+                6,
+                8)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidTriangleSpan,
+            "two-triangle collision leaf beyond its rigid partition rejected");
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                validCollisionTree.nodes.data(),
+                validCollisionTree.nodes.size(),
+                validCollisionTree.leafs.data(),
+                validCollisionTree.leafs.size(),
+                2,
+                6,
+                7)
+                == db::validation::XSurfaceCollisionTopologyStatus::InvalidTriangleSpan,
+            "rigid collision partition beyond its surface rejected");
+
+        std::array<TestSurfaceCollisionNode, 127> maximumQueueNodes = {};
+        std::array<TestSurfaceCollisionLeaf, 63> maximumQueueLeafs = {};
+        maximumQueueNodes[0].childBeginIndex = 1;
+        maximumQueueNodes[0].childCount = 63;
+        for (std::uint32_t index = 0; index < 63; ++index)
+        {
+            maximumQueueNodes[1u + index].childBeginIndex =
+                static_cast<std::uint16_t>(64u + index);
+            maximumQueueNodes[1u + index].childCount = 1;
+            maximumQueueNodes[64u + index].childBeginIndex =
+                static_cast<std::uint16_t>(index);
+            maximumQueueNodes[64u + index].childCount = UINT16_C(0x8001);
+            maximumQueueLeafs[index].triangleBeginIndex =
+                static_cast<std::uint16_t>(index);
+        }
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                maximumQueueNodes.data(),
+                maximumQueueNodes.size(),
+                maximumQueueLeafs.data(),
+                maximumQueueLeafs.size(),
+                0,
+                63,
+                63)
+                == db::validation::XSurfaceCollisionTopologyStatus::Ok,
+            "surface collision node-range queue accepts 63 pending ranges");
+
+        std::array<TestSurfaceCollisionNode, 129> overflowingQueueNodes = {};
+        std::array<TestSurfaceCollisionLeaf, 64> overflowingQueueLeafs = {};
+        overflowingQueueNodes[0].childBeginIndex = 1;
+        overflowingQueueNodes[0].childCount = 64;
+        for (std::uint32_t index = 0; index < 64; ++index)
+        {
+            overflowingQueueNodes[1u + index].childBeginIndex =
+                static_cast<std::uint16_t>(65u + index);
+            overflowingQueueNodes[1u + index].childCount = 1;
+            overflowingQueueNodes[65u + index].childBeginIndex =
+                static_cast<std::uint16_t>(index);
+            overflowingQueueNodes[65u + index].childCount = UINT16_C(0x8001);
+            overflowingQueueLeafs[index].triangleBeginIndex =
+                static_cast<std::uint16_t>(index);
+        }
+        Expect(
+            db::validation::ValidateXSurfaceCollisionTopology(
+                overflowingQueueNodes.data(),
+                overflowingQueueNodes.size(),
+                overflowingQueueLeafs.data(),
+                overflowingQueueLeafs.size(),
+                0,
+                64,
+                64)
+                == db::validation::XSurfaceCollisionTopologyStatus::
+                    NodeRangeQueueCapacityExceeded,
+            "surface collision topology rejects 64 pending node ranges");
+    }
+
     Expect(
         db::validation::SpeakerMapExpectedSpeakerCount(0) == 2u
             && db::validation::SpeakerMapExpectedSpeakerCount(1) == 6u,
