@@ -109,6 +109,123 @@ require_source_contains(
     "db::validation::AllU16Below"
     "world AABB static-model indices must be bounded before runtime use")
 require_source_contains(
+    "database/db_validation.h"
+    "ValidateWorldAabbTopology("
+    "world AABB topology must use the portable linear-time validator")
+require_source_contains(
+    "database/db_load.cpp"
+    "WorldAabbTreePresenceValid(
+            varGfxCell->aabbTree != nullptr"
+    "world AABB arrays must validate their owning pointer/count before loading")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!DB_ValidateWorldAabbTrees(varGfxWorld))"
+    "completed fast-file worlds must validate every owning AABB tree")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!DB_ValidateWorldAabbCell(varGfxWorld, varGfxCell))"
+    "every fast-file cell, including inline portal cells, must validate its AABB topology")
+require_source_contains(
+    "database/db_load.cpp"
+    "world->models[0].surfaceCount
+            != world->dpvs.staticSurfaceCount"
+    "world AABB metadata must match the world brush-model surface partition")
+require_source_contains(
+    "database/db_load.cpp"
+    "db::validation::CoverageComplete("
+    "world AABB cell roots must cover each sorted-surface partition exactly once")
+require_source_contains(
+    "database/db_load.cpp"
+    "varGfxWorldDpvsStatic->smodelCount
+        > db::validation::kMaxWorldAabbStaticModels"
+    "fast-file static-model counts must fit uint16 AABB indices before payload loading")
+require_source_contains(
+    "database/db_load.cpp"
+    "Fast-file world has an invalid sorted surface index"
+    "world sorted-surface values must be bounded before renderer traversal")
+require_source_contains(
+    "gfx_d3d/r_gfx.h"
+    "GfxAabbTree_GetChildren("
+    "world AABB child offsets must have one byte-displacement accessor")
+require_source_contains(
+    "gfx_d3d/r_gfx.h"
+    "GfxAabbTree_SetChildren("
+    "world AABB producers must range-check native byte displacements")
+require_source_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "ValidateImplicitWorldAabbForest("
+    "raw BSP world AABB forests must validate before recursive reconstruction")
+require_source_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "const std::uint32_t staticSurfaceCount = s_world.models[0].surfaceCount"
+    "raw BSP AABB ranges must use the static sorted-surface partition")
+require_source_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "R_ValidateBrushModelSurfaceRanges(&s_world)"
+    "raw BSP brush-model surface ranges must validate before AABB consumption")
+require_source_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "if (tree->smodelIndexCount == UINT16_MAX)"
+    "load-object AABB static-model lists must reject count wraparound")
+require_source_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "if (smodelIndex < 0 || smodelIndex > UINT16_MAX)"
+    "load-object AABB static-model indices must validate before uint16 storage")
+require_source_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "if (tree->childCount == UINT16_MAX)"
+    "load-object AABB child appends must reject count wraparound")
+require_source_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "if (smodelCount > UINT16_MAX)"
+    "raw BSP entity parsing must reject unrepresentable static-model indices before allocation")
+require_source_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "static_cast<std::uint32_t>(sizeof(GfxStaticModelCombinedInst))"
+    "load-object static-model sorting must allocate the native combined stride")
+require_source_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "&& depth < db::validation::kMaxWorldAabbDepth"
+    "load-object AABB sorting must stop subdividing at the runtime recursion budget")
+require_source_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "R_PreflightNoDecalAabbTree("
+    "raw BSP AABB no-decal output must preflight capacity and field widths")
+require_source_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "R_ValidateLoadedWorldAabbTrees("
+    "flattened load-object world AABB trees must validate before publication")
+require_source_not_contains(
+    "gfx_d3d/r_bsp_load_obj.cpp"
+    "tree + tree->childrenOffset"
+    "world AABB byte offsets must not be scaled as element offsets")
+require_source_not_contains(
+    "gfx_d3d/r_marks.cpp"
+    "(char *)tree + tree->childrenOffset"
+    "renderer mark traversal must use the canonical AABB child accessor")
+require_source_not_contains(
+    "gfx_d3d/r_dpvs_static.cpp"
+    "(char *)tree + tree->childrenOffset"
+    "renderer visibility traversal must use the canonical AABB child accessor")
+
+file(READ
+    "${SOURCE_ROOT}/src/gfx_d3d/r_bsp_load_obj.cpp"
+    _world_aabb_load_obj_source)
+string(FIND
+    "${_world_aabb_load_obj_source}"
+    "if (!R_PreflightNoDecalAabbTree("
+    _world_aabb_preflight_call)
+string(FIND
+    "${_world_aabb_load_obj_source}"
+    "startSurfIndex = R_BuildNoDecalAabbTree_r("
+    _world_aabb_no_decal_build_call)
+if (_world_aabb_preflight_call EQUAL -1
+    OR _world_aabb_no_decal_build_call EQUAL -1
+    OR _world_aabb_preflight_call GREATER _world_aabb_no_decal_build_call)
+    message(FATAL_ERROR
+        "Raw BSP AABB no-decal output must preflight before writing")
+endif()
+require_source_contains(
     "database/db_load.cpp"
     "db::validation::CountInRange(varFont->glyphCount, 96, 65536)"
     "font glyph tables must cover direct ASCII indexing without oversized counts")

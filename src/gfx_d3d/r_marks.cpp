@@ -219,7 +219,7 @@ void __cdecl R_AABBTreeSurfaces_r(
     {
         if (tree->childCount)
         {
-            children = (GfxAabbTree *)((char *)tree + tree->childrenOffset);
+            children = GfxAabbTree_GetChildren(tree);
             for (childIndex = 0; childIndex < tree->childCount; ++childIndex)
                 R_AABBTreeSurfaces_r(
                     &children[childIndex],
@@ -372,7 +372,7 @@ void __cdecl R_AABBTreeSurfacesTwoLists_r(
     {
         if (tree->childCount)
         {
-            children = (GfxAabbTree *)((char *)tree + tree->childrenOffset);
+            children = GfxAabbTree_GetChildren(tree);
             for (childIndex = 0; childIndex < tree->childCount; ++childIndex)
                 R_AABBTreeSurfacesTwoLists_r(
                     &children[childIndex],
@@ -537,7 +537,7 @@ void __cdecl R_AABBTreeStaticModels_r(
     {
         if (tree->childCount)
         {
-            children = (GfxAabbTree *)((char *)tree + tree->childrenOffset);
+            children = GfxAabbTree_GetChildren(tree);
             for (childIndex = 0; childIndex < tree->childCount; ++childIndex)
                 R_AABBTreeStaticModels_r(
                     &children[childIndex],
@@ -901,7 +901,7 @@ void __cdecl R_AABBTreeCylinderSurfaces_r(
     {
         if (tree->childCount)
         {
-            children = (GfxAabbTree *)((char *)tree + tree->childrenOffset);
+            children = GfxAabbTree_GetChildren(tree);
             for (childIndex = 0; childIndex < tree->childCount; ++childIndex)
                 R_AABBTreeCylinderSurfaces_r(
                     &children[childIndex],
@@ -2550,4 +2550,3 @@ void __cdecl R_LerpModelMarkPoints(
     Vec3Lerp(from->xyz, to->xyz, lerp, out->xyz);
     Vec3Lerp(from->vertWeights, to->vertWeights, lerp, out->vertWeights);
 }
-

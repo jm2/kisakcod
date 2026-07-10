@@ -8,24 +8,23 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: implement linear-time world AABB topology validation, then resume the remaining
-  22 legacy direct references and add a Windows x86 headless compile/link CI leg.
-- Last completed batch: database asset enumeration now uses one exact
-  `(XAssetHeader, void *)` callback type in FastFile and load-object modes. Load-object adapters
-  activate typed union members, `Hunk_AddAsset` uses a native `AssetList`, count-only queries no
-  longer dereference null output, and undersized buffers stop writing and fail only after the
-  database read lock is released. All active enumeration callsites are uncast; explicit bounded
-  contexts replace x86 stack/layout tricks in material, model, image, sound-curve, vision-set,
-  FX, and model-preview consumers. Delayed/lost-image failures are deferred until enumeration
-  releases the read lock, and removal callbacks now use exact one-argument adapters.
+- Active work: resume the remaining 22 legacy direct references, then add a Windows x86
+  headless compile/link CI leg.
+- Last completed batch: fast-file and raw-BSP graphics-world AABB trees now receive iterative,
+  linear-time validation before renderer traversal. Child byte offsets, exact ownership,
+  forward topology, depth, finite/nonempty bounds, parent/child surface partitions, cell-root
+  coverage, sorted indices, brush-model ranges, and static-model index/count widths are bounded.
+  Raw no-decal output is preflighted before writing. Load-object producers now use one canonical
+  byte-offset accessor/setter and native node sizes, fixing the prior byte-versus-element unit
+  mismatch while bounding dynamic subdivision and flattening.
 - Portable validation: 12/12 tests pass locally. The production relocation registry is
   also strict-warning clean under GCC/Clang and GCC ILP32 syntax checking; ASan/UBSan
   pass locally with leak detection disabled because LeakSanitizer cannot run under the
   command-runner ptrace environment. Portable tests do not execute the Windows stream
   adapter or media ownership paths.
-- Windows validation: runtime-material-consumer CI run 29072016695 passed x86 Debug, Release,
-  no-Steam, and all five portable target jobs on 2026-07-10. The asset-enumeration callback
-  batch requires its own Windows CI run after push.
+- Windows validation: asset-enumeration CI run 29073048478 passed all five portable target jobs
+  but its three x86 engine jobs found one missing callback declaration. Repair commit 593c149 is
+  in CI run 29074533150; the world-AABB batch requires its own Windows run after push.
 
 ## Milestone status
 
@@ -33,7 +32,7 @@ work item changes. Do not create session-specific handoff files.
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 builds; five native utility-test runners; engine runtime smoke and release workflows remain unexercised. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 28/50 bounded direct references, pre-publication material graph/state validation, and bounded runtime material consumers landed; production-path fuzz fixtures and 22 direct relocations remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 28/50 bounded direct references, pre-publication material graph/state validation, bounded runtime material consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures and 22 direct relocations remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, 19 full-span raw/POD fields, exact registered direct strings, and six exact completed material object types exist; packed mirrors, 22 direct offsets, broader completed-object relocation, and runtime widening remain. |
@@ -52,8 +51,7 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Implement the linear-time world AABB topology validator, then resume the remaining 22
-   raw/completed-object relocations.
+1. Resume the remaining 22 raw/completed-object relocations.
 2. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
 3. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
 4. Classify and burn down the 255 direct and four formula-based ABI layout assertions.
@@ -85,10 +83,11 @@ work item changes. Do not create session-specific handoff files.
   validate operand/register semantics; untrusted fast-files still expose the D3D driver's
   semantic validator. Require signed/trusted production assets or a complete validated
   translation path plus malformed-bytecode fuzzing before accepting arbitrary content.
-- World AABB model indices are bounded, but serialized child offsets/counts, surface
-  ranges, acyclic topology, and aggregate validation/runtime work are not. Validate each
-  owning cell's complete flat tree before renderer traversal and cache or budget repeated
-  validation of shared direct index lists.
+- Graphics-world AABB topology and surface coverage are now validated end-to-end, but exact
+  shared direct static-model index spans can still amplify repeated validation work; cache or
+  budget identical spans. The separate clipmap `CollisionAabbTree` still needs material,
+  child/partition, leaf-owner, finite-bounds, acyclic-topology, and depth validation before its
+  recursive collision/physics consumers can treat untrusted maps as safe.
 - Database-thread `Com_Error` handling is still process-fatal, so malformed
   fast-file rejection remains a denial-of-service boundary until zone rollback
   and recoverable database-thread error propagation are implemented.

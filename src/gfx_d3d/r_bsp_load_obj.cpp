@@ -20,6 +20,9 @@
 #include "r_dpvs.h"
 #include "r_outdoor.h"
 
+#include <database/db_validation.h>
+#include <cstdlib>
+
 #ifdef KISAK_MP
 #include <cgame_mp/cg_local_mp.h>
 #elif KISAK_SP
@@ -28,6 +31,123 @@
 #endif
 
 r_globals_load_t rgl;
+
+namespace
+{
+std::uint8_t *s_aabbTreeRootFlags;
+
+bool R_ValidateBrushModelSurfaceRanges(const GfxWorld *world)
+{
+    if (!world
+        || world->surfaceCount < 0
+        || world->modelCount <= 0
+        || !world->models
+        || world->models[0].startSurfIndex != 0)
+    {
+        return false;
+    }
+    for (std::int32_t modelIndex = 0;
+        modelIndex < world->modelCount;
+        ++modelIndex)
+    {
+        const GfxBrushModel &model = world->models[modelIndex];
+        if (!db::validation::OptionalUnsignedSpanWithinPartition(
+                model.startSurfIndex,
+                model.surfaceCount,
+                0,
+                static_cast<std::uint32_t>(world->surfaceCount)))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool R_ValidateLoadedWorldAabbTrees(
+    const GfxWorld *world,
+    std::uint32_t staticSurfaceCount,
+    std::uint32_t staticSurfaceCountNoDecal)
+{
+    if (!world
+        || world->surfaceCount < 0
+        || !db::validation::WorldAabbSurfacePartitionsValid(
+            staticSurfaceCount,
+            staticSurfaceCountNoDecal,
+            static_cast<std::uint32_t>(world->surfaceCount))
+        || !db::validation::PointerCountConsistent(
+            world->cells != nullptr,
+            world->dpvsPlanes.cellCount))
+    {
+        return false;
+    }
+
+    const std::uint64_t sortedSurfaceCount =
+        static_cast<std::uint64_t>(staticSurfaceCount)
+        + staticSurfaceCountNoDecal;
+    if (sortedSurfaceCount > UINT32_MAX
+        || !db::validation::PointerCountConsistent(
+            world->dpvs.sortedSurfIndex != nullptr,
+            static_cast<std::int64_t>(sortedSurfaceCount))
+        || !db::validation::AllU16Below(
+            world->dpvs.sortedSurfIndex,
+            static_cast<std::uint32_t>(sortedSurfaceCount),
+            staticSurfaceCount))
+    {
+        return false;
+    }
+
+    std::int32_t totalNodeCount = 0;
+    std::int32_t maximumCellNodeCount = 0;
+    for (std::int32_t cellIndex = 0;
+        cellIndex < world->dpvsPlanes.cellCount;
+        ++cellIndex)
+    {
+        const GfxCell &cell = world->cells[cellIndex];
+        std::int32_t nextTotal = 0;
+        if (!db::validation::WorldAabbTreePresenceValid(
+                cell.aabbTree != nullptr,
+                cell.aabbTreeCount)
+            || !db::validation::CheckedCountSum(
+                totalNodeCount,
+                cell.aabbTreeCount,
+                &nextTotal))
+        {
+            return false;
+        }
+        totalNodeCount = nextTotal;
+        if (cell.aabbTreeCount > maximumCellNodeCount)
+            maximumCellNodeCount = cell.aabbTreeCount;
+    }
+
+    std::uint8_t *nodeDepths = maximumCellNodeCount
+        ? static_cast<std::uint8_t *>(
+            std::malloc(static_cast<std::size_t>(maximumCellNodeCount)))
+        : nullptr;
+    if (maximumCellNodeCount && !nodeDepths)
+        return false;
+
+    for (std::int32_t cellIndex = 0;
+        cellIndex < world->dpvsPlanes.cellCount;
+        ++cellIndex)
+    {
+        const GfxCell &cell = world->cells[cellIndex];
+        if (db::validation::ValidateWorldAabbTopology(
+                cell.aabbTree,
+                cell.aabbTreeCount,
+                staticSurfaceCount,
+                staticSurfaceCountNoDecal,
+                nodeDepths,
+                static_cast<std::uint64_t>(maximumCellNodeCount))
+            != db::validation::WorldAabbTopologyStatus::Ok)
+        {
+            std::free(nodeDepths);
+            return false;
+        }
+    }
+    std::free(nodeDepths);
+    return true;
+}
+}
 
 void __cdecl R_InterpretSunLightParseParamsIntoLights(SunLightParseParams *sunParse, GfxLight *sunLight)
 {
@@ -1637,8 +1757,12 @@ int __cdecl R_FinishLoadingAabbTrees_r(GfxAabbTree *tree, int totalTreesUsed)
     ClearBounds(tree->mins, tree->maxs);
     if (tree->childCount)
     {
-        tree->childrenOffset = &rgl.aabbTrees[totalTreesUsed] - tree;
-        children = (tree + tree->childrenOffset);
+        children = &rgl.aabbTrees[totalTreesUsed];
+        if (!GfxAabbTree_SetChildren(tree, children))
+        {
+            Com_Error(ERR_DROP, "World AABB child offset exceeds the runtime range");
+            return totalTreesUsed;
+        }
         iassert( children[0].startSurfIndex == tree->startSurfIndex );
         totalTreesUsed += tree->childCount;
         for (childIndex = 0; childIndex < tree->childCount; ++childIndex)
@@ -1673,37 +1797,63 @@ void __cdecl R_LoadAabbTrees(TrisType trisType)
 
     lumpType = trisType != TRIS_TYPE_LAYERED ? LUMP_UNLAYERED_AABBTREES : LUMP_AABBTREES;
     in = (const DiskGfxAabbTree *)Com_GetBspLump(lumpType, 0xCu, &aabbTreeCount);
-    out = (GfxAabbTree *)Hunk_Alloc(44 * aabbTreeCount, "R_LoadAabbTrees", 22);
+    if (!R_ValidateBrushModelSurfaceRanges(&s_world))
+    {
+        Com_Error(ERR_DROP, "Invalid BSP static world surface count");
+        return;
+    }
+    const std::uint32_t staticSurfaceCount = s_world.models[0].surfaceCount;
+    std::uint32_t treeBytes = 0;
+    if (!db::validation::CheckedSpanBytes(
+            aabbTreeCount,
+            static_cast<std::uint32_t>(sizeof(GfxAabbTree)),
+            &treeBytes)
+        || treeBytes > INT32_MAX)
+    {
+        Com_Error(ERR_DROP, "Invalid BSP world AABB tree count");
+        return;
+    }
+    s_aabbTreeRootFlags = aabbTreeCount
+        ? Hunk_Alloc(aabbTreeCount, "R_LoadAabbTrees roots", 22)
+        : nullptr;
+    const db::validation::WorldAabbTopologyStatus diskTopologyStatus =
+        db::validation::ValidateImplicitWorldAabbForest(
+            in,
+            aabbTreeCount,
+            staticSurfaceCount,
+            s_aabbTreeRootFlags,
+            aabbTreeCount);
+    if (diskTopologyStatus != db::validation::WorldAabbTopologyStatus::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid BSP world AABB topology: %s",
+            db::validation::WorldAabbTopologyStatusName(diskTopologyStatus));
+        return;
+    }
+    out = treeBytes
+        ? reinterpret_cast<GfxAabbTree *>(
+            Hunk_Alloc(treeBytes, "R_LoadAabbTrees", 22))
+        : nullptr;
+    if (treeBytes)
+        memset(out, 0, treeBytes);
     rgl.aabbTrees = out;
     rgl.aabbTreeCount = aabbTreeCount;
     for (aabbTreeIndex = 0; aabbTreeIndex < aabbTreeCount; ++aabbTreeIndex)
     {
-        surfaceCount = in[aabbTreeIndex].surfaceCount;
+        surfaceCount = static_cast<int>(in[aabbTreeIndex].surfaceCount);
         if (surfaceCount)
         {
-            out[aabbTreeIndex].startSurfIndex = in[aabbTreeIndex].firstSurface;
-            if (out[aabbTreeIndex].startSurfIndex != in[aabbTreeIndex].firstSurface)
-                MyAssertHandler(
-                    ".\\r_bsp_load_obj.cpp",
-                    3633,
-                    0,
-                    "%s",
-                    "out[aabbTreeIndex].startSurfIndex == in[aabbTreeIndex].firstSurface");
+            out[aabbTreeIndex].startSurfIndex =
+                static_cast<std::uint16_t>(in[aabbTreeIndex].firstSurface);
         }
         else
         {
             out[aabbTreeIndex].startSurfIndex = 0;
         }
-        out[aabbTreeIndex].surfaceCount = surfaceCount;
-        iassert( out[aabbTreeIndex].surfaceCount == surfaceCount );
-        out[aabbTreeIndex].childCount = in[aabbTreeIndex].childCount;
-        if (out[aabbTreeIndex].childCount != in[aabbTreeIndex].childCount)
-            MyAssertHandler(
-                ".\\r_bsp_load_obj.cpp",
-                3644,
-                0,
-                "%s",
-                "out[aabbTreeIndex].childCount == in[aabbTreeIndex].childCount");
+        out[aabbTreeIndex].surfaceCount = static_cast<std::uint16_t>(surfaceCount);
+        out[aabbTreeIndex].childCount =
+            static_cast<std::uint16_t>(in[aabbTreeIndex].childCount);
     }
     for (aabbTreeIndexa = 0;
         aabbTreeIndexa < aabbTreeCount;
@@ -1733,9 +1883,24 @@ void __cdecl R_LoadCells(uint32_t bspVersion, TrisType trisType)
     {
         in = Com_GetBspLump(LUMP_CELLS, 0x34u, &cellCount);
     }
-    out = (GfxCell *)Hunk_Alloc(56 * cellCount, "R_LoadCells", 22);
+    std::uint32_t cellBytes = 0;
+    if (cellCount > INT32_MAX
+        || !db::validation::CheckedSpanBytes(
+            cellCount,
+            static_cast<std::uint32_t>(sizeof(GfxCell)),
+            &cellBytes)
+        || cellBytes > INT32_MAX)
+    {
+        Com_Error(ERR_DROP, "Invalid BSP world cell count");
+        return;
+    }
+    out = cellBytes
+        ? reinterpret_cast<GfxCell *>(Hunk_Alloc(cellBytes, "R_LoadCells", 22))
+        : nullptr;
+    if (cellBytes)
+        memset(out, 0, cellBytes);
     s_world.cells = out;
-    s_world.dpvsPlanes.cellCount = cellCount;
+    s_world.dpvsPlanes.cellCount = static_cast<int>(cellCount);
     s_world.cellBitsCount = 16 * ((cellCount + 127) >> 7);
     for (cellIndex = 0; cellIndex < cellCount; ++cellIndex)
     {
@@ -1745,7 +1910,21 @@ void __cdecl R_LoadCells(uint32_t bspVersion, TrisType trisType)
         out->maxs[0] = *((float *)in + 3);
         out->maxs[1] = *((float *)in + 4);
         out->maxs[2] = *((float *)in + 5);
-        out->aabbTree = &rgl.aabbTrees[*(uint16_t *)&in[2 * trisType + 24]];
+        std::uint16_t diskAabbTreeIndex = 0;
+        memcpy(
+            &diskAabbTreeIndex,
+            &in[2 * trisType + 24],
+            sizeof(diskAabbTreeIndex));
+        const std::uint32_t aabbTreeIndex = diskAabbTreeIndex;
+        if (aabbTreeIndex >= static_cast<std::uint32_t>(rgl.aabbTreeCount)
+            || !s_aabbTreeRootFlags
+            || s_aabbTreeRootFlags[aabbTreeIndex] != 1)
+        {
+            Com_Error(ERR_DROP, "Invalid BSP world AABB root for cell %u", cellIndex);
+            return;
+        }
+        s_aabbTreeRootFlags[aabbTreeIndex] = 2;
+        out->aabbTree = &rgl.aabbTrees[aabbTreeIndex];
         out->portals = (GfxPortal *)(68 * *((_DWORD *)in + 7));
         out->portalCount = *((_DWORD *)in + 8);
         cullGroupCount = *((_DWORD *)in + 10);
@@ -1785,6 +1964,14 @@ void __cdecl R_LoadCells(uint32_t bspVersion, TrisType trisType)
             in += 52;
         }
         ++out;
+    }
+    for (std::int32_t treeIndex = 0; treeIndex < rgl.aabbTreeCount; ++treeIndex)
+    {
+        if (s_aabbTreeRootFlags[treeIndex] == 1)
+        {
+            Com_Error(ERR_DROP, "BSP world AABB root is not owned by a cell");
+            return;
+        }
     }
 }
 
@@ -2322,6 +2509,71 @@ char __cdecl R_IsSurfaceDecalLayer(
     return 1;
 }
 
+namespace
+{
+bool R_PreflightNoDecalAabbTree(
+    const GfxAabbTree *tree,
+    std::uint32_t startSurfIndex,
+    std::uint32_t outputCapacity,
+    std::uint32_t depth,
+    std::uint32_t *endSurfIndex)
+{
+    if (!tree || !endSurfIndex
+        || depth == 0
+        || depth > db::validation::kMaxWorldAabbDepth
+        || startSurfIndex > outputCapacity)
+    {
+        return false;
+    }
+
+    std::uint32_t cursor = startSurfIndex;
+    if (tree->childCount)
+    {
+        const GfxAabbTree *children = GfxAabbTree_GetChildren(tree);
+        for (std::uint32_t childIndex = 0;
+            childIndex < tree->childCount;
+            ++childIndex)
+        {
+            if (!R_PreflightNoDecalAabbTree(
+                    &children[childIndex],
+                    cursor,
+                    outputCapacity,
+                    depth + 1,
+                    &cursor))
+            {
+                return false;
+            }
+        }
+    }
+    else
+    {
+        for (std::uint32_t surfaceIndex = 0;
+            surfaceIndex < tree->surfaceCount;
+            ++surfaceIndex)
+        {
+            const std::uint16_t sortedSurface =
+                s_world.dpvs.sortedSurfIndex[tree->startSurfIndex + surfaceIndex];
+            if ((s_world.dpvs.surfaces[sortedSurface].flags & 2) == 0)
+            {
+                if (cursor >= outputCapacity)
+                    return false;
+                ++cursor;
+            }
+        }
+    }
+
+    const std::uint32_t emittedCount = cursor - startSurfIndex;
+    if (emittedCount > tree->surfaceCount
+        || emittedCount > UINT16_MAX
+        || (emittedCount && startSurfIndex > UINT16_MAX))
+    {
+        return false;
+    }
+    *endSurfIndex = cursor;
+    return true;
+}
+}
+
 uint32_t __cdecl R_BuildNoDecalAabbTree_r(GfxAabbTree *tree, uint32_t startSurfIndex)
 {
     int startSurfIndexNoDecal; // eax
@@ -2343,7 +2595,7 @@ uint32_t __cdecl R_BuildNoDecalAabbTree_r(GfxAabbTree *tree, uint32_t startSurfI
     tree->startSurfIndexNoDecal = startSurfIndex;
     if (tree->childCount)
     {
-        children = (tree + tree->childrenOffset);
+        children = GfxAabbTree_GetChildren(tree);
         for (childIter = 0; childIter < tree->childCount; ++childIter)
             startSurfIndex = R_BuildNoDecalAabbTree_r(&children[childIter], startSurfIndex);
     }
@@ -2382,6 +2634,11 @@ void R_BuildNoDecalSubModels()
     int modelIndex; // [esp+18h] [ebp-8h]
     uint32_t startSurfIndex; // [esp+1Ch] [ebp-4h]
 
+    if (!R_ValidateBrushModelSurfaceRanges(&s_world))
+    {
+        Com_Error(ERR_DROP, "Invalid BSP world models for AABB no-decal ranges");
+        return;
+    }
     for (modelIndex = 0; modelIndex < s_world.modelCount; ++modelIndex)
     {
         model = &s_world.models[modelIndex];
@@ -2397,17 +2654,44 @@ void R_BuildNoDecalSubModels()
                 ++model->surfaceCountNoDecal;
         }
     }
+    if (!db::validation::WorldAabbSurfacePartitionsValid(
+            s_world.models->surfaceCount,
+            s_world.models->surfaceCountNoDecal,
+            static_cast<std::uint32_t>(s_world.surfaceCount)))
+    {
+        Com_Error(ERR_DROP, "Invalid BSP world AABB surface partitions");
+        return;
+    }
+    const std::uint32_t noDecalOutputCapacity =
+        2 * static_cast<std::uint32_t>(s_world.models->surfaceCount);
+    std::uint32_t preflightSurfIndex = s_world.models->surfaceCount;
+    for (cellIter = 0; cellIter < s_world.dpvsPlanes.cellCount; ++cellIter)
+    {
+        if (!R_PreflightNoDecalAabbTree(
+                s_world.cells[cellIter].aabbTree,
+                preflightSurfIndex,
+                noDecalOutputCapacity,
+                1,
+                &preflightSurfIndex))
+        {
+            Com_Error(ERR_DROP, "Invalid BSP world AABB no-decal output span");
+            return;
+        }
+    }
+    if (preflightSurfIndex - s_world.models->surfaceCount
+        != s_world.models->surfaceCountNoDecal)
+    {
+        Com_Error(ERR_DROP, "BSP world AABB leaves do not cover static surfaces exactly");
+        return;
+    }
     startSurfIndex = s_world.models->surfaceCount;
     for (cellIter = 0; cellIter < s_world.dpvsPlanes.cellCount; ++cellIter)
         startSurfIndex = R_BuildNoDecalAabbTree_r(s_world.cells[cellIter].aabbTree, startSurfIndex);
     if (s_world.models->surfaceCountNoDecal != startSurfIndex - s_world.models->surfaceCount)
-        MyAssertHandler(
-            ".\\r_bsp_load_obj.cpp",
-            2579,
-            1,
-            "s_world.models[0].surfaceCountNoDecal == startSurfIndex - s_world.models[0].surfaceCount\n\t%i, %i",
-            s_world.models->surfaceCountNoDecal,
-            startSurfIndex - s_world.models->surfaceCount);
+    {
+        Com_Error(ERR_DROP, "BSP world AABB no-decal output changed after validation");
+        return;
+    }
 }
 
 char *__cdecl R_ValueForKey(const char *key, char *(*spawnVars)[2], int spawnVarCount)
@@ -2649,6 +2933,11 @@ static void __cdecl R_LoadMiscModel(char *(*spawnVars)[2], int spawnVarCount, in
     float axis[3][3]; // [esp+54h] [ebp-28h] BYREF
     uint8_t staticModelFlags; // [esp+7Bh] [ebp-1h]
 
+    if (s_world.dpvs.smodelCount > UINT16_MAX)
+    {
+        Com_Error(ERR_DROP, "BSP world static-model index exceeds uint16 capacity");
+        return;
+    }
     R_CheckValidStaticModel(spawnVars, spawnVarCount, &model, origin);
     smodelDrawInst = &s_world.dpvs.smodelDrawInsts[s_world.dpvs.smodelCount];
     smodelInst = &s_world.dpvs.smodelInsts[s_world.dpvs.smodelCount++];
@@ -2762,10 +3051,37 @@ void __cdecl R_LoadEntities(uint32_t bspVersion)
         if (!*spawnVars[0][0])
             Com_Error(ERR_DROP, "R_LoadEntities: entity without a classname");
         if (!I_stricmp(spawnVars[0][1], "misc_model"))
+        {
+            if (smodelCount > UINT16_MAX)
+            {
+                Com_Error(ERR_DROP, "BSP world static-model count exceeds uint16 indices");
+                Hunk_FreeTempMemory(textPool);
+                return;
+            }
             ++smodelCount;
+        }
     }
-    s_world.dpvs.smodelDrawInsts = (GfxStaticModelDrawInst*)Hunk_Alloc(76 * smodelCount, "R_LoadEntities", 21);
-    s_world.dpvs.smodelInsts = (GfxStaticModelInst*)Hunk_Alloc(28 * smodelCount, "R_LoadEntities", 21);
+    std::uint32_t smodelDrawBytes = 0;
+    std::uint32_t smodelInstBytes = 0;
+    if (!db::validation::CheckedSpanBytes(
+            smodelCount,
+            static_cast<std::uint32_t>(sizeof(GfxStaticModelDrawInst)),
+            &smodelDrawBytes)
+        || !db::validation::CheckedSpanBytes(
+            smodelCount,
+            static_cast<std::uint32_t>(sizeof(GfxStaticModelInst)),
+            &smodelInstBytes)
+        || smodelDrawBytes > INT32_MAX
+        || smodelInstBytes > INT32_MAX)
+    {
+        Com_Error(ERR_DROP, "BSP world static-model arrays exceed the runtime range");
+        Hunk_FreeTempMemory(textPool);
+        return;
+    }
+    s_world.dpvs.smodelDrawInsts = reinterpret_cast<GfxStaticModelDrawInst *>(
+        Hunk_Alloc(smodelDrawBytes, "R_LoadEntities", 21));
+    s_world.dpvs.smodelInsts = reinterpret_cast<GfxStaticModelInst *>(
+        Hunk_Alloc(smodelInstBytes, "R_LoadEntities", 21));
     s_world.dpvs.smodelCount = 0;
     text = startPos;
     iassert( s_world.cells );
@@ -2876,10 +3192,10 @@ void R_SetStaticModelReflectionProbes()
 void __cdecl R_AddStaticModelToAabbTree_r(GfxWorld *world, GfxAabbTree *tree, int smodelIndex)
 {
     int v3; // [esp+4h] [ebp-30h]
-    uint8_t *children; // [esp+14h] [ebp-20h]
+    GfxAabbTree *children; // [esp+14h] [ebp-20h]
     GfxAabbTree *childTree; // [esp+18h] [ebp-1Ch]
     GfxAabbTree *childTreea; // [esp+18h] [ebp-1Ch]
-    uint8_t *newChildren; // [esp+1Ch] [ebp-18h]
+    GfxAabbTree *newChildren; // [esp+1Ch] [ebp-18h]
     int childIndex; // [esp+20h] [ebp-14h]
     int childIndexa; // [esp+20h] [ebp-14h]
     int childIndexb; // [esp+20h] [ebp-14h]
@@ -2887,6 +3203,16 @@ void __cdecl R_AddStaticModelToAabbTree_r(GfxWorld *world, GfxAabbTree *tree, in
     GfxStaticModelInst *smodelInst; // [esp+28h] [ebp-Ch]
     int i; // [esp+30h] [ebp-4h]
 
+    if (smodelIndex < 0 || smodelIndex > UINT16_MAX)
+    {
+        Com_Error(ERR_DROP, "World AABB static-model index exceeds uint16 capacity");
+        return;
+    }
+    if (tree->smodelIndexCount == UINT16_MAX)
+    {
+        Com_Error(ERR_DROP, "World AABB static-model list exceeds its uint16 capacity");
+        return;
+    }
     if (((tree->smodelIndexCount - 1) & tree->smodelIndexCount) == 0)
     {
         if (tree->smodelIndexCount)
@@ -2909,9 +3235,10 @@ void __cdecl R_AddStaticModelToAabbTree_r(GfxWorld *world, GfxAabbTree *tree, in
     if (tree->childCount)
     {
         smodelInst = &world->dpvs.smodelInsts[smodelIndex];
+        children = GfxAabbTree_GetChildren(tree);
         for (childIndex = 0; childIndex < tree->childCount; ++childIndex)
         {
-            childTree = (GfxAabbTree *)((char *)&tree[childIndex] + tree->childrenOffset);
+            childTree = &children[childIndex];
             if (smodelInst->mins[0] >= (double)childTree->mins[0]
                 && smodelInst->mins[1] >= (double)childTree->mins[1]
                 && smodelInst->mins[2] >= (double)childTree->mins[2]
@@ -2926,15 +3253,44 @@ void __cdecl R_AddStaticModelToAabbTree_r(GfxWorld *world, GfxAabbTree *tree, in
         {
             if (childIndexa >= tree->childCount)
             {
-                newChildren = Hunk_AllocAlign(44 * (tree->childCount + 1), 4, "R_AddStaticModelToAabbTree_r", 21);
-                children = (uint8_t *)tree + tree->childrenOffset;
-                memcpy(newChildren, children, 44 * tree->childCount);
-                tree->childrenOffset = newChildren - (uint8_t *)tree;
+                if (tree->childCount == UINT16_MAX)
+                {
+                    Com_Error(ERR_DROP, "World AABB child count exceeds uint16 capacity");
+                    return;
+                }
+                newChildren = reinterpret_cast<GfxAabbTree *>(Hunk_AllocAlign(
+                    sizeof(GfxAabbTree) * (tree->childCount + 1),
+                    alignof(GfxAabbTree),
+                    "R_AddStaticModelToAabbTree_r",
+                    21));
+                memcpy(
+                    newChildren,
+                    children,
+                    sizeof(GfxAabbTree) * tree->childCount);
                 for (childIndexb = 0; childIndexb < tree->childCount; ++childIndexb)
-                    *(_DWORD *)&newChildren[44 * childIndexb + 40] = &children[44 * childIndexb
-                    + *(_DWORD *)&children[44 * childIndexb + 40]]
-                    - &newChildren[44 * childIndexb];
-                childTreea = (GfxAabbTree *)((char *)&tree[tree->childCount++] + tree->childrenOffset);
+                {
+                    if (children[childIndexb].childCount)
+                    {
+                        if (!GfxAabbTree_SetChildren(
+                                &newChildren[childIndexb],
+                                GfxAabbTree_GetChildren(&children[childIndexb])))
+                        {
+                            Com_Error(ERR_DROP, "World AABB child offset exceeds the runtime range");
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        newChildren[childIndexb].childrenOffset = 0;
+                    }
+                }
+                if (!GfxAabbTree_SetChildren(tree, newChildren))
+                {
+                    Com_Error(ERR_DROP, "World AABB child offset exceeds the runtime range");
+                    return;
+                }
+                children = newChildren;
+                childTreea = &children[tree->childCount++];
                 childTreea->mins[0] = smodelInst->mins[0];
                 childTreea->mins[1] = smodelInst->mins[1];
                 childTreea->mins[2] = smodelInst->mins[2];
@@ -2944,7 +3300,7 @@ void __cdecl R_AddStaticModelToAabbTree_r(GfxWorld *world, GfxAabbTree *tree, in
                 R_AddStaticModelToAabbTree_r(world, childTreea, smodelIndex);
                 return;
             }
-            childTree = (GfxAabbTree *)((char *)&tree[childIndexa] + tree->childrenOffset);
+            childTree = &children[childIndexa];
             if (!childTree->surfaceCount)
                 break;
         }
@@ -3079,9 +3435,12 @@ void __cdecl R_AllocStaticModels(GfxAabbTree *tree)
         memcpy(smodelIndexes, tree->smodelIndexes, 2 * tree->smodelIndexCount);
         tree->smodelIndexes = (unsigned short*)smodelIndexes;
     }
-    children = (tree + tree->childrenOffset);
-    for (childIndex = 0; childIndex < tree->childCount; ++childIndex)
-        R_AllocStaticModels(&children[childIndex]);
+    if (tree->childCount)
+    {
+        children = GfxAabbTree_GetChildren(tree);
+        for (childIndex = 0; childIndex < tree->childCount; ++childIndex)
+            R_AllocStaticModels(&children[childIndex]);
+    }
 }
 
 int __cdecl CompareStaticModels(uint16_t *smodel0, uint16_t *smodel1)
@@ -3131,7 +3490,10 @@ int __cdecl R_SortGfxAabbTreeChildren(
     return childCount < 2 ? 0 : childCount;
 }
 
-void __cdecl R_SortGfxAabbTree(GfxWorld *world, GfxAabbTree *tree)
+void __cdecl R_SortGfxAabbTree_r(
+    GfxWorld *world,
+    GfxAabbTree *tree,
+    std::uint32_t depth)
 {
     float *v2; // [esp+8h] [ebp-84h]
     int j; // [esp+14h] [ebp-78h]
@@ -3153,12 +3515,17 @@ void __cdecl R_SortGfxAabbTree(GfxWorld *world, GfxAabbTree *tree)
     int count; // [esp+84h] [ebp-8h]
     int smodelIndex; // [esp+88h] [ebp-4h]
 
+    if (depth == 0 || depth > db::validation::kMaxWorldAabbDepth)
+    {
+        Com_Error(ERR_DROP, "World AABB static-model tree exceeds its depth budget");
+        return;
+    }
     qsort(tree->smodelIndexes, tree->smodelIndexCount, 2u, (int(*)(const void *, const void *))CompareStaticModels);
     if (tree->childCount)
     {
-        children = (tree + tree->childrenOffset);
+        children = GfxAabbTree_GetChildren(tree);
         for (childIndex = 0; childIndex < tree->childCount; ++childIndex)
-            R_SortGfxAabbTree(world, &children[childIndex]);
+            R_SortGfxAabbTree_r(world, &children[childIndex], depth + 1);
     }
     else
     {
@@ -3189,7 +3556,8 @@ void __cdecl R_SortGfxAabbTree(GfxWorld *world, GfxAabbTree *tree)
             tree->maxs[1] = maxs[1];
             tree->maxs[2] = maxs[2];
         }
-        if (tree->smodelIndexCount >= 8u)
+        if (tree->smodelIndexCount >= 8u
+            && depth < db::validation::kMaxWorldAabbDepth)
         {
             Vec3Add(mins, maxs, middle);
             Vec3Scale(middle, 0.5, middle);
@@ -3240,10 +3608,18 @@ void __cdecl R_SortGfxAabbTree(GfxWorld *world, GfxAabbTree *tree)
                     ++count;
                 if (smodelIndexCount)
                     ++count;
-                tree->childrenOffset = Hunk_AllocAlign(44 * count, 4, "R_SortGfxAabbTree", 21) - (unsigned char*)tree;
+                children = reinterpret_cast<GfxAabbTree *>(Hunk_AllocAlign(
+                    sizeof(GfxAabbTree) * count,
+                    alignof(GfxAabbTree),
+                    "R_SortGfxAabbTree",
+                    21));
+                if (!GfxAabbTree_SetChildren(tree, children))
+                {
+                    Com_Error(ERR_DROP, "World AABB child offset exceeds the runtime range");
+                    return;
+                }
                 if (tree->surfaceCount)
                 {
-                    children = (tree + tree->childrenOffset);
                     childTree = &children[tree->childCount++];
                     childTree->mins[0] = tree->mins[0];
                     childTree->mins[1] = tree->mins[1];
@@ -3264,19 +3640,17 @@ void __cdecl R_SortGfxAabbTree(GfxWorld *world, GfxAabbTree *tree)
                     count = childCount[ja];
                     if (count)
                     {
-                        children = (tree + tree->childrenOffset);
                         childTree = &children[tree->childCount++];
                         childTree->smodelIndexCount = count;
                         iassert( childTree->smodelIndexCount == count );
                         childTree->smodelIndexes = smodelIndexes;
-                        R_SortGfxAabbTree(world, childTree);
+                        R_SortGfxAabbTree_r(world, childTree, depth + 1);
                         smodelIndexes += count;
                         smodelIndexCount -= count;
                     }
                 }
                 if (smodelIndexCount)
                 {
-                    children = (tree + tree->childrenOffset);
                     childTree = &children[tree->childCount++];
                     childTree->smodelIndexCount = smodelIndexCount;
                     if (childTree->smodelIndexCount != smodelIndexCount)
@@ -3287,11 +3661,16 @@ void __cdecl R_SortGfxAabbTree(GfxWorld *world, GfxAabbTree *tree)
                             "%s",
                             "childTree->smodelIndexCount == smodelIndexCount");
                     childTree->smodelIndexes = smodelIndexes;
-                    R_SortGfxAabbTree(world, childTree);
+                    R_SortGfxAabbTree_r(world, childTree, depth + 1);
                 }
             }
         }
     }
+}
+
+void __cdecl R_SortGfxAabbTree(GfxWorld *world, GfxAabbTree *tree)
+{
+    R_SortGfxAabbTree_r(world, tree, 1);
 }
 
 int __cdecl R_AabbTreeChildrenCount_r(GfxAabbTree *tree)
@@ -3301,9 +3680,21 @@ int __cdecl R_AabbTreeChildrenCount_r(GfxAabbTree *tree)
     int count; // [esp+8h] [ebp-4h]
 
     count = 1;
-    children = (tree + tree->childrenOffset);
-    for (childIndex = 0; childIndex < tree->childCount; ++childIndex)
-        count += R_AabbTreeChildrenCount_r(&children[childIndex]);
+    if (tree->childCount)
+    {
+        children = GfxAabbTree_GetChildren(tree);
+        for (childIndex = 0; childIndex < tree->childCount; ++childIndex)
+        {
+            const int childNodeCount =
+                R_AabbTreeChildrenCount_r(&children[childIndex]);
+            if (childNodeCount <= 0 || count > INT32_MAX - childNodeCount)
+            {
+                Com_Error(ERR_DROP, "World AABB node count exceeds the runtime range");
+                return 0;
+            }
+            count += childNodeCount;
+        }
+    }
     return count;
 }
 
@@ -3314,11 +3705,23 @@ GfxAabbTree *__cdecl R_AabbTreeMove_r(GfxAabbTree *tree, GfxAabbTree *newTree, G
     GfxAabbTree *allocChildren; // [esp+10h] [ebp-4h]
 
     qmemcpy(newTree, tree, sizeof(GfxAabbTree));
-    children = (tree + tree->childrenOffset);
-    newTree->childrenOffset = newChildren - newTree;
+    if (!tree->childCount)
+    {
+        newTree->childrenOffset = 0;
+        return newChildren;
+    }
+    children = GfxAabbTree_GetChildren(tree);
+    if (!GfxAabbTree_SetChildren(newTree, newChildren))
+    {
+        Com_Error(ERR_DROP, "World AABB child offset exceeds the runtime range");
+        return newChildren;
+    }
     allocChildren = &newChildren[tree->childCount];
     for (childIndex = 0; childIndex < tree->childCount; ++childIndex)
-        allocChildren = R_AabbTreeMove_r(&children[childIndex], &newChildren[childIndex], allocChildren);
+        allocChildren = R_AabbTreeMove_r(
+            &children[childIndex],
+            &newChildren[childIndex],
+            allocChildren);
     return allocChildren;
 }
 
@@ -3330,7 +3733,22 @@ void __cdecl R_FixupGfxAabbTrees(GfxCell *cell)
     tree = cell->aabbTree;
     iassert( tree );
     cell->aabbTreeCount = R_AabbTreeChildrenCount_r(tree);
-    newTree = (GfxAabbTree*)Hunk_AllocAlign(44 * cell->aabbTreeCount, 4, "R_FixupGfxAabbTrees", 21);
+    std::uint32_t treeBytes = 0;
+    if (cell->aabbTreeCount <= 0
+        || !db::validation::CheckedSpanBytes(
+            static_cast<std::uint32_t>(cell->aabbTreeCount),
+            static_cast<std::uint32_t>(sizeof(GfxAabbTree)),
+            &treeBytes)
+        || treeBytes > INT32_MAX)
+    {
+        Com_Error(ERR_DROP, "World AABB node array exceeds the runtime range");
+        return;
+    }
+    newTree = reinterpret_cast<GfxAabbTree *>(Hunk_AllocAlign(
+        treeBytes,
+        alignof(GfxAabbTree),
+        "R_FixupGfxAabbTrees",
+        21));
     if (R_AabbTreeMove_r(tree, newTree, newTree + 1) - newTree != cell->aabbTreeCount)
         MyAssertHandler(".\\r_bsp_load_obj.cpp", 3383, 0, "%s", "allocChildren - newTree == cell->aabbTreeCount");
     cell->aabbTree = newTree;
@@ -3348,10 +3766,26 @@ int R_PostLoadEntities()
     uint32_t smodelIndexb; // [esp+520h] [ebp-4h]
 
     iassert( rgl.staticModelReflectionProbesLoaded );
-    smodelCombinedInsts = (GfxStaticModelCombinedInst*)Z_Malloc(104 * s_world.dpvs.smodelCount, "R_PostLoadEntities", 21);
+    std::uint32_t combinedInstBytes = 0;
+    if (!db::validation::CheckedSpanBytes(
+            s_world.dpvs.smodelCount,
+            static_cast<std::uint32_t>(sizeof(GfxStaticModelCombinedInst)),
+            &combinedInstBytes)
+        || combinedInstBytes > INT32_MAX)
+    {
+        Com_Error(ERR_DROP, "BSP world combined static-model array exceeds the runtime range");
+        return 0;
+    }
+    smodelCombinedInsts = combinedInstBytes
+        ? reinterpret_cast<GfxStaticModelCombinedInst *>(
+            Z_Malloc(combinedInstBytes, "R_PostLoadEntities", 21))
+        : nullptr;
     for (smodelIndex = 0; smodelIndex < s_world.dpvs.smodelCount; ++smodelIndex)
     {
-        qmemcpy(&smodelCombinedInsts[smodelIndex], &s_world.dpvs.smodelDrawInsts[smodelIndex], 0x4Cu);
+        qmemcpy(
+            &smodelCombinedInsts[smodelIndex].smodelDrawInst,
+            &s_world.dpvs.smodelDrawInsts[smodelIndex],
+            sizeof(smodelCombinedInsts[smodelIndex].smodelDrawInst));
         qmemcpy(
             &smodelCombinedInsts[smodelIndex].smodelInst,
             &s_world.dpvs.smodelInsts[smodelIndex],
@@ -3362,19 +3796,26 @@ int R_PostLoadEntities()
     //    &smodelCombinedInsts[s_world.dpvs.smodelCount],
     //    (104 * s_world.dpvs.smodelCount) / 104,
     //    R_StaticModelCompare);
-    std::sort(&smodelCombinedInsts[0], &smodelCombinedInsts[s_world.dpvs.smodelCount], R_StaticModelCompare);
+    if (s_world.dpvs.smodelCount > 1)
+    {
+        std::sort(
+            &smodelCombinedInsts[0],
+            &smodelCombinedInsts[s_world.dpvs.smodelCount],
+            R_StaticModelCompare);
+    }
     for (smodelIndexa = 0; smodelIndexa < s_world.dpvs.smodelCount; ++smodelIndexa)
     {
         qmemcpy(
             &s_world.dpvs.smodelDrawInsts[smodelIndexa],
-            &smodelCombinedInsts[smodelIndexa],
+            &smodelCombinedInsts[smodelIndexa].smodelDrawInst,
             sizeof(s_world.dpvs.smodelDrawInsts[smodelIndexa]));
         qmemcpy(
             &s_world.dpvs.smodelInsts[smodelIndexa],
             &smodelCombinedInsts[smodelIndexa].smodelInst,
             sizeof(s_world.dpvs.smodelInsts[smodelIndexa]));
     }
-    Z_Free(smodelCombinedInsts, 21);
+    if (smodelCombinedInsts)
+        Z_Free(smodelCombinedInsts, 21);
     iassert( s_world.dpvsPlanes.nodes );
     for (smodelIndexb = 0; smodelIndexb < s_world.dpvs.smodelCount; ++smodelIndexb)
         R_FilterStaticModelIntoCells_r(
@@ -3394,6 +3835,15 @@ int R_PostLoadEntities()
         if (cellIndexb >= s_world.dpvsPlanes.cellCount)
             break;
         R_FixupGfxAabbTrees(&s_world.cells[cellIndexb]);
+    }
+    if (!s_world.models
+        || !R_ValidateLoadedWorldAabbTrees(
+            &s_world,
+            s_world.models->surfaceCount,
+            s_world.models->surfaceCountNoDecal))
+    {
+        Com_Error(ERR_DROP, "Invalid loaded BSP world AABB topology");
+        return result;
     }
     return result;
 }

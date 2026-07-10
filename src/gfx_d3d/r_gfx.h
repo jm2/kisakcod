@@ -495,6 +495,47 @@ struct GfxAabbTree // sizeof=0x2C
     int childrenOffset;
 };
 
+inline GfxAabbTree *GfxAabbTree_GetChildren(GfxAabbTree *tree)
+{
+    return reinterpret_cast<GfxAabbTree *>(
+        reinterpret_cast<std::uint8_t *>(tree) + tree->childrenOffset);
+}
+
+inline const GfxAabbTree *GfxAabbTree_GetChildren(const GfxAabbTree *tree)
+{
+    return reinterpret_cast<const GfxAabbTree *>(
+        reinterpret_cast<const std::uint8_t *>(tree) + tree->childrenOffset);
+}
+
+inline bool GfxAabbTree_SetChildren(
+    GfxAabbTree *tree,
+    const GfxAabbTree *children)
+{
+    if (!tree || !children)
+        return false;
+
+    const std::uintptr_t treeAddress = reinterpret_cast<std::uintptr_t>(tree);
+    const std::uintptr_t childAddress = reinterpret_cast<std::uintptr_t>(children);
+    if (childAddress >= treeAddress)
+    {
+        const std::uintptr_t offset = childAddress - treeAddress;
+        if (offset > static_cast<std::uintptr_t>(INT32_MAX))
+            return false;
+        tree->childrenOffset = static_cast<std::int32_t>(offset);
+    }
+    else
+    {
+        const std::uintptr_t magnitude = treeAddress - childAddress;
+        constexpr std::uintptr_t kMinimumOffsetMagnitude =
+            static_cast<std::uintptr_t>(INT32_MAX) + 1;
+        if (magnitude > kMinimumOffsetMagnitude)
+            return false;
+        tree->childrenOffset = static_cast<std::int32_t>(
+            -static_cast<std::int64_t>(magnitude));
+    }
+    return true;
+}
+
 struct GfxPortal;
 
 struct GfxPortalWritable // sizeof=0xC

@@ -20,6 +20,8 @@
 #include <gfx_d3d/r_primarylights.h>
 #include <game/g_bsp.h>
 
+#include <cstdlib>
+
 namespace
 {
 constexpr db::relocation::BlockMask kDirectBlock4 = db::relocation::BlockBit(4);
@@ -553,6 +555,190 @@ int32_t DB_CheckedCountCeilDiv(int64_t value, int64_t divisor, const char *descr
         return 0;
     }
     return result;
+}
+
+bool DB_ValidateWorldAabbCell(
+    const GfxWorld *world,
+    const GfxCell *cell)
+{
+    if (!world || !cell
+        || !db::validation::WorldAabbTreePresenceValid(
+            cell->aabbTree != nullptr,
+            cell->aabbTreeCount))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file world AABB pointer/count");
+        return false;
+    }
+
+    std::uint8_t *nodeDepths = cell->aabbTreeCount
+        ? static_cast<std::uint8_t *>(
+            std::malloc(static_cast<std::size_t>(cell->aabbTreeCount)))
+        : nullptr;
+    if (cell->aabbTreeCount && !nodeDepths)
+    {
+        Com_Error(ERR_DROP, "Could not allocate world AABB validation state");
+        return false;
+    }
+    const db::validation::WorldAabbTopologyStatus status =
+        db::validation::ValidateWorldAabbTopology(
+            cell->aabbTree,
+            cell->aabbTreeCount,
+            world->dpvs.staticSurfaceCount,
+            world->dpvs.staticSurfaceCountNoDecal,
+            nodeDepths,
+            static_cast<std::uint64_t>(cell->aabbTreeCount));
+    std::free(nodeDepths);
+    if (status != db::validation::WorldAabbTopologyStatus::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid fast-file world AABB topology: %s",
+            db::validation::WorldAabbTopologyStatusName(status));
+        return false;
+    }
+    return true;
+}
+
+bool DB_ValidateWorldAabbTrees(const GfxWorld *world)
+{
+    if (!world
+        || !db::validation::PointerCountConsistent(
+            world->cells != nullptr,
+            world->dpvsPlanes.cellCount))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file world cell pointer/count");
+        return false;
+    }
+    if (world->surfaceCount < 0
+        || !db::validation::WorldAabbSurfacePartitionsValid(
+            world->dpvs.staticSurfaceCount,
+            world->dpvs.staticSurfaceCountNoDecal,
+            static_cast<std::uint32_t>(world->surfaceCount))
+        || world->modelCount <= 0
+        || !world->models
+        || world->models[0].startSurfIndex != 0
+        || world->models[0].surfaceCount
+            != world->dpvs.staticSurfaceCount
+        || world->models[0].surfaceCountNoDecal
+            != world->dpvs.staticSurfaceCountNoDecal
+        || world->dpvs.smodelCount
+            > db::validation::kMaxWorldAabbStaticModels)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file world static-surface counts");
+        return false;
+    }
+
+    std::int32_t totalNodeCount = 0;
+    std::int32_t maximumCellNodeCount = 0;
+    for (std::int32_t cellIndex = 0;
+        cellIndex < world->dpvsPlanes.cellCount;
+        ++cellIndex)
+    {
+        const GfxCell &cell = world->cells[cellIndex];
+        if (!db::validation::WorldAabbTreePresenceValid(
+                cell.aabbTree != nullptr,
+                cell.aabbTreeCount))
+        {
+            Com_Error(
+                ERR_DROP,
+                "Invalid fast-file world AABB pointer/count in cell %d",
+                cellIndex);
+            return false;
+        }
+
+        std::int32_t nextTotal = 0;
+        if (!db::validation::CheckedCountSum(
+                totalNodeCount,
+                cell.aabbTreeCount,
+                &nextTotal))
+        {
+            Com_Error(ERR_DROP, "Invalid fast-file aggregate world AABB count");
+            return false;
+        }
+        totalNodeCount = nextTotal;
+        if (cell.aabbTreeCount > maximumCellNodeCount)
+            maximumCellNodeCount = cell.aabbTreeCount;
+    }
+
+    std::uint8_t *nodeDepths = maximumCellNodeCount
+        ? static_cast<std::uint8_t *>(
+            std::malloc(static_cast<std::size_t>(maximumCellNodeCount)))
+        : nullptr;
+    if (maximumCellNodeCount && !nodeDepths)
+    {
+        Com_Error(ERR_DROP, "Could not allocate world AABB validation state");
+        return false;
+    }
+    const std::uint64_t sortedSurfaceCount =
+        static_cast<std::uint64_t>(world->dpvs.staticSurfaceCount)
+        + world->dpvs.staticSurfaceCountNoDecal;
+    std::uint8_t *surfaceCoverage = sortedSurfaceCount
+        ? static_cast<std::uint8_t *>(
+            std::calloc(static_cast<std::size_t>(sortedSurfaceCount), 1))
+        : nullptr;
+    if (sortedSurfaceCount && !surfaceCoverage)
+    {
+        std::free(nodeDepths);
+        Com_Error(ERR_DROP, "Could not allocate world AABB surface coverage");
+        return false;
+    }
+
+    for (std::int32_t cellIndex = 0;
+        cellIndex < world->dpvsPlanes.cellCount;
+        ++cellIndex)
+    {
+        const GfxCell &cell = world->cells[cellIndex];
+        const db::validation::WorldAabbTopologyStatus status =
+            db::validation::ValidateWorldAabbTopology(
+                cell.aabbTree,
+                cell.aabbTreeCount,
+                world->dpvs.staticSurfaceCount,
+                world->dpvs.staticSurfaceCountNoDecal,
+                nodeDepths,
+                static_cast<std::uint64_t>(maximumCellNodeCount));
+        if (status != db::validation::WorldAabbTopologyStatus::Ok)
+        {
+            std::free(nodeDepths);
+            std::free(surfaceCoverage);
+            Com_Error(
+                ERR_DROP,
+                "Invalid fast-file world AABB topology in cell %d: %s",
+                cellIndex,
+                db::validation::WorldAabbTopologyStatusName(status));
+            return false;
+        }
+        if (cell.aabbTreeCount)
+        {
+            const GfxAabbTree &root = cell.aabbTree[0];
+            if (!db::validation::MarkUniqueCoverageSpan(
+                    surfaceCoverage,
+                    sortedSurfaceCount,
+                    root.startSurfIndex,
+                    root.surfaceCount)
+                || !db::validation::MarkUniqueCoverageSpan(
+                    surfaceCoverage,
+                    sortedSurfaceCount,
+                    root.startSurfIndexNoDecal,
+                    root.surfaceCountNoDecal))
+            {
+                std::free(nodeDepths);
+                std::free(surfaceCoverage);
+                Com_Error(ERR_DROP, "Overlapping fast-file world AABB root surfaces");
+                return false;
+            }
+        }
+    }
+    std::free(nodeDepths);
+    if (!db::validation::CoverageComplete(
+            surfaceCoverage,
+            sortedSurfaceCount))
+    {
+        std::free(surfaceCoverage);
+        Com_Error(ERR_DROP, "Fast-file world AABB roots leave uncovered surfaces");
+        return false;
+    }
+    std::free(surfaceCoverage);
+    return true;
 }
 }
 
@@ -7358,12 +7544,21 @@ void __cdecl Load_GfxAabbTreeArray(bool atStreamStart, int32_t count)
 void __cdecl Load_GfxCell(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varGfxCell, 56);
+    if (!db::validation::WorldAabbTreePresenceValid(
+            varGfxCell->aabbTree != nullptr,
+            varGfxCell->aabbTreeCount))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file world AABB pointer/count");
+        return;
+    }
     if (varGfxCell->aabbTree)
     {
         varGfxCell->aabbTree = (GfxAabbTree *)AllocLoad_FxElemVisStateSample();
         varGfxAabbTree = varGfxCell->aabbTree;
         Load_GfxAabbTreeArray(1, varGfxCell->aabbTreeCount);
     }
+    if (!DB_ValidateWorldAabbCell(varGfxWorld, varGfxCell))
+        return;
     if (varGfxCell->portals)
     {
         varGfxCell->portals = (GfxPortal *)AllocLoad_FxElemVisStateSample();
@@ -7754,6 +7949,21 @@ void __cdecl Load_GfxWorldDpvsStatic(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varGfxWorldDpvsStatic, 104);
     // Validate the full metadata relationship before installing any optional DPVS payload.
+    if (varGfxWorld->surfaceCount < 0
+        || !db::validation::WorldAabbSurfacePartitionsValid(
+            varGfxWorldDpvsStatic->staticSurfaceCount,
+            varGfxWorldDpvsStatic->staticSurfaceCountNoDecal,
+            static_cast<std::uint32_t>(varGfxWorld->surfaceCount)))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file world static-surface counts");
+        return;
+    }
+    if (varGfxWorldDpvsStatic->smodelCount
+        > db::validation::kMaxWorldAabbStaticModels)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file world static-model count");
+        return;
+    }
     const int32_t lodDataCount = DB_CheckedCountProduct(
         2,
         varGfxWorldDpvsStatic->smodelVisDataCount,
@@ -7823,6 +8033,21 @@ void __cdecl Load_GfxWorldDpvsStatic(bool atStreamStart)
         varGfxWorldDpvsStatic->sortedSurfIndex = (uint16_t *)AllocLoad_XBlendInfo();
         varushort = varGfxWorldDpvsStatic->sortedSurfIndex;
         Load_ushortArray(1, sortedSurfaceCount);
+    }
+    if (!DB_ValidatePointerCount(
+            varGfxWorldDpvsStatic->sortedSurfIndex,
+            sortedSurfaceCount,
+            "sorted world surfaces"))
+    {
+        return;
+    }
+    if (!db::validation::AllU16Below(
+            varGfxWorldDpvsStatic->sortedSurfIndex,
+            static_cast<std::uint32_t>(sortedSurfaceCount),
+            varGfxWorldDpvsStatic->staticSurfaceCount))
+    {
+        Com_Error(ERR_DROP, "Fast-file world has an invalid sorted surface index");
+        return;
     }
     if (varGfxWorldDpvsStatic->smodelInsts)
     {
@@ -7926,6 +8151,7 @@ void __cdecl Load_GfxWorld(bool atStreamStart)
         varGfxWorld->dpvsPlanes.cellCount,
         0,
         "world cells");
+    DB_CheckedCountSum(varGfxWorld->surfaceCount, 0, "world surfaces");
     const int32_t cellWordCount = DB_CheckedCountCeilDiv(
         cellCount,
         32,
@@ -8014,6 +8240,8 @@ void __cdecl Load_GfxWorld(bool atStreamStart)
     DB_PopStreamPos();
     varGfxWorldDpvsPlanes = &varGfxWorld->dpvsPlanes;
     Load_GfxWorldDpvsPlanes(0);
+    if (!DB_ValidatePointerCount(varGfxWorld->cells, cellCount, "world cells"))
+        return;
     if (varGfxWorld->cells)
     {
         varGfxWorld->cells = (GfxCell *)AllocLoad_FxElemVisStateSample();
@@ -8136,6 +8364,8 @@ void __cdecl Load_GfxWorld(bool atStreamStart)
     Load_GfxWorldDpvsStatic(0);
     varGfxWorldDpvsDynamic = &varGfxWorld->dpvsDyn;
     Load_GfxWorldDpvsDynamic(0);
+    if (!DB_ValidateWorldAabbTrees(varGfxWorld))
+        return;
     DB_PopStreamPos();
 }
 

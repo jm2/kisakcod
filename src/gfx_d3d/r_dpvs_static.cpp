@@ -57,7 +57,7 @@ void __cdecl R_AddAabbTreeSurfacesInFrustum_r(const GfxAabbTree *tree, const Dpv
     {
         if (tree->childCount)
         {
-            children = (const GfxAabbTree *)((char *)tree + tree->childrenOffset);
+            children = GfxAabbTree_GetChildren(tree);
             childCount = tree->childCount;
             for (childIndex = 0; childIndex < childCount; ++childIndex)
                 R_AddAabbTreeSurfacesInFrustum_r(&children[childIndex], &clipSetChild);
