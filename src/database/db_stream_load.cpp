@@ -17,6 +17,40 @@ bool DB_DecodeOffset(uint32_t value, uint32_t requiredBytes, disk32::DecodedOffs
         blockSizes[i] = g_streamZoneMem->blocks[i].size;
     return disk32::DecodeOffset({value}, blockSizes, 9, requiredBytes, decoded);
 }
+
+bool DB_ResolveCStringField(
+    const uint32_t *data,
+    db::relocation::BlockMask allowedBlocks,
+    uintptr_t *pointer,
+    uint32_t *byteCount)
+{
+    if (pointer)
+        *pointer = 0;
+    if (byteCount)
+        *byteCount = 0;
+    if (!data || !pointer || !byteCount)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file string offset");
+        return false;
+    }
+
+    uint32_t tokenValue = 0;
+    std::memcpy(&tokenValue, data, sizeof(tokenValue));
+    const db::relocation::Status status = DB_ResolveOffsetCString(
+        {tokenValue},
+        allowedBlocks,
+        pointer,
+        byteCount);
+    if (status != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid fast-file string offset: %s",
+            db::relocation::StatusName(status));
+        return false;
+    }
+    return true;
+}
 }
 
 
@@ -185,6 +219,51 @@ void __cdecl DB_ConvertOffsetToPointer(
     std::memcpy(data, &narrowed, sizeof(narrowed));
 }
 
+void __cdecl DB_ConvertOffsetToCString(
+    uint32_t *data,
+    db::relocation::BlockMask allowedBlocks)
+{
+    uintptr_t pointer = 0;
+    uint32_t byteCount = 0;
+    if (!DB_ResolveCStringField(data, allowedBlocks, &pointer, &byteCount))
+        return;
+    if (pointer > UINT32_MAX)
+    {
+        Com_Error(ERR_DROP, "Fast-file string pointer does not fit the 32-bit runtime");
+        return;
+    }
+
+    const uint32_t narrowed = static_cast<uint32_t>(pointer);
+    std::memcpy(data, &narrowed, sizeof(narrowed));
+}
+
+void __cdecl DB_ConvertOffsetToTempString(
+    uint32_t *data,
+    db::relocation::BlockMask allowedBlocks)
+{
+    uintptr_t pointer = 0;
+    uint32_t byteCount = 0;
+    if (!DB_ResolveCStringField(data, allowedBlocks, &pointer, &byteCount))
+        return;
+    if (!db::validation::CanInternString(byteCount))
+    {
+        Com_Error(ERR_DROP, "Fast-file temporary string exceeds the runtime length limit");
+        return;
+    }
+
+    const uint32_t stringValue = SL_GetStringOfSize(
+        reinterpret_cast<const char *>(pointer),
+        4,
+        byteCount,
+        6);
+    if (stringValue > UINT16_MAX)
+    {
+        Com_Error(ERR_DROP, "Fast-file temporary string exceeds the 16-bit runtime");
+        return;
+    }
+    std::memcpy(data, &stringValue, sizeof(stringValue));
+}
+
 void __cdecl DB_ConvertOffsetToPointerLegacy(uint32_t *data)
 {
     disk32::DecodedOffset decoded{};
@@ -213,7 +292,7 @@ void __cdecl DB_ConvertOffsetToPointerLegacy(uint32_t *data)
     std::memcpy(data, &narrowed, sizeof(narrowed));
 }
 
-void __cdecl Load_XStringCustom(char **str)
+uint32_t __cdecl Load_XStringCustom(char **str)
 {
     uint8_t *pos; // [esp+0h] [ebp-8h]
     int32_t length = 0;
@@ -221,7 +300,7 @@ void __cdecl Load_XStringCustom(char **str)
     if (!str || !*str)
     {
         Com_Error(ERR_DROP, "Invalid fast-file string pointer");
-        return;
+        return 0;
     }
 
     for (pos = reinterpret_cast<uint8_t *>(*str); ; ++pos)
@@ -229,7 +308,7 @@ void __cdecl Load_XStringCustom(char **str)
         if (length == (std::numeric_limits<int32_t>::max)() || !DB_IsStreamRangeValid(pos, 1))
         {
             Com_Error(ERR_DROP, "Unterminated fast-file string exceeds stream block");
-            return;
+            return 0;
         }
         DB_LoadXFileData(pos, 1u);
         ++length;
@@ -237,16 +316,38 @@ void __cdecl Load_XStringCustom(char **str)
             break;
     }
     DB_IncStreamPos(length);
+    const db::relocation::Status registered = DB_RegisterStreamCString(
+        *str,
+        static_cast<uint32_t>(length));
+    if (registered != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Cannot register fast-file string extent: %s",
+            db::relocation::StatusName(registered));
+        return 0;
+    }
+    return static_cast<uint32_t>(length);
 }
 
 void __cdecl Load_TempStringCustom(char **str)
 {
-    const char * string; // [esp+0h] [ebp-4h]
+    uint32_t stringValue = 0;
 
-    Load_XStringCustom(str);
+    const uint32_t byteCount = Load_XStringCustom(str);
+    if (!byteCount)
+        return;
+    if (!db::validation::CanInternString(byteCount))
+    {
+        Com_Error(ERR_DROP, "Fast-file temporary string exceeds the runtime length limit");
+        return;
+    }
     if (*str)
-        string = (const char*)SL_GetString(*str, 4u); // KISAKTODO: this seems way wrong but it's what the decomp is showing
-    else
-        string= 0;
-    *str = (char *)string;
+        stringValue = SL_GetStringOfSize(*str, 4u, byteCount, 6);
+    if (stringValue > UINT16_MAX)
+    {
+        Com_Error(ERR_DROP, "Fast-file temporary string exceeds the 16-bit runtime");
+        return;
+    }
+    *str = reinterpret_cast<char *>(static_cast<uintptr_t>(stringValue));
 }

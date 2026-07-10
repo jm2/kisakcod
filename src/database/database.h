@@ -268,6 +268,9 @@ bool __cdecl DB_IsStreamRangeValid(const void *ptr, uint32_t size);
 bool __cdecl DB_IsZoneRangeValid(const void *ptr, uint32_t size);
 uint8_t *__cdecl DB_AllocStreamPos(int32_t alignment);
 void __cdecl DB_IncStreamPos(int32_t size);
+DBAliasHandle __cdecl DB_RegisterPointerSlot(
+    const void *slot,
+    DBAliasKind kind);
 DBAliasHandle __cdecl DB_InsertPointer(DBAliasKind kind);
 void __cdecl DB_SetInsertedPointer(
     DBAliasHandle handle,
@@ -282,12 +285,23 @@ db::relocation::Status __cdecl DB_ResolveInsertedPointer(
 db::relocation::Status __cdecl DB_MarkStreamRangeMaterialized(
     const void *pointer,
     uint32_t size);
+db::relocation::Status __cdecl DB_RegisterStreamCString(
+    const void *pointer,
+    uint32_t byteCount);
+db::relocation::Status __cdecl DB_ValidateStreamCString(
+    const void *pointer,
+    uint32_t *byteCount);
 db::relocation::Status __cdecl DB_ResolveOffsetBytes(
     disk32::PointerToken token,
     uint64_t requiredBytes,
     size_t alignment,
     db::relocation::BlockMask allowedBlocks,
     uintptr_t *pointer);
+db::relocation::Status __cdecl DB_ResolveOffsetCString(
+    disk32::PointerToken token,
+    db::relocation::BlockMask allowedBlocks,
+    uintptr_t *pointer,
+    uint32_t *byteCount);
 
 // db_stream_load
 void __cdecl Load_Stream(bool atStreamStart, uint8_t *ptr, int32_t size);
@@ -302,8 +316,14 @@ void __cdecl DB_ConvertOffsetToPointer(
     uint64_t requiredBytes,
     size_t alignment,
     db::relocation::BlockMask allowedBlocks);
+void __cdecl DB_ConvertOffsetToCString(
+    uint32_t *data,
+    db::relocation::BlockMask allowedBlocks);
+void __cdecl DB_ConvertOffsetToTempString(
+    uint32_t *data,
+    db::relocation::BlockMask allowedBlocks);
 void __cdecl DB_ConvertOffsetToPointerLegacy(uint32_t *data);
-void __cdecl Load_XStringCustom(char **str);
+uint32_t __cdecl Load_XStringCustom(char **str);
 void __cdecl Load_TempStringCustom(char **str);
 
 // db_stringtable_load

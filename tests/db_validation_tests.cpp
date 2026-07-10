@@ -20,6 +20,11 @@ void Expect(bool condition, const char *message)
 
 int main()
 {
+    Expect(db::validation::CanInternString(1), "empty terminated string can be interned");
+    Expect(db::validation::CanInternString(65531), "maximum script-memory string can be interned");
+    Expect(!db::validation::CanInternString(0), "zero-byte string extent rejected");
+    Expect(!db::validation::CanInternString(65532), "script-memory allocation ceiling enforced");
+
     std::uint32_t spanBytes = UINT32_MAX;
     Expect(db::validation::CheckedSpanBytes(0, 20, &spanBytes) && spanBytes == 0, "zero span size");
     Expect(db::validation::CheckedSpanBytes(12, 20, &spanBytes) && spanBytes == 240, "direct span size");

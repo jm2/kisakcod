@@ -23,9 +23,9 @@ constexpr BlockMask BlockBit(std::uint32_t block)
 constexpr BlockMask kAllBlocks =
     static_cast<BlockMask>((BlockMask{1} << kBlockCount) - 1);
 
-// Block-4 alias slots are four-byte serialized identities only. Native pointers
-// live in this side table so registering an alias never widens or overwrites the
-// packed slot on 64-bit hosts.
+// Block-4 alias/completed-object slots are four-byte serialized identities.
+// Native pointers live in this side table so registering provenance never
+// widens or overwrites the packed slot on 64-bit hosts.
 
 struct BlockView
 {
@@ -62,6 +62,7 @@ enum class AliasKind : std::uint8_t
     RawFile,
     GfxWorld,
     Font,
+    XStringPointerSlot,
     Count,
 };
 
@@ -90,16 +91,25 @@ enum class Status : std::uint8_t
     SizeOverflow,
     MisalignedAddress,
     UnmaterializedRange,
+    UnterminatedString,
+    InvalidStringExtent,
+    UnregisteredString,
 };
 
 class DirectResolver
 {
 public:
-    explicit DirectResolver(std::size_t maxIntervals = 1u << 20);
+    explicit DirectResolver(
+        std::size_t maxIntervals = 1u << 20,
+        std::size_t maxStrings = 1u << 20);
 
     void Reset(const BlockView *blocks, std::size_t blockCount);
 
     Status MarkMaterialized(std::uintptr_t address, std::uint32_t size);
+    Status RegisterCString(std::uintptr_t address, std::uint32_t byteCount);
+    Status ValidateCStringAddress(
+        std::uintptr_t address,
+        std::uint32_t *byteCount) const;
     // Empty spans are vacuously materialized and may resolve at block end.
     // Callers must continue to pair the returned pointer with the zero count.
     Status ResolveBytes(
@@ -115,6 +125,11 @@ public:
         std::size_t alignment,
         BlockMask allowedBlocks,
         std::uintptr_t *address) const;
+    Status ResolveCString(
+        disk32::PointerToken token,
+        BlockMask allowedBlocks,
+        std::uintptr_t *address,
+        std::uint32_t *byteCount) const;
     Status ContiguousMaterializedBytes(
         std::uint32_t block,
         std::uint32_t offset,
@@ -133,13 +148,22 @@ private:
         std::vector<Interval> materialized;
     };
 
+    struct StringRecord
+    {
+        std::uint32_t block;
+        std::uint32_t offset;
+        std::uint32_t byteCount;
+    };
+
     bool ContainsMaterialized(
         std::uint32_t block,
         std::uint32_t offset,
         std::uint32_t size) const;
 
     BlockState blocks_[kBlockCount];
+    std::vector<StringRecord> strings_;
     std::size_t maxIntervals_;
+    std::size_t maxStrings_;
     std::size_t intervalCount_ = 0;
     bool contextValid_ = false;
 };

@@ -1,6 +1,7 @@
 #include "db_relocation.h"
 
 #include <algorithm>
+#include <cstring>
 #include <new>
 #include <stdexcept>
 
@@ -19,8 +20,11 @@ bool SpanContains(const BlockView &block, std::uintptr_t address, std::uint32_t 
 }
 }
 
-DirectResolver::DirectResolver(std::size_t maxIntervals)
-    : maxIntervals_(maxIntervals)
+DirectResolver::DirectResolver(
+    std::size_t maxIntervals,
+    std::size_t maxStrings)
+    : maxIntervals_(maxIntervals),
+      maxStrings_(maxStrings)
 {
 }
 
@@ -32,6 +36,7 @@ void DirectResolver::Reset(const BlockView *blocks, std::size_t blockCount)
         blocks_[i].view = contextValid_ ? blocks[i] : BlockView{};
         blocks_[i].materialized.clear();
     }
+    strings_.clear();
     intervalCount_ = 0;
 }
 
@@ -128,6 +133,126 @@ bool DirectResolver::ContainsMaterialized(
         && size <= candidate.end - offset;
 }
 
+Status DirectResolver::RegisterCString(
+    std::uintptr_t address,
+    std::uint32_t byteCount)
+{
+    if (!contextValid_)
+        return Status::InvalidContext;
+    if (!byteCount)
+        return Status::InvalidArgument;
+
+    std::uint32_t block = 0;
+    for (; block < kBlockCount; ++block)
+    {
+        if (SpanContains(blocks_[block].view, address, byteCount))
+            break;
+    }
+    if (block == kBlockCount)
+        return Status::OutOfRange;
+
+    const std::uint32_t offset = static_cast<std::uint32_t>(
+        address - blocks_[block].view.base);
+    const auto found = std::lower_bound(
+        strings_.begin(),
+        strings_.end(),
+        StringRecord{block, offset, 0},
+        [](const StringRecord &left, const StringRecord &right)
+        {
+            return left.block < right.block
+                || (left.block == right.block && left.offset < right.offset);
+        });
+    if (found != strings_.end()
+        && found->block == block
+        && found->offset == offset)
+    {
+        return found->byteCount == byteCount
+            ? Status::Ok
+            : Status::MetadataMismatch;
+    }
+    if (!ContainsMaterialized(block, offset, byteCount))
+        return Status::UnmaterializedRange;
+
+    const void *terminator = std::memchr(
+        reinterpret_cast<const void *>(address),
+        0,
+        byteCount);
+    if (!terminator)
+        return Status::UnterminatedString;
+    if (reinterpret_cast<std::uintptr_t>(terminator) - address != byteCount - 1)
+        return Status::InvalidStringExtent;
+    if (strings_.size() >= maxStrings_)
+        return Status::CapacityExceeded;
+
+    try
+    {
+        strings_.insert(found, {block, offset, byteCount});
+    }
+    catch (const std::bad_alloc &)
+    {
+        return Status::CapacityExceeded;
+    }
+    catch (const std::length_error &)
+    {
+        return Status::CapacityExceeded;
+    }
+    return Status::Ok;
+}
+
+Status DirectResolver::ValidateCStringAddress(
+    std::uintptr_t address,
+    std::uint32_t *byteCount) const
+{
+    if (byteCount)
+        *byteCount = 0;
+    if (!byteCount)
+        return Status::InvalidArgument;
+    if (!contextValid_)
+        return Status::InvalidContext;
+
+    std::uint32_t block = 0;
+    for (; block < kBlockCount; ++block)
+    {
+        if (SpanContains(blocks_[block].view, address, 1))
+            break;
+    }
+    if (block == kBlockCount)
+        return Status::OutOfRange;
+
+    const std::uint32_t offset = static_cast<std::uint32_t>(
+        address - blocks_[block].view.base);
+    const auto found = std::lower_bound(
+        strings_.begin(),
+        strings_.end(),
+        StringRecord{block, offset, 0},
+        [](const StringRecord &left, const StringRecord &right)
+        {
+            return left.block < right.block
+                || (left.block == right.block && left.offset < right.offset);
+        });
+    if (found == strings_.end()
+        || found->block != block
+        || found->offset != offset)
+    {
+        return Status::UnregisteredString;
+    }
+    if (!ContainsMaterialized(block, offset, found->byteCount))
+        return Status::UnmaterializedRange;
+    const void *terminator = std::memchr(
+        reinterpret_cast<const void *>(address),
+        0,
+        found->byteCount);
+    if (!terminator
+        || reinterpret_cast<std::uintptr_t>(terminator) - address
+            != found->byteCount - 1)
+    {
+        return Status::InvalidStringExtent;
+    }
+
+    *byteCount = found->byteCount;
+    return Status::Ok;
+}
+
 Status DirectResolver::ResolveBytes(
     disk32::PointerToken token,
     std::uint64_t byteCount,
@@ -213,6 +338,50 @@ Status DirectResolver::ResolveArray(
         return Status::SizeOverflow;
 
     return ResolveBytes(token, count * elementSize, alignment, allowedBlocks, address);
+}
+
+Status DirectResolver::ResolveCString(
+    disk32::PointerToken token,
+    BlockMask allowedBlocks,
+    std::uintptr_t *address,
+    std::uint32_t *byteCount) const
+{
+    if (address)
+        *address = 0;
+    if (byteCount)
+        *byteCount = 0;
+    if (!address || !byteCount)
+        return Status::InvalidArgument;
+
+    std::uintptr_t resolved = 0;
+    const Status resolvedStatus = ResolveBytes(
+        token,
+        1,
+        1,
+        allowedBlocks,
+        &resolved);
+    if (resolvedStatus != Status::Ok)
+        return resolvedStatus;
+
+    std::uint32_t registeredBytes = 0;
+    const Status provenanceStatus = ValidateCStringAddress(
+        resolved,
+        &registeredBytes);
+    if (provenanceStatus != Status::Ok)
+        return provenanceStatus;
+
+    const Status fullSpanStatus = ResolveBytes(
+        token,
+        registeredBytes,
+        1,
+        allowedBlocks,
+        &resolved);
+    if (fullSpanStatus != Status::Ok)
+        return fullSpanStatus;
+
+    *byteCount = registeredBytes;
+    *address = resolved;
+    return Status::Ok;
 }
 
 Status DirectResolver::ContiguousMaterializedBytes(
@@ -315,9 +484,9 @@ Status AliasRegistry::RegisterSlot(
 
     if (!records_.empty())
     {
-        // DB_InsertPointer reserves from block 4's monotonically advancing
-        // stream cursor. Keeping records in that order makes alias lookup a
-        // stable binary search while handles remain vector indices.
+        // Registered alias and completed-object slots come from block 4's
+        // monotonically advancing stream cursor. Keeping records in that order
+        // makes lookup a stable binary search while handles remain indices.
         if (offset == records_.back().offset)
             return Status::DuplicateSlot;
         if (offset < records_.back().offset)
@@ -366,6 +535,16 @@ Status AliasRegistry::Publish(
         return Status::KindMismatch;
     if (record.published)
         return Status::AlreadyPublished;
+    if (expectedKind == AliasKind::XStringPointerSlot)
+    {
+        const BlockView &aliasBlock = blocks_[kAliasBlock];
+        if (!aliasBlock.base
+            || record.offset > (std::numeric_limits<std::uintptr_t>::max)() - aliasBlock.base
+            || resolvedAddress != aliasBlock.base + record.offset)
+        {
+            return Status::MetadataMismatch;
+        }
+    }
 
     record.resolvedAddress = resolvedAddress;
     record.metadata = metadata;
@@ -466,6 +645,9 @@ const char *StatusName(Status status)
     case Status::SizeOverflow: return "size overflow";
     case Status::MisalignedAddress: return "misaligned address";
     case Status::UnmaterializedRange: return "unmaterialized range";
+    case Status::UnterminatedString: return "unterminated string";
+    case Status::InvalidStringExtent: return "invalid string extent";
+    case Status::UnregisteredString: return "unregistered string";
     }
     return "unknown";
 }

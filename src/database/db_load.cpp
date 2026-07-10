@@ -638,7 +638,9 @@ void __cdecl Load_TempString(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varTempString);
+            DB_ConvertOffsetToTempString(
+                (uint32_t*)varTempString,
+                kDirectBlock4);
         }
     }
 }
@@ -671,7 +673,9 @@ void __cdecl Load_XString(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varXString);
+            DB_ConvertOffsetToCString(
+                (uint32_t*)varXString,
+                kDirectBlock4);
         }
     }
 }
@@ -699,12 +703,28 @@ void __cdecl Load_XStringPtr(bool atStreamStart)
         if (*varXStringPtr == (const char **)-1)
         {
             *varXStringPtr = (const char **)AllocLoad_FxElemVisStateSample();
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                *varXStringPtr,
+                DBAliasKind::XStringPointerSlot);
+            if (!completed)
+                return;
             varXString = *varXStringPtr;
             Load_XString(1);
+            if (!**varXStringPtr || !***varXStringPtr)
+            {
+                Com_Error(ERR_DROP, "Fast-file string holder has no value");
+                return;
+            }
+            DB_SetInsertedPointer(
+                completed,
+                DBAliasKind::XStringPointerSlot,
+                *varXStringPtr);
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varXStringPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)varXStringPtr,
+                DBAliasKind::XStringPointerSlot);
         }
     }
 }
@@ -1477,7 +1497,7 @@ void __cdecl Load_SndAliasCustom(snd_alias_list_t **var)
     {
         varXStringPtr = (const char ***)var;
         Load_XStringPtr(0);
-        if (!*varXStringPtr)
+        if (!*varXStringPtr || !**varXStringPtr || !***varXStringPtr)
         {
             Com_Error(ERR_DROP, "Fast-file sound alias reference has no name");
             return;

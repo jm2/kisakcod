@@ -255,10 +255,29 @@ void __cdecl DB_IncStreamPos(int32_t size)
     g_streamPos += size;
 }
 
+DBAliasHandle __cdecl DB_RegisterPointerSlot(
+    const void *slot,
+    DBAliasKind kind)
+{
+    DBAliasHandle handle;
+    const db::relocation::Status status = g_aliasRegistry.RegisterSlot(
+        reinterpret_cast<uintptr_t>(slot),
+        kind,
+        &handle);
+    if (status != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Cannot register fast-file pointer slot: %s",
+            db::relocation::StatusName(status));
+        return {};
+    }
+    return handle;
+}
+
 DBAliasHandle __cdecl DB_InsertPointer(DBAliasKind kind)
 {
     uint32_t *slot = nullptr;
-    DBAliasHandle handle;
 
     DB_PushStreamPos(4);
     slot = reinterpret_cast<uint32_t *>(DB_AllocStreamPos(3));
@@ -277,19 +296,7 @@ DBAliasHandle __cdecl DB_InsertPointer(DBAliasKind kind)
     DB_IncStreamPos(4);
     DB_PopStreamPos();
 
-    const db::relocation::Status status = g_aliasRegistry.RegisterSlot(
-        reinterpret_cast<uintptr_t>(slot),
-        kind,
-        &handle);
-    if (status != db::relocation::Status::Ok)
-    {
-        Com_Error(
-            ERR_DROP,
-            "Cannot register fast-file alias slot: %s",
-            db::relocation::StatusName(status));
-        return {};
-    }
-    return handle;
+    return DB_RegisterPointerSlot(slot, kind);
 }
 
 void __cdecl DB_SetInsertedPointer(
@@ -303,6 +310,35 @@ void __cdecl DB_SetInsertedPointer(
     {
         Com_Error(ERR_DROP, "Fast-file sound alias source is outside zone memory");
         return;
+    }
+    if (expectedKind == DBAliasKind::XStringPointerSlot
+        && !DB_IsZoneRangeValid(pointer, 4))
+    {
+        Com_Error(ERR_DROP, "Fast-file completed string holder is outside zone memory");
+        return;
+    }
+    if (expectedKind == DBAliasKind::XStringPointerSlot)
+    {
+        uint32_t stringPointer = 0;
+        memcpy(&stringPointer, pointer, sizeof(stringPointer));
+        uint32_t stringBytes = 0;
+        const db::relocation::Status stringStatus =
+            DB_ValidateStreamCString(
+                reinterpret_cast<const void *>(static_cast<uintptr_t>(stringPointer)),
+                &stringBytes);
+        if (stringStatus != db::relocation::Status::Ok)
+        {
+            Com_Error(
+                ERR_DROP,
+                "Fast-file completed string holder has invalid contents: %s",
+                db::relocation::StatusName(stringStatus));
+            return;
+        }
+        if (stringBytes <= 1)
+        {
+            Com_Error(ERR_DROP, "Fast-file completed string holder has no value");
+            return;
+        }
     }
 
     const db::relocation::Status status = g_aliasRegistry.Publish(
@@ -340,6 +376,27 @@ db::relocation::Status __cdecl DB_MarkStreamRangeMaterialized(
         size);
 }
 
+db::relocation::Status __cdecl DB_RegisterStreamCString(
+    const void *pointer,
+    uint32_t byteCount)
+{
+    if (!pointer)
+        return db::relocation::Status::InvalidArgument;
+
+    return g_directResolver.RegisterCString(
+        reinterpret_cast<uintptr_t>(pointer),
+        byteCount);
+}
+
+db::relocation::Status __cdecl DB_ValidateStreamCString(
+    const void *pointer,
+    uint32_t *byteCount)
+{
+    return g_directResolver.ValidateCStringAddress(
+        reinterpret_cast<uintptr_t>(pointer),
+        byteCount);
+}
+
 db::relocation::Status __cdecl DB_ResolveOffsetBytes(
     disk32::PointerToken token,
     uint64_t requiredBytes,
@@ -353,4 +410,17 @@ db::relocation::Status __cdecl DB_ResolveOffsetBytes(
         alignment,
         allowedBlocks,
         pointer);
+}
+
+db::relocation::Status __cdecl DB_ResolveOffsetCString(
+    disk32::PointerToken token,
+    db::relocation::BlockMask allowedBlocks,
+    uintptr_t *pointer,
+    uint32_t *byteCount)
+{
+    return g_directResolver.ResolveCString(
+        token,
+        allowedBlocks,
+        pointer,
+        byteCount);
 }

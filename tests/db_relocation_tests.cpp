@@ -1,6 +1,8 @@
 #include <database/db_relocation.h>
 
+#include <array>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <limits>
 
@@ -317,11 +319,219 @@ void TestDirectResolver()
         Status::InvalidContext,
         "materialization rejects invalid reset context");
 }
+
+void TestDirectCString()
+{
+    alignas(2) std::array<std::uint8_t, 64> storage{};
+    storage.fill(static_cast<std::uint8_t>('x'));
+    storage[0] = 0;
+    std::memcpy(storage.data() + 9, "alpha", 6);
+    storage[20] = 0;
+    storage[24] = static_cast<std::uint8_t>('a');
+    storage[25] = static_cast<std::uint8_t>('b');
+    storage[27] = 0;
+    storage[30] = 0;
+    storage[31] = static_cast<std::uint8_t>('z');
+    std::memcpy(storage.data() + 40, "seq", 4);
+
+    BlockView blocks[db::relocation::kBlockCount]{};
+    blocks[4].base = reinterpret_cast<std::uintptr_t>(storage.data());
+    blocks[4].size = static_cast<std::uint32_t>(storage.size());
+
+    DirectResolver resolver;
+    resolver.Reset(blocks, db::relocation::kBlockCount);
+    ExpectStatus(resolver.MarkMaterialized(blocks[4].base, 1), Status::Ok, "mark empty C string");
+    ExpectStatus(resolver.MarkMaterialized(blocks[4].base + 9, 6), Status::Ok, "mark terminated C string");
+    ExpectStatus(resolver.MarkMaterialized(blocks[4].base + 16, 4), Status::Ok, "mark unterminated C string");
+    ExpectStatus(resolver.MarkMaterialized(blocks[4].base + 24, 2), Status::Ok, "mark C string prefix before gap");
+    ExpectStatus(resolver.MarkMaterialized(blocks[4].base + 27, 1), Status::Ok, "mark terminator after gap");
+    ExpectStatus(resolver.MarkMaterialized(blocks[4].base + 30, 2), Status::Ok, "mark extent with early terminator");
+    for (std::uint32_t offset = 40; offset < 44; ++offset)
+    {
+        ExpectStatus(
+            resolver.MarkMaterialized(blocks[4].base + offset, 1),
+            Status::Ok,
+            "coalesce sequential one-byte C string writes");
+    }
+    ExpectStatus(
+        resolver.RegisterCString(blocks[4].base, 1),
+        Status::Ok,
+        "register empty C string provenance");
+    ExpectStatus(
+        resolver.RegisterCString(blocks[4].base + 9, 6),
+        Status::Ok,
+        "register terminated C string provenance");
+    ExpectStatus(
+        resolver.RegisterCString(blocks[4].base + 9, 6),
+        Status::Ok,
+        "duplicate exact C string registration is idempotent");
+    ExpectStatus(
+        resolver.RegisterCString(blocks[4].base + 9, 7),
+        Status::MetadataMismatch,
+        "duplicate C string start with different extent rejected");
+    ExpectStatus(
+        resolver.RegisterCString(blocks[4].base + 40, 4),
+        Status::Ok,
+        "register sequentially written C string provenance");
+    ExpectStatus(
+        resolver.RegisterCString(blocks[4].base + 16, 4),
+        Status::UnterminatedString,
+        "C string registration rejects terminator outside its extent");
+    ExpectStatus(
+        resolver.RegisterCString(blocks[4].base + 24, 4),
+        Status::UnmaterializedRange,
+        "C string registration rejects a materialization gap");
+    ExpectStatus(
+        resolver.RegisterCString(blocks[4].base + 30, 2),
+        Status::InvalidStringExtent,
+        "C string registration rejects bytes after its first terminator");
+    ExpectStatus(
+        resolver.RegisterCString(blocks[4].base + 9, 0),
+        Status::InvalidArgument,
+        "zero-length C string registration rejected");
+
+    std::uint32_t registeredBytes = UINT32_MAX;
+    ExpectStatus(
+        resolver.ValidateCStringAddress(blocks[4].base + 9, &registeredBytes),
+        Status::Ok,
+        "validate exact registered C string address");
+    Expect(registeredBytes == 6, "registered C string extent is preserved");
+    ExpectStatus(
+        resolver.ValidateCStringAddress(blocks[4].base + 10, &registeredBytes),
+        Status::UnregisteredString,
+        "interior C string address lacks start provenance");
+    Expect(registeredBytes == 0, "failed C string address validation clears extent");
+    ExpectStatus(
+        resolver.ValidateCStringAddress(blocks[4].base + 9, nullptr),
+        Status::InvalidArgument,
+        "null C string validation output rejected");
+
+    std::uintptr_t address = Address(0x55);
+    std::uint32_t byteCount = UINT32_MAX;
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 0), BlockBit(4), &address, &byteCount),
+        Status::Ok,
+        "resolve empty materialized C string");
+    Expect(address == blocks[4].base && byteCount == 1, "empty C string includes its terminator");
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 9), BlockBit(4), &address, &byteCount),
+        Status::Ok,
+        "resolve terminated materialized C string");
+    Expect(address == blocks[4].base + 9 && byteCount == 6, "C string stops at bounded terminator");
+    Expect((address & 1) != 0, "C string resolution permits byte-aligned addresses");
+    storage[14] = static_cast<std::uint8_t>('x');
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 9), BlockBit(4), &address, &byteCount),
+        Status::InvalidStringExtent,
+        "mutated registered C string terminator rejected");
+    Expect(address == 0 && byteCount == 0, "mutated C string clears outputs");
+    storage[14] = 0;
+    storage[10] = 0;
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 9), BlockBit(4), &address, &byteCount),
+        Status::InvalidStringExtent,
+        "mutated interior C string terminator rejected");
+    Expect(address == 0 && byteCount == 0, "interior-NUL C string clears outputs");
+    storage[10] = static_cast<std::uint8_t>('l');
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 40), BlockBit(4), &address, &byteCount),
+        Status::Ok,
+        "resolve C string materialized one byte at a time");
+    Expect(byteCount == 4, "sequential C string writes coalesce through the terminator");
+
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 16), BlockBit(4), &address, &byteCount),
+        Status::UnregisteredString,
+        "materialized bytes without C string provenance rejected");
+    Expect(address == 0 && byteCount == 0, "unregistered C string clears outputs");
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 24), BlockBit(4), &address, &byteCount),
+        Status::UnregisteredString,
+        "C string cannot cross a gap to unregistered terminator");
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 32), BlockBit(4), &address, &byteCount),
+        Status::UnmaterializedRange,
+        "unmaterialized C string rejected");
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 9), BlockBit(7), &address, &byteCount),
+        Status::WrongBlock,
+        "C string block policy enforced");
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 9), 0, &address, &byteCount),
+        Status::InvalidBlockMask,
+        "empty C string block policy rejected");
+    ExpectStatus(
+        resolver.ResolveCString({0}, BlockBit(4), &address, &byteCount),
+        Status::InvalidToken,
+        "null token rejected as direct C string");
+    ExpectStatus(
+        resolver.ResolveCString({disk32::kInline}, BlockBit(4), &address, &byteCount),
+        Status::InvalidToken,
+        "inline sentinel rejected as direct C string");
+    ExpectStatus(
+        resolver.ResolveCString({disk32::kSharedInline}, BlockBit(4), &address, &byteCount),
+        Status::InvalidToken,
+        "shared-inline sentinel rejected as direct C string");
+    byteCount = UINT32_MAX;
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 9), BlockBit(4), nullptr, &byteCount),
+        Status::InvalidArgument,
+        "null C string address output rejected");
+    Expect(byteCount == 0, "null C string address clears length output");
+    address = Address(0x55);
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 9), BlockBit(4), &address, nullptr),
+        Status::InvalidArgument,
+        "null C string length output rejected");
+    Expect(address == 0, "null C string length clears address output");
+
+    DirectResolver stringLimited(16, 1);
+    stringLimited.Reset(blocks, db::relocation::kBlockCount);
+    ExpectStatus(stringLimited.MarkMaterialized(blocks[4].base, 1), Status::Ok, "mark first limited C string");
+    ExpectStatus(stringLimited.MarkMaterialized(blocks[4].base + 9, 6), Status::Ok, "mark second limited C string");
+    ExpectStatus(stringLimited.RegisterCString(blocks[4].base, 1), Status::Ok, "fill C string provenance budget");
+    ExpectStatus(
+        stringLimited.RegisterCString(blocks[4].base + 9, 6),
+        Status::CapacityExceeded,
+        "C string provenance budget enforced");
+    ExpectStatus(
+        stringLimited.ResolveCString(Token(4, 0), BlockBit(4), &address, &byteCount),
+        Status::Ok,
+        "C string capacity failure preserves registered provenance");
+
+    resolver.Reset(blocks, db::relocation::kBlockCount);
+    ExpectStatus(resolver.MarkMaterialized(blocks[4].base + 9, 6), Status::Ok, "remark C string after reset");
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 9), BlockBit(4), &address, &byteCount),
+        Status::UnregisteredString,
+        "C string reset clears registered provenance");
+    blocks[4].base = 0;
+    resolver.Reset(blocks, db::relocation::kBlockCount);
+    ExpectStatus(
+        resolver.ResolveCString(Token(4, 9), BlockBit(4), &address, &byteCount),
+        Status::UnloadedBlock,
+        "C string in unloaded block rejected");
+
+    resolver.Reset(nullptr, 0);
+    ExpectStatus(
+        resolver.RegisterCString(reinterpret_cast<std::uintptr_t>(storage.data()), 1),
+        Status::InvalidContext,
+        "C string registration rejects invalid context");
+    byteCount = UINT32_MAX;
+    ExpectStatus(
+        resolver.ValidateCStringAddress(
+            reinterpret_cast<std::uintptr_t>(storage.data()),
+            &byteCount),
+        Status::InvalidContext,
+        "C string validation rejects invalid context");
+    Expect(byteCount == 0, "invalid-context C string validation clears extent");
+}
 }
 
 int main()
 {
     TestDirectResolver();
+    TestDirectCString();
 
     BlockView blocks[db::relocation::kBlockCount];
     FillBlocks(blocks);
@@ -495,6 +705,41 @@ int main()
         Status::Ok,
         "binary search finds middle alias record");
     Expect(resolved == Address(0x4001), "middle alias pointer is exact");
+
+    registry.Reset(blocks, db::relocation::kBlockCount);
+    AliasHandle stringSlot;
+    ExpectStatus(
+        registry.RegisterSlot(
+            blocks[4].base,
+            AliasKind::XStringPointerSlot,
+            &stringSlot),
+        Status::Ok,
+        "register completed C string pointer slot");
+    ExpectStatus(
+        registry.Publish(
+            stringSlot,
+            AliasKind::XStringPointerSlot,
+            blocks[4].base + 4,
+            0),
+        Status::MetadataMismatch,
+        "completed C string pointer must publish its own slot");
+    ExpectStatus(
+        registry.Resolve(Token(4, 0), AliasKind::XStringPointerSlot, 0, &resolved),
+        Status::PendingSlot,
+        "wrong completed-slot publication leaves provenance pending");
+    ExpectStatus(
+        registry.Publish(
+            stringSlot,
+            AliasKind::XStringPointerSlot,
+            blocks[4].base,
+            0),
+        Status::Ok,
+        "publish exact completed C string pointer slot");
+    ExpectStatus(
+        registry.Resolve(Token(4, 0), AliasKind::XStringPointerSlot, 0, &resolved),
+        Status::Ok,
+        "resolve exact completed C string pointer slot");
+    Expect(resolved == blocks[4].base, "completed C string pointer slot is exact");
 
     BlockView wideBlocks[db::relocation::kBlockCount];
     FillBlocks(wideBlocks);

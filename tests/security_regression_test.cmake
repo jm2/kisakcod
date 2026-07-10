@@ -37,6 +37,38 @@ require_source_contains(
     "requiredBytes ? requiredBytes : 1"
     "non-null zero-count direct offsets must still reference materialized storage")
 require_source_contains(
+    "database/db_stream_load.cpp"
+    "DB_ResolveOffsetCString"
+    "direct fast-file strings must scan only bounded materialized storage")
+require_source_contains(
+    "database/db_stream_load.cpp"
+    "DB_RegisterStreamCString"
+    "inline fast-file strings must register exact start and extent provenance")
+require_source_contains(
+    "database/db_stream_load.cpp"
+    "SL_GetStringOfSize"
+    "direct temporary strings must be interned with their validated extent")
+require_source_contains(
+    "database/db_validation.h"
+    "kMaxInternedStringBytes = 65531"
+    "temporary strings must remain below the script-memory allocation ceiling")
+require_source_contains(
+    "database/db_stream_load.cpp"
+    "db::validation::CanInternString(byteCount)"
+    "inline and direct temporary strings must enforce the allocation ceiling")
+require_source_contains(
+    "database/db_load.cpp"
+    "DBAliasKind::XStringPointerSlot"
+    "direct string-holder references must use completed-object provenance")
+require_source_contains(
+    "database/db_stream.cpp"
+    "DB_ValidateStreamCString"
+    "completed string holders must validate registered pointee provenance")
+require_source_contains(
+    "database/db_relocation.cpp"
+    "resolvedAddress != aliasBlock.base + record.offset"
+    "completed string holders must publish their exact registered slot")
+require_source_contains(
     "database/db_file_load.cpp"
     "DB_MarkStreamRangeMaterialized(pos, size)"
     "successful fast-file output must be recorded as materialized")
@@ -80,9 +112,9 @@ file(STRINGS
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 41)
+if (NOT _legacy_direct_offset_count EQUAL 38)
     message(FATAL_ERROR
-        "Expected exactly 41 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 38 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 string(REGEX MATCH

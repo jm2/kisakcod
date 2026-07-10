@@ -5,6 +5,15 @@
 
 namespace db::validation
 {
+// Script strings allocate byteCount + 4 bytes from a 65,536-node memory tree;
+// MT_GetSize treats allocations of 65,536 bytes or more as fatal.
+constexpr std::uint32_t kMaxInternedStringBytes = 65531;
+
+constexpr bool CanInternString(std::uint32_t byteCount)
+{
+    return byteCount != 0 && byteCount <= kMaxInternedStringBytes;
+}
+
 constexpr bool CheckedSpanBytes(
     std::uint64_t count,
     std::uint32_t stride,
