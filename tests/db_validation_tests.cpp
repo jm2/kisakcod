@@ -28,6 +28,45 @@ int main()
     Expect(!db::validation::CheckedArrayBytes((std::numeric_limits<std::int32_t>::max)(), 8, &bytes), "multiplication overflow rejected");
     Expect(!db::validation::CheckedArrayBytes(1, 8, nullptr), "null byte result rejected");
 
+    std::int32_t count = -1;
+    Expect(db::validation::CheckedCountSum(12, 30, &count) && count == 42, "count sum");
+    Expect(!db::validation::CheckedCountSum(-1, 1, &count), "negative sum operand rejected");
+    Expect(!db::validation::CheckedCountSum(
+        (std::numeric_limits<std::int32_t>::max)(), 1, &count), "count sum overflow rejected");
+    Expect(!db::validation::CheckedCountSum(1, 1, nullptr), "null count sum result rejected");
+    Expect(db::validation::CheckedCountProduct(6, 7, &count) && count == 42, "count product");
+    Expect(db::validation::CheckedCountProduct(
+        (std::numeric_limits<std::int32_t>::max)(), 1, &count)
+        && count == (std::numeric_limits<std::int32_t>::max)(), "maximum count product");
+    Expect(db::validation::CheckedCountProduct(0, 42, &count) && count == 0, "zero product");
+    Expect(!db::validation::CheckedCountProduct(
+        0, (std::numeric_limits<std::uint32_t>::max)(), &count), "oversized zero-product operand rejected");
+    Expect(!db::validation::CheckedCountProduct(-1, 0, &count), "negative product operand rejected");
+    Expect(!db::validation::CheckedCountProduct(
+        (std::numeric_limits<std::uint32_t>::max)(), 2, &count), "count product overflow rejected");
+    Expect(!db::validation::CheckedCountProduct(1, 1, nullptr), "null count product result rejected");
+    Expect(db::validation::CheckedCountDifference(10, 3, &count) && count == 7, "count difference");
+    Expect(db::validation::CheckedCountDifference(
+        (std::numeric_limits<std::int32_t>::max)(), 0, &count)
+        && count == (std::numeric_limits<std::int32_t>::max)(), "maximum count difference");
+    Expect(!db::validation::CheckedCountDifference(3, 10, &count), "count subtraction underflow rejected");
+    Expect(!db::validation::CheckedCountDifference(
+        (std::numeric_limits<std::uint32_t>::max)(),
+        (std::numeric_limits<std::uint32_t>::max)(),
+        &count), "oversized difference operands rejected");
+    Expect(!db::validation::CheckedCountDifference(1, 0, nullptr), "null count difference result rejected");
+    Expect(db::validation::CheckedCountCeilDiv(33, 32, &count) && count == 2, "count ceiling division");
+    Expect(db::validation::CheckedCountCeilDiv(
+        (std::numeric_limits<std::int32_t>::max)(), 32, &count)
+        && count == 67108864, "large count ceiling division");
+    Expect(db::validation::CheckedCountCeilDiv(
+        (std::numeric_limits<std::int32_t>::max)(), 1, &count)
+        && count == (std::numeric_limits<std::int32_t>::max)(), "maximum count ceiling division");
+    Expect(!db::validation::CheckedCountCeilDiv(1, 0, &count), "zero divisor rejected");
+    Expect(!db::validation::CheckedCountCeilDiv(1, 1, nullptr), "null ceiling-division result rejected");
+    Expect(!db::validation::CheckedCountCeilDiv(
+        (std::numeric_limits<std::uint32_t>::max)(), 32, &count), "oversized dividend rejected");
+
     Expect(db::validation::CanAppendBytes(0x40000, 0x40000, 0x80000), "double-buffer append");
     Expect(db::validation::CanAppendBytes(0x80000, 0, 0x80000), "zero append at capacity");
     Expect(!db::validation::CanAppendBytes(0x80001, 0, 0x80000), "current bytes over capacity rejected");

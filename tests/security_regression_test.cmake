@@ -58,6 +58,17 @@ if (_raw_array_loads)
         "Unchecked generated fast-file array loads remain in db_load.cpp; use Load_StreamArray")
 endif()
 
+file(READ "${SOURCE_ROOT}/src/database/db_load.cpp" _db_load_source)
+string(REPLACE "->" "." _db_load_count_source "${_db_load_source}")
+string(REGEX MATCH
+    "Load_[A-Za-z0-9_]+Array[ \\t\\r\\n]*\\([ \\t\\r\\n]*1[ \\t\\r\\n]*,[^;]*(\\+|-|\\*|/|%|<<|>>|&|\\||\\^)[^;]*\\);"
+    _raw_derived_count
+    "${_db_load_count_source}")
+if (_raw_derived_count)
+    message(FATAL_ERROR
+        "Unchecked derived fast-file array count remains in db_load.cpp: ${_raw_derived_count}")
+endif()
+
 set(_format_sensitive_sources
     "cgame/cg_hudelem.cpp"
     "cgame/cg_info.cpp"
