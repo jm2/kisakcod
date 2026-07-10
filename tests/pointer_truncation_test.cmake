@@ -14,8 +14,8 @@ cmake_minimum_required(VERSION 3.16)
 # CMake, unlike raw C++ source lines (which carry ';' and '"'). Fixing a site lowers a
 # file's count and makes its highest-index token stale -> forces an allowlist burndown.
 #
-# NOTE: the bare-hex-sizeof-assert funnel (P3 in the design) lands in M4 alongside the
-# ABI layout-header split; it is intentionally not enforced yet.
+# P3 is enforced separately by abi-sizeof-debt-tripwire. Its exact expression
+# ledger covers both hexadecimal and decimal literal layout assertions.
 
 set(SRC_DIR "${SOURCE_ROOT}/src")
 

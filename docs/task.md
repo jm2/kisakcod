@@ -8,23 +8,23 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: replace the unfinished bare-sizeof scanner with an exact M1/M4 ABI
-  debt ledger, then return to relocation provenance.
-- Last completed batch: checked 39 generated loader count formulas across animation,
-  models, water, effects, clipmaps, raw files, string tables, light grids, and DPVS;
-  products, sums, differences, and ceiling division now reject negative/overflowed data.
-- Portable validation: 9/9 tests pass locally, including checked database arithmetic
-  and security source invariants. These tests do not execute the Windows loader.
-- Windows validation: loader CI run 29058600306 passed x86 Debug, Release,
-  no-Steam, and all five portable target jobs on 2026-07-09. The derived-count
-  batch still requires its own Windows CI run after push.
+- Active work: design typed relocation and alias provenance checks, then exercise
+  malformed offsets through a production-path loader harness.
+- Last completed batch: added an exact, expression-keyed M1/M4 ABI debt ledger for
+  255 direct literal and four formula-based `sizeof` assertions. The tripwire catches
+  additions, changes, duplicates, and stale entries without depending on line numbers.
+- Portable validation: 11/11 tests pass locally, including checked database arithmetic,
+  security source invariants, and the ABI debt ledger. These tests do not execute the
+  Windows loader.
+- Windows validation: derived-count CI run 29059186355 passed x86 Debug, Release,
+  no-Steam, and all five portable target jobs on 2026-07-09.
 
 ## Milestone status
 
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 builds; five native utility-test runners; engine runtime smoke and release workflows remain unexercised. |
-| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, and portable compile tests exist; engine atomics/platform integration remains. |
+| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, and an exact 259-site ABI debt ledger exist; engine atomics/platform integration remains. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, and generated derived counts landed; sanitizers and relocation provenance remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
@@ -44,10 +44,10 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Replace the unfinished bare-hex-only scanner with a hex/decimal, expression-keyed ABI debt ledger.
-2. Design M5 typed relocation/alias validation, then add malformed production-path loader/BSP harnesses.
-3. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
-4. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
+1. Design M5 typed relocation/alias validation, then add malformed production-path loader/BSP harnesses.
+2. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
+3. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
+4. Classify and burn down the 255 direct and four formula-based ABI layout assertions.
 5. Begin the M3 headless platform-services interface.
 
 ## Known release blockers

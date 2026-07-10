@@ -1,0 +1,5 @@
+# Multiline, compound, and assertion-kind scanner regression cases.
+test.cpp|iassert:sizeof(Runtime)==16|1
+test.cpp|static_assert:sizeof(First)==4|1
+test.cpp|static_assert:sizeof(Multiline)==12|1
+test.cpp|static_assert:sizeof(Second)==8|1

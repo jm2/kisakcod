@@ -1,0 +1,5 @@
+# Formula-based sizeof ABI assertions awaiting on-disk/runtime classification.
+bgame/bg_local.h|(sizeof(structloadAnim_t)*512)==36864|1
+game/actor_aim.cpp|sizeof(_QWORD[1030])==sizeof(char[8240])|1
+gfx_d3d/r_fog.cpp|sizeof(GfxFog)*FOG_COUNT==100|1
+xanim/dobj.cpp|(sizeof(DObj_s)-sizeof(obj->models))==96|1
