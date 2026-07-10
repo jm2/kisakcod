@@ -2,12 +2,17 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "db_relocation.h"
+
 #include <zlib/zlib.h>
 
 #include <xanim/xanim.h>
 #include <xanim/xmodel.h>
 #include <win32/win_local.h>
 #
+using DBAliasHandle = db::relocation::AliasHandle;
+using DBAliasKind = db::relocation::AliasKind;
+
 enum $D93A52C218787A3ED865FD745137F4B3 : int32_t
 {
     DM_MEMORY_TEMP = 0x0,
@@ -263,13 +268,26 @@ bool __cdecl DB_IsStreamRangeValid(const void *ptr, uint32_t size);
 bool __cdecl DB_IsZoneRangeValid(const void *ptr, uint32_t size);
 uint8_t *__cdecl DB_AllocStreamPos(int32_t alignment);
 void __cdecl DB_IncStreamPos(int32_t size);
-const void **__cdecl DB_InsertPointer();
+DBAliasHandle __cdecl DB_InsertPointer(DBAliasKind kind);
+void __cdecl DB_SetInsertedPointer(
+    DBAliasHandle handle,
+    DBAliasKind expectedKind,
+    const void *pointer,
+    uint32_t metadata = 0);
+db::relocation::Status __cdecl DB_ResolveInsertedPointer(
+    disk32::PointerToken token,
+    DBAliasKind expectedKind,
+    uint32_t expectedMetadata,
+    uintptr_t *pointer);
 
 // db_stream_load
 void __cdecl Load_Stream(bool atStreamStart, uint8_t *ptr, int32_t size);
 void __cdecl Load_StreamArray(bool atStreamStart, uint8_t *ptr, int32_t count, uint32_t stride);
 void __cdecl Load_DelayStream();
-void __cdecl DB_ConvertOffsetToAlias(uint32_t *data);
+void __cdecl DB_ConvertOffsetToAlias(
+    uint32_t *data,
+    DBAliasKind expectedKind,
+    uint32_t expectedMetadata = 0);
 void __cdecl DB_ConvertOffsetToPointer(uint32_t *data);
 void __cdecl Load_XStringCustom(char **str);
 void __cdecl Load_TempStringCustom(char **str);

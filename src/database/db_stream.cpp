@@ -3,6 +3,8 @@
 
 namespace
 {
+db::relocation::AliasRegistry g_aliasRegistry;
+
 bool DB_GetBlock(uint32_t index, const XBlock **block)
 {
     if (!block || !g_streamZoneMem || index >= ARRAY_COUNT(g_streamZoneMem->blocks))
@@ -41,6 +43,14 @@ void __cdecl DB_InitStreams(XZoneMemory *zoneMem)
             return;
         }
     }
+
+    db::relocation::BlockView relocationBlocks[db::relocation::kBlockCount];
+    for (i = 0; i < ARRAY_COUNT(zoneMem->blocks); ++i)
+    {
+        relocationBlocks[i].base = reinterpret_cast<uintptr_t>(zoneMem->blocks[i].data);
+        relocationBlocks[i].size = zoneMem->blocks[i].size;
+    }
+    g_aliasRegistry.Reset(relocationBlocks, ARRAY_COUNT(relocationBlocks));
 
     g_streamZoneMem = zoneMem;
     g_streamPos = zoneMem->blocks[0].data;
@@ -231,15 +241,75 @@ void __cdecl DB_IncStreamPos(int32_t size)
     g_streamPos += size;
 }
 
-const void **__cdecl DB_InsertPointer()
+DBAliasHandle __cdecl DB_InsertPointer(DBAliasKind kind)
 {
-    const void **pData; // [esp+0h] [ebp-4h]
+    uint32_t *slot = nullptr;
+    DBAliasHandle handle;
 
     DB_PushStreamPos(4);
-    pData = (const void **)DB_AllocStreamPos(3);
-    if (!pData)
-        return nullptr;
+    slot = reinterpret_cast<uint32_t *>(DB_AllocStreamPos(3));
+    if (!slot)
+    {
+        DB_PopStreamPos();
+        return {};
+    }
+    if (!DB_IsStreamRangeValid(slot, static_cast<uint32_t>(sizeof(*slot))))
+    {
+        Com_Error(ERR_DROP, "Fast-file alias slot exceeds stream block 4");
+        DB_PopStreamPos();
+        return {};
+    }
+    *slot = 0;
     DB_IncStreamPos(4);
     DB_PopStreamPos();
-    return pData;
+
+    const db::relocation::Status status = g_aliasRegistry.RegisterSlot(
+        reinterpret_cast<uintptr_t>(slot),
+        kind,
+        &handle);
+    if (status != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Cannot register fast-file alias slot: %s",
+            db::relocation::StatusName(status));
+        return {};
+    }
+    return handle;
+}
+
+void __cdecl DB_SetInsertedPointer(
+    DBAliasHandle handle,
+    DBAliasKind expectedKind,
+    const void *pointer,
+    uint32_t metadata)
+{
+    if (expectedKind == DBAliasKind::SoundData
+        && !DB_IsZoneRangeValid(pointer, metadata))
+    {
+        Com_Error(ERR_DROP, "Fast-file sound alias source is outside zone memory");
+        return;
+    }
+
+    const db::relocation::Status status = g_aliasRegistry.Publish(
+        handle,
+        expectedKind,
+        reinterpret_cast<uintptr_t>(pointer),
+        metadata);
+    if (status != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Cannot publish fast-file alias slot: %s",
+            db::relocation::StatusName(status));
+    }
+}
+
+db::relocation::Status __cdecl DB_ResolveInsertedPointer(
+    disk32::PointerToken token,
+    DBAliasKind expectedKind,
+    uint32_t expectedMetadata,
+    uintptr_t *pointer)
+{
+    return g_aliasRegistry.Resolve(token, expectedKind, expectedMetadata, pointer);
 }

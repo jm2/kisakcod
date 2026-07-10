@@ -25,6 +25,10 @@ require_source_contains(
     "CheckedArrayBytes(count, stride, &byteCount)"
     "generated fast-file arrays must use checked count multiplication")
 require_source_contains(
+    "database/db_stream_load.cpp"
+    "DB_ResolveInsertedPointer"
+    "fast-file aliases must resolve through registered provenance")
+require_source_contains(
     "database/db_file_load.cpp"
     "InterlockedExchange(&g_fileReadBytes, static_cast<LONG>(dwNumberOfBytesTransfered))"
     "asynchronous fast-file reads must preserve the actual completion byte count")
@@ -59,6 +63,14 @@ if (_raw_array_loads)
 endif()
 
 file(READ "${SOURCE_ROOT}/src/database/db_load.cpp" _db_load_source)
+string(REGEX MATCH
+    "(\\*inserted[ \\t]*=|inserted->)"
+    _raw_alias_slot_write
+    "${_db_load_source}")
+if (_raw_alias_slot_write)
+    message(FATAL_ERROR
+        "Native pointer write to four-byte fast-file alias slot remains: ${_raw_alias_slot_write}")
+endif()
 string(REPLACE "->" "." _db_load_count_source "${_db_load_source}")
 string(REGEX MATCH
     "Load_[A-Za-z0-9_]+Array[ \\t\\r\\n]*\\([ \\t\\r\\n]*1[ \\t\\r\\n]*,[^;]*(\\+|-|\\*|/|%|<<|>>|&|\\||\\^)[^;]*\\);"

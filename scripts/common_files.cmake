@@ -104,6 +104,8 @@ set(DATABASE
     "${SRC_DIR}/database/db_file_load.cpp"
     "${SRC_DIR}/database/db_load.cpp"
     "${SRC_DIR}/database/db_memory.cpp"
+    "${SRC_DIR}/database/db_relocation.cpp"
+    "${SRC_DIR}/database/db_relocation.h"
     "${SRC_DIR}/database/db_registry.cpp"
     "${SRC_DIR}/database/db_stream.cpp"
     "${SRC_DIR}/database/db_stream_load.cpp"

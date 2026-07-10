@@ -27,6 +27,21 @@ set_target_properties(kisakcod-disk32-tests PROPERTIES
 )
 add_test(NAME disk32-pointer-token-bounds COMMAND kisakcod-disk32-tests)
 
+add_executable(kisakcod-db-relocation-tests
+    db_relocation_tests.cpp
+    ${SRC_DIR}/database/db_relocation.cpp
+)
+target_include_directories(kisakcod-db-relocation-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-db-relocation-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-db-relocation-tests)
+set_target_properties(kisakcod-db-relocation-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-relocation-alias-provenance
+    COMMAND kisakcod-db-relocation-tests
+)
+
 add_executable(kisakcod-identity-tests identity_tests.cpp)
 target_include_directories(kisakcod-identity-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-identity-tests PRIVATE cxx_std_20)

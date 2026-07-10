@@ -1047,7 +1047,7 @@ void __cdecl Load_XAnimParts(bool atStreamStart)
 
 void __cdecl Load_XAnimPartsPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varXAnimPartsPtr, 4);
@@ -1060,17 +1060,22 @@ void __cdecl Load_XAnimPartsPtr(bool atStreamStart)
             *varXAnimPartsPtr = (XAnimParts *)AllocLoad_FxElemVisStateSample();
             varXAnimParts = *varXAnimPartsPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::XAnimParts);
             else
-                inserted = 0;
+                inserted = {};
             Load_XAnimParts(1);
             Load_XAnimPartsAsset((XAssetHeader *)varXAnimPartsPtr);
             if (inserted)
-                *inserted = *varXAnimPartsPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::XAnimParts,
+                    *varXAnimPartsPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varXAnimPartsPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varXAnimPartsPtr,
+                DBAliasKind::XAnimParts);
         }
     }
     DB_PopStreamPos();
@@ -1159,8 +1164,10 @@ void __cdecl Load_SetSoundData(uint8_t **data, MssSoundCOD4 *mssSound)
 
 void __cdecl Load_MssSound(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
+    uint8_t *sharedData = nullptr;
+    uint32_t sharedDataSize = 0;
 
     Load_Stream(atStreamStart, (unsigned char*)varMssSound, 40);
     DB_PushStreamPos(0);
@@ -1169,20 +1176,32 @@ void __cdecl Load_MssSound(bool atStreamStart)
         value = (uint32_t)varMssSound->data;
         if (value < 0xFFFFFFFE)
         {
-            DB_ConvertOffsetToAlias((uint32_t*)&varMssSound->data);
+            // Alias raw zone bytes, not another LoadedSound's MSS allocation;
+            // every LoadedSound owns and frees its processed playback buffer.
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)&varMssSound->data,
+                DBAliasKind::SoundData,
+                varMssSound->info.data_len);
+            Load_SetSoundData(&varMssSound->data, varMssSound);
         }
         else
         {
             varMssSound->data = AllocLoad_raw_byte();
+            sharedData = varMssSound->data;
+            sharedDataSize = varMssSound->info.data_len;
             varbyte = varMssSound->data;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::SoundData);
             else
-                inserted = 0;
+                inserted = {};
             Load_byteArray(1, varMssSound->info.data_len);
             Load_SetSoundData(&varMssSound->data, varMssSound);
             if (inserted)
-                *inserted = varMssSound->data;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::SoundData,
+                    sharedData,
+                    sharedDataSize);
         }
     }
     DB_PopStreamPos();
@@ -1201,7 +1220,7 @@ void __cdecl Load_LoadedSound(bool atStreamStart)
 
 void __cdecl Load_LoadedSoundPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varLoadedSoundPtr, 4);
@@ -1214,17 +1233,22 @@ void __cdecl Load_LoadedSoundPtr(bool atStreamStart)
             *varLoadedSoundPtr = (LoadedSound *)AllocLoad_FxElemVisStateSample();
             varLoadedSound = *varLoadedSoundPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::LoadedSound);
             else
-                inserted = 0;
+                inserted = {};
             Load_LoadedSound(1);
             Load_LoadedSoundAsset((XAssetHeader *)varLoadedSoundPtr);
             if (inserted)
-                *inserted = *varLoadedSoundPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::LoadedSound,
+                    *varLoadedSoundPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varLoadedSoundPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varLoadedSoundPtr,
+                DBAliasKind::LoadedSound);
         }
     }
     DB_PopStreamPos();
@@ -1269,7 +1293,7 @@ void __cdecl Load_SndCurve(bool atStreamStart)
 
 void __cdecl Load_SndCurvePtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varSndCurvePtr, 4);
@@ -1282,17 +1306,22 @@ void __cdecl Load_SndCurvePtr(bool atStreamStart)
             *varSndCurvePtr = (SndCurve *)AllocLoad_FxElemVisStateSample();
             varSndCurve = *varSndCurvePtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::SndCurve);
             else
-                inserted = 0;
+                inserted = {};
             Load_SndCurve(1);
             Load_SndCurveAsset((XAssetHeader *)varSndCurvePtr);
             if (inserted)
-                *inserted = *varSndCurvePtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::SndCurve,
+                    *varSndCurvePtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varSndCurvePtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varSndCurvePtr,
+                DBAliasKind::SndCurve);
         }
     }
     DB_PopStreamPos();
@@ -1385,7 +1414,7 @@ void __cdecl Load_snd_alias_list_t(bool atStreamStart)
 
 void __cdecl Load_snd_alias_list_ptr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (unsigned char*)varsnd_alias_list_ptr, 4);
@@ -1398,17 +1427,22 @@ void __cdecl Load_snd_alias_list_ptr(bool atStreamStart)
             *varsnd_alias_list_ptr = (snd_alias_list_t*)AllocLoad_FxElemVisStateSample();
             varsnd_alias_list_t = *varsnd_alias_list_ptr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::SndAliasList);
             else
-                inserted = 0;
+                inserted = {};
             Load_snd_alias_list_t(1);
             Load_snd_alias_list_Asset((XAssetHeader*)varsnd_alias_list_ptr);
             if (inserted)
-                *inserted = *varsnd_alias_list_ptr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::SndAliasList,
+                    *varsnd_alias_list_ptr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t*)varsnd_alias_list_ptr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)varsnd_alias_list_ptr,
+                DBAliasKind::SndAliasList);
         }
     }
     DB_PopStreamPos();
@@ -1764,7 +1798,7 @@ void __cdecl Load_XSurfaceArray(bool atStreamStart, int32_t count)
 
 void __cdecl Load_GfxTextureLoad(bool atStreamStart)
 {
-    GfxTexture *inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     IDirect3DBaseTexture9 *value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (unsigned char*)varGfxTextureLoad, 4);
@@ -1778,17 +1812,29 @@ void __cdecl Load_GfxTextureLoad(bool atStreamStart)
             varGfxTextureLoad->basemap = (IDirect3DBaseTexture9*)AllocLoad_FxElemVisStateSample();
             varGfxImageLoadDef = varGfxTextureLoad->loadDef;
             if (value == (IDirect3DBaseTexture9*)-2)
-                inserted = (GfxTexture*)DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::GfxTexture);
             else
-                inserted = 0;
+                inserted = {};
             Load_GfxImageLoadDef(1);
             Load_Texture(varGfxTextureLoad, varGfxImage);
             if (inserted)
-                inserted->basemap = varGfxTextureLoad->basemap;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::GfxTexture,
+                    varGfxTextureLoad->basemap,
+                    static_cast<uint32_t>(varGfxImage->mapType));
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t*)varGfxTextureLoad);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)varGfxTextureLoad,
+                DBAliasKind::GfxTexture,
+                static_cast<uint32_t>(varGfxImage->mapType));
+            if (varGfxTextureLoad->basemap)
+            {
+                // Image_Release drops one COM reference for every GfxImage.
+                varGfxTextureLoad->basemap->AddRef();
+            }
         }
     }
     DB_PopStreamPos();
@@ -1829,7 +1875,7 @@ void __cdecl Load_GfxImage(bool atStreamStart)
 
 void __cdecl Load_GfxImagePtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varGfxImagePtr, 4);
@@ -1842,17 +1888,22 @@ void __cdecl Load_GfxImagePtr(bool atStreamStart)
             *varGfxImagePtr = (GfxImage *)AllocLoad_FxElemVisStateSample();
             varGfxImage = *varGfxImagePtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::GfxImage);
             else
-                inserted = 0;
+                inserted = {};
             Load_GfxImage(1);
             Load_GfxImageAsset((XAssetHeader *)varGfxImagePtr);
             if (inserted)
-                *inserted = *varGfxImagePtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::GfxImage,
+                    *varGfxImagePtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varGfxImagePtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varGfxImagePtr,
+                DBAliasKind::GfxImage);
         }
     }
     DB_PopStreamPos();
@@ -2244,7 +2295,7 @@ void __cdecl Load_MaterialTechniqueSet(bool atStreamStart)
 
 void __cdecl Load_MaterialTechniqueSetPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varMaterialTechniqueSetPtr, 4);
@@ -2257,17 +2308,22 @@ void __cdecl Load_MaterialTechniqueSetPtr(bool atStreamStart)
             *varMaterialTechniqueSetPtr = (MaterialTechniqueSet *)AllocLoad_FxElemVisStateSample();
             varMaterialTechniqueSet = *varMaterialTechniqueSetPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::MaterialTechniqueSet);
             else
-                inserted = 0;
+                inserted = {};
             Load_MaterialTechniqueSet(1);
             Load_MaterialTechniqueSetAsset((XAssetHeader *)varMaterialTechniqueSetPtr);
             if (inserted)
-                *inserted = *varMaterialTechniqueSetPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::MaterialTechniqueSet,
+                    *varMaterialTechniqueSetPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varMaterialTechniqueSetPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varMaterialTechniqueSetPtr,
+                DBAliasKind::MaterialTechniqueSet);
         }
     }
     DB_PopStreamPos();
@@ -2325,7 +2381,7 @@ void __cdecl Load_Material(bool atStreamStart)
 
 void __cdecl Load_MaterialHandle(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varMaterialHandle, 4);
@@ -2338,17 +2394,22 @@ void __cdecl Load_MaterialHandle(bool atStreamStart)
             *varMaterialHandle = (Material *)AllocLoad_FxElemVisStateSample();
             varMaterial = *varMaterialHandle;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::Material);
             else
-                inserted = 0;
+                inserted = {};
             Load_Material(1);
             Load_MaterialAsset((XAssetHeader *)varMaterialHandle);
             if (inserted)
-                *inserted = *varMaterialHandle;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::Material,
+                    *varMaterialHandle);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varMaterialHandle);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varMaterialHandle,
+                DBAliasKind::Material);
         }
     }
     DB_PopStreamPos();
@@ -2470,7 +2531,7 @@ void __cdecl Load_GfxLightDef(bool atStreamStart)
 
 void __cdecl Load_GfxLightDefPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varGfxLightDefPtr, 4);
@@ -2483,17 +2544,22 @@ void __cdecl Load_GfxLightDefPtr(bool atStreamStart)
             *varGfxLightDefPtr = (GfxLightDef *)AllocLoad_FxElemVisStateSample();
             varGfxLightDef = *varGfxLightDefPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::GfxLightDef);
             else
-                inserted = 0;
+                inserted = {};
             Load_GfxLightDef(1);
             Load_LightDefAsset((XAssetHeader *)varGfxLightDefPtr);
             if (inserted)
-                *inserted = *varGfxLightDefPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::GfxLightDef,
+                    *varGfxLightDefPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varGfxLightDefPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varGfxLightDefPtr,
+                DBAliasKind::GfxLightDef);
         }
     }
     DB_PopStreamPos();
@@ -2635,7 +2701,7 @@ void __cdecl Load_PhysPreset(bool atStreamStart)
 
 void __cdecl Load_PhysPresetPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varPhysPresetPtr, 4);
@@ -2648,17 +2714,22 @@ void __cdecl Load_PhysPresetPtr(bool atStreamStart)
             *varPhysPresetPtr = (PhysPreset *)AllocLoad_FxElemVisStateSample();
             varPhysPreset = *varPhysPresetPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::PhysPreset);
             else
-                inserted = 0;
+                inserted = {};
             Load_PhysPreset(1);
             Load_PhysPresetAsset((XAssetHeader *)varPhysPresetPtr);
             if (inserted)
-                *inserted = *varPhysPresetPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::PhysPreset,
+                    *varPhysPresetPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varPhysPresetPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varPhysPresetPtr,
+                DBAliasKind::PhysPreset);
         }
     }
     DB_PopStreamPos();
@@ -2972,7 +3043,7 @@ void __cdecl Load_XModel(bool atStreamStart)
 
 void __cdecl Load_XModelPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varXModelPtr, 4);
@@ -2985,17 +3056,22 @@ void __cdecl Load_XModelPtr(bool atStreamStart)
             *varXModelPtr = (XModel *)AllocLoad_FxElemVisStateSample();
             varXModel = *varXModelPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::XModel);
             else
-                inserted = 0;
+                inserted = {};
             Load_XModel(1);
             Load_XModelAsset((XAssetHeader *)varXModelPtr);
             if (inserted)
-                *inserted = *varXModelPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::XModel,
+                    *varXModelPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varXModelPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varXModelPtr,
+                DBAliasKind::XModel);
         }
     }
     DB_PopStreamPos();
@@ -3379,7 +3455,7 @@ void __cdecl Load_GameWorldMp(bool atStreamStart)
 
 void __cdecl Load_GameWorldSpPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varGameWorldSpPtr, 4);
@@ -3392,17 +3468,22 @@ void __cdecl Load_GameWorldSpPtr(bool atStreamStart)
             *varGameWorldSpPtr = (GameWorldSp *)AllocLoad_FxElemVisStateSample();
             varGameWorldSp = *varGameWorldSpPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::GameWorldSp);
             else
-                inserted = 0;
+                inserted = {};
             Load_GameWorldSp(1);
             Load_GameWorldSpAsset((XAssetHeader *)varGameWorldSpPtr);
             if (inserted)
-                *inserted = *varGameWorldSpPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::GameWorldSp,
+                    *varGameWorldSpPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varGameWorldSpPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varGameWorldSpPtr,
+                DBAliasKind::GameWorldSp);
         }
     }
     DB_PopStreamPos();
@@ -3410,7 +3491,7 @@ void __cdecl Load_GameWorldSpPtr(bool atStreamStart)
 
 void __cdecl Load_GameWorldMpPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varGameWorldMpPtr, 4);
@@ -3423,17 +3504,22 @@ void __cdecl Load_GameWorldMpPtr(bool atStreamStart)
             *varGameWorldMpPtr = (GameWorldMp *)AllocLoad_FxElemVisStateSample();
             varGameWorldMp = *varGameWorldMpPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::GameWorldMp);
             else
-                inserted = 0;
+                inserted = {};
             Load_GameWorldMp(1);
             Load_GameWorldMpAsset((XAssetHeader *)varGameWorldMpPtr);
             if (inserted)
-                *inserted = *varGameWorldMpPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::GameWorldMp,
+                    *varGameWorldMpPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varGameWorldMpPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varGameWorldMpPtr,
+                DBAliasKind::GameWorldMp);
         }
     }
     DB_PopStreamPos();
@@ -3475,7 +3561,7 @@ void __cdecl Mark_GameWorldMpPtr()
 
 void __cdecl Load_FxEffectDefHandle(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varFxEffectDefHandle, 4);
@@ -3488,17 +3574,22 @@ void __cdecl Load_FxEffectDefHandle(bool atStreamStart)
             *varFxEffectDefHandle = (const FxEffectDef *)AllocLoad_FxElemVisStateSample();
             varFxEffectDef = (FxEffectDef *)*varFxEffectDefHandle;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::FxEffectDef);
             else
-                inserted = 0;
+                inserted = {};
             Load_FxEffectDef(1);
             Load_FxEffectDefAsset((XAssetHeader *)varFxEffectDefHandle);
             if (inserted)
-                *inserted = *varFxEffectDefHandle;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::FxEffectDef,
+                    *varFxEffectDefHandle);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varFxEffectDefHandle);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varFxEffectDefHandle,
+                DBAliasKind::FxEffectDef);
         }
     }
     DB_PopStreamPos();
@@ -3944,7 +4035,7 @@ void __cdecl Load_MapEnts(bool atStreamStart)
 
 void __cdecl Load_MapEntsPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varMapEntsPtr, 4);
@@ -3957,17 +4048,22 @@ void __cdecl Load_MapEntsPtr(bool atStreamStart)
             *varMapEntsPtr = (MapEnts *)AllocLoad_FxElemVisStateSample();
             varMapEnts = *varMapEntsPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::MapEnts);
             else
-                inserted = 0;
+                inserted = {};
             Load_MapEnts(1);
             Load_MapEntsAsset((XAssetHeader *)varMapEntsPtr);
             if (inserted)
-                *inserted = *varMapEntsPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::MapEnts,
+                    *varMapEntsPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varMapEntsPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varMapEntsPtr,
+                DBAliasKind::MapEnts);
         }
     }
     DB_PopStreamPos();
@@ -4432,7 +4528,7 @@ void __cdecl Load_clipMap_t(bool atStreamStart)
 
 void __cdecl Load_clipMap_ptr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varclipMap_ptr, 4);
@@ -4445,17 +4541,22 @@ void __cdecl Load_clipMap_ptr(bool atStreamStart)
             *varclipMap_ptr = (clipMap_t *)AllocLoad_FxElemVisStateSample();
             varclipMap_t = *varclipMap_ptr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::ClipMap);
             else
-                inserted = 0;
+                inserted = {};
             Load_clipMap_t(1);
             Load_ClipMapAsset((XAssetHeader *)varclipMap_ptr);
             if (inserted)
-                *inserted = *varclipMap_ptr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::ClipMap,
+                    *varclipMap_ptr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varclipMap_ptr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varclipMap_ptr,
+                DBAliasKind::ClipMap);
         }
     }
     DB_PopStreamPos();
@@ -4551,7 +4652,7 @@ void __cdecl Load_ComWorld(bool atStreamStart)
 
 void __cdecl Load_ComWorldPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varComWorldPtr, 4);
@@ -4564,17 +4665,22 @@ void __cdecl Load_ComWorldPtr(bool atStreamStart)
             *varComWorldPtr = (ComWorld *)AllocLoad_FxElemVisStateSample();
             varComWorld = *varComWorldPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::ComWorld);
             else
-                inserted = 0;
+                inserted = {};
             Load_ComWorld(1);
             Load_ComWorldAsset((XAssetHeader *)varComWorldPtr);
             if (inserted)
-                *inserted = *varComWorldPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::ComWorld,
+                    *varComWorldPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varComWorldPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varComWorldPtr,
+                DBAliasKind::ComWorld);
         }
     }
     DB_PopStreamPos();
@@ -4933,7 +5039,7 @@ void __cdecl Load_menuDef_t(bool atStreamStart)
 
 void __cdecl Load_menuDef_ptr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varmenuDef_ptr, 4);
@@ -4946,17 +5052,22 @@ void __cdecl Load_menuDef_ptr(bool atStreamStart)
             *varmenuDef_ptr = (menuDef_t *)AllocLoad_FxElemVisStateSample();
             varmenuDef_t = *varmenuDef_ptr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::MenuDef);
             else
-                inserted = 0;
+                inserted = {};
             Load_menuDef_t(1);
             Load_MenuAsset((XAssetHeader *)varmenuDef_ptr);
             if (inserted)
-                *inserted = *varmenuDef_ptr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::MenuDef,
+                    *varmenuDef_ptr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varmenuDef_ptr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varmenuDef_ptr,
+                DBAliasKind::MenuDef);
         }
     }
     DB_PopStreamPos();
@@ -4994,7 +5105,7 @@ void __cdecl Load_MenuList(bool atStreamStart)
 
 void __cdecl Load_MenuListPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varMenuListPtr, 4);
@@ -5007,17 +5118,22 @@ void __cdecl Load_MenuListPtr(bool atStreamStart)
             *varMenuListPtr = (MenuList *)AllocLoad_FxElemVisStateSample();
             varMenuList = *varMenuListPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::MenuList);
             else
-                inserted = 0;
+                inserted = {};
             Load_MenuList(1);
             Load_MenuListAsset((XAssetHeader *)varMenuListPtr);
             if (inserted)
-                *inserted = *varMenuListPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::MenuList,
+                    *varMenuListPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varMenuListPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varMenuListPtr,
+                DBAliasKind::MenuList);
         }
     }
     DB_PopStreamPos();
@@ -5159,7 +5275,7 @@ void __cdecl Load_LocalizeEntry(bool atStreamStart)
 
 void __cdecl Load_LocalizeEntryPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varLocalizeEntryPtr, 4);
@@ -5172,17 +5288,22 @@ void __cdecl Load_LocalizeEntryPtr(bool atStreamStart)
             *varLocalizeEntryPtr = (LocalizeEntry *)AllocLoad_FxElemVisStateSample();
             varLocalizeEntry = *varLocalizeEntryPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::LocalizeEntry);
             else
-                inserted = 0;
+                inserted = {};
             Load_LocalizeEntry(1);
             Load_LocalizeEntryAsset((XAssetHeader *)varLocalizeEntryPtr);
             if (inserted)
-                *inserted = *varLocalizeEntryPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::LocalizeEntry,
+                    *varLocalizeEntryPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varLocalizeEntryPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varLocalizeEntryPtr,
+                DBAliasKind::LocalizeEntry);
         }
     }
     DB_PopStreamPos();
@@ -5238,7 +5359,7 @@ void __cdecl Load_FxImpactTable(bool atStreamStart)
 
 void __cdecl Load_FxImpactTablePtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varFxImpactTablePtr, 4);
@@ -5251,17 +5372,22 @@ void __cdecl Load_FxImpactTablePtr(bool atStreamStart)
             *varFxImpactTablePtr = (FxImpactTable *)AllocLoad_FxElemVisStateSample();
             varFxImpactTable = *varFxImpactTablePtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::FxImpactTable);
             else
-                inserted = 0;
+                inserted = {};
             Load_FxImpactTable(1);
             Load_FxImpactTableAsset((XAssetHeader *)varFxImpactTablePtr);
             if (inserted)
-                *inserted = *varFxImpactTablePtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::FxImpactTable,
+                    *varFxImpactTablePtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varFxImpactTablePtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varFxImpactTablePtr,
+                DBAliasKind::FxImpactTable);
         }
     }
     DB_PopStreamPos();
@@ -5568,7 +5694,7 @@ void __cdecl Load_WeaponDef(bool atStreamStart)
 
 void __cdecl Load_WeaponDefPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varWeaponDefPtr, 4);
@@ -5581,17 +5707,22 @@ void __cdecl Load_WeaponDefPtr(bool atStreamStart)
             *varWeaponDefPtr = (WeaponDef *)AllocLoad_FxElemVisStateSample();
             varWeaponDef = *varWeaponDefPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::WeaponDef);
             else
-                inserted = 0;
+                inserted = {};
             Load_WeaponDef(1);
             Load_WeaponDefAsset((XAssetHeader *)varWeaponDefPtr);
             if (inserted)
-                *inserted = *varWeaponDefPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::WeaponDef,
+                    *varWeaponDefPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varWeaponDefPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varWeaponDefPtr,
+                DBAliasKind::WeaponDef);
         }
     }
     DB_PopStreamPos();
@@ -5791,7 +5922,7 @@ void __cdecl Load_RawFile(bool atStreamStart)
 
 void __cdecl Load_RawFilePtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varRawFilePtr, 4);
@@ -5804,17 +5935,22 @@ void __cdecl Load_RawFilePtr(bool atStreamStart)
             *varRawFilePtr = (RawFile *)AllocLoad_FxElemVisStateSample();
             varRawFile = *varRawFilePtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::RawFile);
             else
-                inserted = 0;
+                inserted = {};
             Load_RawFile(1);
             Load_RawFileAsset((XAssetHeader *)varRawFilePtr);
             if (inserted)
-                *inserted = *varRawFilePtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::RawFile,
+                    *varRawFilePtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varRawFilePtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varRawFilePtr,
+                DBAliasKind::RawFile);
         }
     }
     DB_PopStreamPos();
@@ -6789,7 +6925,7 @@ void __cdecl Load_GfxWorld(bool atStreamStart)
 
 void __cdecl Load_GfxWorldPtr(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varGfxWorldPtr, 4);
@@ -6802,17 +6938,22 @@ void __cdecl Load_GfxWorldPtr(bool atStreamStart)
             *varGfxWorldPtr = (GfxWorld *)AllocLoad_FxElemVisStateSample();
             varGfxWorld = *varGfxWorldPtr;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::GfxWorld);
             else
-                inserted = 0;
+                inserted = {};
             Load_GfxWorld(1);
             Load_GfxWorldAsset((XAssetHeader *)varGfxWorldPtr);
             if (inserted)
-                *inserted = *varGfxWorldPtr;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::GfxWorld,
+                    *varGfxWorldPtr);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varGfxWorldPtr);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varGfxWorldPtr,
+                DBAliasKind::GfxWorld);
         }
     }
     DB_PopStreamPos();
@@ -6927,7 +7068,7 @@ void __cdecl Load_Font(bool atStreamStart)
 
 void __cdecl Load_FontHandle(bool atStreamStart)
 {
-    const void **inserted; // [esp+0h] [ebp-Ch]
+    DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
 
     Load_Stream(atStreamStart, (uint8_t *)varFontHandle, 4);
@@ -6940,17 +7081,22 @@ void __cdecl Load_FontHandle(bool atStreamStart)
             *varFontHandle = (Font_s *)AllocLoad_FxElemVisStateSample();
             varFont = *varFontHandle;
             if (value == -2)
-                inserted = DB_InsertPointer();
+                inserted = DB_InsertPointer(DBAliasKind::Font);
             else
-                inserted = 0;
+                inserted = {};
             Load_Font(1);
             Load_FontAsset((XAssetHeader *)varFontHandle);
             if (inserted)
-                *inserted = *varFontHandle;
+                DB_SetInsertedPointer(
+                    inserted,
+                    DBAliasKind::Font,
+                    *varFontHandle);
         }
         else
         {
-            DB_ConvertOffsetToAlias((uint32_t *)varFontHandle);
+            DB_ConvertOffsetToAlias(
+                (uint32_t *)varFontHandle,
+                DBAliasKind::Font);
         }
     }
     DB_PopStreamPos();

@@ -94,23 +94,41 @@ void __cdecl Load_DelayStream()
     }
 }
 
-void __cdecl DB_ConvertOffsetToAlias(uint32_t *data)
+void __cdecl DB_ConvertOffsetToAlias(
+    uint32_t *data,
+    DBAliasKind expectedKind,
+    uint32_t expectedMetadata)
 {
-    disk32::DecodedOffset decoded{};
-    if (!data || !g_streamZoneMem || !DB_DecodeOffset(*data, sizeof(uint32_t), &decoded))
+    if (!data)
     {
         Com_Error(ERR_DROP, "Invalid fast-file alias offset");
         return;
     }
-    if (!g_streamZoneMem->blocks[decoded.block].data)
+
+    uint32_t tokenValue = 0;
+    std::memcpy(&tokenValue, data, sizeof(tokenValue));
+    uintptr_t pointer = 0;
+    const db::relocation::Status status = DB_ResolveInsertedPointer(
+        {tokenValue},
+        expectedKind,
+        expectedMetadata,
+        &pointer);
+    if (status != db::relocation::Status::Ok)
     {
-        Com_Error(ERR_DROP, "Fast-file alias references an unloaded block");
+        Com_Error(
+            ERR_DROP,
+            "Invalid fast-file alias offset: %s",
+            db::relocation::StatusName(status));
         return;
     }
-    std::memcpy(
-        data,
-        &g_streamZoneMem->blocks[decoded.block].data[decoded.offset],
-        sizeof(*data));
+    if (pointer > UINT32_MAX)
+    {
+        Com_Error(ERR_DROP, "Fast-file alias does not fit the 32-bit runtime");
+        return;
+    }
+
+    const uint32_t narrowed = static_cast<uint32_t>(pointer);
+    std::memcpy(data, &narrowed, sizeof(narrowed));
 }
 
 void __cdecl DB_ConvertOffsetToPointer(uint32_t *data)
