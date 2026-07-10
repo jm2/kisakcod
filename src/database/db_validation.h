@@ -2217,6 +2217,478 @@ inline bool GfxWorldCellGraphValid(
     return true;
 }
 
+constexpr std::uint32_t kMaxPathNodes = 8192;
+constexpr std::uint32_t kMaxPathTreeNodes = 16383;
+constexpr std::uint32_t kMaxPathTreeDepth = 64;
+constexpr std::uint32_t kMaxPathChainDepth = 256;
+constexpr std::int32_t kMaxPathNodeType = 19;
+
+constexpr bool PathNodeTypeValid(std::int64_t type)
+{
+    return type >= 0 && type <= kMaxPathNodeType;
+}
+
+constexpr bool PathNodeReferenceValid(
+    std::int64_t nodeIndex,
+    std::uint64_t nodeCount)
+{
+    return nodeIndex == -1
+        || (nodeIndex >= 0
+            && static_cast<std::uint64_t>(nodeIndex) < nodeCount);
+}
+
+template <typename Node>
+inline bool PathNodesRuntimeValid(
+    const Node *nodes,
+    std::uint64_t nodeCount)
+{
+    if (nodeCount > kMaxPathNodes
+        || (nodes != nullptr) != (nodeCount != 0))
+    {
+        return false;
+    }
+
+    try
+    {
+        std::vector<std::uint8_t> parentStates(
+            static_cast<std::size_t>(nodeCount),
+            UINT8_C(0));
+        std::vector<std::uint32_t> parentDepths(
+            static_cast<std::size_t>(nodeCount),
+            UINT32_C(0));
+        std::vector<std::uint32_t> parentTrail;
+        parentTrail.reserve(static_cast<std::size_t>(nodeCount));
+
+        for (std::uint64_t nodeIndex = 0;
+            nodeIndex < nodeCount;
+            ++nodeIndex)
+        {
+            const auto &constant = nodes[nodeIndex].constant;
+            const std::int64_t overlap0 =
+                static_cast<std::int64_t>(constant.wOverlapNode[0]);
+            const std::int64_t overlap1 =
+                static_cast<std::int64_t>(constant.wOverlapNode[1]);
+            if (!PathNodeTypeValid(
+                    static_cast<std::int64_t>(constant.type))
+                || !PathNodeReferenceValid(
+                    overlap0,
+                    nodeCount)
+                || !PathNodeReferenceValid(
+                    overlap1,
+                    nodeCount)
+                || (overlap0 == -1 && overlap1 != -1)
+                || overlap0 == static_cast<std::int64_t>(nodeIndex)
+                || overlap1 == static_cast<std::int64_t>(nodeIndex)
+                || (overlap0 >= 0 && overlap0 == overlap1)
+                || !PathNodeReferenceValid(
+                    static_cast<std::int64_t>(constant.wChainParent),
+                    nodeCount)
+                || constant.wChainParent
+                    == static_cast<std::int64_t>(nodeIndex)
+                || !std::isfinite(constant.vOrigin[0])
+                || !std::isfinite(constant.vOrigin[1])
+                || !std::isfinite(constant.vOrigin[2])
+                || !std::isfinite(constant.fAngle)
+                || !std::isfinite(constant.forward[0])
+                || !std::isfinite(constant.forward[1])
+                || !std::isfinite(constant.fRadius)
+                || !std::isfinite(constant.minUseDistSq))
+            {
+                return false;
+            }
+        }
+
+        for (std::uint32_t start = 0;
+            start < nodeCount;
+            ++start)
+        {
+            if (parentStates[start] == 2)
+                continue;
+            parentTrail.clear();
+            std::int64_t current = start;
+            std::uint32_t parentDepth = 0;
+            while (current >= 0)
+            {
+                if (parentTrail.size() >= kMaxPathChainDepth)
+                    return false;
+                const std::uint32_t index =
+                    static_cast<std::uint32_t>(current);
+                if (parentStates[index] == 1)
+                    return false;
+                if (parentStates[index] == 2)
+                {
+                    parentDepth = parentDepths[index];
+                    break;
+                }
+                parentStates[index] = 1;
+                parentTrail.push_back(index);
+                current = static_cast<std::int64_t>(
+                    nodes[index].constant.wChainParent);
+            }
+            for (auto entry = parentTrail.rbegin();
+                entry != parentTrail.rend();
+                ++entry)
+            {
+                if (parentDepth >= kMaxPathChainDepth)
+                    return false;
+                ++parentDepth;
+                parentDepths[*entry] = parentDepth;
+                parentStates[*entry] = 2;
+            }
+        }
+        return true;
+    }
+    catch (const std::bad_alloc &)
+    {
+        return false;
+    }
+}
+
+inline bool PathChainMapsRuntimeValid(
+    const std::uint16_t *chainNodeForNode,
+    const std::uint16_t *nodeForChainNode,
+    std::uint64_t nodeCount,
+    std::uint64_t chainNodeCount)
+{
+    if (nodeCount > kMaxPathNodes
+        || chainNodeCount > nodeCount
+        || (chainNodeForNode != nullptr) != (nodeCount != 0)
+        || (nodeForChainNode != nullptr) != (nodeCount != 0))
+    {
+        return false;
+    }
+    for (std::uint64_t position = 0;
+        position < nodeCount;
+        ++position)
+    {
+        const std::uint32_t nodeIndex = nodeForChainNode[position];
+        if (nodeIndex >= nodeCount
+            || chainNodeForNode[nodeIndex] != position)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+constexpr bool PathVisibilityBytes(
+    std::uint64_t nodeCount,
+    std::int32_t *bytes)
+{
+    if (bytes)
+        *bytes = 0;
+    if (!bytes || nodeCount > kMaxPathNodes)
+        return false;
+
+    const std::uint64_t bitCount = nodeCount
+        * (nodeCount ? nodeCount - 1u : 0u);
+    const std::uint64_t byteCount = (bitCount + 7u) / 8u;
+    if (byteCount
+        > static_cast<std::uint64_t>(
+            (std::numeric_limits<std::int32_t>::max)()))
+    {
+        return false;
+    }
+    *bytes = static_cast<std::int32_t>(byteCount);
+    return true;
+}
+
+constexpr bool PathTreeLayoutValid(
+    bool hasTree,
+    std::uint64_t pathNodeCount,
+    std::int64_t treeNodeCount,
+    std::int32_t *treeBytes)
+{
+    if (treeBytes)
+        *treeBytes = 0;
+    if (!treeBytes || pathNodeCount > kMaxPathNodes
+        || treeNodeCount < 0
+        || treeNodeCount > kMaxPathTreeNodes
+        || hasTree != (treeNodeCount != 0))
+    {
+        return false;
+    }
+    if (pathNodeCount == 0)
+        return treeNodeCount == 0;
+    if (treeNodeCount
+        > static_cast<std::int64_t>(pathNodeCount * 2u - 1u))
+    {
+        return false;
+    }
+    return CheckedArrayBytes(
+        static_cast<std::int32_t>(treeNodeCount),
+        disk32::kPathTreeBytes,
+        treeBytes);
+}
+
+struct PathDataLayoutExtents
+{
+    std::int32_t nodeBytes = 0;
+    std::int32_t baseNodeBytes = 0;
+    std::int32_t chainMapBytes = 0;
+    std::int32_t visibilityBytes = 0;
+    std::int32_t treeBytes = 0;
+};
+
+inline bool PathDataLayoutValid(
+    bool hasNodes,
+    bool hasBaseNodes,
+    std::uint64_t nodeCount,
+    std::uint64_t chainNodeCount,
+    bool hasChainNodeForNode,
+    bool hasNodeForChainNode,
+    bool hasVisibility,
+    std::int64_t visibilityBytes,
+    bool hasTree,
+    std::int64_t treeNodeCount,
+    PathDataLayoutExtents *extents)
+{
+    if (!extents)
+        return false;
+    *extents = {};
+
+    std::int32_t expectedVisibilityBytes = 0;
+    if (nodeCount > kMaxPathNodes
+        || chainNodeCount > nodeCount
+        || visibilityBytes < 0
+        || hasNodes != (nodeCount != 0)
+        || hasBaseNodes != (nodeCount != 0)
+        || hasChainNodeForNode != (nodeCount != 0)
+        || hasNodeForChainNode != (nodeCount != 0)
+        || hasVisibility != (visibilityBytes != 0)
+        || !PathVisibilityBytes(nodeCount, &expectedVisibilityBytes)
+        || (hasVisibility
+            && visibilityBytes != expectedVisibilityBytes)
+        || !PathTreeLayoutValid(
+            hasTree,
+            nodeCount,
+            treeNodeCount,
+            &extents->treeBytes))
+    {
+        return false;
+    }
+
+    const std::int32_t checkedNodeCount =
+        static_cast<std::int32_t>(nodeCount);
+    if (!CheckedArrayBytes(
+            checkedNodeCount,
+            disk32::kPathNodeBytes,
+            &extents->nodeBytes)
+        || !CheckedArrayBytes(
+            checkedNodeCount,
+            disk32::kPathBaseNodeBytes,
+            &extents->baseNodeBytes))
+    {
+        return false;
+    }
+    if (hasChainNodeForNode
+        && !CheckedArrayBytes(
+            checkedNodeCount,
+            disk32::kPathNodeIndexBytes,
+            &extents->chainMapBytes))
+    {
+        return false;
+    }
+    extents->visibilityBytes =
+        static_cast<std::int32_t>(visibilityBytes);
+    return true;
+}
+
+template <typename PathData>
+inline bool PathDataLayoutValid(
+    const PathData &path,
+    PathDataLayoutExtents *extents)
+{
+    return PathDataLayoutValid(
+        path.nodes != nullptr,
+        path.basenodes != nullptr,
+        static_cast<std::uint64_t>(path.nodeCount),
+        static_cast<std::uint64_t>(path.chainNodeCount),
+        path.chainNodeForNode != nullptr,
+        path.nodeForChainNode != nullptr,
+        path.pathVis != nullptr,
+        static_cast<std::int64_t>(path.visBytes),
+        path.nodeTree != nullptr,
+        static_cast<std::int64_t>(path.nodeTreeCount),
+        extents);
+}
+
+template <typename Link>
+inline bool PathLinksRuntimeValid(
+    const Link *links,
+    std::uint64_t linkCount,
+    std::uint64_t pathNodeCount)
+{
+    if (pathNodeCount > kMaxPathNodes
+        || linkCount > pathNodeCount
+        || (links != nullptr) != (linkCount != 0))
+    {
+        return false;
+    }
+    for (std::uint64_t linkIndex = 0;
+        linkIndex < linkCount;
+        ++linkIndex)
+    {
+        if (static_cast<std::uint64_t>(links[linkIndex].nodeNum)
+                >= pathNodeCount
+            || !std::isfinite(links[linkIndex].fDist)
+            || links[linkIndex].fDist < 0.0f)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+struct PathTreeVisit
+{
+    std::uint32_t index;
+    std::uint32_t depth;
+    bool exiting;
+};
+
+template <typename Tree>
+inline bool PathTreeGraphValid(
+    const Tree *trees,
+    std::uint64_t treeNodeCount,
+    std::uint64_t pathNodeCount,
+    std::uint32_t serializedTreeStride = disk32::kPathTreeBytes)
+{
+    std::int32_t treeBytes = 0;
+    if (treeNodeCount
+            > static_cast<std::uint64_t>(
+                (std::numeric_limits<std::int64_t>::max)())
+        || !PathTreeLayoutValid(
+            trees != nullptr,
+            pathNodeCount,
+            static_cast<std::int64_t>(treeNodeCount),
+            &treeBytes))
+    {
+        return false;
+    }
+    if (treeNodeCount == 0)
+        return true;
+
+    std::uint64_t rootIndex = 0;
+    if (!SerializedArrayElementIndex(
+            trees,
+            treeNodeCount,
+            serializedTreeStride,
+            trees,
+            &rootIndex)
+        || rootIndex != 0)
+    {
+        return false;
+    }
+
+    try
+    {
+        std::vector<std::uint8_t> states(
+            static_cast<std::size_t>(treeNodeCount),
+            UINT8_C(0));
+        std::vector<std::uint8_t> leafOwners(
+            static_cast<std::size_t>(pathNodeCount),
+            UINT8_C(0));
+        std::vector<PathTreeVisit> pending;
+        pending.reserve(static_cast<std::size_t>(treeNodeCount) * 2u);
+        pending.push_back({0, 1, false});
+        std::uint64_t totalLeafEntries = 0;
+
+        while (!pending.empty())
+        {
+            const PathTreeVisit visit = pending.back();
+            pending.pop_back();
+            if (visit.exiting)
+            {
+                if (states[visit.index] != 1)
+                    return false;
+                states[visit.index] = 2;
+                continue;
+            }
+            if (visit.depth > kMaxPathTreeDepth
+                || states[visit.index] != 0)
+            {
+                return false;
+            }
+            states[visit.index] = 1;
+
+            const Tree &tree = trees[visit.index];
+            const std::int64_t axis =
+                static_cast<std::int64_t>(tree.axis);
+            if (axis >= 0)
+            {
+                if (axis > 2 || !std::isfinite(tree.dist)
+                    || visit.depth >= kMaxPathTreeDepth)
+                {
+                    return false;
+                }
+                std::uint64_t childIndices[2] = {};
+                for (std::uint32_t child = 0; child < 2; ++child)
+                {
+                    if (!SerializedArrayElementIndex(
+                            trees,
+                            treeNodeCount,
+                            serializedTreeStride,
+                            tree.u.child[child],
+                            &childIndices[child]))
+                    {
+                        return false;
+                    }
+                }
+                pending.push_back({visit.index, visit.depth, true});
+                pending.push_back({
+                    static_cast<std::uint32_t>(childIndices[1]),
+                    visit.depth + 1u,
+                    false});
+                pending.push_back({
+                    static_cast<std::uint32_t>(childIndices[0]),
+                    visit.depth + 1u,
+                    false});
+                continue;
+            }
+
+            const std::int64_t leafCount =
+                static_cast<std::int64_t>(tree.u.s.nodeCount);
+            if (!CountInRange(
+                    leafCount,
+                    1,
+                    static_cast<std::int64_t>(pathNodeCount))
+                || !tree.u.s.nodes
+                || static_cast<std::uint64_t>(leafCount)
+                    > pathNodeCount - totalLeafEntries)
+            {
+                return false;
+            }
+            totalLeafEntries += static_cast<std::uint64_t>(leafCount);
+            for (std::int64_t leafIndex = 0;
+                leafIndex < leafCount;
+                ++leafIndex)
+            {
+                const std::uint32_t pathNodeIndex =
+                    tree.u.s.nodes[leafIndex];
+                if (pathNodeIndex >= pathNodeCount
+                    || leafOwners[pathNodeIndex])
+                {
+                    return false;
+                }
+                leafOwners[pathNodeIndex] = 1;
+            }
+            states[visit.index] = 2;
+        }
+
+        for (const std::uint8_t state : states)
+        {
+            if (state != 2)
+                return false;
+        }
+        return true;
+    }
+    catch (const std::bad_alloc &)
+    {
+        return false;
+    }
+}
+
 constexpr std::uint32_t kMaxBrushNonaxialSides = 26;
 constexpr std::uint32_t kMaxBrushWindingEdges = 12;
 constexpr std::int32_t kMaxBrushAdjacencyEntries = 32 * 12;

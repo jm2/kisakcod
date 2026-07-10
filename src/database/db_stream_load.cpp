@@ -1,5 +1,4 @@
 #include "database.h"
-#include "db_disk32.h"
 #include "db_validation.h"
 #include <qcommon/qcommon.h>
 
@@ -7,17 +6,6 @@
 
 namespace
 {
-bool DB_DecodeOffset(uint32_t value, uint32_t requiredBytes, disk32::DecodedOffset *decoded)
-{
-    if (!g_streamZoneMem)
-        return false;
-
-    uint32_t blockSizes[9];
-    for (uint32_t i = 0; i < 9; ++i)
-        blockSizes[i] = g_streamZoneMem->blocks[i].size;
-    return disk32::DecodeOffset({value}, blockSizes, 9, requiredBytes, decoded);
-}
-
 bool DB_ResolveCStringField(
     const uint32_t *data,
     db::relocation::BlockMask allowedBlocks,
@@ -262,34 +250,6 @@ void __cdecl DB_ConvertOffsetToTempString(
         return;
     }
     std::memcpy(data, &stringValue, sizeof(stringValue));
-}
-
-void __cdecl DB_ConvertOffsetToPointerLegacy(uint32_t *data)
-{
-    disk32::DecodedOffset decoded{};
-    uint32_t tokenValue = 0;
-    if (data)
-        std::memcpy(&tokenValue, data, sizeof(tokenValue));
-    if (!data || !g_streamZoneMem || !DB_DecodeOffset(tokenValue, 1, &decoded))
-    {
-        Com_Error(ERR_DROP, "Invalid fast-file pointer offset");
-        return;
-    }
-    if (!g_streamZoneMem->blocks[decoded.block].data)
-    {
-        Com_Error(ERR_DROP, "Fast-file pointer references an unloaded block");
-        return;
-    }
-
-    const uintptr_t pointer = reinterpret_cast<uintptr_t>(
-        &g_streamZoneMem->blocks[decoded.block].data[decoded.offset]);
-    if (pointer > UINT32_MAX)
-    {
-        Com_Error(ERR_DROP, "Fast-file pointer does not fit the 32-bit runtime");
-        return;
-    }
-    const uint32_t narrowed = static_cast<uint32_t>(pointer);
-    std::memcpy(data, &narrowed, sizeof(narrowed));
 }
 
 uint32_t __cdecl Load_XStringCustom(char **str)

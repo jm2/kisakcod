@@ -8,15 +8,17 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: migrate the remaining path-tree forward reference, then add a Windows x86 headless
-  compile/link CI leg.
-- Last completed batch: graphics-world cell headers now materialize before portal targets resolve;
-  each target must be an exact serialized cell start, and portal runtime scratch is scrubbed before
-  fixup. Checked cell/AABB/portal/cull/probe extents, finite portal geometry, canonical plane sides,
-  renderer workspace limits, nonempty per-cell AABB/probe arrays, global reflection-probe/image and
-  cull-group records, sorted-surface spans, reflection texture scratch, cell-caster storage, brush
-  models, and complete AABB/portal graphs validate before world asset publication. Loader failures,
-  full-header allocation failures, and missing shared-world alias slots now propagate without
+- Active work: add a Windows x86 headless compile/link CI leg, then begin the platform-services
+  boundary needed by the Linux dedicated server.
+- Last completed batch: the final legacy direct-offset helper is removed. Counted path-tree headers
+  materialize before forward/back child offsets resolve; every child must be an exact owned flat-array
+  element, and inline/out-of-owner nodes are rejected. Checked path/link/visibility/tree extents,
+  finite split planes, bounded unique leaf indices, acyclic single-owner topology, full reachability,
+  and a depth-64 limit validate before `GameWorldSp` publication. Runtime-only path owner/search
+  state is scrubbed, node types and constant node references are bounded, chain-parent cycles and
+  hierarchies deeper than 256 nodes are rejected, inverse chain maps are proven as bounded
+  permutations, path visibility requires the complete runtime-indexed bit extent, link indices are
+  bounded, full header/child allocations are preflighted, and loader or shared-slot failure suppresses
   publication.
 - Portable validation: 12/12 tests pass locally. The production relocation registry is
   also strict-warning clean under GCC/Clang and GCC ILP32 syntax checking; ASan/UBSan
@@ -29,7 +31,7 @@ work item changes. Do not create session-specific handoff files.
   jobs. Surface run 29100892076 passed all five portable jobs but exposed an early-declaration
   error in the Windows-only surface validator. Physics/repair run 29102757297 then passed all eight
   jobs, confirming the parameterized model-bone-count repair and exact physics graph batch. Clipmap
-  brush-graph run 29105491437 also passed all eight jobs.
+  brush-graph run 29105491437 and portal/cell run 29108651064 also passed all eight jobs.
 
 ## Milestone status
 
@@ -37,10 +39,10 @@ work item changes. Do not create session-specific handoff files.
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 builds; five native utility-test runners; engine runtime smoke and release workflows remain unexercised. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 49/50 bounded direct references, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal graph and state validation, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures and 1 direct relocation remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
-| M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush and portal/cell spans, and 18 exact completed object types exist; packed mirrors, 1 direct offset, broader completed-object relocation, and runtime widening remain. |
+| M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, all legacy direct references migrated to bounded resolution, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush, portal/cell, and path-tree spans, and 18 exact completed object types exist; packed mirrors, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
 ## Target matrix
@@ -56,12 +58,11 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Migrate the remaining path-tree graph relocation. Add a deferred typed fixup for authentic
-   forward child references rather than weakening materialization checks.
-2. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
+1. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
+2. Begin the M3 headless platform-services interface.
 3. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
 4. Classify and burn down the 255 direct and four formula-based ABI layout assertions.
-5. Begin the M3 headless platform-services interface.
+5. Add production fast-file fixtures/fuzzing and assess stronger SP overlap/chain hierarchy semantics.
 
 ## Known release blockers
 
@@ -113,13 +114,15 @@ work item changes. Do not create session-specific handoff files.
 - Weapon registration still protects the 128-entry `bg_weaponDefs` table only with a
   release-disabled assertion after incrementing the index. Single-player's 128-entry
   editable accuracy-graph registry has the same assertion-only overflow pattern.
-- One explicitly labeled legacy direct fast-file relocation still proves only
-  one destination byte is in-bounds. Twenty-three raw/POD fields, three string/holder fields,
+- All 50 direct fast-file references now use bounded resolution or validated owning-array fixups.
+  Twenty-three raw/POD fields, three string/holder fields,
   eighteen exact completed object types, graph-validated clipmap brush spans, and one
   completed-but-not-yet-typed bone-name array now
   enforce bounded materialization or exact typed completion, but broader graph/type provenance
-  plus runtime widening remain M5 requirements. The remaining path-tree tokens include plausible
-  forward references and therefore need a deferred-fixup design before bounded resolution.
+  plus runtime widening remain M5 requirements. Path-tree forward/back offsets now resolve only
+  after the complete flat owner array materializes. The current IW3 asset writer confirms that the
+  counted array is registered before reusable children become direct offsets; a retail SP fixture
+  remains desirable as an end-to-end compatibility regression rather than an inline-format decision.
   Already-materialized and registered-start enforcement intentionally rejects
   raw/string/completed-object forward references;
   compatibility still needs retail fast-file fixtures. Alias and direct provenance also

@@ -331,7 +331,6 @@ void __cdecl DB_ConvertOffsetToCString(
 void __cdecl DB_ConvertOffsetToTempString(
     uint32_t *data,
     db::relocation::BlockMask allowedBlocks);
-void __cdecl DB_ConvertOffsetToPointerLegacy(uint32_t *data);
 uint32_t __cdecl Load_XStringCustom(char **str);
 void __cdecl Load_TempStringCustom(char **str);
 
@@ -536,21 +535,21 @@ void __cdecl Mark_XModelPieceArray(int32_t count);
 void __cdecl Mark_XModelPieces();
 void __cdecl Mark_XModelPiecesPtr();
 void __cdecl Load_pathlink_tArray(bool atStreamStart, int32_t count);
-void __cdecl Load_pathnode_constant_t(bool atStreamStart);
-void __cdecl Load_pathnode_t(bool atStreamStart);
-void __cdecl Load_pathnode_tArray(bool atStreamStart, int32_t count);
+bool __cdecl Load_pathnode_constant_t(bool atStreamStart);
+bool __cdecl Load_pathnode_t(bool atStreamStart);
+bool __cdecl Load_pathnode_tArray(bool atStreamStart, int32_t count);
 void __cdecl Load_pathbasenode_tArray(bool atStreamStart, int32_t count);
-void __cdecl Load_pathnode_tree_nodes_t(bool atStreamStart);
-void __cdecl Load_pathnode_tree_ptr(bool atStreamStart);
-void __cdecl Load_pathnode_tree_ptrArray(bool atStreamStart, int32_t count);
-void __cdecl Load_pathnode_tree_info_t(bool atStreamStart);
-void __cdecl Load_pathnode_tree_t(bool atStreamStart);
-void __cdecl Load_pathnode_tree_tArray(bool atStreamStart, int32_t count);
+bool __cdecl Load_pathnode_tree_nodes_t(bool atStreamStart);
+bool __cdecl Load_pathnode_tree_ptr(bool atStreamStart);
+bool __cdecl Load_pathnode_tree_ptrArray(bool atStreamStart, int32_t count);
+bool __cdecl Load_pathnode_tree_info_t(bool atStreamStart);
+bool __cdecl Load_pathnode_tree_t(bool atStreamStart);
+bool __cdecl Load_pathnode_tree_tArray(bool atStreamStart, int32_t count);
 void __cdecl Mark_pathnode_constant_t();
 void __cdecl Mark_pathnode_t();
 void __cdecl Mark_pathnode_tArray(int32_t count);
-void __cdecl Load_PathData(bool atStreamStart);
-void __cdecl Load_GameWorldSp(bool atStreamStart);
+bool __cdecl Load_PathData(bool atStreamStart);
+bool __cdecl Load_GameWorldSp(bool atStreamStart);
 void __cdecl Load_GameWorldMp(bool atStreamStart);
 void __cdecl Load_GameWorldSpPtr(bool atStreamStart);
 void __cdecl Load_GameWorldMpPtr(bool atStreamStart);

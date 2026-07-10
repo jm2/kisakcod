@@ -714,6 +714,15 @@ int main()
             && disk32::kGfxCullGroupBytes == 32u
             && disk32::kDpvsPlaneBytes == 20u
             && disk32::kVec3Bytes == 12u
+            && disk32::kGameWorldSpBytes == 44u
+            && disk32::kPathDataBytes == 40u
+            && disk32::kPathNodeBytes == 128u
+            && disk32::kPathNodeConstantBytes == 68u
+            && disk32::kPathLinkBytes == 12u
+            && disk32::kPathBaseNodeBytes == 16u
+            && disk32::kPathTreeBytes == 16u
+            && disk32::kPathTreeLeafInfoBytes == 8u
+            && disk32::kPathNodeIndexBytes == 2u
             && disk32::kStringTableBytes == 16u
             && disk32::kXModelPieceBytes == 16u
             && disk32::kXModelPiecesBytes == 12u

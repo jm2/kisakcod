@@ -5708,9 +5708,27 @@ void __cdecl Load_pathlink_tArray(bool atStreamStart, int32_t count)
     Load_StreamArray(atStreamStart, (uint8_t *)varpathlink_t, count, 12);
 }
 
-void __cdecl Load_pathnode_constant_t(bool atStreamStart)
+bool __cdecl Load_pathnode_constant_t(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varpathnode_constant_t, 68);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varpathnode_constant_t,
+        disk32::kPathNodeConstantBytes);
+    const int32_t linkCount = varpathnode_constant_t->totalLinkCount;
+    int32_t linkBytes = 0;
+    if (!varPathData
+        || varPathData->nodeCount > db::validation::kMaxPathNodes
+        || linkCount > static_cast<int32_t>(varPathData->nodeCount)
+        || (varpathnode_constant_t->Links != nullptr)
+            != (linkCount != 0)
+        || !db::validation::CheckedArrayBytes(
+            linkCount,
+            disk32::kPathLinkBytes,
+            &linkBytes))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file path-node links");
+        return false;
+    }
     varScriptString = &varpathnode_constant_t->targetname;
     Load_ScriptString(0);
     varScriptString = &varpathnode_constant_t->script_linkName;
@@ -5724,68 +5742,179 @@ void __cdecl Load_pathnode_constant_t(bool atStreamStart)
     if (varpathnode_constant_t->Links)
     {
         varpathnode_constant_t->Links = (pathlink_s *)AllocLoad_FxElemVisStateSample();
+        if (!varpathnode_constant_t->Links
+            || !DB_IsStreamRangeValid(
+                varpathnode_constant_t->Links,
+                static_cast<uint32_t>(linkBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file path-node links exceed block 4");
+            return false;
+        }
         varpathlink_t = varpathnode_constant_t->Links;
-        Load_pathlink_tArray(1, varpathnode_constant_t->totalLinkCount);
+        Load_pathlink_tArray(1, linkCount);
     }
+    if (!DB_ValidateMaterializedBlock4Span(
+            varpathnode_constant_t->Links,
+            static_cast<uint32_t>(linkBytes),
+            4,
+            "path-node links")
+        || !db::validation::PathLinksRuntimeValid(
+            varpathnode_constant_t->Links,
+            static_cast<uint32_t>(linkCount),
+            varPathData->nodeCount))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file path-node links");
+        return false;
+    }
+    return true;
 }
 
-void __cdecl Load_pathnode_t(bool atStreamStart)
+bool __cdecl Load_pathnode_t(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varpathnode_t, 128);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varpathnode_t,
+        disk32::kPathNodeBytes);
+    std::memset(
+        &varpathnode_t->dynamic.pOwner,
+        0,
+        sizeof(varpathnode_t->dynamic.pOwner));
+    std::memset(
+        &varpathnode_t->transient,
+        0,
+        sizeof(varpathnode_t->transient));
+    if (!db::validation::PathNodeTypeValid(
+            static_cast<int32_t>(varpathnode_t->constant.type)))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file path-node type");
+        return false;
+    }
     varpathnode_constant_t = &varpathnode_t->constant;
-    Load_pathnode_constant_t(0);
+    return Load_pathnode_constant_t(0);
 }
 
-void __cdecl Load_pathnode_tArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_pathnode_tArray(bool atStreamStart, int32_t count)
 {
     pathnode_t *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varpathnode_t, count, 128);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varpathnode_t,
+        count,
+        disk32::kPathNodeBytes);
     var = varpathnode_t;
     for (i = 0; i < count; ++i)
     {
         varpathnode_t = var;
-        Load_pathnode_t(0);
+        if (!Load_pathnode_t(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
 void __cdecl Load_pathbasenode_tArray(bool atStreamStart, int32_t count)
 {
-    Load_StreamArray(atStreamStart, (uint8_t *)varpathbasenode_t, count, 16);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varpathbasenode_t,
+        count,
+        disk32::kPathBaseNodeBytes);
 }
 
-void __cdecl Load_pathnode_tree_nodes_t(bool atStreamStart)
+bool __cdecl Load_pathnode_tree_nodes_t(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varpathnode_tree_nodes_t, 8);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varpathnode_tree_nodes_t,
+        disk32::kPathTreeLeafInfoBytes);
+    const int32_t leafNodeCount = varpathnode_tree_nodes_t->nodeCount;
+    int32_t leafNodeBytes = 0;
+    if (!varPathData
+        || varPathData->nodeCount > db::validation::kMaxPathNodes
+        || !db::validation::CountInRange(
+            leafNodeCount,
+            1,
+            varPathData->nodeCount)
+        || !varpathnode_tree_nodes_t->nodes
+        || !db::validation::CheckedArrayBytes(
+            leafNodeCount,
+            disk32::kPathNodeIndexBytes,
+            &leafNodeBytes))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file path-tree leaf");
+        return false;
+    }
     if (varpathnode_tree_nodes_t->nodes)
     {
         varpathnode_tree_nodes_t->nodes = (uint16_t *)AllocLoad_XBlendInfo();
+        if (!varpathnode_tree_nodes_t->nodes
+            || !DB_IsStreamRangeValid(
+                varpathnode_tree_nodes_t->nodes,
+                static_cast<uint32_t>(leafNodeBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file path-tree leaf exceeds block 4");
+            return false;
+        }
         varushort = varpathnode_tree_nodes_t->nodes;
-        Load_ushortArray(1, varpathnode_tree_nodes_t->nodeCount);
+        Load_ushortArray(1, leafNodeCount);
     }
+    if (!DB_ValidateMaterializedBlock4Span(
+            varpathnode_tree_nodes_t->nodes,
+            static_cast<uint32_t>(leafNodeBytes),
+            2,
+            "path-tree leaf nodes")
+        || !db::validation::AllU16Below(
+            varpathnode_tree_nodes_t->nodes,
+            static_cast<uint32_t>(leafNodeCount),
+            varPathData->nodeCount))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file path-tree leaf");
+        return false;
+    }
+    return true;
 }
 
-void __cdecl Load_pathnode_tree_ptr(bool atStreamStart)
+bool __cdecl Load_pathnode_tree_ptr(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varpathnode_tree_ptr, 4);
-    if (*varpathnode_tree_ptr)
+    if (!varPathData || !varPathData->nodeTree
+        || !db::validation::CountInRange(
+            varPathData->nodeTreeCount,
+            1,
+            db::validation::kMaxPathTreeNodes)
+        || !*varpathnode_tree_ptr
+        || *varpathnode_tree_ptr == (pathnode_tree_t *)-1
+        || *varpathnode_tree_ptr == (pathnode_tree_t *)-2)
     {
-        if (*varpathnode_tree_ptr == (pathnode_tree_t *)-1)
-        {
-            *varpathnode_tree_ptr = (pathnode_tree_t *)AllocLoad_FxElemVisStateSample();
-            varpathnode_tree_t = *varpathnode_tree_ptr;
-            Load_pathnode_tree_t(1);
-        }
-        else
-        {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varpathnode_tree_ptr);
-        }
+        Com_Error(ERR_DROP, "Invalid fast-file path-tree child token");
+        return false;
     }
+    if (!DB_ResolveDirectPointer(
+            varpathnode_tree_ptr,
+            disk32::kPathTreeBytes,
+            4,
+            kDirectBlock4,
+            "path-tree child"))
+    {
+        return false;
+    }
+    uint64_t childIndex = 0;
+    if (!db::validation::SerializedArrayElementIndex(
+            varPathData->nodeTree,
+            static_cast<uint32_t>(varPathData->nodeTreeCount),
+            disk32::kPathTreeBytes,
+            *varpathnode_tree_ptr,
+            &childIndex))
+    {
+        Com_Error(ERR_DROP, "Fast-file path-tree child is not an owned node");
+        return false;
+    }
+    return true;
 }
 
-void __cdecl Load_pathnode_tree_ptrArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_pathnode_tree_ptrArray(bool atStreamStart, int32_t count)
 {
     pathnode_tree_t **var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
@@ -5795,45 +5924,59 @@ void __cdecl Load_pathnode_tree_ptrArray(bool atStreamStart, int32_t count)
     for (i = 0; i < count; ++i)
     {
         varpathnode_tree_ptr = var;
-        Load_pathnode_tree_ptr(0);
+        if (!Load_pathnode_tree_ptr(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
-void __cdecl Load_pathnode_tree_info_t(bool atStreamStart)
+bool __cdecl Load_pathnode_tree_info_t(bool atStreamStart)
 {
     if (varpathnode_tree_t->axis < 0)
     {
         varpathnode_tree_nodes_t = (pathnode_tree_nodes_t *)varpathnode_tree_info_t;
-        Load_pathnode_tree_nodes_t(atStreamStart);
+        return Load_pathnode_tree_nodes_t(atStreamStart);
     }
-    else
+    if (varpathnode_tree_t->axis > 2
+        || !std::isfinite(varpathnode_tree_t->dist))
     {
-        varpathnode_tree_ptr = (pathnode_tree_t **)varpathnode_tree_info_t;
-        Load_pathnode_tree_ptrArray(atStreamStart, 2);
+        Com_Error(ERR_DROP, "Invalid fast-file path-tree split");
+        return false;
     }
+    varpathnode_tree_ptr = (pathnode_tree_t **)varpathnode_tree_info_t;
+    return Load_pathnode_tree_ptrArray(atStreamStart, 2);
 }
 
-void __cdecl Load_pathnode_tree_t(bool atStreamStart)
+bool __cdecl Load_pathnode_tree_t(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varpathnode_tree_t, 16);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varpathnode_tree_t,
+        disk32::kPathTreeBytes);
     varpathnode_tree_info_t = &varpathnode_tree_t->u;
-    Load_pathnode_tree_info_t(0);
+    return Load_pathnode_tree_info_t(0);
 }
 
-void __cdecl Load_pathnode_tree_tArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_pathnode_tree_tArray(bool atStreamStart, int32_t count)
 {
     pathnode_tree_t *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varpathnode_tree_t, count, 16);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varpathnode_tree_t,
+        count,
+        disk32::kPathTreeBytes);
     var = varpathnode_tree_t;
     for (i = 0; i < count; ++i)
     {
         varpathnode_tree_t = var;
-        Load_pathnode_tree_t(0);
+        if (!Load_pathnode_tree_t(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
 void __cdecl Mark_pathnode_constant_t()
@@ -5870,58 +6013,185 @@ void __cdecl Mark_pathnode_tArray(int32_t count)
     }
 }
 
-void __cdecl Load_PathData(bool atStreamStart)
+bool __cdecl Load_PathData(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varPathData, 40);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varPathData,
+        disk32::kPathDataBytes);
+    db::validation::PathDataLayoutExtents extents = {};
+    if (!db::validation::PathDataLayoutValid(*varPathData, &extents))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file path-data layout");
+        return false;
+    }
     if (varPathData->nodes)
     {
         varPathData->nodes = (pathnode_t *)AllocLoad_FxElemVisStateSample();
+        if (!varPathData->nodes
+            || !DB_IsStreamRangeValid(
+                varPathData->nodes,
+                static_cast<uint32_t>(extents.nodeBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file path nodes exceed block 4");
+            return false;
+        }
         varpathnode_t = varPathData->nodes;
-        Load_pathnode_tArray(1, varPathData->nodeCount);
+        if (!Load_pathnode_tArray(
+                1,
+                static_cast<int32_t>(varPathData->nodeCount)))
+        {
+            return false;
+        }
     }
     DB_PushStreamPos(1);
     if (varPathData->basenodes)
     {
         varPathData->basenodes = (pathbasenode_t *)AllocLoad_GfxPackedVertex0();
+        if (!varPathData->basenodes
+            || !DB_IsStreamRangeValid(
+                varPathData->basenodes,
+                static_cast<uint32_t>(extents.baseNodeBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file path base nodes exceed block 1");
+            DB_PopStreamPos();
+            return false;
+        }
         varpathbasenode_t = varPathData->basenodes;
-        Load_pathbasenode_tArray(1, varPathData->nodeCount);
+        Load_pathbasenode_tArray(
+            1,
+            static_cast<int32_t>(varPathData->nodeCount));
     }
     DB_PopStreamPos();
     if (varPathData->chainNodeForNode)
     {
         varPathData->chainNodeForNode = (uint16_t *)AllocLoad_XBlendInfo();
+        if (!varPathData->chainNodeForNode
+            || !DB_IsStreamRangeValid(
+                varPathData->chainNodeForNode,
+                static_cast<uint32_t>(extents.chainMapBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file path chain map exceeds block 4");
+            return false;
+        }
         varUnsignedShort = varPathData->chainNodeForNode;
-        Load_UnsignedShortArray(1, varPathData->nodeCount);
+        Load_UnsignedShortArray(
+            1,
+            static_cast<int32_t>(varPathData->nodeCount));
     }
     if (varPathData->nodeForChainNode)
     {
         varPathData->nodeForChainNode = (uint16_t *)AllocLoad_XBlendInfo();
+        if (!varPathData->nodeForChainNode
+            || !DB_IsStreamRangeValid(
+                varPathData->nodeForChainNode,
+                static_cast<uint32_t>(extents.chainMapBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file inverse path chain map exceeds block 4");
+            return false;
+        }
         varUnsignedShort = varPathData->nodeForChainNode;
-        Load_UnsignedShortArray(1, varPathData->nodeCount);
+        Load_UnsignedShortArray(
+            1,
+            static_cast<int32_t>(varPathData->nodeCount));
     }
     if (varPathData->pathVis)
     {
         varPathData->pathVis = AllocLoad_raw_byte();
+        if (!varPathData->pathVis
+            || !DB_IsStreamRangeValid(
+                varPathData->pathVis,
+                static_cast<uint32_t>(extents.visibilityBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file path visibility exceeds block 4");
+            return false;
+        }
         varbyte = varPathData->pathVis;
-        Load_byteArray(1, varPathData->visBytes);
+        Load_byteArray(1, extents.visibilityBytes);
     }
     if (varPathData->nodeTree)
     {
         varPathData->nodeTree = (pathnode_tree_t *)AllocLoad_FxElemVisStateSample();
+        if (!varPathData->nodeTree
+            || !DB_IsStreamRangeValid(
+                varPathData->nodeTree,
+                static_cast<uint32_t>(extents.treeBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file path tree exceeds block 4");
+            return false;
+        }
         varpathnode_tree_t = varPathData->nodeTree;
-        Load_pathnode_tree_tArray(1, varPathData->nodeTreeCount);
+        if (!Load_pathnode_tree_tArray(1, varPathData->nodeTreeCount))
+            return false;
     }
+    if (!DB_ValidateMaterializedBlock4Span(
+            varPathData->nodes,
+            static_cast<uint32_t>(extents.nodeBytes),
+            4,
+            "path nodes")
+        || !DB_ValidateMaterializedSpan(
+            varPathData->basenodes,
+            static_cast<uint32_t>(extents.baseNodeBytes),
+            16,
+            kDirectBlock1,
+            "path base nodes")
+        || !DB_ValidateMaterializedBlock4Span(
+            varPathData->chainNodeForNode,
+            static_cast<uint32_t>(extents.chainMapBytes),
+            2,
+            "path chain map")
+        || !DB_ValidateMaterializedBlock4Span(
+            varPathData->nodeForChainNode,
+            static_cast<uint32_t>(extents.chainMapBytes),
+            2,
+            "inverse path chain map")
+        || !DB_ValidateMaterializedBlock4Span(
+            varPathData->pathVis,
+            static_cast<uint32_t>(extents.visibilityBytes),
+            1,
+            "path visibility")
+        || !DB_ValidateMaterializedBlock4Span(
+            varPathData->nodeTree,
+            static_cast<uint32_t>(extents.treeBytes),
+            4,
+            "path tree")
+        || !db::validation::PathNodesRuntimeValid(
+            varPathData->nodes,
+            varPathData->nodeCount)
+        || !db::validation::PathChainMapsRuntimeValid(
+            varPathData->chainNodeForNode,
+            varPathData->nodeForChainNode,
+            varPathData->nodeCount,
+            varPathData->chainNodeCount)
+        || !db::validation::PathTreeGraphValid(
+            varPathData->nodeTree,
+            static_cast<uint32_t>(varPathData->nodeTreeCount),
+            varPathData->nodeCount,
+            disk32::kPathTreeBytes))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file path graph");
+        return false;
+    }
+    return true;
 }
 
-void __cdecl Load_GameWorldSp(bool atStreamStart)
+bool __cdecl Load_GameWorldSp(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGameWorldSp, 44);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varGameWorldSp,
+        disk32::kGameWorldSpBytes);
     DB_PushStreamPos(4);
     varXString = &varGameWorldSp->name;
     Load_XString(0);
     varPathData = &varGameWorldSp->path;
-    Load_PathData(0);
+    if (!Load_PathData(0))
+    {
+        DB_PopStreamPos();
+        return false;
+    }
     DB_PopStreamPos();
+    return true;
 }
 
 void __cdecl Load_GameWorldMp(bool atStreamStart)
@@ -5946,12 +6216,35 @@ void __cdecl Load_GameWorldSpPtr(bool atStreamStart)
         if (value == -1 || value == -2)
         {
             *varGameWorldSpPtr = (GameWorldSp *)AllocLoad_FxElemVisStateSample();
+            if (!*varGameWorldSpPtr
+                || !DB_IsStreamRangeValid(
+                    *varGameWorldSpPtr,
+                    disk32::kGameWorldSpBytes))
+            {
+                Com_Error(ERR_DROP, "Cannot allocate fast-file SP world header");
+                *varGameWorldSpPtr = nullptr;
+                DB_PopStreamPos();
+                return;
+            }
             varGameWorldSp = *varGameWorldSpPtr;
             if (value == -2)
+            {
                 inserted = DB_InsertPointer(DBAliasKind::GameWorldSp);
+                if (!inserted)
+                {
+                    *varGameWorldSpPtr = nullptr;
+                    DB_PopStreamPos();
+                    return;
+                }
+            }
             else
                 inserted = {};
-            Load_GameWorldSp(1);
+            if (!Load_GameWorldSp(1))
+            {
+                *varGameWorldSpPtr = nullptr;
+                DB_PopStreamPos();
+                return;
+            }
             Load_GameWorldSpAsset((XAssetHeader *)varGameWorldSpPtr);
             if (inserted)
                 DB_SetInsertedPointer(

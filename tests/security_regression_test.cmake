@@ -262,6 +262,80 @@ require_source_not_contains(
     "varGfxPortal->cell = (GfxCell *)AllocLoad_FxElemVisStateSample()"
     "portal targets must not allocate cells outside the owned world array")
 require_source_contains(
+    "database/db_validation.h"
+    "kMaxPathTreeDepth = 64"
+    "path-tree traversal must reject recursion-depth denial of service")
+require_source_contains(
+    "database/db_validation.h"
+    "kMaxPathChainDepth = 256"
+    "path-chain parents must bound recursive gameplay traversal depth")
+require_source_contains(
+    "database/db_validation.h"
+    "PathNodeTypeValid("
+    "path-node types must be bounded before runtime table lookup and bit shifts")
+require_source_ordered(
+    "database/db_load.cpp"
+    "&varpathnode_t->dynamic.pOwner"
+    "&varpathnode_t->transient"
+    "PathNodeTypeValid("
+    "runtime-only path-node state must be scrubbed before type validation")
+require_source_contains(
+    "database/db_validation.h"
+    "PathDataLayoutValid("
+    "path-data child arrays must derive checked disk32 extents")
+require_source_contains(
+    "database/db_validation.h"
+    "PathVisibilityBytes("
+    "path visibility must cover every runtime-indexed directed node pair")
+require_source_contains(
+    "database/db_validation.h"
+    "PathLinksRuntimeValid("
+    "path links must reject out-of-range runtime node indices")
+require_source_ordered(
+    "database/db_load.cpp"
+    "PathNodesRuntimeValid(
+            varPathData->nodes"
+    "PathChainMapsRuntimeValid(
+            varPathData->chainNodeForNode"
+    "PathTreeGraphValid(
+            varPathData->nodeTree"
+    "path runtime indices and parent topology must validate before tree publication")
+require_source_ordered(
+    "database/db_load.cpp"
+    "Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varpathnode_tree_t,
+        count,
+        disk32::kPathTreeBytes)"
+    "if (!Load_pathnode_tree_t(0))"
+    "the complete flat path-tree header array must materialize before child fixups")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_ResolveDirectPointer(
+            varpathnode_tree_ptr"
+    "SerializedArrayElementIndex(
+            varPathData->nodeTree"
+    "path-tree children must resolve a full header before exact owner membership")
+require_source_ordered(
+    "database/db_load.cpp"
+    "PathTreeGraphValid(
+            varPathData->nodeTree"
+    "if (!Load_GameWorldSp(1))"
+    "completed path trees must validate before returning toward SP-world publication")
+require_source_ordered(
+    "database/db_load.cpp"
+    "if (!Load_GameWorldSp(1))"
+    "Load_GameWorldSpAsset((XAssetHeader *)varGameWorldSpPtr)"
+    "invalid path graphs must stop SP-world asset publication")
+require_source_not_contains(
+    "database/db_load.cpp"
+    "*varpathnode_tree_ptr = (pathnode_tree_t *)AllocLoad_FxElemVisStateSample()"
+    "path-tree children must not allocate nodes outside the owned flat array")
+require_source_not_contains(
+    "database/db_stream_load.cpp"
+    "DB_ConvertOffsetToPointerLegacy"
+    "all direct fast-file offsets must use bounded typed resolution")
+require_source_contains(
     "database/db_load.cpp"
     "world->models[0].surfaceCount
             != world->dpvs.staticSurfaceCount"
@@ -2088,9 +2162,9 @@ file(STRINGS
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 1)
+if (NOT _legacy_direct_offset_count EQUAL 0)
     message(FATAL_ERROR
-        "Expected exactly 1 explicitly legacy direct fast-file offset; found ${_legacy_direct_offset_count}. "
+        "Expected no legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 

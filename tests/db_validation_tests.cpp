@@ -190,6 +190,140 @@ struct TestClipMapFixture
     TestClipMap map = {};
 };
 
+struct TestPathLink
+{
+    float fDist = 0.0f;
+    std::uint16_t nodeNum = 0;
+};
+
+struct TestPathTree;
+
+struct TestPathTreeLeaf
+{
+    std::int32_t nodeCount = 0;
+    std::uint16_t *nodes = nullptr;
+};
+
+struct TestPathTreeInfo
+{
+    TestPathTree *child[2] = {};
+    TestPathTreeLeaf s = {};
+};
+
+struct TestPathTree
+{
+    std::int32_t axis = -1;
+    float dist = 0.0f;
+    TestPathTreeInfo u = {};
+};
+
+struct TestPathNodeConstant
+{
+    std::int32_t type = 0;
+    float vOrigin[3] = {};
+    float fAngle = 0.0f;
+    float forward[2] = {};
+    float fRadius = 0.0f;
+    float minUseDistSq = 0.0f;
+    std::int16_t wOverlapNode[2] = {-1, -1};
+    std::int16_t wChainParent = -1;
+};
+
+struct TestPathNode
+{
+    TestPathNodeConstant constant = {};
+};
+
+struct TestPathBaseNode
+{
+    std::uint8_t value = 0;
+};
+
+struct TestPathData
+{
+    std::uint32_t nodeCount = 0;
+    TestPathNode *nodes = nullptr;
+    TestPathBaseNode *basenodes = nullptr;
+    std::uint32_t chainNodeCount = 0;
+    std::uint16_t *chainNodeForNode = nullptr;
+    std::uint16_t *nodeForChainNode = nullptr;
+    std::int32_t visBytes = 0;
+    std::uint8_t *pathVis = nullptr;
+    std::int32_t nodeTreeCount = 0;
+    TestPathTree *nodeTree = nullptr;
+};
+
+struct TestPathTreeFixture
+{
+    std::array<TestPathTree, 7> trees = {};
+    std::array<std::uint16_t, 6> pathNodeIndices = {};
+};
+
+void PopulateValidPathTreeFixture(TestPathTreeFixture *fixture)
+{
+    *fixture = {};
+    fixture->trees[0].axis = 0;
+    fixture->trees[0].dist = 4.0f;
+    fixture->trees[0].u.child[0] = &fixture->trees[4];
+    fixture->trees[0].u.child[1] = &fixture->trees[1];
+    fixture->trees[1].axis = 1;
+    fixture->trees[1].dist = -2.0f;
+    fixture->trees[1].u.child[0] = &fixture->trees[5];
+    fixture->trees[1].u.child[1] = &fixture->trees[6];
+    fixture->trees[4].axis = 2;
+    fixture->trees[4].dist = 1.0f;
+    fixture->trees[4].u.child[0] = &fixture->trees[2];
+    fixture->trees[4].u.child[1] = &fixture->trees[3];
+
+    constexpr std::uint32_t leafTreeIndices[] = {2, 3, 5, 6};
+    constexpr std::uint32_t leafOffsets[] = {0, 2, 3, 4};
+    constexpr std::uint32_t leafCounts[] = {2, 1, 1, 2};
+    for (std::uint32_t pathNodeIndex = 0;
+        pathNodeIndex < fixture->pathNodeIndices.size();
+        ++pathNodeIndex)
+    {
+        fixture->pathNodeIndices[pathNodeIndex] =
+            static_cast<std::uint16_t>(pathNodeIndex);
+    }
+    for (std::uint32_t leaf = 0; leaf < 4; ++leaf)
+    {
+        TestPathTree &tree = fixture->trees[leafTreeIndices[leaf]];
+        tree.axis = -1;
+        tree.u.s.nodeCount = static_cast<std::int32_t>(leafCounts[leaf]);
+        tree.u.s.nodes = &fixture->pathNodeIndices[leafOffsets[leaf]];
+    }
+}
+
+void PopulatePathTreeDepthFixture(
+    std::uint32_t leafDepth,
+    std::vector<TestPathTree> *trees,
+    std::vector<std::uint16_t> *pathNodeIndices)
+{
+    trees->assign(leafDepth * 2u - 1u, TestPathTree{});
+    pathNodeIndices->resize(leafDepth);
+    const std::uint32_t internalCount = leafDepth - 1u;
+    for (std::uint32_t internal = 0;
+        internal < internalCount;
+        ++internal)
+    {
+        TestPathTree &tree = (*trees)[internal];
+        tree.axis = static_cast<std::int32_t>(internal % 3u);
+        tree.dist = static_cast<float>(internal);
+        tree.u.child[0] = internal + 1u < internalCount
+            ? &(*trees)[internal + 1u]
+            : &(*trees)[internalCount];
+        tree.u.child[1] = &(*trees)[internalCount + 1u + internal];
+    }
+    for (std::uint32_t leaf = 0; leaf < leafDepth; ++leaf)
+    {
+        (*pathNodeIndices)[leaf] = static_cast<std::uint16_t>(leaf);
+        TestPathTree &tree = (*trees)[internalCount + leaf];
+        tree.axis = -1;
+        tree.u.s.nodeCount = 1;
+        tree.u.s.nodes = &(*pathNodeIndices)[leaf];
+    }
+}
+
 struct TestGfxAabbTree
 {
     std::uint8_t value = 0;
@@ -3206,6 +3340,413 @@ int main()
     Expect(
         !db::validation::ClipMapBoxBrushValid(clipBox),
         "box brush with nonsentinel inverted bounds rejected");
+
+    std::int32_t pathVisibilityBytes = -1;
+    Expect(
+        db::validation::PathVisibilityBytes(0, &pathVisibilityBytes)
+            && pathVisibilityBytes == 0
+            && db::validation::PathVisibilityBytes(6, &pathVisibilityBytes)
+            && pathVisibilityBytes == 4
+            && db::validation::PathVisibilityBytes(
+                db::validation::kMaxPathNodes,
+                &pathVisibilityBytes)
+            && pathVisibilityBytes == 8387584,
+        "path visibility uses the complete directed-pair bit matrix");
+    Expect(
+        !db::validation::PathVisibilityBytes(
+            db::validation::kMaxPathNodes + 1u,
+            &pathVisibilityBytes)
+            && !db::validation::PathVisibilityBytes(1, nullptr),
+        "oversized path visibility layouts are rejected");
+
+    TestPathNode pathNodes[6] = {};
+    TestPathBaseNode pathBaseNodes[6] = {};
+    std::uint16_t pathChainNodeForNode[6] = {0, 1, 2, 3, 4, 5};
+    std::uint16_t pathNodeForChainNode[6] = {0, 1, 2, 3, 4, 5};
+    std::uint8_t pathVisibility[4] = {};
+    TestPathTreeFixture pathTree = {};
+    PopulateValidPathTreeFixture(&pathTree);
+    Expect(
+        db::validation::PathNodeTypeValid(0)
+            && db::validation::PathNodeTypeValid(19)
+            && !db::validation::PathNodeTypeValid(-1)
+            && !db::validation::PathNodeTypeValid(20),
+        "path node types must remain safe runtime table and bit indices");
+    TestPathData pathData = {};
+    pathData.nodeCount = 6;
+    pathData.nodes = pathNodes;
+    pathData.basenodes = pathBaseNodes;
+    pathData.chainNodeForNode = pathChainNodeForNode;
+    pathData.nodeForChainNode = pathNodeForChainNode;
+    pathData.visBytes = 4;
+    pathData.pathVis = pathVisibility;
+    pathData.nodeTreeCount =
+        static_cast<std::int32_t>(pathTree.trees.size());
+    pathData.nodeTree = pathTree.trees.data();
+    db::validation::PathDataLayoutExtents pathExtents = {};
+    Expect(
+        db::validation::PathDataLayoutValid(pathData, &pathExtents)
+            && pathExtents.nodeBytes == 768
+            && pathExtents.baseNodeBytes == 96
+            && pathExtents.chainMapBytes == 12
+            && pathExtents.visibilityBytes == 4
+            && pathExtents.treeBytes == 112,
+        "path-data child extents use fixed disk32 schemas");
+    pathData.pathVis = nullptr;
+    pathData.visBytes = 0;
+    Expect(
+        db::validation::PathDataLayoutValid(pathData, &pathExtents),
+        "explicit no-cache path visibility form accepted");
+    pathData = {};
+    Expect(
+        db::validation::PathDataLayoutValid(pathData, &pathExtents),
+        "empty path data accepted");
+
+    pathData.nodeCount = 6;
+    pathData.nodes = pathNodes;
+    pathData.basenodes = pathBaseNodes;
+    pathData.chainNodeForNode = pathChainNodeForNode;
+    pathData.nodeForChainNode = pathNodeForChainNode;
+    pathData.visBytes = 4;
+    pathData.pathVis = pathVisibility;
+    pathData.nodeTreeCount = 7;
+    pathData.nodeTree = pathTree.trees.data();
+    pathData.basenodes = nullptr;
+    Expect(
+        !db::validation::PathDataLayoutValid(pathData, &pathExtents),
+        "path data requires runtime base-node storage");
+    pathData.basenodes = pathBaseNodes;
+    pathData.chainNodeCount = 1;
+    pathData.chainNodeForNode = nullptr;
+    pathData.nodeForChainNode = nullptr;
+    Expect(
+        !db::validation::PathDataLayoutValid(pathData, &pathExtents),
+        "nonempty path data requires both chain maps");
+    pathData.chainNodeForNode = pathChainNodeForNode;
+    Expect(
+        !db::validation::PathDataLayoutValid(pathData, &pathExtents),
+        "one-sided path chain maps rejected");
+    pathData.nodeForChainNode = pathNodeForChainNode;
+    Expect(
+        db::validation::PathDataLayoutValid(pathData, &pathExtents)
+            && pathExtents.chainMapBytes == 12,
+        "paired path chain maps use the full node count");
+    pathData.chainNodeCount = 7;
+    Expect(
+        !db::validation::PathDataLayoutValid(pathData, &pathExtents),
+        "path chain count beyond all path nodes rejected");
+    pathData.chainNodeCount = 0;
+    pathData.visBytes = 3;
+    Expect(
+        !db::validation::PathDataLayoutValid(pathData, &pathExtents),
+        "undersized path visibility cache rejected");
+    pathData.visBytes = 4;
+    pathData.nodeTreeCount = 12;
+    Expect(
+        !db::validation::PathDataLayoutValid(pathData, &pathExtents),
+        "path tree larger than a full binary tree rejected");
+    pathData.nodeTreeCount = -1;
+    Expect(
+        !db::validation::PathDataLayoutValid(pathData, &pathExtents),
+        "negative path-tree count rejected");
+    pathData.nodeTreeCount = 7;
+    pathData.nodeCount = db::validation::kMaxPathNodes + 1u;
+    Expect(
+        !db::validation::PathDataLayoutValid(pathData, &pathExtents),
+        "path node count above the engine limit rejected");
+    Expect(
+        !db::validation::PathDataLayoutValid(pathData, nullptr),
+        "path-data layout requires extent output");
+
+    Expect(
+        db::validation::PathNodesRuntimeValid(pathNodes, 6)
+            && db::validation::PathNodesRuntimeValid<TestPathNode>(
+                nullptr,
+                0),
+        "finite path-node constants with sentinel references accepted");
+    pathNodes[0].constant.type = 20;
+    Expect(
+        !db::validation::PathNodesRuntimeValid(pathNodes, 6),
+        "path-node type at the runtime table limit rejected");
+    pathNodes[0] = {};
+    pathNodes[0].constant.wOverlapNode[0] = 6;
+    Expect(
+        !db::validation::PathNodesRuntimeValid(pathNodes, 6),
+        "path-node overlap index at the node limit rejected");
+    pathNodes[0] = {};
+    pathNodes[0].constant.wOverlapNode[0] = -2;
+    Expect(
+        !db::validation::PathNodesRuntimeValid(pathNodes, 6),
+        "noncanonical negative path-node overlap rejected");
+    pathNodes[0] = {};
+    pathNodes[0].constant.wOverlapNode[1] = 1;
+    Expect(
+        !db::validation::PathNodesRuntimeValid(pathNodes, 6),
+        "sparse path-node overlap slots rejected");
+    pathNodes[0] = {};
+    pathNodes[0].constant.wOverlapNode[0] = 0;
+    Expect(
+        !db::validation::PathNodesRuntimeValid(pathNodes, 6),
+        "self-referential path-node overlap rejected");
+    pathNodes[0] = {};
+    pathNodes[0].constant.wChainParent = 6;
+    Expect(
+        !db::validation::PathNodesRuntimeValid(pathNodes, 6),
+        "path-node chain parent at the node limit rejected");
+    pathNodes[0] = {};
+    pathNodes[0].constant.wChainParent = 1;
+    pathNodes[1].constant.wChainParent = 0;
+    Expect(
+        !db::validation::PathNodesRuntimeValid(pathNodes, 6),
+        "cyclic path-node chain parents rejected");
+    pathNodes[0] = {};
+    pathNodes[1] = {};
+    pathNodes[0].constant.vOrigin[1] =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        !db::validation::PathNodesRuntimeValid(pathNodes, 6),
+        "non-finite path-node geometry rejected");
+    pathNodes[0] = {};
+    Expect(
+        !db::validation::PathNodesRuntimeValid<TestPathNode>(nullptr, 1),
+        "path-node runtime validation requires owned storage");
+    std::vector<TestPathNode> deepPathChain(256);
+    for (std::size_t nodeIndex = 1;
+        nodeIndex < deepPathChain.size();
+        ++nodeIndex)
+    {
+        deepPathChain[nodeIndex].constant.wChainParent =
+            static_cast<std::int16_t>(nodeIndex - 1u);
+    }
+    Expect(
+        db::validation::PathNodesRuntimeValid(
+            deepPathChain.data(),
+            deepPathChain.size()),
+        "path chain at the parent-depth limit accepted");
+    deepPathChain.emplace_back();
+    deepPathChain.back().constant.wChainParent = 255;
+    Expect(
+        !db::validation::PathNodesRuntimeValid(
+            deepPathChain.data(),
+            deepPathChain.size()),
+        "path chain beyond the parent-depth limit rejected");
+
+    Expect(
+        db::validation::PathChainMapsRuntimeValid(
+            pathChainNodeForNode,
+            pathNodeForChainNode,
+            6,
+            2)
+            && db::validation::PathChainMapsRuntimeValid(
+                nullptr,
+                nullptr,
+                0,
+                0),
+        "inverse path-chain permutations accepted");
+    pathNodeForChainNode[5] = 6;
+    Expect(
+        !db::validation::PathChainMapsRuntimeValid(
+            pathChainNodeForNode,
+            pathNodeForChainNode,
+            6,
+            2),
+        "out-of-range inverse path-chain index rejected");
+    pathNodeForChainNode[5] = 5;
+    pathNodeForChainNode[0] = 1;
+    pathNodeForChainNode[1] = 0;
+    Expect(
+        !db::validation::PathChainMapsRuntimeValid(
+            pathChainNodeForNode,
+            pathNodeForChainNode,
+            6,
+            2),
+        "inconsistent inverse path-chain permutation rejected");
+    pathNodeForChainNode[0] = 0;
+    pathNodeForChainNode[1] = 1;
+    std::uint16_t scrambledChainNodeForNode[6] = {1, 3, 0, 5, 4, 2};
+    std::uint16_t scrambledNodeForChainNode[6] = {2, 0, 5, 1, 4, 3};
+    Expect(
+        db::validation::PathChainMapsRuntimeValid(
+            scrambledChainNodeForNode,
+            scrambledNodeForChainNode,
+            6,
+            0)
+            && db::validation::PathChainMapsRuntimeValid(
+                scrambledChainNodeForNode,
+                scrambledNodeForChainNode,
+                6,
+                3),
+        "scrambled inverse chain maps accept empty and nonempty chain prefixes");
+    Expect(
+        !db::validation::PathChainMapsRuntimeValid(
+            nullptr,
+            nullptr,
+            6,
+            0),
+        "nonempty path data rejects absent runtime chain maps");
+
+    TestPathLink pathLinks[2] = {{12.0f, 1}, {4.0f, 5}};
+    Expect(
+        db::validation::PathLinksRuntimeValid(pathLinks, 2, 6)
+            && db::validation::PathLinksRuntimeValid<TestPathLink>(
+                nullptr,
+                0,
+                6),
+        "finite in-range path links accepted");
+    pathLinks[1].nodeNum = 6;
+    Expect(
+        !db::validation::PathLinksRuntimeValid(pathLinks, 2, 6),
+        "path link index at the node limit rejected");
+    pathLinks[1].nodeNum = 5;
+    pathLinks[0].fDist = -1.0f;
+    Expect(
+        !db::validation::PathLinksRuntimeValid(pathLinks, 2, 6),
+        "negative path-link distance rejected");
+    pathLinks[0].fDist =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        !db::validation::PathLinksRuntimeValid(pathLinks, 2, 6),
+        "non-finite path-link distance rejected");
+    Expect(
+        !db::validation::PathLinksRuntimeValid<TestPathLink>(
+            nullptr,
+            1,
+            6)
+            && !db::validation::PathLinksRuntimeValid(pathLinks, 0, 6),
+        "noncanonical path link pointer/count pairs rejected");
+
+    PopulateValidPathTreeFixture(&pathTree);
+    const std::uint32_t testPathTreeStride =
+        static_cast<std::uint32_t>(sizeof(TestPathTree));
+    Expect(
+        db::validation::PathTreeGraphValid(
+            pathTree.trees.data(),
+            pathTree.trees.size(),
+            pathTree.pathNodeIndices.size(),
+            testPathTreeStride),
+        "scrambled flat path tree accepts forward and backward child references");
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            pathTree.trees.data(),
+            pathTree.trees.size(),
+            pathTree.pathNodeIndices.size(),
+            0),
+        "path tree rejects a zero serialized stride");
+    PopulateValidPathTreeFixture(&pathTree);
+    pathTree.trees[0].axis = 3;
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            pathTree.trees.data(), 7, 6, testPathTreeStride),
+        "path tree split axis outside XYZ rejected");
+    PopulateValidPathTreeFixture(&pathTree);
+    pathTree.trees[0].dist =
+        (std::numeric_limits<float>::infinity)();
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            pathTree.trees.data(), 7, 6, testPathTreeStride),
+        "path tree non-finite split distance rejected");
+    PopulateValidPathTreeFixture(&pathTree);
+    pathTree.trees[0].u.child[0] = nullptr;
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            pathTree.trees.data(), 7, 6, testPathTreeStride),
+        "path tree null child rejected");
+    PopulateValidPathTreeFixture(&pathTree);
+    pathTree.trees[0].u.child[0] = reinterpret_cast<TestPathTree *>(
+        reinterpret_cast<std::uintptr_t>(pathTree.trees.data()) + 1u);
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            pathTree.trees.data(), 7, 6, testPathTreeStride),
+        "path tree interior child pointer rejected");
+    PopulateValidPathTreeFixture(&pathTree);
+    pathTree.trees[0].u.child[0] = pathTree.trees.data()
+        + pathTree.trees.size();
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            pathTree.trees.data(), 7, 6, testPathTreeStride),
+        "path tree one-past child pointer rejected");
+    PopulateValidPathTreeFixture(&pathTree);
+    pathTree.trees[4].u.child[0] = &pathTree.trees[0];
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            pathTree.trees.data(), 7, 6, testPathTreeStride),
+        "path tree cycle rejected");
+    PopulateValidPathTreeFixture(&pathTree);
+    pathTree.trees[0].u.child[1] = &pathTree.trees[4];
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            pathTree.trees.data(), 7, 6, testPathTreeStride),
+        "shared path-tree child ownership rejected");
+    PopulateValidPathTreeFixture(&pathTree);
+    pathTree.trees[2].u.s.nodeCount = 0;
+    pathTree.trees[2].u.s.nodes = nullptr;
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            pathTree.trees.data(), 7, 6, testPathTreeStride),
+        "empty path-tree leaf rejected");
+    PopulateValidPathTreeFixture(&pathTree);
+    pathTree.trees[2].u.s.nodeCount = -1;
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            pathTree.trees.data(), 7, 6, testPathTreeStride),
+        "negative path-tree leaf count rejected");
+    PopulateValidPathTreeFixture(&pathTree);
+    pathTree.trees[0].axis = -1;
+    pathTree.trees[0].u.s.nodeCount = 1;
+    pathTree.trees[0].u.s.nodes = pathTree.pathNodeIndices.data();
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            pathTree.trees.data(), 7, 6, testPathTreeStride),
+        "orphaned flat path-tree nodes rejected");
+    PopulateValidPathTreeFixture(&pathTree);
+    pathTree.pathNodeIndices[2] = 6;
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            pathTree.trees.data(), 7, 6, testPathTreeStride),
+        "path-tree leaf index at the node limit rejected");
+    PopulateValidPathTreeFixture(&pathTree);
+    pathTree.pathNodeIndices[2] = 0;
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            pathTree.trees.data(), 7, 6, testPathTreeStride),
+        "duplicate path-tree leaf ownership rejected");
+    TestPathTree leafRoot = {};
+    std::uint16_t leafRootIndex = 0;
+    leafRoot.axis = -7;
+    leafRoot.u.s.nodeCount = 1;
+    leafRoot.u.s.nodes = &leafRootIndex;
+    Expect(
+        db::validation::PathTreeGraphValid(
+            &leafRoot,
+            1,
+            1,
+            static_cast<std::uint32_t>(sizeof(leafRoot))),
+        "single negative-axis path-tree leaf root accepted");
+    Expect(
+        db::validation::PathTreeGraphValid<TestPathTree>(
+            nullptr,
+            0,
+            0,
+            testPathTreeStride),
+        "empty path tree accepted with empty path data");
+    std::vector<TestPathTree> deepPathTrees;
+    std::vector<std::uint16_t> deepPathIndices;
+    PopulatePathTreeDepthFixture(64, &deepPathTrees, &deepPathIndices);
+    Expect(
+        db::validation::PathTreeGraphValid(
+            deepPathTrees.data(),
+            deepPathTrees.size(),
+            deepPathIndices.size(),
+            testPathTreeStride),
+        "path tree at the iterative traversal depth limit accepted");
+    PopulatePathTreeDepthFixture(65, &deepPathTrees, &deepPathIndices);
+    Expect(
+        !db::validation::PathTreeGraphValid(
+            deepPathTrees.data(),
+            deepPathTrees.size(),
+            deepPathIndices.size(),
+            testPathTreeStride),
+        "path tree beyond the traversal depth limit rejected");
 
     const std::uintptr_t serializedCellBaseAddress =
         static_cast<std::uintptr_t>(0x1000);
