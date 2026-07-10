@@ -126,17 +126,141 @@ require_source_contains(
     "world AABB topology must use the portable linear-time validator")
 require_source_contains(
     "database/db_load.cpp"
-    "WorldAabbTreePresenceValid(
-            varGfxCell->aabbTree != nullptr"
-    "world AABB arrays must validate their owning pointer/count before loading")
+    "GfxCellLayoutValid(*varGfxCell, &extents)"
+    "world cell child arrays must validate checked extents before loading")
 require_source_contains(
     "database/db_load.cpp"
-    "if (!DB_ValidateWorldAabbTrees(varGfxWorld))"
+    "!DB_ValidateWorldAabbTrees(varGfxWorld)"
     "completed fast-file worlds must validate every owning AABB tree")
 require_source_contains(
     "database/db_load.cpp"
     "if (!DB_ValidateWorldAabbCell(varGfxWorld, varGfxCell))"
-    "every fast-file cell, including inline portal cells, must validate its AABB topology")
+    "every owning fast-file cell must validate its AABB topology")
+require_source_contains(
+    "database/db_validation.h"
+    "kMaxGfxWorldCells = 1024"
+    "world cells must fit fixed renderer bitsets and traversal lists")
+require_source_contains(
+    "database/db_validation.h"
+    "kMaxGfxPortalVertices = 64"
+    "portal geometry must fit fixed renderer hull workspaces")
+require_source_contains(
+    "database/db_validation.h"
+    "kMaxGfxReflectionProbes = 254"
+    "world reflection-probe iteration must not wrap its uint8 index")
+require_source_contains(
+    "database/db_validation.h"
+    "aabbTreeCount < 1"
+    "every world cell must retain the AABB root dereferenced by runtime queries")
+require_source_contains(
+    "database/db_validation.h"
+    "GfxReflectionProbeRuntimeValid("
+    "world reflection probes must validate finite origins and required images")
+require_source_contains(
+    "database/db_validation.h"
+    "GfxCullGroupRuntimeValid("
+    "world cull groups must validate bounds and sorted-surface spans")
+require_source_contains(
+    "database/db_load.cpp"
+    "GfxWorldCellBitsValid(
+            cellCount,
+            varGfxWorld->cellBitsCount)"
+    "world cell bit buffers must match the renderer's fixed chunk layout")
+require_source_contains(
+    "database/db_validation.h"
+    "SerializedArrayElementIndex("
+    "serialized member references must use explicit disk strides")
+require_source_ordered(
+    "database/db_load.cpp"
+    "Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varGfxCell,
+        count,
+        disk32::kGfxCellBytes)"
+    "DB_ResolveDirectPointer(
+            &varGfxPortal->cell"
+    "the complete cell header array must materialize before portal targets resolve")
+require_source_ordered(
+    "database/db_load.cpp"
+    "varGfxPortal->writable = {};"
+    "DB_ResolveDirectPointer(
+            &varGfxPortal->cell"
+    "serialized portal runtime pointers must be scrubbed before target fixups")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_ResolveDirectPointer(
+            &varGfxPortal->cell"
+    "SerializedArrayElementIndex(
+            varGfxWorld->cells"
+    "portal targets must resolve a bounded span before exact cell membership")
+require_source_ordered(
+    "database/db_load.cpp"
+    "GfxWorldCellGraphValid(
+            *varGfxWorld"
+    "if (!Load_GfxWorld(1))"
+    "completed world cell graphs must validate before returning to asset publication")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_ValidateMaterializedSpan(
+            varGfxWorld->reflectionProbeTextures"
+    "GfxWorldCellGraphValid(
+            *varGfxWorld"
+    "reflection texture scratch storage must materialize before world publication")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_ValidateMaterializedSpan(
+            varGfxWorld->cellCasterBits"
+    "GfxWorldCellGraphValid(
+            *varGfxWorld"
+    "cell-caster storage must materialize before world publication")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_ValidateMaterializedBlock4Span(
+            varGfxWorld->dpvs.sortedSurfIndex"
+    "GfxWorldCellGraphValid(
+            *varGfxWorld"
+    "sorted surfaces must materialize before graph validation dereferences them")
+require_source_contains(
+    "database/db_load.cpp"
+    "db::validation::CheckedCountSum(
+            varGfxWorld->dpvs.staticSurfaceCountNoDecal,
+            varGfxWorld->dpvs.staticSurfaceCount,
+            &sortedSurfaceCount)"
+    "sorted-surface overflow must fail instead of collapsing to a zero-byte span")
+require_source_ordered(
+    "database/db_load.cpp"
+    "DB_ValidateMaterializedBlock4Span(
+            varGfxWorld->models"
+    "!DB_ValidateWorldAabbTrees(varGfxWorld)"
+    "world brush models must materialize before AABB validation dereferences model zero")
+require_source_contains(
+    "database/db_load.cpp"
+    "!DB_IsStreamRangeValid(
+                    *varGfxWorldPtr,
+                    disk32::kGfxWorldBytes)"
+    "world loading must preflight its complete top-level header allocation")
+require_source_ordered(
+    "database/db_load.cpp"
+    "inserted = DB_InsertPointer(DBAliasKind::GfxWorld);
+                if (!inserted)"
+    "if (!Load_GfxWorld(1))"
+    "shared world alias-slot failure must stop loading before asset publication")
+require_source_ordered(
+    "database/db_load.cpp"
+    "!DB_IsStreamRangeValid(
+                    varGfxWorld->sunLight,
+                    disk32::kGfxLightBytes)"
+    "DB_ValidateSunLight(varGfxWorld->sunLight)"
+    "inline world sunlight must preflight its full schema before validation")
+require_source_ordered(
+    "database/db_load.cpp"
+    "if (!Load_GfxWorld(1))"
+    "Load_GfxWorldAsset((XAssetHeader *)varGfxWorldPtr)"
+    "invalid portal graphs must stop world asset publication")
+require_source_not_contains(
+    "database/db_load.cpp"
+    "varGfxPortal->cell = (GfxCell *)AllocLoad_FxElemVisStateSample()"
+    "portal targets must not allocate cells outside the owned world array")
 require_source_contains(
     "database/db_load.cpp"
     "world->models[0].surfaceCount
@@ -264,7 +388,8 @@ require_source_contains(
     "material state-bit tables must use their full aligned block-4 span")
 require_source_contains(
     "database/db_load.cpp"
-    "(uint32_t*)&varGfxAabbTree->smodelIndexes,
+    "DB_ResolveDirectPointer(
+                &varGfxAabbTree->smodelIndexes,
                 smodelIndexByteCount,
                 2,
                 kDirectBlock4"
@@ -1963,9 +2088,9 @@ file(STRINGS
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 2)
+if (NOT _legacy_direct_offset_count EQUAL 1)
     message(FATAL_ERROR
-        "Expected exactly 2 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 1 explicitly legacy direct fast-file offset; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 

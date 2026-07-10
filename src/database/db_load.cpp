@@ -25,6 +25,7 @@
 
 namespace
 {
+constexpr db::relocation::BlockMask kDirectBlock1 = db::relocation::BlockBit(1);
 constexpr db::relocation::BlockMask kDirectBlock4 = db::relocation::BlockBit(4);
 constexpr db::relocation::BlockMask kDirectBlock7 = db::relocation::BlockBit(7);
 constexpr db::relocation::BlockMask kDirectBlock8 = db::relocation::BlockBit(8);
@@ -131,10 +132,11 @@ bool DB_ResolveDirectPointer(
     return true;
 }
 
-bool DB_ValidateMaterializedBlock4Span(
+bool DB_ValidateMaterializedSpan(
     const void *pointer,
     uint32_t bytes,
     size_t alignment,
+    db::relocation::BlockMask allowedBlocks,
     const char *description)
 {
     if (!bytes)
@@ -143,17 +145,31 @@ bool DB_ValidateMaterializedBlock4Span(
         pointer,
         bytes,
         alignment,
-        kDirectBlock4);
+        allowedBlocks);
     if (status != db::relocation::Status::Ok)
     {
         Com_Error(
             ERR_DROP,
-            "Invalid completed fast-file block-4 span for %s: %s",
+            "Invalid completed fast-file span for %s: %s",
             description,
             db::relocation::StatusName(status));
         return false;
     }
     return true;
+}
+
+bool DB_ValidateMaterializedBlock4Span(
+    const void *pointer,
+    uint32_t bytes,
+    size_t alignment,
+    const char *description)
+{
+    return DB_ValidateMaterializedSpan(
+        pointer,
+        bytes,
+        alignment,
+        kDirectBlock4,
+        description);
 }
 
 bool DB_GetClipBrushAdjacencyBytes(
@@ -8878,7 +8894,10 @@ void __cdecl Mark_sunflare_t()
 
 void __cdecl Load_GfxReflectionProbe(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxReflectionProbe, 16);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varGfxReflectionProbe,
+        disk32::kGfxReflectionProbeBytes);
     varGfxImagePtr = &varGfxReflectionProbe->reflectionImage;
     Load_GfxImagePtr(0);
 }
@@ -8888,7 +8907,11 @@ void __cdecl Load_GfxReflectionProbeArray(bool atStreamStart, int32_t count)
     GfxReflectionProbe *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varGfxReflectionProbe, count, 16);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varGfxReflectionProbe,
+        count,
+        disk32::kGfxReflectionProbeBytes);
     var = varGfxReflectionProbe;
     for (i = 0; i < count; ++i)
     {
@@ -8923,15 +8946,18 @@ void __cdecl Load_StaticModelIndexArray(bool atStreamStart, int32_t count)
     Load_StreamArray(atStreamStart, (uint8_t *)varStaticModelIndex, count, 2);
 }
 
-void __cdecl Load_GfxAabbTree(bool atStreamStart)
+bool __cdecl Load_GfxAabbTree(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxAabbTree, 44);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varGfxAabbTree,
+        disk32::kGfxAabbTreeBytes);
     if (!DB_ValidatePointerCount(
             varGfxAabbTree->smodelIndexes,
             varGfxAabbTree->smodelIndexCount,
             "world AABB static-model indices"))
     {
-        return;
+        return false;
     }
     const uint32_t smodelIndexByteCount = DB_CheckedDirectSpanBytes(
         varGfxAabbTree->smodelIndexCount,
@@ -8942,138 +8968,288 @@ void __cdecl Load_GfxAabbTree(bool atStreamStart)
         if (varGfxAabbTree->smodelIndexes == (uint16_t *)-1)
         {
             varGfxAabbTree->smodelIndexes = (uint16_t *)AllocLoad_XBlendInfo();
+            if (!varGfxAabbTree->smodelIndexes
+                || !DB_IsStreamRangeValid(
+                    varGfxAabbTree->smodelIndexes,
+                    smodelIndexByteCount))
+            {
+                Com_Error(
+                    ERR_DROP,
+                    "Fast-file world AABB static-model indices exceed block 4");
+                return false;
+            }
             varStaticModelIndex = varGfxAabbTree->smodelIndexes;
             Load_StaticModelIndexArray(1, varGfxAabbTree->smodelIndexCount);
         }
-        else
-        {
-            DB_ConvertOffsetToPointer(
-                (uint32_t*)&varGfxAabbTree->smodelIndexes,
+        else if (!DB_ResolveDirectPointer(
+                &varGfxAabbTree->smodelIndexes,
                 smodelIndexByteCount,
                 2,
-                kDirectBlock4);
+                kDirectBlock4,
+                "world AABB static-model indices"))
+        {
+            return false;
         }
     }
-    if (!db::validation::AllU16Below(
+    if (!DB_ValidateMaterializedBlock4Span(
+            varGfxAabbTree->smodelIndexes,
+            smodelIndexByteCount,
+            2,
+            "world AABB static-model indices")
+        || !db::validation::AllU16Below(
             varGfxAabbTree->smodelIndexes,
             varGfxAabbTree->smodelIndexCount,
             varGfxWorld->dpvs.smodelCount))
     {
         Com_Error(ERR_DROP, "Fast-file world AABB has an invalid static-model index");
-        return;
+        return false;
     }
+    return true;
 }
 
-void __cdecl Load_GfxAabbTreeArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_GfxAabbTreeArray(bool atStreamStart, int32_t count)
 {
     GfxAabbTree *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varGfxAabbTree, count, 44);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varGfxAabbTree,
+        count,
+        disk32::kGfxAabbTreeBytes);
     var = varGfxAabbTree;
     for (i = 0; i < count; ++i)
     {
         varGfxAabbTree = var;
-        Load_GfxAabbTree(0);
+        if (!Load_GfxAabbTree(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
-void __cdecl Load_GfxCell(bool atStreamStart)
+bool __cdecl Load_GfxCell(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxCell, 56);
-    if (!db::validation::WorldAabbTreePresenceValid(
-            varGfxCell->aabbTree != nullptr,
-            varGfxCell->aabbTreeCount))
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varGfxCell,
+        disk32::kGfxCellBytes);
+    db::validation::GfxCellLayoutExtents extents = {};
+    if (!db::validation::GfxCellLayoutValid(*varGfxCell, &extents))
     {
-        Com_Error(ERR_DROP, "Invalid fast-file world AABB pointer/count");
-        return;
+        Com_Error(ERR_DROP, "Invalid fast-file world cell layout");
+        return false;
     }
     if (varGfxCell->aabbTree)
     {
         varGfxCell->aabbTree = (GfxAabbTree *)AllocLoad_FxElemVisStateSample();
+        if (!varGfxCell->aabbTree
+            || !DB_IsStreamRangeValid(
+                varGfxCell->aabbTree,
+                static_cast<uint32_t>(extents.aabbTreeBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file world cell AABB trees exceed block 4");
+            return false;
+        }
         varGfxAabbTree = varGfxCell->aabbTree;
-        Load_GfxAabbTreeArray(1, varGfxCell->aabbTreeCount);
+        if (!Load_GfxAabbTreeArray(1, varGfxCell->aabbTreeCount))
+            return false;
     }
     if (!DB_ValidateWorldAabbCell(varGfxWorld, varGfxCell))
-        return;
+        return false;
     if (varGfxCell->portals)
     {
         varGfxCell->portals = (GfxPortal *)AllocLoad_FxElemVisStateSample();
+        if (!varGfxCell->portals
+            || !DB_IsStreamRangeValid(
+                varGfxCell->portals,
+                static_cast<uint32_t>(extents.portalBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file world cell portals exceed block 4");
+            return false;
+        }
         varGfxPortal = varGfxCell->portals;
-        Load_GfxPortalArray(1, varGfxCell->portalCount);
+        if (!Load_GfxPortalArray(1, varGfxCell->portalCount))
+            return false;
     }
     if (varGfxCell->cullGroups)
     {
         varGfxCell->cullGroups = (int32_t *)AllocLoad_FxElemVisStateSample();
+        if (!varGfxCell->cullGroups
+            || !DB_IsStreamRangeValid(
+                varGfxCell->cullGroups,
+                static_cast<uint32_t>(extents.cullGroupBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file world cell cull groups exceed block 4");
+            return false;
+        }
         varint = varGfxCell->cullGroups;
         Load_intArray(1, varGfxCell->cullGroupCount);
     }
     if (varGfxCell->reflectionProbes)
     {
         varGfxCell->reflectionProbes = AllocLoad_raw_byte();
+        if (!varGfxCell->reflectionProbes
+            || !DB_IsStreamRangeValid(
+                varGfxCell->reflectionProbes,
+                static_cast<uint32_t>(extents.reflectionProbeBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file world cell reflection probes exceed block 4");
+            return false;
+        }
         varbyte = varGfxCell->reflectionProbes;
         Load_byteArray(1, varGfxCell->reflectionProbeCount);
     }
+    if (!DB_ValidateMaterializedBlock4Span(
+            varGfxCell->aabbTree,
+            static_cast<uint32_t>(extents.aabbTreeBytes),
+            4,
+            "world cell AABB trees")
+        || !DB_ValidateMaterializedBlock4Span(
+            varGfxCell->portals,
+            static_cast<uint32_t>(extents.portalBytes),
+            4,
+            "world cell portals")
+        || !DB_ValidateMaterializedBlock4Span(
+            varGfxCell->cullGroups,
+            static_cast<uint32_t>(extents.cullGroupBytes),
+            4,
+            "world cell cull groups")
+        || !DB_ValidateMaterializedBlock4Span(
+            varGfxCell->reflectionProbes,
+            static_cast<uint32_t>(extents.reflectionProbeBytes),
+            1,
+            "world cell reflection probes"))
+    {
+        return false;
+    }
+    return true;
 }
 
-void __cdecl Load_GfxCellArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_GfxCellArray(bool atStreamStart, int32_t count)
 {
     GfxCell *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varGfxCell, count, 56);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varGfxCell,
+        count,
+        disk32::kGfxCellBytes);
     var = varGfxCell;
     for (i = 0; i < count; ++i)
     {
         varGfxCell = var;
-        Load_GfxCell(0);
+        if (!Load_GfxCell(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
-void __cdecl Load_GfxPortal(bool atStreamStart)
+bool __cdecl Load_GfxPortal(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxPortal, 68);
-    if (varGfxPortal->cell)
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varGfxPortal,
+        disk32::kGfxPortalBytes);
+    varGfxPortal->writable = {};
+    if (!varGfxPortal->cell
+        || varGfxPortal->cell == (GfxCell *)-1
+        || varGfxPortal->cell == (GfxCell *)-2)
     {
-        if (varGfxPortal->cell == (GfxCell *)-1)
-        {
-            varGfxPortal->cell = (GfxCell *)AllocLoad_FxElemVisStateSample();
-            varGfxCell = varGfxPortal->cell;
-            Load_GfxCell(1);
-        }
-        else
-        {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varGfxPortal->cell);
-        }
+        Com_Error(ERR_DROP, "Invalid fast-file world portal cell token");
+        return false;
     }
+    if (!DB_ResolveDirectPointer(
+            &varGfxPortal->cell,
+            disk32::kGfxCellBytes,
+            4,
+            kDirectBlock4,
+            "world portal cell"))
+    {
+        return false;
+    }
+    uint64_t cellIndex = 0;
+    if (!varGfxWorld
+        || !db::validation::SerializedArrayElementIndex(
+            varGfxWorld->cells,
+            varGfxWorld->dpvsPlanes.cellCount,
+            disk32::kGfxCellBytes,
+            varGfxPortal->cell,
+            &cellIndex))
+    {
+        Com_Error(ERR_DROP, "Fast-file world portal target is not a cell");
+        return false;
+    }
+    if (!varGfxPortal->vertices
+        || varGfxPortal->vertexCount
+            < db::validation::kMinGfxPortalVertices
+        || varGfxPortal->vertexCount
+            > db::validation::kMaxGfxPortalVertices)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file world portal vertex layout");
+        return false;
+    }
+    const uint32_t vertexBytes = DB_CheckedDirectSpanBytes(
+        varGfxPortal->vertexCount,
+        disk32::kVec3Bytes,
+        "world portal vertices");
     if (varGfxPortal->vertices)
     {
         varGfxPortal->vertices = (float (*)[3])AllocLoad_FxElemVisStateSample();
+        if (!varGfxPortal->vertices
+            || !DB_IsStreamRangeValid(
+                varGfxPortal->vertices,
+                vertexBytes))
+        {
+            Com_Error(ERR_DROP, "Fast-file world portal vertices exceed block 4");
+            return false;
+        }
         varvec3_t = varGfxPortal->vertices;
         Load_vec3_tArray(1, varGfxPortal->vertexCount);
     }
+    if (!DB_ValidateMaterializedBlock4Span(
+            varGfxPortal->vertices,
+            vertexBytes,
+            4,
+            "world portal vertices")
+        || !db::validation::GfxPortalRuntimeValid(*varGfxPortal))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file world portal");
+        return false;
+    }
+    return true;
 }
 
-void __cdecl Load_GfxPortalArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_GfxPortalArray(bool atStreamStart, int32_t count)
 {
     GfxPortal *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varGfxPortal, count, 68);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varGfxPortal,
+        count,
+        disk32::kGfxPortalBytes);
     var = varGfxPortal;
     for (i = 0; i < count; ++i)
     {
         varGfxPortal = var;
-        Load_GfxPortal(0);
+        if (!Load_GfxPortal(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
 void __cdecl Load_GfxCullGroupArray(bool atStreamStart, int32_t count)
 {
-    Load_StreamArray(atStreamStart, (uint8_t *)varGfxCullGroup, count, 32);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varGfxCullGroup,
+        count,
+        disk32::kGfxCullGroupBytes);
 }
 
 void __cdecl Load_GfxLightGridEntryArray(bool atStreamStart, int32_t count)
@@ -9580,16 +9756,70 @@ void __cdecl Load_GfxWorldDpvsPlanes(bool atStreamStart)
     DB_PopStreamPos();
 }
 
-void __cdecl Load_GfxWorld(bool atStreamStart)
+bool __cdecl Load_GfxWorld(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varGfxWorld, 732);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varGfxWorld,
+        disk32::kGfxWorldBytes);
     // World dimensions and primary-light ordering are runtime invariants even if
     // an individual optional visibility buffer is absent from the archive.
     const int32_t cellCount = DB_CheckedCountSum(
         varGfxWorld->dpvsPlanes.cellCount,
         0,
         "world cells");
-    DB_CheckedCountSum(varGfxWorld->surfaceCount, 0, "world surfaces");
+    int32_t cellBytes = 0;
+    if (!db::validation::GfxWorldCellLayoutValid(
+            varGfxWorld->cells != nullptr,
+            cellCount,
+            &cellBytes)
+        || !db::validation::GfxWorldCellBitsValid(
+            cellCount,
+            varGfxWorld->cellBitsCount)
+        || varGfxWorld->surfaceCount < 0
+        || !db::validation::WorldAabbSurfacePartitionsValid(
+            varGfxWorld->dpvs.staticSurfaceCount,
+            varGfxWorld->dpvs.staticSurfaceCountNoDecal,
+            static_cast<uint32_t>(varGfxWorld->surfaceCount)))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file world cell array");
+        return false;
+    }
+    int32_t reflectionProbeBytes = 0;
+    int32_t reflectionProbeTextureBytes = 0;
+    int32_t cullGroupBytes = 0;
+    int32_t modelBytes = 0;
+    if (!db::validation::GfxReflectionProbeCountValid(
+            varGfxWorld->reflectionProbeCount)
+        || varGfxWorld->cullGroupCount < 0
+        || (varGfxWorld->reflectionProbes != nullptr)
+            != (varGfxWorld->reflectionProbeCount != 0)
+        || (varGfxWorld->reflectionProbeTextures != nullptr)
+            != (varGfxWorld->reflectionProbeCount != 0)
+        || (varGfxWorld->dpvs.cullGroups != nullptr)
+            != (varGfxWorld->cullGroupCount != 0)
+        || varGfxWorld->modelCount <= 0
+        || !varGfxWorld->models
+        || !db::validation::CheckedArrayBytes(
+            static_cast<int32_t>(varGfxWorld->reflectionProbeCount),
+            disk32::kGfxReflectionProbeBytes,
+            &reflectionProbeBytes)
+        || !db::validation::CheckedArrayBytes(
+            static_cast<int32_t>(varGfxWorld->reflectionProbeCount),
+            disk32::kGfxTextureBytes,
+            &reflectionProbeTextureBytes)
+        || !db::validation::CheckedArrayBytes(
+            varGfxWorld->cullGroupCount,
+            disk32::kGfxCullGroupBytes,
+            &cullGroupBytes)
+        || !db::validation::CheckedArrayBytes(
+            varGfxWorld->modelCount,
+            disk32::kGfxBrushModelBytes,
+            &modelBytes))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file world cell lookup arrays");
+        return false;
+    }
     const int32_t cellWordCount = DB_CheckedCountCeilDiv(
         cellCount,
         32,
@@ -9598,6 +9828,32 @@ void __cdecl Load_GfxWorld(bool atStreamStart)
         cellCount,
         cellWordCount,
         "world cell-caster bits");
+    int32_t sortedSurfaceCount = 0;
+    int32_t cellCasterBytes = 0;
+    int32_t sortedSurfaceBytes = 0;
+    if (!db::validation::CheckedCountSum(
+            varGfxWorld->dpvs.staticSurfaceCountNoDecal,
+            varGfxWorld->dpvs.staticSurfaceCount,
+            &sortedSurfaceCount)
+        || !DB_ValidatePointerCount(
+            varGfxWorld->cellCasterBits,
+            cellCasterCount,
+            "world cell-caster bits")
+        || !DB_ValidatePointerCount(
+            varGfxWorld->dpvs.sortedSurfIndex,
+            sortedSurfaceCount,
+            "sorted world surfaces")
+        || !db::validation::CheckedArrayBytes(
+            cellCasterCount,
+            sizeof(uint32_t),
+            &cellCasterBytes)
+        || !db::validation::CheckedArrayBytes(
+            sortedSurfaceCount,
+            sizeof(uint16_t),
+            &sortedSurfaceBytes))
+    {
+        return false;
+    }
     const int32_t primaryLightCount = DB_CheckedCountSum(
         varGfxWorld->primaryLightCount,
         0,
@@ -9654,20 +9910,29 @@ void __cdecl Load_GfxWorld(bool atStreamStart)
         if (varGfxWorld->sunLight == (GfxLight *)-1)
         {
             varGfxWorld->sunLight = (GfxLight *)AllocLoad_FxElemVisStateSample();
+            if (!varGfxWorld->sunLight
+                || !DB_IsStreamRangeValid(
+                    varGfxWorld->sunLight,
+                    disk32::kGfxLightBytes))
+            {
+                Com_Error(ERR_DROP, "Fast-file sun light exceeds block 4");
+                DB_PopStreamPos();
+                return false;
+            }
             const DBAliasHandle completed = DB_RegisterPointerSlot(
                 varGfxWorld->sunLight,
                 DBAliasKind::GfxLight);
             if (!completed)
             {
                 DB_PopStreamPos();
-                return;
+                return false;
             }
             varGfxLight = varGfxWorld->sunLight;
             Load_GfxLight(1);
             if (!DB_ValidateSunLight(varGfxWorld->sunLight))
             {
                 DB_PopStreamPos();
-                return;
+                return false;
             }
             if (!DB_CompleteObject(
                     completed,
@@ -9677,7 +9942,7 @@ void __cdecl Load_GfxWorld(bool atStreamStart)
                     disk32::kGfxLightBytes))
             {
                 DB_PopStreamPos();
-                return;
+                return false;
             }
         }
         else
@@ -9691,26 +9956,67 @@ void __cdecl Load_GfxWorld(bool atStreamStart)
     if (varGfxWorld->reflectionProbes)
     {
         varGfxWorld->reflectionProbes = (GfxReflectionProbe *)AllocLoad_FxElemVisStateSample();
+        if (!varGfxWorld->reflectionProbes
+            || !DB_IsStreamRangeValid(
+                varGfxWorld->reflectionProbes,
+                static_cast<uint32_t>(reflectionProbeBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file world reflection probes exceed block 4");
+            DB_PopStreamPos();
+            return false;
+        }
         varGfxReflectionProbe = varGfxWorld->reflectionProbes;
-        Load_GfxReflectionProbeArray(1, varGfxWorld->reflectionProbeCount);
+        Load_GfxReflectionProbeArray(
+            1,
+            static_cast<int32_t>(varGfxWorld->reflectionProbeCount));
     }
     DB_PushStreamPos(1);
     if (varGfxWorld->reflectionProbeTextures)
     {
         varGfxWorld->reflectionProbeTextures = (GfxTexture *)AllocLoad_FxElemVisStateSample();
+        if (!varGfxWorld->reflectionProbeTextures
+            || !DB_IsStreamRangeValid(
+                varGfxWorld->reflectionProbeTextures,
+                static_cast<uint32_t>(reflectionProbeTextureBytes)))
+        {
+            Com_Error(
+                ERR_DROP,
+                "Fast-file world reflection textures exceed block 1");
+            DB_PopStreamPos();
+            DB_PopStreamPos();
+            return false;
+        }
         varGfxRawTexture = varGfxWorld->reflectionProbeTextures;
-        Load_GfxRawTextureArray(1, varGfxWorld->reflectionProbeCount);
+        Load_GfxRawTextureArray(
+            1,
+            static_cast<int32_t>(varGfxWorld->reflectionProbeCount));
     }
     DB_PopStreamPos();
     varGfxWorldDpvsPlanes = &varGfxWorld->dpvsPlanes;
     Load_GfxWorldDpvsPlanes(0);
     if (!DB_ValidatePointerCount(varGfxWorld->cells, cellCount, "world cells"))
-        return;
+    {
+        DB_PopStreamPos();
+        return false;
+    }
     if (varGfxWorld->cells)
     {
         varGfxWorld->cells = (GfxCell *)AllocLoad_FxElemVisStateSample();
+        if (!varGfxWorld->cells
+            || !DB_IsStreamRangeValid(
+                varGfxWorld->cells,
+                static_cast<uint32_t>(cellBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file world cells exceed block 4");
+            DB_PopStreamPos();
+            return false;
+        }
         varGfxCell = varGfxWorld->cells;
-        Load_GfxCellArray(1, varGfxWorld->dpvsPlanes.cellCount);
+        if (!Load_GfxCellArray(1, varGfxWorld->dpvsPlanes.cellCount))
+        {
+            DB_PopStreamPos();
+            return false;
+        }
     }
     if (varGfxWorld->lightmaps)
     {
@@ -9739,6 +10045,15 @@ void __cdecl Load_GfxWorld(bool atStreamStart)
     if (varGfxWorld->models)
     {
         varGfxWorld->models = (GfxBrushModel *)AllocLoad_FxElemVisStateSample();
+        if (!varGfxWorld->models
+            || !DB_IsStreamRangeValid(
+                varGfxWorld->models,
+                static_cast<uint32_t>(modelBytes)))
+        {
+            Com_Error(ERR_DROP, "Fast-file world models exceed block 4");
+            DB_PopStreamPos();
+            return false;
+        }
         varGfxBrushModel = varGfxWorld->models;
         Load_GfxBrushModelArray(1, varGfxWorld->modelCount);
     }
@@ -9760,6 +10075,18 @@ void __cdecl Load_GfxWorld(bool atStreamStart)
     if (varGfxWorld->cellCasterBits)
     {
         varGfxWorld->cellCasterBits = (uint32_t *)AllocLoad_FxElemVisStateSample();
+        if (!varGfxWorld->cellCasterBits
+            || !DB_IsStreamRangeValid(
+                varGfxWorld->cellCasterBits,
+                static_cast<uint32_t>(cellCasterBytes)))
+        {
+            Com_Error(
+                ERR_DROP,
+                "Fast-file world cell-caster bits exceed block 1");
+            DB_PopStreamPos();
+            DB_PopStreamPos();
+            return false;
+        }
         varraw_uint = varGfxWorld->cellCasterBits;
         Load_raw_uintArray(1, cellCasterCount);
     }
@@ -9828,9 +10155,54 @@ void __cdecl Load_GfxWorld(bool atStreamStart)
     Load_GfxWorldDpvsStatic(0);
     varGfxWorldDpvsDynamic = &varGfxWorld->dpvsDyn;
     Load_GfxWorldDpvsDynamic(0);
-    if (!DB_ValidateWorldAabbTrees(varGfxWorld))
-        return;
+    if (!DB_ValidateMaterializedBlock4Span(
+            varGfxWorld->cells,
+            static_cast<uint32_t>(cellBytes),
+            4,
+            "world cells")
+        || !DB_ValidateMaterializedBlock4Span(
+            varGfxWorld->reflectionProbes,
+            static_cast<uint32_t>(reflectionProbeBytes),
+            4,
+            "world reflection probes")
+        || !DB_ValidateMaterializedSpan(
+            varGfxWorld->reflectionProbeTextures,
+            static_cast<uint32_t>(reflectionProbeTextureBytes),
+            4,
+            kDirectBlock1,
+            "world reflection textures")
+        || !DB_ValidateMaterializedSpan(
+            varGfxWorld->cellCasterBits,
+            static_cast<uint32_t>(cellCasterBytes),
+            4,
+            kDirectBlock1,
+            "world cell-caster bits")
+        || !DB_ValidateMaterializedBlock4Span(
+            varGfxWorld->dpvs.cullGroups,
+            static_cast<uint32_t>(cullGroupBytes),
+            4,
+            "world cull groups")
+        || !DB_ValidateMaterializedBlock4Span(
+            varGfxWorld->dpvs.sortedSurfIndex,
+            static_cast<uint32_t>(sortedSurfaceBytes),
+            2,
+            "sorted world surfaces")
+        || !DB_ValidateMaterializedBlock4Span(
+            varGfxWorld->models,
+            static_cast<uint32_t>(modelBytes),
+            4,
+            "world brush models")
+        || !db::validation::GfxWorldCellGraphValid(
+            *varGfxWorld,
+            disk32::kGfxCellBytes)
+        || !DB_ValidateWorldAabbTrees(varGfxWorld))
+    {
+        Com_Error(ERR_DROP, "Invalid completed fast-file world cell graph");
+        DB_PopStreamPos();
+        return false;
+    }
     DB_PopStreamPos();
+    return true;
 }
 
 void __cdecl Load_GfxWorldPtr(bool atStreamStart)
@@ -9846,12 +10218,35 @@ void __cdecl Load_GfxWorldPtr(bool atStreamStart)
         if (value == -1 || value == -2)
         {
             *varGfxWorldPtr = (GfxWorld *)AllocLoad_FxElemVisStateSample();
+            if (!*varGfxWorldPtr
+                || !DB_IsStreamRangeValid(
+                    *varGfxWorldPtr,
+                    disk32::kGfxWorldBytes))
+            {
+                Com_Error(ERR_DROP, "Cannot allocate fast-file world header");
+                *varGfxWorldPtr = nullptr;
+                DB_PopStreamPos();
+                return;
+            }
             varGfxWorld = *varGfxWorldPtr;
             if (value == -2)
+            {
                 inserted = DB_InsertPointer(DBAliasKind::GfxWorld);
+                if (!inserted)
+                {
+                    *varGfxWorldPtr = nullptr;
+                    DB_PopStreamPos();
+                    return;
+                }
+            }
             else
                 inserted = {};
-            Load_GfxWorld(1);
+            if (!Load_GfxWorld(1))
+            {
+                *varGfxWorldPtr = nullptr;
+                DB_PopStreamPos();
+                return;
+            }
             Load_GfxWorldAsset((XAssetHeader *)varGfxWorldPtr);
             if (inserted)
                 DB_SetInsertedPointer(

@@ -704,6 +704,16 @@ int main()
             && disk32::kWeaponBounceSoundCount == 29u
             && disk32::kWeaponBounceSoundTableBytes == 116u
             && disk32::kGfxLightBytes == 64u
+            && disk32::kGfxWorldBytes == 732u
+            && disk32::kGfxReflectionProbeBytes == 16u
+            && disk32::kGfxTextureBytes == 4u
+            && disk32::kGfxCellBytes == 56u
+            && disk32::kGfxBrushModelBytes == 56u
+            && disk32::kGfxAabbTreeBytes == 44u
+            && disk32::kGfxPortalBytes == 68u
+            && disk32::kGfxCullGroupBytes == 32u
+            && disk32::kDpvsPlaneBytes == 20u
+            && disk32::kVec3Bytes == 12u
             && disk32::kStringTableBytes == 16u
             && disk32::kXModelPieceBytes == 16u
             && disk32::kXModelPiecesBytes == 12u

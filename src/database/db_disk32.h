@@ -36,6 +36,16 @@ constexpr uint32_t kWeaponBounceSoundCount = 29;
 constexpr uint32_t kWeaponBounceSoundTableBytes =
     kWeaponBounceSoundCount * sizeof(uint32_t);
 constexpr uint32_t kGfxLightBytes = 64;
+constexpr uint32_t kGfxWorldBytes = 732;
+constexpr uint32_t kGfxReflectionProbeBytes = 16;
+constexpr uint32_t kGfxTextureBytes = 4;
+constexpr uint32_t kGfxCellBytes = 56;
+constexpr uint32_t kGfxBrushModelBytes = 56;
+constexpr uint32_t kGfxAabbTreeBytes = 44;
+constexpr uint32_t kGfxPortalBytes = 68;
+constexpr uint32_t kGfxCullGroupBytes = 32;
+constexpr uint32_t kDpvsPlaneBytes = 20;
+constexpr uint32_t kVec3Bytes = 12;
 constexpr uint32_t kStringTableBytes = 16;
 constexpr uint32_t kXModelPieceBytes = 16;
 constexpr uint32_t kXModelPiecesBytes = 12;

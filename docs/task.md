@@ -8,16 +8,16 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: migrate the path-tree and portal-cell forward references, then add a Windows x86
-  headless compile/link CI leg.
-- Last completed batch: clipmap brush sides and adjacency now resolve their full derived spans only
-  after the global plane, side, and edge arrays are materialized. Loading validates checked array
-  extents, finite plane metadata and brush bounds, the 250-nonaxial-side collision-workspace limit,
-  exact ordered global side/edge partitions, adjacency prefixes and IDs, material indices, exact
-  global plane membership, and the special box-brush sentinel before asset publication. Box brushes
-  use exact typed completed-object provenance, loader failures propagate through `Load_clipMap_t`,
-  and the box/capsule/cylinder collision paths reject oversized or missing side spans before fixed
-  workspace writes.
+- Active work: migrate the remaining path-tree forward reference, then add a Windows x86 headless
+  compile/link CI leg.
+- Last completed batch: graphics-world cell headers now materialize before portal targets resolve;
+  each target must be an exact serialized cell start, and portal runtime scratch is scrubbed before
+  fixup. Checked cell/AABB/portal/cull/probe extents, finite portal geometry, canonical plane sides,
+  renderer workspace limits, nonempty per-cell AABB/probe arrays, global reflection-probe/image and
+  cull-group records, sorted-surface spans, reflection texture scratch, cell-caster storage, brush
+  models, and complete AABB/portal graphs validate before world asset publication. Loader failures,
+  full-header allocation failures, and missing shared-world alias slots now propagate without
+  publication.
 - Portable validation: 12/12 tests pass locally. The production relocation registry is
   also strict-warning clean under GCC/Clang and GCC ILP32 syntax checking; ASan/UBSan
   pass locally with leak detection disabled because LeakSanitizer cannot run under the
@@ -28,7 +28,8 @@ work item changes. Do not create session-specific handoff files.
   targets and three Windows x86 engine builds. Model-pieces run 29099309312 also passed all eight
   jobs. Surface run 29100892076 passed all five portable jobs but exposed an early-declaration
   error in the Windows-only surface validator. Physics/repair run 29102757297 then passed all eight
-  jobs, confirming the parameterized model-bone-count repair and exact physics graph batch.
+  jobs, confirming the parameterized model-bone-count repair and exact physics graph batch. Clipmap
+  brush-graph run 29105491437 also passed all eight jobs.
 
 ## Milestone status
 
@@ -36,10 +37,10 @@ work item changes. Do not create session-specific handoff files.
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 builds; five native utility-test runners; engine runtime smoke and release workflows remain unexercised. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 48/50 bounded direct references, pre-publication material/sound/world/model/surface/physics/clipmap-brush graph and state validation, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures and 2 direct relocations remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 49/50 bounded direct references, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal graph and state validation, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures and 1 direct relocation remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
-| M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush spans, and 18 exact completed object types exist; packed mirrors, 2 direct offsets, broader completed-object relocation, and runtime widening remain. |
+| M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush and portal/cell spans, and 18 exact completed object types exist; packed mirrors, 1 direct offset, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
 ## Target matrix
@@ -55,8 +56,8 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Migrate the remaining 2 graph/composite relocations. Add deferred typed fixups for authentic
-   forward references and derived adjacency extents rather than weakening materialization checks.
+1. Migrate the remaining path-tree graph relocation. Add a deferred typed fixup for authentic
+   forward child references rather than weakening materialization checks.
 2. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
 3. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
 4. Classify and burn down the 255 direct and four formula-based ABI layout assertions.
@@ -112,13 +113,13 @@ work item changes. Do not create session-specific handoff files.
 - Weapon registration still protects the 128-entry `bg_weaponDefs` table only with a
   release-disabled assertion after incrementing the index. Single-player's 128-entry
   editable accuracy-graph registry has the same assertion-only overflow pattern.
-- Two explicitly labeled legacy direct fast-file relocations still prove only
+- One explicitly labeled legacy direct fast-file relocation still proves only
   one destination byte is in-bounds. Twenty-three raw/POD fields, three string/holder fields,
   eighteen exact completed object types, graph-validated clipmap brush spans, and one
   completed-but-not-yet-typed bone-name array now
   enforce bounded materialization or exact typed completion, but broader graph/type provenance
-  plus runtime widening remain M5 requirements. Path-tree and portal-cell tokens include known or
-  plausible forward references and therefore need a deferred-fixup design before bounded resolution.
+  plus runtime widening remain M5 requirements. The remaining path-tree tokens include plausible
+  forward references and therefore need a deferred-fixup design before bounded resolution.
   Already-materialized and registered-start enforcement intentionally rejects
   raw/string/completed-object forward references;
   compatibility still needs retail fast-file fixtures. Alias and direct provenance also

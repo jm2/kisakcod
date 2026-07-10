@@ -190,6 +190,203 @@ struct TestClipMapFixture
     TestClipMap map = {};
 };
 
+struct TestGfxAabbTree
+{
+    std::uint8_t value = 0;
+};
+
+struct TestGfxImage
+{
+    std::uint8_t value = 0;
+};
+
+struct TestGfxTexture
+{
+    std::uint32_t value = 0;
+};
+
+struct TestGfxCullGroup
+{
+    float mins[3] = {};
+    float maxs[3] = {};
+    std::int32_t surfaceCount = 0;
+    std::int32_t startSurfIndex = -1;
+};
+
+struct TestGfxReflectionProbe
+{
+    float origin[3] = {};
+    TestGfxImage *reflectionImage = nullptr;
+};
+
+struct TestGfxCell;
+
+struct TestDpvsPlane
+{
+    float coeffs[4] = {};
+    std::uint8_t side[3] = {};
+};
+
+struct TestGfxPortal
+{
+    TestDpvsPlane plane = {};
+    TestGfxCell *cell = nullptr;
+    float (*vertices)[3] = nullptr;
+    std::uint8_t vertexCount = 0;
+    float hullAxis[2][3] = {};
+};
+
+struct TestGfxCell
+{
+    float mins[3] = {};
+    float maxs[3] = {};
+    std::int32_t aabbTreeCount = 0;
+    TestGfxAabbTree *aabbTree = nullptr;
+    std::int32_t portalCount = 0;
+    TestGfxPortal *portals = nullptr;
+    std::int32_t cullGroupCount = 0;
+    std::int32_t *cullGroups = nullptr;
+    std::uint8_t reflectionProbeCount = 0;
+    std::uint8_t *reflectionProbes = nullptr;
+};
+
+struct TestGfxWorldDpvsPlanes
+{
+    std::int32_t cellCount = 0;
+};
+
+struct TestGfxWorldDpvs
+{
+    std::uint32_t staticSurfaceCount = 0;
+    std::uint32_t staticSurfaceCountNoDecal = 0;
+    std::uint16_t *sortedSurfIndex = nullptr;
+    TestGfxCullGroup *cullGroups = nullptr;
+};
+
+struct TestGfxWorld
+{
+    std::int32_t surfaceCount = 0;
+    std::int32_t cullGroupCount = 0;
+    std::uint32_t reflectionProbeCount = 0;
+    TestGfxReflectionProbe *reflectionProbes = nullptr;
+    TestGfxTexture *reflectionProbeTextures = nullptr;
+    TestGfxWorldDpvsPlanes dpvsPlanes = {};
+    TestGfxCell *cells = nullptr;
+    TestGfxWorldDpvs dpvs = {};
+};
+
+struct TestGfxWorldFixture
+{
+    std::array<TestGfxAabbTree, 4> aabbTrees = {};
+    std::array<TestGfxPortal, 4> portals = {};
+    float vertices[4][4][3] = {};
+    std::array<std::int32_t, 4> cellCullGroups = {};
+    std::array<std::uint8_t, 4> cellReflectionProbes = {};
+    std::array<TestGfxCell, 4> cells = {};
+    std::array<TestGfxCullGroup, 3> cullGroups = {};
+    std::array<TestGfxReflectionProbe, 3> reflectionProbes = {};
+    std::array<TestGfxImage, 3> reflectionImages = {};
+    std::array<TestGfxTexture, 3> reflectionProbeTextures = {};
+    std::array<std::uint16_t, 3> sortedSurfIndex = {};
+    TestGfxWorld world = {};
+};
+
+void PopulateValidGfxWorldFixture(TestGfxWorldFixture *fixture)
+{
+    *fixture = {};
+    constexpr std::uint32_t targetCells[] = {1, 0, 3, 3};
+    for (std::uint32_t index = 0;
+        index < fixture->cells.size();
+        ++index)
+    {
+        TestGfxCell &cell = fixture->cells[index];
+        for (std::uint32_t axis = 0; axis < 3; ++axis)
+        {
+            cell.mins[axis] = -4.0f - static_cast<float>(index);
+            cell.maxs[axis] = 4.0f + static_cast<float>(index);
+        }
+        cell.aabbTreeCount = 1;
+        cell.aabbTree = &fixture->aabbTrees[index];
+        cell.portalCount = 1;
+        cell.portals = &fixture->portals[index];
+        cell.cullGroupCount = 1;
+        cell.cullGroups = &fixture->cellCullGroups[index];
+        fixture->cellCullGroups[index] =
+            static_cast<std::int32_t>(index % fixture->cullGroups.size());
+        cell.reflectionProbeCount = 1;
+        cell.reflectionProbes = &fixture->cellReflectionProbes[index];
+        fixture->cellReflectionProbes[index] =
+            static_cast<std::uint8_t>(
+                index % fixture->reflectionProbes.size());
+
+        TestGfxPortal &portal = fixture->portals[index];
+        portal.cell = &fixture->cells[targetCells[index]];
+        portal.plane.coeffs[0] = 1.0f;
+        portal.plane.coeffs[1] = -1.0f;
+        portal.plane.coeffs[3] = 2.0f;
+        portal.plane.side[0] = 12;
+        portal.plane.side[1] = 4;
+        portal.plane.side[2] = 8;
+        portal.vertices = fixture->vertices[index];
+        portal.vertexCount = 4;
+        portal.hullAxis[0][0] = 1.0f;
+        portal.hullAxis[1][1] = 1.0f;
+        const float z = static_cast<float>(index);
+        portal.vertices[0][0] = -1.0f;
+        portal.vertices[0][1] = -1.0f;
+        portal.vertices[0][2] = z;
+        portal.vertices[1][0] = 1.0f;
+        portal.vertices[1][1] = -1.0f;
+        portal.vertices[1][2] = z;
+        portal.vertices[2][0] = 1.0f;
+        portal.vertices[2][1] = 1.0f;
+        portal.vertices[2][2] = z;
+        portal.vertices[3][0] = -1.0f;
+        portal.vertices[3][1] = 1.0f;
+        portal.vertices[3][2] = z;
+    }
+
+    fixture->world.cullGroupCount =
+        static_cast<std::int32_t>(fixture->cullGroups.size());
+    fixture->world.surfaceCount =
+        static_cast<std::int32_t>(fixture->sortedSurfIndex.size());
+    fixture->world.reflectionProbeCount =
+        static_cast<std::uint32_t>(fixture->reflectionProbes.size());
+    fixture->world.reflectionProbes = fixture->reflectionProbes.data();
+    fixture->world.reflectionProbeTextures =
+        fixture->reflectionProbeTextures.data();
+    fixture->world.dpvsPlanes.cellCount =
+        static_cast<std::int32_t>(fixture->cells.size());
+    fixture->world.cells = fixture->cells.data();
+    fixture->world.dpvs.staticSurfaceCount =
+        static_cast<std::uint32_t>(fixture->sortedSurfIndex.size());
+    fixture->world.dpvs.staticSurfaceCountNoDecal = 0;
+    fixture->world.dpvs.sortedSurfIndex =
+        fixture->sortedSurfIndex.data();
+    fixture->world.dpvs.cullGroups = fixture->cullGroups.data();
+    for (std::uint32_t index = 0;
+        index < fixture->cullGroups.size();
+        ++index)
+    {
+        TestGfxCullGroup &group = fixture->cullGroups[index];
+        for (std::uint32_t axis = 0; axis < 3; ++axis)
+        {
+            group.mins[axis] = -8.0f - static_cast<float>(index);
+            group.maxs[axis] = 8.0f + static_cast<float>(index);
+        }
+        group.surfaceCount = 1;
+        group.startSurfIndex = static_cast<std::int32_t>(index);
+        fixture->sortedSurfIndex[index] =
+            static_cast<std::uint16_t>(index);
+
+        TestGfxReflectionProbe &probe = fixture->reflectionProbes[index];
+        probe.origin[0] = static_cast<float>(index);
+        probe.origin[1] = static_cast<float>(index) + 1.0f;
+        probe.origin[2] = static_cast<float>(index) + 2.0f;
+        probe.reflectionImage = &fixture->reflectionImages[index];
+    }
+}
+
 void PopulateValidClipMapFixture(TestClipMapFixture *fixture)
 {
     *fixture = {};
@@ -3009,6 +3206,530 @@ int main()
     Expect(
         !db::validation::ClipMapBoxBrushValid(clipBox),
         "box brush with nonsentinel inverted bounds rejected");
+
+    const std::uintptr_t serializedCellBaseAddress =
+        static_cast<std::uintptr_t>(0x1000);
+    const auto serializedCellBase = reinterpret_cast<const TestGfxCell *>(
+        serializedCellBaseAddress);
+    std::uint64_t serializedCellIndex = UINT64_MAX;
+    Expect(
+        db::validation::SerializedArrayElementIndex(
+            serializedCellBase,
+            4,
+            disk32::kGfxCellBytes,
+            serializedCellBase,
+            &serializedCellIndex)
+            && serializedCellIndex == 0,
+        "first serialized world cell accepted");
+    Expect(
+        db::validation::SerializedArrayElementIndex(
+            serializedCellBase,
+            4,
+            disk32::kGfxCellBytes,
+            reinterpret_cast<const TestGfxCell *>(
+                serializedCellBaseAddress
+                    + disk32::kGfxCellBytes * 2u),
+            &serializedCellIndex)
+            && serializedCellIndex == 2,
+        "forward serialized world cell accepted");
+    Expect(
+        db::validation::SerializedArrayElementIndex(
+            serializedCellBase,
+            4,
+            disk32::kGfxCellBytes,
+            reinterpret_cast<const TestGfxCell *>(
+                serializedCellBaseAddress
+                    + disk32::kGfxCellBytes * 3u),
+            &serializedCellIndex)
+            && serializedCellIndex == 3,
+        "last serialized world cell accepted");
+    Expect(
+        db::validation::SerializedArrayElementIndex(
+            serializedCellBase,
+            4,
+            disk32::kGfxCellBytes,
+            reinterpret_cast<const TestGfxCell *>(
+                serializedCellBaseAddress
+                    + disk32::kGfxCellBytes),
+            &serializedCellIndex)
+            && serializedCellIndex == 1,
+        "backward-selected serialized world cell accepted");
+    Expect(
+        !db::validation::SerializedArrayElementIndex(
+            serializedCellBase,
+            4,
+            disk32::kGfxCellBytes,
+            reinterpret_cast<const TestGfxCell *>(
+                serializedCellBaseAddress + 1u),
+            &serializedCellIndex),
+        "interior serialized world cell pointer rejected");
+    Expect(
+        !db::validation::SerializedArrayElementIndex(
+            serializedCellBase,
+            4,
+            disk32::kGfxCellBytes,
+            reinterpret_cast<const TestGfxCell *>(
+                serializedCellBaseAddress
+                    + disk32::kGfxCellBytes * 4u),
+            &serializedCellIndex),
+        "one-past serialized world cell pointer rejected");
+    Expect(
+        !db::validation::SerializedArrayElementIndex(
+            serializedCellBase,
+            4,
+            0,
+            serializedCellBase,
+            &serializedCellIndex),
+        "zero serialized world cell stride rejected");
+    const auto overflowingSerializedCellBase =
+        reinterpret_cast<const TestGfxCell *>(
+            (std::numeric_limits<std::uintptr_t>::max)() - 31u);
+    Expect(
+        !db::validation::SerializedArrayElementIndex(
+            overflowingSerializedCellBase,
+            2,
+            32,
+            overflowingSerializedCellBase,
+            &serializedCellIndex),
+        "overflowing serialized world cell span rejected");
+    Expect(
+        !db::validation::SerializedArrayElementIndex(
+            serializedCellBase,
+            4,
+            disk32::kGfxCellBytes,
+            serializedCellBase,
+            nullptr),
+        "serialized world cell membership requires index output");
+
+    std::int32_t gfxCellBytes = -1;
+    Expect(
+        db::validation::GfxWorldCellLayoutValid(
+            true,
+            db::validation::kMaxGfxWorldCells,
+            &gfxCellBytes)
+            && gfxCellBytes == 57344,
+        "maximum world cell header table accepted");
+    Expect(
+        !db::validation::GfxWorldCellLayoutValid(
+            true,
+            db::validation::kMaxGfxWorldCells + 1,
+            &gfxCellBytes),
+        "world cell count above the source limit rejected");
+    Expect(
+        !db::validation::GfxWorldCellLayoutValid(
+            false,
+            1,
+            &gfxCellBytes),
+        "missing required world cell table rejected");
+    Expect(
+        !db::validation::GfxWorldCellLayoutValid(
+            true,
+            0,
+            &gfxCellBytes),
+        "empty world cell table rejected");
+    Expect(
+        !db::validation::GfxWorldCellLayoutValid(true, 1, nullptr),
+        "world cell layout requires extent output");
+    Expect(
+        db::validation::GfxWorldCellBitsValid(1, 16)
+            && db::validation::GfxWorldCellBitsValid(128, 16)
+            && db::validation::GfxWorldCellBitsValid(129, 32)
+            && db::validation::GfxWorldCellBitsValid(1024, 128),
+        "world cell bit bytes match the renderer's 128-cell allocation chunks");
+    Expect(
+        !db::validation::GfxWorldCellBitsValid(0, 0)
+            && !db::validation::GfxWorldCellBitsValid(1025, 144)
+            && !db::validation::GfxWorldCellBitsValid(128, 32),
+        "invalid world cell bit byte counts rejected");
+    Expect(
+        db::validation::GfxReflectionProbeCountValid(1)
+            && db::validation::GfxReflectionProbeCountValid(254),
+        "renderer-safe world reflection-probe counts accepted");
+    Expect(
+        !db::validation::GfxReflectionProbeCountValid(0)
+            && !db::validation::GfxReflectionProbeCountValid(255),
+        "empty and uint8-wrapping world reflection-probe counts rejected");
+
+    TestGfxWorldFixture gfxWorld = {};
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    db::validation::GfxCellLayoutExtents gfxCellExtents = {};
+    Expect(
+        db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            &gfxCellExtents)
+            && gfxCellExtents.aabbTreeBytes
+                == static_cast<std::int32_t>(
+                    disk32::kGfxAabbTreeBytes)
+            && gfxCellExtents.portalBytes
+                == static_cast<std::int32_t>(
+                    disk32::kGfxPortalBytes)
+            && gfxCellExtents.cullGroupBytes == 4
+            && gfxCellExtents.reflectionProbeBytes == 1,
+        "world cell child extents use serialized strides");
+    Expect(
+        !db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            nullptr),
+        "world cell layout requires extent output");
+    gfxWorld.cells[0].mins[0] =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        !db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            &gfxCellExtents),
+        "non-finite world cell bounds rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cells[0].mins[1] = 10.0f;
+    Expect(
+        !db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            &gfxCellExtents),
+        "inverted world cell bounds rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cells[0].aabbTree = nullptr;
+    Expect(
+        !db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            &gfxCellExtents),
+        "missing world cell AABB table rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cells[0].aabbTreeCount = 0;
+    gfxWorld.cells[0].aabbTree = nullptr;
+    Expect(
+        !db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            &gfxCellExtents),
+        "world cell without the runtime-required AABB root rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cells[0].portals = nullptr;
+    Expect(
+        !db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            &gfxCellExtents),
+        "missing world cell portal table rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cells[0].cullGroups = nullptr;
+    Expect(
+        !db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            &gfxCellExtents),
+        "missing world cell cull-group table rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cells[0].reflectionProbes = nullptr;
+    Expect(
+        !db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            &gfxCellExtents),
+        "missing world cell reflection-probe table rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cells[0].reflectionProbeCount = 0;
+    gfxWorld.cells[0].reflectionProbes = nullptr;
+    Expect(
+        !db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            &gfxCellExtents),
+        "world cell without a nearest-probe candidate rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cells[0].portalCount = 0;
+    Expect(
+        !db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            &gfxCellExtents),
+        "present empty world cell portal table rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cells[0].aabbTreeCount = -1;
+    Expect(
+        !db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            &gfxCellExtents),
+        "negative world cell AABB count rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cells[0].portalCount = INT32_MAX;
+    Expect(
+        !db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            &gfxCellExtents),
+        "overflowing world cell portal extent rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cells[0].cullGroupCount = INT32_MAX;
+    Expect(
+        !db::validation::GfxCellLayoutValid(
+            gfxWorld.cells[0],
+            &gfxCellExtents),
+        "overflowing world cell cull-group extent rejected");
+
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    Expect(
+        db::validation::GfxPortalRuntimeValid(gfxWorld.portals[0]),
+        "finite four-vertex portal with canonical plane sides accepted");
+    gfxWorld.portals[0].cell = nullptr;
+    Expect(
+        !db::validation::GfxPortalRuntimeValid(gfxWorld.portals[0]),
+        "portal without a target cell rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.portals[0].vertexCount =
+        db::validation::kMinGfxPortalVertices - 1;
+    Expect(
+        !db::validation::GfxPortalRuntimeValid(gfxWorld.portals[0]),
+        "portal below the minimum vertex count rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.portals[0].vertexCount =
+        db::validation::kMaxGfxPortalVertices + 1;
+    Expect(
+        !db::validation::GfxPortalRuntimeValid(gfxWorld.portals[0]),
+        "portal above the maximum vertex count rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.portals[0].vertices = nullptr;
+    Expect(
+        !db::validation::GfxPortalRuntimeValid(gfxWorld.portals[0]),
+        "portal without a vertex table rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.portals[0].plane.coeffs[0] = 0.0f;
+    gfxWorld.portals[0].plane.coeffs[1] = 0.0f;
+    Expect(
+        !db::validation::GfxPortalRuntimeValid(gfxWorld.portals[0]),
+        "portal with a zero plane normal rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.portals[0].plane.coeffs[3] =
+        (std::numeric_limits<float>::infinity)();
+    Expect(
+        !db::validation::GfxPortalRuntimeValid(gfxWorld.portals[0]),
+        "portal with a non-finite plane rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.portals[0].plane.side[1] = 16;
+    Expect(
+        !db::validation::GfxPortalRuntimeValid(gfxWorld.portals[0]),
+        "portal with a noncanonical plane side offset rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.portals[0].hullAxis[1][2] =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        !db::validation::GfxPortalRuntimeValid(gfxWorld.portals[0]),
+        "portal with a non-finite hull axis rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.vertices[0][2][1] =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        !db::validation::GfxPortalRuntimeValid(gfxWorld.portals[0]),
+        "portal with a non-finite vertex rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    float maximumPortalVertices[
+        db::validation::kMaxGfxPortalVertices][3] = {};
+    gfxWorld.portals[0].vertices = maximumPortalVertices;
+    gfxWorld.portals[0].vertexCount =
+        db::validation::kMaxGfxPortalVertices;
+    Expect(
+        db::validation::GfxPortalRuntimeValid(gfxWorld.portals[0]),
+        "maximum-size finite portal vertex table accepted");
+
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    const std::uint32_t testCellStride =
+        static_cast<std::uint32_t>(sizeof(TestGfxCell));
+    Expect(
+        db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "directed portal graph accepts forward, backward, cyclic, and self links");
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(gfxWorld.world, 0),
+        "world portal graph rejects a zero cell stride");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.world.reflectionProbeCount = 0;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph requires the default reflection probe");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.world.reflectionProbeCount = 255;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph rejects a uint8-wrapping probe count");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.world.reflectionProbeTextures = nullptr;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph requires reflection texture scratch storage");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.reflectionProbes[1].origin[2] =
+        (std::numeric_limits<float>::infinity)();
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph rejects a non-finite reflection probe");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.reflectionProbes[1].reflectionImage = nullptr;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph rejects a probe without an image");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cullGroups[0].mins[0] = 9.0f;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph rejects inverted cull-group bounds");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cullGroups[0].maxs[1] =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph rejects non-finite cull-group bounds");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cullGroups[0].surfaceCount = -1;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph rejects a negative cull-group surface count");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cullGroups[0].surfaceCount = 0;
+    gfxWorld.cullGroups[0].startSurfIndex = 0;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "empty cull groups require the source-format minus-one start");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cullGroups[0].startSurfIndex = -1;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "nonempty cull groups require a nonnegative surface start");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cullGroups[2].surfaceCount = 2;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "cull-group spans beyond sorted surfaces are rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.world.dpvs.sortedSurfIndex = nullptr;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph requires the sorted surface table");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.world.dpvs.staticSurfaceCountNoDecal = 4;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph rejects a no-decal partition beyond static surfaces");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.world.surfaceCount = 2;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph rejects static surfaces beyond the world total");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.world.surfaceCount = -1;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph rejects a negative surface total");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.sortedSurfIndex[2] = 3;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph rejects an out-of-range sorted surface index");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.portals[0].cell = reinterpret_cast<TestGfxCell *>(
+        reinterpret_cast<std::uintptr_t>(gfxWorld.cells.data()) + 1u);
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph rejects an interior target cell pointer");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.portals[0].cell = reinterpret_cast<TestGfxCell *>(
+        reinterpret_cast<std::uintptr_t>(gfxWorld.cells.data())
+            + sizeof(TestGfxCell) * gfxWorld.cells.size());
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph rejects a one-past target cell pointer");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cellCullGroups[0] = -1;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "negative world cell cull-group index rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cellCullGroups[0] = gfxWorld.world.cullGroupCount;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world cell cull-group index at the global limit rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cellReflectionProbes[0] =
+        static_cast<std::uint8_t>(gfxWorld.world.reflectionProbeCount);
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world cell reflection-probe index at the global limit rejected");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.world.dpvs.cullGroups = nullptr;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph requires its global cull-group table");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.world.reflectionProbes = nullptr;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph requires its global reflection-probe table");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.world.cells = nullptr;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph requires its global cell table");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.world.cullGroupCount = -1;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "world portal graph rejects a negative global cull-group count");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.cells[2].maxs[0] =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "invalid child cell rejects the complete world portal graph");
+    PopulateValidGfxWorldFixture(&gfxWorld);
+    gfxWorld.portals[3].plane.side[0] = 0;
+    Expect(
+        !db::validation::GfxWorldCellGraphValid(
+            gfxWorld.world,
+            testCellStride),
+        "invalid portal rejects the complete world portal graph");
 
     std::uint32_t spanBytes = UINT32_MAX;
     Expect(db::validation::CheckedSpanBytes(0, 20, &spanBytes) && spanBytes == 0, "zero span size");

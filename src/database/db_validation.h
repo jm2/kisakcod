@@ -1582,6 +1582,45 @@ inline bool ExactArrayBoundaryPosition(
         == baseAddress + static_cast<std::uintptr_t>(position) * elementBytes;
 }
 
+template <typename Element>
+inline bool SerializedArrayElementIndex(
+    const Element *base,
+    std::uint64_t count,
+    std::uint32_t serializedStride,
+    const Element *candidate,
+    std::uint64_t *index)
+{
+    if (index)
+        *index = 0;
+    if (!index || !base || !candidate || count == 0
+        || serializedStride == 0)
+    {
+        return false;
+    }
+
+    const std::uintptr_t baseAddress =
+        reinterpret_cast<std::uintptr_t>(base);
+    const std::uintptr_t candidateAddress =
+        reinterpret_cast<std::uintptr_t>(candidate);
+    const std::uintptr_t elementBytes = serializedStride;
+    const std::uintptr_t maximumAddress =
+        (std::numeric_limits<std::uintptr_t>::max)();
+    if (count > (maximumAddress - baseAddress) / elementBytes)
+        return false;
+
+    const std::uintptr_t endAddress = baseAddress
+        + static_cast<std::uintptr_t>(count) * elementBytes;
+    if (candidateAddress < baseAddress || candidateAddress >= endAddress)
+        return false;
+
+    const std::uintptr_t relativeAddress = candidateAddress - baseAddress;
+    if (relativeAddress % elementBytes != 0)
+        return false;
+
+    *index = relativeAddress / elementBytes;
+    return true;
+}
+
 constexpr bool ClipMapBrushAdjacencySlotValid(
     std::int64_t offset,
     std::uint32_t count,
@@ -1837,6 +1876,345 @@ inline bool ClipMapBrushGraphValid(const ClipMap &map)
     }
     return consumedSides == brushSideCount
         && consumedEdges == brushEdgeCount;
+}
+
+constexpr std::uint32_t kMaxGfxWorldCells = 1024;
+constexpr std::uint32_t kMinGfxPortalVertices = 3;
+constexpr std::uint32_t kMaxGfxPortalVertices = 64;
+constexpr std::uint32_t kMinGfxReflectionProbes = 1;
+constexpr std::uint32_t kMaxGfxReflectionProbes = 254;
+
+constexpr bool GfxReflectionProbeCountValid(std::uint64_t count)
+{
+    return count >= kMinGfxReflectionProbes
+        && count <= kMaxGfxReflectionProbes;
+}
+
+constexpr bool GfxWorldCellBitsValid(
+    std::int64_t cellCount,
+    std::int64_t cellBitsBytes)
+{
+    return CountInRange(cellCount, 1, kMaxGfxWorldCells)
+        && cellBitsBytes == 16 * ((cellCount + 127) / 128);
+}
+
+constexpr bool GfxWorldCellLayoutValid(
+    bool hasCells,
+    std::int64_t cellCount,
+    std::int32_t *cellBytes)
+{
+    if (cellBytes)
+        *cellBytes = 0;
+    if (!cellBytes || !hasCells
+        || !CountInRange(cellCount, 1, kMaxGfxWorldCells))
+    {
+        return false;
+    }
+
+    return CheckedArrayBytes(
+        static_cast<std::int32_t>(cellCount),
+        disk32::kGfxCellBytes,
+        cellBytes);
+}
+
+struct GfxCellLayoutExtents
+{
+    std::int32_t aabbTreeBytes = 0;
+    std::int32_t portalBytes = 0;
+    std::int32_t cullGroupBytes = 0;
+    std::int32_t reflectionProbeBytes = 0;
+};
+
+inline bool GfxCellLayoutValid(
+    const float *mins,
+    const float *maxs,
+    bool hasAabbTree,
+    std::int64_t aabbTreeCount,
+    bool hasPortals,
+    std::int64_t portalCount,
+    bool hasCullGroups,
+    std::int64_t cullGroupCount,
+    bool hasReflectionProbes,
+    std::uint64_t reflectionProbeCount,
+    GfxCellLayoutExtents *extents)
+{
+    if (!extents)
+        return false;
+    *extents = {};
+
+    const std::int64_t maximumCount =
+        (std::numeric_limits<std::int32_t>::max)();
+    if (!FiniteFloatArray(mins, 3)
+        || !FiniteFloatArray(maxs, 3)
+        || aabbTreeCount < 1 || aabbTreeCount > maximumCount
+        || portalCount < 0 || portalCount > maximumCount
+        || cullGroupCount < 0 || cullGroupCount > maximumCount
+        || !GfxReflectionProbeCountValid(reflectionProbeCount)
+        || hasAabbTree != (aabbTreeCount != 0)
+        || hasPortals != (portalCount != 0)
+        || hasCullGroups != (cullGroupCount != 0)
+        || hasReflectionProbes != (reflectionProbeCount != 0))
+    {
+        return false;
+    }
+
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        if (mins[axis] > maxs[axis])
+            return false;
+    }
+
+    return CheckedArrayBytes(
+            static_cast<std::int32_t>(aabbTreeCount),
+            disk32::kGfxAabbTreeBytes,
+            &extents->aabbTreeBytes)
+        && CheckedArrayBytes(
+            static_cast<std::int32_t>(portalCount),
+            disk32::kGfxPortalBytes,
+            &extents->portalBytes)
+        && CheckedArrayBytes(
+            static_cast<std::int32_t>(cullGroupCount),
+            4,
+            &extents->cullGroupBytes)
+        && CheckedArrayBytes(
+            static_cast<std::int32_t>(reflectionProbeCount),
+            1,
+            &extents->reflectionProbeBytes);
+}
+
+template <typename Cell>
+inline bool GfxCellLayoutValid(
+    const Cell &cell,
+    GfxCellLayoutExtents *extents)
+{
+    return GfxCellLayoutValid(
+        cell.mins,
+        cell.maxs,
+        cell.aabbTree != nullptr,
+        static_cast<std::int64_t>(cell.aabbTreeCount),
+        cell.portals != nullptr,
+        static_cast<std::int64_t>(cell.portalCount),
+        cell.cullGroups != nullptr,
+        static_cast<std::int64_t>(cell.cullGroupCount),
+        cell.reflectionProbes != nullptr,
+        static_cast<std::uint64_t>(cell.reflectionProbeCount),
+        extents);
+}
+
+template <typename Portal>
+inline bool GfxPortalRuntimeValid(const Portal &portal)
+{
+    const std::int64_t vertexCount = portal.vertexCount;
+    if (!portal.cell || !portal.vertices
+        || !CountInRange(
+            vertexCount,
+            kMinGfxPortalVertices,
+            kMaxGfxPortalVertices)
+        || !FiniteFloatArray(portal.plane.coeffs, 4)
+        || (portal.plane.coeffs[0] == 0.0f
+            && portal.plane.coeffs[1] == 0.0f
+            && portal.plane.coeffs[2] == 0.0f)
+        || !FiniteFloatArray(&portal.hullAxis[0][0], 6))
+    {
+        return false;
+    }
+
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        const std::uint32_t expectedSide = axis * 4
+            + (portal.plane.coeffs[axis] > 0.0f ? 12 : 0);
+        if (static_cast<std::uint32_t>(portal.plane.side[axis])
+            != expectedSide)
+        {
+            return false;
+        }
+    }
+
+    for (std::uint32_t vertexIndex = 0;
+        vertexIndex < static_cast<std::uint32_t>(vertexCount);
+        ++vertexIndex)
+    {
+        if (!FiniteFloatArray(portal.vertices[vertexIndex], 3))
+            return false;
+    }
+    return true;
+}
+
+template <typename ReflectionProbe>
+inline bool GfxReflectionProbeRuntimeValid(
+    const ReflectionProbe &probe)
+{
+    return FiniteFloatArray(probe.origin, 3)
+        && probe.reflectionImage != nullptr;
+}
+
+template <typename CullGroup>
+inline bool GfxCullGroupRuntimeValid(
+    const CullGroup &group,
+    std::uint64_t sortedSurfaceCount)
+{
+    if (!FiniteFloatArray(group.mins, 3)
+        || !FiniteFloatArray(group.maxs, 3))
+    {
+        return false;
+    }
+    for (std::uint32_t axis = 0; axis < 3; ++axis)
+    {
+        if (group.mins[axis] > group.maxs[axis])
+            return false;
+    }
+
+    const std::int64_t surfaceCount = group.surfaceCount;
+    const std::int64_t startSurface = group.startSurfIndex;
+    if (surfaceCount < 0)
+        return false;
+    if (surfaceCount == 0)
+        return startSurface == -1;
+    return startSurface >= 0
+        && UnsignedSpanWithinPartition(
+            static_cast<std::uint64_t>(startSurface),
+            static_cast<std::uint64_t>(surfaceCount),
+            0,
+            sortedSurfaceCount);
+}
+
+template <typename World>
+inline bool GfxWorldCellGraphValid(
+    const World &world,
+    std::uint32_t serializedCellStride = disk32::kGfxCellBytes)
+{
+    const std::int64_t cellCount = world.dpvsPlanes.cellCount;
+    std::int32_t cellBytes = 0;
+    if (!GfxWorldCellLayoutValid(
+            world.cells != nullptr,
+            cellCount,
+            &cellBytes)
+        || world.cullGroupCount < 0
+        || (world.dpvs.cullGroups != nullptr)
+            != (world.cullGroupCount != 0)
+        || !GfxReflectionProbeCountValid(world.reflectionProbeCount)
+        || !world.reflectionProbes
+        || !world.reflectionProbeTextures)
+    {
+        return false;
+    }
+
+    const std::uint64_t staticSurfaceCount =
+        static_cast<std::uint64_t>(world.dpvs.staticSurfaceCount);
+    const std::uint64_t staticSurfaceCountNoDecal =
+        static_cast<std::uint64_t>(world.dpvs.staticSurfaceCountNoDecal);
+    const std::uint64_t sortedSurfaceCount = staticSurfaceCount
+        + staticSurfaceCountNoDecal;
+    const std::int64_t worldSurfaceCount =
+        static_cast<std::int64_t>(world.surfaceCount);
+    if (worldSurfaceCount < 0
+        || !WorldAabbSurfacePartitionsValid(
+            staticSurfaceCount,
+            staticSurfaceCountNoDecal,
+            static_cast<std::uint64_t>(worldSurfaceCount))
+        || (world.dpvs.sortedSurfIndex != nullptr)
+            != (sortedSurfaceCount != 0)
+        || sortedSurfaceCount
+            > (std::numeric_limits<std::uint32_t>::max)()
+        || !AllU16Below(
+            world.dpvs.sortedSurfIndex,
+            static_cast<std::uint32_t>(sortedSurfaceCount),
+            static_cast<std::uint32_t>(staticSurfaceCount)))
+    {
+        return false;
+    }
+
+    const std::uint32_t checkedCellCount =
+        static_cast<std::uint32_t>(cellCount);
+    std::uint64_t firstCellIndex = 0;
+    if (!SerializedArrayElementIndex(
+            world.cells,
+            checkedCellCount,
+            serializedCellStride,
+            world.cells,
+            &firstCellIndex)
+        || firstCellIndex != 0)
+    {
+        return false;
+    }
+
+    const std::uint64_t globalCullGroupCount =
+        static_cast<std::uint64_t>(world.cullGroupCount);
+    const std::uint64_t globalReflectionProbeCount =
+        static_cast<std::uint64_t>(world.reflectionProbeCount);
+    for (std::uint64_t probeIndex = 0;
+        probeIndex < globalReflectionProbeCount;
+        ++probeIndex)
+    {
+        if (!GfxReflectionProbeRuntimeValid(
+                world.reflectionProbes[probeIndex]))
+        {
+            return false;
+        }
+    }
+    for (std::uint64_t cullGroupIndex = 0;
+        cullGroupIndex < globalCullGroupCount;
+        ++cullGroupIndex)
+    {
+        if (!GfxCullGroupRuntimeValid(
+                world.dpvs.cullGroups[cullGroupIndex],
+                sortedSurfaceCount))
+        {
+            return false;
+        }
+    }
+    for (std::uint32_t cellIndex = 0;
+        cellIndex < checkedCellCount;
+        ++cellIndex)
+    {
+        const auto &cell = world.cells[cellIndex];
+        GfxCellLayoutExtents extents = {};
+        if (!GfxCellLayoutValid(cell, &extents))
+            return false;
+
+        for (std::int32_t cullIndex = 0;
+            cullIndex < cell.cullGroupCount;
+            ++cullIndex)
+        {
+            const std::int64_t groupIndex = cell.cullGroups[cullIndex];
+            if (groupIndex < 0
+                || static_cast<std::uint64_t>(groupIndex)
+                    >= globalCullGroupCount)
+            {
+                return false;
+            }
+        }
+        for (std::uint32_t probeIndex = 0;
+            probeIndex
+                < static_cast<std::uint32_t>(cell.reflectionProbeCount);
+            ++probeIndex)
+        {
+            if (static_cast<std::uint64_t>(
+                    cell.reflectionProbes[probeIndex])
+                >= globalReflectionProbeCount)
+            {
+                return false;
+            }
+        }
+        for (std::int32_t portalIndex = 0;
+            portalIndex < cell.portalCount;
+            ++portalIndex)
+        {
+            const auto &portal = cell.portals[portalIndex];
+            std::uint64_t targetCellIndex = 0;
+            if (!GfxPortalRuntimeValid(portal)
+                || !SerializedArrayElementIndex(
+                    world.cells,
+                    checkedCellCount,
+                    serializedCellStride,
+                    portal.cell,
+                    &targetCellIndex))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 constexpr std::uint32_t kMaxBrushNonaxialSides = 26;
