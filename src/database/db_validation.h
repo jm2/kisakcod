@@ -607,6 +607,431 @@ constexpr bool AllU16Below(
     return true;
 }
 
+constexpr bool WorldAabbTreePresenceValid(
+    bool hasTree,
+    std::int64_t nodeCount)
+{
+    return nodeCount >= 0
+        && nodeCount <= (std::numeric_limits<std::int32_t>::max)()
+        && hasTree == (nodeCount != 0);
+}
+
+constexpr bool UnsignedSpanWithinPartition(
+    std::uint64_t start,
+    std::uint64_t count,
+    std::uint64_t partitionStart,
+    std::uint64_t partitionCount)
+{
+    if (start < partitionStart)
+        return false;
+    const std::uint64_t relativeStart = start - partitionStart;
+    return relativeStart <= partitionCount
+        && count <= partitionCount - relativeStart;
+}
+
+constexpr bool OptionalUnsignedSpanWithinPartition(
+    std::uint64_t start,
+    std::uint64_t count,
+    std::uint64_t partitionStart,
+    std::uint64_t partitionCount)
+{
+    return count == 0
+        || UnsignedSpanWithinPartition(
+            start,
+            count,
+            partitionStart,
+            partitionCount);
+}
+
+constexpr std::uint32_t kMaxWorldAabbDepth = 64;
+constexpr std::uint64_t kMaxWorldAabbSurfaceEntries =
+    static_cast<std::uint64_t>(
+        (std::numeric_limits<std::uint16_t>::max)()) + 1;
+constexpr std::uint64_t kMaxWorldAabbStaticModels =
+    static_cast<std::uint64_t>(
+        (std::numeric_limits<std::uint16_t>::max)()) + 1;
+
+constexpr bool WorldAabbSurfacePartitionsValid(
+    std::uint64_t staticSurfaceCount,
+    std::uint64_t staticSurfaceCountNoDecal,
+    std::uint64_t worldSurfaceCount)
+{
+    return staticSurfaceCountNoDecal <= staticSurfaceCount
+        && staticSurfaceCount <= worldSurfaceCount
+        && staticSurfaceCount <= kMaxWorldAabbSurfaceEntries
+        && (staticSurfaceCountNoDecal == 0
+            || staticSurfaceCount
+                <= (std::numeric_limits<std::uint16_t>::max)());
+}
+
+inline bool MarkUniqueCoverageSpan(
+    std::uint8_t *coverage,
+    std::uint64_t coverageCount,
+    std::uint64_t start,
+    std::uint64_t count)
+{
+    if (count == 0)
+        return true;
+    if ((!coverage && coverageCount)
+        || !UnsignedSpanWithinPartition(start, count, 0, coverageCount))
+    {
+        return false;
+    }
+    for (std::uint64_t index = start; index < start + count; ++index)
+    {
+        if (coverage[index])
+            return false;
+        coverage[index] = 1;
+    }
+    return true;
+}
+
+inline bool CoverageComplete(
+    const std::uint8_t *coverage,
+    std::uint64_t coverageCount)
+{
+    if (!coverage && coverageCount)
+        return false;
+    for (std::uint64_t index = 0; index < coverageCount; ++index)
+    {
+        if (!coverage[index])
+            return false;
+    }
+    return true;
+}
+
+enum class WorldAabbTopologyStatus : std::uint8_t
+{
+    Ok,
+    InvalidTree,
+    InvalidWorkBuffer,
+    InvalidBounds,
+    InvalidSurfaceRange,
+    InvalidChildSpan,
+    InvalidTopology,
+    DepthLimitExceeded,
+};
+
+constexpr const char *WorldAabbTopologyStatusName(
+    WorldAabbTopologyStatus status)
+{
+    switch (status)
+    {
+    case WorldAabbTopologyStatus::Ok:
+        return "ok";
+    case WorldAabbTopologyStatus::InvalidTree:
+        return "invalid tree pointer/count";
+    case WorldAabbTopologyStatus::InvalidWorkBuffer:
+        return "invalid topology work buffer";
+    case WorldAabbTopologyStatus::InvalidBounds:
+        return "invalid node bounds";
+    case WorldAabbTopologyStatus::InvalidSurfaceRange:
+        return "invalid surface range";
+    case WorldAabbTopologyStatus::InvalidChildSpan:
+        return "invalid child span";
+    case WorldAabbTopologyStatus::InvalidTopology:
+        return "disconnected or multiply-owned node";
+    case WorldAabbTopologyStatus::DepthLimitExceeded:
+        return "tree depth limit exceeded";
+    }
+    return "unknown";
+}
+
+struct ImplicitWorldAabbTraversalFrame
+{
+    std::uint32_t firstChild;
+    std::uint32_t nextChild;
+    std::uint32_t childCount;
+};
+
+template <typename Node>
+inline WorldAabbTopologyStatus ValidateImplicitWorldAabbForest(
+    const Node *nodes,
+    std::int64_t nodeCount,
+    std::uint64_t staticSurfaceCount,
+    std::uint8_t *rootFlags,
+    std::uint64_t rootFlagCapacity)
+{
+    if (nodeCount < 0
+        || nodeCount > (std::numeric_limits<std::int32_t>::max)()
+        || (!nodes && nodeCount))
+    {
+        return WorldAabbTopologyStatus::InvalidTree;
+    }
+    if (nodeCount == 0)
+    {
+        return staticSurfaceCount == 0
+            ? WorldAabbTopologyStatus::Ok
+            : WorldAabbTopologyStatus::InvalidSurfaceRange;
+    }
+    if (staticSurfaceCount > kMaxWorldAabbSurfaceEntries)
+        return WorldAabbTopologyStatus::InvalidSurfaceRange;
+    if (!rootFlags
+        || rootFlagCapacity < static_cast<std::uint64_t>(nodeCount))
+    {
+        return WorldAabbTopologyStatus::InvalidWorkBuffer;
+    }
+
+    const std::uint32_t count = static_cast<std::uint32_t>(nodeCount);
+    for (std::uint32_t index = 0; index < count; ++index)
+        rootFlags[index] = 0;
+
+    ImplicitWorldAabbTraversalFrame stack[kMaxWorldAabbDepth] = {};
+    std::uint64_t leafSurfaceCount = 0;
+    std::uint64_t rootSurfaceEnd = 0;
+    std::uint32_t rootIndex = 0;
+    while (rootIndex < count)
+    {
+        rootFlags[rootIndex] = 1;
+        std::uint32_t nextFreeNode = rootIndex + 1;
+        std::uint32_t nodeIndex = rootIndex;
+        std::uint32_t stackCount = 0;
+        for (;;)
+        {
+            const Node &node = nodes[nodeIndex];
+            if (node.surfaceCount > (std::numeric_limits<std::uint16_t>::max)()
+                || (node.surfaceCount
+                    && (node.firstSurface
+                            > (std::numeric_limits<std::uint16_t>::max)()
+                        || !UnsignedSpanWithinPartition(
+                            node.firstSurface,
+                            node.surfaceCount,
+                            0,
+                            staticSurfaceCount))))
+            {
+                return WorldAabbTopologyStatus::InvalidSurfaceRange;
+            }
+            if (node.childCount > (std::numeric_limits<std::uint16_t>::max)())
+                return WorldAabbTopologyStatus::InvalidChildSpan;
+            if (nodeIndex == rootIndex && node.surfaceCount)
+            {
+                if (node.firstSurface < rootSurfaceEnd)
+                    return WorldAabbTopologyStatus::InvalidSurfaceRange;
+                rootSurfaceEnd = static_cast<std::uint64_t>(node.firstSurface)
+                    + node.surfaceCount;
+            }
+
+            if (node.childCount)
+            {
+                if (stackCount + 2 > kMaxWorldAabbDepth)
+                    return WorldAabbTopologyStatus::DepthLimitExceeded;
+                if (node.childCount > count - nextFreeNode)
+                    return WorldAabbTopologyStatus::InvalidChildSpan;
+
+                std::uint64_t expectedSurface = node.firstSurface;
+                std::uint64_t childSurfaceCount = 0;
+                for (std::uint32_t child = 0;
+                    child < node.childCount;
+                    ++child)
+                {
+                    const Node &childNode = nodes[nextFreeNode + child];
+                    if (childNode.surfaceCount)
+                    {
+                        if (childNode.firstSurface != expectedSurface)
+                            return WorldAabbTopologyStatus::InvalidSurfaceRange;
+                        expectedSurface += childNode.surfaceCount;
+                        childSurfaceCount += childNode.surfaceCount;
+                    }
+                }
+                if (childSurfaceCount != node.surfaceCount)
+                    return WorldAabbTopologyStatus::InvalidSurfaceRange;
+
+                ImplicitWorldAabbTraversalFrame &frame = stack[stackCount++];
+                frame.firstChild = nextFreeNode;
+                frame.nextChild = 1;
+                frame.childCount = node.childCount;
+                nextFreeNode += node.childCount;
+                nodeIndex = frame.firstChild;
+                continue;
+            }
+
+            if (node.surfaceCount
+                > staticSurfaceCount - leafSurfaceCount)
+            {
+                return WorldAabbTopologyStatus::InvalidSurfaceRange;
+            }
+            leafSurfaceCount += node.surfaceCount;
+
+            bool advancedToSibling = false;
+            while (stackCount)
+            {
+                ImplicitWorldAabbTraversalFrame &frame = stack[stackCount - 1];
+                if (frame.nextChild < frame.childCount)
+                {
+                    nodeIndex = frame.firstChild + frame.nextChild++;
+                    advancedToSibling = true;
+                    break;
+                }
+                --stackCount;
+            }
+            if (advancedToSibling)
+                continue;
+
+            rootIndex = nextFreeNode;
+            break;
+        }
+    }
+    if (rootIndex != count)
+        return WorldAabbTopologyStatus::InvalidTopology;
+    return leafSurfaceCount == staticSurfaceCount
+        ? WorldAabbTopologyStatus::Ok
+        : WorldAabbTopologyStatus::InvalidSurfaceRange;
+}
+
+template <typename Node>
+inline WorldAabbTopologyStatus ValidateWorldAabbTopology(
+    const Node *nodes,
+    std::int64_t nodeCount,
+    std::uint64_t staticSurfaceCount,
+    std::uint64_t staticSurfaceCountNoDecal,
+    std::uint8_t *nodeDepths,
+    std::uint64_t nodeDepthCapacity,
+    std::uint32_t maximumDepth = kMaxWorldAabbDepth)
+{
+    if (!WorldAabbTreePresenceValid(nodes != nullptr, nodeCount))
+        return WorldAabbTopologyStatus::InvalidTree;
+    if (nodeCount == 0)
+        return WorldAabbTopologyStatus::Ok;
+    if (!nodeDepths
+        || nodeDepthCapacity < static_cast<std::uint64_t>(nodeCount)
+        || maximumDepth == 0
+        || maximumDepth
+            > (std::numeric_limits<std::uint8_t>::max)() / 2)
+    {
+        return WorldAabbTopologyStatus::InvalidWorkBuffer;
+    }
+
+    const std::uint32_t count = static_cast<std::uint32_t>(nodeCount);
+    for (std::uint32_t index = 0; index < count; ++index)
+        nodeDepths[index] = 0;
+    nodeDepths[0] = 1;
+
+    std::uint64_t edgeCount = 0;
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        if (nodeDepths[index] == 0)
+            return WorldAabbTopologyStatus::InvalidTopology;
+
+        const Node &node = nodes[index];
+        for (std::uint32_t axis = 0; axis < 3; ++axis)
+        {
+            if (!std::isfinite(node.mins[axis])
+                || !std::isfinite(node.maxs[axis]))
+            {
+                return WorldAabbTopologyStatus::InvalidBounds;
+            }
+        }
+
+        if ((node.surfaceCount
+                && !UnsignedSpanWithinPartition(
+                    node.startSurfIndex,
+                    node.surfaceCount,
+                    0,
+                    staticSurfaceCount))
+            || node.surfaceCountNoDecal > node.surfaceCount
+            || (node.surfaceCountNoDecal
+                && !UnsignedSpanWithinPartition(
+                    node.startSurfIndexNoDecal,
+                    node.surfaceCountNoDecal,
+                    staticSurfaceCount,
+                    staticSurfaceCountNoDecal)))
+        {
+            return WorldAabbTopologyStatus::InvalidSurfaceRange;
+        }
+
+        const std::uint32_t childCount = node.childCount;
+        if (!childCount)
+            continue;
+        if (node.childrenOffset <= 0)
+            return WorldAabbTopologyStatus::InvalidChildSpan;
+
+        const std::uint64_t childByteOffset =
+            static_cast<std::uint64_t>(node.childrenOffset);
+        if (childByteOffset % sizeof(Node) != 0)
+            return WorldAabbTopologyStatus::InvalidChildSpan;
+        const std::uint64_t childDelta = childByteOffset / sizeof(Node);
+        if (childDelta == 0 || childDelta > count - index)
+            return WorldAabbTopologyStatus::InvalidChildSpan;
+        const std::uint64_t firstChild = index + childDelta;
+        if (firstChild >= count || childCount > count - firstChild)
+            return WorldAabbTopologyStatus::InvalidChildSpan;
+
+        std::uint64_t expectedSurface = node.startSurfIndex;
+        std::uint64_t expectedNoDecalSurface = node.startSurfIndexNoDecal;
+        std::uint64_t childSurfaceCount = 0;
+        std::uint64_t childNoDecalSurfaceCount = 0;
+        for (std::uint32_t child = 0; child < childCount; ++child)
+        {
+            const Node &childNode = nodes[firstChild + child];
+            if (childNode.surfaceCount)
+            {
+                if (childNode.startSurfIndex != expectedSurface)
+                    return WorldAabbTopologyStatus::InvalidSurfaceRange;
+                expectedSurface += childNode.surfaceCount;
+                childSurfaceCount += childNode.surfaceCount;
+            }
+            if (childNode.surfaceCountNoDecal)
+            {
+                if (childNode.startSurfIndexNoDecal != expectedNoDecalSurface)
+                    return WorldAabbTopologyStatus::InvalidSurfaceRange;
+                expectedNoDecalSurface += childNode.surfaceCountNoDecal;
+                childNoDecalSurfaceCount += childNode.surfaceCountNoDecal;
+            }
+        }
+        if (childSurfaceCount != node.surfaceCount
+            || childNoDecalSurfaceCount != node.surfaceCountNoDecal)
+        {
+            return WorldAabbTopologyStatus::InvalidSurfaceRange;
+        }
+
+        edgeCount += childCount;
+        if (edgeCount >= count)
+            return WorldAabbTopologyStatus::InvalidTopology;
+
+        const std::uint32_t childDepth = nodeDepths[index] + 1;
+        if (childDepth > maximumDepth)
+            return WorldAabbTopologyStatus::DepthLimitExceeded;
+        for (std::uint32_t child = 0; child < childCount; ++child)
+        {
+            const std::uint32_t childIndex =
+                static_cast<std::uint32_t>(firstChild + child);
+            if (nodeDepths[childIndex] != 0)
+                return WorldAabbTopologyStatus::InvalidTopology;
+            nodeDepths[childIndex] = static_cast<std::uint8_t>(childDepth);
+        }
+    }
+    if (edgeCount != count - 1)
+        return WorldAabbTopologyStatus::InvalidTopology;
+
+    constexpr std::uint8_t kSubtreeHasSpatialContents = UINT8_C(0x80);
+    for (std::uint32_t index = count; index-- > 0;)
+    {
+        const Node &node = nodes[index];
+        bool hasSpatialContents =
+            node.surfaceCount != 0 || node.smodelIndexCount != 0;
+        if (node.childCount)
+        {
+            const std::uint32_t firstChild = index
+                + static_cast<std::uint32_t>(node.childrenOffset / sizeof(Node));
+            for (std::uint32_t child = 0; child < node.childCount; ++child)
+            {
+                hasSpatialContents = hasSpatialContents
+                    || (nodeDepths[firstChild + child]
+                        & kSubtreeHasSpatialContents) != 0;
+            }
+        }
+        if (!hasSpatialContents)
+            continue;
+        for (std::uint32_t axis = 0; axis < 3; ++axis)
+        {
+            if (node.mins[axis] > node.maxs[axis])
+                return WorldAabbTopologyStatus::InvalidBounds;
+        }
+        nodeDepths[index] |= kSubtreeHasSpatialContents;
+    }
+    return WorldAabbTopologyStatus::Ok;
+}
+
 constexpr bool CheckedSpanBytes(
     std::uint64_t count,
     std::uint32_t stride,

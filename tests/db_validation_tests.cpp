@@ -1,5 +1,6 @@
 #include <database/db_validation.h>
 
+#include <array>
 #include <cstdint>
 #include <iostream>
 #include <limits>
@@ -15,6 +16,59 @@ void Expect(bool condition, const char *message)
         std::cerr << "FAIL: " << message << '\n';
         ++failures;
     }
+}
+
+struct TestWorldAabbNode
+{
+    float mins[3] = {};
+    float maxs[3] = {};
+    std::uint16_t childCount = 0;
+    std::uint16_t surfaceCount = 0;
+    std::uint16_t startSurfIndex = 0;
+    std::uint16_t surfaceCountNoDecal = 0;
+    std::uint16_t startSurfIndexNoDecal = 0;
+    std::uint16_t smodelIndexCount = 0;
+    std::int32_t childrenOffset = 0;
+};
+
+struct TestDiskWorldAabbNode
+{
+    std::uint32_t firstSurface = 0;
+    std::uint32_t surfaceCount = 0;
+    std::uint32_t childCount = 0;
+};
+
+template <std::size_t Count>
+void SetTestWorldAabbChildren(
+    std::array<TestWorldAabbNode, Count> *nodes,
+    std::size_t parent,
+    std::size_t firstChild,
+    std::uint16_t childCount)
+{
+    (*nodes)[parent].childCount = childCount;
+    (*nodes)[parent].childrenOffset = static_cast<std::int32_t>(
+        (firstChild - parent) * sizeof(TestWorldAabbNode));
+}
+
+std::array<TestWorldAabbNode, 4> ValidTestWorldAabbTree()
+{
+    std::array<TestWorldAabbNode, 4> nodes = {};
+    nodes[0].surfaceCount = 4;
+    nodes[0].surfaceCountNoDecal = 2;
+    nodes[0].startSurfIndexNoDecal = 4;
+    nodes[1].surfaceCount = 2;
+    nodes[1].surfaceCountNoDecal = 1;
+    nodes[1].startSurfIndexNoDecal = 4;
+    nodes[2].startSurfIndex = 2;
+    nodes[2].surfaceCount = 2;
+    nodes[2].surfaceCountNoDecal = 1;
+    nodes[2].startSurfIndexNoDecal = 5;
+    nodes[3].surfaceCount = 2;
+    nodes[3].surfaceCountNoDecal = 1;
+    nodes[3].startSurfIndexNoDecal = 4;
+    SetTestWorldAabbChildren(&nodes, 0, 1, 2);
+    SetTestWorldAabbChildren(&nodes, 1, 3, 1);
+    return nodes;
 }
 }
 
@@ -41,6 +95,401 @@ int main()
     Expect(
         !db::validation::AssetOutputWriteAllowed(false, 0, 0),
         "count-only asset enumeration performs no output writes");
+
+    Expect(
+        db::validation::WorldAabbTreePresenceValid(false, 0),
+        "empty world AABB tree is represented by a null pointer");
+    Expect(
+        db::validation::WorldAabbTreePresenceValid(true, 1),
+        "nonempty world AABB tree requires a pointer");
+    Expect(
+        !db::validation::WorldAabbTreePresenceValid(false, 1),
+        "missing nonempty world AABB tree rejected");
+    Expect(
+        !db::validation::WorldAabbTreePresenceValid(true, 0),
+        "present zero-node world AABB tree rejected");
+    Expect(
+        db::validation::UnsignedSpanWithinPartition(4, 2, 4, 2),
+        "world AABB surface span may end exactly at its partition limit");
+    Expect(
+        !db::validation::UnsignedSpanWithinPartition(5, 2, 4, 2),
+        "world AABB surface span cannot exceed its partition limit");
+    Expect(
+        db::validation::OptionalUnsignedSpanWithinPartition(65535, 0, 0, 10),
+        "empty brush-model surface span permits its uint16 sentinel start");
+    Expect(
+        db::validation::WorldAabbSurfacePartitionsValid(50000, 40000, 50000),
+        "world AABB no-decal partition may end beyond a uint16 start index");
+    Expect(
+        !db::validation::WorldAabbSurfacePartitionsValid(65537, 0, 65537),
+        "world AABB static partition must have a representable nonempty start");
+    Expect(
+        !db::validation::WorldAabbSurfacePartitionsValid(65536, 1, 65536),
+        "nonempty world AABB no-decal partition requires a uint16 start");
+    std::uint8_t surfaceCoverage[4] = {};
+    Expect(
+        db::validation::MarkUniqueCoverageSpan(surfaceCoverage, 4, 0, 2)
+            && db::validation::MarkUniqueCoverageSpan(surfaceCoverage, 4, 2, 2)
+            && db::validation::CoverageComplete(surfaceCoverage, 4),
+        "disjoint world AABB root spans cover their full partition");
+    surfaceCoverage[0] = 0;
+    surfaceCoverage[1] = 0;
+    surfaceCoverage[2] = 0;
+    surfaceCoverage[3] = 0;
+    Expect(
+        db::validation::MarkUniqueCoverageSpan(surfaceCoverage, 4, 0, 2)
+            && !db::validation::MarkUniqueCoverageSpan(surfaceCoverage, 4, 1, 2),
+        "overlapping world AABB root spans rejected");
+    surfaceCoverage[0] = 0;
+    surfaceCoverage[1] = 0;
+    surfaceCoverage[2] = 0;
+    surfaceCoverage[3] = 0;
+    Expect(
+        db::validation::MarkUniqueCoverageSpan(surfaceCoverage, 4, 1, 3)
+            && !db::validation::CoverageComplete(surfaceCoverage, 4),
+        "gapped world AABB root coverage rejected");
+
+    std::uint8_t aabbDepths[65] = {};
+    const auto validAabbTree = ValidTestWorldAabbTree();
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            validAabbTree.data(),
+            validAabbTree.size(),
+            4,
+            2,
+            aabbDepths,
+            sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::Ok,
+        "valid branched world AABB topology accepted");
+    Expect(
+        db::validation::ValidateWorldAabbTopology<TestWorldAabbNode>(
+            nullptr,
+            0,
+            0,
+            0,
+            nullptr,
+            0)
+            == db::validation::WorldAabbTopologyStatus::Ok,
+        "empty world AABB topology accepted without scratch storage");
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            validAabbTree.data(),
+            validAabbTree.size(),
+            4,
+            2,
+            aabbDepths,
+            3)
+            == db::validation::WorldAabbTopologyStatus::InvalidWorkBuffer,
+        "undersized world AABB topology scratch storage rejected");
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            validAabbTree.data(),
+            validAabbTree.size(),
+            4,
+            2,
+            aabbDepths,
+            sizeof(aabbDepths),
+            128)
+            == db::validation::WorldAabbTopologyStatus::InvalidWorkBuffer,
+        "world AABB depth budget reserves its work-state content bit");
+
+    auto invalidAabbTree = ValidTestWorldAabbTree();
+    invalidAabbTree[0].childrenOffset += 1;
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            invalidAabbTree.data(), 4, 4, 2, aabbDepths, sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::InvalidChildSpan,
+        "misaligned world AABB child offset rejected");
+    invalidAabbTree = ValidTestWorldAabbTree();
+    invalidAabbTree[0].childrenOffset = -static_cast<std::int32_t>(
+        sizeof(TestWorldAabbNode));
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            invalidAabbTree.data(), 4, 4, 2, aabbDepths, sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::InvalidChildSpan,
+        "backward world AABB child offset rejected");
+    invalidAabbTree = ValidTestWorldAabbTree();
+    invalidAabbTree[0].childrenOffset = 4 * sizeof(TestWorldAabbNode);
+    invalidAabbTree[0].childCount = 1;
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            invalidAabbTree.data(), 4, 4, 2, aabbDepths, sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::InvalidChildSpan,
+        "one-past world AABB child block rejected");
+    invalidAabbTree = ValidTestWorldAabbTree();
+    SetTestWorldAabbChildren(&invalidAabbTree, 1, 2, 1);
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            invalidAabbTree.data(), 4, 4, 2, aabbDepths, sizeof(aabbDepths))
+            != db::validation::WorldAabbTopologyStatus::Ok,
+        "multiply-owned world AABB child rejected");
+    invalidAabbTree = ValidTestWorldAabbTree();
+    SetTestWorldAabbChildren(&invalidAabbTree, 0, 2, 1);
+    invalidAabbTree[1].childCount = 0;
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            invalidAabbTree.data(), 4, 4, 2, aabbDepths, sizeof(aabbDepths))
+            != db::validation::WorldAabbTopologyStatus::Ok,
+        "disconnected world AABB node rejected");
+    invalidAabbTree = ValidTestWorldAabbTree();
+    invalidAabbTree[2].startSurfIndex = 0;
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            invalidAabbTree.data(), 4, 4, 2, aabbDepths, sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::InvalidSurfaceRange,
+        "world AABB child surface ranges must partition their parent");
+
+    invalidAabbTree = ValidTestWorldAabbTree();
+    invalidAabbTree[2].startSurfIndex = 3;
+    invalidAabbTree[2].surfaceCount = 2;
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            invalidAabbTree.data(), 4, 4, 2, aabbDepths, sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::InvalidSurfaceRange,
+        "out-of-range world AABB surface span rejected");
+    invalidAabbTree = ValidTestWorldAabbTree();
+    invalidAabbTree[2].startSurfIndexNoDecal = 3;
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            invalidAabbTree.data(), 4, 4, 2, aabbDepths, sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::InvalidSurfaceRange,
+        "world AABB no-decal span outside its partition rejected");
+    invalidAabbTree = ValidTestWorldAabbTree();
+    invalidAabbTree[2].surfaceCountNoDecal = 3;
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            invalidAabbTree.data(), 4, 4, 3, aabbDepths, sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::InvalidSurfaceRange,
+        "world AABB no-decal count cannot exceed its full surface count");
+
+    invalidAabbTree = ValidTestWorldAabbTree();
+    invalidAabbTree[2].mins[0] =
+        (std::numeric_limits<float>::quiet_NaN)();
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            invalidAabbTree.data(), 4, 4, 2, aabbDepths, sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::InvalidBounds,
+        "NaN world AABB bound rejected");
+    invalidAabbTree = ValidTestWorldAabbTree();
+    invalidAabbTree[2].mins[0] = 1.0f;
+    invalidAabbTree[2].maxs[0] = 0.0f;
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            invalidAabbTree.data(), 4, 4, 2, aabbDepths, sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::InvalidBounds,
+        "inverted nonempty world AABB bound rejected");
+    std::array<TestWorldAabbNode, 2> invertedInternalAabb = {};
+    SetTestWorldAabbChildren(&invertedInternalAabb, 0, 1, 1);
+    invertedInternalAabb[0].surfaceCount = 1;
+    invertedInternalAabb[0].mins[0] = 1.0f;
+    invertedInternalAabb[0].maxs[0] = 0.0f;
+    invertedInternalAabb[1].surfaceCount = 1;
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            invertedInternalAabb.data(),
+            invertedInternalAabb.size(),
+            1,
+            0,
+            aabbDepths,
+            sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::InvalidBounds,
+        "inverted world AABB parent with nonempty descendants rejected");
+    invertedInternalAabb[0].surfaceCount = 0;
+    invertedInternalAabb[1].surfaceCount = 0;
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            invertedInternalAabb.data(),
+            invertedInternalAabb.size(),
+            0,
+            0,
+            aabbDepths,
+            sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::Ok,
+        "fully empty world AABB subtree permits sentinel bounds");
+    TestWorldAabbNode emptyAabbLeaf = {};
+    emptyAabbLeaf.mins[0] = 1.0f;
+    emptyAabbLeaf.maxs[0] = 0.0f;
+    emptyAabbLeaf.childrenOffset = INT32_MIN;
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            &emptyAabbLeaf, 1, 0, 0, aabbDepths, sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::Ok,
+        "empty world AABB leaf permits sentinel bounds and ignores its child offset");
+
+    std::array<TestWorldAabbNode, 64> maximumDepthAabb = {};
+    for (std::size_t index = 0; index + 1 < maximumDepthAabb.size(); ++index)
+        SetTestWorldAabbChildren(&maximumDepthAabb, index, index + 1, 1);
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            maximumDepthAabb.data(),
+            maximumDepthAabb.size(),
+            0,
+            0,
+            aabbDepths,
+            sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::Ok,
+        "world AABB topology at the recursion-depth budget accepted");
+    std::array<TestWorldAabbNode, 65> excessiveDepthAabb = {};
+    for (std::size_t index = 0; index + 1 < excessiveDepthAabb.size(); ++index)
+        SetTestWorldAabbChildren(&excessiveDepthAabb, index, index + 1, 1);
+    Expect(
+        db::validation::ValidateWorldAabbTopology(
+            excessiveDepthAabb.data(),
+            excessiveDepthAabb.size(),
+            0,
+            0,
+            aabbDepths,
+            sizeof(aabbDepths))
+            == db::validation::WorldAabbTopologyStatus::DepthLimitExceeded,
+        "world AABB topology beyond the recursion-depth budget rejected");
+
+    std::array<TestDiskWorldAabbNode, 4> validDiskAabbForest = {{
+        {0, 4, 2},
+        {0, 2, 0},
+        {2, 2, 0},
+        {4, 1, 0},
+    }};
+    std::uint8_t diskAabbRoots[65] = {};
+    Expect(
+        db::validation::ValidateImplicitWorldAabbForest(
+            validDiskAabbForest.data(),
+            validDiskAabbForest.size(),
+            5,
+            diskAabbRoots,
+            sizeof(diskAabbRoots))
+            == db::validation::WorldAabbTopologyStatus::Ok
+            && diskAabbRoots[0] == 1
+            && diskAabbRoots[1] == 0
+            && diskAabbRoots[2] == 0
+            && diskAabbRoots[3] == 1,
+        "valid implicit BSP AABB forest identifies exact roots");
+    auto invalidDiskAabbForest = validDiskAabbForest;
+    invalidDiskAabbForest[0].childCount = 4;
+    Expect(
+        db::validation::ValidateImplicitWorldAabbForest(
+            invalidDiskAabbForest.data(),
+            invalidDiskAabbForest.size(),
+            5,
+            diskAabbRoots,
+            sizeof(diskAabbRoots))
+            == db::validation::WorldAabbTopologyStatus::InvalidChildSpan,
+        "implicit BSP AABB child block beyond the lump rejected");
+    invalidDiskAabbForest = validDiskAabbForest;
+    invalidDiskAabbForest[2].firstSurface = 4;
+    Expect(
+        db::validation::ValidateImplicitWorldAabbForest(
+            invalidDiskAabbForest.data(),
+            invalidDiskAabbForest.size(),
+            5,
+            diskAabbRoots,
+            sizeof(diskAabbRoots))
+            == db::validation::WorldAabbTopologyStatus::InvalidSurfaceRange,
+        "implicit BSP AABB surface span beyond the world rejected");
+    invalidDiskAabbForest = validDiskAabbForest;
+    invalidDiskAabbForest[2].firstSurface = 0;
+    Expect(
+        db::validation::ValidateImplicitWorldAabbForest(
+            invalidDiskAabbForest.data(),
+            invalidDiskAabbForest.size(),
+            5,
+            diskAabbRoots,
+            sizeof(diskAabbRoots))
+            == db::validation::WorldAabbTopologyStatus::InvalidSurfaceRange,
+        "implicit BSP AABB child surface ranges must partition their parent");
+    Expect(
+        db::validation::ValidateImplicitWorldAabbForest(
+            validDiskAabbForest.data(),
+            validDiskAabbForest.size(),
+            5,
+            diskAabbRoots,
+            3)
+            == db::validation::WorldAabbTopologyStatus::InvalidWorkBuffer,
+        "implicit BSP AABB root scratch capacity enforced");
+    std::array<TestDiskWorldAabbNode, 2> excessiveLeafReferences = {{
+        {0, 3, 0},
+        {2, 3, 0},
+    }};
+    Expect(
+        db::validation::ValidateImplicitWorldAabbForest(
+            excessiveLeafReferences.data(),
+            excessiveLeafReferences.size(),
+            5,
+            diskAabbRoots,
+            sizeof(diskAabbRoots))
+            == db::validation::WorldAabbTopologyStatus::InvalidSurfaceRange,
+        "implicit BSP AABB aggregate leaf references cannot overflow no-decal output");
+    const std::array<TestDiskWorldAabbNode, 1> excessiveCombinedPartitions = {{
+        {0, UINT32_C(50000), 0},
+    }};
+    Expect(
+        db::validation::ValidateImplicitWorldAabbForest(
+            excessiveCombinedPartitions.data(),
+            excessiveCombinedPartitions.size(),
+            50000,
+            diskAabbRoots,
+            sizeof(diskAabbRoots))
+            == db::validation::WorldAabbTopologyStatus::Ok,
+        "implicit BSP AABB leaves may cover a large representable static partition");
+    const std::array<TestDiskWorldAabbNode, 1> unrepresentableDiskSurfaceCount = {{
+        {0, UINT32_C(65536), 0},
+    }};
+    Expect(
+        db::validation::ValidateImplicitWorldAabbForest(
+            unrepresentableDiskSurfaceCount.data(),
+            unrepresentableDiskSurfaceCount.size(),
+            65536,
+            diskAabbRoots,
+            sizeof(diskAabbRoots))
+            == db::validation::WorldAabbTopologyStatus::InvalidSurfaceRange,
+        "implicit BSP AABB surface counts must fit their uint16 runtime field");
+    const std::array<TestDiskWorldAabbNode, 7> nestedDiskAabbForest = {{
+        {0, 3, 2},
+        {0, 2, 2},
+        {2, 1, 1},
+        {0, 1, 0},
+        {1, 1, 0},
+        {2, 1, 0},
+        {3, 1, 0},
+    }};
+    Expect(
+        db::validation::ValidateImplicitWorldAabbForest(
+            nestedDiskAabbForest.data(),
+            nestedDiskAabbForest.size(),
+            4,
+            diskAabbRoots,
+            sizeof(diskAabbRoots))
+            == db::validation::WorldAabbTopologyStatus::Ok
+            && diskAabbRoots[0] == 1
+            && diskAabbRoots[6] == 1,
+        "implicit BSP AABB traversal returns from descendants to reserved siblings");
+    std::array<TestDiskWorldAabbNode, 64> maximumDepthDiskAabbTree = {};
+    for (std::size_t index = 0;
+        index + 1 < maximumDepthDiskAabbTree.size();
+        ++index)
+    {
+        maximumDepthDiskAabbTree[index].childCount = 1;
+    }
+    Expect(
+        db::validation::ValidateImplicitWorldAabbForest(
+            maximumDepthDiskAabbTree.data(),
+            maximumDepthDiskAabbTree.size(),
+            0,
+            diskAabbRoots,
+            sizeof(diskAabbRoots))
+            == db::validation::WorldAabbTopologyStatus::Ok,
+        "implicit BSP AABB topology at the reconstruction depth budget accepted");
+    std::array<TestDiskWorldAabbNode, 65> deepDiskAabbTree = {};
+    for (std::size_t index = 0; index + 1 < deepDiskAabbTree.size(); ++index)
+        deepDiskAabbTree[index].childCount = 1;
+    Expect(
+        db::validation::ValidateImplicitWorldAabbForest(
+            deepDiskAabbTree.data(),
+            deepDiskAabbTree.size(),
+            0,
+            diskAabbRoots,
+            sizeof(diskAabbRoots))
+            == db::validation::WorldAabbTopologyStatus::DepthLimitExceeded,
+        "implicit BSP AABB reconstruction depth is bounded before recursion");
 
     Expect(db::validation::CanInternString(1), "empty terminated string can be interned");
     Expect(db::validation::CanInternString(65531), "maximum script-memory string can be interned");
