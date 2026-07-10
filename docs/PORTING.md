@@ -722,7 +722,8 @@ non-headless dedi as a Windows-only legacy config.
 
 **L2 — Localized-string assets ride the fast-file path.** `SE_GetString_LoadObj`
 (`stringed_ingame.cpp:15-18`, `IsFastFileLoad()`) loads the `localizedString` asset through the same
-`DB_ConvertOffsetToPointer` 32-bit-zone machinery — add it to the M5 mirror/relocation inventory. The
+`DB_ConvertOffsetToPointerLegacy` 32-bit-zone machinery — it remains in the M5
+mirror/relocation inventory. The
 text `.str` path (`SE_LoadFileData` → `FS_ReadFile`) is bitness-neutral and needs no work.
 
 ---

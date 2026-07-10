@@ -4,6 +4,7 @@
 namespace
 {
 db::relocation::AliasRegistry g_aliasRegistry;
+db::relocation::DirectResolver g_directResolver;
 
 bool DB_GetBlock(uint32_t index, const XBlock **block)
 {
@@ -30,6 +31,18 @@ void __cdecl DB_InitStreams(XZoneMemory *zoneMem)
 {
     int32_t i; // [esp+0h] [ebp-4h]
 
+    // Do not retain relocation state or stream cursors from a prior zone if
+    // validation of the replacement zone fails.
+    g_aliasRegistry.Reset(nullptr, 0);
+    g_directResolver.Reset(nullptr, 0);
+    g_streamZoneMem = nullptr;
+    g_streamPos = nullptr;
+    g_streamPosIndex = 0;
+    g_streamDelayIndex = 0;
+    g_streamPosStackIndex = 0;
+    for (i = 0; i < ARRAY_COUNT(g_streamPosArray); ++i)
+        g_streamPosArray[i] = nullptr;
+
     if (!zoneMem)
     {
         Com_Error(ERR_DROP, "Cannot initialize fast-file streams without zone memory");
@@ -51,6 +64,7 @@ void __cdecl DB_InitStreams(XZoneMemory *zoneMem)
         relocationBlocks[i].size = zoneMem->blocks[i].size;
     }
     g_aliasRegistry.Reset(relocationBlocks, ARRAY_COUNT(relocationBlocks));
+    g_directResolver.Reset(relocationBlocks, ARRAY_COUNT(relocationBlocks));
 
     g_streamZoneMem = zoneMem;
     g_streamPos = zoneMem->blocks[0].data;
@@ -312,4 +326,31 @@ db::relocation::Status __cdecl DB_ResolveInsertedPointer(
     uintptr_t *pointer)
 {
     return g_aliasRegistry.Resolve(token, expectedKind, expectedMetadata, pointer);
+}
+
+db::relocation::Status __cdecl DB_MarkStreamRangeMaterialized(
+    const void *pointer,
+    uint32_t size)
+{
+    if (!pointer)
+        return db::relocation::Status::InvalidArgument;
+
+    return g_directResolver.MarkMaterialized(
+        reinterpret_cast<uintptr_t>(pointer),
+        size);
+}
+
+db::relocation::Status __cdecl DB_ResolveOffsetBytes(
+    disk32::PointerToken token,
+    uint64_t requiredBytes,
+    size_t alignment,
+    db::relocation::BlockMask allowedBlocks,
+    uintptr_t *pointer)
+{
+    return g_directResolver.ResolveBytes(
+        token,
+        requiredBytes,
+        alignment,
+        allowedBlocks,
+        pointer);
 }

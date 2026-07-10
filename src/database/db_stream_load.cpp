@@ -39,6 +39,16 @@ void __cdecl Load_Stream(bool atStreamStart, uint8_t *ptr, int32_t size)
             if (g_streamPosIndex == 1)
             {
                 memset(ptr, 0, size);
+                const db::relocation::Status materialized =
+                    DB_MarkStreamRangeMaterialized(ptr, static_cast<uint32_t>(size));
+                if (materialized != db::relocation::Status::Ok)
+                {
+                    Com_Error(
+                        ERR_DROP,
+                        "Cannot record zero-filled fast-file range: %s",
+                        db::relocation::StatusName(materialized));
+                    return;
+                }
             }
             else
             {
@@ -92,6 +102,7 @@ void __cdecl Load_DelayStream()
         }
         DB_LoadXFileData((unsigned char*)g_streamDelayArray[index].ptr, g_streamDelayArray[index].size);
     }
+    g_streamDelayIndex = 0;
 }
 
 void __cdecl DB_ConvertOffsetToAlias(
@@ -131,10 +142,56 @@ void __cdecl DB_ConvertOffsetToAlias(
     std::memcpy(data, &narrowed, sizeof(narrowed));
 }
 
-void __cdecl DB_ConvertOffsetToPointer(uint32_t *data)
+void __cdecl DB_ConvertOffsetToPointer(
+    uint32_t *data,
+    uint64_t requiredBytes,
+    size_t alignment,
+    db::relocation::BlockMask allowedBlocks)
+{
+    if (!data)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file pointer offset");
+        return;
+    }
+
+    uint32_t tokenValue = 0;
+    std::memcpy(&tokenValue, data, sizeof(tokenValue));
+    uintptr_t pointer = 0;
+    // A non-null serialized pointer must still identify one materialized byte
+    // when its associated element count is zero. This preserves the legacy
+    // converter's minimum token bound and rejects one-past-end/padding targets.
+    const uint64_t resolvedBytes = requiredBytes ? requiredBytes : 1;
+    const db::relocation::Status status = DB_ResolveOffsetBytes(
+        {tokenValue},
+        resolvedBytes,
+        alignment,
+        allowedBlocks,
+        &pointer);
+    if (status != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid fast-file pointer offset: %s",
+            db::relocation::StatusName(status));
+        return;
+    }
+    if (pointer > UINT32_MAX)
+    {
+        Com_Error(ERR_DROP, "Fast-file pointer does not fit the 32-bit runtime");
+        return;
+    }
+
+    const uint32_t narrowed = static_cast<uint32_t>(pointer);
+    std::memcpy(data, &narrowed, sizeof(narrowed));
+}
+
+void __cdecl DB_ConvertOffsetToPointerLegacy(uint32_t *data)
 {
     disk32::DecodedOffset decoded{};
-    if (!data || !g_streamZoneMem || !DB_DecodeOffset(*data, 1, &decoded))
+    uint32_t tokenValue = 0;
+    if (data)
+        std::memcpy(&tokenValue, data, sizeof(tokenValue));
+    if (!data || !g_streamZoneMem || !DB_DecodeOffset(tokenValue, 1, &decoded))
     {
         Com_Error(ERR_DROP, "Invalid fast-file pointer offset");
         return;
@@ -152,7 +209,8 @@ void __cdecl DB_ConvertOffsetToPointer(uint32_t *data)
         Com_Error(ERR_DROP, "Fast-file pointer does not fit the 32-bit runtime");
         return;
     }
-    *data = static_cast<uint32_t>(pointer);
+    const uint32_t narrowed = static_cast<uint32_t>(pointer);
+    std::memcpy(data, &narrowed, sizeof(narrowed));
 }
 
 void __cdecl Load_XStringCustom(char **str)

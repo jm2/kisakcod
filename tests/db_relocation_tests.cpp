@@ -9,7 +9,10 @@ namespace
 using db::relocation::AliasHandle;
 using db::relocation::AliasKind;
 using db::relocation::AliasRegistry;
+using db::relocation::BlockBit;
+using db::relocation::BlockMask;
 using db::relocation::BlockView;
+using db::relocation::DirectResolver;
 using db::relocation::Status;
 
 int failures = 0;
@@ -52,10 +55,274 @@ void FillBlocks(BlockView (&blocks)[db::relocation::kBlockCount])
         blocks[i].size = 0x100;
     }
 }
+
+void TestDirectResolver()
+{
+    BlockView blocks[db::relocation::kBlockCount];
+    FillBlocks(blocks);
+
+    DirectResolver resolver;
+    std::uintptr_t address = Address(0x55);
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 0), 4, 4, BlockBit(4), &address),
+        Status::InvalidContext,
+        "direct resolve before reset");
+    Expect(address == 0, "failed direct resolve clears output");
+
+    resolver.Reset(blocks, db::relocation::kBlockCount);
+    ExpectStatus(
+        resolver.MarkMaterialized(blocks[4].base, 16),
+        Status::Ok,
+        "mark first direct range");
+    ExpectStatus(
+        resolver.MarkMaterialized(blocks[4].base + 16, 8),
+        Status::Ok,
+        "coalesce adjacent direct range");
+    ExpectStatus(
+        resolver.MarkMaterialized(blocks[4].base + 32, 8),
+        Status::Ok,
+        "mark direct range after alignment gap");
+    ExpectStatus(
+        resolver.MarkMaterialized(blocks[4].base + 4, 4),
+        Status::Ok,
+        "contained direct range is idempotent");
+    ExpectStatus(
+        resolver.MarkMaterialized(blocks[4].base + 48, 8),
+        Status::Ok,
+        "mark second separated range");
+    ExpectStatus(
+        resolver.MarkMaterialized(blocks[4].base + 40, 8),
+        Status::Ok,
+        "bridge separated direct ranges");
+
+    std::uint32_t contiguous = 0;
+    ExpectStatus(
+        resolver.ContiguousMaterializedBytes(4, 0, &contiguous),
+        Status::Ok,
+        "query coalesced materialized range");
+    Expect(contiguous == 24, "adjacent materialized ranges coalesce");
+    ExpectStatus(
+        resolver.ContiguousMaterializedBytes(4, 32, &contiguous),
+        Status::Ok,
+        "query bridged materialized range");
+    Expect(contiguous == 24, "bridging mark coalesces both neighbors");
+    ExpectStatus(
+        resolver.ContiguousMaterializedBytes(4, 24, &contiguous),
+        Status::UnmaterializedRange,
+        "alignment hole remains unmaterialized");
+
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 4), 8, 4, BlockBit(4), &address),
+        Status::Ok,
+        "resolve complete materialized byte span");
+    Expect(address == blocks[4].base + 4, "direct byte address resolved exactly");
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 4), 8, 4, BlockBit(4), nullptr),
+        Status::InvalidArgument,
+        "null direct output rejected");
+    ExpectStatus(
+        resolver.ResolveArray(Token(4, 0), 3, 4, 4, BlockBit(4), &address),
+        Status::Ok,
+        "resolve materialized array span");
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 20), 8, 4, BlockBit(4), &address),
+        Status::UnmaterializedRange,
+        "span crossing materialization gap rejected");
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 24), 1, 1, BlockBit(4), &address),
+        Status::UnmaterializedRange,
+        "alignment padding rejected");
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 2), 1, 4, BlockBit(4), &address),
+        Status::MisalignedAddress,
+        "misaligned direct address rejected");
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 0), 4, 4, BlockBit(7), &address),
+        Status::WrongBlock,
+        "direct block policy enforced");
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 0), 4, 0, BlockBit(4), &address),
+        Status::InvalidAlignment,
+        "zero direct alignment rejected");
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 0), 4, 3, BlockBit(4), &address),
+        Status::InvalidAlignment,
+        "non-power-of-two alignment rejected");
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 0), 4, 4, 0, &address),
+        Status::InvalidBlockMask,
+        "empty direct block mask rejected");
+    ExpectStatus(
+        resolver.ResolveBytes(
+            Token(4, 0),
+            4,
+            4,
+            static_cast<BlockMask>(BlockBit(4) | BlockBit(12)),
+            &address),
+        Status::InvalidBlockMask,
+        "out-of-domain block mask rejected");
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 0), UINT64_C(0x100000000), 4, BlockBit(4), &address),
+        Status::SizeOverflow,
+        "direct byte span wider than disk block rejected");
+    ExpectStatus(
+        resolver.ResolveArray(
+            Token(4, 0),
+            (std::numeric_limits<std::uint64_t>::max)(),
+            2,
+            4,
+            BlockBit(4),
+            &address),
+        Status::SizeOverflow,
+        "direct array multiplication overflow rejected");
+    ExpectStatus(
+        resolver.ResolveArray(Token(4, 0), 1, 0, 4, BlockBit(4), &address),
+        Status::InvalidArgument,
+        "zero direct element size rejected");
+    ExpectStatus(
+        resolver.ResolveBytes({0}, 1, 1, BlockBit(4), &address),
+        Status::InvalidToken,
+        "null direct token rejected");
+    Expect(address == 0, "later failed direct resolve clears successful output");
+    ExpectStatus(
+        resolver.ResolveBytes(Token(9, 0), 1, 1, db::relocation::kAllBlocks, &address),
+        Status::InvalidToken,
+        "out-of-domain direct token rejected");
+    ExpectStatus(
+        resolver.ResolveBytes(
+            Token(4, blocks[4].size),
+            0,
+            1,
+            BlockBit(4),
+            &address),
+        Status::Ok,
+        "zero direct span accepted at block end");
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, blocks[4].size), 1, 1, BlockBit(4), &address),
+        Status::OutOfRange,
+        "nonempty direct span rejected at block end");
+
+    resolver.Reset(blocks, db::relocation::kBlockCount);
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 0), 1, 1, BlockBit(4), &address),
+        Status::UnmaterializedRange,
+        "reset clears materialized ranges");
+    ExpectStatus(
+        resolver.MarkMaterialized(Address(0x70000000), 4),
+        Status::OutOfRange,
+        "non-zone materialization ignored by core");
+    contiguous = UINT32_MAX;
+    ExpectStatus(
+        resolver.ContiguousMaterializedBytes(4, 0, nullptr),
+        Status::InvalidArgument,
+        "null contiguous-range output rejected");
+    ExpectStatus(
+        resolver.ContiguousMaterializedBytes(4, blocks[4].size + 1, &contiguous),
+        Status::OutOfRange,
+        "out-of-range contiguous query rejected");
+    Expect(contiguous == 0, "failed contiguous query clears output");
+
+    DirectResolver limited(1);
+    limited.Reset(blocks, db::relocation::kBlockCount);
+    ExpectStatus(
+        limited.MarkMaterialized(blocks[4].base, 1),
+        Status::Ok,
+        "fill direct interval budget");
+    ExpectStatus(
+        limited.MarkMaterialized(blocks[7].base, 1),
+        Status::CapacityExceeded,
+        "fragmented direct interval budget enforced across blocks");
+    ExpectStatus(
+        limited.MarkMaterialized(blocks[4].base + 1, 1),
+        Status::Ok,
+        "adjacent range can coalesce at interval capacity");
+
+    DirectResolver reclaimed(2);
+    reclaimed.Reset(blocks, db::relocation::kBlockCount);
+    ExpectStatus(
+        reclaimed.MarkMaterialized(blocks[4].base, 1),
+        Status::Ok,
+        "mark first reclaimable interval");
+    ExpectStatus(
+        reclaimed.MarkMaterialized(blocks[4].base + 2, 1),
+        Status::Ok,
+        "mark second reclaimable interval");
+    ExpectStatus(
+        reclaimed.MarkMaterialized(blocks[4].base + 1, 1),
+        Status::Ok,
+        "bridge reclaims an interval-budget slot");
+    ExpectStatus(
+        reclaimed.MarkMaterialized(blocks[7].base, 1),
+        Status::Ok,
+        "reclaimed interval-budget slot can be reused");
+    ExpectStatus(
+        reclaimed.MarkMaterialized(blocks[8].base, 1),
+        Status::CapacityExceeded,
+        "capacity failure preserves bounded interval state");
+    ExpectStatus(
+        reclaimed.ResolveBytes(Token(4, 0), 3, 1, BlockBit(4), &address),
+        Status::Ok,
+        "capacity failure preserves existing materialized intervals");
+
+    DirectResolver prepended;
+    prepended.Reset(blocks, db::relocation::kBlockCount);
+    ExpectStatus(
+        prepended.MarkMaterialized(blocks[4].base + 16, 8),
+        Status::Ok,
+        "mark later interval before earlier data");
+    ExpectStatus(
+        prepended.MarkMaterialized(blocks[4].base, 8),
+        Status::Ok,
+        "prepend an out-of-order interval");
+    ExpectStatus(
+        prepended.MarkMaterialized(blocks[4].base + 8, 8),
+        Status::Ok,
+        "bridge prepended and later intervals");
+    ExpectStatus(
+        prepended.ContiguousMaterializedBytes(4, 0, &contiguous),
+        Status::Ok,
+        "query out-of-order coalesced interval");
+    Expect(contiguous == 24, "out-of-order interval insertion remains sorted");
+
+    BlockView unloaded[db::relocation::kBlockCount];
+    FillBlocks(unloaded);
+    unloaded[7].base = 0;
+    resolver.Reset(unloaded, db::relocation::kBlockCount);
+    ExpectStatus(
+        resolver.ResolveBytes(Token(7, 0), 1, 1, BlockBit(7), &address),
+        Status::UnloadedBlock,
+        "unloaded direct block rejected");
+
+    BlockView overflow[db::relocation::kBlockCount];
+    FillBlocks(overflow);
+    overflow[4].base = (std::numeric_limits<std::uintptr_t>::max)() - 3;
+    overflow[4].size = 8;
+    resolver.Reset(overflow, db::relocation::kBlockCount);
+    ExpectStatus(
+        resolver.MarkMaterialized(overflow[4].base, 8),
+        Status::OutOfRange,
+        "native-wrapping materialized range rejected");
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 4), 1, 1, BlockBit(4), &address),
+        Status::OutOfRange,
+        "native direct address overflow rejected");
+    ExpectStatus(
+        resolver.ResolveBytes(Token(4, 0), 8, 1, BlockBit(4), &address),
+        Status::OutOfRange,
+        "native direct span end overflow rejected");
+
+    resolver.Reset(nullptr, 0);
+    ExpectStatus(
+        resolver.MarkMaterialized(blocks[4].base, 1),
+        Status::InvalidContext,
+        "materialization rejects invalid reset context");
+}
 }
 
 int main()
 {
+    TestDirectResolver();
+
     BlockView blocks[db::relocation::kBlockCount];
     FillBlocks(blocks);
 

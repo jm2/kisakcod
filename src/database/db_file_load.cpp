@@ -290,6 +290,19 @@ void __cdecl DB_LoadXFileData(uint8_t *pos, uint32_t size)
             return;
         }
     }
+
+    const db::relocation::Status materialized =
+        DB_MarkStreamRangeMaterialized(pos, size);
+    if (materialized != db::relocation::Status::Ok
+        && materialized != db::relocation::Status::InvalidContext
+        && materialized != db::relocation::Status::OutOfRange)
+    {
+        DB_CancelLoadXFile();
+        Com_Error(
+            ERR_DROP,
+            "Cannot record fast-file output range: %s",
+            db::relocation::StatusName(materialized));
+    }
 }
 
 void DB_ReadXFileStage()

@@ -10,12 +10,243 @@ namespace
 {
 bool SpanContains(const BlockView &block, std::uintptr_t address, std::uint32_t size)
 {
-    if (!block.base || address < block.base)
+    if (!block.base || address < block.base
+        || size > (std::numeric_limits<std::uintptr_t>::max)() - address)
         return false;
 
     const std::uintptr_t offset = address - block.base;
     return offset <= block.size && size <= block.size - offset;
 }
+}
+
+DirectResolver::DirectResolver(std::size_t maxIntervals)
+    : maxIntervals_(maxIntervals)
+{
+}
+
+void DirectResolver::Reset(const BlockView *blocks, std::size_t blockCount)
+{
+    contextValid_ = blocks && blockCount == kBlockCount;
+    for (std::size_t i = 0; i < kBlockCount; ++i)
+    {
+        blocks_[i].view = contextValid_ ? blocks[i] : BlockView{};
+        blocks_[i].materialized.clear();
+    }
+    intervalCount_ = 0;
+}
+
+Status DirectResolver::MarkMaterialized(std::uintptr_t address, std::uint32_t size)
+{
+    if (!contextValid_)
+        return Status::InvalidContext;
+
+    std::uint32_t blockIndex = 0;
+    for (; blockIndex < kBlockCount; ++blockIndex)
+    {
+        if (SpanContains(blocks_[blockIndex].view, address, size))
+            break;
+    }
+    if (blockIndex == kBlockCount)
+        return Status::OutOfRange;
+    if (!size)
+        return Status::Ok;
+
+    const std::uint32_t begin = static_cast<std::uint32_t>(
+        address - blocks_[blockIndex].view.base);
+    const std::uint32_t end = begin + size;
+    std::vector<Interval> &intervals = blocks_[blockIndex].materialized;
+
+    auto first = std::lower_bound(
+        intervals.begin(),
+        intervals.end(),
+        begin,
+        [](const Interval &interval, std::uint32_t value)
+        {
+            return interval.end < value;
+        });
+    std::uint32_t mergedBegin = begin;
+    std::uint32_t mergedEnd = end;
+    auto last = first;
+    while (last != intervals.end() && last->begin <= mergedEnd)
+    {
+        mergedBegin = std::min(mergedBegin, last->begin);
+        mergedEnd = std::max(mergedEnd, last->end);
+        ++last;
+    }
+
+    if (first != last)
+    {
+        const std::size_t mergedCount = static_cast<std::size_t>(last - first);
+        first->begin = mergedBegin;
+        first->end = mergedEnd;
+        intervals.erase(first + 1, last);
+        intervalCount_ -= mergedCount - 1;
+        return Status::Ok;
+    }
+    if (intervalCount_ >= maxIntervals_)
+        return Status::CapacityExceeded;
+
+    try
+    {
+        intervals.insert(first, {mergedBegin, mergedEnd});
+    }
+    catch (const std::bad_alloc &)
+    {
+        return Status::CapacityExceeded;
+    }
+    catch (const std::length_error &)
+    {
+        return Status::CapacityExceeded;
+    }
+    ++intervalCount_;
+    return Status::Ok;
+}
+
+bool DirectResolver::ContainsMaterialized(
+    std::uint32_t block,
+    std::uint32_t offset,
+    std::uint32_t size) const
+{
+    if (!size)
+        return true;
+
+    const std::vector<Interval> &intervals = blocks_[block].materialized;
+    const auto after = std::upper_bound(
+        intervals.begin(),
+        intervals.end(),
+        offset,
+        [](std::uint32_t value, const Interval &interval)
+        {
+            return value < interval.begin;
+        });
+    if (after == intervals.begin())
+        return false;
+
+    const Interval &candidate = *(after - 1);
+    return offset >= candidate.begin
+        && offset <= candidate.end
+        && size <= candidate.end - offset;
+}
+
+Status DirectResolver::ResolveBytes(
+    disk32::PointerToken token,
+    std::uint64_t byteCount,
+    std::size_t alignment,
+    BlockMask allowedBlocks,
+    std::uintptr_t *address) const
+{
+    if (address)
+        *address = 0;
+    if (!address)
+        return Status::InvalidArgument;
+    if (!contextValid_)
+        return Status::InvalidContext;
+    if (!alignment || (alignment & (alignment - 1)))
+        return Status::InvalidAlignment;
+    const BlockMask invalidBlocks = static_cast<BlockMask>(
+        allowedBlocks & static_cast<BlockMask>(~kAllBlocks));
+    if (!allowedBlocks || invalidBlocks)
+        return Status::InvalidBlockMask;
+    if (!token.isOffset())
+        return Status::InvalidToken;
+
+    const std::uint32_t adjusted = token.value - 1;
+    const std::uint32_t blockIndex = adjusted >> 28;
+    if (blockIndex >= kBlockCount)
+        return Status::InvalidToken;
+    if (!(allowedBlocks & BlockBit(blockIndex)))
+        return Status::WrongBlock;
+    if (byteCount > (std::numeric_limits<std::uint32_t>::max)())
+        return Status::SizeOverflow;
+
+    std::uint32_t blockSizes[kBlockCount];
+    for (std::size_t i = 0; i < kBlockCount; ++i)
+        blockSizes[i] = blocks_[i].view.size;
+
+    disk32::DecodedOffset decoded{};
+    if (!disk32::DecodeOffset(
+            token,
+            blockSizes,
+            kBlockCount,
+            static_cast<std::uint32_t>(byteCount),
+            &decoded))
+    {
+        return Status::OutOfRange;
+    }
+
+    const BlockView &block = blocks_[decoded.block].view;
+    if (!block.base)
+        return Status::UnloadedBlock;
+    if (decoded.offset > (std::numeric_limits<std::uintptr_t>::max)() - block.base)
+        return Status::OutOfRange;
+
+    const std::uintptr_t resolved = block.base + decoded.offset;
+    if (byteCount > (std::numeric_limits<std::uintptr_t>::max)() - resolved)
+        return Status::OutOfRange;
+    if (resolved & (alignment - 1))
+        return Status::MisalignedAddress;
+    if (!ContainsMaterialized(
+            decoded.block,
+            decoded.offset,
+            static_cast<std::uint32_t>(byteCount)))
+    {
+        return Status::UnmaterializedRange;
+    }
+
+    *address = resolved;
+    return Status::Ok;
+}
+
+Status DirectResolver::ResolveArray(
+    disk32::PointerToken token,
+    std::uint64_t count,
+    std::uint64_t elementSize,
+    std::size_t alignment,
+    BlockMask allowedBlocks,
+    std::uintptr_t *address) const
+{
+    if (address)
+        *address = 0;
+    if (!elementSize)
+        return Status::InvalidArgument;
+    if (count > (std::numeric_limits<std::uint64_t>::max)() / elementSize)
+        return Status::SizeOverflow;
+
+    return ResolveBytes(token, count * elementSize, alignment, allowedBlocks, address);
+}
+
+Status DirectResolver::ContiguousMaterializedBytes(
+    std::uint32_t block,
+    std::uint32_t offset,
+    std::uint32_t *bytes) const
+{
+    if (bytes)
+        *bytes = 0;
+    if (!bytes)
+        return Status::InvalidArgument;
+    if (!contextValid_)
+        return Status::InvalidContext;
+    if (block >= kBlockCount || offset > blocks_[block].view.size)
+        return Status::OutOfRange;
+
+    const std::vector<Interval> &intervals = blocks_[block].materialized;
+    const auto after = std::upper_bound(
+        intervals.begin(),
+        intervals.end(),
+        offset,
+        [](std::uint32_t value, const Interval &interval)
+        {
+            return value < interval.begin;
+        });
+    if (after == intervals.begin())
+        return Status::UnmaterializedRange;
+
+    const Interval &candidate = *(after - 1);
+    if (offset < candidate.begin || offset >= candidate.end)
+        return Status::UnmaterializedRange;
+
+    *bytes = candidate.end - offset;
+    return Status::Ok;
 }
 
 AliasRegistry::AliasRegistry(std::size_t maxRecords)
@@ -230,6 +461,11 @@ const char *StatusName(Status status)
     case Status::UnregisteredSlot: return "unregistered slot";
     case Status::PendingSlot: return "pending slot";
     case Status::MetadataMismatch: return "metadata mismatch";
+    case Status::InvalidAlignment: return "invalid alignment";
+    case Status::InvalidBlockMask: return "invalid block mask";
+    case Status::SizeOverflow: return "size overflow";
+    case Status::MisalignedAddress: return "misaligned address";
+    case Status::UnmaterializedRange: return "unmaterialized range";
     }
     return "unknown";
 }

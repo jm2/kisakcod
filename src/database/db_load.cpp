@@ -22,6 +22,29 @@
 
 namespace
 {
+constexpr db::relocation::BlockMask kDirectBlock4 = db::relocation::BlockBit(4);
+constexpr db::relocation::BlockMask kDirectBlock7 = db::relocation::BlockBit(7);
+constexpr db::relocation::BlockMask kDirectBlock8 = db::relocation::BlockBit(8);
+
+uint32_t DB_CheckedDirectSpanBytes(
+    int64_t count,
+    uint32_t stride,
+    const char *description)
+{
+    uint32_t result = 0;
+    if (count < 0
+        || !db::validation::CheckedSpanBytes(
+            static_cast<uint64_t>(count),
+            stride,
+            &result)
+        || result > INT32_MAX)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file direct span for %s", description);
+        return 0;
+    }
+    return result;
+}
+
 int32_t DB_CheckedCountSum(int64_t left, int64_t right, const char *description)
 {
     int32_t result = 0;
@@ -615,7 +638,7 @@ void __cdecl Load_TempString(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varTempString);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varTempString);
         }
     }
 }
@@ -648,7 +671,7 @@ void __cdecl Load_XString(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varXString);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varXString);
         }
     }
 }
@@ -681,7 +704,7 @@ void __cdecl Load_XStringPtr(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varXStringPtr);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varXStringPtr);
         }
     }
 }
@@ -1355,7 +1378,7 @@ void __cdecl Load_snd_alias_t(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varsnd_alias_t->soundFile);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varsnd_alias_t->soundFile);
         }
     }
     varSndCurvePtr = &varsnd_alias_t->volumeFalloffCurve;
@@ -1370,7 +1393,7 @@ void __cdecl Load_snd_alias_t(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varsnd_alias_t->speakerMap);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varsnd_alias_t->speakerMap);
         }
     }
 }
@@ -1406,7 +1429,7 @@ void __cdecl Load_snd_alias_list_t(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varsnd_alias_list_t->head);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varsnd_alias_list_t->head);
         }
     }
     DB_PopStreamPos();
@@ -1647,7 +1670,7 @@ void __cdecl Load_XRigidVertList(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varXRigidVertList->collisionTree);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varXRigidVertList->collisionTree);
         }
     }
 }
@@ -1704,7 +1727,7 @@ void __cdecl Load_XSurfaceVertexInfo(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varXSurfaceVertexInfo->vertsBlend);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varXSurfaceVertexInfo->vertsBlend);
         }
     }
 }
@@ -1730,6 +1753,18 @@ void __cdecl Load_XZoneHandle(bool atStreamStart)
 void __cdecl Load_XSurface(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (unsigned char*)varXSurface, 56);
+    const uint32_t vertexByteCount = DB_CheckedDirectSpanBytes(
+        varXSurface->vertCount,
+        32,
+        "surface vertices");
+    const int32_t indexCount = DB_CheckedCountProduct(
+        3,
+        varXSurface->triCount,
+        "surface triangle indices");
+    const uint32_t indexByteCount = DB_CheckedDirectSpanBytes(
+        indexCount,
+        2,
+        "surface triangle index bytes");
     varXZoneHandle = &varXSurface->zoneHandle;
     Load_XZoneHandle(0);
     varXSurfaceVertexInfo = &varXSurface->vertInfo;
@@ -1745,7 +1780,11 @@ void __cdecl Load_XSurface(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varXSurface->verts0);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varXSurface->verts0,
+                vertexByteCount,
+                16,
+                kDirectBlock7);
         }
     }
     DB_PopStreamPos();
@@ -1759,7 +1798,7 @@ void __cdecl Load_XSurface(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varXSurface->vertList);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varXSurface->vertList);
         }
     }
     DB_PushStreamPos(8);
@@ -1769,13 +1808,15 @@ void __cdecl Load_XSurface(bool atStreamStart)
         {
             varXSurface->triIndices = (uint16_t *)AllocLoad_GfxPackedVertex0();
             varr_index16_t = varXSurface->triIndices;
-            const int32_t indexCount = DB_CheckedCountProduct(
-                3, varXSurface->triCount, "surface triangle indices");
             Load_r_index16_tArray(1, indexCount);
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varXSurface->triIndices);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varXSurface->triIndices,
+                indexByteCount,
+                16,
+                kDirectBlock8);
         }
     }
     DB_PopStreamPos();
@@ -2012,7 +2053,7 @@ void __cdecl Load_MaterialVertexShaderPtr(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varMaterialVertexShaderPtr);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varMaterialVertexShaderPtr);
         }
     }
 }
@@ -2039,7 +2080,7 @@ void __cdecl Load_MaterialPixelShaderPtr(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varMaterialPixelShaderPtr);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varMaterialPixelShaderPtr);
         }
     }
 }
@@ -2070,7 +2111,7 @@ void __cdecl Load_MaterialArgumentDef(bool atStreamStart)
             }
             else
             {
-                DB_ConvertOffsetToPointer((uint32_t*)varMaterialArgumentDef);
+                DB_ConvertOffsetToPointerLegacy((uint32_t*)varMaterialArgumentDef);
             }
         }
         break;
@@ -2140,7 +2181,7 @@ void __cdecl Load_MaterialPass(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varMaterialPass);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varMaterialPass);
         }
     }
     varMaterialVertexShaderPtr = &varMaterialPass->vertexShader;
@@ -2211,7 +2252,7 @@ void __cdecl Load_MaterialTextureDefInfo(bool atStreamStart)
             }
             else
             {
-                DB_ConvertOffsetToPointer((uint32_t*)varMaterialTextureDefInfo);
+                DB_ConvertOffsetToPointerLegacy((uint32_t*)varMaterialTextureDefInfo);
             }
         }
     }
@@ -2262,7 +2303,7 @@ void __cdecl Load_MaterialTechniquePtr(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varMaterialTechniquePtr);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varMaterialTechniquePtr);
         }
     }
 }
@@ -2347,7 +2388,7 @@ void __cdecl Load_Material(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varMaterial->textureTable);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varMaterial->textureTable);
         }
     }
     if (varMaterial->constantTable)
@@ -2360,7 +2401,7 @@ void __cdecl Load_Material(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varMaterial->constantTable);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varMaterial->constantTable);
         }
     }
     if (varMaterial->stateBitsTable)
@@ -2373,7 +2414,7 @@ void __cdecl Load_Material(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varMaterial->stateBitsTable);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varMaterial->stateBitsTable);
         }
     }
     DB_PopStreamPos();
@@ -2767,7 +2808,7 @@ void __cdecl Load_cbrushside_t(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)(uint32_t*)varcbrushside_t);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)(uint32_t*)varcbrushside_t);
         }
     }
 }
@@ -2836,6 +2877,10 @@ void __cdecl Load_XModelCollSurfArray(bool atStreamStart, int32_t count)
 void __cdecl Load_BrushWrapper(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varBrushWrapper, 80);
+    const uint32_t planeByteCount = DB_CheckedDirectSpanBytes(
+        varBrushWrapper->numsides,
+        20,
+        "physics brush planes");
     if (varBrushWrapper->sides)
     {
         varBrushWrapper->sides = (cbrushside_t *)AllocLoad_FxElemVisStateSample();
@@ -2858,7 +2903,11 @@ void __cdecl Load_BrushWrapper(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varBrushWrapper->planes);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varBrushWrapper->planes,
+                planeByteCount,
+                4,
+                kDirectBlock4);
         }
     }
 }
@@ -2876,7 +2925,7 @@ void __cdecl Load_PhysGeomInfo(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varPhysGeomInfo);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varPhysGeomInfo);
         }
     }
 }
@@ -2918,6 +2967,26 @@ void __cdecl Load_XModel(bool atStreamStart)
         4,
         nonRootBoneCount,
         "model non-root transforms");
+    const uint32_t parentListByteCount = DB_CheckedDirectSpanBytes(
+        nonRootBoneCount,
+        1,
+        "model parent list");
+    const uint32_t quatByteCount = DB_CheckedDirectSpanBytes(
+        nonRootTransformCount,
+        2,
+        "model quaternions");
+    const uint32_t translationByteCount = DB_CheckedDirectSpanBytes(
+        nonRootTransformCount,
+        4,
+        "model translations");
+    const uint32_t classificationByteCount = DB_CheckedDirectSpanBytes(
+        varXModel->numBones,
+        1,
+        "model part classifications");
+    const uint32_t baseMatByteCount = DB_CheckedDirectSpanBytes(
+        varXModel->numBones,
+        32,
+        "model base matrices");
     DB_PushStreamPos(4);
     varXString = &varXModel->name;
     Load_XString(0);
@@ -2931,7 +3000,7 @@ void __cdecl Load_XModel(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varXModel->boneNames);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varXModel->boneNames);
         }
     }
     if (varXModel->parentList)
@@ -2944,7 +3013,11 @@ void __cdecl Load_XModel(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varXModel->parentList);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varXModel->parentList,
+                parentListByteCount,
+                1,
+                kDirectBlock4);
         }
     }
     if (varXModel->quats)
@@ -2957,7 +3030,11 @@ void __cdecl Load_XModel(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varXModel->quats);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varXModel->quats,
+                quatByteCount,
+                2,
+                kDirectBlock4);
         }
     }
     if (varXModel->trans)
@@ -2970,7 +3047,11 @@ void __cdecl Load_XModel(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varXModel->trans);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varXModel->trans,
+                translationByteCount,
+                4,
+                kDirectBlock4);
         }
     }
     if (varXModel->partClassification)
@@ -2983,7 +3064,11 @@ void __cdecl Load_XModel(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varXModel->partClassification);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varXModel->partClassification,
+                classificationByteCount,
+                1,
+                kDirectBlock4);
         }
     }
     if (varXModel->baseMat)
@@ -2996,7 +3081,11 @@ void __cdecl Load_XModel(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varXModel->baseMat);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varXModel->baseMat,
+                baseMatByteCount,
+                4,
+                kDirectBlock4);
         }
     }
     if (varXModel->surfs)
@@ -3035,7 +3124,7 @@ void __cdecl Load_XModel(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varXModel->physGeoms);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varXModel->physGeoms);
         }
     }
     DB_PopStreamPos();
@@ -3140,7 +3229,7 @@ void __cdecl Load_XModelPiecesPtr(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varXModelPiecesPtr);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varXModelPiecesPtr);
         }
     }
 }
@@ -3300,7 +3389,7 @@ void __cdecl Load_pathnode_tree_ptr(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varpathnode_tree_ptr);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varpathnode_tree_ptr);
         }
     }
 }
@@ -4113,7 +4202,7 @@ void __cdecl Load_cNode_t(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varcNode_t);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varcNode_t);
         }
     }
 }
@@ -4151,7 +4240,7 @@ void __cdecl Load_cLeafBrushNodeLeaf_t(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varcLeafBrushNodeLeaf_t);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varcLeafBrushNodeLeaf_t);
         }
     }
 }
@@ -4223,7 +4312,7 @@ void __cdecl Load_CollisionPartition(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varCollisionPartition->borders);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varCollisionPartition->borders);
         }
     }
 }
@@ -4266,7 +4355,7 @@ void __cdecl Load_cbrush_t(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varcbrush_t->sides);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varcbrush_t->sides);
         }
     }
     if (varcbrush_t->baseAdjacentSide)
@@ -4279,7 +4368,7 @@ void __cdecl Load_cbrush_t(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varcbrush_t->baseAdjacentSide);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varcbrush_t->baseAdjacentSide);
         }
     }
 }
@@ -4324,6 +4413,10 @@ void __cdecl Load_clipMap_t(bool atStreamStart)
         varclipMap_t->numClusters,
         varclipMap_t->clusterBytes,
         "clipmap visibility");
+    const uint32_t planeByteCount = DB_CheckedDirectSpanBytes(
+        varclipMap_t->planeCount,
+        20,
+        "clipmap planes");
     DB_PushStreamPos(4);
     varXString = &varclipMap_t->name;
     Load_XString(0);
@@ -4337,7 +4430,11 @@ void __cdecl Load_clipMap_t(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varclipMap_t->planes);
+            DB_ConvertOffsetToPointer(
+                (uint32_t*)&varclipMap_t->planes,
+                planeByteCount,
+                4,
+                kDirectBlock4);
         }
     }
     if (varclipMap_t->staticModelList)
@@ -4460,7 +4557,7 @@ void __cdecl Load_clipMap_t(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varclipMap_t->box_brush);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varclipMap_t->box_brush);
         }
     }
     if (varclipMap_t->dynEntDefList[0])
@@ -5562,7 +5659,7 @@ void __cdecl Load_WeaponDef(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varWeaponDef->bounceSound);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varWeaponDef->bounceSound);
         }
     }
     varFxEffectDefHandle = &varWeaponDef->viewShellEjectEffect;
@@ -5635,7 +5732,7 @@ void __cdecl Load_WeaponDef(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varWeaponDef->accuracyGraphKnots);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varWeaponDef->accuracyGraphKnots);
         }
     }
     if (varWeaponDef->originalAccuracyGraphKnots[0])
@@ -5648,7 +5745,7 @@ void __cdecl Load_WeaponDef(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varWeaponDef->originalAccuracyGraphKnots);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varWeaponDef->originalAccuracyGraphKnots);
         }
     }
     varXString = &varWeaponDef->accuracyGraphName[1];
@@ -5663,7 +5760,7 @@ void __cdecl Load_WeaponDef(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varWeaponDef->accuracyGraphKnots[1]);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varWeaponDef->accuracyGraphKnots[1]);
         }
     }
     if (varWeaponDef->originalAccuracyGraphKnots[1])
@@ -5676,7 +5773,7 @@ void __cdecl Load_WeaponDef(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varWeaponDef->originalAccuracyGraphKnots[1]);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varWeaponDef->originalAccuracyGraphKnots[1]);
         }
     }
     varXString = &varWeaponDef->szUseHintString;
@@ -5996,7 +6093,7 @@ void __cdecl Load_StringTablePtr(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)varStringTablePtr);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)varStringTablePtr);
         }
     }
 }
@@ -6134,7 +6231,7 @@ void __cdecl Load_GfxAabbTree(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varGfxAabbTree->smodelIndexes);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varGfxAabbTree->smodelIndexes);
         }
     }
 }
@@ -6211,7 +6308,7 @@ void __cdecl Load_GfxPortal(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varGfxPortal->cell);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varGfxPortal->cell);
         }
     }
     if (varGfxPortal->vertices)
@@ -6682,7 +6779,7 @@ void __cdecl Load_GfxWorldDpvsPlanes(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varGfxWorldDpvsPlanes->planes);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varGfxWorldDpvsPlanes->planes);
         }
     }
     if (varGfxWorldDpvsPlanes->nodes)
@@ -6779,7 +6876,7 @@ void __cdecl Load_GfxWorld(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varGfxWorld->sunLight);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varGfxWorld->sunLight);
         }
     }
     if (varGfxWorld->reflectionProbes)
@@ -7060,7 +7157,7 @@ void __cdecl Load_Font(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointer((uint32_t*)&varFont->glyphs);
+            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varFont->glyphs);
         }
     }
     DB_PopStreamPos();

@@ -5,6 +5,21 @@
 
 namespace db::validation
 {
+constexpr bool CheckedSpanBytes(
+    std::uint64_t count,
+    std::uint32_t stride,
+    std::uint32_t *bytes)
+{
+    if (!bytes || !stride
+        || count > (std::numeric_limits<std::uint32_t>::max)() / stride)
+    {
+        return false;
+    }
+
+    *bytes = static_cast<std::uint32_t>(count * stride);
+    return true;
+}
+
 constexpr bool CheckedArrayBytes(std::int32_t count, std::uint32_t stride, std::int32_t *bytes)
 {
     if (!bytes || count < 0 || !stride)

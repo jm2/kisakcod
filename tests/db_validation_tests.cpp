@@ -20,6 +20,16 @@ void Expect(bool condition, const char *message)
 
 int main()
 {
+    std::uint32_t spanBytes = UINT32_MAX;
+    Expect(db::validation::CheckedSpanBytes(0, 20, &spanBytes) && spanBytes == 0, "zero span size");
+    Expect(db::validation::CheckedSpanBytes(12, 20, &spanBytes) && spanBytes == 240, "direct span size");
+    Expect(db::validation::CheckedSpanBytes(UINT64_C(214748364), 20, &spanBytes)
+        && spanBytes == UINT32_C(4294967280), "maximum direct span product");
+    Expect(!db::validation::CheckedSpanBytes(UINT64_C(214748365), 20, &spanBytes), "direct span overflow rejected");
+    Expect(!db::validation::CheckedSpanBytes((std::numeric_limits<std::uint64_t>::max)(), 1, &spanBytes), "oversized direct span count rejected");
+    Expect(!db::validation::CheckedSpanBytes(1, 0, &spanBytes), "zero direct span stride rejected");
+    Expect(!db::validation::CheckedSpanBytes(1, 1, nullptr), "null direct span result rejected");
+
     std::int32_t bytes = -1;
     Expect(db::validation::CheckedArrayBytes(0, 8, &bytes) && bytes == 0, "zero array size");
     Expect(db::validation::CheckedArrayBytes(32768, 8, &bytes) && bytes == 262144, "asset array size");

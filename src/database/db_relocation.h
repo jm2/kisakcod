@@ -11,6 +11,17 @@ namespace db::relocation
 {
 constexpr std::size_t kBlockCount = 9;
 constexpr std::uint32_t kAliasBlock = 4;
+using BlockMask = std::uint16_t;
+
+constexpr BlockMask BlockBit(std::uint32_t block)
+{
+    return block < sizeof(BlockMask) * 8
+        ? static_cast<BlockMask>(BlockMask{1} << block)
+        : BlockMask{0};
+}
+
+constexpr BlockMask kAllBlocks =
+    static_cast<BlockMask>((BlockMask{1} << kBlockCount) - 1);
 
 // Block-4 alias slots are four-byte serialized identities only. Native pointers
 // live in this side table so registering an alias never widens or overwrites the
@@ -74,6 +85,63 @@ enum class Status : std::uint8_t
     UnregisteredSlot,
     PendingSlot,
     MetadataMismatch,
+    InvalidAlignment,
+    InvalidBlockMask,
+    SizeOverflow,
+    MisalignedAddress,
+    UnmaterializedRange,
+};
+
+class DirectResolver
+{
+public:
+    explicit DirectResolver(std::size_t maxIntervals = 1u << 20);
+
+    void Reset(const BlockView *blocks, std::size_t blockCount);
+
+    Status MarkMaterialized(std::uintptr_t address, std::uint32_t size);
+    // Empty spans are vacuously materialized and may resolve at block end.
+    // Callers must continue to pair the returned pointer with the zero count.
+    Status ResolveBytes(
+        disk32::PointerToken token,
+        std::uint64_t byteCount,
+        std::size_t alignment,
+        BlockMask allowedBlocks,
+        std::uintptr_t *address) const;
+    Status ResolveArray(
+        disk32::PointerToken token,
+        std::uint64_t count,
+        std::uint64_t elementSize,
+        std::size_t alignment,
+        BlockMask allowedBlocks,
+        std::uintptr_t *address) const;
+    Status ContiguousMaterializedBytes(
+        std::uint32_t block,
+        std::uint32_t offset,
+        std::uint32_t *bytes) const;
+
+private:
+    struct Interval
+    {
+        std::uint32_t begin;
+        std::uint32_t end;
+    };
+
+    struct BlockState
+    {
+        BlockView view{};
+        std::vector<Interval> materialized;
+    };
+
+    bool ContainsMaterialized(
+        std::uint32_t block,
+        std::uint32_t offset,
+        std::uint32_t size) const;
+
+    BlockState blocks_[kBlockCount];
+    std::size_t maxIntervals_;
+    std::size_t intervalCount_ = 0;
+    bool contextValid_ = false;
 };
 
 class AliasHandle

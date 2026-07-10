@@ -29,6 +29,18 @@ require_source_contains(
     "DB_ResolveInsertedPointer"
     "fast-file aliases must resolve through registered provenance")
 require_source_contains(
+    "database/db_stream_load.cpp"
+    "DB_ResolveOffsetBytes"
+    "migrated direct offsets must resolve through materialized-range provenance")
+require_source_contains(
+    "database/db_stream_load.cpp"
+    "requiredBytes ? requiredBytes : 1"
+    "non-null zero-count direct offsets must still reference materialized storage")
+require_source_contains(
+    "database/db_file_load.cpp"
+    "DB_MarkStreamRangeMaterialized(pos, size)"
+    "successful fast-file output must be recorded as materialized")
+require_source_contains(
     "database/db_file_load.cpp"
     "InterlockedExchange(&g_fileReadBytes, static_cast<LONG>(dwNumberOfBytesTransfered))"
     "asynchronous fast-file reads must preserve the actual completion byte count")
@@ -63,6 +75,16 @@ if (_raw_array_loads)
 endif()
 
 file(READ "${SOURCE_ROOT}/src/database/db_load.cpp" _db_load_source)
+file(STRINGS
+    "${SOURCE_ROOT}/src/database/db_load.cpp"
+    _legacy_direct_offsets
+    REGEX "DB_ConvertOffsetToPointerLegacy")
+list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
+if (NOT _legacy_direct_offset_count EQUAL 41)
+    message(FATAL_ERROR
+        "Expected exactly 41 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Migrations must update this debt gate.")
+endif()
 string(REGEX MATCH
     "(\\*inserted[ \\t]*=|inserted->)"
     _raw_alias_slot_write

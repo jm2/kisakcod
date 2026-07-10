@@ -279,6 +279,15 @@ db::relocation::Status __cdecl DB_ResolveInsertedPointer(
     DBAliasKind expectedKind,
     uint32_t expectedMetadata,
     uintptr_t *pointer);
+db::relocation::Status __cdecl DB_MarkStreamRangeMaterialized(
+    const void *pointer,
+    uint32_t size);
+db::relocation::Status __cdecl DB_ResolveOffsetBytes(
+    disk32::PointerToken token,
+    uint64_t requiredBytes,
+    size_t alignment,
+    db::relocation::BlockMask allowedBlocks,
+    uintptr_t *pointer);
 
 // db_stream_load
 void __cdecl Load_Stream(bool atStreamStart, uint8_t *ptr, int32_t size);
@@ -288,7 +297,12 @@ void __cdecl DB_ConvertOffsetToAlias(
     uint32_t *data,
     DBAliasKind expectedKind,
     uint32_t expectedMetadata = 0);
-void __cdecl DB_ConvertOffsetToPointer(uint32_t *data);
+void __cdecl DB_ConvertOffsetToPointer(
+    uint32_t *data,
+    uint64_t requiredBytes,
+    size_t alignment,
+    db::relocation::BlockMask allowedBlocks);
+void __cdecl DB_ConvertOffsetToPointerLegacy(uint32_t *data);
 void __cdecl Load_XStringCustom(char **str);
 void __cdecl Load_TempStringCustom(char **str);
 
