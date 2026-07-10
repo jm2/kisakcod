@@ -398,6 +398,11 @@ void __cdecl R_UpdateVertexDecl(GfxCmdBufState *state)
     const MaterialPass *pass; // [esp+40h] [ebp-8h]
     const MaterialVertexShader *vertexShader; // [esp+44h] [ebp-4h]
 
+    if (!state || static_cast<uint32_t>(state->prim.vertDeclType) >= VERTDECL_COUNT)
+    {
+        Com_Error(ERR_DROP, "Invalid material vertex declaration type");
+        return;
+    }
     pass = state->pass;
     iassert( pass->vertexDecl );
     vertexShader = pass->vertexShader;

@@ -167,6 +167,94 @@ require_source_contains(
     "bgame/bg_weapons_load_obj.cpp"
     "db::validation::NormalizedGraphKnots("
     "load-object weapon graphs must enforce runtime interpolation invariants")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!Load_MaterialVertexDeclaration(1))
+                return;
+            Load_BuildVertexDecl"
+    "material vertex declarations must validate before D3D construction")
+require_source_contains(
+    "gfx_d3d/r_material.cpp"
+    "db::validation::MaterialVertexRoutingValid"
+    "all material vertex-declaration construction paths must validate routing indices")
+require_source_contains(
+    "gfx_d3d/r_material.cpp"
+    "memset((*mtlVertDecl)->routing.decl, 0"
+    "material vertex declarations must discard serialized runtime handles")
+require_source_contains(
+    "database/db_load.cpp"
+    "uint16_t destinationMask = 0"
+    "material vertex declarations must reject duplicate destination semantics")
+require_source_contains(
+    "database/db_load.cpp"
+    "db::validation::MaterialPassLayoutValid("
+    "material passes must bound serialized argument partitions and custom flags")
+require_source_contains(
+    "database/db_load.cpp"
+    "db::validation::MaterialArgumentShapeValid("
+    "material shader arguments must bound runtime register and source indices")
+require_source_contains(
+    "database/db_load.cpp"
+    "MaterialCodeConstantAllowedInSegment("
+    "material code constants must match their serialized update-frequency partition")
+require_source_contains(
+    "database/db_load.cpp"
+    "MaterialCodeSamplerAllowedInSegment("
+    "material code samplers must match their serialized update-frequency partition")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!DB_ValidateMaterialPassArguments(varMaterialPass, argumentCount))"
+    "material arguments must be validated after their literal fixups")
+require_source_contains(
+    "database/db_load.cpp"
+    "uint32_t vertexRegisterMask = 0"
+    "material arguments must reject overlapping vertex constant registers")
+require_source_contains(
+    "database/db_load.cpp"
+    "uint16_t pixelSamplerMask = 0"
+    "material arguments must reject stored/custom pixel sampler collisions")
+require_source_contains(
+    "database/db_load.cpp"
+    "uint32_t pixelConstantMask[8] = {}"
+    "material arguments must reject overlapping pixel constant registers")
+require_source_contains(
+    "database/db_load.cpp"
+    "CountInRange(varMaterialTechnique->passCount, 1, 4)"
+    "material techniques must fit the four-pass authored/runtime bound")
+require_source_contains(
+    "database/db_load.cpp"
+    "varMaterialTechnique->flags &= UINT16_C(0x3F)"
+    "material techniques must clear the serialized runtime upload bit")
+require_source_contains(
+    "database/db_load.cpp"
+    "varMaterialTechniqueSet->worldVertFormat,
+            0,
+            11"
+    "material world vertex formats must not index past declaration variants")
+require_source_contains(
+    "database/db_load.cpp"
+    "varMaterialTechniqueSet->hasBeenUploaded = false"
+    "material technique sets must not trust serialized upload state")
+require_source_contains(
+    "database/db_load.cpp"
+    "varMaterialTechniqueSet->remappedTechniqueSet = nullptr"
+    "material technique sets must not trust serialized remap pointers")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "consts->count >= ARRAY_COUNT(consts->dest)"
+    "pixel literal collection must enforce its runtime capacity")
+require_source_contains(
+    "gfx_d3d/rb_shade.cpp"
+    "static_cast<uint32_t>(primState->vertDeclType) >= VERTDECL_COUNT"
+    "material binding must bound the runtime vertex declaration type")
+require_source_contains(
+    "gfx_d3d/r_shade.cpp"
+    "static_cast<uint32_t>(state->prim.vertDeclType) >= VERTDECL_COUNT"
+    "material updates must bound the runtime vertex declaration type")
+require_source_contains(
+    "gfx_d3d/rb_uploadshaders.cpp"
+    "static_cast<uint32_t>(vertDeclType) >= VERTDECL_COUNT"
+    "material uploads must bound the runtime vertex declaration type")
 
 file(READ
     "${SOURCE_ROOT}/src/bgame/bg_weapons_load_obj.cpp"
@@ -264,6 +352,48 @@ if (_raw_array_loads)
 endif()
 
 file(READ "${SOURCE_ROOT}/src/database/db_load.cpp" _db_load_source)
+string(FIND
+    "${_db_load_source}"
+    "db::validation::MaterialPassLayoutValid("
+    _material_pass_header_validation)
+string(FIND
+    "${_db_load_source}"
+    "if (varMaterialPass->vertexDecl)"
+    _material_pass_first_child_fixup)
+if (_material_pass_header_validation EQUAL -1
+    OR _material_pass_first_child_fixup EQUAL -1
+    OR _material_pass_header_validation GREATER _material_pass_first_child_fixup)
+    message(FATAL_ERROR
+        "Material pass headers must be validated before child fixups")
+endif()
+string(FIND
+    "${_db_load_source}"
+    "CountInRange(varMaterialTechnique->passCount, 1, 4)"
+    _material_technique_count_validation)
+string(FIND
+    "${_db_load_source}"
+    "Load_MaterialPassArray(1, varMaterialTechnique->passCount)"
+    _material_technique_pass_load)
+if (_material_technique_count_validation EQUAL -1
+    OR _material_technique_pass_load EQUAL -1
+    OR _material_technique_count_validation GREATER _material_technique_pass_load)
+    message(FATAL_ERROR
+        "Material technique pass counts must be validated before array loading")
+endif()
+string(FIND
+    "${_db_load_source}"
+    "Load_MaterialShaderArgumentArray(1, static_cast<int32_t>(argumentCount))"
+    _material_argument_load)
+string(FIND
+    "${_db_load_source}"
+    "if (!DB_ValidateMaterialPassArguments(varMaterialPass, argumentCount))"
+    _material_argument_validation)
+if (_material_argument_load EQUAL -1
+    OR _material_argument_validation EQUAL -1
+    OR _material_argument_load GREATER _material_argument_validation)
+    message(FATAL_ERROR
+        "Material shader arguments must be validated after loading/fixups")
+endif()
 file(STRINGS
     "${SOURCE_ROOT}/src/database/db_load.cpp"
     _legacy_direct_offsets

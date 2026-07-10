@@ -58,6 +58,148 @@ inline bool NormalizedGraphKnots(const float (*knots)[2], std::uint32_t count)
     return true;
 }
 
+constexpr bool MaterialVertexRoutingValid(
+    std::uint32_t source,
+    std::uint32_t destination)
+{
+    return source < 9 && destination < 12;
+}
+
+constexpr bool MaterialVertexRoutingFollows(
+    std::uint32_t previousSource,
+    std::uint32_t previousDestination,
+    std::uint32_t source,
+    std::uint32_t destination)
+{
+    return previousSource < source
+        || (previousSource == source && previousDestination < destination);
+}
+
+constexpr bool MaterialPassLayoutValid(
+    std::uint32_t perPrimitiveCount,
+    std::uint32_t perObjectCount,
+    std::uint32_t stableCount,
+    bool hasArguments,
+    std::uint32_t customSamplerFlags)
+{
+    if (customSamplerFlags & ~UINT32_C(7))
+        return false;
+    if (perPrimitiveCount > 64 || perObjectCount > 64 - perPrimitiveCount)
+        return false;
+    const std::uint32_t firstTwo = perPrimitiveCount + perObjectCount;
+    if (stableCount > 64 - firstTwo)
+        return false;
+    const std::uint32_t argumentCount = firstTwo + stableCount;
+    const std::uint32_t customArgumentCount = (customSamplerFlags & 1)
+        + ((customSamplerFlags >> 1) & 1)
+        + ((customSamplerFlags >> 2) & 1);
+    return argumentCount != 0 && hasArguments
+        && customArgumentCount <= 64 - argumentCount;
+}
+
+enum class MaterialArgumentSegment : std::uint8_t
+{
+    PerPrimitive,
+    PerObject,
+    Stable,
+};
+
+constexpr bool MaterialArgumentTypeAllowedInSegment(
+    std::uint32_t type,
+    MaterialArgumentSegment segment)
+{
+    if (type >= 8)
+        return false;
+    switch (segment)
+    {
+    case MaterialArgumentSegment::PerPrimitive:
+        return type == 3;
+    case MaterialArgumentSegment::PerObject:
+        return type == 3 || type == 4;
+    case MaterialArgumentSegment::Stable:
+        return true;
+    }
+    return false;
+}
+
+constexpr bool MaterialArgumentShapeValid(
+    std::uint32_t type,
+    std::uint32_t destination,
+    std::uint32_t sourceIndex,
+    std::uint32_t firstRow,
+    std::uint32_t rowCount)
+{
+    switch (type)
+    {
+    case 0: // named vertex constant
+    case 1: // literal vertex constant
+        return destination < 32;
+    case 2: // named pixel sampler
+        return destination < 16;
+    case 3: // code vertex constant/matrix
+        if (destination >= 32 || sourceIndex >= 90 || rowCount == 0
+            || rowCount > 32 - destination)
+        {
+            return false;
+        }
+        if (sourceIndex < 58)
+            return firstRow == 0 && rowCount == 1;
+        return firstRow < 4 && rowCount <= 4 - firstRow;
+    case 4: // code pixel sampler
+        return destination < 16 && sourceIndex < 27;
+    case 5: // code pixel constant
+        return destination < 256 && sourceIndex < 51
+            && firstRow == 0 && rowCount == 1;
+    case 6: // named pixel constant
+    case 7: // literal pixel constant
+        return destination < 256;
+    default:
+        return false;
+    }
+}
+
+constexpr bool MaterialCodeConstantAllowedInSegment(
+    std::uint32_t sourceIndex,
+    MaterialArgumentSegment segment)
+{
+    if (sourceIndex >= 90)
+        return false;
+    switch (segment)
+    {
+    case MaterialArgumentSegment::Stable:
+        return sourceIndex <= 50;
+    case MaterialArgumentSegment::PerObject:
+        return (sourceIndex >= 51 && sourceIndex <= 56)
+            || (sourceIndex >= 62 && sourceIndex <= 69)
+            || (sourceIndex >= 74 && sourceIndex <= 77)
+            || (sourceIndex >= 82 && sourceIndex <= 85);
+    case MaterialArgumentSegment::PerPrimitive:
+        return (sourceIndex >= 57 && sourceIndex <= 61)
+            || (sourceIndex >= 70 && sourceIndex <= 73)
+            || (sourceIndex >= 78 && sourceIndex <= 81)
+            || (sourceIndex >= 86 && sourceIndex <= 89);
+    }
+    return false;
+}
+
+constexpr bool MaterialCodeSamplerAllowedInSegment(
+    std::uint32_t sourceIndex,
+    MaterialArgumentSegment segment)
+{
+    if (sourceIndex >= 27 || segment == MaterialArgumentSegment::PerPrimitive)
+        return false;
+    if (segment == MaterialArgumentSegment::PerObject)
+    {
+        return sourceIndex == 9 || sourceIndex == 15 || sourceIndex == 16
+            || (sourceIndex >= 21 && sourceIndex <= 25);
+    }
+    if (segment != MaterialArgumentSegment::Stable)
+        return false;
+    return sourceIndex != 4 && sourceIndex != 5 && sourceIndex != 9
+        && sourceIndex != 15 && sourceIndex != 16
+        && !(sourceIndex >= 21 && sourceIndex <= 26);
+}
+
 constexpr bool AllU16Below(
     const std::uint16_t *values,
     std::uint32_t count,

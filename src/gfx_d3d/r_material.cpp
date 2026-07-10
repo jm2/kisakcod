@@ -5,6 +5,7 @@
 #include <qcommon/mem_track.h>
 #include <qcommon/cmd.h>
 #include <database/database.h>
+#include <database/db_validation.h>
 #include "rb_logfile.h"
 #include "r_utils.h"
 #include "r_dvars.h"
@@ -354,7 +355,38 @@ void __cdecl Load_BuildVertexDecl(MaterialVertexDeclaration **mtlVertDecl)
     MaterialStreamRouting data[16]; // [esp+8h] [ebp-28h] BYREF
     int vertDeclType; // [esp+2Ch] [ebp-4h]
 
-    memcpy(data, &(*mtlVertDecl)->routing, sizeof(data));
+    if (!mtlVertDecl || !*mtlVertDecl
+        || !db::validation::CountInRange((*mtlVertDecl)->streamCount, 1, 12))
+    {
+        Com_Error(ERR_DROP, "Invalid material vertex declaration count");
+        return;
+    }
+
+    uint16_t destinationMask = 0;
+    bool hasOptionalSource = false;
+    for (uint32_t index = 0; index < (*mtlVertDecl)->streamCount; ++index)
+    {
+        const MaterialStreamRouting &routing = (*mtlVertDecl)->routing.data[index];
+        if (!db::validation::MaterialVertexRoutingValid(routing.source, routing.dest)
+            || (destinationMask & (UINT16_C(1) << routing.dest))
+            || (index && !db::validation::MaterialVertexRoutingFollows(
+                (*mtlVertDecl)->routing.data[index - 1].source,
+                (*mtlVertDecl)->routing.data[index - 1].dest,
+                routing.source,
+                routing.dest)))
+        {
+            Com_Error(ERR_DROP, "Invalid material vertex declaration routing");
+            return;
+        }
+        destinationMask = static_cast<uint16_t>(
+            destinationMask | (UINT16_C(1) << routing.dest));
+        hasOptionalSource = hasOptionalSource || routing.source >= 5;
+    }
+
+    memcpy(data, (*mtlVertDecl)->routing.data, sizeof(data));
+    memset((*mtlVertDecl)->routing.decl, 0, sizeof((*mtlVertDecl)->routing.decl));
+    (*mtlVertDecl)->hasOptionalSource = hasOptionalSource;
+    (*mtlVertDecl)->isLoaded = false;
     for (vertDeclType = 0; vertDeclType < 16; ++vertDeclType)
     {
         if (r_loadForRenderer->current.enabled)

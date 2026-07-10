@@ -70,6 +70,12 @@ uint32_t __cdecl RB_UploadMaterialPassVertexDecl(
     void *data,
     uint32_t stride)
 {
+    if (!primState || !vertexDecl
+        || static_cast<uint32_t>(vertDeclType) >= VERTDECL_COUNT)
+    {
+        Com_Error(ERR_DROP, "Invalid material vertex declaration upload type");
+        return 0;
+    }
     if (!vertexDecl->routing.decl[vertDeclType])
         return 0;
     primState->vertDeclType = vertDeclType;

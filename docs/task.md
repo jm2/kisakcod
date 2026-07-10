@@ -8,23 +8,24 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: harden material declarations, techniques, passes, and shader arguments
-  before renderer/D3D consumers use serialized indices. Then validate complete world AABB
-  topology and continue migrating the remaining 28 legacy direct fast-file references.
-- Last completed batch: all four block-4 weapon accuracy-graph references now require
-  matching optional counts of 2 through 16, both working/original pointers for nonempty
-  graphs, and exact aligned `count * 8` spans. Both copies must have normalized finite
-  values, endpoints 0/1, and strictly increasing X coordinates before runtime interpolation.
-  The load-object parser now bounds the 16-knot stack array before writes, accepts exactly
-  16 knots, rejects zero/short/malformed pairs, and uses the same semantic validator.
+- Active work: add exact completed-object provenance for shared material declarations,
+  techniques, shaders, and texture arrays, then run cross-material state/table validation.
+  Complete world AABB topology validation and 28 legacy direct references follow.
+- Last completed batch: material vertex declarations now bound count/routing/order before
+  D3D construction, reject duplicate semantics, clear serialized COM/runtime state, and
+  bound every runtime declaration-type index. Techniques are limited to four complete
+  passes and scrub upload flags. Passes require their declaration/shaders and 1–64 correctly
+  partitioned arguments; argument types, update frequencies, ordering, register spans,
+  source indices, and vertex/pixel/sampler collisions are validated before renderer use.
+  Pixel-literal comparison scratch now safely covers the full authored pass ceiling.
 - Portable validation: 12/12 tests pass locally. The production relocation registry is
   also strict-warning clean under GCC/Clang and GCC ILP32 syntax checking; ASan/UBSan
   pass locally with leak detection disabled because LeakSanitizer cannot run under the
   command-runner ptrace environment. Portable tests do not execute the Windows stream
   adapter or media ownership paths.
-- Windows validation: raw/POD CI run 29066365013 passed x86 Debug, Release, no-Steam,
-  and all five portable target jobs on 2026-07-09. The weapon-graph batch requires its
-  own Windows CI run after push.
+- Windows validation: weapon-graph CI run 29066782612 passed x86 Debug, Release,
+  no-Steam, and all five portable target jobs on 2026-07-09. The material-structure
+  batch requires its own Windows CI run after push.
 
 ## Milestone status
 
@@ -32,7 +33,7 @@ work item changes. Do not create session-specific handoff files.
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 builds; five native utility-test runners; engine runtime smoke and release workflows remain unexercised. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, and an exact 259-site ABI debt ledger exist; engine atomics/platform integration remains. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated derived counts, exact alias/completed-holder provenance, and 22/50 bounded direct references landed; production-path fuzz fixtures and 28 direct relocations remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 22/50 bounded direct references, and pre-use material structure/argument validation landed; production-path fuzz fixtures and 28 direct relocations remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, 19 full-span raw/POD fields, and exact registered direct strings exist; packed mirrors, 28 direct offsets, broader completed-object relocation, and runtime widening remain. |
@@ -51,9 +52,9 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Add pre-use material declaration/pass/argument guards, exact completion provenance,
-   and bounded material table/state semantics; then implement the linear-time world AABB
-   topology validator and resume the 28 raw collision/model/completed-object relocations.
+1. Add exact material declaration/technique/shader completion provenance and bounded
+   material table/state semantics; then implement the linear-time world AABB topology
+   validator and resume the 28 raw collision/model/completed-object relocations.
 2. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
 3. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
 4. Classify and burn down the 255 direct and four formula-based ABI layout assertions.
@@ -64,10 +65,13 @@ work item changes. Do not create session-specific handoff files.
 - Headless source composition is not compile/link-tested and retains 33 allowlisted client/media includes.
 - Fast-file loading lacks a production-path malformed-input test harness and
   completed-object/type provenance for direct offsets.
-- Material loading now proves raw table extents, but vertex declarations are built and
-  shaders can be queued before their serialized routing/count metadata is validated. Add
-  early declaration/technique/pass/argument guards, exact completed-object provenance,
-  and a post-fixup pass for `stateBitsEntry + passCount`, named scans, and destinations.
+- Inline material declarations, techniques, passes, and arguments now receive pre-use
+  structural validation, but shared material references among the 28 remaining legacy
+  offsets can still bypass those checks. Add exact completion provenance, then require
+  sorted texture/constant tables, bounded named-hash membership,
+  `stateBitsEntry + passCount` spans, and safe remapped-technique relationships.
+  Material `cameraRegion`, `sortKey`, and other derived
+  runtime fields also need bounds or recomputation before asset publication.
 - World AABB model indices are bounded, but serialized child offsets/counts, surface
   ranges, acyclic topology, and aggregate validation/runtime work are not. Validate each
   owning cell's complete flat tree before renderer traversal and cache or budget repeated

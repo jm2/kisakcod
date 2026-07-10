@@ -6220,20 +6220,18 @@ void __cdecl R_RegisterShaderConst(uint32_t dest, const float *value, GfxShaderC
 {
     uint32_t sortedIndex; // [esp+4h] [ebp-4h]
 
-    if (consts->count >= 0x10)
-        MyAssertHandler(
-            ".\\r_material_consts.cpp",
-            15,
-            1,
-            "consts->count doesn't index ARRAY_COUNT( consts->dest )\n\t%i not in [0, %i)",
-            consts->count,
-            16);
-    for (sortedIndex = consts->count;
-        sortedIndex && *(&consts->count + sortedIndex + 1) > dest;
-        consts->value[sortedIndex + 1] = consts->value[sortedIndex])
+    if (!consts || !value || consts->count >= ARRAY_COUNT(consts->dest))
     {
-        --sortedIndex;
-        consts->dest[sortedIndex + 1] = consts->dest[sortedIndex];
+        Com_Error(ERR_DROP, "Too many material pixel literal constants");
+        return;
+    }
+
+    for (sortedIndex = consts->count;
+        sortedIndex && consts->dest[sortedIndex - 1] > dest;
+        --sortedIndex)
+    {
+        consts->dest[sortedIndex] = consts->dest[sortedIndex - 1];
+        consts->value[sortedIndex] = consts->value[sortedIndex - 1];
     }
     consts->dest[sortedIndex] = dest;
     consts->value[sortedIndex] = value;

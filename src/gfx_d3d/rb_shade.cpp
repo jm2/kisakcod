@@ -16,6 +16,13 @@ void __cdecl R_SetVertexDecl(GfxCmdBufPrimState *primState, const MaterialVertex
     int hr; // [esp+34h] [ebp-Ch]
     IDirect3DDevice9 *device; // [esp+3Ch] [ebp-4h]
 
+    if (!primState
+        || (vertexDecl
+            && static_cast<uint32_t>(primState->vertDeclType) >= VERTDECL_COUNT))
+    {
+        Com_Error(ERR_DROP, "Invalid material vertex declaration type");
+        return;
+    }
     if (vertexDecl)
         v3 = vertexDecl->routing.decl[primState->vertDeclType];
     else
@@ -295,4 +302,3 @@ void __cdecl RB_TessOverflow()
     RB_BeginSurface(gfxCmdBufState.origMaterial, gfxCmdBufState.origTechType);
     g_primStats = primStats;
 }
-

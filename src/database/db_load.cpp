@@ -107,6 +107,156 @@ bool DB_ValidateWeaponAccuracyGraphKnots(const WeaponDef *weapon, uint32_t graph
     return true;
 }
 
+bool DB_ValidateMaterialVertexDeclaration(const MaterialVertexDeclaration *declaration)
+{
+    if (!declaration
+        || !db::validation::CountInRange(declaration->streamCount, 1, 12))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file material vertex declaration count");
+        return false;
+    }
+
+    uint16_t destinationMask = 0;
+    for (uint32_t index = 0; index < declaration->streamCount; ++index)
+    {
+        const MaterialStreamRouting &routing = declaration->routing.data[index];
+        if (!db::validation::MaterialVertexRoutingValid(routing.source, routing.dest)
+            || (destinationMask & (UINT16_C(1) << routing.dest))
+            || (index && !db::validation::MaterialVertexRoutingFollows(
+                declaration->routing.data[index - 1].source,
+                declaration->routing.data[index - 1].dest,
+                routing.source,
+                routing.dest)))
+        {
+            Com_Error(ERR_DROP, "Invalid fast-file material vertex declaration routing");
+            return false;
+        }
+        destinationMask = static_cast<uint16_t>(
+            destinationMask | (UINT16_C(1) << routing.dest));
+    }
+    return true;
+}
+
+bool DB_ValidateMaterialPassArguments(const MaterialPass *pass, uint32_t argumentCount)
+{
+    const uint32_t perPrimitiveEnd = pass->perPrimArgCount;
+    const uint32_t perObjectEnd = perPrimitiveEnd + pass->perObjArgCount;
+    uint32_t vertexRegisterMask = 0;
+    uint16_t pixelSamplerMask = 0;
+    if (pass->customSamplerFlags & 1)
+        pixelSamplerMask |= UINT16_C(1) << 1;
+    if (pass->customSamplerFlags & 2)
+        pixelSamplerMask |= UINT16_C(1) << 2;
+    if (pass->customSamplerFlags & 4)
+        pixelSamplerMask |= UINT16_C(1) << 3;
+    uint32_t pixelConstantMask[8] = {};
+
+    for (uint32_t index = 0; index < argumentCount; ++index)
+    {
+        const MaterialShaderArgument &argument = pass->args[index];
+        db::validation::MaterialArgumentSegment segment;
+        uint32_t segmentStart = 0;
+        if (index < perPrimitiveEnd)
+        {
+            segment = db::validation::MaterialArgumentSegment::PerPrimitive;
+        }
+        else if (index < perObjectEnd)
+        {
+            segment = db::validation::MaterialArgumentSegment::PerObject;
+            segmentStart = perPrimitiveEnd;
+        }
+        else
+        {
+            segment = db::validation::MaterialArgumentSegment::Stable;
+            segmentStart = perObjectEnd;
+        }
+
+        uint32_t sourceIndex = 0;
+        if (argument.type == 3 || argument.type == 5)
+            sourceIndex = argument.u.codeConst.index;
+        else if (argument.type == 4)
+            sourceIndex = static_cast<uint32_t>(argument.u.codeSampler);
+
+        if (!db::validation::MaterialArgumentTypeAllowedInSegment(argument.type, segment)
+            || !db::validation::MaterialArgumentShapeValid(
+                argument.type,
+                argument.dest,
+                sourceIndex,
+                argument.u.codeConst.firstRow,
+                argument.u.codeConst.rowCount)
+            || (argument.type == 3
+                && !db::validation::MaterialCodeConstantAllowedInSegment(
+                    sourceIndex,
+                    segment))
+            || (argument.type == 4
+                && !db::validation::MaterialCodeSamplerAllowedInSegment(
+                    sourceIndex,
+                    segment))
+            || ((argument.type == 1 || argument.type == 7)
+                && !argument.u.literalConst))
+        {
+            Com_Error(ERR_DROP, "Invalid fast-file material shader argument");
+            return false;
+        }
+
+        if (index > segmentStart)
+        {
+            const MaterialShaderArgument &previous = pass->args[index - 1];
+            if (argument.type < previous.type
+                || (argument.type == previous.type
+                    && ((argument.type == 0 || argument.type == 2 || argument.type == 6)
+                        ? argument.u.nameHash < previous.u.nameHash
+                        : argument.dest < previous.dest)))
+            {
+                Com_Error(ERR_DROP, "Unordered fast-file material shader arguments");
+                return false;
+            }
+        }
+
+        if (argument.type == 0 || argument.type == 1 || argument.type == 3)
+        {
+            const uint32_t registerCount = argument.type == 3
+                ? argument.u.codeConst.rowCount
+                : 1;
+            for (uint32_t row = 0; row < registerCount; ++row)
+            {
+                const uint32_t registerBit = UINT32_C(1) << (argument.dest + row);
+                if (vertexRegisterMask & registerBit)
+                {
+                    Com_Error(ERR_DROP, "Overlapping fast-file material vertex constants");
+                    return false;
+                }
+                vertexRegisterMask |= registerBit;
+            }
+        }
+
+        if (argument.type == 2 || argument.type == 4)
+        {
+            const uint16_t samplerBit = static_cast<uint16_t>(
+                UINT16_C(1) << argument.dest);
+            if (pixelSamplerMask & samplerBit)
+            {
+                Com_Error(ERR_DROP, "Overlapping fast-file material pixel samplers");
+                return false;
+            }
+            pixelSamplerMask |= samplerBit;
+        }
+
+        if (argument.type == 5 || argument.type == 6 || argument.type == 7)
+        {
+            const uint32_t word = argument.dest >> 5;
+            const uint32_t constantBit = UINT32_C(1) << (argument.dest & 31);
+            if (pixelConstantMask[word] & constantBit)
+            {
+                Com_Error(ERR_DROP, "Overlapping fast-file material pixel constants");
+                return false;
+            }
+            pixelConstantMask[word] |= constantBit;
+        }
+    }
+    return true;
+}
+
 int32_t DB_CheckedCountSum(int64_t left, int64_t right, const char *description)
 {
     int32_t result = 0;
@@ -2167,9 +2317,22 @@ void __cdecl Load_MaterialPixelShaderPtr(bool atStreamStart)
     }
 }
 
-void __cdecl Load_MaterialVertexDeclaration(bool atStreamStart)
+bool __cdecl Load_MaterialVertexDeclaration(bool atStreamStart)
 {
     Load_Stream(atStreamStart, &varMaterialVertexDeclaration->streamCount, 100);
+    if (!DB_ValidateMaterialVertexDeclaration(varMaterialVertexDeclaration))
+        return false;
+    varMaterialVertexDeclaration->hasOptionalSource = false;
+    varMaterialVertexDeclaration->isLoaded = false;
+    for (uint32_t index = 0; index < varMaterialVertexDeclaration->streamCount; ++index)
+    {
+        if (varMaterialVertexDeclaration->routing.data[index].source >= 5)
+        {
+            varMaterialVertexDeclaration->hasOptionalSource = true;
+            break;
+        }
+    }
+    return true;
 }
 
 void __cdecl Load_MaterialArgumentCodeConst(bool atStreamStart)
@@ -2258,13 +2421,30 @@ void __cdecl Load_GfxStateBitsArray(bool atStreamStart, int32_t count)
 void __cdecl Load_MaterialPass(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (unsigned char*)varMaterialPass, 20);
+    const uint32_t argumentCount = static_cast<uint32_t>(varMaterialPass->perPrimArgCount)
+        + varMaterialPass->perObjArgCount
+        + varMaterialPass->stableArgCount;
+    if (!varMaterialPass->vertexDecl
+        || !varMaterialPass->vertexShader
+        || !varMaterialPass->pixelShader
+        || !db::validation::MaterialPassLayoutValid(
+            varMaterialPass->perPrimArgCount,
+            varMaterialPass->perObjArgCount,
+            varMaterialPass->stableArgCount,
+            varMaterialPass->args != nullptr,
+            varMaterialPass->customSamplerFlags))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file material pass header");
+        return;
+    }
     if (varMaterialPass->vertexDecl)
     {
         if (varMaterialPass->vertexDecl == (MaterialVertexDeclaration*)-1)
         {
             varMaterialPass->vertexDecl = (MaterialVertexDeclaration*)AllocLoad_FxElemVisStateSample();
             varMaterialVertexDeclaration = varMaterialPass->vertexDecl;
-            Load_MaterialVertexDeclaration(1);
+            if (!Load_MaterialVertexDeclaration(1))
+                return;
             Load_BuildVertexDecl(&varMaterialPass->vertexDecl);
         }
         else
@@ -2280,15 +2460,9 @@ void __cdecl Load_MaterialPass(bool atStreamStart)
     {
         varMaterialPass->args = (MaterialShaderArgument*)AllocLoad_FxElemVisStateSample();
         varMaterialShaderArgument = varMaterialPass->args;
-        const int32_t objectAndPrimitiveArgs = DB_CheckedCountSum(
-            varMaterialPass->perObjArgCount,
-            varMaterialPass->perPrimArgCount,
-            "material arguments");
-        const int32_t argumentCount = DB_CheckedCountSum(
-            varMaterialPass->stableArgCount,
-            objectAndPrimitiveArgs,
-            "material arguments");
-        Load_MaterialShaderArgumentArray(1, argumentCount);
+        Load_MaterialShaderArgumentArray(1, static_cast<int32_t>(argumentCount));
+        if (!DB_ValidateMaterialPassArguments(varMaterialPass, argumentCount))
+            return;
     }
 }
 
@@ -2310,15 +2484,20 @@ void __cdecl Load_MaterialPassArray(bool atStreamStart, int32_t count)
 void __cdecl Load_MaterialTechnique(bool atStreamStart)
 {
     if (!atStreamStart)
-        MyAssertHandler("c:\\trees\\cod3\\src\\database\\../gfx_d3d/r_material_load_db.h", 5470, 0, "%s", "atStreamStart");
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file material technique stream start");
+        return;
+    }
     Load_Stream(1, (uint8_t *)varMaterialTechnique, 8); // 0x2668
-    if (DB_GetStreamPos() != (uint8_t *)varMaterialTechnique->passArray)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\database\\../gfx_d3d/r_material_load_db.h",
-            5472,
-            0,
-            "%s",
-            "DB_GetStreamPos() == reinterpret_cast< byte * >( varMaterialTechnique->passArray )");
+    if (!varMaterialTechnique->name
+        || !db::validation::CountInRange(varMaterialTechnique->passCount, 1, 4)
+        || (varMaterialTechnique->flags & ~UINT16_C(0x803F))
+        || DB_GetStreamPos() != (uint8_t *)varMaterialTechnique->passArray)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file material technique header");
+        return;
+    }
+    varMaterialTechnique->flags &= UINT16_C(0x3F);
     varMaterialPass = (MaterialPass*)&varMaterialTechnique->passArray[0].vertexDecl;
     Load_MaterialPassArray(1, varMaterialTechnique->passCount); // 0x2990
     varXString = &varMaterialTechnique->name;
@@ -2414,6 +2593,17 @@ void __cdecl Load_MaterialTechniquePtrArray(bool atStreamStart, int32_t count)
 void __cdecl Load_MaterialTechniqueSet(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varMaterialTechniqueSet, 148);
+    if (!varMaterialTechniqueSet->name
+        || !db::validation::CountInRange(
+            varMaterialTechniqueSet->worldVertFormat,
+            0,
+            11))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file material technique set header");
+        return;
+    }
+    varMaterialTechniqueSet->hasBeenUploaded = false;
+    varMaterialTechniqueSet->remappedTechniqueSet = nullptr;
     DB_PushStreamPos(4);
     varXString = &varMaterialTechniqueSet->name;
     Load_XString(0);

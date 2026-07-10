@@ -453,7 +453,7 @@ void __cdecl Load_MaterialVertexShader(bool atStreamStart);
 void __cdecl Load_MaterialVertexShaderPtr(bool atStreamStart);
 void __cdecl Load_MaterialPixelShader(bool atStreamStart);
 void __cdecl Load_MaterialPixelShaderPtr(bool atStreamStart);
-void __cdecl Load_MaterialVertexDeclaration(bool atStreamStart);
+bool __cdecl Load_MaterialVertexDeclaration(bool atStreamStart);
 void __cdecl Load_MaterialArgumentCodeConst(bool atStreamStart);
 void __cdecl Load_MaterialArgumentDef(bool atStreamStart);
 void __cdecl Load_MaterialShaderArgument(bool atStreamStart);
