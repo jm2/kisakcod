@@ -601,6 +601,8 @@ void __cdecl Material_ForEachTechniqueSet_FastFile(
 void __cdecl Material_ForEachTechniqueSet(
     void(__cdecl *callback)(MaterialTechniqueSet *),
     bool includeOverride = false);
+void __cdecl Material_ReleaseTechniqueSetResources(
+    MaterialTechniqueSet *techniqueSet);
 bool __cdecl IsValidMaterialHandle(Material* const handle);
 
 //void __cdecl R_GetMaterialList(XAssetHeader header, char *data);
