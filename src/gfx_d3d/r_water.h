@@ -3,6 +3,8 @@
 
 #define HCOUNT 4096
 
+constexpr float kWaterInitialTime = -3.402823466e+38F;
+
 struct WaterGlob // sizeof=0x9000
 {                                       // ...
     complex_s H[4096];
@@ -25,7 +27,7 @@ void __cdecl WaterPixelsFromAmplitudes(GfxColor *pixels, complex_s *H, const wat
 void __cdecl GenerateMipMaps(_D3DFORMAT format, uint8_t *pixels, water_t *water);
 void __cdecl R_UploadWaterTexture(water_t *water, float floatTime);
 void __cdecl R_InitWater();
-void __cdecl Load_PicmipWater(water_t **waterRef);
+bool __cdecl Load_PicmipWater(water_t **waterRef);
 
 // r_water_load_obj
 void __cdecl R_InitLoadWater();

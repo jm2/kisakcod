@@ -67,6 +67,7 @@ enum class AliasKind : std::uint8_t
     MaterialTechnique,
     MaterialVertexShader,
     MaterialPixelShader,
+    MaterialWater,
     Count,
 };
 
@@ -79,6 +80,7 @@ constexpr bool RequiresExactStartPublication(AliasKind kind)
     case AliasKind::MaterialTechnique:
     case AliasKind::MaterialVertexShader:
     case AliasKind::MaterialPixelShader:
+    case AliasKind::MaterialWater:
         return true;
     default:
         return false;

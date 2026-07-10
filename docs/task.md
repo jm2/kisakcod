@@ -8,26 +8,24 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: complete exact provenance for material texture tables and nested water
-  objects, then run bounded cross-material table/state validation. Linear-time world AABB
-  topology validation and the remaining 24 legacy direct references follow.
-- Last completed batch: stage-specific inline vertex and pixel shaders now register their
-  exact aligned block-4 starts before loading and publish only after their fixed 16-byte disk
-  objects, nonempty registered names, and nested programs complete. Load definitions require
-  2–65,535 DWORDs and renderer 0/1; a bounded DX9 token walker checks the expected SM2/SM3
-  stage/model, instruction and comment extents, exact END, and the fully materialized block-4
-  program span before D3D sees it. Serialized COM handles are scrubbed; active creation uses
-  typed outputs, checks HRESULT/non-null results, and releases partial failures, while
-  inactive/headless variants correctly retain null handles. Passes, techniques, and
-  technique sets reject mixed renderer variants, and direct references require exact
-  stage-specific completed starts, kinds, and extents.
+- Active work: complete exact provenance for material texture tables, then run bounded
+  cross-material table/state validation. Linear-time world AABB topology validation and the
+  remaining 23 legacy direct references follow.
+- Last completed batch: nested material water now registers its exact aligned block-4 start
+  before loading and publishes only after its fixed 68-byte disk object, bounded 4–64 square
+  power-of-two grid, finite physical/code constants, fully materialized finite amplitude and
+  nonnegative-frequency arrays, resolved water-image contract, and paired picmip compaction
+  complete. Serialized update time is scrubbed. Runtime upload rejects invalid state and
+  non-finite time without unsafe float-to-integer conversion, raw-material water is
+  deterministically initialized and validated before caching, and failed nested loads now
+  propagate through texture, material, and technique-set loading before asset publication.
 - Portable validation: 12/12 tests pass locally. The production relocation registry is
   also strict-warning clean under GCC/Clang and GCC ILP32 syntax checking; ASan/UBSan
   pass locally with leak detection disabled because LeakSanitizer cannot run under the
   command-runner ptrace environment. Portable tests do not execute the Windows stream
   adapter or media ownership paths.
-- Windows validation: completed-technique CI run 29068580864 passed x86 Debug, Release,
-  no-Steam, and all five portable target jobs on 2026-07-10. The completed-shader batch
+- Windows validation: completed-shader CI run 29069409523 passed x86 Debug, Release,
+  no-Steam, and all five portable target jobs on 2026-07-10. The completed-water batch
   requires its own Windows CI run after push.
 
 ## Milestone status
@@ -36,10 +34,10 @@ work item changes. Do not create session-specific handoff files.
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 builds; five native utility-test runners; engine runtime smoke and release workflows remain unexercised. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, and an exact 259-site ABI debt ledger exist; engine atomics/platform integration remains. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 26/50 bounded direct references, and pre-use material structure/argument validation landed; production-path fuzz fixtures and 24 direct relocations remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 37 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, 27/50 bounded direct references, and pre-use material structure/argument validation landed; production-path fuzz fixtures and 23 direct relocations remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
-| M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, 19 full-span raw/POD fields, exact registered direct strings, and four exact completed material object types exist; packed mirrors, 24 direct offsets, broader completed-object relocation, and runtime widening remain. |
+| M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, 19 full-span raw/POD fields, exact registered direct strings, and five exact completed material object types exist; packed mirrors, 23 direct offsets, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
 ## Target matrix
@@ -55,9 +53,9 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Complete exact provenance for material texture tables and nested water objects; add
-   bounded cross-material table/state semantics, then implement the linear-time world AABB
-   topology validator and resume the remaining 24 raw/completed-object relocations.
+1. Complete exact provenance for material texture tables and add bounded cross-material
+   table/state semantics, then implement the linear-time world AABB topology validator and
+   resume the remaining 23 raw/completed-object relocations.
 2. Add a Windows x86 headless compile/link CI leg and fix its unresolved client-symbol dependencies.
 3. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
 4. Classify and burn down the 255 direct and four formula-based ABI layout assertions.
@@ -70,8 +68,8 @@ work item changes. Do not create session-specific handoff files.
   completed-object/type provenance for direct offsets.
 - Inline material declarations, techniques, passes, and arguments receive pre-use
   structural validation, and shared vertex declarations, techniques, and both shader stages
-  now require exact completed-object provenance. Shared texture arrays among the 24 remaining
-  legacy offsets can still bypass corresponding checks. Add exact completion provenance,
+  and nested water now require exact completed-object provenance. Shared texture arrays among
+  the 23 remaining legacy offsets can still bypass corresponding checks. Add exact completion provenance,
   then require sorted texture/constant tables, bounded named-hash membership,
   `stateBitsEntry + passCount` spans, and safe remapped-technique relationships.
   Material `cameraRegion`, `sortKey`, and other derived
@@ -99,9 +97,9 @@ work item changes. Do not create session-specific handoff files.
 - Weapon registration still protects the 128-entry `bg_weaponDefs` table only with a
   release-disabled assertion after incrementing the index. Single-player's 128-entry
   editable accuracy-graph registry has the same assertion-only overflow pattern.
-- Twenty-four explicitly labeled legacy direct fast-file relocations still prove only
+- Twenty-three explicitly labeled legacy direct fast-file relocations still prove only
   one destination byte is in-bounds. Nineteen raw/POD fields, three string/holder fields,
-  and four completed material object types now enforce bounded materialization or exact typed
+  and five completed material object types now enforce bounded materialization or exact typed
   completion, but broader object/type provenance plus runtime widening remain M5 requirements.
   Already-materialized and registered-start enforcement intentionally rejects
   raw/string/completed-object forward references;

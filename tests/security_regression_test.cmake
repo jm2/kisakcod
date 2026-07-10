@@ -58,6 +58,11 @@ require_source_contains(
     "inline and direct temporary strings must enforce the allocation ceiling")
 require_source_contains(
     "database/db_load.cpp"
+    "varMaterial->textureCount,
+            \"material textures\")"
+    "material textures must reject missing nonempty spans")
+require_source_contains(
+    "database/db_load.cpp"
     "varMaterial->constantCount,
             \"material constants\")"
     "material constants must reject missing nonempty spans")
@@ -390,6 +395,83 @@ require_source_contains(
     "Fast-file material technique set mixes renderer variants"
     "all techniques in a set must target the same renderer")
 require_source_contains(
+    "database/db_load.cpp"
+    "DB_ConvertOffsetToAlias(
+                (uint32_t*)varMaterialTextureDefInfo,
+                DBAliasKind::MaterialWater,
+                disk32::kMaterialWaterBytes)"
+    "shared material water must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "FiniteComplexArray(
+            varwater_t->H0,"
+    "material water amplitudes must be finite")
+require_source_contains(
+    "database/db_load.cpp"
+    "FiniteNonnegativeFloatArray(
+            varwater_t->wTerm,"
+    "material water frequencies must be finite and nonnegative")
+require_source_contains(
+    "database/db_load.cpp"
+    "FiniteFloatArray(water->codeConstant, 4)"
+    "material water code constants must be finite")
+require_source_contains(
+    "gfx_d3d/r_water.cpp"
+    "water->image->width != expectedImageWidth
+        || water->image->height != expectedImageHeight"
+    "loaded material water must target its mode-specific water image dimensions")
+require_source_contains(
+    "gfx_d3d/r_water.cpp"
+    "Com_Error(ERR_DROP, \"Invalid material water image contract\")"
+    "loaded material water image contract failures must reject publication")
+require_source_contains(
+    "database/db_stream.cpp"
+    "case DBAliasKind::MaterialWater:
+        if (metadata != disk32::kMaterialWaterBytes
+            || materializedBytes != disk32::kMaterialWaterBytes)"
+    "completed material water must use its fixed disk32 schema")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "water_t setup = {}"
+    "raw material water must initialize serialized and runtime state")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "(const char*)material + texdef->u.waterDefOffset"
+    "raw material water offsets must use byte arithmetic")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "(const char*)mtlRaw
+                            + textureTableRaw[texIndex].u.waterDefOffset"
+    "raw material construction must use byte offsets for water definitions")
+require_source_contains(
+    "gfx_d3d/r_material_load_obj.cpp"
+    "setup.writable.floatTime = kWaterInitialTime"
+    "raw material water input must initialize runtime time state")
+require_source_contains(
+    "gfx_d3d/r_water_load_obj.cpp"
+    "destination->writable.floatTime = kWaterInitialTime"
+    "cached raw material water must scrub runtime time state")
+require_source_contains(
+    "database/db_load.cpp"
+    "return Load_MaterialTextureDefInfo(0)"
+    "material texture definitions must propagate nested payload failure")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!Load_MaterialTextureDef(0))"
+    "material texture arrays must propagate element failure")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!Load_MaterialTextureDefArray(1, varMaterial->textureCount))"
+    "materials must propagate texture-table failure")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!Load_Material(1))"
+    "material handles must reject failed child graphs before publication")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (varMaterialTextureDefInfo && *varMaterialTextureDefInfo)"
+    "material water marking must test the payload rather than its holder")
+require_source_contains(
     "database/db_validation.h"
     "major != loadForRenderer + 2"
     "material shader bytecode models must match their renderer variant")
@@ -634,6 +716,90 @@ if (_material_pixel_shader_header_load EQUAL -1
 endif()
 string(FIND
     "${_db_load_source}"
+    "DB_RegisterPointerSlot(
+                *varMaterialTextureDefInfo,
+                DBAliasKind::MaterialWater)"
+    _material_water_registration)
+string(FIND
+    "${_db_load_source}"
+    "if (!Load_water_t(1))"
+    _material_water_load)
+string(FIND
+    "${_db_load_source}"
+    "if (!Load_PicmipWater(varMaterialTextureDefInfo))"
+    _material_water_picmip)
+string(FIND
+    "${_db_load_source}"
+    "if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::MaterialWater,
+                    *varMaterialTextureDefInfo,
+                    disk32::kMaterialWaterBytes,
+                    disk32::kMaterialWaterBytes))"
+    _material_water_completion)
+string(FIND
+    "${_db_load_source}"
+    "Load_Stream(
+        1,
+        (uint8_t *)varwater_t,
+        disk32::kMaterialWaterBytes)"
+    _material_water_header_load)
+string(FIND
+    "${_db_load_source}"
+    "varwater_t->writable.floatTime = kWaterInitialTime"
+    _material_water_runtime_scrub)
+string(FIND
+    "${_db_load_source}"
+    "if (!DB_ValidateWaterHeader(varwater_t, &sampleCount))"
+    _material_water_header_validation)
+if (_material_water_registration EQUAL -1
+    OR _material_water_load EQUAL -1
+    OR _material_water_picmip EQUAL -1
+    OR _material_water_completion EQUAL -1
+    OR _material_water_header_load EQUAL -1
+    OR _material_water_runtime_scrub EQUAL -1
+    OR _material_water_header_validation EQUAL -1
+    OR _material_water_registration GREATER _material_water_load
+    OR _material_water_load GREATER _material_water_picmip
+    OR _material_water_picmip GREATER _material_water_completion
+    OR _material_water_header_load GREATER _material_water_runtime_scrub
+    OR _material_water_runtime_scrub GREATER _material_water_header_validation)
+    message(FATAL_ERROR
+        "Material water must scrub runtime state and publish only after validated picmip completion")
+endif()
+file(READ "${SOURCE_ROOT}/src/gfx_d3d/r_water.cpp" _water_runtime_source)
+string(FIND
+    "${_water_runtime_source}"
+    "DownsampleWaterGridInPlace(
+            water->H0,
+            sourceWidth,
+            targetWidth)"
+    _material_water_amplitude_picmip)
+string(FIND
+    "${_water_runtime_source}"
+    "DownsampleWaterGridInPlace(
+            water->wTerm,
+            sourceWidth,
+            targetWidth)"
+    _material_water_frequency_picmip)
+if (_material_water_amplitude_picmip EQUAL -1
+    OR _material_water_frequency_picmip EQUAL -1)
+    message(FATAL_ERROR
+        "Material water picmip must compact paired amplitudes and frequencies")
+endif()
+string(FIND "${_water_runtime_source}" "std::fmod(phaseSource, 1024.0)" _water_bounded_phase)
+string(FIND "${_water_runtime_source}" "if (!std::isfinite(phase))" _water_finite_phase)
+string(FIND "${_water_runtime_source}" "std::hypot(sample.real, sample.imag)" _water_safe_magnitude)
+string(FIND "${_water_runtime_source}" "iassert( fftIndexa < HCOUNT )" _water_second_fft_bound)
+if (_water_bounded_phase EQUAL -1
+    OR _water_finite_phase EQUAL -1
+    OR _water_safe_magnitude EQUAL -1
+    OR _water_second_fft_bound EQUAL -1)
+    message(FATAL_ERROR
+        "Material water runtime must bound numeric conversions and both FFT passes")
+endif()
+string(FIND
+    "${_db_load_source}"
     "const db::relocation::Status materialized = DB_ValidateStreamAddress("
     _material_shader_program_materialization)
 string(FIND
@@ -675,9 +841,9 @@ file(STRINGS
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 24)
+if (NOT _legacy_direct_offset_count EQUAL 23)
     message(FATAL_ERROR
-        "Expected exactly 24 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 23 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 

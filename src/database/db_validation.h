@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 
@@ -43,6 +44,120 @@ constexpr bool MaterialTechniqueDiskBytes(
 
     *bytes = disk32::kMaterialTechniqueHeaderBytes
         + passCount * disk32::kMaterialPassBytes;
+    return true;
+}
+
+constexpr bool WaterGridValid(std::int64_t width, std::int64_t height)
+{
+    return width == height
+        && CountInRange(width, 4, 64)
+        && (static_cast<std::uint64_t>(width)
+            & (static_cast<std::uint64_t>(width) - 1)) == 0;
+}
+
+inline bool WaterParametersValid(
+    float horizontalLength,
+    float verticalLength,
+    float gravity,
+    float windVelocity,
+    float windDirectionX,
+    float windDirectionY,
+    float amplitude)
+{
+    return std::isfinite(horizontalLength) && horizontalLength > 0.0f
+        && std::isfinite(verticalLength) && verticalLength > 0.0f
+        && std::isfinite(gravity) && gravity > 0.0f
+        && std::isfinite(windVelocity) && windVelocity > 0.0f
+        && std::isfinite(windDirectionX)
+        && std::isfinite(windDirectionY)
+        && (windDirectionX != 0.0f || windDirectionY != 0.0f)
+        && std::isfinite(amplitude) && amplitude > 0.0f;
+}
+
+template <typename Complex>
+inline bool FiniteComplexArray(const Complex *values, std::uint32_t count)
+{
+    if (!values && count)
+        return false;
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        if (!std::isfinite(values[index].real)
+            || !std::isfinite(values[index].imag))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+inline bool FiniteNonnegativeFloatArray(
+    const float *values,
+    std::uint32_t count)
+{
+    if (!values && count)
+        return false;
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        if (!std::isfinite(values[index]) || values[index] < 0.0f)
+            return false;
+    }
+    return true;
+}
+
+inline bool FiniteFloatArray(const float *values, std::uint32_t count)
+{
+    if (!values && count)
+        return false;
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        if (!std::isfinite(values[index]))
+            return false;
+    }
+    return true;
+}
+
+constexpr std::int32_t WaterPicmipDimension(
+    std::int32_t dimension,
+    std::int32_t picmipLevel)
+{
+    if (!CountInRange(picmipLevel, 0, 1)
+        || !CountInRange(dimension, 4, 64)
+        || (static_cast<std::uint32_t>(dimension)
+            & (static_cast<std::uint32_t>(dimension) - 1)) != 0)
+    {
+        return 0;
+    }
+
+    const std::int32_t shifted = dimension >> picmipLevel;
+    return shifted < 4 ? 4 : shifted;
+}
+
+template <typename Sample>
+inline bool DownsampleWaterGridInPlace(
+    Sample *values,
+    std::int32_t sourceWidth,
+    std::int32_t targetWidth)
+{
+    if (!values
+        || !WaterGridValid(sourceWidth, sourceWidth)
+        || !WaterGridValid(targetWidth, targetWidth)
+        || targetWidth > sourceWidth
+        || sourceWidth % targetWidth != 0)
+    {
+        return false;
+    }
+
+    const std::int32_t stride = sourceWidth / targetWidth;
+    for (std::int32_t y = 0; y < targetWidth; ++y)
+    {
+        for (std::int32_t x = 0; x < targetWidth; ++x)
+        {
+            const std::int32_t sourceIndex =
+                y * stride * sourceWidth + x * stride;
+            const std::int32_t targetIndex = y * targetWidth + x;
+            values[targetIndex] = values[sourceIndex];
+        }
+    }
     return true;
 }
 

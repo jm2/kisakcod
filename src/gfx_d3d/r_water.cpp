@@ -1,4 +1,5 @@
 #include "r_water.h"
+#include <database/db_validation.h>
 #include <qcommon/mem_track.h>
 #include "r_image.h"
 #include <universal/fft.h>
@@ -6,11 +7,13 @@
 #include <qcommon/qcommon.h>
 #include <universal/profile.h>
 
+#include <algorithm>
+#include <cmath>
+
 WaterGlob waterGlob;
 WaterGlobStatic waterGlobStatic;
 
 //uint32_t const *const g_selectByteFromInt__uint4 820e3810     gfx_d3d : r_water.obj
-long volatile g_waterLock;//          85b3ac80     gfx_d3d : r_water.obj
 //struct __vector4 const g_selectByteFromInt 85b45900     gfx_d3d : r_water.obj
 
 
@@ -43,24 +46,19 @@ void __cdecl R_UploadWaterTextureInternal(water_t **data)
         PROF_SCOPED("GenerateMipMaps");
         GenerateMipMaps(D3DFMT_L8, waterGlob.pixels, water);
     }
-
-    InterlockedExchangeAdd(&g_waterLock, -1);
 }
 
 void __cdecl WaterFrequenciesAtTime(complex_s *H, const water_t *water, float t)
 {
-    __int64 v3; // [esp+0h] [ebp-44h]
     float sinReal; // [esp+28h] [ebp-1Ch]
     int vecKCount; // [esp+2Ch] [ebp-18h]
     int vecKIndex; // [esp+30h] [ebp-14h]
     float *wTerm; // [esp+34h] [ebp-10h]
     complex_s *H0; // [esp+38h] [ebp-Ch]
     float sinImag; // [esp+3Ch] [ebp-8h]
-    float ta; // [esp+54h] [ebp+10h]
 
     iassert( H );
     iassert( water );
-    ta = t * 162.9746551513672;
     vecKCount = water->N * water->M;
     iassert( (vecKCount <= (64 * 64)) );
     vecKIndex = 0;
@@ -68,11 +66,30 @@ void __cdecl WaterFrequenciesAtTime(complex_s *H, const water_t *water, float t)
     H0 = water->H0;
     while (vecKIndex < vecKCount)
     {
-        if (*(uint32_t *)wTerm)
+        if (*wTerm != 0.0f)
         {
-            v3 = (__int64)(*wTerm * ta);
-            sinReal = waterGlobStatic.sinTable[((v3 & 0x3FF) + 255) & 0x3FF];
-            sinImag = waterGlobStatic.sinTable[v3 & 0x3FF];
+            const double scaledTimeDouble =
+                static_cast<double>(t) * 162.9746551513672;
+            const float scaledTime = static_cast<float>(scaledTimeDouble);
+            const float legacyPhase = *wTerm * scaledTime;
+            const double phaseSource = std::isfinite(legacyPhase)
+                ? static_cast<double>(legacyPhase)
+                : static_cast<double>(*wTerm) * scaledTimeDouble;
+            const double phase = std::fmod(phaseSource, 1024.0);
+            if (!std::isfinite(phase))
+            {
+                H[vecKIndex].real = 0.0f;
+                H[vecKIndex].imag = 0.0f;
+                ++vecKIndex;
+                ++wTerm;
+                ++H0;
+                continue;
+            }
+            const int64_t phaseIndex = static_cast<int64_t>(phase);
+            const uint32_t tableIndex =
+                static_cast<uint32_t>(phaseIndex) & UINT32_C(0x3FF);
+            sinReal = waterGlobStatic.sinTable[(tableIndex + 255) & 0x3FF];
+            sinImag = waterGlobStatic.sinTable[tableIndex];
             iassert(!IS_NAN(H0->real));
             iassert(!IS_NAN(H0->imag));
             iassert(!IS_NAN(sinReal));
@@ -119,8 +136,8 @@ void __cdecl WaterAmplitudesFromFrequencies(complex_s *H, const water_t *water)
     for (waterIndexa = 0; waterIndexa < water->M; ++waterIndexa)
     {
         fftIndexa = water->N * waterIndexa;
-        iassert( fftIndex >= 0 );
-        iassert( fftIndex < HCOUNT );
+        iassert( fftIndexa >= 0 );
+        iassert( fftIndexa < HCOUNT );
         FFT(&H[fftIndexa], log2_m, waterGlobStatic.fftBitswap, waterGlobStatic.fftTrigTable);
     }
     TransposeArray(H, water->M);
@@ -154,81 +171,31 @@ void __cdecl TransposeArray(complex_s *H, uint32_t M)
 
 void __cdecl WaterPixelsFromAmplitudes(GfxColor *pixels, complex_s *H, const water_t *water)
 {
-    float v3; // [esp+Ch] [ebp-9Ch]
-    float v4; // [esp+10h] [ebp-98h]
-    float v5; // [esp+20h] [ebp-88h]
-    float v6; // [esp+24h] [ebp-84h]
-    float v7; // [esp+34h] [ebp-74h]
-    float v8; // [esp+38h] [ebp-70h]
-    float v9; // [esp+48h] [ebp-60h]
-    float v10; // [esp+4Ch] [ebp-5Ch]
-    float v11; // [esp+50h] [ebp-58h]
-    float v12; // [esp+54h] [ebp-54h]
-    float v13; // [esp+58h] [ebp-50h]
-    float v14; // [esp+5Ch] [ebp-4Ch]
-    float v15; // [esp+68h] [ebp-40h]
-    float v16; // [esp+6Ch] [ebp-3Ch]
-    float v17; // [esp+70h] [ebp-38h]
-    float v18; // [esp+74h] [ebp-34h]
-    float v19; // [esp+78h] [ebp-30h]
-    float v20; // [esp+7Ch] [ebp-2Ch]
-    float v21; // [esp+80h] [ebp-28h]
-    float v22; // [esp+84h] [ebp-24h]
-    uint32_t ixy; // [esp+98h] [ebp-10h]
-    uint32_t ixya; // [esp+98h] [ebp-10h]
-    float dz; // [esp+9Ch] [ebp-Ch]
-    GfxColor color; // [esp+A0h] [ebp-8h]
-    uint32_t count; // [esp+A4h] [ebp-4h]
-
     iassert( pixels );
     iassert( H );
     iassert( water->M == water->N );
-    count = water->N * water->M;
+    const uint32_t count = water->N * water->M;
     iassert( (!(count & 3)) );
-    dz = 1.0 / (double)count;
-    ixy = 0;
-    while (ixy < count)
+    const float normalization = static_cast<float>(
+        1.0 / static_cast<double>(count));
+    for (uint32_t sampleIndex = 0; sampleIndex < count; sampleIndex += 4)
     {
-        v22 = H[ixy].imag * H[ixy].imag + H[ixy].real * H[ixy].real;
-        v14 = sqrt(v22);
-        ixya = ixy + 1;
-        v21 = H[ixya].imag * H[ixya].imag + H[ixya].real * H[ixya].real;
-        v13 = sqrt(v21);
-        ++ixya;
-        v20 = H[ixya].imag * H[ixya].imag + H[ixya].real * H[ixya].real;
-        v12 = sqrt(v20);
-        ++ixya;
-        v19 = H[ixya].imag * H[ixya].imag + H[ixya].real * H[ixya].real;
-        v11 = sqrt(v19);
-        ixy = ixya + 1;
-        v18 = dz * v14;
-        v10 = v18 - 1.0;
-        if (v10 < 0.0)
-            v9 = dz * v14;
-        else
-            v9 = 1.0;
-        v17 = dz * v13;
-        v8 = v17 - 1.0;
-        if (v8 < 0.0)
-            v7 = dz * v13;
-        else
-            v7 = 1.0;
-        v16 = dz * v12;
-        v6 = v16 - 1.0;
-        if (v6 < 0.0)
-            v5 = dz * v12;
-        else
-            v5 = 1.0;
-        v15 = dz * v11;
-        v4 = v15 - 1.0;
-        if (v4 < 0.0)
-            v3 = dz * v11;
-        else
-            v3 = 1.0;
-        color.array[3] = (int)(v3 * 255.9989929199219);
-        color.array[0] = (int)(v9 * 255.9989929199219);
-        color.array[1] = (int)(v7 * 255.9989929199219);
-        color.array[2] = (int)(v5 * 255.9989929199219);
+        GfxColor color = {};
+        for (uint32_t component = 0; component < 4; ++component)
+        {
+            const complex_s &sample = H[sampleIndex + component];
+            const float magnitudeSquared =
+                sample.imag * sample.imag + sample.real * sample.real;
+            const float magnitude = std::isfinite(magnitudeSquared)
+                ? std::sqrt(magnitudeSquared)
+                : std::hypot(sample.real, sample.imag);
+            float intensity = magnitude * normalization;
+            if (!std::isfinite(intensity))
+                intensity = 1.0f;
+            intensity = std::clamp(intensity, 0.0f, 1.0f);
+            color.array[component] = static_cast<uint8_t>(
+                intensity * 255.9989929199219);
+        }
         pixels->packed = color.packed;
         ++pixels;
     }
@@ -266,6 +233,22 @@ void __cdecl GenerateMipMaps(_D3DFORMAT format, uint8_t *pixels, water_t *water)
 void __cdecl R_UploadWaterTexture(water_t *water, float floatTime)
 {
     iassert( water );
+    if (!water
+        || !std::isfinite(floatTime)
+        || !db::validation::WaterGridValid(water->M, water->N)
+        || !water->H0
+        || !water->wTerm
+        || !water->image
+        || water->image->mapType != MAPTYPE_2D
+        || water->image->semantic != TS_WATER_MAP
+        || water->image->category != IMG_CATEGORY_WATER
+        || water->image->depth != 1
+        || water->image->width != water->M
+        || water->image->height != water->N)
+    {
+        Com_Error(ERR_DROP, "Invalid runtime material water upload");
+        return;
+    }
     if (floatTime != water->writable.floatTime)
     {
         water->writable.floatTime = floatTime;
@@ -288,51 +271,62 @@ void __cdecl R_InitWater()
     FFT_Init(waterGlobStatic.fftBitswap, waterGlobStatic.fftTrigTable);
 }
 
-void __cdecl Load_PicmipWater(water_t **waterRef)
+bool __cdecl Load_PicmipWater(water_t **waterRef)
 {
-    complex_s *H0; // edx
-    float real; // ecx
-    float imag; // edx
-    complex_s *v4; // eax
-    int v5; // [esp+4h] [ebp-2Ch]
-    int v6; // [esp+8h] [ebp-28h]
-    int m; // [esp+14h] [ebp-1Ch]
-    int srcIndex; // [esp+18h] [ebp-18h]
-    int downsample; // [esp+1Ch] [ebp-14h]
-    int n; // [esp+24h] [ebp-Ch]
-    int dstIndex; // [esp+2Ch] [ebp-4h]
-
-    if ((*waterRef)->M >> r_picmip_water->current.integer < 4)
-        v6 = 4;
-    else
-        v6 = (*waterRef)->M >> r_picmip_water->current.integer;
-    if ((*waterRef)->N >> r_picmip_water->current.integer < 4)
-        v5 = 4;
-    else
-        v5 = (*waterRef)->N >> r_picmip_water->current.integer;
-    if (v6 != (*waterRef)->M || v5 != (*waterRef)->N)
+    if (!waterRef || !*waterRef || !r_picmip_water || !r_loadForRenderer)
     {
-        iassert( (*waterRef)->M == (*waterRef)->N );
-        //iassert( M == N );
-        downsample = (*waterRef)->M / v6;
-        (*waterRef)->M = v6;
-        (*waterRef)->N = v5;
-        srcIndex = 0;
-        dstIndex = 0;
-        for (m = 0; m < v6; ++m)
-        {
-            for (n = 0; n < v5; ++n)
-            {
-                H0 = (*waterRef)->H0;
-                real = H0[srcIndex].real;
-                imag = H0[srcIndex].imag;
-                v4 = (*waterRef)->H0;
-                v4[dstIndex].real = real;
-                v4[dstIndex++].imag = imag;
-                srcIndex += downsample;
-            }
-            srcIndex += v6 * downsample * (downsample - 1);
-        }
+        Com_Error(ERR_DROP, "Invalid material water picmip state");
+        return false;
     }
-}
 
+    water_t *water = *waterRef;
+    const int32_t sourceWidth = water->M;
+    const int32_t sourceHeight = water->N;
+    const int32_t picmipLevel = r_picmip_water->current.integer;
+    const int32_t targetWidth =
+        db::validation::WaterPicmipDimension(sourceWidth, picmipLevel);
+    const int32_t targetHeight =
+        db::validation::WaterPicmipDimension(sourceHeight, picmipLevel);
+    if (!db::validation::WaterGridValid(sourceWidth, sourceHeight)
+        || !targetWidth
+        || targetWidth != targetHeight
+        || !water->H0
+        || !water->wTerm
+        || !water->image)
+    {
+        Com_Error(ERR_DROP, "Invalid material water picmip input");
+        return false;
+    }
+
+    const int32_t expectedImageWidth =
+        r_loadForRenderer->current.enabled ? targetWidth : sourceWidth;
+    const int32_t expectedImageHeight =
+        r_loadForRenderer->current.enabled ? targetHeight : sourceHeight;
+    if (water->image->mapType != MAPTYPE_2D
+        || water->image->semantic != TS_WATER_MAP
+        || water->image->category != IMG_CATEGORY_WATER
+        || water->image->depth != 1
+        || water->image->width != expectedImageWidth
+        || water->image->height != expectedImageHeight)
+    {
+        Com_Error(ERR_DROP, "Invalid material water image contract");
+        return false;
+    }
+
+    if (!db::validation::DownsampleWaterGridInPlace(
+            water->H0,
+            sourceWidth,
+            targetWidth)
+        || !db::validation::DownsampleWaterGridInPlace(
+            water->wTerm,
+            sourceWidth,
+            targetWidth))
+    {
+        Com_Error(ERR_DROP, "Invalid material water picmip dimensions");
+        return false;
+    }
+
+    water->M = targetWidth;
+    water->N = targetHeight;
+    return true;
+}

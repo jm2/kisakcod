@@ -647,6 +647,10 @@ int main()
             AliasKind::MaterialPixelShader),
         "material pixel shaders require exact completed starts");
     Expect(
+        db::relocation::RequiresExactStartPublication(
+            AliasKind::MaterialWater),
+        "material water requires exact completed starts");
+    Expect(
         !db::relocation::RequiresExactStartPublication(AliasKind::Material),
         "redirectable asset aliases do not require their slot address");
 
@@ -1141,6 +1145,81 @@ int main()
     Expect(
         resolved == blocks[4].base + disk32::kMaterialVertexShaderBytes,
         "completed pixel shader address is exact");
+
+    registry.Reset(blocks, db::relocation::kBlockCount);
+    AliasHandle materialWater;
+    ExpectStatus(
+        registry.RegisterSlot(
+            blocks[4].base,
+            AliasKind::MaterialWater,
+            &materialWater),
+        Status::Ok,
+        "register completed material water start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialWater,
+            disk32::kMaterialWaterBytes,
+            &resolved),
+        Status::PendingSlot,
+        "material water is pending before completion");
+    ExpectStatus(
+        registry.Publish(
+            materialWater,
+            AliasKind::MaterialWater,
+            blocks[4].base + 4,
+            disk32::kMaterialWaterBytes),
+        Status::MetadataMismatch,
+        "completed material water must publish its own start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialWater,
+            disk32::kMaterialWaterBytes,
+            &resolved),
+        Status::PendingSlot,
+        "failed material water publication remains pending");
+    ExpectStatus(
+        registry.Publish(
+            materialWater,
+            AliasKind::MaterialWater,
+            blocks[4].base,
+            disk32::kMaterialWaterBytes),
+        Status::Ok,
+        "publish exact completed material water start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialWater,
+            0,
+            &resolved),
+        Status::MetadataMismatch,
+        "material water disk metadata is exact");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialPixelShader,
+            disk32::kMaterialPixelShaderBytes,
+            &resolved),
+        Status::KindMismatch,
+        "material water cannot resolve as another completed material object");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 4),
+            AliasKind::MaterialWater,
+            disk32::kMaterialWaterBytes,
+            &resolved),
+        Status::UnregisteredSlot,
+        "material water interior is not an object start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialWater,
+            disk32::kMaterialWaterBytes,
+            &resolved),
+        Status::Ok,
+        "resolve exact completed material water start");
+    Expect(resolved == blocks[4].base, "completed material water address is exact");
 
     BlockView wideBlocks[db::relocation::kBlockCount];
     FillBlocks(wideBlocks);

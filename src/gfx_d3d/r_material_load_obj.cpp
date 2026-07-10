@@ -1,4 +1,5 @@
 #include "r_material.h"
+#include <database/db_validation.h>
 #include "r_utils.h"
 #include <universal/com_files.h>
 
@@ -5450,22 +5451,23 @@ BOOL __cdecl R_IsWorldMaterialType(uint32_t materialType)
 
 water_t *__cdecl Material_RegisterWaterImage(const MaterialWaterDef *water)
 {
-    int v2; // [esp+0h] [ebp-5Ch]
-    int v3; // [esp+4h] [ebp-58h]
-    int textureWidth; // [esp+10h] [ebp-4Ch]
-    water_t setup; // [esp+14h] [ebp-48h] BYREF
+    if (!water || !r_picmip_water)
+        return nullptr;
 
-    textureWidth = water->textureWidth;
-    if (textureWidth != textureWidth)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\qcommon\\../universal/assertive.h",
-            281,
-            0,
-            "i == static_cast< Type >( i )\n\t%i, %i",
-            textureWidth,
-            textureWidth);
-    setup.M = textureWidth;
-    setup.N = textureWidth;
+    const int textureWidth = water->textureWidth;
+    const int picmipWidth = db::validation::WaterPicmipDimension(
+        textureWidth,
+        r_picmip_water->current.integer);
+    if (!picmipWidth)
+    {
+        Com_PrintError(8, "ERROR: material has invalid water dimensions\n");
+        return nullptr;
+    }
+
+    water_t setup = {};
+    setup.writable.floatTime = kWaterInitialTime;
+    setup.M = picmipWidth;
+    setup.N = picmipWidth;
     setup.Lx = water->horizontalWorldLength;
     setup.Lz = water->verticalWorldLength;
     setup.gravity = 800.0;
@@ -5473,17 +5475,6 @@ water_t *__cdecl Material_RegisterWaterImage(const MaterialWaterDef *water)
     setup.winddir[0] = water->windDirection[0];
     setup.winddir[1] = water->windDirection[1];
     setup.amplitude = water->amplitude;
-    setup.image = 0;
-    if (textureWidth >> r_picmip_water->current.integer < 4)
-        v3 = 4;
-    else
-        v3 = textureWidth >> r_picmip_water->current.integer;
-    setup.M = v3;
-    if (setup.N >> r_picmip_water->current.integer < 4)
-        v2 = 4;
-    else
-        v2 = setup.N >> r_picmip_water->current.integer;
-    setup.N = v2;
     return R_LoadWaterSetup(&setup);
 }
 
@@ -5522,7 +5513,9 @@ BOOL __cdecl Material_FinishLoadingTexdef(
         texdef->samplerState |= 0x10u;
     }
     if (texdef->semantic == 11)
-        return Material_RegisterWaterImage((const MaterialWaterDef*)(material + texdef->u.imageNameOffset)) != 0;
+        return Material_RegisterWaterImage(
+            (const MaterialWaterDef*)(
+                (const char*)material + texdef->u.waterDefOffset)) != 0;
     else
         return Material_RegisterImage(material, texdef->u.imageNameOffset, texdef->semantic, imageTrack);
 }
@@ -5969,7 +5962,15 @@ Material *__cdecl Material_LoadRaw(const MaterialRaw *mtlRaw, uint32_t materialT
                     "material->textureTable[texIndex].samplerState & SAMPLER_FILTER_MASK");
             material->textureTable[texIndex].semantic = textureTableRaw[texIndex].semantic;
             if (material->textureTable[texIndex].semantic == 11)
-                material->textureTable[texIndex].u.image = (GfxImage*)Material_RegisterWaterImage((const MaterialWaterDef*)(mtlRaw + textureTableRaw[texIndex].u.imageNameOffset));
+            {
+                material->textureTable[texIndex].u.image =
+                    (GfxImage*)Material_RegisterWaterImage(
+                        (const MaterialWaterDef*)(
+                            (const char*)mtlRaw
+                            + textureTableRaw[texIndex].u.waterDefOffset));
+                if (!material->textureTable[texIndex].u.image)
+                    return nullptr;
+            }
             else
                 material->textureTable[texIndex].u.image = Image_Register(
                     (const char*)mtlRaw + textureTableRaw[texIndex].u.imageNameOffset,

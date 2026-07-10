@@ -1,4 +1,5 @@
 #include "r_water.h"
+#include <database/db_validation.h>
 #include <qcommon/qcommon.h>
 #include <universal/q_shared.h>
 #include "r_image.h"
@@ -131,6 +132,8 @@ GfxImage *__cdecl R_CreateWaterMap(char *name, uint16_t imageWidth, uint16_t ima
     GfxImage *image; // [esp+0h] [ebp-4h]
 
     image = Image_Alloc(name, 5u, 0xBu, 9u);
+    if (!image)
+        return nullptr;
     iassert( image );
     image->width = imageWidth;
     image->height = imageHeight;
@@ -138,7 +141,10 @@ GfxImage *__cdecl R_CreateWaterMap(char *name, uint16_t imageWidth, uint16_t ima
     return image;
 }
 
-void __cdecl R_CreateWaterSetup(const water_t *source, int waterMapSetupIndex, water_t *destination)
+bool __cdecl R_CreateWaterSetup(
+    const water_t *source,
+    int waterMapSetupIndex,
+    water_t *destination)
 {
     char *v3; // eax
     uint16_t M; // [esp-8h] [ebp-18h]
@@ -150,47 +156,54 @@ void __cdecl R_CreateWaterSetup(const water_t *source, int waterMapSetupIndex, w
     iassert( destination );
     elementCount = source->N * source->M;
     memcpy(destination, source, sizeof(water_t));
+    destination->writable.floatTime = kWaterInitialTime;
     destination->H0 = (complex_s *)Material_Alloc(8 * elementCount);
     destination->wTerm = (float *)Material_Alloc(4 * elementCount);
+    if (!destination->H0 || !destination->wTerm)
+    {
+        Com_PrintError(8, "ERROR: could not allocate water frequency data\n");
+        return false;
+    }
     R_PickWaterFrequencies(destination);
+    if (!db::validation::FiniteComplexArray(
+            destination->H0,
+            static_cast<uint32_t>(elementCount))
+        || !db::validation::FiniteNonnegativeFloatArray(
+            destination->wTerm,
+            static_cast<uint32_t>(elementCount)))
+    {
+        Com_PrintError(8, "ERROR: water parameters produced invalid frequencies\n");
+        return false;
+    }
     N = source->N;
     M = source->M;
     v3 = va("watersetup%i", waterMapSetupIndex);
     image = R_CreateWaterMap(v3, M, N);
-    iassert( image );
+    if (!image)
+        return false;
     destination->image = image;
+    return true;
 }
 
 water_t *__cdecl R_LoadWaterSetup(const water_t *water)
 {
     int waterMapSetupIndex; // [esp+0h] [ebp-4h]
 
-    iassert( IsPowerOf2( water->N ) );
-    iassert( IsPowerOf2( water->M ) );
-    if (water->M < 4 || water->M > 64)
-        MyAssertHandler(
-            ".\\r_water_load_obj.cpp",
-            143,
-            0,
-            "water->M not in [MIN_WATER_SIZE, MAX_WATER_SIZE]\n\t%i not in [%i, %i]",
-            water->M,
-            4,
-            64);
-    if (water->N < 4 || water->N > 64)
-        MyAssertHandler(
-            ".\\r_water_load_obj.cpp",
-            144,
-            0,
-            "water->N not in [MIN_WATER_SIZE, MAX_WATER_SIZE]\n\t%i not in [%i, %i]",
-            water->N,
-            4,
-            64);
-    iassert( water->Lx > 0 );
-    iassert( water->Lz > 0 );
-    iassert( water->gravity > 0 );
-    iassert( water->windvel > 0 );
-    iassert( water->winddir[0] || water->winddir[1] );
-    iassert( water->amplitude > 0 );
+    if (!water
+        || !db::validation::WaterGridValid(water->M, water->N)
+        || !db::validation::WaterParametersValid(
+            water->Lx,
+            water->Lz,
+            water->gravity,
+            water->windvel,
+            water->winddir[0],
+            water->winddir[1],
+            water->amplitude)
+        || !db::validation::FiniteFloatArray(water->codeConstant, 4))
+    {
+        Com_PrintError(8, "ERROR: material has invalid water parameters\n");
+        return nullptr;
+    }
     for (waterMapSetupIndex = 0; waterMapSetupIndex < sceneWaterMapSetupsCount; ++waterMapSetupIndex)
     {
         if (R_WatersEquivalent(&sceneWaterMapSetups[waterMapSetupIndex], water))
@@ -203,7 +216,13 @@ water_t *__cdecl R_LoadWaterSetup(const water_t *water)
     }
     else
     {
-        R_CreateWaterSetup(water, waterMapSetupIndex, &sceneWaterMapSetups[waterMapSetupIndex]);
+        if (!R_CreateWaterSetup(
+                water,
+                waterMapSetupIndex,
+                &sceneWaterMapSetups[waterMapSetupIndex]))
+        {
+            return nullptr;
+        }
         ++sceneWaterMapSetupsCount;
         return &sceneWaterMapSetups[waterMapSetupIndex];
     }

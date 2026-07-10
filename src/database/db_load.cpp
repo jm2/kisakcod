@@ -118,6 +118,33 @@ bool DB_ValidateMaterialShaderProgram(
     return true;
 }
 
+bool DB_ValidateWaterHeader(const water_t *water, int32_t *sampleCount)
+{
+    if (sampleCount)
+        *sampleCount = 0;
+    if (!water || !sampleCount
+        || !db::validation::WaterGridValid(water->M, water->N)
+        || !db::validation::WaterParametersValid(
+            water->Lx,
+            water->Lz,
+            water->gravity,
+            water->windvel,
+            water->winddir[0],
+            water->winddir[1],
+            water->amplitude)
+        || !db::validation::FiniteFloatArray(water->codeConstant, 4)
+        || !water->H0
+        || !water->wTerm
+        || !water->image)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file material water header");
+        return false;
+    }
+
+    *sampleCount = water->M * water->N;
+    return true;
+}
+
 bool DB_ValidateWeaponAccuracyGraph(
     const WeaponDef *weapon,
     uint32_t graphIndex,
@@ -2251,27 +2278,78 @@ void __cdecl Mark_GfxImagePtr()
     }
 }
 
-void __cdecl Load_water_t(bool atStreamStart)
+bool __cdecl Load_water_t(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varwater_t, 68);
-    const int32_t sampleCount = DB_CheckedCountProduct(
-        varwater_t->N,
-        varwater_t->M,
-        "water samples");
-    if (varwater_t->H0)
+    if (!atStreamStart)
     {
-        varwater_t->H0 = (complex_s *)AllocLoad_FxElemVisStateSample();
-        varcomplex_t = varwater_t->H0;
-        Load_complex_tArray(1, sampleCount);
+        Com_Error(ERR_DROP, "Invalid fast-file material water stream start");
+        return false;
     }
-    if (varwater_t->wTerm)
+    Load_Stream(
+        1,
+        (uint8_t *)varwater_t,
+        disk32::kMaterialWaterBytes);
+    varwater_t->writable.floatTime = kWaterInitialTime;
+    int32_t sampleCount = 0;
+    if (!DB_ValidateWaterHeader(varwater_t, &sampleCount))
+        return false;
+
+    varwater_t->H0 = (complex_s *)AllocLoad_FxElemVisStateSample();
+    if (!varwater_t->H0)
     {
-        varwater_t->wTerm = (float *)AllocLoad_FxElemVisStateSample();
-        varfloat = varwater_t->wTerm;
-        Load_floatArray(1, sampleCount);
+        Com_Error(ERR_DROP, "Could not allocate material water amplitudes");
+        return false;
+    }
+    varcomplex_t = varwater_t->H0;
+    Load_complex_tArray(1, sampleCount);
+
+    varwater_t->wTerm = (float *)AllocLoad_FxElemVisStateSample();
+    if (!varwater_t->wTerm)
+    {
+        Com_Error(ERR_DROP, "Could not allocate material water frequencies");
+        return false;
+    }
+    varfloat = varwater_t->wTerm;
+    Load_floatArray(1, sampleCount);
+
+    uint32_t amplitudeBytes = 0;
+    uint32_t frequencyBytes = 0;
+    if (!db::validation::CheckedSpanBytes(
+            static_cast<uint32_t>(sampleCount),
+            static_cast<uint32_t>(sizeof(complex_s)),
+            &amplitudeBytes)
+        || !db::validation::CheckedSpanBytes(
+            static_cast<uint32_t>(sampleCount),
+            static_cast<uint32_t>(sizeof(float)),
+            &frequencyBytes)
+        || DB_ValidateStreamAddress(
+            varwater_t->H0,
+            amplitudeBytes,
+            alignof(complex_s),
+            kDirectBlock4) != db::relocation::Status::Ok
+        || DB_ValidateStreamAddress(
+            varwater_t->wTerm,
+            frequencyBytes,
+            alignof(float),
+            kDirectBlock4) != db::relocation::Status::Ok
+        || !db::validation::FiniteComplexArray(
+            varwater_t->H0,
+            static_cast<uint32_t>(sampleCount))
+        || !db::validation::FiniteNonnegativeFloatArray(
+            varwater_t->wTerm,
+            static_cast<uint32_t>(sampleCount)))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file material water frequency data");
+        return false;
     }
     varGfxImagePtr = &varwater_t->image;
     Load_GfxImagePtr(0);
+    if (!varwater_t->image)
+    {
+        Com_Error(ERR_DROP, "Fast-file material water has no completed image");
+        return false;
+    }
+    return true;
 }
 
 void __cdecl Mark_water_t()
@@ -2749,40 +2827,70 @@ bool __cdecl Load_MaterialTechnique(bool atStreamStart)
     return true;
 }
 
-void __cdecl Load_MaterialTextureDefInfo(bool atStreamStart)
+bool __cdecl Load_MaterialTextureDefInfo(bool atStreamStart)
 {
     if (varMaterialTextureDef->semantic == 11)
     {
-        if (*varMaterialTextureDefInfo)
+        if (!varMaterialTextureDefInfo || !*varMaterialTextureDefInfo)
         {
-            if (*varMaterialTextureDefInfo == (water_t*)-1)
+            Com_Error(ERR_DROP, "Fast-file water texture has no definition");
+            return false;
+        }
+        if (*varMaterialTextureDefInfo == (water_t*)-1)
+        {
+            *varMaterialTextureDefInfo =
+                (water_t*)AllocLoad_FxElemVisStateSample();
+            if (!*varMaterialTextureDefInfo)
+                return false;
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                *varMaterialTextureDefInfo,
+                DBAliasKind::MaterialWater);
+            if (!completed)
+                return false;
+            varwater_t = *varMaterialTextureDefInfo;
+            if (!Load_water_t(1))
+                return false;
+            if (!Load_PicmipWater(varMaterialTextureDefInfo))
+                return false;
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::MaterialWater,
+                    *varMaterialTextureDefInfo,
+                    disk32::kMaterialWaterBytes,
+                    disk32::kMaterialWaterBytes))
             {
-                *varMaterialTextureDefInfo = (water_t*)AllocLoad_FxElemVisStateSample();
-                varwater_t = *varMaterialTextureDefInfo;
-                Load_water_t(1);
-                Load_PicmipWater(varMaterialTextureDefInfo);
+                return false;
             }
-            else
-            {
-                DB_ConvertOffsetToPointerLegacy((uint32_t*)varMaterialTextureDefInfo);
-            }
+        }
+        else
+        {
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)varMaterialTextureDefInfo,
+                DBAliasKind::MaterialWater,
+                disk32::kMaterialWaterBytes);
         }
     }
     else
     {
         varGfxImagePtr = (GfxImage **)varMaterialTextureDefInfo;
         Load_GfxImagePtr(atStreamStart);
+        if (!*varGfxImagePtr)
+        {
+            Com_Error(ERR_DROP, "Fast-file material texture has no image");
+            return false;
+        }
     }
+    return true;
 }
 
-void __cdecl Load_MaterialTextureDef(bool atStreamStart)
+bool __cdecl Load_MaterialTextureDef(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varMaterialTextureDef, 12);
     varMaterialTextureDefInfo = (water_t**)&varMaterialTextureDef->u;
-    Load_MaterialTextureDefInfo(0);
+    return Load_MaterialTextureDefInfo(0);
 }
 
-void __cdecl Load_MaterialTextureDefArray(bool atStreamStart, int32_t count)
+bool __cdecl Load_MaterialTextureDefArray(bool atStreamStart, int32_t count)
 {
     MaterialTextureDef *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
@@ -2792,9 +2900,11 @@ void __cdecl Load_MaterialTextureDefArray(bool atStreamStart, int32_t count)
     for (i = 0; i < count; ++i)
     {
         varMaterialTextureDef = var;
-        Load_MaterialTextureDef(0);
+        if (!Load_MaterialTextureDef(0))
+            return false;
         ++var;
     }
+    return true;
 }
 
 void __cdecl Load_MaterialConstantDefArray(bool atStreamStart, int32_t count)
@@ -2914,7 +3024,7 @@ bool __cdecl Load_MaterialTechniqueSet(bool atStreamStart)
     return true;
 }
 
-void __cdecl Load_MaterialTechniqueSetPtr(bool atStreamStart)
+bool __cdecl Load_MaterialTechniqueSetPtr(bool atStreamStart)
 {
     DBAliasHandle inserted;
     uint32_t value; // [esp+4h] [ebp-8h]
@@ -2935,7 +3045,7 @@ void __cdecl Load_MaterialTechniqueSetPtr(bool atStreamStart)
             if (!Load_MaterialTechniqueSet(1))
             {
                 DB_PopStreamPos();
-                return;
+                return false;
             }
             Load_MaterialTechniqueSetAsset((XAssetHeader *)varMaterialTechniqueSetPtr);
             if (inserted)
@@ -2952,12 +3062,17 @@ void __cdecl Load_MaterialTechniqueSetPtr(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+    return true;
 }
 
-void __cdecl Load_Material(bool atStreamStart)
+bool __cdecl Load_Material(bool atStreamStart)
 {
     Load_Stream(atStreamStart, (uint8_t *)varMaterial, 80);
     if (!DB_ValidatePointerCount(
+            varMaterial->textureTable,
+            varMaterial->textureCount,
+            "material textures")
+        || !DB_ValidatePointerCount(
             varMaterial->constantTable,
             varMaterial->constantCount,
             "material constants")
@@ -2966,7 +3081,7 @@ void __cdecl Load_Material(bool atStreamStart)
             varMaterial->stateBitsCount,
             "material state bits"))
     {
-        return;
+        return false;
     }
     const uint32_t constantByteCount = DB_CheckedDirectSpanBytes(
         varMaterial->constantCount,
@@ -2980,14 +3095,22 @@ void __cdecl Load_Material(bool atStreamStart)
     varMaterialInfo = &varMaterial->info;
     Load_MaterialInfo(0);
     varMaterialTechniqueSetPtr = &varMaterial->techniqueSet;
-    Load_MaterialTechniqueSetPtr(0);
+    if (!Load_MaterialTechniqueSetPtr(0))
+    {
+        DB_PopStreamPos();
+        return false;
+    }
     if (varMaterial->textureTable)
     {
         if (varMaterial->textureTable == (MaterialTextureDef *)-1)
         {
             varMaterial->textureTable = (MaterialTextureDef *)AllocLoad_FxElemVisStateSample();
             varMaterialTextureDef = varMaterial->textureTable;
-            Load_MaterialTextureDefArray(1, varMaterial->textureCount);
+            if (!Load_MaterialTextureDefArray(1, varMaterial->textureCount))
+            {
+                DB_PopStreamPos();
+                return false;
+            }
         }
         else
         {
@@ -3029,6 +3152,7 @@ void __cdecl Load_Material(bool atStreamStart)
         }
     }
     DB_PopStreamPos();
+    return true;
 }
 
 void __cdecl Load_MaterialHandle(bool atStreamStart)
@@ -3049,7 +3173,11 @@ void __cdecl Load_MaterialHandle(bool atStreamStart)
                 inserted = DB_InsertPointer(DBAliasKind::Material);
             else
                 inserted = {};
-            Load_Material(1);
+            if (!Load_Material(1))
+            {
+                DB_PopStreamPos();
+                return;
+            }
             Load_MaterialAsset((XAssetHeader *)varMaterialHandle);
             if (inserted)
                 DB_SetInsertedPointer(
@@ -3086,7 +3214,7 @@ void __cdecl Mark_MaterialTextureDefInfo()
 {
     if (varMaterialTextureDef->semantic == 11)
     {
-        if (varMaterialTextureDefInfo)
+        if (varMaterialTextureDefInfo && *varMaterialTextureDefInfo)
         {
             varwater_t = *(water_t**)varMaterialTextureDefInfo;
             Mark_water_t();

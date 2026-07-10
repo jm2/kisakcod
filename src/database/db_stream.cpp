@@ -414,6 +414,15 @@ bool __cdecl DB_CompleteObject(
         }
         headerBytes = disk32::kMaterialPixelShaderBytes;
         break;
+    case DBAliasKind::MaterialWater:
+        if (metadata != disk32::kMaterialWaterBytes
+            || materializedBytes != disk32::kMaterialWaterBytes)
+        {
+            Com_Error(ERR_DROP, "Invalid completed material water schema");
+            return false;
+        }
+        headerBytes = disk32::kMaterialWaterBytes;
+        break;
     default:
         Com_Error(ERR_DROP, "Unsupported completed fast-file object schema");
         return false;

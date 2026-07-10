@@ -111,6 +111,194 @@ int main()
         !db::validation::MaterialTechniqueDiskBytes(1, nullptr),
         "null material technique disk extent output rejected");
 
+    Expect(db::validation::WaterGridValid(4, 4), "minimum water FFT grid accepted");
+    Expect(db::validation::WaterGridValid(8, 8), "power-of-two water FFT grid accepted");
+    Expect(db::validation::WaterGridValid(64, 64), "maximum water FFT grid accepted");
+    Expect(!db::validation::WaterGridValid(4, 8), "non-square water FFT grid rejected");
+    Expect(!db::validation::WaterGridValid(3, 3), "undersized water FFT grid rejected");
+    Expect(!db::validation::WaterGridValid(65, 65), "oversized water FFT grid rejected");
+    Expect(!db::validation::WaterGridValid(6, 6), "non-power-of-two water FFT grid rejected");
+    Expect(!db::validation::WaterGridValid(-4, -4), "negative water FFT grid rejected");
+
+    Expect(
+        db::validation::WaterParametersValid(
+            1.0f,
+            1.0f,
+            800.0f,
+            10.0f,
+            1.0f,
+            0.0f,
+            0.5f),
+        "finite positive water parameters accepted");
+    Expect(
+        !db::validation::WaterParametersValid(
+            0.0f,
+            1.0f,
+            800.0f,
+            10.0f,
+            1.0f,
+            0.0f,
+            0.5f),
+        "zero water world length rejected");
+    Expect(
+        !db::validation::WaterParametersValid(
+            1.0f,
+            1.0f,
+            800.0f,
+            10.0f,
+            0.0f,
+            0.0f,
+            0.5f),
+        "zero water wind direction rejected");
+    Expect(
+        !db::validation::WaterParametersValid(
+            1.0f,
+            1.0f,
+            800.0f,
+            10.0f,
+            (std::numeric_limits<float>::quiet_NaN)(),
+            1.0f,
+            0.5f),
+        "NaN water parameter rejected");
+    Expect(
+        !db::validation::WaterParametersValid(
+            1.0f,
+            1.0f,
+            (std::numeric_limits<float>::infinity)(),
+            10.0f,
+            1.0f,
+            0.0f,
+            0.5f),
+        "infinite water parameter rejected");
+
+    struct ComplexPair
+    {
+        float real;
+        float imag;
+    };
+    const ComplexPair finiteComplex[] = {{0.0f, 1.0f}, {-2.0f, 3.0f}};
+    const ComplexPair nanComplex[] = {
+        {0.0f, (std::numeric_limits<float>::quiet_NaN)()}};
+    const float finiteFrequencies[] = {0.0f, 1.0f, 100.0f};
+    const float negativeFrequencies[] = {0.0f, -1.0f};
+    const float infiniteFrequencies[] = {
+        0.0f,
+        (std::numeric_limits<float>::infinity)()};
+    Expect(
+        db::validation::FiniteComplexArray(finiteComplex, 2),
+        "finite water complex samples accepted");
+    Expect(
+        !db::validation::FiniteComplexArray(nanComplex, 1),
+        "non-finite water complex sample rejected");
+    Expect(
+        db::validation::FiniteComplexArray<ComplexPair>(nullptr, 0),
+        "empty water complex sample array accepted");
+    Expect(
+        !db::validation::FiniteComplexArray<ComplexPair>(nullptr, 1),
+        "missing water complex sample array rejected");
+    Expect(
+        db::validation::FiniteNonnegativeFloatArray(finiteFrequencies, 3),
+        "finite nonnegative water frequencies accepted");
+    Expect(
+        !db::validation::FiniteNonnegativeFloatArray(negativeFrequencies, 2),
+        "negative water frequency rejected");
+    Expect(
+        !db::validation::FiniteNonnegativeFloatArray(infiniteFrequencies, 2),
+        "infinite water frequency rejected");
+    Expect(
+        db::validation::FiniteNonnegativeFloatArray(nullptr, 0),
+        "empty water frequency array accepted");
+    Expect(
+        !db::validation::FiniteNonnegativeFloatArray(nullptr, 1),
+        "missing water frequency array rejected");
+    const float finiteConstants[] = {0.0f, -1.0f, 2.0f, 3.0f};
+    const float nanConstants[] = {
+        0.0f,
+        (std::numeric_limits<float>::quiet_NaN)()};
+    Expect(
+        db::validation::FiniteFloatArray(finiteConstants, 4),
+        "finite water code constants accepted");
+    Expect(
+        !db::validation::FiniteFloatArray(nanConstants, 2),
+        "non-finite water code constant rejected");
+    Expect(
+        db::validation::WaterPicmipDimension(8, 0) == 8,
+        "water picmip zero preserves its dimension");
+    Expect(
+        db::validation::WaterPicmipDimension(8, 1) == 4,
+        "water picmip one halves its dimension");
+    Expect(
+        db::validation::WaterPicmipDimension(4, 1) == 4,
+        "water picmip preserves the minimum dimension");
+    Expect(
+        db::validation::WaterPicmipDimension(64, 1) == 32,
+        "water picmip halves the maximum dimension");
+    Expect(
+        db::validation::WaterPicmipDimension(8, 2) == 0,
+        "invalid water picmip rejected");
+    Expect(
+        db::validation::WaterPicmipDimension(6, 1) == 0,
+        "non-power-of-two water picmip rejected");
+
+    int amplitudeGrid[64];
+    int frequencyGrid[64];
+    for (int index = 0; index < 64; ++index)
+    {
+        amplitudeGrid[index] = index;
+        frequencyGrid[index] = 1000 + index;
+    }
+    Expect(
+        db::validation::DownsampleWaterGridInPlace(amplitudeGrid, 8, 4),
+        "water amplitude grid downsamples in place");
+    Expect(
+        db::validation::DownsampleWaterGridInPlace(frequencyGrid, 8, 4),
+        "water frequency grid downsamples in place");
+    const int expectedPicmipIndices[] = {
+        0, 2, 4, 6,
+        16, 18, 20, 22,
+        32, 34, 36, 38,
+        48, 50, 52, 54};
+    for (int index = 0; index < 16; ++index)
+    {
+        Expect(
+            amplitudeGrid[index] == expectedPicmipIndices[index],
+            "water amplitude picmip selects the expected source sample");
+        Expect(
+            frequencyGrid[index] == 1000 + expectedPicmipIndices[index],
+            "water frequency picmip selects the matching source sample");
+    }
+    int minimumGrid[16];
+    for (int index = 0; index < 16; ++index)
+        minimumGrid[index] = index;
+    Expect(
+        db::validation::DownsampleWaterGridInPlace(minimumGrid, 4, 4),
+        "minimum water grid accepts identity picmip");
+    Expect(
+        minimumGrid[15] == 15,
+        "identity water picmip preserves samples");
+    Expect(
+        !db::validation::DownsampleWaterGridInPlace(minimumGrid, 4, 8),
+        "water grid upsampling rejected");
+    Expect(
+        !db::validation::DownsampleWaterGridInPlace<int>(nullptr, 8, 4),
+        "missing water grid rejected before picmip");
+    Expect(
+        !db::validation::DownsampleWaterGridInPlace(minimumGrid, 6, 4),
+        "non-power-of-two source grid rejected before picmip");
+
+    int maximumGrid[4096];
+    for (int index = 0; index < 4096; ++index)
+        maximumGrid[index] = index;
+    Expect(
+        db::validation::DownsampleWaterGridInPlace(maximumGrid, 64, 32),
+        "maximum water grid downsamples one picmip level");
+    Expect(
+        maximumGrid[0] == 0
+            && maximumGrid[1] == 2
+            && maximumGrid[32] == 128
+            && maximumGrid[1023] == 4030,
+        "maximum water grid selects the expected source samples");
+
     Expect(
         db::validation::MaterialShaderLoadDefValid(true, 2, 0),
         "minimum shader load definition accepted");
