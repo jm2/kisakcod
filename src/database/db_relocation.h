@@ -11,6 +11,10 @@ namespace db::relocation
 {
 constexpr std::size_t kBlockCount = 9;
 constexpr std::uint32_t kAliasBlock = 4;
+// Serialized MaterialVertexDeclaration extent in the 32-bit fast-file schema.
+// This is deliberately not sizeof(MaterialVertexDeclaration): the native type
+// grows when its D3D pointer array is widened on 64-bit hosts.
+constexpr std::uint32_t kMaterialVertexDeclarationDiskBytes = 100;
 using BlockMask = std::uint16_t;
 
 constexpr BlockMask BlockBit(std::uint32_t block)
@@ -63,6 +67,7 @@ enum class AliasKind : std::uint8_t
     GfxWorld,
     Font,
     XStringPointerSlot,
+    MaterialVertexDeclaration,
     Count,
 };
 
@@ -110,6 +115,11 @@ public:
     Status ValidateCStringAddress(
         std::uintptr_t address,
         std::uint32_t *byteCount) const;
+    Status ValidateAddress(
+        std::uintptr_t address,
+        std::uint64_t byteCount,
+        std::size_t alignment,
+        BlockMask allowedBlocks) const;
     // Empty spans are vacuously materialized and may resolve at block end.
     // Callers must continue to pair the returned pointer with the zero count.
     Status ResolveBytes(

@@ -340,6 +340,28 @@ void __cdecl DB_SetInsertedPointer(
             return;
         }
     }
+    if (expectedKind == DBAliasKind::MaterialVertexDeclaration)
+    {
+        if (metadata != db::relocation::kMaterialVertexDeclarationDiskBytes)
+        {
+            Com_Error(ERR_DROP, "Invalid completed material vertex declaration schema");
+            return;
+        }
+        const db::relocation::Status declarationStatus =
+            g_directResolver.ValidateAddress(
+                reinterpret_cast<uintptr_t>(pointer),
+                metadata,
+                4,
+                db::relocation::BlockBit(db::relocation::kAliasBlock));
+        if (declarationStatus != db::relocation::Status::Ok)
+        {
+            Com_Error(
+                ERR_DROP,
+                "Fast-file completed material vertex declaration is invalid: %s",
+                db::relocation::StatusName(declarationStatus));
+            return;
+        }
+    }
 
     const db::relocation::Status status = g_aliasRegistry.Publish(
         handle,

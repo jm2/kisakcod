@@ -314,6 +314,29 @@ require_source_contains(
     "resolvedAddress != aliasBlock.base + record.offset"
     "completed string holders must publish their exact registered slot")
 require_source_contains(
+    "database/db_relocation.cpp"
+    "RequiresExactStartPublication(expectedKind)"
+    "completed material objects must publish their exact registered start")
+require_source_contains(
+    "database/db_stream.cpp"
+    "g_directResolver.ValidateAddress("
+    "completed material objects must cover a fully materialized stream span")
+require_source_contains(
+    "database/db_load.cpp"
+    "DBAliasKind::MaterialVertexDeclaration"
+    "material vertex declaration references must use completed-object provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_ConvertOffsetToAlias(
+                (uint32_t*)&varMaterialPass->vertexDecl,
+                DBAliasKind::MaterialVertexDeclaration,
+                db::relocation::kMaterialVertexDeclarationDiskBytes)"
+    "shared material vertex declarations must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "db::relocation::kMaterialVertexDeclarationDiskBytes"
+    "material vertex declaration provenance must use its fixed disk32 extent")
+require_source_contains(
     "database/db_file_load.cpp"
     "DB_MarkStreamRangeMaterialized(pos, size)"
     "successful fast-file output must be recorded as materialized")
@@ -394,14 +417,44 @@ if (_material_argument_load EQUAL -1
     message(FATAL_ERROR
         "Material shader arguments must be validated after loading/fixups")
 endif()
+string(FIND
+    "${_db_load_source}"
+    "DB_RegisterPointerSlot(
+                varMaterialPass->vertexDecl,
+                DBAliasKind::MaterialVertexDeclaration)"
+    _material_vertex_declaration_registration)
+string(FIND
+    "${_db_load_source}"
+    "if (!Load_MaterialVertexDeclaration(1))"
+    _material_vertex_declaration_load)
+string(FIND
+    "${_db_load_source}"
+    "Load_BuildVertexDecl(&varMaterialPass->vertexDecl)"
+    _material_vertex_declaration_build)
+string(FIND
+    "${_db_load_source}"
+    "DB_SetInsertedPointer(
+                completed,
+                DBAliasKind::MaterialVertexDeclaration"
+    _material_vertex_declaration_completion)
+if (_material_vertex_declaration_registration EQUAL -1
+    OR _material_vertex_declaration_load EQUAL -1
+    OR _material_vertex_declaration_build EQUAL -1
+    OR _material_vertex_declaration_completion EQUAL -1
+    OR _material_vertex_declaration_registration GREATER _material_vertex_declaration_load
+    OR _material_vertex_declaration_load GREATER _material_vertex_declaration_build
+    OR _material_vertex_declaration_build GREATER _material_vertex_declaration_completion)
+    message(FATAL_ERROR
+        "Material vertex declaration provenance must begin before loading and publish after construction")
+endif()
 file(STRINGS
     "${SOURCE_ROOT}/src/database/db_load.cpp"
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 28)
+if (NOT _legacy_direct_offset_count EQUAL 27)
     message(FATAL_ERROR
-        "Expected exactly 28 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 27 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 string(REGEX MATCH

@@ -69,6 +69,10 @@ void TestDirectResolver()
         resolver.ResolveBytes(Token(4, 0), 4, 4, BlockBit(4), &address),
         Status::InvalidContext,
         "direct resolve before reset");
+    ExpectStatus(
+        resolver.ValidateAddress(Address(0x1000), 4, 4, BlockBit(4)),
+        Status::InvalidContext,
+        "native address validation before reset");
     Expect(address == 0, "failed direct resolve clears output");
 
     resolver.Reset(blocks, db::relocation::kBlockCount);
@@ -112,6 +116,99 @@ void TestDirectResolver()
         resolver.ContiguousMaterializedBytes(4, 24, &contiguous),
         Status::UnmaterializedRange,
         "alignment hole remains unmaterialized");
+
+    ExpectStatus(
+        resolver.ValidateAddress(blocks[4].base + 4, 8, 4, BlockBit(4)),
+        Status::Ok,
+        "validate materialized native address span");
+    ExpectStatus(
+        resolver.ValidateAddress(blocks[4].base + 20, 8, 4, BlockBit(4)),
+        Status::UnmaterializedRange,
+        "native address crossing materialization gap rejected");
+    ExpectStatus(
+        resolver.ValidateAddress(blocks[4].base + 2, 1, 4, BlockBit(4)),
+        Status::MisalignedAddress,
+        "misaligned native address rejected");
+    ExpectStatus(
+        resolver.ValidateAddress(blocks[4].base, 4, 4, BlockBit(7)),
+        Status::WrongBlock,
+        "native address block policy enforced");
+    ExpectStatus(
+        resolver.ValidateAddress(blocks[4].base, 4, 0, BlockBit(4)),
+        Status::InvalidAlignment,
+        "zero native address alignment rejected");
+    ExpectStatus(
+        resolver.ValidateAddress(blocks[4].base, 4, 3, BlockBit(4)),
+        Status::InvalidAlignment,
+        "non-power-of-two native address alignment rejected");
+    ExpectStatus(
+        resolver.ValidateAddress(blocks[4].base, 4, 4, 0),
+        Status::InvalidBlockMask,
+        "empty native address block mask rejected");
+    ExpectStatus(
+        resolver.ValidateAddress(
+            blocks[4].base,
+            4,
+            4,
+            static_cast<BlockMask>(BlockBit(4) | BlockBit(12))),
+        Status::InvalidBlockMask,
+        "out-of-domain native address block mask rejected");
+    ExpectStatus(
+        resolver.ValidateAddress(Address(0x70000000), 4, 4, BlockBit(4)),
+        Status::OutOfRange,
+        "non-zone native address rejected");
+    ExpectStatus(
+        resolver.ValidateAddress(
+            blocks[4].base,
+            UINT64_C(0x100000000),
+            4,
+            BlockBit(4)),
+        Status::SizeOverflow,
+        "native address span wider than disk block rejected");
+
+    BlockView adjacentBlocks[db::relocation::kBlockCount];
+    FillBlocks(adjacentBlocks);
+    adjacentBlocks[3].base = Address(0x20000000);
+    adjacentBlocks[3].size = 0x100;
+    adjacentBlocks[4].base = adjacentBlocks[3].base + adjacentBlocks[3].size;
+    adjacentBlocks[4].size = 0x100;
+    DirectResolver adjacentResolver;
+    adjacentResolver.Reset(adjacentBlocks, db::relocation::kBlockCount);
+    ExpectStatus(
+        adjacentResolver.MarkMaterialized(
+            adjacentBlocks[4].base,
+            adjacentBlocks[4].size),
+        Status::Ok,
+        "materialize block adjacent to prior block end");
+    ExpectStatus(
+        adjacentResolver.ValidateAddress(
+            adjacentBlocks[4].base,
+            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            4,
+            BlockBit(4)),
+        Status::Ok,
+        "later adjacent block start is not shadowed by prior block end");
+    ExpectStatus(
+        adjacentResolver.ValidateAddress(
+            adjacentBlocks[4].base
+                + adjacentBlocks[4].size
+                - db::relocation::kMaterialVertexDeclarationDiskBytes,
+            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            4,
+            BlockBit(4)),
+        Status::Ok,
+        "last complete native address span accepted");
+    ExpectStatus(
+        adjacentResolver.ValidateAddress(
+            adjacentBlocks[4].base
+                + adjacentBlocks[4].size
+                - db::relocation::kMaterialVertexDeclarationDiskBytes
+                + 1,
+            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            1,
+            BlockBit(4)),
+        Status::OutOfRange,
+        "native address span crossing block end rejected");
 
     ExpectStatus(
         resolver.ResolveBytes(Token(4, 4), 8, 4, BlockBit(4), &address),
@@ -740,6 +837,104 @@ int main()
         Status::Ok,
         "resolve exact completed C string pointer slot");
     Expect(resolved == blocks[4].base, "completed C string pointer slot is exact");
+
+    registry.Reset(blocks, db::relocation::kBlockCount);
+    AliasHandle declaration;
+    ExpectStatus(
+        registry.RegisterSlot(
+            blocks[4].base,
+            AliasKind::MaterialVertexDeclaration,
+            &declaration),
+        Status::Ok,
+        "register completed material vertex declaration start");
+    ExpectStatus(
+        registry.Publish(
+            declaration,
+            AliasKind::MaterialVertexDeclaration,
+            blocks[4].base + 4,
+            db::relocation::kMaterialVertexDeclarationDiskBytes),
+        Status::MetadataMismatch,
+        "completed material vertex declaration must publish its own start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialVertexDeclaration,
+            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            &resolved),
+        Status::PendingSlot,
+        "wrong declaration publication leaves provenance pending");
+    ExpectStatus(
+        registry.Publish(
+            declaration,
+            AliasKind::MaterialVertexDeclaration,
+            blocks[4].base,
+            db::relocation::kMaterialVertexDeclarationDiskBytes),
+        Status::Ok,
+        "publish exact completed material vertex declaration start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialVertexDeclaration,
+            0,
+            &resolved),
+        Status::MetadataMismatch,
+        "material vertex declaration schema metadata is exact");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::Material,
+            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            &resolved),
+        Status::KindMismatch,
+        "material vertex declaration cannot resolve as another object type");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 4),
+            AliasKind::MaterialVertexDeclaration,
+            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            &resolved),
+        Status::UnregisteredSlot,
+        "interior material vertex declaration address is not an object start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialVertexDeclaration,
+            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            &resolved),
+        Status::Ok,
+        "resolve exact completed material vertex declaration start");
+    Expect(
+        resolved == blocks[4].base,
+        "completed material vertex declaration address is exact");
+
+    AliasHandle secondDeclaration;
+    ExpectStatus(
+        registry.RegisterSlot(
+            blocks[4].base + db::relocation::kMaterialVertexDeclarationDiskBytes,
+            AliasKind::MaterialVertexDeclaration,
+            &secondDeclaration),
+        Status::Ok,
+        "register distinct completed declaration with identical shape");
+    ExpectStatus(
+        registry.Publish(
+            secondDeclaration,
+            AliasKind::MaterialVertexDeclaration,
+            blocks[4].base + db::relocation::kMaterialVertexDeclarationDiskBytes,
+            db::relocation::kMaterialVertexDeclarationDiskBytes),
+        Status::Ok,
+        "publish distinct completed declaration start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, db::relocation::kMaterialVertexDeclarationDiskBytes),
+            AliasKind::MaterialVertexDeclaration,
+            db::relocation::kMaterialVertexDeclarationDiskBytes,
+            &resolved),
+        Status::Ok,
+        "resolve second completed declaration independently");
+    Expect(
+        resolved == blocks[4].base
+            + db::relocation::kMaterialVertexDeclarationDiskBytes,
+        "identical declarations retain distinct serialized identities");
 
     BlockView wideBlocks[db::relocation::kBlockCount];
     FillBlocks(wideBlocks);

@@ -18,6 +18,18 @@ bool SpanContains(const BlockView &block, std::uintptr_t address, std::uint32_t 
     const std::uintptr_t offset = address - block.base;
     return offset <= block.size && size <= block.size - offset;
 }
+
+bool RequiresExactStartPublication(AliasKind kind)
+{
+    switch (kind)
+    {
+    case AliasKind::XStringPointerSlot:
+    case AliasKind::MaterialVertexDeclaration:
+        return true;
+    default:
+        return false;
+    }
+}
 }
 
 DirectResolver::DirectResolver(
@@ -250,6 +262,49 @@ Status DirectResolver::ValidateCStringAddress(
     }
 
     *byteCount = found->byteCount;
+    return Status::Ok;
+}
+
+Status DirectResolver::ValidateAddress(
+    std::uintptr_t address,
+    std::uint64_t byteCount,
+    std::size_t alignment,
+    BlockMask allowedBlocks) const
+{
+    if (!contextValid_)
+        return Status::InvalidContext;
+    if (!alignment || (alignment & (alignment - 1)))
+        return Status::InvalidAlignment;
+    const BlockMask invalidBlocks = static_cast<BlockMask>(
+        allowedBlocks & static_cast<BlockMask>(~kAllBlocks));
+    if (!allowedBlocks || invalidBlocks)
+        return Status::InvalidBlockMask;
+    if (byteCount > (std::numeric_limits<std::uint32_t>::max)())
+        return Status::SizeOverflow;
+
+    const std::uint32_t extent = static_cast<std::uint32_t>(byteCount);
+    std::uint32_t block = kBlockCount;
+    bool foundDisallowedBlock = false;
+    for (std::uint32_t candidate = 0; candidate < kBlockCount; ++candidate)
+    {
+        if (!SpanContains(blocks_[candidate].view, address, extent))
+            continue;
+        if (allowedBlocks & BlockBit(candidate))
+        {
+            block = candidate;
+            break;
+        }
+        foundDisallowedBlock = true;
+    }
+    if (block == kBlockCount)
+        return foundDisallowedBlock ? Status::WrongBlock : Status::OutOfRange;
+    if (address & (alignment - 1))
+        return Status::MisalignedAddress;
+
+    const std::uint32_t offset = static_cast<std::uint32_t>(
+        address - blocks_[block].view.base);
+    if (!ContainsMaterialized(block, offset, extent))
+        return Status::UnmaterializedRange;
     return Status::Ok;
 }
 
@@ -535,7 +590,7 @@ Status AliasRegistry::Publish(
         return Status::KindMismatch;
     if (record.published)
         return Status::AlreadyPublished;
-    if (expectedKind == AliasKind::XStringPointerSlot)
+    if (RequiresExactStartPublication(expectedKind))
     {
         const BlockView &aliasBlock = blocks_[kAliasBlock];
         if (!aliasBlock.base

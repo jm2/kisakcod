@@ -2319,7 +2319,10 @@ void __cdecl Load_MaterialPixelShaderPtr(bool atStreamStart)
 
 bool __cdecl Load_MaterialVertexDeclaration(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, &varMaterialVertexDeclaration->streamCount, 100);
+    Load_Stream(
+        atStreamStart,
+        &varMaterialVertexDeclaration->streamCount,
+        db::relocation::kMaterialVertexDeclarationDiskBytes);
     if (!DB_ValidateMaterialVertexDeclaration(varMaterialVertexDeclaration))
         return false;
     varMaterialVertexDeclaration->hasOptionalSource = false;
@@ -2442,14 +2445,27 @@ void __cdecl Load_MaterialPass(bool atStreamStart)
         if (varMaterialPass->vertexDecl == (MaterialVertexDeclaration*)-1)
         {
             varMaterialPass->vertexDecl = (MaterialVertexDeclaration*)AllocLoad_FxElemVisStateSample();
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                varMaterialPass->vertexDecl,
+                DBAliasKind::MaterialVertexDeclaration);
+            if (!completed)
+                return;
             varMaterialVertexDeclaration = varMaterialPass->vertexDecl;
             if (!Load_MaterialVertexDeclaration(1))
                 return;
             Load_BuildVertexDecl(&varMaterialPass->vertexDecl);
+            DB_SetInsertedPointer(
+                completed,
+                DBAliasKind::MaterialVertexDeclaration,
+                varMaterialPass->vertexDecl,
+                db::relocation::kMaterialVertexDeclarationDiskBytes);
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)varMaterialPass);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)&varMaterialPass->vertexDecl,
+                DBAliasKind::MaterialVertexDeclaration,
+                db::relocation::kMaterialVertexDeclarationDiskBytes);
         }
     }
     varMaterialVertexShaderPtr = &varMaterialPass->vertexShader;
