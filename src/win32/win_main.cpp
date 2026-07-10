@@ -421,7 +421,9 @@ void __cdecl  Sys_Quit()
 	SL_Shutdown();
 	if (!com_errorEntered)
 		track_shutdown(0);
+#ifndef KISAK_DEDI_HEADLESS
 	Con_ShutdownChannels();
+#endif
 	exit(0);
 }
 

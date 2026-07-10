@@ -1244,7 +1244,11 @@ void __cdecl Cmd_ExecuteSingleCommand(int32_t  localClientNum, int32_t  controll
             {
                 if (!Dvar_Command() && (!com_sv_running || !com_sv_running->current.enabled || !SV_GameCommand()))
                 {
+#ifdef KISAK_DEDI_HEADLESS
+                    Com_Printf(0, "Unknown command \"%s\"\n", Cmd_Argv(0));
+#else
                     CL_ForwardCommandToServer(localClientNum, text);
+#endif
                     Cmd_EndTokenizedString();
                     return;
                 }

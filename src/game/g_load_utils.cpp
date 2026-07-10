@@ -1,10 +1,10 @@
 #include "game_public.h"
+#include <xanim/xanim.h>
 
 #ifdef KISAK_SP
 #include "g_main.h"
 
 #include <qcommon/qcommon.h>
-#include <xanim/xanim.h>
 #include <universal/q_parse.h>
 #endif
 
@@ -160,4 +160,3 @@ char *__cdecl vtos(const float *v)
 
     return s;
 }
-

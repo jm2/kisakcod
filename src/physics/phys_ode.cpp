@@ -1334,6 +1334,12 @@ void __cdecl Phys_TweakBulletImpact(float *worldPos, float *bulletDir, const flo
 
 void __cdecl Phys_PlayCollisionSound(int localClientNum, dxBody *body, uint32_t sndClass, ContactList *contactList)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)localClientNum;
+    (void)body;
+    (void)sndClass;
+    (void)contactList;
+#else
     double v4; // st7
     float scale; // [esp+8h] [ebp-74h]
     float velocity[3]; // [esp+Ch] [ebp-70h] BYREF
@@ -1383,6 +1389,7 @@ void __cdecl Phys_PlayCollisionSound(int localClientNum, dxBody *body, uint32_t 
         if (sound)
             SND_AddPhysicsSound(sound, pos);
     }
+#endif
 }
 
 void __cdecl Phys_BodyGetPointVelocity(dxBody *body, float *point, float *outVelocity)

@@ -3,6 +3,7 @@
 #include <Windows.h>
 
 #include <universal/assertive.h>
+#include <universal/profile.h>
 
 #ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/rb_drawprofile.h>

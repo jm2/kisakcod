@@ -612,6 +612,7 @@ void Com_PrintWarning(int channel, const char *fmt, ...)
 void __cdecl Com_Shutdown(const char* finalmsg)
 {
     Com_ShutdownInternal(finalmsg);
+#ifndef KISAK_DEDI_HEADLESS
 #ifdef KISAK_MP
     if (!com_dedicated->current.integer)
 #endif
@@ -619,11 +620,12 @@ void __cdecl Com_Shutdown(const char* finalmsg)
         CL_InitRenderer();
         Com_AssetLoadUI();
     }
+#endif
 }
 
 void __cdecl CL_ShutdownDemo()
 {
-#ifdef KISAK_MP
+#if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)
     clientConnection_t *clc; // [esp+0h] [ebp-4h]
 
     clc = CL_GetLocalClientConnection(0);
@@ -667,6 +669,7 @@ void __cdecl CL_ShutdownDemo()
 
 void __cdecl Com_ShutdownInternal(const char* finalmsg)
 {
+#ifndef KISAK_DEDI_HEADLESS
     int localClientNum; // [esp+0h] [ebp-4h]
 
     for (localClientNum = 0; localClientNum < 1; ++localClientNum)
@@ -674,6 +677,7 @@ void __cdecl Com_ShutdownInternal(const char* finalmsg)
 //    KISAK_NULLSUB();
     CL_ShutdownAll(false);
     CL_ShutdownDemo();
+#endif
 #ifdef KISAK_MP
     FakeLag_Shutdown();
 #endif
@@ -824,10 +828,14 @@ void Com_Error(errorParm_t code, const char* fmt, ...)
 
 void __cdecl  Com_Quit_f()
 {
+#ifndef KISAK_DEDI_HEADLESS
     int localClientNum; // [esp+0h] [ebp-4h]
+#endif
 
     Com_Printf(0, "quitting...\n");
+#ifndef KISAK_DEDI_HEADLESS
     R_PopRemoteScreenUpdate();
+#endif
     Com_SyncThreads();
     Scr_Cleanup();
     Sys_EnterCriticalSection(CRITSECT_COM_ERROR);
@@ -835,16 +843,20 @@ void __cdecl  Com_Quit_f()
     if (!com_errorEntered)
     {
         Com_ClearTempMemory();
+#ifndef KISAK_DEDI_HEADLESS
         Sys_DestroySplashWindow();
         for (localClientNum = 0; localClientNum < 1; ++localClientNum)
             CL_Shutdown(localClientNum);
+#endif
 #ifdef KISAK_MP
         FakeLag_Shutdown();
 #endif
         //LB_EndOngoingTasks();
         // KISAKTODO: could be missing more here for SP
         SV_Shutdown("EXE_SERVERQUIT");
+#ifndef KISAK_DEDI_HEADLESS
         CL_ShutdownRef();
+#endif
         Com_Close();
         Com_CloseLogfiles();
         FS_Shutdown();

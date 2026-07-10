@@ -1330,8 +1330,13 @@ char __cdecl Scr_AllowBreakpoint(char *pos)
 {
     if (scrDebuggerGlob.disableBreakpoints)
         return 0;
+#ifdef KISAK_DEDI_HEADLESS
+    if (Sys_IsRemoteDebugClient())
+        return 1;
+#else
     if (cls.uiStarted && !cls.quit)
         return 1;
+#endif
     if (pos)
     {
         Com_PrintWarning(23, "script runtime warning: ignored breakpoint.\n");
@@ -1514,9 +1519,11 @@ void __cdecl Scr_AddAssignmentBreakpoint(uint8_t *codePos)
 
 void Scr_Step()
 {
+#ifndef KISAK_DEDI_HEADLESS
     bool evaluate; // [esp+3h] [ebp-9h]
     uint32_t localId; // [esp+4h] [ebp-8h] BYREF
     const char *codePos; // [esp+8h] [ebp-4h]
+#endif
 
     if (Sys_IsRemoteDebugClient())
     {
@@ -1528,6 +1535,7 @@ void Scr_Step()
             Scr_ResumeBreakpoints();
         }
     }
+#ifndef KISAK_DEDI_HEADLESS
     else
     {
         clientUIActives[0].keyCatchers &= ~2u;
@@ -1556,6 +1564,7 @@ void Scr_Step()
             Scr_SetTempBreakpoint((char*)codePos, localId);
         }
     }
+#endif
 }
 
 void __cdecl Scr_InitDebuggerMain()
@@ -1628,8 +1637,10 @@ void __cdecl Scr_InitDebugger()
         //Scr_OpenScriptList::Init(&scrDebuggerGlob.openScriptList);
         scrDebuggerGlob.openScriptList.Init();
         scrDebuggerGlob.debugger_inited = 1;
+#ifndef KISAK_DEDI_HEADLESS
         if (cls.uiStarted)
             UI_Component_Init();
+#endif
     }
 }
 
@@ -1827,12 +1838,14 @@ void __cdecl Scr_RunDebugger()
 // KISAKTODO: move in client somewhere
 void __cdecl CL_EndScriptDebugger(int timeSpentInDebugger)
 {
-#ifdef KISAK_MP
+#if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)
     if (clientUIActives[0].connectionState == CA_ACTIVE)
     {
         Con_TimeNudged(0, timeSpentInDebugger);
         CL_AdjustTimeDelta(0);
     }
+#else
+    (void)timeSpentInDebugger;
 #endif
 }
 
@@ -1848,6 +1861,10 @@ void __cdecl Scr_ShutdownRemoteClient(int restart)
 
 Scr_WatchElement_s *Scr_DisplayDebugger()
 {
+#ifdef KISAK_DEDI_HEADLESS
+    iassert(!Sys_IsRemoteDebugClient());
+    return Scr_ResumeBreakpoints();
+#else
     const char *varUsagePos; // [esp+0h] [ebp-14h]
     uint32_t keyCatchers; // [esp+4h] [ebp-10h]
     int startTime; // [esp+Ch] [ebp-8h]
@@ -1913,6 +1930,7 @@ Scr_WatchElement_s *Scr_DisplayDebugger()
     scrVarPub.evaluate = 0;
     scrVarPub.varUsagePos = varUsagePos;
     return Scr_ResumeBreakpoints();
+#endif
 }
 
 void __cdecl Scr_WatchElementHitBreakpoint(Scr_WatchElement_s *element, bool enabled)
@@ -3270,6 +3288,14 @@ bool __cdecl Scr_CanDrawScript()
 // LWSS HACK (dont see thisptr for these... but it's just a wrapper for R_*** functions, so who cares)
 void __cdecl UI_Component__DrawText(float x, float y, float width, int fontEnum, const float *color, char *text)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)fontEnum;
+    (void)color;
+    (void)text;
+#else
     float v6; // [esp+1Ch] [ebp-10h]
     float v7; // [esp+20h] [ebp-Ch]
     float v8; // [esp+24h] [ebp-8h]
@@ -3282,20 +3308,31 @@ void __cdecl UI_Component__DrawText(float x, float y, float width, int fontEnum,
     v8 = UI_Component::g.charHeight + y;
     v6 = floor(v8);
     R_AddCmdDrawText(text, maxChars, cls.consoleFont, v7, v6, 1.0, 1.0, 0.0, color, 0);
+#endif
 }
 
 void __cdecl UI_Component__DrawPic(float x, float y, float width, float height, const float *color, Material *material)
 {
+#ifdef KISAK_DEDI_HEADLESS
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    (void)color;
+    (void)material;
+#else
     float v6; // [esp+2Ch] [ebp-Ch]
     float v7; // [esp+30h] [ebp-8h]
 
     v7 = floor(y);
     v6 = floor(x);
     R_AddCmdDrawStretchPic(v6, v7, width, height, 0.0, 0.0, 1.0, 1.0, color, material);
+#endif
 }
 
 void Scr_DrawCurrentFilename()
 {
+#ifndef KISAK_DEDI_HEADLESS
     char *v0; // eax
     char *v1; // eax
     __int64 v2; // [esp+10h] [ebp-C8h]
@@ -3339,6 +3376,7 @@ void Scr_DrawCurrentFilename()
             UI_Component__DrawText(x, 0.0, width, 5, colorYellow, filename);
         }
     }
+#endif
 }
 
 void __cdecl Scr_DrawScript()

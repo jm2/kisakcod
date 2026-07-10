@@ -1134,7 +1134,7 @@ bool __cdecl BG_CanItemBeGrabbed(const entityState_s *ent, const playerState_s *
     weapIdx = ent->index.brushmodel % MAX_WEAPONS;
     weapDef = BG_GetWeaponDef(weapIdx);
 
-    iassert(bg_itemlist[ITEM_WEAPMODEL(ent->index.item) * MAX_WEAPONS + weapIdx].giType == IT_WEAPON);
+    iassert(bg_itemlist[BG_GetItemWeaponModel(ent->index.item) * MAX_WEAPONS + weapIdx].giType == IT_WEAPON);
 
     if (WeaponEntCanBeGrabbed(ent, ps, touched, weapIdx))
         return 1;
@@ -1221,7 +1221,7 @@ bool __cdecl BG_PlayerHasRoomForEntAllAmmoTypes(const entityState_s *ent, const 
     if (!v3)
         return false;
 
-    iassert(bg_itemlist[ITEM_WEAPMODEL(ent->index.item) * MAX_WEAPONS + weapIdx].giType == IT_WEAPON);
+    iassert(bg_itemlist[BG_GetItemWeaponModel(ent->index.item) * MAX_WEAPONS + weapIdx].giType == IT_WEAPON);
 
     if (!BG_GetMaxPickupableAmmo(ps, weapIdx))
         return false;

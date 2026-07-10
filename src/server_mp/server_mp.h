@@ -7,9 +7,7 @@
 #include <qcommon/net_chan_mp.h>
 #include <qcommon/sv_msg_write_mp.h>
 
-#ifndef KISAK_DEDI_HEADLESS
-#include <client_mp/client_mp.h>
-#endif
+#include <game_mp/g_client_public_mp.h>
 
 enum //$C3A80A4928DD55B480B15DEB8BFE1B34 : __int32
 {

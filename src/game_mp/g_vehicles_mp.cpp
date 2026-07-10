@@ -36,9 +36,10 @@
 //    struct dvar_s const *const vehTextureScrollScale 82e97278     g_vehicles_mp.obj
 //    short s_numVehicleInfos    82e9727c     g_vehicles_mp.obj
 
+#ifndef KISAK_DEDI_HEADLESS
 const dvar_t *heli_barrelMaxVelocity;
-
 vehicleEffects vehEffects[1][8];
+#endif
 
 uint16_t *s_wheelTags[4] =
 {
@@ -104,14 +105,11 @@ const dvar_t *vehTestHorsepower;
 const dvar_t *vehTestWeight;
 const dvar_t *vehTestMaxMPH;
 
+#ifndef KISAK_DEDI_HEADLESS
 void __cdecl CG_VehRegisterDvars();
 
 clientInfo_t *__cdecl ClientInfoForLocalClient(int32_t localClientNum)
 {
-#ifdef KISAK_DEDI_HEADLESS
-    (void)localClientNum;
-    return level_bgs.clientinfo;
-#else
     cg_s *cgameGlob;
 
     cgameGlob = CG_GetLocalClientGlobals(localClientNum);
@@ -119,7 +117,6 @@ clientInfo_t *__cdecl ClientInfoForLocalClient(int32_t localClientNum)
     bcassert(cgameGlob->predictedPlayerState.clientNum, MAX_CLIENTS);
 
     return &cgameGlob->bgs.clientinfo[cgameGlob->predictedPlayerState.clientNum];
-#endif
 }
 
 vehicleEffects *__cdecl VehicleGetFxInfo(int32_t localClientNum, int32_t entityNum)
@@ -201,11 +198,6 @@ uint16_t __cdecl CompressUnit(float unit)
 
 double __cdecl GetSpeed(int32_t localClientNum, centity_s *cent)
 {
-#ifdef KISAK_DEDI_HEADLESS
-    (void)localClientNum;
-    (void)cent;
-    return 0.0;
-#else
     int32_t serverTimeDelta; // [esp+Ch] [ebp-1Ch]
     float posDelta[3]; // [esp+10h] [ebp-18h] BYREF
     float len; // [esp+1Ch] [ebp-Ch]
@@ -222,8 +214,8 @@ double __cdecl GetSpeed(int32_t localClientNum, centity_s *cent)
     if (serverTimeDelta <= 0.0)
         return 0.0;
     return (len / serverTimeDelta);
-#endif
 }
+#endif
 
 void __cdecl G_VehRegisterDvars()
 {

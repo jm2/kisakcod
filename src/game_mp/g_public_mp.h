@@ -914,6 +914,9 @@ void __cdecl SP_trigger_lookat(gentity_s *self);
 
 // g_vehicles_mp
 uint16_t __cdecl BG_VehiclesGetSlotTagName(int32_t slotIndex);
+extern uint16_t *s_flashTags[5];
+
+#ifndef KISAK_DEDI_HEADLESS
 void __cdecl CG_VehRegisterDvars();
 DObj_s *__cdecl GetVehicleEntDObj(int32_t localClientNum, centity_s *centVeh);
 void __cdecl CG_VehGunnerPOV(int32_t localClientNum, float *resultOrigin, float *resultAngles);
@@ -946,6 +949,8 @@ void __cdecl SetupPoseControllers(int32_t localClientNum, DObj_s *obj, centity_s
 uint16_t __cdecl CompressUnit(float unit);
 void __cdecl VehicleFXTest(int32_t localClientNum, const DObj_s *obj, centity_s *cent, vehfx_t *fxInfo);
 double __cdecl GetSpeed(int32_t localClientNum, centity_s *cent);
+#endif
+
 void __cdecl VEH_SetPosition(gentity_s *ent, const float *origin, const float *vel, const float *angles);
 void __cdecl VEH_InitPhysics(gentity_s *ent);
 bool __cdecl VEH_SlideMove(gentity_s *ent, int32_t gravity);

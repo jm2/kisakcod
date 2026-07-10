@@ -56,6 +56,8 @@ const dvar_t *missileJavSpeedLimitClimb;
 const dvar_t *missileHellfireUpAccel;
 const dvar_t *missileDebugDraw;
 
+static constexpr float g_missileUp[3] = { 0.0f, 0.0f, 1.0f };
+
 
 void __cdecl G_RegisterMissileDvars()
 {
@@ -358,7 +360,7 @@ void __cdecl G_ExplodeMissile(gentity_s *ent)
                     2065);
                 if (weapDef->projExplosionEffectForceNormalUp)
                 {
-                    normal = up;
+                    normal = g_missileUp;
                 }
                 else
                 {
@@ -1210,11 +1212,11 @@ void __cdecl MissileImpact(gentity_s *ent, trace_t *trace, float *dir, float *en
         && ent->missileTargetEnt.isDefined()
         && (v7 = ent->missileTargetEnt.ent(), v7 == other))
     {
-        normal = up;
+        normal = g_missileUp;
     }
     else if (weapDef->projExplosionEffectForceNormalUp)
     {
-        normal = up;
+        normal = g_missileUp;
     }
     else
     {

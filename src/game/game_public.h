@@ -3,6 +3,7 @@
 #include <universal/q_shared.h>
 
 #ifdef KISAK_MP
+#include <game_mp/g_client_public_mp.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <cgame_mp/cg_local_mp.h>
 #endif

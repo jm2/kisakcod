@@ -15,6 +15,22 @@
 #include "g_main.h"
 #endif
 
+static constexpr int32_t g_debugEdgePairs[12][2] =
+{
+    { 0, 1 },
+    { 0, 2 },
+    { 0, 4 },
+    { 1, 3 },
+    { 1, 5 },
+    { 2, 3 },
+    { 2, 6 },
+    { 3, 7 },
+    { 4, 5 },
+    { 4, 6 },
+    { 5, 7 },
+    { 6, 7 }
+};
+
 void __cdecl G_DebugLine(const float *start, const float *end, const float *color, int32_t depthTest)
 {
     CL_AddDebugLine(start, end, color, depthTest, 0, 1);
@@ -85,7 +101,12 @@ void __cdecl G_DebugBox(
         Vec3Add(&v[3 * i], origin, &v[3 * i]);
     }
     for (ia = 0; ia < 0xC; ++ia)
-        G_DebugLineWithDuration(&v[3 * iEdgePairs[ia][0]], &v[3 * iEdgePairs[ia][1]], color, depthTest, duration);
+        G_DebugLineWithDuration(
+            &v[3 * g_debugEdgePairs[ia][0]],
+            &v[3 * g_debugEdgePairs[ia][1]],
+            color,
+            depthTest,
+            duration);
 }
 
 void __cdecl G_DebugCircle(

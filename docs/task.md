@@ -8,20 +8,21 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: make the new Windows x86 headless compile/link CI leg green by removing its remaining
-  client/media symbol dependencies, then begin the Linux platform-services boundary.
-- Last completed batch: fast-file dispatch now enforces the build-mode asset contract before payload
-  loading or marking. MP rejects SP clipmaps/worlds and SP rejects MP PVS clipmaps/worlds; the same
-  policy guards registry publication and allocation before a mode-null singleton pool can be called.
-  Valid-but-unimplemented IDs with null handlers/pools are rejected at the same boundary. The
-  mode-specific and unavailable IW3 asset IDs plus the type-count ceiling are compile-time-pinned to
-  the engine enum and covered by a portable, mode-parametric policy test; generic registry entry
-  points also reject invalid enum values before indexing handler/pool arrays.
-- Portable validation: 13/13 tests pass locally. The production relocation registry is
-  also strict-warning clean under GCC/Clang and GCC ILP32 syntax checking; ASan/UBSan
-  pass locally with leak detection disabled because LeakSanitizer cannot run under the
-  command-runner ptrace environment. Portable tests do not execute the Windows stream
-  adapter or media ownership paths.
+- Active work: rerun the Windows x86 headless compile/link CI leg after repairing the first exposed
+  shared-type and client-lifecycle boundaries, then iterate on any remaining linker dependencies
+  before beginning the Linux platform-services boundary.
+- Last completed batch: the first headless compile remediation extracts authoritative MP client,
+  session, snapshot, voice, and config-string layouts from the desktop client header into a
+  renderer/audio-independent game/server header with pointer-width-aware size checks. Shared game
+  sources now compose their `MapEnts`, `DObjAnimMat`, debug-box, missile-up, and profiler dependencies
+  directly. Client-only vehicle FX, client-global script-debug UI paths, collision audio,
+  demo/splash teardown, command forwarding, and console-channel shutdown are compiled out of the
+  headless path. The work also corrects a latent weapon-item model calculation that could multiply
+  the 128-entry stride twice when forming a `bg_itemlist` assertion index.
+- Portable validation: 13/13 tests pass locally under GCC, Clang, and GCC ASan/UBSan, with leak
+  detection disabled because LeakSanitizer cannot run under the command-runner ptrace environment.
+  The production relocation registry is also strict-warning clean under GCC/Clang and GCC ILP32
+  syntax checking. Portable tests do not execute the Windows stream adapter or media ownership paths.
 - Windows validation: AABB warning repair run 29096212752, bounded-direct-reference run
   29096704210, and exact shared-object run 29098235207 each passed all eight jobs: five portable
   targets and three Windows x86 engine builds. Model-pieces run 29099309312 also passed all eight
@@ -30,13 +31,17 @@ work item changes. Do not create session-specific handoff files.
   jobs, confirming the parameterized model-bone-count repair and exact physics graph batch. Clipmap
   brush-graph run 29105491437, portal/cell run 29108651064, and path-data/tree run 29110801804
   also passed all eight jobs. Asset-admission run 29111550531 then passed all eight jobs with the
-  new 13-test portable suite.
+  new 13-test portable suite. Headless-gate run 29116266353 passed all eight established jobs and
+  configured the new dependency-free target successfully, then failed during compilation because
+  server-owned MP layouts and several shared constants still lived behind excluded client/cgame
+  headers. The current batch addresses every non-cascade compiler root reported by that job; its
+  MSVC rerun is the next gate.
 
 ## Milestone status
 
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
-| M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a Release headless-dedicated compile/link gate, and five native utility-test runners exist; the new headless gate still needs its first result, while runtime smoke and release workflows remain unexercised. |
+| M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a Release headless-dedicated compile/link gate, and five native utility-test runners exist; the first headless run configured without client SDK setup and exposed compile-boundary debt now repaired locally, while its rerun, runtime smoke, and release workflows remain unexercised. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
@@ -57,7 +62,7 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Make the Windows x86 headless compile/link CI leg green and burn down its unresolved client/media dependencies.
+1. Rerun the Windows x86 headless compile/link CI leg, fix its next compile/link layer, and burn down unresolved client/media dependencies.
 2. Begin the M3 headless platform-services interface.
 3. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
 4. Classify and burn down the 255 direct and four formula-based ABI layout assertions.
@@ -65,8 +70,9 @@ work item changes. Do not create session-specific handoff files.
 
 ## Known release blockers
 
-- Headless source composition has a new compile/link gate awaiting its first result and retains 34
-  allowlisted client/media includes.
+- Headless source composition configured successfully in its first compile/link run but failed its
+  initial compile on server layouts hidden behind desktop-client headers. The known compiler roots
+  are repaired locally and await CI confirmation; 34 client/media includes remain allowlisted.
 - Fast-file loading lacks a production-path malformed-input test harness and
   completed-object/type provenance for direct offsets.
 - Inline material declarations, techniques, passes, and arguments receive pre-use

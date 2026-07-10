@@ -27,10 +27,6 @@ struct ScreenPlacement;
 
 #define MYMODELCOUNT 4
 
-#define MAX_WEAPONS 128
-
-#define ITEM_WEAPMODEL(x) (MAX_WEAPONS * (x / MAX_WEAPONS))
-
 #define PRIMARY_LIGHT_NONE 0
 
 static const float up[3] = { 0.0f, 0.0f, 1.0f };

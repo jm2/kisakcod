@@ -7,6 +7,7 @@
 #include <server/server.h>
 #endif
 
+struct DObjAnimMat;
 
 void __cdecl TRACK_sv_game();
 gentity_s *__cdecl SV_GentityNum(int num);

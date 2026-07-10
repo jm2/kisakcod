@@ -56,6 +56,7 @@ set(GAME
 set(GAME_MP
     "${SRC_DIR}/game_mp/g_active_mp.cpp"
     "${SRC_DIR}/game_mp/g_client_mp.cpp"
+    "${SRC_DIR}/game_mp/g_client_public_mp.h"
     "${SRC_DIR}/game_mp/g_client_script_cmd_mp.cpp"
     "${SRC_DIR}/game_mp/g_cmds_mp.cpp"
     "${SRC_DIR}/game_mp/g_combat_mp.cpp"

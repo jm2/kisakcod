@@ -28,6 +28,13 @@ constexpr auto MAX_FRIENDLY_DIST = 15000.0;
 
 #define STATIC_MAX_LOCAL_CLIENTS 1 // LWSS Add
 #define MAX_CLIENTS 64
+constexpr int32_t MAX_WEAPONS = 128;
+
+constexpr int32_t BG_GetItemWeaponModel(int32_t itemIndex)
+{
+    return itemIndex / MAX_WEAPONS;
+}
+
 #define WEAPONSTATE_RAISING(x) (x == WEAPON_RAISING || x == WEAPON_RAISING_ALTSWITCH)
 #define WEAPONSTATE_DROPPING(x) (x == WEAPON_DROPPING || x == WEAPON_DROPPING_QUICK)
 

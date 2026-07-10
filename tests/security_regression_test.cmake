@@ -44,6 +44,22 @@ foreach(_callback_source IN LISTS _callback_sources)
 endforeach()
 
 require_source_contains(
+    "bgame/bg_local.h"
+    "constexpr int32_t MAX_WEAPONS = 128"
+    "weapon-table width must be owned by shared game code")
+require_source_contains(
+    "bgame/bg_local.h"
+    "return itemIndex / MAX_WEAPONS;"
+    "weapon item indices must decode their model without applying the table stride")
+require_source_contains(
+    "bgame/bg_misc.cpp"
+    "BG_GetItemWeaponModel(ent->index.item) * MAX_WEAPONS + weapIdx"
+    "weapon item lookup must apply the model stride exactly once")
+require_source_not_contains(
+    "bgame/bg_misc.cpp"
+    "ITEM_WEAPMODEL"
+    "legacy weapon-model macro could multiply the item-table stride twice")
+require_source_contains(
     "qcommon/files.cpp"
     "ARRAY_COUNT(fs_serverReferencedFFCheckSums)"
     "fast-file reference capacity must be derived from the destination array")
