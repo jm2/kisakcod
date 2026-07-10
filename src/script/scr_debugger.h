@@ -3,7 +3,12 @@
 #include "scr_parser.h"
 #include "scr_yacc.h"
 
+#ifndef KISAK_DEDI_HEADLESS
 #include <ui/ui_shared.h>
+#else
+struct UI_Component;
+struct UI_LinesComponent;
+#endif
 
 #define ONLY_LOCAL_CLIENT_NUM 0
 #define KEYCATCH_SCRIPT 2
@@ -161,6 +166,7 @@ struct Scr_WatchElementDoubleNode_t // sizeof=0x8
 };
 static_assert(sizeof(Scr_WatchElementDoubleNode_t) == 0x8);
 
+#ifndef KISAK_DEDI_HEADLESS
 struct scrDebuggerGlob_t // sizeof=0x2B8
 {                                       // ...
     int prevMouseTime;                  // ...
@@ -222,6 +228,7 @@ struct scrDebuggerGlob_t // sizeof=0x2B8
     int gainFocusTime;                  // ...
 };
 static_assert(sizeof(scrDebuggerGlob_t) == 0x2B8);
+#endif
 
 void __cdecl TRACK_scr_debugger();
 void __cdecl Scr_KeyEvent(int key);
@@ -336,9 +343,11 @@ void __cdecl Scr_DrawScript();
 
 void Scr_UpdateRemoteDebugger();
 
+#ifndef KISAK_DEDI_HEADLESS
 extern scrDebuggerGlob_t scrDebuggerGlob;
 extern Scr_Breakpoint g_breakpoints[128];
 extern Scr_Breakpoint *g_breakpointsHead;
+#endif
 
 extern uint32_t g_breakonObject;
 extern uint32_t g_breakonString;

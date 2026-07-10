@@ -1,4 +1,199 @@
 #include "scr_debugger.h"
+
+#ifdef KISAK_DEDI_HEADLESS
+
+#include "scr_vm.h"
+
+#include <qcommon/qcommon.h>
+
+#include <win32/win_net_debug.h>
+
+// The legacy debugger owns graphical UI objects and a client-frame event loop.
+// Headless dedicated builds keep only the VM hooks needed to execute scripts;
+// interactive and remote debugger sessions are an explicit unsupported capability.
+namespace
+{
+bool s_headlessDebuggerBreakpointsEnabled = true;
+bool s_headlessDebuggerWarningPrinted;
+
+void Scr_HeadlessDebuggerUnavailable()
+{
+    if (!s_headlessDebuggerWarningPrinted)
+    {
+        s_headlessDebuggerWarningPrinted = true;
+        Com_PrintWarning(23, "Script debugger is unavailable in KISAK_DEDI_HEADLESS builds.\n");
+    }
+}
+
+void Scr_HeadlessDisableRemoteDebugger()
+{
+    if (Sys_IsRemoteDebugClient())
+    {
+        Scr_HeadlessDebuggerUnavailable();
+        NET_RestartDebug();
+    }
+}
+}
+
+void __cdecl TRACK_scr_debugger()
+{
+}
+
+void __cdecl Scr_KeyEvent(int)
+{
+}
+
+void __cdecl Scr_AddDebugText(char *)
+{
+}
+
+void __cdecl Scr_MonitorCommand(const char *)
+{
+}
+
+void __cdecl Scr_InitDebuggerMain()
+{
+}
+
+void __cdecl Scr_ShutdownDebuggerMain()
+{
+}
+
+void __cdecl Scr_InitDebugger()
+{
+}
+
+void __cdecl Scr_ShutdownDebugger()
+{
+}
+
+void __cdecl Scr_InitDebuggerSystem()
+{
+    Scr_HeadlessDisableRemoteDebugger();
+}
+
+void Scr_InitBreakpoints()
+{
+}
+
+void __cdecl Scr_ShutdownDebuggerSystem(int)
+{
+}
+
+void __cdecl Scr_ShutdownRemoteClient(int)
+{
+}
+
+void __cdecl Scr_AddAssignmentPos(char *)
+{
+}
+
+void __cdecl Scr_RunDebuggerRemote()
+{
+    Scr_HeadlessDebuggerUnavailable();
+    Scr_HeadlessDisableRemoteDebugger();
+}
+
+void __cdecl Scr_RunDebugger()
+{
+    Scr_HeadlessDebuggerUnavailable();
+}
+
+Scr_WatchElement_s *Scr_DisplayDebugger()
+{
+    Scr_HeadlessDebuggerUnavailable();
+    return nullptr;
+}
+
+void __cdecl Scr_ShowConsole()
+{
+}
+
+int __cdecl Scr_HitBreakpoint(VariableValue *, char *, uint32_t, int)
+{
+    Scr_HeadlessDebuggerUnavailable();
+    return OP_NOP;
+}
+
+int __cdecl Scr_HitAssignmentBreakpoint(VariableValue *, char *, uint32_t, int)
+{
+    Scr_HeadlessDebuggerUnavailable();
+    return OP_NOP;
+}
+
+void __cdecl Scr_HitBuiltinBreakpoint(VariableValue *, const char *, uint32_t, int, int, uint32_t)
+{
+    Scr_HeadlessDebuggerUnavailable();
+}
+
+void __cdecl Scr_CheckBreakonNotify(uint32_t, uint32_t, VariableValue *, char *, uint32_t)
+{
+}
+
+void __cdecl Scr_DebugKillThread(uint32_t, const char *)
+{
+}
+
+void __cdecl Scr_DebugTerminateThread(int topThread)
+{
+    // Preserve the non-debugger termination path used when developer mode is off.
+    scrVmPub.function_frame_start[topThread].fs.pos = &g_EndPos;
+}
+
+bool __cdecl Scr_RefToVariable(uint32_t, int)
+{
+    return false;
+}
+
+char __cdecl Scr_AllowBreakpoint(char *)
+{
+    return 0;
+}
+
+int __cdecl Scr_UpdateDebugSocket()
+{
+    Scr_HeadlessDisableRemoteDebugger();
+    return 0;
+}
+
+void __cdecl Scr_UpdateDebugger()
+{
+}
+
+void Scr_UpdateRemoteDebugger()
+{
+    Scr_HeadlessDisableRemoteDebugger();
+}
+
+void Scr_EnableBreakpoints(bool enable)
+{
+    s_headlessDebuggerBreakpointsEnabled = enable;
+}
+
+bool __cdecl Scr_IgnoreErrors()
+{
+    return !s_headlessDebuggerBreakpointsEnabled;
+}
+
+bool Scr_CanDrawScript()
+{
+    return false;
+}
+
+void __cdecl Scr_DrawScript()
+{
+}
+
+void __cdecl Scr_SetSelectionComp(UI_Component *)
+{
+}
+
+void __cdecl Scr_SetMiscScrollPaneComp(UI_LinesComponent *)
+{
+}
+
+#else
+
 #include "scr_animtree.h"
 #include "scr_parser.h"
 #include "scr_main.h"
@@ -3471,3 +3666,5 @@ void Scr_UpdateRemoteDebugger()
     iassert(Sys_IsMainThread());
 
 }
+
+#endif

@@ -8,17 +8,14 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: rerun all Windows x86 engine legs after repairing the second headless compiler layer
-  and the normal-build declarations that had previously arrived transitively through client headers;
-  then iterate on the first linker boundary before beginning the Linux platform-services boundary.
-- Last completed batch: the second headless compile remediation gives shared declarations and math
-  helpers explicit owners, removes Win32 scalar/intrinsic leakage from shared networking code, and
-  keeps normal client command/voice dependencies explicit. The common lifecycle now preserves the
-  server, database, filesystem, script, packet, and fake-lag paths while compiling client, renderer,
-  sound, input, and UI work out of the headless profile. Headless startup directly loads the four
-  authoritative MP fast-file zones plus an optional mod without loading `ui_mp`, fixes the dedicated
-  dvar at mode 2, and retains bounded pre-console diagnostics. Console command queuing and event-copy
-  bounds were also repaired. Five client/media include-debt entries were retired, leaving 29 tracked.
+- Active work: commit and validate the headless script-debugger boundary, then implement the
+  database-scoped null GPU/audio resource backend exposed by the first successful headless link.
+- Last completed batch: headless script execution no longer instantiates the legacy graphical
+  debugger global or its UI-derived objects and vtables. Interactive and remote script debugging are
+  explicitly unavailable in this profile, VM hooks remain inert and linkable, debugger opcodes
+  degrade to `OP_NOP`, remote sessions are closed, and developer-mode thread termination retains the
+  normal non-debugger behavior. Non-headless preprocessed source/header output is unchanged. The last
+  direct script-debugger UI include was retired, leaving 28 tracked client/media includes.
 - Portable validation: 13/13 tests pass locally under GCC, Clang, and GCC ASan/UBSan, with leak
   detection disabled because LeakSanitizer cannot run under the command-runner ptrace environment.
   The production relocation registry is also strict-warning clean under GCC/Clang and GCC ILP32
@@ -37,14 +34,18 @@ work item changes. Do not create session-specific handoff files.
   headers. First-remediation run 29120376492 passed all five portable jobs, but all four Windows
   engine jobs failed: the three established builds exposed normal-client declarations that had
   arrived transitively through removed headers, while the headless job reached a second layer of
-  shared math, profiling, console, lifecycle, and preprocessor defects. The current batch maps every
-  non-cascade diagnostic from those jobs to a direct fix; its MSVC rerun is the next gate.
+  shared math, profiling, console, lifecycle, and preprocessor defects. Second-remediation run
+  29121929895 passed all eight established jobs, proving the normal Release, Debug, and no-Steam
+  repairs, and the headless target compiled every translation unit before failing at link with 106
+  unresolved externals. The local script-debugger boundary removes the largest UI/vtable family;
+  database GPU/audio realization and smaller collision, dynamic-entity, sound-alias, and load-object
+  adapters are the remaining confirmed linker seams.
 
 ## Milestone status
 
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
-| M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a Release headless-dedicated compile/link gate, and five native utility-test runners exist; the headless target configures without client SDK setup and its first two compiler layers are repaired locally, while the next MSVC/link rerun, runtime smoke, and release workflows remain unexercised. |
+| M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a Release headless-dedicated compile/link gate, and five native utility-test runners exist; the headless target configures and compiles fully without client SDK setup, while linker burn-down, runtime smoke, and release workflows remain. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
@@ -65,22 +66,26 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Rerun the Windows x86 headless compile/link CI leg, fix its next compile/link layer, and burn down unresolved client/media dependencies.
-2. Begin the M3 headless platform-services interface.
-3. Finish M1 fixed-width atomics integration and continue pointer-debt removal.
-4. Classify and burn down the 255 direct and four formula-based ABI layout assertions.
-5. Add production fast-file fixtures/fuzzing and assess stronger SP overlap/chain hierarchy semantics.
+1. Land and rerun the headless script-debugger/UI linker separation.
+2. Implement a database-scoped headless resource backend that preserves fast-file parsing,
+   validation, aliasing, and CPU data while suppressing GPU/audio realization.
+3. Repair the remaining server collision, dynamic-entity, sound-alias, and load-object link seams.
+4. Begin the M3 headless platform-services interface.
+5. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
 
 ## Known release blockers
 
-- Headless source composition configures successfully and has progressed through two compiler layers.
-  All diagnostics from run 29120376492 are repaired locally and await CI confirmation; 29
-  client/media includes remain allowlisted. The next expected boundary is linking: `scrDebuggerGlob`
-  still embeds polymorphic UI objects whose vtables and core methods live in the excluded UI source
-  group. A deliberate script-debugger core/state split is required rather than linking graphical UI
-  code back into the server. Headless script-created console channels currently retain the default
-  script channel because the client console filter graph is absent; extract a shared channel registry
-  if per-channel filtering is required for dedicated administration.
+- Headless source composition now configures and compiles fully. Run 29121929895 reached link and
+  reported 106 unresolved externals. The local headless script backend removes the graphical
+  debugger/UI family without restoring client UI code; 28 client/media includes remain allowlisted.
+  The largest remaining family is database resource realization: common MP fast-files legitimately
+  contain images, materials, shaders, geometry buffers, and loaded sounds, so the server must still
+  parse, validate, relocate, and publish those asset graphs while a database-scoped null backend
+  suppresses D3D/Miles handles and preserves stream consumption and ownership. Smaller confirmed
+  seams remain for `CG_TraceCapsule`, `DynEnt_LoadEntities`, object-file material/model bounds,
+  sound aliases, and shutdown audio. Headless script-created console channels currently retain the
+  default script channel because the client console filter graph is absent; extract a shared channel
+  registry if per-channel filtering is required for dedicated administration.
 - Fast-file loading lacks a production-path malformed-input test harness and
   completed-object/type provenance for direct offsets.
 - Inline material declarations, techniques, passes, and arguments receive pre-use

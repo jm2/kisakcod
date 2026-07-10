@@ -26,7 +26,6 @@ database/db_registry.cpp|#include <gfx_d3d/r_staticmodelcache.h>
 database/db_registry.cpp|#include <gfx_d3d/rb_shade.h>
 database/db_registry.cpp|#include <gfx_d3d/rb_uploadshaders.h>
 qcommon/cmd.cpp|#include <sound/snd_local.h>
-script/scr_debugger.h|#include <ui/ui_shared.h>
 universal/com_sndalias.h|#include <sound/snd_public.h>
 xanim/xanim.h|#include <gfx_d3d/r_bsp.h>
 xanim/xanim.h|#include <gfx_d3d/r_font.h>
