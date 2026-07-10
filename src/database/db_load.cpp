@@ -10739,6 +10739,14 @@ void __cdecl Load_XAssetHeader(bool atStreamStart)
         Com_Error(ERR_DROP, "Invalid fast-file asset type %d", varXAsset->type);
         return;
     }
+    if (!DB_IsXAssetTypeSupportedForBuild(varXAsset->type))
+    {
+        Com_Error(
+            ERR_DROP,
+            "Fast-file asset type '%s' is not supported by this build",
+            DB_GetXAssetTypeName(varXAsset->type));
+        return;
+    }
 
     switch (varXAsset->type)
     {
@@ -10858,6 +10866,20 @@ void __cdecl Load_XAsset(bool atStreamStart)
 
 void __cdecl Mark_XAssetHeader()
 {
+    if (varXAsset->type < 0 || varXAsset->type >= ASSET_TYPE_COUNT)
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file asset type %d", varXAsset->type);
+        return;
+    }
+    if (!DB_IsXAssetTypeSupportedForBuild(varXAsset->type))
+    {
+        Com_Error(
+            ERR_DROP,
+            "Cannot mark asset type '%s' in this build",
+            DB_GetXAssetTypeName(varXAsset->type));
+        return;
+    }
+
     switch (varXAsset->type)
     {
     case ASSET_TYPE_PHYSPRESET:

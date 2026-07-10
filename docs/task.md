@@ -10,17 +10,14 @@ work item changes. Do not create session-specific handoff files.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
 - Active work: add a Windows x86 headless compile/link CI leg, then begin the platform-services
   boundary needed by the Linux dedicated server.
-- Last completed batch: the final legacy direct-offset helper is removed. Counted path-tree headers
-  materialize before forward/back child offsets resolve; every child must be an exact owned flat-array
-  element, and inline/out-of-owner nodes are rejected. Checked path/link/visibility/tree extents,
-  finite split planes, bounded unique leaf indices, acyclic single-owner topology, full reachability,
-  and a depth-64 limit validate before `GameWorldSp` publication. Runtime-only path owner/search
-  state is scrubbed, node types and constant node references are bounded, chain-parent cycles and
-  hierarchies deeper than 256 nodes are rejected, inverse chain maps are proven as bounded
-  permutations, path visibility requires the complete runtime-indexed bit extent, link indices are
-  bounded, full header/child allocations are preflighted, and loader or shared-slot failure suppresses
-  publication.
-- Portable validation: 12/12 tests pass locally. The production relocation registry is
+- Last completed batch: fast-file dispatch now enforces the build-mode asset contract before payload
+  loading or marking. MP rejects SP clipmaps/worlds and SP rejects MP PVS clipmaps/worlds; the same
+  policy guards registry publication and allocation before a mode-null singleton pool can be called.
+  Valid-but-unimplemented IDs with null handlers/pools are rejected at the same boundary. The
+  mode-specific and unavailable IW3 asset IDs plus the type-count ceiling are compile-time-pinned to
+  the engine enum and covered by a portable, mode-parametric policy test; generic registry entry
+  points also reject invalid enum values before indexing handler/pool arrays.
+- Portable validation: 13/13 tests pass locally. The production relocation registry is
   also strict-warning clean under GCC/Clang and GCC ILP32 syntax checking; ASan/UBSan
   pass locally with leak detection disabled because LeakSanitizer cannot run under the
   command-runner ptrace environment. Portable tests do not execute the Windows stream
@@ -31,7 +28,8 @@ work item changes. Do not create session-specific handoff files.
   jobs. Surface run 29100892076 passed all five portable jobs but exposed an early-declaration
   error in the Windows-only surface validator. Physics/repair run 29102757297 then passed all eight
   jobs, confirming the parameterized model-bone-count repair and exact physics graph batch. Clipmap
-  brush-graph run 29105491437 and portal/cell run 29108651064 also passed all eight jobs.
+  brush-graph run 29105491437, portal/cell run 29108651064, and path-data/tree run 29110801804
+  also passed all eight jobs.
 
 ## Milestone status
 
@@ -39,7 +37,7 @@ work item changes. Do not create session-specific handoff files.
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 builds; five native utility-test runners; engine runtime smoke and release workflows remain unexercised. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
 | M3 platform services | Not started beyond CMake plumbing | No POSIX implementation or populated `src/_platform` tree. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, all legacy direct references migrated to bounded resolution, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush, portal/cell, and path-tree spans, and 18 exact completed object types exist; packed mirrors, broader completed-object relocation, and runtime widening remain. |

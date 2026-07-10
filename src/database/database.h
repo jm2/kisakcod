@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "db_asset_mode.h"
 #include "db_relocation.h"
 
 #include <zlib/zlib.h>
@@ -10,6 +11,41 @@
 #include <xanim/xmodel.h>
 #include <win32/win_local.h>
 #
+
+static_assert(static_cast<int32_t>(ASSET_TYPE_CLIPMAP) == db::asset_mode::kClipMap);
+static_assert(static_cast<int32_t>(ASSET_TYPE_CLIPMAP_PVS) == db::asset_mode::kClipMapPvs);
+static_assert(static_cast<int32_t>(ASSET_TYPE_GAMEWORLD_SP) == db::asset_mode::kGameWorldSp);
+static_assert(static_cast<int32_t>(ASSET_TYPE_GAMEWORLD_MP) == db::asset_mode::kGameWorldMp);
+static_assert(static_cast<int32_t>(ASSET_TYPE_UI_MAP) == db::asset_mode::kUiMap);
+static_assert(static_cast<int32_t>(ASSET_TYPE_SNDDRIVER_GLOBALS) == db::asset_mode::kSndDriverGlobals);
+static_assert(static_cast<int32_t>(ASSET_TYPE_AITYPE) == db::asset_mode::kAiType);
+static_assert(static_cast<int32_t>(ASSET_TYPE_MPTYPE) == db::asset_mode::kMpType);
+static_assert(static_cast<int32_t>(ASSET_TYPE_CHARACTER) == db::asset_mode::kCharacter);
+static_assert(static_cast<int32_t>(ASSET_TYPE_XMODELALIAS) == db::asset_mode::kXModelAlias);
+static_assert(static_cast<int32_t>(ASSET_TYPE_COUNT) == db::asset_mode::kAssetTypeCount);
+
+#if defined(KISAK_MP) && defined(KISAK_SP)
+#error "KISAK_MP and KISAK_SP cannot both be enabled"
+#elif defined(KISAK_MP)
+inline constexpr db::asset_mode::BuildMode kDBBuildMode = db::asset_mode::BuildMode::Multiplayer;
+#elif defined(KISAK_SP)
+inline constexpr db::asset_mode::BuildMode kDBBuildMode = db::asset_mode::BuildMode::SinglePlayer;
+#endif
+
+inline constexpr bool DB_IsXAssetTypeSupportedForBuild(const XAssetType type) noexcept
+{
+#if defined(KISAK_MP) || defined(KISAK_SP)
+    return db::asset_mode::IsAssetTypeSupported(kDBBuildMode, static_cast<int32_t>(type));
+#else
+    // Standalone tooling that consumes database declarations has no runtime
+    // asset pool but still shares the enum-range/unavailable-type contract.
+    const db::asset_mode::Requirement requirement =
+        db::asset_mode::RequirementForAssetType(static_cast<int32_t>(type));
+    return requirement != db::asset_mode::Requirement::Invalid
+        && requirement != db::asset_mode::Requirement::Unavailable;
+#endif
+}
+
 using DBAliasHandle = db::relocation::AliasHandle;
 using DBAliasKind = db::relocation::AliasKind;
 

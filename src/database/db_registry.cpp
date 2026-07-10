@@ -1681,6 +1681,16 @@ XAssetHeader __cdecl DB_AllocXAssetHeader(XAssetType type)
 {
     XAssetHeader header; // [esp+4h] [ebp-4h]
 
+    if (!DB_IsXAssetTypeSupportedForBuild(type))
+    {
+        Sys_UnlockWrite(&db_hashCritSect);
+        Com_Error(
+            ERR_DROP,
+            "Cannot allocate asset type %d in this build",
+            static_cast<int32_t>(type));
+        header.data = nullptr;
+        return header;
+    }
     header.data = DB_AllocXAssetHeaderHandler[type](DB_XAssetPool[type]).data;
     if (!header.data)
     {
@@ -1906,6 +1916,15 @@ XAssetHeader __cdecl DB_AddXAsset(XAssetType type, XAssetHeader header)
     XAssetEntryPoolEntry *existingEntry; // [esp+0h] [ebp-14h]
     XAssetEntryPoolEntry newEntry; // [esp+4h] [ebp-10h] BYREF
 
+    if (!DB_IsXAssetTypeSupportedForBuild(type))
+    {
+        Com_Error(
+            ERR_DROP,
+            "Cannot publish asset type %d in this build",
+            static_cast<int32_t>(type));
+        header.data = nullptr;
+        return header;
+    }
     newEntry.entry.asset.type = type;
     newEntry.entry.asset.header = header;
     Sys_LockWrite(&db_hashCritSect);
@@ -2159,6 +2178,14 @@ void __cdecl DB_GetXAsset(XAssetType type, XAssetHeader header)
     const char *name; // [esp+10h] [ebp-8h]
     XAssetEntry *assetEntry; // [esp+14h] [ebp-4h]
 
+    if (!DB_IsXAssetTypeSupportedForBuild(type))
+    {
+        Com_Error(
+            ERR_DROP,
+            "Cannot mark asset type %d in this build",
+            static_cast<int32_t>(type));
+        return;
+    }
     asset.type = type;
     asset.header = header;
     name = DB_GetXAssetName(&asset);

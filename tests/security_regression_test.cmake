@@ -337,6 +337,47 @@ require_source_not_contains(
     "all direct fast-file offsets must use bounded typed resolution")
 require_source_contains(
     "database/db_load.cpp"
+    "void __cdecl Load_XAssetHeader(bool atStreamStart)
+{
+    if (varXAsset->type < 0 || varXAsset->type >= ASSET_TYPE_COUNT)"
+    "top-level asset loading must validate the serialized type before dispatch")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (!DB_IsXAssetTypeSupportedForBuild(varXAsset->type))
+    {
+        Com_Error(
+            ERR_DROP,
+            \"Fast-file asset type '%s' is not supported by this build\""
+    "top-level asset loading must reject disallowed build-mode and unavailable types before dispatch")
+require_source_contains(
+    "database/db_load.cpp"
+    "void __cdecl Mark_XAssetHeader()
+{
+    if (varXAsset->type < 0 || varXAsset->type >= ASSET_TYPE_COUNT)"
+    "asset marking must validate the type before dispatch")
+require_source_contains(
+    "database/db_load.cpp"
+    "\"Cannot mark asset type '%s' in this build\""
+    "asset marking must reject disallowed build-mode and unavailable types before dispatch")
+require_source_contains(
+    "database/db_registry.cpp"
+    "if (!DB_IsXAssetTypeSupportedForBuild(type))
+    {
+        Sys_UnlockWrite(&db_hashCritSect);
+        Com_Error(
+            ERR_DROP,
+            \"Cannot allocate asset type %d in this build\""
+    "asset allocation must reject invalid, unavailable, and wrong-mode types before pool indexing")
+require_source_contains(
+    "database/db_registry.cpp"
+    "\"Cannot publish asset type %d in this build\""
+    "asset publication must reject invalid, unavailable, and wrong-mode types before insertion")
+require_source_contains(
+    "database/db_registry.cpp"
+    "\"Cannot mark asset type %d in this build\""
+    "registry marking must reject invalid, unavailable, and wrong-mode types before name lookup")
+require_source_contains(
+    "database/db_load.cpp"
     "world->models[0].surfaceCount
             != world->dpvs.staticSurfaceCount"
     "world AABB metadata must match the world brush-model surface partition")
