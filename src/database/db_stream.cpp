@@ -423,6 +423,17 @@ bool __cdecl DB_CompleteObject(
         }
         headerBytes = disk32::kMaterialWaterBytes;
         break;
+    case DBAliasKind::MaterialTextureTable:
+        if (metadata != materializedBytes
+            || metadata < disk32::kMaterialTextureDefBytes
+            || metadata > UINT32_C(255) * disk32::kMaterialTextureDefBytes
+            || metadata % disk32::kMaterialTextureDefBytes != 0)
+        {
+            Com_Error(ERR_DROP, "Invalid completed material texture-table schema");
+            return false;
+        }
+        headerBytes = metadata;
+        break;
     default:
         Com_Error(ERR_DROP, "Unsupported completed fast-file object schema");
         return false;

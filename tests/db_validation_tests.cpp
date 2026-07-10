@@ -111,6 +111,57 @@ int main()
         !db::validation::MaterialTechniqueDiskBytes(1, nullptr),
         "null material technique disk extent output rejected");
 
+    uint32_t textureTableBytes = UINT32_C(0xFFFFFFFF);
+    Expect(
+        db::validation::MaterialTextureTableDiskBytes(1, &textureTableBytes)
+            && textureTableBytes == disk32::kMaterialTextureDefBytes,
+        "single-entry material texture-table extent accepted");
+    Expect(
+        db::validation::MaterialTextureTableDiskBytes(255, &textureTableBytes)
+            && textureTableBytes == 255 * disk32::kMaterialTextureDefBytes,
+        "maximum material texture-table extent accepted");
+    Expect(
+        !db::validation::MaterialTextureTableDiskBytes(0, &textureTableBytes)
+            && textureTableBytes == 0,
+        "empty completed material texture table rejected");
+    Expect(
+        !db::validation::MaterialTextureTableDiskBytes(256, &textureTableBytes)
+            && textureTableBytes == 0,
+        "oversized material texture table rejected");
+    Expect(
+        !db::validation::MaterialTextureTableDiskBytes(1, nullptr),
+        "null material texture-table extent output rejected");
+    Expect(
+        db::validation::MaterialTextureHeaderValid(1, 0, true, 'a', 'z'),
+        "minimum material texture header accepted");
+    Expect(
+        db::validation::MaterialTextureHeaderValid(23, 11, true, '$', 'p'),
+        "maximum decoded material sampler and semantic accepted");
+    Expect(
+        !db::validation::MaterialTextureHeaderValid(0, 0, true, 'a', 'z'),
+        "material texture without a filter rejected");
+    Expect(
+        !db::validation::MaterialTextureHeaderValid(8, 0, true, 'a', 'z'),
+        "material texture mipmap state without a filter rejected");
+    Expect(
+        !db::validation::MaterialTextureHeaderValid(25, 0, true, 'a', 'z'),
+        "out-of-range decoded material sampler rejected");
+    Expect(
+        db::validation::MaterialTextureHeaderValid(1, 3, true, 'a', 'z'),
+        "reserved in-range material texture semantic accepted");
+    Expect(
+        !db::validation::MaterialTextureHeaderValid(1, 12, true, 'a', 'z'),
+        "out-of-range material texture semantic rejected");
+    Expect(
+        !db::validation::MaterialTextureHeaderValid(1, 0, false, 'a', 'z'),
+        "material texture without a payload rejected");
+    Expect(
+        !db::validation::MaterialTextureHeaderValid(1, 0, true, 0, 'z'),
+        "material texture without a name start rejected");
+    Expect(
+        !db::validation::MaterialTextureHeaderValid(1, 0, true, 'a', 0),
+        "material texture without a name end rejected");
+
     Expect(db::validation::WaterGridValid(4, 4), "minimum water FFT grid accepted");
     Expect(db::validation::WaterGridValid(8, 8), "power-of-two water FFT grid accepted");
     Expect(db::validation::WaterGridValid(64, 64), "maximum water FFT grid accepted");

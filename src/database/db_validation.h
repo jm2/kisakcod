@@ -47,6 +47,36 @@ constexpr bool MaterialTechniqueDiskBytes(
     return true;
 }
 
+constexpr bool MaterialTextureTableDiskBytes(
+    std::uint32_t textureCount,
+    std::uint32_t *bytes)
+{
+    if (bytes)
+        *bytes = 0;
+    if (!bytes || !CountInRange(textureCount, 1, 255))
+        return false;
+
+    *bytes = textureCount * disk32::kMaterialTextureDefBytes;
+    return true;
+}
+
+constexpr bool MaterialTextureHeaderValid(
+    std::uint32_t samplerState,
+    std::uint32_t semantic,
+    bool hasPayload,
+    std::uint32_t nameStart,
+    std::uint32_t nameEnd)
+{
+    const std::uint32_t filter = samplerState & UINT32_C(0x7);
+    const std::uint32_t mipmap = samplerState & UINT32_C(0x18);
+    return hasPayload
+        && nameStart != 0
+        && nameEnd != 0
+        && filter != 0
+        && mipmap != UINT32_C(0x18)
+        && semantic <= 11;
+}
+
 constexpr bool WaterGridValid(std::int64_t width, std::int64_t height)
 {
     return width == height

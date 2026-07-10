@@ -651,6 +651,10 @@ int main()
             AliasKind::MaterialWater),
         "material water requires exact completed starts");
     Expect(
+        db::relocation::RequiresExactStartPublication(
+            AliasKind::MaterialTextureTable),
+        "material texture tables require exact completed starts");
+    Expect(
         !db::relocation::RequiresExactStartPublication(AliasKind::Material),
         "redirectable asset aliases do not require their slot address");
 
@@ -1220,6 +1224,85 @@ int main()
         Status::Ok,
         "resolve exact completed material water start");
     Expect(resolved == blocks[4].base, "completed material water address is exact");
+
+    registry.Reset(blocks, db::relocation::kBlockCount);
+    AliasHandle materialTextureTable;
+    constexpr uint32_t twoTextureBytes =
+        2 * disk32::kMaterialTextureDefBytes;
+    ExpectStatus(
+        registry.RegisterSlot(
+            blocks[4].base,
+            AliasKind::MaterialTextureTable,
+            &materialTextureTable),
+        Status::Ok,
+        "register completed material texture-table start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialTextureTable,
+            twoTextureBytes,
+            &resolved),
+        Status::PendingSlot,
+        "material texture table is pending before completion");
+    ExpectStatus(
+        registry.Publish(
+            materialTextureTable,
+            AliasKind::MaterialTextureTable,
+            blocks[4].base + 4,
+            twoTextureBytes),
+        Status::MetadataMismatch,
+        "completed material texture table must publish its own start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialTextureTable,
+            twoTextureBytes,
+            &resolved),
+        Status::PendingSlot,
+        "failed material texture-table publication remains pending");
+    ExpectStatus(
+        registry.Publish(
+            materialTextureTable,
+            AliasKind::MaterialTextureTable,
+            blocks[4].base,
+            twoTextureBytes),
+        Status::Ok,
+        "publish exact completed material texture-table start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialTextureTable,
+            disk32::kMaterialTextureDefBytes,
+            &resolved),
+        Status::MetadataMismatch,
+        "material texture-table disk extent is exact");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialWater,
+            disk32::kMaterialWaterBytes,
+            &resolved),
+        Status::KindMismatch,
+        "material texture table cannot resolve as another material object");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 4),
+            AliasKind::MaterialTextureTable,
+            twoTextureBytes,
+            &resolved),
+        Status::UnregisteredSlot,
+        "material texture-table interior is not an object start");
+    ExpectStatus(
+        registry.Resolve(
+            Token(4, 0),
+            AliasKind::MaterialTextureTable,
+            twoTextureBytes,
+            &resolved),
+        Status::Ok,
+        "resolve exact completed material texture-table start");
+    Expect(
+        resolved == blocks[4].base,
+        "completed material texture-table address is exact");
 
     BlockView wideBlocks[db::relocation::kBlockCount];
     FillBlocks(wideBlocks);

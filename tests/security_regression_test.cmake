@@ -472,6 +472,43 @@ require_source_contains(
     "if (varMaterialTextureDefInfo && *varMaterialTextureDefInfo)"
     "material water marking must test the payload rather than its holder")
 require_source_contains(
+    "database/db_load.cpp"
+    "DB_ConvertOffsetToAlias(
+                (uint32_t*)&varMaterial->textureTable,
+                DBAliasKind::MaterialTextureTable,
+                textureByteCount)"
+    "shared material texture tables must resolve through exact typed provenance")
+require_source_contains(
+    "database/db_load.cpp"
+    "db::validation::MaterialTextureHeaderValid("
+    "material texture headers must be bounded before payload fixup")
+require_source_contains(
+    "database/db_load.cpp"
+    "var[-1].nameHash >= var->nameHash"
+    "material texture tables must be strictly hash ordered")
+require_source_contains(
+    "database/db_load.cpp"
+    "Present-empty spans are legal in disk32"
+    "empty material texture tables must be explicitly canonicalized")
+require_source_contains(
+    "database/db_load.cpp"
+    "if (textureToken == disk32::kInline)"
+    "empty inline material texture tables must preserve stream alignment")
+require_source_contains(
+    "database/db_load.cpp"
+    "DB_ConvertOffsetToPointer(
+                    (uint32_t*)&varMaterial->textureTable,
+                    0,
+                    4,
+                    kDirectBlock4)"
+    "empty direct material texture tables must still validate their token")
+require_source_contains(
+    "database/db_stream.cpp"
+    "case DBAliasKind::MaterialTextureTable:
+        if (metadata != materializedBytes
+            || metadata < disk32::kMaterialTextureDefBytes"
+    "completed material texture tables must validate their variable disk32 extent")
+require_source_contains(
     "database/db_validation.h"
     "major != loadForRenderer + 2"
     "material shader bytecode models must match their renderer variant")
@@ -800,6 +837,33 @@ if (_water_bounded_phase EQUAL -1
 endif()
 string(FIND
     "${_db_load_source}"
+    "DB_RegisterPointerSlot(
+                varMaterial->textureTable,
+                DBAliasKind::MaterialTextureTable)"
+    _material_texture_table_registration)
+string(FIND
+    "${_db_load_source}"
+    "if (!Load_MaterialTextureDefArray(1, varMaterial->textureCount))"
+    _material_texture_table_load)
+string(FIND
+    "${_db_load_source}"
+    "if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::MaterialTextureTable,
+                    varMaterial->textureTable,
+                    textureByteCount,
+                    textureByteCount))"
+    _material_texture_table_completion)
+if (_material_texture_table_registration EQUAL -1
+    OR _material_texture_table_load EQUAL -1
+    OR _material_texture_table_completion EQUAL -1
+    OR _material_texture_table_registration GREATER _material_texture_table_load
+    OR _material_texture_table_load GREATER _material_texture_table_completion)
+    message(FATAL_ERROR
+        "Material texture-table provenance must begin before child loading and publish after completion")
+endif()
+string(FIND
+    "${_db_load_source}"
     "const db::relocation::Status materialized = DB_ValidateStreamAddress("
     _material_shader_program_materialization)
 string(FIND
@@ -841,9 +905,9 @@ file(STRINGS
     _legacy_direct_offsets
     REGEX "DB_ConvertOffsetToPointerLegacy")
 list(LENGTH _legacy_direct_offsets _legacy_direct_offset_count)
-if (NOT _legacy_direct_offset_count EQUAL 23)
+if (NOT _legacy_direct_offset_count EQUAL 22)
     message(FATAL_ERROR
-        "Expected exactly 23 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
+        "Expected exactly 22 explicitly legacy direct fast-file offsets; found ${_legacy_direct_offset_count}. "
         "Migrations must update this debt gate.")
 endif()
 

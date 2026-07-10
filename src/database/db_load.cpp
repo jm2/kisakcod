@@ -2885,7 +2885,20 @@ bool __cdecl Load_MaterialTextureDefInfo(bool atStreamStart)
 
 bool __cdecl Load_MaterialTextureDef(bool atStreamStart)
 {
-    Load_Stream(atStreamStart, (uint8_t *)varMaterialTextureDef, 12);
+    Load_Stream(
+        atStreamStart,
+        (uint8_t *)varMaterialTextureDef,
+        disk32::kMaterialTextureDefBytes);
+    if (!db::validation::MaterialTextureHeaderValid(
+            varMaterialTextureDef->samplerState,
+            varMaterialTextureDef->semantic,
+            varMaterialTextureDef->u.image != nullptr,
+            static_cast<uint8_t>(varMaterialTextureDef->nameStart),
+            static_cast<uint8_t>(varMaterialTextureDef->nameEnd)))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file material texture header");
+        return false;
+    }
     varMaterialTextureDefInfo = (water_t**)&varMaterialTextureDef->u;
     return Load_MaterialTextureDefInfo(0);
 }
@@ -2895,13 +2908,22 @@ bool __cdecl Load_MaterialTextureDefArray(bool atStreamStart, int32_t count)
     MaterialTextureDef *var; // [esp+0h] [ebp-8h]
     int32_t i; // [esp+4h] [ebp-4h]
 
-    Load_StreamArray(atStreamStart, (uint8_t *)varMaterialTextureDef, count, 12);
+    Load_StreamArray(
+        atStreamStart,
+        (uint8_t *)varMaterialTextureDef,
+        count,
+        disk32::kMaterialTextureDefBytes);
     var = varMaterialTextureDef;
     for (i = 0; i < count; ++i)
     {
         varMaterialTextureDef = var;
         if (!Load_MaterialTextureDef(0))
             return false;
+        if (i && var[-1].nameHash >= var->nameHash)
+        {
+            Com_Error(ERR_DROP, "Unordered fast-file material texture table");
+            return false;
+        }
         ++var;
     }
     return true;
@@ -3091,6 +3113,15 @@ bool __cdecl Load_Material(bool atStreamStart)
         varMaterial->stateBitsCount,
         8,
         "material state bits");
+    uint32_t textureByteCount = 0;
+    if (varMaterial->textureCount
+        && !db::validation::MaterialTextureTableDiskBytes(
+            varMaterial->textureCount,
+            &textureByteCount))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file material texture-table extent");
+        return false;
+    }
     DB_PushStreamPos(4);
     varMaterialInfo = &varMaterial->info;
     Load_MaterialInfo(0);
@@ -3102,11 +3133,64 @@ bool __cdecl Load_Material(bool atStreamStart)
     }
     if (varMaterial->textureTable)
     {
-        if (varMaterial->textureTable == (MaterialTextureDef *)-1)
+        if (!varMaterial->textureCount)
+        {
+            // Present-empty spans are legal in disk32, but have no completed
+            // object start or runtime consumer. Preserve inline alignment or
+            // validate a direct token, then canonicalize the span to null.
+            uint32_t textureToken = 0;
+            memcpy(
+                &textureToken,
+                &varMaterial->textureTable,
+                sizeof(textureToken));
+            if (textureToken == disk32::kInline)
+            {
+                if (!AllocLoad_FxElemVisStateSample())
+                {
+                    Com_Error(ERR_DROP, "Could not align empty material texture table");
+                    DB_PopStreamPos();
+                    return false;
+                }
+            }
+            else
+            {
+                DB_ConvertOffsetToPointer(
+                    (uint32_t*)&varMaterial->textureTable,
+                    0,
+                    4,
+                    kDirectBlock4);
+            }
+            varMaterial->textureTable = nullptr;
+        }
+        else if (varMaterial->textureTable == (MaterialTextureDef *)-1)
         {
             varMaterial->textureTable = (MaterialTextureDef *)AllocLoad_FxElemVisStateSample();
+            if (!varMaterial->textureTable)
+            {
+                Com_Error(ERR_DROP, "Could not allocate material texture table");
+                DB_PopStreamPos();
+                return false;
+            }
+            const DBAliasHandle completed = DB_RegisterPointerSlot(
+                varMaterial->textureTable,
+                DBAliasKind::MaterialTextureTable);
+            if (!completed)
+            {
+                DB_PopStreamPos();
+                return false;
+            }
             varMaterialTextureDef = varMaterial->textureTable;
             if (!Load_MaterialTextureDefArray(1, varMaterial->textureCount))
+            {
+                DB_PopStreamPos();
+                return false;
+            }
+            if (!DB_CompleteObject(
+                    completed,
+                    DBAliasKind::MaterialTextureTable,
+                    varMaterial->textureTable,
+                    textureByteCount,
+                    textureByteCount))
             {
                 DB_PopStreamPos();
                 return false;
@@ -3114,7 +3198,10 @@ bool __cdecl Load_Material(bool atStreamStart)
         }
         else
         {
-            DB_ConvertOffsetToPointerLegacy((uint32_t*)&varMaterial->textureTable);
+            DB_ConvertOffsetToAlias(
+                (uint32_t*)&varMaterial->textureTable,
+                DBAliasKind::MaterialTextureTable,
+                textureByteCount);
         }
     }
     if (varMaterial->constantTable)

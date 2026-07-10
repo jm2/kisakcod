@@ -24,6 +24,7 @@ constexpr uint32_t kMaterialPixelShaderBytes = 16;
 constexpr uint32_t kMaterialShaderProgramBytes = 12;
 constexpr uint32_t kMaterialShaderLoadDefBytes = 8;
 constexpr uint32_t kMaterialWaterBytes = 68;
+constexpr uint32_t kMaterialTextureDefBytes = 12;
 
 struct PointerToken
 {
