@@ -1,4 +1,6 @@
 #pragma once
+#include <universal/platform_compat.h>
+
 #include "r_material.h"
 #include "rb_backend.h"
 #include "fxprimitives.h"
@@ -63,7 +65,7 @@ void __cdecl R_ProcessWorkerCmdInternal(WorkerCmdType type, void *data);
 void R_InitWorkerThreads();
 int R_InitWorkerCmds();
 int R_InitWorkerCmdsPos();
-void __cdecl  R_WorkerThread();
+void KISAK_CDECL R_WorkerThread(uint32_t threadContext);
 void __cdecl R_AddWorkerCmd(WorkerCmdType type, uint8_t *data);
 void __cdecl R_UpdateActiveWorkerThreads();
 void __cdecl R_WaitFrontendWorkerCmds();

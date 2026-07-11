@@ -29,7 +29,10 @@ void __cdecl Sys_WaitDatabaseThread();
 bool __cdecl Sys_SpawnWorkerThread(
     void(__cdecl* function)(std::uint32_t),
     std::uint32_t threadIndex);
-void __cdecl Sys_SuspendThread(ThreadContext_t threadContext);
+void __cdecl Sys_SetWorkerThreadActive(
+    std::uint32_t workerIndex,
+    bool active);
+void __cdecl Sys_WorkerThreadPausePoint(ThreadContext_t threadContext);
 void __cdecl Sys_ResumeThread(ThreadContext_t threadContext);
 void *__cdecl Sys_RendererSleep();
 int __cdecl Sys_RendererReady();

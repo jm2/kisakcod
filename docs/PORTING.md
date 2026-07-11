@@ -61,7 +61,7 @@ Remaining gates, in implementation order:
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
 2. Finish engine-wide fixed-width atomic adoption, migrate engine creation/identity onto the native
-   thread lifecycle, and replace renderer-worker suspension with a cooperative pause gate.
+   thread lifecycle, and finish portable priority/processor policy plus crash-freeze isolation.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -745,9 +745,12 @@ publishing `HANDLE` or `pthread_t`; runtime tests exercise ordering, identity, t
 visibility, and repeated cleanup on all five native utility targets. A shared four-state worker gate
 now supplies cooperative pause requests, parked acknowledgements, and directional resume signals;
 integrated stress tests cover waiting and in-flight tasks, queued work while parked, rapid stale-event
-cycles, and independent workers under ThreadSanitizer. Next, migrate the high-level engine consumers
-onto these contracts, then add priority/affinity policy, filesystem/virtual memory, console/process,
-and BSD sockets.
+cycles, and independent workers under ThreadSanitizer. Both renderer workers now call that gate only
+at command-free boundaries; controller transitions wake their command wait and do not return from a
+disable until `Parked` is published. This removes debugger-oriented `SuspendThread` from normal
+operation and fixes the worker entry's incompatible function-pointer cast. Next, migrate remaining
+engine creation/identity consumers, then add priority/affinity policy, filesystem/virtual memory,
+console/process, and BSD sockets.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),

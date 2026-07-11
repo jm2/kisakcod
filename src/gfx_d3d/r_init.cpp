@@ -3742,7 +3742,7 @@ char __cdecl R_InitHardware(const GfxWindowParms *wndParms)
         iassert( r_smp_worker_thread[workerIndex] );
         Dvar_ClearModified((dvar_s*)r_smp_worker_thread[workerIndex]);
         if (r_smp_worker_thread[workerIndex]->current.enabled)
-            Sys_ResumeThread((ThreadContext_t)(workerIndex + 2));
+            Sys_SetWorkerThreadActive(workerIndex, true);
     }
     return 1;
 }

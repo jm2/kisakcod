@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 
+#include <qcommon/sys_worker_gate.h>
 #include <universal/assertive.h>
 #include <universal/profile.h>
 
@@ -47,6 +48,9 @@ volatile int g_timeout;
 typedef void (*ThreadFuncFn)(uint32_t);
 static ThreadFuncFn threadFunc[THREAD_CONTEXT_COUNT];
 
+static constexpr uint32_t WORKER_THREAD_COUNT = 2;
+static SysWorkerGateHandle s_workerThreadGate[WORKER_THREAD_COUNT];
+
 void *g_threadValues[THREAD_CONTEXT_COUNT][4];
 std::uint32_t threadId[THREAD_CONTEXT_COUNT];
 void *threadHandle[THREAD_CONTEXT_COUNT];
@@ -70,6 +74,32 @@ static SysEventHandle backendEvent[2];
 static SysEventHandle ackendEvent;
 static SysEventHandle updateSpotLightEffectEvent;
 static SysEventHandle updateEffectsEvent;
+
+static bool Sys_IsWorkerThreadIndexValid(const uint32_t workerIndex)
+{
+    if (workerIndex < WORKER_THREAD_COUNT)
+        return true;
+
+    iassert(workerIndex < WORKER_THREAD_COUNT);
+    return false;
+}
+
+static bool Sys_GetWorkerThreadIndex(
+    const ThreadContext_t threadContext,
+    uint32_t *const workerIndex)
+{
+    if (threadContext >= THREAD_CONTEXT_WORKER0
+        && threadContext <= THREAD_CONTEXT_WORKER1)
+    {
+        *workerIndex = static_cast<uint32_t>(
+            threadContext - THREAD_CONTEXT_WORKER0);
+        return true;
+    }
+
+    iassert(threadContext >= THREAD_CONTEXT_WORKER0
+        && threadContext <= THREAD_CONTEXT_WORKER1);
+    return false;
+}
 
 static bool __cdecl Sys_IsUsingAnyRenderProfile()
 {
@@ -310,10 +340,13 @@ void __cdecl Sys_WaitDatabaseThread()
 
 bool __cdecl Sys_SpawnWorkerThread(void(__cdecl* function)(uint32_t), uint32_t threadIndex)
 {
-    ThreadContext_t threadContext; // [esp+0h] [ebp-4h]
+    if (!Sys_IsWorkerThreadIndexValid(threadIndex))
+        return false;
 
-    threadContext = (ThreadContext_t)(threadIndex + 2);
-    if (threadHandle[threadIndex + 2])
+    const ThreadContext_t threadContext = static_cast<ThreadContext_t>(
+        THREAD_CONTEXT_WORKER0 + threadIndex);
+    if (threadHandle[threadContext] || s_workerThreadGate[threadIndex])
+    {
         MyAssertHandler(
             ".\\qcommon\\threads.cpp",
             1113,
@@ -321,14 +354,66 @@ bool __cdecl Sys_SpawnWorkerThread(void(__cdecl* function)(uint32_t), uint32_t t
             "%s\n\t(threadContext) = %i",
             "(!threadHandle[threadContext])",
             threadContext);
+
+        return false;
+    }
+
+    Sys_WorkerGateCreate(&s_workerThreadGate[threadIndex]);
     Sys_CreateThread(function, threadContext);
-    return threadHandle[threadContext] != 0;
+    if (threadHandle[threadContext])
+        return true;
+
+    threadFunc[threadContext] = nullptr;
+    Sys_WorkerGateDestroy(&s_workerThreadGate[threadIndex]);
+    return false;
 }
 
-void __cdecl Sys_SuspendThread(ThreadContext_t threadContext)
+void __cdecl Sys_SetWorkerThreadActive(
+    const uint32_t workerIndex,
+    const bool active)
 {
-    iassert( threadHandle[threadContext] );
-    SuspendThread(threadHandle[threadContext]);
+    if (!Sys_IsWorkerThreadIndexValid(workerIndex))
+        return;
+
+    const ThreadContext_t threadContext = static_cast<ThreadContext_t>(
+        THREAD_CONTEXT_WORKER0 + workerIndex);
+    SysWorkerGateHandle const gate = s_workerThreadGate[workerIndex];
+    if (!gate || !threadHandle[threadContext])
+    {
+        iassert(gate);
+        iassert(threadHandle[threadContext]);
+        return;
+    }
+
+    if (active)
+    {
+        if (Sys_WorkerGateActivate(gate))
+            Sys_ResumeThread(threadContext);
+        Sys_SetWorkerCmdEvent();
+        return;
+    }
+
+    if (Sys_WorkerGateRequestPause(gate))
+    {
+        Sys_SetWorkerCmdEvent();
+        Sys_WorkerGateWaitPaused(gate);
+    }
+}
+
+void __cdecl Sys_WorkerThreadPausePoint(const ThreadContext_t threadContext)
+{
+    uint32_t workerIndex;
+    if (!Sys_GetWorkerThreadIndex(threadContext, &workerIndex))
+        return;
+
+    SysWorkerGateHandle const gate = s_workerThreadGate[workerIndex];
+    if (!gate)
+    {
+        iassert(gate);
+        return;
+    }
+
+    Sys_WorkerGatePausePoint(gate);
 }
 
 void __cdecl Sys_ResumeThread(ThreadContext_t threadContext)

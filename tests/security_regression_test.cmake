@@ -137,9 +137,16 @@ foreach(_native_thread_token
     "pthread"
     "HANDLE"
     "DWORD"
+    "cpu_set_t"
+    "sched_param"
+    "GROUP_AFFINITY"
+    "KAFFINITY"
     "std::thread"
     "CreateThread"
     "_beginthread"
+    "SetThreadAffinityMask"
+    "SuspendThread"
+    "ResumeThread"
 )
     require_source_not_contains(
         "qcommon/sys_thread.h"
@@ -159,6 +166,33 @@ foreach(_native_worker_suspend_token
         "qcommon/sys_worker_gate.h"
         "${_native_worker_suspend_token}"
         "cooperative worker gate must not expose native suspension APIs")
+endforeach()
+require_source_contains(
+    "gfx_d3d/r_workercmds.h"
+    "void KISAK_CDECL R_WorkerThread(uint32_t threadContext);"
+    "renderer worker entry must accept its fixed-width thread context without an ABI cast")
+require_source_contains(
+    "gfx_d3d/r_workercmds.cpp"
+    "Sys_SpawnWorkerThread(R_WorkerThread, workerThreadIndexa)"
+    "renderer worker creation must pass its exactly typed entry point")
+require_source_not_contains(
+    "gfx_d3d/r_workercmds.cpp"
+    "(void(__cdecl *)(uint32_t))R_WorkerThread"
+    "renderer worker creation must not cast an incompatible no-argument entry point")
+require_source_not_contains(
+    "qcommon/threads.h"
+    "Sys_SuspendThread("
+    "shared thread orchestration must not re-expose arbitrary worker suspension")
+foreach(_renderer_worker_source
+    "gfx_d3d/r_init.cpp"
+    "gfx_d3d/r_workercmds.cpp"
+)
+    foreach(_legacy_worker_control Sys_SuspendThread Sys_ResumeThread)
+        require_source_not_contains(
+            "${_renderer_worker_source}"
+            "${_legacy_worker_control}("
+            "renderer workers must use the cooperative active-state controller")
+    endforeach()
 endforeach()
 foreach(_raw_event_api CreateEventA SetEvent ResetEvent WaitForSingleObject)
     require_source_not_matches(

@@ -8,9 +8,15 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: wire the opaque lifecycle and cooperative worker gate into engine thread consumers,
-  then continue fixed-width atomic adoption without relaxing the POSIX engine gate.
-- Last completed batch: an opaque `SysWorkerGateHandle` implements acknowledged cooperative
+- Active work: migrate remaining engine creation/identity/priority/affinity consumers onto opaque
+  thread handles, quarantine crash-only freezing, then continue fixed-width atomic adoption without
+  relaxing the POSIX engine gate.
+- Last completed batch: both renderer workers now use the cooperative gate at command-free safe
+  points. Initial activation starts the native thread once; runtime dvar transitions request a pause,
+  wake the command wait, and block until the worker publishes `Parked`. The old normal-operation
+  `Sys_SuspendThread` path is gone, the wait counter is balanced before parking, and `R_WorkerThread`
+  now has the exact fixed-width callback signature instead of relying on an incompatible cast.
+- Previous worker-gate batch: an opaque `SysWorkerGateHandle` implements acknowledged cooperative
   renderer-worker pausing without native suspension. A four-state atomic protocol and separate
   directional auto-reset events prevent lost/stale wakeups. Integrated tests cover initial start,
   waiting and in-flight pauses, queued work while parked, duplicate transitions, 128 rapid cycles,
@@ -102,7 +108,7 @@ work item changes. Do not create session-specific handoff files.
 | M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
-| M3 platform services | In progress: time/sync/event/thread lifecycle native | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, and a target-neutral cooperative worker gate. Public contracts are Windows/pthread-free. Linux/macOS engine/headless sets remain empty and engine-gated; high-level thread consumer migration, priority/affinity, filesystem, process/console, and socket backends remain. |
+| M3 platform services | In progress: time/sync/event/thread lifecycle native | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, and a target-neutral cooperative worker gate now used by renderer workers. Public contracts are Windows/pthread-free. Linux/macOS engine/headless sets remain empty and engine-gated; remaining creation/identity plus priority/affinity, filesystem, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, all legacy direct references migrated to bounded resolution, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush, portal/cell, and path-tree spans, and 18 exact completed object types exist; packed mirrors, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
@@ -121,8 +127,8 @@ work item changes. Do not create session-specific handoff files.
 ## Immediate queue
 
 1. Validate the protected licensed-content headless startup/map/`getstatus` workflow on its runner.
-2. Migrate high-level engine thread creation/identity to `SysThreadHandle` and wire renderer workers
-   to the tested cooperative pause gate, removing their normal-use native suspension.
+2. Migrate high-level engine creation/identity to `SysThreadHandle`, add truthful priority and
+   ordinal processor-policy backends, and quarantine terminal crash-only freezing.
 3. Finish the broader M1 fixed-width atomic call-site migration, including dvar sorting and
    remaining `LONG`/volatile counters that are not part of `FastCriticalSection`.
 4. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
@@ -149,11 +155,10 @@ work item changes. Do not create session-specific handoff files.
   finish that M1 migration before compiling a non-Windows engine target.
 - Native event services are selected and all event consumers use the opaque handle. A native
   opaque thread lifecycle is also selected and runtime-tested, but high-level creation/identity has
-  not yet migrated from Windows-owned `threads.cpp`. The acknowledged cooperative worker gate is
-  implemented and stress-tested but not yet connected to renderer consumers, so their current path
-  still uses unsafe native suspension. Priority/affinity policy is unported. Fatal-error freezing
-  remains separate and requires the Linux signal park and macOS Mach mechanisms specified in the
-  porting plan.
+  not yet migrated from Windows-owned `threads.cpp`. Renderer workers now park through the tested
+  cooperative gate, so normal-operation native suspension has been removed. Priority/affinity policy
+  is unported. Fatal-error freezing remains separate and requires the Linux signal park and macOS
+  Mach mechanisms specified in the porting plan.
 - Fast-file loading lacks a production-path malformed-input test harness and
   completed-object/type provenance for direct offsets.
 - Inline material declarations, techniques, passes, and arguments receive pre-use

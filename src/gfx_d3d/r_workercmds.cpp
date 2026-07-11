@@ -380,7 +380,7 @@ void R_InitWorkerThreads()
         R_InitWorkerCmds();
         for (workerThreadIndexa = 0; workerThreadIndexa < 2; ++workerThreadIndexa)
         {
-            if (!Sys_SpawnWorkerThread((void(__cdecl *)(uint32_t))R_WorkerThread, workerThreadIndexa))
+            if (!Sys_SpawnWorkerThread(R_WorkerThread, workerThreadIndexa))
                 Com_Error(ERR_FATAL, "Failed to create thread");
         }
     }
@@ -488,9 +488,10 @@ int R_InitWorkerCmdsPos()
     return result;
 }
 
-void __cdecl  R_WorkerThread()
+void KISAK_CDECL R_WorkerThread(uint32_t threadContext)
 {
     void *Value; // eax
+    const ThreadContext_t context = static_cast<ThreadContext_t>(threadContext);
 
     Value = Sys_GetValue(2);
     if (setjmp(*(jmp_buf *)Value))
@@ -499,11 +500,13 @@ void __cdecl  R_WorkerThread()
 
     while (1)
     {
+        Sys_WorkerThreadPausePoint(context);
         {
             PROF_SCOPED("WaitForWorkerCmd");
             InterlockedIncrement(&g_workerCmdWaitCount);
             Sys_WaitForWorkerCmd();
             InterlockedDecrement(&g_workerCmdWaitCount);
+            Sys_WorkerThreadPausePoint(context);
         }
         {
             PROF_SCOPED("WorkerThread");
@@ -587,10 +590,9 @@ LABEL_9:
             if (r_smp_worker_thread[workerIter]->modified)
             {
                 Dvar_ClearModified((dvar_s*)r_smp_worker_thread[workerIter]);
-                if (r_smp_worker_thread[workerIter]->current.enabled)
-                    Sys_ResumeThread((ThreadContext_t)(workerIter + 2));
-                else
-                    Sys_SuspendThread((ThreadContext_t)(workerIter + 2));
+                Sys_SetWorkerThreadActive(
+                    workerIter,
+                    r_smp_worker_thread[workerIter]->current.enabled);
             }
         }
         R_ReleaseThreadOwnership();
@@ -630,4 +632,3 @@ void __cdecl R_WaitWorkerCmds()
 
     R_ProcessWorkerCmdsWithTimeout(R_FinishedWorkerCmds, 1);
 }
-
