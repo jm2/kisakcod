@@ -1822,9 +1822,31 @@ require_source_contains(
     "fast-file asset enumeration must bound every output write")
 require_source_contains(
     "database/db_registry.cpp"
-    "InterlockedDecrement(&db_hashCritSect.readCount);
+    "Sys_UnlockRead(&db_hashCritSect);
     if (assets && assetCount > maxCount)"
     "asset capacity failure must occur after releasing the database read lock")
+require_source_not_contains(
+    "database/db_registry.cpp"
+    "db_hashCritSect.readCount"
+    "database readers must not bypass the shared atomic lock helpers")
+require_source_not_contains(
+    "database/db_registry.cpp"
+    "db_hashCritSect.writeCount"
+    "database writer-state queries must be atomic")
+require_source_not_contains(
+    "universal/dvar.cpp"
+    "g_dvarCritSect.readCount"
+    "dvar readers must not bypass the shared atomic lock helpers")
+require_source_not_contains(
+    "universal/dvar.cpp"
+    "g_dvarCritSect.writeCount"
+    "dvar writer-state polling must be atomic")
+require_source_contains(
+    "database/db_registry.cpp"
+    "Sys_UnlockRead(&db_hashCritSect);
+    if (!alwaysfails)
+        MyAssertHandler(\".\\\\database\\\\db_registry.cpp\", 2849, 0, \"unreachable\");"
+    "default-asset lookup must release its read lock on the no-match path")
 require_source_contains(
     "database/db_registry.cpp"
     "DB_RemoveTechniqueSetAsset"

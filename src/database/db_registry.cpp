@@ -696,19 +696,10 @@ void __cdecl DB_EndRecoverLostDevice()
 {
     int32_t zoneIter; // [esp+4h] [ebp-4h]
 
-    InterlockedIncrement(&db_hashCritSect.readCount);
-    while (db_hashCritSect.writeCount)
-        NET_Sleep(0);
+    Sys_LockRead(&db_hashCritSect);
     for (zoneIter = 0; zoneIter < g_zoneCount; ++zoneIter)
         DB_RecoverGeometryBuffers(&g_zones[g_zoneHandles[zoneIter]].mem);
-    if (db_hashCritSect.readCount <= 0)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\gfx_d3d\\../qcommon/threads_interlock.h",
-            76,
-            0,
-            "%s",
-            "critSect->readCount > 0");
-    InterlockedDecrement(&db_hashCritSect.readCount);
+    Sys_UnlockRead(&db_hashCritSect);
     if (!Sys_IsMainThread())
         MyAssertHandler(".\\database\\db_registry.cpp", 2929, 0, "%s", "Sys_IsMainThread()");
     if (!g_isRecoveringLostDevice)
@@ -730,19 +721,10 @@ void __cdecl DB_BeginRecoverLostDevice()
     g_isRecoveringLostDevice = 1;
     while (!g_mayRecoverLostAssets)
         NET_Sleep(0);
-    InterlockedIncrement(&db_hashCritSect.readCount);
-    while (db_hashCritSect.writeCount)
-        NET_Sleep(0);
+    Sys_LockRead(&db_hashCritSect);
     for (zoneIter = 0; zoneIter < g_zoneCount; ++zoneIter)
         DB_ReleaseGeometryBuffers(&g_zones[g_zoneHandles[zoneIter]].mem);
-    if (db_hashCritSect.readCount <= 0)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\gfx_d3d\\../qcommon/threads_interlock.h",
-            76,
-            0,
-            "%s",
-            "critSect->readCount > 0");
-    InterlockedDecrement(&db_hashCritSect.readCount);
+    Sys_UnlockRead(&db_hashCritSect);
 }
 
 void __cdecl DB_InitSingleton(void *pool, int32_t size)
@@ -1107,9 +1089,7 @@ void __cdecl DB_EnumXAssets_FastFile(
     XAssetEntryPoolEntry *assetEntry; // [esp+10h] [ebp-8h]
     uint32_t overrideAssetEntryIndex; // [esp+14h] [ebp-4h]
 
-    InterlockedIncrement(&db_hashCritSect.readCount);
-    while (db_hashCritSect.writeCount)
-        NET_Sleep(0);
+    Sys_LockRead(&db_hashCritSect);
     for (hash = 0; hash < 0x8000; ++hash)
     {
         for (assetEntryIndex = db_hashTable[hash]; assetEntryIndex; assetEntryIndex = assetEntry->entry.nextHash)
@@ -1130,14 +1110,7 @@ void __cdecl DB_EnumXAssets_FastFile(
             }
         }
     }
-    if (db_hashCritSect.readCount <= 0)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\gfx_d3d\\../qcommon/threads_interlock.h",
-            76,
-            0,
-            "%s",
-            "critSect->readCount > 0");
-    InterlockedDecrement(&db_hashCritSect.readCount);
+    Sys_UnlockRead(&db_hashCritSect);
 }
 
 int32_t __cdecl DB_GetAllXAssetOfType(XAssetType type, XAssetHeader* assets, int32_t maxCount)
@@ -1327,18 +1300,9 @@ XAssetHeader __cdecl DB_FindXAssetHeader(XAssetType type, const char *name)
     {
         while (1)
         {
-            InterlockedIncrement(&db_hashCritSect.readCount);
-            while (db_hashCritSect.writeCount)
-                NET_Sleep(0);
+            Sys_LockRead(&db_hashCritSect);
             assetEntry = &DB_FindXAssetEntry(type, name)->entry;
-            if (db_hashCritSect.readCount <= 0)
-                MyAssertHandler(
-                    "c:\\trees\\cod3\\src\\gfx_d3d\\../qcommon/threads_interlock.h",
-                    76,
-                    0,
-                    "%s",
-                    "critSect->readCount > 0");
-            InterlockedDecrement(&db_hashCritSect.readCount);
+            Sys_UnlockRead(&db_hashCritSect);
             DB_RegisteredReorderAsset(type, name, assetEntry);
             if (assetEntry && (assetEntry->zoneIndex || Sys_IsDatabaseReady2()))
                 goto returnAsset;
@@ -1891,9 +1855,7 @@ bool __cdecl DB_IsXAssetDefault(XAssetType type, const char *name)
     XAssetEntryPoolEntry *assetEntry; // [esp+Ch] [ebp-4h]
 
     hash = DB_HashForName(name, type);
-    InterlockedIncrement(&db_hashCritSect.readCount);
-    while (db_hashCritSect.writeCount)
-        NET_Sleep(0);
+    Sys_LockRead(&db_hashCritSect);
     for (assetEntryIndex = db_hashTable[hash]; assetEntryIndex; assetEntryIndex = assetEntry->entry.nextHash)
     {
         assetEntry = &g_assetEntryPool[assetEntryIndex];
@@ -1902,18 +1864,12 @@ bool __cdecl DB_IsXAssetDefault(XAssetType type, const char *name)
             XAssetName = DB_GetXAssetName(&assetEntry->entry.asset);
             if (!I_stricmp(XAssetName, name))
             {
-                if (db_hashCritSect.readCount <= 0)
-                    MyAssertHandler(
-                        "c:\\trees\\cod3\\src\\gfx_d3d\\../qcommon/threads_interlock.h",
-                        76,
-                        0,
-                        "%s",
-                        "critSect->readCount > 0");
-                InterlockedDecrement(&db_hashCritSect.readCount);
+                Sys_UnlockRead(&db_hashCritSect);
                 return assetEntry->entry.zoneIndex == 0;
             }
         }
     }
+    Sys_UnlockRead(&db_hashCritSect);
     if (!alwaysfails)
         MyAssertHandler(".\\database\\db_registry.cpp", 2849, 0, "unreachable");
     return 1;
@@ -1932,9 +1888,7 @@ int32_t __cdecl DB_GetAllXAssetOfType_FastFile(XAssetType type, XAssetHeader *as
         return 0;
     }
     assetCount = 0;
-    InterlockedIncrement(&db_hashCritSect.readCount);
-    while (db_hashCritSect.writeCount)
-        NET_Sleep(0);
+    Sys_LockRead(&db_hashCritSect);
     for (hash = 0; hash < 0x8000; ++hash)
     {
         for (assetEntryIndex = db_hashTable[hash]; assetEntryIndex; assetEntryIndex = assetEntry->entry.nextHash)
@@ -1953,14 +1907,7 @@ int32_t __cdecl DB_GetAllXAssetOfType_FastFile(XAssetType type, XAssetHeader *as
             }
         }
     }
-    if (db_hashCritSect.readCount <= 0)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\gfx_d3d\\../qcommon/threads_interlock.h",
-            76,
-            0,
-            "%s",
-            "critSect->readCount > 0");
-    InterlockedDecrement(&db_hashCritSect.readCount);
+    Sys_UnlockRead(&db_hashCritSect);
     if (assets && assetCount > maxCount)
     {
         Com_Error(
@@ -3130,7 +3077,7 @@ void __cdecl DB_ShutdownXAssets()
 
     DB_SyncXAssets();
     DB_SyncExternalAssets();
-    iassert(!db_hashCritSect.writeCount);
+    iassert(!Sys_IsWriteLocked(&db_hashCritSect));
     Sys_LockWrite(&db_hashCritSect);
     for (i = g_zoneCount - 1; i >= 0; --i)
         DB_UnloadXZone(g_zoneHandles[i], 0);

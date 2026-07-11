@@ -87,5 +87,8 @@ RUNTIME_SIZE(FastCriticalSection, 8, 8);
 void KISAK_CDECL Sys_InitializeCriticalSections();
 void KISAK_CDECL Sys_EnterCriticalSection(int critSect);
 void KISAK_CDECL Sys_LeaveCriticalSection(int critSect);
+void KISAK_CDECL Sys_LockRead(FastCriticalSection *critSect);
+void KISAK_CDECL Sys_UnlockRead(FastCriticalSection *critSect);
 void KISAK_CDECL Sys_LockWrite(FastCriticalSection *critSect);
 void KISAK_CDECL Sys_UnlockWrite(FastCriticalSection *critSect);
+bool KISAK_CDECL Sys_IsWriteLocked(const FastCriticalSection *critSect);

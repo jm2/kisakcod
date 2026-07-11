@@ -197,6 +197,25 @@ bool TestCriticalSections()
 bool TestFastCriticalSection()
 {
     FastCriticalSection criticalSection{};
+    if (Sys_IsWriteLocked(&criticalSection))
+    {
+        std::fputs("FastCriticalSection started write-locked\n", stderr);
+        return false;
+    }
+
+    Sys_LockWrite(&criticalSection);
+    if (!Sys_IsWriteLocked(&criticalSection))
+    {
+        std::fputs("FastCriticalSection did not publish its writer state\n", stderr);
+        return false;
+    }
+    Sys_UnlockWrite(&criticalSection);
+    if (Sys_IsWriteLocked(&criticalSection))
+    {
+        std::fputs("FastCriticalSection retained its writer state after unlock\n", stderr);
+        return false;
+    }
+
     const bool excluded = TestContendedExclusion(
         "FastCriticalSection",
         [&criticalSection]() { Sys_LockWrite(&criticalSection); },
@@ -210,6 +229,143 @@ bool TestFastCriticalSection()
 
     return excluded;
 }
+
+bool TestFastCriticalSectionReadersAndWriters()
+{
+    constexpr std::uint32_t readerCount = 4;
+    constexpr std::uint32_t writerCount = 2;
+    constexpr std::uint32_t readerIterations = 512;
+    constexpr std::uint32_t writerIterations = 256;
+    constexpr std::uint64_t payloadMask = 0xA5A55A5AF0F00F0FULL;
+
+    struct SharedPayload
+    {
+        std::uint64_t generation;
+        std::uint64_t check;
+    };
+
+    FastCriticalSection criticalSection{};
+    SharedPayload payload{0, payloadMask};
+    std::atomic<std::uint32_t> readyCount{0};
+    std::atomic<bool> start{false};
+    std::atomic<std::uint32_t> firstReadersInside{0};
+    std::atomic<std::uint32_t> activeReaders{0};
+    std::atomic<std::uint32_t> activeWriters{0};
+    std::atomic<std::uint32_t> readerOverlapViolations{0};
+    std::atomic<std::uint32_t> writerOverlapViolations{0};
+    std::atomic<std::uint32_t> writerStateViolations{0};
+    std::atomic<std::uint32_t> payloadViolations{0};
+
+    std::vector<std::thread> workers;
+    workers.reserve(readerCount + writerCount);
+
+    for (std::uint32_t reader = 0; reader < readerCount; ++reader)
+    {
+        workers.emplace_back([&]() {
+            readyCount.fetch_add(1, std::memory_order_release);
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+
+            for (std::uint32_t iteration = 0;
+                 iteration < readerIterations;
+                 ++iteration)
+            {
+                Sys_LockRead(&criticalSection);
+                activeReaders.fetch_add(1);
+                if (activeWriters.load() != 0)
+                    readerOverlapViolations.fetch_add(1);
+
+                if (iteration == 0)
+                {
+                    firstReadersInside.fetch_add(1, std::memory_order_release);
+                    while (firstReadersInside.load(std::memory_order_acquire) != readerCount)
+                        std::this_thread::yield();
+                }
+
+                const std::uint64_t generation = payload.generation;
+                std::this_thread::yield();
+                if (payload.check != (generation ^ payloadMask))
+                    payloadViolations.fetch_add(1);
+
+                activeReaders.fetch_sub(1);
+                Sys_UnlockRead(&criticalSection);
+            }
+        });
+    }
+
+    for (std::uint32_t writer = 0; writer < writerCount; ++writer)
+    {
+        workers.emplace_back([&]() {
+            readyCount.fetch_add(1, std::memory_order_release);
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+
+            for (std::uint32_t iteration = 0;
+                 iteration < writerIterations;
+                 ++iteration)
+            {
+                Sys_LockWrite(&criticalSection);
+                if (!Sys_IsWriteLocked(&criticalSection))
+                    writerStateViolations.fetch_add(1);
+                if (activeWriters.fetch_add(1) != 0 || activeReaders.load() != 0)
+                    writerOverlapViolations.fetch_add(1);
+
+                const std::uint64_t nextGeneration = payload.generation + 1;
+                payload.generation = nextGeneration;
+                std::this_thread::yield();
+                payload.check = nextGeneration ^ payloadMask;
+
+                if (activeWriters.fetch_sub(1) != 1)
+                    writerOverlapViolations.fetch_add(1);
+                Sys_UnlockWrite(&criticalSection);
+            }
+        });
+    }
+
+    while (readyCount.load(std::memory_order_acquire) != readerCount + writerCount)
+        std::this_thread::yield();
+    start.store(true, std::memory_order_release);
+
+    for (std::thread &worker : workers)
+        worker.join();
+
+    const std::uint64_t expectedGeneration = writerCount * writerIterations;
+    if (firstReadersInside.load() != readerCount
+        || activeReaders.load() != 0
+        || activeWriters.load() != 0
+        || readerOverlapViolations.load() != 0
+        || writerOverlapViolations.load() != 0
+        || writerStateViolations.load() != 0
+        || payloadViolations.load() != 0
+        || payload.generation != expectedGeneration
+        || payload.check != (expectedGeneration ^ payloadMask)
+        || criticalSection.readCount != 0
+        || criticalSection.writeCount != 0
+        || Sys_IsWriteLocked(&criticalSection))
+    {
+        std::fprintf(
+            stderr,
+            "FastCriticalSection reader/writer contract failed: "
+            "firstReaders=%u activeReaders=%u activeWriters=%u "
+            "readerOverlap=%u writerOverlap=%u writerState=%u payload=%u "
+            "generation=%llu expected=%llu check=%llu readCount=%u writeCount=%u\n",
+            firstReadersInside.load(),
+            activeReaders.load(),
+            activeWriters.load(),
+            readerOverlapViolations.load(),
+            writerOverlapViolations.load(),
+            writerStateViolations.load(),
+            payloadViolations.load(),
+            static_cast<unsigned long long>(payload.generation),
+            static_cast<unsigned long long>(expectedGeneration),
+            static_cast<unsigned long long>(payload.check),
+            criticalSection.readCount,
+            criticalSection.writeCount);
+        return false;
+    }
+
+    return true;
+}
 }
 
 int main()
@@ -221,6 +377,8 @@ int main()
     if (!TestCriticalSections())
         return 1;
     if (!TestFastCriticalSection())
+        return 1;
+    if (!TestFastCriticalSectionReadersAndWriters())
         return 1;
 
     std::puts("platform service runtime contracts passed");

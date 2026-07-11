@@ -202,21 +202,12 @@ void __cdecl Dvar_ForEach(void(__cdecl *callback)(const dvar_s *, void *), void 
 {
     int dvarIter; // [esp+4h] [ebp-4h]
 
-    InterlockedIncrement(&g_dvarCritSect.readCount);
-    while (g_dvarCritSect.writeCount)
-        NET_Sleep(0);
+    Sys_LockRead(&g_dvarCritSect);
     if (!areDvarsSorted)
         Dvar_Sort();
     for (dvarIter = 0; dvarIter < dvarCount; ++dvarIter)
         callback(sortedDvars[dvarIter], userData);
-    if (g_dvarCritSect.readCount <= 0)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\universal\\../qcommon/threads_interlock.h",
-            76,
-            0,
-            "%s",
-            "critSect->readCount > 0");
-    InterlockedDecrement(&g_dvarCritSect.readCount);
+    Sys_UnlockRead(&g_dvarCritSect);
 }
 
 bool __cdecl CompareDvars(const dvar_t *cached0, const dvar_t *cached1)
@@ -243,21 +234,12 @@ void __cdecl Dvar_ForEachName(void(__cdecl *callback)(const char *))
 {
     int dvarIter; // [esp+4h] [ebp-4h]
 
-    InterlockedIncrement(&g_dvarCritSect.readCount);
-    while (g_dvarCritSect.writeCount)
-        NET_Sleep(0);
+    Sys_LockRead(&g_dvarCritSect);
     if (!areDvarsSorted)
         Dvar_Sort();
     for (dvarIter = 0; dvarIter < dvarCount; ++dvarIter)
         callback(sortedDvars[dvarIter]->name);
-    if (g_dvarCritSect.readCount <= 0)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\universal\\../qcommon/threads_interlock.h",
-            76,
-            0,
-            "%s",
-            "critSect->readCount > 0");
-    InterlockedDecrement(&g_dvarCritSect.readCount);
+    Sys_UnlockRead(&g_dvarCritSect);
 }
 
 const dvar_s *__cdecl Dvar_GetAtIndex(uint32_t index)
@@ -793,34 +775,17 @@ static dvar_s *__cdecl Dvar_FindMalleableVar(const char *dvarName)
 {
     dvar_s *var; // [esp+8h] [ebp-8h]
 
-    InterlockedIncrement(&g_dvarCritSect.readCount);
-
-    while (g_dvarCritSect.writeCount)
-        NET_Sleep(0);
+    Sys_LockRead(&g_dvarCritSect);
 
     for (var = dvarHashTable[generateHashValue(dvarName)]; var; var = var->hashNext)
     {
         if (!I_stricmp(dvarName, var->name))
         {
-            if (g_dvarCritSect.readCount <= 0)
-                MyAssertHandler(
-                    "c:\\trees\\cod3\\src\\universal\\../qcommon/threads_interlock.h",
-                    76,
-                    0,
-                    "%s",
-                    "critSect->readCount > 0");
-            InterlockedDecrement(&g_dvarCritSect.readCount);
+            Sys_UnlockRead(&g_dvarCritSect);
             return var;
         }
     }
-    if (g_dvarCritSect.readCount <= 0)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\universal\\../qcommon/threads_interlock.h",
-            76,
-            0,
-            "%s",
-            "critSect->readCount > 0");
-    InterlockedDecrement(&g_dvarCritSect.readCount);
+    Sys_UnlockRead(&g_dvarCritSect);
     return 0;
 }
 
@@ -2778,23 +2743,14 @@ void __cdecl Dvar_SetCheatState()
     int dvarIter; // [esp+4h] [ebp-8h]
     dvar_s *dvar; // [esp+8h] [ebp-4h]
 
-    InterlockedIncrement(&g_dvarCritSect.readCount);
-    while (g_dvarCritSect.writeCount)
-        NET_Sleep(0);
+    Sys_LockRead(&g_dvarCritSect);
     for (dvarIter = 0; dvarIter < dvarCount; ++dvarIter)
     {
         dvar = &dvarPool[dvarIter];
         if ((dvar->flags & 0x80) != 0)
             Dvar_SetVariant(dvar, dvar->reset, DVAR_SOURCE_INTERNAL);
     }
-    if (g_dvarCritSect.readCount <= 0)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\universal\\../qcommon/threads_interlock.h",
-            76,
-            0,
-            "%s",
-            "critSect->readCount > 0");
-    InterlockedDecrement(&g_dvarCritSect.readCount);
+    Sys_UnlockRead(&g_dvarCritSect);
 }
 
 void __cdecl Dvar_Init()
@@ -2808,51 +2764,26 @@ void __cdecl Dvar_ResetScriptInfo()
 {
     int dvarIter; // [esp+4h] [ebp-4h]
 
-    InterlockedIncrement(&g_dvarCritSect.readCount);
-    while (g_dvarCritSect.writeCount)
-        NET_Sleep(0);
+    Sys_LockRead(&g_dvarCritSect);
     for (dvarIter = 0; dvarIter < dvarCount; ++dvarIter)
         dvarPool[dvarIter].flags &= ~0x400u;
-    if (g_dvarCritSect.readCount <= 0)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\universal\\../qcommon/threads_interlock.h",
-            76,
-            0,
-            "%s",
-            "critSect->readCount > 0");
-    InterlockedDecrement(&g_dvarCritSect.readCount);
+    Sys_UnlockRead(&g_dvarCritSect);
 }
 
 char __cdecl Dvar_AnyLatchedValues()
 {
     int dvarIter; // [esp+8h] [ebp-4h]
 
-    InterlockedIncrement(&g_dvarCritSect.readCount);
-    while (g_dvarCritSect.writeCount)
-        NET_Sleep(0);
+    Sys_LockRead(&g_dvarCritSect);
     for (dvarIter = 0; dvarIter < dvarCount; ++dvarIter)
     {
         if (Dvar_HasLatchedValue(&dvarPool[dvarIter]))
         {
-            if (g_dvarCritSect.readCount <= 0)
-                MyAssertHandler(
-                    "c:\\trees\\cod3\\src\\universal\\../qcommon/threads_interlock.h",
-                    76,
-                    0,
-                    "%s",
-                    "critSect->readCount > 0");
-            InterlockedDecrement(&g_dvarCritSect.readCount);
+            Sys_UnlockRead(&g_dvarCritSect);
             return 1;
         }
     }
-    if (g_dvarCritSect.readCount <= 0)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\universal\\../qcommon/threads_interlock.h",
-            76,
-            0,
-            "%s",
-            "critSect->readCount > 0");
-    InterlockedDecrement(&g_dvarCritSect.readCount);
+    Sys_UnlockRead(&g_dvarCritSect);
     return 0;
 }
 
@@ -2860,22 +2791,13 @@ void __cdecl Dvar_ResetDvars(uint16_t filter, DvarSetSource setSource)
 {
     int dvarIter; // [esp+4h] [ebp-8h]
 
-    InterlockedIncrement(&g_dvarCritSect.readCount);
-    while (g_dvarCritSect.writeCount)
-        NET_Sleep(0);
+    Sys_LockRead(&g_dvarCritSect);
     for (dvarIter = 0; dvarIter < dvarCount; ++dvarIter)
     {
         if ((filter & dvarPool[dvarIter].flags) != 0)
             Dvar_Reset(&dvarPool[dvarIter], setSource);
     }
-    if (g_dvarCritSect.readCount <= 0)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\universal\\../qcommon/threads_interlock.h",
-            76,
-            0,
-            "%s",
-            "critSect->readCount > 0");
-    InterlockedDecrement(&g_dvarCritSect.readCount);
+    Sys_UnlockRead(&g_dvarCritSect);
 }
 
 int __cdecl Com_SaveDvarsToBuffer(const char **dvarnames, uint32_t numDvars, char *buffer, uint32_t bufsize)
@@ -2968,9 +2890,7 @@ int __cdecl Com_LoadDvarsFromBuffer(const char **dvarnames, uint32_t numDvars, c
 #ifdef KISAK_SP
 void Dvar_SaveDvars(MemoryFile *memFile, uint16_t filter)
 {
-    InterlockedIncrement(&g_dvarCritSect.readCount);
-    while (g_dvarCritSect.writeCount)
-        NET_Sleep(0);
+    Sys_LockRead(&g_dvarCritSect);
 
     int writeBuf;
     for (int bucket = 0; bucket < 256; ++bucket)
@@ -3014,14 +2934,7 @@ void Dvar_SaveDvars(MemoryFile *memFile, uint16_t filter)
     writeBuf = -1;
     MemFile_WriteData(memFile, 4, &writeBuf);
 
-    if (g_dvarCritSect.readCount <= 0)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\universal\\../qcommon/threads_interlock.h",
-            76,
-            0,
-            "%s",
-            "critSect->readCount > 0");
-    InterlockedDecrement(&g_dvarCritSect.readCount);
+    Sys_UnlockRead(&g_dvarCritSect);
 }
 
 void Dvar_LoadDvars(MemoryFile *memFile)

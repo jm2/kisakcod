@@ -13,22 +13,57 @@
 
 namespace
 {
-std::uint32_t Sys_ReadFastCriticalSectionCount(volatile std::uint32_t *count)
+std::uint32_t Sys_ReadFastCriticalSectionCount(const volatile std::uint32_t *count)
 {
+    volatile std::uint32_t *const mutableCount =
+        const_cast<volatile std::uint32_t *>(count);
 #if defined(_MSC_VER)
     return static_cast<std::uint32_t>(InterlockedCompareExchange(
-        reinterpret_cast<volatile long *>(count), 0, 0));
+        reinterpret_cast<volatile long *>(mutableCount), 0, 0));
 #else
-    return static_cast<std::uint32_t>(InterlockedCompareExchange(count, 0, 0));
+    return static_cast<std::uint32_t>(InterlockedCompareExchange(mutableCount, 0, 0));
 #endif
 }
-}
 
-void KISAK_CDECL Sys_LockWrite(FastCriticalSection *critSect)
+void Sys_ValidateFastCriticalSection(const FastCriticalSection *critSect)
 {
     iassert(critSect);
     if (!critSect)
         std::abort();
+}
+}
+
+bool KISAK_CDECL Sys_IsWriteLocked(const FastCriticalSection *critSect)
+{
+    Sys_ValidateFastCriticalSection(critSect);
+    return Sys_ReadFastCriticalSectionCount(&critSect->writeCount) != 0;
+}
+
+void KISAK_CDECL Sys_LockRead(FastCriticalSection *critSect)
+{
+    Sys_ValidateFastCriticalSection(critSect);
+
+    InterlockedIncrement(&critSect->readCount);
+    while (Sys_IsWriteLocked(critSect))
+        Sys_Sleep(0);
+}
+
+void KISAK_CDECL Sys_UnlockRead(FastCriticalSection *critSect)
+{
+    Sys_ValidateFastCriticalSection(critSect);
+
+    const std::uint32_t readCount =
+        Sys_ReadFastCriticalSectionCount(&critSect->readCount);
+    iassert(readCount > 0);
+    if (readCount == 0)
+        std::abort();
+
+    InterlockedDecrement(&critSect->readCount);
+}
+
+void KISAK_CDECL Sys_LockWrite(FastCriticalSection *critSect)
+{
+    Sys_ValidateFastCriticalSection(critSect);
 
     while (true)
     {
@@ -47,9 +82,7 @@ void KISAK_CDECL Sys_LockWrite(FastCriticalSection *critSect)
 
 void KISAK_CDECL Sys_UnlockWrite(FastCriticalSection *critSect)
 {
-    iassert(critSect);
-    if (!critSect)
-        std::abort();
+    Sys_ValidateFastCriticalSection(critSect);
 
     const std::uint32_t writeCount =
         Sys_ReadFastCriticalSectionCount(&critSect->writeCount);

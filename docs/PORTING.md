@@ -37,7 +37,7 @@ Completed foundation work:
 - portable `sys_sync.h`/`sys_time.h` contracts, including fixed-width MP/SP critical-section IDs
   and `FastCriticalSection` layout checks wired into all five utility-CI targets;
 - native Win32/POSIX monotonic-clock, sleep/yield, and recursive-critical-section backends plus a
-  common fixed-width fast write lock, with concurrent runtime coverage on utility targets;
+  common fixed-width fast reader/write lock, with concurrent runtime coverage on utility targets;
 - corrected Win32 multi-config DirectX paths and post-build output handling;
 - `build-win.ps1`, Windows CI, tagged release archives/checksums, and separately
   protected legacy/headless licensed dedicated-server smoke definitions;
@@ -54,8 +54,8 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Finish shared atomic reader semantics, then extract opaque thread/event handles behind the M3
-   platform contracts and exercise them on every portable CI leg.
+2. Finish engine-wide fixed-width atomic adoption, then extract opaque thread/event handles behind
+   the M3 platform contracts and exercise them on every portable CI leg.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -723,10 +723,12 @@ Linux/macOS retain empty engine/headless lists but select `CLOCK_MONOTONIC`/`nan
 `pthread_once`/recursive-pthread services. Tests freeze both profile ABIs and calling conventions,
 require one-copy source composition, reject Win32 sources in non-Windows sets, and exercise
 concurrent first initialization, recursion, contention, and time progress. This is a working native
-service slice, **not** a claim that a POSIX engine target builds. The immediate correctness gate is
-the remaining direct volatile `FastCriticalSection` reader polling in `dvar.cpp`/`db_registry.cpp`:
-move it behind shared atomics before POSIX/ARM64 engine compilation. Then extract opaque
-thread/event handles, filesystem/virtual memory, console/process, and BSD sockets.
+service slice, **not** a claim that a POSIX engine target builds. `FastCriticalSection` readers in
+`dvar.cpp` and `db_registry.cpp` now use the same sequentially consistent helper contract as writers;
+reader/writer stress tests and source guards prevent direct volatile polling from returning. That
+migration also fixed the no-match read-lock leak in `DB_IsXAssetDefault`. The wider M1 Interlocked/
+`LONG` inventory still needs fixed-width adoption before POSIX/ARM64 engine compilation. Next,
+extract opaque thread/event handles, filesystem/virtual memory, console/process, and BSD sockets.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),
