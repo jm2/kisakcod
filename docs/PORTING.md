@@ -705,17 +705,22 @@ covers calling-convention/`KISAK_ALIGNAS`.
 `platform_compat.h`) and `src/universal/sys_atomic.h` (the fixed-width atomics shim) have landed, with
 `db_disk32.h` reconciled onto `ONDISK_SIZE` + the single canonical `disk32::Ptr32<T>`, and a new
 `tests/abi_atomics_tests.cpp` ctest that rides all five portable-CI legs (verified locally under g++ 16
-and clang++ 22 on both ILP32 and LP64). **Atomics design decision:** the shim maps the six `Interlocked`
-names onto `__atomic_*` seq-cst builtins under `#if !defined(_MSC_VER)` (MSVC keeps its intrinsics →
-byte-identical, zero call-site edits). The critical contract — `Increment`/`Decrement` return the *new*
-value, `ExchangeAdd`/`Exchange`/`CompareExchange` return the *old*; `CompareExchange` keeps Win32
-`(dest,exchange,comparand)` order — is asserted by the test. Corrected census: **197** real
-`Interlocked` calls (the earlier 209 double-counted 12 assertion-message string literals). *M1 open
-tail (deferred, intentionally):* wiring the ~32 atomics TUs to include `sys_atomic.h` rides M3's
-`<Windows.h>` decouple (a no-op on MSVC and non-buildable off-MSVC until then); retyping the ~30
-`volatile long` counter members + 3 `long` globals + the 23 `(LONG*)` casts to `int32_t` (byte-identical
-on Win, prevents LP64 layout divergence) is folded into M4 alongside the struct widening; the bare
-`sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now and burned down in M4.
+and clang++ 22 on both ILP32 and LP64). **Atomics design decision:** the collision-free `Sys_Atomic*`
+API is now the canonical boundary on every compiler. It accepts only aligned `int32_t`/`uint32_t`
+words, uses unsuffixed `_Interlocked*` compiler intrinsics behind `<intrin.h>` on MSVC, and maps to
+`__atomic_*` seq-cst operations on GCC/Clang. Bit-preserving conversions centralize MSVC's unavoidable
+`long *` intrinsic impedance mismatch without exposing `LONG` or importing `Windows.h`. The critical
+contract — `Increment`/`Decrement` return the *new* value, `FetchAdd`/`Exchange`/`CompareExchange`
+return the *old*; `CompareExchange` keeps Win32 `(dest,exchange,comparand)` order — now runs on MSVC
+as well as GCC/Clang, including high-bit/wrap and pointer exchange cases. Non-MSVC `Interlocked*`
+aliases remain only as a temporary source-migration aid; Windows-owned names are never redefined on
+MSVC. The shared fast-lock implementation is the first layout-bound consumer and no longer contains
+a Windows include or native cast. Corrected live census: **175** direct `Interlocked` calls remain
+across 28 engine TUs (the original 209 double-counted 12 assertion-message literals, and subsequent
+thread/dvar/fast-lock migrations removed 22 real calls). *M1 open tail:* migrate those remaining
+families and retype their `volatile long`/`LONG` storage and casts to exact-width words; then delete
+the compatibility aliases. The bare `sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now
+and burned down in M4.
 
 **M3 (native time/synchronization/event/thread-lifecycle services landed) — platform ownership is
 explicit, but the engine remains gated.**

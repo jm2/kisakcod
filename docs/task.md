@@ -8,9 +8,16 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: continue engine-wide fixed-width atomic adoption in coherent subsystem batches, then
+- Active work: migrate script and XAnim/DObj lifetime/lock state onto the canonical fixed-width
+  atomic boundary in separate subsystem batches, then continue database progress/I/O state and
   extract the next POSIX filesystem/virtual-memory/process service without relaxing the engine gate.
-- Last completed batch: dvar sorting no longer depends on `LONG`, Interlocked, Windows headers, or
+- Current atomic-boundary batch: `sys_atomic.h` now provides collision-free, fixed-width
+  `Sys_Atomic*` operations on every compiler. MSVC uses `<intrin.h>` without importing `Windows.h`,
+  with the sole `int32_t`/`uint32_t` to native `long` cast and bit-preserving conversion centralized;
+  GCC/Clang use seq-cst `__atomic` operations. All native utility runners now execute return-order,
+  wrap/high-bit, load/store, CAS, and pointer-exchange semantics. The shared fast lock is the first
+  canonical consumer and no longer contains platform branches, native casts, or Windows names.
+- Previous batch: dvar sorting no longer depends on `LONG`, Interlocked, Windows headers, or
   the Win32 networking sleep wrapper. Private seq-cst atomic flags now publish sorted state and
   arbitrate the one-sorter/multiple-waiter protocol; registration invalidation is atomic, waiting
   uses `Sys_Sleep`, and source guards reject raw flag access or reordered publication.
@@ -118,7 +125,8 @@ work item changes. Do not create session-specific handoff files.
   Thread-lifecycle run 29135266993 also passed all nine jobs, executing create/start/identity/join/
   destroy coverage on every native utility target while preserving all four Windows x86 links.
   Worker-gate run 29135580627, renderer-consumer run 29135757396, and scheduling-policy run
-  29135831489 each passed all nine jobs in sequence.
+  29135831489 each passed all nine jobs in sequence. High-level opaque-thread run 29136380656 and
+  dvar-atomic run 29136530880 then each passed all nine jobs as well.
   The observed linker debt is now 106 -> 45 -> 0.
 
 ## Milestone status

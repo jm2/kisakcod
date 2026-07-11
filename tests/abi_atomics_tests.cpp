@@ -1,11 +1,9 @@
 // M1 portable compile-check + contract test for the new ABI headers.
 //
-// This is the ONLY compile of the non-MSVC atomics path anywhere: every one of the
-// 197 Interlocked call sites lives in an engine TU that reaches <Windows.h>, and the
-// portable-tests CI legs build with KISAK_BUILD_MP/DEDICATED/SP=OFF, so none of those
-// TUs compile on Linux/macOS. This standalone target rides the portable-tests leg on
-// all five runners under kisakcod_test_warnings() (-Wall -Wextra -Wpedantic -Werror /
-// MSVC /W4 /WX), and forces the __atomic_* branch of sys_atomic.h to be parsed and run.
+// This standalone target rides the portable-tests leg on all five runners under
+// kisakcod_test_warnings() (-Wall -Wextra -Wpedantic -Werror / MSVC /W4 /WX). It
+// exercises the canonical fixed-width atomic API through both the MSVC intrinsic
+// backend and the GCC/Clang __atomic backend.
 //
 // What it proves: (1) kisak_abi.h / sys_atomic.h / platform_compat.h / db_disk32.h all
 // parse clean under GCC, Clang and MSVC; (2) the atomics wrappers honor the Win32
@@ -14,8 +12,9 @@
 // widths; (4) the calling-convention / alignment shims are actually referenced (they
 // are define-away no-ops off MSVC, so only a test that touches them parses that branch).
 //
-// What it does NOT prove: memory-ordering correctness under contention. That is
-// validated later under the M2 ASan/UBSan + threaded-engine gate on linux_amd64.
+// What it does NOT prove: every engine call site has migrated or every shared field
+// is free of non-atomic access. Source guards and subsystem stress tests cover those
+// properties one coherent field family at a time.
 
 #include <universal/kisak_abi.h>
 #include <universal/sys_atomic.h>
@@ -60,33 +59,55 @@ int main()
     if (cdeclProbe(1) != 2)
         return fail("KISAK_CDECL");
 
-#if !defined(_MSC_VER)
-    // On MSVC these names resolve to the <windows.h> intrinsics (not included here),
-    // and are covered by the real engine build; the shim under test is the __atomic_* path.
     int32_t i = 0;
-    if (InterlockedIncrement(&i) != 1 || i != 1)
+    if (Sys_AtomicIncrement(&i) != 1 || i != 1)
         return fail("Increment must return the NEW value");
-    if (InterlockedDecrement(&i) != 0 || i != 0)
+    if (Sys_AtomicDecrement(&i) != 0 || i != 0)
         return fail("Decrement must return the NEW value");
 
     uint32_t u = 10;
-    if (InterlockedExchangeAdd(&u, 5u) != 10u || u != 15u)
-        return fail("ExchangeAdd must return the OLD value");
+    if (Sys_AtomicFetchAdd(&u, 5u) != 10u || u != 15u)
+        return fail("FetchAdd must return the OLD value");
 
     volatile int32_t c = 7;
-    if (InterlockedCompareExchange(&c, 9, 7) != 7 || c != 9)
+    if (Sys_AtomicCompareExchange(&c, 9, 7) != 7 || Sys_AtomicLoad(&c) != 9)
         return fail("CompareExchange (dest,exchange,comparand) swap + return OLD");
-    if (InterlockedCompareExchange(&c, 1, 7) != 9 || c != 9)
+    if (Sys_AtomicCompareExchange(&c, 1, 7) != 9 || Sys_AtomicLoad(&c) != 9)
         return fail("CompareExchange no-swap must return OLD and not write");
 
     int32_t e = 4;
-    if (InterlockedExchange(&e, 6) != 4 || e != 6)
+    if (Sys_AtomicExchange(&e, 6) != 4 || Sys_AtomicLoad(&e) != 6)
         return fail("Exchange must return the OLD value");
 
+    Sys_AtomicStore(&u, UINT32_C(0xffffffff));
+    if (Sys_AtomicLoad(&u) != UINT32_C(0xffffffff))
+        return fail("Load/Store must preserve every 32-bit pattern");
+    if (Sys_AtomicIncrement(&u) != 0 || Sys_AtomicLoad(&u) != 0)
+        return fail("unsigned Increment must wrap at 32 bits");
+    if (Sys_AtomicCompareExchange(&u, UINT32_C(0x80000000), 0u) != 0
+        || Sys_AtomicLoad(&u) != UINT32_C(0x80000000))
+    {
+        return fail("CompareExchange must preserve the unsigned high bit");
+    }
+
     int dummy = 0;
-    void *pv = &dummy;
-    if (InterlockedExchangePointer(&pv, static_cast<void *>(nullptr)) != &dummy || pv != nullptr)
+    int *pv = &dummy;
+    if (Sys_AtomicExchangePointer(&pv, static_cast<int *>(nullptr)) != &dummy
+        || pv != nullptr)
+    {
         return fail("ExchangePointer must swap and return the OLD pointer");
+    }
+
+#if !defined(_MSC_VER)
+    // Transitional aliases must retain the same contract until all engine call
+    // sites have moved to the collision-free Sys_Atomic* names.
+    int32_t legacy = 0;
+    if (InterlockedIncrement(&legacy) != 1
+        || InterlockedExchangeAdd(&legacy, 2) != 1
+        || InterlockedCompareExchange(&legacy, 8, 3) != 3)
+    {
+        return fail("legacy Interlocked aliases");
+    }
 #endif
 
     return 0;

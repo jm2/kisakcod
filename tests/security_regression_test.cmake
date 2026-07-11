@@ -2090,6 +2090,45 @@ require_source_not_contains(
     "universal/dvar.cpp"
     "g_dvarCritSect.writeCount"
     "dvar writer-state polling must be atomic")
+foreach(_native_fast_lock_token
+    "Windows.h"
+    "windows.h"
+    "Interlocked"
+    "reinterpret_cast<volatile long"
+)
+    require_source_not_contains(
+        "qcommon/sys_sync.cpp"
+        "${_native_fast_lock_token}"
+        "the shared fast lock must use the fixed-width atomic boundary")
+endforeach()
+require_source_contains(
+    "qcommon/sys_sync.cpp"
+    "return Sys_AtomicLoad(count);"
+    "fast-lock readers must use the canonical atomic load")
+require_source_contains(
+    "qcommon/sys_sync.cpp"
+    "Sys_AtomicIncrement(&critSect->readCount);"
+    "fast-lock reader acquisition must use the canonical atomic increment")
+require_source_contains(
+    "qcommon/sys_sync.cpp"
+    "Sys_AtomicDecrement(&critSect->writeCount);"
+    "fast-lock writer release must use the canonical atomic decrement")
+require_source_not_contains(
+    "universal/sys_atomic.h"
+    "#include <Windows.h>"
+    "the fixed-width atomic leaf must not import Windows SDK types or macros")
+require_source_contains(
+    "universal/sys_atomic.h"
+    "#include <intrin.h>"
+    "the MSVC atomic backend must use compiler intrinsics without Windows.h")
+require_source_contains(
+    "universal/sys_atomic.h"
+    "static_assert(std::numeric_limits<unsigned long>::digits == 32"
+    "the centralized MSVC intrinsic bridge must freeze its native word width")
+require_source_contains(
+    "universal/sys_atomic.h"
+    "std::is_same_v<Word, std::int32_t>"
+    "the atomic boundary must reject LP64 long storage")
 foreach(_native_dvar_sort_token
     "Windows.h"
     "windows.h"
