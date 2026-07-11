@@ -12,6 +12,7 @@
 #include <qcommon/sys_sync.h>
 #include <qcommon/sys_thread.h>
 #include <qcommon/sys_time.h>
+#include <qcommon/sys_worker_gate.h>
 
 // The standalone service target intentionally does not link the engine's
 // assert/reporting graph.  Preserve debug assertion behavior with a fatal test
@@ -527,6 +528,235 @@ bool TestRepeatedThreadLifecycle()
     return true;
 }
 
+struct WorkerGateThreadState
+{
+    SysWorkerGateHandle gate{nullptr};
+    SysThreadHandle thread{nullptr};
+    SysEventHandle wakeEvent{nullptr};
+    SysEventHandle enteredEvent{nullptr};
+    SysEventHandle taskStartedEvent{nullptr};
+    SysEventHandle taskReleaseEvent{nullptr};
+    SysEventHandle taskCompletedEvent{nullptr};
+    std::atomic<bool> stop{false};
+    std::atomic<bool> taskPending{false};
+    std::atomic<bool> blockTask{false};
+    std::atomic<std::uint32_t> completedTasks{0};
+};
+
+void KISAK_CDECL WorkerGateThreadEntry(void *const userData)
+{
+    WorkerGateThreadState *const state =
+        static_cast<WorkerGateThreadState *>(userData);
+    Sys_SetEvent(&state->enteredEvent);
+
+    for (;;)
+    {
+        Sys_WorkerGatePausePoint(state->gate);
+        Sys_WaitForSingleObject(&state->wakeEvent);
+        Sys_WorkerGatePausePoint(state->gate);
+
+        if (state->stop.load(std::memory_order_acquire))
+            return;
+        if (!state->taskPending.exchange(false, std::memory_order_acq_rel))
+            continue;
+
+        Sys_SetEvent(&state->taskStartedEvent);
+        if (state->blockTask.load(std::memory_order_acquire))
+            Sys_WaitForSingleObject(&state->taskReleaseEvent);
+
+        state->completedTasks.fetch_add(1, std::memory_order_release);
+        Sys_SetEvent(&state->taskCompletedEvent);
+    }
+}
+
+bool CreateWorkerGateThread(
+    WorkerGateThreadState *const state,
+    const char *const name)
+{
+    Sys_WorkerGateCreate(&state->gate);
+    Sys_CreateEvent(false, false, &state->wakeEvent);
+    Sys_CreateEvent(true, false, &state->enteredEvent);
+    Sys_CreateEvent(false, false, &state->taskStartedEvent);
+    Sys_CreateEvent(false, false, &state->taskReleaseEvent);
+    Sys_CreateEvent(false, false, &state->taskCompletedEvent);
+    return Sys_ThreadCreateSuspended(
+        WorkerGateThreadEntry,
+        state,
+        name,
+        &state->thread);
+}
+
+bool StartWorkerGateThread(WorkerGateThreadState *const state)
+{
+    if (!Sys_WorkerGateActivate(state->gate))
+        return false;
+    Sys_ThreadStart(state->thread);
+    return Sys_WaitForSingleObjectTimeout(&state->enteredEvent, 2'000);
+}
+
+bool StopWorkerGateThread(WorkerGateThreadState *const state)
+{
+    state->stop.store(true, std::memory_order_release);
+    if (Sys_WorkerGateActivate(state->gate))
+        return false;
+    Sys_SetEvent(&state->wakeEvent);
+    if (!Sys_ThreadJoinTimeout(state->thread, 2'000))
+        return false;
+
+    Sys_ThreadDestroy(&state->thread);
+    Sys_WorkerGateDestroy(&state->gate);
+    Sys_DestroyEvent(&state->wakeEvent);
+    Sys_DestroyEvent(&state->enteredEvent);
+    Sys_DestroyEvent(&state->taskStartedEvent);
+    Sys_DestroyEvent(&state->taskReleaseEvent);
+    Sys_DestroyEvent(&state->taskCompletedEvent);
+    return !state->thread
+        && !state->gate
+        && !state->wakeEvent
+        && !state->enteredEvent
+        && !state->taskStartedEvent
+        && !state->taskReleaseEvent
+        && !state->taskCompletedEvent;
+}
+
+bool PauseWorkerGateThread(WorkerGateThreadState *const state)
+{
+    if (!Sys_WorkerGateRequestPause(state->gate))
+        return false;
+    Sys_SetEvent(&state->wakeEvent);
+    Sys_WorkerGateWaitPaused(state->gate);
+    return !Sys_WorkerGateIsActive(state->gate);
+}
+
+bool QueueWorkerGateTask(WorkerGateThreadState *const state)
+{
+    state->taskPending.store(true, std::memory_order_release);
+    Sys_SetEvent(&state->wakeEvent);
+    return Sys_WaitForSingleObjectTimeout(&state->taskStartedEvent, 2'000)
+        && Sys_WaitForSingleObjectTimeout(&state->taskCompletedEvent, 2'000);
+}
+
+bool TestCooperativeWorkerGate()
+{
+    WorkerGateThreadState first;
+    if (!CreateWorkerGateThread(&first, "platform-test-worker-gate"))
+    {
+        std::fputs("worker-gate thread creation failed\n", stderr);
+        return false;
+    }
+
+    if (Sys_WorkerGateIsActive(first.gate)
+        || Sys_WorkerGateRequestPause(first.gate))
+    {
+        std::fputs("new worker gate did not start inactive\n", stderr);
+        return false;
+    }
+    Sys_WorkerGateWaitPaused(first.gate);
+    if (!StartWorkerGateThread(&first)
+        || Sys_WorkerGateActivate(first.gate))
+    {
+        std::fputs("worker gate did not perform a one-shot initial start\n", stderr);
+        return false;
+    }
+
+    if (!PauseWorkerGateThread(&first)
+        || Sys_WorkerGateRequestPause(first.gate))
+    {
+        std::fputs("waiting worker did not acknowledge its pause\n", stderr);
+        return false;
+    }
+    Sys_WorkerGateWaitPaused(first.gate);
+    const std::uint32_t parkedCount = first.completedTasks.load();
+
+    first.taskPending.store(true, std::memory_order_release);
+    Sys_SetEvent(&first.wakeEvent);
+    if (Sys_WaitForSingleObjectTimeout(&first.taskStartedEvent, 5)
+        || first.completedTasks.load() != parkedCount)
+    {
+        std::fputs("parked worker consumed queued work\n", stderr);
+        return false;
+    }
+    if (Sys_WorkerGateActivate(first.gate)
+        || !Sys_WaitForSingleObjectTimeout(&first.taskStartedEvent, 2'000)
+        || !Sys_WaitForSingleObjectTimeout(&first.taskCompletedEvent, 2'000)
+        || first.completedTasks.load() != parkedCount + 1)
+    {
+        std::fputs("resumed worker did not consume queued work\n", stderr);
+        return false;
+    }
+
+    first.blockTask.store(true, std::memory_order_release);
+    first.taskPending.store(true, std::memory_order_release);
+    Sys_SetEvent(&first.wakeEvent);
+    if (!Sys_WaitForSingleObjectTimeout(&first.taskStartedEvent, 2'000)
+        || !Sys_WorkerGateRequestPause(first.gate))
+    {
+        std::fputs("in-flight worker task did not start pause protocol\n", stderr);
+        return false;
+    }
+    Sys_SetEvent(&first.wakeEvent);
+
+    SysEventHandle pauseReturnedEvent = nullptr;
+    Sys_CreateEvent(true, false, &pauseReturnedEvent);
+    std::thread pauseWaiter([&]() {
+        Sys_WorkerGateWaitPaused(first.gate);
+        Sys_SetEvent(&pauseReturnedEvent);
+    });
+    const bool returnedBeforeSafePoint =
+        Sys_WaitForSingleObjectTimeout(&pauseReturnedEvent, 5);
+    Sys_SetEvent(&first.taskReleaseEvent);
+    const bool returnedAfterSafePoint =
+        Sys_WaitForSingleObjectTimeout(&pauseReturnedEvent, 2'000);
+    pauseWaiter.join();
+    Sys_DestroyEvent(&pauseReturnedEvent);
+    first.blockTask.store(false, std::memory_order_release);
+    if (returnedBeforeSafePoint
+        || !returnedAfterSafePoint
+        || !Sys_WaitForSingleObjectTimeout(&first.taskCompletedEvent, 2'000))
+    {
+        std::fputs("worker pause did not wait for an in-flight safe point\n", stderr);
+        return false;
+    }
+
+    constexpr std::uint32_t rapidPauseCycles = 128;
+    for (std::uint32_t cycle = 0; cycle < rapidPauseCycles; ++cycle)
+    {
+        if (Sys_WorkerGateActivate(first.gate)
+            || !Sys_WorkerGateRequestPause(first.gate))
+        {
+            std::fputs("rapid worker-gate transition failed\n", stderr);
+            return false;
+        }
+        Sys_SetEvent(&first.wakeEvent);
+        Sys_WorkerGateWaitPaused(first.gate);
+        if (Sys_WorkerGateIsActive(first.gate)
+            || Sys_WorkerGateRequestPause(first.gate))
+        {
+            std::fputs("rapid worker-gate pause was not stable\n", stderr);
+            return false;
+        }
+    }
+
+    WorkerGateThreadState second;
+    if (!CreateWorkerGateThread(&second, "platform-test-worker-gate-2")
+        || !StartWorkerGateThread(&second)
+        || !QueueWorkerGateTask(&second)
+        || second.completedTasks.load() != 1
+        || Sys_WorkerGateIsActive(first.gate))
+    {
+        std::fputs("worker gates did not operate independently\n", stderr);
+        return false;
+    }
+
+    if (!StopWorkerGateThread(&second)
+        || !StopWorkerGateThread(&first))
+    {
+        std::fputs("worker-gate lifecycle cleanup failed\n", stderr);
+        return false;
+    }
+    return true;
+}
+
 bool TestConcurrentInitialization()
 {
     constexpr std::uint32_t threadCount = 8;
@@ -882,6 +1112,8 @@ int main()
     if (!TestMultipleThreadIdentity())
         return 1;
     if (!TestRepeatedThreadLifecycle())
+        return 1;
+    if (!TestCooperativeWorkerGate())
         return 1;
     if (!TestConcurrentInitialization())
         return 1;

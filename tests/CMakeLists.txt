@@ -106,6 +106,7 @@ endforeach()
 add_executable(kisakcod-platform-service-runtime-tests
     platform_service_runtime_tests.cpp
     ${SRC_DIR}/qcommon/sys_sync.cpp
+    ${SRC_DIR}/qcommon/sys_worker_gate.cpp
     ${KISAK_PLATFORM_SERVICE_SOURCES}
 )
 target_include_directories(kisakcod-platform-service-runtime-tests PRIVATE ${SRC_DIR})

@@ -146,6 +146,20 @@ foreach(_native_thread_token
         "${_native_thread_token}"
         "opaque thread contract must not expose native thread types")
 endforeach()
+foreach(_native_worker_suspend_token
+    "Windows.h"
+    "windows.h"
+    "SuspendThread"
+    "ResumeThread"
+    "pthread"
+    "HANDLE"
+    "DWORD"
+)
+    require_source_not_contains(
+        "qcommon/sys_worker_gate.h"
+        "${_native_worker_suspend_token}"
+        "cooperative worker gate must not expose native suspension APIs")
+endforeach()
 foreach(_raw_event_api CreateEventA SetEvent ResetEvent WaitForSingleObject)
     require_source_not_matches(
         "qcommon/threads.cpp"

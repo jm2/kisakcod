@@ -6,6 +6,7 @@
 #include <qcommon/sys_sync.h>
 #include <qcommon/sys_thread.h>
 #include <qcommon/sys_time.h>
+#include <qcommon/sys_worker_gate.h>
 #include <qcommon/threads.h>
 
 static_assert(std::is_same_v<std::underlying_type_t<CriticalSection>, std::int32_t>);
@@ -20,6 +21,9 @@ static_assert(sizeof(SysEventHandle) == sizeof(void *));
 static_assert(std::is_pointer_v<SysThreadHandle>);
 static_assert(std::is_same_v<SysThreadHandle, SysThread *>);
 static_assert(sizeof(SysThreadHandle) == sizeof(void *));
+static_assert(std::is_pointer_v<SysWorkerGateHandle>);
+static_assert(std::is_same_v<SysWorkerGateHandle, SysWorkerGate *>);
+static_assert(sizeof(SysWorkerGateHandle) == sizeof(void *));
 static_assert(std::is_same_v<
     std::underlying_type_t<ThreadContext_t>,
     std::int32_t>);
@@ -61,6 +65,9 @@ using ThreadJoinTimeoutFunction =
     bool (KISAK_CDECL *)(SysThreadHandle, std::uint32_t);
 using ThreadDestroyFunction = void (KISAK_CDECL *)(SysThreadHandle *);
 using ExpectedThreadEntry = void (KISAK_CDECL *)(void *);
+using WorkerGateHandleFunction = void (KISAK_CDECL *)(SysWorkerGateHandle *);
+using WorkerGateActionFunction = void (KISAK_CDECL *)(SysWorkerGateHandle);
+using WorkerGateQueryFunction = bool (KISAK_CDECL *)(SysWorkerGateHandle);
 
 static_assert(std::is_same_v<decltype(&Sys_Milliseconds), MillisecondsFunction>);
 static_assert(std::is_same_v<decltype(&Sys_MillisecondsRaw), MillisecondsFunction>);
@@ -99,6 +106,27 @@ static_assert(std::is_same_v<
     ThreadJoinTimeoutFunction>);
 static_assert(std::is_same_v<decltype(&Sys_ThreadJoin), ThreadActionFunction>);
 static_assert(std::is_same_v<decltype(&Sys_ThreadDestroy), ThreadDestroyFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_WorkerGateCreate),
+    WorkerGateHandleFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_WorkerGateDestroy),
+    WorkerGateHandleFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_WorkerGateActivate),
+    WorkerGateQueryFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_WorkerGateRequestPause),
+    WorkerGateQueryFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_WorkerGateWaitPaused),
+    WorkerGateActionFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_WorkerGatePausePoint),
+    WorkerGateActionFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_WorkerGateIsActive),
+    WorkerGateQueryFunction>);
 
 #if defined(KISAK_MP)
 static_assert(CRITSECT_CONSOLE == 0x0);

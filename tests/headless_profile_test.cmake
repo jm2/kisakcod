@@ -127,6 +127,8 @@ foreach(_contract_source
     "${SRC_DIR}/qcommon/sys_sync.h"
     "${SRC_DIR}/qcommon/sys_thread.h"
     "${SRC_DIR}/qcommon/sys_time.h"
+    "${SRC_DIR}/qcommon/sys_worker_gate.cpp"
+    "${SRC_DIR}/qcommon/sys_worker_gate.h"
 )
     set(_contract_source_count 0)
     foreach(_dedi_source IN LISTS _dedi_sources)

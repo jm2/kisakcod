@@ -428,6 +428,8 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/sys_sync.h"
     "${SRC_DIR}/qcommon/sys_thread.h"
     "${SRC_DIR}/qcommon/sys_time.h"
+    "${SRC_DIR}/qcommon/sys_worker_gate.cpp"
+    "${SRC_DIR}/qcommon/sys_worker_gate.h"
     "${SRC_DIR}/qcommon/threads.cpp"
     "${SRC_DIR}/qcommon/threads.h"
     "${SRC_DIR}/qcommon/threads_interlock.h"

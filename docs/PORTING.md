@@ -42,6 +42,8 @@ Completed foundation work:
   Windows-free public thread/context headers;
 - an opaque thread lifecycle with current-thread capture, create-suspended/start, identity,
   finite/infinite join, and explicit destruction on Win32 and POSIX;
+- an opaque, target-neutral renderer-worker gate with acknowledged cooperative pause/resume and
+  stale-event-resistant runtime stress coverage;
 - corrected Win32 multi-config DirectX paths and post-build output handling;
 - `build-win.ps1`, Windows CI, tagged release archives/checksums, and separately
   protected legacy/headless licensed dedicated-server smoke definitions;
@@ -740,9 +742,12 @@ migration also fixed the no-match read-lock leak in `DB_IsXAssetDefault`. The wi
 thread lifecycle now adds native Win32/POSIX current-thread capture, suspended creation with a
 one-shot start gate, handle identity, bounded/infinite join, and explicit destruction without
 publishing `HANDLE` or `pthread_t`; runtime tests exercise ordering, identity, timeouts, completion
-visibility, and repeated cleanup on all five native utility targets. Next, migrate the high-level
-engine consumers, replace renderer-worker native suspension with cooperative acknowledged pausing,
-then add priority/affinity policy, filesystem/virtual memory, console/process, and BSD sockets.
+visibility, and repeated cleanup on all five native utility targets. A shared four-state worker gate
+now supplies cooperative pause requests, parked acknowledgements, and directional resume signals;
+integrated stress tests cover waiting and in-flight tasks, queued work while parked, rapid stale-event
+cycles, and independent workers under ThreadSanitizer. Next, migrate the high-level engine consumers
+onto these contracts, then add priority/affinity policy, filesystem/virtual memory, console/process,
+and BSD sockets.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),
