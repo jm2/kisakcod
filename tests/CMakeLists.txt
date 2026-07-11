@@ -86,6 +86,22 @@ set_target_properties(kisakcod-abi-atomics-tests PROPERTIES
 )
 add_test(NAME abi-atomics-and-layout-macros COMMAND kisakcod-abi-atomics-tests)
 
+add_executable(kisakcod-script-string-atomic-tests
+    script_string_atomic_tests.cpp
+)
+target_include_directories(kisakcod-script-string-atomic-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-script-string-atomic-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-script-string-atomic-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-script-string-atomic-tests)
+set_target_properties(kisakcod-script-string-atomic-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME script-string-packed-atomic-contracts
+    COMMAND kisakcod-script-string-atomic-tests
+)
+set_tests_properties(script-string-packed-atomic-contracts PROPERTIES TIMEOUT 20)
+
 foreach(_profile mp sp)
     set(_target "kisakcod-platform-service-${_profile}-tests")
     string(TOUPPER "${_profile}" _profile_upper)
