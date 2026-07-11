@@ -1,13 +1,14 @@
 #include <qcommon/qcommon.h>
 
-#include <Windows.h>
+#include <atomic>
+
 #include <qcommon/sys_sync.h>
+#include <qcommon/sys_time.h>
 #include <qcommon/cmd.h>
 #include "com_files.h"
 #include "com_memory.h"
 #include <stringed/stringed_hooks.h>
 #include "q_parse.h"
-#include <win32/win_net.h>
 #include "com_math.h"
 #include "memfile.h"        // Dvar_Save/LoadDvars
 
@@ -20,7 +21,7 @@
 const dvar_s *dvar_cheats;
 int dvar_modifiedFlags;
 
-LONG isSortingDvars;
+static std::atomic<bool> s_isSortingDvars{false};
 
 static FastCriticalSection g_dvarCritSect;
 
@@ -28,8 +29,7 @@ static dvar_s* dvarHashTable[0x100];
     
 static dvar_s dvarPool[0x1000];
 static dvar_s* sortedDvars[0x1000];
-static bool areDvarsSorted;
-static LONG isSortedDvars;
+static std::atomic<bool> s_areDvarsSorted{false};
 static int dvarCount;
 
 bool isDvarSystemActive;
@@ -203,7 +203,7 @@ void __cdecl Dvar_ForEach(void(__cdecl *callback)(const dvar_s *, void *), void 
     int dvarIter; // [esp+4h] [ebp-4h]
 
     Sys_LockRead(&g_dvarCritSect);
-    if (!areDvarsSorted)
+    if (!s_areDvarsSorted.load(std::memory_order_seq_cst))
         Dvar_Sort();
     for (dvarIter = 0; dvarIter < dvarCount; ++dvarIter)
         callback(sortedDvars[dvarIter], userData);
@@ -217,16 +217,21 @@ bool __cdecl CompareDvars(const dvar_t *cached0, const dvar_t *cached1)
 
 void Dvar_Sort()
 {
-    if (InterlockedCompareExchange(&isSortingDvars, 1, 0))
+    bool expected = false;
+    if (!s_isSortingDvars.compare_exchange_strong(
+            expected,
+            true,
+            std::memory_order_seq_cst,
+            std::memory_order_seq_cst))
     {
-        while (isSortingDvars)
-            NET_Sleep(1);
+        while (s_isSortingDvars.load(std::memory_order_seq_cst))
+            Sys_Sleep(1);
     }
     else
     {
         std::sort(sortedDvars, sortedDvars + dvarCount, CompareDvars);
-        areDvarsSorted = 1;
-        isSortingDvars = 0;
+        s_areDvarsSorted.store(true, std::memory_order_seq_cst);
+        s_isSortingDvars.store(false, std::memory_order_seq_cst);
     }
 }
 
@@ -235,7 +240,7 @@ void __cdecl Dvar_ForEachName(void(__cdecl *callback)(const char *))
     int dvarIter; // [esp+4h] [ebp-4h]
 
     Sys_LockRead(&g_dvarCritSect);
-    if (!areDvarsSorted)
+    if (!s_areDvarsSorted.load(std::memory_order_seq_cst))
         Dvar_Sort();
     for (dvarIter = 0; dvarIter < dvarCount; ++dvarIter)
         callback(sortedDvars[dvarIter]->name);
@@ -1535,7 +1540,7 @@ const dvar_s *__cdecl Dvar_RegisterNew(
     }
     dvar = &dvarPool[dvarCount];
     sortedDvars[dvarCount] = dvar;
-    areDvarsSorted = 0;
+    s_areDvarsSorted.store(false, std::memory_order_seq_cst);
     ++dvarCount;
     dvar->type = type;
     if ((flags & 0x4000) != 0)

@@ -2090,6 +2090,95 @@ require_source_not_contains(
     "universal/dvar.cpp"
     "g_dvarCritSect.writeCount"
     "dvar writer-state polling must be atomic")
+foreach(_native_dvar_sort_token
+    "Windows.h"
+    "windows.h"
+    "win_net"
+    "Interlocked"
+    "LONG"
+)
+    require_source_not_contains(
+        "universal/dvar.cpp"
+        "${_native_dvar_sort_token}"
+        "dvar sorting must not depend on Windows atomics or networking")
+endforeach()
+require_source_contains(
+    "universal/dvar.cpp"
+    "static std::atomic<bool> s_areDvarsSorted{false};"
+    "the sorted-dvar publication flag must be an initialized C++ atomic")
+require_source_contains(
+    "universal/dvar.cpp"
+    "static std::atomic<bool> s_isSortingDvars{false};"
+    "the dvar sort-owner flag must be an initialized C++ atomic")
+require_source_contains(
+    "universal/dvar.cpp"
+    "s_isSortingDvars.compare_exchange_strong("
+    "exactly one thread must claim each dvar sort")
+require_source_contains(
+    "universal/dvar.cpp"
+    "s_isSortingDvars.load("
+    "dvar sort waiters must observe the atomic owner flag")
+require_source_contains(
+    "universal/dvar.cpp"
+    "s_isSortingDvars.store(false,"
+    "the dvar sort owner must release its atomic claim")
+require_source_contains(
+    "universal/dvar.cpp"
+    "s_areDvarsSorted.load("
+    "dvar readers must observe sorted publication atomically")
+require_source_contains(
+    "universal/dvar.cpp"
+    "s_areDvarsSorted.store(true,"
+    "a completed dvar sort must publish its result atomically")
+require_source_contains(
+    "universal/dvar.cpp"
+    "s_areDvarsSorted.store(false,"
+    "dvar registration must invalidate sorted publication atomically")
+require_source_ordered(
+    "universal/dvar.cpp"
+    "std::sort(sortedDvars, sortedDvars + dvarCount, CompareDvars);"
+    "s_areDvarsSorted.store(true,"
+    "dvar sort results must be complete before publication")
+require_source_ordered(
+    "universal/dvar.cpp"
+    "s_areDvarsSorted.store(true,"
+    "s_isSortingDvars.store(false,"
+    "sorted publication must precede releasing waiting sort callers")
+
+file(READ "${SOURCE_ROOT}/src/universal/dvar.cpp" _dvar_atomic_source)
+set(_dvar_sorted_flag_accesses "${_dvar_atomic_source}")
+string(REPLACE
+    "static std::atomic<bool> s_areDvarsSorted{false};"
+    ""
+    _dvar_sorted_flag_accesses
+    "${_dvar_sorted_flag_accesses}")
+string(REGEX REPLACE
+    "s_areDvarsSorted[ \t\r\n]*\\.[ \t\r\n]*(load|store)[ \t\r\n]*\\("
+    ""
+    _dvar_sorted_flag_accesses
+    "${_dvar_sorted_flag_accesses}")
+string(FIND "${_dvar_sorted_flag_accesses}" "s_areDvarsSorted" _raw_dvar_sorted_access)
+if (NOT _raw_dvar_sorted_access EQUAL -1)
+    message(FATAL_ERROR
+        "Dvar sorted-publication flag has a non-atomic load, store, alias, or assignment")
+endif()
+
+set(_dvar_sort_owner_accesses "${_dvar_atomic_source}")
+string(REPLACE
+    "static std::atomic<bool> s_isSortingDvars{false};"
+    ""
+    _dvar_sort_owner_accesses
+    "${_dvar_sort_owner_accesses}")
+string(REGEX REPLACE
+    "s_isSortingDvars[ \t\r\n]*\\.[ \t\r\n]*(compare_exchange_(strong|weak)|load|store)[ \t\r\n]*\\("
+    ""
+    _dvar_sort_owner_accesses
+    "${_dvar_sort_owner_accesses}")
+string(FIND "${_dvar_sort_owner_accesses}" "s_isSortingDvars" _raw_dvar_sort_owner_access)
+if (NOT _raw_dvar_sort_owner_access EQUAL -1)
+    message(FATAL_ERROR
+        "Dvar sort-owner flag has a non-atomic load, store, alias, or assignment")
+endif()
 require_source_contains(
     "database/db_registry.cpp"
     "Sys_UnlockRead(&db_hashCritSect);

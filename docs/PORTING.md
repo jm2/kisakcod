@@ -759,6 +759,12 @@ includes Windows headers or calls native threading/Interlocked APIs; SP pointer-
 four callback casts were removed. Next, finish broader fixed-width atomics, then add filesystem/
 virtual-memory, console/process, and BSD sockets.
 
+The first follow-on atomic cleanup also moved dvar sorting off `LONG`/Interlocked and the Win32
+network sleep wrapper. Two private seq-cst boolean atomics now provide sorter ownership and sorted-
+array publication across concurrent read-lock holders, while the write lock invalidates publication
+when a dvar is registered. Regression guards forbid raw access and require sort-before-publish-before-
+release ordering.
+
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),
 which **D3D9on12 does not provide** any more than dxvk does — so Windows-ARM64 hits the same failure as

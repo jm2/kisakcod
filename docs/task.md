@@ -8,9 +8,13 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: continue engine-wide fixed-width atomic adoption, then extract the next POSIX
-  filesystem/virtual-memory/process service without relaxing the engine gate.
-- Last completed batch: high-level thread orchestration now uses private `SysThreadHandle` storage,
+- Active work: continue engine-wide fixed-width atomic adoption in coherent subsystem batches, then
+  extract the next POSIX filesystem/virtual-memory/process service without relaxing the engine gate.
+- Last completed batch: dvar sorting no longer depends on `LONG`, Interlocked, Windows headers, or
+  the Win32 networking sleep wrapper. Private seq-cst atomic flags now publish sorted state and
+  arbitrate the one-sorter/multiple-waiter protocol; registration invalidation is atomic, waiting
+  uses `Sys_Sleep`, and source guards reject raw flag access or reordered publication.
+- Previous high-level thread batch: thread orchestration uses private `SysThreadHandle` storage,
   pointer-safe per-context start records, exact CDECL callback types, backend identity checks, and
   ordinal scheduling policy. `threads.cpp` no longer includes Windows headers or calls native thread/
   Interlocked APIs; renderer handoff/count and SP timeout state use explicit seq-cst atomics. All
@@ -122,7 +126,7 @@ work item changes. Do not create session-specific handoff files.
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
-| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
+| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, native-width database enumeration contexts, fixed-width fast locks, and native dvar-sort atomics exist; broader engine atomics/platform integration remains. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
 | M3 platform services | In progress: core thread services integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, and a cooperative worker gate used by renderer workers. High-level orchestration is native-type-free. Linux/macOS engine/headless sets remain empty and engine-gated; POSIX crash freezing, filesystem, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
@@ -167,8 +171,9 @@ work item changes. Do not create session-specific handoff files.
 - Native time and recursive critical-section services are selected and runtime-tested. The custom
   fast lock now routes every dvar/database reader and writer counter operation through shared
   sequentially consistent helpers, with source guards and reader/writer stress coverage. Broader
-  engine atomics still contain Windows `LONG`, direct volatile polling, and Windows-header coupling;
-  finish that M1 migration before compiling a non-Windows engine target.
+  engine atomics still contain Windows `LONG`, direct volatile polling, and Windows-header coupling,
+  although dvar sorting and all state in `threads.cpp` are now native C++ atomics. Finish that M1
+  migration before compiling a non-Windows engine target.
 - Native event and thread services are selected, runtime-tested, and used by high-level orchestration.
   Renderer workers park cooperatively; private opaque handles own creation, identity, priority, and
   ordinal affinity; `threads.cpp` is free of native Windows threading APIs. Fatal-error freezing is
