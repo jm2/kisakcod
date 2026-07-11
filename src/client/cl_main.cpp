@@ -1072,16 +1072,10 @@ void __cdecl CL_VoidCommand()
 
 void __cdecl CL_startMultiplayer_f()
 {
-    iassert(0); // KISAKTODO
-    if (!Sys_IsMainThread())
-        MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\client\\cl_main.cpp", 1453, 0, "%s", "Sys_IsMainThread()");
-    //LSP_SendLogRequest(cl_controller_in_use);
-    //LB_EndOngoingTasks();
-    Com_SyncThreads();
-    Sys_SuspendOtherThreads();
-    R_ShutdownDirect3D();
-    //XLaunchNewImage("cod3mp.exe", 0);
-    //JUMPOUT(0x82179E04);
+    Com_PrintError(
+        14,
+        "startMultiplayer is unavailable because executable handoff is not implemented\n");
+    return;
 }
 
 void __cdecl CL_ShellExecute_URL_f()
@@ -1859,4 +1853,3 @@ void __cdecl CL_Init(int localClientNum)
     clients[0].usingAds = 0;
     Com_Printf(14, "----- Client Initialization Complete -----\n");
 }
-

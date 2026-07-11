@@ -412,7 +412,7 @@ void Sys_Error(const char *error, ...)
 	if (com_dedicated && com_dedicated->current.integer)
 		Win_TerminateOnFatalError(string);
 	#endif
-	Sys_SuspendOtherThreads();
+	Sys_FreezeOtherThreadsForCrash();
 	
 	// random gamma crap we don't care about
 	// FixWindowsDesktop();

@@ -122,6 +122,8 @@ foreach(_service_source IN LISTS _expected_win32_service_sources)
 endforeach()
 
 foreach(_contract_source
+    "${SRC_DIR}/qcommon/threads.cpp"
+    "${SRC_DIR}/qcommon/threads.h"
     "${SRC_DIR}/qcommon/sys_event.h"
     "${SRC_DIR}/qcommon/sys_sync.cpp"
     "${SRC_DIR}/qcommon/sys_sync.h"

@@ -1,76 +1,10 @@
 #include <win32/win_local.h>
 
-#include <universal/assertive.h>
-
 #include <qcommon/qcommon.h>
-#include <qcommon/threads.h>
 
 #include <direct.h>
 #include <io.h>
 #include "com_memory.h"
-
-uint32_t Win_InitThreads()
-{
-    HANDLE CurrentProcess;
-    unsigned long result; 
-    unsigned long cpuCount; 
-    DWORD_PTR systemAffinityMask;
-    unsigned long cpuOffset; 
-    DWORD_PTR threadAffinityMask;
-    DWORD_PTR affinityMaskBits[33];
-    DWORD_PTR processAffinityMask; 
-
-    CurrentProcess = GetCurrentProcess();
-    result = GetProcessAffinityMask(CurrentProcess, &processAffinityMask, &systemAffinityMask);
-    s_affinityMaskForProcess = processAffinityMask;
-    cpuCount = 0;
-    for (threadAffinityMask = 1; (processAffinityMask & ((DWORD_PTR)0 - threadAffinityMask)) != 0; threadAffinityMask *= 2)
-    {
-        if ((processAffinityMask & threadAffinityMask) != 0)
-        {
-            result = cpuCount;
-            affinityMaskBits[cpuCount++] = threadAffinityMask;
-            if (cpuCount == 32)
-                break;
-        }
-        result = 2 * threadAffinityMask;
-    }
-    if (cpuCount > 1)
-    {
-        s_cpuCount = cpuCount;
-        s_affinityMaskForCpu[0] = affinityMaskBits[0];
-        result = affinityMaskBits[cpuCount - 1];
-        s_affinityMaskForCpu[1] = result;
-        if (cpuCount != 2)
-        {
-            if (cpuCount == 3)
-            {
-                s_affinityMaskForCpu[2] = affinityMaskBits[1];
-            }
-            else if (cpuCount == 4)
-            {
-                s_affinityMaskForCpu[2] = affinityMaskBits[1];
-                result = affinityMaskBits[2];
-                s_affinityMaskForCpu[3] = affinityMaskBits[2];
-            }
-            else
-            {
-                cpuOffset = (cpuCount - 2) / 3;
-                iassert(1 + cpuOffset < (cpuCount - 1) - cpuOffset);
-                s_affinityMaskForCpu[2] = affinityMaskBits[cpuOffset + 1];
-                result = affinityMaskBits[cpuCount - 1 - cpuOffset];
-                s_affinityMaskForCpu[3] = result;
-                s_cpuCount = 4;
-            }
-        }
-    }
-    else
-    {
-        s_cpuCount = 1;
-        s_affinityMaskForCpu[0] = -1;
-    }
-    return result;
-}
 
 // *(_DWORD *)(*(_DWORD *)(*((_DWORD *)NtCurrentTeb()->ThreadLocalStoragePointer + _tls_index) + 4)
 

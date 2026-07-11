@@ -131,6 +131,32 @@ require_source_not_contains(
     "qcommon/threads.h"
     "#include <Windows.h>"
     "public thread declarations must remain Windows-independent")
+require_source_contains(
+    "qcommon/threads.h"
+    "#include <qcommon/sys_thread.h>"
+    "shared thread orchestration must use the opaque native-thread contract")
+foreach(_legacy_thread_registry "qcommon/threads.cpp" "qcommon/threads.h")
+    require_source_not_matches(
+        "${_legacy_thread_registry}"
+        "threadId[ \\t\\r\\n]*\\["
+        "shared thread orchestration must not retain a numeric native-thread registry")
+endforeach()
+require_source_not_matches(
+    "qcommon/threads.h"
+    "threadHandle[ \\t\\r\\n]*\\["
+    "opaque thread handles must remain private to their implementation")
+foreach(_native_thread_registry_token
+    "HANDLE"
+    "DWORD"
+    "pthread_t"
+    "void *threadHandle"
+    "void* threadHandle"
+)
+    require_source_not_contains(
+        "qcommon/threads.h"
+        "${_native_thread_registry_token}"
+        "public thread orchestration must not expose a native or untyped handle registry")
+endforeach()
 foreach(_native_thread_token
     "Windows.h"
     "windows.h"
@@ -173,6 +199,10 @@ require_source_contains(
     "renderer worker entry must accept its fixed-width thread context without an ABI cast")
 require_source_contains(
     "gfx_d3d/r_workercmds.cpp"
+    "void KISAK_CDECL R_WorkerThread(uint32_t threadContext)"
+    "renderer worker implementation must retain its exact fixed-width entry signature")
+require_source_contains(
+    "gfx_d3d/r_workercmds.cpp"
     "Sys_SpawnWorkerThread(R_WorkerThread, workerThreadIndexa)"
     "renderer worker creation must pass its exactly typed entry point")
 require_source_not_contains(
@@ -192,6 +222,140 @@ foreach(_renderer_worker_source
             "${_renderer_worker_source}"
             "${_legacy_worker_control}("
             "renderer workers must use the cooperative active-state controller")
+    endforeach()
+endforeach()
+foreach(_raw_thread_api
+    CreateThread
+    GetCurrentThreadId
+    DuplicateHandle
+    SetThreadAffinityMask
+    SetThreadPriority
+    SuspendThread
+    ResumeThread
+)
+    require_source_not_matches(
+        "qcommon/threads.cpp"
+        "(^|[^A-Za-z0-9_])${_raw_thread_api}\\("
+        "shared thread orchestration must not bypass the opaque native-thread backend")
+endforeach()
+foreach(_native_thread_source_token
+    "#include <Windows"
+    "#include <win32/"
+    "PVOID"
+    "Interlocked"
+    "RaiseException"
+    "MS_VC_EXCEPTION"
+    "LPTHREAD_START_ROUTINE"
+)
+    require_source_not_contains(
+        "qcommon/threads.cpp"
+        "${_native_thread_source_token}"
+        "shared thread orchestration must not regain native Windows coupling")
+endforeach()
+foreach(_required_thread_service_call
+    "Sys_ThreadCaptureCurrent("
+    "Sys_ThreadCreateSuspended("
+    "Sys_ThreadStart("
+    "Sys_ThreadIsCurrent("
+    "Sys_ThreadGetEligibleProcessorCount("
+    "Sys_ThreadSetPriority("
+    "Sys_ThreadPinToEligibleProcessor("
+    "Sys_ThreadClearAffinity("
+    "Sys_ThreadForceSuspendForCrash("
+)
+    require_source_contains(
+        "qcommon/threads.cpp"
+        "${_required_thread_service_call}"
+        "engine thread policy must remain behind the opaque native-thread service")
+endforeach()
+require_source_not_contains(
+    "qcommon/threads.h"
+    "Sys_StartThread("
+    "one-shot native thread start must remain private to thread orchestration")
+foreach(_retired_thread_topology_token
+    "Win_InitThreads"
+    "s_affinityMaskForProcess"
+    "s_affinityMaskForCpu"
+    "s_cpuCount"
+)
+    require_source_not_contains(
+        "universal/win_common.cpp"
+        "${_retired_thread_topology_token}"
+        "Win32 filesystem code must not regain ownership of thread topology")
+endforeach()
+require_source_contains(
+    "win32/win_main.cpp"
+    "Sys_FreezeOtherThreadsForCrash();"
+    "the Windows fatal path must use the explicitly crash-only thread freeze")
+require_source_not_contains(
+    "win32/win_main.cpp"
+    "Sys_SuspendOtherThreads();"
+    "the Windows fatal path must not use the legacy generic suspension name")
+foreach(_crash_freeze_owner
+    "win32/win_main.cpp"
+    "qcommon/threads.cpp"
+)
+    file(READ "${SOURCE_ROOT}/src/${_crash_freeze_owner}" _crash_freeze_owner_text)
+    string(REGEX MATCHALL
+        "Sys_FreezeOtherThreadsForCrash\\("
+        _crash_freeze_owner_matches
+        "${_crash_freeze_owner_text}")
+    list(LENGTH _crash_freeze_owner_matches _crash_freeze_owner_count)
+    if (NOT _crash_freeze_owner_count EQUAL 1)
+        message(FATAL_ERROR
+            "Expected exactly one crash-freeze occurrence in ${_crash_freeze_owner}, found ${_crash_freeze_owner_count}")
+    endif()
+endforeach()
+file(GLOB_RECURSE _crash_freeze_sources "${SOURCE_ROOT}/src/*.cpp")
+foreach(_crash_freeze_source IN LISTS _crash_freeze_sources)
+    file(RELATIVE_PATH _crash_freeze_relative
+        "${SOURCE_ROOT}/src"
+        "${_crash_freeze_source}")
+    if (NOT _crash_freeze_relative STREQUAL "win32/win_main.cpp"
+        AND NOT _crash_freeze_relative STREQUAL "qcommon/threads.cpp")
+        file(READ "${_crash_freeze_source}" _crash_freeze_text)
+        string(FIND
+            "${_crash_freeze_text}"
+            "Sys_FreezeOtherThreadsForCrash("
+            _crash_freeze_position)
+        if (NOT _crash_freeze_position EQUAL -1)
+            message(FATAL_ERROR
+                "Crash-only thread freeze escaped into ${_crash_freeze_relative}")
+        endif()
+    endif()
+endforeach()
+require_source_contains(
+    "client/cl_main.cpp"
+    "void __cdecl CL_startMultiplayer_f()
+{
+    Com_PrintError(
+        14,
+        \"startMultiplayer is unavailable because executable handoff is not implemented\\n\");
+    return;
+}"
+    "the incomplete executable-handoff command must fail safely before changing runtime state")
+foreach(_forbidden_start_multiplayer_action
+    "Sys_FreezeOtherThreadsForCrash("
+    "Sys_SuspendOtherThreads("
+)
+    require_source_not_contains(
+        "client/cl_main.cpp"
+        "${_forbidden_start_multiplayer_action}"
+        "the incomplete executable-handoff command must not freeze threads or tear down rendering")
+endforeach()
+foreach(_typed_thread_entry_source
+    "database/db_registry.cpp"
+    "gfx_d3d/r_rendercmds.cpp"
+    "server/sv_demo.cpp"
+)
+    foreach(_forbidden_thread_entry_cast
+        "(void(__cdecl *)(uint32_t))"
+        "(void(__cdecl *)(unsigned int))"
+    )
+        require_source_not_contains(
+            "${_typed_thread_entry_source}"
+            "${_forbidden_thread_entry_cast}"
+            "typed engine thread callbacks must not be hidden behind ABI casts")
     endforeach()
 endforeach()
 foreach(_raw_event_api CreateEventA SetEvent ResetEvent WaitForSingleObject)

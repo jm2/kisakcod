@@ -752,9 +752,12 @@ operation and fixes the worker entry's incompatible function-pointer cast. Sched
 uses fixed-width result enums and backend-owned eligible-processor ordinals: Linux snapshots its
 sparse allowed cpuset dynamically, macOS reports hard pinning unsupported, and Windows keeps its
 native group mask private. Priority hints are likewise truthful rather than silently ignored. A
-terminal-only crash-freeze call is deliberately separate and has no resume operation. Next, migrate
-the remaining engine creation/identity/policy consumers, then add filesystem/virtual memory,
-console/process, and BSD sockets.
+terminal-only crash-freeze call is deliberately separate and has no resume operation. High-level
+orchestration now stores only opaque handles, passes pointer-safe start records through the native
+trampoline, uses handle identity, and applies the backend scheduling policy. `threads.cpp` no longer
+includes Windows headers or calls native threading/Interlocked APIs; SP pointer-to-int returns and
+four callback casts were removed. Next, finish broader fixed-width atomics, then add filesystem/
+virtual-memory, console/process, and BSD sockets.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),
@@ -762,13 +765,14 @@ which **D3D9on12 does not provide** any more than dxvk does — so Windows-ARM64
 Linux/macOS. *Move the `IDirectDraw7` replacement into an all-target step*, and validate the D3D9on12
 device-create + VRAM-query + double-`Direct3DCreate9` seam on the `windows-11-arm` runner.
 
-**M4 — Fatal-error thread suspend needs a per-OS mechanism.** `Sys_SuspendOtherThreads`/`Sys_Error`
-freeze all threads to walk stacks (`threads.cpp:168-181/326-336`); there is no portable equivalent.
-*Specify:* Linux `tgkill`+`SIGRTMIN` handler that only sets a flag and parks on a semaphore; macOS
-`mach thread_suspend`/`thread_get_state`. The crashing thread's stack walk must read the suspended
-thread's context and **never call libc heap** (async-signal-safety), and must interlock with the ARM
-step's `backtrace()`/`CaptureStackBackTrace` replacement. Add a deliberate worker-thread-assert test
-on all five targets.
+**M4 — Fatal-error thread freeze is isolated but still needs POSIX mechanisms.**
+`Sys_FreezeOtherThreadsForCrash` is now called only by `Sys_Error`; the abandoned SP executable-
+handoff command no longer freezes threads or tears down D3D. Windows uses the terminal-only checked
+backend operation, with no resume API. Linux still needs a preinstalled `tgkill`+`SIGRTMIN` handler
+that only records context and parks on a futex/semaphore; macOS needs `mach thread_suspend` plus
+`thread_get_state`. The crashing thread's stack walk must read suspended contexts and **never call
+libc heap** from the signal handler, and must interlock with the ARM `backtrace()`/stack-capture work.
+Add a deliberate worker-thread-assert test on all five targets.
 
 **L1 — Non-headless dedicated server is Windows-only.** `scripts/dedi/dedi_sources.cmake` links
 Bink/GFX_D3D/Miles/Speex unless `KISAK_DEDI_HEADLESS=ON`. State that **headless is the only supported

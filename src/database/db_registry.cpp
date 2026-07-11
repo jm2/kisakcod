@@ -2444,7 +2444,7 @@ void __cdecl DB_LoadZone_f()
 
 void __cdecl DB_InitThread()
 {
-    if (!Sys_SpawnDatabaseThread((void(__cdecl *)(uint32_t))DB_Thread))
+    if (!Sys_SpawnDatabaseThread(DB_Thread))
         Sys_Error("Failed to create database thread");
 }
 

@@ -212,7 +212,7 @@ void __cdecl R_InitDynamicMesh(
 
 void __cdecl R_InitRenderThread()
 {
-    if (!Sys_SpawnRenderThread((void(__cdecl *)(uint32_t))RB_RenderThread))
+    if (!Sys_SpawnRenderThread(RB_RenderThread))
         Com_Error(ERR_FATAL, "Failed to create render thread");
 }
 

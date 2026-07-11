@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include <qcommon/sys_event.h>
+#include <qcommon/sys_thread.h>
 #include <qcommon/sys_time.h>
 #include <qcommon/thread_context.h>
 
@@ -13,27 +14,23 @@ enum ThreadOwner : std::int32_t
     THREAD_OWNER_CINEMATICS = 0x2,
 };
 
+using SysThreadContextEntry = void (KISAK_CDECL *)(std::uint32_t);
+
 std::uint32_t __cdecl Sys_GetCpuCount();
 void __cdecl Sys_InitMainThread();
-std::uint32_t __cdecl Sys_GetCurrentThreadId();
-void __cdecl Sys_InitThread(ThreadContext_t threadContext);
-char __cdecl Sys_SpawnRenderThread(void(__cdecl* function)(std::uint32_t));
-void __cdecl Sys_CreateThread(void(__cdecl* function)(std::uint32_t), ThreadContext_t threadContext);
-void __cdecl SetThreadName(std::uint32_t threadId, const char* threadName);
-std::uint32_t __stdcall Sys_ThreadMain(ThreadContext_t parameter);
-char __cdecl Sys_SpawnDatabaseThread(void(__cdecl* function)(std::uint32_t));
+char __cdecl Sys_SpawnRenderThread(SysThreadContextEntry function);
+char __cdecl Sys_SpawnDatabaseThread(SysThreadContextEntry function);
 void __cdecl Sys_SuspendDatabaseThread(ThreadOwner owner);
 void __cdecl Sys_ResumeDatabaseThread(ThreadOwner owner);
 bool __cdecl Sys_HaveSuspendedDatabaseThread(ThreadOwner owner);
 void __cdecl Sys_WaitDatabaseThread();
 bool __cdecl Sys_SpawnWorkerThread(
-    void(__cdecl* function)(std::uint32_t),
+    SysThreadContextEntry function,
     std::uint32_t threadIndex);
 void __cdecl Sys_SetWorkerThreadActive(
     std::uint32_t workerIndex,
     bool active);
 void __cdecl Sys_WorkerThreadPausePoint(ThreadContext_t threadContext);
-void __cdecl Sys_ResumeThread(ThreadContext_t threadContext);
 void *__cdecl Sys_RendererSleep();
 int __cdecl Sys_RendererReady();
 void __cdecl Sys_RenderCompleted();
@@ -59,7 +56,7 @@ bool __cdecl Sys_IsRenderThread();
 bool __cdecl Sys_IsDatabaseThread();
 bool __cdecl Sys_IsMainThread();
 #ifdef KISAK_SP
-bool __cdecl Sys_IsServerThread();
+bool KISAK_CDECL Sys_IsServerThread();
 #endif
 void __cdecl Sys_SetValue(int valueIndex, void* data);
 void* __cdecl Sys_GetValue(int valueIndex);
@@ -72,9 +69,9 @@ void __cdecl Sys_ResetUpdateSpotLightEffectEvent();
 void __cdecl Sys_WaitUpdateNonDependentEffectsCompleted();
 void __cdecl Sys_SetUpdateNonDependentEffectsEvent();
 void __cdecl Sys_ResetUpdateNonDependentEffectsEvent();
-void __cdecl Sys_SuspendOtherThreads();
+void __cdecl Sys_FreezeOtherThreadsForCrash();
 void __cdecl Sys_ReleaseThreadOwnership();
-char __cdecl Sys_SpawnCinematicsThread(void(__cdecl* function)(std::uint32_t));
+char __cdecl Sys_SpawnCinematicsThread(SysThreadContextEntry function);
 bool __cdecl Sys_WaitForCinematicsThreadOutstandingRequestEventTimeout(
     std::uint32_t timeoutMsec);
 void __cdecl Sys_SetCinematicsThreadOutstandingRequestEvent();
@@ -88,28 +85,28 @@ int __cdecl Sys_IsRendererReady();
 void __cdecl Sys_BeginLoadThreadPriorities();
 
 #ifdef KISAK_SP
-int Sys_WaitStartServer(std::uint32_t timeout);
-void Sys_InitServerEvents();
-void Sys_ClientMessageReceived();
-void Sys_ClearClientMessage();
-int Sys_SpawnServerThread(void(*function)(std::uint32_t));
-void Sys_WaitClientMessageReceived();
-void Sys_ServerSnapshotCompleted();
-bool Sys_WaitServerSnapshot();
-void Sys_AllowSendClientMessages();
-void Sys_DisallowSendClientMessages();
-int Sys_CanSendClientMessages();
-void Sys_ServerCompleted();
-int Sys_ServerTimeout();
-void Sys_WakeServer();
-void Sys_SleepServer();
-bool Sys_WaitServer();
-void Sys_SetServerTimeout(int timeout);
-bool Sys_WaitForSaveHistoryDone();
-int Sys_SpawnServerDemoThread(void(*function)(std::uint32_t));
-void Sys_SetSaveHistoryEvent();
-void Sys_WaitForSaveHistory();
-void Sys_SetSaveHistoryDoneEvent();
+int KISAK_CDECL Sys_WaitStartServer(std::uint32_t timeout);
+void KISAK_CDECL Sys_InitServerEvents();
+void KISAK_CDECL Sys_ClientMessageReceived();
+void KISAK_CDECL Sys_ClearClientMessage();
+int KISAK_CDECL Sys_SpawnServerThread(SysThreadContextEntry function);
+void KISAK_CDECL Sys_WaitClientMessageReceived();
+void KISAK_CDECL Sys_ServerSnapshotCompleted();
+bool KISAK_CDECL Sys_WaitServerSnapshot();
+void KISAK_CDECL Sys_AllowSendClientMessages();
+void KISAK_CDECL Sys_DisallowSendClientMessages();
+int KISAK_CDECL Sys_CanSendClientMessages();
+void KISAK_CDECL Sys_ServerCompleted();
+int KISAK_CDECL Sys_ServerTimeout();
+void KISAK_CDECL Sys_WakeServer();
+void KISAK_CDECL Sys_SleepServer();
+bool KISAK_CDECL Sys_WaitServer();
+void KISAK_CDECL Sys_SetServerTimeout(int timeout);
+bool KISAK_CDECL Sys_WaitForSaveHistoryDone();
+int KISAK_CDECL Sys_SpawnServerDemoThread(SysThreadContextEntry function);
+void KISAK_CDECL Sys_SetSaveHistoryEvent();
+void KISAK_CDECL Sys_WaitForSaveHistory();
+void KISAK_CDECL Sys_SetSaveHistoryDoneEvent();
 #endif
 
 
@@ -121,12 +118,4 @@ enum WinThreadLock : std::int32_t
 };
 void __cdecl Win_SetThreadLock(WinThreadLock threadLock);
 WinThreadLock __cdecl Win_GetThreadLock();
-void Win_UpdateThreadLock();
-
-
-extern void *g_threadValues[THREAD_CONTEXT_COUNT][4];
-extern std::uint32_t threadId[THREAD_CONTEXT_COUNT];
-extern void *threadHandle[THREAD_CONTEXT_COUNT];
-extern std::uint32_t s_affinityMaskForProcess;
-extern std::uint32_t s_cpuCount;
-extern std::uint32_t s_affinityMaskForCpu[4];
+void KISAK_CDECL Win_UpdateThreadLock();

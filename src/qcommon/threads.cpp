@@ -1,17 +1,18 @@
 #include "threads.h"
 
-#include <Windows.h>
+#include <atomic>
+#include <cstdlib>
 
+#include <qcommon/sys_sync.h>
 #include <qcommon/sys_worker_gate.h>
 #include <universal/assertive.h>
 #include <universal/profile.h>
+#include <universal/q_shared.h>
 
 #ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/rb_drawprofile.h>
 #include <gfx_d3d/r_init.h>
 #endif
-#include <win32/win_local.h>
-
 #if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)
 #include <client_mp/client_mp.h>
 #elif KISAK_SP
@@ -21,15 +22,11 @@
 #include <gfx_d3d/rb_backend.h>
 #endif
 
-uint32_t Win_InitThreads();
-
+extern float com_timescaleValue;
+extern const dvar_t *sys_lockThreads;
 
 // NOTE(mrsteyk): keep in mind this is 4 elements long.
 static thread_local void **g_threadLocals;
-
-//static uint32_t s_affinityMaskForProcess;
-//static uint32_t s_cpuCount;
-//static uint32_t s_affinityMaskForCpu[4];
 
 #ifdef KISAK_SP
 int isDoingDatabaseInit;
@@ -42,27 +39,31 @@ SysEventHandle clientMessageReceived;
 SysEventHandle g_saveHistoryEvent;
 SysEventHandle g_saveHistoryDoneEvent;
 
-volatile int g_timeout;
+static std::atomic<int32_t> g_timeout{0};
 #endif
 
-typedef void (*ThreadFuncFn)(uint32_t);
-static ThreadFuncFn threadFunc[THREAD_CONTEXT_COUNT];
+using ThreadFuncFn = SysThreadContextEntry;
+
+struct SysEngineThreadStartRecord
+{
+    ThreadContext_t threadContext;
+    ThreadFuncFn function;
+};
+
+static SysEngineThreadStartRecord s_threadStartRecord[THREAD_CONTEXT_COUNT];
+static SysThreadHandle threadHandle[THREAD_CONTEXT_COUNT];
+static void *g_threadValues[THREAD_CONTEXT_COUNT][4];
 
 static constexpr uint32_t WORKER_THREAD_COUNT = 2;
 static SysWorkerGateHandle s_workerThreadGate[WORKER_THREAD_COUNT];
 
-void *g_threadValues[THREAD_CONTEXT_COUNT][4];
-std::uint32_t threadId[THREAD_CONTEXT_COUNT];
-void *threadHandle[THREAD_CONTEXT_COUNT];
-uint32_t s_affinityMaskForProcess;
-uint32_t s_cpuCount;
-uint32_t s_affinityMaskForCpu[4];
+static void KISAK_CDECL Sys_StartThread(ThreadContext_t threadContext);
 
 static int g_databaseThreadOwner;
 
-static volatile PVOID smpData;
+static std::atomic<void *> smpData{nullptr};
 
-static volatile uint32_t renderPausedCount;
+static std::atomic<int32_t> renderPausedCount{0};
 
 static WinThreadLock s_threadLock;
 
@@ -148,15 +149,133 @@ static const char *s_threadNames[THREAD_CONTEXT_COUNT] =
 };
 #endif
 
+static bool Sys_IsThreadContextValid(const ThreadContext_t threadContext)
+{
+    const int32_t contextIndex = static_cast<int32_t>(threadContext);
+    if (contextIndex >= 0 && contextIndex < THREAD_CONTEXT_COUNT)
+        return true;
+
+    iassert(contextIndex >= 0 && contextIndex < THREAD_CONTEXT_COUNT);
+    return false;
+}
+
+static uint32_t Sys_GetPreferredProcessorOrdinal(
+    const uint32_t eligibleProcessorCount,
+    const uint32_t preferredSlot)
+{
+    iassert(eligibleProcessorCount > 1);
+    iassert(preferredSlot < 4);
+
+    switch (preferredSlot)
+    {
+    case 0:
+        return 0;
+    case 1:
+        return eligibleProcessorCount - 1;
+    case 2:
+        if (eligibleProcessorCount <= 4)
+            return 1;
+        return 1 + (eligibleProcessorCount - 2) / 3;
+    case 3:
+        if (eligibleProcessorCount == 4)
+            return 2;
+        return eligibleProcessorCount - 1 - (eligibleProcessorCount - 2) / 3;
+    default:
+        iassert(0);
+        return 0;
+    }
+}
+
+static void Sys_ApplyThreadAffinity(const ThreadContext_t threadContext)
+{
+    if (!Sys_IsThreadContextValid(threadContext))
+        return;
+
+    SysThreadHandle const thread = threadHandle[threadContext];
+    if (!thread)
+        return;
+
+    const uint32_t eligibleProcessorCount =
+        Sys_ThreadGetEligibleProcessorCount();
+    const uint32_t preferredSlotCount = eligibleProcessorCount < 4
+        ? eligibleProcessorCount
+        : 4;
+    bool shouldPin = false;
+    uint32_t preferredSlot = 0;
+
+    switch (threadContext)
+    {
+    case THREAD_CONTEXT_MAIN:
+        shouldPin = s_threadLock != THREAD_LOCK_NONE
+            && eligibleProcessorCount > 1;
+        preferredSlot = 0;
+        break;
+    case THREAD_CONTEXT_BACKEND:
+        shouldPin = s_threadLock != THREAD_LOCK_NONE
+            && eligibleProcessorCount > 1;
+        preferredSlot = 1;
+        break;
+    case THREAD_CONTEXT_DATABASE:
+        shouldPin = s_threadLock == THREAD_LOCK_ALL
+            && eligibleProcessorCount > 1;
+        preferredSlot = eligibleProcessorCount < 3 ? 1 : 2;
+        break;
+    case THREAD_CONTEXT_CINEMATIC:
+        shouldPin = s_threadLock == THREAD_LOCK_ALL
+            && eligibleProcessorCount > 1;
+        preferredSlot = preferredSlotCount - 1;
+        break;
+    case THREAD_CONTEXT_WORKER0:
+        shouldPin = s_threadLock == THREAD_LOCK_ALL
+            && eligibleProcessorCount >= 3;
+        preferredSlot = 2;
+        break;
+    case THREAD_CONTEXT_WORKER1:
+        shouldPin = s_threadLock == THREAD_LOCK_ALL
+            && eligibleProcessorCount >= 4;
+        preferredSlot = 3;
+        break;
+    default:
+        break;
+    }
+
+    if (shouldPin)
+    {
+        const uint32_t ordinal = Sys_GetPreferredProcessorOrdinal(
+            eligibleProcessorCount,
+            preferredSlot);
+        (void)Sys_ThreadPinToEligibleProcessor(thread, ordinal);
+    }
+    else
+    {
+        (void)Sys_ThreadClearAffinity(thread);
+    }
+}
+
+static void Sys_ApplyThreadAffinityToAll()
+{
+    for (int32_t contextIndex = 0;
+         contextIndex < THREAD_CONTEXT_COUNT;
+         ++contextIndex)
+    {
+        Sys_ApplyThreadAffinity(static_cast<ThreadContext_t>(contextIndex));
+    }
+}
+
 uint32_t __cdecl Sys_GetCpuCount()
 {
-    return s_cpuCount;
+    return Sys_ThreadGetEligibleProcessorCount();
 }
 
 void __cdecl Sys_EndLoadThreadPriorities()
 {
     iassert(Sys_IsMainThread());
-    SetThreadPriority(threadHandle[THREAD_CONTEXT_MAIN], 0);
+    if (threadHandle[THREAD_CONTEXT_MAIN])
+    {
+        (void)Sys_ThreadSetPriority(
+            threadHandle[THREAD_CONTEXT_MAIN],
+            SysThreadPriority::Normal);
+    }
 }
 
 int __cdecl Sys_IsRendererReady()
@@ -164,35 +283,97 @@ int __cdecl Sys_IsRendererReady()
     return Sys_WaitForSingleObjectTimeout(&renderCompletedEvent, 0);
 }
 
-void __cdecl Sys_InitMainThread()
+static void Sys_InitThread(const ThreadContext_t threadContext)
 {
-    HANDLE process; // [esp+0h] [ebp-8h]
-    HANDLE pseudoHandle; // [esp+4h] [ebp-4h]
+    if (!Sys_IsThreadContextValid(threadContext))
+        return;
 
-    threadId[THREAD_CONTEXT_MAIN] = Sys_GetCurrentThreadId();
-    process = GetCurrentProcess();
-    pseudoHandle = GetCurrentThread();
-    DuplicateHandle(process, pseudoHandle, process, threadHandle, 0, 0, 2);
-    Win_InitThreads();
-    //*(uint32_t*)(*((uint32_t*)NtCurrentTeb()->ThreadLocalStoragePointer + _tls_index) + 4) = g_threadValues;
-    g_threadLocals = g_threadValues[THREAD_CONTEXT_MAIN];
-    Com_InitThreadData(0);
-}
-
-uint32_t __cdecl Sys_GetCurrentThreadId()
-{
-    return GetCurrentThreadId();
-}
-
-void __cdecl Sys_InitThread(ThreadContext_t threadContext)
-{
-    //*(uint32_t*)(*((uint32_t*)NtCurrentTeb()->ThreadLocalStoragePointer + _tls_index) + 4) = g_threadValues[threadContext];
     g_threadLocals = g_threadValues[threadContext];
     Com_InitThreadData(threadContext);
     Profile_InitContext(threadContext);
 }
 
-char __cdecl Sys_SpawnRenderThread(void(__cdecl* function)(uint32_t))
+static void KISAK_CDECL Sys_EngineThreadMain(void *const userData)
+{
+    const SysEngineThreadStartRecord *const startRecord =
+        static_cast<const SysEngineThreadStartRecord *>(userData);
+    if (!startRecord || !Sys_IsThreadContextValid(startRecord->threadContext))
+    {
+        iassert(startRecord);
+        return;
+    }
+
+    const ThreadFuncFn function = startRecord->function;
+    if (!function)
+    {
+        iassert(function);
+        return;
+    }
+
+    const ThreadContext_t threadContext = startRecord->threadContext;
+#ifdef TRACY_ENABLE
+    TracyCSetThreadName(s_threadNames[threadContext]);
+#endif
+    Sys_InitThread(threadContext);
+    function(static_cast<uint32_t>(threadContext));
+}
+
+static bool Sys_CreateThread(
+    const ThreadFuncFn function,
+    const ThreadContext_t threadContext)
+{
+    if (!function || !Sys_IsThreadContextValid(threadContext))
+    {
+        iassert(function);
+        return false;
+    }
+
+    SysEngineThreadStartRecord &startRecord = s_threadStartRecord[threadContext];
+    if (startRecord.function || threadHandle[threadContext])
+    {
+        iassert(!startRecord.function);
+        iassert(!threadHandle[threadContext]);
+        return false;
+    }
+
+    startRecord.threadContext = threadContext;
+    startRecord.function = function;
+    if (!Sys_ThreadCreateSuspended(
+            Sys_EngineThreadMain,
+            &startRecord,
+            s_threadNames[threadContext],
+            &threadHandle[threadContext]))
+    {
+        startRecord = {};
+        return false;
+    }
+
+    Sys_ApplyThreadAffinity(threadContext);
+    return true;
+}
+
+void __cdecl Sys_InitMainThread()
+{
+    if (threadHandle[THREAD_CONTEXT_MAIN])
+    {
+        iassert(!threadHandle[THREAD_CONTEXT_MAIN]);
+        return;
+    }
+
+    if (!Sys_ThreadCaptureCurrent(
+            s_threadNames[THREAD_CONTEXT_MAIN],
+            &threadHandle[THREAD_CONTEXT_MAIN]))
+    {
+        iassert(threadHandle[THREAD_CONTEXT_MAIN]);
+        std::abort();
+    }
+
+    Sys_ApplyThreadAffinity(THREAD_CONTEXT_MAIN);
+    g_threadLocals = g_threadValues[THREAD_CONTEXT_MAIN];
+    Com_InitThreadData(THREAD_CONTEXT_MAIN);
+}
+
+char __cdecl Sys_SpawnRenderThread(SysThreadContextEntry function)
 {
     Sys_CreateEvent(0, 0, &renderPausedEvent);
     Sys_CreateEvent(1, 1, &renderCompletedEvent);
@@ -203,72 +384,12 @@ char __cdecl Sys_SpawnRenderThread(void(__cdecl* function)(uint32_t))
     Sys_CreateEvent(1, 1, &updateSpotLightEffectEvent);
     Sys_CreateEvent(1, 1, &updateEffectsEvent);
 
-    Sys_CreateThread(function, THREAD_CONTEXT_BACKEND);
-
-    if (!threadHandle[THREAD_CONTEXT_BACKEND])
+    if (!Sys_CreateThread(function, THREAD_CONTEXT_BACKEND))
         return 0;
 
-    Sys_ResumeThread(THREAD_CONTEXT_BACKEND);
+    Sys_StartThread(THREAD_CONTEXT_BACKEND);
 
     return 1;
-}
-
-void __cdecl Sys_CreateThread(void(__cdecl* function)(uint32_t), ThreadContext_t threadContext)
-{
-    iassert( threadFunc[threadContext] == NULL );
-    iassert(threadContext < THREAD_CONTEXT_COUNT);
-    threadFunc[threadContext] = function;
-    DWORD nativeThreadId = 0;
-    threadHandle[threadContext] = CreateThread(
-        0,
-        0,
-        (LPTHREAD_START_ROUTINE)Sys_ThreadMain,
-        (LPVOID)threadContext,
-        4u,
-        &nativeThreadId);
-    threadId[threadContext] = static_cast<std::uint32_t>(nativeThreadId);
-    SetThreadName(threadId[threadContext], s_threadNames[threadContext]);
-}
-
-#define MS_VC_EXCEPTION 0x406d1388
-struct tagTHREADNAME_INFO // sizeof=0x10
-{                                     
-    DWORD dwType; // Must be 0x1000.
-    LPCSTR szName; // Pointer to name (in user addr space).
-    DWORD dwThreadID; // Thread ID (-1=caller thread).
-    DWORD dwFlags; // Reserved for future use, must be zero.          
-};
-
-// https://learn.microsoft.com/en-us/visualstudio/debugger/tips-for-debugging-threads?view=vs-2022&tabs=csharp
-void __cdecl SetThreadName(uint32_t threadId, const char* threadName)
-{
-    tagTHREADNAME_INFO info; // [esp+10h] [ebp-28h] BYREF
-    //CPPEH_RECORD ms_exc; // [esp+20h] [ebp-18h]
-
-    info.dwType = 0x1000;
-    info.szName = threadName;
-    info.dwThreadID = threadId;
-    info.dwFlags = 0;
-    
-#ifdef TRACY_ENABLE
-    TracyCSetThreadName(threadName);
-#endif
-
-    __try {
-        RaiseException(MS_VC_EXCEPTION, 0, sizeof(info) / sizeof(ULONG_PTR), (ULONG_PTR*)&info);
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
-    }
-}
-
-uint32_t __stdcall Sys_ThreadMain(ThreadContext_t threadContext)
-{
-    bcassert(threadContext, THREAD_CONTEXT_COUNT);
-    iassert(threadFunc[threadContext]);
-    SetThreadName(0xFFFFFFFF, s_threadNames[threadContext]);
-    Sys_InitThread(threadContext);
-    threadFunc[threadContext](threadContext);
-    return 0;
 }
 
 static SysEventHandle wakeDatabaseEvent;
@@ -278,20 +399,22 @@ static SysEventHandle resumedDatabaseEvent;
 
 bool dediRenderHack = false;
 
-char __cdecl Sys_SpawnDatabaseThread(void(__cdecl* function)(uint32_t))
+char __cdecl Sys_SpawnDatabaseThread(SysThreadContextEntry function)
 {
     Sys_CreateEvent(0, 0, &wakeDatabaseEvent);
     Sys_CreateEvent(1, 1, &databaseCompletedEvent);
     Sys_CreateEvent(1, 1, &databaseCompletedEvent2);
     Sys_CreateEvent(1, 1, &resumedDatabaseEvent);
 
-    Sys_CreateThread(function, THREAD_CONTEXT_DATABASE);
-
-    if (!threadHandle[THREAD_CONTEXT_DATABASE])
+    if (!Sys_CreateThread(function, THREAD_CONTEXT_DATABASE))
         return 0;
 
-    SetThreadPriority(threadHandle[THREAD_CONTEXT_DATABASE], s_cpuCount > 1 ? 1 : -1);
-    Sys_ResumeThread(THREAD_CONTEXT_DATABASE);
+    (void)Sys_ThreadSetPriority(
+        threadHandle[THREAD_CONTEXT_DATABASE],
+        Sys_GetCpuCount() > 1
+            ? SysThreadPriority::AboveNormal
+            : SysThreadPriority::BelowNormal);
+    Sys_StartThread(THREAD_CONTEXT_DATABASE);
 
     return 1;
 }
@@ -338,7 +461,9 @@ void __cdecl Sys_WaitDatabaseThread()
     Sys_WaitForSingleObject(&resumedDatabaseEvent);
 }
 
-bool __cdecl Sys_SpawnWorkerThread(void(__cdecl* function)(uint32_t), uint32_t threadIndex)
+bool __cdecl Sys_SpawnWorkerThread(
+    SysThreadContextEntry function,
+    uint32_t threadIndex)
 {
     if (!Sys_IsWorkerThreadIndexValid(threadIndex))
         return false;
@@ -359,11 +484,9 @@ bool __cdecl Sys_SpawnWorkerThread(void(__cdecl* function)(uint32_t), uint32_t t
     }
 
     Sys_WorkerGateCreate(&s_workerThreadGate[threadIndex]);
-    Sys_CreateThread(function, threadContext);
-    if (threadHandle[threadContext])
+    if (Sys_CreateThread(function, threadContext))
         return true;
 
-    threadFunc[threadContext] = nullptr;
     Sys_WorkerGateDestroy(&s_workerThreadGate[threadIndex]);
     return false;
 }
@@ -388,7 +511,7 @@ void __cdecl Sys_SetWorkerThreadActive(
     if (active)
     {
         if (Sys_WorkerGateActivate(gate))
-            Sys_ResumeThread(threadContext);
+            Sys_StartThread(threadContext);
         Sys_SetWorkerCmdEvent();
         return;
     }
@@ -416,20 +539,29 @@ void __cdecl Sys_WorkerThreadPausePoint(const ThreadContext_t threadContext)
     Sys_WorkerGatePausePoint(gate);
 }
 
-void __cdecl Sys_ResumeThread(ThreadContext_t threadContext)
+static void KISAK_CDECL Sys_StartThread(const ThreadContext_t threadContext)
 {
-    iassert( threadHandle[threadContext] );
-    ResumeThread(threadHandle[threadContext]);
+    if (!Sys_IsThreadContextValid(threadContext))
+        return;
+
+    SysThreadHandle const thread = threadHandle[threadContext];
+    if (!thread)
+    {
+        iassert(thread);
+        return;
+    }
+
+    Sys_ThreadStart(thread);
 }
 
 void *__cdecl Sys_RendererSleep()
 {
-    return InterlockedExchangePointer(&smpData, nullptr);
+    return smpData.exchange(nullptr, std::memory_order_seq_cst);
 }
 
 int __cdecl Sys_RendererReady()
 {
-    return smpData != 0;
+    return smpData.load(std::memory_order_seq_cst) != nullptr;
 }
 
 void __cdecl Sys_RenderCompleted()
@@ -440,9 +572,8 @@ void __cdecl Sys_RenderCompleted()
 
 void __cdecl Sys_FrontEndSleep()
 {
-    int newCount; // [esp+0h] [ebp-4h]
+    int32_t newCount; // [esp+0h] [ebp-4h]
 
-    KISAK_NULLSUB();
     if (!Sys_WaitForSingleObjectTimeout(&noThreadOwnershipEvent, 0))
         MyAssertHandler(
             ".\\qcommon\\threads.cpp",
@@ -453,7 +584,7 @@ void __cdecl Sys_FrontEndSleep()
     Sys_WaitForSingleObject(&rendererRunningEvent);
     Sys_ResetEvent(&noThreadOwnershipEvent);
     Sys_SetEvent(&backendEvent[1]);
-    newCount = InterlockedDecrement(&renderPausedCount);
+    newCount = renderPausedCount.fetch_sub(1, std::memory_order_seq_cst) - 1;
     if (newCount != -1 && newCount)
         MyAssertHandler(
             ".\\qcommon\\threads.cpp",
@@ -468,9 +599,9 @@ void __cdecl Sys_FrontEndSleep()
 void __cdecl Sys_WakeRenderer(void* data)
 {
     Sys_ResetEvent(&renderCompletedEvent);
-    const void *old = InterlockedExchangePointer(&smpData, data);
+    const void *old = smpData.exchange(data, std::memory_order_seq_cst);
     vassert(!old, "old = %p", old);
-    KISAK_NULLSUB();
+    (void)old;
     Sys_SetEvent(&backendEvent[1]);
     Sys_SetWorkerCmdEvent();
 }
@@ -545,7 +676,6 @@ void __cdecl Sys_WakeDatabase2()
 
 bool __cdecl Sys_FinishRenderer()
 {
-    KISAK_NULLSUB();
     return !Sys_WaitForSingleObjectTimeout(&noThreadOwnershipEvent, 0);
 }
 
@@ -561,9 +691,9 @@ void __cdecl Sys_WaitForMainThread()
 
 void __cdecl Sys_StopRenderer()
 {
-    uint32_t newCount; // [esp+0h] [ebp-4h]
+    int32_t newCount; // [esp+0h] [ebp-4h]
 
-    newCount = InterlockedIncrement(&renderPausedCount);
+    newCount = renderPausedCount.fetch_add(1, std::memory_order_seq_cst) + 1;
     if (newCount > 1)
         MyAssertHandler(
             ".\\qcommon\\threads.cpp",
@@ -583,23 +713,27 @@ void __cdecl Sys_StartRenderer()
 
 bool __cdecl Sys_IsRenderThread()
 {
-    return Sys_GetCurrentThreadId() == threadId[THREAD_CONTEXT_BACKEND];
+    SysThreadHandle const thread = threadHandle[THREAD_CONTEXT_BACKEND];
+    return thread && Sys_ThreadIsCurrent(thread);
 }
 
 bool __cdecl Sys_IsDatabaseThread()
 {
-    return Sys_GetCurrentThreadId() == threadId[THREAD_CONTEXT_DATABASE];
+    SysThreadHandle const thread = threadHandle[THREAD_CONTEXT_DATABASE];
+    return thread && Sys_ThreadIsCurrent(thread);
 }
 
 bool __cdecl Sys_IsMainThread()
 {
-    return Sys_GetCurrentThreadId() == threadId[THREAD_CONTEXT_MAIN];
+    SysThreadHandle const thread = threadHandle[THREAD_CONTEXT_MAIN];
+    return thread && Sys_ThreadIsCurrent(thread);
 }
 
 #ifdef KISAK_SP
-bool Sys_IsServerThread()
+bool KISAK_CDECL Sys_IsServerThread()
 {
-    return threadId[THREAD_CONTEXT_SERVER] == GetCurrentThreadId();
+    SysThreadHandle const thread = threadHandle[THREAD_CONTEXT_SERVER];
+    return thread && Sys_ThreadIsCurrent(thread);
 }
 #endif
 
@@ -617,7 +751,6 @@ void* __cdecl Sys_GetValue(int valueIndex)
 
 void __cdecl Sys_WaitForWorkerCmd()
 {
-    KISAK_NULLSUB();
     Sys_WaitForSingleObjectTimeout(backendEvent, 1u);
 }
 
@@ -648,7 +781,6 @@ void __cdecl Sys_ResetUpdateSpotLightEffectEvent()
 
 void __cdecl Sys_WaitUpdateNonDependentEffectsCompleted()
 {
-    KISAK_NULLSUB();
     Sys_WaitForSingleObject(&updateEffectsEvent);
 }
 
@@ -662,16 +794,17 @@ void __cdecl Sys_ResetUpdateNonDependentEffectsEvent()
     Sys_ResetEvent(&updateEffectsEvent);
 }
 
-void __cdecl Sys_SuspendOtherThreads()
+void __cdecl Sys_FreezeOtherThreadsForCrash()
 {
-    uint32_t threadIndex; // [esp+0h] [ebp-8h]
-    uint32_t currentThreadId; // [esp+4h] [ebp-4h]
-
-    currentThreadId = Sys_GetCurrentThreadId();
-    for (threadIndex = 0; threadIndex < THREAD_CONTEXT_COUNT; ++threadIndex)
+    for (int32_t contextIndex = 0;
+         contextIndex < THREAD_CONTEXT_COUNT;
+         ++contextIndex)
     {
-        if (threadHandle[threadIndex] && threadId[threadIndex] && threadId[threadIndex] != currentThreadId)
-            SuspendThread(threadHandle[threadIndex]);
+        SysThreadHandle const thread = threadHandle[contextIndex];
+        if (!thread || Sys_ThreadIsCurrent(thread))
+            continue;
+
+        (void)Sys_ThreadForceSuspendForCrash(thread);
     }
 }
 
@@ -691,14 +824,13 @@ static SysEventHandle g_cinematicsThreadOutstandingRequestEvent;
 static SysEventHandle g_cinematicsHostOutstandingRequestEvent;
 
 
-char __cdecl Sys_SpawnCinematicsThread(void(__cdecl* function)(uint32_t))
+char __cdecl Sys_SpawnCinematicsThread(SysThreadContextEntry function)
 {
     Sys_CreateEvent(1, 1, &g_cinematicsThreadOutstandingRequestEvent);
     Sys_CreateEvent(1, 0, &g_cinematicsHostOutstandingRequestEvent);
-    Sys_CreateThread(function, THREAD_CONTEXT_CINEMATIC);
-    if (!threadHandle[THREAD_CONTEXT_CINEMATIC])
+    if (!Sys_CreateThread(function, THREAD_CONTEXT_CINEMATIC))
         return 0;
-    Sys_ResumeThread(THREAD_CONTEXT_CINEMATIC);
+    Sys_StartThread(THREAD_CONTEXT_CINEMATIC);
     return 1;
 }
 
@@ -734,43 +866,19 @@ void __cdecl Sys_ResetCinematicsHostOutstandingRequestEvent()
 
 void __cdecl Win_SetThreadLock(WinThreadLock threadLock)
 {
-    if (s_cpuCount != 1 && threadLock != s_threadLock)
+    if (threadLock < THREAD_LOCK_NONE || threadLock > THREAD_LOCK_ALL)
     {
-        s_threadLock = threadLock;
-        iassert(s_cpuCount >= 2);
-
-        if (threadLock)
-            SetThreadAffinityMask(threadHandle[THREAD_CONTEXT_MAIN], s_affinityMaskForCpu[0]);
-        else
-            SetThreadAffinityMask(threadHandle[THREAD_CONTEXT_MAIN], s_affinityMaskForProcess);
-
-        if (threadLock)
-            SetThreadAffinityMask(threadHandle[THREAD_CONTEXT_BACKEND], s_affinityMaskForCpu[1]);
-        else
-            SetThreadAffinityMask(threadHandle[THREAD_CONTEXT_BACKEND], s_affinityMaskForProcess);
-        if (threadLock == THREAD_LOCK_ALL)
-            SetThreadAffinityMask(threadHandle[THREAD_CONTEXT_DATABASE], s_affinityMaskForCpu[2 - (s_cpuCount < 3)]);
-        else
-            SetThreadAffinityMask(threadHandle[THREAD_CONTEXT_DATABASE], s_affinityMaskForProcess);
-        if (threadLock == THREAD_LOCK_ALL)
-            SetThreadAffinityMask(threadHandle[THREAD_CONTEXT_TRACE_COUNT], s_affinityMaskForCpu[s_cpuCount - 1]);
-        else
-            SetThreadAffinityMask(threadHandle[THREAD_CONTEXT_TRACE_COUNT], s_affinityMaskForProcess);
-        if (s_cpuCount >= 3)
-        {
-            if (threadLock == THREAD_LOCK_ALL)
-                SetThreadAffinityMask(threadHandle[THREAD_CONTEXT_WORKER0], s_affinityMaskForCpu[2]);
-            else
-                SetThreadAffinityMask(threadHandle[THREAD_CONTEXT_WORKER0], s_affinityMaskForProcess);
-        }
-        if (s_cpuCount >= 4)
-        {
-            if (threadLock == THREAD_LOCK_ALL)
-                SetThreadAffinityMask(threadHandle[THREAD_CONTEXT_WORKER1], s_affinityMaskForCpu[3]);
-            else
-                SetThreadAffinityMask(threadHandle[THREAD_CONTEXT_WORKER1], s_affinityMaskForProcess);
-        }
+        iassert(threadLock >= THREAD_LOCK_NONE && threadLock <= THREAD_LOCK_ALL);
+        return;
     }
+
+    if (threadLock == s_threadLock)
+        return;
+
+    // Main capture and thread creation apply the current policy directly, so
+    // an unchanged enum does not need per-frame native affinity calls.
+    s_threadLock = threadLock;
+    Sys_ApplyThreadAffinityToAll();
 }
 
 WinThreadLock __cdecl Win_GetThreadLock()
@@ -778,11 +886,11 @@ WinThreadLock __cdecl Win_GetThreadLock()
     return s_threadLock;
 }
 
-void Win_UpdateThreadLock()
+void KISAK_CDECL Win_UpdateThreadLock()
 {
-    if (s_cpuCount == 1)
+    if (Sys_GetCpuCount() == 1)
     {
-        s_threadLock = THREAD_LOCK_ALL;
+        Win_SetThreadLock(THREAD_LOCK_ALL);
     }
     else if (Sys_IsUsingAnyRenderProfile())
     {
@@ -800,11 +908,16 @@ void Win_UpdateThreadLock()
 void __cdecl Sys_BeginLoadThreadPriorities()
 {
     iassert(Sys_IsMainThread());
-    SetThreadPriority(threadHandle[THREAD_CONTEXT_MAIN], -1);
+    if (threadHandle[THREAD_CONTEXT_MAIN])
+    {
+        (void)Sys_ThreadSetPriority(
+            threadHandle[THREAD_CONTEXT_MAIN],
+            SysThreadPriority::BelowNormal);
+    }
 }
 
 #ifdef KISAK_SP
-int Sys_WaitStartServer(uint32_t timeout)
+int KISAK_CDECL Sys_WaitStartServer(uint32_t timeout)
 {
     int v2; // r3
     int v3; // r30
@@ -824,80 +937,72 @@ int Sys_WaitStartServer(uint32_t timeout)
     return v3;
 }
 
-void Sys_InitServerEvents()
+void KISAK_CDECL Sys_InitServerEvents()
 {
     Sys_ResetEvent(&wakeServerEvent);
     Sys_ResetEvent(&serverCompletedEvent);
     Sys_SetEvent(&allowSendClientMessagesEvent);
     Sys_ResetEvent(&serverSnapshotEvent);
     Sys_SetEvent(&clientMessageReceived);
-    g_timeout = 0;
+    g_timeout.store(0, std::memory_order_seq_cst);
 }
 
-void Sys_ClientMessageReceived()
+void KISAK_CDECL Sys_ClientMessageReceived()
 {
     Sys_SetEvent(&clientMessageReceived);
 }
-void Sys_ClearClientMessage()
+void KISAK_CDECL Sys_ClearClientMessage()
 {
     Sys_ResetEvent(&clientMessageReceived);
 }
-int Sys_SpawnServerThread(void(*function)(uint32_t))
+int KISAK_CDECL Sys_SpawnServerThread(SysThreadContextEntry function)
 {
-    int result; // r3
-
     Sys_CreateEvent(true, false, &wakeServerEvent);
     Sys_CreateEvent(true, false, &serverCompletedEvent);
     Sys_CreateEvent(true, false, &allowSendClientMessagesEvent);
     Sys_CreateEvent(false, false, &serverSnapshotEvent);
     Sys_CreateEvent(true, true, &clientMessageReceived);
-    Sys_CreateThread(function, THREAD_CONTEXT_SERVER);
-    result = (int)threadHandle[THREAD_CONTEXT_SERVER];
+    if (!Sys_CreateThread(function, THREAD_CONTEXT_SERVER))
+        return 0;
 
-    if (threadHandle[THREAD_CONTEXT_SERVER])
-    {
-        //XSetThreadProcessor(threadHandle[5], 3u);
-        Sys_ResumeThread(THREAD_CONTEXT_SERVER);
-        return 1;
-    }
-
-    return result;
+    Sys_StartThread(THREAD_CONTEXT_SERVER);
+    return 1;
 }
-void Sys_WaitClientMessageReceived()
+void KISAK_CDECL Sys_WaitClientMessageReceived()
 {
     uint32_t v0; // r8
 
     PROF_SCOPED("wait receive msg");
     Sys_WaitForSingleObject(&clientMessageReceived);
 }
-void Sys_ServerSnapshotCompleted()
+void KISAK_CDECL Sys_ServerSnapshotCompleted()
 {
     Sys_SetEvent(&serverSnapshotEvent);
 }
-bool Sys_WaitServerSnapshot()
+bool KISAK_CDECL Sys_WaitServerSnapshot()
 {
     PROF_SCOPED("wait snapshot");
     return Sys_WaitForSingleObjectTimeout(&serverSnapshotEvent, 1);
 }
-void Sys_AllowSendClientMessages()
+void KISAK_CDECL Sys_AllowSendClientMessages()
 {
     Sys_SetEvent(&allowSendClientMessagesEvent);
 }
-void Sys_DisallowSendClientMessages()
+void KISAK_CDECL Sys_DisallowSendClientMessages()
 {
     Sys_ResetEvent(&allowSendClientMessagesEvent);
 }
-int Sys_CanSendClientMessages()
+int KISAK_CDECL Sys_CanSendClientMessages()
 {
     return Sys_WaitForSingleObjectTimeout(&allowSendClientMessagesEvent, 0);
 }
-void Sys_ServerCompleted()
+void KISAK_CDECL Sys_ServerCompleted()
 {
     Sys_SetEvent(&serverCompletedEvent);
 }
-int Sys_ServerTimeout()
+int KISAK_CDECL Sys_ServerTimeout()
 {
-    int time = g_timeout;
+    const int32_t time = g_timeout.load(std::memory_order_seq_cst);
 
     if (!time)
     {
@@ -905,20 +1010,21 @@ int Sys_ServerTimeout()
     }
 
     int timeMS = Sys_Milliseconds();
-    if (timeMS - g_timeout >= 0)
+    if (timeMS - g_timeout.load(std::memory_order_seq_cst) >= 0)
     {
         int nextTimeout = timeMS - (int)(-50.0f / com_timescaleValue);
 
-        // shitty atomic looping that is emulated from XBox360
         while (true)
         {
-            int current = g_timeout;
+            int32_t current = g_timeout.load(std::memory_order_seq_cst);
             if (current != time)
                 break;
 
-            // linux spergs, use: __sync_bool_compare_and_swap()
-            int oldVal = InterlockedCompareExchange((volatile uint32_t*)&g_timeout, nextTimeout, current);
-            if (oldVal == current)
+            if (g_timeout.compare_exchange_strong(
+                    current,
+                    nextTimeout,
+                    std::memory_order_seq_cst,
+                    std::memory_order_seq_cst))
             {
                 return 1;
             }
@@ -931,16 +1037,16 @@ int Sys_ServerTimeout()
 
     return 0;
 }
-void Sys_WakeServer()
+void KISAK_CDECL Sys_WakeServer()
 {
     Sys_SetEvent(&wakeServerEvent);
 }
-bool Sys_WaitServer()
+bool KISAK_CDECL Sys_WaitServer()
 {
     PROF_SCOPED("wait server");
     return Sys_WaitForSingleObjectTimeout(&serverCompletedEvent, 1);
 }
-void Sys_SleepServer()
+void KISAK_CDECL Sys_SleepServer()
 {
     bool v0; // r30
 
@@ -954,7 +1060,7 @@ void Sys_SleepServer()
         Sys_LeaveCriticalSection(CRITSECT_START_SERVER);
     }
 }
-void Sys_SetServerTimeout(int timeout)
+void KISAK_CDECL Sys_SetServerTimeout(int timeout)
 {
     int timeMS; // r3
 
@@ -966,56 +1072,54 @@ void Sys_SetServerTimeout(int timeout)
         //a12 = (int)(float)((float)__SPAIR64__(&a12, timeout) / (float)v13);
         int val = (int)((float)timeout / com_timescaleValue);
         timeMS = Sys_Milliseconds();
-        if (g_timeout && timeMS - g_timeout < 0 && g_timeout - (timeMS + val) <= 0)
+        const int32_t currentTimeout =
+            g_timeout.load(std::memory_order_seq_cst);
+        if (currentTimeout
+            && timeMS - currentTimeout < 0
+            && currentTimeout - (timeMS + val) <= 0)
         {
             //PIXSetMarker(0xFFFFFFFF, "ignore server timeout: %d", a12);
         }
         else
         {
-            g_timeout = timeMS + val;
+            g_timeout.store(timeMS + val, std::memory_order_seq_cst);
             //PIXSetMarker(0xFFFFFFFF, "server timeout: %d", a12);
         }
     }
     else
     {
-        g_timeout = 0;
+        g_timeout.store(0, std::memory_order_seq_cst);
         //PIXSetMarker(0xFFFFFFFF, "server timeout");
     }
 }
 
-bool Sys_WaitForSaveHistoryDone()
+bool KISAK_CDECL Sys_WaitForSaveHistoryDone()
 {
     return Sys_WaitForSingleObjectTimeout(&g_saveHistoryDoneEvent, 0x7D0u);
 }
 
-int Sys_SpawnServerDemoThread(void(*function)(uint32_t))
+int KISAK_CDECL Sys_SpawnServerDemoThread(SysThreadContextEntry function)
 {
-    int result; // r3
-
     Sys_CreateEvent(false, false, &g_saveHistoryEvent);
     Sys_CreateEvent(false, false, &g_saveHistoryDoneEvent);
-    Sys_CreateThread(function, THREAD_CONTEXT_SERVER_DEMO);
-    result = (int)threadHandle[THREAD_CONTEXT_SERVER_DEMO];
-    if (threadHandle[THREAD_CONTEXT_SERVER_DEMO])
-    {
-        //XSetThreadProcessor(threadHandle[11], 2u);
-        Sys_ResumeThread(THREAD_CONTEXT_SERVER_DEMO);
-        return 1;
-    }
-    return result;
+    if (!Sys_CreateThread(function, THREAD_CONTEXT_SERVER_DEMO))
+        return 0;
+
+    Sys_StartThread(THREAD_CONTEXT_SERVER_DEMO);
+    return 1;
 }
 
-void Sys_SetSaveHistoryEvent()
+void KISAK_CDECL Sys_SetSaveHistoryEvent()
 {
     Sys_SetEvent(&g_saveHistoryEvent);
 }
 
-void Sys_WaitForSaveHistory()
+void KISAK_CDECL Sys_WaitForSaveHistory()
 {
     Sys_WaitForSingleObject(&g_saveHistoryEvent);
 }
 
-void Sys_SetSaveHistoryDoneEvent()
+void KISAK_CDECL Sys_SetSaveHistoryDoneEvent()
 {
     Sys_SetEvent(&g_saveHistoryDoneEvent);
 }

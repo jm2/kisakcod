@@ -1146,7 +1146,7 @@ void __cdecl SV_SaveHistoryLoop(unsigned int threadContext)
 
 bool SV_InitHistorySaveThread()
 {
-    return Sys_SpawnServerDemoThread((void(__cdecl *)(unsigned int))SV_SaveHistoryLoop);
+    return Sys_SpawnServerDemoThread(SV_SaveHistoryLoop);
 }
 
 void __cdecl SV_InitDemoSystem()
@@ -1157,7 +1157,7 @@ void __cdecl SV_InitDemoSystem()
         MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\server\\sv_demo.cpp", 2137, 0, "%s", "!g_fileMarkHistory");
     g_fileTimeHistory = SV_DemoOpenFile("timeHistory.cache");
     g_fileMarkHistory = SV_DemoOpenFile("markHistory.cache");
-    Sys_SpawnServerDemoThread((void(__cdecl *)(unsigned int))SV_SaveHistoryLoop);
+    Sys_SpawnServerDemoThread(SV_SaveHistoryLoop);
 }
 
 server_demo_history_t *__cdecl SV_DemoGetFreeBuffer()
@@ -2203,4 +2203,3 @@ int __cdecl SV_DemoButtonPressed()
         return 0;
     }
 }
-
