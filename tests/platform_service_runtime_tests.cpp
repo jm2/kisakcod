@@ -1,3 +1,4 @@
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -9,6 +10,7 @@
 
 #include <qcommon/sys_event.h>
 #include <qcommon/sys_sync.h>
+#include <qcommon/sys_thread.h>
 #include <qcommon/sys_time.h>
 
 // The standalone service target intentionally does not link the engine's
@@ -206,6 +208,323 @@ bool TestManualResetEvents()
     }
 
     return valid;
+}
+
+struct BlockingThreadState
+{
+    SysThreadHandle *self;
+    SysThreadHandle parent;
+    SysEventHandle entered;
+    SysEventHandle release;
+    std::atomic<bool> selfIdentity{false};
+    std::atomic<bool> parentIdentity{false};
+    std::uint32_t visibleValue{0};
+};
+
+void KISAK_CDECL BlockingThreadEntry(void *const userData)
+{
+    BlockingThreadState *const state =
+        static_cast<BlockingThreadState *>(userData);
+    state->selfIdentity.store(
+        Sys_ThreadIsCurrent(*state->self),
+        std::memory_order_release);
+    state->parentIdentity.store(
+        Sys_ThreadIsCurrent(state->parent),
+        std::memory_order_release);
+    state->visibleValue = 1;
+    Sys_SetEvent(&state->entered);
+    Sys_WaitForSingleObject(&state->release);
+    state->visibleValue = 2;
+}
+
+bool TestThreadCaptureAndLifecycle()
+{
+    SysThreadHandle parent = nullptr;
+    if (!Sys_ThreadCaptureCurrent("platform-test-main", &parent)
+        || !parent
+        || !Sys_ThreadIsCurrent(parent))
+    {
+        std::fputs("current-thread capture or identity failed\n", stderr);
+        return false;
+    }
+
+    SysThreadHandle child = nullptr;
+    BlockingThreadState state{&child, parent, nullptr, nullptr};
+    Sys_CreateEvent(true, false, &state.entered);
+    Sys_CreateEvent(true, false, &state.release);
+    if (!Sys_ThreadCreateSuspended(
+            BlockingThreadEntry,
+            &state,
+            "platform-test-blocked",
+            &child)
+        || !child)
+    {
+        std::fputs("suspended thread creation failed\n", stderr);
+        return false;
+    }
+
+    if (Sys_WaitForSingleObjectTimeout(&state.entered, 0)
+        || Sys_ThreadIsCurrent(child))
+    {
+        std::fputs("suspended thread ran before start\n", stderr);
+        return false;
+    }
+
+    Sys_ThreadStart(child);
+    if (!Sys_WaitForSingleObjectTimeout(&state.entered, 2'000))
+    {
+        std::fputs("started thread did not enter its callback\n", stderr);
+        return false;
+    }
+    if (!state.selfIdentity.load(std::memory_order_acquire)
+        || state.parentIdentity.load(std::memory_order_acquire)
+        || Sys_ThreadIsCurrent(child))
+    {
+        std::fputs("parent/child thread identity was not isolated\n", stderr);
+        return false;
+    }
+    if (Sys_ThreadJoinTimeout(child, 0)
+        || Sys_ThreadJoinTimeout(child, 5))
+    {
+        std::fputs("blocked thread joined before its release event\n", stderr);
+        return false;
+    }
+
+    Sys_SetEvent(&state.release);
+    if (!Sys_ThreadJoinTimeout(child, 2'000))
+    {
+        std::fputs("released thread did not join within the bound\n", stderr);
+        return false;
+    }
+    if (state.visibleValue != 2)
+    {
+        std::fputs("thread completion did not publish callback writes\n", stderr);
+        return false;
+    }
+
+    Sys_ThreadDestroy(&child);
+    if (child)
+    {
+        std::fputs("joined thread destroy did not null its handle\n", stderr);
+        return false;
+    }
+    Sys_DestroyEvent(&state.entered);
+    Sys_DestroyEvent(&state.release);
+
+    Sys_ThreadDestroy(&parent);
+    if (parent)
+    {
+        std::fputs("captured thread destroy did not null its handle\n", stderr);
+        return false;
+    }
+
+    return true;
+}
+
+struct CompletingThreadState
+{
+    SysEventHandle completed;
+    std::uint32_t visibleValue;
+};
+
+void KISAK_CDECL CompletingThreadEntry(void *const userData)
+{
+    CompletingThreadState *const state =
+        static_cast<CompletingThreadState *>(userData);
+    state->visibleValue = 0xC0DEF00Du;
+    Sys_SetEvent(&state->completed);
+}
+
+bool TestKnownCompleteInfiniteJoin()
+{
+    CompletingThreadState state{nullptr, 0};
+    Sys_CreateEvent(true, false, &state.completed);
+
+    SysThreadHandle thread = nullptr;
+    if (!Sys_ThreadCreateSuspended(
+            CompletingThreadEntry,
+            &state,
+            "platform-test-complete",
+            &thread))
+    {
+        std::fputs("known-complete thread creation failed\n", stderr);
+        return false;
+    }
+
+    Sys_ThreadStart(thread);
+    if (!Sys_WaitForSingleObjectTimeout(&state.completed, 2'000))
+    {
+        std::fputs("known-complete thread did not signal completion\n", stderr);
+        return false;
+    }
+    Sys_ThreadJoin(thread);
+    if (state.visibleValue != 0xC0DEF00Du)
+    {
+        std::fputs("infinite join did not publish callback writes\n", stderr);
+        return false;
+    }
+
+    Sys_ThreadDestroy(&thread);
+    Sys_DestroyEvent(&state.completed);
+    if (thread || state.completed)
+    {
+        std::fputs("known-complete lifecycle did not null its handles\n", stderr);
+        return false;
+    }
+    return true;
+}
+
+constexpr std::uint32_t multipleThreadCount = 4;
+
+struct MultipleThreadGroup;
+struct MultipleThreadState
+{
+    MultipleThreadGroup *group;
+    std::uint32_t index;
+};
+
+struct MultipleThreadGroup
+{
+    std::array<SysThreadHandle, multipleThreadCount> handles{};
+    std::array<MultipleThreadState, multipleThreadCount> states{};
+    SysEventHandle allEntered{nullptr};
+    SysEventHandle release{nullptr};
+    std::atomic<std::uint32_t> enteredCount{0};
+    std::atomic<std::uint32_t> identityFailures{0};
+};
+
+void KISAK_CDECL MultipleThreadEntry(void *const userData)
+{
+    MultipleThreadState *const state =
+        static_cast<MultipleThreadState *>(userData);
+    MultipleThreadGroup *const group = state->group;
+
+    for (std::uint32_t index = 0; index < multipleThreadCount; ++index)
+    {
+        const bool expectedCurrent = index == state->index;
+        if (Sys_ThreadIsCurrent(group->handles[index]) != expectedCurrent)
+            group->identityFailures.fetch_add(1);
+    }
+
+    if (group->enteredCount.fetch_add(1) + 1 == multipleThreadCount)
+        Sys_SetEvent(&group->allEntered);
+    Sys_WaitForSingleObject(&group->release);
+}
+
+bool TestMultipleThreadIdentity()
+{
+    MultipleThreadGroup group;
+    Sys_CreateEvent(true, false, &group.allEntered);
+    Sys_CreateEvent(true, false, &group.release);
+
+    for (std::uint32_t index = 0; index < multipleThreadCount; ++index)
+    {
+        group.states[index] = MultipleThreadState{&group, index};
+        if (!Sys_ThreadCreateSuspended(
+                MultipleThreadEntry,
+                &group.states[index],
+                "platform-test-multiple",
+                &group.handles[index]))
+        {
+            std::fputs("multiple-thread creation failed\n", stderr);
+            return false;
+        }
+        if (Sys_ThreadIsCurrent(group.handles[index]))
+        {
+            std::fputs("child handle matched the creating thread\n", stderr);
+            return false;
+        }
+        for (std::uint32_t prior = 0; prior < index; ++prior)
+        {
+            if (group.handles[prior] == group.handles[index])
+            {
+                std::fputs("simultaneous threads shared an opaque handle\n", stderr);
+                return false;
+            }
+        }
+    }
+
+    for (SysThreadHandle thread : group.handles)
+        Sys_ThreadStart(thread);
+
+    const bool allEntered =
+        Sys_WaitForSingleObjectTimeout(&group.allEntered, 2'000);
+    Sys_SetEvent(&group.release);
+
+    bool allJoined = true;
+    for (SysThreadHandle thread : group.handles)
+    {
+        if (!Sys_ThreadJoinTimeout(thread, 2'000))
+            allJoined = false;
+    }
+    if (!allEntered
+        || !allJoined
+        || group.enteredCount.load() != multipleThreadCount
+        || group.identityFailures.load() != 0)
+    {
+        std::fputs("multiple-thread identity/lifecycle contract failed\n", stderr);
+        return false;
+    }
+
+    for (SysThreadHandle &thread : group.handles)
+        Sys_ThreadDestroy(&thread);
+    Sys_DestroyEvent(&group.allEntered);
+    Sys_DestroyEvent(&group.release);
+    for (SysThreadHandle thread : group.handles)
+    {
+        if (thread)
+        {
+            std::fputs("multiple-thread destroy did not null every handle\n", stderr);
+            return false;
+        }
+    }
+    return true;
+}
+
+void KISAK_CDECL RepeatedThreadEntry(void *const userData)
+{
+    std::atomic<std::uint32_t> *const completionCount =
+        static_cast<std::atomic<std::uint32_t> *>(userData);
+    completionCount->fetch_add(1);
+}
+
+bool TestRepeatedThreadLifecycle()
+{
+    constexpr std::uint32_t lifecycleCount = 32;
+    std::atomic<std::uint32_t> completionCount{0};
+
+    for (std::uint32_t iteration = 0; iteration < lifecycleCount; ++iteration)
+    {
+        SysThreadHandle thread = nullptr;
+        if (!Sys_ThreadCreateSuspended(
+                RepeatedThreadEntry,
+                &completionCount,
+                "platform-test-repeat",
+                &thread))
+        {
+            std::fputs("repeated thread creation failed\n", stderr);
+            return false;
+        }
+        Sys_ThreadStart(thread);
+        if (!Sys_ThreadJoinTimeout(thread, 2'000))
+        {
+            std::fputs("repeated thread join exceeded its bound\n", stderr);
+            return false;
+        }
+        Sys_ThreadDestroy(&thread);
+        if (thread)
+        {
+            std::fputs("repeated thread destroy retained its handle\n", stderr);
+            return false;
+        }
+    }
+
+    if (completionCount.load() != lifecycleCount)
+    {
+        std::fputs("repeated thread callbacks did not run exactly once\n", stderr);
+        return false;
+    }
+    return true;
 }
 
 bool TestConcurrentInitialization()
@@ -555,6 +874,14 @@ int main()
     if (!TestAutoResetEvents())
         return 1;
     if (!TestManualResetEvents())
+        return 1;
+    if (!TestThreadCaptureAndLifecycle())
+        return 1;
+    if (!TestKnownCompleteInfiniteJoin())
+        return 1;
+    if (!TestMultipleThreadIdentity())
+        return 1;
+    if (!TestRepeatedThreadLifecycle())
         return 1;
     if (!TestConcurrentInitialization())
         return 1;

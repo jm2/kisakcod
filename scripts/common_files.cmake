@@ -426,6 +426,7 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/sys_event.h"
     "${SRC_DIR}/qcommon/sys_sync.cpp"
     "${SRC_DIR}/qcommon/sys_sync.h"
+    "${SRC_DIR}/qcommon/sys_thread.h"
     "${SRC_DIR}/qcommon/sys_time.h"
     "${SRC_DIR}/qcommon/threads.cpp"
     "${SRC_DIR}/qcommon/threads.h"

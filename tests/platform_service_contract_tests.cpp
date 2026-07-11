@@ -4,6 +4,7 @@
 
 #include <qcommon/sys_event.h>
 #include <qcommon/sys_sync.h>
+#include <qcommon/sys_thread.h>
 #include <qcommon/sys_time.h>
 #include <qcommon/threads.h>
 
@@ -16,6 +17,9 @@ static_assert(offsetof(FastCriticalSection, writeCount) == 4);
 static_assert(std::is_pointer_v<SysEventHandle>);
 static_assert(std::is_same_v<SysEventHandle, SysEvent *>);
 static_assert(sizeof(SysEventHandle) == sizeof(void *));
+static_assert(std::is_pointer_v<SysThreadHandle>);
+static_assert(std::is_same_v<SysThreadHandle, SysThread *>);
+static_assert(sizeof(SysThreadHandle) == sizeof(void *));
 static_assert(std::is_same_v<
     std::underlying_type_t<ThreadContext_t>,
     std::int32_t>);
@@ -44,6 +48,19 @@ using CreateEventFunction =
 using EventFunction = void (KISAK_CDECL *)(SysEventHandle *);
 using WaitEventTimeoutFunction =
     bool (KISAK_CDECL *)(SysEventHandle *, std::uint32_t);
+using ThreadCaptureFunction =
+    bool (KISAK_CDECL *)(const char *, SysThreadHandle *);
+using ThreadCreateFunction = bool (KISAK_CDECL *)(
+    SysThreadEntry,
+    void *,
+    const char *,
+    SysThreadHandle *);
+using ThreadActionFunction = void (KISAK_CDECL *)(SysThreadHandle);
+using ThreadQueryFunction = bool (KISAK_CDECL *)(SysThreadHandle);
+using ThreadJoinTimeoutFunction =
+    bool (KISAK_CDECL *)(SysThreadHandle, std::uint32_t);
+using ThreadDestroyFunction = void (KISAK_CDECL *)(SysThreadHandle *);
+using ExpectedThreadEntry = void (KISAK_CDECL *)(void *);
 
 static_assert(std::is_same_v<decltype(&Sys_Milliseconds), MillisecondsFunction>);
 static_assert(std::is_same_v<decltype(&Sys_MillisecondsRaw), MillisecondsFunction>);
@@ -68,6 +85,20 @@ static_assert(std::is_same_v<decltype(&Sys_WaitForSingleObject), EventFunction>)
 static_assert(std::is_same_v<
     decltype(&Sys_WaitForSingleObjectTimeout),
     WaitEventTimeoutFunction>);
+static_assert(std::is_same_v<SysThreadEntry, ExpectedThreadEntry>);
+static_assert(std::is_same_v<
+    decltype(&Sys_ThreadCaptureCurrent),
+    ThreadCaptureFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_ThreadCreateSuspended),
+    ThreadCreateFunction>);
+static_assert(std::is_same_v<decltype(&Sys_ThreadStart), ThreadActionFunction>);
+static_assert(std::is_same_v<decltype(&Sys_ThreadIsCurrent), ThreadQueryFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_ThreadJoinTimeout),
+    ThreadJoinTimeoutFunction>);
+static_assert(std::is_same_v<decltype(&Sys_ThreadJoin), ThreadActionFunction>);
+static_assert(std::is_same_v<decltype(&Sys_ThreadDestroy), ThreadDestroyFunction>);
 
 #if defined(KISAK_MP)
 static_assert(CRITSECT_CONSOLE == 0x0);

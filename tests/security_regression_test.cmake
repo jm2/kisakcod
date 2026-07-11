@@ -131,6 +131,21 @@ require_source_not_contains(
     "qcommon/threads.h"
     "#include <Windows.h>"
     "public thread declarations must remain Windows-independent")
+foreach(_native_thread_token
+    "Windows.h"
+    "windows.h"
+    "pthread"
+    "HANDLE"
+    "DWORD"
+    "std::thread"
+    "CreateThread"
+    "_beginthread"
+)
+    require_source_not_contains(
+        "qcommon/sys_thread.h"
+        "${_native_thread_token}"
+        "opaque thread contract must not expose native thread types")
+endforeach()
 foreach(_raw_event_api CreateEventA SetEvent ResetEvent WaitForSingleObject)
     require_source_not_matches(
         "qcommon/threads.cpp"

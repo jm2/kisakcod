@@ -34,12 +34,14 @@ Completed foundation work:
 - platform source override plumbing for Windows, Linux, and macOS;
 - target-owned engine/headless/service source selection that preserves the exact Win32 lists while
   keeping Linux/macOS lists explicitly empty and incomplete until native backends land;
-- portable `sys_sync.h`/`sys_time.h` contracts, including fixed-width MP/SP critical-section IDs
-  and `FastCriticalSection` layout checks wired into all five utility-CI targets;
+- portable `sys_sync.h`/`sys_time.h`/`sys_thread.h` contracts, including fixed-width MP/SP
+  critical-section IDs and opaque native thread handles wired into all five utility-CI targets;
 - native Win32/POSIX monotonic-clock, sleep/yield, and recursive-critical-section backends plus a
   common fixed-width fast reader/write lock, with concurrent runtime coverage on utility targets;
 - an opaque event contract with checked Win32 and POSIX manual/auto-reset implementations, and
   Windows-free public thread/context headers;
+- an opaque thread lifecycle with current-thread capture, create-suspended/start, identity,
+  finite/infinite join, and explicit destruction on Win32 and POSIX;
 - corrected Win32 multi-config DirectX paths and post-build output handling;
 - `build-win.ps1`, Windows CI, tagged release archives/checksums, and separately
   protected legacy/headless licensed dedicated-server smoke definitions;
@@ -56,8 +58,8 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Finish engine-wide fixed-width atomic adoption, then extract native thread creation, identity,
-   priority/affinity, and lifecycle behind M3 contracts on every portable CI leg.
+2. Finish engine-wide fixed-width atomic adoption, migrate engine creation/identity onto the native
+   thread lifecycle, and replace renderer-worker suspension with a cooperative pause gate.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -713,8 +715,8 @@ tail (deferred, intentionally):* wiring the ~32 atomics TUs to include `sys_atom
 on Win, prevents LP64 layout divergence) is folded into M4 alongside the struct widening; the bare
 `sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now and burned down in M4.
 
-**M3 (native time/synchronization/event services landed) — platform ownership is explicit, but the
-engine remains gated.**
+**M3 (native time/synchronization/event/thread-lifecycle services landed) — platform ownership is
+explicit, but the engine remains gated.**
 `src/qcommon/sys_sync.h` now owns the exact fixed-width MP/SP `CriticalSection` IDs, the 8-byte
 `FastCriticalSection` contract, and the existing lock API; `src/qcommon/sys_time.h` owns the clock
 and sleep/yield API. The database public header no longer imports `win_local.h` or exposes the
@@ -734,8 +736,13 @@ service slice, **not** a claim that a POSIX engine target builds. `FastCriticalS
 `dvar.cpp` and `db_registry.cpp` now use the same sequentially consistent helper contract as writers;
 reader/writer stress tests and source guards prevent direct volatile polling from returning. That
 migration also fixed the no-match read-lock leak in `DB_IsXAssetDefault`. The wider M1 Interlocked/
-`LONG` inventory still needs fixed-width adoption before POSIX/ARM64 engine compilation. Next,
-extract thread creation/identity/priority/TLS, filesystem/virtual memory, console/process, and BSD sockets.
+`LONG` inventory still needs fixed-width adoption before POSIX/ARM64 engine compilation. An opaque
+thread lifecycle now adds native Win32/POSIX current-thread capture, suspended creation with a
+one-shot start gate, handle identity, bounded/infinite join, and explicit destruction without
+publishing `HANDLE` or `pthread_t`; runtime tests exercise ordering, identity, timeouts, completion
+visibility, and repeated cleanup on all five native utility targets. Next, migrate the high-level
+engine consumers, replace renderer-worker native suspension with cooperative acknowledged pausing,
+then add priority/affinity policy, filesystem/virtual memory, console/process, and BSD sockets.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),

@@ -8,9 +8,16 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: continue engine-wide fixed-width atomic adoption and extract native thread
-  creation/identity/priority handles without relaxing the POSIX engine gate.
-- Last completed batch: an opaque `SysEventHandle` contract now selects checked Win32 and POSIX
+- Active work: migrate engine thread creation/identity onto the new opaque lifecycle service, then
+  replace renderer-worker suspension with a cooperative pause gate; continue fixed-width atomic
+  adoption without relaxing the POSIX engine gate.
+- Last completed batch: an opaque `SysThreadHandle` lifecycle contract now selects checked Win32
+  and POSIX backends. It captures the current thread, creates callbacks behind a one-shot start
+  gate, compares current-thread identity without exposing `HANDLE`/`pthread_t`, supports bounded
+  and infinite joins, and releases captured or joined handles explicitly. Runtime tests cover
+  suspended-start ordering, parent/child and four-way identity isolation, timeout and completion
+  visibility, destruction/nulling, and 32 repeated lifecycles on every native utility target.
+- Previous event batch: an opaque `SysEventHandle` contract selects checked Win32 and POSIX
   event backends. The POSIX condition-variable state machine preserves sticky manual-reset signals,
   one-waiter auto reset, assigned wakes across Reset, zero/finite/infinite waits, and steady-clock
   timeouts. All 21 MP/SP event creations retain their original modes, raw event APIs are gone from
@@ -44,6 +51,7 @@ work item changes. Do not create session-specific handoff files.
   client/media includes remain.
 - Portable validation: 16/16 tests pass locally under GCC, Clang, and GCC ASan/UBSan, with leak
   detection disabled because LeakSanitizer cannot run under the command-runner ptrace environment.
+  The integrated platform-service runtime also passes under GCC ThreadSanitizer.
   The production relocation registry is also strict-warning clean under GCC/Clang and GCC ILP32
   syntax checking. Portable tests do not execute the Windows stream adapter or media ownership paths.
 - Windows validation: AABB warning repair run 29096212752, bounded-direct-reference run
@@ -77,7 +85,8 @@ work item changes. Do not create session-specific handoff files.
   runtime backend on Windows amd64/ARM64, Linux amd64/arm64, and macOS arm64 while preserving all
   Windows x86 engine links and the retained headless artifact.
   Atomic-reader run 29134203963 likewise passed all nine jobs after the dvar/database migration and
-  lock-leak repair.
+  lock-leak repair. Event-service run 29134703222 then passed all nine jobs after the opaque event
+  consumer migration, including both Windows architectures and all three POSIX utility targets.
   The observed linker debt is now 106 -> 45 -> 0.
 
 ## Milestone status
@@ -87,7 +96,7 @@ work item changes. Do not create session-specific handoff files.
 | M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, and native-width database enumeration contexts exist; engine atomics/platform integration remains. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
-| M3 platform services | In progress: time/sync/event native | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, and opaque event implementations. Public thread headers are Windows-free. Linux/macOS engine/headless sets remain empty and engine-gated; thread creation/identity/priority, filesystem, process/console, and socket backends remain. |
+| M3 platform services | In progress: time/sync/event/thread lifecycle native | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event, and opaque thread-lifecycle implementations. Public contracts are Windows/pthread-free. Linux/macOS engine/headless sets remain empty and engine-gated; high-level thread consumers, cooperative worker pausing, priority/affinity, filesystem, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, all legacy direct references migrated to bounded resolution, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush, portal/cell, and path-tree spans, and 18 exact completed object types exist; packed mirrors, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
@@ -106,10 +115,10 @@ work item changes. Do not create session-specific handoff files.
 ## Immediate queue
 
 1. Validate the protected licensed-content headless startup/map/`getstatus` workflow on its runner.
-2. Finish the broader M1 fixed-width atomic call-site migration, including dvar sorting and
+2. Migrate high-level engine thread creation/identity to `SysThreadHandle`, then replace renderer
+   worker `SuspendThread`/`ResumeThread` use with an acknowledged cooperative pause gate.
+3. Finish the broader M1 fixed-width atomic call-site migration, including dvar sorting and
    remaining `LONG`/volatile counters that are not part of `FastCriticalSection`.
-3. Extract opaque native thread handles plus creation, identity, priority/affinity, and lifecycle;
-   keep fatal-error thread suspension as its separately specified per-OS safety step.
 4. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
 
 ## Known release blockers
@@ -132,10 +141,12 @@ work item changes. Do not create session-specific handoff files.
   sequentially consistent helpers, with source guards and reader/writer stress coverage. Broader
   engine atomics still contain Windows `LONG`, direct volatile polling, and Windows-header coupling;
   finish that M1 migration before compiling a non-Windows engine target.
-- Native event services are selected and runtime-tested, and all engine event consumers use the
-  opaque handle. Thread creation, IDs, priority/affinity, TLS publication, and suspend/resume still
-  live in Windows-owned `threads.cpp`; fatal-error suspension additionally requires the Linux signal
-  park and macOS Mach mechanisms specified in the porting plan.
+- Native event services are selected and all event consumers use the opaque handle. A native
+  opaque thread lifecycle is also selected and runtime-tested, but high-level creation/identity has
+  not yet migrated from Windows-owned `threads.cpp`. Renderer-worker enable/disable still uses
+  unsafe native suspension and needs an acknowledged cooperative gate; priority/affinity policy is
+  unported. Fatal-error freezing remains separate and requires the Linux signal park and macOS Mach
+  mechanisms specified in the porting plan.
 - Fast-file loading lacks a production-path malformed-input test harness and
   completed-object/type provenance for direct offsets.
 - Inline material declarations, techniques, passes, and arguments receive pre-use

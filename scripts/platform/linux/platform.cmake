@@ -8,12 +8,14 @@ endforeach()
 
 # The Linux engine backend is intentionally incomplete.  Empty, explicit
 # source sets prevent it from inheriting Win32 files while the top-level engine
-# configuration gate remains in force.
+# configuration gate remains in force. Portable services remain independently
+# buildable and runtime-tested.
 set(PLATFORM_LINUX "")
 set(PLATFORM_LINUX_DEDI_HEADLESS "")
 set(PLATFORM_LINUX_SERVICES
     "${SRC_DIR}/_platform/posix/sys_event.cpp"
     "${SRC_DIR}/_platform/posix/sys_sync.cpp"
+    "${SRC_DIR}/_platform/posix/sys_thread.cpp"
     "${SRC_DIR}/_platform/posix/sys_time.cpp"
 )
 kisakcod_select_platform_source_sets(
