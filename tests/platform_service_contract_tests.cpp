@@ -2,8 +2,10 @@
 #include <cstdint>
 #include <type_traits>
 
+#include <qcommon/sys_event.h>
 #include <qcommon/sys_sync.h>
 #include <qcommon/sys_time.h>
+#include <qcommon/threads.h>
 
 static_assert(std::is_same_v<std::underlying_type_t<CriticalSection>, std::int32_t>);
 static_assert(sizeof(CriticalSection) == sizeof(std::int32_t));
@@ -11,6 +13,24 @@ static_assert(std::is_standard_layout_v<FastCriticalSection>);
 static_assert(sizeof(FastCriticalSection) == 8);
 static_assert(offsetof(FastCriticalSection, readCount) == 0);
 static_assert(offsetof(FastCriticalSection, writeCount) == 4);
+static_assert(std::is_pointer_v<SysEventHandle>);
+static_assert(std::is_same_v<SysEventHandle, SysEvent *>);
+static_assert(sizeof(SysEventHandle) == sizeof(void *));
+static_assert(std::is_same_v<
+    std::underlying_type_t<ThreadContext_t>,
+    std::int32_t>);
+static_assert(std::is_same_v<
+    std::underlying_type_t<ThreadOwner>,
+    std::int32_t>);
+static_assert(std::is_same_v<
+    std::underlying_type_t<WinThreadLock>,
+    std::int32_t>);
+static_assert(std::is_same_v<
+    std::remove_extent_t<decltype(threadId)>,
+    std::uint32_t>);
+static_assert(std::is_same_v<
+    std::remove_extent_t<decltype(threadHandle)>,
+    void *>);
 
 using MillisecondsFunction = std::uint32_t (KISAK_CDECL *)();
 using SleepFunction = void (KISAK_CDECL *)(std::uint32_t);
@@ -19,6 +39,11 @@ using CriticalSectionFunction = void (KISAK_CDECL *)(int);
 using FastCriticalSectionFunction = void (KISAK_CDECL *)(FastCriticalSection *);
 using FastCriticalSectionQueryFunction =
     bool (KISAK_CDECL *)(const FastCriticalSection *);
+using CreateEventFunction =
+    void (KISAK_CDECL *)(bool, bool, SysEventHandle *);
+using EventFunction = void (KISAK_CDECL *)(SysEventHandle *);
+using WaitEventTimeoutFunction =
+    bool (KISAK_CDECL *)(SysEventHandle *, std::uint32_t);
 
 static_assert(std::is_same_v<decltype(&Sys_Milliseconds), MillisecondsFunction>);
 static_assert(std::is_same_v<decltype(&Sys_MillisecondsRaw), MillisecondsFunction>);
@@ -35,6 +60,14 @@ static_assert(std::is_same_v<decltype(&Sys_UnlockWrite), FastCriticalSectionFunc
 static_assert(std::is_same_v<
     decltype(&Sys_IsWriteLocked),
     FastCriticalSectionQueryFunction>);
+static_assert(std::is_same_v<decltype(&Sys_CreateEvent), CreateEventFunction>);
+static_assert(std::is_same_v<decltype(&Sys_DestroyEvent), EventFunction>);
+static_assert(std::is_same_v<decltype(&Sys_SetEvent), EventFunction>);
+static_assert(std::is_same_v<decltype(&Sys_ResetEvent), EventFunction>);
+static_assert(std::is_same_v<decltype(&Sys_WaitForSingleObject), EventFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_WaitForSingleObjectTimeout),
+    WaitEventTimeoutFunction>);
 
 #if defined(KISAK_MP)
 static_assert(CRITSECT_CONSOLE == 0x0);

@@ -16,6 +16,14 @@ function(require_source_not_contains RELATIVE_PATH NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+function(require_source_not_matches RELATIVE_PATH PATTERN DESCRIPTION)
+    file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
+    string(REGEX MATCH "${PATTERN}" _match "${_source}")
+    if (NOT "${_match}" STREQUAL "")
+        message(FATAL_ERROR "Forbidden security regression (${DESCRIPTION}) in src/${RELATIVE_PATH}")
+    endif()
+endfunction()
+
 function(require_source_ordered RELATIVE_PATH FIRST SECOND DESCRIPTION)
     file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
     string(FIND "${_source}" "${FIRST}" _first_position)
@@ -115,6 +123,20 @@ require_source_contains(
     "win32/win_main.cpp"
     "Sys_Error(\"Less than 128 MB of virtual address space remains\");"
     "headless low-memory startup must fail without a modal prompt")
+require_source_contains(
+    "qcommon/threads.h"
+    "#include <qcommon/sys_event.h>"
+    "public thread services must use the opaque event contract")
+require_source_not_contains(
+    "qcommon/threads.h"
+    "#include <Windows.h>"
+    "public thread declarations must remain Windows-independent")
+foreach(_raw_event_api CreateEventA SetEvent ResetEvent WaitForSingleObject)
+    require_source_not_matches(
+        "qcommon/threads.cpp"
+        "(^|[^A-Za-z0-9_])${_raw_event_api}\\("
+        "thread orchestration must not bypass the native event backend")
+endforeach()
 require_source_contains(
     "physics/ode/error.cpp"
     "#if !defined(_WIN32) || defined(KISAK_DEDI_HEADLESS)"

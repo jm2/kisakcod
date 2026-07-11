@@ -1,9 +1,9 @@
 #pragma once
 
-#include <universal/q_shared.h>
+#include <cstdint>
 
 #ifdef KISAK_MP
-enum ThreadContext_t : __int32
+enum ThreadContext_t : std::int32_t
 {
     THREAD_CONTEXT_MAIN         = 0x0,
     THREAD_CONTEXT_BACKEND      = 0x1,
@@ -16,8 +16,8 @@ enum ThreadContext_t : __int32
     THREAD_CONTEXT_DATABASE     = 0x6,
     THREAD_CONTEXT_COUNT        = 0x7,
 };
-#elif KISAK_SP
-enum ThreadContext_t : __int32
+#elif defined(KISAK_SP)
+enum ThreadContext_t : std::int32_t
 {
     THREAD_CONTEXT_MAIN = 0x0,
     THREAD_CONTEXT_BACKEND = 0x1,

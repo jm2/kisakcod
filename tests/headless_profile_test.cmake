@@ -61,10 +61,12 @@ set(_expected_win32_headless_sources
     "${SRC_DIR}/win32/win_steam.h"
 )
 set(_expected_win32_service_sources
+    "${SRC_DIR}/_platform/win32/sys_event.cpp"
     "${SRC_DIR}/_platform/win32/sys_sync.cpp"
     "${SRC_DIR}/_platform/win32/sys_time.cpp"
 )
 set(_expected_posix_service_sources
+    "${SRC_DIR}/_platform/posix/sys_event.cpp"
     "${SRC_DIR}/_platform/posix/sys_sync.cpp"
     "${SRC_DIR}/_platform/posix/sys_time.cpp"
 )
@@ -118,6 +120,7 @@ foreach(_service_source IN LISTS _expected_win32_service_sources)
 endforeach()
 
 foreach(_contract_source
+    "${SRC_DIR}/qcommon/sys_event.h"
     "${SRC_DIR}/qcommon/sys_sync.cpp"
     "${SRC_DIR}/qcommon/sys_sync.h"
     "${SRC_DIR}/qcommon/sys_time.h"

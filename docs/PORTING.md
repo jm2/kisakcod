@@ -38,6 +38,8 @@ Completed foundation work:
   and `FastCriticalSection` layout checks wired into all five utility-CI targets;
 - native Win32/POSIX monotonic-clock, sleep/yield, and recursive-critical-section backends plus a
   common fixed-width fast reader/write lock, with concurrent runtime coverage on utility targets;
+- an opaque event contract with checked Win32 and POSIX manual/auto-reset implementations, and
+  Windows-free public thread/context headers;
 - corrected Win32 multi-config DirectX paths and post-build output handling;
 - `build-win.ps1`, Windows CI, tagged release archives/checksums, and separately
   protected legacy/headless licensed dedicated-server smoke definitions;
@@ -54,8 +56,8 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Finish engine-wide fixed-width atomic adoption, then extract opaque thread/event handles behind
-   the M3 platform contracts and exercise them on every portable CI leg.
+2. Finish engine-wide fixed-width atomic adoption, then extract native thread creation, identity,
+   priority/affinity, and lifecycle behind M3 contracts on every portable CI leg.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -711,7 +713,8 @@ tail (deferred, intentionally):* wiring the ~32 atomics TUs to include `sys_atom
 on Win, prevents LP64 layout divergence) is folded into M4 alongside the struct widening; the bare
 `sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now and burned down in M4.
 
-**M3 (native time/synchronization landed) — platform ownership is explicit, but the engine remains gated.**
+**M3 (native time/synchronization/event services landed) — platform ownership is explicit, but the
+engine remains gated.**
 `src/qcommon/sys_sync.h` now owns the exact fixed-width MP/SP `CriticalSection` IDs, the 8-byte
 `FastCriticalSection` contract, and the existing lock API; `src/qcommon/sys_time.h` owns the clock
 and sleep/yield API. The database public header no longer imports `win_local.h` or exposes the
@@ -720,7 +723,11 @@ private `_OVERLAPPED` callback, and the platform-neutral
 selects target-neutral engine, headless, and service source variables: Win32 republishes its exact
 working engine lists plus native `timeGetTime`/`Sleep` and `INIT_ONCE`/`CRITICAL_SECTION` services;
 Linux/macOS retain empty engine/headless lists but select `CLOCK_MONOTONIC`/`nanosleep` and
-`pthread_once`/recursive-pthread services. Tests freeze both profile ABIs and calling conventions,
+`pthread_once`/recursive-pthread services. An opaque event layer additionally maps Win32 event
+objects and a POSIX condition-variable state machine with manual/auto reset, assigned-wake, poll,
+timeout, and infinite-wait parity; all high-level event consumers use it, and public thread headers
+no longer expose `Windows.h`, `DWORD`, or `HANDLE`. Tests freeze both profile ABIs and calling
+conventions,
 require one-copy source composition, reject Win32 sources in non-Windows sets, and exercise
 concurrent first initialization, recursion, contention, and time progress. This is a working native
 service slice, **not** a claim that a POSIX engine target builds. `FastCriticalSection` readers in
@@ -728,7 +735,7 @@ service slice, **not** a claim that a POSIX engine target builds. `FastCriticalS
 reader/writer stress tests and source guards prevent direct volatile polling from returning. That
 migration also fixed the no-match read-lock leak in `DB_IsXAssetDefault`. The wider M1 Interlocked/
 `LONG` inventory still needs fixed-width adoption before POSIX/ARM64 engine compilation. Next,
-extract opaque thread/event handles, filesystem/virtual memory, console/process, and BSD sockets.
+extract thread creation/identity/priority/TLS, filesystem/virtual memory, console/process, and BSD sockets.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),

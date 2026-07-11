@@ -423,6 +423,7 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/mem_track.h"
     "${SRC_DIR}/qcommon/qcommon.h"
     "${SRC_DIR}/qcommon/statmonitor.cpp"
+    "${SRC_DIR}/qcommon/sys_event.h"
     "${SRC_DIR}/qcommon/sys_sync.cpp"
     "${SRC_DIR}/qcommon/sys_sync.h"
     "${SRC_DIR}/qcommon/sys_time.h"

@@ -33,13 +33,13 @@ static thread_local void **g_threadLocals;
 #ifdef KISAK_SP
 int isDoingDatabaseInit;
 
-void *wakeServerEvent;
-void *serverCompletedEvent;
-void *allowSendClientMessagesEvent;
-void *serverSnapshotEvent;
-void *clientMessageReceived;
-void *g_saveHistoryEvent;
-void *g_saveHistoryDoneEvent;
+SysEventHandle wakeServerEvent;
+SysEventHandle serverCompletedEvent;
+SysEventHandle allowSendClientMessagesEvent;
+SysEventHandle serverSnapshotEvent;
+SysEventHandle clientMessageReceived;
+SysEventHandle g_saveHistoryEvent;
+SysEventHandle g_saveHistoryDoneEvent;
 
 volatile int g_timeout;
 #endif
@@ -48,8 +48,8 @@ typedef void (*ThreadFuncFn)(uint32_t);
 static ThreadFuncFn threadFunc[THREAD_CONTEXT_COUNT];
 
 void *g_threadValues[THREAD_CONTEXT_COUNT][4];
-DWORD threadId[THREAD_CONTEXT_COUNT];
-HANDLE threadHandle[THREAD_CONTEXT_COUNT];
+std::uint32_t threadId[THREAD_CONTEXT_COUNT];
+void *threadHandle[THREAD_CONTEXT_COUNT];
 uint32_t s_affinityMaskForProcess;
 uint32_t s_cpuCount;
 uint32_t s_affinityMaskForCpu[4];
@@ -62,14 +62,14 @@ static volatile uint32_t renderPausedCount;
 
 static WinThreadLock s_threadLock;
 
-static void *renderPausedEvent;
-static void *renderCompletedEvent;
-static void *noThreadOwnershipEvent;
-static void *rendererRunningEvent;
-static void *backendEvent[2];
-static void *ackendEvent;
-static void *updateSpotLightEffectEvent;
-static void *updateEffectsEvent;
+static SysEventHandle renderPausedEvent;
+static SysEventHandle renderCompletedEvent;
+static SysEventHandle noThreadOwnershipEvent;
+static SysEventHandle rendererRunningEvent;
+static SysEventHandle backendEvent[2];
+static SysEventHandle ackendEvent;
+static SysEventHandle updateSpotLightEffectEvent;
+static SysEventHandle updateEffectsEvent;
 
 static bool __cdecl Sys_IsUsingAnyRenderProfile()
 {
@@ -183,23 +183,20 @@ char __cdecl Sys_SpawnRenderThread(void(__cdecl* function)(uint32_t))
     return 1;
 }
 
-void __cdecl Sys_CreateEvent(bool manualReset, bool initialState, void** event)
-{
-    *event = CreateEventA(0, manualReset, initialState, 0);
-}
-
 void __cdecl Sys_CreateThread(void(__cdecl* function)(uint32_t), ThreadContext_t threadContext)
 {
     iassert( threadFunc[threadContext] == NULL );
     iassert(threadContext < THREAD_CONTEXT_COUNT);
     threadFunc[threadContext] = function;
+    DWORD nativeThreadId = 0;
     threadHandle[threadContext] = CreateThread(
         0,
         0,
         (LPTHREAD_START_ROUTINE)Sys_ThreadMain,
         (LPVOID)threadContext,
         4u,
-        &threadId[threadContext]);
+        &nativeThreadId);
+    threadId[threadContext] = static_cast<std::uint32_t>(nativeThreadId);
     SetThreadName(threadId[threadContext], s_threadNames[threadContext]);
 }
 
@@ -244,10 +241,10 @@ uint32_t __stdcall Sys_ThreadMain(ThreadContext_t threadContext)
     return 0;
 }
 
-static void* wakeDatabaseEvent;
-static void* databaseCompletedEvent;
-static void* databaseCompletedEvent2;
-static void* resumedDatabaseEvent;
+static SysEventHandle wakeDatabaseEvent;
+static SysEventHandle databaseCompletedEvent;
+static SysEventHandle databaseCompletedEvent2;
+static SysEventHandle resumedDatabaseEvent;
 
 bool dediRenderHack = false;
 
@@ -286,11 +283,6 @@ void __cdecl Sys_SuspendDatabaseThread(ThreadOwner owner)
     Sys_ResetEvent(&resumedDatabaseEvent);
 }
 
-void __cdecl Sys_ResetEvent(void** event)
-{
-    ResetEvent(*event);
-}
-
 void __cdecl Sys_ResumeDatabaseThread(ThreadOwner owner)
 {
     iassert( owner != THREAD_OWNER_NONE );
@@ -306,11 +298,6 @@ void __cdecl Sys_ResumeDatabaseThread(ThreadOwner owner)
     Sys_SetEvent(&resumedDatabaseEvent);
 }
 
-void __cdecl Sys_SetEvent(void** event)
-{
-    SetEvent(*event);
-}
-
 bool __cdecl Sys_HaveSuspendedDatabaseThread(ThreadOwner owner)
 {
     return g_databaseThreadOwner == owner;
@@ -319,14 +306,6 @@ bool __cdecl Sys_HaveSuspendedDatabaseThread(ThreadOwner owner)
 void __cdecl Sys_WaitDatabaseThread()
 {
     Sys_WaitForSingleObject(&resumedDatabaseEvent);
-}
-
-void __cdecl Sys_WaitForSingleObject(void** event)
-{
-    uint32_t result; // [esp+0h] [ebp-4h]
-
-    result = WaitForSingleObject(*event, 0xFFFFFFFF);
-    iassert(result == ((((uint32_t)0x00000000L)) + 0));
 }
 
 bool __cdecl Sys_SpawnWorkerThread(void(__cdecl* function)(uint32_t), uint32_t threadIndex)
@@ -399,12 +378,6 @@ void __cdecl Sys_FrontEndSleep()
             "((newCount == -1) || (newCount == 0))",
             newCount);
     Sys_WaitForSingleObject(&renderPausedEvent);
-}
-
-bool __cdecl Sys_WaitForSingleObjectTimeout(void** event, uint32_t msec)
-{
-    iassert( msec != INFINITE );
-    return WaitForSingleObject(*event, msec) == 0;
 }
 
 void __cdecl Sys_WakeRenderer(void* data)
@@ -629,8 +602,8 @@ void __cdecl Sys_ReleaseThreadOwnership()
     Sys_SetEvent(&noThreadOwnershipEvent);
 }
 
-static void* g_cinematicsThreadOutstandingRequestEvent;
-static void* g_cinematicsHostOutstandingRequestEvent;
+static SysEventHandle g_cinematicsThreadOutstandingRequestEvent;
+static SysEventHandle g_cinematicsHostOutstandingRequestEvent;
 
 
 char __cdecl Sys_SpawnCinematicsThread(void(__cdecl* function)(uint32_t))
@@ -760,7 +733,7 @@ int Sys_WaitStartServer(uint32_t timeout)
     }
     else if (v2)
     {
-        ResetEvent(serverCompletedEvent);
+        Sys_ResetEvent(&serverCompletedEvent);
     }
     Sys_LeaveCriticalSection(CRITSECT_START_SERVER);
     return v3;
@@ -768,31 +741,31 @@ int Sys_WaitStartServer(uint32_t timeout)
 
 void Sys_InitServerEvents()
 {
-    ResetEvent(wakeServerEvent);
-    ResetEvent(serverCompletedEvent);
-    SetEvent(allowSendClientMessagesEvent);
-    ResetEvent(serverSnapshotEvent);
-    SetEvent(clientMessageReceived);
+    Sys_ResetEvent(&wakeServerEvent);
+    Sys_ResetEvent(&serverCompletedEvent);
+    Sys_SetEvent(&allowSendClientMessagesEvent);
+    Sys_ResetEvent(&serverSnapshotEvent);
+    Sys_SetEvent(&clientMessageReceived);
     g_timeout = 0;
 }
 
 void Sys_ClientMessageReceived()
 {
-    SetEvent(clientMessageReceived);
+    Sys_SetEvent(&clientMessageReceived);
 }
 void Sys_ClearClientMessage()
 {
-    ResetEvent(clientMessageReceived);
+    Sys_ResetEvent(&clientMessageReceived);
 }
 int Sys_SpawnServerThread(void(*function)(uint32_t))
 {
     int result; // r3
 
-    wakeServerEvent = CreateEventA(0, 1, 0, 0);
-    serverCompletedEvent = CreateEventA(0, 1, 0, 0);
-    allowSendClientMessagesEvent = CreateEventA(0, 1, 0, 0);
-    serverSnapshotEvent = CreateEventA(0, 0, 0, 0);
-    clientMessageReceived = CreateEventA(0, 1, 1, 0);
+    Sys_CreateEvent(true, false, &wakeServerEvent);
+    Sys_CreateEvent(true, false, &serverCompletedEvent);
+    Sys_CreateEvent(true, false, &allowSendClientMessagesEvent);
+    Sys_CreateEvent(false, false, &serverSnapshotEvent);
+    Sys_CreateEvent(true, true, &clientMessageReceived);
     Sys_CreateThread(function, THREAD_CONTEXT_SERVER);
     result = (int)threadHandle[THREAD_CONTEXT_SERVER];
 
@@ -814,28 +787,28 @@ void Sys_WaitClientMessageReceived()
 }
 void Sys_ServerSnapshotCompleted()
 {
-    SetEvent(serverSnapshotEvent);
+    Sys_SetEvent(&serverSnapshotEvent);
 }
 bool Sys_WaitServerSnapshot()
 {
     PROF_SCOPED("wait snapshot");
-    return WaitForSingleObject(serverSnapshotEvent, 1) == 0;
+    return Sys_WaitForSingleObjectTimeout(&serverSnapshotEvent, 1);
 }
 void Sys_AllowSendClientMessages()
 {
-    SetEvent(allowSendClientMessagesEvent);
+    Sys_SetEvent(&allowSendClientMessagesEvent);
 }
 void Sys_DisallowSendClientMessages()
 {
-    ResetEvent(allowSendClientMessagesEvent);
+    Sys_ResetEvent(&allowSendClientMessagesEvent);
 }
 int Sys_CanSendClientMessages()
 {
-    return WaitForSingleObject(allowSendClientMessagesEvent, 0) == 0;
+    return Sys_WaitForSingleObjectTimeout(&allowSendClientMessagesEvent, 0);
 }
 void Sys_ServerCompleted()
 {
-    SetEvent(serverCompletedEvent);
+    Sys_SetEvent(&serverCompletedEvent);
 }
 int Sys_ServerTimeout()
 {
@@ -875,24 +848,24 @@ int Sys_ServerTimeout()
 }
 void Sys_WakeServer()
 {
-    SetEvent(wakeServerEvent);
+    Sys_SetEvent(&wakeServerEvent);
 }
 bool Sys_WaitServer()
 {
     PROF_SCOPED("wait server");
-    return WaitForSingleObject(serverCompletedEvent, 1) == 0;
+    return Sys_WaitForSingleObjectTimeout(&serverCompletedEvent, 1);
 }
 void Sys_SleepServer()
 {
     bool v0; // r30
 
     //PIXBeginNamedEvent_Copy_NoVarArgs(0xFFFFFFFF, "sleep server");
-    v0 = WaitForSingleObject(wakeServerEvent, 0) == 0;
+    v0 = Sys_WaitForSingleObjectTimeout(&wakeServerEvent, 0);
     //PIXEndNamedEvent();
     if (v0)
     {
         Sys_EnterCriticalSection(CRITSECT_START_SERVER);
-        ResetEvent(wakeServerEvent);
+        Sys_ResetEvent(&wakeServerEvent);
         Sys_LeaveCriticalSection(CRITSECT_START_SERVER);
     }
 }
@@ -927,15 +900,15 @@ void Sys_SetServerTimeout(int timeout)
 
 bool Sys_WaitForSaveHistoryDone()
 {
-    return WaitForSingleObject(g_saveHistoryDoneEvent, 0x7D0u) == 0;
+    return Sys_WaitForSingleObjectTimeout(&g_saveHistoryDoneEvent, 0x7D0u);
 }
 
 int Sys_SpawnServerDemoThread(void(*function)(uint32_t))
 {
     int result; // r3
 
-    g_saveHistoryEvent = CreateEventA(0, 0, 0, 0);
-    g_saveHistoryDoneEvent = CreateEventA(0, 0, 0, 0);
+    Sys_CreateEvent(false, false, &g_saveHistoryEvent);
+    Sys_CreateEvent(false, false, &g_saveHistoryDoneEvent);
     Sys_CreateThread(function, THREAD_CONTEXT_SERVER_DEMO);
     result = (int)threadHandle[THREAD_CONTEXT_SERVER_DEMO];
     if (threadHandle[THREAD_CONTEXT_SERVER_DEMO])
@@ -949,16 +922,16 @@ int Sys_SpawnServerDemoThread(void(*function)(uint32_t))
 
 void Sys_SetSaveHistoryEvent()
 {
-    SetEvent(g_saveHistoryEvent);
+    Sys_SetEvent(&g_saveHistoryEvent);
 }
 
 void Sys_WaitForSaveHistory()
 {
-    WaitForSingleObject(g_saveHistoryEvent, INFINITE);
+    Sys_WaitForSingleObject(&g_saveHistoryEvent);
 }
 
 void Sys_SetSaveHistoryDoneEvent()
 {
-    SetEvent(g_saveHistoryDoneEvent);
+    Sys_SetEvent(&g_saveHistoryDoneEvent);
 }
 #endif

@@ -7,6 +7,7 @@
 #include <thread>
 #include <vector>
 
+#include <qcommon/sys_event.h>
 #include <qcommon/sys_sync.h>
 #include <qcommon/sys_time.h>
 
@@ -24,6 +25,187 @@ bool IsForwardOrEqual(const std::uint32_t before, const std::uint32_t after)
 {
     return after - before <= static_cast<std::uint32_t>(
         std::numeric_limits<std::int32_t>::max());
+}
+
+bool RunEventWaiterRound(
+    SysEventHandle *const event,
+    const std::uint32_t expectedSignaledWaiters,
+    const char *const eventKind)
+{
+    constexpr std::uint32_t waiterCount = 4;
+    constexpr std::uint32_t waiterTimeoutMilliseconds = 250;
+
+    std::atomic<std::uint32_t> readyCount{0};
+    std::atomic<bool> start{false};
+    std::atomic<std::uint32_t> signaledCount{0};
+    std::atomic<std::uint32_t> completedCount{0};
+
+    std::vector<std::thread> waiters;
+    waiters.reserve(waiterCount);
+    for (std::uint32_t waiter = 0; waiter < waiterCount; ++waiter)
+    {
+        waiters.emplace_back([&]() {
+            readyCount.fetch_add(1, std::memory_order_release);
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+
+            if (Sys_WaitForSingleObjectTimeout(
+                    event,
+                    waiterTimeoutMilliseconds))
+            {
+                signaledCount.fetch_add(1);
+            }
+            completedCount.fetch_add(1);
+        });
+    }
+
+    while (readyCount.load(std::memory_order_acquire) != waiterCount)
+        std::this_thread::yield();
+    start.store(true, std::memory_order_release);
+    Sys_SetEvent(event);
+
+    for (std::thread &waiter : waiters)
+        waiter.join();
+
+    if (completedCount.load() != waiterCount
+        || signaledCount.load() != expectedSignaledWaiters)
+    {
+        std::fprintf(
+            stderr,
+            "%s event woke %u of %u waiters; expected %u\n",
+            eventKind,
+            signaledCount.load(),
+            completedCount.load(),
+            expectedSignaledWaiters);
+        return false;
+    }
+
+    return true;
+}
+
+bool TestAutoResetEvents()
+{
+    SysEventHandle event = nullptr;
+    Sys_CreateEvent(false, false, &event);
+    if (!event)
+    {
+        std::fputs("auto-reset event creation returned null\n", stderr);
+        return false;
+    }
+
+    bool valid = true;
+    if (Sys_WaitForSingleObjectTimeout(&event, 0)
+        || Sys_WaitForSingleObjectTimeout(&event, 5))
+    {
+        std::fputs("initially-false auto-reset event was signaled\n", stderr);
+        valid = false;
+    }
+
+    std::atomic<bool> infiniteWaitReady{false};
+    std::atomic<bool> infiniteWaitCompleted{false};
+    std::thread infiniteWaiter([&]() {
+        infiniteWaitReady.store(true, std::memory_order_release);
+        Sys_WaitForSingleObject(&event);
+        infiniteWaitCompleted.store(true, std::memory_order_release);
+    });
+    while (!infiniteWaitReady.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    Sys_SetEvent(&event);
+    infiniteWaiter.join();
+    if (!infiniteWaitCompleted.load(std::memory_order_acquire))
+    {
+        std::fputs("infinite event wait did not consume its signal\n", stderr);
+        valid = false;
+    }
+
+    if (!RunEventWaiterRound(&event, 1, "auto-reset")
+        || !RunEventWaiterRound(&event, 1, "auto-reset"))
+    {
+        valid = false;
+    }
+
+    Sys_DestroyEvent(&event);
+    if (event)
+    {
+        std::fputs("auto-reset event destroy did not null its handle\n", stderr);
+        valid = false;
+    }
+
+    Sys_CreateEvent(false, true, &event);
+    if (!event)
+    {
+        std::fputs("initially-true auto-reset event creation returned null\n", stderr);
+        return false;
+    }
+    if (!Sys_WaitForSingleObjectTimeout(&event, 0)
+        || Sys_WaitForSingleObjectTimeout(&event, 0))
+    {
+        std::fputs("initial auto-reset signal was not consumed exactly once\n", stderr);
+        valid = false;
+    }
+
+    Sys_SetEvent(&event);
+    if (!Sys_WaitForSingleObjectTimeout(&event, 50)
+        || Sys_WaitForSingleObjectTimeout(&event, 0))
+    {
+        std::fputs("set auto-reset signal was not consumed exactly once\n", stderr);
+        valid = false;
+    }
+
+    Sys_DestroyEvent(&event);
+    if (event)
+    {
+        std::fputs("initially-true auto-reset destroy did not null its handle\n", stderr);
+        valid = false;
+    }
+
+    return valid;
+}
+
+bool TestManualResetEvents()
+{
+    SysEventHandle event = nullptr;
+    Sys_CreateEvent(true, false, &event);
+    if (!event)
+    {
+        std::fputs("manual-reset event creation returned null\n", stderr);
+        return false;
+    }
+
+    bool valid = true;
+    if (Sys_WaitForSingleObjectTimeout(&event, 0)
+        || Sys_WaitForSingleObjectTimeout(&event, 5))
+    {
+        std::fputs("initially-false manual-reset event was signaled\n", stderr);
+        valid = false;
+    }
+
+    if (!RunEventWaiterRound(&event, 4, "manual-reset"))
+        valid = false;
+
+    if (!Sys_WaitForSingleObjectTimeout(&event, 0)
+        || !Sys_WaitForSingleObjectTimeout(&event, 0))
+    {
+        std::fputs("manual-reset event did not retain its signaled state\n", stderr);
+        valid = false;
+    }
+
+    Sys_ResetEvent(&event);
+    if (Sys_WaitForSingleObjectTimeout(&event, 0)
+        || Sys_WaitForSingleObjectTimeout(&event, 5))
+    {
+        std::fputs("manual-reset event remained signaled after reset\n", stderr);
+        valid = false;
+    }
+
+    Sys_DestroyEvent(&event);
+    if (event)
+    {
+        std::fputs("manual-reset event destroy did not null its handle\n", stderr);
+        valid = false;
+    }
+
+    return valid;
 }
 
 bool TestConcurrentInitialization()
@@ -370,6 +552,10 @@ bool TestFastCriticalSectionReadersAndWriters()
 
 int main()
 {
+    if (!TestAutoResetEvents())
+        return 1;
+    if (!TestManualResetEvents())
+        return 1;
     if (!TestConcurrentInitialization())
         return 1;
     if (!TestTimeServices())

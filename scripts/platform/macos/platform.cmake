@@ -12,6 +12,7 @@ endforeach()
 set(PLATFORM_MACOS "")
 set(PLATFORM_MACOS_DEDI_HEADLESS "")
 set(PLATFORM_MACOS_SERVICES
+    "${SRC_DIR}/_platform/posix/sys_event.cpp"
     "${SRC_DIR}/_platform/posix/sys_sync.cpp"
     "${SRC_DIR}/_platform/posix/sys_time.cpp"
 )
