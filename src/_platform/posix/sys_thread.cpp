@@ -3,17 +3,24 @@
 #endif
 
 #include <pthread.h>
+#if defined(__linux__)
+#include <sched.h>
+#endif
+#include <unistd.h>
 
 #include <atomic>
 #include <cerrno>
+#include <climits>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <new>
 #include <string>
 #include <system_error>
+#include <vector>
 
 #include <qcommon/sys_thread.h>
 
@@ -26,6 +33,7 @@ enum class SysThreadState
     Running,
     Joining,
     Joined,
+    CrashFrozen,
 };
 }
 
@@ -46,6 +54,26 @@ struct SysThread
 
 namespace
 {
+#if defined(__linux__)
+struct LinuxAffinityTopology
+{
+    std::mutex mutex;
+    cpu_set_t *baseline{};
+    std::size_t setSize{};
+    std::vector<std::size_t> eligibleProcessors;
+    bool initialized{};
+    bool available{};
+
+    ~LinuxAffinityTopology()
+    {
+        if (baseline)
+            CPU_FREE(baseline);
+    }
+};
+
+LinuxAffinityTopology s_linuxAffinityTopology;
+#endif
+
 [[noreturn]] void Sys_ThreadFailFast()
 {
     std::abort();
@@ -63,6 +91,142 @@ SysThread *Sys_ValidateThread(SysThreadHandle thread)
         Sys_ThreadFailFast();
     return thread;
 }
+
+SysThread *Sys_ValidatePolicyThread(SysThreadHandle threadHandle)
+{
+    SysThread *const thread = Sys_ValidateThread(threadHandle);
+    const SysThreadState state = thread->state.load(std::memory_order_acquire);
+    if (state == SysThreadState::Joining
+        || state == SysThreadState::Joined
+        || state == SysThreadState::CrashFrozen)
+        Sys_ThreadFailFast();
+    return thread;
+}
+
+#if defined(__linux__)
+bool Sys_InitializeLinuxAffinityLocked()
+{
+    LinuxAffinityTopology &topology = s_linuxAffinityTopology;
+    if (topology.initialized)
+        return topology.available;
+
+    topology.initialized = true;
+
+    long configuredProcessorCount = sysconf(_SC_NPROCESSORS_CONF);
+    std::size_t processorCapacity = 64;
+    if (configuredProcessorCount > 0)
+    {
+        const auto configured = static_cast<unsigned long long>(
+            configuredProcessorCount);
+        if (configured <= std::numeric_limits<std::size_t>::max())
+            processorCapacity = static_cast<std::size_t>(configured);
+    }
+    if (processorCapacity < 64)
+        processorCapacity = 64;
+
+    cpu_set_t *baseline = nullptr;
+    std::size_t setSize = 0;
+    for (;;)
+    {
+        baseline = CPU_ALLOC(processorCapacity);
+        if (!baseline)
+            return false;
+
+        setSize = CPU_ALLOC_SIZE(processorCapacity);
+        CPU_ZERO_S(setSize, baseline);
+        const int result = pthread_getaffinity_np(
+            pthread_self(),
+            setSize,
+            baseline);
+        if (result == 0)
+            break;
+
+        CPU_FREE(baseline);
+        baseline = nullptr;
+        if (result != EINVAL
+            || processorCapacity
+                > std::numeric_limits<std::size_t>::max() / 2)
+        {
+            return false;
+        }
+        processorCapacity *= 2;
+    }
+
+    try
+    {
+        if (setSize > std::numeric_limits<std::size_t>::max() / CHAR_BIT)
+        {
+            CPU_FREE(baseline);
+            return false;
+        }
+        const std::size_t representableProcessorCount = setSize * CHAR_BIT;
+        for (std::size_t processor = 0;
+             processor < representableProcessorCount;
+             ++processor)
+        {
+            if (CPU_ISSET_S(processor, setSize, baseline))
+                topology.eligibleProcessors.push_back(processor);
+        }
+    }
+    catch (...)
+    {
+        CPU_FREE(baseline);
+        topology.eligibleProcessors.clear();
+        return false;
+    }
+
+    if (topology.eligibleProcessors.empty())
+    {
+        CPU_FREE(baseline);
+        return false;
+    }
+
+    topology.baseline = baseline;
+    topology.setSize = setSize;
+    topology.available = true;
+    return true;
+}
+
+bool Sys_EnsureLinuxAffinity()
+{
+    try
+    {
+        std::lock_guard<std::mutex> lock(s_linuxAffinityTopology.mutex);
+        return Sys_InitializeLinuxAffinityLocked();
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+SysThreadPolicyStatus Sys_MapPthreadAffinityResult(const int result)
+{
+    if (result == 0)
+        return SysThreadPolicyStatus::Applied;
+    if (result == EPERM || result == EACCES)
+        return SysThreadPolicyStatus::PermissionDenied;
+#if defined(ENOSYS)
+    if (result == ENOSYS)
+        return SysThreadPolicyStatus::Unsupported;
+#endif
+    return SysThreadPolicyStatus::Unavailable;
+}
+#endif
+
+#if defined(__APPLE__)
+std::uint32_t Sys_GetOnlineProcessorCount()
+{
+    const long processorCount = sysconf(_SC_NPROCESSORS_ONLN);
+    if (processorCount <= 0)
+        return 1;
+
+    const auto count = static_cast<unsigned long long>(processorCount);
+    if (count > std::numeric_limits<std::uint32_t>::max())
+        return std::numeric_limits<std::uint32_t>::max();
+    return static_cast<std::uint32_t>(count);
+}
+#endif
 
 SysThread *Sys_AllocateThread(const char *name)
 {
@@ -220,6 +384,10 @@ bool KISAK_CDECL Sys_ThreadCaptureCurrent(
     if (!thread)
         return false;
 
+#if defined(__linux__)
+    (void)Sys_EnsureLinuxAffinity();
+#endif
+
     thread->nativeThread = pthread_self();
     thread->state.store(SysThreadState::Captured, std::memory_order_relaxed);
     Sys_SetCurrentThreadName(thread->name);
@@ -240,6 +408,10 @@ bool KISAK_CDECL Sys_ThreadCreateSuspended(
     SysThread *const thread = Sys_AllocateThread(name);
     if (!thread)
         return false;
+
+#if defined(__linux__)
+    (void)Sys_EnsureLinuxAffinity();
+#endif
 
     thread->entry = entry;
     thread->userData = userData;
@@ -322,4 +494,144 @@ void KISAK_CDECL Sys_ThreadDestroy(SysThreadHandle *threadHandle)
 
     delete thread;
     *threadHandle = nullptr;
+}
+
+std::uint32_t KISAK_CDECL Sys_ThreadGetEligibleProcessorCount()
+{
+#if defined(__linux__)
+    try
+    {
+        std::lock_guard<std::mutex> lock(s_linuxAffinityTopology.mutex);
+        if (!Sys_InitializeLinuxAffinityLocked())
+            return 1;
+
+        const std::size_t count =
+            s_linuxAffinityTopology.eligibleProcessors.size();
+        if (count > std::numeric_limits<std::uint32_t>::max())
+            return std::numeric_limits<std::uint32_t>::max();
+        return static_cast<std::uint32_t>(count);
+    }
+    catch (...)
+    {
+        return 1;
+    }
+#elif defined(__APPLE__)
+    return Sys_GetOnlineProcessorCount();
+#else
+#error "sys_thread.cpp: unsupported POSIX target"
+#endif
+}
+
+SysThreadPolicyStatus KISAK_CDECL Sys_ThreadSetPriority(
+    SysThreadHandle threadHandle,
+    const SysThreadPriority priority)
+{
+    (void)Sys_ValidatePolicyThread(threadHandle);
+    switch (priority)
+    {
+    case SysThreadPriority::BelowNormal:
+    case SysThreadPriority::AboveNormal:
+        return SysThreadPolicyStatus::Unsupported;
+    case SysThreadPriority::Normal:
+        return SysThreadPolicyStatus::Applied;
+    default:
+        Sys_ThreadFailFast();
+    }
+}
+
+SysThreadPolicyStatus KISAK_CDECL Sys_ThreadPinToEligibleProcessor(
+    SysThreadHandle threadHandle,
+    const std::uint32_t ordinal)
+{
+    SysThread *const thread = Sys_ValidatePolicyThread(threadHandle);
+
+#if defined(__linux__)
+    try
+    {
+        std::lock_guard<std::mutex> lock(s_linuxAffinityTopology.mutex);
+        LinuxAffinityTopology &topology = s_linuxAffinityTopology;
+        if (!Sys_InitializeLinuxAffinityLocked()
+            || ordinal >= topology.eligibleProcessors.size())
+        {
+            return SysThreadPolicyStatus::Unavailable;
+        }
+
+        const std::size_t representableProcessorCount =
+            topology.setSize * CHAR_BIT;
+        cpu_set_t *const selectedSet = CPU_ALLOC(representableProcessorCount);
+        if (!selectedSet)
+            return SysThreadPolicyStatus::Unavailable;
+
+        CPU_ZERO_S(topology.setSize, selectedSet);
+        CPU_SET_S(
+            topology.eligibleProcessors[ordinal],
+            topology.setSize,
+            selectedSet);
+        const int result = pthread_setaffinity_np(
+            thread->nativeThread,
+            topology.setSize,
+            selectedSet);
+        CPU_FREE(selectedSet);
+        return Sys_MapPthreadAffinityResult(result);
+    }
+    catch (...)
+    {
+        return SysThreadPolicyStatus::Unavailable;
+    }
+#elif defined(__APPLE__)
+    (void)thread;
+    if (ordinal >= Sys_GetOnlineProcessorCount())
+        return SysThreadPolicyStatus::Unavailable;
+    return SysThreadPolicyStatus::Unsupported;
+#else
+#error "sys_thread.cpp: unsupported POSIX target"
+#endif
+}
+
+SysThreadPolicyStatus KISAK_CDECL Sys_ThreadClearAffinity(
+    SysThreadHandle threadHandle)
+{
+    SysThread *const thread = Sys_ValidatePolicyThread(threadHandle);
+
+#if defined(__linux__)
+    try
+    {
+        std::lock_guard<std::mutex> lock(s_linuxAffinityTopology.mutex);
+        LinuxAffinityTopology &topology = s_linuxAffinityTopology;
+        if (!Sys_InitializeLinuxAffinityLocked())
+            return SysThreadPolicyStatus::Unavailable;
+
+        return Sys_MapPthreadAffinityResult(pthread_setaffinity_np(
+            thread->nativeThread,
+            topology.setSize,
+            topology.baseline));
+    }
+    catch (...)
+    {
+        return SysThreadPolicyStatus::Unavailable;
+    }
+#elif defined(__APPLE__)
+    (void)thread;
+    return SysThreadPolicyStatus::Applied;
+#else
+#error "sys_thread.cpp: unsupported POSIX target"
+#endif
+}
+
+SysThreadCrashFreezeStatus KISAK_CDECL Sys_ThreadForceSuspendForCrash(
+    SysThreadHandle threadHandle)
+{
+    SysThread *const thread = Sys_ValidateThread(threadHandle);
+    if (pthread_equal(pthread_self(), thread->nativeThread) != 0)
+        return SysThreadCrashFreezeStatus::CurrentThread;
+
+    const SysThreadState state = thread->state.load(std::memory_order_acquire);
+    if (state == SysThreadState::Suspended
+        || state == SysThreadState::Joining
+        || state == SysThreadState::Joined
+        || state == SysThreadState::CrashFrozen)
+    {
+        return SysThreadCrashFreezeStatus::AlreadyStopped;
+    }
+    return SysThreadCrashFreezeStatus::Unsupported;
 }

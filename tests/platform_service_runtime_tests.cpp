@@ -322,6 +322,146 @@ bool TestThreadCaptureAndLifecycle()
     return true;
 }
 
+bool IsDefinedThreadPolicyStatus(const SysThreadPolicyStatus status)
+{
+    switch (status)
+    {
+    case SysThreadPolicyStatus::Applied:
+    case SysThreadPolicyStatus::Unsupported:
+    case SysThreadPolicyStatus::PermissionDenied:
+    case SysThreadPolicyStatus::Unavailable:
+        return true;
+    }
+
+    return false;
+}
+
+bool TestThreadPolicyServices()
+{
+    SysThreadHandle current = nullptr;
+    if (!Sys_ThreadCaptureCurrent("platform-test-thread-policy", &current)
+        || !current)
+    {
+        std::fputs("thread-policy current-thread capture failed\n", stderr);
+        return false;
+    }
+
+    bool valid = true;
+    const std::uint32_t eligibleProcessorCount =
+        Sys_ThreadGetEligibleProcessorCount();
+    if (eligibleProcessorCount < 1)
+    {
+        std::fputs("eligible processor count was zero\n", stderr);
+        valid = false;
+    }
+
+    const SysThreadPolicyStatus normalStatus = Sys_ThreadSetPriority(
+        current,
+        SysThreadPriority::Normal);
+    if (normalStatus != SysThreadPolicyStatus::Applied)
+    {
+        std::fprintf(
+            stderr,
+            "normal thread priority was not applied (status %u)\n",
+            static_cast<unsigned int>(normalStatus));
+        valid = false;
+    }
+
+    // Above-normal may legitimately require privileges. Restore Normal after
+    // probing both hints so later tests do not inherit a scheduling change.
+    const SysThreadPolicyStatus aboveStatus = Sys_ThreadSetPriority(
+        current,
+        SysThreadPriority::AboveNormal);
+    const SysThreadPolicyStatus belowStatus = Sys_ThreadSetPriority(
+        current,
+        SysThreadPriority::BelowNormal);
+    if (!IsDefinedThreadPolicyStatus(aboveStatus)
+        || !IsDefinedThreadPolicyStatus(belowStatus))
+    {
+        std::fprintf(
+            stderr,
+            "thread priority returned an undefined status (above %u, below %u)\n",
+            static_cast<unsigned int>(aboveStatus),
+            static_cast<unsigned int>(belowStatus));
+        valid = false;
+    }
+    if (Sys_ThreadSetPriority(current, SysThreadPriority::Normal)
+        != SysThreadPolicyStatus::Applied)
+    {
+        std::fputs("normal thread priority could not be restored\n", stderr);
+        valid = false;
+    }
+
+    const SysThreadPolicyStatus outOfRangePinStatus =
+        Sys_ThreadPinToEligibleProcessor(current, eligibleProcessorCount);
+    if (outOfRangePinStatus != SysThreadPolicyStatus::Unavailable)
+    {
+        std::fprintf(
+            stderr,
+            "out-of-range processor ordinal was not unavailable (status %u)\n",
+            static_cast<unsigned int>(outOfRangePinStatus));
+        valid = false;
+    }
+
+    const SysThreadPolicyStatus firstProcessorPinStatus =
+        Sys_ThreadPinToEligibleProcessor(current, 0);
+#if defined(__APPLE__)
+    if (firstProcessorPinStatus != SysThreadPolicyStatus::Unsupported)
+    {
+        std::fprintf(
+            stderr,
+            "macOS processor pinning was not reported unsupported (status %u)\n",
+            static_cast<unsigned int>(firstProcessorPinStatus));
+        valid = false;
+    }
+#elif defined(_WIN32) || defined(__linux__)
+    if (firstProcessorPinStatus != SysThreadPolicyStatus::Applied)
+    {
+        std::fprintf(
+            stderr,
+            "processor ordinal zero was not applied (status %u)\n",
+            static_cast<unsigned int>(firstProcessorPinStatus));
+        valid = false;
+    }
+#else
+#error "Thread policy runtime contract requires Windows, Linux, or macOS"
+#endif
+
+    const SysThreadPolicyStatus clearAffinityStatus =
+        Sys_ThreadClearAffinity(current);
+    if (clearAffinityStatus != SysThreadPolicyStatus::Applied
+        && clearAffinityStatus != SysThreadPolicyStatus::Unsupported)
+    {
+        std::fprintf(
+            stderr,
+            "clearing thread affinity returned status %u\n",
+            static_cast<unsigned int>(clearAffinityStatus));
+        valid = false;
+    }
+
+    // The only crash-freeze call made by this test targets the caller. It must
+    // report that identity instead of ever suspending the live test thread.
+    const SysThreadCrashFreezeStatus crashFreezeStatus =
+        Sys_ThreadForceSuspendForCrash(current);
+    if (crashFreezeStatus != SysThreadCrashFreezeStatus::CurrentThread)
+    {
+        std::fprintf(
+            stderr,
+            "current-thread crash freeze was not rejected safely (status %u)\n",
+            static_cast<unsigned int>(crashFreezeStatus));
+        valid = false;
+    }
+
+    Sys_ThreadDestroy(&current);
+    if (current)
+    {
+        std::fputs("thread-policy capture destroy retained its handle\n", stderr);
+        valid = false;
+    }
+
+    return valid;
+}
+
 struct CompletingThreadState
 {
     SysEventHandle completed;
@@ -1106,6 +1246,8 @@ int main()
     if (!TestManualResetEvents())
         return 1;
     if (!TestThreadCaptureAndLifecycle())
+        return 1;
+    if (!TestThreadPolicyServices())
         return 1;
     if (!TestKnownCompleteInfiniteJoin())
         return 1;

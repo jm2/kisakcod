@@ -748,8 +748,12 @@ integrated stress tests cover waiting and in-flight tasks, queued work while par
 cycles, and independent workers under ThreadSanitizer. Both renderer workers now call that gate only
 at command-free boundaries; controller transitions wake their command wait and do not return from a
 disable until `Parked` is published. This removes debugger-oriented `SuspendThread` from normal
-operation and fixes the worker entry's incompatible function-pointer cast. Next, migrate remaining
-engine creation/identity consumers, then add priority/affinity policy, filesystem/virtual memory,
+operation and fixes the worker entry's incompatible function-pointer cast. Scheduling policy now
+uses fixed-width result enums and backend-owned eligible-processor ordinals: Linux snapshots its
+sparse allowed cpuset dynamically, macOS reports hard pinning unsupported, and Windows keeps its
+native group mask private. Priority hints are likewise truthful rather than silently ignored. A
+terminal-only crash-freeze call is deliberately separate and has no resume operation. Next, migrate
+the remaining engine creation/identity/policy consumers, then add filesystem/virtual memory,
 console/process, and BSD sockets.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**

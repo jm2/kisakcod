@@ -21,6 +21,27 @@ static_assert(sizeof(SysEventHandle) == sizeof(void *));
 static_assert(std::is_pointer_v<SysThreadHandle>);
 static_assert(std::is_same_v<SysThreadHandle, SysThread *>);
 static_assert(sizeof(SysThreadHandle) == sizeof(void *));
+static_assert(std::is_same_v<
+    std::underlying_type_t<SysThreadPriority>,
+    std::uint8_t>);
+static_assert(static_cast<std::uint8_t>(SysThreadPriority::BelowNormal) == 0);
+static_assert(static_cast<std::uint8_t>(SysThreadPriority::Normal) == 1);
+static_assert(static_cast<std::uint8_t>(SysThreadPriority::AboveNormal) == 2);
+static_assert(std::is_same_v<
+    std::underlying_type_t<SysThreadPolicyStatus>,
+    std::uint8_t>);
+static_assert(static_cast<std::uint8_t>(SysThreadPolicyStatus::Applied) == 0);
+static_assert(static_cast<std::uint8_t>(SysThreadPolicyStatus::Unsupported) == 1);
+static_assert(static_cast<std::uint8_t>(SysThreadPolicyStatus::PermissionDenied) == 2);
+static_assert(static_cast<std::uint8_t>(SysThreadPolicyStatus::Unavailable) == 3);
+static_assert(std::is_same_v<
+    std::underlying_type_t<SysThreadCrashFreezeStatus>,
+    std::uint8_t>);
+static_assert(static_cast<std::uint8_t>(SysThreadCrashFreezeStatus::Frozen) == 0);
+static_assert(static_cast<std::uint8_t>(SysThreadCrashFreezeStatus::CurrentThread) == 1);
+static_assert(static_cast<std::uint8_t>(SysThreadCrashFreezeStatus::AlreadyStopped) == 2);
+static_assert(static_cast<std::uint8_t>(SysThreadCrashFreezeStatus::Unsupported) == 3);
+static_assert(static_cast<std::uint8_t>(SysThreadCrashFreezeStatus::Failed) == 4);
 static_assert(std::is_pointer_v<SysWorkerGateHandle>);
 static_assert(std::is_same_v<SysWorkerGateHandle, SysWorkerGate *>);
 static_assert(sizeof(SysWorkerGateHandle) == sizeof(void *));
@@ -64,6 +85,17 @@ using ThreadQueryFunction = bool (KISAK_CDECL *)(SysThreadHandle);
 using ThreadJoinTimeoutFunction =
     bool (KISAK_CDECL *)(SysThreadHandle, std::uint32_t);
 using ThreadDestroyFunction = void (KISAK_CDECL *)(SysThreadHandle *);
+using ThreadProcessorCountFunction = std::uint32_t (KISAK_CDECL *)();
+using ThreadPriorityFunction = SysThreadPolicyStatus (KISAK_CDECL *)(
+    SysThreadHandle,
+    SysThreadPriority);
+using ThreadPinFunction = SysThreadPolicyStatus (KISAK_CDECL *)(
+    SysThreadHandle,
+    std::uint32_t);
+using ThreadPolicyFunction =
+    SysThreadPolicyStatus (KISAK_CDECL *)(SysThreadHandle);
+using ThreadCrashFreezeFunction =
+    SysThreadCrashFreezeStatus (KISAK_CDECL *)(SysThreadHandle);
 using ExpectedThreadEntry = void (KISAK_CDECL *)(void *);
 using WorkerGateHandleFunction = void (KISAK_CDECL *)(SysWorkerGateHandle *);
 using WorkerGateActionFunction = void (KISAK_CDECL *)(SysWorkerGateHandle);
@@ -106,6 +138,21 @@ static_assert(std::is_same_v<
     ThreadJoinTimeoutFunction>);
 static_assert(std::is_same_v<decltype(&Sys_ThreadJoin), ThreadActionFunction>);
 static_assert(std::is_same_v<decltype(&Sys_ThreadDestroy), ThreadDestroyFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_ThreadGetEligibleProcessorCount),
+    ThreadProcessorCountFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_ThreadSetPriority),
+    ThreadPriorityFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_ThreadPinToEligibleProcessor),
+    ThreadPinFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_ThreadClearAffinity),
+    ThreadPolicyFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_ThreadForceSuspendForCrash),
+    ThreadCrashFreezeFunction>);
 static_assert(std::is_same_v<
     decltype(&Sys_WorkerGateCreate),
     WorkerGateHandleFunction>);
