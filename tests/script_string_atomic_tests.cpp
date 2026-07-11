@@ -1,4 +1,5 @@
 #include <script/scr_string_atomic.h>
+#include <script/scr_stringlist.h>
 
 #include <atomic>
 #include <barrier>

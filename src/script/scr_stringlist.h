@@ -1,5 +1,9 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
+#include <type_traits>
+
+#include <universal/kisak_abi.h>
 
 #define HASH_STAT_FREE      0
 #define HASH_STAT_MOVABLE   0x10000
@@ -22,42 +26,49 @@ struct HashEntry
     HashEntry_unnamed_type_u u;
 };
 
-struct __declspec(align(128)) scrStringGlob_t
+struct KISAK_ALIGNAS(128) scrStringGlob_t
 {                                       
     HashEntry hashTable[20000];         
     bool inited;                        
     HashEntry *nextFreeEntry;
 };
 
- struct RefString
- {
-     union
-     {
-         struct
-         {
-             unsigned __int32 refCount : 16;
-             unsigned __int32 user : 8;
-             unsigned __int32 byteLen : 8; // includes null terminator
-         };
-         volatile uint32_t data;
-     };
-     char str[1];
- };
+struct RefString
+{
+    volatile uint32_t data;
+    char str[1];
+};
+RUNTIME_OFFSET(RefString, data, 0, 0);
+RUNTIME_OFFSET(RefString, str, 4, 4);
+static_assert(std::is_same_v<decltype(RefString::data), volatile uint32_t>);
+static_assert(std::is_standard_layout_v<RefString>);
+static_assert(std::is_trivially_copyable_v<RefString>);
 
- struct RefVector
- {
-     union
-     {
-         struct
-         {
-             uint32_t refCount : 16;
-             uint32_t user : 8;
-             uint32_t byteLen : 8;
-         };
-         volatile int head;
-     };
-     float vec[3];
- };
+inline volatile uint32_t *SL_RefStringWord(RefString *refString) noexcept
+{
+    return &refString->data;
+}
+
+inline const volatile uint32_t *SL_RefStringWord(
+    const RefString *refString) noexcept
+{
+    return &refString->data;
+}
+
+struct RefVector
+{
+    uint16_t refCount;
+    uint8_t user;
+    uint8_t byteLen;
+    float vec[3];
+};
+RUNTIME_SIZE(RefVector, 0x10, 0x10);
+RUNTIME_OFFSET(RefVector, refCount, 0, 0);
+RUNTIME_OFFSET(RefVector, user, 2, 2);
+RUNTIME_OFFSET(RefVector, byteLen, 3, 3);
+RUNTIME_OFFSET(RefVector, vec, 4, 4);
+static_assert(std::is_standard_layout_v<RefVector>);
+static_assert(std::is_trivially_copyable_v<RefVector>);
 
 //#define MT_NODE_SIZE 12
 #define MT_NODE_SIZE (sizeof(MemoryNode))
@@ -72,8 +83,13 @@ struct scrStringDebugGlob_t
 {
     volatile uint32_t refCount[65536];
     volatile uint32_t totalRefCount;
-    int ignoreLeaks;
+    int32_t ignoreLeaks;
 };
+RUNTIME_SIZE(scrStringDebugGlob_t, 0x40008, 0x40008);
+RUNTIME_OFFSET(scrStringDebugGlob_t, totalRefCount, 0x40000, 0x40000);
+RUNTIME_OFFSET(scrStringDebugGlob_t, ignoreLeaks, 0x40004, 0x40004);
+static_assert(std::is_standard_layout_v<scrStringDebugGlob_t>);
+static_assert(std::is_trivially_copyable_v<scrStringDebugGlob_t>);
 
 void SL_Init();
 void SL_InitCheckLeaks();
@@ -87,7 +103,7 @@ void SL_BeginLoadScripts();
 void SL_EndLoadScripts();
 
 void __cdecl SL_AddUser(uint32_t stringValue, uint32_t user);
-void SL_AddUserInternal(RefString* refStr, uint32_t user);
+bool SL_AddUserInternal(RefString* refStr, uint32_t user);
 
 void SL_AddRefToString(uint32_t stringValue);
 

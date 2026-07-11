@@ -1,14 +1,18 @@
 #include "scr_stringlist.h"
 
 #include <string.h> // strlen()
-#include <universal/assertive.h>
-#include <win32/win_local.h>
-#include <universal/q_shared.h>
+#include <limits>
+
 #include <qcommon/qcommon.h>
+#include <qcommon/sys_sync.h>
+#include <universal/assertive.h>
+#include <universal/com_constantconfigstrings.h>
+#include <universal/profile.h>
+#include <universal/q_shared.h>
+#include <universal/sys_atomic.h>
 
 #include "scr_memorytree.h"
-#include <universal/profile.h>
-#include <universal/com_constantconfigstrings.h>
+#include "scr_string_atomic.h"
 #include "scr_variable.h"
 
 scrStringDebugGlob_t* scrStringDebugGlob;
@@ -16,6 +20,52 @@ static scrStringDebugGlob_t scrStringDebugGlobBuf;
 static scrStringGlob_t scrStringGlob; // 0x244E300
 
 #define SCR_SYS_GAME 1
+
+static bool SL_IsValidUserMask(uint32_t user, bool allowZero)
+{
+	if (user > (std::numeric_limits<uint8_t>::max)())
+		return false;
+	return user ? (user & (user - 1)) == 0 : allowZero;
+}
+
+static uint32_t SL_DebugRefCount(uint32_t stringValue)
+{
+	if (!scrStringDebugGlob)
+		return 0;
+	return Sys_AtomicLoad(&scrStringDebugGlob->refCount[stringValue]);
+}
+
+static void SL_DebugAddRef(uint32_t stringValue)
+{
+	if (!scrStringDebugGlob)
+		return;
+
+	const uint32_t refCount = SL_DebugRefCount(stringValue);
+	iassert(refCount < (std::numeric_limits<uint16_t>::max)());
+	if (refCount >= (std::numeric_limits<uint16_t>::max)())
+		return;
+
+	Sys_AtomicIncrement(&scrStringDebugGlob->totalRefCount);
+	Sys_AtomicIncrement(&scrStringDebugGlob->refCount[stringValue]);
+}
+
+static void SL_DebugRemoveRef(uint32_t stringValue)
+{
+	if (!scrStringDebugGlob)
+		return;
+
+	const uint32_t totalRefCount =
+		Sys_AtomicLoad(&scrStringDebugGlob->totalRefCount);
+	const uint32_t refCount = SL_DebugRefCount(stringValue);
+	iassert(totalRefCount && refCount);
+	if (!totalRefCount || !refCount)
+		return;
+
+	Sys_AtomicDecrement(&scrStringDebugGlob->totalRefCount);
+	Sys_AtomicDecrement(&scrStringDebugGlob->refCount[stringValue]);
+}
+
+static bool SL_FreeString(uint32_t stringValue, RefString* refStr, uint32_t len);
 
 static uint32_t __cdecl GetHashCode(const char *str, uint32_t len)
 {
@@ -73,9 +123,8 @@ void SL_InitCheckLeaks()
 {
 	iassert(!scrStringDebugGlob);
 
+	Com_Memset(&scrStringDebugGlobBuf, 0, sizeof(scrStringDebugGlobBuf));
 	scrStringDebugGlob = &scrStringDebugGlobBuf;
-	Com_Memset(&scrStringDebugGlobBuf, 0, 0x40000);
-	scrStringDebugGlob->totalRefCount = 0;
 }
 
 static uint32_t SL_ConvertFromRefString(RefString *refString)
@@ -83,50 +132,40 @@ static uint32_t SL_ConvertFromRefString(RefString *refString)
 	return ((char *)refString - scrMemTreePub.mt_buffer) / MT_NODE_SIZE;
 }
 
-void SL_AddUserInternal(RefString* refStr, uint32_t user)
+bool SL_AddUserInternal(RefString* refStr, uint32_t user)
 {
-	if (((uint8_t)user & refStr->user) == 0)
-	{
-		if (scrStringDebugGlob)
-		{
-			int str = SL_ConvertFromRefString(refStr);
-			iassert((scrStringDebugGlob->refCount[str] < 65536));
-			iassert((scrStringDebugGlob->refCount[str] >= 0));
+	const uint8_t userByte = static_cast<uint8_t>(user);
+	iassert(SL_IsValidUserMask(user, true));
+	if (!SL_IsValidUserMask(user, true))
+		return false;
 
-			InterlockedIncrement(&scrStringDebugGlob->totalRefCount);
-			InterlockedIncrement(&scrStringDebugGlob->refCount[str]);
-		}
-
-		volatile int Comperand;
-		do
-			Comperand = refStr->data;
-		while (InterlockedCompareExchange(&refStr->data, Comperand | (user << 16), Comperand) != Comperand);
-		InterlockedIncrement(&refStr->data);
-	}
+	const scr_string_atomic::AddUserRefResult result =
+		scr_string_atomic::AddUserRef(SL_RefStringWord(refStr), userByte);
+	if (result == scr_string_atomic::AddUserRefResult::Invalid)
+		return false;
+	if (result == scr_string_atomic::AddUserRefResult::Added)
+		SL_DebugAddRef(SL_ConvertFromRefString(refStr));
+	return true;
 }
 
 void SL_AddRefToString(uint32_t stringValue)
 {
 	PROF_SCOPED("SL_AddRefToString");
 
-	if (scrStringDebugGlob)
-	{
-		iassert(scrStringDebugGlob->refCount[stringValue]);
-		iassert((scrStringDebugGlob->refCount[stringValue] < 65536));
-
-		InterlockedIncrement(&scrStringDebugGlob->totalRefCount);
-		InterlockedIncrement(&scrStringDebugGlob->refCount[stringValue]);
-	}
-
 	RefString* refStr = GetRefString(stringValue);
-	InterlockedIncrement(&refStr->data);
-
-	iassert(refStr->refCount);
+	if (!scr_string_atomic::TryAddRef(SL_RefStringWord(refStr)))
+	{
+		Com_Error(ERR_DROP, "invalid script string reference increment");
+		return;
+	}
+	SL_DebugAddRef(stringValue);
+	iassert(scr_string_atomic::RefCount(
+		scr_string_atomic::Load(SL_RefStringWord(refStr))) != 0);
 }
 
 void SL_CheckExists(uint32_t stringValue)
 {
-	iassert(!scrStringDebugGlob || scrStringDebugGlob->refCount[stringValue]);
+	iassert(!scrStringDebugGlob || SL_DebugRefCount(stringValue));
 }
 
 static void SL_CheckLeaks()
@@ -137,9 +176,9 @@ static void SL_CheckLeaks()
 		{
 			for (int i = 1; i < 65536; ++i)
 			{
-				iassert(!scrStringDebugGlob->refCount[i]);
+				iassert(!SL_DebugRefCount(i));
 			}
-			iassert((!scrStringDebugGlob->totalRefCount));
+			iassert(!Sys_AtomicLoad(&scrStringDebugGlob->totalRefCount));
 		}
 		scrStringDebugGlob = NULL;
 	}
@@ -156,30 +195,50 @@ void SL_Shutdown()
 
 void SL_ShutdownSystem(uint32_t user)
 {
-	iassert(user);
+	iassert(SL_IsValidUserMask(user, false));
+	const uint8_t userByte = static_cast<uint8_t>(user);
+	if (!SL_IsValidUserMask(user, false))
+	{
+		Com_Error(ERR_DROP, "invalid script string shutdown user mask");
+		return;
+	}
 
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 
-	for (uint32_t hash = 1; hash < STRINGLIST_SIZE; ++hash)
+	bool invalidTransition = false;
+	for (uint32_t hash = 1;
+		hash < STRINGLIST_SIZE && !invalidTransition;
+		++hash)
 	{
 		do
 		{
 			if ((scrStringGlob.hashTable[hash].status_next & HASH_STAT_MASK) == 0)
 				break;
 
-			RefString* refStr = GetRefString(scrStringGlob.hashTable[hash].u.prev);
-
-			if (((uint8_t)user & refStr->user) == 0)
+			const uint32_t stringValue = scrStringGlob.hashTable[hash].u.prev;
+			RefString* refStr = GetRefString(stringValue);
+			const uint32_t len = static_cast<uint32_t>(SL_GetRefStringLen(refStr) + 1);
+			const scr_string_atomic::RemoveUserRefResult result =
+				scr_string_atomic::RemoveUserRef(
+					SL_RefStringWord(refStr), userByte);
+			if (result.status == scr_string_atomic::RemoveUserRefStatus::NotPresent)
 				break;
-
-			refStr->data = ((uint8_t)(~(BYTE)user & HIWORD(refStr->data)) << 16) | refStr->data & 0xFF00FFFF;
+			if (result.status == scr_string_atomic::RemoveUserRefStatus::Invalid)
+			{
+				invalidTransition = true;
+				break;
+			}
 
 			scrStringGlob.nextFreeEntry = 0;
-			SL_RemoveRefToString(scrStringGlob.hashTable[hash].u.prev);
+			SL_DebugRemoveRef(stringValue);
+			if (result.reachedZero && !SL_FreeString(stringValue, refStr, len))
+				invalidTransition = true;
 		} while (scrStringGlob.nextFreeEntry);
 	}
 
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (invalidTransition)
+		Com_Error(ERR_DROP, "invalid script string user-reference removal");
 }
 
 int SL_IsLowercaseString(uint32_t stringValue)
@@ -200,25 +259,41 @@ int SL_IsLowercaseString(uint32_t stringValue)
 
 void SL_TransferSystem(uint32_t from, uint32_t to)
 {
-	iassert(from);
-	iassert(to);
+	iassert(SL_IsValidUserMask(from, false));
+	iassert(SL_IsValidUserMask(to, false));
+	const uint8_t fromByte = static_cast<uint8_t>(from);
+	const uint8_t toByte = static_cast<uint8_t>(to);
+	if (!SL_IsValidUserMask(from, false)
+		|| !SL_IsValidUserMask(to, false))
+	{
+		Com_Error(ERR_DROP, "invalid script string transfer user mask");
+		return;
+	}
 
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 
-	for (uint32_t hash = 1; hash < STRINGLIST_SIZE; ++hash)
+	bool invalidTransition = false;
+	for (uint32_t hash = 1;
+		hash < STRINGLIST_SIZE && !invalidTransition;
+		++hash)
 	{
 		if ((scrStringGlob.hashTable[hash].status_next & HASH_STAT_MASK) != 0)
 		{
-			RefString* refStr = GetRefString(scrStringGlob.hashTable[hash].u.prev);
-			if (((uint8_t)from & refStr->user) != 0)
-			{
-				refStr->data = ((uint8_t)(~(BYTE)from & HIWORD(refStr->data)) << 16) | refStr->data & 0xFF00FFFF;
-				refStr->data = ((uint8_t)(to | HIWORD(refStr->data)) << 16) | refStr->data & 0xFF00FFFF;
-			}
+			const uint32_t stringValue = scrStringGlob.hashTable[hash].u.prev;
+			RefString* refStr = GetRefString(stringValue);
+			const scr_string_atomic::TransferUserResult result =
+				scr_string_atomic::TransferUser(
+				SL_RefStringWord(refStr), fromByte, toByte);
+			if (result == scr_string_atomic::TransferUserResult::ReleasedDuplicate)
+				SL_DebugRemoveRef(stringValue);
+			else if (result == scr_string_atomic::TransferUserResult::Invalid)
+				invalidTransition = true;
 		}
 	}
 
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (invalidTransition)
+		Com_Error(ERR_DROP, "invalid script string user transfer");
 }
 
 uint32_t SL_GetString_(const char* str, uint32_t user, int type)
@@ -231,6 +306,13 @@ uint32_t SL_GetStringOfSize(const char* str, uint32_t user, uint32_t len, int ty
 	PROF_SCOPED("SL_GetStringOfSize");
 
 	iassert(str);
+	const uint8_t userByte = static_cast<uint8_t>(user);
+	iassert(SL_IsValidUserMask(user, true));
+	if (!SL_IsValidUserMask(user, true))
+	{
+		Com_Error(ERR_DROP, "script string user mask exceeds 8 bits");
+		return 0;
+	}
 
 	uint32_t hash = GetHashCode(str, len);
 
@@ -252,9 +334,16 @@ uint32_t SL_GetStringOfSize(const char* str, uint32_t user, uint32_t len, int ty
 		refStr = GetRefString(entry->u.prev);
 
 		// Check if this string is already stored, if it matches the string at this particular hash lookup, and return existing entry if so.
-		if (refStr->byteLen == (uint8_t)len && !memcmp(refStr->str, str, len))
+		if (scr_string_atomic::ByteLength(
+				scr_string_atomic::Load(SL_RefStringWord(refStr))) == static_cast<uint8_t>(len)
+			&& !memcmp(refStr->str, str, len))
 		{
-			SL_AddUserInternal(refStr, user);
+			if (!SL_AddUserInternal(refStr, user))
+			{
+				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+				Com_Error(ERR_DROP, "invalid script string reference increment");
+				return 0;
+			}
 
 			iassert((entry->status_next & HASH_STAT_MASK) != HASH_STAT_FREE);
 
@@ -275,7 +364,9 @@ uint32_t SL_GetStringOfSize(const char* str, uint32_t user, uint32_t len, int ty
 
 			refStr = GetRefString(newEntry->u.prev);
 
-			if (refStr->byteLen == (uint8_t)len && !memcmp(refStr->str, str, len))
+			if (scr_string_atomic::ByteLength(
+					scr_string_atomic::Load(SL_RefStringWord(refStr))) == static_cast<uint8_t>(len)
+				&& !memcmp(refStr->str, str, len))
 			{
 				scrStringGlob.hashTable[prev].status_next = (uint16_t)newEntry->status_next | scrStringGlob.hashTable[prev].status_next & HASH_STAT_MASK;
 				newEntry->status_next = (uint16_t)entry->status_next | newEntry->status_next & HASH_STAT_MASK;
@@ -283,7 +374,12 @@ uint32_t SL_GetStringOfSize(const char* str, uint32_t user, uint32_t len, int ty
 				stringValue = newEntry->u.prev;
 				newEntry->u.prev = entry->u.prev;
 				entry->u.prev = stringValue;
-				SL_AddUserInternal(refStr, user);
+				if (!SL_AddUserInternal(refStr, user))
+				{
+					Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+					Com_Error(ERR_DROP, "invalid script string reference increment");
+					return 0;
+				}
 
 				iassert((newEntry->status_next & HASH_STAT_MASK) != HASH_STAT_FREE);
 				iassert((entry->status_next & HASH_STAT_MASK) != HASH_STAT_FREE);
@@ -303,7 +399,9 @@ uint32_t SL_GetStringOfSize(const char* str, uint32_t user, uint32_t len, int ty
 			// KISAKTODO?
 			//Scr_DumpScriptThreads();
 			//Scr_DumpScriptVariablesDefault();
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 			Com_Error(ERR_DROP, "exceeded maximum number of script strings (increase STRINGLIST_SIZE)");
+			return 0;
 		}
 
 		stringValue = MT_AllocIndex(len + 4, type);
@@ -342,7 +440,9 @@ uint32_t SL_GetStringOfSize(const char* str, uint32_t user, uint32_t len, int ty
 				// KISAKTODO?
 				//Scr_DumpScriptThreads();
 				//Scr_DumpScriptVariablesDefault();
+				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 				Com_Error(ERR_DROP, "exceeded maximum number of script strings");
+				return 0;
 			}
 
 			stringValue = MT_AllocIndex(len + 4, type);
@@ -375,16 +475,12 @@ uint32_t SL_GetStringOfSize(const char* str, uint32_t user, uint32_t len, int ty
 
 	refStr = GetRefString(stringValue);
 	memcpy((uint8_t*)refStr->str, (uint8_t*)str, len);
-	refStr->data = ((uint8_t)user << 16) | refStr->data & 0xFF00FFFF;
-	iassert(refStr->user == user);
-	refStr->data = refStr->data & 0xFFFF0000 | 1;
-	refStr->data = (len << 24) | refStr->data & 0xFFFFFF;
-
-	if (scrStringDebugGlob)
-	{
-		InterlockedIncrement(&scrStringDebugGlob->totalRefCount);
-		InterlockedIncrement(&scrStringDebugGlob->refCount[stringValue]);
-	}
+	Sys_AtomicStore(
+		SL_RefStringWord(refStr),
+		scr_string_atomic::Pack(1, userByte, static_cast<uint8_t>(len)));
+	iassert(scr_string_atomic::User(
+		scr_string_atomic::Load(SL_RefStringWord(refStr))) == userByte);
+	SL_DebugAddRef(stringValue);
 
 	iassert((entry->status_next & HASH_STAT_MASK) != HASH_STAT_FREE);
 	iassert(refStr->str == SL_ConvertToString(stringValue));
@@ -396,7 +492,7 @@ uint32_t SL_GetStringOfSize(const char* str, uint32_t user, uint32_t len, int ty
 
 const char* SL_ConvertToString(uint32_t stringValue)
 {
-	iassert((!stringValue || !scrStringDebugGlob || scrStringDebugGlob->refCount[stringValue]));
+	iassert(!stringValue || !scrStringDebugGlob || SL_DebugRefCount(stringValue));
 
 	if (stringValue)
 	{
@@ -450,7 +546,9 @@ static uint32_t FindStringOfSize(const char* str, uint32_t len)
 
 	RefString* refStr = GetRefString(entry->u.prev);
 
-	if (refStr->byteLen != (uint8_t)len || memcmp(refStr->str, str, len))
+	if (scr_string_atomic::ByteLength(
+			scr_string_atomic::Load(SL_RefStringWord(refStr))) != static_cast<uint8_t>(len)
+		|| memcmp(refStr->str, str, len))
 	{
 		uint32_t prev = hash;
 		uint32_t newIndex = (uint16_t)entry->status_next;
@@ -462,7 +560,9 @@ static uint32_t FindStringOfSize(const char* str, uint32_t len)
 			iassert((newEntry->status_next & HASH_STAT_MASK) == HASH_STAT_MOVABLE);
 			refStr = GetRefString(newEntry->u.prev);
 
-			if (refStr->byteLen == (uint8_t)len && !memcmp(refStr->str, str, len))
+			if (scr_string_atomic::ByteLength(
+					scr_string_atomic::Load(SL_RefStringWord(refStr))) == static_cast<uint8_t>(len)
+				&& !memcmp(refStr->str, str, len))
 			{
 				scrStringGlob.hashTable[prev].status_next = (uint16_t)newEntry->status_next | scrStringGlob.hashTable[prev].status_next & HASH_STAT_MASK;
 				newEntry->status_next = (uint16_t)entry->status_next | newEntry->status_next & HASH_STAT_MASK;
@@ -501,31 +601,27 @@ uint32_t SL_FindString(const char* str)
 
 void __cdecl SL_TransferRefToUser(uint32_t stringValue, uint32_t user)
 {
-	volatile LONG Comperand; // [esp+20h] [ebp-28h]
-	RefString *refStr; // [esp+44h] [ebp-4h]
-
 	PROF_SCOPED("SL_TransferRefToUser");
 
-	refStr = GetRefString(stringValue);
-	if ((user & refStr->user) != 0)
+	const uint8_t userByte = static_cast<uint8_t>(user);
+	iassert(SL_IsValidUserMask(user, false));
+	if (!SL_IsValidUserMask(user, false))
 	{
-		iassert(refStr->refCount > 1);
-
-		if (scrStringDebugGlob)
-		{
-			iassert(scrStringDebugGlob->refCount[stringValue]);
-
-			InterlockedDecrement(&scrStringDebugGlob->totalRefCount);
-			InterlockedDecrement(&scrStringDebugGlob->refCount[stringValue]);
-		}
-		InterlockedDecrement(&refStr->data);
+		Com_Error(ERR_DROP, "invalid script string transfer user mask");
+		return;
 	}
-	else
+
+	RefString *const refStr = GetRefString(stringValue);
+	const scr_string_atomic::TransferRefToUserResult result =
+		scr_string_atomic::TransferRefToUser(
+			SL_RefStringWord(refStr), userByte);
+	if (result == scr_string_atomic::TransferRefToUserResult::Invalid)
 	{
-		do
-			Comperand = refStr->data;
-		while (InterlockedCompareExchange(&refStr->data, Comperand | (user << 16), Comperand) != Comperand);
+		Com_Error(ERR_DROP, "invalid script string reference transfer");
+		return;
 	}
+	if (result == scr_string_atomic::TransferRefToUserResult::ReleasedDuplicate)
+		SL_DebugRemoveRef(stringValue);
 }
 
 uint32_t SL_GetStringForVector(const float* v)
@@ -562,7 +658,9 @@ uint32_t SL_GetString(const char* str, uint32_t user)
 
 int SL_GetRefStringLen(RefString* refString)
 {
-	int len = (uint8_t)(refString->byteLen - 1);
+	const uint8_t byteLength = scr_string_atomic::ByteLength(
+		scr_string_atomic::Load(SL_RefStringWord(refString)));
+	int len = static_cast<uint8_t>(byteLength - 1);
 
 	while (refString->str[len])
 		len += 256;
@@ -618,7 +716,7 @@ void SL_RemoveRefToString(uint32_t stringValue)
 	SL_RemoveRefToStringOfSize(stringValue, len);
 }
 
-static void SL_FreeString(uint32_t stringValue, RefString* refStr, uint32_t len)
+static bool SL_FreeString(uint32_t stringValue, RefString* refStr, uint32_t len)
 {
 	PROF_SCOPED("SL_FreeString");
 
@@ -626,16 +724,23 @@ static void SL_FreeString(uint32_t stringValue, RefString* refStr, uint32_t len)
 
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 
-	if (refStr->refCount)
+	const uint32_t packed = scr_string_atomic::Load(SL_RefStringWord(refStr));
+	if (scr_string_atomic::RefCount(packed) != 0)
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
-		return;
+		return true;
 	}
 	else
 	{
 		HashEntry *entry = &scrStringGlob.hashTable[index];
 
-		iassert(!refStr->user);
+		const uint8_t user = scr_string_atomic::User(packed);
+		iassert(user == 0);
+		if (user != 0)
+		{
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return false;
+		}
 
 		MT_FreeIndex(stringValue, len + 4);
 
@@ -685,6 +790,7 @@ static void SL_FreeString(uint32_t stringValue, RefString* refStr, uint32_t len)
 		scrStringGlob.hashTable[newNext].u.prev = newIndex;
 		scrStringGlob.hashTable[0].status_next = newIndex;
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return true;
 	}
 }
 
@@ -697,7 +803,9 @@ const char* __cdecl SL_DebugConvertToString(uint32_t stringValue)
 	if (!stringValue)
 		return "<NULL>";
 	refString = GetRefString(stringValue);
-	len = (uint8_t)(HIBYTE(refString->data) - 1);
+	const uint8_t byteLength = scr_string_atomic::ByteLength(
+		scr_string_atomic::Load(SL_RefStringWord(refString)));
+	len = static_cast<uint8_t>(byteLength - 1);
 	if (refString->str[len])
 		return "<BINARY>";
 	for (i = 0; i < len; ++i)
@@ -740,39 +848,38 @@ void SL_RemoveRefToStringOfSize(uint32_t stringValue, uint32_t len)
 	PROF_SCOPED("SL_RemoveRefToStringOfSize");
 
 	RefString* refStr = GetRefString(stringValue);
-
-	if (InterlockedDecrement(&refStr->data) << 16) // refcount
+	const scr_string_atomic::RemoveRefAttempt attempt =
+		scr_string_atomic::TryRemoveRefUnlessLast(SL_RefStringWord(refStr));
+	if (attempt == scr_string_atomic::RemoveRefAttempt::Removed)
 	{
-		if (scrStringDebugGlob)
-		{
-			// An assert here means that it tried to free a string handle that didn't have ref's. (add `SL_ConvertToString(stringValue)` to watch tab)
-			// generally means there is a bug ("+attack" in vehicle nodes, that's odd!!)
-			iassert(scrStringDebugGlob->totalRefCount && scrStringDebugGlob->refCount[stringValue]);
-			iassert(scrStringDebugGlob->refCount[stringValue]);
-
-			if (scrStringDebugGlob->refCount[stringValue])
-			{
-				InterlockedDecrement(&scrStringDebugGlob->totalRefCount);
-				InterlockedDecrement(&scrStringDebugGlob->refCount[stringValue]);
-			}
-		}
+		SL_DebugRemoveRef(stringValue);
+		return;
 	}
-	else
+	if (attempt == scr_string_atomic::RemoveRefAttempt::Invalid)
 	{
-		SL_FreeString(stringValue, refStr, len);
-		if (scrStringDebugGlob)
-		{
-			// see above ^^
-			iassert(scrStringDebugGlob->totalRefCount && scrStringDebugGlob->refCount[stringValue]);
-			iassert(scrStringDebugGlob->refCount[stringValue]);
-
-			if (scrStringDebugGlob->refCount[stringValue])
-			{
-				InterlockedDecrement(&scrStringDebugGlob->totalRefCount);
-				InterlockedDecrement(&scrStringDebugGlob->refCount[stringValue]);
-			}
-		}
+		iassert(attempt != scr_string_atomic::RemoveRefAttempt::Invalid);
+		return;
 	}
+
+	// Serialize the last decrement with hash lookup/unlink. Once zero is
+	// published, interning cannot observe the entry until it has been removed.
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	const scr_string_atomic::RemoveRefResult result =
+		scr_string_atomic::TryRemoveRef(SL_RefStringWord(refStr));
+	if (!result.success)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		iassert(result.success);
+		return;
+	}
+
+	// Account the old owner before a zero transition can return the memory-tree
+	// slot to the allocator and let a new string reuse the same debug index.
+	SL_DebugRemoveRef(stringValue);
+	const bool validFree =
+		!result.reachedZero || SL_FreeString(stringValue, refStr, len);
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	iassert(validFree);
 }
 
 void __cdecl SL_AddUser(uint32_t stringValue, uint32_t user)
@@ -780,7 +887,8 @@ void __cdecl SL_AddUser(uint32_t stringValue, uint32_t user)
 	RefString *RefString; // eax
 
 	RefString = GetRefString(stringValue);
-	SL_AddUserInternal(RefString, user);
+	if (!SL_AddUserInternal(RefString, user))
+		Com_Error(ERR_DROP, "invalid script string reference increment");
 }
 
 void __cdecl Scr_SetString(uint16_t *to, uint32_t from)
@@ -871,7 +979,9 @@ void Scr_SetStringFromCharString(uint16_t *to, const char *from)
 
 uint32_t SL_GetUser(uint32_t stringValue)
 {
-	return GetRefString(stringValue)->user;
+	RefString *const refString = GetRefString(stringValue);
+	return scr_string_atomic::User(
+		scr_string_atomic::Load(SL_RefStringWord(refString)));
 }
 
 const char *SL_ConvertToStringSafe(uint32_t stringValue)
@@ -881,7 +991,7 @@ const char *SL_ConvertToStringSafe(uint32_t stringValue)
 
 	if (scrStringDebugGlob)
 	{
-		iassert((!stringValue || !scrStringDebugGlob || scrStringDebugGlob->refCount[stringValue]));
+		iassert(!stringValue || SL_DebugRefCount(stringValue));
 	}
 
 	return GetRefString(stringValue)->str;

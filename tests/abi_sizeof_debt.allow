@@ -189,8 +189,6 @@ script/scr_debugger.h|static_assert:sizeof(scr_localVar_t)==0x8|1
 script/scr_debugger.h|static_assert:sizeof(sval_u)==0x4|1
 script/scr_evaluate.h|static_assert:sizeof(ArchivedCanonicalStringInfo)==0x8|1
 script/scr_evaluate.h|static_assert:sizeof(scrEvaluateGlob_t)==0x10|1
-script/scr_main.h|static_assert:sizeof(PrecacheEntry)==0x8|1
-script/scr_main.h|static_assert:sizeof(scrVarPub_t)==0x2007C|1
 script/scr_memorytree.h|static_assert:sizeof(MemoryNode)==12|1
 script/scr_memorytree.h|static_assert:sizeof(scrMemTreeGlob_t)==0xC0380|1
 script/scr_parser.h|static_assert:sizeof(OpcodeLookup)==0x18|1

@@ -715,9 +715,9 @@ return the *old*; `CompareExchange` keeps Win32 `(dest,exchange,comparand)` orde
 as well as GCC/Clang, including high-bit/wrap and pointer exchange cases. Non-MSVC `Interlocked*`
 aliases remain only as a temporary source-migration aid; Windows-owned names are never redefined on
 MSVC. The shared fast-lock implementation is the first layout-bound consumer and no longer contains
-a Windows include or native cast. Corrected live census: **175** direct `Interlocked` calls remain
-across 28 engine TUs (the original 209 double-counted 12 assertion-message literals, and subsequent
-thread/dvar/fast-lock migrations removed 22 real calls). *M1 open tail:* migrate those remaining
+a Windows include or native cast. Corrected live census after the script migration: **151** direct
+`Interlocked` calls remain across 26 engine TUs (the original 209 double-counted 12 assertion-message
+literals, and subsequent thread/dvar/fast-lock/script migrations removed 46 real calls). *M1 open tail:* migrate those remaining
 families and retype their `volatile long`/`LONG` storage and casts to exact-width words; then delete
 the compatibility aliases. The bare `sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now
 and burned down in M4.
@@ -769,6 +769,25 @@ network sleep wrapper. Two private seq-cst boolean atomics now provide sorter ow
 array publication across concurrent read-lock holders, while the write lock invalidates publication
 when a dvar is registered. Regression guards forbid raw access and require sort-before-publish-before-
 release ordering.
+
+The next fixed-width batch moved all 24 script string/vector Interlocked sites behind that boundary.
+`RefString` is now one explicit aligned `uint32_t` packed word rather than an atomically modified union
+aliased through non-atomic bitfields. A standalone CAS protocol combines user-bit claims with their
+reference increment, retries reference-to-user transfers from the observed word, rejects 16-bit
+underflow/overflow, preserves the encoded length, and gives exactly one remover the zero transition.
+The generic last decrement is reserved for the hash-lock owner, so lookup cannot observe a linked
+zero-count entry; shutdown clears a user and its owned reference in one CAS. Moving an owner onto an
+already-present destination consumes the duplicate packed/debug reference instead of leaking it.
+This fixes the prior same-user double increment, transfer leaks, lost user-bit RMW, post-free debug
+counter race, and error paths that could unwind while retaining the recursive string lock.
+Thirty-two-way claim/remove contention, same/disjoint user removal, transfer races, bit preservation,
+and invalid bounds run under the five native utility targets and local TSan. Leak initialization now
+clears the whole debug state (including `ignoreLeaks`), and vector debug indexing uses the memory-tree
+stride with bounds/alignment validation. `RefVector` now spells its 16/8/8-bit header fields explicitly;
+its local
+16-bit lifetime remains serialized by the script VM, while only global/debug counters are atomic.
+`scrVarPub_t` now freezes the vector counter at its distinct 32/64-bit runtime offsets instead of
+asserting the 32-bit total size on every architecture.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),

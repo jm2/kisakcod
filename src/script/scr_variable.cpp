@@ -7,12 +7,14 @@
 #include "scr_compiler.h"
 
 #include <qcommon/qcommon.h>
-#include <Windows.h>
 #include <universal/com_files.h>
+#include <universal/sys_atomic.h>
 #include "scr_parser.h"
 #include <database/database.h>
 #include <universal/q_parse.h>
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 
 #undef GetObject
 #undef FindObject
@@ -88,7 +90,7 @@ void Scr_InitVariables()
 	memset(scrVarDebugPub->leakCount, 0, sizeof(scrVarDebugPub->leakCount));
 
 	scrVarPub.totalObjectRefCount = 0;
-	scrVarPub.totalVectorRefCount = 0;
+	Sys_AtomicStore(&scrVarPub.totalVectorRefCount, 0u);
 
 	if (scrVarDebugPub)
 		memset(scrVarDebugPub->extRefCount, 0, sizeof(scrVarDebugPub->extRefCount));
@@ -474,35 +476,99 @@ float const* Scr_AllocVector(float const* v)
 	return result;
 }
 
+static bool Scr_GetVectorDebugIndex(
+	const RefVector *refVector,
+	uint32_t *index)
+{
+	const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(refVector);
+	const std::uintptr_t base =
+		reinterpret_cast<std::uintptr_t>(scrMemTreePub.mt_buffer);
+	const std::uintptr_t nodeSize = static_cast<std::uintptr_t>(MT_NODE_SIZE);
+	if (address < base)
+	{
+		iassert(address >= base);
+		return false;
+	}
+
+	const std::uintptr_t offset = address - base;
+	if (offset % nodeSize != 0 || offset / nodeSize >= SL_MAX_STRING_INDEX)
+	{
+		iassert(offset % nodeSize == 0
+			&& offset / nodeSize < SL_MAX_STRING_INDEX);
+		return false;
+	}
+	*index = static_cast<uint32_t>(offset / nodeSize);
+	return true;
+}
+
 void  AddRefToVector(float const* vectorValue)
 {
-	if (!*((_BYTE*)vectorValue - 1))
+	RefVector *const refVector = reinterpret_cast<RefVector *>(
+		const_cast<char *>(reinterpret_cast<const char *>(vectorValue)
+			- offsetof(RefVector, vec)));
+	if (!refVector->byteLen)
 	{
-		InterlockedIncrement(&scrVarPub.totalVectorRefCount);
+		iassert(refVector->refCount < (std::numeric_limits<uint16_t>::max)());
+		if (refVector->refCount >= (std::numeric_limits<uint16_t>::max)())
+		{
+			Com_Error(ERR_DROP, "script vector reference count overflow");
+			return;
+		}
 		if (scrStringDebugGlob)
 		{
-			iassert(scrStringDebugGlob->refCount[((char*)vectorValue - 4 - scrMemTreePub.mt_buffer) / MT_NODE_SIZE] >= 0);
-			InterlockedIncrement(&scrStringDebugGlob->refCount[((char*)(vectorValue - 1) - scrMemTreePub.mt_buffer) / 12]);
+			uint32_t index;
+			if (!Scr_GetVectorDebugIndex(refVector, &index))
+			{
+				Com_Error(ERR_DROP, "invalid script vector allocation index");
+				return;
+			}
+			Sys_AtomicIncrement(&scrStringDebugGlob->refCount[index]);
 		}
-		((unsigned short*)vectorValue)[-2]++;
-		iassert(((unsigned short*)vectorValue)[-2]);
+		Sys_AtomicIncrement(&scrVarPub.totalVectorRefCount);
+		++refVector->refCount;
+		iassert(refVector->refCount);
 	}
 }
 
 void  RemoveRefToVector(float const* vectorValue)
 {
-	if (!*((_BYTE*)vectorValue - 1))
+	RefVector *const refVector = reinterpret_cast<RefVector *>(
+		const_cast<char *>(reinterpret_cast<const char *>(vectorValue)
+			- offsetof(RefVector, vec)));
+	if (!refVector->byteLen)
 	{
-		InterlockedDecrement(&scrVarPub.totalVectorRefCount);
+		uint32_t debugIndex = 0;
+		if (scrStringDebugGlob
+			&& !Scr_GetVectorDebugIndex(refVector, &debugIndex))
+		{
+			Com_Error(ERR_DROP, "invalid script vector allocation index");
+			return;
+		}
+
+		uint32_t debugRefCount = 1;
 		if (scrStringDebugGlob)
 		{
-			iassert(scrStringDebugGlob->refCount[((char*)vectorValue - 4 - scrMemTreePub.mt_buffer) / MT_NODE_SIZE] >= 0);
-			InterlockedDecrement(&scrStringDebugGlob->refCount[((char*)(vectorValue - 1) - scrMemTreePub.mt_buffer) / 12]);
+			debugRefCount =
+				Sys_AtomicLoad(&scrStringDebugGlob->refCount[debugIndex]);
+			iassert(debugRefCount);
+			if (!debugRefCount)
+				return;
 		}
-		if (*((_WORD*)vectorValue - 2))
-			--*((_WORD*)vectorValue - 2);
+
+		const uint32_t totalVectorRefCount =
+			Sys_AtomicLoad(&scrVarPub.totalVectorRefCount);
+		iassert(totalVectorRefCount);
+		if (!totalVectorRefCount)
+			return;
+		Sys_AtomicDecrement(&scrVarPub.totalVectorRefCount);
+		if (scrStringDebugGlob)
+			Sys_AtomicDecrement(&scrStringDebugGlob->refCount[debugIndex]);
+		if (refVector->refCount)
+			--refVector->refCount;
 		else
-			MT_Free((_BYTE*)vectorValue - 4, 16);
+			MT_Free(
+				reinterpret_cast<unsigned char *>(refVector),
+				static_cast<int>(sizeof(*refVector)));
 	}
 }
 
@@ -1787,7 +1853,8 @@ void  Scr_CastDebugString(VariableValue* value)
 		return;
 	case VAR_ANIMATION:
 		intValue = value->u.intValue;
-		Anims = Scr_GetAnims(HIWORD(value->u.intValue));
+		Anims = Scr_GetAnims(
+			static_cast<uint16_t>(static_cast<uint32_t>(value->u.intValue) >> 16));
 		s = XAnimGetAnimDebugName(Anims, intValue);
 		v2 = SL_GetString_(s, 0, 15);
 		goto LABEL_7;
@@ -2636,11 +2703,11 @@ void  Scr_EvalBoolNot(VariableValue* value)
 
 void  Scr_EvalEquality(VariableValue* value1, VariableValue* value2)
 {
-	BOOL v2; // [esp+0h] [ebp-18h]
+	int32_t v2; // [esp+0h] [ebp-18h]
 	float v3; // [esp+8h] [ebp-10h]
 	float v4; // [esp+10h] [ebp-8h]
-	BOOL tempInt; // [esp+14h] [ebp-4h]
-	BOOL tempInta; // [esp+14h] [ebp-4h]
+	int32_t tempInt; // [esp+14h] [ebp-4h]
+	int32_t tempInta; // [esp+14h] [ebp-4h]
 
 	Scr_CastWeakerPair(value1, value2);
 	iassert(value1->type == value2->type);
@@ -3232,7 +3299,7 @@ void  Scr_CheckLeaks(void)
 		Scr_CheckLeakRange(1u, 0x8001u);
 		Scr_CheckLeakRange(VARIABLELIST_CHILD_BEGIN, 0x18000u);
 		iassert(!scrVarPub.totalObjectRefCount);
-		iassert(!scrVarPub.totalVectorRefCount);
+		iassert(!Sys_AtomicLoad(&scrVarPub.totalVectorRefCount));
 		iassert(!scrVarPub.ext_threadcount);
 	}
 	if (scrVarDebugPub)
@@ -3468,11 +3535,25 @@ float* Scr_AllocVector(void)
 	
 	vec = (RefVector *)MT_Alloc(sizeof(RefVector), 2);
 	result = &vec->vec[0];
-	vec->head = 0;
+	vec->refCount = 0;
+	vec->user = 0;
+	vec->byteLen = 0;
 
-	InterlockedIncrement(&scrVarPub.totalVectorRefCount);
+	uint32_t debugIndex = 0;
 	if (scrStringDebugGlob)
-		InterlockedIncrement(&scrStringDebugGlob->refCount[((char*)(result - 1) - scrMemTreePub.mt_buffer) / 12]);
+	{
+		const bool validIndex = Scr_GetVectorDebugIndex(vec, &debugIndex);
+		iassert(validIndex);
+		if (!validIndex)
+		{
+			Com_Error(ERR_DROP, "invalid script vector allocation index");
+			return result;
+		}
+	}
+
+	Sys_AtomicIncrement(&scrVarPub.totalVectorRefCount);
+	if (scrStringDebugGlob)
+		Sys_AtomicIncrement(&scrStringDebugGlob->refCount[debugIndex]);
 
 	return result;
 }

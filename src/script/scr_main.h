@@ -1,5 +1,6 @@
 #pragma once
 
+#include <universal/kisak_abi.h>
 #include <universal/q_shared.h>
 
 #include <universal/com_memory.h>
@@ -32,7 +33,7 @@ static const char *var_typename[] =
     "removed thread",
 };
 
-struct scrVarPub_t // sizeof=0x2007C
+struct scrVarPub_t // ILP32 sizeof=0x2007C
 {
     char* fieldBuffer;
     uint16_t canonicalStrCount;
@@ -71,7 +72,8 @@ struct scrVarPub_t // sizeof=0x2007C
     int totalObjectRefCount;
     volatile uint32_t totalVectorRefCount;
 };
-static_assert(sizeof(scrVarPub_t) == 0x2007C);
+RUNTIME_SIZE(scrVarPub_t, 0x2007C, 0x200A0);
+RUNTIME_OFFSET(scrVarPub_t, totalVectorRefCount, 0x20078, 0x20098);
 
 struct PrecacheEntry // sizeof=0x8
 {                                       // ...
@@ -80,7 +82,7 @@ struct PrecacheEntry // sizeof=0x8
     // padding byte
     uint32_t sourcePos;
 };
-static_assert(sizeof(PrecacheEntry) == 0x8);
+RUNTIME_SIZE(PrecacheEntry, 0x8, 0x8);
 
 extern scrVarPub_t scrVarPub;
 extern scrVarDebugPub_t scrVarDebugPubBuf;

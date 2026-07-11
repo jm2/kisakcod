@@ -36,6 +36,19 @@ function(require_source_ordered RELATIVE_PATH FIRST SECOND DESCRIPTION)
     endif()
 endfunction()
 
+function(require_all_occurrences_wrapped RELATIVE_PATH OCCURRENCE_PATTERN WRAPPED_PATTERN DESCRIPTION)
+    file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
+    string(REGEX MATCHALL "${OCCURRENCE_PATTERN}" _all_occurrences "${_source}")
+    string(REGEX MATCHALL "${WRAPPED_PATTERN}" _wrapped_occurrences "${_source}")
+    list(LENGTH _all_occurrences _all_count)
+    list(LENGTH _wrapped_occurrences _wrapped_count)
+    if (_all_count EQUAL 0 OR NOT _all_count EQUAL _wrapped_count)
+        message(FATAL_ERROR
+            "Unwrapped security-sensitive access (${DESCRIPTION}) in src/${RELATIVE_PATH}: "
+            "${_wrapped_count}/${_all_count} occurrences use the required boundary")
+    endif()
+endfunction()
+
 file(GLOB_RECURSE _callback_sources "${SOURCE_ROOT}/src/*.cpp")
 foreach(_callback_source IN LISTS _callback_sources)
     file(READ "${_callback_source}" _callback_text)
@@ -2129,6 +2142,267 @@ require_source_contains(
     "universal/sys_atomic.h"
     "std::is_same_v<Word, std::int32_t>"
     "the atomic boundary must reject LP64 long storage")
+
+foreach(_script_atomic_source
+    "script/scr_stringlist.cpp"
+    "script/scr_variable.cpp"
+    "script/scr_string_atomic.h"
+)
+    foreach(_native_script_atomic_token
+        "win32/win_local.h"
+        "Interlocked"
+    )
+        require_source_not_contains(
+            "${_script_atomic_source}"
+            "${_native_script_atomic_token}"
+            "script lifetime accounting must not depend on Windows atomics or bit macros")
+    endforeach()
+    require_source_not_matches(
+        "${_script_atomic_source}"
+        "#[ \t]*include[ \t]*[<\"]([Ww][Ii][Nn][Dd][Oo][Ww][Ss]\\.[Hh]|win32/win_local\\.h)[>\"]"
+        "script lifetime accounting must not import Windows headers")
+    require_source_not_matches(
+        "${_script_atomic_source}"
+        "HI(WORD|BYTE)[ \t\r\n]*\\("
+        "script lifetime accounting must not use Windows bit macros")
+    foreach(_native_script_atomic_type "LONG" "BOOL" "BYTE")
+        require_source_not_matches(
+            "${_script_atomic_source}"
+            "(^|[^A-Za-z0-9_])${_native_script_atomic_type}([^A-Za-z0-9_]|$)"
+            "script lifetime accounting must use fixed-width types")
+    endforeach()
+endforeach()
+
+require_source_contains(
+    "script/scr_string_atomic.h"
+    "inline constexpr std::uint32_t kRefCountMask = UINT32_C(0x0000ffff);"
+    "the packed string reference mask must remain explicit")
+require_source_contains(
+    "script/scr_string_atomic.h"
+    "inline constexpr std::uint32_t kUserMask = UINT32_C(0x00ff0000);"
+    "the packed string user mask must remain explicit")
+require_source_contains(
+    "script/scr_string_atomic.h"
+    "inline constexpr std::uint32_t kByteLengthMask = UINT32_C(0xff000000);"
+    "the packed string byte-length mask must remain explicit")
+require_source_contains(
+    "script/scr_string_atomic.h"
+    "Sys_AtomicCompareExchange(value, desired, observed);"
+    "packed string transitions must retry through the canonical atomic CAS")
+require_source_contains(
+    "script/scr_string_atomic.h"
+    "if (refCount == 0 || refCount == kMaxRefCount)"
+    "packed string additions must reject underflowed and overflowing lifetimes")
+require_source_contains(
+    "script/scr_string_atomic.h"
+    "user != 0 && (User(observed) & user) != 0"
+    "same-user claims must be decided from the CAS snapshot")
+require_source_contains(
+    "script/scr_string_atomic.h"
+    "alreadyPresent && refCount == 1"
+    "duplicate user transfers must not consume their last reference")
+require_source_contains(
+    "script/scr_string_atomic.h"
+    "inline RemoveUserRefResult RemoveUserRef("
+    "user-bit removal and its owned reference decrement must share one CAS")
+require_source_contains(
+    "script/scr_string_atomic.h"
+    "inline RemoveRefAttempt TryRemoveRefUnlessLast("
+    "the unlocked removal path must reserve zero publication for the hash-lock owner")
+require_source_contains(
+    "script/scr_string_atomic.h"
+    "if (refCount == 1 && User(observed) != 0)"
+    "generic removal must not consume the final user-owned reference")
+require_source_contains(
+    "script/scr_string_atomic.h"
+    "enum class TransferUserResult : std::uint8_t"
+    "user transfers must report duplicate-owner reference merges")
+require_source_not_contains(
+    "script/scr_string_atomic.h"
+    "*value"
+    "the packed helper must not dereference shared words outside Sys_Atomic")
+require_source_not_contains(
+    "script/scr_string_atomic.h"
+    "value["
+    "the packed helper must not index shared words outside Sys_Atomic")
+
+require_source_contains(
+    "script/scr_stringlist.h"
+    "volatile uint32_t data;"
+    "RefString must retain one aligned fixed-width packed word")
+require_source_not_matches(
+    "script/scr_stringlist.h"
+    "refCount[ \t\r\n]*:[ \t\r\n]*16"
+    "RefString readers must not alias its atomic word through bitfields")
+require_source_contains(
+    "script/scr_stringlist.h"
+    "RUNTIME_OFFSET(RefString, data, 0, 0);"
+    "the packed string word offset must remain frozen")
+require_source_contains(
+    "script/scr_stringlist.h"
+    "RUNTIME_OFFSET(RefString, str, 4, 4);"
+    "the script string payload offset must remain frozen")
+require_source_contains(
+    "script/scr_stringlist.h"
+    "return &refString->data;"
+    "the validated RefString word accessor must remain the sole lexical member owner")
+require_source_contains(
+    "script/scr_stringlist.h"
+    "uint16_t refCount;"
+    "serialized RefVector lifetime state must have an explicit fixed width")
+require_source_contains(
+    "script/scr_stringlist.h"
+    "RUNTIME_SIZE(RefVector, 0x10, 0x10);"
+    "the serialized vector header size must remain frozen")
+foreach(_ref_vector_layout
+    "RUNTIME_OFFSET(RefVector, refCount, 0, 0);"
+    "RUNTIME_OFFSET(RefVector, user, 2, 2);"
+    "RUNTIME_OFFSET(RefVector, byteLen, 3, 3);"
+    "RUNTIME_OFFSET(RefVector, vec, 4, 4);"
+)
+    require_source_contains(
+        "script/scr_stringlist.h"
+        "${_ref_vector_layout}"
+        "every serialized vector header field offset must remain frozen")
+endforeach()
+require_source_contains(
+    "script/scr_stringlist.h"
+    "RUNTIME_SIZE(scrStringDebugGlob_t, 0x40008, 0x40008);"
+    "the script string debug layout must remain frozen")
+require_source_contains(
+    "script/scr_stringlist.h"
+    "RUNTIME_OFFSET(scrStringDebugGlob_t, totalRefCount, 0x40000, 0x40000);"
+    "the string debug aggregate counter offset must remain frozen")
+require_source_contains(
+    "script/scr_stringlist.h"
+    "RUNTIME_OFFSET(scrStringDebugGlob_t, ignoreLeaks, 0x40004, 0x40004);"
+    "the string debug leak-policy offset must remain frozen")
+require_source_contains(
+    "script/scr_main.h"
+    "RUNTIME_SIZE(scrVarPub_t, 0x2007C, 0x200A0);"
+    "the script public runtime layout must remain frozen on both pointer widths")
+require_source_contains(
+    "script/scr_main.h"
+    "RUNTIME_OFFSET(scrVarPub_t, totalVectorRefCount, 0x20078, 0x20098);"
+    "the vector reference counter offset must be frozen on 32- and 64-bit runtimes")
+require_source_contains(
+    "script/scr_main.h"
+    "RUNTIME_SIZE(PrecacheEntry, 0x8, 0x8);"
+    "the script precache record must retain its width-independent layout")
+
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "scr_string_atomic::AddUserRef(SL_RefStringWord(refStr), userByte);"
+    "user claims and their reference increment must be one packed transition")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "scr_string_atomic::TransferRefToUser(
+			SL_RefStringWord(refStr), userByte);"
+    "reference-to-user transfer races must be resolved by one packed transition")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "scr_string_atomic::RemoveUserRef(
+					SL_RefStringWord(refStr), userByte);"
+    "system shutdown must clear a user and its reference in one packed transition")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "result == scr_string_atomic::TransferUserResult::ReleasedDuplicate)
+				SL_DebugRemoveRef(stringValue);"
+    "merging an existing destination user must remove its duplicate debug reference")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "Com_Memset(&scrStringDebugGlobBuf, 0, sizeof(scrStringDebugGlobBuf));"
+    "debug leak initialization must reset counters and ignoreLeaks together")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "return user ? (user & (user - 1)) == 0 : allowZero;"
+    "each nonzero script-string user bit must own exactly one reference")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			Com_Error(ERR_DROP, \"exceeded maximum number of script strings (increase STRINGLIST_SIZE)\");
+			return 0;"
+    "primary string-table exhaustion must release the hash lock before dropping")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+				Com_Error(ERR_DROP, \"exceeded maximum number of script strings\");
+				return 0;"
+    "relocated string-table exhaustion must release the hash lock before dropping")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "// Account the old owner before a zero transition can return the memory-tree
+	// slot to the allocator and let a new string reuse the same debug index.
+	SL_DebugRemoveRef(stringValue);
+	const bool validFree =
+		!result.reachedZero || SL_FreeString(stringValue, refStr, len);"
+    "old debug ownership must be removed before a zero-reference slot can be reused")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "// Serialize the last decrement with hash lookup/unlink. Once zero is
+	// published, interning cannot observe the entry until it has been removed.
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "the final string reference must be published while owning the hash lock")
+require_source_not_matches(
+    "script/scr_stringlist.cpp"
+    "(refStr|refString)[ \t\r\n]*->[ \t\r\n]*(refCount|user|byteLen)"
+    "packed RefString fields must be decoded from one atomic snapshot")
+require_source_not_contains(
+    "script/scr_stringlist.cpp"
+    "->data"
+    "scr_stringlist.cpp must access RefString packed words only through SL_RefStringWord")
+
+require_all_occurrences_wrapped(
+    "script/scr_stringlist.cpp"
+    "scrStringDebugGlob[ \t\r\n]*->[ \t\r\n]*refCount"
+    "Sys_Atomic(Load|Increment|Decrement)[ \t\r\n]*\\([ \t\r\n]*&scrStringDebugGlob[ \t\r\n]*->[ \t\r\n]*refCount[ \t\r\n]*\\[[^]]+\\]"
+    "string debug reference counters must use canonical atomic operations")
+require_all_occurrences_wrapped(
+    "script/scr_stringlist.cpp"
+    "scrStringDebugGlob[ \t\r\n]*->[ \t\r\n]*totalRefCount"
+    "Sys_Atomic(Load|Increment|Decrement)[ \t\r\n]*\\([ \t\r\n]*&scrStringDebugGlob[ \t\r\n]*->[ \t\r\n]*totalRefCount"
+    "the aggregate string debug count must use canonical atomic operations")
+require_all_occurrences_wrapped(
+    "script/scr_variable.cpp"
+    "scrStringDebugGlob[ \t\r\n]*->[ \t\r\n]*refCount"
+    "Sys_Atomic(Load|Increment|Decrement)[ \t\r\n]*\\([ \t\r\n]*&scrStringDebugGlob[ \t\r\n]*->[ \t\r\n]*refCount[ \t\r\n]*\\[[^]]+\\]"
+    "vector debug reference counters must use canonical atomic operations")
+require_all_occurrences_wrapped(
+    "script/scr_variable.cpp"
+    "scrVarPub[ \t\r\n]*\\.[ \t\r\n]*totalVectorRefCount"
+    "Sys_Atomic(Load|Store|Increment|Decrement)[ \t\r\n]*\\([ \t\r\n]*&scrVarPub[ \t\r\n]*\\.[ \t\r\n]*totalVectorRefCount"
+    "the global vector lifetime count must use canonical atomic operations")
+require_source_contains(
+    "script/scr_variable.cpp"
+    "refVector->refCount < (std::numeric_limits<uint16_t>::max)()"
+    "serialized vector reference increments must reject 16-bit overflow")
+require_source_contains(
+    "script/scr_variable.cpp"
+    "offset % nodeSize != 0 || offset / nodeSize >= SL_MAX_STRING_INDEX"
+    "vector debug accounting must validate its memory-tree index")
+foreach(_legacy_vector_header_access
+    "_BYTE*)vectorValue"
+    "_WORD*)vectorValue"
+    "vectorValue - 1"
+)
+    require_source_not_contains(
+        "script/scr_variable.cpp"
+        "${_legacy_vector_header_access}"
+        "RefVector headers must not use untyped pointer arithmetic")
+endforeach()
+require_source_contains(
+    "script/scr_variable.cpp"
+    "Sys_AtomicStore(&scrVarPub.totalVectorRefCount, 0u);"
+    "vector lifetime initialization must use the canonical atomic store")
+require_source_contains(
+    "script/scr_variable.cpp"
+    "Sys_AtomicDecrement(&scrVarPub.totalVectorRefCount);"
+    "vector lifetime release must use the canonical atomic decrement")
+require_source_contains(
+    "script/scr_variable.cpp"
+    "Sys_AtomicIncrement(&scrStringDebugGlob->refCount[debugIndex]);"
+    "vector allocation debug accounting must use the canonical atomic increment")
+
 foreach(_native_dvar_sort_token
     "Windows.h"
     "windows.h"

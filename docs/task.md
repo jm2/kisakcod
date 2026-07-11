@@ -8,10 +8,21 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: migrate script and XAnim/DObj lifetime/lock state onto the canonical fixed-width
-  atomic boundary in separate subsystem batches, then continue database progress/I/O state and
+- Active work: migrate XAnim/DObj lifetime/lock state onto the canonical fixed-width atomic boundary,
+  then continue database progress/I/O state and
   extract the next POSIX filesystem/virtual-memory/process service without relaxing the engine gate.
-- Current atomic-boundary batch: `sys_atomic.h` now provides collision-free, fixed-width
+- Last completed batch: script string and vector lifetime accounting no longer imports Windows
+  atomics or types. A tested packed-word CAS helper makes same-user claims, duplicate transfers,
+  reference changes, and user-bit moves indivisible while preserving the encoded length; it rejects
+  underflow/overflow and assigns exactly one owner to the zero transition. The last generic decrement
+  is published while holding the hash lock, shutdown clears a user with its owned reference in one
+  CAS, and transfers collapse an already-owned destination instead of leaking a reference. Debug
+  accounting completes before a freed string slot can be recycled, error paths release the recursive
+  lock before dropping, leak initialization resets `ignoreLeaks`,
+  vector debug indices are validated, and exact 32/64-bit runtime layouts replace two raw size
+  assertions. The vector object's 16-bit reference field remains explicitly script-VM serialized;
+  only its global/debug accounting is atomic. The direct Interlocked census is now 151 calls in 26 TUs.
+- Previous atomic-boundary batch: `sys_atomic.h` now provides collision-free, fixed-width
   `Sys_Atomic*` operations on every compiler. MSVC uses `<intrin.h>` without importing `Windows.h`,
   with the sole `int32_t`/`uint32_t` to native `long` cast and bit-preserving conversion centralized;
   GCC/Clang use seq-cst `__atomic` operations. All native utility runners now execute return-order,
@@ -84,7 +95,7 @@ work item changes. Do not create session-specific handoff files.
   the legacy dedicated smoke. The smoke now requires the requested map in the status response, and
   its self-hosted jobs run only from `master` and check out the immutable dispatched SHA. Twenty-one
   client/media includes remain.
-- Portable validation: 16/16 tests pass locally under GCC, Clang, and GCC ASan/UBSan, with leak
+- Portable validation: 17/17 tests pass locally under GCC, Clang, and GCC ASan/UBSan, with leak
   detection disabled because LeakSanitizer cannot run under the command-runner ptrace environment.
   The integrated platform-service runtime also passes under GCC ThreadSanitizer.
   The production relocation registry is also strict-warning clean under GCC/Clang and GCC ILP32
@@ -126,7 +137,8 @@ work item changes. Do not create session-specific handoff files.
   destroy coverage on every native utility target while preserving all four Windows x86 links.
   Worker-gate run 29135580627, renderer-consumer run 29135757396, and scheduling-policy run
   29135831489 each passed all nine jobs in sequence. High-level opaque-thread run 29136380656 and
-  dvar-atomic run 29136530880 then each passed all nine jobs as well.
+  dvar-atomic run 29136530880 then each passed all nine jobs as well. Fixed-width atomic-boundary run
+  29136863094 also passed all nine jobs, including the MSVC intrinsic backend on amd64 and ARM64.
   The observed linker debt is now 106 -> 45 -> 0.
 
 ## Milestone status
@@ -134,7 +146,7 @@ work item changes. Do not create session-specific handoff files.
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
-| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, `sys_atomic.h`, portable compile tests, an exact 259-site ABI debt ledger, native-width database enumeration contexts, fixed-width fast locks, and native dvar-sort atomics exist; broader engine atomics/platform integration remains. |
+| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration contexts, fixed-width fast locks, native dvar-sort atomics, and race-safe script packed references exist; 151 direct engine Interlocked calls and broader platform integration remain. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
 | M3 platform services | In progress: core thread services integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, and a cooperative worker gate used by renderer workers. High-level orchestration is native-type-free. Linux/macOS engine/headless sets remain empty and engine-gated; POSIX crash freezing, filesystem, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | Seed only | Runtime structures and script VM remain 32-bit-layout-bound. |
@@ -155,8 +167,8 @@ work item changes. Do not create session-specific handoff files.
 ## Immediate queue
 
 1. Validate the protected licensed-content headless startup/map/`getstatus` workflow on its runner.
-2. Finish the broader M1 fixed-width atomic call-site migration, including dvar sorting and
-   remaining `LONG`/volatile counters that are not part of `FastCriticalSection`.
+2. Finish the broader M1 fixed-width atomic call-site migration, starting with XAnim/DObj and then
+   database I/O/progress plus the remaining `LONG`/volatile counter families.
 3. Extract filesystem/virtual-memory/process services and implement Linux signal-park plus macOS
    Mach crash freezing behind the already isolated terminal API.
 4. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
