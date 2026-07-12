@@ -856,7 +856,7 @@ int main()
         Expect(
             db::validation::XSurfaceVertexPayloadValid(
                 packedVertices.data(),
-                packedVertices.size()),
+                static_cast<std::uint32_t>(packedVertices.size())),
             "finite canonical packed surface vertices accepted");
         auto invalidPackedVertices = packedVertices;
         invalidPackedVertices[0].xyz[1] =
@@ -864,14 +864,14 @@ int main()
         Expect(
             !db::validation::XSurfaceVertexPayloadValid(
                 invalidPackedVertices.data(),
-                invalidPackedVertices.size()),
+                static_cast<std::uint32_t>(invalidPackedVertices.size())),
             "non-finite packed surface position rejected");
         invalidPackedVertices[0] = packedVertices[0];
         invalidPackedVertices[0].binormalSign = 0.0f;
         Expect(
             !db::validation::XSurfaceVertexPayloadValid(
                 invalidPackedVertices.data(),
-                invalidPackedVertices.size()),
+                static_cast<std::uint32_t>(invalidPackedVertices.size())),
             "noncanonical packed surface binormal sign rejected");
         Expect(
             !db::validation::XSurfaceVertexPayloadValid<
@@ -900,7 +900,7 @@ int main()
         Expect(
             !db::validation::XModelLodSurfaceCacheLayoutValid(
                 invalidCacheSurfaces.data(),
-                invalidCacheSurfaces.size(),
+                static_cast<std::uint32_t>(invalidCacheSurfaces.size()),
                 &lodVertexCount,
                 &lodTriangleCount),
             "gapped LOD surface vertex base rejected");
@@ -909,7 +909,7 @@ int main()
         Expect(
             !db::validation::XModelLodSurfaceCacheLayoutValid(
                 invalidCacheSurfaces.data(),
-                invalidCacheSurfaces.size(),
+                static_cast<std::uint32_t>(invalidCacheSurfaces.size()),
                 &lodVertexCount,
                 &lodTriangleCount),
             "gapped LOD surface triangle base rejected");
@@ -918,7 +918,7 @@ int main()
         Expect(
             !db::validation::XModelLodSurfaceCacheLayoutValid(
                 invalidCacheSurfaces.data(),
-                invalidCacheSurfaces.size(),
+                static_cast<std::uint32_t>(invalidCacheSurfaces.size()),
                 &lodVertexCount,
                 &lodTriangleCount),
             "unpadded LOD cache surface rejected");
@@ -970,7 +970,7 @@ int main()
         Expect(
             db::validation::XModelBasePoseValid(
                 basePose.data(),
-                basePose.size()),
+                static_cast<std::uint32_t>(basePose.size())),
             "finite canonical non-unit base-pose quaternion accepted");
         auto invalidBasePose = basePose;
         invalidBasePose[0].trans[1] =
@@ -978,28 +978,28 @@ int main()
         Expect(
             !db::validation::XModelBasePoseValid(
                 invalidBasePose.data(),
-                invalidBasePose.size()),
+                static_cast<std::uint32_t>(invalidBasePose.size())),
             "non-finite base-pose translation rejected");
         invalidBasePose[0] = basePose[0];
         invalidBasePose[0].quat[3] = 0.0f;
         Expect(
             !db::validation::XModelBasePoseValid(
                 invalidBasePose.data(),
-                invalidBasePose.size()),
+                static_cast<std::uint32_t>(invalidBasePose.size())),
             "zero-length base-pose quaternion rejected");
         invalidBasePose[0] = basePose[0];
         invalidBasePose[0].transWeight = 1.0f;
         Expect(
             !db::validation::XModelBasePoseValid(
                 invalidBasePose.data(),
-                invalidBasePose.size()),
+                static_cast<std::uint32_t>(invalidBasePose.size())),
             "noncanonical base-pose quaternion weight rejected");
         invalidBasePose[0] = basePose[0];
         invalidBasePose[0].quat[0] = 1000.0f;
         Expect(
             !db::validation::XModelBasePoseValid(
                 invalidBasePose.data(),
-                invalidBasePose.size()),
+                static_cast<std::uint32_t>(invalidBasePose.size())),
             "base-pose transform unsafe for packed-basis conversion rejected");
 
         std::array<TestBoneInfoPayload, 2> boneInfo = {};
@@ -1015,28 +1015,28 @@ int main()
         Expect(
             db::validation::XModelBoneInfoValid(
                 boneInfo.data(),
-                boneInfo.size()),
+                static_cast<std::uint32_t>(boneInfo.size())),
             "canonical finite model bone bounds accepted");
         auto invalidBoneInfo = boneInfo;
         invalidBoneInfo[0].bounds[0][0] = 2.0f;
         Expect(
             !db::validation::XModelBoneInfoValid(
                 invalidBoneInfo.data(),
-                invalidBoneInfo.size()),
+                static_cast<std::uint32_t>(invalidBoneInfo.size())),
             "reversed model bone bounds rejected");
         invalidBoneInfo[0] = boneInfo[0];
         invalidBoneInfo[0].offset[0] = 0.5f;
         Expect(
             !db::validation::XModelBoneInfoValid(
                 invalidBoneInfo.data(),
-                invalidBoneInfo.size()),
+                static_cast<std::uint32_t>(invalidBoneInfo.size())),
             "model bone offset inconsistent with bounds rejected");
         invalidBoneInfo[0] = boneInfo[0];
         invalidBoneInfo[0].radiusSquared = 2.0f;
         Expect(
             !db::validation::XModelBoneInfoValid(
                 invalidBoneInfo.data(),
-                invalidBoneInfo.size()),
+                static_cast<std::uint32_t>(invalidBoneInfo.size())),
             "model bone radius inconsistent with bounds rejected");
 
         const float modelMins[3] = {-4.0f, -3.0f, -2.0f};

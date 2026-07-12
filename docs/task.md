@@ -8,7 +8,7 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: verify the corrective DObj/model-surface commit in all nine CI jobs, run the protected
+- Active work: verify the MSVC narrowing repair in all nine CI jobs, run the protected
   licensed headless smoke, then begin staged FX layout/iterator/counter/status protocols without
   relaxing the engine gate.
 - Progress estimate: approximately **20% complete by engineering effort** (plausible range 15–25%).
@@ -35,7 +35,12 @@ work item changes. Do not create session-specific handoff files.
   TSan. The batch removes seven more executable native calls, leaving **70 direct
   `Interlocked` calls in 10 engine translation units**. Run **29201767094** passed all five portable
   jobs but failed the four Windows engine jobs on two undefined yields, one missing cull-state include,
-  and a non-constexpr layout assertion; the corrective commit repairs all four seams. Residuals: a failed
+  and a non-constexpr layout assertion. Corrective commit `89a6122` repaired all four seams: run
+  **29203597111** passed all four Windows engine jobs, including the three client builds that are the
+  only jobs compiling `gfx_d3d`, but its two MSVC portable-test jobs failed on fifteen identical C4267
+  `size_t`-to-`uint32_t` narrowings in the new `db_validation_tests.cpp`, which only `/W4 /WX` MSVC
+  diagnoses. This commit applies the repository's existing `static_cast<std::uint32_t>` count idiom at
+  all fifteen sites; no engine code changes. Residuals: a failed
   later vertex reservation can consume an already reserved surface slice for that frame; static
   XModel draw-list `surfId` decoding still needs the same bounded accessor; `XAnimResetAnimMap`
   mutates a shared tree during pre-reservation preparation, so a theoretically racing reservation
@@ -280,8 +285,11 @@ work item changes. Do not create session-specific handoff files.
   29199400717, while all three client builds found the same MSVC const mismatch in
   `R_AddDObjToScene`; focused correction `33bdd81` then passed all nine jobs in replacement run
   29199666846. DObj/model-surface run 29201767094 then passed all five portable jobs but failed all
-  four Windows engine jobs at compile time; the current corrective commit addresses the four shared
-  MSVC failures and awaits replacement CI evidence.
+  four Windows engine jobs at compile time. Corrective commit `89a6122` cleared every one of those
+  seams: run 29203597111 passed all four Windows engine jobs and the three POSIX portable jobs, but
+  both MSVC portable-test jobs failed on fifteen C4267 narrowings confined to the new
+  `db_validation_tests.cpp`. The current commit casts those counts and awaits replacement CI evidence;
+  because the engine is unchanged, the four Windows engine jobs are already proven green on this tree.
   The observed linker debt is now 106 -> 45 -> 0.
 
 ## Milestone status
