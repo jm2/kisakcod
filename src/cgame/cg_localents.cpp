@@ -4,6 +4,7 @@
 #include <aim_assist/aim_assist.h>
 
 #include <universal/profile.h>
+#include <universal/sys_atomic.h>
 
 #ifdef KISAK_MP
 #include <cgame_mp/cg_local_mp.h>
@@ -15,7 +16,9 @@ localEntity_s cg_localEntities[1][128];
 localEntity_s cg_activeLocalEntities[1];
 localEntity_s *cg_freeLocalEntities[1];
 
-LONG g_localEntThread;
+// Diagnostic overlap counter only; this does not serialize local-entity access.
+// Every increment remains paired with a decrement even if the assertion returns.
+volatile int32_t g_localEntThread;
 
 void __cdecl TRACK_cg_localents()
 {
@@ -39,8 +42,8 @@ localEntity_s *__cdecl CG_AllocLocalEntity(int32_t localClientNum)
 {
     localEntity_s *le; // [esp+0h] [ebp-4h]
 
-    if (InterlockedIncrement(&g_localEntThread) != 1)
-        MyAssertHandler(".\\cgame\\cg_localents.cpp", 69, 0, "%s", "Sys_InterlockedIncrement( &g_localEntThread ) == 1");
+    if (Sys_AtomicIncrement(&g_localEntThread) != 1)
+        MyAssertHandler(".\\cgame\\cg_localents.cpp", 69, 0, "%s", "Sys_AtomicIncrement( &g_localEntThread ) == 1");
     if (!cg_freeLocalEntities[localClientNum])
         CG_FreeLocalEntity(localClientNum, cg_activeLocalEntities[localClientNum].prev);
     le = cg_freeLocalEntities[localClientNum];
@@ -50,8 +53,8 @@ localEntity_s *__cdecl CG_AllocLocalEntity(int32_t localClientNum)
     le->prev = &cg_activeLocalEntities[localClientNum];
     cg_activeLocalEntities[localClientNum].next->prev = le;
     cg_activeLocalEntities[localClientNum].next = le;
-    if (InterlockedDecrement(&g_localEntThread))
-        MyAssertHandler(".\\cgame\\cg_localents.cpp", 89, 0, "%s", "Sys_InterlockedDecrement( &g_localEntThread ) == 0");
+    if (Sys_AtomicDecrement(&g_localEntThread))
+        MyAssertHandler(".\\cgame\\cg_localents.cpp", 89, 0, "%s", "Sys_AtomicDecrement( &g_localEntThread ) == 0");
     return le;
 }
 
@@ -75,8 +78,8 @@ void __cdecl CG_AddLocalEntityTracerBeams(int32_t localClientNum)
 
     PROF_SCOPED("CG_DAF_AddLocalEntities");
 
-    if (InterlockedIncrement(&g_localEntThread) != 1)
-        MyAssertHandler(".\\cgame\\cg_localents.cpp", 156, 0, "%s", "Sys_InterlockedIncrement( &g_localEntThread ) == 1");
+    if (Sys_AtomicIncrement(&g_localEntThread) != 1)
+        MyAssertHandler(".\\cgame\\cg_localents.cpp", 156, 0, "%s", "Sys_AtomicIncrement( &g_localEntThread ) == 1");
 
     activeLocalEntities = &cg_activeLocalEntities[localClientNum];
     cgameGlob = CG_GetLocalClientGlobals(localClientNum);
@@ -93,8 +96,8 @@ void __cdecl CG_AddLocalEntityTracerBeams(int32_t localClientNum)
             CG_AddMovingTracer(cgameGlob, le, &cgameGlob->refdef);
     }
 
-    if (InterlockedDecrement(&g_localEntThread))
-        MyAssertHandler(".\\cgame\\cg_localents.cpp", 178, 0, "%s", "Sys_InterlockedDecrement( &g_localEntThread ) == 0");
+    if (Sys_AtomicDecrement(&g_localEntThread))
+        MyAssertHandler(".\\cgame\\cg_localents.cpp", 178, 0, "%s", "Sys_AtomicDecrement( &g_localEntThread ) == 0");
 }
 
 void __cdecl CG_AddMovingTracer(const cg_s *cgameGlob, localEntity_s *le, const refdef_s *refdef)
@@ -134,4 +137,3 @@ void __cdecl CG_AddMovingTracer(const cg_s *cgameGlob, localEntity_s *le, const 
     Vec3Mad(start, scale, dir, end);
     CG_DrawTracer(start, end, refdef);
 }
-

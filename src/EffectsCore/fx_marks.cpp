@@ -22,10 +22,13 @@
 #include <algorithm>
 #include <aim_assist/aim_assist.h>
 #include <universal/profile.h>
+#include <universal/sys_atomic.h>
 
 FxMarkPoint g_fxMarkPoints[765];
 
-static int32_t g_markThread[1];
+// Diagnostic overlap counter only; this does not serialize mark generation.
+// Every increment remains paired with a decrement even if the assertion returns.
+static volatile int32_t g_markThread[1];
 
 void __cdecl TRACK_fx_marks()
 {
@@ -544,13 +547,13 @@ void __cdecl FX_AllocAndConstructMark(
     std::sort(markTris, &markTris[triCount], FX_CompareMarkTris);
 
     Sys_EnterCriticalSection(CRITSECT_ALLOC_MARK);
-    if (InterlockedIncrement((LONG*) & g_markThread[localClientNum]) != 1)
+    if (Sys_AtomicIncrement(&g_markThread[localClientNum]) != 1)
         MyAssertHandler(
             ".\\EffectsCore\\fx_marks.cpp",
             505,
             0,
             "%s",
-            "Sys_InterlockedIncrement( &g_markThread[localClientNum] ) == 1");
+            "Sys_AtomicIncrement( &g_markThread[localClientNum] ) == 1");
     if (localClientNum)
         MyAssertHandler(
             "c:\\trees\\cod3\\src\\effectscore\\fx_marks.h",
@@ -646,13 +649,13 @@ void __cdecl FX_AllocAndConstructMark(
             "newMark->pointCount == pointCount\n\t%i, %i",
             newMark->pointCount,
             pointCount);
-    if (InterlockedDecrement((LONG*) & g_markThread[localClientNum]))
+    if (Sys_AtomicDecrement(&g_markThread[localClientNum]))
         MyAssertHandler(
             ".\\EffectsCore\\fx_marks.cpp",
             586,
             0,
             "%s",
-            "Sys_InterlockedDecrement( &g_markThread[localClientNum] ) == 0");
+            "Sys_AtomicDecrement( &g_markThread[localClientNum] ) == 0");
     Sys_LeaveCriticalSection(CRITSECT_ALLOC_MARK);
     FX_CopyMarkTris(marksSystem, markTris, newMark->tris, triCount);
     FX_CopyMarkPoints(marksSystem, markPoints, newMark->points, pointCount);
@@ -1325,13 +1328,13 @@ void __cdecl FX_BeginGeneratingMarkVertsForEntModels(int32_t localClientNum, uin
             "fx_marks->current.enabled && fx_marks_ents->current.enabled");
     PROF_SCOPED("FX_GenMarkVertsEnt");
     R_BeginMarkMeshVerts();
-    if (InterlockedIncrement((LONG*) & g_markThread[localClientNum]) != 1)
+    if (Sys_AtomicIncrement(&g_markThread[localClientNum]) != 1)
         MyAssertHandler(
             ".\\EffectsCore\\fx_marks.cpp",
             1638,
             0,
             "%s",
-            "Sys_InterlockedIncrement( &g_markThread[localClientNum] ) == 1");
+            "Sys_AtomicIncrement( &g_markThread[localClientNum] ) == 1");
     if (localClientNum)
         MyAssertHandler(
             "c:\\trees\\cod3\\src\\effectscore\\fx_marks.h",
@@ -2095,13 +2098,13 @@ void __cdecl FX_EndGeneratingMarkVertsForEntModels(int32_t localClientNum)
             "(clientIndex == 0)",
             localClientNum);
     FX_FinishGeneratingMarkVerts(fx_marksSystemPool);
-    if (InterlockedDecrement((LONG*) & g_markThread[localClientNum]))
+    if (Sys_AtomicDecrement(&g_markThread[localClientNum]))
         MyAssertHandler(
             ".\\EffectsCore\\fx_marks.cpp",
             1734,
             0,
             "%s",
-            "Sys_InterlockedDecrement( &g_markThread[localClientNum] ) == 0");
+            "Sys_AtomicDecrement( &g_markThread[localClientNum] ) == 0");
     R_EndMarkMeshVerts();
 }
 
@@ -2138,13 +2141,13 @@ void __cdecl FX_GenerateMarkVertsForStaticModels(
             "fx_marks->current.enabled && fx_marks_smodels->current.enabled");
     PROF_SCOPED("FX_GenMarkVertsStaticModel");
     R_BeginMarkMeshVerts();
-    if (InterlockedIncrement((LONG*) & g_markThread[localClientNum]) != 1)
+    if (Sys_AtomicIncrement(&g_markThread[localClientNum]) != 1)
         MyAssertHandler(
             ".\\EffectsCore\\fx_marks.cpp",
             1756,
             0,
             "%s",
-            "Sys_InterlockedIncrement( &g_markThread[localClientNum] ) == 1");
+            "Sys_AtomicIncrement( &g_markThread[localClientNum] ) == 1");
     if (localClientNum)
         MyAssertHandler(
             "c:\\trees\\cod3\\src\\effectscore\\fx_marks.h",
@@ -2170,13 +2173,13 @@ void __cdecl FX_GenerateMarkVertsForStaticModels(
         }
     }
     FX_FinishGeneratingMarkVerts(fx_marksSystemPool);
-    if (InterlockedDecrement((LONG*) & g_markThread[localClientNum]))
+    if (Sys_AtomicDecrement(&g_markThread[localClientNum]))
         MyAssertHandler(
             ".\\EffectsCore\\fx_marks.cpp",
             1788,
             0,
             "%s",
-            "Sys_InterlockedDecrement( &g_markThread[localClientNum] ) == 0");
+            "Sys_AtomicDecrement( &g_markThread[localClientNum] ) == 0");
     R_EndMarkMeshVerts();
 }
 
@@ -2423,13 +2426,13 @@ void __cdecl FX_GenerateMarkVertsForWorld(int32_t localClientNum)
     {
         PROF_SCOPED("FX_GenMarkVertsWorld");
         R_BeginMarkMeshVerts();
-        if (InterlockedIncrement((LONG*) & g_markThread[localClientNum]) != 1)
+        if (Sys_AtomicIncrement(&g_markThread[localClientNum]) != 1)
             MyAssertHandler(
                 ".\\EffectsCore\\fx_marks.cpp",
                 1810,
                 0,
                 "%s",
-                "Sys_InterlockedIncrement( &g_markThread[localClientNum] ) == 1");
+                "Sys_AtomicIncrement( &g_markThread[localClientNum] ) == 1");
         if (localClientNum)
             MyAssertHandler(
                 "c:\\trees\\cod3\\src\\effectscore\\fx_marks.h",
@@ -2448,13 +2451,13 @@ void __cdecl FX_GenerateMarkVertsForWorld(int32_t localClientNum)
             &System->camera,
             indexCount);
         FX_FinishGeneratingMarkVerts(fx_marksSystemPool);
-        if (InterlockedDecrement((LONG*) & g_markThread[localClientNum]))
+        if (Sys_AtomicDecrement(&g_markThread[localClientNum]))
             MyAssertHandler(
                 ".\\EffectsCore\\fx_marks.cpp",
                 1820,
                 0,
                 "%s",
-                "Sys_InterlockedDecrement( &g_markThread[localClientNum] ) == 0");
+                "Sys_AtomicDecrement( &g_markThread[localClientNum] ) == 0");
         R_EndMarkMeshVerts();
     }
 }
@@ -2482,4 +2485,3 @@ char __cdecl FX_GenerateMarkVertsForList_WorldBrush(
     }
     return 1;
 }
-

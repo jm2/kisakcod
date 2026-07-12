@@ -2154,6 +2154,56 @@ require_source_contains(
     "std::is_same_v<Word, std::int32_t>"
     "the atomic boundary must reject LP64 long storage")
 
+foreach(_diagnostic_counter_source
+    "cgame/cg_localents.cpp"
+    "EffectsCore/fx_marks.cpp"
+)
+    require_source_contains(
+        "${_diagnostic_counter_source}"
+        "#include <universal/sys_atomic.h>"
+        "diagnostic overlap counters must use the fixed-width atomic boundary")
+    require_source_contains(
+        "${_diagnostic_counter_source}"
+        "Diagnostic overlap counter only; this does not serialize"
+        "overlap counters must not be mistaken for mutual-exclusion locks")
+    require_source_not_contains(
+        "${_diagnostic_counter_source}"
+        "Interlocked"
+        "diagnostic overlap counters must not use native Windows atomics")
+    require_source_not_matches(
+        "${_diagnostic_counter_source}"
+        "(^|[^A-Za-z0-9_])LONG([^A-Za-z0-9_]|$)"
+        "diagnostic overlap counters must not use native Windows word types")
+endforeach()
+require_source_contains(
+    "cgame/cg_localents.cpp"
+    "volatile int32_t g_localEntThread;"
+    "the local-entity overlap counter must remain an exact 32-bit atomic word")
+require_source_match_count(
+    "cgame/cg_localents.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*Sys_AtomicIncrement"
+    2
+    "each local-entity diagnostic entry must use the canonical increment")
+require_source_match_count(
+    "cgame/cg_localents.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*Sys_AtomicDecrement"
+    2
+    "each local-entity diagnostic entry must retain its balancing decrement")
+require_source_contains(
+    "EffectsCore/fx_marks.cpp"
+    "static volatile int32_t g_markThread[1];"
+    "the mark-generation overlap counter must remain an exact 32-bit atomic word")
+require_source_match_count(
+    "EffectsCore/fx_marks.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*Sys_AtomicIncrement"
+    4
+    "each mark-generation diagnostic entry must use the canonical increment")
+require_source_match_count(
+    "EffectsCore/fx_marks.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*Sys_AtomicDecrement"
+    4
+    "each mark-generation diagnostic entry must retain its balancing decrement")
+
 foreach(_script_atomic_source
     "script/scr_stringlist.cpp"
     "script/scr_variable.cpp"
