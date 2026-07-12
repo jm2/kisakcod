@@ -465,7 +465,7 @@ uint32_t __cdecl FakeLag_SendPacket(netsrc_t sock, int length, uint8_t *data, ne
         && (!FakeLag_HostingGameOrParty() || to.type != NA_IP))
     {
         slot = FakeLag_GetFreeSlot();
-        uint8_t *const queuedData = static_cast<uint8_t *>(
+        uint8_t *const queuedData = reinterpret_cast<uint8_t *>(
             Z_VirtualAlloc(length, "FakeLag_SendPacket", 0));
         if (!queuedData)
             return static_cast<uint32_t>(-2);
@@ -555,7 +555,7 @@ uint32_t __cdecl FakeLag_QueueIncomingPacket(bool loopback, netsrc_t sock, netad
     if (fakelag_packetloss->current.value > 0.0 && fakelag_packetloss->current.value >= flrand(0.0, 1.0))
         return -1;
     slot = FakeLag_GetFreeSlot();
-    uint8_t *const queuedData = static_cast<uint8_t *>(
+    uint8_t *const queuedData = reinterpret_cast<uint8_t *>(
         Z_VirtualAlloc(msg->cursize, "FakeLag_QueueIncomingPacket", 0));
     if (!queuedData)
         return static_cast<uint32_t>(-1);
