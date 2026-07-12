@@ -44,7 +44,7 @@ struct View
     return value != 0u && (value & (value - 1u)) == 0u;
 }
 
-[[nodiscard]] inline bool TryAdd(
+[[nodiscard]] constexpr bool TryAdd(
     const std::uint32_t left,
     const std::uint32_t right,
     std::uint32_t *const result) noexcept
@@ -57,7 +57,7 @@ struct View
     return true;
 }
 
-[[nodiscard]] inline bool TryMultiply(
+[[nodiscard]] constexpr bool TryMultiply(
     const std::uint32_t left,
     const std::uint32_t right,
     std::uint32_t *const result) noexcept
@@ -74,7 +74,7 @@ struct View
     return true;
 }
 
-[[nodiscard]] inline bool TryAlignUp(
+[[nodiscard]] constexpr bool TryAlignUp(
     const std::uint32_t value,
     const std::uint32_t alignment,
     std::uint32_t *const result) noexcept
@@ -92,7 +92,7 @@ struct View
 }
 
 // Returns zero for an alignment that cannot safely align an int32 stream tag.
-[[nodiscard]] inline std::uint32_t HiddenRecordSize(
+[[nodiscard]] constexpr std::uint32_t HiddenRecordSize(
     const std::uint32_t recordAlignment) noexcept
 {
     if (recordAlignment < alignof(std::int32_t))

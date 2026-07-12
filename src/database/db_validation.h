@@ -674,6 +674,36 @@ inline bool XSurfaceTriangleIndicesValid(
     return AllU16Below(indices, triangleCount * 3u, vertexCount);
 }
 
+constexpr bool XSurfaceTriangleCountValid(
+    const std::uint32_t triangleCount)
+{
+    // The source builder pads an odd triangle count with one degenerate
+    // triangle.  Static-model cache upload consumes triangles two at a time
+    // with a do/while loop, so accepting an unpadded one-triangle surface
+    // would make that consumer read beyond the three-index span.
+    return triangleCount >= 2u && (triangleCount & 1u) == 0u;
+}
+
+template <typename PackedVertex>
+inline bool XSurfaceVertexPayloadValid(
+    const PackedVertex *const vertices,
+    const std::uint32_t vertexCount)
+{
+    if (!vertices || !vertexCount)
+        return false;
+    for (std::uint32_t index = 0u; index < vertexCount; ++index)
+    {
+        if (!FiniteFloatArray(vertices[index].xyz, 3)
+            || !std::isfinite(vertices[index].binormalSign)
+            || (vertices[index].binormalSign != -1.0f
+                && vertices[index].binormalSign != 1.0f))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 inline bool XSurfaceSkinningLayoutValid(
     const std::int16_t *const bucketVertexCounts,
     const bool hasBlendRecords,
@@ -802,6 +832,245 @@ inline bool XModelLodLayoutValid(
         && lodSurfaceCount <= modelSurfaceCount - lodSurfaceIndex
         && std::isfinite(distance) && distance >= 0.0f
         && XSurfacePartBitsWithinBoneCount(partBits, modelBoneCount);
+}
+
+inline bool XModelLodDistanceFollows(
+    const float previousDistance,
+    const float distance)
+{
+    return std::isfinite(previousDistance)
+        && std::isfinite(distance)
+        && previousDistance >= 0.0f
+        && distance >= previousDistance;
+}
+
+template <typename Surface>
+inline bool XModelLodSurfaceCacheLayoutValid(
+    const Surface *const surfaces,
+    const std::uint32_t surfaceCount,
+    std::uint32_t *const totalVertexCount,
+    std::uint32_t *const totalTriangleCount)
+{
+    if (totalVertexCount)
+        *totalVertexCount = 0u;
+    if (totalTriangleCount)
+        *totalTriangleCount = 0u;
+    if (!surfaces || !surfaceCount || !totalVertexCount
+        || !totalTriangleCount)
+    {
+        return false;
+    }
+
+    std::uint32_t expectedVertexBase = 0u;
+    std::uint32_t expectedTriangleBase = 0u;
+    for (std::uint32_t index = 0u; index < surfaceCount; ++index)
+    {
+        const Surface &surface = surfaces[index];
+        if (!surface.vertCount
+            || !XSurfaceTriangleCountValid(surface.triCount)
+            || surface.baseVertIndex != expectedVertexBase
+            || surface.baseTriIndex != expectedTriangleBase
+            || surface.vertCount
+                > (std::numeric_limits<std::uint32_t>::max)()
+                    - expectedVertexBase
+            || surface.triCount
+                > (std::numeric_limits<std::uint32_t>::max)()
+                    - expectedTriangleBase)
+        {
+            return false;
+        }
+        expectedVertexBase += surface.vertCount;
+        expectedTriangleBase += surface.triCount;
+    }
+
+    *totalVertexCount = expectedVertexBase;
+    *totalTriangleCount = expectedTriangleBase;
+    return true;
+}
+
+constexpr bool XModelStaticCacheLayoutValid(
+    const std::uint32_t cacheIndexPlusOne,
+    const std::uint32_t allocationBits,
+    const std::uint32_t vertexCount,
+    const std::uint32_t triangleCount)
+{
+    if (cacheIndexPlusOne == 0u)
+        return true;
+    if (cacheIndexPlusOne > 4u || allocationBits < 4u
+        || allocationBits > 9u || !vertexCount
+        || !XSurfaceTriangleCountValid(triangleCount))
+    {
+        return false;
+    }
+
+    const std::uint64_t indexUnits =
+        (UINT64_C(3) * triangleCount + UINT64_C(3)) / UINT64_C(4);
+    const std::uint64_t requiredUnits = vertexCount > indexUnits
+        ? vertexCount
+        : indexUnits;
+    return requiredUnits <= (UINT64_C(1) << allocationBits);
+}
+
+template <typename AnimMat>
+inline bool DObjAnimMatPayloadValid(const AnimMat &mat)
+{
+    if (!FiniteFloatArray(mat.quat, 4)
+        || !FiniteFloatArray(mat.trans, 3)
+        || !std::isfinite(mat.transWeight)
+        || mat.transWeight <= 0.0f)
+    {
+        return false;
+    }
+
+    double quaternionLengthSquared = 0.0;
+    for (std::uint32_t component = 0u; component < 4u; ++component)
+    {
+        const double value = mat.quat[component];
+        quaternionLengthSquared += value * value;
+    }
+    const double weightedLength =
+        quaternionLengthSquared * static_cast<double>(mat.transWeight);
+    constexpr double kRepresentationTolerance = 0.01;
+    if (!std::isfinite(quaternionLengthSquared)
+        || quaternionLengthSquared <= 0.0
+        || !std::isfinite(weightedLength)
+        || std::fabs(weightedLength - 2.0) > kRepresentationTolerance)
+    {
+        return false;
+    }
+
+    const double x = mat.quat[0];
+    const double y = mat.quat[1];
+    const double z = mat.quat[2];
+    const double w = mat.quat[3];
+    const double scale = mat.transWeight;
+    const double xx = scale * x * x;
+    const double xy = scale * x * y;
+    const double xz = scale * x * z;
+    const double xw = scale * x * w;
+    const double yy = scale * y * y;
+    const double yz = scale * y * z;
+    const double yw = scale * y * w;
+    const double zz = scale * z * z;
+    const double zw = scale * z * w;
+    const double axis[3][3] = {
+        {1.0 - (yy + zz), xy + zw, xz - yw},
+        {xy - zw, 1.0 - (xx + zz), yz + xw},
+        {xz + yw, yz - xw, 1.0 - (xx + yy)},
+    };
+    constexpr double kAxisTolerance = 0.02;
+    for (std::uint32_t row = 0u; row < 3u; ++row)
+    {
+        double lengthSquared = 0.0;
+        for (std::uint32_t column = 0u; column < 3u; ++column)
+        {
+            if (!std::isfinite(axis[row][column])
+                || std::fabs(axis[row][column]) > 1.0 + kAxisTolerance)
+            {
+                return false;
+            }
+            lengthSquared += axis[row][column] * axis[row][column];
+        }
+        if (std::fabs(lengthSquared - 1.0) > kAxisTolerance)
+            return false;
+    }
+    for (std::uint32_t first = 0u; first < 3u; ++first)
+    {
+        for (std::uint32_t second = first + 1u; second < 3u; ++second)
+        {
+            double dot = 0.0;
+            for (std::uint32_t column = 0u; column < 3u; ++column)
+                dot += axis[first][column] * axis[second][column];
+            if (std::fabs(dot) > kAxisTolerance)
+                return false;
+        }
+    }
+    return true;
+}
+
+template <typename AnimMat>
+inline bool XModelBasePoseValid(
+    const AnimMat *const matrices,
+    const std::uint32_t boneCount)
+{
+    if (!matrices || !boneCount || boneCount > 128u)
+        return false;
+    for (std::uint32_t bone = 0u; bone < boneCount; ++bone)
+    {
+        if (!DObjAnimMatPayloadValid(matrices[bone]))
+            return false;
+    }
+    return true;
+}
+
+template <typename BoneInfo>
+inline bool XModelBoneInfoValid(
+    const BoneInfo *const boneInfo,
+    const std::uint32_t boneCount)
+{
+    if (!boneInfo || !boneCount || boneCount > 128u)
+        return false;
+    for (std::uint32_t bone = 0u; bone < boneCount; ++bone)
+    {
+        const BoneInfo &info = boneInfo[bone];
+        if (!FiniteFloatArray(info.bounds[0], 3)
+            || !FiniteFloatArray(info.bounds[1], 3)
+            || !FiniteFloatArray(info.offset, 3)
+            || !std::isfinite(info.radiusSquared)
+            || info.radiusSquared < 0.0f
+            || std::signbit(info.radiusSquared))
+        {
+            return false;
+        }
+
+        double expectedRadiusSquared = 0.0;
+        for (std::uint32_t axis = 0u; axis < 3u; ++axis)
+        {
+            if (info.bounds[0][axis] > info.bounds[1][axis])
+                return false;
+            const double midpoint =
+                (static_cast<double>(info.bounds[0][axis])
+                    + info.bounds[1][axis]) * 0.5;
+            const double halfExtent =
+                static_cast<double>(info.bounds[1][axis]) - midpoint;
+            const double offsetTolerance =
+                0.001 * (1.0 + std::fabs(midpoint));
+            if (std::fabs(static_cast<double>(info.offset[axis]) - midpoint)
+                > offsetTolerance)
+            {
+                return false;
+            }
+            expectedRadiusSquared += halfExtent * halfExtent;
+        }
+        const double radiusTolerance =
+            0.001 * (1.0 + expectedRadiusSquared);
+        if (!std::isfinite(expectedRadiusSquared)
+            || std::fabs(
+                static_cast<double>(info.radiusSquared)
+                    - expectedRadiusSquared) > radiusTolerance)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+inline bool XModelBoundsValid(
+    const float *const mins,
+    const float *const maxs,
+    const float radius)
+{
+    if (!FiniteFloatArray(mins, 3) || !FiniteFloatArray(maxs, 3)
+        || !std::isfinite(radius) || radius < 0.0f)
+    {
+        return false;
+    }
+    for (std::uint32_t axis = 0u; axis < 3u; ++axis)
+    {
+        if (mins[axis] > maxs[axis])
+            return false;
+    }
+    return true;
 }
 
 inline bool XModelPartClassificationsValid(

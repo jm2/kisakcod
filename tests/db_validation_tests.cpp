@@ -65,6 +65,34 @@ struct TestRigidVertList
     std::uint16_t boneOffset = 0;
 };
 
+struct TestSurfaceCacheLayout
+{
+    std::uint16_t vertCount = 0;
+    std::uint16_t triCount = 0;
+    std::uint16_t baseVertIndex = 0;
+    std::uint16_t baseTriIndex = 0;
+};
+
+struct TestPackedVertexPayload
+{
+    float xyz[3] = {};
+    float binormalSign = 1.0f;
+};
+
+struct TestAnimMatPayload
+{
+    float quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float trans[3] = {};
+    float transWeight = 2.0f;
+};
+
+struct TestBoneInfoPayload
+{
+    float bounds[2][3] = {};
+    float offset[3] = {};
+    float radiusSquared = 0.0f;
+};
+
 struct TestSurfaceCollisionTree
 {
     std::array<TestSurfaceCollisionNode, 4> nodes = {};
@@ -810,6 +838,223 @@ int main()
                 (std::numeric_limits<std::uint32_t>::max)() / 3u + 1u,
                 1),
             "surface triangle-index count multiplication overflow rejected");
+
+        Expect(
+            db::validation::XSurfaceTriangleCountValid(2)
+                && db::validation::XSurfaceTriangleCountValid(8),
+            "builder-padded even surface triangle counts accepted");
+        Expect(
+            !db::validation::XSurfaceTriangleCountValid(0)
+                && !db::validation::XSurfaceTriangleCountValid(1)
+                && !db::validation::XSurfaceTriangleCountValid(3),
+            "empty and unpadded surface triangle counts rejected");
+
+        std::array<TestPackedVertexPayload, 2> packedVertices = {};
+        packedVertices[0].xyz[0] = -8.0f;
+        packedVertices[1].xyz[2] = 12.0f;
+        packedVertices[1].binormalSign = -1.0f;
+        Expect(
+            db::validation::XSurfaceVertexPayloadValid(
+                packedVertices.data(),
+                packedVertices.size()),
+            "finite canonical packed surface vertices accepted");
+        auto invalidPackedVertices = packedVertices;
+        invalidPackedVertices[0].xyz[1] =
+            std::numeric_limits<float>::quiet_NaN();
+        Expect(
+            !db::validation::XSurfaceVertexPayloadValid(
+                invalidPackedVertices.data(),
+                invalidPackedVertices.size()),
+            "non-finite packed surface position rejected");
+        invalidPackedVertices[0] = packedVertices[0];
+        invalidPackedVertices[0].binormalSign = 0.0f;
+        Expect(
+            !db::validation::XSurfaceVertexPayloadValid(
+                invalidPackedVertices.data(),
+                invalidPackedVertices.size()),
+            "noncanonical packed surface binormal sign rejected");
+        Expect(
+            !db::validation::XSurfaceVertexPayloadValid<
+                TestPackedVertexPayload>(nullptr, 1),
+            "missing packed surface vertex payload rejected");
+
+        const TestSurfaceCacheLayout validCacheSurfaces[] = {
+            {3, 2, 0, 0},
+            {2, 4, 3, 2},
+        };
+        std::uint32_t lodVertexCount = 99u;
+        std::uint32_t lodTriangleCount = 99u;
+        Expect(
+            db::validation::XModelLodSurfaceCacheLayoutValid(
+                validCacheSurfaces,
+                2,
+                &lodVertexCount,
+                &lodTriangleCount)
+                && lodVertexCount == 5u && lodTriangleCount == 6u,
+            "exact cumulative LOD surface-cache bases accepted");
+        auto invalidCacheSurfaces = std::array<TestSurfaceCacheLayout, 2>{
+            validCacheSurfaces[0],
+            validCacheSurfaces[1],
+        };
+        invalidCacheSurfaces[1].baseVertIndex = 4;
+        Expect(
+            !db::validation::XModelLodSurfaceCacheLayoutValid(
+                invalidCacheSurfaces.data(),
+                invalidCacheSurfaces.size(),
+                &lodVertexCount,
+                &lodTriangleCount),
+            "gapped LOD surface vertex base rejected");
+        invalidCacheSurfaces[1] = validCacheSurfaces[1];
+        invalidCacheSurfaces[1].baseTriIndex = 4;
+        Expect(
+            !db::validation::XModelLodSurfaceCacheLayoutValid(
+                invalidCacheSurfaces.data(),
+                invalidCacheSurfaces.size(),
+                &lodVertexCount,
+                &lodTriangleCount),
+            "gapped LOD surface triangle base rejected");
+        invalidCacheSurfaces[1] = validCacheSurfaces[1];
+        invalidCacheSurfaces[1].triCount = 3;
+        Expect(
+            !db::validation::XModelLodSurfaceCacheLayoutValid(
+                invalidCacheSurfaces.data(),
+                invalidCacheSurfaces.size(),
+                &lodVertexCount,
+                &lodTriangleCount),
+            "unpadded LOD cache surface rejected");
+        Expect(
+            !db::validation::XModelLodSurfaceCacheLayoutValid<
+                TestSurfaceCacheLayout>(
+                nullptr,
+                0,
+                &lodVertexCount,
+                &lodTriangleCount)
+                && lodVertexCount == 0u && lodTriangleCount == 0u,
+            "missing LOD cache surface array rejected with zero outputs");
+
+        Expect(
+            db::validation::XModelStaticCacheLayoutValid(0, 0, 5, 6),
+            "canonical disabled static-model cache metadata accepted");
+        Expect(
+            db::validation::XModelStaticCacheLayoutValid(0, 255, 5, 6),
+            "disabled static-model cache ignores inactive allocation metadata");
+        Expect(
+            db::validation::XModelStaticCacheLayoutValid(1, 4, 16, 20)
+                && db::validation::XModelStaticCacheLayoutValid(4, 9, 512, 682),
+            "bounded static-model cache groups and capacities accepted");
+        Expect(
+            !db::validation::XModelStaticCacheLayoutValid(5, 4, 1, 2)
+                && !db::validation::XModelStaticCacheLayoutValid(1, 3, 1, 2)
+                && !db::validation::XModelStaticCacheLayoutValid(1, 10, 1, 2),
+            "static-model cache group and shift bounds enforced");
+        Expect(
+            !db::validation::XModelStaticCacheLayoutValid(1, 4, 17, 2)
+                && !db::validation::XModelStaticCacheLayoutValid(1, 4, 1, 22),
+            "undersized static-model vertex and index cache allocations rejected");
+
+        Expect(
+            db::validation::XModelLodDistanceFollows(100.0f, 100.0f)
+                && db::validation::XModelLodDistanceFollows(100.0f, 200.0f),
+            "nondecreasing finite model LOD distances accepted");
+        Expect(
+            !db::validation::XModelLodDistanceFollows(200.0f, 100.0f)
+                && !db::validation::XModelLodDistanceFollows(
+                    100.0f,
+                    std::numeric_limits<float>::infinity()),
+            "decreasing and non-finite model LOD distances rejected");
+
+        std::array<TestAnimMatPayload, 2> basePose = {};
+        basePose[1].quat[3] = 2.0f;
+        basePose[1].transWeight = 0.5f;
+        basePose[1].trans[0] = 4.0f;
+        Expect(
+            db::validation::XModelBasePoseValid(
+                basePose.data(),
+                basePose.size()),
+            "finite canonical non-unit base-pose quaternion accepted");
+        auto invalidBasePose = basePose;
+        invalidBasePose[0].trans[1] =
+            std::numeric_limits<float>::infinity();
+        Expect(
+            !db::validation::XModelBasePoseValid(
+                invalidBasePose.data(),
+                invalidBasePose.size()),
+            "non-finite base-pose translation rejected");
+        invalidBasePose[0] = basePose[0];
+        invalidBasePose[0].quat[3] = 0.0f;
+        Expect(
+            !db::validation::XModelBasePoseValid(
+                invalidBasePose.data(),
+                invalidBasePose.size()),
+            "zero-length base-pose quaternion rejected");
+        invalidBasePose[0] = basePose[0];
+        invalidBasePose[0].transWeight = 1.0f;
+        Expect(
+            !db::validation::XModelBasePoseValid(
+                invalidBasePose.data(),
+                invalidBasePose.size()),
+            "noncanonical base-pose quaternion weight rejected");
+        invalidBasePose[0] = basePose[0];
+        invalidBasePose[0].quat[0] = 1000.0f;
+        Expect(
+            !db::validation::XModelBasePoseValid(
+                invalidBasePose.data(),
+                invalidBasePose.size()),
+            "base-pose transform unsafe for packed-basis conversion rejected");
+
+        std::array<TestBoneInfoPayload, 2> boneInfo = {};
+        for (TestBoneInfoPayload &info : boneInfo)
+        {
+            for (std::uint32_t axis = 0u; axis < 3u; ++axis)
+            {
+                info.bounds[0][axis] = -1.0f;
+                info.bounds[1][axis] = 1.0f;
+            }
+            info.radiusSquared = 3.0f;
+        }
+        Expect(
+            db::validation::XModelBoneInfoValid(
+                boneInfo.data(),
+                boneInfo.size()),
+            "canonical finite model bone bounds accepted");
+        auto invalidBoneInfo = boneInfo;
+        invalidBoneInfo[0].bounds[0][0] = 2.0f;
+        Expect(
+            !db::validation::XModelBoneInfoValid(
+                invalidBoneInfo.data(),
+                invalidBoneInfo.size()),
+            "reversed model bone bounds rejected");
+        invalidBoneInfo[0] = boneInfo[0];
+        invalidBoneInfo[0].offset[0] = 0.5f;
+        Expect(
+            !db::validation::XModelBoneInfoValid(
+                invalidBoneInfo.data(),
+                invalidBoneInfo.size()),
+            "model bone offset inconsistent with bounds rejected");
+        invalidBoneInfo[0] = boneInfo[0];
+        invalidBoneInfo[0].radiusSquared = 2.0f;
+        Expect(
+            !db::validation::XModelBoneInfoValid(
+                invalidBoneInfo.data(),
+                invalidBoneInfo.size()),
+            "model bone radius inconsistent with bounds rejected");
+
+        const float modelMins[3] = {-4.0f, -3.0f, -2.0f};
+        const float modelMaxs[3] = {4.0f, 3.0f, 2.0f};
+        Expect(
+            db::validation::XModelBoundsValid(modelMins, modelMaxs, 6.0f),
+            "finite ordered model bounds accepted");
+        const float reversedModelMaxs[3] = {-5.0f, 3.0f, 2.0f};
+        Expect(
+            !db::validation::XModelBoundsValid(
+                modelMins,
+                reversedModelMaxs,
+                6.0f)
+                && !db::validation::XModelBoundsValid(
+                    modelMins,
+                    modelMaxs,
+                    -1.0f),
+            "reversed model bounds and negative radius rejected");
 
         const std::int16_t mixedSkinCounts[4] = {1, 2, 3, 4};
         std::uint32_t blendElementCount = 99u;

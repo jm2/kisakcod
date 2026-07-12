@@ -102,6 +102,24 @@ RUNTIME_SIZE(DObjModel_s, 0x8, 0x10);
 RUNTIME_OFFSET(DObjModel_s, boneName, 0x4, 0x8);
 RUNTIME_OFFSET(DObjModel_s, ignoreCollision, 0x6, 0xA);
 
+// Owns every fallible resource needed to publish a DObj. Callers must
+// value-initialize the plan, then either commit or discard it exactly once.
+// Keeping this separate preserves the engine-facing DObj_s ABI.
+struct DObjCreatePlan
+{
+    XAnimTree_s *tree;
+    XModel **models;
+    uint32_t duplicateParts;
+    uint32_t ignoreCollision;
+    uint16_t entnum;
+    uint8_t duplicatePartsSize;
+    uint8_t numModels;
+    uint8_t numBones;
+    uint8_t reserved[3];
+    float radius;
+    uint32_t hidePartBits[4];
+};
+
 void __cdecl DObjInit();
 void __cdecl DObjShutdown();
 void __cdecl DObjDumpInfo(const DObj_s *obj);
@@ -109,8 +127,16 @@ bool __cdecl DObjIgnoreCollision(const DObj_s *obj, char modelIndex);
 void __cdecl DObjGetHierarchyBits(const DObj_s *obj, int boneIndex, int *partBits);
 bool __cdecl DObjSkelIsBoneUpToDate(DObj_s *obj, int boneIndex);
 void __cdecl DObjSetTree(DObj_s *obj, XAnimTree_s *tree);
+void DObjPrepareCreate(
+    DObjModel_s *dobjModels,
+    uint32_t numModels,
+    XAnimTree_s *tree,
+    uint16_t entnum,
+    DObjCreatePlan *plan);
+void DObjPrepareClone(const DObj_s *from, DObjCreatePlan *plan);
+bool DObjTryCommitCreatePlan(DObjCreatePlan *plan, DObj_s *obj);
+void DObjDiscardCreatePlan(DObjCreatePlan *plan);
 void __cdecl DObjCreate(DObjModel_s *dobjModels, uint32_t numModels, XAnimTree_s *tree, DObj_s *buf, __int16 entnum);
-void __cdecl DObjCreateDuplicateParts(DObj_s *obj, DObjModel_s *dobjModels, uint32_t numModels);
 void __cdecl DObjDumpCreationInfo(DObjModel_s *dobjModels, uint32_t numModels);
 void __cdecl DObjComputeBounds(DObj_s *obj);
 void __cdecl DObjFree(DObj_s *obj);
@@ -148,7 +174,7 @@ int __cdecl DObjGetBoneIndex(const DObj_s *obj, uint32_t name, unsigned __int8 *
 int __cdecl DObjGetModelBoneIndex(const DObj_s *obj, const char *modelName, uint32_t name, unsigned __int8 *index);
 void __cdecl DObjGetBasePoseMatrix(const DObj_s *obj, unsigned __int8 boneIndex, DObjAnimMat *outMat);
 void __cdecl DObjSetHidePartBits(DObj_s *obj, const uint32_t *partBits);
-int DObjGetNumSurfaces(const DObj_s *obj, char *lods);
+int DObjGetNumSurfaces(const DObj_s *obj, const char *lods);
 void DObjClone(const DObj_s *from, DObj_s *obj);
 
 

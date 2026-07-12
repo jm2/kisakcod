@@ -8,7 +8,7 @@ verification pass (each finding a reviewer *tried to refute*); the eight top sec
 
 ---
 
-## Remediation status (July 11, 2026)
+## Remediation status (July 12, 2026)
 
 Fixed in the initial porting implementation:
 
@@ -285,7 +285,7 @@ extraction.
 
 ---
 
-## 5. Porting-era renderer/concurrency findings (July 11, 2026)
+## 5. Porting-era renderer/concurrency findings (July 12, 2026)
 
 These findings were exposed while replacing Windows atomics and widening runtime
 layouts. They are additional to the original 47-item count above.
@@ -315,8 +315,13 @@ and required part bits must match before publication. Worker and scene parsers
 validate exact framing, owner frame, published cursors, contiguous outputs, and
 record semantics before use. Fast-file completion now rejects malformed skin
 buckets/weights, rigid coverage, XModel skeleton parents/classifications/LODs,
-and collision counts/spans/bones before asset publication. Runtime DObj accessors
-repeat safety-critical model/count/parent/capacity checks for non-fast-file paths.
+and collision counts/spans/bones before asset publication. Static-cache bases/capacity,
+finite/canonical vertex/base-pose/bone/model data, and aggregate collision contents are
+also checked. Runtime DObj accessors repeat safety-critical model/count/parent/capacity
+checks for non-fast-file paths. DObj create, clone, and unarchive now prepare fallible
+allocation/string work before pool reservation or object locking and publish through an
+assignment-only transaction, preventing recoverable `Com_Error` longjmps from stranding
+locks or allocated-but-unmapped pool slots.
 Residuals: reserving the independent surface slice before a later failed vertex
 reservation wastes bounded capacity until the next frame, static XModel `surfId`
 consumers still need the shared arena-bound accessor, and load-object model readers

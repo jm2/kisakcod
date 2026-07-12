@@ -94,7 +94,7 @@ DObjAnimMat *R_UpdateSceneEntBounds(
                 state = R_LoadSceneEntityCullState(sceneEnt);
                 iassert(state >= CULL_STATE_BOUNDED_PENDING);
                 if (state == CULL_STATE_BOUNDED_PENDING)
-                    Sys_Yield();
+                    Sys_Sleep(0);
             } while (state == CULL_STATE_BOUNDED_PENDING);
             if (state == CULL_STATE_DONE)
             {

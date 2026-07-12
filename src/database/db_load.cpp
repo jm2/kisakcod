@@ -314,7 +314,7 @@ bool DB_GetXSurfaceLayout(
     if (*deformed > 1
         || !skinningLayoutValid
         || !surface->vertCount
-        || !surface->triCount
+        || !db::validation::XSurfaceTriangleCountValid(surface->triCount)
         || !surface->verts0
         || !surface->triIndices
         || !rigidLayoutValid
@@ -402,7 +402,8 @@ bool DB_ValidateLoadedXSurface(
     uint32_t rigidListBytes = 0;
     uint32_t blendElementCount = 0;
     uint32_t blendBytes = 0;
-    if (!db::validation::CheckedSpanBytes(
+    if (!db::validation::XSurfaceTriangleCountValid(surface->triCount)
+        || !db::validation::CheckedSpanBytes(
             surface->vertCount,
             32,
             &vertexBytes)
@@ -441,6 +442,9 @@ bool DB_ValidateLoadedXSurface(
         kDirectBlock8);
     if (vertexSpan != db::relocation::Status::Ok
         || indexSpan != db::relocation::Status::Ok
+        || !db::validation::XSurfaceVertexPayloadValid(
+            surface->verts0,
+            surface->vertCount)
         || !db::validation::XSurfaceTriangleIndicesValid(
             surface->triIndices,
             surface->triCount,
@@ -5506,6 +5510,8 @@ bool DB_ValidateLoadedXModel(
         return false;
     }
 
+    const uint32_t nonRootBoneCount =
+        model->numBones - model->numRootBones;
     uint32_t surfaceBytes = 0u;
     uint32_t materialBytes = 0u;
     uint32_t boneInfoBytes = 0u;
@@ -5573,14 +5579,25 @@ bool DB_ValidateLoadedXModel(
             "model collision surfaces")
         || !db::validation::XModelPartClassificationsValid(
             model->partClassification,
-            model->numBones))
+            model->numBones)
+        || !db::validation::FiniteFloatArray(
+            model->trans,
+            3u * nonRootBoneCount)
+        || !db::validation::XModelBasePoseValid(
+            model->baseMat,
+            model->numBones)
+        || !db::validation::XModelBoneInfoValid(
+            model->boneInfo,
+            model->numBones)
+        || !db::validation::XModelBoundsValid(
+            model->mins,
+            model->maxs,
+            model->radius))
     {
         Com_Error(ERR_DROP, "Invalid completed fast-file model array span");
         return false;
     }
 
-    const uint32_t nonRootBoneCount =
-        model->numBones - model->numRootBones;
     for (uint32_t child = 0u; child < nonRootBoneCount; ++child)
     {
         const uint32_t boneIndex = model->numRootBones + child;
@@ -5613,6 +5630,33 @@ bool DB_ValidateLoadedXModel(
             || lodInfo.numsurfs > model->numsurfs - expectedSurfaceIndex)
         {
             Com_Error(ERR_DROP, "Invalid completed fast-file model LOD");
+            return false;
+        }
+        const float previousLodDistance = lod > 0u
+            ? model->lodInfo[lod - 1u].dist
+            : 0.0f;
+        if (!db::validation::XModelLodDistanceFollows(
+                previousLodDistance,
+                lodInfo.dist))
+        {
+            Com_Error(ERR_DROP, "Fast-file model LOD distances are not monotonic");
+            return false;
+        }
+
+        uint32_t lodVertexCount = 0u;
+        uint32_t lodTriangleCount = 0u;
+        if (!db::validation::XModelLodSurfaceCacheLayoutValid(
+                &model->surfs[lodInfo.surfIndex],
+                lodInfo.numsurfs,
+                &lodVertexCount,
+                &lodTriangleCount)
+            || !db::validation::XModelStaticCacheLayoutValid(
+                lodInfo.smcIndexPlusOne,
+                lodInfo.smcAllocBits,
+                lodVertexCount,
+                lodTriangleCount))
+        {
+            Com_Error(ERR_DROP, "Invalid completed fast-file model cache layout");
             return false;
         }
         for (uint32_t surface = 0u;
@@ -5648,6 +5692,7 @@ bool DB_ValidateLoadedXModel(
             return false;
         }
     }
+    uint32_t aggregateCollisionContents = 0u;
     for (int32_t surface = 0;
          surface < model->numCollSurfs;
          ++surface)
@@ -5677,6 +5722,8 @@ bool DB_ValidateLoadedXModel(
             Com_Error(ERR_DROP, "Invalid completed model collision graph");
             return false;
         }
+        aggregateCollisionContents |= static_cast<uint32_t>(
+            collision.contents);
         for (uint32_t axis = 0u; axis < 3u; ++axis)
         {
             if (collision.mins[axis] > collision.maxs[axis])
@@ -5697,6 +5744,12 @@ bool DB_ValidateLoadedXModel(
                 return false;
             }
         }
+    }
+    if (static_cast<uint32_t>(model->contents)
+        != aggregateCollisionContents)
+    {
+        Com_Error(ERR_DROP, "Fast-file model collision contents are inconsistent");
+        return false;
     }
     return true;
 }

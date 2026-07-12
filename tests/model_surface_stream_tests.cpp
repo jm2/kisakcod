@@ -51,6 +51,9 @@ constexpr std::uint32_t kRigidSize =
 
 static_assert(sizeof(NativeSkinnedRecord) == (sizeof(void *) == 4 ? 24u : 40u));
 static_assert(sizeof(NativeRigidRecord) == (sizeof(void *) == 4 ? 56u : 72u));
+static_assert(surface_stream::HiddenRecordSize(4u) == 4u);
+static_assert(surface_stream::HiddenRecordSize(8u) == 8u);
+static_assert(surface_stream::HiddenRecordSize(2u) == 0u);
 
 int Fail(const char *const message)
 {

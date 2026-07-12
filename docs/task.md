@@ -8,9 +8,12 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: land the DObj/model-surface native-stream and model-asset validation batch, verify all
-  nine CI jobs, then begin the staged FX layout/iterator/counter/status protocols without relaxing
-  the engine gate.
+- Active work: verify the corrective DObj/model-surface commit in all nine CI jobs, run the protected
+  licensed headless smoke, then begin staged FX layout/iterator/counter/status protocols without
+  relaxing the engine gate.
+- Progress estimate: approximately **20% complete by engineering effort** (plausible range 15–25%).
+  The foundation/checklist view is about 25–30% and the shared foundation is roughly 60–70% mature,
+  but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Current DObj/model-surface batch: the inherited fixed 3,600-byte stack overlay and retail
   4/24/56-byte pointer-bearing stream assumptions are gone. A shared checked planner/cursor uses
   native 4/8, 24/40, and 56/72-byte records, aligned exact-capacity CAS reservations, placement
@@ -22,13 +25,21 @@ work item changes. Do not create session-specific handoff files.
   surface/temp cursors, BModel records, and all touched publication paths use exact-width atomics and
   native layouts; `int8_t` LOD storage preserves `-1` on ARM targets. Fast-file XSurface/XModel
   completion now validates skin buckets, weight records/sums, rigid coverage, part bits, skeleton
-  parents, hit-location classifications, exact LOD coverage, materials, and collision counts/spans/
-  bounds/bone indices. Runtime DObj model/LOD/bone-info accessors duplicate the safety-critical bounds
-  for load-object and debug paths. Local validation is **23/23** under GCC, Clang, Clang ASan/UBSan,
-  and Clang TSan. The batch removes seven more executable native calls, leaving **70 direct
-  `Interlocked` calls in 10 engine translation units**. CI is the landing gate. Residuals: a failed
+  parents, hit-location classifications, exact LOD/cache bases and allocation, finite/canonical
+  vertex/base-pose/bone/model data, materials, and collision counts/spans/bounds/bone indices/contents.
+  Runtime DObj model/LOD/bone-info accessors duplicate the safety-critical bounds for load-object and
+  debug paths. Corrective construction now prepares all fallible DObj create/clone resources before
+  pool reservation or object locking, validates duplicate maps and signed LODs, and publishes through
+  an assignment-only commit; ordinary failure paths discard their owned plan. Local validation is
+  **23/23** under GCC, Clang, ASan/UBSan (with leak detection disabled for the ptrace runner), and
+  TSan. The batch removes seven more executable native calls, leaving **70 direct
+  `Interlocked` calls in 10 engine translation units**. Run **29201767094** passed all five portable
+  jobs but failed the four Windows engine jobs on two undefined yields, one missing cull-state include,
+  and a non-constexpr layout assertion; the corrective commit repairs all four seams. Residuals: a failed
   later vertex reservation can consume an already reserved surface slice for that frame; static
-  XModel draw-list `surfId` decoding still needs the same bounded accessor; and the load-object
+  XModel draw-list `surfId` decoding still needs the same bounded accessor; `XAnimResetAnimMap`
+  mutates a shared tree during pre-reservation preparation, so a theoretically racing reservation
+  failure can leave the requested mapping without a published DObj (current callers are serialized); and the load-object
   `Buf_Read` family remains unbounded and alignment-unsafe, requiring a cursor threaded through the
   model/surface/physics parsers rather than another local assertion.
 - Completed worker-queue batch: all 25 native atomic calls and mixed raw queue accesses in
@@ -268,7 +279,9 @@ work item changes. Do not create session-specific handoff files.
   29197855220. Worker-queue commit `9772706` passed headless and all five portable jobs in run
   29199400717, while all three client builds found the same MSVC const mismatch in
   `R_AddDObjToScene`; focused correction `33bdd81` then passed all nine jobs in replacement run
-  29199666846.
+  29199666846. DObj/model-surface run 29201767094 then passed all five portable jobs but failed all
+  four Windows engine jobs at compile time; the current corrective commit addresses the four shared
+  MSVC failures and awaits replacement CI evidence.
   The observed linker debt is now 106 -> 45 -> 0.
 
 ## Milestone status
@@ -296,9 +309,9 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Validate the protected licensed-content headless startup/map/`getstatus` workflow on its runner.
-2. Land and run all nine CI jobs for the DObj/model-surface batch, then start the staged FX
-   layout/iterator/counter/status families.
+1. Verify the corrective DObj/model-surface commit in all nine CI jobs.
+2. Validate the protected licensed-content headless startup/map/`getstatus` workflow, then start the
+   staged FX layout/iterator/counter/status families.
 3. Extract filesystem/virtual-memory/process services and implement Linux signal-park plus macOS
    Mach crash freezing behind the already isolated terminal API.
 4. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
@@ -337,8 +350,9 @@ work item changes. Do not create session-specific handoff files.
   producer through worker and scene consumers. One bounded frame-level inefficiency remains: the
   surface arena is reserved before the independent vertex arena, so a later vertex-capacity failure
   burns that surface slice until the next frame. Static XModel draw-list `surfId` decoding also still
-  trusts producer state instead of a shared bounded accessor. Address both without weakening the
-  exact DObj framing contract.
+  trusts producer state instead of a shared bounded accessor. Fallible XAnim map construction is
+  performed before DObj reservation/locking; make that tree mutation itself transactional if DObj
+  creation becomes concurrently reservable. Address these without weakening the exact DObj framing contract.
 - EffectsCore retains 61 native atomic calls and intertwined packed status, iterator, pool,
   visibility, and signed-ring protocols. Additive lock/refcount updates can carry into adjacent flags;
   pool corruption can continue into out-of-bounds access; and visibility reservation/packing has an

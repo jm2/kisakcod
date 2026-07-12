@@ -722,7 +722,7 @@ void __cdecl R_SkinSceneDObj(
                 state = Sys_AtomicLoad(&sceneEnt->cull.state);
                 iassert(state >= CULL_STATE_SKINNED_PENDING);
                 if (state == CULL_STATE_SKINNED_PENDING)
-                    Sys_Yield();
+                    Sys_Sleep(0);
             } while (state == CULL_STATE_SKINNED_PENDING);
 
             iassert(state >= CULL_STATE_DONE);

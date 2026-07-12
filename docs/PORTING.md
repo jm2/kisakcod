@@ -6,7 +6,7 @@
 
 ---
 
-## Implementation status (July 11, 2026)
+## Implementation status (July 12, 2026)
 
 Target policy is fixed: preserve retail assets and wire interoperability; use a
 shared **native Vulkan RHI** (MoltenVK on macOS) that replaces D3D9, OpenAL Soft,
@@ -64,8 +64,9 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Land and obtain all-target CI evidence for the DObj/model-surface batch, then implement the
-   dependent staged FX layout/iterator/counter/status protocols.
+2. Obtain all-target CI evidence for the corrective DObj/model-surface transaction, asset-validation,
+   and Windows compile repair, then implement the dependent staged FX layout/iterator/counter/status
+   protocols.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -900,8 +901,9 @@ complete descriptors. Workers and scene walkers validate owner frame, published 
 framing, output contiguity, material/surface identity, and required bones. Fast-file completion now
 validates XSurface buckets/weights/rigid coverage plus XModel skeleton parents, classifications,
 exact LOD coverage, materials, and collision spans/bones. The 23-test GCC/Clang/ASan/UBSan/TSan
-matrix is green, and the live native-atomic census is **70 calls in 10 TUs**; all-target CI remains
-the landing gate. The next renderer work is EffectsCore's 61 native calls, staged as exact-width
+matrix is green, and the live native-atomic census is **70 calls in 10 TUs**. Its first all-target run
+passed all five portable jobs but found four shared Windows compile seams; the corrective transaction/
+validation/build patch awaits replacement CI evidence. The next renderer work is EffectsCore's 61 native calls, staged as exact-width
 layout, iterator/scalar, pool, camera/visibility/ring, and packed-status protocol batches. The
 load-object `Buf_Read<T>` family remains unbounded and potentially unaligned and needs a real bounded
 cursor for security and ARM64 correctness. Detailed live blockers and sequencing remain in

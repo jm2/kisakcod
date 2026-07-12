@@ -5,6 +5,7 @@
 #include "r_image.h"
 #include "r_init.h"
 #include "r_scene.h"
+#include "r_dpvs.h"
 #include "r_dvars.h"
 #include <database/database.h>
 #include "r_bsp.h"

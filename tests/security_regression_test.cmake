@@ -2875,11 +2875,19 @@ require_source_contains(
     "xanim/dobj.cpp"
     "DObjLock(mutableFrom);"
     "DObj cloning must hold the source lock while taking its snapshot")
-require_source_match_count(
+require_source_contains(
     "xanim/dobj.cpp"
-    "DObjUnlock[ \t\r\n]*\\([ \t\r\n]*mutableFrom[ \t\r\n]*\\)"
-    3
-    "DObj cloning must release its source lock on both validation failures and success")
+    "DObjUnlock(mutableFrom);\n    if (snapshotError)"
+    "DObj cloning must release its source lock before reporting snapshot failures")
+require_source_ordered(
+    "xanim/dobj.cpp"
+    "DObjUnlock(mutableFrom);\n    if (snapshotError)"
+    "preparedDuplicateParts = SL_GetStringOfSize("
+    "DObj cloning must release its source lock before fallible string interning")
+require_source_not_contains(
+    "xanim/dobj.cpp"
+    "SL_AddRefToString(duplicateParts)"
+    "DObj cloning must not call a longjmp-capable ref increment while locked")
 foreach(_whole_dobj_copy_pattern
     "mem(cpy|move)[ \t\r\n]*\\([ \t\r\n]*obj[ \t\r\n]*,[ \t\r\n]*from([^A-Za-z0-9_]|$)"
     "mem(cpy|move)[ \t\r\n]*\\([^;]*sizeof[ \t\r\n]*\\([ \t\r\n]*DObj_s[ \t\r\n]*\\)"
@@ -2942,7 +2950,7 @@ require_source_contains(
     "DObj clone allocation must verify native pointer alignment")
 require_source_contains(
     "xanim/dobj.cpp"
-    "memcpy(models, from->models, modelDataSize);"
+    "memcpy(models, modelData, modelDataSize);"
     "DObj cloning must copy only pointer-width model data, not allocator padding")
 
 require_source_not_contains(
@@ -3042,7 +3050,7 @@ require_source_contains(
 
 require_source_contains(
     "xanim/dobj.cpp"
-    "Sys_AtomicCompareExchange(&obj->locked, 1u, 0u);"
+    "Sys_AtomicCompareExchange(&obj->locked, 1u, 0u)"
     "DObj create and clone paths must reserve construction state atomically")
 require_source_contains(
     "xanim/dobj.cpp"
@@ -3050,23 +3058,32 @@ require_source_contains(
     "DObj teardown must claim the live object lock before validation and release")
 require_source_contains(
     "xanim/dobj.cpp"
-    "obj->models = models;\n    DObjUnlock(mutableFrom);\n    Sys_AtomicStore(&obj->locked, 0u);"
-    "DObj clone publication must release the destination only after a complete source snapshot")
+    "DObjApplyCreatePlanLocked(plan, obj);\n    Sys_AtomicStore(&obj->locked, 0u);"
+    "DObj create and clone publication must apply a complete plan before release")
 require_source_contains(
     "xanim/dobj.cpp"
-    "Sys_AtomicStore(&obj->locked, 1u);\n    MT_Free("
-    "DObj unarchive must reserve construction state before rebuilding live fields")
+    "DObjPrepareCreateInternal("
+    "DObj unarchive must prepare fallible state before rebuilding live fields")
 require_source_contains(
     "xanim/dobj.cpp"
-    "DObjSetHidePartBits(obj, savedObj.hidePartBits);\n    Sys_AtomicStore(&obj->locked, 0u);"
+    "DObjApplyCreatePlanLocked(&plan, obj);\n    Sys_AtomicStore(&obj->locked, 0u);"
     "DObj unarchive must publish only after restoring hide-part state")
+require_source_ordered(
+    "xanim/dobj.cpp"
+    "XAnimResetAnimMap(&treeModelView, tree->children);"
+    "bool DObjTryCommitCreatePlan(DObjCreatePlan *plan, DObj_s *obj)"
+    "fallible animation-map preparation must precede DObj construction locks")
+require_source_contains(
+    "xanim/dobj.cpp"
+    "DObj duplicate-bone map exceeds its encoded size"
+    "DObj duplicate maps must reject their one-byte encoded-size overflow")
 require_source_not_contains(
     "xanim/dobj.cpp"
     "1 <<"
     "DObj model masks must not use signed shifts at model index 31")
 require_source_contains(
     "xanim/dobj.cpp"
-    "if (!dobjModels[modelIndex].model)"
+    "if (!model)"
     "DObj creation must reject null models before claiming construction state")
 
 require_source_contains(
@@ -3079,16 +3096,26 @@ require_source_not_contains(
     "DObj pool tracking must not retain the x86-only byte count")
 require_source_contains(
     "qcommon/dobj_management.cpp"
-    "DObjCreate(dobjModels, numModels, tree, &objBuf[index], 0);\n    clientObjMap[handle] = index;"
+    "DObjTryCommitCreatePlan(&plan, &objBuf[index])"
     "client DObjs must be fully constructed before map publication")
 require_source_contains(
     "qcommon/dobj_management.cpp"
-    "DObjCreate(dobjModels, numModels, tree, &objBuf[index], handle + 1);\n    serverObjMap[handle] = index;"
+    "DObjTryCommitCreatePlan(&plan, &objBuf[index])"
     "server DObjs must be fully constructed before map publication")
 require_source_contains(
     "qcommon/dobj_management.cpp"
-    "DObjClone(&objBuf[v4], &objBuf[FreeDObjIndex]);\n    clientObjMapBuffered[v2] = FreeDObjIndex;"
+    "DObjTryCommitCreatePlan(&plan, &objBuf[FreeDObjIndex])"
     "buffered DObj clones must be complete before map publication")
+require_source_ordered(
+    "qcommon/dobj_management.cpp"
+    "DObjPrepareCreate(dobjModels, numModels, tree, 0, &plan);"
+    "index = Com_GetFreeDObjIndex();"
+    "fallible client DObj preparation must precede pool reservation")
+require_source_ordered(
+    "qcommon/dobj_management.cpp"
+    "DObjPrepareClone(&objBuf[v4], &plan);"
+    "FreeDObjIndex = Com_GetFreeDObjIndex();"
+    "fallible DObj clone preparation must precede pool reservation")
 
 require_source_contains(
     "cgame/cg_modelpreviewer.h"

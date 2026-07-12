@@ -2,6 +2,7 @@
 #include "mem_track.h"
 #include "threads.h"
 #include <xanim/dobj.h>
+#include <universal/sys_atomic.h>
 #include <win32/win_local.h>
 
 #define DOBJ_HANDLE_MAX (MAX_GENTITIES - 128) // 2048
@@ -16,6 +17,56 @@ static int com_lastDObjIndex;
 // LWSS: used in SP (KISAKTODO: could MP use this?)
 static __int16 clientObjMapBuffered[CLIENT_DOBJ_HANDLE_MAX];
 static uint8_t serverObjDirty[272];
+
+namespace
+{
+void Com_LockDObjAllocation()
+{
+#ifdef KISAK_SP
+    Sys_EnterCriticalSection(CRITSECT_DOBJ_ALLOC);
+#else
+    iassert(Sys_IsMainThread());
+#endif
+}
+
+void Com_UnlockDObjAllocation()
+{
+#ifdef KISAK_SP
+    Sys_LeaveCriticalSection(CRITSECT_DOBJ_ALLOC);
+#endif
+}
+
+bool Com_IsReusableDObjSlot(const uint32_t index)
+{
+    const DObj_s &obj = objBuf[index];
+    return Sys_AtomicLoad(&obj.locked) == 0u && !obj.tree && !obj.models
+        && !obj.numModels && !obj.duplicateParts;
+}
+
+bool Com_HasDObjCapacity()
+{
+    Com_LockDObjAllocation();
+    // Preserve the original one-slot reserve, but reject before any fallible
+    // DObj preparation instead of publishing the last object and longjmping.
+    const bool hasCapacity = objFreeCount > 1;
+    Com_UnlockDObjAllocation();
+    return hasCapacity;
+}
+
+void Com_ReleaseReservedDObjIndex(const uint32_t index)
+{
+    iassert(index > 0 && index < DOBJ_HANDLE_MAX);
+    Com_LockDObjAllocation();
+    iassert(objAlloced[index]);
+    iassert(Com_IsReusableDObjSlot(index));
+    if (objAlloced[index] && Com_IsReusableDObjSlot(index))
+    {
+        objAlloced[index] = false;
+        ++objFreeCount;
+    }
+    Com_UnlockDObjAllocation();
+}
+}
 
 void __cdecl TRACK_dobj_management()
 {
@@ -96,33 +147,52 @@ DObj_s *__cdecl Com_ClientDObjCreate(
     iassert(dobjModels);
     iassert(((unsigned)handle < CLIENT_DOBJ_HANDLE_MAX));
     iassert(!Com_GetClientDObj(handle, localClientNum));
+    if (!Com_HasDObjCapacity())
+    {
+        Com_Error(ERR_DROP, "No free DObjs");
+        return nullptr;
+    }
+
+    DObjCreatePlan plan{};
+    DObjPrepareCreate(dobjModels, numModels, tree, 0, &plan);
     index = Com_GetFreeDObjIndex();
+    if (!index)
+    {
+        DObjDiscardCreatePlan(&plan);
+        Com_Error(ERR_DROP, "No reusable DObj slots");
+        return nullptr;
+    }
     iassert((unsigned)handle < CLIENT_DOBJ_HANDLE_MAX);
     iassert(handle >= localClientNum * CLIENT_DOBJ_HANDLE_MAX);
     iassert(handle < localClientNum * CLIENT_DOBJ_HANDLE_MAX + CLIENT_DOBJ_HANDLE_MAX);
 
     iassert((unsigned)index < DOBJ_HANDLE_MAX);
 
-    DObjCreate(dobjModels, numModels, tree, &objBuf[index], 0);
+    if (!DObjTryCommitCreatePlan(&plan, &objBuf[index]))
+    {
+        Com_ReleaseReservedDObjIndex(index);
+        DObjDiscardCreatePlan(&plan);
+        Com_Error(ERR_DROP, "Reserved client DObj slot was not reusable");
+        return nullptr;
+    }
     clientObjMap[handle] = index;
-
-    if (!objFreeCount)
-        Com_Error(ERR_DROP, "No free DObjs");
 
     return &objBuf[index];
 }
 
 int __cdecl Com_GetFreeDObjIndex()
 {
-#ifdef KISAK_MP
-    iassert(Sys_IsMainThread());
-#elif KISAK_SP
-    Sys_EnterCriticalSection(CRITSECT_DOBJ_ALLOC);
-#endif
+    Com_LockDObjAllocation();
+
+    if (objFreeCount <= 1)
+    {
+        Com_UnlockDObjAllocation();
+        return 0;
+    }
 
     for (int i = com_lastDObjIndex + 1; i < DOBJ_HANDLE_MAX; ++i)
     {
-        if (!objAlloced[i])
+        if (!objAlloced[i] && Com_IsReusableDObjSlot(i))
         {
             com_lastDObjIndex = i;
 
@@ -135,15 +205,13 @@ int __cdecl Com_GetFreeDObjIndex()
             iassert(objFreeCount);
 
             --objFreeCount;
-#ifdef KISAK_SP
-            Sys_LeaveCriticalSection(CRITSECT_DOBJ_ALLOC);
-#endif
+            Com_UnlockDObjAllocation();
             return i;
         }
     }
     for (int i = 1; i <= com_lastDObjIndex; ++i)
     {
-        if (!objAlloced[i])
+        if (!objAlloced[i] && Com_IsReusableDObjSlot(i))
         {
             com_lastDObjIndex = i;
             iassert(i);
@@ -154,15 +222,12 @@ int __cdecl Com_GetFreeDObjIndex()
             iassert(objFreeCount);
 
             --objFreeCount;
-#ifdef KISAK_SP
-            Sys_LeaveCriticalSection(CRITSECT_DOBJ_ALLOC);
-#endif
+            Com_UnlockDObjAllocation();
             return i;
         }
     }
 
-    if (!alwaysfails)
-        MyAssertHandler(".\\qcommon\\dobj_management.cpp", 208, 0, "unreachable");
+    Com_UnlockDObjAllocation();
     return 0;
 }
 
@@ -198,21 +263,43 @@ DObj_s *__cdecl Com_ServerDObjCreate(
     iassert(handle < SERVER_DOBJ_HANDLE_MAX);
     iassert(!Com_GetServerDObj(handle));
 
+    if (!Com_HasDObjCapacity())
+    {
+        Com_Error(ERR_DROP, "No free DObjs");
+        return nullptr;
+    }
+
+    DObjCreatePlan plan{};
+    DObjPrepareCreate(
+        dobjModels,
+        numModels,
+        tree,
+        static_cast<uint16_t>(handle + 1u),
+        &plan);
     index = Com_GetFreeDObjIndex();
+    if (!index)
+    {
+        DObjDiscardCreatePlan(&plan);
+        Com_Error(ERR_DROP, "No reusable DObj slots");
+        return nullptr;
+    }
 
     iassert((unsigned)handle < SERVER_DOBJ_HANDLE_MAX);
+
+    iassert((unsigned)index < DOBJ_HANDLE_MAX);
+
+    if (!DObjTryCommitCreatePlan(&plan, &objBuf[index]))
+    {
+        Com_ReleaseReservedDObjIndex(index);
+        DObjDiscardCreatePlan(&plan);
+        Com_Error(ERR_DROP, "Reserved server DObj slot was not reusable");
+        return nullptr;
+    }
+    serverObjMap[handle] = index;
 
 #ifdef KISAK_SP
     serverObjDirty[(int)handle >> 3] |= 1 << (handle & 7);
 #endif
-
-    iassert((unsigned)index < DOBJ_HANDLE_MAX);
-
-    DObjCreate(dobjModels, numModels, tree, &objBuf[index], handle + 1);
-    serverObjMap[handle] = index;
-
-    if (!objFreeCount)
-        Com_Error(ERR_DROP, "No free DObjs");
 
     return &objBuf[index];
 }
@@ -329,6 +416,11 @@ DObj_s *Com_DObjCloneToBuffer(uint32_t entnum)
     uint32_t v4; // r26
     uint32_t FreeDObjIndex; // r30
 
+    if (entnum >= SERVER_DOBJ_HANDLE_MAX)
+    {
+        Com_Error(ERR_DROP, "server DObj clone handle %u is out of range", entnum);
+        return nullptr;
+    }
     if (entnum >= 0x880)
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\qcommon\\dobj_management.cpp",
@@ -340,6 +432,11 @@ DObj_s *Com_DObjCloneToBuffer(uint32_t entnum)
     serverDobjIndex = serverObjMap[entnum];
     v4 = serverDobjIndex;
     iassert( serverDobjIndex );
+    if (!serverDobjIndex || v4 >= DOBJ_HANDLE_MAX)
+    {
+        Com_Error(ERR_DROP, "cannot clone a missing server DObj");
+        return nullptr;
+    }
     if (entnum >= 0x900)
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\qcommon\\dobj_management.cpp",
@@ -354,7 +451,21 @@ DObj_s *Com_DObjCloneToBuffer(uint32_t entnum)
             0,
             "%s",
             "!clientObjMapBuffered[entnum]");
+    if (!Com_HasDObjCapacity())
+    {
+        Com_Error(ERR_DROP, "No free DObjs");
+        return nullptr;
+    }
+
+    DObjCreatePlan plan{};
+    DObjPrepareClone(&objBuf[v4], &plan);
     FreeDObjIndex = Com_GetFreeDObjIndex();
+    if (!FreeDObjIndex)
+    {
+        DObjDiscardCreatePlan(&plan);
+        Com_Error(ERR_DROP, "No reusable DObj slots");
+        return nullptr;
+    }
     if (entnum >= 0x900)
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\qcommon\\dobj_management.cpp",
@@ -380,10 +491,14 @@ DObj_s *Com_DObjCloneToBuffer(uint32_t entnum)
             "%s\n\t(clientDobjIndex) = %i",
             "((unsigned)clientDobjIndex < 2048)",
             FreeDObjIndex);
-    DObjClone(&objBuf[v4], &objBuf[FreeDObjIndex]);
+    if (!DObjTryCommitCreatePlan(&plan, &objBuf[FreeDObjIndex]))
+    {
+        Com_ReleaseReservedDObjIndex(FreeDObjIndex);
+        DObjDiscardCreatePlan(&plan);
+        Com_Error(ERR_DROP, "Reserved buffered DObj slot was not reusable");
+        return nullptr;
+    }
     clientObjMapBuffered[v2] = FreeDObjIndex;
-    if (!objFreeCount)
-        Com_Error(ERR_DROP, "No free DObjs");
 
     return &objBuf[FreeDObjIndex];
 }
@@ -392,6 +507,11 @@ void Com_DObjCloneFromBuffer(uint32_t entnum)
 {
     uint32_t v2; // r31
 
+    if (entnum >= CLIENT_DOBJ_HANDLE_MAX)
+    {
+        Com_Error(ERR_DROP, "buffered DObj clone handle %u is out of range", entnum);
+        return;
+    }
     if (entnum >= 0x900)
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\qcommon\\dobj_management.cpp",
@@ -401,6 +521,7 @@ void Com_DObjCloneFromBuffer(uint32_t entnum)
             "(unsigned)entnum < ARRAY_COUNT( clientObjMap )");
     v2 = entnum;
     if (clientObjMap[entnum])
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\qcommon\\dobj_management.cpp",
             357,
@@ -408,6 +529,9 @@ void Com_DObjCloneFromBuffer(uint32_t entnum)
             "%s\n\t(entnum) = %i",
             "(!clientObjMap[entnum])",
             entnum);
+        Com_Error(ERR_DROP, "cannot replace a live client DObj with a buffered clone");
+        return;
+    }
 
     if (clientObjMapBuffered[v2])
     {
