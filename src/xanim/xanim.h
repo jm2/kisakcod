@@ -1,7 +1,10 @@
 #pragma once
 
+#include <type_traits>
+
 // LWSS: This file has way too many structs. KISAKTODO: move out later.
 #include "xanim_public.h"
+#include <universal/kisak_abi.h>
 #include <script/scr_stringlist.h>
 #include <gfx_d3d/r_font.h>
 #include <gfx_d3d/r_bsp.h>
@@ -200,6 +203,11 @@ struct XAnimEntry // sizeof=0x8
         XAnimParent animParent;
     };
 };
+RUNTIME_SIZE(XAnimEntry, 0x8, 0x10);
+RUNTIME_OFFSET(XAnimEntry, numAnims, 0x0, 0x0);
+RUNTIME_OFFSET(XAnimEntry, parent, 0x2, 0x2);
+RUNTIME_OFFSET(XAnimEntry, parts, 0x4, 0x8);
+static_assert(std::is_standard_layout_v<XAnimEntry>);
 struct XAnim_s // sizeof=0x14
 {
     const char *debugName;
@@ -207,17 +215,32 @@ struct XAnim_s // sizeof=0x14
     const char **debugAnimNames;
     XAnimEntry entries[1];
 };
+RUNTIME_SIZE(XAnim_s, 0x14, 0x28);
+RUNTIME_OFFSET(XAnim_s, debugName, 0x0, 0x0);
+RUNTIME_OFFSET(XAnim_s, size, 0x4, 0x8);
+RUNTIME_OFFSET(XAnim_s, debugAnimNames, 0x8, 0x10);
+RUNTIME_OFFSET(XAnim_s, entries, 0xC, 0x18);
+static_assert(std::is_standard_layout_v<XAnim_s>);
 
 struct XAnimTree_s // sizeof=0x14
 {
     XAnim_s *anims;
     int info_usage;
-    volatile long calcRefCount;
-    volatile long modifyRefCount;
+    volatile int32_t calcRefCount;
+    volatile int32_t modifyRefCount;
     uint16_t children;
     // padding byte
     // padding byte
 };
+RUNTIME_SIZE(XAnimTree_s, 0x14, 0x18);
+RUNTIME_OFFSET(XAnimTree_s, anims, 0x0, 0x0);
+RUNTIME_OFFSET(XAnimTree_s, info_usage, 0x4, 0x8);
+RUNTIME_OFFSET(XAnimTree_s, calcRefCount, 0x8, 0xC);
+RUNTIME_OFFSET(XAnimTree_s, modifyRefCount, 0xC, 0x10);
+RUNTIME_OFFSET(XAnimTree_s, children, 0x10, 0x14);
+static_assert(std::is_same_v<decltype(XAnimTree_s::calcRefCount), volatile int32_t>);
+static_assert(std::is_same_v<decltype(XAnimTree_s::modifyRefCount), volatile int32_t>);
+static_assert(std::is_standard_layout_v<XAnimTree_s>);
 struct mnode_t // sizeof=0x4
 {
     uint16_t cellIndex;

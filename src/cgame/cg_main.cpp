@@ -1622,7 +1622,11 @@ void __cdecl CG_Shutdown(int localClientNum)
 
 void *__cdecl Hunk_AllocXAnimClient(int size)
 {
-    return Hunk_AllocLowAlign(size, 4, "Hunk_AllocXAnimClient", 11);
+    return Hunk_AllocLowAlign(
+        size,
+        alignof(XAnimTree_s),
+        "Hunk_AllocXAnimClient",
+        11);
 }
 
 int __cdecl CG_PlayClientSoundAlias(int localClientNum, snd_alias_list_t *aliasList)
@@ -1712,4 +1716,3 @@ int __cdecl CG_PlayEntitySoundAliasByName(int localClientNum, SndEntHandle entit
     SND_AddLengthNotify(v9, v7, SndLengthNotify_Subtitle);
     return v9;
 }
-

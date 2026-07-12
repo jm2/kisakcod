@@ -431,7 +431,7 @@ void *__cdecl CG_ModPrvAlloc(int size)
         MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_modelpreviewer.cpp", 600, 0, "%s", "g_modPrvHunkUser");
         v2 = g_modPrvHunkUser;
     }
-    return Hunk_UserAlloc(v2, size, 4);
+    return Hunk_UserAlloc(v2, size, alignof(XAnimTree_s));
 }
 
 void __cdecl CG_ModPrvFree(void *allocated, int size)
@@ -446,10 +446,6 @@ void __cdecl CG_ModPrvFree(void *allocated, int size)
 
 void CG_ModPrvResetGlobals()
 {
-    DObj_s **p_obj; // r10
-    int v1; // r11
-
-    p_obj = &g_mdlprv.model.clones[0].obj;
     g_mdlprv.system.cachedAllModels = 0;
     g_mdlprv.system.uiModePC = SELECTION_MODE;
     g_mdlprv.system.uiModeGPad = MDLPRVMODE_FOCUSED;
@@ -472,13 +468,8 @@ void CG_ModPrvResetGlobals()
     g_mdlprv.model.lodDist[2] = 30;
     g_mdlprv.model.lodDist[3] = 40;
     g_mdlprv.model.cloneNextIdx = 0;
-    v1 = 10;
-    do
-    {
-        --v1;
-        *p_obj = 0;
-        p_obj += 78;
-    } while (v1);
+    for (int cloneIndex = 0; cloneIndex < MDLPRV_CLONE_COUNT; ++cloneIndex)
+        g_mdlprv.model.clones[cloneIndex].obj = nullptr;
     g_mdlprv.model.ragdoll = 0;
     g_mdlprv.viewer.centerRadius = 100.0;
     g_mdlprv.viewer.horizontal = 0.0;
@@ -1486,7 +1477,7 @@ void CG_ModPrvLightValuesUpdate()
 
 void __cdecl TRACK_cg_modelpreviewer()
 {
-    track_static_alloc_internal(&g_mdlprv, 34904, "g_mdlprv", 0);
+    track_static_alloc_internal(&g_mdlprv, sizeof(g_mdlprv), "g_mdlprv", 0);
     track_static_alloc_internal(mpDefaultDrawBoneOptions, 16, "mpDefaultDrawBoneOptions", 0);
     track_static_alloc_internal(modPrvAnimBlendModeNames, 12, "modPrvAnimBlendModeNames", 0);
 }
@@ -2218,21 +2209,8 @@ void __cdecl MdlPrvCloneClear(MdlPrvClone *clone)
 
 void MdlPrvCloneClearAll()
 {
-    int v0; // r30
-    DObj_s **p_obj; // r31
-
-    v0 = 10;
-    p_obj = &g_mdlprv.model.clones[0].obj;
-    do
-    {
-        if (*p_obj)
-        {
-            DObjFree(*p_obj);
-            *p_obj = 0;
-        }
-        --v0;
-        p_obj += 78;
-    } while (v0);
+    for (int cloneIndex = 0; cloneIndex < MDLPRV_CLONE_COUNT; ++cloneIndex)
+        MdlPrvCloneClear(&g_mdlprv.model.clones[cloneIndex]);
 }
 
 void __cdecl MdlPrvCloneModel(const cg_s *cgGlob)
@@ -2245,7 +2223,7 @@ void __cdecl MdlPrvCloneModel(const cg_s *cgGlob)
     float forward[3]; // [sp+70h] [-40h] BYREF
 
     cloneNextIdx = g_mdlprv.model.cloneNextIdx;
-    if (g_mdlprv.model.cloneNextIdx >= 0xAu)
+    if (g_mdlprv.model.cloneNextIdx >= MDLPRV_CLONE_COUNT)
     {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_modelpreviewer.cpp",
@@ -2267,7 +2245,7 @@ void __cdecl MdlPrvCloneModel(const cg_s *cgGlob)
     DObjClone(g_mdlprv.model.currentObj, (DObj_s*)pClone->objBuf);
     pClone->obj = (DObj_s *)pClone->objBuf;
     DObjSetTree((DObj_s *)pClone->objBuf, 0);
-    memcpy(pClone, &g_mdlprv.model.currentEntity, 0x7Cu);
+    pClone->ent = g_mdlprv.model.currentEntity;
     AngleVectors(cgGlob->refdefViewAngles, forward, right, up);
     ++g_mdlprv.model.cloneNextIdx;
     g_mdlprv.model.initialOrigin[1] = g_mdlprv.model.initialOrigin[1] + (forward[0] * 16.0f);
@@ -2275,7 +2253,7 @@ void __cdecl MdlPrvCloneModel(const cg_s *cgGlob)
     g_mdlprv.model.currentEntity.placement.base.origin[0] = g_mdlprv.model.currentEntity.placement.base.origin[0] + (right[0] * 16.0f);
     g_mdlprv.model.currentEntity.placement.base.origin[1] = g_mdlprv.model.currentEntity.placement.base.origin[1] + (forward[0] * 16.0f);
 
-    if (g_mdlprv.model.cloneNextIdx >= 0xAu)
+    if (g_mdlprv.model.cloneNextIdx >= MDLPRV_CLONE_COUNT)
         g_mdlprv.model.cloneNextIdx = 0;
 }
 
@@ -2711,8 +2689,6 @@ void __cdecl CG_AddModelPreviewerModel(int frametime)
     double v9; // fp30
     bool center; // r4
     double Radius; // fp1
-    int up; // r29
-    float *right; // r31
     const cpose_t *v14; // r4
     const DObj_s *v15; // r3
     __int64 v16; // [sp+50h] [-70h] BYREF
@@ -2778,30 +2754,30 @@ void __cdecl CG_AddModelPreviewerModel(int frametime)
             g_mdlprv.model.currentEntity.cull.maxs[2] = g_mdlprv.model.currentEntity.info.pose->origin[2] + (float)Radius;
             CG_ModPrvFrameModel();
         }
-        up = 10;
-        right = &g_mdlprv.model.clones[0].pose.origin[1];
-        do
+        for (int cloneIndex = 0;
+            cloneIndex < MDLPRV_CLONE_COUNT;
+            ++cloneIndex)
         {
-            if (*((unsigned int *)right - 7))
+            MdlPrvClone &clone = g_mdlprv.model.clones[cloneIndex];
+            if (clone.obj)
             {
-                memset(right - 6, 0, 0x54u);
-                *((_BYTE *)right - 22) = 17;
-                *((unsigned int *)right - 9) = (unsigned int)right - 6;
-                UnitQuatToAxis(right - 35, v18);
-                AxisToAngles(v18, right + 2);
-                *(right - 1) = *(right - 31);
-                *right = *(right - 30);
-                right[1] = *(right - 29);
-                v14 = (const cpose_t *)*((unsigned int *)right - 9);
-                v15 = (const DObj_s *)*((unsigned int *)right - 7);
+                memset(&clone.pose, 0, sizeof(clone.pose));
+                clone.pose.eType = 17;
+                clone.ent.info.pose = &clone.pose;
+                UnitQuatToAxis(clone.ent.placement.base.quat, v18);
+                AxisToAngles(v18, clone.pose.angles);
+                memcpy(
+                    clone.pose.origin,
+                    clone.ent.placement.base.origin,
+                    sizeof(clone.pose.origin));
+                v14 = clone.ent.info.pose;
+                v15 = clone.obj;
                 *(float *)&v16 = v14->origin[0];
                 *((float *)&v16 + 1) = v14->origin[1];
                 v17 = v14->origin[2] + (float)4.0;
                 R_AddDObjToScene(v15, v14, 0x881u, 0, (float *)&v16, 0.0);
             }
-            --up;
-            right += 78;
-        } while (up);
+        }
     }
 #endif
 }
@@ -2948,36 +2924,24 @@ void __cdecl CG_ModelPreviewerBuildViewPosStr(char *buffer, int bufferSize)
 
 void __cdecl CG_ModPrvSaveDObjs()
 {
-    int v0; // r30
-    DObj_s **p_obj; // r31
-
-    v0 = 10;
-    p_obj = &g_mdlprv.model.clones[0].obj;
-    do
+    for (int cloneIndex = 0; cloneIndex < MDLPRV_CLONE_COUNT; ++cloneIndex)
     {
-        if (*p_obj)
-            DObjArchive(*p_obj);
-        --v0;
-        p_obj += 78;
-    } while (v0);
+        MdlPrvClone &clone = g_mdlprv.model.clones[cloneIndex];
+        if (clone.obj)
+            DObjArchive(clone.obj);
+    }
     if (g_mdlprv.model.currentObj)
         DObjArchive(g_mdlprv.model.currentObj);
 }
 
 void __cdecl CG_ModPrvLoadDObjs()
 {
-    int v0; // r30
-    DObj_s **p_obj; // r31
-
-    v0 = 10;
-    p_obj = &g_mdlprv.model.clones[0].obj;
-    do
+    for (int cloneIndex = 0; cloneIndex < MDLPRV_CLONE_COUNT; ++cloneIndex)
     {
-        if (*p_obj)
-            DObjUnarchive(*p_obj);
-        --v0;
-        p_obj += 78;
-    } while (v0);
+        MdlPrvClone &clone = g_mdlprv.model.clones[cloneIndex];
+        if (clone.obj)
+            DObjUnarchive(clone.obj);
+    }
     if (g_mdlprv.model.currentObj)
         DObjUnarchive(g_mdlprv.model.currentObj);
 }

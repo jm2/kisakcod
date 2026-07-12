@@ -5,11 +5,13 @@
 #include <physics/phys_local.h>
 #include "dobj_utils.h"
 #include <universal/profile.h>
+#include <universal/sys_atomic.h>
 
 struct SavedDObjModel // sizeof=0x2
 {                                       // ...
     uint16_t boneName;
 };
+RUNTIME_SIZE(SavedDObjModel, 0x2, 0x2);
 
 struct SavedDObj // sizeof=0x60
 {                                       // ...
@@ -21,6 +23,56 @@ struct SavedDObj // sizeof=0x60
     XAnimTree_s *tree;                  // ...
     uint32_t hidePartBits[4];       // ...
 };
+RUNTIME_SIZE(SavedDObj, 0x60, 0x68);
+RUNTIME_OFFSET(SavedDObj, models, 0x40, 0x40);
+RUNTIME_OFFSET(SavedDObj, tree, 0x4C, 0x50);
+RUNTIME_OFFSET(SavedDObj, hidePartBits, 0x50, 0x58);
+
+namespace
+{
+int DObjGetModelDataSize(const uint32_t numModels)
+{
+    iassert(numModels <= DOBJ_MAX_SUBMODELS);
+    return static_cast<int>(
+        numModels * (sizeof(XModel *) + sizeof(uint8_t)));
+}
+
+int DObjGetModelAllocationSize(const uint32_t numModels)
+{
+    const int dataSize = DObjGetModelDataSize(numModels);
+    if constexpr (alignof(XModel *) > alignof(MemoryNode))
+    {
+        // Single-node starts are only guaranteed four-byte alignment. Force a
+        // two-node buddy block when one model's pointer array needs 8-byte alignment.
+        if (dataSize <= static_cast<int>(sizeof(MemoryNode)))
+            return static_cast<int>(sizeof(MemoryNode)) + 1;
+    }
+    return dataSize;
+}
+
+void DObjCreateLocked(
+    DObjModel_s *dobjModels,
+    const uint32_t numModels,
+    XAnimTree_s *tree,
+    DObj_s *obj,
+    const __int16 entnum)
+{
+    iassert(Sys_AtomicLoad(&obj->locked) == 1u);
+
+    memset((unsigned __int8 *)&obj->skel, 0, sizeof(obj->skel));
+    obj->duplicatePartsSize = 0;
+    obj->duplicateParts = 0;
+    obj->ignoreCollision = 0;
+    obj->entnum = entnum;
+    obj->hidePartBits[0] = 0;
+    obj->hidePartBits[1] = 0;
+    obj->hidePartBits[2] = 0;
+    obj->hidePartBits[3] = 0;
+    DObjCreateDuplicateParts(obj, dobjModels, numModels);
+    DObjComputeBounds(obj);
+    DObjSetTree(obj, tree);
+}
+}
 
 uint32_t g_empty;
 
@@ -92,7 +144,16 @@ void __cdecl DObjDumpInfo(const DObj_s *obj)
 
 bool __cdecl DObjIgnoreCollision(const DObj_s *obj, char modelIndex)
 {
-    return (obj->ignoreCollision & (1 << modelIndex)) != 0;
+    iassert(obj);
+    iassert(modelIndex >= 0);
+    iassert(static_cast<uint32_t>(modelIndex) < obj->numModels);
+    if (!obj || modelIndex < 0
+        || static_cast<uint32_t>(modelIndex) >= obj->numModels)
+    {
+        return false;
+    }
+    return (obj->ignoreCollision
+        & (1u << static_cast<uint32_t>(modelIndex))) != 0;
 }
 
 void __cdecl DObjGetHierarchyBits(const DObj_s *obj, int boneIndex, int *partBits)
@@ -207,20 +268,45 @@ void __cdecl DObjCreate(DObjModel_s *dobjModels, uint32_t numModels, XAnimTree_s
     iassert(numModels > 0);
     iassert((unsigned)numModels <= DOBJ_MAX_SUBMODELS);
     iassert(obj);
+    if (!obj)
+    {
+        Com_Error(ERR_DROP, "cannot create a null DObj");
+        return;
+    }
+    if (!dobjModels || numModels == 0 || numModels > DOBJ_MAX_SUBMODELS)
+    {
+        Com_Error(ERR_DROP, "cannot create a DObj with invalid models");
+        return;
+    }
+    for (uint32_t modelIndex = 0; modelIndex < numModels; ++modelIndex)
+    {
+        if (!dobjModels[modelIndex].model)
+        {
+            Com_Error(ERR_DROP, "cannot create a DObj with a null model");
+            return;
+        }
+    }
 
-    memset((unsigned __int8 *)&obj->skel, 0, sizeof(obj->skel));
-    obj->duplicatePartsSize = 0;
-    obj->duplicateParts = 0;
-    obj->ignoreCollision = 0;
-    obj->locked = 0;
-    obj->entnum = entnum;
-    obj->hidePartBits[0] = 0;
-    obj->hidePartBits[1] = 0;
-    obj->hidePartBits[2] = 0;
-    obj->hidePartBits[3] = 0;
-    DObjCreateDuplicateParts(obj, dobjModels, numModels);
-    DObjComputeBounds(obj);
-    DObjSetTree(obj, tree);
+    const uint32_t lockState =
+        Sys_AtomicCompareExchange(&obj->locked, 1u, 0u);
+    iassert(lockState == 0u);
+    if (lockState != 0u)
+    {
+        Com_Error(ERR_DROP, "cannot create a locked DObj");
+        return;
+    }
+    iassert(!obj->models);
+    iassert(!obj->numModels);
+    iassert(!obj->duplicateParts);
+    if (obj->models || obj->numModels || obj->duplicateParts)
+    {
+        Sys_AtomicStore(&obj->locked, 0u);
+        Com_Error(ERR_DROP, "cannot overwrite a live DObj");
+        return;
+    }
+
+    DObjCreateLocked(dobjModels, numModels, tree, obj, entnum);
+    Sys_AtomicStore(&obj->locked, 0u);
 }
 
 void __cdecl DObjCreateDuplicateParts(DObj_s *obj, DObjModel_s *dobjModels, uint32_t numModels)
@@ -270,7 +356,7 @@ void __cdecl DObjCreateDuplicateParts(DObj_s *obj, DObjModel_s *dobjModels, uint
         modelParents[currNumModels] = -1;
         matOffset[currNumModels] = boneIndex;
         if (dobjModel->ignoreCollision)
-            obj->ignoreCollision |= 1 << currNumModels;
+            obj->ignoreCollision |= 1u << currNumModels;
         if (currNumModels)
         {
             name = dobjModel->boneName;
@@ -337,8 +423,13 @@ void __cdecl DObjCreateDuplicateParts(DObj_s *obj, DObjModel_s *dobjModels, uint
     iassert(boneCount == (byte)boneCount);
     obj->numBones = boneCount;
     iassert(numModels > 0);
-    obj->models = (XModel **)MT_Alloc(5 * numModels, 13);
-    memcpy((unsigned __int8 *)obj->models, (unsigned __int8 *)models, 4 * numModels);
+    obj->models = (XModel **)MT_Alloc(
+        DObjGetModelAllocationSize(numModels), 13);
+    iassert(reinterpret_cast<uintptr_t>(obj->models) % alignof(XModel *) == 0);
+    memcpy(
+        (unsigned __int8 *)obj->models,
+        (unsigned __int8 *)models,
+        sizeof(*models) * numModels);
     memcpy((unsigned __int8 *)&obj->models[numModels], modelParents, numModels);
     iassert(g_empty);
     iassert(!obj->duplicateParts);
@@ -402,16 +493,16 @@ void __cdecl DObjComputeBounds(DObj_s *obj)
     obj->radius = radius;
 }
 
-void __cdecl DObjFree(DObj_s *obj)
+namespace
 {
-    XModel **models; // [esp+34h] [ebp-4h]
+void DObjFreeLocked(DObj_s *obj)
+{
+    iassert(Sys_AtomicLoad(&obj->locked) == 1u);
 
-    PROF_SCOPED("DObjFree");
-    iassert(obj);
-    models = obj->models;
+    XModel **const models = obj->models;
     if (models)
     {
-        MT_Free((byte*)models, 5 * obj->numModels);
+        MT_Free((byte*)models, DObjGetModelAllocationSize(obj->numModels));
         obj->models = 0;
     }
     obj->numModels = 0; // LWSS: blops backport
@@ -428,6 +519,29 @@ void __cdecl DObjFree(DObj_s *obj)
         obj->duplicatePartsSize = 0;
         obj->duplicateParts = 0;
     }
+}
+}
+
+void __cdecl DObjFree(DObj_s *obj)
+{
+    PROF_SCOPED("DObjFree");
+    iassert(obj);
+    if (!obj)
+    {
+        Com_Error(ERR_DROP, "cannot free a null DObj");
+        return;
+    }
+
+    DObjLock(obj);
+    if (obj->numModels > DOBJ_MAX_SUBMODELS
+        || (obj->numModels != 0) != (obj->models != nullptr))
+    {
+        DObjUnlock(obj);
+        Com_Error(ERR_DROP, "cannot free an invalid DObj");
+        return;
+    }
+    DObjFreeLocked(obj);
+    DObjUnlock(obj);
 }
 
 void __cdecl DObjGetCreateParms(
@@ -473,7 +587,8 @@ void __cdecl DObjGetCreateParms(
         startBoneIndex += XModelNumBones(model);
         dobjModel->model = models[modelIndex];
         dobjModel->boneName = 0;
-        dobjModel->ignoreCollision = (obj->ignoreCollision & (1 << modelIndex)) != 0;
+        dobjModel->ignoreCollision =
+            (obj->ignoreCollision & (1u << modelIndex)) != 0;
         if (modelParents[modelIndex] != 255)
         {
             for (parentModelIndex = modelIndex - 1; parentModelIndex >= 0; --parentModelIndex)
@@ -502,9 +617,33 @@ void __cdecl DObjGetCreateParms(
 void __cdecl DObjArchive(DObj_s *obj)
 {
     DObjModel_s *model; // [esp+8h] [ebp-170h]
-    SavedDObj savedObj; // [esp+10h] [ebp-168h] BYREF
+    SavedDObj savedObj{}; // [esp+10h] [ebp-168h] BYREF
     uint32_t modelIndex; // [esp+74h] [ebp-104h]
     DObjModel_s dobjModels[32]; // [esp+78h] [ebp-100h] BYREF
+
+    iassert(obj);
+    if (!obj)
+    {
+        Com_Error(ERR_DROP, "cannot archive a null DObj");
+        return;
+    }
+    DObjLock(obj);
+    if (obj->numModels == 0 || obj->numModels > DOBJ_MAX_SUBMODELS
+        || !obj->models)
+    {
+        DObjUnlock(obj);
+        Com_Error(ERR_DROP, "cannot archive an invalid DObj");
+        return;
+    }
+    for (uint32_t modelIndex = 0; modelIndex < obj->numModels; ++modelIndex)
+    {
+        if (!obj->models[modelIndex])
+        {
+            DObjUnlock(obj);
+            Com_Error(ERR_DROP, "cannot archive a DObj with a null model");
+            return;
+        }
+    }
 
     DObjGetCreateParms(obj, dobjModels, &savedObj.numModels, &savedObj.tree, &savedObj.entnum);
     savedObj.ignoreCollision = 0;
@@ -518,35 +657,73 @@ void __cdecl DObjArchive(DObj_s *obj)
         model = &dobjModels[modelIndex];
         savedObj.dobjModels[modelIndex].boneName = model->boneName;
         if (model->ignoreCollision)
-            savedObj.ignoreCollision |= 1 << modelIndex;
+            savedObj.ignoreCollision |= 1u << modelIndex;
     }
 
     iassert(obj->models);
     obj->models = NULL;
-    DObjFree(obj);
+    DObjFreeLocked(obj);
 
-    static_assert((sizeof(DObj_s) - sizeof(obj->models)) == 96);
-    memcpy(obj, &savedObj, sizeof(DObj_s) - sizeof(obj->models));
+    // DB_ArchiveAssets has already synchronized the render thread. This exact
+    // copy retires the live lock word and leaves an opaque SavedDObj in-place;
+    // no DObj access is valid until the matching DObjUnarchive call.
+    memcpy(obj, &savedObj, sizeof(savedObj));
 }
 
 void __cdecl DObjUnarchive(DObj_s *obj)
 {
     DObjModel_s *model; // [esp+8h] [ebp-170h]
-    SavedDObj savedObj; // [esp+10h] [ebp-168h] BYREF
+    SavedDObj savedObj{}; // [esp+10h] [ebp-168h] BYREF
     uint32_t modelIndex; // [esp+74h] [ebp-104h]
     DObjModel_s dobjModels[32]; // [esp+78h] [ebp-100h] BYREF
 
+    iassert(obj);
+    if (!obj)
+    {
+        Com_Error(ERR_DROP, "cannot unarchive a null DObj");
+        return;
+    }
+
     memcpy(&savedObj, obj, sizeof(savedObj));
+    if (savedObj.numModels == 0
+        || savedObj.numModels > DOBJ_MAX_SUBMODELS
+        || !savedObj.models)
+    {
+        Com_Error(ERR_DROP, "cannot unarchive an invalid DObj");
+        return;
+    }
     for (modelIndex = 0; modelIndex < savedObj.numModels; ++modelIndex)
     {
+        if (!savedObj.models[modelIndex])
+        {
+            Com_Error(ERR_DROP, "cannot unarchive a DObj with a null model");
+            return;
+        }
         model = &dobjModels[modelIndex];
         model->boneName = savedObj.dobjModels[modelIndex].boneName;
         model->model = savedObj.models[modelIndex];
-        model->ignoreCollision = (savedObj.ignoreCollision & (1 << modelIndex)) != 0;
+        model->ignoreCollision =
+            (savedObj.ignoreCollision & (1u << modelIndex)) != 0;
     }
-    MT_Free((_BYTE *)savedObj.models, 5 * savedObj.numModels);
-    DObjCreate(dobjModels, savedObj.numModels, savedObj.tree, obj, savedObj.entnum);
+
+    // The in-place SavedDObj is externally quiesced. Mark the destination as
+    // constructing before returning it to live DObj form, then publish it only
+    // after every field and hide-part bit is initialized.
+    Sys_AtomicStore(&obj->locked, 1u);
+    MT_Free(
+        (_BYTE *)savedObj.models,
+        DObjGetModelAllocationSize(savedObj.numModels));
+    obj->models = nullptr;
+    obj->numModels = 0;
+    obj->duplicateParts = 0;
+    DObjCreateLocked(
+        dobjModels,
+        savedObj.numModels,
+        savedObj.tree,
+        obj,
+        savedObj.entnum);
     DObjSetHidePartBits(obj, savedObj.hidePartBits);
+    Sys_AtomicStore(&obj->locked, 0u);
 }
 
 void __cdecl DObjSkelClear(const DObj_s *obj)
@@ -809,7 +986,7 @@ LABEL_17:
         model = models[j];
         names = model->boneNames;
         size = model->numBones;
-        ignoreCollision = obj->ignoreCollision & (1 << j);
+        ignoreCollision = obj->ignoreCollision & (1u << j);
         localBoneIndex = 0;
         while (1)
         {
@@ -1018,7 +1195,7 @@ void __cdecl DObjTracelinePartBits(DObj_s *obj, int *partBits)
     {
         model = models[j];
         size = model->numBones;
-        if ((obj->ignoreCollision & (1 << j)) != 0)
+        if ((obj->ignoreCollision & (1u << j)) != 0)
         {
             globalBoneIndex += size;
         }
@@ -1317,18 +1494,85 @@ int DObjGetNumSurfaces(const DObj_s *obj, char *lods)
 
 void DObjClone(const DObj_s *from, DObj_s *obj)
 {
-    uint32_t duplicateParts; // r3
-    XModel **v5; // r3
-
+    iassert(from);
     iassert(obj);
+    iassert(from != obj);
+    if (!from || !obj)
+    {
+        Com_Error(ERR_DROP, "cannot clone a null DObj");
+        return;
+    }
+    if (from == obj)
+    {
+        Com_Error(ERR_DROP, "cannot clone an aliased DObj");
+        return;
+    }
 
-    memcpy(obj, from, sizeof(DObj_s));
-    memset(&obj->skel, 0, sizeof(obj->skel));
-    duplicateParts = obj->duplicateParts;
-    if (obj->duplicateParts && duplicateParts != g_empty)
+    const uint32_t destinationLock =
+        Sys_AtomicCompareExchange(&obj->locked, 1u, 0u);
+    iassert(destinationLock == 0u);
+    if (destinationLock != 0u)
+    {
+        Com_Error(ERR_DROP, "cannot clone onto a locked DObj");
+        return;
+    }
+
+    iassert(!obj->numModels);
+    iassert(!obj->models);
+    iassert(!obj->duplicateParts);
+    if (obj->numModels || obj->models || obj->duplicateParts)
+    {
+        Sys_AtomicStore(&obj->locked, 0u);
+        Com_Error(ERR_DROP, "cannot clone onto a live DObj");
+        return;
+    }
+
+    DObj_s *const mutableFrom = const_cast<DObj_s *>(from);
+    DObjLock(mutableFrom);
+    iassert(from->numModels);
+    iassert(from->models);
+    if (!from->numModels || from->numModels > DOBJ_MAX_SUBMODELS
+        || !from->models)
+    {
+        DObjUnlock(mutableFrom);
+        Sys_AtomicStore(&obj->locked, 0u);
+        Com_Error(ERR_DROP, "cannot clone an invalid DObj");
+        return;
+    }
+    for (uint32_t modelIndex = 0; modelIndex < from->numModels; ++modelIndex)
+    {
+        if (!from->models[modelIndex])
+        {
+            DObjUnlock(mutableFrom);
+            Sys_AtomicStore(&obj->locked, 0u);
+            Com_Error(ERR_DROP, "cannot clone a DObj with a null model");
+            return;
+        }
+    }
+
+    const int modelAllocationSize =
+        DObjGetModelAllocationSize(from->numModels);
+    const int modelDataSize = DObjGetModelDataSize(from->numModels);
+    XModel **const models =
+        (XModel **)MT_Alloc(modelAllocationSize, 13);
+    iassert(reinterpret_cast<uintptr_t>(models) % alignof(XModel *) == 0);
+    memcpy(models, from->models, modelDataSize);
+
+    const uint32_t duplicateParts = from->duplicateParts;
+    if (duplicateParts && duplicateParts != g_empty)
         SL_AddRefToString(duplicateParts);
+
     obj->tree = 0;
-    v5 = (XModel **)MT_Alloc(from->numModels + __ROL4__(from->numModels, 2), 13);
-    obj->models = v5;
-    memcpy(v5, from->models, from->numModels + __ROL4__(from->numModels, 2));
+    obj->duplicateParts = from->duplicateParts;
+    obj->entnum = from->entnum;
+    obj->duplicatePartsSize = from->duplicatePartsSize;
+    obj->numModels = from->numModels;
+    obj->numBones = from->numBones;
+    obj->ignoreCollision = from->ignoreCollision;
+    memset(&obj->skel, 0, sizeof(obj->skel));
+    obj->radius = from->radius;
+    memcpy(obj->hidePartBits, from->hidePartBits, sizeof(obj->hidePartBits));
+    obj->models = models;
+    DObjUnlock(mutableFrom);
+    Sys_AtomicStore(&obj->locked, 0u);
 }

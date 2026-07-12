@@ -19,7 +19,7 @@ static uint8_t serverObjDirty[272];
 
 void __cdecl TRACK_dobj_management()
 {
-    track_static_alloc_internal(objBuf, 204800, "objBuf", 11);
+    track_static_alloc_internal(objBuf, sizeof(objBuf), "objBuf", 11);
     track_static_alloc_internal(objAlloced, 2048, "objAlloced", 11);
     track_static_alloc_internal(clientObjMap, 2304, "clientObjMap", 11);
     track_static_alloc_internal(serverObjMap, 2048, "serverObjMap", 11);
@@ -101,11 +101,10 @@ DObj_s *__cdecl Com_ClientDObjCreate(
     iassert(handle >= localClientNum * CLIENT_DOBJ_HANDLE_MAX);
     iassert(handle < localClientNum * CLIENT_DOBJ_HANDLE_MAX + CLIENT_DOBJ_HANDLE_MAX);
 
-    clientObjMap[handle] = index;
-
     iassert((unsigned)index < DOBJ_HANDLE_MAX);
 
     DObjCreate(dobjModels, numModels, tree, &objBuf[index], 0);
+    clientObjMap[handle] = index;
 
     if (!objFreeCount)
         Com_Error(ERR_DROP, "No free DObjs");
@@ -198,11 +197,10 @@ DObj_s *__cdecl Com_ServerDObjCreate(
     serverObjDirty[(int)handle >> 3] |= 1 << (handle & 7);
 #endif
 
-    serverObjMap[handle] = index;
-
     iassert((unsigned)index < DOBJ_HANDLE_MAX);
 
     DObjCreate(dobjModels, numModels, tree, &objBuf[index], handle + 1);
+    serverObjMap[handle] = index;
 
     if (!objFreeCount)
         Com_Error(ERR_DROP, "No free DObjs");
@@ -230,9 +228,9 @@ void __cdecl Com_SafeClientDObjFree(uint32_t handle, int localClientNum)
 #ifdef KISAK_SP
         Sys_EnterCriticalSection(CRITSECT_DOBJ_ALLOC);
 #endif
+        DObjFree(&objBuf[index]);
         objAlloced[index] = 0;
         ++objFreeCount;
-        DObjFree(&objBuf[index]);
 #ifdef KISAK_SP
         Sys_LeaveCriticalSection(CRITSECT_DOBJ_ALLOC);
 #endif
@@ -262,9 +260,9 @@ void __cdecl Com_SafeServerDObjFree(uint32_t handle)
 #ifdef KISAK_SP
         Sys_EnterCriticalSection(CRITSECT_DOBJ_ALLOC);
 #endif
+        DObjFree(&objBuf[index]);
         objAlloced[index] = 0;
         ++objFreeCount;
-        DObjFree(&objBuf[index]);
 #ifdef KISAK_SP
         Sys_LeaveCriticalSection(CRITSECT_DOBJ_ALLOC);
 #endif
@@ -357,8 +355,6 @@ DObj_s *Com_DObjCloneToBuffer(uint32_t entnum)
             entnum,
             2304);
 
-    clientObjMapBuffered[v2] = FreeDObjIndex;
-
     if (v4 >= 0x800)
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\qcommon\\dobj_management.cpp",
@@ -376,6 +372,7 @@ DObj_s *Com_DObjCloneToBuffer(uint32_t entnum)
             "((unsigned)clientDobjIndex < 2048)",
             FreeDObjIndex);
     DObjClone(&objBuf[v4], &objBuf[FreeDObjIndex]);
+    clientObjMapBuffered[v2] = FreeDObjIndex;
     if (!objFreeCount)
         Com_Error(ERR_DROP, "No free DObjs");
 

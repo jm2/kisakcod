@@ -2,6 +2,7 @@
 #include <universal/q_shared.h>
 #include <qcommon/qcommon.h>
 #include <universal/profile.h>
+#include <universal/sys_atomic.h>
 
 void __cdecl Short2LerpAsVec2(const __int16 *from, const __int16 *to, float frac, float *out)
 {
@@ -1790,13 +1791,17 @@ LABEL_20:
     tree = obj->tree;
     if (tree && tree->children)
     {
-        InterlockedIncrement(&tree->calcRefCount);
-        iassert(!tree->modifyRefCount);
+        const int32_t calcRefCount = Sys_AtomicIncrement(&tree->calcRefCount);
+        iassert(calcRefCount > 0);
+        (void)calcRefCount;
+        iassert(Sys_AtomicLoad(&tree->modifyRefCount) == 0);
         info.ignorePartBits.setBit(127);
         AnimInfo = GetAnimInfo(tree->children);
         XAnimCalc(obj, AnimInfo, 1.0f, 1, 0, &info, 0, p_skel->mat);
-        iassert(!tree->modifyRefCount);
-        InterlockedDecrement(&tree->calcRefCount);
+        iassert(Sys_AtomicLoad(&tree->modifyRefCount) == 0);
+        const int32_t remainingCalcRefCount = Sys_AtomicDecrement(&tree->calcRefCount);
+        iassert(remainingCalcRefCount >= 0);
+        (void)remainingCalcRefCount;
     }
     boneIndex = 0;
     models = obj->models;

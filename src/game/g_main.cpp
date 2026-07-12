@@ -868,8 +868,6 @@ void G_LoadAnimTreeInstances()
     int v0; // r31
     XAnimTree_s **actorXAnimTrees; // r30
     XAnim_s *anims; // r29
-    int v3; // r30
-    int *p_entnum; // r31
     int v5; // r31
     XAnimTree_s **actorXAnimClientTrees; // r30
     void *result; // r3
@@ -883,15 +881,11 @@ void G_LoadAnimTreeInstances()
         *actorXAnimTrees++ = XAnimCreateTree(anims, Hunk_AllocActorXAnimServer);
     } while (v0);
     g_scr_data.actorBackupXAnimTree = XAnimCreateTree(anims, Hunk_AllocActorXAnimServer);
-    v3 = 16;
-    p_entnum = &g_scr_data.actorCorpseInfo[0].entnum;
-    do
+    for (corpseInfo_t &corpseInfo : g_scr_data.actorCorpseInfo)
     {
-        --v3;
-        *(p_entnum - 1) = (int)XAnimCreateTree(anims, Hunk_AllocActorXAnimServer);
-        *p_entnum = -1;
-        p_entnum += 8;
-    } while (v3);
+        corpseInfo.tree = XAnimCreateTree(anims, Hunk_AllocActorXAnimServer);
+        corpseInfo.entnum = -1;
+    }
     v5 = 64;
     actorXAnimClientTrees = g_scr_data.actorXAnimClientTrees;
     do
@@ -1895,25 +1889,6 @@ void __cdecl G_SendClientMessages()
     unsigned int ActorFriendlyIndex; // r3
     unsigned int v8; // r29
     unsigned __int8 *v9; // r11
-    unsigned __int8 v10; // r10
-    actor_prone_info_s *v11; // r9
-    int *p_entnum; // r11
-    int v13; // r4
-    int *v14; // r8
-    actor_prone_info_s *v15; // r7
-    int v16; // ctr
-    int v17; // r5
-    int *v18; // r8
-    actor_prone_info_s *v19; // r7
-    int v20; // ctr
-    int v21; // r6
-    int *v22; // r8
-    actor_prone_info_s *v23; // r7
-    int v24; // ctr
-    int v25; // r6
-    int *v26; // r8
-    actor_prone_info_s *v27; // r7
-    int v28; // ctr
     int v29; // r8
     int v30; // r9
     int entNum; // r11
@@ -1969,72 +1944,17 @@ void __cdecl G_SendClientMessages()
         ++v0;
         ++v1;
     } while ((uintptr_t)cgData_actorProneInfo < (uintptr_t)&level.cgData_actorProneInfo[32]);
-    v10 = 33;
-    v11 = &level.cgData_actorProneInfo[33];
-    p_entnum = &g_scr_data.actorCorpseInfo[0].entnum;
-    v13 = 4;
-    do
+    for (int corpseIndex = 0; corpseIndex < 16; ++corpseIndex)
     {
-        if (*p_entnum >= 0)
+        const corpseInfo_t &corpseInfo =
+            g_scr_data.actorCorpseInfo[corpseIndex];
+        if (corpseInfo.entnum >= 0)
         {
-            v14 = p_entnum + 1;
-            v15 = v11 - 1;
-            level.specialIndex[*p_entnum] = v10 - 1;
-            v16 = 6;
-            do
-            {
-                *(unsigned int *)&v15->bCorpseOrientation = *v14++;
-                v15 = (actor_prone_info_s *)((char *)v15 + 4);
-                --v16;
-            } while (v16);
+            const int specialIndex = corpseIndex + 32;
+            level.specialIndex[corpseInfo.entnum] = specialIndex;
+            level.cgData_actorProneInfo[specialIndex] = corpseInfo.proneInfo;
         }
-        v17 = p_entnum[8];
-        if (v17 >= 0)
-        {
-            v18 = p_entnum + 9;
-            v19 = v11;
-            level.specialIndex[v17] = v10;
-            v20 = 6;
-            do
-            {
-                *(unsigned int *)&v19->bCorpseOrientation = *v18++;
-                v19 = (actor_prone_info_s *)((char *)v19 + 4);
-                --v20;
-            } while (v20);
-        }
-        v21 = p_entnum[16];
-        if (v21 >= 0)
-        {
-            v22 = p_entnum + 17;
-            v23 = v11 + 1;
-            level.specialIndex[v21] = v10 + 1;
-            v24 = 6;
-            do
-            {
-                *(unsigned int *)&v23->bCorpseOrientation = *v22++;
-                v23 = (actor_prone_info_s *)((char *)v23 + 4);
-                --v24;
-            } while (v24);
-        }
-        v25 = p_entnum[24];
-        if (v25 >= 0)
-        {
-            v26 = p_entnum + 25;
-            v27 = v11 + 2;
-            level.specialIndex[v25] = v10 + 2;
-            v28 = 6;
-            do
-            {
-                *(unsigned int *)&v27->bCorpseOrientation = *v26++;
-                v27 = (actor_prone_info_s *)((char *)v27 + 4);
-                --v28;
-            } while (v28);
-        }
-        --v13;
-        v10 += 4;
-        p_entnum += 32;
-        v11 += 4;
-    } while (v13);
+    }
     v29 = 2;
     v30 = 0;
     do

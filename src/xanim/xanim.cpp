@@ -9,7 +9,10 @@
 #include <universal/profile.h>
 #include <script/scr_vm.h>
 #include <universal/com_files.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_sync.h>
+#include <universal/sys_atomic.h>
+
+#include <limits>
 
 #if defined(KISAK_MP) && !defined(KISAK_DEDI_HEADLESS)
 #include <cgame_mp/cg_local_mp.h>
@@ -268,6 +271,25 @@ bool __cdecl IsLeafNode(const XAnimEntry* anim)
     return anim->numAnims == 0;
 }
 
+namespace
+{
+bool XAnimGetAnimsAllocationSize(const uint32_t size, int *const allocationSize)
+{
+    const std::size_t headerSize = offsetof(XAnim_s, entries);
+    const std::size_t maxSize = static_cast<std::size_t>(
+        (std::numeric_limits<int>::max)());
+    if (size == 0
+        || size > (maxSize - headerSize) / sizeof(XAnimEntry))
+    {
+        return false;
+    }
+
+    *allocationSize = static_cast<int>(
+        headerSize + static_cast<std::size_t>(size) * sizeof(XAnimEntry));
+    return true;
+}
+}
+
 XAnim_s* __cdecl XAnimCreateAnims(const char* debugName, uint32_t size, void* (__cdecl* Alloc)(int))
 {
     char v4; // [esp+3h] [ebp-29h]
@@ -275,12 +297,26 @@ XAnim_s* __cdecl XAnimCreateAnims(const char* debugName, uint32_t size, void* (_
     const char* v6; // [esp+Ch] [ebp-20h]
     char* newDebugName; // [esp+20h] [ebp-Ch]
     XAnim_s* anims; // [esp+28h] [ebp-4h]
+    int allocationSize;
 
     iassert(debugName);
     iassert(Alloc);
+    if (!debugName || !Alloc || !XAnimGetAnimsAllocationSize(size, &allocationSize))
+    {
+        Com_Error(ERR_DROP, "cannot allocate an invalid XAnim table");
+        return nullptr;
+    }
 
-    anims = (XAnim_s*)Alloc(8 * size + 12);
+    anims = (XAnim_s*)Alloc(allocationSize);
+    if (!anims
+        || reinterpret_cast<uintptr_t>(anims) % alignof(XAnim_s) != 0)
+    {
+        Com_Error(ERR_DROP, "XAnim allocator returned invalid storage");
+        return nullptr;
+    }
+    anims->debugName = nullptr;
     anims->size = size;
+    anims->debugAnimNames = nullptr;
 
     if (g_anim_developer)
     {
@@ -293,7 +329,16 @@ XAnim_s* __cdecl XAnimCreateAnims(const char* debugName, uint32_t size, void* (_
             *v5++ = *v6++;
         } while (v4);
         anims->debugName = newDebugName;
-        anims->debugAnimNames = (const char**)Hunk_AllocDebugMem(4 * size, "XAnimCreateAnims");
+        const uint64_t debugNameBytes =
+            static_cast<uint64_t>(size) * sizeof(*anims->debugAnimNames);
+        if (debugNameBytes > UINT32_MAX)
+        {
+            Com_Error(ERR_DROP, "XAnim debug-name table is too large");
+            return nullptr;
+        }
+        anims->debugAnimNames = (const char**)Hunk_AllocDebugMem(
+            static_cast<uint32_t>(debugNameBytes),
+            "XAnimCreateAnims");
     }
 
     if (Hunk_DataOnHunk((unsigned char*)anims))
@@ -354,22 +399,53 @@ XAnimTree_s* __cdecl XAnimCreateTree(XAnim_s* anims, void* (__cdecl* Alloc)(int)
 
     iassert(anims);
     iassert(anims->size);
+    iassert(Alloc);
+    if (!anims || !anims->size || !Alloc)
+    {
+        Com_Error(ERR_DROP, "cannot create an invalid XAnim tree");
+        return nullptr;
+    }
 
     tree = (XAnimTree_s*)Alloc(sizeof(XAnimTree_s));
+    if (!tree
+        || reinterpret_cast<uintptr_t>(tree) % alignof(XAnimTree_s) != 0)
+    {
+        Com_Error(ERR_DROP, "XAnim tree allocator returned invalid storage");
+        return nullptr;
+    }
     memset(tree, 0, sizeof(XAnimTree_s));
     tree->anims = anims;
     iassert(!tree->info_usage);
+    iassert(Sys_AtomicLoad(&tree->calcRefCount) == 0);
+    iassert(Sys_AtomicLoad(&tree->modifyRefCount) == 0);
     return tree;
 }
 
 void __cdecl XAnimFreeTree(XAnimTree_s* tree, void(__cdecl* Free)(void*, int))
 {
     iassert(tree);
+    if (!tree)
+    {
+        Com_Error(ERR_DROP, "cannot free a null XAnim tree");
+        return;
+    }
     iassert(tree->anims);
     iassert(tree->anims->size);
+    const int32_t calcRefCount = Sys_AtomicLoad(&tree->calcRefCount);
+    const int32_t modifyRefCount = Sys_AtomicLoad(&tree->modifyRefCount);
+    iassert(calcRefCount == 0);
+    iassert(modifyRefCount == 0);
+    if (!tree->anims || !tree->anims->size
+        || calcRefCount != 0 || modifyRefCount != 0)
+    {
+        Com_Error(ERR_DROP, "cannot free an active or invalid XAnim tree");
+        return;
+    }
 
     XAnimClearTree(tree);
     iassert(!tree->info_usage);
+    iassert(Sys_AtomicLoad(&tree->calcRefCount) == 0);
+    iassert(Sys_AtomicLoad(&tree->modifyRefCount) == 0);
     if (Free)
     {
         Free(tree, sizeof(XAnimTree_s));
@@ -542,17 +618,24 @@ double __cdecl XAnimGetLength(const XAnim_s* anims, uint32_t animIndex)
 {
     XAnimParts* parts; // [esp+Ch] [ebp-4h]
 
-    if (!anims)
-        MyAssertHandler(".\\xanim\\xanim.cpp", 2395, 0, "%s", "anims");
-    if (animIndex >= anims->size)
-        MyAssertHandler(".\\xanim\\xanim.cpp", 2396, 0, "animIndex < anims->size\n\t%i, %i", animIndex, anims->size);
-    if ((const XAnim_s*)((char*)anims + 8 * animIndex) == (const XAnim_s*)-12)
-        MyAssertHandler(".\\xanim\\xanim.cpp", 2399, 0, "%s", "entry");
-    if (!IsLeafNode(&anims->entries[animIndex]))
-        MyAssertHandler(".\\xanim\\xanim.cpp", 2400, 0, "%s", "IsLeafNode( entry )");
-    parts = anims->entries[animIndex].parts;
-    if (!parts)
-        MyAssertHandler(".\\xanim\\xanim.cpp", 2403, 0, "%s", "parts");
+    iassert(anims);
+    if (!anims || animIndex >= anims->size)
+    {
+        Com_Error(ERR_DROP, "invalid XAnim length lookup");
+        return 0.0;
+    }
+    const XAnimEntry *const entry = &anims->entries[animIndex];
+    if (!IsLeafNode(entry))
+    {
+        Com_Error(ERR_DROP, "cannot get the length of an XAnim blend node");
+        return 0.0;
+    }
+    parts = entry->parts;
+    if (!parts || parts->framerate == 0.0f)
+    {
+        Com_Error(ERR_DROP, "cannot get the length of an invalid XAnim");
+        return 0.0;
+    }
     return (float)((double)parts->numframes / parts->framerate);
 }
 
@@ -1121,11 +1204,13 @@ void __cdecl XAnimFreeInfo(XAnimTree_s* tree, uint32_t infoIndex)
     const char* animToModel; // [esp+8h] [ebp-Ch]
     uint32_t prev; // [esp+Ch] [ebp-8h]
 
-    InterlockedIncrement(&tree->modifyRefCount);
-
-    iassert(!tree->calcRefCount);
     iassert(tree);
     iassert(infoIndex && (infoIndex < 4096));
+
+    const int32_t modifyRefCount = Sys_AtomicIncrement(&tree->modifyRefCount);
+    iassert(modifyRefCount > 0);
+    (void)modifyRefCount;
+    iassert(Sys_AtomicLoad(&tree->calcRefCount) == 0);
 
     info = &g_xAnimInfo[infoIndex];
 
@@ -1181,8 +1266,10 @@ void __cdecl XAnimFreeInfo(XAnimTree_s* tree, uint32_t infoIndex)
     Sys_LeaveCriticalSection(CRITSECT_XANIM_ALLOC);
 #endif
 
-    iassert(!tree->calcRefCount);
-    InterlockedDecrement(&tree->modifyRefCount);
+    iassert(Sys_AtomicLoad(&tree->calcRefCount) == 0);
+    const int32_t remainingModifyRefCount = Sys_AtomicDecrement(&tree->modifyRefCount);
+    iassert(remainingModifyRefCount >= 0);
+    (void)remainingModifyRefCount;
 }
 
 void __cdecl XAnimClearServerNotify(XAnimInfo* info)
@@ -3520,12 +3607,16 @@ int __cdecl XAnimSetGoalWeightKnob(
 void __cdecl XAnimClearTree(XAnimTree_s* tree)
 {
     iassert(tree);
+    iassert(Sys_AtomicLoad(&tree->calcRefCount) == 0);
+    iassert(Sys_AtomicLoad(&tree->modifyRefCount) == 0);
     if (tree->children)
     {
         XAnimFreeInfo(tree, tree->children);
         iassert(!tree->children);
     }
     iassert(!tree->info_usage);
+    iassert(Sys_AtomicLoad(&tree->calcRefCount) == 0);
+    iassert(Sys_AtomicLoad(&tree->modifyRefCount) == 0);
 }
 
 int __cdecl XAnimSetGoalWeightNode(
@@ -4083,11 +4174,18 @@ void XAnimDisableLeakCheck()
 
 void XAnimFreeAnims(XAnim_s *anims, void(*Free)(void *, int))
 {
-    int v4; // r29
+    int allocationSize;
 
-    v4 = 8 * anims->size + 12;
+    iassert(anims);
+    iassert(Free);
+    if (!anims || !Free
+        || !XAnimGetAnimsAllocationSize(anims->size, &allocationSize))
+    {
+        Com_Error(ERR_DROP, "cannot free an invalid XAnim table");
+        return;
+    }
     XAnimFreeList(anims);
-    Free(anims, v4);
+    Free(anims, allocationSize);
 }
 
 static void XAnimCloneClientAnimInfo(const XAnimInfo *from, XAnimInfo *to)

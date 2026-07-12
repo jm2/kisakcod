@@ -1,6 +1,8 @@
 #include "dobj_utils.h"
 #include "xmodel.h"
+#include <qcommon/sys_time.h>
 #include <universal/assertive.h>
+#include <universal/sys_atomic.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_utils.h>
 #endif
@@ -546,21 +548,29 @@ void __cdecl DObjGetHidePartBits(const DObj_s *obj, uint32_t *partBits)
 
 void __cdecl DObjLock(DObj_s *obj)
 {
-    volatile uint32_t *Destination; // [esp+0h] [ebp-4h]
+    iassert(obj);
+    if (!obj)
+        return;
 
-    Destination = &obj->locked;
-    do
+    for (;;)
     {
-        while (*Destination)
-            ;
-    } while (InterlockedCompareExchange(Destination, 1, 0));
+        if (!Sys_AtomicCompareExchange(&obj->locked, 1u, 0u))
+        {
+            return;
+        }
+        Sys_Sleep(0);
+    }
 }
 
 void __cdecl DObjUnlock(DObj_s *obj)
 {
-    iassert(obj->locked);
+    iassert(obj);
+    if (!obj)
+        return;
 
-    obj->locked = 0;
+    const uint32_t lockState = Sys_AtomicExchange(&obj->locked, 0u);
+    iassert(lockState == 1);
+    (void)lockState;
 }
 
 // seems blops specific

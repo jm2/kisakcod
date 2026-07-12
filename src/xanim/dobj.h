@@ -2,6 +2,9 @@
 #include <ode/ode.h>
 #include <qcommon/bitarray.h>
 #include <cstdint>
+#include <type_traits>
+
+#include <universal/kisak_abi.h>
 
 struct PhysPreset;
 
@@ -56,6 +59,8 @@ struct DSkel // sizeof=0x38
     int timeStamp;                      // ...
     DObjAnimMat* mat;                   // ...
 };
+RUNTIME_SIZE(DSkel, 0x38, 0x40);
+RUNTIME_OFFSET(DSkel, mat, 0x34, 0x38);
 
 struct DObjSkelMat // sizeof=0x40
 {                                       // ...
@@ -79,6 +84,12 @@ struct DObj_s // sizeof=0x64
     uint32_t hidePartBits[4];
     XModel** models;
 };
+RUNTIME_SIZE(DObj_s, 0x64, 0x78);
+RUNTIME_OFFSET(DObj_s, locked, 0x10, 0x14);
+RUNTIME_OFFSET(DObj_s, skel, 0x14, 0x18);
+RUNTIME_OFFSET(DObj_s, models, 0x60, 0x70);
+static_assert(std::is_same_v<decltype(DObj_s::locked), volatile uint32_t>);
+static_assert(std::is_standard_layout_v<DObj_s>);
 
 struct DObjModel_s // sizeof=0x8
 {                                       // ...
@@ -87,6 +98,9 @@ struct DObjModel_s // sizeof=0x8
     bool ignoreCollision;               // ...
     // padding byte
 };
+RUNTIME_SIZE(DObjModel_s, 0x8, 0x10);
+RUNTIME_OFFSET(DObjModel_s, boneName, 0x4, 0x8);
+RUNTIME_OFFSET(DObjModel_s, ignoreCollision, 0x6, 0xA);
 
 void __cdecl DObjInit();
 void __cdecl DObjShutdown();

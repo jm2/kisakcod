@@ -715,9 +715,9 @@ return the *old*; `CompareExchange` keeps Win32 `(dest,exchange,comparand)` orde
 as well as GCC/Clang, including high-bit/wrap and pointer exchange cases. Non-MSVC `Interlocked*`
 aliases remain only as a temporary source-migration aid; Windows-owned names are never redefined on
 MSVC. The shared fast-lock implementation is the first layout-bound consumer and no longer contains
-a Windows include or native cast. Corrected live census after the script migration: **151** direct
-`Interlocked` calls remain across 26 engine TUs (the original 209 double-counted 12 assertion-message
-literals, and subsequent thread/dvar/fast-lock/script migrations removed 46 real calls). *M1 open tail:* migrate those remaining
+a Windows include or native cast. Corrected live census after the XAnim/DObj migration: **146** direct
+`Interlocked` calls remain across 23 engine TUs (the original 209 double-counted 12 assertion-message
+literals, and subsequent thread/dvar/fast-lock/script/XAnim/DObj migrations removed 51 real calls). *M1 open tail:* migrate those remaining
 families and retype their `volatile long`/`LONG` storage and casts to exact-width words; then delete
 the compatibility aliases. The bare `sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now
 and burned down in M4.
@@ -788,6 +788,20 @@ its local
 16-bit lifetime remains serialized by the script VM, while only global/debug counters are atomic.
 `scrVarPub_t` now freezes the vector counter at its distinct 32/64-bit runtime offsets instead of
 asserting the 32-bit total size on every architecture.
+
+The next batch moved XAnim tree overlap counters and DObj locking/lifecycle onto the same exact-width
+boundary. DObj create/clone reserves construction state and publishes last, free and source cloning
+own the lock, object maps publish only complete instances, and archive/unarchive copies one exact,
+initialized native-width saved record inside the existing render-thread-quiesced DB window. Model
+pointer/parent storage now scales with pointer width and forces an aligned buddy block for the
+one-model 64-bit case; clone no longer copies a transient lock, and the prior native-size archive
+formula can no longer over-read the stack. `XAnimEntry`, `XAnim_s`, `XAnimTree_s`, and `DObj_s` have
+dual 32/64-bit layout contracts. Variable XAnim tables use checked `offsetof + count * sizeof(entry)`
+allocation and pointer-width debug tables; SP preview buffers/clone traversal, tracked pool sizes,
+and corpse-tree/metadata traversal no longer use x86 byte strides or pointer-to-int writes. This is
+not a complete XAnim payload widening: `XAnimIndices`/`XAnimParts`, the 88-byte clone allocation, and
+matching load-object assumptions remain frozen to the retail layout and must be split into disk32
+mirrors plus a native 0x88 runtime `XAnimParts` before a 64-bit engine TU can compile.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),

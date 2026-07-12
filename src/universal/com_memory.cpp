@@ -148,7 +148,7 @@ void FreeString(const char* str)
 
 uint8_t* __cdecl Hunk_AllocXAnimPrecache(uint32_t size)
 {
-    return Hunk_AllocAlign(size, 4, "XAnimPrecache", 11);
+    return Hunk_AllocAlign(size, alignof(void *), "XAnimPrecache", 11);
 }
 
 uint8_t* __cdecl Hunk_AllocPhysPresetPrecache(uint32_t size)
@@ -885,7 +885,7 @@ void* Hunk_AllocDebugMem(uint32_t size)
     iassert(Sys_IsMainThread());
     iassert(g_debugUser);
 
-    return Hunk_UserAlloc(g_debugUser, size, 4);
+    return Hunk_UserAlloc(g_debugUser, size, alignof(void *));
 }
 
 void __cdecl Hunk_FreeDebugMem(void* ptr)

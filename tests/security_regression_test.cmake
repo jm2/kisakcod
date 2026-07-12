@@ -36,6 +36,17 @@ function(require_source_ordered RELATIVE_PATH FIRST SECOND DESCRIPTION)
     endif()
 endfunction()
 
+function(require_source_match_count RELATIVE_PATH PATTERN EXPECTED_COUNT DESCRIPTION)
+    file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
+    string(REGEX MATCHALL "${PATTERN}" _matches "${_source}")
+    list(LENGTH _matches _match_count)
+    if (NOT _match_count EQUAL EXPECTED_COUNT)
+        message(FATAL_ERROR
+            "Unexpected security invariant count (${DESCRIPTION}) in src/${RELATIVE_PATH}: "
+            "expected ${EXPECTED_COUNT}, found ${_match_count}")
+    endif()
+endfunction()
+
 function(require_all_occurrences_wrapped RELATIVE_PATH OCCURRENCE_PATTERN WRAPPED_PATTERN DESCRIPTION)
     file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
     string(REGEX MATCHALL "${OCCURRENCE_PATTERN}" _all_occurrences "${_source}")
@@ -2402,6 +2413,365 @@ require_source_contains(
     "script/scr_variable.cpp"
     "Sys_AtomicIncrement(&scrStringDebugGlob->refCount[debugIndex]);"
     "vector allocation debug accounting must use the canonical atomic increment")
+
+foreach(_xanim_atomic_source
+    "xanim/xanim.cpp"
+    "xanim/xanim_calc.cpp"
+    "xanim/dobj.cpp"
+    "xanim/dobj_utils.cpp"
+)
+    require_source_contains(
+        "${_xanim_atomic_source}"
+        "#include <universal/sys_atomic.h>"
+        "XAnim and DObj synchronization must use the fixed-width atomic boundary")
+    foreach(_native_xanim_atomic_token
+        "Interlocked"
+        "win32/win_local.h"
+        "Windows.h"
+        "windows.h"
+    )
+        require_source_not_contains(
+            "${_xanim_atomic_source}"
+            "${_native_xanim_atomic_token}"
+            "XAnim and DObj synchronization must remain platform-independent")
+    endforeach()
+endforeach()
+
+require_source_contains(
+    "xanim/xanim.h"
+    "volatile int32_t calcRefCount;"
+    "the animation calculation counter must remain an exact 32-bit atomic word")
+require_source_contains(
+    "xanim/xanim.h"
+    "volatile int32_t modifyRefCount;"
+    "the animation modification counter must remain an exact 32-bit atomic word")
+foreach(_xanim_tree_layout
+    "RUNTIME_SIZE(XAnimTree_s, 0x14, 0x18);"
+    "RUNTIME_OFFSET(XAnimTree_s, anims, 0x0, 0x0);"
+    "RUNTIME_OFFSET(XAnimTree_s, info_usage, 0x4, 0x8);"
+    "RUNTIME_OFFSET(XAnimTree_s, calcRefCount, 0x8, 0xC);"
+    "RUNTIME_OFFSET(XAnimTree_s, modifyRefCount, 0xC, 0x10);"
+    "RUNTIME_OFFSET(XAnimTree_s, children, 0x10, 0x14);"
+    "static_assert(std::is_same_v<decltype(XAnimTree_s::calcRefCount), volatile int32_t>);"
+    "static_assert(std::is_same_v<decltype(XAnimTree_s::modifyRefCount), volatile int32_t>);"
+    "static_assert(std::is_standard_layout_v<XAnimTree_s>);"
+)
+    require_source_contains(
+        "xanim/xanim.h"
+        "${_xanim_tree_layout}"
+        "the XAnim tree layout must remain frozen on both pointer widths")
+endforeach()
+
+foreach(_xanim_counter_source "xanim/xanim.cpp" "xanim/xanim_calc.cpp")
+    foreach(_xanim_counter "calcRefCount" "modifyRefCount")
+        require_all_occurrences_wrapped(
+            "${_xanim_counter_source}"
+            "->[ \t\r\n]*${_xanim_counter}"
+            "Sys_Atomic(Load|Store|Increment|Decrement|FetchAdd|Exchange|CompareExchange)[ \t\r\n]*\\([ \t\r\n]*&[^,;()]*->[ \t\r\n]*${_xanim_counter}"
+            "every XAnim overlap-counter access must use a canonical atomic operation")
+    endforeach()
+endforeach()
+require_source_contains(
+    "xanim/xanim.cpp"
+    "iassert(tree);\n    iassert(infoIndex && (infoIndex < 4096));"
+    "XAnimFreeInfo must validate its tree before touching overlap counters")
+require_source_ordered(
+    "xanim/xanim.cpp"
+    "iassert(tree);\n    iassert(infoIndex && (infoIndex < 4096));"
+    "Sys_AtomicIncrement(&tree->modifyRefCount);"
+    "XAnimFreeInfo must validate its tree before incrementing its modification counter")
+
+require_source_contains(
+    "xanim/dobj.h"
+    "volatile uint32_t locked;"
+    "the DObj lock must remain an exact 32-bit atomic word")
+foreach(_dobj_layout
+    "RUNTIME_SIZE(DObj_s, 0x64, 0x78);"
+    "RUNTIME_OFFSET(DObj_s, locked, 0x10, 0x14);"
+    "RUNTIME_OFFSET(DObj_s, skel, 0x14, 0x18);"
+    "RUNTIME_OFFSET(DObj_s, models, 0x60, 0x70);"
+    "static_assert(std::is_same_v<decltype(DObj_s::locked), volatile uint32_t>);"
+    "static_assert(std::is_standard_layout_v<DObj_s>);"
+)
+    require_source_contains(
+        "xanim/dobj.h"
+        "${_dobj_layout}"
+        "the DObj runtime layout must remain frozen on both pointer widths")
+endforeach()
+foreach(_dobj_atomic_source "xanim/dobj.cpp" "xanim/dobj_utils.cpp")
+    require_all_occurrences_wrapped(
+        "${_dobj_atomic_source}"
+        "->[ \t\r\n]*locked"
+        "Sys_Atomic(Load|Store|Increment|Decrement|FetchAdd|Exchange|CompareExchange)[ \t\r\n]*\\([ \t\r\n]*&[^,;()]*->[ \t\r\n]*locked"
+        "every DObj lock access must use a canonical atomic operation")
+endforeach()
+require_source_contains(
+    "xanim/dobj_utils.cpp"
+    "Sys_AtomicCompareExchange(&obj->locked, 1u, 0u)"
+    "DObj lock acquisition must use a fixed-width compare-exchange")
+require_source_contains(
+    "xanim/dobj_utils.cpp"
+    "Sys_AtomicExchange(&obj->locked, 0u)"
+    "DObj unlock must atomically validate and release its ownership word")
+require_source_contains(
+    "xanim/dobj_utils.cpp"
+    "Sys_Sleep(0);"
+    "contended DObj locking must yield instead of spinning without pause")
+
+require_source_contains(
+    "xanim/dobj.cpp"
+    "DObjLock(mutableFrom);"
+    "DObj cloning must hold the source lock while taking its snapshot")
+require_source_match_count(
+    "xanim/dobj.cpp"
+    "DObjUnlock[ \t\r\n]*\\([ \t\r\n]*mutableFrom[ \t\r\n]*\\)"
+    3
+    "DObj cloning must release its source lock on both validation failures and success")
+foreach(_whole_dobj_copy_pattern
+    "mem(cpy|move)[ \t\r\n]*\\([ \t\r\n]*obj[ \t\r\n]*,[ \t\r\n]*from([^A-Za-z0-9_]|$)"
+    "mem(cpy|move)[ \t\r\n]*\\([^;]*sizeof[ \t\r\n]*\\([ \t\r\n]*DObj_s[ \t\r\n]*\\)"
+    "\\*obj[ \t\r\n]*=[ \t\r\n]*\\*from"
+    "DObj_s[ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*[ \t\r\n]*=[ \t\r\n]*\\*from"
+)
+    require_source_not_matches(
+        "xanim/dobj.cpp"
+        "${_whole_dobj_copy_pattern}"
+        "live DObj snapshots must never copy the lock word")
+endforeach()
+
+foreach(_saved_dobj_layout
+    "RUNTIME_SIZE(SavedDObj, 0x60, 0x68);"
+    "RUNTIME_OFFSET(SavedDObj, models, 0x40, 0x40);"
+    "RUNTIME_OFFSET(SavedDObj, tree, 0x4C, 0x50);"
+    "RUNTIME_OFFSET(SavedDObj, hidePartBits, 0x50, 0x58);"
+)
+    require_source_contains(
+        "xanim/dobj.cpp"
+        "${_saved_dobj_layout}"
+        "the lock-free archived DObj record must have an exact native-width layout")
+endforeach()
+require_source_match_count(
+    "xanim/dobj.cpp"
+    "SavedDObj[ \t\r\n]+savedObj[ \t\r\n]*\\{[ \t\r\n]*\\}"
+    2
+    "archive snapshots must be zero-initialized before exact-size copies")
+require_source_match_count(
+    "xanim/dobj.cpp"
+    "memcpy[ \t\r\n]*\\([^;]*savedObj[^;]*\\)"
+    2
+    "only the exact archive and unarchive snapshot copies may involve SavedDObj")
+require_source_match_count(
+    "xanim/dobj.cpp"
+    "memcpy[ \t\r\n]*\\([ \t\r\n]*obj[ \t\r\n]*,[ \t\r\n]*&savedObj[ \t\r\n]*,[ \t\r\n]*sizeof[ \t\r\n]*\\([ \t\r\n]*savedObj[ \t\r\n]*\\)[ \t\r\n]*\\)"
+    1
+    "DObjArchive must copy exactly the initialized SavedDObj record")
+require_source_match_count(
+    "xanim/dobj.cpp"
+    "memcpy[ \t\r\n]*\\([ \t\r\n]*&savedObj[ \t\r\n]*,[ \t\r\n]*obj[ \t\r\n]*,[ \t\r\n]*sizeof[ \t\r\n]*\\([ \t\r\n]*savedObj[ \t\r\n]*\\)[ \t\r\n]*\\)"
+    1
+    "DObjUnarchive must read exactly the SavedDObj record")
+require_source_not_matches(
+    "xanim/dobj.cpp"
+    "sizeof[ \t\r\n]*\\([ \t\r\n]*DObj_s[ \t\r\n]*\\)[ \t\r\n]*-[ \t\r\n]*sizeof"
+    "archive copies must not derive disk size from the native DObj layout")
+
+require_source_contains(
+    "xanim/dobj.cpp"
+    "numModels * (sizeof(XModel *) + sizeof(uint8_t))"
+    "DObj model storage must account for native pointer width")
+require_source_contains(
+    "xanim/dobj.cpp"
+    "if constexpr (alignof(XModel *) > alignof(MemoryNode))"
+    "DObj model storage must compensate when memory-tree nodes under-align pointers")
+require_source_contains(
+    "xanim/dobj.cpp"
+    "reinterpret_cast<uintptr_t>(models) % alignof(XModel *) == 0"
+    "DObj clone allocation must verify native pointer alignment")
+require_source_contains(
+    "xanim/dobj.cpp"
+    "memcpy(models, from->models, modelDataSize);"
+    "DObj cloning must copy only pointer-width model data, not allocator padding")
+
+require_source_not_contains(
+    "cgame/cg_modelpreviewer.h"
+    "char objBuf[100]"
+    "model-preview DObj storage must not retain the x86-only object size")
+require_source_match_count(
+    "cgame/cg_modelpreviewer.h"
+    "alignas[ \t\r\n]*\\([ \t\r\n]*DObj_s[ \t\r\n]*\\)[ \t\r\n]*char[ \t\r\n]+objBuf[ \t\r\n]*\\[[ \t\r\n]*sizeof[ \t\r\n]*\\([ \t\r\n]*DObj_s[ \t\r\n]*\\)[ \t\r\n]*\\]"
+    2
+    "both model-preview DObj buffers must use native size and alignment")
+require_source_match_count(
+    "cgame/cg_modelpreviewer.cpp"
+    "const[ \t\r\n]+uint64_t[ \t\r\n]+allocationBytes[ \t\r\n]*="
+    2
+    "model-preview pointer table sizes must be computed without 32-bit overflow")
+require_source_match_count(
+    "cgame/cg_modelpreviewer.cpp"
+    "allocationBytes[ \t\r\n]*>[ \t\r\n]*UINT32_MAX"
+    2
+    "both model-preview pointer tables must reject truncating Hunk sizes")
+require_source_match_count(
+    "cgame/cg_modelpreviewer.cpp"
+    "static_cast<uint32_t>[ \t\r\n]*\\([ \t\r\n]*allocationBytes[ \t\r\n]*\\)"
+    2
+    "both model-preview pointer tables must narrow only after validation")
+require_source_match_count(
+    "cgame/cg_modelpreviewer.cpp"
+    "alignof[ \t\r\n]*\\([ \t\r\n]*const[ \t\r\n]+char[ \t\r\n]*\\*[ \t\r\n]*\\)"
+    2
+    "both model-preview pointer tables must use native pointer alignment")
+require_source_contains(
+    "cgame/cg_modelpreviewer.cpp"
+    "sizeof(*g_mdlprv.system.modelNames)\n            * (static_cast<uint64_t>(g_mdlprv.system.modelCount) + 2)"
+    "model-preview model enumeration must allocate a native-width pointer table")
+require_source_contains(
+    "cgame/cg_modelpreviewer.cpp"
+    "sizeof(*g_mdlprv.system.animNames)\n            * (static_cast<uint64_t>(g_mdlprv.system.animCount) + 2)"
+    "model-preview animation enumeration must allocate a native-width pointer table")
+
+foreach(_xanim_table_layout
+    "RUNTIME_SIZE(XAnimEntry, 0x8, 0x10);"
+    "RUNTIME_OFFSET(XAnimEntry, parts, 0x4, 0x8);"
+    "RUNTIME_SIZE(XAnim_s, 0x14, 0x28);"
+    "RUNTIME_OFFSET(XAnim_s, debugName, 0x0, 0x0);"
+    "RUNTIME_OFFSET(XAnim_s, size, 0x4, 0x8);"
+    "RUNTIME_OFFSET(XAnim_s, debugAnimNames, 0x8, 0x10);"
+    "RUNTIME_OFFSET(XAnim_s, entries, 0xC, 0x18);"
+)
+    require_source_contains(
+        "xanim/xanim.h"
+        "${_xanim_table_layout}"
+        "variable-sized XAnim table layouts must remain native-width exact")
+endforeach()
+require_source_contains(
+    "xanim/xanim.cpp"
+    "const std::size_t headerSize = offsetof(XAnim_s, entries);"
+    "XAnim table allocation must derive its header from the native layout")
+require_source_contains(
+    "xanim/xanim.cpp"
+    "size > (maxSize - headerSize) / sizeof(XAnimEntry)"
+    "XAnim table allocation must reject native-size overflow")
+require_source_contains(
+    "xanim/xanim.cpp"
+    "static_cast<uint64_t>(size) * sizeof(*anims->debugAnimNames)"
+    "XAnim debug pointer tables must use native pointer width")
+foreach(_legacy_xanim_table_formula
+    "8 * size + 12"
+    "4 * size"
+    "8 * animIndex"
+)
+    require_source_not_contains(
+        "xanim/xanim.cpp"
+        "${_legacy_xanim_table_formula}"
+        "XAnim tables must not retain x86-only element arithmetic")
+endforeach()
+require_source_contains(
+    "xanim/xanim.cpp"
+    "reinterpret_cast<uintptr_t>(tree) % alignof(XAnimTree_s) != 0"
+    "XAnim tree allocation must validate native alignment")
+require_source_contains(
+    "cgame/cg_modelpreviewer.cpp"
+    "Hunk_UserAlloc(v2, size, alignof(XAnimTree_s))"
+    "model-preview XAnim allocations must request native alignment")
+require_source_contains(
+    "cgame/cg_main.cpp"
+    "alignof(XAnimTree_s)"
+    "SP client XAnim allocations must request native alignment")
+require_source_contains(
+    "universal/com_memory.cpp"
+    "Hunk_AllocAlign(size, alignof(void *), \"XAnimPrecache\", 11)"
+    "XAnim precache allocations must request native pointer alignment")
+require_source_contains(
+    "universal/com_memory.cpp"
+    "Hunk_UserAlloc(g_debugUser, size, alignof(void *))"
+    "debug pointer tables must receive native pointer alignment")
+
+require_source_contains(
+    "xanim/dobj.cpp"
+    "Sys_AtomicCompareExchange(&obj->locked, 1u, 0u);"
+    "DObj create and clone paths must reserve construction state atomically")
+require_source_contains(
+    "xanim/dobj.cpp"
+    "DObjLock(obj);\n    if (obj->numModels > DOBJ_MAX_SUBMODELS"
+    "DObj teardown must claim the live object lock before validation and release")
+require_source_contains(
+    "xanim/dobj.cpp"
+    "obj->models = models;\n    DObjUnlock(mutableFrom);\n    Sys_AtomicStore(&obj->locked, 0u);"
+    "DObj clone publication must release the destination only after a complete source snapshot")
+require_source_contains(
+    "xanim/dobj.cpp"
+    "Sys_AtomicStore(&obj->locked, 1u);\n    MT_Free("
+    "DObj unarchive must reserve construction state before rebuilding live fields")
+require_source_contains(
+    "xanim/dobj.cpp"
+    "DObjSetHidePartBits(obj, savedObj.hidePartBits);\n    Sys_AtomicStore(&obj->locked, 0u);"
+    "DObj unarchive must publish only after restoring hide-part state")
+require_source_not_contains(
+    "xanim/dobj.cpp"
+    "1 <<"
+    "DObj model masks must not use signed shifts at model index 31")
+require_source_contains(
+    "xanim/dobj.cpp"
+    "if (!dobjModels[modelIndex].model)"
+    "DObj creation must reject null models before claiming construction state")
+
+require_source_contains(
+    "qcommon/dobj_management.cpp"
+    "track_static_alloc_internal(objBuf, sizeof(objBuf), \"objBuf\", 11);"
+    "DObj pool tracking must use the native object-array size")
+require_source_not_contains(
+    "qcommon/dobj_management.cpp"
+    "204800"
+    "DObj pool tracking must not retain the x86-only byte count")
+require_source_contains(
+    "qcommon/dobj_management.cpp"
+    "DObjCreate(dobjModels, numModels, tree, &objBuf[index], 0);\n    clientObjMap[handle] = index;"
+    "client DObjs must be fully constructed before map publication")
+require_source_contains(
+    "qcommon/dobj_management.cpp"
+    "DObjCreate(dobjModels, numModels, tree, &objBuf[index], handle + 1);\n    serverObjMap[handle] = index;"
+    "server DObjs must be fully constructed before map publication")
+require_source_contains(
+    "qcommon/dobj_management.cpp"
+    "DObjClone(&objBuf[v4], &objBuf[FreeDObjIndex]);\n    clientObjMapBuffered[v2] = FreeDObjIndex;"
+    "buffered DObj clones must be complete before map publication")
+
+require_source_contains(
+    "cgame/cg_modelpreviewer.h"
+    "inline constexpr int MDLPRV_CLONE_COUNT = 10;"
+    "model-preview active clone traversal must have a typed bound")
+foreach(_legacy_model_preview_stride
+    "p_obj += 78"
+    "right += 78"
+    "memcpy(pClone, &g_mdlprv.model.currentEntity, 0x7Cu)"
+)
+    require_source_not_contains(
+        "cgame/cg_modelpreviewer.cpp"
+        "${_legacy_model_preview_stride}"
+        "model-preview clone traversal must not use x86-only structure strides")
+endforeach()
+require_source_contains(
+    "cgame/cg_modelpreviewer.cpp"
+    "track_static_alloc_internal(&g_mdlprv, sizeof(g_mdlprv), \"g_mdlprv\", 0);"
+    "model-preview tracking must use the native aggregate size")
+require_source_contains(
+    "cgame/cg_modelpreviewer.cpp"
+    "pClone->ent = g_mdlprv.model.currentEntity;"
+    "model-preview cloning must copy the typed entity rather than a frozen byte prefix")
+
+require_source_not_contains(
+    "game/g_main.cpp"
+    "(int)XAnimCreateTree"
+    "SP corpse XAnim trees must not truncate pointers")
+require_source_contains(
+    "game/g_main.cpp"
+    "corpseInfo.tree = XAnimCreateTree(anims, Hunk_AllocActorXAnimServer);"
+    "SP corpse XAnim trees must be assigned through their typed field")
+require_source_contains(
+    "game/g_main.cpp"
+    "level.cgData_actorProneInfo[specialIndex] = corpseInfo.proneInfo;"
+    "SP corpse metadata traversal must use typed native-width records")
 
 foreach(_native_dvar_sort_token
     "Windows.h"
