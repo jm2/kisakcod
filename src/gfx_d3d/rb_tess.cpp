@@ -17,9 +17,39 @@
 #include "r_draw_staticmodel.h"
 #include "r_draw_xmodel.h"
 #include "r_pretess.h"
+#include "r_model_surface_stream.h"
 #include <cstddef>
 #include <cstdint>
 #include <universal/sys_atomic.h>
+
+namespace model_surface_stream = gfx::model_surface_stream;
+
+namespace
+{
+template <typename Record>
+const Record *RB_ResolveModelSurface(
+    const GfxBackEndData *const data,
+    const uint32_t objectId,
+    const int32_t minimumTag,
+    const int32_t maximumTag)
+{
+    if (!data)
+        return nullptr;
+
+    const Record *record = nullptr;
+    return model_surface_stream::TryResolveTypedWordOffset(
+               data,
+               data->surfsBuffer,
+               sizeof(data->surfsBuffer),
+               Sys_AtomicLoad(&data->surfPos),
+               objectId,
+               minimumTag,
+               maximumTag,
+               &record)
+        ? record
+        : nullptr;
+}
+} // namespace
 
 GfxScaledPlacement s_manualObjectPlacement;
 
@@ -741,10 +771,24 @@ uint32_t __cdecl R_TessXModelSkinnedDrawSurfList(
     drawSurfIndex = 0;
     if (info->cameraView)
     {
-        modelSurf = (const GfxModelSkinnedSurface *)((char *)data + 4 * drawSurf.fields.objectId);
+        modelSurf = RB_ResolveModelSurface<GfxModelSkinnedSurface>(
+            data,
+            drawSurf.fields.objectId,
+            model_surface_stream::kDirectSkinnedTag,
+            (std::numeric_limits<int32_t>::max)());
+        if (!modelSurf)
+        {
+            RB_EndTrackImmediatePrims();
+            return 0u;
+        }
         baseGfxEntIndex = modelSurf->info.gfxEntIndex;
         if (modelSurf->info.gfxEntIndex)
         {
+            if (baseGfxEntIndex >= ARRAY_COUNT(data->gfxEnts))
+            {
+                RB_EndTrackImmediatePrims();
+                return 0u;
+            }
             depthHackFlags = (GfxDepthRangeType)(data->gfxEnts[baseGfxEntIndex].renderFxFlags & 2);
             materialTime = data->gfxEnts[baseGfxEntIndex].materialTime;
         }
@@ -797,12 +841,20 @@ uint32_t __cdecl R_TessXModelSkinnedDrawSurfList(
                 if ((drawSurfList[drawSurfIndex].packed & 0xFFFFFFFFFF000000uLL) != __PAIR64__(HIDWORD(drawSurf.packed),drawSurfKey))
                     break;
 
-                modelSurf = (const GfxModelSkinnedSurface *)((char *)data + 4 * drawSurf.fields.objectId);
+                modelSurf = RB_ResolveModelSurface<GfxModelSkinnedSurface>(
+                    data,
+                    drawSurf.fields.objectId,
+                    model_surface_stream::kDirectSkinnedTag,
+                    (std::numeric_limits<int32_t>::max)());
+                if (!modelSurf)
+                    break;
                 gfxEntIndex = modelSurf->info.gfxEntIndex;
                 if (gfxEntIndex != baseGfxEntIndex)
                 {
                     if (modelSurf->info.gfxEntIndex)
                     {
+                        if (gfxEntIndex >= ARRAY_COUNT(data->gfxEnts))
+                            break;
                         if ((data->gfxEnts[gfxEntIndex].renderFxFlags & 2) != depthHackFlags
                             || materialTime != data->gfxEnts[gfxEntIndex].materialTime)
                         {
@@ -830,12 +882,20 @@ uint32_t __cdecl R_TessXModelSkinnedDrawSurfList(
                 drawSurf.packed_low = drawSurfList[drawSurfIndex].packed_low;
                 if ((drawSurfList[drawSurfIndex].packed & 0xFFFFFFFFE0000000uLL) != __PAIR64__( HIDWORD(drawSurf.packed),drawSurfKeya))
                     break;
-                modelSurf = (const GfxModelSkinnedSurface *)((char *)data + 4 * drawSurf.fields.objectId);
+                modelSurf = RB_ResolveModelSurface<GfxModelSkinnedSurface>(
+                    data,
+                    drawSurf.fields.objectId,
+                    model_surface_stream::kDirectSkinnedTag,
+                    (std::numeric_limits<int32_t>::max)());
+                if (!modelSurf)
+                    break;
                 gfxEntIndexa = modelSurf->info.gfxEntIndex;
                 if (gfxEntIndexa != baseGfxEntIndex)
                 {
                     if (modelSurf->info.gfxEntIndex)
                     {
+                        if (gfxEntIndexa >= ARRAY_COUNT(data->gfxEnts))
+                            break;
                         if ((data->gfxEnts[gfxEntIndexa].renderFxFlags & 2) != depthHackFlags
                             || materialTime != data->gfxEnts[gfxEntIndexa].materialTime)
                         {
@@ -854,10 +914,26 @@ uint32_t __cdecl R_TessXModelSkinnedDrawSurfList(
     {
         iassert(prepassContext.state == NULL);
         iassert(baseTechType != TECHNIQUE_LIT);
-        modelSurfa = (const GfxModelSkinnedSurface *)((char *)data + 4 * drawSurf.fields.objectId);
+        modelSurfa = RB_ResolveModelSurface<GfxModelSkinnedSurface>(
+            data,
+            drawSurf.fields.objectId,
+            model_surface_stream::kDirectSkinnedTag,
+            (std::numeric_limits<int32_t>::max)());
+        if (!modelSurfa)
+        {
+            RB_EndTrackImmediatePrims();
+            return 0u;
+        }
         baseGfxEntIndexa = modelSurfa->info.gfxEntIndex;
         if (modelSurfa->info.gfxEntIndex)
+        {
+            if (baseGfxEntIndexa >= ARRAY_COUNT(data->gfxEnts))
+            {
+                RB_EndTrackImmediatePrims();
+                return 0u;
+            }
             materialTimea = data->gfxEnts[baseGfxEntIndexa].materialTime;
+        }
         else
             materialTimea = 0.0f;
         setupVertexShadera = R_UpdateMaterialTime(commonSource, materialTimea);
@@ -881,12 +957,20 @@ uint32_t __cdecl R_TessXModelSkinnedDrawSurfList(
                 HIDWORD(drawSurf.packed),
                 drawSurfKeyb))
                 break;
-            modelSurfa = (const GfxModelSkinnedSurface *)((char *)data + 4 * drawSurf.fields.objectId);
+            modelSurfa = RB_ResolveModelSurface<GfxModelSkinnedSurface>(
+                data,
+                drawSurf.fields.objectId,
+                model_surface_stream::kDirectSkinnedTag,
+                (std::numeric_limits<int32_t>::max)());
+            if (!modelSurfa)
+                break;
             gfxEntIndexb = modelSurfa->info.gfxEntIndex;
             if (gfxEntIndexb != baseGfxEntIndexa)
             {
                 if (modelSurfa->info.gfxEntIndex)
                 {
+                    if (gfxEntIndexb >= ARRAY_COUNT(data->gfxEnts))
+                        break;
                     if (materialTimea != data->gfxEnts[gfxEntIndexb].materialTime)
                         break;
                 }
@@ -1028,10 +1112,24 @@ uint32_t __cdecl R_TessXModelRigidDrawSurfList(
 
     if (info->cameraView)
     {
-        modelSurf = (const GfxModelRigidSurface *)((char *)data + 4 * drawSurf.fields.objectId);
+        modelSurf = RB_ResolveModelSurface<GfxModelRigidSurface>(
+            data,
+            drawSurf.fields.objectId,
+            model_surface_stream::kRigidTag,
+            model_surface_stream::kRigidTag);
+        if (!modelSurf)
+        {
+            RB_EndTrackImmediatePrims();
+            return 0u;
+        }
         gfxEntIndex = modelSurf->surf.info.gfxEntIndex;
         if (modelSurf->surf.info.gfxEntIndex)
         {
+            if (gfxEntIndex >= ARRAY_COUNT(data->gfxEnts))
+            {
+                RB_EndTrackImmediatePrims();
+                return 0u;
+            }
             depthHackFlags = (GfxDepthRangeType)(data->gfxEnts[gfxEntIndex].renderFxFlags & 2);
             materialTime = data->gfxEnts[gfxEntIndex].materialTime;
         }
@@ -1382,12 +1480,26 @@ uint32_t __cdecl R_TessXModelRigidSkinnedDrawSurfList(
         drawSurfSubKey = drawSurfSubMask.packed & drawSurf.packed;
         do
         {
-            modelSurf = (const GfxModelRigidSurface *)((char*)data + 4 * drawSurf.fields.objectId);
+            modelSurf = RB_ResolveModelSurface<GfxModelRigidSurface>(
+                data,
+                drawSurf.fields.objectId,
+                model_surface_stream::kDirectSkinnedTag,
+                model_surface_stream::kDirectSkinnedTag);
+            if (!modelSurf)
+            {
+                RB_EndTrackImmediatePrims();
+                return drawSurfIndex;
+            }
             if (info->cameraView)
             {
                 gfxEntIndex = modelSurf->surf.info.gfxEntIndex;
                 if (modelSurf->surf.info.gfxEntIndex)
                 {
+                    if (gfxEntIndex >= ARRAY_COUNT(data->gfxEnts))
+                    {
+                        RB_EndTrackImmediatePrims();
+                        return drawSurfIndex;
+                    }
                     depthHackFlags = (GfxDepthRangeType)(data->gfxEnts[gfxEntIndex].renderFxFlags & 2);
                     materialTime = data->gfxEnts[gfxEntIndex].materialTime;
                 }

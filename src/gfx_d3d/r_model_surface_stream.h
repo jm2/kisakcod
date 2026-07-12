@@ -171,6 +171,128 @@ struct View
         && boneCount <= kMaxSkinningBones - firstBone;
 }
 
+// Resolves a legacy dword offset into a bounded byte arena.  The offset is
+// relative to wordOffsetBase, while capacity and publishedBytes describe the
+// arena beginning at arenaBegin.  This separation is needed because renderer
+// draw-surface object IDs historically address records from the beginning of
+// GfxBackEndData even though the records live in its surface arena.
+//
+// The output is left untouched on failure.  The first int32 is copied only
+// after the complete requested extent and native alignment have been checked.
+[[nodiscard]] inline bool TryResolveWordOffsetRange(
+    const void *const wordOffsetBase,
+    const void *const arenaBegin,
+    const std::uint32_t capacity,
+    const std::uint32_t publishedBytes,
+    const std::uint32_t dwordOffset,
+    const std::uint32_t recordSize,
+    const std::uint32_t recordAlignment,
+    const std::int32_t minimumTag,
+    const std::int32_t maximumTag,
+    const void **const record,
+    std::int32_t *const recordTag = nullptr) noexcept
+{
+    if (!wordOffsetBase || !arenaBegin || !record
+        || publishedBytes > capacity || recordSize < sizeof(std::int32_t)
+        || recordAlignment < alignof(std::int32_t)
+        || !IsPowerOfTwo(recordAlignment) || minimumTag > maximumTag)
+    {
+        return false;
+    }
+
+    std::uint32_t byteOffset = 0u;
+    if (!TryMultiply(
+            dwordOffset,
+            static_cast<std::uint32_t>(sizeof(std::uint32_t)),
+            &byteOffset))
+    {
+        return false;
+    }
+
+    const std::uintptr_t baseAddress =
+        reinterpret_cast<std::uintptr_t>(wordOffsetBase);
+    const std::uintptr_t arenaAddress =
+        reinterpret_cast<std::uintptr_t>(arenaBegin);
+    if (arenaAddress < baseAddress
+        || arenaAddress - baseAddress
+            > (std::numeric_limits<std::uint32_t>::max)())
+    {
+        return false;
+    }
+
+    const std::uint32_t arenaBaseOffset = static_cast<std::uint32_t>(
+        arenaAddress - baseAddress);
+    if (byteOffset < arenaBaseOffset)
+        return false;
+
+    const std::uint32_t recordOffset = byteOffset - arenaBaseOffset;
+    if (recordOffset > publishedBytes
+        || recordSize > publishedBytes - recordOffset
+        || recordOffset > capacity || recordSize > capacity - recordOffset)
+    {
+        return false;
+    }
+
+    if (arenaAddress
+        > (std::numeric_limits<std::uintptr_t>::max)() - recordOffset)
+    {
+        return false;
+    }
+    const std::uintptr_t recordAddress = arenaAddress + recordOffset;
+    if ((recordAddress
+         & static_cast<std::uintptr_t>(recordAlignment - 1u))
+        != 0u)
+    {
+        return false;
+    }
+
+    std::int32_t tag = 0;
+    std::memcpy(&tag, reinterpret_cast<const void *>(recordAddress), sizeof(tag));
+    if (tag < minimumTag || tag > maximumTag)
+        return false;
+
+    *record = reinterpret_cast<const void *>(recordAddress);
+    if (recordTag)
+        *recordTag = tag;
+    return true;
+}
+
+template <typename Record>
+[[nodiscard]] inline bool TryResolveTypedWordOffset(
+    const void *const wordOffsetBase,
+    const void *const arenaBegin,
+    const std::uint32_t capacity,
+    const std::uint32_t publishedBytes,
+    const std::uint32_t dwordOffset,
+    const std::int32_t minimumTag,
+    const std::int32_t maximumTag,
+    const Record **const record,
+    std::int32_t *const recordTag = nullptr) noexcept
+{
+    if (!record)
+        return false;
+
+    const void *resolved = nullptr;
+    if (!TryResolveWordOffsetRange(
+            wordOffsetBase,
+            arenaBegin,
+            capacity,
+            publishedBytes,
+            dwordOffset,
+            static_cast<std::uint32_t>(sizeof(Record)),
+            static_cast<std::uint32_t>(alignof(Record)),
+            minimumTag,
+            maximumTag,
+            &resolved,
+            recordTag))
+    {
+        return false;
+    }
+
+    *record = static_cast<const Record *>(resolved);
+    return true;
+}
+
 // Atomically reserves an aligned byte slice.  Padding belongs to the
 // reservation protocol but is not included in the returned slice.  A rejected
 // reservation never changes either the shared counter or *offset.

@@ -351,6 +351,173 @@ bool TestPointerBytesRemainNativeWidth()
             == kMatrixBits;
 }
 
+bool TestCheckedWordOffsetResolution()
+{
+    struct alignas(NativeRigidRecord) OffsetArena
+    {
+        std::array<std::uint8_t, 16> prefix{};
+        alignas(NativeRigidRecord) std::array<std::uint8_t, 256> bytes{};
+    } arena;
+
+    constexpr std::uint32_t kRecordOffset = 8u;
+    NativeSkinnedRecord source;
+    source.tag = surface_stream::kDirectSkinnedTag;
+    std::memcpy(
+        arena.bytes.data() + kRecordOffset,
+        &source,
+        sizeof(source));
+
+    const std::uintptr_t baseAddress =
+        reinterpret_cast<std::uintptr_t>(&arena);
+    const std::uintptr_t recordAddress = reinterpret_cast<std::uintptr_t>(
+        arena.bytes.data() + kRecordOffset);
+    if (recordAddress < baseAddress
+        || ((recordAddress - baseAddress) % sizeof(std::uint32_t)) != 0u)
+    {
+        return false;
+    }
+    const std::uint32_t objectId = static_cast<std::uint32_t>(
+        (recordAddress - baseAddress) / sizeof(std::uint32_t));
+    const std::uint32_t exactPublished =
+        kRecordOffset + static_cast<std::uint32_t>(sizeof(source));
+
+    const NativeSkinnedRecord *resolved = nullptr;
+    std::int32_t resolvedTag = 27;
+    if (!surface_stream::TryResolveTypedWordOffset(
+            &arena,
+            arena.bytes.data(),
+            static_cast<std::uint32_t>(arena.bytes.size()),
+            exactPublished,
+            objectId,
+            surface_stream::kDirectSkinnedTag,
+            (std::numeric_limits<std::int32_t>::max)(),
+            &resolved,
+            &resolvedTag)
+        || resolved != reinterpret_cast<const NativeSkinnedRecord *>(
+            arena.bytes.data() + kRecordOffset)
+        || resolvedTag != surface_stream::kDirectSkinnedTag)
+    {
+        return false;
+    }
+
+    const NativeSkinnedRecord *const unchanged =
+        reinterpret_cast<const NativeSkinnedRecord *>(
+            arena.bytes.data());
+    resolved = unchanged;
+    resolvedTag = 27;
+    if (surface_stream::TryResolveTypedWordOffset(
+            &arena,
+            arena.bytes.data(),
+            static_cast<std::uint32_t>(arena.bytes.size()),
+            exactPublished - 1u,
+            objectId,
+            surface_stream::kDirectSkinnedTag,
+            (std::numeric_limits<std::int32_t>::max)(),
+            &resolved,
+            &resolvedTag)
+        || resolved != unchanged || resolvedTag != 27)
+    {
+        return false;
+    }
+
+    resolved = unchanged;
+    if (surface_stream::TryResolveTypedWordOffset(
+            &arena,
+            arena.bytes.data(),
+            static_cast<std::uint32_t>(arena.bytes.size()),
+            static_cast<std::uint32_t>(arena.bytes.size() + 1u),
+            objectId,
+            surface_stream::kDirectSkinnedTag,
+            (std::numeric_limits<std::int32_t>::max)(),
+            &resolved)
+        || resolved != unchanged)
+    {
+        return false;
+    }
+
+    if constexpr (alignof(NativeSkinnedRecord) > sizeof(std::uint32_t))
+    {
+        const std::uint32_t misalignedOffset = sizeof(std::uint32_t);
+        std::memcpy(
+            arena.bytes.data() + misalignedOffset,
+            &source,
+            sizeof(source));
+        const std::uintptr_t misalignedAddress = reinterpret_cast<std::uintptr_t>(
+            arena.bytes.data() + misalignedOffset);
+        const std::uint32_t misalignedObjectId = static_cast<std::uint32_t>(
+            (misalignedAddress - baseAddress) / sizeof(std::uint32_t));
+        resolved = unchanged;
+        if (surface_stream::TryResolveTypedWordOffset(
+                &arena,
+                arena.bytes.data(),
+                static_cast<std::uint32_t>(arena.bytes.size()),
+                exactPublished,
+                misalignedObjectId,
+                surface_stream::kDirectSkinnedTag,
+                (std::numeric_limits<std::int32_t>::max)(),
+                &resolved)
+            || resolved != unchanged)
+        {
+            return false;
+        }
+    }
+
+    resolved = unchanged;
+    if (surface_stream::TryResolveTypedWordOffset(
+            &arena,
+            arena.bytes.data(),
+            static_cast<std::uint32_t>(arena.bytes.size()),
+            exactPublished,
+            (std::numeric_limits<std::uint32_t>::max)(),
+            surface_stream::kDirectSkinnedTag,
+            (std::numeric_limits<std::int32_t>::max)(),
+            &resolved)
+        || resolved != unchanged)
+    {
+        return false;
+    }
+
+    source.tag = surface_stream::kRigidTag;
+    std::memcpy(
+        arena.bytes.data() + kRecordOffset,
+        &source,
+        sizeof(source));
+    resolved = unchanged;
+    if (surface_stream::TryResolveTypedWordOffset(
+            &arena,
+            arena.bytes.data(),
+            static_cast<std::uint32_t>(arena.bytes.size()),
+            exactPublished,
+            objectId,
+            surface_stream::kDirectSkinnedTag,
+            (std::numeric_limits<std::int32_t>::max)(),
+            &resolved)
+        || resolved != unchanged)
+    {
+        return false;
+    }
+
+    source.tag = surface_stream::kDirectSkinnedTag;
+    std::memcpy(
+        arena.bytes.data() + kRecordOffset,
+        &source,
+        sizeof(source));
+    const NativeRigidRecord *rigid =
+        reinterpret_cast<const NativeRigidRecord *>(
+            arena.bytes.data());
+    return !surface_stream::TryResolveTypedWordOffset(
+               &arena,
+               arena.bytes.data(),
+               static_cast<std::uint32_t>(arena.bytes.size()),
+               exactPublished,
+               objectId,
+               surface_stream::kDirectSkinnedTag,
+               surface_stream::kDirectSkinnedTag,
+               &rigid)
+        && rigid == reinterpret_cast<const NativeRigidRecord *>(
+            arena.bytes.data());
+}
+
 bool TestExactAlignedArenaCapacityAndFailureStability()
 {
     volatile std::uint32_t counter = 1u;
@@ -484,6 +651,8 @@ int main()
         return Fail("exact, truncated, and malformed cursor bounds");
     if (!TestPointerBytesRemainNativeWidth())
         return Fail("native-width high pointer bytes");
+    if (!TestCheckedWordOffsetResolution())
+        return Fail("checked word-offset resolution");
     if (!TestExactAlignedArenaCapacityAndFailureStability())
         return Fail("exact arena capacity and failure stability");
     if (!TestContendedAlignedArenaSlicesDoNotOverlap())
