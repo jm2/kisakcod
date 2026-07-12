@@ -22,21 +22,34 @@ int __cdecl XModelGetSurfaces(const XModel *model, XSurface **surfaces, int lod)
     iassert(model);
     iassert(surfaces);
     iassert(lod >= 0);
-    bcassert(model->lodInfo[lod].surfIndex, model->numsurfs);
-    const XModelLodInfo *lodInfo = model->lodInfo;
-    iassert(lodInfo->surfIndex + lodInfo->numsurfs <= model->numsurfs);
-    *surfaces = &model->surfs[lodInfo[lod].surfIndex];
-    return lodInfo[lod].numsurfs;
+    if (!surfaces)
+        return 0;
+    *surfaces = nullptr;
+    if (!model || lod < 0 || lod >= MAX_LODS || lod >= model->numLods)
+        return 0;
+
+    const XModelLodInfo &lodInfo = model->lodInfo[lod];
+    bcassert(lodInfo.surfIndex, model->numsurfs);
+    if (lodInfo.surfIndex > model->numsurfs
+        || lodInfo.numsurfs > model->numsurfs - lodInfo.surfIndex
+        || !lodInfo.numsurfs
+        || !model->surfs)
+    {
+        return 0;
+    }
+
+    *surfaces = &model->surfs[lodInfo.surfIndex];
+    return lodInfo.numsurfs;
 }
 
 XSurface *__cdecl XModelGetSurface(const XModel *model, int lod, int surfIndex)
 {
-    uint32_t modelSurfIndex; // [esp+0h] [ebp-4h]
-
     iassert(lod >= 0);
-    modelSurfIndex = surfIndex + model->lodInfo[lod].surfIndex;
-    bcassert(modelSurfIndex, model->numsurfs);
-    return &model->surfs[modelSurfIndex];
+    XSurface *surfaces = nullptr;
+    const int surfaceCount = XModelGetSurfaces(model, &surfaces, lod);
+    if (!surfaces || surfIndex < 0 || surfIndex >= surfaceCount)
+        return nullptr;
+    return &surfaces[surfIndex];
 }
 
 const XModelLodInfo *__cdecl XModelGetLodInfo(const XModel *model, int lod)
@@ -44,6 +57,8 @@ const XModelLodInfo *__cdecl XModelGetLodInfo(const XModel *model, int lod)
     iassert(model);
     iassert(lod >= 0);
 
+    if (!model || lod < 0 || lod >= MAX_LODS || lod >= model->numLods)
+        return nullptr;
     return &model->lodInfo[lod];
 }
 
@@ -52,7 +67,13 @@ uint32_t __cdecl XModelGetSurfCount(const XModel *model, int lod)
     iassert(model);
     iassert(lod >= 0);
 
-    return model->lodInfo[lod].numsurfs;
+    if (!model || lod < 0 || lod >= MAX_LODS || lod >= model->numLods)
+        return 0;
+    const XModelLodInfo &lodInfo = model->lodInfo[lod];
+    return lodInfo.surfIndex <= model->numsurfs
+            && lodInfo.numsurfs <= model->numsurfs - lodInfo.surfIndex
+        ? lodInfo.numsurfs
+        : 0u;
 }
 
 Material **__cdecl XModelGetSkins(const XModel *model, int lod)
@@ -60,17 +81,32 @@ Material **__cdecl XModelGetSkins(const XModel *model, int lod)
     iassert(model);
     iassert(lod >= 0);
 
-    return &model->materialHandles[model->lodInfo[lod].surfIndex];
+    if (!model || !model->materialHandles || lod < 0
+        || lod >= MAX_LODS || lod >= model->numLods)
+    {
+        return nullptr;
+    }
+    const XModelLodInfo &lodInfo = model->lodInfo[lod];
+    if (lodInfo.surfIndex > model->numsurfs
+        || lodInfo.numsurfs > model->numsurfs - lodInfo.surfIndex)
+    {
+        return nullptr;
+    }
+    return &model->materialHandles[lodInfo.surfIndex];
 }
 
 XModelLodRampType __cdecl XModelGetLodRampType(const XModel *model)
 {
-    return (XModelLodRampType)model->lodRampType;
+    return model && model->lodRampType < XMODEL_LOD_RAMP_COUNT
+        ? static_cast<XModelLodRampType>(model->lodRampType)
+        : XMODEL_LOD_RAMP_RIGID;
 }
 
 int __cdecl XModelGetNumLods(const XModel *model)
 {
-    return model->numLods;
+    return model && model->numLods > 0 && model->numLods <= MAX_LODS
+        ? model->numLods
+        : 0;
 }
 
 double __cdecl XModelGetLodOutDist(const XModel *model)
@@ -96,6 +132,8 @@ int __cdecl XModelGetLodForDist(const XModel *model, float dist)
     int lodIndex; // [esp+4h] [ebp-10h]
     int lodCount; // [esp+Ch] [ebp-8h]
 
+    if (!model)
+        return -1;
     lodCount = XModelGetNumLods(model);
     for (lodIndex = 0; lodIndex < lodCount; ++lodIndex)
     {

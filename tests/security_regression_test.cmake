@@ -4862,6 +4862,165 @@ foreach(_worker_layout_contract
         "worker payloads must freeze their 32/64-bit native layouts")
 endforeach()
 
+# Model-surface streams are heterogeneous native records.  Every producer and
+# walker must share one aligned framing contract so a hidden dword cannot
+# misalign the next pointer-bearing record on 64-bit targets.
+require_source_not_contains(
+    "gfx_d3d/r_model_surface_stream.h"
+    "Interlocked"
+    "model-surface framing must remain independent of native Windows atomics")
+require_source_contains(
+    "gfx_d3d/r_model_surface_stream.h"
+    "HiddenRecordSize"
+    "hidden records must preserve native alignment for the following record")
+require_source_contains(
+    "gfx_d3d/r_model_surface_stream.h"
+    "TryReserveAligned"
+    "the shared scene arena must use a tested aligned bounded reservation")
+require_source_contains(
+    "gfx_d3d/r_model_skin.cpp"
+    "streamBytes <= end - streamAddress"
+    "model-surface span checks must use subtraction rather than wrapping addition")
+foreach(_model_surface_layout
+    "RUNTIME_SIZE(GfxModelHiddenSurface, 0x4, 0x8);"
+    "RUNTIME_SIZE(GfxModelSurfaceInfo, 0xC, 0x10);"
+    "RUNTIME_SIZE(GfxModelSkinnedSurface, 0x18, 0x28);"
+    "RUNTIME_SIZE(GfxModelRigidSurface, 0x38, 0x48);"
+    "RUNTIME_OFFSET(SkinXModelCmd, modelSurfWordCount, 0x1A, 0x22);"
+)
+    require_source_contains(
+        "gfx_d3d/r_dobj_skin.h"
+        "${_model_surface_layout}"
+        "model-surface records must freeze their native-width layout")
+endforeach()
+foreach(_unsafe_dobj_skin_token
+    "Interlocked"
+    "surfsBuffer[150"
+    "reinterpret_cast<uint>"
+    "(int)&frontEndDataOut->tempSkinBuf"
+)
+    require_source_not_contains(
+        "gfx_d3d/r_dobj_skin.cpp"
+        "${_unsafe_dobj_skin_token}"
+        "DObj skinning must not retain ${_unsafe_dobj_skin_token}")
+endforeach()
+require_source_ordered(
+    "gfx_d3d/r_dobj_skin.cpp"
+    "R_PlanDObjSkinStream(
+            *sceneEnt,
+            *obj,
+            hideBits,
+            fastFileLoad,
+            &plan)"
+    "TryReserveAligned(
+            &frontEndDataOut->surfPos"
+    "DObj skin records must be capacity-proven before the shared arena is reserved")
+require_source_ordered(
+    "gfx_d3d/r_dobj_skin.cpp"
+    "sceneEnt->cull.skinnedSurfs.surfCount ="
+    "sceneEnt->cull.skinnedSurfs.firstSurf = stream;"
+    "a DObj stream pointer must publish only after its exact bounds")
+require_source_contains(
+    "gfx_d3d/r_model_skin.cpp"
+    "R_ValidateSkinXModelStream(skinCmd, &streamOwner)"
+    "the skin worker must validate the complete bounded stream before execution")
+require_source_not_matches(
+    "gfx_d3d/r_model_skin.cpp"
+    "surfPos[^\r\n]*(\\+ 4|\\+ 56)"
+    "the skin worker must not retain retail byte strides")
+require_source_contains(
+    "gfx_d3d/r_scene.cpp"
+    "model_surface_stream::Cursor cursor("
+    "frontend DObj walkers must share the bounded stream parser")
+require_source_not_matches(
+    "gfx_d3d/r_scene.cpp"
+    "surfSize[ \t]*=[ \t]*(4|24|56)"
+    "frontend DObj walkers must not retain retail byte strides")
+require_source_not_contains(
+    "gfx_d3d/r_model.cpp"
+    "uint8_t surfBuf[3580]"
+    "single-model skin records must not use the undersized retail stack buffer")
+require_source_contains(
+    "gfx_d3d/r_dpvs.cpp"
+    "sizeof(BModelSurface)"
+    "brush-model arena reservations must account for native pointer width")
+require_source_contains(
+    "gfx_d3d/r_rendercmds.h"
+    "volatile uint32_t surfPos;"
+    "the shared model-surface arena cursor must remain exactly 32 bits")
+require_source_contains(
+    "gfx_d3d/r_rendercmds.h"
+    "volatile uint32_t tempSkinPos;"
+    "the temporary skin arena cursor must remain exactly 32 bits")
+require_source_contains(
+    "xanim/xmodel_utils.cpp"
+    "const XModelLodInfo &lodInfo = model->lodInfo[lod];"
+    "surface lookup must validate the selected LOD rather than LOD zero")
+require_source_contains(
+    "database/db_load.cpp"
+    "db::validation::XSurfaceBlendRecordsValid("
+    "completed weighted surfaces must validate every bone record before publication")
+require_source_contains(
+    "database/db_load.cpp"
+    "db::validation::XSurfaceRigidSkinningValid("
+    "completed rigid surfaces must validate exact vertex and bone coverage")
+require_source_ordered(
+    "database/db_load.cpp"
+    "const bool validModel = DB_ValidateLoadedXModel("
+    "DB_PopStreamPos();
+    return validModel;"
+    "completed models must validate before leaving their materialization scope")
+require_source_contains(
+    "database/db_load.cpp"
+    "Invalid fast-file model parent relationship"
+    "model skeleton parents must remain inside the bounded bone matrix")
+require_source_contains(
+    "database/db_load.cpp"
+    "XModelPartClassificationsValid("
+    "model part classifications must remain inside the hit-location priority map")
+require_source_ordered(
+    "database/db_load.cpp"
+    "CountInRange(
+            varXModelCollSurf->numCollTris"
+    "varXModelCollSurf->collTris =
+        (XModelCollTri_s *)AllocLoad_FxElemVisStateSample();"
+    "model collision triangle counts must validate before allocation and loading")
+require_source_contains(
+    "database/db_load.cpp"
+    "collision.boneIdx >= model->numBones"
+    "model collision bones must remain inside the owning model")
+require_source_contains(
+    "gfx_d3d/r_model_skin.cpp"
+    "publishedOutputBytes - outputOffset"
+    "skin worker writes must remain inside an actually published vertex reservation")
+require_source_contains(
+    "gfx_d3d/r_model_skin.cpp"
+    "owner != frontEndDataOut"
+    "skin workers must reject stale streams from a different backend frame")
+require_source_contains(
+    "gfx_d3d/r_scene.cpp"
+    "publishedBytes - (streamAddress - arenaBegin)"
+    "scene walkers must reject unreserved or stale model-stream bytes")
+require_source_contains(
+    "xanim/dobj_utils.cpp"
+    "obj->numModels > DOBJ_MAX_SUBMODELS"
+    "DObj LOD writes must validate their fixed model-count capacity")
+require_source_contains(
+    "xanim/dobj_utils.cpp"
+    "obj->numBones > boneInfoCapacity"
+    "DObj bone-info flattening must honor the caller's output capacity")
+require_source_ordered(
+    "gfx_d3d/r_model_pose.cpp"
+    "if (!DObjGetBoneInfo("
+    "R_SetNoDraw(sceneEnt);
+                    return nullptr;"
+    "failed DObj bounds construction must release the pending cull-state owner")
+require_source_ordered(
+    "gfx_d3d/r_dpvs.cpp"
+    "::new (bmodelSurf) BModelSurface"
+    "bmodelInfo->surfId = surfId >> 2;"
+    "brush-model records must finish construction before their ID is published")
+
 set(_format_sensitive_sources
     "cgame/cg_hudelem.cpp"
     "cgame/cg_info.cpp"

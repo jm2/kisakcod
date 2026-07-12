@@ -1,6 +1,7 @@
 #pragma once
 
 #include <xanim/xanim.h>
+#include <universal/sys_atomic.h>
 
 #include "r_init.h"
 #include "r_rendercmds.h"
@@ -36,28 +37,37 @@ struct BModelSurface // sizeof=0x8
     const GfxScaledPlacement *placement;
     const GfxSurface *surf;
 };
+RUNTIME_SIZE(BModelSurface, 0x8, 0x10);
 
-struct GfxSkinnedXModelSurfs // sizeof=0x4
+struct GfxSkinnedXModelSurfs // sizeof=0x8/0x10
 {                                       // ...
     void *firstSurf;
+    uint16_t wordCount;
+    uint16_t surfCount;
 };
-struct GfxSceneEntityCull // sizeof=0x40
+RUNTIME_SIZE(GfxSkinnedXModelSurfs, 0x8, 0x10);
+RUNTIME_OFFSET(GfxSkinnedXModelSurfs, wordCount, 0x4, 0x8);
+RUNTIME_OFFSET(GfxSkinnedXModelSurfs, surfCount, 0x6, 0xA);
+struct GfxSceneEntityCull // sizeof=0x44/0x50
 {                                       // ...
     volatile uint32_t state;
     float mins[3];
     float maxs[3];
-    char lods[32];
+    int8_t lods[32];
     GfxSkinnedXModelSurfs skinnedSurfs;
 };
+RUNTIME_SIZE(GfxSceneEntityCull, 0x44, 0x50);
+RUNTIME_OFFSET(GfxSceneEntityCull, skinnedSurfs, 0x3C, 0x40);
 
 struct cpose_t;
+struct GfxModelSkinnedSurface;
 
 union GfxSceneEntityInfo // sizeof=0x4
 {                                       // ...
     cpose_t *pose;
     uint16_t *cachedLightingHandle;
 };
-struct GfxSceneEntity // sizeof=0x7C // (SP/MP same)
+struct GfxSceneEntity // sizeof=0x80/0xA0 (SP/MP same)
 {                                       // ...
     float lightingOrigin[3];
     GfxScaledPlacement placement;
@@ -71,6 +81,26 @@ struct GfxSceneEntity // sizeof=0x7C // (SP/MP same)
     // padding byte
     // padding byte
 };
+RUNTIME_SIZE(GfxSceneEntity, 0x80, 0xA0);
+RUNTIME_OFFSET(GfxSceneEntity, cull, 0x2C, 0x30);
+RUNTIME_OFFSET(GfxSceneEntity, gfxEntIndex, 0x70, 0x80);
+RUNTIME_OFFSET(GfxSceneEntity, obj, 0x74, 0x88);
+RUNTIME_OFFSET(GfxSceneEntity, info, 0x78, 0x90);
+RUNTIME_OFFSET(GfxSceneEntity, reflectionProbeIndex, 0x7C, 0x98);
+
+inline uint32_t R_LoadSceneEntityCullState(
+    const GfxSceneEntity *const sceneEnt) noexcept
+{
+    return sceneEnt ? Sys_AtomicLoad(&sceneEnt->cull.state) : 4u;
+}
+
+inline void R_StoreSceneEntityCullState(
+    GfxSceneEntity *const sceneEnt,
+    const uint32_t state) noexcept
+{
+    if (sceneEnt)
+        Sys_AtomicStore(&sceneEnt->cull.state, state);
+}
 
 struct GfxVisibleLight // sizeof=0x2008
 {                                       // ...
@@ -235,7 +265,9 @@ GfxDrawSurf *__cdecl R_AddBModelSurfaces(
     MaterialTechniqueType techType,
     GfxDrawSurf *drawSurf,
     GfxDrawSurf *lastDrawSurf);
-const XSurface *__cdecl R_GetXSurface(uint32_t *modelSurf, surfaceType_t surfType);
+const XSurface *__cdecl R_GetXSurface(
+    const GfxModelSkinnedSurface *modelSurf,
+    surfaceType_t surfType);
 void __cdecl R_AddXModelSurfacesCamera(
     XModelDrawInfo *modelInfo,
     const XModel *model,

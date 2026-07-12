@@ -5,6 +5,12 @@
 #include "r_buffers.h"
 #include <universal/profile.h>
 #include "r_dobj_skin.h"
+#include "r_model_surface_stream.h"
+#include <database/db_validation.h>
+
+#include <cstring>
+
+namespace model_surface_stream = gfx::model_surface_stream;
 
 
 //uint32_t const *const g_shortBoneWeightPerm__uint4 820f4950     gfx_d3d : r_model_skin.obj
@@ -53,6 +59,227 @@ static void __cdecl R_MultiplySkelMat(const DObjSkelMat *mat0, const DObjSkelMat
         + mat1->origin[2];
 }
 
+namespace
+{
+constexpr uint32_t kSkinVertexArenaBytes = 0x480000u;
+constexpr uint32_t kSkinRecordAlignment = alignof(GfxModelRigidSurface);
+constexpr uint32_t kHiddenSkinRecordBytes = sizeof(GfxModelHiddenSurface);
+constexpr uint32_t kSkinnedSkinRecordBytes = sizeof(GfxModelSkinnedSurface);
+constexpr uint32_t kRigidSkinRecordBytes = sizeof(GfxModelRigidSurface);
+
+const GfxBackEndData *R_GetSkinStreamOwner(
+    const void *const stream,
+    const uint32_t streamBytes)
+{
+    if (!stream || !streamBytes)
+        return nullptr;
+
+    const uintptr_t streamAddress = reinterpret_cast<uintptr_t>(stream);
+    for (const GfxBackEndData &data : s_backEndData)
+    {
+        const uintptr_t begin = reinterpret_cast<uintptr_t>(data.surfsBuffer);
+        const uintptr_t end = begin + sizeof(data.surfsBuffer);
+        const uint32_t publishedBytes = Sys_AtomicLoad(&data.surfPos);
+        if (streamAddress >= begin && streamAddress <= end
+            && streamBytes <= end - streamAddress
+            && publishedBytes <= sizeof(data.surfsBuffer)
+            && streamAddress - begin <= publishedBytes
+            && streamBytes <= publishedBytes - (streamAddress - begin))
+        {
+            return &data;
+        }
+    }
+    return nullptr;
+}
+
+bool R_SurfaceSkinningMetadataValid(
+    const XSurface &surface,
+    const uint32_t modelBoneCount)
+{
+    if (!surface.verts0)
+        return false;
+
+    uint32_t blendElementCount = 0u;
+    if (!db::validation::XSurfaceSkinningLayoutValid(
+            surface.vertInfo.vertCount,
+            surface.vertInfo.vertsBlend != nullptr,
+            surface.vertCount,
+            surface.deformed,
+            &blendElementCount))
+    {
+        return false;
+    }
+
+    uint32_t surfacePartBits[4] = {};
+    std::memcpy(
+        surfacePartBits,
+        surface.partBits,
+        sizeof(surfacePartBits));
+    return surface.deformed
+        ? db::validation::XSurfaceBlendRecordsValid(
+            surface.vertInfo.vertsBlend,
+            surface.vertInfo.vertCount,
+            modelBoneCount,
+            surfacePartBits)
+        : db::validation::XSurfaceRigidSkinningValid(
+            surface.vertList,
+            surface.vertListCount,
+            surface.vertCount,
+            modelBoneCount,
+            surfacePartBits);
+}
+
+bool R_CommandContainsSurfaceBones(
+    const SkinXModelCmd &skinCmd,
+    const GfxModelSkinnedSurface &surface)
+{
+    for (uint32_t localBone = 0u;
+         localBone < surface.info.boneCount;
+         ++localBone)
+    {
+        const uint32_t localBits = static_cast<uint32_t>(
+            surface.xsurf->partBits[localBone >> 5]);
+        if ((localBits
+                & (UINT32_C(0x80000000) >> (localBone & 31u))) == 0u)
+        {
+            continue;
+        }
+        const uint32_t globalBone = surface.info.boneIndex + localBone;
+        if ((skinCmd.surfacePartBits[globalBone >> 5]
+                & (UINT32_C(0x80000000) >> (globalBone & 31u))) == 0u)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool R_ValidateSkinXModelStream(
+    const SkinXModelCmd *const skinCmd,
+    const GfxBackEndData **const ownerOut)
+{
+    if (!skinCmd || !ownerOut || !skinCmd->modelSurfs || !skinCmd->mat
+        || !skinCmd->surfCount || !skinCmd->modelSurfWordCount)
+    {
+        return false;
+    }
+
+    uint32_t streamBytes = 0u;
+    if (!model_surface_stream::TryMultiply(
+            skinCmd->modelSurfWordCount,
+            static_cast<uint32_t>(sizeof(uint32_t)),
+            &streamBytes))
+    {
+        return false;
+    }
+    const GfxBackEndData *const owner =
+        R_GetSkinStreamOwner(skinCmd->modelSurfs, streamBytes);
+    if (!owner || owner != frontEndDataOut)
+        return false;
+
+    bool outputModeSet = false;
+    bool directOutput = false;
+    uint32_t priorOutputEnd = 0u;
+
+    model_surface_stream::Cursor cursor(
+        skinCmd->modelSurfs,
+        streamBytes,
+        skinCmd->surfCount);
+    for (uint32_t index = 0u; index < skinCmd->surfCount; ++index)
+    {
+        model_surface_stream::View record;
+        if (!cursor.Next(
+                kHiddenSkinRecordBytes,
+                kSkinnedSkinRecordBytes,
+                kRigidSkinRecordBytes,
+                &record))
+        {
+            return false;
+        }
+        if (record.kind != model_surface_stream::RecordKind::Skinned)
+            continue;
+
+        const GfxModelSkinnedSurface *const surface =
+            reinterpret_cast<const GfxModelSkinnedSurface *>(record.data);
+        if (!surface->xsurf || !surface->info.baseMat
+            || !model_surface_stream::IsBoneSpanValid(
+                surface->info.boneIndex,
+                surface->info.boneCount)
+            || !R_SurfaceSkinningMetadataValid(
+                *surface->xsurf,
+                surface->info.boneCount)
+            || !R_CommandContainsSurfaceBones(*skinCmd, *surface))
+        {
+            return false;
+        }
+
+        uint32_t vertexBytes = 0u;
+        if (!surface->xsurf->vertCount
+            || !model_surface_stream::TryMultiply(
+                surface->xsurf->vertCount,
+                static_cast<uint32_t>(sizeof(GfxPackedVertex)),
+                &vertexBytes))
+        {
+            return false;
+        }
+
+        uint32_t outputOffset = 0u;
+        uint32_t publishedOutputBytes = 0u;
+        const bool recordDirect = surface->skinnedCachedOffset
+            == model_surface_stream::kDirectSkinnedTag;
+        if (recordDirect)
+        {
+            if (!owner->tempSkinBuf || !surface->skinnedVert)
+                return false;
+            const uintptr_t output =
+                reinterpret_cast<uintptr_t>(surface->skinnedVert);
+            const uintptr_t tempBegin =
+                reinterpret_cast<uintptr_t>(owner->tempSkinBuf);
+            publishedOutputBytes = Sys_AtomicLoad(&owner->tempSkinPos);
+            if ((output & 15u) != 0u || output < tempBegin
+                || output - tempBegin > kSkinVertexArenaBytes
+                || vertexBytes > kSkinVertexArenaBytes - (output - tempBegin))
+            {
+                return false;
+            }
+            outputOffset = static_cast<uint32_t>(output - tempBegin);
+        }
+        else
+        {
+            outputOffset = static_cast<uint32_t>(
+                surface->skinnedCachedOffset);
+            if (!owner->skinnedCacheVb || !gfxBuf.skinnedCacheLockAddr
+                || (outputOffset & 15u) != 0u
+                || outputOffset > kSkinVertexArenaBytes
+                || vertexBytes > kSkinVertexArenaBytes - outputOffset)
+            {
+                return false;
+            }
+            publishedOutputBytes = Sys_AtomicLoad(
+                &owner->skinnedCacheVb->used);
+        }
+
+        if (publishedOutputBytes > kSkinVertexArenaBytes
+            || outputOffset > publishedOutputBytes
+            || vertexBytes > publishedOutputBytes - outputOffset
+            || (outputModeSet
+                && (recordDirect != directOutput
+                    || outputOffset != priorOutputEnd)))
+        {
+            return false;
+        }
+        outputModeSet = true;
+        directOutput = recordDirect;
+        priorOutputEnd = outputOffset + vertexBytes;
+    }
+
+    if (!cursor.Finished() || !outputModeSet)
+        return false;
+    *ownerOut = owner;
+    return true;
+}
+} // namespace
+
 void R_SkinXModelCmd(const SkinXModelCmd *skinCmd)
 {
     if (dx.deviceLost) return;
@@ -62,14 +289,27 @@ void R_SkinXModelCmd(const SkinXModelCmd *skinCmd)
     //bool sseEnabled = sys_SSE->current.enabled && r_sse_skinning->current.enabled;
     //bool sseStateUsed = false;
 
+    const GfxBackEndData *streamOwner = nullptr;
     iassert(skinCmd);
-    if (!skinCmd)
+    if (!R_ValidateSkinXModelStream(skinCmd, &streamOwner))
+    {
+        Com_Error(
+            ERR_FATAL,
+            "Renderer skin worker stream invariant failed");
         return;
-    iassert(skinCmd->surfCount);
+    }
 
-    GfxModelSkinnedSurface * surfPos = (GfxModelSkinnedSurface*)skinCmd->modelSurfs;
+    const uint32_t streamBytes =
+        static_cast<uint32_t>(skinCmd->modelSurfWordCount)
+        * sizeof(uint32_t);
+    model_surface_stream::Cursor cursor(
+        skinCmd->modelSurfs,
+        streamBytes,
+        skinCmd->surfCount);
 
     int boneIndex = -1;
+    uint8_t boneCount = 0u;
+    const DObjAnimMat *baseMat = nullptr;
     GfxPackedVertex *skinVerticesOut = NULL;
 
     DObjSkelMat __declspec(align(16)) boneSkelMats[128];
@@ -77,19 +317,29 @@ void R_SkinXModelCmd(const SkinXModelCmd *skinCmd)
 
     for (uint32_t i = 0; i < skinCmd->surfCount; i++)
     {
-        GfxModelSkinnedSurface *skinnedSurf = surfPos;
-
-        if (skinnedSurf->skinnedCachedOffset == -3)
+        model_surface_stream::View record;
+        if (!cursor.Next(
+                kHiddenSkinRecordBytes,
+                kSkinnedSkinRecordBytes,
+                kRigidSkinRecordBytes,
+                &record))
         {
-            surfPos = (GfxModelSkinnedSurface *)((char *)surfPos + 4);
-            continue;
+            return;
         }
+        if (record.kind != model_surface_stream::RecordKind::Skinned)
+            continue;
 
-        if (boneIndex != skinnedSurf->info.boneIndex)
+        GfxModelSkinnedSurface *const skinnedSurf =
+            reinterpret_cast<GfxModelSkinnedSurface *>(record.data);
+
+        if (boneIndex != skinnedSurf->info.boneIndex
+            || boneCount != skinnedSurf->info.boneCount
+            || baseMat != skinnedSurf->info.baseMat)
         {
             boneIndex = skinnedSurf->info.boneIndex;
+            boneCount = skinnedSurf->info.boneCount;
+            baseMat = skinnedSurf->info.baseMat;
             const int totalBones = boneIndex + skinnedSurf->info.boneCount;
-            const DObjAnimMat* baseMats = &skinnedSurf->info.baseMat[-boneIndex];
             for (uint32_t j = boneIndex; j < totalBones; j++)
             {
                 if ((skinCmd->surfacePartBits[j >> 5] & (0x80000000 >> (j & 0x1F))) == 0)
@@ -103,7 +353,7 @@ void R_SkinXModelCmd(const SkinXModelCmd *skinCmd)
 
                 DObjSkelMat mat0, mat1;
 
-                ConvertQuatToInverseSkelMat(&baseMats[j], &mat0);
+                ConvertQuatToInverseSkelMat(&baseMat[j - boneIndex], &mat0);
                 ConvertQuatToSkelMat(&skinCmd->mat[j], &mat1);
                 R_MultiplySkelMat(&mat0, &mat1, &boneSkelMats[j]);
 
@@ -114,26 +364,19 @@ void R_SkinXModelCmd(const SkinXModelCmd *skinCmd)
             }
         }
 
-        if (skinnedSurf->skinnedCachedOffset == -2)
-        {
-            surfPos = (GfxModelSkinnedSurface *)((char *)surfPos + 56);
-            continue;
-        }
-
-        surfPos = skinnedSurf + 1;
         XSurface *xsurf = skinnedSurf->xsurf;
 
         iassert(xsurf);
 
         if (skinnedSurf->skinnedCachedOffset < 0)
         {
-            iassert((reinterpret_cast<uint>(skinnedSurf->skinnedVert) & 15) == 0);
+            iassert((reinterpret_cast<uintptr_t>(skinnedSurf->skinnedVert) & 15u) == 0u);
             skinVerticesOut = skinnedSurf->skinnedVert;
         }
         else
         {
             iassert(gfxBuf.skinnedCacheLockAddr);
-            iassert(((reinterpret_cast<uint>(gfxBuf.skinnedCacheLockAddr) & 15) == 0));
+            iassert((reinterpret_cast<uintptr_t>(gfxBuf.skinnedCacheLockAddr) & 15u) == 0u);
             iassert(((skinnedSurf->skinnedCachedOffset & 15) == 0));
             skinVerticesOut = (GfxPackedVertex*)&gfxBuf.skinnedCacheLockAddr[skinnedSurf->skinnedCachedOffset];
         }
@@ -164,6 +407,9 @@ void R_SkinXModelCmd(const SkinXModelCmd *skinCmd)
 
         //}
     }
+
+    iassert(cursor.Finished());
+    (void)streamOwner;
 
     //if (sseStateUsed)
         /*_m_empty();*/
@@ -439,8 +685,8 @@ void __cdecl R_SkinXSurfaceRigid(
     const DObjSkelMat *bone; // [esp+5Ch] [ebp-4h]
 
     iassert(vertices);
-    iassert(!(reinterpret_cast<unsigned>(vertices) & 15));
-    iassert(!(reinterpret_cast<unsigned>(boneMatrix) & 15));
+    iassert((reinterpret_cast<uintptr_t>(vertices) & 15u) == 0u);
+    iassert((reinterpret_cast<uintptr_t>(boneMatrix) & 15u) == 0u);
 
     PROF_SCOPED("SkinXSurfaceWeight");
 

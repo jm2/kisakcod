@@ -136,7 +136,8 @@ void R_AddCellSceneEntSurfacesInFrustumCmd(const DpvsDynamicCellCmd *cmd)
                     if (!R_CullSphereDpvs(sceneEnt->placement.base.origin, entInfo[entnum].radius, innerPlanes, innerPlaneCount))
                     {
                         int itr = 0;
-                        if (sceneEnt->cull.state < 2)
+                        if (R_LoadSceneEntityCullState(sceneEnt)
+                            < CULL_STATE_BOUNDED)
                             goto LABEL_36;
 
                         bmodel = planes;
@@ -156,7 +157,8 @@ void R_AddCellSceneEntSurfacesInFrustumCmd(const DpvsDynamicCellCmd *cmd)
                         {
                         LABEL_36:
                             dpvsEntity.sceneEnt = &scene.sceneDObj[sceneEntIndex];
-                            if (sceneEnt->cull.state < 2)
+                            if (R_LoadSceneEntityCullState(sceneEnt)
+                                < CULL_STATE_BOUNDED)
                                 R_AddWorkerCmd<WRKCMD_DPVS_ENTITY>(dpvsEntity);
                             else
                                 R_AddEntitySurfacesInFrustumCmd(&dpvsEntity);

@@ -674,6 +674,242 @@ inline bool XSurfaceTriangleIndicesValid(
     return AllU16Below(indices, triangleCount * 3u, vertexCount);
 }
 
+inline bool XSurfaceSkinningLayoutValid(
+    const std::int16_t *const bucketVertexCounts,
+    const bool hasBlendRecords,
+    const std::uint32_t surfaceVertexCount,
+    const bool deformed,
+    std::uint32_t *const blendElementCount)
+{
+    if (!bucketVertexCounts || !blendElementCount)
+        return false;
+
+    std::uint32_t totalVertices = 0u;
+    std::uint32_t totalElements = 0u;
+    for (std::uint32_t bucket = 0u; bucket < 4u; ++bucket)
+    {
+        if (bucketVertexCounts[bucket] < 0)
+            return false;
+        const std::uint32_t count = static_cast<std::uint32_t>(
+            bucketVertexCounts[bucket]);
+        if (count > (std::numeric_limits<std::uint32_t>::max)()
+                - totalVertices)
+        {
+            return false;
+        }
+        totalVertices += count;
+
+        const std::uint32_t stride = 2u * bucket + 1u;
+        if (count != 0u
+            && stride > ((std::numeric_limits<std::uint32_t>::max)()
+                - totalElements) / count)
+        {
+            return false;
+        }
+        totalElements += stride * count;
+    }
+
+    if (deformed)
+    {
+        if (!surfaceVertexCount || totalVertices != surfaceVertexCount
+            || !hasBlendRecords || !totalElements)
+        {
+            return false;
+        }
+    }
+    else if (totalVertices != 0u || hasBlendRecords || totalElements != 0u)
+    {
+        return false;
+    }
+
+    *blendElementCount = totalElements;
+    return true;
+}
+
+inline bool XSurfacePartBitsContainBone(
+    const std::uint32_t *const partBits,
+    const std::uint32_t boneIndex)
+{
+    return partBits && boneIndex < 128u
+        && (partBits[boneIndex >> 5]
+            & (UINT32_C(0x80000000) >> (boneIndex & 31u))) != 0u;
+}
+
+inline bool XSurfacePartBitsWithinBoneCount(
+    const std::uint32_t *const partBits,
+    const std::uint32_t modelBoneCount)
+{
+    if (!partBits || modelBoneCount == 0u || modelBoneCount > 128u)
+        return false;
+    for (std::uint32_t bone = modelBoneCount; bone < 128u; ++bone)
+    {
+        if (XSurfacePartBitsContainBone(partBits, bone))
+            return false;
+    }
+    return true;
+}
+
+struct XModelPointerPresence
+{
+    bool name = false;
+    bool boneNames = false;
+    bool parentList = false;
+    bool quaternions = false;
+    bool translations = false;
+    bool partClassification = false;
+    bool baseMatrices = false;
+    bool surfaces = false;
+    bool materials = false;
+    bool boneInfo = false;
+};
+
+constexpr bool XModelHeaderLayoutValid(
+    const std::uint32_t boneCount,
+    const std::uint32_t rootBoneCount,
+    const std::uint32_t surfaceCount,
+    const std::int32_t lodCount,
+    const std::uint32_t lodRampType,
+    const XModelPointerPresence &pointers)
+{
+    const bool hasNonRootBones = rootBoneCount < boneCount;
+    return boneCount > 0u && boneCount <= 128u
+        && rootBoneCount <= boneCount
+        && surfaceCount > 0u
+        && lodCount > 0 && lodCount <= 4
+        && lodRampType < 2u
+        && pointers.name && pointers.boneNames
+        && pointers.partClassification && pointers.baseMatrices
+        && pointers.surfaces && pointers.materials && pointers.boneInfo
+        && (!hasNonRootBones
+            || (pointers.parentList
+                && pointers.quaternions
+                && pointers.translations));
+}
+
+inline bool XModelLodLayoutValid(
+    const std::uint32_t lodIndex,
+    const std::uint32_t lodSurfaceIndex,
+    const std::uint32_t lodSurfaceCount,
+    const std::uint32_t modelSurfaceCount,
+    const std::uint32_t storedLod,
+    const float distance,
+    const std::uint32_t modelBoneCount,
+    const std::uint32_t *const partBits)
+{
+    return lodIndex < 4u && storedLod == lodIndex
+        && lodSurfaceCount > 0u
+        && lodSurfaceIndex <= modelSurfaceCount
+        && lodSurfaceCount <= modelSurfaceCount - lodSurfaceIndex
+        && std::isfinite(distance) && distance >= 0.0f
+        && XSurfacePartBitsWithinBoneCount(partBits, modelBoneCount);
+}
+
+inline bool XModelPartClassificationsValid(
+    const std::uint8_t *const classifications,
+    const std::uint32_t boneCount)
+{
+    if (!classifications || !boneCount || boneCount > 128u)
+        return false;
+    constexpr std::uint32_t kHitLocationCount = 0x13u;
+    for (std::uint32_t bone = 0u; bone < boneCount; ++bone)
+    {
+        if (classifications[bone] >= kHitLocationCount)
+            return false;
+    }
+    return true;
+}
+
+inline bool XSurfaceBlendRecordsValid(
+    const std::uint16_t *const blendRecords,
+    const std::int16_t *const bucketVertexCounts,
+    const std::uint32_t modelBoneCount,
+    const std::uint32_t *const partBits)
+{
+    if (!blendRecords || !bucketVertexCounts
+        || !XSurfacePartBitsWithinBoneCount(partBits, modelBoneCount))
+    {
+        return false;
+    }
+
+    std::size_t recordOffset = 0u;
+    for (std::uint32_t bucket = 0u; bucket < 4u; ++bucket)
+    {
+        if (bucketVertexCounts[bucket] < 0)
+            return false;
+        const std::uint32_t recordCount = static_cast<std::uint32_t>(
+            bucketVertexCounts[bucket]);
+        const std::size_t stride = 2u * bucket + 1u;
+        for (std::uint32_t recordIndex = 0u;
+             recordIndex < recordCount;
+             ++recordIndex)
+        {
+            const std::uint16_t *const record =
+                &blendRecords[recordOffset];
+            std::uint32_t explicitWeightSum = 0u;
+            for (std::uint32_t influence = 0u;
+                 influence <= bucket;
+                 ++influence)
+            {
+                const std::size_t boneSlot = influence == 0u
+                    ? 0u
+                    : 2u * influence - 1u;
+                const std::uint32_t boneOffset = record[boneSlot];
+                const std::uint32_t boneIndex = boneOffset >> 6;
+                if ((boneOffset & 63u) != 0u
+                    || boneIndex >= modelBoneCount
+                    || !XSurfacePartBitsContainBone(partBits, boneIndex))
+                {
+                    return false;
+                }
+                if (influence != 0u)
+                {
+                    const std::uint32_t weight = record[2u * influence];
+                    if (weight
+                        > (std::numeric_limits<std::uint16_t>::max)()
+                            - explicitWeightSum)
+                        return false;
+                    explicitWeightSum += weight;
+                }
+            }
+            recordOffset += stride;
+        }
+    }
+    return true;
+}
+
+template <typename RigidVertList>
+inline bool XSurfaceRigidSkinningValid(
+    const RigidVertList *const lists,
+    const std::size_t listCount,
+    const std::uint32_t surfaceVertexCount,
+    const std::uint32_t modelBoneCount,
+    const std::uint32_t *const partBits)
+{
+    if (!lists || !listCount || !surfaceVertexCount
+        || !XSurfacePartBitsWithinBoneCount(partBits, modelBoneCount))
+    {
+        return false;
+    }
+
+    std::uint32_t coveredVertices = 0u;
+    for (std::size_t index = 0u; index < listCount; ++index)
+    {
+        const std::uint32_t boneOffset = lists[index].boneOffset;
+        const std::uint32_t boneIndex = boneOffset >> 6;
+        const std::uint32_t vertexCount = lists[index].vertCount;
+        if (!vertexCount || (boneOffset & 63u) != 0u
+            || boneIndex >= modelBoneCount
+            || !XSurfacePartBitsContainBone(partBits, boneIndex)
+            || coveredVertices > surfaceVertexCount
+            || vertexCount > surfaceVertexCount - coveredVertices)
+        {
+            return false;
+        }
+        coveredVertices += vertexCount;
+    }
+    return coveredVertices == surfaceVertexCount;
+}
+
 inline bool XSurfaceTrailingPaddingTriangleValid(
     const std::uint16_t *indices,
     std::uint32_t coveredTriangleCount,

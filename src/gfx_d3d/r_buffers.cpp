@@ -6,6 +6,7 @@
 #include "rb_logfile.h"
 #include "r_utils.h"
 #include <universal/profile.h>
+#include <universal/sys_atomic.h>
 
 
 //struct GfxBuffers gfxBuf   85b3aa20     gfx_d3d : r_buffers.obj
@@ -359,7 +360,7 @@ void __cdecl R_ShutdownTempSkinBuf()
         {
             Z_VirtualFree(data->tempSkinBuf);
             data->tempSkinBuf = 0;
-            data->tempSkinPos = 0;
+            Sys_AtomicStore(&data->tempSkinPos, 0u);
         }
     }
 }

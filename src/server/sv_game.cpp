@@ -453,11 +453,23 @@ void __cdecl SV_XModelDebugBoxes(gentity_s *ent)
 
     obj = Com_GetServerDObj(ent->s.number);
     if (!obj)
+    {
         MyAssertHandler(".\\server\\sv_game.cpp", 869, 0, "%s", "obj");
+        return;
+    }
     numBones = DObjNumBones(obj);
-    if (numBones > 128)
+    if (numBones <= 0 || numBones > 128)
+    {
         MyAssertHandler(".\\server\\sv_game.cpp", 872, 0, "%s", "numBones <= DOBJ_MAX_PARTS");
-    DObjGetBoneInfo(obj, boneInfoArray);
+        return;
+    }
+    if (!DObjGetBoneInfo(
+            obj,
+            boneInfoArray,
+            ARRAY_COUNT(boneInfoArray)))
+    {
+        return;
+    }
     boneMatrix = DObjGetRotTransArray(obj);
     color[0] = 1.0;
     color[1] = 1.0;

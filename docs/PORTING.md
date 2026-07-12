@@ -26,6 +26,9 @@ Completed foundation work:
 - pointer-width-safe hunk allocator alignment/accounting, temporary allocation
   return types, parse-tree alignment, and checked client/server skeleton arenas with fixed-width
   cursors/epochs, wrap invalidation, and contention coverage;
+- native-width, bounded heterogeneous DObj/model-surface streams with exact arena reservations,
+  worker/scene framing validation, ARM-safe signed LOD storage, and pre-publication XSurface/XModel
+  skin, skeleton, LOD, material, and collision-graph validation;
 - a green Windows x86 `KISAK_DEDI_HEADLESS` compile/link profile that excludes
   client/cgame/UI/D3D/audio/cinema/proprietary media groups, parses common
   fast-files through a validated null GPU/audio backend, retains its binary as
@@ -61,8 +64,8 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Land and obtain Windows CI evidence for the typed fixed-width renderer worker queue, then harden
-   DObj skin scratch/arena bounds before the dependent staged FX protocols.
+2. Land and obtain all-target CI evidence for the DObj/model-surface batch, then implement the
+   dependent staged FX layout/iterator/counter/status protocols.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -882,19 +885,27 @@ notifications plus predicate rechecks remove waiter-count signaling races while 
 event's existing 1 ms bounded poll. All 17 payloads use compile-time traits, native-size buffers,
 dual-width layouts, aligned bounded dequeue storage, and typed dispatch; shadow-cookie, DPVS entity,
 lighting-handle, and timeout-callback narrowing is removed. The 22-test GCC/Clang/ASan/UBSan/TSan
-matrix includes eight-producer/eight-consumer exact-once wrap stress. The live census is 77 calls in
-13 TUs. Run 29199400717 passed headless plus all five portable architectures, then exposed one
+matrix includes eight-producer/eight-consumer exact-once wrap stress. Run 29199400717 passed headless
+plus all five portable architectures, then exposed one
 MSVC-only const mismatch in the three client builds: the widened cached-lighting pointer targets a
 handle that the lighting cache mutates. `R_AddDObjToScene` now declares that pose parameter mutable;
-replacement Windows production compilation is the landing gate. Worker/event shutdown remains absent;
+corrective commit `33bdd81` passed all nine jobs in run 29199666846. Worker/event shutdown remains absent;
 the inherited full-ring inline path may overtake older same-type work, and handler longjmp bypasses
 normal completion accounting, so both remain runtime/error-unwind gates.
 
-Next, `r_dobj_skin.cpp` needs a fail-closed security batch for its unchecked fixed stack-record
-buffer, arithmetic/arena failures, alignment, and pointer narrowing. EffectsCore then retains 61
-native calls and requires staged exact-width layout plus iterator, pool, visibility/ring, and packed-
-status protocol rewrites. Detailed live blockers and sequencing remain in `docs/task.md` and
-`docs/CODEBASE_AUDIT.md`.
+The DObj/model-surface batch removes the unchecked fixed stack-record overlay and retail pointer-
+bearing strides. A shared native-width planner/cursor now bounds and aligns exact scene/vertex
+reservations; producers preflight selected LOD, bone, record, and output extents and publish only
+complete descriptors. Workers and scene walkers validate owner frame, published cursors, exact
+framing, output contiguity, material/surface identity, and required bones. Fast-file completion now
+validates XSurface buckets/weights/rigid coverage plus XModel skeleton parents, classifications,
+exact LOD coverage, materials, and collision spans/bones. The 23-test GCC/Clang/ASan/UBSan/TSan
+matrix is green, and the live native-atomic census is **70 calls in 10 TUs**; all-target CI remains
+the landing gate. The next renderer work is EffectsCore's 61 native calls, staged as exact-width
+layout, iterator/scalar, pool, camera/visibility/ring, and packed-status protocol batches. The
+load-object `Buf_Read<T>` family remains unbounded and potentially unaligned and needs a real bounded
+cursor for security and ARM64 correctness. Detailed live blockers and sequencing remain in
+`docs/task.md` and `docs/CODEBASE_AUDIT.md`.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),

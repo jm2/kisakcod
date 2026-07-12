@@ -41,6 +41,133 @@
 #endif
 #include "r_state.h"
 #include "r_draw_sunshadow.h"
+#include "r_model_surface_stream.h"
+
+namespace model_surface_stream = gfx::model_surface_stream;
+
+namespace
+{
+constexpr uint32_t kModelSurfaceAlignment = alignof(GfxModelRigidSurface);
+constexpr uint32_t kHiddenModelSurfaceBytes = sizeof(GfxModelHiddenSurface);
+constexpr uint32_t kSkinnedModelSurfaceBytes = sizeof(GfxModelSkinnedSurface);
+constexpr uint32_t kRigidModelSurfaceBytes = sizeof(GfxModelRigidSurface);
+
+static_assert(
+    kHiddenModelSurfaceBytes
+    == model_surface_stream::HiddenRecordSize(kModelSurfaceAlignment));
+static_assert((kSkinnedModelSurfaceBytes % kModelSurfaceAlignment) == 0u);
+static_assert((kRigidModelSurfaceBytes % kModelSurfaceAlignment) == 0u);
+
+bool R_ValidateSceneModelSurfaceStream(
+    const GfxSceneEntity &sceneEnt,
+    const uint32_t cullState,
+    uint32_t *const streamBytesOut,
+    uint32_t *const streamSurfacesOut)
+{
+    if (!streamBytesOut || !streamSurfacesOut || !frontEndDataOut
+        || cullState <= CULL_STATE_DONE)
+    {
+        return false;
+    }
+
+    const uint32_t streamSurfaces = sceneEnt.cull.skinnedSurfs.surfCount;
+    uint32_t streamBytes = 0u;
+    if (!streamSurfaces
+        || cullState - CULL_STATE_DONE != streamSurfaces
+        || !model_surface_stream::TryMultiply(
+            sceneEnt.cull.skinnedSurfs.wordCount,
+            static_cast<uint32_t>(sizeof(uint32_t)),
+            &streamBytes)
+        || !streamBytes || !sceneEnt.cull.skinnedSurfs.firstSurf)
+    {
+        return false;
+    }
+
+    const uintptr_t streamAddress = reinterpret_cast<uintptr_t>(
+        sceneEnt.cull.skinnedSurfs.firstSurf);
+    const uintptr_t arenaBegin = reinterpret_cast<uintptr_t>(
+        frontEndDataOut->surfsBuffer);
+    const uintptr_t arenaEnd = arenaBegin
+        + sizeof(frontEndDataOut->surfsBuffer);
+    const uint32_t publishedBytes = Sys_AtomicLoad(
+        &frontEndDataOut->surfPos);
+    if (streamAddress < arenaBegin || streamAddress > arenaEnd
+        || streamBytes > arenaEnd - streamAddress
+        || publishedBytes > sizeof(frontEndDataOut->surfsBuffer)
+        || streamAddress - arenaBegin > publishedBytes
+        || streamBytes
+            > publishedBytes - (streamAddress - arenaBegin))
+    {
+        return false;
+    }
+
+    model_surface_stream::Cursor cursor(
+        sceneEnt.cull.skinnedSurfs.firstSurf,
+        streamBytes,
+        streamSurfaces);
+    for (uint32_t index = 0u; index < streamSurfaces; ++index)
+    {
+        model_surface_stream::View record;
+        if (!cursor.Next(
+                kHiddenModelSurfaceBytes,
+                kSkinnedModelSurfaceBytes,
+                kRigidModelSurfaceBytes,
+                &record))
+        {
+            return false;
+        }
+    }
+    if (!cursor.Finished())
+        return false;
+
+    *streamBytesOut = streamBytes;
+    *streamSurfacesOut = streamSurfaces;
+    return true;
+}
+
+bool R_ValidateSceneDObjModels(
+    const GfxSceneEntity &sceneEnt,
+    const DObj_s &obj,
+    const uint32_t streamSurfaces)
+{
+    if (!obj.models || !obj.numModels
+        || obj.numModels > DOBJ_MAX_SUBMODELS)
+    {
+        return false;
+    }
+
+    uint32_t expectedSurfaces = 0u;
+    for (uint32_t modelIndex = 0u;
+         modelIndex < obj.numModels;
+         ++modelIndex)
+    {
+        const int lod = sceneEnt.cull.lods[modelIndex];
+        if (lod < 0)
+            continue;
+
+        XModel *const model = DObjGetModel(&obj, modelIndex);
+        XSurface *surfaces = nullptr;
+        const int surfaceCount = XModelGetSurfaces(model, &surfaces, lod);
+        Material **const materials = XModelGetSkins(model, lod);
+        if (!model || !surfaces || !materials || surfaceCount <= 0
+            || expectedSurfaces > streamSurfaces
+            || static_cast<uint32_t>(surfaceCount)
+                > streamSurfaces - expectedSurfaces)
+        {
+            return false;
+        }
+        for (int surfaceIndex = 0;
+             surfaceIndex < surfaceCount;
+             ++surfaceIndex)
+        {
+            if (!materials[surfaceIndex])
+                return false;
+        }
+        expectedSurfaces += static_cast<uint32_t>(surfaceCount);
+    }
+    return expectedSurfaces == streamSurfaces;
+}
+} // namespace
 
 //struct GfxScene scene      859c8280     gfx_d3d : r_scene.obj
 GfxViewParms lockPvsViewParms;
@@ -48,7 +175,7 @@ GfxScene scene;
 
 void __cdecl TRACK_r_scene()
 {
-    track_static_alloc_internal(&scene, 1395968, "scene", 18);
+    track_static_alloc_internal(&scene, sizeof(scene), "scene", 18);
 }
 
 uint32_t __cdecl R_AllocSceneDObj()
@@ -190,7 +317,9 @@ void __cdecl R_AddDObjToScene(
                 sceneEnt->entnum = entnum;
                 scene.dpvs.sceneDObjIndex[entnum] = sceneEntIndex;
                 sceneEnt->info.pose = (cpose_t*)pose;
-                iassert(sceneEnt->cull.state == CULL_STATE_OUT);
+                iassert(
+                    R_LoadSceneEntityCullState(sceneEnt)
+                    == CULL_STATE_OUT);
                 radiusa = DObjGetRadius(obj);
                 CG_GetPoseOrigin(pose, sceneEnt->placement.base.origin);
                 CG_GetPoseAngles(pose, angles);
@@ -448,7 +577,7 @@ void __cdecl R_AddBModelSurfacesCamera(
             ++drawSurfs[region];
         }
         ++modelSurf;
-        surfId += 2;
+        surfId += sizeof(BModelSurface) / sizeof(uint32_t);
     }
 }
 
@@ -492,16 +621,18 @@ GfxDrawSurf *__cdecl R_AddBModelSurfaces(
             ++drawSurf;
         }
         ++modelSurf;
-        surfId += 2;
+        surfId += sizeof(BModelSurface) / sizeof(uint32_t);
     }
     return drawSurf;
 }
 
-const XSurface *__cdecl R_GetXSurface(uint32_t *modelSurf, surfaceType_t surfType)
+const XSurface *__cdecl R_GetXSurface(
+    const GfxModelSkinnedSurface *modelSurf,
+    surfaceType_t surfType)
 {
     iassert( modelSurf );
     iassert( R_IsModelSurfaceType( surfType ) );
-    return (const XSurface *)modelSurf[1];
+    return modelSurf ? modelSurf->xsurf : nullptr;
 }
 
 void __cdecl R_AddXModelSurfacesCamera(
@@ -551,8 +682,10 @@ void __cdecl R_AddXModelSurfacesCamera(
         skinnedCachedOffset = modelSurf->surf.skinnedCachedOffset;
         if (modelSurf->surf.skinnedCachedOffset == -3)
         {
-            ++surfId;
-            modelSurf = (GfxModelRigidSurface*)((char*)modelSurf + 4);
+            surfId += sizeof(GfxModelHiddenSurface) / sizeof(uint32_t);
+            modelSurf = reinterpret_cast<GfxModelRigidSurface *>(
+                reinterpret_cast<uint8_t *>(modelSurf)
+                + sizeof(GfxModelHiddenSurface));
         }
         else
         {
@@ -567,8 +700,10 @@ void __cdecl R_AddXModelSurfacesCamera(
             region = (*material)->cameraRegion;
             if (region == 3)
             {
-                surfId += 14;
-                ++modelSurf;
+                surfId += sizeof(GfxModelRigidSurface) / sizeof(uint32_t);
+                modelSurf = reinterpret_cast<GfxModelRigidSurface *>(
+                    reinterpret_cast<uint8_t *>(modelSurf)
+                    + sizeof(GfxModelRigidSurface));
             }
             else
             {
@@ -625,16 +760,18 @@ void __cdecl R_AddXModelSurfacesCamera(
                 ++drawSurfs[region];
                 if (r_showTriCounts->current.enabled)
                 {
-                    xSurf = R_GetXSurface((uint32_t*)modelSurf, surfType);
+                    xSurf = R_GetXSurface(&modelSurf->surf, surfType);
                     totalTriCount += XSurfaceGetNumTris(xSurf);
                 }
                 else if (r_showVertCounts->current.enabled)
                 {
-                    v12 = R_GetXSurface((uint32_t *)modelSurf, surfType);
+                    v12 = R_GetXSurface(&modelSurf->surf, surfType);
                     totalVertCount += XSurfaceGetNumVerts(v12);
                 }
-                surfId += 14;
-                ++modelSurf;
+                surfId += sizeof(GfxModelRigidSurface) / sizeof(uint32_t);
+                modelSurf = reinterpret_cast<GfxModelRigidSurface *>(
+                    reinterpret_cast<uint8_t *>(modelSurf)
+                    + sizeof(GfxModelRigidSurface));
             }
         }
         ++material;
@@ -687,8 +824,10 @@ GfxDrawSurf *__cdecl R_AddXModelSurfaces(
         skinnedCachedOffset = modelSurf->surf.skinnedCachedOffset;
         if (modelSurf->surf.skinnedCachedOffset == -3)
         {
-            ++surfId;
-            modelSurf = (GfxModelRigidSurface *)((char *)modelSurf + 4);
+            surfId += sizeof(GfxModelHiddenSurface) / sizeof(uint32_t);
+            modelSurf = reinterpret_cast<GfxModelRigidSurface *>(
+                reinterpret_cast<uint8_t *>(modelSurf)
+                + sizeof(GfxModelHiddenSurface));
         }
         else
         {
@@ -726,13 +865,17 @@ GfxDrawSurf *__cdecl R_AddXModelSurfaces(
                 //drawSurf->packed = newDrawSurf;
 
                 ++drawSurf;
-                surfId += 14;
-                ++modelSurf;
+                surfId += sizeof(GfxModelRigidSurface) / sizeof(uint32_t);
+                modelSurf = reinterpret_cast<GfxModelRigidSurface *>(
+                    reinterpret_cast<uint8_t *>(modelSurf)
+                    + sizeof(GfxModelRigidSurface));
             }
             else
             {
-                surfId += 14;
-                ++modelSurf;
+                surfId += sizeof(GfxModelRigidSurface) / sizeof(uint32_t);
+                modelSurf = reinterpret_cast<GfxModelRigidSurface *>(
+                    reinterpret_cast<uint8_t *>(modelSurf)
+                    + sizeof(GfxModelRigidSurface));
             }
         }
         ++material;
@@ -747,146 +890,140 @@ void __cdecl R_AddDObjSurfacesCamera(
     GfxDrawSurf **drawSurfs,
     GfxDrawSurf **lastDrawSurfs)
 {
-    const XSurface *xSurf; // eax
-    const XSurface *v6; // eax
-    bool v10; // [esp+4h] [ebp-6Ch]
-    uint32_t surfId; // [esp+Ch] [ebp-64h]
-    int totalVertCount; // [esp+10h] [ebp-60h]
-    const DObj_s *obj; // [esp+14h] [ebp-5Ch]
-    //unsigned __int64 drawSurf; // [esp+18h] [ebp-58h]
-    int totalTriCount; // [esp+20h] [ebp-50h]
-    Material **material; // [esp+24h] [ebp-4Ch]
-    XModel *model; // [esp+28h] [ebp-48h]
-    uint32_t subMatIndex; // [esp+2Ch] [ebp-44h]
-    uint32_t surfSize; // [esp+30h] [ebp-40h]
-    int lod; // [esp+3Ch] [ebp-34h]
-    uint32_t depthHack; // [esp+40h] [ebp-30h]
-    char *modelSurf; // [esp+44h] [ebp-2Ch]
-    bool isShadowReceiver; // [esp+48h] [ebp-28h]
-    surfaceType_t surfType; // [esp+4Ch] [ebp-24h]
-    uint32_t region; // [esp+50h] [ebp-20h]
-    uint32_t gfxEntIndex; // [esp+54h] [ebp-1Ch]
-    uint32_t numsurfs; // [esp+5Ch] [ebp-14h]
-    uint32_t modelIndex; // [esp+60h] [ebp-10h]
-    uint32_t modelCount; // [esp+64h] [ebp-Ch]
-    int totalSurfCount; // [esp+6Ch] [ebp-4h]
-
-    modelSurf = (char *)sceneEnt->cull.skinnedSurfs.firstSurf;
-    if (!modelSurf)
+    iassert(sceneEnt);
+    const uint32_t cullState = R_LoadSceneEntityCullState(sceneEnt);
+    if (!sceneEnt || cullState <= CULL_STATE_DONE
+        || !sceneEnt->cull.skinnedSurfs.firstSurf)
         return;
-    totalTriCount = 0;
-    totalVertCount = 0;
-    totalSurfCount = 0;
-    obj = sceneEnt->obj;
-    iassert( obj );
-    modelCount = DObjGetNumModels(obj);
+
+    uint32_t streamBytes = 0u;
+    uint32_t streamSurfaces = 0u;
+    if (!R_ValidateSceneModelSurfaceStream(
+            *sceneEnt,
+            cullState,
+            &streamBytes,
+            &streamSurfaces))
+        return;
+
+    model_surface_stream::Cursor cursor(
+        sceneEnt->cull.skinnedSurfs.firstSurf,
+        streamBytes,
+        streamSurfaces);
+    const DObj_s *const obj = sceneEnt->obj;
+    iassert(obj);
+    if (!obj || !R_ValidateSceneDObjModels(
+            *sceneEnt,
+            *obj,
+            streamSurfaces))
+        return;
+    const uint32_t modelCount = DObjGetNumModels(obj);
 
     bcassert(gfxDrawMethod.emissiveTechType, TECHNIQUE_COUNT);
 
-    gfxEntIndex = sceneEnt->gfxEntIndex;
-    if (sceneEnt->gfxEntIndex)
+    const uint32_t gfxEntIndex = sceneEnt->gfxEntIndex;
+    bool isShadowReceiver = false;
+    uint32_t depthHack = 0u;
+    if (gfxEntIndex)
     {
-        v10 = sc_enable->current.enabled && (frontEndDataOut->gfxEnts[gfxEntIndex].renderFxFlags & 0x100) != 0;
-        isShadowReceiver = v10;
+        if (gfxEntIndex >= ARRAY_COUNT(frontEndDataOut->gfxEnts))
+            return;
+        isShadowReceiver = sc_enable->current.enabled
+            && (frontEndDataOut->gfxEnts[gfxEntIndex].renderFxFlags & 0x100) != 0;
         depthHack = (frontEndDataOut->gfxEnts[gfxEntIndex].renderFxFlags & 2) != 0;
     }
-    else
+
+    int totalTriCount = 0;
+    int totalVertCount = 0;
+    uint32_t totalSurfCount = 0u;
+    for (uint32_t modelIndex = 0u; modelIndex < modelCount; ++modelIndex)
     {
-        isShadowReceiver = 0;
-        depthHack = 0;
-    }
-    modelIndex = 0;
-LABEL_15:
-    if (modelIndex < modelCount)
-    {
-        lod = sceneEnt->cull.lods[modelIndex];
+        const int lod = sceneEnt->cull.lods[modelIndex];
         if (lod < 0)
-            goto LABEL_14;
-        model = DObjGetModel(obj, modelIndex);
-        iassert( model );
-        numsurfs = XModelGetSurfCount(model, lod);
-        material = XModelGetSkins(model, lod);
-        iassert( material );
-        for (subMatIndex = 0; ; ++subMatIndex)
+            continue;
+
+        XModel *const model = DObjGetModel(obj, modelIndex);
+        XSurface *surfaces = nullptr;
+        const int surfaceCount = XModelGetSurfaces(model, &surfaces, lod);
+        if (!model || !surfaces || surfaceCount <= 0)
+            return;
+        Material **material = XModelGetSkins(model, lod);
+        if (!material)
+            return;
+
+        for (int surfaceIndex = 0; surfaceIndex < surfaceCount;
+             ++surfaceIndex, ++material)
         {
-            if (subMatIndex >= numsurfs)
+            model_surface_stream::View record;
+            if (!cursor.Next(
+                    kHiddenModelSurfaceBytes,
+                    kSkinnedModelSurfaceBytes,
+                    kRigidModelSurfaceBytes,
+                    &record))
             {
-            LABEL_45:
-                totalSurfCount += numsurfs;
-            LABEL_14:
-                ++modelIndex;
-                goto LABEL_15;
+                return;
             }
-            if (*(uint32_t *)modelSurf == -2)
-            {
-                surfType = SF_BEGIN_XMODEL;
-                surfSize = 56;
-            }
-            else
-            {
-                if (*(uint32_t *)modelSurf == -3)
-                {
-                    surfSize = 4;
-                    goto LABEL_22;
-                }
-                surfType = SF_XMODEL_SKINNED;
-                surfSize = 24;
-            }
-            iassert(*material);
+            ++totalSurfCount;
+            if (record.kind == model_surface_stream::RecordKind::Hidden)
+                continue;
+
+            GfxModelSkinnedSurface *const modelSurf =
+                reinterpret_cast<GfxModelSkinnedSurface *>(record.data);
+            const surfaceType_t surfType =
+                record.kind == model_surface_stream::RecordKind::Rigid
+                ? SF_BEGIN_XMODEL
+                : SF_XMODEL_SKINNED;
+            if (!*material || modelSurf->xsurf != &surfaces[surfaceIndex])
+                return;
             iassert(rgp.sortedMaterials[(*material)->info.drawSurf.fields.materialSortedIndex] == *material);
-            region = (*material)->cameraRegion;
+            const uint32_t region = (*material)->cameraRegion;
+            if (region >= 4u)
+                return;
             if (region != 3)
             {
                 if (drawSurfs[region] >= lastDrawSurfs[region])
                 {
                     R_WarnOncePerFrame(R_WARN_MAX_SCENE_DRAWSURFS, "R_AddDObjSurfacesCamera");
-                    goto LABEL_45;
+                    return;
                 }
-                *((_WORD *)modelSurf + 7) = gfxEntIndex;
-                *((_WORD *)modelSurf + 8) = lightingHandle;
-                surfId = modelSurf - (char *)frontEndDataOut;
-                iassert( !(surfId & 3) );
-                surfId = surfId >> 2;
+
+                modelSurf->info.gfxEntIndex = static_cast<uint16_t>(gfxEntIndex);
+                modelSurf->info.lightingHandle = static_cast<uint16_t>(lightingHandle);
+                const uintptr_t recordAddress = reinterpret_cast<uintptr_t>(modelSurf);
+                const uintptr_t dataAddress = reinterpret_cast<uintptr_t>(frontEndDataOut);
+                if (recordAddress < dataAddress
+                    || recordAddress - dataAddress >= sizeof(frontEndDataOut->surfsBuffer)
+                    || ((recordAddress - dataAddress) & 3u) != 0u)
+                {
+                    return;
+                }
+                const uint32_t surfId = static_cast<uint32_t>(
+                    (recordAddress - dataAddress) / sizeof(uint32_t));
                 bcassert(surfId, (1 << MTL_SORT_OBJECT_ID_BITS));
 
-                //drawSurf = (*material)->info.drawSurf.packed;
-
                 drawSurfs[region]->packed = (*material)->info.drawSurf.packed;
-
                 drawSurfs[region]->fields.surfType = surfType;
                 drawSurfs[region]->fields.primarySortKey -= depthHack;
                 drawSurfs[region]->fields.customIndex = isShadowReceiver;
                 drawSurfs[region]->fields.reflectionProbeIndex = sceneEnt->reflectionProbeIndex;
                 drawSurfs[region]->fields.objectId = surfId;
                 drawSurfs[region]->fields.primaryLightIndex = primaryLightIndex;
-
-                //HIDWORD(drawSurf) = ((surfType & 0xF) << 18) // surftype
-                //    | (((((drawSurf >> 54) & 0x3F) - depthHack) & 0x3F) << 22) // primarySortKey
-                //    | HIDWORD(drawSurf) & 0xF003FFFF; // all bits except the 10 we just set
-                //LODWORD(drawSurf) = ((isShadowReceiver & 0x1F) << 24) // customIndex
-                    //| (sceneEnt->reflectionProbeIndex << 16) & 0xE0FFFFFF
-                    //| (uint16_t)surfIda
-                    //| drawSurf & 0xE0000000; // top 3 bits
-                //HIDWORD(drawSurf) = (primaryLightIndex << 10) | HIDWORD(drawSurf) & 0xFFFC03FF;
-
-                //drawSurfs[region]->packed = drawSurf;
                 ++drawSurfs[region];
                 if (r_showTriCounts->current.enabled)
                 {
-                    xSurf = R_GetXSurface((uint32_t *)modelSurf, surfType);
+                    const XSurface *const xSurf = R_GetXSurface(modelSurf, surfType);
                     totalTriCount += XSurfaceGetNumTris(xSurf);
                 }
                 else if (r_showVertCounts->current.enabled)
                 {
-                    v6 = R_GetXSurface((uint32_t*)modelSurf, surfType);
-                    totalVertCount += XSurfaceGetNumVerts(v6);
+                    const XSurface *const xSurf = R_GetXSurface(modelSurf, surfType);
+                    totalVertCount += XSurfaceGetNumVerts(xSurf);
                 }
             }
-        LABEL_22:
-            ++material;
-            modelSurf += surfSize;
         }
     }
+
+    if (!cursor.Finished() || totalSurfCount != streamSurfaces)
+        return;
     if (r_showTriCounts->current.enabled)
     {
         R_AddXModelDebugString(sceneEnt->placement.base.origin, va("%i", totalTriCount));
@@ -907,100 +1044,110 @@ GfxDrawSurf *__cdecl R_AddDObjSurfaces(
     GfxDrawSurf *drawSurf,
     GfxDrawSurf *lastDrawSurf)
 {
-    uint32_t surfId; // [esp+10h] [ebp-50h]
-    const DObj_s *obj; // [esp+14h] [ebp-4Ch]
-    Material **material; // [esp+18h] [ebp-48h]
-    XModel *model; // [esp+1Ch] [ebp-44h]
-    uint32_t subMatIndex; // [esp+20h] [ebp-40h]
-    uint32_t surfSize; // [esp+24h] [ebp-3Ch]
-    GfxDrawSurf newDrawSurf; // [esp+28h] [ebp-38h]
-    int lod; // [esp+38h] [ebp-28h]
-    uint32_t depthHack; // [esp+3Ch] [ebp-24h]
-    char *modelSurf; // [esp+40h] [ebp-20h]
-    char surfType; // [esp+44h] [ebp-1Ch]
-    uint32_t numsurfs; // [esp+50h] [ebp-10h]
-    uint32_t modelIndex; // [esp+54h] [ebp-Ch]
-    uint32_t modelCount; // [esp+58h] [ebp-8h]
-
-    modelSurf = (char *)sceneEnt->cull.skinnedSurfs.firstSurf;
-    if (!modelSurf)
+    iassert(sceneEnt);
+    const uint32_t cullState = R_LoadSceneEntityCullState(sceneEnt);
+    if (!sceneEnt || cullState <= CULL_STATE_DONE
+        || !sceneEnt->cull.skinnedSurfs.firstSurf)
         return drawSurf;
-    obj = sceneEnt->obj;
-    iassert( obj );
-    modelCount = DObjGetNumModels(obj);
+
+    uint32_t streamBytes = 0u;
+    uint32_t streamSurfaces = 0u;
+    if (!R_ValidateSceneModelSurfaceStream(
+            *sceneEnt,
+            cullState,
+            &streamBytes,
+            &streamSurfaces))
+        return drawSurf;
+    model_surface_stream::Cursor cursor(
+        sceneEnt->cull.skinnedSurfs.firstSurf,
+        streamBytes,
+        streamSurfaces);
+
+    const DObj_s *const obj = sceneEnt->obj;
+    iassert(obj);
+    if (!obj || !R_ValidateSceneDObjModels(
+            *sceneEnt,
+            *obj,
+            streamSurfaces))
+        return drawSurf;
+    const uint32_t modelCount = DObjGetNumModels(obj);
+    uint32_t depthHack = 0u;
     if (sceneEnt->gfxEntIndex)
-        depthHack = (frontEndDataOut->gfxEnts[sceneEnt->gfxEntIndex].renderFxFlags & 2) != 0;
-    else
-        depthHack = 0;
-    for (modelIndex = 0; modelIndex < modelCount; ++modelIndex)
     {
-        lod = sceneEnt->cull.lods[modelIndex];
-        if (lod >= 0)
+        if (sceneEnt->gfxEntIndex >= ARRAY_COUNT(frontEndDataOut->gfxEnts))
+            return drawSurf;
+        depthHack = (frontEndDataOut->gfxEnts[sceneEnt->gfxEntIndex].renderFxFlags & 2) != 0;
+    }
+
+    uint32_t consumedSurfaces = 0u;
+    for (uint32_t modelIndex = 0u; modelIndex < modelCount; ++modelIndex)
+    {
+        const int lod = sceneEnt->cull.lods[modelIndex];
+        if (lod < 0)
+            continue;
+
+        XModel *const model = DObjGetModel(obj, modelIndex);
+        XSurface *surfaces = nullptr;
+        const int surfaceCount = XModelGetSurfaces(model, &surfaces, lod);
+        if (!model || !surfaces || surfaceCount <= 0)
+            return drawSurf;
+        Material **material = XModelGetSkins(model, lod);
+        if (!material)
+            return drawSurf;
+
+        for (int surfaceIndex = 0; surfaceIndex < surfaceCount;
+             ++surfaceIndex, ++material)
         {
-            model = DObjGetModel(obj, modelIndex);
-            iassert( model );
-            numsurfs = XModelGetSurfCount(model, lod);
-            material = XModelGetSkins(model, lod);
-            iassert( material );
-            subMatIndex = 0;
-        LABEL_18:
-            if (subMatIndex >= numsurfs)
+            model_surface_stream::View record;
+            if (!cursor.Next(
+                    kHiddenModelSurfaceBytes,
+                    kSkinnedModelSurfaceBytes,
+                    kRigidModelSurfaceBytes,
+                    &record))
+            {
+                return drawSurf;
+            }
+            ++consumedSurfaces;
+            if (record.kind == model_surface_stream::RecordKind::Hidden)
                 continue;
-            if (*(uint32_t *)modelSurf == -2)
-            {
-                surfType = 7;
-                surfSize = 56;
-            }
-            else
-            {
-                if (*(uint32_t *)modelSurf == -3)
-                {
-                    surfSize = 4;
-                LABEL_17:
-                    ++subMatIndex;
-                    ++material;
-                    modelSurf += surfSize;
-                    goto LABEL_18;
-                }
-                surfType = 9;
-                surfSize = 24;
-            }
-            iassert(*material);
+            GfxModelSkinnedSurface *const modelSurf =
+                reinterpret_cast<GfxModelSkinnedSurface *>(record.data);
+            if (!*material || modelSurf->xsurf != &surfaces[surfaceIndex])
+                return drawSurf;
             iassert(rgp.sortedMaterials[(*material)->info.drawSurf.fields.materialSortedIndex] == *material);
-            if (Material_GetTechnique(*material, techType))
+            if (!Material_GetTechnique(*material, techType))
+                continue;
+            if (drawSurf >= lastDrawSurf)
             {
-                if (drawSurf >= lastDrawSurf)
-                {
-                    R_WarnOncePerFrame(R_WARN_MAX_SCENE_DRAWSURFS, "R_AddDObjSurfaces");
-                    continue;
-                }
-                surfId = modelSurf - (char *)frontEndDataOut;
-                iassert(!(surfId & 3));
-
-                surfId = surfId / 4;
-                iassert(surfId < (1 << MTL_SORT_OBJECT_ID_BITS));
-
-                newDrawSurf = (*material)->info.drawSurf;
-
-                drawSurf->packed = newDrawSurf.packed; // LWSS: see explanation below, it basically copies the whole thing and sets a few custom fields.
-
-                drawSurf->fields.objectId = (unsigned short)surfId;
-                //*(uint32_t *)&drawSurf->fields = (uint16_t)surfIda  // set lower 16 (objectId)
-                //    | *(uint32_t *)&newDrawSurf.fields & 0xFFFF0000; // Copy the higher 2 bytes (bits 16-32)
-                
-                drawSurf->fields.surfType = surfType;
-                drawSurf->fields.primarySortKey = (newDrawSurf.fields.primarySortKey - depthHack);
-
-                // HIDWORD(drawSurf->packed) = // Adds << 32 to all below
-                //     ((surfType & 0xF) << 18) // surfType
-                //     | (((((newDrawSurf.packed >> 54) & 0x3F) - depthHack) & 0x3F) << 22) // newDrawSurf.primarySortKey - depthhack
-                //     | HIDWORD(newDrawSurf.packed) & 0xF003FFFF; // Copy everything higher than 32 except for 10bits (Surftype and primarySortKey, we did those already)
-
-                ++drawSurf;
+                R_WarnOncePerFrame(R_WARN_MAX_SCENE_DRAWSURFS, "R_AddDObjSurfaces");
+                return drawSurf;
             }
-            goto LABEL_17;
+
+            const uintptr_t recordAddress = reinterpret_cast<uintptr_t>(record.data);
+            const uintptr_t dataAddress = reinterpret_cast<uintptr_t>(frontEndDataOut);
+            if (recordAddress < dataAddress
+                || recordAddress - dataAddress >= sizeof(frontEndDataOut->surfsBuffer)
+                || ((recordAddress - dataAddress) & 3u) != 0u)
+            {
+                return drawSurf;
+            }
+            const uint32_t surfId = static_cast<uint32_t>(
+                (recordAddress - dataAddress) / sizeof(uint32_t));
+            iassert(surfId < (1 << MTL_SORT_OBJECT_ID_BITS));
+
+            const GfxDrawSurf newDrawSurf = (*material)->info.drawSurf;
+            drawSurf->packed = newDrawSurf.packed;
+            drawSurf->fields.objectId = static_cast<unsigned short>(surfId);
+            drawSurf->fields.surfType =
+                record.kind == model_surface_stream::RecordKind::Rigid ? 7 : 9;
+            drawSurf->fields.primarySortKey =
+                newDrawSurf.fields.primarySortKey - depthHack;
+            ++drawSurf;
         }
     }
+
+    if (!cursor.Finished() || consumedSurfaces != streamSurfaces)
+        return drawSurf;
     return drawSurf;
 }
 
@@ -1104,9 +1251,18 @@ void __cdecl R_ClearScene(uint32_t localClientNum)
     iassert( rg.inFrame );
     iassert( Sys_IsMainThread() || Sys_IsRenderThread() );
     scene.dpvs.localClientNum = localClientNum;
-    Com_Memset((uint32_t *)scene.sceneDObj, 0, 124 * scene.sceneDObjCount);
-    Com_Memset((uint32_t *)&scene.sceneModel[0].info, 0, 72 * scene.sceneModelCount);
-    Com_Memset((uint32_t *)&scene.sceneBrush[0].info.surfId, 0, 40 * scene.sceneBrushCount);
+    Com_Memset(
+        scene.sceneDObj,
+        0,
+        sizeof(scene.sceneDObj[0]) * scene.sceneDObjCount);
+    Com_Memset(
+        &scene.sceneModel[0].info,
+        0,
+        sizeof(scene.sceneModel[0]) * scene.sceneModelCount);
+    Com_Memset(
+        &scene.sceneBrush[0].info.surfId,
+        0,
+        sizeof(scene.sceneBrush[0]) * scene.sceneBrushCount);
     scene.addedLightCount = 0;
     for (uint32_t drawSurfType = 0u;
          drawSurfType < static_cast<uint32_t>(DRAW_SURF_TYPE_COUNT);

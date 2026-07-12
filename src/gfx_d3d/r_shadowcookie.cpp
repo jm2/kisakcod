@@ -129,7 +129,7 @@ void __cdecl R_PopulateCandidates(const GfxViewParms *viewParmsDraw, ShadowCandi
         {
             shadowHint = 0;
         }
-        if (sceneEnt->cull.state != 4)
+        if (R_LoadSceneEntityCullState(sceneEnt) != CULL_STATE_DONE)
         {
             Radius = DObjGetRadius(sceneEnt->obj);
             entityMajorAxisLength = Radius + Radius;
@@ -670,15 +670,16 @@ void __cdecl R_GenerateSceneEntShadowReceivers(ShadowCookieList *shadowCookieLis
         if (scene.sceneDObjVisData[0][sceneEntIndex] == 1)
         {
             sceneEnt = &scene.sceneDObj[sceneEntIndex];
-            if (sceneEnt->cull.state < 2)
+            if (R_LoadSceneEntityCullState(sceneEnt) < CULL_STATE_BOUNDED)
                 MyAssertHandler(
                     ".\\r_shadowcookie.cpp",
                     668,
                     0,
                     "sceneEnt->cull.state >= CULL_STATE_BOUNDED\n\t%i, %i",
-                    sceneEnt->cull.state,
+                    R_LoadSceneEntityCullState(sceneEnt),
                     2);
-            iassert( sceneEnt->cull.state != CULL_STATE_DONE );
+            iassert(
+                R_LoadSceneEntityCullState(sceneEnt) != CULL_STATE_DONE);
             if (sceneEnt->gfxEntIndex && (frontEndDataOut->gfxEnts[sceneEnt->gfxEntIndex].renderFxFlags & 0x100) != 0)
             {
                 for (cookieIndex = 0; cookieIndex < cookieCount; ++cookieIndex)
@@ -721,4 +722,3 @@ void __cdecl R_ResetShadowCookies()
     shadowCookieGlob.weightCap = 10.0;
     shadowCookieGlob.lastTime = -1;
 }
-

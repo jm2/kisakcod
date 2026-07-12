@@ -164,6 +164,22 @@ add_test(
 )
 set_tests_properties(worker-queue-atomic-protocols PROPERTIES TIMEOUT 30)
 
+add_executable(kisakcod-model-surface-stream-tests
+    model_surface_stream_tests.cpp
+)
+target_include_directories(kisakcod-model-surface-stream-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-model-surface-stream-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-model-surface-stream-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-model-surface-stream-tests)
+set_target_properties(kisakcod-model-surface-stream-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME renderer-model-surface-stream-contracts
+    COMMAND kisakcod-model-surface-stream-tests
+)
+set_tests_properties(renderer-model-surface-stream-contracts PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-script-string-atomic-tests
     script_string_atomic_tests.cpp
 )

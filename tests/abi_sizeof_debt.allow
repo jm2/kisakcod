@@ -145,8 +145,6 @@ game_mp/g_public_mp.h|static_assert:sizeof(useList_t)==0x8|1
 gfx_d3d/fxprimitives.h|static_assert:sizeof(FxEffectDef)==32|1
 gfx_d3d/fxprimitives.h|static_assert:sizeof(FxImpactTable)==8|1
 gfx_d3d/r_bsp.h|static_assert:sizeof(GfxWorld)==0x2DC|1
-gfx_d3d/r_dobj_skin.h|static_assert:sizeof(GfxModelRigidSurface)==56|1
-gfx_d3d/r_dobj_skin.h|static_assert:sizeof(GfxModelSkinnedSurface)==24|1
 gfx_d3d/r_font.h|static_assert:sizeof(Font_s)==24|1
 gfx_d3d/r_gfx.h|static_assert:sizeof(GfxImage)==36|1
 gfx_d3d/r_gfx.h|static_assert:sizeof(GfxPackedVertex)==32|1

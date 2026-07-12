@@ -3,6 +3,7 @@
 #include "r_dobj_skin.h"
 #include <universal/profile.h>
 #include "r_dpvs.h"
+#include <qcommon/sys_time.h>
 
 #ifdef KISAK_MP
 #include <cgame_mp/cg_local_mp.h>
@@ -80,15 +81,20 @@ DObjAnimMat *R_UpdateSceneEntBounds(
     GfxSceneEntity *localSceneEnt; // [esp+33Ch] [ebp-18h]
     uint32_t state; // [esp+340h] [ebp-14h]
 
-    if (InterlockedCompareExchange((volatile LONG *)&sceneEnt->cull, 1, 0))
+    if (Sys_AtomicCompareExchange(
+            &sceneEnt->cull.state,
+            CULL_STATE_BOUNDED_PENDING,
+            CULL_STATE_OUT) != CULL_STATE_OUT)
     {
         *pLocalSceneEnt = 0;
         if (waitForCullState)
         {
             do
             {
-                state = sceneEnt->cull.state;
+                state = R_LoadSceneEntityCullState(sceneEnt);
                 iassert(state >= CULL_STATE_BOUNDED_PENDING);
+                if (state == CULL_STATE_BOUNDED_PENDING)
+                    Sys_Yield();
             } while (state == CULL_STATE_BOUNDED_PENDING);
             if (state == CULL_STATE_DONE)
             {
@@ -139,7 +145,14 @@ DObjAnimMat *R_UpdateSceneEntBounds(
                 maxWorld.v[2] = -131072.0;
                 maxWorld.v[3] = 0.0;
 
-                DObjGetBoneInfo(obj, boneInfoArray);
+                if (!DObjGetBoneInfo(
+                        obj,
+                        boneInfoArray,
+                        ARRAY_COUNT(boneInfoArray)))
+                {
+                    R_SetNoDraw(sceneEnt);
+                    return nullptr;
+                }
                 boneCount = DObjNumBones(obj);
                 animPartBit = 0x80000000;
                 boneIndex = 0;
@@ -234,9 +247,13 @@ DObjAnimMat *R_UpdateSceneEntBounds(
                 localSceneEnt->cull.maxs[1] = maxWorld.v[1];
                 localSceneEnt->cull.maxs[2] = maxWorld.v[2];
 
-                iassert(localSceneEnt->cull.state == CULL_STATE_BOUNDED_PENDING);
+                iassert(
+                    R_LoadSceneEntityCullState(localSceneEnt)
+                    == CULL_STATE_BOUNDED_PENDING);
 
-                localSceneEnt->cull.state = CULL_STATE_BOUNDED;
+                R_StoreSceneEntityCullState(
+                    localSceneEnt,
+                    CULL_STATE_BOUNDED);
                 return boneMatrix;
             }
             else
@@ -278,15 +295,15 @@ DObjAnimMat *__cdecl R_DObjCalcPose(const GfxSceneEntity *sceneEnt, const DObj_s
 
 void __cdecl R_SetNoDraw(GfxSceneEntity *sceneEnt)
 {
-    if (sceneEnt->cull.state != 1)
+    if (R_LoadSceneEntityCullState(sceneEnt) != CULL_STATE_BOUNDED_PENDING)
         MyAssertHandler(
             ".\\r_model_pose.cpp",
             68,
             0,
             "%s\n\t(sceneEnt->cull.state) = %i",
             "(sceneEnt->cull.state == CULL_STATE_BOUNDED_PENDING)",
-            sceneEnt->cull.state);
-    sceneEnt->cull.state = 4;
+            R_LoadSceneEntityCullState(sceneEnt));
+    R_StoreSceneEntityCullState(sceneEnt, CULL_STATE_DONE);
 }
 
 void __cdecl R_UpdateGfxEntityBoundsCmd(GfxSceneEntity **data)
@@ -304,4 +321,3 @@ void __cdecl R_UpdateGfxEntityBoundsCmd(GfxSceneEntity **data)
         iassert( localSceneEnt );
     }
 }
-

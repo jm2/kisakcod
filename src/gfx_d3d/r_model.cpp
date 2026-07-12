@@ -14,6 +14,11 @@
 #include "r_utils.h"
 #include <cgame/cg_local.h>
 #include "r_model_pose.h"
+#include "r_model_surface_stream.h"
+
+#include <new>
+
+namespace model_surface_stream = gfx::model_surface_stream;
 
 const int boxVerts[24][3] =
 {
@@ -190,7 +195,13 @@ void __cdecl R_XModelDebugBoxes(const DObj_s *obj, int *partBits)
     {
         boneCount = DObjNumBones(obj);
         iassert( boneCount <= DOBJ_MAX_PARTS );
-        DObjGetBoneInfo(obj, boneInfoArray);
+        if (!DObjGetBoneInfo(
+                obj,
+                boneInfoArray,
+                ARRAY_COUNT(boneInfoArray)))
+        {
+            return;
+        }
         color[0] = 1.0;
         color[1] = 1.0;
         color[2] = 1.0;
@@ -283,89 +294,136 @@ int __cdecl R_SkinXModel(
     float val,
     __int16 gfxEntIndex)
 {
-    uint32_t startSurfPos; // [esp+2Ch] [ebp-E58h]
-    XSurface* xsurf; // [esp+38h] [ebp-E4Ch]
-    int surfaceIndex; // [esp+40h] [ebp-E44h]
-    uint16_t* surfPos; // [esp+44h] [ebp-E40h]
-    uint8_t surfBuf[3580]; // [esp+48h] [ebp-E3Ch] BYREF
-    uint32_t hidePartBits[4]; // [esp+E4Ch] [ebp-38h] BYREF
-    //XSurface* surfaces; // [esp+E5Ch] [ebp-28h]
-    XSurface* surfaces; // [esp+E60h] [ebp-24h] BYREF
-    int lodForDist; // [esp+E64h] [ebp-20h]
-    float dist; // [esp+E68h] [ebp-1Ch]
-    float AdjustedLodDist; // [esp+E6Ch] [ebp-18h]
-    XModelDrawInfo* modelInfoa; // [esp+E78h] [ebp-Ch]
-    //const XModel* modela; // [esp+E7Ch] [ebp-8h]
-    //const GfxPlacement* obja; // [esp+E84h] [ebp+0h]
-
-    //modelInfoa = a1;
-    //modela = (const XModel*)obja;
     iassert(model);
-
-    if (!IsFastFileLoad() && XModelBad(model))
+    iassert(modelInfo);
+    iassert(placement);
+    if (!model || !modelInfo || !placement || !frontEndDataOut || val == 0.0f
+        || (!IsFastFileLoad() && XModelBad(model)))
+    {
         return 0;
+    }
 
-    iassert(val);
-
-    dist = R_GetBaseLodDist(placement->origin) * (1.0 / val);
-    XModelLodRampType lodRamp = XModelGetLodRampType(model);
-    AdjustedLodDist = R_GetAdjustedLodDist(dist, lodRamp);
-    lodForDist = XModelGetLodForDist(model, AdjustedLodDist);
+    const float dist = R_GetBaseLodDist(placement->origin) * (1.0f / val);
+    const XModelLodRampType lodRamp = XModelGetLodRampType(model);
+    const float adjustedLodDist = R_GetAdjustedLodDist(dist, lodRamp);
+    const int lodForDist = XModelGetLodForDist(model, adjustedLodDist);
 
     if (lodForDist < 0)
         return 0;
 
     PROF_SCOPED("R_SkinXModel");
 
-    int surfaceCount = XModelGetSurfaces(model, &surfaces, lodForDist);
-    iassert(surfaceCount);
+    XSurface *surfaces = nullptr;
+    const int surfaceCount = XModelGetSurfaces(
+        model,
+        &surfaces,
+        lodForDist);
+    if (!surfaces || surfaceCount <= 0)
+        return 0;
 
+    uint32_t hidePartBits[4] = {};
     if (obj)
         DObjGetHidePartBits(obj, hidePartBits);
 
-    surfPos = (uint16_t*)surfBuf;
-    for (surfaceIndex = 0; surfaceIndex < surfaceCount; ++surfaceIndex)
+    constexpr uint32_t kSurfaceAlignment = alignof(GfxModelRigidSurface);
+    uint32_t streamBytes = 0u;
+    for (int surfaceIndex = 0; surfaceIndex < surfaceCount; ++surfaceIndex)
     {
-        xsurf = surfaces + surfaceIndex;
-        if (obj
-            && xsurf->partBits[3] & hidePartBits[3]
-            | xsurf->partBits[2] & hidePartBits[2]
-            | xsurf->partBits[1] & hidePartBits[1]
-            | xsurf->partBits[0] & hidePartBits[0])
+        const XSurface &surface = surfaces[surfaceIndex];
+        const bool hidden = obj
+            && (((static_cast<uint32_t>(surface.partBits[0]) & hidePartBits[0])
+                | (static_cast<uint32_t>(surface.partBits[1]) & hidePartBits[1])
+                | (static_cast<uint32_t>(surface.partBits[2]) & hidePartBits[2])
+                | (static_cast<uint32_t>(surface.partBits[3]) & hidePartBits[3]))
+                != 0u);
+        const uint32_t recordSize = hidden
+            ? sizeof(GfxModelHiddenSurface)
+            : sizeof(GfxModelRigidSurface);
+        uint32_t recordOffset = 0u;
+        uint32_t nextStreamBytes = 0u;
+        if (!model_surface_stream::TryPlanRecord(
+                streamBytes,
+                recordSize,
+                kSurfaceAlignment,
+                sizeof(frontEndDataOut->surfsBuffer),
+                &recordOffset,
+                &nextStreamBytes)
+            || recordOffset != streamBytes)
         {
-            *(_DWORD*)surfPos = -3;
-            surfPos += 2;
+            R_WarnOncePerFrame(R_WARN_MAX_SCENE_SURFS_SIZE);
+            return 0;
         }
-        else
-        {
-            if (!xsurf->deformed && IsFastFileLoad())
-                startSurfPos = -2;
-            else
-                startSurfPos = -1;
-            *(_DWORD*)surfPos = startSurfPos;
-            // @Correctness
-            *((_DWORD*)surfPos + 1) = (_DWORD)xsurf;
-            surfPos[7] = gfxEntIndex;
-            surfPos[8] = 0;
-            qmemcpy(surfPos + 12, placement, 0x1Cu);
-            *((float*)surfPos + 13) = val;
-            surfPos += 28;
-        }
+        streamBytes = nextStreamBytes;
     }
-    startSurfPos = InterlockedExchangeAdd(&frontEndDataOut->surfPos, (char*)surfPos - (char*)surfBuf);
-    if ((char*)surfPos - (char*)surfBuf + startSurfPos <= 0x20000)
-    {
-        iassert(!(startSurfPos & 3));
-        modelInfo->surfId = startSurfPos >> 2;
-        memcpy(&frontEndDataOut->surfsBuffer[startSurfPos], surfBuf, (char*)surfPos - (char*)surfBuf);
-        modelInfo->lod = lodForDist;
-        return 1;
-    }
-    else
+
+    uint32_t startSurfPos = 0u;
+    if (!model_surface_stream::TryReserveAligned(
+            &frontEndDataOut->surfPos,
+            streamBytes,
+            sizeof(frontEndDataOut->surfsBuffer),
+            kSurfaceAlignment,
+            &startSurfPos))
     {
         R_WarnOncePerFrame(R_WARN_MAX_SCENE_SURFS_SIZE);
         return 0;
     }
+
+    uint8_t *const stream = &frontEndDataOut->surfsBuffer[startSurfPos];
+    uint32_t builtBytes = 0u;
+    for (int surfaceIndex = 0; surfaceIndex < surfaceCount; ++surfaceIndex)
+    {
+        XSurface *const surface = &surfaces[surfaceIndex];
+        const bool hidden = obj
+            && (((static_cast<uint32_t>(surface->partBits[0]) & hidePartBits[0])
+                | (static_cast<uint32_t>(surface->partBits[1]) & hidePartBits[1])
+                | (static_cast<uint32_t>(surface->partBits[2]) & hidePartBits[2])
+                | (static_cast<uint32_t>(surface->partBits[3]) & hidePartBits[3]))
+                != 0u);
+        const uint32_t recordSize = hidden
+            ? sizeof(GfxModelHiddenSurface)
+            : sizeof(GfxModelRigidSurface);
+        uint32_t recordOffset = 0u;
+        uint32_t nextBuiltBytes = 0u;
+        if (!model_surface_stream::TryPlanRecord(
+                builtBytes,
+                recordSize,
+                kSurfaceAlignment,
+                streamBytes,
+                &recordOffset,
+                &nextBuiltBytes)
+            || recordOffset != builtBytes)
+        {
+            return 0;
+        }
+
+        if (hidden)
+        {
+            ::new (stream + recordOffset) GfxModelHiddenSurface{
+                model_surface_stream::kHiddenTag};
+        }
+        else
+        {
+            GfxModelRigidSurface *const record =
+                ::new (stream + recordOffset) GfxModelRigidSurface{};
+            record->surf.skinnedCachedOffset =
+                !surface->deformed && IsFastFileLoad()
+                ? model_surface_stream::kRigidTag
+                : model_surface_stream::kDirectSkinnedTag;
+            record->surf.xsurf = surface;
+            record->surf.info.gfxEntIndex =
+                static_cast<uint16_t>(gfxEntIndex);
+            record->placement.base = *placement;
+            record->placement.scale = val;
+        }
+        builtBytes = nextBuiltBytes;
+    }
+
+    if (builtBytes != streamBytes)
+        return 0;
+    iassert((startSurfPos & 3u) == 0u);
+    modelInfo->surfId = startSurfPos / sizeof(uint32_t);
+    modelInfo->lod = lodForDist;
+    return 1;
 }
 
 void __cdecl R_SkinSceneEnt(GfxSceneEntity *sceneEnt)
@@ -419,7 +477,8 @@ void __cdecl R_LockSkinnedCache()
         PROF_SCOPED("LockSkinnedCache");
 
         gfxBuf.skinnedCacheLockAddr = (unsigned char *)R_LockVertexBuffer(vb, 0, 0, 0x2000);
-        if (((uint32_t)gfxBuf.skinnedCacheLockAddr & 0xF) != 0)
+        if ((reinterpret_cast<uintptr_t>(gfxBuf.skinnedCacheLockAddr) & 0xFu)
+            != 0u)
         {
             R_UnlockVertexBuffer(vb);
             gfxBuf.skinnedCacheLockAddr = 0;

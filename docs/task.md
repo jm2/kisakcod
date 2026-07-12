@@ -8,10 +8,30 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: validate and land the renderer worker-queue/native-payload batch, then harden the
-  DObj skin scratch/arena path before the dependent staged FX protocols without relaxing the engine
-  gate.
-- Current worker-queue batch: all 25 native atomic calls and mixed raw queue accesses in
+- Active work: land the DObj/model-surface native-stream and model-asset validation batch, verify all
+  nine CI jobs, then begin the staged FX layout/iterator/counter/status protocols without relaxing
+  the engine gate.
+- Current DObj/model-surface batch: the inherited fixed 3,600-byte stack overlay and retail
+  4/24/56-byte pointer-bearing stream assumptions are gone. A shared checked planner/cursor uses
+  native 4/8, 24/40, and 56/72-byte records, aligned exact-capacity CAS reservations, placement
+  construction, and explicit word/surface counts. DObj skinning now preflights selected LODs, bone
+  spans, hidden/rigid/skinned record bytes, output vertices, surface and vertex arenas, and second-pass
+  equivalence before publishing the scene descriptor or worker command. Worker and scene consumers
+  validate exact framing, owner frame, published reservation cursors, contiguous output ranges,
+  surface identity, material coverage, and shifted required-bone sets before access. Scene cull state,
+  surface/temp cursors, BModel records, and all touched publication paths use exact-width atomics and
+  native layouts; `int8_t` LOD storage preserves `-1` on ARM targets. Fast-file XSurface/XModel
+  completion now validates skin buckets, weight records/sums, rigid coverage, part bits, skeleton
+  parents, hit-location classifications, exact LOD coverage, materials, and collision counts/spans/
+  bounds/bone indices. Runtime DObj model/LOD/bone-info accessors duplicate the safety-critical bounds
+  for load-object and debug paths. Local validation is **23/23** under GCC, Clang, Clang ASan/UBSan,
+  and Clang TSan. The batch removes seven more executable native calls, leaving **70 direct
+  `Interlocked` calls in 10 engine translation units**. CI is the landing gate. Residuals: a failed
+  later vertex reservation can consume an already reserved surface slice for that frame; static
+  XModel draw-list `surfId` decoding still needs the same bounded accessor; and the load-object
+  `Buf_Read` family remains unbounded and alignment-unsafe, requiring a cursor threaded through the
+  model/surface/physics parsers rather than another local assertion.
+- Completed worker-queue batch: all 25 native atomic calls and mixed raw queue accesses in
   `r_workercmds.cpp` now use exact-width bounded helpers. The lossy minimum-type hint is removed in
   favor of a deterministic 17-type scan. Short per-queue producer and consumer guards cover only
   reserve/copy/publication and claim/copy/cursor movement, closing the inherited wrapped-cursor ABA
@@ -24,12 +44,11 @@ work item changes. Do not create session-specific handoff files.
   timeout callback cast. Descriptors initialize before backend startup; dequeue scratch is aligned and
   bounded; impossible release-build transitions fail closed. Local validation is 22/22 under GCC,
   Clang, Clang ASan/UBSan, and Clang TSan, including eight-producer/eight-consumer exact-once wrap
-  stress. The batch reduces the live census from 102 calls/14 TUs to **77 calls/13 TUs**. Run
-  29199400717 passed the headless build and all five portable architectures, but the three client
-  builds exposed one MSVC-only const-correctness error after the lighting-handle pointer widening.
-  The corrective change makes `R_AddDObjToScene`'s pose parameter truthfully mutable because the
-  cached-lighting path writes that handle; replacement Windows CI is the remaining landing gate. The
-  shared manual event retains its inherited 1 ms bounded poll, and
+  stress. The batch reduced the live census from 102 calls/14 TUs to 77 calls/13 TUs. Run
+  29199400717 passed the headless build and all five portable architectures but exposed one shared
+  MSVC const mismatch in the three client builds. Corrective commit `33bdd81` makes the cached-lighting
+  pose truthfully mutable, and replacement run **29199666846 passed all nine jobs**. The shared manual
+  event retains its inherited 1 ms bounded poll, and
   worker shutdown/reinitialization remains process-lifetime debt. The inherited full-ring inline
   fallback may overtake older same-type queued work, and a handler-level `Com_Error`/longjmp can
   bypass normal completion accounting; preserve those as explicit runtime-test/error-unwind work.
@@ -190,7 +209,7 @@ work item changes. Do not create session-specific handoff files.
   the legacy dedicated smoke. The smoke now requires the requested map in the status response, and
   its self-hosted jobs run only from `master` and check out the immutable dispatched SHA. Twenty-one
   client/media includes remain.
-- Portable validation: 22/22 tests pass locally under GCC, Clang, and Clang ASan/UBSan, with leak
+- Portable validation: 23/23 tests pass locally under GCC, Clang, and Clang ASan/UBSan, with leak
   detection disabled because LeakSanitizer cannot run under the command-runner ptrace environment.
   The full suite, including the database and archive/network contracts plus the skeleton-arena and
   pose publication, renderer-reservation, and MPMC worker-queue contention tests, also passes under
@@ -248,7 +267,8 @@ work item changes. Do not create session-specific handoff files.
   nine jobs in run 29196678355. Renderer-reservation commit `0fddf2d` then passed all nine jobs in run
   29197855220. Worker-queue commit `9772706` passed headless and all five portable jobs in run
   29199400717, while all three client builds found the same MSVC const mismatch in
-  `R_AddDObjToScene`; the focused mutable-pose correction is awaiting its replacement run.
+  `R_AddDObjToScene`; focused correction `33bdd81` then passed all nine jobs in replacement run
+  29199666846.
   The observed linker debt is now 106 -> 45 -> 0.
 
 ## Milestone status
@@ -256,8 +276,8 @@ work item changes. Do not create session-specific handoff files.
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
-| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration/IWD search contexts, fixed-width fast locks, native dvar/script/XAnim/DObj/database/IWD/loopback/skeleton/pose, bounded renderer reservations, and a typed fixed-width worker queue exist; 77 executable direct engine Interlocked calls in 13 translation units and broader platform integration remain. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 45 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
+| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration/IWD search contexts, fixed-width fast locks, native dvar/script/XAnim/DObj/database/IWD/loopback/skeleton/pose, bounded renderer/model-surface reservations, and a typed fixed-width worker queue exist; 70 executable direct engine Interlocked calls in 10 translation units and broader platform integration remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 45 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, complete graphics-world AABB topology validation, and bounded XSurface/XModel skin/skeleton/collision contracts landed; production-path fuzz fixtures and the load-object bounded cursor remain. |
 | M3 platform services | In progress: core thread services integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, and a cooperative worker gate used by renderer workers. High-level orchestration is native-type-free. Linux/macOS engine/headless sets remain empty and engine-gated; POSIX crash freezing, filesystem, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table and DObj runtime/saved layouts, allocations, preview buffers, and SP corpse pointers are native-width exact. XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, all legacy direct references migrated to bounded resolution, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush, portal/cell, and path-tree spans, and 18 exact completed object types exist; packed mirrors, broader completed-object relocation, and runtime widening remain. |
@@ -277,8 +297,8 @@ work item changes. Do not create session-specific handoff files.
 ## Immediate queue
 
 1. Validate the protected licensed-content headless startup/map/`getstatus` workflow on its runner.
-2. Land and run Windows CI for the worker-queue/native-payload batch, then harden DObj skin scratch
-   and arena bounds before the staged FX layout/iterator/counter/status families.
+2. Land and run all nine CI jobs for the DObj/model-surface batch, then start the staged FX
+   layout/iterator/counter/status families.
 3. Extract filesystem/virtual-memory/process services and implement Linux signal-park plus macOS
    Mach crash freezing behind the already isolated terminal API.
 4. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
@@ -302,7 +322,7 @@ work item changes. Do not create session-specific handoff files.
   fast lock now routes every dvar/database reader and writer counter operation through shared
   sequentially consistent helpers, with source guards and reader/writer stress coverage. Broader
   engine atomics still contain Windows `LONG`, direct volatile polling, and Windows-header coupling;
-  77 executable direct calls remain across 13 translation units after the worker-queue batch,
+  70 executable direct calls remain across 10 translation units after the DObj/model-surface batch,
   although dvar sorting and all state in `threads.cpp` are now native C++ atomics. Finish that M1
   migration before compiling a non-Windows engine target.
 - The renderer worker queue now uses guarded fixed-width element cursors, one full-lifetime work
@@ -313,10 +333,12 @@ work item changes. Do not create session-specific handoff files.
   same-type queued work, and handler `Com_Error`/longjmp bypasses completion accounting. Add a
   generation-aware event wait, error-unwind cleanup, ordering fixtures, and explicit teardown before
   embedding or restarting the renderer in-process.
-- `r_dobj_skin.cpp` writes variable 4/56-byte records into a fixed 3,600-byte stack buffer without a
-  capacity proof. Its vertex/surface arithmetic and temporary arenas can overflow or poison future
-  reservations, one pointer is narrowed to `int`, and byte storage lacks an explicit alignment
-  contract. This is a dedicated fail-closed security/64-bit batch, not a mechanical atomic rename.
+- The DObj/model-surface stream is now planned, aligned, bounded, native-width, and validated from
+  producer through worker and scene consumers. One bounded frame-level inefficiency remains: the
+  surface arena is reserved before the independent vertex arena, so a later vertex-capacity failure
+  burns that surface slice until the next frame. Static XModel draw-list `surfId` decoding also still
+  trusts producer state instead of a shared bounded accessor. Address both without weakening the
+  exact DObj framing contract.
 - EffectsCore retains 61 native atomic calls and intertwined packed status, iterator, pool,
   visibility, and signed-ring protocols. Additive lock/refcount updates can carry into adjacent flags;
   pool corruption can continue into out-of-bounds access; and visibility reservation/packing has an
@@ -360,10 +382,14 @@ work item changes. Do not create session-specific handoff files.
   budget identical spans. The separate clipmap `CollisionAabbTree` still needs material,
   child/partition, leaf-owner, finite-bounds, acyclic-topology, and depth validation before its
   recursive collision/physics consumers can treat untrusted maps as safe.
-- Rigid model-surface collision topology is validated, but deformed-surface blend bucket totals,
-  bone-offset records, and weight semantics still need a pre-publication pass. Collision-tree
-  scales intentionally allow positive infinity because the legacy source builder divides by zero
-  on planar axes; fix and fixture-test degenerate-axis encoding before requiring finite scales.
+- Rigid and deformed model surfaces now validate exact vertex buckets, blend byte extents, aligned
+  bone offsets, part-bit membership, bounded explicit-weight sums, rigid coverage, collision
+  partitions, and collision-tree topology before publication; the worker repeats the skinning
+  semantics before execution. Collision-tree scales intentionally allow positive infinity because
+  the legacy source builder divides by zero on planar axes; fix and fixture-test degenerate-axis
+  encoding before requiring finite scales. The load-object model/surface/physics readers still use
+  the global unbounded, potentially unaligned `Buf_Read<T>` primitive; replace it with a checked
+  `current/end` cursor before treating local model files as hostile-input safe or ARM-clean.
 - Model physics brushes and geometry lists now have exact completed provenance and source-builder
   bounds, and authentic forward side-plane references are deferred until their target array is
   materialized. Retail fast-file fixtures still need to confirm inline-plane encoding, and primitive

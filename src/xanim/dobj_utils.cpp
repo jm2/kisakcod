@@ -8,6 +8,67 @@
 #endif
 #include <universal/profile.h>
 
+#include <bit>
+#include <cmath>
+#include <limits>
+
+namespace
+{
+bool DObjModelPoseContractValid(const XModel *const model)
+{
+    if (!model || !model->numBones
+        || model->numRootBones > model->numBones
+        || model->numLods <= 0 || model->numLods > MAX_LODS)
+    {
+        return false;
+    }
+    if (!model->boneNames || !model->partClassification
+        || !model->baseMat || !model->boneInfo)
+    {
+        return false;
+    }
+
+    constexpr uint32_t kHitLocationCount = 0x13u;
+    for (uint32_t bone = 0u; bone < model->numBones; ++bone)
+    {
+        if (model->partClassification[bone] >= kHitLocationCount)
+            return false;
+    }
+
+    if (model->numBones == model->numRootBones)
+        return true;
+    if (!model->parentList || !model->quats || !model->trans)
+        return false;
+    const uint32_t nonRootBoneCount =
+        model->numBones - model->numRootBones;
+    for (uint32_t child = 0u; child < nonRootBoneCount; ++child)
+    {
+        const uint32_t boneIndex = model->numRootBones + child;
+        const uint32_t parentOffset = model->parentList[child];
+        if (!parentOffset || parentOffset > boneIndex)
+            return false;
+    }
+    return true;
+}
+
+bool DObjPartBitsWithinModel(
+    const int (&partBits)[4],
+    const uint32_t modelBoneCount)
+{
+    if (!modelBoneCount || modelBoneCount > DOBJ_MAX_PARTS)
+        return false;
+    for (uint32_t bone = modelBoneCount; bone < DOBJ_MAX_PARTS; ++bone)
+    {
+        if ((static_cast<uint32_t>(partBits[bone >> 5])
+                & (UINT32_C(0x80000000) >> (bone & 31u))) != 0u)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+} // namespace
+
 static double __cdecl DObj_GetBaseLodDist(const float *origin)
 {
 #ifdef KISAK_DEDI_HEADLESS
@@ -39,88 +100,91 @@ int __cdecl DObjGetNumModels(const DObj_s *obj)
     return obj->numModels;
 }
 
-int __cdecl DObjGetSurfaces(const DObj_s *obj, int *partBits, const char *lods)
+int __cdecl DObjGetSurfaces(const DObj_s *obj, int *partBits, const int8_t *lods)
 {
-    int j; // [esp+0h] [ebp-4Ch]
-    int numBones; // [esp+4h] [ebp-48h]
-    int numBonesa; // [esp+4h] [ebp-48h]
-    int boneIndex; // [esp+8h] [ebp-44h]
-    int numModels; // [esp+10h] [ebp-3Ch]
-    XModel *model; // [esp+14h] [ebp-38h]
-    XModel *modela; // [esp+14h] [ebp-38h]
-    int surfaceCount; // [esp+18h] [ebp-34h]
-    char targBoneIndexLow; // [esp+1Ch] [ebp-30h]
-    int lod; // [esp+24h] [ebp-28h]
-    int loda; // [esp+24h] [ebp-28h]
-    int targBoneIndexHigh; // [esp+28h] [ebp-24h]
-    int surfPartBits[7]; // [esp+2Ch] [ebp-20h] BYREF
-    XModel **models; // [esp+48h] [ebp-4h]
+    if (!partBits)
+        return 0;
+    memset(partBits, 0, 4u * sizeof(partBits[0]));
+    if (!obj || !lods || !obj->models || !obj->numModels
+        || obj->numModels > DOBJ_MAX_SUBMODELS)
+    {
+        return 0;
+    }
 
-    numModels = obj->numModels;
-    iassert(numModels);
-    models = obj->models;
-    model = *models;
-    numBones = XModelNumBones(*models);
-    lod = *lods;
-    if (lod < 0)
+    uint32_t accumulatedBits[4] = {};
+    uint32_t boneIndex = 0u;
+    uint32_t surfaceCount = 0u;
+    for (uint32_t modelIndex = 0u; modelIndex < obj->numModels; ++modelIndex)
     {
-        surfaceCount = 0;
-        partBits[0] = 0;
-        partBits[1] = 0;
-        partBits[2] = 0;
-        partBits[3] = 0;
-    }
-    else
-    {
-        surfaceCount = model->lodInfo[lod].numsurfs;
-        partBits[0] = model->lodInfo[lod].partBits[0];
-        partBits[1] = model->lodInfo[lod].partBits[1];
-        partBits[2] = model->lodInfo[lod].partBits[2];
-        partBits[3] = model->lodInfo[lod].partBits[3];
-    }
-    boneIndex = numBones;
-    memset(surfPartBits, 0, sizeof(surfPartBits));
-    for (j = 1; j < numModels; ++j)
-    {
-        modela = models[j];
-        numBonesa = XModelNumBones(modela);
-        loda = lods[j];
-        if (loda >= 0)
+        const XModel *const model = obj->models[modelIndex];
+        if (!DObjModelPoseContractValid(model)
+            || boneIndex >= DOBJ_MAX_PARTS
+            || model->numBones > DOBJ_MAX_PARTS - boneIndex)
         {
-            surfaceCount += modela->lodInfo[loda].numsurfs;
+            return 0;
+        }
 
-            surfPartBits[3] = modela->lodInfo[loda].partBits[0];
-            surfPartBits[4] = modela->lodInfo[loda].partBits[1];
-            surfPartBits[5] = modela->lodInfo[loda].partBits[2];
-            surfPartBits[6] = modela->lodInfo[loda].partBits[3];
-
-            targBoneIndexHigh = boneIndex >> 5;
-            targBoneIndexLow = boneIndex & 0x1F;
-
-            if ((boneIndex & 0x1F) != 0)
+        const int lod = lods[modelIndex];
+        if (lod >= 0)
+        {
+            if (lod >= MAX_LODS || lod >= model->numLods)
+                return 0;
+            const XModelLodInfo &lodInfo = model->lodInfo[lod];
+            if (!lodInfo.numsurfs || lodInfo.surfIndex > model->numsurfs
+                || lodInfo.numsurfs > model->numsurfs - lodInfo.surfIndex
+                || !model->surfs || !model->materialHandles
+                || !DObjPartBitsWithinModel(
+                    lodInfo.partBits,
+                    model->numBones)
+                || surfaceCount
+                    > static_cast<uint32_t>(
+                        (std::numeric_limits<int>::max)()) - lodInfo.numsurfs)
             {
-                *partBits |= (uint32_t)surfPartBits[3 - targBoneIndexHigh] >> targBoneIndexLow;
-                partBits[1] |= ((uint32_t)surfPartBits[4 - targBoneIndexHigh] >> targBoneIndexLow)
-                    | (surfPartBits[3 - targBoneIndexHigh] << (32 - targBoneIndexLow));
-                partBits[2] |= ((uint32_t)surfPartBits[5 - targBoneIndexHigh] >> targBoneIndexLow)
-                    | (surfPartBits[4 - targBoneIndexHigh] << (32 - targBoneIndexLow));
-                partBits[3] |= ((uint32_t)surfPartBits[6 - targBoneIndexHigh] >> targBoneIndexLow)
-                    | (surfPartBits[5 - targBoneIndexHigh] << (32 - targBoneIndexLow));
+                return 0;
+            }
+            surfaceCount += lodInfo.numsurfs;
+
+            const uint32_t block = boneIndex >> 5;
+            const uint32_t shift = boneIndex & 31u;
+            const uint32_t source[7] = {
+                0u,
+                0u,
+                0u,
+                static_cast<uint32_t>(lodInfo.partBits[0]),
+                static_cast<uint32_t>(lodInfo.partBits[1]),
+                static_cast<uint32_t>(lodInfo.partBits[2]),
+                static_cast<uint32_t>(lodInfo.partBits[3]),
+            };
+            if (!shift)
+            {
+                accumulatedBits[0] |= source[3u - block];
+                accumulatedBits[1] |= source[4u - block];
+                accumulatedBits[2] |= source[5u - block];
+                accumulatedBits[3] |= source[6u - block];
             }
             else
             {
-                partBits[0] |= surfPartBits[3 - targBoneIndexHigh];
-                partBits[1] |= surfPartBits[4 - targBoneIndexHigh];
-                partBits[2] |= surfPartBits[5 - targBoneIndexHigh];
-                partBits[3] |= surfPartBits[6 - targBoneIndexHigh];
+                const uint32_t carryShift = 32u - shift;
+                accumulatedBits[0] |= source[3u - block] >> shift;
+                accumulatedBits[1] |= (source[4u - block] >> shift)
+                    | (source[3u - block] << carryShift);
+                accumulatedBits[2] |= (source[5u - block] >> shift)
+                    | (source[4u - block] << carryShift);
+                accumulatedBits[3] |= (source[6u - block] >> shift)
+                    | (source[5u - block] << carryShift);
             }
         }
-        boneIndex += numBonesa;
+        boneIndex += model->numBones;
     }
-    return surfaceCount;
+
+    if (boneIndex != obj->numBones)
+        return 0;
+    for (uint32_t word = 0u; word < 4u; ++word)
+        partBits[word] = std::bit_cast<int32_t>(accumulatedBits[word]);
+    return static_cast<int>(surfaceCount);
 }
 
-void __cdecl DObjGetSurfaceData(const DObj_s *obj, const float *origin, float scale, char *lods)
+void __cdecl DObjGetSurfaceData(const DObj_s *obj, const float *origin, float scale, int8_t *lods)
 {
     XModelLodRampType lodRampType; // [esp+Ch] [ebp-18h]
     XModel *model; // [esp+10h] [ebp-14h]
@@ -129,41 +193,98 @@ void __cdecl DObjGetSurfaceData(const DObj_s *obj, const float *origin, float sc
     int modelCount; // [esp+1Ch] [ebp-8h]
     int modelIndex; // [esp+20h] [ebp-4h]
 
+    if (!lods)
+        return;
+    for (uint32_t index = 0u; index < DOBJ_MAX_SUBMODELS; ++index)
+        lods[index] = -1;
+
     iassert(obj);
+    if (!obj || !origin || !obj->models || !obj->numModels
+        || obj->numModels > DOBJ_MAX_SUBMODELS
+        || !std::isfinite(scale) || scale == 0.0f)
+    {
+        return;
+    }
     modelCount = DObjGetNumModels(obj);
     iassert(modelCount <= DOBJ_MAX_SUBMODELS);
     iassert(scale != 0.0);
 
-    baseDist = DObj_GetBaseLodDist(origin) * (1.0 / scale);
+    for (modelIndex = 0; modelIndex < modelCount; ++modelIndex)
+    {
+        model = obj->models[modelIndex];
+        if (!DObjModelPoseContractValid(model)
+            || model->lodRampType >= XMODEL_LOD_RAMP_COUNT)
+        {
+            return;
+        }
+    }
+
+    baseDist = DObj_GetBaseLodDist(origin) * (1.0f / scale);
 
     iassert(!IS_NAN(scale));
     iassert(!IS_NAN(baseDist));
+
+    if (!std::isfinite(baseDist))
+        return;
 
     for (modelIndex = 0; modelIndex < modelCount; ++modelIndex)
     {
         model = DObjGetModel(obj, modelIndex);
         lodRampType = XModelGetLodRampType(model);
         adjustedDist = DObj_GetAdjustedLodDist(baseDist, lodRampType);
-        lods[modelIndex] = DObjGetLodForDist(obj, modelIndex, adjustedDist);
+        lods[modelIndex] = static_cast<int8_t>(
+            DObjGetLodForDist(obj, modelIndex, adjustedDist));
     }
 }
 
-void __cdecl DObjGetBoneInfo(const DObj_s *obj, XBoneInfo **boneInfo)
+bool __cdecl DObjGetBoneInfo(
+    const DObj_s *obj,
+    XBoneInfo **boneInfo,
+    const uint32_t boneInfoCapacity)
 {
-    int j; // [esp+0h] [ebp-14h]
-    XModel *model; // [esp+4h] [ebp-10h]
-    int size; // [esp+8h] [ebp-Ch]
-    int i; // [esp+Ch] [ebp-8h]
-    XModel **models; // [esp+10h] [ebp-4h]
-
-    models = obj->models;
-    for (j = 0; j < obj->numModels; ++j)
+    if (!boneInfo || !boneInfoCapacity)
+        return false;
+    for (uint32_t index = 0u; index < boneInfoCapacity; ++index)
+        boneInfo[index] = nullptr;
+    if (!obj || !obj->models || !obj->numModels
+        || obj->numModels > DOBJ_MAX_SUBMODELS
+        || !obj->numBones || obj->numBones > DOBJ_MAX_PARTS
+        || obj->numBones > boneInfoCapacity)
     {
-        model = models[j];
-        size = model->numBones;
-        for (i = 0; i < size; ++i)
-            *boneInfo++ = &model->boneInfo[i];
+        return false;
     }
+
+    uint32_t totalBoneCount = 0u;
+    for (uint32_t modelIndex = 0u;
+         modelIndex < obj->numModels;
+         ++modelIndex)
+    {
+        const XModel *const model = obj->models[modelIndex];
+        if (!model || !model->numBones || !model->boneInfo
+            || totalBoneCount > obj->numBones
+            || model->numBones > obj->numBones - totalBoneCount)
+        {
+            return false;
+        }
+        totalBoneCount += model->numBones;
+    }
+    if (totalBoneCount != obj->numBones)
+        return false;
+
+    uint32_t outputIndex = 0u;
+    for (uint32_t modelIndex = 0u;
+         modelIndex < obj->numModels;
+         ++modelIndex)
+    {
+        XModel *const model = obj->models[modelIndex];
+        for (uint32_t boneIndex = 0u;
+             boneIndex < model->numBones;
+             ++boneIndex)
+        {
+            boneInfo[outputIndex++] = &model->boneInfo[boneIndex];
+        }
+    }
+    return true;
 }
 
 int __cdecl DObjNumBones(const DObj_s *obj)
@@ -173,6 +294,12 @@ int __cdecl DObjNumBones(const DObj_s *obj)
 
 int __cdecl DObjGetLodForDist(const DObj_s *obj, int modelIndex, float dist)
 {
+    if (!obj || !obj->models || modelIndex < 0
+        || modelIndex >= obj->numModels
+        || modelIndex >= DOBJ_MAX_SUBMODELS)
+    {
+        return -1;
+    }
     return XModelGetLodForDist(obj->models[modelIndex], dist);
 }
 

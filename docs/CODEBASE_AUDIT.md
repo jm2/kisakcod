@@ -26,7 +26,7 @@ Fixed in the initial porting implementation:
 - Native time, synchronization, event, thread-lifecycle, scheduling, and
   cooperative worker-gate services now run on all five portable utility targets.
 - Fixed-width atomic migrations cover dvar/script/XAnim/DObj/database/IWD/network,
-  skeleton/pose, and the first bounded renderer reservation family. The live
+  skeleton/pose, worker queues, bounded renderer reservations, and DObj/model-surface streams. The live
   debt ledger and current validation evidence are maintained in `docs/task.md`.
 
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
@@ -305,15 +305,22 @@ lifetime objects without teardown or safe reinitialization. Full-ring inline fal
 can overtake older same-type queued work, and handler longjmp bypasses ordinary
 completion accounting; both need runtime/error-unwind fixtures before behavioral change.
 
-### P2. DObj skinning contains an asset-amplified stack/arena hazard
+### P2. DObj/model-surface stack, arena, and asset hazards are repaired
 
-`gfx_d3d/r_dobj_skin.cpp` builds variable 4/56-byte surface records in a fixed
-3,600-byte stack buffer without proving that the selected record mix fits. The
-same path has unchecked `32 * vertexCount` and surface-size arithmetic, consumes
-temporary/surface arena capacity after failed reservations, overlays structs on
-byte storage without a language-level alignment contract, and retains a pointer-
-to-`int` conversion. Treat this as a dedicated fail-closed hardening batch rather
-than a mechanical atomic rename.
+The fixed 3,600-byte stack overlay is replaced by a two-pass checked plan that
+constructs aligned native 4/8, 24/40, and 56/72-byte records directly into an
+owned scene-arena slice. Exact bounded reservations cover scene and output vertex
+bytes; second-pass totals, bone spans, selected LODs, materials, surface identity,
+and required part bits must match before publication. Worker and scene parsers
+validate exact framing, owner frame, published cursors, contiguous outputs, and
+record semantics before use. Fast-file completion now rejects malformed skin
+buckets/weights, rigid coverage, XModel skeleton parents/classifications/LODs,
+and collision counts/spans/bones before asset publication. Runtime DObj accessors
+repeat safety-critical model/count/parent/capacity checks for non-fast-file paths.
+Residuals: reserving the independent surface slice before a later failed vertex
+reservation wastes bounded capacity until the next frame, static XModel `surfId`
+consumers still need the shared arena-bound accessor, and load-object model readers
+remain based on unbounded, potentially unaligned `Buf_Read<T>` operations.
 
 ### P3. FX packed status/free lists/visibility require protocol rewrites
 
@@ -336,8 +343,9 @@ The bounded `r_drawsurf` batch replaces split load/exchange and overshooting
 fetch-add reservations with a bounded exact-width CAS helper. It rejects invalid
 regions/ranges, supports exact capacity, leaves counters unchanged on failure,
 and validates published code-mesh record/argument/index spans before backend use.
-The remaining scene counters, byte arenas, cull state, worker lifecycle, and FX
-families above remain explicit debt.
+The DObj scene byte arenas and cull state are now exact-width and bounded as well.
+Static-model draw-list provenance, the small remaining scene/backend native calls,
+worker lifecycle, and FX families above remain explicit debt.
 
 ## 6. Recommended fix order
 

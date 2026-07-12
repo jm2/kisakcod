@@ -51,11 +51,31 @@ static int s_renderCmdWarnSize;
 
 void __cdecl TRACK_r_rendercmds()
 {
-    track_static_alloc_internal((void *)s_backEndData, 2346752, "s_backEndData", 18);
-    track_static_alloc_internal(g_viewInfo, 212352, "g_viewInfo", 18);
-    track_static_alloc_internal(g_frontEndCmds, 32, "g_frontEndCmds", 18);
-    track_static_alloc_internal(&s_debugFrameGlob, 1173632, "s_debugFrameGlob", 0);
-    track_static_alloc_internal(&g_debugFrontEndCmds, 16, "g_debugFrontEndCmds", 0);
+    track_static_alloc_internal(
+        s_backEndData,
+        sizeof(s_backEndData),
+        "s_backEndData",
+        18);
+    track_static_alloc_internal(
+        g_viewInfo,
+        sizeof(g_viewInfo),
+        "g_viewInfo",
+        18);
+    track_static_alloc_internal(
+        g_frontEndCmds,
+        sizeof(g_frontEndCmds),
+        "g_frontEndCmds",
+        18);
+    track_static_alloc_internal(
+        &s_debugFrameGlob,
+        sizeof(s_debugFrameGlob),
+        "s_debugFrameGlob",
+        0);
+    track_static_alloc_internal(
+        &g_debugFrontEndCmds,
+        sizeof(g_debugFrontEndCmds),
+        "g_debugFrontEndCmds",
+        0);
 }
 
 void __cdecl R_FreeGlobalVariable(void *var)
@@ -319,7 +339,7 @@ bool R_UpdateSkinCacheUsage()
     bool result; // eax
 
     iassert( frontEndDataOut->skinnedCacheVb );
-    result = frontEndDataOut->skinnedCacheVb->used >= 0x410000u;
+    result = Sys_AtomicLoad(&frontEndDataOut->skinnedCacheVb->used) >= 0x410000u;
     rg.skinnedCacheReachedThreshold = result;
     return result;
 }
@@ -459,10 +479,11 @@ GfxCmdHeader *__cdecl R_GetCommandBuffer(GfxRenderCommand renderCmd, int bytes)
 
 void R_FreeTempSkinBuffer()
 {
-    if (frontEndDataOut->tempSkinPos)
+    const uint32_t tempSkinPos = Sys_AtomicLoad(&frontEndDataOut->tempSkinPos);
+    if (tempSkinPos)
     {
-        Z_VirtualDecommit(frontEndDataOut->tempSkinBuf, frontEndDataOut->tempSkinPos);
-        frontEndDataOut->tempSkinPos = 0;
+        Z_VirtualDecommit(frontEndDataOut->tempSkinBuf, tempSkinPos);
+        Sys_AtomicStore(&frontEndDataOut->tempSkinPos, 0u);
     }
 }
 
@@ -471,7 +492,7 @@ uint32_t g_frameIndex;
 DebugGlobals *R_ToggleSmpFrame()
 {
     DebugGlobals *result; // eax
-    volatile int surfPos; // [esp+0h] [ebp-Ch]
+    uint32_t surfPos; // [esp+0h] [ebp-Ch]
     DebugGlobals *debugGlobalsEntry; // [esp+8h] [ebp-4h]
 
     if (!rg.viewInfoCount)
@@ -496,7 +517,7 @@ DebugGlobals *R_ToggleSmpFrame()
     frontEndDataOut->smcPatchCount = 0;
     frontEndDataOut->smcPatchVertsUsed = 0;
     frontEndDataOut->modelLightingPatchCount = 0;
-    frontEndDataOut->skinnedCacheVb->used = 0;
+    Sys_AtomicStore(&frontEndDataOut->skinnedCacheVb->used, 0u);
     s_cmdList = frontEndDataOut->commands;
     KISAK_NULLSUB();
     if (frontEndDataOut->drawSurfCount > 0x8000u)
@@ -509,19 +530,10 @@ DebugGlobals *R_ToggleSmpFrame()
             frontEndDataOut->drawSurfCount,
             0,
             0x8000);
-    if (frontEndDataOut->surfPos < 0)
-        MyAssertHandler(
-            ".\\r_rendercmds.cpp",
-            1038,
-            0,
-            "%s\n\t(frontEndDataOut->surfPos) = %i",
-            "(frontEndDataOut->surfPos >= 0)",
-            frontEndDataOut->surfPos);
-    if (frontEndDataOut->surfPos > 0x20000)
+    surfPos = Sys_AtomicLoad(&frontEndDataOut->surfPos);
+    if (surfPos > 0x20000u)
         surfPos = 0x20000;
-    else
-        surfPos = frontEndDataOut->surfPos;
-    frontEndDataOut->surfPos = surfPos;
+    Sys_AtomicStore(&frontEndDataOut->surfPos, surfPos);
     if (frontEndDataOut->cloudCount > 0x100u)
         MyAssertHandler(
             ".\\r_rendercmds.cpp",
@@ -532,14 +544,14 @@ DebugGlobals *R_ToggleSmpFrame()
             0,
             256);
     Com_Memset(frontEndDataOut->drawSurfs, 176, 8 * frontEndDataOut->drawSurfCount);
-    Com_Memset(frontEndDataOut->surfsBuffer, 176, frontEndDataOut->surfPos);
+    Com_Memset(frontEndDataOut->surfsBuffer, 176, surfPos);
     Com_Memset(frontEndDataOut->clouds, 176, frontEndDataOut->cloudCount << 6);
     Com_Memset(&frontEndDataOut->codeMeshes[0].triCount, 176, 0x8000);
     Com_Memset(frontEndDataOut->primDrawSurfsBuf, 176, 4 * frontEndDataOut->primDrawSurfPos);
     Com_Memset(&frontEndDataOut->fogSettings, 176, 20);
     frontEndDataOut->drawSurfCount = 0;
     frontEndDataOut->primDrawSurfPos = 0;
-    frontEndDataOut->surfPos = 0;
+    Sys_AtomicStore(&frontEndDataOut->surfPos, 0u);
     frontEndDataOut->gfxEntCount = 1;
     frontEndDataOut->cloudCount = 0;
     Sys_AtomicStore(&frontEndDataOut->codeMeshCount, 0u);
@@ -1734,7 +1746,7 @@ void __cdecl R_InitTempSkinBuf()
     for (i = 0; i < 2; ++i)
     {
         data = &s_backEndData[i];
-        iassert( !data->tempSkinPos );
+        iassert(!Sys_AtomicLoad(&data->tempSkinPos));
         iassert( !data->tempSkinBuf );
         data->tempSkinBuf = (uint8_t *)Z_VirtualReserve(0x480000);
     }

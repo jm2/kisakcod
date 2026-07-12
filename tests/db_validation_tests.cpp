@@ -62,6 +62,7 @@ struct TestRigidVertList
     std::uint16_t triOffset = 0;
     std::uint16_t triCount = 0;
     const void *collisionTree = nullptr;
+    std::uint16_t boneOffset = 0;
 };
 
 struct TestSurfaceCollisionTree
@@ -810,11 +811,207 @@ int main()
                 1),
             "surface triangle-index count multiplication overflow rejected");
 
+        const std::int16_t mixedSkinCounts[4] = {1, 2, 3, 4};
+        std::uint32_t blendElementCount = 99u;
+        Expect(
+            db::validation::XSurfaceSkinningLayoutValid(
+                mixedSkinCounts,
+                true,
+                10,
+                true,
+                &blendElementCount)
+                && blendElementCount == 50u,
+            "exact deformed surface skinning buckets accepted");
+        std::int16_t invalidSkinCounts[4] = {-1, 2, 3, 4};
+        Expect(
+            !db::validation::XSurfaceSkinningLayoutValid(
+                invalidSkinCounts,
+                true,
+                8,
+                true,
+                &blendElementCount),
+            "negative surface skinning bucket rejected");
+        invalidSkinCounts[0] = 1;
+        Expect(
+            !db::validation::XSurfaceSkinningLayoutValid(
+                invalidSkinCounts,
+                true,
+                9,
+                true,
+                &blendElementCount),
+            "surface skinning bucket total mismatch rejected");
+        Expect(
+            !db::validation::XSurfaceSkinningLayoutValid(
+                mixedSkinCounts,
+                false,
+                10,
+                true,
+                &blendElementCount),
+            "missing deformed surface blend records rejected");
+        const std::int16_t emptySkinCounts[4] = {};
+        Expect(
+            db::validation::XSurfaceSkinningLayoutValid(
+                emptySkinCounts,
+                false,
+                5,
+                false,
+                &blendElementCount)
+                && blendElementCount == 0u,
+            "canonical rigid surface skinning metadata accepted");
+
+        const std::int16_t oneEachSkinCounts[4] = {1, 1, 1, 1};
+        std::array<std::uint16_t, 16> blendRecords = {
+            0,
+            0, 64, 100,
+            0, 64, 100, 128, 200,
+            0, 64, 100, 128, 200, 192, 300,
+        };
+        const std::uint32_t fourBonePartBits[4] = {
+            UINT32_C(0xF0000000), 0, 0, 0};
+        Expect(
+            db::validation::XSurfaceBlendRecordsValid(
+                blendRecords.data(),
+                oneEachSkinCounts,
+                4,
+                fourBonePartBits),
+            "bounded weighted-surface bone records accepted");
+        auto invalidBlendRecords = blendRecords;
+        invalidBlendRecords[2] = 65;
+        Expect(
+            !db::validation::XSurfaceBlendRecordsValid(
+                invalidBlendRecords.data(),
+                oneEachSkinCounts,
+                4,
+                fourBonePartBits),
+            "misaligned weighted-surface bone offset rejected");
+        invalidBlendRecords = blendRecords;
+        invalidBlendRecords[14] = 256;
+        Expect(
+            !db::validation::XSurfaceBlendRecordsValid(
+                invalidBlendRecords.data(),
+                oneEachSkinCounts,
+                4,
+                fourBonePartBits),
+            "weighted-surface bone offset at model end rejected");
+        invalidBlendRecords = blendRecords;
+        invalidBlendRecords[11] = 40000;
+        invalidBlendRecords[13] = 30000;
+        Expect(
+            !db::validation::XSurfaceBlendRecordsValid(
+                invalidBlendRecords.data(),
+                oneEachSkinCounts,
+                4,
+                fourBonePartBits),
+            "weighted-surface explicit weight overflow rejected");
+        const std::uint32_t missingBonePartBits[4] = {
+            UINT32_C(0xE0000000), 0, 0, 0};
+        Expect(
+            !db::validation::XSurfaceBlendRecordsValid(
+                blendRecords.data(),
+                oneEachSkinCounts,
+                4,
+                missingBonePartBits),
+            "weighted-surface bone absent from part bits rejected");
+        const std::uint32_t outOfRangePartBits[4] = {
+            UINT32_C(0xF8000000), 0, 0, 0};
+        Expect(
+            !db::validation::XSurfaceBlendRecordsValid(
+                blendRecords.data(),
+                oneEachSkinCounts,
+                4,
+                outOfRangePartBits),
+            "surface part bit beyond model bone count rejected");
+
+        db::validation::XModelPointerPresence modelPointers;
+        modelPointers.name = true;
+        modelPointers.boneNames = true;
+        modelPointers.partClassification = true;
+        modelPointers.baseMatrices = true;
+        modelPointers.surfaces = true;
+        modelPointers.materials = true;
+        modelPointers.boneInfo = true;
+        Expect(
+            db::validation::XModelHeaderLayoutValid(
+                1, 1, 2, 1, 0, modelPointers),
+            "root-only model pointer contract accepted");
+        Expect(
+            !db::validation::XModelHeaderLayoutValid(
+                1, 1, 2, 5, 0, modelPointers),
+            "model LOD count beyond its fixed array rejected");
+        modelPointers.parentList = true;
+        modelPointers.quaternions = true;
+        Expect(
+            !db::validation::XModelHeaderLayoutValid(
+                2, 1, 2, 1, 0, modelPointers),
+            "non-root model without translations rejected");
+        modelPointers.translations = true;
+        Expect(
+            db::validation::XModelHeaderLayoutValid(
+                2, 1, 2, 1, 1, modelPointers),
+            "complete non-root model pointer contract accepted");
+
+        const std::uint32_t twoBonePartBits[4] = {
+            UINT32_C(0xC0000000), 0, 0, 0};
+        Expect(
+            db::validation::XModelLodLayoutValid(
+                0, 0, 2, 2, 0, 1000.0f, 2, twoBonePartBits),
+            "bounded model LOD surface and bone ranges accepted");
+        Expect(
+            !db::validation::XModelLodLayoutValid(
+                0, 1, 2, 2, 0, 1000.0f, 2, twoBonePartBits),
+            "model LOD surface span beyond aggregate rejected");
+        Expect(
+            !db::validation::XModelLodLayoutValid(
+                0,
+                0,
+                2,
+                2,
+                1,
+                std::numeric_limits<float>::quiet_NaN(),
+                2,
+                twoBonePartBits),
+            "mismatched and non-finite model LOD metadata rejected");
+        const std::uint8_t validPartClassifications[2] = {0u, 0x12u};
+        const std::uint8_t invalidPartClassifications[2] = {0u, 0x13u};
+        Expect(
+            db::validation::XModelPartClassificationsValid(
+                validPartClassifications,
+                2),
+            "bounded model part classifications accepted");
+        Expect(
+            !db::validation::XModelPartClassificationsValid(
+                invalidPartClassifications,
+                2),
+            "model part classification beyond the priority map rejected");
+
         const auto collisionTree = ValidTestSurfaceCollisionTree();
         const TestRigidVertList validRigidLists[] = {
             {3, 0, 2, &collisionTree},
             {2, 2, 2, &collisionTree},
         };
+        auto validRigidSkinLists = std::array<TestRigidVertList, 2>{
+            validRigidLists[0],
+            validRigidLists[1],
+        };
+        validRigidSkinLists[0].boneOffset = 0;
+        validRigidSkinLists[1].boneOffset = 64;
+        Expect(
+            db::validation::XSurfaceRigidSkinningValid(
+                validRigidSkinLists.data(),
+                validRigidSkinLists.size(),
+                5,
+                4,
+                fourBonePartBits),
+            "bounded rigid-surface bone partitions accepted");
+        validRigidSkinLists[1].boneOffset = 65;
+        Expect(
+            !db::validation::XSurfaceRigidSkinningValid(
+                validRigidSkinLists.data(),
+                validRigidSkinLists.size(),
+                5,
+                4,
+                fourBonePartBits),
+            "misaligned rigid-surface bone offset rejected");
         Expect(
             db::validation::XSurfaceRigidPartitionValid(
                 validRigidLists,

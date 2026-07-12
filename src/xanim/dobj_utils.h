@@ -5,9 +5,12 @@
 
 DObjAnimMat *__cdecl DObjGetRotTransArray(const DObj_s *obj);
 int __cdecl DObjGetNumModels(const DObj_s *obj);
-int __cdecl DObjGetSurfaces(const DObj_s *obj, int *partBits, const char *lods);
-void __cdecl DObjGetSurfaceData(const DObj_s *obj, const float *origin, float scale, char *lods);
-void __cdecl DObjGetBoneInfo(const DObj_s *obj, XBoneInfo **boneInfo);
+int __cdecl DObjGetSurfaces(const DObj_s *obj, int *partBits, const int8_t *lods);
+void __cdecl DObjGetSurfaceData(const DObj_s *obj, const float *origin, float scale, int8_t *lods);
+bool __cdecl DObjGetBoneInfo(
+    const DObj_s *obj,
+    XBoneInfo **boneInfo,
+    uint32_t boneInfoCapacity);
 int __cdecl DObjNumBones(const DObj_s *obj);
 int __cdecl DObjGetLodForDist(const DObj_s *obj, int modelIndex, float dist);
 void __cdecl DObjGetSetBones(const DObj_s *obj, int *setPartBits);

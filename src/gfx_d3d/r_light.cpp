@@ -820,13 +820,13 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
         if (sceneEntVisData[sceneEntIndex] == 1)
         {
             sceneEnt = &scene.sceneDObj[sceneEntIndex];
-            if (sceneEnt->cull.state < 2)
+            if (R_LoadSceneEntityCullState(sceneEnt) < CULL_STATE_BOUNDED)
                 MyAssertHandler(
                     ".\\r_light.cpp",
                     895,
                     0,
                     "sceneEnt->cull.state >= CULL_STATE_BOUNDED\n\t%i, %i",
-                    sceneEnt->cull.state,
+                    R_LoadSceneEntityCullState(sceneEnt),
                     2);
             bounds = sceneEnt->cull.mins;
             lightIndex = 0;
@@ -1472,4 +1472,3 @@ void __cdecl R_EmitShadowedLightPartitionSurfs(
     info->drawSurfs = &frontEndDataOut->drawSurfs[firstDrawSurf];
     info->drawSurfCount = drawSurfCount;
 }
-

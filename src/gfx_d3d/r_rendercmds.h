@@ -539,7 +539,7 @@ const struct __declspec(align(16)) GfxBackEndData // sizeof=0x11E780
     uint32_t shadowableLightHasShadowMap[8];
     uint32_t frameCount;
     int drawSurfCount;
-    volatile long surfPos;
+    volatile uint32_t surfPos;
     volatile long gfxEntCount;
     GfxEntity gfxEnts[128];
     volatile long cloudCount;
@@ -551,7 +551,7 @@ const struct __declspec(align(16)) GfxBackEndData // sizeof=0x11E780
     GfxVertexBufferState *skinnedCacheVb;
     IDirect3DQuery9 *endFence;
     uint8_t *tempSkinBuf;
-    volatile long tempSkinPos;
+    volatile uint32_t tempSkinPos;
     IDirect3DIndexBuffer9 *preTessIb;
     int viewParmCount;
     GfxFog fogSettings;

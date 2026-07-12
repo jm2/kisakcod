@@ -1,6 +1,7 @@
 #include "r_dpvs.h"
 #include <qcommon/mem_track.h>
 #include "r_model_lighting.h"
+#include "r_model_surface_stream.h"
 #include "r_dvars.h"
 #include <DynEntity/DynEntity_client.h>
 #include "r_drawsurf.h"
@@ -16,6 +17,10 @@
 #include "rb_light.h"
 #include "r_sunshadow.h" // SCENE_VIEW_CAMERA
 #include <universal/profile.h>
+
+#include <new>
+
+namespace model_surface_stream = gfx::model_surface_stream;
 
 #ifdef KISAK_MP
 #include <cgame_mp/cg_local_mp.h>
@@ -231,7 +236,9 @@ void __cdecl R_AddAllSceneEntSurfacesCamera(const GfxViewInfo *viewInfo)
             if (sceneEntVisData[sceneEntIndex] == 1)
             {
                 sceneEnt = &scene.sceneDObj[sceneEntIndex];
-                iassert(sceneEnt->cull.state >= CULL_STATE_BOUNDED);
+                iassert(
+                    R_LoadSceneEntityCullState(sceneEnt)
+                    >= CULL_STATE_BOUNDED);
                 cachedLightingHandle = sceneEnt->info.cachedLightingHandle;
                 lightingHandle = R_AllocModelLighting_Box(
                     viewInfo,
@@ -644,13 +651,15 @@ void __cdecl R_DrawAllSceneEnt(const GfxViewInfo *viewInfo)
                         sceneEntVisData[viewIndex][sceneEntIndex] = scene.dpvs.entVisData[viewIndex][entnum];
                         visData |= sceneEntVisData[viewIndex++][sceneEntIndex];
                     }
-                    if ((visData & 1) != 0 && sceneEnt->cull.state < 2)
+                    if ((visData & 1) != 0
+                        && R_LoadSceneEntityCullState(sceneEnt)
+                            < CULL_STATE_BOUNDED)
                         MyAssertHandler(
                             ".\\r_dpvs.cpp",
                             1393,
                             0,
                             "sceneEnt->cull.state >= CULL_STATE_BOUNDED\n\t%i, %i",
-                            sceneEnt->cull.state,
+                            R_LoadSceneEntityCullState(sceneEnt),
                             2);
                     continue;
                 }
@@ -691,13 +700,14 @@ void __cdecl R_DrawAllSceneEnt(const GfxViewInfo *viewInfo)
             {
                 if (R_SkinAndBoundSceneEnt(sceneEnt))
                 {
-                    if (sceneEnt->cull.state < 2)
+                    if (R_LoadSceneEntityCullState(sceneEnt)
+                        < CULL_STATE_BOUNDED)
                         MyAssertHandler(
                             ".\\r_dpvs.cpp",
                             1505,
                             0,
                             "sceneEnt->cull.state >= CULL_STATE_BOUNDED\n\t%i, %i",
-                            sceneEnt->cull.state,
+                            R_LoadSceneEntityCullState(sceneEnt),
                             2);
                 }
                 else
@@ -737,13 +747,14 @@ void __cdecl R_DrawAllSceneEnt(const GfxViewInfo *viewInfo)
             sceneEntVisData[viewIndex][sceneEntIndex] = scene.dpvs.entVisData[viewIndex][entnum];
             visData |= sceneEntVisData[viewIndex++][sceneEntIndex];
         }
-        if ((visData & 1) != 0 && sceneEnt->cull.state < 2)
+        if ((visData & 1) != 0
+            && R_LoadSceneEntityCullState(sceneEnt) < CULL_STATE_BOUNDED)
             MyAssertHandler(
                 ".\\r_dpvs.cpp",
                 1460,
                 0,
                 "sceneEnt->cull.state >= CULL_STATE_BOUNDED\n\t%i, %i",
-                sceneEnt->cull.state,
+                R_LoadSceneEntityCullState(sceneEnt),
                 2);
     }
     for (viewIndex = 0; viewIndex < 7; ++viewIndex)
@@ -889,7 +900,7 @@ int __cdecl R_DrawBModel(BModelDrawInfo *bmodelInfo, const GfxBrushModel *bmodel
 {
     uint16_t visibleSurfaceCount; // [esp+Ah] [ebp-26h]
     uint32_t surfId; // [esp+10h] [ebp-20h]
-    int startSurfPos; // [esp+14h] [ebp-1Ch]
+    uint32_t startSurfPos; // [esp+14h] [ebp-1Ch]
     GfxScaledPlacement *newPlacement; // [esp+18h] [ebp-18h]
     uint32_t surfIndex; // [esp+1Ch] [ebp-14h]
     uint32_t surfIndexa; // [esp+1Ch] [ebp-14h]
@@ -897,30 +908,75 @@ int __cdecl R_DrawBModel(BModelDrawInfo *bmodelInfo, const GfxBrushModel *bmodel
     const GfxSurface *surfa; // [esp+24h] [ebp-Ch]
     BModelSurface *bmodelSurf; // [esp+28h] [ebp-8h]
 
+    iassert(bmodelInfo);
+    iassert(bmodel);
+    iassert(placement);
+    if (!bmodelInfo || !bmodel || !placement || !frontEndDataOut
+        || !rgp.world || !rgp.world->dpvs.surfaces
+        || rgp.world->surfaceCount < 0
+        || bmodel->startSurfIndex > static_cast<uint32_t>(
+            rgp.world->surfaceCount)
+        || bmodel->surfaceCount > static_cast<uint32_t>(
+            rgp.world->surfaceCount) - bmodel->startSurfIndex
+        || bmodel->surfaceCountNoDecal > bmodel->surfaceCount)
+    {
+        return 0;
+    }
+
     if (r_drawDecals->current.enabled)
         visibleSurfaceCount = bmodel->surfaceCount;
     else
         visibleSurfaceCount = bmodel->surfaceCountNoDecal;
-    iassert( visibleSurfaceCount );
-    startSurfPos = InterlockedExchangeAdd(&frontEndDataOut->surfPos, 8 * visibleSurfaceCount + 32);
-    if (8 * (uint32_t)visibleSurfaceCount + 32 + startSurfPos <= 0x20000)
+    if (!visibleSurfaceCount)
+        return 0;
+
+    if (!r_drawDecals->current.enabled)
+    {
+        uint32_t countedVisibleSurfaces = 0u;
+        const GfxSurface *const surfaces =
+            &rgp.world->dpvs.surfaces[bmodel->startSurfIndex];
+        for (uint32_t index = 0u; index < bmodel->surfaceCount; ++index)
+        {
+            if ((surfaces[index].flags & 2) == 0)
+                ++countedVisibleSurfaces;
+        }
+        if (countedVisibleSurfaces != visibleSurfaceCount)
+            return 0;
+    }
+
+    uint32_t surfaceBytes = 0u;
+    uint32_t totalBytes = 0u;
+    if (model_surface_stream::TryMultiply(
+            visibleSurfaceCount,
+            static_cast<uint32_t>(sizeof(BModelSurface)),
+            &surfaceBytes)
+        && model_surface_stream::TryAdd(
+            static_cast<uint32_t>(sizeof(GfxScaledPlacement)),
+            surfaceBytes,
+            &totalBytes)
+        && model_surface_stream::TryReserveAligned(
+            &frontEndDataOut->surfPos,
+            totalBytes,
+            sizeof(frontEndDataOut->surfsBuffer),
+            alignof(BModelSurface),
+            &startSurfPos))
     {
         iassert( !(startSurfPos & 3) );
-        newPlacement = (GfxScaledPlacement *)&frontEndDataOut->surfsBuffer[startSurfPos];
-        memcpy(&frontEndDataOut->surfsBuffer[startSurfPos], placement, 0x1Cu);
+        newPlacement = ::new (
+            &frontEndDataOut->surfsBuffer[startSurfPos])
+            GfxScaledPlacement{};
+        newPlacement->base = *placement;
         newPlacement->scale = 1.0;
-        bmodelSurf = (BModelSurface *)&newPlacement[1];
+        bmodelSurf = reinterpret_cast<BModelSurface *>(&newPlacement[1]);
         surfId = (char *)&newPlacement[1] - (char *)frontEndDataOut;
         iassert( !(surfId & 3) );
-        bmodelInfo->surfId = surfId >> 2;
         if (r_drawDecals->current.enabled)
         {
             surfIndexa = 0;
             surfa = &rgp.world->dpvs.surfaces[bmodel->startSurfIndex];
             while (surfIndexa < bmodel->surfaceCount)
             {
-                bmodelSurf->placement = newPlacement;
-                bmodelSurf->surf = surfa;
+                ::new (bmodelSurf) BModelSurface{newPlacement, surfa};
                 ++bmodelSurf;
                 ++surfIndexa;
                 ++surfa;
@@ -930,18 +986,24 @@ int __cdecl R_DrawBModel(BModelDrawInfo *bmodelInfo, const GfxBrushModel *bmodel
         {
             surfIndex = 0;
             surf = &rgp.world->dpvs.surfaces[bmodel->startSurfIndex];
+            uint32_t builtSurfaceCount = 0u;
             while (surfIndex < bmodel->surfaceCount)
             {
                 if ((surf->flags & 2) == 0)
                 {
-                    bmodelSurf->placement = newPlacement;
-                    bmodelSurf->surf = surf;
+                    if (builtSurfaceCount >= visibleSurfaceCount)
+                        return 0;
+                    ::new (bmodelSurf) BModelSurface{newPlacement, surf};
                     ++bmodelSurf;
+                    ++builtSurfaceCount;
                 }
                 ++surfIndex;
                 ++surf;
             }
+            if (builtSurfaceCount != visibleSurfaceCount)
+                return 0;
         }
+        bmodelInfo->surfId = surfId >> 2;
         return 1;
     }
     else
@@ -1499,7 +1561,7 @@ void __cdecl R_FilterEntitiesIntoCells(int cameraCellIndex)
     for (sceneEntIndex = 0; sceneEntIndex < scene.sceneDObjCount; ++sceneEntIndex)
     {
         sceneEnt = &scene.sceneDObj[sceneEntIndex];
-        if (sceneEnt->cull.state != 4)
+        if (R_LoadSceneEntityCullState(sceneEnt) != CULL_STATE_DONE)
         {
             entnum = sceneEnt->entnum;
             for (viewIndex = 0; viewIndex < 3; ++viewIndex)
