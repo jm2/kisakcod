@@ -5515,7 +5515,7 @@ void GScr_ClientPrint()
 void GScr_OpenFile()
 {
     char *fullpathname; // [esp+3Ch] [ebp-20h]
-    int32_t filesize; // [esp+40h] [ebp-1Ch]
+    uint32_t filesize; // [esp+40h] [ebp-1Ch]
     const char *filename; // [esp+44h] [ebp-18h]
     int32_t tempFile; // [esp+48h] [ebp-14h] BYREF
     int32_t *f; // [esp+4Ch] [ebp-10h]
@@ -5527,9 +5527,9 @@ void GScr_OpenFile()
     {
         filename = Scr_GetString(0);
         mode = Scr_GetString(1);
-        for (filenum = 0; filenum < 1; ++filenum)
+        for (filenum = 0; filenum < static_cast<int32_t>(ARRAY_COUNT(level.openScriptIOFileHandles)); ++filenum)
         {
-            if (!level.openScriptIOFileHandles[filenum])
+            if (!level.openScriptIOFileHandles[filenum] && !level.openScriptIOFileBuffers[filenum])
             {
                 //f = (int32_t *)(4 * filenum + 23808484);
                 f = &level.openScriptIOFileHandles[filenum];
@@ -5545,13 +5545,15 @@ void GScr_OpenFile()
         if (!strcmp(mode, "read"))
         {
             fullpathname = va("%s/%s", "scriptdata", filename);
+            tempFile = 0;
             filesize = FS_FOpenFileByMode(fullpathname, &tempFile, FS_READ);
-            if (filesize >= 0)
+            if (filesize <= 0x7FFFFFFEu && tempFile)
             {
-                level.openScriptIOFileBuffers[filenum] = Z_VirtualAlloc(filesize + 1, "GScr_OpenFile", 10);
+                const int32_t fileLength = static_cast<int32_t>(filesize);
+                level.openScriptIOFileBuffers[filenum] = Z_VirtualAlloc(fileLength + 1, "GScr_OpenFile", 10);
                 FS_Read((uint8_t *)level.openScriptIOFileBuffers[filenum], filesize, tempFile);
                 FS_FCloseFile(tempFile);
-                level.openScriptIOFileBuffers[filenum][filesize] = 0;
+                level.openScriptIOFileBuffers[filenum][fileLength] = 0;
                 Com_BeginParseSession(filename);
                 Com_SetCSV(1);
                 level.currentScriptIOLineMark[filenum].lines = 0;
@@ -5559,6 +5561,8 @@ void GScr_OpenFile()
             }
             else
             {
+                if (tempFile)
+                    FS_FCloseFile(tempFile);
                 Scr_AddInt(-1);
             }
             return;
@@ -5595,7 +5599,7 @@ void GScr_CloseFile()
     if (Scr_GetNumParam())
     {
         filenum = Scr_GetInt(0);
-        if ((uint32_t )filenum >= 2)
+        if (static_cast<uint32_t>(filenum) >= ARRAY_COUNT(level.openScriptIOFileHandles))
         {
             Com_Printf(23, "CloseFile failed, invalid file number %i\n", filenum);
             Scr_AddInt(-1);
@@ -5647,7 +5651,7 @@ void __cdecl Scr_FPrint_internal(bool commaBetweenFields)
     if (Scr_GetNumParam() > 1)
     {
         filenum = Scr_GetInt(0);
-        if ((uint32_t )filenum < 2)
+        if (static_cast<uint32_t>(filenum) < ARRAY_COUNT(level.openScriptIOFileHandles))
         {
             if (level.openScriptIOFileHandles[filenum])
             {
@@ -5698,7 +5702,7 @@ void GScr_FReadLn()
     if (Scr_GetNumParam())
     {
         filenum = Scr_GetInt(0);
-        if ((uint32_t )filenum < 2)
+        if (static_cast<uint32_t>(filenum) < ARRAY_COUNT(level.openScriptIOFileBuffers))
         {
             if (level.openScriptIOFileBuffers[filenum])
             {
@@ -5759,7 +5763,7 @@ void GScr_FGetArg()
     {
         filenum = Scr_GetInt(0);
         arg = Scr_GetInt(1);
-        if ((uint32_t )filenum < 2)
+        if (static_cast<uint32_t>(filenum) < ARRAY_COUNT(level.openScriptIOFileBuffers))
         {
             if (arg >= 0)
             {

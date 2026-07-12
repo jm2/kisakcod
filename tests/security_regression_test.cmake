@@ -38,8 +38,19 @@ endfunction()
 
 function(require_source_match_count RELATIVE_PATH PATTERN EXPECTED_COUNT DESCRIPTION)
     file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
-    string(REGEX MATCHALL "${PATTERN}" _matches "${_source}")
-    list(LENGTH _matches _match_count)
+    set(_remaining "${_source}")
+    set(_match_count 0)
+    while(TRUE)
+        string(REGEX MATCH "${PATTERN}" _match "${_remaining}")
+        if("${_match}" STREQUAL "")
+            break()
+        endif()
+        math(EXPR _match_count "${_match_count} + 1")
+        string(FIND "${_remaining}" "${_match}" _match_position)
+        string(LENGTH "${_match}" _match_length)
+        math(EXPR _next_position "${_match_position} + ${_match_length}")
+        string(SUBSTRING "${_remaining}" ${_next_position} -1 _remaining)
+    endwhile()
     if (NOT _match_count EQUAL EXPECTED_COUNT)
         message(FATAL_ERROR
             "Unexpected security invariant count (${DESCRIPTION}) in src/${RELATIVE_PATH}: "
@@ -5047,6 +5058,98 @@ require_source_ordered(
     "::new (bmodelSurf) BModelSurface"
     "bmodelInfo->surfId = surfId >> 2;"
     "brush-model records must finish construction before their ID is published")
+
+# Upstream SP restorations must retain fixed-width save records and release-safe
+# bounds checks. These guards cover defects found during PR review that portable
+# utility targets cannot compile directly.
+require_source_contains(
+    "game/g_scr_vehicle.cpp"
+    "SaveMemory_SaveWrite(&sndIndices[i], static_cast<int>(sizeof(sndIndices[i])), save);"
+    "vehicle sound-index saves must always write one fixed-width element")
+require_source_contains(
+    "game/g_scr_vehicle.cpp"
+    "SaveMemory_LoadRead(&sndIndices[i], static_cast<int>(sizeof(sndIndices[i])), save);"
+    "vehicle sound-index loads must always read one fixed-width element")
+require_source_not_matches(
+    "game/g_scr_vehicle.cpp"
+    "if[ \t]*\\([ \t]*sndIndices\\[i\\][ \t]*\\)[\r\n \t]*SaveMemory_(SaveWrite|LoadRead)"
+    "vehicle save records must not depend on runtime sound-index occupancy")
+require_source_match_count(
+    "game/g_scr_vehicle.cpp"
+    "obj[ \t]*=[ \t]*Com_GetServerDObj\\(target->s.number\\);[\r\n \t]*if[ \t]*\\(!obj\\)[\r\n \t]*continue;[\r\n \t]*DObjPhysicsGetBounds\\(obj,"
+    2
+    "both vehicle-touch paths must null-check the server DObj before dereference")
+require_source_ordered(
+    "cgame/cg_weapons.cpp"
+    "weapDef = BG_GetWeaponDef(BG_GetViewmodelWeaponIndex(ps));"
+    "if (!weapDef)\n        return false;"
+    "night-vision attachment logic must reject a missing weapon definition")
+require_source_contains(
+    "game/g_scr_main.cpp"
+    "!level.openScriptIOFileHandles[v2] && !level.openScriptIOFileBuffers[v2]"
+    "single-player script-file slots must remain occupied by either storage kind")
+require_source_match_count(
+    "game/g_scr_main.cpp"
+    "ARRAY_COUNT\\(level.openScriptIOFile(Handles|Buffers)\\)"
+    6
+    "all single-player script-file slot loops and lookups must use their real bounds")
+require_source_not_matches(
+    "game/g_scr_main.cpp"
+    "void[ \\t]*\\*[ \\t]*v23"
+    "filesystem handles must not be stored in pointer-width scratch slots")
+require_source_ordered(
+    "game/g_scr_main.cpp"
+    "int fileHandle;"
+    "FS_FOpenFileByMode((char *)v9, &fileHandle, FS_READ);"
+    "single-player script reads must use a typed filesystem handle")
+require_source_ordered(
+    "game/g_scr_main.cpp"
+    "FS_FOpenFileByMode((char *)v9, &fileHandle, FS_READ);"
+    "Remote <= 0x7FFFFFFEu && fileHandle"
+    "single-player script reads must reject failed and oversized files")
+require_source_contains(
+    "game/g_scr_main.cpp"
+    "(Remote & 0x80000000u) == 0 && *v5"
+    "append success must test the unsigned filesystem status explicitly")
+require_source_contains(
+    "game/g_scr_main.cpp"
+    "Com_Printf(23, \"FPrintln failed, invalid file number %i\\n\", Int);"
+    "single-player invalid write-slot diagnostics must supply their format argument")
+require_source_contains(
+    "game/g_scr_main.cpp"
+    "Com_Printf(23, \"FPrintln failed, file number %i was not open for writing\\n\", Int);"
+    "single-player unopened write-slot diagnostics must supply their format argument")
+require_source_contains(
+    "game/g_scr_main.cpp"
+    "Com_Printf(23, \"freadln failed, invalid file number %i\\n\", Int);"
+    "single-player invalid read-slot diagnostics must supply their format argument")
+require_source_contains(
+    "game/g_scr_main.cpp"
+    "Com_Printf(23, \"freadln failed, file number %i was not open for reading\\n\", Int);"
+    "single-player unopened read-slot diagnostics must supply their format argument")
+require_source_contains(
+    "game_mp/g_scr_main_mp.cpp"
+    "!level.openScriptIOFileHandles[filenum] && !level.openScriptIOFileBuffers[filenum]"
+    "script-file slots must remain occupied by either a write handle or a read buffer")
+require_source_match_count(
+    "game_mp/g_scr_main_mp.cpp"
+    "ARRAY_COUNT\\(level.openScriptIOFile(Handles|Buffers)\\)"
+    5
+    "all multiplayer script-file slot loops and lookups must use their real one-slot bounds")
+require_source_not_matches(
+    "game_mp/g_scr_main_mp.cpp"
+    "filenum[ \\t]*(<|>=)[ \\t]*2"
+    "multiplayer script-file APIs must not accept slot one for one-element arrays")
+require_source_ordered(
+    "game_mp/g_scr_main_mp.cpp"
+    "filesize = FS_FOpenFileByMode(fullpathname, &tempFile, FS_READ);"
+    "filesize <= 0x7FFFFFFEu && tempFile"
+    "multiplayer script reads must reject failed and oversized files")
+require_source_ordered(
+    "game_mp/g_scr_main_mp.cpp"
+    "filesize <= 0x7FFFFFFEu && tempFile"
+    "const int32_t fileLength = static_cast<int32_t>(filesize);"
+    "multiplayer script reads must validate size before signed allocation math")
 
 set(_format_sensitive_sources
     "cgame/cg_hudelem.cpp"

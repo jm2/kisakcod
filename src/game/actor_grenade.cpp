@@ -959,7 +959,7 @@ bool __cdecl Actor_Grenade_IsPointSafe(actor_s *self, const float *vPoint)
     grenadeEnt = p_pGrenade;
     centerPos = p_pGrenade->ent()->missile.predictLandPos;
     inflictor = grenadeEnt->ent();
-    return G_CanRadiusDamageFromPos(self->ent, vPoint, inflictor, centerPos, radius, 1.0f, NULL, 0.0f, 1, 0x802011) == 0; // KISAKTODO: check args...
+    return G_CanRadiusDamageFromPos(self->ent, vPoint, inflictor, centerPos, radius, 1.0f, NULL, 0.0f, 1, 0x802011) == 0;
 }
 
 float __cdecl Actor_Grenade_EscapePlane(actor_s *self, float *normal)
@@ -2025,14 +2025,14 @@ void __cdecl Actor_Grenade_AttemptEscape(actor_s *self, int bForceAbortPath)
     {
     LABEL_30:
         dist = Actor_Grenade_EscapePlane(self, normal);
-        Actor_FindPathAwayNotCrossPlanes(self, self->pGrenade.ent()->missile.predictLandPos, minSafeDist, normal, dist, 1);
+        Actor_FindPathAwayNotCrossPlanes(self, self->pGrenade.ent()->missile.predictLandPos, minSafeDist, normal, dist, 1, 1);
         if (Actor_HasPath(self))
         {
             Actor_SetSubState(self, STATE_GRENADE_FLEE);
             return;
         }
         if (!Actor_IsSuppressed(self)
-            || (Actor_FindPathAwayNotCrossPlanes(self, self->pGrenade.ent()->missile.predictLandPos, minSafeDist, normal, dist, 0),
+            || (Actor_FindPathAwayNotCrossPlanes(self, self->pGrenade.ent()->missile.predictLandPos, minSafeDist, normal, dist, 0, 1),
                 !Actor_HasPath(self)))
         {
             Actor_FindPathAway(self, self->pGrenade.ent()->missile.predictLandPos, minSafeDist, 1);

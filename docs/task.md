@@ -6,14 +6,25 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Branch: `master`
+- Branch: `master`; active integration PR: `merge/upstream-9` ([#1](https://github.com/jm2/kisakcod/pull/1)).
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: verify the MSVC narrowing repair in all nine CI jobs, run the protected
-  licensed headless smoke, then begin staged FX layout/iterator/counter/status protocols without
-  relaxing the engine gate.
+- Active work: land and verify PR #1's upstream merge review fixes, run the protected licensed
+  headless smoke, then begin staged FX layout/iterator/counter/status protocols without relaxing
+  the engine gate.
 - Progress estimate: approximately **20% complete by engineering effort** (plausible range 15–25%).
   The foundation/checklist view is about 25–30% and the shared foundation is roughly 60–70% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
+- Upstream integration: PR #1 merges upstream `master` through `8a0f14f` (nine commits; upstream is
+  not currently ahead) while preserving the port's pointer-width and security changes. It restores
+  several primarily SP features plus real shared renderer, XAnim, and unzip fixes; the accidental
+  `src/staged_changes.patch` artifact is excluded. Pre-review run **29204498860 passed all nine CI
+  jobs**. Gemini/Codex review found fixed-width vehicle save-stream and null-dereference defects; the
+  current follow-up fixes the substantiated findings and records the two false positives (pathnode's
+  no-match branch already returned, and `CG_Missile` consistently declares/uses its uppercase local).
+  A full delta audit additionally repaired the restored SP script-file API's one-slot ownership,
+  pointer-width handle, signed-size, append-status, bounds, cleanup, and variadic-format defects, then
+  applied the same one-slot ownership, bounds, and signed-allocation protections to the active MP API.
+  Source-level regression guards cover these engine-only paths pending replacement Windows CI.
 - Current DObj/model-surface batch: the inherited fixed 3,600-byte stack overlay and retail
   4/24/56-byte pointer-bearing stream assumptions are gone. A shared checked planner/cursor uses
   native 4/8, 24/40, and 56/72-byte records, aligned exact-capacity CAS reservations, placement
@@ -39,8 +50,8 @@ work item changes. Do not create session-specific handoff files.
   **29203597111** passed all four Windows engine jobs, including the three client builds that are the
   only jobs compiling `gfx_d3d`, but its two MSVC portable-test jobs failed on fifteen identical C4267
   `size_t`-to-`uint32_t` narrowings in the new `db_validation_tests.cpp`, which only `/W4 /WX` MSVC
-  diagnoses. This commit applies the repository's existing `static_cast<std::uint32_t>` count idiom at
-  all fifteen sites; no engine code changes. Residuals: a failed
+  diagnoses. Commit `78d72b1` applies the repository's existing `static_cast<std::uint32_t>` count
+  idiom at all fifteen sites; replacement run **29203923350 passed all nine jobs**. Residuals: a failed
   later vertex reservation can consume an already reserved surface slice for that frame; static
   XModel draw-list `surfId` decoding still needs the same bounded accessor; `XAnimResetAnimMap`
   mutates a shared tree during pre-reservation preparation, so a theoretically racing reservation
@@ -288,8 +299,9 @@ work item changes. Do not create session-specific handoff files.
   four Windows engine jobs at compile time. Corrective commit `89a6122` cleared every one of those
   seams: run 29203597111 passed all four Windows engine jobs and the three POSIX portable jobs, but
   both MSVC portable-test jobs failed on fifteen C4267 narrowings confined to the new
-  `db_validation_tests.cpp`. The current commit casts those counts and awaits replacement CI evidence;
-  because the engine is unchanged, the four Windows engine jobs are already proven green on this tree.
+  `db_validation_tests.cpp`. Corrective commit `78d72b1` casts those counts, and replacement run
+  29203923350 passed all nine jobs. Upstream integration commit `6c86e83` subsequently passed all nine
+  jobs in run 29204498860 before review follow-ups.
   The observed linker debt is now 106 -> 45 -> 0.
 
 ## Milestone status
@@ -317,8 +329,8 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Verify the corrective DObj/model-surface commit in all nine CI jobs.
-2. Validate the protected licensed-content headless startup/map/`getstatus` workflow, then start the
+1. Land PR #1's substantiated automated-review fixes and verify all nine replacement CI jobs.
+2. Merge PR #1, validate the protected licensed-content headless startup/map/`getstatus` workflow, then start the
    staged FX layout/iterator/counter/status families.
 3. Extract filesystem/virtual-memory/process services and implement Linux signal-park plus macOS
    Mach crash freezing behind the already isolated terminal API.

@@ -3111,10 +3111,7 @@ void __cdecl Con_DrawOutputVersion(float x, float y, float width, float height)
 
 char *__cdecl Con_GetVersionString()
 {
-    const char *BuildNumber; // eax
-
-    BuildNumber = getBuildNumber();
-    return va("Build %s %s", BuildNumber, "win-x86");
+	return va("Build %s %s", getBuildNumber(), CPUSTRING);
 }
 
 void __cdecl Con_PageUp()

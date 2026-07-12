@@ -322,7 +322,7 @@ const BuiltinMethodDef methods_2[166] =
   { "logstring", ScrCmd_LogString, 0 }
 };
 
-BuiltinFunctionDef functions[250] =
+BuiltinFunctionDef functions[251] =
 {
   { "createprintchannel", GScr_CreatePrintChannel, 1 },
   { "setprintchannel", GScr_printChannelSet, 1 },
@@ -521,6 +521,7 @@ BuiltinFunctionDef functions[250] =
     0
   },
   { "stopcinematicingame", GScr_StopCinematicInGame, 0 },
+  { "iscinematicplaying", GScr_IsCinematicPlaying, 0 },
   { "earthquake", GScr_Earthquake, 0 },
   { "drawcompassfriendlies", (void(*)())GScr_DrawCompassFriendlies, 0 },
   { "bulletspread", Scr_BulletSpread, 0 },
@@ -3346,9 +3347,9 @@ void __cdecl GScr_SetFriendlyChain(scr_entref_t entref)
     v3 = (float *)Pathnode;
     if (Pathnode->constant.wChainId < 1)
     {
-        Path_ConvertNodeToIndex(Pathnode);
         v4 = va(
             "Node %d (%.2f, %.2f, %.2f) is not a friendly chain node.\n",
+            Path_ConvertNodeToIndex(Pathnode),
             v3[5],
             v3[6],
             v3[7]
@@ -3984,7 +3985,7 @@ void __cdecl ScrCmd_DoDamage(scr_entref_t entref)
         0, //dflags
         0, // mod
         0xFFFFFFFF, // weapon
-        HITLOC_HEAD, // KISAKTODO (weird?)
+        HITLOC_HEAD, // weird but accurate
         0,
         0);
 }
@@ -6465,9 +6466,10 @@ void GScr_PrecacheLocationSelector()
     char v4[1032]; // [sp+50h] [-420h] BYREF
 
     String = Scr_GetString(0);
+
     for (i = 0; i < 3; ++i)
     {
-        SV_GetConfigstring(i + 1152, v4, 1024);
+        SV_GetConfigstring(i + CS_LOC_SEL_MTLS, v4, 1024);
         if (!I_stricmp(v4, String))
         {
             Com_DPrintf(23, "Script tried to precache the location selector '%s' more than once\n", String);
@@ -6476,7 +6478,7 @@ void GScr_PrecacheLocationSelector()
     }
     for (j = 0; j < 3; ++j)
     {
-        SV_GetConfigstring(j + 1152, v4, 1024);
+        SV_GetConfigstring(j + CS_LOC_SEL_MTLS, v4, 1024);
         if (!v4[0])
             break;
     }
@@ -6485,7 +6487,7 @@ void GScr_PrecacheLocationSelector()
         v3 = va("Too many location selectors precached. Max allowed is %i", 3);
         Scr_Error(v3);
     }
-    SV_SetConfigstring(j + 1152, String);
+    SV_SetConfigstring(j + CS_LOC_SEL_MTLS, String);
 }
 
 void Scr_PrecacheNightvisionCodeAssets()
@@ -6509,7 +6511,7 @@ int __cdecl GScr_GetLocSelIndex(const char *mtlName)
     v2 = 0;
     while (1)
     {
-        SV_GetConfigstring(v2 + 1152, v5, 1024);
+        SV_GetConfigstring(v2 + CS_LOC_SEL_MTLS, v5, 1024);
         if (!I_stricmp(v5, mtlName))
             break;
         if (++v2 >= 3)
@@ -7135,6 +7137,13 @@ void GScr_StopCinematicInGame()
         Scr_Error("stopcinematicingame takes no parameters: stopcinematicingame()\n");
     R_Cinematic_UnsetNextPlayback();
     R_Cinematic_StopPlayback();
+}
+
+void GScr_IsCinematicPlaying()
+{
+    if (Scr_GetNumParam())
+        Scr_Error("iscinematicplaying takes no parameters: iscinematicplaying()\n");
+    Scr_AddInt(R_Cinematic_IsStarted() || R_Cinematic_IsPending() || R_Cinematic_IsNextReady());
 }
 
 void GScr_Earthquake()
@@ -7997,7 +8006,7 @@ void Scr_SetExponentialFog()
     Dvar_SetFloat((dvar_s*)g_fogStartDistReadOnly, startDist);
     Dvar_SetFloat((dvar_s*)g_fogHalfDistReadOnly, halfwayDist);
 
-    iassert(density > 0.0f && density <= 1.0f);
+    iassert(density > 0.0f && density < 1.0f);
     
     Scr_SetFog("setExpFog", startDist, density, v3, v4, v5, v6);
 }
@@ -9405,12 +9414,12 @@ void __cdecl GScr_SetDepthOfField(scr_entref_t entref)
         Scr_ParamError(3u, "far end must be >= 0");
     if (v6 < 4.0 || v6 > 10.0)
     {
-        v8 = va((const char *)0x40100000, 0, 0);
+        v8 = va("near blur should be between %g and %g", 4.0, 10.0);
         Scr_ParamError(4u, v8);
     }
     if (v7 < 0.0 || v7 > v6)
     {
-        v9 = va(0, 0);
+        v9 = va("far blur should be >= %g and <= near blur", 0.0);
         Scr_ParamError(5u, v9);
     }
     if (Float >= v3)
@@ -10001,17 +10010,15 @@ void GScr_OpenFile()
     const char *String; // r25
     const char *v1; // r3
     int v2; // r26
-    int *openScriptIOFileHandles; // r11
     int v4; // r28
     int *v5; // r31
     const char *v6; // r10
     const char *v7; // r11
     int v8; // r8
     const char *v9; // r31
-    int Remote; // r3
+    uint32_t Remote; // r3
     int v11; // r31
     unsigned char *v12; // r3
-    void *v13; // r5
     const char *v14; // r10
     const char *v15; // r11
     int v16; // r8
@@ -10021,30 +10028,25 @@ void GScr_OpenFile()
     const char *v20; // r11
     int v21; // r8
     const char *v22; // r3
-    void *v23[20]; // [sp+50h] [-50h] BYREF
+    int fileHandle; // [sp+50h] [-50h] BYREF
 
     if (Scr_GetNumParam() > 1)
     {
         String = Scr_GetString(0);
         v1 = Scr_GetString(1);
-        v2 = 0;
-        openScriptIOFileHandles = level.openScriptIOFileHandles;
-        while (*openScriptIOFileHandles)
+        for (v2 = 0; v2 < static_cast<int>(ARRAY_COUNT(level.openScriptIOFileHandles)); ++v2)
         {
-            ++openScriptIOFileHandles;
-            ++v2;
-            if ((uintptr_t)openScriptIOFileHandles >= (uintptr_t)level.openScriptIOFileBuffers)
-                goto LABEL_7;
+            if (!level.openScriptIOFileHandles[v2] && !level.openScriptIOFileBuffers[v2])
+                break;
         }
-        v4 = v2;
-        v5 = &level.openScriptIOFileHandles[v2];
-        if (!v5)
+        if (v2 >= static_cast<int>(ARRAY_COUNT(level.openScriptIOFileHandles)))
         {
-        LABEL_7:
             Com_Printf(23, "OpenFile failed.  %i files already open\n", 1);
             Scr_AddInt(-1);
             return;
         }
+        v4 = v2;
+        v5 = &level.openScriptIOFileHandles[v2];
         v6 = "read";
         v7 = v1;
         do
@@ -10057,21 +10059,16 @@ void GScr_OpenFile()
         } while (!v8);
         if (!v8)
         {
-            // KISAKTODO??
-            //v9 = va("%s/%s", "scriptdata", String);
-            //if (FS_IsUsingRemotePCSharing())
-            //    Remote = FS_FOpenFileReadRemote(v9, 0, v23);
-            //else
-            //    Remote = FS_FOpenFileByMode(v9, v23, FS_READ);
-            //v11 = Remote;
-            //if (Remote >= 0)
-            if (0) // ^^^^^^^^^^^^^^^^^^^^^^
+            v9 = va("%s/%s", "scriptdata", String);
+            fileHandle = 0;
+            Remote = FS_FOpenFileByMode((char *)v9, &fileHandle, FS_READ);
+            if (Remote <= 0x7FFFFFFEu && fileHandle)
             {
-                v12 = (unsigned char *)Z_VirtualAlloc(Remote + 1, "GScr_OpenFile", 10);
-                v13 = v23[0];
+                v11 = static_cast<int>(Remote);
+                v12 = (unsigned char *)Z_VirtualAlloc(v11 + 1, "GScr_OpenFile", 10);
                 level.openScriptIOFileBuffers[v4] = v12;
-                FS_Read(v12, v11, (int)v13);
-                FS_FCloseFile((int)v23[0]);
+                FS_Read(v12, v11, fileHandle);
+                FS_FCloseFile(fileHandle);
                 level.openScriptIOFileBuffers[v4][v11] = 0;
                 Com_BeginParseSession(String);
                 Com_SetCSV(1);
@@ -10079,6 +10076,8 @@ void GScr_OpenFile()
                 Scr_AddInt(v2);
                 return;
             }
+            if (fileHandle)
+                FS_FCloseFile(fileHandle);
             goto LABEL_30;
         }
         v14 = "write";
@@ -10110,8 +10109,12 @@ void GScr_OpenFile()
             else
             {
                 v22 = va("%s/%s", "scriptdata", String);
-                if (FS_FOpenFileByMode((char*)v22, &level.openScriptIOFileHandles[v2], FS_APPEND) >= 0)
+                Remote = FS_FOpenFileByMode((char*)v22, v5, FS_APPEND);
+                if ((Remote & 0x80000000u) == 0 && *v5)
                     goto LABEL_22;
+                if (*v5)
+                    FS_FCloseFile(*v5);
+                *v5 = 0;
             }
         }
         else
@@ -10142,7 +10145,7 @@ void GScr_CloseFile()
     {
         Int = Scr_GetInt(0);
         v1 = Int;
-        if (Int > 1)
+        if (Int >= ARRAY_COUNT(level.openScriptIOFileHandles))
         {
             Com_Printf(23, "CloseFile failed, invalid file number %i\n", Int);
         }
@@ -10197,15 +10200,15 @@ void __cdecl Scr_FPrint_internal(bool commaBetweenFields)
         return;
     }
     Int = Scr_GetInt(0);
-    if (Int > 1)
+    if (Int >= ARRAY_COUNT(level.openScriptIOFileHandles))
     {
-        Com_Printf(23, "FPrintln failed, invalid file number %i\n");
+        Com_Printf(23, "FPrintln failed, invalid file number %i\n", Int);
         goto LABEL_14;
     }
     v3 = Int;
     if (!level.openScriptIOFileHandles[Int])
     {
-        Com_Printf(23, "FPrintln failed, file number %i was not open for writing\n");
+        Com_Printf(23, "FPrintln failed, file number %i was not open for writing\n", Int);
     LABEL_14:
         Scr_AddInt(-1);
         return;
@@ -10253,14 +10256,14 @@ void GScr_FReadLn()
         goto LABEL_12;
     }
     Int = Scr_GetInt(0);
-    if (Int > 1)
+    if (Int >= ARRAY_COUNT(level.openScriptIOFileBuffers))
     {
-        Com_Printf(23, "freadln failed, invalid file number %i\n");
+        Com_Printf(23, "freadln failed, invalid file number %i\n", Int);
         goto LABEL_11;
     }
     if (!level.openScriptIOFileBuffers[Int])
     {
-        Com_Printf(23, "freadln failed, file number %i was not open for reading\n");
+        Com_Printf(23, "freadln failed, file number %i was not open for reading\n", Int);
         goto LABEL_11;
     }
     v6[0] = (const char*)level.openScriptIOFileBuffers[Int];
@@ -10305,7 +10308,7 @@ void GScr_FGetArg()
     Int = Scr_GetInt(0);
     v1 = Scr_GetInt(1);
     v2 = v1;
-    if (Int > 1)
+    if (Int >= ARRAY_COUNT(level.openScriptIOFileBuffers))
     {
         Com_Printf(23, "freadline failed, invalid file number %i\n", Int);
         goto LABEL_14;
@@ -10601,37 +10604,16 @@ void __cdecl ScrCmd_LogString(scr_entref_t entref)
 
 void(__cdecl *__cdecl BuiltIn_GetFunction(const char **pName, int *type))()
 {
-    int v2; // r6
-    unsigned int v3; // r31
-    BuiltinFunctionDef *i; // r7
-    const char *actionString; // r10
-    const char *v6; // r11
-    int v7; // r8
-
-    v2 = 0;
-    v3 = 0;
-    for (i = functions; ; ++i)
+    for (unsigned int i = 0; i < ARRAY_COUNT(functions); ++i)
     {
-        actionString = i->actionString;
-        v6 = *pName;
-        do
+        if (!strcmp(*pName, functions[i].actionString))
         {
-            v7 = (unsigned __int8)*v6 - *(unsigned __int8 *)actionString;
-            if (!*v6)
-                break;
-            ++v6;
-            ++actionString;
-        } while (!v7);
-        if (!v7)
-            break;
-        v3 += 12;
-        ++v2;
-        if (v3 >= 0xBB8)
-            return 0;
+            *pName = functions[i].actionString;
+            *type = functions[i].type;
+            return functions[i].actionFunc;
+        }
     }
-    *pName = functions[v2].actionString;
-    *type = functions[v2].type;
-    return functions[v2].actionFunc;
+    return NULL;
 }
 
 void(__cdecl *__cdecl Scr_GetFunction(const char **pName, int *type))()
@@ -10881,8 +10863,7 @@ void GScr_SetLightFovRange(scr_entref_t entref) // KISAKTODO: another cleanup pa
     if (outerFov < 0.99900001f || outerFov >= 120.001f)
         Scr_ParamError(0, "outer fov must be in the range of 1 to 120");
 
-    //cosOuter = cosf(outerFov * 0.017453292f * 0.5f);
-    cosOuter = cosf(outerFov * 0.017453292f) * 0.5f; // blops bug fix? This seems more right to me
+    cosOuter = cosf(outerFov * 0.017453292f * 0.5f);
     if (cosOuter < refLight->cosHalfFovOuter - 0.001f)
         Scr_ParamError(0, "outer fov cannot be larger than the fov when the map was compiled");
 
@@ -10899,8 +10880,7 @@ void GScr_SetLightFovRange(scr_entref_t entref) // KISAKTODO: another cleanup pa
         if (innerFov < -0.001f || innerFov >= outerFov + 0.001f)
             Scr_ParamError(1, "inner fov must be in the range of 0 to outer fov");
 
-        //float rawCosInner = cosf(innerFov * 0.017453292f * 0.5f);
-        float rawCosInner = cosf(innerFov * 0.017453292f) * 0.5f;// blops bug fix? This seems more right to me
+        float rawCosInner = cosf(innerFov * 0.017453292f * 0.5f);
 
         float upperClampedInner = (rawCosInner >= 1.0f) ? 1.0f : rawCosInner;
         cosInner = ((clampedCosOuter + 0.001f) >= rawCosInner)
