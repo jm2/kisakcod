@@ -18,6 +18,7 @@
 #include <xanim/dobj_utils.h>
 #include <stringed/stringed_hooks.h>
 #include <qcommon/com_bsp.h>
+#include <qcommon/skel_memory_atomic.h>
 #include <universal/com_sndalias.h>
 #include <gfx_d3d/r_scene.h>
 #include <gfx_d3d/r_bsp.h>
@@ -433,7 +434,7 @@ void __cdecl CL_ShutdownCGame(int32_t localClientNum)
     }
 }
 
-int32_t warnCount;
+static volatile uint32_t s_skelWarningEpoch;
 bool __cdecl CL_DObjCreateSkelForBone(DObj_s *obj, int32_t boneIndex)
 {
     char *buf; // [esp+0h] [ebp-Ch]
@@ -454,9 +455,10 @@ bool __cdecl CL_DObjCreateSkelForBone(DObj_s *obj, int32_t boneIndex)
     }
     else
     {
-        if (warnCount != timeStamp)
+        if (skel_memory_atomic::ClaimWarning(
+                &s_skelWarningEpoch,
+                timeStamp))
         {
-            warnCount = timeStamp;
             Com_PrintWarning(14, "WARNING: CL_SKEL_MEMORY_SIZE exceeded - not calculating skeleton\n");
         }
         return 1;

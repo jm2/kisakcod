@@ -4123,6 +4123,436 @@ if (_raw_derived_count)
         "Unchecked derived fast-file array count remains in db_load.cpp: ${_raw_derived_count}")
 endif()
 
+# cpose_t::cullIn is shared by the renderer and client threads.  Keep its
+# frozen engine layout exact while requiring every producer and consumer to use
+# one protocol boundary; a plain read or assignment can otherwise lose a
+# concurrent request.
+require_source_match_count(
+    "bgame/bg_local.h"
+    "volatile[ \\t]+uint32_t[ \\t]+cullIn"
+    2
+    "both MP and SP pose state words must remain fixed-width atomic storage")
+require_source_contains(
+    "bgame/bg_local.h"
+    "RUNTIME_OFFSET(cpose_t, cullIn, 0x8, 0x8);"
+    "the MP pose atomic word must retain its x86 and native offsets")
+require_source_contains(
+    "bgame/bg_local.h"
+    "RUNTIME_SIZE(cpose_t, 0x64, 0x68);"
+    "the MP pose layout must retain its x86 and native sizes")
+require_source_contains(
+    "bgame/bg_local.h"
+    "RUNTIME_OFFSET(cpose_t, cullIn, 0x10, 0x18);"
+    "the SP pose atomic word must retain its x86 and native offsets")
+require_source_contains(
+    "bgame/bg_local.h"
+    "RUNTIME_SIZE(cpose_t, 0x54, 0x60);"
+    "the SP pose layout must retain its x86 and native sizes")
+
+foreach(_native_pose_atomic_token
+    "Windows.h"
+    "windows.h"
+    "Interlocked"
+    "0xFFFFFFF0"
+)
+    require_source_not_contains(
+        "cgame/cg_pose_atomic.h"
+        "${_native_pose_atomic_token}"
+        "the pose atomic protocol must remain platform-neutral")
+endforeach()
+require_source_not_matches(
+    "cgame/cg_pose_atomic.h"
+    "(^|[^A-Za-z0-9_])LONG([^A-Za-z0-9_]|$)"
+    "the pose atomic protocol must not use a native Windows word")
+require_source_contains(
+    "cgame/cg_pose_atomic.h"
+    "(void)Sys_AtomicCompareExchange(state, kUsed, kIdle);"
+    "a used notification must only claim idle state and never downgrade culled")
+require_source_contains(
+    "cgame/cg_pose_atomic.h"
+    "Sys_AtomicStore(state, kCulled);"
+    "a culled notification must publish the strongest pending state")
+require_source_contains(
+    "cgame/cg_pose_atomic.h"
+    "return Sys_AtomicExchange(state, kIdle);"
+    "pose consumers must atomically claim and clear one pending request")
+require_source_contains(
+    "cgame/cg_pose_atomic.h"
+    "return Sys_AtomicLoad(state);"
+    "non-consuming pose readers must use an atomic load")
+require_source_match_count(
+    "cgame/cg_pose_atomic.h"
+    "Sys_AtomicStore\\(state, kIdle\\)"
+    1
+    "pose reset must atomically restore idle state")
+
+file(GLOB_RECURSE _pose_access_sources
+    "${SOURCE_ROOT}/src/*.cpp"
+    "${SOURCE_ROOT}/src/*.h")
+set(_pose_field_access_count 0)
+set(_wrapped_pose_field_access_count 0)
+foreach(_pose_access_source IN LISTS _pose_access_sources)
+    file(READ "${_pose_access_source}" _pose_access_text)
+    string(REGEX MATCHALL
+        "(\\.|->)cullIn"
+        _pose_field_accesses
+        "${_pose_access_text}")
+    string(REGEX MATCHALL
+        "cg::pose_atomic::(MarkUsed|MarkCulled|Consume|Peek|Reset)[ \\t\\r\\n]*\\([^;]*(\\.|->)cullIn"
+        _wrapped_pose_field_accesses
+        "${_pose_access_text}")
+    list(LENGTH _pose_field_accesses _pose_source_access_count)
+    list(LENGTH _wrapped_pose_field_accesses _wrapped_pose_source_access_count)
+    math(EXPR _pose_field_access_count
+        "${_pose_field_access_count} + ${_pose_source_access_count}")
+    math(EXPR _wrapped_pose_field_access_count
+        "${_wrapped_pose_field_access_count} + ${_wrapped_pose_source_access_count}")
+endforeach()
+if (NOT _pose_field_access_count EQUAL 10
+    OR NOT _pose_field_access_count EQUAL _wrapped_pose_field_access_count)
+    message(FATAL_ERROR
+        "Every cpose_t::cullIn field access must use cg::pose_atomic: "
+        "${_wrapped_pose_field_access_count}/${_pose_field_access_count} wrapped "
+        "(expected 10 current consumers). Update this topology gate only for an "
+        "intentional, helper-wrapped consumer change.")
+endif()
+
+# Skeleton caches use a fixed-width cursor and generation word embedded in
+# frozen engine structures.  The shared helper owns arithmetic and atomic
+# transitions without importing a native ABI-sized atomic type.
+foreach(_skel_layout_header
+    "client/client.h"
+    "client_mp/client_mp.h"
+    "server/server.h"
+    "server_mp/server_mp.h"
+)
+    require_source_match_count(
+        "${_skel_layout_header}"
+        "volatile[ \\t]+uint32_t[ \\t]+skelTimeStamp"
+        1
+        "skeleton epochs must remain exact-width storage")
+    require_source_match_count(
+        "${_skel_layout_header}"
+        "volatile[ \\t]+uint32_t[ \\t]+skelMemPos"
+        1
+        "skeleton arena cursors must remain exact-width storage")
+endforeach()
+
+foreach(_native_skel_atomic_token
+    "Windows.h"
+    "windows.h"
+    "Interlocked"
+    "0xFFFFFFF0"
+)
+    require_source_not_contains(
+        "qcommon/skel_memory_atomic.h"
+        "${_native_skel_atomic_token}"
+        "the skeleton arena protocol must remain platform-neutral")
+endforeach()
+require_source_not_matches(
+    "qcommon/skel_memory_atomic.h"
+    "(^|[^A-Za-z0-9_])LONG([^A-Za-z0-9_]|$)"
+    "the skeleton arena protocol must not use a native Windows word")
+require_source_contains(
+    "qcommon/skel_memory_atomic.h"
+    "class ResetGuard"
+    "skeleton resetters must be serialized across the complete publication scope")
+require_source_contains(
+    "qcommon/skel_memory_atomic.h"
+    "while (Sys_AtomicCompareExchange(gate_, 1u, 0u) != 0u)"
+    "the skeleton reset guard must claim one fixed-width owner")
+require_source_contains(
+    "qcommon/skel_memory_atomic.h"
+    "Sys_AtomicStore(gate_, 0u);"
+    "the skeleton reset guard must release ownership atomically")
+require_source_contains(
+    "qcommon/skel_memory_atomic.h"
+    "value != 0u && (value & (value - 1u)) == 0u"
+    "arena alignment must be a nonzero power of two")
+require_source_contains(
+    "qcommon/skel_memory_atomic.h"
+    "if (value > kInvalidOffset - mask)"
+    "aligned reservation sizes must reject uint32 overflow")
+require_source_contains(
+    "qcommon/skel_memory_atomic.h"
+    "if (!storage || storageBytes > kInvalidOffset
+        || !IsPowerOfTwo(alignment))"
+    "arena views must reject null, oversized, and invalidly aligned storage")
+require_source_contains(
+    "qcommon/skel_memory_atomic.h"
+    "static_cast<std::uint32_t>(storageBytes) - padding"
+    "arena capacity must account for base-alignment padding")
+require_source_contains(
+    "qcommon/skel_memory_atomic.h"
+    "if ((observed & (alignment - 1u)) != 0u
+            || observed > capacity
+            || reservedBytes > capacity - observed)"
+    "reservations must reject corrupt alignment, invalid cursors, and overflow-safe exhaustion")
+require_source_contains(
+    "qcommon/skel_memory_atomic.h"
+    "const std::uint32_t previous = Sys_AtomicCompareExchange(
+            cursor,
+            desired,
+            observed);"
+    "arena cursor publication must use a checked compare/exchange")
+require_source_contains(
+    "qcommon/skel_memory_atomic.h"
+    "if (desired == 0u)
+        {
+            if (onWrap)
+                onWrap();
+            desired = 1u;
+        }"
+    "zero must remain reserved when the skeleton epoch rolls over")
+require_source_contains(
+    "qcommon/skel_memory_atomic.h"
+    "void (*const onWrap)() = nullptr"
+    "skeleton epoch advancement must accept an invalidation callback for full-cycle reuse")
+require_source_ordered(
+    "qcommon/skel_memory_atomic.h"
+    "onWrap();"
+    "const std::uint32_t previous = Sys_AtomicCompareExchange(
+            epoch,"
+    "full-cycle invalidation must run before epoch one can be published")
+require_source_contains(
+    "qcommon/skel_memory_atomic.h"
+    "return std::bit_cast<std::int32_t>(epoch);"
+    "engine timestamps must preserve the unsigned epoch bit pattern")
+require_source_contains(
+    "qcommon/skel_memory_atomic.h"
+    "const std::uint32_t previous = Sys_AtomicCompareExchange(
+            warnedEpoch,
+            epoch,
+            observed);"
+    "skeleton exhaustion warnings must be claimed once per epoch")
+
+set(_skel_migrated_sources
+    "client/cl_cgame.cpp"
+    "client/cl_main.cpp"
+    "client/cl_pose.cpp"
+    "client_mp/cl_cgame_mp.cpp"
+    "client_mp/cl_main_mp.cpp"
+    "client_mp/cl_pose_mp.cpp"
+    "server/sv_game.cpp"
+    "server/sv_init.cpp"
+)
+foreach(_skel_migrated_source IN LISTS _skel_migrated_sources)
+    foreach(_retired_skel_token
+        "Interlocked"
+        "0xFFFFFFF0"
+        "warnCount"
+    )
+        require_source_not_contains(
+            "${_skel_migrated_source}"
+            "${_retired_skel_token}"
+            "migrated skeleton code must not restore native atomics, hardcoded masks, or racy warning counters")
+    endforeach()
+    require_source_not_matches(
+        "${_skel_migrated_source}"
+        "(^|[^A-Za-z0-9_])LONG([^A-Za-z0-9_]|$)"
+        "migrated skeleton code must not use a native Windows word")
+endforeach()
+require_source_not_contains(
+    "client_mp/cl_pose_mp.cpp"
+    "0x3FFF0"
+    "MP skeleton allocation must use exact aligned arena capacity instead of a hardcoded under-allocation")
+
+foreach(_skel_arena_consumer
+    "client/cl_main.cpp"
+    "client/cl_pose.cpp"
+    "client_mp/cl_main_mp.cpp"
+    "client_mp/cl_pose_mp.cpp"
+    "server/sv_game.cpp"
+)
+    require_all_occurrences_wrapped(
+        "${_skel_arena_consumer}"
+        "skel_memory_atomic::MakeArenaView"
+        "skel_memory_atomic::MakeArenaView[ \\t\\r\\n]*\\([^;]*sizeof[ \\t\\r\\n]*\\("
+        "every skeleton arena view must derive capacity from its actual backing array")
+endforeach()
+foreach(_skel_allocator
+    "client/cl_pose.cpp"
+    "client_mp/cl_pose_mp.cpp"
+    "server/sv_game.cpp"
+)
+    require_source_contains(
+        "${_skel_allocator}"
+        "alignedSize <= arena.capacity"
+        "skeleton allocation must reject requests larger than exact aligned capacity")
+    require_all_occurrences_wrapped(
+        "${_skel_allocator}"
+        "skel_memory_atomic::ReserveAligned"
+        "skel_memory_atomic::ReserveAligned[ \\t\\r\\n]*\\([^;]*skelMemPos[^;]*arena.capacity"
+        "skeleton reservations must use their embedded atomic cursor and exact arena capacity")
+endforeach()
+
+# ResetGuard owns the complete arena publication scope.  Within it, base and
+# cursor publication precede generation advancement, whose wrap callback
+# invalidates old DObj skeletons before epoch one becomes observable.
+require_source_ordered(
+    "client/cl_main.cpp"
+    "const skel_memory_atomic::ResetGuard resetGuard(&s_skelResetGate);"
+    "clients[0].skelMemoryStart = arena.base;"
+    "SP client reset ownership must cover arena publication")
+require_source_ordered(
+    "client/cl_main.cpp"
+    "clients[0].skelMemoryStart = arena.base;"
+    "Sys_AtomicStore(&clients[0].skelMemPos, 0u);"
+    "SP client skeleton reset must publish its aligned base before its empty cursor")
+require_source_ordered(
+    "client/cl_main.cpp"
+    "Sys_AtomicStore(&clients[0].skelMemPos, 0u);"
+    "skel_memory_atomic::AdvanceEpoch("
+    "SP client skeleton reset must empty its cursor before advancing its epoch")
+require_source_contains(
+    "client/cl_main.cpp"
+    "skel_memory_atomic::AdvanceEpoch(
+        &clients[0].skelTimeStamp,
+        Com_ClientDObjClearAllSkel);"
+    "SP client epoch reuse must atomically couple client DObj invalidation")
+require_source_ordered(
+    "client_mp/cl_main_mp.cpp"
+    "const skel_memory_atomic::ResetGuard resetGuard(&s_skelResetGate);"
+    "skelGlob->skelMemoryStart = arena.base;"
+    "MP client reset ownership must cover arena publication")
+require_source_ordered(
+    "client_mp/cl_main_mp.cpp"
+    "skelGlob->skelMemoryStart = arena.base;"
+    "Sys_AtomicStore(&skelGlob->skelMemPos, 0u);"
+    "MP client skeleton reset must publish its aligned base before its empty cursor")
+require_source_ordered(
+    "client_mp/cl_main_mp.cpp"
+    "Sys_AtomicStore(&skelGlob->skelMemPos, 0u);"
+    "skel_memory_atomic::AdvanceEpoch("
+    "MP client skeleton reset must empty its cursor before advancing its epoch")
+require_source_contains(
+    "client_mp/cl_main_mp.cpp"
+    "skel_memory_atomic::AdvanceEpoch(
+        &skelGlob->skelTimeStamp,
+        Com_ClientDObjClearAllSkel);"
+    "MP client epoch reuse must atomically couple client DObj invalidation")
+require_source_ordered(
+    "server/sv_game.cpp"
+    "const skel_memory_atomic::ResetGuard resetGuard(&s_skelResetGate);"
+    "g_sv_skel_memory_start = arena.base;"
+    "server reset ownership must cover arena publication")
+require_source_ordered(
+    "server/sv_game.cpp"
+    "g_sv_skel_memory_start = arena.base;"
+    "Sys_AtomicStore(&sv.skelMemPos, 0u);"
+    "server skeleton reset must publish its aligned base before its empty cursor")
+require_source_ordered(
+    "server/sv_game.cpp"
+    "Sys_AtomicStore(&sv.skelMemPos, 0u);"
+    "skel_memory_atomic::AdvanceEpoch("
+    "server skeleton reset must empty its cursor before advancing its epoch")
+require_source_contains(
+    "server/sv_game.cpp"
+    "skel_memory_atomic::AdvanceEpoch(
+        &sv.skelTimeStamp,
+        Com_ServerDObjClearAllSkel);"
+    "server epoch reuse must atomically couple server DObj invalidation")
+require_source_contains(
+    "server/sv_init.cpp"
+    "Sys_AtomicStore(&sv.skelTimeStamp, 0u);"
+    "server startup must initialize its atomic skeleton epoch through the portable boundary")
+
+require_source_contains(
+    "qcommon/qcommon.h"
+    "void __cdecl Com_ServerDObjClearAllSkel();"
+    "the full-cycle server skeleton invalidation routine must be publicly declared")
+require_source_contains(
+    "qcommon/dobj_management.cpp"
+    "void __cdecl Com_ServerDObjClearAllSkel()"
+    "the full-cycle server skeleton invalidation routine must be implemented")
+require_source_contains(
+    "qcommon/dobj_management.cpp"
+    "for (int handle = 0; handle < SERVER_DOBJ_HANDLE_MAX; ++handle)"
+    "server full-cycle invalidation must visit every possible DObj handle")
+require_source_contains(
+    "qcommon/dobj_management.cpp"
+    "if (serverObjMap[handle])
+            DObjSkelClear(&objBuf[serverObjMap[handle]]);"
+    "server full-cycle invalidation must clear every live mapped DObj skeleton")
+
+# Allocation exhaustion can reset and advance the server arena, so both DObj
+# creation paths must reload the generation immediately before publishing a
+# skeleton.  The only two DObjCreateSkel calls in this allocator unit follow
+# their checked SV_AllocSkelMemory calls.
+file(READ "${SOURCE_ROOT}/src/server/sv_game.cpp" _sv_skel_protocol_source)
+string(REPLACE ";" "" _sv_skel_protocol_source "${_sv_skel_protocol_source}")
+string(REGEX MATCHALL
+    "timeStamp = skel_memory_atomic::LoadTimestamp\\(&sv.skelTimeStamp\\)
+    DObjCreateSkel\\(obj, buf, timeStamp\\)"
+    _sv_post_allocation_epoch_reloads
+    "${_sv_skel_protocol_source}")
+list(LENGTH _sv_post_allocation_epoch_reloads _sv_post_allocation_epoch_reload_count)
+if (NOT _sv_post_allocation_epoch_reload_count EQUAL 2)
+    message(FATAL_ERROR
+        "Server DObj creation must reload the skeleton epoch immediately "
+        "before publication: expected 2 paths, found "
+        "${_sv_post_allocation_epoch_reload_count}")
+endif()
+require_source_match_count(
+    "server/sv_game.cpp"
+    "Com_Error\\([^;]*invalid skeleton allocation"
+    2
+    "server skeleton allocation failures must drop instead of reporting a usable matrix")
+
+# Catch any new raw field access anywhere in production code.  Epoch reads and
+# transitions remain inside skel_memory_atomic, while startup initialization
+# retains the same fixed-width Sys_AtomicStore boundary.
+file(GLOB_RECURSE _skel_access_sources
+    "${SOURCE_ROOT}/src/*.cpp"
+    "${SOURCE_ROOT}/src/*.h")
+set(_skel_cursor_access_count 0)
+set(_wrapped_skel_cursor_access_count 0)
+set(_skel_epoch_access_count 0)
+set(_wrapped_skel_epoch_access_count 0)
+foreach(_skel_access_source IN LISTS _skel_access_sources)
+    file(READ "${_skel_access_source}" _skel_access_text)
+    string(REGEX MATCHALL
+        "(\\.|->)skelMemPos"
+        _skel_cursor_accesses
+        "${_skel_access_text}")
+    string(REGEX MATCHALL
+        "(Sys_AtomicStore|skel_memory_atomic::[A-Za-z0-9_]+)[ \\t\\r\\n]*\\([^;]*(\\.|->)skelMemPos"
+        _wrapped_skel_cursor_accesses
+        "${_skel_access_text}")
+    string(REGEX MATCHALL
+        "(\\.|->)skelTimeStamp"
+        _skel_epoch_accesses
+        "${_skel_access_text}")
+    string(REGEX MATCHALL
+        "(Sys_AtomicStore|skel_memory_atomic::[A-Za-z0-9_]+)[ \\t\\r\\n]*\\([^;]*(\\.|->)skelTimeStamp"
+        _wrapped_skel_epoch_accesses
+        "${_skel_access_text}")
+    list(LENGTH _skel_cursor_accesses _skel_source_cursor_count)
+    list(LENGTH _wrapped_skel_cursor_accesses _wrapped_skel_source_cursor_count)
+    list(LENGTH _skel_epoch_accesses _skel_source_epoch_count)
+    list(LENGTH _wrapped_skel_epoch_accesses _wrapped_skel_source_epoch_count)
+    math(EXPR _skel_cursor_access_count
+        "${_skel_cursor_access_count} + ${_skel_source_cursor_count}")
+    math(EXPR _wrapped_skel_cursor_access_count
+        "${_wrapped_skel_cursor_access_count} + ${_wrapped_skel_source_cursor_count}")
+    math(EXPR _skel_epoch_access_count
+        "${_skel_epoch_access_count} + ${_skel_source_epoch_count}")
+    math(EXPR _wrapped_skel_epoch_access_count
+        "${_wrapped_skel_epoch_access_count} + ${_wrapped_skel_source_epoch_count}")
+endforeach()
+if (_skel_cursor_access_count EQUAL 0
+    OR NOT _skel_cursor_access_count EQUAL _wrapped_skel_cursor_access_count)
+    message(FATAL_ERROR
+        "Every skeleton cursor field access must use the portable boundary: "
+        "${_wrapped_skel_cursor_access_count}/${_skel_cursor_access_count} wrapped")
+endif()
+if (_skel_epoch_access_count EQUAL 0
+    OR NOT _skel_epoch_access_count EQUAL _wrapped_skel_epoch_access_count)
+    message(FATAL_ERROR
+        "Every skeleton epoch field access must use the portable boundary: "
+        "${_wrapped_skel_epoch_access_count}/${_skel_epoch_access_count} wrapped")
+endif()
+
 set(_format_sensitive_sources
     "cgame/cg_hudelem.cpp"
     "cgame/cg_info.cpp"

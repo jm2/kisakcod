@@ -21,6 +21,7 @@
 #include "cg_compassfriendlies.h"
 
 #include <bgame/bg_local.h>
+#include <cgame/cg_pose_atomic.h>
 
 void __cdecl LocalConvertQuatToMat(const DObjAnimMat *mat, float (*axis)[3])
 {
@@ -271,7 +272,7 @@ void __cdecl CG_mg42_PreControllers(int localClientNum, const DObj_s *obj, centi
     cent->pose.turret.playerUsing = v5;
     if (v5)
     {
-        cent->pose.cullIn = 0;
+        cg::pose_atomic::Reset(&cent->pose.cullIn);
         cent->pose.actor.proneType = (int)cgArray[0].refdefViewAngles;
     }
     else
@@ -1082,7 +1083,7 @@ void __cdecl CG_Vehicle_PreControllers(int localClientNum, const DObj_s *obj, ce
     DObjGetBoneIndex(obj, scr_const.tag_turret, &cent->pose.vehicle.tag_turret);
     DObjGetBoneIndex(obj, scr_const.tag_barrel, &cent->pose.vehicle.tag_barrel);
 
-    if (cent->pose.cullIn == 2)
+    if (cg::pose_atomic::Peek(&cent->pose.cullIn) == cg::pose_atomic::kCulled)
     {
         height = cent->pose.actor.height;
         AnglesToAxis(cent->pose.angles, axis);
@@ -2168,22 +2169,20 @@ void __cdecl CG_GetPoseLightingHandle(const cpose_t *pose)
 void __cdecl CG_PredictiveSkinCEntity(GfxSceneEntity *sceneEnt)
 {
     GfxSceneEntityInfo v2; // r11
-    int cullIn; // r10
+    uint32_t cullIn; // r10
 
     iassert(sceneEnt);
 
     if (!cl_freemove->current.integer)
     {
         v2.pose = sceneEnt->info.pose;
-        cullIn = v2.pose->cullIn;
-        if (cullIn == 1)
+        cullIn = cg::pose_atomic::Consume(&v2.pose->cullIn);
+        if (cullIn == cg::pose_atomic::kUsed)
         {
-            v2.pose->cullIn = 0;
             R_UpdateXModelBoundsDelayed(sceneEnt);
         }
-        else if (cullIn == 2)
+        else if (cullIn == cg::pose_atomic::kCulled)
         {
-            v2.pose->cullIn = 0;
             R_SkinGfxEntityDelayed(sceneEnt);
         }
     }
@@ -2433,4 +2432,3 @@ int __cdecl CG_DObjGetWorldTagPos(const cpose_t *pose, DObj_s *obj, unsigned int
 
     return 1;
 }
-

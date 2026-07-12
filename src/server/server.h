@@ -379,8 +379,8 @@ struct server_t
     int checksum;
     server_demo_t demo;
     int levelTime;
-    int skelTimeStamp;
-    unsigned int skelMemPos;
+    volatile uint32_t skelTimeStamp;
+    volatile uint32_t skelMemPos;
     int previousTime;
     int previousTimeIndex;
     int previousTotalTimes[10];

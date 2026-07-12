@@ -1,5 +1,7 @@
 #pragma once
 
+#include <universal/kisak_abi.h>
+
 #ifdef KISAK_MP
 #include <qcommon/msg_mp.h>
 #elif KISAK_SP
@@ -1169,7 +1171,7 @@ struct GfxSkinCacheEntry // sizeof=0xC
     uint16_t ageCount;
 };
 static_assert(sizeof(GfxSkinCacheEntry) == 0xC);
-struct cpose_t // sizeof=0x64
+struct cpose_t // sizeof=0x64 (x86), 0x68 (64-bit)
 {                                       // ...
     uint16_t lightingHandle;
     uint8_t eType;
@@ -1191,7 +1193,8 @@ struct cpose_t // sizeof=0x64
         CEntFx fx;
     };
 };
-static_assert(sizeof(cpose_t) == 0x64);
+RUNTIME_OFFSET(cpose_t, cullIn, 0x8, 0x8);
+RUNTIME_SIZE(cpose_t, 0x64, 0x68);
 #elif KISAK_SP
 struct CEntActorInfo
 {
@@ -1209,7 +1212,7 @@ struct cpose_t
     int ragdollHandle;
     //int physObjId;
     uintptr_t physObjId;
-    volatile int cullIn;
+    volatile uint32_t cullIn;
     float origin[3];
     float angles[3];
     //$51809EA76892896F64281DFB626CE797 ___u9;
@@ -1221,6 +1224,8 @@ struct cpose_t
         CEntFx fx;
     };
 };
+RUNTIME_OFFSET(cpose_t, cullIn, 0x10, 0x18);
+RUNTIME_SIZE(cpose_t, 0x54, 0x60);
 #endif
 
 struct centity_s // sizeof=0x1DC

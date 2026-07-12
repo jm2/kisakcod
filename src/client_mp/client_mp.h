@@ -139,7 +139,7 @@ struct clientActive_t // sizeof=0x1B1BDC
     int32_t cgamePredictedDataServerTime;
     float viewangles[3];
     int32_t serverId;
-    int32_t skelTimeStamp;                  // XREF: CL_GetSkelTimeStamp(void)+E/r
+    volatile uint32_t skelTimeStamp;        // XREF: CL_GetSkelTimeStamp(void)+E/r
     volatile uint32_t skelMemPos;            // XREF: CL_AllocSkelMemory(uint)+97/o
     char skelMemory[262144];
     char *skelMemoryStart;              // XREF: CL_AllocSkelMemory(uint)+66/r

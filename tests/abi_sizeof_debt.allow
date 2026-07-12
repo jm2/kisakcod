@@ -82,7 +82,6 @@ bgame/bg_local.h|static_assert:sizeof(bgs_t_human)==0x10|1
 bgame/bg_local.h|static_assert:sizeof(clientControllers_t)==0x60|1
 bgame/bg_local.h|static_assert:sizeof(clientInfo_t)==0x4CC|1
 bgame/bg_local.h|static_assert:sizeof(controller_info_t)==0x60|1
-bgame/bg_local.h|static_assert:sizeof(cpose_t)==0x64|1
 bgame/bg_local.h|static_assert:sizeof(gitem_s)==0x4|1
 bgame/bg_local.h|static_assert:sizeof(hudElemSoundInfo_t)==0x4|1
 bgame/bg_local.h|static_assert:sizeof(hudelem_s)==0xA0|1

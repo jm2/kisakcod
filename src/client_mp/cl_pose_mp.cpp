@@ -5,38 +5,59 @@
 #include "client_mp.h"
 
 #include <gfx_d3d/r_scene.h>
+#include <qcommon/skel_memory_atomic.h>
 #include <xanim/dobj_utils.h>
+
+namespace
+{
+constexpr uint32_t kSkelMemoryAlignment = 16u;
+volatile uint32_t s_skelWarningEpoch;
+}
 
 char *__cdecl CL_AllocSkelMemory(uint32_t size)
 {
-    volatile uint32_t *Addend; // [esp+0h] [ebp-Ch]
-    char *result; // [esp+4h] [ebp-8h]
-    int skelMemPos; // [esp+8h] [ebp-4h]
-    uint32_t sizea; // [esp+14h] [ebp+8h]
-
+    iassert(size);
     if (!size)
-        MyAssertHandler(".\\client_mp\\cl_pose_mp.cpp", 30, 0, "%s", "size");
-    sizea = (size + 15) & 0xFFFFFFF0;
-    if (sizea > 0x3FFF0)
-        MyAssertHandler(".\\client_mp\\cl_pose_mp.cpp", 33, 0, "%s", "size <= CL_SKEL_MEMORY_SIZE - SKEL_MEM_ALIGNMENT");
-    if (!clients[R_GetLocalClientNum()].skelMemoryStart)
-        MyAssertHandler(".\\client_mp\\cl_pose_mp.cpp", 35, 0, "%s", "skel_glob->skelMemoryStart");
-    Addend = &clients[R_GetLocalClientNum()].skelMemPos;
-    skelMemPos = InterlockedExchangeAdd(Addend, sizea);
-    result = &clients[R_GetLocalClientNum()].skelMemoryStart[skelMemPos];
-    if (sizea + skelMemPos > 0x3FFF0)
-        return 0;
-    if (!result)
-        MyAssertHandler(".\\client_mp\\cl_pose_mp.cpp", 46, 0, "%s", "result");
-    return result;
+        return nullptr;
+
+    clientActive_t *const skelGlob = &clients[R_GetLocalClientNum()];
+    const skel_memory_atomic::ArenaView arena =
+        skel_memory_atomic::MakeArenaView(
+            skelGlob->skelMemory,
+            sizeof(skelGlob->skelMemory),
+            kSkelMemoryAlignment);
+    iassert(arena.base);
+    iassert(skelGlob->skelMemoryStart == arena.base);
+    if (!arena.base || skelGlob->skelMemoryStart != arena.base)
+        return nullptr;
+
+    uint32_t alignedSize = 0u;
+    const bool validSize = skel_memory_atomic::CheckedAlignUp(
+        size,
+        kSkelMemoryAlignment,
+        &alignedSize)
+        && alignedSize <= arena.capacity;
+    iassert(validSize);
+    if (!validSize)
+        return nullptr;
+
+    const uint32_t offset = skel_memory_atomic::ReserveAligned(
+        &skelGlob->skelMemPos,
+        size,
+        arena.capacity,
+        kSkelMemoryAlignment);
+    if (offset == skel_memory_atomic::kInvalidOffset)
+        return nullptr;
+
+    return arena.base + offset;
 }
 
 int __cdecl CL_GetSkelTimeStamp()
 {
-    return clients[R_GetLocalClientNum()].skelTimeStamp;
+    return skel_memory_atomic::LoadTimestamp(
+        &clients[R_GetLocalClientNum()].skelTimeStamp);
 }
 
-int warnCount_0;
 int __cdecl CL_DObjCreateSkelForBones(const DObj_s *obj, int *partBits, DObjAnimMat **pMatOut)
 {
     char *buf; // [esp+0h] [ebp-Ch]
@@ -64,13 +85,13 @@ int __cdecl CL_DObjCreateSkelForBones(const DObj_s *obj, int *partBits, DObjAnim
         else
         {
             *pMatOut = 0;
-            if (warnCount_0 != timeStamp)
+            if (skel_memory_atomic::ClaimWarning(
+                    &s_skelWarningEpoch,
+                    timeStamp))
             {
-                warnCount_0 = timeStamp;
                 Com_PrintWarning(14, "WARNING: CL_SKEL_MEMORY_SIZE exceeded - not calculating skeleton\n");
             }
             return 1;
         }
     }
 }
-

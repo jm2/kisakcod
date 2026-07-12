@@ -177,6 +177,15 @@ void __cdecl Com_ClientDObjClearAllSkel()
     }
 }
 
+void __cdecl Com_ServerDObjClearAllSkel()
+{
+    for (int handle = 0; handle < SERVER_DOBJ_HANDLE_MAX; ++handle)
+    {
+        if (serverObjMap[handle])
+            DObjSkelClear(&objBuf[serverObjMap[handle]]);
+    }
+}
+
 DObj_s *__cdecl Com_ServerDObjCreate(
     DObjModel_s *dobjModels,
     uint16_t numModels,

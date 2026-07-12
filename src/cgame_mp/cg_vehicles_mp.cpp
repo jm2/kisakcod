@@ -10,6 +10,7 @@
 #include <xanim/dobj_utils.h>
 #include <EffectsCore/fx_system.h>
 #include <game_mp/g_public_mp.h>
+#include <cgame/cg_pose_atomic.h>
 
 //struct vehicleEffects(*)[8] vehEffects 8284e650     cg_vehicles_mp.obj
 
@@ -502,7 +503,7 @@ void __cdecl SetupPoseControllers(int32_t localClientNum, DObj_s *obj, centity_s
     DObjGetBoneIndex(obj, scr_const.tag_body, &cent->pose.vehicle.tag_body);
     DObjGetBoneIndex(obj, scr_const.tag_turret, &cent->pose.vehicle.tag_turret);
     DObjGetBoneIndex(obj, scr_const.tag_barrel, &cent->pose.vehicle.tag_barrel);
-    if (cent->pose.cullIn == 2)
+    if (cg::pose_atomic::Peek(&cent->pose.cullIn) == cg::pose_atomic::kCulled)
     {
         CG_DObjGetWorldTagMatrix(&cent->pose, obj, scr_const.tag_origin, (float (*)[3])axis[4], fxInfo->soundEngineOrigin);
         fxInfo->soundEnabled = 1;

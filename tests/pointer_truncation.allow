@@ -8,7 +8,6 @@ cgame_mp/cg_main_mp.cpp|1
 cgame_mp/cg_pose_mp.cpp|1
 cgame_mp/cg_pose_mp.cpp|2
 cgame_mp/cg_pose_mp.cpp|3
-client_mp/cl_pose_mp.cpp|1
 common/brush_edges.cpp|1
 devgui/devgui.cpp|1
 EffectsCore/fx_update.cpp|1
@@ -32,7 +31,6 @@ script/scr_debugger.cpp|1
 script/scr_debugger.cpp|2
 script/scr_parser.cpp|1
 script/scr_parser.cpp|2
-server/sv_game.cpp|1
 universal/com_memory.cpp|1
 universal/com_memory.cpp|2
 universal/com_memory.cpp|3

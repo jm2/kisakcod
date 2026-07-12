@@ -33,6 +33,7 @@
 #include <universal/profile.h>
 #include <qcommon/com_bsp.h>
 #include <qcommon/identity.h>
+#include <qcommon/skel_memory_atomic.h>
 
 #include <ui_mp/ui_mp.h>
 
@@ -407,8 +408,6 @@ void __cdecl CL_MapLoading(const char *mapname)
 
 void __cdecl CL_ResetSkeletonCache(int32_t localClientNum)
 {
-    clientActive_t *v1; // [esp+0h] [ebp-4h]
-
     if (!Sys_IsMainThread())
         MyAssertHandler(".\\client_mp\\cl_main_mp.cpp", 1512, 0, "%s", "Sys_IsMainThread()");
     if (!clients)
@@ -421,12 +420,25 @@ void __cdecl CL_ResetSkeletonCache(int32_t localClientNum)
             "localClientNum doesn't index MAX_LOCAL_CLIENTS\n\t%i not in [0, %i)",
             localClientNum,
             1);
-    v1 = &clients[localClientNum];
-    if (!++v1->skelTimeStamp)
-        ++v1->skelTimeStamp;
-    v1->skelMemoryStart = reinterpret_cast<char *>(
-        reinterpret_cast<uintptr_t>(&v1->skelMemory[15]) & ~uintptr_t(15));
-    v1->skelMemPos = 0;
+    static volatile uint32_t s_skelResetGate;
+    const skel_memory_atomic::ResetGuard resetGuard(&s_skelResetGate);
+    clientActive_t *const skelGlob = &clients[localClientNum];
+    const skel_memory_atomic::ArenaView arena =
+        skel_memory_atomic::MakeArenaView(
+            skelGlob->skelMemory,
+            sizeof(skelGlob->skelMemory),
+            16u);
+    iassert(arena.base);
+    if (!arena.base)
+        return;
+
+    // Reset is externally quiesced.  Publish the arena and empty cursor before
+    // advancing the epoch that permits workers to consume the new generation.
+    skelGlob->skelMemoryStart = arena.base;
+    Sys_AtomicStore(&skelGlob->skelMemPos, 0u);
+    skel_memory_atomic::AdvanceEpoch(
+        &skelGlob->skelTimeStamp,
+        Com_ClientDObjClearAllSkel);
 }
 
 void __cdecl CL_ClearState(int32_t localClientNum)

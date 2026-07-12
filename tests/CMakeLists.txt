@@ -100,6 +100,38 @@ add_test(
 )
 set_tests_properties(database-load-atomic-protocols PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-skel-memory-atomic-tests
+    skel_memory_atomic_tests.cpp
+)
+target_include_directories(kisakcod-skel-memory-atomic-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-skel-memory-atomic-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-skel-memory-atomic-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-skel-memory-atomic-tests)
+set_target_properties(kisakcod-skel-memory-atomic-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME skeleton-memory-atomic-protocols
+    COMMAND kisakcod-skel-memory-atomic-tests
+)
+set_tests_properties(skeleton-memory-atomic-protocols PROPERTIES TIMEOUT 20)
+
+add_executable(kisakcod-cg-pose-atomic-tests
+    cg_pose_atomic_tests.cpp
+)
+target_include_directories(kisakcod-cg-pose-atomic-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-cg-pose-atomic-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-cg-pose-atomic-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-cg-pose-atomic-tests)
+set_target_properties(kisakcod-cg-pose-atomic-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME cgame-pose-atomic-protocols
+    COMMAND kisakcod-cg-pose-atomic-tests
+)
+set_tests_properties(cgame-pose-atomic-protocols PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-script-string-atomic-tests
     script_string_atomic_tests.cpp
 )

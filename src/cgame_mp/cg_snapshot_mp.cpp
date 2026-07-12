@@ -14,6 +14,7 @@
 #include <EffectsCore/fx_system.h>
 #include <aim_assist/aim_assist.h>
 #include <universal/profile.h>
+#include <cgame/cg_pose_atomic.h>
 
 void __cdecl CG_ShutdownEntity(int localClientNum, centity_s *cent)
 {
@@ -397,7 +398,7 @@ void __cdecl CG_ResetEntity(int localClientNum, centity_s *cent, int newEntity)
     AimAssist_ClearEntityReference(localClientNum, cent->nextState.number);
     qmemcpy(&cent->currentState, &cent->nextState.lerp, sizeof(cent->currentState));
     cent->bTrailMade = 0;
-    cent->pose.cullIn = 0;
+    cg::pose_atomic::Reset(&cent->pose.cullIn);
     if (localClientNum)
         MyAssertHandler(
             "c:\\trees\\cod3\\src\\cgame_mp\\cg_local_mp.h",

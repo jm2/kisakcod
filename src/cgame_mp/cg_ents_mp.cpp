@@ -26,6 +26,7 @@
 #include <script/scr_memorytree.h>
 #include <game_mp/g_public_mp.h>
 #include <universal/profile.h>
+#include <cgame/cg_pose_atomic.h>
 
 float g_entMoveTolVec[3] = { 16.0f, 16.0f, 16.0f };
 
@@ -89,7 +90,7 @@ void __cdecl CG_mg42_PreControllers(DObj_s *obj, centity_s *cent)
     if (cent->pose.turret.playerUsing)
     {
         cent->pose.turret.viewAngles = cgameGlob->refdefViewAngles;
-        cent->pose.cullIn = 0;
+        cg::pose_atomic::Reset(&cent->pose.cullIn);
     }
     else
     {
@@ -1990,15 +1991,13 @@ void __cdecl CG_PredictiveSkinCEntity(GfxSceneEntity *sceneEnt)
     if (!sceneEnt)
         MyAssertHandler(".\\cgame_mp\\cg_ents_mp.cpp", 1810, 0, "%s", "sceneEnt");
     pose = sceneEnt->info.pose;
-    if (pose->cullIn == 1)
+    const uint32_t cullIn = cg::pose_atomic::Consume(&pose->cullIn);
+    if (cullIn == cg::pose_atomic::kUsed)
     {
-        pose->cullIn = 0;
         R_UpdateXModelBoundsDelayed(sceneEnt);
     }
-    else if (pose->cullIn == 2)
+    else if (cullIn == cg::pose_atomic::kCulled)
     {
-        pose->cullIn = 0;
         R_SkinGfxEntityDelayed(sceneEnt);
     }
 }
-

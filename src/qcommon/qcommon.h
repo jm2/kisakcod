@@ -716,6 +716,7 @@ DObj_s *__cdecl Com_ClientDObjCreate(
 	int localClientNum);
 int __cdecl Com_GetFreeDObjIndex();
 void __cdecl Com_ClientDObjClearAllSkel();
+void __cdecl Com_ServerDObjClearAllSkel();
 DObj_s *__cdecl Com_ServerDObjCreate(
 	DObjModel_s *dobjModels,
 	uint16_t numModels,

@@ -20,6 +20,7 @@
 #include <qcommon/threads.h>
 #include <universal/com_files.h>
 #include <universal/com_sndalias.h>
+#include <universal/sys_atomic.h>
 
 const dvar_t *sv_clientFrameRateFix;
 const dvar_t *sv_loadMyChanges;
@@ -127,7 +128,7 @@ void __cdecl SV_StartMap(int randomSeed)
     com_inServerFrame = 0;
     sv.state = SS_LOADING;
     com_time = 0;
-    sv.skelTimeStamp = 0;
+    Sys_AtomicStore(&sv.skelTimeStamp, 0u);
     Dvar_SetInt(cl_paused, 1);
 }
 
@@ -607,8 +608,6 @@ void __cdecl SV_SpawnServer(const char *mapname, int savegame)
         PROF_SCOPED("Check load level");
         SV_CheckLoadLevel(save);
         //sv_startTime = com_frametime;
-        //sv_skelTimeStamp = 49;
-        
     }
 
     
@@ -660,4 +659,3 @@ void __cdecl SV_SpawnServer(const char *mapname, int savegame)
 
     Sys_EndLoadThreadPriorities();
 }
-

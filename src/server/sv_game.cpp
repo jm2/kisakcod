@@ -11,6 +11,7 @@
 #include <universal/com_sndalias.h>
 #include <qcommon/com_bsp.h>
 #include <qcommon/threads.h>
+#include <qcommon/skel_memory_atomic.h>
 
 #ifdef KISAK_MP
 #include <game_mp/g_main_mp.h>
@@ -192,10 +193,24 @@ void __cdecl SV_DObjDumpInfo(gentity_s *ent)
 
 void __cdecl SV_ResetSkeletonCache()
 {
-    if (!++sv.skelTimeStamp)
-        sv.skelTimeStamp = 1;
-    g_sv_skel_memory_start = g_sv_skel_memory;
-    sv.skelMemPos = 0;
+    static volatile uint32_t s_skelResetGate;
+    const skel_memory_atomic::ResetGuard resetGuard(&s_skelResetGate);
+    const skel_memory_atomic::ArenaView arena =
+        skel_memory_atomic::MakeArenaView(
+            g_sv_skel_memory,
+            sizeof(g_sv_skel_memory),
+            SKEL_MEM_ALIGNMENT);
+    iassert(arena.base);
+    if (!arena.base)
+        return;
+
+    // Callers quiesce skeleton users around cache resets.  Publish the empty
+    // arena before the epoch that makes the new generation observable.
+    g_sv_skel_memory_start = arena.base;
+    Sys_AtomicStore(&sv.skelMemPos, 0u);
+    skel_memory_atomic::AdvanceEpoch(
+        &sv.skelTimeStamp,
+        Com_ServerDObjClearAllSkel);
 }
 
 bool __cdecl SV_DObjCreateSkelForBone(DObj_s *obj, int boneIndex)
@@ -203,41 +218,75 @@ bool __cdecl SV_DObjCreateSkelForBone(DObj_s *obj, int boneIndex)
     char *buf; // [esp+0h] [ebp-8h]
     uint32_t len; // [esp+4h] [ebp-4h]
 
-    if (DObjSkelExists(obj, sv.skelTimeStamp))
+    int32_t timeStamp =
+        skel_memory_atomic::LoadTimestamp(&sv.skelTimeStamp);
+    if (DObjSkelExists(obj, timeStamp))
         return DObjSkelIsBoneUpToDate(obj, boneIndex);
     len = DObjGetAllocSkelSize(obj);
     buf = SV_AllocSkelMemory(len);
-    DObjCreateSkel(obj, buf, sv.skelTimeStamp);
+    iassert(buf);
+    if (!buf)
+    {
+        Com_Error(
+            ERR_DROP,
+            "SV_DObjCreateSkelForBone: invalid skeleton allocation (%u bytes)",
+            len);
+        return true;
+    }
+
+    // Allocation may reset an exhausted cache and advance its generation.
+    timeStamp = skel_memory_atomic::LoadTimestamp(&sv.skelTimeStamp);
+    DObjCreateSkel(obj, buf, timeStamp);
     return 0;
 }
 
-int warnCount_2;
+static volatile uint32_t s_skelWarningEpoch;
 char *__cdecl SV_AllocSkelMemory(uint32_t size)
 {
-    char *result; // [esp+0h] [ebp-4h]
-    uint32_t sizea; // [esp+Ch] [ebp+8h]
-
     iassert(size);
-    sizea = (size + 15) & 0xFFFFFFF0;
-    iassert(size <= sizeof(g_sv_skel_memory) - SKEL_MEM_ALIGNMENT);
-    iassert(g_sv_skel_memory_start);
+    if (!size)
+        return nullptr;
 
-    while (1)
+    const skel_memory_atomic::ArenaView arena =
+        skel_memory_atomic::MakeArenaView(
+            g_sv_skel_memory,
+            sizeof(g_sv_skel_memory),
+            SKEL_MEM_ALIGNMENT);
+    iassert(arena.base);
+    iassert(g_sv_skel_memory_start == arena.base);
+    if (!arena.base || g_sv_skel_memory_start != arena.base)
+        return nullptr;
+
+    uint32_t alignedSize = 0u;
+    const bool validSize = skel_memory_atomic::CheckedAlignUp(
+        size,
+        SKEL_MEM_ALIGNMENT,
+        &alignedSize)
+        && alignedSize <= arena.capacity;
+    iassert(validSize);
+    if (!validSize)
+        return nullptr;
+
+    for (;;)
     {
-        result = &g_sv_skel_memory_start[sv.skelMemPos];
-        sv.skelMemPos += sizea;
-        if (sv.skelMemPos <= (sizeof(g_sv_skel_memory) - SKEL_MEM_ALIGNMENT))
-            break;
-        if (warnCount_2 != sv.skelTimeStamp)
+        const uint32_t offset = skel_memory_atomic::ReserveAligned(
+            &sv.skelMemPos,
+            size,
+            arena.capacity,
+            SKEL_MEM_ALIGNMENT);
+        if (offset != skel_memory_atomic::kInvalidOffset)
+            return arena.base + offset;
+
+        const int32_t timeStamp =
+            skel_memory_atomic::LoadTimestamp(&sv.skelTimeStamp);
+        if (skel_memory_atomic::ClaimWarning(
+                &s_skelWarningEpoch,
+                timeStamp))
         {
-            warnCount_2 = sv.skelTimeStamp;
             Com_PrintWarning(15, "WARNING: SV_SKEL_MEMORY_SIZE exceeded\n");
         }
         SV_ResetSkeletonCache();
     }
-
-    iassert(result);
-    return result;
 }
 
 int __cdecl SV_DObjCreateSkelForBones(DObj_s *obj, int *partBits)
@@ -245,11 +294,25 @@ int __cdecl SV_DObjCreateSkelForBones(DObj_s *obj, int *partBits)
     char *buf; // [esp+0h] [ebp-8h]
     uint32_t len; // [esp+4h] [ebp-4h]
 
-    if (DObjSkelExists(obj, sv.skelTimeStamp))
+    int32_t timeStamp =
+        skel_memory_atomic::LoadTimestamp(&sv.skelTimeStamp);
+    if (DObjSkelExists(obj, timeStamp))
         return DObjSkelAreBonesUpToDate(obj, partBits);
     len = DObjGetAllocSkelSize(obj);
     buf = SV_AllocSkelMemory(len);
-    DObjCreateSkel(obj, buf, sv.skelTimeStamp);
+    iassert(buf);
+    if (!buf)
+    {
+        Com_Error(
+            ERR_DROP,
+            "SV_DObjCreateSkelForBones: invalid skeleton allocation (%u bytes)",
+            len);
+        return 1;
+    }
+
+    // Allocation may reset an exhausted cache and advance its generation.
+    timeStamp = skel_memory_atomic::LoadTimestamp(&sv.skelTimeStamp);
+    DObjCreateSkel(obj, buf, timeStamp);
     return 0;
 }
 
@@ -560,11 +623,7 @@ void __cdecl SV_InitGameVM(uint32_t randomSeed, int restart, int savegame, SaveG
     }
 
     G_ResetEntityParsePoint();
-    if (!++sv.skelTimeStamp)
-        sv.skelTimeStamp = 1;
-    sv.skelMemPos = 0;
-    g_sv_skel_memory_start = reinterpret_cast<char *>(
-        (reinterpret_cast<uintptr_t>(&g_sv_skel_memory[15])) & ~uintptr_t(15));
+    SV_ResetSkeletonCache();
     SND_ErrorCleanup();
 
     {

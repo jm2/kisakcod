@@ -24,7 +24,8 @@ Completed foundation work:
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
   by the current fast-file offset fixup path and covered by portable tests;
 - pointer-width-safe hunk allocator alignment/accounting, temporary allocation
-  return types, parse-tree alignment, and client/server skeleton alignment;
+  return types, parse-tree alignment, and checked client/server skeleton arenas with fixed-width
+  cursors/epochs, wrap invalidation, and contention coverage;
 - a green Windows x86 `KISAK_DEDI_HEADLESS` compile/link profile that excludes
   client/cgame/UI/D3D/audio/cinema/proprietary media groups, parses common
   fast-files through a validated null GPU/audio backend, retains its binary as
@@ -60,9 +61,9 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Finish and obtain Windows CI evidence for the IWD/unzip and loopback/fake-lag batch, then
-   migrate checked SP/MP skeleton-arena reservation, pose-cull publication, and the remaining
-   audited fixed-width atomic families.
+2. Land and obtain Windows CI evidence for the checked SP/MP skeleton-arena, epoch-wrap, and
+   pose-cull publication batch, then migrate the remaining audited renderer/FX fixed-width atomic
+   families.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -717,7 +718,7 @@ as well as GCC/Clang, including high-bit/wrap and pointer exchange cases. Non-MS
 aliases remain only as a temporary source-migration aid; Windows-owned names are never redefined on
 MSVC. The shared fast-lock implementation is the first layout-bound consumer and no longer contains
 a Windows include or native cast. Corrected live census after the landed diagnostic, database, and
-current IWD/loopback batches: **110** direct `Interlocked` calls remain across 18 engine TUs. The original
+current skeleton/pose batch: **107** direct `Interlocked` calls remain across 15 engine TUs. The original
 209 also included 12 assertion-message literals. *M1 open tail:* migrate the
 remaining families, and retype their `volatile long`/`LONG` storage and casts to exact-width words; then delete
 the compatibility aliases. The bare `sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now
@@ -825,7 +826,7 @@ file handles, zone requests, read-buffer cursors, and vertex/index pointer-offse
 runtime validation. The full portable suite is 18/18 locally under GCC, Clang, GCC ASan/UBSan, and
 GCC TSan; all nine Windows/portable CI jobs passed in run 29177998144.
 
-The current IWD/loopback batch removes three more native atomic calls. Canonical IWD-handle
+IWD/loopback commit `aa91d37` removes three more native atomic calls. Canonical IWD-handle
 ownership and reference publication use fixed-width atomics, while contended readers open an
 independent archive instead of copying a live unzip cursor. Runtime layout contracts and native
 allocation/sort widths cover IWD, file-handle, directory, and search-path records. Checked two-pass
@@ -837,9 +838,32 @@ queue locks serialize loopback payload/cursor publication across wraparound, wit
 packet sizes, destinations, and unaligned marker reads. Fake-lag queueing validates release-build
 inputs and allocations, preserves caller receive capacity, rejects inconsistent metadata, and
 clears complete retired slots. Source guards freeze these contracts, and the full 18-test local
-GCC/Clang/ASan/UBSan/TSan matrix passes; Windows CI is pending. Remaining adjacent debt is explicit:
+GCC/Clang/ASan/UBSan/TSan matrix passes. Its first Windows run exposed two MSVC-only fake-lag
+`char *` to `uint8_t *` conversions; corrective commit `0a119b7` made the reinterpretation explicit,
+and replacement run 29195736931 passed all nine jobs. Remaining adjacent debt is explicit:
 path-based clone opens retain a compatible-replacement file-identity TOCTOU, unzip CRC enforcement is
 disabled, and native-`unsigned long`/signed-int file-size records cap safe archives below 2 GiB.
+
+The current skeleton/pose batch removes another three native calls and closes the adjacent arena
+publication defects. A shared platform-neutral helper derives each arena's aligned base and exact
+capacity from its real backing array; checked arithmetic and CAS reservation reject invalid
+alignment, size overflow, corrupt/misaligned cursors, exhaustion, and out-of-range requests without
+advancing the cursor or forming a pointer first. Client and server resets publish the base and empty
+cursor before advancing their exact-width epoch. Before a complete 32-bit cycle reuses epoch 1, all
+affected client/server DObj skeletons are cleared, preventing a dormant timestamp from accepting an
+old arena pointer. A private exact-width guard serializes the entire reset publication scope, and the
+clear callback runs inside the epoch CAS retry loop, so contending resetters cannot race or publish
+epoch one without first invalidating the old generation; server creation also reloads the epoch after
+an allocation-triggered reset and drops on an impossible allocation failure rather than reporting an
+unusable matrix as ready. Once-per-epoch warning claims are atomic. Every SP/MP `cpose_t::cullIn`
+access now uses a shared CAS/store/exchange/load protocol that preserves culled priority and cannot
+erase a racing producer with a split load/reset. Dual 32/64-bit layout contracts, repository-wide
+source guards, exact-
+capacity/corrupt-cursor/rollover tests, eight-thread arena contention, and pose producer/consumer
+races pass in the full 20-test GCC, Clang, Clang ASan/UBSan, and Clang TSan matrix. Windows CI remains
+the landing gate for this uncommitted batch. Skeleton-worker quiescence during reset remains an
+external lifecycle contract; resetter serialization is enforced, but the inherited
+`allowedAllocSkel` state is still unused and does not enforce worker quiescence.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),

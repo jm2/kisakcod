@@ -14,6 +14,7 @@
 #include <database/database.h>
 #include <ui/ui.h>
 #include <qcommon/threads.h>
+#include <qcommon/skel_memory_atomic.h>
 #include <cgame/cg_snapshot.h>
 #include "cl_parse.h"
 #include "cl_demo.h"
@@ -619,11 +620,25 @@ void __cdecl CL_MapLoading(const char *mapname)
 void __cdecl CL_ResetSkeletonCache()
 {
     iassert(Sys_IsMainThread());
+    static volatile uint32_t s_skelResetGate;
+    const skel_memory_atomic::ResetGuard resetGuard(&s_skelResetGate);
     //PIXSetMarker(0xFFFFFFFF, "CL_ResetSkeletonCache");
-    if (!++clients[0].skelTimeStamp)
-        clients[0].skelTimeStamp = 1;
-    clients[0].skelMemoryStart = (char *)((uintptr_t)&clients[0].skelMemory[15] & ~(uintptr_t)0xF);
-    clients[0].skelMemPos = 0;
+    const skel_memory_atomic::ArenaView arena =
+        skel_memory_atomic::MakeArenaView(
+            clients[0].skelMemory,
+            sizeof(clients[0].skelMemory),
+            SKEL_MEM_ALIGNMENT);
+    iassert(arena.base);
+    if (!arena.base)
+        return;
+
+    // Reset is externally quiesced.  Publish the arena and empty cursor before
+    // advancing the epoch that permits workers to consume the new generation.
+    clients[0].skelMemoryStart = arena.base;
+    Sys_AtomicStore(&clients[0].skelMemPos, 0u);
+    skel_memory_atomic::AdvanceEpoch(
+        &clients[0].skelTimeStamp,
+        Com_ClientDObjClearAllSkel);
 }
 
 void __cdecl CL_ClearState()

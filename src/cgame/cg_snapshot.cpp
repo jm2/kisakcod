@@ -15,6 +15,7 @@
 #include <game/g_local.h>
 #include <gfx_d3d/r_model.h>
 #include "cg_servercmds.h"
+#include <cgame/cg_pose_atomic.h>
 
 unsigned int g_centInPrevSnapshot[68]{ 0 };
 bool g_clientDirty[MAX_GENTITIES];
@@ -109,7 +110,7 @@ void __cdecl CG_ResetEntity(int localClientNum, centity_s *cent)
     memcpy(&cent->currentState, &cent->nextState.lerp, sizeof(cent->currentState));
     v5 = cent->nextState.eType;
     cent->bTrailMade = 0;
-    cent->pose.cullIn = 0;
+    cg::pose_atomic::Reset(&cent->pose.cullIn);
     cent->oldEType = v5;
     if (localClientNum)
         MyAssertHandler(
@@ -1186,4 +1187,3 @@ void __cdecl CG_ProcessSnapshots(int localClientNum)
     //Profile_EndInternal(0);
     //PIXEndNamedEvent();
 }
-

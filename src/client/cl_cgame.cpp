@@ -25,6 +25,7 @@
 #include <game/savememory.h>
 #include <server/sv_game.h>
 #include <qcommon/com_bsp.h>
+#include <qcommon/skel_memory_atomic.h>
 
 char bigConfigString[8192];
 const float g_color_table[8][4]
@@ -554,7 +555,7 @@ void __cdecl CL_ShutdownCGame()
     }
 }
 
-static int warnCount;
+static volatile uint32_t s_skelWarningEpoch;
 int __cdecl CL_DObjCreateSkelForBone(DObj_s *obj, int boneIndex)
 {
     int SkelTimeStamp; // r31
@@ -575,9 +576,10 @@ int __cdecl CL_DObjCreateSkelForBone(DObj_s *obj, int boneIndex)
     }
     else
     {
-        if (warnCount != SkelTimeStamp)
+        if (skel_memory_atomic::ClaimWarning(
+                &s_skelWarningEpoch,
+                SkelTimeStamp))
         {
-            warnCount = SkelTimeStamp;
             Com_PrintWarning(14, "WARNING: CL_SKEL_MEMORY_SIZE exceeded - not calculating skeleton\n");
         }
         return 1;

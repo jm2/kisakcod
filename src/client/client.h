@@ -906,7 +906,7 @@ struct clientActive_t
     int32_t forceOffhand;
 
     // skel_glob sub-struct?
-    int32_t skelTimeStamp;
+    volatile uint32_t skelTimeStamp;
     volatile uint32_t skelMemPos;
     char skelMemory[524288];
     char *skelMemoryStart;
