@@ -628,7 +628,7 @@ uint32_t SL_GetStringForVector(const float* v)
 {
 	char tempString[132];
 
-	snprintf(tempString, ARRAYSIZE(tempString), "(%g, %g, %g)", *v, v[1], v[2]);
+	snprintf(tempString, sizeof(tempString), "(%g, %g, %g)", *v, v[1], v[2]);
 	return SL_GetString_(tempString, 0, 15);
 }
 
@@ -636,7 +636,7 @@ uint32_t SL_GetStringForInt(int i)
 {
 	char tempString[132]; // [esp+0h] [ebp-88h] BYREF
 
-	snprintf(tempString, ARRAYSIZE(tempString), "%i", i);
+	snprintf(tempString, sizeof(tempString), "%i", i);
 	return SL_GetString_(tempString, 0, 15);
 }
 
@@ -644,7 +644,7 @@ uint32_t SL_GetStringForFloat(float f)
 {
 	char tempString[132]; // [esp+8h] [ebp-88h] BYREF
 
-	snprintf(tempString, ARRAYSIZE(tempString), "%g", f);
+	snprintf(tempString, sizeof(tempString), "%g", f);
 	return SL_GetString_(tempString, 0, 15);
 }
 

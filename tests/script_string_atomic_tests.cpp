@@ -1,5 +1,16 @@
 #include <script/scr_string_atomic.h>
+
+#if defined(_MSC_VER)
+// scr_stringlist.h intentionally carries a 128-byte-aligned engine global.
+// MSVC's level-4 padding warning is expected for that ABI contract; keep the
+// real Win64/ARM64 layout assertions compiled without weakening /WX globally.
+#pragma warning(push)
+#pragma warning(disable : 4324)
+#endif
 #include <script/scr_stringlist.h>
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 #include <atomic>
 #include <barrier>

@@ -40,10 +40,11 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DBUILD_TESTING=ON
 
-      - name: Build and test
-        run: |
-          cmake --build build-tests --config Release --parallel
-          ctest --test-dir build-tests -C Release --output-on-failure
+      - name: Build portable tests
+        run: cmake --build build-tests --config Release --parallel
+
+      - name: Run portable tests
+        run: ctest --test-dir build-tests -C Release --output-on-failure
 
   windows-x86:
     name: Windows x86 / ${{ matrix.config }}
