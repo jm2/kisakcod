@@ -8,8 +8,9 @@
 
 #include <physics/phys_local.h>
 
-#include <win32/win_local.h>
+#include <qcommon/sys_sync.h>
 #include <universal/profile.h>
+#include <universal/sys_atomic.h>
 
 #ifdef KISAK_MP
 #include <cgame_mp/cg_local_mp.h>
@@ -720,7 +721,7 @@ void __cdecl FX_DrawElem_Cloud(FxDrawState *draw)
             draw->preVisState.sampleLerpInv);
         if (draw->visState.scale != 0.0 && !FX_CullElementForDraw_Cloud(draw))
         {
-            InterlockedIncrement(&draw->system->gfxCloudCount);
+            Sys_AtomicIncrement(&draw->system->gfxCloudCount);
             visuals.anonymous = FX_GetElemVisuals(draw->elemDef, draw->randomSeed).anonymous;
             if (!visuals.anonymous)
                 MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 792, 0, "%s", "visuals.material");
@@ -918,7 +919,7 @@ void __cdecl FX_DrawNonSpriteElems(FxSystem *system)
         effect = FX_EffectFromHandle(system, system->allEffectHandles[activeIndex & 0x3FF]);
         FX_DrawNonSpriteEffect(system, effect, 1u, system->msecDraw);
     }
-    if (!InterlockedDecrement(&system->iteratorCount) && system->needsGarbageCollection)
+    if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
         FX_RunGarbageCollection(system);
 }
 
@@ -934,7 +935,7 @@ void __cdecl FX_BeginIteratingOverEffects_Cooperative(FxSystem *system)
             iteratorCount = 0;
         else
             iteratorCount = system->iteratorCount;
-    } while (InterlockedCompareExchange(&system->iteratorCount, iteratorCount + 1, iteratorCount) != iteratorCount);
+    } while (Sys_AtomicCompareExchange(&system->iteratorCount, iteratorCount + 1, iteratorCount) != iteratorCount);
 }
 
 void __cdecl FX_DrawNonSpriteEffect(FxSystem *system, FxEffect *effect, uint32_t elemClass, int32_t drawTime)
@@ -1090,7 +1091,7 @@ void __cdecl FX_DrawSpotLight(FxSystem *system)
         v1 = FX_EffectFromHandle(system, system->activeSpotLightEffectHandle);
         FX_DrawSpotLightEffect(system, v1, msecDraw);
     }
-    if (!InterlockedDecrement(&system->iteratorCount) && system->needsGarbageCollection)
+    if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
         FX_RunGarbageCollection(system);
 }
 
@@ -1161,7 +1162,7 @@ void __cdecl FX_DrawSpriteElems(FxSystem *system, int32_t drawTime)
             FX_DrawTrailsForEffect(system, effecta, drawTime);
         }
     }
-    if (!InterlockedDecrement(&system->iteratorCount) && system->needsGarbageCollection)
+    if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
         FX_RunGarbageCollection(system);
     if (system->sprite.indexCount)
     {
@@ -1688,4 +1689,3 @@ double __cdecl FX_ClampRangeLerp(float dist, const FxFloatRange *range)
     }
     return value;
 }
-

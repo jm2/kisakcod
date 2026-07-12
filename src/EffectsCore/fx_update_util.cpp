@@ -1,5 +1,7 @@
 #include "fx_system.h"
 
+#include <universal/sys_atomic.h>
+
 int32_t warnCount_1;
 
 void __cdecl FX_OffsetSpawnOrigin(
@@ -416,7 +418,7 @@ void __cdecl FX_AddVisBlocker(FxSystem *system, const float *posWorld, float rad
                 "opacity >= 0.0f && opacity < 65536.0f * FX_VIS_BLOCKER_VISIBILITY_INV_SCALE");
         localVisBlocker->radius = (int)(radius * 16.0);
         localVisBlocker->visibility = (int)((1.0 - opacity) * 65536.0);
-        InterlockedIncrement(&visState->blockerCount);
+        Sys_AtomicIncrement(&visState->blockerCount);
     }
     else if (warnCount_1 != system->frameCount)
     {

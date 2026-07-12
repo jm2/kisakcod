@@ -1077,7 +1077,10 @@ bool __cdecl FX_LoadEditorEffect(const char *name, FxEditorEffectDef *edEffectDe
 
 void* FX_AllocMem(uint32_t size)
 {
-    return Hunk_AllocAlign(size, 4, "FX_Alloc", 8);
+    // The converted blob begins with FxEffectDef and contains native pointers.
+    // This remains 4-byte aligned on x86 and widens naturally on 64-bit targets.
+    return Hunk_AllocAlign(
+        size, static_cast<int>(alignof(FxEffectDef)), "FX_Alloc", 8);
 }
 
 PhysPreset *__cdecl FX_RegisterPhysPreset(const char *name)

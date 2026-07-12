@@ -296,8 +296,16 @@ FxImpactTable *__cdecl CG_RegisterImpactEffects_LoadObj(const char *mapname)
         Com_sprintf(mapdir, 0x40u, "fx/maps/%s", mapname);
         CG_RegisterImpactEffectsForDir(mapdir, &effectFile, listbuf);
     }
-    fx = (FxImpactTable *)Hunk_AllocAlign(8u, 4, "CG_RegisterImpactEffects", 8);
-    v1 = Hunk_AllocAlign(0x630u, 4, "CG_RegisterImpactEffects", 8);
+    fx = (FxImpactTable *)Hunk_AllocAlign(
+        static_cast<uint32_t>(sizeof(FxImpactTable)),
+        static_cast<int>(alignof(FxImpactTable)),
+        "CG_RegisterImpactEffects",
+        8);
+    v1 = Hunk_AllocAlign(
+        static_cast<uint32_t>(sizeof(FxImpactEntry) * 12),
+        static_cast<int>(alignof(FxImpactEntry)),
+        "CG_RegisterImpactEffects",
+        8);
     fx->table = (FxImpactEntry *)v1;
     iBadCount = 0;
     for (i = 0; i < 0xC; ++i)

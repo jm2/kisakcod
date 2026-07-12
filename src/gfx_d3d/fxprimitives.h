@@ -4,30 +4,8 @@
 #include <universal/q_shared.h>
 #include <universal/com_math.h>
 
-constexpr size_t MAX_EFFECTS = 1024;
-constexpr size_t MAX_ELEMS = 2048;
-constexpr size_t MAX_TRAILS = 128;
-constexpr size_t MAX_TRAIL_ELEMS = 2048;
+#include <EffectsCore/fx_runtime.h>
            
-struct Material;
-
-struct r_double_index_t // sizeof=0x4
-{                             
-    r_double_index_t()
-    {
-        kisak = 0;
-    }
-    r_double_index_t(int val)
-    {
-        kisak = val;
-    }
-    union
-    {
-        uint16_t value[2];          // ...
-        uint32_t kisak;
-    };
-};
-
 struct orientation_t // sizeof=0x30
 {                                       // ...
     float origin[3];                    // ...
@@ -43,186 +21,7 @@ struct GfxMarkContext // sizeof=0x6
     uint16_t modelIndex;        // ...
 };
 
-struct FxElemDef;
-
 /////////////////////////////////////////////////////////////////////////////////
-struct FxBoltAndSortOrder // sizeof=0x4
-{                                       // ...
-    unsigned __int32 dobjHandle : 12;
-    unsigned __int32 temporalBits : 1;
-    unsigned __int32 boneIndex : 11;
-    unsigned __int32 sortOrder : 8;
-};
-
-struct FxSpatialFrame // sizeof=0x1C
-{                                       // ...
-    float quat[4];
-    float origin[3];                    // ...
-};
-
-struct FxEffectDef // sizeof=0x20
-{                                       // ...
-    const char *name;
-    int flags;
-    int totalSize;
-    int msecLoopingLife;
-    int elemDefCountLooping;
-    int elemDefCountOneShot;
-    int elemDefCountEmission;
-    const FxElemDef *elemDefs;
-};
-static_assert(sizeof(FxEffectDef) == 32);
-
-struct FxEffect // sizeof=0x80
-{                                       // ...
-    const FxEffectDef *def;
-    volatile long status;
-    uint16_t firstElemHandle[3];
-    uint16_t firstSortedElemHandle;
-    uint16_t firstTrailHandle;
-    uint16_t randomSeed;
-    uint16_t owner;
-    uint16_t packedLighting;
-    FxBoltAndSortOrder boltAndSortOrder;
-    volatile long frameCount;
-    int msecBegin;
-    int msecLastUpdate;
-    FxSpatialFrame frameAtSpawn;
-    FxSpatialFrame frameNow;
-    FxSpatialFrame framePrev;
-    float distanceTraveled;
-};
-
-template<typename T>
-struct FxPool
-{
-    union
-    {
-        int nextFree;
-        T item;
-    };
-};
-struct FxCamera // sizeof=0xB0
-{                                       // ...
-    float origin[3];
-    volatile long isValid;
-    float frustum[6][4];
-    float axis[3][3];
-    uint32_t frustumPlaneCount;
-    float viewOffset[3];
-    uint32_t pad[3];
-};
-
-struct FxSpriteInfo // sizeof=0x10
-{                                       // ...
-    r_double_index_t *indices;          // ...
-    uint32_t indexCount;
-    Material *material;
-    const char *name;
-};
-union FxElem_u // sizeof=0x4
-{                                       // ...
-    float trailTexCoord;
-    uint16_t lightingHandle;
-};
-struct FxElem // sizeof=0x28
-{                                       // ...
-    uint8_t defIndex;
-    uint8_t sequence;
-    uint8_t atRestFraction;
-    uint8_t emitResidual;
-    uint16_t nextElemHandleInEffect;
-    uint16_t prevElemHandleInEffect;
-    int msecBegin;
-    float baseVel[3];
-    //$A58BA6DA60295001BBA5E9F807131CF1 ___u8;
-    union
-    {
-        int physObjId;
-        float origin[3];
-    };
-    //FxElem::<unnamed_type_u> u;
-    FxElem_u u;
-
-    static constexpr size_t HANDLE_SCALE = 4;
-};
-struct FxTrail // sizeof=0x8
-{                                       // ...
-    uint16_t nextTrailHandle;   // ...
-    uint16_t firstElemHandle;   // ...
-    uint16_t lastElemHandle;    // ...
-    char defIndex;                      // ...
-    char sequence;                      // ...
-
-    static constexpr size_t HANDLE_SCALE = 4;
-};
-struct FxTrailElem // sizeof=0x20
-{                                       // ...
-    float origin[3];
-    float spawnDist;
-    int msecBegin;
-    uint16_t nextTrailElemHandle;
-    __int16 baseVelZ;
-    char basis[2][3];
-    uint8_t sequence;
-    uint8_t unused;
-
-    static constexpr size_t HANDLE_SCALE = 4;
-};
-struct FxVisBlocker // sizeof=0x10
-{                                       // ...
-    float origin[3];
-    uint16_t radius;
-    uint16_t visibility;
-};
-struct FxVisState // sizeof=0x1010
-{                                       // ...
-    FxVisBlocker blocker[256];
-    volatile long blockerCount;
-    uint32_t pad[3];
-};
-struct FxSystem // sizeof=0xA60
-{                                       // ...
-    FxCamera camera;
-    FxCamera cameraPrev;
-    FxSpriteInfo sprite;
-    FxEffect *effects;
-    FxPool<FxElem> *elems;
-    FxPool<FxTrail> *trails;
-    FxPool<FxTrailElem> *trailElems;
-    uint16_t *deferredElems;
-    volatile long firstFreeElem;
-    volatile long firstFreeTrailElem;
-    volatile long firstFreeTrail;
-    volatile long deferredElemCount;
-    volatile long activeElemCount;
-    volatile long activeTrailElemCount;
-    volatile long activeTrailCount;
-    volatile long gfxCloudCount;
-    FxVisState *visState;
-    const FxVisState *visStateBufferRead;
-    FxVisState *visStateBufferWrite;
-    volatile long firstActiveEffect;
-    volatile long firstNewEffect;
-    volatile long firstFreeEffect;
-    uint16_t allEffectHandles[1024];
-    volatile long activeSpotLightEffectCount;
-    volatile long activeSpotLightElemCount;
-    uint16_t activeSpotLightEffectHandle;
-    uint16_t activeSpotLightElemHandle;
-    __int16 activeSpotLightBoltDobj;
-    // padding byte
-    // padding byte
-    volatile long iteratorCount;
-    int msecNow;
-    volatile long msecDraw;
-    int frameCount;
-    bool isInitialized;
-    bool needsGarbageCollection;
-    bool isArchiving;
-    uint8_t localClientNum;
-    uint32_t restartList[32];
-};
 struct FxMarkPoint // sizeof=0x20
 {                                       // ...
     float xyz[3];
@@ -321,7 +120,7 @@ struct FxCmd // sizeof=0xC
 {                                       // ...
     FxSystem *system;
     int localClientNum;
-    volatile int *spawnLock;
+    volatile std::int32_t *spawnLock;
 };
 RUNTIME_SIZE(FxCmd, 0xC, 0x18);
 RUNTIME_OFFSET(FxCmd, localClientNum, 0x4, 0x8);
@@ -480,30 +279,6 @@ const struct FxElemDef // sizeof=0xFC
     uint8_t lightingFrac;
     uint8_t useItemClip;
     uint8_t unused[1];
-};
-
-struct FxImpactEntry // sizeof=0x84
-{
-    const FxEffectDef *nonflesh[29];
-    const FxEffectDef *flesh[4];
-};
-
-struct FxImpactTable // sizeof=0x8
-{                                       // ...
-    const char *name;
-    FxImpactEntry *table;
-};
-static_assert(sizeof(FxImpactTable) == 8);
-
-struct FxSystemBuffers // sizeof=0x47480
-{                                       // ...
-    FxEffect effects[MAX_EFFECTS];
-    FxPool<FxElem> elems[MAX_ELEMS];
-    FxPool<FxTrail> trails[MAX_TRAILS];
-    FxPool<FxTrailElem> trailElems[MAX_TRAIL_ELEMS];
-    FxVisState visState[2];
-    uint16_t deferredElems[2048];
-    uint8_t padBuffer[96];
 };
 
 template<typename ITEM_TYPE, size_t LIMIT>

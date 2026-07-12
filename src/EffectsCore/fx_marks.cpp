@@ -1,6 +1,7 @@
 #include "fx_system.h"
 
 #include <qcommon/mem_track.h>
+#include <qcommon/sys_sync.h>
 
 #include <gfx_d3d/r_drawsurf.h>
 #include <gfx_d3d/rb_tess.h>
@@ -16,8 +17,6 @@
 #elif KISAK_SP
 #include <cgame/cg_main.h>
 #endif
-
-#include <win32/win_local.h>
 
 #include <algorithm>
 #include <aim_assist/aim_assist.h>

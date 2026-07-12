@@ -15,10 +15,11 @@
 
 #include <physics/phys_local.h>
 
-#include <win32/win_local.h>
 #include <aim_assist/aim_assist.h>
 
 #include <universal/profile.h>
+#include <universal/sys_atomic.h>
+#include <qcommon/sys_sync.h>
 
 void __cdecl FX_SpawnlAlFutureLooping(
     FxSystem *system,
@@ -2122,15 +2123,15 @@ void __cdecl FX_UpdateSpotLight(FxCmd* cmd)
             if (system->activeSpotLightEffectCount != 1)
                 MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 1836, 0, "%s", "system->activeSpotLightEffectCount == 1");
             for (effect = FX_EffectFromHandle(system, system->activeSpotLightEffectHandle);
-                InterlockedExchangeAdd(&effect->status, 0x20000000) >= 0x20000000;
-                InterlockedExchangeAdd(&effect->status, -536870912))
+                Sys_AtomicFetchAdd(&effect->status, 0x20000000) >= 0x20000000;
+                Sys_AtomicFetchAdd(&effect->status, -536870912))
             {
                 ;
             }
             FX_UpdateSpotLightEffect(system, effect);
-            InterlockedExchangeAdd(&effect->status, -536870912);
+            Sys_AtomicFetchAdd(&effect->status, -536870912);
         }
-        if (!InterlockedDecrement(&system->iteratorCount) && system->needsGarbageCollection)
+        if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
             FX_RunGarbageCollection(system);
         if (fx_draw->current.enabled)
             FX_DrawSpotLight(system);
@@ -2261,13 +2262,13 @@ void __cdecl FX_Update(FxSystem* system, int32_t localClientNum, bool nonBoltedE
         localEffect = FX_EffectFromHandle(system, system->allEffectHandles[activeIndex & 0x3FF]);
         if (FX_ShouldProcessEffect(system, localEffect, nonBoltedEffectsOnly))
         {
-            while (InterlockedExchangeAdd(&localEffect->status, 0x20000000) >= 0x20000000)
-                InterlockedExchangeAdd(&localEffect->status, -536870912);
+            while (Sys_AtomicFetchAdd(&localEffect->status, 0x20000000) >= 0x20000000)
+                Sys_AtomicFetchAdd(&localEffect->status, -536870912);
             FX_UpdateEffect(system, localEffect);
-            InterlockedExchangeAdd(&localEffect->status, -536870912);
+            Sys_AtomicFetchAdd(&localEffect->status, -536870912);
         }
     }
-    if (!InterlockedDecrement(&system->iteratorCount) && system->needsGarbageCollection)
+    if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
         FX_RunGarbageCollection(system);
 }
 
@@ -2307,7 +2308,7 @@ void __cdecl FX_UpdateEffect(FxSystem* system, FxEffect* effect)
 bool __cdecl FX_ShouldProcessEffect(FxSystem *system, FxEffect *effect, bool nonBoltedEffectsOnly)
 {
     return (!nonBoltedEffectsOnly || effect->boltAndSortOrder.boneIndex == 0x7FF)
-        && InterlockedExchange(&effect->frameCount, system->frameCount) != system->frameCount;
+        && Sys_AtomicExchange(&effect->frameCount, system->frameCount) != system->frameCount;
 }
 
 void __cdecl FX_RunPhysics(int32_t localClientNum)
@@ -2371,8 +2372,8 @@ void __cdecl FX_AddNonSpriteDrawSurfs(FxCmd *cmd)
 
 void __cdecl FX_RewindTo(int32_t localClientNum, int32_t time)
 {
-    volatile long *Destination; // [esp+4h] [ebp-10ACh]
-    volatile long Comperand; // [esp+8h] [ebp-10A8h]
+    volatile int32_t *Destination; // [esp+4h] [ebp-10ACh]
+    volatile int32_t Comperand; // [esp+8h] [ebp-10A8h]
     uint16_t v4; // [esp+18h] [ebp-1098h]
     FxEffect *effect; // [esp+1Ch] [ebp-1094h]
     FxEffect *effecta; // [esp+1Ch] [ebp-1094h]
@@ -2409,13 +2410,13 @@ void __cdecl FX_RewindTo(int32_t localClientNum, int32_t time)
             effecta = (FxEffect *)v11[bitNum];
             if ((uint16_t)effecta->status)
             {
-                while (InterlockedExchangeAdd(&effecta->status, 0x20000000) >= 0x20000000)
-                    InterlockedExchangeAdd(&effecta->status, -536870912);
+                while (Sys_AtomicFetchAdd(&effecta->status, 0x20000000) >= 0x20000000)
+                    Sys_AtomicFetchAdd(&effecta->status, -536870912);
                 FX_KillEffect(system, effecta);
-                InterlockedExchangeAdd(&effecta->status, -536870912);
+                Sys_AtomicFetchAdd(&effecta->status, -536870912);
             }
         }
-        if (!InterlockedDecrement(&system->iteratorCount) && system->needsGarbageCollection)
+        if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
             FX_RunGarbageCollection(system);
         for (bitNum = 0; bitNum < v12; ++bitNum)
         {
@@ -2428,7 +2429,7 @@ void __cdecl FX_RewindTo(int32_t localClientNum, int32_t time)
                     Destination = &effectb->status;
                     do
                         Comperand = *Destination;
-                    while (InterlockedCompareExchange(Destination, Comperand | 0x10000, Comperand) != Comperand);
+                    while (Sys_AtomicCompareExchange(Destination, Comperand | 0x10000, Comperand) != Comperand);
                     FX_StartNewEffect(system, effectb);
                 }
                 else
@@ -2517,7 +2518,7 @@ void __cdecl FX_SetNextUpdateCamera(int32_t localClientNum, const refdef_s *refd
         system->camera.frustum[5][3] = -system->camera.frustum[0][3] - zfar;
         system->camera.frustumPlaneCount = 6;
     }
-    InterlockedExchange(&system->camera.isValid, 1);
+    Sys_AtomicExchange(&system->camera.isValid, 1);
 }
 
 void __cdecl FX_SetNextUpdateTime(int32_t localClientNum, int32_t time)
@@ -2533,8 +2534,8 @@ void __cdecl FX_SetNextUpdateTime(int32_t localClientNum, int32_t time)
             "time >= system->msecNow\n\t%i, %i",
             time,
             system->msecNow);
-    InterlockedExchange(&system->camera.isValid, 0);
-    InterlockedExchange(&system->msecDraw, time);
+    Sys_AtomicExchange(&system->camera.isValid, 0);
+    Sys_AtomicExchange(&system->msecDraw, time);
     system->msecNow = time;
     if (++system->frameCount <= 0)
         system->frameCount = 1;
@@ -2545,4 +2546,3 @@ void __cdecl FX_FillUpdateCmd(int32_t localClientNum, FxCmd *cmd)
     cmd->system = FX_GetSystem(localClientNum);
     cmd->localClientNum = localClientNum;
 }
-

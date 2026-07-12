@@ -1,5 +1,6 @@
 #include "fx_system.h"
 #include <universal/profile.h>
+#include <universal/sys_atomic.h>
 
 
 void __cdecl FX_SortEffects(FxSystem *system)
@@ -51,7 +52,7 @@ void __cdecl FX_SortEffects(FxSystem *system)
 
 void __cdecl FX_WaitBeginIteratingOverEffects_Exclusive(FxSystem *system)
 {
-    volatile long *Destination; // [esp+0h] [ebp-4h]
+    volatile int32_t *Destination; // [esp+0h] [ebp-4h]
 
     if (system->isArchiving)
         MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 512, 0, "%s", "!system->isArchiving");
@@ -60,7 +61,7 @@ void __cdecl FX_WaitBeginIteratingOverEffects_Exclusive(FxSystem *system)
     {
         while (*Destination)
             ;
-    } while (InterlockedCompareExchange(Destination, -1, 0));
+    } while (Sys_AtomicCompareExchange(Destination, -1, 0));
 }
 
 bool __cdecl FX_FirstEffectIsFurther(FxEffect *firstEffect, FxEffect *secondEffect)
@@ -269,4 +270,3 @@ bool __cdecl FX_ExistingElemSortsBeforeNewElem(
     distToCamSq = Vec3LengthSq(diff);
     return sortElemNew->distToCamSq < (double)distToCamSq;
 }
-

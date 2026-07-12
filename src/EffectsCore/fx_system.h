@@ -926,18 +926,6 @@ FxPostLightInfo *__cdecl FX_PostLight_GetInfo();
 
 
 // fx_profile
-struct FxProfileEntry // sizeof=0x1C
-{                                       // ...
-    const FxEffectDef *effectDef;
-    int32_t effectCount;
-    int32_t activeElemCount;
-    int32_t pendingElemCount;
-    int32_t trailCount;
-    int32_t activeTrailElemCount;
-    int32_t pendingTrailElemCount;
-};
-static_assert(sizeof(FxProfileEntry) == 0x1C);
-
 void __cdecl FX_DrawProfile(int32_t clientIndex, void(__cdecl *drawFunc)(char *), float *profilePos);
 FxProfileEntry *__cdecl FX_GetProfileEntry(const FxEffectDef *effectDef, FxProfileEntry *entryPool, int32_t *entryCount);
 void __cdecl FX_ProfileSingleEffect(FxSystem *system, const FxEffect *effect, FxProfileEntry *entry);

@@ -34,7 +34,6 @@ EffectsCore/fx_system.h|static_assert:sizeof(FxMarkDObjUpdateContext)==0x108|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxMarkTri)==0xC|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxPostLight)==0x24|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxPostLightInfo)==0xD84|1
-EffectsCore/fx_system.h|static_assert:sizeof(FxProfileEntry)==0x1C|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxSprite)==0x20|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxTrailSegmentDrawState)==0x3C|1
 EffectsCore/fx_system.h|static_assert:sizeof(MarkInfo)==0x448|1
@@ -142,8 +141,6 @@ game_mp/g_public_mp.h|static_assert:sizeof(gameTypeScript_t)==0x84|1
 game_mp/g_public_mp.h|static_assert:sizeof(scr_data_t)==0x379C|1
 game_mp/g_public_mp.h|static_assert:sizeof(scr_data_t_s)==0x10A8|1
 game_mp/g_public_mp.h|static_assert:sizeof(useList_t)==0x8|1
-gfx_d3d/fxprimitives.h|static_assert:sizeof(FxEffectDef)==32|1
-gfx_d3d/fxprimitives.h|static_assert:sizeof(FxImpactTable)==8|1
 gfx_d3d/r_bsp.h|static_assert:sizeof(GfxWorld)==0x2DC|1
 gfx_d3d/r_font.h|static_assert:sizeof(Font_s)==24|1
 gfx_d3d/r_gfx.h|static_assert:sizeof(GfxImage)==36|1
