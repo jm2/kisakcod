@@ -6,11 +6,11 @@
 #include <string.h>
 #include <universal/q_shared.h>
 #include <qcommon/qcommon.h>
+#include <qcommon/sys_error.h>
+#include <qcommon/sys_memory.h>
 #include <qcommon/threads.h>
 
 #include <qcommon/mem_track.h>
-#include <win32/win_local.h>
-#include <win32/win_net.h>
 #include <database/database.h>
 #include <database/db_validation.h>
 #include "com_files.h"
@@ -21,6 +21,7 @@
 #include "physicalmemory.h"
 
 #include <cstdint>
+#include <limits>
 
 HunkUser *g_user;
 fileData_s *com_hunkData;
@@ -50,18 +51,48 @@ unsigned char* s_hunkData;
 
 namespace
 {
-constexpr uintptr_t kPageMask = 4095;
+bool CheckedAlignUp(
+    const std::size_t value,
+    const std::size_t alignment,
+    std::size_t *const result)
+{
+    if (!alignment || !result)
+        return false;
+
+    const std::size_t remainder = value % alignment;
+    const std::size_t adjustment = remainder ? alignment - remainder : 0;
+    if (value > std::numeric_limits<std::size_t>::max() - adjustment)
+        return false;
+
+    *result = value + adjustment;
+    return true;
+}
 
 uint8_t *PageFloor(const void *pointer)
 {
-    return reinterpret_cast<uint8_t *>(
-        reinterpret_cast<uintptr_t>(pointer) & ~kPageMask);
+    const std::size_t pageSize = Sys_VirtualMemoryPageSize();
+    const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(pointer);
+    if (!pageSize)
+    {
+        Com_Error(ERR_FATAL, "Virtual-memory page size is unavailable");
+        return nullptr;
+    }
+    return reinterpret_cast<uint8_t *>(address - address % pageSize);
 }
 
 uint8_t *PageCeil(const void *pointer)
 {
-    return reinterpret_cast<uint8_t *>(
-        (reinterpret_cast<uintptr_t>(pointer) + kPageMask) & ~kPageMask);
+    const std::size_t pageSize = Sys_VirtualMemoryPageSize();
+    std::size_t alignedAddress;
+    if (!CheckedAlignUp(
+            reinterpret_cast<std::uintptr_t>(pointer),
+            pageSize,
+            &alignedAddress))
+    {
+        Com_Error(ERR_FATAL, "Virtual-memory page alignment overflow");
+        return nullptr;
+    }
+    return reinterpret_cast<uint8_t *>(alignedAddress);
 }
 }
 uint8_t *s_origHunkData;
@@ -99,8 +130,8 @@ void __cdecl Hunk_AddAsset(XAssetHeader header, void *data)
 void Com_TouchMemory()
 {
     int32_t sum; // [esp+4h] [ebp-10h]
-    DWORD start; // [esp+8h] [ebp-Ch]
-    DWORD end; // [esp+Ch] [ebp-8h]
+    uint32_t start; // [esp+8h] [ebp-Ch]
+    uint32_t end; // [esp+Ch] [ebp-8h]
     int32_t i; // [esp+10h] [ebp-4h]
     int32_t ia; // [esp+10h] [ebp-4h]
 
@@ -109,9 +140,9 @@ void Com_TouchMemory()
     start = Sys_Milliseconds();
     sum = 0;
     for (i = 0; i < hunk_low.permanent >> 2; i += 64)
-        sum += *(_DWORD *)&s_hunkData[4 * i];
+        sum += *reinterpret_cast<int32_t *>(&s_hunkData[4 * i]);
     for (ia = (s_hunkTotal - hunk_high.permanent) >> 2; ia < hunk_high.permanent >> 2; ia += 64)
-        sum += *(_DWORD *)&s_hunkData[4 * ia];
+        sum += *reinterpret_cast<int32_t *>(&s_hunkData[4 * ia]);
     end = Sys_Milliseconds();
     Com_Printf(16, "Com_TouchMemory: %i msec. Using sum: %d\n", end - start, sum);
 }
@@ -175,11 +206,13 @@ uint8_t* __cdecl Hunk_AllocXAnimServer(uint32_t size)
 
 void* __cdecl Z_VirtualReserve(int32_t size)
 {
-    void* buf; // [esp+0h] [ebp-4h]
-
     if (size <= 0)
+    {
         MyAssertHandler(".\\universal\\com_memory.cpp", 150, 0, "%s\n\t(size) = %i", "(size > 0)", size);
-    buf = VirtualAlloc(0, size, 0x2000u, 4u);
+        return nullptr;
+    }
+
+    void *const buf = Sys_VirtualMemoryReserve(static_cast<std::size_t>(size));
     if (!buf)
         MyAssertHandler(".\\universal\\com_memory.cpp", 208, 0, "%s", "buf");
     return buf;
@@ -187,14 +220,27 @@ void* __cdecl Z_VirtualReserve(int32_t size)
 
 void __cdecl Z_VirtualDecommitInternal(void* ptr, int32_t size)
 {
-    if (size < 0)
-        MyAssertHandler(".\\universal\\com_memory.cpp", 325, 0, "%s\n\t(size) = %i", "(size >= 0)", size);
-    VirtualFree(ptr, size, 0x4000u);
+    if (!ptr || size <= 0)
+    {
+        MyAssertHandler(".\\universal\\com_memory.cpp", 325, 0, "%s\n\t(size) = %i", "(ptr && size > 0)", size);
+        return;
+    }
+    const bool decommitted =
+        Sys_VirtualMemoryDecommit(ptr, static_cast<std::size_t>(size));
+    if (!decommitted)
+        MyAssertHandler(".\\universal\\com_memory.cpp", 325, 0, "%s", "decommitted");
 }
 
 void __cdecl Z_VirtualFreeInternal(void* ptr)
 {
-    VirtualFree(ptr, 0, 0x8000u);
+    if (!ptr)
+    {
+        iassert(ptr);
+        return;
+    }
+    const bool released = Sys_VirtualMemoryRelease(ptr);
+    if (!released)
+        MyAssertHandler(".\\universal\\com_memory.cpp", 338, 0, "%s", "released");
 }
 
 void* __cdecl Z_TryVirtualAllocInternal(int32_t size)
@@ -202,16 +248,41 @@ void* __cdecl Z_TryVirtualAllocInternal(int32_t size)
     void* ptr; // [esp+0h] [ebp-4h]
 
     ptr = Z_VirtualReserve(size);
-    if (Z_TryVirtualCommitInternal(ptr, size))
+    if (ptr && Z_TryVirtualCommitInternal(ptr, size))
         return ptr;
-    Z_VirtualFree(ptr);
+    if (ptr)
+        Z_VirtualFree(ptr);
     return 0;
 }
 
 bool __cdecl Z_TryVirtualCommitInternal(void* ptr, int32_t size)
 {
-    iassert(size >= 0);
-    return VirtualAlloc(ptr, size, 0x1000u, 4u) != 0;
+    iassert(ptr);
+    iassert(size > 0);
+    if (!ptr || size <= 0)
+        return false;
+
+    const std::uintptr_t beginAddress = reinterpret_cast<std::uintptr_t>(ptr);
+    const std::size_t byteCount = static_cast<std::size_t>(size);
+    if (byteCount > (std::numeric_limits<std::uintptr_t>::max)() - beginAddress)
+        return false;
+
+    uint8_t *const commitBegin = PageFloor(ptr);
+    uint8_t *const commitEnd = PageCeil(
+        reinterpret_cast<void *>(beginAddress + byteCount));
+    if (!commitBegin || !commitEnd)
+        return false;
+
+    const std::uintptr_t commitBeginAddress =
+        reinterpret_cast<std::uintptr_t>(commitBegin);
+    const std::uintptr_t commitEndAddress =
+        reinterpret_cast<std::uintptr_t>(commitEnd);
+    if (commitEndAddress <= commitBeginAddress)
+        return false;
+
+    return Sys_VirtualMemoryCommit(
+        commitBegin,
+        static_cast<std::size_t>(commitEndAddress - commitBeginAddress));
 }
 
 void __cdecl Z_VirtualCommitInternal(void* ptr, int32_t size)
@@ -236,7 +307,17 @@ char* __cdecl Z_TryVirtualAlloc(int32_t size, const char* name, int32_t type)
 
     buf = (char*)Z_TryVirtualAllocInternal(size);
     if (buf)
-        track_z_commit((size + 4095) & 0xFFFFF000, type);
+    {
+        std::size_t committedSize;
+        const bool aligned = CheckedAlignUp(
+            static_cast<std::size_t>(size),
+            Sys_VirtualMemoryPageSize(),
+            &committedSize);
+        iassert(aligned);
+        iassert(committedSize <= static_cast<std::size_t>(INT32_MAX));
+        if (aligned && committedSize <= static_cast<std::size_t>(INT32_MAX))
+            track_z_commit(static_cast<int32_t>(committedSize), type);
+    }
     return buf;
 }
 
@@ -898,9 +979,23 @@ HunkUser* __cdecl Hunk_UserCreate(int32_t maxSize, const char* name, bool fixed,
 {
     HunkUser* user; // [esp+0h] [ebp-4h]
 
-    if (maxSize % 4096)
-        MyAssertHandler(".\\universal\\com_memory.cpp", 2834, 0, "%s\n\t(maxSize) = %i", "(!(maxSize % (4*1024)))", maxSize);
+    const std::size_t pageSize = Sys_VirtualMemoryPageSize();
+    if (maxSize <= 0
+        || !pageSize
+        || static_cast<std::size_t>(maxSize) % pageSize != 0)
+    {
+        MyAssertHandler(
+            ".\\universal\\com_memory.cpp",
+            2834,
+            0,
+            "%s\n\t(maxSize) = %i",
+            "(maxSize > 0 && maxSize is native-page aligned)",
+            maxSize);
+        return nullptr;
+    }
     user = (HunkUser*)Z_VirtualReserve(maxSize);
+    if (!user)
+        return nullptr;
     Z_VirtualCommit(user, static_cast<int>(offsetof(HunkUser, buf)));
     user->end = reinterpret_cast<uintptr_t>(user) + maxSize;
     user->pos = reinterpret_cast<uintptr_t>(user->buf);

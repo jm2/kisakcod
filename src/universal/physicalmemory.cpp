@@ -1,21 +1,31 @@
 #include "physicalmemory.h"
 
-#include <Windows.h>
 #include "assertive.h"
 #include <qcommon/mem_track.h>
 #include "q_shared.h"
 #include <qcommon/qcommon.h>
-#include <win32/win_local.h>
+#include <qcommon/sys_error.h>
+#include <qcommon/sys_memory.h>
 
 PhysicalMemory g_mem;
 int g_overAllocatedSize;
 
 void __cdecl PMem_Init()
 {
-    uint8_t *memory; // [esp+0h] [ebp-4h]
+    constexpr std::size_t memorySize = 0x8000000u;
+    void *const reservation = Sys_VirtualMemoryReserve(memorySize);
+    if (!reservation || !Sys_VirtualMemoryCommit(reservation, memorySize))
+    {
+        if (reservation)
+            Sys_VirtualMemoryRelease(reservation);
+        Sys_OutOfMemErrorInternal(".\\universal\\physicalmemory.cpp", 17);
+        return;
+    }
 
-    memory = (uint8_t *)VirtualAlloc(0, 0x8000000u, 0x1000u, 4u);
-    PMem_InitPhysicalMemory(&g_mem, memory, 0x8000000u);
+    PMem_InitPhysicalMemory(
+        &g_mem,
+        static_cast<uint8_t *>(reservation),
+        static_cast<uint32_t>(memorySize));
 }
 
 void __cdecl PMem_DumpMemStats()

@@ -86,6 +86,34 @@ set_target_properties(kisakcod-abi-atomics-tests PROPERTIES
 )
 add_test(NAME abi-atomics-and-layout-macros COMMAND kisakcod-abi-atomics-tests)
 
+add_executable(kisakcod-fx-atomic-layout-tests
+    fx_atomic_layout_tests.cpp
+)
+target_include_directories(kisakcod-fx-atomic-layout-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-fx-atomic-layout-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-fx-atomic-layout-tests)
+set_target_properties(kisakcod-fx-atomic-layout-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-fixed-width-atomic-layouts
+    COMMAND kisakcod-fx-atomic-layout-tests
+)
+
+add_executable(kisakcod-fx-runtime-blob-tests
+    fx_runtime_blob_tests.cpp
+)
+target_include_directories(kisakcod-fx-runtime-blob-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-fx-runtime-blob-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-fx-runtime-blob-tests)
+set_target_properties(kisakcod-fx-runtime-blob-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-runtime-blob-layout
+    COMMAND kisakcod-fx-runtime-blob-tests
+)
+
 add_executable(kisakcod-db-load-atomic-tests db_load_atomic_tests.cpp)
 target_include_directories(kisakcod-db-load-atomic-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-db-load-atomic-tests PRIVATE cxx_std_20)
@@ -235,6 +263,32 @@ add_test(
     COMMAND kisakcod-platform-service-runtime-tests
 )
 set_tests_properties(platform-service-runtime-contracts PROPERTIES TIMEOUT 20)
+
+set(_platform_memory_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
+list(FILTER _platform_memory_sources INCLUDE REGEX "[/\\\\]sys_memory\\.cpp$")
+list(LENGTH _platform_memory_sources _platform_memory_source_count)
+if (NOT _platform_memory_source_count EQUAL 1)
+    message(FATAL_ERROR
+        "Expected exactly one selected platform sys_memory.cpp, found "
+        "${_platform_memory_source_count}")
+endif()
+
+add_executable(kisakcod-platform-memory-tests
+    platform_memory_tests.cpp
+    ${_platform_memory_sources}
+)
+target_include_directories(kisakcod-platform-memory-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-platform-memory-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-platform-memory-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-platform-memory-tests)
+set_target_properties(kisakcod-platform-memory-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME platform-virtual-memory-contracts
+    COMMAND kisakcod-platform-memory-tests
+)
+set_tests_properties(platform-virtual-memory-contracts PROPERTIES TIMEOUT 20)
 
 add_test(
     NAME dedi-headless-source-profile

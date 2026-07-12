@@ -5059,6 +5059,229 @@ require_source_ordered(
     "bmodelInfo->surfId = surfId >> 2;"
     "brush-model records must finish construction before their ID is published")
 
+# EffectsCore runtime atomics must remain exact-width on LP64 platforms while
+# preserving the x86 layout and native operation return semantics.
+file(GLOB _effectscore_atomic_sources
+    "${SOURCE_ROOT}/src/EffectsCore/*.cpp"
+    "${SOURCE_ROOT}/src/EffectsCore/*.h")
+list(APPEND _effectscore_atomic_sources
+    "${SOURCE_ROOT}/src/gfx_d3d/fxprimitives.h")
+foreach(_effectscore_source IN LISTS _effectscore_atomic_sources)
+    file(READ "${_effectscore_source}" _effectscore_text)
+    foreach(_retired_effectscore_token
+        "Interlocked"
+        "win32/win_local.h")
+        string(FIND "${_effectscore_text}" "${_retired_effectscore_token}" _token_position)
+        if (NOT _token_position EQUAL -1)
+            message(FATAL_ERROR
+                "EffectsCore retains native Windows atomic dependency in ${_effectscore_source}")
+        endif()
+    endforeach()
+    string(REGEX MATCH
+        "(^|[^A-Za-z0-9_])LONG([^A-Za-z0-9_]|$)|volatile[ \\t]+long"
+        _native_effectscore_word
+        "${_effectscore_text}")
+    if (NOT "${_native_effectscore_word}" STREQUAL "")
+        message(FATAL_ERROR
+            "EffectsCore retains a native-width atomic word in ${_effectscore_source}")
+    endif()
+endforeach()
+require_source_contains(
+    "gfx_d3d/fxprimitives.h"
+    "#include <EffectsCore/fx_runtime.h>"
+    "renderer FX declarations must consume the portable runtime layout")
+require_source_match_count(
+    "EffectsCore/fx_runtime.h"
+    "alignas\\(4\\)[ \\t]+volatile[ \\t]+std::int32_t"
+    19
+    "all EffectsCore runtime atomic words must remain explicit int32_t storage")
+foreach(_fx_runtime_layout
+    "FxEffectDef, 0x20, 0x28"
+    "FxEffect, 0x80, 0x88"
+    "FxCamera, 0xB0, 0xB0"
+    "FxSpriteInfo, 0x10, 0x20"
+    "FxVisState, 0x1010, 0x1010"
+    "FxSystem, 0xA60, 0xA90"
+    "FxImpactEntry, 0x84, 0x108"
+    "FxImpactTable, 0x8, 0x10"
+    "FxProfileEntry, 0x1C, 0x20"
+    "FxSystemBuffers, 0x47480, 0x49480")
+    require_source_contains(
+        "EffectsCore/fx_runtime.h"
+        "RUNTIME_SIZE(${_fx_runtime_layout});"
+        "EffectsCore runtime structures must freeze both native layouts")
+endforeach()
+require_source_contains(
+    "cgame/cg_effects_load_obj.cpp"
+    "static_cast<uint32_t>(sizeof(FxImpactTable))"
+    "load-object impact tables must allocate their native runtime size")
+require_source_contains(
+    "cgame/cg_effects_load_obj.cpp"
+    "static_cast<uint32_t>(sizeof(FxImpactEntry) * 12)"
+    "load-object impact entries must allocate native pointer-bearing records")
+require_source_contains(
+    "EffectsCore/fx_convert.cpp"
+    "FxRuntimeBlobCursor sizePlanner;"
+    "editor effect conversion must use the checked runtime-blob planner")
+require_source_contains(
+    "EffectsCore/fx_convert.cpp"
+    "sizePlanner.ReserveArray<FxEffectDef>(1)"
+    "editor effect conversion must include an aligned native runtime header")
+require_source_contains(
+    "EffectsCore/fx_convert.cpp"
+    "sizePlanner.ReserveArray<FxElemDef>(static_cast<uint32_t>(elemCountTotal))"
+    "editor effect conversion must include aligned native element definitions")
+require_source_contains(
+    "EffectsCore/fx_convert.cpp"
+    "FX_PlanElemDefsOfType("
+    "editor effect conversion must plan editor payloads before allocation")
+require_source_contains(
+    "EffectsCore/fx_convert.cpp"
+    "FX_PlanEmittedElemDefPayloads(&sizePlanner, editorEffect)"
+    "editor effect conversion must plan copied emission payloads")
+require_source_contains(
+    "EffectsCore/fx_convert.cpp"
+    "FxRuntimeBlobCursor writer(reinterpret_cast<uint8_t *>(effect), totalBytesNeeded);"
+    "editor effect conversion must write through the bounded runtime-blob cursor")
+require_source_contains(
+    "EffectsCore/fx_convert.cpp"
+    "writer.Offset();"
+    "editor effect conversion must verify the planned and written byte counts")
+require_source_ordered(
+    "EffectsCore/fx_convert.cpp"
+    "elemCountTotal = 0;"
+    "if ((editorEffect->elems[elemIndex].editorFlags & 0x80000000) == 0)\n            ++elemCountTotal;"
+    "disabled editor elements must not inflate the runtime definition count")
+require_source_contains(
+    "EffectsCore/fx_runtime_blob.h"
+    "alignmentMask > (std::numeric_limits<std::size_t>::max)() - offset"
+    "runtime-blob alignment must reject addition overflow")
+require_source_contains(
+    "EffectsCore/fx_runtime_blob.h"
+    "std::memset(buffer_ + offset_, 0, alignedOffset - offset_);"
+    "runtime-blob writers must initialize alignment padding")
+require_source_not_matches(
+    "EffectsCore/fx_convert.cpp"
+    "_QWORD[ \\t]*\\*[ \\t]*\\)?[ \\t]*curves"
+    "velocity sampling must not pack native curve pointers as x86 qwords")
+require_source_not_matches(
+    "EffectsCore/fx_convert.cpp"
+    "(_DWORD|uint32_t)[^\r\n]*(\\+[ \\t]*53|\\[53\\])"
+    "effect conversion must use typed XModel physics-preset access")
+require_source_contains(
+    "EffectsCore/fx_convert.cpp"
+    "edElemDef->trailDef.indCount & 1"
+    "trail conversion must reject an unpaired final edge index")
+require_source_contains(
+    "EffectsCore/fx_convert.cpp"
+    "ARRAY_COUNT(edElemDef->trailDef.inds)"
+    "trail conversion must bound editor index storage")
+require_source_contains(
+    "EffectsCore/fx_convert.cpp"
+    "ARRAY_COUNT(edElemDef->trailDef.verts)"
+    "trail conversion must bound editor vertex storage")
+require_source_contains(
+    "EffectsCore/fx_convert.cpp"
+    "elemDef->elemType == 9 || elemDef->visualCount > 1u"
+    "emitted decal definitions must deep-copy their mark visual pair")
+require_source_contains(
+    "EffectsCore/fx_load_obj.cpp"
+    "static_cast<int>(alignof(FxEffectDef))"
+    "converted effect blobs must receive native pointer alignment")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "visuals.model->physPreset"
+    "effect physics must use typed XModel physics-preset access")
+require_source_contains(
+    "EffectsCore/fx_profile.cpp"
+    "qsort(entryPool, entryCount, sizeof(FxProfileEntry)"
+    "FX profiling must sort with the native pointer-bearing entry stride")
+
+# Static-XModel draw IDs must be resolved against the published surface arena;
+# raw draw-list casts remain permitted only for the separately queued BModel path.
+require_source_contains(
+    "gfx_d3d/r_model_surface_stream.h"
+    "TryResolveWordOffsetRange"
+    "model-surface IDs must have one bounded word-offset resolver")
+require_source_contains(
+    "gfx_d3d/r_scene.cpp"
+    "StaticXModelSurfaceCursor"
+    "static-XModel traversal must use its checked heterogeneous stream cursor")
+require_source_not_contains(
+    "gfx_d3d/r_scene.cpp"
+    "modelSurf = (GfxModelRigidSurface *)((char *)frontEndDataOut + 4 * surfId);"
+    "static-XModel scene submission must not decode surfId with a raw cast")
+require_source_match_count(
+    "gfx_d3d/r_draw_xmodel.cpp"
+    "R_ResolveModelSurface<"
+    5
+    "all XModel draw-list consumers must use the bounded typed resolver")
+require_source_match_count(
+    "gfx_d3d/rb_tess.cpp"
+    "RB_ResolveModelSurface<"
+    7
+    "all scoped XModel tessellation consumers must use the bounded typed resolver")
+require_source_match_count(
+    "gfx_d3d/r_draw_xmodel.cpp"
+    "gfxEntIndex >= ARRAY_COUNT\\(data->gfxEnts\\)"
+    2
+    "XModel draw consumers must bound every changed gfxEnt index")
+require_source_match_count(
+    "gfx_d3d/rb_tess.cpp"
+    "gfxEntIndex[a-z]* >= ARRAY_COUNT\\(data->gfxEnts\\)"
+    5
+    "XModel tessellation consumers must bound every changed gfxEnt index")
+require_source_match_count(
+    "gfx_d3d/rb_tess.cpp"
+    "\\(char \\*\\)data \\+ 4 \\* drawSurf.fields.objectId"
+    1
+    "only the explicitly deferred BModel object-ID cast may remain in rb_tess")
+
+# Virtual-memory consumers use one native-page, size_t service boundary and no
+# longer import the Win32 allocator directly.
+foreach(_portable_memory_consumer
+    "universal/com_memory.cpp"
+    "universal/physicalmemory.cpp")
+    require_source_contains(
+        "${_portable_memory_consumer}"
+        "#include <qcommon/sys_memory.h>"
+        "runtime memory consumers must use the portable virtual-memory service")
+    require_source_not_contains(
+        "${_portable_memory_consumer}"
+        "#include <win32/win_local.h>"
+        "runtime memory consumers must not import Win32 platform state")
+    require_source_not_matches(
+        "${_portable_memory_consumer}"
+        "(^|[^A-Za-z0-9_])Virtual(Alloc|Free)[ \\t\r\n]*\\("
+        "runtime memory consumers must not call Win32 virtual memory directly")
+endforeach()
+require_source_contains(
+    "qcommon/sys_memory.h"
+    "std::size_t KISAK_CDECL Sys_VirtualMemoryPageSize();"
+    "virtual-memory page size must use native size width")
+require_source_contains(
+    "qcommon/sys_memory.h"
+    "void *KISAK_CDECL Sys_VirtualMemoryReserve(std::size_t size);"
+    "virtual-memory reservation sizes must use native size width")
+require_source_contains(
+    "_platform/posix/sys_memory.cpp"
+    "MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED"
+    "POSIX decommit must replace pages with a guaranteed zero-filled reservation")
+require_source_contains(
+    "_platform/win32/sys_memory.cpp"
+    "MEM_RESERVE"
+    "Win32 virtual memory must preserve reserve/commit separation")
+require_source_ordered(
+    "universal/com_memory.cpp"
+    "uint8_t *const commitBegin = PageFloor(ptr);"
+    "uint8_t *const commitEnd = PageCeil("
+    "zone commits must cover an unaligned caller's first and last native pages")
+require_source_ordered(
+    "universal/com_memory.cpp"
+    "uint8_t *const commitEnd = PageCeil("
+    "Sys_VirtualMemoryCommit(\n        commitBegin,"
+    "zone commits must pass the aligned covering range to the strict platform API")
+
 # Upstream SP restorations must retain fixed-width save records and release-safe
 # bounds checks. These guards cover defects found during PR review that portable
 # utility targets cannot compile directly.
