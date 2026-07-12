@@ -6,25 +6,27 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Branch: `master`; active integration PR: `merge/upstream-9` ([#1](https://github.com/jm2/kisakcod/pull/1)).
+- Branch: `master` at upstream-integration merge `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: land and verify PR #1's upstream merge review fixes, run the protected licensed
-  headless smoke, then begin staged FX layout/iterator/counter/status protocols without relaxing
-  the engine gate.
+- Active work: parallel fixed-width EffectsCore atomics, bounded static-XModel stream access, and
+  portable virtual-memory services; then run the protected licensed headless smoke and continue the
+  staged FX iterator/counter/status protocols without relaxing the engine gate.
 - Progress estimate: approximately **20% complete by engineering effort** (plausible range 15–25%).
   The foundation/checklist view is about 25–30% and the shared foundation is roughly 60–70% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
-- Upstream integration: PR #1 merges upstream `master` through `8a0f14f` (nine commits; upstream is
-  not currently ahead) while preserving the port's pointer-width and security changes. It restores
-  several primarily SP features plus real shared renderer, XAnim, and unzip fixes; the accidental
+- Upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
+  (nine commits; upstream was not ahead at merge time) while preserving the port's pointer-width and
+  security changes. It restores several primarily SP features plus real shared renderer, XAnim, and
+  unzip fixes; the accidental
   `src/staged_changes.patch` artifact is excluded. Pre-review run **29204498860 passed all nine CI
   jobs**. Gemini/Codex review found fixed-width vehicle save-stream and null-dereference defects; the
-  current follow-up fixes the substantiated findings and records the two false positives (pathnode's
+  review follow-up fixed the substantiated findings and recorded the two false positives (pathnode's
   no-match branch already returned, and `CG_Missile` consistently declares/uses its uppercase local).
   A full delta audit additionally repaired the restored SP script-file API's one-slot ownership,
   pointer-width handle, signed-size, append-status, bounds, cleanup, and variadic-format defects, then
   applied the same one-slot ownership, bounds, and signed-allocation protections to the active MP API.
-  Source-level regression guards cover these engine-only paths pending replacement Windows CI.
+  Source-level regression guards cover these engine-only paths. Review-fix commit `6d604c1` and merge
+  candidate run **29205843697 passed all nine CI jobs**, including all four Windows engine variants.
 - Current DObj/model-surface batch: the inherited fixed 3,600-byte stack overlay and retail
   4/24/56-byte pointer-bearing stream assumptions are gone. A shared checked planner/cursor uses
   native 4/8, 24/40, and 56/72-byte records, aligned exact-capacity CAS reservations, placement
@@ -329,11 +331,12 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Land PR #1's substantiated automated-review fixes and verify all nine replacement CI jobs.
-2. Merge PR #1, validate the protected licensed-content headless startup/map/`getstatus` workflow, then start the
-   staged FX layout/iterator/counter/status families.
-3. Extract filesystem/virtual-memory/process services and implement Linux signal-park plus macOS
-   Mach crash freezing behind the already isolated terminal API.
+1. Land fixed-width EffectsCore atomics, bounded static-XModel accessors, and portable virtual-memory
+   services as independently reviewable commits.
+2. Validate the protected licensed-content headless startup/map/`getstatus` workflow, then continue
+   the staged FX iterator/counter/status families.
+3. Extract filesystem/process services and implement Linux signal-park plus macOS Mach crash freezing
+   behind the already isolated terminal API.
 4. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
 
 ## Known release blockers
