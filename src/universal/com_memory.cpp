@@ -61,7 +61,7 @@ bool CheckedAlignUp(
 
     const std::size_t remainder = value % alignment;
     const std::size_t adjustment = remainder ? alignment - remainder : 0;
-    if (value > std::numeric_limits<std::size_t>::max() - adjustment)
+    if (value > (std::numeric_limits<std::size_t>::max)() - adjustment)
         return false;
 
     *result = value + adjustment;
