@@ -1636,13 +1636,20 @@ int32_t __cdecl FX_CopyEmittedElemDefs(
                 }
                 if (elemDef->elemType == 9 || elemDef->visualCount > 1u)
                 {
-                    const size_t visualSize = elemDef->elemType == 9
-                        ? sizeof(FxElemMarkVisuals)
-                        : sizeof(FxElemVisuals);
-                    memcpy(
-                        (uint8_t *)elemDef->visuals.markArray,
-                        elemDefEmit->visuals.anonymous,
-                        visualSize * elemDef->visualCount);
+                    if (elemDef->elemType == 9)
+                    {
+                        memcpy(
+                            elemDef->visuals.markArray,
+                            elemDefEmit->visuals.markArray,
+                            sizeof(FxElemMarkVisuals) * elemDef->visualCount);
+                    }
+                    else
+                    {
+                        memcpy(
+                            elemDef->visuals.array,
+                            elemDefEmit->visuals.array,
+                            sizeof(FxElemVisuals) * elemDef->visualCount);
+                    }
                 }
             }
         }
