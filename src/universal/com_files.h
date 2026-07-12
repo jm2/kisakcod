@@ -1,5 +1,7 @@
 #pragma once
 
+#include <climits>
+#include <universal/kisak_abi.h>
 #include "q_shared.h"
 
 enum FsThread : __int32
@@ -26,13 +28,16 @@ struct directory_t // sizeof=0x200
     char path[256];
     char gamedir[256];
 };
-struct fileInIwd_s // sizeof=0xC
+RUNTIME_SIZE(directory_t, 0x200, 0x200);
+struct fileInIwd_s
 {
     uint32_t pos;
     char* name;
     fileInIwd_s* next;
 };
-struct iwd_t // sizeof=0x324
+RUNTIME_SIZE(fileInIwd_s, 0xC, 0x18);
+
+struct iwd_t
 {
     char iwdFilename[256];
     char iwdBasename[256];
@@ -40,16 +45,19 @@ struct iwd_t // sizeof=0x324
     uint8_t* handle;
     int checksum;
     int pure_checksum;
+    // Atomic ownership flag for the shared unzip handle: 0 = available,
+    // 1 = owned by one non-clone file handle.
     volatile uint32_t hasOpenFile;
     int numfiles;
-    uint8_t referenced;
-    // padding byte
-    // padding byte
-    // padding byte
+    volatile uint32_t referenced;
     uint32_t hashSize;
     fileInIwd_s** hashTable;
     fileInIwd_s* buildBuffer;
 };
+RUNTIME_SIZE(iwd_t, 0x324, 0x330);
+RUNTIME_OFFSET(iwd_t, hasOpenFile, 0x30C, 0x310);
+RUNTIME_OFFSET(iwd_t, referenced, 0x314, 0x318);
+
 struct searchpath_s // sizeof=0x1C
 {
     searchpath_s *next;
@@ -60,18 +68,23 @@ struct searchpath_s // sizeof=0x1C
     int ignorePureCheck;
     int language;
 };
+RUNTIME_SIZE(searchpath_s, 0x1C, 0x28);
 
-union qfile_gus // sizeof=0x4
+union qfile_gus
 {                                       // ...
     FILE *o;
     unsigned char *z;
 };
-struct qfile_us // sizeof=0x8
+RUNTIME_SIZE(qfile_gus, 0x4, 0x8);
+
+struct qfile_us
 {                                       // ...
     qfile_gus file;
-    int iwdIsClone;
+    int32_t iwdIsClone;
 };
-struct fileHandleData_t // sizeof=0x11C
+RUNTIME_SIZE(qfile_us, 0x8, 0x10);
+
+struct fileHandleData_t
 {
     qfile_us handleFiles;
     int handleSync;
@@ -81,6 +94,7 @@ struct fileHandleData_t // sizeof=0x11C
     int streamed;
     char name[256];
 };
+RUNTIME_SIZE(fileHandleData_t, 0x11C, 0x130);
 
 bool __cdecl FS_Initialized();
 

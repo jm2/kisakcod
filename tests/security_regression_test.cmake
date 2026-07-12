@@ -434,6 +434,309 @@ require_source_contains(
     SND_StopSounds(SND_STOP_STREAMED);
 #endif"
     "headless filesystem shutdown must not link the sound backend")
+
+foreach(_iwd_atomic_source
+    "universal/com_files.cpp"
+    "universal/com_files.h"
+)
+    require_source_not_contains(
+        "${_iwd_atomic_source}"
+        "Interlocked"
+        "IWD ownership must use the portable fixed-width atomic boundary")
+    require_source_not_matches(
+        "${_iwd_atomic_source}"
+        "(^|[^A-Za-z0-9_])LONG([^A-Za-z0-9_]|$)"
+        "IWD ownership must not depend on a native Windows word")
+endforeach()
+foreach(_iwd_layout_contract
+    "RUNTIME_SIZE(directory_t, 0x200, 0x200);"
+    "volatile uint32_t hasOpenFile;"
+    "volatile uint32_t referenced;"
+    "RUNTIME_SIZE(fileInIwd_s, 0xC, 0x18);"
+    "RUNTIME_SIZE(iwd_t, 0x324, 0x330);"
+    "RUNTIME_OFFSET(iwd_t, hasOpenFile, 0x30C, 0x310);"
+    "RUNTIME_OFFSET(iwd_t, referenced, 0x314, 0x318);"
+    "RUNTIME_SIZE(searchpath_s, 0x1C, 0x28);"
+    "RUNTIME_SIZE(qfile_gus, 0x4, 0x8);"
+    "RUNTIME_SIZE(qfile_us, 0x8, 0x10);"
+    "RUNTIME_SIZE(fileHandleData_t, 0x11C, 0x130);"
+)
+    require_source_contains(
+        "universal/com_files.h"
+        "${_iwd_layout_contract}"
+        "IWD and file-handle layouts must remain frozen on both pointer widths")
+endforeach()
+require_all_occurrences_wrapped(
+    "universal/com_files.cpp"
+    "->[ \t\r\n]*hasOpenFile"
+    "Sys_Atomic(Load|Store|Exchange|CompareExchange)[ \t\r\n]*\\([ \t\r\n]*&[^,;()]*->[ \t\r\n]*hasOpenFile"
+    "every canonical IWD-handle ownership access must be atomic")
+require_all_occurrences_wrapped(
+    "universal/com_files.cpp"
+    "->[ \t\r\n]*referenced"
+    "Sys_Atomic(Load|Store|Exchange|CompareExchange)[ \t\r\n]*\\([ \t\r\n]*&[^,;()]*->[ \t\r\n]*referenced"
+    "every IWD reference-publication access must be atomic")
+require_source_not_contains(
+    "universal/com_files.cpp"
+    "unzReOpen("
+    "contended IWD readers must not clone mutable live unzip state")
+foreach(_retired_unzip_reopen_source
+    "qcommon/unzip.cpp"
+    "qcommon/unzip.h"
+)
+    require_source_not_contains(
+        "${_retired_unzip_reopen_source}"
+        "unzReOpen"
+        "the mutable unzip-state clone API must remain retired")
+endforeach()
+require_source_not_contains(
+    "universal/com_files.cpp"
+    "Com_Memcpy((char *)zfi, (char *)iwd->handle"
+    "selected IWD readers must not copy the canonical live unzip cursor")
+require_source_contains(
+    "universal/com_files.cpp"
+    "fsh[*file].handleFiles.file.z = unzOpen(iwd->iwdFilename);"
+    "contended IWD readers must open an independent archive handle")
+require_source_contains(
+    "universal/com_files.cpp"
+    "Sys_AtomicCompareExchange(&iwd->hasOpenFile, 1u, 0u)"
+    "the canonical unzip handle must be claimed atomically")
+require_source_contains(
+    "universal/com_files.cpp"
+    "Sys_AtomicExchange(&fsh[h].zipFile->hasOpenFile, 0u)"
+    "the canonical unzip handle must be released and validated atomically")
+require_source_contains(
+    "universal/com_files.cpp"
+    "unzSetCurrentFileInfoPosition(
+            fsh[*file].handleFiles.file.z, iwdFile->pos)"
+    "IWD positioning must target the selected canonical or clone handle")
+require_source_contains(
+    "universal/com_files.cpp"
+    "selectedArchiveInfo.number_entry
+                != static_cast<unsigned long>(iwd->numfiles)"
+    "reopened IWDs must preserve their central-directory entry count")
+require_source_contains(
+    "universal/com_files.cpp"
+    "selectedFileInfo.size_filename >= sizeof(selectedFileName)
+                || memchr("
+    "selected IWD entries must reject unterminated and embedded-NUL names")
+require_source_contains(
+    "universal/com_files.cpp"
+    "FS_FilenameCompare(selectedFileName, iwdFile->name)"
+    "reopened IWDs must verify that a cached position still names the selected entry")
+require_source_contains(
+    "universal/com_files.cpp"
+    "Com_Memset(&fsh[h], 0, sizeof(fsh[h]));"
+    "file-handle cleanup must clear the native runtime record size")
+require_source_contains(
+    "universal/com_files.cpp"
+    "h < 0 || h >= static_cast<int32_t>(ARRAY_COUNT(fsh))"
+    "file close must reject handles before indexing the handle table")
+require_source_match_count(
+    "universal/com_files.cpp"
+    "memchr\\("
+    3
+    "IWD construction and reopen must reject embedded NUL names in all three consumers")
+require_source_contains(
+    "universal/com_files.cpp"
+    "if (unzGoToFirstFile(uf) != UNZ_OK)"
+    "IWD construction must reject an invalid first central-directory entry")
+require_source_contains(
+    "universal/com_files.cpp"
+    "i + 1u < entryCount && unzGoToNextFile(uf) != UNZ_OK"
+    "IWD construction must reject partial central-directory traversal")
+require_source_contains(
+    "universal/com_files.cpp"
+    "nameBytes > static_cast<size_t>(namesEnd - namePtr)"
+    "IWD names must remain inside their checked aggregate allocation")
+require_source_contains(
+    "universal/com_files.cpp"
+    "if (namePtr != namesEnd)"
+    "both IWD traversal passes must agree on the exact name allocation extent")
+require_source_contains(
+    "universal/com_files.cpp"
+    "qsort(s0, static_cast<size_t>(numfiles), sizeof(s0[0]), iwdsort);"
+    "IWD pointer sorting must use the native pointer element width")
+require_source_contains(
+    "universal/com_files.cpp"
+    "Z_Malloc(sizeof(*search), \"FS_AddIwdFilesForGameDirectory\", 3)"
+    "IWD search paths must allocate their native runtime record size")
+require_source_contains(
+    "universal/com_files.cpp"
+    "Z_Malloc(sizeof(*search), \"FS_AddGameDirectory\", 3)"
+    "directory search paths must allocate their native runtime record size")
+require_source_not_contains(
+    "universal/com_files.cpp"
+    "Z_Malloc(28,"
+    "search-path allocation must not retain the x86-only byte count")
+require_source_not_contains(
+    "universal/com_files.cpp"
+    "(searchpath_s **)*pSearch"
+    "search-path insertion must not type-pun its first member")
+require_source_contains(
+    "universal/com_files.cpp"
+    "memcpy(v2, \"          \", 10);"
+    "localized IWD sorting must not write character storage through aliased words")
+require_source_contains(
+    "universal/com_files.cpp"
+    "fs_iwdFileCount = 0;"
+    "filesystem shutdown must reset its per-search-path IWD count")
+
+require_source_contains(
+    "qcommon/unzip.cpp"
+    "uint8_t bytes[2];"
+    "ZIP 16-bit scalars must decode from exact little-endian bytes")
+require_source_contains(
+    "qcommon/unzip.cpp"
+    "uint8_t bytes[4];"
+    "ZIP 32-bit scalars must decode from exact little-endian bytes")
+foreach(_host_word_zip_decoder
+    "LittleShort"
+    "LittleLong"
+)
+    require_source_not_contains(
+        "qcommon/unzip.cpp"
+        "${_host_word_zip_decoder}"
+        "ZIP parsing must not depend on host-word endian macros")
+endforeach()
+require_source_contains(
+    "qcommon/unzip.cpp"
+    "else if (uL != 0x06054b50u)"
+    "ZIP opening must validate the end-of-central-directory signature")
+require_source_contains(
+    "qcommon/unzip.cpp"
+    "us.size_central_dir <= central_pos - us.offset_central_dir"
+    "ZIP central-directory bounds must avoid addition overflow")
+require_source_contains(
+    "qcommon/unzip.cpp"
+    "if (file==NULL || pos==NULL)"
+    "ZIP position queries must validate both arguments")
+require_source_contains(
+    "qcommon/unzip.cpp"
+    "s->current_file_ok = (err == UNZ_OK);
+\treturn err;"
+    "ZIP repositioning must return its actual parser result")
+require_source_contains(
+    "qcommon/unzip.cpp"
+    "if (pfile_in_zip_read_info->read_buffer == NULL)"
+    "ZIP entry opening must reject buffer allocation failure")
+require_source_contains(
+    "qcommon/unzip.cpp"
+    "unzlocal_FreeCurrentFile(pfile_in_zip_read_info);
+\t    return err;"
+    "ZIP inflate initialization failures must tear down partial state")
+
+foreach(_loopback_atomic_source
+    "qcommon/net_chan_mp.cpp"
+    "qcommon/net_chan_mp.h"
+)
+    require_source_not_contains(
+        "${_loopback_atomic_source}"
+        "Interlocked"
+        "loopback queues must use the portable fixed-width atomic boundary")
+    require_source_not_matches(
+        "${_loopback_atomic_source}"
+        "(^|[^A-Za-z0-9_])LONG([^A-Za-z0-9_]|$)"
+        "loopback queues must not depend on a native Windows word")
+endforeach()
+foreach(_loopback_layout_contract
+    "RUNTIME_SIZE(loopmsg_t, 0x580, 0x580);"
+    "RUNTIME_SIZE(loopback_t, 0x5808, 0x5808);"
+)
+    require_source_contains(
+        "qcommon/net_chan_mp.h"
+        "${_loopback_layout_contract}"
+        "loopback queue records must remain fixed-width on every target")
+endforeach()
+foreach(_loopback_cursor "send" "get")
+    require_all_occurrences_wrapped(
+        "qcommon/net_chan_mp.cpp"
+        "loop->[ \t\r\n]*${_loopback_cursor}"
+        "Sys_Atomic(Load|Store|Exchange|CompareExchange)[ \t\r\n]*\\([ \t\r\n]*&loop->[ \t\r\n]*${_loopback_cursor}"
+        "every loopback queue cursor access must use canonical atomics")
+endforeach()
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "Sys_AtomicCompareExchange(
+               &s_loopbackLocks[queueIndex], 1u, 0u)"
+    "loopback slot payloads must be protected against wrapped reuse")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "Sys_Sleep(0);"
+    "contended loopback publishers must yield")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "message.datalen = static_cast<int32_t>(length);
+    message.port = returnPort;
+
+    // Publish only after the complete slot payload is visible.
+    Sys_AtomicStore(&loop->send, send + 1u);"
+    "loopback producers must publish only complete slot metadata and payload")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "// Finish copying before the slot can be reused by a wrapped producer.
+    Sys_AtomicStore(&loop->get, get + 1u);"
+    "loopback consumers must release a slot only after copying it")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "static_cast<uint32_t>(dataLength) > sizeof(message.data)
+        || dataLength > net_message->maxsize"
+    "loopback consumers must validate stored length and destination capacity")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "length > sizeof(loopbacks[0].msgs[0].data)"
+    "loopback producers must reject oversized packets")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "memcpy(&packetMarker, data, sizeof(packetMarker));"
+    "packet logging must read its marker without alignment or short-buffer UB")
+require_source_not_contains(
+    "qcommon/net_chan_mp.cpp"
+    "*(uint32_t *)data"
+    "packet logging must not dereference an unaligned or undersized marker")
+require_source_not_contains(
+    "qcommon/net_chan_mp.cpp"
+    "*(uint32_t *)net_from"
+    "loopback source addresses must not be cleared through type-punned stores")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "const int32_t destinationCapacity = net_message->maxsize;"
+    "fake-lag delivery must preserve the caller's destination capacity")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "queued.length > static_cast<uint32_t>(destinationCapacity)"
+    "fake-lag delivery must reject packets larger than the caller's buffer")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "static_cast<uint32_t>(queuedSize) != queued.length"
+    "fake-lag delivery must reject inconsistent queued metadata")
+require_source_not_contains(
+    "qcommon/net_chan_mp.cpp"
+    "net_message->maxsize = laggedPackets"
+    "fake-lag delivery must not replace the caller's capacity with queued metadata")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "if (length <= 0 || !data)"
+    "fake-lag outbound input must use a release-active runtime check")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "msg->cursize <= 0
+        || msg->maxsize < msg->cursize"
+    "fake-lag incoming input must use release-active message bounds")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "if (!queuedData)
+            return static_cast<uint32_t>(-2);"
+    "fake-lag outbound allocation failure must leave no live queue slot")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "if (!queuedData)
+        return static_cast<uint32_t>(-1);"
+    "fake-lag incoming allocation failure must leave no live queue slot")
+require_source_contains(
+    "qcommon/net_chan_mp.cpp"
+    "memset(&laggedPackets[packet], 0, sizeof(laggedPackets[packet]));"
+    "fake-lag slot destruction must clear all stale metadata")
 require_source_contains(
     "qcommon/cmd.cpp"
     "dumpraw is unavailable because headless builds do not realize media resources"

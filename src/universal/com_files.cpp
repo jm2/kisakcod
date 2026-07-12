@@ -2,6 +2,7 @@
 #include "q_shared.h"
 
 #include <universal/com_memory.h>
+#include <universal/sys_atomic.h>
 #include <qcommon/com_fileaccess.h>
 #include <qcommon/qcommon.h>
 #include <win32/win_local.h>
@@ -11,6 +12,8 @@
 #include <qcommon/com_bsp.h>
 #include <qcommon/cmd.h>
 #include <qcommon/files.h>
+#include <climits>
+#include <limits>
 #include <io.h>
 
 const dvar_t *fs_remotePCDirectory;
@@ -93,7 +96,7 @@ char *__cdecl FS_ReferencedIwdPureChecksums()
     {
         if (search->iwd && !search->bLocalized)
         {
-            if (search->iwd->referenced)
+            if (Sys_AtomicLoad(&search->iwd->referenced))
             {
                 v0 = va("%i ", search->iwd->pure_checksum);
                 I_strncat(info6, 0x2000, v0);
@@ -150,7 +153,7 @@ char *__cdecl FS_ReferencedIwdNames()
     info8[0] = 0;
     for (search = fs_searchpaths; search; search = search->next)
     {
-        if (search->iwd && (search->iwd->referenced || I_strnicmp(search->iwd->iwdGamename, "main", 4)))
+        if (search->iwd && (Sys_AtomicLoad(&search->iwd->referenced) || I_strnicmp(search->iwd->iwdGamename, "main", 4)))
         {
             if (info8[0])
                 I_strncat(info8, 0x2000, " ");
@@ -171,7 +174,7 @@ char *__cdecl FS_ReferencedIwdChecksums()
     info5[0] = 0;
     for (search = fs_searchpaths; search; search = search->next)
     {
-        if (search->iwd && (search->iwd->referenced || I_strnicmp(search->iwd->iwdGamename, "main", 4)))
+        if (search->iwd && (Sys_AtomicLoad(&search->iwd->referenced) || I_strnicmp(search->iwd->iwdGamename, "main", 4)))
         {
             v0 = va("%i ", search->iwd->checksum);
             I_strncat(info5, 0x2000, v0);
@@ -226,7 +229,7 @@ void __cdecl FS_ClearIwdReferences()
     for (search = fs_searchpaths; search; search = search->next)
     {
         if (search->iwd)
-            search->iwd->referenced = 0;
+            Sys_AtomicStore(&search->iwd->referenced, 0u);
     }
 }
 
@@ -483,20 +486,36 @@ void __cdecl FS_FCloseFile(int h)
     FILE *f; // [esp+0h] [ebp-4h]
 
     FS_CheckFileSystemStarted();
+    if (h == 0)
+        return;
+    if (h < 0 || h >= static_cast<int32_t>(ARRAY_COUNT(fsh)))
+    {
+        MyAssertHandler(".\\universal\\com_files.cpp", 1274, 0, "%s", "h >= 0 && h < ARRAY_COUNT(fsh)");
+        return;
+    }
+    if (!fsh[h].handleFiles.file.o)
+    {
+        MyAssertHandler(".\\universal\\com_files.cpp", 1275, 0, "%s", "fsh[h].handleFiles.file.o");
+        return;
+    }
     if (fsh[h].streamed)
         MyAssertHandler(".\\universal\\com_files.cpp", 1275, 0, "%s", "!fsh[h].streamed");
     if (fsh[h].zipFile)
     {
         unzCloseCurrentFile(fsh[h].handleFiles.file.z);
-        if (fsh[h].handleFiles.iwdIsClone)
+        const int32_t cloneState = fsh[h].handleFiles.iwdIsClone;
+        if (cloneState != 0 && cloneState != 1)
+            MyAssertHandler(".\\universal\\com_files.cpp", 1281, 0, "%s", "cloneState == 0 || cloneState == 1");
+        if (cloneState != 0)
         {
             unzClose(fsh[h].handleFiles.file.z);
         }
         else
         {
-            if (!fsh[h].zipFile->hasOpenFile)
-                MyAssertHandler(".\\universal\\com_files.cpp", 1287, 0, "%s", "fsh[h].zipFile->hasOpenFile");
-            fsh[h].zipFile->hasOpenFile = 0;
+            const uint32_t previousOpenState =
+                Sys_AtomicExchange(&fsh[h].zipFile->hasOpenFile, 0u);
+            if (previousOpenState != 1u)
+                MyAssertHandler(".\\universal\\com_files.cpp", 1287, 0, "%s", "previousOpenState == 1u");
         }
     }
     else if (h)
@@ -504,7 +523,7 @@ void __cdecl FS_FCloseFile(int h)
         f = FS_FileForHandle(h);
         FS_FileClose(f);
     }
-    Com_Memset((uint32_t *)&fsh[h], 0, 284);
+    Com_Memset(&fsh[h], 0, sizeof(fsh[h]));
 }
 
 void __cdecl FS_FCloseLogFile(int h)
@@ -750,11 +769,9 @@ uint32_t __cdecl FS_FOpenFileReadForThread(const char *filename, int *file, FsTh
     fileInIwd_s *iwdFile; // [esp+200h] [ebp-130h]
     directory_t *dir; // [esp+204h] [ebp-12Ch]
     int hash; // [esp+208h] [ebp-128h]
-    unz_s *zfi; // [esp+20Ch] [ebp-124h]
     const char *impureIwd; // [esp+210h] [ebp-120h]
     iwd_t *iwd; // [esp+214h] [ebp-11Ch]
     const char *extension; // [esp+218h] [ebp-118h]
-    file_in_zip_read_info_s *ziptemp; // [esp+21Ch] [ebp-114h]
     char netpath[256]; // [esp+220h] [ebp-110h] BYREF
     bool wasSkipped; // [esp+327h] [ebp-9h]
     searchpath_s *search; // [esp+328h] [ebp-8h]
@@ -898,21 +915,24 @@ uint32_t __cdecl FS_FOpenFileReadForThread(const char *filename, int *file, FsTh
         impureIwd = (const char *)iwd;
         goto LABEL_29;
     }
-    if (!iwd->referenced && !FS_FilesAreLoadedGlobally(sanitizedName))
-        iwd->referenced = 1;
-    if (InterlockedCompareExchange(&iwd->hasOpenFile, 1, 0) == 1)
+    if (!FS_FilesAreLoadedGlobally(sanitizedName))
+        Sys_AtomicStore(&iwd->referenced, 1u);
+    const uint32_t previousOpenState =
+        Sys_AtomicCompareExchange(&iwd->hasOpenFile, 1u, 0u);
+    if (previousOpenState != 0u)
     {
+        if (previousOpenState != 1u)
+            MyAssertHandler(".\\universal\\com_files.cpp", 2077, 0, "%s", "previousOpenState == 1u");
         fsh[*file].handleFiles.iwdIsClone = 1;
-        fsh[*file].handleFiles.file.z = unzReOpen(iwd->iwdFilename, iwd->handle);
+        fsh[*file].handleFiles.file.z = unzOpen(iwd->iwdFilename);
         if (!fsh[*file].handleFiles.file.z)
         {
+            Com_Memset(&fsh[*file], 0, sizeof(fsh[*file]));
+            *file = 0;
             if (thread)
-            {
-                FS_FCloseFile(*file);
-                *file = 0;
                 return -1;
-            }
-            Com_Error(ERR_FATAL, "Couldn't reopen %s", iwd);
+            Com_Error(ERR_FATAL, "Couldn't reopen %s", iwd->iwdFilename);
+            return -1;
         }
     }
     else
@@ -922,18 +942,68 @@ uint32_t __cdecl FS_FOpenFileReadForThread(const char *filename, int *file, FsTh
     }
     I_strncpyz(fsh[*file].name, sanitizedName, 256);
     fsh[*file].zipFile = iwd;
-    zfi = (unz_s *)fsh[*file].handleFiles.file.o;
-    filetemp = zfi->file;
-    ziptemp = zfi->pfile_in_zip_read;
-    unzSetCurrentFileInfoPosition(iwd->handle, iwdFile->pos);
-    Com_Memcpy((char *)zfi, (char *)iwd->handle, 128);
-    zfi->file = filetemp;
-    zfi->pfile_in_zip_read = ziptemp;
-    unzOpenCurrentFile(fsh[*file].handleFiles.file.z);
     fsh[*file].zipFilePos = iwdFile->pos;
+    unz_global_info_s selectedArchiveInfo = {};
+    int openResult = unzGetGlobalInfo(
+        fsh[*file].handleFiles.file.z, &selectedArchiveInfo);
+    if (openResult == UNZ_OK
+        && (iwd->numfiles < 0
+            || selectedArchiveInfo.number_entry
+                != static_cast<unsigned long>(iwd->numfiles)))
+    {
+        openResult = UNZ_BADZIPFILE;
+    }
+    const int positionResult = openResult == UNZ_OK
+        ? unzSetCurrentFileInfoPosition(
+            fsh[*file].handleFiles.file.z, iwdFile->pos)
+        : openResult;
+    unz_file_info_s selectedFileInfo = {};
+    char selectedFileName[256] = {};
+    openResult = positionResult;
+    if (positionResult == UNZ_OK)
+    {
+        openResult = unzGetCurrentFileInfo(
+            fsh[*file].handleFiles.file.z,
+            &selectedFileInfo,
+            selectedFileName,
+            sizeof(selectedFileName),
+            nullptr,
+            0,
+            nullptr,
+            0);
+        bool selectedSizeIsValid = true;
+#if ULONG_MAX > UINT32_MAX
+        selectedSizeIsValid = selectedFileInfo.uncompressed_size
+            <= static_cast<unsigned long>(
+                (std::numeric_limits<uint32_t>::max)());
+#endif
+        if (openResult == UNZ_OK
+            && (selectedFileInfo.size_filename >= sizeof(selectedFileName)
+                || memchr(
+                    selectedFileName,
+                    '\0',
+                    static_cast<size_t>(selectedFileInfo.size_filename))
+                || !selectedSizeIsValid
+                || FS_FilenameCompare(selectedFileName, iwdFile->name)))
+        {
+            openResult = UNZ_BADZIPFILE;
+        }
+        if (openResult == UNZ_OK)
+            openResult = unzOpenCurrentFile(fsh[*file].handleFiles.file.z);
+    }
+    if (openResult != UNZ_OK)
+    {
+        const int failedHandle = *file;
+        FS_FCloseFile(failedHandle);
+        *file = 0;
+        if (thread)
+            return -1;
+        Com_Error(ERR_FATAL, "Couldn't open %s in %s", sanitizedName, iwd->iwdFilename);
+        return -1;
+    }
     if (fs_debug->current.integer && thread == FS_THREAD_MAIN)
         Com_Printf(10, "FS_FOpenFileRead: %s (found in '%s')\n", sanitizedName, iwd->iwdFilename);
-    return zfi->cur_file_info.uncompressed_size;
+    return static_cast<uint32_t>(selectedFileInfo.uncompressed_size);
 }
 
 int __cdecl FS_FOpenFileReadDatabase(const char *filename, int *file)
@@ -1294,7 +1364,7 @@ void __cdecl FS_AddSearchPath(searchpath_s *search)
     if (search->bLocalized)
     {
         while (*pSearch && !(*pSearch)->bLocalized)
-            pSearch = (searchpath_s **)*pSearch;
+            pSearch = &(*pSearch)->next;
     }
     search->next = *pSearch;
     *pSearch = search;
@@ -1302,76 +1372,190 @@ void __cdecl FS_AddSearchPath(searchpath_s *search)
 
 iwd_t *__cdecl FS_LoadZipFile(char *zipfile, char *basename)
 {
-    char v3; // [esp+17h] [ebp-1DDh]
-    char *name; // [esp+1Ch] [ebp-1D8h]
-    char *v5; // [esp+20h] [ebp-1D4h]
-    uint8_t *uf; // [esp+70h] [ebp-184h]
-    char *namePtr; // [esp+74h] [ebp-180h]
-    int hash; // [esp+7Ch] [ebp-178h]
-    int fs_numHeaderLongs; // [esp+80h] [ebp-174h]
-    int *fs_headerLongs; // [esp+84h] [ebp-170h]
-    iwd_t *iwd; // [esp+88h] [ebp-16Ch]
-    uint32_t len; // [esp+8Ch] [ebp-168h]
-    fileInIwd_s *buildBuffer; // [esp+90h] [ebp-164h]
+    uint8_t *uf = nullptr;
+    char *namePtr;
+    int hash;
+    int fs_numHeaderLongs = 0;
+    int *fs_headerLongs = nullptr;
+    iwd_t *iwd = nullptr;
+    fileInIwd_s *buildBuffer = nullptr;
     unz_file_info_s file_info; // [esp+94h] [ebp-160h] BYREF
     char filename_inzip[256]; // [esp+E4h] [ebp-110h] BYREF
-    uint32_t i; // [esp+1E8h] [ebp-Ch]
+    uint32_t i;
     unz_global_info_s gi; // [esp+1ECh] [ebp-8h] BYREF
 
-    fs_numHeaderLongs = 0;
-    uf = unzOpen(zipfile);
-    if (unzGetGlobalInfo(uf, &gi))
-        return 0;
-    fs_iwdFileCount += gi.number_entry;
-    len = 0;
-    unzGoToFirstFile(uf);
-    for (i = 0; i < gi.number_entry && !unzGetCurrentFileInfo(uf, &file_info, filename_inzip, 0x100u, 0, 0, 0, 0); ++i)
+    const auto failLoad = [&]() -> iwd_t *
     {
-        len += &filename_inzip[strlen(filename_inzip) + 1] - &filename_inzip[1] + 1;
-        unzGoToNextFile(uf);
+        if (uf)
+            unzClose(uf);
+        Z_Free(buildBuffer, 3);
+        Z_Free(fs_headerLongs, 3);
+        Z_Free(iwd, 3);
+        return nullptr;
+    };
+
+    if (!zipfile
+        || !basename
+        || strlen(zipfile) >= 256u
+        || strlen(basename) >= 256u)
+    {
+        return failLoad();
     }
-    //buildBuffer = (fileInIwd_s*)Z_Malloc(len + 12 * gi.number_entry, "FS_LoadZipFile1", 3);
-    buildBuffer = (fileInIwd_s*)Z_Malloc(gi.number_entry * sizeof(fileInIwd_s) + len, "FS_LoadZipFile1", 3);
-    namePtr = (char*)&buildBuffer[gi.number_entry];
-    //fs_headerLongs = (int*)Z_Malloc(4 * gi.number_entry, "FS_LoadZipFile2", 3);
-    fs_headerLongs = (int*)Z_Malloc(gi.number_entry * sizeof(int), "FS_LoadZipFile2", 3);
-    for (i = 1; i <= 0x400 && i <= gi.number_entry; i *= 2)
-        ;
-    //iwd = (iwd_t*) Z_Malloc(4 * i + 0x324, "FS_LoadZipFile3", 3);
-    iwd = (iwd_t*) Z_Malloc(sizeof(iwd_t) + i * sizeof(fileInIwd_s *), "FS_LoadZipFile3", 3);
-    iwd->hashSize = i;
-    //iwd->hashTable = &iwd[1];
+
+    uf = unzOpen(zipfile);
+    if (!uf
+        || unzGetGlobalInfo(uf, &gi) != UNZ_OK
+        || gi.number_entry == 0
+        || gi.number_entry > static_cast<unsigned long>(
+            (std::numeric_limits<int32_t>::max)()))
+    {
+        return failLoad();
+    }
+
+    const uint32_t entryCount = static_cast<uint32_t>(gi.number_entry);
+    if (fs_iwdFileCount < 0
+        || entryCount > static_cast<uint32_t>(
+            (std::numeric_limits<int32_t>::max)() - fs_iwdFileCount))
+    {
+        return failLoad();
+    }
+
+    size_t namesBytes = 0;
+    if (unzGoToFirstFile(uf) != UNZ_OK)
+        return failLoad();
+    for (i = 0; i < entryCount; ++i)
+    {
+        if (unzGetCurrentFileInfo(
+                uf,
+                &file_info,
+                filename_inzip,
+                sizeof(filename_inzip),
+                nullptr,
+                0,
+                nullptr,
+                0) != UNZ_OK
+            || file_info.size_filename >= sizeof(filename_inzip)
+            || memchr(
+                filename_inzip,
+                '\0',
+                static_cast<size_t>(file_info.size_filename)))
+        {
+            return failLoad();
+        }
+
+        const size_t nameBytes =
+            static_cast<size_t>(file_info.size_filename) + 1u;
+        if (namesBytes
+            > static_cast<size_t>((std::numeric_limits<int32_t>::max)())
+                - nameBytes)
+        {
+            return failLoad();
+        }
+        namesBytes += nameBytes;
+
+        if (i + 1u < entryCount && unzGoToNextFile(uf) != UNZ_OK)
+            return failLoad();
+    }
+
+    const size_t entryBytes =
+        static_cast<size_t>(entryCount) * sizeof(fileInIwd_s);
+    if (entryBytes
+        > static_cast<size_t>((std::numeric_limits<int32_t>::max)())
+            - namesBytes)
+    {
+        return failLoad();
+    }
+    const size_t buildBytes = entryBytes + namesBytes;
+    const size_t headerBytes = static_cast<size_t>(entryCount) * sizeof(int);
+
+    buildBuffer = static_cast<fileInIwd_s *>(Z_Malloc(
+        static_cast<int32_t>(buildBytes), "FS_LoadZipFile1", 3));
+    fs_headerLongs = static_cast<int *>(Z_Malloc(
+        static_cast<int32_t>(headerBytes), "FS_LoadZipFile2", 3));
+
+    uint32_t hashSize = 1u;
+    while (hashSize <= 0x400u && hashSize <= entryCount)
+        hashSize *= 2u;
+    const size_t iwdBytes =
+        sizeof(iwd_t) + static_cast<size_t>(hashSize) * sizeof(fileInIwd_s *);
+    iwd = static_cast<iwd_t *>(Z_Malloc(
+        static_cast<int32_t>(iwdBytes), "FS_LoadZipFile3", 3));
+    if (!buildBuffer || !fs_headerLongs || !iwd)
+        return failLoad();
+
+    namePtr = reinterpret_cast<char *>(buildBuffer) + entryBytes;
+    char *const namesEnd = reinterpret_cast<char *>(buildBuffer) + buildBytes;
+    iwd->hashSize = hashSize;
     iwd->hashTable = (fileInIwd_s**)(((char *)iwd) + sizeof(iwd_t));
     for (i = 0; i < iwd->hashSize; ++i)
         iwd->hashTable[i] = 0;
     I_strncpyz(iwd->iwdFilename, zipfile, 256);
     I_strncpyz(iwd->iwdBasename, basename, 256);
-    if (strlen(iwd->iwdBasename) > 4 && !I_stricmp(&iwd->iwdFilename[strlen(iwd->iwdBasename) + 252], ".iwd"))
-        iwd->iwdFilename[strlen(iwd->iwdBasename) + 252] = 0;
-    iwd->handle = uf;
-    iwd->numfiles = gi.number_entry;
-    iwd->hasOpenFile = 0;
-    unzGoToFirstFile(uf);
-    for (i = 0; i < gi.number_entry && !unzGetCurrentFileInfo(uf, &file_info, filename_inzip, 0x100u, 0, 0, 0, 0); ++i)
+    const size_t basenameLength = strlen(iwd->iwdBasename);
+    if (basenameLength > 4
+        && !I_stricmp(&iwd->iwdBasename[basenameLength - 4], ".iwd"))
     {
+        iwd->iwdBasename[basenameLength - 4] = '\0';
+    }
+    iwd->handle = uf;
+    iwd->numfiles = static_cast<int32_t>(entryCount);
+    Sys_AtomicStore(&iwd->hasOpenFile, 0u);
+    Sys_AtomicStore(&iwd->referenced, 0u);
+    if (unzGoToFirstFile(uf) != UNZ_OK)
+        return failLoad();
+    for (i = 0; i < entryCount; ++i)
+    {
+        if (unzGetCurrentFileInfo(
+                uf,
+                &file_info,
+                filename_inzip,
+                sizeof(filename_inzip),
+                nullptr,
+                0,
+                nullptr,
+                0) != UNZ_OK
+            || file_info.size_filename >= sizeof(filename_inzip)
+            || memchr(
+                filename_inzip,
+                '\0',
+                static_cast<size_t>(file_info.size_filename)))
+        {
+            return failLoad();
+        }
+
         if (file_info.uncompressed_size)
             fs_headerLongs[fs_numHeaderLongs++] = file_info.crc;
         I_strlwr(filename_inzip);
         hash = FS_HashFileName(filename_inzip, iwd->hashSize);
         buildBuffer[i].name = namePtr;
-        v5 = filename_inzip;
-        name = buildBuffer[i].name;
-        do
+        const size_t nameBytes =
+            static_cast<size_t>(file_info.size_filename) + 1u;
+        if (namePtr > namesEnd
+            || nameBytes > static_cast<size_t>(namesEnd - namePtr))
         {
-            v3 = *v5;
-            *name++ = *v5++;
-        } while (v3);
-        namePtr += &filename_inzip[strlen(filename_inzip) + 1] - &filename_inzip[1] + 1;
-        unzGetCurrentFileInfoPosition(uf, (unsigned long*)&buildBuffer[i].pos);
+            return failLoad();
+        }
+        memcpy(namePtr, filename_inzip, nameBytes);
+        namePtr += nameBytes;
+        unsigned long currentFilePosition = 0;
+        const int positionResult =
+            unzGetCurrentFileInfoPosition(uf, &currentFilePosition);
+        bool positionIsValid = positionResult == UNZ_OK;
+#if ULONG_MAX > UINT32_MAX
+        positionIsValid = positionIsValid
+            && currentFilePosition <= static_cast<unsigned long>(
+                (std::numeric_limits<uint32_t>::max)());
+#endif
+        if (!positionIsValid)
+            return failLoad();
+        buildBuffer[i].pos = static_cast<uint32_t>(currentFilePosition);
         buildBuffer[i].next = iwd->hashTable[hash];
         iwd->hashTable[hash] = &buildBuffer[i];
-        unzGoToNextFile(uf);
+        if (i + 1u < entryCount && unzGoToNextFile(uf) != UNZ_OK)
+            return failLoad();
     }
+    if (namePtr != namesEnd)
+        return failLoad();
     iwd->checksum = Com_BlockChecksumKey32((const unsigned char *)fs_headerLongs, 4 * fs_numHeaderLongs, 0);
     if (fs_checksumFeed)
         iwd->pure_checksum = Com_BlockChecksumKey32((const unsigned char*)fs_headerLongs, 4 * fs_numHeaderLongs, fs_checksumFeed);
@@ -1380,7 +1564,9 @@ iwd_t *__cdecl FS_LoadZipFile(char *zipfile, char *basename)
     iwd->checksum = iwd->checksum;
     iwd->pure_checksum = iwd->pure_checksum;
     Z_Free(fs_headerLongs, 3);
+    fs_headerLongs = nullptr;
     iwd->buildBuffer = buildBuffer;
+    fs_iwdFileCount += static_cast<int32_t>(entryCount);
     return iwd;
 }
 
@@ -1434,16 +1620,14 @@ int __cdecl FS_PathCmp(const char *s1, const char *s2)
     return 0;
 }
 
-int __cdecl iwdsort(const char **a, char **b)
+int __cdecl iwdsort(const void *left, const void *right)
 {
     char *pszLanguageB; // [esp+0h] [ebp-10h]
     char *pszLanguageA; // [esp+4h] [ebp-Ch]
-    char *bb; // [esp+8h] [ebp-8h]
-    char *aa; // [esp+Ch] [ebp-4h]
+    char *const aa = *static_cast<char *const *>(left);
+    char *const bb = *static_cast<char *const *>(right);
 
-    aa = (char *)*a;
-    bb = *b;
-    if (!I_strncmp(*a, "          ", 10) && !I_strncmp(bb, "          ", 10))
+    if (!I_strncmp(aa, "          ", 10) && !I_strncmp(bb, "          ", 10))
     {
         pszLanguageA = IwdFileLanguage(aa);
         pszLanguageB = IwdFileLanguage(bb);
@@ -1464,9 +1648,6 @@ void __cdecl FS_AddIwdFilesForGameDirectory(char *path, char *pszGameFolder)
 {
     char *v2; // eax
     const char *LanguageName; // eax
-    char v4; // [esp+3h] [ebp-1149h]
-    char *iwdGamename; // [esp+8h] [ebp-1144h]
-    char *v6; // [esp+Ch] [ebp-1140h]
     signed int j; // [esp+20h] [ebp-112Ch]
     char ospath[260]; // [esp+24h] [ebp-1128h] BYREF
     iwd_t *ZipFile; // [esp+12Ch] [ebp-1020h]
@@ -1482,16 +1663,22 @@ void __cdecl FS_AddIwdFilesForGameDirectory(char *path, char *pszGameFolder)
     FS_BuildOSPath(path, pszGameFolder, (char *)"", ospath);
     ospath[&ospath[strlen(ospath) + 1] - &ospath[1] - 1] = 0;
     list = Sys_ListFiles(ospath, "iwd", 0, &numfiles, 0);
-    if (numfiles > 1024)
+    if (!list || numfiles <= 0)
+    {
+        if (list)
+            FS_FreeFileList((const char **)list);
+        return;
+    }
+    if (numfiles > static_cast<int32_t>(ARRAY_COUNT(s0)))
     {
         Com_PrintWarning(
             10,
-            "WARNING: Exceeded max number of iwd files in %s/%s (%1/%1)\n",
+            "WARNING: Exceeded max number of iwd files in %s/%s (%i/%i)\n",
             path,
             pszGameFolder,
             numfiles,
-            1024);
-        numfiles = 1024;
+            static_cast<int32_t>(ARRAY_COUNT(s0)));
+        numfiles = static_cast<int32_t>(ARRAY_COUNT(s0));
     }
     for (i = 0; i < numfiles; ++i)
     {
@@ -1499,12 +1686,10 @@ void __cdecl FS_AddIwdFilesForGameDirectory(char *path, char *pszGameFolder)
         if (!I_strncmp(s0[i], "localized_", 10))
         {
             v2 = s0[i];
-            *(_DWORD *)v2 = *(_DWORD *)"          ";
-            *((_DWORD *)v2 + 1) = 538976288;    
-            *((_WORD *)v2 + 4) = 8224;
+            memcpy(v2, "          ", 10);
         }
     }
-    qsort(s0, numfiles, 4u, (int(__cdecl *)(const void *, const void *))iwdsort);
+    qsort(s0, static_cast<size_t>(numfiles), sizeof(s0[0]), iwdsort);
     for (i = 0; i < numfiles; ++i)
     {
         if (I_strncmp(s0[i], "          ", 10))
@@ -1554,14 +1739,24 @@ void __cdecl FS_AddIwdFilesForGameDirectory(char *path, char *pszGameFolder)
         ZipFile = FS_LoadZipFile(ospath, s0[i]);
         if (ZipFile)
         {
-            v6 = pszGameFolder;
-            iwdGamename = ZipFile->iwdGamename;
-            do
+            I_strncpyz(
+                ZipFile->iwdGamename,
+                pszGameFolder,
+                sizeof(ZipFile->iwdGamename));
+            search = static_cast<searchpath_s *>(
+                Z_Malloc(sizeof(*search), "FS_AddIwdFilesForGameDirectory", 3));
+            if (!search)
             {
-                v4 = *v6;
-                *iwdGamename++ = *v6++;
-            } while (v4);
-            search = (searchpath_s *)Z_Malloc(28, "FS_AddIwdFilesForGameDirectory", 3);
+                fs_iwdFileCount -= ZipFile->numfiles;
+                unzClose(ZipFile->handle);
+                Z_Free(ZipFile->buildBuffer, 3);
+                Z_Free(ZipFile, 3);
+                FS_FreeFileList((const char **)list);
+                Com_Error(
+                    ERR_FATAL,
+                    "FS_AddIwdFilesForGameDirectory: out of memory");
+                return;
+            }
             search->iwd = ZipFile;
             search->bLocalized = v10;
             search->language = piLanguageIndex;
@@ -1598,7 +1793,6 @@ int __cdecl Sys_DirectoryHasContents(const char *directory)
 
 void __cdecl FS_AddGameDirectory(char *path, char *dir, int bLanguageDirectory, int iLanguage)
 {
-    uint32_t *v4; // eax
     int v5; // eax
     const char *v6; // [esp+10h] [ebp-15Ch]
     char ospath[260]; // [esp+14h] [ebp-158h] BYREF
@@ -1656,9 +1850,18 @@ void __cdecl FS_AddGameDirectory(char *path, char *dir, int bLanguageDirectory, 
     {
         I_strncpyz(fs_gamedir, szGameFolder, 256);
     }
-    search = (searchpath_s *)Z_Malloc(28, "FS_AddGameDirectory", 3);
-    v4 = (uint32_t*)Z_Malloc(512, "FS_AddGameDirectory", 3);
-    search->dir = (directory_t *)v4;
+    search = static_cast<searchpath_s *>(
+        Z_Malloc(sizeof(*search), "FS_AddGameDirectory", 3));
+    directory_t *const directory = static_cast<directory_t *>(
+        Z_Malloc(sizeof(*directory), "FS_AddGameDirectory", 3));
+    if (!search || !directory)
+    {
+        Z_Free(search, 3);
+        Z_Free(directory, 3);
+        Com_Error(ERR_FATAL, "FS_AddGameDirectory: out of memory");
+        return;
+    }
+    search->dir = directory;
     I_strncpyz(search->dir->path, path, 256);
     I_strncpyz(search->dir->gamedir, szGameFolder, 256);
     if (!bLanguageDirectory && iLanguage)
@@ -2868,12 +3071,15 @@ void __cdecl FS_ShutdownSearchPaths(searchpath_s *p)
         next = p->next;
         if (p->iwd)
         {
+            const uint32_t openState = Sys_AtomicLoad(&p->iwd->hasOpenFile);
+            if (openState != 0u)
+                MyAssertHandler(".\\universal\\com_files.cpp", 5398, 0, "%s", "openState == 0u");
             unzClose(p->iwd->handle);
             Z_Free(p->iwd->buildBuffer, 3);
-            Z_Free(p->iwd->iwdFilename, 3);
+            Z_Free(p->iwd, 3);
         }
         if (p->dir)
-            Z_Free(p->dir->path, 3);
+            Z_Free(p->dir, 3);
         Z_Free(p, 3);
         p = next;
     }
@@ -2897,11 +3103,12 @@ void __cdecl FS_Shutdown()
     SEH_Shutdown_StringEd();
     for (i = 1; i < 65; ++i)
     {
-        if (fsh[i].fileSize)
+        if (fsh[i].handleFiles.file.o)
             FS_FCloseFile(i);
     }
     FS_ShutdownSearchPaths(fs_searchpaths);
     fs_searchpaths = 0;
+    fs_iwdFileCount = 0;
     FS_RemoveCommands();
 }
 

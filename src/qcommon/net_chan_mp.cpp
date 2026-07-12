@@ -17,6 +17,8 @@
 #endif
 #include <universal/profile.h>
 #include <universal/com_math.h>
+#include <universal/sys_atomic.h>
+#include <limits>
 
 
 const dvar_t *showpackets;
@@ -42,6 +44,73 @@ uint8_t tempNetchanPacketBuf[131072];
 loopback_t loopbacks[2];
 fakedLatencyPackets_t laggedPackets[512];
 bool fakelagInitialized;
+
+namespace
+{
+constexpr uint32_t LOOPBACK_QUEUE_COUNT = 2u;
+constexpr uint32_t LOOPBACK_MESSAGE_COUNT = 16u;
+constexpr uint32_t LOOPBACK_MESSAGE_MASK = LOOPBACK_MESSAGE_COUNT - 1u;
+
+static_assert(ARRAY_COUNT(loopbacks) == LOOPBACK_QUEUE_COUNT);
+static_assert(ARRAY_COUNT(loopbacks[0].msgs) == LOOPBACK_MESSAGE_COUNT);
+static_assert((LOOPBACK_MESSAGE_COUNT & LOOPBACK_MESSAGE_MASK) == 0u);
+
+// send/get publish the queue state, while this lock protects each non-atomic
+// slot payload from being overwritten as a wrapped consumer copies it.
+volatile uint32_t s_loopbackLocks[LOOPBACK_QUEUE_COUNT];
+
+bool Net_LoopbackQueueIndex(netsrc_t sock, uint32_t *queueIndex)
+{
+    if (!queueIndex)
+        return false;
+
+    const int32_t value = static_cast<int32_t>(sock);
+    if (value < 0 || static_cast<uint32_t>(value) >= LOOPBACK_QUEUE_COUNT)
+        return false;
+
+    *queueIndex = static_cast<uint32_t>(value);
+    return true;
+}
+
+bool Net_ResolveLoopbackRoute(
+    netsrc_t sock,
+    const netadr_t &to,
+    uint32_t *queueIndex,
+    int32_t *returnPort)
+{
+    if (!queueIndex || !returnPort)
+        return false;
+
+    if (sock == NS_CLIENT1)
+    {
+        *queueIndex = static_cast<uint32_t>(NS_SERVER);
+        *returnPort = static_cast<int32_t>(NS_CLIENT1);
+        return true;
+    }
+
+    if (sock != NS_SERVER || to.port >= LOOPBACK_QUEUE_COUNT)
+        return false;
+
+    *queueIndex = static_cast<uint32_t>(to.port);
+    *returnPort = static_cast<int32_t>(NS_CLIENT1);
+    return true;
+}
+
+void Net_LockLoopback(uint32_t queueIndex)
+{
+    while (Sys_AtomicCompareExchange(
+               &s_loopbackLocks[queueIndex], 1u, 0u)
+           != 0u)
+    {
+        Sys_Sleep(0);
+    }
+}
+
+void Net_UnlockLoopback(uint32_t queueIndex)
+{
+    Sys_AtomicStore(&s_loopbackLocks[queueIndex], 0u);
+}
+}
 
 ClientSnapshotData s_clientSnapshotData[64];
 
@@ -283,24 +352,36 @@ void __cdecl Net_DisplayProfile(int localClientNum)
 
 char __cdecl FakeLag_DestroyPacket(uint32_t packet)
 {
-    Z_VirtualFree(laggedPackets[packet].data);
-    laggedPackets[packet].data = 0;
-    laggedPackets[packet].msg.data = 0;
-    laggedPackets[packet].length = 0;
-    laggedPackets[packet].msg.cursize = 0;
+    if (packet >= ARRAY_COUNT(laggedPackets))
+        return 0;
+
+    if (laggedPackets[packet].data)
+        Z_VirtualFree(laggedPackets[packet].data);
+    memset(&laggedPackets[packet], 0, sizeof(laggedPackets[packet]));
     return 1;
 }
 
 void __cdecl FakeLag_SendPacket_Real(uint32_t packet)
 {
-    iassert( packet < FAKELATENCY_MAX_PACKETS_HELD );
-    iassert( laggedPackets[ packet ].outbound );
-    iassert( laggedPackets[ packet ].data );
+    if (packet >= ARRAY_COUNT(laggedPackets))
+        return;
+
+    fakedLatencyPackets_t &queued = laggedPackets[packet];
+    if (!queued.outbound
+        || !queued.data
+        || queued.length == 0u
+        || queued.length > static_cast<uint32_t>(
+            (std::numeric_limits<int32_t>::max)()))
+    {
+        FakeLag_DestroyPacket(packet);
+        return;
+    }
+
     NET_SendPacket(
-        laggedPackets[packet].sock,
-        laggedPackets[packet].length,
-        laggedPackets[packet].data,
-        laggedPackets[packet].addr);
+        queued.sock,
+        static_cast<int32_t>(queued.length),
+        queued.data,
+        queued.addr);
     FakeLag_DestroyPacket(packet);
 }
 
@@ -361,8 +442,9 @@ uint32_t __cdecl FakeLag_SendPacket(netsrc_t sock, int length, uint8_t *data, ne
     uint32_t now; // [esp+24h] [ebp-10h]
     int change; // [esp+28h] [ebp-Ch]
 
-    iassert( length > 0 );
-    iassert( data != NULL );
+    if (length <= 0 || !data)
+        return static_cast<uint32_t>(-2);
+
     now = Sys_Milliseconds();
     if (fakelag_jitter->current.integer + fakelag_target->current.integer != fakelag_current->current.integer)
     {
@@ -383,20 +465,27 @@ uint32_t __cdecl FakeLag_SendPacket(netsrc_t sock, int length, uint8_t *data, ne
         && (!FakeLag_HostingGameOrParty() || to.type != NA_IP))
     {
         slot = FakeLag_GetFreeSlot();
-        laggedPackets[slot].outbound = 1;
-        laggedPackets[slot].sock = sock;
-        laggedPackets[slot].loopback = to.type == NA_LOOPBACK;
-        laggedPackets[slot].addr = to;
-        laggedPackets[slot].length = length;
-        laggedPackets[slot].data = (uint8_t *)Z_VirtualAlloc(length, "FakeLag_SendPacket", 0);
-        laggedPackets[slot].msg.data = laggedPackets[slot].data;
-        memcpy(laggedPackets[slot].data, data, length);
+        uint8_t *const queuedData = static_cast<uint8_t *>(
+            Z_VirtualAlloc(length, "FakeLag_SendPacket", 0));
+        if (!queuedData)
+            return static_cast<uint32_t>(-2);
+
+        memcpy(queuedData, data, static_cast<size_t>(length));
+        fakedLatencyPackets_t &queued = laggedPackets[slot];
+        memset(&queued, 0, sizeof(queued));
+        queued.outbound = true;
+        queued.sock = sock;
+        queued.loopback = to.type == NA_LOOPBACK;
+        queued.addr = to;
+        queued.data = queuedData;
+        queued.msg.data = queuedData;
         if (fakelag_jitter->current.integer)
             jitter = irand(0, lastCall - now);
         else
             jitter = 0;
-        laggedPackets[slot].startTime = jitter + Sys_Milliseconds();
-        if (showpackets->current.integer && (showpackets->current.integer > 1 || !laggedPackets[slot].loopback))
+        queued.startTime = jitter + Sys_Milliseconds();
+        queued.length = static_cast<uint32_t>(length);
+        if (showpackets->current.integer && (showpackets->current.integer > 1 || !queued.loopback))
         {
             if (sock == NS_SERVER)
             {
@@ -410,7 +499,7 @@ uint32_t __cdecl FakeLag_SendPacket(netsrc_t sock, int length, uint8_t *data, ne
                     v6 = "client";
                 v7 = v6;
             }
-            if (laggedPackets[slot].loopback)
+            if (queued.loopback)
                 Com_Printf(16, "[%u] adding outbound %s packet for %s\n", now, "loopback", v7);
             else
                 Com_Printf(16, "[%u] adding outbound %s packet for %s\n", now, "network", v7);
@@ -441,8 +530,15 @@ uint32_t __cdecl FakeLag_QueueIncomingPacket(bool loopback, netsrc_t sock, netad
     uint32_t now; // [esp+2Ch] [ebp-Ch]
     int change; // [esp+30h] [ebp-8h]
 
-    iassert( msg->cursize > 0 );
-    iassert( msg->data != NULL );
+    if (!from
+        || !msg
+        || !msg->data
+        || msg->cursize <= 0
+        || msg->maxsize < msg->cursize)
+    {
+        return static_cast<uint32_t>(-1);
+    }
+
     now = Sys_Milliseconds();
     if (fakelag_jitter->current.integer + fakelag_target->current.integer != fakelag_current->current.integer)
     {
@@ -459,23 +555,28 @@ uint32_t __cdecl FakeLag_QueueIncomingPacket(bool loopback, netsrc_t sock, netad
     if (fakelag_packetloss->current.value > 0.0 && fakelag_packetloss->current.value >= flrand(0.0, 1.0))
         return -1;
     slot = FakeLag_GetFreeSlot();
-    laggedPackets[slot].outbound = 0;
-    laggedPackets[slot].loopback = loopback;
-    laggedPackets[slot].sock = sock;
-    laggedPackets[slot].addr = *from;
-    laggedPackets[slot].length = msg->cursize;
-    laggedPackets[slot].data = (uint8_t *)Z_VirtualAlloc(msg->cursize, "FakeLag_SendPacket", 0);
-    if (!laggedPackets[slot].data)
-        return -1;
-    memcpy(laggedPackets[slot].data, msg->data, msg->cursize);
-    qmemcpy(&laggedPackets[slot].msg, msg, sizeof(laggedPackets[slot].msg));
-    laggedPackets[slot].msg.data = laggedPackets[slot].data;
+    uint8_t *const queuedData = static_cast<uint8_t *>(
+        Z_VirtualAlloc(msg->cursize, "FakeLag_QueueIncomingPacket", 0));
+    if (!queuedData)
+        return static_cast<uint32_t>(-1);
+
+    memcpy(queuedData, msg->data, static_cast<size_t>(msg->cursize));
+    fakedLatencyPackets_t &queued = laggedPackets[slot];
+    memset(&queued, 0, sizeof(queued));
+    queued.outbound = false;
+    queued.loopback = loopback;
+    queued.sock = sock;
+    queued.addr = *from;
+    queued.data = queuedData;
+    qmemcpy(&queued.msg, msg, sizeof(queued.msg));
+    queued.msg.data = queuedData;
     if (fakelag_jitter->current.integer)
         jitter = irand(0, lastCall_0 - now);
     else
         jitter = 0;
-    laggedPackets[slot].startTime = jitter + Sys_Milliseconds();
-    if (showpackets->current.integer && (showpackets->current.integer > 1 || !laggedPackets[slot].loopback))
+    queued.startTime = jitter + Sys_Milliseconds();
+    queued.length = static_cast<uint32_t>(msg->cursize);
+    if (showpackets->current.integer && (showpackets->current.integer > 1 || !queued.loopback))
     {
         if (sock == NS_SERVER)
         {
@@ -526,6 +627,15 @@ int __cdecl FakeLag_GetPacket(bool loopback, netsrc_t sock, netadr_t *net_from, 
     signed int packet; // [esp+0h] [ebp-8h]
     signed int now; // [esp+4h] [ebp-4h]
 
+    if (!net_from
+        || !net_message
+        || !net_message->data
+        || net_message->maxsize < 0)
+    {
+        return 0;
+    }
+
+    const int32_t destinationCapacity = net_message->maxsize;
     now = Sys_Milliseconds();
     for (packet = 0; ; ++packet)
     {
@@ -541,22 +651,36 @@ int __cdecl FakeLag_GetPacket(bool loopback, netsrc_t sock, netadr_t *net_from, 
             break;
         }
     }
-    if (showpackets->current.integer && (showpackets->current.integer > 1 || !laggedPackets[packet].loopback))
+    fakedLatencyPackets_t &queued = laggedPackets[packet];
+    const int32_t queuedSize = queued.msg.cursize;
+    if (!queued.data
+        || queued.msg.data != queued.data
+        || queued.length > static_cast<uint32_t>(destinationCapacity)
+        || queuedSize < 0
+        || static_cast<uint32_t>(queuedSize) != queued.length
+        || queued.msg.readcount < 0
+        || queued.msg.readcount > queuedSize)
+    {
+        FakeLag_DestroyPacket(static_cast<uint32_t>(packet));
+        return 0;
+    }
+
+    if (showpackets->current.integer && (showpackets->current.integer > 1 || !queued.loopback))
         Com_Printf(
             16,
             "[%i] delivering incoming packet from %i (time: %i) (%ims latency)\n",
             now,
-            laggedPackets[packet].startTime,
-            laggedPackets[packet].startTime,
-            now - laggedPackets[packet].startTime);
-    *net_from = laggedPackets[packet].addr;
-    net_message->bit = laggedPackets[packet].msg.bit;
-    net_message->cursize = laggedPackets[packet].msg.cursize;
-    net_message->maxsize = laggedPackets[packet].msg.maxsize;
-    net_message->overflowed = laggedPackets[packet].msg.overflowed;
-    net_message->readcount = laggedPackets[packet].msg.readcount;
-    memcpy(net_message->data, laggedPackets[packet].data, laggedPackets[packet].length);
-    FakeLag_DestroyPacket(packet);
+            queued.startTime,
+            queued.startTime,
+            now - queued.startTime);
+    *net_from = queued.addr;
+    net_message->bit = queued.msg.bit;
+    net_message->cursize = queuedSize;
+    net_message->overflowed = queued.msg.overflowed;
+    net_message->readcount = queued.msg.readcount;
+    if (queued.length != 0u)
+        memcpy(net_message->data, queued.data, queued.length);
+    FakeLag_DestroyPacket(static_cast<uint32_t>(packet));
     return 1;
 }
 
@@ -1097,30 +1221,74 @@ int __cdecl NET_GetServerPacket(netadr_t *net_from, msg_t *net_message)
 
 int __cdecl NET_GetLoopPacket_Real(netsrc_t sock, netadr_t *net_from, msg_t *net_message)
 {
-    loopback_t *loop; // [esp+0h] [ebp-8h]
-    int i; // [esp+4h] [ebp-4h]
-
-    loop = &loopbacks[sock];
-    if (loop->send - loop->get > 16)
-        loop->get = loop->send - 16;
-    if (loop->get >= loop->send)
+    uint32_t queueIndex;
+    if (!Net_LoopbackQueueIndex(sock, &queueIndex)
+        || !net_from
+        || !net_message
+        || !net_message->data
+        || net_message->maxsize < 0)
+    {
         return 0;
-    i = loop->get & 0xF;
-    InterlockedIncrement(&loop->get);
-    memcpy(net_message->data, loop->msgs[i].data, loop->msgs[i].datalen);
-    net_message->cursize = loop->msgs[i].datalen;
-    net_from->type = NA_BOT;
-    *(uint32_t *)net_from->ip = 0;
-    *(uint32_t *)&net_from->port = 0;
-    *(uint32_t *)&net_from->ipx[2] = 0;
-    *(uint32_t *)&net_from->ipx[6] = 0;
+    }
+
+    loopback_t *const loop = &loopbacks[queueIndex];
+    Net_LockLoopback(queueIndex);
+
+    const uint32_t send = Sys_AtomicLoad(&loop->send);
+    uint32_t get = Sys_AtomicLoad(&loop->get);
+    const uint32_t pending = send - get;
+    if (pending > LOOPBACK_MESSAGE_COUNT)
+    {
+        get = send - LOOPBACK_MESSAGE_COUNT;
+        Sys_AtomicStore(&loop->get, get);
+    }
+
+    if (get == send)
+    {
+        Net_UnlockLoopback(queueIndex);
+        return 0;
+    }
+
+    const uint32_t slot = get & LOOPBACK_MESSAGE_MASK;
+    const loopmsg_t &message = loop->msgs[slot];
+    const int32_t dataLength = message.datalen;
+    if (dataLength < 0
+        || static_cast<uint32_t>(dataLength) > sizeof(message.data)
+        || dataLength > net_message->maxsize
+        || message.port < 0
+        || message.port > UINT16_MAX)
+    {
+        // A malformed entry must not wedge the consumer on the same slot.
+        Sys_AtomicStore(&loop->get, get + 1u);
+        Net_UnlockLoopback(queueIndex);
+        return 0;
+    }
+
+    if (dataLength != 0)
+        memcpy(net_message->data, message.data, static_cast<uint32_t>(dataLength));
+    net_message->cursize = dataLength;
+    memset(net_from, 0, sizeof(*net_from));
     net_from->type = NA_LOOPBACK;
-    net_from->port = loop->msgs[i].port;
+    net_from->port = static_cast<uint16_t>(message.port);
+
+    // Finish copying before the slot can be reused by a wrapped producer.
+    Sys_AtomicStore(&loop->get, get + 1u);
+    Net_UnlockLoopback(queueIndex);
     return 1;
 }
 
 int __cdecl NET_GetLoopPacket(netsrc_t sock, netadr_t *net_from, msg_t *net_message)
 {
+    uint32_t queueIndex;
+    if (!Net_LoopbackQueueIndex(sock, &queueIndex)
+        || !net_from
+        || !net_message
+        || !net_message->data
+        || net_message->maxsize < 0)
+    {
+        return 0;
+    }
+
     if (fakelagInitialized && fakelag_current->current.integer)
         return FakeLag_GetPacket(1, sock, net_from, net_message);
     else
@@ -1130,45 +1298,59 @@ int __cdecl NET_GetLoopPacket(netsrc_t sock, netadr_t *net_from, msg_t *net_mess
 
 void __cdecl NET_SendLoopPacket(netsrc_t sock, uint32_t length, uint8_t *data, netadr_t to)
 {
-    loopback_t *loop; // [esp+0h] [ebp-10h]
-    int i; // [esp+4h] [ebp-Ch]
-    netsrc_t port; // [esp+8h] [ebp-8h]
+    uint32_t queueIndex;
+    int32_t returnPort;
+    if (!data
+        || length > sizeof(loopbacks[0].msgs[0].data)
+        || !Net_ResolveLoopbackRoute(
+            sock, to, &queueIndex, &returnPort))
+    {
+        return;
+    }
 
-    port = NS_CLIENT1;
-    if (sock >= NS_SERVER)
-    {
-        if (sock == NS_SERVER)
-            sock = (netsrc_t)to.port;
-    }
-    else
-    {
-        port = sock;
-        sock = NS_SERVER;
-    }
-    loop = &loopbacks[sock];
-    i = loop->send & 0xF;
-    memcpy(loop->msgs[i].data, data, length);
-    loop->msgs[i].datalen = length;
-    loop->msgs[i].port = port;
-    InterlockedIncrement(&loop->send);
+    loopback_t *const loop = &loopbacks[queueIndex];
+    Net_LockLoopback(queueIndex);
+
+    const uint32_t send = Sys_AtomicLoad(&loop->send);
+    loopmsg_t &message = loop->msgs[send & LOOPBACK_MESSAGE_MASK];
+    if (length != 0u)
+        memcpy(message.data, data, length);
+    message.datalen = static_cast<int32_t>(length);
+    message.port = returnPort;
+
+    // Publish only after the complete slot payload is visible.
+    Sys_AtomicStore(&loop->send, send + 1u);
+    Net_UnlockLoopback(queueIndex);
 }
 
 char __cdecl NET_SendPacket(netsrc_t sock, int length, uint8_t *data, netadr_t to)
 {
-    netadr_t v5; // [esp-14h] [ebp-18h]
+    if (length < 0 || !data)
+        return 0;
 
-    if (showpackets->current.integer && *(uint32_t *)data == -1)
-        Com_Printf(16, "[%s] send packet %4i\n", netsrcString[sock], length);
+    uint32_t packetMarker = 0;
+    if (static_cast<uint32_t>(length) >= sizeof(packetMarker))
+        memcpy(&packetMarker, data, sizeof(packetMarker));
+
+    uint32_t sourceIndex;
+    const char *const sourceName = Net_LoopbackQueueIndex(sock, &sourceIndex)
+        ? netsrcString[sourceIndex]
+        : "unknown";
+    if (showpackets->current.integer && packetMarker == UINT32_MAX)
+        Com_Printf(16, "[%s] send packet %4i\n", sourceName, length);
     if (to.type == NA_LOOPBACK)
     {
-        //*(_QWORD *)&v5.type = __PAIR64__(*(uint32_t *)to.ip, 2);
-        v5.type = NA_LOOPBACK;
-        //*(uint32_t *)&v5.port = *(uint32_t *)&to.port;
-        v5.port = to.port;
-        //*(_QWORD *)&v5.ipx[2] = *(_QWORD *)&to.ipx[2];
-        v5.ipx[0] = to.ipx[0];
-        v5.ipx[1] = to.ipx[1];
-        NET_SendLoopPacket(sock, length, data, v5);
+        uint32_t queueIndex;
+        int32_t returnPort;
+        if (static_cast<uint32_t>(length)
+                > sizeof(loopbacks[0].msgs[0].data)
+            || !Net_ResolveLoopbackRoute(
+                sock, to, &queueIndex, &returnPort))
+        {
+            return 0;
+        }
+
+        NET_SendLoopPacket(sock, static_cast<uint32_t>(length), data, to);
         return 1;
     }
     else if (to.type == NA_BAD)

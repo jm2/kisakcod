@@ -8,10 +8,23 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: finish and obtain Windows CI evidence for the database progress/I/O atomic batch,
-  then migrate the small IWD ownership and loopback-publication families (or the next audited safe
-  atomic batch) without relaxing the engine gate.
-- Current database batch: standalone-tested atomic protocols use fixed-width
+- Active work: validate and land the IWD ownership/unzip and loopback/fake-lag publication batch,
+  then migrate the checked SP/MP skeleton arena and pose-cull publication families without relaxing
+  the engine gate.
+- Current IWD/loopback batch: canonical IWD-handle ownership and reference publication use exact
+  fixed-width atomics; contended readers open independent archives instead of copying a live unzip
+  cursor; selected entries, handle bounds, native record sizes, and shutdown cleanup are validated.
+  IWD discovery now uses pointer-sized sorting and native search-path allocations. Both central-
+  directory passes reject partial traversal, long/embedded-NUL names, arithmetic/allocation failure,
+  changed name extents, and invalid positions. The legacy unzip layer rejects short scalar reads,
+  invalid EOCD/bounds, allocation/inflate failures, and partial state, and its unsafe `unzReOpen` API
+  is removed. Per-queue locks now protect loopback payload/cursor publication across wraparound;
+  packet routes, lengths, destinations, and marker reads are bounded. Fake-lag queueing validates
+  release-build inputs and allocation results, preserves the caller's receive capacity, rejects
+  inconsistent metadata, and fully clears retired slots. This removes three more native atomic
+  calls, leaving **110 direct `Interlocked` calls in 18 engine translation units**. Local validation
+  is 18/18 under GCC, Clang, GCC ASan/UBSan, and GCC TSan; Windows CI is pending.
+- Last completed database batch: standalone-tested atomic protocols use fixed-width
   `FileReadState`/`ProgressState` records plus an `AssetRecoveryGate`; they publish results coherently,
   serialize back-to-back lost-device recovery against database asset use, reject invalid read sizes
   and progress underflow/overflow, and calculate bounded progress snapshots without mixed atomic/raw
@@ -21,11 +34,9 @@ work item changes. Do not create session-specific handoff files.
   close prior cross-thread races; the lost-device recovery handshake now has a tested safe-state
   claim/recheck protocol and yielding waits. Buffered overlapped reads remove the unfulfilled
   unbuffered sector-alignment contract, and file-handle, zone input, vertex/index pointer-offset, and
-  read-buffer bounds receive runtime validation. This batch replaces 20 executable native atomic calls. Together with
-  the diagnostic batch, **113 direct `Interlocked` calls remain in 20 engine translation units**.
-  Its new portable test brings the local suite to 18/18 under GCC, Clang, GCC ASan/UBSan, and GCC
-  TSan; Windows CI has not run for this batch.
-- Last completed batch: diagnostic mark-generation and local-entity overlap counters now use exact
+  read-buffer bounds receive runtime validation. This batch replaced 20 executable native atomic
+  calls; commit `cfd9045` passed all nine CI jobs in run 29177998144.
+- Previous diagnostic batch: mark-generation and local-entity overlap counters now use exact
   fixed-width `Sys_Atomic*` words, keep every increment paired with a decrement, and have source guards
   against reintroducing native atomics. This landed 12-call migration is diagnostic only and does not
   claim to serialize the underlying renderer/cgame work.
@@ -127,8 +138,8 @@ work item changes. Do not create session-specific handoff files.
   client/media includes remain.
 - Portable validation: 18/18 tests pass locally under GCC, Clang, and GCC ASan/UBSan, with leak
   detection disabled because LeakSanitizer cannot run under the command-runner ptrace environment.
-  The full suite, including the new database file-read/progress atomic protocol test, also passes
-  under GCC ThreadSanitizer.
+  The full suite, including the database file-read/progress protocol plus the current IWD/unzip and
+  loopback source contracts, also passes under GCC ThreadSanitizer.
   The production relocation registry is also strict-warning clean under GCC/Clang and GCC ILP32
   syntax checking. Portable tests do not execute the Windows stream adapter or media ownership paths.
 - Windows validation: AABB warning repair run 29096212752, bounded-direct-reference run
@@ -175,8 +186,9 @@ work item changes. Do not create session-specific handoff files.
   over-aligned script layout. This batch replaces those three uses with `sizeof`, keeps Windows64
   layout compilation under a local C4324 suppression, and splits portable build/test CI steps;
   corrective XAnim/DObj run 29176960257 passed all nine jobs. Diagnostic-overlap commit `c400a27`
-  then passed all nine jobs in run 29177286439. The current database batch has only the
-  18/18 local GCC/Clang/sanitizer evidence above and must not be treated as Windows-CI-validated yet.
+  then passed all nine jobs in run 29177286439. Database I/O/recovery commit `cfd9045` subsequently
+  passed all nine jobs in run 29177998144. The current IWD/unzip/loopback batch has only the 18/18
+  local GCC/Clang/sanitizer evidence above and must not be treated as Windows-CI-validated yet.
   The observed linker debt is now 106 -> 45 -> 0.
 
 ## Milestone status
@@ -184,7 +196,7 @@ work item changes. Do not create session-specific handoff files.
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
-| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration contexts, fixed-width fast locks, native dvar/script/XAnim/DObj state, guarded DObj lifecycle publication, and a locally tested database I/O/progress protocol exist; 113 executable direct engine Interlocked calls in 20 translation units and broader platform integration remain. |
+| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration/IWD search contexts, fixed-width fast locks, native dvar/script/XAnim/DObj/database/IWD/loopback state, and guarded lifecycle/publication protocols exist; 110 executable direct engine Interlocked calls in 18 translation units and broader platform integration remain. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 45 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
 | M3 platform services | In progress: core thread services integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, and a cooperative worker gate used by renderer workers. High-level orchestration is native-type-free. Linux/macOS engine/headless sets remain empty and engine-gated; POSIX crash freezing, filesystem, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table and DObj runtime/saved layouts, allocations, preview buffers, and SP corpse pointers are native-width exact. XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads remain 32-bit-layout-bound. |
@@ -205,8 +217,8 @@ work item changes. Do not create session-specific handoff files.
 ## Immediate queue
 
 1. Validate the protected licensed-content headless startup/map/`getstatus` workflow on its runner.
-2. Finish and run Windows CI for the database I/O/progress atomic batch, then migrate small IWD
-   ownership and loopback publication (or another audited safe family).
+2. Finish and run Windows CI for the IWD/unzip and loopback/fake-lag batch, then migrate checked
+   SP/MP skeleton-arena reservation and pose-cull publication.
 3. Extract filesystem/virtual-memory/process services and implement Linux signal-park plus macOS
    Mach crash freezing behind the already isolated terminal API.
 4. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
@@ -230,7 +242,7 @@ work item changes. Do not create session-specific handoff files.
   fast lock now routes every dvar/database reader and writer counter operation through shared
   sequentially consistent helpers, with source guards and reader/writer stress coverage. Broader
   engine atomics still contain Windows `LONG`, direct volatile polling, and Windows-header coupling;
-  113 executable direct calls remain across 20 translation units after the current database batch,
+  110 executable direct calls remain across 18 translation units after the current IWD/loopback batch,
   although dvar sorting and all state in `threads.cpp` are now native C++ atomics. Finish that M1
   migration before compiling a non-Windows engine target.
 - XAnim tree/table ownership and DObj runtime storage are native-width-safe, but the animation payload
@@ -312,4 +324,9 @@ work item changes. Do not create session-specific handoff files.
 - SteamGameServer is not implemented; legacy non-headless dedicated Steam auth still uses the desktop client API.
 - Master-server discovery and HTTP redirect downloads remain nonfunctional.
 - Miles/Bink and zlib 1.1.4 must be removed or replaced before portable releases.
+- Independent IWD readers still reopen an archive by pathname. Selected entry/count validation
+  catches many replacements, but an on-disk path swap with a compatible directory remains a file-
+  identity TOCTOU until the filesystem service can reopen the same underlying file object. Legacy
+  unzip CRC verification is disabled, and its public/runtime records still use native
+  `unsigned long` plus signed-int file sizes, limiting safe archives to below 2 GiB.
 - Licensed gameplay smoke and release packaging workflows have not run.

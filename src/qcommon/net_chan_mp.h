@@ -4,6 +4,8 @@
 #error This File is MultiPlayer Only
 #endif
 
+#include <universal/kisak_abi.h>
+
 #include "msg_mp.h"
 
 // number of old messages that must be kept on client and
@@ -124,9 +126,10 @@ struct fakedLatencyPackets_t // sizeof=0x50
 struct loopmsg_t // sizeof=0x580
 {                                       // ...
     uint8_t data[1400];
-    int datalen;
-    int port;
+    int32_t datalen;
+    int32_t port;
 };
+RUNTIME_SIZE(loopmsg_t, 0x580, 0x580);
 
 struct loopback_t // sizeof=0x5808
 {                                       // ...
@@ -134,6 +137,7 @@ struct loopback_t // sizeof=0x5808
     volatile uint32_t get;
     volatile uint32_t send;
 };
+RUNTIME_SIZE(loopback_t, 0x5808, 0x5808);
 
 struct clientHeader_t // sizeof=0x64C
 {                                       // ...

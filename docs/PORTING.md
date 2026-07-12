@@ -60,9 +60,9 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Finish and obtain Windows CI evidence for the database I/O/progress atomic batch, then migrate
-   IWD ownership, loopback publication, and the
-   remaining audited fixed-width atomic families.
+2. Finish and obtain Windows CI evidence for the IWD/unzip and loopback/fake-lag batch, then
+   migrate checked SP/MP skeleton-arena reservation, pose-cull publication, and the remaining
+   audited fixed-width atomic families.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -716,8 +716,8 @@ return the *old*; `CompareExchange` keeps Win32 `(dest,exchange,comparand)` orde
 as well as GCC/Clang, including high-bit/wrap and pointer exchange cases. Non-MSVC `Interlocked*`
 aliases remain only as a temporary source-migration aid; Windows-owned names are never redefined on
 MSVC. The shared fast-lock implementation is the first layout-bound consumer and no longer contains
-a Windows include or native cast. Corrected live census after the landed diagnostic batch and current
-database batch: **113** direct `Interlocked` calls remain across 20 engine TUs. The original
+a Windows include or native cast. Corrected live census after the landed diagnostic, database, and
+current IWD/loopback batches: **110** direct `Interlocked` calls remain across 18 engine TUs. The original
 209 also included 12 assertion-message literals. *M1 open tail:* migrate the
 remaining families, and retype their `volatile long`/`LONG` storage and casts to exact-width words; then delete
 the compatibility aliases. The bare `sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now
@@ -810,7 +810,7 @@ diagnostic batch moved 12 mark-generation and local-entity overlap-counter calls
 passed all nine jobs in run 29177286439. These counters detect overlap and do not claim to serialize
 the underlying renderer or cgame operations.
 
-The current database batch replaces another 20 executable native atomic calls. A
+Database I/O/recovery commit `cfd9045` replaces another 20 executable native atomic calls. A
 standalone-tested `FileReadState` publishes error/byte results before completion and rejects invalid
 completion sizes; `ProgressState` provides coherent snapshots, bounded fractions, rebasing, and
 checked negative/overflow updates without mixed atomic/raw access. A tested `AssetRecoveryGate`
@@ -823,7 +823,23 @@ recovery handshake claims and releases its safe state with yielding waits. Buffe
 opens remove the previous unbuffered sector-alignment contract that the ring allocation did not meet;
 file handles, zone requests, read-buffer cursors, and vertex/index pointer-offset conversion also gain
 runtime validation. The full portable suite is 18/18 locally under GCC, Clang, GCC ASan/UBSan, and
-GCC TSan. This batch has **not** run through Windows CI yet.
+GCC TSan; all nine Windows/portable CI jobs passed in run 29177998144.
+
+The current IWD/loopback batch removes three more native atomic calls. Canonical IWD-handle
+ownership and reference publication use fixed-width atomics, while contended readers open an
+independent archive instead of copying a live unzip cursor. Runtime layout contracts and native
+allocation/sort widths cover IWD, file-handle, directory, and search-path records. Checked two-pass
+archive construction rejects partial traversal, long or embedded-NUL names, overflow/allocation
+failure, inconsistent name extents, and invalid cached positions; shutdown now closes actual handles
+and resets its IWD count. The unzip reader rejects short scalar reads, malformed EOCD/bounds,
+allocation/inflate failure, and partial publication, and the unsafe `unzReOpen` API is gone. Per-
+queue locks serialize loopback payload/cursor publication across wraparound, with bounded routes,
+packet sizes, destinations, and unaligned marker reads. Fake-lag queueing validates release-build
+inputs and allocations, preserves caller receive capacity, rejects inconsistent metadata, and
+clears complete retired slots. Source guards freeze these contracts, and the full 18-test local
+GCC/Clang/ASan/UBSan/TSan matrix passes; Windows CI is pending. Remaining adjacent debt is explicit:
+path-based clone opens retain a compatible-replacement file-identity TOCTOU, unzip CRC enforcement is
+disabled, and native-`unsigned long`/signed-int file-size records cap safe archives below 2 GiB.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),

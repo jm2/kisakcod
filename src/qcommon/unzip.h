@@ -135,8 +135,6 @@ typedef struct
 */
 
 extern unzFile unzOpen (const char *path);
-extern unzFile unzReOpen (const char* path, unzFile file);
-
 /*
   Open a Zip file. path contain the full pathname (by example,
      on a Windows NT computer "c:\\zlib\\zlib111.zip" or on an Unix computer
