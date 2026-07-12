@@ -1512,6 +1512,8 @@ void __cdecl VEH_TouchEntities(gentity_s *ent)
             if (!target->model)
                 continue;
             obj = Com_GetServerDObj(target->s.number);
+            if (!obj)
+                continue;
             DObjPhysicsGetBounds(obj, mins, maxs);
             Vec3Add(target->r.currentOrigin, mins, mins);
             Vec3Add(target->r.currentOrigin, maxs, maxs);
@@ -1568,6 +1570,8 @@ void __cdecl VEH_TouchEntities(gentity_s *ent)
                     if (!target->model)
                         continue;
                     obj = Com_GetServerDObj(target->s.number);
+                    if (!obj)
+                        continue;
                     DObjPhysicsGetBounds(obj, mins, maxs);
                     Vec3Add(target->r.currentOrigin, mins, mins);
                     Vec3Add(target->r.currentOrigin, maxs, maxs);
@@ -5643,15 +5647,11 @@ void G_SaveVehicleInfo(SaveGame *save)
 {
     if (s_numVehicleInfos <= 0)
         return;
-    uint16_t *sndIndices = (uint16_t *)s_vehicleInfos[0].sndIndices;
-    for (int v2 = 0; v2 < s_numVehicleInfos; ++v2)
+    for (int vehicleIndex = 0; vehicleIndex < s_numVehicleInfos; ++vehicleIndex)
     {
+        uint16_t *const sndIndices = s_vehicleInfos[vehicleIndex].sndIndices;
         for (int i = 0; i < 6; ++i)
-        {
-            if (sndIndices[i])
-                SaveMemory_SaveWrite(&sndIndices[i], 2, save);
-        }
-        sndIndices += 314; // = sizeof(vehicle_info_t) / sizeof(uint16_t)
+            SaveMemory_SaveWrite(&sndIndices[i], static_cast<int>(sizeof(sndIndices[i])), save);
     }
 }
 
@@ -5659,15 +5659,11 @@ void G_LoadVehicleInfo(SaveGame *save)
 {
     if (s_numVehicleInfos <= 0)
         return;
-    uint16_t *sndIndices = (uint16_t *)s_vehicleInfos[0].sndIndices;
-    for (int v2 = 0; v2 < s_numVehicleInfos; ++v2)
+    for (int vehicleIndex = 0; vehicleIndex < s_numVehicleInfos; ++vehicleIndex)
     {
+        uint16_t *const sndIndices = s_vehicleInfos[vehicleIndex].sndIndices;
         for (int i = 0; i < 6; ++i)
-        {
-            if (sndIndices[i])
-                SaveMemory_LoadRead(&sndIndices[i], 2, save);
-        }
-        sndIndices += 314;
+            SaveMemory_LoadRead(&sndIndices[i], static_cast<int>(sizeof(sndIndices[i])), save);
     }
 }
 

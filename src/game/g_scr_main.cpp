@@ -10010,17 +10010,15 @@ void GScr_OpenFile()
     const char *String; // r25
     const char *v1; // r3
     int v2; // r26
-    int *openScriptIOFileHandles; // r11
     int v4; // r28
     int *v5; // r31
     const char *v6; // r10
     const char *v7; // r11
     int v8; // r8
     const char *v9; // r31
-    int Remote; // r3
+    uint32_t Remote; // r3
     int v11; // r31
     unsigned char *v12; // r3
-    void *v13; // r5
     const char *v14; // r10
     const char *v15; // r11
     int v16; // r8
@@ -10030,30 +10028,25 @@ void GScr_OpenFile()
     const char *v20; // r11
     int v21; // r8
     const char *v22; // r3
-    void *v23[20]; // [sp+50h] [-50h] BYREF
+    int fileHandle; // [sp+50h] [-50h] BYREF
 
     if (Scr_GetNumParam() > 1)
     {
         String = Scr_GetString(0);
         v1 = Scr_GetString(1);
-        v2 = 0;
-        openScriptIOFileHandles = level.openScriptIOFileHandles;
-        while (*openScriptIOFileHandles)
+        for (v2 = 0; v2 < static_cast<int>(ARRAY_COUNT(level.openScriptIOFileHandles)); ++v2)
         {
-            ++openScriptIOFileHandles;
-            ++v2;
-            if ((uintptr_t)openScriptIOFileHandles >= (uintptr_t)level.openScriptIOFileBuffers)
-                goto LABEL_7;
+            if (!level.openScriptIOFileHandles[v2] && !level.openScriptIOFileBuffers[v2])
+                break;
         }
-        v4 = v2;
-        v5 = &level.openScriptIOFileHandles[v2];
-        if (!v5)
+        if (v2 >= static_cast<int>(ARRAY_COUNT(level.openScriptIOFileHandles)))
         {
-        LABEL_7:
             Com_Printf(23, "OpenFile failed.  %i files already open\n", 1);
             Scr_AddInt(-1);
             return;
         }
+        v4 = v2;
+        v5 = &level.openScriptIOFileHandles[v2];
         v6 = "read";
         v7 = v1;
         do
@@ -10067,15 +10060,15 @@ void GScr_OpenFile()
         if (!v8)
         {
             v9 = va("%s/%s", "scriptdata", String);
-            Remote = FS_FOpenFileByMode((char *)v9, (int *)v23, FS_READ);
-            v11 = Remote;
-            if (Remote >= 0)
+            fileHandle = 0;
+            Remote = FS_FOpenFileByMode((char *)v9, &fileHandle, FS_READ);
+            if (Remote <= 0x7FFFFFFEu && fileHandle)
             {
-                v12 = (unsigned char *)Z_VirtualAlloc(Remote + 1, "GScr_OpenFile", 10);
-                v13 = v23[0];
+                v11 = static_cast<int>(Remote);
+                v12 = (unsigned char *)Z_VirtualAlloc(v11 + 1, "GScr_OpenFile", 10);
                 level.openScriptIOFileBuffers[v4] = v12;
-                FS_Read(v12, v11, (int)v13);
-                FS_FCloseFile((int)v23[0]);
+                FS_Read(v12, v11, fileHandle);
+                FS_FCloseFile(fileHandle);
                 level.openScriptIOFileBuffers[v4][v11] = 0;
                 Com_BeginParseSession(String);
                 Com_SetCSV(1);
@@ -10083,6 +10076,8 @@ void GScr_OpenFile()
                 Scr_AddInt(v2);
                 return;
             }
+            if (fileHandle)
+                FS_FCloseFile(fileHandle);
             goto LABEL_30;
         }
         v14 = "write";
@@ -10114,8 +10109,12 @@ void GScr_OpenFile()
             else
             {
                 v22 = va("%s/%s", "scriptdata", String);
-                if (FS_FOpenFileByMode((char*)v22, &level.openScriptIOFileHandles[v2], FS_APPEND) >= 0)
+                Remote = FS_FOpenFileByMode((char*)v22, v5, FS_APPEND);
+                if ((Remote & 0x80000000u) == 0 && *v5)
                     goto LABEL_22;
+                if (*v5)
+                    FS_FCloseFile(*v5);
+                *v5 = 0;
             }
         }
         else
@@ -10146,7 +10145,7 @@ void GScr_CloseFile()
     {
         Int = Scr_GetInt(0);
         v1 = Int;
-        if (Int > 1)
+        if (Int >= ARRAY_COUNT(level.openScriptIOFileHandles))
         {
             Com_Printf(23, "CloseFile failed, invalid file number %i\n", Int);
         }
@@ -10201,15 +10200,15 @@ void __cdecl Scr_FPrint_internal(bool commaBetweenFields)
         return;
     }
     Int = Scr_GetInt(0);
-    if (Int > 1)
+    if (Int >= ARRAY_COUNT(level.openScriptIOFileHandles))
     {
-        Com_Printf(23, "FPrintln failed, invalid file number %i\n");
+        Com_Printf(23, "FPrintln failed, invalid file number %i\n", Int);
         goto LABEL_14;
     }
     v3 = Int;
     if (!level.openScriptIOFileHandles[Int])
     {
-        Com_Printf(23, "FPrintln failed, file number %i was not open for writing\n");
+        Com_Printf(23, "FPrintln failed, file number %i was not open for writing\n", Int);
     LABEL_14:
         Scr_AddInt(-1);
         return;
@@ -10257,14 +10256,14 @@ void GScr_FReadLn()
         goto LABEL_12;
     }
     Int = Scr_GetInt(0);
-    if (Int > 1)
+    if (Int >= ARRAY_COUNT(level.openScriptIOFileBuffers))
     {
-        Com_Printf(23, "freadln failed, invalid file number %i\n");
+        Com_Printf(23, "freadln failed, invalid file number %i\n", Int);
         goto LABEL_11;
     }
     if (!level.openScriptIOFileBuffers[Int])
     {
-        Com_Printf(23, "freadln failed, file number %i was not open for reading\n");
+        Com_Printf(23, "freadln failed, file number %i was not open for reading\n", Int);
         goto LABEL_11;
     }
     v6[0] = (const char*)level.openScriptIOFileBuffers[Int];
@@ -10309,7 +10308,7 @@ void GScr_FGetArg()
     Int = Scr_GetInt(0);
     v1 = Scr_GetInt(1);
     v2 = v1;
-    if (Int > 1)
+    if (Int >= ARRAY_COUNT(level.openScriptIOFileBuffers))
     {
         Com_Printf(23, "freadline failed, invalid file number %i\n", Int);
         goto LABEL_14;

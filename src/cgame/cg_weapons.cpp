@@ -1053,6 +1053,8 @@ bool __cdecl CG_NVGViewModelShouldBeAttached(int32_t localClientNum)
     // BG_GetViewmodelWeaponIndex resolves offHandIndex vs weapon via (weapFlags & 2),
     // matching the inline logic in CoD3SP.exe CG_NVGViewModelShouldBeAttached.
     weapDef = BG_GetWeaponDef(BG_GetViewmodelWeaponIndex(ps));
+    if (!weapDef)
+        return false;
 
     if (ps->weaponstate == WEAPON_NIGHTVISION_WEAR)
     {
