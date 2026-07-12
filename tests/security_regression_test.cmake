@@ -3052,7 +3052,8 @@ require_source_contains(
     "successful fast-file output must be recorded as materialized")
 require_source_contains(
     "database/db_file_load.cpp"
-    "InterlockedExchange(&g_fileReadBytes, static_cast<LONG>(dwNumberOfBytesTransfered))"
+    "db::load_atomic::PublishFileRead(
+        &g_fileRead,"
     "asynchronous fast-file reads must preserve the actual completion byte count")
 require_source_contains(
     "database/db_file_load.cpp"
@@ -3062,6 +3063,194 @@ require_source_contains(
     "database/db_file_load.cpp"
     "db::validation::CanAppendBytes"
     "fast-file ring-buffer accounting must reject invalid accumulated input")
+require_source_contains(
+    "database/db_file_load.cpp"
+    "if (cancelError == ERROR_NOT_FOUND)"
+    "a completion that races cancellation must drain through another alertable wait")
+foreach(_native_db_atomic_token
+    "Interlocked"
+    "LPOVERLAPPED_COMPLETION_ROUTINE"
+)
+    require_source_not_contains(
+        "database/db_file_load.cpp"
+        "${_native_db_atomic_token}"
+        "the fast-file adapter must use the fixed-width atomic protocol without callback casts")
+endforeach()
+require_source_not_matches(
+    "database/db_file_load.cpp"
+    "(^|[^A-Za-z0-9_])LONG([^A-Za-z0-9_]|$)"
+    "fast-file atomic storage must not use a native Windows word")
+require_source_contains(
+    "database/db_file_load.cpp"
+    "static db::load_atomic::ProgressState g_loadProgress;"
+    "fast-file progress must use one coherent fixed-width record")
+require_source_contains(
+    "database/db_file_load.cpp"
+    "static db::load_atomic::FileReadState g_fileRead;"
+    "asynchronous reads must use one ordered fixed-width result slot")
+require_source_contains(
+    "database/db_file_load.cpp"
+    "static VOID CALLBACK DB_FileReadCompletion(
+    DWORD dwErrorCode,
+    DWORD dwNumberOfBytesTransfered,
+    LPOVERLAPPED lpOverlapped)"
+    "the Windows completion adapter must retain its exact native callback ABI")
+require_source_contains(
+    "database/db_file_load.cpp"
+    "db::load_atomic::RebaseProgress("
+    "header-time progress rebasing must be transactional")
+require_source_contains(
+    "database/db_file_load.cpp"
+    "db::load_atomic::LoadedFraction(snapshot)"
+    "progress readers must consume a coherent bounded snapshot")
+
+foreach(_retired_db_progress_word
+    "g_fileReadComplete"
+    "g_fileReadError"
+    "g_fileReadBytes"
+    "g_loadProgressSequence"
+    "g_loadedSize"
+    "g_loadedExternalBytes"
+    "g_totalSize"
+    "g_totalExternalBytes"
+)
+    require_source_not_contains(
+        "database/db_file_load.cpp"
+        "${_retired_db_progress_word}"
+        "fast-file state must not bypass its portable atomic record")
+endforeach()
+
+foreach(_native_db_helper_token
+    "Windows.h"
+    "windows.h"
+    "Interlocked"
+    "LONG"
+    "OVERLAPPED"
+)
+    require_source_not_contains(
+        "database/db_load_atomic.h"
+        "${_native_db_helper_token}"
+        "the portable database atomic protocol must not import Windows concepts")
+endforeach()
+require_source_contains(
+    "database/db_load_atomic.h"
+    "Sys_AtomicStore(&state->complete, 0u);
+    Sys_AtomicStore(&state->error, 0u);
+    Sys_AtomicStore(&state->bytes, 0u);"
+    "read-slot reset must unpublish completion before clearing its payload")
+require_source_contains(
+    "database/db_load_atomic.h"
+    "Sys_AtomicStore(&state->bytes, valid ? bytes : 0u);
+    Sys_AtomicStore(&state->complete, 1u);"
+    "read-slot completion must publish its payload before the ready flag")
+require_source_contains(
+    "database/db_load_atomic.h"
+    "inline ProgressUpdateResult RebaseProgress("
+    "the progress protocol must own header-time rebasing")
+require_source_contains(
+    "database/db_load_atomic.h"
+    "std::this_thread::yield();"
+    "contended database atomic protocols must yield")
+
+foreach(_native_registry_atomic_token
+    "Interlocked"
+    "FILE_FLAG_NO_BUFFERING"
+    "0x60000000"
+)
+    require_source_not_contains(
+        "database/db_registry.cpp"
+        "${_native_registry_atomic_token}"
+        "database queue atomics and buffered reads must retain portable-safe semantics")
+endforeach()
+require_source_not_matches(
+    "database/db_registry.cpp"
+    "(^|[^A-Za-z0-9_])LONG([^A-Za-z0-9_]|$)"
+    "database queue state must not use a native Windows word")
+require_source_contains(
+    "database/db_load_atomic.h"
+    "std::atomic<bool> assetsSafe_{true};"
+    "lost-device recovery must begin in an idle/safe state")
+require_source_contains(
+    "database/db_registry.cpp"
+    "static db::load_atomic::AssetRecoveryGate g_assetRecoveryGate;"
+    "database recovery state must use the standalone-tested gate")
+require_source_contains(
+    "database/db_load_atomic.h"
+    "assetsSafe_.store(true, std::memory_order_seq_cst);
+            while (recoveryRequested_.load(std::memory_order_seq_cst))
+                std::this_thread::yield();
+
+            assetsSafe_.store(false, std::memory_order_seq_cst);
+            if (!recoveryRequested_.load(std::memory_order_seq_cst))
+                return;"
+    "asset safe points must advertise through back-to-back recoveries and recheck after reclaiming")
+require_source_contains(
+    "database/db_load_atomic.h"
+    "void EndRecovery() noexcept
+    {
+        // Do not clear assetsSafe_ here."
+    "recovery completion must leave the safe publication owned by the database thread")
+require_source_contains(
+    "database/db_registry.cpp"
+    "DB_WaitForRecoveryAndClaimAssets();
+
+        zone = &g_zones[g_zoneIndex];"
+    "database asset-use ownership must precede publication of a new zone")
+require_source_contains(
+    "database/db_registry.cpp"
+    "DB_LOADING_ASSET_QUEUE_RESERVED"
+    "zone producers must reserve the queue before populating shared entries")
+require_source_contains(
+    "database/db_registry.cpp"
+    "static volatile uint32_t g_loadingAssets;"
+    "loading-asset accounting must remain private fixed-width atomic storage")
+require_source_not_contains(
+    "database/database.h"
+    "g_loadingAssets"
+    "public database headers must not expose mutable loading-asset storage")
+require_source_contains(
+    "database/db_registry.cpp"
+    "Sys_AtomicExchange(&g_zoneInfoCount, 0u)"
+    "the database thread must atomically claim each published zone batch")
+require_source_contains(
+    "database/db_registry.cpp"
+    "DB_CompleteLoadingAsset();"
+    "zone completion must use checked atomic accounting")
+require_source_not_contains(
+    "database/db_registry.cpp"
+    "--g_loadingAssets"
+    "zone completion must not underflow through a raw decrement")
+require_source_contains(
+    "database/db_registry.cpp"
+    "FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN"
+    "fast-file reads must use buffered overlapped sequential I/O")
+foreach(_retired_database_pointer_pattern
+    "(uint32_t)indices"
+    "(char *)zoneFile + 1"
+    "(void *)-1"
+)
+    require_source_not_contains(
+        "database/db_registry.cpp"
+        "${_retired_database_pointer_pattern}"
+        "database buffer and handle validation must not use truncated or invalid pointer arithmetic")
+endforeach()
+require_source_contains(
+    "database/db_registry.cpp"
+    "const uintptr_t indexAddress = reinterpret_cast<uintptr_t>(indices);"
+    "index-buffer offsets must be calculated at native pointer width")
+require_source_contains(
+    "database/db_registry.cpp"
+    "byteOffset > indexBlock.size || (byteOffset & 1u)"
+    "index-buffer offsets must stay inside the owning zone block and remain element-aligned")
+require_source_contains(
+    "database/db_registry.cpp"
+    "byteOffset > vertexBlock.size
+        || byteOffset > static_cast<uintptr_t>(INT32_MAX)"
+    "vertex-buffer offsets must fit both the owning block and public result type")
+require_source_contains(
+    "database/db_registry.cpp"
+    "alignas(uint32_t) uint8_t g_fileBuf[524288];"
+    "the buffered fast-file ring must satisfy its word-alignment contract")
 require_source_contains(
     "database/db_stringtable_load.cpp"
     "*var >= static_cast<uint32_t>(varXAssetList->stringList.count)"

@@ -1,4 +1,5 @@
 #include "database.h"
+#include "db_load_atomic.h"
 #include "db_validation.h"
 
 #include <qcommon/files.h>
@@ -27,8 +28,10 @@
 #endif
 #include <win32/win_localize.h>
 #include <universal/profile.h>
+#include <universal/sys_atomic.h>
 
 #include <algorithm>
+#include <atomic>
 
 #include <setjmp.h>
 #include <game/g_bsp.h>
@@ -432,7 +435,7 @@ XAssetPool<RawFile, POOLSIZE_RAWFILE> g_RawFilePool;
 XAssetPool<StringTable, POOLSIZE_STRINGTABLE> g_StringTablePool;
 
 XAssetEntryPoolEntry g_assetEntryPool[32768];
-uint8_t g_fileBuf[524288];
+alignas(uint32_t) uint8_t g_fileBuf[524288];
 
 fileData_s *com_fileDataHashTable[1024];
 
@@ -441,19 +444,44 @@ FastCriticalSection db_hashCritSect;
 bool g_zoneInited;
 int32_t g_zoneCount;
 
-bool g_isRecoveringLostDevice;
-bool g_mayRecoverLostAssets;
-volatile bool g_loadingZone;
+static db::load_atomic::AssetRecoveryGate g_assetRecoveryGate;
+volatile uint32_t g_loadingZone;
 volatile uint32_t g_zoneInfoCount;
-bool g_initializing;
+static std::atomic<bool> g_initializing{false};
 
 char g_debugZoneName[64];
 uint32_t g_zoneAllocType;
 uint32_t g_zoneIndex;
 uint32_t _S1;
 const dvar_t *zone_reorder;
-volatile uint32_t g_loadingAssets;
+static volatile uint32_t g_loadingAssets;
 XZoneInfoInternal g_zoneInfo[8];
+
+static constexpr uint32_t DB_LOADING_ASSET_QUEUE_RESERVED = UINT32_MAX;
+
+void DB_CompleteLoadingAsset()
+{
+    uint32_t observed = Sys_AtomicLoad(&g_loadingAssets);
+    for (;;)
+    {
+        if (!observed || observed > ARRAY_COUNT(g_zoneInfo))
+        {
+            Com_Error(
+                ERR_FATAL,
+                "Invalid pending fast-file asset count %u",
+                observed);
+            return;
+        }
+
+        const uint32_t previous = Sys_AtomicCompareExchange(
+            &g_loadingAssets,
+            observed - 1u,
+            observed);
+        if (previous == observed)
+            return;
+        observed = previous;
+    }
+}
 
 char *__cdecl DB_ReferencedFFChecksums()
 {
@@ -647,13 +675,77 @@ void __cdecl TRACK_db_registry()
 
 void __cdecl DB_GetIndexBufferAndBase(uint8_t zoneHandle, void *indices, void **ib, int32_t *baseIndex)
 {
+    if (!ib || !baseIndex)
+    {
+        Com_Error(ERR_DROP, "Invalid index-buffer output request");
+        return;
+    }
+    *ib = nullptr;
+    *baseIndex = 0;
+    if (zoneHandle >= ARRAY_COUNT(g_zones) || !indices)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid index-buffer zone handle %u",
+            static_cast<uint32_t>(zoneHandle));
+        return;
+    }
+
+    const XBlock &indexBlock = g_zones[zoneHandle].mem.blocks[8];
+    const uintptr_t blockStart = reinterpret_cast<uintptr_t>(indexBlock.data);
+    const uintptr_t indexAddress = reinterpret_cast<uintptr_t>(indices);
+    if (!blockStart || indexAddress < blockStart)
+    {
+        Com_Error(ERR_DROP, "Index data does not belong to its fast-file zone");
+        return;
+    }
+    const uintptr_t byteOffset = indexAddress - blockStart;
+    if (byteOffset > indexBlock.size || (byteOffset & 1u)
+        || byteOffset / 2u > static_cast<uintptr_t>(INT32_MAX))
+    {
+        Com_Error(ERR_DROP, "Invalid index-buffer byte offset");
+        return;
+    }
+
     *ib = g_zones[zoneHandle].mem.indexBuffer;
-    *baseIndex = ((uint32_t)indices - (uint32_t)g_zones[zoneHandle].mem.blocks[8].data) >> 1;
+    *baseIndex = static_cast<int32_t>(byteOffset / 2u);
 }
 
 void __cdecl DB_GetVertexBufferAndOffset(uint8_t zoneHandle, _BYTE *verts, void **vb, int32_t *vertexOffset)
 {
-    *vertexOffset = verts - g_zones[zoneHandle].mem.blocks[7].data;
+    if (!vb || !vertexOffset)
+    {
+        Com_Error(ERR_DROP, "Invalid vertex-buffer output request");
+        return;
+    }
+    *vb = nullptr;
+    *vertexOffset = 0;
+    if (zoneHandle >= ARRAY_COUNT(g_zones) || !verts)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid vertex-buffer zone handle %u",
+            static_cast<uint32_t>(zoneHandle));
+        return;
+    }
+
+    const XBlock &vertexBlock = g_zones[zoneHandle].mem.blocks[7];
+    const uintptr_t blockStart = reinterpret_cast<uintptr_t>(vertexBlock.data);
+    const uintptr_t vertexAddress = reinterpret_cast<uintptr_t>(verts);
+    if (!blockStart || vertexAddress < blockStart)
+    {
+        Com_Error(ERR_DROP, "Vertex data does not belong to its fast-file zone");
+        return;
+    }
+    const uintptr_t byteOffset = vertexAddress - blockStart;
+    if (byteOffset > vertexBlock.size
+        || byteOffset > static_cast<uintptr_t>(INT32_MAX))
+    {
+        Com_Error(ERR_DROP, "Invalid vertex-buffer byte offset");
+        return;
+    }
+
+    *vertexOffset = static_cast<int32_t>(byteOffset);
     *vb = g_zones[zoneHandle].mem.vertexBuffer;
 }
 
@@ -666,6 +758,13 @@ static const char *DB_GetFastFileBasePath()
     // database before the filesystem dvars have been registered.
     return Sys_DefaultInstallPath();
 }
+
+// Buffered overlapped reads avoid the sector-alignment contract imposed by
+// unbuffered I/O.  The fast-file ring is only naturally word-aligned;
+// sequential-scan caching is the safe equivalent until the file adapter owns
+// an explicitly aligned allocation.
+static constexpr uint32_t DB_FAST_FILE_ASYNC_FLAGS =
+    FILE_FLAG_OVERLAPPED | FILE_FLAG_SEQUENTIAL_SCAN;
 
 void __cdecl DB_BuildOSPath_Mod(const char *zoneName, uint32_t size, char *filename)
 {
@@ -685,11 +784,23 @@ bool __cdecl DB_ModFileExists()
     if (!*(_BYTE *)fs_gameDirVar->current.integer)
         return 0;
     DB_BuildOSPath_Mod("mod", 0x100u, filename);
-    zoneFile = CreateFileA(filename, 0x80000000, 1u, 0, 3u, 0x60000000u, 0);
-    if (zoneFile == (void *)-1)
+    zoneFile = CreateFileA(
+        filename,
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (zoneFile == INVALID_HANDLE_VALUE)
         return 0;
     CloseHandle(zoneFile);
     return 1;
+}
+
+static void DB_WaitForRecoveryAndClaimAssets()
+{
+    g_assetRecoveryGate.WaitForRecoveryAndClaimAssets();
 }
 
 void __cdecl DB_EndRecoverLostDevice()
@@ -702,12 +813,15 @@ void __cdecl DB_EndRecoverLostDevice()
     Sys_UnlockRead(&db_hashCritSect);
     if (!Sys_IsMainThread())
         MyAssertHandler(".\\database\\db_registry.cpp", 2929, 0, "%s", "Sys_IsMainThread()");
-    if (!g_isRecoveringLostDevice)
-        MyAssertHandler(".\\database\\db_registry.cpp", 2930, 0, "%s", "g_isRecoveringLostDevice");
-    if (!g_mayRecoverLostAssets)
-        MyAssertHandler(".\\database\\db_registry.cpp", 2931, 0, "%s", "g_mayRecoverLostAssets");
-    g_mayRecoverLostAssets = !g_loadingZone;
-    g_isRecoveringLostDevice = 0;
+    if (!g_assetRecoveryGate.IsRecoveryRequested())
+        MyAssertHandler(".\\database\\db_registry.cpp", 2930, 0, "%s", "g_assetRecoveryGate.IsRecoveryRequested()");
+    if (!g_assetRecoveryGate.AreAssetsSafe())
+        MyAssertHandler(".\\database\\db_registry.cpp", 2931, 0, "%s", "g_assetRecoveryGate.AreAssetsSafe()");
+    // Keep the safe publication set until the database thread explicitly
+    // reclaims asset use.  Clearing it here can deadlock a back-to-back
+    // recovery that starts before the waiting database thread observes this
+    // recovery ending.
+    g_assetRecoveryGate.EndRecovery();
 }
 
 void __cdecl DB_BeginRecoverLostDevice()
@@ -716,11 +830,11 @@ void __cdecl DB_BeginRecoverLostDevice()
 
     if (!Sys_IsMainThread())
         MyAssertHandler(".\\database\\db_registry.cpp", 2896, 0, "%s", "Sys_IsMainThread()");
-    if (g_isRecoveringLostDevice)
-        MyAssertHandler(".\\database\\db_registry.cpp", 2897, 0, "%s", "!g_isRecoveringLostDevice");
-    g_isRecoveringLostDevice = 1;
-    while (!g_mayRecoverLostAssets)
-        NET_Sleep(0);
+    if (!g_assetRecoveryGate.BeginRecovery())
+    {
+        MyAssertHandler(".\\database\\db_registry.cpp", 2897, 0, "%s", "!g_assetRecoveryGate.IsRecoveryRequested()");
+        return;
+    }
     Sys_LockRead(&db_hashCritSect);
     for (zoneIter = 0; zoneIter < g_zoneCount; ++zoneIter)
         DB_ReleaseGeometryBuffers(&g_zones[g_zoneHandles[zoneIter]].mem);
@@ -1839,12 +1953,12 @@ void __cdecl DB_Update()
 
 void __cdecl DB_SetInitializing(bool inUse)
 {
-    g_initializing = inUse;
+    g_initializing.store(inUse, std::memory_order_seq_cst);
 }
 
 bool __cdecl DB_GetInitializing()
 {
-    return g_initializing;
+    return g_initializing.load(std::memory_order_seq_cst);
 }
 
 bool __cdecl DB_IsXAssetDefault(XAssetType type, const char *name)
@@ -1922,17 +2036,8 @@ int32_t __cdecl DB_GetAllXAssetOfType_FastFile(XAssetType type, XAssetHeader *as
 
 void DB_SyncLostDevice()
 {
-    if (g_isRecoveringLostDevice)
-    {
-        if (g_mayRecoverLostAssets)
-            MyAssertHandler(".\\database\\db_registry.cpp", 2945, 0, "%s", "!g_mayRecoverLostAssets");
-        g_mayRecoverLostAssets = 1;
-        do
-            NET_Sleep(0x19u);
-        while (g_isRecoveringLostDevice);
-        if (g_mayRecoverLostAssets)
-            MyAssertHandler(".\\database\\db_registry.cpp", 2951, 0, "%s", "!g_mayRecoverLostAssets");
-    }
+    if (g_assetRecoveryGate.IsRecoveryRequested())
+        DB_WaitForRecoveryAndClaimAssets();
 }
 
 XAssetHeader __cdecl DB_AddXAsset(XAssetType type, XAssetHeader header)
@@ -2230,8 +2335,8 @@ void DB_PostLoadXZone()
     int32_t remoteScreenUpdateNesting; // [esp+4h] [ebp-4h]
 
     iassert(Sys_IsMainThread() || Sys_IsRenderThread());
-    iassert(!g_loadingZone);
-    iassert(!g_zoneInfoCount);
+    iassert(!Sys_AtomicLoad(&g_loadingZone));
+    iassert(!Sys_AtomicLoad(&g_zoneInfoCount));
 
     if (!Sys_IsDatabaseReady2())
     {
@@ -2309,6 +2414,16 @@ void __cdecl DB_LoadXAssets(XZoneInfo *zoneInfo, uint32_t zoneCount, int32_t syn
     int32_t i; // [esp+10h] [ebp-8h]
     int32_t zoneFreeFlags; // [esp+14h] [ebp-4h]
 
+    if (!Sys_IsMainThread())
+    {
+        Com_Error(ERR_DROP, "DB_LoadXAssets must run on the main thread");
+        return;
+    }
+    if (!zoneInfo || !zoneCount || zoneCount > ARRAY_COUNT(g_zoneInfo))
+    {
+        Com_Error(ERR_DROP, "Invalid fast-file zone request count %u", zoneCount);
+        return;
+    }
     iassert(Sys_IsMainThread());
     iassert(zoneCount);
 
@@ -2396,39 +2511,83 @@ void __cdecl DB_LoadXZone(XZoneInfo *zoneInfo, uint32_t zoneCount)
     char *zoneName; // [esp+4h] [ebp-8h]
     uint32_t zoneInfoCount; // [esp+8h] [ebp-4h]
 
-    if (g_zoneCount == 32)
+    if (g_zoneCount < 0 || g_zoneCount >= 32)
+    {
         Com_Error(ERR_DROP, "Max zone count exceeded");
-    if (g_zoneInfoCount)
-        MyAssertHandler(".\\database\\db_registry.cpp", 3240, 0, "%s", "!g_zoneInfoCount");
-    if (g_loadingAssets)
-        MyAssertHandler(".\\database\\db_registry.cpp", 3241, 0, "%s", "!g_loadingAssets");
+        return;
+    }
+    if (!zoneInfo && zoneCount)
+    {
+        Com_Error(ERR_DROP, "Cannot queue a null fast-file zone list");
+        return;
+    }
+    if (Sys_AtomicLoad(&g_zoneInfoCount))
+    {
+        Com_Error(ERR_DROP, "Cannot replace an active fast-file zone queue");
+        return;
+    }
+    const uint32_t previousLoadingAssets = Sys_AtomicCompareExchange(
+        &g_loadingAssets,
+        DB_LOADING_ASSET_QUEUE_RESERVED,
+        0u);
+    if (previousLoadingAssets)
+    {
+        Com_Error(ERR_DROP, "Cannot replace an active fast-file zone queue");
+        return;
+    }
     zoneInfoCount = 0;
     for (j = 0; j < zoneCount; ++j)
     {
         zoneName = (char *)zoneInfo[j].name;
         if (zoneName)
         {
-            if (zoneInfoCount >= 8)
-                MyAssertHandler(".\\database\\db_registry.cpp", 3249, 0, "%s", "zoneInfoCount < ARRAY_COUNT( g_zoneInfo )");
+            if (!*zoneName)
+            {
+                Sys_AtomicStore(&g_loadingAssets, 0u);
+                Com_Error(ERR_DROP, "Cannot queue an empty fast-file zone name");
+                return;
+            }
+            if (zoneInfoCount >= ARRAY_COUNT(g_zoneInfo))
+            {
+                Sys_AtomicStore(&g_loadingAssets, 0u);
+                Com_Error(
+                    ERR_DROP,
+                    "Cannot queue more than %u fast-file zones",
+                    static_cast<uint32_t>(ARRAY_COUNT(g_zoneInfo)));
+                return;
+            }
             I_strncpyz(g_zoneInfo[zoneInfoCount].name, zoneName, 64);
             Com_Printf(16, "Loading fastfile %s\n", g_zoneInfo[zoneInfoCount].name);
             g_zoneInfo[zoneInfoCount++].flags = zoneInfo[j].allocFlags;
-            if (zoneInfoCount)
-            {
-                //g_loadingAssets = zoneInfoCount;
-                Sys_WakeDatabase2();
-                Sys_WakeDatabase();
-                //g_zoneInfoCount = zoneInfoCount;
-                Sys_NotifyDatabase();
-            }
         }
+    }
+    if (!zoneInfoCount)
+    {
+        Sys_AtomicStore(&g_loadingAssets, 0u);
+        return;
+    }
+    if (zoneInfoCount > static_cast<uint32_t>(32 - g_zoneCount))
+    {
+        Sys_AtomicStore(&g_loadingAssets, 0u);
+        Com_Error(ERR_DROP, "Fast-file zone queue exceeds the remaining zone capacity");
+        return;
     }
     if (zoneInfoCount)
     {
-        g_loadingAssets = zoneInfoCount;
+        // Publish the initialized queue before either wake-up path can make
+        // it visible to the database thread.
+        const uint32_t previousReservation = Sys_AtomicCompareExchange(
+            &g_loadingAssets,
+            zoneInfoCount,
+            DB_LOADING_ASSET_QUEUE_RESERVED);
+        if (previousReservation != DB_LOADING_ASSET_QUEUE_RESERVED)
+        {
+            Com_Error(ERR_FATAL, "Fast-file asset queue publication raced");
+            return;
+        }
+        Sys_AtomicStore(&g_zoneInfoCount, zoneInfoCount);
         Sys_WakeDatabase2();
         Sys_WakeDatabase();
-        g_zoneInfoCount = zoneInfoCount;
         Sys_NotifyDatabase();
     }
 }
@@ -2476,31 +2635,46 @@ void __cdecl  DB_Thread(uint32_t threadContext)
 void DB_TryLoadXFile()
 {
     uint32_t j; // [esp+0h] [ebp-8h]
-    uint32_t zoneInfoCount; // [esp+4h] [ebp-4h]
 
-    if (g_zoneInfoCount)
+    const uint32_t zoneInfoCount = Sys_AtomicExchange(&g_zoneInfoCount, 0u);
+    if (zoneInfoCount)
     {
-        zoneInfoCount = g_zoneInfoCount;
-        g_zoneInfoCount = 0;
-        if (g_loadingZone)
+        if (zoneInfoCount > ARRAY_COUNT(g_zoneInfo))
+        {
+            Sys_AtomicStore(&g_loadingAssets, 0u);
+            Com_Error(
+                ERR_FATAL,
+                "Invalid queued fast-file zone count %u",
+                zoneInfoCount);
+            return;
+        }
+        if (Sys_AtomicLoad(&g_loadingZone))
             MyAssertHandler(".\\database\\db_registry.cpp", 3764, 0, "%s", "!g_loadingZone");
         for (j = 0; j < zoneInfoCount; ++j)
         {
             if (!DB_TryLoadXFileInternal(g_zoneInfo[j].name, g_zoneInfo[j].flags))
-                --g_loadingAssets;
+                DB_CompleteLoadingAsset();
         }
-        if (g_loadingZone)
+        if (Sys_AtomicLoad(&g_loadingZone))
             MyAssertHandler(".\\database\\db_registry.cpp", 3772, 0, "%s", "!g_loadingZone");
-        if (g_loadingAssets)
+        if (Sys_AtomicLoad(&g_loadingAssets))
             MyAssertHandler(".\\database\\db_registry.cpp", 3773, 0, "%s", "!g_loadingAssets");
         Sys_LockWrite(&s_dbReorder.critSect);
         DB_EndReorderZone();
         Sys_UnlockWrite(&s_dbReorder.critSect);
         Sys_DatabaseCompleted();
     }
-    else if (g_loadingAssets)
+    else
     {
-        MyAssertHandler(".\\database\\db_registry.cpp", 3759, 0, "%s", "!g_loadingAssets");
+        const uint32_t loadingAssets = Sys_AtomicLoad(&g_loadingAssets);
+        if (loadingAssets != DB_LOADING_ASSET_QUEUE_RESERVED
+            && loadingAssets > ARRAY_COUNT(g_zoneInfo))
+        {
+            Com_Error(
+                ERR_FATAL,
+                "Invalid pending fast-file asset count %u",
+                loadingAssets);
+        }
     }
 }
 
@@ -2639,7 +2813,7 @@ void __cdecl DB_BeginReorderZone(const char *zoneName)
     Sys_LockWrite(&s_dbReorder.critSect);
     Com_sprintf(csvName, 0x100u, "..\\share\\zone_source\\%s.csv", zoneName);
     file = CreateFileA(csvName, 0x80000000, 0, 0, 3u, 0, 0);
-    if (file == (void *)-1)
+    if (file == INVALID_HANDLE_VALUE)
     {
         Sys_UnlockWrite(&s_dbReorder.critSect);
     }
@@ -2726,44 +2900,77 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
     uint32_t i; // [esp+114h] [ebp-8h]
     void *zoneFile; // [esp+118h] [ebp-4h]
 
+    if (!zoneName || !*zoneName)
+    {
+        Com_Error(ERR_DROP, "Cannot load an unnamed fast-file zone");
+        return 0;
+    }
     Com_Printf(0, "Trying to load file %s with flags %x\n", zoneName, zoneFlags);
 
     modZone = 0;
-    iassert(!g_zoneInfoCount);
+    iassert(!Sys_AtomicLoad(&g_zoneInfoCount));
     if (I_stricmp(zoneName, "mp_patch"))
     {
         if (*(_BYTE *)fs_gameDirVar->current.integer && DB_ShouldLoadFromModDir(zoneName))
         {
             DB_BuildOSPath_Mod(zoneName, 256, filename);
-            zoneFile = CreateFileA(filename, 0x80000000, 1u, 0, 3u, 0x60000000u, 0);
-            modZone = (char *)zoneFile + 1 != 0;
+            zoneFile = CreateFileA(
+                filename,
+                GENERIC_READ,
+                FILE_SHARE_READ,
+                nullptr,
+                OPEN_EXISTING,
+                DB_FAST_FILE_ASYNC_FLAGS,
+                nullptr);
+            modZone = zoneFile != INVALID_HANDLE_VALUE;
         }
         else
         {
-            zoneFile = (void *)-1;
+            zoneFile = INVALID_HANDLE_VALUE;
         }
-        if (zoneFile == (void *)-1)
+        if (zoneFile == INVALID_HANDLE_VALUE)
         {
             DB_BuildOSPath(zoneName, 256, filename);
-            zoneFile = CreateFileA(filename, 0x80000000, 1u, 0, 3u, 0x60000000u, 0);
+            zoneFile = CreateFileA(
+                filename,
+                GENERIC_READ,
+                FILE_SHARE_READ,
+                nullptr,
+                OPEN_EXISTING,
+                DB_FAST_FILE_ASYNC_FLAGS,
+                nullptr);
         }
     }
     else
     {
-        zoneFile = CreateFileA("update:\\mp_patch.ff", 0x80000000, 0, 0, 3u, 0x60000000u, 0);
-        if (zoneFile == (void *)-1)
+        zoneFile = CreateFileA(
+            "update:\\mp_patch.ff",
+            GENERIC_READ,
+            0,
+            nullptr,
+            OPEN_EXISTING,
+            DB_FAST_FILE_ASYNC_FLAGS,
+            nullptr);
+        if (zoneFile == INVALID_HANDLE_VALUE)
         {
             Com_Printf(16, "Loading mp_patch.ff from disc, not from the update drive\n");
             DB_BuildOSPath(zoneName, 256, filename);
-            zoneFile = CreateFileA(filename, 0x80000000, 0, 0, 3u, 0x60000000u, 0);
-            if (zoneFile == (void *)-1)
+            zoneFile = CreateFileA(
+                filename,
+                GENERIC_READ,
+                0,
+                nullptr,
+                OPEN_EXISTING,
+                DB_FAST_FILE_ASYNC_FLAGS,
+                nullptr);
+            if (zoneFile == INVALID_HANDLE_VALUE)
             {
                 Com_PrintWarning(10, "WARNING: Could not find zone '%s'\n", filename);
                 return 0;
             }
         }
     }
-    if (zoneFile == (void *)-1)
+    if (zoneFile == INVALID_HANDLE_VALUE)
     {
         v3 = strstr(filename, "_load");
         if (v3)
@@ -2790,9 +2997,34 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
         }
 
         if (!g_zoneIndex)
-            MyAssertHandler(".\\database\\db_registry.cpp", 3667, 0, "%s", "g_zoneIndex");
-        if (!*zoneName)
-            MyAssertHandler(".\\database\\db_registry.cpp", 3668, 0, "%s", "zoneName[0]");
+        {
+            CloseHandle(zoneFile);
+            Com_Error(ERR_FATAL, "No free fast-file zone slot");
+            return 0;
+        }
+        if (g_zoneCount < 0 || g_zoneCount >= 32)
+        {
+            CloseHandle(zoneFile);
+            Com_Error(ERR_FATAL, "Fast-file zone count is out of range");
+            return 0;
+        }
+        if ((_S1 & 1) == 0)
+        {
+            _S1 |= 1u;
+            zone_reorder = Dvar_RegisterString(
+                "zone_reorder",
+                "",
+                DVAR_NOFLAG,
+                "Set to the name of the fast file you want to reorder");
+        }
+        if (Sys_AtomicCompareExchange(&g_loadingZone, 1u, 0u))
+        {
+            CloseHandle(zoneFile);
+            Com_Error(ERR_FATAL, "Overlapping fast-file zone loads");
+            return 0;
+        }
+        DB_WaitForRecoveryAndClaimAssets();
+
         zone = &g_zones[g_zoneIndex];
         memset(zone, 0, sizeof(XZone));
         //v5 = g_zoneIndex;
@@ -2805,36 +3037,20 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
                 g_zoneIndex,
                 (uint8_t)g_zoneIndex);
         g_zoneHandles[g_zoneCount] = g_zoneIndex;
-        if (zone->name[0])
-            MyAssertHandler(".\\database\\db_registry.cpp", 3674, 0, "%s", "!zone->name[0]");
         I_strncpyz(zone->name, zoneName, 64);
         zone->flags = zoneFlags;
         zone->fileSize = GetFileSize(zoneFile, 0);
         zone->modZone = modZone;
-        if (g_loadingZone)
-            MyAssertHandler(".\\database\\db_registry.cpp", 3683, 0, "%s", "!g_loadingZone");
-        if ((_S1 & 1) == 0)
-        {
-            _S1 |= 1u;
-            zone_reorder = Dvar_RegisterString(
-                "zone_reorder",
-                "",
-                DVAR_NOFLAG,
-                "Set to the name of the fast file you want to reorder");
-        }
         if (!_stricmp(zone_reorder->current.string, zoneName))
             DB_BeginReorderZone(zoneName);
         ++g_zoneCount;
-        g_loadingZone = 1;
-        while (g_isRecoveringLostDevice)
-            NET_Sleep(25);
-        g_mayRecoverLostAssets = 0;
         g_zoneAllocType = DB_GetZoneAllocType(zoneFlags);
-        if (g_zoneAllocType == 1 && g_initializing)
+        if (g_zoneAllocType == 1
+            && g_initializing.load(std::memory_order_seq_cst))
         {
             startWaitingTime = Sys_Milliseconds();
             Com_Printf(0, "Waiting for $init to finish.  There may be assets missing from code_post_gfx.\n");
-            while (g_initializing)
+            while (g_initializing.load(std::memory_order_seq_cst))
                 DB_Sleep(1);
             v4 = Sys_Milliseconds();
             Com_Printf(16, "Waited %d ms for $init to finish.\n", v4 - startWaitingTime);
@@ -2847,10 +3063,11 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
         DB_LoadXFile(filename, zoneFile, zone->name, &zone->mem, 0, g_fileBuf, g_zoneAllocType);
         DB_LoadXFileInternal();
         PMem_EndAlloc(zone->name, g_zoneAllocType);
-        if (!g_loadingZone)
+        const uint32_t previousLoadingZone =
+            Sys_AtomicExchange(&g_loadingZone, 0u);
+        if (previousLoadingZone != 1u)
             MyAssertHandler(".\\database\\db_registry.cpp", 3725, 0, "%s", "g_loadingZone");
-        g_loadingZone = 0;
-        g_mayRecoverLostAssets = 1;
+        g_assetRecoveryGate.ReleaseAssets();
         return 1;
     }
 }
@@ -3309,8 +3526,15 @@ int32_t __cdecl DB_FileSize(const char *zoneName, int32_t isMod)
         DB_BuildOSPath_Mod(zoneName, 0x100u, filename);
     else
         DB_BuildOSPath(zoneName, 0x100u, filename);
-    zoneFile = CreateFileA(filename, 0x80000000, 1u, 0, 3u, 0x60000000u, 0);
-    if (zoneFile == (void *)-1)
+    zoneFile = CreateFileA(
+        filename,
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (zoneFile == INVALID_HANDLE_VALUE)
         return 0;
     size = GetFileSize(zoneFile, 0);
     CloseHandle(zoneFile);
@@ -3321,7 +3545,7 @@ void __cdecl Load_GetCurrentZoneHandle(uint8_t *handle)
 {
     //uint8_t v1; // [esp+0h] [ebp-4h]
 
-    iassert(g_loadingZone);
+    iassert(Sys_AtomicLoad(&g_loadingZone) == 1u);
     //v1 = g_zoneIndex;
     //if (g_zoneIndex != g_zoneIndex)
     //    MyAssertHandler(

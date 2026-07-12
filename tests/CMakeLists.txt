@@ -86,6 +86,20 @@ set_target_properties(kisakcod-abi-atomics-tests PROPERTIES
 )
 add_test(NAME abi-atomics-and-layout-macros COMMAND kisakcod-abi-atomics-tests)
 
+add_executable(kisakcod-db-load-atomic-tests db_load_atomic_tests.cpp)
+target_include_directories(kisakcod-db-load-atomic-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-db-load-atomic-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-db-load-atomic-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-db-load-atomic-tests)
+set_target_properties(kisakcod-db-load-atomic-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-load-atomic-protocols
+    COMMAND kisakcod-db-load-atomic-tests
+)
+set_tests_properties(database-load-atomic-protocols PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-script-string-atomic-tests
     script_string_atomic_tests.cpp
 )

@@ -8,10 +8,28 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: migrate database progress/I/O state onto the canonical fixed-width atomic boundary,
-  then continue the remaining engine counter families and
-  extract the next POSIX filesystem/virtual-memory/process service without relaxing the engine gate.
-- Last completed batch: XAnim tree overlap counters and the DObj lock/lifecycle protocol now use
+- Active work: finish and obtain Windows CI evidence for the database progress/I/O atomic batch,
+  then migrate the small IWD ownership and loopback-publication families (or the next audited safe
+  atomic batch) without relaxing the engine gate.
+- Current database batch: standalone-tested atomic protocols use fixed-width
+  `FileReadState`/`ProgressState` records plus an `AssetRecoveryGate`; they publish results coherently,
+  serialize back-to-back lost-device recovery against database asset use, reject invalid read sizes
+  and progress underflow/overflow, and calculate bounded progress snapshots without mixed atomic/raw
+  access. The database queue now publishes initialized entries before wake-up, claims each batch
+  exactly once, reserves producer ownership, and rejects replacement, capacity overflow, and asset-
+  count underflow. Atomic minimum-fast-file, initialization, loading-zone, and loading-asset states
+  close prior cross-thread races; the lost-device recovery handshake now has a tested safe-state
+  claim/recheck protocol and yielding waits. Buffered overlapped reads remove the unfulfilled
+  unbuffered sector-alignment contract, and file-handle, zone input, vertex/index pointer-offset, and
+  read-buffer bounds receive runtime validation. This batch replaces 20 executable native atomic calls. Together with
+  the diagnostic batch, **113 direct `Interlocked` calls remain in 20 engine translation units**.
+  Its new portable test brings the local suite to 18/18 under GCC, Clang, GCC ASan/UBSan, and GCC
+  TSan; Windows CI has not run for this batch.
+- Last completed batch: diagnostic mark-generation and local-entity overlap counters now use exact
+  fixed-width `Sys_Atomic*` words, keep every increment paired with a decrement, and have source guards
+  against reintroducing native atomics. This landed 12-call migration is diagnostic only and does not
+  claim to serialize the underlying renderer/cgame work.
+- Previous XAnim/DObj batch: XAnim tree overlap counters and the DObj lock/lifecycle protocol now use
   exact 32-bit `Sys_Atomic*` words without Windows headers. Create/clone construction is reserved and
   published last, free/clone source access is serialized, object maps publish only complete DObjs,
   contended locks yield, and archive/unarchive preserves an exact initialized native-width overlay
@@ -22,7 +40,7 @@ work item changes. Do not create session-specific handoff files.
   and native allocator alignment. SP preview DObj buffers/clone traversal and corpse tree/metadata
   traversal no longer use x86 byte strides or pointer-to-int writes. Source guards freeze the new
   layouts, lifecycle ordering, allocation formulas, publication order, and absence of raw/native
-  atomic access. The direct Interlocked census is now 146 calls in 23 engine translation units.
+  atomic access.
 - Previous script-lifetime batch: script string and vector lifetime accounting no longer imports Windows
   atomics or types. A tested packed-word CAS helper makes same-user claims, duplicate transfers,
   reference changes, and user-bit moves indivisible while preserving the encoded length; it rejects
@@ -107,9 +125,10 @@ work item changes. Do not create session-specific handoff files.
   the legacy dedicated smoke. The smoke now requires the requested map in the status response, and
   its self-hosted jobs run only from `master` and check out the immutable dispatched SHA. Twenty-one
   client/media includes remain.
-- Portable validation: 17/17 tests pass locally under GCC, Clang, and GCC ASan/UBSan, with leak
+- Portable validation: 18/18 tests pass locally under GCC, Clang, and GCC ASan/UBSan, with leak
   detection disabled because LeakSanitizer cannot run under the command-runner ptrace environment.
-  The integrated platform-service runtime also passes under GCC ThreadSanitizer.
+  The full suite, including the new database file-read/progress atomic protocol test, also passes
+  under GCC ThreadSanitizer.
   The production relocation registry is also strict-warning clean under GCC/Clang and GCC ILP32
   syntax checking. Portable tests do not execute the Windows stream adapter or media ownership paths.
 - Windows validation: AABB warning repair run 29096212752, bounded-direct-reference run
@@ -155,7 +174,9 @@ work item changes. Do not create session-specific handoff files.
   Windows-engine `ARRAYSIZE` compile errors and an MSVC `/W4 /WX` interaction with the test-only
   over-aligned script layout. This batch replaces those three uses with `sizeof`, keeps Windows64
   layout compilation under a local C4324 suppression, and splits portable build/test CI steps;
-  the corrective run is pending.
+  corrective XAnim/DObj run 29176960257 passed all nine jobs. Diagnostic-overlap commit `c400a27`
+  then passed all nine jobs in run 29177286439. The current database batch has only the
+  18/18 local GCC/Clang/sanitizer evidence above and must not be treated as Windows-CI-validated yet.
   The observed linker debt is now 106 -> 45 -> 0.
 
 ## Milestone status
@@ -163,8 +184,8 @@ work item changes. Do not create session-specific handoff files.
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
-| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration contexts, fixed-width fast locks, native dvar/script/XAnim/DObj state, and guarded DObj lifecycle publication exist; 146 direct engine Interlocked calls in 23 translation units and broader platform integration remain. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 43 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
+| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration contexts, fixed-width fast locks, native dvar/script/XAnim/DObj state, guarded DObj lifecycle publication, and a locally tested database I/O/progress protocol exist; 113 executable direct engine Interlocked calls in 20 translation units and broader platform integration remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 45 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
 | M3 platform services | In progress: core thread services integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, and a cooperative worker gate used by renderer workers. High-level orchestration is native-type-free. Linux/macOS engine/headless sets remain empty and engine-gated; POSIX crash freezing, filesystem, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table and DObj runtime/saved layouts, allocations, preview buffers, and SP corpse pointers are native-width exact. XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, all legacy direct references migrated to bounded resolution, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush, portal/cell, and path-tree spans, and 18 exact completed object types exist; packed mirrors, broader completed-object relocation, and runtime widening remain. |
@@ -184,8 +205,8 @@ work item changes. Do not create session-specific handoff files.
 ## Immediate queue
 
 1. Validate the protected licensed-content headless startup/map/`getstatus` workflow on its runner.
-2. Finish the broader M1 fixed-width atomic call-site migration, starting with database I/O/progress
-   and then the remaining `LONG`/volatile counter families.
+2. Finish and run Windows CI for the database I/O/progress atomic batch, then migrate small IWD
+   ownership and loopback publication (or another audited safe family).
 3. Extract filesystem/virtual-memory/process services and implement Linux signal-park plus macOS
    Mach crash freezing behind the already isolated terminal API.
 4. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
@@ -208,7 +229,8 @@ work item changes. Do not create session-specific handoff files.
 - Native time and recursive critical-section services are selected and runtime-tested. The custom
   fast lock now routes every dvar/database reader and writer counter operation through shared
   sequentially consistent helpers, with source guards and reader/writer stress coverage. Broader
-  engine atomics still contain Windows `LONG`, direct volatile polling, and Windows-header coupling,
+  engine atomics still contain Windows `LONG`, direct volatile polling, and Windows-header coupling;
+  113 executable direct calls remain across 20 translation units after the current database batch,
   although dvar sorting and all state in `threads.cpp` are now native C++ atomics. Finish that M1
   migration before compiling a non-Windows engine target.
 - XAnim tree/table ownership and DObj runtime storage are native-width-safe, but the animation payload

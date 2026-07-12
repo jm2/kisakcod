@@ -6,7 +6,7 @@
 
 ---
 
-## Implementation status (July 10, 2026)
+## Implementation status (July 11, 2026)
 
 Target policy is fixed: preserve retail assets and wire interoperability; use a
 shared **native Vulkan RHI** (MoltenVK on macOS) that replaces D3D9, OpenAL Soft,
@@ -60,8 +60,9 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Finish engine-wide fixed-width atomic adoption, migrate engine creation/identity onto the native
-   thread lifecycle, and finish portable priority/processor policy plus crash-freeze isolation.
+2. Finish and obtain Windows CI evidence for the database I/O/progress atomic batch, then migrate
+   IWD ownership, loopback publication, and the
+   remaining audited fixed-width atomic families.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -715,10 +716,10 @@ return the *old*; `CompareExchange` keeps Win32 `(dest,exchange,comparand)` orde
 as well as GCC/Clang, including high-bit/wrap and pointer exchange cases. Non-MSVC `Interlocked*`
 aliases remain only as a temporary source-migration aid; Windows-owned names are never redefined on
 MSVC. The shared fast-lock implementation is the first layout-bound consumer and no longer contains
-a Windows include or native cast. Corrected live census after the XAnim/DObj migration: **146** direct
-`Interlocked` calls remain across 23 engine TUs (the original 209 double-counted 12 assertion-message
-literals, and subsequent thread/dvar/fast-lock/script/XAnim/DObj migrations removed 51 real calls). *M1 open tail:* migrate those remaining
-families and retype their `volatile long`/`LONG` storage and casts to exact-width words; then delete
+a Windows include or native cast. Corrected live census after the landed diagnostic batch and current
+database batch: **113** direct `Interlocked` calls remain across 20 engine TUs. The original
+209 also included 12 assertion-message literals. *M1 open tail:* migrate the
+remaining families, and retype their `volatile long`/`LONG` storage and casts to exact-width words; then delete
 the compatibility aliases. The bare `sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now
 and burned down in M4.
 
@@ -802,6 +803,27 @@ and corpse-tree/metadata traversal no longer use x86 byte strides or pointer-to-
 not a complete XAnim payload widening: `XAnimIndices`/`XAnimParts`, the 88-byte clone allocation, and
 matching load-object assumptions remain frozen to the retail layout and must be split into disk32
 mirrors plus a native 0x88 runtime `XAnimParts` before a 64-bit engine TU can compile.
+
+Corrective/XAnim-DObj commit `f2159da` passed all nine CI jobs in run 29176960257. The next landed
+diagnostic batch moved 12 mark-generation and local-entity overlap-counter calls onto exact-width
+`Sys_Atomic*` words while preserving balanced diagnostic entry/exit accounting; commit `c400a27`
+passed all nine jobs in run 29177286439. These counters detect overlap and do not claim to serialize
+the underlying renderer or cgame operations.
+
+The current database batch replaces another 20 executable native atomic calls. A
+standalone-tested `FileReadState` publishes error/byte results before completion and rejects invalid
+completion sizes; `ProgressState` provides coherent snapshots, bounded fractions, rebasing, and
+checked negative/overflow updates without mixed atomic/raw access. A tested `AssetRecoveryGate`
+preserves the database safe point across back-to-back lost-device recoveries and rechecks before
+asset use. Zone queues reserve producer ownership, publish initialized entries before wake-up,
+atomically claim each batch once, and reject
+replacement, capacity overflow, and loading-asset underflow. Minimum-fast-file, initialization,
+loading-zone, and loading-asset state now have explicit atomic ownership, while the lost-device
+recovery handshake claims and releases its safe state with yielding waits. Buffered overlapped file
+opens remove the previous unbuffered sector-alignment contract that the ring allocation did not meet;
+file handles, zone requests, read-buffer cursors, and vertex/index pointer-offset conversion also gain
+runtime validation. The full portable suite is 18/18 locally under GCC, Clang, GCC ASan/UBSan, and
+GCC TSan. This batch has **not** run through Windows CI yet.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),

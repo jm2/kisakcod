@@ -1,16 +1,17 @@
 #include "database.h"
+#include "db_load_atomic.h"
 #include "db_validation.h"
 
 #include <qcommon/threads.h>
 #include <win32/win_local.h>
 #include <universal/com_files.h>
+#include <universal/sys_atomic.h>
 
 #ifndef KISAK_DEDI_HEADLESS
 #include <gfx_d3d/r_image.h>
 #include <gfx_d3d/r_buffers.h>
 #endif
 
-//uint32_t volatile g_loadingAssets      828e3f3c     db_file_load.obj
 //int32_t marker_db_file_load  828e3f40     db_file_load.obj
 
 struct DB_LoadData // sizeof=0x68
@@ -27,17 +28,12 @@ struct DB_LoadData // sizeof=0x68
     int32_t allocType;                      // ...
 };
 
-bool g_minimumFastFileLoaded;
+static volatile uint32_t g_minimumFastFileLoaded;
 
 DB_LoadData g_load;
-LONG g_loadedSize;
-LONG g_loadedExternalBytes;
-volatile int32_t g_totalSize;
-volatile int32_t g_totalExternalBytes;
-int32_t g_trackLoadProgress;
-volatile LONG g_fileReadComplete;
-volatile LONG g_fileReadError;
-volatile LONG g_fileReadBytes;
+static db::load_atomic::ProgressState g_loadProgress;
+static volatile uint32_t g_trackLoadProgress;
+static db::load_atomic::FileReadState g_fileRead;
 bool g_fileReadEof;
 bool g_inflateInitialized;
 bool g_inflateStreamEnded;
@@ -45,10 +41,10 @@ bool g_inflateStreamEnded;
 XAssetList g_varXAssetList;
 
 static int32_t DB_WaitXFileStageInternal();
-static void __stdcall DB_FileReadCompletion(
-    uint32_t dwErrorCode,
-    uint32_t dwNumberOfBytesTransfered,
-    _OVERLAPPED *lpOverlapped);
+static VOID CALLBACK DB_FileReadCompletion(
+    DWORD dwErrorCode,
+    DWORD dwNumberOfBytesTransfered,
+    LPOVERLAPPED lpOverlapped);
 
 void __cdecl DB_CancelLoadXFile()
 {
@@ -84,17 +80,16 @@ static int32_t DB_WaitXFileStageInternal()
     }
 
     bool cancelRequested = false;
-    while (!InterlockedCompareExchange(&g_fileReadComplete, 0, 0))
+    while (!db::load_atomic::FileReadComplete(&g_fileRead))
     {
         const DWORD waitResult = SleepEx(30000u, TRUE);
-        if (InterlockedCompareExchange(&g_fileReadComplete, 0, 0))
+        if (db::load_atomic::FileReadComplete(&g_fileRead))
             break;
 
         if (waitResult == 0)
         {
             if (cancelRequested)
             {
-                g_load.outstandingReads = 0;
                 Com_Error(
                     ERR_FATAL,
                     "Timed out cancelling fast-file read for '%s' (error %lu)",
@@ -105,7 +100,14 @@ static int32_t DB_WaitXFileStageInternal()
             if (!CancelIo(g_load.f))
             {
                 const DWORD cancelError = GetLastError();
-                g_load.outstandingReads = 0;
+                if (cancelError == ERROR_NOT_FOUND)
+                {
+                    // The request can finish after the completion check but
+                    // before cancellation.  Enter another alertable wait so
+                    // its already-queued completion APC can publish the slot.
+                    cancelRequested = true;
+                    continue;
+                }
                 Com_Error(
                     ERR_FATAL,
                     "Could not cancel fast-file read for '%s' (error %lu)",
@@ -118,7 +120,6 @@ static int32_t DB_WaitXFileStageInternal()
         else if (waitResult == WAIT_FAILED)
         {
             const DWORD waitError = GetLastError();
-            g_load.outstandingReads = 0;
             Com_Error(
                 ERR_FATAL,
                 "Fast-file read wait failed for '%s' (error %lu)",
@@ -129,28 +130,38 @@ static int32_t DB_WaitXFileStageInternal()
     }
 
     --g_load.outstandingReads;
-    const LONG readError = InterlockedCompareExchange(&g_fileReadError, 0, 0);
-    const LONG readBytes = InterlockedCompareExchange(&g_fileReadBytes, 0, 0);
+    const db::load_atomic::FileReadSnapshot readResult =
+        db::load_atomic::SnapshotFileRead(&g_fileRead);
+    iassert(readResult.complete);
+    const uint32_t readError = readResult.error;
+    const uint32_t readBytes = readResult.bytes;
     if (readError != ERROR_SUCCESS && readError != ERROR_HANDLE_EOF)
     {
         g_fileReadEof = true;
         return 0;
     }
-    if (readBytes < 0 || readBytes > 0x40000
+    if (readBytes > db::load_atomic::kFileReadBytes
         || !db::validation::CanAppendBytes(
             g_load.stream.avail_in,
-            static_cast<uint32_t>(readBytes),
-            0x80000u))
+            readBytes,
+            db::load_atomic::kFileBufferBytes))
     {
         g_fileReadEof = true;
         return 0;
     }
 
-    if (readBytes)
-        InterlockedIncrement(&g_loadedSize);
-    g_load.stream.avail_in += static_cast<uint32_t>(readBytes);
+    if (readBytes
+        && db::load_atomic::AccumulateProgress(&g_loadProgress, 1, 0)
+            != db::load_atomic::ProgressUpdateResult::Applied)
+    {
+        g_fileReadEof = true;
+        Com_Error(ERR_DROP, "Fast-file internal load progress overflow");
+        return 0;
+    }
+    g_load.stream.avail_in += readBytes;
 
-    if (readError == ERROR_HANDLE_EOF || readBytes < 0x40000)
+    if (readError == ERROR_HANDLE_EOF
+        || readBytes < db::load_atomic::kFileReadBytes)
     {
         g_fileReadEof = true;
     }
@@ -159,11 +170,11 @@ static int32_t DB_WaitXFileStageInternal()
         ULARGE_INTEGER fileOffset;
         fileOffset.LowPart = g_load.overlapped.Offset;
         fileOffset.HighPart = g_load.overlapped.OffsetHigh;
-        fileOffset.QuadPart += 0x40000;
+        fileOffset.QuadPart += db::load_atomic::kFileReadBytes;
         g_load.overlapped.Offset = fileOffset.LowPart;
         g_load.overlapped.OffsetHigh = fileOffset.HighPart;
     }
-    return readBytes;
+    return static_cast<int32_t>(readBytes);
 }
 
 int32_t DB_WaitXFileStage()
@@ -171,10 +182,15 @@ int32_t DB_WaitXFileStage()
     const int32_t readBytes = DB_WaitXFileStageInternal();
     if (readBytes <= 0)
     {
-        const LONG readError = InterlockedCompareExchange(&g_fileReadError, 0, 0);
+        const uint32_t readError =
+            db::load_atomic::SnapshotFileRead(&g_fileRead).error;
         DB_CancelLoadXFile();
         if (readError != ERROR_SUCCESS && readError != ERROR_HANDLE_EOF)
-            Com_Error(ERR_DROP, "Read error %ld for fast-file '%s'", readError, g_load.filename);
+            Com_Error(
+                ERR_DROP,
+                "Read error %lu for fast-file '%s'",
+                static_cast<unsigned long>(readError),
+                g_load.filename);
         else
             Com_Error(ERR_DROP, "Fast-file '%s' ended unexpectedly", g_load.filename);
         return 0;
@@ -184,29 +200,28 @@ int32_t DB_WaitXFileStage()
 
 void __cdecl DB_LoadedExternalData(int32_t size)
 {
-    InterlockedExchangeAdd(&g_loadedExternalBytes, size);
+    if (db::load_atomic::AccumulateProgress(&g_loadProgress, 0, size)
+        != db::load_atomic::ProgressUpdateResult::Applied)
+        Com_Error(ERR_DROP, "Invalid fast-file external load progress increment %d", size);
 }
 
 double __cdecl DB_GetLoadedFraction()
 {
-    double loadedBytesInternal; // [esp+14h] [ebp-20h]
-    double totalBytesInternal; // [esp+1Ch] [ebp-18h]
-    double loadedBytesExternal; // [esp+24h] [ebp-10h]
-    double totalBytesExternal; // [esp+2Ch] [ebp-8h]
-
-    if (!g_totalSize)
+    const db::load_atomic::ProgressSnapshot snapshot =
+        db::load_atomic::SnapshotProgress(&g_loadProgress);
+    if (snapshot.totalChunks < 0 || snapshot.loadedChunks < 0
+        || snapshot.totalExternalBytes < 0
+        || snapshot.loadedExternalBytes < 0)
+    {
+        MyAssertHandler(
+            ".\\database\\db_file_load.cpp",
+            341,
+            0,
+            "%s",
+            "load progress counters are non-negative");
         return 0.0;
-    totalBytesInternal = (double)g_totalSize * 262144.0;
-    loadedBytesInternal = (double)g_loadedSize * 262144.0;
-    if (loadedBytesInternal < 0.0)
-        MyAssertHandler(".\\database\\db_file_load.cpp", 341, 0, "%s", "loadedBytesInternal >= 0");
-    if (totalBytesInternal < loadedBytesInternal)
-        loadedBytesInternal = totalBytesInternal;
-    totalBytesExternal = (double)g_totalExternalBytes;
-    loadedBytesExternal = (double)g_loadedExternalBytes;
-    if (totalBytesExternal < loadedBytesExternal)
-        loadedBytesExternal = totalBytesExternal;
-    return (float)((loadedBytesInternal + loadedBytesExternal) / (totalBytesInternal + totalBytesExternal));
+    }
+    return static_cast<float>(db::load_atomic::LoadedFraction(snapshot));
 }
 
 void __cdecl DB_LoadXFileData(uint8_t *pos, uint32_t size)
@@ -226,10 +241,15 @@ void __cdecl DB_LoadXFileData(uint8_t *pos, uint32_t size)
         {
             if (g_load.outstandingReads <= 0 || DB_WaitXFileStageInternal() <= 0)
             {
-                const LONG readError = InterlockedCompareExchange(&g_fileReadError, 0, 0);
+                const uint32_t readError =
+                    db::load_atomic::SnapshotFileRead(&g_fileRead).error;
                 DB_CancelLoadXFile();
                 if (readError != ERROR_SUCCESS && readError != ERROR_HANDLE_EOF)
-                    Com_Error(ERR_DROP, "Read error %ld for fast-file '%s'", readError, g_load.filename);
+                    Com_Error(
+                        ERR_DROP,
+                        "Read error %lu for fast-file '%s'",
+                        static_cast<unsigned long>(readError),
+                        g_load.filename);
                 else
                     Com_Error(ERR_DROP, "Fastfile for zone '%s' ended unexpectedly.", g_load.filename);
                 return;
@@ -240,10 +260,11 @@ void __cdecl DB_LoadXFileData(uint8_t *pos, uint32_t size)
         const uintptr_t bufferStart = reinterpret_cast<uintptr_t>(g_load.compressBufferStart);
         const uintptr_t bufferEnd = reinterpret_cast<uintptr_t>(g_load.compressBufferEnd);
         const uintptr_t nextIn = reinterpret_cast<uintptr_t>(g_load.stream.next_in);
-        if (!bufferStart || bufferEnd < bufferStart || bufferEnd - bufferStart != 0x80000u
+        if (!bufferStart || bufferEnd < bufferStart
+            || bufferEnd - bufferStart != db::load_atomic::kFileBufferBytes
             || !db::validation::SpanWithinBlock(
                 bufferStart,
-                0x80000u,
+                db::load_atomic::kFileBufferBytes,
                 nextIn,
                 g_load.stream.avail_in))
         {
@@ -270,7 +291,11 @@ void __cdecl DB_LoadXFileData(uint8_t *pos, uint32_t size)
         if (g_load.f)
         {
             const uintptr_t updatedNextIn = reinterpret_cast<uintptr_t>(g_load.stream.next_in);
-            if (!db::validation::SpanWithinBlock(bufferStart, 0x80000u, updatedNextIn, 0))
+            if (!db::validation::SpanWithinBlock(
+                    bufferStart,
+                    db::load_atomic::kFileBufferBytes,
+                    updatedNextIn,
+                    0))
             {
                 DB_CancelLoadXFile();
                 Com_Error(ERR_DROP, "Fast-file input cursor escaped its read buffer");
@@ -353,33 +378,36 @@ int32_t __cdecl DB_ReadData()
         SetLastError(ERROR_INVALID_HANDLE);
         return 0;
     }
-    fileBuffer = &g_load.compressBufferStart[g_load.overlapped.Offset % 0x80000];
+    fileBuffer = &g_load.compressBufferStart[
+        g_load.overlapped.Offset % db::load_atomic::kFileBufferBytes];
     Sys_WaitDatabaseThread();
-    InterlockedExchange(&g_fileReadComplete, FALSE);
-    InterlockedExchange(&g_fileReadError, ERROR_SUCCESS);
-    InterlockedExchange(&g_fileReadBytes, 0);
-    if (!ReadFileEx(g_load.f, fileBuffer, 0x40000u, &g_load.overlapped, (LPOVERLAPPED_COMPLETION_ROUTINE)DB_FileReadCompletion))
+    db::load_atomic::ResetFileRead(&g_fileRead);
+    if (!ReadFileEx(
+            g_load.f,
+            fileBuffer,
+            db::load_atomic::kFileReadBytes,
+            &g_load.overlapped,
+            DB_FileReadCompletion))
         return 0;
     ++g_load.outstandingReads;
     return 1;
 }
 
-static void __stdcall DB_FileReadCompletion(
-    uint32_t dwErrorCode,
-    uint32_t dwNumberOfBytesTransfered,
-    _OVERLAPPED *lpOverlapped)
+static VOID CALLBACK DB_FileReadCompletion(
+    DWORD dwErrorCode,
+    DWORD dwNumberOfBytesTransfered,
+    LPOVERLAPPED lpOverlapped)
 {
-    if (lpOverlapped != &g_load.overlapped || dwNumberOfBytesTransfered > 0x40000)
-    {
-        InterlockedExchange(&g_fileReadError, ERROR_INVALID_DATA);
-        InterlockedExchange(&g_fileReadBytes, 0);
-    }
-    else
-    {
-        InterlockedExchange(&g_fileReadError, static_cast<LONG>(dwErrorCode));
-        InterlockedExchange(&g_fileReadBytes, static_cast<LONG>(dwNumberOfBytesTransfered));
-    }
-    InterlockedExchange(&g_fileReadComplete, TRUE);
+    const bool validOverlapped = lpOverlapped == &g_load.overlapped;
+    (void)db::load_atomic::PublishFileRead(
+        &g_fileRead,
+        validOverlapped
+            ? static_cast<uint32_t>(dwErrorCode)
+            : static_cast<uint32_t>(ERROR_INVALID_DATA),
+        validOverlapped
+            ? static_cast<uint32_t>(dwNumberOfBytesTransfered)
+            : 0u,
+        static_cast<uint32_t>(ERROR_INVALID_DATA));
 }
 
 #ifdef KISAK_DEDI_HEADLESS
@@ -504,10 +532,15 @@ void __cdecl DB_LoadXFileInternal()
     const int32_t initialReadSize = DB_WaitXFileStageInternal();
     if (initialReadSize < 12)
     {
-        const LONG readError = InterlockedCompareExchange(&g_fileReadError, 0, 0);
+        const uint32_t readError =
+            db::load_atomic::SnapshotFileRead(&g_fileRead).error;
         DB_CancelLoadXFile();
         if (readError != ERROR_SUCCESS && readError != ERROR_HANDLE_EOF)
-            Com_Error(ERR_DROP, "Read error %ld for fast-file '%s'", readError, g_load.filename);
+            Com_Error(
+                ERR_DROP,
+                "Read error %lu for fast-file '%s'",
+                static_cast<unsigned long>(readError),
+                g_load.filename);
         else
             Com_Error(ERR_DROP, "Fastfile for zone '%s' has a truncated header.", g_load.filename);
         return;
@@ -566,23 +599,29 @@ void __cdecl DB_LoadXFileInternal()
     }
     
     DB_LoadXFileData((uint8_t *)&file, sizeof(XFile));
-    if (g_trackLoadProgress)
+    if (Sys_AtomicLoad(&g_trackLoadProgress))
     {
         LARGE_INTEGER nativeFileSize{};
         if (GetFileSizeEx(g_load.f, &nativeFileSize) && nativeFileSize.QuadPart >= 0)
         {
             const uint64_t fileSize = static_cast<uint64_t>(nativeFileSize.QuadPart);
             const uint64_t totalSize = fileSize + file.externalSize;
-            const uint64_t fileChunks = (fileSize + 0x3FFFFu) / 0x40000u;
-            if (totalSize >= 0x100000u && fileChunks <= INT32_MAX
-                && file.externalSize <= INT32_MAX)
+            const uint64_t fileChunks =
+                (fileSize + db::load_atomic::kFileReadBytes - 1u)
+                / db::load_atomic::kFileReadBytes;
+            if (totalSize >= 0x100000u
+                && fileChunks <= static_cast<uint64_t>(INT32_MAX)
+                && file.externalSize <= static_cast<uint32_t>(INT32_MAX))
             {
-                const int32_t remainingChunks = static_cast<int32_t>(fileChunks) - g_loadedSize;
-                const int32_t remainingExternal = static_cast<int32_t>(file.externalSize) - g_loadedExternalBytes;
-                g_totalSize = remainingChunks > 0 ? remainingChunks : 0;
-                g_loadedSize = 0;
-                g_totalExternalBytes = remainingExternal > 0 ? remainingExternal : 0;
-                g_loadedExternalBytes = 0;
+                if (db::load_atomic::RebaseProgress(
+                        &g_loadProgress,
+                        static_cast<int32_t>(fileChunks),
+                        static_cast<int32_t>(file.externalSize))
+                    != db::load_atomic::ProgressUpdateResult::Applied)
+                {
+                    Com_Error(ERR_DROP, "Invalid fast-file load progress state");
+                    return;
+                }
             }
         }
     }
@@ -598,19 +637,22 @@ void __cdecl DB_LoadXFileInternal()
     }
     DB_PopStreamPos();
     DB_FinishGeometryBlocks(g_load.zoneMem);
-    --g_loadingAssets;
+    DB_CompleteLoadingAsset();
     Load_DelayStream();
     DB_LoadDelayedImages();
     iassert(g_load.compressBufferStart);
     Com_Printf(10, "Loaded zone '%s'\n", g_load.filename);
-    if (!g_minimumFastFileLoaded)
-        g_minimumFastFileLoaded = I_stricmp("localized_code_post_gfx_mp", g_load.filename) == 0;
+    if (!Sys_AtomicLoad(&g_minimumFastFileLoaded)
+        && I_stricmp("localized_code_post_gfx_mp", g_load.filename) == 0)
+    {
+        Sys_AtomicStore(&g_minimumFastFileLoaded, 1u);
+    }
     DB_CancelLoadXFile();
 }
 
 bool __cdecl DB_IsMinimumFastFileLoaded()
 {
-    return g_minimumFastFileLoaded;
+    return Sys_AtomicLoad(&g_minimumFastFileLoaded) != 0;
 }
 
 void Load_XAssetListCustom()
@@ -666,11 +708,10 @@ void __cdecl Load_XAssetArrayCustom(int32_t count)
 
 void __cdecl DB_ResetZoneSize(int32_t trackLoadProgress)
 {
-    g_totalSize = 0;
-    g_loadedSize = 0;
-    g_totalExternalBytes = 0;
-    g_loadedExternalBytes = 0;
-    g_trackLoadProgress = trackLoadProgress;
+    const db::load_atomic::ProgressUpdateResult resetResult =
+        db::load_atomic::ConfigureProgress(&g_loadProgress, 0, 0);
+    iassert(resetResult == db::load_atomic::ProgressUpdateResult::Applied);
+    Sys_AtomicStore(&g_trackLoadProgress, trackLoadProgress != 0 ? 1u : 0u);
 }
 
 void __cdecl DB_LoadXFile(
@@ -700,16 +741,14 @@ void __cdecl DB_LoadXFile(
     g_fileReadEof = false;
     g_inflateInitialized = false;
     g_inflateStreamEnded = false;
-    InterlockedExchange(&g_fileReadComplete, FALSE);
-    InterlockedExchange(&g_fileReadError, ERROR_SUCCESS);
-    InterlockedExchange(&g_fileReadBytes, 0);
+    db::load_atomic::ResetFileRead(&g_fileRead);
     g_load.f = f;
     g_load.filename = filename;
     g_load.zoneMem = zoneMem;
     g_load.interrupt = interrupt;
     g_load.allocType = allocType;
     g_load.compressBufferStart = buf;
-    g_load.compressBufferEnd = buf + 0x80000;
+    g_load.compressBufferEnd = buf + db::load_atomic::kFileBufferBytes;
     g_load.stream.next_in = buf;
     g_load.stream.avail_in = 0;
 }

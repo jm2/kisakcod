@@ -316,7 +316,9 @@ string(FIND "${_db_load_internal_source}" "    DB_AllocXZoneMemory(" _db_load_al
 string(FIND "${_db_load_internal_source}" "    DB_InitStreams(g_load.zoneMem);" _db_load_init_streams)
 string(FIND "${_db_load_internal_source}" "    Load_XAssetListCustom();" _db_load_asset_list)
 string(FIND "${_db_load_internal_source}" "    DB_FinishGeometryBlocks(g_load.zoneMem);" _db_load_finish_geometry)
-string(FIND "${_db_load_internal_source}" "    --g_loadingAssets;" _db_load_accounting)
+string(FIND "${_db_load_internal_source}"
+    "    DB_CompleteLoadingAsset();"
+    _db_load_accounting)
 string(FIND "${_db_load_internal_source}" "    Load_DelayStream();" _db_load_delayed_stream)
 string(FIND "${_db_load_internal_source}" "    DB_LoadDelayedImages();" _db_load_delayed_images)
 string(FIND "${_db_load_internal_source}" "    DB_CancelLoadXFile();" _db_load_cancel REVERSE)

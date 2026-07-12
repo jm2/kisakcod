@@ -189,6 +189,7 @@ void __cdecl DB_LoadZone_f();
 void __cdecl DB_InitThread();
 void __cdecl  DB_Thread(uint32_t threadContext);
 void DB_TryLoadXFile();
+void DB_CompleteLoadingAsset();
 int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags);
 void __cdecl DB_BuildOSPath(const char *zoneName, uint32_t size, char *filename);
 int32_t __cdecl DB_GetZoneAllocType(int32_t zoneFlags);
@@ -778,7 +779,6 @@ extern const char *g_assetNames[33];
 extern XAssetEntry *g_copyInfo[0x800];
 extern uint32_t g_copyInfoCount;
 
-extern volatile uint32_t g_loadingAssets;
 
 extern XAssetList *varXAssetList;
 

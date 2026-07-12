@@ -294,7 +294,6 @@ int __cdecl R_ProcessWorkerCmd(WorkerCmdType type)
         KISAK_NULLSUB();
         for (i = 0; i < count; ++i)
             R_ProcessWorkerCmdInternal(type, &data[dataSize * i]);
-        //InterlockedExchangeAdd(&workerCmds->inSize, -count);
         InterlockedExchangeAdd((LONG*)&workerCmds->inSize, -(int)count);
         if (g_workerCmdWaitCount)
             Sys_SetWorkerCmdEvent();
