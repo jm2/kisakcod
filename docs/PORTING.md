@@ -61,9 +61,8 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Land and obtain Windows CI evidence for the checked SP/MP skeleton-arena, epoch-wrap, and
-   pose-cull publication batch, then migrate the remaining audited renderer/FX fixed-width atomic
-   families.
+2. Land and obtain Windows CI evidence for the bounded renderer-reservation batch, then migrate the
+   renderer worker queue before the dependent staged FX fixed-width/layout protocols.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -718,7 +717,7 @@ as well as GCC/Clang, including high-bit/wrap and pointer exchange cases. Non-MS
 aliases remain only as a temporary source-migration aid; Windows-owned names are never redefined on
 MSVC. The shared fast-lock implementation is the first layout-bound consumer and no longer contains
 a Windows include or native cast. Corrected live census after the landed diagnostic, database, and
-current skeleton/pose batch: **107** direct `Interlocked` calls remain across 15 engine TUs. The original
+bounded renderer-reservation batch: **102** direct `Interlocked` calls remain across 14 engine TUs. The original
 209 also included 12 assertion-message literals. *M1 open tail:* migrate the
 remaining families, and retype their `volatile long`/`LONG` storage and casts to exact-width words; then delete
 the compatibility aliases. The bare `sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now
@@ -844,7 +843,7 @@ and replacement run 29195736931 passed all nine jobs. Remaining adjacent debt is
 path-based clone opens retain a compatible-replacement file-identity TOCTOU, unzip CRC enforcement is
 disabled, and native-`unsigned long`/signed-int file-size records cap safe archives below 2 GiB.
 
-The current skeleton/pose batch removes another three native calls and closes the adjacent arena
+Skeleton/pose commit `060e6ba` removes another three native calls and closes the adjacent arena
 publication defects. A shared platform-neutral helper derives each arena's aligned base and exact
 capacity from its real backing array; checked arithmetic and CAS reservation reject invalid
 alignment, size overflow, corrupt/misaligned cursors, exhaustion, and out-of-range requests without
@@ -860,10 +859,28 @@ access now uses a shared CAS/store/exchange/load protocol that preserves culled 
 erase a racing producer with a split load/reset. Dual 32/64-bit layout contracts, repository-wide
 source guards, exact-
 capacity/corrupt-cursor/rollover tests, eight-thread arena contention, and pose producer/consumer
-races pass in the full 20-test GCC, Clang, Clang ASan/UBSan, and Clang TSan matrix. Windows CI remains
-the landing gate for this uncommitted batch. Skeleton-worker quiescence during reset remains an
+races pass in the full 20-test GCC, Clang, Clang ASan/UBSan, and Clang TSan matrix; all nine jobs then
+passed in run 29196678355. Skeleton-worker quiescence during reset remains an
 external lifecycle contract; resetter serialization is enforced, but the inherited
 `allowedAllocSkel` state is still unused and does not enforce worker quiescence.
+
+The bounded renderer-reservation batch then removes all five native calls from `r_drawsurf.cpp`.
+One exact-width CAS helper grants non-overlapping fixed-array ranges without overflow, overshoot, or
+counter poisoning and permits exact-capacity use. FX regions and release-build inputs are checked;
+scene/backend counters, resetters, merge consumers, and backend readers share one atomic boundary;
+and malformed stage, code-mesh record, argument, triangle, and index extents fail closed before
+backing-array access. Single-index and multi-element eight-thread contention tests bring the full
+local GCC, Clang, Clang ASan/UBSan, and Clang TSan matrix to 21/21. The live census is now 102 direct
+calls across 14 engine TUs; Windows production compilation is the remaining landing gate.
+
+The next atomic dependency is `r_workercmds.cpp`, before EffectsCore: its CAS-min update can raise a
+concurrently lowered priority, raw and atomic accesses mix, reset/wait ordering permits a lost wake,
+and retail x86 byte literals truncate pointer-bearing command payloads on every 64-bit target.
+EffectsCore itself retains 61 native calls and requires staged exact-width layout plus iterator,
+pool, visibility/ring, and packed-status protocol rewrites. Separately, `r_dobj_skin.cpp` needs a
+fail-closed security batch for its unchecked fixed stack-record buffer, arithmetic/arena failures,
+alignment, and pointer narrowing. Detailed live blockers and sequencing remain in `docs/task.md` and
+`docs/CODEBASE_AUDIT.md`.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
 `r_texturemem.cpp:14-86` queries VRAM via `IDirectDraw7` (`DirectDrawCreateEx`/`GetAvailableVidMem`),

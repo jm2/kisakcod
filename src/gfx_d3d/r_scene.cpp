@@ -30,6 +30,7 @@
 #include "r_cinematic.h"
 #include <win32/win_net.h>
 #include <universal/profile.h>
+#include <universal/sys_atomic.h>
 #include "rb_state.h"
 
 #ifdef KISAK_MP
@@ -1107,7 +1108,10 @@ void __cdecl R_ClearScene(uint32_t localClientNum)
     Com_Memset((uint32_t *)&scene.sceneModel[0].info, 0, 72 * scene.sceneModelCount);
     Com_Memset((uint32_t *)&scene.sceneBrush[0].info.surfId, 0, 40 * scene.sceneBrushCount);
     scene.addedLightCount = 0;
-    memset((uint8_t *)scene.drawSurfCount, 0, sizeof(scene.drawSurfCount));
+    for (uint32_t drawSurfType = 0u;
+         drawSurfType < static_cast<uint32_t>(DRAW_SURF_TYPE_COUNT);
+         ++drawSurfType)
+        Sys_AtomicStore(&scene.drawSurfCount[drawSurfType], 0u);
     for (viewIndex = 0; viewIndex < 7; ++viewIndex)
         Com_Memset((uint32_t *)scene.sceneModelVisData[viewIndex], 1, scene.sceneModelCount);
     scene.sceneDObjCount = 0;
@@ -1713,7 +1717,9 @@ void __cdecl R_GenerateSortedDrawSurfs(
             R_GenerateMarkVertsForDynamicModels();
     }
     KISAK_NULLSUB();
-    R_SortDrawSurfs(scene.drawSurfs[6], scene.drawSurfCount[6]);
+    R_SortDrawSurfs(
+        scene.drawSurfs[DRAW_SURF_FX_CAMERA_LIT],
+        Sys_AtomicLoad(&scene.drawSurfCount[DRAW_SURF_FX_CAMERA_LIT]));
     decalInfo = &viewInfo->decalInfo;
     R_InitDrawSurfListInfo(&viewInfo->decalInfo);
     decalInfo->baseTechType = gfxDrawMethod.baseTechType;
@@ -1729,7 +1735,9 @@ void __cdecl R_GenerateSortedDrawSurfs(
     decalInfo->drawSurfCount = frontEndDataOut->drawSurfCount - firstDrawSurfCount;
     R_WaitWorkerCmdsOfType(WRKCMD_GENERATE_FX_VERTS);
     KISAK_NULLSUB();
-    R_SortDrawSurfs(scene.drawSurfs[DRAW_SURF_FX_CAMERA_EMISSIVE], scene.drawSurfCount[DRAW_SURF_FX_CAMERA_EMISSIVE]);
+    R_SortDrawSurfs(
+        scene.drawSurfs[DRAW_SURF_FX_CAMERA_EMISSIVE],
+        Sys_AtomicLoad(&scene.drawSurfCount[DRAW_SURF_FX_CAMERA_EMISSIVE]));
     emissiveInfo = &viewInfo->emissiveInfo;
     R_InitDrawSurfListInfo(&viewInfo->emissiveInfo);
     EmissiveTechnique = R_GetEmissiveTechnique(viewInfo, gfxDrawMethod.emissiveTechType);
@@ -2245,4 +2253,3 @@ void __cdecl R_UnlinkDynEnt(uint32_t dynEntId, DynEntityDrawType drawType)
     R_UnfilterDynEntFromCells(dynEntId, drawType);
     R_UnlinkDynEntFromPrimaryLights(dynEntId, drawType);
 }
-

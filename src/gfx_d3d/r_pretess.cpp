@@ -7,6 +7,7 @@
 #include "rb_tess.h"
 #include "r_draw_staticmodel.h"
 #include <universal/profile.h>
+#include <universal/sys_atomic.h>
 
 
 void __cdecl R_InitDrawSurfListInfo(GfxDrawSurfListInfo *info)
@@ -60,37 +61,66 @@ void __cdecl R_MergeAndEmitDrawSurfLists(DrawSurfType firstStage, int stageCount
     uint32_t v2; // eax
     signed int v3; // [esp+0h] [ebp-164h]
     uint32_t srcStageIndex; // [esp+38h] [ebp-12Ch]
-    int freeDrawSurfCount; // [esp+3Ch] [ebp-128h]
+    uint32_t freeDrawSurfCount; // [esp+3Ch] [ebp-128h]
     uint32_t stageIndex; // [esp+40h] [ebp-124h]
     signed int primarySortKey; // [esp+48h] [ebp-11Ch]
     GfxDrawSurf *drawSurfs[DRAW_SURF_TYPE_COUNT]; // [esp+4Ch] [ebp-118h]
     uint32_t dstStageIndex; // [esp+D8h] [ebp-8Ch]
     uint32_t drawSurfCount[DRAW_SURF_TYPE_COUNT]; // [esp+DCh] [ebp-88h]
     
-    iassert(stageCount >= 1 && stageCount <= DRAW_SURF_TYPE_COUNT);
+    const bool validRange = stageCount >= 1
+        && stageCount <= DRAW_SURF_TYPE_COUNT
+        && firstStage >= 0
+        && firstStage <= DRAW_SURF_TYPE_COUNT - stageCount;
+    iassert(validRange);
+    if (!validRange
+        || frontEndDataOut->drawSurfCount < 0
+        || frontEndDataOut->drawSurfCount > 0x8000)
+    {
+        return;
+    }
 
-    freeDrawSurfCount = 0x8000 - frontEndDataOut->drawSurfCount;
-    if (freeDrawSurfCount > 0)
+    freeDrawSurfCount =
+        0x8000u - static_cast<uint32_t>(frontEndDataOut->drawSurfCount);
+    if (freeDrawSurfCount != 0u)
     {
         dstStageIndex = 0;
-        for (srcStageIndex = 0; srcStageIndex < stageCount; ++srcStageIndex)
+        for (srcStageIndex = 0;
+             srcStageIndex < static_cast<uint32_t>(stageCount);
+             ++srcStageIndex)
         {
-            stageIndex = srcStageIndex + firstStage;
-            if (scene.drawSurfCount[srcStageIndex + firstStage] > freeDrawSurfCount)
+            stageIndex =
+                srcStageIndex + static_cast<uint32_t>(firstStage);
+            uint32_t stageDrawSurfCount =
+                Sys_AtomicLoad(&scene.drawSurfCount[stageIndex]);
+            const int configuredStageCapacity =
+                scene.maxDrawSurfCount[stageIndex];
+            const uint32_t stageCapacity = configuredStageCapacity > 0
+                && scene.drawSurfs[stageIndex]
+                ? static_cast<uint32_t>(configuredStageCapacity)
+                : 0u;
+            const uint32_t usableStageCount =
+                stageCapacity < freeDrawSurfCount
+                    ? stageCapacity
+                    : freeDrawSurfCount;
+            if (stageDrawSurfCount > usableStageCount)
             {
-                scene.drawSurfCount[stageIndex] = freeDrawSurfCount;
+                stageDrawSurfCount = usableStageCount;
+                Sys_AtomicStore(
+                    &scene.drawSurfCount[stageIndex],
+                    stageDrawSurfCount);
                 R_WarnOncePerFrame(R_WARN_MAX_DRAWSURFS);
             }
-            if (scene.drawSurfCount[stageIndex])
+            if (stageDrawSurfCount != 0u)
             {
-                freeDrawSurfCount -= scene.drawSurfCount[stageIndex];
-                drawSurfCount[dstStageIndex] = scene.drawSurfCount[stageIndex];
+                freeDrawSurfCount -= stageDrawSurfCount;
+                drawSurfCount[dstStageIndex] = stageDrawSurfCount;
                 drawSurfs[dstStageIndex++] = scene.drawSurfs[stageIndex];
             }
         }
         while (dstStageIndex)
         {
-            stageCount = dstStageIndex;
+            const uint32_t sourceListCount = dstStageIndex;
             if (dstStageIndex == 1)
             {
                 R_EmitDrawSurfList(drawSurfs[0], drawSurfCount[0]);
@@ -107,7 +137,9 @@ void __cdecl R_MergeAndEmitDrawSurfLists(DrawSurfType firstStage, int stageCount
                 primarySortKey = v3;
             }
             dstStageIndex = 0;
-            for (srcStageIndex = 0; srcStageIndex < stageCount; ++srcStageIndex)
+            for (srcStageIndex = 0;
+                 srcStageIndex < sourceListCount;
+                 ++srcStageIndex)
             {
                 v2 = R_EmitDrawSurfListForKey(drawSurfs[srcStageIndex], drawSurfCount[srcStageIndex], primarySortKey); // KISAKTODO: change to blops style
                 drawSurfs[dstStageIndex] = &drawSurfs[srcStageIndex][v2];

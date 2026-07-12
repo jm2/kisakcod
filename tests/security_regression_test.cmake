@@ -4553,6 +4553,129 @@ if (_skel_epoch_access_count EQUAL 0
         "${_wrapped_skel_epoch_access_count}/${_skel_epoch_access_count} wrapped")
 endif()
 
+# Renderer worker producers reserve fixed-array ranges through one portable,
+# bounded CAS protocol.  Exact-width storage prevents C long from widening and
+# shifting the scene/back-end layouts on Linux and macOS.
+require_source_not_contains(
+    "gfx_d3d/r_reservation_atomic.h"
+    "Interlocked"
+    "renderer reservations must remain independent of native Windows atomics")
+require_source_not_matches(
+    "gfx_d3d/r_reservation_atomic.h"
+    "(^|[^A-Za-z0-9_])LONG([^A-Za-z0-9_]|$)"
+    "renderer reservations must not use a native Windows word")
+require_source_contains(
+    "gfx_d3d/r_reservation_atomic.h"
+    "observed > capacity || count > capacity - observed"
+    "renderer reservation capacity checks must not use overflow-prone addition")
+require_source_contains(
+    "gfx_d3d/r_reservation_atomic.h"
+    "Sys_AtomicCompareExchange("
+    "renderer reservations must atomically claim unique ranges")
+require_source_not_contains(
+    "gfx_d3d/r_drawsurf.cpp"
+    "Interlocked"
+    "draw-surface reservations must use the portable bounded protocol")
+require_source_match_count(
+    "gfx_d3d/r_drawsurf.cpp"
+    "gfx::reservation_atomic::TryReserve(Index)?[ \t\r\n]*\\("
+    4
+    "all draw-surface counter reservations must use the bounded protocol")
+require_source_contains(
+    "gfx_d3d/r_drawsurf.cpp"
+    "region >= static_cast<uint32_t>(DRAW_SURF_TYPE_COUNT)"
+    "FX draw-surface regions must be validated before indexing scene arrays")
+require_source_contains(
+    "gfx_d3d/r_drawsurf.cpp"
+    "region >= static_cast<uint32_t>(DRAW_SURF_FX_CAMERA_LIT)"
+    "atomic draw-surface reservations must remain limited to FX-owned regions")
+require_source_contains(
+    "gfx_d3d/r_drawsurf.cpp"
+    "if (!argOffsetOut || argCount < 0 || argCount > CODE_MESH_ARG_COUNT)"
+    "code-mesh argument reservations must validate release-build inputs")
+require_source_contains(
+    "gfx_d3d/r_drawsurf.cpp"
+    "static constexpr int CODE_MESH_ARG_COUNT = 2;"
+    "code-mesh argument ranges must fit the two dedicated shader constants")
+require_source_contains(
+    "gfx_d3d/r_scene.h"
+    "volatile uint32_t drawSurfCount[34];"
+    "draw-surface reservation counters must retain exact 32-bit layout")
+require_source_not_contains(
+    "gfx_d3d/r_scene.h"
+    "volatile long drawSurfCount"
+    "draw-surface counters must not widen under LP64")
+foreach(_renderer_counter
+    "codeMeshCount"
+    "codeMeshArgsCount"
+    "markMeshCount"
+)
+    require_source_contains(
+        "gfx_d3d/r_rendercmds.h"
+        "volatile uint32_t ${_renderer_counter};"
+        "renderer back-end reservation counters must retain exact 32-bit layout")
+    require_source_not_contains(
+        "gfx_d3d/r_rendercmds.h"
+        "volatile long ${_renderer_counter}"
+        "renderer back-end reservation counters must not widen under LP64")
+    require_source_contains(
+        "gfx_d3d/r_rendercmds.cpp"
+        "Sys_AtomicStore(&frontEndDataOut->${_renderer_counter}, 0u);"
+        "renderer back-end reservation counters must reset through their atomic boundary")
+endforeach()
+require_source_contains(
+    "gfx_d3d/r_scene.cpp"
+    "Sys_AtomicStore(&scene.drawSurfCount[drawSurfType], 0u);"
+    "draw-surface counters must reset through their atomic boundary")
+require_source_contains(
+    "gfx_d3d/r_pretess.cpp"
+    "Sys_AtomicLoad(&scene.drawSurfCount[stageIndex]);"
+    "draw-surface merging must acquire each worker-published FX extent")
+require_source_contains(
+    "gfx_d3d/r_pretess.cpp"
+    "Sys_AtomicStore(
+                    &scene.drawSurfCount[stageIndex],"
+    "draw-surface clamping must remain inside the atomic ownership boundary")
+require_source_contains(
+    "gfx_d3d/rb_tess.cpp"
+    "codeMeshArgsCount = Sys_AtomicLoad(&data->codeMeshArgsCount);"
+    "the renderer back end must acquire the published code-mesh argument extent")
+require_source_contains(
+    "gfx_d3d/rb_tess.cpp"
+    "codeMeshCount = Sys_AtomicLoad(&data->codeMeshCount);"
+    "the renderer back end must acquire the published code-mesh record extent")
+require_source_ordered(
+    "gfx_d3d/rb_tess.cpp"
+    "if (objectId >= codeMeshCount)"
+    "codeMesh = &data->codeMeshes[objectId];"
+    "code-mesh object IDs must be bounded before the backing array is indexed")
+require_source_contains(
+    "gfx_d3d/rb_tess.cpp"
+    "codeMesh->triCount <= kCodeMeshTriangleLimit"
+    "code-mesh triangle counts must be bounded before byte arithmetic")
+require_source_contains(
+    "gfx_d3d/rb_tess.cpp"
+    "<= indexBufferAddress + kCodeMeshIndexBytes
+                    - codeMeshIndexAddress;"
+    "code-mesh index spans must use subtraction-based bounds validation")
+require_source_contains(
+    "gfx_d3d/rb_tess.cpp"
+    "argCount > codeMeshArgsCount - argOffset"
+    "the renderer back end must reject malformed argument ranges without overflow")
+require_source_contains(
+    "gfx_d3d/rb_tess.cpp"
+    "if (!R_TessCodeMeshList_AddCodeMeshArgs("
+    "malformed code-mesh arguments must fail the owning draw-surface record closed")
+require_source_contains(
+    "gfx_d3d/rb_tess.cpp"
+    "argGlobalIndex);
+            return false;"
+    "an invalid code-mesh argument index must not reach the backing array")
+require_source_contains(
+    "gfx_d3d/r_pretess.cpp"
+    "stageCapacity < freeDrawSurfCount"
+    "draw-surface merging must clamp each extent to its configured backing array")
+
 set(_format_sensitive_sources
     "cgame/cg_hudelem.cpp"
     "cgame/cg_info.cpp"

@@ -17,6 +17,9 @@
 #include "r_draw_staticmodel.h"
 #include "r_draw_xmodel.h"
 #include "r_pretess.h"
+#include <cstddef>
+#include <cstdint>
+#include <universal/sys_atomic.h>
 
 GfxScaledPlacement s_manualObjectPlacement;
 
@@ -100,7 +103,6 @@ void __cdecl RB_ShowTess(GfxCmdBufContext context, const float *center, const ch
 
 uint32_t __cdecl R_TessCodeMeshList(const GfxDrawSurfListArgs *listArgs, GfxCmdBufContext prepassContext)
 {
-    const char *v2; // eax
     GfxDepthRangeType depthRangeType; // [esp+24h] [ebp-6Ch]
     GfxCmdBufContext context; // [esp+3Ch] [ebp-54h]
     const GfxDrawSurfListInfo *info; // [esp+44h] [ebp-4Ch]
@@ -110,6 +112,7 @@ uint32_t __cdecl R_TessCodeMeshList(const GfxDrawSurfListArgs *listArgs, GfxCmdB
     uint32_t drawSurfIndex; // [esp+5Ch] [ebp-34h]
     uint8_t *indices; // [esp+68h] [ebp-28h]
     uint32_t argCount; // [esp+6Ch] [ebp-24h]
+    uint32_t codeMeshCount;
     const GfxDrawSurf *drawSurfList; // [esp+70h] [ebp-20h]
     GfxDrawPrimArgs args; // [esp+74h] [ebp-1Ch] BYREF
     unsigned __int64 drawSurfKey; // [esp+80h] [ebp-10h]
@@ -138,6 +141,16 @@ uint32_t __cdecl R_TessCodeMeshList(const GfxDrawSurfListArgs *listArgs, GfxCmdB
     if (depthRangeType != context.state->depthRangeType)
         R_ChangeDepthRange(context.state, depthRangeType);
     data = context.source->input.data;
+    codeMeshCount = Sys_AtomicLoad(&data->codeMeshCount);
+    if (codeMeshCount > ARRAY_COUNT(data->codeMeshes))
+    {
+        MyAssertHandler(
+            ".\\rb_tess.cpp",
+            197,
+            0,
+            "published code mesh count exceeds the backing array");
+        return 1u;
+    }
     R_SetMeshStream(context.state, (GfxMeshData*)&data->codeMesh);
     indices = 0;
     args.baseIndex = 0;
@@ -150,32 +163,56 @@ uint32_t __cdecl R_TessCodeMeshList(const GfxDrawSurfListArgs *listArgs, GfxCmdB
 
     do
     {
-        codeMesh = &data->codeMeshes[drawSurf.fields.objectId];
-
-        iassert(codeMesh->triCount > 0);
-        
-        if (data->codeMeshes[drawSurf.fields.objectId].indices < data->codeMesh.indices
-            || &data->codeMeshes[drawSurf.fields.objectId].indices[3 * data->codeMeshes[drawSurf.fields.objectId].triCount] > data->codeMesh.indices + 24576)
+        const uint32_t objectId = drawSurf.fields.objectId;
+        if (objectId >= codeMeshCount)
         {
-            v2 = va(
-                "0x%08x 0x%08x %i %i %s",
-                data->codeMeshes[LOWORD(drawSurf.packed)].indices,
-                data->codeMesh.indices,
-                3 * data->codeMeshes[LOWORD(drawSurf.packed)].triCount,
-                24576,
-                context.state->material->info.name);
             MyAssertHandler(
                 ".\\rb_tess.cpp",
                 237,
                 0,
-                "%s\n\t%s",
-                "&codeMesh->indices[0] >= &data->codeMesh.indices[0] && &codeMesh->indices[codeMesh->triCount * 3] <= &data->code"
-                "Mesh.indices[GFX_CODE_MESH_INDEX_LIMIT]",
-                v2);
+                "code mesh objectId %u is outside the published array",
+                objectId);
+            g_primStats = nullptr;
+            return drawSurfIndex + 1u;
         }
+        codeMesh = &data->codeMeshes[objectId];
+
+        constexpr uint32_t kCodeMeshIndexLimit = 24576u;
+        constexpr uint32_t kCodeMeshTriangleLimit =
+            kCodeMeshIndexLimit / 3u;
+        const uintptr_t indexBufferAddress =
+            reinterpret_cast<uintptr_t>(data->codeMesh.indices);
+        const uintptr_t codeMeshIndexAddress =
+            reinterpret_cast<uintptr_t>(codeMesh->indices);
+        constexpr size_t kCodeMeshIndexBytes =
+            kCodeMeshIndexLimit * sizeof(uint16_t);
+        const bool validIndexRange = data->codeMesh.indices
+            && codeMesh->indices
+            && codeMesh->triCount > 0u
+            && codeMesh->triCount <= kCodeMeshTriangleLimit
+            && indexBufferAddress <= UINTPTR_MAX - kCodeMeshIndexBytes
+            && codeMeshIndexAddress >= indexBufferAddress
+            && codeMeshIndexAddress <= indexBufferAddress + kCodeMeshIndexBytes
+            && 3u * codeMesh->triCount * sizeof(uint16_t)
+                <= indexBufferAddress + kCodeMeshIndexBytes
+                    - codeMeshIndexAddress;
+        if (!validIndexRange)
+        {
+            MyAssertHandler(
+                ".\\rb_tess.cpp",
+                237,
+                0,
+                "code mesh index range is outside the published buffer");
+            g_primStats = nullptr;
+            return drawSurfIndex + 1u;
+        }
+
+        const uint8_t *const expectedNextIndices = args.triCount
+            ? indices + 3u * args.triCount * sizeof(uint16_t)
+            : indices;
         if (argCount
-            || data->codeMeshes[drawSurf.fields.objectId].argCount
-            || &indices[6 * args.triCount] != (uint8_t *)data->codeMeshes[drawSurf.fields.objectId].indices)
+            || codeMesh->argCount
+            || expectedNextIndices != reinterpret_cast<uint8_t *>(codeMesh->indices))
         {
             if (args.triCount)
             {
@@ -183,12 +220,29 @@ uint32_t __cdecl R_TessCodeMeshList(const GfxDrawSurfListArgs *listArgs, GfxCmdB
                 R_DrawIndexedPrimitive(&context.state->prim, &args);
                 args.triCount = 0;
             }
-            indices = (uint8_t *)data->codeMeshes[drawSurf.fields.objectId].indices;
-            R_TessCodeMeshList_AddCodeMeshArgs(context.source, data, codeMesh);
+            indices = reinterpret_cast<uint8_t *>(codeMesh->indices);
+            if (!R_TessCodeMeshList_AddCodeMeshArgs(
+                    context.source,
+                    data,
+                    codeMesh))
+            {
+                g_primStats = nullptr;
+                return drawSurfIndex + 1u;
+            }
             R_SetupPassPerObjectArgs(context);
             R_SetupPassPerPrimArgs(context);
         }
-        argCount = data->codeMeshes[drawSurf.fields.objectId].argCount;
+        if (args.triCount > kCodeMeshTriangleLimit - codeMesh->triCount)
+        {
+            MyAssertHandler(
+                ".\\rb_tess.cpp",
+                237,
+                0,
+                "contiguous code mesh triangle range exceeds the index buffer");
+            g_primStats = nullptr;
+            return drawSurfIndex + 1u;
+        }
+        argCount = codeMesh->argCount;
         args.triCount += codeMesh->triCount;
         g_frameStatsCur.fxIndexCount += 3 * codeMesh->triCount;
         if (++drawSurfIndex == drawSurfCount)
@@ -211,7 +265,7 @@ void __cdecl R_SetVertexDeclTypeNormal(GfxCmdBufState *state, MaterialVertexDecl
     R_UpdateVertexDecl(state);
 }
 
-void __cdecl R_TessCodeMeshList_AddCodeMeshArgs(
+bool __cdecl R_TessCodeMeshList_AddCodeMeshArgs(
     GfxCmdBufSourceState *source,
     const GfxBackEndData *data,
     const FxCodeMeshData *codeMesh)
@@ -225,16 +279,34 @@ void __cdecl R_TessCodeMeshList_AddCodeMeshArgs(
     uint32_t argGlobalIndex; // [esp+18h] [ebp-14h]
     uint32_t argCount; // [esp+20h] [ebp-Ch]
     uint32_t argOffset; // [esp+24h] [ebp-8h]
+    uint32_t codeMeshArgsCount;
     CodeConstant constantId; // [esp+28h] [ebp-4h]
 
     argOffset = codeMesh->argOffset;
     argCount = codeMesh->argCount;
+    codeMeshArgsCount = Sys_AtomicLoad(&data->codeMeshArgsCount);
+    const uint32_t codeMeshArgLimit =
+        static_cast<uint32_t>(CONST_SRC_CODE_CODE_MESH_ARG_LAST
+            - CONST_SRC_CODE_CODE_MESH_ARG_0 + 1);
+    if (codeMeshArgsCount > ARRAY_COUNT(data->codeMeshArgs)
+        || argCount > codeMeshArgLimit
+        || argOffset > codeMeshArgsCount
+        || argCount > codeMeshArgsCount - argOffset)
+    {
+        MyAssertHandler(
+            ".\\rb_tess.cpp",
+            148,
+            0,
+            "code mesh argument range is outside the published buffer");
+        return false;
+    }
     for (argIndex = 0; argIndex != argCount; ++argIndex)
     {
         constantId = (CodeConstant)((int)CONST_SRC_CODE_CODE_MESH_ARG_0 + argIndex);
         iassert(constantId <= CONST_SRC_CODE_CODE_MESH_ARG_LAST);
         argGlobalIndex = argOffset + argIndex;
-        if (argOffset + argIndex >= data->codeMeshArgsCount)
+        if (argGlobalIndex >= codeMeshArgsCount)
+        {
             MyAssertHandler(
                 ".\\rb_tess.cpp",
                 156,
@@ -242,6 +314,8 @@ void __cdecl R_TessCodeMeshList_AddCodeMeshArgs(
                 "%s\n\t(argGlobalIndex) = %i",
                 "(argGlobalIndex < static_cast< uint >( data->codeMeshArgsCount ))",
                 argGlobalIndex);
+            return false;
+        }
         v3 = data->codeMeshArgs[argGlobalIndex][0];
         v4 = data->codeMeshArgs[argGlobalIndex][1];
         v5 = data->codeMeshArgs[argGlobalIndex][2];
@@ -261,6 +335,7 @@ void __cdecl R_TessCodeMeshList_AddCodeMeshArgs(
         v7[3] = v6;
         R_DirtyCodeConstant(source, constantId);
     }
+    return true;
 }
 
 uint32_t __cdecl R_TessMarkMeshList(const GfxDrawSurfListArgs *listArgs, GfxCmdBufContext prepassContext)
@@ -1581,4 +1656,3 @@ uint32_t __cdecl R_TessBModel(const GfxDrawSurfListArgs *listArgs, GfxCmdBufCont
     g_primStats = 0;
     return drawSurfIndex;
 }
-

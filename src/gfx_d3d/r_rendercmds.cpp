@@ -25,6 +25,7 @@
 #include "r_drawsurf.h"
 #include "rb_state.h"
 #include <universal/profile.h>
+#include <universal/sys_atomic.h>
 
 //  struct GfxBackEndData *frontEndDataOut 85827c80     gfx_d3d : r_rendercmds.obj
 GfxBackEndData *frontEndDataOut;
@@ -541,10 +542,10 @@ DebugGlobals *R_ToggleSmpFrame()
     frontEndDataOut->surfPos = 0;
     frontEndDataOut->gfxEntCount = 1;
     frontEndDataOut->cloudCount = 0;
-    frontEndDataOut->codeMeshCount = 0;
-    frontEndDataOut->codeMeshArgsCount = 0;
+    Sys_AtomicStore(&frontEndDataOut->codeMeshCount, 0u);
+    Sys_AtomicStore(&frontEndDataOut->codeMeshArgsCount, 0u);
     R_ResetMesh(&frontEndDataOut->codeMesh);
-    frontEndDataOut->markMeshCount = 0;
+    Sys_AtomicStore(&frontEndDataOut->markMeshCount, 0u);
     R_ResetMesh(&frontEndDataOut->markMesh);
     frontEndDataOut->viewParmCount = 0;
     frontEndDataOut->cmds = 0;

@@ -538,9 +538,9 @@ const struct __declspec(align(16)) GfxBackEndData // sizeof=0x11E780
     volatile long gfxEntCount;
     GfxEntity gfxEnts[128];
     volatile long cloudCount;
-    volatile long codeMeshCount;
-    volatile long codeMeshArgsCount;
-    volatile long markMeshCount;
+    volatile uint32_t codeMeshCount;
+    volatile uint32_t codeMeshArgsCount;
+    volatile uint32_t markMeshCount;
     FxMarkMeshData markMeshes[1536];
     GfxMeshData markMesh;
     GfxVertexBufferState *skinnedCacheVb;

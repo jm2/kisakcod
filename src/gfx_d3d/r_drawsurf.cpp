@@ -9,12 +9,14 @@
 #include "r_meshdata.h"
 
 #include "r_dvars.h"
+#include "r_reservation_atomic.h"
 
 #include "r_scene.h"
 #include <universal/profile.h>
 
 static bool g_processCodeMesh;
 static bool g_processMarkMesh;
+static constexpr int CODE_MESH_ARG_COUNT = 2;
 
 char __cdecl R_ReserveCodeMeshIndices(int indexCount, r_double_index_t** indicesOut)
 {
@@ -36,23 +38,35 @@ char __cdecl R_ReserveCodeMeshVerts(int vertCount, uint16_t* baseVertex)
 
 char __cdecl R_ReserveCodeMeshArgs(int argCount, uint32_t* argOffsetOut)
 {
-    volatile int oldArgCount; // [esp+8h] [ebp-4h]
-
     iassert( g_processCodeMesh );
     iassert( (argCount >= 0) );
     iassert( argOffsetOut );
-    oldArgCount = frontEndDataOut->codeMeshArgsCount;
-    if ((uint32_t)(argCount + oldArgCount) < 0x100)
-    {
-        *argOffsetOut = oldArgCount;
-        InterlockedExchange(&frontEndDataOut->codeMeshArgsCount, argCount + oldArgCount);
-        return 1;
-    }
-    else
+
+    if (!argOffsetOut || argCount < 0 || argCount > CODE_MESH_ARG_COUNT)
     {
         R_WarnOncePerFrame(R_WARN_MAX_CODE_ARGS);
         return 0;
     }
+
+    // A mesh with no shader arguments owns no range.  Keep its canonical
+    // offset at zero even when other workers have already reserved arguments.
+    if (argCount == 0)
+    {
+        *argOffsetOut = 0u;
+        return 1;
+    }
+
+    if (gfx::reservation_atomic::TryReserve(
+            &frontEndDataOut->codeMeshArgsCount,
+            static_cast<uint32_t>(argCount),
+            static_cast<uint32_t>(ARRAY_COUNT(frontEndDataOut->codeMeshArgs)),
+            argOffsetOut))
+    {
+        return 1;
+    }
+
+    R_WarnOncePerFrame(R_WARN_MAX_CODE_ARGS);
+    return 0;
 }
 
 byte R_GetMaterialSortKey(const Material* material)
@@ -68,14 +82,31 @@ GfxDrawSurf R_GetMaterialInfoPacked(const Material* material)
 // KISAKTODO THIS MIGHT BE WRONG?? FIELD IS A RANDOM ASS GUESS, IDA IS NOT BEING HELPFUL
 GfxDrawSurf* __cdecl R_AllocFxDrawSurf(uint32_t region)
 {
-    int drawSurfCount; // [esp+8h] [ebp-4h]
+    const bool isFxRegion =
+        (region >= static_cast<uint32_t>(DRAW_SURF_FX_CAMERA_LIT)
+            && region <= static_cast<uint32_t>(DRAW_SURF_FX_CAMERA_LIT_DECAL))
+        || (region >= static_cast<uint32_t>(DRAW_SURF_FX_CAMERA_EMISSIVE)
+            && region <= static_cast<uint32_t>(DRAW_SURF_FX_CAMERA_EMISSIVE_DECAL));
+    if (!isFxRegion
+        || region >= static_cast<uint32_t>(DRAW_SURF_TYPE_COUNT)
+        || !scene.drawSurfs[region]
+        || scene.maxDrawSurfCount[region] <= 0)
+    {
+        R_WarnOncePerFrame(R_WARN_MAX_FX_DRAWSURFS);
+        return nullptr;
+    }
 
-    drawSurfCount = InterlockedIncrement(&scene.drawSurfCount[region]) - 1;
-    if (drawSurfCount < scene.maxDrawSurfCount[region])
-        return &scene.drawSurfs[region][drawSurfCount];
-    InterlockedDecrement(&scene.drawSurfCount[region]);
+    uint32_t drawSurfIndex = 0u;
+    if (gfx::reservation_atomic::TryReserveIndex(
+            &scene.drawSurfCount[region],
+            static_cast<uint32_t>(scene.maxDrawSurfCount[region]),
+            &drawSurfIndex))
+    {
+        return &scene.drawSurfs[region][drawSurfIndex];
+    }
+
     R_WarnOncePerFrame(R_WARN_MAX_FX_DRAWSURFS);
-    return 0;
+    return nullptr;
 }
 
 void __cdecl R_AddCodeMeshDrawSurf(
@@ -100,8 +131,10 @@ void __cdecl R_AddCodeMeshDrawSurf(
 
     if (Material_GetTechnique(material, gfxDrawMethod.emissiveTechType) && (material->info.gameFlags & 2) == 0)
     {
-        codeMeshIndex = InterlockedExchangeAdd(&frontEndDataOut->codeMeshCount, 1);
-        if (codeMeshIndex < 0x800)
+        if (gfx::reservation_atomic::TryReserveIndex(
+                &frontEndDataOut->codeMeshCount,
+                static_cast<uint32_t>(ARRAY_COUNT(frontEndDataOut->codeMeshes)),
+                &codeMeshIndex))
         {
             localCodeMesh = &frontEndDataOut->codeMeshes[codeMeshIndex];
             localCodeMesh->triCount = indexCount / 3;
@@ -236,8 +269,10 @@ void __cdecl R_AddMarkMeshDrawSurf(
     iassert(rgp.sortedMaterials[material->info.drawSurf.fields.materialSortedIndex] == material);
     if (Material_GetTechnique(material, (MaterialTechniqueType)gfxDrawMethod.litTechType[11][0]))
     {
-        markMeshIndex = InterlockedExchangeAdd(&frontEndDataOut->markMeshCount, 1);
-        if (markMeshIndex < 0x600)
+        if (gfx::reservation_atomic::TryReserveIndex(
+                &frontEndDataOut->markMeshCount,
+                static_cast<uint32_t>(ARRAY_COUNT(frontEndDataOut->markMeshes)),
+                &markMeshIndex))
         {
             markMesh = &frontEndDataOut->markMeshes[markMeshIndex];
             markMesh->triCount = indexCount / 3;

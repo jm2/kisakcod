@@ -132,6 +132,22 @@ add_test(
 )
 set_tests_properties(cgame-pose-atomic-protocols PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-renderer-reservation-atomic-tests
+    renderer_reservation_atomic_tests.cpp
+)
+target_include_directories(kisakcod-renderer-reservation-atomic-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-renderer-reservation-atomic-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-renderer-reservation-atomic-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-renderer-reservation-atomic-tests)
+set_target_properties(kisakcod-renderer-reservation-atomic-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME renderer-bounded-reservation-protocols
+    COMMAND kisakcod-renderer-reservation-atomic-tests
+)
+set_tests_properties(renderer-bounded-reservation-protocols PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-script-string-atomic-tests
     script_string_atomic_tests.cpp
 )

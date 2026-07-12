@@ -8,7 +8,7 @@ verification pass (each finding a reviewer *tried to refute*); the eight top sec
 
 ---
 
-## Remediation status (July 8, 2026)
+## Remediation status (July 11, 2026)
 
 Fixed in the initial porting implementation:
 
@@ -20,13 +20,18 @@ Fixed in the initial porting implementation:
   unsupported targets fail clearly, and CI uses the actual DirectX NuGet layout.
 - Fast-file offset fixups now validate block indices and byte spans before
   dereferencing zone memory.
-- Dedicated server source composition now has an experimental headless profile
-  and test guard, but the legacy client-backed profile remains default until
-  remaining client/render/audio references are stubbed or guarded.
+- A dependency-free Windows x86 headless dedicated profile now compiles and
+  links in CI with null GPU/audio asset realization; the protected licensed
+  map-load/network smoke remains the release gate.
+- Native time, synchronization, event, thread-lifecycle, scheduling, and
+  cooperative worker-gate services now run on all five portable utility targets.
+- Fixed-width atomic migrations cover dvar/script/XAnim/DObj/database/IWD/network,
+  skeleton/pose, and the first bounded renderer reservation family. The live
+  debt ledger and current validation evidence are maintained in `docs/task.md`.
 
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
-limiting, HTTP downloads, dependency replacement/upgrades, genuine headless
-dedicated server separation, and the remaining medium/low findings.
+limiting, HTTP downloads, dependency replacement/upgrades, protected headless
+runtime smoke, the porting-era findings below, and the remaining medium/low findings.
 
 The first H2 parser conversions are complete: invalid entity references,
 24-bit flag indices, last-changed field indices, and HUD field counts now set
@@ -280,7 +285,59 @@ extraction.
 
 ---
 
-## 5. Recommended fix order
+## 5. Porting-era renderer/concurrency findings (July 11, 2026)
+
+These findings were exposed while replacing Windows atomics and widening runtime
+layouts. They are additional to the original 47-item count above.
+
+### P1. Renderer worker queue can lose priority and truncates 64-bit commands
+
+`gfx_d3d/r_workercmds.cpp` is a genuine multi-producer/multi-consumer queue. Its
+minimum-type notification can raise a concurrently lowered minimum because it
+CASes against a fresh raw comparand. All queue words mix native atomic operations
+with raw volatile access, and event reset/wait ordering leaves a polling-dependent
+lost-wake window. More immediately for the port, all 17 payload descriptors use
+retail x86 byte literals: pointer-bearing commands copy only four-byte pointers
+and truncated structure prefixes on amd64/ARM64. Migrate this queue before the FX
+iterator: use fixed-width bounded element cursors, a correct CAS-min loop,
+unconditional/rechecked notification, typed `sizeof` descriptors, aligned scratch
+storage, and MPMC contention tests.
+
+### P2. DObj skinning contains an asset-amplified stack/arena hazard
+
+`gfx_d3d/r_dobj_skin.cpp` builds variable 4/56-byte surface records in a fixed
+3,600-byte stack buffer without proving that the selected record mix fits. The
+same path has unchecked `32 * vertexCount` and surface-size arithmetic, consumes
+temporary/surface arena capacity after failed reservations, overlays structs on
+byte storage without a language-level alignment contract, and retains a pointer-
+to-`int` conversion. Treat this as a dedicated fail-closed hardening batch rather
+than a mechanical atomic rename.
+
+### P3. FX packed status/free lists/visibility require protocol rewrites
+
+`EffectsCore` retains 61 native atomic calls and 35 load-bearing `long`/`LONG`
+uses. `FxEffect::status` combines a 16-bit refcount, owned-child count, pending and
+flag bits, plus an additive bit-29 lock: unchecked add/subtract can carry into
+adjacent flags, and enough contenders can corrupt/false-acquire the lock. Pool
+head/count assertions continue into out-of-bounds access on corruption. The
+visibility blocker writer is off by one, can omit the last record, permits
+multiple producers to reserve the same slot, and packs invalid/zero-opacity
+floating-point inputs unsafely. The signed effect ring also relies on overflowing
+ever-increasing cursors. Land exact-width FX layouts first, then iterator/lifecycle,
+worker-independent scalar, pool, camera, visibility, ring, and packed-status
+helpers with standalone sanitizer/contention tests; do not blind-substitute the
+native calls.
+
+### P4. First renderer reservation family is repaired
+
+The bounded `r_drawsurf` batch replaces split load/exchange and overshooting
+fetch-add reservations with a bounded exact-width CAS helper. It rejects invalid
+regions/ranges, supports exact capacity, leaves counters unchanged on failure,
+and validates published code-mesh record/argument/index spans before backend use.
+The remaining scene counters, byte arenas, cull state, worker queue, and FX
+families above remain explicit debt.
+
+## 6. Recommended fix order
 
 1. **C1–C3, H1, H2** — the remote RCE/DoS set. Small diffs, port-independent; fixing
    `MSG_ReadBitsCompress` (output bound) + `CL_ParseDownload` (size check) + `SV_ReceiveStats` (range) +

@@ -39,7 +39,7 @@ union GfxStaticModelPreTessSurf // sizeof=0x4
 void __cdecl RB_ShowTess(GfxCmdBufContext context, const float *center, const char *tessName, const float *color);
 uint32_t __cdecl R_TessCodeMeshList(const GfxDrawSurfListArgs *listArgs, GfxCmdBufContext prepassContext);
 void __cdecl R_SetVertexDeclTypeNormal(GfxCmdBufState *state, MaterialVertexDeclType vertDeclType);
-void __cdecl R_TessCodeMeshList_AddCodeMeshArgs(
+bool __cdecl R_TessCodeMeshList_AddCodeMeshArgs(
     GfxCmdBufSourceState *source,
     const GfxBackEndData *data,
     const FxCodeMeshData *codeMesh);
