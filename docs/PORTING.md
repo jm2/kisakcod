@@ -883,7 +883,10 @@ event's existing 1 ms bounded poll. All 17 payloads use compile-time traits, nat
 dual-width layouts, aligned bounded dequeue storage, and typed dispatch; shadow-cookie, DPVS entity,
 lighting-handle, and timeout-callback narrowing is removed. The 22-test GCC/Clang/ASan/UBSan/TSan
 matrix includes eight-producer/eight-consumer exact-once wrap stress. The live census is 77 calls in
-13 TUs; Windows production compilation is the landing gate. Worker/event shutdown remains absent;
+13 TUs. Run 29199400717 passed headless plus all five portable architectures, then exposed one
+MSVC-only const mismatch in the three client builds: the widened cached-lighting pointer targets a
+handle that the lighting cache mutates. `R_AddDObjToScene` now declares that pose parameter mutable;
+replacement Windows production compilation is the landing gate. Worker/event shutdown remains absent;
 the inherited full-ring inline path may overtake older same-type work, and handler longjmp bypasses
 normal completion accounting, so both remain runtime/error-unwind gates.
 

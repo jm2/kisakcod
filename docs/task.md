@@ -24,8 +24,12 @@ work item changes. Do not create session-specific handoff files.
   timeout callback cast. Descriptors initialize before backend startup; dequeue scratch is aligned and
   bounded; impossible release-build transitions fail closed. Local validation is 22/22 under GCC,
   Clang, Clang ASan/UBSan, and Clang TSan, including eight-producer/eight-consumer exact-once wrap
-  stress. The batch reduces the live census from 102 calls/14 TUs to **77 calls/13 TUs**; Windows CI
-  is the remaining landing gate. The shared manual event retains its inherited 1 ms bounded poll, and
+  stress. The batch reduces the live census from 102 calls/14 TUs to **77 calls/13 TUs**. Run
+  29199400717 passed the headless build and all five portable architectures, but the three client
+  builds exposed one MSVC-only const-correctness error after the lighting-handle pointer widening.
+  The corrective change makes `R_AddDObjToScene`'s pose parameter truthfully mutable because the
+  cached-lighting path writes that handle; replacement Windows CI is the remaining landing gate. The
+  shared manual event retains its inherited 1 ms bounded poll, and
   worker shutdown/reinitialization remains process-lifetime debt. The inherited full-ring inline
   fallback may overtake older same-type queued work, and a handler-level `Com_Error`/longjmp can
   bypass normal completion accounting; preserve those as explicit runtime-test/error-unwind work.
@@ -242,7 +246,9 @@ work item changes. Do not create session-specific handoff files.
   MSVC-only fake-lag pointer-conversion errors; corrective commit `0a119b7` resolved them, and
   replacement run 29195736931 passed all nine jobs. Skeleton/pose commit `060e6ba` then passed all
   nine jobs in run 29196678355. Renderer-reservation commit `0fddf2d` then passed all nine jobs in run
-  29197855220.
+  29197855220. Worker-queue commit `9772706` passed headless and all five portable jobs in run
+  29199400717, while all three client builds found the same MSVC const mismatch in
+  `R_AddDObjToScene`; the focused mutable-pose correction is awaiting its replacement run.
   The observed linker debt is now 106 -> 45 -> 0.
 
 ## Milestone status

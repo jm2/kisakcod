@@ -138,7 +138,7 @@ void __cdecl R_AddBrushModelToSceneFromAngles(
 
 void __cdecl R_AddDObjToScene(
     const DObj_s *obj,
-    const cpose_t *pose,
+    cpose_t *pose,
     uint32_t entnum,
     uint32_t renderFxFlags,
     float *lightingOrigin,
