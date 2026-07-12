@@ -1,6 +1,7 @@
 #pragma once
 
 #include <qcommon/qcommon.h>
+#include <universal/kisak_abi.h>
 
 #include "r_debug.h"
 #include "r_font.h"
@@ -362,6 +363,10 @@ struct ShadowCookieCmd // sizeof=0x10
     ShadowCookieList *shadowCookieList;
     int localClientNum;
 };
+RUNTIME_SIZE(ShadowCookieCmd, 0x10, 0x20);
+RUNTIME_OFFSET(ShadowCookieCmd, viewParmsDraw, 0x4, 0x8);
+RUNTIME_OFFSET(ShadowCookieCmd, shadowCookieList, 0x8, 0x10);
+RUNTIME_OFFSET(ShadowCookieCmd, localClientNum, 0xC, 0x18);
 struct GfxSunShadowProjection // sizeof=0x60
 {                                       // ...
     float viewMatrix[4][4];

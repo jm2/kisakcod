@@ -18,7 +18,7 @@ static int __cdecl R_CullSphereDpvs(const float *origin, float radius, const Dpv
 }
 
 // Blops augmented 
-void R_AddCellSceneEntSurfacesInFrustumCmd(GfxWorldDpvsPlanes *data)
+void R_AddCellSceneEntSurfacesInFrustumCmd(const DpvsDynamicCellCmd *cmd)
 {
     bool v2; // zf
     DWORD v3; // eax
@@ -51,9 +51,14 @@ void R_AddCellSceneEntSurfacesInFrustumCmd(GfxWorldDpvsPlanes *data)
     GfxWorldDpvsPlanes *worldDpvsPlanes; // [esp+BCh] [ebp-1Ch]
     uint32_t localClientNum; // [esp+C0h] [ebp-18h]
     GfxSceneDpvs *sceneDpvs; // [esp+C4h] [ebp-14h]
-    DpvsDynamicCellCmd *dpvsCell; // [esp+C8h] [ebp-10h]
+    const DpvsDynamicCellCmd *dpvsCell; // [esp+C8h] [ebp-10h]
 
-    dpvsCell = (DpvsDynamicCellCmd*)data;
+    if (!cmd)
+    {
+        iassert(cmd);
+        return;
+    }
+    dpvsCell = cmd;
     sceneDpvs = &scene.dpvs;
     localClientNum = scene.dpvs.localClientNum;
     worldDpvsPlanes = &rgp.world->dpvsPlanes;
@@ -152,9 +157,9 @@ void R_AddCellSceneEntSurfacesInFrustumCmd(GfxWorldDpvsPlanes *data)
                         LABEL_36:
                             dpvsEntity.sceneEnt = &scene.sceneDObj[sceneEntIndex];
                             if (sceneEnt->cull.state < 2)
-                                R_AddWorkerCmd(WRKCMD_DPVS_ENTITY, (uint8_t *)&dpvsEntity);
+                                R_AddWorkerCmd<WRKCMD_DPVS_ENTITY>(dpvsEntity);
                             else
-                                R_AddEntitySurfacesInFrustumCmd((uint16_t *)&dpvsEntity);
+                                R_AddEntitySurfacesInFrustumCmd(&dpvsEntity);
                         }
                     }
                 }

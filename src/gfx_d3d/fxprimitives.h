@@ -1,5 +1,6 @@
 #pragma once
 
+#include <universal/kisak_abi.h>
 #include <universal/q_shared.h>
 #include <universal/com_math.h>
 
@@ -322,6 +323,9 @@ struct FxCmd // sizeof=0xC
     int localClientNum;
     volatile int *spawnLock;
 };
+RUNTIME_SIZE(FxCmd, 0xC, 0x18);
+RUNTIME_OFFSET(FxCmd, localClientNum, 0x4, 0x8);
+RUNTIME_OFFSET(FxCmd, spawnLock, 0x8, 0x10);
 
 struct FxFloatRange // sizeof=0x8
 {                                       // ...

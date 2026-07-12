@@ -347,7 +347,7 @@ int  R_SkinSceneDObjModels(
         skinCmd.modelSurfs = &frontEndDataOut->surfsBuffer[startSurfPos];
         skinCmd.surfCount = totalSurfaceCount;
         skinCmd.mat = boneMatrix;
-        R_AddWorkerCmd(WRKCMD_SKIN_XMODEL, (unsigned char *)&skinCmd);
+        R_AddWorkerCmd<WRKCMD_SKIN_XMODEL>(skinCmd);
     }
 
     return totalSurfaceCount;

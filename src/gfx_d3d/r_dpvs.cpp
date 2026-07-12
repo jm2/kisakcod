@@ -232,7 +232,7 @@ void __cdecl R_AddAllSceneEntSurfacesCamera(const GfxViewInfo *viewInfo)
             {
                 sceneEnt = &scene.sceneDObj[sceneEntIndex];
                 iassert(sceneEnt->cull.state >= CULL_STATE_BOUNDED);
-                cachedLightingHandle = (uint16_t *)LongNoSwap((uint32_t)sceneEnt->info.cachedLightingHandle);
+                cachedLightingHandle = sceneEnt->info.cachedLightingHandle;
                 lightingHandle = R_AllocModelLighting_Box(
                     viewInfo,
                     sceneEnt->lightingOrigin,
@@ -2424,16 +2424,16 @@ void __cdecl R_AddCellSurfacesAndCullGroupsInFrustumDelayed(
     dpvsStaticCell.planeCount = planeCount;
     dpvsStaticCell.frustumPlaneCount = frustumPlaneCount;
     dpvsStaticCell.viewIndex = g_viewIndex; // *(_WORD *)(*((uint32_t *)NtCurrentTeb()->ThreadLocalStoragePointer + _tls_index) + 12);
-    R_AddWorkerCmd(WRKCMD_DPVS_CELL_STATIC, (uint8_t *)&dpvsStaticCell);
+    R_AddWorkerCmd<WRKCMD_DPVS_CELL_STATIC>(dpvsStaticCell);
 
     dpvsDynamicCell.cellIndex = cell - rgp.world->cells;
     dpvsDynamicCell.planes = planes;
     dpvsDynamicCell.planeCount = planeCount;
     dpvsDynamicCell.frustumPlaneCount = frustumPlaneCount;
     dpvsDynamicCell.viewIndex = g_viewIndex; //*(_WORD *)(*((uint32_t *)NtCurrentTeb()->ThreadLocalStoragePointer + _tls_index) + 12);
-    R_AddWorkerCmd(WRKCMD_DPVS_CELL_DYN_MODEL, (uint8_t *)&dpvsDynamicCell);
-    R_AddWorkerCmd(WRKCMD_DPVS_CELL_SCENE_ENT, (uint8_t *)&dpvsDynamicCell);
-    R_AddWorkerCmd(WRKCMD_DPVS_CELL_DYN_BRUSH, (uint8_t *)&dpvsDynamicCell);
+    R_AddWorkerCmd<WRKCMD_DPVS_CELL_DYN_MODEL>(dpvsDynamicCell);
+    R_AddWorkerCmd<WRKCMD_DPVS_CELL_SCENE_ENT>(dpvsDynamicCell);
+    R_AddWorkerCmd<WRKCMD_DPVS_CELL_DYN_BRUSH>(dpvsDynamicCell);
 }
 
 void __cdecl R_ShowCull()

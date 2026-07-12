@@ -1,6 +1,7 @@
 #pragma once
 #include "r_rendercmds.h"
 #include "r_scene.h"
+#include <universal/kisak_abi.h>
 
 #define R_SPOTSHADOW_TILE_COUNT 4
 
@@ -9,6 +10,7 @@ struct GfxSpotShadowEntCmd // sizeof=0x8
     GfxSceneEntity *sceneEnt;           // ...
     const GfxLight *light;              // ...
 };
+RUNTIME_SIZE(GfxSpotShadowEntCmd, 0x8, 0x10);
 
 void __cdecl R_AddSpotShadowEntCmd(const GfxSpotShadowEntCmd *data);
 char __cdecl R_AddSpotShadowsForLight(

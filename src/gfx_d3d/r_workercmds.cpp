@@ -12,21 +12,22 @@
 #include <EffectsCore/fx_system.h>
 #include "r_model_skin.h"
 #include "r_dvars.h"
-#include <win32/win_net.h>
-#include <win32/win_local.h>
 #include "rb_logfile.h"
 #include "r_setstate_d3d.h"
 #include "r_model_pose.h"
+#include "r_worker_queue_atomic.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <setjmp.h>
+#include <type_traits>
 
-void(__cdecl *g_cmdExecFailed[17])();
-volatile WorkerCmdType g_waitTypeMainThread;
+namespace worker_atomic = gfx::worker_queue_atomic;
 
-//long volatile g_workerCmdWaitCount 85b4fc54     gfx_d3d : r_workercmds.obj
+static volatile int32_t g_waitTypeMainThread = -1;
 
-GfxEntity *g_GfxEntityBoundsBuf[256];
-GfxEntity *g_SkinGfxEntityBuf[1024];
+GfxSceneEntity *g_GfxEntityBoundsBuf[256];
+GfxSceneEntity *g_SkinGfxEntityBuf[1024];
 FxCmd g_UpdateFxNonDependentBuf[1];
 FxCmd g_UpdateFxRemainingBuf[1];
 SkinCachedStaticModelCmd g_skinCachedStaticModelBuf[512];
@@ -45,60 +46,172 @@ ShadowCookieCmd g_shadowCookieBuf[1];
 
 WorkerCmds g_workerCmds[WRKCMD_COUNT];
 
-int __cdecl R_FXNonDependentOrSpotLightPending(void* args)
+namespace
+{
+constexpr uint32_t kWorkerBatchCount = 10u;
+constexpr uint32_t kWorkerMaxPayloadSize = 192u;
+constexpr uint32_t kOutstandingCountLimit = UINT32_MAX;
+
+using WorkerBusyPredicate = bool(__cdecl *)();
+
+bool R_IsWorkerCmdTypeValid(const WorkerCmdType type)
+{
+    const int32_t value = static_cast<int32_t>(type);
+    return value >= 0 && value < static_cast<int32_t>(WRKCMD_COUNT);
+}
+
+bool R_IsWorkerCmdDescriptorValid(const WorkerCmds &cmd)
+{
+    return cmd.buf
+        && cmd.dataSize > 0u
+        && cmd.dataSize <= kWorkerMaxPayloadSize
+        && cmd.bufSize > 0u
+        && cmd.bufCount > 0u
+        && cmd.bufSize % cmd.dataSize == 0u
+        && cmd.bufSize / cmd.dataSize == cmd.bufCount;
+}
+
+bool R_WorkerQueuePending(const WorkerCmds &cmd)
+{
+    // One word owns the complete submission lifetime, including queued and
+    // inline execution, so wait/dependency predicates need no split snapshot.
+    return Sys_AtomicLoad(&cmd.outstandingCount) != 0u;
+}
+
+void R_WorkerQueueInvariantFailure(const char *const detail)
+{
+    iassert(0);
+    Com_Error(ERR_FATAL, "Renderer worker queue invariant failed: %s", detail);
+}
+
+bool R_ReleaseWorkerGuard(volatile uint32_t *const guard)
+{
+    const bool released = worker_atomic::ReleaseGuard(guard);
+    if (!released)
+        R_WorkerQueueInvariantFailure("guard ownership");
+    return released;
+}
+
+template <WorkerCmdType Command, class T, std::size_t Count>
+bool R_BindWorkerCmdBuffer(T (&buffer)[Count])
+{
+    static_assert(std::is_same_v<T, WorkerCmdPayloadT<Command>>);
+    static_assert(std::is_trivially_copyable_v<T>);
+    static_assert(Count > 0u);
+
+    constexpr std::size_t nativeDataSize = sizeof(T);
+    constexpr std::size_t nativeBufferSize = sizeof(buffer);
+    if (nativeDataSize > kWorkerMaxPayloadSize
+        || nativeBufferSize > UINT32_MAX)
+    {
+        return false;
+    }
+
+    WorkerCmds &cmd = g_workerCmds[Command];
+    cmd.dataSize = static_cast<uint32_t>(nativeDataSize);
+    cmd.buf = reinterpret_cast<uint8_t *>(buffer);
+    cmd.bufSize = static_cast<uint32_t>(nativeBufferSize);
+    cmd.bufCount = static_cast<uint32_t>(Count);
+    Sys_AtomicStore(&cmd.startPos, 0u);
+    Sys_AtomicStore(&cmd.endPos, 0u);
+    Sys_AtomicStore(&cmd.producerGuard, 0u);
+    Sys_AtomicStore(&cmd.inSize, 0u);
+    Sys_AtomicStore(&cmd.outSize, 0u);
+    Sys_AtomicStore(&cmd.consumerGuard, 0u);
+    Sys_AtomicStore(&cmd.outstandingCount, 0u);
+    return R_IsWorkerCmdDescriptorValid(cmd);
+}
+
+bool R_FXNonDependentOrSpotLightPending()
 {
     return R_FXSpotLightPending() || R_FXNonDependentPending();
 }
 
+bool R_EndFenceBusy()
+{
+    return R_EndFencePending() != 0;
+}
+
+const WorkerBusyPredicate g_cmdOutputBusy[WRKCMD_COUNT] =
+{
+    nullptr,
+    nullptr,
+    &R_FXNonDependentOrSpotLightPending,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    &R_EndFenceBusy,
+    &R_EndFenceBusy,
+    &R_EndFenceBusy,
+    &R_EndFenceBusy,
+};
+} // namespace
+
 bool __cdecl R_FXSpotLightPending()
 {
-    return g_workerCmds[0].inSize > 0;
+    return R_WorkerQueuePending(g_workerCmds[WRKCMD_UPDATE_FX_SPOT_LIGHT]);
 }
 
 bool __cdecl R_FXNonDependentPending()
 {
-    return g_workerCmds[1].inSize > 0;
-}
-
-int __cdecl R_EndFenceBusy(void *args)
-{
-    return R_EndFencePending();
+    return R_WorkerQueuePending(g_workerCmds[WRKCMD_UPDATE_FX_NON_DEPENDENT]);
 }
 
 void __cdecl TRACK_r_workercmds()
 {
-    track_static_alloc_internal(g_GfxEntityBoundsBuf, 1024, "g_GfxEntityBoundsBuf", 18);
-    track_static_alloc_internal(g_SkinGfxEntityBuf, 4096, "g_SkinGfxEntityBuf", 18);
-    track_static_alloc_internal(g_UpdateFxNonDependentBuf, 12, "g_UpdateFxNonDependentBuf", 18);
-    track_static_alloc_internal(g_UpdateFxRemainingBuf, 12, "g_UpdateFxRemainingBuf", 18);
-    track_static_alloc_internal(g_skinCachedStaticModelBuf, 2048, "g_skinCachedStaticModelBuf", 18);
-    track_static_alloc_internal(g_SkinXModelBuf, 28672, "g_SkinXModelBuf", 18);
-    track_static_alloc_internal(g_workerCmds, 2176, "g_workerCmds", 18);
-}
-
-volatile LONG g_workerCmdMinType;
-
-static LONG R_GetWorkerCmdMinType()
-{
-    return InterlockedCompareExchange(&g_workerCmdMinType, 0, 0);
+    TRACK_STATIC_ARR(g_GfxEntityBoundsBuf, 18);
+    TRACK_STATIC_ARR(g_SkinGfxEntityBuf, 18);
+    TRACK_STATIC_ARR(g_UpdateFxNonDependentBuf, 18);
+    TRACK_STATIC_ARR(g_UpdateFxRemainingBuf, 18);
+    TRACK_STATIC_ARR(g_skinCachedStaticModelBuf, 18);
+    TRACK_STATIC_ARR(g_SkinXModelBuf, 18);
+    TRACK_STATIC_ARR(g_dpvsCellStaticBuf, 18);
+    TRACK_STATIC_ARR(g_dpvsCellSceneEntBuf, 18);
+    TRACK_STATIC_ARR(g_dpvsCellDynModelBuf, 18);
+    TRACK_STATIC_ARR(g_dpvsCellDynBrushBuf, 18);
+    TRACK_STATIC_ARR(g_dpvsEntityBuf, 18);
+    TRACK_STATIC_ARR(g_UpdateFxSpotLightBuf, 18);
+    TRACK_STATIC_ARR(g_GenerateFxVertsBuf, 18);
+    TRACK_STATIC_ARR(g_GenerateMarkVertsBuf, 18);
+    TRACK_STATIC_ARR(g_addSceneEntBuf, 18);
+    TRACK_STATIC_ARR(g_spotShadowEntBuf, 18);
+    TRACK_STATIC_ARR(g_shadowCookieBuf, 18);
+    TRACK_STATIC_ARR(g_workerCmds, 18);
 }
 
 int __cdecl R_ProcessWorkerCmdsWithTimeoutInternal(int(__cdecl *timeout)())
 {
-    int processed; // [esp+0h] [ebp-Ch]
-    WorkerCmdType minType; // [esp+4h] [ebp-8h]
-    WorkerCmdType type; // [esp+8h] [ebp-4h]
-
-    if (timeout())
+    if (!timeout || timeout())
         return 1;
+
     Sys_ResetWorkerCmdEvent();
+    int processed;
     do
     {
-    restart_2:
         processed = 0;
-        type = g_waitTypeMainThread;
-        if (type >= 0 && g_workerCmds[type].outSize > 0)
+        const WorkerCmdType waitType = static_cast<WorkerCmdType>(
+            Sys_AtomicLoad(&g_waitTypeMainThread));
+        if (R_IsWorkerCmdTypeValid(waitType))
         {
+            while (R_ProcessWorkerCmd(waitType))
+            {
+                if (timeout())
+                    return 1;
+                processed = 1;
+            }
+        }
+        for (int32_t typeIndex = 0;
+             typeIndex < static_cast<int32_t>(WRKCMD_COUNT);
+             ++typeIndex)
+        {
+            const WorkerCmdType type = static_cast<WorkerCmdType>(typeIndex);
             while (R_ProcessWorkerCmd(type))
             {
                 if (timeout())
@@ -106,198 +219,206 @@ int __cdecl R_ProcessWorkerCmdsWithTimeoutInternal(int(__cdecl *timeout)())
                 processed = 1;
             }
         }
-        minType = (WorkerCmdType)R_GetWorkerCmdMinType();
-        if (minType == INT_MAX)
-            minType = WRKCMD_FIRST_FRONTEND;
-        for (type = minType; type < WRKCMD_COUNT; ++type)
-        {
-            if (g_workerCmds[type].outSize > 0)
-            {
-                while (R_ProcessWorkerCmd(type))
-                {
-                    if (timeout())
-                        return 1;
-                    if (R_GetWorkerCmdMinType() < type)
-                        goto restart_2;
-                    processed = 1;
-                }
-            }
-            InterlockedCompareExchange(&g_workerCmdMinType, INT_MAX, type);
-        }
         if (timeout())
             return 1;
-    } while (processed || minType);
+    } while (processed);
     return 0;
 }
 
-LONG g_workerCmdWaitCount;
 void __cdecl R_ProcessWorkerCmdsWithTimeout(int(__cdecl *timeout)(), int forever)
 {
+    if (!timeout)
+    {
+        iassert(timeout);
+        return;
+    }
     while (!timeout() && !R_ProcessWorkerCmdsWithTimeoutInternal(timeout) && forever)
     {
         PROF_SCOPED("WaitForWorkerCmd");
-        InterlockedIncrement(&g_workerCmdWaitCount);
         Sys_WaitForWorkerCmd();
-        if (timeout())
-        {
-            InterlockedDecrement(&g_workerCmdWaitCount);
-            return;
-        }
-        InterlockedDecrement(&g_workerCmdWaitCount);
     }
 }
 
 void __cdecl R_WaitWorkerCmdsOfType(WorkerCmdType type)
 {
     iassert(Sys_IsMainThread());
-    g_waitTypeMainThread = type;
+    iassert(R_IsWorkerCmdTypeValid(type));
+    if (!R_IsWorkerCmdTypeValid(type))
+        return;
+
+    Sys_AtomicStore(&g_waitTypeMainThread, static_cast<int32_t>(type));
     if (!R_WorkerCmdsFinished())
     {
         R_NotifyWorkerCmdType(type);
         KISAK_NULLSUB();
         R_ProcessWorkerCmdsWithTimeout(R_WorkerCmdsFinished, 1);
     }
-    g_waitTypeMainThread = (WorkerCmdType)-1;
+    Sys_AtomicStore(&g_waitTypeMainThread, -1);
 }
 
 void __cdecl R_NotifyWorkerCmdType(WorkerCmdType type)
 {
-    LONG value = InterlockedCompareExchange(&g_workerCmdMinType, 0, 0);
-    if (value > type)
-     	InterlockedCompareExchange(&g_workerCmdMinType, type, g_workerCmdMinType);
-        
-    if (g_workerCmdWaitCount)
+    iassert(R_IsWorkerCmdTypeValid(type));
+    if (R_IsWorkerCmdTypeValid(type))
         Sys_SetWorkerCmdEvent();
 }
 
 int __cdecl R_WorkerCmdsFinished()
 {
-    return g_workerCmds[g_waitTypeMainThread].inSize == 0;
+    const WorkerCmdType waitType = static_cast<WorkerCmdType>(
+        Sys_AtomicLoad(&g_waitTypeMainThread));
+    return R_IsWorkerCmdTypeValid(waitType)
+        && !R_WorkerQueuePending(g_workerCmds[waitType]);
 }
 
 void __cdecl R_ProcessWorkerCmds()
 {
-    int processed; // [esp+0h] [ebp-Ch]
-    WorkerCmdType minType; // [esp+4h] [ebp-8h]
-    WorkerCmdType type; // [esp+8h] [ebp-4h]
-
     Sys_ResetWorkerCmdEvent();
+    int processed;
     do
     {
-    restart_1:
         processed = 0;
-        type = g_waitTypeMainThread;
-        if (type >= 0 && g_workerCmds[type].outSize > 0)
+        const WorkerCmdType waitType = static_cast<WorkerCmdType>(
+            Sys_AtomicLoad(&g_waitTypeMainThread));
+        if (R_IsWorkerCmdTypeValid(waitType))
         {
+            while (R_ProcessWorkerCmd(waitType))
+                processed = 1;
+        }
+        for (int32_t typeIndex = 0;
+             typeIndex < static_cast<int32_t>(WRKCMD_COUNT);
+             ++typeIndex)
+        {
+            const WorkerCmdType type = static_cast<WorkerCmdType>(typeIndex);
             while (R_ProcessWorkerCmd(type))
                 processed = 1;
         }
-        minType = (WorkerCmdType)R_GetWorkerCmdMinType();
-        if (minType == INT_MAX)
-            minType = WRKCMD_FIRST_FRONTEND;
-        for (type = minType; type < WRKCMD_COUNT; ++type)
-        {
-            bcassert(type, WRKCMD_COUNT);
-            if (g_workerCmds[type].outSize > 0)
-            {
-                while (R_ProcessWorkerCmd(type))
-                {
-                    if (R_GetWorkerCmdMinType() < type)
-                        goto restart_1;
-                    processed = 1;
-                }
-            }
-            InterlockedCompareExchange(&g_workerCmdMinType, INT_MAX, type);
-        }
-    } while (processed || minType);
+    } while (processed);
 }
 
 int __cdecl R_ProcessWorkerCmd(WorkerCmdType type)
 {
-    int v2; // eax
-    int v3; // eax
-    uint32_t bufCount; // [esp+0h] [ebp-7A4h]
-    uint8_t data[1920]; // [esp+4h] [ebp-7A0h] BYREF
-    int dataSize; // [esp+788h] [ebp-1Ch]
-    WorkerCmds *workerCmds; // [esp+78Ch] [ebp-18h]
-    uint32_t currentCount; // [esp+790h] [ebp-14h]
-    uint32_t startPos; // [esp+794h] [ebp-10h]
-    uint32_t newStartPos; // [esp+798h] [ebp-Ch]
-    uint32_t i; // [esp+79Ch] [ebp-8h]
-    uint32_t count; // [esp+7A0h] [ebp-4h]
+    iassert(R_IsWorkerCmdTypeValid(type));
+    if (!R_IsWorkerCmdTypeValid(type))
+        return 0;
 
-    bcassert(type, WRKCMD_COUNT);
-    workerCmds = &g_workerCmds[type];
-    dataSize = workerCmds->dataSize;
-    bufCount = workerCmds->bufCount;
-    iassert( !(workerCmds->bufSize % dataSize) );
-    while (InterlockedExchangeAdd((LONG*)&workerCmds->outSize, -1) <= 0)
+    WorkerCmds &cmd = g_workerCmds[type];
+    if (!R_IsWorkerCmdDescriptorValid(cmd))
     {
-        if (InterlockedExchangeAdd((LONG*)&workerCmds->outSize, 1) < 0)
-            return 0;
+        R_WorkerQueueInvariantFailure("invalid descriptor during consume");
+        return 0;
     }
-    if (g_cmdOutputBusy[type])
+
+    if (!worker_atomic::TryAcquireGuard(&cmd.consumerGuard))
     {
-        while (1)
-        {
-            startPos = workerCmds->startPos;
-            memcpy(data, &workerCmds->buf[dataSize * startPos], dataSize);
-            if (g_cmdOutputBusy[type](data))
-            {
-                InterlockedExchangeAdd((LONG*)&workerCmds->outSize, 1);
-                return 0;
-            }
-            newStartPos = startPos + 1;
-            if (startPos + 1 == bufCount)
-                newStartPos = 0;
-            v2 = InterlockedCompareExchange((LONG*)&workerCmds->startPos, newStartPos, startPos);
-            if (v2 == startPos)
-                break;
-            if (g_cmdExecFailed[type])
-                g_cmdExecFailed[type]();
-        }
-        KISAK_NULLSUB();
-        R_ProcessWorkerCmdInternal(type, data);
-        InterlockedExchangeAdd((LONG*)&workerCmds->inSize, -1);
-        if (g_workerCmdWaitCount)
-            Sys_SetWorkerCmdEvent();
+        if (Sys_AtomicLoad(&cmd.consumerGuard) > 1u)
+            R_WorkerQueueInvariantFailure("corrupt consumer guard");
+        return 0;
     }
-    else
+
+    const uint32_t readyCount = Sys_AtomicLoad(&cmd.outSize);
+    if (readyCount == 0u)
     {
-        iassert( !g_cmdExecFailed[type] );
-        if (InterlockedExchangeAdd((LONG*)&workerCmds->outSize, -9) < 9)
-        {
-            InterlockedExchangeAdd((LONG*)&workerCmds->outSize, 9);
-            count = 1;
-        }
-        else
-        {
-            count = 10;
-        }
-        do
-        {
-            startPos = workerCmds->startPos;
-            currentCount = bufCount - startPos;
-            if (count < bufCount - startPos)
-            {
-                currentCount = count;
-                newStartPos = count + startPos;
-            }
-            else
-            {
-                memcpy(&data[dataSize * currentCount], workerCmds->buf, dataSize * (count - currentCount));
-                newStartPos = count - currentCount;
-            }
-            memcpy(data, &workerCmds->buf[dataSize * startPos], dataSize * currentCount);
-            v3 = InterlockedCompareExchange((LONG*)&workerCmds->startPos, newStartPos, startPos);
-        } while (v3 != startPos);
-        KISAK_NULLSUB();
-        for (i = 0; i < count; ++i)
-            R_ProcessWorkerCmdInternal(type, &data[dataSize * i]);
-        InterlockedExchangeAdd((LONG*)&workerCmds->inSize, -(int)count);
-        if (g_workerCmdWaitCount)
-            Sys_SetWorkerCmdEvent();
+        (void)R_ReleaseWorkerGuard(&cmd.consumerGuard);
+        return 0;
     }
+    if (readyCount > cmd.bufCount)
+    {
+        R_WorkerQueueInvariantFailure("published count exceeds capacity");
+        return 0;
+    }
+
+    const WorkerBusyPredicate busyPredicate = g_cmdOutputBusy[type];
+    if (busyPredicate && busyPredicate())
+    {
+        (void)R_ReleaseWorkerGuard(&cmd.consumerGuard);
+        return 0;
+    }
+
+    uint32_t count = 0u;
+    const uint32_t maximum = busyPredicate ? 1u : kWorkerBatchCount;
+    if (!worker_atomic::TryClaimUpTo(
+            &cmd.outSize,
+            maximum,
+            cmd.bufCount,
+            &count))
+    {
+        R_WorkerQueueInvariantFailure("ready claim failed");
+        return 0;
+    }
+
+    const std::size_t totalBytes =
+        static_cast<std::size_t>(count) * cmd.dataSize;
+    alignas(std::max_align_t) uint8_t data[
+        kWorkerBatchCount * kWorkerMaxPayloadSize];
+    if (count > cmd.bufCount || totalBytes > sizeof(data))
+    {
+        R_WorkerQueueInvariantFailure("dequeue scratch range");
+        return 0;
+    }
+
+    const uint32_t startPos = Sys_AtomicLoad(&cmd.startPos);
+    if (startPos >= cmd.bufCount)
+    {
+        R_WorkerQueueInvariantFailure("read cursor outside ring");
+        return 0;
+    }
+
+    const uint32_t firstCount = count < cmd.bufCount - startPos
+        ? count
+        : cmd.bufCount - startPos;
+    const uint32_t secondCount = count - firstCount;
+    memcpy(
+        data,
+        &cmd.buf[static_cast<std::size_t>(startPos) * cmd.dataSize],
+        static_cast<std::size_t>(firstCount) * cmd.dataSize);
+    if (secondCount != 0u)
+    {
+        memcpy(
+            &data[static_cast<std::size_t>(firstCount) * cmd.dataSize],
+            cmd.buf,
+            static_cast<std::size_t>(secondCount) * cmd.dataSize);
+    }
+
+    uint32_t claimedStart = UINT32_MAX;
+    const bool advanced = worker_atomic::TryAdvanceCursor(
+        &cmd.startPos,
+        count,
+        cmd.bufCount,
+        &claimedStart);
+    if (!advanced || claimedStart != startPos)
+    {
+        R_WorkerQueueInvariantFailure("read cursor advance");
+        return 0;
+    }
+
+    if (!R_ReleaseWorkerGuard(&cmd.consumerGuard))
+        return 0;
+    KISAK_NULLSUB();
+    for (uint32_t index = 0u; index < count; ++index)
+    {
+        R_ProcessWorkerCmdInternal(
+            type,
+            &data[static_cast<std::size_t>(index) * cmd.dataSize]);
+    }
+
+    if (!worker_atomic::TrySubtractBounded(
+            &cmd.inSize,
+            count,
+            cmd.bufCount))
+    {
+        R_WorkerQueueInvariantFailure("queued capacity completion");
+        return 0;
+    }
+    if (!worker_atomic::TrySubtractBounded(
+            &cmd.outstandingCount,
+            count,
+            kOutstandingCountLimit))
+    {
+        R_WorkerQueueInvariantFailure("outstanding completion");
+        return 0;
+    }
+    Sys_SetWorkerCmdEvent();
     return 1;
 }
 
@@ -319,7 +440,8 @@ void __cdecl R_ProcessWorkerCmdInternal(WorkerCmdType type, void *data)
         R_AddCellStaticSurfacesInFrustumCmd((DpvsStaticCellCmd *)data);
         break;
     case WRKCMD_DPVS_CELL_SCENE_ENT:
-        R_AddCellSceneEntSurfacesInFrustumCmd((GfxWorldDpvsPlanes *)data);
+        R_AddCellSceneEntSurfacesInFrustumCmd(
+            static_cast<const DpvsDynamicCellCmd *>(data));
         break;
     case WRKCMD_DPVS_CELL_DYN_MODEL:
         R_AddCellDynModelSurfacesInFrustumCmd((const DpvsDynamicCellCmd *)data);
@@ -328,10 +450,12 @@ void __cdecl R_ProcessWorkerCmdInternal(WorkerCmdType type, void *data)
         R_AddCellDynBrushSurfacesInFrustumCmd((const DpvsDynamicCellCmd *)data);
         break;
     case WRKCMD_DPVS_ENTITY:
-        R_AddEntitySurfacesInFrustumCmd((uint16_t *)data);
+        R_AddEntitySurfacesInFrustumCmd(
+            static_cast<const DpvsEntityCmd *>(data));
         break;
     case WRKCMD_ADD_SCENE_ENT:
-        R_AddAllSceneEntSurfacesCamera(*(const GfxViewInfo **)data);
+        R_AddAllSceneEntSurfacesCamera(
+            static_cast<const SceneEntCmd *>(data)->viewInfo);
         break;
     case WRKCMD_SPOT_SHADOW_ENT:
         R_AddSpotShadowEntCmd((const GfxSpotShadowEntCmd *)data);
@@ -357,7 +481,7 @@ void __cdecl R_ProcessWorkerCmdInternal(WorkerCmdType type, void *data)
         R_SkinCachedStaticModelCmd((SkinCachedStaticModelCmd *)data);
         break;
     case WRKCMD_SKIN_XMODEL:
-        R_SkinXModelCmd((WORD*)data);
+        R_SkinXModelCmd(static_cast<const SkinXModelCmd *>(data));
         break;
     default:
         if (!alwaysfails)
@@ -376,7 +500,6 @@ void R_InitWorkerThreads()
     iassert( Sys_IsMainThread() );
     if (sys_smp_allowed->current.enabled)
     {
-        R_InitWorkerCmds();
         for (workerThreadIndexa = 0; workerThreadIndexa < 2; ++workerThreadIndexa)
         {
             if (!Sys_SpawnWorkerThread(R_WorkerThread, workerThreadIndexa))
@@ -387,104 +510,39 @@ void R_InitWorkerThreads()
 
 int R_InitWorkerCmds()
 {
-    g_workerCmds[0].buf = (uint8_t *)g_UpdateFxSpotLightBuf;
-    g_workerCmds[0].bufSize = 12;
-    g_workerCmds[0].dataSize = 12;
-
-    g_workerCmds[1].buf = (uint8_t *)g_UpdateFxNonDependentBuf;
-    g_workerCmds[1].bufSize = 12;
-    g_workerCmds[1].dataSize = 12;
-
-    g_workerCmds[2].buf = (uint8_t *)g_UpdateFxRemainingBuf;
-    g_workerCmds[2].bufSize = 12;
-    g_workerCmds[2].dataSize = 12;
-
-    g_workerCmds[3].buf = (uint8_t *)g_dpvsCellStaticBuf;
-    g_workerCmds[3].bufSize = 3072;
-    g_workerCmds[3].dataSize = 12;
-
-    g_workerCmds[4].buf = (uint8_t *)g_dpvsCellSceneEntBuf;
-    g_workerCmds[4].bufSize = 6144;
-    g_workerCmds[4].dataSize = 12;
-
-    g_workerCmds[5].buf = (uint8_t *)g_dpvsCellDynModelBuf;
-    g_workerCmds[5].bufSize = 6144;
-    g_workerCmds[5].dataSize = 12;
-
-    g_workerCmds[6].buf = (uint8_t *)g_dpvsCellDynBrushBuf;
-    g_workerCmds[6].bufSize = 6144;
-    g_workerCmds[6].dataSize = 12;
-
-    g_workerCmds[7].buf = (uint8_t *)g_dpvsEntityBuf;
-    g_workerCmds[7].bufSize = 0x8000;
-    g_workerCmds[7].dataSize = 16;
-
-    g_workerCmds[8].buf = (uint8_t *)g_addSceneEntBuf;
-    g_workerCmds[8].bufSize = 4;
-    g_workerCmds[8].dataSize = 4;
-
-    g_workerCmds[9].buf = (uint8_t *)g_spotShadowEntBuf;
-    g_workerCmds[9].bufSize = 2048;
-    g_workerCmds[9].dataSize = 8;
-
-    g_workerCmds[10].buf = (uint8_t *)g_shadowCookieBuf;
-    g_workerCmds[10].bufSize = 16;
-    g_workerCmds[10].dataSize = 16;
-
-    g_workerCmds[11].buf = (uint8_t *)g_GfxEntityBoundsBuf;
-    g_workerCmds[11].bufSize = 1024;
-    g_workerCmds[11].dataSize = 4;
-
-    g_workerCmds[12].buf = (uint8_t *)g_SkinGfxEntityBuf;
-    g_workerCmds[12].bufSize = 4096;
-    g_workerCmds[12].dataSize = 4;
-
-    g_workerCmds[13].buf = (uint8_t *)g_GenerateFxVertsBuf;
-    g_workerCmds[13].bufSize = 136;
-    g_workerCmds[13].dataSize = 68;
-
-    g_workerCmds[14].buf = (uint8_t *)g_GenerateMarkVertsBuf;
-    g_workerCmds[14].bufSize = 12;
-    g_workerCmds[14].dataSize = 12;
-
-    g_workerCmds[15].buf = (uint8_t *)g_skinCachedStaticModelBuf;
-    g_workerCmds[15].bufSize = 2048;
-    g_workerCmds[15].dataSize = 4;
-
-    g_workerCmds[16].buf = (uint8_t *)g_SkinXModelBuf;
-    g_workerCmds[16].bufSize = 28672;
-    g_workerCmds[16].dataSize = 28;
-
-    return R_InitWorkerCmdsPos();
-}
-
-int R_InitWorkerCmdsPos()
-{
-    int result; // eax
-    WorkerCmds *workerCmds; // [esp+4h] [ebp-8h]
-    int type; // [esp+8h] [ebp-4h]
-
-    for (type = 0; type < 17; ++type)
-    {
-        workerCmds = &g_workerCmds[type];
-        workerCmds->startPos = 0;
-        workerCmds->endPos = workerCmds->bufSize;
-        workerCmds->syncedEndPos = 0;
-        workerCmds->inSize = 0;
-        workerCmds->outSize = 0;
-        iassert( workerCmds->dataSize );
-        workerCmds->bufCount = workerCmds->bufSize / workerCmds->dataSize;
-        if (workerCmds->dataSize > 0xC0)
-            MyAssertHandler(
-                ".\\r_workercmds.cpp",
-                369,
-                0,
-                "%s\n\t(workerCmds->dataSize) = %i",
-                "(workerCmds->dataSize <= 192)",
-                workerCmds->dataSize);
-        result = type + 1;
-    }
-    return result;
+    Sys_AtomicStore(&g_waitTypeMainThread, -1);
+    bool valid = true;
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_UPDATE_FX_SPOT_LIGHT>(
+        g_UpdateFxSpotLightBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_UPDATE_FX_NON_DEPENDENT>(
+        g_UpdateFxNonDependentBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_UPDATE_FX_REMAINING>(
+        g_UpdateFxRemainingBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_DPVS_CELL_STATIC>(
+        g_dpvsCellStaticBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_DPVS_CELL_SCENE_ENT>(
+        g_dpvsCellSceneEntBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_DPVS_CELL_DYN_MODEL>(
+        g_dpvsCellDynModelBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_DPVS_CELL_DYN_BRUSH>(
+        g_dpvsCellDynBrushBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_DPVS_ENTITY>(g_dpvsEntityBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_ADD_SCENE_ENT>(g_addSceneEntBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_SPOT_SHADOW_ENT>(
+        g_spotShadowEntBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_SHADOW_COOKIE>(g_shadowCookieBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_BOUNDS_ENT_DELAYED>(
+        g_GfxEntityBoundsBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_SKIN_ENT_DELAYED>(
+        g_SkinGfxEntityBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_GENERATE_FX_VERTS>(
+        g_GenerateFxVertsBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_GENERATE_MARK_VERTS>(
+        g_GenerateMarkVertsBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_SKIN_CACHED_STATICMODEL>(
+        g_skinCachedStaticModelBuf);
+    valid &= R_BindWorkerCmdBuffer<WRKCMD_SKIN_XMODEL>(g_SkinXModelBuf);
+    return valid ? 1 : 0;
 }
 
 void KISAK_CDECL R_WorkerThread(uint32_t threadContext)
@@ -502,9 +560,7 @@ void KISAK_CDECL R_WorkerThread(uint32_t threadContext)
         Sys_WorkerThreadPausePoint(context);
         {
             PROF_SCOPED("WaitForWorkerCmd");
-            InterlockedIncrement(&g_workerCmdWaitCount);
             Sys_WaitForWorkerCmd();
-            InterlockedDecrement(&g_workerCmdWaitCount);
             Sys_WorkerThreadPausePoint(context);
         }
         {
@@ -514,54 +570,114 @@ void KISAK_CDECL R_WorkerThread(uint32_t threadContext)
     }
 }
 
-void __cdecl R_AddWorkerCmd(WorkerCmdType type, uint8_t *data)
+void gfx::worker_cmd_detail::AddWorkerCmd(
+    WorkerCmdType type,
+    const void *data,
+    std::size_t dataSize)
 {
-    LONG* Destination; // [esp+30h] [ebp-20h]
-    int bufCount; // [esp+34h] [ebp-1Ch]
-    int endPos; // [esp+38h] [ebp-18h]
-    int bufSize; // [esp+40h] [ebp-10h]
-    int dataSize; // [esp+44h] [ebp-Ch]
-    WorkerCmds *workerCmds; // [esp+48h] [ebp-8h]
+    iassert(R_IsWorkerCmdTypeValid(type));
+    iassert(data);
+    if (!R_IsWorkerCmdTypeValid(type) || !data)
+        return;
+
+    WorkerCmds &cmd = g_workerCmds[type];
+    const bool validDescriptor = R_IsWorkerCmdDescriptorValid(cmd);
+    if (!validDescriptor || dataSize != cmd.dataSize)
+    {
+        R_WorkerQueueInvariantFailure("invalid descriptor or payload size");
+        return;
+    }
+
+    const bool producerTracked = worker_atomic::TryAddBounded(
+        &cmd.outstandingCount,
+        1u,
+        kOutstandingCountLimit);
+    if (!producerTracked)
+    {
+        R_WorkerQueueInvariantFailure("outstanding submission overflow");
+        return;
+    }
 
     if (r_smp_worker->current.enabled && sys_smp_allowed->current.enabled)
     {
-        workerCmds = &g_workerCmds[type];
-        dataSize = workerCmds->dataSize;
-        bufSize = workerCmds->bufSize;
-        bufCount = workerCmds->bufCount;
-        iassert( !(bufSize % dataSize ) );
-        if (InterlockedExchangeAdd((LONG*)&workerCmds->inSize, 1) < bufCount)
+        bool queueFull = false;
+        while (!worker_atomic::TryAcquireGuard(&cmd.producerGuard))
         {
-            endPos = InterlockedExchangeAdd((LONG*)&workerCmds->endPos, dataSize) % bufSize;
-            iassert( (endPos >= 0) );
-            if (!endPos)
-                InterlockedExchangeAdd((LONG*)&workerCmds->endPos, -bufSize);
-            memcpy(&workerCmds->buf[endPos], data, dataSize);
-            Destination = (LONG*)&workerCmds->syncedEndPos;
-            do
+            if (Sys_AtomicLoad(&cmd.producerGuard) > 1u)
             {
-                while (*Destination != endPos)
-                    ;
-            } while (InterlockedCompareExchange(Destination, (dataSize + endPos) % bufSize, endPos) != endPos);
-            InterlockedExchangeAdd((LONG*)&workerCmds->outSize, 1);
+                R_WorkerQueueInvariantFailure("corrupt producer guard");
+                return;
+            }
+            Sys_Sleep(0);
+        }
+
+        if (worker_atomic::TryAddBounded(&cmd.inSize, 1u, cmd.bufCount))
+        {
+            uint32_t endPos = UINT32_MAX;
+            if (!worker_atomic::TryAdvanceCursor(
+                    &cmd.endPos,
+                    1u,
+                    cmd.bufCount,
+                    &endPos))
+            {
+                R_WorkerQueueInvariantFailure("write cursor advance");
+                return;
+            }
+
+            memcpy(
+                &cmd.buf[static_cast<std::size_t>(endPos) * cmd.dataSize],
+                data,
+                cmd.dataSize);
+            if (!worker_atomic::TryAddBounded(
+                    &cmd.outSize,
+                    1u,
+                    cmd.bufCount))
+            {
+                R_WorkerQueueInvariantFailure("ready publication");
+                return;
+            }
+            if (!R_ReleaseWorkerGuard(&cmd.producerGuard))
+                return;
             R_NotifyWorkerCmdType(type);
             return;
         }
-        if (type != 15)
+        else
+        {
+            const uint32_t inSize = Sys_AtomicLoad(&cmd.inSize);
+            if (inSize > cmd.bufCount)
+            {
+                R_WorkerQueueInvariantFailure("queued capacity claim");
+                return;
+            }
+            queueFull = true;
+        }
+
+        if (!R_ReleaseWorkerGuard(&cmd.producerGuard))
+            return;
+        if (queueFull && type != WRKCMD_SKIN_CACHED_STATICMODEL)
             R_WarnOncePerFrame(R_WARN_WORKER_CMD_SIZE, type);
-        InterlockedExchangeAdd((LONG*)&workerCmds->inSize, -1);
     }
 
     {
         PROF_SCOPED("WaitWorkerCmds");
         if (g_cmdOutputBusy[type])
         {
-            while (g_cmdOutputBusy[type](data))
-                NET_Sleep(1);
+            while (g_cmdOutputBusy[type]())
+                Sys_Sleep(1);
         }
     }
 
-    R_ProcessWorkerCmdInternal(type, data);
+    R_ProcessWorkerCmdInternal(type, const_cast<void *>(data));
+    const bool releasedInlineProducer = worker_atomic::TrySubtractBounded(
+        &cmd.outstandingCount,
+        1u,
+        kOutstandingCountLimit);
+    if (!releasedInlineProducer)
+    {
+        R_WorkerQueueInvariantFailure("inline outstanding completion");
+        return;
+    }
+    Sys_SetWorkerCmdEvent();
 }
 
 void __cdecl R_UpdateActiveWorkerThreads()
@@ -610,11 +726,11 @@ void __cdecl R_WaitFrontendWorkerCmds()
 
 int __cdecl R_FinishedWorkerCmds()
 {
-    int type; // [esp+4h] [ebp-4h]
-
-    for (type = 0; type < 17; ++type)
+    for (int32_t typeIndex = 0;
+         typeIndex < static_cast<int32_t>(WRKCMD_COUNT);
+         ++typeIndex)
     {
-        if (g_workerCmds[type].inSize > 0)
+        if (R_WorkerQueuePending(g_workerCmds[typeIndex]))
             return 0;
     }
     return 1;

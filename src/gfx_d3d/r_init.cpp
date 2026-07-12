@@ -335,7 +335,7 @@ void __cdecl R_SyncGpu(int(__cdecl *WorkCallback)(unsigned __int64))
             }
             else
             {
-                R_ProcessWorkerCmdsWithTimeout((int(*)())R_GpuFenceTimeout, 0);
+                R_ProcessWorkerCmdsWithTimeout(R_GpuFenceTimeout, 0);
             }
         }
         R_ReleaseGpuFenceLock();
@@ -2819,6 +2819,8 @@ void __cdecl R_InitThreads()
 {
     iassert(!r_glob.isRenderingRemoteUpdate);
 
+    if (!R_InitWorkerCmds())
+        Com_Error(ERR_FATAL, "Failed to initialize renderer worker queues");
     R_InitRenderThread();
     R_InitWorkerThreads();
 }

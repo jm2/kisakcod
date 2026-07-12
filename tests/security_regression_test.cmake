@@ -4676,6 +4676,192 @@ require_source_contains(
     "stageCapacity < freeDrawSurfCount"
     "draw-surface merging must clamp each extent to its configured backing array")
 
+# Renderer commands use typed native-width payloads and a bounded MPMC ring.
+# Short producer/consumer guards protect byte publication and dequeue copies;
+# handlers execute outside the guards, and one outstandingCount owns queued and
+# inline work through handler completion.
+require_source_not_contains(
+    "gfx_d3d/r_worker_queue_atomic.h"
+    "Interlocked"
+    "worker queue protocols must remain independent of native Windows atomics")
+require_source_not_matches(
+    "gfx_d3d/r_worker_queue_atomic.h"
+    "(^|[^A-Za-z0-9_])LONG([^A-Za-z0-9_]|$)"
+    "worker queue protocols must use exact-width state")
+require_source_contains(
+    "gfx_d3d/r_worker_queue_atomic.h"
+    "observed > capacity || amount > capacity - observed"
+    "worker queue capacity claims must not use overflow-prone addition")
+require_source_contains(
+    "gfx_d3d/r_worker_queue_atomic.h"
+    "amount > observed"
+    "worker queue completion must reject underflow")
+require_source_contains(
+    "gfx_d3d/r_worker_queue_atomic.h"
+    "TryAcquireGuard"
+    "worker queue payload transitions must have a tested short ownership guard")
+require_source_not_contains(
+    "gfx_d3d/r_workercmds.cpp"
+    "Interlocked"
+    "renderer worker queues must use the portable fixed-width protocol")
+foreach(_worker_native_token
+    "LONG"
+    "_WORD"
+    "NET_Sleep"
+    "win32/"
+    "g_workerCmdMinType"
+    "g_workerCmdWaitCount"
+    "syncedEndPos"
+)
+    require_source_not_contains(
+        "gfx_d3d/r_workercmds.cpp"
+        "${_worker_native_token}"
+        "worker queue source must not retain ${_worker_native_token}")
+endforeach()
+require_source_not_matches(
+    "gfx_d3d/r_workercmds.cpp"
+    "\\.(dataSize|bufSize)[ 	]*=[ 	]*(0x[0-9A-Fa-f]+|[0-9]+)[uU]?;"
+    "worker payload descriptors must derive native sizes from typed buffers")
+require_source_match_count(
+    "gfx_d3d/r_workercmds.cpp"
+    "R_BindWorkerCmdBuffer<WRKCMD_"
+    17
+    "every worker command must bind one typed payload buffer")
+require_source_contains(
+    "gfx_d3d/r_workercmds.cpp"
+    "alignas(std::max_align_t) uint8_t data["
+    "dequeued command payloads must retain native alignment")
+require_source_contains(
+    "gfx_d3d/r_workercmds.cpp"
+    "TryAcquireGuard(&cmd.consumerGuard)"
+    "consumer claim/copy/cursor transitions must be serialized against ABA")
+require_source_contains(
+    "gfx_d3d/r_workercmds.cpp"
+    "TryAcquireGuard(&cmd.producerGuard)"
+    "producer reserve/copy/publication transitions must remain ordered")
+require_source_ordered(
+    "gfx_d3d/r_workercmds.cpp"
+    "const uint32_t readyCount = Sys_AtomicLoad(&cmd.outSize);"
+    "const WorkerBusyPredicate busyPredicate = g_cmdOutputBusy[type];"
+    "idle queue scans must not execute dependency predicates")
+require_source_not_contains(
+    "gfx_d3d/r_workercmds.cpp"
+    "Sys_AtomicStore(guard, 0u)"
+    "failed guard ownership must quarantine rather than force-unlock a queue")
+require_source_contains(
+    "gfx_d3d/r_workercmds.cpp"
+    "Com_Error(ERR_FATAL, \"Renderer worker queue invariant failed: %s\", detail);"
+    "impossible queue transitions must fail closed in release builds")
+require_source_ordered(
+    "gfx_d3d/r_workercmds.cpp"
+    "R_ProcessWorkerCmdInternal(type, const_cast<void *>(data));"
+    "const bool releasedInlineProducer = worker_atomic::TrySubtractBounded("
+    "inline fallback must retain producer ownership through handler completion")
+require_source_ordered(
+    "gfx_d3d/r_workercmds.cpp"
+    "R_ReleaseWorkerGuard(&cmd.producerGuard)"
+    "R_WarnOncePerFrame(R_WARN_WORKER_CMD_SIZE, type);"
+    "queue-full diagnostics must execute outside the producer guard")
+require_source_contains(
+    "gfx_d3d/r_workercmds.cpp"
+    "return Sys_AtomicLoad(&cmd.outstandingCount) != 0u;"
+    "wait predicates must use one linearizable full-lifetime work count")
+require_source_ordered(
+    "gfx_d3d/r_workercmds.cpp"
+    "R_ProcessWorkerCmdInternal("
+    "TrySubtractBounded(
+            &cmd.outstandingCount,
+            count,"
+    "queued work must remain outstanding through handler completion")
+require_source_contains(
+    "gfx_d3d/r_workercmds.h"
+    "RUNTIME_SIZE(WorkerCmds, 0x80, 0x88);"
+    "worker queue storage must retain its native-width layout contract")
+require_source_match_count(
+    "gfx_d3d/r_workercmds.h"
+    "KISAK_WORKER_CMD_PAYLOAD\\(WRKCMD_"
+    17
+    "every public worker command must map to one compile-time payload type")
+require_source_ordered(
+    "gfx_d3d/r_init.cpp"
+    "R_InitWorkerCmds()"
+    "R_InitRenderThread();"
+    "worker descriptors must publish before the backend thread can scan them")
+require_source_contains(
+    "gfx_d3d/r_scene.cpp"
+    "ShadowCookieCmd shadowCookieCmd{};"
+    "shadow-cookie commands must preserve native-width pointers")
+require_source_not_contains(
+    "gfx_d3d/r_scene.cpp"
+    "data[0] = (uint32_t)viewParmsDpvs;"
+    "shadow-cookie command pointers must not truncate to retail x86 words")
+require_source_not_contains(
+    "gfx_d3d/r_scene.cpp"
+    "LongNoSwap((uint32_t)"
+    "scene lighting handles must not truncate their owning pose pointers")
+require_source_not_contains(
+    "gfx_d3d/r_dpvs.cpp"
+    "LongNoSwap((uint32_t)sceneEnt->info.cachedLightingHandle)"
+    "DPVS lighting handles must retain native pointer width")
+require_source_contains(
+    "gfx_d3d/r_dpvs_entity.cpp"
+    "R_AddEntitySurfacesInFrustumCmd(const DpvsEntityCmd *cmd)"
+    "DPVS entity commands must decode through their typed native layout")
+foreach(_dpvs_x86_decode
+    "(uint32_t *)data"
+    "data[4]"
+    "data[5]"
+)
+    require_source_not_contains(
+        "gfx_d3d/r_dpvs_entity.cpp"
+        "${_dpvs_x86_decode}"
+        "DPVS worker dispatch must not retain x86 word-offset decoding")
+endforeach()
+require_source_not_contains(
+    "gfx_d3d/r_init.cpp"
+    "(int(*)())R_GpuFenceTimeout"
+    "GPU wait callbacks must retain an exact function type")
+
+file(GLOB _worker_producer_sources "${SOURCE_ROOT}/src/gfx_d3d/*.cpp")
+set(_typed_worker_producer_count 0)
+foreach(_worker_source IN LISTS _worker_producer_sources)
+    file(READ "${_worker_source}" _worker_source_text)
+    string(REGEX MATCHALL "R_AddWorkerCmd<WRKCMD_" _typed_worker_calls "${_worker_source_text}")
+    list(LENGTH _typed_worker_calls _typed_worker_file_count)
+    math(EXPR _typed_worker_producer_count
+        "${_typed_worker_producer_count} + ${_typed_worker_file_count}")
+    string(REGEX MATCH "R_AddWorkerCmd[ 	]*\\(" _untyped_worker_call "${_worker_source_text}")
+    if (NOT "${_untyped_worker_call}" STREQUAL "")
+        message(FATAL_ERROR
+            "Untyped worker command producer remains in ${_worker_source}")
+    endif()
+endforeach()
+if (NOT _typed_worker_producer_count EQUAL 17)
+    message(FATAL_ERROR
+        "Expected 17 typed worker producers, found ${_typed_worker_producer_count}")
+endif()
+
+foreach(_worker_layout_contract
+    "gfx_d3d/fxprimitives.h|RUNTIME_SIZE(FxCmd, 0xC, 0x18);"
+    "gfx_d3d/r_dpvs.h|RUNTIME_SIZE(DpvsDynamicCellCmd, 0xC, 0x10);"
+    "gfx_d3d/r_dpvs.h|RUNTIME_SIZE(DpvsStaticCellCmd, 0xC, 0x18);"
+    "gfx_d3d/r_dpvs.h|RUNTIME_SIZE(DpvsEntityCmd, 0x10, 0x20);"
+    "gfx_d3d/r_scene.h|RUNTIME_SIZE(SceneEntCmd, 0x4, 0x8);"
+    "gfx_d3d/r_spotshadow.h|RUNTIME_SIZE(GfxSpotShadowEntCmd, 0x8, 0x10);"
+    "gfx_d3d/r_rendercmds.h|RUNTIME_SIZE(ShadowCookieCmd, 0x10, 0x20);"
+    "EffectsCore/fx_system.h|RUNTIME_SIZE(FxGenerateVertsCmd, 0x44, 0x58);"
+    "gfx_d3d/r_staticmodelcache.h|RUNTIME_SIZE(SkinCachedStaticModelCmd, 0x4, 0x4);"
+    "gfx_d3d/r_dobj_skin.h|RUNTIME_SIZE(SkinXModelCmd, 0x1C, 0x28);"
+)
+    string(REPLACE "|" ";" _worker_layout_parts "${_worker_layout_contract}")
+    list(GET _worker_layout_parts 0 _worker_layout_file)
+    list(GET _worker_layout_parts 1 _worker_layout_text)
+    require_source_contains(
+        "${_worker_layout_file}"
+        "${_worker_layout_text}"
+        "worker payloads must freeze their 32/64-bit native layouts")
+endforeach()
+
 set(_format_sensitive_sources
     "cgame/cg_hudelem.cpp"
     "cgame/cg_info.cpp"

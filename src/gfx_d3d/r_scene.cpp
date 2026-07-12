@@ -217,7 +217,7 @@ void __cdecl R_AddDObjToScene(
                 sceneModel->obj = obj;
                 sceneModel->entnum = entnum;
                 scene.dpvs.sceneXModelIndex[entnum] = sceneEntIndex;
-                sceneModel->cachedLightingHandle = (uint16_t *)LongNoSwap((uint32_t)pose);
+                sceneModel->cachedLightingHandle = &pose->lightingHandle;
                 radius = XModelGetRadius(model);
                 CG_GetPoseOrigin(pose, sceneModel->placement.base.origin);
                 CG_GetPoseAngles(pose, angles);
@@ -1450,7 +1450,6 @@ void __cdecl R_GenerateSortedDrawSurfs(
     float v8; // [esp+4Ch] [ebp-12Ch]
     float v9; // [esp+70h] [ebp-108h]
     float *viewOrigin; // [esp+BCh] [ebp-BCh]
-    uint32_t data[20]; // [esp+C4h] [ebp-B4h] BYREF
     float v15; // [esp+114h] [ebp-64h]
     float v16; // [esp+118h] [ebp-60h]
     float v17; // [esp+11Ch] [ebp-5Ch]
@@ -1644,7 +1643,7 @@ void __cdecl R_GenerateSortedDrawSurfs(
     R_DrawAllSceneEnt(viewInfo);
     R_WaitWorkerCmdsOfType(WRKCMD_SKIN_ENT_DELAYED);
     sceneEntCmd.viewInfo = viewInfo;
-    R_AddWorkerCmd(WRKCMD_ADD_SCENE_ENT, (uint8_t *)&sceneEntCmd);
+    R_AddWorkerCmd<WRKCMD_ADD_SCENE_ENT>(sceneEntCmd);
     R_SortAllStaticModelSurfacesCamera();
     visibleLightCount = R_GetVisibleDLights(visibleLights);
     R_GetLightSurfs(visibleLightCount, visibleLights);
@@ -1665,11 +1664,12 @@ void __cdecl R_GenerateSortedDrawSurfs(
         }
         else if (dynamicShadowType == SHADOW_COOKIE)
         {
-            data[0] = (uint32_t)viewParmsDpvs;
-            data[1] = (uint32_t)viewParmsDraw;
-            data[2] = (uint32_t)&viewInfo->shadowCookieList;
-            data[3] = viewInfo->localClientNum;
-            R_AddWorkerCmd(WRKCMD_SHADOW_COOKIE, (uint8_t *)data);
+            ShadowCookieCmd shadowCookieCmd{};
+            shadowCookieCmd.viewParmsDpvs = viewParmsDpvs;
+            shadowCookieCmd.viewParmsDraw = viewParmsDraw;
+            shadowCookieCmd.shadowCookieList = &viewInfo->shadowCookieList;
+            shadowCookieCmd.localClientNum = viewInfo->localClientNum;
+            R_AddWorkerCmd<WRKCMD_SHADOW_COOKIE>(shadowCookieCmd);
         }
     }
     R_SetAllStaticModelLighting();
@@ -2028,7 +2028,7 @@ void R_GenerateMarkVertsForDynamicModels()
         entnum = sceneEntity->entnum;
         if (entnum < gfxCfg.entnumOrdinaryEnd && (scene.sceneDObjVisData[0][dobjIndex] & 1) != 0)
         {
-            lightHandle = *(_WORD *)LongNoSwap((uint32_t)sceneEntity->info.pose);
+            lightHandle = sceneEntity->info.pose->lightingHandle;
             FX_GenerateMarkVertsForEntDObj(
                 scene.dpvs.localClientNum,
                 entnum,

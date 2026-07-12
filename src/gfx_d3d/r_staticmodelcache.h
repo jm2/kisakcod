@@ -1,4 +1,5 @@
 #pragma once
+#include <universal/kisak_abi.h>
 #include <xanim/xmodel.h>
 #include "r_rendercmds.h"
 
@@ -10,6 +11,7 @@ struct SkinCachedStaticModelCmd // sizeof=0x4
     uint16_t cacheIndex;        // ...
     uint16_t firstPatchVert;    // ...
 };
+RUNTIME_SIZE(SkinCachedStaticModelCmd, 0x4, 0x4);
 
 struct GfxCachedSModelSurf // sizeof=0x8
 {                                       // ...

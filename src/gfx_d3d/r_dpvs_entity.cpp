@@ -5,7 +5,7 @@
 
 
 
-void __cdecl R_AddEntitySurfacesInFrustumCmd(uint16_t *data)
+void __cdecl R_AddEntitySurfacesInFrustumCmd(const DpvsEntityCmd *cmd)
 {
     int v1; // [esp+4h] [ebp-28h]
     const DpvsPlane *plane; // [esp+Ch] [ebp-20h]
@@ -16,15 +16,28 @@ void __cdecl R_AddEntitySurfacesInFrustumCmd(uint16_t *data)
     const DpvsPlane *planes; // [esp+24h] [ebp-8h]
     GfxSceneEntity *sceneEnt; // [esp+28h] [ebp-4h]
 
-    sceneEnt = *(GfxSceneEntity **)data;
+    const bool validCmd = cmd
+        && cmd->sceneEnt
+        && (cmd->planeCount == 0u || cmd->planes)
+        && cmd->planeCount <= DPVS_PORTAL_MAX_PLANES
+        && cmd->entVisData
+        && rgp.world
+        && rgp.world->dpvsPlanes.cellCount > 0
+        && static_cast<uint32_t>(cmd->cellIndex)
+            < static_cast<uint32_t>(rgp.world->dpvsPlanes.cellCount);
+    iassert(validCmd);
+    if (!validCmd)
+        return;
+
+    sceneEnt = cmd->sceneEnt;
     boneMatrix = R_UpdateSceneEntBounds(sceneEnt, &localSceneEnt, &obj, 1);
     if (boneMatrix)
     {
         iassert( localSceneEnt );
-        planes = (const DpvsPlane *)*((uint32_t *)data + 1);
+        planes = cmd->planes;
         itr = 0;
         plane = planes;
-        while (itr < data[4])
+        while (itr < cmd->planeCount)
         {
             //if (*(float *)((char *)localSceneEnt->cull.mins + v2->side[0]) * v2->coeffs[0]
             //    + v2->coeffs[3]
@@ -43,14 +56,17 @@ void __cdecl R_AddEntitySurfacesInFrustumCmd(uint16_t *data)
         if (!v1
             && R_BoundsInCell(
                 (mnode_t *)rgp.world->dpvsPlanes.nodes,
-                data[5],
+                cmd->cellIndex,
                 localSceneEnt->cull.mins,
                 localSceneEnt->cull.maxs))
         {
             CG_CullIn(localSceneEnt->info.pose);
             R_SkinSceneDObj(sceneEnt, localSceneEnt, obj, boneMatrix, 0);
             iassert( localSceneEnt->entnum != gfxCfg.entnumNone );
-            *(_BYTE *)(localSceneEnt->entnum + *((uint32_t *)data + 3)) = 1;
+            if (localSceneEnt->entnum < gfxCfg.entCount)
+                cmd->entVisData[localSceneEnt->entnum] = 1;
+            else
+                iassert(localSceneEnt->entnum < gfxCfg.entCount);
         }
         else
         {
@@ -147,4 +163,3 @@ bool __cdecl R_BoundsInCell_r(mnode_t *node, int findCellIndex, const float *min
     }
     return cellIndex && cellIndex - 1 == findCellIndex;
 }
-

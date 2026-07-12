@@ -3,6 +3,7 @@
 #include "r_init.h"
 #include "r_rendercmds.h"
 #include "r_scene.h"
+#include <universal/kisak_abi.h>
 
 #define DPVS_PORTAL_MAX_PLANES 16
 
@@ -46,6 +47,10 @@ struct DpvsDynamicCellCmd // sizeof=0xC
     uint8_t frustumPlaneCount;  // ...
     uint16_t viewIndex;         // ...
 };
+RUNTIME_SIZE(DpvsDynamicCellCmd, 0xC, 0x10);
+RUNTIME_OFFSET(DpvsDynamicCellCmd, cellIndex, 0x4, 0x8);
+RUNTIME_OFFSET(DpvsDynamicCellCmd, planeCount, 0x8, 0xC);
+RUNTIME_OFFSET(DpvsDynamicCellCmd, viewIndex, 0xA, 0xE);
 
 struct DpvsStaticCellCmd // sizeof=0xC
 {                                       // ...
@@ -55,6 +60,10 @@ struct DpvsStaticCellCmd // sizeof=0xC
     uint8_t frustumPlaneCount;  // ...
     uint16_t viewIndex;         // ...
 };
+RUNTIME_SIZE(DpvsStaticCellCmd, 0xC, 0x18);
+RUNTIME_OFFSET(DpvsStaticCellCmd, cell, 0x4, 0x8);
+RUNTIME_OFFSET(DpvsStaticCellCmd, planeCount, 0x8, 0x10);
+RUNTIME_OFFSET(DpvsStaticCellCmd, viewIndex, 0xA, 0x12);
 
 struct DpvsEntityCmd // sizeof=0x10
 {                                       // ...
@@ -64,6 +73,11 @@ struct DpvsEntityCmd // sizeof=0x10
     uint16_t cellIndex;
     uint8_t *entVisData;
 };
+RUNTIME_SIZE(DpvsEntityCmd, 0x10, 0x20);
+RUNTIME_OFFSET(DpvsEntityCmd, planes, 0x4, 0x8);
+RUNTIME_OFFSET(DpvsEntityCmd, planeCount, 0x8, 0x10);
+RUNTIME_OFFSET(DpvsEntityCmd, cellIndex, 0xA, 0x12);
+RUNTIME_OFFSET(DpvsEntityCmd, entVisData, 0xC, 0x18);
 
 struct FilterEntInfo // sizeof=0x10
 {                                       // ...
@@ -301,7 +315,7 @@ float __cdecl R_DpvsPlaneMaxSignedDistToBox(const DpvsPlane *plane, const float 
 void R_SetCullDist(float dist);
 
 // r_dpvs_entity
-void __cdecl R_AddEntitySurfacesInFrustumCmd(uint16_t *data);
+void __cdecl R_AddEntitySurfacesInFrustumCmd(const DpvsEntityCmd *cmd);
 bool __cdecl R_BoundsInCell(mnode_t *node, int findCellIndex, const float *mins, const float *maxs);
 bool __cdecl R_BoundsInCell_r(mnode_t *node, int findCellIndex, const float *mins, const float *maxs);
 
@@ -318,7 +332,7 @@ void __cdecl R_CullDynModelInCell(
 
 
 // r_dpvs_sceneent
-void R_AddCellSceneEntSurfacesInFrustumCmd(GfxWorldDpvsPlanes *data);
+void R_AddCellSceneEntSurfacesInFrustumCmd(const DpvsDynamicCellCmd *cmd);
 
 // r_dpvs_static
 void __cdecl R_AddCellStaticSurfacesInFrustumCmd(DpvsStaticCellCmd *data);

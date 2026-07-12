@@ -1,4 +1,5 @@
 #pragma once
+#include <universal/kisak_abi.h>
 #include "r_scene.h"
 
 struct GfxModelSurfaceInfo // sizeof=0xC
@@ -42,6 +43,10 @@ struct SkinXModelCmd // sizeof=0x1C
     // padding byte
     // padding byte
 };
+RUNTIME_SIZE(SkinXModelCmd, 0x1C, 0x28);
+RUNTIME_OFFSET(SkinXModelCmd, mat, 0x4, 0x8);
+RUNTIME_OFFSET(SkinXModelCmd, surfacePartBits, 0x8, 0x10);
+RUNTIME_OFFSET(SkinXModelCmd, surfCount, 0x18, 0x20);
 
 int __cdecl DObjBad(const DObj_s *obj);
 void __cdecl R_SkinSceneDObj(

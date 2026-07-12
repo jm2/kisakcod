@@ -78,7 +78,7 @@ void __cdecl TRACK_rb_backend()
     track_static_alloc_internal(&gfxCmdBufInput, 1072, "gfxCmdBufInput", 18);
 }
 
-bool __cdecl R_GpuFenceTimeout()
+int __cdecl R_GpuFenceTimeout()
 {
     if (RB_IsGpuFenceFinished())
         return 1;
@@ -3065,4 +3065,3 @@ void __cdecl RB_RegisterBackendAssets()
 {
     backEnd.debugFont = R_RegisterFont("fonts/smalldevfont", 1);
 }
-

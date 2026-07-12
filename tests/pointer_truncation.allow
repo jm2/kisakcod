@@ -21,7 +21,6 @@ gfx_d3d/r_draw_staticmodel.cpp|1
 gfx_d3d/r_draw_staticmodel.cpp|2
 gfx_d3d/r_material_load_obj.cpp|1
 gfx_d3d/r_material_load_obj.cpp|2
-gfx_d3d/r_scene.cpp|1
 qcommon/common.cpp|1
 qcommon/files.cpp|1
 qcommon/files.cpp|2

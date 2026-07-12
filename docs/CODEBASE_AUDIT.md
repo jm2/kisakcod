@@ -290,18 +290,20 @@ extraction.
 These findings were exposed while replacing Windows atomics and widening runtime
 layouts. They are additional to the original 47-item count above.
 
-### P1. Renderer worker queue can lose priority and truncates 64-bit commands
+### P1. Renderer worker queue race and 64-bit truncation are repaired
 
-`gfx_d3d/r_workercmds.cpp` is a genuine multi-producer/multi-consumer queue. Its
-minimum-type notification can raise a concurrently lowered minimum because it
-CASes against a fresh raw comparand. All queue words mix native atomic operations
-with raw volatile access, and event reset/wait ordering leaves a polling-dependent
-lost-wake window. More immediately for the port, all 17 payload descriptors use
-retail x86 byte literals: pointer-bearing commands copy only four-byte pointers
-and truncated structure prefixes on amd64/ARM64. Migrate this queue before the FX
-iterator: use fixed-width bounded element cursors, a correct CAS-min loop,
-unconditional/rechecked notification, typed `sizeof` descriptors, aligned scratch
-storage, and MPMC contention tests.
+The worker-queue batch removes all 25 native calls and the lossy minimum-type hint,
+using a deterministic 17-type scan plus short fixed-width producer/consumer guards.
+This also closes a wrapped read-cursor ABA that could copy and execute a stale slot
+twice. One full-lifetime outstanding count covers queued, executing, recursive, and
+inline-fallback work; impossible transitions fail closed. All 17 payload descriptors
+derive native size/count from typed buffers, dequeue storage is aligned and bounded,
+and typed shadow-cookie/DPVS/model dispatch preserves 64-bit pointers. Eight-producer/
+eight-consumer exact-once wrap stress runs under TSan. Residual debt: the shared
+manual event retains a 1 ms bounded poll and renderer workers/events remain process-
+lifetime objects without teardown or safe reinitialization. Full-ring inline fallback
+can overtake older same-type queued work, and handler longjmp bypasses ordinary
+completion accounting; both need runtime/error-unwind fixtures before behavioral change.
 
 ### P2. DObj skinning contains an asset-amplified stack/arena hazard
 
@@ -334,7 +336,7 @@ The bounded `r_drawsurf` batch replaces split load/exchange and overshooting
 fetch-add reservations with a bounded exact-width CAS helper. It rejects invalid
 regions/ranges, supports exact capacity, leaves counters unchanged on failure,
 and validates published code-mesh record/argument/index spans before backend use.
-The remaining scene counters, byte arenas, cull state, worker queue, and FX
+The remaining scene counters, byte arenas, cull state, worker lifecycle, and FX
 families above remain explicit debt.
 
 ## 6. Recommended fix order

@@ -579,7 +579,7 @@ void __cdecl RB_RegisterBackendAssets();
 
 void RB_AbandonGpuFence();
 void __cdecl R_InsertGpuFence();
-bool __cdecl R_GpuFenceTimeout();
+int __cdecl R_GpuFenceTimeout();
 void __cdecl R_FinishGpuFence();
 void __cdecl R_AcquireGpuFenceLock();
 void __cdecl R_ReleaseGpuFenceLock();

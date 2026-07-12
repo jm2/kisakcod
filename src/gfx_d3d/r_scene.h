@@ -29,6 +29,7 @@ struct SceneEntCmd // sizeof=0x4
 {                                       // ...
     const GfxViewInfo *viewInfo;        // ...
 };
+RUNTIME_SIZE(SceneEntCmd, 0x4, 0x8);
 
 struct BModelSurface // sizeof=0x8
 {

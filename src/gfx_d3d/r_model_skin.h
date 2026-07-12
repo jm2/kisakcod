@@ -2,7 +2,9 @@
 #include "r_material.h"
 #include <universal/q_shared.h>
 
-void  R_SkinXModelCmd(_WORD *data);
+struct SkinXModelCmd;
+
+void R_SkinXModelCmd(const SkinXModelCmd *skinCmd);
 void __cdecl R_SkinXSurfaceSkinned(
     const struct XSurface *xsurf,
     const DObjSkelMat *boneMatrix,

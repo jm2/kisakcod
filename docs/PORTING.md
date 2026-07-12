@@ -61,8 +61,8 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Land and obtain Windows CI evidence for the bounded renderer-reservation batch, then migrate the
-   renderer worker queue before the dependent staged FX fixed-width/layout protocols.
+2. Land and obtain Windows CI evidence for the typed fixed-width renderer worker queue, then harden
+   DObj skin scratch/arena bounds before the dependent staged FX protocols.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -717,7 +717,7 @@ as well as GCC/Clang, including high-bit/wrap and pointer exchange cases. Non-MS
 aliases remain only as a temporary source-migration aid; Windows-owned names are never redefined on
 MSVC. The shared fast-lock implementation is the first layout-bound consumer and no longer contains
 a Windows include or native cast. Corrected live census after the landed diagnostic, database, and
-bounded renderer-reservation batch: **102** direct `Interlocked` calls remain across 14 engine TUs. The original
+worker-queue batch: **77** direct `Interlocked` calls remain across 13 engine TUs. The original
 209 also included 12 assertion-message literals. *M1 open tail:* migrate the
 remaining families, and retype their `volatile long`/`LONG` storage and casts to exact-width words; then delete
 the compatibility aliases. The bare `sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now
@@ -870,16 +870,27 @@ counter poisoning and permits exact-capacity use. FX regions and release-build i
 scene/backend counters, resetters, merge consumers, and backend readers share one atomic boundary;
 and malformed stage, code-mesh record, argument, triangle, and index extents fail closed before
 backing-array access. Single-index and multi-element eight-thread contention tests bring the full
-local GCC, Clang, Clang ASan/UBSan, and Clang TSan matrix to 21/21. The live census is now 102 direct
-calls across 14 engine TUs; Windows production compilation is the remaining landing gate.
+local GCC, Clang, Clang ASan/UBSan, and Clang TSan matrix to 21/21. Commit `0fddf2d` passed all nine
+jobs in run 29197855220.
 
-The next atomic dependency is `r_workercmds.cpp`, before EffectsCore: its CAS-min update can raise a
-concurrently lowered priority, raw and atomic accesses mix, reset/wait ordering permits a lost wake,
-and retail x86 byte literals truncate pointer-bearing command payloads on every 64-bit target.
-EffectsCore itself retains 61 native calls and requires staged exact-width layout plus iterator,
-pool, visibility/ring, and packed-status protocol rewrites. Separately, `r_dobj_skin.cpp` needs a
-fail-closed security batch for its unchecked fixed stack-record buffer, arithmetic/arena failures,
-alignment, and pointer narrowing. Detailed live blockers and sequencing remain in `docs/task.md` and
+The renderer worker-queue batch removes another 25 native calls and closes both the lossy CAS-min
+priority race and a wrapped read-cursor ABA that could execute a stale command twice. A deterministic
+17-type scan replaces the hint. Short exact-width producer/consumer guards serialize payload copy
+and cursor publication only; handlers stay parallel. One outstanding count covers queue submission,
+execution, recursive FX generation, and full-queue inline fallback until completion. Unconditional
+notifications plus predicate rechecks remove waiter-count signaling races while retaining the shared
+event's existing 1 ms bounded poll. All 17 payloads use compile-time traits, native-size buffers,
+dual-width layouts, aligned bounded dequeue storage, and typed dispatch; shadow-cookie, DPVS entity,
+lighting-handle, and timeout-callback narrowing is removed. The 22-test GCC/Clang/ASan/UBSan/TSan
+matrix includes eight-producer/eight-consumer exact-once wrap stress. The live census is 77 calls in
+13 TUs; Windows production compilation is the landing gate. Worker/event shutdown remains absent;
+the inherited full-ring inline path may overtake older same-type work, and handler longjmp bypasses
+normal completion accounting, so both remain runtime/error-unwind gates.
+
+Next, `r_dobj_skin.cpp` needs a fail-closed security batch for its unchecked fixed stack-record
+buffer, arithmetic/arena failures, alignment, and pointer narrowing. EffectsCore then retains 61
+native calls and requires staged exact-width layout plus iterator, pool, visibility/ring, and packed-
+status protocol rewrites. Detailed live blockers and sequencing remain in `docs/task.md` and
 `docs/CODEBASE_AUDIT.md`.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**

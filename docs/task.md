@@ -8,17 +8,37 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: land the bounded `r_drawsurf` reservation batch, then migrate the renderer worker
-  queue before the dependent staged FX fixed-width/layout protocols without relaxing the engine gate.
-- Current renderer-reservation batch: the five `r_drawsurf.cpp` native atomics now use a tested,
+- Active work: validate and land the renderer worker-queue/native-payload batch, then harden the
+  DObj skin scratch/arena path before the dependent staged FX protocols without relaxing the engine
+  gate.
+- Current worker-queue batch: all 25 native atomic calls and mixed raw queue accesses in
+  `r_workercmds.cpp` now use exact-width bounded helpers. The lossy minimum-type hint is removed in
+  favor of a deterministic 17-type scan. Short per-queue producer and consumer guards cover only
+  reserve/copy/publication and claim/copy/cursor movement, closing the inherited wrapped-cursor ABA
+  duplicate-execution race while handlers remain parallel. One `outstandingCount` owns queued,
+  executing, recursively submitted, and full-queue inline work through completion, so type-specific
+  and wait-all predicates are linearizable; publication/completion notification is unconditional.
+  All 17 command types have compile-time payload traits, native `sizeof`-derived descriptors and
+  32/64-bit layout contracts. Typed dispatch removes truncated shadow-cookie/DPVS pointers, delayed
+  pointer-buffer mismatches, x86 word decoding, three lighting-handle pointer round trips, and the GPU
+  timeout callback cast. Descriptors initialize before backend startup; dequeue scratch is aligned and
+  bounded; impossible release-build transitions fail closed. Local validation is 22/22 under GCC,
+  Clang, Clang ASan/UBSan, and Clang TSan, including eight-producer/eight-consumer exact-once wrap
+  stress. The batch reduces the live census from 102 calls/14 TUs to **77 calls/13 TUs**; Windows CI
+  is the remaining landing gate. The shared manual event retains its inherited 1 ms bounded poll, and
+  worker shutdown/reinitialization remains process-lifetime debt. The inherited full-ring inline
+  fallback may overtake older same-type queued work, and a handler-level `Com_Error`/longjmp can
+  bypass normal completion accounting; preserve those as explicit runtime-test/error-unwind work.
+- Completed renderer-reservation batch: the five `r_drawsurf.cpp` native atomics now use a tested,
   exact-width bounded CAS reservation helper. This repairs the code-mesh argument allocator's split
   load/exchange lost-update race, prevents failed draw-surface/code-mesh/mark-mesh reservations from
   poisoning their counters, permits exact-capacity use, validates release-build region/input bounds,
   and removes the first four LP64-widening renderer counter declarations. Reset, merge, and backend
   accesses share the atomic boundary; stage, record, argument, triangle, and index extents fail closed
-  before backing-array access. Local validation is 21/21 under GCC, Clang, Clang ASan/UBSan, and
+  before backing-array access. Local validation was 21/21 under GCC, Clang, Clang ASan/UBSan, and
   Clang TSan, including contended single- and multi-element reservations. The batch reduces the live
-  census from 107 calls/15 TUs to **102 calls/14 TUs**; Windows CI is the remaining landing gate.
+  census from 107 calls/15 TUs to 102 calls/14 TUs. Commit `0fddf2d` passed all nine jobs in run
+  29197855220.
 - Completed skeleton/pose batch: a shared, platform-neutral skeleton-arena helper derives exact
   aligned capacity from each backing array, rejects invalid alignments, arithmetic overflow,
   corrupt/misaligned cursors, oversized requests, and exhaustion without poisoning the cursor, and
@@ -166,10 +186,11 @@ work item changes. Do not create session-specific handoff files.
   the legacy dedicated smoke. The smoke now requires the requested map in the status response, and
   its self-hosted jobs run only from `master` and check out the immutable dispatched SHA. Twenty-one
   client/media includes remain.
-- Portable validation: 21/21 tests pass locally under GCC, Clang, and Clang ASan/UBSan, with leak
+- Portable validation: 22/22 tests pass locally under GCC, Clang, and Clang ASan/UBSan, with leak
   detection disabled because LeakSanitizer cannot run under the command-runner ptrace environment.
   The full suite, including the database and archive/network contracts plus the skeleton-arena and
-  pose publication and renderer-reservation contention tests, also passes under Clang ThreadSanitizer.
+  pose publication, renderer-reservation, and MPMC worker-queue contention tests, also passes under
+  Clang ThreadSanitizer.
   The production relocation registry is also strict-warning clean under GCC/Clang and GCC ILP32
   syntax checking. Portable tests do not execute the Windows stream adapter or media ownership paths.
 - Windows validation: AABB warning repair run 29096212752, bounded-direct-reference run
@@ -220,7 +241,8 @@ work item changes. Do not create session-specific handoff files.
   passed all nine jobs in run 29177998144. IWD/unzip/loopback commit `aa91d37` then exposed two
   MSVC-only fake-lag pointer-conversion errors; corrective commit `0a119b7` resolved them, and
   replacement run 29195736931 passed all nine jobs. Skeleton/pose commit `060e6ba` then passed all
-  nine jobs in run 29196678355.
+  nine jobs in run 29196678355. Renderer-reservation commit `0fddf2d` then passed all nine jobs in run
+  29197855220.
   The observed linker debt is now 106 -> 45 -> 0.
 
 ## Milestone status
@@ -228,7 +250,7 @@ work item changes. Do not create session-specific handoff files.
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
-| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration/IWD search contexts, fixed-width fast locks, native dvar/script/XAnim/DObj/database/IWD/loopback/skeleton/pose and bounded renderer-reservation state, and guarded lifecycle/publication protocols exist; 102 executable direct engine Interlocked calls in 14 translation units and broader platform integration remain. |
+| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration/IWD search contexts, fixed-width fast locks, native dvar/script/XAnim/DObj/database/IWD/loopback/skeleton/pose, bounded renderer reservations, and a typed fixed-width worker queue exist; 77 executable direct engine Interlocked calls in 13 translation units and broader platform integration remain. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 45 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, and complete graphics-world AABB topology validation landed; production-path fuzz fixtures remain. |
 | M3 platform services | In progress: core thread services integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, and a cooperative worker gate used by renderer workers. High-level orchestration is native-type-free. Linux/macOS engine/headless sets remain empty and engine-gated; POSIX crash freezing, filesystem, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table and DObj runtime/saved layouts, allocations, preview buffers, and SP corpse pointers are native-width exact. XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads remain 32-bit-layout-bound. |
@@ -249,8 +271,8 @@ work item changes. Do not create session-specific handoff files.
 ## Immediate queue
 
 1. Validate the protected licensed-content headless startup/map/`getstatus` workflow on its runner.
-2. Land and run Windows CI for the bounded `r_drawsurf` reservation batch, then migrate the renderer
-   worker queue before the staged FX layout/iterator/counter/status families that depend on it.
+2. Land and run Windows CI for the worker-queue/native-payload batch, then harden DObj skin scratch
+   and arena bounds before the staged FX layout/iterator/counter/status families.
 3. Extract filesystem/virtual-memory/process services and implement Linux signal-park plus macOS
    Mach crash freezing behind the already isolated terminal API.
 4. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
@@ -274,14 +296,17 @@ work item changes. Do not create session-specific handoff files.
   fast lock now routes every dvar/database reader and writer counter operation through shared
   sequentially consistent helpers, with source guards and reader/writer stress coverage. Broader
   engine atomics still contain Windows `LONG`, direct volatile polling, and Windows-header coupling;
-  102 executable direct calls remain across 14 translation units after the bounded renderer-reservation batch,
+  77 executable direct calls remain across 13 translation units after the worker-queue batch,
   although dvar sorting and all state in `threads.cpp` are now native C++ atomics. Finish that M1
   migration before compiling a non-Windows engine target.
-- The renderer worker queue must precede FX migration. Its minimum-priority update can overwrite a
-  concurrently lower priority, plain and atomic accesses mix on the same state, reset/wait ordering
-  leaves a lost-wake window, and x86 byte literals truncate pointer-bearing command payloads on
-  amd64/ARM64. Replace it with fixed-width bounded element cursors, a correct CAS-min protocol,
-  typed `sizeof` descriptors, aligned scratch storage, rechecked wakeups, and MPMC stress tests.
+- The renderer worker queue now uses guarded fixed-width element cursors, one full-lifetime work
+  count, typed native descriptors, aligned scratch, and unconditional notification; the racy minimum
+  hint and x86 payload literals are gone. The shared manual event still uses its inherited 1 ms poll
+  as a bounded fallback around external renderer/gate wakes, and worker threads/events have no
+  shutdown or safe reinitialization lifecycle. Full-ring inline fallback can still overtake older
+  same-type queued work, and handler `Com_Error`/longjmp bypasses completion accounting. Add a
+  generation-aware event wait, error-unwind cleanup, ordering fixtures, and explicit teardown before
+  embedding or restarting the renderer in-process.
 - `r_dobj_skin.cpp` writes variable 4/56-byte records into a fixed 3,600-byte stack buffer without a
   capacity proof. Its vertex/surface arithmetic and temporary arenas can overflow or poison future
   reservations, one pointer is narrowed to `int`, and byte storage lacks an explicit alignment

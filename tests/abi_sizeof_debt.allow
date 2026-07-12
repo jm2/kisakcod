@@ -29,7 +29,6 @@ EffectsCore/fx_system.h|static_assert:sizeof(FxEffectDefTableEntry)==0x8|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxElemField)==0x8|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxFlagDef)==0x10|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxFlagOutputSet)==0xC|1
-EffectsCore/fx_system.h|static_assert:sizeof(FxGenerateVertsCmd)==0x44|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxInsertSortElem)==0x14|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxMarkDObjUpdateContext)==0x108|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxMarkTri)==0xC|1

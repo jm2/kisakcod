@@ -236,7 +236,7 @@ void __cdecl R_AddSpotShadowModelEntities(
             if (entnum != gfxCfg.entnumNone)
             {
                 if (R_IsEntityVisibleToPrimaryLight(localClientNum, entnum, primaryLightIndex))
-                    R_AddWorkerCmd(WRKCMD_SPOT_SHADOW_ENT, (uint8_t *)&cmd);
+                    R_AddWorkerCmd<WRKCMD_SPOT_SHADOW_ENT>(cmd);
             }
         }
     }

@@ -666,7 +666,10 @@ struct FxGenerateVertsCmd // sizeof=0x44
     float vieworg[3];
     float viewaxis[3][3];
 };
-static_assert(sizeof(FxGenerateVertsCmd) == 0x44);
+RUNTIME_SIZE(FxGenerateVertsCmd, 0x44, 0x58);
+RUNTIME_OFFSET(FxGenerateVertsCmd, localClientNum, 0x10, 0x20);
+RUNTIME_OFFSET(FxGenerateVertsCmd, vieworg, 0x14, 0x24);
+RUNTIME_OFFSET(FxGenerateVertsCmd, viewaxis, 0x20, 0x30);
 
 void __cdecl FX_EvaluateVisAlpha(FxElemPreVisualState *preVisState, FxElemVisualState *visState);
 uint8_t __cdecl FX_InterpolateColor(

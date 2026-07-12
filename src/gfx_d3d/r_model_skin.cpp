@@ -53,7 +53,7 @@ static void __cdecl R_MultiplySkelMat(const DObjSkelMat *mat0, const DObjSkelMat
         + mat1->origin[2];
 }
 
-void R_SkinXModelCmd(_WORD *data)
+void R_SkinXModelCmd(const SkinXModelCmd *skinCmd)
 {
     if (dx.deviceLost) return;
 
@@ -62,9 +62,9 @@ void R_SkinXModelCmd(_WORD *data)
     //bool sseEnabled = sys_SSE->current.enabled && r_sse_skinning->current.enabled;
     //bool sseStateUsed = false;
 
-    SkinXModelCmd* skinCmd = (SkinXModelCmd*)data;
-
     iassert(skinCmd);
+    if (!skinCmd)
+        return;
     iassert(skinCmd->surfCount);
 
     GfxModelSkinnedSurface * surfPos = (GfxModelSkinnedSurface*)skinCmd->modelSurfs;
@@ -464,4 +464,3 @@ void __cdecl R_SkinXSurfaceRigid(
 
     iassert(vertex - vertices == totalVertCount);
 }
-
