@@ -1,8 +1,9 @@
 #include "fx_system.h"
+#include "fx_visibility_atomic.h"
 
 #include <universal/sys_atomic.h>
 
-int32_t warnCount_1;
+alignas(4) volatile std::int32_t warnCount_1;
 
 void __cdecl FX_OffsetSpawnOrigin(
     const FxSpatialFrame* effectFrame,
@@ -390,40 +391,57 @@ void __cdecl FX_OrientationPosFromWorldPos(const orientation_t *orient, const fl
 
 void __cdecl FX_AddVisBlocker(FxSystem *system, const float *posWorld, float radius, float opacity)
 {
-    FxVisState *visState; // [esp+1Ch] [ebp-Ch]
-    int32_t blockerIndex; // [esp+20h] [ebp-8h]
-    FxVisBlocker *localVisBlocker; // [esp+24h] [ebp-4h]
+    FxVisState *visState;
+    std::uint32_t blockerIndex;
+    FxVisBlocker *localVisBlocker;
+    fx::visibility::PackedBlockerScalars packed;
 
+    if (!system || !posWorld)
+    {
+        MyAssertHandler(".\\EffectsCore\\fx_update_util.cpp", 377, 0, "%s", "system && posWorld");
+        return;
+    }
+    if (!fx::visibility::IsFiniteOrigin(posWorld)
+        || !fx::visibility::TryPackBlockerScalars(radius, opacity, &packed))
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_update_util.cpp",
+            383,
+            0,
+            "%s",
+            "finite origin, 0 <= radius < 4096, and 0 <= opacity < 1");
+        return;
+    }
     visState = system->visStateBufferWrite;
-    blockerIndex = visState->blockerCount + 1;
-    if (blockerIndex < 256)
+    if (!visState)
+    {
+        MyAssertHandler(".\\EffectsCore\\fx_update_util.cpp", 394, 0, "%s", "visState");
+        return;
+    }
+    if (fx::visibility::TryBeginBlockerAppend(&visState->blockerCount, &blockerIndex))
     {
         localVisBlocker = &visState->blocker[blockerIndex];
         localVisBlocker->origin[0] = *posWorld;
         localVisBlocker->origin[1] = posWorld[1];
         localVisBlocker->origin[2] = posWorld[2];
-        if (radius >= 4096.0)
+        localVisBlocker->radius = packed.radius;
+        localVisBlocker->visibility = packed.visibility;
+        if (!fx::visibility::PublishBlockerAppend(&visState->blockerCount, blockerIndex))
+        {
             MyAssertHandler(
                 ".\\EffectsCore\\fx_update_util.cpp",
-                383,
+                416,
                 0,
                 "%s",
-                "radius < 65536.0f * FX_VIS_BLOCKER_RADIUS_INV_SCALE");
-        if (opacity < 0.0 || opacity >= 1.0)
-            MyAssertHandler(
-                ".\\EffectsCore\\fx_update_util.cpp",
-                384,
-                0,
-                "%s",
-                "opacity >= 0.0f && opacity < 65536.0f * FX_VIS_BLOCKER_VISIBILITY_INV_SCALE");
-        localVisBlocker->radius = (int)(radius * 16.0);
-        localVisBlocker->visibility = (int)((1.0 - opacity) * 65536.0);
-        Sys_AtomicIncrement(&visState->blockerCount);
+                "single-producer visibility append count is unchanged");
+        }
     }
-    else if (warnCount_1 != system->frameCount)
+    else if (Sys_AtomicExchange(&warnCount_1, system->frameCount) != system->frameCount)
     {
-        warnCount_1 = system->frameCount;
-        Com_PrintWarning(21, "More than %i visibility blocking particles exist concurrently\n", 256);
+        Com_PrintWarning(
+            21,
+            "More than %u visibility blocking particles exist concurrently\n",
+            fx::visibility::kBlockerCapacity);
     }
 }
 
@@ -433,10 +451,13 @@ void __cdecl FX_ToggleVisBlockerFrame(FxSystem *system)
 
     if (!system)
         MyAssertHandler(".\\EffectsCore\\fx_update_util.cpp", 400, 0, "%s", "system");
+    // FX_GenerateVerts calls this after its last blocker payload is published.
+    // These pointer stores remain non-atomic: callers must not observe the swap
+    // until the WRKCMD_GENERATE_FX_VERTS completion boundary has been crossed.
     visStateSwapCache = (FxVisState *)system->visStateBufferRead;
     system->visStateBufferRead = system->visStateBufferWrite;
     system->visStateBufferWrite = visStateSwapCache;
-    system->visStateBufferWrite->blockerCount = 0;
+    Sys_AtomicStore(&system->visStateBufferWrite->blockerCount, 0);
     fx_serverVisClient = system->localClientNum;
 }
 

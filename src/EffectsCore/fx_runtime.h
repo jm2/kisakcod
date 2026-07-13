@@ -180,6 +180,7 @@ struct FxVisBlocker
     std::uint16_t radius;
     std::uint16_t visibility;
 };
+RUNTIME_SIZE(FxVisBlocker, 0x10, 0x10);
 
 struct FxVisState
 {
@@ -188,6 +189,7 @@ struct FxVisState
     std::uint32_t pad[3];
 };
 RUNTIME_SIZE(FxVisState, 0x1010, 0x1010);
+RUNTIME_OFFSET(FxVisState, blockerCount, 0x1000, 0x1000);
 
 struct FxSystem
 {

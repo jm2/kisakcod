@@ -1,4 +1,5 @@
 #include "fx_system.h"
+#include "fx_visibility_atomic.h"
 
 #include <qcommon/mem_track.h>
 #include <qcommon/sys_sync.h>
@@ -161,7 +162,8 @@ void __cdecl FX_ResetSystem(FxSystem *system)
     system->activeSpotLightEffectCount = 0;
     system->activeSpotLightElemCount = 0;
     system->gfxCloudCount = 0;
-    system->visState->blockerCount = 0;
+    Sys_AtomicStore(&system->visState[0].blockerCount, 0);
+    Sys_AtomicStore(&system->visState[1].blockerCount, 0);
     system->visStateBufferRead = system->visState;
     system->visStateBufferWrite = system->visState + 1;
 }
@@ -2045,7 +2047,9 @@ double __cdecl FX_GetClientVisibility(int32_t localClientNum, const float *start
     const FxVisState *visState; // [esp+6Ch] [ebp-44h]
     float dir[3]; // [esp+70h] [ebp-40h] BYREF
     float halfLen; // [esp+7Ch] [ebp-34h]
-    int32_t blockerIndex; // [esp+80h] [ebp-30h]
+    std::uint32_t blockerIndex;
+    std::uint32_t blockerCount;
+    std::int32_t rawBlockerCount;
     float len; // [esp+84h] [ebp-2Ch]
     FxSystem *system; // [esp+88h] [ebp-28h]
     float projDir[3]; // [esp+8Ch] [ebp-24h] BYREF
@@ -2056,8 +2060,34 @@ double __cdecl FX_GetClientVisibility(int32_t localClientNum, const float *start
 
     system = FX_GetSystem(localClientNum);
     visState = system->visStateBufferRead;
-    if (!visState || !visState->blockerCount)
+    if (!visState)
         return 1.0;
+    rawBlockerCount = Sys_AtomicLoad(&visState->blockerCount);
+    if (rawBlockerCount <= 0)
+    {
+        if (rawBlockerCount < 0)
+        {
+            MyAssertHandler(
+                ".\\EffectsCore\\fx_system.cpp",
+                2355,
+                0,
+                "%s",
+                "visState->blockerCount >= 0");
+        }
+        return 1.0;
+    }
+    blockerCount = static_cast<std::uint32_t>(rawBlockerCount);
+    if (blockerCount > fx::visibility::kBlockerCapacity)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            2355,
+            0,
+            "visState->blockerCount <= FX_VIS_BLOCKER_LIMIT\n\t%u, %u",
+            blockerCount,
+            fx::visibility::kBlockerCapacity);
+        blockerCount = fx::visibility::kBlockerCapacity;
+    }
 
     PROF_SCOPED("FX_GetVisibility");
 
@@ -2067,15 +2097,7 @@ double __cdecl FX_GetClientVisibility(int32_t localClientNum, const float *start
     {
         halfLen = len * 0.5;
         totalVis = 1.0;
-        if (visState->blockerCount > 256)
-            MyAssertHandler(
-                ".\\EffectsCore\\fx_system.cpp",
-                2355,
-                0,
-                "visState->blockerCount <= FX_VIS_BLOCKER_LIMIT\n\t%i, %i",
-                visState->blockerCount,
-                256);
-        for (blockerIndex = 0; blockerIndex < visState->blockerCount; ++blockerIndex)
+        for (blockerIndex = 0; blockerIndex < blockerCount; ++blockerIndex)
         {
             visBlocker = &visState->blocker[blockerIndex];
             Vec3Sub(visBlocker->origin, start, projDir);
