@@ -629,8 +629,8 @@ static physics::allocation::ResourceHandle Phys_CreatePrimaryGeomResource(
             context->space,
             context->body,
             geomState->u.boxState.extent[0],
-            geomState->u.cylinderState.radius,
-            geomState->u.cylinderState.halfHeight);
+            geomState->u.boxState.extent[1],
+            geomState->u.boxState.extent[2]);
     case PHYS_GEOM_BRUSHMODEL:
         return Phys_CreateBrushmodelGeom(
             context->space,
@@ -719,8 +719,8 @@ static PhysBodyModelCreateStatus Phys_TryBodyAddGeomAndSetMass(
             &mass,
             totalMass,
             geomState->u.boxState.extent[0],
-            geomState->u.cylinderState.radius,
-            geomState->u.cylinderState.halfHeight);
+            geomState->u.boxState.extent[1],
+            geomState->u.boxState.extent[2]);
         break;
     case PHYS_GEOM_BRUSHMODEL:
         Phys_MassSetBrushTotal(

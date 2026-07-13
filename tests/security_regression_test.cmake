@@ -492,6 +492,15 @@ require_source_not_matches(
     "physics/phys_ode.cpp"
     "geomState\\.u\\.cylinderState\\.(radius|halfHeight)[ \t]*=[ \t]*physMass"
     "brush inertia must use named native-layout members instead of cylinder overlays")
+require_source_match_count(
+    "physics/phys_ode.cpp"
+    "geomState->u\\.boxState\\.extent\\[[012]\\]"
+    6
+    "box mass and geometry creation must use typed box extents")
+require_source_not_contains(
+    "physics/phys_ode.cpp"
+    "geomState->u.boxState.extent[0],\n            geomState->u.cylinderState.radius"
+    "box construction must not alias dimensions through cylinder state")
 require_source_contains(
     "physics/phys_ode.cpp"
     "physGlob.worldData[bodyWorldIndex].timeLastUpdate;"
