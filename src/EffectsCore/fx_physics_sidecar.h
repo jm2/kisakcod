@@ -462,18 +462,26 @@ struct SidecarTestAccess
 
     std::array<dxBody *, BODY_LIMIT> secondBodies{};
     std::size_t secondBodyCount = 0;
+    const std::size_t secondTargetCount = second->activeCount_;
     for (const BodySlot &slot : second->slots_)
     {
+        if (secondBodyCount == secondTargetCount)
+            break;
         if (slot.body)
             secondBodies[secondBodyCount++] = slot.body;
     }
     std::sort(
         secondBodies.begin(), secondBodies.begin() + secondBodyCount,
         std::less<dxBody *>{});
+    std::size_t firstBodyCount = 0;
+    const std::size_t firstTargetCount = first->activeCount_;
     for (const BodySlot &slot : first->slots_)
     {
-        if (slot.body
-            && std::binary_search(
+        if (firstBodyCount == firstTargetCount)
+            break;
+        if (!slot.body)
+            continue;
+        if (std::binary_search(
                 secondBodies.begin(),
                 secondBodies.begin() + secondBodyCount,
                 slot.body,
@@ -481,6 +489,7 @@ struct SidecarTestAccess
         {
             return SidecarStatus::DuplicateBody;
         }
+        ++firstBodyCount;
     }
     return SidecarStatus::Success;
 }
