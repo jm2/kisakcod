@@ -1,6 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
 
 #include <universal/platform_compat.h>
 
@@ -18,6 +21,200 @@ bool KISAK_CDECL Sys_FileSystemGetCurrentDirectory(
 bool KISAK_CDECL Sys_FileSystemGetExecutablePath(
     char *output,
     std::size_t outputCapacity);
+
+enum class SysFileSystemEntryKind : std::uint8_t
+{
+    RegularFile,
+    Directory,
+};
+
+struct SysFileSystemDirectoryEntry
+{
+    std::string name;
+    SysFileSystemEntryKind kind;
+};
+
+enum class SysFileSystemListStatus : std::uint8_t
+{
+    Complete,
+    Truncated,
+    Error,
+};
+
+// Enumerates immediate children of one real directory. Results contain only
+// regular files and real directories: symbolic links, reparse points, and
+// special files are omitted. Names are valid UTF-8 and sorted by a stable,
+// locale-independent ASCII case-insensitive ordering with a bytewise tie
+// break. At most maximumEntries are retained; Truncated reports that eligible
+// entries were omitted. Error always clears entries.
+SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
+    const char *utf8Path,
+    std::size_t maximumEntries,
+    std::vector<SysFileSystemDirectoryEntry> *entries);
+
+// Engine filesystem extensions do not include the dot. Matching is an exact,
+// ASCII case-insensitive suffix match and does not interpret wildcard bytes.
+inline bool Sys_FileSystemHasExtension(
+    const char *const name,
+    const char *const extension)
+{
+    if (!name || !extension || extension[0] == '\0')
+        return false;
+
+    std::size_t nameLength = 0;
+    while (name[nameLength] != '\0')
+        ++nameLength;
+    std::size_t extensionLength = 0;
+    while (extension[extensionLength] != '\0')
+        ++extensionLength;
+    if (nameLength <= extensionLength
+        || name[nameLength - extensionLength - 1] != '.')
+    {
+        return false;
+    }
+
+    const char *const suffix = name + nameLength - extensionLength;
+    const auto asciiLower = [](const unsigned char character) {
+        return character >= 'A' && character <= 'Z'
+            ? static_cast<unsigned char>(character + ('a' - 'A'))
+            : character;
+    };
+    for (std::size_t index = 0; index < extensionLength; ++index)
+    {
+        if (asciiLower(static_cast<unsigned char>(suffix[index]))
+            != asciiLower(static_cast<unsigned char>(extension[index])))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+namespace kisakcod_filesystem_detail
+{
+inline unsigned char NormalizeFilterCharacter(
+    const unsigned char character)
+{
+    const unsigned char separator =
+        character == '\\' || character == ':' ? '/' : character;
+    return separator >= 'A' && separator <= 'Z'
+        ? static_cast<unsigned char>(separator + ('a' - 'A'))
+        : separator;
+}
+
+inline bool MatchFilterToken(
+    const char *const pattern,
+    const unsigned char nameCharacter,
+    const char **const nextPattern)
+{
+    if (*pattern == '?')
+    {
+        *nextPattern = pattern + 1;
+        return true;
+    }
+    if (*pattern != '[')
+    {
+        *nextPattern = pattern + 1;
+        return NormalizeFilterCharacter(
+                static_cast<unsigned char>(*pattern))
+            == NormalizeFilterCharacter(nameCharacter);
+    }
+
+    bool matched = false;
+    const unsigned char normalizedName =
+        NormalizeFilterCharacter(nameCharacter);
+    const char *cursor = pattern + 1;
+    while (*cursor != '\0' && *cursor != ']')
+    {
+        const unsigned char rangeBegin = NormalizeFilterCharacter(
+            static_cast<unsigned char>(*cursor));
+        if (cursor[1] == '-'
+            && cursor[2] != '\0'
+            && cursor[2] != ']')
+        {
+            const unsigned char rangeEnd = NormalizeFilterCharacter(
+                static_cast<unsigned char>(cursor[2]));
+            const unsigned char lower =
+                rangeBegin < rangeEnd ? rangeBegin : rangeEnd;
+            const unsigned char upper =
+                rangeBegin < rangeEnd ? rangeEnd : rangeBegin;
+            matched = matched
+                || (normalizedName >= lower && normalizedName <= upper);
+            cursor += 3;
+        }
+        else
+        {
+            matched = matched || normalizedName == rangeBegin;
+            ++cursor;
+        }
+    }
+    if (*cursor == ']')
+    {
+        *nextPattern = cursor + 1;
+        return matched;
+    }
+
+    // An unterminated class is a literal opening bracket.
+    *nextPattern = pattern + 1;
+    return normalizedName == static_cast<unsigned char>('[');
+}
+}
+
+// Full-length, locale-independent form of the engine's path glob. Both slash
+// spellings (and the historical ':' spelling) compare as '/', matching is
+// ASCII case-insensitive, '*' spans zero or more bytes, '?' spans one byte,
+// and bracket ranges are supported.
+inline bool Sys_FileSystemMatchesPathFilter(
+    const char *const filter,
+    const char *const name)
+{
+    if (!filter || !name)
+        return false;
+
+    const char *pattern = filter;
+    const char *cursor = name;
+    const char *starPattern = nullptr;
+    const char *starCursor = nullptr;
+    while (*cursor != '\0')
+    {
+        // Preserve Com_Filter's historical prefix behavior: exhausting the
+        // filter succeeds even when name bytes remain.
+        if (*pattern == '\0')
+            return true;
+        if (*pattern == '*')
+        {
+            do
+            {
+                ++pattern;
+            } while (*pattern == '*');
+            starPattern = pattern;
+            starCursor = cursor;
+            if (*pattern == '\0')
+                return true;
+            continue;
+        }
+
+        const char *nextPattern = pattern;
+        if (*pattern != '\0'
+            && kisakcod_filesystem_detail::MatchFilterToken(
+                pattern,
+                static_cast<unsigned char>(*cursor),
+                &nextPattern))
+        {
+            pattern = nextPattern;
+            ++cursor;
+            continue;
+        }
+
+        if (!starPattern)
+            return false;
+        pattern = starPattern;
+        cursor = ++starCursor;
+    }
+    while (*pattern == '*')
+        ++pattern;
+    return *pattern == '\0';
+}
 
 // Returns the byte length of the parent portion of an absolute UTF-8 path.
 // Files directly beneath POSIX, drive, extended-drive, and UNC roots retain

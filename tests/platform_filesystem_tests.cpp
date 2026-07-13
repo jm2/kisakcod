@@ -39,9 +39,12 @@ bool WriteFile(const std::string &path)
 {
 #if defined(_WIN32)
     const std::wstring extended = ExtendedPath(path);
-    FILE *const file = extended.empty()
-        ? nullptr
-        : _wfopen(extended.c_str(), L"wb");
+    FILE *file = nullptr;
+    if (!extended.empty()
+        && _wfopen_s(&file, extended.c_str(), L"wb") != 0)
+    {
+        file = nullptr;
+    }
 #else
     FILE *const file = std::fopen(path.c_str(), "wb");
 #endif
@@ -365,6 +368,166 @@ bool TestLongCurrentDirectory(const std::string &workingDirectory)
         removed = RemoveDirectoryNative(*directory) && removed;
     return pathChecks && Check(restored) && Check(removed);
 }
+
+bool TestBoundedDirectoryEnumeration(const std::string &workingDirectory)
+{
+    const std::string root = MakeUniquePath(workingDirectory) + "-enumerate";
+    const std::string alphaDirectory = Join(root, "alpha-dir");
+    const std::string nestedDirectory = Join(alphaDirectory, "nested");
+    const std::string zuluDirectory = Join(root, "Zulu-dir");
+    const std::string alphaFile = Join(root, "a.TXT");
+    const std::string zuluFile = Join(root, "Z.txt");
+    const std::string middleFile = Join(root, "middle.bin");
+    const std::string unicodeName = "unicode-\xe2\x98\x83";
+    const std::string unicodeFile = Join(root, unicodeName);
+    const std::string longName = std::string(220, 'l') + ".dat";
+    const std::string longFile = Join(root, longName);
+    const std::string link = Join(root, "directory-link");
+
+    if (!Check(Sys_FileSystemCreateDirectory(root.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(alphaDirectory.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(nestedDirectory.c_str()))
+        || !Check(Sys_FileSystemCreateDirectory(zuluDirectory.c_str()))
+        || !Check(WriteFile(alphaFile))
+        || !Check(WriteFile(zuluFile))
+        || !Check(WriteFile(middleFile))
+        || !Check(WriteFile(unicodeFile))
+        || !Check(WriteFile(longFile)))
+    {
+        return false;
+    }
+
+    bool linkCreated = false;
+#if defined(_WIN32)
+    const std::wstring wideLink = ExtendedPath(link);
+    const std::wstring wideTarget = ExtendedPath(alphaDirectory);
+    constexpr DWORD directoryLink = 0x1;
+    constexpr DWORD allowUnprivilegedCreate = 0x2;
+    linkCreated = !wideLink.empty()
+        && !wideTarget.empty()
+        && CreateSymbolicLinkW(
+            wideLink.c_str(),
+            wideTarget.c_str(),
+            directoryLink | allowUnprivilegedCreate);
+#else
+    linkCreated = symlink(alphaDirectory.c_str(), link.c_str()) == 0;
+    const std::string fifo = Join(root, "named-pipe");
+    if (!Check(mkfifo(fifo.c_str(), 0600) == 0))
+        return false;
+#endif
+
+    std::vector<SysFileSystemDirectoryEntry> entries{{
+        "must-be-cleared", SysFileSystemEntryKind::RegularFile}};
+    if (!Check(Sys_FileSystemListDirectory(
+            root.c_str(), 32, &entries)
+            == SysFileSystemListStatus::Complete)
+        || !Check(entries.size() == 7))
+    {
+        return false;
+    }
+    const std::vector<std::string> expectedNames{
+        "a.TXT",
+        "alpha-dir",
+        longName,
+        "middle.bin",
+        unicodeName,
+        "Z.txt",
+        "Zulu-dir",
+    };
+    for (std::size_t index = 0; index < expectedNames.size(); ++index)
+    {
+        if (!Check(entries[index].name == expectedNames[index]))
+            return false;
+    }
+    if (!Check(entries[0].kind == SysFileSystemEntryKind::RegularFile)
+        || !Check(entries[1].kind == SysFileSystemEntryKind::Directory)
+        || !Check(entries[6].kind == SysFileSystemEntryKind::Directory))
+    {
+        return false;
+    }
+
+    if (!Check(Sys_FileSystemListDirectory(root.c_str(), 3, &entries)
+            == SysFileSystemListStatus::Truncated)
+        || !Check(entries.size() == 3)
+        || !Check(entries[0].name == "a.TXT")
+        || !Check(entries[1].name == "alpha-dir")
+        || !Check(entries[2].name == longName)
+        || !Check(Sys_FileSystemListDirectory(root.c_str(), 0, &entries)
+            == SysFileSystemListStatus::Truncated)
+        || !Check(entries.empty()))
+    {
+        return false;
+    }
+
+    entries.push_back({"must-be-cleared", SysFileSystemEntryKind::RegularFile});
+    const std::string missing = Join(root, "missing");
+    if (!Check(Sys_FileSystemListDirectory(missing.c_str(), 4, &entries)
+            == SysFileSystemListStatus::Error)
+        || !Check(entries.empty())
+        || !Check(Sys_FileSystemListDirectory(alphaFile.c_str(), 4, &entries)
+            == SysFileSystemListStatus::Error)
+        || !Check(entries.empty())
+        || (linkCreated
+            && !Check(Sys_FileSystemListDirectory(link.c_str(), 4, &entries)
+                == SysFileSystemListStatus::Error))
+        || !Check(entries.empty())
+        || (linkCreated
+            && !Check(Sys_FileSystemListDirectory(
+                Join(link, "nested").c_str(), 4, &entries)
+                == SysFileSystemListStatus::Error))
+        || !Check(entries.empty())
+        || !Check(Sys_FileSystemListDirectory("\xff", 4, &entries)
+            == SysFileSystemListStatus::Error)
+        || !Check(Sys_FileSystemListDirectory(root.c_str(), 4, nullptr)
+            == SysFileSystemListStatus::Error)
+        || !Check(Sys_FileSystemHasExtension("archive.IWD", "iwd"))
+        || !Check(Sys_FileSystemHasExtension("archive.tar.IwD", "iwd"))
+        || !Check(!Sys_FileSystemHasExtension("archiveiwd", "iwd"))
+        || !Check(!Sys_FileSystemHasExtension("archive.iwd.bak", "iwd"))
+        || !Check(!Sys_FileSystemHasExtension("archive.iwd", ""))
+        || !Check(!Sys_FileSystemHasExtension(nullptr, "iwd"))
+        || !Check(Sys_FileSystemMatchesPathFilter(
+            "sub\\*.cfg", "SUB/file.CFG"))
+        || !Check(Sys_FileSystemMatchesPathFilter(
+            "maps/*/script?.[g-h]sc", "maps/mp/script1.gsc"))
+        || !Check(Sys_FileSystemMatchesPathFilter(
+            "literal[[]name", "literal[name"))
+        || !Check(Sys_FileSystemMatchesPathFilter("", "any/path"))
+        || !Check(Sys_FileSystemMatchesPathFilter("prefix", "prefix-tail"))
+        || !Check(!Sys_FileSystemMatchesPathFilter(
+            "maps/*/script?.[g-h]sc", "maps/mp/script.gsc"))
+        || !Check(Sys_FileSystemMatchesPathFilter(
+            "*.dat", longName.c_str()))
+        || !Check(!Sys_FileSystemMatchesPathFilter(
+            "*.txt", longName.c_str()))
+        || !Check(!Sys_FileSystemMatchesPathFilter(nullptr, "file.cfg")))
+    {
+        return false;
+    }
+
+#if defined(_WIN32)
+    bool removedLink = true;
+    if (linkCreated)
+        removedLink = RemoveDirectoryW(ExtendedPath(link).c_str());
+#else
+    const bool removedLink = !linkCreated || unlink(link.c_str()) == 0;
+    const bool removedFifo = RemoveFileNative(fifo);
+#endif
+    const bool removed = RemoveFileNative(longFile)
+        && RemoveFileNative(unicodeFile)
+        && RemoveFileNative(middleFile)
+        && RemoveFileNative(zuluFile)
+        && RemoveFileNative(alphaFile)
+        && RemoveDirectoryNative(zuluDirectory)
+        && RemoveDirectoryNative(nestedDirectory)
+        && RemoveDirectoryNative(alphaDirectory)
+        && RemoveDirectoryNative(root);
+    return Check(removedLink)
+#if !defined(_WIN32)
+        && Check(removedFifo)
+#endif
+        && Check(removed);
+}
 }
 
 int main()
@@ -375,6 +538,7 @@ int main()
         && TestClassificationAndDepth(workingDirectory)
         && TestAncestorLinks(workingDirectory)
         && TestLongCurrentDirectory(workingDirectory)
+        && TestBoundedDirectoryEnumeration(workingDirectory)
         ? 0
         : 1;
 }

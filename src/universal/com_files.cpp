@@ -13,6 +13,7 @@
 #include <qcommon/cmd.h>
 #include <qcommon/files.h>
 #include <climits>
+#include <cstdint>
 #include <limits>
 #include <io.h>
 
@@ -2575,7 +2576,10 @@ const char **__cdecl FS_ListFilteredFiles(
     if (sanitizedPath[0])
         ++pathDepth;
     user = Hunk_UserCreate(0x20000, "FS_ListFilteredFiles", 0, 0, 3);
-    list = (const char **)Hunk_UserAlloc(user, 0x8004u, 4);
+    list = static_cast<const char **>(Hunk_UserAlloc(
+        user,
+        static_cast<std::uint32_t>((0x1fffU + 2U) * sizeof(*list)),
+        alignof(const char *)));
     *list++ = (const char *)user;
     for (search = searchPath; search; search = search->next)
     {
@@ -2734,12 +2738,18 @@ const char **__cdecl FS_ListFilteredFilesInLocation(
         {
             if (locationSearchPath)
             {
-                locationSearch->next = (searchpath_s *)Hunk_UserAlloc(user, 0x1Cu, 4);
+                locationSearch->next = static_cast<searchpath_s *>(Hunk_UserAlloc(
+                    user,
+                    static_cast<std::uint32_t>(sizeof(searchpath_s)),
+                    alignof(searchpath_s)));
                 locationSearch = locationSearch->next;
             }
             else
             {
-                locationSearchPath = (searchpath_s *)Hunk_UserAlloc(user, 0x1Cu, 4);
+                locationSearchPath = static_cast<searchpath_s *>(Hunk_UserAlloc(
+                    user,
+                    static_cast<std::uint32_t>(sizeof(searchpath_s)),
+                    alignof(searchpath_s)));
                 locationSearch = locationSearchPath;
             }
             locationSearch->next = 0;

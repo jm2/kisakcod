@@ -1,15 +1,18 @@
 #include <qcommon/sys_filesystem.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <new>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -128,6 +131,92 @@ bool IsDirectoryNoFollow(const int parentFd, const char *const name)
     struct stat status{};
     return fstatat(parentFd, name, &status, AT_SYMLINK_NOFOLLOW) == 0
         && S_ISDIR(status.st_mode);
+}
+
+int OpenDirectoryForEnumeration(const char *const path)
+{
+    std::vector<std::string> components;
+    if (!SplitSafePath(path, &components))
+        return -1;
+
+    constexpr int enumerationFlags =
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
+    int parentFd = open(
+        path[0] == '/' ? "/" : ".",
+        components.empty() ? enumerationFlags : DirectoryOpenFlags());
+    if (parentFd < 0)
+        return -1;
+
+    for (std::size_t index = 0; index < components.size(); ++index)
+    {
+        const bool leaf = index + 1 == components.size();
+        const int nextFd = openat(
+            parentFd,
+            components[index].c_str(),
+            leaf ? enumerationFlags : DirectoryOpenFlags());
+        const bool parentClosed = close(parentFd) == 0;
+        if (nextFd < 0 || !parentClosed)
+        {
+            if (nextFd >= 0)
+                close(nextFd);
+            return -1;
+        }
+        parentFd = nextFd;
+    }
+    return parentFd;
+}
+
+unsigned char AsciiLower(const unsigned char character)
+{
+    return character >= 'A' && character <= 'Z'
+        ? static_cast<unsigned char>(character + ('a' - 'A'))
+        : character;
+}
+
+bool DirectoryEntryLess(
+    const SysFileSystemDirectoryEntry &left,
+    const SysFileSystemDirectoryEntry &right)
+{
+    const std::size_t commonLength =
+        (std::min)(left.name.size(), right.name.size());
+    for (std::size_t index = 0; index < commonLength; ++index)
+    {
+        const unsigned char leftCharacter =
+            AsciiLower(static_cast<unsigned char>(left.name[index]));
+        const unsigned char rightCharacter =
+            AsciiLower(static_cast<unsigned char>(right.name[index]));
+        if (leftCharacter != rightCharacter)
+            return leftCharacter < rightCharacter;
+    }
+    if (left.name.size() != right.name.size())
+        return left.name.size() < right.name.size();
+    return left.name < right.name;
+}
+
+void InsertBoundedEntry(
+    SysFileSystemDirectoryEntry entry,
+    const std::size_t maximumEntries,
+    std::vector<SysFileSystemDirectoryEntry> *const entries,
+    bool *const truncated)
+{
+    if (entries->size() < maximumEntries)
+    {
+        entries->push_back(std::move(entry));
+        std::push_heap(
+            entries->begin(), entries->end(), DirectoryEntryLess);
+        return;
+    }
+
+    *truncated = true;
+    if (maximumEntries != 0
+        && DirectoryEntryLess(entry, entries->front()))
+    {
+        std::pop_heap(
+            entries->begin(), entries->end(), DirectoryEntryLess);
+        entries->back() = std::move(entry);
+        std::push_heap(
+            entries->begin(), entries->end(), DirectoryEntryLess);
+    }
 }
 }
 
@@ -251,4 +340,91 @@ bool KISAK_CDECL Sys_FileSystemGetExecutablePath(
 #else
 #error Unsupported POSIX executable-path implementation
 #endif
+}
+
+SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
+    const char *const utf8Path,
+    const std::size_t maximumEntries,
+    std::vector<SysFileSystemDirectoryEntry> *const entries)
+{
+    if (!entries)
+        return SysFileSystemListStatus::Error;
+    entries->clear();
+    if (!utf8Path || utf8Path[0] == '\0' || !IsValidUtf8(utf8Path))
+        return SysFileSystemListStatus::Error;
+
+    const int directoryFd = OpenDirectoryForEnumeration(utf8Path);
+    if (directoryFd < 0)
+        return SysFileSystemListStatus::Error;
+    DIR *const directory = fdopendir(directoryFd);
+    if (!directory)
+    {
+        close(directoryFd);
+        return SysFileSystemListStatus::Error;
+    }
+
+    bool truncated = false;
+    bool failed = false;
+    errno = 0;
+    while (const dirent *const directoryEntry = readdir(directory))
+    {
+        const char *const name = directoryEntry->d_name;
+        if ((name[0] == '.' && name[1] == '\0')
+            || (name[0] == '.' && name[1] == '.' && name[2] == '\0'))
+        {
+            errno = 0;
+            continue;
+        }
+        if (!IsValidUtf8(name))
+        {
+            failed = true;
+            break;
+        }
+
+        struct stat status{};
+        if (fstatat(directoryFd, name, &status, AT_SYMLINK_NOFOLLOW) != 0)
+        {
+            failed = true;
+            break;
+        }
+
+        SysFileSystemEntryKind kind;
+        if (S_ISREG(status.st_mode))
+            kind = SysFileSystemEntryKind::RegularFile;
+        else if (S_ISDIR(status.st_mode))
+            kind = SysFileSystemEntryKind::Directory;
+        else
+        {
+            errno = 0;
+            continue;
+        }
+
+        try
+        {
+            InsertBoundedEntry(
+                SysFileSystemDirectoryEntry{std::string(name), kind},
+                maximumEntries,
+                entries,
+                &truncated);
+        }
+        catch (const std::bad_alloc &)
+        {
+            failed = true;
+            break;
+        }
+        errno = 0;
+    }
+    if (errno != 0)
+        failed = true;
+    if (closedir(directory) != 0)
+        failed = true;
+    if (failed)
+    {
+        entries->clear();
+        return SysFileSystemListStatus::Error;
+    }
+    std::sort(entries->begin(), entries->end(), DirectoryEntryLess);
+    return truncated
+        ? SysFileSystemListStatus::Truncated
+        : SysFileSystemListStatus::Complete;
 }

@@ -1,3 +1,6 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <Windows.h>
 
 #include <qcommon/sys_filesystem.h>
@@ -5,7 +8,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <limits>
+#include <new>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -86,6 +91,40 @@ bool WideToUtf8(
         ResetOutput(output, outputCapacity);
         return false;
     }
+    return true;
+}
+
+bool WideToUtf8String(
+    const wchar_t *const input,
+    std::string *const output)
+{
+    if (!input || !output)
+        return false;
+    const int required = WideCharToMultiByte(
+        CP_UTF8,
+        WC_ERR_INVALID_CHARS,
+        input,
+        -1,
+        nullptr,
+        0,
+        nullptr,
+        nullptr);
+    if (required <= 0)
+        return false;
+    std::vector<char> utf8(static_cast<std::size_t>(required), '\0');
+    if (WideCharToMultiByte(
+            CP_UTF8,
+            WC_ERR_INVALID_CHARS,
+            input,
+            -1,
+            utf8.data(),
+            required,
+            nullptr,
+            nullptr) != required)
+    {
+        return false;
+    }
+    output->assign(utf8.data(), static_cast<std::size_t>(required - 1));
     return true;
 }
 
@@ -323,6 +362,59 @@ bool HoldRealAncestors(
     *leafBegin = previousBegin;
     return true;
 }
+
+unsigned char AsciiLower(const unsigned char character)
+{
+    return character >= 'A' && character <= 'Z'
+        ? static_cast<unsigned char>(character + ('a' - 'A'))
+        : character;
+}
+
+bool DirectoryEntryLess(
+    const SysFileSystemDirectoryEntry &left,
+    const SysFileSystemDirectoryEntry &right)
+{
+    const std::size_t commonLength =
+        (std::min)(left.name.size(), right.name.size());
+    for (std::size_t index = 0; index < commonLength; ++index)
+    {
+        const unsigned char leftCharacter =
+            AsciiLower(static_cast<unsigned char>(left.name[index]));
+        const unsigned char rightCharacter =
+            AsciiLower(static_cast<unsigned char>(right.name[index]));
+        if (leftCharacter != rightCharacter)
+            return leftCharacter < rightCharacter;
+    }
+    if (left.name.size() != right.name.size())
+        return left.name.size() < right.name.size();
+    return left.name < right.name;
+}
+
+void InsertBoundedEntry(
+    SysFileSystemDirectoryEntry entry,
+    const std::size_t maximumEntries,
+    std::vector<SysFileSystemDirectoryEntry> *const entries,
+    bool *const truncated)
+{
+    if (entries->size() < maximumEntries)
+    {
+        entries->push_back(std::move(entry));
+        std::push_heap(
+            entries->begin(), entries->end(), DirectoryEntryLess);
+        return;
+    }
+
+    *truncated = true;
+    if (maximumEntries != 0
+        && DirectoryEntryLess(entry, entries->front()))
+    {
+        std::pop_heap(
+            entries->begin(), entries->end(), DirectoryEntryLess);
+        entries->back() = std::move(entry);
+        std::push_heap(
+            entries->begin(), entries->end(), DirectoryEntryLess);
+    }
+}
 }
 
 bool KISAK_CDECL Sys_FileSystemCreateDirectory(const char *const utf8Path)
@@ -408,4 +500,123 @@ bool KISAK_CDECL Sys_FileSystemGetExecutablePath(
             L'\0');
     }
     return false;
+}
+
+SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
+    const char *const utf8Path,
+    const std::size_t maximumEntries,
+    std::vector<SysFileSystemDirectoryEntry> *const entries)
+{
+    if (!entries)
+        return SysFileSystemListStatus::Error;
+    entries->clear();
+
+    std::wstring path;
+    if (!Utf8ToWide(utf8Path, &path) || HasUnsafeRawComponent(path))
+        return SysFileSystemListStatus::Error;
+    std::wstring absolutePath;
+    if (!GetAbsolutePath(path, &absolutePath))
+        return SysFileSystemListStatus::Error;
+    std::wstring extendedPath = AddExtendedPrefix(absolutePath);
+
+    std::vector<HANDLE> heldAncestors;
+    std::size_t leafBegin = 0;
+    if (!HoldRealAncestors(extendedPath, &heldAncestors, &leafBegin))
+        return SysFileSystemListStatus::Error;
+    const HANDLE heldDirectory = OpenHeldDirectory(extendedPath);
+    if (heldDirectory == INVALID_HANDLE_VALUE)
+    {
+        CloseHeldDirectories(&heldAncestors);
+        return SysFileSystemListStatus::Error;
+    }
+
+    if (!extendedPath.empty()
+        && extendedPath.back() != L'\\'
+        && extendedPath.back() != L'/')
+    {
+        extendedPath.push_back(L'\\');
+    }
+    extendedPath.push_back(L'*');
+
+    WIN32_FIND_DATAW findData{};
+    HANDLE findHandle = FindFirstFileExW(
+        extendedPath.c_str(),
+        FindExInfoBasic,
+        &findData,
+        FindExSearchNameMatch,
+        nullptr,
+        0);
+    if (findHandle == INVALID_HANDLE_VALUE)
+    {
+        const DWORD error = GetLastError();
+        CloseHandle(heldDirectory);
+        CloseHeldDirectories(&heldAncestors);
+        return error == ERROR_FILE_NOT_FOUND
+            ? SysFileSystemListStatus::Complete
+            : SysFileSystemListStatus::Error;
+    }
+
+    bool truncated = false;
+    bool failed = false;
+    for (;;)
+    {
+        const wchar_t *const wideName = findData.cFileName;
+        const bool dot = wideName[0] == L'.' && wideName[1] == L'\0';
+        const bool dotDot = wideName[0] == L'.'
+            && wideName[1] == L'.'
+            && wideName[2] == L'\0';
+        const DWORD attributes = findData.dwFileAttributes;
+        if (!dot
+            && !dotDot
+            && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0)
+        {
+            const bool directory =
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            std::string name;
+            try
+            {
+                if (!WideToUtf8String(wideName, &name))
+                {
+                    failed = true;
+                    break;
+                }
+                InsertBoundedEntry(
+                    SysFileSystemDirectoryEntry{
+                        std::move(name),
+                        directory
+                            ? SysFileSystemEntryKind::Directory
+                            : SysFileSystemEntryKind::RegularFile},
+                    maximumEntries,
+                    entries,
+                    &truncated);
+            }
+            catch (const std::bad_alloc &)
+            {
+                failed = true;
+                break;
+            }
+        }
+
+        if (!FindNextFileW(findHandle, &findData))
+        {
+            if (GetLastError() != ERROR_NO_MORE_FILES)
+                failed = true;
+            break;
+        }
+    }
+
+    if (!FindClose(findHandle))
+        failed = true;
+    if (!CloseHandle(heldDirectory))
+        failed = true;
+    CloseHeldDirectories(&heldAncestors);
+    if (failed)
+    {
+        entries->clear();
+        return SysFileSystemListStatus::Error;
+    }
+    std::sort(entries->begin(), entries->end(), DirectoryEntryLess);
+    return truncated
+        ? SysFileSystemListStatus::Truncated
+        : SysFileSystemListStatus::Complete;
 }

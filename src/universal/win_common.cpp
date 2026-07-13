@@ -1,10 +1,17 @@
-#include <win32/win_local.h>
-
-#include <qcommon/qcommon.h>
 #include <qcommon/sys_filesystem.h>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
 #include <direct.h>
 #include <io.h>
+#endif
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 #include "com_memory.h"
@@ -16,13 +23,14 @@ void __cdecl Sys_Mkdir(const char *path)
     (void)Sys_FileSystemCreateDirectory(path);
 }
 
-BOOL __cdecl Sys_RemoveDirTree(const char *path)
+bool __cdecl Sys_RemoveDirTree(const char *path)
 {
     if (!path || !path[0])
-        return 0;
+        return false;
 
+#if defined(_WIN32)
     bool v2; // [esp+8h] [ebp-250h]
-    int handle; // [esp+1Ch] [ebp-23Ch]
+    std::intptr_t handle; // [esp+1Ch] [ebp-23Ch]
     char childPath[256]; // [esp+20h] [ebp-238h] BYREF
     _finddata64i32_t find; // [esp+120h] [ebp-138h] BYREF
     bool hasError; // [esp+252h] [ebp-6h]
@@ -56,56 +64,208 @@ BOOL __cdecl Sys_RemoveDirTree(const char *path)
     } while (!hasError && _findnext64i32(handle, &find) != -1);
     _findclose(handle);
     return !hasError && _rmdir(path) != -1;
+#else
+    // Recursive deletion remains a separate handle-relative platform-service
+    // task. Do not emulate it with path-following POSIX traversal.
+    return false;
+#endif
 }
 
-void __cdecl Sys_ListFilteredFiles(
-    HunkUser *user,
-    const char *basedir,
-    const char *subdirs,
-    const char *filter,
-    char **list,
-    int *numfiles)
+namespace
 {
-    char filename[256]; // [esp+10h] [ebp-338h] BYREF
-    _finddata64i32_t findinfo; // [esp+110h] [ebp-238h] BYREF
-    int findhandle; // [esp+23Ch] [ebp-10Ch]
-    char search[260]; // [esp+240h] [ebp-108h] BYREF
+constexpr std::size_t kMaximumListedFiles = 0x1fff;
+constexpr std::size_t kMaximumFilteredTraversalEntries =
+    kMaximumListedFiles * 8;
+constexpr std::size_t kMaximumFilteredDepth = 256;
 
-    if (*numfiles < 0x1FFF)
+std::string JoinPath(
+    const std::string &left,
+    const std::string &right)
+{
+    if (left.empty())
+        return right;
+    if (right.empty())
+        return left;
+    if (left.back() == '/' || left.back() == '\\')
+        return left + right;
+#if defined(_WIN32)
+    return left + "\\" + right;
+#else
+    return left + "/" + right;
+#endif
+}
+
+std::string JoinRelativePath(
+    const std::string &left,
+    const std::string &right)
+{
+    if (left.empty())
+        return right;
+#if defined(_WIN32)
+    return left + "\\" + right;
+#else
+    return left + "/" + right;
+#endif
+}
+
+bool IsExcludedDirectory(const SysFileSystemDirectoryEntry &entry)
+{
+    return entry.kind == SysFileSystemEntryKind::Directory
+        && I_stricmp(entry.name.c_str(), "CVS") == 0;
+}
+
+char *CopyHunkString(
+    HunkUser *const user,
+    const std::string &value)
+{
+    if (!user
+        || value.size() >= (std::numeric_limits<std::uint32_t>::max)())
     {
-        if (strlen(subdirs))
-            Com_sprintf(search, 0x100u, "%s\\%s\\*", basedir, subdirs);
-        else
-            Com_sprintf(search, 0x100u, "%s\\*", basedir);
-        findhandle = _findfirst64i32(search, &findinfo);
-        if (findhandle != -1)
+        return nullptr;
+    }
+    const std::size_t byteCount = value.size() + 1;
+    char *const copy = static_cast<char *>(Hunk_UserAlloc(
+        user,
+        static_cast<std::uint32_t>(byteCount),
+        alignof(char)));
+    std::memcpy(copy, value.c_str(), byteCount);
+    return copy;
+}
+
+void ListFilteredFilesRecursive(
+    HunkUser *const user,
+    const std::string &baseDirectory,
+    const std::string &subdirectories,
+    const char *const filter,
+    char **const list,
+    int *const numberOfFiles,
+    std::size_t *const visitedEntries,
+    const std::size_t depth)
+{
+    if (!user
+        || !filter
+        || !list
+        || !numberOfFiles
+        || !visitedEntries
+        || *numberOfFiles < 0
+        || static_cast<std::size_t>(*numberOfFiles) >= kMaximumListedFiles
+        || *visitedEntries >= kMaximumFilteredTraversalEntries
+        || depth > kMaximumFilteredDepth)
+    {
+        return;
+    }
+
+    std::vector<SysFileSystemDirectoryEntry> entries;
+    const std::size_t remainingTraversal =
+        kMaximumFilteredTraversalEntries - *visitedEntries;
+    const SysFileSystemListStatus status = Sys_FileSystemListDirectory(
+        JoinPath(baseDirectory, subdirectories).c_str(),
+        remainingTraversal,
+        &entries);
+    if (status == SysFileSystemListStatus::Error)
+        return;
+
+    for (const SysFileSystemDirectoryEntry &entry : entries)
+    {
+        if (*visitedEntries == kMaximumFilteredTraversalEntries
+            || static_cast<std::size_t>(*numberOfFiles)
+                == kMaximumListedFiles)
         {
-            do
-            {
-                if ((findinfo.attrib & 0x10) == 0
-                    || I_stricmp(findinfo.name, ".") && I_stricmp(findinfo.name, "..") && I_stricmp(findinfo.name, "CVS"))
-                {
-                    if (*numfiles >= 0x1FFF)
-                        break;
-                    if (subdirs)
-                        Com_sprintf(filename, 0x100u, "%s\\%s", subdirs, findinfo.name);
-                    else
-                        Com_sprintf(filename, 0x100u, "%s", findinfo.name);
-                    if (Com_FilterPath(filter, filename, 0))
-                        list[(*numfiles)++] = Hunk_CopyString(user, filename);
-                }
-            } while (_findnext64i32(findhandle, &findinfo) != -1);
-            _findclose(findhandle);
+            return;
+        }
+        ++*visitedEntries;
+        if (IsExcludedDirectory(entry))
+            continue;
+
+        const std::string relativePath =
+            JoinRelativePath(subdirectories, entry.name);
+        if (entry.kind == SysFileSystemEntryKind::Directory)
+        {
+            ListFilteredFilesRecursive(
+                user,
+                baseDirectory,
+                relativePath,
+                filter,
+                list,
+                numberOfFiles,
+                visitedEntries,
+                depth + 1);
+        }
+        if (static_cast<std::size_t>(*numberOfFiles)
+            == kMaximumListedFiles)
+        {
+            return;
+        }
+        if (Sys_FileSystemMatchesPathFilter(
+                filter, relativePath.c_str()))
+        {
+            char *const copy = CopyHunkString(user, relativePath);
+            if (!copy)
+                return;
+            list[(*numberOfFiles)++] = copy;
         }
     }
 }
 
-BOOL __cdecl HasFileExtension(const char *name, const char *extension)
+char **FinalizeFileList(
+    HunkUser *const user,
+    char **const temporaryList,
+    const int numberOfFiles)
 {
-    char search[260]; // [esp+0h] [ebp-108h] BYREF
+    if (!user || !temporaryList || numberOfFiles <= 0)
+    {
+        if (user)
+            Hunk_UserDestroy(user);
+        return nullptr;
+    }
 
-    Com_sprintf(search, 0x100u, "*.%s", extension);
-    return I_stricmpwild(search, name) == 0;
+    const std::size_t pointerCount =
+        static_cast<std::size_t>(numberOfFiles) + 2;
+    if (pointerCount
+        > (std::numeric_limits<std::uint32_t>::max)() / sizeof(char *))
+    {
+        Hunk_UserDestroy(user);
+        return nullptr;
+    }
+    const std::size_t byteCount = pointerCount * sizeof(char *);
+    char **const allocation = static_cast<char **>(Hunk_UserAlloc(
+        user,
+        static_cast<std::uint32_t>(byteCount),
+        alignof(char *)));
+    allocation[0] = reinterpret_cast<char *>(user);
+    char **const result = allocation + 1;
+    for (int index = 0; index < numberOfFiles; ++index)
+        result[index] = temporaryList[index];
+    result[numberOfFiles] = nullptr;
+    return result;
+}
+}
+
+void __cdecl Sys_ListFilteredFiles(
+    HunkUser *const user,
+    const char *const basedir,
+    const char *const subdirs,
+    const char *const filter,
+    char **const list,
+    int *const numfiles)
+{
+    if (!user || !basedir || !filter || !list || !numfiles)
+        return;
+    std::size_t visitedEntries = 0;
+    ListFilteredFilesRecursive(
+        user,
+        basedir,
+        subdirs ? subdirs : "",
+        filter,
+        list,
+        numfiles,
+        &visitedEntries,
+        0);
+}
+
+bool __cdecl HasFileExtension(const char *name, const char *extension)
+{
+    return Sys_FileSystemHasExtension(name, extension);
 }
 
 int __cdecl Sys_CountFileList(char **list)
@@ -131,109 +291,69 @@ char **__cdecl Sys_ListFiles(
     int *numfiles,
     int wantsubs)
 {
-    char *v6; // eax
-    char **v7; // [esp+4h] [ebp-264h]
-    _finddata64i32_t findinfo; // [esp+18h] [ebp-250h] BYREF
-    int flag; // [esp+140h] [ebp-128h]
-    char **listCopy; // [esp+144h] [ebp-124h]
-    int findhandle; // [esp+148h] [ebp-120h]
-    char *(*list)[8192]; // [esp+14Ch] [ebp-11Ch]
-    int nfiles; // [esp+150h] [ebp-118h] BYREF
-    HunkUser *user; // [esp+154h] [ebp-114h]
-    char search[256]; // [esp+160h] [ebp-108h] BYREF
-    int i; // [esp+264h] [ebp-4h]
+    if (!numfiles)
+        return nullptr;
+    *numfiles = 0;
+    if (!directory || directory[0] == '\0')
+        return nullptr;
 
-    LargeLocal list_large_local(0x8000); // [esp+158h] [ebp-110h] BYREF
-    //LargeLocal::LargeLocal(&list_large_local, 0x8000);
-    //list = (char *(*)[8192])LargeLocal::GetBuf(&list_large_local);
-    list = (char *(*)[8192])list_large_local.GetBuf();
+    std::vector<char *> temporaryList(kMaximumListedFiles + 1, nullptr);
+    HunkUser *const user =
+        Hunk_UserCreate(0x20000, "Sys_ListFiles", 0, 0, 3);
+    int nfiles = 0;
     if (filter)
     {
-        user = Hunk_UserCreate(0x20000, "Sys_ListFiles", 0, 0, 3);
-        nfiles = 0;
-        Sys_ListFilteredFiles(user, directory, "", filter, (char **)list, &nfiles);
-        (*list)[nfiles] = 0;
+        Sys_ListFilteredFiles(
+            user,
+            directory,
+            "",
+            filter,
+            temporaryList.data(),
+            &nfiles);
         *numfiles = nfiles;
-        if (nfiles)
-        {
-            listCopy = (char **)Hunk_UserAlloc(user, 4 * nfiles + 8, 4);
-            *listCopy++ = (char *)user;
-            for (i = 0; i < nfiles; ++i)
-                listCopy[i] = (*list)[i];
-            listCopy[i] = 0;
-            //LargeLocal::~LargeLocal(&list_large_local);
-            return listCopy;
-        }
-        else
-        {
-            Hunk_UserDestroy(user);
-            //LargeLocal::~LargeLocal(&list_large_local);
-            return 0;
-        }
+        return FinalizeFileList(user, temporaryList.data(), nfiles);
     }
-    else
+
+    if (!extension)
+        extension = "";
+    const bool extensionRequestsDirectories =
+        extension[0] == '/' && extension[1] == '\0';
+    if (extensionRequestsDirectories)
+        extension = "";
+    const bool wantDirectories = wantsubs || extensionRequestsDirectories;
+
+    std::vector<SysFileSystemDirectoryEntry> entries;
+    const SysFileSystemListStatus status = Sys_FileSystemListDirectory(
+        directory,
+        kMaximumFilteredTraversalEntries,
+        &entries);
+    if (status == SysFileSystemListStatus::Error)
     {
-        if (!extension)
-            extension = "";
-        if (*extension != 47 || extension[1])
-        {
-            flag = 16;
-        }
-        else
-        {
-            extension = "";
-            flag = 0;
-        }
-        if (*extension)
-            Com_sprintf(search, 0x100u, "%s\\*.%s", directory, extension);
-        else
-            Com_sprintf(search, 0x100u, "%s\\*", directory);
-        nfiles = 0;
-        findhandle = _findfirst64i32(search, &findinfo);
-        if (findhandle == -1)
-        {
-            *numfiles = 0;
-            //LargeLocal::~LargeLocal(&list_large_local);
-            return 0;
-        }
-        else
-        {
-            user = Hunk_UserCreate(0x20000, "Sys_ListFiles", 0, 0, 3);
-            do
-            {
-                if ((!wantsubs && flag != (findinfo.attrib & 0x10) || wantsubs && (findinfo.attrib & 0x10) != 0)
-                    && ((findinfo.attrib & 0x10) == 0
-                        || I_stricmp(findinfo.name, ".") && I_stricmp(findinfo.name, "..") && I_stricmp(findinfo.name, "CVS"))
-                    && (!*extension || HasFileExtension(findinfo.name, extension)))
-                {
-                    v6 = Hunk_CopyString(user, findinfo.name);
-                    (*list)[nfiles++] = v6;
-                    if (nfiles == 0x1FFF)
-                        break;
-                }
-            } while (_findnext64i32(findhandle, &findinfo) != -1);
-            (*list)[nfiles] = 0;
-            _findclose(findhandle);
-            *numfiles = nfiles;
-            if (nfiles)
-            {
-                listCopy = (char **)Hunk_UserAlloc(user, 4 * nfiles + 8, 4);
-                *listCopy++ = (char *)user;
-                for (i = 0; i < nfiles; ++i)
-                    listCopy[i] = (*list)[i];
-                listCopy[i] = 0;
-                v7 = listCopy;
-                //LargeLocal::~LargeLocal(&list_large_local);
-                return v7;
-            }
-            else
-            {
-                Hunk_UserDestroy(user);
-                //LargeLocal::~LargeLocal(&list_large_local);
-                return 0;
-            }
-        }
+        Hunk_UserDestroy(user);
+        return nullptr;
     }
+
+    for (const SysFileSystemDirectoryEntry &entry : entries)
+    {
+        if (static_cast<std::size_t>(nfiles) == kMaximumListedFiles)
+            break;
+        const bool isDirectory =
+            entry.kind == SysFileSystemEntryKind::Directory;
+        if (isDirectory != wantDirectories
+            || IsExcludedDirectory(entry)
+            || (extension[0] != '\0'
+                && !Sys_FileSystemHasExtension(
+                    entry.name.c_str(), extension)))
+        {
+            continue;
+        }
+        char *const copy = CopyHunkString(user, entry.name);
+        if (!copy)
+            break;
+        temporaryList[nfiles++] = copy;
+    }
+    *numfiles = nfiles;
+    return FinalizeFileList(user, temporaryList.data(), nfiles);
 }
 
 
@@ -276,12 +396,14 @@ char *__cdecl Sys_DefaultInstallPath()
 {
     static std::vector<char> exePath = [] {
         std::vector<char> path;
+#if defined(_WIN32)
         if (IsDebuggerPresent())
         {
             if (!ReadDynamicPath(Sys_FileSystemGetCurrentDirectory, &path))
                 path.assign(1, '\0');
         }
         else
+#endif
         {
             if (!ReadDynamicPath(Sys_FileSystemGetExecutablePath, &path))
                 path.assign(1, '\0');

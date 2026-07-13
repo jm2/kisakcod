@@ -155,7 +155,7 @@ void __cdecl Sys_Listen_f();
 #endif
 
 void __cdecl Sys_Mkdir(const char *path);
-BOOL __cdecl Sys_RemoveDirTree(const char *path);
+bool __cdecl Sys_RemoveDirTree(const char *path);
 int __cdecl Sys_CountFileList(char **list);
 char **__cdecl Sys_ListFiles(
 	const char *directory,
