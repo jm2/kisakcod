@@ -5956,9 +5956,9 @@ require_source_match_count(
     "every non-empty allocation failure must drop only after releasing the allocator lock")
 require_source_match_count(
     "EffectsCore/fx_system.cpp"
-    "Sys_LeaveCriticalSection[ \t\r\n]*\\([ \t\r\n]*CRITSECT_FX_ALLOC[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*status[ \t]*!=[ \t]*FxPoolMutationStatus::Success[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"
+    "Sys_LeaveCriticalSection[ \t\r\n]*\\([ \t\r\n]*CRITSECT_FX_ALLOC[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*status[ \t]*!=[ \t]*FxPoolMutationStatus::Success[ \t\r\n]*&&[ \t]*status[ \t]*!=[ \t]*FxPoolMutationStatus::BeforePublishRejected[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"
     2
-    "every fail-fast element pool release must drop only after releasing the allocator lock")
+    "every unexpected element pool release failure must drop only after releasing the allocator lock")
 require_source_not_matches(
     "EffectsCore/fx_system.cpp"
     "\\*firstFreeIndex[ \t]*=|(\\+\\+|--)[ \t]*\\*activeCount"
@@ -7289,6 +7289,11 @@ require_source_ordered(
     "return FxPoolMutationStatus::BeforePublishRejected;"
     "pool[freedIndex].item = ITEM_TYPE{};"
     "fallible FX pool callbacks must reject before publishing a free slot")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "status[ \t]*!=[ \t]*FxPoolMutationStatus::Success[ \t\r\n]*&&[ \t]*status[ \t]*!=[ \t]*FxPoolMutationStatus::BeforePublishRejected"
+    3
+    "all fallible FX free wrappers must return callback vetoes without a fatal error")
 
 set(_format_sensitive_sources
     "cgame/cg_hudelem.cpp"
