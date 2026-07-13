@@ -26,6 +26,10 @@
 #include <game/g_main.h>
 #endif
 
+static_assert(
+    physics::ode::UserGeomClassDataMatches<BrushInfo>,
+    "ODE user-geom storage must exactly match native BrushInfo layout");
+
 // LWSS HACK - unfk some types
 #define float dReal
 
@@ -690,7 +694,7 @@ void __cdecl Phys_InitBrushmodelGeomClass()
     gclass.isPlaceable = true;
     gclass.collider = Phys_GetColliderNull;
     gclass.aabb = Phys_GetBrushmodelAABB;
-    gclass.bytes = 16;
+    gclass.bytes = static_cast<int>(sizeof(BrushInfo));
     classID = dCreateGeomClass(&gclass);
     if (classID != 11)
         MyAssertHandler(
@@ -748,7 +752,7 @@ void __cdecl Phys_InitBrushGeomClass()
     gclass.isPlaceable = true;
     gclass.collider = Phys_GetColliderNull;
     gclass.aabb = Phys_GetBrushAABB;
-    gclass.bytes = 16;
+    gclass.bytes = static_cast<int>(sizeof(BrushInfo));
     classID = dCreateGeomClass(&gclass);
     if (classID != 12)
         MyAssertHandler(
@@ -939,7 +943,7 @@ dxGeom *__cdecl Phys_CreateBrushmodelGeom(
     unsigned __int16 brushModel,
     const float *centerOfMass)
 {
-    GeomStateBrush *ClassData; // eax
+    BrushInfo *classData; // eax
     dxGeom *geom; // [esp+8h] [ebp-8h]
     const cmodel_t *cmod; // [esp+Ch] [ebp-4h]
 
@@ -961,17 +965,17 @@ dxGeom *__cdecl Phys_CreateBrushmodelGeom(
     geom = ODE_CreateGeom(11, space, body);
     if (!geom)
         return 0;
-    ClassData = (GeomStateBrush *)dGeomGetClassData(geom);
-    ClassData->u.brushModel = brushModel;
-    ClassData->momentsOfInertia[0] = centerOfMass[0];
-    ClassData->momentsOfInertia[1] = centerOfMass[1];
-    ClassData->momentsOfInertia[2] = centerOfMass[2];
+    classData = static_cast<BrushInfo *>(dGeomGetClassData(geom));
+    classData->u.brushModel = brushModel;
+    classData->centerOfMass[0] = centerOfMass[0];
+    classData->centerOfMass[1] = centerOfMass[1];
+    classData->centerOfMass[2] = centerOfMass[2];
     return geom;
 }
 
 dxGeom *__cdecl Phys_CreateBrushGeom(dxSpace *space, dxBody *body, const cbrush_t *brush, const float *centerOfMass)
 {
-    GeomStateBrush *ClassData; // eax
+    BrushInfo *classData; // eax
     dxGeom *geom; // [esp+8h] [ebp-4h]
 
     if (!space)
@@ -991,11 +995,11 @@ dxGeom *__cdecl Phys_CreateBrushGeom(dxSpace *space, dxBody *body, const cbrush_
     geom = ODE_CreateGeom(12, space, body);
     if (!geom)
         return 0;
-    ClassData = (GeomStateBrush *)dGeomGetClassData(geom);
-    ClassData->u.brush = brush;
-    ClassData->momentsOfInertia[0] = centerOfMass[0];
-    ClassData->momentsOfInertia[1] = centerOfMass[1];
-    ClassData->momentsOfInertia[2] = centerOfMass[2];
+    classData = static_cast<BrushInfo *>(dGeomGetClassData(geom));
+    classData->u.brush = brush;
+    classData->centerOfMass[0] = centerOfMass[0];
+    classData->centerOfMass[1] = centerOfMass[1];
+    classData->centerOfMass[2] = centerOfMass[2];
     return geom;
 }
 

@@ -411,6 +411,164 @@ require_source_contains(
     "physics/ode/error.cpp"
     "#if !defined(_WIN32) || defined(KISAK_DEDI_HEADLESS)"
     "headless ODE failures must use the stderr/nonzero-exit backend")
+require_source_ordered(
+    "physics/ode/ode.cpp"
+    "new (std::nothrow) dxBody;"
+    "if (!b)\n        return nullptr;"
+    "ODE body allocation failure must be checked before initialization")
+require_source_ordered(
+    "physics/ode/ode.cpp"
+    "if (!b)\n        return nullptr;"
+    "initObject(b, w);"
+    "failed ODE bodies must not enter their world list")
+require_source_not_contains(
+    "physics/ode/ode.cpp"
+    "free(b);"
+    "heap-backed ODE bodies must use matching C++ deallocation")
+require_source_match_count(
+    "physics/ode/ode.cpp"
+    "delete[ \t]+b[ \t]*;"
+    2
+    "both ODE body destruction paths must match the fallback new-expression")
+foreach(_resource_pair_callback
+    "ResourceHandle (*createPrimary)(void *context) noexcept = nullptr;"
+    "ResourceHandle (*createCompanion)("
+    "void (*destroyPrimary)("
+    "TryCreateResourcePair("
+)
+    require_source_contains(
+        "physics/phys_resource_pair.h"
+        "${_resource_pair_callback}"
+        "resource-pair rollback callbacks must retain their noexcept contract")
+endforeach()
+require_source_ordered(
+    "physics/phys_resource_pair.cpp"
+    "callbacks.createCompanion(callbacks.context, primary);"
+    "callbacks.destroyPrimary(callbacks.context, primary);"
+    "failed companion creation must return its primary resource")
+require_source_ordered(
+    "physics/phys_resource_pair.cpp"
+    "callbacks.destroyPrimary(callbacks.context, primary);"
+    "return {ResourcePairStatus::CompanionUnavailable, nullptr, nullptr};"
+    "resource-pair failure must publish no stale ownership")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "physics::allocation::TryCreateResourcePair(resourceCallbacks, true);"
+    "physics bodies and user data must be acquired transactionally")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "resourceCallbacks, geomState->isOriented);"
+    "primary collision and optional transforms must be acquired transactionally")
+require_source_ordered(
+    "physics/phys_ode.cpp"
+    "dSpaceRemove(physGlob.space[worldIndex], outerGeom);"
+    "dSpaceAdd(physGlob.space[worldIndex], outerGeom);"
+    "successful geom construction must preserve legacy simple-space ordering")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "dBodyDestroy(static_cast<dxBody *>(body));"
+    "user-data exhaustion must return its newly created body")
+require_source_not_contains(
+    "physics/phys_ode.cpp"
+    "iassert(userData);\n        memset((uint8_t *)userData"
+    "physics user-data exhaustion must not reach memset through an assertion")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "!(state->mass > 0.0f) || !std::isfinite(state->mass)"
+    "body construction must reject nonpositive or nonfinite mass before allocation")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "geomState.u.brushState.u.brush = brush;"
+    "brush geometry state must retain its native-width typed pointer")
+require_source_not_contains(
+    "physics/phys_ode.cpp"
+    "(int)brush"
+    "brush geometry state must not truncate pointers through its x86 union overlay")
+require_source_contains(
+    "physics/ode/collision_kernel.h"
+    "alignas(physics::ode::kUserGeomClassDataAlignment)\n        unsigned char user_data[physics::ode::kUserGeomClassDataBytes]"
+    "ODE user-geom storage must scale and align with native brush-pointer width")
+require_source_contains(
+    "physics/ode/collision_kernel.h"
+    "sizeof(dxUserGeom) <= sizeof(dxGeomTransform)"
+    "native user geoms must continue to fit the shared ODE geom pool")
+require_source_contains(
+    "physics/ode/collision_kernel.h"
+    "alignof(dxUserGeom) <= alignof(dxGeomTransform)"
+    "native user geoms must satisfy the shared ODE geom-pool alignment")
+require_source_contains(
+    "physics/ode/odeext.h"
+    "alignas(dxGeomTransform)\n        char geoms["
+    "ODE geom-pool backing storage must encode its placement-new alignment")
+require_source_contains(
+    "physics/phys_world_collision.cpp"
+    "physics::ode::UserGeomClassDataMatches<BrushInfo>"
+    "production BrushInfo size and alignment must match ODE class storage")
+require_source_contains(
+    "physics/phys_local.h"
+    "RUNTIME_SIZE(BrushInfo, 0x10, 0x18);"
+    "production BrushInfo must retain its exact x86/native64 sizes")
+require_source_match_count(
+    "physics/phys_world_collision.cpp"
+    "gclass\\.bytes = static_cast<int>\\(sizeof\\(BrushInfo\\)\\);"
+    2
+    "both brush user classes must register their native runtime payload size")
+require_source_not_contains(
+    "physics/phys_world_collision.cpp"
+    "gclass.bytes = 16;"
+    "brush user-class payloads must not retain their x86-only byte width")
+require_source_not_matches(
+    "physics/phys_ode.cpp"
+    "geomState\\.u\\.cylinderState\\.(radius|halfHeight)[ \t]*=[ \t]*physMass"
+    "brush inertia must use named native-layout members instead of cylinder overlays")
+require_source_match_count(
+    "physics/phys_ode.cpp"
+    "geomState->u\\.boxState\\.extent\\[[012]\\]"
+    6
+    "box mass and geometry creation must use typed box extents")
+require_source_not_contains(
+    "physics/phys_ode.cpp"
+    "geomState->u.boxState.extent[0],\n            geomState->u.cylinderState.radius"
+    "box construction must not alias dimensions through cylinder state")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "physGlob.worldData[bodyWorldIndex].timeLastUpdate;"
+    "physics wake timestamps must come from typed world data")
+require_source_not_contains(
+    "physics/phys_ode.cpp"
+    "(int)physGlob.space["
+    "physics wake timestamps must not truncate an unrelated space pointer")
+require_source_contains(
+    "physics/phys_local.h"
+    "Phys_TryCreateBodyFromStateAndXModel("
+    "fresh body-plus-model construction must expose a checked API")
+require_source_contains(
+    "physics/phys_local.h"
+    "void __cdecl Phys_ObjSetCollisionFromXModel("
+    "legacy collision callers must retain their source-compatible wrapper")
+require_source_ordered(
+    "physics/phys_ode.cpp"
+    "*outBody = nullptr;"
+    "Phys_TryBuildCollisionFromXModel(model, worldIndex, body, true, true);"
+    "checked construction must clear output ownership before building collision")
+require_source_ordered(
+    "physics/phys_ode.cpp"
+    "Phys_TryBuildCollisionFromXModel(model, worldIndex, body, true, true);"
+    "Phys_ObjDestroy(worldIndex, body);"
+    "checked collision failure must destroy the complete fresh body")
+require_source_ordered(
+    "physics/phys_ode.cpp"
+    "return collisionStatus;"
+    "*outBody = body;"
+    "checked construction must publish ownership only after every failure exit")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "Phys_TryCreateBodyFromStateAndXModel("
+    "FX archive restore must not publish bodies with partial collision")
+require_source_not_contains(
+    "EffectsCore/fx_archive.cpp"
+    "Phys_CreateBodyFromState(PHYS_WORLD_FX"
+    "FX archive restore must use the checked body-plus-model transaction")
 require_source_contains(
     "cgame_mp/dedicated_cgame.cpp"
     "{ \"code_post_gfx_mp\", 2, 0 }"
@@ -6186,16 +6344,6 @@ require_source_ordered(
     "FX_ValidateArchiveBodyState(\n                physicsEntries[index].state)"
     "if (!FX_BeginArchive(system))"
     "restore must validate every staged physics body before acquiring live ownership")
-require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "FX_CaptureReplacedArchivePhysics("
-    "FX_CreateArchivePhysics("
-    "restore must retain replaced bodies before creating replacement bodies")
-require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "FX_CreateArchivePhysics("
-    "memcpy(systemBuffers, restoredBuffers, sizeof(*systemBuffers));"
-    "restore must create all staged physics before publishing staged buffers")
 require_source_matches(
     "EffectsCore/fx_archive.cpp"
     "Sys_EnterCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;][ \t\r\n]*memcpy\\(systemBuffers,[ \t]*restoredBuffers,[ \t]*sizeof\\(\\*systemBuffers\\)\\)[ \t]*[;][ \t\r\n]*memcpy\\(system,[ \t]*&restoredSystem,[ \t]*sizeof\\(\\*system\\)\\)[ \t]*[;][ \t\r\n]*FX_LinkSystemBuffers\\(system,[ \t]*systemBuffers\\)[ \t]*[;][ \t\r\n]*const[ \t]+bool[ \t]+restoredExclusiveState[ \t]*=[ \t\r\n]*FX_RestoreArchiveExclusiveState\\(system\\)[ \t]*[;][ \t\r\n]*Sys_LeaveCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;]"

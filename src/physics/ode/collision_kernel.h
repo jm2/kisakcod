@@ -33,6 +33,7 @@ internal data structures and functions for collision detection.
 #include <ode/contact.h>
 #include <ode/collision.h>
 #include "objects.h"
+#include "user_geom_storage.h"
 #include <universal/assertive.h>
 
 #include <new>
@@ -224,7 +225,8 @@ struct dxSimpleSpace : public dxSpace {
 };
 
 struct dxUserGeom : public dxGeom {
-    char user_data[16]; // MOD
+    alignas(physics::ode::kUserGeomClassDataAlignment)
+        unsigned char user_data[physics::ode::kUserGeomClassDataBytes]; // MOD
 
     dxUserGeom(int class_num = dFirstUserClass, dxSpace *space = nullptr, dxBody *body = nullptr); // MOD
 
@@ -273,6 +275,13 @@ struct dxGeomTransform : public dxGeom {
     void computeFinalTx();
     void Destruct();
 };
+
+static_assert(
+    sizeof(dxUserGeom) <= sizeof(dxGeomTransform),
+    "ODE geom-pool slots must hold the native-width user-geom payload");
+static_assert(
+    alignof(dxUserGeom) <= alignof(dxGeomTransform),
+    "ODE geom-pool slots must satisfy native user-geom alignment");
 
 dxGeom *ODE_CreateGeom(int classnum, dxSpace *space, dxBody *body);
 dxGeom *ODE_AllocateGeom();

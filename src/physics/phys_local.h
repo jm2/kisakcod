@@ -10,6 +10,8 @@
 #include <universal/memfile.h>
 #include <universal/pool_allocator.h>
 
+#include <cstdint>
+
 enum $B7C75F5EC8C61F46B3FEFC285D8D85F1 : __int32
 {
     GEOM_CLASS_BRUSHMODEL = 0xB,
@@ -44,6 +46,15 @@ struct BodyState // sizeof=0x70
     int timeLastAsleep;
     int type;
     int underwater;
+};
+
+enum class PhysBodyModelCreateStatus : std::uint8_t
+{
+    Success,
+    InvalidArgument,
+    BodyResourcesExhausted,
+    PrimaryGeomAllocationFailed,
+    TransformGeomAllocationFailed,
 };
 
 enum physStuckState_t : __int32
@@ -281,6 +292,8 @@ struct BrushInfo // sizeof=0x10
     BrushInfo_u u;
     float centerOfMass[3];
 };
+RUNTIME_SIZE(BrushInfo, 0x10, 0x18);
+RUNTIME_OFFSET(BrushInfo, centerOfMass, 0x4, 0x8);
 
 // phys_ode
 struct ScreenPlacement;
@@ -303,6 +316,14 @@ dxBody *__cdecl Phys_ObjCreateAxis(
     float *velocity,
     const PhysPreset *physPreset);
 dxBody *__cdecl Phys_CreateBodyFromState(PhysWorld worldIndex, const BodyState *state);
+// Creates a fresh body and all collision owned by model as one transaction.
+// Failure leaves *outBody null and releases every body/user-data/geom resource;
+// success transfers the complete body to the caller.
+[[nodiscard]] PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromStateAndXModel(
+    PhysWorld worldIndex,
+    const BodyState *state,
+    const XModel *model,
+    dxBody **outBody) noexcept;
 void __cdecl Phys_BodyGetCenterOfMass(dxBody *body, float *outPosition);
 void __cdecl Phys_BodyAddGeomAndSetMass(
     PhysWorld worldIndex,

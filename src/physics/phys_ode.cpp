@@ -1,4 +1,5 @@
 #include "phys_local.h"
+#include "phys_resource_pair.h"
 #include <qcommon/sys_time.h>
 #include <qcommon/mem_track.h>
 #include <aim_assist/aim_assist.h>
@@ -11,6 +12,8 @@
 #include "ode/odeext.h"
 #include <universal/profile.h>
 #include "ode/collision_transform.h"
+
+#include <cmath>
 
 #ifdef KISAK_DEDI_HEADLESS
 #define CG_DrawStringExt(...) ((void)0)
@@ -463,6 +466,44 @@ dxBody *__cdecl Phys_ObjCreateAxis(
     return Phys_CreateBodyFromState(worldIndex, &state);
 }
 
+struct PhysBodyResourceContext
+{
+    dxWorld *world;
+};
+
+static physics::allocation::ResourceHandle Phys_CreateBodyResource(
+    void *opaque) noexcept
+{
+    const auto *const context =
+        static_cast<const PhysBodyResourceContext *>(opaque);
+    return context && context->world
+        ? dBodyCreate(context->world)
+        : nullptr;
+}
+
+static physics::allocation::ResourceHandle Phys_CreateBodyUserDataResource(
+    void *,
+    physics::allocation::ResourceHandle) noexcept
+{
+#ifdef USE_POOL_ALLOCATOR
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    PhysObjUserData *const userData =
+        reinterpret_cast<PhysObjUserData *>(Pool_Alloc(&physGlob.userDataPool));
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    return userData;
+#else
+    return malloc(sizeof(PhysObjUserData));
+#endif
+}
+
+static void Phys_DestroyBodyResource(
+    void *,
+    physics::allocation::ResourceHandle body) noexcept
+{
+    if (body)
+        dBodyDestroy(static_cast<dxBody *>(body));
+}
+
 dxBody *__cdecl Phys_CreateBodyFromState(PhysWorld worldIndex, const BodyState *state)
 {
     float *savedPos; // [esp+14h] [ebp-A4h]
@@ -472,64 +513,83 @@ dxBody *__cdecl Phys_CreateBodyFromState(PhysWorld worldIndex, const BodyState *
     dxBody *body; // [esp+A8h] [ebp-10h]
     float centerOfMass[3]; // [esp+ACh] [ebp-Ch] BYREF
 
-    iassert(state);
-    iassert(physGlob.world[worldIndex]);
-    iassert(physGlob.space[worldIndex]);
+    if (!state || worldIndex < PHYS_WORLD_DYNENT || worldIndex >= PHYS_WORLD_COUNT
+        || !(state->mass > 0.0f) || !std::isfinite(state->mass))
+    {
+        iassert(
+            state && worldIndex >= PHYS_WORLD_DYNENT && worldIndex < PHYS_WORLD_COUNT
+            && state->mass > 0.0f && std::isfinite(state->mass));
+        return nullptr;
+    }
+    if (!physGlob.world[worldIndex] || !physGlob.space[worldIndex])
+    {
+        iassert(physGlob.world[worldIndex] && physGlob.space[worldIndex]);
+        return nullptr;
+    }
 
     dWorldSetAutoDisableLinearThreshold(physGlob.world[worldIndex], phys_autoDisableLinear->current.value);
     dWorldSetAutoDisableAngularThreshold(physGlob.world[worldIndex], phys_autoDisableAngular->current.value);
     dWorldSetAutoDisableTime(physGlob.world[worldIndex], phys_autoDisableTime->current.value);
-    body = dBodyCreate(physGlob.world[worldIndex]);
-
-    if (body)
-    {
-        if (worldIndex == PHYS_WORLD_RAGDOLL)
-            dBodySetFiniteRotationMode(body, 1);
-#ifdef USE_POOL_ALLOCATOR
-        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-        userData = (PhysObjUserData *)Pool_Alloc(&physGlob.userDataPool);
-        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
-#else
-        userData = (PhysObjUserData *)malloc(sizeof(PhysObjUserData));
-#endif
-        iassert(userData);
-        memset((uint8_t *)userData, 0, sizeof(PhysObjUserData));
-        dBodySetData(body, userData);
-        dBodySetPosition(body, state->position[0], state->position[1], state->position[2]);
-        dBodySetLinearVel(body, state->velocity[0], state->velocity[1], state->velocity[2]);
-        dBodySetAngularVel(body, state->angVelocity[0], state->angVelocity[1], state->angVelocity[2]);
-        Phys_AxisToOdeMatrix3(state->rotation, rotMatrix);
-        dBodySetRotation(body, rotMatrix);
-        centerOfMass[0] = -state->centerOfMassOffset[0];
-        centerOfMass[1] = -state->centerOfMassOffset[1];
-        centerOfMass[2] = -state->centerOfMassOffset[2];
-        geomState.isOriented = 0;
-        geomState.type = PHYS_GEOM_NONE;
-        userData->translation[0] = state->centerOfMassOffset[0];
-        userData->translation[1] = state->centerOfMassOffset[1];
-        userData->translation[2] = state->centerOfMassOffset[2];
-        Phys_BodyAddGeomAndSetMass(worldIndex, body, state->mass, &geomState, centerOfMass);
-        userData->body = body;
-        savedPos = userData->savedPos;
-        userData->savedPos[0] = state->position[0];
-        savedPos[1] = state->position[1];
-        savedPos[2] = state->position[2];
-        qmemcpy(userData->savedRot, state->rotation, sizeof(userData->savedRot));
-        userData->bounce = state->bounce;
-        userData->friction = state->friction;
-        userData->state = (physStuckState_t)state->state;
-        userData->timeLastAsleep = state->timeLastAsleep;
-        Phys_BodyGetCenterOfMass(body, userData->awakeTooLongLastPos);
-        userData->sndClass = state->type;
-        if (!LOBYTE(state->underwater))
-            dBodyDisable(body);
-        return body;
-    }
-    else
+    PhysBodyResourceContext resourceContext{physGlob.world[worldIndex]};
+    const physics::allocation::ResourcePairCallbacks resourceCallbacks{
+        &resourceContext,
+        Phys_CreateBodyResource,
+        Phys_CreateBodyUserDataResource,
+        Phys_DestroyBodyResource,
+    };
+    const physics::allocation::ResourcePairResult resources =
+        physics::allocation::TryCreateResourcePair(resourceCallbacks, true);
+    if (resources.status == physics::allocation::ResourcePairStatus::PrimaryUnavailable)
     {
         Com_PrintWarning(20, "Maximum number of physics bodies exceeded (more than %i)\n", 512);
-        return 0;
+        return nullptr;
     }
+    if (resources.status == physics::allocation::ResourcePairStatus::CompanionUnavailable)
+    {
+        Com_PrintWarning(20, "Maximum number of physics body user-data records exceeded (more than %i)\n", 512);
+        return nullptr;
+    }
+    if (resources.status != physics::allocation::ResourcePairStatus::Success)
+    {
+        iassert(resources.status == physics::allocation::ResourcePairStatus::Success);
+        return nullptr;
+    }
+
+    body = static_cast<dxBody *>(resources.primary);
+    userData = static_cast<PhysObjUserData *>(resources.companion);
+    if (worldIndex == PHYS_WORLD_RAGDOLL)
+        dBodySetFiniteRotationMode(body, 1);
+    memset((uint8_t *)userData, 0, sizeof(PhysObjUserData));
+    dBodySetData(body, userData);
+    dBodySetPosition(body, state->position[0], state->position[1], state->position[2]);
+    dBodySetLinearVel(body, state->velocity[0], state->velocity[1], state->velocity[2]);
+    dBodySetAngularVel(body, state->angVelocity[0], state->angVelocity[1], state->angVelocity[2]);
+    Phys_AxisToOdeMatrix3(state->rotation, rotMatrix);
+    dBodySetRotation(body, rotMatrix);
+    centerOfMass[0] = -state->centerOfMassOffset[0];
+    centerOfMass[1] = -state->centerOfMassOffset[1];
+    centerOfMass[2] = -state->centerOfMassOffset[2];
+    geomState.isOriented = 0;
+    geomState.type = PHYS_GEOM_NONE;
+    userData->translation[0] = state->centerOfMassOffset[0];
+    userData->translation[1] = state->centerOfMassOffset[1];
+    userData->translation[2] = state->centerOfMassOffset[2];
+    Phys_BodyAddGeomAndSetMass(worldIndex, body, state->mass, &geomState, centerOfMass);
+    userData->body = body;
+    savedPos = userData->savedPos;
+    userData->savedPos[0] = state->position[0];
+    savedPos[1] = state->position[1];
+    savedPos[2] = state->position[2];
+    qmemcpy(userData->savedRot, state->rotation, sizeof(userData->savedRot));
+    userData->bounce = state->bounce;
+    userData->friction = state->friction;
+    userData->state = (physStuckState_t)state->state;
+    userData->timeLastAsleep = state->timeLastAsleep;
+    Phys_BodyGetCenterOfMass(body, userData->awakeTooLongLastPos);
+    userData->sndClass = state->type;
+    if (!LOBYTE(state->underwater))
+        dBodyDisable(body);
+    return body;
 }
 
 void __cdecl Phys_BodyGetCenterOfMass(dxBody *body, float *outPosition)
@@ -542,24 +602,113 @@ void __cdecl Phys_BodyGetCenterOfMass(dxBody *body, float *outPosition)
     outPosition[2] = bodyPosition[2];
 }
 
-void __cdecl Phys_BodyAddGeomAndSetMass(
+struct PhysGeomResourceContext
+{
+    dxSpace *space;
+    dxBody *body;
+    const GeomState *geomState;
+    const float *centerOfMass;
+};
+
+static physics::allocation::ResourceHandle Phys_CreatePrimaryGeomResource(
+    void *opaque) noexcept
+{
+    const auto *const context =
+        static_cast<const PhysGeomResourceContext *>(opaque);
+    if (!context || !context->space || !context->body
+        || !context->geomState || !context->centerOfMass)
+    {
+        return nullptr;
+    }
+
+    const GeomState *const geomState = context->geomState;
+    switch (geomState->type)
+    {
+    case PHYS_GEOM_BOX:
+        return dCreateBox(
+            context->space,
+            context->body,
+            geomState->u.boxState.extent[0],
+            geomState->u.boxState.extent[1],
+            geomState->u.boxState.extent[2]);
+    case PHYS_GEOM_BRUSHMODEL:
+        return Phys_CreateBrushmodelGeom(
+            context->space,
+            context->body,
+            geomState->u.brushState.u.brushModel,
+            context->centerOfMass);
+    case PHYS_GEOM_BRUSH:
+        return Phys_CreateBrushGeom(
+            context->space,
+            context->body,
+            geomState->u.brushState.u.brush,
+            context->centerOfMass);
+    case PHYS_GEOM_CYLINDER:
+        return Phys_CreateCylinderGeom(
+            context->space,
+            context->body,
+            &geomState->u.cylinderState);
+    case PHYS_GEOM_CAPSULE:
+        return Phys_CreateCapsuleGeom(
+            context->space,
+            context->body,
+            &geomState->u.cylinderState);
+    default:
+        return nullptr;
+    }
+}
+
+static physics::allocation::ResourceHandle Phys_CreateTransformGeomResource(
+    void *opaque,
+    physics::allocation::ResourceHandle) noexcept
+{
+    const auto *const context =
+        static_cast<const PhysGeomResourceContext *>(opaque);
+    return context && context->space && context->body
+        ? dCreateGeomTransform(context->space, context->body)
+        : nullptr;
+}
+
+static void Phys_DestroyPrimaryGeomResource(
+    void *,
+    physics::allocation::ResourceHandle geom) noexcept
+{
+    if (geom)
+        ODE_GeomDestruct(static_cast<dxGeom *>(geom));
+}
+
+static PhysBodyModelCreateStatus Phys_TryBodyAddGeomAndSetMass(
     PhysWorld worldIndex,
     dxBody *body,
     float totalMass,
     GeomState *geomState,
-    const float *centerOfMass)
+    const float *centerOfMass,
+    bool reportFailure) noexcept
 {
     dxGeom *geom; // [esp+18h] [ebp-54h]
     dMass mass; // [esp+1Ch] [ebp-50h] BYREF
     dxGeom *geomTransform; // [esp+68h] [ebp-4h]
 
+    if (worldIndex < PHYS_WORLD_DYNENT || worldIndex >= PHYS_WORLD_COUNT
+        || !body || !geomState || !centerOfMass
+        || !physGlob.world[worldIndex] || !physGlob.space[worldIndex]
+        || body->world != physGlob.world[worldIndex])
+    {
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    }
     dMassSetZero(&mass);
-    if (totalMass <= 0.0)
-        MyAssertHandler(".\\physics\\phys_ode.cpp", 498, 0, "%s", "totalMass > 0");
+    if (!(totalMass > 0.0f) || !std::isfinite(totalMass))
+    {
+        if (reportFailure)
+            MyAssertHandler(".\\physics\\phys_ode.cpp", 498, 0, "%s", "totalMass > 0");
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    }
     if (!dBodyGetData(body))
-        MyAssertHandler(".\\physics\\phys_ode.cpp", 501, 0, "%s", "userData");
-    geom = 0;
-    Phys_AdjustForNewCenterOfMass(body, centerOfMass);
+    {
+        if (reportFailure)
+            MyAssertHandler(".\\physics\\phys_ode.cpp", 501, 0, "%s", "userData");
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    }
     switch (geomState->type)
     {
     case PHYS_GEOM_NONE:
@@ -570,16 +719,8 @@ void __cdecl Phys_BodyAddGeomAndSetMass(
             &mass,
             totalMass,
             geomState->u.boxState.extent[0],
-            geomState->u.cylinderState.radius,
-            geomState->u.cylinderState.halfHeight);
-        geom = dCreateBox(
-            physGlob.space[worldIndex],
-            body,
-            geomState->u.boxState.extent[0],
-            geomState->u.cylinderState.radius,
-            geomState->u.cylinderState.halfHeight);
-        if (!geom)
-            Com_PrintWarning(20, "Maximum number of physics geoms exceeded\n");
+            geomState->u.boxState.extent[1],
+            geomState->u.boxState.extent[2]);
         break;
     case PHYS_GEOM_BRUSHMODEL:
         Phys_MassSetBrushTotal(
@@ -587,13 +728,6 @@ void __cdecl Phys_BodyAddGeomAndSetMass(
             totalMass,
             geomState->u.brushState.momentsOfInertia,
             geomState->u.brushState.productsOfInertia);
-        geom = Phys_CreateBrushmodelGeom(
-            physGlob.space[worldIndex],
-            body,
-            geomState->u.brushState.u.brushModel,
-            centerOfMass);
-        if (!geom)
-            Com_PrintWarning(20, "Maximum number of physics geoms exceeded\n");
         break;
     case PHYS_GEOM_BRUSH:
         Phys_MassSetBrushTotal(
@@ -601,9 +735,6 @@ void __cdecl Phys_BodyAddGeomAndSetMass(
             totalMass,
             geomState->u.brushState.momentsOfInertia,
             geomState->u.brushState.productsOfInertia);
-        geom = Phys_CreateBrushGeom(physGlob.space[worldIndex], body, geomState->u.brushState.u.brush, centerOfMass);
-        if (!geom)
-            Com_PrintWarning(20, "Maximum number of physics geoms exceeded\n");
         break;
     case PHYS_GEOM_CYLINDER:
         dMassSetCylinderTotal(
@@ -612,9 +743,6 @@ void __cdecl Phys_BodyAddGeomAndSetMass(
             geomState->u.cylinderState.direction,
             geomState->u.cylinderState.radius,
             geomState->u.cylinderState.halfHeight);
-        geom = Phys_CreateCylinderGeom(physGlob.space[worldIndex], body, &geomState->u.cylinderState);
-        if (!geom)
-            Com_PrintWarning(20, "Maximum number of physics geoms exceeded\n");
         break;
     case PHYS_GEOM_CAPSULE:
         dMassSetCappedCylinderTotal(
@@ -623,29 +751,80 @@ void __cdecl Phys_BodyAddGeomAndSetMass(
             geomState->u.cylinderState.direction,
             geomState->u.cylinderState.radius,
             geomState->u.cylinderState.halfHeight);
-        geom = Phys_CreateCapsuleGeom(physGlob.space[worldIndex], body, &geomState->u.cylinderState);
-        if (!geom)
-            Com_PrintWarning(20, "Maximum number of physics geoms exceeded\n");
         break;
     default:
-        if (!alwaysfails)
+        if (reportFailure && !alwaysfails)
             MyAssertHandler(".\\physics\\phys_ode.cpp", 548, 0, "invalid geometry type");
-        break;
+        return PhysBodyModelCreateStatus::InvalidArgument;
     }
-    if (geomState->isOriented && geom)
+    if (geomState->type == PHYS_GEOM_NONE)
     {
-        geomTransform = dCreateGeomTransform(physGlob.space[worldIndex], body);
-        if (geomTransform)
-        {
-            dGeomTransformSetGeom(geomTransform, geom);
-            ODE_GeomTransformSetRotation(geomTransform, vec3_origin, geomState->orientation);
-        }
-        else
-        {
-            Com_PrintError(20, "Maximum number of physics geoms exceeded\n");
-        }
+        Phys_AdjustForNewCenterOfMass(body, centerOfMass);
+        dBodySetMass(body, &mass);
+        return PhysBodyModelCreateStatus::Success;
     }
+
+    PhysGeomResourceContext resourceContext{
+        physGlob.space[worldIndex], body, geomState, centerOfMass};
+    const physics::allocation::ResourcePairCallbacks resourceCallbacks{
+        &resourceContext,
+        Phys_CreatePrimaryGeomResource,
+        Phys_CreateTransformGeomResource,
+        Phys_DestroyPrimaryGeomResource,
+    };
+    const physics::allocation::ResourcePairResult resources =
+        physics::allocation::TryCreateResourcePair(
+            resourceCallbacks, geomState->isOriented);
+    if (resources.status == physics::allocation::ResourcePairStatus::PrimaryUnavailable)
+    {
+        if (reportFailure)
+            Com_PrintWarning(20, "Maximum number of physics geoms exceeded\n");
+        return PhysBodyModelCreateStatus::PrimaryGeomAllocationFailed;
+    }
+    if (resources.status == physics::allocation::ResourcePairStatus::CompanionUnavailable)
+    {
+        if (reportFailure)
+            Com_PrintError(20, "Maximum number of physics geoms exceeded\n");
+        return PhysBodyModelCreateStatus::TransformGeomAllocationFailed;
+    }
+    if (resources.status != physics::allocation::ResourcePairStatus::Success)
+    {
+        if (reportFailure)
+            MyAssertHandler(".\\physics\\phys_ode.cpp", 548, 0, "invalid geometry allocation callbacks");
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    }
+
+    // Keep the caller's body state untouched until every fallible geometry
+    // allocation has succeeded. Newly attached geoms follow the body when its
+    // center moves; the transform offset is then initialized below.
+    Phys_AdjustForNewCenterOfMass(body, centerOfMass);
+    geom = static_cast<dxGeom *>(resources.primary);
+    geomTransform = static_cast<dxGeom *>(resources.companion);
+    if (geomTransform)
+    {
+        dGeomTransformSetGeom(geomTransform, geom);
+        ODE_GeomTransformSetRotation(
+            geomTransform, vec3_origin, geomState->orientation);
+    }
+    // Body movement can promote pre-existing clean geoms in a simple space.
+    // Reinsert the completed outer geom so successful construction retains
+    // the legacy adjust-then-create collision traversal order.
+    dxGeom *const outerGeom = geomTransform ? geomTransform : geom;
+    dSpaceRemove(physGlob.space[worldIndex], outerGeom);
+    dSpaceAdd(physGlob.space[worldIndex], outerGeom);
     dBodySetMass(body, &mass);
+    return PhysBodyModelCreateStatus::Success;
+}
+
+void __cdecl Phys_BodyAddGeomAndSetMass(
+    PhysWorld worldIndex,
+    dxBody *body,
+    float totalMass,
+    GeomState *geomState,
+    const float *centerOfMass)
+{
+    (void)Phys_TryBodyAddGeomAndSetMass(
+        worldIndex, body, totalMass, geomState, centerOfMass, true);
 }
 
 void __cdecl Phys_AdjustForNewCenterOfMass(dxBody *body, const float *newRelCenterOfMass)
@@ -846,7 +1025,12 @@ void __cdecl Phys_ObjSetOrientation(
     dBodySetRotation(body, newOdeRotation);
 }
 
-void __cdecl Phys_ObjAddGeomBox(PhysWorld worldIndex, dxBody *id, const float *boxMin, const float *boxMax)
+static PhysBodyModelCreateStatus Phys_TryObjAddGeomBox(
+    PhysWorld worldIndex,
+    dxBody *id,
+    const float *boxMin,
+    const float *boxMax,
+    bool reportFailure) noexcept
 {
     GeomState geomState; // [esp+Ch] [ebp-A0h] BYREF
     dxBody *body; // [esp+54h] [ebp-58h]
@@ -854,31 +1038,47 @@ void __cdecl Phys_ObjAddGeomBox(PhysWorld worldIndex, dxBody *id, const float *b
     dMass mass; // [esp+64h] [ebp-48h] BYREF
 
     dMassSetZero(&mass);
-    if (!id)
-        MyAssertHandler(".\\physics\\phys_ode.cpp", 731, 0, "%s", "id");
+    if (!id || !boxMin || !boxMax)
+    {
+        if (reportFailure)
+            MyAssertHandler(".\\physics\\phys_ode.cpp", 731, 0, "%s", "id && boxMin && boxMax");
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    }
     body = id;
     geomState.type = PHYS_GEOM_BOX;
     Vec3Avg(boxMin, boxMax, centerOfMass);
     Vec3Sub(boxMax, boxMin, geomState.u.boxState.extent);
     geomState.isOriented = 0;
     dBodyGetMass(body, &mass);
-    Phys_BodyAddGeomAndSetMass(worldIndex, body, mass.mass, &geomState, centerOfMass);
+    return Phys_TryBodyAddGeomAndSetMass(
+        worldIndex, body, mass.mass, &geomState, centerOfMass, reportFailure);
 }
 
-void __cdecl Phys_ObjAddGeomBoxRotated(
+void __cdecl Phys_ObjAddGeomBox(PhysWorld worldIndex, dxBody *id, const float *boxMin, const float *boxMax)
+{
+    (void)Phys_TryObjAddGeomBox(worldIndex, id, boxMin, boxMax, true);
+}
+
+static PhysBodyModelCreateStatus Phys_TryObjAddGeomBoxRotated(
     PhysWorld worldIndex,
     dxBody *id,
     const float *center,
     const float *halfLengths,
-    const float (*orientation)[3])
+    const float (*orientation)[3],
+    bool reportFailure) noexcept
 {
     GeomState geomState; // [esp+1Ch] [ebp-98h] BYREF
     dxBody *body; // [esp+68h] [ebp-4Ch]
     dMass mass; // [esp+6Ch] [ebp-48h] BYREF
 
     dMassSetZero(&mass);
-    if (!id)
-        MyAssertHandler(".\\physics\\phys_ode.cpp", 753, 0, "%s", "id");
+    if (!id || !center || !halfLengths || !orientation)
+    {
+        if (reportFailure)
+            MyAssertHandler(
+                ".\\physics\\phys_ode.cpp", 753, 0, "%s", "id && center && halfLengths && orientation");
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    }
     body = id;
     geomState.type = PHYS_GEOM_BOX;
     Vec3Scale(halfLengths, 2.0, geomState.u.boxState.extent);
@@ -893,7 +1093,19 @@ void __cdecl Phys_ObjAddGeomBoxRotated(
     geomState.orientation[2][1] = (*orientation)[7];
     geomState.orientation[2][2] = (*orientation)[8];
     dBodyGetMass(body, &mass);
-    Phys_BodyAddGeomAndSetMass(worldIndex, body, mass.mass, &geomState, center);
+    return Phys_TryBodyAddGeomAndSetMass(
+        worldIndex, body, mass.mass, &geomState, center, reportFailure);
+}
+
+void __cdecl Phys_ObjAddGeomBoxRotated(
+    PhysWorld worldIndex,
+    dxBody *id,
+    const float *center,
+    const float *halfLengths,
+    const float (*orientation)[3])
+{
+    (void)Phys_TryObjAddGeomBoxRotated(
+        worldIndex, id, center, halfLengths, orientation, true);
 }
 
 void __cdecl Phys_ObjAddGeomBrushModel(
@@ -912,8 +1124,8 @@ void __cdecl Phys_ObjAddGeomBrushModel(
     body = id;
     geomState.type = PHYS_GEOM_BRUSHMODEL;
     geomState.u.brushState.u.brushModel = brushModel;
-    geomState.u.cylinderState.radius = physMass->momentsOfInertia[0];
-    geomState.u.cylinderState.halfHeight = physMass->momentsOfInertia[1];
+    geomState.u.brushState.momentsOfInertia[0] = physMass->momentsOfInertia[0];
+    geomState.u.brushState.momentsOfInertia[1] = physMass->momentsOfInertia[1];
     geomState.u.brushState.momentsOfInertia[2] = physMass->momentsOfInertia[2];
     geomState.u.brushState.productsOfInertia[0] = physMass->productsOfInertia[0];
     geomState.u.brushState.productsOfInertia[1] = physMass->productsOfInertia[1];
@@ -923,27 +1135,42 @@ void __cdecl Phys_ObjAddGeomBrushModel(
     Phys_BodyAddGeomAndSetMass(worldIndex, id, mass.mass, &geomState, physMass->centerOfMass);
 }
 
-void __cdecl Phys_ObjAddGeomBrush(PhysWorld worldIndex, dxBody *id, const cbrush_t *brush, const PhysMass *physMass)
+static PhysBodyModelCreateStatus Phys_TryObjAddGeomBrush(
+    PhysWorld worldIndex,
+    dxBody *id,
+    const cbrush_t *brush,
+    const PhysMass *physMass,
+    bool reportFailure) noexcept
 {
     GeomState geomState; // [esp+14h] [ebp-98h] BYREF
     dxBody *body; // [esp+60h] [ebp-4Ch]
     dMass mass; // [esp+64h] [ebp-48h] BYREF
 
     dMassSetZero(&mass);
-    if (!id)
-        MyAssertHandler(".\\physics\\phys_ode.cpp", 798, 0, "%s", "id");
+    if (!id || !brush || !physMass)
+    {
+        if (reportFailure)
+            MyAssertHandler(".\\physics\\phys_ode.cpp", 798, 0, "%s", "id && brush && physMass");
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    }
     body = id;
     geomState.type = PHYS_GEOM_BRUSH;
-    geomState.u.cylinderState.direction = (int)brush;
-    geomState.u.cylinderState.radius = physMass->momentsOfInertia[0];
-    geomState.u.cylinderState.halfHeight = physMass->momentsOfInertia[1];
+    geomState.u.brushState.u.brush = brush;
+    geomState.u.brushState.momentsOfInertia[0] = physMass->momentsOfInertia[0];
+    geomState.u.brushState.momentsOfInertia[1] = physMass->momentsOfInertia[1];
     geomState.u.brushState.momentsOfInertia[2] = physMass->momentsOfInertia[2];
     geomState.u.brushState.productsOfInertia[0] = physMass->productsOfInertia[0];
     geomState.u.brushState.productsOfInertia[1] = physMass->productsOfInertia[1];
     geomState.u.brushState.productsOfInertia[2] = physMass->productsOfInertia[2];
     geomState.isOriented = 0;
     dBodyGetMass(id, &mass);
-    Phys_BodyAddGeomAndSetMass(worldIndex, id, mass.mass, &geomState, physMass->centerOfMass);
+    return Phys_TryBodyAddGeomAndSetMass(
+        worldIndex, id, mass.mass, &geomState, physMass->centerOfMass, reportFailure);
+}
+
+void __cdecl Phys_ObjAddGeomBrush(PhysWorld worldIndex, dxBody *id, const cbrush_t *brush, const PhysMass *physMass)
+{
+    (void)Phys_TryObjAddGeomBrush(worldIndex, id, brush, physMass, true);
 }
 
 void __cdecl Phys_ObjAddGeomCylinder(PhysWorld worldIndex, dxBody *id, const float *boxMin, const float *boxMax)
@@ -1007,14 +1234,15 @@ void __cdecl Phys_ObjAddGeomCylinderDirection(
     Phys_BodyAddGeomAndSetMass(worldIndex, body, mass.mass, &geomState, centerOfMass);
 }
 
-void __cdecl Phys_ObjAddGeomCylinderRotated(
+static PhysBodyModelCreateStatus Phys_TryObjAddGeomCylinderRotated(
     PhysWorld worldIndex,
     dxBody *id,
     int direction,
     float radius,
     float halfHeight,
     const float *center,
-    const float (*orientation)[3])
+    const float (*orientation)[3],
+    bool reportFailure) noexcept
 {
     GeomState geomState; // [esp+1Ch] [ebp-98h] BYREF
     dxBody *body; // [esp+64h] [ebp-50h]
@@ -1022,14 +1250,19 @@ void __cdecl Phys_ObjAddGeomCylinderRotated(
     dMass mass; // [esp+6Ch] [ebp-48h] BYREF
 
     dMassSetZero(&mass);
-    if (!id)
-        MyAssertHandler(".\\physics\\phys_ode.cpp", 877, 0, "%s", "id");
+    if (!id || !center || !orientation || direction < 0 || direction >= 3)
+    {
+        if (reportFailure)
+        {
+            MyAssertHandler(
+                ".\\physics\\phys_ode.cpp", 877, 0, "%s", "id && center && orientation && direction >= 0 && direction < 3");
+        }
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    }
     body = id;
     geomState.type = PHYS_GEOM_CYLINDER;
     cyl = &geomState.u.cylinderState;
     geomState.u.cylinderState.direction = direction + 1;
-    if (direction + 1 < 1 || cyl->direction > 3)
-        MyAssertHandler(".\\physics\\phys_ode.cpp", 885, 0, "%s", "cyl->direction >= 1 && cyl->direction <= 3");
     cyl->radius = radius;
     cyl->halfHeight = halfHeight;
     geomState.isOriented = 1;
@@ -1043,7 +1276,21 @@ void __cdecl Phys_ObjAddGeomCylinderRotated(
     geomState.orientation[2][1] = (*orientation)[7];
     geomState.orientation[2][2] = (*orientation)[8];
     dBodyGetMass(body, &mass);
-    Phys_BodyAddGeomAndSetMass(worldIndex, body, mass.mass, &geomState, center);
+    return Phys_TryBodyAddGeomAndSetMass(
+        worldIndex, body, mass.mass, &geomState, center, reportFailure);
+}
+
+void __cdecl Phys_ObjAddGeomCylinderRotated(
+    PhysWorld worldIndex,
+    dxBody *id,
+    int direction,
+    float radius,
+    float halfHeight,
+    const float *center,
+    const float (*orientation)[3])
+{
+    (void)Phys_TryObjAddGeomCylinderRotated(
+        worldIndex, id, direction, radius, halfHeight, center, orientation, true);
 }
 
 void __cdecl Phys_ObjAddGeomCapsule(
@@ -1075,39 +1322,74 @@ void __cdecl Phys_ObjAddGeomCapsule(
     Phys_BodyAddGeomAndSetMass(worldIndex, body, mass.mass, &geomState, centerOfMass);
 }
 
-void __cdecl Phys_ObjSetCollisionFromXModel(const XModel *model, PhysWorld worldIndex, dxBody *physId)
+static PhysBodyModelCreateStatus Phys_TryBuildCollisionFromXModel(
+    const XModel *model,
+    PhysWorld worldIndex,
+    dxBody *physId,
+    bool stopOnFailure,
+    bool reportFailure) noexcept
 {
     float mins[3]; // [esp+10h] [ebp-24h] BYREF
     PhysGeomInfo *geom; // [esp+1Ch] [ebp-18h]
     float maxs[3]; // [esp+20h] [ebp-14h] BYREF
     PhysGeomList *geomList; // [esp+2Ch] [ebp-8h]
     uint32_t geomIndex; // [esp+30h] [ebp-4h]
+    PhysBodyModelCreateStatus firstFailure = PhysBodyModelCreateStatus::Success;
+
+    if (!model || !physId)
+    {
+        if (reportFailure)
+            MyAssertHandler(".\\physics\\phys_ode.cpp", 956, 0, "%s", "model && physId");
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    }
 
     if (model->physGeoms)
     {
         geomList = model->physGeoms;
+        if (geomList->count != 0 && !geomList->geoms)
+            return PhysBodyModelCreateStatus::InvalidArgument;
         geomIndex = 0;
         geom = geomList->geoms;
         while (geomIndex < geomList->count)
         {
+            PhysBodyModelCreateStatus status;
             if (geom->brush)
             {
-                Phys_ObjAddGeomBrush(worldIndex, physId, (const cbrush_t *)geom->brush, &geomList->mass);
+                status = Phys_TryObjAddGeomBrush(
+                    worldIndex,
+                    physId,
+                    (const cbrush_t *)geom->brush,
+                    &geomList->mass,
+                    reportFailure);
             }
             else if (geom->type == 1)
             {
-                Phys_ObjAddGeomBoxRotated(worldIndex, physId, geom->offset, geom->halfLengths, geom->orientation);
+                status = Phys_TryObjAddGeomBoxRotated(
+                    worldIndex,
+                    physId,
+                    geom->offset,
+                    geom->halfLengths,
+                    geom->orientation,
+                    reportFailure);
             }
             else
             {
-                Phys_ObjAddGeomCylinderRotated(
+                status = Phys_TryObjAddGeomCylinderRotated(
                     worldIndex,
                     physId,
                     0,
                     geom->halfLengths[1],
                     geom->halfLengths[0],
                     geom->offset,
-                    geom->orientation);
+                    geom->orientation,
+                    reportFailure);
+            }
+            if (status != PhysBodyModelCreateStatus::Success)
+            {
+                if (firstFailure == PhysBodyModelCreateStatus::Success)
+                    firstFailure = status;
+                if (stopOnFailure)
+                    return firstFailure;
             }
             ++geomIndex;
             ++geom;
@@ -1126,8 +1408,49 @@ void __cdecl Phys_ObjSetCollisionFromXModel(const XModel *model, PhysWorld world
             maxs[1] = 50.0;
             maxs[2] = 50.0;
         }
-        Phys_ObjAddGeomBox(worldIndex, physId, mins, maxs);
+        firstFailure = Phys_TryObjAddGeomBox(
+            worldIndex, physId, mins, maxs, reportFailure);
     }
+    return firstFailure;
+}
+
+void __cdecl Phys_ObjSetCollisionFromXModel(const XModel *model, PhysWorld worldIndex, dxBody *physId)
+{
+    (void)Phys_TryBuildCollisionFromXModel(model, worldIndex, physId, false, true);
+}
+
+PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromStateAndXModel(
+    PhysWorld worldIndex,
+    const BodyState *state,
+    const XModel *model,
+    dxBody **outBody) noexcept
+{
+    if (!outBody)
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    *outBody = nullptr;
+    if (worldIndex < PHYS_WORLD_DYNENT || worldIndex >= PHYS_WORLD_COUNT
+        || !state || !model || !physInited
+        || !physGlob.world[worldIndex] || !physGlob.space[worldIndex])
+    {
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    }
+    if (!(state->mass > 0.0f) || !std::isfinite(state->mass))
+        return PhysBodyModelCreateStatus::InvalidArgument;
+
+    dxBody *const body = Phys_CreateBodyFromState(worldIndex, state);
+    if (!body)
+        return PhysBodyModelCreateStatus::BodyResourcesExhausted;
+
+    const PhysBodyModelCreateStatus collisionStatus =
+        Phys_TryBuildCollisionFromXModel(model, worldIndex, body, true, true);
+    if (collisionStatus != PhysBodyModelCreateStatus::Success)
+    {
+        Phys_ObjDestroy(worldIndex, body);
+        return collisionStatus;
+    }
+
+    *outBody = body;
+    return PhysBodyModelCreateStatus::Success;
 }
 
 void __cdecl Phys_ObjSetAngularVelocity(dxBody *id, float *angularVel)
@@ -1217,8 +1540,17 @@ void __cdecl Phys_ObjAddForce(PhysWorld worldIndex, dxBody *id, float *worldPos,
     dBodyAddForceAtPos(id, fx, fy, fz, *worldPos, worldPos[1], worldPos[2]);
     dBodyEnable(id);
     userData = (PhysObjUserData *)dBodyGetData(id);
+    if (!userData)
+    {
+        MyAssertHandler(".\\physics\\phys_ode.cpp", 1078, 0, "%s", "userData");
+        return;
+    }
     odeWorld = ODE_BodyGetWorld(id);
-    userData->timeLastAsleep = (int)physGlob.space[51 * Phys_IndexFromODEWorld(odeWorld) - 152];
+    const int bodyWorldIndex = Phys_IndexFromODEWorld(odeWorld);
+    if (bodyWorldIndex < PHYS_WORLD_DYNENT || bodyWorldIndex >= PHYS_WORLD_COUNT)
+        return;
+    userData->timeLastAsleep =
+        physGlob.worldData[bodyWorldIndex].timeLastUpdate;
 }
 
 int __cdecl Phys_IndexFromODEWorld(dxWorld *world)

@@ -349,12 +349,15 @@ set(PHYSICS
     "${SRC_DIR}/physics/phys_contacts.cpp"
     "${SRC_DIR}/physics/phys_local.h"
     "${SRC_DIR}/physics/phys_ode.cpp"
+    "${SRC_DIR}/physics/phys_resource_pair.cpp"
+    "${SRC_DIR}/physics/phys_resource_pair.h"
     "${SRC_DIR}/physics/phys_world_collision.cpp"
 )
 
 set(PHYSICS_ODE
     "${SRC_DIR}/physics/ode/collision_kernel.cpp"
     "${SRC_DIR}/physics/ode/collision_kernel.h"
+    "${SRC_DIR}/physics/ode/user_geom_storage.h"
     "${SRC_DIR}/physics/ode/collision_quadtreespace.cpp"
     "${SRC_DIR}/physics/ode/collision_space.cpp"
     "${SRC_DIR}/physics/ode/collision_space_internal.h"

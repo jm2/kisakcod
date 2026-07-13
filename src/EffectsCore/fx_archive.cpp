@@ -1273,13 +1273,17 @@ bool FX_CollectArchivePhysicsEntries(
     return true;
 }
 
-void FX_DestroyCreatedArchivePhysics(
+// The archive restore transaction owns CRITSECT_PHYSICS continuously while
+// calling the helpers below.  Keeping lock ownership at the transaction level
+// prevents staged bodies, which ODE links into its world at creation time,
+// from becoming observable between construction, FX graph publication, and
+// either commit or rollback.
+void FX_DestroyCreatedArchivePhysicsLocked(
     FxArchivePhysicsEntry *const entries,
     const std::size_t entryCount) noexcept
 {
     if (!entries)
         return;
-    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     for (std::size_t index = 0; index < entryCount; ++index)
     {
         if (entries[index].createdBody)
@@ -1288,17 +1292,15 @@ void FX_DestroyCreatedArchivePhysics(
             entries[index].createdBody = nullptr;
         }
     }
-    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 }
 
-bool FX_CaptureReplacedArchivePhysics(
+bool FX_CaptureReplacedArchivePhysicsLocked(
     FxArchivePhysicsEntry *const entries,
     const std::size_t entryCount) noexcept
 {
     if (entryCount != 0 && !entries)
         return false;
     bool valid = true;
-    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     for (std::size_t index = 0; index < entryCount; ++index)
     {
         entries[index].replacedBody =
@@ -1324,17 +1326,15 @@ bool FX_CaptureReplacedArchivePhysics(
         if (!valid)
             break;
     }
-    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     return valid;
 }
 
-void FX_DestroyReplacedArchivePhysics(
+void FX_DestroyReplacedArchivePhysicsLocked(
     FxArchivePhysicsEntry *const entries,
     const std::size_t entryCount) noexcept
 {
     if (!entries)
         return;
-    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     for (std::size_t index = 0; index < entryCount; ++index)
     {
         if (entries[index].replacedBody)
@@ -1343,10 +1343,9 @@ void FX_DestroyReplacedArchivePhysics(
             entries[index].replacedBody = nullptr;
         }
     }
-    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 }
 
-bool FX_CreateArchivePhysics(
+bool FX_CreateArchivePhysicsLocked(
     FxArchivePhysicsEntry *const entries,
     const std::size_t entryCount,
     const std::int32_t archiveTime) noexcept
@@ -1366,7 +1365,6 @@ bool FX_CreateArchivePhysics(
     }
 
     bool created = true;
-    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     const std::int32_t physicsTime =
         physGlob.worldData[PHYS_WORLD_FX].timeLastUpdate;
     if ((entryCount != 0
@@ -1379,23 +1377,22 @@ bool FX_CreateArchivePhysics(
     {
         FxArchivePhysicsEntry &entry = entries[index];
         FX_NormalizeArchiveBodyState(&entry.state, physicsTime);
-        entry.createdBody =
-            Phys_CreateBodyFromState(PHYS_WORLD_FX, &entry.state);
+        const PhysBodyModelCreateStatus bodyStatus =
+            Phys_TryCreateBodyFromStateAndXModel(
+                PHYS_WORLD_FX,
+                &entry.state,
+                entry.model,
+                &entry.createdBody);
         int encodedBody = 0;
-        const bool bodyEncoded = entry.createdBody
+        const bool bodyEncoded =
+            bodyStatus == PhysBodyModelCreateStatus::Success
             && FX_EncodeArchivedPhysicsBody(
                 entry.createdBody, &encodedBody);
-        if (bodyEncoded)
-        {
-            Phys_ObjSetCollisionFromXModel(
-                entry.model, PHYS_WORLD_FX, entry.createdBody);
-        }
         if (!bodyEncoded)
             created = false;
         else
             entry.elem->physObjId = encodedBody;
     }
-    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     return created;
 }
 }
@@ -1726,9 +1723,8 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
         return;
     }
 
-    // Nothing below this point performs archive I/O or reports ERR_DROP. New
-    // physics bodies remain private to restoredBuffers until every body is
-    // ready. The old bodies are retained until the validated state is copied.
+    // Nothing below this point performs archive I/O or reports ERR_DROP. The
+    // old bodies are retained until the validated replacement state is copied.
     FxSystem rollbackSystem{};
     Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
     std::memcpy(&rollbackSystem, system, sizeof(rollbackSystem));
@@ -1741,6 +1737,16 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     // falsely report that the old state could not be restored.
     Sys_AtomicStore(&rollbackSystem.iteratorCount, 0);
 
+    // Lock order for archive restore is archive gate/exclusive iterator, a
+    // completed FX_ALLOC snapshot interval, then PHYSICS. The snapshot lock is
+    // also a drain barrier for an allocator entrant that passed while the gate
+    // was transitioning; after it is released, gate state 2 prevents any new
+    // archive-aware entrant. This makes the archive owner the only thread that
+    // can briefly acquire FX_ALLOC beneath PHYSICS for publication or rollback.
+    // Normal paths do not nest these locks. Do not release PHYSICS until either
+    // the replacement bodies and graph are both committed or every staged body
+    // is destroyed: ODE links a body into its global world during construction.
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     std::size_t replacedPhysicsEntryCount = 0;
     bool restoreReady = FX_ArchiveEffectRingIsValid(system)
         && FX_ValidatePoolAllocationGraphState(system)
@@ -1751,10 +1757,10 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
             &replacedPhysicsEntryCount,
             false,
             nullptr)
-        && FX_CaptureReplacedArchivePhysics(
+        && FX_CaptureReplacedArchivePhysicsLocked(
             replacedPhysicsEntries,
             replacedPhysicsEntryCount)
-        && FX_CreateArchivePhysics(
+        && FX_CreateArchivePhysicsLocked(
             physicsEntries,
             physicsEntryCount,
             restoredSystem.msecNow);
@@ -1782,7 +1788,7 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
         {
             // Publication transferred ownership of the new bodies to a fully
             // validated live graph. Only now are the old bodies unreachable.
-            FX_DestroyReplacedArchivePhysics(
+            FX_DestroyReplacedArchivePhysicsLocked(
                 replacedPhysicsEntries,
                 replacedPhysicsEntryCount);
         }
@@ -1801,12 +1807,14 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
             rollbackValid = restoredRollbackExclusiveState
                 && FX_RebuildPoolAllocationStates(system)
                 && FX_ValidatePoolAllocationGraphState(system);
-            FX_DestroyCreatedArchivePhysics(
+            FX_DestroyCreatedArchivePhysicsLocked(
                 physicsEntries, physicsEntryCount);
         }
     }
     if (!statePublished)
-        FX_DestroyCreatedArchivePhysics(physicsEntries, physicsEntryCount);
+        FX_DestroyCreatedArchivePhysicsLocked(
+            physicsEntries, physicsEntryCount);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     system->isArchiving = false;
     const bool releasedArchive = FX_EndArchive(system);
     Z_Free(rollbackBuffers, 10);
