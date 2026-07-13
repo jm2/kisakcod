@@ -152,7 +152,7 @@ struct FxElem
     float baseVel[3];
     union
     {
-        int physObjId;
+        std::int32_t physObjId;
         float origin[3];
     };
     FxElem_u u;
@@ -160,6 +160,7 @@ struct FxElem
     static constexpr std::size_t HANDLE_SCALE = 4;
 };
 RUNTIME_SIZE(FxElem, 0x28, 0x28);
+RUNTIME_OFFSET(FxElem, physObjId, 0x18, 0x18);
 
 struct FxTrail
 {

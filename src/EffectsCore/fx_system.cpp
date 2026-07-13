@@ -2681,7 +2681,8 @@ bool __cdecl FX_FreePool_Generic_FxTrail_(
         allocationState,
         std::forward<BEFORE_PUBLISH>(beforePublish));
     Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-    if (status != FxPoolMutationStatus::Success)
+    if (status != FxPoolMutationStatus::Success
+        && status != FxPoolMutationStatus::BeforePublishRejected)
     {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
@@ -2957,7 +2958,8 @@ bool __cdecl FX_FreePool_Generic_FxElem_(
         allocationState,
         std::forward<BEFORE_PUBLISH>(beforePublish));
     Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-    if (status != FxPoolMutationStatus::Success)
+    if (status != FxPoolMutationStatus::Success
+        && status != FxPoolMutationStatus::BeforePublishRejected)
     {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
@@ -2992,7 +2994,8 @@ bool __cdecl FX_FreePool_Generic_FxTrailElem_(
         allocationState,
         std::forward<BEFORE_PUBLISH>(beforePublish));
     Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-    if (status != FxPoolMutationStatus::Success)
+    if (status != FxPoolMutationStatus::Success
+        && status != FxPoolMutationStatus::BeforePublishRejected)
     {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",

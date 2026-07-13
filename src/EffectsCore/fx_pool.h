@@ -25,6 +25,7 @@ enum class FxPoolMutationStatus : std::uint8_t
     AlreadyFree,
     UninitializedAllocationState,
     AllocationStateMismatch,
+    BeforePublishRejected,
 };
 
 constexpr std::size_t FX_POOL_ALLOCATION_WORD_BITS = 64;
@@ -439,6 +440,11 @@ FxPoolMutationStatus FxPoolFreeLocked(
 {
     static_assert(std::is_nothrow_invocable_v<BEFORE_PUBLISH>,
                   "FX pool pre-publish unlink must not throw");
+    using BeforePublishResult = std::invoke_result_t<BEFORE_PUBLISH>;
+    static_assert(
+        std::is_void_v<BeforePublishResult>
+            || std::is_same_v<BeforePublishResult, bool>,
+        "FX pool pre-publish unlink must return void or bool");
     std::int32_t freedIndex = -1;
     const FxPoolMutationStatus status =
         FxPoolCanFreeLocked<ITEM_TYPE, LIMIT>(
@@ -452,7 +458,15 @@ FxPoolMutationStatus FxPoolFreeLocked(
         return status;
 
     const std::int32_t firstFree = *firstFreeIndex;
-    std::forward<BEFORE_PUBLISH>(beforePublish)();
+    if constexpr (std::is_void_v<BeforePublishResult>)
+    {
+        // Preserve the source-compatible, infallible callback contract.
+        std::forward<BEFORE_PUBLISH>(beforePublish)();
+    }
+    else if (!std::forward<BEFORE_PUBLISH>(beforePublish)())
+    {
+        return FxPoolMutationStatus::BeforePublishRejected;
+    }
     pool[freedIndex].item = ITEM_TYPE{};
     pool[freedIndex].nextFree = firstFree;
     FxPoolSetAllocationStateBit(
