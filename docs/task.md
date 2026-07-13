@@ -6,13 +6,13 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Branch: `agent/effectscore-runtime-hardening`; branch point: `0a713013`; upstream-integration
-  baseline: `2b759db`.
+- Branch: `agent/fx-missing-effect-alias`; branch point: merged EffectsCore hardening commit
+  `036ddaf8`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: finish the final EffectsCore review correction and obtain replacement all-target
-  evidence for the hardened pool, archive, draw/update/profile, lifecycle, kill,
-  garbage-collection, and rewind transaction; then complete the bounded load-object/Disk32 FX
-  boundary while the protected licensed headless smoke waits for its self-hosted runners.
+- Active work: replace the loose-file missing-effect fallback's `_DWORD` pointer rebasing and
+  hard-coded x86 offsets with a checked typed native-width alias, then begin explicit Disk32 FX
+  schemas and physics-pointer ownership while the protected licensed headless smoke waits for its
+  self-hosted runners.
 - Progress estimate: approximately **29% complete by engineering effort** (plausible range 25–34%).
   The foundation/checklist view is about 46–51% and the shared foundation is roughly 83–90% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
@@ -41,7 +41,9 @@ work item changes. Do not create session-specific handoff files.
   native impact-table allocations, and a native `FxProfileEntry` sort stride. A shared checked blob
   cursor now gives every pointer-bearing converted payload its native alignment, zeroes padding, rejects
   signed-size/capacity overflow transactionally, and verifies planner/writer parity. Disk32 work remains
-  for `fx_archive`, fast-file impact-table reads, and `fx_load_obj` offset fixups. Freelist allocation/free
+  for `fx_archive` and fast-file effect/impact-table reads; the separate `fx_load_obj` debt is its
+  missing-effect fallback clone, which writes native pointers through `_DWORD` and rebases literal x86
+  offsets. Freelist allocation/free
   now validates heads, links, strides, counts, and ownership before mutation, clears payloads before
   publication, maintains atomic active counts, and leaves failed mutations transactional. Native-size
   effect handle codecs remove the x86-only `0x8000` ceiling and reject malformed/misaligned handles.
@@ -68,11 +70,14 @@ work item changes. Do not create session-specific handoff files.
   portable targets and all four Windows x86 engine variants. Codex review then found that partial
   updates intentionally pass a staged trail copy into element retirement: the correction retains the
   real allocated trail owner for validation and publishes both staged and live endpoints in the same
-  allocator transaction. Local GCC, Clang, ASan/UBSan, and TSan validation is 30/30; replacement CI
-  evidence for the reviewed head remains the merge gate.
-  Remaining FX-specific work is the real 64-bit Disk32 archive conversion, a fully bounded/aligned
-  `fx_load_obj` cursor, camera/scalar snapshot publication, production integration fixtures, and Windows
-  engine compile/runtime evidence.
+  allocator transaction. PR #2 merged at `036ddaf8` after replacement run **29277249156 passed all
+  nine CI jobs**; local GCC, Clang, ASan/UBSan, and TSan validation was 30/30. Remaining FX-specific
+  work is the typed missing-effect alias, real 64-bit Disk32 archive/fast-file conversion, native
+  ownership for the `FxElem::physObjId` physics pointer, camera/scalar snapshot publication, and
+  production integration fixtures. The global unbounded/alignment-unsafe `Buf_Read<T>` cursor has
+  114 consumers in XAnim/XModel load-object code and is a distinct security/ARM batch, not an
+  EffectsCore reader. The current typed-alias batch raises the portable local matrix to **31/31**
+  under GCC, Clang, ASan/UBSan, and TSan and passes strict AArch64 syntax compilation.
 - Current model draw-stream batch: a shared checked dword-offset resolver validates the published surface
   arena, overflow, native alignment, full record extent, and tag before access. Static scene traversal
   handles hidden and rigid records without raw pointer stepping; all five draw-XModel and seven scoped
@@ -410,15 +415,18 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Land EffectsCore runtime-hardening PR #2 after its reviewed trail-owner correction obtains green
-   portable plus Windows engine evidence.
-2. Replace the unbounded/unaligned FX load-object reads and implement the 64-bit Disk32 FX archive
-   conversion with malformed-input and round-trip fixtures.
-3. Monitor the protected licensed-content headless startup/map/`getstatus` workflow, and implement the
+1. Replace the missing-FX fallback's x86 raw clone with a checked typed alias and portable
+   native-pointer/capacity tests.
+2. Add packed FX Disk32 schemas and byte-level malformed/round-trip fixtures, then replace the
+   truncated `FxElem::physObjId` pointer with a native sidecar or generation-checked handle before
+   enabling 64-bit archive restore.
+3. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
+   `current/end` cursor plus count, bone, weight, triangle, and string bounds.
+4. Monitor the protected licensed-content headless startup/map/`getstatus` workflow, and implement the
    designed handle-relative recursive deletion service without symlink/reparse traversal.
-4. Extract standard-stream console services, then process/event services and Linux signal-park plus
+5. Extract standard-stream console services, then process/event services and Linux signal-park plus
    macOS Mach crash freezing behind the already isolated terminal API.
-5. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
+6. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
 
 ## Known release blockers
 
@@ -464,8 +472,9 @@ work item changes. Do not create session-specific handoff files.
   traversed state before publication. Bounded CAS helpers prevent packed reference/owned/pending/lock
   fields from carrying into neighbors, and a durable admission marker prevents killed records with
   external references from re-entering the graph. Remaining blockers are camera/scalar publication,
-  the unbounded/alignment-unsafe load-object cursor, real Disk32 FX archive conversion on 64-bit targets,
-  production fixtures, and all-target engine evidence.
+  the raw x86 missing-effect fallback clone, real Disk32 FX archive/fast-file conversion, native
+  ownership for the physics-body pointer currently stored in `FxElem::physObjId`, and production
+  fixtures. The unbounded load-object cursor is tracked separately under XAnim/XModel.
 - XAnim tree/table ownership and DObj runtime storage are native-width-safe, but the animation payload
   is not: `XAnimIndices` and `XAnimParts` still freeze the retail 32-bit layout, `XAnimClone` still
   allocates 88 bytes, and load-object code contains matching 32-bit payload assumptions. The actual

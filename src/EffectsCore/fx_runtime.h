@@ -13,6 +13,15 @@ constexpr std::size_t MAX_TRAIL_ELEMS = 2048;
 struct Material;
 struct FxElemDef;
 
+// FxElemDef is defined in the renderer-facing FX header, but portable helpers
+// need its native span without pulling that platform-heavy definition in.
+// The complete type is frozen to these same values by RUNTIME_SIZE where it is
+// defined and contains native pointers, so its alignment follows pointer width.
+constexpr std::size_t FX_ELEM_DEF_RUNTIME_SIZE =
+    KISAK_ARCH_64BIT ? 0x120u : 0xFCu;
+constexpr std::size_t FX_ELEM_DEF_RUNTIME_ALIGNMENT =
+    KISAK_ARCH_64BIT ? 8u : 4u;
+
 struct r_double_index_t
 {
     r_double_index_t()

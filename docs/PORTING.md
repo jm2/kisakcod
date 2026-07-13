@@ -64,10 +64,10 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Land the EffectsCore runtime-hardening PR with all-target evidence and add live-engine
-   kill/rewind/archive fixtures.
-3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
-   native runtime structures.
+2. Replace the EffectsCore loose-file missing-effect fallback's x86 raw clone, then add live-engine
+   kill/rewind/archive fixtures to the merged runtime-hardening baseline.
+3. Introduce fixed-width `disk32` fast-file/archive schemas, native physics-pointer ownership, and
+   checked conversion into native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
 5. Implement the remaining platform services (sockets, filesystem,
    virtual memory, console/process) for Windows/POSIX.
@@ -900,9 +900,9 @@ validates XSurface buckets/weights/rigid coverage plus XModel skeleton parents, 
 exact LOD coverage, materials, and collision spans/bones. The 23-test GCC/Clang/ASan/UBSan/TSan
 matrix is green, and subsequent batches reduced the executable direct-`Interlocked` census to zero.
 All-target run 29250761031 passes the five portable jobs and all four Windows engine variants for the
-preceding filesystem/final-atomic baseline; the current FX runtime-hardening batch passes all 30 local
-tests under GCC, Clang, ASan/UBSan, and TSan, plus strict AArch64 cross-compilation, and awaits replacement
-all-target evidence after commit. EffectsCore now has exact-width runtime layouts, portable atomic
+preceding filesystem/final-atomic baseline; EffectsCore runtime-hardening PR #2 merged at `036ddaf8`
+after run 29277249156 passed all nine jobs. Its 30 local tests also pass under GCC, Clang,
+ASan/UBSan, and TSan, plus strict AArch64 cross-compilation. EffectsCore now has exact-width runtime layouts, portable atomic
 operations, cooperative iterator/GC protocols, bounded visibility publication, transactional freelists,
 fixed-size allocation sidecars, atomic active counts, and native-size handle codecs. Archive restore
 transactionally reconstructs all three ownership maps from bounded acyclic freelists and rejects count
@@ -910,9 +910,11 @@ mismatches; archive, draw/update/profile/sort, spawn, removal, GC, kill, and rew
 complete traversed state before publication. A writer-intent gate, durable lifecycle marker, bounded
 packed-status CAS helpers, retained owner-subtree preflight, restart-root transaction, and explicit
 longjmp unwind prevent resurrection, concurrent traversal/mutation, adjacent-field carry, and abandoned
-locks/gates. Explicit signed trail bytes preserve compressed basis data on Linux ARM64. Remaining work is
-camera/scalar snapshot publication, real Disk32 FX archive conversion on 64-bit targets, production
-fixtures, and a bounded/aligned replacement for load-object `Buf_Read<T>`. Detailed live blockers and sequencing remain in
+locks/gates. Explicit signed trail bytes preserve compressed basis data on Linux ARM64. Remaining FX
+work is a typed loose-file missing-effect alias, camera/scalar snapshot publication, real Disk32
+archive/fast-file conversion, native physics-body pointer ownership, and production fixtures. The
+unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
+a separate transactional `current/end` cursor migration. Detailed live blockers and sequencing remain in
 `docs/task.md` and `docs/CODEBASE_AUDIT.md`.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**
