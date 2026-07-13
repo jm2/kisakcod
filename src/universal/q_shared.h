@@ -40,7 +40,13 @@
 #include <time.h>
 #include <ctype.h>
 #include <cfloat> // FLT_MAX
+#include <climits> // INT_MIN / INT_MAX
 #include <cstdint>
+
+// Compile-time only (emits no code or data), so this is byte-identical on the
+// MSVC x86 engine build. It supplies the calling-convention shim and the
+// RUNTIME_SIZE/RUNTIME_OFFSET layout-freeze macros to every shared header.
+#include "kisak_abi.h"
 
 // this is the define for determining if we have an asm version of a C function
 #if (defined _M_IX86 || defined __i386__) && !defined __sun__  && !defined __LCC__
@@ -847,7 +853,9 @@ struct StringTable // sizeof=0x10
 	int rowCount;
 	const char **values;
 };
-static_assert(sizeof(StringTable) == 16);
+// Two pointers + two ints: 0x10 on ILP32, 0x18 on LP64. Not a wire or on-disk
+// struct, so it is allowed to widen natively.
+RUNTIME_SIZE(StringTable, 0x10, 0x18);
 
 const char *__cdecl StringTable_GetColumnValueForRow(const StringTable *table, int row, int column);
 const char *__cdecl StringTable_Lookup(

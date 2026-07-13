@@ -391,6 +391,24 @@ add_test(
 )
 set_tests_properties(platform-filesystem-path-contracts PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-net-wire-contract-tests
+    net_wire_contract_tests.cpp
+)
+# The legacy engine headers (q_shared.h / qcommon.h) are decompiled code and are not
+# -Wall -Wextra clean. SYSTEM keeps the strict warning set on this test's own code while
+# not failing the build on warnings originating inside those headers.
+target_include_directories(kisakcod-net-wire-contract-tests SYSTEM PRIVATE ${SRC_DIR} ${DEPS_DIR})
+target_compile_features(kisakcod-net-wire-contract-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-net-wire-contract-tests PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-net-wire-contract-tests)
+set_target_properties(kisakcod-net-wire-contract-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME net-wire-format-contracts
+    COMMAND kisakcod-net-wire-contract-tests
+)
+
 add_test(
     NAME dedi-headless-source-profile
     COMMAND ${CMAKE_COMMAND}
