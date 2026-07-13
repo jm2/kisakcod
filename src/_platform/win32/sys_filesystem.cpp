@@ -502,9 +502,11 @@ bool KISAK_CDECL Sys_FileSystemGetExecutablePath(
     return false;
 }
 
-SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
+SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectoryFiltered(
     const char *const utf8Path,
     const std::size_t maximumEntries,
+    const SysFileSystemEntryFilter filter,
+    const void *const filterContext,
     std::vector<SysFileSystemDirectoryEntry> *const entries)
 {
     if (!entries)
@@ -580,15 +582,18 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
                     failed = true;
                     break;
                 }
-                InsertBoundedEntry(
-                    SysFileSystemDirectoryEntry{
-                        std::move(name),
-                        directory
-                            ? SysFileSystemEntryKind::Directory
-                            : SysFileSystemEntryKind::RegularFile},
-                    maximumEntries,
-                    entries,
-                    &truncated);
+                const SysFileSystemEntryKind kind = directory
+                    ? SysFileSystemEntryKind::Directory
+                    : SysFileSystemEntryKind::RegularFile;
+                if (!filter || filter(name.c_str(), kind, filterContext))
+                {
+                    InsertBoundedEntry(
+                        SysFileSystemDirectoryEntry{
+                            std::move(name), kind},
+                        maximumEntries,
+                        entries,
+                        &truncated);
+                }
             }
             catch (const std::bad_alloc &)
             {
@@ -619,4 +624,13 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
     return truncated
         ? SysFileSystemListStatus::Truncated
         : SysFileSystemListStatus::Complete;
+}
+
+SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
+    const char *const utf8Path,
+    const std::size_t maximumEntries,
+    std::vector<SysFileSystemDirectoryEntry> *const entries)
+{
+    return Sys_FileSystemListDirectoryFiltered(
+        utf8Path, maximumEntries, nullptr, nullptr, entries);
 }

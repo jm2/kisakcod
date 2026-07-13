@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -34,6 +35,11 @@ struct SysFileSystemDirectoryEntry
     SysFileSystemEntryKind kind;
 };
 
+using SysFileSystemEntryFilter = bool (KISAK_CDECL *)(
+    const char *name,
+    SysFileSystemEntryKind kind,
+    const void *context);
+
 enum class SysFileSystemListStatus : std::uint8_t
 {
     Complete,
@@ -50,6 +56,16 @@ enum class SysFileSystemListStatus : std::uint8_t
 SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
     const char *utf8Path,
     std::size_t maximumEntries,
+    std::vector<SysFileSystemDirectoryEntry> *entries);
+
+// Applies filter before maximumEntries is enforced, so irrelevant directory
+// children cannot consume the caller's result budget. A null filter includes
+// every eligible child and is equivalent to Sys_FileSystemListDirectory.
+SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectoryFiltered(
+    const char *utf8Path,
+    std::size_t maximumEntries,
+    SysFileSystemEntryFilter filter,
+    const void *filterContext,
     std::vector<SysFileSystemDirectoryEntry> *entries);
 
 // Engine filesystem extensions do not include the dot. Matching is an exact,
@@ -158,6 +174,55 @@ inline bool MatchFilterToken(
     *nextPattern = pattern + 1;
     return normalizedName == static_cast<unsigned char>('[');
 }
+}
+
+inline int Sys_FileSystemCompareEnginePaths(
+    const char *left,
+    const char *right)
+{
+    if (left == right)
+        return 0;
+    if (!left)
+        return -1;
+    if (!right)
+        return 1;
+
+    for (;;)
+    {
+        const unsigned char leftCharacter =
+            kisakcod_filesystem_detail::NormalizeFilterCharacter(
+                static_cast<unsigned char>(*left++));
+        const unsigned char rightCharacter =
+            kisakcod_filesystem_detail::NormalizeFilterCharacter(
+                static_cast<unsigned char>(*right++));
+        if (leftCharacter < rightCharacter)
+            return -1;
+        if (leftCharacter > rightCharacter)
+            return 1;
+        if (leftCharacter == '\0')
+            return 0;
+    }
+}
+
+inline bool Sys_FileSystemEnginePathsEqual(
+    const char *const left,
+    const char *const right)
+{
+    return Sys_FileSystemCompareEnginePaths(left, right) == 0;
+}
+
+inline void Sys_FileSystemSortPathPointers(
+    const char **const paths,
+    const std::size_t pathCount)
+{
+    if (!paths || pathCount < 2)
+        return;
+    std::stable_sort(
+        paths,
+        paths + pathCount,
+        [](const char *const left, const char *const right) {
+            return Sys_FileSystemCompareEnginePaths(left, right) < 0;
+        });
 }
 
 // Full-length, locale-independent form of the engine's path glob. Both slash

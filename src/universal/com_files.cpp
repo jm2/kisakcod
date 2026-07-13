@@ -5,6 +5,7 @@
 #include <universal/sys_atomic.h>
 #include <qcommon/com_fileaccess.h>
 #include <qcommon/qcommon.h>
+#include <qcommon/sys_filesystem.h>
 #include <win32/win_local.h>
 #include <qcommon/threads.h>
 #include <stringed/stringed_hooks.h>
@@ -739,25 +740,7 @@ BOOL __cdecl FS_UseSearchPath(const searchpath_s *pSearch)
 
 int __cdecl FS_FilenameCompare(const char *s1, const char *s2)
 {
-    int c2; // [esp+0h] [ebp-8h]
-    int c1; // [esp+4h] [ebp-4h]
-
-    do
-    {
-        c1 = *s1++;
-        c2 = *s2++;
-        if (I_islower(c1))
-            c1 -= ' ';
-        if (I_islower(c2))
-            c2 -= ' ';
-        if (c1 == '\\' || c1 == ':')
-            c1 = '/';
-        if (c2 == '\\' || c2 == ':')
-            c2 = '/';
-        if (c1 != c2)
-            return -1;
-    } while (c1);
-    return 0;
+    return Sys_FileSystemEnginePathsEqual(s1, s2) ? 0 : -1;
 }
 
 uint32_t __cdecl FS_FOpenFileReadForThread(const char *filename, int *file, FsThread thread)
@@ -1598,27 +1581,7 @@ char *__cdecl IwdFileLanguage(const char *pszIwdFileName)
 
 int __cdecl FS_PathCmp(const char *s1, const char *s2)
 {
-    int c2; // [esp+0h] [ebp-8h]
-    int c1; // [esp+4h] [ebp-4h]
-
-    do
-    {
-        c1 = *s1++;
-        c2 = *s2++;
-        if (I_islower(c1))
-            c1 -= ' ';
-        if (I_islower(c2))
-            c2 -= ' ';
-        if (c1 == '\\' || c1 == ':')
-            c1 = '/';
-        if (c2 == '\\' || c2 == ':')
-            c2 = '/';
-        if (c1 < c2)
-            return -1;
-        if (c1 > c2)
-            return 1;
-    } while (c1);
-    return 0;
+    return Sys_FileSystemCompareEnginePaths(s1, s2);
 }
 
 int __cdecl iwdsort(const void *left, const void *right)
@@ -2029,26 +1992,10 @@ void __cdecl FS_Dir_f()
 
 void __cdecl FS_SortFileList(const char **filelist, int numfiles)
 {
-    int j; // [esp+4h] [ebp-14h]
-    int k; // [esp+8h] [ebp-10h]
-    int numsortedfiles; // [esp+Ch] [ebp-Ch]
-    int i; // [esp+10h] [ebp-8h]
-    char *sortedlist; // [esp+14h] [ebp-4h]
-
-    sortedlist = (char*)Z_Malloc(4 * numfiles + 4, "FS_SortFileList", 3);
-    *(_DWORD *)sortedlist = 0;
-    numsortedfiles = 0;
-    for (i = 0; i < numfiles; ++i)
-    {
-        for (j = 0; j < numsortedfiles && FS_PathCmp(filelist[i], *(const char **)&sortedlist[4 * j]) >= 0; ++j)
-            ;
-        for (k = numsortedfiles; k > j; --k)
-            *(_DWORD *)&sortedlist[4 * k] = *(_DWORD *)&sortedlist[4 * k - 4];
-        *(_DWORD *)&sortedlist[4 * j] = (char)filelist[i]; // KISAKTODO: probably cooked
-        ++numsortedfiles;
-    }
-    Com_Memcpy(filelist, sortedlist, 4 * numfiles);
-    Z_Free(sortedlist, 3);
+    if (!filelist || numfiles <= 1)
+        return;
+    Sys_FileSystemSortPathPointers(
+        filelist, static_cast<std::size_t>(numfiles));
 }
 
 void __cdecl FS_NewDir_f()
@@ -2461,7 +2408,7 @@ int __cdecl FS_AddFileToList(HunkUser *user, const char *name, const char **list
         return 0x1FFF;
     for (i = 0; i < nfiles; ++i)
     {
-        if (!I_stricmp(name, list[i]))
+        if (!FS_FilenameCompare(name, list[i]))
             return nfiles;
     }
     list[nfiles] = Hunk_CopyString(user, name);

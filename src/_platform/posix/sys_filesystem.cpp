@@ -97,6 +97,11 @@ void ResetOutput(char *const output, const std::size_t outputCapacity)
         output[0] = '\0';
 }
 
+bool IsEnginePathSeparator(const char character)
+{
+    return character == '/' || character == '\\';
+}
+
 bool SplitSafePath(
     const char *const path,
     std::vector<std::string> *const components)
@@ -108,10 +113,10 @@ bool SplitSafePath(
     const char *cursor = path;
     while (*cursor != '\0')
     {
-        while (*cursor == '/')
+        while (IsEnginePathSeparator(*cursor))
             ++cursor;
         const char *const begin = cursor;
-        while (*cursor != '\0' && *cursor != '/')
+        while (*cursor != '\0' && !IsEnginePathSeparator(*cursor))
             ++cursor;
         if (cursor == begin)
             continue;
@@ -142,7 +147,7 @@ int OpenDirectoryForEnumeration(const char *const path)
     constexpr int enumerationFlags =
         O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW;
     int parentFd = open(
-        path[0] == '/' ? "/" : ".",
+        IsEnginePathSeparator(path[0]) ? "/" : ".",
         components.empty() ? enumerationFlags : DirectoryOpenFlags());
     if (parentFd < 0)
         return -1;
@@ -227,7 +232,7 @@ bool KISAK_CDECL Sys_FileSystemCreateDirectory(const char *const path)
         return false;
 
     int parentFd = open(
-        path[0] == '/' ? "/" : ".",
+        IsEnginePathSeparator(path[0]) ? "/" : ".",
         DirectoryOpenFlags());
     if (parentFd < 0)
         return false;
@@ -342,9 +347,11 @@ bool KISAK_CDECL Sys_FileSystemGetExecutablePath(
 #endif
 }
 
-SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
+SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectoryFiltered(
     const char *const utf8Path,
     const std::size_t maximumEntries,
+    const SysFileSystemEntryFilter filter,
+    const void *const filterContext,
     std::vector<SysFileSystemDirectoryEntry> *const entries)
 {
     if (!entries)
@@ -380,6 +387,13 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
             failed = true;
             break;
         }
+        // Engine paths treat both bytes as separators. A literal POSIX child
+        // containing either byte cannot be represented and safely reopened.
+        if (std::strchr(name, '\\') || std::strchr(name, ':'))
+        {
+            errno = 0;
+            continue;
+        }
 
         struct stat status{};
         if (fstatat(directoryFd, name, &status, AT_SYMLINK_NOFOLLOW) != 0)
@@ -394,6 +408,12 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
         else if (S_ISDIR(status.st_mode))
             kind = SysFileSystemEntryKind::Directory;
         else
+        {
+            errno = 0;
+            continue;
+        }
+
+        if (filter && !filter(name, kind, filterContext))
         {
             errno = 0;
             continue;
@@ -427,4 +447,13 @@ SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
     return truncated
         ? SysFileSystemListStatus::Truncated
         : SysFileSystemListStatus::Complete;
+}
+
+SysFileSystemListStatus KISAK_CDECL Sys_FileSystemListDirectory(
+    const char *const utf8Path,
+    const std::size_t maximumEntries,
+    std::vector<SysFileSystemDirectoryEntry> *const entries)
+{
+    return Sys_FileSystemListDirectoryFiltered(
+        utf8Path, maximumEntries, nullptr, nullptr, entries);
 }

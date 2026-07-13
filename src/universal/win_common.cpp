@@ -108,10 +108,39 @@ std::string JoinRelativePath(
 #endif
 }
 
+bool IsExcludedDirectory(
+    const char *const name,
+    const SysFileSystemEntryKind kind)
+{
+    return kind == SysFileSystemEntryKind::Directory
+        && Sys_FileSystemEnginePathsEqual(name, "CVS");
+}
+
 bool IsExcludedDirectory(const SysFileSystemDirectoryEntry &entry)
 {
-    return entry.kind == SysFileSystemEntryKind::Directory
-        && I_stricmp(entry.name.c_str(), "CVS") == 0;
+    return IsExcludedDirectory(entry.name.c_str(), entry.kind);
+}
+
+struct DirectListFilterContext
+{
+    const char *extension;
+    bool wantDirectories;
+};
+
+bool KISAK_CDECL SelectDirectListEntry(
+    const char *const name,
+    const SysFileSystemEntryKind kind,
+    const void *const opaqueContext)
+{
+    const auto *const context =
+        static_cast<const DirectListFilterContext *>(opaqueContext);
+    if (!name || !context)
+        return false;
+    const bool isDirectory = kind == SysFileSystemEntryKind::Directory;
+    return isDirectory == context->wantDirectories
+        && !IsExcludedDirectory(name, kind)
+        && (context->extension[0] == '\0'
+            || Sys_FileSystemHasExtension(name, context->extension));
 }
 
 char *CopyHunkString(
@@ -132,7 +161,7 @@ char *CopyHunkString(
     return copy;
 }
 
-void ListFilteredFilesRecursive(
+bool ListFilteredFilesRecursive(
     HunkUser *const user,
     const std::string &baseDirectory,
     const std::string &subdirectories,
@@ -147,13 +176,15 @@ void ListFilteredFilesRecursive(
         || !list
         || !numberOfFiles
         || !visitedEntries
-        || *numberOfFiles < 0
-        || static_cast<std::size_t>(*numberOfFiles) >= kMaximumListedFiles
-        || *visitedEntries >= kMaximumFilteredTraversalEntries
-        || depth > kMaximumFilteredDepth)
+        || *numberOfFiles < 0)
     {
-        return;
+        return false;
     }
+    if (static_cast<std::size_t>(*numberOfFiles) >= kMaximumListedFiles)
+        return false;
+    if (*visitedEntries >= kMaximumFilteredTraversalEntries
+        || depth > kMaximumFilteredDepth)
+        return false;
 
     std::vector<SysFileSystemDirectoryEntry> entries;
     const std::size_t remainingTraversal =
@@ -163,7 +194,8 @@ void ListFilteredFilesRecursive(
         remainingTraversal,
         &entries);
     if (status == SysFileSystemListStatus::Error)
-        return;
+        return false;
+    bool complete = status == SysFileSystemListStatus::Complete;
 
     for (const SysFileSystemDirectoryEntry &entry : entries)
     {
@@ -171,7 +203,7 @@ void ListFilteredFilesRecursive(
             || static_cast<std::size_t>(*numberOfFiles)
                 == kMaximumListedFiles)
         {
-            return;
+            return false;
         }
         ++*visitedEntries;
         if (IsExcludedDirectory(entry))
@@ -181,7 +213,7 @@ void ListFilteredFilesRecursive(
             JoinRelativePath(subdirectories, entry.name);
         if (entry.kind == SysFileSystemEntryKind::Directory)
         {
-            ListFilteredFilesRecursive(
+            const bool childComplete = ListFilteredFilesRecursive(
                 user,
                 baseDirectory,
                 relativePath,
@@ -190,21 +222,23 @@ void ListFilteredFilesRecursive(
                 numberOfFiles,
                 visitedEntries,
                 depth + 1);
+            complete = childComplete && complete;
         }
         if (static_cast<std::size_t>(*numberOfFiles)
             == kMaximumListedFiles)
         {
-            return;
+            return false;
         }
         if (Sys_FileSystemMatchesPathFilter(
                 filter, relativePath.c_str()))
         {
             char *const copy = CopyHunkString(user, relativePath);
             if (!copy)
-                return;
+                return false;
             list[(*numberOfFiles)++] = copy;
         }
     }
+    return complete;
 }
 
 char **FinalizeFileList(
@@ -252,7 +286,7 @@ void __cdecl Sys_ListFilteredFiles(
     if (!user || !basedir || !filter || !list || !numfiles)
         return;
     std::size_t visitedEntries = 0;
-    ListFilteredFilesRecursive(
+    const bool complete = ListFilteredFilesRecursive(
         user,
         basedir,
         subdirs ? subdirs : "",
@@ -261,6 +295,15 @@ void __cdecl Sys_ListFilteredFiles(
         numfiles,
         &visitedEntries,
         0);
+    if (!complete)
+    {
+        std::fprintf(
+            stderr,
+            "WARNING: Sys_ListFilteredFiles traversal incomplete for '%s' "
+            "(directory error, depth limit, or %zu-entry safety cap)\n",
+            basedir,
+            kMaximumFilteredTraversalEntries);
+    }
 }
 
 bool __cdecl HasFileExtension(const char *name, const char *extension)
@@ -323,30 +366,32 @@ char **__cdecl Sys_ListFiles(
     const bool wantDirectories = wantsubs || extensionRequestsDirectories;
 
     std::vector<SysFileSystemDirectoryEntry> entries;
-    const SysFileSystemListStatus status = Sys_FileSystemListDirectory(
+    const DirectListFilterContext directFilter{extension, wantDirectories};
+    const SysFileSystemListStatus status =
+        Sys_FileSystemListDirectoryFiltered(
         directory,
-        kMaximumFilteredTraversalEntries,
+        kMaximumListedFiles,
+        SelectDirectListEntry,
+        &directFilter,
         &entries);
     if (status == SysFileSystemListStatus::Error)
     {
         Hunk_UserDestroy(user);
         return nullptr;
     }
+    if (status == SysFileSystemListStatus::Truncated)
+    {
+        std::fprintf(
+            stderr,
+            "WARNING: Sys_ListFiles limited '%s' to %zu eligible entries\n",
+            directory,
+            kMaximumListedFiles);
+    }
 
     for (const SysFileSystemDirectoryEntry &entry : entries)
     {
         if (static_cast<std::size_t>(nfiles) == kMaximumListedFiles)
             break;
-        const bool isDirectory =
-            entry.kind == SysFileSystemEntryKind::Directory;
-        if (isDirectory != wantDirectories
-            || IsExcludedDirectory(entry)
-            || (extension[0] != '\0'
-                && !Sys_FileSystemHasExtension(
-                    entry.name.c_str(), extension)))
-        {
-            continue;
-        }
         char *const copy = CopyHunkString(user, entry.name);
         if (!copy)
             break;

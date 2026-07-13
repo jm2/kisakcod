@@ -21,8 +21,17 @@ namespace
 std::wstring ExtendedPath(const std::string &path);
 #endif
 
+const char *gCheckStage = "startup";
+
+void SetCheckStage(const char *const stage)
+{
+    gCheckStage = stage ? stage : "unknown";
+}
+
 bool Check(const bool condition)
 {
+    if (!condition)
+        std::fprintf(stderr, "FAIL: platform filesystem stage: %s\n", gCheckStage);
     return condition;
 }
 
@@ -39,19 +48,30 @@ bool WriteFile(const std::string &path)
 {
 #if defined(_WIN32)
     const std::wstring extended = ExtendedPath(path);
-    FILE *file = nullptr;
-    if (!extended.empty()
-        && _wfopen_s(&file, extended.c_str(), L"wb") != 0)
-    {
-        file = nullptr;
-    }
+    const HANDLE file = extended.empty()
+        ? INVALID_HANDLE_VALUE
+        : CreateFileW(
+            extended.c_str(),
+            GENERIC_WRITE,
+            0,
+            nullptr,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return false;
+    DWORD byteCount = 0;
+    const bool written = ::WriteFile(
+        file, "x", 1, &byteCount, nullptr)
+        && byteCount == 1;
+    return CloseHandle(file) && written;
 #else
     FILE *const file = std::fopen(path.c_str(), "wb");
-#endif
     if (!file)
         return false;
     const bool written = std::fwrite("x", 1, 1, file) == 1;
     return std::fclose(file) == 0 && written;
+#endif
 }
 
 #if defined(_WIN32)
@@ -140,6 +160,15 @@ std::string MakeUniquePath(const std::string &workingDirectory)
         workingDirectory,
         "kisakcod-fs-test-" + std::to_string(tick)
             + "-" + std::to_string(ProcessId()));
+}
+
+bool KISAK_CDECL SelectTextFile(
+    const char *const name,
+    const SysFileSystemEntryKind kind,
+    const void *)
+{
+    return kind == SysFileSystemEntryKind::RegularFile
+        && Sys_FileSystemHasExtension(name, "txt");
 }
 
 bool ReadPaths(std::string *const workingDirectory)
@@ -371,6 +400,7 @@ bool TestLongCurrentDirectory(const std::string &workingDirectory)
 
 bool TestBoundedDirectoryEnumeration(const std::string &workingDirectory)
 {
+    SetCheckStage("bounded-enumeration/setup");
     const std::string root = MakeUniquePath(workingDirectory) + "-enumerate";
     const std::string alphaDirectory = Join(root, "alpha-dir");
     const std::string nestedDirectory = Join(alphaDirectory, "nested");
@@ -398,6 +428,7 @@ bool TestBoundedDirectoryEnumeration(const std::string &workingDirectory)
     }
 
     bool linkCreated = false;
+    SetCheckStage("bounded-enumeration/link-and-special-entry-setup");
 #if defined(_WIN32)
     const std::wstring wideLink = ExtendedPath(link);
     const std::wstring wideTarget = ExtendedPath(alphaDirectory);
@@ -412,15 +443,40 @@ bool TestBoundedDirectoryEnumeration(const std::string &workingDirectory)
 #else
     linkCreated = symlink(alphaDirectory.c_str(), link.c_str()) == 0;
     const std::string fifo = Join(root, "named-pipe");
-    if (!Check(mkfifo(fifo.c_str(), 0600) == 0))
+    const std::string literalBackslash = Join(root, "literal\\child");
+    const std::string literalColon = Join(root, "literal:child");
+    if (!Check(mkfifo(fifo.c_str(), 0600) == 0)
+        || !Check(WriteFile(literalBackslash))
+        || !Check(WriteFile(literalColon)))
         return false;
 #endif
 
     std::vector<SysFileSystemDirectoryEntry> entries{{
         "must-be-cleared", SysFileSystemEntryKind::RegularFile}};
-    if (!Check(Sys_FileSystemListDirectory(
-            root.c_str(), 32, &entries)
-            == SysFileSystemListStatus::Complete)
+    SetCheckStage("bounded-enumeration/complete-snapshot");
+    const SysFileSystemListStatus snapshotStatus =
+        Sys_FileSystemListDirectory(root.c_str(), 32, &entries);
+    if (snapshotStatus != SysFileSystemListStatus::Complete
+        || entries.size() != 7)
+    {
+        std::fprintf(
+            stderr,
+            "filesystem snapshot: status=%u count=%zu link=%s\n",
+            static_cast<unsigned int>(snapshotStatus),
+            entries.size(),
+            linkCreated ? "created" : "not-created");
+        for (const SysFileSystemDirectoryEntry &entry : entries)
+        {
+            std::fprintf(
+                stderr,
+                "  %s (%s)\n",
+                entry.name.c_str(),
+                entry.kind == SysFileSystemEntryKind::Directory
+                    ? "directory"
+                    : "file");
+        }
+    }
+    if (!Check(snapshotStatus == SysFileSystemListStatus::Complete)
         || !Check(entries.size() == 7))
     {
         return false;
@@ -446,6 +502,24 @@ bool TestBoundedDirectoryEnumeration(const std::string &workingDirectory)
         return false;
     }
 
+    // FS_BuildOSPath historically emits engine-style backslashes on every
+    // host.  POSIX services must interpret both slash forms as separators.
+    std::string engineStyleRoot = root;
+    SetCheckStage("bounded-enumeration/engine-style-path");
+    for (char &character : engineStyleRoot)
+    {
+        if (character == '/')
+            character = '\\';
+    }
+    if (!Check(Sys_FileSystemListDirectory(
+            engineStyleRoot.c_str(), 32, &entries)
+            == SysFileSystemListStatus::Complete)
+        || !Check(entries.size() == expectedNames.size()))
+    {
+        return false;
+    }
+
+    SetCheckStage("bounded-enumeration/truncation-contract");
     if (!Check(Sys_FileSystemListDirectory(root.c_str(), 3, &entries)
             == SysFileSystemListStatus::Truncated)
         || !Check(entries.size() == 3)
@@ -461,6 +535,7 @@ bool TestBoundedDirectoryEnumeration(const std::string &workingDirectory)
 
     entries.push_back({"must-be-cleared", SysFileSystemEntryKind::RegularFile});
     const std::string missing = Join(root, "missing");
+    SetCheckStage("bounded-enumeration/error-filter-extension-contracts");
     if (!Check(Sys_FileSystemListDirectory(missing.c_str(), 4, &entries)
             == SysFileSystemListStatus::Error)
         || !Check(entries.empty())
@@ -505,6 +580,7 @@ bool TestBoundedDirectoryEnumeration(const std::string &workingDirectory)
         return false;
     }
 
+    SetCheckStage("bounded-enumeration/cleanup");
 #if defined(_WIN32)
     bool removedLink = true;
     if (linkCreated)
@@ -512,6 +588,8 @@ bool TestBoundedDirectoryEnumeration(const std::string &workingDirectory)
 #else
     const bool removedLink = !linkCreated || unlink(link.c_str()) == 0;
     const bool removedFifo = RemoveFileNative(fifo);
+    const bool removedAmbiguousNames = RemoveFileNative(literalBackslash)
+        && RemoveFileNative(literalColon);
 #endif
     const bool removed = RemoveFileNative(longFile)
         && RemoveFileNative(unicodeFile)
@@ -525,20 +603,108 @@ bool TestBoundedDirectoryEnumeration(const std::string &workingDirectory)
     return Check(removedLink)
 #if !defined(_WIN32)
         && Check(removedFifo)
+        && Check(removedAmbiguousNames)
 #endif
         && Check(removed);
+}
+
+bool TestFilteredCollectionAndPathHelpers(
+    const std::string &workingDirectory)
+{
+    SetCheckStage("filtered-collection/setup");
+    const std::string root = MakeUniquePath(workingDirectory) + "-filtered";
+    if (!Check(Sys_FileSystemCreateDirectory(root.c_str())))
+        return false;
+
+    std::vector<std::string> nonmatchingFiles;
+    for (int index = 0; index < 12; ++index)
+    {
+        const std::string file = Join(
+            root,
+            "a" + std::to_string(index) + ".bin");
+        if (!Check(WriteFile(file)))
+            return false;
+        nonmatchingFiles.push_back(file);
+    }
+    const std::string lastEligible = Join(root, "z-last.txt");
+    if (!Check(WriteFile(lastEligible)))
+        return false;
+
+    std::vector<SysFileSystemDirectoryEntry> entries;
+    SetCheckStage("filtered-collection/nonmatches-before-eligible");
+    if (!Check(Sys_FileSystemListDirectoryFiltered(
+            root.c_str(), 1, SelectTextFile, nullptr, &entries)
+            == SysFileSystemListStatus::Complete)
+        || !Check(entries.size() == 1)
+        || !Check(entries[0].name == "z-last.txt"))
+    {
+        return false;
+    }
+
+    const std::string firstEligible = Join(root, "y-first.txt");
+    SetCheckStage("filtered-collection/eligible-truncation");
+    if (!Check(WriteFile(firstEligible))
+        || !Check(Sys_FileSystemListDirectoryFiltered(
+            root.c_str(), 1, SelectTextFile, nullptr, &entries)
+            == SysFileSystemListStatus::Truncated)
+        || !Check(entries.size() == 1)
+        || !Check(entries[0].name == "y-first.txt"))
+    {
+        return false;
+    }
+
+    const char *paths[]{
+        "zeta",
+        "Beta\\item",
+        "alpha",
+        "beta/item",
+    };
+    SetCheckStage("filtered-collection/native-pointer-sort-and-dedupe");
+    Sys_FileSystemSortPathPointers(paths, std::size(paths));
+    if (!Check(std::string(paths[0]) == "alpha")
+        || !Check(std::string(paths[1]) == "Beta\\item")
+        || !Check(std::string(paths[2]) == "beta/item")
+        || !Check(std::string(paths[3]) == "zeta")
+        || !Check(Sys_FileSystemEnginePathsEqual(
+            "folder\\FILE.cfg", "FOLDER/file.cfg"))
+        || !Check(Sys_FileSystemEnginePathsEqual(
+            "folder:FILE.cfg", "FOLDER/file.cfg"))
+        || !Check(!Sys_FileSystemEnginePathsEqual(
+            "folder/file.cfg", "folder/file.bin")))
+    {
+        return false;
+    }
+
+    SetCheckStage("filtered-collection/cleanup");
+    bool removed = RemoveFileNative(firstEligible)
+        && RemoveFileNative(lastEligible);
+    for (const std::string &file : nonmatchingFiles)
+        removed = RemoveFileNative(file) && removed;
+    return Check(removed) && Check(RemoveDirectoryNative(root));
 }
 }
 
 int main()
 {
     std::string workingDirectory;
-    return ReadPaths(&workingDirectory)
-        && TestRootParentClassification()
-        && TestClassificationAndDepth(workingDirectory)
-        && TestAncestorLinks(workingDirectory)
-        && TestLongCurrentDirectory(workingDirectory)
-        && TestBoundedDirectoryEnumeration(workingDirectory)
-        ? 0
-        : 1;
+    SetCheckStage("path-queries");
+    if (!ReadPaths(&workingDirectory))
+        return 1;
+    SetCheckStage("root-parent-classification");
+    if (!TestRootParentClassification())
+        return 1;
+    SetCheckStage("mkdir-classification-and-depth");
+    if (!TestClassificationAndDepth(workingDirectory))
+        return 1;
+    SetCheckStage("ancestor-link-rejection");
+    if (!TestAncestorLinks(workingDirectory))
+        return 1;
+    SetCheckStage("long-current-directory");
+    if (!TestLongCurrentDirectory(workingDirectory))
+        return 1;
+    if (!TestBoundedDirectoryEnumeration(workingDirectory))
+        return 1;
+    if (!TestFilteredCollectionAndPathHelpers(workingDirectory))
+        return 1;
+    return 0;
 }
