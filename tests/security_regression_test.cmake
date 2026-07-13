@@ -5197,6 +5197,22 @@ require_source_contains(
     "static_cast<int>(alignof(FxEffectDef))"
     "converted effect blobs must receive native pointer alignment")
 require_source_contains(
+    "EffectsCore/fx_load_obj.cpp"
+    "FX_TryPlanMissingEffectAlias"
+    "missing-effect aliases must use a bounded native layout plan")
+require_source_contains(
+    "EffectsCore/fx_load_obj.cpp"
+    "FX_TryBuildMissingEffectAlias"
+    "missing-effect aliases must use typed native pointer publication")
+require_source_not_contains(
+    "EffectsCore/fx_load_obj.cpp"
+    "_DWORD"
+    "missing-effect aliases must not write native pointers through x86 words")
+require_source_not_contains(
+    "EffectsCore/fx_load_obj.cpp"
+    "relocationDistance"
+    "missing-effect aliases must not rebase hard-coded x86 payload offsets")
+require_source_contains(
     "EffectsCore/fx_system.cpp"
     "visuals.model->physPreset"
     "effect physics must use typed XModel physics-preset access")

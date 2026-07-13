@@ -114,6 +114,20 @@ add_test(
     COMMAND kisakcod-fx-runtime-blob-tests
 )
 
+add_executable(kisakcod-fx-missing-effect-alias-tests
+    fx_missing_effect_alias_tests.cpp
+)
+target_include_directories(kisakcod-fx-missing-effect-alias-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-fx-missing-effect-alias-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-fx-missing-effect-alias-tests)
+set_target_properties(kisakcod-fx-missing-effect-alias-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-missing-effect-alias
+    COMMAND kisakcod-fx-missing-effect-alias-tests
+)
+
 add_executable(kisakcod-fx-visibility-atomic-tests
     fx_visibility_atomic_tests.cpp
 )

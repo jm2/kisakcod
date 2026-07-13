@@ -1,4 +1,5 @@
 #include "fx_system.h"
+#include "fx_missing_effect_alias.h"
 #include <universal/com_files.h>
 #include <universal/q_parse.h>
 #include <gfx_d3d/r_model.h>
@@ -1102,56 +1103,47 @@ PhysPreset *__cdecl FX_RegisterPhysPreset(const char *name)
 
 const FxEffectDef *__cdecl FX_LoadFailed(const char *name)
 {
-    char v2; // [esp+3h] [ebp-55h]
-    _BYTE *v3; // [esp+8h] [ebp-50h]
-    const char *v4; // [esp+Ch] [ebp-4Ch]
-    const char *v5; // [esp+2Ch] [ebp-2Ch]
-    _DWORD *v6; // [esp+30h] [ebp-28h]
-    _DWORD *v7; // [esp+34h] [ebp-24h]
-    uint32_t baseBytesNeeded; // [esp+40h] [ebp-18h]
-    byte *effectDef; // [esp+48h] [ebp-10h]
-    int relocationDistance; // [esp+4Ch] [ebp-Ch]
-    int elemIndex; // [esp+54h] [ebp-4h]
+    if (!FX_LoadObjEffectNameIsValid(name))
+    {
+        Com_Error(ERR_DROP, "Invalid missing FX alias name");
+        return fx_load.defaultEffect;
+    }
 
     if (!fx_load.defaultEffect)
     {
         if (!I_stricmp(name, "misc/missing_fx"))
             Com_Error(ERR_FATAL, "Couldn't load default effect");
         FX_RegisterDefaultEffect();
-        if (!fx_load.defaultEffect)
-            MyAssertHandler(".\\EffectsCore\\fx_load_obj.cpp", 1220, 1, "%s", "fx_load.defaultEffect");
-        if (!fx_load.defaultEffect->name)
-            MyAssertHandler(".\\EffectsCore\\fx_load_obj.cpp", 1221, 1, "%s", "fx_load.defaultEffect->name");
-        if (I_strcmp(fx_load.defaultEffect->name, "misc/missing_fx"))
-            MyAssertHandler(
-                ".\\EffectsCore\\fx_load_obj.cpp",
-                1222,
-                1,
-                "%s",
-                "!I_strcmp( fx_load.defaultEffect->name, FX_DEFAULT_EFFECT_NAME )");
     }
-    v5 = &fx_load.defaultEffect->name[strlen(fx_load.defaultEffect->name) + 1];
-    baseBytesNeeded = fx_load.defaultEffect->totalSize - (v5 - fx_load.defaultEffect->name);
-    effectDef = (byte *)FX_AllocMem(fx_load.defaultEffect->totalSize - (v5 - (fx_load.defaultEffect->name + 1)) + strlen(name));
-    memcpy(effectDef, (uint8_t *)fx_load.defaultEffect, baseBytesNeeded);
-    *(_DWORD *)effectDef = (_DWORD)&effectDef[baseBytesNeeded];
-    v4 = name;
-    v3 = *(_BYTE **)effectDef;
-    do
+    if (!fx_load.defaultEffect || !fx_load.defaultEffect->name
+        || I_strcmp(fx_load.defaultEffect->name, "misc/missing_fx"))
     {
-        v2 = *v4;
-        *v3++ = *v4++;
-    } while (v2);
-    relocationDistance = effectDef - (uint8_t *)fx_load.defaultEffect;
-    *((_DWORD *)effectDef + 7) += effectDef - (uint8_t *)fx_load.defaultEffect;
-    for (elemIndex = 0; elemIndex < *((_DWORD *)effectDef + 5) + *((_DWORD *)effectDef + 4); ++elemIndex)
-    {
-        v7 = (_DWORD *)(*((_DWORD *)effectDef + 7) + 252 * elemIndex + 180);
-        *v7 += relocationDistance;
-        v6 = (_DWORD *)(*((_DWORD *)effectDef + 7) + 252 * elemIndex + 184);
-        *v6 += relocationDistance;
+        Com_Error(ERR_FATAL, "Couldn't load a valid default effect");
+        return nullptr;
     }
-    return (const FxEffectDef *)effectDef;
+
+    FxMissingEffectAliasPlan plan{};
+    if (!FX_TryPlanMissingEffectAlias(
+            fx_load.defaultEffect, name, &plan))
+    {
+        Com_Error(ERR_DROP, "Invalid default FX graph for alias '%s'", name);
+        return fx_load.defaultEffect;
+    }
+
+    void *const storage = FX_AllocMem(plan.totalSize);
+    FxEffectDef *alias = nullptr;
+    if (!storage
+        || !FX_TryBuildMissingEffectAlias(
+            fx_load.defaultEffect,
+            name,
+            storage,
+            plan.totalSize,
+            &alias))
+    {
+        Com_Error(ERR_DROP, "Couldn't build missing FX alias '%s'", name);
+        return fx_load.defaultEffect;
+    }
+    return alias;
 }
 
 const FxEffectDef *__cdecl FX_Load(const char *name)
