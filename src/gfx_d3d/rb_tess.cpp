@@ -17,12 +17,14 @@
 #include "r_draw_staticmodel.h"
 #include "r_draw_xmodel.h"
 #include "r_pretess.h"
+#include "r_bmodel_surface_stream.h"
 #include "r_model_surface_stream.h"
 #include <cstddef>
 #include <cstdint>
 #include <universal/sys_atomic.h>
 
 namespace model_surface_stream = gfx::model_surface_stream;
+namespace bmodel_surface_stream = gfx::bmodel_surface_stream;
 
 namespace
 {
@@ -45,6 +47,38 @@ const Record *RB_ResolveModelSurface(
                objectId,
                minimumTag,
                maximumTag,
+               &record)
+        ? record
+        : nullptr;
+}
+
+const BModelSurface *RB_ResolveBModelSurface(
+    const GfxBackEndData *const data,
+    const GfxDrawSurf &drawSurf)
+{
+    // Unlike XModel arena records, BModelSurface has no in-record tag.  Its
+    // draw-surface type is the protocol tag, and its placement pointer anchors
+    // the record to the exact placement-plus-array layout built by R_DrawBModel.
+    if (!data || !rgp.world || !rgp.world->dpvs.surfaces
+        || rgp.world->surfaceCount <= 0)
+    {
+        return nullptr;
+    }
+
+    const std::uint32_t publishedBytes = Sys_AtomicLoad(&data->surfPos);
+    const BModelSurface *record = nullptr;
+    return bmodel_surface_stream::TryResolveTaggedRecord<
+               BModelSurface,
+               GfxScaledPlacement,
+               GfxSurface>(
+               drawSurf.fields.surfType == SF_BMODEL,
+               data,
+               data->surfsBuffer,
+               sizeof(data->surfsBuffer),
+               publishedBytes,
+               drawSurf.fields.objectId,
+               rgp.world->dpvs.surfaces,
+               static_cast<std::uint32_t>(rgp.world->surfaceCount),
                &record)
         ? record
         : nullptr;
@@ -1727,7 +1761,14 @@ uint32_t __cdecl R_TessBModel(const GfxDrawSurfListArgs *listArgs, GfxCmdBufCont
         drawSurfSubKey = drawSurfSubMask.packed & drawSurf.packed;
         do
         {
-            bmodelSurf = (const BModelSurface *)((char *)data + 4 * drawSurf.fields.objectId);
+            bmodelSurf = RB_ResolveBModelSurface(data, drawSurf);
+            if (!bmodelSurf)
+            {
+                g_primStats = nullptr;
+                return bmodel_surface_stream::InvalidRecordProgress(
+                    drawSurfIndex,
+                    drawSurfCount);
+            }
 
             if (commonSource->objectPlacement != bmodelSurf->placement)
                 R_ChangeObjectPlacement(commonSource, bmodelSurf->placement);

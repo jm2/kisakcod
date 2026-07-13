@@ -41,9 +41,11 @@
 #endif
 #include "r_state.h"
 #include "r_draw_sunshadow.h"
+#include "r_bmodel_surface_stream.h"
 #include "r_model_surface_stream.h"
 
 namespace model_surface_stream = gfx::model_surface_stream;
+namespace bmodel_surface_stream = gfx::bmodel_surface_stream;
 
 namespace
 {
@@ -277,6 +279,32 @@ private:
     uint32_t publishedBytes_ = 0u;
     uint32_t surfId_ = 0u;
 };
+
+bool R_TryResolveBModelSurfaceSequence(
+    const BModelDrawInfo *const bmodelInfo,
+    const uint32_t surfaceCount,
+    const BModelSurface **const surfaces)
+{
+    if (!bmodelInfo || !frontEndDataOut || !rgp.world
+        || !rgp.world->dpvs.surfaces || rgp.world->surfaceCount <= 0)
+    {
+        return false;
+    }
+
+    return bmodel_surface_stream::TryResolveSequence<
+        BModelSurface,
+        GfxScaledPlacement,
+        GfxSurface>(
+        frontEndDataOut,
+        frontEndDataOut->surfsBuffer,
+        sizeof(frontEndDataOut->surfsBuffer),
+        Sys_AtomicLoad(&frontEndDataOut->surfPos),
+        bmodelInfo->surfId,
+        surfaceCount,
+        rgp.world->dpvs.surfaces,
+        static_cast<uint32_t>(rgp.world->surfaceCount),
+        surfaces);
+}
 } // namespace
 
 //struct GfxScene scene      859c8280     gfx_d3d : r_scene.obj
@@ -623,14 +651,14 @@ void __cdecl R_AddBModelSurfacesCamera(
     uint32_t surfId; // [esp+8h] [ebp-24h]
     //unsigned __int64 drawSurf; // [esp+Ch] [ebp-20h]
     const Material *material; // [esp+14h] [ebp-18h]
-    BModelSurface *modelSurf; // [esp+18h] [ebp-14h]
+    const BModelSurface *modelSurf; // [esp+18h] [ebp-14h]
     const GfxSurface *bspSurf; // [esp+1Ch] [ebp-10h]
     uint32_t region; // [esp+20h] [ebp-Ch]
     uint32_t count; // [esp+28h] [ebp-4h]
 
     iassert(bmodel);
-    surfId = bmodelInfo->surfId;
-    modelSurf = (BModelSurface *)((char *)frontEndDataOut + 4 * surfId);
+    if (!bmodel)
+        return;
     if (reflectionProbeIndex >= 0x100)
         MyAssertHandler(
             ".\\r_scene.cpp",
@@ -651,6 +679,14 @@ void __cdecl R_AddBModelSurfacesCamera(
         surfaceCount = bmodel->surfaceCount;
     else
         surfaceCount = bmodel->surfaceCountNoDecal;
+    if (!R_TryResolveBModelSurfaceSequence(
+            bmodelInfo,
+            surfaceCount,
+            &modelSurf))
+    {
+        return;
+    }
+    surfId = bmodelInfo->surfId;
     for (count = 0; count < surfaceCount; ++count)
     {
         bspSurf = modelSurf->surf;
@@ -701,16 +737,24 @@ GfxDrawSurf *__cdecl R_AddBModelSurfaces(
     uint16_t surfaceCount; // [esp+6h] [ebp-2Ah]
     uint32_t surfId; // [esp+10h] [ebp-20h]
     const Material *material; // [esp+14h] [ebp-1Ch]
-    BModelSurface *modelSurf; // [esp+20h] [ebp-10h]
+    const BModelSurface *modelSurf; // [esp+20h] [ebp-10h]
     uint32_t count; // [esp+2Ch] [ebp-4h]
 
     iassert( bmodel );
-    surfId = bmodelInfo->surfId;
-    modelSurf = (BModelSurface *)((char *)frontEndDataOut + 4 * surfId);
+    if (!bmodel)
+        return drawSurf;
     if (r_drawDecals->current.enabled)
         surfaceCount = bmodel->surfaceCount;
     else
         surfaceCount = bmodel->surfaceCountNoDecal;
+    if (!R_TryResolveBModelSurfaceSequence(
+            bmodelInfo,
+            surfaceCount,
+            &modelSurf))
+    {
+        return drawSurf;
+    }
+    surfId = bmodelInfo->surfId;
     for (count = 0; count < surfaceCount; ++count)
     {
         if (drawSurf >= lastDrawSurf)

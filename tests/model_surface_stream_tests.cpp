@@ -1,3 +1,4 @@
+#include <gfx_d3d/r_bmodel_surface_stream.h>
 #include <gfx_d3d/r_model_surface_stream.h>
 
 #include <array>
@@ -6,11 +7,13 @@
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <new>
 #include <thread>
 #include <vector>
 
 namespace
 {
+namespace bmodel_stream = gfx::bmodel_surface_stream;
 namespace surface_stream = gfx::model_surface_stream;
 
 struct NativeSurfaceInfo
@@ -34,6 +37,22 @@ struct NativeRigidRecord
 {
     NativeSkinnedRecord surface;
     float placement[8] = {};
+};
+
+struct NativeBrushPlacement
+{
+    std::uint32_t words[8] = {};
+};
+
+struct NativeWorldSurface
+{
+    std::uint32_t token = 0u;
+};
+
+struct NativeBrushRecord
+{
+    const NativeBrushPlacement *placement = nullptr;
+    const NativeWorldSurface *surf = nullptr;
 };
 
 constexpr std::uint32_t kRecordAlignment = static_cast<std::uint32_t>(
@@ -357,7 +376,7 @@ bool TestCheckedWordOffsetResolution()
     {
         std::array<std::uint8_t, 16> prefix{};
         alignas(NativeRigidRecord) std::array<std::uint8_t, 256> bytes{};
-    } arena;
+    } arena{};
 
     constexpr std::uint32_t kRecordOffset = 8u;
     NativeSkinnedRecord source;
@@ -518,6 +537,221 @@ bool TestCheckedWordOffsetResolution()
             arena.bytes.data());
 }
 
+bool TestBModelOwnershipSequenceAndProgress()
+{
+    struct NativeBrushRecordArray
+    {
+        NativeBrushRecord records[2];
+    };
+    struct alignas(NativeBrushRecord) BModelArena
+    {
+        std::array<std::uint8_t, 16> prefix{};
+        alignas(NativeBrushRecord) std::array<std::uint8_t, 256> bytes{};
+    } arena{};
+    std::array<NativeWorldSurface, 3> world{};
+
+    constexpr std::uint32_t kPlacementOffset = 0u;
+    constexpr std::uint32_t kRecordOffset =
+        static_cast<std::uint32_t>(sizeof(NativeBrushPlacement));
+    NativeBrushPlacement *const placement = ::new (
+        arena.bytes.data() + kPlacementOffset) NativeBrushPlacement{};
+    NativeBrushRecordArray *const recordArray = ::new (
+        arena.bytes.data() + kRecordOffset) NativeBrushRecordArray{
+        {
+            {placement, &world[0]},
+            {placement, &world[2]},
+        }};
+    NativeBrushRecord *const source = recordArray->records;
+
+    const std::uintptr_t baseAddress =
+        reinterpret_cast<std::uintptr_t>(&arena);
+    const std::uintptr_t recordAddress =
+        reinterpret_cast<std::uintptr_t>(source);
+    if (recordAddress < baseAddress
+        || ((recordAddress - baseAddress) % sizeof(std::uint32_t)) != 0u)
+    {
+        return false;
+    }
+
+    const std::uint32_t firstObjectId = static_cast<std::uint32_t>(
+        (recordAddress - baseAddress) / sizeof(std::uint32_t));
+    const std::uint32_t secondObjectId = firstObjectId
+        + static_cast<std::uint32_t>(
+            sizeof(NativeBrushRecord) / sizeof(std::uint32_t));
+    const std::uint32_t exactPublished = kRecordOffset
+        + static_cast<std::uint32_t>(sizeof(NativeBrushRecordArray));
+
+    const NativeBrushRecord *resolved = nullptr;
+    if (!bmodel_stream::TryResolveSequence<
+            NativeBrushRecord,
+            NativeBrushPlacement,
+            NativeWorldSurface>(
+            &arena,
+            arena.bytes.data(),
+            static_cast<std::uint32_t>(arena.bytes.size()),
+            exactPublished,
+            firstObjectId,
+            2u,
+            world.data(),
+            static_cast<std::uint32_t>(world.size()),
+            &resolved)
+        || resolved != source)
+    {
+        return false;
+    }
+
+    resolved = nullptr;
+    if (!bmodel_stream::TryResolveTaggedRecord<
+            NativeBrushRecord,
+            NativeBrushPlacement,
+            NativeWorldSurface>(
+            true,
+            &arena,
+            arena.bytes.data(),
+            static_cast<std::uint32_t>(arena.bytes.size()),
+            exactPublished,
+            secondObjectId,
+            world.data(),
+            static_cast<std::uint32_t>(world.size()),
+            &resolved)
+        || resolved != &source[1])
+    {
+        return false;
+    }
+
+    const NativeBrushRecord *const unchanged =
+        reinterpret_cast<const NativeBrushRecord *>(
+            arena.bytes.data() + 128u);
+    resolved = unchanged;
+    if (bmodel_stream::TryResolveTaggedRecord<
+            NativeBrushRecord,
+            NativeBrushPlacement,
+            NativeWorldSurface>(
+            false,
+            &arena,
+            arena.bytes.data(),
+            static_cast<std::uint32_t>(arena.bytes.size()),
+            exactPublished,
+            firstObjectId,
+            world.data(),
+            static_cast<std::uint32_t>(world.size()),
+            &resolved)
+        || resolved != unchanged)
+    {
+        return false;
+    }
+
+    NativeBrushPlacement outsidePlacement{};
+    source[0].placement = &outsidePlacement;
+    resolved = unchanged;
+    if (bmodel_stream::TryResolveTaggedRecord<
+            NativeBrushRecord,
+            NativeBrushPlacement,
+            NativeWorldSurface>(
+            true,
+            &arena,
+            arena.bytes.data(),
+            static_cast<std::uint32_t>(arena.bytes.size()),
+            exactPublished,
+            firstObjectId,
+            world.data(),
+            static_cast<std::uint32_t>(world.size()),
+            &resolved)
+        || resolved != unchanged)
+    {
+        return false;
+    }
+
+    source[0].placement = reinterpret_cast<const NativeBrushPlacement *>(
+        arena.bytes.data() + 1u);
+    resolved = unchanged;
+    if (bmodel_stream::TryResolveTaggedRecord<
+            NativeBrushRecord,
+            NativeBrushPlacement,
+            NativeWorldSurface>(
+            true,
+            &arena,
+            arena.bytes.data(),
+            static_cast<std::uint32_t>(arena.bytes.size()),
+            exactPublished,
+            firstObjectId,
+            world.data(),
+            static_cast<std::uint32_t>(world.size()),
+            &resolved)
+        || resolved != unchanged)
+    {
+        return false;
+    }
+
+    source[0].placement = placement;
+    source[1].placement = reinterpret_cast<const NativeBrushPlacement *>(
+        arena.bytes.data() + kRecordOffset);
+    resolved = unchanged;
+    if (bmodel_stream::TryResolveSequence<
+            NativeBrushRecord,
+            NativeBrushPlacement,
+            NativeWorldSurface>(
+            &arena,
+            arena.bytes.data(),
+            static_cast<std::uint32_t>(arena.bytes.size()),
+            exactPublished,
+            firstObjectId,
+            2u,
+            world.data(),
+            static_cast<std::uint32_t>(world.size()),
+            &resolved)
+        || resolved != unchanged)
+    {
+        return false;
+    }
+
+    source[1].placement = placement;
+    source[1].surf = world.data() + world.size();
+    resolved = unchanged;
+    if (bmodel_stream::TryResolveSequence<
+            NativeBrushRecord,
+            NativeBrushPlacement,
+            NativeWorldSurface>(
+            &arena,
+            arena.bytes.data(),
+            static_cast<std::uint32_t>(arena.bytes.size()),
+            exactPublished,
+            firstObjectId,
+            2u,
+            world.data(),
+            static_cast<std::uint32_t>(world.size()),
+            &resolved)
+        || resolved != unchanged)
+    {
+        return false;
+    }
+
+    source[1].surf = &world[2];
+    resolved = unchanged;
+    if (bmodel_stream::TryResolveSequence<
+            NativeBrushRecord,
+            NativeBrushPlacement,
+            NativeWorldSurface>(
+            &arena,
+            arena.bytes.data(),
+            static_cast<std::uint32_t>(arena.bytes.size()),
+            exactPublished - 1u,
+            firstObjectId,
+            2u,
+            world.data(),
+            static_cast<std::uint32_t>(world.size()),
+            &resolved)
+        || resolved != unchanged)
+    {
+        return false;
+    }
+
+    return bmodel_stream::InvalidRecordProgress(0u, 2u) == 1u
+        && bmodel_stream::InvalidRecordProgress(1u, 2u) == 2u
+        && bmodel_stream::InvalidRecordProgress(2u, 2u) == 2u
+        && bmodel_stream::InvalidRecordProgress(0u, 0u) == 0u;
+}
+
 bool TestExactAlignedArenaCapacityAndFailureStability()
 {
     volatile std::uint32_t counter = 1u;
@@ -653,6 +887,8 @@ int main()
         return Fail("native-width high pointer bytes");
     if (!TestCheckedWordOffsetResolution())
         return Fail("checked word-offset resolution");
+    if (!TestBModelOwnershipSequenceAndProgress())
+        return Fail("BModel ownership, sequence, and invalid progress");
     if (!TestExactAlignedArenaCapacityAndFailureStability())
         return Fail("exact arena capacity and failure stability");
     if (!TestContendedAlignedArenaSlicesDoNotOverlap())
