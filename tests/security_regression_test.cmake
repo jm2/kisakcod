@@ -24,6 +24,14 @@ function(require_source_not_matches RELATIVE_PATH PATTERN DESCRIPTION)
     endif()
 endfunction()
 
+function(require_source_matches RELATIVE_PATH PATTERN DESCRIPTION)
+    file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
+    string(REGEX MATCH "${PATTERN}" _match "${_source}")
+    if ("${_match}" STREQUAL "")
+        message(FATAL_ERROR "Missing security invariant (${DESCRIPTION}) in src/${RELATIVE_PATH}")
+    endif()
+endfunction()
+
 function(require_source_ordered RELATIVE_PATH FIRST SECOND DESCRIPTION)
     file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
     string(FIND "${_source}" "${FIRST}" _first_position)
@@ -5226,6 +5234,77 @@ require_source_contains(
     "EffectsCore/fx_runtime.h"
     "RUNTIME_OFFSET(FxVisState, blockerCount, 0x1000, 0x1000);"
     "the FX visibility count offset must remain fixed across native layouts")
+require_all_occurrences_wrapped(
+    "EffectsCore/fx_draw.cpp"
+    "&system->iteratorCount"
+    "FxIterator(BeginCooperative|EndCooperative)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
+    "FX cooperative iterator ownership")
+require_all_occurrences_wrapped(
+    "EffectsCore/fx_sort.cpp"
+    "&system->iteratorCount"
+    "FxIterator(WaitBeginExclusive|EndExclusive)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
+    "FX sort exclusive iterator ownership")
+require_all_occurrences_wrapped(
+    "EffectsCore/fx_system.cpp"
+    "&system->iteratorCount"
+    "(Sys_AtomicStore|FxIteratorEndExclusive|FxIteratorTryBeginExclusive)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
+    "FX system iterator initialization and exclusive ownership")
+require_source_match_count(
+    "EffectsCore/fx_draw.cpp"
+    "FxIterator(BeginCooperative|EndCooperative)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
+    2
+    "both cooperative iterator transitions must use their shared helpers")
+require_source_match_count(
+    "EffectsCore/fx_sort.cpp"
+    "FxIterator(WaitBeginExclusive|EndExclusive)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
+    2
+    "both sort iterator transitions must use their shared helpers")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "(Sys_AtomicStore|FxIteratorEndExclusive|FxIteratorTryBeginExclusive)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
+    3
+    "system iterator reset and exclusive transitions must remain explicit")
+require_source_match_count(
+    "EffectsCore/fx_draw.cpp"
+    "system->iteratorCount"
+    3
+    "all cooperative iterator references must remain accounted for")
+require_source_match_count(
+    "EffectsCore/fx_sort.cpp"
+    "system->iteratorCount"
+    3
+    "all sort iterator references must remain accounted for")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "system->iteratorCount"
+    4
+    "all system iterator references must remain accounted for")
+require_source_matches(
+    "EffectsCore/fx_iterator_atomic.h"
+    "if[ \t\r\n]*\\([^{}]*observed[ \t\r\n]*<[ \t\r\n]*0[^{}]*\\)[ \t\r\n]*\\{[ \t\r\n]*std::this_thread::yield[ \t\r\n]*\\([ \t\r\n]*\\)[ \t\r\n]*;[ \t\r\n]*continue[ \t\r\n]*;[ \t\r\n]*\\}"
+    "FX cooperative admission must yield while the gate is unavailable")
+require_source_matches(
+    "EffectsCore/fx_iterator_atomic.h"
+    "if[ \t\r\n]*\\([^{};]*Sys_AtomicCompareExchange[^{};]*\\)[ \t\r\n]*return[ \t\r\n]*;[ \t\r\n]*std::this_thread::yield[ \t\r\n]*\\([ \t\r\n]*\\)[ \t\r\n]*;"
+    "FX cooperative admission must yield after a lost CAS race")
+require_source_matches(
+    "EffectsCore/fx_iterator_atomic.h"
+    "while[ \t\r\n]*\\([ \t\r\n]*!FxIteratorTryBeginExclusive[ \t\r\n]*\\([ \t\r\n]*state[ \t\r\n]*\\)[ \t\r\n]*\\)[ \t\r\n]*\\{[ \t\r\n]*while[ \t\r\n]*\\([ \t\r\n]*Sys_AtomicLoad[ \t\r\n]*\\([ \t\r\n]*state[ \t\r\n]*\\)[ \t\r\n]*!=[ \t\r\n]*0[ \t\r\n]*\\)[ \t\r\n]*\\{[ \t\r\n]*std::this_thread::yield[ \t\r\n]*\\([ \t\r\n]*\\)[ \t\r\n]*;[ \t\r\n]*\\}[ \t\r\n]*std::this_thread::yield[ \t\r\n]*\\([ \t\r\n]*\\)[ \t\r\n]*;[ \t\r\n]*\\}"
+    "FX exclusive admission must yield in both wait and retry paths")
+require_source_contains(
+    "EffectsCore/fx_iterator_atomic.h"
+    "std::atomic_ref<bool>(*requested).store(true, std::memory_order_seq_cst);"
+    "FX garbage-collection requests must retain their byte layout and publish atomically")
+foreach(_fx_iterator_consumer
+    "EffectsCore/fx_draw.cpp"
+    "EffectsCore/fx_system.cpp"
+    "EffectsCore/fx_update.cpp")
+    require_all_occurrences_wrapped(
+        "${_fx_iterator_consumer}"
+        "system->needsGarbageCollection"
+        "Fx(GarbageCollectionRequested|RequestGarbageCollection|ClearGarbageCollectionRequest)[ \t\r\n]*\\([ \t\r\n]*&system->needsGarbageCollection[ \t\r\n]*\\)"
+        "FX garbage-collection request storage")
+endforeach()
 
 # Static-XModel and BModel draw IDs must be resolved against the published
 # surface arena before any record or embedded pointer is dereferenced.
@@ -5285,6 +5364,109 @@ foreach(_bmodel_consumer
         "\\(char \\*\\)(data|frontEndDataOut) \\+ 4 \\* (drawSurf.fields.objectId|surfId)"
         "BModel object IDs must not be decoded with raw base-plus-offset casts")
 endforeach()
+
+# The renderer no longer depends on the Win32 Interlocked namespace. Every
+# executable reservation must use the fixed-width bounded Sys_Atomic boundary.
+file(GLOB_RECURSE _renderer_atomic_sources
+    "${SOURCE_ROOT}/src/gfx_d3d/*.cpp"
+    "${SOURCE_ROOT}/src/gfx_d3d/*.h")
+foreach(_renderer_atomic_source IN LISTS _renderer_atomic_sources)
+    file(READ "${_renderer_atomic_source}" _renderer_atomic_text)
+    string(REGEX MATCH
+        "(^|[^A-Za-z0-9_])_?Interlocked[A-Za-z0-9_]*[ \t\r\n]*\\("
+        _renderer_interlocked_call
+        "${_renderer_atomic_text}")
+    if (NOT "${_renderer_interlocked_call}" STREQUAL "")
+        message(FATAL_ERROR
+            "Renderer retains a direct Interlocked call in ${_renderer_atomic_source}")
+    endif()
+endforeach()
+require_source_not_contains(
+    "universal/sys_atomic.h"
+    "#define Interlocked"
+    "the portable atomic boundary must not mask incomplete migrations with Win32 aliases")
+foreach(_backend_counter
+    "modelLightingPatchCount"
+    "gfxEntCount"
+    "cloudCount")
+    require_source_contains(
+        "gfx_d3d/r_rendercmds.h"
+        "volatile uint32_t ${_backend_counter};"
+        "renderer backend counters must remain exact-width atomic storage")
+endforeach()
+require_source_matches(
+    "gfx_d3d/r_scene.cpp"
+    "gfx::reservation_atomic::TryReserveIndex[ \t\r\n]*\\([ \t\r\n]*&frontEndDataOut->gfxEntCount[ \t\r\n]*,"
+    "scene entities must reserve their exact backing array through the bounded CAS helper")
+require_source_matches(
+    "gfx_d3d/r_dpvs.cpp"
+    "gfx::reservation_atomic::TryReserveIndex[ \t\r\n]*\\([ \t\r\n]*&frontEndDataOut->gfxEntCount[ \t\r\n]*,"
+    "DPVS entities must reserve their exact backing array through the bounded CAS helper")
+require_source_matches(
+    "gfx_d3d/r_scene.cpp"
+    "gfx::reservation_atomic::TryReserveIndex[ \t\r\n]*\\([ \t\r\n]*&frontEndDataOut->cloudCount[ \t\r\n]*,"
+    "particle clouds must reserve their exact backing array through the bounded CAS helper")
+require_source_matches(
+    "gfx_d3d/rb_light.cpp"
+    "gfx::reservation_atomic::TryReserveIndex[ \t\r\n]*\\([ \t\r\n]*&frontEndDataOut->modelLightingPatchCount[ \t\r\n]*,"
+    "model-lighting patches must reserve their exact backing array through the bounded CAS helper")
+foreach(_backend_counter
+    "modelLightingPatchCount"
+    "gfxEntCount"
+    "cloudCount")
+    require_source_matches(
+        "gfx_d3d/r_rendercmds.cpp"
+        "Sys_AtomicStore[ \t\r\n]*\\([ \t\r\n]*&frontEndDataOut->${_backend_counter}[ \t\r\n]*,"
+        "renderer backend ${_backend_counter} must reset through its atomic boundary")
+endforeach()
+foreach(_cloud_count_consumer
+    "gfx_d3d/r_drawsurf.cpp;frontEndDataOut"
+    "gfx_d3d/rb_tess.cpp;data"
+    "gfx_d3d/r_rendercmds.cpp;frontEndDataOut")
+    list(GET _cloud_count_consumer 0 _cloud_count_source)
+    list(GET _cloud_count_consumer 1 _cloud_count_owner)
+    require_source_matches(
+        "${_cloud_count_source}"
+        "Sys_AtomicLoad[ \t\r\n]*\\([ \t\r\n]*&${_cloud_count_owner}->cloudCount[ \t\r\n]*\\)"
+        "renderer cloud extents must be acquired before their backing array is consumed")
+endforeach()
+require_source_matches(
+    "gfx_d3d/rb_backend.cpp"
+    "Sys_AtomicLoad[ \t\r\n]*\\([ \t\r\n]*&backEndData->modelLightingPatchCount[ \t\r\n]*\\)"
+    "renderer model-lighting extents must be acquired before their backing array is consumed")
+foreach(_renderer_member_census
+    "gfx_d3d/r_scene.cpp;frontEndDataOut;gfxEntCount;1"
+    "gfx_d3d/r_scene.cpp;frontEndDataOut;cloudCount;1"
+    "gfx_d3d/r_dpvs.cpp;frontEndDataOut;gfxEntCount;1"
+    "gfx_d3d/rb_light.cpp;frontEndDataOut;modelLightingPatchCount;1"
+    "gfx_d3d/r_rendercmds.cpp;frontEndDataOut;modelLightingPatchCount;1"
+    "gfx_d3d/r_rendercmds.cpp;frontEndDataOut;gfxEntCount;1"
+    "gfx_d3d/r_rendercmds.cpp;frontEndDataOut;cloudCount;3"
+    "gfx_d3d/r_drawsurf.cpp;frontEndDataOut;cloudCount;2"
+    "gfx_d3d/rb_tess.cpp;data;cloudCount;2"
+    "gfx_d3d/rb_backend.cpp;backEndData;modelLightingPatchCount;1")
+    list(GET _renderer_member_census 0 _renderer_member_source)
+    list(GET _renderer_member_census 1 _renderer_member_owner)
+    list(GET _renderer_member_census 2 _renderer_member_name)
+    list(GET _renderer_member_census 3 _renderer_member_count)
+    require_source_match_count(
+        "${_renderer_member_source}"
+        "${_renderer_member_owner}->${_renderer_member_name}"
+        "${_renderer_member_count}"
+        "all ${_renderer_member_owner}->${_renderer_member_name} accesses must remain accounted for")
+endforeach()
+require_source_matches(
+    "gfx_d3d/r_add_cmdbuf.cpp"
+    "R_EndCmdBuf[ \t\r\n]*\\([ \t\r\n]*delayedCmdBuf[ \t\r\n]*\\)[ \t\r\n]*;[ \t\r\n]*delayedCmdBuf->primDrawSurfSize[ \t\r\n]*=[ \t\r\n]*0[ \t\r\n]*;"
+    "oversized primitive commands must close active delayed-buffer state before rejection")
+require_source_contains(
+    "gfx_d3d/r_dpvs.cpp"
+    "gfxEntIndex = 0u;"
+    "default renderer entities must initialize the complete native index word")
+require_source_contains(
+    "gfx_d3d/rb_light.cpp"
+    "ARRAY_COUNT(frontEndDataOut->modelLightingPatchList)"
+    "model-lighting reservations must derive their exact backing capacity")
 
 # Virtual-memory consumers use one native-page, size_t service boundary and no
 # longer import the Win32 allocator directly.

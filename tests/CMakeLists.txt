@@ -130,6 +130,22 @@ add_test(
 )
 set_tests_properties(effectscore-visibility-publication PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-fx-iterator-atomic-tests
+    fx_iterator_atomic_tests.cpp
+)
+target_include_directories(kisakcod-fx-iterator-atomic-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-fx-iterator-atomic-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-fx-iterator-atomic-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-fx-iterator-atomic-tests)
+set_target_properties(kisakcod-fx-iterator-atomic-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-iterator-atomic-protocol
+    COMMAND kisakcod-fx-iterator-atomic-tests
+)
+set_tests_properties(effectscore-iterator-atomic-protocol PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-db-load-atomic-tests db_load_atomic_tests.cpp)
 target_include_directories(kisakcod-db-load-atomic-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-db-load-atomic-tests PRIVATE cxx_std_20)

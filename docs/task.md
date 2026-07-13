@@ -8,11 +8,11 @@ work item changes. Do not create session-specific handoff files.
 
 - Branch: `master`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: integrate and verify the bounded BModel, FX visibility-publication, and portable
-  filesystem-path batches; then run the protected licensed headless smoke and continue directory
-  enumeration plus the staged FX iterator/freelist/status protocols without relaxing the engine gate.
-- Progress estimate: approximately **24% complete by engineering effort** (plausible range 20–29%).
-  The foundation/checklist view is about 35–40% and the shared foundation is roughly 70–80% mature,
+- Active work: clear the Windows portable runtime gate for the new bounded filesystem enumeration,
+  verify the final renderer/FX atomic migrations in all nine CI jobs, then run the protected licensed
+  headless smoke and continue handle-relative deletion plus the staged FX freelist/status protocols.
+- Progress estimate: approximately **25% complete by engineering effort** (plausible range 21–30%).
+  The foundation/checklist view is about 40–45% and the shared foundation is roughly 75–85% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
   (nine commits; upstream was not ahead at merge time) while preserving the port's pointer-width and
@@ -31,7 +31,9 @@ work item changes. Do not create session-specific handoff files.
   `EffectsCore/fx_runtime.h` with exact 32/64-bit size, alignment, standard-layout, and trivial-copy
   contracts. Nineteen atomic words and `FxCmd::spawnLock` use explicit 32-bit storage, and all 61
   native atomic calls across the six EffectsCore users preserve their old/new-value semantics through
-  `Sys_Atomic*`; the executable census is now **9 calls in 4 renderer translation units**. Native
+  `Sys_Atomic*`. The iterator admission/exclusive-release and garbage-collection request paths now use
+  fixed-width atomic helpers with cooperative wait yielding. The remaining renderer reservations and
+  counters have also migrated, so the executable census is now **zero direct `Interlocked` calls**. Native
   conversion uses checked `sizeof` allocation/copy math and alignment, typed XModel physics pointers,
   complete 12-pointer curve copies, bounded paired trail indices, correct single-decal deep copies,
   native impact-table allocations, and a native `FxProfileEntry` sort stride. A shared checked blob
@@ -55,13 +57,19 @@ work item changes. Do not create session-specific handoff files.
   cover partial ranges, overflow, zero-on-recommit, exact-once release, and concurrency. MSVC exposed
   one `max`-macro collision and one incorrectly named FX visual-union source; corrective commits
   `8dbc36b` and `5a72e5e` fixed both, and run **29214406641 passed all nine CI jobs**.
-- Current filesystem-path batch: portable Win32/POSIX services provide UTF-8 directory creation,
-  dynamically sized current-directory lookup, and executable-path lookup. Directory creation holds and
+- Current filesystem batch: portable Win32/POSIX services provide UTF-8 directory creation,
+  dynamically sized current-directory lookup, executable-path lookup, and bounded deterministic
+  directory enumeration. Enumeration rejects symlink/reparse/special entries, applies optional filters
+  before result limits, preserves native pointer widths in sort/list storage, and reports incomplete
+  direct or recursive results instead of silently hiding matches. Directory creation holds and
   validates every ancestor without following POSIX symlinks or Win32 reparse points; Windows uses wide
   long-path APIs and rejects invalid/DOS-device components. Common wrappers no longer truncate at 256
   bytes and preserve POSIX, drive, extended-drive, and UNC roots. Recursive deletion deliberately remains
-  Win32 debt pending handle-relative enumeration/deletion; it only gains a null/empty guard in this batch.
-  The integrated utility suite passes **28/28** under GCC, Clang, ASan/UBSan, and TSan.
+  Win32 debt pending handle-relative enumeration/deletion. The integrated utility suite passes **29/29**
+  locally under GCC, Clang, ASan/UBSan, and TSan. Run **29215880727** passed every engine job and all three
+  POSIX utility jobs, but the filesystem contract failed without diagnostics on Windows amd64/ARM64;
+  the corrective batch replaces CRT fixture writes with native wide APIs and adds granular failure stages
+  for the replacement CI run.
 - Current DObj/model-surface batch: the inherited fixed 3,600-byte stack overlay and retail
   4/24/56-byte pointer-bearing stream assumptions are gone. A shared checked planner/cursor uses
   native 4/8, 24/40, and 56/72-byte records, aligned exact-capacity CAS reservations, placement
@@ -347,9 +355,9 @@ work item changes. Do not create session-specific handoff files.
 | Milestone | Status | Current evidence / next gate |
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
-| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration/IWD search contexts, fixed-width fast locks, native dvar/script/XAnim/DObj/database/IWD/loopback/skeleton/pose/EffectsCore, bounded renderer/model-surface reservations, and a typed fixed-width worker queue exist; 9 executable direct engine Interlocked calls in 4 renderer translation units and broader platform integration remain. |
+| M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration/IWD search contexts, fixed-width fast locks, native dvar/script/XAnim/DObj/database/IWD/loopback/skeleton/pose/EffectsCore, bounded renderer/model-surface reservations, and a typed fixed-width worker queue exist. The executable engine has zero direct `Interlocked` calls; remaining work is broader raw-width/layout debt and platform integration. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 45 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, complete graphics-world AABB topology validation, and bounded XSurface/XModel skin/skeleton/collision contracts landed; production-path fuzz fixtures and the load-object bounded cursor remain. |
-| M3 platform services | In progress: thread, memory, and core path services integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, virtual-memory lifecycle, UTF-8 mkdir/cwd/executable paths, and a cooperative worker gate used by renderer workers. Linux/macOS engine/headless sets remain empty and engine-gated; directory enumeration/deletion, POSIX crash freezing, process/console, and socket backends remain. |
+| M3 platform services | In progress: thread, memory, and filesystem enumeration integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, virtual-memory lifecycle, UTF-8 mkdir/cwd/executable paths, bounded directory enumeration, and a cooperative worker gate used by renderer workers. Linux/macOS engine/headless sets remain empty and engine-gated; handle-relative recursive deletion, POSIX crash freezing, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table and DObj runtime/saved layouts, allocations, preview buffers, and SP corpse pointers are native-width exact. XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, all legacy direct references migrated to bounded resolution, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush, portal/cell, and path-tree spans, and 18 exact completed object types exist; packed mirrors, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
@@ -367,11 +375,10 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Verify the BModel/FX visibility/filesystem-path integration in all nine CI jobs and run the protected
-   licensed-content headless startup/map/`getstatus` workflow.
-2. Extract portable directory enumeration for `Sys_ListFiles`, then design handle-relative recursive
-   deletion without symlink/reparse traversal.
-3. Continue the staged FX iterator/freelist/camera/ring/status families and disk32 FX archive boundary.
+1. Verify the corrective filesystem-enumeration plus final renderer/FX atomic integration in all nine
+   CI jobs, then run the protected licensed-content headless startup/map/`getstatus` workflow.
+2. Design handle-relative recursive deletion without symlink/reparse traversal.
+3. Continue the staged FX freelist/camera/ring/status families and disk32 FX archive boundary.
 4. Extract process/console services and implement Linux signal-park plus macOS Mach crash freezing
    behind the already isolated terminal API.
 5. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.

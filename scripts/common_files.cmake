@@ -27,6 +27,7 @@ set(EFFECTSCORE
     "${SRC_DIR}/EffectsCore/fx_random.cpp"
     "${SRC_DIR}/EffectsCore/fx_runtime.h"
     "${SRC_DIR}/EffectsCore/fx_runtime_blob.h"
+    "${SRC_DIR}/EffectsCore/fx_iterator_atomic.h"
     "${SRC_DIR}/EffectsCore/fx_visibility_atomic.h"
     "${SRC_DIR}/EffectsCore/fx_sort.cpp"
     "${SRC_DIR}/EffectsCore/fx_sprite.cpp"
