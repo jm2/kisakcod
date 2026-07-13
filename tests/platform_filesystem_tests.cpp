@@ -31,7 +31,17 @@ void SetCheckStage(const char *const stage)
 bool Check(const bool condition)
 {
     if (!condition)
+    {
+#if defined(_WIN32)
+        std::fprintf(
+            stderr,
+            "FAIL: platform filesystem stage: %s (Win32 error %lu)\n",
+            gCheckStage,
+            static_cast<unsigned long>(GetLastError()));
+#else
         std::fprintf(stderr, "FAIL: platform filesystem stage: %s\n", gCheckStage);
+#endif
+    }
     return condition;
 }
 
@@ -367,31 +377,45 @@ bool TestAncestorLinks(const std::string &workingDirectory)
 
 bool TestLongCurrentDirectory(const std::string &workingDirectory)
 {
+    SetCheckStage("long-current-directory/create-root");
     const std::string root = MakeUniquePath(workingDirectory) + "-long";
     if (!Check(Sys_FileSystemCreateDirectory(root.c_str())))
         return false;
 
     std::vector<std::string> directories{root};
     std::string current = root;
-    while (current.size() <= 320)
+#if defined(_WIN32)
+    // SetCurrentDirectoryW remains subject to the process-wide MAX_PATH
+    // policy unless both the host and executable opt into long-path behavior.
+    // Stay below that boundary while still forcing a dynamically sized query.
+    constexpr std::size_t currentDirectoryTarget = 220;
+#else
+    constexpr std::size_t currentDirectoryTarget = 320;
+#endif
+    while (current.size() <= currentDirectoryTarget)
     {
+        SetCheckStage("long-current-directory/create-component");
         current = Join(current, "long-directory-component");
         if (!Check(Sys_FileSystemCreateDirectory(current.c_str())))
             return false;
         directories.push_back(current);
     }
+    SetCheckStage("long-current-directory/set-current");
     if (!Check(SetCurrentDirectoryNative(current)))
         return false;
 
-    std::array<char, 256> truncated{};
+    std::array<char, 128> truncated{};
     std::array<char, 4096> complete{};
+    SetCheckStage("long-current-directory/query");
     const bool pathChecks =
         Check(!Sys_FileSystemGetCurrentDirectory(truncated.data(), truncated.size()))
         && Check(truncated[0] == '\0')
         && Check(Sys_FileSystemGetCurrentDirectory(complete.data(), complete.size()))
-        && Check(std::strlen(complete.data()) > 256);
+        && Check(std::strlen(complete.data()) >= truncated.size());
 
+    SetCheckStage("long-current-directory/restore");
     const bool restored = SetCurrentDirectoryNative(workingDirectory);
+    SetCheckStage("long-current-directory/cleanup");
     bool removed = true;
     for (auto directory = directories.rbegin(); directory != directories.rend(); ++directory)
         removed = RemoveDirectoryNative(*directory) && removed;

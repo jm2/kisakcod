@@ -68,8 +68,10 @@ work item changes. Do not create session-specific handoff files.
   Win32 debt pending handle-relative enumeration/deletion. The integrated utility suite passes **29/29**
   locally under GCC, Clang, ASan/UBSan, and TSan. Run **29215880727** passed every engine job and all three
   POSIX utility jobs, but the filesystem contract failed without diagnostics on Windows amd64/ARM64;
-  the corrective batch replaces CRT fixture writes with native wide APIs and adds granular failure stages
-  for the replacement CI run.
+  diagnostic run **29216713463** isolated that failure to a test forcing the process current directory
+  beyond the default Windows `MAX_PATH` policy, before enumeration began. The corrected fixture still
+  verifies dynamic current-directory sizing below that policy boundary on Windows, retains the >320-byte
+  POSIX case, uses native wide file APIs, and emits granular Win32 diagnostics in replacement CI.
 - Current DObj/model-surface batch: the inherited fixed 3,600-byte stack overlay and retail
   4/24/56-byte pointer-bearing stream assumptions are gone. A shared checked planner/cursor uses
   native 4/8, 24/40, and 56/72-byte records, aligned exact-capacity CAS reservations, placement
