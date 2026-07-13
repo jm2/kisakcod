@@ -411,6 +411,136 @@ require_source_contains(
     "physics/ode/error.cpp"
     "#if !defined(_WIN32) || defined(KISAK_DEDI_HEADLESS)"
     "headless ODE failures must use the stderr/nonzero-exit backend")
+require_source_ordered(
+    "physics/ode/ode.cpp"
+    "new (std::nothrow) dxBody;"
+    "if (!b)\n        return nullptr;"
+    "ODE body allocation failure must be checked before initialization")
+require_source_ordered(
+    "physics/ode/ode.cpp"
+    "if (!b)\n        return nullptr;"
+    "initObject(b, w);"
+    "failed ODE bodies must not enter their world list")
+require_source_not_contains(
+    "physics/ode/ode.cpp"
+    "free(b);"
+    "heap-backed ODE bodies must use matching C++ deallocation")
+require_source_match_count(
+    "physics/ode/ode.cpp"
+    "delete[ \t]+b[ \t]*;"
+    2
+    "both ODE body destruction paths must match the fallback new-expression")
+foreach(_resource_pair_callback
+    "ResourceHandle (*createPrimary)(void *context) noexcept = nullptr;"
+    "ResourceHandle (*createCompanion)("
+    "void (*destroyPrimary)("
+    "TryCreateResourcePair("
+)
+    require_source_contains(
+        "physics/phys_resource_pair.h"
+        "${_resource_pair_callback}"
+        "resource-pair rollback callbacks must retain their noexcept contract")
+endforeach()
+require_source_ordered(
+    "physics/phys_resource_pair.cpp"
+    "callbacks.createCompanion(callbacks.context, primary);"
+    "callbacks.destroyPrimary(callbacks.context, primary);"
+    "failed companion creation must return its primary resource")
+require_source_ordered(
+    "physics/phys_resource_pair.cpp"
+    "callbacks.destroyPrimary(callbacks.context, primary);"
+    "return {ResourcePairStatus::CompanionUnavailable, nullptr, nullptr};"
+    "resource-pair failure must publish no stale ownership")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "physics::allocation::TryCreateResourcePair(resourceCallbacks, true);"
+    "physics bodies and user data must be acquired transactionally")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "resourceCallbacks, geomState->isOriented);"
+    "primary collision and optional transforms must be acquired transactionally")
+require_source_not_contains(
+    "physics/phys_ode.cpp"
+    "Phys_AdjustForNewCenterOfMass(body, centerOfMass);\n    if (geomState->type == PHYS_GEOM_NONE)"
+    "fallible geom acquisition must not mutate body center-of-mass state first")
+require_source_ordered(
+    "physics/phys_ode.cpp"
+    "dSpaceRemove(physGlob.space[worldIndex], outerGeom);"
+    "dSpaceAdd(physGlob.space[worldIndex], outerGeom);"
+    "successful geom construction must preserve legacy simple-space ordering")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "dBodyDestroy(static_cast<dxBody *>(body));"
+    "user-data exhaustion must return its newly created body")
+require_source_not_contains(
+    "physics/phys_ode.cpp"
+    "iassert(userData);\n        memset((uint8_t *)userData"
+    "physics user-data exhaustion must not reach memset through an assertion")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "!(state->mass > 0.0f) || !std::isfinite(state->mass)"
+    "body construction must reject nonpositive or nonfinite mass before allocation")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "geomState.u.brushState.u.brush = brush;"
+    "brush geometry state must retain its native-width typed pointer")
+require_source_not_contains(
+    "physics/phys_ode.cpp"
+    "(int)brush"
+    "brush geometry state must not truncate pointers through its x86 union overlay")
+require_source_not_matches(
+    "physics/phys_ode.cpp"
+    "geomState\\.u\\.cylinderState\\.(radius|halfHeight)[ \t]*=[ \t]*physMass"
+    "brush inertia must use named native-layout members instead of cylinder overlays")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "physGlob.worldData[bodyWorldIndex].timeLastUpdate;"
+    "physics wake timestamps must come from typed world data")
+require_source_not_contains(
+    "physics/phys_ode.cpp"
+    "(int)physGlob.space["
+    "physics wake timestamps must not truncate an unrelated space pointer")
+require_source_ordered(
+    "physics/phys_ode.cpp"
+    "dCreateGeomTransform(context->space, context->body)"
+    "ODE_GeomDestruct(static_cast<dxGeom *>(geom));"
+    "failed transform allocation must release its primary geometry")
+require_source_ordered(
+    "physics/phys_ode.cpp"
+    "ODE_GeomDestruct(static_cast<dxGeom *>(geom));"
+    "return PhysBodyModelCreateStatus::TransformGeomAllocationFailed;"
+    "transform cleanup must precede observable construction failure")
+require_source_contains(
+    "physics/phys_local.h"
+    "Phys_TryCreateBodyFromStateAndXModel("
+    "fresh body-plus-model construction must expose a checked API")
+require_source_contains(
+    "physics/phys_local.h"
+    "void __cdecl Phys_ObjSetCollisionFromXModel("
+    "legacy collision callers must retain their source-compatible wrapper")
+require_source_ordered(
+    "physics/phys_ode.cpp"
+    "*outBody = nullptr;"
+    "Phys_TryBuildCollisionFromXModel(model, worldIndex, body, true, true);"
+    "checked construction must clear output ownership before building collision")
+require_source_ordered(
+    "physics/phys_ode.cpp"
+    "Phys_TryBuildCollisionFromXModel(model, worldIndex, body, true, true);"
+    "Phys_ObjDestroy(worldIndex, body);"
+    "checked collision failure must destroy the complete fresh body")
+require_source_ordered(
+    "physics/phys_ode.cpp"
+    "return collisionStatus;"
+    "*outBody = body;"
+    "checked construction must publish ownership only after every failure exit")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "Phys_TryCreateBodyFromStateAndXModel("
+    "FX archive restore must not publish bodies with partial collision")
+require_source_not_contains(
+    "EffectsCore/fx_archive.cpp"
+    "Phys_CreateBodyFromState(PHYS_WORLD_FX"
+    "FX archive restore must use the checked body-plus-model transaction")
 require_source_contains(
     "cgame_mp/dedicated_cgame.cpp"
     "{ \"code_post_gfx_mp\", 2, 0 }"

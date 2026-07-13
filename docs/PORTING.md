@@ -64,10 +64,11 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Replace the EffectsCore loose-file missing-effect fallback's x86 raw clone, then add live-engine
-   kill/rewind/archive fixtures to the merged runtime-hardening baseline.
-3. Introduce fixed-width `disk32` fast-file/archive schemas, native physics-pointer ownership, and
-   checked conversion into native runtime structures.
+2. Land transactional ODE body/model construction, widen the generic pool allocator's freelist links,
+   then wire the merged native physics sidecar through live spawn/draw/free/reset/archive paths and add
+   kill/rewind/archive fixtures.
+3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
+   structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
 5. Implement the remaining platform services (sockets, filesystem,
    virtual memory, console/process) for Windows/POSIX.
@@ -913,13 +914,25 @@ longjmp unwind prevent resurrection, concurrent traversal/mutation, adjacent-fie
 locks/gates. Explicit signed trail bytes preserve compressed basis data on Linux ARM64. PR #3 replaced
 the loose-file missing-effect raw clone with a checked native-width typed alias and merged at
 `facbfb12` after run 29279924536 passed all nine jobs; its 31-test GCC/Clang/sanitizer matrix and strict
-AArch64 syntax check were also green. The next foundation adds a private noncopyable native-body
+AArch64 syntax check were also green. PR #4 added a private noncopyable native-body
 sidecar with full-width generation tokens, semantic validation, lifetime-bound ownership-preserving
 staged publication/rollback, and a fallible pre-freelist pool callback without changing `FxElem`'s
 0x28-byte layout. Its 32-test GCC/Clang/ASan/UBSan/TSan matrix and strict AArch64 syntax check are
-green; spawn/draw/free/reset/archive integration remains the immediate follow-up. That archive work
+green; both automated review fixes landed and run 29286377602 passed all nine jobs before merge at
+`3c542f20`. Spawn/draw/free/reset/archive integration remains the immediate follow-up. That archive work
 must stage body-state recipes or reserve global capacity because ODE's 512-body ceiling cannot assume
-that complete live and replacement sets coexist. Remaining FX work is
+that complete live and replacement sets coexist. Its prerequisite is allocation-failure-safe ODE
+body/user-data/model-collision construction. The current branch closes the audited exhaustion paths with
+a portable resource-pair transaction used for body/user-data and primary/optional-transform acquisition,
+a checked fresh body-plus-model API that destroys every partial resource before failure is observable,
+and FX archive staging that publishes only complete collision bodies. Allocation precedes center-of-mass
+mutation, the legacy wrapper retains deterministic space ordering, fallback heap bodies use matching
+`new`/`delete`, and adjacent brush-pointer/wake-timestamp truncations are removed. The standalone 33rd
+test injects failures into the same portable transaction primitive (not the full ODE pools); the GCC
+utility suite is 33/33 green, with that test also clean under strict GCC/Clang and sanitizer runs plus
+x86-32/AArch64 compilation. The next M4 prerequisite is the generic pool allocator: it still serializes freelist
+links through `uint32_t`, which must become full-width unaligned-safe pointer storage without changing its
+x86 metadata layout, alongside aligned ODE geom backing storage. Remaining FX work is
 camera/scalar snapshot publication, real Disk32 archive/fast-file conversion, that production
 physics-sidecar wiring, and production fixtures. The
 unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs

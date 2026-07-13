@@ -41,6 +41,8 @@
 // ADD: for memcpy
 #include <string.h>
 
+#include <new>
+
 // misc defines
 #define ALLOCA dALLOCA16
 
@@ -1479,8 +1481,11 @@ dxBody *dBodyCreate(dxWorld *w)
     dxBody *b = (dxBody *)Pool_Alloc(&odeGlob.bodyPool);
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 #else
-    dxBody *b = new dxBody;
+    dxBody *b = new (std::nothrow) dxBody;
 #endif
+
+    if (!b)
+        return nullptr;
 
     initObject(b, w);
     b->firstjoint = 0;
@@ -1604,7 +1609,7 @@ void dWorldDestroy(dxWorld* w)
 #ifdef USE_POOL_ALLOCATOR
         Pool_Free((freenode*)b, &odeGlob.bodyPool);
 #else
-        free(b);
+        delete b;
 #endif
         b = nextb;
     }
@@ -1662,6 +1667,6 @@ void dBodyDestroy(dxBody* b)
     Pool_Free((freenode*)b, &odeGlob.bodyPool);
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 #else
-    free(b);
+    delete b;
 #endif
 }

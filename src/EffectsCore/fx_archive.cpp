@@ -1379,17 +1379,17 @@ bool FX_CreateArchivePhysics(
     {
         FxArchivePhysicsEntry &entry = entries[index];
         FX_NormalizeArchiveBodyState(&entry.state, physicsTime);
-        entry.createdBody =
-            Phys_CreateBodyFromState(PHYS_WORLD_FX, &entry.state);
+        const PhysBodyModelCreateStatus bodyStatus =
+            Phys_TryCreateBodyFromStateAndXModel(
+                PHYS_WORLD_FX,
+                &entry.state,
+                entry.model,
+                &entry.createdBody);
         int encodedBody = 0;
-        const bool bodyEncoded = entry.createdBody
+        const bool bodyEncoded =
+            bodyStatus == PhysBodyModelCreateStatus::Success
             && FX_EncodeArchivedPhysicsBody(
                 entry.createdBody, &encodedBody);
-        if (bodyEncoded)
-        {
-            Phys_ObjSetCollisionFromXModel(
-                entry.model, PHYS_WORLD_FX, entry.createdBody);
-        }
         if (!bodyEncoded)
             created = false;
         else
