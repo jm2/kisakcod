@@ -1,4 +1,5 @@
 #include "fx_system.h"
+#include "fx_iterator_atomic.h"
 
 #include <gfx_d3d/r_drawsurf.h>
 #include <gfx_d3d/r_scene.h>
@@ -919,23 +920,33 @@ void __cdecl FX_DrawNonSpriteElems(FxSystem *system)
         effect = FX_EffectFromHandle(system, system->allEffectHandles[activeIndex & 0x3FF]);
         FX_DrawNonSpriteEffect(system, effect, 1u, system->msecDraw);
     }
-    if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
-        FX_RunGarbageCollection(system);
+    FX_EndIteratingOverEffects_Cooperative(system);
 }
 
 void __cdecl FX_BeginIteratingOverEffects_Cooperative(FxSystem *system)
 {
-    volatile int32_t iteratorCount; // [esp+0h] [ebp-Ch]
-
     if (system->isArchiving)
         MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 479, 0, "%s", "!system->isArchiving");
-    do
+    FxIteratorBeginCooperative(&system->iteratorCount);
+}
+
+void __cdecl FX_EndIteratingOverEffects_Cooperative(FxSystem *system)
+{
+    std::int32_t remaining = -1;
+    if (!FxIteratorEndCooperative(&system->iteratorCount, &remaining))
     {
-        if (system->iteratorCount < 0)
-            iteratorCount = 0;
-        else
-            iteratorCount = system->iteratorCount;
-    } while (Sys_AtomicCompareExchange(&system->iteratorCount, iteratorCount + 1, iteratorCount) != iteratorCount);
+        MyAssertHandler(
+            "c:\\trees\\cod3\\src\\effectscore\\fx_system.h",
+            491,
+            0,
+            "%s",
+            "system->iteratorCount > 0");
+        return;
+    }
+
+    if (remaining == 0
+        && FxGarbageCollectionRequested(&system->needsGarbageCollection))
+        FX_RunGarbageCollection(system);
 }
 
 void __cdecl FX_DrawNonSpriteEffect(FxSystem *system, FxEffect *effect, uint32_t elemClass, int32_t drawTime)
@@ -1091,8 +1102,7 @@ void __cdecl FX_DrawSpotLight(FxSystem *system)
         v1 = FX_EffectFromHandle(system, system->activeSpotLightEffectHandle);
         FX_DrawSpotLightEffect(system, v1, msecDraw);
     }
-    if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
-        FX_RunGarbageCollection(system);
+    FX_EndIteratingOverEffects_Cooperative(system);
 }
 
 void __cdecl FX_DrawSpotLightEffect(FxSystem *system, FxEffect *effect, int32_t drawTime)
@@ -1162,8 +1172,7 @@ void __cdecl FX_DrawSpriteElems(FxSystem *system, int32_t drawTime)
             FX_DrawTrailsForEffect(system, effecta, drawTime);
         }
     }
-    if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
-        FX_RunGarbageCollection(system);
+    FX_EndIteratingOverEffects_Cooperative(system);
     if (system->sprite.indexCount)
     {
         if (!system->sprite.name)

@@ -1,4 +1,5 @@
 #include "fx_system.h"
+#include "fx_iterator_atomic.h"
 #include "fx_visibility_atomic.h"
 
 #include <qcommon/mem_track.h>
@@ -139,7 +140,8 @@ void __cdecl FX_ResetSystem(FxSystem *system)
     system->firstActiveEffect = 0;
     system->firstNewEffect = 0;
     system->firstFreeEffect = 0;
-    system->iteratorCount = 0;
+    Sys_AtomicStore(&system->iteratorCount, 0);
+    FxClearGarbageCollectionRequest(&system->needsGarbageCollection);
     system->deferredElemCount = 0;
     elems = system->elems;
     system->firstFreeElem = 0;
@@ -248,7 +250,7 @@ void __cdecl FX_EffectNoLongerReferenced(FxSystem *system, FxEffect *remoteEffec
                 oldStatusValue);
         FX_DelRefToEffect(system, remoteOwner);
     }
-    system->needsGarbageCollection = 1;
+    FxRequestGarbageCollection(&system->needsGarbageCollection);
 }
 
 void __cdecl FX_DelRefToEffect(FxSystem *system, FxEffect *effect)
@@ -278,9 +280,10 @@ void __cdecl FX_RunGarbageCollection(FxSystem *system)
 
     if (!system)
         MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 779, 0, "%s", "system");
-    if (system->needsGarbageCollection && FX_BeginIteratingOverEffects_Exclusive(system))
+    if (FxGarbageCollectionRequested(&system->needsGarbageCollection)
+        && FX_BeginIteratingOverEffects_Exclusive(system))
     {
-        system->needsGarbageCollection = 0;
+        FxClearGarbageCollectionRequest(&system->needsGarbageCollection);
         activeIndex = system->firstNewEffect;
         freedCount = 0;
         while (activeIndex != system->firstActiveEffect)
@@ -305,7 +308,8 @@ void __cdecl FX_RunGarbageCollection(FxSystem *system)
             memset((uint8_t *)effect, 0, sizeof(FxEffect));
         }
         system->firstActiveEffect = activeIndex;
-        system->iteratorCount = 0;
+        if (!FxIteratorEndExclusive(&system->iteratorCount))
+            MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 535, 0, "%s", "system->iteratorCount == -1");
     }
 }
 
@@ -313,7 +317,7 @@ bool __cdecl FX_BeginIteratingOverEffects_Exclusive(FxSystem *system)
 {
     if (system->isArchiving)
         MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 523, 0, "%s", "!system->isArchiving");
-    return Sys_AtomicCompareExchange(&system->iteratorCount, -1, 0) == 0;
+    return FxIteratorTryBeginExclusive(&system->iteratorCount);
 }
 
 void __cdecl FX_RunGarbageCollection_FreeSpotLight(FxSystem *system, uint16_t effectHandle)
@@ -1186,8 +1190,7 @@ void __cdecl FX_StopEffect(FxSystem *system, FxEffect *effect)
                         FX_StopEffect(system, otherEffect);
                 }
             }
-            if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
-                FX_RunGarbageCollection(system);
+            FX_EndIteratingOverEffects_Cooperative(system);
         }
         FX_DelRefToEffect(system, effect);
     }
@@ -1274,8 +1277,7 @@ void __cdecl FX_KillEffect(FxSystem* system, FxEffect* effect)
             }
             ++activeIndex;
         }
-        if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
-            FX_RunGarbageCollection(system);
+        FX_EndIteratingOverEffects_Cooperative(system);
     }
     FX_DelRefToEffect(system, effect);
 }
@@ -1333,8 +1335,7 @@ void __cdecl FX_KillEffectDef(int32_t localClientNum, const FxEffectDef *def)
             Sys_AtomicFetchAdd(&effect->status, -536870912);
         }
     }
-    if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
-        FX_RunGarbageCollection(system);
+    FX_EndIteratingOverEffects_Cooperative(system);
 }
 
 void __cdecl FX_KillAllEffects(int32_t localClientNum)
@@ -1360,8 +1361,7 @@ void __cdecl FX_KillAllEffects(int32_t localClientNum)
                 Sys_AtomicFetchAdd(&effect->status, -536870912);
             }
         }
-        if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
-            FX_RunGarbageCollection(system);
+        FX_EndIteratingOverEffects_Cooperative(system);
     }
 }
 

@@ -1,7 +1,5 @@
 #include "fx_system.h"
 
-#include <universal/sys_atomic.h>
-
 void __cdecl FX_DrawProfile(int32_t clientIndex, void(__cdecl *drawFunc)(char *), float *profilePos)
 {
     char *v3; // eax
@@ -32,8 +30,7 @@ void __cdecl FX_DrawProfile(int32_t clientIndex, void(__cdecl *drawFunc)(char *)
         entry = FX_GetProfileEntry(effect->def, entryPool, &entryCount);
         FX_ProfileSingleEffect(system, effect, entry);
     }
-    if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
-        FX_RunGarbageCollection(system);
+    FX_EndIteratingOverEffects_Cooperative(system);
     qsort(entryPool, entryCount, sizeof(FxProfileEntry),
         (int(__cdecl *)(const void *, const void *))FX_CompareProfileEntries);
     v11 = system->firstNewEffect - system->firstActiveEffect;

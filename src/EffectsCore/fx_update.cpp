@@ -1,4 +1,5 @@
 #include "fx_system.h"
+#include "fx_iterator_atomic.h"
 
 #include <xanim/xanim.h>
 #include <xanim/dobj.h>
@@ -2131,8 +2132,7 @@ void __cdecl FX_UpdateSpotLight(FxCmd* cmd)
             FX_UpdateSpotLightEffect(system, effect);
             Sys_AtomicFetchAdd(&effect->status, -536870912);
         }
-        if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
-            FX_RunGarbageCollection(system);
+        FX_EndIteratingOverEffects_Cooperative(system);
         if (fx_draw->current.enabled)
             FX_DrawSpotLight(system);
     }
@@ -2268,8 +2268,7 @@ void __cdecl FX_Update(FxSystem* system, int32_t localClientNum, bool nonBoltedE
             Sys_AtomicFetchAdd(&localEffect->status, -536870912);
         }
     }
-    if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
-        FX_RunGarbageCollection(system);
+    FX_EndIteratingOverEffects_Cooperative(system);
 }
 
 void __cdecl FX_UpdateEffect(FxSystem* system, FxEffect* effect)
@@ -2416,8 +2415,7 @@ void __cdecl FX_RewindTo(int32_t localClientNum, int32_t time)
                 Sys_AtomicFetchAdd(&effecta->status, -536870912);
             }
         }
-        if (!Sys_AtomicDecrement(&system->iteratorCount) && system->needsGarbageCollection)
-            FX_RunGarbageCollection(system);
+        FX_EndIteratingOverEffects_Cooperative(system);
         for (bitNum = 0; bitNum < v12; ++bitNum)
         {
             if (Com_BitCheckAssert(dst, bitNum, 128))
@@ -2439,7 +2437,7 @@ void __cdecl FX_RewindTo(int32_t localClientNum, int32_t time)
                 }
             }
         }
-        if (system->needsGarbageCollection)
+        if (FxGarbageCollectionRequested(&system->needsGarbageCollection))
             FX_RunGarbageCollection(system);
     }
 }

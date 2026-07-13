@@ -1,6 +1,6 @@
 #include "fx_system.h"
+#include "fx_iterator_atomic.h"
 #include <universal/profile.h>
-#include <universal/sys_atomic.h>
 
 
 void __cdecl FX_SortEffects(FxSystem *system)
@@ -47,21 +47,15 @@ void __cdecl FX_SortEffects(FxSystem *system)
         v3[v8] = v10;
         system->allEffectHandles[v8] = v5;
     }
-    system->iteratorCount = 0;
+    if (!FxIteratorEndExclusive(&system->iteratorCount))
+        MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 520, 0, "%s", "system->iteratorCount == -1");
 }
 
 void __cdecl FX_WaitBeginIteratingOverEffects_Exclusive(FxSystem *system)
 {
-    volatile int32_t *Destination; // [esp+0h] [ebp-4h]
-
     if (system->isArchiving)
         MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 512, 0, "%s", "!system->isArchiving");
-    Destination = &system->iteratorCount;
-    do
-    {
-        while (*Destination)
-            ;
-    } while (Sys_AtomicCompareExchange(Destination, -1, 0));
+    FxIteratorWaitBeginExclusive(&system->iteratorCount);
 }
 
 bool __cdecl FX_FirstEffectIsFurther(FxEffect *firstEffect, FxEffect *secondEffect)

@@ -740,6 +740,7 @@ bool __cdecl FX_CullElementForDraw_Light(const FxDrawState *draw);
 void __cdecl FX_DrawElem_SpotLight(FxDrawState *draw);
 void __cdecl FX_DrawNonSpriteElems(FxSystem *system);
 void __cdecl FX_BeginIteratingOverEffects_Cooperative(FxSystem *system);
+void __cdecl FX_EndIteratingOverEffects_Cooperative(FxSystem *system);
 void __cdecl FX_DrawNonSpriteEffect(FxSystem *system, FxEffect *effect, uint32_t elemClass, int32_t drawTime);
 void __cdecl FX_DrawElement(FxSystem *system, const FxElemDef *elemDef, const FxElem *elem, FxDrawState *draw);
 void __cdecl FX_DrawSpotLight(FxSystem *system);
