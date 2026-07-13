@@ -349,6 +349,8 @@ set(PHYSICS
     "${SRC_DIR}/physics/phys_contacts.cpp"
     "${SRC_DIR}/physics/phys_local.h"
     "${SRC_DIR}/physics/phys_ode.cpp"
+    "${SRC_DIR}/physics/phys_resource_pair.cpp"
+    "${SRC_DIR}/physics/phys_resource_pair.h"
     "${SRC_DIR}/physics/phys_world_collision.cpp"
 )
 

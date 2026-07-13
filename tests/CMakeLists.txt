@@ -142,6 +142,21 @@ add_test(
     COMMAND kisakcod-fx-physics-sidecar-tests
 )
 
+add_executable(kisakcod-phys-resource-pair-tests
+    phys_resource_pair_tests.cpp
+    ${SRC_DIR}/physics/phys_resource_pair.cpp
+)
+target_include_directories(kisakcod-phys-resource-pair-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-phys-resource-pair-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-phys-resource-pair-tests)
+set_target_properties(kisakcod-phys-resource-pair-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME physics-resource-pair-rollback
+    COMMAND kisakcod-phys-resource-pair-tests
+)
+
 add_executable(kisakcod-fx-visibility-atomic-tests
     fx_visibility_atomic_tests.cpp
 )
