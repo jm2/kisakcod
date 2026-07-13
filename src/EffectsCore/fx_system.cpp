@@ -1,5 +1,7 @@
 #include "fx_system.h"
 #include "fx_iterator_atomic.h"
+#include "fx_pool.h"
+#include "fx_pool_graph.h"
 #include "fx_visibility_atomic.h"
 
 #include <qcommon/mem_track.h>
@@ -24,12 +26,1580 @@
 #include <universal/profile.h>
 #include <universal/sys_atomic.h>
 
+#include <array>
+#include <cstdlib>
+#include <limits>
+#include <thread>
+
 int32_t fx_maxLocalClients;
 int32_t fx_serverVisClient;
 
 FxSystem fx_systemPool[1];
 FxSystemBuffers fx_systemBufferPool[1];
 FxMarksSystem fx_marksSystemPool[1];
+alignas(4) volatile std::int32_t fx_archiveGate[1]{};
+alignas(4) volatile std::int32_t fx_cooperativeIteratorGeneration[1]{};
+alignas(4) volatile std::int32_t fx_effectKillGate[1]{};
+alignas(4) volatile std::int32_t
+    fx_effectOwnerAdmissionBlocked[1][FX_EFFECT_LIMIT]{};
+
+namespace
+{
+struct FxPoolAllocationStates
+{
+    FxPoolAllocationState<MAX_ELEMS> elems;
+    FxPoolAllocationState<MAX_TRAILS> trails;
+    FxPoolAllocationState<MAX_TRAIL_ELEMS> trailElems;
+};
+
+FxPoolAllocationStates fx_poolAllocationStates[1];
+
+struct FxArchiveThreadState
+{
+    FxSystem *system = nullptr;
+    std::uint32_t generation = 0;
+};
+
+thread_local FxArchiveThreadState fx_archiveThreadState;
+
+struct FxEffectLockThreadEntry
+{
+    FxSystem *system = nullptr;
+    FxEffect *effect = nullptr;
+    std::uint32_t generation = 0;
+};
+
+thread_local std::array<FxEffectLockThreadEntry, FX_EFFECT_LIMIT>
+    fx_effectLockThreadEntries{};
+thread_local std::size_t fx_effectLockThreadEntryCount = 0;
+
+struct FxEffectReservationThreadState
+{
+    FxSystem *system = nullptr;
+    FxEffect *effect = nullptr;
+    FxEffect *ownerEffect = nullptr;
+    std::int32_t allocIndex = 0;
+    std::uint32_t generation = 0;
+    bool ownerRelationshipAdded = false;
+    bool spotLightRelationshipAdded = false;
+};
+
+thread_local FxEffectReservationThreadState
+    fx_effectReservationThreadState{};
+
+struct FxEffectKillThreadState
+{
+    FxSystem *system = nullptr;
+    FxEffect *effect = nullptr;
+    volatile std::int32_t *killGate = nullptr;
+    std::array<volatile std::int32_t *, FX_EFFECT_LIMIT> admissionStates{};
+    std::size_t admissionStateCount = 0;
+    std::array<FxEffect *, FX_EFFECT_LIMIT> retainedEffects{};
+    std::size_t retainedEffectCount = 0;
+    std::uint32_t generation = 0;
+    bool mutationStarted = false;
+};
+
+thread_local FxEffectKillThreadState fx_effectKillThreadState{};
+
+struct FxEffectKillExclusiveThreadState
+{
+    FxSystem *system = nullptr;
+    std::uint32_t generation = 0;
+    bool exclusiveAcquired = false;
+};
+
+thread_local FxEffectKillExclusiveThreadState
+    fx_effectKillExclusiveThreadState{};
+
+struct FxEffectRestartRetainThreadState
+{
+    FxSystem *system = nullptr;
+    std::array<FxEffect *, FX_EFFECT_LIMIT> effects{};
+    std::size_t effectCount = 0;
+    std::uint32_t generation = 0;
+    bool ownsKillGate = false;
+};
+
+thread_local FxEffectRestartRetainThreadState
+    fx_effectRestartRetainThreadState{};
+
+volatile std::int32_t *FX_GetArchiveGate(
+    const FxSystem *const system) noexcept
+{
+    for (std::size_t index = 0;
+         index < sizeof(fx_systemPool) / sizeof(fx_systemPool[0]);
+         ++index)
+    {
+        if (system == &fx_systemPool[index])
+            return &fx_archiveGate[index];
+    }
+    return nullptr;
+}
+
+volatile std::int32_t *FX_GetCooperativeIteratorGenerationState(
+    const FxSystem *const system) noexcept
+{
+    for (std::size_t index = 0;
+         index < sizeof(fx_systemPool) / sizeof(fx_systemPool[0]);
+         ++index)
+    {
+        if (system == &fx_systemPool[index])
+            return &fx_cooperativeIteratorGeneration[index];
+    }
+    return nullptr;
+}
+
+volatile std::int32_t *FX_GetEffectKillGate(
+    const FxSystem *const system) noexcept
+{
+    for (std::size_t index = 0;
+         index < sizeof(fx_systemPool) / sizeof(fx_systemPool[0]);
+         ++index)
+    {
+        if (system == &fx_systemPool[index])
+            return &fx_effectKillGate[index];
+    }
+    return nullptr;
+}
+
+bool FX_CurrentThreadOwnsArchive(const FxSystem *const system) noexcept
+{
+    if (!fx_archiveThreadState.system)
+        return false;
+
+    if (fx_archiveThreadState.generation
+        != FX_GetCooperativeIteratorGeneration(
+            fx_archiveThreadState.system))
+    {
+        fx_archiveThreadState = {};
+        return false;
+    }
+    return fx_archiveThreadState.system == system;
+}
+
+bool FX_CurrentThreadOwnsEffectKillExclusive(
+    const FxSystem *const system) noexcept
+{
+    if (!fx_effectKillExclusiveThreadState.system)
+        return false;
+    if (fx_effectKillExclusiveThreadState.generation
+        != FX_GetCooperativeIteratorGeneration(
+            fx_effectKillExclusiveThreadState.system))
+    {
+        fx_effectKillExclusiveThreadState = {};
+        return false;
+    }
+    return fx_effectKillExclusiveThreadState.system == system;
+}
+
+bool FX_CurrentThreadOwnsEffectRestartGate(
+    const FxSystem *const system) noexcept
+{
+    if (!fx_effectRestartRetainThreadState.system
+        || !fx_effectRestartRetainThreadState.ownsKillGate)
+    {
+        return false;
+    }
+    if (fx_effectRestartRetainThreadState.generation
+        != FX_GetCooperativeIteratorGeneration(
+            fx_effectRestartRetainThreadState.system))
+    {
+        fx_effectRestartRetainThreadState = {};
+        return false;
+    }
+    return fx_effectRestartRetainThreadState.system == system;
+}
+
+void FX_EnterArchiveAwarePoolCriticalSection()
+{
+    for (;;)
+    {
+        while (Sys_AtomicLoad(&fx_archiveGate[0]) == 2)
+            std::this_thread::yield();
+        Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
+        if (Sys_AtomicLoad(&fx_archiveGate[0]) != 2)
+            return;
+        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    }
+}
+
+FxPoolAllocationStates *FX_GetPoolAllocationStates(
+    const FxSystem *const system) noexcept
+{
+    for (std::size_t index = 0;
+         index < sizeof(fx_systemPool) / sizeof(fx_systemPool[0]);
+         ++index)
+    {
+        if (system == &fx_systemPool[index])
+            return &fx_poolAllocationStates[index];
+    }
+    return nullptr;
+}
+
+volatile std::int32_t *FX_GetEffectOwnerAdmissionState(
+    const FxSystem *const system,
+    const FxEffect *const effect) noexcept
+{
+    if (!system || !effect)
+        return nullptr;
+    constexpr std::size_t effectHandleStride = FxHandleStride<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>();
+    for (std::size_t systemIndex = 0;
+         systemIndex < sizeof(fx_systemPool) / sizeof(fx_systemPool[0]);
+         ++systemIndex)
+    {
+        if (system != &fx_systemPool[systemIndex])
+            continue;
+        const std::uint16_t effectHandle = FxEncodeHandle<
+            FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                system->effects, effect);
+        if (effectHandle == FX_INVALID_HANDLE)
+            return nullptr;
+        return &fx_effectOwnerAdmissionBlocked[systemIndex]
+            [effectHandle / effectHandleStride];
+    }
+    return nullptr;
+}
+
+bool FX_ResetEffectOwnerAdmissionForReservation(
+    FxSystem *const system,
+    FxEffect *const effect) noexcept
+{
+    volatile std::int32_t *const state =
+        FX_GetEffectOwnerAdmissionState(system, effect);
+    if (!state)
+        return false;
+    FX_EnterArchiveAwarePoolCriticalSection();
+    Sys_AtomicStore(state, 0);
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return true;
+}
+
+void FX_ReleaseAllEffectKillRetains() noexcept;
+bool FX_TryAdjustEffectReferenceCount(
+    FxEffect *effect,
+    bool increment) noexcept;
+bool FX_RecordEffectKillRetain(
+    FxSystem *system,
+    FxEffect *effect) noexcept;
+
+bool FX_BeginEffectKillAdmission(
+    FxSystem *const system,
+    FxEffect *const effect,
+    std::int32_t *const outPublicationBarrier) noexcept
+{
+    if (!system || !effect || !outPublicationBarrier
+        || fx_effectKillThreadState.system
+        || !FX_CurrentThreadOwnsEffectKillExclusive(system))
+    {
+        return false;
+    }
+    volatile std::int32_t *const admissionState =
+        FX_GetEffectOwnerAdmissionState(system, effect);
+    volatile std::int32_t *const killGate =
+        FX_GetEffectKillGate(system);
+    if (!admissionState || !killGate)
+        return false;
+
+    FX_EnterArchiveAwarePoolCriticalSection();
+    if (Sys_AtomicLoad(killGate) != 2
+        || Sys_AtomicLoad(admissionState) != 0)
+    {
+        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+        return false;
+    }
+    const std::int32_t publicationBarrier =
+        Sys_AtomicLoad(&system->firstFreeEffect);
+    if (publicationBarrier < 0)
+    {
+        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+        return false;
+    }
+    fx_effectKillThreadState.system = system;
+    fx_effectKillThreadState.effect = effect;
+    fx_effectKillThreadState.killGate = killGate;
+    fx_effectKillThreadState.admissionStates[0] = admissionState;
+    fx_effectKillThreadState.admissionStateCount = 1;
+    fx_effectKillThreadState.generation =
+        FX_GetCooperativeIteratorGeneration(system);
+    const bool targetReferenceAdded =
+        FX_TryAdjustEffectReferenceCount(effect, true);
+    const bool targetRetainRecorded = targetReferenceAdded
+        && FX_RecordEffectKillRetain(system, effect);
+    if (!targetRetainRecorded)
+    {
+        if (targetReferenceAdded)
+            (void)FX_TryAdjustEffectReferenceCount(effect, false);
+        fx_effectKillThreadState = {};
+        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+        return false;
+    }
+    Sys_AtomicStore(admissionState, 1);
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    *outPublicationBarrier = publicationBarrier;
+    return true;
+}
+
+void FX_EndEffectKillAdmission(const bool keepBlocked) noexcept
+{
+    if (fx_effectKillThreadState.retainedEffectCount != 0)
+        FX_ReleaseAllEffectKillRetains();
+    FxSystem *const system = fx_effectKillThreadState.system;
+    volatile std::int32_t *const killGate =
+        fx_effectKillThreadState.killGate;
+    const std::uint32_t generation =
+        fx_effectKillThreadState.generation;
+    if (!system || !killGate
+        || generation != FX_GetCooperativeIteratorGeneration(system))
+    {
+        fx_effectKillThreadState = {};
+        return;
+    }
+    FX_EnterArchiveAwarePoolCriticalSection();
+    if (!keepBlocked)
+    {
+        while (fx_effectKillThreadState.admissionStateCount != 0)
+        {
+            volatile std::int32_t *const admissionState =
+                fx_effectKillThreadState.admissionStates[
+                    --fx_effectKillThreadState.admissionStateCount];
+            if (admissionState)
+            {
+                (void)Sys_AtomicCompareExchange(
+                    admissionState, 0, 1);
+            }
+        }
+    }
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    fx_effectKillThreadState = {};
+}
+
+void FX_MarkEffectKillMutationStarted() noexcept
+{
+    if (fx_effectKillThreadState.system)
+        fx_effectKillThreadState.mutationStarted = true;
+}
+
+bool FX_ClaimEffectOwnerAdmissionForKillLocked(
+    FxSystem *const system,
+    FxEffect *const effect) noexcept
+{
+    if (!system || !effect
+        || fx_effectKillThreadState.system != system
+        || fx_effectKillThreadState.generation
+            != FX_GetCooperativeIteratorGeneration(system))
+    {
+        return false;
+    }
+    volatile std::int32_t *const admissionState =
+        FX_GetEffectOwnerAdmissionState(system, effect);
+    if (!admissionState)
+        return false;
+    for (std::size_t stateIndex = 0;
+         stateIndex < fx_effectKillThreadState.admissionStateCount;
+         ++stateIndex)
+    {
+        if (fx_effectKillThreadState.admissionStates[stateIndex]
+            == admissionState)
+        {
+            return true;
+        }
+    }
+    if (Sys_AtomicLoad(admissionState) != 0)
+    {
+        return (static_cast<std::uint32_t>(
+                    Sys_AtomicLoad(&effect->status))
+                & FX_STATUS_OWNER_ADMISSION_BLOCKED) != 0;
+    }
+    if (fx_effectKillThreadState.admissionStateCount
+        == fx_effectKillThreadState.admissionStates.size())
+    {
+        return false;
+    }
+    Sys_AtomicStore(admissionState, 1);
+    fx_effectKillThreadState.admissionStates[
+        fx_effectKillThreadState.admissionStateCount++] = admissionState;
+    return true;
+}
+
+void FX_MarkEffectOwnerAdmissionPermanentlyBlocked(
+    FxEffect *const effect) noexcept
+{
+    if (!effect)
+        return;
+    std::int32_t observed = Sys_AtomicLoad(&effect->status);
+    for (;;)
+    {
+        const std::uint32_t desiredStatus =
+            static_cast<std::uint32_t>(observed)
+            | static_cast<std::uint32_t>(
+                FX_STATUS_OWNER_ADMISSION_BLOCKED);
+        const std::int32_t previous = Sys_AtomicCompareExchange(
+            &effect->status,
+            static_cast<std::int32_t>(desiredStatus),
+            observed);
+        if (previous == observed)
+            return;
+        observed = previous;
+    }
+}
+
+bool FX_RecordEffectKillRetain(
+    FxSystem *const system,
+    FxEffect *const effect) noexcept
+{
+    if (!system || !effect
+        || fx_effectKillThreadState.system != system
+        || fx_effectKillThreadState.generation
+            != FX_GetCooperativeIteratorGeneration(system)
+        || fx_effectKillThreadState.retainedEffectCount
+            == fx_effectKillThreadState.retainedEffects.size())
+    {
+        return false;
+    }
+    fx_effectKillThreadState.retainedEffects[
+        fx_effectKillThreadState.retainedEffectCount++] = effect;
+    return true;
+}
+
+bool FX_ForgetEffectKillRetain(
+    FxSystem *const system,
+    const FxEffect *const effect) noexcept
+{
+    if (!system || !effect
+        || fx_effectKillThreadState.system != system
+        || fx_effectKillThreadState.generation
+            != FX_GetCooperativeIteratorGeneration(system)
+        || fx_effectKillThreadState.retainedEffectCount == 0
+        || fx_effectKillThreadState.retainedEffects[
+            fx_effectKillThreadState.retainedEffectCount - 1] != effect)
+    {
+        return false;
+    }
+    --fx_effectKillThreadState.retainedEffectCount;
+    fx_effectKillThreadState.retainedEffects[
+        fx_effectKillThreadState.retainedEffectCount] = nullptr;
+    return true;
+}
+
+bool FX_ReleaseEffectKillRetain(
+    FxSystem *const system,
+    FxEffect *const effect) noexcept
+{
+    if (!FX_ForgetEffectKillRetain(system, effect))
+        return false;
+    FX_DelRefToEffect(system, effect);
+    return true;
+}
+
+void FX_ReleaseAllEffectKillRetains() noexcept
+{
+    FxSystem *const system = fx_effectKillThreadState.system;
+    if (!system
+        || fx_effectKillThreadState.generation
+            != FX_GetCooperativeIteratorGeneration(system))
+    {
+        fx_effectKillThreadState.retainedEffectCount = 0;
+        fx_effectKillThreadState.retainedEffects.fill(nullptr);
+        return;
+    }
+    while (fx_effectKillThreadState.retainedEffectCount != 0)
+    {
+        FxEffect *const effect = fx_effectKillThreadState.retainedEffects[
+            --fx_effectKillThreadState.retainedEffectCount];
+        fx_effectKillThreadState.retainedEffects[
+            fx_effectKillThreadState.retainedEffectCount] = nullptr;
+        if (effect)
+            FX_DelRefToEffect(system, effect);
+    }
+}
+
+template <typename ITEM_TYPE, std::size_t LIMIT>
+bool FX_IsPoolItemAllocatedLocked(
+    const FxPool<ITEM_TYPE> *const pool,
+    const ITEM_TYPE *const item,
+    const FxPoolAllocationState<LIMIT> *const state) noexcept
+{
+    std::int32_t itemIndex = -1;
+    return state && state->initialized
+        && FxPoolItemIndex<ITEM_TYPE, LIMIT>(pool, item, &itemIndex)
+        && FxPoolAllocationStateIsAllocated(
+            *state, static_cast<std::size_t>(itemIndex));
+}
+}
+
+std::uint32_t __cdecl FX_GetCooperativeIteratorGeneration(
+    const FxSystem *const system)
+{
+    volatile std::int32_t *const generation =
+        FX_GetCooperativeIteratorGenerationState(system);
+    return generation
+        ? static_cast<std::uint32_t>(Sys_AtomicLoad(generation))
+        : 0;
+}
+
+namespace
+{
+[[noreturn]] void FX_DropInvalidEffectLock(const char *const reason)
+{
+    Com_Error(ERR_DROP, "Invalid FX effect lock state: %s", reason);
+    std::abort();
+}
+
+bool FX_CurrentThreadOwnsEffectLock(
+    const FxSystem *const system,
+    const FxEffect *const effect) noexcept
+{
+    if (!system || !effect)
+        return false;
+    const std::uint32_t generation =
+        FX_GetCooperativeIteratorGeneration(system);
+    for (std::size_t index = 0;
+         index < fx_effectLockThreadEntryCount;
+         ++index)
+    {
+        const FxEffectLockThreadEntry &entry =
+            fx_effectLockThreadEntries[index];
+        if (entry.system == system && entry.effect == effect
+            && entry.generation == generation)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool FX_CurrentThreadOwnsAnyEffectLock() noexcept
+{
+    bool ownsLiveLock = false;
+    for (std::size_t index = 0;
+         index < fx_effectLockThreadEntryCount;
+         ++index)
+    {
+        const FxEffectLockThreadEntry &entry =
+            fx_effectLockThreadEntries[index];
+        if (entry.system && entry.effect
+            && entry.generation
+                == FX_GetCooperativeIteratorGeneration(entry.system))
+        {
+            ownsLiveLock = true;
+            break;
+        }
+    }
+    if (!ownsLiveLock && fx_effectLockThreadEntryCount != 0)
+    {
+        fx_effectLockThreadEntries.fill({});
+        fx_effectLockThreadEntryCount = 0;
+    }
+    return ownsLiveLock;
+}
+
+bool FX_TryClearEffectLockBit(FxEffect *const effect) noexcept
+{
+    if (!effect)
+        return false;
+    std::int32_t observed = Sys_AtomicLoad(&effect->status);
+    for (;;)
+    {
+        const std::uint32_t status =
+            static_cast<std::uint32_t>(observed);
+        if ((status & FX_STATUS_IS_LOCKED) == 0)
+            return false;
+        const std::uint32_t desiredStatus =
+            status & ~static_cast<std::uint32_t>(FX_STATUS_IS_LOCKED);
+        const std::int32_t previous = Sys_AtomicCompareExchange(
+            &effect->status,
+            static_cast<std::int32_t>(desiredStatus),
+            observed);
+        if (previous == observed)
+            return true;
+        observed = previous;
+    }
+}
+
+bool FX_EffectNoLongerReferencedBounded(
+    FxSystem *system,
+    FxEffect *effect) noexcept;
+
+void FX_BeginEffectReservation(
+    FxSystem *const system,
+    const std::int32_t allocIndex)
+{
+    if (!system || fx_effectReservationThreadState.system)
+        FX_DropInvalidEffectLock("nested or invalid effect reservation");
+    fx_effectReservationThreadState.system = system;
+    fx_effectReservationThreadState.allocIndex = allocIndex;
+    fx_effectReservationThreadState.generation =
+        FX_GetCooperativeIteratorGeneration(system);
+}
+
+void FX_PreflightEffectReservation(FxSystem *const system)
+{
+    if (!system)
+        FX_DropInvalidEffectLock("missing effect reservation system");
+    if (!fx_effectReservationThreadState.system)
+        return;
+    if (fx_effectReservationThreadState.generation
+        != FX_GetCooperativeIteratorGeneration(
+            fx_effectReservationThreadState.system))
+    {
+        fx_effectReservationThreadState = {};
+        return;
+    }
+    FX_DropInvalidEffectLock("nested effect reservation");
+}
+
+void FX_SetReservedEffect(FxEffect *const effect)
+{
+    if (!fx_effectReservationThreadState.system || !effect)
+        FX_DropInvalidEffectLock("missing reserved effect");
+    fx_effectReservationThreadState.effect = effect;
+}
+
+void FX_RecordReservedEffectOwner(FxEffect *const ownerEffect)
+{
+    if (!fx_effectReservationThreadState.system || !ownerEffect)
+        FX_DropInvalidEffectLock("missing reserved effect owner");
+    fx_effectReservationThreadState.ownerEffect = ownerEffect;
+    fx_effectReservationThreadState.ownerRelationshipAdded = true;
+}
+
+void FX_RecordReservedEffectSpotLight()
+{
+    if (!fx_effectReservationThreadState.system
+        || !fx_effectReservationThreadState.effect)
+        FX_DropInvalidEffectLock("missing reserved spotlight effect");
+    fx_effectReservationThreadState.spotLightRelationshipAdded = true;
+}
+
+bool FX_PublishEffectReservation(const bool tombstone) noexcept
+{
+    const FxEffectReservationThreadState reservation =
+        fx_effectReservationThreadState;
+    if (!reservation.system)
+        return false;
+    if (reservation.generation
+        != FX_GetCooperativeIteratorGeneration(reservation.system))
+    {
+        fx_effectReservationThreadState = {};
+        return false;
+    }
+
+    const std::int32_t observedFirstNewEffect =
+        Sys_AtomicLoad(&reservation.system->firstNewEffect);
+    if (observedFirstNewEffect > reservation.allocIndex)
+    {
+        // The slot is already visible. Never convert a published, potentially
+        // worker-owned effect into a tombstone from longjmp cleanup.
+        fx_effectReservationThreadState = {};
+        return false;
+    }
+
+    bool rollbackValid = true;
+    if (tombstone)
+    {
+        const std::uint16_t effectHandle =
+            reservation.system->allEffectHandles[
+                static_cast<std::size_t>(reservation.allocIndex)
+                & (FX_EFFECT_LIMIT - 1)];
+        FxEffect *const effect = FxDecodeHandle<
+            FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                reservation.system->effects, effectHandle);
+        const bool effectSlotIsValid = effect
+            && (!reservation.effect || reservation.effect == effect);
+        if (!effectSlotIsValid)
+            rollbackValid = false;
+
+        FX_EnterArchiveAwarePoolCriticalSection();
+        if (reservation.ownerRelationshipAdded)
+        {
+            if (effectSlotIsValid)
+            {
+                FxEffect *const recordedOwner = FxDecodeHandle<
+                    FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                        reservation.system->effects, effect->owner);
+                const std::uint32_t heldLockBit =
+                    static_cast<std::uint32_t>(
+                        Sys_AtomicLoad(&effect->status))
+                    & static_cast<std::uint32_t>(FX_STATUS_IS_LOCKED);
+                // Model cancellation as the reserved child's final reference
+                // release. The bounded release plan removes the owner's pair
+                // and cascades through any owner that consequently retires.
+                if (recordedOwner != reservation.ownerEffect)
+                    rollbackValid = false;
+                if (recordedOwner)
+                {
+                    Sys_AtomicStore(
+                        &effect->status,
+                        static_cast<std::int32_t>(heldLockBit | 1u));
+                    if (!FX_EffectNoLongerReferencedBounded(
+                            reservation.system, effect))
+                    {
+                        rollbackValid = false;
+                    }
+                }
+                else
+                {
+                    rollbackValid = false;
+                }
+            }
+            else
+            {
+                rollbackValid = false;
+            }
+        }
+        if (reservation.spotLightRelationshipAdded)
+        {
+            if (Sys_AtomicLoad(
+                    &reservation.system->activeSpotLightEffectCount) == 1
+                && Sys_AtomicLoad(
+                    &reservation.system->activeSpotLightElemCount) == 0
+                && reservation.system->activeSpotLightEffectHandle
+                    == effectHandle)
+            {
+                reservation.system->activeSpotLightEffectHandle =
+                    FX_INVALID_HANDLE;
+                reservation.system->activeSpotLightElemHandle =
+                    FX_INVALID_HANDLE;
+                reservation.system->activeSpotLightBoltDobj = -1;
+                Sys_AtomicStore(
+                    &reservation.system->activeSpotLightEffectCount, 0);
+            }
+            else
+            {
+                rollbackValid = false;
+            }
+        }
+        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+
+        // Ordinary elements are only created after publication. Empty trails
+        // may already exist and are deliberately retained for the normal GC
+        // trail cleanup path. Give the zero-reference tombstone a valid root
+        // owner so full-graph validation can safely admit it.
+        if (effectSlotIsValid)
+        {
+            const std::uint32_t heldLockBit =
+                static_cast<std::uint32_t>(
+                    Sys_AtomicLoad(&effect->status))
+                & static_cast<std::uint32_t>(FX_STATUS_IS_LOCKED);
+            effect->owner = effectHandle;
+            effect->firstElemHandle[0] = FX_INVALID_HANDLE;
+            effect->firstElemHandle[1] = FX_INVALID_HANDLE;
+            effect->firstElemHandle[2] = FX_INVALID_HANDLE;
+            effect->firstSortedElemHandle = FX_INVALID_HANDLE;
+            Sys_AtomicStore(
+                &effect->status,
+                static_cast<std::int32_t>(
+                    static_cast<std::uint32_t>(FX_STATUS_SELF_OWNED)
+                    | heldLockBit));
+        }
+    }
+
+    for (;;)
+    {
+        const std::int32_t firstNewEffect =
+            Sys_AtomicLoad(&reservation.system->firstNewEffect);
+        if (firstNewEffect == reservation.allocIndex)
+        {
+            if (Sys_AtomicCompareExchange(
+                    &reservation.system->firstNewEffect,
+                    reservation.allocIndex + 1,
+                    reservation.allocIndex)
+                == reservation.allocIndex)
+            {
+                if (tombstone)
+                {
+                    FxRequestGarbageCollection(
+                        &reservation.system->needsGarbageCollection);
+                }
+                // Publication is the transaction boundary. Clearing the TLS
+                // frame here permits synchronous runner effects during
+                // FX_StartNewEffect; any later ERR_DROP leaves this live,
+                // internally consistent effect for ordinary system cleanup.
+                fx_effectReservationThreadState = {};
+                return !tombstone || rollbackValid;
+            }
+            continue;
+        }
+        if (firstNewEffect > reservation.allocIndex)
+        {
+            fx_effectReservationThreadState = {};
+            return false;
+        }
+        std::this_thread::yield();
+    }
+}
+}
+
+bool __cdecl FX_LockEffect(FxSystem *const system, FxEffect *const effect)
+{
+    if (!system || !effect)
+        FX_DropInvalidEffectLock("missing system or effect");
+    if (fx_effectLockThreadEntryCount
+        == fx_effectLockThreadEntries.size())
+    {
+        FX_DropInvalidEffectLock("thread lock stack exceeds capacity");
+    }
+    for (std::size_t index = 0;
+         index < fx_effectLockThreadEntryCount;
+         ++index)
+    {
+        if (fx_effectLockThreadEntries[index].system == system
+            && fx_effectLockThreadEntries[index].effect == effect)
+        {
+            FX_DropInvalidEffectLock("recursive lock acquisition");
+        }
+    }
+
+    std::int32_t observed = Sys_AtomicLoad(&effect->status);
+    for (;;)
+    {
+        const std::uint32_t status =
+            static_cast<std::uint32_t>(observed);
+        if ((status & 0xC0000000u) != 0)
+            FX_DropInvalidEffectLock("reserved lock bits are set");
+        // A cooperative iterator can observe an effect immediately before a
+        // different worker releases its final reference. Treat that ordinary
+        // lifetime race as stale work, not as corrupt engine state.
+        if ((status & FX_STATUS_REF_COUNT_MASK) == 0)
+            return false;
+        if ((status & FX_STATUS_IS_LOCKED) != 0)
+        {
+            std::this_thread::yield();
+            observed = Sys_AtomicLoad(&effect->status);
+            continue;
+        }
+        const std::uint32_t desiredStatus =
+            status | static_cast<std::uint32_t>(FX_STATUS_IS_LOCKED);
+        const std::int32_t previous = Sys_AtomicCompareExchange(
+            &effect->status,
+            static_cast<std::int32_t>(desiredStatus),
+            observed);
+        if (previous == observed)
+            break;
+        observed = previous;
+    }
+
+    fx_effectLockThreadEntries[fx_effectLockThreadEntryCount++] = {
+        system,
+        effect,
+        FX_GetCooperativeIteratorGeneration(system)};
+    return true;
+}
+
+void __cdecl FX_UnlockEffect(FxSystem *const system, FxEffect *const effect)
+{
+    if (fx_effectLockThreadEntryCount == 0)
+        FX_DropInvalidEffectLock("unlock without thread ownership");
+    const FxEffectLockThreadEntry entry =
+        fx_effectLockThreadEntries[fx_effectLockThreadEntryCount - 1];
+    if (entry.system != system || entry.effect != effect)
+        FX_DropInvalidEffectLock("non-LIFO or cross-system unlock");
+    --fx_effectLockThreadEntryCount;
+    fx_effectLockThreadEntries[fx_effectLockThreadEntryCount] = {};
+    if (entry.generation != FX_GetCooperativeIteratorGeneration(system))
+        FX_DropInvalidEffectLock("stale reset generation");
+    if (!FX_TryClearEffectLockBit(effect))
+        FX_DropInvalidEffectLock("owned lock bit is clear");
+}
+
+bool __cdecl FX_IsEffectLifecycleBlocked(
+    const FxEffect *const effect) noexcept
+{
+    return !effect
+        || (static_cast<std::uint32_t>(
+                Sys_AtomicLoad(&effect->status))
+            & FX_STATUS_OWNER_ADMISSION_BLOCKED) != 0;
+}
+
+bool __cdecl FX_RearmEffectForRestart(
+    FxSystem *const system,
+    FxEffect *const effect) noexcept
+{
+    if (!system || !effect
+        || !FX_CurrentThreadOwnsEffectLock(system, effect)
+        || (!FX_CurrentThreadOwnsCooperativeIterator(system)
+            && !FX_CurrentThreadOwnsEffectKillExclusive(system))
+        || fx_effectKillThreadState.system)
+    {
+        return false;
+    }
+
+    volatile std::int32_t *const admissionState =
+        FX_GetEffectOwnerAdmissionState(system, effect);
+    volatile std::int32_t *const killGate =
+        FX_GetEffectKillGate(system);
+    if (!admissionState || !killGate)
+        return false;
+
+    FX_EnterArchiveAwarePoolCriticalSection();
+    FxPoolAllocationStates *const poolStates =
+        FX_GetPoolAllocationStates(system);
+    const std::uint16_t effectHandle = FxEncodeHandle<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+            system->effects, effect);
+    const std::uint32_t status = static_cast<std::uint32_t>(
+        Sys_AtomicLoad(&effect->status));
+    const std::int32_t killGateState = Sys_AtomicLoad(killGate);
+    const bool canRearm = effectHandle != FX_INVALID_HANDLE
+        && effect->owner == effectHandle
+        && (status & FX_STATUS_REF_COUNT_MASK) != 0
+        && (status & FX_STATUS_IS_LOCKED) != 0
+        && (status & FX_STATUS_SELF_OWNED) != 0
+        && (status & FX_STATUS_HAS_PENDING_LOOP_ELEMS) == 0
+        && (status & FX_STATUS_OWNER_ADMISSION_BLOCKED) != 0
+        && effect->firstSortedElemHandle == FX_INVALID_HANDLE
+        && effect->firstElemHandle[0] == FX_INVALID_HANDLE
+        && effect->firstElemHandle[1] == FX_INVALID_HANDLE
+        && effect->firstElemHandle[2] == FX_INVALID_HANDLE
+        && Sys_AtomicLoad(admissionState) == 1
+        && (killGateState == 0
+            || (killGateState == 2
+                && FX_CurrentThreadOwnsEffectRestartGate(system)));
+    bool emptyTrailGraph = canRearm && poolStates;
+    std::array<bool, MAX_TRAILS> visitedTrails{};
+    std::uint16_t trailHandle = effect->firstTrailHandle;
+    for (std::size_t trailCount = 0;
+         emptyTrailGraph && trailHandle != FX_INVALID_HANDLE;
+         ++trailCount)
+    {
+        if (trailCount == MAX_TRAILS)
+        {
+            emptyTrailGraph = false;
+            break;
+        }
+        FxPool<FxTrail> *const trail = FxDecodeHandle<
+            FxPool<FxTrail>, MAX_TRAILS, FxTrail::HANDLE_SCALE>(
+                system->trails, trailHandle);
+        if (!trail)
+        {
+            emptyTrailGraph = false;
+            break;
+        }
+        const std::size_t trailIndex = static_cast<std::size_t>(
+            trail - system->trails);
+        if (visitedTrails[trailIndex]
+            || !FX_IsPoolItemAllocatedLocked<FxTrail, MAX_TRAILS>(
+                system->trails,
+                &trail->item,
+                &poolStates->trails)
+            || trail->item.firstElemHandle != FX_INVALID_HANDLE
+            || trail->item.lastElemHandle != FX_INVALID_HANDLE)
+        {
+            emptyTrailGraph = false;
+            break;
+        }
+        visitedTrails[trailIndex] = true;
+        trailHandle = trail->item.nextTrailHandle;
+    }
+    const std::int32_t spotLightEffectCount =
+        Sys_AtomicLoad(&system->activeSpotLightEffectCount);
+    const std::int32_t spotLightElemCount =
+        Sys_AtomicLoad(&system->activeSpotLightElemCount);
+    const bool emptySpotLightGraph = spotLightEffectCount >= 0
+        && spotLightEffectCount <= 1
+        && spotLightElemCount >= 0
+        && spotLightElemCount <= spotLightEffectCount
+        && !(spotLightEffectCount == 1
+            && system->activeSpotLightEffectHandle == effectHandle
+            && spotLightElemCount != 0);
+    if (canRearm && emptyTrailGraph && emptySpotLightGraph)
+    {
+        Sys_AtomicStore(
+            &effect->status,
+            static_cast<std::int32_t>(
+                status
+                & ~static_cast<std::uint32_t>(
+                    FX_STATUS_OWNER_ADMISSION_BLOCKED)));
+        Sys_AtomicStore(admissionState, 0);
+    }
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return canRearm && emptyTrailGraph && emptySpotLightGraph;
+}
+
+bool __cdecl FX_RetainEffectForRestart(
+    FxSystem *const system,
+    FxEffect *const effect) noexcept
+{
+    if (fx_effectRestartRetainThreadState.system
+        && fx_effectRestartRetainThreadState.generation
+            != FX_GetCooperativeIteratorGeneration(
+                fx_effectRestartRetainThreadState.system))
+    {
+        fx_effectRestartRetainThreadState = {};
+    }
+    if (!system || !effect
+        || !FX_CurrentThreadOwnsEffectKillExclusive(system)
+        || (fx_effectRestartRetainThreadState.system
+            && (fx_effectRestartRetainThreadState.system != system
+                || fx_effectRestartRetainThreadState.generation
+                    != FX_GetCooperativeIteratorGeneration(system)))
+        || fx_effectRestartRetainThreadState.effectCount
+            == fx_effectRestartRetainThreadState.effects.size())
+    {
+        return false;
+    }
+
+    FX_EnterArchiveAwarePoolCriticalSection();
+    const std::uint32_t status = static_cast<std::uint32_t>(
+        Sys_AtomicLoad(&effect->status));
+    const std::uint32_t referenceCount =
+        status & FX_STATUS_REF_COUNT_MASK;
+    const bool retained = referenceCount != 0
+        && referenceCount < FX_STATUS_REF_COUNT_MASK - 1u
+        && (status & FX_STATUS_OWNER_ADMISSION_BLOCKED) == 0
+        && FX_TryAdjustEffectReferenceCount(effect, true);
+    if (retained)
+    {
+        if (!fx_effectRestartRetainThreadState.system)
+        {
+            fx_effectRestartRetainThreadState.system = system;
+            fx_effectRestartRetainThreadState.generation =
+                FX_GetCooperativeIteratorGeneration(system);
+        }
+        fx_effectRestartRetainThreadState.effects[
+            fx_effectRestartRetainThreadState.effectCount++] = effect;
+    }
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return retained;
+}
+
+bool __cdecl FX_ConsumeEffectRestartRetain(
+    FxSystem *const system,
+    FxEffect *const effect,
+    const bool releaseReference) noexcept
+{
+    if (!system || !effect
+        || fx_effectRestartRetainThreadState.system != system
+        || fx_effectRestartRetainThreadState.generation
+            != FX_GetCooperativeIteratorGeneration(system)
+        || fx_effectRestartRetainThreadState.effectCount == 0)
+    {
+        return false;
+    }
+
+    std::size_t retainedIndex =
+        fx_effectRestartRetainThreadState.effectCount;
+    for (std::size_t index = 0;
+         index < fx_effectRestartRetainThreadState.effectCount;
+         ++index)
+    {
+        if (fx_effectRestartRetainThreadState.effects[index] == effect)
+        {
+            retainedIndex = index;
+            break;
+        }
+    }
+    if (retainedIndex == fx_effectRestartRetainThreadState.effectCount)
+        return false;
+    for (std::size_t index = retainedIndex + 1;
+         index < fx_effectRestartRetainThreadState.effectCount;
+         ++index)
+    {
+        fx_effectRestartRetainThreadState.effects[index - 1] =
+            fx_effectRestartRetainThreadState.effects[index];
+    }
+    --fx_effectRestartRetainThreadState.effectCount;
+    fx_effectRestartRetainThreadState.effects[
+        fx_effectRestartRetainThreadState.effectCount] = nullptr;
+    if (fx_effectRestartRetainThreadState.effectCount == 0
+        && !fx_effectRestartRetainThreadState.ownsKillGate)
+        fx_effectRestartRetainThreadState = {};
+    if (releaseReference)
+        FX_DelRefToEffect(system, effect);
+    return true;
+}
+
+void __cdecl FX_AbandonCurrentThreadEffectRestartRetainsForError() noexcept
+{
+    FxSystem *const system = fx_effectRestartRetainThreadState.system;
+    if (!system
+        || fx_effectRestartRetainThreadState.generation
+            != FX_GetCooperativeIteratorGeneration(system))
+    {
+        fx_effectRestartRetainThreadState = {};
+        return;
+    }
+    while (fx_effectRestartRetainThreadState.effectCount != 0)
+    {
+        FxEffect *const effect =
+            fx_effectRestartRetainThreadState.effects[
+                --fx_effectRestartRetainThreadState.effectCount];
+        fx_effectRestartRetainThreadState.effects[
+            fx_effectRestartRetainThreadState.effectCount] = nullptr;
+        if (effect)
+            FX_DelRefToEffect(system, effect);
+    }
+    if (!fx_effectRestartRetainThreadState.ownsKillGate)
+        fx_effectRestartRetainThreadState = {};
+}
+
+void __cdecl FX_AbandonCurrentThreadEffectRestartGateForError() noexcept
+{
+    FxSystem *const system = fx_effectRestartRetainThreadState.system;
+    const bool generationMatches = system
+        && fx_effectRestartRetainThreadState.generation
+            == FX_GetCooperativeIteratorGeneration(system);
+    const bool ownsKillGate =
+        fx_effectRestartRetainThreadState.ownsKillGate;
+    fx_effectRestartRetainThreadState = {};
+    if (!generationMatches || !ownsKillGate)
+        return;
+    volatile std::int32_t *const killGate =
+        FX_GetEffectKillGate(system);
+    if (killGate)
+        (void)Sys_AtomicCompareExchange(killGate, 0, 2);
+}
+
+void __cdecl FX_AbandonCurrentThreadEffectLocksForError() noexcept
+{
+    while (fx_effectLockThreadEntryCount != 0)
+    {
+        const FxEffectLockThreadEntry entry =
+            fx_effectLockThreadEntries[--fx_effectLockThreadEntryCount];
+        fx_effectLockThreadEntries[fx_effectLockThreadEntryCount] = {};
+        if (entry.system && entry.effect
+            && entry.generation
+                == FX_GetCooperativeIteratorGeneration(entry.system))
+        {
+            (void)FX_TryClearEffectLockBit(entry.effect);
+        }
+    }
+}
+
+void __cdecl FX_AbandonCurrentThreadEffectReservationForError() noexcept
+{
+    (void)FX_PublishEffectReservation(true);
+}
+
+void __cdecl FX_AbandonCurrentThreadEffectKillRetainsForError() noexcept
+{
+    FX_ReleaseAllEffectKillRetains();
+}
+
+void __cdecl FX_AbandonCurrentThreadEffectKillForError() noexcept
+{
+    const bool mutationStarted =
+        fx_effectKillThreadState.mutationStarted;
+    FX_EndEffectKillAdmission(mutationStarted);
+}
+
+bool __cdecl FX_IsElemAllocated(
+    FxSystem *const system,
+    const FxElem *const elem)
+{
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!states || !system || !system->elems || !elem)
+        return false;
+    FX_EnterArchiveAwarePoolCriticalSection();
+    const bool allocated = FX_IsPoolItemAllocatedLocked<FxElem, MAX_ELEMS>(
+        system->elems, elem, &states->elems);
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return allocated;
+}
+
+bool __cdecl FX_IsTrailAllocated(
+    FxSystem *const system,
+    const FxTrail *const trail)
+{
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!states || !system || !system->trails || !trail)
+        return false;
+    FX_EnterArchiveAwarePoolCriticalSection();
+    const bool allocated =
+        FX_IsPoolItemAllocatedLocked<FxTrail, MAX_TRAILS>(
+            system->trails, trail, &states->trails);
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return allocated;
+}
+
+bool __cdecl FX_IsTrailElemAllocated(
+    FxSystem *const system,
+    const FxTrailElem *const trailElem)
+{
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!states || !system || !system->trailElems || !trailElem)
+        return false;
+    FX_EnterArchiveAwarePoolCriticalSection();
+    const bool allocated =
+        FX_IsPoolItemAllocatedLocked<FxTrailElem, MAX_TRAIL_ELEMS>(
+            system->trailElems, trailElem, &states->trailElems);
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return allocated;
+}
+
+bool __cdecl FX_GetSpotLightStateSnapshot(
+    const FxSystem *const system,
+    FxSpotLightStateSnapshot *const snapshot)
+{
+    if (!system || !snapshot)
+        return false;
+    FX_EnterArchiveAwarePoolCriticalSection();
+    snapshot->effectCount =
+        Sys_AtomicLoad(&system->activeSpotLightEffectCount);
+    snapshot->elemCount =
+        Sys_AtomicLoad(&system->activeSpotLightElemCount);
+    snapshot->effectHandle = system->activeSpotLightEffectHandle;
+    snapshot->elemHandle = system->activeSpotLightElemHandle;
+    snapshot->boltDobj = system->activeSpotLightBoltDobj;
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return true;
+}
+
+bool __cdecl FX_SetSpotLightBoltDobj(
+    FxSystem *const system,
+    const std::int16_t boltDobj)
+{
+    if (!system)
+        return false;
+    FX_EnterArchiveAwarePoolCriticalSection();
+    system->activeSpotLightBoltDobj = boltDobj;
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return true;
+}
+
+namespace
+{
+const FxElemDef *FX_GetValidatedRuntimeElemDef(
+    const FxEffect *const effect,
+    const std::uint32_t elemDefIndex)
+{
+    if (!effect || !effect->def || !effect->def->elemDefs
+        || effect->def->elemDefCountLooping < 0
+        || effect->def->elemDefCountOneShot < 0
+        || effect->def->elemDefCountEmission < 0)
+    {
+        Com_Error(ERR_DROP, "Invalid FX element definition state");
+        return nullptr;
+    }
+
+    const std::int64_t elemDefCount =
+        static_cast<std::int64_t>(effect->def->elemDefCountLooping)
+        + effect->def->elemDefCountOneShot
+        + effect->def->elemDefCountEmission;
+    if (elemDefCount > 256 || elemDefIndex >= elemDefCount)
+    {
+        Com_Error(ERR_DROP, "Invalid FX element definition index %u", elemDefIndex);
+        return nullptr;
+    }
+    return &effect->def->elemDefs[elemDefIndex];
+}
+
+bool FX_ValidateSpotLightEffectDef(
+    const FxEffectDef *const def,
+    bool *const outHasSpotLight) noexcept
+{
+    if (!def || !outHasSpotLight || def->elemDefCountLooping < 0
+        || def->elemDefCountOneShot < 0
+        || def->elemDefCountEmission < 0)
+    {
+        return false;
+    }
+    const std::int64_t elemDefCount =
+        static_cast<std::int64_t>(def->elemDefCountLooping)
+        + def->elemDefCountOneShot
+        + def->elemDefCountEmission;
+    if (elemDefCount > 256 || (elemDefCount != 0 && !def->elemDefs))
+        return false;
+
+    std::size_t spotLightCount = 0;
+    for (std::int64_t elemDefIndex = 0;
+         elemDefIndex < elemDefCount;
+         ++elemDefIndex)
+    {
+        if (def->elemDefs[elemDefIndex].elemType == FX_ELEM_TYPE_SPOT_LIGHT
+            && ++spotLightCount > 1)
+        {
+            return false;
+        }
+    }
+    *outHasSpotLight = spotLightCount == 1;
+    return true;
+}
+}
+
+bool __cdecl FX_ArchiveGateIsActive(const FxSystem *const system)
+{
+    volatile std::int32_t *const gate = FX_GetArchiveGate(system);
+    return gate && Sys_AtomicLoad(gate) != 0;
+}
+
+bool __cdecl FX_EffectKillGateIsActive(
+    const FxSystem *const system) noexcept
+{
+    volatile std::int32_t *const gate = FX_GetEffectKillGate(system);
+    return gate && Sys_AtomicLoad(gate) != 0;
+}
+
+void __cdecl FX_WaitForArchiveGate(const FxSystem *const system)
+{
+    volatile std::int32_t *const gate = FX_GetArchiveGate(system);
+    if (!gate)
+        return;
+    while (Sys_AtomicLoad(gate) != 0)
+        std::this_thread::yield();
+}
+
+void __cdecl FX_WaitForEffectKillGate(
+    const FxSystem *const system) noexcept
+{
+    volatile std::int32_t *const gate = FX_GetEffectKillGate(system);
+    if (!gate)
+        return;
+    while (Sys_AtomicLoad(gate) != 0)
+        std::this_thread::yield();
+}
+
+bool __cdecl FX_BeginEffectKillExclusive(FxSystem *const system) noexcept
+{
+    if (fx_effectRestartRetainThreadState.system
+        && fx_effectRestartRetainThreadState.generation
+            != FX_GetCooperativeIteratorGeneration(
+                fx_effectRestartRetainThreadState.system))
+    {
+        fx_effectRestartRetainThreadState = {};
+    }
+    if (!system || fx_effectKillExclusiveThreadState.system
+        || fx_effectRestartRetainThreadState.system
+        || FX_CurrentThreadOwnsCooperativeIterator(system)
+        || FX_CurrentThreadOwnsArchive(system)
+        || FX_CurrentThreadOwnsSortExclusive(system)
+        || FX_CurrentThreadOwnsAnyEffectLock())
+    {
+        return false;
+    }
+
+    volatile std::int32_t *const killGate =
+        FX_GetEffectKillGate(system);
+    if (!killGate)
+        return false;
+    while (Sys_AtomicCompareExchange(killGate, 1, 0) != 0)
+        std::this_thread::yield();
+
+    fx_effectKillExclusiveThreadState.system = system;
+    fx_effectKillExclusiveThreadState.generation =
+        FX_GetCooperativeIteratorGeneration(system);
+    for (;;)
+    {
+        FX_WaitForArchiveGate(system);
+        FxIteratorWaitBeginExclusive(&system->iteratorCount);
+        volatile std::int32_t *const archiveGate =
+            FX_GetArchiveGate(system);
+        const std::int32_t archiveGateState = archiveGate
+            ? Sys_AtomicLoad(archiveGate)
+            : 2;
+        if (archiveGateState != 2)
+        {
+            fx_effectKillExclusiveThreadState.exclusiveAcquired = true;
+            if (Sys_AtomicCompareExchange(killGate, 2, 1) == 1)
+                return true;
+            (void)FxIteratorEndExclusive(&system->iteratorCount);
+            fx_effectKillExclusiveThreadState = {};
+            (void)Sys_AtomicCompareExchange(killGate, 0, 1);
+            return false;
+        }
+        if (!FxIteratorEndExclusive(&system->iteratorCount))
+        {
+            fx_effectKillExclusiveThreadState = {};
+            (void)Sys_AtomicCompareExchange(killGate, 0, 1);
+            return false;
+        }
+    }
+}
+
+bool __cdecl FX_EndEffectKillExclusive(FxSystem *const system) noexcept
+{
+    if (!system
+        || !FX_CurrentThreadOwnsEffectKillExclusive(system)
+        || !fx_effectKillExclusiveThreadState.exclusiveAcquired)
+    {
+        return false;
+    }
+    volatile std::int32_t *const killGate =
+        FX_GetEffectKillGate(system);
+    if (!killGate || Sys_AtomicLoad(killGate) != 2)
+        return false;
+    const bool released =
+        FxIteratorEndExclusive(&system->iteratorCount);
+    if (!released)
+        return false;
+    fx_effectKillExclusiveThreadState.exclusiveAcquired = false;
+    if (Sys_AtomicCompareExchange(killGate, 0, 2) != 2)
+        return false;
+    fx_effectKillExclusiveThreadState = {};
+    return true;
+}
+
+bool __cdecl FX_ThreadOwnsEffectKillExclusive(
+    const FxSystem *const system) noexcept
+{
+    return FX_CurrentThreadOwnsEffectKillExclusive(system);
+}
+
+bool __cdecl FX_CompleteEffectKillExclusiveDowngrade(
+    FxSystem *const system) noexcept
+{
+    if (!system
+        || !FX_CurrentThreadOwnsEffectKillExclusive(system)
+        || !fx_effectKillExclusiveThreadState.exclusiveAcquired
+        || Sys_AtomicLoad(&system->iteratorCount) != 1)
+    {
+        return false;
+    }
+    volatile std::int32_t *const killGate =
+        FX_GetEffectKillGate(system);
+    if (!killGate || Sys_AtomicLoad(killGate) != 2)
+        return false;
+    if (fx_effectRestartRetainThreadState.system
+        && (fx_effectRestartRetainThreadState.system != system
+            || fx_effectRestartRetainThreadState.generation
+                != FX_GetCooperativeIteratorGeneration(system)))
+    {
+        return false;
+    }
+    if (!fx_effectRestartRetainThreadState.system)
+    {
+        fx_effectRestartRetainThreadState.system = system;
+        fx_effectRestartRetainThreadState.generation =
+            FX_GetCooperativeIteratorGeneration(system);
+    }
+    fx_effectRestartRetainThreadState.ownsKillGate = true;
+    fx_effectKillExclusiveThreadState = {};
+    return true;
+}
+
+bool __cdecl FX_EndEffectRestartGate(FxSystem *const system) noexcept
+{
+    if (!system || !FX_CurrentThreadOwnsEffectRestartGate(system)
+        || fx_effectRestartRetainThreadState.effectCount != 0
+        || !FX_CurrentThreadOwnsCooperativeIterator(system))
+    {
+        return false;
+    }
+    volatile std::int32_t *const killGate =
+        FX_GetEffectKillGate(system);
+    if (!killGate
+        || Sys_AtomicCompareExchange(killGate, 0, 2) != 2)
+    {
+        return false;
+    }
+    fx_effectRestartRetainThreadState = {};
+    return true;
+}
+
+void __cdecl FX_AbandonCurrentThreadEffectKillExclusiveForError() noexcept
+{
+    const FxEffectKillExclusiveThreadState state =
+        fx_effectKillExclusiveThreadState;
+    fx_effectKillExclusiveThreadState = {};
+    if (state.system
+        && state.generation
+            == FX_GetCooperativeIteratorGeneration(state.system))
+    {
+        if (state.exclusiveAcquired)
+            (void)FxIteratorEndExclusive(&state.system->iteratorCount);
+        volatile std::int32_t *const killGate =
+            FX_GetEffectKillGate(state.system);
+        if (killGate)
+        {
+            if (Sys_AtomicCompareExchange(killGate, 0, 2) != 2)
+                (void)Sys_AtomicCompareExchange(killGate, 0, 1);
+        }
+    }
+}
+
+bool __cdecl FX_BeginArchive(FxSystem *const system)
+{
+    volatile std::int32_t *const gate = FX_GetArchiveGate(system);
+    if (!system || !gate || system->isArchiving
+        || FX_CurrentThreadOwnsCooperativeIterator(system)
+        || FX_ThreadOwnsEffectKillExclusive(system)
+        || FX_CurrentThreadOwnsArchive(system)
+        || fx_archiveThreadState.system
+        || Sys_AtomicCompareExchange(gate, 1, 0) != 0)
+    {
+        return false;
+    }
+
+    fx_archiveThreadState.system = system;
+    fx_archiveThreadState.generation =
+        FX_GetCooperativeIteratorGeneration(system);
+    FxIteratorWaitBeginExclusive(&system->iteratorCount);
+    if (Sys_AtomicCompareExchange(gate, 2, 1) == 1)
+        return true;
+
+    FxIteratorEndExclusive(&system->iteratorCount);
+    fx_archiveThreadState = {};
+    return false;
+}
+
+bool __cdecl FX_RestoreArchiveExclusiveState(FxSystem *const system)
+{
+    volatile std::int32_t *const gate = FX_GetArchiveGate(system);
+    if (!system || !gate || Sys_AtomicLoad(gate) != 2
+        || !FX_CurrentThreadOwnsArchive(system))
+    {
+        return false;
+    }
+    return FxIteratorTryBeginExclusive(&system->iteratorCount);
+}
+
+bool __cdecl FX_EndArchive(FxSystem *const system)
+{
+    volatile std::int32_t *const gate = FX_GetArchiveGate(system);
+    if (!system || !gate || Sys_AtomicLoad(gate) != 2
+        || !FX_CurrentThreadOwnsArchive(system))
+    {
+        return false;
+    }
+    const bool released = FxIteratorEndExclusive(&system->iteratorCount);
+    if (!released)
+        return false;
+    const bool opened =
+        Sys_AtomicCompareExchange(gate, 0, 2) == 2;
+    fx_archiveThreadState = {};
+    return opened;
+}
+
+void __cdecl FX_AbandonCurrentThreadArchiveForError() noexcept
+{
+    FxSystem *const system = fx_archiveThreadState.system;
+    if (!system)
+        return;
+
+    volatile std::int32_t *const gate = FX_GetArchiveGate(system);
+    const bool generationMatches =
+        fx_archiveThreadState.generation
+        == FX_GetCooperativeIteratorGeneration(system);
+    fx_archiveThreadState = {};
+    if (!gate || !generationMatches)
+        return;
+
+    // Archive publication can temporarily replace iteratorCount with zero.
+    // Release normal exclusive ownership if it is still present, then open
+    // only the gate that this thread claimed. Other states are left intact for
+    // the engine's subsequent quiescent reset rather than being overwritten.
+    FxIteratorEndExclusive(&system->iteratorCount);
+    system->isArchiving = false;
+    if (Sys_AtomicCompareExchange(gate, 0, 2) != 2)
+        Sys_AtomicCompareExchange(gate, 0, 1);
+}
+
+[[noreturn]] void KISAK_CDECL FX_InvalidPoolHandle(
+    const void *const pool,
+    const std::uint32_t handle)
+{
+    Com_Error(
+        ERR_DROP,
+        "Invalid FX pool handle %u for pool %p",
+        handle,
+        pool);
+    std::abort();
+}
 
 void __cdecl TRACK_fx_system()
 {
@@ -39,6 +1609,26 @@ void __cdecl TRACK_fx_system()
         fx_systemBufferPool, static_cast<int>(sizeof(fx_systemBufferPool)), "fx_systemBufferPool", 8);
     track_static_alloc_internal(
         fx_marksSystemPool, static_cast<int>(sizeof(fx_marksSystemPool)), "fx_marksSystemPool", 8);
+    track_static_alloc_internal(
+        fx_poolAllocationStates,
+        static_cast<int>(sizeof(fx_poolAllocationStates)),
+        "fx_poolAllocationStates",
+        8);
+    track_static_alloc_internal(
+        const_cast<std::int32_t *>(fx_archiveGate),
+        static_cast<int>(sizeof(fx_archiveGate)),
+        "fx_archiveGate",
+        4);
+    track_static_alloc_internal(
+        const_cast<std::int32_t *>(fx_cooperativeIteratorGeneration),
+        static_cast<int>(sizeof(fx_cooperativeIteratorGeneration)),
+        "fx_cooperativeIteratorGeneration",
+        4);
+    track_static_alloc_internal(
+        const_cast<std::int32_t *>(fx_effectKillGate),
+        static_cast<int>(sizeof(fx_effectKillGate)),
+        "fx_effectKillGate",
+        4);
 }
 
 XModel *__cdecl FX_RegisterModel(const char *modelName)
@@ -80,6 +1670,138 @@ void __cdecl FX_LinkSystemBuffers(FxSystem *system, FxSystemBuffers *systemBuffe
     system->trailElems = systemBuffers->trailElems;
     system->visState = systemBuffers->visState;
     system->deferredElems = systemBuffers->deferredElems;
+}
+
+bool __cdecl FX_RebuildPoolAllocationStates(FxSystem *system)
+{
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!system || !states || !system->effects || !system->elems
+        || !system->trails
+        || !system->trailElems)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            180,
+            0,
+            "%s",
+            "system and FX pool sidecars are linked");
+        return false;
+    }
+
+    FxPoolAllocationStates rebuilt{};
+    alignas(4) volatile std::int32_t rebuiltElemCount = 0;
+    alignas(4) volatile std::int32_t rebuiltTrailCount = 0;
+    alignas(4) volatile std::int32_t rebuiltTrailElemCount = 0;
+
+    volatile std::int32_t *const archiveGate =
+        FX_GetArchiveGate(system);
+    if (!archiveGate)
+        return false;
+    const std::int32_t archiveGateState =
+        Sys_AtomicLoad(archiveGate);
+    const bool ownsArchive = FX_CurrentThreadOwnsArchive(system);
+    if (archiveGateState == 2 && !ownsArchive)
+        return false;
+    if (ownsArchive)
+        Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
+    else
+        FX_EnterArchiveAwarePoolCriticalSection();
+    const FxPoolMutationStatus elemStatus =
+        FxPoolRebuildAllocationStateLocked<FxElem, MAX_ELEMS>(
+            &system->firstFreeElem,
+            system->elems,
+            &rebuiltElemCount,
+            &rebuilt.elems);
+    const FxPoolMutationStatus trailStatus =
+        FxPoolRebuildAllocationStateLocked<FxTrail, MAX_TRAILS>(
+            &system->firstFreeTrail,
+            system->trails,
+            &rebuiltTrailCount,
+            &rebuilt.trails);
+    const FxPoolMutationStatus trailElemStatus =
+        FxPoolRebuildAllocationStateLocked<FxTrailElem, MAX_TRAIL_ELEMS>(
+            &system->firstFreeTrailElem,
+            system->trailElems,
+            &rebuiltTrailElemCount,
+            &rebuilt.trailElems);
+
+    const bool valid = elemStatus == FxPoolMutationStatus::Success
+        && trailStatus == FxPoolMutationStatus::Success
+        && trailElemStatus == FxPoolMutationStatus::Success
+        && Sys_AtomicLoad(&system->activeElemCount)
+            == Sys_AtomicLoad(&rebuiltElemCount)
+        && Sys_AtomicLoad(&system->activeTrailCount)
+            == Sys_AtomicLoad(&rebuiltTrailCount)
+        && Sys_AtomicLoad(&system->activeTrailElemCount)
+            == Sys_AtomicLoad(&rebuiltTrailElemCount);
+    if (valid)
+    {
+        *states = rebuilt;
+        for (std::size_t effectIndex = 0;
+             effectIndex < FX_EFFECT_LIMIT;
+             ++effectIndex)
+        {
+            volatile std::int32_t *const admissionState =
+                FX_GetEffectOwnerAdmissionState(
+                    system, &system->effects[effectIndex]);
+            if (admissionState)
+            {
+                const std::uint32_t effectStatus =
+                    static_cast<std::uint32_t>(Sys_AtomicLoad(
+                        &system->effects[effectIndex].status));
+                Sys_AtomicStore(
+                    admissionState,
+                    (effectStatus
+                        & FX_STATUS_OWNER_ADMISSION_BLOCKED) != 0
+                        ? 1
+                        : 0);
+            }
+        }
+    }
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+
+    if (!valid)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            220,
+            0,
+            "FX pool state rebuild failed (%u, %u, %u)",
+            static_cast<unsigned>(elemStatus),
+            static_cast<unsigned>(trailStatus),
+            static_cast<unsigned>(trailElemStatus));
+    }
+    return valid;
+}
+
+bool __cdecl FX_ValidatePoolAllocationGraphState(FxSystem *system)
+{
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!system || !states)
+        return false;
+
+    volatile std::int32_t *const archiveGate =
+        FX_GetArchiveGate(system);
+    if (!archiveGate)
+        return false;
+    const std::int32_t archiveGateState =
+        Sys_AtomicLoad(archiveGate);
+    const bool ownsArchive = FX_CurrentThreadOwnsArchive(system);
+    if (archiveGateState == 2 && !ownsArchive)
+        return false;
+    if (ownsArchive)
+        Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
+    else
+        FX_EnterArchiveAwarePoolCriticalSection();
+    const bool valid = FxValidatePoolAllocationGraph(
+        system,
+        states->elems,
+        states->trails,
+        states->trailElems);
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return valid;
 }
 
 void __cdecl FX_InitSystem(int32_t localClientNum)
@@ -134,12 +1856,31 @@ void __cdecl FX_ResetSystem(FxSystem *system)
     int32_t i; // [esp+20h] [ebp-8h]
     int32_t effectIndex; // [esp+24h] [ebp-4h]
 
+    volatile std::int32_t *const archiveGate =
+        FX_GetArchiveGate(system);
+    if (archiveGate)
+        Sys_AtomicStore(archiveGate, 2);
+    volatile std::int32_t *const killGate =
+        FX_GetEffectKillGate(system);
+    if (killGate)
+        Sys_AtomicStore(killGate, 0);
     system->effects->def = 0;
     for (effectIndex = 0; effectIndex < FX_EFFECT_LIMIT; ++effectIndex)
+    {
         system->allEffectHandles[effectIndex] = FX_EffectToHandle(system, &system->effects[effectIndex]);
+        volatile std::int32_t *const admissionState =
+            FX_GetEffectOwnerAdmissionState(
+                system, &system->effects[effectIndex]);
+        if (admissionState)
+            Sys_AtomicStore(admissionState, 0);
+    }
     system->firstActiveEffect = 0;
     system->firstNewEffect = 0;
     system->firstFreeEffect = 0;
+    volatile std::int32_t *const iteratorGeneration =
+        FX_GetCooperativeIteratorGenerationState(system);
+    if (iteratorGeneration)
+        Sys_AtomicIncrement(iteratorGeneration);
     Sys_AtomicStore(&system->iteratorCount, 0);
     FxClearGarbageCollectionRequest(&system->needsGarbageCollection);
     system->deferredElemCount = 0;
@@ -148,34 +1889,65 @@ void __cdecl FX_ResetSystem(FxSystem *system)
     for (i = 0; i < 2047; ++i)
         elems[i].nextFree = i + 1;
     elems[i].nextFree = -1;
-    system->activeElemCount = 0;
+    Sys_AtomicStore(&system->activeElemCount, 0);
     trailElems = system->trailElems;
     system->firstFreeTrailElem = 0;
     for (j = 0; j < 2047; ++j)
         trailElems[j].nextFree = j + 1;
     trailElems[j].nextFree = -1;
-    system->activeTrailElemCount = 0;
+    Sys_AtomicStore(&system->activeTrailElemCount, 0);
     trails = system->trails;
     system->firstFreeTrail = 0;
     for (k = 0; k < 127; ++k)
         trails[k].nextFree = k + 1;
     trails[k].nextFree = -1;
-    system->activeTrailCount = 0;
-    system->activeSpotLightEffectCount = 0;
-    system->activeSpotLightElemCount = 0;
-    system->gfxCloudCount = 0;
+    Sys_AtomicStore(&system->activeTrailCount, 0);
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!states)
+    {
+        if (archiveGate)
+            Sys_AtomicStore(archiveGate, 0);
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            220,
+            0,
+            "%s",
+            "FX pool allocation sidecars exist");
+        Com_Error(ERR_DROP, "Missing FX pool allocation sidecars");
+        return;
+    }
+    FxPoolResetAllocationState(&states->elems);
+    FxPoolResetAllocationState(&states->trails);
+    FxPoolResetAllocationState(&states->trailElems);
+    Sys_AtomicStore(&system->activeSpotLightEffectCount, 0);
+    Sys_AtomicStore(&system->activeSpotLightElemCount, 0);
+    system->activeSpotLightEffectHandle = FX_INVALID_HANDLE;
+    system->activeSpotLightElemHandle = FX_INVALID_HANDLE;
+    system->activeSpotLightBoltDobj = -1;
+    Sys_AtomicStore(&system->gfxCloudCount, 0);
     Sys_AtomicStore(&system->visState[0].blockerCount, 0);
     Sys_AtomicStore(&system->visState[1].blockerCount, 0);
     system->visStateBufferRead = system->visState;
     system->visStateBufferWrite = system->visState + 1;
+    if (archiveGate)
+        Sys_AtomicStore(archiveGate, 0);
 }
 
 int32_t __cdecl FX_EffectToHandle(FxSystem *system, FxEffect *effect)
 {
-    iassert(system);
-    iassert(effect && effect >= &system->effects[0] && effect < &system->effects[FX_EFFECT_LIMIT]);
+    if (!system || !effect)
+    {
+        iassert(system);
+        iassert(effect);
+        return -1;
+    }
 
-    return ((char *)effect - (char *)system->effects) / 4;
+    const std::uint16_t handle =
+        FxEncodeHandle<FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+            system->effects, effect);
+    vassert(handle != FX_INVALID_HANDLE, "%p %p", system->effects, effect);
+    return handle == FX_INVALID_HANDLE ? -1 : static_cast<std::int32_t>(handle);
 }
 
 
@@ -188,13 +1960,53 @@ void __cdecl FX_ShutdownSystem(int32_t localClientNum)
     systemBuffers = FX_GetSystemBuffers(localClientNum);
     if (!system)
         MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 503, 0, "%s", "system");
-    memset((uint8_t *)system, 0, sizeof(FxSystem));
+    volatile std::int32_t *const archiveGate =
+        FX_GetArchiveGate(system);
+    volatile std::int32_t *const iteratorGeneration =
+        FX_GetCooperativeIteratorGenerationState(system);
+    if (!system || !archiveGate
+        || Sys_AtomicCompareExchange(archiveGate, 2, 0) != 0)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            503,
+            0,
+            "%s",
+            "FX shutdown begins with a quiescent archive gate");
+        return;
+    }
+    if (Sys_AtomicLoad(&system->iteratorCount) != 0)
+    {
+        Sys_AtomicStore(archiveGate, 0);
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            503,
+            0,
+            "%s",
+            "FX shutdown begins without live iterators");
+        return;
+    }
     if (!systemBuffers)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 505, 0, "%s", "systemBuffers");
+    {
+        Sys_AtomicStore(archiveGate, 0);
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            505,
+            0,
+            "%s",
+            "FX system buffers exist during shutdown");
+        return;
+    }
+    if (iteratorGeneration)
+        Sys_AtomicIncrement(iteratorGeneration);
+    if (fx_archiveThreadState.system == system)
+        fx_archiveThreadState = {};
+    memset((uint8_t *)system, 0, sizeof(FxSystem));
     memset((uint8_t *)systemBuffers, 0, sizeof(FxSystemBuffers));
     if (system->isInitialized)
         MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 507, 1, "%s", "!system->isInitialized");
     FX_UnregisterAll();
+    Sys_AtomicStore(archiveGate, 0);
 }
 
 void __cdecl FX_RelocateSystem(FxSystem *system, int32_t relocationDistance)
@@ -206,110 +2018,573 @@ void __cdecl FX_RelocateSystem(FxSystem *system, int32_t relocationDistance)
     }
 }
 
-void __cdecl FX_EffectNoLongerReferenced(FxSystem *system, FxEffect *remoteEffect)
+namespace
 {
-    const char *v2; // eax
-    int32_t oldStatusValue; // [esp+14h] [ebp-8h]
-    FxEffect *remoteOwner; // [esp+18h] [ebp-4h]
+constexpr std::uint32_t FX_OWNED_EFFECT_COUNT_INCREMENT =
+    1u << FX_STATUS_OWNED_EFFECTS_SHIFT;
 
-    if (!remoteEffect)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 677, 0, "%s", "remoteEffect");
-    if ((uint16_t)remoteEffect->status != 1)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 690, 0, "%s", "(effect->status & FX_STATUS_REF_COUNT_MASK) == 1");
-    if ((remoteEffect->status & 0x7FE0000) != 0)
+struct FxEffectReferenceReleasePlan
+{
+    std::array<std::uint16_t, FX_EFFECT_LIMIT> referenceHandles{};
+    std::array<std::uint16_t, FX_EFFECT_LIMIT> ownedCountHandles{};
+    std::array<bool, FX_EFFECT_LIMIT + 1> requestGarbageCollection{};
+    std::size_t referenceCount = 0;
+    std::size_t ownedCount = 0;
+};
+
+bool FX_TryAdjustEffectReferenceCount(
+    FxEffect *const effect,
+    const bool increment) noexcept
+{
+    if (!effect)
+        return false;
+    std::int32_t observed = Sys_AtomicLoad(&effect->status);
+    for (;;)
     {
-        v2 = va("%s, %i", remoteEffect->def->name, remoteEffect->status);
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_system.cpp",
-            691,
-            0,
-            "%s\n\t%s",
-            "(effect->status & FX_STATUS_OWNED_EFFECTS_MASK) == 0",
-            v2);
+        const std::uint32_t status =
+            static_cast<std::uint32_t>(observed);
+        const std::uint32_t referenceCount = status & FX_STATUS_REF_COUNT_MASK;
+        if (referenceCount == 0
+            || (increment
+                && referenceCount == FX_STATUS_REF_COUNT_MASK))
+        {
+            return false;
+        }
+        const std::uint32_t desiredStatus = increment
+            ? status + 1u
+            : status - 1u;
+        const std::int32_t previous = Sys_AtomicCompareExchange(
+            &effect->status,
+            static_cast<std::int32_t>(desiredStatus),
+            observed);
+        if (previous == observed)
+            return true;
+        observed = previous;
     }
-    remoteOwner = FX_EffectFromHandle(system, remoteEffect->owner);
-    if ((remoteEffect->status & 0x10000000) == 0)
+}
+
+bool FX_TryAdjustOwnedEffectCount(
+    FxEffect *const effect,
+    const bool increment) noexcept
+{
+    if (!effect)
+        return false;
+    std::int32_t observed = Sys_AtomicLoad(&effect->status);
+    for (;;)
     {
-        if ((remoteOwner->status & 0x7FE0000) == 0)
-            MyAssertHandler(
-                ".\\EffectsCore\\fx_system.cpp",
-                708,
-                0,
-                "%s\n\t(owner->status) = %i",
-                "((owner->status & FX_STATUS_OWNED_EFFECTS_MASK) > 0)",
-                remoteOwner->status);
-        oldStatusValue = Sys_AtomicFetchAdd(&remoteOwner->status, -131072);
-        if ((oldStatusValue & 0xF801FFFF) != ((oldStatusValue - 0x20000) & 0xF801FFFF))
-            MyAssertHandler(
-                ".\\EffectsCore\\fx_system.cpp",
-                717,
-                0,
-                "%s\n\t(oldStatusValue) = %i",
-                "((oldStatusValue & ~FX_STATUS_OWNED_EFFECTS_MASK) == ((oldStatusValue - (1 << FX_STATUS_OWNED_EFFECTS_SHIFT)) & "
-                "~FX_STATUS_OWNED_EFFECTS_MASK))",
-                oldStatusValue);
-        FX_DelRefToEffect(system, remoteOwner);
+        const std::uint32_t status =
+            static_cast<std::uint32_t>(observed);
+        const std::uint32_t ownedCount =
+            status & FX_STATUS_OWNED_EFFECTS_MASK;
+        if ((!increment && ownedCount < FX_OWNED_EFFECT_COUNT_INCREMENT)
+            || (increment && ownedCount == FX_STATUS_OWNED_EFFECTS_MASK))
+        {
+            return false;
+        }
+        const std::uint32_t desiredStatus = increment
+            ? status + FX_OWNED_EFFECT_COUNT_INCREMENT
+            : status - FX_OWNED_EFFECT_COUNT_INCREMENT;
+        const std::int32_t previous = Sys_AtomicCompareExchange(
+            &effect->status,
+            static_cast<std::int32_t>(desiredStatus),
+            observed);
+        if (previous == observed)
+            return true;
+        observed = previous;
     }
-    FxRequestGarbageCollection(&system->needsGarbageCollection);
+}
+
+bool FX_TryAddOwnedEffectReference(FxEffect *const effect) noexcept
+{
+    if (!effect)
+        return false;
+    std::int32_t observed = Sys_AtomicLoad(&effect->status);
+    for (;;)
+    {
+        const std::uint32_t status =
+            static_cast<std::uint32_t>(observed);
+        const std::uint32_t referenceCount =
+            status & FX_STATUS_REF_COUNT_MASK;
+        const std::uint32_t ownedCount =
+            status & FX_STATUS_OWNED_EFFECTS_MASK;
+        if (referenceCount == 0
+            || referenceCount == FX_STATUS_REF_COUNT_MASK
+            || ownedCount == FX_STATUS_OWNED_EFFECTS_MASK)
+        {
+            return false;
+        }
+        const std::uint32_t desiredStatus = status + 1u
+            + FX_OWNED_EFFECT_COUNT_INCREMENT;
+        const std::int32_t previous = Sys_AtomicCompareExchange(
+            &effect->status,
+            static_cast<std::int32_t>(desiredStatus),
+            observed);
+        if (previous == observed)
+            return true;
+        observed = previous;
+    }
+}
+
+bool FX_TryAddEffectReferenceSerialized(
+    FxSystem *const system,
+    FxEffect *const effect) noexcept
+{
+    if (!system || !effect)
+        return false;
+    FX_EnterArchiveAwarePoolCriticalSection();
+    const bool adjusted =
+        FX_TryAdjustEffectReferenceCount(effect, true);
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return adjusted;
+}
+
+enum class FxOwnedEffectReferenceAddResult : std::uint8_t
+{
+    Success,
+    Blocked,
+    Invalid
+};
+
+FxOwnedEffectReferenceAddResult FX_TryAddOwnedEffectReferenceSerialized(
+    FxSystem *const system,
+    FxEffect *const effect) noexcept
+{
+    if (!system || !effect)
+        return FxOwnedEffectReferenceAddResult::Invalid;
+    volatile std::int32_t *const admissionState =
+        FX_GetEffectOwnerAdmissionState(system, effect);
+    if (!admissionState)
+        return FxOwnedEffectReferenceAddResult::Invalid;
+    FX_EnterArchiveAwarePoolCriticalSection();
+    FxOwnedEffectReferenceAddResult result =
+        FxOwnedEffectReferenceAddResult::Invalid;
+    const std::uint32_t status = static_cast<std::uint32_t>(
+        Sys_AtomicLoad(&effect->status));
+    if (Sys_AtomicLoad(admissionState) != 0
+        || (status & FX_STATUS_OWNER_ADMISSION_BLOCKED) != 0)
+    {
+        result = FxOwnedEffectReferenceAddResult::Blocked;
+    }
+    else if (FX_TryAddOwnedEffectReference(effect))
+    {
+        result = FxOwnedEffectReferenceAddResult::Success;
+    }
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return result;
+}
+
+bool FX_BuildEffectReferenceReleasePlan(
+    FxSystem *const system,
+    FxEffect *const effect,
+    FxEffectReferenceReleasePlan *const plan) noexcept
+{
+    if (!system || !system->effects || !effect || !plan)
+        return false;
+
+    const std::uint16_t initialHandle = FxEncodeHandle<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+            system->effects, effect);
+    if (initialHandle == FX_INVALID_HANDLE)
+        return false;
+
+    const std::uint32_t initialStatus =
+        static_cast<std::uint32_t>(Sys_AtomicLoad(&effect->status));
+    if ((initialStatus & FX_STATUS_REF_COUNT_MASK) != 1
+        || (initialStatus & FX_STATUS_OWNED_EFFECTS_MASK) != 0)
+    {
+        return false;
+    }
+
+    constexpr std::size_t effectHandleStride = FxHandleStride<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>();
+    std::array<bool, FX_EFFECT_LIMIT> visitedEffects{};
+    visitedEffects[initialHandle / effectHandleStride] = true;
+
+    plan->requestGarbageCollection[0] = true;
+    if ((initialStatus & FX_STATUS_SELF_OWNED) != 0)
+        return effect->owner == initialHandle;
+
+    FxEffect *child = effect;
+    for (;;)
+    {
+        if (plan->ownedCount == plan->ownedCountHandles.size()
+            || plan->referenceCount == plan->referenceHandles.size())
+        {
+            return false;
+        }
+
+        const std::uint16_t ownerHandle = child->owner;
+        FxEffect *const owner = FxDecodeHandle<
+            FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                system->effects, ownerHandle);
+        if (!owner)
+            return false;
+        const std::size_t ownerIndex = ownerHandle / effectHandleStride;
+        if (visitedEffects[ownerIndex])
+            return false;
+        visitedEffects[ownerIndex] = true;
+
+        const std::uint32_t ownerStatus =
+            static_cast<std::uint32_t>(Sys_AtomicLoad(&owner->status));
+        if ((ownerStatus & FX_STATUS_REF_COUNT_MASK) == 0
+            || (ownerStatus & FX_STATUS_OWNED_EFFECTS_MASK)
+                < FX_OWNED_EFFECT_COUNT_INCREMENT)
+        {
+            return false;
+        }
+
+        plan->ownedCountHandles[plan->ownedCount++] = ownerHandle;
+        const std::size_t referenceIndex = plan->referenceCount++;
+        plan->referenceHandles[referenceIndex] = ownerHandle;
+        if ((ownerStatus & FX_STATUS_REF_COUNT_MASK) != 1)
+            return true;
+        // The relationship from child is still published while this plan is
+        // validated. It is the owner's final owned-effect/reference pair.
+        if ((ownerStatus & FX_STATUS_OWNED_EFFECTS_MASK)
+            != FX_OWNED_EFFECT_COUNT_INCREMENT)
+            return false;
+
+        plan->requestGarbageCollection[referenceIndex + 1] = true;
+        if ((ownerStatus & FX_STATUS_SELF_OWNED) != 0)
+            return owner->owner == ownerHandle;
+        child = owner;
+    }
+}
+
+bool FX_ApplyEffectReferenceReleasePlan(
+    FxSystem *const system,
+    FxEffect *const initialEffect,
+    const FxEffectReferenceReleasePlan &plan) noexcept
+{
+    std::size_t adjustedOwnedCount = 0;
+    for (; adjustedOwnedCount < plan.ownedCount; ++adjustedOwnedCount)
+    {
+        FxEffect *const owner = FxDecodeHandle<
+            FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                system->effects,
+                plan.ownedCountHandles[adjustedOwnedCount]);
+        if (!FX_TryAdjustOwnedEffectCount(owner, false))
+            break;
+    }
+    if (adjustedOwnedCount != plan.ownedCount)
+    {
+        while (adjustedOwnedCount != 0)
+        {
+            FxEffect *const owner = FxDecodeHandle<
+                FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                    system->effects,
+                    plan.ownedCountHandles[--adjustedOwnedCount]);
+            FX_TryAdjustOwnedEffectCount(owner, true);
+        }
+        return false;
+    }
+
+    std::size_t nextReferenceIndex = plan.referenceCount;
+    while (nextReferenceIndex != 0)
+    {
+        FxEffect *const referencedEffect = FxDecodeHandle<
+            FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                system->effects,
+                plan.referenceHandles[nextReferenceIndex - 1]);
+        if (!FX_TryAdjustEffectReferenceCount(referencedEffect, false))
+            break;
+        --nextReferenceIndex;
+    }
+    if (nextReferenceIndex != 0)
+    {
+        for (std::size_t referenceIndex = nextReferenceIndex;
+             referenceIndex < plan.referenceCount;
+             ++referenceIndex)
+        {
+            FxEffect *const referencedEffect = FxDecodeHandle<
+                FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                    system->effects,
+                    plan.referenceHandles[referenceIndex]);
+            FX_TryAdjustEffectReferenceCount(referencedEffect, true);
+        }
+        while (adjustedOwnedCount != 0)
+        {
+            FxEffect *const owner = FxDecodeHandle<
+                FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                    system->effects,
+                    plan.ownedCountHandles[--adjustedOwnedCount]);
+            FX_TryAdjustOwnedEffectCount(owner, true);
+        }
+        return false;
+    }
+
+    if (plan.requestGarbageCollection[0])
+        FxRequestGarbageCollection(&system->needsGarbageCollection);
+    for (std::size_t referenceIndex = 0;
+         referenceIndex < plan.referenceCount;
+         ++referenceIndex)
+    {
+        if (plan.requestGarbageCollection[referenceIndex + 1])
+            FxRequestGarbageCollection(&system->needsGarbageCollection);
+    }
+    (void)initialEffect;
+    return true;
+}
+
+bool FX_EffectNoLongerReferencedBounded(
+    FxSystem *const system,
+    FxEffect *const effect) noexcept
+{
+    FxEffectReferenceReleasePlan plan{};
+    return FX_BuildEffectReferenceReleasePlan(system, effect, &plan)
+        && FX_ApplyEffectReferenceReleasePlan(system, effect, plan);
+}
 }
 
 void __cdecl FX_DelRefToEffect(FxSystem *system, FxEffect *effect)
 {
-    if (!effect)
-        MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 393, 0, "%s", "effect");
-    if ((uint16_t)effect->status == 1)
-        FX_EffectNoLongerReferenced(system, effect);
-    if (!(uint16_t)effect->status)
+    if (!system || !effect)
+    {
+        MyAssertHandler(
+            "c:\\trees\\cod3\\src\\effectscore\\fx_system.h",
+            393,
+            0,
+            "%s",
+            "system && effect");
+        return;
+    }
+
+    FX_EnterArchiveAwarePoolCriticalSection();
+    const std::uint32_t status =
+        static_cast<std::uint32_t>(Sys_AtomicLoad(&effect->status));
+    if ((status & FX_STATUS_REF_COUNT_MASK) == 0)
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\src\\effectscore\\fx_system.h",
             411,
             0,
-            "%s\n\t(effect->status & FX_STATUS_REF_COUNT_MASK) = %i",
-            "((effect->status & FX_STATUS_REF_COUNT_MASK) > 0)",
-            (uint16_t)effect->status);
-    Sys_AtomicDecrement(&effect->status);
+            "%s",
+            "FX effect reference count is nonzero");
+        FxRequestGarbageCollection(&system->needsGarbageCollection);
+        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+        return;
+    }
+    if ((status & FX_STATUS_REF_COUNT_MASK) == 1
+        && !FX_EffectNoLongerReferencedBounded(system, effect))
+    {
+        MyAssertHandler(
+            "c:\\trees\\cod3\\src\\effectscore\\fx_system.h",
+            411,
+            0,
+            "%s",
+            "FX owner-reference graph is bounded, acyclic, and consistent");
+        FxRequestGarbageCollection(&system->needsGarbageCollection);
+        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+        return;
+    }
+    if (!FX_TryAdjustEffectReferenceCount(effect, false))
+    {
+        MyAssertHandler(
+            "c:\\trees\\cod3\\src\\effectscore\\fx_system.h",
+            411,
+            0,
+            "%s",
+            "FX effect reference decrement succeeds");
+        FxRequestGarbageCollection(&system->needsGarbageCollection);
+    }
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+}
+
+static bool FX_ValidateSpotLightForGarbageCollection(
+    FxSystem *system,
+    std::uint16_t effectHandle) noexcept;
+
+static bool FX_ValidateEffectForGarbageCollection(
+    const FxEffect *const effect) noexcept
+{
+    if (!effect)
+        return false;
+    const std::uint32_t status = static_cast<std::uint32_t>(
+        Sys_AtomicLoad(&effect->status));
+    constexpr std::uint32_t allowedZeroReferenceStatus =
+        FX_STATUS_OWNER_ADMISSION_BLOCKED | FX_STATUS_SELF_OWNED;
+    if ((status & ~allowedZeroReferenceStatus) != 0
+        || effect->firstSortedElemHandle != FX_INVALID_HANDLE)
+    {
+        return false;
+    }
+    for (std::size_t elemClass = 0; elemClass < 3; ++elemClass)
+    {
+        if (effect->firstElemHandle[elemClass] != FX_INVALID_HANDLE)
+            return false;
+    }
+    return true;
 }
 
 void __cdecl FX_RunGarbageCollection(FxSystem *system)
 {
-    uint16_t effectHandle; // [esp+8h] [ebp-818h]
-    uint32_t freedCount; // [esp+Ch] [ebp-814h]
-    uint16_t freedHandles[1026]; // [esp+10h] [ebp-810h]
-    FxEffect *effect; // [esp+818h] [ebp-8h]
-    int32_t activeIndex; // [esp+81Ch] [ebp-4h]
+    std::array<std::uint16_t, FX_EFFECT_LIMIT> freedHandles{};
+    std::size_t freedCount = 0;
+    bool invalidEffectRing = false;
+    bool invalidEffectHandle = false;
+    bool invalidPoolGraph = false;
+    bool invalidElementGraph = false;
+    bool invalidTrailGraph = false;
+    bool invalidSpotLightGraph = false;
 
     if (!system)
+    {
         MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 779, 0, "%s", "system");
+        return;
+    }
+    const bool reuseKillExclusive =
+        FX_ThreadOwnsEffectKillExclusive(system);
     if (FxGarbageCollectionRequested(&system->needsGarbageCollection)
-        && FX_BeginIteratingOverEffects_Exclusive(system))
+        && (reuseKillExclusive
+            || FX_BeginIteratingOverEffects_Exclusive(system)))
     {
         FxClearGarbageCollectionRequest(&system->needsGarbageCollection);
-        activeIndex = system->firstNewEffect;
-        freedCount = 0;
-        while (activeIndex != system->firstActiveEffect)
+        const std::int32_t firstActiveEffect =
+            Sys_AtomicLoad(&system->firstActiveEffect);
+        const std::int32_t firstNewEffect =
+            Sys_AtomicLoad(&system->firstNewEffect);
+        const std::int32_t firstFreeEffect =
+            Sys_AtomicLoad(&system->firstFreeEffect);
+        const std::int64_t activeEffectCount64 =
+            static_cast<std::int64_t>(firstNewEffect) - firstActiveEffect;
+        const std::int64_t allocatedEffectCount64 =
+            static_cast<std::int64_t>(firstFreeEffect) - firstActiveEffect;
+        if (firstActiveEffect < 0
+            || firstNewEffect < firstActiveEffect
+            || firstFreeEffect < firstNewEffect
+            || activeEffectCount64 > FX_EFFECT_LIMIT
+            || allocatedEffectCount64 > FX_EFFECT_LIMIT)
         {
-            effectHandle = system->allEffectHandles[--activeIndex & 0x3FF];
-            effect = FX_EffectFromHandle(system, effectHandle);
-            if ((uint16_t)effect->status)
-            {
-                system->allEffectHandles[((_WORD)freedCount + (_WORD)activeIndex) & 0x3FF] = effectHandle;
-            }
-            else
-            {
-                FX_RunGarbageCollection_FreeTrails(system, effect);
-                FX_RunGarbageCollection_FreeSpotLight(system, effectHandle);
-                freedHandles[freedCount++] = effectHandle;
-            }
+            invalidEffectRing = true;
+            FxRequestGarbageCollection(&system->needsGarbageCollection);
         }
-        while (freedCount)
+        if (!invalidEffectRing
+            && !FX_ValidatePoolAllocationGraphState(system))
         {
-            system->allEffectHandles[activeIndex++ & 0x3FF] = freedHandles[--freedCount];
-            effect = FX_EffectFromHandle(system, freedHandles[freedCount]);
-            memset((uint8_t *)effect, 0, sizeof(FxEffect));
+            invalidPoolGraph = true;
+            FxRequestGarbageCollection(&system->needsGarbageCollection);
         }
-        system->firstActiveEffect = activeIndex;
-        if (!FxIteratorEndExclusive(&system->iteratorCount))
+
+        std::int32_t activeIndex = firstNewEffect;
+        if (!invalidEffectRing && !invalidPoolGraph)
+        {
+            const std::size_t activeEffectCount =
+                static_cast<std::size_t>(activeEffectCount64);
+            for (std::size_t scannedCount = 0;
+                 scannedCount < activeEffectCount;
+                 ++scannedCount)
+            {
+                --activeIndex;
+                const std::uint16_t effectHandle =
+                    system->allEffectHandles[
+                        static_cast<std::size_t>(activeIndex)
+                        & (FX_EFFECT_LIMIT - 1)];
+                const auto retainEffectHandle = [&]() noexcept {
+                    system->allEffectHandles[
+                        (static_cast<std::size_t>(activeIndex) + freedCount)
+                        & (FX_EFFECT_LIMIT - 1)] = effectHandle;
+                };
+                FxEffect *const effect = FxDecodeHandle<
+                    FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                        system->effects, effectHandle);
+                if (!effect)
+                {
+                    retainEffectHandle();
+                    FxRequestGarbageCollection(&system->needsGarbageCollection);
+                    invalidEffectHandle = true;
+                }
+                else if (static_cast<std::uint16_t>(
+                             Sys_AtomicLoad(&effect->status)) != 0)
+                {
+                    retainEffectHandle();
+                }
+                else if (!FX_ValidateEffectForGarbageCollection(effect))
+                {
+                    retainEffectHandle();
+                    FxRequestGarbageCollection(&system->needsGarbageCollection);
+                    invalidElementGraph = true;
+                }
+                else if (!FX_ValidateSpotLightForGarbageCollection(
+                             system, effectHandle))
+                {
+                    retainEffectHandle();
+                    FxRequestGarbageCollection(&system->needsGarbageCollection);
+                    invalidSpotLightGraph = true;
+                }
+                else if (!FX_RunGarbageCollection_FreeTrails(system, effect)
+                         || effect->firstTrailHandle != FX_INVALID_HANDLE)
+                {
+                    retainEffectHandle();
+                    FxRequestGarbageCollection(&system->needsGarbageCollection);
+                    invalidTrailGraph = true;
+                }
+                else if (!FX_RunGarbageCollection_FreeSpotLight(
+                             system, effectHandle))
+                {
+                    retainEffectHandle();
+                    FxRequestGarbageCollection(&system->needsGarbageCollection);
+                    invalidSpotLightGraph = true;
+                }
+                else if (freedCount == freedHandles.size())
+                {
+                    retainEffectHandle();
+                    FxRequestGarbageCollection(&system->needsGarbageCollection);
+                    invalidEffectRing = true;
+                }
+                else
+                {
+                    freedHandles[freedCount++] = effectHandle;
+                }
+            }
+            while (freedCount != 0)
+            {
+                const std::uint16_t freedHandle =
+                    freedHandles[--freedCount];
+                system->allEffectHandles[
+                    static_cast<std::size_t>(activeIndex++)
+                    & (FX_EFFECT_LIMIT - 1)] = freedHandle;
+                FxEffect *const effect = FxDecodeHandle<
+                    FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                        system->effects, freedHandle);
+                if (effect)
+                    memset(static_cast<void *>(effect), 0, sizeof(*effect));
+                else
+                    invalidEffectHandle = true;
+            }
+            const std::int32_t remainingActiveEffectCount =
+                firstNewEffect - activeIndex;
+            const std::int32_t remainingAllocatedEffectCount =
+                firstFreeEffect - activeIndex;
+            const std::int32_t normalizedFirstActive =
+                activeIndex & (FX_EFFECT_LIMIT - 1);
+            Sys_AtomicStore(
+                &system->firstActiveEffect, normalizedFirstActive);
+            Sys_AtomicStore(
+                &system->firstNewEffect,
+                normalizedFirstActive + remainingActiveEffectCount);
+            Sys_AtomicStore(
+                &system->firstFreeEffect,
+                normalizedFirstActive + remainingAllocatedEffectCount);
+        }
+
+        const bool releasedExclusive = reuseKillExclusive
+            || FxIteratorEndExclusive(&system->iteratorCount);
+        if (!releasedExclusive)
             MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 535, 0, "%s", "system->iteratorCount == -1");
+        if (!releasedExclusive)
+            Com_Error(ERR_DROP, "Invalid FX exclusive iterator state during garbage collection");
+        else if (invalidEffectRing)
+            Com_Error(ERR_DROP, "Invalid FX effect ring during garbage collection");
+        else if (invalidEffectHandle)
+            Com_Error(ERR_DROP, "Invalid FX effect handle during garbage collection");
+        else if (invalidPoolGraph)
+            Com_Error(ERR_DROP, "Invalid FX pool graph during garbage collection");
+        else if (invalidElementGraph)
+            Com_Error(ERR_DROP, "Invalid FX element graph during garbage collection");
+        else if (invalidTrailGraph)
+            Com_Error(ERR_DROP, "Invalid FX trail graph during garbage collection");
+        else if (invalidSpotLightGraph)
+            Com_Error(ERR_DROP, "Invalid FX spotlight graph during garbage collection");
     }
 }
 
@@ -317,61 +2592,206 @@ bool __cdecl FX_BeginIteratingOverEffects_Exclusive(FxSystem *system)
 {
     if (system->isArchiving)
         MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 523, 0, "%s", "!system->isArchiving");
-    return FxIteratorTryBeginExclusive(&system->iteratorCount);
-}
-
-void __cdecl FX_RunGarbageCollection_FreeSpotLight(FxSystem *system, uint16_t effectHandle)
-{
-    if (system->activeSpotLightEffectCount && system->activeSpotLightEffectHandle == effectHandle)
+    if (FX_ThreadOwnsEffectKillExclusive(system)
+        || FX_ArchiveGateIsActive(system)
+        || !FxIteratorTryBeginExclusive(&system->iteratorCount))
     {
-        if (system->activeSpotLightEffectCount != 1)
-            MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 739, 0, "%s", "system->activeSpotLightEffectCount == 1");
-        Sys_AtomicDecrement(&system->activeSpotLightEffectCount);
+        return false;
     }
+    if (!FX_ArchiveGateIsActive(system))
+        return true;
+    if (!FxIteratorEndExclusive(&system->iteratorCount))
+    {
+        Com_Error(ERR_DROP, "Invalid FX exclusive iterator state during archive race");
+        return false;
+    }
+    return false;
 }
 
-void __cdecl FX_FreePool_Generic_FxTrail_(FxTrail *item, volatile int32_t *firstFreeIndex, FxPool<FxTrail> *pool)
+static bool FX_ValidateSpotLightForGarbageCollection(
+    FxSystem *const system,
+    const std::uint16_t effectHandle) noexcept
 {
-    volatile uint32_t freedIndex; // [esp+4h] [ebp-4h]
+    if (!system)
+        return false;
+    const std::int32_t effectCount =
+        Sys_AtomicLoad(&system->activeSpotLightEffectCount);
+    const std::int32_t elemCount =
+        Sys_AtomicLoad(&system->activeSpotLightElemCount);
+    if (effectCount < 0 || effectCount > 1
+        || elemCount < 0 || elemCount > 1
+        || elemCount > effectCount)
+    {
+        return false;
+    }
+    if (effectCount == 0)
+        return elemCount == 0;
 
-    freedIndex = ((char *)item - (char *)pool) >> 3;
-    if (freedIndex >= 0x80)
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_system.cpp",
-            228,
-            0,
-            "%s",
-            "freedIndex >= 0 && freedIndex < ITEM_TYPE::POOL_SIZE");
-    Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-    if (*firstFreeIndex != -1 && *firstFreeIndex >= 0x80u)
+    FxEffect *const spotLightEffect = FxDecodeHandle<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+            system->effects, system->activeSpotLightEffectHandle);
+    bool hasSpotLight = false;
+    if (!spotLightEffect
+        || !FX_ValidateSpotLightEffectDef(
+            spotLightEffect->def, &hasSpotLight)
+        || !hasSpotLight)
+    {
+        return false;
+    }
+    if (system->activeSpotLightEffectHandle != effectHandle)
+        return true;
+    return elemCount == 0
+        && (static_cast<std::uint32_t>(
+                Sys_AtomicLoad(&spotLightEffect->status)) & 0xFFFFu)
+            == 0;
+}
+
+bool __cdecl FX_RunGarbageCollection_FreeSpotLight(
+    FxSystem *system,
+    uint16_t effectHandle)
+{
+    if (!FX_ValidateSpotLightForGarbageCollection(system, effectHandle))
+        return false;
+    if (system->activeSpotLightEffectHandle == effectHandle)
+    {
+        system->activeSpotLightEffectHandle = FX_INVALID_HANDLE;
+        system->activeSpotLightBoltDobj = -1;
+        if (Sys_AtomicLoad(&system->activeSpotLightEffectCount) == 1)
+            Sys_AtomicStore(&system->activeSpotLightEffectCount, 0);
+    }
+    return true;
+}
+
+template <typename BEFORE_PUBLISH>
+bool __cdecl FX_FreePool_Generic_FxTrail_(
+    FxTrail *item,
+    volatile int32_t *firstFreeIndex,
+    FxPool<FxTrail> *pool,
+    volatile int32_t *activeCount,
+    FxPoolAllocationState<MAX_TRAILS> *allocationState,
+    BEFORE_PUBLISH &&beforePublish)
+{
+    FX_EnterArchiveAwarePoolCriticalSection();
+    const FxPoolMutationStatus status =
+        FxPoolFreeLocked<FxTrail, MAX_TRAILS>(
+        item,
+        firstFreeIndex,
+        pool,
+        activeCount,
+        allocationState,
+        std::forward<BEFORE_PUBLISH>(beforePublish));
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    if (status != FxPoolMutationStatus::Success)
+    {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
             243,
             0,
-            "%s",
-            "*firstFreeIndex == -1 || (*firstFreeIndex >= 0 && *firstFreeIndex < ITEM_TYPE::POOL_SIZE)");
-    *(_DWORD *)&item->nextTrailHandle = *firstFreeIndex;
-    *firstFreeIndex = freedIndex;
-    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+            "FX trail pool free failed with status %u",
+            static_cast<unsigned>(status));
+    }
+    return status == FxPoolMutationStatus::Success;
 }
 
-void __cdecl FX_RunGarbageCollection_FreeTrails(FxSystem *system, FxEffect *effect)
+bool __cdecl FX_RunGarbageCollection_FreeTrails(FxSystem *system, FxEffect *effect)
 {
-    uint16_t firstTrailHandle; // [esp+Ah] [ebp-6h]
-    FxPool<FxTrail> *trail; // [esp+Ch] [ebp-4h]
-
-    while (effect->firstTrailHandle != 0xFFFF)
+    if (!system || !effect)
     {
-        firstTrailHandle = effect->firstTrailHandle;
-        if (!system)
-            MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 362, 0, "%s", "system");
-        trail = FX_PoolFromHandle_Generic<FxTrail, 128>(system->trails, firstTrailHandle);
-        effect->firstTrailHandle = trail->item.nextTrailHandle;
-        trail->nextFree = 0;
-        *(uint32_t *)&trail->item.lastElemHandle = 0;
-        FX_FreePool_Generic_FxTrail_((FxTrail *)trail, &system->firstFreeTrail, system->trails);
-        Sys_AtomicDecrement(&system->activeTrailCount);
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            361,
+            0,
+            "%s",
+            "system && effect");
+        return false;
     }
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!states)
+        return false;
+
+    std::array<FxPool<FxTrail> *, MAX_TRAILS> trailsToFree{};
+    std::array<bool, MAX_TRAILS> visitedTrailIndices{};
+    std::size_t trailCount = 0;
+    std::uint16_t trailHandle = effect->firstTrailHandle;
+    while (trailHandle != FX_INVALID_HANDLE)
+    {
+        if (trailCount == MAX_TRAILS)
+        {
+            MyAssertHandler(
+                ".\\EffectsCore\\fx_system.cpp",
+                397,
+                0,
+                "%s",
+                "FX trail chain is bounded and acyclic");
+            return false;
+        }
+        FxPool<FxTrail> *const trail =
+            FxDecodeHandle<FxPool<FxTrail>, MAX_TRAILS, FxTrail::HANDLE_SCALE>(
+                system->trails, trailHandle);
+        if (!trail || !FX_IsTrailAllocated(system, &trail->item))
+            return false;
+        if (trail->item.firstElemHandle != FX_INVALID_HANDLE
+            || trail->item.lastElemHandle != FX_INVALID_HANDLE)
+        {
+            MyAssertHandler(
+                ".\\EffectsCore\\fx_system.cpp",
+                397,
+                0,
+                "%s",
+                "garbage-collected FX trails have no live elements");
+            return false;
+        }
+        const std::size_t trailIndex =
+            static_cast<std::size_t>(trail - system->trails);
+        if (visitedTrailIndices[trailIndex])
+        {
+            MyAssertHandler(
+                ".\\EffectsCore\\fx_system.cpp",
+                397,
+                0,
+                "%s",
+                "FX trail chain is bounded and acyclic");
+            return false;
+        }
+        visitedTrailIndices[trailIndex] = true;
+        trailsToFree[trailCount++] = trail;
+        trailHandle = trail->item.nextTrailHandle;
+    }
+
+    for (std::size_t index = 0; index < trailCount; ++index)
+    {
+        FxPool<FxTrail> *const trail = trailsToFree[index];
+        const std::uint16_t firstTrailHandle =
+            effect->firstTrailHandle;
+        const std::uint16_t expectedTrailHandle =
+            FX_PoolToHandle_Generic<FxTrail, MAX_TRAILS>(
+                system->trails, &trail->item);
+        if (firstTrailHandle != expectedTrailHandle)
+        {
+            MyAssertHandler(
+                ".\\EffectsCore\\fx_system.cpp",
+                397,
+                0,
+                "%s",
+                "effect trail head matches the validated free order");
+            return false;
+        }
+        const std::uint16_t nextTrailHandle = trail->item.nextTrailHandle;
+        if (!FX_FreePool_Generic_FxTrail_(
+                &trail->item,
+                &system->firstFreeTrail,
+                system->trails,
+                &system->activeTrailCount,
+                &states->trails,
+                [&]() noexcept {
+                    effect->firstTrailHandle = nextTrailHandle;
+                }))
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 void __cdecl FX_SpawnEffect_AllocTrails(FxSystem *system, FxEffect *effect)
@@ -382,10 +2802,29 @@ void __cdecl FX_SpawnEffect_AllocTrails(FxSystem *system, FxEffect *effect)
     int32_t elemDefIter; // [esp+14h] [ebp-Ch]
     FxTrail localTrail;
 
+    if (!system || !effect || !effect->def)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            968,
+            0,
+            "%s",
+            "system && effect && effect->def");
+        return;
+    }
     def = effect->def;
-    if (!effect->def)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 968, 0, "%s", "def");
-    elemDefCount = def->elemDefCountOneShot + def->elemDefCountLooping + def->elemDefCountEmission;
+    const std::int64_t validatedElemDefCount =
+        static_cast<std::int64_t>(def->elemDefCountOneShot)
+        + def->elemDefCountLooping
+        + def->elemDefCountEmission;
+    if (def->elemDefCountOneShot < 0 || def->elemDefCountLooping < 0
+        || def->elemDefCountEmission < 0 || validatedElemDefCount > 256
+        || (validatedElemDefCount && !def->elemDefs))
+    {
+        Com_Error(ERR_DROP, "Invalid FX element definitions for trail allocation");
+        return;
+    }
+    elemDefCount = static_cast<std::int32_t>(validatedElemDefCount);
     for (elemDefIter = 0; elemDefIter != elemDefCount; ++elemDefIter)
     {
         if (effect->def->elemDefs[elemDefIter].elemType == 3)
@@ -395,7 +2834,7 @@ void __cdecl FX_SpawnEffect_AllocTrails(FxSystem *system, FxEffect *effect)
                 return;
 
             localTrail.nextTrailHandle = effect->firstTrailHandle;
-            localTrail.defIndex = elemDefIter;
+            localTrail.defIndex = static_cast<std::uint8_t>(elemDefIter);
 
             iassert(localTrail.defIndex == elemDefIter);
 
@@ -404,11 +2843,11 @@ void __cdecl FX_SpawnEffect_AllocTrails(FxSystem *system, FxEffect *effect)
 
             localTrail.sequence = 0;
 
-            iassert(system);
-
-            effect->firstTrailHandle = FX_PoolToHandle_Generic<FxTrail, 128>(system->trails, &remoteTrail->item);
-            
+            const std::uint16_t trailHandle =
+                FX_PoolToHandle_Generic<FxTrail, MAX_TRAILS>(
+                    system->trails, &remoteTrail->item);
             remoteTrail->item = localTrail;
+            effect->firstTrailHandle = trailHandle;
         }
     }
 }
@@ -416,179 +2855,174 @@ void __cdecl FX_SpawnEffect_AllocTrails(FxSystem *system, FxEffect *effect)
 FxPool<FxTrail>* __cdecl FX_AllocPool_Generic_FxTrail_(
     volatile int32_t* firstFreeIndex,
     FxPool<FxTrail>* pool,
-    volatile int32_t* activeCount)
+    volatile int32_t* activeCount,
+    FxPoolAllocationState<MAX_TRAILS> *allocationState)
 {
-    FxPool<FxTrail>* item; // [esp+0h] [ebp-8h]
-    uint32_t itemIndex; // [esp+4h] [ebp-4h]
-
-    Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-    itemIndex = *firstFreeIndex;
-    if (*firstFreeIndex != -1 && itemIndex >= 0x80)
+    FxPoolMutationStatus status;
+    FX_EnterArchiveAwarePoolCriticalSection();
+    FxPool<FxTrail> *const item =
+        FxPoolAllocateLocked<FxTrail, MAX_TRAILS>(
+        firstFreeIndex, pool, activeCount, allocationState, &status);
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    if (status != FxPoolMutationStatus::Success
+        && status != FxPoolMutationStatus::Empty)
+    {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
             188,
             0,
-            "%s",
-            "itemIndex == -1 || (itemIndex >= 0 && itemIndex < ITEM_TYPE::POOL_SIZE)");
-    if (itemIndex == -1)
-    {
-        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-        return 0;
+            "FX trail pool allocation failed with status %u",
+            static_cast<unsigned>(status));
+        Com_Error(
+            ERR_DROP,
+            "FX trail pool allocation failed with status %u",
+            static_cast<unsigned>(status));
     }
-    else
-    {
-        item = &pool[itemIndex];
-        if (item->nextFree != -1 && item->nextFree >= 0x80u)
-            MyAssertHandler(
-                ".\\EffectsCore\\fx_system.cpp",
-                200,
-                0,
-                "%s",
-                "item->nextFree == -1 || (item->nextFree >= 0 && item->nextFree < ITEM_TYPE::POOL_SIZE)");
-        *firstFreeIndex = item->nextFree;
-        ++*activeCount;
-        
-        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-        return &pool[itemIndex];
-    }
+    return item;
 }
 
 FxPool<FxTrailElem>* __cdecl FX_AllocPool_Generic_FxTrailElem_(
     volatile int32_t * firstFreeIndex,
     FxPool<FxTrailElem>* pool,
-    volatile int32_t * activeCount)
+    volatile int32_t * activeCount,
+    FxPoolAllocationState<MAX_TRAIL_ELEMS> *allocationState)
 {
-    FxPool<FxTrailElem>* item; // [esp+0h] [ebp-8h]
-    uint32_t itemIndex; // [esp+4h] [ebp-4h]
-
-    Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-    itemIndex = *firstFreeIndex;
-    if (*firstFreeIndex != -1 && itemIndex >= 0x800)
+    FxPoolMutationStatus status;
+    FX_EnterArchiveAwarePoolCriticalSection();
+    FxPool<FxTrailElem> *const item =
+        FxPoolAllocateLocked<FxTrailElem, MAX_TRAIL_ELEMS>(
+            firstFreeIndex, pool, activeCount, allocationState, &status);
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    if (status != FxPoolMutationStatus::Success
+        && status != FxPoolMutationStatus::Empty)
+    {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
             188,
             0,
-            "%s",
-            "itemIndex == -1 || (itemIndex >= 0 && itemIndex < ITEM_TYPE::POOL_SIZE)");
-    if (itemIndex == -1)
-    {
-        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-        return 0;
+            "FX trail element pool allocation failed with status %u",
+            static_cast<unsigned>(status));
+        Com_Error(
+            ERR_DROP,
+            "FX trail element pool allocation failed with status %u",
+            static_cast<unsigned>(status));
     }
-    else
-    {
-        item = &pool[itemIndex];
-        if (item->nextFree != -1 && item->nextFree >= 0x800u)
-            MyAssertHandler(
-                ".\\EffectsCore\\fx_system.cpp",
-                200,
-                0,
-                "%s",
-                "item->nextFree == -1 || (item->nextFree >= 0 && item->nextFree < ITEM_TYPE::POOL_SIZE)");
-        *firstFreeIndex = item->nextFree;
-        ++*activeCount;
-        
-        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-        return &pool[itemIndex];
-    }
+    return item;
 }
 
 FxPool<FxElem>* __cdecl FX_AllocPool_Generic_FxElem_(
     volatile int32_t* firstFreeIndex,
     FxPool<FxElem>* pool,
-    volatile int32_t * activeCount)
+    volatile int32_t * activeCount,
+    FxPoolAllocationState<MAX_ELEMS> *allocationState)
 {
-    FxPool<FxElem>* item; // [esp+0h] [ebp-8h]
-    uint32_t itemIndex; // [esp+4h] [ebp-4h]
-
-    Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-    itemIndex = *firstFreeIndex;
-    if (*firstFreeIndex != -1 && itemIndex >= 0x800)
+    FxPoolMutationStatus status;
+    FX_EnterArchiveAwarePoolCriticalSection();
+    FxPool<FxElem> *const item = FxPoolAllocateLocked<FxElem, MAX_ELEMS>(
+        firstFreeIndex, pool, activeCount, allocationState, &status);
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    if (status != FxPoolMutationStatus::Success
+        && status != FxPoolMutationStatus::Empty)
+    {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
             188,
             0,
-            "%s",
-            "itemIndex == -1 || (itemIndex >= 0 && itemIndex < ITEM_TYPE::POOL_SIZE)");
-    if (itemIndex == -1)
-    {
-        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-        return 0;
+            "FX element pool allocation failed with status %u",
+            static_cast<unsigned>(status));
+        Com_Error(
+            ERR_DROP,
+            "FX element pool allocation failed with status %u",
+            static_cast<unsigned>(status));
     }
-    else
-    {
-        item = &pool[itemIndex];
-        if (item->nextFree != -1 && item->nextFree >= 0x800u)
-            MyAssertHandler(
-                ".\\EffectsCore\\fx_system.cpp",
-                200,
-                0,
-                "%s",
-                "item->nextFree == -1 || (item->nextFree >= 0 && item->nextFree < ITEM_TYPE::POOL_SIZE)");
-        *firstFreeIndex = item->nextFree;
-        ++*activeCount;
-        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-        return &pool[itemIndex];
-    }
+    return item;
 }
 
-void __cdecl FX_FreePool_Generic_FxElem_(FxElem* item, volatile int32_t* firstFreeIndex, FxPool<FxElem>* pool)
+template <typename BEFORE_PUBLISH>
+bool __cdecl FX_FreePool_Generic_FxElem_(
+    FxElem *item,
+    volatile int32_t *firstFreeIndex,
+    FxPool<FxElem> *pool,
+    volatile int32_t *activeCount,
+    FxPoolAllocationState<MAX_ELEMS> *allocationState,
+    BEFORE_PUBLISH &&beforePublish)
 {
-    volatile uint32_t freedIndex; // [esp+4h] [ebp-4h]
-
-    freedIndex = ((char*)item - (char*)pool) / 40;
-    if (freedIndex >= 0x800)
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_system.cpp",
-            228,
-            0,
-            "%s",
-            "freedIndex >= 0 && freedIndex < ITEM_TYPE::POOL_SIZE");
-    Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-    if (*firstFreeIndex != -1 && *firstFreeIndex >= 0x800u)
+    FX_EnterArchiveAwarePoolCriticalSection();
+    const FxPoolMutationStatus status =
+        FxPoolFreeLocked<FxElem, MAX_ELEMS>(
+        item,
+        firstFreeIndex,
+        pool,
+        activeCount,
+        allocationState,
+        std::forward<BEFORE_PUBLISH>(beforePublish));
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    if (status != FxPoolMutationStatus::Success)
+    {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
             243,
             0,
-            "%s",
-            "*firstFreeIndex == -1 || (*firstFreeIndex >= 0 && *firstFreeIndex < ITEM_TYPE::POOL_SIZE)");
-    *(_DWORD*)&item->defIndex = *firstFreeIndex;
-    *firstFreeIndex = freedIndex;
-    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+            "FX element pool free failed with status %u",
+            static_cast<unsigned>(status));
+        Com_Error(
+            ERR_DROP,
+            "FX element pool free failed with status %u",
+            static_cast<unsigned>(status));
+    }
+    return status == FxPoolMutationStatus::Success;
 }
 
-void __cdecl FX_FreePool_Generic_FxTrailElem_(
+template <typename BEFORE_PUBLISH>
+bool __cdecl FX_FreePool_Generic_FxTrailElem_(
     FxTrailElem* item,
     volatile int32_t* firstFreeIndex,
-    FxPool<FxTrailElem>* pool)
+    FxPool<FxTrailElem>* pool,
+    volatile int32_t *activeCount,
+    FxPoolAllocationState<MAX_TRAIL_ELEMS> *allocationState,
+    BEFORE_PUBLISH &&beforePublish)
 {
-    volatile uint32_t freedIndex; // [esp+4h] [ebp-4h]
-
-    freedIndex = ((char*)item - (char*)pool) >> 5;
-    if (freedIndex >= 0x800)
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_system.cpp",
-            228,
-            0,
-            "%s",
-            "freedIndex >= 0 && freedIndex < ITEM_TYPE::POOL_SIZE");
-    Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-    if (*firstFreeIndex != -1 && *firstFreeIndex >= 0x800u)
+    FX_EnterArchiveAwarePoolCriticalSection();
+    const FxPoolMutationStatus status =
+        FxPoolFreeLocked<FxTrailElem, MAX_TRAIL_ELEMS>(
+        item,
+        firstFreeIndex,
+        pool,
+        activeCount,
+        allocationState,
+        std::forward<BEFORE_PUBLISH>(beforePublish));
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    if (status != FxPoolMutationStatus::Success)
+    {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
             243,
             0,
-            "%s",
-            "*firstFreeIndex == -1 || (*firstFreeIndex >= 0 && *firstFreeIndex < ITEM_TYPE::POOL_SIZE)");
-    LODWORD(item->origin[0]) = *firstFreeIndex;
-    *firstFreeIndex = freedIndex;
-    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+            "FX trail element pool free failed with status %u",
+            static_cast<unsigned>(status));
+        Com_Error(
+            ERR_DROP,
+            "FX trail element pool free failed with status %u",
+            static_cast<unsigned>(status));
+    }
+    return status == FxPoolMutationStatus::Success;
 }
 
 
 FxPool<FxTrail> *__cdecl FX_AllocTrail(FxSystem *system)
 {
-    return FX_AllocPool_Generic_FxTrail_(&system->firstFreeTrail, system->trails, &system->activeTrailCount);
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!states)
+    {
+        Com_Error(ERR_DROP, "Missing FX trail pool allocation sidecar");
+        return nullptr;
+    }
+    return FX_AllocPool_Generic_FxTrail_(
+        &system->firstFreeTrail,
+        system->trails,
+        &system->activeTrailCount,
+        &states->trails);
 }
 
 uint16_t __cdecl FX_CalculatePackedLighting(const float *origin)
@@ -598,7 +3032,7 @@ uint16_t __cdecl FX_CalculatePackedLighting(const float *origin)
     R_GetAverageLightingAtPoint(origin, color);
     return ((color[2] & 0xF8) << 8) | (8 * (color[1] & 0xF8)) | ((color[0] & 0xF8) >> 3);
 }
-FxEffect* __cdecl FX_SpawnEffect(
+static FxEffect* FX_SpawnEffect_Internal(
     FxSystem* system,
     const FxEffectDef* remoteDef,
     int32_t msecBegin,
@@ -610,13 +3044,12 @@ FxEffect* __cdecl FX_SpawnEffect(
     uint16_t owner,
     uint32_t markEntnum)
 {
-    volatile int32_t* Destination; // [esp+Ch] [ebp-34h]
     uint16_t effectHandle; // [esp+1Ch] [ebp-24h]
-    int32_t allocIndex; // [esp+20h] [ebp-20h]
+    int32_t allocIndex = -1; // [esp+20h] [ebp-20h]
     FxEffect* ownerEffect; // [esp+28h] [ebp-18h]
     FxEffect* remoteEffect; // [esp+2Ch] [ebp-14h]
-    int32_t oldStatusValue; // [esp+30h] [ebp-10h]
-    char isSpotLightEffect; // [esp+3Bh] [ebp-5h]
+    bool isSpotLightEffect = false; // [esp+3Bh] [ebp-5h]
+    bool effectClaimBlocked = false;
     uint32_t elemClass; // [esp+3Ch] [ebp-4h]
 
     iassert(system);
@@ -625,27 +3058,131 @@ FxEffect* __cdecl FX_SpawnEffect(
     iassert(origin);
     iassert(axis);
 
+    if (!FX_ValidateSpotLightEffectDef(remoteDef, &isSpotLightEffect))
+    {
+        Com_Error(ERR_DROP, "Invalid FX effect definition during spawn");
+        return nullptr;
+    }
+    if (isSpotLightEffect)
+    {
+        FxSpotLightStateSnapshot spotLightSnapshot{};
+        if (!FX_GetSpotLightStateSnapshot(system, &spotLightSnapshot))
+        {
+            Com_Error(ERR_DROP, "Missing FX spotlight state during spawn");
+            return nullptr;
+        }
+        const std::int32_t spotLightEffectCount =
+            spotLightSnapshot.effectCount;
+        const std::int32_t spotLightElemCount =
+            spotLightSnapshot.elemCount;
+        if (spotLightEffectCount < 0 || spotLightEffectCount > 1
+            || spotLightElemCount < 0 || spotLightElemCount > 1
+            || spotLightElemCount > spotLightEffectCount)
+        {
+            Com_Error(ERR_DROP, "Invalid FX spotlight counts during spawn");
+            return nullptr;
+        }
+    }
     if (fx_cull_effect_spawn->current.enabled && FX_CullEffectForSpawn(&system->cameraPrev, remoteDef, origin))
         return 0;
 
-    isSpotLightEffect = FX_IsSpotLightEffect(system, remoteDef);
     if (!isSpotLightEffect || FX_CanAllocSpotLightEffect(system))
     {
-        allocIndex = Sys_AtomicFetchAdd(&system->firstFreeEffect, 1);
-        while (allocIndex - system->firstActiveEffect >= FX_EFFECT_LIMIT)
+        // No fallible reservation-state transition may occur after the ring
+        // slot is claimed; otherwise ordered firstNew publication can stall
+        // permanently behind an untracked index.
+        FX_PreflightEffectReservation(system);
+        // Serialize claims with owner admission and kill preflight. This gives
+        // a killer a real quiescent point at firstNew == firstFree while it
+        // holds the allocator lock; publication itself remains ordered and
+        // lock-free so a claimant can always finish outside this section.
+        FX_EnterArchiveAwarePoolCriticalSection();
+        for (;;)
         {
-            if (Sys_AtomicCompareExchange(&system->firstFreeEffect, allocIndex, allocIndex + 1) == allocIndex + 1)
-                return 0;
+            volatile std::int32_t *const killGate =
+                FX_GetEffectKillGate(system);
+            const std::int32_t killGateState = killGate
+                ? Sys_AtomicLoad(killGate)
+                : -1;
+            if (killGateState == 2
+                && !FX_CurrentThreadOwnsEffectRestartGate(system))
+            {
+                effectClaimBlocked = true;
+                break;
+            }
+            if (killGateState < 0 || killGateState > 2)
+                break;
+            const std::int32_t firstActiveEffect =
+                Sys_AtomicLoad(&system->firstActiveEffect);
+            const std::int32_t firstNewEffect =
+                Sys_AtomicLoad(&system->firstNewEffect);
+            const std::int32_t firstFreeEffect =
+                Sys_AtomicLoad(&system->firstFreeEffect);
+            const std::int64_t activeEffectCount =
+                static_cast<std::int64_t>(firstNewEffect)
+                - firstActiveEffect;
+            const std::int64_t allocatedEffectCount =
+                static_cast<std::int64_t>(firstFreeEffect)
+                - firstActiveEffect;
+            if (firstActiveEffect < 0
+                || firstNewEffect < firstActiveEffect
+                || firstFreeEffect < firstNewEffect
+                || activeEffectCount > FX_EFFECT_LIMIT
+                || allocatedEffectCount > FX_EFFECT_LIMIT)
+            {
+                break;
+            }
+            if (allocatedEffectCount == FX_EFFECT_LIMIT)
+                break;
+            if (firstFreeEffect
+                == (std::numeric_limits<std::int32_t>::max)())
+                break;
+            if (Sys_AtomicCompareExchange(
+                    &system->firstFreeEffect,
+                    firstFreeEffect + 1,
+                    firstFreeEffect)
+                == firstFreeEffect)
+            {
+                allocIndex = firstFreeEffect;
+                break;
+            }
         }
+        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+        if (effectClaimBlocked)
+            return nullptr;
+        if (allocIndex < 0)
+        {
+            FxRequestGarbageCollection(
+                &system->needsGarbageCollection);
+            return nullptr;
+        }
+        FX_BeginEffectReservation(system, allocIndex);
         effectHandle = system->allEffectHandles[allocIndex & 0x3FF];
         remoteEffect = FX_EffectFromHandle(system, effectHandle);
+        FX_SetReservedEffect(remoteEffect);
+        if (!FX_ResetEffectOwnerAdmissionForReservation(
+                system, remoteEffect))
+        {
+            Com_Error(ERR_DROP, "Missing FX effect owner-admission state");
+            return nullptr;
+        }
+        remoteEffect->owner = effectHandle;
+        remoteEffect->firstElemHandle[0] = FX_INVALID_HANDLE;
+        remoteEffect->firstElemHandle[1] = FX_INVALID_HANDLE;
+        remoteEffect->firstElemHandle[2] = FX_INVALID_HANDLE;
+        remoteEffect->firstSortedElemHandle = FX_INVALID_HANDLE;
+        remoteEffect->firstTrailHandle = FX_INVALID_HANDLE;
+        remoteEffect->def = nullptr;
+        Sys_AtomicStore(&remoteEffect->status, FX_STATUS_SELF_OWNED);
         remoteEffect->def = remoteDef;
-        remoteEffect->status = remoteDef->msecLoopingLife != 0 ? 0x20010002 : 0x20000001;
-
-        for (elemClass = 0; elemClass < 3; ++elemClass)
-            remoteEffect->firstElemHandle[elemClass] = -1;
-
-        remoteEffect->firstSortedElemHandle = -1;
+        Sys_AtomicStore(
+            &remoteEffect->status,
+            remoteDef->msecLoopingLife != 0 ? 0x00010002 : 0x00000001);
+        if (!FX_LockEffect(system, remoteEffect))
+        {
+            Com_Error(ERR_DROP, "Reserved FX effect lost its initial reference");
+            return nullptr;
+        }
 
         if ((remoteDef->flags & 1) != 0)
             remoteEffect->packedLighting = FX_CalculatePackedLighting(origin);
@@ -656,26 +3193,61 @@ FxEffect* __cdecl FX_SpawnEffect(
         remoteEffect->msecLastUpdate = remoteEffect->msecBegin;
         remoteEffect->distanceTraveled = 0.0;
         FX_SetEffectRandomSeed(remoteEffect, remoteDef);
-        remoteEffect->firstTrailHandle = -1;
-        FX_SpawnEffect_AllocTrails(system, remoteEffect);
+        if (isSpotLightEffect
+            && !FX_SpawnEffect_AllocSpotLightEffect(system, remoteEffect))
+        {
+            FX_UnlockEffect(system, remoteEffect);
+            Sys_AtomicStore(&remoteEffect->status, 0);
+            (void)FX_PublishEffectReservation(true);
+            FxRequestGarbageCollection(&system->needsGarbageCollection);
+            return nullptr;
+        }
         if (isSpotLightEffect)
-            FX_SpawnEffect_AllocSpotLightEffect(system, remoteEffect);
+            FX_RecordReservedEffectSpotLight();
+        FX_SpawnEffect_AllocTrails(system, remoteEffect);
 
-        iassert((remoteEffect->status & FX_STATUS_OWNED_EFFECTS_MASK) == 0);
+        iassert((static_cast<std::uint32_t>(
+            Sys_AtomicLoad(&remoteEffect->status))
+            & FX_STATUS_OWNED_EFFECTS_MASK) == 0);
 
         if (owner == 0xFFFF)
         {
             remoteEffect->owner = effectHandle;
-            remoteEffect->status |= 0x10000000u;
+            Sys_AtomicStore(
+                &remoteEffect->status,
+                Sys_AtomicLoad(&remoteEffect->status)
+                    | FX_STATUS_SELF_OWNED);
         }
         else
         {
             remoteEffect->owner = owner;
             ownerEffect = FX_EffectFromHandle(system, owner);
-            FX_AddRefToEffect(system, ownerEffect);
-            oldStatusValue = Sys_AtomicFetchAdd(&ownerEffect->status, 0x20000);
-            iassert(((oldStatusValue & ~FX_STATUS_OWNED_EFFECTS_MASK) == ((oldStatusValue + (1 << FX_STATUS_OWNED_EFFECTS_SHIFT)) & ~FX_STATUS_OWNED_EFFECTS_MASK)));
-            iassert(((ownerEffect->status & FX_STATUS_OWNED_EFFECTS_MASK) > 0));
+            const FxOwnedEffectReferenceAddResult ownerAddResult =
+                FX_TryAddOwnedEffectReferenceSerialized(
+                    system, ownerEffect);
+            if (ownerAddResult
+                == FxOwnedEffectReferenceAddResult::Blocked)
+            {
+                const bool cancelled =
+                    FX_PublishEffectReservation(true);
+                FX_UnlockEffect(system, remoteEffect);
+                if (!cancelled)
+                {
+                    Com_Error(
+                        ERR_DROP,
+                        "Invalid FX reservation cancellation state");
+                }
+                return nullptr;
+            }
+            if (ownerAddResult
+                != FxOwnedEffectReferenceAddResult::Success)
+            {
+                Com_Error(
+                    ERR_DROP,
+                    "Invalid FX owner reference state during spawn");
+                return nullptr;
+            }
+            FX_RecordReservedEffectOwner(ownerEffect);
         }
         if (dobjHandle < 0)
             MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1253, 0, "%s", "dobjHandle >= 0");
@@ -711,14 +3283,13 @@ FxEffect* __cdecl FX_SpawnEffect(
         AxisToQuat(axis, remoteEffect->frameAtSpawn.quat);
         memcpy(&remoteEffect->framePrev, &remoteEffect->frameAtSpawn, sizeof(remoteEffect->framePrev));
         memcpy(&remoteEffect->frameNow, &remoteEffect->frameAtSpawn, sizeof(remoteEffect->frameNow));
-        Destination = &system->firstNewEffect;
-        do
+        if (!FX_PublishEffectReservation(false))
         {
-            while (*Destination != allocIndex)
-                ;
-        } while (Sys_AtomicCompareExchange(Destination, allocIndex + 1, allocIndex) != allocIndex);
+            Com_Error(ERR_DROP, "Invalid FX effect publication state");
+            return nullptr;
+        }
         FX_StartNewEffect(system, remoteEffect);
-        Sys_AtomicFetchAdd(&remoteEffect->status, -536870912);
+        FX_UnlockEffect(system, remoteEffect);
         return remoteEffect;
     }
     else
@@ -728,19 +3299,66 @@ FxEffect* __cdecl FX_SpawnEffect(
     }
 }
 
-void __cdecl FX_AddRefToEffect(FxSystem *__formal, FxEffect *effect)
+FxEffect* __cdecl FX_SpawnEffect(
+    FxSystem* system,
+    const FxEffectDef* remoteDef,
+    int32_t msecBegin,
+    const float* origin,
+    const float (*axis)[3],
+    int32_t dobjHandle,
+    int32_t boneIndex,
+    int32_t runnerSortOrder,
+    uint16_t owner,
+    uint32_t markEntnum)
 {
-    if (!effect)
-        MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 369, 0, "%s", "effect");
-    if (!(uint16_t)effect->status)
+    if (!system)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1255,
+            0,
+            "%s",
+            "system");
+        return nullptr;
+    }
+
+    // Com_Error performs an engine-level nonlocal unwind, so a C++ scope guard
+    // cannot make iterator release reliable. Engine recovery must quiesce and
+    // reset or shut down FX; those paths invalidate stale thread ownership.
+    FX_BeginIteratingOverEffects_Cooperative(system);
+    FxEffect *const effect = FX_SpawnEffect_Internal(
+        system,
+        remoteDef,
+        msecBegin,
+        origin,
+        axis,
+        dobjHandle,
+        boneIndex,
+        runnerSortOrder,
+        owner,
+        markEntnum);
+    FX_EndIteratingOverEffects_Cooperative(system);
+    return effect;
+}
+
+void __cdecl FX_AddRefToEffect(FxSystem *system, FxEffect *effect)
+{
+    if (!FX_TryAddEffectReferenceSerialized(system, effect))
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\src\\effectscore\\fx_system.h",
             372,
             0,
             "%s\n\t(effect->status & FX_STATUS_REF_COUNT_MASK) = %i",
-            "((effect->status & FX_STATUS_REF_COUNT_MASK) > 0)",
-            (uint16_t)effect->status);
-    Sys_AtomicIncrement(&effect->status);
+            "FX effect reference count is nonzero and has headroom",
+            effect
+                ? static_cast<int>(
+                    static_cast<std::uint32_t>(
+                        Sys_AtomicLoad(&effect->status))
+                    & FX_STATUS_REF_COUNT_MASK)
+                : 0);
+        Com_Error(ERR_DROP, "Invalid FX effect reference increment");
+    }
 }
 
 char __cdecl FX_CullEffectForSpawn(const FxCamera *camera, const FxEffectDef *effectDef, const float *origin)
@@ -845,48 +3463,62 @@ char __cdecl FX_EffectAffectsGameplay(const FxEffectDef *remoteEffectDef)
 
 char __cdecl FX_IsSpotLightEffect(FxSystem *system, const FxEffectDef *def)
 {
-    int32_t elemDefIter; // [esp+4h] [ebp-4h]
-
-    for (elemDefIter = 0;
-        elemDefIter != def->elemDefCountOneShot + def->elemDefCountLooping + def->elemDefCountEmission;
-        ++elemDefIter)
+    bool hasSpotLight = false;
+    if (!system || !FX_ValidateSpotLightEffectDef(def, &hasSpotLight))
     {
-        if (def->elemDefs[elemDefIter].elemType == 7)
-            return 1;
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1020,
+            0,
+            "%s",
+            "system && valid single-spotlight effect definition");
+        Com_Error(ERR_DROP, "Invalid FX spotlight effect definition");
+        return 0;
     }
-    return 0;
+    return hasSpotLight;
 }
 
 bool __cdecl FX_CanAllocSpotLightEffect(const FxSystem *system)
 {
-    return system->activeSpotLightEffectCount < 1;
+    FxSpotLightStateSnapshot snapshot{};
+    return FX_GetSpotLightStateSnapshot(system, &snapshot)
+        && snapshot.effectCount == 0 && snapshot.elemCount == 0;
 }
 
 char __cdecl FX_SpawnEffect_AllocSpotLightEffect(FxSystem *system, FxEffect *effect)
 {
-    const FxEffectDef *def; // [esp+4h] [ebp-10h]
-    int32_t elemDefCount; // [esp+Ch] [ebp-8h]
-    int32_t elemDefIter; // [esp+10h] [ebp-4h]
-
-    def = effect->def;
-    if (!effect->def)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1031, 0, "%s", "def");
-    elemDefCount = def->elemDefCountOneShot + def->elemDefCountLooping + def->elemDefCountEmission;
-    for (elemDefIter = 0; elemDefIter != elemDefCount; ++elemDefIter)
+    bool hasSpotLight = false;
+    if (!system || !effect
+        || !FX_ValidateSpotLightEffectDef(effect->def, &hasSpotLight)
+        || !hasSpotLight)
     {
-        if (effect->def->elemDefs[elemDefIter].elemType == 7)
-        {
-            if (system->activeSpotLightEffectCount >= 1)
-                MyAssertHandler(
-                    ".\\EffectsCore\\fx_system.cpp",
-                    1040,
-                    0,
-                    "%s",
-                    "system->activeSpotLightEffectCount < FX_SPOT_LIGHT_LIMIT");
-            ++system->activeSpotLightEffectCount;
-            system->activeSpotLightEffectHandle = FX_EffectToHandle(system, effect);
-        }
+        Com_Error(ERR_DROP, "Invalid FX spotlight allocation state");
+        return 0;
     }
+
+    const std::uint16_t effectHandle = FxEncodeHandle<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+            system->effects, effect);
+    if (effectHandle == FX_INVALID_HANDLE)
+    {
+        Com_Error(ERR_DROP, "Invalid FX spotlight owner pointer");
+        return 0;
+    }
+
+    bool published = false;
+    FX_EnterArchiveAwarePoolCriticalSection();
+    if (Sys_AtomicLoad(&system->activeSpotLightEffectCount) == 0
+        && Sys_AtomicLoad(&system->activeSpotLightElemCount) == 0)
+    {
+        system->activeSpotLightEffectHandle = effectHandle;
+        system->activeSpotLightElemHandle = FX_INVALID_HANDLE;
+        system->activeSpotLightBoltDobj = -1;
+        Sys_AtomicStore(&system->activeSpotLightEffectCount, 1);
+        published = true;
+    }
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    if (!published)
+        return 0;
     return 1;
 }
 
@@ -916,7 +3548,8 @@ void __cdecl FX_AssertAllocatedEffect(int32_t localClientNum, FxEffect *effect)
     if (!system)
         MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1335, 0, "%s", "system");
     FX_EffectToHandle(system, effect);
-    if (!(uint16_t)effect->status)
+    if ((static_cast<std::uint32_t>(Sys_AtomicLoad(&effect->status))
+            & FX_STATUS_REF_COUNT_MASK) == 0)
         MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1337, 0, "%s", "(effect->status & FX_STATUS_REF_COUNT_MASK) != 0");
 }
 
@@ -1012,12 +3645,23 @@ void __cdecl FX_PlayBoltedEffect(
     if (effect)
         FX_DelRefToEffect(system, effect);
 }
-void __cdecl FX_RetriggerEffect(int32_t localClientNum, FxEffect* effect, int32_t msecBegin)
+static void FX_StopEffect_Internal(FxSystem *system, FxEffect *effect);
+static void FX_StopEffectNonRecursive_Internal(
+    FxSystem *system,
+    FxEffect *effect);
+static void FX_KillEffect_Internal(FxSystem *system, FxEffect *effect);
+static void FX_RemoveAllEffectElems_Internal(
+    FxSystem *system,
+    FxEffect *effect);
+
+static void FX_RetriggerEffect_Internal(
+    int32_t localClientNum,
+    FxEffect* effect,
+    int32_t msecBegin)
 {
     volatile int32_t* Destination; // [esp+1Ch] [ebp-54h]
     volatile int32_t Comperand; // [esp+20h] [ebp-50h]
-    uint16_t lastOldTrailElemHandle[8]; // [esp+34h] [ebp-3Ch] BYREF
-    int32_t trailCount; // [esp+44h] [ebp-2Ch] BYREF
+    uint16_t lastOldTrailElemHandle[MAX_TRAILS];
     uint16_t lastElemHandle[5]; // [esp+48h] [ebp-28h] BYREF
     bool catchUpNewElems; // [esp+53h] [ebp-1Dh]
     uint16_t firstOldElemHandle[4]; // [esp+54h] [ebp-1Ch] BYREF
@@ -1025,13 +3669,25 @@ void __cdecl FX_RetriggerEffect(int32_t localClientNum, FxEffect* effect, int32_
     bool hasPendingLoopElems; // [esp+6Bh] [ebp-5h]
     uint32_t elemClass; // [esp+6Ch] [ebp-4h]
 
-    if (!(uint16_t)effect->status)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1461, 0, "%s", "(effect->status & FX_STATUS_REF_COUNT_MASK) != 0");
-    while (Sys_AtomicFetchAdd(&effect->status, 0x20000000) >= 0x20000000)
-        Sys_AtomicFetchAdd(&effect->status, -536870912);
     system = FX_GetSystem(localClientNum);
+    if (!system || !effect)
+    {
+        Com_Error(ERR_DROP, "Missing FX retrigger state");
+        return;
+    }
+    if ((static_cast<std::uint32_t>(Sys_AtomicLoad(&effect->status))
+            & FX_STATUS_REF_COUNT_MASK) == 0)
+        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1461, 0, "%s", "(effect->status & FX_STATUS_REF_COUNT_MASK) != 0");
+    if (!FX_LockEffect(system, effect))
+        return;
+    if (FX_IsEffectLifecycleBlocked(effect))
+    {
+        FX_UnlockEffect(system, effect);
+        return;
+    }
     FX_AddRefToEffect(system, effect);
-    if ((effect->status & 0x10000) != 0)
+    if ((static_cast<std::uint32_t>(Sys_AtomicLoad(&effect->status))
+            & FX_STATUS_HAS_PENDING_LOOP_ELEMS) != 0)
     {
         FX_SpawnAllFutureLooping(
             system,
@@ -1042,11 +3698,21 @@ void __cdecl FX_RetriggerEffect(int32_t localClientNum, FxEffect* effect, int32_
             &effect->frameNow,
             effect->msecBegin,
             effect->msecLastUpdate);
-        FX_StopEffect(system, effect);
+        FX_StopEffect_Internal(system, effect);
     }
     for (elemClass = 0; elemClass < 3; ++elemClass)
         firstOldElemHandle[elemClass] = effect->firstElemHandle[elemClass];
-    FX_GetTrailHandleList_Last(system, effect, lastOldTrailElemHandle, &trailCount);
+    if (!FX_GetTrailHandleList_Last(
+            system,
+            effect,
+            lastOldTrailElemHandle,
+            sizeof(lastOldTrailElemHandle) / sizeof(lastOldTrailElemHandle[0])))
+    {
+        FX_DelRefToEffect(system, effect);
+        FX_UnlockEffect(system, effect);
+        Com_Error(ERR_DROP, "Invalid FX trail chain during retrigger");
+        return;
+    }
     catchUpNewElems = msecBegin < effect->msecLastUpdate;
     if (msecBegin > effect->msecLastUpdate)
     {
@@ -1105,107 +3771,370 @@ void __cdecl FX_RetriggerEffect(int32_t localClientNum, FxEffect* effect, int32_
     FX_SortNewElemsInEffect(system, effect);
     if (!hasPendingLoopElems)
         FX_DelRefToEffect(system, effect);
-    Sys_AtomicFetchAdd(&effect->status, -536870912);
+    FX_UnlockEffect(system, effect);
 }
 
-void __cdecl FX_GetTrailHandleList_Last(
+void __cdecl FX_RetriggerEffect(
+    int32_t localClientNum,
+    FxEffect* effect,
+    int32_t msecBegin)
+{
+    FxSystem *const system = FX_GetSystem(localClientNum);
+    if (!system || !effect)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1474,
+            0,
+            "%s",
+            "system && effect");
+        return;
+    }
+    FX_BeginIteratingOverEffects_Cooperative(system);
+    FX_RetriggerEffect_Internal(localClientNum, effect, msecBegin);
+    FX_EndIteratingOverEffects_Cooperative(system);
+}
+
+bool __cdecl FX_GetTrailHandleList_Last(
     FxSystem *system,
     FxEffect *effect,
     uint16_t *outHandleList,
-    int32_t *outTrailCount)
+    const std::size_t outHandleCapacity)
 {
-    uint16_t trailHandle; // [esp+0h] [ebp-Ch]
-    FxPool<FxTrail> *trail; // [esp+4h] [ebp-8h]
-    uint32_t trailIndex; // [esp+8h] [ebp-4h]
-
-    trailIndex = 0;
-    for (trailHandle = effect->firstTrailHandle; trailHandle != 0xFFFF; trailHandle = trail->item.nextTrailHandle)
+    if (!system || !effect || !outHandleList
+        || outHandleCapacity == 0 || outHandleCapacity > MAX_TRAILS)
     {
-        if (!system)
-            MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 362, 0, "%s", "system");
-        trail = FX_PoolFromHandle_Generic<FxTrail, 128>(system->trails, trailHandle);
-        if (trailIndex >= 2)
-            MyAssertHandler(
-                ".\\EffectsCore\\fx_system.cpp",
-                1442,
-                0,
-                "%s\n\t(trailIndex) = %i",
-                "(trailIndex < (sizeof( outHandleList ) / (sizeof( outHandleList[0] ) * (sizeof( outHandleList ) != 4 || sizeof( "
-                "outHandleList[0] ) <= 4))))",
-                trailIndex);
-        outHandleList[trailIndex++] = trail->item.lastElemHandle;
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1442,
+            0,
+            "%s",
+            "system && effect && outHandleList && valid output capacity");
+        return false;
     }
-    *outTrailCount = trailIndex;
+
+    std::array<bool, MAX_TRAILS> visitedTrailIndices{};
+    std::array<bool, MAX_TRAIL_ELEMS> visitedTrailElemIndices{};
+    std::size_t trailIndex = 0;
+    std::uint16_t trailHandle = effect->firstTrailHandle;
+    while (trailHandle != FX_INVALID_HANDLE)
+    {
+        FxPool<FxTrail> *const trail =
+            FxDecodeHandle<FxPool<FxTrail>, MAX_TRAILS, FxTrail::HANDLE_SCALE>(
+                system->trails, trailHandle);
+        if (!trail || !FX_IsTrailAllocated(system, &trail->item))
+            return false;
+        const std::size_t poolIndex =
+            static_cast<std::size_t>(trail - system->trails);
+        if (visitedTrailIndices[poolIndex] || trailIndex == outHandleCapacity)
+            return false;
+        visitedTrailIndices[poolIndex] = true;
+
+        if ((trail->item.firstElemHandle == FX_INVALID_HANDLE)
+            != (trail->item.lastElemHandle == FX_INVALID_HANDLE))
+        {
+            return false;
+        }
+        std::uint16_t terminalTrailElemHandle = FX_INVALID_HANDLE;
+        std::uint16_t trailElemHandle = trail->item.firstElemHandle;
+        std::size_t traversedTrailElemCount = 0;
+        while (trailElemHandle != FX_INVALID_HANDLE)
+        {
+            if (traversedTrailElemCount++ == MAX_TRAIL_ELEMS)
+                return false;
+            FxPool<FxTrailElem> *const trailElem = FxDecodeHandle<
+                FxPool<FxTrailElem>, MAX_TRAIL_ELEMS,
+                FxTrailElem::HANDLE_SCALE>(
+                    system->trailElems, trailElemHandle);
+            if (!trailElem
+                || !FX_IsTrailElemAllocated(system, &trailElem->item))
+            {
+                return false;
+            }
+            const std::size_t trailElemIndex =
+                static_cast<std::size_t>(trailElem - system->trailElems);
+            if (visitedTrailElemIndices[trailElemIndex])
+                return false;
+            visitedTrailElemIndices[trailElemIndex] = true;
+            terminalTrailElemHandle = trailElemHandle;
+            trailElemHandle = trailElem->item.nextTrailElemHandle;
+        }
+        if (terminalTrailElemHandle != trail->item.lastElemHandle)
+            return false;
+
+        outHandleList[trailIndex++] = terminalTrailElemHandle;
+        trailHandle = trail->item.nextTrailHandle;
+    }
+    return true;
 }
 
-void __cdecl FX_ThroughWithEffect(int32_t localClientNum, FxEffect *effect)
+void __cdecl FX_ThroughWithEffect(
+    const int32_t localClientNum,
+    FxEffect *const effect)
 {
-    FxSystem *system; // [esp+4h] [ebp-4h]
-
-    system = FX_GetSystem(localClientNum);
-    if (!system)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1517, 0, "%s", "system");
-    if (system->isInitialized)
+    FxSystem *const system = FX_GetSystem(localClientNum);
+    if (!system || !effect)
     {
-        if (!(uint16_t)effect->status)
-            MyAssertHandler(
-                ".\\EffectsCore\\fx_system.cpp",
-                1521,
-                0,
-                "%s",
-                "(effect->status & FX_STATUS_REF_COUNT_MASK) != 0");
-        while (Sys_AtomicFetchAdd(&effect->status, 0x20000000) >= 0x20000000)
-            Sys_AtomicFetchAdd(&effect->status, -536870912);
-        FX_KillEffect(system, effect);
-        Sys_AtomicFetchAdd(&effect->status, -536870912);
-        FX_DelRefToEffect(system, effect);
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1517,
+            0,
+            "%s",
+            "system && effect");
+        return;
+    }
+    if (!system->isInitialized)
+        return;
+    if ((static_cast<std::uint32_t>(Sys_AtomicLoad(&effect->status))
+            & FX_STATUS_REF_COUNT_MASK) == 0)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1521,
+            0,
+            "%s",
+            "(effect->status & FX_STATUS_REF_COUNT_MASK) != 0");
+        return;
+    }
+    FX_KillEffect(system, effect);
+    FX_DelRefToEffect(system, effect);
+}
+
+static bool FX_GetBoundedActiveEffectRange(
+    const FxSystem *const system,
+    std::uint32_t *const outFirstActiveEffect,
+    std::size_t *const outActiveEffectCount) noexcept
+{
+    if (!system || !outFirstActiveEffect || !outActiveEffectCount)
+        return false;
+    const std::int32_t firstActiveEffect =
+        Sys_AtomicLoad(&system->firstActiveEffect);
+    const std::int32_t firstNewEffect =
+        Sys_AtomicLoad(&system->firstNewEffect);
+    const std::int32_t firstFreeEffect =
+        Sys_AtomicLoad(&system->firstFreeEffect);
+    const std::int64_t activeEffectCount =
+        static_cast<std::int64_t>(firstNewEffect) - firstActiveEffect;
+    const std::int64_t allocatedEffectCount =
+        static_cast<std::int64_t>(firstFreeEffect) - firstActiveEffect;
+    if (firstActiveEffect < 0 || firstNewEffect < firstActiveEffect
+        || firstFreeEffect < firstNewEffect
+        || activeEffectCount > allocatedEffectCount
+        || allocatedEffectCount > FX_EFFECT_LIMIT)
+    {
+        return false;
+    }
+    *outFirstActiveEffect = static_cast<std::uint32_t>(firstActiveEffect);
+    *outActiveEffectCount =
+        static_cast<std::size_t>(activeEffectCount);
+    return true;
+}
+
+static bool FX_ValidateEffectAdmissionMarkersExclusive(
+    FxSystem *const system) noexcept
+{
+    if (!system || !FX_CurrentThreadOwnsEffectKillExclusive(system))
+        return false;
+
+    bool valid = true;
+    FX_EnterArchiveAwarePoolCriticalSection();
+    const std::int32_t firstActiveEffect =
+        Sys_AtomicLoad(&system->firstActiveEffect);
+    const std::int32_t firstNewEffect =
+        Sys_AtomicLoad(&system->firstNewEffect);
+    const std::int32_t firstFreeEffect =
+        Sys_AtomicLoad(&system->firstFreeEffect);
+    if (firstActiveEffect < 0
+        || firstNewEffect < firstActiveEffect
+        || firstNewEffect != firstFreeEffect
+        || static_cast<std::int64_t>(firstFreeEffect)
+                - firstActiveEffect
+            > FX_EFFECT_LIMIT)
+    {
+        valid = false;
+    }
+    for (std::int32_t activeIndex = firstActiveEffect;
+         valid && activeIndex < firstFreeEffect;
+         ++activeIndex)
+    {
+        FxEffect *const effect = FxDecodeHandle<
+            FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                system->effects,
+                system->allEffectHandles[
+                    static_cast<std::size_t>(activeIndex)
+                    & (FX_EFFECT_LIMIT - 1)]);
+        volatile std::int32_t *const admissionState =
+            FX_GetEffectOwnerAdmissionState(system, effect);
+        if (!effect || !admissionState)
+        {
+            valid = false;
+            break;
+        }
+        const std::int32_t blocked =
+            Sys_AtomicLoad(admissionState);
+        const bool markerBlocked =
+            FX_IsEffectLifecycleBlocked(effect);
+        if ((blocked != 0 && blocked != 1)
+            || (blocked == 1) != markerBlocked)
+        {
+            valid = false;
+        }
+    }
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return valid;
+}
+
+bool __cdecl FX_ValidateEffectKillExclusiveState(
+    FxSystem *const system) noexcept
+{
+    return system
+        && FX_CurrentThreadOwnsEffectKillExclusive(system)
+        && FX_ValidatePoolAllocationGraphState(system)
+        && FX_ValidateEffectAdmissionMarkersExclusive(system);
+}
+
+static void FX_StopEffect_Internal(FxSystem *system, FxEffect *effect)
+{
+    if (!system || !system->effects || !effect)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1569,
+            0,
+            "%s",
+            "system && system->effects && effect");
+        return;
+    }
+
+    const std::uint16_t stoppedEffectHandle = FxEncodeHandle<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+            system->effects, effect);
+    std::uint32_t firstActiveEffect = 0;
+    std::size_t activeEffectCount = 0;
+    if (stoppedEffectHandle == FX_INVALID_HANDLE
+        || !FX_GetBoundedActiveEffectRange(
+            system, &firstActiveEffect, &activeEffectCount))
+    {
+        FxRequestGarbageCollection(&system->needsGarbageCollection);
+        return;
+    }
+
+    constexpr std::size_t effectHandleStride = FxHandleStride<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>();
+    std::array<std::uint16_t, FX_EFFECT_LIMIT> activeEffectHandles{};
+    std::array<bool, FX_EFFECT_LIMIT> activeEffectSlots{};
+    for (std::size_t activeOffset = 0;
+         activeOffset < activeEffectCount;
+         ++activeOffset)
+    {
+        const std::uint16_t activeEffectHandle =
+            system->allEffectHandles[
+                (static_cast<std::size_t>(firstActiveEffect) + activeOffset)
+                & (FX_EFFECT_LIMIT - 1)];
+        FxEffect *const activeEffect = FxDecodeHandle<
+            FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                system->effects, activeEffectHandle);
+        if (!activeEffect)
+        {
+            FxRequestGarbageCollection(&system->needsGarbageCollection);
+            return;
+        }
+        const std::size_t activeEffectIndex =
+            activeEffectHandle / effectHandleStride;
+        if (activeEffectSlots[activeEffectIndex])
+        {
+            FxRequestGarbageCollection(&system->needsGarbageCollection);
+            return;
+        }
+        activeEffectSlots[activeEffectIndex] = true;
+        activeEffectHandles[activeOffset] = activeEffectHandle;
+    }
+
+    PROF_SCOPED("FX_StopEffect");
+    std::array<std::uint16_t, FX_EFFECT_LIMIT> pendingEffectHandles{};
+    std::array<bool, FX_EFFECT_LIMIT> discoveredEffects{};
+    std::size_t pendingEffectCount = 0;
+    pendingEffectHandles[pendingEffectCount++] = stoppedEffectHandle;
+    discoveredEffects[stoppedEffectHandle / effectHandleStride] = true;
+    while (pendingEffectCount != 0)
+    {
+        const std::uint16_t currentEffectHandle =
+            pendingEffectHandles[--pendingEffectCount];
+        FxEffect *const currentEffect = FxDecodeHandle<
+            FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                system->effects, currentEffectHandle);
+        if (!currentEffect)
+        {
+            FxRequestGarbageCollection(&system->needsGarbageCollection);
+            continue;
+        }
+        const std::uint32_t currentStatus = static_cast<std::uint32_t>(
+            Sys_AtomicLoad(&currentEffect->status));
+        if ((currentStatus & FX_STATUS_REF_COUNT_MASK) == 0)
+        {
+            if ((currentStatus & FX_STATUS_HAS_PENDING_LOOP_ELEMS) != 0)
+                FxRequestGarbageCollection(&system->needsGarbageCollection);
+            continue;
+        }
+        if (!FX_TryAddEffectReferenceSerialized(system, currentEffect))
+        {
+            FxRequestGarbageCollection(&system->needsGarbageCollection);
+            continue;
+        }
+        FX_StopEffectNonRecursive_Internal(system, currentEffect);
+
+        for (std::size_t activeOffset = 0;
+             activeOffset < activeEffectCount;
+             ++activeOffset)
+        {
+            const std::uint16_t childEffectHandle =
+                activeEffectHandles[activeOffset];
+            if (childEffectHandle == currentEffectHandle)
+                continue;
+            FxEffect *const childEffect = FxDecodeHandle<
+                FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                    system->effects, childEffectHandle);
+            if (!childEffect || childEffect->owner != currentEffectHandle)
+                continue;
+            const std::size_t childEffectIndex =
+                childEffectHandle / effectHandleStride;
+            if (!discoveredEffects[childEffectIndex])
+            {
+                if (pendingEffectCount == pendingEffectHandles.size())
+                {
+                    FxRequestGarbageCollection(
+                        &system->needsGarbageCollection);
+                    break;
+                }
+                discoveredEffects[childEffectIndex] = true;
+                pendingEffectHandles[pendingEffectCount++] =
+                    childEffectHandle;
+            }
+        }
+        FX_DelRefToEffect(system, currentEffect);
     }
 }
 
 void __cdecl FX_StopEffect(FxSystem *system, FxEffect *effect)
 {
-    uint16_t effectHandle; // [esp+20h] [ebp-14h]
-    uint16_t stoppedEffectHandle; // [esp+24h] [ebp-10h]
-    FxEffect *otherEffect; // [esp+2Ch] [ebp-8h]
-    volatile int32_t activeIndex; // [esp+30h] [ebp-4h]
-
-    if (!effect)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1569, 0, "%s", "effect");
-    if ((uint16_t)effect->status)
-    {
-        PROF_SCOPED("FX_StopEffect");
-        FX_AddRefToEffect(system, effect);
-        FX_StopEffectNonRecursive(system, effect);
-        if((effect->status & 0x7FE0000) != 0)
-        {
-            stoppedEffectHandle = FX_EffectToHandle(system, effect);
-            FX_BeginIteratingOverEffects_Cooperative(system);
-            for (activeIndex = system->firstActiveEffect; activeIndex != system->firstNewEffect; ++activeIndex)
-            {
-                effectHandle = system->allEffectHandles[activeIndex & 0x3FF];
-                if (effectHandle != stoppedEffectHandle)
-                {
-                    otherEffect = FX_EffectFromHandle(system, effectHandle);
-                    if (otherEffect->owner == stoppedEffectHandle)
-                        FX_StopEffect(system, otherEffect);
-                }
-            }
-            FX_EndIteratingOverEffects_Cooperative(system);
-        }
-        FX_DelRefToEffect(system, effect);
-    }
-    else if ((effect->status & 0x10000) != 0)
+    if (!system || !effect)
     {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
-            1573,
+            1569,
             0,
             "%s",
-            "!(effect->status & FX_STATUS_HAS_PENDING_LOOP_ELEMS)");
+            "system && effect");
+        return;
     }
+    FX_BeginIteratingOverEffects_Cooperative(system);
+    FX_StopEffect_Internal(system, effect);
+    FX_EndIteratingOverEffects_Cooperative(system);
 }
 
-void __cdecl FX_StopEffectNonRecursive(FxSystem *system, FxEffect *effect)
+static void FX_StopEffectNonRecursive_Internal(
+    FxSystem *system,
+    FxEffect *effect)
 {
     volatile int32_t status; // [esp+4h] [ebp-4h]
 
@@ -1213,7 +4142,7 @@ void __cdecl FX_StopEffectNonRecursive(FxSystem *system, FxEffect *effect)
         MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1541, 0, "%s", "effect");
     while (1)
     {
-        status = effect->status;
+        status = Sys_AtomicLoad(&effect->status);
         if ((status & 0x10000) == 0)
             break;
         if (Sys_AtomicCompareExchange(&effect->status, status & -65537, status) == status)
@@ -1224,144 +4153,999 @@ void __cdecl FX_StopEffectNonRecursive(FxSystem *system, FxEffect *effect)
     }
 }
 
-void __cdecl FX_KillEffect(FxSystem* system, FxEffect* effect)
+void __cdecl FX_StopEffectNonRecursive(
+    FxSystem *system,
+    FxEffect *effect)
 {
-    uint16_t effectHandle; // [esp+Ch] [ebp-14h]
-    uint16_t killedEffectHandle; // [esp+10h] [ebp-10h]
-    FxEffect* otherEffect; // [esp+18h] [ebp-8h]
-    volatile int32_t activeIndex; // [esp+1Ch] [ebp-4h]
-
-    if (!effect)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1653, 0, "%s", "effect");
-    if (!(uint16_t)effect->status)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1654, 0, "%s", "(effect->status & FX_STATUS_REF_COUNT_MASK) != 0");
-    if ((effect->status & 0x60000000) == 0)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1656, 0, "%s", "(effect->status & FX_STATUS_IS_LOCKED_MASK) != 0");
-    FX_AddRefToEffect(system, effect);
-    FX_RemoveAllEffectElems(system, effect);
-    if ((effect->status & 0x7FE0000) != 0)
+    if (!system || !effect)
     {
-        killedEffectHandle = FX_EffectToHandle(system, effect);
-        FX_BeginIteratingOverEffects_Cooperative(system);
-        activeIndex = system->firstActiveEffect;
-        while ((effect->status & 0x7FE0000) != 0)
-        {
-            if (activeIndex == system->firstNewEffect)
-                MyAssertHandler(
-                    ".\\EffectsCore\\fx_system.cpp",
-                    1668,
-                    1,
-                    "activeIndex != system->firstNewEffect\n\t%i, %i",
-                    activeIndex,
-                    system->firstNewEffect);
-            effectHandle = system->allEffectHandles[activeIndex & 0x3FF];
-            if (effectHandle != killedEffectHandle)
-            {
-                otherEffect = FX_EffectFromHandle(system, effectHandle);
-                if (otherEffect->owner == killedEffectHandle)
-                {
-                    while (Sys_AtomicFetchAdd(&otherEffect->status, 0x20000000) >= 0x20000000)
-                        Sys_AtomicFetchAdd(&otherEffect->status, -536870912);
-                    if ((otherEffect->status & 0x7FE0000) != 0)
-                        MyAssertHandler(
-                            ".\\EffectsCore\\fx_system.cpp",
-                            1685,
-                            0,
-                            "%s\n\t(otherEffect->status) = %i",
-                            "((otherEffect->status & FX_STATUS_OWNED_EFFECTS_MASK) == 0)",
-                            otherEffect->status);
-                    if ((uint16_t)otherEffect->status)
-                        FX_RemoveAllEffectElems(system, otherEffect);
-                    Sys_AtomicFetchAdd(&otherEffect->status, -536870912);
-                }
-            }
-            ++activeIndex;
-        }
-        FX_EndIteratingOverEffects_Cooperative(system);
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1541,
+            0,
+            "%s",
+            "system && effect");
+        return;
     }
-    FX_DelRefToEffect(system, effect);
+    FX_BeginIteratingOverEffects_Cooperative(system);
+    FX_StopEffectNonRecursive_Internal(system, effect);
+    FX_EndIteratingOverEffects_Cooperative(system);
 }
 
-void __cdecl FX_RemoveAllEffectElems(FxSystem *system, FxEffect *effect)
+static bool FX_ValidateEffectOwnerForestSnapshot(
+    FxSystem *const system,
+    const std::array<std::uint16_t, FX_EFFECT_LIMIT> &activeHandles,
+    const std::size_t activeEffectCount,
+    const std::uint16_t killedEffectHandle,
+    std::array<bool, FX_EFFECT_LIMIT> *const outKilledSubtreeSlots,
+    std::size_t *const outKilledSubtreeCount) noexcept
 {
-    uint16_t trailHandle; // [esp+4h] [ebp-Ch]
-    FxPool<FxTrail> *trail; // [esp+8h] [ebp-8h]
-    uint32_t elemClass; // [esp+Ch] [ebp-4h]
-
-    if (!effect)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1618, 0, "%s", "effect");
-    FX_AddRefToEffect(system, effect);
-    FX_StopEffect(system, effect);
-    for (elemClass = 0; elemClass < 3; ++elemClass)
+    if (!system || !outKilledSubtreeSlots || !outKilledSubtreeCount
+        || activeEffectCount > FX_EFFECT_LIMIT)
     {
-        while (effect->firstElemHandle[elemClass] != 0xFFFF)
-            FX_FreeElem(system, effect->firstElemHandle[elemClass], effect, elemClass);
+        return false;
     }
-    for (trailHandle = effect->firstTrailHandle; trailHandle != 0xFFFF; trailHandle = trail->item.nextTrailHandle)
+    constexpr std::size_t effectHandleStride = FxHandleStride<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>();
+    std::array<bool, FX_EFFECT_LIMIT> activeSlots{};
+    std::array<std::size_t, FX_EFFECT_LIMIT> inboundLiveChildren{};
+    std::array<FxEffect *, FX_EFFECT_LIMIT> activeEffects{};
+    outKilledSubtreeSlots->fill(false);
+    *outKilledSubtreeCount = 0;
+
+    for (std::size_t offset = 0; offset < activeEffectCount; ++offset)
     {
-        if (!system)
-            MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 362, 0, "%s", "system");
-        for (trail = FX_PoolFromHandle_Generic<FxTrail, 128>(system->trails, trailHandle);
-            trail->item.firstElemHandle != 0xFFFF;
-            FX_FreeTrailElem(system, trail->item.firstElemHandle, effect, (FxTrail *)trail))
+        const std::uint16_t effectHandle = activeHandles[offset];
+        FxEffect *const activeEffect = FxDecodeHandle<
+            FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                system->effects, effectHandle);
+        if (!activeEffect)
+            return false;
+        const std::size_t effectIndex =
+            effectHandle / effectHandleStride;
+        if (activeSlots[effectIndex])
+            return false;
+        activeSlots[effectIndex] = true;
+        activeEffects[offset] = activeEffect;
+    }
+
+    FxEffect *const killedEffect = FxDecodeHandle<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+            system->effects, killedEffectHandle);
+    if (!killedEffect)
+        return false;
+    const std::size_t killedIndex = static_cast<std::size_t>(
+        killedEffect - system->effects);
+    if (!activeSlots[killedIndex])
+        return false;
+
+    for (std::size_t offset = 0; offset < activeEffectCount; ++offset)
+    {
+        FxEffect *const activeEffect = activeEffects[offset];
+        const std::uint16_t effectHandle = activeHandles[offset];
+        const std::uint32_t status = static_cast<std::uint32_t>(
+            Sys_AtomicLoad(&activeEffect->status));
+        if ((status & 0xC0000000u) != 0)
+            return false;
+        FxEffect *const owner = FxDecodeHandle<
+            FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                system->effects, activeEffect->owner);
+        if (!owner)
+            return false;
+        const std::size_t ownerIndex = static_cast<std::size_t>(
+            owner - system->effects);
+        if (!activeSlots[ownerIndex])
+            return false;
+        const bool selfOwned =
+            (status & FX_STATUS_SELF_OWNED) != 0;
+        if (selfOwned != (activeEffect->owner == effectHandle))
+            return false;
+        if (!selfOwned && (status & FX_STATUS_REF_COUNT_MASK) != 0)
         {
-            ;
+            if (inboundLiveChildren[ownerIndex]
+                == FX_EFFECT_LIMIT - 1)
+            {
+                return false;
+            }
+            ++inboundLiveChildren[ownerIndex];
         }
     }
-    if (system->activeSpotLightElemCount > 0
-        && effect == FX_EffectFromHandle(system, system->activeSpotLightEffectHandle))
+
+    for (std::size_t offset = 0; offset < activeEffectCount; ++offset)
     {
-        FX_FreeSpotLightElem(system, system->activeSpotLightElemHandle, effect);
+        FxEffect *const activeEffect = activeEffects[offset];
+        const std::size_t effectIndex = static_cast<std::size_t>(
+            activeEffect - system->effects);
+        const std::uint32_t status = static_cast<std::uint32_t>(
+            Sys_AtomicLoad(&activeEffect->status));
+        const std::size_t encodedOwnedCount =
+            (status & FX_STATUS_OWNED_EFFECTS_MASK)
+            >> FX_STATUS_OWNED_EFFECTS_SHIFT;
+        if (encodedOwnedCount != inboundLiveChildren[effectIndex])
+            return false;
+
+        FxEffect *ownerCursor = activeEffect;
+        bool reachedRoot = false;
+        bool belongsToKilledSubtree = false;
+        for (std::size_t depth = 0; depth < FX_EFFECT_LIMIT; ++depth)
+        {
+            belongsToKilledSubtree = belongsToKilledSubtree
+                || ownerCursor == killedEffect;
+            const std::uint32_t ownerStatus =
+                static_cast<std::uint32_t>(
+                    Sys_AtomicLoad(&ownerCursor->status));
+            if ((ownerStatus & FX_STATUS_SELF_OWNED) != 0)
+            {
+                reachedRoot = true;
+                break;
+            }
+            ownerCursor = FxDecodeHandle<
+                FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                    system->effects, ownerCursor->owner);
+            if (!ownerCursor
+                || !activeSlots[static_cast<std::size_t>(
+                    ownerCursor - system->effects)])
+            {
+                return false;
+            }
+        }
+        if (!reachedRoot)
+            return false;
+        if (belongsToKilledSubtree
+            && (status & FX_STATUS_REF_COUNT_MASK) != 0)
+        {
+            (*outKilledSubtreeSlots)[effectIndex] = true;
+            ++*outKilledSubtreeCount;
+        }
     }
-    FX_DelRefToEffect(system, effect);
+    return (*outKilledSubtreeSlots)[killedIndex]
+        && *outKilledSubtreeCount != 0;
+}
+
+struct FxEffectRemovalValidationState
+{
+    std::array<bool, MAX_ELEMS> visitedElems{};
+    std::array<bool, MAX_TRAILS> visitedTrails{};
+    std::array<bool, MAX_TRAIL_ELEMS> visitedTrailElems{};
+};
+
+static bool FX_ValidateEffectRemovalGraph(
+    FxSystem *const system,
+    const FxEffect *const effect,
+    FxEffectRemovalValidationState *const validationState) noexcept
+{
+    if (!system || !effect || !effect->def || !system->elems
+        || !system->trails || !system->trailElems || !validationState)
+    {
+        return false;
+    }
+
+    const FxEffectDef *const effectDef = effect->def;
+    const std::int64_t elemDefCount64 =
+        static_cast<std::int64_t>(effectDef->elemDefCountLooping)
+        + effectDef->elemDefCountOneShot
+        + effectDef->elemDefCountEmission;
+    if (effectDef->elemDefCountLooping < 0
+        || effectDef->elemDefCountOneShot < 0
+        || effectDef->elemDefCountEmission < 0
+        || elemDefCount64 > 256
+        || (elemDefCount64 != 0 && !effectDef->elemDefs))
+    {
+        return false;
+    }
+    const std::size_t elemDefCount =
+        static_cast<std::size_t>(elemDefCount64);
+
+    std::size_t linkedReferenceCount = 0;
+    bool foundSortedHead =
+        effect->firstSortedElemHandle == FX_INVALID_HANDLE;
+
+    for (std::size_t elemClass = 0; elemClass < 3; ++elemClass)
+    {
+        std::uint16_t expectedPreviousHandle = FX_INVALID_HANDLE;
+        std::uint16_t elemHandle = effect->firstElemHandle[elemClass];
+        std::size_t elemCount = 0;
+        while (elemHandle != FX_INVALID_HANDLE)
+        {
+            if (elemCount++ == MAX_ELEMS)
+                return false;
+            FxPool<FxElem> *const elem = FxDecodeHandle<
+                FxPool<FxElem>, MAX_ELEMS, FxElem::HANDLE_SCALE>(
+                    system->elems, elemHandle);
+            if (!elem || !FX_IsElemAllocated(system, &elem->item))
+                return false;
+            const std::size_t elemIndex =
+                static_cast<std::size_t>(elem - system->elems);
+            if (validationState->visitedElems[elemIndex]
+                || elem->item.prevElemHandleInEffect
+                    != expectedPreviousHandle
+                || elem->item.defIndex >= elemDefCount)
+            {
+                return false;
+            }
+            validationState->visitedElems[elemIndex] = true;
+            ++linkedReferenceCount;
+            if (elemClass == 0
+                && elemHandle == effect->firstSortedElemHandle)
+            {
+                foundSortedHead = true;
+            }
+            expectedPreviousHandle = elemHandle;
+            elemHandle = elem->item.nextElemHandleInEffect;
+        }
+    }
+    if (!foundSortedHead)
+        return false;
+
+    std::uint16_t trailHandle = effect->firstTrailHandle;
+    std::size_t trailCount = 0;
+    while (trailHandle != FX_INVALID_HANDLE)
+    {
+        if (trailCount++ == MAX_TRAILS)
+            return false;
+        FxPool<FxTrail> *const trail = FxDecodeHandle<
+            FxPool<FxTrail>, MAX_TRAILS, FxTrail::HANDLE_SCALE>(
+                system->trails, trailHandle);
+        if (!trail || !FX_IsTrailAllocated(system, &trail->item))
+            return false;
+        const std::size_t trailIndex =
+            static_cast<std::size_t>(trail - system->trails);
+        if (validationState->visitedTrails[trailIndex]
+            || trail->item.defIndex >= elemDefCount
+            || effectDef->elemDefs[trail->item.defIndex].elemType
+                != FX_ELEM_TYPE_TRAIL)
+        {
+            return false;
+        }
+        validationState->visitedTrails[trailIndex] = true;
+
+        const bool hasFirst =
+            trail->item.firstElemHandle != FX_INVALID_HANDLE;
+        const bool hasLast =
+            trail->item.lastElemHandle != FX_INVALID_HANDLE;
+        if (hasFirst != hasLast)
+            return false;
+        std::uint16_t trailElemHandle = trail->item.firstElemHandle;
+        std::uint16_t terminalHandle = FX_INVALID_HANDLE;
+        std::size_t trailElemCount = 0;
+        while (trailElemHandle != FX_INVALID_HANDLE)
+        {
+            if (trailElemCount++ == MAX_TRAIL_ELEMS)
+                return false;
+            FxPool<FxTrailElem> *const trailElem = FxDecodeHandle<
+                FxPool<FxTrailElem>, MAX_TRAIL_ELEMS,
+                FxTrailElem::HANDLE_SCALE>(
+                    system->trailElems, trailElemHandle);
+            if (!trailElem
+                || !FX_IsTrailElemAllocated(system, &trailElem->item))
+            {
+                return false;
+            }
+            const std::size_t trailElemIndex =
+                static_cast<std::size_t>(trailElem - system->trailElems);
+            if (validationState->visitedTrailElems[trailElemIndex])
+                return false;
+            validationState->visitedTrailElems[trailElemIndex] = true;
+            ++linkedReferenceCount;
+            terminalHandle = trailElemHandle;
+            trailElemHandle = trailElem->item.nextTrailElemHandle;
+        }
+        if (terminalHandle != trail->item.lastElemHandle)
+            return false;
+        trailHandle = trail->item.nextTrailHandle;
+    }
+
+    FxSpotLightStateSnapshot spotLightSnapshot{};
+    if (!FX_GetSpotLightStateSnapshot(system, &spotLightSnapshot)
+        || spotLightSnapshot.effectCount < 0
+        || spotLightSnapshot.effectCount > 1
+        || spotLightSnapshot.elemCount < 0
+        || spotLightSnapshot.elemCount > spotLightSnapshot.effectCount)
+    {
+        return false;
+    }
+    const std::uint16_t effectHandle = FxEncodeHandle<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+            system->effects, effect);
+    if (effectHandle == FX_INVALID_HANDLE)
+        return false;
+    if (spotLightSnapshot.effectCount == 1
+        && spotLightSnapshot.effectHandle == effectHandle)
+    {
+        bool hasSpotLight = false;
+        if (!FX_ValidateSpotLightEffectDef(
+                effectDef, &hasSpotLight)
+            || !hasSpotLight)
+        {
+            return false;
+        }
+    }
+    if (spotLightSnapshot.elemCount == 1
+        && spotLightSnapshot.effectHandle == effectHandle)
+    {
+        FxPool<FxElem> *const spotLightElem = FxDecodeHandle<
+            FxPool<FxElem>, MAX_ELEMS, FxElem::HANDLE_SCALE>(
+                system->elems, spotLightSnapshot.elemHandle);
+        if (!spotLightElem
+            || !FX_IsElemAllocated(system, &spotLightElem->item))
+        {
+            return false;
+        }
+        const std::size_t elemIndex =
+            static_cast<std::size_t>(spotLightElem - system->elems);
+        if (validationState->visitedElems[elemIndex]
+            || spotLightElem->item.defIndex >= elemDefCount
+            || effectDef->elemDefs[spotLightElem->item.defIndex].elemType
+                != FX_ELEM_TYPE_SPOT_LIGHT
+            || spotLightElem->item.nextElemHandleInEffect
+                != FX_INVALID_HANDLE
+            || spotLightElem->item.prevElemHandleInEffect
+                != FX_INVALID_HANDLE)
+        {
+            return false;
+        }
+        validationState->visitedElems[elemIndex] = true;
+        ++linkedReferenceCount;
+    }
+
+    const std::uint32_t status = static_cast<std::uint32_t>(
+        Sys_AtomicLoad(&effect->status));
+    const std::size_t referenceCount =
+        status & FX_STATUS_REF_COUNT_MASK;
+    const std::size_t ownedEffectCount =
+        (status & FX_STATUS_OWNED_EFFECTS_MASK)
+        >> FX_STATUS_OWNED_EFFECTS_SHIFT;
+    const std::size_t pendingLoopReference =
+        (status & FX_STATUS_HAS_PENDING_LOOP_ELEMS) != 0 ? 1u : 0u;
+    // Each caller has already retained the effect for preflight. The original
+    // graph must still fund every linked element, live owned child, and
+    // pending-loop reference without borrowing that temporary retain.
+    const std::size_t requiredReferenceCount = linkedReferenceCount
+        + ownedEffectCount + pendingLoopReference + 1u;
+    return requiredReferenceCount <= FX_STATUS_REF_COUNT_MASK
+        && referenceCount >= requiredReferenceCount;
+}
+
+static bool FX_WaitForEffectPublicationBarrier(
+    const FxSystem *const system,
+    const std::int32_t publicationBarrier) noexcept
+{
+    if (!system || publicationBarrier < 0)
+        return false;
+
+    constexpr std::size_t maxPublicationWaits = 1u << 20;
+    for (std::size_t waitCount = 0;
+         waitCount < maxPublicationWaits;
+         ++waitCount)
+    {
+        const std::int32_t firstActiveEffect =
+            Sys_AtomicLoad(&system->firstActiveEffect);
+        const std::int32_t firstNewEffect =
+            Sys_AtomicLoad(&system->firstNewEffect);
+        const std::int32_t firstFreeEffect =
+            Sys_AtomicLoad(&system->firstFreeEffect);
+        if (firstActiveEffect < 0
+            || firstNewEffect < firstActiveEffect
+            || firstFreeEffect < firstNewEffect
+            || publicationBarrier > firstFreeEffect
+            || static_cast<std::int64_t>(firstFreeEffect)
+                    - firstActiveEffect
+                > FX_EFFECT_LIMIT)
+        {
+            return false;
+        }
+        if (firstNewEffect >= publicationBarrier)
+            return true;
+        std::this_thread::yield();
+    }
+    return false;
+}
+
+static void FX_KillEffect_Internal(FxSystem *system, FxEffect *effect)
+{
+    if (!system || !system->effects || !effect)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1653,
+            0,
+            "%s",
+            "system && system->effects && effect");
+        return;
+    }
+    const std::uint32_t initialStatus = static_cast<std::uint32_t>(
+        Sys_AtomicLoad(&effect->status));
+    if ((initialStatus & FX_STATUS_REF_COUNT_MASK) == 0
+        || (initialStatus & FX_STATUS_IS_LOCKED) == 0
+        || !FX_CurrentThreadOwnsEffectLock(system, effect)
+        || !FX_CurrentThreadOwnsEffectKillExclusive(system))
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1654,
+            0,
+            "%s",
+            "killed FX effect is referenced and owned by this kill iterator/locker");
+        FxRequestGarbageCollection(&system->needsGarbageCollection);
+        return;
+    }
+
+    const std::uint16_t killedEffectHandle = FxEncodeHandle<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+            system->effects, effect);
+    std::int32_t publicationBarrier = 0;
+    if (killedEffectHandle == FX_INVALID_HANDLE)
+    {
+        Com_Error(ERR_DROP, "Invalid FX effect handle during kill");
+        return;
+    }
+    if (!FX_BeginEffectKillAdmission(
+            system, effect, &publicationBarrier))
+    {
+        volatile std::int32_t *const admissionState =
+            FX_GetEffectOwnerAdmissionState(system, effect);
+        if (admissionState
+            && Sys_AtomicLoad(admissionState) == 1
+            && FX_IsEffectLifecycleBlocked(effect))
+        {
+            return;
+        }
+        Com_Error(ERR_DROP, "Invalid FX kill admission state");
+        return;
+    }
+
+    std::array<std::uint16_t, FX_EFFECT_LIMIT> activeEffectHandles{};
+    std::array<bool, FX_EFFECT_LIMIT> killedSubtreeSlots{};
+    std::array<FxEffect *, FX_EFFECT_LIMIT> retainedChildEffects{};
+    std::size_t activeEffectCount = 0;
+    std::size_t retainedChildCount = 0;
+    std::size_t lockedChildCount = 0;
+    bool targetRetained = true;
+
+    const auto abandonPreflight = [&]() noexcept
+    {
+        while (retainedChildCount != 0)
+        {
+            const std::size_t childIndex = --retainedChildCount;
+            FxEffect *const childEffect =
+                retainedChildEffects[childIndex];
+            (void)FX_ReleaseEffectKillRetain(system, childEffect);
+            if (childIndex < lockedChildCount)
+                FX_UnlockEffect(system, childEffect);
+        }
+        lockedChildCount = 0;
+        if (targetRetained)
+            (void)FX_ReleaseEffectKillRetain(system, effect);
+        FX_EndEffectKillAdmission(false);
+        FxRequestGarbageCollection(&system->needsGarbageCollection);
+    };
+
+    bool snapshotReady = FX_WaitForEffectPublicationBarrier(
+        system, publicationBarrier);
+    if (snapshotReady)
+    {
+        FX_EnterArchiveAwarePoolCriticalSection();
+        const std::int32_t firstActiveEffect =
+            Sys_AtomicLoad(&system->firstActiveEffect);
+        const std::int32_t firstNewEffect =
+            Sys_AtomicLoad(&system->firstNewEffect);
+        const std::int32_t firstFreeEffect =
+            Sys_AtomicLoad(&system->firstFreeEffect);
+        const std::int64_t activeEffectCount64 =
+            static_cast<std::int64_t>(firstNewEffect)
+            - firstActiveEffect;
+        if (firstActiveEffect < 0
+            || firstNewEffect < firstActiveEffect
+            || firstFreeEffect < firstNewEffect
+            || firstNewEffect != firstFreeEffect
+            || activeEffectCount64 > FX_EFFECT_LIMIT)
+        {
+            snapshotReady = false;
+        }
+        else
+        {
+            activeEffectCount =
+                static_cast<std::size_t>(activeEffectCount64);
+            for (std::size_t activeOffset = 0;
+                 activeOffset < activeEffectCount;
+                 ++activeOffset)
+            {
+                activeEffectHandles[activeOffset] =
+                    system->allEffectHandles[
+                        (static_cast<std::size_t>(firstActiveEffect)
+                            + activeOffset)
+                        & (FX_EFFECT_LIMIT - 1)];
+            }
+
+            std::size_t killedSubtreeCount = 0;
+            snapshotReady = FX_ValidateEffectOwnerForestSnapshot(
+                system,
+                activeEffectHandles,
+                activeEffectCount,
+                killedEffectHandle,
+                &killedSubtreeSlots,
+                &killedSubtreeCount);
+            constexpr std::size_t effectHandleStride = FxHandleStride<
+                FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>();
+            for (std::size_t activeOffset = 0;
+                 snapshotReady && activeOffset < activeEffectCount;
+                 ++activeOffset)
+            {
+                const std::uint16_t subtreeHandle =
+                    activeEffectHandles[activeOffset];
+                const std::size_t subtreeIndex =
+                    subtreeHandle / effectHandleStride;
+                if (!killedSubtreeSlots[subtreeIndex])
+                    continue;
+                FxEffect *const subtreeEffect = FxDecodeHandle<
+                    FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                        system->effects, subtreeHandle);
+                snapshotReady = subtreeEffect
+                    && FX_ClaimEffectOwnerAdmissionForKillLocked(
+                        system, subtreeEffect);
+            }
+
+            for (std::size_t activeOffset = 0;
+                 snapshotReady && activeOffset < activeEffectCount;
+                 ++activeOffset)
+            {
+                const std::uint16_t subtreeHandle =
+                    activeEffectHandles[activeOffset];
+                const std::size_t subtreeIndex =
+                    subtreeHandle / effectHandleStride;
+                if (subtreeHandle == killedEffectHandle
+                    || !killedSubtreeSlots[subtreeIndex])
+                {
+                    continue;
+                }
+                FxEffect *const subtreeEffect = FxDecodeHandle<
+                    FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                        system->effects, subtreeHandle);
+                const bool referenceAdded = subtreeEffect
+                    && retainedChildCount
+                        < retainedChildEffects.size()
+                    && FX_TryAdjustEffectReferenceCount(
+                        subtreeEffect, true);
+                if (!referenceAdded
+                    || !FX_RecordEffectKillRetain(
+                        system, subtreeEffect))
+                {
+                    if (referenceAdded)
+                    {
+                        (void)FX_TryAdjustEffectReferenceCount(
+                            subtreeEffect, false);
+                    }
+                    snapshotReady = false;
+                    break;
+                }
+                retainedChildEffects[retainedChildCount++] =
+                    subtreeEffect;
+            }
+            snapshotReady = snapshotReady
+                && retainedChildCount + 1 == killedSubtreeCount;
+        }
+        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    }
+
+    if (!snapshotReady)
+    {
+        abandonPreflight();
+        Com_Error(
+            ERR_DROP,
+            "FX kill could not obtain a valid quiescent ownership snapshot");
+        return;
+    }
+
+    for (; lockedChildCount < retainedChildCount; ++lockedChildCount)
+    {
+        if (!FX_LockEffect(
+                system, retainedChildEffects[lockedChildCount]))
+        {
+            abandonPreflight();
+            Com_Error(
+                ERR_DROP,
+                "FX kill could not lock its retained ownership subtree");
+            return;
+        }
+    }
+
+    FxEffectRemovalValidationState removalValidation{};
+    if (!FX_ValidateEffectRemovalGraph(
+            system, effect, &removalValidation))
+    {
+        abandonPreflight();
+        Com_Error(ERR_DROP, "Invalid FX removal graph during kill");
+        return;
+    }
+    for (std::size_t childIndex = 0;
+         childIndex < retainedChildCount;
+         ++childIndex)
+    {
+        if (!FX_ValidateEffectRemovalGraph(
+                system,
+                retainedChildEffects[childIndex],
+                &removalValidation))
+        {
+            abandonPreflight();
+            Com_Error(ERR_DROP, "Invalid owned FX removal graph during kill");
+            return;
+        }
+    }
+
+    // The entire live ownership subtree is retained, admission-blocked,
+    // locked, and locally validated before the first destructive unlink.
+    FX_MarkEffectOwnerAdmissionPermanentlyBlocked(effect);
+    for (std::size_t childIndex = 0;
+         childIndex < retainedChildCount;
+         ++childIndex)
+    {
+        FX_MarkEffectOwnerAdmissionPermanentlyBlocked(
+            retainedChildEffects[childIndex]);
+    }
+    FX_MarkEffectKillMutationStarted();
+    FX_RemoveAllEffectElems_Internal(system, effect);
+    for (std::size_t childIndex = 0;
+         childIndex < retainedChildCount;
+         ++childIndex)
+    {
+        FxEffect *const childEffect = retainedChildEffects[childIndex];
+        FX_RemoveAllEffectElems_Internal(system, childEffect);
+    }
+    while (lockedChildCount != 0)
+    {
+        FxEffect *const lockedChild =
+            retainedChildEffects[--lockedChildCount];
+        (void)FX_ReleaseEffectKillRetain(system, lockedChild);
+        FX_UnlockEffect(system, lockedChild);
+    }
+    retainedChildCount = 0;
+    (void)FX_ReleaseEffectKillRetain(system, effect);
+    targetRetained = false;
+    FX_EndEffectKillAdmission(true);
+}
+
+void __cdecl FX_KillEffect(FxSystem *system, FxEffect *effect)
+{
+    if (!system || !effect)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1653,
+            0,
+            "%s",
+            "system && effect");
+        return;
+    }
+    const bool alreadyExclusive =
+        FX_CurrentThreadOwnsEffectKillExclusive(system);
+    if (!alreadyExclusive && !FX_BeginEffectKillExclusive(system))
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1653,
+            0,
+            "%s",
+            "FX kill begins without cooperative or nested exclusive ownership");
+        FxRequestGarbageCollection(&system->needsGarbageCollection);
+        return;
+    }
+    if (!FX_ValidatePoolAllocationGraphState(system)
+        || !FX_ValidateEffectAdmissionMarkersExclusive(system))
+    {
+        Com_Error(ERR_DROP, "Invalid FX pool graph before effect kill");
+        return;
+    }
+    if (!FX_IsEffectLifecycleBlocked(effect)
+        && FX_LockEffect(system, effect))
+    {
+        FX_KillEffect_Internal(system, effect);
+        FX_UnlockEffect(system, effect);
+    }
+    if (!FX_ValidatePoolAllocationGraphState(system)
+        || !FX_ValidateEffectAdmissionMarkersExclusive(system))
+    {
+        Com_Error(ERR_DROP, "Invalid FX pool graph after effect kill");
+        return;
+    }
+    if (!alreadyExclusive && !FX_EndEffectKillExclusive(system))
+    {
+        Com_Error(ERR_DROP, "Invalid FX exclusive iterator after effect kill");
+        return;
+    }
+    if (!alreadyExclusive
+        && FxGarbageCollectionRequested(
+            &system->needsGarbageCollection))
+        FX_RunGarbageCollection(system);
+}
+
+static void FX_RemoveAllEffectElems_Internal(
+    FxSystem *system,
+    FxEffect *effect)
+{
+    if (!system || !effect)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1618,
+            0,
+            "%s",
+            "system && effect");
+        return;
+    }
+
+    FxSpotLightStateSnapshot spotLightSnapshot{};
+    if (!FX_GetSpotLightStateSnapshot(system, &spotLightSnapshot))
+    {
+        Com_Error(ERR_DROP, "Missing FX spotlight cleanup state");
+        return;
+    }
+    const std::int32_t spotLightEffectCount =
+        spotLightSnapshot.effectCount;
+    const std::int32_t spotLightElemCount =
+        spotLightSnapshot.elemCount;
+    if (spotLightEffectCount < 0 || spotLightEffectCount > 1
+        || spotLightElemCount < 0 || spotLightElemCount > 1
+        || spotLightElemCount > spotLightEffectCount)
+    {
+        Com_Error(ERR_DROP, "Invalid FX spotlight counts during effect cleanup");
+        return;
+    }
+
+    // Kill preflight already retained and locked the complete ownership
+    // subtree, so the non-recursive stop consumes only this effect's pending
+    // loop reference without introducing another fallible temporary retain.
+    FX_StopEffectNonRecursive_Internal(system, effect);
+    std::array<bool, MAX_ELEMS> releasedElemIndices{};
+    std::array<bool, MAX_TRAIL_ELEMS> releasedTrailElemIndices{};
+    std::array<bool, MAX_TRAILS> traversedTrailIndices{};
+    for (std::uint32_t elemClass = 0; elemClass < 3; ++elemClass)
+    {
+        while (effect->firstElemHandle[elemClass] != FX_INVALID_HANDLE)
+        {
+            const std::uint16_t previousHandle =
+                effect->firstElemHandle[elemClass];
+            FxPool<FxElem> *const elem =
+                FX_PoolFromHandle_Generic<FxElem, MAX_ELEMS>(
+                    system->elems, previousHandle);
+            if (!elem || !FX_IsElemAllocated(system, &elem->item))
+            {
+                FxRequestGarbageCollection(&system->needsGarbageCollection);
+                break;
+            }
+            const std::size_t elemIndex =
+                static_cast<std::size_t>(elem - system->elems);
+            if (releasedElemIndices[elemIndex])
+            {
+                FxRequestGarbageCollection(&system->needsGarbageCollection);
+                break;
+            }
+            releasedElemIndices[elemIndex] = true;
+            FX_FreeElem(system, previousHandle, effect, elemClass);
+            if (effect->firstElemHandle[elemClass] == previousHandle)
+            {
+                FxRequestGarbageCollection(&system->needsGarbageCollection);
+                break;
+            }
+        }
+    }
+
+    std::uint16_t trailHandle = effect->firstTrailHandle;
+    std::size_t traversedTrailCount = 0;
+    while (trailHandle != FX_INVALID_HANDLE)
+    {
+        if (traversedTrailCount++ >= MAX_TRAILS)
+        {
+            FxRequestGarbageCollection(&system->needsGarbageCollection);
+            break;
+        }
+        FxPool<FxTrail> *const trail =
+            FX_PoolFromHandle_Generic<FxTrail, MAX_TRAILS>(
+                system->trails, trailHandle);
+        if (!trail || !FX_IsTrailAllocated(system, &trail->item))
+        {
+            FxRequestGarbageCollection(&system->needsGarbageCollection);
+            break;
+        }
+        const std::size_t trailIndex =
+            static_cast<std::size_t>(trail - system->trails);
+        if (traversedTrailIndices[trailIndex])
+        {
+            FxRequestGarbageCollection(&system->needsGarbageCollection);
+            break;
+        }
+        traversedTrailIndices[trailIndex] = true;
+        const std::uint16_t nextTrailHandle = trail->item.nextTrailHandle;
+        bool trailComplete = true;
+        while (trail->item.firstElemHandle != FX_INVALID_HANDLE)
+        {
+            const std::uint16_t previousHandle =
+                trail->item.firstElemHandle;
+            FxPool<FxTrailElem> *const trailElem =
+                FX_PoolFromHandle_Generic<FxTrailElem, MAX_TRAIL_ELEMS>(
+                    system->trailElems, previousHandle);
+            if (!trailElem
+                || !FX_IsTrailElemAllocated(system, &trailElem->item))
+            {
+                FxRequestGarbageCollection(&system->needsGarbageCollection);
+                trailComplete = false;
+                break;
+            }
+            const std::size_t trailElemIndex =
+                static_cast<std::size_t>(trailElem - system->trailElems);
+            if (releasedTrailElemIndices[trailElemIndex])
+            {
+                FxRequestGarbageCollection(&system->needsGarbageCollection);
+                trailComplete = false;
+                break;
+            }
+            releasedTrailElemIndices[trailElemIndex] = true;
+            FX_FreeTrailElem(system, previousHandle, effect, &trail->item);
+            if (trail->item.firstElemHandle == previousHandle)
+            {
+                FxRequestGarbageCollection(&system->needsGarbageCollection);
+                trailComplete = false;
+                break;
+            }
+        }
+        if (!trailComplete || nextTrailHandle == trailHandle)
+        {
+            FxRequestGarbageCollection(&system->needsGarbageCollection);
+            break;
+        }
+        trailHandle = nextTrailHandle;
+    }
+
+    const int effectHandle = FX_EffectToHandle(system, effect);
+    if (effectHandle >= 0
+        && spotLightSnapshot.elemCount > 0
+        && spotLightSnapshot.effectHandle
+            == static_cast<std::uint16_t>(effectHandle))
+    {
+        FX_FreeSpotLightElem(system, spotLightSnapshot.elemHandle, effect);
+    }
 }
 
 void __cdecl FX_KillEffectDef(int32_t localClientNum, const FxEffectDef *def)
 {
-    FxEffect *effect; // [esp+Ch] [ebp-Ch]
-    FxSystem *system; // [esp+10h] [ebp-8h]
-    int32_t activeIndex; // [esp+14h] [ebp-4h]
-
-    system = FX_GetSystem(localClientNum);
-    FX_BeginIteratingOverEffects_Cooperative(system);
-    for (activeIndex = system->firstActiveEffect; activeIndex != system->firstFreeEffect; ++activeIndex)
+    FxSystem *const system = FX_GetSystem(localClientNum);
+    if (!system || !def)
     {
-        effect = FX_EffectFromHandle(system, system->allEffectHandles[activeIndex & 0x3FF]);
-        if (effect->def == def && (uint16_t)effect->status)
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1710,
+            0,
+            "%s",
+            "system && def");
+        return;
+    }
+    if (!FX_BeginEffectKillExclusive(system))
+    {
+        FxRequestGarbageCollection(&system->needsGarbageCollection);
+        return;
+    }
+    if (!FX_ValidatePoolAllocationGraphState(system)
+        || !FX_ValidateEffectAdmissionMarkersExclusive(system))
+    {
+        Com_Error(ERR_DROP, "Invalid FX pool graph before definition kill");
+        return;
+    }
+    std::uint32_t firstActiveEffect = 0;
+    std::size_t activeEffectCount = 0;
+    if (!FX_GetBoundedActiveEffectRange(
+            system, &firstActiveEffect, &activeEffectCount))
+    {
+        Com_Error(ERR_DROP, "Invalid FX effect ring during definition kill");
+        return;
+    }
+    for (std::size_t activeOffset = 0;
+         activeOffset < activeEffectCount;
+         ++activeOffset)
+    {
+        const std::uint32_t activeIndex =
+            firstActiveEffect + static_cast<std::uint32_t>(activeOffset);
+        FxEffect *const effect = FX_EffectFromHandle(
+            system,
+            system->allEffectHandles[
+                activeIndex & (FX_EFFECT_LIMIT - 1)]);
+        if (effect->def == def
+            && (static_cast<std::uint32_t>(
+                    Sys_AtomicLoad(&effect->status))
+                & FX_STATUS_REF_COUNT_MASK) != 0
+            && !FX_IsEffectLifecycleBlocked(effect))
         {
-            while (Sys_AtomicFetchAdd(&effect->status, 0x20000000) >= 0x20000000)
-                Sys_AtomicFetchAdd(&effect->status, -536870912);
-            FX_KillEffect(system, effect);
-            Sys_AtomicFetchAdd(&effect->status, -536870912);
+            if (FX_LockEffect(system, effect))
+            {
+                FX_KillEffect_Internal(system, effect);
+                FX_UnlockEffect(system, effect);
+            }
         }
     }
-    FX_EndIteratingOverEffects_Cooperative(system);
+    if (!FX_ValidatePoolAllocationGraphState(system)
+        || !FX_ValidateEffectAdmissionMarkersExclusive(system))
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid FX pool graph after definition kill");
+        return;
+    }
+    if (!FX_EndEffectKillExclusive(system))
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid FX exclusive iterator after definition kill");
+        return;
+    }
+    if (FxGarbageCollectionRequested(&system->needsGarbageCollection))
+        FX_RunGarbageCollection(system);
 }
 
 void __cdecl FX_KillAllEffects(int32_t localClientNum)
 {
-    FxEffect *effect; // [esp+Ch] [ebp-Ch]
-    FxSystem *system; // [esp+10h] [ebp-8h]
-    int32_t activeIndex; // [esp+14h] [ebp-4h]
-
-    system = FX_GetSystem(localClientNum);
+    FxSystem *const system = FX_GetSystem(localClientNum);
     if (!system)
         MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1732, 0, "%s", "system");
-    if (system->isInitialized)
+    if (system && system->isInitialized)
     {
-        FX_BeginIteratingOverEffects_Cooperative(system);
-        for (activeIndex = system->firstActiveEffect; activeIndex != system->firstNewEffect; ++activeIndex)
+        if (!FX_BeginEffectKillExclusive(system))
         {
-            effect = FX_EffectFromHandle(system, system->allEffectHandles[activeIndex & 0x3FF]);
-            if ((uint16_t)effect->status)
+            FxRequestGarbageCollection(&system->needsGarbageCollection);
+            return;
+        }
+        if (!FX_ValidatePoolAllocationGraphState(system)
+            || !FX_ValidateEffectAdmissionMarkersExclusive(system))
+        {
+            Com_Error(ERR_DROP, "Invalid FX pool graph before kill-all");
+            return;
+        }
+        std::uint32_t firstActiveEffect = 0;
+        std::size_t activeEffectCount = 0;
+        if (!FX_GetBoundedActiveEffectRange(
+                system, &firstActiveEffect, &activeEffectCount))
+        {
+            Com_Error(ERR_DROP, "Invalid FX effect ring during kill-all");
+            return;
+        }
+        for (std::size_t activeOffset = 0;
+             activeOffset < activeEffectCount;
+             ++activeOffset)
+        {
+            const std::uint32_t activeIndex =
+                firstActiveEffect
+                + static_cast<std::uint32_t>(activeOffset);
+            FxEffect *const effect = FX_EffectFromHandle(
+                system,
+                system->allEffectHandles[
+                    activeIndex & (FX_EFFECT_LIMIT - 1)]);
+            if ((static_cast<std::uint32_t>(
+                    Sys_AtomicLoad(&effect->status))
+                    & FX_STATUS_REF_COUNT_MASK) != 0
+                && !FX_IsEffectLifecycleBlocked(effect))
             {
-                while (Sys_AtomicFetchAdd(&effect->status, 0x20000000) >= 0x20000000)
-                    Sys_AtomicFetchAdd(&effect->status, -536870912);
-                FX_KillEffect(system, effect);
-                Sys_AtomicFetchAdd(&effect->status, -536870912);
+                if (FX_LockEffect(system, effect))
+                {
+                    FX_KillEffect_Internal(system, effect);
+                    FX_UnlockEffect(system, effect);
+                }
             }
         }
-        FX_EndIteratingOverEffects_Cooperative(system);
+        if (!FX_ValidatePoolAllocationGraphState(system)
+            || !FX_ValidateEffectAdmissionMarkersExclusive(system))
+        {
+            Com_Error(ERR_DROP, "Invalid FX pool graph after kill-all");
+            return;
+        }
+        if (!FX_EndEffectKillExclusive(system))
+        {
+            Com_Error(
+                ERR_DROP,
+                "Invalid FX exclusive iterator after kill-all");
+            return;
+        }
+        if (FxGarbageCollectionRequested(
+                &system->needsGarbageCollection))
+        {
+            FX_RunGarbageCollection(system);
+        }
     }
 }
 
@@ -1383,16 +5167,29 @@ void __cdecl FX_SpawnTrailElem_NoCull(
     uint16_t trailElemHandle; // [esp+54h] [ebp-8h]
     FxTrailElem *lastTrailElemInEffect; // [esp+58h] [ebp-4h]
 
-    if (!system)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1916, 0, "%s", "system");
-    if (!effect)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1917, 0, "%s", "effect");
-    if (!effect->def)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1919, 0, "%s", "effectDef");
-    if (!trail)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1920, 0, "%s", "trail");
-    elemDef = &effect->def->elemDefs[trail->defIndex];
+    if (!system || !effect || !effect->def || !trail
+        || !effectFrameWhenPlayed)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1916,
+            0,
+            "%s",
+            "system && effect && effect->def && trail && effectFrameWhenPlayed");
+        return;
+    }
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
+    if (!FX_IsTrailAllocated(system, trail))
+    {
+        Com_Error(ERR_DROP, "FX trail spawn owner is not allocated");
+        return;
+    }
+    elemDef = FX_GetValidatedRuntimeElemDef(effect, trail->defIndex);
+    if (!elemDef)
+        return;
     if (elemDef->elemType != 3)
+    {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
             1923,
@@ -1400,6 +5197,8 @@ void __cdecl FX_SpawnTrailElem_NoCull(
             "%s\n\t(elemDef->elemType) = %i",
             "(elemDef->elemType == FX_ELEM_TYPE_TRAIL)",
             elemDef->elemType);
+        return;
+    }
     msecBegin = elemDef->spawnDelayMsec.base + msecWhenPlayed;
     if (elemDef->spawnDelayMsec.amplitude)
         msecBegin += ((elemDef->spawnDelayMsec.amplitude + 1)
@@ -1423,6 +5222,28 @@ void __cdecl FX_SpawnTrailElem_NoCull(
         + (((elemDef->lifeSpanMsec.amplitude + 1) * LOWORD(fx_randomTable[randomSeed + 17])) >> 16)
         + elemDef->lifeSpanMsec.base > system->msecNow)
     {
+        lastTrailElemInEffect = nullptr;
+        if ((trail->firstElemHandle == FX_INVALID_HANDLE)
+            != (trail->lastElemHandle == FX_INVALID_HANDLE))
+        {
+            Com_Error(ERR_DROP, "Invalid FX trail endpoint handles");
+            return;
+        }
+        if (trail->lastElemHandle != FX_INVALID_HANDLE)
+        {
+            lastElemHandle = trail->lastElemHandle;
+            FxPool<FxTrailElem> *const lastTrailElem =
+                FX_PoolFromHandle_Generic<FxTrailElem, MAX_TRAIL_ELEMS>(
+                    system->trailElems, lastElemHandle);
+            if (!FX_IsTrailElemAllocated(system, &lastTrailElem->item)
+                || lastTrailElem->item.nextTrailElemHandle != FX_INVALID_HANDLE)
+            {
+                Com_Error(ERR_DROP, "Invalid FX trail tail link");
+                return;
+            }
+            lastTrailElemInEffect = &lastTrailElem->item;
+        }
+
         remoteTrailElem = FX_AllocTrailElem(system);
         if (remoteTrailElem)
         {
@@ -1435,42 +5256,39 @@ void __cdecl FX_SpawnTrailElem_NoCull(
                 remoteTrailElem->item.origin,
                 basis[0],
                 basis[1]);
-            if (!system)
-                MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 341, 0, "%s", "system");
-            trailElemHandle = FX_PoolToHandle_Generic<FxTrailElem, 2048>(system->trailElems, (FxTrailElem *)remoteTrailElem);
-            if (trail->lastElemHandle == 0xFFFF)
-            {
-                if (trail->firstElemHandle != 0xFFFF)
-                    MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1954, 0, "%s", "trail->firstElemHandle == FX_HANDLE_NONE");
-                trail->firstElemHandle = trailElemHandle;
-            }
-            else
-            {
-                lastElemHandle = trail->lastElemHandle;
-                if (!system)
-                    MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 348, 0, "%s", "system");
-                lastTrailElemInEffect = (FxTrailElem *)FX_PoolFromHandle_Generic<FxTrailElem, 2048>(
-                    system->trailElems,
-                    lastElemHandle);
-                lastTrailElemInEffect->nextTrailElemHandle = trailElemHandle;
-            }
-            remoteTrailElem->item.nextTrailElemHandle = -1;
-            trail->lastElemHandle = trailElemHandle;
+            trailElemHandle = FX_PoolToHandle_Generic<
+                FxTrailElem, MAX_TRAIL_ELEMS>(
+                    system->trailElems, &remoteTrailElem->item);
+            remoteTrailElem->item.nextTrailElemHandle = FX_INVALID_HANDLE;
             remoteTrailElem->item.msecBegin = msecBegin;
             remoteTrailElem->item.spawnDist = distanceWhenPlayed;
             remoteTrailElem->item.baseVelZ = 0;
             remoteTrailElem->item.sequence = trail->sequence++;
             FX_TrailElem_CompressBasis(basis, remoteTrailElem->item.basis);
+
+            if (lastTrailElemInEffect)
+                lastTrailElemInEffect->nextTrailElemHandle = trailElemHandle;
+            else
+                trail->firstElemHandle = trailElemHandle;
+            trail->lastElemHandle = trailElemHandle;
         }
     }
 }
 
 FxPool<FxTrailElem> *__cdecl FX_AllocTrailElem(FxSystem *system)
 {
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!states)
+    {
+        Com_Error(ERR_DROP, "Missing FX trail-element allocation sidecar");
+        return nullptr;
+    }
     return FX_AllocPool_Generic_FxTrailElem_(
         &system->firstFreeTrailElem,
         system->trailElems,
-        &system->activeTrailElemCount);
+        &system->activeTrailElemCount,
+        &states->trailElems);
 }
 
 void __cdecl FX_SpawnTrailElem_Cull(
@@ -1483,16 +5301,29 @@ void __cdecl FX_SpawnTrailElem_Cull(
 {
     const FxElemDef *elemDef; // [esp+28h] [ebp-4h]
 
-    if (!system)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1981, 0, "%s", "system");
-    if (!effect)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1982, 0, "%s", "effect");
-    if (!effect->def)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1984, 0, "%s", "effectDef");
-    if (!trail)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1985, 0, "%s", "trail");
-    elemDef = &effect->def->elemDefs[trail->defIndex];
+    if (!system || !effect || !effect->def || !trail
+        || !effectFrameWhenPlayed)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1981,
+            0,
+            "%s",
+            "system && effect && effect->def && trail && effectFrameWhenPlayed");
+        return;
+    }
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
+    if (!FX_IsTrailAllocated(system, trail))
+    {
+        Com_Error(ERR_DROP, "FX culled-trail spawn owner is not allocated");
+        return;
+    }
+    elemDef = FX_GetValidatedRuntimeElemDef(effect, trail->defIndex);
+    if (!elemDef)
+        return;
     if (elemDef->elemType != 3)
+    {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
             1988,
@@ -1500,6 +5331,8 @@ void __cdecl FX_SpawnTrailElem_Cull(
             "%s\n\t(elemDef->elemType) = %i",
             "(elemDef->elemType == FX_ELEM_TYPE_TRAIL)",
             elemDef->elemType);
+        return;
+    }
     if (FX_CullTrailElem(&system->cameraPrev, elemDef, effectFrameWhenPlayed->origin, trail->sequence))
         ++trail->sequence;
     else
@@ -1537,14 +5370,95 @@ bool __cdecl FX_CullTrailElem(
 
 void __cdecl FX_SpawnSpotLightElem(FxSystem *system, FxElem *elem)
 {
-    if (system->activeSpotLightEffectCount <= 0)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 2038, 0, "%s", "system->activeSpotLightEffectCount > 0");
-    if (system->activeSpotLightElemCount)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 2039, 0, "%s", "system->activeSpotLightElemCount == 0");
-    ++system->activeSpotLightElemCount;
-    if (!system)
-        MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 327, 0, "%s", "system");
-    system->activeSpotLightElemHandle = FX_PoolToHandle_Generic<FxElem, 2048>(system->elems, elem);
+    if (!system || !elem)
+    {
+        Com_Error(ERR_DROP, "Missing FX spotlight spawn state");
+        return;
+    }
+    if (!FX_IsElemAllocated(system, elem))
+    {
+        Com_Error(ERR_DROP, "FX spotlight element is not allocated");
+        return;
+    }
+    FxSpotLightStateSnapshot spotLightSnapshot{};
+    if (!FX_GetSpotLightStateSnapshot(system, &spotLightSnapshot))
+    {
+        Com_Error(ERR_DROP, "Missing FX spotlight publication state");
+        return;
+    }
+    if (spotLightSnapshot.effectCount != 1
+        || spotLightSnapshot.elemCount != 0)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            2038,
+            0,
+            "%s",
+            "system->activeSpotLightEffectCount == 1 && system->activeSpotLightElemCount == 0");
+        Com_Error(ERR_DROP, "Invalid FX spotlight publication counts");
+        return;
+    }
+
+    FxEffect *const effect = FxDecodeHandle<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+            system->effects, spotLightSnapshot.effectHandle);
+    if (!effect
+        || (static_cast<std::uint32_t>(Sys_AtomicLoad(&effect->status))
+                & FX_STATUS_REF_COUNT_MASK) == 0
+        || FX_IsEffectLifecycleBlocked(effect))
+    {
+        Com_Error(ERR_DROP, "Invalid FX spotlight effect owner");
+        return;
+    }
+    bool hasSpotLight = false;
+    if (!FX_ValidateSpotLightEffectDef(effect->def, &hasSpotLight)
+        || !hasSpotLight)
+    {
+        Com_Error(ERR_DROP, "Invalid FX spotlight owner definition");
+        return;
+    }
+    const FxElemDef *const elemDef =
+        FX_GetValidatedRuntimeElemDef(effect, elem->defIndex);
+    if (!elemDef || elemDef->elemType != FX_ELEM_TYPE_SPOT_LIGHT
+        || elem->prevElemHandleInEffect != FX_INVALID_HANDLE)
+    {
+        Com_Error(ERR_DROP, "Invalid FX spotlight element ownership");
+        return;
+    }
+
+    const std::uint16_t elemHandle =
+        FxEncodeHandle<FxPool<FxElem>, MAX_ELEMS, FxElem::HANDLE_SCALE>(
+            system->elems, elem);
+    if (elemHandle == FX_INVALID_HANDLE)
+    {
+        Com_Error(ERR_DROP, "Invalid FX spotlight element pointer");
+        return;
+    }
+
+    bool published = false;
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    FX_EnterArchiveAwarePoolCriticalSection();
+    if (states
+        && FX_IsPoolItemAllocatedLocked<FxElem, MAX_ELEMS>(
+            system->elems, elem, &states->elems)
+        && Sys_AtomicLoad(&system->activeSpotLightEffectCount) == 1
+        && Sys_AtomicLoad(&system->activeSpotLightElemCount) == 0
+        && system->activeSpotLightEffectHandle
+            == FxEncodeHandle<FxEffect, FX_EFFECT_LIMIT,
+                FxEffect::HANDLE_SCALE>(system->effects, effect))
+    {
+        elem->nextElemHandleInEffect = FX_INVALID_HANDLE;
+        system->activeSpotLightElemHandle = elemHandle;
+        Sys_AtomicStore(&system->activeSpotLightElemCount, 1);
+        published = true;
+    }
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    if (!published)
+    {
+        Com_Error(ERR_DROP, "FX spotlight state changed during element spawn");
+        return;
+    }
 }
 
 void __cdecl FX_SpawnElem(
@@ -1564,15 +5478,31 @@ void __cdecl FX_SpawnElem(
     const FxElemDef *elemDef; // [esp+6Ch] [ebp-14h]
     uint32_t randomSeed; // [esp+74h] [ebp-Ch]
     FxPool<FxElem> *elem; // [esp+78h] [ebp-8h]
+    FxPool<FxElem> *nextElemInEffect;
     uint32_t elemClass; // [esp+7Ch] [ebp-4h]
 
-    iassert(system);
-    iassert(effect);
-    iassert(effect->def);
+    if (!system || !effect || !effect->def || !effectFrameWhenPlayed
+        || elemDefIndex < 0)
+    {
+        iassert(system);
+        iassert(effect);
+        iassert(effect && effect->def);
+        iassert(effectFrameWhenPlayed);
+        return;
+    }
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
 
-    elemDef = &effect->def->elemDefs[elemDefIndex];
+    elemDef = FX_GetValidatedRuntimeElemDef(
+        effect, static_cast<std::uint32_t>(elemDefIndex));
+    if (!elemDef)
+        return;
 
-    iassert(elemDef->elemType != FX_ELEM_TYPE_TRAIL);
+    if (elemDef->elemType == FX_ELEM_TYPE_TRAIL)
+    {
+        iassert(elemDef->elemType != FX_ELEM_TYPE_TRAIL);
+        return;
+    }
 
     if (!fx_cull_elem_spawn->current.enabled || !FX_CullElemForSpawn(&system->cameraPrev, elemDef, effectFrameWhenPlayed->origin))
     {
@@ -1622,13 +5552,67 @@ void __cdecl FX_SpawnElem(
                 + (((elemDef->lifeSpanMsec.amplitude + 1) * LOWORD(fx_randomTable[randomSeed + 17])) >> 16)
                 + elemDef->lifeSpanMsec.base > system->msecNow)
             {
+                nextElemInEffect = nullptr;
+                nextElemHandleInEffect = FX_INVALID_HANDLE;
+                elemType = elemDef->elemType;
+                if (elemType != FX_ELEM_TYPE_SPOT_LIGHT)
+                {
+                    if (elemType > FX_ELEM_TYPE_TRAIL)
+                    {
+                        elemClass = elemType == FX_ELEM_TYPE_CLOUD ? 2 : 1;
+                    }
+                    else
+                    {
+                        elemClass = 0;
+                    }
+                    nextElemHandleInEffect =
+                        effect->firstElemHandle[elemClass];
+                    if (nextElemHandleInEffect != FX_INVALID_HANDLE)
+                    {
+                        nextElemInEffect =
+                            FX_PoolFromHandle_Generic<FxElem, MAX_ELEMS>(
+                                system->elems, nextElemHandleInEffect);
+                        if (!FX_IsElemAllocated(system, &nextElemInEffect->item)
+                            || nextElemInEffect->item.prevElemHandleInEffect
+                                != FX_INVALID_HANDLE)
+                        {
+                            Com_Error(ERR_DROP, "Invalid FX element head link");
+                            return;
+                        }
+                    }
+                }
+                else
+                {
+                    bool hasSpotLight = false;
+                    const std::uint16_t effectHandle = FxEncodeHandle<
+                        FxEffect, FX_EFFECT_LIMIT,
+                        FxEffect::HANDLE_SCALE>(system->effects, effect);
+                    if (effectHandle == FX_INVALID_HANDLE
+                        || !FX_ValidateSpotLightEffectDef(
+                            effect->def, &hasSpotLight)
+                        || !hasSpotLight
+                        || Sys_AtomicLoad(
+                            &system->activeSpotLightEffectCount) != 1
+                        || Sys_AtomicLoad(
+                            &system->activeSpotLightElemCount) != 0
+                        || system->activeSpotLightEffectHandle
+                            != effectHandle)
+                    {
+                        Com_Error(
+                            ERR_DROP,
+                            "Invalid FX spotlight state before element allocation");
+                        return;
+                    }
+                }
+
                 elem = FX_AllocElem(system);
                 if (elem)
                 {
                     FX_AddRefToEffect(system, effect);
-                    elem->item.defIndex = elemDefIndex;
-                    elem->item.sequence = sequence;
-                    elem->item.atRestFraction = -1;
+                    elem->item.defIndex = static_cast<std::uint8_t>(elemDefIndex);
+                    elem->item.sequence = static_cast<std::uint8_t>(sequence);
+                    elem->item.atRestFraction =
+                        (std::numeric_limits<std::uint8_t>::max)();
                     elem->item.emitResidual = 0;
                     elem->item.msecBegin = msecBegin;
                     if (randomSeed != (296 * elem->item.sequence + elem->item.msecBegin + (uint32_t)effect->randomSeed)
@@ -1652,29 +5636,17 @@ void __cdecl FX_SpawnElem(
                     }
                     else
                     {
-                        elemType = elemDef->elemType;
-                        if (elemType > 3u)
+                        elem->item.nextElemHandleInEffect =
+                            nextElemHandleInEffect;
+                        const std::uint16_t elemHandle =
+                            FX_PoolToHandle_Generic<FxElem, MAX_ELEMS>(
+                                system->elems, &elem->item);
+                        if (nextElemInEffect)
                         {
-                            if (elemType == 4)
-                                elemClass = 2;
-                            else
-                                elemClass = 1;
+                            nextElemInEffect->item.prevElemHandleInEffect =
+                                elemHandle;
                         }
-                        else
-                        {
-                            elemClass = 0;
-                        }
-                        elem->item.nextElemHandleInEffect = effect->firstElemHandle[elemClass];
-                        if (!system)
-                            MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 327, 0, "%s", "system");
-                        effect->firstElemHandle[elemClass] = FX_PoolToHandle_Generic<FxElem, 2048>(system->elems, (FxElem *)elem);
-                        if (elem->item.nextElemHandleInEffect != 0xFFFF)
-                        {
-                            nextElemHandleInEffect = elem->item.nextElemHandleInEffect;
-                            if (!system)
-                                MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 334, 0, "%s", "system");
-                            FX_PoolFromHandle_Generic<FxElem, 2048>(system->elems, nextElemHandleInEffect)->item.prevElemHandleInEffect = effect->firstElemHandle[elemClass];
-                        }
+                        effect->firstElemHandle[elemClass] = elemHandle;
                         if (elemDef->elemType == 5)
                         {
                             elem->item.u.lightingHandle = 0;
@@ -1683,7 +5655,8 @@ void __cdecl FX_SpawnElem(
                             {
                                 if (!system)
                                     MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 327, 0, "%s", "system");
-                                v7 = FX_PoolToHandle_Generic<FxElem, 2048>(system->elems, (FxElem*)elem);
+                                v7 = FX_PoolToHandle_Generic<FxElem, MAX_ELEMS>(
+                                    system->elems, &elem->item);
                                 FX_FreeElem(system, v7, effect, elemClass);
                             }
                         }
@@ -1701,7 +5674,18 @@ void __cdecl FX_SpawnElem(
 
 FxPool<FxElem> *__cdecl FX_AllocElem(FxSystem *system)
 {
-    return FX_AllocPool_Generic_FxElem_(&system->firstFreeElem, system->elems, &system->activeElemCount);
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!states)
+    {
+        Com_Error(ERR_DROP, "Missing FX element allocation sidecar");
+        return nullptr;
+    }
+    return FX_AllocPool_Generic_FxElem_(
+        &system->firstFreeElem,
+        system->elems,
+        &system->activeElemCount,
+        &states->elems);
 }
 
 void __cdecl FX_SpawnRunner(
@@ -1919,122 +5903,377 @@ void __cdecl FX_SpawnSound(
 
 void __cdecl FX_FreeElem(FxSystem* system, uint16_t elemHandle, FxEffect* effect, uint32_t elemClass)
 {
-    uint16_t prevElemHandleInEffect; // [esp+10h] [ebp-14h]
-    uint16_t nextElemHandleInEffect; // [esp+12h] [ebp-12h]
-    const FxElemDef* elemDef; // [esp+14h] [ebp-10h]
-    FxPool<FxElem>* elem; // [esp+20h] [ebp-4h]
-
-    if (!system)
-        MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 334, 0, "%s", "system");
-    elem = FX_PoolFromHandle_Generic<FxElem, 2048>(system->elems, elemHandle);
-    if (!elemClass && effect->firstSortedElemHandle == elemHandle)
-        effect->firstSortedElemHandle = elem->item.nextElemHandleInEffect;
-    if (elem->item.nextElemHandleInEffect != 0xFFFF)
+    if (!system || !effect || !effect->def || elemClass >= 3)
     {
-        nextElemHandleInEffect = elem->item.nextElemHandleInEffect;
-        if (!system)
-            MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 334, 0, "%s", "system");
-        FX_PoolFromHandle_Generic<FxElem, 2048>(system->elems, nextElemHandleInEffect)->item.prevElemHandleInEffect = elem->item.prevElemHandleInEffect;
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1868,
+            0,
+            "%s",
+            "system && effect && effect->def && elemClass < 3");
+        return;
     }
-    if (elem->item.prevElemHandleInEffect == 0xFFFF)
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!states)
+    {
+        Com_Error(ERR_DROP, "Missing FX element allocation sidecar during free");
+        return;
+    }
+
+    FxPool<FxElem> *const elem =
+        FX_PoolFromHandle_Generic<FxElem, 2048>(system->elems, elemHandle);
+    if (!elem || !FX_IsElemAllocated(system, &elem->item))
+    {
+        Com_Error(ERR_DROP, "FX element being freed is not allocated");
+        return;
+    }
+
+    const FxElem releasedElem = elem->item;
+    FxPool<FxElem> *nextElem = nullptr;
+    if (releasedElem.nextElemHandleInEffect != FX_INVALID_HANDLE)
+    {
+        nextElem = FX_PoolFromHandle_Generic<FxElem, 2048>(
+            system->elems, releasedElem.nextElemHandleInEffect);
+        if (!nextElem || nextElem == elem
+            || !FX_IsElemAllocated(system, &nextElem->item))
+        {
+            Com_Error(ERR_DROP, "Invalid next FX element ownership during free");
+            return;
+        }
+        if (nextElem->item.prevElemHandleInEffect != elemHandle)
+        {
+            MyAssertHandler(
+                ".\\EffectsCore\\fx_system.cpp",
+                1912,
+                0,
+                "%s",
+                "nextElem->item.prevElemHandleInEffect == elemHandle");
+            Com_Error(ERR_DROP, "Invalid next FX element backlink during free");
+            return;
+        }
+    }
+
+    FxPool<FxElem> *prevElem = nullptr;
+    if (releasedElem.prevElemHandleInEffect == FX_INVALID_HANDLE)
     {
         if (effect->firstElemHandle[elemClass] != elemHandle)
+        {
             MyAssertHandler(
                 ".\\EffectsCore\\fx_system.cpp",
                 2207,
                 0,
                 "%s",
                 "effect->firstElemHandle[elemClass] == elemHandle");
-        effect->firstElemHandle[elemClass] = elem->item.nextElemHandleInEffect;
+            Com_Error(ERR_DROP, "Invalid FX element list head during free");
+            return;
+        }
     }
     else
     {
-        prevElemHandleInEffect = elem->item.prevElemHandleInEffect;
-        if (!system)
-            MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 334, 0, "%s", "system");
-        FX_PoolFromHandle_Generic<FxElem, 2048>(system->elems, prevElemHandleInEffect)->item.nextElemHandleInEffect = elem->item.nextElemHandleInEffect;
+        prevElem = FX_PoolFromHandle_Generic<FxElem, 2048>(
+            system->elems, releasedElem.prevElemHandleInEffect);
+        if (!prevElem || prevElem == elem
+            || !FX_IsElemAllocated(system, &prevElem->item))
+        {
+            Com_Error(ERR_DROP, "Invalid previous FX element ownership during free");
+            return;
+        }
+        if (prevElem->item.nextElemHandleInEffect != elemHandle)
+        {
+            MyAssertHandler(
+                ".\\EffectsCore\\fx_system.cpp",
+                1938,
+                0,
+                "%s",
+                "prevElem->item.nextElemHandleInEffect == elemHandle");
+            Com_Error(ERR_DROP, "Invalid previous FX element forward link during free");
+            return;
+        }
     }
-    elemDef = &effect->def->elemDefs[elem->item.defIndex];
-    if (elemDef->elemType == 5 && (elemDef->flags & 0x8000000) != 0 && elem->item.physObjId)
+
+    const FxEffectDef *const effectDef = effect->def;
+    const std::int64_t elemDefCount =
+        static_cast<std::int64_t>(effectDef->elemDefCountLooping)
+        + effectDef->elemDefCountOneShot
+        + effectDef->elemDefCountEmission;
+    if (!effectDef->elemDefs || effectDef->elemDefCountLooping < 0
+        || effectDef->elemDefCountOneShot < 0
+        || effectDef->elemDefCountEmission < 0
+        || releasedElem.defIndex >= elemDefCount)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1954,
+            0,
+            "%s",
+            "releasedElem.defIndex indexes effectDef->elemDefs");
+        Com_Error(ERR_DROP, "Invalid FX element definition during free");
+        return;
+    }
+    const FxElemDef *const elemDef =
+        &effectDef->elemDefs[releasedElem.defIndex];
+    if (!FX_FreePool_Generic_FxElem_(
+            &elem->item,
+            &system->firstFreeElem,
+            system->elems,
+            &system->activeElemCount,
+            &states->elems,
+            [&]() noexcept {
+                if (!elemClass && effect->firstSortedElemHandle == elemHandle)
+                    effect->firstSortedElemHandle =
+                        releasedElem.nextElemHandleInEffect;
+                if (nextElem)
+                {
+                    nextElem->item.prevElemHandleInEffect =
+                        releasedElem.prevElemHandleInEffect;
+                }
+                if (prevElem)
+                {
+                    prevElem->item.nextElemHandleInEffect =
+                        releasedElem.nextElemHandleInEffect;
+                }
+                else
+                {
+                    effect->firstElemHandle[elemClass] =
+                        releasedElem.nextElemHandleInEffect;
+                }
+            }))
+    {
+        return;
+    }
+
+    if (elemDef->elemType == 5 && (elemDef->flags & 0x8000000) != 0
+        && releasedElem.physObjId)
     {
         Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-        Phys_ObjDestroy(PHYS_WORLD_FX, (dxBody*)elem->item.physObjId);
+        Phys_ObjDestroy(PHYS_WORLD_FX, (dxBody *)releasedElem.physObjId);
         Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     }
-    elem->nextFree = 0;
-    *(_DWORD*)&elem->item.nextElemHandleInEffect = 0;
-    elem->item.msecBegin = 0;
-    elem->item.baseVel[0] = 0.0;
-    elem->item.baseVel[1] = 0.0;
-    elem->item.baseVel[2] = 0.0;
-    elem->item.physObjId = 0;
-    elem->item.origin[1] = 0.0;
-    elem->item.origin[2] = 0.0;
-    elem->item.u.trailTexCoord = 0.0;
-    FX_FreePool_Generic_FxElem_((FxElem*)elem, &system->firstFreeElem, system->elems);
     FX_DelRefToEffect(system, effect);
-    Sys_AtomicDecrement(&system->activeElemCount);
 }
 
 void __cdecl FX_FreeTrailElem(FxSystem *system, uint16_t trailElemHandle, FxEffect *effect, FxTrail *trail)
 {
-    FxPool<FxTrailElem> *trailElem; // [esp+10h] [ebp-4h]
-
-    if (!system)
-        MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 348, 0, "%s", "system");
-    trailElem = FX_PoolFromHandle_Generic<FxTrailElem, 2048>(system->trailElems, trailElemHandle);
-    if (trail->firstElemHandle != trailElemHandle)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 2256, 0, "%s", "trail->firstElemHandle == trailElemHandle");
-    if (trail->lastElemHandle == trailElemHandle)
+    if (!system || !effect || !trail)
     {
-        if (trail->firstElemHandle != trailElemHandle)
-            MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 2260, 0, "%s", "trail->firstElemHandle == trailElemHandle");
-        trail->lastElemHandle = -1;
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1932,
+            0,
+            "%s",
+            "system && effect && trail");
+        return;
     }
-    trail->firstElemHandle = trailElem->item.nextTrailElemHandle;
-    trailElem->nextFree = 0;
-    trailElem->item.origin[1] = 0.0;
-    trailElem->item.origin[2] = 0.0;
-    trailElem->item.spawnDist = 0.0;
-    trailElem->item.msecBegin = 0;
-    *(uint32_t *)&trailElem->item.nextTrailElemHandle = 0;
-    *(uint32_t *)&trailElem->item.basis[0][0] = 0;
-    *(uint32_t *)&trailElem->item.basis[1][1] = 0;
-    FX_FreePool_Generic_FxTrailElem_((FxTrailElem *)trailElem, &system->firstFreeTrailElem, system->trailElems);
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!states)
+    {
+        Com_Error(ERR_DROP, "Missing FX trail-element allocation sidecar during free");
+        return;
+    }
+    if (!FX_IsTrailAllocated(system, trail))
+    {
+        Com_Error(ERR_DROP, "FX trail-element owner is not allocated");
+        return;
+    }
+
+    FxPool<FxTrailElem> *const trailElem =
+        FX_PoolFromHandle_Generic<FxTrailElem, 2048>(
+            system->trailElems, trailElemHandle);
+    if (!trailElem
+        || !FX_IsTrailElemAllocated(system, &trailElem->item))
+    {
+        Com_Error(ERR_DROP, "FX trail element being freed is not allocated");
+        return;
+    }
+    if (trail->firstElemHandle != trailElemHandle)
+    {
+        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 2256, 0, "%s", "trail->firstElemHandle == trailElemHandle");
+        Com_Error(ERR_DROP, "Invalid FX trail-element list head during free");
+        return;
+    }
+
+    if (trail->lastElemHandle == FX_INVALID_HANDLE)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1949,
+            0,
+            "%s",
+            "nonempty trail has a valid tail handle");
+        Com_Error(ERR_DROP, "Invalid FX trail endpoint state during free");
+        return;
+    }
+    FxPool<FxTrailElem> *const lastTrailElem =
+        FxDecodeHandle<FxPool<FxTrailElem>, MAX_TRAIL_ELEMS,
+            FxTrailElem::HANDLE_SCALE>(
+            system->trailElems, trail->lastElemHandle);
+    if (!lastTrailElem
+        || !FX_IsTrailElemAllocated(system, &lastTrailElem->item)
+        || lastTrailElem->item.nextTrailElemHandle != FX_INVALID_HANDLE)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1949,
+            0,
+            "%s",
+            "trail tail handle identifies a terminal element");
+        Com_Error(ERR_DROP, "Invalid FX trail tail ownership during free");
+        return;
+    }
+
+    const std::uint16_t nextTrailElemHandle =
+        trailElem->item.nextTrailElemHandle;
+    FxPool<FxTrailElem> *nextTrailElem = nullptr;
+    if (nextTrailElemHandle != FX_INVALID_HANDLE)
+    {
+        nextTrailElem = FxDecodeHandle<
+            FxPool<FxTrailElem>, MAX_TRAIL_ELEMS,
+            FxTrailElem::HANDLE_SCALE>(
+            system->trailElems, nextTrailElemHandle);
+    }
+    if (nextTrailElemHandle == trailElemHandle
+        || (nextTrailElemHandle != FX_INVALID_HANDLE
+            && (!nextTrailElem
+                || !FX_IsTrailElemAllocated(
+                    system, &nextTrailElem->item)))
+        || ((trail->lastElemHandle == trailElemHandle)
+            != (nextTrailElemHandle == FX_INVALID_HANDLE)))
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1949,
+            0,
+            "%s",
+            "trail element links are consistent");
+        Com_Error(ERR_DROP, "Invalid FX trail-element links during free");
+        return;
+    }
+    if (!FX_FreePool_Generic_FxTrailElem_(
+            &trailElem->item,
+            &system->firstFreeTrailElem,
+            system->trailElems,
+            &system->activeTrailElemCount,
+            &states->trailElems,
+            [&]() noexcept {
+                if (trail->lastElemHandle == trailElemHandle)
+                    trail->lastElemHandle = FX_INVALID_HANDLE;
+                trail->firstElemHandle = nextTrailElemHandle;
+            }))
+    {
+        return;
+    }
     FX_DelRefToEffect(system, effect);
-    Sys_AtomicDecrement(&system->activeTrailElemCount);
 }
 
 void __cdecl FX_FreeSpotLightElem(FxSystem *system, uint16_t elemHandle, FxEffect *effect)
 {
-    FxPool<FxElem> *v3; // eax
-    uint16_t activeSpotLightElemHandle; // [esp+Eh] [ebp-6h]
+    if (!system || !effect)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1976,
+            0,
+            "%s",
+            "system && effect");
+        return;
+    }
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!states)
+    {
+        Com_Error(ERR_DROP, "Missing FX element allocation sidecar during spotlight free");
+        return;
+    }
 
-    if (system->activeSpotLightEffectCount <= 0 || system->activeSpotLightElemCount <= 0)
+    const std::uint16_t effectHandle = FxEncodeHandle<
+        FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+            system->effects, effect);
+    if (effectHandle == FX_INVALID_HANDLE)
+    {
+        Com_Error(ERR_DROP, "Invalid FX spotlight effect pointer during free");
+        return;
+    }
+    FxSpotLightStateSnapshot spotLightSnapshot{};
+    if (!FX_GetSpotLightStateSnapshot(system, &spotLightSnapshot))
+    {
+        Com_Error(ERR_DROP, "Missing FX spotlight state during free");
+        return;
+    }
+    if (spotLightSnapshot.effectCount != 1
+        || spotLightSnapshot.elemCount != 1)
+    {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
             2288,
             0,
             "%s",
-            "system->activeSpotLightEffectCount > 0 && system->activeSpotLightElemCount > 0");
-    activeSpotLightElemHandle = system->activeSpotLightElemHandle;
-    if (!system)
-        MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 334, 0, "%s", "system");
-    v3 = FX_PoolFromHandle_Generic<FxElem, 2048>(system->elems, activeSpotLightElemHandle);
-    v3->nextFree = 0;
-    *(uint32_t *)&v3->item.nextElemHandleInEffect = 0;
-    v3->item.msecBegin = 0;
-    v3->item.baseVel[0] = 0.0;
-    v3->item.baseVel[1] = 0.0;
-    v3->item.baseVel[2] = 0.0;
-    v3->item.physObjId = 0;
-    v3->item.origin[1] = 0.0;
-    v3->item.origin[2] = 0.0;
-    v3->item.u.trailTexCoord = 0.0;
-    FX_FreePool_Generic_FxElem_((FxElem *)v3, &system->firstFreeElem, system->elems);
+            "system->activeSpotLightEffectCount == 1 && system->activeSpotLightElemCount == 1");
+        Com_Error(ERR_DROP, "Invalid FX spotlight counts during free");
+        return;
+    }
+    if (spotLightSnapshot.effectHandle != effectHandle)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1994,
+            0,
+            "%s",
+            "system->activeSpotLightEffectHandle == effectHandle");
+        Com_Error(ERR_DROP, "Invalid FX spotlight effect owner during free");
+        return;
+    }
+    if (spotLightSnapshot.elemHandle != elemHandle)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            1994,
+            0,
+            "%s",
+            "system->activeSpotLightElemHandle == elemHandle");
+        Com_Error(ERR_DROP, "Invalid FX spotlight element handle during free");
+        return;
+    }
+
+    FxPool<FxElem> *const elem = FX_PoolFromHandle_Generic<FxElem, 2048>(
+        system->elems, elemHandle);
+    if (!elem || !FX_IsElemAllocated(system, &elem->item))
+    {
+        Com_Error(ERR_DROP, "FX spotlight element being freed is not allocated");
+        return;
+    }
+    bool hasSpotLight = false;
+    if (!FX_ValidateSpotLightEffectDef(effect->def, &hasSpotLight)
+        || !hasSpotLight)
+    {
+        Com_Error(ERR_DROP, "Invalid FX spotlight owner definition during free");
+        return;
+    }
+    const FxElemDef *const elemDef =
+        FX_GetValidatedRuntimeElemDef(effect, elem->item.defIndex);
+    if (!elemDef || elemDef->elemType != FX_ELEM_TYPE_SPOT_LIGHT
+        || elem->item.nextElemHandleInEffect != FX_INVALID_HANDLE
+        || elem->item.prevElemHandleInEffect != FX_INVALID_HANDLE)
+    {
+        Com_Error(ERR_DROP, "Invalid FX spotlight element ownership during free");
+        return;
+    }
+    if (!FX_FreePool_Generic_FxElem_(
+            &elem->item,
+            &system->firstFreeElem,
+            system->elems,
+            &system->activeElemCount,
+            &states->elems,
+            [&]() noexcept {
+                system->activeSpotLightElemHandle = FX_INVALID_HANDLE;
+                system->activeSpotLightBoltDobj = -1;
+                Sys_AtomicStore(&system->activeSpotLightElemCount, 0);
+            }))
+    {
+        return;
+    }
     FX_DelRefToEffect(system, effect);
-    Sys_AtomicDecrement(&system->activeElemCount);
-    Sys_AtomicDecrement(&system->activeSpotLightElemCount);
 }
 
 double __cdecl FX_GetClientVisibility(int32_t localClientNum, const float *start, const float *end)

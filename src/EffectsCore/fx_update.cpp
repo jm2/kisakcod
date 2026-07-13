@@ -22,6 +22,126 @@
 #include <universal/sys_atomic.h>
 #include <qcommon/sys_sync.h>
 
+#include <array>
+#include <cmath>
+#include <cstdlib>
+#include <limits>
+
+namespace
+{
+[[noreturn]] void FX_DropCorruptUpdatePool(
+    const char *const poolName,
+    const std::uint16_t handle)
+{
+    Com_Error(
+        ERR_DROP,
+        "Corrupt FX update %s handle %u is invalid or refers to a free pool slot",
+        poolName,
+        static_cast<unsigned int>(handle));
+    std::abort();
+}
+
+[[noreturn]] void FX_DropCorruptUpdateList(const char *const reason)
+{
+    Com_Error(ERR_DROP, "Corrupt FX update list: %s", reason);
+    std::abort();
+}
+
+std::size_t FX_GetValidatedUpdateElemDefCount(const FxEffect *const effect)
+{
+    if (!effect || !effect->def
+        || effect->def->elemDefCountLooping < 0
+        || effect->def->elemDefCountOneShot < 0
+        || effect->def->elemDefCountEmission < 0)
+    {
+        FX_DropCorruptUpdateList("invalid effect definition state");
+    }
+    const std::int64_t elemDefCount =
+        static_cast<std::int64_t>(effect->def->elemDefCountLooping)
+        + effect->def->elemDefCountOneShot
+        + effect->def->elemDefCountEmission;
+    if (elemDefCount > 256
+        || (elemDefCount > 0 && !effect->def->elemDefs))
+    {
+        FX_DropCorruptUpdateList("invalid effect definition count");
+    }
+    return static_cast<std::size_t>(elemDefCount);
+}
+
+const FxElemDef *FX_GetValidatedUpdateElemDef(
+    const FxEffect *const effect,
+    const std::uint32_t elemDefIndex)
+{
+    if (elemDefIndex >= FX_GetValidatedUpdateElemDefCount(effect))
+        FX_DropCorruptUpdateList("element definition index is out of range");
+    return &effect->def->elemDefs[elemDefIndex];
+}
+
+void FX_ValidateUpdateTrailDef(const FxElemDef *const elemDef)
+{
+    if (!elemDef || elemDef->elemType != FX_ELEM_TYPE_TRAIL
+        || !elemDef->trailDef || elemDef->trailDef->splitDist <= 0)
+    {
+        FX_DropCorruptUpdateList("invalid trail definition");
+    }
+}
+
+void FX_ValidateUpdateElemClass(
+    const std::uint32_t elemClass,
+    const FxElemDef *const elemDef)
+{
+    const bool classMatches = elemDef
+        && ((elemClass == 0 && elemDef->elemType <= FX_ELEM_TYPE_TAIL)
+            || (elemClass == 1
+                && (elemDef->elemType == FX_ELEM_TYPE_MODEL
+                    || elemDef->elemType == FX_ELEM_TYPE_OMNI_LIGHT))
+            || (elemClass == 2
+                && elemDef->elemType == FX_ELEM_TYPE_CLOUD));
+    if (!classMatches)
+        FX_DropCorruptUpdateList("element type does not match its pool class");
+}
+
+FxPool<FxElem> *FX_GetAllocatedUpdateElem(
+    FxSystem *const system,
+    const std::uint16_t handle)
+{
+    if (!system || !system->elems)
+        FX_DropCorruptUpdatePool("element", handle);
+    FxPool<FxElem> *const slot =
+        FX_PoolFromHandle_Generic<FxElem, MAX_ELEMS>(system->elems, handle);
+    if (!FX_IsElemAllocated(system, &slot->item))
+        FX_DropCorruptUpdatePool("element", handle);
+    return slot;
+}
+
+FxPool<FxTrail> *FX_GetAllocatedUpdateTrail(
+    FxSystem *const system,
+    const std::uint16_t handle)
+{
+    if (!system || !system->trails)
+        FX_DropCorruptUpdatePool("trail", handle);
+    FxPool<FxTrail> *const slot =
+        FX_PoolFromHandle_Generic<FxTrail, MAX_TRAILS>(system->trails, handle);
+    if (!FX_IsTrailAllocated(system, &slot->item))
+        FX_DropCorruptUpdatePool("trail", handle);
+    return slot;
+}
+
+FxPool<FxTrailElem> *FX_GetAllocatedUpdateTrailElem(
+    FxSystem *const system,
+    const std::uint16_t handle)
+{
+    if (!system || !system->trailElems)
+        FX_DropCorruptUpdatePool("trail element", handle);
+    FxPool<FxTrailElem> *const slot =
+        FX_PoolFromHandle_Generic<FxTrailElem, MAX_TRAIL_ELEMS>(
+            system->trailElems, handle);
+    if (!FX_IsTrailElemAllocated(system, &slot->item))
+        FX_DropCorruptUpdatePool("trail element", handle);
+    return slot;
+}
+}
+
 void __cdecl FX_SpawnlAlFutureLooping(
     FxSystem *system,
     FxEffect *effect,
@@ -38,6 +158,8 @@ void __cdecl FX_SpawnlAlFutureLooping(
         MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 465, 0, "%s", "effect");
     if (!effect->def)
         MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 468, 0, "%s", "effectDef");
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
     for (elemDefIndex = elemDefFirst; elemDefIndex != elemDefCount + elemDefFirst; ++elemDefIndex)
     {
         if (effect->def->elemDefs[elemDefIndex].spawn.looping.count != 0x7FFFFFFF)
@@ -64,91 +186,90 @@ void __cdecl FX_SpawnTrailLoopingElems(
     float distanceTravelledBegin,
     float distanceTravelledEnd)
 {
-    float v10; // [esp+1Ch] [ebp-50h]
-    float v11; // [esp+20h] [ebp-4Ch]
-    float v12; // [esp+24h] [ebp-48h]
     float lerp; // [esp+2Ch] [ebp-40h]
     FxSpatialFrame frameWhenPlayed; // [esp+34h] [ebp-38h] BYREF
     float distSpawn; // [esp+50h] [ebp-1Ch]
-    float normalizedTotalDistance; // [esp+54h] [ebp-18h]
     const FxEffectDef* effectDef; // [esp+58h] [ebp-14h]
     const FxElemDef* elemDef; // [esp+5Ch] [ebp-10h]
-    float normalizedDistanceTraversed; // [esp+60h] [ebp-Ch]
-    float normalizedDistanceRemaining; // [esp+64h] [ebp-8h]
-    float normalizedDistanceBeforeSpawn; // [esp+68h] [ebp-4h]
 
-    if (!effect)
-        MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 101, 0, "%s", "effect");
-    effectDef = effect->def;
-    if (!effectDef)
-        MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 104, 0, "%s", "effectDef");
-    if (trail->defIndex >= (effectDef->elemDefCountEmission
-        + effectDef->elemDefCountOneShot
-        + effectDef->elemDefCountLooping))
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_update.cpp",
-            106,
-            0,
-            "trail->defIndex doesn't index effectDef->elemDefCountLooping + effectDef->elemDefCountOneShot + effectDef->elemDef"
-            "CountEmission\n"
-            "\t%i not in [0, %i)",
-            trail->defIndex,
-            effectDef->elemDefCountEmission + effectDef->elemDefCountOneShot + effectDef->elemDefCountLooping);
+    if (!system || !effect || !trail || !frameBegin || !frameEnd)
+        FX_DropCorruptUpdateList("missing trail update state");
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
+    effectDef = effect ? effect->def : nullptr;
+    elemDef = FX_GetValidatedUpdateElemDef(effect, trail->defIndex);
+    FX_ValidateUpdateTrailDef(elemDef);
     if (trail->defIndex >= effectDef->elemDefCountLooping
         && trail->defIndex < effectDef->elemDefCountOneShot + effectDef->elemDefCountLooping)
     {
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_update.cpp",
-            107,
-            0,
-            "%s",
-            "trail->defIndex < effectDef->elemDefCountLooping || trail->defIndex >= effectDef->elemDefCountLooping + effectDef-"
-            ">elemDefCountOneShot");
+        FX_DropCorruptUpdateList("trail definition appears in the one-shot definition range");
     }
-    if (msecWhenPlayed > msecUpdateBegin || msecUpdateBegin > msecUpdateEnd)
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_update.cpp",
-            108,
-            0,
-            "msecUpdateBegin not in [msecWhenPlayed, msecUpdateEnd]\n\t%g not in [%g, %g]",
-            msecUpdateBegin,
-            msecWhenPlayed,
-            msecUpdateEnd);
-    elemDef = &effect->def->elemDefs[trail->defIndex];
-    if (elemDef->elemType != 3)
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_update.cpp",
-            112,
-            0,
-            "%s\n\t(elemDef->elemType) = %i",
-            "(elemDef->elemType == FX_ELEM_TYPE_TRAIL)",
-            elemDef->elemType);
-    if (!elemDef->trailDef)
-        MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 113, 0, "%s", "elemDef->trailDef");
-    normalizedTotalDistance = (distanceTravelledEnd - distanceTravelledBegin) / elemDef->trailDef->splitDist;
-    v12 = distanceTravelledBegin / elemDef->trailDef->splitDist;
-    v11 = floor(v12);
-    v10 = v12 - v11;
-    normalizedDistanceBeforeSpawn = 1.0 - v10;
-    normalizedDistanceTraversed = 0.0;
-    normalizedDistanceRemaining = normalizedTotalDistance;
-    while (normalizedDistanceBeforeSpawn < normalizedDistanceRemaining)
+    if (msecWhenPlayed > msecUpdateBegin
+        || msecUpdateBegin > msecUpdateEnd
+        || !std::isfinite(distanceTravelledBegin)
+        || !std::isfinite(distanceTravelledEnd)
+        || distanceTravelledEnd < distanceTravelledBegin)
     {
-        normalizedDistanceTraversed = normalizedDistanceTraversed + normalizedDistanceBeforeSpawn;
-        lerp = normalizedDistanceTraversed / normalizedTotalDistance;
-        distSpawn = (distanceTravelledEnd - distanceTravelledBegin) * lerp + distanceTravelledBegin;
+        FX_DropCorruptUpdateList("invalid trail update interval");
+    }
+
+    const double distanceDelta =
+        static_cast<double>(distanceTravelledEnd)
+        - static_cast<double>(distanceTravelledBegin);
+    const double splitDistance =
+        static_cast<double>(elemDef->trailDef->splitDist);
+    const double normalizedTotalDistance = distanceDelta / splitDistance;
+    const double normalizedDistanceAtBegin =
+        static_cast<double>(distanceTravelledBegin) / splitDistance;
+    const double normalizedDistanceBeforeSpawn =
+        1.0
+        - (normalizedDistanceAtBegin
+           - std::floor(normalizedDistanceAtBegin));
+    if (!std::isfinite(normalizedTotalDistance)
+        || !std::isfinite(normalizedDistanceBeforeSpawn))
+    {
+        FX_DropCorruptUpdateList("non-finite trail spawn interval");
+    }
+
+    std::size_t spawnCount = 0;
+    if (normalizedDistanceBeforeSpawn < normalizedTotalDistance)
+    {
+        const double candidateCount = std::ceil(
+            normalizedTotalDistance - normalizedDistanceBeforeSpawn);
+        if (!std::isfinite(candidateCount)
+            || candidateCount > static_cast<double>(MAX_TRAIL_ELEMS))
+        {
+            FX_DropCorruptUpdateList("trail spawn count exceeds pool capacity");
+        }
+        spawnCount = static_cast<std::size_t>(candidateCount);
+    }
+
+    for (std::size_t spawnIndex = 0;
+         spawnIndex < spawnCount;
+         ++spawnIndex)
+    {
+        const double normalizedDistanceTraversed =
+            normalizedDistanceBeforeSpawn
+            + static_cast<double>(spawnIndex);
+        lerp = static_cast<float>(
+            normalizedDistanceTraversed / normalizedTotalDistance);
+        distSpawn = static_cast<float>(
+            distanceDelta * lerp + distanceTravelledBegin);
         Vec3Lerp(frameBegin->origin, frameEnd->origin, lerp, frameWhenPlayed.origin);
         Vec4Lerp(frameBegin->quat, frameEnd->quat, lerp, frameWhenPlayed.quat);
         Vec4Normalize(frameWhenPlayed.quat);
+        const double spawnMsec =
+            static_cast<double>(msecUpdateBegin)
+            + (static_cast<std::int64_t>(msecUpdateEnd)
+               - static_cast<std::int64_t>(msecUpdateBegin))
+                * static_cast<double>(lerp);
         FX_SpawnTrailElem_Cull(
             system,
             effect,
             trail,
             &frameWhenPlayed,
-            msecUpdateBegin + ((msecUpdateEnd - msecUpdateBegin) * lerp),
+            static_cast<std::int32_t>(spawnMsec),
             distSpawn);
-        normalizedDistanceRemaining = normalizedDistanceRemaining - normalizedDistanceBeforeSpawn;
-        normalizedDistanceBeforeSpawn = 1.0;
     }
 }
 
@@ -174,6 +295,8 @@ void __cdecl FX_SpawnLoopingElems(
     iassert(effect);
     effectDef = effect->def;
     iassert(effectDef);
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
     bcassert(elemDefIndex, effectDef->elemDefCountLooping + effectDef->elemDefCountOneShot + effectDef->elemDefCountEmission);
     iassert(elemDefIndex < effectDef->elemDefCountLooping || elemDefIndex >= effectDef->elemDefCountLooping + effectDef->elemDefCountOneShot);
     rangeassert(msecUpdateBegin, msecWhenPlayed, msecUpdateEnd);
@@ -223,6 +346,8 @@ void __cdecl FX_SpawnAllFutureLooping(
 
     const FxEffectDef *effectDef = effect->def;
     iassert(effectDef);
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
 
     for (int32_t elemDefIndex = elemDefFirst; elemDefIndex != elemDefCount + elemDefFirst; ++elemDefIndex)
     {
@@ -388,29 +513,27 @@ void __cdecl FX_BeginLooping(
         MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 492, 0, "%s", "effect");
     if (!effect->def)
         MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 495, 0, "%s", "effectDef");
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
     elemDefStop = elemDefCount + elemDefFirst;
     for (elemDefIndex = elemDefFirst; elemDefIndex != elemDefStop; ++elemDefIndex)
     {
         if (effect->def->elemDefs[elemDefIndex].elemType != 3)
             FX_SpawnElem(system, effect, elemDefIndex, frameWhenPlayed, msecWhenPlayed, 0.0, 0);
     }
+    std::size_t trailCount = 0;
     for (trailHandle = effect->firstTrailHandle; trailHandle != 0xFFFF; trailHandle = trail->item.nextTrailHandle)
     {
+        if (trailCount++ >= MAX_TRAILS)
+            FX_DropCorruptUpdateList("begin-looping trail chain exceeds pool capacity");
         if (!system)
             MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 362, 0, "%s", "system");
-        trail = FX_PoolFromHandle_Generic<FxTrail, 128>(system->trails, trailHandle);
+        trail = FX_GetAllocatedUpdateTrail(system, trailHandle);
         elemDefIndexa = trail->item.defIndex;
+        elemDef = FX_GetValidatedUpdateElemDef(effect, elemDefIndexa);
+        FX_ValidateUpdateTrailDef(elemDef);
         if (elemDefIndexa >= elemDefFirst && elemDefIndexa < elemDefStop)
         {
-            elemDef = &effect->def->elemDefs[elemDefIndexa];
-            if (elemDef->elemType != 3)
-                MyAssertHandler(
-                    ".\\EffectsCore\\fx_update.cpp",
-                    517,
-                    0,
-                    "%s\n\t(elemDef->elemType) = %i",
-                    "(elemDef->elemType == FX_ELEM_TYPE_TRAIL)",
-                    elemDef->elemType);
             FX_SpawnTrailElem_NoCull(system, effect, &trail->item, frameWhenPlayed, msecWhenPlayed, 0.0);
             if (msecNow <= msecWhenPlayed)
             {
@@ -449,6 +572,8 @@ void __cdecl FX_TriggerOneShot(
     iassert(effect);
     effectDef = effect->def;
     iassert(effectDef);
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
 
     if (elemDefCount
         && (elemDefFirst < 0
@@ -487,6 +612,8 @@ void __cdecl FX_SpawnOneShotElems(
     const FxEffectDef *effectDef = effect->def;
 
     iassert(effectDef);
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
 
     elemDef = &effectDef->elemDefs[elemDefIndex];
     if (elemDef->elemType != 3)
@@ -505,6 +632,8 @@ void __cdecl FX_StartNewEffect(FxSystem* system, FxEffect* effect)
 
     def = effect->def;
     iassert(def);
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
     FX_BeginLooping(
         system,
         effect,
@@ -679,7 +808,6 @@ void __cdecl FX_UpdateEffectPartial(
     uint16_t* trailElemStart,
     uint16_t* trailElemStop)
 {
-    int32_t v10; // edx
     double v11; // [esp+4h] [ebp-3Ch]
     uint32_t v12; // [esp+14h] [ebp-2Ch]
     uint16_t v13; // [esp+14h] [ebp-2Ch]
@@ -692,6 +820,8 @@ void __cdecl FX_UpdateEffectPartial(
     uint16_t startHandle; // [esp+38h] [ebp-8h]
     uint32_t elemClass; // [esp+3Ch] [ebp-4h]
 
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
     if (effect->msecLastUpdate > msecUpdateEnd)
         MyAssertHandler(
             ".\\EffectsCore\\fx_update.cpp",
@@ -700,7 +830,8 @@ void __cdecl FX_UpdateEffectPartial(
             "effect->msecLastUpdate <= msecUpdateEnd\n\t%g, %g",
             (double)effect->msecLastUpdate,
             (double)msecUpdateEnd);
-    if ((effect->status & 0x10000) != 0)
+    if ((static_cast<std::uint32_t>(Sys_AtomicLoad(&effect->status))
+            & FX_STATUS_HAS_PENDING_LOOP_ELEMS) != 0)
     {
         def = effect->def;
         FX_ProcessLooping(
@@ -732,12 +863,12 @@ void __cdecl FX_UpdateEffectPartial(
     trailIter = 0;
     for (trailHandle = effect->firstTrailHandle; trailHandle != 0xFFFF; trailHandle = trail.nextTrailHandle)
     {
+        if (trailIter >= MAX_TRAILS)
+            FX_DropCorruptUpdateList("partial-update trail chain exceeds pool capacity");
         if (!system)
             MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 362, 0, "%s", "system");
-        remoteTrail = (FxTrail*)FX_PoolFromHandle_Generic<FxTrail, 128>(system->trails, trailHandle);
-        v10 = *(_DWORD*)&remoteTrail->lastElemHandle;
-        *(_DWORD*)&trail.nextTrailHandle = *(_DWORD*)&remoteTrail->nextTrailHandle;
-        *(_DWORD*)&trail.lastElemHandle = v10;
+        remoteTrail = &FX_GetAllocatedUpdateTrail(system, trailHandle)->item;
+        trail = *remoteTrail;
         if (trailElemStart)
             v14 = trailElemStart[trailIter];
         else
@@ -787,6 +918,8 @@ void __cdecl FX_ProcessLooping(
         MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 434, 0, "%s", "effect");
     if (!effect->def)
         MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 437, 0, "%s", "effectDef");
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
     elemDefEnd = elemDefCount + elemDefFirst;
     for (elemDefIndex = elemDefFirst; elemDefIndex != elemDefEnd; ++elemDefIndex)
         FX_SpawnLoopingElems(
@@ -798,12 +931,18 @@ void __cdecl FX_ProcessLooping(
             msecWhenPlayed,
             msecUpdateBegin,
             msecUpdateEnd);
+    std::size_t trailCount = 0;
     for (trailHandle = effect->firstTrailHandle; trailHandle != 0xFFFF; trailHandle = trail->item.nextTrailHandle)
     {
+        if (trailCount++ >= MAX_TRAILS)
+            FX_DropCorruptUpdateList("looping trail chain exceeds pool capacity");
         if (!system)
             MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 362, 0, "%s", "system");
-        trail = FX_PoolFromHandle_Generic<FxTrail, 128>(system->trails, trailHandle);
+        trail = FX_GetAllocatedUpdateTrail(system, trailHandle);
         elemDefIndexa = trail->item.defIndex;
+        const FxElemDef *const trailElemDef =
+            FX_GetValidatedUpdateElemDef(effect, elemDefIndexa);
+        FX_ValidateUpdateTrailDef(trailElemDef);
         if (elemDefIndexa >= elemDefFirst && elemDefIndexa < elemDefEnd)
             FX_SpawnTrailLoopingElems(
                 system,
@@ -829,8 +968,7 @@ void __cdecl FX_UpdateEffectPartialForClass(
     uint16_t elemHandleStop,
     uint32_t elemClass)
 {
-    int32_t v7; // [esp+Ch] [ebp-28h]
-    int32_t lifeSpan; // [esp+14h] [ebp-20h]
+    std::int64_t v7; // [esp+Ch] [ebp-28h]
     uint16_t elemHandle; // [esp+1Ch] [ebp-18h]
     FxUpdateResult updateResult; // [esp+20h] [ebp-14h]
     uint16_t elemHandleNext; // [esp+24h] [ebp-10h]
@@ -840,8 +978,9 @@ void __cdecl FX_UpdateEffectPartialForClass(
     uint16_t elemHandleFirstExisting; // [esp+30h] [ebp-4h]
 
     int32_t unk1;
-    int32_t unk2;
 
+    if (!system || !effect || elemClass >= 3)
+        FX_DropCorruptUpdateList("invalid element-class update state");
     if (effect->msecLastUpdate > msecUpdateEnd)
         MyAssertHandler(
             ".\\EffectsCore\\fx_update.cpp",
@@ -854,8 +993,13 @@ void __cdecl FX_UpdateEffectPartialForClass(
     passCount = 1;
     do
     {
+        if (passCount > MAX_ELEMS)
+            FX_DropCorruptUpdateList("element update requires too many passes");
+        std::size_t passElemCount = 0;
         for (elemHandle = elemHandleStart; elemHandle != elemHandleStop; elemHandle = elemHandleNext)
         {
+            if (passElemCount++ >= MAX_ELEMS)
+                FX_DropCorruptUpdateList("element update chain exceeds pool capacity");
             if (elemHandle == 0xFFFF)
             {
                 Com_Printf(0, "---- EFFECT ABOUT TO ASSERT ----\n");
@@ -866,41 +1010,64 @@ void __cdecl FX_UpdateEffectPartialForClass(
                     elemHandleStart,
                     elemHandleStop,
                     elemHandleFirstExisting);
-                v7 = msecUpdateEnd - msecUpdateBegin;
+                v7 = static_cast<std::int64_t>(msecUpdateEnd)
+                    - msecUpdateBegin;
                 Com_Printf(
                     0,
-                    "update period is from %d to %d (%d ms)\n", // change from lg to d
+                    "update period is from %d to %d (%lld ms)\n",
                     msecUpdateEnd, msecUpdateBegin,
-                    v7);
+                    static_cast<long long>(v7));
                 Com_Printf(0, "here's the active elem list:\n");
+                std::size_t diagnosticElemCount = 0;
                 for (elemHandle = effect->firstElemHandle[elemClass];
                     elemHandle != 0xFFFF;
                     elemHandle = elem->item.nextElemHandleInEffect)
                 {
+                    if (diagnosticElemCount++ >= MAX_ELEMS)
+                        FX_DropCorruptUpdateList("diagnostic element chain exceeds pool capacity");
                     if (!system)
                         MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 334, 0, "%s", "system");
                     // KISAKTODO this is extremely dubious at best
-                    elem = FX_PoolFromHandle_Generic<FxElem, 2048>(system->elems, elemHandle);
+                    elem = FX_GetAllocatedUpdateElem(system, elemHandle);
+                    const FxElemDef *const diagnosticElemDef =
+                        FX_GetValidatedUpdateElemDef(effect, elem->item.defIndex);
+                    FX_ValidateUpdateElemClass(elemClass, diagnosticElemDef);
                     unk1 = (elem->item.msecBegin + effect->randomSeed + 296 * (uint32_t)elem->item.sequence)
                         % 0x1DF;
-                    unk2 = (int)&effect->def->elemDefs[elem->item.defIndex].lifeSpanMsec;
-                    lifeSpan = *(_DWORD*)unk2
-                        + (((*(_DWORD*)(unk2 + 4) + 1) * LOWORD(fx_randomTable[unk1 + 17])) >> 16);
+                    const std::int64_t lifeSpanWide =
+                        static_cast<std::int64_t>(diagnosticElemDef->lifeSpanMsec.base)
+                        + ((static_cast<std::int64_t>(
+                                diagnosticElemDef->lifeSpanMsec.amplitude)
+                                + 1)
+                            * LOWORD(fx_randomTable[unk1 + 17])
+                            >> 16);
+                    if (lifeSpanWide
+                            < (std::numeric_limits<std::int32_t>::min)()
+                        || lifeSpanWide
+                            > (std::numeric_limits<std::int32_t>::max)())
+                    {
+                        FX_DropCorruptUpdateList("diagnostic element lifespan overflows");
+                    }
+                    const std::int64_t dieTime = lifeSpanWide
+                        + static_cast<std::int64_t>(elem->item.msecBegin);
                     Com_Printf(
                         0,
-                        "  elem %i def %i seq %i spawn %i die %i\n",
+                        "  elem %i def %i seq %i spawn %i die %lld\n",
                         elemHandle,
                         elem->item.defIndex,
                         elem->item.sequence,
                         elem->item.msecBegin,
-                        lifeSpan + elem->item.msecBegin);
+                        static_cast<long long>(dieTime));
                 }
                 if (!alwaysfails)
                     MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 1467, 0, "Big bad effects assert.  Include assert log.");
             }
             if (!system)
                 MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 334, 0, "%s", "system");
-            elema = FX_PoolFromHandle_Generic<FxElem, 2048>(system->elems, elemHandle);
+            elema = FX_GetAllocatedUpdateElem(system, elemHandle);
+            FX_ValidateUpdateElemClass(
+                elemClass,
+                FX_GetValidatedUpdateElemDef(effect, elema->item.defIndex));
             updateResult = FX_UpdateElement(system, effect, &elema->item, msecUpdateBegin, msecUpdateEnd);
             elemHandleNext = elema->item.nextElemHandleInEffect;
             if (updateResult == FX_UPDATE_REMOVE)
@@ -997,9 +1164,9 @@ FxUpdateResult __cdecl FX_UpdateElement(
 
 const FxElemDef *__cdecl FX_GetUpdateElemDef(const FxUpdateElem *update)
 {
-    if (!update->effect)
-        MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 79, 0, "%s", "update->effect");
-    return &update->effect->def->elemDefs[update->elemIndex];
+    if (!update)
+        FX_DropCorruptUpdateList("missing element-update state");
+    return FX_GetValidatedUpdateElemDef(update->effect, update->elemIndex);
 }
 
 double __cdecl FX_GetAtRestFraction(const FxUpdateElem *update, float msec)
@@ -1676,7 +1843,6 @@ char __cdecl FX_UpdateElement_SetupUpdate(
     float *elemOrigin,
     FxUpdateElem *update)
 {
-    const FxEffectDef *def; // [esp+4h] [ebp-Ch]
     int32_t msecLifeSpan; // [esp+8h] [ebp-8h]
     const FxElemDef *elemDef; // [esp+Ch] [ebp-4h]
 
@@ -1695,21 +1861,11 @@ char __cdecl FX_UpdateElement_SetupUpdate(
             update->msecUpdateEnd);
     if (update->msecUpdateEnd < update->msecElemBegin)
         return 0;
-    def = effect->def;
-    if (elemDefIndex >= def->elemDefCountEmission + def->elemDefCountOneShot + def->elemDefCountLooping)
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_update.cpp",
-            1119,
-            0,
-            "elemDefIndex doesn't index def->elemDefCountLooping + def->elemDefCountOneShot + def->elemDefCountEmission\n"
-            "\t%i not in [0, %i)",
-            elemDefIndex,
-            def->elemDefCountEmission + def->elemDefCountOneShot + def->elemDefCountLooping);
+    elemDef = FX_GetValidatedUpdateElemDef(effect, elemDefIndex);
     update->elemIndex = elemDefIndex;
     update->atRestFraction = elemAtRestFraction;
     update->randomSeed = (296 * elemSequence + elemMsecBegin + (uint32_t)effect->randomSeed) % 0x1DF;
     update->sequence = elemSequence;
-    elemDef = FX_GetUpdateElemDef(update);
     msecLifeSpan = elemDef->lifeSpanMsec.base
         + (((elemDef->lifeSpanMsec.amplitude + 1) * LOWORD(fx_randomTable[update->randomSeed + 17])) >> 16);
     update->msecElemEnd = msecLifeSpan + update->msecElemBegin;
@@ -1972,6 +2128,11 @@ void __cdecl FX_UpdateEffectPartialTrail(
     uint16_t trailElemHandle; // [esp+48h] [ebp-8h]
     bool removable; // [esp+4Fh] [ebp-1h]
 
+    if (!trail)
+        FX_DropCorruptUpdateList("missing partial-update trail state");
+    const FxElemDef *const trailElemDef =
+        FX_GetValidatedUpdateElemDef(effect, trail->defIndex);
+    FX_ValidateUpdateTrailDef(trailElemDef);
     trailElemHandleLast = -1;
     if (trailElemHandleStart == 0xFFFF)
         trailElemHandle = trail->firstElemHandle;
@@ -1979,13 +2140,17 @@ void __cdecl FX_UpdateEffectPartialTrail(
         trailElemHandle = trailElemHandleStart;
     trailElem = 0;
     removable = trailElemHandle == trail->firstElemHandle;
+    std::size_t trailElemCount = 0;
     while (trailElemHandle != trailElemHandleStop)
     {
+        if (trailElemCount++ >= MAX_TRAIL_ELEMS)
+            FX_DropCorruptUpdateList("trail-element update chain exceeds pool capacity");
         if (trailElemHandle == 0xFFFF)
             MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 1519, 0, "%s", "trailElemHandle != FX_HANDLE_NONE");
         if (!system)
             MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 348, 0, "%s", "system");
-        remoteTrailElem = (FxTrailElem *)FX_PoolFromHandle_Generic<FxTrailElem, 2048>(system->trailElems, trailElemHandle);
+        remoteTrailElem =
+            &FX_GetAllocatedUpdateTrailElem(system, trailElemHandle)->item;
         trailElem = remoteTrailElem;
         trailElemHandleNext = remoteTrailElem->nextTrailElemHandle;
         if (FX_UpdateTrailElement(system, effect, trail, remoteTrailElem, msecUpdateBegin, msecUpdateEnd))
@@ -2001,14 +2166,16 @@ void __cdecl FX_UpdateEffectPartialTrail(
         {
             FX_FreeTrailElem(system, trailElemHandleLast, effect, trail);
         }
-        else if ((effect->status & 0x10000) != 0)
+        else if ((static_cast<std::uint32_t>(
+                     Sys_AtomicLoad(&effect->status))
+                     & FX_STATUS_HAS_PENDING_LOOP_ELEMS) != 0)
         {
             if (!trailElem)
                 MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 1551, 0, "%s", "trailElem");
             trailElem->spawnDist = effect->distanceTraveled;
             FX_GetOriginForTrailElem(
                 effect,
-                &effect->def->elemDefs[trail->defIndex],
+                trailElemDef,
                 frameNow,
                 (296 * trailElem->sequence + trailElem->msecBegin + (uint32_t)effect->randomSeed) % 0x1DF,
                 trailElem->origin,
@@ -2019,10 +2186,10 @@ void __cdecl FX_UpdateEffectPartialTrail(
     }
 }
 
-void __cdecl FX_TrailElem_CompressBasis(const float (*inBasis)[3], char (*outBasis)[3])
+void __cdecl FX_TrailElem_CompressBasis(
+    const float (*inBasis)[3],
+    std::int8_t (*outBasis)[3])
 {
-    int32_t v2; // [esp+0h] [ebp-10h]
-    int32_t v3; // [esp+4h] [ebp-Ch]
     int32_t basisVecIter; // [esp+8h] [ebp-8h]
     int32_t dimIter; // [esp+Ch] [ebp-4h]
 
@@ -2030,19 +2197,15 @@ void __cdecl FX_TrailElem_CompressBasis(const float (*inBasis)[3], char (*outBas
     {
         for (dimIter = 0; dimIter != 3; ++dimIter)
         {
-            v3 = (int)((float)(*inBasis)[3 * basisVecIter + dimIter] * 127.0);
-            if (v3 >= -128)
-            {
-                if (v3 <= 127)
-                    v2 = (int)((float)(*inBasis)[3 * basisVecIter + dimIter] * 127.0);
-                else
-                    v2 = 127;
-            }
-            else
-            {
-                v2 = 0x80;
-            }
-            (*outBasis)[3 * basisVecIter + dimIter] = v2;
+            const float component = inBasis[basisVecIter][dimIter];
+            if (!std::isfinite(component))
+                FX_DropCorruptUpdateList("non-finite trail basis");
+            const float scaled = component * 127.0f;
+            const float clamped = scaled < -128.0f
+                ? -128.0f
+                : (scaled > 127.0f ? 127.0f : scaled);
+            outBasis[basisVecIter][dimIter] = static_cast<std::int8_t>(
+                static_cast<std::int32_t>(clamped));
         }
     }
 }
@@ -2056,12 +2219,15 @@ FxUpdateResult __cdecl FX_UpdateTrailElement(
     int32_t msecUpdateEnd)
 {
     int32_t v7; // [esp+4h] [ebp-B4h]
-    int32_t v8; // [esp+8h] [ebp-B0h]
     float v9; // [esp+10h] [ebp-A8h]
     FxUpdateElem update; // [esp+28h] [ebp-90h] BYREF
     FxUpdateResult updateResult; // [esp+A8h] [ebp-10h] BYREF
     float baseVel[3]; // [esp+ACh] [ebp-Ch] BYREF
 
+    if (!trail || !trailElem)
+        FX_DropCorruptUpdateList("missing trail-element update state");
+    FX_ValidateUpdateTrailDef(
+        FX_GetValidatedUpdateElemDef(effect, trail->defIndex));
     updateResult = FX_UPDATE_KEEP;
     if (FX_UpdateElement_SetupUpdate(
         effect,
@@ -2090,19 +2256,30 @@ FxUpdateResult __cdecl FX_UpdateTrailElement(
                 PROF_SCOPED("FX_UpdateOrigin");
                 updateResult = (FxUpdateResult)FX_UpdateElementPosition(system, &update);
             }
-            v8 = (int)(baseVel[2] / EQUAL_EPSILON);
-            if (v8 >= -32768)
+            const double compressedBaseVelZ =
+                static_cast<double>(baseVel[2]) / EQUAL_EPSILON;
+            if (!std::isfinite(compressedBaseVelZ))
             {
-                if (v8 <= 0x7FFF)
-                    v7 = (int)(baseVel[2] / EQUAL_EPSILON);
-                else
-                    v7 = 0x7FFF;
+                FX_DropCorruptUpdateList(
+                    "non-finite trail vertical velocity");
+            }
+            if (compressedBaseVelZ
+                <= (std::numeric_limits<std::int16_t>::min)())
+            {
+                v7 = (std::numeric_limits<std::int16_t>::min)();
+            }
+            else if (compressedBaseVelZ
+                     >= (std::numeric_limits<std::int16_t>::max)())
+            {
+                v7 = (std::numeric_limits<std::int16_t>::max)();
             }
             else
             {
-                v7 = 0x8000;
+                // The range check above makes this floating-to-integral
+                // conversion defined on every supported compiler.
+                v7 = static_cast<std::int32_t>(compressedBaseVelZ);
             }
-            trailElem->baseVelZ = v7;
+            trailElem->baseVelZ = static_cast<std::int16_t>(v7);
         }
     }
     return updateResult;
@@ -2119,18 +2296,38 @@ void __cdecl FX_UpdateSpotLight(FxCmd* cmd)
         if (!cmd->system)
             MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 1831, 0, "%s", "system");
         FX_BeginIteratingOverEffects_Cooperative(system);
-        if (system->activeSpotLightEffectCount > 0)
+        FxSpotLightStateSnapshot spotLightSnapshot{};
+        if (!FX_GetSpotLightStateSnapshot(system, &spotLightSnapshot))
+            FX_DropCorruptUpdateList("missing spotlight state");
+        const std::int32_t activeSpotLightEffectCount =
+            spotLightSnapshot.effectCount;
+        const std::int32_t activeSpotLightElemCount =
+            spotLightSnapshot.elemCount;
+        if (activeSpotLightEffectCount < 0
+            || activeSpotLightEffectCount > 1
+            || activeSpotLightElemCount < 0
+            || activeSpotLightElemCount > activeSpotLightEffectCount)
         {
-            if (system->activeSpotLightEffectCount != 1)
-                MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 1836, 0, "%s", "system->activeSpotLightEffectCount == 1");
-            for (effect = FX_EffectFromHandle(system, system->activeSpotLightEffectHandle);
-                Sys_AtomicFetchAdd(&effect->status, 0x20000000) >= 0x20000000;
-                Sys_AtomicFetchAdd(&effect->status, -536870912))
+            FX_EndIteratingOverEffects_Cooperative(system);
+            FX_DropCorruptUpdateList("invalid spotlight count pair");
+        }
+        if (activeSpotLightEffectCount == 1)
+        {
+            effect = FX_EffectFromHandle(
+                system, spotLightSnapshot.effectHandle);
+            const bool effectLocked = FX_LockEffect(system, effect);
+            FxSpotLightStateSnapshot lockedSnapshot{};
+            if (effectLocked
+                && !FX_GetSpotLightStateSnapshot(system, &lockedSnapshot))
+                FX_DropCorruptUpdateList("missing locked spotlight state");
+            if (effectLocked && lockedSnapshot.effectCount == 1
+                && lockedSnapshot.effectHandle
+                    == spotLightSnapshot.effectHandle)
             {
-                ;
+                FX_UpdateSpotLightEffect(system, effect);
             }
-            FX_UpdateSpotLightEffect(system, effect);
-            Sys_AtomicFetchAdd(&effect->status, -536870912);
+            if (effectLocked)
+                FX_UnlockEffect(system, effect);
         }
         FX_EndIteratingOverEffects_Cooperative(system);
         if (fx_draw->current.enabled)
@@ -2146,10 +2343,32 @@ void __cdecl FX_UpdateSpotLightEffect(FxSystem* system, FxEffect* effect)
     float newDistanceTraveled; // [esp+40h] [ebp-8h]
     uint32_t elemClass; // [esp+44h] [ebp-4h]
 
-    if ((uint16_t)effect->status && effect->msecLastUpdate <= system->msecNow)
+    if (!FX_IsEffectLifecycleBlocked(effect)
+        && (static_cast<std::uint32_t>(Sys_AtomicLoad(&effect->status))
+            & FX_STATUS_REF_COUNT_MASK) != 0
+        && effect->msecLastUpdate <= system->msecNow)
     {
         FX_UpdateEffectBolt(system, effect);
-        system->activeSpotLightBoltDobj = effect->boltAndSortOrder.dobjHandle;
+        if (effect->boltAndSortOrder.boneIndex == FX_BONE_INDEX_NONE)
+        {
+            // World and mark-entity effects are not attached to a DObj.  The
+            // packed no-DObj sentinel does not fit the signed runtime field
+            // and must never reach Com_GetClientDObj.
+            if (!FX_SetSpotLightBoltDobj(system, -1))
+                FX_DropCorruptUpdateList("missing spotlight bolt state");
+        }
+        else
+        {
+            if (effect->boltAndSortOrder.dobjHandle >= CLIENT_DOBJ_HANDLE_MAX)
+                FX_DropCorruptUpdateList("invalid spotlight DObj handle");
+            if (!FX_SetSpotLightBoltDobj(
+                    system,
+                    static_cast<std::int16_t>(
+                        effect->boltAndSortOrder.dobjHandle)))
+            {
+                FX_DropCorruptUpdateList("missing spotlight bolt state");
+            }
+        }
         Vec3Sub(effect->frameNow.origin, effect->framePrev.origin, diff);
         v2 = Vec3Length(diff);
         newDistanceTraveled = effect->distanceTraveled + v2;
@@ -2182,15 +2401,26 @@ void __cdecl FX_UpdateSpotLightEffectPartial(
     uint16_t activeSpotLightElemHandle; // [esp+12h] [ebp-Ah]
     FxPool<FxElem>* elem; // [esp+18h] [ebp-4h]
 
-    if (system->activeSpotLightEffectCount != 1)
-        MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 1411, 0, "%s", "system->activeSpotLightEffectCount == 1");
-    if (effect != FX_EffectFromHandle(system, system->activeSpotLightEffectHandle))
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_update.cpp",
-            1412,
-            0,
-            "%s",
-            "effect == FX_EffectFromHandle( system, system->activeSpotLightEffectHandle )");
+    if (!system || !effect)
+        FX_DropCorruptUpdateList("missing spotlight update state");
+    if (FX_IsEffectLifecycleBlocked(effect))
+        return;
+    FxSpotLightStateSnapshot spotLightSnapshot{};
+    if (!FX_GetSpotLightStateSnapshot(system, &spotLightSnapshot))
+        FX_DropCorruptUpdateList("missing spotlight update snapshot");
+    const std::int32_t activeSpotLightEffectCount =
+        spotLightSnapshot.effectCount;
+    const std::int32_t activeSpotLightElemCount =
+        spotLightSnapshot.elemCount;
+    if (activeSpotLightEffectCount != 1
+        || activeSpotLightElemCount < 0
+        || activeSpotLightElemCount > 1)
+    {
+        FX_DropCorruptUpdateList(
+            "spotlight update requested without a valid effect/element count pair");
+    }
+    if (effect != FX_EffectFromHandle(system, spotLightSnapshot.effectHandle))
+        FX_DropCorruptUpdateList("spotlight effect handle does not match the update effect");
     if (effect->msecLastUpdate > msecUpdateEnd)
         MyAssertHandler(
             ".\\EffectsCore\\fx_update.cpp",
@@ -2199,14 +2429,24 @@ void __cdecl FX_UpdateSpotLightEffectPartial(
             "effect->msecLastUpdate <= msecUpdateEnd\n\t%g, %g",
             (double)effect->msecLastUpdate,
             (double)msecUpdateEnd);
-    if (system->activeSpotLightElemCount)
+    if (activeSpotLightElemCount == 1)
     {
-        activeSpotLightElemHandle = system->activeSpotLightElemHandle;
+        activeSpotLightElemHandle = spotLightSnapshot.elemHandle;
         if (!system)
             MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 334, 0, "%s", "system");
-        elem = FX_PoolFromHandle_Generic<FxElem, 2048>(system->elems, activeSpotLightElemHandle);
-        if (FX_UpdateElement(system, effect, (FxElem*)elem, msecUpdateBegin, msecUpdateEnd) == FX_UPDATE_REMOVE)
-            FX_FreeSpotLightElem(system, system->activeSpotLightElemHandle, effect);
+        elem = FX_GetAllocatedUpdateElem(system, activeSpotLightElemHandle);
+        const FxElemDef *const elemDef =
+            FX_GetValidatedUpdateElemDef(effect, elem->item.defIndex);
+        if (elemDef->elemType != FX_ELEM_TYPE_SPOT_LIGHT)
+            FX_DropCorruptUpdateList("spotlight element has a non-spotlight definition");
+        if (FX_UpdateElement(
+                system,
+                effect,
+                &elem->item,
+                msecUpdateBegin,
+                msecUpdateEnd)
+            == FX_UPDATE_REMOVE)
+            FX_FreeSpotLightElem(system, spotLightSnapshot.elemHandle, effect);
     }
 }
 
@@ -2250,22 +2490,38 @@ void __cdecl FX_UpdateNonDependent(FxCmd *cmd)
 void __cdecl FX_Update(FxSystem* system, int32_t localClientNum, bool nonBoltedEffectsOnly)
 {
     FxEffect* localEffect; // [esp+48h] [ebp-Ch]
-    volatile int32_t activeIndex; // [esp+4Ch] [ebp-8h]
+    std::uint32_t activeIndex; // [esp+4Ch] [ebp-8h]
 
     PROF_SCOPED("FX_Update");
 
     iassert(system);
 
     FX_BeginIteratingOverEffects_Cooperative(system);
-    for (activeIndex = system->firstActiveEffect; activeIndex != system->firstNewEffect; ++activeIndex)
+    const std::int32_t firstActiveEffect =
+        Sys_AtomicLoad(&system->firstActiveEffect);
+    const std::int32_t firstNewEffect =
+        Sys_AtomicLoad(&system->firstNewEffect);
+    const std::int64_t activeEffectCount64 =
+        static_cast<std::int64_t>(firstNewEffect) - firstActiveEffect;
+    if (firstActiveEffect < 0 || firstNewEffect < firstActiveEffect
+        || activeEffectCount64 > FX_EFFECT_LIMIT)
+        FX_DropCorruptUpdateList("active effect ring exceeds capacity");
+    const std::uint32_t activeEffectCount =
+        static_cast<std::uint32_t>(activeEffectCount64);
+    for (std::uint32_t activeOffset = 0;
+         activeOffset < activeEffectCount;
+         ++activeOffset)
     {
+        activeIndex =
+            static_cast<std::uint32_t>(firstActiveEffect) + activeOffset;
         localEffect = FX_EffectFromHandle(system, system->allEffectHandles[activeIndex & 0x3FF]);
         if (FX_ShouldProcessEffect(system, localEffect, nonBoltedEffectsOnly))
         {
-            while (Sys_AtomicFetchAdd(&localEffect->status, 0x20000000) >= 0x20000000)
-                Sys_AtomicFetchAdd(&localEffect->status, -536870912);
-            FX_UpdateEffect(system, localEffect);
-            Sys_AtomicFetchAdd(&localEffect->status, -536870912);
+            if (FX_LockEffect(system, localEffect))
+            {
+                FX_UpdateEffect(system, localEffect);
+                FX_UnlockEffect(system, localEffect);
+            }
         }
     }
     FX_EndIteratingOverEffects_Cooperative(system);
@@ -2279,7 +2535,10 @@ void __cdecl FX_UpdateEffect(FxSystem* system, FxEffect* effect)
     float newDistanceTraveled; // [esp+40h] [ebp-8h]
     uint32_t elemClass; // [esp+44h] [ebp-4h]
 
-    if ((uint16_t)effect->status && effect->msecLastUpdate <= system->msecNow)
+    if (!FX_IsEffectLifecycleBlocked(effect)
+        && (static_cast<std::uint32_t>(Sys_AtomicLoad(&effect->status))
+            & FX_STATUS_REF_COUNT_MASK) != 0
+        && effect->msecLastUpdate <= system->msecNow)
     {
         FX_UpdateEffectBolt(system, effect);
         Vec3Sub(effect->frameNow.origin, effect->framePrev.origin, diff);
@@ -2306,7 +2565,9 @@ void __cdecl FX_UpdateEffect(FxSystem* system, FxEffect* effect)
 
 bool __cdecl FX_ShouldProcessEffect(FxSystem *system, FxEffect *effect, bool nonBoltedEffectsOnly)
 {
-    return (!nonBoltedEffectsOnly || effect->boltAndSortOrder.boneIndex == 0x7FF)
+    return !FX_IsEffectLifecycleBlocked(effect)
+        && (!nonBoltedEffectsOnly
+            || effect->boltAndSortOrder.boneIndex == 0x7FF)
         && Sys_AtomicExchange(&effect->frameCount, system->frameCount) != system->frameCount;
 }
 
@@ -2371,75 +2632,164 @@ void __cdecl FX_AddNonSpriteDrawSurfs(FxCmd *cmd)
 
 void __cdecl FX_RewindTo(int32_t localClientNum, int32_t time)
 {
-    volatile int32_t *Destination; // [esp+4h] [ebp-10ACh]
-    volatile int32_t Comperand; // [esp+8h] [ebp-10A8h]
-    uint16_t v4; // [esp+18h] [ebp-1098h]
-    FxEffect *effect; // [esp+1Ch] [ebp-1094h]
-    FxEffect *effecta; // [esp+1Ch] [ebp-1094h]
-    FxEffect *effectb; // [esp+1Ch] [ebp-1094h]
-    uint32_t dst[32]; // [esp+20h] [ebp-1090h] BYREF
-    int32_t bitNum; // [esp+A0h] [ebp-1010h]
-    FxSystem *system; // [esp+A4h] [ebp-100Ch]
-    FxEffect* v11[1024]; // [esp+A8h] [ebp-1008h]
-    int32_t v12; // [esp+10A8h] [ebp-8h]
-    volatile int32_t i; // [esp+10ACh] [ebp-4h]
-
-    system = FX_GetSystem(localClientNum);
+    FxSystem *const system = FX_GetSystem(localClientNum);
     if (!system)
-        MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 2052, 0, "%s", "system");
-    if (time < system->msecNow)
     {
-        system->msecNow = time;
-        v12 = 0;
-        memset((uint8_t *)dst, 0, sizeof(dst));
-        FX_BeginIteratingOverEffects_Cooperative(system);
-        for (i = system->firstActiveEffect; i != system->firstNewEffect; ++i)
-        {
-            v4 = system->allEffectHandles[i & 0x3FF];
-            effect = FX_EffectFromHandle(system, v4);
-            v11[v12++] = effect;
-            if ((uint16_t)effect->status && effect->msecBegin < time && effect->owner == v4)
-            {
-                FX_AddRefToEffect(system, effect);
-                Com_BitSetAssert(dst, v12 - 1, 128);
-            }
-        }
-        for (bitNum = 0; bitNum < v12; ++bitNum)
-        {
-            effecta = (FxEffect *)v11[bitNum];
-            if ((uint16_t)effecta->status)
-            {
-                while (Sys_AtomicFetchAdd(&effecta->status, 0x20000000) >= 0x20000000)
-                    Sys_AtomicFetchAdd(&effecta->status, -536870912);
-                FX_KillEffect(system, effecta);
-                Sys_AtomicFetchAdd(&effecta->status, -536870912);
-            }
-        }
-        FX_EndIteratingOverEffects_Cooperative(system);
-        for (bitNum = 0; bitNum < v12; ++bitNum)
-        {
-            if (Com_BitCheckAssert(dst, bitNum, 128))
-            {
-                effectb = (FxEffect *)v11[bitNum];
-                effectb->msecLastUpdate = effectb->msecBegin;
-                if (effectb->def->msecLoopingLife)
-                {
-                    Destination = &effectb->status;
-                    do
-                        Comperand = *Destination;
-                    while (Sys_AtomicCompareExchange(Destination, Comperand | 0x10000, Comperand) != Comperand);
-                    FX_StartNewEffect(system, effectb);
-                }
-                else
-                {
-                    FX_StartNewEffect(system, effectb);
-                    FX_DelRefToEffect(system, effectb);
-                }
-            }
-        }
-        if (FxGarbageCollectionRequested(&system->needsGarbageCollection))
-            FX_RunGarbageCollection(system);
+        MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 2052, 0, "%s", "system");
+        return;
     }
+    if (time >= system->msecNow)
+        return;
+    if (!FX_BeginEffectKillExclusive(system))
+    {
+        FX_DropCorruptUpdateList("rewind could not acquire exclusive ownership");
+    }
+    if (time >= system->msecNow)
+    {
+        if (!FX_EndEffectKillExclusive(system))
+            FX_DropCorruptUpdateList("rewind could not release exclusive ownership");
+        return;
+    }
+    if (!FX_ValidateEffectKillExclusiveState(system))
+    {
+        FX_DropCorruptUpdateList(
+            "rewind found an invalid FX kill transaction state");
+    }
+
+    system->msecNow = time;
+    std::array<FxEffect *, FX_EFFECT_LIMIT> effects{};
+    std::array<bool, FX_EFFECT_LIMIT> restartRoots{};
+    const std::int32_t firstActiveEffect =
+        Sys_AtomicLoad(&system->firstActiveEffect);
+    const std::int32_t firstNewEffect =
+        Sys_AtomicLoad(&system->firstNewEffect);
+    const std::int32_t firstFreeEffect =
+        Sys_AtomicLoad(&system->firstFreeEffect);
+    const std::int64_t activeEffectCount64 =
+        static_cast<std::int64_t>(firstNewEffect) - firstActiveEffect;
+    if (firstActiveEffect < 0 || firstNewEffect < firstActiveEffect
+        || firstNewEffect != firstFreeEffect
+        || activeEffectCount64 > FX_EFFECT_LIMIT)
+    {
+        FX_DropCorruptUpdateList("rewind effect ring is not quiescent");
+    }
+    const std::size_t activeEffectCount =
+        static_cast<std::size_t>(activeEffectCount64);
+    for (std::size_t activeOffset = 0;
+         activeOffset < activeEffectCount;
+         ++activeOffset)
+    {
+        const std::size_t activeIndex =
+            static_cast<std::size_t>(firstActiveEffect) + activeOffset;
+        const std::uint16_t effectHandle =
+            system->allEffectHandles[
+                activeIndex & (FX_EFFECT_LIMIT - 1)];
+        FxEffect *const effect =
+            FX_EffectFromHandle(system, effectHandle);
+        effects[activeOffset] = effect;
+        const std::uint32_t status = static_cast<std::uint32_t>(
+            Sys_AtomicLoad(&effect->status));
+        if ((status & FX_STATUS_REF_COUNT_MASK) != 0
+            && !FX_IsEffectLifecycleBlocked(effect)
+            && effect->msecBegin < time
+            && effect->owner == effectHandle)
+        {
+            if (!FX_RetainEffectForRestart(system, effect))
+                FX_DropCorruptUpdateList("rewind could not retain a restart root");
+            restartRoots[activeOffset] = true;
+        }
+    }
+
+    for (std::size_t effectIndex = 0;
+         effectIndex < activeEffectCount;
+         ++effectIndex)
+    {
+        FxEffect *const effect = effects[effectIndex];
+        const std::uint32_t status = static_cast<std::uint32_t>(
+            Sys_AtomicLoad(&effect->status));
+        if ((status & FX_STATUS_REF_COUNT_MASK) != 0
+            && !FX_IsEffectLifecycleBlocked(effect))
+        {
+            FX_KillEffect(system, effect);
+        }
+    }
+    if (!FX_ValidateEffectKillExclusiveState(system))
+    {
+        FX_DropCorruptUpdateList(
+            "rewind produced an invalid killed FX graph");
+    }
+    if (FxGarbageCollectionRequested(&system->needsGarbageCollection))
+        FX_RunGarbageCollection(system);
+    if (!FX_ValidateEffectKillExclusiveState(system))
+    {
+        FX_DropCorruptUpdateList(
+            "rewind garbage collection invalidated the FX graph");
+    }
+    for (std::size_t effectIndex = 0;
+         effectIndex < activeEffectCount;
+         ++effectIndex)
+    {
+        if (restartRoots[effectIndex]
+            && !FX_IsEffectLifecycleBlocked(effects[effectIndex]))
+        {
+            FX_DropCorruptUpdateList("rewind restart root was not killed");
+        }
+    }
+
+    if (!FX_DowngradeEffectKillExclusiveToCooperative(system))
+        FX_DropCorruptUpdateList("rewind could not downgrade its iterator");
+
+    for (std::size_t effectIndex = 0;
+         effectIndex < activeEffectCount;
+         ++effectIndex)
+    {
+        if (!restartRoots[effectIndex])
+            continue;
+        FxEffect *const effect = effects[effectIndex];
+        if (!FX_LockEffect(system, effect))
+            FX_DropCorruptUpdateList("rewind lost a retained restart root");
+        if (!FX_IsEffectLifecycleBlocked(effect)
+            || !FX_RearmEffectForRestart(system, effect))
+        {
+            FX_DropCorruptUpdateList("rewind could not rearm a restart root");
+        }
+        effect->msecLastUpdate = effect->msecBegin;
+        if (effect->def->msecLoopingLife)
+        {
+            std::int32_t observed = Sys_AtomicLoad(&effect->status);
+            for (;;)
+            {
+                const std::int32_t desired = observed
+                    | FX_STATUS_HAS_PENDING_LOOP_ELEMS;
+                const std::int32_t previous = Sys_AtomicCompareExchange(
+                    &effect->status, desired, observed);
+                if (previous == observed)
+                    break;
+                observed = previous;
+            }
+            if (!FX_ConsumeEffectRestartRetain(
+                    system, effect, false))
+            {
+                FX_DropCorruptUpdateList(
+                    "rewind lost a looping restart retain");
+            }
+            FX_StartNewEffect(system, effect);
+        }
+        else
+        {
+            FX_StartNewEffect(system, effect);
+            if (!FX_ConsumeEffectRestartRetain(
+                    system, effect, true))
+            {
+                FX_DropCorruptUpdateList(
+                    "rewind lost a one-shot restart retain");
+            }
+        }
+        FX_UnlockEffect(system, effect);
+    }
+    if (!FX_EndEffectRestartGate(system))
+        FX_DropCorruptUpdateList("rewind could not reopen FX admission");
+    FX_EndIteratingOverEffects_Cooperative(system);
 }
 
 void __cdecl FX_SetNextUpdateCamera(int32_t localClientNum, const refdef_s *refdef, float zfar)

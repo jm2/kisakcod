@@ -6,13 +6,15 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Branch: `master`; upstream-integration baseline: `2b759db`.
+- Branch: `agent/effectscore-runtime-hardening`; branch point: `0a713013`; upstream-integration
+  baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: clear the Windows portable runtime gate for the new bounded filesystem enumeration,
-  verify the final renderer/FX atomic migrations in all nine CI jobs, then run the protected licensed
-  headless smoke and continue handle-relative deletion plus the staged FX freelist/status protocols.
-- Progress estimate: approximately **25% complete by engineering effort** (plausible range 21–30%).
-  The foundation/checklist view is about 40–45% and the shared foundation is roughly 75–85% mature,
+- Active work: land and obtain all-target evidence for the hardened EffectsCore pool, archive,
+  draw/update/profile, lifecycle, kill, garbage-collection, and rewind transaction; then complete the
+  bounded load-object/Disk32 FX boundary while the protected licensed headless smoke waits for its
+  self-hosted runners.
+- Progress estimate: approximately **29% complete by engineering effort** (plausible range 25–34%).
+  The foundation/checklist view is about 46–51% and the shared foundation is roughly 83–90% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
   (nine commits; upstream was not ahead at merge time) while preserving the port's pointer-width and
@@ -39,10 +41,32 @@ work item changes. Do not create session-specific handoff files.
   native impact-table allocations, and a native `FxProfileEntry` sort stride. A shared checked blob
   cursor now gives every pointer-bearing converted payload its native alignment, zeroes padding, rejects
   signed-size/capacity overflow transactionally, and verifies planner/writer parity. Disk32 work remains
-  for `fx_archive`, fast-file impact-table reads, and `fx_load_obj` offset fixups; iterator/status/freelist
-  protocols and x86 handle decoding remain staged runtime work. The visibility blocker protocol now
-  validates finite packed inputs, uses all 256 slots, writes each payload before atomically publishing
-  its count, bounds corrupt reader counts, and preserves the external generate-verts completion handoff.
+  for `fx_archive`, fast-file impact-table reads, and `fx_load_obj` offset fixups. Freelist allocation/free
+  now validates heads, links, strides, counts, and ownership before mutation, clears payloads before
+  publication, maintains atomic active counts, and leaves failed mutations transactional. Native-size
+  effect handle codecs remove the x86-only `0x8000` ceiling and reject malformed/misaligned handles.
+  Fixed-size allocation sidecars reject arbitrary non-head duplicate frees in O(1), prevent short
+  freelist cycles, and are rebuilt transactionally from bounded acyclic archive lists while requiring
+  archived active counts to match. Reset, allocate, free, and restore all share that ownership state.
+  Archive effect-ring/table fixup and class-1 physics walks, sorting, draw, update, profile, bulk removal,
+  garbage collection, retrigger, trail, and spawn paths now bound their rings/chains and validate pool
+  allocation plus definition indices before access or mutation; malformed GC handles drop only after
+  iterator ownership is released. Public kill/kill-definition/kill-all/through paths use a writer-intent
+  gate, retain and lock a validated owner subtree, and keep allocation sidecars consistent with a durable
+  lifecycle marker so killed externally referenced effects cannot be resurrected or respawn children.
+  Rewind retains restart roots, kills and collects under that same exclusive transaction, atomically
+  downgrades to a cooperative reader, and holds admission closed until every root is rearmed; explicit
+  longjmp cleanup releases reservations, retains, locks, writer/restart gates, and iterator ownership.
+  The legacy 32-bit save/restore path validates system/camera/visibility scalars, runtime semantics,
+  pool ownership, and physics before publication, stages the replacement graph, rolls back a failed
+  commit, and deliberately rejects 64-bit use until the Disk32 converter exists.
+  Packed reference, owned-effect, pending-loop, and lock transitions use bounded CAS operations instead
+  of arithmetic that can carry into adjacent fields. Trail byte fields have explicit signedness,
+  preserving compressed negative basis vectors on Linux ARM64. The visibility blocker protocol validates
+  finite packed inputs, uses all 256 slots, publishes payloads before counts, and bounds corrupt readers.
+  Remaining FX-specific work is the real 64-bit Disk32 archive conversion, a fully bounded/aligned
+  `fx_load_obj` cursor, camera/scalar snapshot publication, production integration fixtures, and Windows
+  engine compile/runtime evidence.
 - Current model draw-stream batch: a shared checked dword-offset resolver validates the published surface
   arena, overflow, native alignment, full record extent, and tag before access. Static scene traversal
   handles hidden and rigid records without raw pointer stepping; all five draw-XModel and seven scoped
@@ -65,13 +89,15 @@ work item changes. Do not create session-specific handoff files.
   validates every ancestor without following POSIX symlinks or Win32 reparse points; Windows uses wide
   long-path APIs and rejects invalid/DOS-device components. Common wrappers no longer truncate at 256
   bytes and preserve POSIX, drive, extended-drive, and UNC roots. Recursive deletion deliberately remains
-  Win32 debt pending handle-relative enumeration/deletion. The integrated utility suite passes **29/29**
+  Win32 debt pending handle-relative enumeration/deletion. The integrated utility suite passes **30/30**
   locally under GCC, Clang, ASan/UBSan, and TSan. Run **29215880727** passed every engine job and all three
   POSIX utility jobs, but the filesystem contract failed without diagnostics on Windows amd64/ARM64;
   diagnostic run **29216713463** isolated that failure to a test forcing the process current directory
   beyond the default Windows `MAX_PATH` policy, before enumeration began. The corrected fixture still
   verifies dynamic current-directory sizing below that policy boundary on Windows, retains the >320-byte
-  POSIX case, uses native wide file APIs, and emits granular Win32 diagnostics in replacement CI.
+  POSIX case, uses native wide file APIs, and emits granular Win32 diagnostics. Replacement run
+  **29250761031 passed all nine jobs**, including Windows amd64/ARM64 portable runtime tests and all four
+  Windows engine variants.
 - Current DObj/model-surface batch: the inherited fixed 3,600-byte stack overlay and retail
   4/24/56-byte pointer-bearing stream assumptions are gone. A shared checked planner/cursor uses
   native 4/8, 24/40, and 56/72-byte records, aligned exact-capacity CAS reservations, placement
@@ -91,7 +117,8 @@ work item changes. Do not create session-specific handoff files.
   an assignment-only commit; ordinary failure paths discard their owned plan. Local validation is
   **23/23** under GCC, Clang, ASan/UBSan (with leak detection disabled for the ptrace runner), and
   TSan. That batch removed seven executable native calls and, with the subsequent EffectsCore work,
-  the current census is **9 direct `Interlocked` calls in 4 engine translation units**. Run
+  the census at that checkpoint fell to **9 direct `Interlocked` calls in 4 engine translation units**;
+  the later renderer migration reduced the current executable census to zero. Run
   **29201767094** passed all five portable
   jobs but failed the four Windows engine jobs on two undefined yields, one missing cull-state include,
   and a non-constexpr layout assertion. Corrective commit `89a6122` repaired all four seams: run
@@ -284,11 +311,11 @@ work item changes. Do not create session-specific handoff files.
   the legacy dedicated smoke. The smoke now requires the requested map in the status response, and
   its self-hosted jobs run only from `master` and check out the immutable dispatched SHA. Twenty-one
   client/media includes remain.
-- Portable validation: 23/23 tests pass locally under GCC, Clang, and Clang ASan/UBSan, with leak
+- Portable validation: 30/30 tests pass locally under GCC, Clang, and Clang ASan/UBSan, with leak
   detection disabled because LeakSanitizer cannot run under the command-runner ptrace environment.
   The full suite, including the database and archive/network contracts plus the skeleton-arena and
-  pose publication, renderer-reservation, and MPMC worker-queue contention tests, also passes under
-  Clang ThreadSanitizer.
+  pose publication, renderer-reservation, MPMC worker-queue, and FX iterator/pool contention tests,
+  also passes under Clang ThreadSanitizer.
   The production relocation registry is also strict-warning clean under GCC/Clang and GCC ILP32
   syntax checking. Portable tests do not execute the Windows stream adapter or media ownership paths.
 - Windows validation: AABB warning repair run 29096212752, bounded-direct-reference run
@@ -358,9 +385,9 @@ work item changes. Do not create session-specific handoff files.
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration/IWD search contexts, fixed-width fast locks, native dvar/script/XAnim/DObj/database/IWD/loopback/skeleton/pose/EffectsCore, bounded renderer/model-surface reservations, and a typed fixed-width worker queue exist. The executable engine has zero direct `Interlocked` calls; remaining work is broader raw-width/layout debt and platform integration. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 45 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, complete graphics-world AABB topology validation, and bounded XSurface/XModel skin/skeleton/collision contracts landed; production-path fuzz fixtures and the load-object bounded cursor remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 45 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path/FX graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, complete graphics-world AABB topology validation, bounded XSurface/XModel skin/skeleton/collision contracts, and transactional FX pool/handle ownership validation landed; production-path fuzz fixtures and the load-object bounded cursor remain. |
 | M3 platform services | In progress: thread, memory, and filesystem enumeration integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, virtual-memory lifecycle, UTF-8 mkdir/cwd/executable paths, bounded directory enumeration, and a cooperative worker gate used by renderer workers. Linux/macOS engine/headless sets remain empty and engine-gated; handle-relative recursive deletion, POSIX crash freezing, process/console, and socket backends remain. |
-| M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table and DObj runtime/saved layouts, allocations, preview buffers, and SP corpse pointers are native-width exact. XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads remain 32-bit-layout-bound. |
+| M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table, DObj runtime/saved layouts, allocations, preview buffers, SP corpse pointers, and EffectsCore effect/pool handle codecs are native-width exact. XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, all legacy direct references migrated to bounded resolution, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush, portal/cell, and path-tree spans, and 18 exact completed object types exist; packed mirrors, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
@@ -377,12 +404,13 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Verify the corrective filesystem-enumeration plus final renderer/FX atomic integration in all nine
-   CI jobs, then run the protected licensed-content headless startup/map/`getstatus` workflow.
-2. Design handle-relative recursive deletion without symlink/reparse traversal.
-3. Continue the staged FX freelist/camera/ring/status families and disk32 FX archive boundary.
-4. Extract process/console services and implement Linux signal-park plus macOS Mach crash freezing
-   behind the already isolated terminal API.
+1. Land the EffectsCore runtime-hardening PR and obtain green portable plus Windows engine evidence.
+2. Replace the unbounded/unaligned FX load-object reads and implement the 64-bit Disk32 FX archive
+   conversion with malformed-input and round-trip fixtures.
+3. Monitor the protected licensed-content headless startup/map/`getstatus` workflow, and implement the
+   designed handle-relative recursive deletion service without symlink/reparse traversal.
+4. Extract standard-stream console services, then process/event services and Linux signal-park plus
+   macOS Mach crash freezing behind the already isolated terminal API.
 5. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
 
 ## Known release blockers
@@ -403,10 +431,10 @@ work item changes. Do not create session-specific handoff files.
 - Native time and recursive critical-section services are selected and runtime-tested. The custom
   fast lock now routes every dvar/database reader and writer counter operation through shared
   sequentially consistent helpers, with source guards and reader/writer stress coverage. Broader
-  engine atomics still contain Windows `LONG`, direct volatile polling, and Windows-header coupling;
-  9 executable direct calls remain across 4 renderer translation units,
-  although dvar sorting and all state in `threads.cpp` are now native C++ atomics. Finish that M1
-  migration before compiling a non-Windows engine target.
+  engine state still contains Windows `LONG`, direct volatile polling, and Windows-header coupling,
+  although the executable direct-`Interlocked` census is now zero and dvar sorting plus all state in
+  `threads.cpp` use portable atomics. Finish the remaining raw polling/layout migration before compiling
+  a non-Windows engine target.
 - The renderer worker queue now uses guarded fixed-width element cursors, one full-lifetime work
   count, typed native descriptors, aligned scratch, and unconditional notification; the racy minimum
   hint and x86 payload literals are gone. The shared manual event still uses its inherited 1 ms poll
@@ -422,11 +450,15 @@ work item changes. Do not create session-specific handoff files.
   trusts producer state instead of a shared bounded accessor. Fallible XAnim map construction is
   performed before DObj reservation/locking; make that tree mutation itself transactional if DObj
   creation becomes concurrently reservable. Address these without weakening the exact DObj framing contract.
-- EffectsCore retains 61 native atomic calls and intertwined packed status, iterator, pool,
-  visibility, and signed-ring protocols. Additive lock/refcount updates can carry into adjacent flags;
-  pool corruption can continue into out-of-bounds access; and visibility reservation/packing has an
-  off-by-one plus invalid-float hazards. Land exact-width layouts first, then iterator/scalars, pools,
-  camera/visibility/ring state, and packed status last, each with standalone contention tests.
+- EffectsCore's former 61 native atomic calls, iterator/kill gates, garbage-collection request,
+  visibility publication, freelists, active counts, ownership sidecars, and native handle codecs use
+  checked portable boundaries. Restore reconstructs pool ownership only from bounded acyclic lists;
+  archive, draw/update/profile/sort, spawn, removal, GC, kill, and rewind paths validate their complete
+  traversed state before publication. Bounded CAS helpers prevent packed reference/owned/pending/lock
+  fields from carrying into neighbors, and a durable admission marker prevents killed records with
+  external references from re-entering the graph. Remaining blockers are camera/scalar publication,
+  the unbounded/alignment-unsafe load-object cursor, real Disk32 FX archive conversion on 64-bit targets,
+  production fixtures, and all-target engine evidence.
 - XAnim tree/table ownership and DObj runtime storage are native-width-safe, but the animation payload
   is not: `XAnimIndices` and `XAnimParts` still freeze the retail 32-bit layout, `XAnimClone` still
   allocates 88 bytes, and load-object code contains matching 32-bit payload assumptions. The actual

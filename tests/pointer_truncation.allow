@@ -10,7 +10,6 @@ cgame_mp/cg_pose_mp.cpp|2
 cgame_mp/cg_pose_mp.cpp|3
 common/brush_edges.cpp|1
 devgui/devgui.cpp|1
-EffectsCore/fx_update.cpp|1
 game/g_targets.cpp|1
 game/pathnode.cpp|1
 game/sentient.cpp|1

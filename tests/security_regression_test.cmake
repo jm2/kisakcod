@@ -5200,9 +5200,9 @@ require_source_contains(
     "EffectsCore/fx_system.cpp"
     "visuals.model->physPreset"
     "effect physics must use typed XModel physics-preset access")
-require_source_contains(
+require_source_matches(
     "EffectsCore/fx_profile.cpp"
-    "qsort(entryPool, entryCount, sizeof(FxProfileEntry)"
+    "qsort\\([ \t\r\n]*entryPool,[ \t\r\n]*entryCount,[ \t\r\n]*sizeof\\(FxProfileEntry\\)"
     "FX profiling must sort with the native pointer-bearing entry stride")
 require_source_ordered(
     "EffectsCore/fx_update_util.cpp"
@@ -5237,7 +5237,7 @@ require_source_contains(
 require_all_occurrences_wrapped(
     "EffectsCore/fx_draw.cpp"
     "&system->iteratorCount"
-    "FxIterator(BeginCooperative|EndCooperative)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
+    "(FxIterator(BeginCooperative|EndCooperative|DowngradeExclusiveToCooperative)|Sys_Atomic(Load|CompareExchange))[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
     "FX cooperative iterator ownership")
 require_all_occurrences_wrapped(
     "EffectsCore/fx_sort.cpp"
@@ -5247,38 +5247,125 @@ require_all_occurrences_wrapped(
 require_all_occurrences_wrapped(
     "EffectsCore/fx_system.cpp"
     "&system->iteratorCount"
-    "(Sys_AtomicStore|FxIteratorEndExclusive|FxIteratorTryBeginExclusive)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
+    "(Sys_AtomicLoad|Sys_AtomicStore|FxIteratorEndExclusive|FxIteratorTryBeginExclusive|FxIteratorWaitBeginExclusive)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
     "FX system iterator initialization and exclusive ownership")
 require_source_match_count(
     "EffectsCore/fx_draw.cpp"
     "FxIterator(BeginCooperative|EndCooperative)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
-    2
-    "both cooperative iterator transitions must use their shared helpers")
+    5
+    "nested/cooperative admission, rollback, release, and error unwind must use their shared helpers")
 require_source_match_count(
     "EffectsCore/fx_sort.cpp"
-    "FxIterator(WaitBeginExclusive|EndExclusive)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
-    2
-    "both sort iterator transitions must use their shared helpers")
+    "FxIterator(WaitBeginExclusive|EndExclusive)[ \t\r\n]*\\([ \t\r\n]*&(state\\.)?system->iteratorCount"
+    4
+    "sort admission, archive-race rollback, normal release, and error unwind must use their shared helpers")
 require_source_match_count(
     "EffectsCore/fx_system.cpp"
-    "(Sys_AtomicStore|FxIteratorEndExclusive|FxIteratorTryBeginExclusive)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
-    3
-    "system iterator reset and exclusive transitions must remain explicit")
+    "(Sys_AtomicLoad|Sys_AtomicStore|FxIteratorEndExclusive|FxIteratorTryBeginExclusive|FxIteratorWaitBeginExclusive)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
+    15
+    "system reset, shutdown checks, archive ownership/error unwind, garbage collection, and rollback transitions must remain explicit")
 require_source_match_count(
     "EffectsCore/fx_draw.cpp"
     "system->iteratorCount"
-    3
+    7
     "all cooperative iterator references must remain accounted for")
 require_source_match_count(
     "EffectsCore/fx_sort.cpp"
     "system->iteratorCount"
-    3
+    4
     "all sort iterator references must remain accounted for")
 require_source_match_count(
     "EffectsCore/fx_system.cpp"
     "system->iteratorCount"
-    4
+    17
     "all system iterator references must remain accounted for")
+
+# Archive ownership uses an external gate to stop new cooperative/exclusive
+# iterators and pool mutations before taking the iterator gate exclusively.
+# Every non-archive admission path rechecks after acquiring its own gate and
+# rolls back on the race instead of entering archive-owned state.
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "alignas(4) volatile std::int32_t fx_archiveGate[1]{};"
+    "archive admission state must remain an aligned external sidecar")
+require_source_not_contains(
+    "EffectsCore/fx_runtime.h"
+    "archiveGate"
+    "archive admission state must not alter persisted FX layouts")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "if (system == &fx_systemPool[index])\n            return &fx_archiveGate[index];"
+    "archive gates must resolve only for owned FX systems")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "while (Sys_AtomicLoad(&fx_archiveGate[0]) == 2)"
+    "Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
+    "pool mutation admission must wait for acquired archive ownership before taking the allocator lock")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
+    "if (Sys_AtomicLoad(&fx_archiveGate[0]) != 2)"
+    "pool mutation admission must recheck acquired archive ownership after taking the allocator lock")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "if (Sys_AtomicLoad(&fx_archiveGate[0]) != 2)"
+    "Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);"
+    "pool mutation admission must release the allocator lock after losing an archive race")
+require_source_contains(
+    "EffectsCore/fx_draw.cpp"
+    "if (FX_CurrentThreadOwnsCooperativeIterator(system))\n    {\n        FxIteratorBeginCooperative(&system->iteratorCount);\n        ++fx_cooperativeIteratorThreadState.depth;\n        return;\n    }"
+    "nested cooperative iterator admission must preserve per-thread depth")
+require_source_contains(
+    "EffectsCore/fx_draw.cpp"
+    "FX_WaitForArchiveGate(system);\n        FX_WaitForEffectKillGate(system);\n        FxIteratorBeginCooperative(&system->iteratorCount);\n        if (!FX_ArchiveGateIsActive(system)\n            && !FX_EffectKillGateIsActive(system))\n        {\n            fx_cooperativeIteratorThreadState.system = system;\n            fx_cooperativeIteratorThreadState.generation =\n                FX_GetCooperativeIteratorGeneration(system);\n            fx_cooperativeIteratorThreadState.depth = 1;\n            return;\n        }"
+    "first cooperative iterator admission must wait, acquire, recheck, and publish thread ownership")
+require_source_contains(
+    "EffectsCore/fx_draw.cpp"
+    "fx_cooperativeIteratorThreadState.generation\n            != FX_GetCooperativeIteratorGeneration(system)"
+    "cooperative iterator release must reject stale reset generations before decrementing shared ownership")
+require_source_ordered(
+    "EffectsCore/fx_draw.cpp"
+    "&& !FX_EffectKillGateIsActive(system))"
+    "FxIteratorEndCooperative(&system->iteratorCount, &remaining)"
+    "cooperative admission must roll back after losing an archive/kill race")
+require_source_ordered(
+    "EffectsCore/fx_sort.cpp"
+    "FX_WaitForArchiveGate(system);"
+    "FxIteratorWaitBeginExclusive(&system->iteratorCount);"
+    "blocking exclusive iterators must wait before acquiring ownership")
+require_source_ordered(
+    "EffectsCore/fx_sort.cpp"
+    "FxIteratorWaitBeginExclusive(&system->iteratorCount);"
+    "if (!FX_ArchiveGateIsActive(system))"
+    "blocking exclusive iterators must recheck the archive gate after acquisition")
+require_source_contains(
+    "EffectsCore/fx_sort.cpp"
+    "fx_sortExclusiveIteratorThreadState.system = system;\n            fx_sortExclusiveIteratorThreadState.generation =\n                FX_GetCooperativeIteratorGeneration(system);"
+    "blocking exclusive iterators must publish generation-tagged thread ownership")
+require_source_ordered(
+    "EffectsCore/fx_sort.cpp"
+    "if (!FX_ArchiveGateIsActive(system))"
+    "if (!FxIteratorEndExclusive(&system->iteratorCount))"
+    "blocking exclusive iterators must roll back ownership after an archive race")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "if (!FX_ArchiveGateIsActive(system))\n        return true;\n    if (!FxIteratorEndExclusive(&system->iteratorCount))"
+    "nonblocking exclusive iterators must recheck and release after an archive race")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "|| Sys_AtomicCompareExchange(gate, 1, 0) != 0)"
+    "fx_archiveThreadState.system = system;"
+    "archive ownership must enter pending state before waiting for active iterators")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "fx_archiveThreadState.generation =\n        FX_GetCooperativeIteratorGeneration(system);\n    FxIteratorWaitBeginExclusive(&system->iteratorCount);"
+    "Sys_AtomicCompareExchange(gate, 2, 1)"
+    "archive ownership must atomically publish acquired state only after exclusive iterator admission")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "const bool released = FxIteratorEndExclusive(&system->iteratorCount);"
+    "Sys_AtomicCompareExchange(gate, 0, 2)"
+    "archive release must relinquish exclusive iteration before atomically reopening admission")
 require_source_matches(
     "EffectsCore/fx_iterator_atomic.h"
     "if[ \t\r\n]*\\([^{}]*observed[ \t\r\n]*<[ \t\r\n]*0[^{}]*\\)[ \t\r\n]*\\{[ \t\r\n]*std::this_thread::yield[ \t\r\n]*\\([ \t\r\n]*\\)[ \t\r\n]*;[ \t\r\n]*continue[ \t\r\n]*;[ \t\r\n]*\\}"
@@ -5297,14 +5384,1384 @@ require_source_contains(
     "FX garbage-collection requests must retain their byte layout and publish atomically")
 foreach(_fx_iterator_consumer
     "EffectsCore/fx_draw.cpp"
-    "EffectsCore/fx_system.cpp"
-    "EffectsCore/fx_update.cpp")
+    "EffectsCore/fx_system.cpp")
     require_all_occurrences_wrapped(
         "${_fx_iterator_consumer}"
         "system->needsGarbageCollection"
-        "Fx(GarbageCollectionRequested|RequestGarbageCollection|ClearGarbageCollectionRequest)[ \t\r\n]*\\([ \t\r\n]*&system->needsGarbageCollection[ \t\r\n]*\\)"
+        "Fx(GarbageCollectionRequested|RequestGarbageCollection|ClearGarbageCollectionRequest)[ \t\r\n]*\\([ \t\r\n]*&(reservation\\.)?system->needsGarbageCollection[ \t\r\n]*\\)"
         "FX garbage-collection request storage")
 endforeach()
+
+# Effect teardown is a writer transaction layered over the iterator gate.
+# The durable lifecycle bit and allocation sidecar must agree, zero-reference
+# records cannot be resurrected, and rewind keeps writer admission closed while
+# it downgrades to a cooperative reader and repopulates retained roots.
+require_source_contains(
+    "EffectsCore/fx_system.h"
+    "FX_STATUS_OWNER_ADMISSION_BLOCKED = FX_STATUS_DEFER_UPDATE"
+    "killed effects must retain a layout-neutral lifecycle marker")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "alignas(4) volatile std::int32_t fx_effectKillGate[1]{};"
+    "effect teardown writer intent must use an aligned external sidecar")
+require_source_not_contains(
+    "EffectsCore/fx_runtime.h"
+    "effectKillGate"
+    "effect teardown writer intent must not alter persisted FX layouts")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "if (referenceCount == 0
+            || (increment
+                && referenceCount == FX_STATUS_REF_COUNT_MASK))"
+    "effect references must reject resurrection and packed-field carry")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "if ((blocked != 0 && blocked != 1)
+            || (blocked == 1) != markerBlocked)"
+    "effect admission sidecars must agree with durable lifecycle markers")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "const bool targetReferenceAdded =
+        FX_TryAdjustEffectReferenceCount(effect, true);"
+    "effect kill admission must retain its target before publication can drain")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "while (Sys_AtomicCompareExchange(killGate, 1, 0) != 0)"
+    "FxIteratorWaitBeginExclusive(&system->iteratorCount);"
+    "effect teardown must publish writer intent before draining readers")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "FxIteratorWaitBeginExclusive(&system->iteratorCount);"
+    "Sys_AtomicCompareExchange(killGate, 2, 1)"
+    "effect teardown must publish exclusive ownership only after draining readers")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "const bool released =
+        FxIteratorEndExclusive(&system->iteratorCount);
+    if (!released)
+        return false;
+    fx_effectKillExclusiveThreadState.exclusiveAcquired = false;
+    if (Sys_AtomicCompareExchange(killGate, 0, 2) != 2)"
+    "ordinary effect teardown must release the iterator before reopening admission")
+require_source_contains(
+    "EffectsCore/fx_iterator_atomic.h"
+    "return Sys_AtomicCompareExchange(state, 1, -1) == -1;"
+    "rewind must downgrade exclusive iterator ownership atomically")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "fx_effectRestartRetainThreadState.ownsKillGate = true;
+    fx_effectKillExclusiveThreadState = {};"
+    "rewind downgrade must transfer writer-gate ownership to restart state")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "fx_effectRestartRetainThreadState.effectCount != 0
+        || !FX_CurrentThreadOwnsCooperativeIterator(system)"
+    "rewind must retain cooperative ownership until every restart retain is consumed")
+require_source_ordered(
+    "EffectsCore/fx_update.cpp"
+    "FX_RunGarbageCollection(system);"
+    "FX_DowngradeEffectKillExclusiveToCooperative(system)"
+    "rewind must reclaim killed pool slots before restarting effects")
+require_source_ordered(
+    "EffectsCore/fx_update.cpp"
+    "FX_DowngradeEffectKillExclusiveToCooperative(system)"
+    "FX_EndEffectRestartGate(system)"
+    "rewind must hold its writer gate across all restart mutations")
+require_source_ordered(
+    "EffectsCore/fx_draw.cpp"
+    "FX_AbandonCurrentThreadEffectRestartRetainsForError();"
+    "FX_AbandonCurrentThreadEffectRestartGateForError();"
+    "error cleanup must release restart retains before reopening writer admission")
+require_source_ordered(
+    "EffectsCore/fx_draw.cpp"
+    "FX_AbandonCurrentThreadEffectRestartGateForError();"
+    "FX_AbandonCurrentThreadCooperativeIteratorsForError();"
+    "error cleanup must reopen restart admission before releasing its reader")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "const bool reuseKillExclusive =
+        FX_ThreadOwnsEffectKillExclusive(system);"
+    "rewind garbage collection must reuse its owned kill-exclusive transaction")
+
+# FX effect and pool handles retain their compact wire representation, but all
+# address/range calculations must use native-width integers so LP64 and ARM64
+# builds cannot truncate a pointer or derive a handle with an x86-only stride.
+require_source_match_count(
+    "EffectsCore/fx_runtime.h"
+    "static[ \t]+constexpr[ \t]+std::size_t[ \t]+HANDLE_SCALE[ \t]*=[ \t]*4[ \t]*[;]"
+    4
+    "every compact FX handle type must declare its explicit legacy scale")
+foreach(_fx_pool_runtime_layout
+    "FxElem, 0x28, 0x28"
+    "FxTrail, 0x8, 0x8"
+    "FxTrailElem, 0x20, 0x20")
+    require_source_contains(
+        "EffectsCore/fx_runtime.h"
+        "RUNTIME_SIZE(${_fx_pool_runtime_layout});"
+        "FX pool item strides must remain fixed on both native layouts")
+endforeach()
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "sizeof(FxPool<ITEM_TYPE>) == sizeof(ITEM_TYPE)"
+    "FX pool slots must preserve the runtime item stride")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "const std::uintptr_t base = reinterpret_cast<std::uintptr_t>(entries);"
+    "FX handle encoding must calculate from a native-width base address")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(entryAddress);"
+    "FX handle encoding must calculate from a native-width item address")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "constexpr std::size_t span = LIMIT * sizeof(ENTRY_TYPE);"
+    "FX handle encoding must bound the complete native entry span")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "if (offset >= span || offset % sizeof(ENTRY_TYPE) != 0)"
+    "FX handle encoding must reject out-of-range and interior addresses")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "constexpr std::size_t handleLimit = LIMIT * stride;"
+    "FX handle decoding must derive its limit from the native entry stride")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "if (!entries || handle >= handleLimit || handle % stride != 0)"
+    "FX handle decoding must reject null, out-of-range, and misaligned handles")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "static_cast<std::size_t>(FX_INVALID_HANDLE - 1) / stride"
+    "FX handle arrays must prove their capacity fits below the invalid sentinel")
+require_source_contains(
+    "gfx_d3d/fxprimitives.h"
+    "FxEncodeHandle<FxPool<ITEM_TYPE>, LIMIT, ITEM_TYPE::HANDLE_SCALE>("
+    "generic FX pool encoding must use the checked native-width codec")
+require_source_contains(
+    "gfx_d3d/fxprimitives.h"
+    "FxDecodeHandle<FxPool<ITEM_TYPE>, LIMIT, ITEM_TYPE::HANDLE_SCALE>("
+    "generic FX pool decoding must use the checked native-width codec")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "FxEncodeHandle<FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>("
+    "effect encoding must use the checked native-width codec")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "FxDecodeHandle<FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>("
+    "effect decoding must use the checked native-width codec")
+require_source_not_matches(
+    "EffectsCore/fx_system.cpp"
+    "freedIndex[ \t]*=[^\r\n]*([/][ \t]*40|>>[ \t]*(3|5))"
+    "FX pool release must not recover indices with x86-only divisors or shifts")
+require_source_not_matches(
+    "EffectsCore/fx_system.cpp"
+    "\\([ \t]*char[ \t]*\\*[ \t]*\\)[^\r\n]*(item|effect)[^\r\n]*-[^\r\n]*(pool|system->effects)"
+    "FX pool/effect encoding must not subtract raw pointers")
+require_source_not_matches(
+    "gfx_d3d/fxprimitives.h"
+    "\\([ \t]*char[ \t]*\\*[ \t]*\\)[^\r\n]*(item|poolArray)[^\r\n]*[-+]"
+    "generic FX handle functions must not perform raw byte-pointer arithmetic")
+require_source_not_matches(
+    "EffectsCore/fx_archive.cpp"
+    "system->effects[^\r\n]*([+][ \t]*4[ \t]*\\*[ \t]*handle|handle[ \t]*\\*[ \t]*4)"
+    "archive effect decoding must not assume the x86 effect stride")
+require_source_contains(
+    "EffectsCore/fx_runtime.h"
+    "std::int32_t nextFree;"
+    "FX pool free-list links must remain explicit fixed-width indices")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "[[noreturn]] void KISAK_CDECL FX_InvalidPoolHandle("
+    "production pool decoding must expose one fail-closed invalid-handle hook")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "[[noreturn]] void KISAK_CDECL FX_InvalidPoolHandle("
+    "the invalid-pool-handle hook must remain explicitly nonreturning")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FX_InvalidPoolHandle[^{]*\\{[^}]*Invalid FX pool handle %u for pool %p[^}]*std::abort\\(\\);"
+    "the invalid-pool-handle hook must retain an abort fallback after ERR_DROP")
+require_source_matches(
+    "gfx_d3d/fxprimitives.h"
+    "FxDecodeHandle<FxPool<ITEM_TYPE>,[ \t]*LIMIT,[ \t]*ITEM_TYPE::HANDLE_SCALE>[ \t\r\n]*\\([^;]*\\)[ \t]*[;][ \t\r\n]*vassert[ \t\r\n]*\\([^;]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!item[ \t\r\n]*\\)[ \t\r\n]*FX_InvalidPoolHandle[ \t\r\n]*\\([ \t\r\n]*poolArray[ \t]*,[ \t]*handle[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*return[ \t]+item[ \t]*[;]"
+    "production pool decoding must route every invalid codec result to the nonreturning hook")
+
+# Pool mutation is centralized behind bounded, transactional helpers. Failed
+# validation must leave the list head, item payload, and active count untouched.
+foreach(_fx_pool_status
+    InvalidArgument
+    CorruptFreeList
+    InvalidActiveCount
+    DuplicateFreeHead
+    AlreadyFree
+    UninitializedAllocationState
+    AllocationStateMismatch)
+    require_source_contains(
+        "EffectsCore/fx_pool.h"
+        "${_fx_pool_status},"
+        "FX pool mutation must retain its ${_fx_pool_status} failure state")
+endforeach()
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "std::array<std::uint64_t, WORD_COUNT> allocatedWords{};"
+    "FX pool allocation ownership must use a fixed-size per-slot bitset")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "std::size_t allocatedCount = 0;"
+    "FX pool allocation state must retain a native-width ownership count")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "bool initialized = false;"
+    "FX pool allocation state must distinguish an uninitialized sidecar")
+require_source_matches(
+    "EffectsCore/fx_pool.h"
+    "void[ \t]+FxPoolResetAllocationState[^}]*allocatedWords.fill[ \t\r\n]*\\([ \t\r\n]*0[ \t\r\n]*\\)[ \t]*[;][^}]*allocatedCount[ \t]*=[ \t]*0[ \t]*[;][^}]*initialized[ \t]*=[ \t]*true[ \t]*[;]"
+    "FX pool reset must initialize an empty allocation sidecar")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "FxPoolAllocationState<LIMIT> rebuilt{};"
+    "FX pool restoration must construct allocation state transactionally")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "rebuilt.allocatedWords.fill((std::numeric_limits<std::uint64_t>::max)());"
+    "FX pool restoration must begin with every valid slot marked allocated")
+require_source_matches(
+    "EffectsCore/fx_pool.h"
+    "if[ \t]+constexpr[ \t\r\n]*\\([ \t\r\n]*LIMIT[ \t]*%[ \t]*FxPoolAllocationState<LIMIT>::WORD_BITS[ \t]*!=[ \t]*0[ \t\r\n]*\\)[^}]*rebuilt.allocatedWords.back[ \t\r\n]*\\([ \t\r\n]*\\)[ \t]*=[ \t\r\n]*\\(std::uint64_t\\{1\\}[ \t]*<<[ \t]*usedBits\\)[ \t]*-[ \t]*1[ \t]*[;]"
+    "FX pool restoration must mask padding bits beyond the fixed pool capacity")
+require_source_matches(
+    "EffectsCore/fx_pool.h"
+    "while[ \t\r\n]*\\([ \t\r\n]*freeIndex[ \t]*!=[ \t]*-1[ \t\r\n]*\\)[ \t\r\n]*\\{[ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!FxPoolFreeIndexIsValid<LIMIT>\\(freeIndex\\)[ \t\r\n]*\\|\\|[ \t]*freeCount[ \t]*==[ \t]*LIMIT[ \t\r\n]*\\)"
+    "FX pool restoration must bound and validate every free-list link")
+require_source_matches(
+    "EffectsCore/fx_pool.h"
+    "if[ \t\r\n]*\\([ \t\r\n]*!FxPoolAllocationStateIsAllocated\\(rebuilt,[ \t]*index\\)[ \t\r\n]*\\)[ \t\r\n]*return[ \t]+FxPoolMutationStatus::CorruptFreeList[ \t]*[;][ \t\r\n]*FxPoolSetAllocationStateBit\\(&rebuilt,[ \t]*index,[ \t]*false\\)[ \t]*[;]"
+    "FX pool restoration must reject repeated/cyclic free slots before clearing them")
+require_source_ordered(
+    "EffectsCore/fx_pool.h"
+    "freeIndex = pool[index].nextFree;"
+    "*allocationState = rebuilt;"
+    "FX pool restoration must finish traversal before committing sidecar state")
+require_source_ordered(
+    "EffectsCore/fx_pool.h"
+    "*allocationState = rebuilt;"
+    "Sys_AtomicStore(\n        activeCount,"
+    "FX pool restoration must commit validated ownership before reconciling the active count")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "if (!FxPoolFreeIndexIsValid<LIMIT>(nextFree) || nextFree == itemIndex)"
+    "FX allocation must validate and reject a self-referential next-free index")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "if (!FxPoolItemIndex<ITEM_TYPE, LIMIT>(pool, item, &freedIndex))"
+    "FX release must validate item ownership and native slot alignment")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "if (!allocationState->initialized)"
+    "FX pool mutation must reject uninitialized allocation state")
+require_source_match_count(
+    "EffectsCore/fx_pool.h"
+    "static_cast<std::size_t>\\(active\\)[ \t\r\n]*!=[ \t\r\n]*allocationState->allocatedCount"
+    2
+    "both allocation and release must reject active-count/sidecar disagreement")
+require_source_matches(
+    "EffectsCore/fx_pool.h"
+    "FxPoolAllocationStateIsAllocated[ \t\r\n]*\\([ \t\r\n]*\\*allocationState[ \t]*,[ \t]*static_cast<std::size_t>\\(itemIndex\\)[ \t\r\n]*\\)[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*CorruptFreeList"
+    "FX allocation must reject a free-list head marked allocated")
+require_source_matches(
+    "EffectsCore/fx_pool.h"
+    "nextFree[ \t]*!=[ \t]*-1[^}]*FxPoolAllocationStateIsAllocated[ \t\r\n]*\\([ \t\r\n]*\\*allocationState[ \t]*,[ \t]*static_cast<std::size_t>\\(nextFree\\)[ \t\r\n]*\\)[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*CorruptFreeList"
+    "FX allocation must reject a next-free link marked allocated")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "if (firstFree == freedIndex)\n        return FxPoolMutationStatus::DuplicateFreeHead;"
+    "FX release must reject a duplicate free-list head before mutation")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "return FxPoolMutationStatus::AlreadyFree;"
+    "FX release must reject non-head duplicate frees from explicit ownership state")
+require_source_ordered(
+    "EffectsCore/fx_pool.h"
+    "if (!FxPoolFreeIndexIsValid<LIMIT>(nextFree) || nextFree == itemIndex)"
+    "*firstFreeIndex = nextFree;"
+    "FX allocation validation must complete before its free-list head changes")
+require_source_ordered(
+    "EffectsCore/fx_pool.h"
+    "FxPoolSetAllocationStateBit(\n        allocationState, static_cast<std::size_t>(itemIndex), true);"
+    "*firstFreeIndex = nextFree;"
+    "FX allocation must claim the sidecar slot before publishing its removal")
+require_source_ordered(
+    "EffectsCore/fx_pool.h"
+    "++allocationState->allocatedCount;"
+    "*firstFreeIndex = nextFree;"
+    "FX allocation must update sidecar accounting before publishing its removal")
+require_source_ordered(
+    "EffectsCore/fx_pool.h"
+    "*firstFreeIndex = nextFree;"
+    "Sys_AtomicIncrement(activeCount);"
+    "FX allocation must remove the free slot before publishing its active count")
+require_source_ordered(
+    "EffectsCore/fx_pool.h"
+    "FxPoolCanFreeLocked<ITEM_TYPE, LIMIT>("
+    "std::forward<BEFORE_PUBLISH>(beforePublish)();"
+    "FX release validation must complete before any unlink callback runs")
+require_source_ordered(
+    "EffectsCore/fx_pool.h"
+    "std::forward<BEFORE_PUBLISH>(beforePublish)();"
+    "pool[freedIndex].item = ITEM_TYPE{};"
+    "FX release must unlink the live item before clearing its payload")
+require_source_ordered(
+    "EffectsCore/fx_pool.h"
+    "pool[freedIndex].item = ITEM_TYPE{};"
+    "pool[freedIndex].nextFree = firstFree;"
+    "FX release must clear payload data before installing its private free link")
+require_source_ordered(
+    "EffectsCore/fx_pool.h"
+    "pool[freedIndex].nextFree = firstFree;"
+    "FxPoolSetAllocationStateBit(\n        allocationState, static_cast<std::size_t>(freedIndex), false);"
+    "FX release must install its private free link before clearing sidecar ownership")
+require_source_ordered(
+    "EffectsCore/fx_pool.h"
+    "--allocationState->allocatedCount;"
+    "*firstFreeIndex = freedIndex;"
+    "FX release must update sidecar accounting before publishing the free-list head")
+require_source_ordered(
+    "EffectsCore/fx_pool.h"
+    "*firstFreeIndex = freedIndex;"
+    "Sys_AtomicDecrement(activeCount);"
+    "FX release must publish the free slot before lowering its active count")
+require_source_match_count(
+    "EffectsCore/fx_pool.h"
+    "\\*firstFreeIndex[ \t]*="
+    2
+    "only the validated allocate and free commit points may mutate the pool head")
+require_source_match_count(
+    "EffectsCore/fx_pool.h"
+    "Sys_AtomicLoad[ \t\r\n]*\\([ \t\r\n]*activeCount[ \t\r\n]*\\)"
+    2
+    "both allocation and release must validate an atomic active-count snapshot")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "FxPoolAllocateLocked<Fx"
+    3
+    "all three live FX pool allocators must use the transactional helper")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "FxPoolFreeLocked<Fx"
+    3
+    "all three live FX pool releasers must use the transactional helper")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "activeCount[ \t]*,[ \t\r\n]*allocationState[ \t]*,[ \t\r\n]*&status"
+    3
+    "all allocation wrappers must pass their capacity-matched sidecar to the helper")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "activeCount[ \t]*,[ \t\r\n]*allocationState[ \t]*,[ \t\r\n]*std::forward<BEFORE_PUBLISH>"
+    3
+    "all release wrappers must pass their capacity-matched sidecar to the helper")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "struct FxPoolAllocationStates"
+    "production allocation ownership must remain in an external sidecar")
+require_source_not_contains(
+    "EffectsCore/fx_runtime.h"
+    "FxPoolAllocationState"
+    "allocation sidecars must not alter persisted FX runtime layouts")
+foreach(_fx_pool_sidecar_member
+    "MAX_ELEMS;elems"
+    "MAX_TRAILS;trails"
+    "MAX_TRAIL_ELEMS;trailElems")
+    list(GET _fx_pool_sidecar_member 0 _fx_pool_sidecar_limit)
+    list(GET _fx_pool_sidecar_member 1 _fx_pool_sidecar_name)
+    require_source_contains(
+        "EffectsCore/fx_system.cpp"
+        "FxPoolAllocationState<${_fx_pool_sidecar_limit}> ${_fx_pool_sidecar_name};"
+        "production FX pool ${_fx_pool_sidecar_name} must have a capacity-matched sidecar")
+endforeach()
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "if (system == &fx_systemPool[index])"
+    "allocation sidecars must be resolved only for owned FX systems")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "FxPoolResetAllocationState[ \t\r\n]*\\([ \t\r\n]*&states->(elems|trails|trailElems)[ \t\r\n]*\\)"
+    3
+    "system reset must initialize all three production allocation sidecars")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "trails[k].nextFree = -1;"
+    "FxPoolResetAllocationState(&states->elems);"
+    "system reset must finish every free list before publishing empty sidecar state")
+require_source_contains(
+    "EffectsCore/fx_system.h"
+    "bool __cdecl FX_RebuildPoolAllocationStates(FxSystem *system);"
+    "archive restoration must expose checked pool-sidecar reconstruction")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "FxPoolAllocationStates rebuilt{};"
+    "production sidecar reconstruction must stage all three pools locally")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "FxPoolRebuildAllocationStateLocked<Fx"
+    3
+    "production sidecar reconstruction must derive all three pool states")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "Sys_AtomicLoad[ \t\r\n]*\\([ \t\r\n]*&system->active(Elem|Trail|TrailElem)Count[ \t\r\n]*\\)[ \t\r\n]*==[ \t\r\n]*Sys_AtomicLoad[ \t\r\n]*\\([ \t\r\n]*&rebuilt(Elem|Trail|TrailElem)Count[ \t\r\n]*\\)"
+    3
+    "archive pool reconstruction must match every persisted active count to the derived free list")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "if (valid)"
+    "*states = rebuilt;"
+    "Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);"
+    "production sidecar reconstruction must publish all pools atomically under the allocator lock")
+
+# The pure archive graph validator binds every allocated pool slot to exactly
+# one owning effect/list, validates backlinks and trail endpoints, and rejects
+# orphaned or aliased records before save or restore publication.
+foreach(_fx_graph_consumer
+    "EffectsCore/fx_system.cpp"
+    "EffectsCore/fx_archive.cpp")
+    require_source_contains(
+        "${_fx_graph_consumer}"
+        "#include \"fx_pool_graph.h\""
+        "production FX graph consumers must include the shared validator")
+endforeach()
+require_source_contains(
+    "EffectsCore/fx_pool_graph.h"
+    "inline bool FxValidatePoolAllocationGraph("
+    "FX archive ownership validation must remain a shared pure helper")
+require_source_contains(
+    "EffectsCore/fx_pool_graph.h"
+    "if (!state.initialized || state.allocatedCount > LIMIT)"
+    "graph validation must reject malformed allocation-sidecar metadata")
+require_source_contains(
+    "EffectsCore/fx_pool_graph.h"
+    "if (allocatedCount != state.allocatedCount)"
+    "graph validation must reconcile allocation bits with their recorded count")
+require_source_contains(
+    "EffectsCore/fx_pool_graph.h"
+    "for (std::size_t index = LIMIT; index < bitCapacity; ++index)"
+    "graph validation must reject set padding bits outside a pool")
+require_source_contains(
+    "EffectsCore/fx_pool_graph.h"
+    "if (!FxPoolAllocationStateIsAllocated(allocationState, index))"
+    "graph handle decoding must reject references to free slots")
+foreach(_fx_graph_visit_set
+    "MAX_EFFECTS;allocatedEffectSlots"
+    "MAX_ELEMS;visitedElems"
+    "MAX_TRAILS;visitedTrails"
+    "MAX_TRAIL_ELEMS;visitedTrailElems")
+    list(GET _fx_graph_visit_set 0 _fx_graph_visit_limit)
+    list(GET _fx_graph_visit_set 1 _fx_graph_visit_name)
+    require_source_contains(
+        "EffectsCore/fx_pool_graph.h"
+        "std::array<bool, ${_fx_graph_visit_limit}> ${_fx_graph_visit_name}{};"
+        "graph validation must track ${_fx_graph_visit_name} against aliases")
+endforeach()
+require_source_contains(
+    "EffectsCore/fx_pool_graph.h"
+    "std::array<bool, MAX_EFFECTS> effectSlotsInPermutation{};"
+    "the entire effect-handle inventory must be a unique pool permutation")
+foreach(_fx_graph_bound
+    MAX_ELEMS
+    MAX_TRAILS
+    MAX_TRAIL_ELEMS)
+    require_source_contains(
+        "EffectsCore/fx_pool_graph.h"
+        "== ${_fx_graph_bound}"
+        "graph traversal must enforce the ${_fx_graph_bound} capacity")
+endforeach()
+require_source_contains(
+    "EffectsCore/fx_pool_graph.h"
+    "elem->item.prevElemHandleInEffect\n                        != expectedPreviousHandle"
+    "graph validation must verify element backlinks while traversing")
+require_source_contains(
+    "EffectsCore/fx_pool_graph.h"
+    "if (hasFirstTrailElem != hasLastTrailElem)"
+    "graph validation must reject inconsistent trail endpoint sentinels")
+require_source_contains(
+    "EffectsCore/fx_pool_graph.h"
+    "if (terminalTrailElemHandle != trail->item.lastElemHandle)"
+    "graph validation must bind each recorded trail tail to its terminal element")
+require_source_match_count(
+    "EffectsCore/fx_pool_graph.h"
+    "EveryAllocatedSlotWasVisited[ \t\r\n]*\\("
+    4
+    "the graph helper plus all three pool completeness checks must remain accounted for")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "!FxValidatePoolAllocationGraph("
+    "*states = rebuilt;"
+    "restore staging must validate the reconstructed graph before publishing its sidecar")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "const bool valid = FxValidatePoolAllocationGraph("
+    "production graph validation must inspect live sidecars while allocator state is stable")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FX_ValidatePoolAllocationGraphState(system)"
+    "memcpy(&systemSnapshot, system, sizeof(systemSnapshot));"
+    "save must validate the complete live graph before staging its snapshot")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "validCommittedState = restoredExclusiveState
+            && FX_RebuildPoolAllocationStates(system)"
+    "&& FX_ValidatePoolAllocationGraphState(system);
+        if (validCommittedState)"
+    "restore publication must rebuild and revalidate live sidecars before reopening admission")
+foreach(_fx_pool_sidecar_use
+    "elems;6"
+    "trails;4"
+    "trailElems;4")
+    list(GET _fx_pool_sidecar_use 0 _fx_pool_sidecar_name)
+    list(GET _fx_pool_sidecar_use 1 _fx_pool_sidecar_count)
+    require_source_match_count(
+        "EffectsCore/fx_system.cpp"
+        "&states->${_fx_pool_sidecar_name}"
+        ${_fx_pool_sidecar_count}
+        "every production ${_fx_pool_sidecar_name} reset/check/allocate/free must use its matching sidecar")
+endforeach()
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "FX_EnterArchiveAwarePoolCriticalSection[ \t\r\n]*\\([ \t\r\n]*\\)[ \t]*[;]"
+    27
+    "every pool/reference/admission mutation and graph or sidecar check must use archive-aware admission")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "Sys_LeaveCriticalSection[ \t\r\n]*\\([ \t\r\n]*CRITSECT_FX_ALLOC[ \t\r\n]*\\)"
+    33
+    "every archive-aware allocator access and each fail-closed path must release the allocator lock")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "Sys_LeaveCriticalSection[ \t\r\n]*\\([ \t\r\n]*CRITSECT_FX_ALLOC[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*status[ \t]*!=[ \t]*FxPoolMutationStatus::Success[ \t\r\n]*&&[ \t]*status[ \t]*!=[ \t]*FxPoolMutationStatus::Empty[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"
+    3
+    "every non-empty allocation failure must drop only after releasing the allocator lock")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "Sys_LeaveCriticalSection[ \t\r\n]*\\([ \t\r\n]*CRITSECT_FX_ALLOC[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*status[ \t]*!=[ \t]*FxPoolMutationStatus::Success[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"
+    2
+    "every fail-fast element pool release must drop only after releasing the allocator lock")
+require_source_not_matches(
+    "EffectsCore/fx_system.cpp"
+    "\\*firstFreeIndex[ \t]*=|(\\+\\+|--)[ \t]*\\*activeCount"
+    "FX pool wrappers must not bypass their transactional mutation helpers")
+
+# Runtime graph mutations consult the same allocation sidecars before trusting
+# an owner, target, or neighboring link. This closes the valid-handle-to-free-
+# slot gap that the bounded handle codec alone cannot detect.
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "state[ \t]*&&[ \t]*state->initialized[^;]*FxPoolItemIndex<ITEM_TYPE,[ \t]*LIMIT>[^;]*FxPoolAllocationStateIsAllocated"
+    "runtime sidecar checks must validate initialization, pool ownership, alignment, and allocation state")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "FX_IsPoolItemAllocatedLocked<Fx"
+    5
+    "the shared helper plus element, trail, and trail-element sidecar wrappers must remain accounted for")
+foreach(_fx_runtime_allocation_check
+    "Elem;10"
+    "Trail;8"
+    "TrailElem;8")
+    list(GET _fx_runtime_allocation_check 0 _fx_runtime_item)
+    list(GET _fx_runtime_allocation_check 1 _fx_runtime_count)
+    require_source_match_count(
+        "EffectsCore/fx_system.cpp"
+        "FX_Is${_fx_runtime_item}Allocated[ \t\r\n]*\\("
+        ${_fx_runtime_count}
+        "all runtime ${_fx_runtime_item} ownership checks must remain accounted for")
+endforeach()
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FxDecodeHandle<FxPool<FxTrail>,[ \t]*MAX_TRAILS[^;]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!trail[ \t]*\\|\\|[ \t]*!FX_IsTrailAllocated\\(system,[ \t]*&trail->item\\)[ \t\r\n]*\\)[ \t\r\n]*return[ \t]+false[ \t]*[;]"
+    "garbage collection must reject a valid handle that names a free trail slot")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*!FX_IsTrailAllocated\\(system,[ \t]*trail\\)[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"
+    3
+    "both trail spawners and trail-element free must reject an unallocated owner")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "nextElemInEffect[ \t]*=[ \t\r\n]*FX_PoolFromHandle_Generic<FxElem,[ \t]*MAX_ELEMS>[^;]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!FX_IsElemAllocated\\(system,[ \t]*&nextElemInEffect->item\\)[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"
+    "element spawning must reject a free slot at the current list head")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*!elem[ \t]*\\|\\|[ \t]*!FX_IsElemAllocated\\(system,[ \t]*&elem->item\\)[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"
+    "element free must reject an unallocated target before reading its links")
+foreach(_fx_elem_neighbor next prev)
+    require_source_matches(
+        "EffectsCore/fx_system.cpp"
+        "!${_fx_elem_neighbor}Elem[ \t]*\\|\\|[ \t]*${_fx_elem_neighbor}Elem[ \t]*==[ \t]*elem[ \t\r\n]*\\|\\|[ \t]*!FX_IsElemAllocated\\(system,[ \t]*&${_fx_elem_neighbor}Elem->item\\)[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"
+        "element free must reject an unallocated ${_fx_elem_neighbor} neighbor")
+endforeach()
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "!trailElem[ \t\r\n]*\\|\\|[ \t]*!FX_IsTrailElemAllocated\\(system,[ \t]*&trailElem->item\\)[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"
+    "trail-element free must reject an unallocated target")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "!lastTrailElem[^;]*!FX_IsTrailElemAllocated\\(system,[ \t]*&lastTrailElem->item\\)[^;]*lastTrailElem->item.nextTrailElemHandle[ \t]*!=[ \t]*FX_INVALID_HANDLE"
+    "trail-element free must validate tail ownership before trusting terminal state")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "!nextTrailElem[ \t\r\n]*\\|\\|[ \t]*!FX_IsTrailElemAllocated[ \t\r\n]*\\([ \t\r\n]*system[ \t]*,[ \t]*&nextTrailElem->item\\)"
+    "trail-element free must reject an unallocated successor")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*!FX_FreePool_Generic_Fx"
+    4
+    "every live FX free path must stop when transactional publication fails")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "FX_FreePool_Generic_Fx(Elem|Trail|TrailElem)_[^;]*\\[&\\][ \t\r\n]*\\([ \t\r\n]*\\)[ \t\r\n]*noexcept"
+    4
+    "every live FX free path must supply a nonthrowing pre-publication unlink")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FX_FreePool_Generic_FxTrail_[ \t\r\n]*\\([^;]*\\[&\\][ \t\r\n]*\\([ \t\r\n]*\\)[ \t\r\n]*noexcept[ \t\r\n]*\\{[^;]*effect->firstTrailHandle[ \t]*=[ \t]*nextTrailHandle[ \t]*[;]"
+    "trail ownership must be unlinked inside the pre-publication callback")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FX_FreePool_Generic_FxElem_[ \t\r\n]*\\([^;]*\\[&\\][ \t\r\n]*\\([ \t\r\n]*\\)[ \t\r\n]*noexcept[ \t\r\n]*\\{[ \t\r\n]*if[ \t\r\n]*\\([^;]*effect->firstSortedElemHandle"
+    "effect element links must be removed inside the pre-publication callback")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FX_FreePool_Generic_FxTrailElem_[ \t\r\n]*\\([^;]*\\[&\\][ \t\r\n]*\\([ \t\r\n]*\\)[ \t\r\n]*noexcept[ \t\r\n]*\\{[^;]*trail->lastElemHandle[ \t]*=[ \t]*FX_INVALID_HANDLE[ \t]*[;]"
+    "trail element links must be removed inside the pre-publication callback")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FX_FreePool_Generic_FxElem_[ \t\r\n]*\\([^;]*\\[&\\][ \t\r\n]*\\([ \t\r\n]*\\)[ \t\r\n]*noexcept[ \t\r\n]*\\{[^}]*activeSpotLightElemHandle[ \t]*=[ \t]*FX_INVALID_HANDLE[^}]*Sys_AtomicStore[ \t\r\n]*\\([ \t\r\n]*&system->activeSpotLightElemCount[ \t]*,[ \t]*0"
+    "spot-light ownership must be released before its element enters the free list")
+
+# Pool active counts are shared between the allocator and profiling paths.
+# Resets and reads therefore must use the same exact-width atomic boundary.
+require_all_occurrences_wrapped(
+    "EffectsCore/fx_system.cpp"
+    "system->active(Elem|Trail|TrailElem)Count"
+    "(Sys_Atomic(Store|Load)[ \t\r\n]*\\([^)]*|FX_(Alloc|Free)Pool_Generic_Fx[^;{}]*)&system->active(Elem|Trail|TrailElem)Count"
+    "FX pool active-count reset and mutation ownership")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "Sys_AtomicStore[ \t\r\n]*\\([ \t\r\n]*&system->active(Elem|Trail|TrailElem)Count[ \t\r\n]*,[ \t\r\n]*0[ \t\r\n]*\\)"
+    3
+    "all three FX pool active counts must reset atomically")
+require_all_occurrences_wrapped(
+    "EffectsCore/fx_profile.cpp"
+    "system->active(Elem|Trail|TrailElem)Count"
+    "Sys_AtomicLoad[ \t\r\n]*\\([ \t\r\n]*&system->active(Elem|Trail|TrailElem)Count[ \t\r\n]*\\)"
+    "FX profiling active-count snapshots")
+require_source_match_count(
+    "EffectsCore/fx_profile.cpp"
+    "Sys_AtomicLoad[ \t\r\n]*\\([ \t\r\n]*&system->active(Elem|Trail|TrailElem)Count[ \t\r\n]*\\)"
+    3
+    "FX profiling must snapshot all three shared pool counts atomically")
+
+# Archive traversal consumes externally persisted handles. Restore uses
+# nullable codecs and completes all raw validation before it can publish live
+# state. The legacy public wrappers for partial physics restore/save have been
+# removed so callers cannot bypass the transaction.
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "\\[\\[noreturn\\]\\][ \t]+void[ \t]+FX_DropInvalidEffectHandle[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP[^;]*\\)[ \t]*[;][ \t\r\n]*std::abort[ \t\r\n]*\\([ \t\r\n]*\\)[ \t]*[;]"
+    "invalid effect handles must use ERR_DROP with a nonreturning abort fallback")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "FxDecodeHandle<FxEffect,[ \t]*FX_EFFECT_LIMIT,[ \t]*FxEffect::HANDLE_SCALE>[ \t\r\n]*\\([^;]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!effect[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*FX_DropInvalidEffectHandle[ \t\r\n]*\\([ \t\r\n]*handle[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*\\}[ \t\r\n]*return[ \t]+effect[ \t]*[;]"
+    "effect decoding must route invalid codec results through its central drop hook")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "FxDecodeHandle<[ \t\r\n]*FxEffect,[ \t]*MAX_EFFECTS,[ \t]*FxEffect::HANDLE_SCALE>[ \t\r\n]*\\([^;]*\\)[ \t]*[;][ \t\r\n]*std::size_t[ \t]+elemDefCount[ \t]*=[ \t]*0[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!effect[ \t]*\\|\\|[ \t]*!FX_ValidateArchiveEffectRuntime"
+    "archive traversal must reject an invalid effect handle before using runtime fields")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "FxDecodeHandle<[ \t\r\n]*FxPool<FxElem>,[ \t]*MAX_ELEMS,[ \t]*FxElem::HANDLE_SCALE>[ \t\r\n]*\\([^;]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!remoteElem[ \t]*\\|\\|[ \t]*remoteElem->item.defIndex[ \t]*>=[ \t]*elemDefCount"
+    "archive element traversal must reject invalid handles and definition indices")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "if (chainLength++ == MAX_ELEMS)"
+    "archive element chains must remain bounded by the shared pool")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "if (trailCount++ == MAX_TRAILS)"
+    "archive trail chains must remain bounded by the shared pool")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "if (trailElemCount++ == MAX_TRAIL_ELEMS)"
+    "archive trail-element chains must remain bounded by the shared pool")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "firstNewEffect[ \t]*==[ \t]*firstFreeEffect[^;]*allocatedEffectCount[ \t]*>=[ \t]*0[^;]*allocatedEffectCount[ \t]*<=[ \t]*FX_EFFECT_LIMIT"
+    "archive effect rings must be quiescent, forward, and pool-bounded")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "if (!FX_NormalizeArchiveEffectRing(&restoredSystem))"
+    "FX_LinkSystemBuffers(&restoredSystem, restoredBuffers);"
+    "restore must validate staged ring counters before linking staged runtime buffers")
+
+# Only the complete archive transaction is public. Definition fixup keeps its
+# checked result, while obsolete partial archive/removal entry points must not
+# reappear in the shared header or as externally linked implementations.
+require_source_contains(
+    "EffectsCore/fx_system.h"
+    "bool __cdecl FX_FixupEffectDefHandles"
+    "effect-definition fixup must expose archive validation failure")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "bool __cdecl FX_FixupEffectDefHandles"
+    "effect-definition fixup implementation must propagate validation failure")
+foreach(_fx_removed_public_api
+    FX_RestorePhysicsData
+    FX_SavePhysicsData
+    FX_RemoveAllEffectElems
+    FX_EffectNoLongerReferenced)
+    require_source_not_matches(
+        "EffectsCore/fx_system.h"
+        "(^|[;{}\r\n])[ \t]*(bool|void)[ \t]+(__cdecl[ \t]+)?${_fx_removed_public_api}[ \t\r\n]*\\("
+        "obsolete public ${_fx_removed_public_api} API must remain absent")
+endforeach()
+foreach(_fx_removed_archive_api
+    FX_RestorePhysicsData
+    FX_SavePhysicsData)
+    require_source_not_matches(
+        "EffectsCore/fx_archive.cpp"
+        "(^|[;{}\r\n])[ \t]*(bool|void)[ \t]+(__cdecl[ \t]+)?${_fx_removed_archive_api}[ \t\r\n]*\\("
+        "obsolete partial ${_fx_removed_archive_api} implementation must remain absent")
+endforeach()
+
+# Archive parsing and serialization stage complete native snapshots. Restore
+# validates/fixes the temporary graph and physics payload before acquiring live
+# ownership, while save releases exclusion before fallible serialization.
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "FxSystem restoredSystem{};"
+    "restore must stage persisted system metadata outside live state")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "FxSystemBuffers *const restoredBuffers ="
+    "restore must stage persisted pool buffers outside live state")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FX_ValidateArchiveSystemBooleanBytes("
+    "std::memcpy(\n        &restoredSystem,"
+    "restore must validate serialized bool representations before forming a typed system")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "Sys_AtomicLoad(&restoredSystem.iteratorCount) != 0"
+    "FX_LinkSystemBuffers(&restoredSystem, restoredBuffers);"
+    "restore must validate lifecycle, client, and iterator state before linking staged buffers")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FX_ReadArchiveDataNoDrop(\n            memFile,\n            FX_ARCHIVE_BUFFER_SIZE,"
+    "if (!FX_RebuildArchivePoolAllocationStates("
+    "restore must read staged pool storage before reconstructing ownership")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "if (!FX_RebuildArchivePoolAllocationStates("
+    "FX_FixupEffectDefHandlesNoDrop(&restoredSystem, &table)"
+    "restore must validate staged allocation state before traversing effect records")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "if (!readVisStateValid || !writeVisStateValid"
+    "FX_ReadArchiveDataNoDrop(\n                memFile,\n                FX_ARCHIVE_BODY_STATE_SIZE,"
+    "restore must validate relocated visibility pointers before reading physics payloads")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FX_ValidateArchiveBodyState(\n                physicsEntries[index].state)"
+    "if (!FX_BeginArchive(system))"
+    "restore must validate every staged physics body before acquiring live ownership")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FX_CaptureReplacedArchivePhysics("
+    "FX_CreateArchivePhysics("
+    "restore must retain replaced bodies before creating replacement bodies")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FX_CreateArchivePhysics("
+    "memcpy(systemBuffers, restoredBuffers, sizeof(*systemBuffers));"
+    "restore must create all staged physics before publishing staged buffers")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "Sys_EnterCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;][ \t\r\n]*memcpy\\(systemBuffers,[ \t]*restoredBuffers,[ \t]*sizeof\\(\\*systemBuffers\\)\\)[ \t]*[;][ \t\r\n]*memcpy\\(system,[ \t]*&restoredSystem,[ \t]*sizeof\\(\\*system\\)\\)[ \t]*[;][ \t\r\n]*FX_LinkSystemBuffers\\(system,[ \t]*systemBuffers\\)[ \t]*[;][ \t\r\n]*const[ \t]+bool[ \t]+restoredExclusiveState[ \t]*=[ \t\r\n]*FX_RestoreArchiveExclusiveState\\(system\\)[ \t]*[;][ \t\r\n]*Sys_LeaveCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;]"
+    "restore must commit linked system and pool snapshots atomically while preserving archive ownership")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "bool __cdecl FX_RestoreArchiveExclusiveState"
+    "return FxIteratorTryBeginExclusive(&system->iteratorCount);"
+    "restore commit must reconstruct exclusive iterator state through the checked iterator helper")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FX_RestoreArchiveExclusiveState[^}]*Sys_AtomicLoad\\(gate\\)[ \t]*!=[ \t]*2[^}]*!FX_CurrentThreadOwnsArchive\\(system\\)"
+    "restore commit must require both acquired archive state and current-thread ownership")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "FxSystem systemSnapshot{};"
+    "save must stage system metadata outside live state")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "FxSystemBuffers *const bufferSnapshot ="
+    "save must stage pool buffers outside live state")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "if (!FX_BeginArchive(system))"
+    "const bool snapshotValid = FX_ArchiveEffectRingIsValid(system)"
+    "save must acquire archive exclusion before validating the live snapshot")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "const[ \t]+bool[ \t]+snapshotValid[ \t]*=[ \t]*FX_ArchiveEffectRingIsValid\\(system\\)[^;]*&&[ \t]*FX_ValidatePoolAllocationGraphState\\(system\\)[^;]*&&[ \t]*FX_CollectArchivePhysicsEntries\\("
+    "save must validate pool ownership before collecting physics entries")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "Sys_EnterCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;][ \t\r\n]*memcpy\\(&systemSnapshot,[ \t]*system,[ \t]*sizeof\\(systemSnapshot\\)\\)[ \t]*[;][ \t\r\n]*memcpy\\(bufferSnapshot,[ \t]*systemBuffers,[ \t]*sizeof\\(\\*bufferSnapshot\\)\\)[ \t]*[;][ \t\r\n]*Sys_LeaveCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;]"
+    "save must copy system and pool state under one stable allocator interval")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "systemSnapshot.activeSpotLightBoltDobj ="
+    "if (!releasedArchive)"
+    "save must finish staging before releasing archive exclusion")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "if (!releasedArchive)"
+    "bool archiveWritten = FX_WriteArchiveDataNoDrop("
+    "save must release live ownership before fallible archive writes")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "FX_WriteArchiveDataNoDrop[ \t\r\n]*\\([ \t\r\n]*memFile,[ \t]*FX_ARCHIVE_BUFFER_SIZE,[ \t]*bufferSnapshot\\)"
+    "save must serialize staged pool buffers rather than mutable live storage")
+
+# The legacy archive is Disk32. Native pointers must be proven representable
+# before narrowing; unsupported 64-bit placements fail closed before archive
+# payload publication or relocation arithmetic.
+require_source_match_count(
+    "EffectsCore/fx_archive.cpp"
+    "reinterpret_cast<std::uintptr_t>\\(system\\)"
+    2
+    "both save and restore must inspect the full native system address")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "currentSystemAddress[ \t\r\n]*>[ \t\r\n]*\\(std::numeric_limits<std::uint32_t>::max\\)\\(\\)"
+    "restore must reject native system addresses outside Disk32")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "systemAddress[ \t]*>[ \t\r\n]*\\(std::numeric_limits<std::uint32_t>::max\\)\\(\\)"
+    "save must reject native system addresses outside Disk32")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "FX_EncodeArchivedPhysicsBody[^}]*address[ \t]*>[ \t]*\\(std::numeric_limits<std::uint32_t>::max\\)\\(\\)"
+    "archive physics handles must reject native pointers outside Disk32")
+require_source_match_count(
+    "EffectsCore/fx_archive.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*sizeof\\(void[ \t]*\\*\\)[ \t]*!=[ \t]*4[ \t\r\n]*\\)"
+    2
+    "save and restore must fail closed until explicit 64-bit archive conversion exists")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FX archive save requires Disk32 conversion on this target"
+    "FX_SaveEffectDefTable(system, memFile);"
+    "unsupported native save addresses must fail before writing archive payload")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FX archive restore requires Disk32 conversion on this target"
+    "static_cast<std::uint32_t>(currentSystemAddress)"
+    "restore must reject an unrepresentable native address before narrowing it")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "const[ \t]+std::uint32_t[ \t]+relocationBits[ \t]*=[ \t\r\n]*static_cast<std::uint32_t>\\(currentSystemAddress\\)[ \t\r\n]*-[ \t]*archivedSystemAddress[ \t]*[;]"
+    "Disk32 relocation must use defined unsigned modular subtraction")
+require_source_match_count(
+    "EffectsCore/fx_archive.cpp"
+    "const[ \t]+std::uint32_t[ \t]+relocated(Read|Write)Address[ \t]*=[ \t\r\n]*archived(Read|Write)Address[ \t]*\\+[ \t]*relocationBits[ \t]*[;]"
+    2
+    "Disk32 pointer relocation must use defined unsigned modular addition")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "if (table->count < 0 || table->count >= 1024)"
+    "table->entries[table->count].key = key;"
+    "archive effect-definition insertion must validate table capacity before writing")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "if (!effectDef)"
+    "table->entries[table->count].key = key;"
+    "archive effect-definition insertion must reject a null definition before writing")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "if (!table || table->count < 0 || table->count > 1024)"
+    "for (std::int32_t index = 0; index < table->count; ++index)"
+    "archive effect-definition lookup must validate the persisted count before iteration")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "if (!effect || !effect->def || !outCount"
+    "archive definition-count validation must reject missing owning pointers")
+foreach(_fx_archive_elem_count
+    elemDefCountLooping
+    elemDefCountOneShot
+    elemDefCountEmission)
+    require_source_contains(
+        "EffectsCore/fx_archive.cpp"
+        "effect->def->${_fx_archive_elem_count} < 0"
+        "archive element-definition lookup must reject a negative ${_fx_archive_elem_count}")
+endforeach()
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "|| (count != 0 && !effect->def->elemDefs))"
+    "archive definition-count validation must require storage for nonempty definitions")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*!effect[ \t]*\\|\\|[ \t]*!FX_ValidateArchiveEffectRuntime\\(system,[ \t]*effect\\)[^;]*!FX_ValidateArchiveEffectDefTiming"
+    "unified archive traversal must validate effect runtime and definition timing before pool links")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*!FX_ValidateArchiveElemRuntime[^;]*!FX_ArchiveElemTypeMatchesClass[^;]*!FX_AppendArchivePhysicsEntry"
+    "unified archive traversal must validate element runtime and class before physics collection")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "if (!FX_ValidateArchiveBodyState(entries[index].state))"
+    "captured physics states must be validated before serialization")
+
+# Free paths validate each handle before reading or rewriting linked records;
+# malformed neighbors must abort before the transactional pool publication.
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "else[ \t]+if[ \t\r\n]*\\([ \t\r\n]*!FX_RunGarbageCollection_FreeTrails[ \t\r\n]*\\([ \t\r\n]*system[ \t]*,[ \t]*effect[ \t\r\n]*\\)[ \t\r\n]*\\|\\|[ \t]*effect->firstTrailHandle[ \t]*!=[ \t]*FX_INVALID_HANDLE[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*invalidTrailGraph[ \t]*=[ \t]*true[ \t]*[;]"
+    "garbage collection must defer a corrupt trail graph until iterator ownership is released")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "const bool releasedExclusive ="
+    "else if (invalidEffectHandle)"
+    "garbage collection must report corrupt effects only after ending exclusive iteration")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "const bool releasedExclusive ="
+    "else if (invalidTrailGraph)"
+    "garbage collection must report corrupt effects/trails only after ending exclusive iteration")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FxDecodeHandle<[ \t\r\n]*FxEffect,[ \t]*FX_EFFECT_LIMIT,[ \t]*FxEffect::HANDLE_SCALE>[ \t\r\n]*\\([^;]*effectHandle[^;]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!effect[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*FxRequestGarbageCollection[^}]*invalidEffectHandle[ \t]*=[ \t]*true[ \t]*[;]"
+    "garbage collection must retain and defer an invalid active effect handle")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FxDecodeHandle<[ \t\r\n]*FxEffect,[ \t]*FX_EFFECT_LIMIT,[ \t]*FxEffect::HANDLE_SCALE>[ \t\r\n]*\\([^;]*freedHandle[^;]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*effect[ \t\r\n]*\\)[^;]*memset[^;]*[;][ \t\r\n]*else[ \t\r\n]*invalidEffectHandle[ \t]*=[ \t]*true[ \t]*[;]"
+    "garbage collection must clear only a validated freed effect record")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "FxPool<FxElem>[ \t]*\\*[ \t]*const[ \t]+elem[ \t]*=[ \t\r\n]*FX_PoolFromHandle_Generic<FxElem,[ \t]*2048>[ \t\r\n]*\\([^;]*\\)[ \t]*[;]"
+    2
+    "element and spot-light free paths must use the central fatal decoder")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FxDecodeHandle<FxPool<FxTrail>,[ \t]*MAX_TRAILS,[ \t]*FxTrail::HANDLE_SCALE>[ \t\r\n]*\\([^;]*trailHandle[^;]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!trail[ \t]*\\|\\|[ \t]*!FX_IsTrailAllocated\\(system,[ \t]*&trail->item\\)[ \t\r\n]*\\)[ \t\r\n]*return[ \t]+false[ \t]*[;]"
+    "trail garbage collection must use a recoverable checked decoder during prevalidation")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FxPool<FxTrailElem>[ \t]*\\*[ \t]*const[ \t]+trailElem[ \t]*=[ \t\r\n]*FX_PoolFromHandle_Generic<FxTrailElem,[ \t]*2048>[ \t\r\n]*\\([^;]*trailElemHandle[^;]*\\)[ \t]*[;]"
+    "trail-element free must use the central fatal decoder")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "nextTrailElemHandle[ \t]*==[ \t]*trailElemHandle"
+    1
+    "trail-element free must reject a self-referential successor")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*trail->lastElemHandle[ \t]*==[ \t]*FX_INVALID_HANDLE[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*return[ \t]*[;][ \t\r\n]*\\}[ \t\r\n]*FxPool<FxTrailElem>[ \t]*\\*[ \t]*const[ \t]+lastTrailElem[ \t]*="
+    "trail-element free must reject a missing tail before decoding it")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "lastTrailElem->item.nextTrailElemHandle != FX_INVALID_HANDLE"
+    "if (!FX_FreePool_Generic_FxTrailElem_("
+    "trail-element tail validation must complete before pool publication")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "static[ \t]+void[ \t]+FX_RemoveAllEffectElems_Internal[ \t\r\n]*\\([^)]*\\)[ \t\r\n]*\\{[ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!system[ \t\r\n]*\\|\\|[ \t\r\n]*!effect[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*return[ \t]*[;][ \t\r\n]*\\}"
+    "internal bulk effect cleanup must reject null state before mutation")
+foreach(_fx_cleanup_visited_set
+    "MAX_ELEMS;releasedElemIndices"
+    "MAX_TRAIL_ELEMS;releasedTrailElemIndices"
+    "MAX_TRAILS;traversedTrailIndices")
+    list(GET _fx_cleanup_visited_set 0 _fx_cleanup_limit)
+    list(GET _fx_cleanup_visited_set 1 _fx_cleanup_set)
+    require_source_contains(
+        "EffectsCore/fx_system.cpp"
+        "std::array<bool, ${_fx_cleanup_limit}> ${_fx_cleanup_set}{};"
+        "bulk effect cleanup must track every visited ${_fx_cleanup_limit} pool slot")
+endforeach()
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "const[ \t]+std::uint16_t[ \t]+previousHandle"
+    2
+    "both bulk element cleanup loops must retain a no-progress snapshot")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FX_PoolFromHandle_Generic<FxElem,[ \t]*MAX_ELEMS>[ \t\r\n]*\\([ \t\r\n]*system->elems[ \t]*,[ \t]*previousHandle[ \t\r\n]*\\)"
+    "bulk element cleanup must decode each target through the central fatal boundary")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "static_cast<std::size_t>(elem - system->elems);"
+    "bulk element cleanup must derive its visited index from the decoded pool slot")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*releasedElemIndices\\[elemIndex\\][ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*FxRequestGarbageCollection[^}]*break[ \t]*[;][ \t\r\n]*\\}[ \t\r\n]*releasedElemIndices\\[elemIndex\\][ \t]*=[ \t]*true[ \t]*[;][ \t\r\n]*FX_FreeElem"
+    "bulk element cleanup must reject duplicate/cyclic handles before freeing")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FX_FreeElem[ \t\r\n]*\\([ \t\r\n]*system[ \t]*,[ \t]*previousHandle[ \t]*,[ \t]*effect[ \t]*,[ \t]*elemClass[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*effect->firstElemHandle\\[elemClass\\][ \t]*==[ \t]*previousHandle[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*FxRequestGarbageCollection[^}]*break[ \t]*[;][ \t\r\n]*\\}"
+    "bulk effect cleanup must stop and defer collection when an element free makes no progress")
+require_source_contains(
+    "EffectsCore/fx_runtime.h"
+    "constexpr std::size_t MAX_TRAILS = 128;"
+    "bulk trail cleanup must share the runtime trail-pool capacity")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*traversedTrailCount\\+\\+[ \t]*>=[ \t]*MAX_TRAILS[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*FxRequestGarbageCollection[^}]*break[ \t]*[;][ \t\r\n]*\\}"
+    "bulk trail cleanup must bound corrupt multi-record cycles and defer collection")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*traversedTrailCount\\+\\+[ \t]*>=[ \t]*MAX_TRAILS[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*FxRequestGarbageCollection[^}]*break[ \t]*[;][ \t\r\n]*\\}[ \t\r\n]*FxPool<FxTrail>[ \t]*\\*[ \t]*const[ \t]+trail[ \t]*=[ \t\r\n]*FX_PoolFromHandle_Generic<FxTrail,[ \t]*MAX_TRAILS>"
+    "bulk trail cleanup must enforce its traversal bound before decoding a record")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FX_PoolFromHandle_Generic<FxTrail,[ \t]*MAX_TRAILS>[ \t\r\n]*\\([ \t\r\n]*system->trails[ \t]*,[ \t]*trailHandle[ \t\r\n]*\\)"
+    "bulk trail cleanup must decode each target through the central fatal boundary")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "static_cast<std::size_t>(trail - system->trails);"
+    "bulk trail cleanup must derive its visited index from the decoded pool slot")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*traversedTrailIndices\\[trailIndex\\][ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*FxRequestGarbageCollection[^}]*break[ \t]*[;][ \t\r\n]*\\}[ \t\r\n]*traversedTrailIndices\\[trailIndex\\][ \t]*=[ \t]*true[ \t]*[;][ \t\r\n]*const[ \t]+std::uint16_t[ \t]+nextTrailHandle[ \t]*=[ \t]*trail->item.nextTrailHandle[ \t]*[;]"
+    "bulk trail cleanup must reject duplicate/cyclic handles before reading links")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FX_PoolFromHandle_Generic<FxTrailElem,[ \t]*MAX_TRAIL_ELEMS>[ \t\r\n]*\\([ \t\r\n]*system->trailElems[ \t]*,[ \t]*previousHandle[ \t\r\n]*\\)"
+    "bulk trail-element cleanup must decode each target through the central fatal boundary")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "static_cast<std::size_t>(trailElem - system->trailElems);"
+    "bulk trail-element cleanup must derive its visited index from the decoded pool slot")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*releasedTrailElemIndices\\[trailElemIndex\\][ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*FxRequestGarbageCollection[^}]*trailComplete[ \t]*=[ \t]*false[ \t]*[;][^}]*break[ \t]*[;][ \t\r\n]*\\}[ \t\r\n]*releasedTrailElemIndices\\[trailElemIndex\\][ \t]*=[ \t]*true[ \t]*[;][ \t\r\n]*FX_FreeTrailElem"
+    "bulk trail-element cleanup must reject duplicate/cyclic handles before freeing")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FX_FreeTrailElem[ \t\r\n]*\\([ \t\r\n]*system[ \t]*,[ \t]*previousHandle[ \t]*,[ \t]*effect[ \t]*,[ \t]*&trail->item[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*trail->item.firstElemHandle[ \t]*==[ \t]*previousHandle[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*FxRequestGarbageCollection[^}]*trailComplete[ \t]*=[ \t]*false[ \t]*[;][^}]*break[ \t]*[;][ \t\r\n]*\\}"
+    "bulk trail-element cleanup must stop and defer collection when a free makes no progress")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*!trailComplete[ \t\r\n]*\\|\\|[ \t\r\n]*nextTrailHandle[ \t]*==[ \t]*trailHandle[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*FxRequestGarbageCollection[^}]*break[ \t]*[;][ \t\r\n]*\\}[ \t\r\n]*trailHandle[ \t]*=[ \t]*nextTrailHandle[ \t]*[;]"
+    "bulk trail cleanup must reject incomplete/self-linked records before advancing")
+require_source_not_matches(
+    "EffectsCore/fx_system.cpp"
+    "for[ \t\r\n]*\\([^;]*trailHandle[^;]*[;][^;]*trailHandle[^;]*[;][^)]*trail->item.nextTrailHandle[^)]*\\)[ \t\r\n]*\\{[^}]*FX_FreeTrailElem"
+    "bulk trail cleanup must not dereference an unchecked decoder in a for-loop increment")
+
+# Garbage collection validates the complete trail graph without mutation,
+# then frees exactly that snapshot. Fatal reporting happens only after the
+# exclusive iterator state has been released.
+require_source_contains(
+    "EffectsCore/fx_system.h"
+    "bool __cdecl FX_RunGarbageCollection_FreeTrails(FxSystem *system, FxEffect *effect);"
+    "trail garbage collection must expose validation failure to its owner")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "std::array<FxPool<FxTrail> *, MAX_TRAILS> trailsToFree{};"
+    "trail garbage collection must snapshot validated records before mutation")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "std::array<bool, MAX_TRAILS> visitedTrailIndices{};"
+    "trail garbage collection must reject cyclic or aliased pool slots")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "if (trailCount == MAX_TRAILS)"
+    "trail garbage collection must enforce the exact pool capacity")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "FxPool<FxTrail> *const trail =
+            FxDecodeHandle<FxPool<FxTrail>, MAX_TRAILS, FxTrail::HANDLE_SCALE>(
+                system->trails, trailHandle);
+        if (!trail || !FX_IsTrailAllocated(system, &trail->item))
+            return false;"
+    "trail garbage-collection prevalidation must reject invalid or free handles before indexing")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*visitedTrailIndices\\[trailIndex\\][ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*return[ \t]+false[ \t]*[;][ \t\r\n]*\\}[ \t\r\n]*visitedTrailIndices\\[trailIndex\\][ \t]*=[ \t]*true[ \t]*[;][ \t\r\n]*trailsToFree\\[trailCount\\+\\+\\][ \t]*=[ \t]*trail[ \t]*[;]"
+    "trail garbage-collection prevalidation must reject duplicates before snapshotting")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "trailsToFree[trailCount++] = trail;"
+    "for (std::size_t index = 0; index < trailCount; ++index)"
+    "trail garbage collection must finish its validation pass before freeing")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "const[ \t]+std::uint16_t[ \t]+expectedTrailHandle[ \t]*=[ \t\r\n]*FX_PoolToHandle_Generic<FxTrail,[ \t]*MAX_TRAILS>[^;]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*firstTrailHandle[ \t]*!=[ \t]*expectedTrailHandle[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*return[ \t]+false[ \t]*[;][ \t\r\n]*\\}[^}]*if[ \t\r\n]*\\([ \t\r\n]*!FX_FreePool_Generic_FxTrail_"
+    "trail garbage collection must verify snapshot order before each free publication")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "FxDecodeHandle<FxPool<FxTrail>,[ \t]*MAX_TRAILS,[ \t]*FxTrail::HANDLE_SCALE>"
+    2
+    "only cycle-recoverable trail snapshots must use the nullable low-level decoder")
+
+# Retrigger snapshots are capacity-aware and cycle-safe, and the caller drops
+# its temporary ownership before escalating a malformed trail chain.
+require_source_contains(
+    "EffectsCore/fx_system.h"
+    "bool __cdecl FX_GetTrailHandleList_Last("
+    "trail snapshot construction must return validation status")
+require_source_contains(
+    "EffectsCore/fx_system.h"
+    "std::size_t outHandleCapacity);"
+    "trail snapshot construction must receive an explicit native-width capacity")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "uint16_t lastOldTrailElemHandle[MAX_TRAILS];"
+    "retrigger snapshots must use the shared trail-pool capacity")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "outHandleCapacity == 0 || outHandleCapacity > MAX_TRAILS"
+    "trail snapshot construction must reject invalid caller capacities")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FxDecodeHandle<FxPool<FxTrail>,[ \t]*MAX_TRAILS,[ \t]*FxTrail::HANDLE_SCALE>[ \t\r\n]*\\([^;]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!trail[ \t]*\\|\\|[ \t]*!FX_IsTrailAllocated\\(system,[ \t]*&trail->item\\)[ \t\r\n]*\\)[ \t\r\n]*return[ \t]+false[ \t]*[;][ \t\r\n]*const[ \t]+std::size_t[ \t]+poolIndex"
+    "retrigger trail snapshots must reject invalid handles before indexing")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "if (visitedTrailIndices[poolIndex] || trailIndex == outHandleCapacity)"
+    "outHandleList[trailIndex++] = terminalTrailElemHandle;"
+    "retrigger trail snapshots must reject duplicates/capacity exhaustion before writing")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "if (visitedTrailElemIndices[trailElemIndex])"
+    "if (terminalTrailElemHandle != trail->item.lastElemHandle)"
+    "retrigger trail snapshots must reject cyclic trail elements before accepting the stored tail")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*!FX_GetTrailHandleList_Last[^}]*\\{[ \t\r\n]*FX_DelRefToEffect[ \t\r\n]*\\([ \t\r\n]*system[ \t]*,[ \t]*effect[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*FX_UnlockEffect[ \t\r\n]*\\([ \t\r\n]*system[ \t]*,[ \t]*effect[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"
+    "retrigger must release its reference and status lock before reporting an invalid snapshot")
+
+# Spawn paths validate the existing tail/head before allocating a new record,
+# fully initialize the new payload, then publish backlinks and owning heads.
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "void[ \t]+__cdecl[ \t]+FX_SpawnEffect_AllocTrails[^}]*if[ \t\r\n]*\\([ \t\r\n]*!system[ \t]*\\|\\|[ \t]*!effect[ \t]*\\|\\|[ \t]*!effect->def[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*return[ \t]*[;][ \t\r\n]*\\}[ \t\r\n]*def[ \t]*=[ \t]*effect->def[ \t]*[;]"
+    "effect trail allocation must validate its owners before reading the definition")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "const std::int64_t validatedElemDefCount ="
+    "effect trail allocation must sum definition counts without signed overflow")
+foreach(_fx_trail_elem_count
+    elemDefCountOneShot
+    elemDefCountLooping
+    elemDefCountEmission)
+    require_source_contains(
+        "EffectsCore/fx_system.cpp"
+        "def->${_fx_trail_elem_count} < 0"
+        "effect trail allocation must reject a negative ${_fx_trail_elem_count}")
+endforeach()
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "validatedElemDefCount[ \t]*>[ \t]*256[^}]*validatedElemDefCount[ \t]*&&[ \t]*!def->elemDefs[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP[^}]*return[ \t]*[;]"
+    "effect trail allocation must enforce uint8 index capacity and definition storage")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "localTrail.defIndex = static_cast<std::uint8_t>(elemDefIter);"
+    "validated trail definition indices must narrow explicitly")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "FX_PoolToHandle_Generic<FxTrail, MAX_TRAILS>("
+    "new trail handles must use the shared pool capacity")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "remoteTrail->item = localTrail;"
+    "effect->firstTrailHandle = trailHandle;"
+    "effect trail allocation must initialize the payload before publishing its handle")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "(trail->firstElemHandle == FX_INVALID_HANDLE)\n            != (trail->lastElemHandle == FX_INVALID_HANDLE)"
+    "trail spawning must reject inconsistent endpoint sentinels")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "lastTrailElemInEffect = &lastTrailElem->item;"
+    "remoteTrailElem = FX_AllocTrailElem(system);"
+    "trail spawning must validate the existing tail before allocating")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*!FX_IsTrailElemAllocated\\(system,[ \t]*&lastTrailElem->item\\)[ \t\r\n]*\\|\\|[ \t\r\n]*lastTrailElem->item.nextTrailElemHandle[ \t]*!=[ \t]*FX_INVALID_HANDLE[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP[^}]*return[ \t]*[;][ \t\r\n]*\\}[ \t\r\n]*lastTrailElemInEffect[ \t]*=[ \t]*&lastTrailElem->item[ \t]*[;]"
+    "trail spawning must reject a decoded tail that is free or nonterminal")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "FX_TrailElem_CompressBasis(basis, remoteTrailElem->item.basis);"
+    "if (lastTrailElemInEffect)"
+    "trail spawning must initialize the complete payload before linking it")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*lastTrailElemInEffect[ \t\r\n]*\\)[ \t\r\n]*lastTrailElemInEffect->nextTrailElemHandle[ \t]*=[ \t]*trailElemHandle[ \t]*[;][ \t\r\n]*else[ \t\r\n]*trail->firstElemHandle[ \t]*=[ \t]*trailElemHandle[ \t]*[;][ \t\r\n]*trail->lastElemHandle[ \t]*=[ \t]*trailElemHandle[ \t]*[;]"
+    "trail spawning must publish its tail/head links before the final endpoint")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "nextElemInEffect =\n                            FX_PoolFromHandle_Generic<FxElem, MAX_ELEMS>("
+    "elem = FX_AllocElem(system);"
+    "element spawning must validate the current head before allocating")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*!FX_IsElemAllocated\\(system,[ \t]*&nextElemInEffect->item\\)[ \t\r\n]*\\|\\|[ \t\r\n]*nextElemInEffect->item.prevElemHandleInEffect[ \t\r\n]*!=[ \t\r\n]*FX_INVALID_HANDLE[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP[^}]*return[ \t]*[;][ \t\r\n]*\\}"
+    "element spawning must reject a free head or one that already has a predecessor")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "elem->item.nextElemHandleInEffect =\n                            nextElemHandleInEffect;"
+    "if (nextElemInEffect)"
+    "element spawning must initialize its forward link before publishing backlinks")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "nextElemInEffect->item.prevElemHandleInEffect =\n                                elemHandle;"
+    "effect->firstElemHandle[elemClass] = elemHandle;"
+    "element spawning must publish the validated backlink before the owning head")
+
+# Every runtime element-definition lookup validates the owning pointers,
+# signed component counts, byte-sized persisted index capacity, and requested
+# index before returning an array element. All callers stop on rejection.
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "const FxElemDef *FX_GetValidatedRuntimeElemDef("
+    "runtime element-definition access must use one checked boundary")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "!effect || !effect->def || !effect->def->elemDefs"
+    "runtime element-definition lookup must validate every owning pointer")
+foreach(_fx_runtime_elem_count
+    elemDefCountLooping
+    elemDefCountOneShot
+    elemDefCountEmission)
+    require_source_contains(
+        "EffectsCore/fx_system.cpp"
+        "effect->def->${_fx_runtime_elem_count} < 0"
+        "runtime element-definition lookup must reject a negative ${_fx_runtime_elem_count}")
+endforeach()
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "const std::int64_t elemDefCount ="
+    "runtime element-definition lookup must sum counts without signed overflow")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*elemDefCount[ \t]*>[ \t]*256[ \t]*\\|\\|[ \t]*elemDefIndex[ \t]*>=[ \t]*elemDefCount[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP[^}]*return[ \t]+nullptr[ \t]*[;][ \t\r\n]*\\}[ \t\r\n]*return[ \t]+&effect->def->elemDefs\\[elemDefIndex\\][ \t]*[;]"
+    "runtime element-definition lookup must validate byte capacity and index before dereference")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "FX_GetValidatedRuntimeElemDef[ \t\r\n]*\\("
+    6
+    "the shared helper plus all five runtime element-definition consumers must remain accounted for")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "elemDef[ \t]*=[ \t]*FX_GetValidatedRuntimeElemDef[^;]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!elemDef[ \t\r\n]*\\)[ \t\r\n]*return[ \t]*[;]"
+    3
+    "every runtime element-definition consumer must stop before dereferencing a rejected definition")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*!system[ \t]*\\|\\|[ \t]*!effect[ \t]*\\|\\|[ \t]*!effect->def[ \t]*\\|\\|[ \t]*!trail[ \t\r\n]*\\|\\|[ \t]*!effectFrameWhenPlayed[ \t\r\n]*\\)"
+    2
+    "both trail-spawn paths must validate the trail before reading its definition index")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*elemDef->elemType[ \t]*!=[ \t]*3[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*MyAssertHandler[^}]*return[ \t]*[;][ \t\r\n]*\\}"
+    2
+    "both trail-spawn paths must stop after rejecting a non-trail definition")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "|| elemDefIndex < 0)"
+    "element spawning must reject a negative definition index before unsigned conversion")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "elem->item.defIndex = static_cast<std::uint8_t>(elemDefIndex);"
+    "element spawning must narrow its validated definition index explicitly")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "elem->item.sequence = static_cast<std::uint8_t>(sequence);"
+    "element spawning must preserve explicit byte-width sequence semantics")
+
+# Sort paths validate both the old/new chains before any list-head mutation.
+# Every fallback traversal remains bounded even if a future edit bypasses a
+# prevalidation call.
+require_source_contains(
+    "EffectsCore/fx_sort.cpp"
+    "[[noreturn]] void FX_DropCorruptSortList(const char *const reason)"
+    "sort corruption must use a central nonreturning drop hook")
+require_source_ordered(
+    "EffectsCore/fx_sort.cpp"
+    "Corrupt FX element sort list: %s"
+    "std::abort();"
+    "sort corruption must retain an abort fallback after ERR_DROP")
+require_source_match_count(
+    "EffectsCore/fx_sort.cpp"
+    "std::array<bool,[ \t]*MAX_ELEMS>[ \t]+visited\\{\\}[ \t]*[;]"
+    2
+    "both sort prevalidation passes must track visited element slots")
+require_source_contains(
+    "EffectsCore/fx_sort.cpp"
+    "if (handle == insertedElemHandle)"
+    "insertion prevalidation must reject an already-linked new element")
+require_source_match_count(
+    "EffectsCore/fx_sort.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*visited\\[elemIndex\\][ \t\r\n]*\\)"
+    2
+    "both sort prevalidation passes must reject cycles and duplicates")
+require_source_match_count(
+    "EffectsCore/fx_sort.cpp"
+    ">=[ \t]*MAX_ELEMS"
+    5
+    "all sort validation and mutation traversals must remain pool-bounded")
+require_source_ordered(
+    "EffectsCore/fx_sort.cpp"
+    "FX_ValidateSortChains(
+        system, effect, elemHandle, stopElemHandle);"
+    "effect->firstElemHandle[0] = stopElemHandle;"
+    "sort-chain prevalidation must complete before list-head mutation")
+require_source_ordered(
+    "EffectsCore/fx_sort.cpp"
+    "FX_ValidateInsertionList(
+        system, effect, effect->firstElemHandle[0], elemHandle);"
+    "elem->nextElemHandleInEffect = *prevNextElemHandle;"
+    "insertion-chain prevalidation must complete before link mutation")
+require_source_match_count(
+    "EffectsCore/fx_sort.cpp"
+    "FX_PoolFromHandle_Generic<FxElem,[ \t]*MAX_ELEMS>"
+    6
+    "all sort-chain decodes must use the shared element capacity and fatal boundary")
+
+# Runtime byte fields must not depend on implementation-defined plain-char
+# signedness on ARM targets.
+require_source_contains(
+    "EffectsCore/fx_runtime.h"
+    "std::uint8_t defIndex;"
+    "trail definition indices must remain explicitly unsigned bytes")
+require_source_match_count(
+    "EffectsCore/fx_runtime.h"
+    "std::uint8_t[ \t]+sequence[ \t]*[;]"
+    3
+    "element, trail, and trail-element sequences must remain explicitly unsigned bytes")
+require_source_contains(
+    "EffectsCore/fx_runtime.h"
+    "std::int8_t basis[2][3];"
+    "compressed trail bases must retain signed-byte semantics")
+require_source_match_count(
+    "EffectsCore/fx_system.h"
+    "std::int8_t[ \t]*\\([ \t]*\\*outBasis\\)[ \t]*\\[3\\]"
+    2
+    "both public compressed-basis declarations must use signed bytes")
+require_source_contains(
+    "EffectsCore/fx_system.h"
+    "const std::int8_t (*inBasis)[3]"
+    "public trail-basis decompression must consume signed bytes")
+require_source_contains(
+    "EffectsCore/fx_update.cpp"
+    "std::int8_t (*outBasis)[3]"
+    "trail-basis compression must write signed bytes")
+require_source_contains(
+    "EffectsCore/fx_update.cpp"
+    "outBasis[basisVecIter][dimIter] = static_cast<std::int8_t>(
+                static_cast<std::int32_t>(clamped));"
+    "trail-basis compression must narrow its clamped value explicitly")
+require_source_contains(
+    "EffectsCore/fx_draw.cpp"
+    "const std::int8_t (*inBasis)[3]"
+    "trail-basis decompression must read signed bytes")
 
 # Static-XModel and BModel draw IDs must be resolved against the published
 # surface arena before any record or embedded pointer is dereferenced.

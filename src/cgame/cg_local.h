@@ -981,7 +981,7 @@ void CG_DrawVersion();
 void __cdecl CG_DrawSoundEqOverlay(int32_t localClientNum);
 void __cdecl CG_DrawSoundOverlay(const ScreenPlacement *scrPlace);
 void __cdecl CG_DrawFxProfile(int32_t localClientNum);
-void __cdecl CG_DrawFxText(char *text, float *profilePos);
+void __cdecl CG_DrawFxText(const char *text, float *profilePos);
 void __cdecl CG_DrawFxMarkProfile(int32_t localClientNum);
 
 

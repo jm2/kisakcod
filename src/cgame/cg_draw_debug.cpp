@@ -803,10 +803,10 @@ void __cdecl CG_DrawFxProfile(int32_t localClientNum)
 
     profilePos[0] = 0.0f;
     profilePos[1] = 12.0f;
-    FX_DrawProfile(localClientNum, (void(__cdecl *)(char *))CG_DrawFxText, profilePos);
+    FX_DrawProfile(localClientNum, CG_DrawFxText, profilePos);
 }
 
-void __cdecl CG_DrawFxText(char *text, float *profilePos)
+void __cdecl CG_DrawFxText(const char *text, float *profilePos)
 {
     iassert(text);
 
@@ -832,5 +832,5 @@ void __cdecl CG_DrawFxMarkProfile(int32_t localClientNum)
 
     profilePos[0] = 0.0f;
     profilePos[1] = 12.0f;
-    FX_DrawMarkProfile(localClientNum, (void(*)(const char*, float*))CG_DrawFxText, profilePos);
+    FX_DrawMarkProfile(localClientNum, CG_DrawFxText, profilePos);
 }
