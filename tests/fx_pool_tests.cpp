@@ -1014,7 +1014,7 @@ bool EffectHandlesUseNativeEntrySize()
         if (sizeof(FxEffect) != 0x88 || lastHandle <= 0x7fff)
             return false;
     }
-    else if (sizeof(FxEffect) != 0x80)
+    else if constexpr (sizeof(FxEffect) != 0x80)
     {
         return false;
     }
