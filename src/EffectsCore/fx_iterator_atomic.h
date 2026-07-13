@@ -73,6 +73,12 @@ inline bool FxIteratorEndExclusive(volatile std::int32_t *const state) noexcept
     return Sys_AtomicCompareExchange(state, 0, -1) == -1;
 }
 
+inline bool FxIteratorDowngradeExclusiveToCooperative(
+    volatile std::int32_t *const state) noexcept
+{
+    return Sys_AtomicCompareExchange(state, 1, -1) == -1;
+}
+
 static_assert(std::atomic_ref<bool>::is_always_lock_free);
 static_assert(std::atomic_ref<bool>::required_alignment <= alignof(bool));
 

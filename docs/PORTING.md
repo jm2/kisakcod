@@ -64,9 +64,8 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Obtain all-target CI evidence for the corrective DObj/model-surface transaction, asset-validation,
-   and Windows compile repair, then implement the dependent staged FX layout/iterator/counter/status
-   protocols.
+2. Land the EffectsCore runtime-hardening PR with all-target evidence and add live-engine
+   kill/rewind/archive fixtures.
 3. Introduce fixed-width `disk32` fast-file schemas and checked conversion into
    native runtime structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -717,15 +716,13 @@ words, uses unsuffixed `_Interlocked*` compiler intrinsics behind `<intrin.h>` o
 `long *` intrinsic impedance mismatch without exposing `LONG` or importing `Windows.h`. The critical
 contract — `Increment`/`Decrement` return the *new* value, `FetchAdd`/`Exchange`/`CompareExchange`
 return the *old*; `CompareExchange` keeps Win32 `(dest,exchange,comparand)` order — now runs on MSVC
-as well as GCC/Clang, including high-bit/wrap and pointer exchange cases. Non-MSVC `Interlocked*`
-aliases remain only as a temporary source-migration aid; Windows-owned names are never redefined on
-MSVC. The shared fast-lock implementation is the first layout-bound consumer and no longer contains
-a Windows include or native cast. Corrected live census after the landed diagnostic, database, and
-worker-queue batch: **77** direct `Interlocked` calls remain across 13 engine TUs. The original
-209 also included 12 assertion-message literals. *M1 open tail:* migrate the
-remaining families, and retype their `volatile long`/`LONG` storage and casts to exact-width words; then delete
-the compatibility aliases. The bare `sizeof(T)==0x..` CI tripwire (§9) can be seeded/frozen green now
-and burned down in M4.
+as well as GCC/Clang, including high-bit/wrap and pointer exchange cases. The temporary non-MSVC
+`Interlocked*` aliases have been removed, and the executable engine census is now **zero direct
+`Interlocked` calls**. Shared fast locks, worker queues, database/script/XAnim/DObj/EffectsCore state,
+and renderer reservations use exact-width storage and portable operations. *M1 open tail:* migrate the
+remaining raw volatile polling, Windows `LONG` storage, platform-header coupling, and native-layout
+assumptions that do not appear in the direct-call census. The bare `sizeof(T)==0x..` CI tripwire (§9)
+continues to freeze and burn down M4 layout debt.
 
 **M3 (native time/synchronization/event/thread-lifecycle services landed) — platform ownership is
 explicit, but the engine remains gated.**
@@ -901,12 +898,21 @@ complete descriptors. Workers and scene walkers validate owner frame, published 
 framing, output contiguity, material/surface identity, and required bones. Fast-file completion now
 validates XSurface buckets/weights/rigid coverage plus XModel skeleton parents, classifications,
 exact LOD coverage, materials, and collision spans/bones. The 23-test GCC/Clang/ASan/UBSan/TSan
-matrix is green, and the live native-atomic census is **70 calls in 10 TUs**. Its first all-target run
-passed all five portable jobs but found four shared Windows compile seams; the corrective transaction/
-validation/build patch awaits replacement CI evidence. The next renderer work is EffectsCore's 61 native calls, staged as exact-width
-layout, iterator/scalar, pool, camera/visibility/ring, and packed-status protocol batches. The
-load-object `Buf_Read<T>` family remains unbounded and potentially unaligned and needs a real bounded
-cursor for security and ARM64 correctness. Detailed live blockers and sequencing remain in
+matrix is green, and subsequent batches reduced the executable direct-`Interlocked` census to zero.
+All-target run 29250761031 passes the five portable jobs and all four Windows engine variants for the
+preceding filesystem/final-atomic baseline; the current FX runtime-hardening batch passes all 30 local
+tests under GCC, Clang, ASan/UBSan, and TSan, plus strict AArch64 cross-compilation, and awaits replacement
+all-target evidence after commit. EffectsCore now has exact-width runtime layouts, portable atomic
+operations, cooperative iterator/GC protocols, bounded visibility publication, transactional freelists,
+fixed-size allocation sidecars, atomic active counts, and native-size handle codecs. Archive restore
+transactionally reconstructs all three ownership maps from bounded acyclic freelists and rejects count
+mismatches; archive, draw/update/profile/sort, spawn, removal, GC, kill, and rewind paths validate their
+complete traversed state before publication. A writer-intent gate, durable lifecycle marker, bounded
+packed-status CAS helpers, retained owner-subtree preflight, restart-root transaction, and explicit
+longjmp unwind prevent resurrection, concurrent traversal/mutation, adjacent-field carry, and abandoned
+locks/gates. Explicit signed trail bytes preserve compressed basis data on Linux ARM64. Remaining work is
+camera/scalar snapshot publication, real Disk32 FX archive conversion on 64-bit targets, production
+fixtures, and a bounded/aligned replacement for load-object `Buf_Read<T>`. Detailed live blockers and sequencing remain in
 `docs/task.md` and `docs/CODEBASE_AUDIT.md`.
 
 **M3 — Windows-ARM64 D3D9on12 is "expected to work," not "just works"; `IDirectDraw7` is mis-scoped.**

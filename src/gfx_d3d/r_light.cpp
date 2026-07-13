@@ -1200,11 +1200,15 @@ bool __cdecl R_SpotLightIsAttachedToDobj(const DObj_s *obj)
     iassert( obj );
     system = FX_GetSystem(0);
     iassert( system );
-    if (!system->activeSpotLightEffectCount)
+    FxSpotLightStateSnapshot spotLightSnapshot{};
+    if (!FX_GetSpotLightStateSnapshot(system, &spotLightSnapshot)
+        || spotLightSnapshot.effectCount != 1
+        || spotLightSnapshot.elemCount != 1)
         return 0;
-    if (system->activeSpotLightBoltDobj == -1)
+    if (spotLightSnapshot.boltDobj < 0
+        || spotLightSnapshot.boltDobj >= CLIENT_DOBJ_HANDLE_MAX)
         return 0;
-    attachedDobj = Com_GetClientDObj(system->activeSpotLightBoltDobj, 0);
+    attachedDobj = Com_GetClientDObj(spotLightSnapshot.boltDobj, 0);
     return attachedDobj && attachedDobj == obj;
 }
 

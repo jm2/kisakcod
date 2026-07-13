@@ -925,6 +925,9 @@ void Com_Error(errorParm_t code, const char* fmt, ...)
         iassert(com_errorEntered);
         errorcode = code;
         Sys_LeaveCriticalSection(CRITSECT_COM_ERROR);
+#ifndef KISAK_DEDI_HEADLESS
+        FX_ErrorCleanup();
+#endif
         Value = (jmp_buf *)Sys_GetValue(2);
         longjmp(*Value, -1);
     }
@@ -2665,6 +2668,9 @@ void Com_CheckError()
     Sys_LeaveCriticalSection(CRITSECT_COM_ERROR);
     if (v0)
     {
+#ifndef KISAK_DEDI_HEADLESS
+        FX_ErrorCleanup();
+#endif
         void * value = Sys_GetValue(2);
         longjmp((int*)value, -1);
     }

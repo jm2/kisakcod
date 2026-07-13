@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 
 #include <qcommon/qcommon.h>
@@ -19,6 +20,10 @@ enum $FFE723C3A54D7F6DDF86A219D7944B2F : int32_t
     FX_STATUS_OWNED_EFFECTS_SHIFT = 0x11,
     FX_STATUS_OWNED_EFFECTS_MASK = 0x7FE0000,
     FX_STATUS_DEFER_UPDATE = 0x8000000,
+    // A killed effect can remain referenced after its elements are removed.
+    // Reuse the original deferred-update bit as its durable lifecycle gate so
+    // updates and owned-effect admission cannot recreate a zombie subtree.
+    FX_STATUS_OWNER_ADMISSION_BLOCKED = FX_STATUS_DEFER_UPDATE,
     FX_STATUS_SELF_OWNED = 0x10000000,
     FX_STATUS_IS_LOCKED = 0x20000000,
     FX_STATUS_IS_LOCKED_MASK = 0x60000000,
@@ -45,22 +50,91 @@ enum $390C8AB619C5D27F330E671BCD9D689E : int32_t
 #define FX_BONE_INDEX_NONE 2047
 #define FX_DOBJ_HANDLE_NONE 4095
 
+struct FxSpotLightStateSnapshot
+{
+    std::int32_t effectCount = 0;
+    std::int32_t elemCount = 0;
+    std::uint16_t effectHandle = 0xFFFFu;
+    std::uint16_t elemHandle = 0xFFFFu;
+    std::int16_t boltDobj = -1;
+};
+
 void __cdecl TRACK_fx_system();
 XModel *__cdecl FX_RegisterModel(const char *modelName);
 FxSystem *__cdecl FX_GetSystem(int32_t clientIndex);
 FxSystemBuffers *__cdecl FX_GetSystemBuffers(int32_t clientIndex);
 void __cdecl FX_LinkSystemBuffers(FxSystem *system, FxSystemBuffers *systemBuffers);
+bool __cdecl FX_RebuildPoolAllocationStates(FxSystem *system);
+bool __cdecl FX_ValidatePoolAllocationGraphState(FxSystem *system);
+bool __cdecl FX_ValidateEffectKillExclusiveState(
+    FxSystem *system) noexcept;
+bool __cdecl FX_ArchiveGateIsActive(const FxSystem *system);
+bool __cdecl FX_EffectKillGateIsActive(const FxSystem *system) noexcept;
+std::uint32_t __cdecl FX_GetCooperativeIteratorGeneration(
+    const FxSystem *system);
+bool __cdecl FX_CurrentThreadOwnsCooperativeIterator(const FxSystem *system);
+void __cdecl FX_WaitForArchiveGate(const FxSystem *system);
+void __cdecl FX_WaitForEffectKillGate(const FxSystem *system) noexcept;
+bool __cdecl FX_BeginArchive(FxSystem *system);
+bool __cdecl FX_RestoreArchiveExclusiveState(FxSystem *system);
+bool __cdecl FX_EndArchive(FxSystem *system);
+void __cdecl FX_AbandonCurrentThreadArchiveForError() noexcept;
+void __cdecl FX_AbandonCurrentThreadSortExclusiveForError() noexcept;
+bool __cdecl FX_CurrentThreadOwnsSortExclusive(
+    const FxSystem *system) noexcept;
+void __cdecl FX_AbandonCurrentThreadEffectLocksForError() noexcept;
+void __cdecl FX_AbandonCurrentThreadEffectReservationForError() noexcept;
+void __cdecl FX_AbandonCurrentThreadEffectKillRetainsForError() noexcept;
+void __cdecl FX_AbandonCurrentThreadEffectKillForError() noexcept;
+void __cdecl FX_ErrorCleanup() noexcept;
+bool __cdecl FX_LockEffect(FxSystem *system, FxEffect *effect);
+void __cdecl FX_UnlockEffect(FxSystem *system, FxEffect *effect);
+bool __cdecl FX_IsEffectLifecycleBlocked(const FxEffect *effect) noexcept;
+bool __cdecl FX_RearmEffectForRestart(
+    FxSystem *system,
+    FxEffect *effect) noexcept;
+bool __cdecl FX_BeginEffectKillExclusive(FxSystem *system) noexcept;
+bool __cdecl FX_EndEffectKillExclusive(FxSystem *system) noexcept;
+bool __cdecl FX_ThreadOwnsEffectKillExclusive(
+    const FxSystem *system) noexcept;
+bool __cdecl FX_CompleteEffectKillExclusiveDowngrade(
+    FxSystem *system) noexcept;
+bool __cdecl FX_DowngradeEffectKillExclusiveToCooperative(
+    FxSystem *system) noexcept;
+bool __cdecl FX_EndEffectRestartGate(FxSystem *system) noexcept;
+void __cdecl FX_AbandonCurrentThreadEffectKillExclusiveForError() noexcept;
+bool __cdecl FX_RetainEffectForRestart(
+    FxSystem *system,
+    FxEffect *effect) noexcept;
+bool __cdecl FX_ConsumeEffectRestartRetain(
+    FxSystem *system,
+    FxEffect *effect,
+    bool releaseReference) noexcept;
+void __cdecl FX_AbandonCurrentThreadEffectRestartRetainsForError() noexcept;
+void __cdecl FX_AbandonCurrentThreadEffectRestartGateForError() noexcept;
+bool __cdecl FX_IsElemAllocated(FxSystem *system, const FxElem *elem);
+bool __cdecl FX_IsTrailAllocated(FxSystem *system, const FxTrail *trail);
+bool __cdecl FX_IsTrailElemAllocated(
+    FxSystem *system,
+    const FxTrailElem *trailElem);
+bool __cdecl FX_GetSpotLightStateSnapshot(
+    const FxSystem *system,
+    FxSpotLightStateSnapshot *snapshot);
+bool __cdecl FX_SetSpotLightBoltDobj(
+    FxSystem *system,
+    std::int16_t boltDobj);
 void __cdecl FX_InitSystem(int32_t localClientNum);
 void __cdecl FX_ResetSystem(FxSystem *system);
 int32_t __cdecl FX_EffectToHandle(FxSystem *system, FxEffect *effect);
 void __cdecl FX_ShutdownSystem(int32_t localClientNum);
 void __cdecl FX_RelocateSystem(FxSystem *system, int32_t relocationDistance);
-void __cdecl FX_EffectNoLongerReferenced(FxSystem *system, FxEffect *remoteEffect);
 void __cdecl FX_DelRefToEffect(FxSystem *system, FxEffect *effect);
 void __cdecl FX_RunGarbageCollection(FxSystem *system);
 bool __cdecl FX_BeginIteratingOverEffects_Exclusive(FxSystem *system);
-void __cdecl FX_RunGarbageCollection_FreeSpotLight(FxSystem *system, uint16_t effectHandle);
-void __cdecl FX_RunGarbageCollection_FreeTrails(FxSystem *system, FxEffect *effect);
+bool __cdecl FX_RunGarbageCollection_FreeSpotLight(
+    FxSystem *system,
+    uint16_t effectHandle);
+bool __cdecl FX_RunGarbageCollection_FreeTrails(FxSystem *system, FxEffect *effect);
 void __cdecl FX_SpawnEffect_AllocTrails(FxSystem *system, FxEffect *effect);
 FxPool<FxTrail> *__cdecl FX_AllocTrail(FxSystem *system);
 uint16_t __cdecl FX_CalculatePackedLighting(const float *origin);
@@ -118,16 +192,15 @@ void __cdecl FX_PlayBoltedEffect(
     uint32_t dobjHandle,
     uint32_t boneIndex);
 void __cdecl FX_RetriggerEffect(int32_t localClientNum, FxEffect *effect, int32_t msecBegin);
-void __cdecl FX_GetTrailHandleList_Last(
+bool __cdecl FX_GetTrailHandleList_Last(
     FxSystem *system,
     FxEffect *effect,
     uint16_t *outHandleList,
-    int32_t *outTrailCount);
+    std::size_t outHandleCapacity);
 void __cdecl FX_ThroughWithEffect(int32_t localClientNum, FxEffect *effect);
 void __cdecl FX_StopEffect(FxSystem *system, FxEffect *effect);
 void __cdecl FX_StopEffectNonRecursive(FxSystem *system, FxEffect *effect);
 void __cdecl FX_KillEffect(FxSystem *system, FxEffect *effect);
-void __cdecl FX_RemoveAllEffectElems(FxSystem *system, FxEffect *effect);
 void __cdecl FX_KillEffectDef(int32_t localClientNum, const FxEffectDef *def);
 void __cdecl FX_KillAllEffects(int32_t localClientNum);
 void __cdecl FX_SpawnTrailElem_NoCull(
@@ -186,10 +259,17 @@ void __cdecl FX_SpawnSound(
     const FxSpatialFrame *effectFrameWhenPlayed,
     int32_t randomSeed);
 void __cdecl FX_FreeElem(FxSystem *system, uint16_t elemHandle, FxEffect *effect, uint32_t elemClass);
-void __cdecl FX_FreeTrailElem(FxSystem *system, uint16_t trailElemHandle, FxEffect *effect, FxTrail *trail);
+void __cdecl FX_FreeTrailElem(
+    FxSystem *system,
+    uint16_t trailElemHandle,
+    FxEffect *effect,
+    FxTrail *trail,
+    FxTrail *trailOwner);
 void __cdecl FX_FreeSpotLightElem(FxSystem *system, uint16_t elemHandle, FxEffect *effect);
 double __cdecl FX_GetClientVisibility(int32_t localClientNum, const float *start, const float *end);
-void __cdecl FX_TrailElem_CompressBasis(const float (*inBasis)[3], char (*outBasis)[3]);
+void __cdecl FX_TrailElem_CompressBasis(
+    const float (*inBasis)[3],
+    std::int8_t (*outBasis)[3]);
 
 double FX_GetServerVisibility(const float *start, const float *end);
 FxEffect *FX_GetClientEffectByIndex(int clientIndex, uint32_t index);
@@ -748,7 +828,9 @@ void __cdecl FX_DrawSpotLightEffect(FxSystem *system, FxEffect *effect, int32_t 
 void __cdecl FX_DrawSpriteElems(FxSystem *system, int32_t drawTime);
 void __cdecl FX_DrawTrailsForEffect(FxSystem *system, FxEffect *effect, int32_t drawTime);
 void __cdecl FX_DrawTrail(FxSystem *system, FxDrawState *draw, FxTrail *trail);
-void __cdecl FX_TrailElem_UncompressBasis(const char (*inBasis)[3], float (*basis)[3]);
+void __cdecl FX_TrailElem_UncompressBasis(
+    const std::int8_t (*inBasis)[3],
+    float (*basis)[3]);
 void __cdecl FX_GenTrail_IndsForSegment(
     FxDrawState *draw,
     uint16_t reservedBaseVertex,
@@ -899,16 +981,14 @@ static_assert(sizeof(FxEffectDefTable) == 0x2004);
 void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile);
 void __cdecl FX_RestoreEffectDefTable(MemoryFile *memFile, FxEffectDefTable *table);
 void __cdecl FX_AddEffectDefTableEntry(FxEffectDefTable *table, uint32_t key, const FxEffectDef *effectDef);
-void __cdecl FX_FixupEffectDefHandles(FxSystem *system, FxEffectDefTable *table);
+bool __cdecl FX_FixupEffectDefHandles(FxSystem *system, FxEffectDefTable *table);
 FxEffect *__cdecl FX_EffectFromHandle(FxSystem *system, uint16_t handle);
 const FxEffectDef *__cdecl FX_FindEffectDefInTable(const FxEffectDefTable *table, uint32_t key);
-void __cdecl FX_RestorePhysicsData(FxSystem *system, MemoryFile *memFile);
 FxElemVisuals __cdecl FX_GetElemVisuals(const FxElemDef *elemDef, int32_t randomSeed);
 void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile);
 void __cdecl FX_SaveEffectDefTable(FxSystem *system, MemoryFile *memFile);
 void __cdecl FX_SaveEffectDefTable_FastFile(MemoryFile *memFile);
 void __cdecl FX_SaveEffectDefTable_LoadObj(MemoryFile* memFile);
-void __cdecl FX_SavePhysicsData(FxSystem *system, MemoryFile *memFile);
 void __cdecl FX_Archive(int32_t clientIndex, MemoryFile *memFile);
 
 // fx_beam
@@ -927,18 +1007,19 @@ FxPostLightInfo *__cdecl FX_PostLight_GetInfo();
 
 
 // fx_profile
-void __cdecl FX_DrawProfile(int32_t clientIndex, void(__cdecl *drawFunc)(char *), float *profilePos);
+using FxProfileDrawFunc = void(__cdecl *)(const char *, float *);
+void __cdecl FX_DrawProfile(int32_t clientIndex, FxProfileDrawFunc drawFunc, float *profilePos);
 FxProfileEntry *__cdecl FX_GetProfileEntry(const FxEffectDef *effectDef, FxProfileEntry *entryPool, int32_t *entryCount);
 void __cdecl FX_ProfileSingleEffect(FxSystem *system, const FxEffect *effect, FxProfileEntry *entry);
 int32_t __cdecl FX_CompareProfileEntries(const FxProfileEntry *e0, const FxProfileEntry *e1);
 double __cdecl FX_GetProfileEntryCost(const FxProfileEntry *entry);
-void __cdecl FX_DrawMarkProfile(int32_t clientIndex, void(__cdecl *drawFunc)(const char *, float *), float *profilePos);
+void __cdecl FX_DrawMarkProfile(int32_t clientIndex, FxProfileDrawFunc drawFunc, float *profilePos);
 void __cdecl FX_DrawMarkProfile_MarkPrint(
     FxMarksSystem* marksSystem,
     uint16_t head,
     const char* name,
     int32_t index,
-    void(__cdecl* drawFunc)(const char*, float*),
+    FxProfileDrawFunc drawFunc,
     float* profilePos);
 
 
@@ -1214,6 +1295,7 @@ void __cdecl FX_UpdateEffectPartialTrail(
     FxSystem *system,
     FxEffect *effect,
     FxTrail *trail,
+    FxTrail *trailOwner,
     int32_t msecUpdateBegin,
     int32_t msecUpdateEnd,
     float distanceTravelledBegin,
@@ -1221,7 +1303,9 @@ void __cdecl FX_UpdateEffectPartialTrail(
     uint16_t trailElemHandleStart,
     uint16_t trailElemHandleStop,
     FxSpatialFrame *frameNow);
-void __cdecl FX_TrailElem_CompressBasis(const float (*inBasis)[3], char (*outBasis)[3]);
+void __cdecl FX_TrailElem_CompressBasis(
+    const float (*inBasis)[3],
+    std::int8_t (*outBasis)[3]);
 FxUpdateResult __cdecl FX_UpdateTrailElement(
     FxSystem *system,
     FxEffect *effect,

@@ -5,6 +5,7 @@
 #include <universal/com_math.h>
 
 #include <EffectsCore/fx_runtime.h>
+#include <EffectsCore/fx_pool.h>
            
 struct orientation_t // sizeof=0x30
 {                                       // ...
@@ -284,15 +285,25 @@ const struct FxElemDef // sizeof=0xFC
 template<typename ITEM_TYPE, size_t LIMIT>
 uint16 FX_PoolToHandle_Generic(FxPool<ITEM_TYPE>* poolArray, ITEM_TYPE* item)
 {
-    static_assert((LIMIT * ITEM_TYPE::HANDLE_SCALE) <= 0xFFFF, "do not support huge pools at the moment");
-
-    vassert(item && item >= &poolArray[0].item && item < &poolArray[LIMIT].item, "%p %p", poolArray, item);
-    return ((char*)item - (char*)poolArray) / ITEM_TYPE::HANDLE_SCALE;
+    static_assert(FxPoolSlotLayoutIsCompatible<ITEM_TYPE>(),
+                  "FX handle stride must match the legacy item stride");
+    const std::uint16_t handle =
+        FxEncodeHandle<FxPool<ITEM_TYPE>, LIMIT, ITEM_TYPE::HANDLE_SCALE>(
+            poolArray, item);
+    vassert(handle != FX_INVALID_HANDLE, "%p %p", poolArray, item);
+    return handle;
 }
 
 template<typename ITEM_TYPE, size_t LIMIT>
 FxPool<ITEM_TYPE>* FX_PoolFromHandle_Generic(FxPool<ITEM_TYPE>* poolArray, uint handle)
 {
-    vassert(handle < (LIMIT * sizeof(ITEM_TYPE) / ITEM_TYPE::HANDLE_SCALE) && handle % (sizeof(ITEM_TYPE) / ITEM_TYPE::HANDLE_SCALE) == 0, "%p %u", poolArray, handle);
-    return (FxPool<ITEM_TYPE> *)((char*)poolArray + (handle * ITEM_TYPE::HANDLE_SCALE));
+    static_assert(FxPoolSlotLayoutIsCompatible<ITEM_TYPE>(),
+                  "FX handle stride must match the legacy item stride");
+    FxPool<ITEM_TYPE> *const item =
+        FxDecodeHandle<FxPool<ITEM_TYPE>, LIMIT, ITEM_TYPE::HANDLE_SCALE>(
+            poolArray, handle);
+    vassert(item != nullptr, "%p %u", poolArray, handle);
+    if (!item)
+        FX_InvalidPoolHandle(poolArray, handle);
+    return item;
 }

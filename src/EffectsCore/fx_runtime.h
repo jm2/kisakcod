@@ -89,6 +89,8 @@ struct FxEffect
     FxSpatialFrame frameNow;
     FxSpatialFrame framePrev;
     float distanceTraveled;
+
+    static constexpr std::size_t HANDLE_SCALE = 4;
 };
 RUNTIME_SIZE(FxEffect, 0x80, 0x88);
 
@@ -97,7 +99,7 @@ struct FxPool
 {
     union
     {
-        int nextFree;
+        std::int32_t nextFree;
         T item;
     };
 };
@@ -148,17 +150,19 @@ struct FxElem
 
     static constexpr std::size_t HANDLE_SCALE = 4;
 };
+RUNTIME_SIZE(FxElem, 0x28, 0x28);
 
 struct FxTrail
 {
     std::uint16_t nextTrailHandle;
     std::uint16_t firstElemHandle;
     std::uint16_t lastElemHandle;
-    char defIndex;
-    char sequence;
+    std::uint8_t defIndex;
+    std::uint8_t sequence;
 
     static constexpr std::size_t HANDLE_SCALE = 4;
 };
+RUNTIME_SIZE(FxTrail, 0x8, 0x8);
 
 struct FxTrailElem
 {
@@ -167,12 +171,13 @@ struct FxTrailElem
     int msecBegin;
     std::uint16_t nextTrailElemHandle;
     std::int16_t baseVelZ;
-    char basis[2][3];
+    std::int8_t basis[2][3];
     std::uint8_t sequence;
     std::uint8_t unused;
 
     static constexpr std::size_t HANDLE_SCALE = 4;
 };
+RUNTIME_SIZE(FxTrailElem, 0x20, 0x20);
 
 struct FxVisBlocker
 {

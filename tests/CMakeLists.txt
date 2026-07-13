@@ -146,6 +146,22 @@ add_test(
 )
 set_tests_properties(effectscore-iterator-atomic-protocol PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-fx-pool-tests
+    fx_pool_tests.cpp
+)
+target_include_directories(kisakcod-fx-pool-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-fx-pool-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-fx-pool-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-fx-pool-tests)
+set_target_properties(kisakcod-fx-pool-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-pool-and-handle-contracts
+    COMMAND kisakcod-fx-pool-tests
+)
+set_tests_properties(effectscore-pool-and-handle-contracts PROPERTIES TIMEOUT 30)
+
 add_executable(kisakcod-db-load-atomic-tests db_load_atomic_tests.cpp)
 target_include_directories(kisakcod-db-load-atomic-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-db-load-atomic-tests PRIVATE cxx_std_20)

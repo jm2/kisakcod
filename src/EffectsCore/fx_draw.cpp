@@ -13,6 +13,205 @@
 #include <universal/profile.h>
 #include <universal/sys_atomic.h>
 
+#include <cstring>
+#include <cstdlib>
+#include <limits>
+
+namespace
+{
+struct FxCooperativeIteratorThreadState
+{
+    const FxSystem *system = nullptr;
+    std::uint32_t generation = 0;
+    std::uint32_t depth = 0;
+};
+
+thread_local FxCooperativeIteratorThreadState
+    fx_cooperativeIteratorThreadState{};
+
+void FX_AbandonCurrentThreadCooperativeIteratorsForError() noexcept
+{
+    FxSystem *const system = const_cast<FxSystem *>(
+        fx_cooperativeIteratorThreadState.system);
+    if (system
+        && fx_cooperativeIteratorThreadState.generation
+            == FX_GetCooperativeIteratorGeneration(system))
+    {
+        while (fx_cooperativeIteratorThreadState.depth != 0)
+        {
+            std::int32_t remaining = -1;
+            if (!FxIteratorEndCooperative(
+                    &system->iteratorCount, &remaining))
+            {
+                break;
+            }
+            --fx_cooperativeIteratorThreadState.depth;
+        }
+    }
+    fx_cooperativeIteratorThreadState = {};
+}
+
+[[noreturn]] void FX_DropCorruptDrawPool(
+    const char *const poolName,
+    const std::uint16_t handle)
+{
+    Com_Error(
+        ERR_DROP,
+        "Corrupt FX draw %s handle %u is invalid or refers to a free pool slot",
+        poolName,
+        static_cast<unsigned int>(handle));
+    std::abort();
+}
+
+[[noreturn]] void FX_DropCorruptDrawList(const char *const reason)
+{
+    Com_Error(ERR_DROP, "Corrupt FX draw list: %s", reason);
+    std::abort();
+}
+
+std::size_t FX_GetValidatedDrawElemDefCount(const FxEffect *const effect)
+{
+    if (!effect || !effect->def
+        || effect->def->elemDefCountLooping < 0
+        || effect->def->elemDefCountOneShot < 0
+        || effect->def->elemDefCountEmission < 0)
+    {
+        FX_DropCorruptDrawList("invalid effect definition state");
+    }
+    const std::int64_t elemDefCount =
+        static_cast<std::int64_t>(effect->def->elemDefCountLooping)
+        + effect->def->elemDefCountOneShot
+        + effect->def->elemDefCountEmission;
+    if (elemDefCount > 256
+        || (elemDefCount > 0 && !effect->def->elemDefs))
+    {
+        FX_DropCorruptDrawList("invalid effect definition count");
+    }
+    return static_cast<std::size_t>(elemDefCount);
+}
+
+const FxElemDef *FX_GetValidatedDrawElemDef(
+    const FxEffect *const effect,
+    const std::uint32_t elemDefIndex)
+{
+    if (elemDefIndex >= FX_GetValidatedDrawElemDefCount(effect))
+        FX_DropCorruptDrawList("element definition index is out of range");
+    return &effect->def->elemDefs[elemDefIndex];
+}
+
+void FX_ValidateDrawTrailDef(const FxElemDef *const elemDef)
+{
+    if (!elemDef || elemDef->elemType != FX_ELEM_TYPE_TRAIL
+        || !elemDef->trailDef || elemDef->trailDef->repeatDist <= 0
+        || elemDef->trailDef->vertCount <= 0
+        || elemDef->trailDef->vertCount
+            > (std::numeric_limits<std::uint16_t>::max)()
+        || elemDef->trailDef->indCount <= 0
+        || (elemDef->trailDef->indCount & 1) != 0
+        || elemDef->trailDef->indCount
+            > (std::numeric_limits<std::uint16_t>::max)() / 3
+        || !elemDef->trailDef->verts
+        || !elemDef->trailDef->inds)
+    {
+        FX_DropCorruptDrawList("invalid trail definition");
+    }
+    for (std::int32_t index = 0;
+         index < elemDef->trailDef->indCount;
+         ++index)
+    {
+        if (elemDef->trailDef->inds[index]
+            >= elemDef->trailDef->vertCount)
+        {
+            FX_DropCorruptDrawList("trail index exceeds its vertex set");
+        }
+    }
+}
+
+FxElem *FX_GetAllocatedDrawElem(
+    FxSystem *const system,
+    const std::uint16_t handle)
+{
+    if (!system || !system->elems)
+        FX_DropCorruptDrawPool("element", handle);
+    FxPool<FxElem> *const slot =
+        FX_PoolFromHandle_Generic<FxElem, MAX_ELEMS>(system->elems, handle);
+    if (!FX_IsElemAllocated(system, &slot->item))
+        FX_DropCorruptDrawPool("element", handle);
+    return &slot->item;
+}
+
+FxTrail *FX_GetAllocatedDrawTrail(
+    FxSystem *const system,
+    const std::uint16_t handle)
+{
+    if (!system || !system->trails)
+        FX_DropCorruptDrawPool("trail", handle);
+    FxPool<FxTrail> *const slot =
+        FX_PoolFromHandle_Generic<FxTrail, MAX_TRAILS>(system->trails, handle);
+    if (!FX_IsTrailAllocated(system, &slot->item))
+        FX_DropCorruptDrawPool("trail", handle);
+    return &slot->item;
+}
+
+const FxTrailElem *FX_GetAllocatedDrawTrailElem(
+    FxSystem *const system,
+    const std::uint16_t handle)
+{
+    if (!system || !system->trailElems)
+        FX_DropCorruptDrawPool("trail element", handle);
+    FxPool<FxTrailElem> *const slot =
+        FX_PoolFromHandle_Generic<FxTrailElem, MAX_TRAIL_ELEMS>(
+            system->trailElems, handle);
+    if (!FX_IsTrailElemAllocated(system, &slot->item))
+        FX_DropCorruptDrawPool("trail element", handle);
+    return &slot->item;
+}
+}
+
+void __cdecl FX_ErrorCleanup() noexcept
+{
+    // Com_Error uses longjmp, so C++ destructors cannot release iterator
+    // ownership. This hook runs at the very start of Com_ErrorCleanup, before
+    // thread synchronization can wait behind a gate abandoned by this thread.
+    // A pre-publication spotlight can already be visible through the
+    // spotlight side channel. Withdraw/tombstone it while its effect lock is
+    // still held, then release the recorded locks so stale waiters observe a
+    // zero-reference effect and skip it.
+    FX_AbandonCurrentThreadEffectReservationForError();
+    FX_AbandonCurrentThreadEffectKillRetainsForError();
+    FX_AbandonCurrentThreadEffectRestartRetainsForError();
+    FX_AbandonCurrentThreadEffectLocksForError();
+    FX_AbandonCurrentThreadEffectKillForError();
+    FX_AbandonCurrentThreadEffectRestartGateForError();
+    FX_AbandonCurrentThreadEffectKillExclusiveForError();
+    FX_AbandonCurrentThreadCooperativeIteratorsForError();
+    FX_AbandonCurrentThreadSortExclusiveForError();
+    FX_AbandonCurrentThreadArchiveForError();
+}
+
+bool __cdecl FX_CurrentThreadOwnsCooperativeIterator(
+    const FxSystem *const system)
+{
+    if (fx_cooperativeIteratorThreadState.depth == 0)
+        return false;
+
+    const FxSystem *const ownedSystem =
+        fx_cooperativeIteratorThreadState.system;
+    if (!ownedSystem
+        || fx_cooperativeIteratorThreadState.generation
+            != FX_GetCooperativeIteratorGeneration(ownedSystem))
+    {
+        fx_cooperativeIteratorThreadState = {};
+        return false;
+    }
+
+    // Any live cooperative ownership on this thread must prevent an archive
+    // wait. Waiting for exclusivity while this thread owns a reader would
+    // deadlock even if a future multi-client build supplied another system.
+    (void)system;
+    return true;
+}
+
 #ifdef KISAK_MP
 #include <cgame_mp/cg_local_mp.h>
 #elif KISAK_SP
@@ -907,7 +1106,7 @@ void __cdecl FX_DrawElem_SpotLight(FxDrawState *draw)
 void __cdecl FX_DrawNonSpriteElems(FxSystem *system)
 {
     FxEffect *effect; // [esp+3Ch] [ebp-8h]
-    volatile int32_t activeIndex; // [esp+40h] [ebp-4h]
+    std::uint32_t activeIndex; // [esp+40h] [ebp-4h]
 
     PROF_SCOPED("FX_DrawElems");
     if (!system)
@@ -915,8 +1114,23 @@ void __cdecl FX_DrawNonSpriteElems(FxSystem *system)
     if (!system->camera.isValid)
         MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1371, 0, "%s", "system->camera.isValid");
     FX_BeginIteratingOverEffects_Cooperative(system);
-    for (activeIndex = system->firstActiveEffect; activeIndex != system->firstNewEffect; ++activeIndex)
+    const std::int32_t firstActiveEffect =
+        Sys_AtomicLoad(&system->firstActiveEffect);
+    const std::int32_t firstNewEffect =
+        Sys_AtomicLoad(&system->firstNewEffect);
+    const std::int64_t activeEffectCount64 =
+        static_cast<std::int64_t>(firstNewEffect) - firstActiveEffect;
+    if (firstActiveEffect < 0 || firstNewEffect < firstActiveEffect
+        || activeEffectCount64 > FX_EFFECT_LIMIT)
+        FX_DropCorruptDrawList("active effect ring exceeds capacity");
+    const std::uint32_t activeEffectCount =
+        static_cast<std::uint32_t>(activeEffectCount64);
+    for (std::uint32_t activeOffset = 0;
+         activeOffset < activeEffectCount;
+         ++activeOffset)
     {
+        activeIndex =
+            static_cast<std::uint32_t>(firstActiveEffect) + activeOffset;
         effect = FX_EffectFromHandle(system, system->allEffectHandles[activeIndex & 0x3FF]);
         FX_DrawNonSpriteEffect(system, effect, 1u, system->msecDraw);
     }
@@ -925,24 +1139,86 @@ void __cdecl FX_DrawNonSpriteElems(FxSystem *system)
 
 void __cdecl FX_BeginIteratingOverEffects_Cooperative(FxSystem *system)
 {
-    if (system->isArchiving)
-        MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 479, 0, "%s", "!system->isArchiving");
-    FxIteratorBeginCooperative(&system->iteratorCount);
+    if (fx_cooperativeIteratorThreadState.depth != 0
+        && fx_cooperativeIteratorThreadState.system != system)
+    {
+        // Refreshing the ownership query discards a generation made stale by
+        // FX_ResetSystem; live cross-system nesting is unsupported.
+        if (FX_CurrentThreadOwnsCooperativeIterator(system))
+            FX_DropCorruptDrawList("cross-system cooperative iterator nesting");
+    }
+    if (FX_CurrentThreadOwnsCooperativeIterator(system))
+    {
+        FxIteratorBeginCooperative(&system->iteratorCount);
+        ++fx_cooperativeIteratorThreadState.depth;
+        return;
+    }
+    for (;;)
+    {
+        FX_WaitForArchiveGate(system);
+        FX_WaitForEffectKillGate(system);
+        FxIteratorBeginCooperative(&system->iteratorCount);
+        if (!FX_ArchiveGateIsActive(system)
+            && !FX_EffectKillGateIsActive(system))
+        {
+            fx_cooperativeIteratorThreadState.system = system;
+            fx_cooperativeIteratorThreadState.generation =
+                FX_GetCooperativeIteratorGeneration(system);
+            fx_cooperativeIteratorThreadState.depth = 1;
+            return;
+        }
+        std::int32_t remaining = -1;
+        if (!FxIteratorEndCooperative(&system->iteratorCount, &remaining))
+        {
+            FX_DropCorruptDrawList(
+                "failed to roll back cooperative iterator admission");
+        }
+    }
+}
+
+bool __cdecl FX_DowngradeEffectKillExclusiveToCooperative(
+    FxSystem *const system) noexcept
+{
+    if (!system || fx_cooperativeIteratorThreadState.depth != 0
+        || !FX_ThreadOwnsEffectKillExclusive(system)
+        || !FxIteratorDowngradeExclusiveToCooperative(
+            &system->iteratorCount))
+    {
+        return false;
+    }
+
+    fx_cooperativeIteratorThreadState.system = system;
+    fx_cooperativeIteratorThreadState.generation =
+        FX_GetCooperativeIteratorGeneration(system);
+    fx_cooperativeIteratorThreadState.depth = 1;
+    if (FX_CompleteEffectKillExclusiveDowngrade(system))
+        return true;
+
+    fx_cooperativeIteratorThreadState = {};
+    (void)Sys_AtomicCompareExchange(
+        &system->iteratorCount, -1, 1);
+    return false;
 }
 
 void __cdecl FX_EndIteratingOverEffects_Cooperative(FxSystem *system)
 {
     std::int32_t remaining = -1;
+    if (fx_cooperativeIteratorThreadState.depth == 0
+        || fx_cooperativeIteratorThreadState.system != system
+        || fx_cooperativeIteratorThreadState.generation
+            != FX_GetCooperativeIteratorGeneration(system))
+    {
+        fx_cooperativeIteratorThreadState = {};
+        FX_DropCorruptDrawList("cooperative iterator ended without thread ownership");
+    }
     if (!FxIteratorEndCooperative(&system->iteratorCount, &remaining))
     {
-        MyAssertHandler(
-            "c:\\trees\\cod3\\src\\effectscore\\fx_system.h",
-            491,
-            0,
-            "%s",
-            "system->iteratorCount > 0");
-        return;
+        fx_cooperativeIteratorThreadState = {};
+        FX_DropCorruptDrawList("failed to release cooperative iterator ownership");
     }
+    --fx_cooperativeIteratorThreadState.depth;
+    if (fx_cooperativeIteratorThreadState.depth == 0)
+        fx_cooperativeIteratorThreadState = {};
 
     if (remaining == 0
         && FxGarbageCollectionRequested(&system->needsGarbageCollection))
@@ -954,30 +1230,37 @@ void __cdecl FX_DrawNonSpriteEffect(FxSystem *system, FxEffect *effect, uint32_t
     uint16_t elemHandle; // [esp+0h] [ebp-BCh]
     FxDrawState drawState; // [esp+4h] [ebp-B8h] BYREF
     const FxElemDef *elemDef; // [esp+B0h] [ebp-Ch]
-    const FxElemDef *elemDefs; // [esp+B4h] [ebp-8h]
     FxElem *elem; // [esp+B8h] [ebp-4h]
 
+    if (!system || !effect)
+        FX_DropCorruptDrawList("missing non-sprite draw state");
+    if (elemClass == 0 || elemClass >= 3)
+        FX_DropCorruptDrawList("invalid non-sprite element class");
     drawState.effect = effect;
     drawState.msecDraw = drawTime;
     elemHandle = effect->firstElemHandle[elemClass];
     if (elemHandle != 0xFFFF)
     {
         drawState.system = system;
-        elemDefs = drawState.effect->def->elemDefs;
+        std::size_t elemCount = 0;
         while (elemHandle != 0xFFFF)
         {
+            if (elemCount++ >= MAX_ELEMS)
+                FX_DropCorruptDrawList("non-sprite element chain exceeds pool capacity");
             if (!system)
                 MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 334, 0, "%s", "system");
-            elem = &FX_PoolFromHandle_Generic<FxElem, 2048>(system->elems, elemHandle)->item;
-            elemDef = &elemDefs[elem->defIndex];
-            if (elemDef->elemType <= 3u)
-                MyAssertHandler(
-                    ".\\EffectsCore\\fx_draw.cpp",
-                    1355,
-                    0,
-                    "%s\n\t(elemDef->elemType) = %i",
-                    "(elemDef->elemType > FX_ELEM_TYPE_LAST_SPRITE)",
-                    elemDef->elemType);
+            elem = FX_GetAllocatedDrawElem(system, elemHandle);
+            elemDef = FX_GetValidatedDrawElemDef(effect, elem->defIndex);
+            const bool classMatches =
+                (elemClass == 1
+                    && (elemDef->elemType == FX_ELEM_TYPE_MODEL
+                        || elemDef->elemType == FX_ELEM_TYPE_OMNI_LIGHT))
+                || (elemClass == 2
+                    && elemDef->elemType == FX_ELEM_TYPE_CLOUD);
+            if (!classMatches)
+            {
+                FX_DropCorruptDrawList("element type does not match its non-sprite class");
+            }
             FX_DrawElement(system, elemDef, elem, &drawState);
             elemHandle = elem->nextElemHandleInEffect;
         }
@@ -1063,21 +1346,17 @@ static ElementHandlerFn s_drawElemHandler[8] =
 
 void __cdecl FX_DrawElement(FxSystem *system, const FxElemDef *elemDef, const FxElem *elem, FxDrawState *draw)
 {
+    if (!elemDef || !elem || !draw)
+        FX_DropCorruptDrawList("missing element draw state");
     if (elemDef->elemType >= 8u)
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_draw.cpp",
-            1010,
-            0,
-            "elemDef->elemType doesn't index FX_ELEM_TYPE_LAST_DRAWN + 1\n\t%i not in [0, %i)",
-            elemDef->elemType,
-            8);
+        FX_DropCorruptDrawList("element type has no draw handler");
     if (elemDef->visualCount && elem->msecBegin <= draw->msecDraw)
     {
         draw->elem = elem;
         draw->elemDef = elemDef;
         FX_DrawElement_Setup_1_(system, draw, elem->msecBegin, elem->sequence, elem->origin, 0);
         if (!s_drawElemHandler[elemDef->elemType])
-            MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1025, 0, "%s", "s_drawElemHandler[elemDef->elemType]");
+            FX_DropCorruptDrawList("element type maps to a null draw handler");
         s_drawElemHandler[elemDef->elemType](draw);
     }
 }
@@ -1092,15 +1371,39 @@ void __cdecl FX_DrawSpotLight(FxSystem *system)
     if (!system->camera.isValid)
         MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1390, 0, "%s", "system->camera.isValid");
     FX_BeginIteratingOverEffects_Cooperative(system);
-    if (system->activeSpotLightElemCount > 0)
+    FxSpotLightStateSnapshot spotLightSnapshot{};
+    if (!FX_GetSpotLightStateSnapshot(system, &spotLightSnapshot))
+        FX_DropCorruptDrawList("missing spotlight state");
+    const std::int32_t activeSpotLightEffectCount =
+        spotLightSnapshot.effectCount;
+    const std::int32_t activeSpotLightElemCount =
+        spotLightSnapshot.elemCount;
+    if (activeSpotLightEffectCount < 0
+        || activeSpotLightEffectCount > 1
+        || activeSpotLightElemCount < 0
+        || activeSpotLightElemCount > activeSpotLightEffectCount)
     {
-        if (system->activeSpotLightEffectCount != 1)
-            MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1395, 0, "%s", "system->activeSpotLightEffectCount == 1");
-        if (system->activeSpotLightElemCount != 1)
-            MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1396, 0, "%s", "system->activeSpotLightElemCount == 1");
+        FX_EndIteratingOverEffects_Cooperative(system);
+        FX_DropCorruptDrawList("invalid spotlight count pair");
+    }
+    if (activeSpotLightElemCount == 1)
+    {
         msecDraw = system->msecDraw;
-        v1 = FX_EffectFromHandle(system, system->activeSpotLightEffectHandle);
-        FX_DrawSpotLightEffect(system, v1, msecDraw);
+        v1 = FX_EffectFromHandle(system, spotLightSnapshot.effectHandle);
+        const bool effectLocked = FX_LockEffect(system, v1);
+        FxSpotLightStateSnapshot lockedSnapshot{};
+        if (effectLocked
+            && !FX_GetSpotLightStateSnapshot(system, &lockedSnapshot))
+            FX_DropCorruptDrawList("missing locked spotlight state");
+        if (effectLocked && lockedSnapshot.effectCount == 1
+            && lockedSnapshot.elemCount == 1
+            && lockedSnapshot.effectHandle == spotLightSnapshot.effectHandle
+            && lockedSnapshot.elemHandle == spotLightSnapshot.elemHandle)
+        {
+            FX_DrawSpotLightEffect(system, v1, msecDraw);
+        }
+        if (effectLocked)
+            FX_UnlockEffect(system, v1);
     }
     FX_EndIteratingOverEffects_Cooperative(system);
 }
@@ -1110,24 +1413,31 @@ void __cdecl FX_DrawSpotLightEffect(FxSystem *system, FxEffect *effect, int32_t 
     uint16_t activeSpotLightElemHandle; // [esp+2h] [ebp-BAh]
     FxDrawState drawState; // [esp+4h] [ebp-B8h] BYREF
     const FxElemDef *elemDef; // [esp+B0h] [ebp-Ch]
-    const FxElemDef *elemDefs; // [esp+B4h] [ebp-8h]
     FxElem *elem; // [esp+B8h] [ebp-4h]
 
-    if (system->activeSpotLightEffectCount <= 0)
-        MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1320, 0, "%s", "system->activeSpotLightEffectCount > 0");
-    if (system->activeSpotLightElemCount <= 0)
-        MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1321, 0, "%s", "system->activeSpotLightElemCount > 0");
+    if (!system || !effect)
+        FX_DropCorruptDrawList("missing spotlight draw state");
+    FxSpotLightStateSnapshot spotLightSnapshot{};
+    if (!FX_GetSpotLightStateSnapshot(system, &spotLightSnapshot))
+        FX_DropCorruptDrawList("missing spotlight draw snapshot");
+    if (spotLightSnapshot.effectCount != 1
+        || spotLightSnapshot.elemCount != 1)
+        FX_DropCorruptDrawList("spotlight draw requested without an exact count pair");
+    if (effect
+        != FX_EffectFromHandle(system, spotLightSnapshot.effectHandle))
+    {
+        FX_DropCorruptDrawList("spotlight effect handle does not match the draw effect");
+    }
     drawState.effect = effect;
     drawState.system = system;
     drawState.msecDraw = drawTime;
-    elemDefs = effect->def->elemDefs;
-    activeSpotLightElemHandle = system->activeSpotLightElemHandle;
+    activeSpotLightElemHandle = spotLightSnapshot.elemHandle;
     if (!system)
         MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 334, 0, "%s", "system");
-    elem = (FxElem *)FX_PoolFromHandle_Generic<FxElem, 2048>(system->elems, activeSpotLightElemHandle);
-    elemDef = &elemDefs[elem->defIndex];
+    elem = FX_GetAllocatedDrawElem(system, activeSpotLightElemHandle);
+    elemDef = FX_GetValidatedDrawElemDef(effect, elem->defIndex);
     if (elemDef->elemType != 7)
-        MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1329, 0, "%s", "elemDef->elemType == FX_ELEM_TYPE_SPOT_LIGHT");
+        FX_DropCorruptDrawList("spotlight element has a non-spotlight definition");
     FX_DrawElement(system, elemDef, elem, &drawState);
 }
 
@@ -1140,14 +1450,14 @@ void __cdecl FX_DrawSpriteElems(FxSystem *system, int32_t drawTime)
     FxSpriteInfo *sprite; // [esp+44h] [ebp-814h]
     uint16_t trailEffects[1026]; // [esp+48h] [ebp-810h]
     int32_t i; // [esp+850h] [ebp-8h]
-    int32_t activeIndex; // [esp+854h] [ebp-4h]
+    std::uint32_t activeIndex; // [esp+854h] [ebp-4h]
 
     PROF_SCOPED("FX_DrawElems");
     if (!system)
         MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1510, 0, "%s", "system");
     if (!system->camera.isValid)
         MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1511, 0, "%s", "system->camera.isValid");
-    system->gfxCloudCount = 0;
+    Sys_AtomicStore(&system->gfxCloudCount, 0);
     sprite = &system->sprite;
     system->sprite.indices = 0;
     system->sprite.indexCount = 0;
@@ -1155,14 +1465,33 @@ void __cdecl FX_DrawSpriteElems(FxSystem *system, int32_t drawTime)
     system->sprite.material = 0;
     numTrailEffects = 0;
     FX_BeginIteratingOverEffects_Cooperative(system);
-    for (activeIndex = system->firstActiveEffect; activeIndex != system->firstNewEffect; ++activeIndex)
+    const std::int32_t firstActiveEffect =
+        Sys_AtomicLoad(&system->firstActiveEffect);
+    const std::int32_t firstNewEffect =
+        Sys_AtomicLoad(&system->firstNewEffect);
+    const std::int64_t activeEffectCount64 =
+        static_cast<std::int64_t>(firstNewEffect) - firstActiveEffect;
+    if (firstActiveEffect < 0 || firstNewEffect < firstActiveEffect
+        || activeEffectCount64 > FX_EFFECT_LIMIT)
+        FX_DropCorruptDrawList("sprite effect ring exceeds capacity");
+    const std::uint32_t activeEffectCount =
+        static_cast<std::uint32_t>(activeEffectCount64);
+    for (std::uint32_t activeOffset = 0;
+         activeOffset < activeEffectCount;
+         ++activeOffset)
     {
+        activeIndex =
+            static_cast<std::uint32_t>(firstActiveEffect) + activeOffset;
         effectHandle = system->allEffectHandles[activeIndex & 0x3FF];
         effect = FX_EffectFromHandle(system, effectHandle);
         FX_DrawSpriteEffect(system, effect, drawTime);
         FX_DrawNonSpriteEffect(system, effect, 2u, drawTime);
         if (effect->firstTrailHandle != 0xFFFF)
+        {
+            if (numTrailEffects >= FX_EFFECT_LIMIT)
+                FX_DropCorruptDrawList("trail effect list exceeds capacity");
             trailEffects[numTrailEffects++] = effectHandle;
+        }
     }
     if (numTrailEffects > 0)
     {
@@ -1202,11 +1531,14 @@ void __cdecl FX_DrawTrailsForEffect(FxSystem *system, FxEffect *effect, int32_t 
     drawState.system = system;
     drawState.effect = effect;
     drawState.msecDraw = drawTime;
+    std::size_t trailCount = 0;
     for (trailHandle = effect->firstTrailHandle; trailHandle != 0xFFFF; trailHandle = trail->nextTrailHandle)
     {
+        if (trailCount++ >= MAX_TRAILS)
+            FX_DropCorruptDrawList("trail chain exceeds pool capacity");
         if (!system)
             MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 362, 0, "%s", "system");
-        trail = (FxTrail *)FX_PoolFromHandle_Generic<FxTrail, 128>(system->trails, trailHandle);
+        trail = FX_GetAllocatedDrawTrail(system, trailHandle);
         FX_DrawTrail(system, &drawState, trail);
     }
 }
@@ -1235,13 +1567,18 @@ void __cdecl FX_DrawTrail(FxSystem *system, FxDrawState *draw, FxTrail *trail)
     float uCoordOffset; // [esp+188h] [ebp-30h]
     float basis[2][3]; // [esp+18Ch] [ebp-2Ch] BYREF
     float lastSegmentNormTime; // [esp+1A4h] [ebp-14h]
+    bool haveLastSegmentDrawState;
     int32_t trailDefVertCount; // [esp+1A8h] [ebp-10h]
     int32_t curSegment; // [esp+1ACh] [ebp-Ch]
     uint16_t trailElemHandle; // [esp+1B0h] [ebp-8h]
     float segmentNormTime; // [esp+1B4h] [ebp-4h] BYREF
 
+    if (!system || !draw || !draw->effect || !trail)
+        FX_DropCorruptDrawList("missing trail draw state");
     sprite = &system->sprite;
-    draw->elemDef = &draw->effect->def->elemDefs[trail->defIndex];
+    draw->elemDef =
+        FX_GetValidatedDrawElemDef(draw->effect, trail->defIndex);
+    FX_ValidateDrawTrailDef(draw->elemDef);
     if (draw->elemDef->visualCount)
     {
         trailElemHandle = trail->firstElemHandle;
@@ -1249,53 +1586,80 @@ void __cdecl FX_DrawTrail(FxSystem *system, FxDrawState *draw, FxTrail *trail)
         {
             if (!system)
                 MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 348, 0, "%s", "system");
-            trailElem = (const FxTrailElem *)FX_PoolFromHandle_Generic<FxTrailElem, 2048>(system->trailElems, trailElemHandle);
+            trailElem = FX_GetAllocatedDrawTrailElem(system, trailElemHandle);
             v6 = trailElem->spawnDist / (double)draw->elemDef->trailDef->repeatDist;
             v5 = floor(v6);
             uCoordOffset = -v5;
             if (draw->elemDef->trailDef->scrollTimeMsec)
             {
+                const std::int64_t scrollDivisor =
+                    draw->elemDef->trailDef->scrollTimeMsec <= 0
+                    ? static_cast<std::int64_t>(
+                        draw->elemDef->trailDef->scrollTimeMsec)
+                    : -static_cast<std::int64_t>(
+                        draw->elemDef->trailDef->scrollTimeMsec);
+                const double scrollFraction =
+                    static_cast<double>(
+                        static_cast<std::int64_t>(draw->msecDraw)
+                        % scrollDivisor)
+                    / static_cast<double>(scrollDivisor);
                 if (draw->elemDef->trailDef->scrollTimeMsec <= 0)
                     v3 = 1.0
-                    - (double)(draw->msecDraw % draw->elemDef->trailDef->scrollTimeMsec)
-                    / (double)draw->elemDef->trailDef->scrollTimeMsec
+                    - scrollFraction
                     + uCoordOffset;
                 else
-                    v3 = (double)(draw->msecDraw % -draw->elemDef->trailDef->scrollTimeMsec)
-                    / (double)-draw->elemDef->trailDef->scrollTimeMsec
-                    + uCoordOffset;
+                    v3 = scrollFraction + uCoordOffset;
                 uCoordOffset = v3;
             }
             upperBoundSegmentCount = 0;
+            std::size_t traversedTrailElemCount = 0;
             for (trailElemHandle = trail->firstElemHandle;
                 trailElemHandle != 0xFFFF;
                 trailElemHandle = trailElem->nextTrailElemHandle)
             {
+                if (traversedTrailElemCount++ >= MAX_TRAIL_ELEMS)
+                    FX_DropCorruptDrawList("trail-element count chain exceeds pool capacity");
                 if (!system)
                     MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 348, 0, "%s", "system");
-                trailElem = (const FxTrailElem *)FX_PoolFromHandle_Generic<FxTrailElem, 2048>(
-                    system->trailElems,
-                    trailElemHandle);
+                trailElem =
+                    FX_GetAllocatedDrawTrailElem(system, trailElemHandle);
                 if (trailElem->msecBegin <= draw->msecDraw)
                     ++upperBoundSegmentCount;
             }
             trailDefVertCount = draw->elemDef->trailDef->vertCount;
             trailDefIndCount = draw->elemDef->trailDef->indCount;
-            if (R_ReserveCodeMeshVerts(trailDefVertCount * upperBoundSegmentCount, &reservedBaseVertex))
+            if (upperBoundSegmentCount > 0
+                && trailDefVertCount
+                    > (std::numeric_limits<std::int32_t>::max)()
+                        / upperBoundSegmentCount)
+            {
+                FX_DropCorruptDrawList("trail vertex reservation overflows");
+            }
+            const std::int32_t verticesToReserve =
+                trailDefVertCount * upperBoundSegmentCount;
+            if (verticesToReserve
+                > (std::numeric_limits<std::uint16_t>::max)())
+            {
+                FX_DropCorruptDrawList("trail vertex reservation exceeds the mesh index space");
+            }
+            if (R_ReserveCodeMeshVerts(verticesToReserve, &reservedBaseVertex))
             {
                 reservedVerts = R_GetCodeMeshVerts(reservedBaseVertex);
                 exactSegmentCount = 0;
                 lastSegmentNormTime = 1.0;
+                haveLastSegmentDrawState = false;
                 memset((uint8_t *)&lastSegmentDrawState, 0, sizeof(lastSegmentDrawState));
+                traversedTrailElemCount = 0;
                 for (trailElemHandle = trail->firstElemHandle;
                     trailElemHandle != 0xFFFF;
                     trailElemHandle = trailElem->nextTrailElemHandle)
                 {
+                    if (traversedTrailElemCount++ >= MAX_TRAIL_ELEMS)
+                        FX_DropCorruptDrawList("trail-element draw chain exceeds pool capacity");
                     if (!system)
                         MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 348, 0, "%s", "system");
-                    trailElem = (const FxTrailElem *)FX_PoolFromHandle_Generic<FxTrailElem, 2048>(
-                        system->trailElems,
-                        trailElemHandle);
+                    trailElem =
+                        FX_GetAllocatedDrawTrailElem(system, trailElemHandle);
                     if (trailElem->msecBegin <= draw->msecDraw)
                     {
                         FX_DrawElement_Setup_1_(
@@ -1318,8 +1682,11 @@ void __cdecl FX_DrawTrail(FxSystem *system, FxDrawState *draw, FxTrail *trail)
                                 if (!trailElem->sequence)
                                     segmentDrawState.color[3] = 0;
                             }
-                            else if (lastSegmentNormTime >= 1.0)
+                            else if (haveLastSegmentDrawState
+                                && lastSegmentNormTime >= 1.0)
                             {
+                                if (exactSegmentCount >= upperBoundSegmentCount)
+                                    FX_DropCorruptDrawList("trail tail segment exceeds its vertex reservation");
                                 memcpy(&tailSegmentDrawState, &lastSegmentDrawState, sizeof(tailSegmentDrawState));
                                 alpha = (1.0 - lastSegmentNormTime) / (segmentNormTime - lastSegmentNormTime);
                                 tailSegmentDrawState.uCoord = (segmentDrawState.uCoord - lastSegmentDrawState.uCoord) * alpha
@@ -1331,10 +1698,13 @@ void __cdecl FX_DrawTrail(FxSystem *system, FxDrawState *draw, FxTrail *trail)
                                     &tailSegmentDrawState,
                                     &reservedVerts[trailDefVertCount * exactSegmentCount++]);
                             }
+                            if (exactSegmentCount >= upperBoundSegmentCount)
+                                FX_DropCorruptDrawList("trail segment exceeds its vertex reservation");
                             FX_GenTrail_VertsForSegment(&segmentDrawState, &reservedVerts[trailDefVertCount * exactSegmentCount++]);
                         }
                         lastSegmentNormTime = segmentNormTime;
                         memcpy(&lastSegmentDrawState, &segmentDrawState, sizeof(lastSegmentDrawState));
+                        haveLastSegmentDrawState = true;
                     }
                 }
                 if (exactSegmentCount > upperBoundSegmentCount)
@@ -1387,7 +1757,9 @@ void __cdecl FX_DrawTrail(FxSystem *system, FxDrawState *draw, FxTrail *trail)
     }
 }
 
-void __cdecl FX_TrailElem_UncompressBasis(const char (*inBasis)[3], float (*basis)[3])
+void __cdecl FX_TrailElem_UncompressBasis(
+    const std::int8_t (*inBasis)[3],
+    float (*basis)[3])
 {
     int32_t basisVecIter; // [esp+4h] [ebp-8h]
     int32_t dimIter; // [esp+8h] [ebp-4h]
@@ -1395,7 +1767,11 @@ void __cdecl FX_TrailElem_UncompressBasis(const char (*inBasis)[3], float (*basi
     for (basisVecIter = 0; basisVecIter != 2; ++basisVecIter)
     {
         for (dimIter = 0; dimIter != 3; ++dimIter)
-            (*basis)[3 * basisVecIter + dimIter] = (double)(*inBasis)[3 * basisVecIter + dimIter] * 0.007874015718698502;
+        {
+            basis[basisVecIter][dimIter] =
+                static_cast<double>(inBasis[basisVecIter][dimIter])
+                * 0.007874015718698502;
+        }
     }
 }
 
@@ -1456,15 +1832,15 @@ void __cdecl Fx_GenTrail_PopulateSegmentDrawState(
     outState->posWorld[0] = draw->posWorld[0];
     outState->posWorld[1] = draw->posWorld[1];
     outState->posWorld[2] = draw->posWorld[2];
-    outState->basis[0][0] = (*basis)[0];
-    outState->basis[0][1] = (*basis)[1];
-    outState->basis[0][2] = (*basis)[2];
-    outState->basis[1][0] = (*basis)[3];
-    outState->basis[1][1] = (*basis)[4];
-    outState->basis[1][2] = (*basis)[5];
+    outState->basis[0][0] = basis[0][0];
+    outState->basis[0][1] = basis[0][1];
+    outState->basis[0][2] = basis[0][2];
+    outState->basis[1][0] = basis[1][0];
+    outState->basis[1][1] = basis[1][1];
+    outState->basis[1][2] = basis[1][2];
     outState->rotation = draw->visState.rotationTotal;
-    *(double *)outState->size = *(double *)draw->visState.size;
-    *(uint32_t *)outState->color = *(uint32_t *)draw->visState.color;
+    std::memcpy(outState->size, draw->visState.size, sizeof(outState->size));
+    std::memcpy(outState->color, draw->visState.color, sizeof(outState->color));
     outState->uCoord = spawnDist / (double)draw->elemDef->trailDef->repeatDist + uCoordOffset;
 }
 
@@ -1571,30 +1947,27 @@ void __cdecl FX_DrawSpriteEffect(FxSystem *system, FxEffect *effect, int32_t dra
     uint16_t elemHandle; // [esp+0h] [ebp-C0h]
     const FxElemDef *elemDef; // [esp+4h] [ebp-BCh]
     FxDrawState drawState; // [esp+8h] [ebp-B8h] BYREF
-    const FxElemDef *elemDefs; // [esp+B8h] [ebp-8h]
     FxElem *elem; // [esp+BCh] [ebp-4h]
 
+    if (!system || !effect)
+        FX_DropCorruptDrawList("missing sprite draw state");
     drawState.effect = effect;
     drawState.msecDraw = drawTime;
     elemHandle = effect->firstElemHandle[0];
     if (elemHandle != 0xFFFF)
     {
         drawState.system = system;
-        elemDefs = drawState.effect->def->elemDefs;
+        std::size_t elemCount = 0;
         while (elemHandle != 0xFFFF)
         {
+            if (elemCount++ >= MAX_ELEMS)
+                FX_DropCorruptDrawList("sprite element chain exceeds pool capacity");
             if (!system)
                 MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 334, 0, "%s", "system");
-            elem = (FxElem *)FX_PoolFromHandle_Generic<FxElem, 2048>(system->elems, elemHandle);
-            elemDef = &elemDefs[elem->defIndex];
-            if (elemDef->elemType > 3u)
-                MyAssertHandler(
-                    ".\\EffectsCore\\fx_draw.cpp",
-                    1304,
-                    0,
-                    "elemDef->elemType <= FX_ELEM_TYPE_LAST_SPRITE\n\t%i, %i",
-                    elemDef->elemType,
-                    3);
+            elem = FX_GetAllocatedDrawElem(system, elemHandle);
+            elemDef = FX_GetValidatedDrawElemDef(effect, elem->defIndex);
+            if (elemDef->elemType > FX_ELEM_TYPE_TAIL)
+                FX_DropCorruptDrawList("element type does not match its sprite class");
             if (elemDef->visualCount)
                 FX_DrawElement(system, elemDef, elem, &drawState);
             elemHandle = elem->nextElemHandleInEffect;

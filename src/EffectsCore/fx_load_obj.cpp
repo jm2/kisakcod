@@ -15,6 +15,21 @@ struct $5E78DEAD8FFD2AA25C77996D083B001E // sizeof=0x808
 
 $5E78DEAD8FFD2AA25C77996D083B001E fx_load;
 
+namespace
+{
+bool FX_LoadObjEffectNameIsValid(const char *const name) noexcept
+{
+    if (!name || !name[0])
+        return false;
+    for (std::size_t length = 1; length < 64; ++length)
+    {
+        if (name[length] == '\0')
+            return true;
+    }
+    return false;
+}
+}
+
 const FxFlagDef s_allFlagDefs[42] =
 {
   { "looping", 0, 1, 1 },
@@ -1040,10 +1055,7 @@ char __cdecl FX_LoadEditorEffectFromBuffer(
 
 bool __cdecl FX_LoadEditorEffect(const char *name, FxEditorEffectDef *edEffectDef)
 {
-    char v3; // [esp+3h] [ebp-5Dh]
-    FxEditorEffectDef *v4; // [esp+8h] [ebp-58h]
-    const char *v5; // [esp+Ch] [ebp-54h]
-    char filename[64]; // [esp+10h] [ebp-50h] BYREF
+    char filename[MAX_OSPATH]; // [esp+10h] [ebp-50h] BYREF
     int fileSize; // [esp+54h] [ebp-Ch]
     bool success; // [esp+5Bh] [ebp-5h]
     void *fileData; // [esp+5Ch] [ebp-4h] BYREF
@@ -1052,18 +1064,16 @@ bool __cdecl FX_LoadEditorEffect(const char *name, FxEditorEffectDef *edEffectDe
         MyAssertHandler(".\\EffectsCore\\fx_load_obj.cpp", 1178, 0, "%s", "name");
     if (!edEffectDef)
         MyAssertHandler(".\\EffectsCore\\fx_load_obj.cpp", 1179, 0, "%s", "edEffectDef");
-    Com_sprintf(filename, 0x40u, "fx/%s.efx", name);
+    if (!FX_LoadObjEffectNameIsValid(name))
+    {
+        Com_PrintError(21, "Invalid effect name\n");
+        return false;
+    }
+    Com_sprintf(filename, sizeof(filename), "fx/%s.efx", name);
     fileSize = FS_ReadFile(filename, &fileData);
     if (fileSize >= 0)
     {
-        v5 = name;
-        v4 = edEffectDef;
-        do
-        {
-            v3 = *v5;
-            v4->name[0] = *v5++;
-            v4 = (FxEditorEffectDef *)((char *)v4 + 1);
-        } while (v3);
+        I_strncpyz(edEffectDef->name, name, sizeof(edEffectDef->name));
         success = FX_LoadEditorEffectFromBuffer((const char *)fileData, filename, edEffectDef);
         FS_FreeFile((char *)fileData);
         return success;
@@ -1146,12 +1156,15 @@ const FxEffectDef *__cdecl FX_LoadFailed(const char *name)
 
 const FxEffectDef *__cdecl FX_Load(const char *name)
 {
-    char v2; // [esp+3h] [ebp-10B61h]
-    const char *v4; // [esp+Ch] [ebp-10B58h]
     const FxEffectDef *v5; // [esp+10h] [ebp-10B54h]
     FxEditorEffectDef edEffectDef; // [esp+14h] [ebp-10B50h] BYREF
 
-    strcpy_s(edEffectDef.name, name);
+    if (!FX_LoadObjEffectNameIsValid(name))
+    {
+        Com_Error(ERR_DROP, "Invalid FX effect name");
+        return fx_load.defaultEffect;
+    }
+    I_strncpyz(edEffectDef.name, name, sizeof(edEffectDef.name));
     if (FX_LoadEditorEffect(name, &edEffectDef)
         && (v5 = FX_Convert(&edEffectDef, &FX_AllocMem)) != 0)
     {
@@ -1197,16 +1210,23 @@ int __cdecl FX_GetHashIndex(const char *name, bool *exists)
         MyAssertHandler(".\\EffectsCore\\fx_load_obj.cpp", 1302, 0, "%s", "name");
     if (!exists)
         MyAssertHandler(".\\EffectsCore\\fx_load_obj.cpp", 1303, 0, "%s", "exists");
-    for (hashIndex = FX_HashName(name); fx_load.effectDefs[hashIndex]; hashIndex = ((_WORD)hashIndex + 1) & 0x1FF)
+    hashIndex = FX_HashName(name);
+    for (std::size_t probeCount = 0; probeCount < 512; ++probeCount)
     {
+        if (!fx_load.effectDefs[hashIndex])
+        {
+            *exists = false;
+            return hashIndex;
+        }
         if (!I_stricmp(name, fx_load.effectDefs[hashIndex]->name))
         {
             *exists = 1;
             return hashIndex;
         }
+        hashIndex = (hashIndex + 1) & 0x1FF;
     }
     *exists = 0;
-    return hashIndex;
+    return -1;
 }
 
 const FxEffectDef *__cdecl FX_Register_LoadObj(const char *name)
@@ -1214,7 +1234,17 @@ const FxEffectDef *__cdecl FX_Register_LoadObj(const char *name)
     int hashIndex; // [esp+0h] [ebp-8h]
     bool exists; // [esp+7h] [ebp-1h] BYREF
 
+    if (!FX_LoadObjEffectNameIsValid(name))
+    {
+        Com_Error(ERR_DROP, "Invalid FX effect name");
+        return fx_load.defaultEffect;
+    }
     hashIndex = FX_GetHashIndex(name, &exists);
+    if (hashIndex < 0)
+    {
+        Com_Error(ERR_DROP, "FX effect registry capacity exceeded");
+        return fx_load.defaultEffect;
+    }
     if (!exists)
         fx_load.effectDefs[hashIndex] = FX_Load(name);
     if (!fx_load.effectDefs[hashIndex])

@@ -53,6 +53,21 @@ bool RejectsInvalidReleases()
     return FxIteratorEndExclusive(&state);
 }
 
+bool DowngradesExclusiveToCooperative()
+{
+    alignas(4) volatile std::int32_t state = -1;
+    std::int32_t remaining = -1;
+
+    if (!FxIteratorDowngradeExclusiveToCooperative(&state)
+        || Sys_AtomicLoad(&state) != 1
+        || FxIteratorDowngradeExclusiveToCooperative(&state))
+    {
+        return false;
+    }
+    return FxIteratorEndCooperative(&state, &remaining)
+        && remaining == 0 && Sys_AtomicLoad(&state) == 0;
+}
+
 bool GarbageCollectionFlagIsAtomicAndLayoutPreserving()
 {
     bool requested = false;
@@ -222,14 +237,16 @@ int main()
         return 1;
     if (!RejectsInvalidReleases())
         return 2;
-    if (!GarbageCollectionFlagIsAtomicAndLayoutPreserving())
+    if (!DowngradesExclusiveToCooperative())
         return 3;
-    if (!WaitsAcrossOppositeOwners())
+    if (!GarbageCollectionFlagIsAtomicAndLayoutPreserving())
         return 4;
-    if (!HandlesSaturatedCountWithoutOverflow())
+    if (!WaitsAcrossOppositeOwners())
         return 5;
-    if (!ContentionStress())
+    if (!HandlesSaturatedCountWithoutOverflow())
         return 6;
+    if (!ContentionStress())
+        return 7;
 
     std::cout << "fx iterator atomic tests passed\n";
     return 0;

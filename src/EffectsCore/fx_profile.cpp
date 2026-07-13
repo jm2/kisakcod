@@ -1,6 +1,83 @@
 #include "fx_system.h"
 
-void __cdecl FX_DrawProfile(int32_t clientIndex, void(__cdecl *drawFunc)(char *), float *profilePos)
+#include <universal/sys_atomic.h>
+
+#include <cstdlib>
+
+namespace
+{
+[[noreturn]] void FX_DropCorruptProfilePool(
+    const char *const poolName,
+    const std::uint16_t handle)
+{
+    Com_Error(
+        ERR_DROP,
+        "Corrupt FX profile %s handle %u is invalid or refers to a free pool slot",
+        poolName,
+        static_cast<unsigned int>(handle));
+    std::abort();
+}
+
+[[noreturn]] void FX_DropCorruptProfileList(const char *const reason)
+{
+    Com_Error(ERR_DROP, "Corrupt FX profile list: %s", reason);
+    std::abort();
+}
+
+FxPool<FxElem> *FX_GetAllocatedProfileElem(
+    FxSystem *const system,
+    const std::uint16_t handle)
+{
+    if (!system || !system->elems)
+        FX_DropCorruptProfilePool("element", handle);
+    FxPool<FxElem> *const slot =
+        FX_PoolFromHandle_Generic<FxElem, MAX_ELEMS>(system->elems, handle);
+    if (!FX_IsElemAllocated(system, &slot->item))
+        FX_DropCorruptProfilePool("element", handle);
+    return slot;
+}
+
+FxPool<FxTrail> *FX_GetAllocatedProfileTrail(
+    FxSystem *const system,
+    const std::uint16_t handle)
+{
+    if (!system || !system->trails)
+        FX_DropCorruptProfilePool("trail", handle);
+    FxPool<FxTrail> *const slot =
+        FX_PoolFromHandle_Generic<FxTrail, MAX_TRAILS>(system->trails, handle);
+    if (!FX_IsTrailAllocated(system, &slot->item))
+        FX_DropCorruptProfilePool("trail", handle);
+    return slot;
+}
+
+FxPool<FxTrailElem> *FX_GetAllocatedProfileTrailElem(
+    FxSystem *const system,
+    const std::uint16_t handle)
+{
+    if (!system || !system->trailElems)
+        FX_DropCorruptProfilePool("trail element", handle);
+    FxPool<FxTrailElem> *const slot =
+        FX_PoolFromHandle_Generic<FxTrailElem, MAX_TRAIL_ELEMS>(
+            system->trailElems, handle);
+    if (!FX_IsTrailElemAllocated(system, &slot->item))
+        FX_DropCorruptProfilePool("trail element", handle);
+    return slot;
+}
+
+int __cdecl FX_CompareProfileEntriesForQsort(
+    const void *const lhs,
+    const void *const rhs)
+{
+    return FX_CompareProfileEntries(
+        static_cast<const FxProfileEntry *>(lhs),
+        static_cast<const FxProfileEntry *>(rhs));
+}
+}
+
+void __cdecl FX_DrawProfile(
+    int32_t clientIndex,
+    FxProfileDrawFunc drawFunc,
+    float *profilePos)
 {
     char *v3; // eax
     char *v4; // eax
@@ -17,62 +94,119 @@ void __cdecl FX_DrawProfile(int32_t clientIndex, void(__cdecl *drawFunc)(char *)
     FxSystem *system; // [esp+48h] [ebp-700Ch]
     FxProfileEntry entryPool[1024]; // [esp+4Ch] [ebp-7008h] BYREF
     FxProfileEntry *entry; // [esp+704Ch] [ebp-8h]
-    volatile int32_t i; // [esp+7050h] [ebp-4h]
+    std::uint32_t i; // [esp+7050h] [ebp-4h]
 
     system = FX_GetSystem(clientIndex);
     if (!system)
         MyAssertHandler(".\\EffectsCore\\fx_profile.cpp", 181, 0, "%s", "system");
     FX_BeginIteratingOverEffects_Cooperative(system);
     entryCount = 0;
-    for (i = system->firstActiveEffect; i != system->firstNewEffect; ++i)
+    const std::int32_t firstActiveEffect =
+        Sys_AtomicLoad(&system->firstActiveEffect);
+    const std::int32_t firstNewEffect =
+        Sys_AtomicLoad(&system->firstNewEffect);
+    const std::int64_t activeEffectCount64 =
+        static_cast<std::int64_t>(firstNewEffect) - firstActiveEffect;
+    if (firstActiveEffect < 0 || firstNewEffect < firstActiveEffect
+        || activeEffectCount64 > FX_EFFECT_LIMIT)
+        FX_DropCorruptProfileList("active effect ring exceeds capacity");
+    const std::uint32_t activeEffectCount =
+        static_cast<std::uint32_t>(activeEffectCount64);
+    for (std::uint32_t activeOffset = 0;
+         activeOffset < activeEffectCount;
+         ++activeOffset)
     {
+        i = static_cast<std::uint32_t>(firstActiveEffect) + activeOffset;
         effect = FX_EffectFromHandle(system, system->allEffectHandles[i & 0x3FF]);
+        if ((static_cast<std::uint32_t>(
+                 Sys_AtomicLoad(&effect->status))
+             & FX_STATUS_REF_COUNT_MASK) == 0)
+        {
+            continue;
+        }
+        if (!effect->def)
+            FX_DropCorruptProfileList("referenced effect has no definition");
         entry = FX_GetProfileEntry(effect->def, entryPool, &entryCount);
         FX_ProfileSingleEffect(system, effect, entry);
     }
+    const std::int32_t activeTrailCount =
+        Sys_AtomicLoad(&system->activeTrailCount);
+    const std::int32_t activeElemCount =
+        Sys_AtomicLoad(&system->activeElemCount);
+    const std::int32_t activeTrailElemCount =
+        Sys_AtomicLoad(&system->activeTrailElemCount);
+    FxSpotLightStateSnapshot spotLightSnapshot{};
+    if (!FX_GetSpotLightStateSnapshot(system, &spotLightSnapshot))
+        FX_DropCorruptProfileList("missing spotlight state");
+    const std::int32_t activeSpotLightEffectCount =
+        spotLightSnapshot.effectCount;
+    const std::int32_t activeSpotLightElemCount =
+        spotLightSnapshot.elemCount;
+    const std::int32_t gfxCloudCount =
+        Sys_AtomicLoad(&system->gfxCloudCount);
+    const bool validPoolCounts = activeTrailCount >= 0
+        && activeTrailCount <= MAX_TRAILS
+        && activeElemCount >= 0
+        && activeElemCount <= MAX_ELEMS
+        && activeTrailElemCount >= 0
+        && activeTrailElemCount <= MAX_TRAIL_ELEMS
+        && gfxCloudCount >= 0
+        && gfxCloudCount <= 256;
+    const bool validSpotLightCountPair =
+        activeSpotLightEffectCount >= 0
+        && activeSpotLightEffectCount <= 1
+        && activeSpotLightElemCount >= 0
+        && activeSpotLightElemCount <= activeSpotLightEffectCount;
     FX_EndIteratingOverEffects_Cooperative(system);
-    qsort(entryPool, entryCount, sizeof(FxProfileEntry),
-        (int(__cdecl *)(const void *, const void *))FX_CompareProfileEntries);
-    v11 = system->firstNewEffect - system->firstActiveEffect;
+    if (!validPoolCounts)
+        FX_DropCorruptProfileList("invalid FX pool count");
+    if (!validSpotLightCountPair)
+        FX_DropCorruptProfileList("invalid spotlight count pair");
+    qsort(
+        entryPool,
+        entryCount,
+        sizeof(FxProfileEntry),
+        FX_CompareProfileEntriesForQsort);
+    v11 = static_cast<std::int32_t>(activeEffectCount);
     v3 = va("%4i of %4i effect objects in use (%.0f%%; %i free)", v11, 1024, (double)v11 * 0.09765625, 1024 - v11);
-    drawFunc(v3);
+    drawFunc(v3, profilePos);
     v4 = va(
         "%4i of %4i trails in use (%.0f%%; %i free)",
-        system->activeTrailCount,
+        activeTrailCount,
         128,
-        (double)(int)system->activeTrailCount * 0.78125,
-        128 - system->activeTrailCount);
-    drawFunc(v4);
+        (double)activeTrailCount * 0.78125,
+        128 - activeTrailCount);
+    drawFunc(v4, profilePos);
     v5 = va(
         "%4i of %4i spot lights in use (%.0f%%; %i free)",
-        system->activeSpotLightEffectCount,
+        activeSpotLightEffectCount,
         1,
-        (double)(int)system->activeSpotLightEffectCount * 100.0,
-        1 - system->activeSpotLightEffectCount);
-    drawFunc(v5);
+        (double)activeSpotLightEffectCount * 100.0,
+        1 - activeSpotLightEffectCount);
+    drawFunc(v5, profilePos);
     v6 = va(
         "%4i of %4i effect elements in use (%.0f%%; %i free)",
-        system->activeElemCount,
+        activeElemCount,
         2048,
-        (double)(int)system->activeElemCount * 0.048828125,
-        2048 - system->activeElemCount);
-    drawFunc(v6);
+        (double)activeElemCount * 0.048828125,
+        2048 - activeElemCount);
+    drawFunc(v6, profilePos);
     v7 = va(
         "%4i of %4i trail elements in use (%.0f%%; %i free)",
-        system->activeTrailElemCount,
+        activeTrailElemCount,
         2048,
-        (double)(int)system->activeTrailElemCount * 0.048828125,
-        2048 - system->activeTrailElemCount);
-    drawFunc(v7);
+        (double)activeTrailElemCount * 0.048828125,
+        2048 - activeTrailElemCount);
+    drawFunc(v7, profilePos);
     v8 = va(
         "%4i of %4i cloud elements in use (%.0f%%; %i free)",
-        system->gfxCloudCount,
+        gfxCloudCount,
         256,
-        (double)(int)system->gfxCloudCount * 0.390625,
-        256 - system->gfxCloudCount);
-    drawFunc(v8);
-    ((void(__cdecl *)(const char *, float *))drawFunc)("", profilePos);
-    ((void(__cdecl *)(const char *, float *))drawFunc)(
+        static_cast<double>(gfxCloudCount) * 0.390625,
+        256 - gfxCloudCount);
+    drawFunc(v8, profilePos);
+    drawFunc("", profilePos);
+    drawFunc(
         "Effects are sorted by percent of available resources used",
         profilePos);
     v9 = va(
@@ -86,8 +220,8 @@ void __cdecl FX_DrawProfile(int32_t clientIndex, void(__cdecl *drawFunc)(char *)
         "actv",
         "pend",
         "effectname");
-    drawFunc(v9);
-    ((void(__cdecl *)(const char *, float *))drawFunc)(
+    drawFunc(v9, profilePos);
+    drawFunc(
         "-------------------------------------------------------------------",
         profilePos);
     for (j = 0; j < entryCount; ++j)
@@ -104,7 +238,7 @@ void __cdecl FX_DrawProfile(int32_t clientIndex, void(__cdecl *drawFunc)(char *)
             entry->activeTrailElemCount,
             entry->pendingTrailElemCount,
             entry->effectDef->name);
-        drawFunc(v10);
+        drawFunc(v10, profilePos);
     }
 }
 
@@ -112,6 +246,11 @@ FxProfileEntry *__cdecl FX_GetProfileEntry(const FxEffectDef *effectDef, FxProfi
 {
     int32_t entryIndex; // [esp+0h] [ebp-4h]
 
+    if (!effectDef || !entryPool || !entryCount
+        || *entryCount < 0 || *entryCount > FX_EFFECT_LIMIT)
+    {
+        FX_DropCorruptProfileList("invalid profile entry state");
+    }
     for (entryIndex = 0; entryIndex < *entryCount; ++entryIndex)
     {
         if (entryPool[entryIndex].effectDef == effectDef)
@@ -125,6 +264,8 @@ FxProfileEntry *__cdecl FX_GetProfileEntry(const FxEffectDef *effectDef, FxProfi
             "entryIndex == *entryCount\n\t%i, %i",
             entryIndex,
             *entryCount);
+    if (*entryCount == FX_EFFECT_LIMIT)
+        FX_DropCorruptProfileList("profile entry pool exceeds capacity");
     ++*entryCount;
     entryPool[entryIndex].effectDef = effectDef;
     entryPool[entryIndex].effectCount = 0;
@@ -146,35 +287,47 @@ void __cdecl FX_ProfileSingleEffect(FxSystem *system, const FxEffect *effect, Fx
     uint32_t elemClass; // [esp+14h] [ebp-8h]
     uint16_t trailElemHandle; // [esp+18h] [ebp-4h]
 
+    if (!system || !effect || !entry)
+        FX_DropCorruptProfileList("missing effect profile state");
     ++entry->effectCount;
     for (elemClass = 0; elemClass < 3; ++elemClass)
     {
+        std::size_t elemCount = 0;
         for (elemHandle = effect->firstElemHandle[elemClass];
             elemHandle != 0xFFFF;
             elemHandle = elem->item.nextElemHandleInEffect)
         {
+            if (elemCount++ >= MAX_ELEMS)
+                FX_DropCorruptProfileList("element chain exceeds pool capacity");
             if (!system)
                 MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 334, 0, "%s", "system");
-            elem = FX_PoolFromHandle_Generic<FxElem, 2048>(system->elems, elemHandle);
+            elem = FX_GetAllocatedProfileElem(system, elemHandle);
             if (elem->item.msecBegin > system->msecNow)
                 ++entry->pendingElemCount;
             else
                 ++entry->activeElemCount;
         }
     }
+    std::size_t trailCount = 0;
     for (trailHandle = effect->firstTrailHandle; trailHandle != 0xFFFF; trailHandle = trail->item.nextTrailHandle)
     {
+        if (trailCount++ >= MAX_TRAILS)
+            FX_DropCorruptProfileList("trail chain exceeds pool capacity");
         if (!system)
             MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 362, 0, "%s", "system");
-        trail = FX_PoolFromHandle_Generic<FxTrail, 128>(system->trails, trailHandle);
+        trail = FX_GetAllocatedProfileTrail(system, trailHandle);
         ++entry->trailCount;
+        std::size_t trailElemCount = 0;
         for (trailElemHandle = trail->item.firstElemHandle;
             trailElemHandle != 0xFFFF;
             trailElemHandle = trailElem->item.nextTrailElemHandle)
         {
+            if (trailElemCount++ >= MAX_TRAIL_ELEMS)
+                FX_DropCorruptProfileList("trail-element chain exceeds pool capacity");
             if (!system)
                 MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 348, 0, "%s", "system");
-            trailElem = FX_PoolFromHandle_Generic<FxTrailElem, 2048>(system->trailElems, trailElemHandle);
+            trailElem =
+                FX_GetAllocatedProfileTrailElem(system, trailElemHandle);
             if (trailElem->item.msecBegin > system->msecNow)
                 ++entry->pendingTrailElemCount;
             else
@@ -211,7 +364,10 @@ double __cdecl FX_GetProfileEntryCost(const FxProfileEntry *entry)
     else
         return (float)((double)entry->effectCount * (1.0f / 1024.0f));
 }
-void __cdecl FX_DrawMarkProfile(int32_t clientIndex, void(__cdecl* drawFunc)(const char*, float*), float* profilePos)
+void __cdecl FX_DrawMarkProfile(
+    int32_t clientIndex,
+    FxProfileDrawFunc drawFunc,
+    float *profilePos)
 {
     const char* v3; // eax
     char* v4; // eax
@@ -308,20 +464,20 @@ void __cdecl FX_DrawMarkProfile(int32_t clientIndex, void(__cdecl* drawFunc)(con
         512,
         fx_marksSystemPool[0].allocedMarkCount,
         fx_marksSystemPool[0].freedMarkCount);
-    ((void(__cdecl*)(char*))drawFunc)(v4);
+    drawFunc(v4, profilePos);
     v5 = va("%4i of %4i triGroups in use (%4i wasted)", 2048 - freeTriGroups, 2048, wastedTriGroups);
-    ((void(__cdecl*)(char*))drawFunc)(v5);
+    drawFunc(v5, profilePos);
     v6 = va("%4i of %4i pointGroups in use (%4i wasted)", 3072 - freePointGroups, 3072, wastedPointGroups);
-    ((void(__cdecl*)(char*))drawFunc)(v6);
+    drawFunc(v6, profilePos);
     drawFunc(" ", profilePos);
     v7 = va("%4i World Brush Marks", worldBrushMarks);
-    ((void(__cdecl*)(char*))drawFunc)(v7);
+    drawFunc(v7, profilePos);
     v8 = va("%4i World Model Marks", worldModelMarks);
-    ((void(__cdecl*)(char*))drawFunc)(v8);
+    drawFunc(v8, profilePos);
     v9 = va("%4i Ent Brush Marks", entBrushMarks);
-    ((void(__cdecl*)(char*))drawFunc)(v9);
+    drawFunc(v9, profilePos);
     v10 = va("%4i Ent Model", entModelMarks);
-    ((void(__cdecl*)(char*))drawFunc)(v10);
+    drawFunc(v10, profilePos);
     FX_DrawMarkProfile_MarkPrint(
         fx_marksSystemPool,
         fx_marksSystemPool[0].firstActiveWorldMarkHandle,
@@ -383,7 +539,7 @@ void __cdecl FX_DrawMarkProfile_MarkPrint(
     uint16_t head,
     const char *name,
     int32_t index,
-    void(__cdecl *drawFunc)(const char *, float *),
+    FxProfileDrawFunc drawFunc,
     float *profilePos)
 {
     const char *v6; // eax
