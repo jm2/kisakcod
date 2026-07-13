@@ -910,9 +910,18 @@ mismatches; archive, draw/update/profile/sort, spawn, removal, GC, kill, and rew
 complete traversed state before publication. A writer-intent gate, durable lifecycle marker, bounded
 packed-status CAS helpers, retained owner-subtree preflight, restart-root transaction, and explicit
 longjmp unwind prevent resurrection, concurrent traversal/mutation, adjacent-field carry, and abandoned
-locks/gates. Explicit signed trail bytes preserve compressed basis data on Linux ARM64. Remaining FX
-work is a typed loose-file missing-effect alias, camera/scalar snapshot publication, real Disk32
-archive/fast-file conversion, native physics-body pointer ownership, and production fixtures. The
+locks/gates. Explicit signed trail bytes preserve compressed basis data on Linux ARM64. PR #3 replaced
+the loose-file missing-effect raw clone with a checked native-width typed alias and merged at
+`facbfb12` after run 29279924536 passed all nine jobs; its 31-test GCC/Clang/sanitizer matrix and strict
+AArch64 syntax check were also green. The next foundation adds a private noncopyable native-body
+sidecar with full-width generation tokens, semantic validation, lifetime-bound ownership-preserving
+staged publication/rollback, and a fallible pre-freelist pool callback without changing `FxElem`'s
+0x28-byte layout. Its 32-test GCC/Clang/ASan/UBSan/TSan matrix and strict AArch64 syntax check are
+green; spawn/draw/free/reset/archive integration remains the immediate follow-up. That archive work
+must stage body-state recipes or reserve global capacity because ODE's 512-body ceiling cannot assume
+that complete live and replacement sets coexist. Remaining FX work is
+camera/scalar snapshot publication, real Disk32 archive/fast-file conversion, that production
+physics-sidecar wiring, and production fixtures. The
 unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
 a separate transactional `current/end` cursor migration. Detailed live blockers and sequencing remain in
 `docs/task.md` and `docs/CODEBASE_AUDIT.md`.

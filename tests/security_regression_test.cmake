@@ -7176,6 +7176,120 @@ require_source_ordered(
     "const int32_t fileLength = static_cast<int32_t>(filesize);"
     "multiplayer script reads must validate size before signed allocation math")
 
+# FX physics ownership is being moved out of the frozen 32-bit element record.
+# Keep the portable generation-token primitive and transactional pool hook in
+# place while production spawn/draw/free/archive integration proceeds.
+require_source_contains(
+    "EffectsCore/fx_runtime.h"
+    "RUNTIME_OFFSET(FxElem, physObjId, 0x18, 0x18);"
+    "the legacy FX physics token field must retain its frozen ABI offset")
+require_source_contains(
+    "EffectsCore/fx_runtime.h"
+    "std::int32_t physObjId;"
+    "the frozen FX physics token field must remain exactly 32 bits wide")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "dxBody *body = nullptr;"
+    "FX physics bodies must live in a native-pointer sidecar")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "BodyToken generation = INVALID_BODY_TOKEN;"
+    "FX physics sidecar slots must carry generation ownership")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "constexpr std::size_t BODY_LIMIT = 512;"
+    "FX physics sidecar ownership must respect the ODE body capacity")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "std::memcpy(&token, &legacyField, sizeof(token));"
+    "legacy signed FX fields must decode token bits without signed conversion")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "std::memcpy(&legacyField, &token, sizeof(legacyField));"
+    "FX physics tokens must encode legacy bits without signed conversion")
+foreach(_fx_physics_sidecar_operation
+    Bind
+    Resolve
+    Take
+    TakeFirst
+    PrepareReplacement
+    PublishReplacement
+    RollbackReplacement)
+    require_source_matches(
+        "EffectsCore/fx_physics_sidecar.h"
+        "(SidecarStatus|TokenResult|BodyResult|IndexedBodyResult)[ \t\r\n]+${_fx_physics_sidecar_operation}[ \t\r\n]*\\("
+        "FX physics sidecar must retain ${_fx_physics_sidecar_operation}")
+endforeach()
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "BodySidecar(const BodySidecar &) = delete;"
+    "FX native-body ownership registries must not be copy constructed")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "BodySidecar &operator=(BodySidecar &&) = delete;"
+    "FX native-body ownership registries must not be moved by assignment")
+require_source_not_matches(
+    "EffectsCore/fx_physics_sidecar.h"
+    "(Bind|Resolve|Take)[^;{]*(BodyToken[ \t]*[&*]|dxBody[ \t]*\\*[ \t]*[&*])"
+    "FX physics ownership APIs must return values rather than aliasable output pointers")
+require_source_matches(
+    "EffectsCore/fx_physics_sidecar.h"
+    "slot[.]body[ \t]*=[ \t]*nullptr[ \t]*;[ \t\r\n]*slot[.]generation[ \t]*=[ \t]*NextGeneration\\(slot[.]generation\\)[ \t]*;"
+    "taking an FX physics body must invalidate the slot generation")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "ValidateReplacementRelation(live, staged)"
+    "FX archive publication must validate the staged generation relation")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "ValidateReplacementRelation(rollback, live)"
+    "FX archive rollback must validate the published generation relation")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "staged->transactionPeer_ != live"
+    "FX archive publication must bind staging to the exact live registry")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "staged->transactionRevision_ != live->revision_"
+    "FX archive publication must reject a changed live registry")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "rollback->transactionPeer_ != live"
+    "FX archive rollback must bind its snapshot to the published registry")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "rollback->transactionRevision_ != live->revision_"
+    "FX archive rollback must reject post-publication mutation")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "staged->transactionPeerLifetimeNonce_ != live->lifetimeNonce_"
+    "FX archive publication must reject a reconstructed source registry")
+require_source_contains(
+    "EffectsCore/fx_physics_sidecar.h"
+    "rollback->transactionPeerLifetimeNonce_ != live->lifetimeNonce_"
+    "FX archive rollback must reject a reconstructed published registry")
+require_source_not_matches(
+    "EffectsCore/fx_physics_sidecar.h"
+    "reinterpret_cast[ \t\r\n]*<[^>]*dxBody"
+    "FX physics sidecar tokens must never be decoded as native pointers")
+require_source_not_matches(
+    "EffectsCore/fx_physics_sidecar.h"
+    "\\([ \t]*(const[ \t]+)?dxBody[ \t]*\\*[ \t]*\\)"
+    "FX physics sidecar tokens must never use C-style native-body pointer casts")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "BeforePublishRejected,"
+    "FX pool frees must expose a distinct rejected-publication status")
+require_source_contains(
+    "EffectsCore/fx_pool.h"
+    "std::is_same_v<BeforePublishResult, bool>"
+    "fallible FX pool callbacks must return bool by value")
+require_source_ordered(
+    "EffectsCore/fx_pool.h"
+    "return FxPoolMutationStatus::BeforePublishRejected;"
+    "pool[freedIndex].item = ITEM_TYPE{};"
+    "fallible FX pool callbacks must reject before publishing a free slot")
+
 set(_format_sensitive_sources
     "cgame/cg_hudelem.cpp"
     "cgame/cg_info.cpp"

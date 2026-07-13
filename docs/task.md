@@ -6,14 +6,14 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Branch: `agent/fx-missing-effect-alias`; branch point: merged EffectsCore hardening commit
-  `036ddaf8`; upstream-integration baseline: `2b759db`.
+- Branch: `agent/fx-physics-sidecar`; branch point: merged native-width missing-effect alias
+  commit `facbfb12`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: replace the loose-file missing-effect fallback's `_DWORD` pointer rebasing and
-  hard-coded x86 offsets with a checked typed native-width alias, then begin explicit Disk32 FX
-  schemas and physics-pointer ownership while the protected licensed headless smoke waits for its
-  self-hosted runners.
-- Progress estimate: approximately **29% complete by engineering effort** (plausible range 25–34%).
+- Active work: land a portable generation-checked FX physics-ownership sidecar and transactional
+  pre-publication pool-free hook without changing the frozen `FxElem` layout, then wire it through
+  spawn/draw/free/reset/archive before beginning the explicit Disk32 FX archive schemas. The
+  protected licensed headless smoke continues to wait for its self-hosted runners.
+- Progress estimate: approximately **30% complete by engineering effort** (plausible range 26–35%).
   The foundation/checklist view is about 46–51% and the shared foundation is roughly 83–90% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
@@ -71,13 +71,31 @@ work item changes. Do not create session-specific handoff files.
   updates intentionally pass a staged trail copy into element retirement: the correction retains the
   real allocated trail owner for validation and publishes both staged and live endpoints in the same
   allocator transaction. PR #2 merged at `036ddaf8` after replacement run **29277249156 passed all
-  nine CI jobs**; local GCC, Clang, ASan/UBSan, and TSan validation was 30/30. Remaining FX-specific
-  work is the typed missing-effect alias, real 64-bit Disk32 archive/fast-file conversion, native
-  ownership for the `FxElem::physObjId` physics pointer, camera/scalar snapshot publication, and
-  production integration fixtures. The global unbounded/alignment-unsafe `Buf_Read<T>` cursor has
+  nine CI jobs**; local GCC, Clang, ASan/UBSan, and TSan validation was 30/30. PR #3 then replaced
+  the loose-file missing-effect fallback's raw `_DWORD` clone and literal x86 rebasing with a checked,
+  typed native-width alias that owns its name, shares only a fully validated immutable element span,
+  and fails transactionally on size, alignment, capacity, or overlap errors. PR #3 merged at
+  `facbfb12` after run **29279924536 passed all nine CI jobs**; Gemini reported no review findings,
+  and the 31-test local GCC/Clang/ASan/UBSan/TSan plus strict AArch64 matrix was green. The current
+  sidecar-foundation branch adds a private noncopyable native `dxBody *` registry keyed by element
+  slot, full-width generation tokens with bit-preserving legacy-field codecs, structural and semantic
+  validation, and source/revision/lifetime-bound staged publication/rollback that rejects duplicate
+  ownership, mismatched generations, replay, reconstructed registries, and stale transaction
+  provenance. A fallible pool pre-publication
+  callback lets the integration detach external ownership
+  before a slot reaches the freelist while leaving rejected frees transactional. The expanded **32/32**
+  portable matrix passes under GCC, Clang, ASan/UBSan, and TSan plus strict AArch64 syntax compilation.
+  This branch intentionally provides the reviewed ownership primitive; production spawn/draw/free/reset
+  and archive paths still need to be routed through it next. Remaining FX-specific work is that runtime
+  integration, real 64-bit Disk32 archive/fast-file conversion, camera/scalar snapshot publication, and
+  production fixtures. ODE's global 512-body ceiling means archive restore must not blindly instantiate
+  a complete replacement while all live bodies still exist: the integration must stage validated body
+  recipes until commit, reserve/account global capacity, or fail safely before publication. The global
+  32-bit frozen token field necessarily permits generation reuse after 2^32 advances, and release
+  shutdown must explicitly drain/finalize the registry because destructor assertions are diagnostic.
+  The global unbounded/alignment-unsafe `Buf_Read<T>` cursor has
   114 consumers in XAnim/XModel load-object code and is a distinct security/ARM batch, not an
-  EffectsCore reader. The current typed-alias batch raises the portable local matrix to **31/31**
-  under GCC, Clang, ASan/UBSan, and TSan and passes strict AArch64 syntax compilation.
+  EffectsCore reader.
 - Current model draw-stream batch: a shared checked dword-offset resolver validates the published surface
   arena, overflow, native alignment, full record extent, and tag before access. Static scene traversal
   handles hidden and rigid records without raw pointer stepping; all five draw-XModel and seven scoped
@@ -415,11 +433,14 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Replace the missing-FX fallback's x86 raw clone with a checked typed alias and portable
-   native-pointer/capacity tests.
-2. Add packed FX Disk32 schemas and byte-level malformed/round-trip fixtures, then replace the
-   truncated `FxElem::physObjId` pointer with a native sidecar or generation-checked handle before
-   enabling 64-bit archive restore.
+1. Finish the generation-checked `FxElem::physObjId` ownership sidecar: land its portable primitive
+   and fallible pool-free transaction first, then integrate spawn/draw/free/reset and staged archive
+   commit/rollback without changing the 0x28-byte `FxElem` ABI. Respect ODE's global 512-body ceiling
+   by staging body-state recipes or reserving capacity instead of assuming live and replacement body
+   sets can coexist.
+2. Add packed FX savegame Disk32 schemas, native handle remapping, opaque effect-definition keys,
+   and byte-level malformed/round-trip fixtures; retain the legacy x86 writer until equivalence is
+   proven. Fast-file `FxEffectDef` widening remains a separate nested-payload batch.
 3. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
 4. Monitor the protected licensed-content headless startup/map/`getstatus` workflow, and implement the

@@ -128,6 +128,20 @@ add_test(
     COMMAND kisakcod-fx-missing-effect-alias-tests
 )
 
+add_executable(kisakcod-fx-physics-sidecar-tests
+    fx_physics_sidecar_tests.cpp
+)
+target_include_directories(kisakcod-fx-physics-sidecar-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-fx-physics-sidecar-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-fx-physics-sidecar-tests)
+set_target_properties(kisakcod-fx-physics-sidecar-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-physics-body-sidecar
+    COMMAND kisakcod-fx-physics-sidecar-tests
+)
+
 add_executable(kisakcod-fx-visibility-atomic-tests
     fx_visibility_atomic_tests.cpp
 )

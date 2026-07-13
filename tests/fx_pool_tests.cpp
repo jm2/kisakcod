@@ -427,6 +427,91 @@ bool AllocationAndFreeTransitions()
         && firstFree == 1 && Sys_AtomicLoad(&activeCount) == 2;
 }
 
+bool FallibleBeforePublishCallbackIsTransactional()
+{
+    FxPool<FxTrail> pool[2];
+    InitializeFreeList(pool);
+    alignas(4) volatile std::int32_t firstFree = 0;
+    alignas(4) volatile std::int32_t activeCount = 0;
+    FxPoolAllocationState<2> allocationState{};
+    FxPoolResetAllocationState(&allocationState);
+    FxPoolMutationStatus status = FxPoolMutationStatus::InvalidArgument;
+
+    FxPool<FxTrail> *const allocated = FxPoolAllocateLocked<FxTrail, 2>(
+        &firstFree, pool, &activeCount, &allocationState, &status);
+    if (allocated != &pool[0] || status != FxPoolMutationStatus::Success)
+        return false;
+    allocated->item = FxTrail{FX_INVALID_HANDLE, 11, 13, 17, 19};
+
+    const auto rejectedPool = Snapshot(pool);
+    const auto rejectedState = allocationState;
+    const std::int32_t rejectedFirstFree = firstFree;
+    const std::int32_t rejectedActiveCount = Sys_AtomicLoad(&activeCount);
+    int callbackCount = 0;
+    bool callbackSawUnpublishedState = false;
+    status = FxPoolFreeLocked<FxTrail, 2>(
+        &allocated->item,
+        &firstFree,
+        pool,
+        &activeCount,
+        &allocationState,
+        [&]() noexcept -> bool {
+            ++callbackCount;
+            callbackSawUnpublishedState = firstFree == rejectedFirstFree
+                && Sys_AtomicLoad(&activeCount) == rejectedActiveCount
+                && MatchesSnapshot(pool, rejectedPool)
+                && MatchesAllocationState(allocationState, rejectedState);
+            return false;
+        });
+    if (status != FxPoolMutationStatus::BeforePublishRejected
+        || callbackCount != 1 || !callbackSawUnpublishedState
+        || firstFree != rejectedFirstFree
+        || Sys_AtomicLoad(&activeCount) != rejectedActiveCount
+        || !MatchesSnapshot(pool, rejectedPool)
+        || !MatchesAllocationState(allocationState, rejectedState))
+    {
+        return false;
+    }
+
+    bool acceptedCallbackSawUnpublishedState = false;
+    status = FxPoolFreeLocked<FxTrail, 2>(
+        &allocated->item,
+        &firstFree,
+        pool,
+        &activeCount,
+        &allocationState,
+        [&]() noexcept -> bool {
+            ++callbackCount;
+            acceptedCallbackSawUnpublishedState =
+                firstFree == rejectedFirstFree
+                && Sys_AtomicLoad(&activeCount) == rejectedActiveCount
+                && MatchesSnapshot(pool, rejectedPool)
+                && MatchesAllocationState(allocationState, rejectedState);
+            return true;
+        });
+    if (status != FxPoolMutationStatus::Success
+        || callbackCount != 2 || !acceptedCallbackSawUnpublishedState
+        || firstFree != 0 || Sys_AtomicLoad(&activeCount) != 0
+        || allocationState.allocatedCount != 0
+        || FxPoolAllocationStateIsAllocated(allocationState, 0))
+    {
+        return false;
+    }
+
+    status = FxPoolFreeLocked<FxTrail, 2>(
+        &allocated->item,
+        &firstFree,
+        pool,
+        &activeCount,
+        &allocationState,
+        [&]() noexcept -> bool {
+            ++callbackCount;
+            return true;
+        });
+    return status == FxPoolMutationStatus::InvalidActiveCount
+        && callbackCount == 2;
+}
+
 bool AllocationFailuresAreTransactional()
 {
     FxPool<FxTrail> pool[3];
@@ -1415,6 +1500,8 @@ int main()
     ok = Run("signed FX byte preservation",
              SignedFxByteFieldsPreserveNegativeValues) && ok;
     ok = Run("allocation/free transitions", AllocationAndFreeTransitions) && ok;
+    ok = Run("fallible pre-publish callback",
+             FallibleBeforePublishCallbackIsTransactional) && ok;
     ok = Run("transactional allocation failures", AllocationFailuresAreTransactional) && ok;
     ok = Run("transactional free failures", FreeFailuresAreTransactional) && ok;
     ok = Run("A-B-A allocation cycle detection",
