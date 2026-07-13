@@ -10,9 +10,12 @@ the *original* inventory, not a live count of open items.
 > **How to read this document.** This is a point-in-time audit, not a live tracker. Many findings
 > below have since been remediated, and the finding bodies deliberately preserve the original defect
 > description and line numbers so the history stays legible. **Do not treat a finding here as open
-> work.** Check the remediation status below and the inline `**Status:**` markers, and treat
-> `docs/task.md` as authoritative for what is actually outstanding. Several line references are stale
-> by construction.
+> work.** Check the remediation status below and the inline `**Status:**` markers.
+>
+> `docs/task.md` is the live checkpoint and tracks current status far more closely than this file —
+> but it is not infallible either, and it currently carries some stale claims of its own. **When the
+> docs disagree with the tree, the tree wins.** Confirm against the source and `git log` before acting
+> on any doc. Several line references in this file are stale by construction.
 
 ---
 
@@ -269,10 +272,12 @@ extraction.
   (`sv_main_mp.cpp:691`) reply to a spoofed source with a larger response. Add per-source rate limiting
   / challenge, cap response size.
 - **Dedicated server is not headless** — **Status: fixed.** A dependency-free `KISAK_DEDI_HEADLESS`
-  profile now compiles and links as its own green CI job and excludes `gfx_d3d`/`EffectsCore`
-  (`scripts/dedi/dedi_sources.cmake:34-37`, which hard-errors if either leaks back in). *Original:*
-  `dedi` links the full client incl. D3D9 + Miles (`scripts/dedi/CMakeLists.txt:40`); wastes deps and
-  blocks a clean Linux server port.
+  profile now compiles and links as its own green CI job. `${EFFECTSCORE}` (`dedi_sources.cmake:41`)
+  and `${GFX_D3D}` (`:49`) are added only in the non-headless `else()` branch (`:38-58`), and
+  `kisakcod_assert_headless_dedi_sources` (`:63-77`) raises `FATAL_ERROR` (`:71`) if any
+  client/media source — or a Bink/Miles dependency (`:74`) — leaks back into the headless list.
+  *Original:* `dedi` links the full client incl. D3D9 + Miles (`scripts/dedi/CMakeLists.txt:40`);
+  wastes deps and blocks a clean Linux server port.
 - **VS multi-config vs `CMAKE_BUILD_TYPE`** — lib selection and DLL copy key off `CMAKE_BUILD_TYPE`
   under a multi-config generator (`post_build.cmake:6`); should use `$<CONFIG>` /
   `$<TARGET_FILE_DIR:..>`. (`build-win.ps1` already passes `--config` to compensate.)
