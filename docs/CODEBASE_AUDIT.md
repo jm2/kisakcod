@@ -4,7 +4,18 @@
 verification pass (each finding a reviewer *tried to refute*); the eight top security items below all
 **survived and were confirmed at high confidence**. Line numbers are as of the analyzed tree.
 
-**Counts:** 3 critical · 10 high · 15 medium · 19 low (47 total, after noting duplicates).
+**Counts:** 3 critical · 10 high · 15 medium · 19 low (47 total, after noting duplicates) — this is
+the *original* inventory, not a live count of open items.
+
+> **How to read this document.** This is a point-in-time audit, not a live tracker. Many findings
+> below have since been remediated, and the finding bodies deliberately preserve the original defect
+> description and line numbers so the history stays legible. **Do not treat a finding here as open
+> work.** Check the remediation status below and the inline `**Status:**` markers.
+>
+> `docs/task.md` is the live checkpoint and tracks current status far more closely than this file —
+> but it is not infallible either, and it currently carries some stale claims of its own. **When the
+> docs disagree with the tree, the tree wins.** Confirm against the source and `git log` before acting
+> on any doc. Several line references in this file are stale by construction.
 
 ---
 
@@ -208,7 +219,10 @@ original libwww is gone), or document that only in-band UDP downloads + pre-inst
 ### H5. `set(WIN32 …)` clobbers CMake's built-in `WIN32`, defeating every `if(WIN32)` guard
 `scripts/common_files.cmake:558`
 
-The source-file list is named `WIN32`, shadowing CMake's reserved boolean. `common_files.cmake` is
+**Status: fixed.** The variable is now `PLATFORM_WIN32` (`common_files.cmake:587`); the cited line
+number is stale and now points at an unrelated source entry.
+
+*Original finding, preserved:* The source-file list is named `WIN32`, shadowing CMake's reserved boolean. `common_files.cmake` is
 included before `pre_build.cmake`, whose entire DirectX/SDK/link block is wrapped in `if(WIN32)`
 (`:2,:28`). Since `WIN32` now holds a non-empty list, **`if(WIN32)` is true on all platforms** — the
 Windows-only path runs unconditionally, and on Windows it works only by accident.
@@ -220,7 +234,12 @@ CMake var `WIN32/UNIX/APPLE/MSVC`.
 ### H6. No functional non-Windows build; linux `platform.cmake` is empty and `KISAK_PLATFORM` is hardcoded
 `scripts/platform/linux/platform.cmake:1`, `CMakeLists.txt:10`
 
-`set(KISAK_PLATFORM win32)` is hardcoded; `win32/platform.cmake` `FATAL_ERROR`s otherwise; the linux
+**Status: fixed (scaffolding).** `KISAK_PLATFORM` is now detected from `CMAKE_SYSTEM_NAME`
+(`CMakeLists.txt:40`), `scripts/platform/linux/platform.cmake` is populated, and `src/_platform/`
+exists with POSIX backends. Note the *engine* is still deliberately gated off on non-Windows by an
+explicit `FATAL_ERROR` (`CMakeLists.txt:50-57`) — that gate is intended, not a defect.
+
+*Original finding, preserved:* `set(KISAK_PLATFORM win32)` is hardcoded; `win32/platform.cmake` `FATAL_ERROR`s otherwise; the linux
 file is 0 bytes; `src/_platform/` (the override root) doesn't exist. The README's "fully-buildable" is
 Windows/MSVC/DX9-only in practice.
 
@@ -230,7 +249,10 @@ from `CMAKE_SYSTEM_NAME`, populate or delete the linux stub, gate DirectX behind
 ### H7. CI Debug matrix job points at a nonexistent DXSDK lib path
 `scripts/pre_build.cmake:45`
 
-CI extracts `build\native\release\lib\x86` into `GITHUB_ENV` but never passes it; `pre_build.cmake:45`
+**Status: fixed.** `pre_build.cmake:47` now uses `${DXSDK_DIR}/release/lib/x86` with `d3dx9.lib` for
+both configurations; both Debug and Release engine jobs link green.
+
+*Original finding, preserved:* CI extracts `build\native\release\lib\x86` into `GITHUB_ENV` but never passes it; `pre_build.cmake:45`
 independently derives `${DXSDK_DIR}/${CMAKE_BUILD_TYPE}/lib/x86` → `build/native/Debug/lib/x86` for the
 Debug entry, and selects `d3dx9d.lib` (`:55`). The NuGet package ships only a lowercase `release` lib
 dir and **no** debug import lib.
@@ -249,23 +271,33 @@ extraction.
 - **Spoofed reflection/amplification DoS** — unauthenticated `getstatus`/`getinfo`
   (`sv_main_mp.cpp:691`) reply to a spoofed source with a larger response. Add per-source rate limiting
   / challenge, cap response size.
-- **Dedicated server is not headless** — `dedi` links the full client incl. D3D9 + Miles
-  (`scripts/dedi/CMakeLists.txt:40`). Wastes deps and blocks a clean Linux server port; carve out a
-  true headless target.
+- **Dedicated server is not headless** — **Status: fixed.** A dependency-free `KISAK_DEDI_HEADLESS`
+  profile now compiles and links as its own green CI job. `${EFFECTSCORE}` (`dedi_sources.cmake:41`)
+  and `${GFX_D3D}` (`:49`) are added only in the non-headless `else()` branch (`:38-58`), and
+  `kisakcod_assert_headless_dedi_sources` (`:63-77`) raises `FATAL_ERROR` (`:71`) if any
+  client/media source — or a Bink/Miles dependency (`:74`) — leaks back into the headless list.
+  *Original:* `dedi` links the full client incl. D3D9 + Miles (`scripts/dedi/CMakeLists.txt:40`);
+  wastes deps and blocks a clean Linux server port.
 - **VS multi-config vs `CMAKE_BUILD_TYPE`** — lib selection and DLL copy key off `CMAKE_BUILD_TYPE`
   under a multi-config generator (`post_build.cmake:6`); should use `$<CONFIG>` /
   `$<TARGET_FILE_DIR:..>`. (`build-win.ps1` already passes `--config` to compensate.)
 - **`/we4700` warnings-as-error applied globally** to vendored third-party code
-  (`platform/win32/platform.cmake:18`).
+  (`platform/win32/platform.cmake:18`). **Status: fixed** — `/we4700` no longer appears in `scripts/`.
 - **`target_compile_definitions(KISAK_EXTENDED)` missing scope keyword** — enabling the feature flag
-  breaks configure (`pre_build.cmake:18`).
+  breaks configure (`pre_build.cmake:18`). **Status: fixed** — now `PUBLIC` (`pre_build.cmake:12`).
 - **SP correctness debt** — save/load wrong array sizing/typing (`g_save.cpp:2488`); AI flag-decode
   gaps (`g_active.cpp:241`); broken LiveStorage stat writing (`win_storage.cpp:634`); many decompiled
   hot paths flagged unverified (union fields, arg counts, casts — `scr_evaluate.cpp:945`).
+  **Status: deferred by scope.** Single-player is out of scope for the port (MP client + headless
+  dedicated only) and is built by **no** CI job (`-DKISAK_BUILD_SP=OFF` everywhere), so the ~97
+  SP-only translation units are not compiled or syntax-checked. Treat SP findings as unvalidated.
 - **Mic mixer setup fails** → voice capture unconfigured (`win_voice.cpp:124`).
 - **Hardcoded absolute dev paths** in `milesEq/build.bat:5`.
-- **Dev-experience/CI gaps** — single Windows job, no tests/lint/format, stale README build steps,
-  throwaway 1-day artifacts (`.github/workflows/build-kisarcod-win.yaml:78`).
+- **Dev-experience/CI gaps** — **Status: fixed.** CI is now 9 jobs (5 portable-test targets + 4
+  Windows x86 engine builds) across `ci.yml`/`release.yml`, with 32 ctest tests and 14-day artifact
+  retention. *Original:* single Windows job, no tests/lint/format, stale README build steps,
+  throwaway 1-day artifacts (`.github/workflows/build-kisarcod-win.yaml:78` — that workflow file no
+  longer exists).
 
 ## 4. LOW (selected)
 
@@ -329,7 +361,18 @@ remain based on unbounded, potentially unaligned `Buf_Read<T>` operations.
 
 ### P3. FX packed status/free lists/visibility require protocol rewrites
 
-`EffectsCore` retains 61 native atomic calls and 35 load-bearing `long`/`LONG`
+**Status: fixed.** Landed across PRs #2–#4 (`036ddaf8`, `facbfb12`, `3c542f20`). `EffectsCore` now has
+**zero** native atomic calls and no `volatile long`/`LONG` in any FX struct; the nineteen atomic words
+are explicit `int32_t` in `EffectsCore/fx_runtime.h` with dual 32/64-bit size contracts. The packed
+status field uses bounded CAS helpers that cannot carry into adjacent fields; freelist allocation and
+free validate heads, links, strides, counts, and ownership before mutation; the visibility blocker
+protocol validates finite packed inputs, uses all 256 slots, and publishes payloads before counts.
+The prescription below was followed in essentially this order. **Do not re-do this work** — see
+`docs/task.md` for what remains (Disk32 FX archive/fast-file conversion, camera/scalar publication,
+and production fixtures).
+
+*Original finding, preserved:* `EffectsCore` retains 61 native atomic calls and 35 load-bearing
+`long`/`LONG`
 uses. `FxEffect::status` combines a 16-bit refcount, owned-child count, pending and
 flag bits, plus an additive bit-29 lock: unchecked add/subtract can carry into
 adjacent flags, and enough contenders can corrupt/false-acquire the lock. Pool
