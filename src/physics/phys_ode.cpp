@@ -13,6 +13,8 @@
 #include <universal/profile.h>
 #include "ode/collision_transform.h"
 
+#include <climits>
+#include <cstddef>
 #include <cmath>
 
 #ifdef KISAK_DEDI_HEADLESS
@@ -92,7 +94,22 @@ void __cdecl ODE_ForEachBody(dxWorld *world, T func)
 
 void __cdecl TRACK_phys()
 {
-    track_static_alloc_internal(&physGlob, 156936, "physGlob", 9);
+    const std::size_t trackedSize = sizeof(physGlob);
+    if (trackedSize > static_cast<std::size_t>(INT_MAX))
+    {
+        MyAssertHandler(
+            ".\\physics\\phys_ode.cpp",
+            95,
+            0,
+            "%s",
+            "sizeof(physGlob) <= INT_MAX");
+        return;
+    }
+    track_static_alloc_internal(
+        &physGlob,
+        static_cast<int>(trackedSize),
+        "physGlob",
+        9);
 }
 
 cmd_function_s Phys_Stop_f_VAR;
@@ -130,8 +147,30 @@ void __cdecl Phys_Init()
     if (!physInited)
     {
         memset((uint8_t *)&physGlob, 0, sizeof(physGlob));
-        Pool_Init((char *)physGlob.userData, &physGlob.userDataPool, 0x70u, 0x200u);
-        ODE_Init();
+        if (!Pool_Init(
+                Pool_StorageFor(physGlob.userData),
+                &physGlob.userDataPool))
+        {
+            MyAssertHandler(
+                ".\\physics\\phys_ode.cpp",
+                316,
+                0,
+                "%s",
+                "Pool_Init(physGlob.userData)");
+            return;
+        }
+        if (!ODE_Init())
+        {
+            physGlob.userDataPool.firstFree = nullptr;
+            physGlob.userDataPool.activeCount = 0;
+            MyAssertHandler(
+                ".\\physics\\phys_ode.cpp",
+                317,
+                0,
+                "%s",
+                "ODE_Init()");
+            return;
+        }
         for (worldIndex = PHYS_WORLD_DYNENT; worldIndex < PHYS_WORLD_COUNT; ++worldIndex)
         {
             physGlob.world[worldIndex] = dWorldCreate(worldIndex);
@@ -488,7 +527,9 @@ static physics::allocation::ResourceHandle Phys_CreateBodyUserDataResource(
 #ifdef USE_POOL_ALLOCATOR
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     PhysObjUserData *const userData =
-        reinterpret_cast<PhysObjUserData *>(Pool_Alloc(&physGlob.userDataPool));
+        static_cast<PhysObjUserData *>(Pool_Alloc(
+            Pool_StorageFor(physGlob.userData),
+            &physGlob.userDataPool));
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     return userData;
 #else
@@ -1513,8 +1554,18 @@ void __cdecl Phys_ObjDestroy(PhysWorld worldIndex, dxBody *id)
     dBodyDestroy(id);
 #ifdef USE_POOL_ALLOCATOR
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-    Pool_Free((freenode *)userData, &physGlob.userDataPool);
+    const bool userDataFreed = Pool_Free(
+        Pool_StorageFor(physGlob.userData),
+        &physGlob.userDataPool,
+        userData);
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    if (!userDataFreed)
+        MyAssertHandler(
+            __FILE__,
+            __LINE__,
+            0,
+            "%s",
+            "physics userdata pool free succeeded");
 #else
     free(userData);
 #endif
@@ -2706,7 +2757,6 @@ bool __cdecl Phys_ObjIsAsleep(dxBody *id)
 
 void __cdecl Phys_Shutdown()
 {
-    uint32_t v0; // eax
     int worldIndex; // [esp+0h] [ebp-4h]
 
     if (physInited)
@@ -2715,8 +2765,20 @@ void __cdecl Phys_Shutdown()
         vassert(physGlob.world[PHYS_WORLD_FX]->nb == 0, "physGlob.world[PHYS_WORLD_FX]->nb = %d", physGlob.world[PHYS_WORLD_FX]->nb);
         vassert(physGlob.world[PHYS_WORLD_RAGDOLL]->nb == 0, "physGlob.world[PHYS_WORLD_RAGDOLL]->nb = %d", physGlob.world[PHYS_WORLD_RAGDOLL]->nb);
 
-        int freeCount = Pool_FreeCount(&physGlob.userDataPool);
-        vassert(freeCount == ARRAY_COUNT(physGlob.userData), "userdata physobj free count = %d", freeCount);
+        const poolcountresult_t freeCount = Pool_GetFreeCount(
+                Pool_StorageFor(physGlob.userData),
+                &physGlob.userDataPool);
+        if (!freeCount.valid
+            || freeCount.count
+                != static_cast<std::size_t>(ARRAY_COUNT(physGlob.userData)))
+        {
+            MyAssertHandler(
+                ".\\physics\\phys_ode.cpp",
+                2309,
+                0,
+                "userdata physobj free count = %zu",
+                freeCount.count);
+        }
 
         ODE_LeakCheck();
         Cmd_RemoveCommand("phys_stop");

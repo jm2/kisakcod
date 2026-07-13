@@ -191,6 +191,10 @@ struct PhysObjUserData // sizeof=0x70
     // padding byte
     // padding byte
 };
+RUNTIME_SIZE(PhysObjUserData, 0x70, 0x78);
+RUNTIME_OFFSET(PhysObjUserData, body, 0xC, 0x10);
+RUNTIME_OFFSET(PhysObjUserData, savedPos, 0x10, 0x18);
+
  struct PhysTriMeshInfo // sizeof=0x14
  {                                       // ...
      float *verts;                       // ...

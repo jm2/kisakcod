@@ -11,7 +11,7 @@
 dxUserGeom *__cdecl Phys_GetWorldGeom();
 void __cdecl ODE_LeakCheck();
 
-void __cdecl ODE_Init();
+bool __cdecl ODE_Init();
 
 struct odeGlob_t // sizeof=0x2C64E0
 {                                       // ...

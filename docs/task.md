@@ -6,14 +6,14 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Branch: `agent/ode-allocation-safety`; branch point: merged FX physics-sidecar foundation
-  commit `3c542f20`; upstream-integration baseline: `2b759db`.
+- Branch: `agent/native-pool-freelist`; branch point: merged transactional ODE/FX safety
+  commit `580b93bb`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: take PR #7's locally complete ODE body/user-data/model-collision and isolated FX archive
-  transaction through Windows CI and review, then widen the shared pool freelist to native pointers
-  before wiring the merged FX physics sidecar atomically through spawn/draw/free/reset/archive. The
-  protected licensed headless smoke continues to wait for its self-hosted runners.
-- Progress estimate: approximately **31% complete by engineering effort** (plausible range 27–36%).
+- Active work: take the descriptor-bounded native-pointer pool freelist and all three migrated physics
+  pools through Windows engine CI and review, then wire the merged FX physics sidecar atomically through
+  spawn/draw/free/reset/archive. The protected licensed headless smoke continues to wait for its
+  self-hosted runners.
+- Progress estimate: approximately **32% complete by engineering effort** (plausible range 28–37%).
   The foundation/checklist view is about 47–52% and the shared foundation is roughly 84–90% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
@@ -94,7 +94,7 @@ work item changes. Do not create session-specific handoff files.
   recipes until commit, reserve/account global capacity, or fail safely before publication. Audit of
   that transaction exposed prerequisite ODE exhaustion defects: `dBodyCreate` and user-data allocation
   dereference null, while primary/transform geometry failures can publish incomplete collision bodies.
-  The active branch now checks body exhaustion before world publication, pairs the dormant heap
+  PR #7 checks body exhaustion before world publication, pairs the dormant heap
   fallback's `new`/`delete`, and uses one tested opaque resource-pair transaction for both body/user-data
   and primary-geom/optional-transform acquisition. A checked fresh body-plus-model API owns whole-body
   rollback and the archive restore path uses it before encoding or publishing a body. Allocation happens
@@ -109,12 +109,22 @@ work item changes. Do not create session-specific handoff files.
   PHYSICS-to-FX_ALLOC publication cannot invert a live allocator lock. Function-scoped source contracts
   bind callback rollback, allocation-before-COM mutation, and the complete archive lock interval. The
   utility suite is **36/36 locally green** under GCC, Clang, ASan/UBSan (leak detection disabled under the
-  ptrace runner), and TSan; focused storage validation also passes x86-32 and AArch64 compilation. Windows
-  engine CI remains the production adapter compile gate. Audit also found the next hard 64-bit blocker:
-  `Pool_Init` writes
-  freelist links through `uint32_t`, while allocation reads native pointers; the next PR must preserve
-  the x86 metadata layout while storing full pointers; the ODE geom backing storage is now explicitly
-  transform-aligned. The global
+  ptrace runner), and TSan; focused storage validation also passes x86-32 and AArch64 compilation. PR #7
+  merged at `580b93bb` after all nine jobs passed in run **29291013134** and automated plus independent
+  review found no remaining defects. The current pool branch closes the next hard 64-bit blocker without
+  changing the 8-byte x86 metadata: every link is stored and loaded at native pointer width through
+  `memcpy`, and a non-owning base/stride/count descriptor makes initialization, allocation, free, count,
+  and leak traversal validate exact slots and bounded list length before mutation. Checked queries return
+  status and value together, so caller output cannot alias and rewrite live pool storage or metadata.
+  Foreign/interior nodes, short/long chains, cycles, duplicate frees, invalid counts, overflow, and
+  metadata overlap are rejected before publishing or mutating a live list. All three production pools
+  use typed or explicit extents; `PhysObjUserData` now uses
+  its actual 0x70/0x78 stride instead of overlapping native64 records, ODE diagnostics use checked index
+  and next accessors, and FX archive capacity fails closed on corrupt state. The strict **39/39** GCC and
+  Clang suites pass, as do focused ASan/UBSan, TSan, x86-32 compile/link, and AArch64 compile/link. Those
+  portable tests compile the allocator contract; Windows x86 engine CI remains the production-callsite
+  compile gate until native engine source sets exist, while all five portable runtime jobs remain the
+  cross-target allocator gate. The global
   32-bit frozen token field necessarily permits generation reuse after 2^32 advances, and release
   shutdown must explicitly drain/finalize the registry because destructor assertions are diagnostic.
   The global unbounded/alignment-unsafe `Buf_Read<T>` cursor has
@@ -438,9 +448,9 @@ work item changes. Do not create session-specific handoff files.
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration/IWD search contexts, fixed-width fast locks, native dvar/script/XAnim/DObj/database/IWD/loopback/skeleton/pose/EffectsCore, bounded renderer/model-surface reservations, and a typed fixed-width worker queue exist. The executable engine has zero direct `Interlocked` calls; remaining work is broader raw-width/layout debt and platform integration. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 45 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path/FX graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, complete graphics-world AABB topology validation, bounded XSurface/XModel skin/skeleton/collision contracts, transactional FX pool/handle ownership validation, and allocation-safe ODE body/user-data/model-collision construction landed locally; production-path fuzz fixtures and the load-object bounded cursor remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 46 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path/FX graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, complete graphics-world AABB topology validation, bounded XSurface/XModel skin/skeleton/collision contracts, transactional FX pool/handle ownership validation, allocation-safe ODE body/user-data/model-collision construction, and a bounded transactional native-width physics pool allocator have landed or are in the current reviewed batch; production-path fuzz fixtures and the load-object bounded cursor remain. |
 | M3 platform services | In progress: thread, memory, and filesystem enumeration integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, virtual-memory lifecycle, UTF-8 mkdir/cwd/executable paths, bounded directory enumeration, and a cooperative worker gate used by renderer workers. Linux/macOS engine/headless sets remain empty and engine-gated; handle-relative recursive deletion, POSIX crash freezing, process/console, and socket backends remain. |
-| M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table, DObj runtime/saved layouts, allocations, preview buffers, SP corpse pointers, and EffectsCore effect/pool handle codecs are native-width exact. The generic pool allocator's `uint32_t` freelist-link write is the next hard native-width blocker; XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads remain 32-bit-layout-bound. |
+| M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table, DObj runtime/saved layouts, allocations, preview buffers, SP corpse pointers, EffectsCore effect/pool handle codecs, ODE user-geometry storage, and the generic physics pool allocator are native-width exact. XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, all legacy direct references migrated to bounded resolution, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush, portal/cell, and path-tree spans, and 18 exact completed object types exist; packed mirrors, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
@@ -457,26 +467,22 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Land PR #7 after replacement Windows engine CI/review confirms the portable resource-pair transaction,
-   native brush class storage, checked body-plus-model adapter, and isolated archive publication interval.
-2. Make `pool_allocator` native-pointer-safe without changing its x86 metadata layout: use full-width
-   unaligned-safe link storage, reject corrupt/duplicate operations transactionally, expose a checked
-   leak-walk accessor, and add x86-32/amd64/AArch64 tests. This is a hard
-   prerequisite for every requested 64-bit target.
-3. Finish the merged generation-checked `FxElem::physObjId` sidecar by integrating spawn/draw/free/reset
+1. Land the current native-pool PR after all Windows engine and five portable runtime jobs confirm the
+   descriptor-bounded full-width freelist, 0x70/0x78 userdata stride, and checked ODE leak diagnostics.
+2. Finish the merged generation-checked `FxElem::physObjId` sidecar by integrating spawn/draw/free/reset
    and staged archive commit/rollback atomically without changing the 0x28-byte ABI. Respect the global
    512-body ceiling with recoverable recipe-based replacement rather than assuming complete live and
    replacement body sets can coexist.
-4. Add packed FX savegame Disk32 schemas, native handle remapping, opaque effect-definition keys,
+3. Add packed FX savegame Disk32 schemas, native handle remapping, opaque effect-definition keys,
    and byte-level malformed/round-trip fixtures; retain the legacy x86 writer until equivalence is
    proven. Fast-file `FxEffectDef` widening remains a separate nested-payload batch.
-5. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
+4. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
-6. Monitor the protected licensed-content headless startup/map/`getstatus` workflow, and implement the
+5. Monitor the protected licensed-content headless startup/map/`getstatus` workflow, and implement the
    designed handle-relative recursive deletion service without symlink/reparse traversal.
-7. Extract standard-stream console services, then process/event services and Linux signal-park plus
+6. Extract standard-stream console services, then process/event services and Linux signal-park plus
    macOS Mach crash freezing behind the already isolated terminal API.
-8. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
+7. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
 
 ## Known release blockers
 

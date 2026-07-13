@@ -934,9 +934,32 @@ bool FX_ArchivePhysicsCapacityAvailableLocked(
         requiredGeomCount += modelGeomCount;
     }
 
-    return Pool_FreeCount(&odeGlob.bodyPool) >= entryCount
-        && Pool_FreeCount(&physGlob.userDataPool) >= entryCount
-        && Pool_FreeCount(&odeGlob.geomPool) >= requiredGeomCount;
+    const poolstorage_t bodyStorage = Pool_StorageFor(odeGlob.bodies);
+    const poolstorage_t userDataStorage =
+        Pool_StorageFor(physGlob.userData);
+    const poolstorage_t geomStorage{
+        odeGlob.geoms,
+        sizeof(dxGeomTransform),
+        ODE_GEOM_POOL_COUNT,
+    };
+    const poolcountresult_t bodyFreeCount = Pool_GetFreeCount(
+        bodyStorage, &odeGlob.bodyPool);
+    if (!bodyFreeCount.valid)
+        return false;
+
+    const poolcountresult_t userDataFreeCount = Pool_GetFreeCount(
+        userDataStorage, &physGlob.userDataPool);
+    if (!userDataFreeCount.valid)
+        return false;
+
+    const poolcountresult_t geomFreeCount = Pool_GetFreeCount(
+        geomStorage, &odeGlob.geomPool);
+    if (!geomFreeCount.valid)
+        return false;
+
+    return bodyFreeCount.count >= entryCount
+        && userDataFreeCount.count >= entryCount
+        && geomFreeCount.count >= requiredGeomCount;
 }
 
 bool FX_AppendArchivePhysicsEntry(

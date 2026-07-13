@@ -64,9 +64,9 @@ Remaining gates, in implementation order:
 
 1. Run the protected licensed headless startup/map/network smoke and repair any
    runtime-only lifecycle gaps it exposes.
-2. Land transactional ODE body/model construction, widen the generic pool allocator's freelist links,
-   then wire the merged native physics sidecar through live spawn/draw/free/reset/archive paths and add
-   kill/rewind/archive fixtures.
+2. Wire the merged native physics sidecar through live spawn/draw/free/reset/archive paths and add
+   kill/rewind/archive fixtures. Transactional ODE body/model construction is merged, and the current
+   reviewed batch has widened and bounded the generic pool allocator without changing its x86 metadata.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -922,7 +922,7 @@ green; both automated review fixes landed and run 29286377602 passed all nine jo
 `3c542f20`. Spawn/draw/free/reset/archive integration remains the immediate follow-up. That archive work
 must stage body-state recipes or reserve global capacity because ODE's 512-body ceiling cannot assume
 that complete live and replacement sets coexist. Its prerequisite is allocation-failure-safe ODE
-body/user-data/model-collision construction. The current branch closes the audited exhaustion paths with
+body/user-data/model-collision construction. PR #7 closes the audited exhaustion paths with
 a portable resource-pair transaction used for body/user-data and primary/optional-transform acquisition,
 a checked fresh body-plus-model API that destroys every partial resource before failure is observable,
 and FX archive staging that publishes only complete collision bodies. Allocation precedes center-of-mass
@@ -935,9 +935,19 @@ post-acquisition allocator drain barrier makes its brief nested publication lock
 source contracts enforce callback rollback, allocation-before-COM mutation, and that continuous archive
 interval. The portable transaction test injects failures into the shared primitive (not the full ODE
 pools); the 36-test GCC/Clang/ASan/UBSan/TSan matrix is green, with focused storage tests also clean under
-x86-32/AArch64 compilation. The next M4 prerequisite is the generic pool allocator: it still serializes freelist
-links through `uint32_t`, which must become full-width unaligned-safe pointer storage without changing its
-x86 metadata layout; ODE geom backing storage is now explicitly transform-aligned. Remaining FX work is
+x86-32/AArch64 compilation. It merged at `580b93bb` after run **29291013134 passed all nine jobs**.
+The current M4 batch removes the generic allocator's `uint32_t` freelist serialization while preserving
+the retail 8-byte x86 `pooldata_t` layout. A base/stride/count descriptor accompanies every operation;
+native-width links use `memcpy`, bounded exact-slot validation covers invalid extents and overflow,
+checked queries return status plus value without aliasable output pointers, and foreign/interior nodes,
+short/long chains, cycles, duplicate frees, underflow, and metadata overlap are
+rejected before publishing or mutating a live list. All body, geom, userdata, FX-capacity, and ODE
+leak-diagnostic callers now provide their real extents. This also repairs the previously hidden native64 `PhysObjUserData` overlap:
+the record is 0x70 bytes on x86 but 0x78 on native64, so its pool no longer advances by the hard-coded x86
+stride. ODE geom backing remains explicitly transform-aligned. Strict 39-test GCC and Clang suites plus
+focused ASan/UBSan, TSan, x86-32, and AArch64 allocator validation are green. Native engine source sets
+still do not compile these production callers, so Windows x86 engine CI remains their compile gate while
+all five portable jobs exercise the allocator contract. Remaining FX work is
 camera/scalar snapshot publication, real Disk32 archive/fast-file conversion, that production
 physics-sidecar wiring, and production fixtures. The
 unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
