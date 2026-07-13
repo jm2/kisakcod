@@ -5196,9 +5196,39 @@ require_source_contains(
     "EffectsCore/fx_profile.cpp"
     "qsort(entryPool, entryCount, sizeof(FxProfileEntry)"
     "FX profiling must sort with the native pointer-bearing entry stride")
+require_source_ordered(
+    "EffectsCore/fx_update_util.cpp"
+    "TryBeginBlockerAppend(&visState->blockerCount, &blockerIndex)"
+    "localVisBlocker->visibility = packed.visibility;"
+    "FX visibility payloads must be written before their count is published")
+require_source_ordered(
+    "EffectsCore/fx_update_util.cpp"
+    "localVisBlocker->visibility = packed.visibility;"
+    "PublishBlockerAppend(&visState->blockerCount, blockerIndex)"
+    "FX visibility count publication must follow the complete payload write")
+require_source_contains(
+    "EffectsCore/fx_visibility_atomic.h"
+    "Sys_AtomicStore(blockerCount, expected + 1);"
+    "FX visibility count publication must provide a post-payload atomic barrier")
+require_source_not_contains(
+    "EffectsCore/fx_visibility_atomic.h"
+    "Sys_AtomicCompareExchange"
+    "the single FX visibility producer must not publish a reservation before its payload")
+require_source_not_contains(
+    "EffectsCore/fx_update_util.cpp"
+    "Sys_AtomicIncrement(&visState->blockerCount)"
+    "FX visibility count must not be incremented before its payload is complete")
+require_source_contains(
+    "EffectsCore/fx_update_util.cpp"
+    "WRKCMD_GENERATE_FX_VERTS completion boundary"
+    "the non-atomic visibility buffer handoff must retain its external ordering contract")
+require_source_contains(
+    "EffectsCore/fx_runtime.h"
+    "RUNTIME_OFFSET(FxVisState, blockerCount, 0x1000, 0x1000);"
+    "the FX visibility count offset must remain fixed across native layouts")
 
-# Static-XModel draw IDs must be resolved against the published surface arena;
-# raw draw-list casts remain permitted only for the separately queued BModel path.
+# Static-XModel and BModel draw IDs must be resolved against the published
+# surface arena before any record or embedded pointer is dereferenced.
 require_source_contains(
     "gfx_d3d/r_model_surface_stream.h"
     "TryResolveWordOffsetRange"
@@ -5231,11 +5261,30 @@ require_source_match_count(
     "gfxEntIndex[a-z]* >= ARRAY_COUNT\\(data->gfxEnts\\)"
     5
     "XModel tessellation consumers must bound every changed gfxEnt index")
-require_source_match_count(
+require_source_contains(
+    "gfx_d3d/r_bmodel_surface_stream.h"
+    "TryResolveSequence"
+    "frontend BModel traversal must validate the complete published sequence")
+require_source_contains(
+    "gfx_d3d/r_bmodel_surface_stream.h"
+    "InvalidRecordProgress"
+    "invalid backend BModel records must still advance the draw loop")
+require_source_contains(
     "gfx_d3d/rb_tess.cpp"
-    "\\(char \\*\\)data \\+ 4 \\* drawSurf.fields.objectId"
-    1
-    "only the explicitly deferred BModel object-ID cast may remain in rb_tess")
+    "RB_ResolveBModelSurface(data, drawSurf)"
+    "backend BModel records must use the bounded tagged resolver")
+require_source_contains(
+    "gfx_d3d/r_scene.cpp"
+    "R_TryResolveBModelSurfaceSequence("
+    "frontend BModel records must use the bounded sequence resolver")
+foreach(_bmodel_consumer
+    "gfx_d3d/rb_tess.cpp"
+    "gfx_d3d/r_scene.cpp")
+    require_source_not_matches(
+        "${_bmodel_consumer}"
+        "\\(char \\*\\)(data|frontEndDataOut) \\+ 4 \\* (drawSurf.fields.objectId|surfId)"
+        "BModel object IDs must not be decoded with raw base-plus-offset casts")
+endforeach()
 
 # Virtual-memory consumers use one native-page, size_t service boundary and no
 # longer import the Win32 allocator directly.
@@ -5281,6 +5330,74 @@ require_source_ordered(
     "uint8_t *const commitEnd = PageCeil("
     "Sys_VirtualMemoryCommit(\n        commitBegin,"
     "zone commits must pass the aligned covering range to the strict platform API")
+
+# Common path queries and one-directory creation use UTF-8 platform services.
+# Recursive deletion remains deliberately outside this boundary until it can
+# receive handle-relative enumeration and deletion on every target.
+require_source_contains(
+    "universal/win_common.cpp"
+    "#include <qcommon/sys_filesystem.h>"
+    "shared filesystem wrappers must consume the portable path service")
+require_source_contains(
+    "universal/win_common.cpp"
+    "Sys_FileSystemCreateDirectory(path)"
+    "Sys_Mkdir must delegate to the portable directory service")
+require_source_contains(
+    "universal/win_common.cpp"
+    "thread_local std::vector<char> cwd"
+    "current-directory results must not retain a fixed 256-byte global buffer")
+require_source_contains(
+    "universal/win_common.cpp"
+    "ReadDynamicPath(Sys_FileSystemGetExecutablePath, &path)"
+    "executable-path lookup must retry without silent truncation")
+require_source_contains(
+    "universal/win_common.cpp"
+    "Sys_FileSystemParentPathLength(fullPath.c_str())"
+    "install-path extraction must preserve POSIX, drive, and UNC roots")
+require_source_not_contains(
+    "universal/win_common.cpp"
+    "_getcwd("
+    "shared current-directory lookup must not call the Win32 CRT directly")
+require_source_not_contains(
+    "universal/win_common.cpp"
+    "GetModuleFileNameA("
+    "shared executable-path lookup must not use a truncating ANSI API")
+require_source_contains(
+    "universal/win_common.cpp"
+    "if (!path || !path[0])"
+    "legacy recursive deletion must reject null and empty roots before length arithmetic")
+require_source_not_contains(
+    "qcommon/sys_filesystem.h"
+    "RemoveDirectoryTree"
+    "recursive deletion must not enter the portable contract without race-safe backends")
+require_source_contains(
+    "_platform/posix/sys_filesystem.cpp"
+    "O_NOFOLLOW"
+    "POSIX directory creation must not follow ancestor symbolic links")
+require_source_contains(
+    "_platform/posix/sys_filesystem.cpp"
+    "mkdirat(parentFd, leaf, 0777)"
+    "POSIX directory creation must remain relative to a held parent descriptor")
+require_source_contains(
+    "_platform/posix/sys_filesystem.cpp"
+    "fstatat(parentFd, name, &status, AT_SYMLINK_NOFOLLOW)"
+    "POSIX existing-leaf classification must not follow a symbolic link")
+require_source_contains(
+    "_platform/win32/sys_filesystem.cpp"
+    "FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT"
+    "Win32 ancestor handles must classify reparse points themselves")
+require_source_not_contains(
+    "_platform/win32/sys_filesystem.cpp"
+    "FILE_SHARE_DELETE"
+    "held Win32 ancestor directories must not be replaceable during validation")
+require_source_contains(
+    "_platform/win32/sys_filesystem.cpp"
+    "reservedName"
+    "extended Win32 paths must still reject DOS device names")
+require_source_contains(
+    "_platform/win32/sys_filesystem.cpp"
+    "CreateDirectoryW(extendedPath.c_str(), nullptr)"
+    "Win32 directory creation must use the Unicode long-path API")
 
 # Upstream SP restorations must retain fixed-width save records and release-safe
 # bounds checks. These guards cover defects found during PR review that portable

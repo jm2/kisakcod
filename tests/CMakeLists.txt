@@ -114,6 +114,22 @@ add_test(
     COMMAND kisakcod-fx-runtime-blob-tests
 )
 
+add_executable(kisakcod-fx-visibility-atomic-tests
+    fx_visibility_atomic_tests.cpp
+)
+target_include_directories(kisakcod-fx-visibility-atomic-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-fx-visibility-atomic-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-fx-visibility-atomic-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-fx-visibility-atomic-tests)
+set_target_properties(kisakcod-fx-visibility-atomic-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-visibility-publication
+    COMMAND kisakcod-fx-visibility-atomic-tests
+)
+set_tests_properties(effectscore-visibility-publication PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-db-load-atomic-tests db_load_atomic_tests.cpp)
 target_include_directories(kisakcod-db-load-atomic-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-db-load-atomic-tests PRIVATE cxx_std_20)
@@ -289,6 +305,31 @@ add_test(
     COMMAND kisakcod-platform-memory-tests
 )
 set_tests_properties(platform-virtual-memory-contracts PROPERTIES TIMEOUT 20)
+
+set(_platform_filesystem_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
+list(FILTER _platform_filesystem_sources INCLUDE REGEX "[/\\\\]sys_filesystem\\.cpp$")
+list(LENGTH _platform_filesystem_sources _platform_filesystem_source_count)
+if (NOT _platform_filesystem_source_count EQUAL 1)
+    message(FATAL_ERROR
+        "Expected exactly one selected platform sys_filesystem.cpp, found "
+        "${_platform_filesystem_source_count}")
+endif()
+
+add_executable(kisakcod-platform-filesystem-tests
+    platform_filesystem_tests.cpp
+    ${_platform_filesystem_sources}
+)
+target_include_directories(kisakcod-platform-filesystem-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-platform-filesystem-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-platform-filesystem-tests)
+set_target_properties(kisakcod-platform-filesystem-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME platform-filesystem-path-contracts
+    COMMAND kisakcod-platform-filesystem-tests
+)
+set_tests_properties(platform-filesystem-path-contracts PROPERTIES TIMEOUT 20)
 
 add_test(
     NAME dedi-headless-source-profile

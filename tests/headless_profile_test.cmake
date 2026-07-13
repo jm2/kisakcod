@@ -62,6 +62,7 @@ set(_expected_win32_headless_sources
 )
 set(_expected_win32_service_sources
     "${SRC_DIR}/_platform/win32/sys_event.cpp"
+    "${SRC_DIR}/_platform/win32/sys_filesystem.cpp"
     "${SRC_DIR}/_platform/win32/sys_memory.cpp"
     "${SRC_DIR}/_platform/win32/sys_sync.cpp"
     "${SRC_DIR}/_platform/win32/sys_thread.cpp"
@@ -69,6 +70,7 @@ set(_expected_win32_service_sources
 )
 set(_expected_posix_service_sources
     "${SRC_DIR}/_platform/posix/sys_event.cpp"
+    "${SRC_DIR}/_platform/posix/sys_filesystem.cpp"
     "${SRC_DIR}/_platform/posix/sys_memory.cpp"
     "${SRC_DIR}/_platform/posix/sys_sync.cpp"
     "${SRC_DIR}/_platform/posix/sys_thread.cpp"
