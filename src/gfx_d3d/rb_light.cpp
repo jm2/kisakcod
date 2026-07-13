@@ -9,6 +9,7 @@
 #include <xanim/xmodel.h>
 #include "r_xsurface.h"
 #include "r_primarylights.h"
+#include "r_reservation_atomic.h"
 #include <universal/profile.h>
 
 #ifdef KISAK_MP
@@ -981,11 +982,16 @@ uint32_t __cdecl R_GetLightingAtPoint(
 GfxModelLightingPatch *__cdecl R_BackEndDataAllocAndClearModelLightingPatch(GfxBackEndData *frontEndDataOut)
 {
     GfxModelLightingPatch *v1; // edx
-    uint32_t patchIndex; // [esp+4h] [ebp-4h]
+    uint32_t patchIndex = UINT32_MAX; // [esp+4h] [ebp-4h]
 
-    patchIndex = InterlockedExchangeAdd(&frontEndDataOut->modelLightingPatchCount, 1);
-    if (patchIndex >= 0x1000)
+    if (!gfx::reservation_atomic::TryReserveIndex(
+            &frontEndDataOut->modelLightingPatchCount,
+            static_cast<uint32_t>(ARRAY_COUNT(frontEndDataOut->modelLightingPatchList)),
+            &patchIndex))
+    {
         Com_Error(ERR_FATAL, "modelLightingPatchList ran out of elements.");
+        return nullptr;
+    }
     v1 = &frontEndDataOut->modelLightingPatchList[patchIndex];
     memset(v1, 0, sizeof(*v1));
     return v1;

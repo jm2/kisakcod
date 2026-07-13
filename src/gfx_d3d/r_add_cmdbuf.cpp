@@ -1,6 +1,7 @@
 #include "r_bsp.h"
 #include "r_rendercmds.h"
 #include "r_drawsurf.h"
+#include "r_reservation_atomic.h"
 
 void __cdecl R_InitDelayedCmdBuf(GfxDelayedCmdBuf *delayedCmdBuf)
 {
@@ -36,9 +37,19 @@ int __cdecl R_AllocDrawSurf(
     GfxDrawSurfList *drawSurfList,
     uint32_t size)
 {
-    uint32_t primDrawSurfPos; // [esp+10h] [ebp-4h]
+    constexpr uint32_t kPrimitiveBlockSize = 512u;
+    uint32_t primDrawSurfPos = UINT32_MAX; // [esp+10h] [ebp-4h]
 
-    iassert( (size < (128 * 512)) );
+    iassert( size < kPrimitiveBlockSize );
+    if (size >= kPrimitiveBlockSize)
+    {
+        // Preserve the delayed-buffer state machine: an active command owns
+        // one terminator slot and must be closed before the block is rejected.
+        R_EndCmdBuf(delayedCmdBuf);
+        delayedCmdBuf->primDrawSurfSize = 0;
+        R_WarnOncePerFrame(R_WARN_PRIM_DRAW_SURF_BUFFER_SIZE);
+        return 0;
+    }
     if (delayedCmdBuf->drawSurfKey.packed != drawSurf.packed)
         R_EndCmdBuf(delayedCmdBuf);
     if (delayedCmdBuf->primDrawSurfSize > size)
@@ -48,15 +59,18 @@ int __cdecl R_AllocDrawSurf(
     else
     {
         R_EndCmdBuf(delayedCmdBuf);
-        primDrawSurfPos = InterlockedExchangeAdd(&frontEndDataOut->primDrawSurfPos, 512);
-        if (primDrawSurfPos >= 0x10000)
+        if (!gfx::reservation_atomic::TryReserve(
+                &frontEndDataOut->primDrawSurfPos,
+                kPrimitiveBlockSize,
+                static_cast<uint32_t>(ARRAY_COUNT(frontEndDataOut->primDrawSurfsBuf)),
+                &primDrawSurfPos))
         {
             delayedCmdBuf->primDrawSurfSize = 0;
             R_WarnOncePerFrame(R_WARN_PRIM_DRAW_SURF_BUFFER_SIZE);
             return 0;
         }
         delayedCmdBuf->primDrawSurfPos = primDrawSurfPos;
-        delayedCmdBuf->primDrawSurfSize = 512;
+        delayedCmdBuf->primDrawSurfSize = kPrimitiveBlockSize;
     }
     if (delayedCmdBuf->drawSurfKey.packed == drawSurf.packed)
         return 1;
@@ -106,4 +120,3 @@ void __cdecl R_WritePrimDrawSurfData(GfxDelayedCmdBuf *delayedCmdBuf, uint8_t *d
     memcpy((uint8_t *)&frontEndDataOut->primDrawSurfsBuf[delayedCmdBuf->primDrawSurfPos], data, 4 * count);
     delayedCmdBuf->primDrawSurfPos += count;
 }
-

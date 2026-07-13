@@ -3,6 +3,8 @@
 #include <qcommon/qcommon.h>
 #include <universal/kisak_abi.h>
 
+#include <type_traits>
+
 #include "r_debug.h"
 #include "r_font.h"
 #include "r_gfx.h"
@@ -534,15 +536,15 @@ const struct __declspec(align(16)) GfxBackEndData // sizeof=0x11E780
     uint32_t smcPatchCount;
     uint32_t smcPatchVertsUsed;
     GfxModelLightingPatch modelLightingPatchList[4096];
-    volatile long modelLightingPatchCount;
+    volatile uint32_t modelLightingPatchCount;
     GfxBackEndPrimitiveData prim;
     uint32_t shadowableLightHasShadowMap[8];
     uint32_t frameCount;
     int drawSurfCount;
     volatile uint32_t surfPos;
-    volatile long gfxEntCount;
+    volatile uint32_t gfxEntCount;
     GfxEntity gfxEnts[128];
-    volatile long cloudCount;
+    volatile uint32_t cloudCount;
     volatile uint32_t codeMeshCount;
     volatile uint32_t codeMeshArgsCount;
     volatile uint32_t markMeshCount;
@@ -579,6 +581,49 @@ const struct __declspec(align(16)) GfxBackEndData // sizeof=0x11E780
     // padding byte
     // padding byte
 };
+
+static_assert(
+    std::is_same_v<
+        std::remove_cv_t<decltype(GfxBackEndData::modelLightingPatchCount)>,
+        uint32_t>,
+    "GfxBackEndData model-lighting counter must remain exactly 32 bits");
+static_assert(
+    std::is_same_v<
+        std::remove_cv_t<decltype(GfxBackEndData::gfxEntCount)>,
+        uint32_t>,
+    "GfxBackEndData entity counter must remain exactly 32 bits");
+static_assert(
+    std::is_same_v<
+        std::remove_cv_t<decltype(GfxBackEndData::cloudCount)>,
+        uint32_t>,
+    "GfxBackEndData cloud counter must remain exactly 32 bits");
+static_assert(
+    offsetof(GfxBackEndData, modelLightingPatchCount) % alignof(uint32_t) == 0u,
+    "GfxBackEndData model-lighting counter lost atomic alignment");
+static_assert(
+    offsetof(GfxBackEndData, gfxEntCount) % alignof(uint32_t) == 0u,
+    "GfxBackEndData entity counter lost atomic alignment");
+static_assert(
+    offsetof(GfxBackEndData, cloudCount) % alignof(uint32_t) == 0u,
+    "GfxBackEndData cloud counter lost atomic alignment");
+static_assert(
+    offsetof(GfxBackEndData, primDrawSurfPos) % alignof(uint32_t) == 0u,
+    "GfxBackEndData primitive draw-surface counter lost atomic alignment");
+static_assert(
+    offsetof(GfxBackEndData, prim)
+            - offsetof(GfxBackEndData, modelLightingPatchCount)
+        == 4u,
+    "GfxBackEndData model-lighting counter widened or shifted its successor");
+static_assert(
+    offsetof(GfxBackEndData, gfxEnts)
+            - offsetof(GfxBackEndData, gfxEntCount)
+        == 4u,
+    "GfxBackEndData entity counter widened or shifted its successor");
+static_assert(
+    offsetof(GfxBackEndData, codeMeshCount)
+            - offsetof(GfxBackEndData, cloudCount)
+        == 4u,
+    "GfxBackEndData cloud counter widened or shifted its successor");
 
 void __cdecl TRACK_r_rendercmds();
 void __cdecl R_FreeGlobalVariable(void *var);

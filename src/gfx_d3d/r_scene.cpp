@@ -43,6 +43,7 @@
 #include "r_draw_sunshadow.h"
 #include "r_bmodel_surface_stream.h"
 #include "r_model_surface_stream.h"
+#include "r_reservation_atomic.h"
 
 namespace model_surface_stream = gfx::model_surface_stream;
 namespace bmodel_surface_stream = gfx::bmodel_surface_stream;
@@ -318,14 +319,15 @@ void __cdecl TRACK_r_scene()
 
 uint32_t __cdecl R_AllocSceneDObj()
 {
-    uint32_t sceneEntIndex; // [esp+0h] [ebp-4h]
+    uint32_t sceneEntIndex = 512u; // [esp+0h] [ebp-4h]
 
     iassert( rg.registered );
     iassert( rg.inFrame );
-    sceneEntIndex = InterlockedExchangeAdd(&scene.sceneDObjCount, 1);
-    if (sceneEntIndex >= 0x200)
+    if (!gfx::reservation_atomic::TryReserveIndex(
+            &scene.sceneDObjCount,
+            static_cast<uint32_t>(ARRAY_COUNT(scene.sceneDObj)),
+            &sceneEntIndex))
     {
-        scene.sceneDObjCount = 512;
         R_WarnOncePerFrame(R_WARN_KNOWN_MODELS, 512);
     }
     return sceneEntIndex;
@@ -333,14 +335,15 @@ uint32_t __cdecl R_AllocSceneDObj()
 
 uint32_t __cdecl R_AllocSceneModel()
 {
-    uint32_t sceneEntIndex; // [esp+0h] [ebp-4h]
+    uint32_t sceneEntIndex = 1024u; // [esp+0h] [ebp-4h]
 
     iassert( rg.registered );
     iassert( rg.inFrame );
-    sceneEntIndex = InterlockedExchangeAdd(&scene.sceneModelCount, 1);
-    if (sceneEntIndex >= 0x400)
+    if (!gfx::reservation_atomic::TryReserveIndex(
+            &scene.sceneModelCount,
+            static_cast<uint32_t>(ARRAY_COUNT(scene.sceneModel)),
+            &sceneEntIndex))
     {
-        scene.sceneModelCount = 1024;
         R_WarnOncePerFrame(R_WARN_KNOWN_MODELS, 1024);
     }
     return sceneEntIndex;
@@ -348,14 +351,15 @@ uint32_t __cdecl R_AllocSceneModel()
 
 uint32_t __cdecl R_AllocSceneBrush()
 {
-    uint32_t sceneEntIndex; // [esp+0h] [ebp-4h]
+    uint32_t sceneEntIndex = 512u; // [esp+0h] [ebp-4h]
 
     iassert( rg.registered );
     iassert( rg.inFrame );
-    sceneEntIndex = InterlockedExchangeAdd(&scene.sceneBrushCount, 1);
-    if (sceneEntIndex >= 0x200)
+    if (!gfx::reservation_atomic::TryReserveIndex(
+            &scene.sceneBrushCount,
+            static_cast<uint32_t>(ARRAY_COUNT(scene.sceneBrush)),
+            &sceneEntIndex))
     {
-        scene.sceneBrushCount = 512;
         R_WarnOncePerFrame(R_WARN_KNOWN_MODELS, 512);
     }
     return sceneEntIndex;
@@ -418,7 +422,7 @@ void __cdecl R_AddDObjToScene(
     float angles[3]; // [esp+20h] [ebp-18h] BYREF
     GfxSceneEntity *sceneEnt; // [esp+2Ch] [ebp-Ch]
     uint32_t sceneEntIndex; // [esp+30h] [ebp-8h]
-    uint32_t gfxEntIndex; // [esp+34h] [ebp-4h]
+    uint32_t gfxEntIndex = UINT32_MAX; // [esp+34h] [ebp-4h]
 
     iassert(Sys_IsMainThread());
     iassert(obj);
@@ -434,10 +438,11 @@ void __cdecl R_AddDObjToScene(
         }
         else
         {
-            gfxEntIndex = InterlockedExchangeAdd(&frontEndDataOut->gfxEntCount, 1);
-            if (gfxEntIndex >= 0x80)
+            if (!gfx::reservation_atomic::TryReserveIndex(
+                    &frontEndDataOut->gfxEntCount,
+                    static_cast<uint32_t>(ARRAY_COUNT(frontEndDataOut->gfxEnts)),
+                    &gfxEntIndex))
             {
-                frontEndDataOut->gfxEntCount = 128;
                 R_WarnOncePerFrame(R_WARN_KNOWN_SPECIAL_MODELS, 128);
                 return;
             }
@@ -502,10 +507,12 @@ void __cdecl R_AddDObjToScene(
 
 GfxParticleCloud *__cdecl R_AddParticleCloudToScene(Material *material)
 {
-    volatile uint32_t cloudIndex; // [esp+Ch] [ebp-4h]
+    uint32_t cloudIndex = UINT32_MAX; // [esp+Ch] [ebp-4h]
 
-    cloudIndex = InterlockedIncrement(&frontEndDataOut->cloudCount) - 1;
-    if (cloudIndex < 0x100)
+    if (gfx::reservation_atomic::TryReserveIndex(
+            &frontEndDataOut->cloudCount,
+            static_cast<uint32_t>(ARRAY_COUNT(frontEndDataOut->clouds)),
+            &cloudIndex))
     {
         if (R_AddParticleCloudDrawSurf(cloudIndex, material))
             return &frontEndDataOut->clouds[cloudIndex];
@@ -514,7 +521,6 @@ GfxParticleCloud *__cdecl R_AddParticleCloudToScene(Material *material)
     }
     else
     {
-        InterlockedDecrement(&frontEndDataOut->cloudCount);
         R_WarnOncePerFrame(R_WARN_MAX_CLOUDS);
         return 0;
     }
@@ -1395,6 +1401,9 @@ void __cdecl R_InitScene()
 
 void __cdecl R_ClearScene(uint32_t localClientNum)
 {
+    const uint32_t sceneBrushCount = Sys_AtomicLoad(&scene.sceneBrushCount);
+    const uint32_t sceneDObjCount = Sys_AtomicLoad(&scene.sceneDObjCount);
+    const uint32_t sceneModelCount = Sys_AtomicLoad(&scene.sceneModelCount);
     uint32_t viewIndex; // [esp+0h] [ebp-4h]
 
     iassert( rg.inFrame );
@@ -1403,25 +1412,25 @@ void __cdecl R_ClearScene(uint32_t localClientNum)
     Com_Memset(
         scene.sceneDObj,
         0,
-        sizeof(scene.sceneDObj[0]) * scene.sceneDObjCount);
+        sizeof(scene.sceneDObj[0]) * sceneDObjCount);
     Com_Memset(
         &scene.sceneModel[0].info,
         0,
-        sizeof(scene.sceneModel[0]) * scene.sceneModelCount);
+        sizeof(scene.sceneModel[0]) * sceneModelCount);
     Com_Memset(
         &scene.sceneBrush[0].info.surfId,
         0,
-        sizeof(scene.sceneBrush[0]) * scene.sceneBrushCount);
+        sizeof(scene.sceneBrush[0]) * sceneBrushCount);
     scene.addedLightCount = 0;
     for (uint32_t drawSurfType = 0u;
          drawSurfType < static_cast<uint32_t>(DRAW_SURF_TYPE_COUNT);
          ++drawSurfType)
         Sys_AtomicStore(&scene.drawSurfCount[drawSurfType], 0u);
     for (viewIndex = 0; viewIndex < 7; ++viewIndex)
-        Com_Memset((uint32_t *)scene.sceneModelVisData[viewIndex], 1, scene.sceneModelCount);
-    scene.sceneDObjCount = 0;
-    scene.sceneModelCount = 0;
-    scene.sceneBrushCount = 0;
+        Com_Memset((uint32_t *)scene.sceneModelVisData[viewIndex], 1, sceneModelCount);
+    Sys_AtomicStore(&scene.sceneDObjCount, 0u);
+    Sys_AtomicStore(&scene.sceneModelCount, 0u);
+    Sys_AtomicStore(&scene.sceneBrushCount, 0u);
     if (rgp.world)
         R_ClearDpvsScene();
 }
@@ -2327,7 +2336,7 @@ void R_GenerateMarkVertsForDynamicModels()
     GfxSceneEntity *sceneEntity; // [esp+24h] [ebp-4h]
 
     FX_BeginGeneratingMarkVertsForEntModels(scene.dpvs.localClientNum, &indexCount);
-    for (dobjIndex = 0; dobjIndex != scene.sceneDObjCount; ++dobjIndex)
+    for (dobjIndex = 0; dobjIndex != R_GetSceneDObjCount(); ++dobjIndex)
     {
         sceneEntity = &scene.sceneDObj[dobjIndex];
         entnum = sceneEntity->entnum;
@@ -2344,7 +2353,7 @@ void R_GenerateMarkVertsForDynamicModels()
                 sceneEntity->info.pose);
         }
     }
-    for (modelIndex = 0; modelIndex != scene.sceneModelCount; ++modelIndex)
+    for (modelIndex = 0; modelIndex != R_GetSceneModelCount(); ++modelIndex)
     {
         sceneModel = &scene.sceneModel[modelIndex];
         entnum = sceneModel->entnum;
@@ -2362,7 +2371,7 @@ void R_GenerateMarkVertsForDynamicModels()
                     &sceneModel->placement);
         }
     }
-    for (brushModelIndex = 0; brushModelIndex != scene.sceneBrushCount; ++brushModelIndex)
+    for (brushModelIndex = 0; brushModelIndex != R_GetSceneBrushCount(); ++brushModelIndex)
     {
         entnum = scene.sceneBrush[brushModelIndex].entnum;
         if (entnum < gfxCfg.entnumOrdinaryEnd && (scene.sceneBrushVisData[0][brushModelIndex] & 1) != 0)

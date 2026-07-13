@@ -226,7 +226,7 @@ void __cdecl R_AddSpotShadowModelEntities(
     GfxSpotShadowEntCmd cmd; // [esp+14h] [ebp-8h] BYREF
 
     cmd.light = light;
-    for (sceneEntIndex = 0; sceneEntIndex < scene.sceneDObjCount; ++sceneEntIndex)
+    for (sceneEntIndex = 0; sceneEntIndex < R_GetSceneDObjCount(); ++sceneEntIndex)
     {
         cmd.sceneEnt = &scene.sceneDObj[sceneEntIndex];
         if (!cmd.sceneEnt->gfxEntIndex
@@ -240,7 +240,7 @@ void __cdecl R_AddSpotShadowModelEntities(
             }
         }
     }
-    for (sceneEntIndexa = 0; sceneEntIndexa < scene.sceneModelCount; ++sceneEntIndexa)
+    for (sceneEntIndexa = 0; sceneEntIndexa < R_GetSceneModelCount(); ++sceneEntIndexa)
     {
         if (!scene.sceneModel[sceneEntIndexa].gfxEntIndex
             || (frontEndDataOut->gfxEnts[scene.sceneModel[sceneEntIndexa].gfxEntIndex].renderFxFlags & 1) == 0)

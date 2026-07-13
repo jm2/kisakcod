@@ -218,6 +218,44 @@ bool TestContendedRangesDoNotOverlap()
     }
     return true;
 }
+
+bool TestRendererCapacityProfilesAndOldIndexContract()
+{
+    // gfxEnt index zero is the renderer's implicit/default entity.  A claim
+    // therefore starts at one and must return the old counter value exactly.
+    volatile std::uint32_t entityCount = 1u;
+    std::uint32_t index = UINT32_MAX;
+    for (std::uint32_t expected = 1u; expected < 128u; ++expected)
+    {
+        if (!TryReserveIndex(&entityCount, 128u, &index)
+            || index != expected)
+        {
+            return false;
+        }
+    }
+    index = 73u;
+    if (TryReserveIndex(&entityCount, 128u, &index)
+        || Sys_AtomicLoad(&entityCount) != 128u
+        || index != 73u)
+    {
+        return false;
+    }
+
+    // Primitive draw-surface writers own fixed 512-dword chunks.  The last
+    // exact-fit range succeeds and subsequent failures cannot overshoot 64K.
+    volatile std::uint32_t primDrawSurfPos = 65536u - 512u;
+    std::uint32_t offset = UINT32_MAX;
+    if (!TryReserve(&primDrawSurfPos, 512u, 65536u, &offset)
+        || offset != 65536u - 512u
+        || Sys_AtomicLoad(&primDrawSurfPos) != 65536u)
+    {
+        return false;
+    }
+    offset = 91u;
+    return !TryReserve(&primDrawSurfPos, 512u, 65536u, &offset)
+        && Sys_AtomicLoad(&primDrawSurfPos) == 65536u
+        && offset == 91u;
+}
 } // namespace
 
 int main()
@@ -232,5 +270,7 @@ int main()
         return Fail("contended indices are unique and bounded");
     if (!TestContendedRangesDoNotOverlap())
         return Fail("contended multi-element ranges do not overlap");
+    if (!TestRendererCapacityProfilesAndOldIndexContract())
+        return Fail("renderer capacities and old-index return contract");
     return 0;
 }

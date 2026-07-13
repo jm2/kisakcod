@@ -814,7 +814,7 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
         if (light->type == 2)
             R_CalcSpotLightPlanes(light, planes[lightIndex]);
     }
-    sceneEntCount = scene.sceneDObjCount;
+    sceneEntCount = R_GetSceneDObjCount();
     sceneEntVisData = scene.sceneDObjVisData[0];
     for (sceneEntIndex = 0; sceneEntIndex < sceneEntCount; ++sceneEntIndex)
     {
@@ -888,7 +888,7 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
             goto LABEL_16;
         }
     }
-    sceneEntCount = scene.sceneModelCount;
+    sceneEntCount = R_GetSceneModelCount();
     sceneEntVisData = scene.sceneModelVisData[0];
     for (sceneEntIndex = 0; sceneEntIndex < sceneEntCount; ++sceneEntIndex)
     {
@@ -1034,7 +1034,7 @@ void __cdecl R_GetSceneEntLightSurfs(const GfxLight **visibleLights, int visible
     LABEL_64:
         ;
     }
-    sceneEntCount = scene.sceneBrushCount;
+    sceneEntCount = R_GetSceneBrushCount();
     sceneEntVisData = scene.sceneBrushVisData[0];
     for (sceneEntIndex = 0; sceneEntIndex < sceneEntCount; ++sceneEntIndex)
     {

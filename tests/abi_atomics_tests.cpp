@@ -98,17 +98,5 @@ int main()
         return fail("ExchangePointer must swap and return the OLD pointer");
     }
 
-#if !defined(_MSC_VER)
-    // Transitional aliases must retain the same contract until all engine call
-    // sites have moved to the collision-free Sys_Atomic* names.
-    int32_t legacy = 0;
-    if (InterlockedIncrement(&legacy) != 1
-        || InterlockedExchangeAdd(&legacy, 2) != 1
-        || InterlockedCompareExchange(&legacy, 8, 3) != 3)
-    {
-        return fail("legacy Interlocked aliases");
-    }
-#endif
-
     return 0;
 }

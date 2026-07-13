@@ -2,6 +2,7 @@
 #include <qcommon/mem_track.h>
 #include "r_model_lighting.h"
 #include "r_model_surface_stream.h"
+#include "r_reservation_atomic.h"
 #include "r_dvars.h"
 #include <DynEntity/DynEntity_client.h>
 #include "r_drawsurf.h"
@@ -229,7 +230,7 @@ void __cdecl R_AddAllSceneEntSurfacesCamera(const GfxViewInfo *viewInfo)
         lastDrawSurfs[1] = &scene.drawSurfs[5][scene.maxDrawSurfCount[5]];
         drawSurfs[2] = scene.drawSurfs[11];
         lastDrawSurfs[2] = &scene.drawSurfs[11][scene.maxDrawSurfCount[11]];
-        sceneEntCount = scene.sceneDObjCount;
+        sceneEntCount = R_GetSceneDObjCount();
         sceneEntVisData = scene.sceneDObjVisData[0];
         for (sceneEntIndex = 0; sceneEntIndex < sceneEntCount; ++sceneEntIndex)
         {
@@ -258,7 +259,7 @@ void __cdecl R_AddAllSceneEntSurfacesCamera(const GfxViewInfo *viewInfo)
                 }
             }
         }
-        sceneEntCount = scene.sceneModelCount;
+        sceneEntCount = R_GetSceneModelCount();
         sceneEntVisData = scene.sceneModelVisData[0];
         for (sceneEntIndex = 0; sceneEntIndex < sceneEntCount; ++sceneEntIndex)
         {
@@ -343,7 +344,7 @@ void __cdecl R_AddAllSceneEntSurfacesCamera(const GfxViewInfo *viewInfo)
                 }
             }
         }
-        sceneEntCount = scene.sceneBrushCount;
+        sceneEntCount = R_GetSceneBrushCount();
         sceneEntVisData = scene.sceneBrushVisData[0];
         for (sceneEntIndex = 0; sceneEntIndex < sceneEntCount; ++sceneEntIndex)
         {
@@ -418,13 +419,13 @@ void __cdecl R_AddAllSceneEntSurfacesRangeSunShadow(uint32_t partitionIndex)
     lastDrawSurf = &drawSurf[scene.maxDrawSurfCount[stage]];
     shadowmapBuildTechType = gfxMetrics.shadowmapBuildTechType;
 
-    for (int sceneEntIndex = 0; sceneEntIndex < scene.sceneDObjCount; ++sceneEntIndex)
+    for (int sceneEntIndex = 0; sceneEntIndex < R_GetSceneDObjCount(); ++sceneEntIndex)
     {
         if (scene.sceneDObjVisData[partitionIndex + 1][sceneEntIndex] == 1)
             drawSurf = R_AddDObjSurfaces(&scene.sceneDObj[sceneEntIndex], shadowmapBuildTechType, drawSurf, lastDrawSurf);
     }
 
-    for (int sceneEntIndex = 0; sceneEntIndex < scene.sceneModelCount; ++sceneEntIndex)
+    for (int sceneEntIndex = 0; sceneEntIndex < R_GetSceneModelCount(); ++sceneEntIndex)
     {
         if (scene.sceneModelVisData[partitionIndex + 1][sceneEntIndex] == 1)
             drawSurf = R_AddXModelSurfaces(
@@ -453,7 +454,7 @@ void __cdecl R_AddAllSceneEntSurfacesRangeSunShadow(uint32_t partitionIndex)
     }
 
 
-    for (int sceneEntIndex = 0; sceneEntIndex < scene.sceneBrushCount; ++sceneEntIndex)
+    for (int sceneEntIndex = 0; sceneEntIndex < R_GetSceneBrushCount(); ++sceneEntIndex)
     {
         if (scene.sceneBrushVisData[partitionIndex + 1][sceneEntIndex] == 1)
             drawSurf = R_AddBModelSurfaces(
@@ -516,13 +517,13 @@ void __cdecl R_AddAllSceneEntSurfacesSpotShadow(
     drawSurf = scene.drawSurfs[stage];
     lastDrawSurf = &drawSurf[scene.maxDrawSurfCount[stage]];
     shadowmapBuildTechType = gfxMetrics.shadowmapBuildTechType;
-    sceneEntCount = scene.sceneDObjCount;
+    sceneEntCount = R_GetSceneDObjCount();
     for (sceneEntIndex = 0; sceneEntIndex < sceneEntCount; ++sceneEntIndex)
     {
         if (scene.sceneDObjVisData[spotShadowIndex + 3][sceneEntIndex] == 1)
             drawSurf = R_AddDObjSurfaces(&scene.sceneDObj[sceneEntIndex], shadowmapBuildTechType, drawSurf, lastDrawSurf);
     }
-    sceneEntCounta = scene.sceneModelCount;
+    sceneEntCounta = R_GetSceneModelCount();
     for (sceneEntIndexa = 0; sceneEntIndexa < sceneEntCounta; ++sceneEntIndexa)
     {
         if (scene.sceneModelVisData[spotShadowIndex + 3][sceneEntIndexa] == 1)
@@ -549,7 +550,7 @@ void __cdecl R_AddAllSceneEntSurfacesSpotShadow(
                 lastDrawSurf);
         }
     }
-    sceneEntCountc = scene.sceneBrushCount;
+    sceneEntCountc = R_GetSceneBrushCount();
     for (sceneEntIndexc = 0; sceneEntIndexc < sceneEntCountc; ++sceneEntIndexc)
     {
         sceneBrush = &scene.sceneBrush[sceneEntIndexc];
@@ -609,7 +610,7 @@ void __cdecl R_DrawAllSceneEnt(const GfxViewInfo *viewInfo)
     entVisBits = dpvsGlob.entVisBits[scene.dpvs.localClientNum];
     for (viewIndex = 0; viewIndex < 7; ++viewIndex)
         sceneEntVisData[viewIndex] = scene.sceneDObjVisData[viewIndex];
-    sceneEntCount = scene.sceneDObjCount;
+    sceneEntCount = R_GetSceneDObjCount();
     iassert( scene.dpvs.localClientNum == (uint)viewInfo->localClientNum );
     view = dpvsGlob.views[scene.dpvs.localClientNum];
     for (sceneEntIndex = 0; sceneEntIndex < sceneEntCount; ++sceneEntIndex)
@@ -761,7 +762,7 @@ void __cdecl R_DrawAllSceneEnt(const GfxViewInfo *viewInfo)
         sceneEntVisData[viewIndex] = scene.sceneModelVisData[viewIndex];
 
 
-    for (sceneEntIndex = 0; sceneEntIndex < scene.sceneModelCount; ++sceneEntIndex)
+    for (sceneEntIndex = 0; sceneEntIndex < R_GetSceneModelCount(); ++sceneEntIndex)
     {
         entnum = scene.sceneModel[sceneEntIndex].entnum;
         visData = 0;
@@ -861,7 +862,7 @@ void __cdecl R_DrawAllSceneEnt(const GfxViewInfo *viewInfo)
     for (viewIndex = 0; viewIndex < 3; ++viewIndex)
         sceneEntVisData[viewIndex] = scene.sceneBrushVisData[viewIndex];
 
-    for (sceneEntIndex = 0; sceneEntIndex < scene.sceneBrushCount; ++sceneEntIndex)
+    for (sceneEntIndex = 0; sceneEntIndex < R_GetSceneBrushCount(); ++sceneEntIndex)
     {
         sceneBrush = &scene.sceneBrush[sceneEntIndex];
         entnum = sceneBrush->entnum;
@@ -1174,7 +1175,7 @@ void __cdecl R_FilterXModelIntoScene(
     const DpvsView *view; // [esp+58h] [ebp-1Ch]
     GfxEntity *gfxEnt; // [esp+5Ch] [ebp-18h]
     uint32_t sceneEntIndex; // [esp+60h] [ebp-14h]
-    uint32_t gfxEntIndex; // [esp+64h] [ebp-10h]
+    uint32_t gfxEntIndex = UINT32_MAX; // [esp+64h] [ebp-10h]
     uint32_t cullCount; // [esp+68h] [ebp-Ch]
     uint8_t sceneEntVisData[4]; // [esp+6Ch] [ebp-8h]
     uint32_t viewIndex; // [esp+70h] [ebp-4h]
@@ -1225,10 +1226,11 @@ void __cdecl R_FilterXModelIntoScene(
     {
         if (renderFxFlags)
         {
-            gfxEntIndex = InterlockedExchangeAdd(&frontEndDataOut->gfxEntCount, 1);
-            if (gfxEntIndex >= 0x80)
+            if (!gfx::reservation_atomic::TryReserveIndex(
+                    &frontEndDataOut->gfxEntCount,
+                    static_cast<uint32_t>(ARRAY_COUNT(frontEndDataOut->gfxEnts)),
+                    &gfxEntIndex))
             {
-                frontEndDataOut->gfxEntCount = 128;
                 R_WarnOncePerFrame(R_WARN_KNOWN_SPECIAL_MODELS, 128);
                 return;
             }
@@ -1238,7 +1240,7 @@ void __cdecl R_FilterXModelIntoScene(
         }
         else
         {
-            LOWORD(gfxEntIndex) = 0;
+            gfxEntIndex = 0u;
         }
         sceneEntIndex = R_AllocSceneModel();
         if (sceneEntIndex < 0x400)
@@ -1558,7 +1560,7 @@ void __cdecl R_FilterEntitiesIntoCells(int cameraCellIndex)
     view = dpvsGlob.views[scene.dpvs.localClientNum];
 
     // DObj 
-    for (sceneEntIndex = 0; sceneEntIndex < scene.sceneDObjCount; ++sceneEntIndex)
+    for (sceneEntIndex = 0; sceneEntIndex < R_GetSceneDObjCount(); ++sceneEntIndex)
     {
         sceneEnt = &scene.sceneDObj[sceneEntIndex];
         if (R_LoadSceneEntityCullState(sceneEnt) != CULL_STATE_DONE)
@@ -1593,7 +1595,7 @@ void __cdecl R_FilterEntitiesIntoCells(int cameraCellIndex)
     }
 
     // XModels
-    for (sceneEntIndex = 0; sceneEntIndex < scene.sceneModelCount; ++sceneEntIndex)
+    for (sceneEntIndex = 0; sceneEntIndex < R_GetSceneModelCount(); ++sceneEntIndex)
     {
         sceneModel = &scene.sceneModel[sceneEntIndex];
         entnum = sceneModel->entnum;
@@ -1629,7 +1631,7 @@ void __cdecl R_FilterEntitiesIntoCells(int cameraCellIndex)
     }
 
     // Brushes
-    for (sceneEntIndex = 0; sceneEntIndex < scene.sceneBrushCount; ++sceneEntIndex)
+    for (sceneEntIndex = 0; sceneEntIndex < R_GetSceneBrushCount(); ++sceneEntIndex)
     {
         sceneBrush = &scene.sceneBrush[sceneEntIndex];
         entnum = sceneBrush->entnum;
@@ -2515,7 +2517,7 @@ void __cdecl R_ShowCull()
 
     if (r_showCullXModels->current.enabled)
     {
-        sceneEntCount = scene.sceneDObjCount;
+        sceneEntCount = R_GetSceneDObjCount();
         sceneEntVisData = scene.sceneDObjVisData[0];
         for (sceneEntIndex = 0; sceneEntIndex < sceneEntCount; ++sceneEntIndex)
         {
@@ -2525,7 +2527,7 @@ void __cdecl R_ShowCull()
             else
                 R_AddDebugBox(&frontEndDataOut->debugGlobals, sceneEnt->cull.mins, sceneEnt->cull.maxs, colorRed);
         }
-        sceneEntCount = scene.sceneModelCount;
+        sceneEntCount = R_GetSceneModelCount();
         sceneEntVisData = scene.sceneModelVisData[0];
         for (sceneEntIndex = 0; sceneEntIndex < sceneEntCount; ++sceneEntIndex)
         {
@@ -2543,7 +2545,7 @@ void __cdecl R_ShowCull()
     }
     if (r_showCullBModels->current.enabled)
     {
-        sceneEntCount = scene.sceneBrushCount;
+        sceneEntCount = R_GetSceneBrushCount();
         sceneEntVisData = scene.sceneBrushVisData[0];
         for (sceneEntIndex = 0; sceneEntIndex < sceneEntCount; ++sceneEntIndex)
         {

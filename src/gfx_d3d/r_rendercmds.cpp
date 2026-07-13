@@ -492,6 +492,8 @@ uint32_t g_frameIndex;
 DebugGlobals *R_ToggleSmpFrame()
 {
     DebugGlobals *result; // eax
+    uint32_t cloudCount;
+    uint32_t primDrawSurfPos;
     uint32_t surfPos; // [esp+0h] [ebp-Ch]
     DebugGlobals *debugGlobalsEntry; // [esp+8h] [ebp-4h]
 
@@ -516,7 +518,7 @@ DebugGlobals *R_ToggleSmpFrame()
     frontEndDataOut->preTessIb = gfxBuf.preTessIndexBufferPool[gfxBuf.preTessBufferFrame].buffer;
     frontEndDataOut->smcPatchCount = 0;
     frontEndDataOut->smcPatchVertsUsed = 0;
-    frontEndDataOut->modelLightingPatchCount = 0;
+    Sys_AtomicStore(&frontEndDataOut->modelLightingPatchCount, 0u);
     Sys_AtomicStore(&frontEndDataOut->skinnedCacheVb->used, 0u);
     s_cmdList = frontEndDataOut->commands;
     KISAK_NULLSUB();
@@ -534,26 +536,28 @@ DebugGlobals *R_ToggleSmpFrame()
     if (surfPos > 0x20000u)
         surfPos = 0x20000;
     Sys_AtomicStore(&frontEndDataOut->surfPos, surfPos);
-    if (frontEndDataOut->cloudCount > 0x100u)
+    cloudCount = Sys_AtomicLoad(&frontEndDataOut->cloudCount);
+    if (cloudCount > 0x100u)
         MyAssertHandler(
             ".\\r_rendercmds.cpp",
             1040,
             0,
-            "frontEndDataOut->cloudCount not in [0, GFX_PARTICLE_CLOUD_LIMIT]\n\t%i not in [%i, %i]",
-            frontEndDataOut->cloudCount,
+            "frontEndDataOut->cloudCount not in [0, GFX_PARTICLE_CLOUD_LIMIT]\n\t%u not in [%i, %i]",
+            cloudCount,
             0,
             256);
     Com_Memset(frontEndDataOut->drawSurfs, 176, 8 * frontEndDataOut->drawSurfCount);
     Com_Memset(frontEndDataOut->surfsBuffer, 176, surfPos);
-    Com_Memset(frontEndDataOut->clouds, 176, frontEndDataOut->cloudCount << 6);
+    Com_Memset(frontEndDataOut->clouds, 176, cloudCount << 6);
     Com_Memset(&frontEndDataOut->codeMeshes[0].triCount, 176, 0x8000);
-    Com_Memset(frontEndDataOut->primDrawSurfsBuf, 176, 4 * frontEndDataOut->primDrawSurfPos);
+    primDrawSurfPos = Sys_AtomicLoad(&frontEndDataOut->primDrawSurfPos);
+    Com_Memset(frontEndDataOut->primDrawSurfsBuf, 176, 4 * primDrawSurfPos);
     Com_Memset(&frontEndDataOut->fogSettings, 176, 20);
     frontEndDataOut->drawSurfCount = 0;
-    frontEndDataOut->primDrawSurfPos = 0;
+    Sys_AtomicStore(&frontEndDataOut->primDrawSurfPos, 0u);
     Sys_AtomicStore(&frontEndDataOut->surfPos, 0u);
-    frontEndDataOut->gfxEntCount = 1;
-    frontEndDataOut->cloudCount = 0;
+    Sys_AtomicStore(&frontEndDataOut->gfxEntCount, 1u);
+    Sys_AtomicStore(&frontEndDataOut->cloudCount, 0u);
     Sys_AtomicStore(&frontEndDataOut->codeMeshCount, 0u);
     Sys_AtomicStore(&frontEndDataOut->codeMeshArgsCount, 0u);
     R_ResetMesh(&frontEndDataOut->codeMesh);

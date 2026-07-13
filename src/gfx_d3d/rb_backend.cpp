@@ -33,6 +33,7 @@
 #include "r_staticmodelcache.h"
 #include "rb_uploadshaders.h"
 #include <universal/timing.h>
+#include <universal/sys_atomic.h>
 
 #include <setjmp.h>
 #ifdef KISAK_SP
@@ -2508,7 +2509,9 @@ void __cdecl RB_BeginFrame(const GfxBackEndData *data)
         ++r_glob.backEndFrameCount;
         RB_UpdateBackEndDvarOptions();
         RB_PatchStaticModelCache();
-        RB_PatchModelLighting(backEndData->modelLightingPatchList, backEndData->modelLightingPatchCount);
+        RB_PatchModelLighting(
+            backEndData->modelLightingPatchList,
+            Sys_AtomicLoad(&backEndData->modelLightingPatchCount));
 
         iassert(dx.device);
         iassert(!dx.inScene);

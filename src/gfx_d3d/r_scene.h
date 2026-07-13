@@ -231,6 +231,16 @@ struct __declspec(align(64)) GfxScene // sizeof=0x154D00
     GfxSceneDpvs dpvs;                  // ...
 };
 
+static_assert(
+    offsetof(GfxScene, sceneDObjCount) % alignof(uint32_t) == 0u,
+    "GfxScene DObj counter lost atomic alignment");
+static_assert(
+    offsetof(GfxScene, sceneModelCount) % alignof(uint32_t) == 0u,
+    "GfxScene model counter lost atomic alignment");
+static_assert(
+    offsetof(GfxScene, sceneBrushCount) % alignof(uint32_t) == 0u,
+    "GfxScene brush counter lost atomic alignment");
+
 void __cdecl TRACK_r_scene();
 uint32_t __cdecl R_AllocSceneDObj();
 uint32_t __cdecl R_AllocSceneModel();
@@ -350,3 +360,18 @@ void __cdecl R_UnlinkDynEnt(uint32_t dynEntId, DynEntityDrawType drawType);
 
 
 extern GfxScene scene;
+
+inline uint32_t R_GetSceneDObjCount() noexcept
+{
+    return Sys_AtomicLoad(&scene.sceneDObjCount);
+}
+
+inline uint32_t R_GetSceneModelCount() noexcept
+{
+    return Sys_AtomicLoad(&scene.sceneModelCount);
+}
+
+inline uint32_t R_GetSceneBrushCount() noexcept
+{
+    return Sys_AtomicLoad(&scene.sceneBrushCount);
+}

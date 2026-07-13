@@ -610,14 +610,15 @@ uint32_t __cdecl R_TessParticleCloudList(const GfxDrawSurfListArgs *listArgs, Gf
     }
     drawSurf = info->drawSurfs[listArgs->firstDrawSurfIndex];
     data = commonSource->input.data;
-    if ((uint32_t)(uint16_t)drawSurf.fields.objectId >= data->cloudCount)
+    const uint32_t cloudCount = Sys_AtomicLoad(&data->cloudCount);
+    if ((uint32_t)(uint16_t)drawSurf.fields.objectId >= cloudCount)
         MyAssertHandler(
             ".\\rb_tess.cpp",
             639,
             0,
-            "drawSurf.fields.objectId doesn't index data->cloudCount\n\t%i not in [0, %i)",
+            "drawSurf.fields.objectId doesn't index data->cloudCount\n\t%i not in [0, %u)",
             (uint16_t)drawSurf.fields.objectId,
-            data->cloudCount);
+            cloudCount);
     cloud = &data->clouds[drawSurf.fields.objectId];
     {
         PROF_SCOPED("RB_SetParticleCloudConstants");

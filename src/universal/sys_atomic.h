@@ -15,10 +15,9 @@
 // Exchange, and CompareExchange return the OLD value. CompareExchange keeps
 // the Win32 argument order (destination, exchange, comparand).
 //
-// Existing non-MSVC Interlocked* aliases remain at the bottom only as a
-// migration aid for engine translation units not yet moved to Sys_Atomic*.
-// They are deliberately not defined on MSVC, where those names belong to the
-// Windows SDK. Delete the aliases after the final call-site migration.
+// Engine call sites use the collision-free Sys_Atomic* names directly.  Do not
+// recreate Interlocked* compatibility macros here: those identifiers belong to
+// the Windows SDK on MSVC, and aliases mask incomplete portability migrations.
 
 #include <bit>
 #include <cstdint>
@@ -195,14 +194,5 @@ KISAK_ATOMIC_INLINE T *Sys_AtomicExchangePointer(
     return __atomic_exchange_n(destination, value, __ATOMIC_SEQ_CST);
 #endif
 }
-
-#if !defined(_MSC_VER)
-#define InterlockedIncrement(p) Sys_AtomicIncrement((p))
-#define InterlockedDecrement(p) Sys_AtomicDecrement((p))
-#define InterlockedExchangeAdd(p, v) Sys_AtomicFetchAdd((p), (v))
-#define InterlockedExchange(p, v) Sys_AtomicExchange((p), (v))
-#define InterlockedExchangePointer(p, v) Sys_AtomicExchangePointer((p), (v))
-#define InterlockedCompareExchange(d, e, c) Sys_AtomicCompareExchange((d), (e), (c))
-#endif
 
 #undef KISAK_ATOMIC_INLINE

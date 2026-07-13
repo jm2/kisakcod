@@ -111,7 +111,7 @@ void __cdecl R_PopulateCandidates(const GfxViewParms *viewParmsDraw, ShadowCandi
         candidates[candidateIter].weight = 100000000.0;
     }
     worstCandidate = candidates;
-    sceneEntCount = scene.sceneDObjCount;
+    sceneEntCount = R_GetSceneDObjCount();
     for (sceneEntIndex = 0; sceneEntIndex < sceneEntCount; ++sceneEntIndex)
     {
         sceneEnt = &scene.sceneDObj[sceneEntIndex];
@@ -662,7 +662,7 @@ void __cdecl R_GenerateSceneEntShadowReceivers(ShadowCookieList *shadowCookieLis
 
     PROF_SCOPED("R_GenerateSceneEntShadowReceivers");
 
-    sceneEntCount = scene.sceneDObjCount;
+    sceneEntCount = R_GetSceneDObjCount();
     cookieCount = shadowCookieList->cookieCount;
     iassert( cookieCount );
     for (sceneEntIndex = 0; sceneEntIndex < sceneEntCount; ++sceneEntIndex)
