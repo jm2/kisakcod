@@ -159,7 +159,6 @@ qcommon/cm_load_obj.cpp|iassert:sizeof(DiskBrushModel)==0x30|1
 qcommon/cm_load_obj.cpp|iassert:sizeof(DiskLeaf)==24|1
 qcommon/cm_load_obj.cpp|iassert:sizeof(DiskLeaf_Version14)==0x24|1
 qcommon/msg_mp.h|static_assert:sizeof(usercmd_s)==0x20|1
-qcommon/qcommon.h|static_assert:sizeof(SpawnVar)==0xA0C|1
 script/scr_animtree.h|static_assert:sizeof(scrAnimGlob_t)==0x20C|1
 script/scr_animtree.h|static_assert:sizeof(scrAnimPub_t)==0x41C|1
 script/scr_compiler.h|static_assert:sizeof(BreakStatementInfo)==0xC|1
@@ -223,7 +222,6 @@ universal/fft.h|static_assert:sizeof(complex_s)==8|1
 universal/q_parse.h|static_assert:sizeof(structParseThreadInfo)==0x460C|1
 universal/q_parse.h|static_assert:sizeof(structcom_parse_mark_t)==0x14|1
 universal/q_parse.h|static_assert:sizeof(structparseInfo_t)==0x420|1
-universal/q_shared.h|static_assert:sizeof(StringTable)==16|1
 xanim/dobj.h|static_assert:sizeof(DObjAnimMat)==32|1
 xanim/xanim.h|static_assert:sizeof(RawFile)==12|1
 xanim/xanim.h|static_assert:sizeof(ScriptStringList)==8|1

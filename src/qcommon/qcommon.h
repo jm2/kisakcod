@@ -1156,7 +1156,9 @@ struct SpawnVar // sizeof=0xA0C
     int32_t numSpawnVarChars;
     char spawnVarChars[2048];
 };
-static_assert(sizeof(SpawnVar) == 0xA0C);
+// 128 `char *` slots widen natively. Internal map-entity parser state: not a wire
+// struct and not an on-disk mirror, so it is allowed to grow on LP64.
+RUNTIME_SIZE(SpawnVar, 0xA0C, 0xC10);
 
 void __cdecl CM_LoadMapData_LoadObj(const char *name);
 struct cplane_s *__cdecl CM_GetPlanes();
@@ -1569,8 +1571,19 @@ inline T Buf_Read(unsigned char **pos)
     return value;
 }
 
+// x86 (32- and 64-bit) always has SSE2; ARM does not have <xmmintrin.h> at all,
+// and <intrin.h> is MSVC-only. Guarding these is what lets shared headers such as
+// ent.h / msg_mp.h / bg_local.h be compiled by the portable test targets.
+#if defined(_M_IX86) || defined(__i386__) || defined(_M_X64) || defined(__x86_64__)
+#define KISAK_HAS_SSE 1
 #include <xmmintrin.h>  // SSE
+#else
+#define KISAK_HAS_SSE 0
+#include <cmath>
+#endif
+#if defined(_MSC_VER)
 #include <intrin.h>
+#endif
 
 // (https://github.com/SwagSoftware/KisakCOD/issues/52)
 // 
@@ -1592,7 +1605,24 @@ inline int SnapFloatToInt(float x)
     return i;
 #endif
 
+#if KISAK_HAS_SSE
     int retval = _mm_cvtss_si32(_mm_set_ss(x));
+#else
+    // Non-x86 fallback. This MUST stay bit-exact with cvtss2si, because snapped
+    // origins/angles go out over the wire and must match the commercial binary.
+    // cvtss2si rounds using MXCSR, whose default is round-to-nearest-even; the
+    // default FE_TONEAREST of nearbyintf() is the same round-half-to-even rule.
+    // Out-of-range and NaN inputs yield the "integer indefinite" value INT_MIN on
+    // SSE, so reproduce that rather than invoking undefined conversion behaviour.
+    int retval;
+    {
+        const float rounded = std::nearbyintf(x);
+        if (!(rounded >= -2147483648.0f && rounded <= 2147483520.0f))
+            retval = INT_MIN; // matches cvtss2si integer-indefinite result
+        else
+            retval = static_cast<int>(rounded);
+    }
+#endif
 
 #if defined(_DEBUG) && defined(_MSC_VER) && defined(_M_IX86)
     const float input = x;
