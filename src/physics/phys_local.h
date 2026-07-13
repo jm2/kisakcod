@@ -292,6 +292,8 @@ struct BrushInfo // sizeof=0x10
     BrushInfo_u u;
     float centerOfMass[3];
 };
+RUNTIME_SIZE(BrushInfo, 0x10, 0x18);
+RUNTIME_OFFSET(BrushInfo, centerOfMass, 0x4, 0x8);
 
 // phys_ode
 struct ScreenPlacement;

@@ -157,6 +157,20 @@ add_test(
     COMMAND kisakcod-phys-resource-pair-tests
 )
 
+add_executable(kisakcod-phys-user-geom-storage-tests
+    phys_user_geom_storage_tests.cpp
+)
+target_include_directories(kisakcod-phys-user-geom-storage-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-phys-user-geom-storage-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-phys-user-geom-storage-tests)
+set_target_properties(kisakcod-phys-user-geom-storage-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME physics-native-user-geom-storage
+    COMMAND kisakcod-phys-user-geom-storage-tests
+)
+
 add_executable(kisakcod-fx-visibility-atomic-tests
     fx_visibility_atomic_tests.cpp
 )
@@ -445,6 +459,20 @@ add_test(
         -DALLOWLIST=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/abi_sizeof/direct.allow
         -DFORMULA_ALLOWLIST=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/abi_sizeof/formula.allow
         -P ${CMAKE_CURRENT_SOURCE_DIR}/abi_sizeof_debt_test.cmake
+)
+
+add_test(
+    NAME physics-transaction-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/physics_transaction_source_test.cmake
+)
+
+add_test(
+    NAME effectscore-archive-physics-transaction
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_physics_transaction_test.cmake
 )
 
 add_test(

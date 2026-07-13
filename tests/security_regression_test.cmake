@@ -459,10 +459,6 @@ require_source_contains(
     "physics/phys_ode.cpp"
     "resourceCallbacks, geomState->isOriented);"
     "primary collision and optional transforms must be acquired transactionally")
-require_source_not_contains(
-    "physics/phys_ode.cpp"
-    "Phys_AdjustForNewCenterOfMass(body, centerOfMass);\n    if (geomState->type == PHYS_GEOM_NONE)"
-    "fallible geom acquisition must not mutate body center-of-mass state first")
 require_source_ordered(
     "physics/phys_ode.cpp"
     "dSpaceRemove(physGlob.space[worldIndex], outerGeom);"
@@ -488,6 +484,39 @@ require_source_not_contains(
     "physics/phys_ode.cpp"
     "(int)brush"
     "brush geometry state must not truncate pointers through its x86 union overlay")
+require_source_contains(
+    "physics/ode/collision_kernel.h"
+    "alignas(physics::ode::kUserGeomClassDataAlignment)\n        unsigned char user_data[physics::ode::kUserGeomClassDataBytes]"
+    "ODE user-geom storage must scale and align with native brush-pointer width")
+require_source_contains(
+    "physics/ode/collision_kernel.h"
+    "sizeof(dxUserGeom) <= sizeof(dxGeomTransform)"
+    "native user geoms must continue to fit the shared ODE geom pool")
+require_source_contains(
+    "physics/ode/collision_kernel.h"
+    "alignof(dxUserGeom) <= alignof(dxGeomTransform)"
+    "native user geoms must satisfy the shared ODE geom-pool alignment")
+require_source_contains(
+    "physics/ode/odeext.h"
+    "alignas(dxGeomTransform)\n        char geoms["
+    "ODE geom-pool backing storage must encode its placement-new alignment")
+require_source_contains(
+    "physics/phys_world_collision.cpp"
+    "physics::ode::UserGeomClassDataMatches<BrushInfo>"
+    "production BrushInfo size and alignment must match ODE class storage")
+require_source_contains(
+    "physics/phys_local.h"
+    "RUNTIME_SIZE(BrushInfo, 0x10, 0x18);"
+    "production BrushInfo must retain its exact x86/native64 sizes")
+require_source_match_count(
+    "physics/phys_world_collision.cpp"
+    "gclass\\.bytes = static_cast<int>\\(sizeof\\(BrushInfo\\)\\);"
+    2
+    "both brush user classes must register their native runtime payload size")
+require_source_not_contains(
+    "physics/phys_world_collision.cpp"
+    "gclass.bytes = 16;"
+    "brush user-class payloads must not retain their x86-only byte width")
 require_source_not_matches(
     "physics/phys_ode.cpp"
     "geomState\\.u\\.cylinderState\\.(radius|halfHeight)[ \t]*=[ \t]*physMass"
@@ -509,16 +538,6 @@ require_source_not_contains(
     "physics/phys_ode.cpp"
     "(int)physGlob.space["
     "physics wake timestamps must not truncate an unrelated space pointer")
-require_source_ordered(
-    "physics/phys_ode.cpp"
-    "dCreateGeomTransform(context->space, context->body)"
-    "ODE_GeomDestruct(static_cast<dxGeom *>(geom));"
-    "failed transform allocation must release its primary geometry")
-require_source_ordered(
-    "physics/phys_ode.cpp"
-    "ODE_GeomDestruct(static_cast<dxGeom *>(geom));"
-    "return PhysBodyModelCreateStatus::TransformGeomAllocationFailed;"
-    "transform cleanup must precede observable construction failure")
 require_source_contains(
     "physics/phys_local.h"
     "Phys_TryCreateBodyFromStateAndXModel("
@@ -6325,16 +6344,6 @@ require_source_ordered(
     "FX_ValidateArchiveBodyState(\n                physicsEntries[index].state)"
     "if (!FX_BeginArchive(system))"
     "restore must validate every staged physics body before acquiring live ownership")
-require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "FX_CaptureReplacedArchivePhysics("
-    "FX_CreateArchivePhysics("
-    "restore must retain replaced bodies before creating replacement bodies")
-require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "FX_CreateArchivePhysics("
-    "memcpy(systemBuffers, restoredBuffers, sizeof(*systemBuffers));"
-    "restore must create all staged physics before publishing staged buffers")
 require_source_matches(
     "EffectsCore/fx_archive.cpp"
     "Sys_EnterCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;][ \t\r\n]*memcpy\\(systemBuffers,[ \t]*restoredBuffers,[ \t]*sizeof\\(\\*systemBuffers\\)\\)[ \t]*[;][ \t\r\n]*memcpy\\(system,[ \t]*&restoredSystem,[ \t]*sizeof\\(\\*system\\)\\)[ \t]*[;][ \t\r\n]*FX_LinkSystemBuffers\\(system,[ \t]*systemBuffers\\)[ \t]*[;][ \t\r\n]*const[ \t]+bool[ \t]+restoredExclusiveState[ \t]*=[ \t\r\n]*FX_RestoreArchiveExclusiveState\\(system\\)[ \t]*[;][ \t\r\n]*Sys_LeaveCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;]"

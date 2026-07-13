@@ -357,6 +357,7 @@ set(PHYSICS
 set(PHYSICS_ODE
     "${SRC_DIR}/physics/ode/collision_kernel.cpp"
     "${SRC_DIR}/physics/ode/collision_kernel.h"
+    "${SRC_DIR}/physics/ode/user_geom_storage.h"
     "${SRC_DIR}/physics/ode/collision_quadtreespace.cpp"
     "${SRC_DIR}/physics/ode/collision_space.cpp"
     "${SRC_DIR}/physics/ode/collision_space_internal.h"

@@ -9,10 +9,10 @@ work item changes. Do not create session-specific handoff files.
 - Branch: `agent/ode-allocation-safety`; branch point: merged FX physics-sidecar foundation
   commit `3c542f20`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: take the locally complete ODE body/user-data/model-collision transaction through Windows
-  CI and review, then widen the shared pool freelist to native pointers before wiring the merged FX
-  physics sidecar atomically through spawn/draw/free/reset/archive. The protected licensed headless
-  smoke continues to wait for its self-hosted runners.
+- Active work: take PR #7's locally complete ODE body/user-data/model-collision and isolated FX archive
+  transaction through Windows CI and review, then widen the shared pool freelist to native pointers
+  before wiring the merged FX physics sidecar atomically through spawn/draw/free/reset/archive. The
+  protected licensed headless smoke continues to wait for its self-hosted runners.
 - Progress estimate: approximately **31% complete by engineering effort** (plausible range 27–36%).
   The foundation/checklist view is about 47–52% and the shared foundation is roughly 84–90% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
@@ -101,11 +101,20 @@ work item changes. Do not create session-specific handoff files.
   before center-of-mass mutation, completed outer geoms retain legacy simple-space ordering, malformed
   mass/model geometry is failure-observable, and two adjacent 64-bit defects were removed: brush state no
   longer truncates pointers through an x86 union overlay, and wake timestamps no longer cast a space
-  pointer to `int`. The utility suite is **33/33 locally green**; the new transaction test also passes
-  strict GCC/Clang, ASan/UBSan, TSan, x86-32, and AArch64 compilation. Windows engine CI remains the
-  production adapter compile gate. Audit also found the next hard 64-bit blocker: `Pool_Init` writes
+  pointer to `int`. Review then closed two further production gaps: ODE user geoms now reserve and align
+  the complete native `BrushInfo` payload (16 bytes on x86, 24 on amd64/ARM64) while proving it still fits
+  the shared transform-sized pool slot, and archive restore retains `CRITSECT_PHYSICS` continuously from
+  replaced-body capture through graph publication and old/new body commit or rollback. The archive gate's
+  post-acquisition `FX_ALLOC` snapshot is an explicit drain barrier, so the narrowly scoped
+  PHYSICS-to-FX_ALLOC publication cannot invert a live allocator lock. Function-scoped source contracts
+  bind callback rollback, allocation-before-COM mutation, and the complete archive lock interval. The
+  utility suite is **36/36 locally green** under GCC, Clang, ASan/UBSan (leak detection disabled under the
+  ptrace runner), and TSan; focused storage validation also passes x86-32 and AArch64 compilation. Windows
+  engine CI remains the production adapter compile gate. Audit also found the next hard 64-bit blocker:
+  `Pool_Init` writes
   freelist links through `uint32_t`, while allocation reads native pointers; the next PR must preserve
-  the x86 metadata layout while storing full pointers and aligning ODE geom backing storage. The global
+  the x86 metadata layout while storing full pointers; the ODE geom backing storage is now explicitly
+  transform-aligned. The global
   32-bit frozen token field necessarily permits generation reuse after 2^32 advances, and release
   shutdown must explicitly drain/finalize the registry because destructor assertions are diagnostic.
   The global unbounded/alignment-unsafe `Buf_Read<T>` cursor has
@@ -355,9 +364,10 @@ work item changes. Do not create session-specific handoff files.
   the legacy dedicated smoke. The smoke now requires the requested map in the status response, and
   its self-hosted jobs run only from `master` and check out the immutable dispatched SHA. Twenty-one
   client/media includes remain.
-- Portable validation: the current GCC utility suite passes 33/33. The 32-test pre-ODE suite separately
-  passed GCC, Clang, ASan/UBSan, and TSan; the new resource-pair transaction test passes strict GCC,
-  Clang, GCC/Clang ASan+UBSan, and GCC TSan, plus x86-32 linking and AArch64 syntax compilation. Leak
+- Portable validation: the current 36-test utility suite passes GCC, Clang, ASan/UBSan, and TSan. The
+  resource-pair and native user-geom tests also pass strict standalone compilation, x86-32 linking, and
+  AArch64 syntax compilation; scoped source contracts exercise the production callback/order and FX
+  archive lock boundaries. Leak
   detection remains disabled because LeakSanitizer cannot run under the command-runner ptrace environment.
   The production relocation registry is also strict-warning clean under GCC/Clang and GCC ILP32
   syntax checking. Portable tests do not execute the Windows stream adapter or media ownership paths.
@@ -447,11 +457,11 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Land the current ODE allocation-safety branch after Windows engine CI/review confirms the portable
-   resource-pair transaction and checked body-plus-model adapter.
+1. Land PR #7 after replacement Windows engine CI/review confirms the portable resource-pair transaction,
+   native brush class storage, checked body-plus-model adapter, and isolated archive publication interval.
 2. Make `pool_allocator` native-pointer-safe without changing its x86 metadata layout: use full-width
    unaligned-safe link storage, reject corrupt/duplicate operations transactionally, expose a checked
-   leak-walk accessor, align ODE geom backing storage, and add x86-32/amd64/AArch64 tests. This is a hard
+   leak-walk accessor, and add x86-32/amd64/AArch64 tests. This is a hard
    prerequisite for every requested 64-bit target.
 3. Finish the merged generation-checked `FxElem::physObjId` sidecar by integrating spawn/draw/free/reset
    and staged archive commit/rollback atomically without changing the 0x28-byte ABI. Respect the global

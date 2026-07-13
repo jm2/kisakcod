@@ -927,12 +927,17 @@ a portable resource-pair transaction used for body/user-data and primary/optiona
 a checked fresh body-plus-model API that destroys every partial resource before failure is observable,
 and FX archive staging that publishes only complete collision bodies. Allocation precedes center-of-mass
 mutation, the legacy wrapper retains deterministic space ordering, fallback heap bodies use matching
-`new`/`delete`, and adjacent brush-pointer/wake-timestamp truncations are removed. The standalone 33rd
-test injects failures into the same portable transaction primitive (not the full ODE pools); the GCC
-utility suite is 33/33 green, with that test also clean under strict GCC/Clang and sanitizer runs plus
+`new`/`delete`, and adjacent brush-pointer/wake-timestamp truncations are removed. Review also widened
+native ODE brush class data from the x86-only 16 bytes to an aligned 16/24-byte payload with exact
+x86/64-bit layout and shared-slot-fit assertions. Archive restore now keeps the physics lock across staged
+body construction, FX graph publication, validation, and commit or rollback; the archive gate plus a
+post-acquisition allocator drain barrier makes its brief nested publication lock safe. Function-scoped
+source contracts enforce callback rollback, allocation-before-COM mutation, and that continuous archive
+interval. The portable transaction test injects failures into the shared primitive (not the full ODE
+pools); the 36-test GCC/Clang/ASan/UBSan/TSan matrix is green, with focused storage tests also clean under
 x86-32/AArch64 compilation. The next M4 prerequisite is the generic pool allocator: it still serializes freelist
 links through `uint32_t`, which must become full-width unaligned-safe pointer storage without changing its
-x86 metadata layout, alongside aligned ODE geom backing storage. Remaining FX work is
+x86 metadata layout; ODE geom backing storage is now explicitly transform-aligned. Remaining FX work is
 camera/scalar snapshot publication, real Disk32 archive/fast-file conversion, that production
 physics-sidecar wiring, and production fixtures. The
 unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
