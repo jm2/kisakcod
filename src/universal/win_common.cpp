@@ -1,20 +1,26 @@
 #include <win32/win_local.h>
 
 #include <qcommon/qcommon.h>
+#include <qcommon/sys_filesystem.h>
 
 #include <direct.h>
 #include <io.h>
+#include <string>
+#include <vector>
 #include "com_memory.h"
 
 // *(_DWORD *)(*(_DWORD *)(*((_DWORD *)NtCurrentTeb()->ThreadLocalStoragePointer + _tls_index) + 4)
 
 void __cdecl Sys_Mkdir(const char *path)
 {
-    _mkdir(path);
+    (void)Sys_FileSystemCreateDirectory(path);
 }
 
 BOOL __cdecl Sys_RemoveDirTree(const char *path)
 {
+    if (!path || !path[0])
+        return 0;
+
     bool v2; // [esp+8h] [ebp-250h]
     int handle; // [esp+1Ch] [ebp-23Ch]
     char childPath[256]; // [esp+20h] [ebp-238h] BYREF
@@ -231,12 +237,34 @@ char **__cdecl Sys_ListFiles(
 }
 
 
-char cwd[256];
+namespace
+{
+using PathQuery = bool (KISAK_CDECL *)(char *, std::size_t);
+
+bool ReadDynamicPath(const PathQuery query, std::vector<char> *const output)
+{
+    if (!query || !output)
+        return false;
+    for (std::size_t capacity = 256; capacity <= 1024 * 1024; capacity *= 2)
+    {
+        output->assign(capacity, '\0');
+        if (query(output->data(), output->size()))
+        {
+            output->resize(strlen(output->data()) + 1);
+            return true;
+        }
+    }
+    output->assign(1, '\0');
+    return false;
+}
+
+}
+
 char *__cdecl Sys_Cwd()
 {
-    _getcwd(cwd, 255);
-    cwd[255] = 0;
-    return cwd;
+    thread_local std::vector<char> cwd(1, '\0');
+    (void)ReadDynamicPath(Sys_FileSystemGetCurrentDirectory, &cwd);
+    return cwd.data();
 }
 
 const char *__cdecl Sys_DefaultCDPath()
@@ -244,30 +272,26 @@ const char *__cdecl Sys_DefaultCDPath()
     return "";
 }
 
-char exePath[256];
 char *__cdecl Sys_DefaultInstallPath()
 {
-    char *v0; // eax
-    uint32_t len; // [esp+0h] [ebp-8h]
-    HINSTANCE__ *hinst; // [esp+4h] [ebp-4h]
-
-    if (!exePath[0])
-    {
+    static std::vector<char> exePath = [] {
+        std::vector<char> path;
         if (IsDebuggerPresent())
         {
-            v0 = Sys_Cwd();
-            I_strncpyz(exePath, v0, 256);
+            if (!ReadDynamicPath(Sys_FileSystemGetCurrentDirectory, &path))
+                path.assign(1, '\0');
         }
         else
         {
-            hinst = GetModuleHandleA(0);
-            len = GetModuleFileNameA(hinst, exePath, 0x100u);
-            if (len == 256)
-                len = 255;
-            while (len && exePath[len] != 92 && exePath[len] != 47 && exePath[len] != 58)
-                --len;
-            exePath[len] = 0;
+            if (!ReadDynamicPath(Sys_FileSystemGetExecutablePath, &path))
+                path.assign(1, '\0');
+            const std::string fullPath(path.data());
+            const std::size_t parentLength =
+                Sys_FileSystemParentPathLength(fullPath.c_str());
+            path.assign(fullPath.begin(), fullPath.begin() + parentLength);
+            path.push_back('\0');
         }
-    }
-    return exePath;
+        return path;
+    }();
+    return exePath.data();
 }
