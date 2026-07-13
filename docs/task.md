@@ -9,10 +9,10 @@ work item changes. Do not create session-specific handoff files.
 - Branch: `agent/effectscore-runtime-hardening`; branch point: `0a713013`; upstream-integration
   baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: land and obtain all-target evidence for the hardened EffectsCore pool, archive,
-  draw/update/profile, lifecycle, kill, garbage-collection, and rewind transaction; then complete the
-  bounded load-object/Disk32 FX boundary while the protected licensed headless smoke waits for its
-  self-hosted runners.
+- Active work: finish the final EffectsCore review correction and obtain replacement all-target
+  evidence for the hardened pool, archive, draw/update/profile, lifecycle, kill,
+  garbage-collection, and rewind transaction; then complete the bounded load-object/Disk32 FX
+  boundary while the protected licensed headless smoke waits for its self-hosted runners.
 - Progress estimate: approximately **29% complete by engineering effort** (plausible range 25–34%).
   The foundation/checklist view is about 46–51% and the shared foundation is roughly 83–90% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
@@ -64,6 +64,12 @@ work item changes. Do not create session-specific handoff files.
   of arithmetic that can carry into adjacent fields. Trail byte fields have explicit signedness,
   preserving compressed negative basis vectors on Linux ARM64. The visibility blocker protocol validates
   finite packed inputs, uses all 256 slots, publishes payloads before counts, and bounds corrupt readers.
+  PR #2 pre-review run **29275713249 passed all nine CI jobs** at `e6b10da`, including all three ARM64
+  portable targets and all four Windows x86 engine variants. Codex review then found that partial
+  updates intentionally pass a staged trail copy into element retirement: the correction retains the
+  real allocated trail owner for validation and publishes both staged and live endpoints in the same
+  allocator transaction. Local GCC, Clang, ASan/UBSan, and TSan validation is 30/30; replacement CI
+  evidence for the reviewed head remains the merge gate.
   Remaining FX-specific work is the real 64-bit Disk32 archive conversion, a fully bounded/aligned
   `fx_load_obj` cursor, camera/scalar snapshot publication, production integration fixtures, and Windows
   engine compile/runtime evidence.
@@ -404,7 +410,8 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Land the EffectsCore runtime-hardening PR and obtain green portable plus Windows engine evidence.
+1. Land EffectsCore runtime-hardening PR #2 after its reviewed trail-owner correction obtains green
+   portable plus Windows engine evidence.
 2. Replace the unbounded/unaligned FX load-object reads and implement the 64-bit Disk32 FX archive
    conversion with malformed-input and round-trip fixtures.
 3. Monitor the protected licensed-content headless startup/map/`getstatus` workflow, and implement the

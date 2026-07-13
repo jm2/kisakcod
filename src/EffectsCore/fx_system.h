@@ -259,7 +259,12 @@ void __cdecl FX_SpawnSound(
     const FxSpatialFrame *effectFrameWhenPlayed,
     int32_t randomSeed);
 void __cdecl FX_FreeElem(FxSystem *system, uint16_t elemHandle, FxEffect *effect, uint32_t elemClass);
-void __cdecl FX_FreeTrailElem(FxSystem *system, uint16_t trailElemHandle, FxEffect *effect, FxTrail *trail);
+void __cdecl FX_FreeTrailElem(
+    FxSystem *system,
+    uint16_t trailElemHandle,
+    FxEffect *effect,
+    FxTrail *trail,
+    FxTrail *trailOwner);
 void __cdecl FX_FreeSpotLightElem(FxSystem *system, uint16_t elemHandle, FxEffect *effect);
 double __cdecl FX_GetClientVisibility(int32_t localClientNum, const float *start, const float *end);
 void __cdecl FX_TrailElem_CompressBasis(
@@ -1290,6 +1295,7 @@ void __cdecl FX_UpdateEffectPartialTrail(
     FxSystem *system,
     FxEffect *effect,
     FxTrail *trail,
+    FxTrail *trailOwner,
     int32_t msecUpdateBegin,
     int32_t msecUpdateEnd,
     float distanceTravelledBegin,

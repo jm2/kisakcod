@@ -882,6 +882,7 @@ void __cdecl FX_UpdateEffectPartial(
             system,
             effect,
             &trail,
+            remoteTrail,
             msecUpdateBegin,
             msecUpdateEnd,
             distanceTravelledBegin,
@@ -2112,6 +2113,7 @@ void __cdecl FX_UpdateEffectPartialTrail(
     FxSystem *system,
     FxEffect *effect,
     FxTrail *trail,
+    FxTrail *trailOwner,
     int32_t msecUpdateBegin,
     int32_t msecUpdateEnd,
     float distanceTravelledBegin,
@@ -2128,7 +2130,7 @@ void __cdecl FX_UpdateEffectPartialTrail(
     uint16_t trailElemHandle; // [esp+48h] [ebp-8h]
     bool removable; // [esp+4Fh] [ebp-1h]
 
-    if (!trail)
+    if (!trail || !trailOwner)
         FX_DropCorruptUpdateList("missing partial-update trail state");
     const FxElemDef *const trailElemDef =
         FX_GetValidatedUpdateElemDef(effect, trail->defIndex);
@@ -2156,7 +2158,10 @@ void __cdecl FX_UpdateEffectPartialTrail(
         if (FX_UpdateTrailElement(system, effect, trail, remoteTrailElem, msecUpdateBegin, msecUpdateEnd))
             removable = 0;
         if (removable && trailElemHandleLast != 0xFFFF)
-            FX_FreeTrailElem(system, trailElemHandleLast, effect, trail);
+        {
+            FX_FreeTrailElem(
+                system, trailElemHandleLast, effect, trail, trailOwner);
+        }
         trailElemHandleLast = trailElemHandle;
         trailElemHandle = trailElemHandleNext;
     }
@@ -2164,7 +2169,8 @@ void __cdecl FX_UpdateEffectPartialTrail(
     {
         if (removable)
         {
-            FX_FreeTrailElem(system, trailElemHandleLast, effect, trail);
+            FX_FreeTrailElem(
+                system, trailElemHandleLast, effect, trail, trailOwner);
         }
         else if ((static_cast<std::uint32_t>(
                      Sys_AtomicLoad(&effect->status))

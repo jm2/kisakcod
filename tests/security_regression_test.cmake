@@ -5978,9 +5978,9 @@ require_source_matches(
     "garbage collection must reject a valid handle that names a free trail slot")
 require_source_match_count(
     "EffectsCore/fx_system.cpp"
-    "if[ \t\r\n]*\\([ \t\r\n]*!FX_IsTrailAllocated\\(system,[ \t]*trail\\)[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"
+    "if[ \t\r\n]*\\([ \t\r\n]*!FX_IsTrailAllocated\\(system,[ \t]*trail(Owner)?\\)[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"
     3
-    "both trail spawners and trail-element free must reject an unallocated owner")
+    "trail spawners and trail-element free must reject an unallocated pool owner")
 require_source_matches(
     "EffectsCore/fx_system.cpp"
     "nextElemInEffect[ \t]*=[ \t\r\n]*FX_PoolFromHandle_Generic<FxElem,[ \t]*MAX_ELEMS>[^;]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!FX_IsElemAllocated\\(system,[ \t]*&nextElemInEffect->item\\)[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"
@@ -6443,7 +6443,7 @@ require_source_matches(
     "bulk trail-element cleanup must reject duplicate/cyclic handles before freeing")
 require_source_matches(
     "EffectsCore/fx_system.cpp"
-    "FX_FreeTrailElem[ \t\r\n]*\\([ \t\r\n]*system[ \t]*,[ \t]*previousHandle[ \t]*,[ \t]*effect[ \t]*,[ \t]*&trail->item[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*trail->item.firstElemHandle[ \t]*==[ \t]*previousHandle[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*FxRequestGarbageCollection[^}]*trailComplete[ \t]*=[ \t]*false[ \t]*[;][^}]*break[ \t]*[;][ \t\r\n]*\\}"
+    "FX_FreeTrailElem[ \t\r\n]*\\([ \t\r\n]*system[ \t]*,[ \t\r\n]*previousHandle[ \t]*,[ \t\r\n]*effect[ \t]*,[ \t\r\n]*&trail->item[ \t]*,[ \t\r\n]*&trail->item[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*trail->item.firstElemHandle[ \t]*==[ \t]*previousHandle[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*FxRequestGarbageCollection[^}]*trailComplete[ \t]*=[ \t]*false[ \t]*[;][^}]*break[ \t]*[;][ \t\r\n]*\\}"
     "bulk trail-element cleanup must stop and defer collection when a free makes no progress")
 require_source_matches(
     "EffectsCore/fx_system.cpp"
@@ -6453,6 +6453,36 @@ require_source_not_matches(
     "EffectsCore/fx_system.cpp"
     "for[ \t\r\n]*\\([^;]*trailHandle[^;]*[;][^;]*trailHandle[^;]*[;][^)]*trail->item.nextTrailHandle[^)]*\\)[ \t\r\n]*\\{[^}]*FX_FreeTrailElem"
     "bulk trail cleanup must not dereference an unchecked decoder in a for-loop increment")
+
+# Partial updates intentionally stage each trail record on the stack. Element
+# retirement validates the real pool owner and updates its endpoints inside the
+# same pool transaction, so the staged copy cannot bypass ownership checks or
+# leave the live trail pointing at a newly freed element.
+require_source_contains(
+    "EffectsCore/fx_update.cpp"
+    "FX_UpdateEffectPartialTrail(
+            system,
+            effect,
+            &trail,
+            remoteTrail,"
+    "partial trail updates must retain their allocated pool owner")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "if (!FX_IsTrailAllocated(system, trailOwner))"
+    "trail-element free must validate the real allocated trail owner")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "trail->firstElemHandle != trailOwner->firstElemHandle
+            || trail->lastElemHandle != trailOwner->lastElemHandle"
+    "staged trail mutation must begin from the live owner's endpoints")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "if (trailOwner != trail)
+                {
+                    if (releasesTail)
+                        trailOwner->lastElemHandle = FX_INVALID_HANDLE;
+                    trailOwner->firstElemHandle = nextTrailElemHandle;"
+    "trail-element free must publish staged endpoint mutation to the live owner")
 
 # Garbage collection validates the complete trail graph without mutation,
 # then frees exactly that snapshot. Fatal reporting happens only after the

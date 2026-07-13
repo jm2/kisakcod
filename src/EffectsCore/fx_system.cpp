@@ -4979,7 +4979,12 @@ static void FX_RemoveAllEffectElems_Internal(
                 break;
             }
             releasedTrailElemIndices[trailElemIndex] = true;
-            FX_FreeTrailElem(system, previousHandle, effect, &trail->item);
+            FX_FreeTrailElem(
+                system,
+                previousHandle,
+                effect,
+                &trail->item,
+                &trail->item);
             if (trail->item.firstElemHandle == previousHandle)
             {
                 FxRequestGarbageCollection(&system->needsGarbageCollection);
@@ -6053,16 +6058,21 @@ void __cdecl FX_FreeElem(FxSystem* system, uint16_t elemHandle, FxEffect* effect
     FX_DelRefToEffect(system, effect);
 }
 
-void __cdecl FX_FreeTrailElem(FxSystem *system, uint16_t trailElemHandle, FxEffect *effect, FxTrail *trail)
+void __cdecl FX_FreeTrailElem(
+    FxSystem *system,
+    uint16_t trailElemHandle,
+    FxEffect *effect,
+    FxTrail *trail,
+    FxTrail *trailOwner)
 {
-    if (!system || !effect || !trail)
+    if (!system || !effect || !trail || !trailOwner)
     {
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
             1932,
             0,
             "%s",
-            "system && effect && trail");
+            "system && effect && trail && trailOwner");
         return;
     }
     FxPoolAllocationStates *const states =
@@ -6072,9 +6082,19 @@ void __cdecl FX_FreeTrailElem(FxSystem *system, uint16_t trailElemHandle, FxEffe
         Com_Error(ERR_DROP, "Missing FX trail-element allocation sidecar during free");
         return;
     }
-    if (!FX_IsTrailAllocated(system, trail))
+    if (!FX_IsTrailAllocated(system, trailOwner))
     {
         Com_Error(ERR_DROP, "FX trail-element owner is not allocated");
+        return;
+    }
+    if (trail != trailOwner
+        && (trail->nextTrailHandle != trailOwner->nextTrailHandle
+            || trail->firstElemHandle != trailOwner->firstElemHandle
+            || trail->lastElemHandle != trailOwner->lastElemHandle
+            || trail->defIndex != trailOwner->defIndex
+            || trail->sequence != trailOwner->sequence))
+    {
+        Com_Error(ERR_DROP, "FX staged trail state does not match its owner");
         return;
     }
 
@@ -6150,6 +6170,8 @@ void __cdecl FX_FreeTrailElem(FxSystem *system, uint16_t trailElemHandle, FxEffe
         Com_Error(ERR_DROP, "Invalid FX trail-element links during free");
         return;
     }
+    const bool releasesTail =
+        trail->lastElemHandle == trailElemHandle;
     if (!FX_FreePool_Generic_FxTrailElem_(
             &trailElem->item,
             &system->firstFreeTrailElem,
@@ -6157,9 +6179,15 @@ void __cdecl FX_FreeTrailElem(FxSystem *system, uint16_t trailElemHandle, FxEffe
             &system->activeTrailElemCount,
             &states->trailElems,
             [&]() noexcept {
-                if (trail->lastElemHandle == trailElemHandle)
+                if (releasesTail)
                     trail->lastElemHandle = FX_INVALID_HANDLE;
                 trail->firstElemHandle = nextTrailElemHandle;
+                if (trailOwner != trail)
+                {
+                    if (releasesTail)
+                        trailOwner->lastElemHandle = FX_INVALID_HANDLE;
+                    trailOwner->firstElemHandle = nextTrailElemHandle;
+                }
             }))
     {
         return;
