@@ -145,6 +145,19 @@ require_source_contains(
     "headless fatal errors must terminate unattended servers with a failure code")
 require_source_contains(
     "win32/win_main.cpp"
+    "while (GetMessageA(&Msg, 0, 0, 0))"
+    "interactive Windows fatal errors must retain their crash message loop")
+require_source_matches(
+    "win32/win_main.cpp"
+    "while[ 	]*\\(GetMessageA\\(&Msg,[ 	]*0,[ 	]*0,[ 	]*0\\)\\)[^{]*\\{[^}]*\\}[ 	\r\n]*exit\\(EXIT_FAILURE\\);"
+    "interactive Windows fatal errors must exit with failure after the message loop")
+require_source_contains(
+    "win32/win_main.cpp"
+    "Sys_SetErrorText(string);
+	exit(EXIT_FAILURE);"
+    "non-main interactive Windows fatal errors must exit with failure")
+require_source_contains(
+    "win32/win_main.cpp"
     "#ifndef KISAK_DEDI_HEADLESS
 	if (!Win_IsRedirectedHandle(STD_OUTPUT_HANDLE)"
     "headless startup must preserve inherited standard handles instead of reopening CONOUT")
