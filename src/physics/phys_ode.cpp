@@ -16,6 +16,7 @@
 #include <climits>
 #include <cstddef>
 #include <cmath>
+#include <limits>
 
 #ifdef KISAK_DEDI_HEADLESS
 #define CG_DrawStringExt(...) ((void)0)
@@ -1512,6 +1513,95 @@ PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromStateAndXModel(
 
     *outBody = body;
     return PhysBodyModelCreateStatus::Success;
+}
+
+PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromPresetAndXModel(
+    const PhysWorld worldIndex,
+    const float *const position,
+    const float *const quat,
+    const float *const velocity,
+    const PhysPreset *const physPreset,
+    const XModel *const model,
+    dxBody **const outBody) noexcept
+{
+    if (!outBody)
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    *outBody = nullptr;
+
+    const bool frictionValid = physPreset
+        && ((std::isfinite(physPreset->friction)
+                && physPreset->friction >= 0.0f
+                && physPreset->friction <= 10000.0f)
+            || physPreset->friction
+                == (std::numeric_limits<float>::max)());
+    if (worldIndex < PHYS_WORLD_DYNENT || worldIndex >= PHYS_WORLD_COUNT
+        || !position || !quat || !velocity || !physPreset || !model
+        || !physInited || !physGlob.world[worldIndex]
+        || !physGlob.space[worldIndex]
+        || physPreset->mass < 0.0001f
+        || physPreset->mass > 1000000.0f
+        || !std::isfinite(physPreset->mass)
+        || !std::isfinite(physPreset->bounce)
+        || physPreset->bounce < 0.0f || physPreset->bounce > 1.0f
+        || !frictionValid
+        || physPreset->type < 0 || physPreset->type >= 50)
+    {
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    }
+    constexpr float MAX_PHYSICS_VECTOR_COMPONENT = 1048576.0f;
+    for (std::size_t index = 0; index < 3; ++index)
+    {
+        if (!std::isfinite(position[index])
+            || position[index] < -MAX_PHYSICS_VECTOR_COMPONENT
+            || position[index] > MAX_PHYSICS_VECTOR_COMPONENT
+            || !std::isfinite(velocity[index])
+            || velocity[index] < -MAX_PHYSICS_VECTOR_COMPONENT
+            || velocity[index] > MAX_PHYSICS_VECTOR_COMPONENT)
+        {
+            return PhysBodyModelCreateStatus::InvalidArgument;
+        }
+    }
+    double quaternionMagnitudeSquared = 0.0;
+    for (std::size_t index = 0; index < 4; ++index)
+    {
+        if (!std::isfinite(quat[index]))
+            return PhysBodyModelCreateStatus::InvalidArgument;
+        const double component = static_cast<double>(quat[index]);
+        quaternionMagnitudeSquared += component * component;
+    }
+    if (!std::isfinite(quaternionMagnitudeSquared)
+        || quaternionMagnitudeSquared
+            < static_cast<double>((std::numeric_limits<float>::min)())
+        || quaternionMagnitudeSquared
+            > static_cast<double>((std::numeric_limits<float>::max)()))
+    {
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    }
+
+    BodyState state{};
+    QuatToAxis(quat, state.rotation);
+    for (const auto &row : state.rotation)
+    {
+        for (const float component : row)
+        {
+            if (!std::isfinite(component))
+                return PhysBodyModelCreateStatus::InvalidArgument;
+        }
+    }
+    for (std::size_t index = 0; index < 3; ++index)
+    {
+        state.position[index] = position[index];
+        state.velocity[index] = velocity[index];
+    }
+    state.mass = physPreset->mass;
+    state.bounce = physPreset->bounce;
+    state.friction = physPreset->friction;
+    state.timeLastAsleep =
+        physGlob.worldData[worldIndex].timeLastSnapshot;
+    state.type = physPreset->type;
+    state.underwater = 1;
+    return Phys_TryCreateBodyFromStateAndXModel(
+        worldIndex, &state, model, outBody);
 }
 
 void __cdecl Phys_ObjSetAngularVelocity(dxBody *id, float *angularVel)

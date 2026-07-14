@@ -1,5 +1,7 @@
 #include "fx_system.h"
 #include "fx_iterator_atomic.h"
+#include "fx_physics_sidecar.h"
+#include "fx_pool.h"
 
 #include <gfx_d3d/r_drawsurf.h>
 #include <gfx_d3d/r_scene.h>
@@ -1045,9 +1047,55 @@ void __cdecl FX_DrawElem_Model(FxDrawState *draw)
 
 void __cdecl FX_SetPlacementFromPhysics(const FxDrawState *draw, GfxPlacement *placement)
 {
+    if (!draw || !draw->system || !draw->effect || !draw->elem
+        || !placement)
+    {
+        Com_Error(ERR_DROP, "Missing FX physics draw state");
+        return;
+    }
+    if (!FX_CurrentThreadOwnsCooperativeIterator(draw->system)
+        || !FX_ThreadOwnsEffectLock(draw->system, draw->effect))
+    {
+        Com_Error(
+            ERR_DROP,
+            "FX physics draw requires cooperative and effect ownership");
+        return;
+    }
+    const fx::physics::BodySidecar *const sidecar =
+        FX_GetPhysicsBodySidecar(draw->system);
+    std::int32_t ownerIndex = -1;
+    if (!sidecar
+        || !FxPoolItemIndex<FxElem, MAX_ELEMS>(
+            draw->system->elems, draw->elem, &ownerIndex))
+    {
+        Com_Error(ERR_DROP, "Invalid FX physics draw owner");
+        return;
+    }
+
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-    Phys_ObjGetInterpolatedState(PHYS_WORLD_FX, (dxBody *)draw->elem->physObjId, placement->origin, placement->quat);
+    // The owning effect lock keeps this pool-slot incarnation live. FX free
+    // then clears the slot under PHYSICS -> FX_ALLOC, so sampling the token
+    // under PHYSICS also keeps Resolve atomic with sidecar transfer.
+    const fx::physics::BodyToken token =
+        fx::physics::TokenFromLegacyField(draw->elem->physObjId);
+    const fx::physics::BodyResult body = fx::physics::Resolve(
+        sidecar, static_cast<std::size_t>(ownerIndex), token);
+    if (body)
+    {
+        Phys_ObjGetInterpolatedState(
+            PHYS_WORLD_FX,
+            body.body,
+            placement->origin,
+            placement->quat);
+    }
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    if (!body)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Invalid FX physics draw binding (%u)",
+            static_cast<unsigned>(body.status));
+    }
 }
 
 void __cdecl FX_DrawElem_Light(FxDrawState *draw)
@@ -1132,13 +1180,21 @@ void __cdecl FX_DrawNonSpriteElems(FxSystem *system)
         activeIndex =
             static_cast<std::uint32_t>(firstActiveEffect) + activeOffset;
         effect = FX_EffectFromHandle(system, system->allEffectHandles[activeIndex & 0x3FF]);
-        FX_DrawNonSpriteEffect(system, effect, 1u, system->msecDraw);
+        if (FX_LockEffect(system, effect))
+        {
+            FX_DrawNonSpriteEffect(system, effect, 1u, system->msecDraw);
+            FX_UnlockEffect(system, effect);
+        }
     }
     FX_EndIteratingOverEffects_Cooperative(system);
 }
 
 void __cdecl FX_BeginIteratingOverEffects_Cooperative(FxSystem *system)
 {
+    if (!system)
+        FX_DropCorruptDrawList("missing cooperative iterator system");
+    const std::uint32_t admissionGeneration =
+        FX_GetCooperativeIteratorGeneration(system);
     if (fx_cooperativeIteratorThreadState.depth != 0
         && fx_cooperativeIteratorThreadState.system != system)
     {
@@ -1158,12 +1214,16 @@ void __cdecl FX_BeginIteratingOverEffects_Cooperative(FxSystem *system)
         FX_WaitForArchiveGate(system);
         FX_WaitForEffectKillGate(system);
         FxIteratorBeginCooperative(&system->iteratorCount);
-        if (!FX_ArchiveGateIsActive(system)
-            && !FX_EffectKillGateIsActive(system))
+        const std::uint32_t currentGeneration =
+            FX_GetCooperativeIteratorGeneration(system);
+        const bool initialized = system->isInitialized != 0;
+        const bool archiveActive = FX_ArchiveGateIsActive(system);
+        const bool killActive = FX_EffectKillGateIsActive(system);
+        if (!archiveActive && !killActive && initialized
+            && currentGeneration == admissionGeneration)
         {
             fx_cooperativeIteratorThreadState.system = system;
-            fx_cooperativeIteratorThreadState.generation =
-                FX_GetCooperativeIteratorGeneration(system);
+            fx_cooperativeIteratorThreadState.generation = currentGeneration;
             fx_cooperativeIteratorThreadState.depth = 1;
             return;
         }
@@ -1172,6 +1232,16 @@ void __cdecl FX_BeginIteratingOverEffects_Cooperative(FxSystem *system)
         {
             FX_DropCorruptDrawList(
                 "failed to roll back cooperative iterator admission");
+        }
+        if (currentGeneration != admissionGeneration)
+        {
+            FX_DropCorruptDrawList(
+                "cooperative iterator crossed an FX lifecycle boundary");
+        }
+        if (!initialized)
+        {
+            FX_DropCorruptDrawList(
+                "cooperative iterator entered an uninitialized FX system");
         }
     }
 }
@@ -1236,6 +1306,12 @@ void __cdecl FX_DrawNonSpriteEffect(FxSystem *system, FxEffect *effect, uint32_t
         FX_DropCorruptDrawList("missing non-sprite draw state");
     if (elemClass == 0 || elemClass >= 3)
         FX_DropCorruptDrawList("invalid non-sprite element class");
+    if (!FX_CurrentThreadOwnsCooperativeIterator(system)
+        || !FX_ThreadOwnsEffectLock(system, effect))
+    {
+        FX_DropCorruptDrawList(
+            "non-sprite traversal requires cooperative and effect ownership");
+    }
     drawState.effect = effect;
     drawState.msecDraw = drawTime;
     elemHandle = effect->firstElemHandle[elemClass];
@@ -1417,6 +1493,12 @@ void __cdecl FX_DrawSpotLightEffect(FxSystem *system, FxEffect *effect, int32_t 
 
     if (!system || !effect)
         FX_DropCorruptDrawList("missing spotlight draw state");
+    if (!FX_CurrentThreadOwnsCooperativeIterator(system)
+        || !FX_ThreadOwnsEffectLock(system, effect))
+    {
+        FX_DropCorruptDrawList(
+            "spotlight traversal requires cooperative and effect ownership");
+    }
     FxSpotLightStateSnapshot spotLightSnapshot{};
     if (!FX_GetSpotLightStateSnapshot(system, &spotLightSnapshot))
         FX_DropCorruptDrawList("missing spotlight draw snapshot");
@@ -1484,6 +1566,8 @@ void __cdecl FX_DrawSpriteElems(FxSystem *system, int32_t drawTime)
             static_cast<std::uint32_t>(firstActiveEffect) + activeOffset;
         effectHandle = system->allEffectHandles[activeIndex & 0x3FF];
         effect = FX_EffectFromHandle(system, effectHandle);
+        if (!FX_LockEffect(system, effect))
+            continue;
         FX_DrawSpriteEffect(system, effect, drawTime);
         FX_DrawNonSpriteEffect(system, effect, 2u, drawTime);
         if (effect->firstTrailHandle != 0xFFFF)
@@ -1492,13 +1576,18 @@ void __cdecl FX_DrawSpriteElems(FxSystem *system, int32_t drawTime)
                 FX_DropCorruptDrawList("trail effect list exceeds capacity");
             trailEffects[numTrailEffects++] = effectHandle;
         }
+        FX_UnlockEffect(system, effect);
     }
     if (numTrailEffects > 0)
     {
         for (i = 0; i < numTrailEffects; ++i)
         {
             effecta = FX_EffectFromHandle(system, trailEffects[i]);
-            FX_DrawTrailsForEffect(system, effecta, drawTime);
+            if (FX_LockEffect(system, effecta))
+            {
+                FX_DrawTrailsForEffect(system, effecta, drawTime);
+                FX_UnlockEffect(system, effecta);
+            }
         }
     }
     FX_EndIteratingOverEffects_Cooperative(system);
@@ -1528,6 +1617,14 @@ void __cdecl FX_DrawTrailsForEffect(FxSystem *system, FxEffect *effect, int32_t 
     uint16_t trailHandle; // [esp+B0h] [ebp-8h]
     FxTrail *trail; // [esp+B4h] [ebp-4h]
 
+    if (!system || !effect)
+        FX_DropCorruptDrawList("missing trail draw state");
+    if (!FX_CurrentThreadOwnsCooperativeIterator(system)
+        || !FX_ThreadOwnsEffectLock(system, effect))
+    {
+        FX_DropCorruptDrawList(
+            "trail traversal requires cooperative and effect ownership");
+    }
     drawState.system = system;
     drawState.effect = effect;
     drawState.msecDraw = drawTime;
@@ -1951,6 +2048,12 @@ void __cdecl FX_DrawSpriteEffect(FxSystem *system, FxEffect *effect, int32_t dra
 
     if (!system || !effect)
         FX_DropCorruptDrawList("missing sprite draw state");
+    if (!FX_CurrentThreadOwnsCooperativeIterator(system)
+        || !FX_ThreadOwnsEffectLock(system, effect))
+    {
+        FX_DropCorruptDrawList(
+            "sprite traversal requires cooperative and effect ownership");
+    }
     drawState.effect = effect;
     drawState.msecDraw = drawTime;
     elemHandle = effect->firstElemHandle[0];

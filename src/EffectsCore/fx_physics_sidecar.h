@@ -101,6 +101,9 @@ class BodySidecar;
 
 [[nodiscard]] inline SidecarStatus Validate(
     const BodySidecar *sidecar) noexcept;
+[[nodiscard]] inline SidecarStatus ValidateVacantOwner(
+    const BodySidecar *sidecar,
+    std::size_t ownerIndex) noexcept;
 [[nodiscard]] inline SidecarStatus ValidateSemanticOwnership(
     const BodySidecar *sidecar,
     const std::array<BodyToken, MAX_ELEMS> &expectedTokens) noexcept;
@@ -191,6 +194,8 @@ class BodySidecar final
 
   private:
     friend SidecarStatus Validate(const BodySidecar *) noexcept;
+    friend SidecarStatus ValidateVacantOwner(
+        const BodySidecar *, std::size_t) noexcept;
     friend SidecarStatus ValidateSemanticOwnership(
         const BodySidecar *,
         const std::array<BodyToken, MAX_ELEMS> &) noexcept;
@@ -396,6 +401,26 @@ struct SidecarTestAccess
         if (bodies[index - 1] == bodies[index])
             return SidecarStatus::DuplicateBody;
     }
+    return SidecarStatus::Success;
+}
+
+// Spawn admission needs a bounded preflight before allocating a native body.
+// A vacant owner's generation can legitimately be nonzero after Take or
+// ResetEmpty, so only the body registration determines owner vacancy here.
+[[nodiscard]] inline SidecarStatus ValidateVacantOwner(
+    const BodySidecar *const sidecar,
+    const std::size_t ownerIndex) noexcept
+{
+    if (!sidecar)
+        return SidecarStatus::InvalidArgument;
+    if (!sidecar->initialized_)
+        return SidecarStatus::Uninitialized;
+    if (ownerIndex >= MAX_ELEMS)
+        return SidecarStatus::OwnerOutOfRange;
+    if (sidecar->activeCount_ > BODY_LIMIT)
+        return SidecarStatus::ActiveCountCorrupt;
+    if (sidecar->slots_[ownerIndex].body)
+        return SidecarStatus::AlreadyBound;
     return SidecarStatus::Success;
 }
 
