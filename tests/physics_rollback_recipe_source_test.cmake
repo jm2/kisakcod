@@ -98,6 +98,21 @@ extract_slice(
     "bool Phys_RollbackTransformHasUniqueInnerOwnership("
     _global_topology_scope
     "global no-report native topology classification")
+foreach(_global_capacity_guard IN ITEMS
+    "bodyStorage\\.itemCount[ \t\r\n]*>[ \t\r\n]*snapshot\\.worldForBody\\.size\\(\\)"
+    "userDataStorage\\.itemCount[ \t\r\n]*>[ \t\r\n]*snapshot\\.bodyForUserData\\.size\\(\\)"
+    "geomStorage\\.itemCount[ \t\r\n]*>[ \t\r\n]*snapshot\\.spaceForGeom\\.size\\(\\)")
+    require_regex("${_global_topology_scope}" "${_global_capacity_guard}"
+        "pool descriptors fit every fixed-capacity topology snapshot")
+endforeach()
+require_regex_ordered("${_global_topology_scope}"
+    "bodyStorage\\.itemCount[ \t\r\n]*>[ \t\r\n]*snapshot\\.worldForBody\\.size\\(\\)"
+    "snapshot\\.worldForBody\\[bodyIndex\\]"
+    "body descriptor capacity is proven before snapshot indexing")
+require_regex_ordered("${_global_topology_scope}"
+    "userDataStorage\\.itemCount[ \t\r\n]*>[ \t\r\n]*snapshot\\.bodyForUserData\\.size\\(\\)"
+    "snapshot\\.bodyForUserData\\[userDataIndex\\]"
+    "user-data descriptor capacity is proven before snapshot indexing")
 foreach(_global_invariant IN ITEMS
     "worldForBody\\.fill\\(PHYS_ROLLBACK_NO_OWNER\\)"
     "bodyForUserData\\.fill\\(PHYS_ROLLBACK_NO_OWNER\\)"
@@ -326,6 +341,10 @@ require_regex_ordered("${_ownership_scope}"
     "Phys_TryGetExactPoolSlotIndex\\([ \t\r\n]*bodyStorage"
     "Phys_RollbackPoolIsValid\\([ \t\r\n]*bodyStorage"
     "foreign body pointers are range-proven before pool traversal")
+require_regex_ordered("${_ownership_scope}"
+    "bodyStorage\\.itemCount[ \t\r\n]*>[ \t\r\n]*PHYS_BODY_POOL_COUNT"
+    "visitedBodies\\[cursorIndex\\]"
+    "body descriptor capacity is proven before fixed cycle-set indexing")
 require_regex("${_ownership_scope}"
     "std::array<bool,[ \t\r\n]*PHYS_BODY_POOL_COUNT>[ \t\r\n]+visitedBodies"
     "world traversal has a fixed cycle bound")

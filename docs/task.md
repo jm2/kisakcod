@@ -18,8 +18,11 @@ work item changes. Do not create session-specific handoff files.
   Expected cleanup is a preflighted no-fail commit; any unexpected post-detach or constructor cleanup
   rejection is surfaced explicitly and fail-stops while archive and PHYSICS exclusion remain closed rather
   than orphaning a native body. Legacy fallback-box and zero-geom models retain normal creation parity, and
-  interactive Windows fatal errors now return a failure exit status. Bounded ownership snapshots and exact
-  full-capacity retirement/rollback/rebind ledgers cover all 512 registrations. Local validation is
+  interactive Windows fatal errors now return a failure exit status. Automated review additionally bounds
+  every body, user-data, and geometry pool descriptor before indexing the fixed topology snapshots and keeps
+  fresh body destruction plus paired user-data release inside one recursive PHYSICS critical section.
+  Bounded ownership snapshots and exact full-capacity retirement/rollback/rebind ledgers cover all 512
+  registrations. Local validation is
   **42/42** under GCC, Clang, ASan/UBSan (leak detection disabled under the ptrace runner), and TSan; the
   sidecar and capacity fixtures also compile and link with strict warnings under x86-32 and AArch64.
   Production `phys_ode.cpp`/`fx_archive.cpp` compilation remains a Windows x86 CI gate because portable
@@ -29,6 +32,9 @@ work item changes. Do not create session-specific handoff files.
   PR #11 merged the live generation-checked sidecar baseline as `da273589` after replacement run
   **29335570405 passed all nine CI jobs**; PR #9's native physics-pool prerequisite merged at `8ce11763`
   after run **29300663478 passed all nine jobs**.
+  PR #12's pre-review head `dded2f45` passed all nine jobs in run **29350268608**; its three substantiated
+  Gemini hardening findings are fixed on the branch, while the claimed nullable canonical FX buffer members
+  are embedded arrays and therefore not nullable when their owning buffer is valid.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.

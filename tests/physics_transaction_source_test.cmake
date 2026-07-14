@@ -81,6 +81,33 @@ function(require_slice_literal_count SLICE_VAR NEEDLE EXPECTED_COUNT DESCRIPTION
     endif()
 endfunction()
 
+extract_source_slice(
+    _phys_ode_source
+    "static bool Phys_ReleaseCreatedBodyResources("
+    "static PhysBodyModelCreateStatus Phys_TryCreateBodyFromStateInternal("
+    _release_body_scope
+    "created body/user-data cleanup")
+require_slice_ordered(
+    _release_body_scope
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
+    "dBodyDestroy(body);"
+    "created body destruction must begin under the physics lock")
+require_slice_ordered(
+    _release_body_scope
+    "dBodyDestroy(body);"
+    "Pool_Free("
+    "body destruction must precede its paired user-data release")
+require_slice_ordered(
+    _release_body_scope
+    "Pool_Free("
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "pool-backed user data must be released before unlocking physics")
+require_slice_ordered(
+    _release_body_scope
+    "free(userData);"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "all allocator variants must release user data before unlocking physics")
+
 set(_try_geom_start
     "static PhysBodyModelCreateStatus Phys_TryBodyAddGeomAndSetMass(")
 set(_try_geom_end "void __cdecl Phys_BodyAddGeomAndSetMass(")

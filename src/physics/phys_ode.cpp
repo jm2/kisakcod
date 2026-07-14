@@ -632,19 +632,20 @@ static bool Phys_ReleaseCreatedBodyResources(
 {
     if (!body || !userData)
         return false;
+
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     dBodyDestroy(body);
 #ifdef USE_POOL_ALLOCATOR
-    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     const bool userDataFreed = Pool_Free(
         Phys_UserDataPoolStorage(),
         &physGlob.userDataPool,
         userData);
-    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
-    return userDataFreed;
 #else
     free(userData);
-    return true;
+    const bool userDataFreed = true;
 #endif
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    return userDataFreed;
 }
 
 static PhysBodyModelCreateStatus Phys_TryCreateBodyFromStateInternal(
@@ -2121,6 +2122,8 @@ PhysBodyRollbackStatus Phys_ValidateLiveBodyOwnershipLocked(
         return PhysBodyRollbackStatus::PhysicsUnavailable;
 
     const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
+    if (bodyStorage.itemCount > PHYS_BODY_POOL_COUNT)
+        return PhysBodyRollbackStatus::BodyPoolInvalid;
     std::size_t bodyIndex = 0;
     if (!Phys_TryGetExactPoolSlotIndex(
             bodyStorage, body, &bodyIndex))
@@ -2337,6 +2340,12 @@ PhysBodyRollbackStatus Phys_TryValidateGlobalTopologyLockedNoReport(
     const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
     const poolstorage_t userDataStorage = Phys_UserDataPoolStorage();
     const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    if (bodyStorage.itemCount > snapshot.worldForBody.size())
+        return PhysBodyRollbackStatus::BodyPoolInvalid;
+    if (userDataStorage.itemCount > snapshot.bodyForUserData.size())
+        return PhysBodyRollbackStatus::UserDataPoolInvalid;
+    if (geomStorage.itemCount > snapshot.spaceForGeom.size())
+        return PhysBodyRollbackStatus::GeomPoolInvalid;
     if (!Phys_RollbackPoolIsValid(bodyStorage, &odeGlob.bodyPool))
         return PhysBodyRollbackStatus::BodyPoolInvalid;
     if (!Phys_RollbackPoolIsValid(
