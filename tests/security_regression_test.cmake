@@ -446,7 +446,7 @@ require_source_match_count(
 foreach(_resource_pair_callback
     "ResourceHandle (*createPrimary)(void *context) noexcept = nullptr;"
     "ResourceHandle (*createCompanion)("
-    "void (*destroyPrimary)("
+    "bool (*destroyPrimary)("
     "TryCreateResourcePair("
 )
     require_source_contains(
@@ -454,16 +454,28 @@ foreach(_resource_pair_callback
         "${_resource_pair_callback}"
         "resource-pair rollback callbacks must retain their noexcept contract")
 endforeach()
+require_source_contains(
+    "physics/phys_resource_pair.h"
+    "PrimaryCleanupFailed,"
+    "resource-pair rollback must distinguish refused primary cleanup")
 require_source_ordered(
     "physics/phys_resource_pair.cpp"
     "callbacks.createCompanion(callbacks.context, primary);"
-    "callbacks.destroyPrimary(callbacks.context, primary);"
+    "!callbacks.destroyPrimary(callbacks.context, primary))"
     "failed companion creation must return its primary resource")
 require_source_ordered(
     "physics/phys_resource_pair.cpp"
-    "callbacks.destroyPrimary(callbacks.context, primary);"
+    "!callbacks.destroyPrimary(callbacks.context, primary))"
     "return {ResourcePairStatus::CompanionUnavailable, nullptr, nullptr};"
-    "resource-pair failure must publish no stale ownership")
+    "successful primary rollback must publish no stale ownership")
+require_source_matches(
+    "physics/phys_resource_pair.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*!callbacks\\.destroyPrimary\\([ \t\r\n]*callbacks\\.context,[ \t\r\n]*primary[ \t\r\n]*\\)[ \t\r\n]*\\)[ \t\r\n]*\\{[ \t\r\n]*return[ \t\r\n]*\\{[ \t\r\n]*ResourcePairStatus::PrimaryCleanupFailed,[ \t\r\n]*primary,[ \t\r\n]*nullptr[ \t\r\n]*\\}[ \t\r\n]*;[ \t\r\n]*\\}"
+    "refused primary cleanup must preserve its still-owned primary handle")
+require_source_not_matches(
+    "physics/phys_resource_pair.cpp"
+    "ResourcePairStatus::PrimaryCleanupFailed,[ \t\r\n]*nullptr,[ \t\r\n]*nullptr"
+    "failed primary cleanup must not erase recoverable ownership")
 require_source_contains(
     "physics/phys_ode.cpp"
     "physics::allocation::TryCreateResourcePair(resourceCallbacks, true);"
@@ -472,6 +484,11 @@ require_source_contains(
     "physics/phys_ode.cpp"
     "resourceCallbacks, geomState->isOriented);"
     "primary collision and optional transforms must be acquired transactionally")
+require_source_match_count(
+    "physics/phys_ode.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*resources\\.status[ \t\r\n]*==[ \t\r\n]*physics::allocation::ResourcePairStatus::PrimaryCleanupFailed[ \t\r\n]*\\)[ \t\r\n]*(\\{[ \t\r\n]*)?return[ \t\r\n]+PhysBodyModelCreateStatus::CleanupFailed[ \t\r\n]*;"
+    2
+    "both production resource-pair users must surface refused cleanup")
 require_source_ordered(
     "physics/phys_ode.cpp"
     "dSpaceRemove(physGlob.space[worldIndex], outerGeom);"

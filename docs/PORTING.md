@@ -966,11 +966,13 @@ archive iterator exclusion across both graph images, and atomically drains all t
 canonical safe-empty reset. Unexpected cleanup failure after ownership transfer fail-stops before admission
 can reopen. Its portable matrix is **42/42** under GCC, Clang, ASan/UBSan, and TSan, with strict x86-32 and
 AArch64 sidecar/capacity compile-link checks; Windows x86 CI remains the production translation-unit gate.
-The next prerequisite makes fresh resource-pair rollback callbacks report cleanup refusal before fault
-injection can exercise the production transaction. Remaining FX work is camera/scalar snapshot publication,
-real Disk32 archive/fast-file conversion, an executable full-restore/fault-injection harness with real
-competing ODE occupancy, and a measured heap-backed transaction workspace. The
-unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
+Status-bearing resource-pair rollback now retains and reports a primary resource when fresh cleanup refuses;
+both archive call sites fail-stop rather than losing that ownership, and diagnostic rollback holds recursive
+PHYSICS exclusion across body/geometry destruction. The next step extracts a pure restore-control seam for
+executable nth-operation fault injection. Remaining FX work is camera/scalar snapshot publication, real
+Disk32 archive/fast-file conversion, an executable full-restore/fault-injection harness with real
+competing ODE occupancy, and a measured heap-backed transaction workspace. The unbounded/alignment-unsafe
+`Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
 a separate transactional `current/end` cursor migration. Detailed live blockers and sequencing remain in
 `docs/task.md` and `docs/CODEBASE_AUDIT.md`.
 

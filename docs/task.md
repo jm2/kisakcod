@@ -10,18 +10,21 @@ work item changes. Do not create session-specific handoff files.
   `a9994b6b`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
 - Active work: this branch closes the first prerequisite for executable production restore fault injection.
-  The generic body/user-data and primary-geom/transform resource-pair transaction will make its rollback
-  callback status-bearing, retain explicit primary ownership when rollback refuses, and return a dedicated
-  cleanup-failure result. Both production acquisition paths will translate that result to the existing
+  The generic body/user-data and primary-geom/transform resource-pair transaction now makes its rollback
+  callback status-bearing, retains explicit primary ownership when rollback refuses, and returns a dedicated
+  cleanup-failure result. Both production acquisition paths translate that result to the existing
   `PhysBodyModelCreateStatus::CleanupFailed`, so the archive reconstruction caller can fail-stop instead of
   silently assuming a preflighted fresh-resource cleanup succeeded. Portable fake-pool tests cover injected
   cleanup refusal, exact ownership/counter preservation, event ordering, and caller retirement of the
-  retained primary. The merged baseline remains **42/42** under GCC, Clang, ASan/UBSan (leak detection
-  disabled under the ptrace runner), and TSan; production `phys_ode.cpp` compilation remains a Windows x86
-  CI gate because portable utility targets do not compile that engine translation unit. After this batch,
-  the next item is a pure restore-control seam with executable nth-operation failure coverage, followed by
-  checked heap transaction scratch, archive-gate waiters, real competing ODE occupancy, and measured x86
-  stack/runtime bounds.
+  retained primary. Fresh no-report callbacks reject only before mutation and report success after their
+  exact no-fail release; both archive callers are pinned to fail-stop on retained cleanup ownership.
+  Diagnostic body and geometry rollback now hold recursive PHYSICS exclusion across the complete legacy
+  destructor call. Local validation is **42/42** under GCC, Clang, ASan/UBSan (leak detection disabled under
+  the ptrace runner), and TSan, and the resource-pair fixture compiles and links with strict warnings under
+  x86-32 and AArch64. Production `phys_ode.cpp` compilation remains a Windows x86 CI gate because portable
+  utility targets do not compile that engine translation unit. The next item is a pure restore-control seam
+  with executable nth-operation failure coverage, followed by checked heap transaction scratch, archive-gate
+  waiters, real competing ODE occupancy, and measured x86 stack/runtime bounds.
   PR #11 merged the live generation-checked sidecar baseline as `da273589` after replacement run
   **29335570405 passed all nine CI jobs**; PR #9's native physics-pool prerequisite merged at `8ce11763`
   after run **29300663478 passed all nine jobs**.
@@ -502,9 +505,7 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Make fresh resource-pair rollback callbacks status-bearing and propagate cleanup refusal without losing
-   primary ownership. Then extract a testable production restore seam around the completed full-capacity
-   transaction and add
+1. Extract a testable production restore-control seam around the completed full-capacity transaction and add
    executable nth-operation fault injection for 0/512 bodies, retire/destroy/create/bind/publish/rebuild/
    reconstruct/drain failure, post-publication rollback, exact destruction ledgers, competing non-FX ODE
    occupancy, safe-empty publication, and archive-gate waiters. Measure the x86 stack/time ceiling, move the
