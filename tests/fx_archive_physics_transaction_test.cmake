@@ -146,6 +146,15 @@ require_ordered(
     "? Status::UnsafeFailure"
     ": Status::RecoverableFailure;"
     "unexpected retained reconstruction ownership must remain unsafe")
+require_position(
+    "${_reconstruct_physics_scope}"
+    "fx::physics::BindWithScratch("
+    _reconstruct_bind_scratch
+    "retired-body reconstruction must bind with caller scratch")
+require_absent(
+    "${_reconstruct_physics_scope}"
+    "fx::physics::Bind("
+    "retired-body reconstruction must not allocate wrapper scratch")
 
 extract_slice(
     "${_archive_source}"
@@ -174,6 +183,25 @@ require_ordered(
     "? Status::UnsafeFailure"
     ": Status::RecoverableFailure;"
     "unexpected retained desired ownership must remain unsafe")
+foreach(_create_scratch_operation IN ITEMS
+    "fx::physics::ValidateDisjointOwnershipWithScratch("
+    "fx::physics::BindWithScratch("
+    "fx::physics::TakeWithScratch(")
+    require_position(
+        "${_create_physics_scope}"
+        "${_create_scratch_operation}"
+        _create_scratch_position
+        "desired archive physics must use caller-owned sidecar scratch")
+endforeach()
+foreach(_create_stack_wrapper IN ITEMS
+    "fx::physics::ValidateDisjointOwnership("
+    "fx::physics::Bind("
+    "fx::physics::Take(")
+    require_absent(
+        "${_create_physics_scope}"
+        "${_create_stack_wrapper}"
+        "desired archive physics must not allocate wrapper scratch")
+endforeach()
 
 foreach(_forbidden_direct_physics_api IN ITEMS
     "Phys_ObjDestroy("
@@ -224,7 +252,7 @@ require_ordered(
 require_ordered(
     "${_retirement_planner}"
     "FX_GetArchivePhysicsFreeCapacityLocked(&freeCapacity)"
-    "fx::archive::BuildPhysicsRetirementPlan("
+    "fx::archive::BuildPhysicsRetirementPlanWithScratch("
     "nonempty planning must use the validated silent capacity snapshot")
 
 extract_slice(
@@ -262,26 +290,26 @@ extract_slice(
 require_ordered(
     "${_drain_helper}"
     "if (sidecars[first] == sidecars[second])"
-    "fx::physics::ValidateDisjointOwnership("
+    "fx::physics::ValidateDisjointOwnershipWithScratch("
     "sidecars must be distinct before ownership comparison")
 require_ordered(
     "${_drain_helper}"
-    "fx::physics::ValidateDisjointOwnership("
-    "fx::physics::SnapshotOwnership("
+    "fx::physics::ValidateDisjointOwnershipWithScratch("
+    "fx::physics::SnapshotOwnershipWithScratch("
     "all pairwise ownership must be disjoint before body inspection")
 require_ordered(
     "${_drain_helper}"
-    "fx::physics::SnapshotOwnership("
+    "fx::physics::SnapshotOwnershipWithScratch("
     "Phys_TryValidateBodyDestroyLockedNoReport("
     "each selected sidecar must snapshot before native destroy preflight")
 require_ordered(
     "${_drain_helper}"
     "Phys_TryValidateBodyDestroyLockedNoReport("
-    "fx::physics::TakeFirst("
+    "fx::physics::TakeFirstWithScratch("
     "every selected native body must preflight before the first Take")
 require_ordered(
     "${_drain_helper}"
-    "fx::physics::TakeFirst("
+    "fx::physics::TakeFirstWithScratch("
     "Phys_TryDestroyBodyLockedNoReport("
     "drain must detach ownership before checked native destruction")
 require_occurrence_count(
@@ -311,11 +339,11 @@ extract_slice(
 require_ordered(
     "${_retire_helper}"
     "Phys_TryValidateBodyDestroyLockedNoReport("
-    "fx::physics::Take("
+    "fx::physics::TakeWithScratch("
     "every selected retirement must preflight before the first Take")
 require_ordered(
     "${_retire_helper}"
-    "fx::physics::Take("
+    "fx::physics::TakeWithScratch("
     "Phys_TryDestroyBodyLockedNoReport("
     "retirement must detach sidecar ownership before destruction")
 foreach(_forbidden_destroy IN ITEMS
@@ -350,7 +378,7 @@ require_ordered(
 require_ordered(
     "${_safe_empty_helper}"
     "FX_DrainArchivePhysicsSidecarsLocked("
-    "FX_PublishArchiveSafeEmptyStateLocked(system)"
+    "FX_PublishArchiveSafeEmptyStateLockedWithScratch("
     "safe-empty recovery must atomically drain all physics before graph reset")
 require_ordered(
     "${_safe_empty_helper}"
@@ -362,6 +390,16 @@ require_ordered(
     "if (drainStatus != Status::Success)"
     "return drainStatus;"
     "safe-empty recovery must propagate unsafe drain failure unchanged")
+require_position(
+    "${_safe_empty_helper}"
+    "FxArchiveRestorePhysicsScratch *const scratch"
+    _safe_empty_workspace_scratch
+    "safe-empty recovery must receive the complete transaction scratch")
+require_ordered(
+    "${_safe_empty_helper}"
+    "&scratch->ownership.sidecar"
+    "&scratch->poolGraph"
+    "safe-empty recovery must pass both sidecar and pool scratch to graph publication")
 foreach(_required_sidecar IN ITEMS
     "{liveSidecar, stagedSidecar, rollbackSidecar}"
     "{true, true, true}")
@@ -386,7 +424,7 @@ endforeach()
 extract_slice(
     "${_system_source}"
     "bool __cdecl FX_CanPublishArchiveSafeEmptyStateLocked("
-    "bool __cdecl FX_PublishArchiveSafeEmptyStateLocked("
+    "bool __cdecl FX_PublishArchiveSafeEmptyStateLockedWithScratch("
     _safe_empty_preflight
     "safe-empty graph preflight")
 require_ordered(
@@ -394,6 +432,45 @@ require_ordered(
     "FX_ValidateArchiveExclusiveState(system)"
     "FX_CanResetSystemGraphUnderExclusiveClaim(system)"
     "safe-empty graph preflight must validate exclusivity before reset prerequisites")
+
+extract_slice(
+    "${_system_source}"
+    "bool __cdecl FX_PublishArchiveSafeEmptyStateLockedWithScratch("
+    "bool __cdecl FX_PublishArchiveSafeEmptyStateLocked("
+    _safe_empty_publication
+    "safe-empty scratch publication")
+foreach(_safe_empty_scratch IN ITEMS
+    "BodySidecarValidationScratch *const sidecarScratch"
+    "FxPoolAllocationGraphScratch *const poolGraphScratch")
+    require_position(
+        "${_safe_empty_publication}"
+        "${_safe_empty_scratch}"
+        _safe_empty_scratch_position
+        "safe-empty publication must receive both caller scratch types")
+endforeach()
+require_ordered(
+    "${_safe_empty_publication}"
+    "fx::physics::ValidateWithScratch(sidecar, sidecarScratch)"
+    "Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
+    "safe-empty publication must validate physics with caller scratch before graph mutation")
+require_ordered(
+    "${_safe_empty_publication}"
+    "FX_ResetSystemGraphUnderExclusiveClaim(system)"
+    "FxValidatePoolAllocationGraphWithScratch("
+    "safe-empty publication must validate the reset graph with caller scratch")
+require_ordered(
+    "${_safe_empty_publication}"
+    "poolGraphScratch"
+    "system->isInitialized = true;"
+    "safe-empty publication must finish caller-scratch graph validation before publication")
+foreach(_safe_empty_stack_wrapper IN ITEMS
+    "fx::physics::Validate(sidecar)"
+    "FxValidatePoolAllocationGraph(")
+    require_absent(
+        "${_safe_empty_publication}"
+        "${_safe_empty_stack_wrapper}"
+        "safe-empty transaction publication must not allocate wrapper scratch")
+endforeach()
 
 extract_slice(
     "${_system_source}"
@@ -442,6 +519,55 @@ require_ordered(
 
 extract_slice(
     "${_archive_source}"
+    "struct FxArchiveRestoreTransactionWorkspace final"
+    "static_assert(std::is_nothrow_default_constructible_v<"
+    _restore_workspace
+    "archive restore transaction workspace")
+set(_previous_workspace_member "struct FxArchiveRestoreTransactionWorkspace final")
+foreach(_workspace_member IN ITEMS
+    "FxSystem rollbackSystem{};"
+    "FxArchiveRestoreControlContext control{};"
+    "FxArchiveRestorePhysicsScratch physicsScratch{};"
+    "fx::physics::BodySidecar stagedPhysicsSidecar{};"
+    "fx::physics::BodySidecar rollbackPhysicsSidecar{};")
+    require_ordered(
+        "${_restore_workspace}"
+        "${_previous_workspace_member}"
+        "${_workspace_member}"
+        "the restore workspace must concretely own ordered transaction state")
+    set(_previous_workspace_member "${_workspace_member}")
+endforeach()
+foreach(_workspace_lifetime_guard IN ITEMS
+    "FxArchiveRestoreTransactionWorkspace() noexcept = default;"
+    "~FxArchiveRestoreTransactionWorkspace() noexcept = default;"
+    "const FxArchiveRestoreTransactionWorkspace &) = delete;")
+    require_position(
+        "${_restore_workspace}"
+        "${_workspace_lifetime_guard}"
+        _workspace_lifetime_position
+        "the restore workspace must have explicit noncopying lifetime semantics")
+endforeach()
+
+extract_slice(
+    "${_archive_source}"
+    "struct FxArchiveRestorePhysicsScratch"
+    "constexpr int FX_ARCHIVE_SYSTEM_SIZE"
+    _restore_scratch
+    "archive restore caller scratch")
+foreach(_scratch_member IN ITEMS
+    "FxArchivePhysicsOwnershipScratch ownership{};"
+    "retirementCandidates{};"
+    "PhysicsRetirementPlanScratch retirementPlanner{};"
+    "FxPoolAllocationGraphScratch poolGraph{};")
+    require_position(
+        "${_restore_scratch}"
+        "${_scratch_member}"
+        _scratch_member_position
+        "the heap workspace must own every bounded restore scratch image")
+endforeach()
+
+extract_slice(
+    "${_archive_source}"
     "void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)"
     "void __cdecl FX_RestoreEffectDefTable("
     _restore_source
@@ -455,6 +581,117 @@ require_position(
     "Sys_AtomicLoad(&rollbackSystem.iteratorCount) == -1"
     _rollback_snapshot_exclusive
     "the rollback graph image must preserve iterator -1")
+
+extract_slice(
+    "${_archive_source}"
+    "bool FX_RebuildArchivePoolAllocationStates("
+    "[[noreturn]] void FX_DropInvalidEffectHandle("
+    _archive_pool_rebuild
+    "archive pool-state preflight")
+require_position(
+    "${_archive_pool_rebuild}"
+    "FxPoolAllocationGraphScratch *const scratch"
+    _archive_pool_scratch_parameter
+    "archive graph preflight must receive caller-owned scratch")
+require_ordered(
+    "${_archive_pool_rebuild}"
+    "FxPoolRebuildAllocationStateLocked<FxTrailElem, MAX_TRAIL_ELEMS>("
+    "FxValidatePoolAllocationGraphWithScratch("
+    "archive preflight must rebuild every allocation sidecar before graph validation")
+require_absent(
+    "${_archive_pool_rebuild}"
+    "FxValidatePoolAllocationGraph("
+    "archive preflight must not allocate the legacy graph wrapper frame")
+
+extract_slice(
+    "${_restore_source}"
+    "FxPoolAllocationGraphScratch *const poolGraphScratch ="
+    "if (!FX_FixupEffectDefHandlesNoDrop("
+    _pool_graph_preflight_lifetime
+    "archive pool-graph scratch lifetime")
+require_ordered(
+    "${_pool_graph_preflight_lifetime}"
+    "AllocateArchiveRestoreWorkspace<"
+    "if (!poolGraphScratch)"
+    "pool graph scratch allocation must be checked before validation")
+require_ordered(
+    "${_pool_graph_preflight_lifetime}"
+    "if (!poolGraphScratch)"
+    "FX_RebuildArchivePoolAllocationStates("
+    "archive pool reconstruction must not run after allocation failure")
+require_ordered(
+    "${_pool_graph_preflight_lifetime}"
+    "FX_RebuildArchivePoolAllocationStates("
+    "DestroyArchiveRestoreWorkspace("
+    "archive graph scratch must be destroyed immediately after preflight")
+require_ordered(
+    "${_pool_graph_preflight_lifetime}"
+    "DestroyArchiveRestoreWorkspace("
+    "if (!restoredPoolStateValid)"
+    "archive graph scratch must be gone before invalid pool state is reported")
+require_ordered(
+    "${_pool_graph_preflight_lifetime}"
+    "if (!restoredPoolStateValid)"
+    "\"Invalid FX pool state in archive\""
+    "invalid pool state may report only after scratch destruction")
+require_absent(
+    "${_pool_graph_preflight_lifetime}"
+    "FxPoolAllocationGraphScratch poolGraphScratch{};"
+    "archive preflight must not recreate graph scratch on the restore stack")
+require_ordered(
+    "${_restore_source}"
+    "DestroyArchiveRestoreWorkspace("
+    "FX_AllocateArchiveRestoreTransactionWorkspace()"
+    "short-lived graph scratch must be destroyed before transaction workspace allocation")
+require_ordered(
+    "${_restore_source}"
+    "FX_AllocateArchiveRestoreTransactionWorkspace()"
+    "FX_BeginArchive(system)"
+    "the checked restore workspace must exist before archive ownership is acquired")
+extract_slice(
+    "${_restore_source}"
+    "if (!FX_BeginArchive(system))"
+    "// Nothing below this point performs archive I/O"
+    _begin_archive_failure
+    "archive begin failure cleanup")
+require_ordered(
+    "${_begin_archive_failure}"
+    "FX_DestroyArchiveRestoreTransactionWorkspace("
+    "Z_Free(rollbackBuffers, 10);"
+    "begin failure must destroy the empty workspace before staging storage")
+require_ordered(
+    "${_begin_archive_failure}"
+    "FX_DestroyArchiveRestoreTransactionWorkspace("
+    "Com_Error(ERR_DROP"
+    "begin failure must destroy the empty workspace before reporting")
+
+foreach(_former_restore_stack_local IN ITEMS
+    "FxSystem rollbackSystem{};"
+    "FxArchiveRestoreControlContext restoreContext{};"
+    "fx::physics::BodySidecar stagedPhysicsSidecar"
+    "fx::physics::BodySidecar rollbackPhysicsSidecar"
+    "FxArchiveRestorePhysicsScratch physicsScratch{};"
+    "FxPoolAllocationGraphScratch poolGraphScratch{};")
+    require_absent(
+        "${_restore_source}"
+        "${_former_restore_stack_local}"
+        "FX_Restore must not recreate transaction workspace members on its stack")
+endforeach()
+require_ordered(
+    "${_restore_source}"
+    "FxSystem &rollbackSystem = restoreWorkspace->rollbackSystem;"
+    "FxArchiveRestoreControlContext &restoreContext ="
+    "FX_Restore must bind rollback and control state from the heap workspace")
+require_ordered(
+    "${_restore_source}"
+    "&restoreWorkspace->stagedPhysicsSidecar"
+    "&restoreWorkspace->rollbackPhysicsSidecar"
+    "FX_Restore must bind both transaction sidecars from the heap workspace")
+require_ordered(
+    "${_restore_source}"
+    "&restoreWorkspace->rollbackPhysicsSidecar"
+    "&restoreWorkspace->physicsScratch"
+    "FX_Restore must bind caller scratch after its workspace sidecars")
 
 extract_slice(
     "${_archive_source}"
@@ -533,6 +770,34 @@ foreach(_adapter_operation IN ITEMS
         "case Operation::${_adapter_operation}:"
         1
         "the production adapter must map every controller operation exactly once")
+endforeach()
+require_occurrence_count(
+    "${_restore_adapter}"
+    "FX_ValidatePoolAllocationGraphStateWithScratch("
+    3
+    "all restore graph validation states must reuse the workspace pool scratch")
+foreach(_adapter_scratch_operation IN ITEMS
+    "FX_CaptureArchivePhysicsRollbackRecipesLockedWithScratch("
+    "fx::physics::PrepareReplacementWithScratch("
+    "FX_ValidateArchivePhysicsOwnershipLockedWithScratch("
+    "fx::physics::PublishReplacementWithScratch("
+    "fx::physics::RollbackReplacementWithScratch(")
+    require_position(
+        "${_restore_adapter}"
+        "${_adapter_scratch_operation}"
+        _adapter_scratch_position
+        "the restore controller adapter must use caller-owned sidecar scratch")
+endforeach()
+foreach(_adapter_stack_wrapper IN ITEMS
+    "FX_ValidatePoolAllocationGraphState(context.system)"
+    "FX_ValidateArchivePhysicsOwnershipLocked("
+    "fx::physics::PrepareReplacement("
+    "fx::physics::PublishReplacement("
+    "fx::physics::RollbackReplacement(")
+    require_absent(
+        "${_restore_adapter}"
+        "${_adapter_stack_wrapper}"
+        "the restore controller adapter must not allocate wrapper scratch")
 endforeach()
 
 extract_slice(
@@ -698,6 +963,24 @@ require_ordered(
     "std::abort();"
     "Z_Free(rollbackBuffers, 10);"
     "unsafe restore must terminate before transaction scratch can be released")
+extract_slice(
+    "${_restore_completion}"
+    "if (restoreOutcome == fx::archive::RestoreControlOutcome::UnsafeFailure)"
+    "    }\n\n    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    _unsafe_restore_branch
+    "unsafe restore fail-stop branch")
+foreach(_unsafe_cleanup IN ITEMS
+    "FX_DestroyArchiveRestoreTransactionWorkspace("
+    "FX_FreeArchiveRestoreWorkspaceMemory("
+    "Z_Free("
+    "Sys_LeaveCriticalSection("
+    "FX_EndArchive("
+    "system->isArchiving = false")
+    require_absent(
+        "${_unsafe_restore_branch}"
+        "${_unsafe_cleanup}"
+        "unsafe restore must retain workspace, locks, and archive admission until termination")
+endforeach()
 require_position(
     "${_restore_source}"
     "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
@@ -751,8 +1034,13 @@ string(SUBSTRING "${_restore_source}" ${_physics_leave} -1 _after_physics)
 require_ordered(
     "${_after_physics}"
     "FX_EndArchive(system);"
+    "FX_DestroyArchiveRestoreTransactionWorkspace(restoreWorkspace)"
+    "safe restore cleanup must destroy the workspace only after archive release")
+require_ordered(
+    "${_after_physics}"
+    "FX_DestroyArchiveRestoreTransactionWorkspace(restoreWorkspace)"
     "Z_Free(rollbackBuffers, 10);"
-    "archive exclusion must be released before staging memory is freed")
+    "safe restore cleanup must destroy the workspace before staging memory is freed")
 require_ordered(
     "${_after_physics}"
     "Z_Free(restoredBuffers, 10);"
@@ -778,6 +1066,11 @@ require_occurrence_count(
     "RestoreControlOutcome::UnsafeFailure"
     1
     "UnsafeFailure must have one centralized fail-stop")
+require_occurrence_count(
+    "${_restore_source}"
+    "FX_DestroyArchiveRestoreTransactionWorkspace("
+    2
+    "workspace destruction must occur only on begin failure and safe terminal cleanup")
 foreach(_non_success_outcome IN ITEMS OriginalRestored SafeEmptyPublished)
     require_absent(
         "${_restore_source}"

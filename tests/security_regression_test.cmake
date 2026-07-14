@@ -179,6 +179,19 @@ require_source_contains(
     "win32/win_main.cpp"
     "Sys_Error(\"Less than 128 MB of virtual address space remains\");"
     "headless low-memory startup must fail without a modal prompt")
+foreach(_sys_error_contract IN ITEMS
+    "qcommon/qcommon.h"
+    "win32/win_local.h"
+    "win32/win_main.cpp")
+    require_source_matches(
+        "${_sys_error_contract}"
+        "\\[\\[noreturn\\]\\][ \t]+void[ \t]+Sys_Error[ \t]*\\("
+        "the cross-platform fatal-error contract must be declared and defined noreturn")
+endforeach()
+require_source_contains(
+    "win32/win_main.cpp"
+    "[[noreturn]] static void Win_TerminateOnFatalError("
+    "Windows non-modal fatal termination must preserve the noreturn contract")
 require_source_contains(
     "qcommon/threads.h"
     "#include <qcommon/sys_event.h>"
@@ -6031,6 +6044,14 @@ require_source_contains(
     "FX archive ownership validation must remain a shared pure helper")
 require_source_contains(
     "EffectsCore/fx_pool_graph.h"
+    "struct FxPoolAllocationGraphScratch"
+    "graph validation must expose bounded caller-owned working storage")
+require_source_contains(
+    "EffectsCore/fx_pool_graph.h"
+    "inline bool FxValidatePoolAllocationGraphWithScratch("
+    "stack-sensitive graph validation must accept caller-owned scratch")
+require_source_contains(
+    "EffectsCore/fx_pool_graph.h"
     "if (!state.initialized || state.allocatedCount > LIMIT)"
     "graph validation must reject malformed allocation-sidecar metadata")
 require_source_contains(
@@ -6089,12 +6110,12 @@ require_source_match_count(
     "the graph helper plus all three pool completeness checks must remain accounted for")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
-    "!FxValidatePoolAllocationGraph("
+    "!FxValidatePoolAllocationGraphWithScratch("
     "*states = rebuilt;"
     "restore staging must validate the reconstructed graph before publishing its sidecar")
 require_source_contains(
     "EffectsCore/fx_system.cpp"
-    "const bool valid = FxValidatePoolAllocationGraph("
+    "const bool valid = FxValidatePoolAllocationGraphWithScratch("
     "production graph validation must inspect live sidecars while allocator state is stable")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
@@ -6103,7 +6124,7 @@ require_source_ordered(
     "save must validate the complete live graph before staging its snapshot")
 require_source_matches(
     "EffectsCore/fx_archive.cpp"
-    "case[ \t]+Operation::ValidateDesiredState:[ \t\r\n]*return[ \t]+FX_ArchiveRestoreControlStatus\\([ \t\r\n]*FX_RebuildPoolAllocationStatesNoReport\\(context.system\\)[ \t\r\n]*&&[ \t]*FX_ValidatePoolAllocationGraphState\\(context.system\\)[ \t\r\n]*&&[ \t]*FX_ValidateArchivePhysicsOwnershipLocked\\("
+    "case[ \t]+Operation::ValidateDesiredState:[ \t\r\n]*return[ \t]+FX_ArchiveRestoreControlStatus\\([ \t\r\n]*FX_RebuildPoolAllocationStatesNoReport\\(context.system\\)[ \t\r\n]*&&[ \t]*FX_ValidatePoolAllocationGraphStateWithScratch\\([ \t\r\n]*context.system,[ \t\r\n]*&context.physicsScratch->poolGraph\\)[ \t\r\n]*&&[ \t]*FX_ValidateArchivePhysicsOwnershipLockedWithScratch\\("
     "restore publication must rebuild and revalidate pool/physics sidecars before reopening admission")
 foreach(_fx_pool_sidecar_use
     "elems;7"
@@ -6347,11 +6368,11 @@ require_source_ordered(
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "FX_ReadArchiveDataNoDrop(\n            memFile,\n            FX_ARCHIVE_BUFFER_SIZE,"
-    "if (!FX_RebuildArchivePoolAllocationStates("
+    "const bool restoredPoolStateValid =\n        FX_RebuildArchivePoolAllocationStates("
     "restore must read staged pool storage before reconstructing ownership")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
-    "if (!FX_RebuildArchivePoolAllocationStates("
+    "const bool restoredPoolStateValid =\n        FX_RebuildArchivePoolAllocationStates("
     "FX_FixupEffectDefHandlesNoDrop(&restoredSystem, &table)"
     "restore must validate staged allocation state before traversing effect records")
 require_source_ordered(
@@ -7476,13 +7497,13 @@ require_source_matches(
     "EffectsCore/fx_physics_sidecar.h"
     "slot[.]body[ \t]*=[ \t]*nullptr[ \t]*;[ \t\r\n]*slot[.]generation[ \t]*=[ \t]*NextGeneration\\(slot[.]generation\\)[ \t]*;"
     "taking an FX physics body must invalidate the slot generation")
-require_source_contains(
+require_source_matches(
     "EffectsCore/fx_physics_sidecar.h"
-    "ValidateReplacementRelation(live, staged)"
+    "ValidateReplacementRelationWithScratch[ \t\r\n]*\\([ \t\r\n]*live,[ \t\r\n]*staged,[ \t\r\n]*scratch[ \t\r\n]*\\)"
     "FX archive publication must validate the staged generation relation")
-require_source_contains(
+require_source_matches(
     "EffectsCore/fx_physics_sidecar.h"
-    "ValidateReplacementRelation(rollback, live)"
+    "ValidateReplacementRelationWithScratch[ \t\r\n]*\\([ \t\r\n]*rollback,[ \t\r\n]*live,[ \t\r\n]*scratch[ \t\r\n]*\\)"
     "FX archive rollback must validate the published generation relation")
 require_source_contains(
     "EffectsCore/fx_physics_sidecar.h"
