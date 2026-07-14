@@ -6,8 +6,8 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Branch: `agent/fx-restore-workspace`; branch point: merged executable restore controller
-  `39432a29`; upstream-integration baseline: `2b759db`.
+- Restore-workspace checkpoint: PR #15 on `agent/fx-restore-workspace`; branch point: merged executable restore
+  controller `39432a29`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
 - Active work: this branch completes checked heap-backed FX archive restore scratch. One explicitly constructed,
   noncopyable transaction workspace now owns the rollback system/control state, staged and rollback body sidecars,
@@ -31,9 +31,12 @@ work item changes. Do not create session-specific handoff files.
   then the effect-table boundary and measured per-function stack gates.
   PR #15's initial run **29361544758** passed the Linux amd64/arm64 and macOS arm64 portable suites plus the
   headless Windows x86 engine build, but both MSVC portable jobs rejected the intentionally over-aligned workspace
-  fixture with C4324 under `/WX`. The fixture now supplies an exact alignment-sized payload instead of relying on
-  implicit tail padding; the focused workspace executable passes under GCC, Clang, ASan/UBSan, and TSan while the
-  replacement Windows gates are pending.
+  fixture with C4324 under `/WX`. The exact-payload fixture correction passed all nine jobs in replacement run
+  **29363682092**. Final independent review then found that the workspace support variable eagerly formed
+  `alignof(T)` for unsupported non-object or incomplete template arguments; the guarded support trait now rejects
+  void, function, incomplete, array, throwing-lifetime, and over-aligned types through the constraint instead of a
+  hard substitution error. Focused GCC, Clang, ASan/UBSan, and TSan execution plus strict x86-32 and AArch64
+  compile/link pass on the final review fix; PR #15 is mergeable only after its new head repeats the nine-job gate.
   PR #14 merged the executable restore controller as `39432a29` after run **29359061795 passed all nine CI
   jobs** and Gemini plus independent review reported no findings. Its portable controller covers all operation
   failures and the production adapter retains archive/PHYSICS ownership through desired, original, safe-empty,
