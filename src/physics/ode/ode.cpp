@@ -1433,28 +1433,113 @@ extern "C" void dTestDataStructures()
 #include <universal/pool_allocator.h>
 #include <win32/win_local.h>
 
+#include <cstddef>
 #include <string>
 
 odeGlob_t odeGlob;
 
+namespace
+{
+poolslotstate_t odeBodyPoolSlotState[512]{};
+poolslotstate_t odeGeomPoolSlotState[ODE_GEOM_POOL_COUNT]{};
+poolcontrol_t odeBodyPoolControl =
+    Pool_ControlFor(odeBodyPoolSlotState);
+poolcontrol_t odeGeomPoolControl =
+    Pool_ControlFor(odeGeomPoolSlotState);
+}
+
+poolstorage_t ODE_BodyPoolStorage() noexcept
+{
+    return Pool_StorageFor(odeGlob.bodies, odeBodyPoolControl);
+}
+
+poolstorage_t ODE_GeomPoolStorage() noexcept
+{
+    return Pool_StorageFor(
+        odeGlob.geoms,
+        sizeof(dxGeomTransform),
+        ODE_GEOM_POOL_COUNT,
+        odeGeomPoolControl);
+}
+
 void __cdecl ODE_LeakCheck()
 {
-    iassert(Pool_FreeCount(&odeGlob.bodyPool) == ARRAY_COUNT(odeGlob.bodies));
+    const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
+    const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    const bool bodyPoolValid = Pool_ValidateFull(
+        bodyStorage, &odeGlob.bodyPool);
+    const poolcountresult_t bodyFreeCount = Pool_GetFreeCount(
+        bodyStorage, &odeGlob.bodyPool);
+    if (!bodyPoolValid || !bodyFreeCount.valid
+        || bodyFreeCount.count != ARRAY_COUNT(odeGlob.bodies))
+    {
+        MyAssertHandler(
+            __FILE__,
+            __LINE__,
+            0,
+            "body pool free count = %zu",
+            bodyFreeCount.count);
+    }
 
-    if (Pool_FreeCount(&odeGlob.geomPool) != ODE_GEOM_POOL_COUNT)
+    const bool geomPoolValid = Pool_ValidateFull(
+        geomStorage, &odeGlob.geomPool);
+    const poolcountresult_t geomFreeCount = Pool_GetFreeCount(
+        geomStorage, &odeGlob.geomPool);
+    if (!geomPoolValid || !geomFreeCount.valid
+        || geomFreeCount.count != ODE_GEOM_POOL_COUNT)
     {
         bool is_free[ODE_GEOM_POOL_COUNT] = {};
-        for (void *ff = odeGlob.geomPool.firstFree; ff;  ff = *(void **)ff) {
-            is_free[(dxGeomTransform*)ff - (dxGeomTransform *)odeGlob.geoms] = true;
+        bool freeListValid = geomPoolValid && geomFreeCount.valid;
+        std::size_t traversedFreeCount = 0;
+        void *freeNode = odeGlob.geomPool.firstFree;
+        while (freeListValid && freeNode)
+        {
+            if (traversedFreeCount >= ODE_GEOM_POOL_COUNT)
+            {
+                freeListValid = false;
+                break;
+            }
+
+            const poolindexresult_t slotIndex = Pool_GetSlotIndex(
+                geomStorage, freeNode);
+            if (!slotIndex.valid
+                || slotIndex.index >= ODE_GEOM_POOL_COUNT
+                || is_free[slotIndex.index])
+            {
+                freeListValid = false;
+                break;
+            }
+
+            is_free[slotIndex.index] = true;
+            ++traversedFreeCount;
+            const poolnextresult_t nextFree = Pool_NextFree(
+                geomStorage, freeNode);
+            if (!nextFree.valid)
+            {
+                freeListValid = false;
+                break;
+            }
+            freeNode = nextFree.next;
+        }
+        if (traversedFreeCount != geomFreeCount.count)
+            freeListValid = false;
+
+        if (!freeListValid)
+            fprintf(stderr, "ODE geom pool free list is corrupt\n");
+
+        for (std::size_t i = 0;
+             freeListValid && i < ODE_GEOM_POOL_COUNT;
+             ++i)
+        {
+            if (is_free[i])
+                continue;
+
+            const auto *const geom = reinterpret_cast<const dxGeom *>(
+                odeGlob.geoms + i * sizeof(dxGeomTransform));
+            fprintf(stderr, "[%zu] type = %d\n", i, geom->type);
         }
 
-        for (int i = 0; i < ODE_GEOM_POOL_COUNT; i++) {
-            if (is_free[i]) continue;
-
-            fprintf(stderr, "[%d] type = %d\n", i, ((dxGeomTransform *)odeGlob.geoms)[i].type);
-        }
-
-        //failassert("Pool_FreeCount(&odeGlob.geomPool) == ODE_GEOM_POOL_COUNT");
+        iassert(freeListValid);
         iassert(0);
     }
 }
@@ -1464,10 +1549,24 @@ dxUserGeom *__cdecl Phys_GetWorldGeom()
     return &odeGlob.worldGeom;
 }
 
-void __cdecl ODE_Init()
+bool __cdecl ODE_Init()
 {
-    Pool_Init((char *)odeGlob.bodies, &odeGlob.bodyPool, sizeof(dxBody), 512);
-    Pool_Init(odeGlob.geoms, &odeGlob.geomPool, sizeof(dxGeomTransform), 2048);
+    const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
+    const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    const bool bodyInvalidated = Pool_Invalidate(
+        bodyStorage, &odeGlob.bodyPool);
+    const bool geomInvalidated = Pool_Invalidate(
+        geomStorage, &odeGlob.geomPool);
+    if (!bodyInvalidated || !geomInvalidated)
+        return false;
+    if (!Pool_Init(bodyStorage, &odeGlob.bodyPool))
+        return false;
+    if (Pool_Init(geomStorage, &odeGlob.geomPool))
+        return true;
+
+    (void)Pool_Invalidate(bodyStorage, &odeGlob.bodyPool);
+    (void)Pool_Invalidate(geomStorage, &odeGlob.geomPool);
+    return false;
 }
 
 // MOD
@@ -1478,7 +1577,8 @@ dxBody *dBodyCreate(dxWorld *w)
     dAASSERT(w);
 #ifdef USE_POOL_ALLOCATOR
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-    dxBody *b = (dxBody *)Pool_Alloc(&odeGlob.bodyPool);
+    dxBody *b = static_cast<dxBody *>(
+        Pool_Alloc(ODE_BodyPoolStorage(), &odeGlob.bodyPool));
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 #else
     dxBody *b = new (std::nothrow) dxBody;
@@ -1602,18 +1702,33 @@ void dWorldDestroy(dxWorld* w)
     dxBody* nextb; // [esp+Ch] [ebp-4h]
 
     b = w->firstbody;
+#ifdef USE_POOL_ALLOCATOR
+    bool bodyPoolFreesValid = true;
+#endif
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     while (b)
     {
         nextb = (dxBody*)b->next;
 #ifdef USE_POOL_ALLOCATOR
-        Pool_Free((freenode*)b, &odeGlob.bodyPool);
+        const bool bodyFreed = Pool_Free(
+            ODE_BodyPoolStorage(), &odeGlob.bodyPool, b);
+        if (!bodyFreed)
+            bodyPoolFreesValid = false;
 #else
         delete b;
 #endif
         b = nextb;
     }
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+#ifdef USE_POOL_ALLOCATOR
+    if (!bodyPoolFreesValid)
+        MyAssertHandler(
+            __FILE__,
+            __LINE__,
+            0,
+            "%s",
+            "body pool frees succeeded");
+#endif
     for (joint = w->firstjoint; joint; joint = nextj)
     {
         nextj = (dxJoint*)joint->next;
@@ -1664,8 +1779,16 @@ void dBodyDestroy(dxBody* b)
 
 #ifdef USE_POOL_ALLOCATOR
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-    Pool_Free((freenode*)b, &odeGlob.bodyPool);
+    const bool bodyFreed = Pool_Free(
+        ODE_BodyPoolStorage(), &odeGlob.bodyPool, b);
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    if (!bodyFreed)
+        MyAssertHandler(
+            __FILE__,
+            __LINE__,
+            0,
+            "%s",
+            "body pool free succeeded");
 #else
     delete b;
 #endif

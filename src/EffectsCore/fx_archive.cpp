@@ -934,9 +934,35 @@ bool FX_ArchivePhysicsCapacityAvailableLocked(
         requiredGeomCount += modelGeomCount;
     }
 
-    return Pool_FreeCount(&odeGlob.bodyPool) >= entryCount
-        && Pool_FreeCount(&physGlob.userDataPool) >= entryCount
-        && Pool_FreeCount(&odeGlob.geomPool) >= requiredGeomCount;
+    const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
+    const poolstorage_t userDataStorage =
+        Phys_UserDataPoolStorage();
+    const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    if (!Pool_ValidateFull(bodyStorage, &odeGlob.bodyPool)
+        || !Pool_ValidateFull(userDataStorage, &physGlob.userDataPool)
+        || !Pool_ValidateFull(geomStorage, &odeGlob.geomPool))
+    {
+        return false;
+    }
+
+    const poolcountresult_t bodyFreeCount = Pool_GetFreeCount(
+        bodyStorage, &odeGlob.bodyPool);
+    if (!bodyFreeCount.valid)
+        return false;
+
+    const poolcountresult_t userDataFreeCount = Pool_GetFreeCount(
+        userDataStorage, &physGlob.userDataPool);
+    if (!userDataFreeCount.valid)
+        return false;
+
+    const poolcountresult_t geomFreeCount = Pool_GetFreeCount(
+        geomStorage, &odeGlob.geomPool);
+    if (!geomFreeCount.valid)
+        return false;
+
+    return bodyFreeCount.count >= entryCount
+        && userDataFreeCount.count >= entryCount
+        && geomFreeCount.count >= requiredGeomCount;
 }
 
 bool FX_AppendArchivePhysicsEntry(

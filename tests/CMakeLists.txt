@@ -171,6 +171,22 @@ add_test(
     COMMAND kisakcod-phys-user-geom-storage-tests
 )
 
+add_executable(kisakcod-pool-allocator-tests
+    pool_allocator_tests.cpp
+    ${SRC_DIR}/universal/pool_allocator.cpp
+)
+target_include_directories(kisakcod-pool-allocator-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-pool-allocator-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-pool-allocator-tests)
+set_target_properties(kisakcod-pool-allocator-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME pool-native-pointer-freelist
+    COMMAND kisakcod-pool-allocator-tests
+)
+set_tests_properties(pool-native-pointer-freelist PROPERTIES TIMEOUT 10)
+
 add_executable(kisakcod-fx-visibility-atomic-tests
     fx_visibility_atomic_tests.cpp
 )
@@ -491,6 +507,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_physics_transaction_test.cmake
+)
+
+add_test(
+    NAME pool-native-pointer-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/pool_allocator_source_test.cmake
 )
 
 add_test(

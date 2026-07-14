@@ -739,8 +739,18 @@ void dGeomFree(dxGeom* g)
         {
 #ifdef USE_POOL_ALLOCATOR
             Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-            Pool_Free((freenode*)g, &odeGlob.geomPool);
+            const bool geomFreed = Pool_Free(
+                ODE_GeomPoolStorage(),
+                &odeGlob.geomPool,
+                g);
             Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+            if (!geomFreed)
+                MyAssertHandler(
+                    __FILE__,
+                    __LINE__,
+                    0,
+                    "%s",
+                    "geom pool free succeeded");
 #else
             free(g);
 #endif
@@ -750,8 +760,18 @@ void dGeomFree(dxGeom* g)
         static_cast<dxGeomTransform*>(g)->Destruct();
 #ifdef USE_POOL_ALLOCATOR
         Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-        Pool_Free((freenode*)g, &odeGlob.geomPool);
+        const bool geomFreed = Pool_Free(
+            ODE_GeomPoolStorage(),
+            &odeGlob.geomPool,
+            g);
         Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        if (!geomFreed)
+            MyAssertHandler(
+                __FILE__,
+                __LINE__,
+                0,
+                "%s",
+                "geom transform pool free succeeded");
 #else
         free(g);
 #endif
@@ -774,7 +794,8 @@ dxGeom* ODE_AllocateGeom()
 #ifdef USE_POOL_ALLOCATOR
     dxGeom* geom;
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-    geom = (dxGeom*)Pool_Alloc(&odeGlob.geomPool);
+    geom = static_cast<dxGeom *>(Pool_Alloc(
+        ODE_GeomPoolStorage(), &odeGlob.geomPool));
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     return geom;
 #else

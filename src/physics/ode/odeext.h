@@ -11,7 +11,13 @@
 dxUserGeom *__cdecl Phys_GetWorldGeom();
 void __cdecl ODE_LeakCheck();
 
-void __cdecl ODE_Init();
+bool __cdecl ODE_Init();
+
+// These descriptors carry the out-of-line ownership controls paired with the
+// ABI-frozen ODE pool metadata. All production users must share these exact
+// descriptors rather than rebuilding an extent without its control.
+poolstorage_t ODE_BodyPoolStorage() noexcept;
+poolstorage_t ODE_GeomPoolStorage() noexcept;
 
 struct odeGlob_t // sizeof=0x2C64E0
 {                                       // ...
