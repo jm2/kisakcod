@@ -1931,11 +1931,13 @@ bool __cdecl FX_RebuildPoolAllocationStatesNoReport(
     return FX_RebuildPoolAllocationStatesInternal(system, false);
 }
 
-bool __cdecl FX_ValidatePoolAllocationGraphState(FxSystem *system)
+bool __cdecl FX_ValidatePoolAllocationGraphStateWithScratch(
+    FxSystem *const system,
+    FxPoolAllocationGraphScratch *const scratch) noexcept
 {
     FxPoolAllocationStates *const states =
         FX_GetPoolAllocationStates(system);
-    if (!system || !states)
+    if (!system || !states || !scratch)
         return false;
 
     volatile std::int32_t *const archiveGate =
@@ -1951,13 +1953,21 @@ bool __cdecl FX_ValidatePoolAllocationGraphState(FxSystem *system)
         Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
     else
         FX_EnterArchiveAwarePoolCriticalSection();
-    const bool valid = FxValidatePoolAllocationGraph(
+    const bool valid = FxValidatePoolAllocationGraphWithScratch(
         system,
         states->elems,
         states->trails,
-        states->trailElems);
+        states->trailElems,
+        scratch);
     Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
     return valid;
+}
+
+bool __cdecl FX_ValidatePoolAllocationGraphState(FxSystem *const system)
+{
+    FxPoolAllocationGraphScratch scratch{};
+    return FX_ValidatePoolAllocationGraphStateWithScratch(
+        system, &scratch);
 }
 
 namespace
@@ -2229,17 +2239,20 @@ bool __cdecl FX_CanPublishArchiveSafeEmptyStateLocked(
         && FX_CanResetSystemGraphUnderExclusiveClaim(system);
 }
 
-bool __cdecl FX_PublishArchiveSafeEmptyStateLocked(
-    FxSystem *const system) noexcept
+bool __cdecl FX_PublishArchiveSafeEmptyStateLockedWithScratch(
+    FxSystem *const system,
+    fx::physics::BodySidecarValidationScratch *const sidecarScratch,
+    FxPoolAllocationGraphScratch *const poolGraphScratch) noexcept
 {
-    if (!FX_CanPublishArchiveSafeEmptyStateLocked(system))
+    if (!sidecarScratch || !poolGraphScratch
+        || !FX_CanPublishArchiveSafeEmptyStateLocked(system))
     {
         return false;
     }
     fx::physics::BodySidecar *const sidecar =
         FX_GetPhysicsBodySidecar(system);
     if (!sidecar
-        || fx::physics::Validate(sidecar)
+        || fx::physics::ValidateWithScratch(sidecar, sidecarScratch)
             != fx::physics::SidecarStatus::Success
         || fx::physics::ValidateVacantDestination(sidecar)
             != fx::physics::SidecarStatus::Success)
@@ -2256,11 +2269,12 @@ bool __cdecl FX_PublishArchiveSafeEmptyStateLocked(
         FX_ResetSystemGraphUnderExclusiveClaim(system);
     bool published = false;
     if (resetStatus == fx::physics::SidecarStatus::Success
-        && FxValidatePoolAllocationGraph(
+        && FxValidatePoolAllocationGraphWithScratch(
             system,
             states->elems,
             states->trails,
-            states->trailElems))
+            states->trailElems,
+            poolGraphScratch))
     {
         system->isInitialized = true;
         system->isArchiving = false;
@@ -2270,6 +2284,15 @@ bool __cdecl FX_PublishArchiveSafeEmptyStateLocked(
     }
     Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
     return published;
+}
+
+bool __cdecl FX_PublishArchiveSafeEmptyStateLocked(
+    FxSystem *const system) noexcept
+{
+    fx::physics::BodySidecarValidationScratch sidecarScratch{};
+    FxPoolAllocationGraphScratch poolGraphScratch{};
+    return FX_PublishArchiveSafeEmptyStateLockedWithScratch(
+        system, &sidecarScratch, &poolGraphScratch);
 }
 
 void __cdecl FX_InitSystem(int32_t localClientNum)
