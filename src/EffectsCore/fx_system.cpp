@@ -31,6 +31,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
+#include <iterator>
 #include <limits>
 #include <thread>
 
@@ -57,11 +58,10 @@ struct FxPoolAllocationStates
 
 FxPoolAllocationStates fx_poolAllocationStates[1];
 fx::physics::BodySidecar fx_physicsBodySidecars[
-    sizeof(fx_poolAllocationStates) / sizeof(fx_poolAllocationStates[0])];
+    std::size(fx_poolAllocationStates)];
 
 static_assert(
-    sizeof(fx_physicsBodySidecars) / sizeof(fx_physicsBodySidecars[0])
-        == sizeof(fx_systemPool) / sizeof(fx_systemPool[0]),
+    std::size(fx_physicsBodySidecars) == std::size(fx_systemPool),
     "FX physics sidecars must match the system pool");
 
 struct FxArchiveThreadState

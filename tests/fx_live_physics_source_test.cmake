@@ -151,7 +151,7 @@ endfunction()
 # The registry remains external to frozen FxSystem/FxSystemBuffers storage.
 require_slice_contains(
     _fx_system_source
-    "fx::physics::BodySidecar fx_physicsBodySidecars[\n    sizeof(fx_poolAllocationStates) / sizeof(fx_poolAllocationStates[0])];"
+    "fx::physics::BodySidecar fx_physicsBodySidecars[\n    std::size(fx_poolAllocationStates)];"
     "native body ownership must use an external per-system registry")
 require_slice_contains(
     _fx_system_source
