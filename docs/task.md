@@ -6,11 +6,21 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-archive-gate-control`; branch point: post-merge restore-workspace checkpoint
-  `6ce9e14`; upstream-integration baseline: `2b759db`. Portable controller/tests commit: `a393c9a`;
-  production integration/guards commit: `2384d00`; review-contract hardening commit: `ebc6654`.
+- Active branch: `agent/ode-fixed-pool-occupancy`; branch point: merged archive-gate checkpoint
+  `5455c778`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Archive-gate checkpoint: normal FX archive admission now uses a portable callback-driven controller with typed
+- Active work: establish honest competing non-FX ODE fixed-pool occupancy and exhaustion coverage. First prove or
+  close the whole-transaction `CRITSECT_PHYSICS` contract around body/user-data/geometry creation and destruction;
+  inner pool-only critical sections currently do not by themselves exclude a mutation that crossed allocation
+  before archive restore acquired its outer PHYSICS interval. Then extract the narrow engine-type-free retirement/
+  reconstruction batch boundary and exercise it with the real 512-body, 512-user-data, and 2,048-geometry pool
+  allocator, resource-pair, sidecar, capacity-planner, and restore-controller primitives. Concrete ODE world/model/
+  collision topology remains production- and Windows-engine-gated unless the lock audit proves it can be moved
+  without importing the full engine dependency graph.
+- Archive-gate checkpoint: PR #16 merged as `5455c778` after CI run **29374832707 passed all nine jobs**. Gemini's
+  two comments were resolved as false positives: the generation lookup is intentionally null-safe and the requested
+  standard headers were already explicit. Codex reviewed the exact merge head `5c3a96a0cd` and found no major issue.
+  Normal FX archive admission now uses a portable callback-driven controller with typed
   `Open`, `Pending`, and `Exclusive` gate values; unknown encodings fail closed. Durable TLS records exact
   `Pending`, `PendingExclusive`, `Acquired`, and `ExclusiveGateOnly` ownership so waiter cancellation, promotion
   rollback, partial release retry, and error abandonment cannot discard a still-owned resource. Deterministic
@@ -23,8 +33,8 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next work: extract the portable ODE runtime needed for real competing non-FX occupancy/exhaustion tests, then
-  move the effect-definition table behind a no-longjmp parsing boundary and add measured stack/runtime gates.
+- Next after ODE occupancy: move the effect-definition table behind a no-longjmp parsing boundary, then add measured
+  stack/runtime gates.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,
@@ -619,7 +629,7 @@ work item changes. Do not create session-specific handoff files.
   admission revalidation prevents old iterator jobs from crossing lifecycle generations. The merged full-capacity
   and restore-workspace batches use exact silent topology recipes, bounded retirement/reconstruction, preserved
   archive exclusion, canonical safe-empty reset, fail-stop handling after lost native ownership, and checked heap
-  transaction/validation scratch including early malformed-graph preflight. The current archive-gate branch adds
+  transaction/validation scratch including early malformed-graph preflight. PR #16 adds
   executable normal admission, durable partial-cleanup ownership, fail-closed typed values, and checked production
   integration. Remaining blockers are camera/scalar publication, real Disk32 FX archive/fast-file conversion,
   competing non-FX occupancy coverage, the effect-table parsing boundary, and measured stack/runtime enforcement.
