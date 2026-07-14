@@ -9,14 +9,19 @@ work item changes. Do not create session-specific handoff files.
 - Active branch: `agent/ode-fixed-pool-occupancy`; branch point: merged archive-gate checkpoint
   `5455c778`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: establish honest competing non-FX ODE fixed-pool occupancy and exhaustion coverage. First prove or
-  close the whole-transaction `CRITSECT_PHYSICS` contract around body/user-data/geometry creation and destruction;
-  inner pool-only critical sections currently do not by themselves exclude a mutation that crossed allocation
-  before archive restore acquired its outer PHYSICS interval. Then extract the narrow engine-type-free retirement/
-  reconstruction batch boundary and exercise it with the real 512-body, 512-user-data, and 2,048-geometry pool
-  allocator, resource-pair, sidecar, capacity-planner, and restore-controller primitives. Concrete ODE world/model/
-  collision topology remains production- and Windows-engine-gated unless the lock audit proves it can be moved
-  without importing the full engine dependency graph.
+- Active work: establish honest competing non-FX ODE fixed-pool occupancy and exhaustion coverage. The prerequisite
+  lock audit is now implemented on this branch: public body/user-data creation, geometry/mass publication, complete
+  body-plus-XModel construction, and body/geometry/user-data destruction retain recursive `CRITSECT_PHYSICS` across
+  each whole topology mutation, while archive `LockedNoReport` entry points preserve caller-owned exclusion and do
+  not report. Source contracts pin every public interval, balanced simple-wrapper release, failure-path release,
+  reporting-after-unlock, exact body/user-data/geom capacity mapping, and the no-longjmp boundary. A new narrow,
+  engine-type-free physics batch controller validates complete unique plans before callbacks, preflights every
+  selected retirement/reconstruction before mutation, fails unknown statuses closed, and reports the exact committed
+  prefix. Its exhaustive GCC/Clang/ASan/UBSan/TSan tests and x86-32/AArch64 compile-link checks pass. The remaining
+  active subphase is an exact 512-body, 512-user-data, and 2,048-geometry runtime fixture using the real pool allocator,
+  resource-pair, sidecar, capacity-planner, and batch-controller primitives under full/mixed occupancy and injected
+  reconstruction/cleanup failures. Concrete ODE world/model/collision topology remains production- and Windows-engine-
+  gated because moving it would import the full engine dependency graph.
 - Archive-gate checkpoint: PR #16 merged as `5455c778` after CI run **29374832707 passed all nine jobs**. Gemini's
   two comments were resolved as false positives: the generation lookup is intentionally null-safe and the requested
   standard headers were already explicit. Codex reviewed the exact merge head `5c3a96a0cd` and found no major issue.
