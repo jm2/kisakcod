@@ -89,18 +89,58 @@ bool EveryAllocatedSlotWasVisited(
 }
 } // namespace kisak_fx_pool_graph_detail
 
+// Caller-owned working storage for allocation-graph validation. Long-lived
+// callers can keep this outside their stack frame and reuse it across
+// independent validations. Every validation fully reinitializes the scratch,
+// including validations that later reject a malformed graph.
+struct FxPoolAllocationGraphScratch
+{
+    std::array<std::size_t, MAX_EFFECTS>
+        linkedEffectReferenceCounts{};
+    std::array<std::size_t, MAX_EFFECTS>
+        inboundLiveOwnedEffectCounts{};
+    std::array<bool, MAX_EFFECTS> effectSlotsInPermutation{};
+    std::array<bool, MAX_EFFECTS> allocatedEffectSlots{};
+    std::array<bool, MAX_ELEMS> visitedElems{};
+    std::array<bool, MAX_TRAILS> visitedTrails{};
+    std::array<bool, MAX_TRAIL_ELEMS> visitedTrailElems{};
+};
+
 // Validates the complete ownership graph reconstructed from an archived FX
 // system. Callers must provide a stable system/pool snapshot (normally while
 // holding the FX allocator lock and archive/iterator exclusion). The function
 // is bounded, allocation-free, non-mutating, and never reports errors itself.
-inline bool FxValidatePoolAllocationGraph(
+inline bool FxValidatePoolAllocationGraphWithScratch(
     const FxSystem *const system,
     const FxPoolAllocationState<MAX_ELEMS> &elemAllocationState,
     const FxPoolAllocationState<MAX_TRAILS> &trailAllocationState,
     const FxPoolAllocationState<MAX_TRAIL_ELEMS>
-        &trailElemAllocationState) noexcept
+        &trailElemAllocationState,
+    FxPoolAllocationGraphScratch *const scratch) noexcept
 {
     using namespace kisak_fx_pool_graph_detail;
+
+    if (!scratch)
+        return false;
+
+    scratch->linkedEffectReferenceCounts.fill(0);
+    scratch->inboundLiveOwnedEffectCounts.fill(0);
+    scratch->effectSlotsInPermutation.fill(false);
+    scratch->allocatedEffectSlots.fill(false);
+    scratch->visitedElems.fill(false);
+    scratch->visitedTrails.fill(false);
+    scratch->visitedTrailElems.fill(false);
+
+    auto &linkedEffectReferenceCounts =
+        scratch->linkedEffectReferenceCounts;
+    auto &inboundLiveOwnedEffectCounts =
+        scratch->inboundLiveOwnedEffectCounts;
+    auto &effectSlotsInPermutation =
+        scratch->effectSlotsInPermutation;
+    auto &allocatedEffectSlots = scratch->allocatedEffectSlots;
+    auto &visitedElems = scratch->visitedElems;
+    auto &visitedTrails = scratch->visitedTrails;
+    auto &visitedTrailElems = scratch->visitedTrailElems;
 
     if (!system || !system->effects || !system->elems || !system->trails
         || !system->trailElems
@@ -143,7 +183,6 @@ inline bool FxValidatePoolAllocationGraph(
     // allEffectHandles is both the active-ring storage and the free-slot
     // inventory. A malformed handle outside the active interval is still
     // security-relevant because it will eventually be consumed by spawn.
-    std::array<bool, MAX_EFFECTS> effectSlotsInPermutation{};
     for (std::size_t handleIndex = 0;
          handleIndex < MAX_EFFECTS;
          ++handleIndex)
@@ -177,11 +216,6 @@ inline bool FxValidatePoolAllocationGraph(
             == MAX_EFFECTS - 1,
         "FX owned-effect status field must represent every possible child");
 
-    std::array<bool, MAX_EFFECTS> allocatedEffectSlots{};
-    std::array<std::size_t, MAX_EFFECTS> linkedEffectReferenceCounts{};
-    std::array<bool, MAX_ELEMS> visitedElems{};
-    std::array<bool, MAX_TRAILS> visitedTrails{};
-    std::array<bool, MAX_TRAIL_ELEMS> visitedTrailElems{};
     std::size_t visitedElemCount = 0;
     std::size_t visitedTrailCount = 0;
     std::size_t visitedTrailElemCount = 0;
@@ -337,7 +371,6 @@ inline bool FxValidatePoolAllocationGraph(
     // runner/emitted effects point at another live effect. A non-self-owned
     // self-reference would recurse through reference release, so the flag and
     // handle relationship must agree in both directions.
-    std::array<std::size_t, MAX_EFFECTS> inboundLiveOwnedEffectCounts{};
     for (std::int64_t activeIndex = firstActiveEffect;
          activeIndex < firstFreeEffect;
          ++activeIndex)
@@ -545,4 +578,22 @@ inline bool FxValidatePoolAllocationGraph(
             trailElemAllocationState,
             visitedTrailElems,
             visitedTrailElemCount);
+}
+
+// Convenience wrapper for callers that do not need to control scratch
+// placement. This preserves the original API and behavior.
+inline bool FxValidatePoolAllocationGraph(
+    const FxSystem *const system,
+    const FxPoolAllocationState<MAX_ELEMS> &elemAllocationState,
+    const FxPoolAllocationState<MAX_TRAILS> &trailAllocationState,
+    const FxPoolAllocationState<MAX_TRAIL_ELEMS>
+        &trailElemAllocationState) noexcept
+{
+    FxPoolAllocationGraphScratch scratch{};
+    return FxValidatePoolAllocationGraphWithScratch(
+        system,
+        elemAllocationState,
+        trailAllocationState,
+        trailElemAllocationState,
+        &scratch);
 }

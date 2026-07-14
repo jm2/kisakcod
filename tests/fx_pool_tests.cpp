@@ -29,6 +29,14 @@ static_assert(std::is_same_v<
               std::int8_t>);
 static_assert(std::is_trivially_copyable_v<
               FxPoolAllocationState<MAX_ELEMS>>);
+static_assert(std::is_trivially_copyable_v<
+              FxPoolAllocationGraphScratch>);
+static_assert(noexcept(FxValidatePoolAllocationGraphWithScratch(
+    std::declval<const FxSystem *>(),
+    std::declval<const FxPoolAllocationState<MAX_ELEMS> &>(),
+    std::declval<const FxPoolAllocationState<MAX_TRAILS> &>(),
+    std::declval<const FxPoolAllocationState<MAX_TRAIL_ELEMS> &>(),
+    std::declval<FxPoolAllocationGraphScratch *>())));
 static_assert(noexcept(FxValidatePoolAllocationGraph(
     std::declval<const FxSystem *>(),
     std::declval<const FxPoolAllocationState<MAX_ELEMS> &>(),
@@ -195,6 +203,17 @@ struct PoolGraphFixture
     {
         return FxValidatePoolAllocationGraph(
             &system, elemState, trailState, trailElemState);
+    }
+
+    bool IsValidWithScratch(
+        FxPoolAllocationGraphScratch *const scratch) const noexcept
+    {
+        return FxValidatePoolAllocationGraphWithScratch(
+            &system,
+            elemState,
+            trailState,
+            trailElemState,
+            scratch);
     }
 };
 
@@ -1183,6 +1202,53 @@ bool ValidPoolAllocationGraphIsAccepted()
     return retiredChildFixture.IsValid();
 }
 
+bool PoolAllocationGraphScratchMatchesWrapperAndIsReusable()
+{
+    FxPoolAllocationGraphScratch scratch{};
+    scratch.linkedEffectReferenceCounts.fill(
+        static_cast<std::size_t>(-1));
+    scratch.inboundLiveOwnedEffectCounts.fill(
+        static_cast<std::size_t>(-1));
+    scratch.effectSlotsInPermutation.fill(true);
+    scratch.allocatedEffectSlots.fill(true);
+    scratch.visitedElems.fill(true);
+    scratch.visitedTrails.fill(true);
+    scratch.visitedTrailElems.fill(true);
+
+    PoolGraphFixture validFixture;
+    const bool wrapperAcceptedValid = validFixture.IsValid();
+    const bool scratchAcceptedValid =
+        validFixture.IsValidWithScratch(&scratch);
+    if (!wrapperAcceptedValid
+        || scratchAcceptedValid != wrapperAcceptedValid
+        || validFixture.IsValidWithScratch(nullptr))
+    {
+        return false;
+    }
+
+    PoolGraphFixture malformedFixture;
+    // Reuse an element already linked into an ordinary chain as the spotlight
+    // element. This reaches a late validation failure after all large scratch
+    // arrays have been populated.
+    malformedFixture.system.activeSpotLightElemHandle =
+        PoolHandle<FxElem, MAX_ELEMS>(
+            malformedFixture.buffers->elems, 0);
+    const bool wrapperAcceptedMalformed = malformedFixture.IsValid();
+    const bool scratchAcceptedMalformed =
+        malformedFixture.IsValidWithScratch(&scratch);
+    if (wrapperAcceptedMalformed
+        || scratchAcceptedMalformed != wrapperAcceptedMalformed)
+    {
+        return false;
+    }
+
+    // A successful validation immediately after the late failure proves that
+    // no visited, reference-count, or permutation state survives reuse.
+    PoolGraphFixture validAfterFailure;
+    return validAfterFailure.IsValidWithScratch(&scratch)
+        && validAfterFailure.IsValid();
+}
+
 bool NonzeroSelfOwnedTombstoneIsGarbageCollectable()
 {
     PoolGraphFixture fixture;
@@ -1525,6 +1591,9 @@ int main()
     ok = Run("native-size effect handles", EffectHandlesUseNativeEntrySize) && ok;
     ok = Run("valid FX allocation graph",
              ValidPoolAllocationGraphIsAccepted) && ok;
+    ok = Run("reusable FX allocation graph scratch",
+             PoolAllocationGraphScratchMatchesWrapperAndIsReusable)
+        && ok;
     ok = Run("nonzero self-owned reservation tombstone",
              NonzeroSelfOwnedTombstoneIsGarbageCollectable) && ok;
     ok = Run("corrupt FX allocation graphs",
