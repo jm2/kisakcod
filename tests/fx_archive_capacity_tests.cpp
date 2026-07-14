@@ -10,6 +10,8 @@ namespace
 int failures = 0;
 
 using PhysicsRetirementPlan = fx::archive::PhysicsRetirementPlan;
+using PhysicsRetirementPlanScratch =
+    fx::archive::PhysicsRetirementPlanScratch;
 using PhysicsRetirementPlanStatus =
     fx::archive::PhysicsRetirementPlanStatus;
 
@@ -225,6 +227,172 @@ void TestAsymmetricFreeCountsUseTheLargerDeficit()
         "the larger body/user-data deficit must determine retirement count");
 }
 
+void TestScratchAndWrapperParity()
+{
+    const fx::archive::PhysicsRetirementCandidate candidates[] = {
+        {4, 40, 2},
+        {2, 20, 5},
+        {3, 10, 5},
+        {1, 30, 1},
+    };
+    PhysicsRetirementPlan wrappedPlan = MakeSentinelPlan();
+    PhysicsRetirementPlan scratchPlan = MakeSentinelPlan();
+    PhysicsRetirementPlanScratch scratch{};
+    const auto wrappedStatus = fx::archive::BuildPhysicsRetirementPlan(
+        {4, 4, 0}, {4, 4, 9}, candidates, 4, &wrappedPlan);
+    const auto scratchStatus =
+        fx::archive::BuildPhysicsRetirementPlanWithScratch(
+            {4, 4, 0},
+            {4, 4, 9},
+            candidates,
+            4,
+            &scratch,
+            &scratchPlan);
+    Check(
+        scratchStatus == wrappedStatus,
+        "caller-owned scratch must preserve wrapper success status");
+    Check(
+        PlansEqual(scratchPlan, wrappedPlan),
+        "caller-owned scratch must preserve wrapper success output");
+
+    const fx::archive::PhysicsRetirementCandidate duplicateCandidates[] = {
+        {0, 7, 1},
+        {1, 7, 2},
+    };
+    const PhysicsRetirementPlan sentinel = MakeSentinelPlan();
+    wrappedPlan = sentinel;
+    scratchPlan = sentinel;
+    const auto wrappedFailure = fx::archive::BuildPhysicsRetirementPlan(
+        {0, 0, 0},
+        {1, 1, 1},
+        duplicateCandidates,
+        2,
+        &wrappedPlan);
+    const auto scratchFailure =
+        fx::archive::BuildPhysicsRetirementPlanWithScratch(
+            {0, 0, 0},
+            {1, 1, 1},
+            duplicateCandidates,
+            2,
+            &scratch,
+            &scratchPlan);
+    Check(
+        scratchFailure == wrappedFailure,
+        "caller-owned scratch must preserve wrapper failure status");
+    Check(
+        PlansEqual(scratchPlan, wrappedPlan),
+        "caller-owned scratch must preserve wrapper failure output");
+}
+
+void TestScratchCanBeReused()
+{
+    PhysicsRetirementPlanScratch scratch{};
+    const fx::archive::PhysicsRetirementCandidate firstCandidates[] = {
+        {4, 40, 2},
+        {2, 20, 5},
+        {3, 10, 5},
+        {1, 30, 1},
+    };
+    PhysicsRetirementPlan plan{};
+    auto status = fx::archive::BuildPhysicsRetirementPlanWithScratch(
+        {4, 4, 0},
+        {4, 4, 9},
+        firstCandidates,
+        4,
+        &scratch,
+        &plan);
+    Check(
+        status == PhysicsRetirementPlanStatus::Success
+            && plan.count == 2 && plan.entryIndices[0] == 3
+            && plan.entryIndices[1] == 2,
+        "the first scratch-backed plan should be deterministic");
+
+    const fx::archive::PhysicsRetirementCandidate secondCandidate{
+        7, 8, 1};
+    plan = MakeSentinelPlan();
+    status = fx::archive::BuildPhysicsRetirementPlanWithScratch(
+        {0, 0, 0},
+        {1, 1, 1},
+        &secondCandidate,
+        1,
+        &scratch,
+        &plan);
+    Check(
+        status == PhysicsRetirementPlanStatus::Success
+            && plan.count == 1 && plan.entryIndices[0] == 7
+            && plan.released.bodies == 1
+            && plan.released.userData == 1
+            && plan.released.geoms == 1,
+        "reused scratch must ignore candidates from a larger prior plan");
+
+    const PhysicsRetirementPlan empty{};
+    plan = MakeSentinelPlan();
+    status = fx::archive::BuildPhysicsRetirementPlanWithScratch(
+        {0, 0, 0}, {0, 0, 0}, nullptr, 0, &scratch, &plan);
+    Check(
+        status == PhysicsRetirementPlanStatus::Success
+            && PlansEqual(plan, empty),
+        "reused scratch must support a subsequent empty plan");
+}
+
+void TestScratchFailuresAreTransactional()
+{
+    PhysicsRetirementPlanScratch scratch{};
+    const PhysicsRetirementPlan sentinel = MakeSentinelPlan();
+    PhysicsRetirementPlan plan = sentinel;
+
+    auto status = fx::archive::BuildPhysicsRetirementPlanWithScratch(
+        {0, 0, 0}, {1, 1, 1}, nullptr, 1, &scratch, &plan);
+    CheckTransactionalFailure(
+        status,
+        PhysicsRetirementPlanStatus::InvalidArgument,
+        plan,
+        sentinel,
+        "scratch-backed planning must reject missing candidate storage",
+        "scratch-backed invalid arguments must preserve the plan");
+
+    const fx::archive::PhysicsRetirementCandidate invalidCandidate{
+        fx::physics::BODY_LIMIT, 0, 0};
+    plan = sentinel;
+    status = fx::archive::BuildPhysicsRetirementPlanWithScratch(
+        {0, 0, 0},
+        {0, 0, 0},
+        &invalidCandidate,
+        1,
+        &scratch,
+        &plan);
+    CheckTransactionalFailure(
+        status,
+        PhysicsRetirementPlanStatus::InvalidCandidate,
+        plan,
+        sentinel,
+        "scratch-backed planning must reject malformed candidates",
+        "scratch-backed invalid candidates must preserve the plan");
+
+    const fx::archive::PhysicsRetirementCandidate candidate{0, 0, 1};
+    plan = sentinel;
+    status = fx::archive::BuildPhysicsRetirementPlanWithScratch(
+        {0, 0, 0}, {2, 2, 2}, &candidate, 1, &scratch, &plan);
+    CheckTransactionalFailure(
+        status,
+        PhysicsRetirementPlanStatus::InsufficientCapacity,
+        plan,
+        sentinel,
+        "scratch-backed planning must report insufficient capacity",
+        "scratch-backed capacity failures must preserve the plan");
+
+    plan = sentinel;
+    status = fx::archive::BuildPhysicsRetirementPlanWithScratch(
+        {0, 0, 0}, {0, 0, 0}, nullptr, 0, nullptr, &plan);
+    CheckTransactionalFailure(
+        status,
+        PhysicsRetirementPlanStatus::InvalidArgument,
+        plan,
+        sentinel,
+        "caller-owned scratch storage is mandatory",
+        "missing scratch storage must preserve the plan");
+}
+
 void TestMalformedCandidatesAreRejected()
 {
     const PhysicsRetirementPlan sentinel = MakeSentinelPlan();
@@ -409,12 +577,14 @@ void TestGlobalBodyLimitBoundary()
     for (std::size_t index = 0; index < candidates.size(); ++index)
         candidates[index] = {index, limit - 1 - index, 1};
 
+    PhysicsRetirementPlanScratch scratch{};
     fx::archive::PhysicsRetirementPlan plan{};
-    const auto status = fx::archive::BuildPhysicsRetirementPlan(
+    const auto status = fx::archive::BuildPhysicsRetirementPlanWithScratch(
         {0, 0, 0},
         {limit, limit, limit},
         candidates.data(),
         candidates.size(),
+        &scratch,
         &plan);
     Check(
         status == PhysicsRetirementPlanStatus::Success,
@@ -453,6 +623,9 @@ int main()
     TestGeometryChoosesMinimumDeterministically();
     TestBodyDeficitStillPrefersExpensiveGeoms();
     TestAsymmetricFreeCountsUseTheLargerDeficit();
+    TestScratchAndWrapperParity();
+    TestScratchCanBeReused();
+    TestScratchFailuresAreTransactional();
     TestMalformedCandidatesAreRejected();
     TestInvalidArgumentsAndCapacityOverflowAreTransactional();
     TestGlobalBodyLimitBoundary();
