@@ -6,14 +6,14 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Branch: `agent/native-pool-freelist`; branch point: merged transactional ODE/FX safety
-  commit `580b93bb`; upstream-integration baseline: `2b759db`.
+- Branch: `agent/fx-live-physics-sidecar`; branch point: merged native physics-pool commit
+  `8ce11763`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: finish PR #9's reviewed descriptor-bounded native-pointer pool freelist follow-up, then
-  wire the merged FX physics sidecar atomically through spawn/draw/free/reset/archive. Its pre-review
-  commit `202cce76` passed all nine jobs in run **29293356200**; the PR remains open while the substantiated
-  review findings are corrected. The replacement 39-test GCC, Clang, ASan/UBSan, and TSan suites plus
-  strict x86-32/AArch64 compile-link checks are locally green; replacement CI and automated review remain.
+- Active work: wire the merged FX physics sidecar atomically through live spawn/draw/free/reset paths,
+  then migrate archive save/token handling and implement capacity-safe restore. PR #9's native physics
+  pool work merged at `8ce11763` after replacement run **29300663478 passed all nine jobs**; both review
+  threads were resolved, the 39-test GCC/Clang/ASan/UBSan/TSan matrix was green, and strict x86-32 plus
+  AArch64 compile/link checks passed.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
@@ -115,7 +115,7 @@ work item changes. Do not create session-specific handoff files.
   utility suite is **36/36 locally green** under GCC, Clang, ASan/UBSan (leak detection disabled under the
   ptrace runner), and TSan; focused storage validation also passes x86-32 and AArch64 compilation. PR #7
   merged at `580b93bb` after all nine jobs passed in run **29291013134** and automated plus independent
-  review found no remaining defects. The current pool branch closes the next hard 64-bit blocker without
+  review found no remaining defects. PR #9 closes the next hard 64-bit blocker without
   changing the 8-byte x86 metadata: every link is stored and loaded at native pointer width through
   `memcpy`, and a non-owning base/stride/count descriptor supplies each operation's exact extent. Checked
   queries return status and value together, so caller output cannot alias and rewrite live pool storage
@@ -134,7 +134,9 @@ work item changes. Do not create session-specific handoff files.
   state. The review-fix strict **39/39** GCC, Clang, ASan/UBSan, and TSan suites pass, as do x86-32 and
   AArch64 compile/link checks. Those portable tests compile the allocator contract;
   Windows x86 engine CI remains the production-callsite compile gate until native engine source sets
-  exist, while all five portable runtime jobs remain the cross-target allocator gate. The global
+  exist, while all five portable runtime jobs remain the cross-target allocator gate. PR #9 merged at
+  `8ce11763` after replacement run **29300663478 passed all nine jobs** and all review threads were resolved.
+  The global
   32-bit frozen token field necessarily permits generation reuse after 2^32 advances, and release
   shutdown must explicitly drain/finalize the registry because destructor assertions are diagnostic.
   The global unbounded/alignment-unsafe `Buf_Read<T>` cursor has
@@ -477,24 +479,21 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Land PR #9 after replacement review CI and automated review confirm the external per-slot shadow control, O(1) hot pool
-   operations, explicit bounded full validation, descriptor layout correction, 0x70/0x78 userdata stride,
-   and checked ODE leak diagnostics. Pre-review run 29293356200 passed all nine jobs at `202cce76`.
-2. Finish the merged generation-checked `FxElem::physObjId` sidecar by integrating spawn/draw/free/reset
+1. Finish the merged generation-checked `FxElem::physObjId` sidecar by integrating spawn/draw/free/reset
    and staged archive commit/rollback atomically without changing the 0x28-byte ABI. Respect the global
    512-body ceiling with recoverable recipe-based replacement rather than assuming complete live and
    replacement body sets can coexist.
-3. Add packed FX savegame Disk32 schemas, native handle remapping, opaque effect-definition keys,
+2. Add packed FX savegame Disk32 schemas, native handle remapping, opaque effect-definition keys,
    and byte-level malformed/round-trip fixtures; retain the legacy x86 writer until equivalence is
    proven. Fast-file `FxEffectDef` widening remains a separate nested-payload batch.
-4. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
+3. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
-5. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
+4. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
    and `KISAKCOD_GAME_DIR` secret are absent. Implement the designed handle-relative recursive deletion
    service without symlink/reparse traversal instead; surface the smoke infrastructure blocker if asked.
-6. Extract standard-stream console services, then process/event services and Linux signal-park plus
+5. Extract standard-stream console services, then process/event services and Linux signal-park plus
    macOS Mach crash freezing behind the already isolated terminal API.
-7. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
+6. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
 
 ## Known release blockers
 
