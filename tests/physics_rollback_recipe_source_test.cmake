@@ -220,6 +220,9 @@ require_regex("${_header}" "struct[ \t\r\n]+PhysBodyResourceDemand"
     "explicit body/user-data/geom resource demand")
 require_regex("${_header}" "struct[ \t\r\n]+PhysBodyRollbackRecipe"
     "state/model/demand rollback recipe")
+require_regex("${_header}"
+    "PhysBodyModelCreateStatus[^}]*CleanupFailed"
+    "archive reconstruction exposes an unrecoverable cleanup status")
 require_regex("${_header}" "Caller owns CRITSECT_PHYSICS"
     "transaction lock ownership contract")
 
@@ -526,6 +529,20 @@ require_regex_ordered("${_recipe_scope}"
 
 extract_slice(
     "${_source}"
+    "static PhysBodyModelCreateStatus Phys_TryCreateBodyFromStateInternal("
+    "dxBody *__cdecl Phys_CreateBodyFromState("
+    _body_create_scope
+    "transactional state-only body creation")
+require_regex_ordered("${_body_create_scope}"
+    "Phys_TryDestroyBodyLockedNoReport\\(worldIndex,[ \t\r\n]*body\\)"
+    "PhysBodyModelCreateStatus::CleanupFailed"
+    "state-only no-report rollback must expose native cleanup failure")
+forbid_regex("${_body_create_scope}"
+    "\\(void\\)[ \t\r\n]*Phys_TryDestroyBodyLockedNoReport"
+    "state-only no-report rollback cannot discard cleanup failure")
+
+extract_slice(
+    "${_source}"
     "Phys_TryCreateBodyFromStateAndXModelInternal("
     "PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromStateAndXModel("
     _create_internal_scope
@@ -561,6 +578,13 @@ require_regex_ordered("${_create_internal_scope}"
 require_regex("${_create_internal_scope}"
     "Phys_ReleaseCreatedBodyResources\\(body,[ \t\r\n]*userData\\)"
     "partial collision construction is rolled back")
+require_regex_ordered("${_create_internal_scope}"
+    "Phys_TryDestroyBodyLockedNoReport\\(worldIndex,[ \t\r\n]*body\\)"
+    "PhysBodyModelCreateStatus::CleanupFailed"
+    "collision rollback must expose native cleanup failure")
+forbid_regex("${_create_internal_scope}"
+    "\\(void\\)[ \t\r\n]*Phys_TryDestroyBodyLockedNoReport"
+    "collision rollback cannot discard native cleanup failure")
 require_regex("${_source}"
     "reportFailure[ \t\r\n]*\\?[ \t\r\n]*Phys_DestroyBodyResource[ \t\r\n]*:[ \t\r\n]*Phys_DestroyFreshBodyResourceNoReport"
     "strict body companion rollback selects the no-report callback")

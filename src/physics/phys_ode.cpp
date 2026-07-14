@@ -746,8 +746,11 @@ static PhysBodyModelCreateStatus Phys_TryCreateBodyFromStateInternal(
     {
         if (reportFailure)
             (void)Phys_ReleaseCreatedBodyResources(body, userData);
-        else
-            (void)Phys_TryDestroyBodyLockedNoReport(worldIndex, body);
+        else if (Phys_TryDestroyBodyLockedNoReport(worldIndex, body)
+            != PhysBodyRollbackStatus::Success)
+        {
+            return PhysBodyModelCreateStatus::CleanupFailed;
+        }
         return massStatus;
     }
     savedPos = userData->savedPos;
@@ -3687,8 +3690,11 @@ Phys_TryCreateBodyFromStateAndXModelInternal(
         }
         else
         {
-            (void)Phys_TryDestroyBodyLockedNoReport(
-                worldIndex, body);
+            if (Phys_TryDestroyBodyLockedNoReport(worldIndex, body)
+                != PhysBodyRollbackStatus::Success)
+            {
+                return PhysBodyModelCreateStatus::CleanupFailed;
+            }
         }
         return collisionStatus;
     }

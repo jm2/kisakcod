@@ -93,6 +93,7 @@ enum class PhysBodyModelCreateStatus : std::uint8_t
     BodyResourcesExhausted,
     PrimaryGeomAllocationFailed,
     TransformGeomAllocationFailed,
+    CleanupFailed,
 };
 
 enum physStuckState_t : __int32
