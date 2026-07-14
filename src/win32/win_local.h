@@ -133,7 +133,7 @@ struct sysEvent_t // sizeof=0x18
 };
 
 void Sys_SetErrorText(const char* buf);
-void Sys_Error(const char *error, ...);
+[[noreturn]] void Sys_Error(const char *error, ...);
 void __cdecl Sys_OutOfMemErrorInternal(const char* filename, int line);
 void __cdecl Sys_NormalExit();
 
