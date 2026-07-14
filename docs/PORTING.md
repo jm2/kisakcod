@@ -65,10 +65,10 @@ Remaining gates, in implementation order:
 1. Keep the protected licensed headless startup/map/network smoke deferred and do not dispatch it until
    its `[self-hosted, kisakcod, windows, x86]` runner and `KISAKCOD_GAME_DIR` secret are provisioned;
    surface that infrastructure blocker rather than creating a permanently queued run.
-2. Wire the merged native physics sidecar through live spawn/draw/free/reset/archive paths and add
-   kill/rewind/archive fixtures. Transactional ODE body/model construction is merged, and the current
-   reviewed batch has widened and bounded the generic pool allocator without changing its x86 metadata;
-   PR #9 merged at `8ce11763` after replacement run 29300663478 passed all nine jobs.
+2. Complete FX archive runtime closure. Live generation-checked sidecars, full-capacity rollback, exhaustive
+   pure restore control, and checked heap transaction/preflight scratch are implemented. Next extract the archive
+   admission gate for deterministic waiter/error-unwind coverage, then the narrow ODE rollback runtime for real
+   competing non-FX occupancy, followed by the no-longjmp effect-table boundary and measured frame/runtime gates.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -974,10 +974,16 @@ portable executable fixture injects every result at every primary, live-graph re
 commit-cleanup, and safe-empty operation; it verifies exact ordering, invalid-callback fail-closure, immediate
 unsafe termination, and the single desired-publication success outcome. The production adapter retains archive
 and PHYSICS exclusion around the complete synchronous controller call and translates an unsafe outcome to a
-fail-stop before admission or scratch ownership can be released. The next sequence is checked heap-backed
-transaction scratch, executable archive-gate waiter coverage, real competing non-FX ODE occupancy, and measured
-x86 stack/runtime ceilings. Remaining FX work also includes camera/scalar snapshot publication and real Disk32
-archive/fast-file conversion. The unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
+fail-stop before admission or scratch ownership can be released. Checked heap lifetimes now own rollback/control,
+both transaction sidecars, ownership images, retirement planning, and pool-graph validation; a short-lived checked
+heap image also covers malformed graph preflight before archive admission. Safe outcomes leave PHYSICS, end archive
+admission, destroy scratch, and then free referenced buffers, while unsafe outcomes use the explicit `[[noreturn]]`
+platform fatal boundary without cleanup. Wrapper/scratch parity, failure preservation/reuse, full capacity, and
+source cleanup order are covered by the **44/44** GCC/Clang/ASan/UBSan/TSan matrix plus strict x86-32/AArch64
+compile/link fixtures. The next sequence is executable archive-gate waiter coverage, real competing non-FX ODE
+occupancy, the no-longjmp effect-table boundary, and measured x86/native64 stack/runtime ceilings. Remaining FX
+work also includes camera/scalar snapshot publication and real Disk32 archive/fast-file conversion. The
+unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
 a separate transactional `current/end` cursor migration. Detailed live blockers and sequencing remain in
 `docs/task.md` and `docs/CODEBASE_AUDIT.md`.
 

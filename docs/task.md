@@ -9,18 +9,26 @@ work item changes. Do not create session-specific handoff files.
 - Branch: `agent/fx-restore-workspace`; branch point: merged executable restore controller
   `39432a29`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: move the FX archive transaction's large nontrivial state and reusable validation/planning scratch
-  into one checked, explicitly constructed heap workspace. Current measured optimized/conservative peaks are
-  approximately **58–66 KiB on x86** and **105–121 KiB on native64**. The first workspace will own the staged
-  and rollback body sidecars, rollback system/control state, retirement candidates/planner scratch, ownership
-  snapshots, token/owner scratch, and pool-graph validation scratch. Checked size narrowing, allocator alignment,
-  placement construction, exact safe-terminal destruction, and wrapper/scratch parity will be executable on
-  portable targets. `UnsafeFailure` must still abort without destructing the workspace, freeing it, releasing
-  PHYSICS, or reopening archive admission because ownership may be indeterminate. The early 8,196-byte x86
-  effect-definition table deliberately remains stack-backed in this batch: registration can longjmp before
-  cleanup, so moving it requires a separate no-leak parsing boundary. Private ODE rollback scratch is also a
-  separate physics-layer batch. The expected first reduction is to roughly 15 KiB x86 / 23 KiB native64 inside
-  the FX layer, followed by the effect-table parsing boundary and measured per-function stack gates.
+- Active work: this branch completes checked heap-backed FX archive restore scratch. One explicitly constructed,
+  noncopyable transaction workspace now owns the rollback system/control state, staged and rollback body sidecars,
+  ownership/token images, retirement candidates/planner, and pool-graph scratch. A short-lived checked heap image
+  also covers malformed restored-graph preflight before the transaction workspace exists, so no attacker-reachable
+  restore validation retains the former 14–23 KiB convenience-wrapper frame. Size narrowing, max-alignment,
+  placement construction, destructor-before-free ordering, scratch/wrapper parity, failure output preservation,
+  and reuse after failure are executable portable contracts. Safe outcomes leave PHYSICS, end archive admission,
+  destroy the workspace, then release referenced buffers; `UnsafeFailure` uses the now-contractual `[[noreturn]]`
+  platform fatal boundary without destructing/freeing scratch, releasing PHYSICS, or reopening admission. Source
+  contracts pin those orders and all production `WithScratch` routes. The four local **44/44** GCC, Clang,
+  ASan/UBSan, and TSan suites pass, as do strict x86-32 and AArch64 compile/link checks for sidecar, capacity,
+  pool-graph, workspace-lifetime, and restore-controller fixtures. Independent lifetime, sidecar, and pool reviews
+  found and verified fixes for the early preflight wrapper and fatal-boundary contract, then reported no remaining
+  ownership, cleanup, lock-order, or scratch-reuse defect. The prior measured restore peaks were approximately
+  **58–66 KiB x86 / 105–121 KiB native64**; structural census projects roughly **15 KiB / 23 KiB** after this
+  change, but an actual production frame gate remains pending because `fx_archive.cpp` is not yet portable outside
+  the Windows engine build. The early 8,196-byte x86 effect-definition table remains stack-backed because
+  registration can longjmp before cleanup; moving it requires a separate no-leak parsing boundary. Next after this
+  PR is executable archive-gate waiter/admission coverage, followed by portable ODE competing-occupancy extraction,
+  then the effect-table boundary and measured per-function stack gates.
   PR #14 merged the executable restore controller as `39432a29` after run **29359061795 passed all nine CI
   jobs** and Gemini plus independent review reported no findings. Its portable controller covers all operation
   failures and the production adapter retains archive/PHYSICS ownership through desired, original, safe-empty,
@@ -48,7 +56,7 @@ work item changes. Do not create session-specific handoff files.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **35% complete by engineering effort** (plausible range 31–40%).
+- Progress estimate: approximately **36% complete by engineering effort** (plausible range 32–41%).
   The foundation/checklist view is about 50–55% and the shared foundation is roughly 88–93% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
@@ -128,9 +136,11 @@ work item changes. Do not create session-specific handoff files.
   global 512-body ceiling is handled by silently validating exact resource demand and global topology,
   retiring only owned old FX bodies needed for capacity, and reconstructing every retired body before an
   old-graph rollback. Desired, rollback, and safe-empty publication keep archive iterator exclusion intact;
-  unexpected cleanup failure terminates before reopening admission. Remaining FX-specific work is real
-  64-bit Disk32 archive/fast-file conversion, camera/scalar snapshot publication, executable production
-  fault-injection fixtures, and a heap transaction workspace to replace the large bounded stack image.
+  unexpected cleanup failure terminates before reopening admission. The current branch moves its bounded
+  transaction and validation scratch to checked heap lifetimes without weakening fail-stop ownership.
+  Remaining FX-specific work is real 64-bit Disk32 archive/fast-file conversion, camera/scalar snapshot
+  publication, executable archive-gate/production runtime fixtures, competing ODE occupancy, the no-longjmp
+  effect-table parsing boundary, and measured stack/runtime gates.
   Audit of that transaction exposed prerequisite ODE exhaustion defects: `dBodyCreate` and user-data allocation
   dereference null, while primary/transform geometry failures can publish incomplete collision bodies.
   PR #7 checks body exhaustion before world publication, pairs the dormant heap
@@ -515,11 +525,12 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Extract a testable production restore-control seam around the completed full-capacity transaction and add
-   executable nth-operation fault injection for 0/512 bodies, retire/destroy/create/bind/publish/rebuild/
-   reconstruct/drain failure, post-publication rollback, exact destruction ledgers, competing non-FX ODE
-   occupancy, safe-empty publication, and archive-gate waiters. Measure the x86 stack/time ceiling, move the
-   bounded transaction workspace to checked heap storage, and enforce the measured caller-frame contract.
+1. Extract the archive admission/gate state machine into a portable controller and add deterministic waiter,
+   cancellation/error-unwind, owner-generation, and reopen-order coverage. Then extract the narrow ODE rollback
+   runtime needed for real competing non-FX occupancy/exhaustion tests. The restore controller's exhaustive
+   nth-operation fixture and checked heap transaction/preflight scratch are complete; after the gate/occupancy
+   fixtures, move the effect-definition table behind a no-longjmp parsing boundary, measure the Windows x86
+   production frame, and enforce source-scoped MSVC plus portable extracted-TU stack limits.
 2. Add packed FX savegame Disk32 schemas, native handle remapping, opaque effect-definition keys,
    and byte-level malformed/round-trip fixtures; retain the legacy x86 writer until equivalence is
    proven. Fast-file `FxEffectDef` widening remains a separate nested-payload batch.
@@ -581,9 +592,11 @@ work item changes. Do not create session-specific handoff files.
   admission revalidation prevents old iterator jobs from crossing lifecycle generations. The current branch
   handles the 512-body full-capacity case with exact silent topology recipes, bounded retirement and
   reconstruction, preserved archive exclusion, canonical safe-empty reset, and fail-stop handling after any
-  lost native ownership. Remaining blockers are camera/scalar publication, real Disk32 FX archive/fast-file
-  conversion, executable production runtime/fault-injection fixtures, competing non-FX occupancy coverage,
-  and a measured heap-backed transaction workspace. `R_FilterXModelIntoScene` still retains an
+  lost native ownership. Its transaction, sidecars, planning, and validation scratch now use checked heap
+  lifetimes, including early malformed-graph preflight; safe and unsafe cleanup orders are source-guarded.
+  Remaining blockers are camera/scalar publication, real Disk32 FX archive/fast-file conversion, executable
+  archive-gate/production runtime fixtures, competing non-FX occupancy coverage, the effect-table parsing
+  boundary, and measured stack/runtime enforcement. `R_FilterXModelIntoScene` still retains an
   FX element's cached-lighting handle pointer beyond the per-effect draw lock; current renderer scheduling
   consumes it before the next FX mutation, but a generation-aware scene-owned cache is required before that
   ordering can be relaxed. The unbounded load-object cursor is tracked separately under XAnim/XModel.
