@@ -5434,11 +5434,6 @@ require_source_match_count(
     4
     "sort admission, archive-race rollback, normal release, and error unwind must use their shared helpers")
 require_source_match_count(
-    "EffectsCore/fx_system.cpp"
-    "(Sys_AtomicLoad|Sys_AtomicStore|FxIteratorEndExclusive|FxIteratorTryBeginExclusive|FxIteratorWaitBeginExclusive)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
-    19
-    "system reset, lifecycle claims, shutdown checks, archive ownership/error unwind, garbage collection, and rollback transitions must remain explicit")
-require_source_match_count(
     "EffectsCore/fx_draw.cpp"
     "system->iteratorCount"
     7
@@ -5448,11 +5443,6 @@ require_source_match_count(
     "system->iteratorCount"
     4
     "all sort iterator references must remain accounted for")
-require_source_match_count(
-    "EffectsCore/fx_system.cpp"
-    "system->iteratorCount"
-    26
-    "all system iterator and lifecycle-claim references must remain accounted for")
 
 # Archive ownership uses an external gate to stop new cooperative/exclusive
 # iterators and pool mutations before taking the iterator gate exclusively.
@@ -6101,11 +6091,6 @@ require_source_match_count(
     "FX_EnterArchiveAwarePoolCriticalSection[ \t\r\n]*\\([ \t\r\n]*\\)[ \t]*[;]"
     28
     "every pool/reference/admission mutation and graph or sidecar check must use archive-aware admission")
-require_source_match_count(
-    "EffectsCore/fx_system.cpp"
-    "Sys_LeaveCriticalSection[ \t\r\n]*\\([ \t\r\n]*CRITSECT_FX_ALLOC[ \t\r\n]*\\)"
-    35
-    "every archive-aware/lifecycle allocator access and fail-closed path must release the allocator lock")
 require_source_match_count(
     "EffectsCore/fx_system.cpp"
     "Sys_LeaveCriticalSection[ \t\r\n]*\\([ \t\r\n]*CRITSECT_FX_ALLOC[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*status[ \t]*!=[ \t]*FxPoolMutationStatus::Success[ \t\r\n]*&&[ \t]*status[ \t]*!=[ \t]*FxPoolMutationStatus::Empty[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP"

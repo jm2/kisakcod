@@ -2082,24 +2082,25 @@ fx::physics::SidecarStatus FX_DrainPhysicsBodySidecarLocked(
     return fx::physics::ResetEmpty(sidecar);
 }
 
-fx::physics::SidecarStatus FX_ResetSystemUnderLifecycleClaim(
+bool FX_CanResetSystemGraphUnderExclusiveClaim(
     FxSystem *const system) noexcept
 {
+    if (!system)
+        return false;
     FxPoolAllocationStates *const states =
         FX_GetPoolAllocationStates(system);
-    if (!system || !states || !system->effects || !system->elems
-        || !system->trailElems || !system->trails || !system->visState
-        || Sys_AtomicLoad(&system->iteratorCount) != -1)
-    {
-        return fx::physics::SidecarStatus::InvalidArgument;
-    }
+    return states && system->effects && system->elems
+        && system->trailElems && system->trails && system->visState
+        && Sys_AtomicLoad(&system->iteratorCount) == -1;
+}
 
-    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-    const fx::physics::SidecarStatus physicsStatus =
-        FX_DrainPhysicsBodySidecarLocked(system);
-    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
-    if (physicsStatus != fx::physics::SidecarStatus::Success)
-        return physicsStatus;
+fx::physics::SidecarStatus FX_ResetSystemGraphUnderExclusiveClaim(
+    FxSystem *const system) noexcept
+{
+    if (!FX_CanResetSystemGraphUnderExclusiveClaim(system))
+        return fx::physics::SidecarStatus::InvalidArgument;
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
 
     system->effects->def = nullptr;
     for (std::int32_t effectIndex = 0;
@@ -2167,7 +2168,66 @@ fx::physics::SidecarStatus FX_ResetSystemUnderLifecycleClaim(
     system->visStateBufferWrite = system->visState + 1;
     return fx::physics::SidecarStatus::Success;
 }
+
+fx::physics::SidecarStatus FX_ResetSystemUnderLifecycleClaim(
+    FxSystem *const system) noexcept
+{
+    if (!FX_CanResetSystemGraphUnderExclusiveClaim(system))
+        return fx::physics::SidecarStatus::InvalidArgument;
+
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    const fx::physics::SidecarStatus physicsStatus =
+        FX_DrainPhysicsBodySidecarLocked(system);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    if (physicsStatus != fx::physics::SidecarStatus::Success)
+        return physicsStatus;
+    return FX_ResetSystemGraphUnderExclusiveClaim(system);
+}
 } // namespace
+
+bool __cdecl FX_PublishArchiveSafeEmptyStateLocked(
+    FxSystem *const system) noexcept
+{
+    if (!system || !FX_CurrentThreadOwnsArchive(system)
+        || Sys_AtomicLoad(&system->iteratorCount) != -1)
+    {
+        return false;
+    }
+    fx::physics::BodySidecar *const sidecar =
+        FX_GetPhysicsBodySidecar(system);
+    if (!sidecar
+        || fx::physics::Validate(sidecar)
+            != fx::physics::SidecarStatus::Success
+        || fx::physics::ValidateVacantDestination(sidecar)
+            != fx::physics::SidecarStatus::Success)
+    {
+        return false;
+    }
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!states)
+        return false;
+
+    Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
+    const fx::physics::SidecarStatus resetStatus =
+        FX_ResetSystemGraphUnderExclusiveClaim(system);
+    bool published = false;
+    if (resetStatus == fx::physics::SidecarStatus::Success
+        && FxValidatePoolAllocationGraph(
+            system,
+            states->elems,
+            states->trails,
+            states->trailElems))
+    {
+        system->isInitialized = true;
+        system->isArchiving = false;
+        fx_archiveThreadState.generation =
+            FX_GetCooperativeIteratorGeneration(system);
+        published = true;
+    }
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return published;
+}
 
 void __cdecl FX_InitSystem(int32_t localClientNum)
 {

@@ -86,6 +86,10 @@ void __cdecl FX_WaitForArchiveGate(const FxSystem *system);
 void __cdecl FX_WaitForEffectKillGate(const FxSystem *system) noexcept;
 bool __cdecl FX_BeginArchive(FxSystem *system);
 bool __cdecl FX_RestoreArchiveExclusiveState(FxSystem *system);
+// Archive restore holds CRITSECT_PHYSICS while calling this fallback. The live
+// physics sidecar must already be valid, transaction-neutral, and empty.
+bool __cdecl FX_PublishArchiveSafeEmptyStateLocked(
+    FxSystem *system) noexcept;
 bool __cdecl FX_EndArchive(FxSystem *system);
 void __cdecl FX_AbandonCurrentThreadArchiveForError() noexcept;
 void __cdecl FX_AbandonCurrentThreadSortExclusiveForError() noexcept;
