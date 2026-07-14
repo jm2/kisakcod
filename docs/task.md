@@ -6,23 +6,26 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Branch: `agent/fx-restore-control`; branch point: merged status-bearing physics cleanup
-  `48906d26`; upstream-integration baseline: `2b759db`.
+- Branch: `agent/fx-restore-workspace`; branch point: merged executable restore controller
+  `39432a29`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: this branch completes the pure FX archive restore-control seam. The production transaction now
-  delegates its branch tree to an allocation-free, engine-independent controller with explicit
-  desired-published, original-restored, safe-empty, and unsafe outcomes. Its portable fake backend injects
-  recoverable, unsafe, and invalid results at every primary and recovery operation boundary and verifies exact
-  live-graph, snapshot, commit-cleanup, and safe-empty traces. The engine adapter maps all 21 operations to the
-  existing helpers while retaining archive/iterator and PHYSICS exclusion through a proven terminal state;
-  post-transfer cleanup failure reaches one centralized fail-stop before admission or scratch ownership can
-  escape. Source contracts pin the production lock interval, exhaustive mapping, tri-state cleanup propagation,
-  desired-only success, and removal of the obsolete inline branch state. Independent semantic review found no
-  remaining ownership, recovery-boundary, lock-order, ABI, or build-list defect. Local validation is **43/43**
-  under GCC, Clang, ASan/UBSan (leak detection disabled under the ptrace runner), and TSan, plus strict x86-32
-  and AArch64 controller compile/link checks. The next item is checked heap transaction scratch, followed by an
-  executable archive-gate controller with deterministic waiters, portable ODE runtime extraction and real
-  competing occupancy, then measured x86 stack/runtime bounds.
+- Active work: move the FX archive transaction's large nontrivial state and reusable validation/planning scratch
+  into one checked, explicitly constructed heap workspace. Current measured optimized/conservative peaks are
+  approximately **58–66 KiB on x86** and **105–121 KiB on native64**. The first workspace will own the staged
+  and rollback body sidecars, rollback system/control state, retirement candidates/planner scratch, ownership
+  snapshots, token/owner scratch, and pool-graph validation scratch. Checked size narrowing, allocator alignment,
+  placement construction, exact safe-terminal destruction, and wrapper/scratch parity will be executable on
+  portable targets. `UnsafeFailure` must still abort without destructing the workspace, freeing it, releasing
+  PHYSICS, or reopening archive admission because ownership may be indeterminate. The early 8,196-byte x86
+  effect-definition table deliberately remains stack-backed in this batch: registration can longjmp before
+  cleanup, so moving it requires a separate no-leak parsing boundary. Private ODE rollback scratch is also a
+  separate physics-layer batch. The expected first reduction is to roughly 15 KiB x86 / 23 KiB native64 inside
+  the FX layer, followed by the effect-table parsing boundary and measured per-function stack gates.
+  PR #14 merged the executable restore controller as `39432a29` after run **29359061795 passed all nine CI
+  jobs** and Gemini plus independent review reported no findings. Its portable controller covers all operation
+  failures and the production adapter retains archive/PHYSICS ownership through desired, original, safe-empty,
+  or unsafe terminal outcomes. Local validation was **43/43** under GCC, Clang, ASan/UBSan, and TSan with strict
+  x86-32 and AArch64 controller compile/link checks.
   PR #13 merged the status-bearing resource cleanup prerequisite as `48906d26` after run
   **29356956952 passed all nine CI jobs** and Gemini reported no findings. The generic body/user-data and
   primary-geom/transform transaction retains explicit primary ownership when rollback refuses and returns a
