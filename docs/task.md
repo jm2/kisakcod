@@ -6,11 +6,18 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
-  jobs**; its branch point was the merged executable restore controller `39432a29`; upstream-integration
-  baseline: `2b759db`.
+- Active branch: `agent/fx-archive-gate-control`; branch point: post-merge restore-workspace checkpoint
+  `6ce9e14`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: this branch completes checked heap-backed FX archive restore scratch. One explicitly constructed,
+- Active work: extract normal FX archive admission into a portable callback-driven controller with explicit
+  pending, iterator-exclusive, acquired, and gate-only recovery phases. Deterministic executable coverage will
+  exercise waiter retry/cancellation, owner identity and lifecycle generation, promotion rollback, partial
+  release retry, error abandon, and exact iterator-before-gate reopening. Production integration will reject
+  same-thread sort/effect-lock ownership before admission, retain recoverable TLS state until every release step
+  succeeds, and leave the distinct reset/init/shutdown lifecycle two-gate claim protocol unchanged.
+- Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
+  jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
+  archive restore scratch. One explicitly constructed,
   noncopyable transaction workspace now owns the rollback system/control state, staged and rollback body sidecars,
   ownership/token images, retirement candidates/planner, and pool-graph scratch. A short-lived checked heap image
   also covers malformed restored-graph preflight before the transaction workspace exists, so no attacker-reachable
