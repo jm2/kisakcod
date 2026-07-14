@@ -91,6 +91,30 @@ struct [[nodiscard]] IndexedBodyResult
     }
 };
 
+// A bounded, read-only view of one native-body registration. Owner indices
+// fit in 16 bits by contract, which keeps a full cleanup snapshot compact on
+// both 32- and 64-bit targets.
+struct OwnershipRecord
+{
+    dxBody *body = nullptr;
+    BodyToken token = INVALID_BODY_TOKEN;
+    std::uint16_t ownerIndex =
+        (std::numeric_limits<std::uint16_t>::max)();
+};
+
+struct OwnershipSnapshot
+{
+    std::array<OwnershipRecord, BODY_LIMIT> records{};
+    std::uint16_t count = 0;
+};
+
+static_assert(BODY_LIMIT <=
+    static_cast<std::size_t>(
+        (std::numeric_limits<std::uint16_t>::max)()));
+static_assert(MAX_ELEMS <=
+    static_cast<std::size_t>(
+        (std::numeric_limits<std::uint16_t>::max)()) + 1u);
+
 struct BodySlot
 {
     dxBody *body = nullptr;
@@ -101,6 +125,9 @@ class BodySidecar;
 
 [[nodiscard]] inline SidecarStatus Validate(
     const BodySidecar *sidecar) noexcept;
+[[nodiscard]] inline SidecarStatus SnapshotOwnership(
+    const BodySidecar *sidecar,
+    OwnershipSnapshot *outSnapshot) noexcept;
 [[nodiscard]] inline SidecarStatus ValidateVacantOwner(
     const BodySidecar *sidecar,
     std::size_t ownerIndex) noexcept;
@@ -194,6 +221,8 @@ class BodySidecar final
 
   private:
     friend SidecarStatus Validate(const BodySidecar *) noexcept;
+    friend SidecarStatus SnapshotOwnership(
+        const BodySidecar *, OwnershipSnapshot *) noexcept;
     friend SidecarStatus ValidateVacantOwner(
         const BodySidecar *, std::size_t) noexcept;
     friend SidecarStatus ValidateSemanticOwnership(
@@ -401,6 +430,40 @@ struct SidecarTestAccess
         if (bodies[index - 1] == bodies[index])
             return SidecarStatus::DuplicateBody;
     }
+    return SidecarStatus::Success;
+}
+
+// Cleanup code must validate every native body before detaching any sidecar
+// registration. Build that inspection image only after whole-sidecar
+// validation, and publish it to the caller only after the bounded scan is
+// complete. Every failure therefore preserves the caller's prior snapshot.
+[[nodiscard]] inline SidecarStatus SnapshotOwnership(
+    const BodySidecar *const sidecar,
+    OwnershipSnapshot *const outSnapshot) noexcept
+{
+    if (!outSnapshot)
+        return SidecarStatus::InvalidArgument;
+    const SidecarStatus structuralStatus = Validate(sidecar);
+    if (structuralStatus != SidecarStatus::Success)
+        return structuralStatus;
+
+    OwnershipSnapshot snapshot{};
+    for (std::size_t ownerIndex = 0; ownerIndex < MAX_ELEMS; ++ownerIndex)
+    {
+        const BodySlot &slot = sidecar->slots_[ownerIndex];
+        if (!slot.body)
+            continue;
+        if (snapshot.count == snapshot.records.size())
+            return SidecarStatus::ActiveCountCorrupt;
+        snapshot.records[snapshot.count++] = {
+            slot.body,
+            slot.generation,
+            static_cast<std::uint16_t>(ownerIndex),
+        };
+    }
+    if (snapshot.count != sidecar->activeCount_)
+        return SidecarStatus::ActiveCountCorrupt;
+    *outSnapshot = snapshot;
     return SidecarStatus::Success;
 }
 

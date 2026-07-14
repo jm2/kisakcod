@@ -46,6 +46,23 @@ static_assert(std::is_same_v<
               decltype(fx::physics::TakeFirst(
                   std::declval<fx::physics::BodySidecar *>())),
               fx::physics::IndexedBodyResult>);
+static_assert(std::is_same_v<
+              decltype(fx::physics::SnapshotOwnership(
+                  std::declval<const fx::physics::BodySidecar *>(),
+                  std::declval<fx::physics::OwnershipSnapshot *>())),
+              fx::physics::SidecarStatus>);
+static_assert(noexcept(fx::physics::SnapshotOwnership(
+    std::declval<const fx::physics::BodySidecar *>(),
+    std::declval<fx::physics::OwnershipSnapshot *>())));
+static_assert(std::is_trivially_copyable_v<
+    fx::physics::OwnershipRecord>);
+static_assert(std::is_trivially_copyable_v<
+    fx::physics::OwnershipSnapshot>);
+static_assert(sizeof(fx::physics::OwnershipRecord)
+    <= sizeof(dxBody *) + 2u * sizeof(std::uint32_t));
+static_assert(std::tuple_size_v<decltype(
+    fx::physics::OwnershipSnapshot::records)>
+    == fx::physics::BODY_LIMIT);
 static_assert(noexcept(fx::physics::Validate(
     std::declval<const fx::physics::BodySidecar *>())));
 static_assert(std::is_same_v<
@@ -68,6 +85,8 @@ using fx::physics::BodySidecar;
 using fx::physics::BodySlot;
 using fx::physics::BodyToken;
 using fx::physics::IndexedBodyResult;
+using fx::physics::OwnershipRecord;
+using fx::physics::OwnershipSnapshot;
 using fx::physics::SidecarStatus;
 using fx::physics::TokenResult;
 using fx::physics::TransactionRole;
@@ -122,6 +141,47 @@ bool SameSlot(const BodySlot &first, const BodySlot &second)
 {
     return first.body == second.body
         && first.generation == second.generation;
+}
+
+bool SameOwnershipRecord(
+    const OwnershipRecord &first,
+    const OwnershipRecord &second)
+{
+    return first.body == second.body
+        && first.token == second.token
+        && first.ownerIndex == second.ownerIndex;
+}
+
+bool SameOwnershipSnapshot(
+    const OwnershipSnapshot &first,
+    const OwnershipSnapshot &second)
+{
+    if (first.count != second.count)
+        return false;
+    for (std::size_t index = 0; index < first.records.size(); ++index)
+    {
+        if (!SameOwnershipRecord(
+                first.records[index], second.records[index]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+OwnershipSnapshot MakeOwnershipSnapshotSentinel(dxBody *const body)
+{
+    OwnershipSnapshot snapshot{};
+    snapshot.count = 173u;
+    for (std::size_t index = 0; index < snapshot.records.size(); ++index)
+    {
+        snapshot.records[index] = {
+            body,
+            static_cast<BodyToken>(index + 1u),
+            static_cast<std::uint16_t>(index % MAX_ELEMS),
+        };
+    }
+    return snapshot;
 }
 
 struct PhysicsPoolItem
@@ -691,6 +751,217 @@ bool TestSemanticValidation()
         == SidecarStatus::OwnershipMismatch;
 }
 
+bool TestOwnershipSnapshotExactRecords()
+{
+    BodySidecar sidecar{};
+    if (!Initialize(&sidecar))
+        return false;
+
+    dxBody lowBody{1u};
+    dxBody middleBody{2u};
+    dxBody highBody{3u};
+    constexpr std::size_t lowOwner = 1u;
+    constexpr std::size_t middleOwner = 71u;
+    constexpr std::size_t highOwner = MAX_ELEMS - 1u;
+    const TokenResult highBind =
+        fx::physics::Bind(&sidecar, highOwner, &highBody);
+    const TokenResult lowBind =
+        fx::physics::Bind(&sidecar, lowOwner, &lowBody);
+    const TokenResult middleBind =
+        fx::physics::Bind(&sidecar, middleOwner, &middleBody);
+    if (!highBind || !lowBind || !middleBind)
+        return false;
+
+    const std::uint64_t revisionBefore =
+        fx::physics::SidecarTestAccess::GetRevision(&sidecar);
+    dxBody sentinelBody{99u};
+    OwnershipSnapshot snapshot =
+        MakeOwnershipSnapshotSentinel(&sentinelBody);
+    if (fx::physics::SnapshotOwnership(&sidecar, &snapshot)
+            != SidecarStatus::Success
+        || snapshot.count != 3u)
+    {
+        return false;
+    }
+
+    const OwnershipRecord expected[] = {
+        {&lowBody, lowBind.token, static_cast<std::uint16_t>(lowOwner)},
+        {&middleBody, middleBind.token,
+         static_cast<std::uint16_t>(middleOwner)},
+        {&highBody, highBind.token, static_cast<std::uint16_t>(highOwner)},
+    };
+    for (std::size_t index = 0; index < std::size(expected); ++index)
+    {
+        if (!SameOwnershipRecord(snapshot.records[index], expected[index]))
+            return false;
+    }
+    const OwnershipRecord emptyRecord{};
+    for (std::size_t index = std::size(expected);
+         index < snapshot.records.size();
+         ++index)
+    {
+        if (!SameOwnershipRecord(snapshot.records[index], emptyRecord))
+            return false;
+    }
+
+    if (sidecar.ActiveCount() != 3u
+        || fx::physics::SidecarTestAccess::GetRevision(&sidecar)
+            != revisionBefore
+        || !ResolvesTo(&sidecar, lowOwner, lowBind.token, &lowBody)
+        || !ResolvesTo(
+            &sidecar, middleOwner, middleBind.token, &middleBody)
+        || !ResolvesTo(&sidecar, highOwner, highBind.token, &highBody))
+    {
+        return false;
+    }
+
+    BodySidecar empty{};
+    if (!Initialize(&empty))
+        return false;
+    snapshot = MakeOwnershipSnapshotSentinel(&sentinelBody);
+    const OwnershipSnapshot expectedEmpty{};
+    return fx::physics::SnapshotOwnership(&empty, &snapshot)
+            == SidecarStatus::Success
+        && SameOwnershipSnapshot(snapshot, expectedEmpty);
+}
+
+bool TestOwnershipSnapshotFullCapacity()
+{
+    BodySidecar sidecar{};
+    if (!Initialize(&sidecar))
+        return false;
+
+    std::array<dxBody, fx::physics::BODY_LIMIT> bodies{};
+    std::array<BodyToken, fx::physics::BODY_LIMIT> tokens{};
+    for (std::size_t owner = 0; owner < bodies.size(); ++owner)
+    {
+        bodies[owner].id = static_cast<std::uint32_t>(owner + 1u);
+        const TokenResult bound =
+            fx::physics::Bind(&sidecar, owner, &bodies[owner]);
+        if (!bound)
+            return false;
+        tokens[owner] = bound.token;
+    }
+
+    const std::uint64_t revisionBefore =
+        fx::physics::SidecarTestAccess::GetRevision(&sidecar);
+    OwnershipSnapshot snapshot{};
+    if (fx::physics::SnapshotOwnership(&sidecar, &snapshot)
+            != SidecarStatus::Success
+        || snapshot.count != fx::physics::BODY_LIMIT
+        || sidecar.ActiveCount() != fx::physics::BODY_LIMIT
+        || fx::physics::SidecarTestAccess::GetRevision(&sidecar)
+            != revisionBefore)
+    {
+        return false;
+    }
+    for (std::size_t owner = 0; owner < bodies.size(); ++owner)
+    {
+        const OwnershipRecord &record = snapshot.records[owner];
+        if (record.body != &bodies[owner]
+            || record.token != tokens[owner]
+            || record.ownerIndex != owner)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TestOwnershipSnapshotFailuresAreTransactional()
+{
+    dxBody sentinelBody{99u};
+    const OwnershipSnapshot sentinel =
+        MakeOwnershipSnapshotSentinel(&sentinelBody);
+    OwnershipSnapshot actual = sentinel;
+    if (fx::physics::SnapshotOwnership(nullptr, &actual)
+            != SidecarStatus::InvalidArgument
+        || !SameOwnershipSnapshot(actual, sentinel))
+    {
+        return false;
+    }
+
+    BodySidecar uninitialized{};
+    actual = sentinel;
+    if (fx::physics::SnapshotOwnership(&uninitialized, &actual)
+            != SidecarStatus::Uninitialized
+        || !SameOwnershipSnapshot(actual, sentinel)
+        || fx::physics::SnapshotOwnership(&uninitialized, nullptr)
+            != SidecarStatus::InvalidArgument)
+    {
+        return false;
+    }
+
+    dxBody countBody{1u};
+    BodySidecar countCorrupt{};
+    if (!Initialize(&countCorrupt)
+        || !fx::physics::Bind(&countCorrupt, 1u, &countBody))
+    {
+        return false;
+    }
+    fx::physics::SidecarTestAccess::SetActiveCount(&countCorrupt, 2u);
+    actual = sentinel;
+    if (fx::physics::SnapshotOwnership(&countCorrupt, &actual)
+            != SidecarStatus::ActiveCountCorrupt
+        || !SameOwnershipSnapshot(actual, sentinel))
+    {
+        return false;
+    }
+
+    dxBody generationBody{2u};
+    BodySidecar generationCorrupt{};
+    if (!Initialize(&generationCorrupt)
+        || !fx::physics::Bind(&generationCorrupt, 2u, &generationBody))
+    {
+        return false;
+    }
+    fx::physics::SidecarTestAccess::SetSlot(
+        &generationCorrupt,
+        2u,
+        &generationBody,
+        fx::physics::INVALID_BODY_TOKEN);
+    actual = sentinel;
+    if (fx::physics::SnapshotOwnership(&generationCorrupt, &actual)
+            != SidecarStatus::CorruptGeneration
+        || !SameOwnershipSnapshot(actual, sentinel))
+    {
+        return false;
+    }
+
+    dxBody duplicateBody{3u};
+    BodySidecar duplicate{};
+    const bool duplicateInitialized = Initialize(&duplicate);
+    const TokenResult duplicateBind = duplicateInitialized
+        ? fx::physics::Bind(&duplicate, 3u, &duplicateBody)
+        : TokenResult{};
+    if (!duplicateBind)
+        return false;
+    fx::physics::SidecarTestAccess::SetSlot(
+        &duplicate, 4u, &duplicateBody, duplicateBind.token);
+    fx::physics::SidecarTestAccess::SetActiveCount(&duplicate, 2u);
+    actual = sentinel;
+    if (fx::physics::SnapshotOwnership(&duplicate, &actual)
+            != SidecarStatus::DuplicateBody
+        || !SameOwnershipSnapshot(actual, sentinel))
+    {
+        return false;
+    }
+
+    BodySidecar provenanceCorrupt{};
+    BodySidecar peer{};
+    if (!Initialize(&provenanceCorrupt) || !Initialize(&peer))
+        return false;
+    fx::physics::SidecarTestAccess::SetTransactionState(
+        &provenanceCorrupt,
+        static_cast<TransactionRole>(0xFFu),
+        &peer,
+        fx::physics::SidecarTestAccess::GetRevision(&peer));
+    actual = sentinel;
+    return fx::physics::SnapshotOwnership(&provenanceCorrupt, &actual)
+            == SidecarStatus::TransactionProvenanceMismatch
+        && SameOwnershipSnapshot(actual, sentinel);
+}
+
 bool TestCorruptBindAndTakeAreNonMutating()
 {
     BodySidecar countCorrupt{};
@@ -1210,6 +1481,210 @@ bool TestFailedRollbackIsNonMutating()
             &live, 10u, postPublishBind.token, &postPublishBody)
         && ResolvesTo(&rollback, 1u, oldBind.token, &oldBody);
 }
+
+bool DrainFixtureSidecar(BodySidecar *const sidecar)
+{
+    if (!sidecar)
+        return false;
+    while (sidecar->ActiveCount() != 0u)
+    {
+        if (!fx::physics::TakeFirst(sidecar))
+            return false;
+    }
+    return fx::physics::ResetEmpty(sidecar) == SidecarStatus::Success
+        && fx::physics::ValidateVacantDestination(sidecar)
+            == SidecarStatus::Success;
+}
+
+bool TestFullCapacityRetireRollbackAndRebind()
+{
+    constexpr std::size_t retiredCount = fx::physics::BODY_LIMIT;
+    BodySidecar live{};
+    BodySidecar staged{};
+    BodySidecar rollback{};
+    BodySidecar discarded{};
+    AllowUndrainedFixture(&live, &staged, &rollback, &discarded);
+    if (!Initialize(&live))
+        return false;
+
+    std::array<dxBody, fx::physics::BODY_LIMIT> oldBodies{};
+    std::array<dxBody, fx::physics::BODY_LIMIT> desiredBodies{};
+    std::array<dxBody, retiredCount> reconstructedBodies{};
+    std::array<BodyToken, fx::physics::BODY_LIMIT> oldTokens{};
+    std::array<BodyToken, fx::physics::BODY_LIMIT> desiredTokens{};
+    std::array<BodyToken, retiredCount> reconstructedTokens{};
+    std::array<bool, retiredCount> retiredLedger{};
+    std::array<bool, fx::physics::BODY_LIMIT> discardedLedger{};
+    std::array<bool, retiredCount> reconstructedLedger{};
+    for (std::size_t owner = 0; owner < fx::physics::BODY_LIMIT; ++owner)
+    {
+        oldBodies[owner].id = static_cast<std::uint32_t>(owner + 1u);
+        desiredBodies[owner].id =
+            static_cast<std::uint32_t>(owner + 1001u);
+        const TokenResult bound =
+            fx::physics::Bind(&live, owner, &oldBodies[owner]);
+        if (!bound)
+            return false;
+        oldTokens[owner] = bound.token;
+    }
+
+    // Model the exact archive ordering: Take every selected live owner before
+    // PrepareReplacement captures the post-retirement revision/generations.
+    for (std::size_t owner = 0; owner < retiredCount; ++owner)
+    {
+        const BodyResult retired =
+            fx::physics::Take(&live, owner, oldTokens[owner]);
+        if (!retired || retired.body != &oldBodies[owner]
+            || retiredLedger[owner])
+        {
+            return false;
+        }
+        retiredLedger[owner] = true;
+    }
+    if (live.ActiveCount() != 0u
+        || fx::physics::PrepareReplacement(&live, &staged)
+            != SidecarStatus::Success)
+    {
+        return false;
+    }
+    for (std::size_t owner = 0; owner < fx::physics::BODY_LIMIT; ++owner)
+    {
+        const TokenResult bound =
+            fx::physics::Bind(&staged, owner, &desiredBodies[owner]);
+        if (!bound)
+            return false;
+        desiredTokens[owner] = bound.token;
+    }
+    if (staged.ActiveCount() != fx::physics::BODY_LIMIT
+        || fx::physics::PublishReplacement(&live, &staged, &rollback)
+            != SidecarStatus::Success
+        || rollback.ActiveCount() != 0u)
+    {
+        return false;
+    }
+    for (std::size_t owner = 0; owner < fx::physics::BODY_LIMIT; ++owner)
+    {
+        if (!ResolvesTo(
+                &live,
+                owner,
+                desiredTokens[owner],
+                &desiredBodies[owner]))
+        {
+            return false;
+        }
+    }
+    if (fx::physics::RollbackReplacement(
+            &live, &rollback, &discarded)
+            != SidecarStatus::Success
+        || live.ActiveCount() != 0u
+        || discarded.ActiveCount() != fx::physics::BODY_LIMIT)
+    {
+        return false;
+    }
+
+    // Every desired registration must survive publication and rollback with
+    // its exact owner, token, and body identity before cleanup transfers it.
+    for (std::size_t owner = 0; owner < fx::physics::BODY_LIMIT; ++owner)
+    {
+        if (!ResolvesTo(
+                &discarded,
+                owner,
+                desiredTokens[owner],
+                &desiredBodies[owner]))
+        {
+            return false;
+        }
+    }
+    for (std::size_t count = 0;
+         count < fx::physics::BODY_LIMIT;
+         ++count)
+    {
+        const IndexedBodyResult taken =
+            fx::physics::TakeFirst(&discarded);
+        if (!taken
+            || taken.ownerIndex >= fx::physics::BODY_LIMIT
+            || discardedLedger[taken.ownerIndex]
+            || taken.body != &desiredBodies[taken.ownerIndex]
+            || taken.token != desiredTokens[taken.ownerIndex])
+        {
+            return false;
+        }
+        discardedLedger[taken.ownerIndex] = true;
+    }
+    if (discarded.ActiveCount() != 0u
+        || fx::physics::ResetEmpty(&discarded)
+            != SidecarStatus::Success
+        || fx::physics::ValidateVacantDestination(&discarded)
+            != SidecarStatus::Success)
+    {
+        return false;
+    }
+
+    std::array<BodyToken, MAX_ELEMS> expected{};
+    for (std::size_t owner = 0; owner < retiredCount; ++owner)
+    {
+        reconstructedBodies[owner].id =
+            static_cast<std::uint32_t>(owner + 2001u);
+        const TokenResult rebound = fx::physics::Bind(
+            &live, owner, &reconstructedBodies[owner]);
+        if (!rebound || rebound.token != desiredTokens[owner]
+            || fx::physics::Resolve(&live, owner, oldTokens[owner]).status
+                != SidecarStatus::StaleToken)
+        {
+            return false;
+        }
+        reconstructedTokens[owner] = rebound.token;
+        expected[owner] = reconstructedTokens[owner];
+    }
+
+    for (std::size_t owner = 0; owner < retiredCount; ++owner)
+    {
+        if (!retiredLedger[owner]
+            || !discardedLedger[owner]
+            || !ResolvesTo(
+                &live,
+                owner,
+                reconstructedTokens[owner],
+                &reconstructedBodies[owner]))
+        {
+            return false;
+        }
+    }
+    if (live.ActiveCount() != fx::physics::BODY_LIMIT
+        || fx::physics::ValidateSemanticOwnership(&live, expected)
+            != SidecarStatus::Success
+        || fx::physics::ValidateVacantDestination(&staged)
+            != SidecarStatus::Success
+        || fx::physics::ValidateVacantDestination(&rollback)
+            != SidecarStatus::Success)
+    {
+        return false;
+    }
+
+    // Mirror the production destruction transfer and prove every restored
+    // registration is transferred exactly once with the expected identity.
+    for (std::size_t count = 0; count < retiredCount; ++count)
+    {
+        const IndexedBodyResult taken = fx::physics::TakeFirst(&live);
+        if (!taken
+            || taken.ownerIndex >= retiredCount
+            || reconstructedLedger[taken.ownerIndex]
+            || taken.body != &reconstructedBodies[taken.ownerIndex]
+            || taken.token != reconstructedTokens[taken.ownerIndex])
+        {
+            return false;
+        }
+        reconstructedLedger[taken.ownerIndex] = true;
+    }
+    for (std::size_t owner = 0; owner < retiredCount; ++owner)
+    {
+        if (!reconstructedLedger[owner])
+            return false;
+    }
+    return DrainFixtureSidecar(&live)
+        && DrainFixtureSidecar(&staged)
+        && DrainFixtureSidecar(&rollback);
+}
 } // namespace
 
 int main()
@@ -1230,6 +1705,12 @@ int main()
         return Fail("generation wrap or reset invalidation");
     if (!TestSemanticValidation())
         return Fail("semantic validation");
+    if (!TestOwnershipSnapshotExactRecords())
+        return Fail("ownership snapshot records or read-only contract");
+    if (!TestOwnershipSnapshotFullCapacity())
+        return Fail("full-capacity ownership snapshot");
+    if (!TestOwnershipSnapshotFailuresAreTransactional())
+        return Fail("transactional ownership snapshot failures");
     if (!TestCorruptBindAndTakeAreNonMutating())
         return Fail("corrupt bind/take mutation rejection");
     if (!TestCorruptTransactionRoleIsRejected())
@@ -1250,5 +1731,7 @@ int main()
         return Fail("cross-state body aliasing");
     if (!TestFailedRollbackIsNonMutating())
         return Fail("failed rollback mutation");
+    if (!TestFullCapacityRetireRollbackAndRebind())
+        return Fail("full-capacity retirement/rollback/rebind sequence");
     return 0;
 }
