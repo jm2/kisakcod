@@ -174,6 +174,26 @@ require_slice_contains(
     "return FX_CurrentThreadOwnsEffectLock(system, effect);"
     "the public effect-lock query must preserve generation-aware TLS ownership")
 
+extract_source_slice(
+    _fx_system_source
+    "bool FX_CurrentThreadOwnsArchive("
+    "bool FX_CurrentThreadOwnsEffectKillExclusive("
+    _archive_owner_query_source
+    "archive owner query")
+require_slice_ordered(
+    _archive_owner_query_source
+    "fx_archiveThreadState.identity"
+    "fx::archive::ArchiveGateOwnerMatches("
+    "archive ownership queries must validate controller identity before admission decisions")
+require_slice_contains(
+    _archive_owner_query_source
+    "FX_GetCooperativeIteratorGeneration(ownerSystem)"
+    "archive ownership queries must validate the recorded lifecycle generation")
+require_slice_not_contains(
+    _archive_owner_query_source
+    "fx_archiveThreadState = {};"
+    "archive ownership queries must retain partial cleanup state instead of silently discarding it")
+
 # Lifecycle mutation closes archive/kill admission, atomically owns the
 # iterator word, and releases iterator-exclusive ownership only at the end.
 extract_source_slice(
@@ -182,6 +202,16 @@ extract_source_slice(
     "bool FX_EndLifecycleClaim("
     _begin_lifecycle_source
     "FX_BeginLifecycleClaim")
+require_slice_ordered(
+    _begin_lifecycle_source
+    "Sys_AtomicCompareExchange(archiveGate, 2, 0)"
+    "Sys_AtomicCompareExchange(killGate, 1, 0)"
+    "lifecycle admission must claim archive exclusion before the kill gate")
+require_slice_ordered(
+    _begin_lifecycle_source
+    "Sys_AtomicCompareExchange(killGate, 1, 0)"
+    "Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
+    "lifecycle admission must own both direct gates before draining the allocator")
 require_slice_ordered(
     _begin_lifecycle_source
     "Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
@@ -203,6 +233,39 @@ require_slice_ordered(
     "(void)FxIteratorEndExclusive(&system->iteratorCount);"
     "(void)Sys_AtomicCompareExchange(killGate, 0, 1);"
     "failed lifecycle revalidation must release iterators before external gates")
+foreach(_normal_archive_controller_call IN ITEMS
+    "AcquireArchiveGate("
+    "ReleaseArchiveGate("
+    "AbandonArchiveGateForError(")
+    require_slice_not_contains(
+        _begin_lifecycle_source
+        "${_normal_archive_controller_call}"
+        "lifecycle claims must retain their distinct direct two-gate protocol")
+endforeach()
+
+extract_source_slice(
+    _fx_system_source
+    "void __cdecl FX_AbandonCurrentThreadArchiveForError("
+    "[[noreturn]] void KISAK_CDECL FX_InvalidPoolHandle("
+    _archive_error_abandon_source
+    "archive error abandon adapter")
+require_slice_contains(
+    _archive_error_abandon_source
+    "fx::archive::AbandonArchiveGateForError("
+    "archive error cleanup must delegate every owner phase to the portable controller")
+require_slice_not_contains(
+    _archive_error_abandon_source
+    "ArchiveGateOwnerPhase::Idle"
+    "even a corrupt Idle owner record must reach canonical controller validation")
+require_slice_not_contains(
+    _archive_error_abandon_source
+    "return;"
+    "archive error cleanup must not silently skip corrupt or partial owner state")
+require_slice_ordered(
+    _archive_error_abandon_source
+    "fx::archive::AbandonArchiveGateForError("
+    "Sys_Error(\"Unable to abandon FX archive ownership safely\")"
+    "incomplete archive error cleanup must fail-stop with retry state retained")
 
 extract_source_slice(
     _fx_system_source
@@ -220,6 +283,10 @@ require_slice_ordered(
     "Sys_AtomicCompareExchange(claim->killGate, 0, 1)"
     "Sys_AtomicCompareExchange(claim->archiveGate, 0, 2)"
     "lifecycle gates must reopen in their established release order")
+require_slice_not_contains(
+    _end_lifecycle_source
+    "ReleaseArchiveGate("
+    "lifecycle release must not enter the normal archive controller")
 
 extract_source_slice(
     _fx_system_source
@@ -356,6 +423,14 @@ require_slice_ordered(
     "kill admission must resample generation after ownership")
 require_slice_contains(
     _kill_admission_source
+    "static_cast<fx::archive::ArchiveGateValue>(-1)"
+    "kill admission must treat a missing archive gate as fail-closed corruption")
+require_slice_contains(
+    _kill_admission_source
+    "fx::archive::ArchiveGateAllowsPrecheckedExclusiveCompletion("
+    "kill admission must distinguish the valid Pending race from Exclusive ownership")
+require_slice_contains(
+    _kill_admission_source
     "currentGeneration == admissionGeneration"
     "kill admission must reject a lifecycle crossing")
 require_slice_contains(
@@ -372,22 +447,67 @@ extract_source_slice(
 require_slice_ordered(
     _archive_admission_source
     "const std::uint32_t admissionGeneration ="
-    "FxIteratorWaitBeginExclusive(&system->iteratorCount);"
-    "archive admission must capture generation before waiting")
+    "fx::archive::AcquireArchiveGate("
+    "archive admission must capture generation before controller acquisition")
 require_slice_ordered(
     _archive_admission_source
-    "FxIteratorWaitBeginExclusive(&system->iteratorCount);"
-    "const bool admissionValid = gateClosed && system->isInitialized"
-    "archive admission must validate initialized state after ownership")
+    "FX_CurrentThreadOwnsSortExclusive(system)"
+    "fx::archive::AcquireArchiveGate("
+    "archive admission must reject same-thread sort exclusivity before waiting")
+require_slice_ordered(
+    _archive_admission_source
+    "FX_CurrentThreadOwnsAnyEffectLock()"
+    "fx::archive::AcquireArchiveGate("
+    "archive admission must reject same-thread effect locks before waiting")
+require_slice_ordered(
+    _archive_admission_source
+    "FX_PerformArchiveGateControlOperation,"
+    "fx::archive::AcquireArchiveGate("
+    "archive admission must bind the production adapter before controller acquisition")
 require_slice_contains(
     _archive_admission_source
-    "== admissionGeneration;"
-    "archive admission must reject a lifecycle generation change")
+    "== fx::archive::ArchiveGateControlStatus::Success;"
+    "archive admission must expose only complete controller acquisition as success")
+foreach(_obsolete_inline_archive_admission IN ITEMS
+    "FxIteratorWaitBeginExclusive(&system->iteratorCount)"
+    "Sys_AtomicCompareExchange(gate, 1, 0)"
+    "fx_archiveThreadState.system ="
+    "fx_archiveThreadState.generation =")
+    require_slice_not_contains(
+        _archive_admission_source
+        "${_obsolete_inline_archive_admission}"
+        "normal archive admission must not recreate the obsolete inline state machine")
+endforeach()
+
+extract_source_slice(
+    _fx_system_source
+    "bool __cdecl FX_EndArchive("
+    "void __cdecl FX_AbandonCurrentThreadArchiveForError("
+    _archive_release_source
+    "archive-exclusive FX iterator release")
 require_slice_ordered(
-    _archive_admission_source
-    "if (admissionValid)"
-    "(void)FxIteratorEndExclusive(&system->iteratorCount);"
-    "invalid archive admission must release iterator ownership")
+    _archive_release_source
+    "const std::uint32_t currentGeneration ="
+    "fx::archive::ReleaseArchiveGate("
+    "archive release must validate the current lifecycle generation through the controller")
+require_slice_ordered(
+    _archive_release_source
+    "FX_PerformArchiveGateControlOperation,"
+    "fx::archive::ReleaseArchiveGate("
+    "archive release must bind the production adapter before controller release")
+require_slice_contains(
+    _archive_release_source
+    "== fx::archive::ArchiveGateControlStatus::Success;"
+    "archive release must report success only after iterator and gate release")
+foreach(_obsolete_inline_archive_release IN ITEMS
+    "FxIteratorEndExclusive(&system->iteratorCount)"
+    "Sys_AtomicCompareExchange(gate, 0, 2)"
+    "fx_archiveThreadState = {}")
+    require_slice_not_contains(
+        _archive_release_source
+        "${_obsolete_inline_archive_release}"
+        "normal archive release must preserve controller retry state")
+endforeach()
 
 extract_source_slice(
     _fx_system_source
@@ -829,6 +949,61 @@ require_literal_count(
     4
     "the definition and three PHYSICS-owning live callers must stay accounted")
 
+# Pool-sidecar rebuild and graph validation may bypass archive-aware allocator
+# admission only for the exact archive owner. Pending, exclusive, and unknown
+# gate values must fail closed for every other thread.
+extract_source_slice(
+    _fx_system_source
+    "bool FX_RebuildPoolAllocationStatesInternal("
+    "bool __cdecl FX_RebuildPoolAllocationStates("
+    _pool_rebuild_admission_source
+    "FX pool allocation-sidecar rebuild admission")
+require_slice_ordered(
+    _pool_rebuild_admission_source
+    "const fx::archive::ArchiveGateValue archiveGateState ="
+    "const bool ownsArchive = FX_ValidateArchiveExclusiveState(system);"
+    "pool rebuild must type the archive gate before proving ownership")
+require_slice_ordered(
+    _pool_rebuild_admission_source
+    "FX_ValidateArchiveExclusiveState(system);"
+    "fx::archive::ArchiveGateBlocksAllocatorAdmission("
+    "pool rebuild must prove exact ownership before testing admission")
+require_slice_contains(
+    _pool_rebuild_admission_source
+    "&& !ownsArchive)\n    {\n        return false;"
+    "pool rebuild must reject every blocked or unknown gate for nonowners")
+require_slice_ordered(
+    _pool_rebuild_admission_source
+    "if (ownsArchive)\n        Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
+    "FX_EnterArchiveAwarePoolCriticalSection();"
+    "only the exact archive owner may bypass archive-aware allocator admission")
+
+extract_source_slice(
+    _fx_system_source
+    "bool __cdecl FX_ValidatePoolAllocationGraphStateWithScratch("
+    "bool __cdecl FX_ValidatePoolAllocationGraphState("
+    _pool_graph_admission_source
+    "FX pool allocation-graph validation admission")
+require_slice_ordered(
+    _pool_graph_admission_source
+    "const fx::archive::ArchiveGateValue archiveGateState ="
+    "const bool ownsArchive = FX_ValidateArchiveExclusiveState(system);"
+    "pool graph validation must type the archive gate before proving ownership")
+require_slice_ordered(
+    _pool_graph_admission_source
+    "FX_ValidateArchiveExclusiveState(system);"
+    "fx::archive::ArchiveGateBlocksAllocatorAdmission("
+    "pool graph validation must prove exact ownership before testing admission")
+require_slice_contains(
+    _pool_graph_admission_source
+    "&& !ownsArchive)\n    {\n        return false;"
+    "pool graph validation must reject every blocked or unknown gate for nonowners")
+require_slice_ordered(
+    _pool_graph_admission_source
+    "if (ownsArchive)\n        Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
+    "FX_EnterArchiveAwarePoolCriticalSection();"
+    "only the exact archive owner may bypass graph-validation admission")
+
 extract_source_slice(
     _fx_pool_source
     "template <typename ITEM_TYPE, std::size_t LIMIT, typename BEFORE_PUBLISH>\nFxPoolMutationStatus FxPoolFreeLocked("
@@ -1186,8 +1361,13 @@ require_slice_ordered(
 require_slice_ordered(
     _safe_empty_source
     "poolGraphScratch"
+    "fx::archive::RefreshArchiveGateOwnerGeneration("
+    "safe-empty publication must validate the graph before refreshing owner generation")
+require_slice_ordered(
+    _safe_empty_source
+    "fx::archive::RefreshArchiveGateOwnerGeneration("
     "system->isInitialized = true;"
-    "safe-empty publication must validate the graph before publishing initialization")
+    "safe-empty publication must refresh archive ownership before publishing initialization")
 require_slice_ordered(
     _safe_empty_source
     "system->isInitialized = true;"
@@ -1195,9 +1375,13 @@ require_slice_ordered(
     "safe-empty publication must initialize the safe graph before ending archive state")
 require_slice_ordered(
     _safe_empty_source
-    "fx_archiveThreadState.generation ="
+    "fx::archive::RefreshArchiveGateOwnerGeneration("
     "Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);"
-    "safe-empty publication must refresh archive TLS before releasing publication exclusion")
+    "safe-empty publication must refresh archive ownership before releasing publication exclusion")
+require_slice_not_contains(
+    _safe_empty_source
+    "fx_archiveThreadState.generation ="
+    "safe-empty publication must not mutate controller generation outside its checked API")
 foreach(_safe_empty_forbidden IN ITEMS
     "CRITSECT_PHYSICS"
     "FX_DrainPhysicsBodySidecarLocked("

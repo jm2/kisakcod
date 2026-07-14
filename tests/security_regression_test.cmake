@@ -5467,9 +5467,9 @@ require_all_occurrences_wrapped(
     "FX sort exclusive iterator ownership")
 require_all_occurrences_wrapped(
     "EffectsCore/fx_system.cpp"
-    "&system->iteratorCount"
-    "((Sys_AtomicLoad|Sys_AtomicStore|FxIteratorEndExclusive|FxIteratorTryBeginExclusive|FxIteratorWaitBeginExclusive)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount|const_cast[ \t\r\n]*<[ \t\r\n]*std::int32_t[ \t\r\n]*\\*[ \t\r\n]*>[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount)"
-    "FX system iterator initialization and exclusive ownership")
+    "&(context\\.)?system->iteratorCount"
+    "((Sys_AtomicLoad|Sys_AtomicStore|FxIteratorEndExclusive|FxIteratorTryBeginExclusive|FxIteratorWaitBeginExclusive)[ \t\r\n]*\\([ \t\r\n]*&(context\\.)?system->iteratorCount|const_cast[ \t\r\n]*<[ \t\r\n]*std::int32_t[ \t\r\n]*\\*[ \t\r\n]*>[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount)"
+    "FX system and archive-adapter iterator initialization/exclusive ownership")
 require_source_match_count(
     "EffectsCore/fx_draw.cpp"
     "FxIterator(BeginCooperative|EndCooperative)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
@@ -5491,10 +5491,10 @@ require_source_match_count(
     4
     "all sort iterator references must remain accounted for")
 
-# Archive ownership uses an external gate to stop new cooperative/exclusive
-# iterators and pool mutations before taking the iterator gate exclusively.
-# Every non-archive admission path rechecks after acquiring its own gate and
-# rolls back on the race instead of entering archive-owned state.
+# Archive ownership uses an external gate without changing the frozen runtime
+# image. Pending blocks iterator admission but deliberately lets allocator work
+# drain; Exclusive blocks both. Unknown values fail closed. Every non-archive
+# admission path rechecks after acquiring its own gate and rolls back on races.
 require_source_contains(
     "EffectsCore/fx_system.cpp"
     "alignas(4) volatile std::int32_t fx_archiveGate[1]{};"
@@ -5507,19 +5507,46 @@ require_source_contains(
     "EffectsCore/fx_system.cpp"
     "if (system == &fx_systemPool[index])\n            return &fx_archiveGate[index];"
     "archive gates must resolve only for owned FX systems")
+require_source_contains(
+    "EffectsCore/fx_archive_gate_control.h"
+    "return value != ArchiveGateValue::Open;"
+    "pending, exclusive, and corrupt archive values must block iterator admission")
+require_source_contains(
+    "EffectsCore/fx_archive_gate_control.h"
+    "return value != ArchiveGateValue::Open\n        && value != ArchiveGateValue::Pending;"
+    "allocator admission must allow only open and pending archive values")
+require_source_contains(
+    "EffectsCore/fx_archive_gate_control.h"
+    "return value == ArchiveGateValue::Open\n        || value == ArchiveGateValue::Pending;"
+    "a prechecked exclusive writer must accept only Open or Pending completion")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "ArchiveGateBlocksIteratorAdmission[ \t\r\n]*\\("
+    2
+    "archive active and waiter paths must share fail-closed iterator admission")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "ArchiveGateBlocksAllocatorAdmission[ \t\r\n]*\\("
+    4
+    "allocator entry, pool rebuild, and graph validation must use typed exclusive-state checks")
+require_source_match_count(
+    "EffectsCore/fx_system.cpp"
+    "const[ \t]+bool[ \t]+ownsArchive[ \t]*=[ \t]*FX_ValidateArchiveExclusiveState\\(system\\)[ \t]*;"
+    2
+    "pool rebuild and graph validation must prove full archive ownership before bypassing admission")
 require_source_ordered(
     "EffectsCore/fx_system.cpp"
-    "while (Sys_AtomicLoad(&fx_archiveGate[0]) == 2)"
+    "while (fx::archive::ArchiveGateBlocksAllocatorAdmission("
     "Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
-    "pool mutation admission must wait for acquired archive ownership before taking the allocator lock")
+    "pool mutation admission must wait for exclusive ownership before locking")
 require_source_ordered(
     "EffectsCore/fx_system.cpp"
     "Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
-    "if (Sys_AtomicLoad(&fx_archiveGate[0]) != 2)"
-    "pool mutation admission must recheck acquired archive ownership after taking the allocator lock")
+    "if (!fx::archive::ArchiveGateBlocksAllocatorAdmission("
+    "pool mutation admission must recheck exclusive ownership after locking")
 require_source_ordered(
     "EffectsCore/fx_system.cpp"
-    "if (Sys_AtomicLoad(&fx_archiveGate[0]) != 2)"
+    "if (!fx::archive::ArchiveGateBlocksAllocatorAdmission("
     "Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);"
     "pool mutation admission must release the allocator lock after losing an archive race")
 require_source_contains(
@@ -5562,20 +5589,83 @@ require_source_contains(
     "EffectsCore/fx_system.cpp"
     "if (!archiveActive && initialized && !archiving\n        && currentGeneration == admissionGeneration)\n    {\n        return true;\n    }\n    if (!FxIteratorEndExclusive(&system->iteratorCount))"
     "nonblocking exclusive iterators must recheck and release after a lifecycle race")
-require_source_ordered(
-    "EffectsCore/fx_system.cpp"
-    "|| Sys_AtomicCompareExchange(gate, 1, 0) != 0)"
-    "fx_archiveThreadState.system = system;"
-    "archive ownership must enter pending state before waiting for active iterators")
-require_source_ordered(
-    "EffectsCore/fx_system.cpp"
-    "fx_archiveThreadState.generation = admissionGeneration;\n    FxIteratorWaitBeginExclusive(&system->iteratorCount);"
-    "Sys_AtomicCompareExchange(gate, 2, 1)"
-    "archive ownership must atomically publish acquired state only after exclusive iterator admission")
 require_source_contains(
     "EffectsCore/fx_system.cpp"
-    "const bool released = FxIteratorEndExclusive(&system->iteratorCount);\n    if (!released)\n        return false;\n    const bool opened =\n        Sys_AtomicCompareExchange(gate, 0, 2) == 2;"
-    "archive release must relinquish exclusive iteration before atomically reopening admission")
+    "const fx::archive::ArchiveGateValue archiveGateState =\n            archiveGate\n            ? static_cast<fx::archive::ArchiveGateValue>(\n                Sys_AtomicLoad(archiveGate))\n            : static_cast<fx::archive::ArchiveGateValue>(-1);"
+    "kill-exclusive admission must map a missing archive gate to a fail-closed value")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "if (fx::archive::ArchiveGateAllowsPrecheckedExclusiveCompletion(\n                archiveGateState)\n            && system->isInitialized\n            && currentGeneration == admissionGeneration)"
+    "kill-exclusive completion must allow the Open-to-Pending race but reject Exclusive and corrupt values")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "thread_local fx::archive::ArchiveGateOwnerState fx_archiveThreadState;"
+    "normal archive ownership must retain a phase-aware retryable TLS state")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "|| FX_CurrentThreadOwnsSortExclusive(system)\n        || FX_CurrentThreadOwnsAnyEffectLock()\n        || fx_archiveThreadState.phase\n            != fx::archive::ArchiveGateOwnerPhase::Idle"
+    "archive admission must reject same-thread sort/effect-lock ownership before controller acquisition")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "return fx::archive::AcquireArchiveGate("
+    "normal archive admission must delegate to the portable controller")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "return fx::archive::ReleaseArchiveGate("
+    "normal archive release must delegate retryable cleanup to the portable controller")
+require_source_not_contains(
+    "EffectsCore/fx_system.cpp"
+    "fx_archiveThreadState.system = system;"
+    "normal archive ownership must not recreate the obsolete TLS record")
+foreach(_archive_adapter_operation
+    ClaimPending
+    TryAcquireIterator
+    WaitForIteratorProgress
+    PromoteExclusive
+    ValidateAdmission
+    ValidateExclusive
+    ReleaseIterator
+    ClearArchivingForError
+    ReopenPending
+    ReopenExclusive)
+    require_source_match_count(
+        "EffectsCore/fx_system.cpp"
+        "case[ \t]+Operation::${_archive_adapter_operation}[ \t]*:"
+        1
+        "the production archive adapter must map ${_archive_adapter_operation} exactly once")
+endforeach()
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "context.gate, pending, open)\n                == open"
+    "normal archive acquisition must claim Pending only from Open")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "context.gate, exclusive, pending)\n                == pending"
+    "normal archive acquisition must promote Exclusive only from Pending")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "context.gate, open, pending)\n                == pending"
+    "pending rollback must reopen only the gate this thread claimed")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "context.gate, open, exclusive)\n                == exclusive"
+    "exclusive release must reopen only the gate this thread acquired")
+require_source_contains(
+    "EffectsCore/fx_archive_gate_control.cpp"
+    "state->phase = ArchiveGateOwnerPhase::PendingExclusive;"
+    "controller acquisition must record iterator ownership before promotion")
+require_source_contains(
+    "EffectsCore/fx_archive_gate_control.cpp"
+    "state->phase = ArchiveGateOwnerPhase::Acquired;"
+    "controller acquisition must record complete ownership before final validation")
+require_source_contains(
+    "EffectsCore/fx_archive_gate_control.cpp"
+    "if (state->phase == ArchiveGateOwnerPhase::ExclusiveGateOnly)\n        return ReopenOwnedGate(state, callbacks);"
+    "partial normal release must retry only the remaining exclusive gate")
+require_source_contains(
+    "EffectsCore/fx_archive_gate_control.cpp"
+    "if (ReleaseIteratorForCleanup(state, callbacks)\n        != ArchiveGateControlStatus::Success)\n    {\n        return ArchiveGateControlStatus::UnsafeFailure;\n    }\n    return ReopenOwnedGate(state, callbacks);"
+    "normal release must relinquish iterator ownership before reopening its gate")
 require_source_matches(
     "EffectsCore/fx_iterator_atomic.h"
     "if[ \t\r\n]*\\([^{}]*observed[ \t\r\n]*<[ \t\r\n]*0[^{}]*\\)[ \t\r\n]*\\{[ \t\r\n]*std::this_thread::yield[ \t\r\n]*\\([ \t\r\n]*\\)[ \t\r\n]*;[ \t\r\n]*continue[ \t\r\n]*;[ \t\r\n]*\\}"
@@ -5687,6 +5777,27 @@ require_source_ordered(
     "FX_AbandonCurrentThreadEffectRestartGateForError();"
     "FX_AbandonCurrentThreadCooperativeIteratorsForError();"
     "error cleanup must reopen restart admission before releasing its reader")
+require_source_ordered(
+    "EffectsCore/fx_draw.cpp"
+    "FX_AbandonCurrentThreadSortExclusiveForError();"
+    "FX_AbandonCurrentThreadArchiveForError();"
+    "error cleanup must release sort exclusivity before abandoning archive ownership")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "if (fx::archive::AbandonArchiveGateForError("
+    "archive error cleanup must delegate phase-aware ownership release")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "Sys_Error(\"Unable to abandon FX archive ownership safely\");\n        std::abort();"
+    "incomplete archive error cleanup must fail-stop with controller state retained")
+require_source_contains(
+    "EffectsCore/fx_archive_gate_control.cpp"
+    "if (Invoke(callbacks,\n            ArchiveGateControlOperation::ClearArchivingForError)\n        != ArchiveGateControlStatus::Success)"
+    "archive error cleanup must clear the archiving marker through its checked adapter")
+require_source_contains(
+    "EffectsCore/fx_archive_gate_control.cpp"
+    "if (Invoke(callbacks, operation) != ArchiveGateControlStatus::Success)\n        return ArchiveGateControlStatus::UnsafeFailure;\n    ClearOwner(state);"
+    "archive controller state must clear only after its owned gate reopens")
 require_source_contains(
     "EffectsCore/fx_system.cpp"
     "const bool reuseKillExclusive =
@@ -6402,8 +6513,8 @@ require_source_contains(
     "the rollback graph image must preserve archive-exclusive iterator state")
 require_source_matches(
     "EffectsCore/fx_system.cpp"
-    "FX_ValidateArchiveExclusiveState[^}]*Sys_AtomicLoad\\(gate\\)[ \t]*==[ \t]*2[^}]*FX_CurrentThreadOwnsArchive\\(system\\)[^}]*Sys_AtomicLoad\\(&system->iteratorCount\\)[ \t]*==[ \t]*-1"
-    "archive publication validation must require gate ownership and iterator -1")
+    "FX_ValidateArchiveExclusiveState[^}]*ArchiveGateOwnerPhase::Acquired[^}]*ArchiveGateValue::Exclusive[^}]*FX_CurrentThreadOwnsArchive\\(system\\)[^}]*Sys_AtomicLoad\\(&system->iteratorCount\\)[ \t]*==[ \t]*-1"
+    "archive publication validation must require acquired controller ownership, exclusive gate, and iterator -1")
 require_source_matches(
     "EffectsCore/fx_system.cpp"
     "FX_CanPublishArchiveSafeEmptyStateLocked[^}]*FX_ValidateArchiveExclusiveState\\(system\\)[^}]*FX_CanResetSystemGraphUnderExclusiveClaim\\(system\\)"

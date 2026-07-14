@@ -1,4 +1,5 @@
 #include "fx_system.h"
+#include "fx_archive_gate_control.h"
 #include "fx_iterator_atomic.h"
 #include "fx_physics_sidecar.h"
 #include "fx_pool.h"
@@ -64,13 +65,7 @@ static_assert(
     std::size(fx_physicsBodySidecars) == std::size(fx_systemPool),
     "FX physics sidecars must match the system pool");
 
-struct FxArchiveThreadState
-{
-    FxSystem *system = nullptr;
-    std::uint32_t generation = 0;
-};
-
-thread_local FxArchiveThreadState fx_archiveThreadState;
+thread_local fx::archive::ArchiveGateOwnerState fx_archiveThreadState;
 
 struct FxEffectLockThreadEntry
 {
@@ -172,6 +167,107 @@ volatile std::int32_t *FX_GetArchiveGate(
     return nullptr;
 }
 
+struct FxArchiveGateControlContext
+{
+    FxSystem *system = nullptr;
+    volatile std::int32_t *gate = nullptr;
+    std::uint32_t expectedGeneration = 0;
+};
+
+fx::archive::ArchiveGateControlStatus
+FX_PerformArchiveGateControlOperation(
+    void *const rawContext,
+    const fx::archive::ArchiveGateControlOperation operation) noexcept
+{
+    using Operation = fx::archive::ArchiveGateControlOperation;
+    using Status = fx::archive::ArchiveGateControlStatus;
+    using Value = fx::archive::ArchiveGateValue;
+
+    if (!rawContext)
+        return Status::UnsafeFailure;
+    auto &context = *static_cast<FxArchiveGateControlContext *>(
+        rawContext);
+    if (!context.system || !context.gate)
+        return Status::UnsafeFailure;
+
+    constexpr std::int32_t open =
+        static_cast<std::int32_t>(Value::Open);
+    constexpr std::int32_t pending =
+        static_cast<std::int32_t>(Value::Pending);
+    constexpr std::int32_t exclusive =
+        static_cast<std::int32_t>(Value::Exclusive);
+
+    switch (operation)
+    {
+    case Operation::ClaimPending:
+        return Sys_AtomicCompareExchange(
+                   context.gate, pending, open)
+                == open
+            ? Status::Success
+            : Status::Rejected;
+    case Operation::TryAcquireIterator:
+        return FxIteratorTryBeginExclusive(
+                   &context.system->iteratorCount)
+            ? Status::Success
+            : Status::Retry;
+    case Operation::WaitForIteratorProgress:
+        if (!context.system->isInitialized
+            || context.system->isArchiving
+            || FX_GetCooperativeIteratorGeneration(context.system)
+                != context.expectedGeneration)
+        {
+            return Status::Cancelled;
+        }
+        std::this_thread::yield();
+        return Status::Retry;
+    case Operation::PromoteExclusive:
+        return Sys_AtomicCompareExchange(
+                   context.gate, exclusive, pending)
+                == pending
+            ? Status::Success
+            : Status::UnsafeFailure;
+    case Operation::ValidateAdmission:
+        if (Sys_AtomicLoad(context.gate) != exclusive
+            || Sys_AtomicLoad(&context.system->iteratorCount) != -1)
+        {
+            return Status::UnsafeFailure;
+        }
+        return context.system->isInitialized
+                && !context.system->isArchiving
+                && FX_GetCooperativeIteratorGeneration(context.system)
+                    == context.expectedGeneration
+            ? Status::Success
+            : Status::Cancelled;
+    case Operation::ValidateExclusive:
+        return Sys_AtomicLoad(context.gate) == exclusive
+                && Sys_AtomicLoad(&context.system->iteratorCount) == -1
+            ? Status::Success
+            : Status::UnsafeFailure;
+    case Operation::ReleaseIterator:
+        return FxIteratorEndExclusive(
+                   &context.system->iteratorCount)
+            ? Status::Success
+            : Status::UnsafeFailure;
+    case Operation::ClearArchivingForError:
+        context.system->isArchiving = false;
+        return Status::Success;
+    case Operation::ReopenPending:
+        return Sys_AtomicCompareExchange(
+                   context.gate, open, pending)
+                == pending
+            ? Status::Success
+            : Status::UnsafeFailure;
+    case Operation::ReopenExclusive:
+        return Sys_AtomicCompareExchange(
+                   context.gate, open, exclusive)
+                == exclusive
+            ? Status::Success
+            : Status::UnsafeFailure;
+    default:
+        return Status::UnsafeFailure;
+    }
+}
+
 volatile std::int32_t *FX_GetCooperativeIteratorGenerationState(
     const FxSystem *const system) noexcept
 {
@@ -200,17 +296,14 @@ volatile std::int32_t *FX_GetEffectKillGate(
 
 bool FX_CurrentThreadOwnsArchive(const FxSystem *const system) noexcept
 {
-    if (!fx_archiveThreadState.system)
+    if (!system || !fx_archiveThreadState.identity)
         return false;
-
-    if (fx_archiveThreadState.generation
-        != FX_GetCooperativeIteratorGeneration(
-            fx_archiveThreadState.system))
-    {
-        fx_archiveThreadState = {};
-        return false;
-    }
-    return fx_archiveThreadState.system == system;
+    const auto *const ownerSystem = static_cast<const FxSystem *>(
+        fx_archiveThreadState.identity);
+    return fx::archive::ArchiveGateOwnerMatches(
+        &fx_archiveThreadState,
+        system,
+        FX_GetCooperativeIteratorGeneration(ownerSystem));
 }
 
 bool FX_CurrentThreadOwnsEffectKillExclusive(
@@ -250,11 +343,19 @@ void FX_EnterArchiveAwarePoolCriticalSection()
 {
     for (;;)
     {
-        while (Sys_AtomicLoad(&fx_archiveGate[0]) == 2)
+        while (fx::archive::ArchiveGateBlocksAllocatorAdmission(
+            static_cast<fx::archive::ArchiveGateValue>(
+                Sys_AtomicLoad(&fx_archiveGate[0]))))
+        {
             std::this_thread::yield();
+        }
         Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-        if (Sys_AtomicLoad(&fx_archiveGate[0]) != 2)
+        if (!fx::archive::ArchiveGateBlocksAllocatorAdmission(
+                static_cast<fx::archive::ArchiveGateValue>(
+                    Sys_AtomicLoad(&fx_archiveGate[0]))))
+        {
             return;
+        }
         Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
     }
 }
@@ -1400,7 +1501,10 @@ bool FX_ValidateSpotLightEffectDef(
 bool __cdecl FX_ArchiveGateIsActive(const FxSystem *const system)
 {
     volatile std::int32_t *const gate = FX_GetArchiveGate(system);
-    return gate && Sys_AtomicLoad(gate) != 0;
+    return gate
+        && fx::archive::ArchiveGateBlocksIteratorAdmission(
+            static_cast<fx::archive::ArchiveGateValue>(
+                Sys_AtomicLoad(gate)));
 }
 
 bool __cdecl FX_EffectKillGateIsActive(
@@ -1415,8 +1519,12 @@ void __cdecl FX_WaitForArchiveGate(const FxSystem *const system)
     volatile std::int32_t *const gate = FX_GetArchiveGate(system);
     if (!gate)
         return;
-    while (Sys_AtomicLoad(gate) != 0)
+    while (fx::archive::ArchiveGateBlocksIteratorAdmission(
+        static_cast<fx::archive::ArchiveGateValue>(
+            Sys_AtomicLoad(gate))))
+    {
         std::this_thread::yield();
+    }
 }
 
 void __cdecl FX_WaitForEffectKillGate(
@@ -1474,12 +1582,16 @@ bool __cdecl FX_BeginEffectKillExclusive(FxSystem *const system) noexcept
         FxIteratorWaitBeginExclusive(&system->iteratorCount);
         volatile std::int32_t *const archiveGate =
             FX_GetArchiveGate(system);
-        const std::int32_t archiveGateState = archiveGate
-            ? Sys_AtomicLoad(archiveGate)
-            : 2;
+        const fx::archive::ArchiveGateValue archiveGateState =
+            archiveGate
+            ? static_cast<fx::archive::ArchiveGateValue>(
+                Sys_AtomicLoad(archiveGate))
+            : static_cast<fx::archive::ArchiveGateValue>(-1);
         const std::uint32_t currentGeneration =
             FX_GetCooperativeIteratorGeneration(system);
-        if (archiveGateState != 2 && system->isInitialized
+        if (fx::archive::ArchiveGateAllowsPrecheckedExclusiveCompletion(
+                archiveGateState)
+            && system->isInitialized
             && currentGeneration == admissionGeneration)
         {
             fx_effectKillExclusiveThreadState.exclusiveAcquired = true;
@@ -1618,38 +1730,41 @@ bool __cdecl FX_BeginArchive(FxSystem *const system)
     if (FX_CurrentThreadOwnsCooperativeIterator(system)
         || FX_ThreadOwnsEffectKillExclusive(system)
         || FX_CurrentThreadOwnsArchive(system)
-        || fx_archiveThreadState.system
-        || Sys_AtomicCompareExchange(gate, 1, 0) != 0)
+        || FX_CurrentThreadOwnsSortExclusive(system)
+        || FX_CurrentThreadOwnsAnyEffectLock()
+        || fx_archiveThreadState.phase
+            != fx::archive::ArchiveGateOwnerPhase::Idle)
     {
         return false;
     }
 
-    fx_archiveThreadState.system = system;
-    fx_archiveThreadState.generation = admissionGeneration;
-    FxIteratorWaitBeginExclusive(&system->iteratorCount);
-    const bool gateClosed =
-        Sys_AtomicCompareExchange(gate, 2, 1) == 1;
-    const bool admissionValid = gateClosed && system->isInitialized
-        && !system->isArchiving
-        && FX_GetCooperativeIteratorGeneration(system)
-            == admissionGeneration;
-    if (admissionValid)
-        return true;
-
-    (void)FxIteratorEndExclusive(&system->iteratorCount);
-    if (gateClosed)
-        (void)Sys_AtomicCompareExchange(gate, 0, 2);
-    else
-        (void)Sys_AtomicCompareExchange(gate, 0, 1);
-    fx_archiveThreadState = {};
-    return false;
+    FxArchiveGateControlContext context{
+        system,
+        gate,
+        admissionGeneration,
+    };
+    const fx::archive::ArchiveGateControlCallbacks callbacks{
+        &context,
+        FX_PerformArchiveGateControlOperation,
+    };
+    return fx::archive::AcquireArchiveGate(
+               &fx_archiveThreadState,
+               system,
+               admissionGeneration,
+               callbacks)
+        == fx::archive::ArchiveGateControlStatus::Success;
 }
 
 bool __cdecl FX_ValidateArchiveExclusiveState(
     const FxSystem *const system) noexcept
 {
     volatile std::int32_t *const gate = FX_GetArchiveGate(system);
-    return system && gate && Sys_AtomicLoad(gate) == 2
+    return system && gate
+        && fx_archiveThreadState.phase
+            == fx::archive::ArchiveGateOwnerPhase::Acquired
+        && Sys_AtomicLoad(gate)
+            == static_cast<std::int32_t>(
+                fx::archive::ArchiveGateValue::Exclusive)
         && FX_CurrentThreadOwnsArchive(system)
         && Sys_AtomicLoad(&system->iteratorCount) == -1;
 }
@@ -1657,42 +1772,53 @@ bool __cdecl FX_ValidateArchiveExclusiveState(
 bool __cdecl FX_EndArchive(FxSystem *const system)
 {
     volatile std::int32_t *const gate = FX_GetArchiveGate(system);
-    if (!system || !gate || Sys_AtomicLoad(gate) != 2
-        || !FX_CurrentThreadOwnsArchive(system))
-    {
+    if (!system || !gate)
         return false;
-    }
-    const bool released = FxIteratorEndExclusive(&system->iteratorCount);
-    if (!released)
-        return false;
-    const bool opened =
-        Sys_AtomicCompareExchange(gate, 0, 2) == 2;
-    fx_archiveThreadState = {};
-    return opened;
+
+    const std::uint32_t currentGeneration =
+        FX_GetCooperativeIteratorGeneration(system);
+    FxArchiveGateControlContext context{
+        system,
+        gate,
+        currentGeneration,
+    };
+    const fx::archive::ArchiveGateControlCallbacks callbacks{
+        &context,
+        FX_PerformArchiveGateControlOperation,
+    };
+    return fx::archive::ReleaseArchiveGate(
+               &fx_archiveThreadState,
+               system,
+               currentGeneration,
+               callbacks)
+        == fx::archive::ArchiveGateControlStatus::Success;
 }
 
 void __cdecl FX_AbandonCurrentThreadArchiveForError() noexcept
 {
-    FxSystem *const system = fx_archiveThreadState.system;
-    if (!system)
-        return;
-
+    auto *const system = const_cast<FxSystem *>(
+        static_cast<const FxSystem *>(fx_archiveThreadState.identity));
     volatile std::int32_t *const gate = FX_GetArchiveGate(system);
-    const bool generationMatches =
-        fx_archiveThreadState.generation
-        == FX_GetCooperativeIteratorGeneration(system);
-    fx_archiveThreadState = {};
-    if (!gate || !generationMatches)
-        return;
-
-    // Runtime archive publication preserves iteratorCount at -1. Release that
-    // exclusive ownership if it is still present, then open only the gate that
-    // this thread claimed. Other states are left intact for the engine's
-    // subsequent quiescent reset rather than being overwritten.
-    FxIteratorEndExclusive(&system->iteratorCount);
-    system->isArchiving = false;
-    if (Sys_AtomicCompareExchange(gate, 0, 2) != 2)
-        Sys_AtomicCompareExchange(gate, 0, 1);
+    const std::uint32_t currentGeneration =
+        FX_GetCooperativeIteratorGeneration(system);
+    FxArchiveGateControlContext context{
+        system,
+        gate,
+        currentGeneration,
+    };
+    const fx::archive::ArchiveGateControlCallbacks callbacks{
+        &context,
+        FX_PerformArchiveGateControlOperation,
+    };
+    if (fx::archive::AbandonArchiveGateForError(
+            &fx_archiveThreadState,
+            currentGeneration,
+            callbacks)
+        != fx::archive::ArchiveGateControlStatus::Success)
+    {
+        Sys_Error("Unable to abandon FX archive ownership safely");
+        std::abort();
+    }
 }
 
 [[noreturn]] void KISAK_CDECL FX_InvalidPoolHandle(
@@ -1842,11 +1968,16 @@ bool FX_RebuildPoolAllocationStatesInternal(
         FX_GetArchiveGate(system);
     if (!archiveGate)
         return false;
-    const std::int32_t archiveGateState =
-        Sys_AtomicLoad(archiveGate);
-    const bool ownsArchive = FX_CurrentThreadOwnsArchive(system);
-    if (archiveGateState == 2 && !ownsArchive)
+    const fx::archive::ArchiveGateValue archiveGateState =
+        static_cast<fx::archive::ArchiveGateValue>(
+            Sys_AtomicLoad(archiveGate));
+    const bool ownsArchive = FX_ValidateArchiveExclusiveState(system);
+    if (fx::archive::ArchiveGateBlocksAllocatorAdmission(
+            archiveGateState)
+        && !ownsArchive)
+    {
         return false;
+    }
     if (ownsArchive)
         Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
     else
@@ -1944,11 +2075,16 @@ bool __cdecl FX_ValidatePoolAllocationGraphStateWithScratch(
         FX_GetArchiveGate(system);
     if (!archiveGate)
         return false;
-    const std::int32_t archiveGateState =
-        Sys_AtomicLoad(archiveGate);
-    const bool ownsArchive = FX_CurrentThreadOwnsArchive(system);
-    if (archiveGateState == 2 && !ownsArchive)
+    const fx::archive::ArchiveGateValue archiveGateState =
+        static_cast<fx::archive::ArchiveGateValue>(
+            Sys_AtomicLoad(archiveGate));
+    const bool ownsArchive = FX_ValidateArchiveExclusiveState(system);
+    if (fx::archive::ArchiveGateBlocksAllocatorAdmission(
+            archiveGateState)
+        && !ownsArchive)
+    {
         return false;
+    }
     if (ownsArchive)
         Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
     else
@@ -2274,12 +2410,14 @@ bool __cdecl FX_PublishArchiveSafeEmptyStateLockedWithScratch(
             states->elems,
             states->trails,
             states->trailElems,
-            poolGraphScratch))
+            poolGraphScratch)
+        && fx::archive::RefreshArchiveGateOwnerGeneration(
+            &fx_archiveThreadState,
+            system,
+            FX_GetCooperativeIteratorGeneration(system)))
     {
         system->isInitialized = true;
         system->isArchiving = false;
-        fx_archiveThreadState.generation =
-            FX_GetCooperativeIteratorGeneration(system);
         published = true;
     }
     Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
@@ -2502,7 +2640,7 @@ void __cdecl FX_ShutdownSystem(int32_t localClientNum)
 
     if (iteratorGeneration)
         Sys_AtomicIncrement(iteratorGeneration);
-    if (fx_archiveThreadState.system == system)
+    if (fx_archiveThreadState.identity == system)
         fx_archiveThreadState = {};
     const bool systemCleared =
         FX_ClearSystemForShutdownLocked(system);
