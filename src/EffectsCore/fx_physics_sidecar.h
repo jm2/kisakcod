@@ -108,6 +108,9 @@ struct OwnershipSnapshot
     std::uint16_t count = 0;
 };
 
+class BodySidecarValidationScratch;
+class BodySidecarSnapshotScratch;
+
 static_assert(BODY_LIMIT <=
     static_cast<std::size_t>(
         (std::numeric_limits<std::uint16_t>::max)()));
@@ -123,8 +126,15 @@ struct BodySlot
 
 class BodySidecar;
 
+[[nodiscard]] inline SidecarStatus ValidateWithScratch(
+    const BodySidecar *sidecar,
+    BodySidecarValidationScratch *scratch) noexcept;
 [[nodiscard]] inline SidecarStatus Validate(
     const BodySidecar *sidecar) noexcept;
+[[nodiscard]] inline SidecarStatus SnapshotOwnershipWithScratch(
+    const BodySidecar *sidecar,
+    OwnershipSnapshot *outSnapshot,
+    BodySidecarSnapshotScratch *scratch) noexcept;
 [[nodiscard]] inline SidecarStatus SnapshotOwnership(
     const BodySidecar *sidecar,
     OwnershipSnapshot *outSnapshot) noexcept;
@@ -134,16 +144,36 @@ class BodySidecar;
 [[nodiscard]] inline SidecarStatus ValidateSemanticOwnership(
     const BodySidecar *sidecar,
     const std::array<BodyToken, MAX_ELEMS> &expectedTokens) noexcept;
+[[nodiscard]] inline SidecarStatus ValidateSemanticOwnershipWithScratch(
+    const BodySidecar *sidecar,
+    const std::array<BodyToken, MAX_ELEMS> &expectedTokens,
+    BodySidecarValidationScratch *scratch) noexcept;
 [[nodiscard]] inline SidecarStatus ValidateVacantDestination(
     const BodySidecar *destination) noexcept;
+[[nodiscard]] inline SidecarStatus ValidateDisjointOwnershipWithScratch(
+    const BodySidecar *first,
+    const BodySidecar *second,
+    BodySidecarValidationScratch *scratch) noexcept;
 [[nodiscard]] inline SidecarStatus ValidateDisjointOwnership(
     const BodySidecar *first,
     const BodySidecar *second) noexcept;
+[[nodiscard]] inline SidecarStatus ValidateReplacementRelationWithScratch(
+    const BodySidecar *base,
+    const BodySidecar *replacement,
+    BodySidecarValidationScratch *scratch) noexcept;
 [[nodiscard]] inline SidecarStatus ValidateReplacementRelation(
     const BodySidecar *base,
     const BodySidecar *replacement) noexcept;
+[[nodiscard]] inline SidecarStatus ResetEmptyWithScratch(
+    BodySidecar *sidecar,
+    BodySidecarValidationScratch *scratch) noexcept;
 [[nodiscard]] inline SidecarStatus ResetEmpty(
     BodySidecar *sidecar) noexcept;
+[[nodiscard]] inline TokenResult BindWithScratch(
+    BodySidecar *sidecar,
+    std::size_t ownerIndex,
+    dxBody *body,
+    BodySidecarValidationScratch *scratch) noexcept;
 [[nodiscard]] inline TokenResult Bind(
     BodySidecar *sidecar,
     std::size_t ownerIndex,
@@ -152,19 +182,41 @@ class BodySidecar;
     const BodySidecar *sidecar,
     std::size_t ownerIndex,
     BodyToken token) noexcept;
+[[nodiscard]] inline BodyResult TakeWithScratch(
+    BodySidecar *sidecar,
+    std::size_t ownerIndex,
+    BodyToken token,
+    BodySidecarValidationScratch *scratch) noexcept;
 [[nodiscard]] inline BodyResult Take(
     BodySidecar *sidecar,
     std::size_t ownerIndex,
     BodyToken token) noexcept;
+[[nodiscard]] inline IndexedBodyResult TakeFirstWithScratch(
+    BodySidecar *sidecar,
+    BodySidecarValidationScratch *scratch) noexcept;
 [[nodiscard]] inline IndexedBodyResult TakeFirst(
     BodySidecar *sidecar) noexcept;
+[[nodiscard]] inline SidecarStatus PrepareReplacementWithScratch(
+    const BodySidecar *live,
+    BodySidecar *staged,
+    BodySidecarValidationScratch *scratch) noexcept;
 [[nodiscard]] inline SidecarStatus PrepareReplacement(
     const BodySidecar *live,
     BodySidecar *staged) noexcept;
+[[nodiscard]] inline SidecarStatus PublishReplacementWithScratch(
+    BodySidecar *live,
+    BodySidecar *staged,
+    BodySidecar *rollback,
+    BodySidecarValidationScratch *scratch) noexcept;
 [[nodiscard]] inline SidecarStatus PublishReplacement(
     BodySidecar *live,
     BodySidecar *staged,
     BodySidecar *rollback) noexcept;
+[[nodiscard]] inline SidecarStatus RollbackReplacementWithScratch(
+    BodySidecar *live,
+    BodySidecar *rollback,
+    BodySidecar *discarded,
+    BodySidecarValidationScratch *scratch) noexcept;
 [[nodiscard]] inline SidecarStatus RollbackReplacement(
     BodySidecar *live,
     BodySidecar *rollback,
@@ -188,6 +240,50 @@ inline std::atomic<std::uint64_t> bodySidecarLifetimeCounter{0};
     }
 }
 } // namespace detail
+
+// Structural validation needs a bounded image large enough for every native
+// body registration. Archive restore keeps this scratch in its workspace so
+// nested ownership operations do not add that image to the restore stack.
+class BodySidecarValidationScratch
+{
+  public:
+    BodySidecarValidationScratch() noexcept = default;
+
+    BodySidecarValidationScratch(
+        const BodySidecarValidationScratch &) = delete;
+    BodySidecarValidationScratch &operator=(
+        const BodySidecarValidationScratch &) = delete;
+    BodySidecarValidationScratch(
+        BodySidecarValidationScratch &&) = delete;
+    BodySidecarValidationScratch &operator=(
+        BodySidecarValidationScratch &&) = delete;
+
+  private:
+    friend SidecarStatus ValidateWithScratch(
+        const BodySidecar *, BodySidecarValidationScratch *) noexcept;
+    friend SidecarStatus ValidateDisjointOwnershipWithScratch(
+        const BodySidecar *, const BodySidecar *,
+        BodySidecarValidationScratch *) noexcept;
+
+    std::array<dxBody *, BODY_LIMIT> sortedBodies_{};
+};
+
+// Snapshot publication additionally needs a full candidate image so failure
+// cannot partially overwrite the caller's output. It extends validation
+// scratch, allowing one workspace object to serve every WithScratch API.
+class BodySidecarSnapshotScratch final
+    : public BodySidecarValidationScratch
+{
+  public:
+    BodySidecarSnapshotScratch() noexcept = default;
+
+  private:
+    friend SidecarStatus SnapshotOwnershipWithScratch(
+        const BodySidecar *, OwnershipSnapshot *,
+        BodySidecarSnapshotScratch *) noexcept;
+
+    OwnershipSnapshot ownershipCandidate_{};
+};
 
 // This object owns its body-pointer registrations. It deliberately cannot be
 // copied or moved: replacement publication must transfer each registration
@@ -220,7 +316,12 @@ class BodySidecar final
     }
 
   private:
+    friend SidecarStatus ValidateWithScratch(
+        const BodySidecar *, BodySidecarValidationScratch *) noexcept;
     friend SidecarStatus Validate(const BodySidecar *) noexcept;
+    friend SidecarStatus SnapshotOwnershipWithScratch(
+        const BodySidecar *, OwnershipSnapshot *,
+        BodySidecarSnapshotScratch *) noexcept;
     friend SidecarStatus SnapshotOwnership(
         const BodySidecar *, OwnershipSnapshot *) noexcept;
     friend SidecarStatus ValidateVacantOwner(
@@ -228,26 +329,55 @@ class BodySidecar final
     friend SidecarStatus ValidateSemanticOwnership(
         const BodySidecar *,
         const std::array<BodyToken, MAX_ELEMS> &) noexcept;
+    friend SidecarStatus ValidateSemanticOwnershipWithScratch(
+        const BodySidecar *,
+        const std::array<BodyToken, MAX_ELEMS> &,
+        BodySidecarValidationScratch *) noexcept;
     friend SidecarStatus ValidateVacantDestination(
         const BodySidecar *) noexcept;
     friend SidecarStatus ValidateDisjointOwnership(
         const BodySidecar *, const BodySidecar *) noexcept;
+    friend SidecarStatus ValidateDisjointOwnershipWithScratch(
+        const BodySidecar *, const BodySidecar *,
+        BodySidecarValidationScratch *) noexcept;
     friend SidecarStatus ValidateReplacementRelation(
         const BodySidecar *, const BodySidecar *) noexcept;
+    friend SidecarStatus ValidateReplacementRelationWithScratch(
+        const BodySidecar *, const BodySidecar *,
+        BodySidecarValidationScratch *) noexcept;
+    friend SidecarStatus ResetEmptyWithScratch(
+        BodySidecar *, BodySidecarValidationScratch *) noexcept;
     friend SidecarStatus ResetEmpty(BodySidecar *) noexcept;
+    friend TokenResult BindWithScratch(
+        BodySidecar *, std::size_t, dxBody *,
+        BodySidecarValidationScratch *) noexcept;
     friend TokenResult Bind(
         BodySidecar *, std::size_t, dxBody *) noexcept;
     friend BodyResult Resolve(
         const BodySidecar *, std::size_t, BodyToken) noexcept;
     friend BodyResult Take(
         BodySidecar *, std::size_t, BodyToken) noexcept;
+    friend BodyResult TakeWithScratch(
+        BodySidecar *, std::size_t, BodyToken,
+        BodySidecarValidationScratch *) noexcept;
     friend IndexedBodyResult TakeFirst(BodySidecar *) noexcept;
+    friend IndexedBodyResult TakeFirstWithScratch(
+        BodySidecar *, BodySidecarValidationScratch *) noexcept;
     friend SidecarStatus PrepareReplacement(
         const BodySidecar *, BodySidecar *) noexcept;
+    friend SidecarStatus PrepareReplacementWithScratch(
+        const BodySidecar *, BodySidecar *,
+        BodySidecarValidationScratch *) noexcept;
     friend SidecarStatus PublishReplacement(
         BodySidecar *, BodySidecar *, BodySidecar *) noexcept;
+    friend SidecarStatus PublishReplacementWithScratch(
+        BodySidecar *, BodySidecar *, BodySidecar *,
+        BodySidecarValidationScratch *) noexcept;
     friend SidecarStatus RollbackReplacement(
         BodySidecar *, BodySidecar *, BodySidecar *) noexcept;
+    friend SidecarStatus RollbackReplacementWithScratch(
+        BodySidecar *, BodySidecar *, BodySidecar *,
+        BodySidecarValidationScratch *) noexcept;
     friend struct SidecarTestAccess;
 
     std::array<BodySlot, MAX_ELEMS> slots_{};
@@ -378,10 +508,11 @@ struct SidecarTestAccess
     return next;
 }
 
-[[nodiscard]] inline SidecarStatus Validate(
-    const BodySidecar *const sidecar) noexcept
+[[nodiscard]] inline SidecarStatus ValidateWithScratch(
+    const BodySidecar *const sidecar,
+    BodySidecarValidationScratch *const scratch) noexcept
 {
-    if (!sidecar)
+    if (!sidecar || !scratch)
         return SidecarStatus::InvalidArgument;
     if (!sidecar->initialized_)
         return SidecarStatus::Uninitialized;
@@ -407,7 +538,7 @@ struct SidecarTestAccess
         return SidecarStatus::TransactionProvenanceMismatch;
     }
 
-    std::array<dxBody *, BODY_LIMIT> bodies{};
+    std::array<dxBody *, BODY_LIMIT> &bodies = scratch->sortedBodies_;
     std::size_t bodyCount = 0;
     for (const BodySlot &slot : sidecar->slots_)
     {
@@ -433,21 +564,31 @@ struct SidecarTestAccess
     return SidecarStatus::Success;
 }
 
+[[nodiscard]] inline SidecarStatus Validate(
+    const BodySidecar *const sidecar) noexcept
+{
+    BodySidecarValidationScratch scratch{};
+    return ValidateWithScratch(sidecar, &scratch);
+}
+
 // Cleanup code must validate every native body before detaching any sidecar
 // registration. Build that inspection image only after whole-sidecar
 // validation, and publish it to the caller only after the bounded scan is
 // complete. Every failure therefore preserves the caller's prior snapshot.
-[[nodiscard]] inline SidecarStatus SnapshotOwnership(
+[[nodiscard]] inline SidecarStatus SnapshotOwnershipWithScratch(
     const BodySidecar *const sidecar,
-    OwnershipSnapshot *const outSnapshot) noexcept
+    OwnershipSnapshot *const outSnapshot,
+    BodySidecarSnapshotScratch *const scratch) noexcept
 {
-    if (!outSnapshot)
+    if (!outSnapshot || !scratch)
         return SidecarStatus::InvalidArgument;
-    const SidecarStatus structuralStatus = Validate(sidecar);
+    const SidecarStatus structuralStatus =
+        ValidateWithScratch(sidecar, scratch);
     if (structuralStatus != SidecarStatus::Success)
         return structuralStatus;
 
-    OwnershipSnapshot snapshot{};
+    OwnershipSnapshot &snapshot = scratch->ownershipCandidate_;
+    snapshot = {};
     for (std::size_t ownerIndex = 0; ownerIndex < MAX_ELEMS; ++ownerIndex)
     {
         const BodySlot &slot = sidecar->slots_[ownerIndex];
@@ -465,6 +606,15 @@ struct SidecarTestAccess
         return SidecarStatus::ActiveCountCorrupt;
     *outSnapshot = snapshot;
     return SidecarStatus::Success;
+}
+
+[[nodiscard]] inline SidecarStatus SnapshotOwnership(
+    const BodySidecar *const sidecar,
+    OwnershipSnapshot *const outSnapshot) noexcept
+{
+    BodySidecarSnapshotScratch scratch{};
+    return SnapshotOwnershipWithScratch(
+        sidecar, outSnapshot, &scratch);
 }
 
 // Spawn admission needs a bounded preflight before allocating a native body.
@@ -489,11 +639,13 @@ struct SidecarTestAccess
 
 // The caller builds expectedTokens from the validated live FX graph: zero for
 // non-physics slots, and the FxElem token for every physics-model owner.
-[[nodiscard]] inline SidecarStatus ValidateSemanticOwnership(
+[[nodiscard]] inline SidecarStatus ValidateSemanticOwnershipWithScratch(
     const BodySidecar *const sidecar,
-    const std::array<BodyToken, MAX_ELEMS> &expectedTokens) noexcept
+    const std::array<BodyToken, MAX_ELEMS> &expectedTokens,
+    BodySidecarValidationScratch *const scratch) noexcept
 {
-    const SidecarStatus structuralStatus = Validate(sidecar);
+    const SidecarStatus structuralStatus =
+        ValidateWithScratch(sidecar, scratch);
     if (structuralStatus != SidecarStatus::Success)
         return structuralStatus;
 
@@ -512,6 +664,15 @@ struct SidecarTestAccess
         }
     }
     return SidecarStatus::Success;
+}
+
+[[nodiscard]] inline SidecarStatus ValidateSemanticOwnership(
+    const BodySidecar *const sidecar,
+    const std::array<BodyToken, MAX_ELEMS> &expectedTokens) noexcept
+{
+    BodySidecarValidationScratch scratch{};
+    return ValidateSemanticOwnershipWithScratch(
+        sidecar, expectedTokens, &scratch);
 }
 
 [[nodiscard]] inline SidecarStatus ValidateVacantDestination(
@@ -535,32 +696,27 @@ struct SidecarTestAccess
     return SidecarStatus::Success;
 }
 
-[[nodiscard]] inline SidecarStatus ValidateDisjointOwnership(
+[[nodiscard]] inline SidecarStatus ValidateDisjointOwnershipWithScratch(
     const BodySidecar *const first,
-    const BodySidecar *const second) noexcept
+    const BodySidecar *const second,
+    BodySidecarValidationScratch *const scratch) noexcept
 {
-    if (!first || !second || first == second)
+    if (!first || !second || first == second || !scratch)
         return SidecarStatus::InvalidArgument;
-    const SidecarStatus firstStatus = Validate(first);
+    const SidecarStatus firstStatus =
+        ValidateWithScratch(first, scratch);
     if (firstStatus != SidecarStatus::Success)
         return firstStatus;
-    const SidecarStatus secondStatus = Validate(second);
+    const SidecarStatus secondStatus =
+        ValidateWithScratch(second, scratch);
     if (secondStatus != SidecarStatus::Success)
         return secondStatus;
 
-    std::array<dxBody *, BODY_LIMIT> secondBodies{};
-    std::size_t secondBodyCount = 0;
-    const std::size_t secondTargetCount = second->activeCount_;
-    for (const BodySlot &slot : second->slots_)
-    {
-        if (secondBodyCount == secondTargetCount)
-            break;
-        if (slot.body)
-            secondBodies[secondBodyCount++] = slot.body;
-    }
-    std::sort(
-        secondBodies.begin(), secondBodies.begin() + secondBodyCount,
-        std::less<dxBody *>{});
+    // The final validation leaves the second sidecar's exact, sorted body
+    // image in scratch, so the disjoint scan needs no additional array.
+    const std::array<dxBody *, BODY_LIMIT> &secondBodies =
+        scratch->sortedBodies_;
+    const std::size_t secondBodyCount = second->activeCount_;
     std::size_t firstBodyCount = 0;
     const std::size_t firstTargetCount = first->activeCount_;
     for (const BodySlot &slot : first->slots_)
@@ -582,16 +738,27 @@ struct SidecarTestAccess
     return SidecarStatus::Success;
 }
 
+[[nodiscard]] inline SidecarStatus ValidateDisjointOwnership(
+    const BodySidecar *const first,
+    const BodySidecar *const second) noexcept
+{
+    BodySidecarValidationScratch scratch{};
+    return ValidateDisjointOwnershipWithScratch(
+        first, second, &scratch);
+}
+
 // A replacement preserves each base slot's generation while empty or advances
 // it exactly once while owning a newly bound body. This checks the per-slot
 // generation relation only; Publish/Rollback separately require the exact
 // source pointer and captured mutation revision.
-[[nodiscard]] inline SidecarStatus ValidateReplacementRelation(
+[[nodiscard]] inline SidecarStatus ValidateReplacementRelationWithScratch(
     const BodySidecar *const base,
-    const BodySidecar *const replacement) noexcept
+    const BodySidecar *const replacement,
+    BodySidecarValidationScratch *const scratch) noexcept
 {
     const SidecarStatus ownershipStatus =
-        ValidateDisjointOwnership(base, replacement);
+        ValidateDisjointOwnershipWithScratch(
+            base, replacement, scratch);
     if (ownershipStatus != SidecarStatus::Success)
         return ownershipStatus;
 
@@ -608,17 +775,28 @@ struct SidecarTestAccess
     return SidecarStatus::Success;
 }
 
+[[nodiscard]] inline SidecarStatus ValidateReplacementRelation(
+    const BodySidecar *const base,
+    const BodySidecar *const replacement) noexcept
+{
+    BodySidecarValidationScratch scratch{};
+    return ValidateReplacementRelationWithScratch(
+        base, replacement, &scratch);
+}
+
 // Reset never abandons a native body. The owner must first Take and destroy
 // every live body. An initialized reset advances all generations so tokens
 // retained by stale work cannot become valid again on the next bind.
-[[nodiscard]] inline SidecarStatus ResetEmpty(
-    BodySidecar *const sidecar) noexcept
+[[nodiscard]] inline SidecarStatus ResetEmptyWithScratch(
+    BodySidecar *const sidecar,
+    BodySidecarValidationScratch *const scratch) noexcept
 {
-    if (!sidecar)
+    if (!sidecar || !scratch)
         return SidecarStatus::InvalidArgument;
     if (sidecar->initialized_)
     {
-        const SidecarStatus status = Validate(sidecar);
+        const SidecarStatus status =
+            ValidateWithScratch(sidecar, scratch);
         if (status != SidecarStatus::Success)
             return status;
         if (sidecar->activeCount_ != 0)
@@ -647,17 +825,26 @@ struct SidecarTestAccess
     return SidecarStatus::Success;
 }
 
-[[nodiscard]] inline TokenResult Bind(
+[[nodiscard]] inline SidecarStatus ResetEmpty(
+    BodySidecar *const sidecar) noexcept
+{
+    BodySidecarValidationScratch scratch{};
+    return ResetEmptyWithScratch(sidecar, &scratch);
+}
+
+[[nodiscard]] inline TokenResult BindWithScratch(
     BodySidecar *const sidecar,
     const std::size_t ownerIndex,
-    dxBody *const body) noexcept
+    dxBody *const body,
+    BodySidecarValidationScratch *const scratch) noexcept
 {
-    if (!sidecar || !body)
+    if (!sidecar || !body || !scratch)
         return {SidecarStatus::InvalidArgument, INVALID_BODY_TOKEN};
     if (ownerIndex >= MAX_ELEMS)
         return {SidecarStatus::OwnerOutOfRange, INVALID_BODY_TOKEN};
 
-    const SidecarStatus structuralStatus = Validate(sidecar);
+    const SidecarStatus structuralStatus =
+        ValidateWithScratch(sidecar, scratch);
     if (structuralStatus != SidecarStatus::Success)
         return {structuralStatus, INVALID_BODY_TOKEN};
     if (sidecar->slots_[ownerIndex].body)
@@ -686,6 +873,15 @@ struct SidecarTestAccess
     return {SidecarStatus::Success, token};
 }
 
+[[nodiscard]] inline TokenResult Bind(
+    BodySidecar *const sidecar,
+    const std::size_t ownerIndex,
+    dxBody *const body) noexcept
+{
+    BodySidecarValidationScratch scratch{};
+    return BindWithScratch(sidecar, ownerIndex, body, &scratch);
+}
+
 // Resolve is the hot draw path. Bind/Take and lifecycle validation maintain the
 // whole-sidecar invariant, so resolution performs only bounded local checks.
 [[nodiscard]] inline BodyResult Resolve(
@@ -712,19 +908,21 @@ struct SidecarTestAccess
     return {SidecarStatus::Success, slot.body};
 }
 
-[[nodiscard]] inline BodyResult Take(
+[[nodiscard]] inline BodyResult TakeWithScratch(
     BodySidecar *const sidecar,
     const std::size_t ownerIndex,
-    const BodyToken token) noexcept
+    const BodyToken token,
+    BodySidecarValidationScratch *const scratch) noexcept
 {
-    if (!sidecar)
+    if (!sidecar || !scratch)
         return {SidecarStatus::InvalidArgument, nullptr};
     if (ownerIndex >= MAX_ELEMS)
         return {SidecarStatus::OwnerOutOfRange, nullptr};
     if (token == INVALID_BODY_TOKEN)
         return {SidecarStatus::ZeroToken, nullptr};
 
-    const SidecarStatus structuralStatus = Validate(sidecar);
+    const SidecarStatus structuralStatus =
+        ValidateWithScratch(sidecar, scratch);
     if (structuralStatus != SidecarStatus::Success)
         return {structuralStatus, nullptr};
     BodySlot &slot = sidecar->slots_[ownerIndex];
@@ -745,18 +943,29 @@ struct SidecarTestAccess
     return {SidecarStatus::Success, body};
 }
 
+[[nodiscard]] inline BodyResult Take(
+    BodySidecar *const sidecar,
+    const std::size_t ownerIndex,
+    const BodyToken token) noexcept
+{
+    BodySidecarValidationScratch scratch{};
+    return TakeWithScratch(sidecar, ownerIndex, token, &scratch);
+}
+
 // Reset/shutdown and archive commit/rollback cleanup can drain registrations
 // even when their owning FxElem graph is no longer published. The native body
 // remains caller-owned and must be destroyed after this transfer returns.
-[[nodiscard]] inline IndexedBodyResult TakeFirst(
-    BodySidecar *const sidecar) noexcept
+[[nodiscard]] inline IndexedBodyResult TakeFirstWithScratch(
+    BodySidecar *const sidecar,
+    BodySidecarValidationScratch *const scratch) noexcept
 {
-    if (!sidecar)
+    if (!sidecar || !scratch)
     {
         return {SidecarStatus::InvalidArgument, nullptr, MAX_ELEMS,
                 INVALID_BODY_TOKEN};
     }
-    const SidecarStatus structuralStatus = Validate(sidecar);
+    const SidecarStatus structuralStatus =
+        ValidateWithScratch(sidecar, scratch);
     if (structuralStatus != SidecarStatus::Success)
     {
         return {structuralStatus, nullptr, MAX_ELEMS,
@@ -784,15 +993,24 @@ struct SidecarTestAccess
             INVALID_BODY_TOKEN};
 }
 
+[[nodiscard]] inline IndexedBodyResult TakeFirst(
+    BodySidecar *const sidecar) noexcept
+{
+    BodySidecarValidationScratch scratch{};
+    return TakeFirstWithScratch(sidecar, &scratch);
+}
+
 // Staging starts bodyless but inherits every generation from the live state.
 // Bind advances selected slots, so restored owners receive fresh tokens.
-[[nodiscard]] inline SidecarStatus PrepareReplacement(
+[[nodiscard]] inline SidecarStatus PrepareReplacementWithScratch(
     const BodySidecar *const live,
-    BodySidecar *const staged) noexcept
+    BodySidecar *const staged,
+    BodySidecarValidationScratch *const scratch) noexcept
 {
-    if (!live || !staged || live == staged)
+    if (!live || !staged || live == staged || !scratch)
         return SidecarStatus::InvalidArgument;
-    const SidecarStatus liveStatus = Validate(live);
+    const SidecarStatus liveStatus =
+        ValidateWithScratch(live, scratch);
     if (liveStatus != SidecarStatus::Success)
         return liveStatus;
     if (live->transactionRole_ != TransactionRole::None)
@@ -818,15 +1036,25 @@ struct SidecarTestAccess
     return SidecarStatus::Success;
 }
 
+[[nodiscard]] inline SidecarStatus PrepareReplacement(
+    const BodySidecar *const live,
+    BodySidecar *const staged) noexcept
+{
+    BodySidecarValidationScratch scratch{};
+    return PrepareReplacementWithScratch(live, staged, &scratch);
+}
+
 // Publish transfers staged registrations to live and old live registrations
 // to rollback. All validation precedes the no-fail per-entry transfer.
-[[nodiscard]] inline SidecarStatus PublishReplacement(
+[[nodiscard]] inline SidecarStatus PublishReplacementWithScratch(
     BodySidecar *const live,
     BodySidecar *const staged,
-    BodySidecar *const rollback) noexcept
+    BodySidecar *const rollback,
+    BodySidecarValidationScratch *const scratch) noexcept
 {
     if (!live || !staged || !rollback
-        || live == staged || live == rollback || staged == rollback)
+        || live == staged || live == rollback || staged == rollback
+        || !scratch)
     {
         return SidecarStatus::InvalidArgument;
     }
@@ -840,7 +1068,8 @@ struct SidecarTestAccess
         return SidecarStatus::TransactionProvenanceMismatch;
     }
     const SidecarStatus relationStatus =
-        ValidateReplacementRelation(live, staged);
+        ValidateReplacementRelationWithScratch(
+            live, staged, scratch);
     if (relationStatus != SidecarStatus::Success)
         return relationStatus;
     const SidecarStatus destinationStatus =
@@ -887,17 +1116,28 @@ struct SidecarTestAccess
     return SidecarStatus::Success;
 }
 
+[[nodiscard]] inline SidecarStatus PublishReplacement(
+    BodySidecar *const live,
+    BodySidecar *const staged,
+    BodySidecar *const rollback) noexcept
+{
+    BodySidecarValidationScratch scratch{};
+    return PublishReplacementWithScratch(
+        live, staged, rollback, &scratch);
+}
+
 // Rollback proves the current live state is still the exact descendant of the
 // saved base, then transfers new registrations to discarded and restores old
 // registrations to live. The caller destroys bodies owned by discarded.
-[[nodiscard]] inline SidecarStatus RollbackReplacement(
+[[nodiscard]] inline SidecarStatus RollbackReplacementWithScratch(
     BodySidecar *const live,
     BodySidecar *const rollback,
-    BodySidecar *const discarded) noexcept
+    BodySidecar *const discarded,
+    BodySidecarValidationScratch *const scratch) noexcept
 {
     if (!live || !rollback || !discarded
         || live == rollback || live == discarded
-        || rollback == discarded)
+        || rollback == discarded || !scratch)
     {
         return SidecarStatus::InvalidArgument;
     }
@@ -911,7 +1151,8 @@ struct SidecarTestAccess
         return SidecarStatus::TransactionProvenanceMismatch;
     }
     const SidecarStatus relationStatus =
-        ValidateReplacementRelation(rollback, live);
+        ValidateReplacementRelationWithScratch(
+            rollback, live, scratch);
     if (relationStatus != SidecarStatus::Success)
         return relationStatus;
     const SidecarStatus destinationStatus =
@@ -956,5 +1197,15 @@ struct SidecarTestAccess
     rollback->transactionRevision_ = 0;
     rollback->transactionRole_ = TransactionRole::None;
     return SidecarStatus::Success;
+}
+
+[[nodiscard]] inline SidecarStatus RollbackReplacement(
+    BodySidecar *const live,
+    BodySidecar *const rollback,
+    BodySidecar *const discarded) noexcept
+{
+    BodySidecarValidationScratch scratch{};
+    return RollbackReplacementWithScratch(
+        live, rollback, discarded, &scratch);
 }
 } // namespace fx::physics
