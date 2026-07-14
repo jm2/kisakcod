@@ -968,11 +968,16 @@ can reopen. Its portable matrix is **42/42** under GCC, Clang, ASan/UBSan, and T
 AArch64 sidecar/capacity compile-link checks; Windows x86 CI remains the production translation-unit gate.
 Status-bearing resource-pair rollback now retains and reports a primary resource when fresh cleanup refuses;
 both archive call sites fail-stop rather than losing that ownership, and diagnostic rollback holds recursive
-PHYSICS exclusion across body/geometry destruction. The next step extracts a pure restore-control seam for
-executable nth-operation fault injection. Remaining FX work is camera/scalar snapshot publication, real
-Disk32 archive/fast-file conversion, an executable full-restore/fault-injection harness with real
-competing ODE occupancy, and a measured heap-backed transaction workspace. The unbounded/alignment-unsafe
-`Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
+PHYSICS exclusion across body/geometry destruction. The restore branch tree now lives in a pure,
+engine-type-free controller with explicit success, recoverable-failure, and unsafe-failure results. Its
+portable executable fixture injects every result at every primary, live-graph recovery, snapshot-recovery,
+commit-cleanup, and safe-empty operation; it verifies exact ordering, invalid-callback fail-closure, immediate
+unsafe termination, and the single desired-publication success outcome. The production adapter retains archive
+and PHYSICS exclusion around the complete synchronous controller call and translates an unsafe outcome to a
+fail-stop before admission or scratch ownership can be released. The next sequence is checked heap-backed
+transaction scratch, executable archive-gate waiter coverage, real competing non-FX ODE occupancy, and measured
+x86 stack/runtime ceilings. Remaining FX work also includes camera/scalar snapshot publication and real Disk32
+archive/fast-file conversion. The unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
 a separate transactional `current/end` cursor migration. Detailed live blockers and sequencing remain in
 `docs/task.md` and `docs/CODEBASE_AUDIT.md`.
 

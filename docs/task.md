@@ -9,14 +9,20 @@ work item changes. Do not create session-specific handoff files.
 - Branch: `agent/fx-restore-control`; branch point: merged status-bearing physics cleanup
   `48906d26`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: extract the production FX archive transaction's branch tree into an allocation-free,
-  engine-independent restore controller with explicit desired-published, original-restored, safe-empty,
-  and unsafe terminal outcomes. A portable fake backend will inject recoverable and unsafe failures at every
-  operation boundary and assert exact recovery traces; the production adapter will keep archive/iterator and
-  PHYSICS exclusion held until the controller reaches a proven terminal state. Unsafe cleanup remains a
-  single fail-stop before ownership or scratch can escape. The following batches are checked heap transaction
-  scratch, an executable archive-gate controller with deterministic waiters, portable ODE runtime extraction
-  and real competing occupancy, then measured x86 stack/runtime bounds.
+- Active work: this branch completes the pure FX archive restore-control seam. The production transaction now
+  delegates its branch tree to an allocation-free, engine-independent controller with explicit
+  desired-published, original-restored, safe-empty, and unsafe outcomes. Its portable fake backend injects
+  recoverable, unsafe, and invalid results at every primary and recovery operation boundary and verifies exact
+  live-graph, snapshot, commit-cleanup, and safe-empty traces. The engine adapter maps all 21 operations to the
+  existing helpers while retaining archive/iterator and PHYSICS exclusion through a proven terminal state;
+  post-transfer cleanup failure reaches one centralized fail-stop before admission or scratch ownership can
+  escape. Source contracts pin the production lock interval, exhaustive mapping, tri-state cleanup propagation,
+  desired-only success, and removal of the obsolete inline branch state. Independent semantic review found no
+  remaining ownership, recovery-boundary, lock-order, ABI, or build-list defect. Local validation is **43/43**
+  under GCC, Clang, ASan/UBSan (leak detection disabled under the ptrace runner), and TSan, plus strict x86-32
+  and AArch64 controller compile/link checks. The next item is checked heap transaction scratch, followed by an
+  executable archive-gate controller with deterministic waiters, portable ODE runtime extraction and real
+  competing occupancy, then measured x86 stack/runtime bounds.
   PR #13 merged the status-bearing resource cleanup prerequisite as `48906d26` after run
   **29356956952 passed all nine CI jobs** and Gemini reported no findings. The generic body/user-data and
   primary-geom/transform transaction retains explicit primary ownership when rollback refuses and returns a

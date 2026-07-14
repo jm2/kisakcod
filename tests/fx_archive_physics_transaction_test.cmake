@@ -6,16 +6,24 @@ endif()
 
 set(_archive_source_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp")
+set(_restore_control_header_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive_restore_control.h")
+set(_restore_control_source_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive_restore_control.cpp")
 set(_system_source_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_system.cpp")
 foreach(_required_source IN ITEMS
     "${_archive_source_path}"
+    "${_restore_control_header_path}"
+    "${_restore_control_source_path}"
     "${_system_source_path}")
     if(NOT EXISTS "${_required_source}")
         message(FATAL_ERROR "FX source not found: ${_required_source}")
     endif()
 endforeach()
 file(READ "${_archive_source_path}" _archive_source)
+file(READ "${_restore_control_header_path}" _restore_control_header)
+file(READ "${_restore_control_source_path}" _restore_control_source)
 file(READ "${_system_source_path}" _system_source)
 
 function(require_position source needle out_position description)
@@ -97,11 +105,14 @@ require_absent(
     "${_archive_source}"
     "(void)Phys_TryDestroyBodyLockedNoReport("
     "archive rollback must never discard native cleanup failure")
-require_position(
+require_absent(
     "${_archive_source}"
-    "Sys_Error(\"FX archive native-body cleanup failed after ownership transfer\")"
-    _cleanup_fail_stop
-    "post-transfer native cleanup must fail-stop under archive ownership")
+    "FX_FailArchivePhysicsCleanupLocked"
+    "archive helpers must propagate cleanup ownership through controller status")
+require_absent(
+    "${_archive_source}"
+    "FX archive native-body cleanup failed after ownership transfer"
+    "archive helpers must not terminate outside the centralized controller fail-stop")
 
 require_occurrence_count(
     "${_archive_source}"
@@ -110,7 +121,7 @@ require_occurrence_count(
     "both desired creation and retired-body reconstruction must classify retained cleanup ownership")
 extract_slice(
     "${_archive_source}"
-    "bool FX_ReconstructRetiredArchivePhysicsLocked("
+    "FX_ReconstructRetiredArchivePhysicsLocked("
     "bool FX_ArchiveRetiredTokenTargetsMatch("
     _reconstruct_physics_scope
     "retired-body reconstruction")
@@ -123,18 +134,23 @@ extract_slice(
 require_ordered(
     "${_reconstruct_failure_scope}"
     "if (bodyStatus == PhysBodyModelCreateStatus::CleanupFailed)"
-    "FX_FailArchivePhysicsCleanupLocked();"
-    "retained reconstruction ownership must fail-stop before ordinary rollback")
+    "return Status::UnsafeFailure;"
+    "retained reconstruction ownership must become an unsafe controller result")
 require_ordered(
     "${_reconstruct_failure_scope}"
-    "FX_FailArchivePhysicsCleanupLocked();"
-    "return false;"
-    "retained reconstruction ownership must not return recoverably")
+    "return Status::UnsafeFailure;"
+    "return createdBody"
+    "cleanup failure must be classified before ordinary creation failure")
+require_ordered(
+    "${_reconstruct_failure_scope}"
+    "? Status::UnsafeFailure"
+    ": Status::RecoverableFailure;"
+    "unexpected retained reconstruction ownership must remain unsafe")
 
 extract_slice(
     "${_archive_source}"
-    "bool FX_CreateArchivePhysicsLocked("
-    "void __cdecl FX_Restore("
+    "FX_CreateArchivePhysicsLocked("
+    "struct FxArchiveRestoreControlContext"
     _create_physics_scope
     "desired archive physics creation")
 extract_slice(
@@ -146,13 +162,18 @@ extract_slice(
 require_ordered(
     "${_create_failure_scope}"
     "if (bodyStatus == PhysBodyModelCreateStatus::CleanupFailed)"
-    "FX_FailArchivePhysicsCleanupLocked();"
-    "retained desired ownership must fail-stop before ordinary restore failure")
+    "return Status::UnsafeFailure;"
+    "retained desired ownership must become an unsafe controller result")
 require_ordered(
     "${_create_failure_scope}"
-    "FX_FailArchivePhysicsCleanupLocked();"
-    "created = false;"
-    "retained desired ownership must not enter recoverable rollback")
+    "return Status::UnsafeFailure;"
+    "return createdBody"
+    "cleanup failure must be classified before ordinary desired creation failure")
+require_ordered(
+    "${_create_failure_scope}"
+    "? Status::UnsafeFailure"
+    ": Status::RecoverableFailure;"
+    "unexpected retained desired ownership must remain unsafe")
 
 foreach(_forbidden_direct_physics_api IN ITEMS
     "Phys_ObjDestroy("
@@ -187,7 +208,7 @@ require_ordered(
 extract_slice(
     "${_archive_source}"
     "bool FX_BuildArchivePhysicsRetirementPlanLocked("
-    "bool FX_RetireArchivePhysicsLocked("
+    "FX_RetireArchivePhysicsLocked("
     _retirement_planner
     "archive retirement planner")
 require_ordered(
@@ -234,7 +255,7 @@ endforeach()
 # native body, and only then begin detaching registrations.
 extract_slice(
     "${_archive_source}"
-    "bool FX_DrainArchivePhysicsSidecarsLocked("
+    "FX_DrainArchivePhysicsSidecarsLocked("
     "enum class FxArchivePhysicsCapacityStatus"
     _drain_helper
     "multi-sidecar drain helper")
@@ -283,8 +304,8 @@ endforeach()
 
 extract_slice(
     "${_archive_source}"
-    "bool FX_RetireArchivePhysicsLocked("
-    "bool FX_ReconstructRetiredArchivePhysicsLocked("
+    "FX_RetireArchivePhysicsLocked("
+    "FX_ReconstructRetiredArchivePhysicsLocked("
     _retire_helper
     "bounded retirement helper")
 require_ordered(
@@ -312,7 +333,7 @@ endforeach()
 
 extract_slice(
     "${_archive_source}"
-    "bool FX_PublishArchivePhysicsSafeEmptyLocked("
+    "FX_PublishArchivePhysicsSafeEmptyLocked("
     "bool FX_AppendArchivePhysicsEntry("
     _safe_empty_helper
     "safe-empty recovery helper")
@@ -331,6 +352,16 @@ require_ordered(
     "FX_DrainArchivePhysicsSidecarsLocked("
     "FX_PublishArchiveSafeEmptyStateLocked(system)"
     "safe-empty recovery must atomically drain all physics before graph reset")
+require_ordered(
+    "${_safe_empty_helper}"
+    "const Status drainStatus ="
+    "if (drainStatus != Status::Success)"
+    "safe-empty recovery must retain the drain's tri-state result")
+require_ordered(
+    "${_safe_empty_helper}"
+    "if (drainStatus != Status::Success)"
+    "return drainStatus;"
+    "safe-empty recovery must propagate unsafe drain failure unchanged")
 foreach(_required_sidecar IN ITEMS
     "{liveSidecar, stagedSidecar, rollbackSidecar}"
     "{true, true, true}")
@@ -426,20 +457,26 @@ require_position(
     "the rollback graph image must preserve iterator -1")
 
 extract_slice(
-    "${_restore_source}"
-    "if (replacementPublished)"
-    "validCommittedState = restoredExclusiveState"
+    "${_archive_source}"
+    "FX_PerformArchiveRestoreControlOperation("
+    "void __cdecl FX_Restore("
+    _restore_adapter
+    "restore controller production adapter")
+extract_slice(
+    "${_restore_adapter}"
+    "case Operation::PublishDesiredGraph:"
+    "case Operation::ValidateDesiredState:"
     _desired_publication
     "desired graph publication")
 require_ordered(
     "${_desired_publication}"
-    "Sys_AtomicStore(&restoredSystem.iteratorCount, -1);"
-    "memcpy(system, &restoredSystem, sizeof(*system));"
+    "Sys_AtomicStore(&context.desiredSystem->iteratorCount, -1);"
+    "sizeof(*context.system));"
     "the desired graph image must publish iterator -1")
 require_before_and_after(
     "${_desired_publication}"
-    "FX_ValidateArchiveExclusiveState(system)"
-    "memcpy(system, &restoredSystem, sizeof(*system));"
+    "FX_ValidateArchiveExclusiveState(context.system)"
+    "sizeof(*context.system));"
     "desired graph publication must preserve archive exclusivity")
 require_absent(
     "${_desired_publication}"
@@ -447,20 +484,156 @@ require_absent(
     "desired graph publication must never create a nonexclusive window")
 
 extract_slice(
-    "${_restore_source}"
-    "if (rollbackPhysicsValid)"
-    "oldStateRestored = stagedDrained"
+    "${_restore_adapter}"
+    "case Operation::PublishOriginalGraph:"
+    "case Operation::ValidateOriginalGraph:"
     _rollback_publication
     "rollback graph publication")
 require_before_and_after(
     "${_rollback_publication}"
-    "FX_ValidateArchiveExclusiveState(system)"
-    "&rollbackSystem,"
+    "FX_ValidateArchiveExclusiveState(context.system)"
+    "sizeof(*context.system));"
     "rollback graph publication must preserve archive exclusivity")
 require_absent(
     "${_rollback_publication}"
     "iteratorCount, 0"
     "rollback graph publication must never create a nonexclusive window")
+
+# Keep the production adapter as a thin, one-case-per-operation translation
+# layer. The portable controller owns sequencing and terminal-state choice.
+require_occurrence_count(
+    "${_restore_adapter}"
+    "switch (operation)"
+    1
+    "the production adapter must use one operation dispatch")
+foreach(_adapter_operation IN ITEMS
+    CaptureOriginal
+    PlanRetirement
+    RetireOriginal
+    PreparePhysicsReplacement
+    CreateDesiredPhysics
+    ValidateDesiredPhysics
+    PublishPhysicsReplacement
+    PublishDesiredGraph
+    ValidateDesiredState
+    ValidateDiscardedOriginalPhysics
+    DrainNonLivePhysics
+    RollbackPhysicsReplacement
+    ValidateOriginalTokensInSnapshot
+    ValidateOriginalTokensInLiveGraph
+    ReconstructRetiredOriginalPhysics
+    PatchOriginalTokensInSnapshot
+    PatchOriginalTokensInLiveGraph
+    ValidateOriginalPhysics
+    PublishOriginalGraph
+    ValidateOriginalGraph
+    PublishSafeEmpty)
+    require_occurrence_count(
+        "${_restore_adapter}"
+        "case Operation::${_adapter_operation}:"
+        1
+        "the production adapter must map every controller operation exactly once")
+endforeach()
+
+extract_slice(
+    "${_restore_control_header}"
+    "enum class RestoreControlOperationStatus"
+    "enum class RestoreControlOutcome"
+    _operation_status_declaration
+    "restore controller operation status")
+foreach(_operation_status IN ITEMS Success RecoverableFailure UnsafeFailure)
+    require_position(
+        "${_operation_status_declaration}"
+        "${_operation_status}"
+        _operation_status_position
+        "restore controller must expose tri-state operation results")
+endforeach()
+extract_slice(
+    "${_restore_control_header}"
+    "enum class RestoreControlOutcome"
+    "struct RestoreControlCallbacks"
+    _outcome_declaration
+    "restore controller outcome")
+foreach(_outcome IN ITEMS
+    DesiredPublished
+    OriginalRestored
+    SafeEmptyPublished
+    UnsafeFailure)
+    require_position(
+        "${_outcome_declaration}"
+        "${_outcome}"
+        _outcome_position
+        "restore controller must expose every terminal ownership state")
+endforeach()
+foreach(_controller_sequence IN ITEMS
+    PrepareOperations
+    DesiredPublicationOperations
+    CommitOperations
+    LiveGraphRecoveryOperations
+    SnapshotRecoveryOperations)
+    require_occurrence_count(
+        "${_restore_control_source}"
+        "${_controller_sequence}"
+        2
+        "restore controller must define and dispatch each transaction sequence")
+endforeach()
+extract_slice(
+    "${_restore_control_source}"
+    "SequenceResult RunSequence("
+    "RestoreControlOutcome PublishSafeEmpty("
+    _sequence_driver
+    "restore controller sequence driver")
+extract_slice(
+    "${_sequence_driver}"
+    "default:"
+    "return SequenceResult::Success;"
+    _invalid_status_scope
+    "invalid callback status handling")
+require_position(
+    "${_invalid_status_scope}"
+    "return SequenceResult::UnsafeFailure;"
+    _invalid_status_failure
+    "invalid callback status must fail closed")
+extract_slice(
+    "${_restore_control_source}"
+    "RestoreControlOutcome RunRestoreControl("
+    "} // namespace fx::archive"
+    _controller_driver
+    "restore controller driver")
+require_ordered(
+    "${_controller_driver}"
+    "if (!callbacks.context || !callbacks.perform)"
+    "return RestoreControlOutcome::UnsafeFailure;"
+    "invalid controller callbacks must fail closed")
+require_ordered(
+    "${_controller_driver}"
+    "RunSequence(callbacks, PrepareOperations)"
+    "RunSequence(callbacks, DesiredPublicationOperations)"
+    "preparation must precede desired graph publication")
+require_ordered(
+    "${_controller_driver}"
+    "RunSequence(callbacks, DesiredPublicationOperations)"
+    "RunSequence(callbacks, CommitOperations)"
+    "desired graph validation must precede commit cleanup")
+
+foreach(_obsolete_inline_control IN ITEMS
+    livePhysicsCaptured
+    retirementPlanned
+    retirementComplete
+    replacementPrepared
+    replacementCreated
+    stagedPhysicsValid
+    replacementPublished
+    restoreSucceeded
+    validCommittedState
+    oldStateRestored
+    safeEmptyPublished
+    safeTerminalState)
+    require_absent(
+        "${_restore_source}"
+        "${_obsolete_inline_control}"
+        "FX_Restore must not retain the obsolete inline controller branch tree")
+endforeach()
 
 require_occurrence_count(
     "${_restore_source}"
@@ -472,21 +645,59 @@ require_occurrence_count(
     "Sys_LeaveCriticalSection(CRITSECT_PHYSICS)"
     1
     "FX_Restore must release one continuous PHYSICS interval")
+require_occurrence_count(
+    "${_restore_source}"
+    "fx::archive::RunRestoreControl(restoreCallbacks)"
+    1
+    "FX_Restore must delegate to the portable controller exactly once")
+require_position(
+    "${_restore_source}"
+    "fx::archive::RunRestoreControl(restoreCallbacks)"
+    _controller_call
+    "restore controller invocation")
+string(SUBSTRING
+    "${_restore_source}" ${_controller_call} -1
+    _restore_completion)
 require_ordered(
     "${_restore_source}"
-    "const bool safeTerminalState ="
-    "Sys_Error(\"FX archive restore could not recover a safe runtime state\")"
-    "unrecoverable restore must classify terminal safety before fail-stop")
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
+    "fx::archive::RunRestoreControl(restoreCallbacks)"
+    "the controller must run only after PHYSICS acquisition")
 require_ordered(
-    "${_restore_source}"
+    "${_restore_completion}"
+    "fx::archive::RunRestoreControl(restoreCallbacks)"
+    "if (restoreOutcome == fx::archive::RestoreControlOutcome::UnsafeFailure)"
+    "the controller outcome must drive centralized fail-stop handling")
+require_ordered(
+    "${_restore_completion}"
+    "if (restoreOutcome == fx::archive::RestoreControlOutcome::UnsafeFailure)"
     "Sys_Error(\"FX archive restore could not recover a safe runtime state\")"
+    "unsafe controller outcome must fail-stop")
+require_ordered(
+    "${_restore_completion}"
+    "Sys_Error(\"FX archive restore could not recover a safe runtime state\")"
+    "std::abort();"
+    "unsafe restore must terminate after reporting the fatal condition")
+require_ordered(
+    "${_restore_completion}"
+    "std::abort();"
     "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
     "unrecoverable restore must fail-stop while native physics remains excluded")
 require_ordered(
-    "${_restore_source}"
+    "${_restore_completion}"
     "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
     "FX_EndArchive(system)"
     "archive admission may reopen only after a safe terminal state exists")
+require_ordered(
+    "${_restore_completion}"
+    "std::abort();"
+    "FX_EndArchive(system)"
+    "unsafe restore must terminate before archive admission can reopen")
+require_ordered(
+    "${_restore_completion}"
+    "std::abort();"
+    "Z_Free(rollbackBuffers, 10);"
+    "unsafe restore must terminate before transaction scratch can be released")
 require_position(
     "${_restore_source}"
     "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
@@ -528,39 +739,13 @@ foreach(_required_no_report_call IN ITEMS
     "Phys_TryValidateBodyDestroyLockedNoReport("
     "Phys_TryDestroyBodyLockedNoReport("
     "Phys_TryCreateBodyFromStateAndXModelLockedNoReport("
-    "FX_RebuildPoolAllocationStatesNoReport(system)")
+    "FX_RebuildPoolAllocationStatesNoReport(")
     require_position(
         "${_archive_source}"
         "${_required_no_report_call}"
         _no_report_position
         "archive transaction must use its no-report primitive")
 endforeach()
-
-require_ordered(
-    "${_restore_source}"
-    "FX_CaptureArchivePhysicsRollbackRecipesLocked("
-    "FX_BuildArchivePhysicsRetirementPlanLocked("
-    "rollback recipes must precede retirement planning")
-require_ordered(
-    "${_restore_source}"
-    "FX_RetireArchivePhysicsLocked("
-    "fx::physics::PrepareReplacement("
-    "retirement must finish before replacement provenance changes")
-require_ordered(
-    "${_restore_source}"
-    "fx::physics::PrepareReplacement("
-    "FX_CreateArchivePhysicsLocked("
-    "replacement provenance must precede construction")
-require_ordered(
-    "${_restore_source}"
-    "FX_CreateArchivePhysicsLocked("
-    "fx::physics::PublishReplacement("
-    "replacement construction must finish before sidecar publication")
-require_ordered(
-    "${_restore_source}"
-    "fx::physics::RollbackReplacement("
-    "FX_ReconstructRetiredArchivePhysicsLocked("
-    "sidecar rollback and discarded-body drain must precede reconstruction")
 
 string(SUBSTRING "${_restore_source}" ${_physics_leave} -1 _after_physics)
 require_ordered(
@@ -571,7 +756,33 @@ require_ordered(
 require_ordered(
     "${_after_physics}"
     "Z_Free(restoredBuffers, 10);"
+    "if (restoreOutcome"
+    "terminal outcome must be checked only after transaction storage is released")
+require_position(
+    "${_after_physics}"
+    "!= fx::archive::RestoreControlOutcome::DesiredPublished"
+    _desired_outcome_check
+    "only desired publication may report restore success")
+require_ordered(
+    "${_after_physics}"
+    "!= fx::archive::RestoreControlOutcome::DesiredPublished"
     "Com_Error("
-    "all transaction storage must be freed before ERR_DROP")
+    "all non-desired terminal states must report ERR_DROP")
+require_occurrence_count(
+    "${_restore_source}"
+    "RestoreControlOutcome::DesiredPublished"
+    1
+    "DesiredPublished must be the sole nonfatal restore outcome")
+require_occurrence_count(
+    "${_restore_source}"
+    "RestoreControlOutcome::UnsafeFailure"
+    1
+    "UnsafeFailure must have one centralized fail-stop")
+foreach(_non_success_outcome IN ITEMS OriginalRestored SafeEmptyPublished)
+    require_absent(
+        "${_restore_source}"
+        "RestoreControlOutcome::${_non_success_outcome}"
+        "recovery outcomes must not be treated as restore success")
+endforeach()
 
 message(STATUS "FX archive full-capacity physics transaction contract passed")
