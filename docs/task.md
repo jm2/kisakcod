@@ -29,6 +29,11 @@ work item changes. Do not create session-specific handoff files.
   registration can longjmp before cleanup; moving it requires a separate no-leak parsing boundary. Next after this
   PR is executable archive-gate waiter/admission coverage, followed by portable ODE competing-occupancy extraction,
   then the effect-table boundary and measured per-function stack gates.
+  PR #15's initial run **29361544758** passed the Linux amd64/arm64 and macOS arm64 portable suites plus the
+  headless Windows x86 engine build, but both MSVC portable jobs rejected the intentionally over-aligned workspace
+  fixture with C4324 under `/WX`. The fixture now supplies an exact alignment-sized payload instead of relying on
+  implicit tail padding; the focused workspace executable passes under GCC, Clang, ASan/UBSan, and TSan while the
+  replacement Windows gates are pending.
   PR #14 merged the executable restore controller as `39432a29` after run **29359061795 passed all nine CI
   jobs** and Gemini plus independent review reported no findings. Its portable controller covers all operation
   failures and the production adapter retains archive/PHYSICS ownership through desired, original, safe-empty,
@@ -530,7 +535,10 @@ work item changes. Do not create session-specific handoff files.
    runtime needed for real competing non-FX occupancy/exhaustion tests. The restore controller's exhaustive
    nth-operation fixture and checked heap transaction/preflight scratch are complete; after the gate/occupancy
    fixtures, move the effect-definition table behind a no-longjmp parsing boundary, measure the Windows x86
-   production frame, and enforce source-scoped MSVC plus portable extracted-TU stack limits.
+   production frame, and enforce source-scoped MSVC plus portable extracted-TU stack limits. The gate audit also
+   found a same-thread sort-exclusive self-deadlock in archive admission and cleanup paths that discard retry state
+   after partial iterator/gate release; the controller phase must close both without changing lifecycle-claim
+   ordering.
 2. Add packed FX savegame Disk32 schemas, native handle remapping, opaque effect-definition keys,
    and byte-level malformed/round-trip fixtures; retain the legacy x86 writer until equivalence is
    proven. Fast-file `FxEffectDef` widening remains a separate nested-payload batch.

@@ -69,6 +69,7 @@ struct ThrowingDestructor
 
 struct alignas(alignof(std::max_align_t) * 2) OverAlignedWorkspace
 {
+    std::array<std::byte, alignof(std::max_align_t) * 2> storage{};
 };
 
 void *Allocate(void *const context, const int byteCount) noexcept
@@ -112,6 +113,7 @@ static_assert(restore::SupportedArchiveRestoreWorkspace<Workspace>);
 static_assert(!restore::SupportedArchiveRestoreWorkspace<Workspace[2]>);
 static_assert(!restore::SupportedArchiveRestoreWorkspace<ThrowingConstructor>);
 static_assert(!restore::SupportedArchiveRestoreWorkspace<ThrowingDestructor>);
+static_assert(sizeof(OverAlignedWorkspace) == alignof(OverAlignedWorkspace));
 static_assert(!restore::SupportedArchiveRestoreWorkspace<OverAlignedWorkspace>);
 static_assert(noexcept(restore::TryNarrowArchiveRestoreWorkspaceSize(0, nullptr)));
 static_assert(noexcept(
