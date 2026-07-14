@@ -10,12 +10,18 @@ set(_restore_control_header_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive_restore_control.h")
 set(_restore_control_source_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive_restore_control.cpp")
+set(_archive_gate_header_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive_gate_control.h")
+set(_archive_gate_source_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive_gate_control.cpp")
 set(_system_source_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_system.cpp")
 foreach(_required_source IN ITEMS
     "${_archive_source_path}"
     "${_restore_control_header_path}"
     "${_restore_control_source_path}"
+    "${_archive_gate_header_path}"
+    "${_archive_gate_source_path}"
     "${_system_source_path}")
     if(NOT EXISTS "${_required_source}")
         message(FATAL_ERROR "FX source not found: ${_required_source}")
@@ -24,6 +30,8 @@ endforeach()
 file(READ "${_archive_source_path}" _archive_source)
 file(READ "${_restore_control_header_path}" _restore_control_header)
 file(READ "${_restore_control_source_path}" _restore_control_source)
+file(READ "${_archive_gate_header_path}" _archive_gate_header)
+file(READ "${_archive_gate_source_path}" _archive_gate_source)
 file(READ "${_system_source_path}" _system_source)
 
 function(require_position source needle out_position description)
@@ -497,9 +505,9 @@ foreach(_canonical_graph_pointer IN ITEMS
         "graph reset must reject noncanonical system-buffer pointers")
 endforeach()
 
-# The shared validator is the proof that the archive owner still holds gate 2
-# and iterator -1. Publication copies preserve -1 and validate that proof on
-# both sides of the desired and rollback graph memcpy operations.
+# The shared validator is the proof that the controller remains fully acquired
+# with an Exclusive gate and iterator -1. Publication copies preserve -1 and
+# validate that proof on both sides of graph memcpy operations.
 extract_slice(
     "${_system_source}"
     "bool __cdecl FX_ValidateArchiveExclusiveState("
@@ -508,14 +516,114 @@ extract_slice(
     "archive-exclusive validator")
 require_ordered(
     "${_exclusive_validator}"
-    "Sys_AtomicLoad(gate) == 2"
+    "ArchiveGateOwnerPhase::Acquired"
+    "ArchiveGateValue::Exclusive"
+    "archive-exclusive validation must require the fully acquired controller phase")
+require_ordered(
+    "${_exclusive_validator}"
+    "ArchiveGateValue::Exclusive"
     "FX_CurrentThreadOwnsArchive(system)"
-    "archive-exclusive validation must require the acquired gate")
+    "archive-exclusive validation must require the acquired gate before owner identity")
 require_ordered(
     "${_exclusive_validator}"
     "FX_CurrentThreadOwnsArchive(system)"
     "Sys_AtomicLoad(&system->iteratorCount) == -1"
     "archive-exclusive validation must require the preserved exclusive iterator")
+
+foreach(_archive_owner_phase IN ITEMS
+    Idle
+    Pending
+    PendingExclusive
+    Acquired
+    ExclusiveGateOnly)
+    require_position(
+        "${_archive_gate_header}"
+        "    ${_archive_owner_phase},"
+        _archive_owner_phase_position
+        "archive controller must retain its ${_archive_owner_phase} ownership phase")
+endforeach()
+
+extract_slice(
+    "${_archive_gate_source}"
+    "ArchiveGateControlStatus AcquireArchiveGate("
+    "ArchiveGateControlStatus ReleaseArchiveGate("
+    _archive_gate_acquire_controller
+    "portable archive gate acquire controller")
+require_ordered(
+    "${_archive_gate_acquire_controller}"
+    "ArchiveGateControlOperation::ClaimPending"
+    "state->phase = ArchiveGateOwnerPhase::Pending;"
+    "archive acquisition must record Pending only after the gate claim succeeds")
+require_ordered(
+    "${_archive_gate_acquire_controller}"
+    "state->phase = ArchiveGateOwnerPhase::Pending;"
+    "ArchiveGateControlOperation::TryAcquireIterator"
+    "archive acquisition must close iterator admission before trying exclusivity")
+require_ordered(
+    "${_archive_gate_acquire_controller}"
+    "state->phase = ArchiveGateOwnerPhase::PendingExclusive;"
+    "ArchiveGateControlOperation::PromoteExclusive"
+    "archive acquisition must record iterator ownership before gate promotion")
+require_ordered(
+    "${_archive_gate_acquire_controller}"
+    "state->phase = ArchiveGateOwnerPhase::Acquired;"
+    "ArchiveGateControlOperation::ValidateAdmission"
+    "archive acquisition must record complete ownership before admission validation")
+
+extract_slice(
+    "${_archive_gate_source}"
+    "ArchiveGateControlStatus ReleaseArchiveGate("
+    "ArchiveGateControlStatus AbandonArchiveGateForError("
+    _archive_gate_release_controller
+    "portable archive gate release controller")
+require_ordered(
+    "${_archive_gate_release_controller}"
+    "ArchiveGateControlOperation::ValidateExclusive"
+    "ReleaseIteratorForCleanup(state, callbacks)"
+    "normal archive release must validate before dropping iterator ownership")
+require_position(
+    "${_archive_gate_release_controller}"
+    "if (ReleaseIteratorForCleanup(state, callbacks)\n        != ArchiveGateControlStatus::Success)\n    {\n        return ArchiveGateControlStatus::UnsafeFailure;\n    }\n    return ReopenOwnedGate(state, callbacks);"
+    _ordered_normal_archive_release
+    "normal archive release must drop iterator ownership before reopening admission")
+require_position(
+    "${_archive_gate_release_controller}"
+    "if (state->phase == ArchiveGateOwnerPhase::ExclusiveGateOnly)\n        return ReopenOwnedGate(state, callbacks);"
+    _gate_only_release_retry
+    "normal release must resume a partial cleanup at its gate-only phase")
+
+extract_slice(
+    "${_archive_gate_source}"
+    "ArchiveGateControlStatus AbandonArchiveGateForError("
+    "bool ArchiveGateOwnerMatches("
+    _archive_gate_error_controller
+    "portable archive gate error controller")
+require_ordered(
+    "${_archive_gate_error_controller}"
+    "ReleaseIteratorForCleanup(state, callbacks)"
+    "ArchiveGateControlOperation::ClearArchivingForError"
+    "error abandon must release iterator ownership before clearing archive state")
+require_ordered(
+    "${_archive_gate_error_controller}"
+    "ArchiveGateControlOperation::ClearArchivingForError"
+    "return ReopenOwnedGate(state, callbacks);"
+    "error abandon must clear archive state before reopening admission")
+require_absent(
+    "${_archive_gate_error_controller}"
+    "ClearOwner(state)"
+    "error abandon must retain retry state until gate reopening succeeds")
+
+extract_slice(
+    "${_archive_gate_source}"
+    "ArchiveGateControlStatus ReopenOwnedGate("
+    "ArchiveGateControlStatus ReleaseIteratorForCleanup("
+    _archive_gate_reopen_controller
+    "portable archive gate reopen helper")
+require_ordered(
+    "${_archive_gate_reopen_controller}"
+    "Invoke(callbacks, operation)"
+    "ClearOwner(state);"
+    "archive ownership may clear only after its gate reopen callback succeeds")
 
 extract_slice(
     "${_archive_source}"

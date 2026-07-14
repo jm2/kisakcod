@@ -173,6 +173,24 @@ add_test(
 )
 set_tests_properties(effectscore-archive-restore-control PROPERTIES TIMEOUT 10)
 
+add_executable(kisakcod-fx-archive-gate-control-tests
+    fx_archive_gate_control_tests.cpp
+    ${SRC_DIR}/EffectsCore/fx_archive_gate_control.cpp
+)
+target_include_directories(
+    kisakcod-fx-archive-gate-control-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-fx-archive-gate-control-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-fx-archive-gate-control-tests)
+set_target_properties(kisakcod-fx-archive-gate-control-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-archive-gate-control
+    COMMAND kisakcod-fx-archive-gate-control-tests
+)
+set_tests_properties(effectscore-archive-gate-control PROPERTIES TIMEOUT 10)
+
 add_executable(kisakcod-fx-archive-restore-workspace-tests
     fx_archive_restore_workspace_tests.cpp
 )

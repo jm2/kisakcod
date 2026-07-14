@@ -6,7 +6,7 @@
 
 ---
 
-## Implementation status (July 12, 2026)
+## Implementation status (July 14, 2026)
 
 Target policy is fixed: preserve retail assets and wire interoperability; use a
 shared **native Vulkan RHI** (MoltenVK on macOS) that replaces D3D9, OpenAL Soft,
@@ -54,6 +54,8 @@ Completed foundation work:
 - Steam decoupled from `WIN32` behind `KISAK_ENABLE_STEAM`/`KISAK_STEAM` with a
   persistent `cl_guid` fallback and `sv_requireSteam`, fixing the unjoinable
   headless-dedi defect (see §10 H2);
+- a portable callback-driven FX archive admission controller with typed, fail-closed gate values,
+  phase-aware TLS ownership, deterministic cleanup/generation tests, and production integration;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -66,9 +68,9 @@ Remaining gates, in implementation order:
    its `[self-hosted, kisakcod, windows, x86]` runner and `KISAKCOD_GAME_DIR` secret are provisioned;
    surface that infrastructure blocker rather than creating a permanently queued run.
 2. Complete FX archive runtime closure. Live generation-checked sidecars, full-capacity rollback, exhaustive
-   pure restore control, and checked heap transaction/preflight scratch are implemented. Next extract the archive
-   admission gate for deterministic waiter/error-unwind coverage, then the narrow ODE rollback runtime for real
-   competing non-FX occupancy, followed by the no-longjmp effect-table boundary and measured frame/runtime gates.
+   pure restore control, checked heap transaction/preflight scratch, and the normal archive admission gate with
+   deterministic waiter/error-unwind coverage are implemented. Next extract the narrow ODE rollback runtime for
+   real competing non-FX occupancy, followed by the no-longjmp effect-table boundary and measured frame/runtime gates.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -980,8 +982,23 @@ heap image also covers malformed graph preflight before archive admission. Safe 
 admission, destroy scratch, and then free referenced buffers, while unsafe outcomes use the explicit `[[noreturn]]`
 platform fatal boundary without cleanup. Wrapper/scratch parity, failure preservation/reuse, full capacity, and
 source cleanup order are covered by the **44/44** GCC/Clang/ASan/UBSan/TSan matrix plus strict x86-32/AArch64
-compile/link fixtures. The next sequence is executable archive-gate waiter coverage, real competing non-FX ODE
-occupancy, the no-longjmp effect-table boundary, and measured x86/native64 stack/runtime ceilings. Remaining FX
+compile/link fixtures. On branch `agent/fx-archive-gate-control`, based on `6ce9e14`, commits `a393c9a`,
+`2384d00`, and `ebc6654` add the portable normal-admission controller, production adapter, and strengthened source
+contracts. Typed `Open`, `Pending`, and `Exclusive` gate values reject unknown encodings, while durable `Pending`,
+`PendingExclusive`, `Acquired`, and
+`ExclusiveGateOnly` TLS phases preserve exact ownership through waiter cancellation, promotion rollback, partial
+release retry, and error abandonment. Deterministic tests cover waiters, cancellation, rollback, every partial
+release/error-abandon path, lifecycle generations, and corrupt-state validation. Begin rejects cooperative,
+kill-exclusive, sort-exclusive, effect-lock, self, and otherwise non-idle ownership; cleanup releases iterator
+ownership before reopening the gate, and corrupt nominally `Idle` state reaches fail-stop validation. The
+prechecked kill race accepts only known `Open`/`Pending` values, pool rebuild/validation requires exact `Acquired`
+proof to bypass admission, and safe-empty reset performs checked generation refresh. The separate reset/init/
+shutdown two-gate lifecycle protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan
+(leak detection disabled), and TSan; strict x86-32 and AArch64 controller compile/link checks and all three focused
+source scripts pass. Two independent audits found and fixed three concrete fail-closed issues and found no
+remaining PR-scope issue. Overall porting progress is approximately **37%** (plausible range **33–42%**), while
+target delivery remains **0/5**. The next sequence is portable ODE rollback runtime for real competing non-FX
+occupancy, then the no-longjmp effect-table boundary and measured x86/native64 stack/runtime ceilings. Remaining FX
 work also includes camera/scalar snapshot publication and real Disk32 archive/fast-file conversion. The
 unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
 a separate transactional `current/end` cursor migration. Detailed live blockers and sequencing remain in

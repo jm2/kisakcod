@@ -15,6 +15,8 @@ set(DYNENTITY
 set(EFFECTSCORE
     "${SRC_DIR}/EffectsCore/fxcurve.cpp"
     "${SRC_DIR}/EffectsCore/fx_archive.cpp"
+    "${SRC_DIR}/EffectsCore/fx_archive_gate_control.cpp"
+    "${SRC_DIR}/EffectsCore/fx_archive_gate_control.h"
     "${SRC_DIR}/EffectsCore/fx_archive_restore_control.cpp"
     "${SRC_DIR}/EffectsCore/fx_archive_restore_control.h"
     "${SRC_DIR}/EffectsCore/fx_archive_restore_workspace.h"
