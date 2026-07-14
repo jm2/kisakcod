@@ -431,6 +431,25 @@ void TestInvalidArguments()
               "null completed-count output invokes no callback");
         Check(MutationMatchesPrefix(fixture, kind, nullptr, 0),
               "null completed-count output mutates no entry");
+
+        std::array<std::size_t, 3> aliasedPlan = validPlan;
+        const auto aliasedPlanBefore = aliasedPlan;
+        fixture.ResetObservations();
+        const Status aliasedOutputStatus = RunBatch(
+            kind,
+            validCallbacks,
+            aliasedPlan.data(),
+            aliasedPlan.size(),
+            kEntryCapacity,
+            &aliasedPlan[1]);
+        Check(aliasedOutputStatus == Status::UnsafeFailure,
+              "completed-count output cannot alias plan storage");
+        Check(aliasedPlan == aliasedPlanBefore,
+              "overlap rejection does not corrupt plan storage");
+        Check(fixture.traceCount == 0,
+              "overlap rejection invokes no callback");
+        Check(MutationMatchesPrefix(fixture, kind, nullptr, 0),
+              "overlap rejection mutates no entry");
     }
 }
 

@@ -32,11 +32,13 @@ struct ArchivePhysicsBatchCallbacks
 
 // Runs an all-preflight-then-commit retirement batch in plan order. Selection
 // indices must be unique and less than entryCount. A null plan is valid only
-// for an empty selection. outCompletedCount is cleared before any callback and
-// counts only commit callbacks that returned Success. A RecoverableFailure
-// from a commit callback must leave that current entry unmodified; an
-// UnsafeFailure denotes ownership that cannot be recovered by this controller.
-// Invalid arguments or callback results fail closed as UnsafeFailure.
+// for an empty selection. The plan must remain stable for the complete
+// synchronous call and cannot overlap outCompletedCount. The output is cleared
+// before any callback and counts only commit callbacks that returned Success.
+// A RecoverableFailure from a commit callback must leave that current entry
+// unmodified; an UnsafeFailure denotes ownership that cannot be recovered by
+// this controller. Invalid arguments or callback results fail closed as
+// UnsafeFailure. An overlapping output is rejected without modifying the plan.
 [[nodiscard]] RestoreControlOperationStatus RunArchivePhysicsRetirementBatch(
     const ArchivePhysicsBatchCallbacks &callbacks,
     const std::size_t *planIndices,
@@ -44,10 +46,9 @@ struct ArchivePhysicsBatchCallbacks
     std::size_t entryCount,
     std::size_t *outCompletedCount) noexcept;
 
-// Applies the same validated two-pass contract to reconstruction. The caller
-// must keep planIndices stable for the complete synchronous call. The
-// controller allocates no storage, performs no reporting, and invokes no
-// callback after the first non-success result.
+// Applies the same validated two-pass and stable non-overlapping plan contract
+// to reconstruction. The controller allocates no storage, performs no
+// reporting, and invokes no callback after the first non-success result.
 [[nodiscard]] RestoreControlOperationStatus
 RunArchivePhysicsReconstructionBatch(
     const ArchivePhysicsBatchCallbacks &callbacks,

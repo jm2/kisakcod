@@ -1,9 +1,39 @@
 #include "fx_archive_physics_batch_control.h"
 
+#include <limits>
+
 namespace fx::archive
 {
 namespace
 {
+[[nodiscard]] bool OutputOverlapsPlan(
+    const std::size_t *const planIndices,
+    const std::size_t selectedCount,
+    const std::size_t *const outCompletedCount) noexcept
+{
+    if (!planIndices || selectedCount == 0 || !outCompletedCount)
+        return false;
+    if (selectedCount
+        > (std::numeric_limits<std::uintptr_t>::max)()
+            / sizeof(*planIndices))
+    {
+        return true;
+    }
+
+    const std::uintptr_t planBegin =
+        reinterpret_cast<std::uintptr_t>(planIndices);
+    const std::uintptr_t planBytes = selectedCount * sizeof(*planIndices);
+    if (planBegin
+        > (std::numeric_limits<std::uintptr_t>::max)() - planBytes)
+    {
+        return true;
+    }
+    const std::uintptr_t outputAddress =
+        reinterpret_cast<std::uintptr_t>(outCompletedCount);
+    return outputAddress >= planBegin
+        && outputAddress < planBegin + planBytes;
+}
+
 [[nodiscard]] bool SelectionIsValid(
     const std::size_t *const planIndices,
     const std::size_t selectedCount,
@@ -53,6 +83,11 @@ namespace
 {
     if (!outCompletedCount)
         return RestoreControlOperationStatus::UnsafeFailure;
+    if (OutputOverlapsPlan(
+            planIndices, selectedCount, outCompletedCount))
+    {
+        return RestoreControlOperationStatus::UnsafeFailure;
+    }
     *outCompletedCount = 0;
 
     if (!callbacks.context || !callbacks.perform
