@@ -6,8 +6,9 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Restore-workspace checkpoint: PR #15 on `agent/fx-restore-workspace`; branch point: merged executable restore
-  controller `39432a29`; upstream-integration baseline: `2b759db`.
+- Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
+  jobs**; its branch point was the merged executable restore controller `39432a29`; upstream-integration
+  baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
 - Active work: this branch completes checked heap-backed FX archive restore scratch. One explicitly constructed,
   noncopyable transaction workspace now owns the rollback system/control state, staged and rollback body sidecars,
@@ -36,7 +37,8 @@ work item changes. Do not create session-specific handoff files.
   `alignof(T)` for unsupported non-object or incomplete template arguments; the guarded support trait now rejects
   void, function, incomplete, array, throwing-lifetime, and over-aligned types through the constraint instead of a
   hard substitution error. Focused GCC, Clang, ASan/UBSan, and TSan execution plus strict x86-32 and AArch64
-  compile/link pass on the final review fix; PR #15 is mergeable only after its new head repeats the nine-job gate.
+  compile/link passed on the final review fix; final run **29364493294** repeated the complete nine-job gate before
+  the PR was squash-merged.
   PR #14 merged the executable restore controller as `39432a29` after run **29359061795 passed all nine CI
   jobs** and Gemini plus independent review reported no findings. Its portable controller covers all operation
   failures and the production adapter retains archive/PHYSICS ownership through desired, original, safe-empty,
