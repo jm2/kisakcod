@@ -1,5 +1,6 @@
 #include "fx_system.h"
 #include "fx_iterator_atomic.h"
+#include "fx_physics_sidecar.h"
 #include "fx_pool.h"
 #include "fx_pool_graph.h"
 #include "fx_visibility_atomic.h"
@@ -27,7 +28,10 @@
 #include <universal/sys_atomic.h>
 
 #include <array>
+#include <cmath>
+#include <cstring>
 #include <cstdlib>
+#include <iterator>
 #include <limits>
 #include <thread>
 
@@ -53,6 +57,12 @@ struct FxPoolAllocationStates
 };
 
 FxPoolAllocationStates fx_poolAllocationStates[1];
+fx::physics::BodySidecar fx_physicsBodySidecars[
+    std::size(fx_poolAllocationStates)];
+
+static_assert(
+    std::size(fx_physicsBodySidecars) == std::size(fx_systemPool),
+    "FX physics sidecars must match the system pool");
 
 struct FxArchiveThreadState
 {
@@ -123,6 +133,31 @@ struct FxEffectRestartRetainThreadState
 
 thread_local FxEffectRestartRetainThreadState
     fx_effectRestartRetainThreadState{};
+
+enum class FxModelPhysicsSpawnOutcome : std::uint8_t
+{
+    Success,
+    ResourceUnavailable,
+    InvalidState,
+    OwnershipRejected,
+};
+
+struct FxModelPhysicsSpawnResult
+{
+    FxModelPhysicsSpawnOutcome outcome =
+        FxModelPhysicsSpawnOutcome::InvalidState;
+    PhysBodyModelCreateStatus physicsStatus =
+        PhysBodyModelCreateStatus::InvalidArgument;
+    fx::physics::SidecarStatus sidecarStatus =
+        fx::physics::SidecarStatus::InvalidArgument;
+};
+
+FxModelPhysicsSpawnResult FX_TrySpawnModelPhysics(
+    FxSystem *system,
+    FxEffect *effect,
+    const FxElemDef *elemDef,
+    int32_t randomSeed,
+    FxElem *elem) noexcept;
 
 volatile std::int32_t *FX_GetArchiveGate(
     const FxSystem *const system) noexcept
@@ -570,6 +605,26 @@ bool FX_CurrentThreadOwnsEffectLock(
     return false;
 }
 
+bool FX_CurrentThreadCanMutateEffect(
+    const FxSystem *const system,
+    const FxEffect *const effect) noexcept
+{
+    return FX_CurrentThreadOwnsEffectLock(system, effect)
+        && (FX_CurrentThreadOwnsCooperativeIterator(system)
+            || FX_CurrentThreadOwnsEffectKillExclusive(system));
+}
+
+bool FX_PhysicsOwnerIsVacantLocked(
+    const fx::physics::BodySidecar *const sidecar,
+    const std::size_t ownerIndex,
+    fx::physics::SidecarStatus *const outStatus) noexcept
+{
+    if (!outStatus)
+        return false;
+    *outStatus = fx::physics::ValidateVacantOwner(sidecar, ownerIndex);
+    return *outStatus == fx::physics::SidecarStatus::Success;
+}
+
 bool FX_CurrentThreadOwnsAnyEffectLock() noexcept
 {
     bool ownsLiveLock = false;
@@ -830,6 +885,13 @@ bool FX_PublishEffectReservation(const bool tombstone) noexcept
         std::this_thread::yield();
     }
 }
+}
+
+bool __cdecl FX_ThreadOwnsEffectLock(
+    const FxSystem *const system,
+    const FxEffect *const effect) noexcept
+{
+    return FX_CurrentThreadOwnsEffectLock(system, effect);
 }
 
 bool __cdecl FX_LockEffect(FxSystem *const system, FxEffect *const effect)
@@ -1356,6 +1418,10 @@ void __cdecl FX_WaitForEffectKillGate(
 
 bool __cdecl FX_BeginEffectKillExclusive(FxSystem *const system) noexcept
 {
+    if (!system)
+        return false;
+    const std::uint32_t admissionGeneration =
+        FX_GetCooperativeIteratorGeneration(system);
     if (fx_effectRestartRetainThreadState.system
         && fx_effectRestartRetainThreadState.generation
             != FX_GetCooperativeIteratorGeneration(
@@ -1363,7 +1429,14 @@ bool __cdecl FX_BeginEffectKillExclusive(FxSystem *const system) noexcept
     {
         fx_effectRestartRetainThreadState = {};
     }
-    if (!system || fx_effectKillExclusiveThreadState.system
+    if (fx_effectKillExclusiveThreadState.system
+        && fx_effectKillExclusiveThreadState.generation
+            != FX_GetCooperativeIteratorGeneration(
+                fx_effectKillExclusiveThreadState.system))
+    {
+        fx_effectKillExclusiveThreadState = {};
+    }
+    if (fx_effectKillExclusiveThreadState.system
         || fx_effectRestartRetainThreadState.system
         || FX_CurrentThreadOwnsCooperativeIterator(system)
         || FX_CurrentThreadOwnsArchive(system)
@@ -1381,8 +1454,7 @@ bool __cdecl FX_BeginEffectKillExclusive(FxSystem *const system) noexcept
         std::this_thread::yield();
 
     fx_effectKillExclusiveThreadState.system = system;
-    fx_effectKillExclusiveThreadState.generation =
-        FX_GetCooperativeIteratorGeneration(system);
+    fx_effectKillExclusiveThreadState.generation = admissionGeneration;
     for (;;)
     {
         FX_WaitForArchiveGate(system);
@@ -1392,11 +1464,22 @@ bool __cdecl FX_BeginEffectKillExclusive(FxSystem *const system) noexcept
         const std::int32_t archiveGateState = archiveGate
             ? Sys_AtomicLoad(archiveGate)
             : 2;
-        if (archiveGateState != 2)
+        const std::uint32_t currentGeneration =
+            FX_GetCooperativeIteratorGeneration(system);
+        if (archiveGateState != 2 && system->isInitialized
+            && currentGeneration == admissionGeneration)
         {
             fx_effectKillExclusiveThreadState.exclusiveAcquired = true;
             if (Sys_AtomicCompareExchange(killGate, 2, 1) == 1)
                 return true;
+            (void)FxIteratorEndExclusive(&system->iteratorCount);
+            fx_effectKillExclusiveThreadState = {};
+            (void)Sys_AtomicCompareExchange(killGate, 0, 1);
+            return false;
+        }
+        if (currentGeneration != admissionGeneration
+            || !system->isInitialized)
+        {
             (void)FxIteratorEndExclusive(&system->iteratorCount);
             fx_effectKillExclusiveThreadState = {};
             (void)Sys_AtomicCompareExchange(killGate, 0, 1);
@@ -1515,8 +1598,11 @@ void __cdecl FX_AbandonCurrentThreadEffectKillExclusiveForError() noexcept
 bool __cdecl FX_BeginArchive(FxSystem *const system)
 {
     volatile std::int32_t *const gate = FX_GetArchiveGate(system);
-    if (!system || !gate || system->isArchiving
-        || FX_CurrentThreadOwnsCooperativeIterator(system)
+    if (!system || !gate)
+        return false;
+    const std::uint32_t admissionGeneration =
+        FX_GetCooperativeIteratorGeneration(system);
+    if (FX_CurrentThreadOwnsCooperativeIterator(system)
         || FX_ThreadOwnsEffectKillExclusive(system)
         || FX_CurrentThreadOwnsArchive(system)
         || fx_archiveThreadState.system
@@ -1526,13 +1612,22 @@ bool __cdecl FX_BeginArchive(FxSystem *const system)
     }
 
     fx_archiveThreadState.system = system;
-    fx_archiveThreadState.generation =
-        FX_GetCooperativeIteratorGeneration(system);
+    fx_archiveThreadState.generation = admissionGeneration;
     FxIteratorWaitBeginExclusive(&system->iteratorCount);
-    if (Sys_AtomicCompareExchange(gate, 2, 1) == 1)
+    const bool gateClosed =
+        Sys_AtomicCompareExchange(gate, 2, 1) == 1;
+    const bool admissionValid = gateClosed && system->isInitialized
+        && !system->isArchiving
+        && FX_GetCooperativeIteratorGeneration(system)
+            == admissionGeneration;
+    if (admissionValid)
         return true;
 
-    FxIteratorEndExclusive(&system->iteratorCount);
+    (void)FxIteratorEndExclusive(&system->iteratorCount);
+    if (gateClosed)
+        (void)Sys_AtomicCompareExchange(gate, 0, 2);
+    else
+        (void)Sys_AtomicCompareExchange(gate, 0, 1);
     fx_archiveThreadState = {};
     return false;
 }
@@ -1615,6 +1710,11 @@ void __cdecl TRACK_fx_system()
         "fx_poolAllocationStates",
         8);
     track_static_alloc_internal(
+        fx_physicsBodySidecars,
+        static_cast<int>(sizeof(fx_physicsBodySidecars)),
+        "fx_physicsBodySidecars",
+        8);
+    track_static_alloc_internal(
         const_cast<std::int32_t *>(fx_archiveGate),
         static_cast<int>(sizeof(fx_archiveGate)),
         "fx_archiveGate",
@@ -1647,6 +1747,32 @@ FxSystem *__cdecl FX_GetSystem(int32_t clientIndex)
             "(clientIndex == 0)",
             clientIndex);
     return fx_systemPool;
+}
+
+fx::physics::BodySidecar *FX_GetPhysicsBodySidecar(
+    FxSystem *const system) noexcept
+{
+    for (std::size_t index = 0;
+         index < sizeof(fx_systemPool) / sizeof(fx_systemPool[0]);
+         ++index)
+    {
+        if (system == &fx_systemPool[index])
+            return &fx_physicsBodySidecars[index];
+    }
+    return nullptr;
+}
+
+const fx::physics::BodySidecar *FX_GetPhysicsBodySidecar(
+    const FxSystem *const system) noexcept
+{
+    for (std::size_t index = 0;
+         index < sizeof(fx_systemPool) / sizeof(fx_systemPool[0]);
+         ++index)
+    {
+        if (system == &fx_systemPool[index])
+            return &fx_physicsBodySidecars[index];
+    }
+    return nullptr;
 }
 
 FxSystemBuffers *__cdecl FX_GetSystemBuffers(int32_t clientIndex)
@@ -1804,23 +1930,314 @@ bool __cdecl FX_ValidatePoolAllocationGraphState(FxSystem *system)
     return valid;
 }
 
+namespace
+{
+enum class FxLifecycleClaimStatus : std::uint8_t
+{
+    Success,
+    InvalidState,
+    ArchiveBusy,
+    KillBusy,
+    IteratorsActive,
+    GateChanged,
+};
+
+struct FxLifecycleClaim
+{
+    FxSystem *system = nullptr;
+    volatile std::int32_t *archiveGate = nullptr;
+    volatile std::int32_t *killGate = nullptr;
+};
+
+FxLifecycleClaimStatus FX_BeginLifecycleClaim(
+    FxSystem *const system,
+    FxLifecycleClaim *const claim) noexcept
+{
+    if (!system || !claim)
+        return FxLifecycleClaimStatus::InvalidState;
+    *claim = {};
+    volatile std::int32_t *const archiveGate =
+        FX_GetArchiveGate(system);
+    volatile std::int32_t *const killGate =
+        FX_GetEffectKillGate(system);
+    if (!archiveGate || !killGate)
+        return FxLifecycleClaimStatus::InvalidState;
+    if (Sys_AtomicCompareExchange(archiveGate, 2, 0) != 0)
+        return FxLifecycleClaimStatus::ArchiveBusy;
+    claim->archiveGate = archiveGate;
+
+    // Claim archive exclusion before the kill gate. If a kill already owns
+    // its gate, release archive exclusion immediately so that operation can
+    // finish instead of creating a gate-order deadlock.
+    if (Sys_AtomicCompareExchange(killGate, 1, 0) != 0)
+    {
+        (void)Sys_AtomicCompareExchange(archiveGate, 0, 2);
+        *claim = {};
+        return FxLifecycleClaimStatus::KillBusy;
+    }
+    claim->killGate = killGate;
+
+    // Drain an allocator entrant that observed the old archive gate before it
+    // changed. Gate state 2 prevents every new archive-aware entrant.
+    Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    if (Sys_AtomicLoad(archiveGate) != 2
+        || Sys_AtomicLoad(killGate) != 1)
+    {
+        (void)Sys_AtomicCompareExchange(killGate, 0, 1);
+        (void)Sys_AtomicCompareExchange(archiveGate, 0, 2);
+        *claim = {};
+        return FxLifecycleClaimStatus::GateChanged;
+    }
+
+    // A zero sample is not ownership: an entrant may have passed both gate
+    // waits and not incremented the reader word yet. The exclusive CAS closes
+    // that admission window; a stranded entrant then waits or rolls back while
+    // both external gates remain closed.
+    if (!FxIteratorTryBeginExclusive(&system->iteratorCount))
+    {
+        (void)Sys_AtomicCompareExchange(killGate, 0, 1);
+        (void)Sys_AtomicCompareExchange(archiveGate, 0, 2);
+        *claim = {};
+        return FxLifecycleClaimStatus::IteratorsActive;
+    }
+    claim->system = system;
+    if (Sys_AtomicLoad(archiveGate) != 2
+        || Sys_AtomicLoad(killGate) != 1)
+    {
+        (void)FxIteratorEndExclusive(&system->iteratorCount);
+        (void)Sys_AtomicCompareExchange(killGate, 0, 1);
+        (void)Sys_AtomicCompareExchange(archiveGate, 0, 2);
+        *claim = {};
+        return FxLifecycleClaimStatus::GateChanged;
+    }
+    return FxLifecycleClaimStatus::Success;
+}
+
+bool FX_EndLifecycleClaim(FxLifecycleClaim *const claim) noexcept
+{
+    if (!claim || !claim->system || !claim->archiveGate
+        || !claim->killGate)
+        return false;
+    const bool iteratorReleased =
+        FxIteratorEndExclusive(&claim->system->iteratorCount);
+    const bool killReleased =
+        Sys_AtomicCompareExchange(claim->killGate, 0, 1) == 1;
+    const bool archiveReleased =
+        Sys_AtomicCompareExchange(claim->archiveGate, 0, 2) == 2;
+    *claim = {};
+    return iteratorReleased && killReleased && archiveReleased;
+}
+
+bool FX_ClearSystemForShutdownLocked(FxSystem *const system) noexcept
+{
+    if (!system || Sys_AtomicLoad(&system->iteratorCount) != -1)
+        return false;
+
+    // Keep the exclusive iterator word intact while clearing the surrounding
+    // legacy image. A whole-object memset would publish zero early and race an
+    // entrant that passed its gate checks immediately before this claim.
+    std::uint8_t *const bytes = reinterpret_cast<std::uint8_t *>(system);
+    std::uint8_t *const iteratorBytes =
+        reinterpret_cast<std::uint8_t *>(
+            const_cast<std::int32_t *>(&system->iteratorCount));
+    const std::size_t prefixSize =
+        static_cast<std::size_t>(iteratorBytes - bytes);
+    if (prefixSize > sizeof(FxSystem) - sizeof(system->iteratorCount))
+        return false;
+    std::memset(bytes, 0, prefixSize);
+    std::memset(
+        iteratorBytes + sizeof(system->iteratorCount),
+        0,
+        sizeof(FxSystem) - prefixSize - sizeof(system->iteratorCount));
+    return Sys_AtomicLoad(&system->iteratorCount) == -1;
+}
+
+fx::physics::SidecarStatus FX_DrainPhysicsBodySidecarLocked(
+    FxSystem *const system) noexcept
+{
+    fx::physics::BodySidecar *const sidecar =
+        FX_GetPhysicsBodySidecar(system);
+    if (!sidecar)
+        return fx::physics::SidecarStatus::InvalidArgument;
+    if (!sidecar->IsInitialized())
+        return fx::physics::ResetEmpty(sidecar);
+
+    fx::physics::SidecarStatus status = fx::physics::Validate(sidecar);
+    if (status != fx::physics::SidecarStatus::Success)
+        return status;
+    std::size_t destroyedCount = 0;
+    while (sidecar->ActiveCount() != 0
+        && destroyedCount < fx::physics::BODY_LIMIT)
+    {
+        const fx::physics::IndexedBodyResult body =
+            fx::physics::TakeFirst(sidecar);
+        if (!body)
+            return body.status;
+        Phys_ObjDestroy(PHYS_WORLD_FX, body.body);
+        ++destroyedCount;
+    }
+    if (sidecar->ActiveCount() != 0)
+        return fx::physics::SidecarStatus::ActiveCountCorrupt;
+    return fx::physics::ResetEmpty(sidecar);
+}
+
+fx::physics::SidecarStatus FX_ResetSystemUnderLifecycleClaim(
+    FxSystem *const system) noexcept
+{
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    if (!system || !states || !system->effects || !system->elems
+        || !system->trailElems || !system->trails || !system->visState
+        || Sys_AtomicLoad(&system->iteratorCount) != -1)
+    {
+        return fx::physics::SidecarStatus::InvalidArgument;
+    }
+
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    const fx::physics::SidecarStatus physicsStatus =
+        FX_DrainPhysicsBodySidecarLocked(system);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    if (physicsStatus != fx::physics::SidecarStatus::Success)
+        return physicsStatus;
+
+    system->effects->def = nullptr;
+    for (std::int32_t effectIndex = 0;
+         effectIndex < FX_EFFECT_LIMIT;
+         ++effectIndex)
+    {
+        system->allEffectHandles[effectIndex] = FxEncodeHandle<
+            FxEffect, FX_EFFECT_LIMIT, FxEffect::HANDLE_SCALE>(
+                system->effects, &system->effects[effectIndex]);
+        volatile std::int32_t *const admissionState =
+            FX_GetEffectOwnerAdmissionState(
+                system, &system->effects[effectIndex]);
+        if (admissionState)
+            Sys_AtomicStore(admissionState, 0);
+    }
+    system->firstActiveEffect = 0;
+    system->firstNewEffect = 0;
+    system->firstFreeEffect = 0;
+    volatile std::int32_t *const iteratorGeneration =
+        FX_GetCooperativeIteratorGenerationState(system);
+    if (iteratorGeneration)
+        Sys_AtomicIncrement(iteratorGeneration);
+    FxClearGarbageCollectionRequest(&system->needsGarbageCollection);
+    system->deferredElemCount = 0;
+
+    system->firstFreeElem = 0;
+    for (std::size_t index = 0; index < MAX_ELEMS - 1; ++index)
+    {
+        system->elems[index].nextFree =
+            static_cast<std::int32_t>(index + 1);
+    }
+    system->elems[MAX_ELEMS - 1].nextFree = -1;
+    Sys_AtomicStore(&system->activeElemCount, 0);
+
+    system->firstFreeTrailElem = 0;
+    for (std::size_t index = 0; index < MAX_TRAIL_ELEMS - 1; ++index)
+    {
+        system->trailElems[index].nextFree =
+            static_cast<std::int32_t>(index + 1);
+    }
+    system->trailElems[MAX_TRAIL_ELEMS - 1].nextFree = -1;
+    Sys_AtomicStore(&system->activeTrailElemCount, 0);
+
+    system->firstFreeTrail = 0;
+    for (std::size_t index = 0; index < MAX_TRAILS - 1; ++index)
+    {
+        system->trails[index].nextFree =
+            static_cast<std::int32_t>(index + 1);
+    }
+    system->trails[MAX_TRAILS - 1].nextFree = -1;
+    Sys_AtomicStore(&system->activeTrailCount, 0);
+
+    FxPoolResetAllocationState(&states->elems);
+    FxPoolResetAllocationState(&states->trails);
+    FxPoolResetAllocationState(&states->trailElems);
+    Sys_AtomicStore(&system->activeSpotLightEffectCount, 0);
+    Sys_AtomicStore(&system->activeSpotLightElemCount, 0);
+    system->activeSpotLightEffectHandle = FX_INVALID_HANDLE;
+    system->activeSpotLightElemHandle = FX_INVALID_HANDLE;
+    system->activeSpotLightBoltDobj = -1;
+    Sys_AtomicStore(&system->gfxCloudCount, 0);
+    Sys_AtomicStore(&system->visState[0].blockerCount, 0);
+    Sys_AtomicStore(&system->visState[1].blockerCount, 0);
+    system->visStateBufferRead = system->visState;
+    system->visStateBufferWrite = system->visState + 1;
+    return fx::physics::SidecarStatus::Success;
+}
+} // namespace
+
 void __cdecl FX_InitSystem(int32_t localClientNum)
 {
-    FxSystem *system; // [esp+4h] [ebp-8h]
-    FxSystemBuffers *systemBuffers; // [esp+8h] [ebp-4h]
+    FxSystem *const system = FX_GetSystem(localClientNum);
+    FxSystemBuffers *const systemBuffers =
+        FX_GetSystemBuffers(localClientNum);
+    if (!system || !systemBuffers)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            463,
+            0,
+            "%s",
+            "system && systemBuffers");
+        return;
+    }
 
-    system = FX_GetSystem(localClientNum);
-    if (!system)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 463, 0, "%s", "system");
-    memset((uint8_t *)system, 0, sizeof(FxSystem));
-    systemBuffers = FX_GetSystemBuffers(localClientNum);
-    if (!systemBuffers)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 466, 0, "%s", "systemBuffers");
-    memset((uint8_t *)systemBuffers, 0, sizeof(FxSystemBuffers));
-    FX_LinkSystemBuffers(system, systemBuffers);
+    // Registration does not touch the FxSystem image and may allocate/report;
+    // finish it before closing lifecycle admission.
     FX_RegisterDvars();
     KISAK_NULLSUB();
-    FX_ResetSystem(system);
+
+    FxLifecycleClaim lifecycleClaim{};
+    const FxLifecycleClaimStatus claimStatus =
+        FX_BeginLifecycleClaim(system, &lifecycleClaim);
+    if (claimStatus != FxLifecycleClaimStatus::Success)
+    {
+        Com_Error(
+            ERR_DROP,
+            "FX init could not acquire quiescent ownership (%u)",
+            static_cast<unsigned>(claimStatus));
+        return;
+    }
+
+    if (system->isInitialized)
+    {
+        const bool released = FX_EndLifecycleClaim(&lifecycleClaim);
+        Com_Error(
+            ERR_DROP,
+            "FX system must be shut down before it is initialized again (release %u)",
+            static_cast<unsigned>(released));
+        return;
+    }
+
+    const bool systemCleared =
+        FX_ClearSystemForShutdownLocked(system);
+    if (!systemCleared)
+    {
+        const bool released = FX_EndLifecycleClaim(&lifecycleClaim);
+        Com_Error(
+            ERR_DROP,
+            "FX init could not clear lifecycle state (release %u)",
+            static_cast<unsigned>(released));
+        return;
+    }
+    std::memset(systemBuffers, 0, sizeof(*systemBuffers));
+    FX_LinkSystemBuffers(system, systemBuffers);
+    const fx::physics::SidecarStatus resetStatus =
+        FX_ResetSystemUnderLifecycleClaim(system);
+    if (resetStatus != fx::physics::SidecarStatus::Success)
+    {
+        const bool released = FX_EndLifecycleClaim(&lifecycleClaim);
+        Com_Error(
+            ERR_DROP,
+            "FX init could not reset lifecycle state (%u, release %u)",
+            static_cast<unsigned>(resetStatus),
+            static_cast<unsigned>(released));
+        return;
+    }
+
     system->msecNow = 0;
     system->msecDraw = -1;
     system->cameraPrev.isValid = 1;
@@ -1844,94 +2261,42 @@ void __cdecl FX_InitSystem(int32_t localClientNum)
     system->localClientNum = localClientNum;
     system->isInitialized = 1;
     fx_serverVisClient = localClientNum;
+    if (!FX_EndLifecycleClaim(&lifecycleClaim))
+    {
+        Com_Error(ERR_DROP, "FX init could not release lifecycle ownership");
+    }
 }
 
 void __cdecl FX_ResetSystem(FxSystem *system)
 {
-    FxPool<FxTrail> *trails; // [esp+0h] [ebp-28h]
-    int32_t k; // [esp+8h] [ebp-20h]
-    FxPool<FxTrailElem> *trailElems; // [esp+Ch] [ebp-1Ch]
-    int32_t j; // [esp+14h] [ebp-14h]
-    FxPool<FxElem> *elems; // [esp+18h] [ebp-10h]
-    int32_t i; // [esp+20h] [ebp-8h]
-    int32_t effectIndex; // [esp+24h] [ebp-4h]
-
-    volatile std::int32_t *const archiveGate =
-        FX_GetArchiveGate(system);
-    if (archiveGate)
-        Sys_AtomicStore(archiveGate, 2);
-    volatile std::int32_t *const killGate =
-        FX_GetEffectKillGate(system);
-    if (killGate)
-        Sys_AtomicStore(killGate, 0);
-    system->effects->def = 0;
-    for (effectIndex = 0; effectIndex < FX_EFFECT_LIMIT; ++effectIndex)
+    FxLifecycleClaim lifecycleClaim{};
+    const FxLifecycleClaimStatus claimStatus =
+        FX_BeginLifecycleClaim(system, &lifecycleClaim);
+    if (claimStatus != FxLifecycleClaimStatus::Success)
     {
-        system->allEffectHandles[effectIndex] = FX_EffectToHandle(system, &system->effects[effectIndex]);
-        volatile std::int32_t *const admissionState =
-            FX_GetEffectOwnerAdmissionState(
-                system, &system->effects[effectIndex]);
-        if (admissionState)
-            Sys_AtomicStore(admissionState, 0);
-    }
-    system->firstActiveEffect = 0;
-    system->firstNewEffect = 0;
-    system->firstFreeEffect = 0;
-    volatile std::int32_t *const iteratorGeneration =
-        FX_GetCooperativeIteratorGenerationState(system);
-    if (iteratorGeneration)
-        Sys_AtomicIncrement(iteratorGeneration);
-    Sys_AtomicStore(&system->iteratorCount, 0);
-    FxClearGarbageCollectionRequest(&system->needsGarbageCollection);
-    system->deferredElemCount = 0;
-    elems = system->elems;
-    system->firstFreeElem = 0;
-    for (i = 0; i < 2047; ++i)
-        elems[i].nextFree = i + 1;
-    elems[i].nextFree = -1;
-    Sys_AtomicStore(&system->activeElemCount, 0);
-    trailElems = system->trailElems;
-    system->firstFreeTrailElem = 0;
-    for (j = 0; j < 2047; ++j)
-        trailElems[j].nextFree = j + 1;
-    trailElems[j].nextFree = -1;
-    Sys_AtomicStore(&system->activeTrailElemCount, 0);
-    trails = system->trails;
-    system->firstFreeTrail = 0;
-    for (k = 0; k < 127; ++k)
-        trails[k].nextFree = k + 1;
-    trails[k].nextFree = -1;
-    Sys_AtomicStore(&system->activeTrailCount, 0);
-    FxPoolAllocationStates *const states =
-        FX_GetPoolAllocationStates(system);
-    if (!states)
-    {
-        if (archiveGate)
-            Sys_AtomicStore(archiveGate, 0);
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_system.cpp",
-            220,
-            0,
-            "%s",
-            "FX pool allocation sidecars exist");
-        Com_Error(ERR_DROP, "Missing FX pool allocation sidecars");
+        Com_Error(
+            ERR_DROP,
+            "FX reset could not acquire quiescent ownership (%u)",
+            static_cast<unsigned>(claimStatus));
         return;
     }
-    FxPoolResetAllocationState(&states->elems);
-    FxPoolResetAllocationState(&states->trails);
-    FxPoolResetAllocationState(&states->trailElems);
-    Sys_AtomicStore(&system->activeSpotLightEffectCount, 0);
-    Sys_AtomicStore(&system->activeSpotLightElemCount, 0);
-    system->activeSpotLightEffectHandle = FX_INVALID_HANDLE;
-    system->activeSpotLightElemHandle = FX_INVALID_HANDLE;
-    system->activeSpotLightBoltDobj = -1;
-    Sys_AtomicStore(&system->gfxCloudCount, 0);
-    Sys_AtomicStore(&system->visState[0].blockerCount, 0);
-    Sys_AtomicStore(&system->visState[1].blockerCount, 0);
-    system->visStateBufferRead = system->visState;
-    system->visStateBufferWrite = system->visState + 1;
-    if (archiveGate)
-        Sys_AtomicStore(archiveGate, 0);
+
+    const fx::physics::SidecarStatus resetStatus =
+        FX_ResetSystemUnderLifecycleClaim(system);
+    const bool released = FX_EndLifecycleClaim(&lifecycleClaim);
+    if (resetStatus != fx::physics::SidecarStatus::Success)
+    {
+        Com_Error(
+            ERR_DROP,
+            "FX reset failed under lifecycle ownership (%u, release %u)",
+            static_cast<unsigned>(resetStatus),
+            static_cast<unsigned>(released));
+        return;
+    }
+    if (!released)
+    {
+        Com_Error(ERR_DROP, "FX reset could not release lifecycle ownership");
+    }
 }
 
 int32_t __cdecl FX_EffectToHandle(FxSystem *system, FxEffect *effect)
@@ -1959,36 +2324,12 @@ void __cdecl FX_ShutdownSystem(int32_t localClientNum)
     system = FX_GetSystem(localClientNum);
     systemBuffers = FX_GetSystemBuffers(localClientNum);
     if (!system)
+    {
         MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 503, 0, "%s", "system");
-    volatile std::int32_t *const archiveGate =
-        FX_GetArchiveGate(system);
-    volatile std::int32_t *const iteratorGeneration =
-        FX_GetCooperativeIteratorGenerationState(system);
-    if (!system || !archiveGate
-        || Sys_AtomicCompareExchange(archiveGate, 2, 0) != 0)
-    {
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_system.cpp",
-            503,
-            0,
-            "%s",
-            "FX shutdown begins with a quiescent archive gate");
-        return;
-    }
-    if (Sys_AtomicLoad(&system->iteratorCount) != 0)
-    {
-        Sys_AtomicStore(archiveGate, 0);
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_system.cpp",
-            503,
-            0,
-            "%s",
-            "FX shutdown begins without live iterators");
         return;
     }
     if (!systemBuffers)
     {
-        Sys_AtomicStore(archiveGate, 0);
         MyAssertHandler(
             ".\\EffectsCore\\fx_system.cpp",
             505,
@@ -1997,16 +2338,64 @@ void __cdecl FX_ShutdownSystem(int32_t localClientNum)
             "FX system buffers exist during shutdown");
         return;
     }
+
+    volatile std::int32_t *const iteratorGeneration =
+        FX_GetCooperativeIteratorGenerationState(system);
+    FxLifecycleClaim lifecycleClaim{};
+    const FxLifecycleClaimStatus claimStatus =
+        FX_BeginLifecycleClaim(system, &lifecycleClaim);
+    if (claimStatus != FxLifecycleClaimStatus::Success)
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_system.cpp",
+            503,
+            0,
+            "%s",
+            "FX shutdown begins with a quiescent archive gate");
+        Com_Error(
+            ERR_DROP,
+            "FX shutdown could not acquire quiescent ownership (%u)",
+            static_cast<unsigned>(claimStatus));
+        return;
+    }
+
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    const fx::physics::SidecarStatus physicsStatus =
+        FX_DrainPhysicsBodySidecarLocked(system);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    if (physicsStatus != fx::physics::SidecarStatus::Success)
+    {
+        const bool released = FX_EndLifecycleClaim(&lifecycleClaim);
+        Com_Error(
+            ERR_DROP,
+            "FX shutdown could not drain physics ownership (%u, release %u)",
+            static_cast<unsigned>(physicsStatus),
+            static_cast<unsigned>(released));
+        return;
+    }
+
     if (iteratorGeneration)
         Sys_AtomicIncrement(iteratorGeneration);
     if (fx_archiveThreadState.system == system)
         fx_archiveThreadState = {};
-    memset((uint8_t *)system, 0, sizeof(FxSystem));
+    const bool systemCleared =
+        FX_ClearSystemForShutdownLocked(system);
+    if (!systemCleared)
+    {
+        const bool released = FX_EndLifecycleClaim(&lifecycleClaim);
+        Com_Error(
+            ERR_DROP,
+            "FX shutdown could not clear lifecycle state (release %u)",
+            static_cast<unsigned>(released));
+        return;
+    }
     memset((uint8_t *)systemBuffers, 0, sizeof(FxSystemBuffers));
-    if (system->isInitialized)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 507, 1, "%s", "!system->isInitialized");
     FX_UnregisterAll();
-    Sys_AtomicStore(archiveGate, 0);
+    if (!FX_EndLifecycleClaim(&lifecycleClaim))
+    {
+        Com_Error(ERR_DROP, "FX shutdown could not release lifecycle gates");
+        return;
+    }
 }
 
 void __cdecl FX_RelocateSystem(FxSystem *system, int32_t relocationDistance)
@@ -2590,16 +2979,26 @@ void __cdecl FX_RunGarbageCollection(FxSystem *system)
 
 bool __cdecl FX_BeginIteratingOverEffects_Exclusive(FxSystem *system)
 {
-    if (system->isArchiving)
-        MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 523, 0, "%s", "!system->isArchiving");
+    if (!system)
+        return false;
+    const std::uint32_t admissionGeneration =
+        FX_GetCooperativeIteratorGeneration(system);
     if (FX_ThreadOwnsEffectKillExclusive(system)
         || FX_ArchiveGateIsActive(system)
         || !FxIteratorTryBeginExclusive(&system->iteratorCount))
     {
         return false;
     }
-    if (!FX_ArchiveGateIsActive(system))
+    const bool initialized = system->isInitialized != 0;
+    const bool archiving = system->isArchiving != 0;
+    const bool archiveActive = FX_ArchiveGateIsActive(system);
+    const std::uint32_t currentGeneration =
+        FX_GetCooperativeIteratorGeneration(system);
+    if (!archiveActive && initialized && !archiving
+        && currentGeneration == admissionGeneration)
+    {
         return true;
+    }
     if (!FxIteratorEndExclusive(&system->iteratorCount))
     {
         Com_Error(ERR_DROP, "Invalid FX exclusive iterator state during archive race");
@@ -2937,6 +3336,28 @@ FxPool<FxElem>* __cdecl FX_AllocPool_Generic_FxElem_(
             static_cast<unsigned>(status));
     }
     return item;
+}
+
+template <typename BEFORE_PUBLISH>
+FxPoolMutationStatus FX_FreePool_Generic_FxElem_Status_(
+    FxElem *item,
+    volatile int32_t *firstFreeIndex,
+    FxPool<FxElem> *pool,
+    volatile int32_t *activeCount,
+    FxPoolAllocationState<MAX_ELEMS> *allocationState,
+    BEFORE_PUBLISH &&beforePublish) noexcept
+{
+    FX_EnterArchiveAwarePoolCriticalSection();
+    const FxPoolMutationStatus status =
+        FxPoolFreeLocked<FxElem, MAX_ELEMS>(
+            item,
+            firstFreeIndex,
+            pool,
+            activeCount,
+            allocationState,
+            std::forward<BEFORE_PUBLISH>(beforePublish));
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    return status;
 }
 
 template <typename BEFORE_PUBLISH>
@@ -5442,31 +5863,118 @@ void __cdecl FX_SpawnSpotLightElem(FxSystem *system, FxElem *elem)
         Com_Error(ERR_DROP, "Invalid FX spotlight element pointer");
         return;
     }
+    if (!FX_CurrentThreadCanMutateEffect(system, effect))
+    {
+        Com_Error(
+            ERR_DROP,
+            "FX spotlight publication requires effect and iterator ownership");
+        return;
+    }
+
+    fx::physics::BodySidecar *const sidecar =
+        FX_GetPhysicsBodySidecar(system);
+    std::int32_t ownerIndex = -1;
+    if (!sidecar
+        || !FxPoolItemIndex<FxElem, MAX_ELEMS>(
+            system->elems, elem, &ownerIndex))
+    {
+        Com_Error(ERR_DROP, "Invalid FX spotlight physics owner");
+        return;
+    }
+    fx::physics::SidecarStatus sidecarStatus =
+        fx::physics::SidecarStatus::InvalidArgument;
 
     bool published = false;
     FxPoolAllocationStates *const states =
         FX_GetPoolAllocationStates(system);
-    FX_EnterArchiveAwarePoolCriticalSection();
-    if (states
-        && FX_IsPoolItemAllocatedLocked<FxElem, MAX_ELEMS>(
-            system->elems, elem, &states->elems)
-        && Sys_AtomicLoad(&system->activeSpotLightEffectCount) == 1
-        && Sys_AtomicLoad(&system->activeSpotLightElemCount) == 0
-        && system->activeSpotLightEffectHandle
-            == FxEncodeHandle<FxEffect, FX_EFFECT_LIMIT,
-                FxEffect::HANDLE_SCALE>(system->effects, effect))
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    const bool ownerVacant = FX_PhysicsOwnerIsVacantLocked(
+        sidecar,
+        static_cast<std::size_t>(ownerIndex),
+        &sidecarStatus);
+    if (ownerVacant)
     {
-        elem->nextElemHandleInEffect = FX_INVALID_HANDLE;
-        system->activeSpotLightElemHandle = elemHandle;
-        Sys_AtomicStore(&system->activeSpotLightElemCount, 1);
-        published = true;
+        FX_EnterArchiveAwarePoolCriticalSection();
+        if (states
+            && FX_IsPoolItemAllocatedLocked<FxElem, MAX_ELEMS>(
+                system->elems, elem, &states->elems)
+            && Sys_AtomicLoad(&system->activeSpotLightEffectCount) == 1
+            && Sys_AtomicLoad(&system->activeSpotLightElemCount) == 0
+            && system->activeSpotLightEffectHandle
+                == FxEncodeHandle<FxEffect, FX_EFFECT_LIMIT,
+                    FxEffect::HANDLE_SCALE>(system->effects, effect))
+        {
+            elem->nextElemHandleInEffect = FX_INVALID_HANDLE;
+            system->activeSpotLightElemHandle = elemHandle;
+            Sys_AtomicStore(&system->activeSpotLightElemCount, 1);
+            published = true;
+        }
+        Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
     }
-    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    if (!ownerVacant)
+    {
+        Com_Error(
+            ERR_DROP,
+            "FX spotlight owner slot has invalid physics ownership (%u)",
+            static_cast<unsigned>(sidecarStatus));
+        return;
+    }
     if (!published)
     {
         Com_Error(ERR_DROP, "FX spotlight state changed during element spawn");
         return;
     }
+}
+
+bool FX_RollbackUnpublishedElem(
+    FxSystem *const system,
+    FxPool<FxElem> *const elem,
+    FxEffect *const effect,
+    FxPoolMutationStatus *const outPoolStatus,
+    fx::physics::SidecarStatus *const outSidecarStatus) noexcept
+{
+    if (!outPoolStatus || !outSidecarStatus)
+        return false;
+    *outPoolStatus = FxPoolMutationStatus::InvalidArgument;
+    *outSidecarStatus = fx::physics::SidecarStatus::InvalidArgument;
+    if (!system || !elem || !effect
+        || !FX_CurrentThreadCanMutateEffect(system, effect))
+    {
+        return false;
+    }
+
+    FxPoolAllocationStates *const states =
+        FX_GetPoolAllocationStates(system);
+    fx::physics::BodySidecar *const sidecar =
+        FX_GetPhysicsBodySidecar(system);
+    std::int32_t ownerIndex = -1;
+    if (!states || !sidecar
+        || !FxPoolItemIndex<FxElem, MAX_ELEMS>(
+            system->elems, &elem->item, &ownerIndex))
+    {
+        return false;
+    }
+
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    *outPoolStatus = FX_FreePool_Generic_FxElem_Status_(
+        &elem->item,
+        &system->firstFreeElem,
+        system->elems,
+        &system->activeElemCount,
+        &states->elems,
+        [&]() noexcept {
+            return FX_PhysicsOwnerIsVacantLocked(
+                sidecar,
+                static_cast<std::size_t>(ownerIndex),
+                outSidecarStatus);
+        });
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+
+    if (*outPoolStatus != FxPoolMutationStatus::Success)
+        return false;
+    FX_DelRefToEffect(system, effect);
+    return true;
 }
 
 void __cdecl FX_SpawnElem(
@@ -5478,7 +5986,6 @@ void __cdecl FX_SpawnElem(
     float distanceWhenPlayed,
     int32_t sequence)
 {
-    uint16_t v7; // ax
     uint16_t nextElemHandleInEffect; // [esp+0h] [ebp-80h]
     uint8_t elemType; // [esp+3h] [ebp-7Dh]
     bool v10; // [esp+47h] [ebp-39h]
@@ -5649,24 +6156,63 @@ void __cdecl FX_SpawnElem(
                         const std::uint16_t elemHandle =
                             FX_PoolToHandle_Generic<FxElem, MAX_ELEMS>(
                                 system->elems, &elem->item);
-                        if (nextElemInEffect)
-                        {
-                            nextElemInEffect->item.prevElemHandleInEffect =
-                                elemHandle;
-                        }
-                        effect->firstElemHandle[elemClass] = elemHandle;
+                        bool publishElem = true;
                         if (elemDef->elemType == 5)
                         {
                             elem->item.u.lightingHandle = 0;
-                            if ((elemDef->flags & 0x8000000) != 0
-                                && !FX_SpawnModelPhysics(system, effect, elemDef, randomSeed, (FxElem*)elem))
+                            if ((elemDef->flags & 0x8000000) != 0)
                             {
-                                if (!system)
-                                    MyAssertHandler("c:\\trees\\cod3\\src\\effectscore\\fx_system.h", 327, 0, "%s", "system");
-                                v7 = FX_PoolToHandle_Generic<FxElem, MAX_ELEMS>(
-                                    system->elems, &elem->item);
-                                FX_FreeElem(system, v7, effect, elemClass);
+                                const FxModelPhysicsSpawnResult physicsResult =
+                                    FX_TrySpawnModelPhysics(
+                                        system,
+                                        effect,
+                                        elemDef,
+                                        randomSeed,
+                                        &elem->item);
+                                publishElem = physicsResult.outcome
+                                    == FxModelPhysicsSpawnOutcome::Success;
+                                if (!publishElem)
+                                {
+                                    FxPoolMutationStatus poolStatus{};
+                                    fx::physics::SidecarStatus sidecarStatus{};
+                                    const bool rolledBack =
+                                        FX_RollbackUnpublishedElem(
+                                            system,
+                                            elem,
+                                            effect,
+                                            &poolStatus,
+                                            &sidecarStatus);
+                                    if (!rolledBack)
+                                    {
+                                        Com_Error(
+                                            ERR_DROP,
+                                            "FX unpublished physics element rollback failed (%u, %u)",
+                                            static_cast<unsigned>(poolStatus),
+                                            static_cast<unsigned>(sidecarStatus));
+                                        return;
+                                    }
+                                    if (physicsResult.outcome
+                                            != FxModelPhysicsSpawnOutcome::ResourceUnavailable)
+                                    {
+                                        Com_Error(
+                                            ERR_DROP,
+                                            "FX model physics spawn failed (%u, %u, %u)",
+                                            static_cast<unsigned>(physicsResult.outcome),
+                                            static_cast<unsigned>(physicsResult.physicsStatus),
+                                            static_cast<unsigned>(physicsResult.sidecarStatus));
+                                        return;
+                                    }
+                                }
                             }
+                        }
+                        if (publishElem)
+                        {
+                            if (nextElemInEffect)
+                            {
+                                nextElemInEffect->item.prevElemHandleInEffect =
+                                    elemHandle;
+                            }
+                            effect->firstElemHandle[elemClass] = elemHandle;
                         }
                     }
                 }
@@ -5779,16 +6325,36 @@ void __cdecl FX_SpawnRunner(
         FX_DelRefToEffect(system, spawnedEffect);
 }
 
-bool __cdecl FX_SpawnModelPhysics(
-    FxSystem* system,
-    FxEffect* effect,
-    const FxElemDef* elemDef,
-    int32_t randomSeed,
-    FxElem* elem)
+namespace
 {
-    float v6; // [esp+14h] [ebp-C8h]
-    float v7; // [esp+18h] [ebp-C4h]
-    float v8; // [esp+1Ch] [ebp-C0h]
+FxModelPhysicsSpawnResult FX_TrySpawnModelPhysics(
+    FxSystem *const system,
+    FxEffect *const effect,
+    const FxElemDef *const elemDef,
+    const int32_t randomSeed,
+    FxElem *const elem) noexcept
+{
+    FxModelPhysicsSpawnResult result{};
+    if (!system || !effect || !elemDef || !elem
+        || elemDef->elemType != FX_ELEM_TYPE_MODEL
+        || (static_cast<std::uint32_t>(elemDef->flags) & 0x08000000u)
+            == 0
+        || !FX_CurrentThreadCanMutateEffect(system, effect))
+    {
+        return result;
+    }
+
+    fx::physics::BodySidecar *const sidecar =
+        FX_GetPhysicsBodySidecar(system);
+    std::int32_t ownerIndex = -1;
+    if (!sidecar || !system->elems
+        || !FxPoolItemIndex<FxElem, MAX_ELEMS>(
+            system->elems, elem, &ownerIndex)
+        || !FX_IsElemAllocated(system, elem))
+    {
+        return result;
+    }
+
     float velocity[3]; // [esp+4Ch] [ebp-90h] BYREF
     float angularVelocity[3]; // [esp+58h] [ebp-84h] BYREF
     FxElemVisuals visuals; // [esp+64h] [ebp-78h]
@@ -5805,29 +6371,109 @@ bool __cdecl FX_SpawnModelPhysics(
     msecLifeSpan = (float)((((elemDef->lifeSpanMsec.amplitude + 1) * LOWORD(fx_randomTable[randomSeed + 17])) >> 16)
         + elemDef->lifeSpanMsec.base);
     FX_GetVelocityAtTime(elemDef, randomSeed, msecLifeSpan, 0.0, &orient, elem->baseVel, velocity);
-    v8 = elemDef->angularVelocity[0].amplitude * fx_randomTable[randomSeed + 3] + elemDef->angularVelocity[0].base;
-    angularVelocity[0] = v8 * 1000.0;
-    v7 = elemDef->angularVelocity[1].amplitude * fx_randomTable[randomSeed + 4] + elemDef->angularVelocity[1].base;
-    angularVelocity[1] = v7 * 1000.0;
-    v6 = elemDef->angularVelocity[2].amplitude * fx_randomTable[randomSeed + 5] + elemDef->angularVelocity[2].base;
-    angularVelocity[2] = v6 * 1000.0;
-    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    angularVelocity[0] =
+        (elemDef->angularVelocity[0].amplitude
+             * fx_randomTable[randomSeed + 3]
+         + elemDef->angularVelocity[0].base)
+        * 1000.0f;
+    angularVelocity[1] =
+        (elemDef->angularVelocity[1].amplitude
+             * fx_randomTable[randomSeed + 4]
+         + elemDef->angularVelocity[1].base)
+        * 1000.0f;
+    angularVelocity[2] =
+        (elemDef->angularVelocity[2].amplitude
+             * fx_randomTable[randomSeed + 5]
+         + elemDef->angularVelocity[2].base)
+        * 1000.0f;
+    constexpr float MAX_FX_PHYSICS_ANGULAR_VELOCITY = 65536.0f;
+    for (const float component : angularVelocity)
+    {
+        if (!std::isfinite(component)
+            || component < -MAX_FX_PHYSICS_ANGULAR_VELOCITY
+            || component > MAX_FX_PHYSICS_ANGULAR_VELOCITY)
+        {
+            return result;
+        }
+    }
     visuals.anonymous = FX_GetElemVisuals(elemDef, randomSeed).anonymous;
-    if (!visuals.model->physPreset)
-        MyAssertHandler(".\\EffectsCore\\fx_system.cpp", 1853, 0, "%s", "visuals.model->physPreset");
-    elem->physObjId = (int)Phys_ObjCreate(
+    if (!visuals.model || !visuals.model->physPreset)
+        return result;
+
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    if (!FX_PhysicsOwnerIsVacantLocked(
+            sidecar,
+            static_cast<std::size_t>(ownerIndex),
+            &result.sidecarStatus))
+    {
+        result.outcome = FxModelPhysicsSpawnOutcome::OwnershipRejected;
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        return result;
+    }
+    if (sidecar->ActiveCount() == fx::physics::BODY_LIMIT)
+    {
+        result.outcome = FxModelPhysicsSpawnOutcome::ResourceUnavailable;
+        result.sidecarStatus = fx::physics::SidecarStatus::CapacityExceeded;
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        return result;
+    }
+
+    dxBody *body = nullptr;
+    result.physicsStatus = Phys_TryCreateBodyFromPresetAndXModel(
         PHYS_WORLD_FX,
         worldOrigin,
         quat,
         velocity,
-        visuals.model->physPreset);
-    if (elem->physObjId)
+        visuals.model->physPreset,
+        visuals.model,
+        &body);
+    if (result.physicsStatus != PhysBodyModelCreateStatus::Success)
     {
-        Phys_ObjSetCollisionFromXModel(visuals.model, PHYS_WORLD_FX, (dxBody*)elem->physObjId);
-        Phys_ObjSetAngularVelocity((dxBody*)elem->physObjId, angularVelocity);
+        result.outcome = result.physicsStatus
+                == PhysBodyModelCreateStatus::InvalidArgument
+            ? FxModelPhysicsSpawnOutcome::InvalidState
+            : FxModelPhysicsSpawnOutcome::ResourceUnavailable;
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        return result;
     }
+
+    Phys_ObjSetAngularVelocity(body, angularVelocity);
+    const fx::physics::TokenResult binding = fx::physics::Bind(
+        sidecar, static_cast<std::size_t>(ownerIndex), body);
+    result.sidecarStatus = binding.status;
+    if (!binding)
+    {
+        // DuplicateBody means the allocator returned an address already owned
+        // by a live registration. That registration retains the sole right to
+        // destroy it; all other Bind failures leave this fresh body caller-owned.
+        if (binding.status != fx::physics::SidecarStatus::DuplicateBody)
+            Phys_ObjDestroy(PHYS_WORLD_FX, body);
+        result.outcome = binding.status
+                == fx::physics::SidecarStatus::CapacityExceeded
+            ? FxModelPhysicsSpawnOutcome::ResourceUnavailable
+            : FxModelPhysicsSpawnOutcome::OwnershipRejected;
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        return result;
+    }
+
+    elem->physObjId = fx::physics::TokenToLegacyField(binding.token);
+    result.outcome = FxModelPhysicsSpawnOutcome::Success;
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
-    return elem->physObjId != 0;
+    return result;
+}
+} // namespace
+
+bool __cdecl FX_SpawnModelPhysics(
+    FxSystem *const system,
+    FxEffect *const effect,
+    const FxElemDef *const elemDef,
+    const int32_t randomSeed,
+    FxElem *const elem)
+{
+    return FX_TrySpawnModelPhysics(
+               system, effect, elemDef, randomSeed, elem)
+            .outcome
+        == FxModelPhysicsSpawnOutcome::Success;
 }
 
 void __cdecl FX_GetOriginForElem(
@@ -5919,6 +6565,13 @@ void __cdecl FX_FreeElem(FxSystem* system, uint16_t elemHandle, FxEffect* effect
             0,
             "%s",
             "system && effect && effect->def && elemClass < 3");
+        return;
+    }
+    if (!FX_CurrentThreadCanMutateEffect(system, effect))
+    {
+        Com_Error(
+            ERR_DROP,
+            "FX element free requires effect and iterator ownership");
         return;
     }
     FxPoolAllocationStates *const states =
@@ -6021,42 +6674,97 @@ void __cdecl FX_FreeElem(FxSystem* system, uint16_t elemHandle, FxEffect* effect
     }
     const FxElemDef *const elemDef =
         &effectDef->elemDefs[releasedElem.defIndex];
-    if (!FX_FreePool_Generic_FxElem_(
-            &elem->item,
-            &system->firstFreeElem,
-            system->elems,
-            &system->activeElemCount,
-            &states->elems,
-            [&]() noexcept {
-                if (!elemClass && effect->firstSortedElemHandle == elemHandle)
-                    effect->firstSortedElemHandle =
-                        releasedElem.nextElemHandleInEffect;
-                if (nextElem)
-                {
-                    nextElem->item.prevElemHandleInEffect =
-                        releasedElem.prevElemHandleInEffect;
-                }
-                if (prevElem)
-                {
-                    prevElem->item.nextElemHandleInEffect =
-                        releasedElem.nextElemHandleInEffect;
-                }
-                else
-                {
-                    effect->firstElemHandle[elemClass] =
-                        releasedElem.nextElemHandleInEffect;
-                }
-            }))
-    {
-        return;
-    }
+    fx::physics::BodySidecar *const sidecar =
+        FX_GetPhysicsBodySidecar(system);
+    const std::size_t ownerIndex =
+        static_cast<std::size_t>(elem - system->elems);
+    const bool ownsPhysicsBody = elemDef->elemType == FX_ELEM_TYPE_MODEL
+        && (static_cast<std::uint32_t>(elemDef->flags) & 0x08000000u)
+            != 0;
+    const fx::physics::BodyToken bodyToken = ownsPhysicsBody
+        ? fx::physics::TokenFromLegacyField(releasedElem.physObjId)
+        : fx::physics::INVALID_BODY_TOKEN;
+    fx::physics::SidecarStatus sidecarStatus =
+        fx::physics::SidecarStatus::InvalidArgument;
+    dxBody *releasedBody = nullptr;
 
-    if (elemDef->elemType == 5 && (elemDef->flags & 0x8000000) != 0
-        && releasedElem.physObjId)
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    const FxPoolMutationStatus poolStatus =
+        FX_FreePool_Generic_FxElem_Status_(
+        &elem->item,
+        &system->firstFreeElem,
+        system->elems,
+        &system->activeElemCount,
+        &states->elems,
+        [&]() noexcept -> bool {
+            if (ownsPhysicsBody)
+            {
+                const fx::physics::BodyResult body = fx::physics::Take(
+                    sidecar, ownerIndex, bodyToken);
+                sidecarStatus = body.status;
+                if (!body)
+                    return false;
+                releasedBody = body.body;
+            }
+            else if (!FX_PhysicsOwnerIsVacantLocked(
+                         sidecar, ownerIndex, &sidecarStatus))
+            {
+                return false;
+            }
+
+            if (!elemClass && effect->firstSortedElemHandle == elemHandle)
+                effect->firstSortedElemHandle =
+                    releasedElem.nextElemHandleInEffect;
+            if (nextElem)
+            {
+                nextElem->item.prevElemHandleInEffect =
+                    releasedElem.prevElemHandleInEffect;
+            }
+            if (prevElem)
+            {
+                prevElem->item.nextElemHandleInEffect =
+                    releasedElem.nextElemHandleInEffect;
+            }
+            else
+            {
+                effect->firstElemHandle[elemClass] =
+                    releasedElem.nextElemHandleInEffect;
+            }
+            return true;
+        });
+    if (poolStatus == FxPoolMutationStatus::Success && releasedBody)
+        Phys_ObjDestroy(PHYS_WORLD_FX, releasedBody);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+
+    if (poolStatus != FxPoolMutationStatus::Success)
     {
-        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-        Phys_ObjDestroy(PHYS_WORLD_FX, (dxBody *)releasedElem.physObjId);
-        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        if (poolStatus == FxPoolMutationStatus::BeforePublishRejected)
+        {
+            MyAssertHandler(
+                ".\\EffectsCore\\fx_system.cpp",
+                __LINE__,
+                0,
+                "FX element physics ownership transfer failed with status %u",
+                static_cast<unsigned>(sidecarStatus));
+            Com_Error(
+                ERR_DROP,
+                "FX element physics ownership transfer failed with status %u",
+                static_cast<unsigned>(sidecarStatus));
+        }
+        else
+        {
+            MyAssertHandler(
+                ".\\EffectsCore\\fx_system.cpp",
+                __LINE__,
+                0,
+                "FX element pool free failed with status %u",
+                static_cast<unsigned>(poolStatus));
+            Com_Error(
+                ERR_DROP,
+                "FX element pool free failed with status %u",
+                static_cast<unsigned>(poolStatus));
+        }
+        return;
     }
     FX_DelRefToEffect(system, effect);
 }
@@ -6210,6 +6918,13 @@ void __cdecl FX_FreeSpotLightElem(FxSystem *system, uint16_t elemHandle, FxEffec
             "system && effect");
         return;
     }
+    if (!FX_CurrentThreadCanMutateEffect(system, effect))
+    {
+        Com_Error(
+            ERR_DROP,
+            "FX spotlight free requires effect and iterator ownership");
+        return;
+    }
     FxPoolAllocationStates *const states =
         FX_GetPoolAllocationStates(system);
     if (!states)
@@ -6290,18 +7005,48 @@ void __cdecl FX_FreeSpotLightElem(FxSystem *system, uint16_t elemHandle, FxEffec
         Com_Error(ERR_DROP, "Invalid FX spotlight element ownership during free");
         return;
     }
-    if (!FX_FreePool_Generic_FxElem_(
-            &elem->item,
-            &system->firstFreeElem,
-            system->elems,
-            &system->activeElemCount,
-            &states->elems,
-            [&]() noexcept {
-                system->activeSpotLightElemHandle = FX_INVALID_HANDLE;
-                system->activeSpotLightBoltDobj = -1;
-                Sys_AtomicStore(&system->activeSpotLightElemCount, 0);
-            }))
+    fx::physics::BodySidecar *const sidecar =
+        FX_GetPhysicsBodySidecar(system);
+    const std::size_t ownerIndex =
+        static_cast<std::size_t>(elem - system->elems);
+    fx::physics::SidecarStatus sidecarStatus =
+        fx::physics::SidecarStatus::InvalidArgument;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    const FxPoolMutationStatus poolStatus =
+        FX_FreePool_Generic_FxElem_Status_(
+        &elem->item,
+        &system->firstFreeElem,
+        system->elems,
+        &system->activeElemCount,
+        &states->elems,
+        [&]() noexcept -> bool {
+            if (!FX_PhysicsOwnerIsVacantLocked(
+                    sidecar, ownerIndex, &sidecarStatus))
+            {
+                return false;
+            }
+            system->activeSpotLightElemHandle = FX_INVALID_HANDLE;
+            system->activeSpotLightBoltDobj = -1;
+            Sys_AtomicStore(&system->activeSpotLightElemCount, 0);
+            return true;
+        });
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    if (poolStatus != FxPoolMutationStatus::Success)
     {
+        if (poolStatus == FxPoolMutationStatus::BeforePublishRejected)
+        {
+            Com_Error(
+                ERR_DROP,
+                "FX spotlight physics owner is not vacant (%u)",
+                static_cast<unsigned>(sidecarStatus));
+        }
+        else
+        {
+            Com_Error(
+                ERR_DROP,
+                "FX spotlight pool free failed with status %u",
+                static_cast<unsigned>(poolStatus));
+        }
         return;
     }
     FX_DelRefToEffect(system, effect);

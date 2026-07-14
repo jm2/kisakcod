@@ -246,6 +246,10 @@ void __cdecl FX_SortEffects(FxSystem *system)
 
 void __cdecl FX_WaitBeginIteratingOverEffects_Exclusive(FxSystem *system)
 {
+    if (!system)
+        FX_DropCorruptSortList("missing exclusive iterator system");
+    const std::uint32_t admissionGeneration =
+        FX_GetCooperativeIteratorGeneration(system);
     if (fx_sortExclusiveIteratorThreadState.system)
     {
         if (fx_sortExclusiveIteratorThreadState.generation
@@ -266,15 +270,30 @@ void __cdecl FX_WaitBeginIteratingOverEffects_Exclusive(FxSystem *system)
     {
         FX_WaitForArchiveGate(system);
         FxIteratorWaitBeginExclusive(&system->iteratorCount);
-        if (!FX_ArchiveGateIsActive(system))
+        const std::uint32_t currentGeneration =
+            FX_GetCooperativeIteratorGeneration(system);
+        const bool initialized = system->isInitialized != 0;
+        const bool archiveActive = FX_ArchiveGateIsActive(system);
+        if (!archiveActive && initialized
+            && currentGeneration == admissionGeneration)
         {
             fx_sortExclusiveIteratorThreadState.system = system;
             fx_sortExclusiveIteratorThreadState.generation =
-                FX_GetCooperativeIteratorGeneration(system);
+                currentGeneration;
             return;
         }
         if (!FxIteratorEndExclusive(&system->iteratorCount))
             FX_DropCorruptSortList("failed to roll back exclusive iterator admission");
+        if (currentGeneration != admissionGeneration)
+        {
+            FX_DropCorruptSortList(
+                "exclusive iterator crossed an FX lifecycle boundary");
+        }
+        if (!initialized)
+        {
+            FX_DropCorruptSortList(
+                "exclusive iterator entered an uninitialized FX system");
+        }
     }
 }
 

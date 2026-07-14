@@ -1,5 +1,6 @@
 #define KISAK_FX_PHYSICS_SIDECAR_TESTING 1
 #include <EffectsCore/fx_physics_sidecar.h>
+#include <EffectsCore/fx_pool.h>
 
 #include <array>
 #include <cstddef>
@@ -47,6 +48,14 @@ static_assert(std::is_same_v<
               fx::physics::IndexedBodyResult>);
 static_assert(noexcept(fx::physics::Validate(
     std::declval<const fx::physics::BodySidecar *>())));
+static_assert(std::is_same_v<
+              decltype(fx::physics::ValidateVacantOwner(
+                  std::declval<const fx::physics::BodySidecar *>(),
+                  std::declval<std::size_t>())),
+              fx::physics::SidecarStatus>);
+static_assert(noexcept(fx::physics::ValidateVacantOwner(
+    std::declval<const fx::physics::BodySidecar *>(),
+    std::declval<std::size_t>())));
 static_assert(noexcept(fx::physics::Bind(
     std::declval<fx::physics::BodySidecar *>(),
     std::declval<std::size_t>(),
@@ -115,6 +124,23 @@ bool SameSlot(const BodySlot &first, const BodySlot &second)
         && first.generation == second.generation;
 }
 
+struct PhysicsPoolItem
+{
+    std::int32_t physObjId;
+    std::uint32_t marker;
+};
+
+static_assert(std::is_trivially_copyable_v<PhysicsPoolItem>);
+static_assert(FxPoolSlotLayoutIsCompatible<PhysicsPoolItem>());
+
+bool SamePoolItem(
+    const PhysicsPoolItem &first,
+    const PhysicsPoolItem &second)
+{
+    return first.physObjId == second.physObjId
+        && first.marker == second.marker;
+}
+
 bool TestInitializationAndLegacyTokenBits()
 {
     BodySidecar sidecar{};
@@ -147,6 +173,301 @@ bool TestInitializationAndLegacyTokenBits()
         && fx::physics::NextRevision(0u) == 1u
         && fx::physics::NextRevision(
                (std::numeric_limits<std::uint64_t>::max)()) == 1u;
+}
+
+bool TestVacantOwnerValidation()
+{
+    constexpr std::size_t owner = 23u;
+    BodySidecar sidecar{};
+    dxBody body{1u};
+
+    if (fx::physics::ValidateVacantOwner(nullptr, owner)
+            != SidecarStatus::InvalidArgument
+        || fx::physics::ValidateVacantOwner(&sidecar, owner)
+            != SidecarStatus::Uninitialized
+        || fx::physics::ValidateVacantOwner(&sidecar, MAX_ELEMS)
+            != SidecarStatus::Uninitialized
+        || !Initialize(&sidecar)
+        || fx::physics::ValidateVacantOwner(&sidecar, MAX_ELEMS)
+            != SidecarStatus::OwnerOutOfRange)
+    {
+        return false;
+    }
+
+    // A second empty reset advances every generation away from zero. The
+    // owner remains vacant and must still pass the O(1) admission check.
+    if (fx::physics::ResetEmpty(&sidecar) != SidecarStatus::Success)
+        return false;
+    const BodyToken resetGeneration =
+        fx::physics::SidecarTestAccess::GetSlot(&sidecar, owner)
+            .generation;
+    if (resetGeneration == fx::physics::INVALID_BODY_TOKEN
+        || fx::physics::ValidateVacantOwner(&sidecar, owner)
+            != SidecarStatus::Success)
+    {
+        return false;
+    }
+
+    fx::physics::SidecarTestAccess::SetActiveCount(
+        &sidecar, fx::physics::BODY_LIMIT + 1u);
+    if (fx::physics::ValidateVacantOwner(&sidecar, owner)
+            != SidecarStatus::ActiveCountCorrupt)
+    {
+        return false;
+    }
+    fx::physics::SidecarTestAccess::SetActiveCount(
+        &sidecar, fx::physics::BODY_LIMIT);
+    if (fx::physics::ValidateVacantOwner(&sidecar, owner)
+            != SidecarStatus::Success)
+    {
+        return false;
+    }
+    fx::physics::SidecarTestAccess::SetActiveCount(&sidecar, 0u);
+
+    const TokenResult bound = fx::physics::Bind(&sidecar, owner, &body);
+    if (!bound
+        || fx::physics::ValidateVacantOwner(&sidecar, owner)
+            != SidecarStatus::AlreadyBound)
+    {
+        return false;
+    }
+
+    const BodyResult released =
+        fx::physics::Take(&sidecar, owner, bound.token);
+    const BodyToken releasedGeneration =
+        fx::physics::SidecarTestAccess::GetSlot(&sidecar, owner)
+            .generation;
+    return released.status == SidecarStatus::Success
+        && released.body == &body
+        && releasedGeneration
+            == fx::physics::NextGeneration(bound.token)
+        && releasedGeneration != fx::physics::INVALID_BODY_TOKEN
+        && fx::physics::ValidateVacantOwner(&sidecar, owner)
+            == SidecarStatus::Success;
+}
+
+bool TestPoolFreeAndSidecarPublicationTransaction()
+{
+    constexpr std::size_t poolLimit = 2u;
+    constexpr std::uint32_t firstMarker = 0xC001D00Du;
+    constexpr std::uint32_t secondMarker = 0x5A1EC0DEu;
+    FxPool<PhysicsPoolItem> pool[poolLimit]{};
+    pool[0].nextFree = 1;
+    pool[1].nextFree = -1;
+    alignas(4) volatile std::int32_t firstFree = 0;
+    alignas(4) volatile std::int32_t activeCount = 0;
+    FxPoolAllocationState<poolLimit> allocationState{};
+    FxPoolResetAllocationState(&allocationState);
+
+    BodySidecar sidecar{};
+    dxBody firstBody{1u};
+    dxBody secondBody{2u};
+    if (!Initialize(&sidecar))
+        return false;
+
+    FxPoolMutationStatus poolStatus =
+        FxPoolMutationStatus::InvalidArgument;
+    FxPool<PhysicsPoolItem> *const allocated =
+        FxPoolAllocateLocked<PhysicsPoolItem, poolLimit>(
+            &firstFree,
+            pool,
+            &activeCount,
+            &allocationState,
+            &poolStatus);
+    std::int32_t ownerIndex = -1;
+    if (allocated != &pool[0]
+        || poolStatus != FxPoolMutationStatus::Success
+        || !FxPoolItemIndex<PhysicsPoolItem, poolLimit>(
+            pool, &allocated->item, &ownerIndex)
+        || ownerIndex != 0)
+    {
+        return false;
+    }
+
+    const TokenResult firstBind = fx::physics::Bind(
+        &sidecar, static_cast<std::size_t>(ownerIndex), &firstBody);
+    if (!firstBind)
+        return false;
+
+    // Model a stale/corrupt legacy token. The failed Take must veto pool-slot
+    // publication without changing either ownership domain.
+    const BodyToken staleToken =
+        fx::physics::NextGeneration(firstBind.token);
+    allocated->item = {
+        fx::physics::TokenToLegacyField(staleToken),
+        firstMarker,
+    };
+    const PhysicsPoolItem rejectedItem = allocated->item;
+    const std::int32_t rejectedFirstFree = firstFree;
+    const std::int32_t rejectedActiveCount =
+        Sys_AtomicLoad(&activeCount);
+    const FxPoolAllocationState<poolLimit> rejectedAllocationState =
+        allocationState;
+    const BodySlot rejectedSidecarSlot =
+        fx::physics::SidecarTestAccess::GetSlot(
+            &sidecar, static_cast<std::size_t>(ownerIndex));
+    const std::size_t rejectedSidecarCount = sidecar.ActiveCount();
+    const std::uint64_t rejectedSidecarRevision =
+        fx::physics::SidecarTestAccess::GetRevision(&sidecar);
+    BodyResult rejectedTake{};
+    bool rejectedCallbackSawAllocatedSlot = false;
+    poolStatus = FxPoolFreeLocked<PhysicsPoolItem, poolLimit>(
+        &allocated->item,
+        &firstFree,
+        pool,
+        &activeCount,
+        &allocationState,
+        [&]() noexcept -> bool {
+            rejectedCallbackSawAllocatedSlot =
+                firstFree == rejectedFirstFree
+                && Sys_AtomicLoad(&activeCount)
+                    == rejectedActiveCount
+                && FxPoolAllocationStateIsAllocated(
+                    allocationState,
+                    static_cast<std::size_t>(ownerIndex))
+                && firstFree != ownerIndex
+                && SamePoolItem(allocated->item, rejectedItem);
+            rejectedTake = fx::physics::Take(
+                &sidecar,
+                static_cast<std::size_t>(ownerIndex),
+                fx::physics::TokenFromLegacyField(
+                    allocated->item.physObjId));
+            return static_cast<bool>(rejectedTake);
+        });
+    if (poolStatus != FxPoolMutationStatus::BeforePublishRejected
+        || !rejectedCallbackSawAllocatedSlot
+        || rejectedTake.status != SidecarStatus::StaleToken
+        || rejectedTake.body != nullptr
+        || firstFree != rejectedFirstFree
+        || Sys_AtomicLoad(&activeCount) != rejectedActiveCount
+        || allocationState.allocatedWords
+            != rejectedAllocationState.allocatedWords
+        || allocationState.allocatedCount
+            != rejectedAllocationState.allocatedCount
+        || allocationState.initialized
+            != rejectedAllocationState.initialized
+        || !SamePoolItem(allocated->item, rejectedItem)
+        || sidecar.ActiveCount() != rejectedSidecarCount
+        || fx::physics::SidecarTestAccess::GetRevision(&sidecar)
+            != rejectedSidecarRevision
+        || !SameSlot(
+            rejectedSidecarSlot,
+            fx::physics::SidecarTestAccess::GetSlot(
+                &sidecar, static_cast<std::size_t>(ownerIndex)))
+        || !ResolvesTo(
+            &sidecar,
+            static_cast<std::size_t>(ownerIndex),
+            firstBind.token,
+            &firstBody))
+    {
+        return false;
+    }
+
+    // With the matching token, Take executes while the pool item is still
+    // allocated. FxPoolFreeLocked publishes the slot only after it succeeds.
+    allocated->item.physObjId =
+        fx::physics::TokenToLegacyField(firstBind.token);
+    const PhysicsPoolItem acceptedItem = allocated->item;
+    BodyResult acceptedTake{};
+    bool acceptedCallbackSawAllocatedSlot = false;
+    poolStatus = FxPoolFreeLocked<PhysicsPoolItem, poolLimit>(
+        &allocated->item,
+        &firstFree,
+        pool,
+        &activeCount,
+        &allocationState,
+        [&]() noexcept -> bool {
+            acceptedCallbackSawAllocatedSlot =
+                firstFree == rejectedFirstFree
+                && Sys_AtomicLoad(&activeCount)
+                    == rejectedActiveCount
+                && FxPoolAllocationStateIsAllocated(
+                    allocationState,
+                    static_cast<std::size_t>(ownerIndex))
+                && firstFree != ownerIndex
+                && SamePoolItem(allocated->item, acceptedItem);
+            acceptedTake = fx::physics::Take(
+                &sidecar,
+                static_cast<std::size_t>(ownerIndex),
+                fx::physics::TokenFromLegacyField(
+                    allocated->item.physObjId));
+            return static_cast<bool>(acceptedTake);
+        });
+    const std::uintptr_t firstBodyAddress =
+        reinterpret_cast<std::uintptr_t>(&firstBody);
+    if (poolStatus != FxPoolMutationStatus::Success
+        || !acceptedCallbackSawAllocatedSlot
+        || acceptedTake.status != SidecarStatus::Success
+        || acceptedTake.body != &firstBody
+        || reinterpret_cast<std::uintptr_t>(acceptedTake.body)
+            != firstBodyAddress
+        || firstFree != ownerIndex
+        || Sys_AtomicLoad(&activeCount) != 0
+        || allocationState.allocatedCount != 0u
+        || FxPoolAllocationStateIsAllocated(
+            allocationState, static_cast<std::size_t>(ownerIndex))
+        || pool[ownerIndex].nextFree != rejectedFirstFree
+        || sidecar.ActiveCount() != 0u)
+    {
+        return false;
+    }
+
+    FxPool<PhysicsPoolItem> *const reallocated =
+        FxPoolAllocateLocked<PhysicsPoolItem, poolLimit>(
+            &firstFree,
+            pool,
+            &activeCount,
+            &allocationState,
+            &poolStatus);
+    std::int32_t reboundOwnerIndex = -1;
+    if (reallocated != allocated
+        || poolStatus != FxPoolMutationStatus::Success
+        || !FxPoolItemIndex<PhysicsPoolItem, poolLimit>(
+            pool, &reallocated->item, &reboundOwnerIndex)
+        || reboundOwnerIndex != ownerIndex)
+    {
+        return false;
+    }
+
+    const TokenResult secondBind = fx::physics::Bind(
+        &sidecar,
+        static_cast<std::size_t>(reboundOwnerIndex),
+        &secondBody);
+    if (!secondBind)
+        return false;
+    reallocated->item = {
+        fx::physics::TokenToLegacyField(secondBind.token),
+        secondMarker,
+    };
+    const BodyResult staleResolve = fx::physics::Resolve(
+        &sidecar,
+        static_cast<std::size_t>(reboundOwnerIndex),
+        firstBind.token);
+    if (secondBind.token == firstBind.token
+        || staleResolve.status != SidecarStatus::StaleToken
+        || staleResolve.body != nullptr
+        || !ResolvesTo(
+            &sidecar,
+            static_cast<std::size_t>(reboundOwnerIndex),
+            secondBind.token,
+            &secondBody))
+    {
+        return false;
+    }
+
+    const BodyResult finalTake = fx::physics::Take(
+        &sidecar,
+        static_cast<std::size_t>(reboundOwnerIndex),
+        secondBind.token);
+    return finalTake.status == SidecarStatus::Success
+        && finalTake.body == &secondBody
+        && FxPoolFreeLocked<PhysicsPoolItem, poolLimit>(
+            &reallocated->item,
+            &firstFree,
+            pool,
+            &activeCount,
+            &allocationState)
+            == FxPoolMutationStatus::Success;
 }
 
 bool TestReturnValueBindResolveTakeAndRecycle()
@@ -895,6 +1216,10 @@ int main()
 {
     if (!TestInitializationAndLegacyTokenBits())
         return Fail("initialization or legacy token bit preservation");
+    if (!TestVacantOwnerValidation())
+        return Fail("vacant-owner validation");
+    if (!TestPoolFreeAndSidecarPublicationTransaction())
+        return Fail("pool/sidecar pre-publication transaction");
     if (!TestReturnValueBindResolveTakeAndRecycle())
         return Fail("return-value bind/resolve/take/recycle contract");
     if (!TestLifecycleDrainAndFinalize())

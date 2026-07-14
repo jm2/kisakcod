@@ -68,8 +68,7 @@ Remaining gates, in implementation order:
 2. Wire the merged native physics sidecar through live spawn/draw/free/reset/archive paths and add
    kill/rewind/archive fixtures. Transactional ODE body/model construction is merged, and the current
    reviewed batch has widened and bounded the generic pool allocator without changing its x86 metadata;
-   PR #9 remains open with its constant-time shadow-control review follow-up locally green and awaiting
-   replacement CI/review.
+   PR #9 merged at `8ce11763` after replacement run 29300663478 passed all nine jobs.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -957,8 +956,8 @@ stride. ODE geom backing remains explicitly transform-aligned. The review-fix 39
 ASan/UBSan, and TSan suites are green, as are strict x86-32 and AArch64 allocator compile/link checks.
 Native
 engine source sets still do not compile these production callers, so Windows x86 engine CI remains their
-compile gate while all five portable jobs exercise the allocator contract. PR #9 remains open pending
-replacement CI and automated review. Remaining FX work is
+compile gate while all five portable jobs exercise the allocator contract. PR #9 merged at `8ce11763`
+after replacement run **29300663478 passed all nine jobs** and all review threads were resolved. Remaining FX work is
 camera/scalar snapshot publication, real Disk32 archive/fast-file conversion, that production
 physics-sidecar wiring, and production fixtures. The
 unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs

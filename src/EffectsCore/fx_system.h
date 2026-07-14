@@ -13,6 +13,11 @@
 
 #define FX_EFFECT_LIMIT 1024
 
+namespace fx::physics
+{
+class BodySidecar;
+}
+
 enum $FFE723C3A54D7F6DDF86A219D7944B2F : int32_t
 {
     FX_STATUS_REF_COUNT_MASK = 0xFFFF,
@@ -63,6 +68,10 @@ void __cdecl TRACK_fx_system();
 XModel *__cdecl FX_RegisterModel(const char *modelName);
 FxSystem *__cdecl FX_GetSystem(int32_t clientIndex);
 FxSystemBuffers *__cdecl FX_GetSystemBuffers(int32_t clientIndex);
+fx::physics::BodySidecar *FX_GetPhysicsBodySidecar(
+    FxSystem *system) noexcept;
+const fx::physics::BodySidecar *FX_GetPhysicsBodySidecar(
+    const FxSystem *system) noexcept;
 void __cdecl FX_LinkSystemBuffers(FxSystem *system, FxSystemBuffers *systemBuffers);
 bool __cdecl FX_RebuildPoolAllocationStates(FxSystem *system);
 bool __cdecl FX_ValidatePoolAllocationGraphState(FxSystem *system);
@@ -89,6 +98,9 @@ void __cdecl FX_AbandonCurrentThreadEffectKillForError() noexcept;
 void __cdecl FX_ErrorCleanup() noexcept;
 bool __cdecl FX_LockEffect(FxSystem *system, FxEffect *effect);
 void __cdecl FX_UnlockEffect(FxSystem *system, FxEffect *effect);
+bool __cdecl FX_ThreadOwnsEffectLock(
+    const FxSystem *system,
+    const FxEffect *effect) noexcept;
 bool __cdecl FX_IsEffectLifecycleBlocked(const FxEffect *effect) noexcept;
 bool __cdecl FX_RearmEffectForRestart(
     FxSystem *system,

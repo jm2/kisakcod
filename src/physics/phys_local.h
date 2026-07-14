@@ -329,6 +329,16 @@ dxBody *__cdecl Phys_CreateBodyFromState(PhysWorld worldIndex, const BodyState *
     const BodyState *state,
     const XModel *model,
     dxBody **outBody) noexcept;
+// Checked spawn-time variant used by FX. Body creation and model collision are
+// one transaction: failure leaves *outBody null and releases every resource.
+[[nodiscard]] PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromPresetAndXModel(
+    PhysWorld worldIndex,
+    const float *position,
+    const float *quat,
+    const float *velocity,
+    const PhysPreset *physPreset,
+    const XModel *model,
+    dxBody **outBody) noexcept;
 void __cdecl Phys_BodyGetCenterOfMass(dxBody *body, float *outPosition);
 void __cdecl Phys_BodyAddGeomAndSetMass(
     PhysWorld worldIndex,
