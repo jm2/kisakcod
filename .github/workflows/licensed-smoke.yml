@@ -1,7 +1,19 @@
 name: Licensed gameplay smoke
 
-# This workflow is manual and protected because it executes repository code on
-# a self-hosted runner that has licensed COD4 data.
+# DEFERRED. Do not dispatch this workflow.
+#
+# It is manual-only and protected because it executes repository code on a
+# self-hosted runner that has licensed COD4 data. That infrastructure does not
+# currently exist: no self-hosted runners are registered and the
+# KISAKCOD_GAME_DIR secret is not set. Licensed-data testing is not a current
+# priority.
+#
+# Without the `preflight` gate below, a dispatch does not fail -- it QUEUES on a
+# runner that will never come online, sits in the run list for 24 hours, and is
+# then killed by GitHub's self-hosted job queue limit without executing a single
+# step. Preflight runs on a hosted runner and fails in seconds with an actionable
+# message instead. It does not block a properly provisioned run: once a runner is
+# registered and the secret exists, preflight passes and the smoke proceeds.
 on:
   workflow_dispatch:
 
@@ -9,8 +21,35 @@ permissions:
   contents: read
 
 jobs:
+  preflight:
+    name: Preflight (licensed infrastructure)
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: licensed-game-data
+    steps:
+      - name: Require licensed-data infrastructure
+        env:
+          GAME_DIR: ${{ secrets.KISAKCOD_GAME_DIR }}
+        run: |
+          if [ -z "$GAME_DIR" ]; then
+            echo "::error title=Licensed gameplay smoke is deferred::KISAKCOD_GAME_DIR is not set, so the smoke cannot run."
+            echo "This workflow is DEFERRED and should not be dispatched."
+            echo ""
+            echo "It requires all of the following, none of which currently exist:"
+            echo "  1. a self-hosted runner labelled [self-hosted, kisakcod, windows, x86]"
+            echo "  2. the KISAKCOD_GAME_DIR secret, pointing at licensed COD4 data"
+            echo "  3. protection rules on the 'licensed-game-data' environment"
+            echo ""
+            echo "Only the repository owner can provision these. Surface the blocker rather"
+            echo "than re-dispatching: without a runner, the self-hosted jobs below would sit"
+            echo "queued for 24 hours and then be killed without running a step."
+            exit 1
+          fi
+          echo "KISAKCOD_GAME_DIR is configured. Proceeding to the self-hosted smoke jobs."
+
   windows-x86:
     name: Windows x86 legacy dedicated
+    needs: preflight
     if: github.ref == 'refs/heads/master'
     environment: licensed-game-data
     runs-on: [self-hosted, kisakcod, windows, x86]
@@ -31,6 +70,7 @@ jobs:
 
   windows-x86-headless:
     name: Windows x86 headless dedicated
+    needs: preflight
     if: github.ref == 'refs/heads/master'
     environment: licensed-game-data
     runs-on: [self-hosted, kisakcod, windows, x86]
