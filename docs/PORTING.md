@@ -958,16 +958,18 @@ engine source sets still do not compile these production callers, so Windows x86
 compile gate while all five portable jobs exercise the allocator contract. PR #9 merged at `8ce11763`
 after replacement run **29300663478 passed all nine jobs** and all review threads were resolved. PR #11
 then merged generation-checked native-body ownership through live FX spawn/draw/free/reset/shutdown and
-legacy-x86 archive replacement at `da273589`; run **29335570405 passed all nine jobs**. The current
-full-capacity branch captures exact rollback recipes and complete silent ODE topology, retires only the
-old FX bodies required by the 512-body global ceiling, reconstructs them on failed publication, preserves
+legacy-x86 archive replacement at `da273589`; run **29335570405 passed all nine jobs**. PR #12 merged the
+full-capacity transaction at `a9994b6b` after run **29355001881 passed all nine jobs**. It captures exact
+rollback recipes and complete silent ODE topology, retires only the old FX bodies required by the 512-body
+global ceiling, reconstructs them on failed publication, preserves
 archive iterator exclusion across both graph images, and atomically drains all three sidecars before a
 canonical safe-empty reset. Unexpected cleanup failure after ownership transfer fail-stops before admission
 can reopen. Its portable matrix is **42/42** under GCC, Clang, ASan/UBSan, and TSan, with strict x86-32 and
 AArch64 sidecar/capacity compile-link checks; Windows x86 CI remains the production translation-unit gate.
-Remaining FX work is camera/scalar snapshot publication, real Disk32 archive/fast-file conversion, an
-executable full-restore/fault-injection harness with real competing ODE occupancy, and a measured heap-backed
-transaction workspace. The
+The next prerequisite makes fresh resource-pair rollback callbacks report cleanup refusal before fault
+injection can exercise the production transaction. Remaining FX work is camera/scalar snapshot publication,
+real Disk32 archive/fast-file conversion, an executable full-restore/fault-injection harness with real
+competing ODE occupancy, and a measured heap-backed transaction workspace. The
 unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
 a separate transactional `current/end` cursor migration. Detailed live blockers and sequencing remain in
 `docs/task.md` and `docs/CODEBASE_AUDIT.md`.
