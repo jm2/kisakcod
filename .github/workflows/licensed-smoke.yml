@@ -16,6 +16,15 @@ name: Licensed gameplay smoke
 # registered and the secret exists, preflight passes and the smoke proceeds.
 on:
   workflow_dispatch:
+    inputs:
+      infrastructure_ready:
+        description: >-
+          Type "yes" ONLY if a [self-hosted, kisakcod, windows, x86] runner is registered AND online.
+          Leave as "no" otherwise: the smoke is deferred, and an unguarded dispatch does not fail, it
+          queues for 24 hours against a runner that does not exist.
+        required: true
+        default: "no"
+        type: string
 
 permissions:
   contents: read
@@ -27,22 +36,42 @@ jobs:
     runs-on: ubuntu-latest
     environment: licensed-game-data
     steps:
-      - name: Require licensed-data infrastructure
+      # A workflow cannot verify runner availability itself: listing self-hosted
+      # runners needs the "Administration: read" permission, which is not one of
+      # the permissions grantable to GITHUB_TOKEN. `timeout-minutes` does not help
+      # either -- it only starts counting once a job begins executing, whereas the
+      # failure mode here is the job never starting at all. So the runner half of
+      # the check has to be an explicit human assertion at dispatch time.
+      - name: Require an explicit infrastructure acknowledgement
+        env:
+          READY: ${{ inputs.infrastructure_ready }}
+        run: |
+          if [ "$READY" != "yes" ]; then
+            echo "::error title=Licensed gameplay smoke is deferred::Dispatched without confirming the self-hosted runner is online."
+            echo "This workflow is DEFERRED and should not be dispatched."
+            echo ""
+            echo "It requires all of the following:"
+            echo "  1. a self-hosted runner labelled [self-hosted, kisakcod, windows, x86], ONLINE"
+            echo "  2. the KISAKCOD_GAME_DIR secret, pointing at licensed COD4 data"
+            echo "  3. protection rules on the 'licensed-game-data' environment"
+            echo ""
+            echo "As of the last check, none of the three existed."
+            echo ""
+            echo "If you have genuinely provisioned the runner, re-dispatch with"
+            echo "infrastructure_ready=yes. Otherwise do not re-dispatch: the self-hosted jobs"
+            echo "would sit queued for 24 hours and then be killed without running a step."
+            exit 1
+          fi
+          echo "Runner availability acknowledged by the dispatcher."
+
+      - name: Require the licensed-data secret
         env:
           GAME_DIR: ${{ secrets.KISAKCOD_GAME_DIR }}
         run: |
           if [ -z "$GAME_DIR" ]; then
-            echo "::error title=Licensed gameplay smoke is deferred::KISAKCOD_GAME_DIR is not set, so the smoke cannot run."
-            echo "This workflow is DEFERRED and should not be dispatched."
-            echo ""
-            echo "It requires all of the following, none of which currently exist:"
-            echo "  1. a self-hosted runner labelled [self-hosted, kisakcod, windows, x86]"
-            echo "  2. the KISAKCOD_GAME_DIR secret, pointing at licensed COD4 data"
-            echo "  3. protection rules on the 'licensed-game-data' environment"
-            echo ""
-            echo "Only the repository owner can provision these. Surface the blocker rather"
-            echo "than re-dispatching: without a runner, the self-hosted jobs below would sit"
-            echo "queued for 24 hours and then be killed without running a step."
+            echo "::error title=KISAKCOD_GAME_DIR is not set::The smoke cannot run without licensed game data."
+            echo "infrastructure_ready=yes was passed, but the KISAKCOD_GAME_DIR secret does not exist"
+            echo "at repository or 'licensed-game-data' environment scope. Add it before dispatching."
             exit 1
           fi
           echo "KISAKCOD_GAME_DIR is configured. Proceeding to the self-hosted smoke jobs."
