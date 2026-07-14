@@ -108,6 +108,48 @@ require_slice_ordered(
     "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
     "all allocator variants must release user data before unlocking physics")
 
+extract_source_slice(
+    _phys_ode_source
+    "static bool Phys_DestroyBodyResource("
+    "static bool Phys_DestroyFreshBodyResourceNoReport("
+    _destroy_body_scope
+    "diagnostic body rollback callback")
+require_slice_matches(
+    _destroy_body_scope
+    "if[ \t\r\n]*\\([ \t\r\n]*!body[ \t\r\n]*\\)[ \t\r\n]*return[ \t\r\n]+false[ \t\r\n]*;"
+    "the diagnostic body rollback callback must reject an invalid handle")
+require_slice_ordered(
+    _destroy_body_scope
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
+    "dBodyDestroy(static_cast<dxBody *>(body));"
+    "diagnostic body rollback must acquire physics exclusion before destruction")
+require_slice_ordered(
+    _destroy_body_scope
+    "dBodyDestroy(static_cast<dxBody *>(body));"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "diagnostic body rollback must retain physics exclusion through destruction")
+require_slice_ordered(
+    _destroy_body_scope
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "return true;"
+    "the diagnostic body rollback callback must report successful destruction")
+
+extract_source_slice(
+    _phys_ode_source
+    "static PhysBodyModelCreateStatus Phys_TryCreateBodyFromStateInternal("
+    "dxBody *__cdecl Phys_CreateBodyFromState("
+    _try_body_scope
+    "Phys_TryCreateBodyFromStateInternal")
+require_slice_matches(
+    _try_body_scope
+    "resources\\.status[ \t\r\n]*==[ \t\r\n]*physics::allocation::ResourcePairStatus::PrimaryCleanupFailed[^}]*return[ \t\r\n]+PhysBodyModelCreateStatus::CleanupFailed[ \t\r\n]*;"
+    "failed body cleanup must be exposed as an unrecoverable creation failure")
+require_slice_ordered(
+    _try_body_scope
+    "resources.status == physics::allocation::ResourcePairStatus::PrimaryCleanupFailed"
+    "resources.status != physics::allocation::ResourcePairStatus::Success"
+    "body cleanup failure must be classified before generic allocator errors")
+
 set(_try_geom_start
     "static PhysBodyModelCreateStatus Phys_TryBodyAddGeomAndSetMass(")
 set(_try_geom_end "void __cdecl Phys_BodyAddGeomAndSetMass(")
@@ -120,12 +162,38 @@ extract_source_slice(
 
 extract_source_slice(
     _phys_ode_source
-    "static void Phys_DestroyPrimaryGeomResource("
-    "${_try_geom_start}"
+    "static bool Phys_DestroyPrimaryGeomResource("
+    "static bool Phys_DestroyFreshPrimaryGeomResourceNoReport("
     _destroy_primary_scope
     "Phys_DestroyPrimaryGeomResource")
-require_slice_contains(
+require_slice_matches(
     _destroy_primary_scope
+    "if[ \t\r\n]*\\([ \t\r\n]*!geom[ \t\r\n]*\\)[ \t\r\n]*return[ \t\r\n]+false[ \t\r\n]*;"
+    "the diagnostic primary-geometry rollback callback must reject an invalid handle")
+require_slice_ordered(
+    _destroy_primary_scope
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
+    "ODE_GeomDestruct(static_cast<dxGeom *>(geom));"
+    "diagnostic primary-geometry rollback must acquire physics exclusion before destruction")
+require_slice_ordered(
+    _destroy_primary_scope
+    "ODE_GeomDestruct(static_cast<dxGeom *>(geom));"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "diagnostic primary-geometry rollback must retain physics exclusion through destruction")
+require_slice_ordered(
+    _destroy_primary_scope
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "return true;"
+    "the diagnostic primary-geometry rollback callback must report successful destruction")
+
+extract_source_slice(
+    _phys_ode_source
+    "static bool Phys_DestroyPrimaryGeomResource("
+    "${_try_geom_start}"
+    _destroy_geom_callbacks_scope
+    "primary geometry rollback callbacks")
+require_slice_contains(
+    _destroy_geom_callbacks_scope
     "ODE_GeomDestruct(static_cast<dxGeom *>(geom));"
     "the production primary-geometry rollback callback must destroy its ODE geom")
 
@@ -218,6 +286,15 @@ require_slice_ordered(
     "return PhysBodyModelCreateStatus::TransformGeomAllocationFailed;"
     "${_adjust_call}"
     "transform allocation failure must return after rollback and before center-of-mass mutation")
+require_slice_matches(
+    _fallible_geom_scope
+    "resources\\.status[ \t\r\n]*==[ \t\r\n]*physics::allocation::ResourcePairStatus::PrimaryCleanupFailed[^}]*return[ \t\r\n]+PhysBodyModelCreateStatus::CleanupFailed[ \t\r\n]*;"
+    "failed primary-geometry cleanup must be exposed as an unrecoverable creation failure")
+require_slice_ordered(
+    _fallible_geom_scope
+    "resources.status == physics::allocation::ResourcePairStatus::PrimaryCleanupFailed"
+    "resources.status != physics::allocation::ResourcePairStatus::Success"
+    "primary-geometry cleanup failure must be classified before generic allocator errors")
 require_slice_ordered(
     _fallible_geom_scope
     "resources.status != physics::allocation::ResourcePairStatus::Success"

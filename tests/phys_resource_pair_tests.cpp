@@ -55,6 +55,7 @@ struct FakeContext
     std::size_t companionLinkCount = 0;
     std::size_t primaryDestroyCount = 0;
     bool companionSharesPrimaryPool = false;
+    bool refusePrimaryDestroy = false;
     bool callbackContractViolated = false;
     bool eventOverflow = false;
 
@@ -162,7 +163,7 @@ allocation::ResourceHandle CreateCompanion(
     return &context->companionResource;
 }
 
-void DestroyPrimary(
+bool DestroyPrimary(
     void *const opaque,
     allocation::ResourceHandle const primary) noexcept
 {
@@ -174,12 +175,16 @@ void DestroyPrimary(
         || context->primaryLinkCount == 0)
     {
         context->callbackContractViolated = true;
-        return;
+        return false;
     }
+
+    if (context->refusePrimaryDestroy)
+        return false;
 
     --context->primaryPool.activeCount;
     ++context->primaryPool.freeCount;
     --context->primaryLinkCount;
+    return true;
 }
 
 allocation::ResourcePairCallbacks CallbacksFor(
@@ -404,6 +409,60 @@ void TestTransformFailureRollsBackPrimaryGeom()
     }
 }
 
+void TestCompanionFailureRetainsPrimaryWhenRollbackIsRefused()
+{
+    FakeContext context{};
+    context.primaryPool.freeCount = 1;
+    context.refusePrimaryDestroy = true;
+    const allocation::ResourcePairCallbacks callbacks =
+        CallbacksFor(&context);
+
+    const allocation::ResourcePairResult result =
+        allocation::TryCreateResourcePair(callbacks, true);
+    ExpectStatus(
+        result,
+        allocation::ResourcePairStatus::PrimaryCleanupFailed,
+        "refused companion-failure rollback reports cleanup failure");
+    Expect(!result
+               && result.primary == &context.primaryResource
+               && !result.companion,
+           "cleanup failure preserves primary ownership for the caller");
+    ExpectEvents(
+        context,
+        {Event::CreatePrimary,
+         Event::CreateCompanion,
+         Event::DestroyPrimary},
+        "cleanup refusal follows allocation and rollback order");
+    Expect(context.primaryPool.freeCount == 0
+               && context.primaryPool.activeCount == 1
+               && context.companionPool.freeCount == 0
+               && context.companionPool.activeCount == 0
+               && context.primaryLinkCount == 1
+               && context.companionLinkCount == 0
+               && context.primaryDestroyCount == 1,
+           "cleanup refusal leaves the primary allocation linked and active");
+    Expect(!context.callbackContractViolated,
+           "cleanup refusal observes the callback contract");
+
+    context.refusePrimaryDestroy = false;
+    Expect(callbacks.destroyPrimary(callbacks.context, result.primary),
+           "caller can clean up the retained primary ownership");
+    ExpectEvents(
+        context,
+        {Event::CreatePrimary,
+         Event::CreateCompanion,
+         Event::DestroyPrimary,
+         Event::DestroyPrimary},
+        "caller cleanup occurs after the refused automatic rollback");
+    Expect(context.primaryPool.freeCount == 1
+               && context.primaryPool.activeCount == 0
+               && context.primaryLinkCount == 0
+               && context.primaryDestroyCount == 2,
+           "caller cleanup restores the retained primary counters");
+    Expect(!context.callbackContractViolated,
+           "caller cleanup observes the retained ownership contract");
+}
+
 void TestBodyAndUserDataSuccessTransfersOwnership()
 {
     FakeContext context{};
@@ -544,6 +603,7 @@ int main()
     TestUserDataFailureRollsBackBody();
     TestPrimaryGeomFailureIsStable();
     TestTransformFailureRollsBackPrimaryGeom();
+    TestCompanionFailureRetainsPrimaryWhenRollbackIsRefused();
     TestBodyAndUserDataSuccessTransfersOwnership();
     TestOrientedGeomSuccessTransfersBothPoolSlots();
     TestUnorientedGeomSkipsCompanionCallbacks();

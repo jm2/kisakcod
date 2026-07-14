@@ -28,7 +28,13 @@ ResourcePairResult TryCreateResourcePair(
         callbacks.createCompanion(callbacks.context, primary);
     if (!companion)
     {
-        callbacks.destroyPrimary(callbacks.context, primary);
+        if (!callbacks.destroyPrimary(callbacks.context, primary))
+        {
+            return {
+                ResourcePairStatus::PrimaryCleanupFailed,
+                primary,
+                nullptr};
+        }
         return {ResourcePairStatus::CompanionUnavailable, nullptr, nullptr};
     }
 

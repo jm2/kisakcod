@@ -204,26 +204,72 @@ forbid_regex("${_inertia_scope}"
 
 extract_slice(
     "${_source}"
-    "static void Phys_DestroyFreshBodyResourceNoReport("
+    "static bool Phys_DestroyFreshBodyResourceNoReport("
     "static PhysBodyModelCreateStatus Phys_TryInitializeBodyMass("
     _fresh_body_rollback_scope
     "fresh body no-report rollback callback")
 require_regex("${_fresh_body_rollback_scope}"
+    "static[ \t\r\n]+bool[ \t\r\n]+Phys_DestroyFreshBodyResourceNoReport\\("
+    "fresh body rollback publishes its cleanup result")
+require_regex_ordered("${_fresh_body_rollback_scope}"
+    "return[ \t\r\n]+false[ \t\r\n]*;"
+    "Phys_ReturnValidatedPoolSlotNoReport\\("
+    "fresh body rollback rejects failed ownership preflight before release")
+require_regex("${_fresh_body_rollback_scope}"
     "Phys_ReturnValidatedPoolSlotNoReport\\("
     "fresh body rollback returns its validated pool slot directly")
+require_regex_ordered("${_fresh_body_rollback_scope}"
+    "Phys_ReturnValidatedPoolSlotNoReport\\("
+    "return[ \t\r\n]+true[ \t\r\n]*;"
+    "fresh body rollback reports success only after exact pool release")
+extract_slice(
+    "${_fresh_body_rollback_scope}"
+    "context->world->firstbody ="
+    "return true;"
+    _fresh_body_commit_scope
+    "fresh body rollback commit tail")
+forbid_regex("${_fresh_body_commit_scope}"
+    "return[ \t\r\n]+false[ \t\r\n]*;"
+    "fresh body rollback cannot reject after its first topology mutation")
+forbid_regex("${_fresh_body_rollback_scope}"
+    "return[ \t\r\n]*;"
+    "fresh body rollback cannot silently discard cleanup status")
 forbid_regex("${_fresh_body_rollback_scope}"
     "(Pool_Free|dBodyDestroy|MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
     "fresh body rollback cannot report through legacy destruction")
 
 extract_slice(
     "${_source}"
-    "static void Phys_DestroyFreshPrimaryGeomResourceNoReport("
+    "static bool Phys_DestroyFreshPrimaryGeomResourceNoReport("
     "static PhysBodyModelCreateStatus Phys_TryBodyAddGeomAndSetMass("
     _fresh_geom_rollback_scope
     "fresh geom no-report rollback callback")
 require_regex("${_fresh_geom_rollback_scope}"
+    "static[ \t\r\n]+bool[ \t\r\n]+Phys_DestroyFreshPrimaryGeomResourceNoReport\\("
+    "fresh geom rollback publishes its cleanup result")
+require_regex_ordered("${_fresh_geom_rollback_scope}"
+    "return[ \t\r\n]+false[ \t\r\n]*;"
+    "Phys_ReturnValidatedPoolSlotNoReport\\("
+    "fresh geom rollback rejects failed ownership preflight before release")
+require_regex("${_fresh_geom_rollback_scope}"
     "Phys_ReturnValidatedPoolSlotNoReport\\("
     "fresh geom rollback returns its validated pool slot directly")
+require_regex_ordered("${_fresh_geom_rollback_scope}"
+    "Phys_ReturnValidatedPoolSlotNoReport\\("
+    "return[ \t\r\n]+true[ \t\r\n]*;"
+    "fresh geom rollback reports success only after exact pool release")
+extract_slice(
+    "${_fresh_geom_rollback_scope}"
+    "context->space->first = geom->next;"
+    "return true;"
+    _fresh_geom_commit_scope
+    "fresh geometry rollback commit tail")
+forbid_regex("${_fresh_geom_commit_scope}"
+    "return[ \t\r\n]+false[ \t\r\n]*;"
+    "fresh geom rollback cannot reject after its first topology mutation")
+forbid_regex("${_fresh_geom_rollback_scope}"
+    "return[ \t\r\n]*;"
+    "fresh geom rollback cannot silently discard cleanup status")
 forbid_regex("${_fresh_geom_rollback_scope}"
     "(Pool_Free|ODE_GeomDestruct|dSpaceRemove|MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
     "fresh geom rollback cannot report through legacy destruction")

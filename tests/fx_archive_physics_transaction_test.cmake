@@ -103,6 +103,57 @@ require_position(
     _cleanup_fail_stop
     "post-transfer native cleanup must fail-stop under archive ownership")
 
+require_occurrence_count(
+    "${_archive_source}"
+    "if (bodyStatus == PhysBodyModelCreateStatus::CleanupFailed)"
+    2
+    "both desired creation and retired-body reconstruction must classify retained cleanup ownership")
+extract_slice(
+    "${_archive_source}"
+    "bool FX_ReconstructRetiredArchivePhysicsLocked("
+    "bool FX_ArchiveRetiredTokenTargetsMatch("
+    _reconstruct_physics_scope
+    "retired-body reconstruction")
+extract_slice(
+    "${_reconstruct_physics_scope}"
+    "if (bodyStatus != PhysBodyModelCreateStatus::Success"
+    "const fx::physics::TokenResult bound"
+    _reconstruct_failure_scope
+    "retired-body reconstruction failure")
+require_ordered(
+    "${_reconstruct_failure_scope}"
+    "if (bodyStatus == PhysBodyModelCreateStatus::CleanupFailed)"
+    "FX_FailArchivePhysicsCleanupLocked();"
+    "retained reconstruction ownership must fail-stop before ordinary rollback")
+require_ordered(
+    "${_reconstruct_failure_scope}"
+    "FX_FailArchivePhysicsCleanupLocked();"
+    "return false;"
+    "retained reconstruction ownership must not return recoverably")
+
+extract_slice(
+    "${_archive_source}"
+    "bool FX_CreateArchivePhysicsLocked("
+    "void __cdecl FX_Restore("
+    _create_physics_scope
+    "desired archive physics creation")
+extract_slice(
+    "${_create_physics_scope}"
+    "if (bodyStatus != PhysBodyModelCreateStatus::Success"
+    "const fx::physics::TokenResult bound"
+    _create_failure_scope
+    "desired archive physics creation failure")
+require_ordered(
+    "${_create_failure_scope}"
+    "if (bodyStatus == PhysBodyModelCreateStatus::CleanupFailed)"
+    "FX_FailArchivePhysicsCleanupLocked();"
+    "retained desired ownership must fail-stop before ordinary restore failure")
+require_ordered(
+    "${_create_failure_scope}"
+    "FX_FailArchivePhysicsCleanupLocked();"
+    "created = false;"
+    "retained desired ownership must not enter recoverable rollback")
+
 foreach(_forbidden_direct_physics_api IN ITEMS
     "Phys_ObjDestroy("
     "Pool_ValidateFull("

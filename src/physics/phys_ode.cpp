@@ -570,15 +570,20 @@ static physics::allocation::ResourceHandle Phys_CreateBodyUserDataResource(
 #endif
 }
 
-static void Phys_DestroyBodyResource(
+static bool Phys_DestroyBodyResource(
     void *,
     physics::allocation::ResourceHandle body) noexcept
 {
-    if (body)
-        dBodyDestroy(static_cast<dxBody *>(body));
+    if (!body)
+        return false;
+
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    dBodyDestroy(static_cast<dxBody *>(body));
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    return true;
 }
 
-static void Phys_DestroyFreshBodyResourceNoReport(
+static bool Phys_DestroyFreshBodyResourceNoReport(
     void *const opaque,
     physics::allocation::ResourceHandle resource) noexcept
 {
@@ -595,7 +600,7 @@ static void Phys_DestroyFreshBodyResourceNoReport(
         || body->tome != worldHead
         || context->world->nb <= 0)
     {
-        return;
+        return false;
     }
     const poolstorage_t storage = ODE_BodyPoolStorage();
     std::size_t bodyIndex = 0;
@@ -605,7 +610,7 @@ static void Phys_DestroyFreshBodyResourceNoReport(
         || storage.control->slotState[bodyIndex]
             != POOL_SLOT_ALLOCATED)
     {
-        return;
+        return false;
     }
 
     context->world->firstbody = static_cast<dxBody *>(body->next);
@@ -616,6 +621,7 @@ static void Phys_DestroyFreshBodyResourceNoReport(
     --context->world->nb;
     Phys_ReturnValidatedPoolSlotNoReport(
         storage, &odeGlob.bodyPool, bodyIndex);
+    return true;
 }
 
 static PhysBodyModelCreateStatus Phys_TryInitializeBodyMass(
@@ -708,6 +714,8 @@ static PhysBodyModelCreateStatus Phys_TryCreateBodyFromStateInternal(
             Com_PrintWarning(20, "Maximum number of physics body user-data records exceeded (more than %i)\n", 512);
         return PhysBodyModelCreateStatus::BodyResourcesExhausted;
     }
+    if (resources.status == physics::allocation::ResourcePairStatus::PrimaryCleanupFailed)
+        return PhysBodyModelCreateStatus::CleanupFailed;
     if (resources.status != physics::allocation::ResourcePairStatus::Success)
     {
         if (reportFailure)
@@ -858,15 +866,20 @@ static physics::allocation::ResourceHandle Phys_CreateTransformGeomResource(
         : nullptr;
 }
 
-static void Phys_DestroyPrimaryGeomResource(
+static bool Phys_DestroyPrimaryGeomResource(
     void *,
     physics::allocation::ResourceHandle geom) noexcept
 {
-    if (geom)
-        ODE_GeomDestruct(static_cast<dxGeom *>(geom));
+    if (!geom)
+        return false;
+
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    ODE_GeomDestruct(static_cast<dxGeom *>(geom));
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    return true;
 }
 
-static void Phys_DestroyFreshPrimaryGeomResourceNoReport(
+static bool Phys_DestroyFreshPrimaryGeomResourceNoReport(
     void *const opaque,
     physics::allocation::ResourceHandle resource) noexcept
 {
@@ -883,7 +896,7 @@ static void Phys_DestroyFreshPrimaryGeomResourceNoReport(
         || geom->type == dGeomTransformClass
         || context->space->count <= 0)
     {
-        return;
+        return false;
     }
     const poolstorage_t storage = ODE_GeomPoolStorage();
     std::size_t geomIndex = 0;
@@ -893,7 +906,7 @@ static void Phys_DestroyFreshPrimaryGeomResourceNoReport(
         || storage.control->slotState[geomIndex]
             != POOL_SLOT_ALLOCATED)
     {
-        return;
+        return false;
     }
 
     context->space->first = geom->next;
@@ -910,6 +923,7 @@ static void Phys_DestroyFreshPrimaryGeomResourceNoReport(
     geom->body_next = nullptr;
     Phys_ReturnValidatedPoolSlotNoReport(
         storage, &odeGlob.geomPool, geomIndex);
+    return true;
 }
 
 static PhysBodyModelCreateStatus Phys_TryBodyAddGeomAndSetMass(
@@ -1024,6 +1038,8 @@ static PhysBodyModelCreateStatus Phys_TryBodyAddGeomAndSetMass(
             Com_PrintError(20, "Maximum number of physics geoms exceeded\n");
         return PhysBodyModelCreateStatus::TransformGeomAllocationFailed;
     }
+    if (resources.status == physics::allocation::ResourcePairStatus::PrimaryCleanupFailed)
+        return PhysBodyModelCreateStatus::CleanupFailed;
     if (resources.status != physics::allocation::ResourcePairStatus::Success)
     {
         if (reportFailure)
