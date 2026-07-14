@@ -887,6 +887,11 @@ bool TestCorruptStateAndNullCallbacksFailClosed()
         &identity, 0u, ArchiveGateOwnerPhase::Idle};
     if (AcquireArchiveGate(&corruptIdle, &identity, 1u, callbacks)
             != ArchiveGateControlStatus::UnsafeFailure
+        || ReleaseArchiveGate(
+            &corruptIdle, &identity, 0u, callbacks)
+            != ArchiveGateControlStatus::UnsafeFailure
+        || AbandonArchiveGateForError(&corruptIdle, 0u, callbacks)
+            != ArchiveGateControlStatus::UnsafeFailure
         || ArchiveGateOwnerMatches(&corruptIdle, &identity, 0u)
         || RefreshArchiveGateOwnerGeneration(
             &corruptIdle, &identity, 1u))

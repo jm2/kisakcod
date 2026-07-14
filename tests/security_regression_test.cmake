@@ -66,6 +66,44 @@ function(require_source_match_count RELATIVE_PATH PATTERN EXPECTED_COUNT DESCRIP
     endif()
 endfunction()
 
+function(extract_security_slice
+    SOURCE_VAR START_MARKER END_MARKER OUT_VAR DESCRIPTION)
+    set(_source "${${SOURCE_VAR}}")
+    string(FIND "${_source}" "${START_MARKER}" _start)
+    if(_start EQUAL -1)
+        message(FATAL_ERROR
+            "Missing start of security invariant (${DESCRIPTION})")
+    endif()
+
+    string(SUBSTRING "${_source}" ${_start} -1 _tail)
+    string(FIND "${_tail}" "${END_MARKER}" _relative_end)
+    if(_relative_end LESS_EQUAL 0)
+        message(FATAL_ERROR
+            "Missing ordered end of security invariant (${DESCRIPTION})")
+    endif()
+
+    string(SUBSTRING "${_tail}" 0 ${_relative_end} _slice)
+    set(${OUT_VAR} "${_slice}" PARENT_SCOPE)
+endfunction()
+
+function(require_security_slice_contains SLICE_VAR NEEDLE DESCRIPTION)
+    string(FIND "${${SLICE_VAR}}" "${NEEDLE}" _position)
+    if(_position EQUAL -1)
+        message(FATAL_ERROR "Missing security invariant (${DESCRIPTION})")
+    endif()
+endfunction()
+
+function(require_security_slice_ordered SLICE_VAR FIRST SECOND DESCRIPTION)
+    string(FIND "${${SLICE_VAR}}" "${FIRST}" _first_position)
+    string(FIND "${${SLICE_VAR}}" "${SECOND}" _second_position)
+    if(_first_position EQUAL -1
+        OR _second_position EQUAL -1
+        OR _first_position GREATER_EQUAL _second_position)
+        message(FATAL_ERROR
+            "Missing or unordered security invariant (${DESCRIPTION})")
+    endif()
+endfunction()
+
 function(require_all_occurrences_wrapped RELATIVE_PATH OCCURRENCE_PATTERN WRAPPED_PATTERN DESCRIPTION)
     file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
     string(REGEX MATCHALL "${OCCURRENCE_PATTERN}" _all_occurrences "${_source}")
@@ -5617,6 +5655,15 @@ require_source_not_contains(
     "EffectsCore/fx_system.cpp"
     "fx_archiveThreadState.system = system;"
     "normal archive ownership must not recreate the obsolete TLS record")
+file(READ
+    "${SOURCE_ROOT}/src/EffectsCore/fx_system.cpp"
+    _fx_system_archive_adapter_file)
+extract_security_slice(
+    _fx_system_archive_adapter_file
+    "fx::archive::ArchiveGateControlStatus\nFX_PerformArchiveGateControlOperation("
+    "volatile std::int32_t *FX_GetCooperativeIteratorGenerationState("
+    _archive_adapter_source
+    "production archive gate adapter")
 foreach(_archive_adapter_operation
     ClaimPending
     TryAcquireIterator
@@ -5634,6 +5681,82 @@ foreach(_archive_adapter_operation
         1
         "the production archive adapter must map ${_archive_adapter_operation} exactly once")
 endforeach()
+
+extract_security_slice(
+    _archive_adapter_source
+    "case Operation::TryAcquireIterator:"
+    "case Operation::WaitForIteratorProgress:"
+    _archive_adapter_try_iterator_source
+    "TryAcquireIterator adapter operation")
+require_security_slice_contains(
+    _archive_adapter_try_iterator_source
+    "return FxIteratorTryBeginExclusive(\n                   &context.system->iteratorCount)\n            ? Status::Success\n            : Status::Retry;"
+    "TryAcquireIterator must bind success/retry to exclusive iterator acquisition")
+
+extract_security_slice(
+    _archive_adapter_source
+    "case Operation::WaitForIteratorProgress:"
+    "case Operation::PromoteExclusive:"
+    _archive_adapter_wait_source
+    "WaitForIteratorProgress adapter operation")
+require_security_slice_contains(
+    _archive_adapter_wait_source
+    "if (!context.system->isInitialized\n            || context.system->isArchiving\n            || FX_GetCooperativeIteratorGeneration(context.system)\n                != context.expectedGeneration)\n        {\n            return Status::Cancelled;\n        }"
+    "iterator waiting must cancel on lifecycle or generation changes")
+require_security_slice_ordered(
+    _archive_adapter_wait_source
+    "return Status::Cancelled;"
+    "std::this_thread::yield();"
+    "iterator waiting must check cancellation before yielding")
+require_security_slice_ordered(
+    _archive_adapter_wait_source
+    "std::this_thread::yield();"
+    "return Status::Retry;"
+    "iterator waiting must yield before requesting a retry")
+
+extract_security_slice(
+    _archive_adapter_source
+    "case Operation::ValidateAdmission:"
+    "case Operation::ValidateExclusive:"
+    _archive_adapter_validate_admission_source
+    "ValidateAdmission adapter operation")
+require_security_slice_contains(
+    _archive_adapter_validate_admission_source
+    "if (Sys_AtomicLoad(context.gate) != exclusive\n            || Sys_AtomicLoad(&context.system->iteratorCount) != -1)\n        {\n            return Status::UnsafeFailure;\n        }\n        return context.system->isInitialized\n                && !context.system->isArchiving\n                && FX_GetCooperativeIteratorGeneration(context.system)\n                    == context.expectedGeneration\n            ? Status::Success\n            : Status::Cancelled;"
+    "admission validation must require exclusive gate/iterator ownership and an unchanged live lifecycle")
+
+extract_security_slice(
+    _archive_adapter_source
+    "case Operation::ValidateExclusive:"
+    "case Operation::ReleaseIterator:"
+    _archive_adapter_validate_exclusive_source
+    "ValidateExclusive adapter operation")
+require_security_slice_contains(
+    _archive_adapter_validate_exclusive_source
+    "return Sys_AtomicLoad(context.gate) == exclusive\n                && Sys_AtomicLoad(&context.system->iteratorCount) == -1\n            ? Status::Success\n            : Status::UnsafeFailure;"
+    "exclusive validation must require exact exclusive gate and iterator ownership")
+
+extract_security_slice(
+    _archive_adapter_source
+    "case Operation::ReleaseIterator:"
+    "case Operation::ClearArchivingForError:"
+    _archive_adapter_release_iterator_source
+    "ReleaseIterator adapter operation")
+require_security_slice_contains(
+    _archive_adapter_release_iterator_source
+    "return FxIteratorEndExclusive(\n                   &context.system->iteratorCount)\n            ? Status::Success\n            : Status::UnsafeFailure;"
+    "ReleaseIterator must bind success to checked exclusive iterator release")
+
+extract_security_slice(
+    _archive_adapter_source
+    "case Operation::ClearArchivingForError:"
+    "case Operation::ReopenPending:"
+    _archive_adapter_clear_archiving_source
+    "ClearArchivingForError adapter operation")
+require_security_slice_contains(
+    _archive_adapter_clear_archiving_source
+    "context.system->isArchiving = false;\n        return Status::Success;"
+    "error cleanup must clear the production archiving flag before succeeding")
 require_source_contains(
     "EffectsCore/fx_system.cpp"
     "context.gate, pending, open)\n                == open"

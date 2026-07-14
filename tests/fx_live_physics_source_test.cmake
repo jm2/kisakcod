@@ -950,8 +950,8 @@ require_literal_count(
     "the definition and three PHYSICS-owning live callers must stay accounted")
 
 # Pool-sidecar rebuild and graph validation may bypass archive-aware allocator
-# admission only for the exact archive owner. Pending, exclusive, and unknown
-# gate values must fail closed for every other thread.
+# admission only for the exact archive owner. Pending permits allocator drain;
+# Exclusive and unknown gate values must fail closed for every other thread.
 extract_source_slice(
     _fx_system_source
     "bool FX_RebuildPoolAllocationStatesInternal("
@@ -963,15 +963,10 @@ require_slice_ordered(
     "const fx::archive::ArchiveGateValue archiveGateState ="
     "const bool ownsArchive = FX_ValidateArchiveExclusiveState(system);"
     "pool rebuild must type the archive gate before proving ownership")
-require_slice_ordered(
-    _pool_rebuild_admission_source
-    "FX_ValidateArchiveExclusiveState(system);"
-    "fx::archive::ArchiveGateBlocksAllocatorAdmission("
-    "pool rebuild must prove exact ownership before testing admission")
 require_slice_contains(
     _pool_rebuild_admission_source
-    "&& !ownsArchive)\n    {\n        return false;"
-    "pool rebuild must reject every blocked or unknown gate for nonowners")
+    "const bool ownsArchive = FX_ValidateArchiveExclusiveState(system);\n    if (fx::archive::ArchiveGateBlocksAllocatorAdmission(\n            archiveGateState)\n        && !ownsArchive)\n    {\n        return false;\n    }"
+    "pool rebuild must reject the exact blocked-gate/nonowner condition")
 require_slice_ordered(
     _pool_rebuild_admission_source
     "if (ownsArchive)\n        Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
@@ -989,15 +984,10 @@ require_slice_ordered(
     "const fx::archive::ArchiveGateValue archiveGateState ="
     "const bool ownsArchive = FX_ValidateArchiveExclusiveState(system);"
     "pool graph validation must type the archive gate before proving ownership")
-require_slice_ordered(
-    _pool_graph_admission_source
-    "FX_ValidateArchiveExclusiveState(system);"
-    "fx::archive::ArchiveGateBlocksAllocatorAdmission("
-    "pool graph validation must prove exact ownership before testing admission")
 require_slice_contains(
     _pool_graph_admission_source
-    "&& !ownsArchive)\n    {\n        return false;"
-    "pool graph validation must reject every blocked or unknown gate for nonowners")
+    "const bool ownsArchive = FX_ValidateArchiveExclusiveState(system);\n    if (fx::archive::ArchiveGateBlocksAllocatorAdmission(\n            archiveGateState)\n        && !ownsArchive)\n    {\n        return false;\n    }"
+    "pool graph validation must reject the exact blocked-gate/nonowner condition")
 require_slice_ordered(
     _pool_graph_admission_source
     "if (ownsArchive)\n        Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
@@ -1360,7 +1350,7 @@ require_slice_ordered(
     "safe-empty publication must validate the reset graph in the success branch")
 require_slice_ordered(
     _safe_empty_source
-    "poolGraphScratch"
+    "FxValidatePoolAllocationGraphWithScratch("
     "fx::archive::RefreshArchiveGateOwnerGeneration("
     "safe-empty publication must validate the graph before refreshing owner generation")
 require_slice_ordered(
