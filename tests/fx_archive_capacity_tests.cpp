@@ -70,6 +70,64 @@ void TestNoRetirementNeeded()
     Check(plan.count == 0, "sufficient capacity should retire nothing");
 }
 
+void TestZeroLiveAndDesiredDemand()
+{
+    const PhysicsRetirementPlan empty{};
+    PhysicsRetirementPlan plan = MakeSentinelPlan();
+    const auto status = fx::archive::BuildPhysicsRetirementPlan(
+        {0, 0, 0}, {0, 0, 0}, nullptr, 0, &plan);
+    Check(
+        status == PhysicsRetirementPlanStatus::Success,
+        "zero live and desired resources should produce a bounded plan");
+    Check(
+        PlansEqual(plan, empty),
+        "zero live and desired resources should publish an empty plan");
+}
+
+void TestLiveResourcesWithZeroDesiredDemandRetireNone()
+{
+    const fx::archive::PhysicsRetirementCandidate candidates[] = {
+        {2, 11, 5},
+        {7, 19, 3},
+    };
+    const PhysicsRetirementPlan empty{};
+    PhysicsRetirementPlan plan = MakeSentinelPlan();
+    const auto status = fx::archive::BuildPhysicsRetirementPlan(
+        {0, 0, 0}, {0, 0, 0}, candidates, 2, &plan);
+    Check(
+        status == PhysicsRetirementPlanStatus::Success,
+        "live resources with no desired demand should be plannable");
+    Check(
+        PlansEqual(plan, empty),
+        "live resources with no desired demand must retire nothing");
+}
+
+void TestZeroLiveWithDesiredDemand()
+{
+    const PhysicsRetirementPlan empty{};
+    PhysicsRetirementPlan plan = MakeSentinelPlan();
+    auto status = fx::archive::BuildPhysicsRetirementPlan(
+        {4, 4, 9}, {4, 4, 9}, nullptr, 0, &plan);
+    Check(
+        status == PhysicsRetirementPlanStatus::Success,
+        "free capacity should satisfy desired demand with no live resources");
+    Check(
+        PlansEqual(plan, empty),
+        "sufficient capacity with no live resources should retire nothing");
+
+    const PhysicsRetirementPlan sentinel = MakeSentinelPlan();
+    plan = sentinel;
+    status = fx::archive::BuildPhysicsRetirementPlan(
+        {3, 3, 8}, {4, 4, 9}, nullptr, 0, &plan);
+    CheckTransactionalFailure(
+        status,
+        PhysicsRetirementPlanStatus::InsufficientCapacity,
+        plan,
+        sentinel,
+        "desired demand beyond free capacity must fail with no live resources",
+        "zero-live capacity failure must preserve every plan output field");
+}
+
 void TestFullPoolReplacement()
 {
     fx::archive::PhysicsRetirementCandidate candidates[12]{};
@@ -387,6 +445,9 @@ void TestGlobalBodyLimitBoundary()
 int main()
 {
     TestNoRetirementNeeded();
+    TestZeroLiveAndDesiredDemand();
+    TestLiveResourcesWithZeroDesiredDemandRetireNone();
+    TestZeroLiveWithDesiredDemand();
     TestFullPoolReplacement();
     TestInsufficientFinalCapacityIsTransactional();
     TestGeometryChoosesMinimumDeterministically();
