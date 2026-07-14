@@ -81,6 +81,33 @@ function(require_slice_literal_count SLICE_VAR NEEDLE EXPECTED_COUNT DESCRIPTION
     endif()
 endfunction()
 
+extract_source_slice(
+    _phys_ode_source
+    "static bool Phys_ReleaseCreatedBodyResources("
+    "static PhysBodyModelCreateStatus Phys_TryCreateBodyFromStateInternal("
+    _release_body_scope
+    "created body/user-data cleanup")
+require_slice_ordered(
+    _release_body_scope
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
+    "dBodyDestroy(body);"
+    "created body destruction must begin under the physics lock")
+require_slice_ordered(
+    _release_body_scope
+    "dBodyDestroy(body);"
+    "Pool_Free("
+    "body destruction must precede its paired user-data release")
+require_slice_ordered(
+    _release_body_scope
+    "Pool_Free("
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "pool-backed user data must be released before unlocking physics")
+require_slice_ordered(
+    _release_body_scope
+    "free(userData);"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "all allocator variants must release user data before unlocking physics")
+
 set(_try_geom_start
     "static PhysBodyModelCreateStatus Phys_TryBodyAddGeomAndSetMass(")
 set(_try_geom_end "void __cdecl Phys_BodyAddGeomAndSetMass(")
@@ -127,8 +154,8 @@ endif()
 
 require_slice_matches(
     _resource_pair_scope
-    "ResourcePairCallbacks[ \t\r\n]+resourceCallbacks[ \t\r\n]*\\{[ \t\r\n]*&resourceContext[ \t\r\n]*,[ \t\r\n]*Phys_CreatePrimaryGeomResource[ \t\r\n]*,[ \t\r\n]*Phys_CreateTransformGeomResource[ \t\r\n]*,[ \t\r\n]*Phys_DestroyPrimaryGeomResource[ \t\r\n]*,[ \t\r\n]*\\};"
-    "the transform allocator must wire primary creation, transform creation, and primary rollback in that order")
+    "ResourcePairCallbacks[ \t\r\n]+resourceCallbacks[ \t\r\n]*\\{[ \t\r\n]*&resourceContext[ \t\r\n]*,[ \t\r\n]*Phys_CreatePrimaryGeomResource[ \t\r\n]*,[ \t\r\n]*Phys_CreateTransformGeomResource[ \t\r\n]*,[ \t\r\n]*reportFailure[ \t\r\n]*\\?[ \t\r\n]*Phys_DestroyPrimaryGeomResource[ \t\r\n]*:[ \t\r\n]*Phys_DestroyFreshPrimaryGeomResourceNoReport[ \t\r\n]*,[ \t\r\n]*\\};"
+    "the transform allocator must wire primary creation, transform creation, and diagnostic/no-report rollback in that order")
 
 require_slice_contains(
     _try_geom_scope

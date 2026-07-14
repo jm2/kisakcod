@@ -921,10 +921,9 @@ sidecar with full-width generation tokens, semantic validation, lifetime-bound o
 staged publication/rollback, and a fallible pre-freelist pool callback without changing `FxElem`'s
 0x28-byte layout. Its 32-test GCC/Clang/ASan/UBSan/TSan matrix and strict AArch64 syntax check are
 green; both automated review fixes landed and run 29286377602 passed all nine jobs before merge at
-`3c542f20`. Spawn/draw/free/reset/archive integration remains the immediate follow-up. That archive work
-must stage body-state recipes or reserve global capacity because ODE's 512-body ceiling cannot assume
-that complete live and replacement sets coexist. Its prerequisite is allocation-failure-safe ODE
-body/user-data/model-collision construction. PR #7 closes the audited exhaustion paths with
+`3c542f20`. PR #11 later completed spawn/draw/free/reset/archive integration; the full-capacity recipe
+transaction is summarized below. Its prerequisite was allocation-failure-safe ODE body/user-data/model-
+collision construction. PR #7 closes the audited exhaustion paths with
 a portable resource-pair transaction used for body/user-data and primary/optional-transform acquisition,
 a checked fresh body-plus-model API that destroys every partial resource before failure is observable,
 and FX archive staging that publishes only complete collision bodies. Allocation precedes center-of-mass
@@ -957,9 +956,18 @@ ASan/UBSan, and TSan suites are green, as are strict x86-32 and AArch64 allocato
 Native
 engine source sets still do not compile these production callers, so Windows x86 engine CI remains their
 compile gate while all five portable jobs exercise the allocator contract. PR #9 merged at `8ce11763`
-after replacement run **29300663478 passed all nine jobs** and all review threads were resolved. Remaining FX work is
-camera/scalar snapshot publication, real Disk32 archive/fast-file conversion, that production
-physics-sidecar wiring, and production fixtures. The
+after replacement run **29300663478 passed all nine jobs** and all review threads were resolved. PR #11
+then merged generation-checked native-body ownership through live FX spawn/draw/free/reset/shutdown and
+legacy-x86 archive replacement at `da273589`; run **29335570405 passed all nine jobs**. The current
+full-capacity branch captures exact rollback recipes and complete silent ODE topology, retires only the
+old FX bodies required by the 512-body global ceiling, reconstructs them on failed publication, preserves
+archive iterator exclusion across both graph images, and atomically drains all three sidecars before a
+canonical safe-empty reset. Unexpected cleanup failure after ownership transfer fail-stops before admission
+can reopen. Its portable matrix is **42/42** under GCC, Clang, ASan/UBSan, and TSan, with strict x86-32 and
+AArch64 sidecar/capacity compile-link checks; Windows x86 CI remains the production translation-unit gate.
+Remaining FX work is camera/scalar snapshot publication, real Disk32 archive/fast-file conversion, an
+executable full-restore/fault-injection harness with real competing ODE occupancy, and a measured heap-backed
+transaction workspace. The
 unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
 a separate transactional `current/end` cursor migration. Detailed live blockers and sequencing remain in
 `docs/task.md` and `docs/CODEBASE_AUDIT.md`.

@@ -366,7 +366,7 @@ require_slice_contains(
 extract_source_slice(
     _fx_system_source
     "bool __cdecl FX_BeginArchive("
-    "bool __cdecl FX_RestoreArchiveExclusiveState("
+    "bool __cdecl FX_ValidateArchiveExclusiveState("
     _archive_admission_source
     "archive-exclusive FX iterator admission")
 require_slice_ordered(
@@ -1041,14 +1041,54 @@ require_slice_ordered(
 
 extract_source_slice(
     _fx_system_source
+    "bool FX_CanResetSystemGraphUnderExclusiveClaim("
+    "fx::physics::SidecarStatus FX_ResetSystemGraphUnderExclusiveClaim("
+    _reset_graph_preflight_source
+    "FX_CanResetSystemGraphUnderExclusiveClaim")
+require_slice_contains(
+    _reset_graph_preflight_source
+    "Sys_AtomicLoad(&system->iteratorCount) == -1"
+    "graph reset preflight must require iterator-exclusive ownership")
+require_slice_contains(
+    _reset_graph_preflight_source
+    "system->effects == buffers->effects"
+    "graph reset preflight must validate canonical graph storage before destructive work")
+
+extract_source_slice(
+    _fx_system_source
+    "fx::physics::SidecarStatus FX_ResetSystemGraphUnderExclusiveClaim("
+    "fx::physics::SidecarStatus FX_ResetSystemUnderLifecycleClaim("
+    _reset_graph_source
+    "FX_ResetSystemGraphUnderExclusiveClaim")
+require_slice_contains(
+    _reset_graph_source
+    "FX_CanResetSystemGraphUnderExclusiveClaim(system)"
+    "graph reset must reuse the non-mutating prerequisite check")
+require_slice_ordered(
+    _reset_graph_source
+    "system->firstFreeElem = 0;"
+    "FxPoolResetAllocationState(&states->elems);"
+    "graph reset must rebuild the element free list before publishing its bitmap")
+require_slice_not_contains(
+    _reset_graph_source
+    "CRITSECT_PHYSICS"
+    "the reusable graph reset must leave physics ownership to its caller")
+
+extract_source_slice(
+    _fx_system_source
     "fx::physics::SidecarStatus FX_ResetSystemUnderLifecycleClaim("
     "} // namespace"
     _reset_under_claim_source
     "FX_ResetSystemUnderLifecycleClaim")
 require_slice_contains(
     _reset_under_claim_source
-    "Sys_AtomicLoad(&system->iteratorCount) != -1"
-    "bulk reset must require iterator-exclusive lifecycle ownership")
+    "FX_CanResetSystemGraphUnderExclusiveClaim(system)"
+    "bulk reset must require complete graph prerequisites")
+require_slice_ordered(
+    _reset_under_claim_source
+    "FX_CanResetSystemGraphUnderExclusiveClaim(system)"
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
+    "bulk reset must reject invalid graph storage before destroying bodies")
 require_slice_ordered(
     _reset_under_claim_source
     "Sys_EnterCriticalSection(CRITSECT_PHYSICS);"
@@ -1062,13 +1102,13 @@ require_slice_ordered(
 require_slice_ordered(
     _reset_under_claim_source
     "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
-    "system->firstFreeElem = 0;"
-    "bulk reset must drain before rebuilding the element free list")
+    "return FX_ResetSystemGraphUnderExclusiveClaim(system);"
+    "bulk reset must drain before rebuilding the graph")
 require_slice_ordered(
     _reset_under_claim_source
     "FX_DrainPhysicsBodySidecarLocked(system);"
-    "FxPoolResetAllocationState(&states->elems);"
-    "bulk reset must drain before clearing the allocation bitmap")
+    "FX_ResetSystemGraphUnderExclusiveClaim(system);"
+    "bulk reset must drain before clearing allocation state")
 require_slice_not_contains(
     _reset_under_claim_source
     "Com_Error("
@@ -1077,6 +1117,95 @@ require_slice_not_contains(
     _reset_under_claim_source
     "Sys_AtomicStore(&system->iteratorCount, 0);"
     "bulk reset must preserve iterator-exclusive lifecycle ownership")
+
+extract_source_slice(
+    _fx_system_source
+    "bool __cdecl FX_CanPublishArchiveSafeEmptyStateLocked("
+    "bool __cdecl FX_PublishArchiveSafeEmptyStateLocked("
+    _safe_empty_preflight_source
+    "FX_CanPublishArchiveSafeEmptyStateLocked")
+require_slice_ordered(
+    _safe_empty_preflight_source
+    "FX_ValidateArchiveExclusiveState(system)"
+    "FX_CanResetSystemGraphUnderExclusiveClaim(system)"
+    "safe-empty preflight must prove archive exclusion before canonical graph storage")
+
+extract_source_slice(
+    _fx_system_source
+    "bool __cdecl FX_PublishArchiveSafeEmptyStateLocked("
+    "void __cdecl FX_InitSystem("
+    _safe_empty_source
+    "FX_PublishArchiveSafeEmptyStateLocked")
+require_slice_contains(
+    _safe_empty_source
+    "FxSystem *const system) noexcept"
+    "safe-empty publication must remain a non-throwing fallback")
+require_slice_contains(
+    _safe_empty_source
+    "FX_CanPublishArchiveSafeEmptyStateLocked(system)"
+    "safe-empty publication must reuse archive, iterator, and graph preflight")
+require_slice_ordered(
+    _safe_empty_source
+    "fx::physics::Validate(sidecar)"
+    "fx::physics::ValidateVacantDestination(sidecar)"
+    "safe-empty publication must validate the sidecar before proving vacancy")
+require_slice_ordered(
+    _safe_empty_source
+    "fx::physics::ValidateVacantDestination(sidecar)"
+    "Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
+    "safe-empty publication must prove vacant physics ownership before mutating the graph")
+require_literal_count(
+    _safe_empty_source
+    "Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
+    1
+    "safe-empty publication must acquire allocator exclusion exactly once")
+require_literal_count(
+    _safe_empty_source
+    "Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);"
+    1
+    "safe-empty publication must release allocator exclusion exactly once")
+require_slice_ordered(
+    _safe_empty_source
+    "Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
+    "FX_ResetSystemGraphUnderExclusiveClaim(system);"
+    "safe-empty publication must rebuild the graph under allocator exclusion")
+require_slice_ordered(
+    _safe_empty_source
+    "FX_ResetSystemGraphUnderExclusiveClaim(system);"
+    "if (resetStatus == fx::physics::SidecarStatus::Success"
+    "safe-empty publication must condition publication on reset success")
+require_slice_ordered(
+    _safe_empty_source
+    "if (resetStatus == fx::physics::SidecarStatus::Success"
+    "FxValidatePoolAllocationGraph("
+    "safe-empty publication must validate the reset graph in the success branch")
+require_slice_ordered(
+    _safe_empty_source
+    "FxValidatePoolAllocationGraph("
+    "system->isInitialized = true;"
+    "safe-empty publication must validate the graph before publishing initialization")
+require_slice_ordered(
+    _safe_empty_source
+    "system->isInitialized = true;"
+    "system->isArchiving = false;"
+    "safe-empty publication must initialize the safe graph before ending archive state")
+require_slice_ordered(
+    _safe_empty_source
+    "fx_archiveThreadState.generation ="
+    "Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);"
+    "safe-empty publication must refresh archive TLS before releasing publication exclusion")
+foreach(_safe_empty_forbidden IN ITEMS
+    "CRITSECT_PHYSICS"
+    "FX_DrainPhysicsBodySidecarLocked("
+    "Phys_ObjDestroy("
+    "Com_Error("
+    "MyAssertHandler("
+    "FX_ValidatePoolAllocationGraphState(")
+    require_slice_not_contains(
+        _safe_empty_source
+        "${_safe_empty_forbidden}"
+        "safe-empty publication must not manipulate physics, destroy resources, report, or reacquire allocator ownership")
+endforeach()
 
 extract_source_slice(
     _fx_system_source

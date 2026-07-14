@@ -435,12 +435,12 @@ void Sys_Error(const char *error, ...)
 				TranslateMessage(&Msg);
 				DispatchMessageA(&Msg);
 			}
-			exit(0);
+			exit(EXIT_FAILURE);
 		}
 	}
 
 	Sys_SetErrorText(string);
-	exit(0);
+	exit(EXIT_FAILURE);
 #endif
 }
 

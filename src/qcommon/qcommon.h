@@ -205,6 +205,9 @@ inline bool Con_IsNotifyChannel(int channel)
 
 void QDECL Com_Printf(int channel, const char* fmt, ...);
 void QDECL Com_Error(errorParm_t code, const char* fmt, ...);
+// Platform fatal-error boundary. Unlike Com_Error, this terminates without
+// running longjmp cleanup hooks that can release engine ownership gates.
+void Sys_Error(const char* error, ...);
 
 void QDECL RefreshQuitOnErrorCondition();
 

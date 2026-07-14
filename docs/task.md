@@ -6,30 +6,40 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Branch: `agent/fx-live-physics-sidecar`; branch point: merged native physics-pool commit
-  `8ce11763`; upstream-integration baseline: `2b759db`.
+- Branch: `agent/fx-archive-full-capacity`; branch point: merged live FX physics integration
+  `da273589`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: the current branch completes the first production integration of the merged FX physics
-  sidecar. Live model spawn, draw, element/spotlight free, reset, initialization, shutdown, and legacy-x86
-  archive save/restore now transfer generation-checked native-body ownership without storing pointer bits
-  in `FxElem::physObjId`. Lifecycle claims close archive/kill admission, hold iterator exclusivity through
-  bulk mutation, reject work that crosses a reset/shutdown generation, and discard stale kill-exclusive
-  thread state before new admission. Every effect-owned draw traversal now holds the owning effect lock;
-  the physics helper requires that lifetime explicitly before reading the pool slot, closing stale-slot ABA
-  where a delayed draw could otherwise resolve a newly reused element's body. Archive replacement validates
-  capacity and both body/graph ownership domains, publishes sidecar ownership before the staged graph,
-  retains old bodies through validation, and rolls back both domains on failure. It fails safely without
-  publication when the old and replacement body sets cannot coexist; recoverable recipe-based replacement
-  at the global 512-body limit and production fault-injection/runtime fixtures remain the next gate.
-  Local validation is **40/40** under GCC, Clang, ASan/UBSan (leak detection disabled under the ptrace
-  runner), and TSan; the expanded sidecar fixture also compiles and links under strict x86-32 and AArch64.
-  Windows x86 production translation-unit validation is pending this branch's PR CI. PR #9's native
-  physics-pool prerequisite merged at `8ce11763` after run **29300663478 passed all nine jobs**.
+- Active work: this branch completes recoverable legacy-x86 FX archive replacement at ODE's global
+  512-body limit. Restore captures exact body/model/topology recipes, silently validates all fixed pools and
+  world/space ownership, retires only generation-checked live FX bodies needed for replacement capacity,
+  reconstructs the old set on any failed publication, and drains all three disjoint sidecars before a
+  canonical safe-empty graph reset when rollback itself is impossible. Iterator `-1` and archive-gate
+  ownership now survive both desired and rollback graph copies without a temporary admission window.
+  Expected cleanup is a preflighted no-fail commit; any unexpected post-detach or constructor cleanup
+  rejection is surfaced explicitly and fail-stops while archive and PHYSICS exclusion remain closed rather
+  than orphaning a native body. Legacy fallback-box and zero-geom models retain normal creation parity, and
+  interactive Windows fatal errors now return a failure exit status. Automated review additionally bounds
+  every body, user-data, and geometry pool descriptor before indexing the fixed topology snapshots and keeps
+  fresh body destruction plus paired user-data release inside one recursive PHYSICS critical section.
+  Bounded ownership snapshots and exact full-capacity retirement/rollback/rebind ledgers cover all 512
+  registrations. Local validation is
+  **42/42** under GCC, Clang, ASan/UBSan (leak detection disabled under the ptrace runner), and TSan; the
+  sidecar and capacity fixtures also compile and link with strict warnings under x86-32 and AArch64.
+  Production `phys_ode.cpp`/`fx_archive.cpp` compilation remains a Windows x86 CI gate because portable
+  utility targets do not compile those engine translation units. The next active item is an executable
+  production restore/fault-injection seam covering nth retire/create/reconstruct/drain failure, real ODE
+  pool occupancy (including non-FX bodies), waiter behavior, and measured x86 stack/runtime bounds.
+  PR #11 merged the live generation-checked sidecar baseline as `da273589` after replacement run
+  **29335570405 passed all nine CI jobs**; PR #9's native physics-pool prerequisite merged at `8ce11763`
+  after run **29300663478 passed all nine jobs**.
+  PR #12's pre-review head `dded2f45` passed all nine jobs in run **29350268608**; its three substantiated
+  Gemini hardening findings are fixed on the branch, while the claimed nullable canonical FX buffer members
+  are embedded arrays and therefore not nullable when their owning buffer is valid.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **34% complete by engineering effort** (plausible range 30–39%).
-  The foundation/checklist view is about 49–54% and the shared foundation is roughly 86–92% mature,
+- Progress estimate: approximately **35% complete by engineering effort** (plausible range 31–40%).
+  The foundation/checklist view is about 50–55% and the shared foundation is roughly 88–93% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
   (nine commits; upstream was not ahead at merge time) while preserving the port's pointer-width and
@@ -104,13 +114,14 @@ work item changes. Do not create session-specific handoff files.
   **29286377602 passed all nine CI jobs**. Its expanded **32/32** portable matrix passes under GCC,
   Clang, ASan/UBSan, and TSan plus strict x86-32 and AArch64 compilation. The current branch routes
   production spawn/draw/free/reset/init/shutdown and legacy archive paths through that primitive while
-  preserving the frozen element ABI. Remaining FX-specific work is real 64-bit Disk32 archive/fast-file
-  conversion, camera/scalar snapshot publication, production fixtures, and recipe-based full-capacity
-  restore. ODE's global 512-body ceiling means archive restore must not blindly instantiate a complete
-  replacement while all live bodies still exist: the current transaction reserves/accounts capacity and
-  fails safely before publication when both sets cannot coexist; the follow-up must capture validated body
-  recipes, retire only owned old FX bodies in bounded batches, and reconstruct the old set on failure. Audit of
-  that transaction exposed prerequisite ODE exhaustion defects: `dBodyCreate` and user-data allocation
+  preserving the frozen element ABI. The current branch adds recipe-based full-capacity restore: ODE's
+  global 512-body ceiling is handled by silently validating exact resource demand and global topology,
+  retiring only owned old FX bodies needed for capacity, and reconstructing every retired body before an
+  old-graph rollback. Desired, rollback, and safe-empty publication keep archive iterator exclusion intact;
+  unexpected cleanup failure terminates before reopening admission. Remaining FX-specific work is real
+  64-bit Disk32 archive/fast-file conversion, camera/scalar snapshot publication, executable production
+  fault-injection fixtures, and a heap transaction workspace to replace the large bounded stack image.
+  Audit of that transaction exposed prerequisite ODE exhaustion defects: `dBodyCreate` and user-data allocation
   dereference null, while primary/transform geometry failures can publish incomplete collision bodies.
   PR #7 checks body exhaustion before world publication, pairs the dormant heap
   fallback's `new`/`delete`, and uses one tested opaque resource-pair transaction for both body/user-data
@@ -494,11 +505,12 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Complete the remaining full-capacity archive case after the generation-checked `FxElem::physObjId`
-   sidecar's live and ordinary-capacity archive integration. Capture validated replacement and rollback
-   recipes, retire only sidecar-owned old FX bodies in bounded batches, rebuild the old set on any failure,
-   and publish a safe empty state if reconstruction itself becomes impossible. Add runtime fault injection
-   for body/user-data/geom exhaustion plus live spawn/free/reset/shutdown and archive kill/rewind fixtures.
+1. Extract a testable production restore seam around the completed full-capacity transaction and add
+   executable nth-operation fault injection for 0/512 bodies, retire/destroy/create/bind/publish/rebuild/
+   reconstruct/drain failure, post-publication rollback, exact destruction ledgers, competing non-FX ODE
+   occupancy, safe-empty publication, and archive-gate waiters. Measure the x86 stack/time ceiling, move the
+   bounded transaction workspace to checked heap storage, and make fresh resource-pair rollback callbacks
+   surface their currently preflight-impossible cleanup failures.
 2. Add packed FX savegame Disk32 schemas, native handle remapping, opaque effect-definition keys,
    and byte-level malformed/round-trip fixtures; retain the legacy x86 writer until equivalence is
    proven. Fast-file `FxEffectDef` widening remains a separate nested-payload batch.
@@ -557,9 +569,12 @@ work item changes. Do not create session-specific handoff files.
   fields from carrying into neighbors, and a durable admission marker prevents killed records with
   external references from re-entering the graph. Generation-tagged native physics ownership now covers
   live spawn/draw/free/spotlight/reset/init/shutdown and transactional legacy-x86 archive replacement;
-  admission revalidation prevents old iterator jobs from crossing lifecycle generations. Remaining blockers
-  are camera/scalar publication, real Disk32 FX archive/fast-file conversion, recoverable full-capacity body
-  replacement, and production runtime/fault-injection fixtures. `R_FilterXModelIntoScene` still retains an
+  admission revalidation prevents old iterator jobs from crossing lifecycle generations. The current branch
+  handles the 512-body full-capacity case with exact silent topology recipes, bounded retirement and
+  reconstruction, preserved archive exclusion, canonical safe-empty reset, and fail-stop handling after any
+  lost native ownership. Remaining blockers are camera/scalar publication, real Disk32 FX archive/fast-file
+  conversion, executable production runtime/fault-injection fixtures, competing non-FX occupancy coverage,
+  and a measured heap-backed transaction workspace. `R_FilterXModelIntoScene` still retains an
   FX element's cached-lighting handle pointer beyond the per-effect draw lock; current renderer scheduling
   consumes it before the next FX mutation, but a generation-aware scene-owned cache is required before that
   ordering can be relaxed. The unbounded load-object cursor is tracked separately under XAnim/XModel.

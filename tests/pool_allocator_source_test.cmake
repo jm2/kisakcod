@@ -406,15 +406,29 @@ require_pool_source_not_contains(
     "*(void **)ff"
     "ODE diagnostics must not dereference raw link storage")
 
-require_pool_source_match_count(
-    "EffectsCore/fx_archive.cpp"
-    "Pool_ValidateFull\\("
-    3
-    "archive capacity must fully validate body, userdata, and geom pools")
 require_pool_source_contains(
     "EffectsCore/fx_archive.cpp"
+    "Phys_TryGetFreeResourceCapacityLockedNoReport("
+    "archive capacity must use the silent native three-pool validator")
+require_pool_source_not_contains(
+    "EffectsCore/fx_archive.cpp"
     "Pool_GetFreeCount("
-    "archive capacity may use O(1) counts only after full validation")
+    "archive capacity must not bypass the silent native validator")
+require_pool_source_not_contains(
+    "EffectsCore/fx_archive.cpp"
+    "Pool_ValidateFull("
+    "archive capacity must not invoke diagnostic full validation")
+foreach(_capacity_pool_storage IN ITEMS
+    "ODE_BodyPoolStorage()"
+    "Phys_UserDataPoolStorage()"
+    "ODE_GeomPoolStorage()")
+    require_pool_function_contains(
+        "physics/phys_ode.cpp"
+        "Phys_TryGetFreeResourceCapacityLockedNoReport("
+        "PhysBodyRollbackStatus __cdecl Phys_TryCaptureBodyStateLocked("
+        "${_capacity_pool_storage}"
+        "silent capacity must inspect every fixed-pool descriptor")
+endforeach()
 require_pool_source_contains(
     "physics/ode/collision_kernel.cpp"
     "ODE_GeomPoolStorage()"

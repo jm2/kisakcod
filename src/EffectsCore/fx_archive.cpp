@@ -1,4 +1,5 @@
 #include "fx_system.h"
+#include "fx_archive_capacity.h"
 #include "fx_physics_sidecar.h"
 #include "fx_pool.h"
 #include "fx_pool_graph.h"
@@ -31,8 +32,11 @@ struct FxArchivePhysicsEntry
     FxElem *elem;
     const XModel *model;
     BodyState state;
+    PhysBodyRollbackRecipe rollbackRecipe;
     std::size_t ownerIndex;
     fx::physics::BodyToken token;
+    fx::physics::BodyToken reconstructedToken;
+    bool retired;
 };
 
 constexpr int FX_ARCHIVE_SYSTEM_SIZE = 2656;
@@ -64,6 +68,31 @@ constexpr float FX_ARCHIVE_PHYSICS_FRICTION_MAX = 10000.0f;
 constexpr float FX_ARCHIVE_PHYSICS_BOUNCE_MAX = 1.0f;
 constexpr double FX_ARCHIVE_UNIT_LENGTH_TOLERANCE = 0.025;
 constexpr double FX_ARCHIVE_ORTHOGONAL_TOLERANCE = 0.025;
+
+bool FX_TryGetArchivePhysicsEntryByteCount(
+    const std::size_t entryCount,
+    std::size_t *const outByteCount,
+    int *const outAllocationSize) noexcept
+{
+    if (!outByteCount || !outAllocationSize
+        || entryCount > fx::physics::BODY_LIMIT
+        || entryCount
+            > (std::numeric_limits<std::size_t>::max)()
+                / sizeof(FxArchivePhysicsEntry))
+    {
+        return false;
+    }
+    const std::size_t byteCount =
+        entryCount * sizeof(FxArchivePhysicsEntry);
+    if (byteCount
+        > static_cast<std::size_t>((std::numeric_limits<int>::max)()))
+    {
+        return false;
+    }
+    *outByteCount = byteCount;
+    *outAllocationSize = static_cast<int>(byteCount);
+    return true;
+}
 
 bool FX_ArchiveFloatIsBounded(
     const float value,
@@ -836,25 +865,6 @@ bool FX_ValidateArchiveVisibility(const FxSystem *const system) noexcept
     return true;
 }
 
-bool FX_ArchivePhysicsBodyIsLiveLocked(dxBody *const expectedBody) noexcept
-{
-    dxWorld *const world = physGlob.world[PHYS_WORLD_FX];
-    if (!expectedBody || !world)
-        return false;
-
-    std::size_t bodyCount = 0;
-    for (dxBody *body = world->firstbody;
-         body;
-         body = static_cast<dxBody *>(body->next))
-    {
-        if (bodyCount++ >= fx::physics::BODY_LIMIT)
-            return false;
-        if (body == expectedBody)
-            return true;
-    }
-    return false;
-}
-
 bool FX_BuildArchiveExpectedTokens(
     const FxArchivePhysicsEntry *const entries,
     const std::size_t entryCount,
@@ -867,16 +877,19 @@ bool FX_BuildArchiveExpectedTokens(
     }
 
     outTokens->fill(fx::physics::INVALID_BODY_TOKEN);
+    std::array<bool, MAX_ELEMS> seenOwners{};
     for (std::size_t index = 0; index < entryCount; ++index)
     {
         const FxArchivePhysicsEntry &entry = entries[index];
         if (entry.ownerIndex >= MAX_ELEMS
-            || entry.token == fx::physics::INVALID_BODY_TOKEN
-            || (*outTokens)[entry.ownerIndex]
-                != fx::physics::INVALID_BODY_TOKEN)
+            || seenOwners[entry.ownerIndex]
+            || entry.token == fx::physics::INVALID_BODY_TOKEN)
         {
             return false;
         }
+        seenOwners[entry.ownerIndex] = true;
+        if (entry.retired)
+            continue;
         (*outTokens)[entry.ownerIndex] = entry.token;
     }
     return true;
@@ -904,78 +917,182 @@ bool FX_ValidateArchivePhysicsOwnershipLocked(
     for (std::size_t index = 0; index < entryCount; ++index)
     {
         FxArchivePhysicsEntry &entry = entries[index];
+        if (entry.retired)
+            continue;
         const fx::physics::BodyResult resolved = fx::physics::Resolve(
             sidecar, entry.ownerIndex, entry.token);
+        BodyState captured{};
         if (!resolved
-            || !FX_ArchivePhysicsBodyIsLiveLocked(resolved.body))
+            || Phys_TryCaptureBodyStateLocked(
+                   PHYS_WORLD_FX, resolved.body, &captured)
+                != PhysBodyRollbackStatus::Success)
         {
             return false;
         }
         if (captureStates)
-            Phys_GetStateFromBody(resolved.body, &entry.state);
+            entry.state = captured;
     }
     return true;
 }
 
-bool FX_DrainArchivePhysicsSidecarLocked(
-    fx::physics::BodySidecar *const sidecar) noexcept
+bool FX_CaptureArchivePhysicsRollbackRecipesLocked(
+    const fx::physics::BodySidecar *const sidecar,
+    FxArchivePhysicsEntry *const entries,
+    const std::size_t entryCount) noexcept
+{
+    if (!FX_ValidateArchivePhysicsOwnershipLocked(
+            sidecar, entries, entryCount, false))
+    {
+        return false;
+    }
+
+    for (std::size_t index = 0; index < entryCount; ++index)
+    {
+        FxArchivePhysicsEntry &entry = entries[index];
+        if (entry.retired || !entry.model)
+            return false;
+        const fx::physics::BodyResult resolved = fx::physics::Resolve(
+            sidecar, entry.ownerIndex, entry.token);
+        PhysBodyRollbackRecipe recipe{};
+        if (!resolved
+            || Phys_TryBuildBodyRollbackRecipeLocked(
+                   PHYS_WORLD_FX,
+                   resolved.body,
+                   entry.model,
+                   &recipe)
+                != PhysBodyRollbackStatus::Success
+            || recipe.model != entry.model
+            || recipe.demand.bodyCount != 1
+            || recipe.demand.userDataCount != 1)
+        {
+            return false;
+        }
+        entry.rollbackRecipe = recipe;
+        entry.state = recipe.state;
+    }
+    return true;
+}
+
+bool FX_PrepareArchivePhysicsSidecarForDrainInspectionLocked(
+    fx::physics::BodySidecar *const sidecar,
+    const bool allowVacantInitialization) noexcept
 {
     if (!sidecar)
         return false;
     if (!sidecar->IsInitialized())
     {
+        if (!allowVacantInitialization)
+            return false;
         return fx::physics::ResetEmpty(sidecar)
             == fx::physics::SidecarStatus::Success;
     }
-    if (fx::physics::Validate(sidecar)
-        != fx::physics::SidecarStatus::Success)
-    {
-        return false;
-    }
-
-    while (sidecar->ActiveCount() != 0)
-    {
-        const fx::physics::IndexedBodyResult taken =
-            fx::physics::TakeFirst(sidecar);
-        if (!taken)
-            return false;
-        Phys_ObjDestroy(PHYS_WORLD_FX, taken.body);
-    }
-    return fx::physics::ResetEmpty(sidecar)
+    return fx::physics::Validate(sidecar)
         == fx::physics::SidecarStatus::Success;
 }
 
-bool FX_GetArchiveModelGeomCount(
-    const XModel *const model,
-    std::size_t *const outGeomCount) noexcept
+[[noreturn]] void FX_FailArchivePhysicsCleanupLocked() noexcept
 {
-    if (!model || !outGeomCount)
-        return false;
+    // Once sidecar ownership has been detached, ordinary rollback can no
+    // longer discover an unexpectedly undestroyable native body. Keep both
+    // archive and PHYSICS exclusion closed and terminate instead of allowing
+    // safe-empty recovery to publish an incomplete destruction ledger.
+    Sys_Error("FX archive native-body cleanup failed after ownership transfer");
+    std::abort();
+}
 
-    if (!model->physGeoms)
+bool FX_DrainArchivePhysicsSidecarsLocked(
+    const std::array<fx::physics::BodySidecar *, 3> &sidecars,
+    const std::array<bool, 3> &drainSidecar) noexcept
+{
+    // Slot zero is always the persistent live registry. Treating an
+    // uninitialized live registry as empty could abandon native bodies that
+    // no longer have registrations. Slots one and two are fresh transaction
+    // locals and may be initialized only after ResetEmpty proves them vacant.
+    for (std::size_t first = 0; first < sidecars.size(); ++first)
     {
-        *outGeomCount = 1;
-        return true;
-    }
-
-    const PhysGeomList &geomList = *model->physGeoms;
-    if (geomList.count > ODE_GEOM_POOL_COUNT
-        || (geomList.count != 0 && !geomList.geoms))
-    {
-        return false;
-    }
-
-    std::size_t geomCount = 0;
-    for (std::uint32_t index = 0; index < geomList.count; ++index)
-    {
-        // Oriented primitive collision consumes a primitive plus its transform.
-        // Brushes are already expressed in model space and consume one geom.
-        const std::size_t required = geomList.geoms[index].brush ? 1 : 2;
-        if (geomCount > ODE_GEOM_POOL_COUNT - required)
+        if (!sidecars[first]
+            || !FX_PrepareArchivePhysicsSidecarForDrainInspectionLocked(
+                sidecars[first], first != 0))
+        {
             return false;
-        geomCount += required;
+        }
+        for (std::size_t second = first + 1;
+             second < sidecars.size();
+             ++second)
+        {
+            if (sidecars[first] == sidecars[second])
+                return false;
+        }
     }
-    *outGeomCount = geomCount;
+
+    // Protect retained as well as drained ownership. Otherwise a corrupt
+    // staged/rollback alias could destroy a body that remains published by the
+    // live sidecar even though the selected drain sets are mutually disjoint.
+    for (std::size_t first = 0; first < sidecars.size(); ++first)
+    {
+        for (std::size_t second = first + 1;
+             second < sidecars.size();
+             ++second)
+        {
+            if (fx::physics::ValidateDisjointOwnership(
+                    sidecars[first], sidecars[second])
+                != fx::physics::SidecarStatus::Success)
+            {
+                return false;
+            }
+        }
+    }
+
+    // Reuse one bounded snapshot so stack cost does not scale with the three
+    // sidecars. PHYSICS ownership prevents any registration/native mutation
+    // between this all-body preflight and the deterministic drain pass.
+    fx::physics::OwnershipSnapshot ownership{};
+    for (std::size_t index = 0; index < sidecars.size(); ++index)
+    {
+        if (!drainSidecar[index])
+            continue;
+        if (fx::physics::SnapshotOwnership(
+                sidecars[index], &ownership)
+            != fx::physics::SidecarStatus::Success)
+        {
+            return false;
+        }
+        for (std::size_t bodyIndex = 0;
+             bodyIndex < ownership.count;
+             ++bodyIndex)
+        {
+            if (Phys_TryValidateBodyDestroyLockedNoReport(
+                    PHYS_WORLD_FX,
+                    ownership.records[bodyIndex].body)
+                != PhysBodyRollbackStatus::Success)
+            {
+                return false;
+            }
+        }
+    }
+
+    for (std::size_t index = 0; index < sidecars.size(); ++index)
+    {
+        if (!drainSidecar[index])
+            continue;
+        fx::physics::BodySidecar *const sidecar = sidecars[index];
+        while (sidecar->ActiveCount() != 0)
+        {
+            const fx::physics::IndexedBodyResult taken =
+                fx::physics::TakeFirst(sidecar);
+            if (!taken)
+                return false;
+            if (Phys_TryDestroyBodyLockedNoReport(
+                    PHYS_WORLD_FX, taken.body)
+                != PhysBodyRollbackStatus::Success)
+                FX_FailArchivePhysicsCleanupLocked();
+        }
+        if (fx::physics::ResetEmpty(sidecar)
+            != fx::physics::SidecarStatus::Success)
+        {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -986,63 +1103,378 @@ enum class FxArchivePhysicsCapacityStatus : std::uint8_t
     Invalid,
 };
 
+bool FX_GetArchivePhysicsDemand(
+    const FxArchivePhysicsEntry *const entries,
+    const std::size_t entryCount,
+    fx::archive::PhysicsResourceCount *const outDemand) noexcept
+{
+    if ((entryCount != 0 && !entries)
+        || entryCount > fx::physics::BODY_LIMIT
+        || !outDemand)
+    {
+        return false;
+    }
+
+    fx::archive::PhysicsResourceCount demand{};
+    for (std::size_t index = 0; index < entryCount; ++index)
+    {
+        PhysBodyResourceDemand bodyDemand{};
+        if (entries[index].retired
+            || Phys_TryGetBodyModelResourceDemand(
+                   entries[index].model, &bodyDemand)
+                != PhysBodyRollbackStatus::Success
+            || bodyDemand.bodyCount != 1
+            || bodyDemand.userDataCount != 1
+            || !fx::archive::PhysicsResourceCountCanAdd(
+                demand.bodies, bodyDemand.bodyCount)
+            || !fx::archive::PhysicsResourceCountCanAdd(
+                demand.userData, bodyDemand.userDataCount)
+            || !fx::archive::PhysicsResourceCountCanAdd(
+                demand.geoms, bodyDemand.geomCount))
+        {
+            return false;
+        }
+        demand.bodies += bodyDemand.bodyCount;
+        demand.userData += bodyDemand.userDataCount;
+        demand.geoms += bodyDemand.geomCount;
+    }
+    *outDemand = demand;
+    return true;
+}
+
+bool FX_GetArchivePhysicsFreeCapacityLocked(
+    fx::archive::PhysicsResourceCount *const outFreeCapacity) noexcept
+{
+    if (!outFreeCapacity)
+        return false;
+    PhysBodyResourceDemand available{};
+    if (Phys_TryGetFreeResourceCapacityLockedNoReport(&available)
+        != PhysBodyRollbackStatus::Success)
+    {
+        return false;
+    }
+
+    *outFreeCapacity = {
+        available.bodyCount,
+        available.userDataCount,
+        available.geomCount,
+    };
+    return true;
+}
+
 FxArchivePhysicsCapacityStatus FX_ArchivePhysicsCapacityAvailableLocked(
     const FxArchivePhysicsEntry *const entries,
     const std::size_t entryCount) noexcept
 {
-    if ((entryCount != 0 && !entries)
-        || entryCount > fx::physics::BODY_LIMIT
-        || !physGlob.world[PHYS_WORLD_FX]
-        || !physGlob.space[PHYS_WORLD_FX])
+    fx::archive::PhysicsResourceCount required{};
+    if (!FX_GetArchivePhysicsDemand(entries, entryCount, &required))
     {
         return FxArchivePhysicsCapacityStatus::Invalid;
     }
-
-    std::size_t requiredGeomCount = 0;
-    for (std::size_t index = 0; index < entryCount; ++index)
+    if (required.bodies == 0 && required.userData == 0
+        && required.geoms == 0)
     {
-        std::size_t modelGeomCount = 0;
-        if (!FX_GetArchiveModelGeomCount(
-                entries[index].model, &modelGeomCount)
-            || requiredGeomCount
-                > ODE_GEOM_POOL_COUNT - modelGeomCount)
-        {
-            return FxArchivePhysicsCapacityStatus::Invalid;
-        }
-        requiredGeomCount += modelGeomCount;
+        return FxArchivePhysicsCapacityStatus::Sufficient;
     }
 
-    const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
-    const poolstorage_t userDataStorage =
-        Phys_UserDataPoolStorage();
-    const poolstorage_t geomStorage = ODE_GeomPoolStorage();
-    if (!Pool_ValidateFull(bodyStorage, &odeGlob.bodyPool)
-        || !Pool_ValidateFull(userDataStorage, &physGlob.userDataPool)
-        || !Pool_ValidateFull(geomStorage, &odeGlob.geomPool))
-    {
-        return FxArchivePhysicsCapacityStatus::Invalid;
-    }
-
-    const poolcountresult_t bodyFreeCount = Pool_GetFreeCount(
-        bodyStorage, &odeGlob.bodyPool);
-    if (!bodyFreeCount.valid)
+    fx::archive::PhysicsResourceCount available{};
+    if (!FX_GetArchivePhysicsFreeCapacityLocked(&available))
         return FxArchivePhysicsCapacityStatus::Invalid;
 
-    const poolcountresult_t userDataFreeCount = Pool_GetFreeCount(
-        userDataStorage, &physGlob.userDataPool);
-    if (!userDataFreeCount.valid)
-        return FxArchivePhysicsCapacityStatus::Invalid;
-
-    const poolcountresult_t geomFreeCount = Pool_GetFreeCount(
-        geomStorage, &odeGlob.geomPool);
-    if (!geomFreeCount.valid)
-        return FxArchivePhysicsCapacityStatus::Invalid;
-
-    return bodyFreeCount.count >= entryCount
-        && userDataFreeCount.count >= entryCount
-        && geomFreeCount.count >= requiredGeomCount
+    return available.bodies >= required.bodies
+        && available.userData >= required.userData
+        && available.geoms >= required.geoms
         ? FxArchivePhysicsCapacityStatus::Sufficient
         : FxArchivePhysicsCapacityStatus::ValidInsufficient;
+}
+
+bool FX_BuildArchivePhysicsRetirementPlanLocked(
+    const FxArchivePhysicsEntry *const desiredEntries,
+    const std::size_t desiredEntryCount,
+    const FxArchivePhysicsEntry *const liveEntries,
+    const std::size_t liveEntryCount,
+    fx::archive::PhysicsRetirementPlan *const outPlan) noexcept
+{
+    if ((liveEntryCount != 0 && !liveEntries) || !outPlan
+        || liveEntryCount > fx::physics::BODY_LIMIT)
+    {
+        return false;
+    }
+
+    fx::archive::PhysicsResourceCount desired{};
+    if (!FX_GetArchivePhysicsDemand(
+            desiredEntries, desiredEntryCount, &desired))
+    {
+        return false;
+    }
+
+    if (desired.bodies == 0 && desired.userData == 0
+        && desired.geoms == 0)
+    {
+        *outPlan = {};
+        return true;
+    }
+
+    fx::archive::PhysicsResourceCount freeCapacity{};
+    if (!FX_GetArchivePhysicsFreeCapacityLocked(&freeCapacity))
+        return false;
+
+    std::array<fx::archive::PhysicsRetirementCandidate,
+               fx::physics::BODY_LIMIT>
+        candidates{};
+    for (std::size_t index = 0; index < liveEntryCount; ++index)
+    {
+        const FxArchivePhysicsEntry &entry = liveEntries[index];
+        if (entry.retired || !entry.rollbackRecipe.model
+            || entry.rollbackRecipe.model != entry.model
+            || entry.rollbackRecipe.demand.bodyCount != 1
+            || entry.rollbackRecipe.demand.userDataCount != 1)
+        {
+            return false;
+        }
+        candidates[index] = {
+            index,
+            entry.ownerIndex,
+            entry.rollbackRecipe.demand.geomCount,
+        };
+    }
+
+    return fx::archive::BuildPhysicsRetirementPlan(
+               freeCapacity,
+               desired,
+               candidates.data(),
+               liveEntryCount,
+               outPlan)
+        == fx::archive::PhysicsRetirementPlanStatus::Success;
+}
+
+bool FX_RetireArchivePhysicsLocked(
+    fx::physics::BodySidecar *const liveSidecar,
+    FxArchivePhysicsEntry *const liveEntries,
+    const std::size_t liveEntryCount,
+    const fx::archive::PhysicsRetirementPlan &plan,
+    std::size_t *const outRetiredCount) noexcept
+{
+    if (!liveSidecar || (liveEntryCount != 0 && !liveEntries)
+        || liveEntryCount > fx::physics::BODY_LIMIT
+        || plan.count > liveEntryCount || !outRetiredCount)
+    {
+        return false;
+    }
+    *outRetiredCount = 0;
+
+    // Prove every selected native body can be destroyed before detaching the
+    // first registration. With PHYSICS held, each subsequent checked destroy
+    // is then a no-fail commit over the validated prefix.
+    for (std::size_t index = 0; index < plan.count; ++index)
+    {
+        const std::size_t entryIndex = plan.entryIndices[index];
+        if (entryIndex >= liveEntryCount)
+            return false;
+        const FxArchivePhysicsEntry &entry = liveEntries[entryIndex];
+        const fx::physics::BodyResult resolved = fx::physics::Resolve(
+            liveSidecar, entry.ownerIndex, entry.token);
+        if (entry.retired || !entry.rollbackRecipe.model
+            || entry.rollbackRecipe.model != entry.model || !resolved
+            || Phys_TryValidateBodyDestroyLockedNoReport(
+                   PHYS_WORLD_FX, resolved.body)
+                != PhysBodyRollbackStatus::Success)
+        {
+            return false;
+        }
+    }
+
+    for (std::size_t index = 0; index < plan.count; ++index)
+    {
+        const std::size_t entryIndex = plan.entryIndices[index];
+        if (entryIndex >= liveEntryCount)
+            return false;
+        FxArchivePhysicsEntry &entry = liveEntries[entryIndex];
+        if (entry.retired || !entry.rollbackRecipe.model
+            || entry.rollbackRecipe.model != entry.model)
+        {
+            return false;
+        }
+
+        const fx::physics::BodyResult taken = fx::physics::Take(
+            liveSidecar, entry.ownerIndex, entry.token);
+        if (!taken)
+            return false;
+        entry.reconstructedToken = fx::physics::INVALID_BODY_TOKEN;
+        entry.retired = true;
+        ++*outRetiredCount;
+        if (Phys_TryDestroyBodyLockedNoReport(
+                PHYS_WORLD_FX, taken.body)
+            != PhysBodyRollbackStatus::Success)
+            FX_FailArchivePhysicsCleanupLocked();
+    }
+    return true;
+}
+
+bool FX_ReconstructRetiredArchivePhysicsLocked(
+    fx::physics::BodySidecar *const liveSidecar,
+    FxArchivePhysicsEntry *const liveEntries,
+    const std::size_t liveEntryCount,
+    const fx::archive::PhysicsRetirementPlan &plan,
+    const std::size_t retiredCount) noexcept
+{
+    if (!liveSidecar || (liveEntryCount != 0 && !liveEntries)
+        || liveEntryCount > fx::physics::BODY_LIMIT
+        || retiredCount > plan.count || plan.count > liveEntryCount)
+    {
+        return false;
+    }
+
+    for (std::size_t index = 0; index < retiredCount; ++index)
+    {
+        const std::size_t entryIndex = plan.entryIndices[index];
+        if (entryIndex >= liveEntryCount)
+            return false;
+        FxArchivePhysicsEntry &entry = liveEntries[entryIndex];
+        const PhysBodyRollbackRecipe &recipe = entry.rollbackRecipe;
+        if (!entry.retired || entry.ownerIndex >= MAX_ELEMS
+            || !recipe.model || recipe.model != entry.model
+            || entry.token == fx::physics::INVALID_BODY_TOKEN
+            || entry.reconstructedToken
+                != fx::physics::INVALID_BODY_TOKEN
+            || recipe.demand.bodyCount != 1
+            || recipe.demand.userDataCount != 1
+            || fx::physics::ValidateVacantOwner(
+                   liveSidecar, entry.ownerIndex)
+                != fx::physics::SidecarStatus::Success)
+        {
+            return false;
+        }
+    }
+
+    for (std::size_t index = 0; index < retiredCount; ++index)
+    {
+        const std::size_t entryIndex = plan.entryIndices[index];
+        FxArchivePhysicsEntry &entry = liveEntries[entryIndex];
+        const PhysBodyRollbackRecipe &recipe = entry.rollbackRecipe;
+        dxBody *createdBody = nullptr;
+        const PhysBodyModelCreateStatus bodyStatus =
+            Phys_TryCreateBodyFromStateAndXModelLockedNoReport(
+                PHYS_WORLD_FX,
+                &recipe.state,
+                recipe.model,
+                &createdBody);
+        if (bodyStatus != PhysBodyModelCreateStatus::Success
+            || !createdBody)
+        {
+            if (bodyStatus == PhysBodyModelCreateStatus::CleanupFailed)
+                FX_FailArchivePhysicsCleanupLocked();
+            return false;
+        }
+
+        const fx::physics::TokenResult bound = fx::physics::Bind(
+            liveSidecar, entry.ownerIndex, createdBody);
+        if (!bound)
+        {
+            if (bound.status != fx::physics::SidecarStatus::DuplicateBody)
+            {
+                if (Phys_TryDestroyBodyLockedNoReport(
+                        PHYS_WORLD_FX, createdBody)
+                    != PhysBodyRollbackStatus::Success)
+                {
+                    FX_FailArchivePhysicsCleanupLocked();
+                }
+            }
+            return false;
+        }
+        entry.reconstructedToken = bound.token;
+    }
+    return true;
+}
+
+bool FX_ArchiveRetiredTokenTargetsMatch(
+    const FxPool<FxElem> *const targetElems,
+    const FxArchivePhysicsEntry *const liveEntries,
+    const std::size_t liveEntryCount,
+    const fx::archive::PhysicsRetirementPlan &plan,
+    const std::size_t retiredCount,
+    const bool requireReconstructedTokens) noexcept
+{
+    if (!targetElems || (liveEntryCount != 0 && !liveEntries)
+        || liveEntryCount > fx::physics::BODY_LIMIT
+        || retiredCount > plan.count || plan.count > liveEntryCount)
+    {
+        return false;
+    }
+
+    for (std::size_t index = 0; index < retiredCount; ++index)
+    {
+        const std::size_t entryIndex = plan.entryIndices[index];
+        if (entryIndex >= liveEntryCount)
+            return false;
+        const FxArchivePhysicsEntry &entry = liveEntries[entryIndex];
+        if (!entry.retired || entry.ownerIndex >= MAX_ELEMS
+            || entry.token == fx::physics::INVALID_BODY_TOKEN
+            || (requireReconstructedTokens
+                && entry.reconstructedToken
+                    == fx::physics::INVALID_BODY_TOKEN)
+            || fx::physics::TokenFromLegacyField(
+                   targetElems[entry.ownerIndex].item.physObjId)
+                != entry.token)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool FX_PatchReconstructedArchivePhysicsTokens(
+    FxPool<FxElem> *const targetElems,
+    FxArchivePhysicsEntry *const liveEntries,
+    const std::size_t liveEntryCount,
+    const fx::archive::PhysicsRetirementPlan &plan,
+    const std::size_t retiredCount) noexcept
+{
+    if (!FX_ArchiveRetiredTokenTargetsMatch(
+            targetElems,
+            liveEntries,
+            liveEntryCount,
+            plan,
+            retiredCount,
+            true))
+    {
+        return false;
+    }
+
+    // All checks precede this no-fail publication pass. A failed body rebuild
+    // therefore never leaves a partially patched old graph.
+    for (std::size_t index = 0; index < retiredCount; ++index)
+    {
+        FxArchivePhysicsEntry &entry =
+            liveEntries[plan.entryIndices[index]];
+        targetElems[entry.ownerIndex].item.physObjId =
+            fx::physics::TokenToLegacyField(entry.reconstructedToken);
+        entry.token = entry.reconstructedToken;
+        entry.reconstructedToken = fx::physics::INVALID_BODY_TOKEN;
+        entry.retired = false;
+    }
+
+    return true;
+}
+
+bool FX_PublishArchivePhysicsSafeEmptyLocked(
+    FxSystem *const system,
+    fx::physics::BodySidecar *const liveSidecar,
+    fx::physics::BodySidecar *const stagedSidecar,
+    fx::physics::BodySidecar *const rollbackSidecar) noexcept
+{
+    if (!system || !liveSidecar || !stagedSidecar || !rollbackSidecar)
+        return false;
+    if (!FX_ValidateArchiveExclusiveState(system)
+        || !FX_CanPublishArchiveSafeEmptyStateLocked(system))
+        return false;
+
+    const bool allPhysicsDrained =
+        FX_DrainArchivePhysicsSidecarsLocked(
+            {liveSidecar, stagedSidecar, rollbackSidecar},
+            {true, true, true});
+    return allPhysicsDrained
+        && FX_PublishArchiveSafeEmptyStateLocked(system);
 }
 
 bool FX_AppendArchivePhysicsEntry(
@@ -1404,7 +1836,7 @@ bool FX_CreateArchivePhysicsLocked(
     for (std::size_t index = 0; index < entryCount; ++index)
     {
         FxArchivePhysicsEntry &entry = entries[index];
-        if (!entry.elem || !entry.model
+        if (!entry.elem || !entry.model || entry.retired
             || !FX_ValidateArchiveBodyState(entry.state))
         {
             return false;
@@ -1428,7 +1860,7 @@ bool FX_CreateArchivePhysicsLocked(
         FX_NormalizeArchiveBodyState(&entry.state, physicsTime);
         dxBody *createdBody = nullptr;
         const PhysBodyModelCreateStatus bodyStatus =
-            Phys_TryCreateBodyFromStateAndXModel(
+            Phys_TryCreateBodyFromStateAndXModelLockedNoReport(
                 PHYS_WORLD_FX,
                 &entry.state,
                 entry.model,
@@ -1436,6 +1868,8 @@ bool FX_CreateArchivePhysicsLocked(
         if (bodyStatus != PhysBodyModelCreateStatus::Success
             || !createdBody)
         {
+            if (bodyStatus == PhysBodyModelCreateStatus::CleanupFailed)
+                FX_FailArchivePhysicsCleanupLocked();
             created = false;
             break;
         }
@@ -1448,7 +1882,14 @@ bool FX_CreateArchivePhysicsLocked(
             // when the allocator returned an already-registered address.
             // Its existing registration owns the sole eventual destruction.
             if (bound.status != fx::physics::SidecarStatus::DuplicateBody)
-                Phys_ObjDestroy(PHYS_WORLD_FX, createdBody);
+            {
+                if (Phys_TryDestroyBodyLockedNoReport(
+                        PHYS_WORLD_FX, createdBody)
+                    != PhysBodyRollbackStatus::Success)
+                {
+                    FX_FailArchivePhysicsCleanupLocked();
+                }
+            }
             created = false;
             break;
         }
@@ -1463,7 +1904,12 @@ bool FX_CreateArchivePhysicsLocked(
                 && disjointStatus
                     != fx::physics::SidecarStatus::DuplicateBody)
             {
-                Phys_ObjDestroy(PHYS_WORLD_FX, detached.body);
+                if (Phys_TryDestroyBodyLockedNoReport(
+                        PHYS_WORLD_FX, detached.body)
+                    != PhysBodyRollbackStatus::Success)
+                {
+                    FX_FailArchivePhysicsCleanupLocked();
+                }
             }
             created = false;
             break;
@@ -1643,11 +2089,21 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     restoredSystem.activeSpotLightBoltDobj =
         restoredSpotLightBoltDobj;
     FxArchivePhysicsEntry *physicsEntries = nullptr;
+    std::size_t physicsEntryByteCount = 0;
+    int physicsEntryAllocationSize = 0;
     if (physicsEntryCount != 0)
     {
+        if (!FX_TryGetArchivePhysicsEntryByteCount(
+                physicsEntryCount,
+                &physicsEntryByteCount,
+                &physicsEntryAllocationSize))
+        {
+            Z_Free(restoredBuffers, 10);
+            Com_Error(ERR_DROP, "Invalid FX physics staging size");
+            return;
+        }
         physicsEntries = static_cast<FxArchivePhysicsEntry *>(Z_Malloc(
-            static_cast<int>(
-                physicsEntryCount * sizeof(FxArchivePhysicsEntry)),
+            physicsEntryAllocationSize,
             "FX_Restore physics staging",
             10));
         if (!physicsEntries)
@@ -1659,7 +2115,7 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
         std::memset(
             physicsEntries,
             0,
-            physicsEntryCount * sizeof(FxArchivePhysicsEntry));
+            physicsEntryByteCount);
         std::size_t populatedEntryCount = 0;
         std::int16_t populatedSpotLightBoltDobj = -1;
         if (!FX_CollectArchivePhysicsEntries(
@@ -1757,11 +2213,22 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
         return;
     }
 
+    std::size_t replacedPhysicsEntryByteCount = 0;
+    int replacedPhysicsEntryAllocationSize = 0;
+    if (!FX_TryGetArchivePhysicsEntryByteCount(
+            fx::physics::BODY_LIMIT,
+            &replacedPhysicsEntryByteCount,
+            &replacedPhysicsEntryAllocationSize))
+    {
+        if (physicsEntries)
+            Z_Free(physicsEntries, 10);
+        Z_Free(restoredBuffers, 10);
+        Com_Error(ERR_DROP, "Invalid current FX physics staging size");
+        return;
+    }
     FxArchivePhysicsEntry *const replacedPhysicsEntries =
         static_cast<FxArchivePhysicsEntry *>(Z_Malloc(
-            static_cast<int>(
-                fx::physics::BODY_LIMIT
-                    * sizeof(FxArchivePhysicsEntry)),
+            replacedPhysicsEntryAllocationSize,
             "FX_Restore replaced physics staging",
             10));
     if (!replacedPhysicsEntries)
@@ -1775,7 +2242,7 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     std::memset(
         replacedPhysicsEntries,
         0,
-        fx::physics::BODY_LIMIT * sizeof(FxArchivePhysicsEntry));
+        replacedPhysicsEntryByteCount);
 
     FxSystemBuffers *const rollbackBuffers =
         static_cast<FxSystemBuffers *>(Z_Malloc(
@@ -1805,19 +2272,20 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
         return;
     }
 
-    // Nothing below this point performs archive I/O or reports ERR_DROP. The
-    // old bodies are retained until the validated replacement state is copied.
+    // Nothing below this point performs archive I/O or reports ERR_DROP. Every
+    // old body is captured as a validated reconstruction recipe before any
+    // selected body is detached and destroyed to make replacement capacity.
     FxSystem rollbackSystem{};
     Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
     std::memcpy(&rollbackSystem, system, sizeof(rollbackSystem));
     std::memcpy(rollbackBuffers, systemBuffers, sizeof(*rollbackBuffers));
     Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-    // Both publication paths restore exclusive ownership through the checked
-    // iterator helper after copying their staged image.  The live snapshot was
-    // taken while this thread owned -1, so normalize its staged word first;
-    // otherwise a rollback would try to acquire an already-negative copy and
-    // falsely report that the old state could not be restored.
-    Sys_AtomicStore(&rollbackSystem.iteratorCount, 0);
+    // The archive owner keeps iterator exclusivity throughout the transaction.
+    // Both staged graph images retain -1 so publication never creates a window
+    // that must be repaired by reacquiring the iterator after the copy.
+    const bool rollbackSnapshotExclusive =
+        FX_ValidateArchiveExclusiveState(system)
+        && Sys_AtomicLoad(&rollbackSystem.iteratorCount) == -1;
 
     // Lock order for archive restore is archive gate/exclusive iterator, a
     // completed FX_ALLOC snapshot interval, then PHYSICS. The snapshot lock is
@@ -1832,7 +2300,10 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     fx::physics::BodySidecar *const livePhysicsSidecar =
         FX_GetPhysicsBodySidecar(system);
     std::size_t replacedPhysicsEntryCount = 0;
-    bool restoreReady = FX_ArchiveEffectRingIsValid(system)
+    fx::archive::PhysicsRetirementPlan retirementPlan{};
+    std::size_t retiredPhysicsEntryCount = 0;
+    const bool livePhysicsCaptured = rollbackSnapshotExclusive
+        && FX_ArchiveEffectRingIsValid(system)
         && FX_ValidatePoolAllocationGraphState(system)
         && FX_CollectArchivePhysicsEntries(
             system,
@@ -1841,51 +2312,72 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
             &replacedPhysicsEntryCount,
             false,
             nullptr)
-        && FX_ValidateArchivePhysicsOwnershipLocked(
+        && FX_CaptureArchivePhysicsRollbackRecipesLocked(
+            livePhysicsSidecar,
+            replacedPhysicsEntries,
+            replacedPhysicsEntryCount);
+    const bool retirementPlanned = livePhysicsCaptured
+        && FX_BuildArchivePhysicsRetirementPlanLocked(
+            physicsEntries,
+            physicsEntryCount,
+            replacedPhysicsEntries,
+            replacedPhysicsEntryCount,
+            &retirementPlan);
+    const bool retirementComplete = retirementPlanned
+        && FX_RetireArchivePhysicsLocked(
             livePhysicsSidecar,
             replacedPhysicsEntries,
             replacedPhysicsEntryCount,
-            false)
+            retirementPlan,
+            &retiredPhysicsEntryCount);
+    const bool replacementPrepared = retirementComplete
         && fx::physics::PrepareReplacement(
             livePhysicsSidecar,
             &stagedPhysicsSidecar)
-            == fx::physics::SidecarStatus::Success
+            == fx::physics::SidecarStatus::Success;
+    const bool replacementCreated = replacementPrepared
         && FX_CreateArchivePhysicsLocked(
             physicsEntries,
             physicsEntryCount,
             restoredSystem.msecNow,
             livePhysicsSidecar,
-            &stagedPhysicsSidecar)
+            &stagedPhysicsSidecar);
+    const bool stagedPhysicsValid = replacementCreated
         && FX_ValidateArchivePhysicsOwnershipLocked(
             &stagedPhysicsSidecar,
             physicsEntries,
             physicsEntryCount,
-            false)
+            false);
+    const bool replacementPublished = stagedPhysicsValid
         && fx::physics::PublishReplacement(
             livePhysicsSidecar,
             &stagedPhysicsSidecar,
             &rollbackPhysicsSidecar)
             == fx::physics::SidecarStatus::Success;
-    bool statePublished = false;
+    bool restoreSucceeded = false;
     bool validCommittedState = false;
-    bool rollbackValid = true;
-    bool scratchSidecarsClean = true;
-    if (restoreReady)
+    bool oldStateRestored = false;
+    bool safeEmptyPublished = false;
+    if (replacementPublished)
     {
         restoredSystem.isArchiving = false;
-        Sys_AtomicStore(&restoredSystem.iteratorCount, 0);
+        Sys_AtomicStore(&restoredSystem.iteratorCount, -1);
 
         Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-        memcpy(systemBuffers, restoredBuffers, sizeof(*systemBuffers));
-        memcpy(system, &restoredSystem, sizeof(*system));
-        FX_LinkSystemBuffers(system, systemBuffers);
-        const bool restoredExclusiveState =
-            FX_RestoreArchiveExclusiveState(system);
+        bool restoredExclusiveState =
+            FX_ValidateArchiveExclusiveState(system);
+        if (restoredExclusiveState)
+        {
+            memcpy(systemBuffers, restoredBuffers, sizeof(*systemBuffers));
+            memcpy(system, &restoredSystem, sizeof(*system));
+            FX_LinkSystemBuffers(system, systemBuffers);
+            restoredExclusiveState =
+                FX_ValidateArchiveExclusiveState(system);
+        }
         Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-        statePublished = true;
 
         validCommittedState = restoredExclusiveState
-            && FX_RebuildPoolAllocationStates(system)
+            && FX_RebuildPoolAllocationStatesNoReport(system)
             && FX_ValidatePoolAllocationGraphState(system)
             && FX_ValidateArchivePhysicsOwnershipLocked(
                 livePhysicsSidecar,
@@ -1894,74 +2386,187 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
                 false);
         if (validCommittedState)
         {
-            // The rollback sidecar now exclusively owns the old bodies. They
-            // become destructible only after the replacement graph and live
-            // registration image both validate.
+            // The rollback sidecar owns only the old bodies that did not need
+            // early retirement. Destroy them only after the replacement graph
+            // and live registration image have both validated.
             const bool rollbackOwnershipValid =
                 FX_ValidateArchivePhysicsOwnershipLocked(
                     &rollbackPhysicsSidecar,
                     replacedPhysicsEntries,
                     replacedPhysicsEntryCount,
                     false);
-            const bool rollbackDrained =
-                FX_DrainArchivePhysicsSidecarLocked(
-                    &rollbackPhysicsSidecar);
-            const bool stagedDrained =
-                FX_DrainArchivePhysicsSidecarLocked(
-                    &stagedPhysicsSidecar);
-            scratchSidecarsClean = rollbackOwnershipValid
-                && rollbackDrained && stagedDrained;
+            const bool discardedPhysicsDrained = rollbackOwnershipValid
+                && FX_DrainArchivePhysicsSidecarsLocked(
+                    {livePhysicsSidecar,
+                     &stagedPhysicsSidecar,
+                     &rollbackPhysicsSidecar},
+                    {false, true, true});
+            restoreSucceeded = discardedPhysicsDrained;
+            if (!restoreSucceeded)
+            {
+                safeEmptyPublished =
+                    FX_PublishArchivePhysicsSafeEmptyLocked(
+                        system,
+                        livePhysicsSidecar,
+                        &stagedPhysicsSidecar,
+                        &rollbackPhysicsSidecar);
+            }
         }
         else
         {
-            // Rebuild/graph validation is expected to be deterministic after
-            // staging, but retain the complete old image so publication still
-            // has a real rollback boundary if an invariant changes.
-            rollbackValid = fx::physics::RollbackReplacement(
+            // Restore sidecar ownership before restoring the old graph. The
+            // discarded replacement must be drained before reconstruction so
+            // every retired old recipe has its original pool capacity again.
+            const bool sidecarRolledBack =
+                fx::physics::RollbackReplacement(
                 livePhysicsSidecar,
                 &rollbackPhysicsSidecar,
                 &stagedPhysicsSidecar)
                 == fx::physics::SidecarStatus::Success;
-            if (rollbackValid)
+            bool stagedDrained = false;
+            bool rollbackDrained = false;
+            bool retiredTargetsValid = false;
+            bool retiredBodiesReconstructed = false;
+            bool retiredTokensPatched = false;
+            bool rollbackPhysicsValid = false;
+            bool rollbackGraphValid = false;
+            if (sidecarRolledBack)
             {
-                Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-                std::memcpy(
-                    systemBuffers,
-                    rollbackBuffers,
-                    sizeof(*systemBuffers));
-                std::memcpy(system, &rollbackSystem, sizeof(*system));
-                FX_LinkSystemBuffers(system, systemBuffers);
-                const bool restoredRollbackExclusiveState =
-                    FX_RestoreArchiveExclusiveState(system);
-                Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-                rollbackValid = restoredRollbackExclusiveState
-                    && FX_RebuildPoolAllocationStates(system)
-                    && FX_ValidatePoolAllocationGraphState(system)
+                const bool discardedPhysicsDrained =
+                    FX_DrainArchivePhysicsSidecarsLocked(
+                        {livePhysicsSidecar,
+                         &stagedPhysicsSidecar,
+                         &rollbackPhysicsSidecar},
+                        {false, true, true});
+                stagedDrained = discardedPhysicsDrained;
+                rollbackDrained = discardedPhysicsDrained;
+                retiredTargetsValid = stagedDrained && rollbackDrained
+                    && FX_ArchiveRetiredTokenTargetsMatch(
+                        rollbackBuffers->elems,
+                        replacedPhysicsEntries,
+                        replacedPhysicsEntryCount,
+                        retirementPlan,
+                        retiredPhysicsEntryCount,
+                        false);
+                retiredBodiesReconstructed = retiredTargetsValid
+                    && FX_ReconstructRetiredArchivePhysicsLocked(
+                        livePhysicsSidecar,
+                        replacedPhysicsEntries,
+                        replacedPhysicsEntryCount,
+                        retirementPlan,
+                        retiredPhysicsEntryCount);
+                retiredTokensPatched = retiredBodiesReconstructed
+                    && FX_PatchReconstructedArchivePhysicsTokens(
+                        rollbackBuffers->elems,
+                        replacedPhysicsEntries,
+                        replacedPhysicsEntryCount,
+                        retirementPlan,
+                        retiredPhysicsEntryCount);
+                rollbackPhysicsValid = retiredTokensPatched
                     && FX_ValidateArchivePhysicsOwnershipLocked(
                         livePhysicsSidecar,
                         replacedPhysicsEntries,
                         replacedPhysicsEntryCount,
                         false);
+                if (rollbackPhysicsValid)
+                {
+                    Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
+                    bool restoredRollbackExclusiveState =
+                        FX_ValidateArchiveExclusiveState(system);
+                    if (restoredRollbackExclusiveState)
+                    {
+                        std::memcpy(
+                            systemBuffers,
+                            rollbackBuffers,
+                            sizeof(*systemBuffers));
+                        std::memcpy(
+                            system,
+                            &rollbackSystem,
+                            sizeof(*system));
+                        FX_LinkSystemBuffers(system, systemBuffers);
+                        restoredRollbackExclusiveState =
+                            FX_ValidateArchiveExclusiveState(system);
+                    }
+                    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+                    rollbackGraphValid = restoredRollbackExclusiveState
+                        && FX_RebuildPoolAllocationStatesNoReport(system)
+                        && FX_ValidatePoolAllocationGraphState(system);
+                }
+                oldStateRestored = stagedDrained && rollbackDrained
+                    && rollbackPhysicsValid && rollbackGraphValid;
             }
-            const bool stagedDrained =
-                FX_DrainArchivePhysicsSidecarLocked(
-                    &stagedPhysicsSidecar);
-            const bool rollbackDrained =
-                FX_DrainArchivePhysicsSidecarLocked(
-                    &rollbackPhysicsSidecar);
-            scratchSidecarsClean = stagedDrained && rollbackDrained;
+            if (!oldStateRestored)
+            {
+                safeEmptyPublished =
+                    FX_PublishArchivePhysicsSafeEmptyLocked(
+                        system,
+                        livePhysicsSidecar,
+                        &stagedPhysicsSidecar,
+                        &rollbackPhysicsSidecar);
+            }
         }
     }
-    if (!statePublished)
+    else
     {
-        const bool stagedDrained =
-            FX_DrainArchivePhysicsSidecarLocked(
-                &stagedPhysicsSidecar);
-        const bool rollbackDrained =
-            FX_DrainArchivePhysicsSidecarLocked(
+        const bool discardedPhysicsDrained =
+            FX_DrainArchivePhysicsSidecarsLocked(
+                {livePhysicsSidecar,
+                 &stagedPhysicsSidecar,
+                 &rollbackPhysicsSidecar},
+                {false, true, true});
+        const bool stagedDrained = discardedPhysicsDrained;
+        const bool rollbackDrained = discardedPhysicsDrained;
+        const bool retiredTargetsValid = stagedDrained && rollbackDrained
+            && FX_ArchiveRetiredTokenTargetsMatch(
+                system->elems,
+                replacedPhysicsEntries,
+                replacedPhysicsEntryCount,
+                retirementPlan,
+                retiredPhysicsEntryCount,
+                false);
+        const bool retiredBodiesReconstructed = retiredTargetsValid
+            && FX_ReconstructRetiredArchivePhysicsLocked(
+                livePhysicsSidecar,
+                replacedPhysicsEntries,
+                replacedPhysicsEntryCount,
+                retirementPlan,
+                retiredPhysicsEntryCount);
+        const bool retiredTokensPatched = retiredBodiesReconstructed
+            && FX_PatchReconstructedArchivePhysicsTokens(
+                system->elems,
+                replacedPhysicsEntries,
+                replacedPhysicsEntryCount,
+                retirementPlan,
+                retiredPhysicsEntryCount);
+        oldStateRestored = retiredTokensPatched
+            && FX_ValidatePoolAllocationGraphState(system)
+            && FX_ValidateArchivePhysicsOwnershipLocked(
+                livePhysicsSidecar,
+                replacedPhysicsEntries,
+                replacedPhysicsEntryCount,
+                false);
+        if (!oldStateRestored)
+        {
+            safeEmptyPublished = FX_PublishArchivePhysicsSafeEmptyLocked(
+                system,
+                livePhysicsSidecar,
+                &stagedPhysicsSidecar,
                 &rollbackPhysicsSidecar);
-        scratchSidecarsClean = stagedDrained && rollbackDrained;
+        }
     }
+    const bool safeTerminalState =
+        (restoreSucceeded && validCommittedState)
+        || oldStateRestored || safeEmptyPublished;
+    if (!safeTerminalState)
+    {
+        // No graph/sidecar image is safe to admit. Com_Error is not suitable:
+        // its longjmp cleanup deliberately releases archive ownership. Keep
+        // both archive and native-physics exclusion closed and terminate the
+        // process before scratch-sidecar ownership can be lost.
+        Sys_Error("FX archive restore could not recover a safe runtime state");
+        std::abort();
+    }
+
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     system->isArchiving = false;
     const bool releasedArchive = FX_EndArchive(system);
@@ -1970,10 +2575,11 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     if (physicsEntries)
         Z_Free(physicsEntries, 10);
     Z_Free(restoredBuffers, 10);
-    if (!restoreReady || !validCommittedState || !rollbackValid
-        || !scratchSidecarsClean || !releasedArchive)
+    if (!restoreSucceeded || !validCommittedState || !releasedArchive)
     {
-        Com_Error(ERR_DROP, "Unable to publish restored FX archive state");
+        Com_Error(
+            ERR_DROP,
+            "Unable to publish restored FX archive state");
         return;
     }
 }
@@ -2170,11 +2776,20 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
         return;
     }
 
+    std::size_t physicsEntryByteCount = 0;
+    int physicsEntryAllocationSize = 0;
+    if (!FX_TryGetArchivePhysicsEntryByteCount(
+            fx::physics::BODY_LIMIT,
+            &physicsEntryByteCount,
+            &physicsEntryAllocationSize))
+    {
+        Z_Free(bufferSnapshot, 10);
+        Com_Error(ERR_DROP, "Invalid FX physics save staging size");
+        return;
+    }
     FxArchivePhysicsEntry *const physicsEntries =
         static_cast<FxArchivePhysicsEntry *>(Z_Malloc(
-            static_cast<int>(
-                fx::physics::BODY_LIMIT
-                    * sizeof(FxArchivePhysicsEntry)),
+            physicsEntryAllocationSize,
             "FX_Save physics staging",
             10));
     if (!physicsEntries)
@@ -2186,7 +2801,7 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
     std::memset(
         physicsEntries,
         0,
-        fx::physics::BODY_LIMIT * sizeof(FxArchivePhysicsEntry));
+        physicsEntryByteCount);
 
     if (!FX_BeginArchive(system))
     {
