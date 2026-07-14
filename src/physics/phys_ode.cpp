@@ -784,8 +784,10 @@ dxBody *__cdecl Phys_CreateBodyFromState(
     const BodyState *const state)
 {
     dxBody *body = nullptr;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     (void)Phys_TryCreateBodyFromStateInternal(
         worldIndex, state, &body, true);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     return body;
 }
 
@@ -1093,8 +1095,10 @@ void __cdecl Phys_BodyAddGeomAndSetMass(
     GeomState *geomState,
     const float *centerOfMass)
 {
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     (void)Phys_TryBodyAddGeomAndSetMass(
         worldIndex, body, totalMass, geomState, centerOfMass, true);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 }
 
 void __cdecl Phys_AdjustForNewCenterOfMass(dxBody *body, const float *newRelCenterOfMass)
@@ -1326,7 +1330,9 @@ static PhysBodyModelCreateStatus Phys_TryObjAddGeomBox(
 
 void __cdecl Phys_ObjAddGeomBox(PhysWorld worldIndex, dxBody *id, const float *boxMin, const float *boxMax)
 {
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     (void)Phys_TryObjAddGeomBox(worldIndex, id, boxMin, boxMax, true);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 }
 
 static PhysBodyModelCreateStatus Phys_TryObjAddGeomBoxRotated(
@@ -1374,8 +1380,10 @@ void __cdecl Phys_ObjAddGeomBoxRotated(
     const float *halfLengths,
     const float (*orientation)[3])
 {
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     (void)Phys_TryObjAddGeomBoxRotated(
         worldIndex, id, center, halfLengths, orientation, true);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 }
 
 void __cdecl Phys_ObjAddGeomBrushModel(
@@ -1401,8 +1409,10 @@ void __cdecl Phys_ObjAddGeomBrushModel(
     geomState.u.brushState.productsOfInertia[1] = physMass->productsOfInertia[1];
     geomState.u.brushState.productsOfInertia[2] = physMass->productsOfInertia[2];
     geomState.isOriented = 0;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     dBodyGetMass(id, &mass);
     Phys_BodyAddGeomAndSetMass(worldIndex, id, mass.mass, &geomState, physMass->centerOfMass);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 }
 
 static PhysBodyModelCreateStatus Phys_TryObjAddGeomBrush(
@@ -1440,7 +1450,9 @@ static PhysBodyModelCreateStatus Phys_TryObjAddGeomBrush(
 
 void __cdecl Phys_ObjAddGeomBrush(PhysWorld worldIndex, dxBody *id, const cbrush_t *brush, const PhysMass *physMass)
 {
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     (void)Phys_TryObjAddGeomBrush(worldIndex, id, brush, physMass, true);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 }
 
 void __cdecl Phys_ObjAddGeomCylinder(PhysWorld worldIndex, dxBody *id, const float *boxMin, const float *boxMax)
@@ -1471,8 +1483,10 @@ void __cdecl Phys_ObjAddGeomCylinder(PhysWorld worldIndex, dxBody *id, const flo
     cyl->radius = v4 * 0.5;
     cyl->halfHeight = extent[2] * 0.5;
     geomState.isOriented = 0;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     dBodyGetMass(body, &mass);
     Phys_BodyAddGeomAndSetMass(worldIndex, body, mass.mass, &geomState, centerOfMass);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 }
 
 void __cdecl Phys_ObjAddGeomCylinderDirection(
@@ -1500,8 +1514,10 @@ void __cdecl Phys_ObjAddGeomCylinderDirection(
     cyl->radius = radius;
     cyl->halfHeight = halfHeight;
     geomState.isOriented = 0;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     dBodyGetMass(body, &mass);
     Phys_BodyAddGeomAndSetMass(worldIndex, body, mass.mass, &geomState, centerOfMass);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 }
 
 static PhysBodyModelCreateStatus Phys_TryObjAddGeomCylinderRotated(
@@ -1559,8 +1575,10 @@ void __cdecl Phys_ObjAddGeomCylinderRotated(
     const float *center,
     const float (*orientation)[3])
 {
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     (void)Phys_TryObjAddGeomCylinderRotated(
         worldIndex, id, direction, radius, halfHeight, center, orientation, true);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 }
 
 void __cdecl Phys_ObjAddGeomCapsule(
@@ -1588,8 +1606,10 @@ void __cdecl Phys_ObjAddGeomCapsule(
     cyl->radius = radius;
     cyl->halfHeight = halfHeight;
     geomState.isOriented = 0;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     dBodyGetMass(body, &mass);
     Phys_BodyAddGeomAndSetMass(worldIndex, body, mass.mass, &geomState, centerOfMass);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 }
 
 namespace
@@ -3624,7 +3644,9 @@ static PhysBodyModelCreateStatus Phys_TryBuildCollisionFromXModel(
 
 void __cdecl Phys_ObjSetCollisionFromXModel(const XModel *model, PhysWorld worldIndex, dxBody *physId)
 {
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     (void)Phys_TryBuildCollisionFromXModel(model, worldIndex, physId, false, true);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
 }
 
 static PhysBodyModelCreateStatus
@@ -3746,19 +3768,25 @@ PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromStateAndXModel(
     if (!(state->mass > 0.0f) || !std::isfinite(state->mass))
         return PhysBodyModelCreateStatus::InvalidArgument;
 
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     dxBody *const body = Phys_CreateBodyFromState(worldIndex, state);
     if (!body)
+    {
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
         return PhysBodyModelCreateStatus::BodyResourcesExhausted;
+    }
 
     const PhysBodyModelCreateStatus collisionStatus =
         Phys_TryBuildCollisionFromXModel(model, worldIndex, body, true, true);
     if (collisionStatus != PhysBodyModelCreateStatus::Success)
     {
         Phys_ObjDestroy(worldIndex, body);
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
         return collisionStatus;
     }
 
     *outBody = body;
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     return PhysBodyModelCreateStatus::Success;
 }
 
@@ -3913,19 +3941,44 @@ void __cdecl Phys_ObjDestroy(PhysWorld worldIndex, dxBody *id)
     PhysObjUserData *userData; // [esp+0h] [ebp-8h]
 
     if (!physInited)
+    {
         MyAssertHandler(".\\physics\\phys_ode.cpp", 1044, 0, "%s", "physInited");
+        return;
+    }
     if (!id)
+    {
         MyAssertHandler(".\\physics\\phys_ode.cpp", 1045, 0, "%s", "id");
+        return;
+    }
+    if (worldIndex < PHYS_WORLD_DYNENT || worldIndex >= PHYS_WORLD_COUNT)
+    {
+        MyAssertHandler(
+            ".\\physics\\phys_ode.cpp",
+            1048,
+            0,
+            "%s",
+            "worldIndex >= PHYS_WORLD_DYNENT && worldIndex < PHYS_WORLD_COUNT");
+        return;
+    }
+
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     if (id->world != physGlob.world[worldIndex])
+    {
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
         MyAssertHandler(".\\physics\\phys_ode.cpp", 1048, 0, "%s", "body->world == physGlob.world[worldIndex]");
+        return;
+    }
     userData = (PhysObjUserData *)dBodyGetData(id);
     dBodyDestroy(id);
 #ifdef USE_POOL_ALLOCATOR
-    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     const bool userDataFreed = Pool_Free(
         Phys_UserDataPoolStorage(),
         &physGlob.userDataPool,
         userData);
+#else
+    free(userData);
+    const bool userDataFreed = true;
+#endif
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     if (!userDataFreed)
         MyAssertHandler(
@@ -3934,9 +3987,6 @@ void __cdecl Phys_ObjDestroy(PhysWorld worldIndex, dxBody *id)
             0,
             "%s",
             "physics userdata pool free succeeded");
-#else
-    free(userData);
-#endif
 }
 
 void __cdecl Phys_ObjAddForce(PhysWorld worldIndex, dxBody *id, float *worldPos, const float *impulse)

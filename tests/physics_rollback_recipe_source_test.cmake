@@ -58,6 +58,40 @@ function(require_regex_ordered haystack first second description)
     endif()
 endfunction()
 
+function(require_physics_transaction
+    source start_marker end_marker mutation_pattern description)
+    extract_slice(
+        "${source}"
+        "${start_marker}"
+        "${end_marker}"
+        _transaction_scope
+        "${description}")
+    require_regex_ordered("${_transaction_scope}"
+        "Sys_EnterCriticalSection\\(CRITSECT_PHYSICS\\)"
+        "${mutation_pattern}"
+        "${description} enters PHYSICS before topology mutation")
+    require_regex_ordered("${_transaction_scope}"
+        "${mutation_pattern}"
+        "Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)"
+        "${description} leaves PHYSICS after topology mutation")
+    string(REGEX MATCHALL
+        "Sys_EnterCriticalSection\\(CRITSECT_PHYSICS\\)"
+        _transaction_enters "${_transaction_scope}")
+    string(REGEX MATCHALL
+        "Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)"
+        _transaction_leaves "${_transaction_scope}")
+    list(LENGTH _transaction_enters _transaction_enter_count)
+    list(LENGTH _transaction_leaves _transaction_leave_count)
+    if(NOT _transaction_enter_count EQUAL 1
+        OR NOT _transaction_leave_count EQUAL 1)
+        message(FATAL_ERROR
+            "Unbalanced physics transaction invariant: ${description}")
+    endif()
+    forbid_regex("${_transaction_scope}"
+        "(Com_Error|Sys_Error)[ \\t\\r\\n]*\\("
+        "${description} cannot longjmp while PHYSICS is held")
+endfunction()
+
 foreach(_status_api IN ITEMS
     Phys_TryGetBodyModelResourceDemand
     Phys_TryGetFreeResourceCapacityLockedNoReport
@@ -88,6 +122,12 @@ foreach(_capacity_pool IN ITEMS
     require_regex("${_capacity_scope}" "${_capacity_pool}"
         "capacity query silently full-validates every fixed pool")
 endforeach()
+require_regex("${_header}"
+    "struct[ \t\r\n]+PhysBodyResourceDemand[ \t\r\n]*\\{[ \t\r\n]*std::size_t[ \t\r\n]+bodyCount[ \t\r\n]*;[ \t\r\n]*std::size_t[ \t\r\n]+userDataCount[ \t\r\n]*;[ \t\r\n]*std::size_t[ \t\r\n]+geomCount[ \t\r\n]*;[ \t\r\n]*\\}"
+    "capacity aggregate field order maps body, user-data, and geom counts exactly")
+require_regex("${_capacity_scope}"
+    "\\*outCapacity[ \t\r\n]*=[ \t\r\n]*\\{[ \t\r\n]*bodyStorage\\.itemCount[ \t\r\n]*-[ \t\r\n]*static_cast<std::size_t>\\(odeGlob\\.bodyPool\\.activeCount\\)[ \t\r\n]*,[ \t\r\n]*userDataStorage\\.itemCount[ \t\r\n]*-[ \t\r\n]*static_cast<std::size_t>\\(physGlob\\.userDataPool\\.activeCount\\)[ \t\r\n]*,[ \t\r\n]*geomStorage\\.itemCount[ \t\r\n]*-[ \t\r\n]*static_cast<std::size_t>\\(odeGlob\\.geomPool\\.activeCount\\)[ \t\r\n]*,[ \t\r\n]*\\}"
+    "free capacity is the exact per-pool itemCount minus activeCount mapping")
 forbid_regex("${_capacity_scope}"
     "(Pool_ValidateFull|Pool_GetFreeCount|MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
     "capacity query cannot report through diagnostic pool APIs")
@@ -605,6 +645,70 @@ require_regex_ordered("${_body_create_scope}"
 forbid_regex("${_body_create_scope}"
     "\\(void\\)[ \t\r\n]*Phys_TryDestroyBodyLockedNoReport"
     "state-only no-report rollback cannot discard cleanup failure")
+forbid_regex("${_body_create_scope}"
+    "(Com_Error|Sys_Error)[ \t\r\n]*\\("
+    "state-only creation cannot longjmp through a public PHYSICS transaction")
+
+require_physics_transaction(
+    "${_source}"
+    "dxBody *__cdecl Phys_CreateBodyFromState("
+    "void __cdecl Phys_BodyGetCenterOfMass("
+    "Phys_TryCreateBodyFromStateInternal\\("
+    "state-only body creation transaction")
+require_physics_transaction(
+    "${_source}"
+    "void __cdecl Phys_BodyAddGeomAndSetMass("
+    "void __cdecl Phys_AdjustForNewCenterOfMass("
+    "Phys_TryBodyAddGeomAndSetMass\\("
+    "geometry and mass publication transaction")
+require_physics_transaction(
+    "${_source}"
+    "void __cdecl Phys_ObjAddGeomBox("
+    "static PhysBodyModelCreateStatus Phys_TryObjAddGeomBoxRotated("
+    "Phys_TryObjAddGeomBox\\("
+    "box geometry transaction")
+require_physics_transaction(
+    "${_source}"
+    "void __cdecl Phys_ObjAddGeomBoxRotated("
+    "void __cdecl Phys_ObjAddGeomBrushModel("
+    "Phys_TryObjAddGeomBoxRotated\\("
+    "rotated box geometry transaction")
+require_physics_transaction(
+    "${_source}"
+    "void __cdecl Phys_ObjAddGeomBrushModel("
+    "static PhysBodyModelCreateStatus Phys_TryObjAddGeomBrush("
+    "Phys_BodyAddGeomAndSetMass\\("
+    "brush-model geometry transaction")
+require_physics_transaction(
+    "${_source}"
+    "void __cdecl Phys_ObjAddGeomBrush("
+    "void __cdecl Phys_ObjAddGeomCylinder("
+    "Phys_TryObjAddGeomBrush\\("
+    "brush geometry transaction")
+require_physics_transaction(
+    "${_source}"
+    "void __cdecl Phys_ObjAddGeomCylinder("
+    "void __cdecl Phys_ObjAddGeomCylinderDirection("
+    "Phys_BodyAddGeomAndSetMass\\("
+    "cylinder geometry transaction")
+require_physics_transaction(
+    "${_source}"
+    "void __cdecl Phys_ObjAddGeomCylinderDirection("
+    "static PhysBodyModelCreateStatus Phys_TryObjAddGeomCylinderRotated("
+    "Phys_BodyAddGeomAndSetMass\\("
+    "directed cylinder geometry transaction")
+require_physics_transaction(
+    "${_source}"
+    "void __cdecl Phys_ObjAddGeomCylinderRotated("
+    "void __cdecl Phys_ObjAddGeomCapsule("
+    "Phys_TryObjAddGeomCylinderRotated\\("
+    "rotated cylinder geometry transaction")
+require_physics_transaction(
+    "${_source}"
+    "void __cdecl Phys_ObjAddGeomCapsule("
+    "namespace\n{\nconstexpr std::size_t PHYS_BODY_POOL_COUNT"
+    "Phys_BodyAddGeomAndSetMass\\("
+    "capsule geometry transaction")
 
 extract_slice(
     "${_source}"
@@ -670,6 +774,25 @@ forbid_regex(
     "${_locked_create_scope}"
     "(MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
     "locked reconstruction entry point is silent")
+forbid_regex(
+    "${_locked_create_scope}"
+    "Sys_(Enter|Leave)CriticalSection[ \t\r\n]*\\("
+    "locked reconstruction preserves caller PHYSICS ownership")
+
+extract_slice(
+    "${_source}"
+    "PhysBodyRollbackStatus __cdecl\nPhys_TryDestroyBodyLockedNoReport("
+    "namespace\n{\nbool Phys_TryBuildRoundedMassTensorNoReport("
+    _locked_destroy_scope
+    "locked no-report destruction API")
+forbid_regex(
+    "${_locked_destroy_scope}"
+    "Sys_(Enter|Leave)CriticalSection[ \t\r\n]*\\("
+    "locked destruction preserves caller PHYSICS ownership")
+forbid_regex(
+    "${_locked_destroy_scope}"
+    "(Com_Error|Sys_Error|MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
+    "locked destruction is report-free")
 
 extract_slice(
     "${_source}"
@@ -683,5 +806,69 @@ require_regex("${_collision_builder_scope}"
 require_regex("${_collision_builder_scope}"
     "geomList->count[ \t\r\n]*!=[ \t\r\n]*0[ \t\r\n]*&&[ \t\r\n]*!geomList->geoms"
     "creation preserves a zero-count no-collision PhysGeomList")
+forbid_regex("${_collision_builder_scope}"
+    "(Com_Error|Sys_Error)[ \t\r\n]*\\("
+    "collision creation cannot longjmp through a public PHYSICS transaction")
+
+require_physics_transaction(
+    "${_source}"
+    "void __cdecl Phys_ObjSetCollisionFromXModel("
+    "static PhysBodyModelCreateStatus\nPhys_TryCreateBodyFromStateAndXModelInternal("
+    "Phys_TryBuildCollisionFromXModel\\("
+    "complete XModel collision transaction")
+
+extract_slice(
+    "${_source}"
+    "PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromStateAndXModel("
+    "PhysBodyModelCreateStatus __cdecl\nPhys_TryCreateBodyFromStateAndXModelLockedNoReport("
+    _public_model_create_scope
+    "public body and XModel transaction")
+require_regex_ordered("${_public_model_create_scope}"
+    "Sys_EnterCriticalSection\\(CRITSECT_PHYSICS\\)"
+    "Phys_CreateBodyFromState\\(worldIndex,[ \t\r\n]*state\\)"
+    "body and XModel creation enters PHYSICS before allocation")
+require_regex("${_public_model_create_scope}"
+    "if[ \t\r\n]*\\([ \t\r\n]*!body[ \t\r\n]*\\)[ \t\r\n]*\\{[ \t\r\n]*Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)[ \t\r\n]*;[ \t\r\n]*return[ \t\r\n]+PhysBodyModelCreateStatus::BodyResourcesExhausted"
+    "body allocation failure releases the public PHYSICS transaction")
+require_regex_ordered("${_public_model_create_scope}"
+    "Phys_ObjDestroy\\(worldIndex,[ \t\r\n]*body\\)"
+    "Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)[ \t\r\n]*;[ \t\r\n]*return[ \t\r\n]+collisionStatus"
+    "collision rollback completes before releasing PHYSICS")
+require_regex_ordered("${_public_model_create_scope}"
+    "\\*outBody[ \t\r\n]*=[ \t\r\n]*body"
+    "Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)[ \t\r\n]*;[ \t\r\n]*return[ \t\r\n]+PhysBodyModelCreateStatus::Success"
+    "successful body and XModel publication releases PHYSICS last")
+forbid_regex("${_public_model_create_scope}"
+    "(Com_Error|Sys_Error)[ \t\r\n]*\\("
+    "body and XModel creation cannot longjmp while PHYSICS is held")
+
+extract_slice(
+    "${_source}"
+    "void __cdecl Phys_ObjDestroy("
+    "void __cdecl Phys_ObjAddForce("
+    _public_destroy_scope
+    "public body destruction transaction")
+require_regex_ordered("${_public_destroy_scope}"
+    "Sys_EnterCriticalSection\\(CRITSECT_PHYSICS\\)"
+    "userData[ \t\r\n]*=[^;]*dBodyGetData\\(id\\)"
+    "body destruction enters PHYSICS before ownership dereference")
+require_regex("${_public_destroy_scope}"
+    "if[ \t\r\n]*\\([ \t\r\n]*id->world[ \t\r\n]*!=[ \t\r\n]*physGlob\\.world\\[worldIndex\\][ \t\r\n]*\\)[ \t\r\n]*\\{[ \t\r\n]*Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)[ \t\r\n]*;[ \t\r\n]*MyAssertHandler"
+    "world-ownership rejection releases PHYSICS before diagnostics")
+require_regex_ordered("${_public_destroy_scope}"
+    "dBodyDestroy\\(id\\)"
+    "Pool_Free\\("
+    "body topology is removed before its user-data slot")
+require_regex_ordered("${_public_destroy_scope}"
+    "Pool_Free\\("
+    "Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)"
+    "body and user-data retirement are one PHYSICS transaction")
+require_regex_ordered("${_public_destroy_scope}"
+    "Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)"
+    "if[ \t\r\n]*\\([ \t\r\n]*!userDataFreed[ \t\r\n]*\\)"
+    "pool-free diagnostics run only after releasing PHYSICS")
+forbid_regex("${_public_destroy_scope}"
+    "(Com_Error|Sys_Error)[ \t\r\n]*\\("
+    "body destruction cannot longjmp while PHYSICS is held")
 
 message(STATUS "Physics rollback recipe source invariants verified")
