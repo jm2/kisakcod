@@ -576,8 +576,12 @@ require_source_ordered(
     "checked construction must publish ownership only after every failure exit")
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
+    "Phys_TryCreateBodyFromStateAndXModelLockedNoReport("
+    "FX archive restore must use complete non-reporting collision construction while PHYSICS is held")
+require_source_not_contains(
+    "EffectsCore/fx_archive.cpp"
     "Phys_TryCreateBodyFromStateAndXModel("
-    "FX archive restore must not publish bodies with partial collision")
+    "FX archive restore must not call the diagnostic body constructor while PHYSICS is held")
 require_source_not_contains(
     "EffectsCore/fx_archive.cpp"
     "Phys_CreateBodyFromState(PHYS_WORLD_FX"
@@ -6083,7 +6087,7 @@ require_source_ordered(
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "validCommittedState = restoredExclusiveState
-            && FX_RebuildPoolAllocationStates(system)"
+            && FX_RebuildPoolAllocationStatesNoReport(system)"
     "&& FX_ValidateArchivePhysicsOwnershipLocked(
                 livePhysicsSidecar,"
     "restore publication must rebuild and revalidate pool/physics sidecars before reopening admission")
@@ -6346,19 +6350,49 @@ require_source_ordered(
     "FX_ValidateArchiveBodyState(\n                physicsEntries[index].state)"
     "if (!FX_BeginArchive(system))"
     "restore must validate every staged physics body before acquiring live ownership")
-require_source_matches(
+# Restore publication must preserve the archive owner's existing iterator -1
+# across both desired and rollback graph copies. Reacquiring after overwriting
+# the iterator would expose live sidecars behind a nonexclusive graph window.
+require_source_not_contains(
     "EffectsCore/fx_archive.cpp"
-    "Sys_EnterCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;][ \t\r\n]*memcpy\\(systemBuffers,[ \t]*restoredBuffers,[ \t]*sizeof\\(\\*systemBuffers\\)\\)[ \t]*[;][ \t\r\n]*memcpy\\(system,[ \t]*&restoredSystem,[ \t]*sizeof\\(\\*system\\)\\)[ \t]*[;][ \t\r\n]*FX_LinkSystemBuffers\\(system,[ \t]*systemBuffers\\)[ \t]*[;][ \t\r\n]*const[ \t]+bool[ \t]+restoredExclusiveState[ \t]*=[ \t\r\n]*FX_RestoreArchiveExclusiveState\\(system\\)[ \t]*[;][ \t\r\n]*Sys_LeaveCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;]"
-    "restore must commit linked system and pool snapshots atomically while preserving archive ownership")
-require_source_ordered(
-    "EffectsCore/fx_system.cpp"
-    "bool __cdecl FX_RestoreArchiveExclusiveState"
-    "return FxIteratorTryBeginExclusive(&system->iteratorCount);"
-    "restore commit must reconstruct exclusive iterator state through the checked iterator helper")
+    "FX_RestoreArchiveExclusiveState("
+    "archive graph publication must never reacquire overwritten iterator state")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "Sys_AtomicStore(&restoredSystem.iteratorCount, -1);"
+    "the desired graph image must preserve archive-exclusive iterator state")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "Sys_AtomicLoad(&rollbackSystem.iteratorCount) == -1;"
+    "the rollback graph image must preserve archive-exclusive iterator state")
 require_source_matches(
     "EffectsCore/fx_system.cpp"
-    "FX_RestoreArchiveExclusiveState[^}]*Sys_AtomicLoad\\(gate\\)[ \t]*!=[ \t]*2[^}]*!FX_CurrentThreadOwnsArchive\\(system\\)"
-    "restore commit must require both acquired archive state and current-thread ownership")
+    "FX_ValidateArchiveExclusiveState[^}]*Sys_AtomicLoad\\(gate\\)[ \t]*==[ \t]*2[^}]*FX_CurrentThreadOwnsArchive\\(system\\)[^}]*Sys_AtomicLoad\\(&system->iteratorCount\\)[ \t]*==[ \t]*-1"
+    "archive publication validation must require gate ownership and iterator -1")
+require_source_matches(
+    "EffectsCore/fx_system.cpp"
+    "FX_CanPublishArchiveSafeEmptyStateLocked[^}]*FX_ValidateArchiveExclusiveState\\(system\\)[^}]*FX_CanResetSystemGraphUnderExclusiveClaim\\(system\\)"
+    "safe-empty publication must preflight graph reset viability under archive exclusivity")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "system->effects == buffers->effects"
+    "safe-empty graph reset must require canonical owned storage")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "FX_CanPublishArchiveSafeEmptyStateLocked(system)"
+    "safe-empty recovery must preflight graph reset prerequisites")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "Sys_Error(\"FX archive restore could not recover a safe runtime state\")"
+    "unrecoverable archive restore must fail-stop before releasing ownership")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "Sys_Error(\"FX archive native-body cleanup failed after ownership transfer\")"
+    "post-transfer native cleanup failure must terminate before safe-empty publication")
+require_source_not_contains(
+    "EffectsCore/fx_archive.cpp"
+    "(void)Phys_TryDestroyBodyLockedNoReport("
+    "archive restore must never discard a fallible native cleanup result")
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
     "FxSystem systemSnapshot{};"

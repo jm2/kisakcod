@@ -366,7 +366,7 @@ require_slice_contains(
 extract_source_slice(
     _fx_system_source
     "bool __cdecl FX_BeginArchive("
-    "bool __cdecl FX_RestoreArchiveExclusiveState("
+    "bool __cdecl FX_ValidateArchiveExclusiveState("
     _archive_admission_source
     "archive-exclusive FX iterator admission")
 require_slice_ordered(
@@ -1051,8 +1051,8 @@ require_slice_contains(
     "graph reset preflight must require iterator-exclusive ownership")
 require_slice_contains(
     _reset_graph_preflight_source
-    "system->effects && system->elems"
-    "graph reset preflight must validate graph storage before destructive work")
+    "system->effects == buffers->effects"
+    "graph reset preflight must validate canonical graph storage before destructive work")
 
 extract_source_slice(
     _fx_system_source
@@ -1120,6 +1120,18 @@ require_slice_not_contains(
 
 extract_source_slice(
     _fx_system_source
+    "bool __cdecl FX_CanPublishArchiveSafeEmptyStateLocked("
+    "bool __cdecl FX_PublishArchiveSafeEmptyStateLocked("
+    _safe_empty_preflight_source
+    "FX_CanPublishArchiveSafeEmptyStateLocked")
+require_slice_ordered(
+    _safe_empty_preflight_source
+    "FX_ValidateArchiveExclusiveState(system)"
+    "FX_CanResetSystemGraphUnderExclusiveClaim(system)"
+    "safe-empty preflight must prove archive exclusion before canonical graph storage")
+
+extract_source_slice(
+    _fx_system_source
     "bool __cdecl FX_PublishArchiveSafeEmptyStateLocked("
     "void __cdecl FX_InitSystem("
     _safe_empty_source
@@ -1130,13 +1142,8 @@ require_slice_contains(
     "safe-empty publication must remain a non-throwing fallback")
 require_slice_contains(
     _safe_empty_source
-    "Sys_AtomicLoad(&system->iteratorCount) != -1"
-    "safe-empty publication must require iterator-exclusive ownership")
-require_slice_ordered(
-    _safe_empty_source
-    "FX_CurrentThreadOwnsArchive(system)"
-    "Sys_AtomicLoad(&system->iteratorCount) != -1"
-    "safe-empty publication must prove archive ownership before inspecting iterator exclusion")
+    "FX_CanPublishArchiveSafeEmptyStateLocked(system)"
+    "safe-empty publication must reuse archive, iterator, and graph preflight")
 require_slice_ordered(
     _safe_empty_source
     "fx::physics::Validate(sidecar)"
