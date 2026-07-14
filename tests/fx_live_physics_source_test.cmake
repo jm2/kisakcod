@@ -151,8 +151,12 @@ endfunction()
 # The registry remains external to frozen FxSystem/FxSystemBuffers storage.
 require_slice_contains(
     _fx_system_source
-    "fx::physics::BodySidecar fx_physicsBodySidecars[1];"
+    "fx::physics::BodySidecar fx_physicsBodySidecars[\n    sizeof(fx_poolAllocationStates) / sizeof(fx_poolAllocationStates[0])];"
     "native body ownership must use an external per-system registry")
+require_slice_contains(
+    _fx_system_source
+    "\"FX physics sidecars must match the system pool\""
+    "the sidecar registry extent must remain tied to the system pool")
 require_slice_contains(
     _fx_system_source
     "FX_GetPhysicsBodySidecar("
