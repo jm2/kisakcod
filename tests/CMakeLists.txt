@@ -191,6 +191,26 @@ add_test(
 )
 set_tests_properties(effectscore-archive-physics-batch-control PROPERTIES TIMEOUT 10)
 
+add_executable(kisakcod-ode-fixed-pool-occupancy-tests
+    ode_fixed_pool_occupancy_tests.cpp
+    ${SRC_DIR}/universal/pool_allocator.cpp
+    ${SRC_DIR}/physics/phys_resource_pair.cpp
+    ${SRC_DIR}/EffectsCore/fx_archive_physics_batch_control.cpp
+)
+target_include_directories(
+    kisakcod-ode-fixed-pool-occupancy-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-ode-fixed-pool-occupancy-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-ode-fixed-pool-occupancy-tests)
+set_target_properties(kisakcod-ode-fixed-pool-occupancy-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME physics-ode-fixed-pool-occupancy
+    COMMAND kisakcod-ode-fixed-pool-occupancy-tests
+)
+set_tests_properties(physics-ode-fixed-pool-occupancy PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-fx-archive-gate-control-tests
     fx_archive_gate_control_tests.cpp
     ${SRC_DIR}/EffectsCore/fx_archive_gate_control.cpp

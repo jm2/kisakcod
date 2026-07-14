@@ -9,19 +9,27 @@ work item changes. Do not create session-specific handoff files.
 - Active branch: `agent/ode-fixed-pool-occupancy`; branch point: merged archive-gate checkpoint
   `5455c778`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: establish honest competing non-FX ODE fixed-pool occupancy and exhaustion coverage. The prerequisite
-  lock audit is now implemented on this branch: public body/user-data creation, geometry/mass publication, complete
-  body-plus-XModel construction, and body/geometry/user-data destruction retain recursive `CRITSECT_PHYSICS` across
-  each whole topology mutation, while archive `LockedNoReport` entry points preserve caller-owned exclusion and do
-  not report. Source contracts pin every public interval, balanced simple-wrapper release, failure-path release,
-  reporting-after-unlock, exact body/user-data/geom capacity mapping, and the no-longjmp boundary. A new narrow,
-  engine-type-free physics batch controller validates complete unique plans before callbacks, preflights every
-  selected retirement/reconstruction before mutation, fails unknown statuses closed, and reports the exact committed
-  prefix. Its exhaustive GCC/Clang/ASan/UBSan/TSan tests and x86-32/AArch64 compile-link checks pass. The remaining
-  active subphase is an exact 512-body, 512-user-data, and 2,048-geometry runtime fixture using the real pool allocator,
-  resource-pair, sidecar, capacity-planner, and batch-controller primitives under full/mixed occupancy and injected
-  reconstruction/cleanup failures. Concrete ODE world/model/collision topology remains production- and Windows-engine-
-  gated because moving it would import the full engine dependency graph.
+- Active work: close the final no-longjmp prerequisite exposed by adversarial review of whole-transaction ODE locking.
+  Public body/user-data creation, geometry/mass publication, complete body-plus-XModel construction, and body/geometry/
+  user-data destruction now retain recursive `CRITSECT_PHYSICS` across each whole topology mutation, while archive
+  `LockedNoReport` entry points preserve caller-owned exclusion. Review proved that merely moving diagnostics after an
+  inner recursive leave is insufficient: `Com_Print*`/`MyAssertHandler` can open the logfile and reach `Com_Error`, and
+  several real CG/FX/DynEnt callers still own an outer PHYSICS level. The active corrective pass is therefore adding
+  explicit no-report pool/ODE allocation and legacy-equivalent joint-aware destruction results, a lightweight silent
+  inertial update that does not import archive validation's large stack frames, intrinsically silent public mutation
+  cores, and top-level reporting only after the outermost owner releases PHYSICS. The original source contracts are
+  being strengthened to cover these transitive boundaries rather than only direct `Com_Error` calls.
+- ODE occupancy runtime on this branch is otherwise complete. The engine-free physics batch controller rejects invalid,
+  duplicate, overlapping-output, and unknown-status inputs before callbacks; preflights every selected retirement or
+  reconstruction before mutation; and reports the exact successful commit prefix. Production FX archive retirement and
+  reconstruction now delegate to it while retaining recoverable wrapper validation, caller-owned PHYSICS, prefix recovery,
+  and centralized fail-stop ownership for ambiguous duplicate bindings. A real exact-size fixture fills 512 body and 512
+  user-data slots plus 2,048 geom slots with 500/500/2,024 competing non-FX resources and 12/12/24 FX resources. It proves
+  full and mixed-demand retirement/reconstruction, deterministic minimum plans, recoverable failure after a committed
+  prefix, transactional capacity/selection rejection, cleanup-refusal ownership, exact non-FX identity preservation,
+  and pool conservation. The **47/47** GCC suite passes; focused GCC/Clang/ASan/UBSan/TSan execution and strict x86-32/
+  AArch64 compile-link also pass. Independent integration review found no functional issue; a wording-only source-test
+  correction now distinguishes prohibited heap/Z allocation from intentional native fixed-pool reconstruction.
 - Archive-gate checkpoint: PR #16 merged as `5455c778` after CI run **29374832707 passed all nine jobs**. Gemini's
   two comments were resolved as false positives: the generation lookup is intentionally null-safe and the requested
   standard headers were already explicit. Codex reviewed the exact merge head `5c3a96a0cd` and found no major issue.
