@@ -1440,28 +1440,37 @@ odeGlob_t odeGlob;
 
 namespace
 {
+poolslotstate_t odeBodyPoolSlotState[512]{};
+poolslotstate_t odeGeomPoolSlotState[ODE_GEOM_POOL_COUNT]{};
+poolcontrol_t odeBodyPoolControl =
+    Pool_ControlFor(odeBodyPoolSlotState);
+poolcontrol_t odeGeomPoolControl =
+    Pool_ControlFor(odeGeomPoolSlotState);
+}
+
 poolstorage_t ODE_BodyPoolStorage() noexcept
 {
-    return Pool_StorageFor(odeGlob.bodies);
+    return Pool_StorageFor(odeGlob.bodies, odeBodyPoolControl);
 }
 
 poolstorage_t ODE_GeomPoolStorage() noexcept
 {
-    return {
+    return Pool_StorageFor(
         odeGlob.geoms,
         sizeof(dxGeomTransform),
         ODE_GEOM_POOL_COUNT,
-    };
-}
+        odeGeomPoolControl);
 }
 
 void __cdecl ODE_LeakCheck()
 {
     const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
     const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    const bool bodyPoolValid = Pool_ValidateFull(
+        bodyStorage, &odeGlob.bodyPool);
     const poolcountresult_t bodyFreeCount = Pool_GetFreeCount(
         bodyStorage, &odeGlob.bodyPool);
-    if (!bodyFreeCount.valid
+    if (!bodyPoolValid || !bodyFreeCount.valid
         || bodyFreeCount.count != ARRAY_COUNT(odeGlob.bodies))
     {
         MyAssertHandler(
@@ -1472,16 +1481,18 @@ void __cdecl ODE_LeakCheck()
             bodyFreeCount.count);
     }
 
+    const bool geomPoolValid = Pool_ValidateFull(
+        geomStorage, &odeGlob.geomPool);
     const poolcountresult_t geomFreeCount = Pool_GetFreeCount(
         geomStorage, &odeGlob.geomPool);
-    if (!geomFreeCount.valid
+    if (!geomPoolValid || !geomFreeCount.valid
         || geomFreeCount.count != ODE_GEOM_POOL_COUNT)
     {
         bool is_free[ODE_GEOM_POOL_COUNT] = {};
-        bool freeListValid = geomFreeCount.valid;
+        bool freeListValid = geomPoolValid && geomFreeCount.valid;
         std::size_t traversedFreeCount = 0;
         void *freeNode = odeGlob.geomPool.firstFree;
-        while (freeNode)
+        while (freeListValid && freeNode)
         {
             if (traversedFreeCount >= ODE_GEOM_POOL_COUNT)
             {
@@ -1540,17 +1551,21 @@ dxUserGeom *__cdecl Phys_GetWorldGeom()
 
 bool __cdecl ODE_Init()
 {
-    odeGlob.bodyPool.firstFree = nullptr;
-    odeGlob.bodyPool.activeCount = 0;
-    odeGlob.geomPool.firstFree = nullptr;
-    odeGlob.geomPool.activeCount = 0;
-    if (!Pool_Init(ODE_BodyPoolStorage(), &odeGlob.bodyPool))
+    const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
+    const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    const bool bodyInvalidated = Pool_Invalidate(
+        bodyStorage, &odeGlob.bodyPool);
+    const bool geomInvalidated = Pool_Invalidate(
+        geomStorage, &odeGlob.geomPool);
+    if (!bodyInvalidated || !geomInvalidated)
         return false;
-    if (Pool_Init(ODE_GeomPoolStorage(), &odeGlob.geomPool))
+    if (!Pool_Init(bodyStorage, &odeGlob.bodyPool))
+        return false;
+    if (Pool_Init(geomStorage, &odeGlob.geomPool))
         return true;
 
-    odeGlob.bodyPool.firstFree = nullptr;
-    odeGlob.bodyPool.activeCount = 0;
+    (void)Pool_Invalidate(bodyStorage, &odeGlob.bodyPool);
+    (void)Pool_Invalidate(geomStorage, &odeGlob.geomPool);
     return false;
 }
 

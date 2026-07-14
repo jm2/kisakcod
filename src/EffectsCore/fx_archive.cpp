@@ -934,14 +934,17 @@ bool FX_ArchivePhysicsCapacityAvailableLocked(
         requiredGeomCount += modelGeomCount;
     }
 
-    const poolstorage_t bodyStorage = Pool_StorageFor(odeGlob.bodies);
+    const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
     const poolstorage_t userDataStorage =
-        Pool_StorageFor(physGlob.userData);
-    const poolstorage_t geomStorage{
-        odeGlob.geoms,
-        sizeof(dxGeomTransform),
-        ODE_GEOM_POOL_COUNT,
-    };
+        Phys_UserDataPoolStorage();
+    const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    if (!Pool_ValidateFull(bodyStorage, &odeGlob.bodyPool)
+        || !Pool_ValidateFull(userDataStorage, &physGlob.userDataPool)
+        || !Pool_ValidateFull(geomStorage, &odeGlob.geomPool))
+    {
+        return false;
+    }
+
     const poolcountresult_t bodyFreeCount = Pool_GetFreeCount(
         bodyStorage, &odeGlob.bodyPool);
     if (!bodyFreeCount.valid)

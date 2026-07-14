@@ -9,10 +9,12 @@ work item changes. Do not create session-specific handoff files.
 - Branch: `agent/native-pool-freelist`; branch point: merged transactional ODE/FX safety
   commit `580b93bb`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: take the descriptor-bounded native-pointer pool freelist and all three migrated physics
-  pools through Windows engine CI and review, then wire the merged FX physics sidecar atomically through
-  spawn/draw/free/reset/archive. The protected licensed headless smoke continues to wait for its
-  self-hosted runners.
+- Active work: finish PR #9's reviewed descriptor-bounded native-pointer pool freelist follow-up, then
+  wire the merged FX physics sidecar atomically through spawn/draw/free/reset/archive. Its pre-review
+  commit `202cce76` passed all nine jobs in run **29293356200**; the PR remains open while the substantiated
+  review findings are corrected. The replacement 39-test GCC, Clang, ASan/UBSan, and TSan suites plus
+  strict x86-32/AArch64 compile-link checks are locally green; replacement CI and automated review remain.
+  The protected licensed headless smoke continues to wait for its self-hosted runners.
 - Progress estimate: approximately **32% complete by engineering effort** (plausible range 28–37%).
   The foundation/checklist view is about 47–52% and the shared foundation is roughly 84–90% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
@@ -113,18 +115,24 @@ work item changes. Do not create session-specific handoff files.
   merged at `580b93bb` after all nine jobs passed in run **29291013134** and automated plus independent
   review found no remaining defects. The current pool branch closes the next hard 64-bit blocker without
   changing the 8-byte x86 metadata: every link is stored and loaded at native pointer width through
-  `memcpy`, and a non-owning base/stride/count descriptor makes initialization, allocation, free, count,
-  and leak traversal validate exact slots and bounded list length before mutation. Checked queries return
-  status and value together, so caller output cannot alias and rewrite live pool storage or metadata.
-  Foreign/interior nodes, short/long chains, cycles, duplicate frees, invalid counts, overflow, and
-  metadata overlap are rejected before publishing or mutating a live list. All three production pools
-  use typed or explicit extents; `PhysObjUserData` now uses
+  `memcpy`, and a non-owning base/stride/count descriptor supplies each operation's exact extent. Checked
+  queries return status and value together, so caller output cannot alias and rewrite live pool storage
+  or metadata. Pre-review commit `202cce76` passed all nine jobs in run **29293356200**. Gemini review then
+  identified that `Pool_Alloc` and `Pool_Free` still traversed the complete inactive list on every hot
+  mutation, and that the `PhysGlob` tracking-size guard was runtime-only. The review fix keeps
+  `pooldata_t` at its retail 8-byte x86 layout while adding external per-slot shadow ownership/link state:
+  `Pool_Alloc`, `Pool_Free`, and `Pool_GetFreeCount` now validate the active metadata and touched link in
+  O(1), reject foreign/interior active nodes, duplicate frees, and active-count divergence before mutation,
+  and preserve transactional failure. Dormant deep links cannot be inspected by an O(1) operation;
+  explicit bounded `Pool_ValidateFull` performs the complete short/long-chain and cycle audit at archive
+  capacity and ODE leak-diagnostic boundaries. All three production pools use typed or explicit extents;
+  `PhysObjUserData` now uses
   its actual 0x70/0x78 stride instead of overlapping native64 records, ODE diagnostics use checked index
-  and next accessors, and FX archive capacity fails closed on corrupt state. The strict **39/39** GCC and
-  Clang suites pass, as do focused ASan/UBSan, TSan, x86-32 compile/link, and AArch64 compile/link. Those
-  portable tests compile the allocator contract; Windows x86 engine CI remains the production-callsite
-  compile gate until native engine source sets exist, while all five portable runtime jobs remain the
-  cross-target allocator gate. The global
+  and next accessors, and FX archive capacity performs the full validation and fails closed on corrupt
+  state. The review-fix strict **39/39** GCC, Clang, ASan/UBSan, and TSan suites pass, as do x86-32 and
+  AArch64 compile/link checks. Those portable tests compile the allocator contract;
+  Windows x86 engine CI remains the production-callsite compile gate until native engine source sets
+  exist, while all five portable runtime jobs remain the cross-target allocator gate. The global
   32-bit frozen token field necessarily permits generation reuse after 2^32 advances, and release
   shutdown must explicitly drain/finalize the registry because destructor assertions are diagnostic.
   The global unbounded/alignment-unsafe `Buf_Read<T>` cursor has
@@ -467,8 +475,9 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Land the current native-pool PR after all Windows engine and five portable runtime jobs confirm the
-   descriptor-bounded full-width freelist, 0x70/0x78 userdata stride, and checked ODE leak diagnostics.
+1. Land PR #9 after replacement review CI and automated review confirm the external per-slot shadow control, O(1) hot pool
+   operations, explicit bounded full validation, descriptor layout correction, 0x70/0x78 userdata stride,
+   and checked ODE leak diagnostics. Pre-review run 29293356200 passed all nine jobs at `202cce76`.
 2. Finish the merged generation-checked `FxElem::physObjId` sidecar by integrating spawn/draw/free/reset
    and staged archive commit/rollback atomically without changing the 0x28-byte ABI. Respect the global
    512-body ceiling with recoverable recipe-based replacement rather than assuming complete live and

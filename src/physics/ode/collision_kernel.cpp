@@ -624,18 +624,6 @@ void dCloseODE()
 #include "odeext.h"
 #include <physics/phys_local.h>
 
-namespace
-{
-poolstorage_t ODE_CollisionGeomPoolStorage() noexcept
-{
-    return {
-        odeGlob.geoms,
-        sizeof(dxGeomTransform),
-        ODE_GEOM_POOL_COUNT,
-    };
-}
-}
-
 void __cdecl dInitUserGeom(dxUserGeom *geom, int classnum, dxSpace *space, dxBody *body)
 {
     if (!geom)
@@ -752,7 +740,7 @@ void dGeomFree(dxGeom* g)
 #ifdef USE_POOL_ALLOCATOR
             Sys_EnterCriticalSection(CRITSECT_PHYSICS);
             const bool geomFreed = Pool_Free(
-                ODE_CollisionGeomPoolStorage(),
+                ODE_GeomPoolStorage(),
                 &odeGlob.geomPool,
                 g);
             Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
@@ -773,7 +761,7 @@ void dGeomFree(dxGeom* g)
 #ifdef USE_POOL_ALLOCATOR
         Sys_EnterCriticalSection(CRITSECT_PHYSICS);
         const bool geomFreed = Pool_Free(
-            ODE_CollisionGeomPoolStorage(),
+            ODE_GeomPoolStorage(),
             &odeGlob.geomPool,
             g);
         Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
@@ -807,7 +795,7 @@ dxGeom* ODE_AllocateGeom()
     dxGeom* geom;
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     geom = static_cast<dxGeom *>(Pool_Alloc(
-        ODE_CollisionGeomPoolStorage(), &odeGlob.geomPool));
+        ODE_GeomPoolStorage(), &odeGlob.geomPool));
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     return geom;
 #else

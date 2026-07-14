@@ -30,11 +30,12 @@ bool CheckAsserted(
     return Check(g_assertionCount > assertionCountBefore, message);
 }
 
-constexpr std::size_t kSlotCount = 5;
+constexpr std::size_t kSlotCount = 9;
 constexpr std::size_t kSlotSize = sizeof(void *) + 5;
 constexpr std::size_t kPrefixSize = 17;
 constexpr std::size_t kSuffixSize = 19;
 constexpr unsigned char kInitialByte = 0xA5u;
+constexpr poolslotstate_t kUninitializedSlot = 0xCCCCCCCCu;
 
 struct PoolFixture
 {
@@ -43,13 +44,22 @@ struct PoolFixture
     alignas(void *)
         std::array<unsigned char,
             kPrefixSize + kPoolBytes + kSuffixSize> bytes{};
-    poolstorage_t storage{};
-    pooldata_t state{};
+    poolslotstate_t slotState[kSlotCount]{};
+    poolcontrol_t control;
+    poolstorage_t storage;
+    pooldata_t data{};
 
     PoolFixture()
-        : storage{bytes.data() + kPrefixSize, kSlotSize, kSlotCount}
+        : control(Pool_ControlFor(slotState)),
+          storage(Pool_StorageFor(
+              bytes.data() + kPrefixSize,
+              kSlotSize,
+              kSlotCount,
+              control))
     {
         bytes.fill(kInitialByte);
+        for (std::size_t index = 0; index < kSlotCount; ++index)
+            slotState[index] = kUninitializedSlot;
     }
 
     void *Slot(const std::size_t index) noexcept
@@ -68,21 +78,47 @@ struct PoolFixture
 
     bool Initialize() noexcept
     {
-        return Pool_Init(storage, &state);
+        return Pool_Init(storage, &data);
     }
 };
 
 struct PoolSnapshot
 {
     void *firstFree;
-    int activeCount;
+    int retailActiveCount;
+    poolcontrol_t control;
+    std::array<poolslotstate_t, kSlotCount> slotState;
     std::array<unsigned char,
         kPrefixSize + PoolFixture::kPoolBytes + kSuffixSize> bytes;
 };
 
+bool ControlsEqual(
+    const poolcontrol_t &left,
+    const poolcontrol_t &right) noexcept
+{
+    return left.slotState == right.slotState
+        && left.slotStateCount == right.slotStateCount
+        && left.boundBase == right.boundBase
+        && left.boundData == right.boundData
+        && left.boundStride == right.boundStride
+        && left.boundCount == right.boundCount
+        && left.headIndex == right.headIndex
+        && left.activeCount == right.activeCount
+        && left.initMagic == right.initMagic;
+}
+
 PoolSnapshot Capture(const PoolFixture &fixture)
 {
-    return {fixture.state.firstFree, fixture.state.activeCount, fixture.bytes};
+    PoolSnapshot snapshot{
+        fixture.data.firstFree,
+        fixture.data.activeCount,
+        fixture.control,
+        {},
+        fixture.bytes,
+    };
+    for (std::size_t index = 0; index < kSlotCount; ++index)
+        snapshot.slotState[index] = fixture.slotState[index];
+    return snapshot;
 }
 
 bool CheckUnchanged(
@@ -90,218 +126,334 @@ bool CheckUnchanged(
     const PoolSnapshot &snapshot,
     const char *const message)
 {
+    bool slotsEqual = true;
+    for (std::size_t index = 0; index < kSlotCount; ++index)
+        slotsEqual = slotsEqual
+            && fixture.slotState[index] == snapshot.slotState[index];
+
     return Check(
-        fixture.state.firstFree == snapshot.firstFree
-            && fixture.state.activeCount == snapshot.activeCount
+        fixture.data.firstFree == snapshot.firstFree
+            && fixture.data.activeCount == snapshot.retailActiveCount
+            && ControlsEqual(fixture.control, snapshot.control)
+            && slotsEqual
             && fixture.bytes == snapshot.bytes,
         message);
 }
 
-void StoreNext(void *const slot, void *const next) noexcept
+bool RawLinkEquals(const void *const slot, void *const expected) noexcept
+{
+    return std::memcmp(slot, &expected, sizeof(expected)) == 0;
+}
+
+void StoreRawLink(void *const slot, void *const next) noexcept
 {
     std::memcpy(slot, &next, sizeof(next));
 }
 
-void TestLayoutAndStorageFactory()
+std::array<unsigned char,
+    kPrefixSize + PoolFixture::kPoolBytes + kSuffixSize>
+ExpectedAfterLinkWrite(
+    const std::array<unsigned char,
+        kPrefixSize + PoolFixture::kPoolBytes + kSuffixSize> &before,
+    const std::size_t slotIndex,
+    void *const next)
 {
-    static_assert(std::is_standard_layout_v<pooldata_t>);
-    static_assert(offsetof(pooldata_t, firstFree) == 0);
-    static_assert(offsetof(pooldata_t, activeCount) == sizeof(void *));
-    static_assert(
-        sizeof(pooldata_t) == (sizeof(void *) == 4 ? 8u : 16u));
-    static_assert(noexcept(Pool_Init(poolstorage_t{}, nullptr)));
-    static_assert(noexcept(Pool_Alloc(poolstorage_t{}, nullptr)));
-    static_assert(noexcept(Pool_Free(poolstorage_t{}, nullptr, nullptr)));
-    static_assert(noexcept(Pool_GetFreeCount(poolstorage_t{}, nullptr)));
-    static_assert(noexcept(Pool_NextFree(poolstorage_t{}, nullptr)));
-    static_assert(noexcept(Pool_GetSlotIndex(poolstorage_t{}, nullptr)));
+    auto expected = before;
+    std::memcpy(
+        expected.data() + kPrefixSize + slotIndex * kSlotSize,
+        &next,
+        sizeof(next));
+    return expected;
+}
 
-    // The former output-pointer API let a caller alias query output with pool
-    // storage or metadata. Keep those signatures uncallable: results must be
-    // returned by value and carry their own validity bit.
-    static_assert(std::is_nothrow_invocable_r_v<
+void SetWrappingStorageBase(poolstorage_t &storage)
+{
+    const std::uintptr_t base =
+        (std::numeric_limits<std::uintptr_t>::max)()
+        - sizeof(void *) + 1u;
+    storage.base = reinterpret_cast<void *>(base);
+    storage.itemSize = sizeof(void *);
+    storage.itemCount = 2;
+}
+
+template <typename Operation>
+void ExpectRejectedWithoutMutation(
+    PoolFixture &fixture,
+    const Operation &operation,
+    const char *const rejectedMessage,
+    const char *const assertionMessage,
+    const char *const mutationMessage)
+{
+    const PoolSnapshot snapshot = Capture(fixture);
+    const std::size_t assertionsBefore = g_assertionCount;
+    Check(operation(), rejectedMessage);
+    CheckAsserted(assertionsBefore, assertionMessage);
+    CheckUnchanged(fixture, snapshot, mutationMessage);
+}
+
+void CheckInitializedBinding(const PoolFixture &fixture)
+{
+    Check(fixture.control.slotState == fixture.slotState,
+        "initialization changed the sidecar pointer");
+    Check(fixture.control.slotStateCount == kSlotCount,
+        "initialization changed the sidecar count");
+    Check(fixture.control.boundBase == fixture.storage.base,
+        "initialization bound the wrong pool base");
+    Check(fixture.control.boundData == &fixture.data,
+        "initialization bound the wrong retail metadata");
+    Check(fixture.control.boundStride == fixture.storage.itemSize,
+        "initialization bound the wrong pool stride");
+    Check(fixture.control.boundCount == fixture.storage.itemCount,
+        "initialization bound the wrong slot count");
+    Check(fixture.control.headIndex == 0,
+        "initialization published the wrong shadow head");
+    Check(fixture.control.activeCount == 0,
+        "initialization published a nonzero shadow active count");
+    Check(fixture.control.initMagic != 0,
+        "initialization did not publish its validity marker");
+}
+
+void TestLayoutAndFactories()
+{
+    static_assert(std::is_standard_layout<pooldata_t>::value, "pooldata ABI");
+    static_assert(offsetof(pooldata_t, firstFree) == 0, "pooldata firstFree");
+    static_assert(
+        offsetof(pooldata_t, activeCount) == sizeof(void *),
+        "pooldata activeCount");
+    static_assert(
+        sizeof(pooldata_t) == (sizeof(void *) == 4 ? 8u : 16u),
+        "pooldata native size");
+    static_assert(std::is_same<poolslotstate_t, std::uint32_t>::value,
+        "slot states must have a fixed width");
+    static_assert(POOL_SLOT_END == UINT32_MAX - 1u, "end sentinel value");
+    static_assert(POOL_SLOT_ALLOCATED == UINT32_MAX,
+        "allocated sentinel value");
+    static_assert(POOL_SLOT_END != POOL_SLOT_ALLOCATED,
+        "slot sentinels must be distinct");
+
+    static_assert(noexcept(Pool_Init(poolstorage_t{}, nullptr)), "init noexcept");
+    static_assert(noexcept(Pool_Invalidate(poolstorage_t{}, nullptr)),
+        "invalidate noexcept");
+    static_assert(noexcept(Pool_Alloc(poolstorage_t{}, nullptr)),
+        "alloc noexcept");
+    static_assert(noexcept(Pool_Free(poolstorage_t{}, nullptr, nullptr)),
+        "free noexcept");
+    static_assert(noexcept(Pool_ValidateFull(poolstorage_t{}, nullptr)),
+        "full validation noexcept");
+    static_assert(noexcept(Pool_GetFreeCount(poolstorage_t{}, nullptr)),
+        "count noexcept");
+    static_assert(noexcept(Pool_NextFree(poolstorage_t{}, nullptr)),
+        "next noexcept");
+    static_assert(noexcept(Pool_GetSlotIndex(poolstorage_t{}, nullptr)),
+        "index noexcept");
+
+    static_assert(std::is_nothrow_invocable_r<
         poolcountresult_t,
         decltype(Pool_GetFreeCount),
         poolstorage_t,
-        const pooldata_t *>);
-    static_assert(!std::is_invocable_v<
+        const pooldata_t *>::value,
+        "free count signature");
+    static_assert(!std::is_invocable<
         decltype(Pool_GetFreeCount),
         poolstorage_t,
         const pooldata_t *,
-        std::size_t *>);
-    static_assert(std::is_nothrow_invocable_r_v<
-        poolnextresult_t,
-        decltype(Pool_NextFree),
-        poolstorage_t,
-        const void *>);
-    static_assert(!std::is_invocable_v<
+        std::size_t *>::value,
+        "legacy free-count output must stay unavailable");
+    static_assert(!std::is_invocable<
         decltype(Pool_NextFree),
         poolstorage_t,
         const void *,
-        void **>);
-    static_assert(std::is_nothrow_invocable_r_v<
-        poolindexresult_t,
-        decltype(Pool_GetSlotIndex),
-        poolstorage_t,
-        const void *>);
-    static_assert(!std::is_invocable_v<
+        void **>::value,
+        "legacy next output must stay unavailable");
+    static_assert(!std::is_invocable<
         decltype(Pool_GetSlotIndex),
         poolstorage_t,
         const void *,
-        std::size_t *>);
+        std::size_t *>::value,
+        "legacy index output must stay unavailable");
 
     struct alignas(16) StaticSlot
     {
-        std::array<unsigned char, 32> payload{};
+        unsigned char payload[32];
     };
 
     StaticSlot slots[3]{};
-    const poolstorage_t storage = Pool_StorageFor(slots);
+    poolslotstate_t states[3]{};
+    poolcontrol_t control = Pool_ControlFor(states);
+    const poolstorage_t storage = Pool_StorageFor(slots, control);
     Check(storage.base == static_cast<void *>(slots),
         "Pool_StorageFor returned the wrong base");
     Check(storage.itemSize == sizeof(StaticSlot),
         "Pool_StorageFor returned the wrong stride");
     Check(storage.itemCount == 3,
         "Pool_StorageFor returned the wrong item count");
+    Check(storage.control == &control,
+        "Pool_StorageFor returned the wrong control object");
+    Check(control.slotState == states && control.slotStateCount == 3,
+        "Pool_ControlFor returned the wrong sidecar extent");
 
-    pooldata_t state{};
-    Check(Pool_Init(storage, &state),
-        "Pool_StorageFor descriptor did not initialize");
-    const poolcountresult_t freeCount = Pool_GetFreeCount(storage, &state);
-    Check(freeCount.valid && freeCount.count == 3,
-        "Pool_StorageFor descriptor reported the wrong free count");
+    pooldata_t data{};
+    Check(Pool_Init(storage, &data),
+        "typed factories did not initialize a pool");
+    Check(Pool_ValidateFull(storage, &data),
+        "typed-factory pool did not pass full validation");
+    const poolcountresult_t count = Pool_GetFreeCount(storage, &data);
+    Check(count.valid && count.count == 3,
+        "typed-factory pool reported the wrong free count");
 }
 
 void TestInitializationAndTraversal()
 {
     PoolFixture fixture;
+    const auto originalBytes = fixture.bytes;
     Check(
         reinterpret_cast<std::uintptr_t>(fixture.storage.base)
                 % alignof(void *)
             != 0,
-        "test fixture must exercise an unaligned pool base");
+        "fixture must exercise an unaligned pool base");
     Check(fixture.storage.itemSize % alignof(void *) != 0,
-        "test fixture must exercise an unaligned pool stride");
-    Check(fixture.Initialize(),
-        "valid unaligned pool initialization failed");
-    Check(fixture.state.firstFree == fixture.Slot(0),
-        "pool initialization published the wrong head");
-    Check(fixture.state.activeCount == 0,
-        "pool initialization published a nonzero active count");
-
-    const poolcountresult_t freeCount =
-        Pool_GetFreeCount(fixture.storage, &fixture.state);
-    Check(freeCount.valid && freeCount.count == kSlotCount,
-        "initialized pool reported the wrong free count");
+        "fixture must exercise an unaligned pool stride");
+    Check(fixture.Initialize(), "valid unaligned pool initialization failed");
+    Check(fixture.data.firstFree == fixture.Slot(0),
+        "initialization published the wrong retail head");
+    Check(fixture.data.activeCount == 0,
+        "initialization published a nonzero retail active count");
+    CheckInitializedBinding(fixture);
 
     for (std::size_t index = 0; index < kSlotCount; ++index)
     {
+        const poolslotstate_t expected = index + 1 < kSlotCount
+            ? static_cast<poolslotstate_t>(index + 1)
+            : POOL_SLOT_END;
+        Check(fixture.slotState[index] == expected,
+            "Pool_Init built the wrong shadow chain");
+
         const void *const expectedNext = index + 1 < kSlotCount
             ? fixture.Slot(index + 1)
             : nullptr;
+        Check(RawLinkEquals(
+                  fixture.Slot(index),
+                  const_cast<void *>(expectedNext)),
+            "Pool_Init wrote the wrong compatibility link bytes");
         const poolnextresult_t next =
             Pool_NextFree(fixture.storage, fixture.Slot(index));
         Check(next.valid && next.next == expectedNext,
-            "initialized pool link did not retain its full pointer value");
+            "Pool_NextFree did not follow the shadow chain");
 
-        const poolindexresult_t slotIndex =
+        const poolindexresult_t slot =
             Pool_GetSlotIndex(fixture.storage, fixture.Slot(index));
-        Check(slotIndex.valid && slotIndex.index == index,
+        Check(slot.valid && slot.index == index,
             "exact pool member mapped to the wrong slot index");
 
-        const auto *const slot = static_cast<const unsigned char *>(
+        const auto *const bytes = static_cast<const unsigned char *>(
             fixture.Slot(index));
         for (std::size_t byte = sizeof(void *);
              byte < fixture.storage.itemSize;
              ++byte)
         {
-            Check(slot[byte] == kInitialByte,
-                "Pool_Init overwrote bytes beyond the freelist link");
+            Check(bytes[byte] == kInitialByte,
+                "Pool_Init overwrote payload beyond the compatibility link");
         }
     }
 
     for (std::size_t byte = 0; byte < kPrefixSize; ++byte)
-    {
-        Check(fixture.bytes[byte] == kInitialByte,
+        Check(fixture.bytes[byte] == originalBytes[byte],
             "Pool_Init overwrote the prefix guard");
-    }
     for (std::size_t byte = kPrefixSize + PoolFixture::kPoolBytes;
          byte < fixture.bytes.size();
          ++byte)
     {
-        Check(fixture.bytes[byte] == kInitialByte,
+        Check(fixture.bytes[byte] == originalBytes[byte],
             "Pool_Init overwrote the suffix guard");
     }
+
+    const poolcountresult_t count =
+        Pool_GetFreeCount(fixture.storage, &fixture.data);
+    Check(count.valid && count.count == kSlotCount,
+        "initialized pool reported the wrong free count");
+    Check(Pool_ValidateFull(fixture.storage, &fixture.data),
+        "initialized pool failed full validation");
 }
 
 void TestAllocationFreeAndLifo()
 {
     PoolFixture fixture;
     Check(fixture.Initialize(), "allocation fixture failed to initialize");
+    const auto originalBytes = fixture.bytes;
 
     std::array<void *, kSlotCount> allocated{};
     for (std::size_t index = 0; index < kSlotCount; ++index)
     {
-        allocated[index] = Pool_Alloc(fixture.storage, &fixture.state);
+        allocated[index] = Pool_Alloc(fixture.storage, &fixture.data);
         Check(allocated[index] == fixture.Slot(index),
-            "Pool_Alloc did not consume the ascending initialized chain");
-        Check(fixture.state.activeCount == static_cast<int>(index + 1),
-            "Pool_Alloc updated activeCount incorrectly");
+            "Pool_Alloc did not consume the ascending shadow chain");
+        Check(fixture.slotState[index] == POOL_SLOT_ALLOCATED,
+            "Pool_Alloc did not mark exactly the returned slot allocated");
+        const poolslotstate_t expectedHead = index + 1 < kSlotCount
+            ? static_cast<poolslotstate_t>(index + 1)
+            : POOL_SLOT_END;
+        Check(fixture.control.headIndex == expectedHead,
+            "Pool_Alloc updated the shadow head incorrectly");
+        Check(fixture.control.activeCount == static_cast<int>(index + 1)
+                && fixture.data.activeCount == static_cast<int>(index + 1),
+            "Pool_Alloc did not update both active counts");
+        Check(fixture.data.firstFree
+                == (index + 1 < kSlotCount
+                        ? fixture.Slot(index + 1)
+                        : nullptr),
+            "Pool_Alloc did not update the retail head mirror");
+        Check(fixture.bytes == originalBytes,
+            "Pool_Alloc modified object payload bytes");
 
-        const poolcountresult_t freeCount =
-            Pool_GetFreeCount(fixture.storage, &fixture.state);
-        Check(freeCount.valid
-                && freeCount.count == kSlotCount - index - 1,
+        const poolcountresult_t count =
+            Pool_GetFreeCount(fixture.storage, &fixture.data);
+        Check(count.valid && count.count == kSlotCount - index - 1,
             "Pool_Alloc updated the free count incorrectly");
+        Check(Pool_ValidateFull(fixture.storage, &fixture.data),
+            "Pool_Alloc produced a state that failed full validation");
     }
 
     const PoolSnapshot exhausted = Capture(fixture);
-    const std::size_t assertionsBeforeExhaustion = g_assertionCount;
-    Check(Pool_Alloc(fixture.storage, &fixture.state) == nullptr,
+    const std::size_t assertionsBefore = g_assertionCount;
+    Check(Pool_Alloc(fixture.storage, &fixture.data) == nullptr,
         "exhausted pool returned an item");
-    Check(g_assertionCount == assertionsBeforeExhaustion,
-        "ordinary pool exhaustion raised an assertion");
+    Check(g_assertionCount == assertionsBefore,
+        "ordinary exhaustion raised an assertion");
     CheckUnchanged(fixture, exhausted,
-        "ordinary pool exhaustion mutated allocator state");
+        "ordinary exhaustion mutated allocator state");
 
     std::memset(allocated[1], 0x5A, fixture.storage.itemSize);
-    Check(Pool_Free(fixture.storage, &fixture.state, allocated[1]),
+    const auto bytesBeforeFirstFree = fixture.bytes;
+    void *const nullNext = nullptr;
+    Check(Pool_Free(fixture.storage, &fixture.data, allocated[1]),
         "first valid free failed");
-    const poolnextresult_t firstNext =
-        Pool_NextFree(fixture.storage, allocated[1]);
-    Check(firstNext.valid && firstNext.next == nullptr,
-        "first valid free did not store a full-width null link");
-    const auto *const firstFreedBytes =
-        static_cast<const unsigned char *>(allocated[1]);
-    for (std::size_t byte = sizeof(void *);
-         byte < fixture.storage.itemSize;
-         ++byte)
-    {
-        Check(firstFreedBytes[byte] == 0x5Au,
-            "Pool_Free overwrote payload bytes after the link");
-    }
+    Check(fixture.slotState[1] == POOL_SLOT_END,
+        "first free did not terminate the shadow list");
+    Check(fixture.control.headIndex == 1
+            && fixture.data.firstFree == allocated[1],
+        "first free published the wrong head");
+    Check(fixture.bytes
+            == ExpectedAfterLinkWrite(bytesBeforeFirstFree, 1, nullNext),
+        "Pool_Free modified bytes beyond its compatibility link");
 
     std::memset(allocated[3], 0x3C, fixture.storage.itemSize);
-    Check(Pool_Free(fixture.storage, &fixture.state, allocated[3]),
+    const auto bytesBeforeSecondFree = fixture.bytes;
+    Check(Pool_Free(fixture.storage, &fixture.data, allocated[3]),
         "second valid free failed");
-    const poolnextresult_t secondNext =
+    Check(fixture.slotState[3] == 1,
+        "second free did not link to the previous shadow head");
+    Check(fixture.bytes
+            == ExpectedAfterLinkWrite(bytesBeforeSecondFree, 3, allocated[1]),
+        "second Pool_Free modified bytes beyond its compatibility link");
+    const poolnextresult_t next =
         Pool_NextFree(fixture.storage, allocated[3]);
-    Check(secondNext.valid && secondNext.next == allocated[1],
-        "second valid free did not link to the previous head");
-    const auto *const secondFreedBytes =
-        static_cast<const unsigned char *>(allocated[3]);
-    for (std::size_t byte = sizeof(void *);
-         byte < fixture.storage.itemSize;
-         ++byte)
-    {
-        Check(secondFreedBytes[byte] == 0x3Cu,
-            "second Pool_Free overwrote payload bytes after the link");
-    }
+    Check(next.valid && next.next == allocated[1],
+        "Pool_NextFree did not use the authoritative shadow edge");
 
-    Check(Pool_Alloc(fixture.storage, &fixture.state) == allocated[3],
-        "freelist did not return the newest free first");
-    Check(Pool_Alloc(fixture.storage, &fixture.state) == allocated[1],
-        "freelist did not return the older free second");
+    Check(Pool_Alloc(fixture.storage, &fixture.data) == allocated[3],
+        "free list did not return the newest free first");
+    Check(Pool_Alloc(fixture.storage, &fixture.data) == allocated[1],
+        "free list did not return the older free second");
 
     for (std::size_t index = 0; index < kSlotCount; ++index)
     {
@@ -309,521 +461,691 @@ void TestAllocationFreeAndLifo()
             allocated[index],
             static_cast<int>(0x20u + index),
             fixture.storage.itemSize);
-        Check(Pool_Free(
-                  fixture.storage, &fixture.state, allocated[index]),
+        const auto bytesBeforeFree = fixture.bytes;
+        void *const previousHead = fixture.data.firstFree;
+        Check(Pool_Free(fixture.storage, &fixture.data, allocated[index]),
             "valid refill free failed");
+        Check(fixture.bytes
+                == ExpectedAfterLinkWrite(
+                    bytesBeforeFree, index, previousHead),
+            "refill free modified bytes beyond its compatibility link");
     }
-    Check(fixture.state.activeCount == 0,
-        "freeing every item did not clear activeCount");
+    Check(fixture.control.activeCount == 0 && fixture.data.activeCount == 0,
+        "freeing every item did not clear both active counts");
+    Check(Pool_ValidateFull(fixture.storage, &fixture.data),
+        "refilled pool failed full validation");
 
     for (std::size_t index = 0; index < kSlotCount; ++index)
     {
-        const std::size_t expectedIndex = kSlotCount - index - 1;
-        Check(Pool_Alloc(fixture.storage, &fixture.state)
-                == allocated[expectedIndex],
+        const std::size_t expected = kSlotCount - index - 1;
+        Check(Pool_Alloc(fixture.storage, &fixture.data) == allocated[expected],
             "refilled pool did not preserve LIFO order");
     }
 }
 
-void TestInvalidInitialization()
+void TestLargePool()
 {
-    PoolFixture fixture;
-    const auto originalBytes = fixture.bytes;
-
-    const auto rejectDescriptor = [&](const poolstorage_t storage,
-                                      const char *const description) {
-        fixture.state.firstFree = fixture.Slot(2);
-        fixture.state.activeCount = 3;
-        fixture.bytes = originalBytes;
-        const std::size_t assertionsBefore = g_assertionCount;
-        Check(!Pool_Init(storage, &fixture.state), description);
-        CheckAsserted(assertionsBefore,
-            "invalid Pool_Init descriptor did not assert");
-        Check(fixture.state.firstFree == nullptr
-                && fixture.state.activeCount == 0,
-            "invalid Pool_Init did not fail closed");
-        Check(fixture.bytes == originalBytes,
-            "invalid Pool_Init modified backing storage");
+    constexpr std::size_t count = 257;
+    struct LargeSlot
+    {
+        unsigned char payload[sizeof(void *) + 3];
     };
 
-    rejectDescriptor(
-        {nullptr, kSlotSize, kSlotCount},
-        "Pool_Init accepted a null base");
-    rejectDescriptor(
-        {fixture.storage.base, 0, kSlotCount},
-        "Pool_Init accepted a zero stride");
-    rejectDescriptor(
-        {fixture.storage.base, sizeof(void *) - 1, kSlotCount},
-        "Pool_Init accepted a sub-pointer stride");
-    rejectDescriptor(
-        {fixture.storage.base, kSlotSize, 0},
-        "Pool_Init accepted a zero item count");
-    rejectDescriptor(
-        {fixture.storage.base, kSlotSize, 1},
-        "Pool_Init accepted a one-item pool");
+    LargeSlot slots[count]{};
+    poolslotstate_t states[count]{};
+    poolcontrol_t control = Pool_ControlFor(states);
+    const poolstorage_t storage = Pool_StorageFor(slots, control);
+    pooldata_t data{};
 
-    const std::size_t tooManyItems =
-        static_cast<std::size_t>((std::numeric_limits<int>::max)()) + 1u;
-    rejectDescriptor(
-        {fixture.storage.base, kSlotSize, tooManyItems},
-        "Pool_Init accepted a count that cannot fit activeCount");
-
-    const std::size_t overflowingStride =
-        (std::numeric_limits<std::size_t>::max)() / 2u + 1u;
-    rejectDescriptor(
-        {fixture.storage.base, overflowingStride, 2},
-        "Pool_Init accepted a size multiplication overflow");
-
-    const std::uintptr_t overflowingBase =
-        (std::numeric_limits<std::uintptr_t>::max)()
-        - sizeof(void *) + 1u;
-    rejectDescriptor(
-        {reinterpret_cast<void *>(overflowingBase), sizeof(void *), 2},
-        "Pool_Init accepted an address-range overflow");
-
-    pooldata_t overlappingStorage[2]{};
-    overlappingStorage[0].firstFree = &overlappingStorage[1];
-    overlappingStorage[0].activeCount = 1;
-    std::array<unsigned char, sizeof(overlappingStorage)> overlapSnapshot{};
-    std::memcpy(
-        overlapSnapshot.data(), overlappingStorage, overlapSnapshot.size());
-    const std::size_t assertionsBeforeOverlap = g_assertionCount;
-    Check(!Pool_Init(
-              Pool_StorageFor(overlappingStorage),
-              &overlappingStorage[0]),
-        "Pool_Init accepted metadata inside its backing storage");
-    CheckAsserted(assertionsBeforeOverlap,
-        "overlapping Pool_Init metadata did not assert");
-    Check(std::memcmp(
-              overlappingStorage,
-              overlapSnapshot.data(),
-              overlapSnapshot.size())
-            == 0,
-        "overlapping Pool_Init modified backing storage or metadata");
-
-    fixture.bytes = originalBytes;
-    const std::size_t assertionsBeforeNullState = g_assertionCount;
-    Check(!Pool_Init(fixture.storage, nullptr),
-        "Pool_Init accepted a null state");
-    CheckAsserted(assertionsBeforeNullState,
-        "null Pool_Init state did not assert");
-    Check(fixture.bytes == originalBytes,
-        "null Pool_Init state modified backing storage");
+    Check(Pool_Init(storage, &data), "large pool failed to initialize");
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        Check(Pool_Alloc(storage, &data) == &slots[index],
+            "large pool allocation lost index precision");
+    }
+    Check(control.headIndex == POOL_SLOT_END,
+        "large exhausted pool retained a head index");
+    for (std::size_t index = 0; index < count; index += 3)
+    {
+        Check(Pool_Free(storage, &data, &slots[index]),
+            "large pool valid free failed");
+    }
+    Check(Pool_ValidateFull(storage, &data),
+        "large pool failed full validation");
 }
 
-void TestInvalidArgumentsAndMembership()
+void TestInvalidInitialization()
+{
+    const auto rejectDescriptor = [](const char *const description,
+                                      const auto &mutateStorage) {
+        PoolFixture fixture;
+        poolstorage_t storage = fixture.storage;
+        mutateStorage(storage);
+        const PoolSnapshot snapshot = Capture(fixture);
+        const std::size_t assertionsBefore = g_assertionCount;
+        Check(!Pool_Init(storage, &fixture.data), description);
+        CheckAsserted(assertionsBefore,
+            "invalid Pool_Init descriptor did not assert");
+        CheckUnchanged(fixture, snapshot,
+            "invalid Pool_Init descriptor mutated state");
+    };
+
+    rejectDescriptor("Pool_Init accepted a null base",
+        [](poolstorage_t &storage) { storage.base = nullptr; });
+    rejectDescriptor("Pool_Init accepted a zero stride",
+        [](poolstorage_t &storage) { storage.itemSize = 0; });
+    rejectDescriptor("Pool_Init accepted a sub-pointer stride",
+        [](poolstorage_t &storage) { storage.itemSize = sizeof(void *) - 1; });
+    rejectDescriptor("Pool_Init accepted a zero item count",
+        [](poolstorage_t &storage) { storage.itemCount = 0; });
+    rejectDescriptor("Pool_Init accepted a one-item pool",
+        [](poolstorage_t &storage) { storage.itemCount = 1; });
+    rejectDescriptor("Pool_Init accepted a null control",
+        [](poolstorage_t &storage) { storage.control = nullptr; });
+    rejectDescriptor("Pool_Init accepted a count above INT_MAX",
+        [](poolstorage_t &storage) {
+            storage.itemCount =
+                static_cast<std::size_t>((std::numeric_limits<int>::max)())
+                + 1u;
+        });
+    rejectDescriptor("Pool_Init accepted extent multiplication overflow",
+        [](poolstorage_t &storage) {
+            storage.itemSize =
+                (std::numeric_limits<std::size_t>::max)() / 2u + 1u;
+            storage.itemCount = 2;
+        });
+    rejectDescriptor("Pool_Init accepted an address-range overflow",
+        [](poolstorage_t &storage) { SetWrappingStorageBase(storage); });
+
+    {
+        PoolFixture fixture;
+        fixture.control.slotState = nullptr;
+        const PoolSnapshot snapshot = Capture(fixture);
+        const std::size_t assertionsBefore = g_assertionCount;
+        Check(!fixture.Initialize(), "Pool_Init accepted a null sidecar");
+        CheckAsserted(assertionsBefore, "null sidecar did not assert");
+        CheckUnchanged(fixture, snapshot, "null sidecar mutated state");
+    }
+    {
+        PoolFixture fixture;
+        --fixture.control.slotStateCount;
+        const PoolSnapshot snapshot = Capture(fixture);
+        const std::size_t assertionsBefore = g_assertionCount;
+        Check(!fixture.Initialize(), "Pool_Init accepted a short sidecar");
+        CheckAsserted(assertionsBefore, "short sidecar did not assert");
+        CheckUnchanged(fixture, snapshot, "short sidecar mutated state");
+    }
+    {
+        PoolFixture fixture;
+        ++fixture.control.slotStateCount;
+        const PoolSnapshot snapshot = Capture(fixture);
+        const std::size_t assertionsBefore = g_assertionCount;
+        Check(!fixture.Initialize(), "Pool_Init accepted a long sidecar");
+        CheckAsserted(assertionsBefore, "long sidecar did not assert");
+        CheckUnchanged(fixture, snapshot, "long sidecar mutated state");
+    }
+    {
+        PoolFixture fixture;
+        alignas(poolslotstate_t)
+            unsigned char misaligned[sizeof(poolslotstate_t) * kSlotCount + 1]{};
+        fixture.control.slotState = reinterpret_cast<poolslotstate_t *>(
+            misaligned + 1);
+        const auto bytesBefore = misaligned;
+        const PoolSnapshot snapshot = Capture(fixture);
+        const std::size_t assertionsBefore = g_assertionCount;
+        Check(!fixture.Initialize(), "Pool_Init accepted a misaligned sidecar");
+        CheckAsserted(assertionsBefore, "misaligned sidecar did not assert");
+        CheckUnchanged(fixture, snapshot, "misaligned sidecar mutated pool state");
+        Check(std::memcmp(misaligned, bytesBefore, sizeof(misaligned)) == 0,
+            "misaligned sidecar storage was modified");
+    }
+    {
+        PoolFixture fixture;
+        const std::uintptr_t stateAddress =
+            (std::numeric_limits<std::uintptr_t>::max)()
+            - sizeof(poolslotstate_t) + 1u;
+        fixture.control.slotState =
+            reinterpret_cast<poolslotstate_t *>(stateAddress);
+        const PoolSnapshot snapshot = Capture(fixture);
+        const std::size_t assertionsBefore = g_assertionCount;
+        Check(!fixture.Initialize(),
+            "Pool_Init accepted a wrapping sidecar range");
+        CheckAsserted(assertionsBefore, "wrapping sidecar did not assert");
+        CheckUnchanged(fixture, snapshot, "wrapping sidecar mutated state");
+    }
+
+    {
+        PoolFixture fixture;
+        fixture.control.slotState = reinterpret_cast<poolslotstate_t *>(
+            fixture.storage.base);
+        const PoolSnapshot snapshot = Capture(fixture);
+        const std::size_t assertionsBefore = g_assertionCount;
+        Check(!fixture.Initialize(),
+            "Pool_Init accepted sidecar storage inside pool payload");
+        CheckAsserted(assertionsBefore,
+            "payload-overlapping sidecar did not assert");
+        CheckUnchanged(fixture, snapshot,
+            "payload-overlapping sidecar mutated state");
+    }
+    {
+        struct Slot
+        {
+            unsigned char payload[sizeof(void *)];
+        } slots[2]{};
+        pooldata_t data{};
+        poolslotstate_t realStates[2]{};
+        poolcontrol_t control = Pool_ControlFor(realStates);
+        control.slotState = reinterpret_cast<poolslotstate_t *>(&data);
+        const poolstorage_t storage = Pool_StorageFor(slots, control);
+        const pooldata_t dataBefore = data;
+        const poolcontrol_t controlBefore = control;
+        Check(!Pool_Init(storage, &data),
+            "Pool_Init accepted a sidecar overlapping pooldata");
+        Check(data.firstFree == dataBefore.firstFree
+                && data.activeCount == dataBefore.activeCount
+                && ControlsEqual(control, controlBefore),
+            "pooldata-overlapping sidecar mutated metadata");
+    }
+    {
+        struct Slot
+        {
+            unsigned char payload[sizeof(void *)];
+        } slots[2]{};
+        poolslotstate_t states[2]{};
+        poolcontrol_t control = Pool_ControlFor(states);
+        control.slotState = reinterpret_cast<poolslotstate_t *>(
+            &control.boundBase);
+        pooldata_t data{};
+        const poolstorage_t storage = Pool_StorageFor(slots, control);
+        const poolcontrol_t controlBefore = control;
+        Check(!Pool_Init(storage, &data),
+            "Pool_Init accepted a sidecar overlapping its control object");
+        Check(ControlsEqual(control, controlBefore),
+            "control-overlapping sidecar mutated control storage");
+    }
+    {
+        poolcontrol_t controls[2]{};
+        poolslotstate_t states[2]{};
+        controls[0] = Pool_ControlFor(states);
+        pooldata_t data{};
+        const poolstorage_t storage = Pool_StorageFor(controls, controls[0]);
+        const poolcontrol_t controlBefore = controls[0];
+        Check(!Pool_Init(storage, &data),
+            "Pool_Init accepted control storage inside pool payload");
+        Check(ControlsEqual(controls[0], controlBefore),
+            "payload-overlapping control was modified");
+    }
+    {
+        pooldata_t poolObjects[2]{};
+        poolslotstate_t states[2]{};
+        poolcontrol_t control = Pool_ControlFor(states);
+        const poolstorage_t storage = Pool_StorageFor(poolObjects, control);
+        const pooldata_t before = poolObjects[0];
+        Check(!Pool_Init(storage, &poolObjects[0]),
+            "Pool_Init accepted pooldata inside pool payload");
+        Check(poolObjects[0].firstFree == before.firstFree
+                && poolObjects[0].activeCount == before.activeCount,
+            "payload-overlapping pooldata was modified");
+    }
+    {
+        struct Slot
+        {
+            unsigned char payload[sizeof(void *)];
+        } slots[2]{};
+        poolslotstate_t states[2]{};
+        poolcontrol_t control = Pool_ControlFor(states);
+        pooldata_t *const overlappingData = reinterpret_cast<pooldata_t *>(
+            &control.boundBase);
+        const poolstorage_t storage = Pool_StorageFor(slots, control);
+        const poolcontrol_t before = control;
+        Check(!Pool_Init(storage, overlappingData),
+            "Pool_Init accepted pooldata overlapping its control object");
+        Check(ControlsEqual(control, before),
+            "control-overlapping pooldata modified control storage");
+    }
+}
+
+void TestInvalidArgumentsAndBinding()
 {
     PoolFixture fixture;
-    Check(fixture.Initialize(),
-        "invalid-operation fixture failed to initialize");
-    void *const allocated = Pool_Alloc(fixture.storage, &fixture.state);
+    Check(fixture.Initialize(), "invalid-operation fixture did not initialize");
+    void *const allocated = Pool_Alloc(fixture.storage, &fixture.data);
     Check(allocated == fixture.Slot(0),
-        "invalid-operation fixture did not allocate its first slot");
+        "invalid-operation fixture did not allocate slot zero");
 
-    alignas(void *) std::array<unsigned char, sizeof(void *)> foreign{};
+    alignas(void *) unsigned char foreign[sizeof(void *)]{};
     void *const interior = static_cast<void *>(
         static_cast<unsigned char *>(fixture.storage.base) + 1);
     void *const onePast = static_cast<void *>(
         static_cast<unsigned char *>(fixture.storage.base)
         + fixture.storage.itemSize * fixture.storage.itemCount);
-    const poolstorage_t invalidStorage{
-        fixture.storage.base, sizeof(void *) - 1, kSlotCount};
 
-    const auto rejectWithoutMutation = [&](const auto &operation,
-                                           const char *const rejected,
-                                           const char *const asserted,
-                                           const char *const unchanged) {
-        const PoolSnapshot snapshot = Capture(fixture);
-        const std::size_t assertionsBefore = g_assertionCount;
-        Check(operation(), rejected);
-        CheckAsserted(assertionsBefore, asserted);
-        CheckUnchanged(fixture, snapshot, unchanged);
-    };
-
-    rejectWithoutMutation(
-        [&]() { return Pool_Alloc(fixture.storage, nullptr) == nullptr; },
-        "Pool_Alloc accepted a null state",
-        "null Pool_Alloc state did not assert",
-        "null Pool_Alloc state mutated storage");
-    rejectWithoutMutation(
-        [&]() { return Pool_Alloc(invalidStorage, &fixture.state) == nullptr; },
-        "Pool_Alloc accepted an invalid descriptor",
-        "invalid Pool_Alloc descriptor did not assert",
-        "invalid Pool_Alloc descriptor mutated state");
-    rejectWithoutMutation(
-        [&]() {
-            return !Pool_Free(invalidStorage, &fixture.state, allocated);
+    ExpectRejectedWithoutMutation(
+        fixture,
+        [&fixture]() { return Pool_Alloc(fixture.storage, nullptr) == nullptr; },
+        "Pool_Alloc accepted null pooldata",
+        "null Pool_Alloc pooldata did not assert",
+        "null Pool_Alloc pooldata mutated state");
+    ExpectRejectedWithoutMutation(
+        fixture,
+        [&fixture, allocated]() {
+            return !Pool_Free(fixture.storage, nullptr, allocated);
         },
-        "Pool_Free accepted an invalid descriptor",
-        "invalid Pool_Free descriptor did not assert",
-        "invalid Pool_Free descriptor mutated state");
-    rejectWithoutMutation(
-        [&]() { return !Pool_Free(fixture.storage, nullptr, allocated); },
-        "Pool_Free accepted a null state",
-        "null Pool_Free state did not assert",
-        "null Pool_Free state mutated storage");
-    rejectWithoutMutation(
-        [&]() { return !Pool_Free(fixture.storage, &fixture.state, nullptr); },
-        "Pool_Free accepted a null item",
-        "null Pool_Free item did not assert",
-        "null Pool_Free item mutated state");
-    rejectWithoutMutation(
-        [&]() { return !Pool_Free(fixture.storage, &fixture.state, interior); },
-        "Pool_Free accepted an interior pointer",
-        "interior Pool_Free pointer did not assert",
-        "interior Pool_Free pointer mutated state");
-    rejectWithoutMutation(
-        [&]() {
-            return !Pool_Free(
-                fixture.storage, &fixture.state, foreign.data());
-        },
-        "Pool_Free accepted a foreign pointer",
-        "foreign Pool_Free pointer did not assert",
-        "foreign Pool_Free pointer mutated state");
-    rejectWithoutMutation(
-        [&]() { return !Pool_Free(fixture.storage, &fixture.state, onePast); },
-        "Pool_Free accepted the one-past pointer",
-        "one-past Pool_Free pointer did not assert",
-        "one-past Pool_Free pointer mutated state");
-
-    rejectWithoutMutation(
-        [&]() {
+        "Pool_Free accepted null pooldata",
+        "null Pool_Free pooldata did not assert",
+        "null Pool_Free pooldata mutated state");
+    ExpectRejectedWithoutMutation(
+        fixture,
+        [&fixture]() {
             const poolcountresult_t result =
                 Pool_GetFreeCount(fixture.storage, nullptr);
             return !result.valid && result.count == 0;
         },
-        "Pool_GetFreeCount accepted a null state",
-        "null Pool_GetFreeCount state did not assert",
-        "null Pool_GetFreeCount state mutated storage");
-    rejectWithoutMutation(
-        [&]() {
-            const poolcountresult_t result =
-                Pool_GetFreeCount(invalidStorage, &fixture.state);
-            return !result.valid && result.count == 0;
-        },
-        "Pool_GetFreeCount accepted an invalid descriptor",
-        "invalid Pool_GetFreeCount descriptor did not assert",
-        "invalid Pool_GetFreeCount descriptor mutated state");
+        "Pool_GetFreeCount accepted null pooldata",
+        "null count pooldata did not assert",
+        "null count pooldata mutated state");
 
-    rejectWithoutMutation(
-        [&]() {
-            const poolnextresult_t result =
-                Pool_NextFree(fixture.storage, nullptr);
-            return !result.valid && result.next == nullptr;
-        },
-        "Pool_NextFree accepted a null node",
-        "null Pool_NextFree node did not assert",
-        "null Pool_NextFree node mutated state");
-    rejectWithoutMutation(
-        [&]() {
-            const poolnextresult_t result =
-                Pool_NextFree(fixture.storage, interior);
-            return !result.valid && result.next == nullptr;
-        },
-        "Pool_NextFree accepted an interior node",
-        "interior Pool_NextFree node did not assert",
-        "interior Pool_NextFree node mutated state");
-    rejectWithoutMutation(
-        [&]() {
-            const poolnextresult_t result =
-                Pool_NextFree(fixture.storage, foreign.data());
-            return !result.valid && result.next == nullptr;
-        },
-        "Pool_NextFree accepted a foreign node",
-        "foreign Pool_NextFree node did not assert",
-        "foreign Pool_NextFree node mutated state");
-    rejectWithoutMutation(
-        [&]() {
-            const poolnextresult_t result =
-                Pool_NextFree(invalidStorage, fixture.Slot(1));
-            return !result.valid && result.next == nullptr;
-        },
-        "Pool_NextFree accepted an invalid descriptor",
-        "invalid Pool_NextFree descriptor did not assert",
-        "invalid Pool_NextFree descriptor mutated state");
+    const auto rejectFreeItem = [&fixture](void *const item,
+                                          const char *const description) {
+        ExpectRejectedWithoutMutation(
+            fixture,
+            [&fixture, item]() {
+                return !Pool_Free(fixture.storage, &fixture.data, item);
+            },
+            description,
+            "invalid Pool_Free item did not assert",
+            "invalid Pool_Free item mutated state");
+    };
+    rejectFreeItem(nullptr, "Pool_Free accepted null item");
+    rejectFreeItem(interior, "Pool_Free accepted an interior pointer");
+    rejectFreeItem(foreign, "Pool_Free accepted a foreign pointer");
+    rejectFreeItem(onePast, "Pool_Free accepted a one-past pointer");
 
-    rejectWithoutMutation(
-        [&]() {
-            const poolindexresult_t result =
-                Pool_GetSlotIndex(fixture.storage, nullptr);
-            return !result.valid && result.index == 0;
+    const auto rejectIndex = [&fixture](const void *const item,
+                                       const char *const description) {
+        ExpectRejectedWithoutMutation(
+            fixture,
+            [&fixture, item]() {
+                const poolindexresult_t result =
+                    Pool_GetSlotIndex(fixture.storage, item);
+                return !result.valid && result.index == 0;
+            },
+            description,
+            "invalid slot-index query did not assert",
+            "invalid slot-index query mutated state");
+    };
+    rejectIndex(nullptr, "Pool_GetSlotIndex accepted null item");
+    rejectIndex(interior, "Pool_GetSlotIndex accepted an interior pointer");
+    rejectIndex(foreign, "Pool_GetSlotIndex accepted a foreign pointer");
+    rejectIndex(onePast, "Pool_GetSlotIndex accepted a one-past pointer");
+
+    ExpectRejectedWithoutMutation(
+        fixture,
+        [&fixture, allocated]() {
+            const poolnextresult_t result =
+                Pool_NextFree(fixture.storage, allocated);
+            return !result.valid && result.next == nullptr;
         },
-        "Pool_GetSlotIndex accepted a null item",
-        "null Pool_GetSlotIndex item did not assert",
-        "null Pool_GetSlotIndex item mutated state");
-    rejectWithoutMutation(
-        [&]() {
-            const poolindexresult_t result =
-                Pool_GetSlotIndex(fixture.storage, interior);
-            return !result.valid && result.index == 0;
+        "Pool_NextFree accepted an allocated slot",
+        "allocated Pool_NextFree slot did not assert",
+        "allocated Pool_NextFree slot mutated state");
+
+    poolstorage_t invalidStorage = fixture.storage;
+    invalidStorage.itemSize = sizeof(void *) - 1;
+    ExpectRejectedWithoutMutation(
+        fixture,
+        [&fixture, invalidStorage]() {
+            return Pool_Alloc(invalidStorage, &fixture.data) == nullptr;
         },
-        "Pool_GetSlotIndex accepted an interior item",
-        "interior Pool_GetSlotIndex item did not assert",
-        "interior Pool_GetSlotIndex item mutated state");
-    rejectWithoutMutation(
-        [&]() {
-            const poolindexresult_t result =
-                Pool_GetSlotIndex(fixture.storage, foreign.data());
-            return !result.valid && result.index == 0;
+        "Pool_Alloc accepted an invalid descriptor",
+        "invalid Pool_Alloc descriptor did not assert",
+        "invalid Pool_Alloc descriptor mutated state");
+
+    poolstorage_t wrongBinding = fixture.storage;
+    ++wrongBinding.itemSize;
+    ExpectRejectedWithoutMutation(
+        fixture,
+        [&fixture, wrongBinding]() {
+            return Pool_Alloc(wrongBinding, &fixture.data) == nullptr;
         },
-        "Pool_GetSlotIndex accepted a foreign item",
-        "foreign Pool_GetSlotIndex item did not assert",
-        "foreign Pool_GetSlotIndex item mutated state");
-    rejectWithoutMutation(
-        [&]() {
-            const poolindexresult_t result =
-                Pool_GetSlotIndex(fixture.storage, onePast);
-            return !result.valid && result.index == 0;
+        "Pool_Alloc accepted a descriptor with the wrong binding",
+        "wrong descriptor binding did not assert",
+        "wrong descriptor binding mutated state");
+
+    pooldata_t otherData{};
+    ExpectRejectedWithoutMutation(
+        fixture,
+        [&fixture, &otherData]() {
+            return Pool_Alloc(fixture.storage, &otherData) == nullptr;
         },
-        "Pool_GetSlotIndex accepted the one-past item",
-        "one-past Pool_GetSlotIndex item did not assert",
-        "one-past Pool_GetSlotIndex item mutated state");
-    rejectWithoutMutation(
-        [&]() {
-            const poolindexresult_t result =
-                Pool_GetSlotIndex(invalidStorage, fixture.Slot(1));
-            return !result.valid && result.index == 0;
-        },
-        "Pool_GetSlotIndex accepted an invalid descriptor",
-        "invalid Pool_GetSlotIndex descriptor did not assert",
-        "invalid Pool_GetSlotIndex descriptor mutated state");
+        "Pool_Alloc accepted different retail metadata",
+        "wrong pooldata binding did not assert",
+        "wrong pooldata binding mutated state");
 }
 
-void TestDuplicateFreeAndCounterBounds()
+void PrepareOneAllocated(PoolFixture &fixture);
+
+void TestDuplicateFreeAndLocalCorruption()
 {
     PoolFixture fixture;
-    Check(fixture.Initialize(),
-        "duplicate-free fixture failed to initialize");
-    void *const first = Pool_Alloc(fixture.storage, &fixture.state);
-    void *const second = Pool_Alloc(fixture.storage, &fixture.state);
-    void *const third = Pool_Alloc(fixture.storage, &fixture.state);
+    Check(fixture.Initialize(), "duplicate-free fixture did not initialize");
+    void *const first = Pool_Alloc(fixture.storage, &fixture.data);
+    void *const second = Pool_Alloc(fixture.storage, &fixture.data);
+    void *const third = Pool_Alloc(fixture.storage, &fixture.data);
     Check(first && second && third,
-        "duplicate-free fixture failed to allocate three slots");
-    Check(Pool_Free(fixture.storage, &fixture.state, first),
+        "duplicate-free fixture did not allocate three slots");
+    Check(Pool_Free(fixture.storage, &fixture.data, first),
         "duplicate-free fixture failed its first free");
-    Check(Pool_Free(fixture.storage, &fixture.state, second),
+    Check(Pool_Free(fixture.storage, &fixture.data, second),
         "duplicate-free fixture failed its second free");
 
-    PoolSnapshot snapshot = Capture(fixture);
-    std::size_t assertionsBefore = g_assertionCount;
-    Check(!Pool_Free(fixture.storage, &fixture.state, second),
-        "Pool_Free accepted a duplicate freelist head");
-    CheckAsserted(assertionsBefore,
-        "duplicate head free did not assert");
-    CheckUnchanged(fixture, snapshot,
-        "duplicate head free mutated allocator state");
+    ExpectRejectedWithoutMutation(
+        fixture,
+        [&fixture, second]() {
+            return !Pool_Free(fixture.storage, &fixture.data, second);
+        },
+        "Pool_Free accepted a duplicate shadow head",
+        "duplicate shadow-head free did not assert",
+        "duplicate shadow-head free mutated state");
+    ExpectRejectedWithoutMutation(
+        fixture,
+        [&fixture, first]() {
+            return !Pool_Free(fixture.storage, &fixture.data, first);
+        },
+        "Pool_Free accepted a duplicate deep free",
+        "duplicate deep free did not assert",
+        "duplicate deep free mutated state");
 
-    snapshot = Capture(fixture);
-    assertionsBefore = g_assertionCount;
-    Check(!Pool_Free(fixture.storage, &fixture.state, first),
-        "Pool_Free accepted a duplicate deeper in the freelist");
-    CheckAsserted(assertionsBefore,
-        "deep duplicate free did not assert");
-    CheckUnchanged(fixture, snapshot,
-        "deep duplicate free mutated allocator state");
+    const auto expectLocallyRejected = [](PoolFixture &corrupt,
+                                          void *const allocatedItem,
+                                          const char *const description) {
+        ExpectRejectedWithoutMutation(
+            corrupt,
+            [&corrupt]() {
+                return Pool_Alloc(corrupt.storage, &corrupt.data) == nullptr;
+            },
+            description,
+            "locally corrupt Pool_Alloc did not assert",
+            "locally corrupt Pool_Alloc mutated state");
+        ExpectRejectedWithoutMutation(
+            corrupt,
+            [&corrupt, allocatedItem]() {
+                return !Pool_Free(
+                    corrupt.storage, &corrupt.data, allocatedItem);
+            },
+            "Pool_Free accepted locally corrupt state",
+            "locally corrupt Pool_Free did not assert",
+            "locally corrupt Pool_Free mutated state");
+        ExpectRejectedWithoutMutation(
+            corrupt,
+            [&corrupt]() {
+                const poolcountresult_t result =
+                    Pool_GetFreeCount(corrupt.storage, &corrupt.data);
+                return !result.valid && result.count == 0;
+            },
+            "Pool_GetFreeCount accepted locally corrupt state",
+            "locally corrupt count did not assert",
+            "locally corrupt count mutated state");
+        ExpectRejectedWithoutMutation(
+            corrupt,
+            [&corrupt]() {
+                return !Pool_ValidateFull(corrupt.storage, &corrupt.data);
+            },
+            "Pool_ValidateFull accepted locally corrupt state",
+            "locally corrupt full validation did not assert",
+            "locally corrupt full validation mutated state");
+    };
 
-    PoolFixture zeroActive;
-    Check(zeroActive.Initialize(),
-        "zero-active fixture failed to initialize");
-    snapshot = Capture(zeroActive);
-    assertionsBefore = g_assertionCount;
-    Check(!Pool_Free(zeroActive.storage, &zeroActive.state, zeroActive.Slot(0)),
-        "Pool_Free underflowed activeCount");
-    CheckAsserted(assertionsBefore,
-        "activeCount underflow did not assert");
-    CheckUnchanged(zeroActive, snapshot,
-        "activeCount underflow mutated allocator state");
-
-    PoolFixture negativeActive;
-    Check(negativeActive.Initialize(),
-        "negative-active fixture failed to initialize");
-    negativeActive.state.activeCount = -1;
-    snapshot = Capture(negativeActive);
-    assertionsBefore = g_assertionCount;
-    Check(Pool_Alloc(negativeActive.storage, &negativeActive.state) == nullptr,
-        "Pool_Alloc accepted a negative activeCount");
-    CheckAsserted(assertionsBefore,
-        "negative activeCount did not assert");
-    CheckUnchanged(negativeActive, snapshot,
-        "negative activeCount mutated allocator state");
-
-    PoolFixture excessiveActive;
-    Check(excessiveActive.Initialize(),
-        "excessive-active fixture failed to initialize");
-    excessiveActive.state.activeCount =
-        static_cast<int>(excessiveActive.storage.itemCount);
-    snapshot = Capture(excessiveActive);
-    assertionsBefore = g_assertionCount;
-    Check(Pool_Alloc(excessiveActive.storage, &excessiveActive.state) == nullptr,
-        "Pool_Alloc accepted a nonempty head at maximum activeCount");
-    CheckAsserted(assertionsBefore,
-        "excessive activeCount did not assert");
-    CheckUnchanged(excessiveActive, snapshot,
-        "excessive activeCount mutated allocator state");
+    {
+        PoolFixture corrupt;
+        PrepareOneAllocated(corrupt);
+        corrupt.data.firstFree = corrupt.Slot(2);
+        expectLocallyRejected(corrupt, corrupt.Slot(0),
+            "Pool_Alloc accepted a mismatched retail head");
+    }
+    {
+        PoolFixture corrupt;
+        PrepareOneAllocated(corrupt);
+        ++corrupt.data.activeCount;
+        expectLocallyRejected(corrupt, corrupt.Slot(0),
+            "Pool_Alloc accepted mismatched active counts");
+    }
+    {
+        PoolFixture corrupt;
+        PrepareOneAllocated(corrupt);
+        corrupt.control.headIndex = static_cast<poolslotstate_t>(kSlotCount);
+        expectLocallyRejected(corrupt, corrupt.Slot(0),
+            "Pool_Alloc accepted an out-of-range shadow head");
+    }
+    {
+        PoolFixture corrupt;
+        PrepareOneAllocated(corrupt);
+        corrupt.slotState[1] = POOL_SLOT_ALLOCATED;
+        expectLocallyRejected(corrupt, corrupt.Slot(0),
+            "Pool_Alloc accepted an allocated shadow head");
+    }
+    {
+        PoolFixture corrupt;
+        PrepareOneAllocated(corrupt);
+        corrupt.slotState[1] = static_cast<poolslotstate_t>(kSlotCount);
+        expectLocallyRejected(corrupt, corrupt.Slot(0),
+            "Pool_Alloc accepted an out-of-range next index");
+    }
+    {
+        PoolFixture corrupt;
+        PrepareOneAllocated(corrupt);
+        corrupt.slotState[1] = 1;
+        expectLocallyRejected(corrupt, corrupt.Slot(0),
+            "Pool_Alloc accepted a head self-cycle");
+    }
+    {
+        PoolFixture corrupt;
+        PrepareOneAllocated(corrupt);
+        corrupt.control.activeCount = -1;
+        expectLocallyRejected(corrupt, corrupt.Slot(0),
+            "Pool_Alloc accepted a negative shadow active count");
+    }
+    {
+        PoolFixture corrupt;
+        PrepareOneAllocated(corrupt);
+        corrupt.control.initMagic ^= 1u;
+        expectLocallyRejected(corrupt, corrupt.Slot(0),
+            "Pool_Alloc accepted a corrupt initialization marker");
+    }
+    {
+        PoolFixture corrupt;
+        PrepareOneAllocated(corrupt);
+        ++corrupt.control.boundStride;
+        expectLocallyRejected(corrupt, corrupt.Slot(0),
+            "Pool_Alloc accepted a corrupt bound stride");
+    }
+    {
+        PoolFixture corrupt;
+        PrepareOneAllocated(corrupt);
+        --corrupt.control.slotStateCount;
+        expectLocallyRejected(corrupt, corrupt.Slot(0),
+            "Pool_Alloc accepted a corrupt sidecar count");
+    }
 }
 
-void ExpectCorruptStateRejected(
+void ExpectDormantCorruptionRejectedByFullValidation(
     PoolFixture &fixture,
-    void *const allocated,
     const char *const description)
 {
     PoolSnapshot snapshot = Capture(fixture);
     std::size_t assertionsBefore = g_assertionCount;
-    const poolcountresult_t freeCount =
-        Pool_GetFreeCount(fixture.storage, &fixture.state);
-    Check(!freeCount.valid && freeCount.count == 0, description);
-    CheckAsserted(assertionsBefore,
-        "corrupt free-count query did not assert");
-    if (!CheckUnchanged(fixture, snapshot,
-            "corrupt free-count query mutated allocator state"))
-    {
-        return;
-    }
-
-    snapshot = Capture(fixture);
-    assertionsBefore = g_assertionCount;
-    Check(Pool_Alloc(fixture.storage, &fixture.state) == nullptr,
-        "Pool_Alloc accepted a corrupt freelist");
-    CheckAsserted(assertionsBefore,
-        "corrupt Pool_Alloc did not assert");
-    if (!CheckUnchanged(fixture, snapshot,
-            "corrupt Pool_Alloc mutated allocator state"))
-    {
-        return;
-    }
-
-    snapshot = Capture(fixture);
-    assertionsBefore = g_assertionCount;
-    Check(!Pool_Free(fixture.storage, &fixture.state, allocated),
-        "Pool_Free accepted a corrupt freelist");
-    CheckAsserted(assertionsBefore,
-        "corrupt Pool_Free did not assert");
+    const poolcountresult_t count =
+        Pool_GetFreeCount(fixture.storage, &fixture.data);
+    Check(count.valid && count.count == kSlotCount - 1,
+        "O(1) free-count query inspected dormant tail state");
+    Check(g_assertionCount == assertionsBefore,
+        "O(1) free-count query asserted on dormant tail state");
     CheckUnchanged(fixture, snapshot,
-        "corrupt Pool_Free mutated allocator state");
+        "O(1) free-count query mutated dormant corruption");
+
+    snapshot = Capture(fixture);
+    assertionsBefore = g_assertionCount;
+    Check(!Pool_ValidateFull(fixture.storage, &fixture.data), description);
+    CheckAsserted(assertionsBefore,
+        "dormant corruption full validation did not assert");
+    CheckUnchanged(fixture, snapshot,
+        "full validation mutated dormant corruption");
 }
 
-void PrepareOneAllocated(PoolFixture &fixture, void **const allocated)
+void PrepareOneAllocated(PoolFixture &fixture)
 {
-    Check(fixture.Initialize(), "corruption fixture failed to initialize");
-    *allocated = Pool_Alloc(fixture.storage, &fixture.state);
-    Check(*allocated == fixture.Slot(0),
-        "corruption fixture failed to allocate slot zero");
+    Check(fixture.Initialize(), "deep-corruption fixture did not initialize");
+    Check(Pool_Alloc(fixture.storage, &fixture.data) == fixture.Slot(0),
+        "deep-corruption fixture did not allocate slot zero");
 }
 
-void TestCorruptChains()
+void TestDormantCorruptionAndFullValidation()
 {
-    alignas(void *) std::array<unsigned char, sizeof(void *)> foreign{};
+    {
+        PoolFixture fixture;
+        PrepareOneAllocated(fixture);
+        fixture.slotState[6] = 6;
+        StoreRawLink(fixture.Slot(6), fixture.Slot(6));
+        ExpectRejectedWithoutMutation(
+            fixture,
+            [&fixture]() {
+                const poolnextresult_t result =
+                    Pool_NextFree(fixture.storage, fixture.Slot(6));
+                return !result.valid && result.next == nullptr;
+            },
+            "Pool_NextFree accepted a deep self-link",
+            "deep Pool_NextFree self-link did not assert",
+            "deep Pool_NextFree self-link mutated state");
+        ExpectDormantCorruptionRejectedByFullValidation(
+            fixture, "Pool_ValidateFull accepted a dormant self-cycle");
+    }
+    {
+        PoolFixture fixture;
+        PrepareOneAllocated(fixture);
+        fixture.slotState[6] = 5;
+        ExpectDormantCorruptionRejectedByFullValidation(
+            fixture, "Pool_ValidateFull accepted a dormant two-node cycle");
+    }
+    {
+        PoolFixture fixture;
+        PrepareOneAllocated(fixture);
+        fixture.slotState[6] = POOL_SLOT_END;
+        ExpectDormantCorruptionRejectedByFullValidation(
+            fixture, "Pool_ValidateFull accepted a short shadow chain");
+    }
+    {
+        PoolFixture fixture;
+        PrepareOneAllocated(fixture);
+        fixture.slotState[6] = POOL_SLOT_ALLOCATED;
+        ExpectDormantCorruptionRejectedByFullValidation(
+            fixture, "Pool_ValidateFull accepted a false allocated tail slot");
+    }
+    {
+        PoolFixture fixture;
+        PrepareOneAllocated(fixture);
+        fixture.slotState[6] = static_cast<poolslotstate_t>(kSlotCount);
+        ExpectDormantCorruptionRejectedByFullValidation(
+            fixture, "Pool_ValidateFull accepted an out-of-range tail edge");
+    }
 
-    {
-        PoolFixture fixture;
-        void *allocated = nullptr;
-        PrepareOneAllocated(fixture, &allocated);
-        fixture.state.firstFree = foreign.data();
-        ExpectCorruptStateRejected(fixture, allocated,
-            "Pool_GetFreeCount accepted a foreign freelist head");
-    }
-    {
-        PoolFixture fixture;
-        void *allocated = nullptr;
-        PrepareOneAllocated(fixture, &allocated);
-        fixture.state.firstFree = static_cast<void *>(
-            static_cast<unsigned char *>(fixture.storage.base) + 1);
-        ExpectCorruptStateRejected(fixture, allocated,
-            "Pool_GetFreeCount accepted an interior freelist head");
-    }
-    {
-        PoolFixture fixture;
-        void *allocated = nullptr;
-        PrepareOneAllocated(fixture, &allocated);
-        fixture.state.firstFree = nullptr;
-        ExpectCorruptStateRejected(fixture, allocated,
-            "Pool_GetFreeCount accepted a prematurely empty chain");
-    }
-    {
-        PoolFixture fixture;
-        void *allocated = nullptr;
-        PrepareOneAllocated(fixture, &allocated);
-        StoreNext(fixture.Slot(1), foreign.data());
-        ExpectCorruptStateRejected(fixture, allocated,
-            "Pool_GetFreeCount accepted a foreign next link");
+    // A valid O(1) mutation may proceed while corruption is beyond the current
+    // head. It must remain locally coherent, and the explicit boundary scan
+    // must still diagnose the dormant fault.
+    PoolFixture fixture;
+    PrepareOneAllocated(fixture);
+    fixture.slotState[7] = 7;
+    const std::size_t assertionsBeforeAlloc = g_assertionCount;
+    Check(Pool_Alloc(fixture.storage, &fixture.data) == fixture.Slot(1),
+        "Pool_Alloc walked and rejected a dormant tail fault");
+    Check(g_assertionCount == assertionsBeforeAlloc,
+        "Pool_Alloc asserted on a dormant tail fault");
+    Check(fixture.slotState[1] == POOL_SLOT_ALLOCATED
+            && fixture.control.headIndex == 2
+            && fixture.control.activeCount == 2
+            && fixture.data.activeCount == 2,
+        "Pool_Alloc was not locally coherent around dormant corruption");
 
-        const std::size_t assertionsBefore = g_assertionCount;
-        const poolnextresult_t next =
-            Pool_NextFree(fixture.storage, fixture.Slot(1));
-        Check(!next.valid && next.next == nullptr,
-            "Pool_NextFree accepted a foreign next link");
-        CheckAsserted(assertionsBefore,
-            "foreign Pool_NextFree link did not assert");
-    }
-    {
-        PoolFixture fixture;
-        void *allocated = nullptr;
-        PrepareOneAllocated(fixture, &allocated);
-        void *const interior = static_cast<void *>(
-            static_cast<unsigned char *>(fixture.Slot(2)) + 1);
-        StoreNext(fixture.Slot(1), interior);
-        ExpectCorruptStateRejected(fixture, allocated,
-            "Pool_GetFreeCount accepted an interior next link");
+    const std::size_t assertionsBeforeFree = g_assertionCount;
+    Check(Pool_Free(fixture.storage, &fixture.data, fixture.Slot(0)),
+        "Pool_Free walked and rejected a dormant tail fault");
+    Check(g_assertionCount == assertionsBeforeFree,
+        "Pool_Free asserted on a dormant tail fault");
+    Check(fixture.slotState[0] == 2
+            && fixture.control.headIndex == 0
+            && fixture.control.activeCount == 1
+            && fixture.data.activeCount == 1,
+        "Pool_Free was not locally coherent around dormant corruption");
 
-        const std::size_t assertionsBefore = g_assertionCount;
-        const poolnextresult_t next =
-            Pool_NextFree(fixture.storage, fixture.Slot(1));
-        Check(!next.valid && next.next == nullptr,
-            "Pool_NextFree accepted an interior next link");
-        CheckAsserted(assertionsBefore,
-            "interior Pool_NextFree link did not assert");
-    }
-    {
-        PoolFixture fixture;
-        void *allocated = nullptr;
-        PrepareOneAllocated(fixture, &allocated);
-        StoreNext(fixture.Slot(1), fixture.Slot(1));
-        ExpectCorruptStateRejected(fixture, allocated,
-            "Pool_GetFreeCount accepted a self-cycle");
-    }
-    {
-        PoolFixture fixture;
-        void *allocated = nullptr;
-        PrepareOneAllocated(fixture, &allocated);
-        StoreNext(fixture.Slot(1), fixture.Slot(2));
-        StoreNext(fixture.Slot(2), fixture.Slot(1));
-        ExpectCorruptStateRejected(fixture, allocated,
-            "Pool_GetFreeCount accepted a two-node cycle");
-    }
-    {
-        PoolFixture fixture;
-        void *allocated = nullptr;
-        PrepareOneAllocated(fixture, &allocated);
-        StoreNext(fixture.Slot(2), nullptr);
-        ExpectCorruptStateRejected(fixture, allocated,
-            "Pool_GetFreeCount accepted a short acyclic chain");
-    }
-    {
-        PoolFixture fixture;
-        void *allocated = nullptr;
-        PrepareOneAllocated(fixture, &allocated);
-        StoreNext(fixture.Slot(4), fixture.Slot(0));
-        StoreNext(fixture.Slot(0), nullptr);
-        ExpectCorruptStateRejected(fixture, allocated,
-            "Pool_GetFreeCount accepted a long acyclic chain");
-    }
-    {
-        PoolFixture fixture;
-        void *allocated = nullptr;
-        PrepareOneAllocated(fixture, &allocated);
-        fixture.state.activeCount = -1;
-        ExpectCorruptStateRejected(fixture, allocated,
-            "Pool_GetFreeCount accepted a negative activeCount");
-    }
-    {
-        PoolFixture fixture;
-        void *allocated = nullptr;
-        PrepareOneAllocated(fixture, &allocated);
-        fixture.state.activeCount =
-            static_cast<int>(fixture.storage.itemCount) + 1;
-        ExpectCorruptStateRejected(fixture, allocated,
-            "Pool_GetFreeCount accepted activeCount above capacity");
-    }
+    const PoolSnapshot snapshot = Capture(fixture);
+    const std::size_t assertionsBeforeFull = g_assertionCount;
+    Check(!Pool_ValidateFull(fixture.storage, &fixture.data),
+        "Pool_ValidateFull missed corruption after local operations");
+    CheckAsserted(assertionsBeforeFull,
+        "post-operation dormant corruption did not assert");
+    CheckUnchanged(fixture, snapshot,
+        "post-operation full validation mutated state");
+}
+
+void TestInvalidation()
+{
+    PoolFixture fixture;
+    Check(fixture.Initialize(), "invalidation fixture did not initialize");
+    Check(Pool_Alloc(fixture.storage, &fixture.data) == fixture.Slot(0),
+        "invalidation fixture did not allocate slot zero");
+    fixture.slotState[7] = 7;
+    const auto bytesBefore = fixture.bytes;
+    poolslotstate_t *const statePointer = fixture.control.slotState;
+    const std::size_t stateCount = fixture.control.slotStateCount;
+
+    Check(Pool_Invalidate(fixture.storage, &fixture.data),
+        "Pool_Invalidate rejected a bound pool with corrupt dormant state");
+    Check(fixture.data.firstFree == nullptr && fixture.data.activeCount == 0,
+        "Pool_Invalidate did not retire retail metadata");
+    Check(fixture.control.slotState == statePointer
+            && fixture.control.slotStateCount == stateCount,
+        "Pool_Invalidate discarded reusable sidecar configuration");
+    Check(fixture.control.boundBase == nullptr
+            && fixture.control.boundData == nullptr
+            && fixture.control.boundStride == 0
+            && fixture.control.boundCount == 0
+            && fixture.control.headIndex == POOL_SLOT_END
+            && fixture.control.activeCount == 0
+            && fixture.control.initMagic == 0,
+        "Pool_Invalidate did not clear the published binding");
+    Check(fixture.bytes == bytesBefore,
+        "Pool_Invalidate modified object payload");
+
+    ExpectRejectedWithoutMutation(
+        fixture,
+        [&fixture]() {
+            return Pool_Alloc(fixture.storage, &fixture.data) == nullptr;
+        },
+        "Pool_Alloc accepted an invalidated pool",
+        "invalidated Pool_Alloc did not assert",
+        "invalidated Pool_Alloc mutated state");
+    ExpectRejectedWithoutMutation(
+        fixture,
+        [&fixture]() {
+            return !Pool_ValidateFull(fixture.storage, &fixture.data);
+        },
+        "Pool_ValidateFull accepted an invalidated pool",
+        "invalidated full validation did not assert",
+        "invalidated full validation mutated state");
+
+    Check(fixture.Initialize(), "invalidated pool could not be reinitialized");
+    Check(Pool_ValidateFull(fixture.storage, &fixture.data),
+        "reinitialized pool failed full validation");
+
+    poolstorage_t wrongStorage = fixture.storage;
+    ++wrongStorage.itemSize;
+    ExpectRejectedWithoutMutation(
+        fixture,
+        [&fixture, wrongStorage]() {
+            return !Pool_Invalidate(wrongStorage, &fixture.data);
+        },
+        "Pool_Invalidate accepted the wrong bound descriptor",
+        "wrong-binding Pool_Invalidate did not assert",
+        "wrong-binding Pool_Invalidate mutated state");
 }
 } // namespace
 
@@ -834,13 +1156,15 @@ void MyAssertHandler(const char *, int, int, const char *, ...)
 
 int main()
 {
-    TestLayoutAndStorageFactory();
+    TestLayoutAndFactories();
     TestInitializationAndTraversal();
     TestAllocationFreeAndLifo();
+    TestLargePool();
     TestInvalidInitialization();
-    TestInvalidArgumentsAndMembership();
-    TestDuplicateFreeAndCounterBounds();
-    TestCorruptChains();
+    TestInvalidArgumentsAndBinding();
+    TestDuplicateFreeAndLocalCorruption();
+    TestDormantCorruptionAndFullValidation();
+    TestInvalidation();
 
     if (g_failureCount != 0)
     {
@@ -848,6 +1172,6 @@ int main()
         return 1;
     }
 
-    std::puts("native pointer pool allocator tests passed");
+    std::puts("external-shadow pool allocator tests passed");
     return 0;
 }

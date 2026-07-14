@@ -66,7 +66,9 @@ Remaining gates, in implementation order:
    runtime-only lifecycle gaps it exposes.
 2. Wire the merged native physics sidecar through live spawn/draw/free/reset/archive paths and add
    kill/rewind/archive fixtures. Transactional ODE body/model construction is merged, and the current
-   reviewed batch has widened and bounded the generic pool allocator without changing its x86 metadata.
+   reviewed batch has widened and bounded the generic pool allocator without changing its x86 metadata;
+   PR #9 remains open with its constant-time shadow-control review follow-up locally green and awaiting
+   replacement CI/review.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -938,16 +940,24 @@ pools); the 36-test GCC/Clang/ASan/UBSan/TSan matrix is green, with focused stor
 x86-32/AArch64 compilation. It merged at `580b93bb` after run **29291013134 passed all nine jobs**.
 The current M4 batch removes the generic allocator's `uint32_t` freelist serialization while preserving
 the retail 8-byte x86 `pooldata_t` layout. A base/stride/count descriptor accompanies every operation;
-native-width links use `memcpy`, bounded exact-slot validation covers invalid extents and overflow,
-checked queries return status plus value without aliasable output pointers, and foreign/interior nodes,
-short/long chains, cycles, duplicate frees, underflow, and metadata overlap are
-rejected before publishing or mutating a live list. All body, geom, userdata, FX-capacity, and ODE
-leak-diagnostic callers now provide their real extents. This also repairs the previously hidden native64 `PhysObjUserData` overlap:
+native-width links use `memcpy`, bounded exact-slot validation covers invalid extents and overflow, and
+checked queries return status plus value without aliasable output pointers. Pre-review commit `202cce76`
+passed all nine jobs in run **29293356200**. Gemini review then found that hot allocation/free still walked
+the complete inactive chain and that the `PhysGlob` tracking-size guard was runtime-only. The review
+fix keeps ownership and link provenance in an external per-slot shadow control: `Pool_Alloc`, `Pool_Free`,
+and `Pool_GetFreeCount` are O(1), validate active metadata plus the touched node/link, and reject
+foreign/interior active pointers, duplicate frees, and count divergence transactionally. An O(1) hot
+operation cannot inspect arbitrary dormant tail bytes, so the explicit bounded `Pool_ValidateFull` owns
+short/long-chain and cycle detection at FX archive-capacity and ODE leak-diagnostic boundaries. All body,
+geom, userdata, FX-capacity, and ODE leak callers provide their real extents and shared shadow controls.
+This also repairs the previously hidden native64 `PhysObjUserData` overlap:
 the record is 0x70 bytes on x86 but 0x78 on native64, so its pool no longer advances by the hard-coded x86
-stride. ODE geom backing remains explicitly transform-aligned. Strict 39-test GCC and Clang suites plus
-focused ASan/UBSan, TSan, x86-32, and AArch64 allocator validation are green. Native engine source sets
-still do not compile these production callers, so Windows x86 engine CI remains their compile gate while
-all five portable jobs exercise the allocator contract. Remaining FX work is
+stride. ODE geom backing remains explicitly transform-aligned. The review-fix 39-test GCC, Clang,
+ASan/UBSan, and TSan suites are green, as are strict x86-32 and AArch64 allocator compile/link checks.
+Native
+engine source sets still do not compile these production callers, so Windows x86 engine CI remains their
+compile gate while all five portable jobs exercise the allocator contract. PR #9 remains open pending
+replacement CI and automated review. Remaining FX work is
 camera/scalar snapshot publication, real Disk32 archive/fast-file conversion, that production
 physics-sidecar wiring, and production fixtures. The
 unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs

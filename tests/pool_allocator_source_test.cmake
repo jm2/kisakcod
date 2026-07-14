@@ -39,148 +39,385 @@ function(require_pool_source_match_count
     endif()
 endfunction()
 
+# Extract by two stable declaration boundaries. This is intentionally more
+# precise than global substring counts: a walk in Pool_ValidateFull is wanted,
+# while the same walk in Pool_Alloc, Pool_Free, or their fast validator is not.
+function(pool_function_slice
+    RELATIVE_PATH START_MARKER END_MARKER OUT_VARIABLE)
+    file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
+    string(FIND "${_source}" "${START_MARKER}" _start)
+    if (_start EQUAL -1)
+        message(FATAL_ERROR
+            "Could not find function boundary '${START_MARKER}' in "
+            "src/${RELATIVE_PATH}")
+    endif()
+    string(FIND "${_source}" "${END_MARKER}" _end)
+    if (_end EQUAL -1 OR _end LESS_EQUAL _start)
+        message(FATAL_ERROR
+            "Could not find ordered function boundary '${END_MARKER}' in "
+            "src/${RELATIVE_PATH}")
+    endif()
+    math(EXPR _length "${_end} - ${_start}")
+    string(SUBSTRING "${_source}" ${_start} ${_length} _body)
+    set(${OUT_VARIABLE} "${_body}" PARENT_SCOPE)
+endfunction()
+
+function(require_pool_function_contains
+    RELATIVE_PATH START_MARKER END_MARKER NEEDLE DESCRIPTION)
+    pool_function_slice(
+        "${RELATIVE_PATH}" "${START_MARKER}" "${END_MARKER}" _body)
+    string(FIND "${_body}" "${NEEDLE}" _position)
+    if (_position EQUAL -1)
+        message(FATAL_ERROR
+            "Missing function invariant (${DESCRIPTION}) in "
+            "src/${RELATIVE_PATH} at ${START_MARKER}")
+    endif()
+endfunction()
+
+function(require_pool_function_not_contains
+    RELATIVE_PATH START_MARKER END_MARKER NEEDLE DESCRIPTION)
+    pool_function_slice(
+        "${RELATIVE_PATH}" "${START_MARKER}" "${END_MARKER}" _body)
+    string(FIND "${_body}" "${NEEDLE}" _position)
+    if (NOT _position EQUAL -1)
+        message(FATAL_ERROR
+            "Forbidden function regression (${DESCRIPTION}) in "
+            "src/${RELATIVE_PATH} at ${START_MARKER}")
+    endif()
+endfunction()
+
+function(require_pool_function_not_matches
+    RELATIVE_PATH START_MARKER END_MARKER PATTERN DESCRIPTION)
+    pool_function_slice(
+        "${RELATIVE_PATH}" "${START_MARKER}" "${END_MARKER}" _body)
+    string(REGEX MATCH "${PATTERN}" _match "${_body}")
+    if (NOT "${_match}" STREQUAL "")
+        message(FATAL_ERROR
+            "Forbidden function regression (${DESCRIPTION}) in "
+            "src/${RELATIVE_PATH} at ${START_MARKER}")
+    endif()
+endfunction()
+
 require_pool_source_contains(
     "universal/pool_allocator.h"
     "RUNTIME_SIZE(pooldata_t, 0x8, 0x10);"
-    "retail pool metadata must retain its x86 layout while widening natively")
+    "retail pool metadata must retain its x86 ABI")
 require_pool_source_contains(
     "universal/pool_allocator.h"
     "RUNTIME_OFFSET(pooldata_t, activeCount, 0x4, 0x8);"
-    "pool active-count offset must be explicit on both pointer widths")
+    "retail active-count offset must remain explicit")
 require_pool_source_contains(
     "universal/pool_allocator.h"
-    "struct poolstorage_t"
-    "each operation must receive the backing extent needed for bounded validation")
+    "using poolslotstate_t = std::uint32_t;"
+    "slot-state indices must have a fixed cross-target width")
 require_pool_source_contains(
     "universal/pool_allocator.h"
-    "poolcountresult_t __cdecl Pool_GetFreeCount("
-    "free-count validation must return status and value without an aliasable output")
+    "constexpr poolslotstate_t POOL_SLOT_END = UINT32_MAX - 1u;"
+    "the free-list end sentinel must be public and stable")
 require_pool_source_contains(
     "universal/pool_allocator.h"
-    "poolindexresult_t __cdecl Pool_GetSlotIndex("
-    "leak diagnostics must return checked indices without aliasable outputs")
+    "constexpr poolslotstate_t POOL_SLOT_ALLOCATED = UINT32_MAX;"
+    "the allocation sentinel must be public and stable")
+require_pool_source_contains(
+    "universal/pool_allocator.h"
+    "struct poolcontrol_t"
+    "portable ownership state must live outside retail metadata")
+require_pool_source_contains(
+    "universal/pool_allocator.h"
+    "RUNTIME_SIZE(poolcontrol_t, 0x24, 0x40);"
+    "control layout must be explicit on both pointer widths")
+require_pool_source_contains(
+    "universal/pool_allocator.h"
+    "poolcontrol_t *control;"
+    "every descriptor must carry its authoritative control table")
+require_pool_source_contains(
+    "universal/pool_allocator.h"
+    "RUNTIME_OFFSET(poolstorage_t, control, 0xC, 0x18);"
+    "descriptor control offset must be target-explicit")
+require_pool_source_contains(
+    "universal/pool_allocator.h"
+    "Pool_ControlFor(poolslotstate_t (&slotState)[N]) noexcept"
+    "typed sidecar construction must retain the exact element count")
+require_pool_source_contains(
+    "universal/pool_allocator.h"
+    "bool __cdecl Pool_Invalidate("
+    "failed or reset owners need an explicit retirement operation")
+require_pool_source_contains(
+    "universal/pool_allocator.h"
+    "bool __cdecl Pool_ValidateFull("
+    "O(N) integrity checking must remain an explicit boundary operation")
 require_pool_source_not_contains(
     "universal/pool_allocator.h"
     "outCount"
-    "pool count queries must not expose aliasable output pointers")
+    "count queries must not expose aliasable outputs")
 require_pool_source_not_contains(
     "universal/pool_allocator.h"
     "outNext"
-    "pool link queries must not expose aliasable output pointers")
+    "link queries must not expose aliasable outputs")
 require_pool_source_not_contains(
     "universal/pool_allocator.h"
     "outIndex"
-    "pool index queries must not expose aliasable output pointers")
+    "index queries must not expose aliasable outputs")
 
 require_pool_source_contains(
     "universal/pool_allocator.cpp"
+    "storage.control->slotStateCount != storage.itemCount"
+    "sidecar extent must exactly match the object pool")
+require_pool_source_contains(
+    "universal/pool_allocator.cpp"
+    "slot-state byte count does not overflow"
+    "sidecar range arithmetic must be checked")
+require_pool_source_contains(
+    "universal/pool_allocator.cpp"
+    "Pool_RangesAreSeparate"
+    "pool, metadata, control, and sidecar ranges must be disjoint")
+require_pool_source_contains(
+    "universal/pool_allocator.cpp"
+    "Pool_MetadataIsSeparate(pooldata, ranges)"
+    "pooldata overlap must be rejected before mutation")
+require_pool_source_contains(
+    "universal/pool_allocator.cpp"
     "std::memcpy(item, &next, sizeof(next));"
-    "free-list links must be written at native pointer width without typed aliasing")
+    "compatibility links must be written without typed aliasing")
 require_pool_source_contains(
     "universal/pool_allocator.cpp"
-    "std::memcpy(&next, item, sizeof(next));"
-    "free-list links must be read at native pointer width without typed aliasing")
-require_pool_source_contains(
+    "std::memcmp(item, &expectedNext, sizeof(expectedNext))"
+    "compatibility links must be compared as bytes")
+require_pool_source_not_contains(
     "universal/pool_allocator.cpp"
-    "storage.itemSize < sizeof(void *)"
-    "every slot must hold a complete native link")
-require_pool_source_contains(
-    "universal/pool_allocator.cpp"
-    "storage.itemSize * storage.itemCount does not overflow"
-    "pool extent multiplication must be checked")
-require_pool_source_contains(
-    "universal/pool_allocator.cpp"
-    "Pool_MetadataIsSeparate"
-    "pool links must not overwrite their metadata")
-require_pool_source_matches(
-    "universal/pool_allocator.cpp"
-    "if[ \t]*\\(!Pool_MetadataIsSeparate\\(storage, pooldata\\)\\)[ \t\r\n]*return false;[ \t\r\n]*pooldata->firstFree[ \t]*=[ \t]*nullptr;"
-    "overlapping metadata must be rejected before initialization writes")
-require_pool_source_contains(
-    "universal/pool_allocator.cpp"
-    "free-list length matches inactive slot count"
-    "free-list validation must be bounded by the descriptor and active count")
+    "Pool_ReadNext"
+    "untrusted object bytes must not be materialized as pointers")
 require_pool_source_not_contains(
     "universal/pool_allocator.cpp"
     "->next"
-    "raw object-lifetime-violating freenode dereferences must not return")
+    "raw freenode lifetime violations must not return")
 require_pool_source_not_contains(
     "universal/pool_allocator.cpp"
     "*(uint32_t *)"
-    "free-list pointers must never be stored through a 32-bit integer")
+    "native compatibility links must never be truncated")
 require_pool_source_not_contains(
     "universal/pool_allocator.cpp"
     "*(void **)"
-    "free-list links must never be read through an unaligned pointer lvalue")
+    "unaligned compatibility links must not use pointer lvalues")
+require_pool_source_match_count(
+    "universal/pool_allocator.cpp"
+    "(^|[\r\n])[ \t]*for[ \t]*\\("
+    3
+    "the only linear walks must be initialization and the two full-validation scans")
+require_pool_source_not_contains(
+    "universal/pool_allocator.cpp"
+    "while ("
+    "no hidden allocator helper may add an unbounded walk")
+require_pool_source_match_count(
+    "universal/pool_allocator.cpp"
+    "Pool_ValidateFull\\("
+    1
+    "full validation must remain explicit rather than called by a hot path")
+
+set(_pool_loop_pattern "(^|[\r\n])[ \t]*(for|while)[ \t]*\\(")
+set(_pool_cpp "universal/pool_allocator.cpp")
+
+require_pool_function_not_matches(
+    "${_pool_cpp}"
+    "bool Pool_FastStateIsValid("
+    "} // namespace"
+    "${_pool_loop_pattern}"
+    "the shared fast validator must remain O(1)")
+require_pool_function_not_contains(
+    "${_pool_cpp}"
+    "bool Pool_FastStateIsValid("
+    "} // namespace"
+    "Pool_ValidateFull("
+    "the fast validator must not call the full validator")
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "bool Pool_FastStateIsValid("
+    "} // namespace"
+    "control.activeCount != pooldata->activeCount"
+    "fast validation must reconcile both active-count mirrors")
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "bool Pool_FastStateIsValid("
+    "} // namespace"
+    "control.slotState[headIndex]"
+    "fast validation must inspect the authoritative head state")
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "bool Pool_FastStateIsValid("
+    "} // namespace"
+    "Pool_LinkMatches(pooldata->firstFree, expectedNext)"
+    "fast validation must reconcile the current compatibility edge")
+
+require_pool_function_not_matches(
+    "${_pool_cpp}"
+    "void *__cdecl Pool_Alloc("
+    "bool __cdecl Pool_Free("
+    "${_pool_loop_pattern}"
+    "Pool_Alloc must remain O(1)")
+require_pool_function_not_contains(
+    "${_pool_cpp}"
+    "void *__cdecl Pool_Alloc("
+    "bool __cdecl Pool_Free("
+    "Pool_ValidateFull("
+    "Pool_Alloc must not invoke full validation")
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "void *__cdecl Pool_Alloc("
+    "bool __cdecl Pool_Free("
+    "control.slotState[state.headIndex] = POOL_SLOT_ALLOCATED;"
+    "allocation must mark exactly the popped shadow slot")
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "void *__cdecl Pool_Alloc("
+    "bool __cdecl Pool_Free("
+    "++control.activeCount;"
+    "allocation must publish its shadow count")
+
+require_pool_function_not_matches(
+    "${_pool_cpp}"
+    "bool __cdecl Pool_Free("
+    "bool __cdecl Pool_ValidateFull("
+    "${_pool_loop_pattern}"
+    "Pool_Free must remain O(1)")
+require_pool_function_not_contains(
+    "${_pool_cpp}"
+    "bool __cdecl Pool_Free("
+    "bool __cdecl Pool_ValidateFull("
+    "Pool_ValidateFull("
+    "Pool_Free must not invoke full validation")
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "bool __cdecl Pool_Free("
+    "bool __cdecl Pool_ValidateFull("
+    "control.slotState[itemIndex] != POOL_SLOT_ALLOCATED"
+    "free must reject duplicate ownership in O(1)")
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "bool __cdecl Pool_Free("
+    "bool __cdecl Pool_ValidateFull("
+    "control.slotState[itemIndex] = state.headIndex;"
+    "free must push through the shadow chain")
+
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "bool __cdecl Pool_ValidateFull("
+    "poolcountresult_t __cdecl Pool_GetFreeCount("
+    "for (std::size_t"
+    "full validation must explicitly scan bounded state")
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "bool __cdecl Pool_ValidateFull("
+    "poolcountresult_t __cdecl Pool_GetFreeCount("
+    "expectedFreeCount"
+    "the free-chain walk must be bounded by the inactive count")
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "bool __cdecl Pool_ValidateFull("
+    "poolcountresult_t __cdecl Pool_GetFreeCount("
+    "allocatedCount != state.activeCount"
+    "full validation must reconcile allocation ownership")
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "bool __cdecl Pool_ValidateFull("
+    "poolcountresult_t __cdecl Pool_GetFreeCount("
+    "every free-list link matches slot-state control"
+    "full validation must reconcile every compatibility edge")
+
+require_pool_function_not_matches(
+    "${_pool_cpp}"
+    "poolcountresult_t __cdecl Pool_GetFreeCount("
+    "poolnextresult_t __cdecl Pool_NextFree("
+    "${_pool_loop_pattern}"
+    "the ordinary count query must remain O(1)")
+require_pool_function_not_contains(
+    "${_pool_cpp}"
+    "poolcountresult_t __cdecl Pool_GetFreeCount("
+    "poolnextresult_t __cdecl Pool_NextFree("
+    "Pool_ValidateFull("
+    "ordinary count queries must not hide a full scan")
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "poolnextresult_t __cdecl Pool_NextFree("
+    "poolindexresult_t __cdecl Pool_GetSlotIndex("
+    "nextIndex == itemIndex"
+    "checked link queries must reject self-cycles")
 
 require_pool_source_contains(
     "physics/phys_local.h"
     "RUNTIME_SIZE(PhysObjUserData, 0x70, 0x78);"
-    "physics userdata records must use their native 64-bit stride")
-require_pool_source_contains(
-    "physics/phys_local.h"
-    "RUNTIME_OFFSET(PhysObjUserData, body, 0xC, 0x10);"
-    "physics userdata body ownership must retain its exact target offset")
+    "physics userdata must retain its native target stride")
 require_pool_source_contains(
     "physics/phys_ode.cpp"
-    "Pool_StorageFor(physGlob.userData)"
-    "userdata pool operations must derive their extent from the typed array")
+    "Pool_ControlFor(physUserDataPoolSlotState)"
+    "userdata ownership needs an external sidecar")
+require_pool_source_contains(
+    "physics/phys_ode.cpp"
+    "Pool_StorageFor(physGlob.userData, physUserDataPoolControl)"
+    "userdata operations must share their bound descriptor")
+require_pool_source_contains(
+    "physics/phys_ode.cpp"
+    "const bool userDataPoolValid = Pool_ValidateFull("
+    "userdata shutdown diagnostics must perform full validation")
 require_pool_source_match_count(
     "physics/phys_ode.cpp"
-    "Pool_StorageFor\\(physGlob[.]userData\\)"
-    4
-    "all userdata init/allocate/free/count operations must use the typed extent")
+    "Pool_ValidateFull\\("
+    1
+    "userdata has one explicit full-validation boundary")
 require_pool_source_contains(
     "physics/phys_ode.cpp"
-    "static_cast<int>(trackedSize)"
-    "memory tracking must use the native PhysGlob size after a checked conversion")
-require_pool_source_not_contains(
-    "physics/phys_ode.cpp"
-    "0x70u, 0x200u"
-    "the x86-only userdata stride must not return")
+    "Pool_Invalidate(userDataStorage, &physGlob.userDataPool)"
+    "userdata resets must retire the old binding explicitly")
 
+require_pool_source_contains(
+    "physics/ode/ode.cpp"
+    "Pool_ControlFor(odeBodyPoolSlotState)"
+    "ODE bodies need an external ownership sidecar")
+require_pool_source_contains(
+    "physics/ode/ode.cpp"
+    "Pool_ControlFor(odeGeomPoolSlotState)"
+    "ODE geoms need an external ownership sidecar")
+require_pool_source_contains(
+    "physics/ode/ode.cpp"
+    "const bool bodyPoolValid = Pool_ValidateFull("
+    "ODE body leak checks must perform full validation")
+require_pool_source_contains(
+    "physics/ode/ode.cpp"
+    "const bool geomPoolValid = Pool_ValidateFull("
+    "ODE geom leak checks must perform full validation")
+require_pool_source_match_count(
+    "physics/ode/ode.cpp"
+    "Pool_ValidateFull\\("
+    2
+    "ODE leak checks must validate both owned pools")
+require_pool_source_contains(
+    "physics/ode/ode.cpp"
+    "Pool_Invalidate(bodyStorage, &odeGlob.bodyPool)"
+    "ODE resets must retire body control explicitly")
+require_pool_source_contains(
+    "physics/ode/ode.cpp"
+    "Pool_Invalidate(geomStorage, &odeGlob.geomPool)"
+    "ODE resets must retire geom control explicitly")
 require_pool_source_contains(
     "physics/ode/ode.cpp"
     "traversedFreeCount >= ODE_GEOM_POOL_COUNT"
-    "ODE leak traversal must have a hard visit bound")
-require_pool_source_contains(
-    "physics/ode/ode.cpp"
-    "Pool_GetSlotIndex("
-    "ODE leak traversal must reject foreign and interior nodes")
-require_pool_source_contains(
-    "physics/ode/ode.cpp"
-    "Pool_NextFree("
-    "ODE leak traversal must use the checked link reader")
-require_pool_source_matches(
-    "physics/ode/ode.cpp"
-    "bool[ \t]+__cdecl[ \t]+ODE_Init[ \t]*\\([^)]*\\)[ \t\r\n]*\\{"
-    "ODE pool initialization must report failure")
+    "diagnostic traversal must retain a hard bound")
 require_pool_source_not_contains(
     "physics/ode/ode.cpp"
     "*(void **)ff"
-    "ODE leak traversal must not dereference raw link storage")
-require_pool_source_not_contains(
-    "physics/ode/ode.cpp"
-    "(dxGeomTransform*)ff -"
-    "ODE leak traversal must not subtract pointers into fabricated object arrays")
+    "ODE diagnostics must not dereference raw link storage")
 
+require_pool_source_match_count(
+    "EffectsCore/fx_archive.cpp"
+    "Pool_ValidateFull\\("
+    3
+    "archive capacity must fully validate body, userdata, and geom pools")
 require_pool_source_contains(
     "EffectsCore/fx_archive.cpp"
     "Pool_GetFreeCount("
-    "FX archive capacity must fail closed on invalid physics pool state")
+    "archive capacity may use O(1) counts only after full validation")
 require_pool_source_contains(
     "physics/ode/collision_kernel.cpp"
-    "ODE_CollisionGeomPoolStorage()"
-    "ODE collision allocation must retain checked geom bounds")
-require_pool_source_match_count(
-    "physics/ode/collision_kernel.cpp"
-    "ODE_CollisionGeomPoolStorage\\(\\)"
-    4
-    "the geom descriptor definition plus both frees and allocation must remain")
-require_pool_source_match_count(
-    "physics/ode/ode.cpp"
-    "ODE_BodyPoolStorage\\(\\)"
-    6
-    "the body descriptor must cover leak count, init, allocation, and both frees")
+    "ODE_GeomPoolStorage()"
+    "collision allocation must retain the bound geom descriptor")
 
-message(STATUS "Native-width pool source invariants verified")
+message(STATUS "External-shadow pool source invariants verified")

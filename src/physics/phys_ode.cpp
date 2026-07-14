@@ -36,6 +36,27 @@
 
 PhysGlob physGlob;
 
+namespace
+{
+poolslotstate_t physUserDataPoolSlotState[512]{};
+poolcontrol_t physUserDataPoolControl =
+    Pool_ControlFor(physUserDataPoolSlotState);
+
+template <std::size_t Size>
+constexpr int PhysTrackedSize() noexcept
+{
+    static_assert(
+        Size <= static_cast<std::size_t>(INT_MAX),
+        "tracked allocation size must fit in int");
+    return static_cast<int>(Size);
+}
+}
+
+poolstorage_t Phys_UserDataPoolStorage() noexcept
+{
+    return Pool_StorageFor(physGlob.userData, physUserDataPoolControl);
+}
+
 bool physInited;
 
 const dvar_t *phys_contact_erp;
@@ -94,20 +115,9 @@ void __cdecl ODE_ForEachBody(dxWorld *world, T func)
 
 void __cdecl TRACK_phys()
 {
-    const std::size_t trackedSize = sizeof(physGlob);
-    if (trackedSize > static_cast<std::size_t>(INT_MAX))
-    {
-        MyAssertHandler(
-            ".\\physics\\phys_ode.cpp",
-            95,
-            0,
-            "%s",
-            "sizeof(physGlob) <= INT_MAX");
-        return;
-    }
     track_static_alloc_internal(
         &physGlob,
-        static_cast<int>(trackedSize),
+        PhysTrackedSize<sizeof(physGlob)>(),
         "physGlob",
         9);
 }
@@ -146,10 +156,20 @@ void __cdecl Phys_Init()
 
     if (!physInited)
     {
+        const poolstorage_t userDataStorage =
+            Phys_UserDataPoolStorage();
+        if (!Pool_Invalidate(userDataStorage, &physGlob.userDataPool))
+        {
+            MyAssertHandler(
+                __FILE__,
+                __LINE__,
+                0,
+                "%s",
+                "Pool_Invalidate(physGlob.userData)");
+            return;
+        }
         memset((uint8_t *)&physGlob, 0, sizeof(physGlob));
-        if (!Pool_Init(
-                Pool_StorageFor(physGlob.userData),
-                &physGlob.userDataPool))
+        if (!Pool_Init(userDataStorage, &physGlob.userDataPool))
         {
             MyAssertHandler(
                 ".\\physics\\phys_ode.cpp",
@@ -161,8 +181,8 @@ void __cdecl Phys_Init()
         }
         if (!ODE_Init())
         {
-            physGlob.userDataPool.firstFree = nullptr;
-            physGlob.userDataPool.activeCount = 0;
+            (void)Pool_Invalidate(
+                userDataStorage, &physGlob.userDataPool);
             MyAssertHandler(
                 ".\\physics\\phys_ode.cpp",
                 317,
@@ -528,7 +548,7 @@ static physics::allocation::ResourceHandle Phys_CreateBodyUserDataResource(
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     PhysObjUserData *const userData =
         static_cast<PhysObjUserData *>(Pool_Alloc(
-            Pool_StorageFor(physGlob.userData),
+            Phys_UserDataPoolStorage(),
             &physGlob.userDataPool));
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     return userData;
@@ -1555,7 +1575,7 @@ void __cdecl Phys_ObjDestroy(PhysWorld worldIndex, dxBody *id)
 #ifdef USE_POOL_ALLOCATOR
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     const bool userDataFreed = Pool_Free(
-        Pool_StorageFor(physGlob.userData),
+        Phys_UserDataPoolStorage(),
         &physGlob.userDataPool,
         userData);
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
@@ -2765,10 +2785,13 @@ void __cdecl Phys_Shutdown()
         vassert(physGlob.world[PHYS_WORLD_FX]->nb == 0, "physGlob.world[PHYS_WORLD_FX]->nb = %d", physGlob.world[PHYS_WORLD_FX]->nb);
         vassert(physGlob.world[PHYS_WORLD_RAGDOLL]->nb == 0, "physGlob.world[PHYS_WORLD_RAGDOLL]->nb = %d", physGlob.world[PHYS_WORLD_RAGDOLL]->nb);
 
+        const poolstorage_t userDataStorage =
+            Phys_UserDataPoolStorage();
+        const bool userDataPoolValid = Pool_ValidateFull(
+            userDataStorage, &physGlob.userDataPool);
         const poolcountresult_t freeCount = Pool_GetFreeCount(
-                Pool_StorageFor(physGlob.userData),
-                &physGlob.userDataPool);
-        if (!freeCount.valid
+            userDataStorage, &physGlob.userDataPool);
+        if (!userDataPoolValid || !freeCount.valid
             || freeCount.count
                 != static_cast<std::size_t>(ARRAY_COUNT(physGlob.userData)))
         {
