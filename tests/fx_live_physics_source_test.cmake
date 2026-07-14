@@ -1121,7 +1121,7 @@ require_slice_not_contains(
 extract_source_slice(
     _fx_system_source
     "bool __cdecl FX_CanPublishArchiveSafeEmptyStateLocked("
-    "bool __cdecl FX_PublishArchiveSafeEmptyStateLocked("
+    "bool __cdecl FX_PublishArchiveSafeEmptyStateLockedWithScratch("
     _safe_empty_preflight_source
     "FX_CanPublishArchiveSafeEmptyStateLocked")
 require_slice_ordered(
@@ -1132,13 +1132,17 @@ require_slice_ordered(
 
 extract_source_slice(
     _fx_system_source
+    "bool __cdecl FX_PublishArchiveSafeEmptyStateLockedWithScratch("
     "bool __cdecl FX_PublishArchiveSafeEmptyStateLocked("
-    "void __cdecl FX_InitSystem("
     _safe_empty_source
-    "FX_PublishArchiveSafeEmptyStateLocked")
+    "FX_PublishArchiveSafeEmptyStateLockedWithScratch")
 require_slice_contains(
     _safe_empty_source
-    "FxSystem *const system) noexcept"
+    "BodySidecarValidationScratch *const sidecarScratch"
+    "safe-empty publication must receive caller-owned sidecar scratch")
+require_slice_contains(
+    _safe_empty_source
+    "FxPoolAllocationGraphScratch *const poolGraphScratch) noexcept"
     "safe-empty publication must remain a non-throwing fallback")
 require_slice_contains(
     _safe_empty_source
@@ -1146,7 +1150,7 @@ require_slice_contains(
     "safe-empty publication must reuse archive, iterator, and graph preflight")
 require_slice_ordered(
     _safe_empty_source
-    "fx::physics::Validate(sidecar)"
+    "fx::physics::ValidateWithScratch(sidecar, sidecarScratch)"
     "fx::physics::ValidateVacantDestination(sidecar)"
     "safe-empty publication must validate the sidecar before proving vacancy")
 require_slice_ordered(
@@ -1177,11 +1181,11 @@ require_slice_ordered(
 require_slice_ordered(
     _safe_empty_source
     "if (resetStatus == fx::physics::SidecarStatus::Success"
-    "FxValidatePoolAllocationGraph("
+    "FxValidatePoolAllocationGraphWithScratch("
     "safe-empty publication must validate the reset graph in the success branch")
 require_slice_ordered(
     _safe_empty_source
-    "FxValidatePoolAllocationGraph("
+    "poolGraphScratch"
     "system->isInitialized = true;"
     "safe-empty publication must validate the graph before publishing initialization")
 require_slice_ordered(
@@ -1200,7 +1204,9 @@ foreach(_safe_empty_forbidden IN ITEMS
     "Phys_ObjDestroy("
     "Com_Error("
     "MyAssertHandler("
-    "FX_ValidatePoolAllocationGraphState(")
+    "FX_ValidatePoolAllocationGraphState("
+    "fx::physics::Validate(sidecar)"
+    "FxValidatePoolAllocationGraph(")
     require_slice_not_contains(
         _safe_empty_source
         "${_safe_empty_forbidden}"

@@ -105,7 +105,7 @@ static void Win_WriteProcessHandle(DWORD stream, const char *msg)
 	}
 }
 
-static void Win_TerminateOnFatalError(const char *message)
+[[noreturn]] static void Win_TerminateOnFatalError(const char *message)
 {
 	const char prefix[] = "\nKisakCOD fatal error: ";
 	const char newline[] = "\n";
@@ -388,7 +388,7 @@ int __cdecl Sys_CheckCrashOrRerun()
 #endif
 }
 
-void Sys_Error(const char *error, ...)
+[[noreturn]] void Sys_Error(const char *error, ...)
 {
 #ifndef KISAK_DEDI_HEADLESS
 	tagMSG Msg; // [esp+4h] [ebp-1024h] BYREF

@@ -1,6 +1,7 @@
 #include "fx_system.h"
 #include "fx_archive_capacity.h"
 #include "fx_archive_restore_control.h"
+#include "fx_archive_restore_workspace.h"
 #include "fx_physics_sidecar.h"
 #include "fx_pool.h"
 #include "fx_pool_graph.h"
@@ -18,6 +19,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <type_traits>
 
 namespace
 {
@@ -38,6 +40,23 @@ struct FxArchivePhysicsEntry
     fx::physics::BodyToken token;
     fx::physics::BodyToken reconstructedToken;
     bool retired;
+};
+
+struct FxArchivePhysicsOwnershipScratch
+{
+    std::array<fx::physics::BodyToken, MAX_ELEMS> expectedTokens{};
+    fx::physics::OwnershipSnapshot drainOwnership{};
+    fx::physics::BodySidecarSnapshotScratch sidecar{};
+};
+
+struct FxArchiveRestorePhysicsScratch
+{
+    FxArchivePhysicsOwnershipScratch ownership{};
+    std::array<fx::archive::PhysicsRetirementCandidate,
+               fx::physics::BODY_LIMIT>
+        retirementCandidates{};
+    fx::archive::PhysicsRetirementPlanScratch retirementPlanner{};
+    FxPoolAllocationGraphScratch poolGraph{};
 };
 
 constexpr int FX_ARCHIVE_SYSTEM_SIZE = 2656;
@@ -412,9 +431,10 @@ std::uint32_t FX_ArchivePointerBits(POINTER_TYPE *const pointer) noexcept
 
 bool FX_RebuildArchivePoolAllocationStates(
     FxSystem *const system,
-    FxArchivePoolAllocationStates *const states)
+    FxArchivePoolAllocationStates *const states,
+    FxPoolAllocationGraphScratch *const scratch)
 {
-    if (!system || !states || !system->elems || !system->trails
+    if (!system || !states || !scratch || !system->elems || !system->trails
         || !system->trailElems)
     {
         return false;
@@ -448,11 +468,12 @@ bool FX_RebuildArchivePoolAllocationStates(
             != Sys_AtomicLoad(&trailCount)
         || Sys_AtomicLoad(&system->activeTrailElemCount)
             != Sys_AtomicLoad(&trailElemCount)
-        || !FxValidatePoolAllocationGraph(
+        || !FxValidatePoolAllocationGraphWithScratch(
             system,
             rebuilt.elems,
             rebuilt.trails,
-            rebuilt.trailElems))
+            rebuilt.trailElems,
+            scratch))
     {
         return false;
     }
@@ -878,38 +899,48 @@ bool FX_BuildArchiveExpectedTokens(
     }
 
     outTokens->fill(fx::physics::INVALID_BODY_TOKEN);
-    std::array<bool, MAX_ELEMS> seenOwners{};
     for (std::size_t index = 0; index < entryCount; ++index)
     {
         const FxArchivePhysicsEntry &entry = entries[index];
         if (entry.ownerIndex >= MAX_ELEMS
-            || seenOwners[entry.ownerIndex]
+            || (*outTokens)[entry.ownerIndex]
+                != fx::physics::INVALID_BODY_TOKEN
             || entry.token == fx::physics::INVALID_BODY_TOKEN)
         {
             return false;
         }
-        seenOwners[entry.ownerIndex] = true;
-        if (entry.retired)
-            continue;
         (*outTokens)[entry.ownerIndex] = entry.token;
+    }
+    // The first pass uses the token array itself as the uniqueness map. Clear
+    // retired owners only after every duplicate has therefore been rejected.
+    for (std::size_t index = 0; index < entryCount; ++index)
+    {
+        const FxArchivePhysicsEntry &entry = entries[index];
+        if (entry.retired)
+        {
+            (*outTokens)[entry.ownerIndex] =
+                fx::physics::INVALID_BODY_TOKEN;
+        }
     }
     return true;
 }
 
-bool FX_ValidateArchivePhysicsOwnershipLocked(
+bool FX_ValidateArchivePhysicsOwnershipLockedWithScratch(
     const fx::physics::BodySidecar *const sidecar,
     FxArchivePhysicsEntry *const entries,
     const std::size_t entryCount,
-    const bool captureStates) noexcept
+    const bool captureStates,
+    std::array<fx::physics::BodyToken, MAX_ELEMS> *const expectedTokens,
+    fx::physics::BodySidecarValidationScratch *const sidecarScratch) noexcept
 {
-    if ((entryCount != 0 && !entries) || !sidecar)
+    if ((entryCount != 0 && !entries) || !sidecar || !expectedTokens
+        || !sidecarScratch)
         return false;
 
-    std::array<fx::physics::BodyToken, MAX_ELEMS> expectedTokens{};
     if (!FX_BuildArchiveExpectedTokens(
-            entries, entryCount, &expectedTokens)
-        || fx::physics::ValidateSemanticOwnership(
-            sidecar, expectedTokens)
+            entries, entryCount, expectedTokens)
+        || fx::physics::ValidateSemanticOwnershipWithScratch(
+            sidecar, *expectedTokens, sidecarScratch)
             != fx::physics::SidecarStatus::Success)
     {
         return false;
@@ -936,13 +967,37 @@ bool FX_ValidateArchivePhysicsOwnershipLocked(
     return true;
 }
 
-bool FX_CaptureArchivePhysicsRollbackRecipesLocked(
+bool FX_ValidateArchivePhysicsOwnershipLocked(
     const fx::physics::BodySidecar *const sidecar,
     FxArchivePhysicsEntry *const entries,
-    const std::size_t entryCount) noexcept
+    const std::size_t entryCount,
+    const bool captureStates) noexcept
 {
-    if (!FX_ValidateArchivePhysicsOwnershipLocked(
-            sidecar, entries, entryCount, false))
+    std::array<fx::physics::BodyToken, MAX_ELEMS> expectedTokens{};
+    fx::physics::BodySidecarValidationScratch sidecarScratch{};
+    return FX_ValidateArchivePhysicsOwnershipLockedWithScratch(
+        sidecar,
+        entries,
+        entryCount,
+        captureStates,
+        &expectedTokens,
+        &sidecarScratch);
+}
+
+bool FX_CaptureArchivePhysicsRollbackRecipesLockedWithScratch(
+    const fx::physics::BodySidecar *const sidecar,
+    FxArchivePhysicsEntry *const entries,
+    const std::size_t entryCount,
+    std::array<fx::physics::BodyToken, MAX_ELEMS> *const expectedTokens,
+    fx::physics::BodySidecarValidationScratch *const sidecarScratch) noexcept
+{
+    if (!FX_ValidateArchivePhysicsOwnershipLockedWithScratch(
+            sidecar,
+            entries,
+            entryCount,
+            false,
+            expectedTokens,
+            sidecarScratch))
     {
         return false;
     }
@@ -976,27 +1031,32 @@ bool FX_CaptureArchivePhysicsRollbackRecipesLocked(
 
 bool FX_PrepareArchivePhysicsSidecarForDrainInspectionLocked(
     fx::physics::BodySidecar *const sidecar,
-    const bool allowVacantInitialization) noexcept
+    const bool allowVacantInitialization,
+    fx::physics::BodySidecarSnapshotScratch *const scratch) noexcept
 {
-    if (!sidecar)
+    if (!sidecar || !scratch)
         return false;
     if (!sidecar->IsInitialized())
     {
         if (!allowVacantInitialization)
             return false;
-        return fx::physics::ResetEmpty(sidecar)
+        return fx::physics::ResetEmptyWithScratch(sidecar, scratch)
             == fx::physics::SidecarStatus::Success;
     }
-    return fx::physics::Validate(sidecar)
+    return fx::physics::ValidateWithScratch(sidecar, scratch)
         == fx::physics::SidecarStatus::Success;
 }
 
 fx::archive::RestoreControlOperationStatus
 FX_DrainArchivePhysicsSidecarsLocked(
     const std::array<fx::physics::BodySidecar *, 3> &sidecars,
-    const std::array<bool, 3> &drainSidecar) noexcept
+    const std::array<bool, 3> &drainSidecar,
+    FxArchivePhysicsOwnershipScratch *const scratch) noexcept
 {
     using Status = fx::archive::RestoreControlOperationStatus;
+
+    if (!scratch)
+        return Status::RecoverableFailure;
 
     // Slot zero is always the persistent live registry. Treating an
     // uninitialized live registry as empty could abandon native bodies that
@@ -1006,7 +1066,7 @@ FX_DrainArchivePhysicsSidecarsLocked(
     {
         if (!sidecars[first]
             || !FX_PrepareArchivePhysicsSidecarForDrainInspectionLocked(
-                sidecars[first], first != 0))
+                sidecars[first], first != 0, &scratch->sidecar))
         {
             return Status::RecoverableFailure;
         }
@@ -1028,8 +1088,8 @@ FX_DrainArchivePhysicsSidecarsLocked(
              second < sidecars.size();
              ++second)
         {
-            if (fx::physics::ValidateDisjointOwnership(
-                    sidecars[first], sidecars[second])
+            if (fx::physics::ValidateDisjointOwnershipWithScratch(
+                    sidecars[first], sidecars[second], &scratch->sidecar)
                 != fx::physics::SidecarStatus::Success)
             {
                 return Status::RecoverableFailure;
@@ -1040,24 +1100,25 @@ FX_DrainArchivePhysicsSidecarsLocked(
     // Reuse one bounded snapshot so stack cost does not scale with the three
     // sidecars. PHYSICS ownership prevents any registration/native mutation
     // between this all-body preflight and the deterministic drain pass.
-    fx::physics::OwnershipSnapshot ownership{};
     for (std::size_t index = 0; index < sidecars.size(); ++index)
     {
         if (!drainSidecar[index])
             continue;
-        if (fx::physics::SnapshotOwnership(
-                sidecars[index], &ownership)
+        if (fx::physics::SnapshotOwnershipWithScratch(
+                sidecars[index],
+                &scratch->drainOwnership,
+                &scratch->sidecar)
             != fx::physics::SidecarStatus::Success)
         {
             return Status::RecoverableFailure;
         }
         for (std::size_t bodyIndex = 0;
-             bodyIndex < ownership.count;
+             bodyIndex < scratch->drainOwnership.count;
              ++bodyIndex)
         {
             if (Phys_TryValidateBodyDestroyLockedNoReport(
                     PHYS_WORLD_FX,
-                    ownership.records[bodyIndex].body)
+                    scratch->drainOwnership.records[bodyIndex].body)
                 != PhysBodyRollbackStatus::Success)
             {
                 return Status::RecoverableFailure;
@@ -1073,7 +1134,8 @@ FX_DrainArchivePhysicsSidecarsLocked(
         while (sidecar->ActiveCount() != 0)
         {
             const fx::physics::IndexedBodyResult taken =
-                fx::physics::TakeFirst(sidecar);
+                fx::physics::TakeFirstWithScratch(
+                    sidecar, &scratch->sidecar);
             if (!taken)
                 return Status::RecoverableFailure;
             if (Phys_TryDestroyBodyLockedNoReport(
@@ -1083,7 +1145,8 @@ FX_DrainArchivePhysicsSidecarsLocked(
                 return Status::UnsafeFailure;
             }
         }
-        if (fx::physics::ResetEmpty(sidecar)
+        if (fx::physics::ResetEmptyWithScratch(
+                sidecar, &scratch->sidecar)
             != fx::physics::SidecarStatus::Success)
         {
             return Status::RecoverableFailure;
@@ -1189,9 +1252,10 @@ bool FX_BuildArchivePhysicsRetirementPlanLocked(
     const std::size_t desiredEntryCount,
     const FxArchivePhysicsEntry *const liveEntries,
     const std::size_t liveEntryCount,
-    fx::archive::PhysicsRetirementPlan *const outPlan) noexcept
+    fx::archive::PhysicsRetirementPlan *const outPlan,
+    FxArchiveRestorePhysicsScratch *const scratch) noexcept
 {
-    if ((liveEntryCount != 0 && !liveEntries) || !outPlan
+    if ((liveEntryCount != 0 && !liveEntries) || !outPlan || !scratch
         || liveEntryCount > fx::physics::BODY_LIMIT)
     {
         return false;
@@ -1215,9 +1279,6 @@ bool FX_BuildArchivePhysicsRetirementPlanLocked(
     if (!FX_GetArchivePhysicsFreeCapacityLocked(&freeCapacity))
         return false;
 
-    std::array<fx::archive::PhysicsRetirementCandidate,
-               fx::physics::BODY_LIMIT>
-        candidates{};
     for (std::size_t index = 0; index < liveEntryCount; ++index)
     {
         const FxArchivePhysicsEntry &entry = liveEntries[index];
@@ -1228,18 +1289,19 @@ bool FX_BuildArchivePhysicsRetirementPlanLocked(
         {
             return false;
         }
-        candidates[index] = {
+        scratch->retirementCandidates[index] = {
             index,
             entry.ownerIndex,
             entry.rollbackRecipe.demand.geomCount,
         };
     }
 
-    return fx::archive::BuildPhysicsRetirementPlan(
+    return fx::archive::BuildPhysicsRetirementPlanWithScratch(
                freeCapacity,
                desired,
-               candidates.data(),
+               scratch->retirementCandidates.data(),
                liveEntryCount,
+               &scratch->retirementPlanner,
                outPlan)
         == fx::archive::PhysicsRetirementPlanStatus::Success;
 }
@@ -1250,13 +1312,14 @@ FX_RetireArchivePhysicsLocked(
     FxArchivePhysicsEntry *const liveEntries,
     const std::size_t liveEntryCount,
     const fx::archive::PhysicsRetirementPlan &plan,
-    std::size_t *const outRetiredCount) noexcept
+    std::size_t *const outRetiredCount,
+    fx::physics::BodySidecarSnapshotScratch *const scratch) noexcept
 {
     using Status = fx::archive::RestoreControlOperationStatus;
 
     if (!liveSidecar || (liveEntryCount != 0 && !liveEntries)
         || liveEntryCount > fx::physics::BODY_LIMIT
-        || plan.count > liveEntryCount || !outRetiredCount)
+        || plan.count > liveEntryCount || !outRetiredCount || !scratch)
     {
         return Status::RecoverableFailure;
     }
@@ -1295,8 +1358,12 @@ FX_RetireArchivePhysicsLocked(
             return Status::RecoverableFailure;
         }
 
-        const fx::physics::BodyResult taken = fx::physics::Take(
-            liveSidecar, entry.ownerIndex, entry.token);
+        const fx::physics::BodyResult taken =
+            fx::physics::TakeWithScratch(
+                liveSidecar,
+                entry.ownerIndex,
+                entry.token,
+                scratch);
         if (!taken)
             return Status::RecoverableFailure;
         entry.reconstructedToken = fx::physics::INVALID_BODY_TOKEN;
@@ -1318,13 +1385,15 @@ FX_ReconstructRetiredArchivePhysicsLocked(
     FxArchivePhysicsEntry *const liveEntries,
     const std::size_t liveEntryCount,
     const fx::archive::PhysicsRetirementPlan &plan,
-    const std::size_t retiredCount) noexcept
+    const std::size_t retiredCount,
+    fx::physics::BodySidecarSnapshotScratch *const scratch) noexcept
 {
     using Status = fx::archive::RestoreControlOperationStatus;
 
     if (!liveSidecar || (liveEntryCount != 0 && !liveEntries)
         || liveEntryCount > fx::physics::BODY_LIMIT
-        || retiredCount > plan.count || plan.count > liveEntryCount)
+        || retiredCount > plan.count || plan.count > liveEntryCount
+        || !scratch)
     {
         return Status::RecoverableFailure;
     }
@@ -1373,8 +1442,12 @@ FX_ReconstructRetiredArchivePhysicsLocked(
                 : Status::RecoverableFailure;
         }
 
-        const fx::physics::TokenResult bound = fx::physics::Bind(
-            liveSidecar, entry.ownerIndex, createdBody);
+        const fx::physics::TokenResult bound =
+            fx::physics::BindWithScratch(
+                liveSidecar,
+                entry.ownerIndex,
+                createdBody,
+                scratch);
         if (!bound)
         {
             if (bound.status != fx::physics::SidecarStatus::DuplicateBody)
@@ -1468,11 +1541,13 @@ FX_PublishArchivePhysicsSafeEmptyLocked(
     FxSystem *const system,
     fx::physics::BodySidecar *const liveSidecar,
     fx::physics::BodySidecar *const stagedSidecar,
-    fx::physics::BodySidecar *const rollbackSidecar) noexcept
+    fx::physics::BodySidecar *const rollbackSidecar,
+    FxArchiveRestorePhysicsScratch *const scratch) noexcept
 {
     using Status = fx::archive::RestoreControlOperationStatus;
 
-    if (!system || !liveSidecar || !stagedSidecar || !rollbackSidecar)
+    if (!system || !liveSidecar || !stagedSidecar || !rollbackSidecar
+        || !scratch)
         return Status::RecoverableFailure;
     if (!FX_ValidateArchiveExclusiveState(system)
         || !FX_CanPublishArchiveSafeEmptyStateLocked(system))
@@ -1483,10 +1558,14 @@ FX_PublishArchivePhysicsSafeEmptyLocked(
     const Status drainStatus =
         FX_DrainArchivePhysicsSidecarsLocked(
             {liveSidecar, stagedSidecar, rollbackSidecar},
-            {true, true, true});
+            {true, true, true},
+            &scratch->ownership);
     if (drainStatus != Status::Success)
         return drainStatus;
-    return FX_PublishArchiveSafeEmptyStateLocked(system)
+    return FX_PublishArchiveSafeEmptyStateLockedWithScratch(
+        system,
+        &scratch->ownership.sidecar,
+        &scratch->poolGraph)
         ? Status::Success
         : Status::RecoverableFailure;
 }
@@ -1838,14 +1917,15 @@ FX_CreateArchivePhysicsLocked(
     const std::size_t entryCount,
     const std::int32_t archiveTime,
     const fx::physics::BodySidecar *const liveSidecar,
-    fx::physics::BodySidecar *const stagedSidecar) noexcept
+    fx::physics::BodySidecar *const stagedSidecar,
+    fx::physics::BodySidecarSnapshotScratch *const scratch) noexcept
 {
     using Status = fx::archive::RestoreControlOperationStatus;
 
     if ((entryCount != 0 && !entries) || !liveSidecar
-        || !stagedSidecar
-        || fx::physics::ValidateDisjointOwnership(
-            liveSidecar, stagedSidecar)
+        || !stagedSidecar || !scratch
+        || fx::physics::ValidateDisjointOwnershipWithScratch(
+            liveSidecar, stagedSidecar, scratch)
             != fx::physics::SidecarStatus::Success)
     {
         return Status::RecoverableFailure;
@@ -1891,8 +1971,12 @@ FX_CreateArchivePhysicsLocked(
                 : Status::RecoverableFailure;
         }
 
-        const fx::physics::TokenResult bound = fx::physics::Bind(
-            stagedSidecar, entry.ownerIndex, createdBody);
+        const fx::physics::TokenResult bound =
+            fx::physics::BindWithScratch(
+                stagedSidecar,
+                entry.ownerIndex,
+                createdBody,
+                scratch);
         if (!bound)
         {
             // A validated staged sidecar can report DuplicateBody here only
@@ -1910,12 +1994,16 @@ FX_CreateArchivePhysicsLocked(
             return Status::RecoverableFailure;
         }
         const fx::physics::SidecarStatus disjointStatus =
-            fx::physics::ValidateDisjointOwnership(
-                liveSidecar, stagedSidecar);
+            fx::physics::ValidateDisjointOwnershipWithScratch(
+                liveSidecar, stagedSidecar, scratch);
         if (disjointStatus != fx::physics::SidecarStatus::Success)
         {
-            const fx::physics::BodyResult detached = fx::physics::Take(
-                stagedSidecar, entry.ownerIndex, bound.token);
+            const fx::physics::BodyResult detached =
+                fx::physics::TakeWithScratch(
+                    stagedSidecar,
+                    entry.ownerIndex,
+                    bound.token,
+                    scratch);
             if (detached
                 && disjointStatus
                     != fx::physics::SidecarStatus::DuplicateBody)
@@ -1951,11 +2039,81 @@ struct FxArchiveRestoreControlContext
     fx::physics::BodySidecar *livePhysicsSidecar;
     fx::physics::BodySidecar *stagedPhysicsSidecar;
     fx::physics::BodySidecar *rollbackPhysicsSidecar;
+    FxArchiveRestorePhysicsScratch *physicsScratch;
     bool originalSnapshotExclusive;
     bool originalGraphPublished;
     fx::archive::PhysicsRetirementPlan retirementPlan;
     std::size_t retiredPhysicsEntryCount;
 };
+
+// The sidecars are last so normal reverse destruction releases their checked
+// transaction lifetimes before the scratch/context they reference. Unsafe
+// restore outcomes deliberately never destroy this object: native ownership
+// may be indeterminate and the process must terminate with admission closed.
+struct FxArchiveRestoreTransactionWorkspace final
+{
+    FxSystem rollbackSystem{};
+    FxArchiveRestoreControlContext control{};
+    FxArchiveRestorePhysicsScratch physicsScratch{};
+    fx::physics::BodySidecar stagedPhysicsSidecar{};
+    fx::physics::BodySidecar rollbackPhysicsSidecar{};
+
+    FxArchiveRestoreTransactionWorkspace() noexcept = default;
+    ~FxArchiveRestoreTransactionWorkspace() noexcept = default;
+    FxArchiveRestoreTransactionWorkspace(
+        const FxArchiveRestoreTransactionWorkspace &) = delete;
+    FxArchiveRestoreTransactionWorkspace &operator=(
+        const FxArchiveRestoreTransactionWorkspace &) = delete;
+};
+
+static_assert(std::is_nothrow_default_constructible_v<
+    FxArchiveRestoreTransactionWorkspace>);
+static_assert(std::is_nothrow_destructible_v<
+    FxArchiveRestoreTransactionWorkspace>);
+static_assert(
+    alignof(FxArchiveRestoreTransactionWorkspace)
+    <= alignof(std::max_align_t));
+
+void *FX_AllocateArchiveRestoreWorkspaceMemory(
+    void *,
+    const int byteCount) noexcept
+{
+    return Z_Malloc(
+        byteCount,
+        "FX_Restore checked workspace",
+        10);
+}
+
+void FX_FreeArchiveRestoreWorkspaceMemory(
+    void *,
+    void *const storage) noexcept
+{
+    if (storage)
+        Z_Free(storage, 10);
+}
+
+constexpr fx::archive::ArchiveRestoreWorkspaceMemoryCallbacks
+    FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY{
+        nullptr,
+        FX_AllocateArchiveRestoreWorkspaceMemory,
+        FX_FreeArchiveRestoreWorkspaceMemory,
+    };
+
+[[nodiscard]] FxArchiveRestoreTransactionWorkspace *
+FX_AllocateArchiveRestoreTransactionWorkspace() noexcept
+{
+    return fx::archive::AllocateArchiveRestoreWorkspace<
+        FxArchiveRestoreTransactionWorkspace>(
+        FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
+}
+
+[[nodiscard]] bool FX_DestroyArchiveRestoreTransactionWorkspace(
+    FxArchiveRestoreTransactionWorkspace *const workspace) noexcept
+{
+    return fx::archive::DestroyArchiveRestoreWorkspace(
+        workspace,
+        FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
+}
 
 fx::archive::RestoreControlOperationStatus
 FX_ArchiveRestoreControlStatus(const bool succeeded) noexcept
@@ -1977,6 +2135,8 @@ FX_PerformArchiveRestoreControlOperation(
         return Status::UnsafeFailure;
     auto &context = *static_cast<FxArchiveRestoreControlContext *>(
         opaqueContext);
+    if (!context.physicsScratch)
+        return Status::UnsafeFailure;
 
     switch (operation)
     {
@@ -1984,7 +2144,9 @@ FX_PerformArchiveRestoreControlOperation(
         return FX_ArchiveRestoreControlStatus(
             context.originalSnapshotExclusive
             && FX_ArchiveEffectRingIsValid(context.system)
-            && FX_ValidatePoolAllocationGraphState(context.system)
+            && FX_ValidatePoolAllocationGraphStateWithScratch(
+                context.system,
+                &context.physicsScratch->poolGraph)
             && FX_CollectArchivePhysicsEntries(
                 context.system,
                 context.originalPhysicsEntries,
@@ -1992,10 +2154,12 @@ FX_PerformArchiveRestoreControlOperation(
                 &context.originalPhysicsEntryCount,
                 false,
                 nullptr)
-            && FX_CaptureArchivePhysicsRollbackRecipesLocked(
+            && FX_CaptureArchivePhysicsRollbackRecipesLockedWithScratch(
                 context.livePhysicsSidecar,
                 context.originalPhysicsEntries,
-                context.originalPhysicsEntryCount));
+                context.originalPhysicsEntryCount,
+                &context.physicsScratch->ownership.expectedTokens,
+                &context.physicsScratch->ownership.sidecar));
 
     case Operation::PlanRetirement:
         return FX_ArchiveRestoreControlStatus(
@@ -2004,7 +2168,8 @@ FX_PerformArchiveRestoreControlOperation(
                 context.desiredPhysicsEntryCount,
                 context.originalPhysicsEntries,
                 context.originalPhysicsEntryCount,
-                &context.retirementPlan));
+                &context.retirementPlan,
+                context.physicsScratch));
 
     case Operation::RetireOriginal:
         return FX_RetireArchivePhysicsLocked(
@@ -2012,13 +2177,15 @@ FX_PerformArchiveRestoreControlOperation(
             context.originalPhysicsEntries,
             context.originalPhysicsEntryCount,
             context.retirementPlan,
-            &context.retiredPhysicsEntryCount);
+            &context.retiredPhysicsEntryCount,
+            &context.physicsScratch->ownership.sidecar);
 
     case Operation::PreparePhysicsReplacement:
         return FX_ArchiveRestoreControlStatus(
-            fx::physics::PrepareReplacement(
+            fx::physics::PrepareReplacementWithScratch(
                 context.livePhysicsSidecar,
-                context.stagedPhysicsSidecar)
+                context.stagedPhysicsSidecar,
+                &context.physicsScratch->ownership.sidecar)
                 == fx::physics::SidecarStatus::Success);
 
     case Operation::CreateDesiredPhysics:
@@ -2027,22 +2194,26 @@ FX_PerformArchiveRestoreControlOperation(
             context.desiredPhysicsEntryCount,
             context.desiredSystem->msecNow,
             context.livePhysicsSidecar,
-            context.stagedPhysicsSidecar);
+            context.stagedPhysicsSidecar,
+            &context.physicsScratch->ownership.sidecar);
 
     case Operation::ValidateDesiredPhysics:
         return FX_ArchiveRestoreControlStatus(
-            FX_ValidateArchivePhysicsOwnershipLocked(
+            FX_ValidateArchivePhysicsOwnershipLockedWithScratch(
                 context.stagedPhysicsSidecar,
                 context.desiredPhysicsEntries,
                 context.desiredPhysicsEntryCount,
-                false));
+                false,
+                &context.physicsScratch->ownership.expectedTokens,
+                &context.physicsScratch->ownership.sidecar));
 
     case Operation::PublishPhysicsReplacement:
         return FX_ArchiveRestoreControlStatus(
-            fx::physics::PublishReplacement(
+            fx::physics::PublishReplacementWithScratch(
                 context.livePhysicsSidecar,
                 context.stagedPhysicsSidecar,
-                context.rollbackPhysicsSidecar)
+                context.rollbackPhysicsSidecar,
+                &context.physicsScratch->ownership.sidecar)
                 == fx::physics::SidecarStatus::Success);
 
     case Operation::PublishDesiredGraph:
@@ -2074,34 +2245,42 @@ FX_PerformArchiveRestoreControlOperation(
     case Operation::ValidateDesiredState:
         return FX_ArchiveRestoreControlStatus(
             FX_RebuildPoolAllocationStatesNoReport(context.system)
-            && FX_ValidatePoolAllocationGraphState(context.system)
-            && FX_ValidateArchivePhysicsOwnershipLocked(
+            && FX_ValidatePoolAllocationGraphStateWithScratch(
+                context.system,
+                &context.physicsScratch->poolGraph)
+            && FX_ValidateArchivePhysicsOwnershipLockedWithScratch(
                 context.livePhysicsSidecar,
                 context.desiredPhysicsEntries,
                 context.desiredPhysicsEntryCount,
-                false));
+                false,
+                &context.physicsScratch->ownership.expectedTokens,
+                &context.physicsScratch->ownership.sidecar));
 
     case Operation::ValidateDiscardedOriginalPhysics:
         return FX_ArchiveRestoreControlStatus(
-            FX_ValidateArchivePhysicsOwnershipLocked(
+            FX_ValidateArchivePhysicsOwnershipLockedWithScratch(
                 context.rollbackPhysicsSidecar,
                 context.originalPhysicsEntries,
                 context.originalPhysicsEntryCount,
-                false));
+                false,
+                &context.physicsScratch->ownership.expectedTokens,
+                &context.physicsScratch->ownership.sidecar));
 
     case Operation::DrainNonLivePhysics:
         return FX_DrainArchivePhysicsSidecarsLocked(
             {context.livePhysicsSidecar,
              context.stagedPhysicsSidecar,
              context.rollbackPhysicsSidecar},
-            {false, true, true});
+            {false, true, true},
+            &context.physicsScratch->ownership);
 
     case Operation::RollbackPhysicsReplacement:
         return FX_ArchiveRestoreControlStatus(
-            fx::physics::RollbackReplacement(
+            fx::physics::RollbackReplacementWithScratch(
                 context.livePhysicsSidecar,
                 context.rollbackPhysicsSidecar,
-                context.stagedPhysicsSidecar)
+                context.stagedPhysicsSidecar,
+                &context.physicsScratch->ownership.sidecar)
                 == fx::physics::SidecarStatus::Success);
 
     case Operation::ValidateOriginalTokensInSnapshot:
@@ -2130,7 +2309,8 @@ FX_PerformArchiveRestoreControlOperation(
             context.originalPhysicsEntries,
             context.originalPhysicsEntryCount,
             context.retirementPlan,
-            context.retiredPhysicsEntryCount);
+            context.retiredPhysicsEntryCount,
+            &context.physicsScratch->ownership.sidecar);
 
     case Operation::PatchOriginalTokensInSnapshot:
         return FX_ArchiveRestoreControlStatus(
@@ -2152,11 +2332,13 @@ FX_PerformArchiveRestoreControlOperation(
 
     case Operation::ValidateOriginalPhysics:
         return FX_ArchiveRestoreControlStatus(
-            FX_ValidateArchivePhysicsOwnershipLocked(
+            FX_ValidateArchivePhysicsOwnershipLockedWithScratch(
                 context.livePhysicsSidecar,
                 context.originalPhysicsEntries,
                 context.originalPhysicsEntryCount,
-                false));
+                false,
+                &context.physicsScratch->ownership.expectedTokens,
+                &context.physicsScratch->ownership.sidecar));
 
     case Operation::PublishOriginalGraph:
     {
@@ -2189,14 +2371,17 @@ FX_PerformArchiveRestoreControlOperation(
         return FX_ArchiveRestoreControlStatus(
             (!context.originalGraphPublished
                 || FX_RebuildPoolAllocationStatesNoReport(context.system))
-            && FX_ValidatePoolAllocationGraphState(context.system));
+            && FX_ValidatePoolAllocationGraphStateWithScratch(
+                context.system,
+                &context.physicsScratch->poolGraph));
 
     case Operation::PublishSafeEmpty:
         return FX_PublishArchivePhysicsSafeEmptyLocked(
             context.system,
             context.livePhysicsSidecar,
             context.stagedPhysicsSidecar,
-            context.rollbackPhysicsSidecar);
+            context.rollbackPhysicsSidecar,
+            context.physicsScratch);
     }
 
     return Status::UnsafeFailure;
@@ -2320,9 +2505,29 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
         return;
     }
 
+    FxPoolAllocationGraphScratch *const poolGraphScratch =
+        fx::archive::AllocateArchiveRestoreWorkspace<
+            FxPoolAllocationGraphScratch>(
+            FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
+    if (!poolGraphScratch)
+    {
+        Z_Free(restoredBuffers, 10);
+        Com_Error(ERR_DROP, "Unable to allocate FX pool validation workspace");
+        return;
+    }
     FxArchivePoolAllocationStates restoredStates{};
-    if (!FX_RebuildArchivePoolAllocationStates(
-            &restoredSystem, &restoredStates))
+    const bool restoredPoolStateValid =
+        FX_RebuildArchivePoolAllocationStates(
+            &restoredSystem,
+            &restoredStates,
+            poolGraphScratch);
+    const bool poolGraphScratchDestroyed =
+        fx::archive::DestroyArchiveRestoreWorkspace(
+            poolGraphScratch,
+            FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
+    if (!poolGraphScratchDestroyed)
+        std::abort();
+    if (!restoredPoolStateValid)
     {
         Z_Free(restoredBuffers, 10);
         Com_Error(ERR_DROP, "Invalid FX pool state in archive");
@@ -2540,10 +2745,26 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
         return;
     }
 
-    fx::physics::BodySidecar stagedPhysicsSidecar;
-    fx::physics::BodySidecar rollbackPhysicsSidecar;
+    FxArchiveRestoreTransactionWorkspace *const restoreWorkspace =
+        FX_AllocateArchiveRestoreTransactionWorkspace();
+    if (!restoreWorkspace)
+    {
+        Z_Free(rollbackBuffers, 10);
+        Z_Free(replacedPhysicsEntries, 10);
+        if (physicsEntries)
+            Z_Free(physicsEntries, 10);
+        Z_Free(restoredBuffers, 10);
+        Com_Error(ERR_DROP, "Unable to allocate FX restore transaction workspace");
+        return;
+    }
+
     if (!FX_BeginArchive(system))
     {
+        const bool workspaceDestroyed =
+            FX_DestroyArchiveRestoreTransactionWorkspace(
+                restoreWorkspace);
+        if (!workspaceDestroyed)
+            std::abort();
         Z_Free(rollbackBuffers, 10);
         Z_Free(replacedPhysicsEntries, 10);
         if (physicsEntries)
@@ -2556,7 +2777,7 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     // Nothing below this point performs archive I/O or reports ERR_DROP. Every
     // old body is captured as a validated reconstruction recipe before any
     // selected body is detached and destroyed to make replacement capacity.
-    FxSystem rollbackSystem{};
+    FxSystem &rollbackSystem = restoreWorkspace->rollbackSystem;
     Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
     std::memcpy(&rollbackSystem, system, sizeof(rollbackSystem));
     std::memcpy(rollbackBuffers, systemBuffers, sizeof(*rollbackBuffers));
@@ -2580,7 +2801,8 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     Sys_EnterCriticalSection(CRITSECT_PHYSICS);
     fx::physics::BodySidecar *const livePhysicsSidecar =
         FX_GetPhysicsBodySidecar(system);
-    FxArchiveRestoreControlContext restoreContext{};
+    FxArchiveRestoreControlContext &restoreContext =
+        restoreWorkspace->control;
     restoreContext.system = system;
     restoreContext.systemBuffers = systemBuffers;
     restoreContext.desiredSystem = &restoredSystem;
@@ -2591,8 +2813,11 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     restoreContext.desiredPhysicsEntryCount = physicsEntryCount;
     restoreContext.originalPhysicsEntries = replacedPhysicsEntries;
     restoreContext.livePhysicsSidecar = livePhysicsSidecar;
-    restoreContext.stagedPhysicsSidecar = &stagedPhysicsSidecar;
-    restoreContext.rollbackPhysicsSidecar = &rollbackPhysicsSidecar;
+    restoreContext.stagedPhysicsSidecar =
+        &restoreWorkspace->stagedPhysicsSidecar;
+    restoreContext.rollbackPhysicsSidecar =
+        &restoreWorkspace->rollbackPhysicsSidecar;
+    restoreContext.physicsScratch = &restoreWorkspace->physicsScratch;
     restoreContext.originalSnapshotExclusive = rollbackSnapshotExclusive;
 
     const fx::archive::RestoreControlCallbacks restoreCallbacks{
@@ -2614,6 +2839,8 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     system->isArchiving = false;
     const bool releasedArchive = FX_EndArchive(system);
+    const bool workspaceDestroyed =
+        FX_DestroyArchiveRestoreTransactionWorkspace(restoreWorkspace);
     Z_Free(rollbackBuffers, 10);
     Z_Free(replacedPhysicsEntries, 10);
     if (physicsEntries)
@@ -2621,7 +2848,8 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     Z_Free(restoredBuffers, 10);
     if (restoreOutcome
             != fx::archive::RestoreControlOutcome::DesiredPublished
-        || !releasedArchive)
+        || !releasedArchive
+        || !workspaceDestroyed)
     {
         Com_Error(
             ERR_DROP,

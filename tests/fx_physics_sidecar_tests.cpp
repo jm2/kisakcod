@@ -24,6 +24,14 @@ static_assert(!std::is_copy_assignable_v<fx::physics::BodySidecar>);
 static_assert(!std::is_move_constructible_v<fx::physics::BodySidecar>);
 static_assert(!std::is_move_assignable_v<fx::physics::BodySidecar>);
 static_assert(!std::is_trivially_copyable_v<fx::physics::BodySidecar>);
+static_assert(!std::is_copy_constructible_v<
+    fx::physics::BodySidecarSnapshotScratch>);
+static_assert(!std::is_copy_assignable_v<
+    fx::physics::BodySidecarSnapshotScratch>);
+static_assert(!std::is_move_constructible_v<
+    fx::physics::BodySidecarSnapshotScratch>);
+static_assert(!std::is_move_assignable_v<
+    fx::physics::BodySidecarSnapshotScratch>);
 static_assert(std::is_same_v<
               decltype(fx::physics::Bind(
                   std::declval<fx::physics::BodySidecar *>(),
@@ -54,6 +62,18 @@ static_assert(std::is_same_v<
 static_assert(noexcept(fx::physics::SnapshotOwnership(
     std::declval<const fx::physics::BodySidecar *>(),
     std::declval<fx::physics::OwnershipSnapshot *>())));
+static_assert(std::is_same_v<
+              decltype(fx::physics::SnapshotOwnershipWithScratch(
+                  std::declval<const fx::physics::BodySidecar *>(),
+                  std::declval<fx::physics::OwnershipSnapshot *>(),
+                  std::declval<
+                      fx::physics::BodySidecarSnapshotScratch *>())),
+              fx::physics::SidecarStatus>);
+static_assert(
+    noexcept(fx::physics::SnapshotOwnershipWithScratch(
+        std::declval<const fx::physics::BodySidecar *>(),
+        std::declval<fx::physics::OwnershipSnapshot *>(),
+        std::declval<fx::physics::BodySidecarSnapshotScratch *>())));
 static_assert(std::is_trivially_copyable_v<
     fx::physics::OwnershipRecord>);
 static_assert(std::is_trivially_copyable_v<
@@ -65,6 +85,39 @@ static_assert(std::tuple_size_v<decltype(
     == fx::physics::BODY_LIMIT);
 static_assert(noexcept(fx::physics::Validate(
     std::declval<const fx::physics::BodySidecar *>())));
+static_assert(noexcept(fx::physics::ValidateWithScratch(
+    std::declval<const fx::physics::BodySidecar *>(),
+    std::declval<fx::physics::BodySidecarValidationScratch *>())));
+static_assert(noexcept(fx::physics::ResetEmptyWithScratch(
+    std::declval<fx::physics::BodySidecar *>(),
+    std::declval<fx::physics::BodySidecarValidationScratch *>())));
+static_assert(noexcept(fx::physics::BindWithScratch(
+    std::declval<fx::physics::BodySidecar *>(),
+    std::declval<std::size_t>(),
+    std::declval<dxBody *>(),
+    std::declval<fx::physics::BodySidecarValidationScratch *>())));
+static_assert(noexcept(fx::physics::TakeWithScratch(
+    std::declval<fx::physics::BodySidecar *>(),
+    std::declval<std::size_t>(),
+    std::declval<fx::physics::BodyToken>(),
+    std::declval<fx::physics::BodySidecarValidationScratch *>())));
+static_assert(noexcept(fx::physics::TakeFirstWithScratch(
+    std::declval<fx::physics::BodySidecar *>(),
+    std::declval<fx::physics::BodySidecarValidationScratch *>())));
+static_assert(noexcept(fx::physics::PrepareReplacementWithScratch(
+    std::declval<const fx::physics::BodySidecar *>(),
+    std::declval<fx::physics::BodySidecar *>(),
+    std::declval<fx::physics::BodySidecarValidationScratch *>())));
+static_assert(noexcept(fx::physics::PublishReplacementWithScratch(
+    std::declval<fx::physics::BodySidecar *>(),
+    std::declval<fx::physics::BodySidecar *>(),
+    std::declval<fx::physics::BodySidecar *>(),
+    std::declval<fx::physics::BodySidecarValidationScratch *>())));
+static_assert(noexcept(fx::physics::RollbackReplacementWithScratch(
+    std::declval<fx::physics::BodySidecar *>(),
+    std::declval<fx::physics::BodySidecar *>(),
+    std::declval<fx::physics::BodySidecar *>(),
+    std::declval<fx::physics::BodySidecarValidationScratch *>())));
 static_assert(std::is_same_v<
               decltype(fx::physics::ValidateVacantOwner(
                   std::declval<const fx::physics::BodySidecar *>(),
@@ -82,6 +135,8 @@ namespace
 {
 using fx::physics::BodyResult;
 using fx::physics::BodySidecar;
+using fx::physics::BodySidecarSnapshotScratch;
+using fx::physics::BodySidecarValidationScratch;
 using fx::physics::BodySlot;
 using fx::physics::BodyToken;
 using fx::physics::IndexedBodyResult;
@@ -141,6 +196,36 @@ bool SameSlot(const BodySlot &first, const BodySlot &second)
 {
     return first.body == second.body
         && first.generation == second.generation;
+}
+
+bool SameSidecarShape(
+    const BodySidecar *const first,
+    const BodySidecar *const second)
+{
+    if (!first || !second
+        || first->ActiveCount() != second->ActiveCount()
+        || first->IsInitialized() != second->IsInitialized()
+        || fx::physics::SidecarTestAccess::GetRevision(first)
+            != fx::physics::SidecarTestAccess::GetRevision(second)
+        || fx::physics::SidecarTestAccess::GetTransactionRole(first)
+            != fx::physics::SidecarTestAccess::GetTransactionRole(second))
+    {
+        return false;
+    }
+
+    for (std::size_t owner = 0; owner < MAX_ELEMS; ++owner)
+    {
+        const BodySlot firstSlot =
+            fx::physics::SidecarTestAccess::GetSlot(first, owner);
+        const BodySlot secondSlot =
+            fx::physics::SidecarTestAccess::GetSlot(second, owner);
+        if ((firstSlot.body != nullptr) != (secondSlot.body != nullptr)
+            || firstSlot.generation != secondSlot.generation)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool SameOwnershipRecord(
@@ -751,6 +836,245 @@ bool TestSemanticValidation()
         == SidecarStatus::OwnershipMismatch;
 }
 
+bool TestScratchWrapperParityAndReuse()
+{
+    BodySidecarSnapshotScratch scratch{};
+
+    BodySidecar wrapperLifecycle{};
+    BodySidecar scratchLifecycle{};
+    AllowUndrainedFixture(&wrapperLifecycle, &scratchLifecycle);
+    if (fx::physics::ResetEmpty(&wrapperLifecycle)
+            != SidecarStatus::Success
+        || fx::physics::ResetEmptyWithScratch(
+               &scratchLifecycle, &scratch)
+            != SidecarStatus::Success
+        || !SameSidecarShape(&wrapperLifecycle, &scratchLifecycle))
+    {
+        return false;
+    }
+
+    dxBody wrapperFirst{1u};
+    dxBody wrapperSecond{2u};
+    dxBody scratchFirst{1u};
+    dxBody scratchSecond{2u};
+    const TokenResult wrapperFirstBind =
+        fx::physics::Bind(&wrapperLifecycle, 5u, &wrapperFirst);
+    const TokenResult scratchFirstBind =
+        fx::physics::BindWithScratch(
+            &scratchLifecycle, 5u, &scratchFirst, &scratch);
+    const TokenResult wrapperSecondBind =
+        fx::physics::Bind(&wrapperLifecycle, 2u, &wrapperSecond);
+    const TokenResult scratchSecondBind =
+        fx::physics::BindWithScratch(
+            &scratchLifecycle, 2u, &scratchSecond, &scratch);
+    if (wrapperFirstBind.status != scratchFirstBind.status
+        || wrapperFirstBind.token != scratchFirstBind.token
+        || wrapperSecondBind.status != scratchSecondBind.status
+        || wrapperSecondBind.token != scratchSecondBind.token
+        || !SameSidecarShape(&wrapperLifecycle, &scratchLifecycle))
+    {
+        return false;
+    }
+
+    const BodyResult wrapperTaken = fx::physics::Take(
+        &wrapperLifecycle, 2u, wrapperSecondBind.token);
+    const BodyResult scratchTaken = fx::physics::TakeWithScratch(
+        &scratchLifecycle, 2u, scratchSecondBind.token, &scratch);
+    const IndexedBodyResult wrapperFirstTaken =
+        fx::physics::TakeFirst(&wrapperLifecycle);
+    const IndexedBodyResult scratchFirstTaken =
+        fx::physics::TakeFirstWithScratch(&scratchLifecycle, &scratch);
+    if (wrapperTaken.status != scratchTaken.status
+        || !wrapperTaken.body || !scratchTaken.body
+        || wrapperTaken.body->id != scratchTaken.body->id
+        || wrapperFirstTaken.status != scratchFirstTaken.status
+        || !wrapperFirstTaken.body || !scratchFirstTaken.body
+        || wrapperFirstTaken.body->id != scratchFirstTaken.body->id
+        || wrapperFirstTaken.ownerIndex != scratchFirstTaken.ownerIndex
+        || wrapperFirstTaken.token != scratchFirstTaken.token
+        || fx::physics::ResetEmpty(&wrapperLifecycle)
+            != SidecarStatus::Success
+        || fx::physics::ResetEmptyWithScratch(
+               &scratchLifecycle, &scratch)
+            != SidecarStatus::Success
+        || !SameSidecarShape(&wrapperLifecycle, &scratchLifecycle))
+    {
+        return false;
+    }
+
+    const std::uint64_t lifecycleRevision =
+        fx::physics::SidecarTestAccess::GetRevision(&scratchLifecycle);
+    dxBody rejectedBody{99u};
+    if (fx::physics::ValidateWithScratch(&scratchLifecycle, nullptr)
+            != SidecarStatus::InvalidArgument
+        || fx::physics::ResetEmptyWithScratch(
+               &scratchLifecycle, nullptr)
+            != SidecarStatus::InvalidArgument
+        || fx::physics::BindWithScratch(
+               &scratchLifecycle, 1u, &rejectedBody, nullptr).status
+            != SidecarStatus::InvalidArgument
+        || fx::physics::TakeWithScratch(
+               &scratchLifecycle, 1u, 1u, nullptr).status
+            != SidecarStatus::InvalidArgument
+        || fx::physics::TakeFirstWithScratch(
+               &scratchLifecycle, nullptr).status
+            != SidecarStatus::InvalidArgument
+        || scratchLifecycle.ActiveCount() != 0u
+        || fx::physics::SidecarTestAccess::GetRevision(
+               &scratchLifecycle) != lifecycleRevision)
+    {
+        return false;
+    }
+
+    BodySidecar wrapperLive{};
+    BodySidecar wrapperStaged{};
+    BodySidecar wrapperRollback{};
+    BodySidecar wrapperDiscarded{};
+    BodySidecar scratchLive{};
+    BodySidecar scratchStaged{};
+    BodySidecar scratchRollback{};
+    BodySidecar scratchDiscarded{};
+    BodySidecar scratchUnrelated{};
+    AllowUndrainedFixture(
+        &wrapperLive,
+        &wrapperStaged,
+        &wrapperRollback,
+        &wrapperDiscarded,
+        &scratchLive,
+        &scratchStaged,
+        &scratchRollback,
+        &scratchDiscarded,
+        &scratchUnrelated);
+    if (!Initialize(&wrapperLive)
+        || fx::physics::ResetEmptyWithScratch(&scratchLive, &scratch)
+            != SidecarStatus::Success
+        || fx::physics::ResetEmptyWithScratch(
+               &scratchUnrelated, &scratch)
+            != SidecarStatus::Success)
+    {
+        return false;
+    }
+
+    dxBody wrapperOldFirst{10u};
+    dxBody wrapperOldSecond{11u};
+    dxBody scratchOldFirst{10u};
+    dxBody scratchOldSecond{11u};
+    const TokenResult wrapperOldFirstBind =
+        fx::physics::Bind(&wrapperLive, 1u, &wrapperOldFirst);
+    const TokenResult wrapperOldSecondBind =
+        fx::physics::Bind(&wrapperLive, 7u, &wrapperOldSecond);
+    const TokenResult scratchOldFirstBind = fx::physics::BindWithScratch(
+        &scratchLive, 1u, &scratchOldFirst, &scratch);
+    const TokenResult scratchOldSecondBind = fx::physics::BindWithScratch(
+        &scratchLive, 7u, &scratchOldSecond, &scratch);
+    if (!wrapperOldFirstBind || !wrapperOldSecondBind
+        || !scratchOldFirstBind || !scratchOldSecondBind
+        || !SameSidecarShape(&wrapperLive, &scratchLive))
+    {
+        return false;
+    }
+
+    std::array<BodyToken, MAX_ELEMS> wrapperExpected{};
+    std::array<BodyToken, MAX_ELEMS> scratchExpected{};
+    wrapperExpected[1] = wrapperOldFirstBind.token;
+    wrapperExpected[7] = wrapperOldSecondBind.token;
+    scratchExpected[1] = scratchOldFirstBind.token;
+    scratchExpected[7] = scratchOldSecondBind.token;
+    if (fx::physics::ValidateSemanticOwnership(
+            &wrapperLive, wrapperExpected)
+            != fx::physics::ValidateSemanticOwnershipWithScratch(
+                &scratchLive, scratchExpected, &scratch)
+        || fx::physics::PrepareReplacement(
+               &wrapperLive, &wrapperStaged)
+            != fx::physics::PrepareReplacementWithScratch(
+                &scratchLive, &scratchStaged, &scratch))
+    {
+        return false;
+    }
+
+    dxBody wrapperNewFirst{20u};
+    dxBody wrapperNewSecond{21u};
+    dxBody scratchNewFirst{20u};
+    dxBody scratchNewSecond{21u};
+    const TokenResult wrapperNewFirstBind =
+        fx::physics::Bind(&wrapperStaged, 1u, &wrapperNewFirst);
+    const TokenResult wrapperNewSecondBind =
+        fx::physics::Bind(&wrapperStaged, 9u, &wrapperNewSecond);
+    const TokenResult scratchNewFirstBind = fx::physics::BindWithScratch(
+        &scratchStaged, 1u, &scratchNewFirst, &scratch);
+    const TokenResult scratchNewSecondBind = fx::physics::BindWithScratch(
+        &scratchStaged, 9u, &scratchNewSecond, &scratch);
+    if (!wrapperNewFirstBind || !wrapperNewSecondBind
+        || !scratchNewFirstBind || !scratchNewSecondBind
+        || !SameSidecarShape(&wrapperStaged, &scratchStaged)
+        || fx::physics::ValidateDisjointOwnership(
+               &wrapperLive, &wrapperStaged)
+            != fx::physics::ValidateDisjointOwnershipWithScratch(
+                &scratchLive, &scratchStaged, &scratch)
+        || fx::physics::ValidateReplacementRelation(
+               &wrapperLive, &wrapperStaged)
+            != fx::physics::ValidateReplacementRelationWithScratch(
+                &scratchLive, &scratchStaged, &scratch))
+    {
+        return false;
+    }
+
+    const std::uint64_t stagedRevision =
+        fx::physics::SidecarTestAccess::GetRevision(&scratchStaged);
+    if (fx::physics::PublishReplacementWithScratch(
+            &scratchUnrelated,
+            &scratchStaged,
+            &scratchRollback,
+            &scratch) != SidecarStatus::TransactionProvenanceMismatch
+        || scratchUnrelated.ActiveCount() != 0u
+        || scratchStaged.ActiveCount() != 2u
+        || scratchRollback.ActiveCount() != 0u
+        || fx::physics::SidecarTestAccess::GetRevision(&scratchStaged)
+            != stagedRevision)
+    {
+        return false;
+    }
+
+    if (fx::physics::PublishReplacement(
+            &wrapperLive, &wrapperStaged, &wrapperRollback)
+            != fx::physics::PublishReplacementWithScratch(
+                &scratchLive,
+                &scratchStaged,
+                &scratchRollback,
+                &scratch)
+        || !SameSidecarShape(&wrapperLive, &scratchLive)
+        || !SameSidecarShape(&wrapperStaged, &scratchStaged)
+        || !SameSidecarShape(&wrapperRollback, &scratchRollback))
+    {
+        return false;
+    }
+
+    OwnershipSnapshot wrappedSnapshot{};
+    OwnershipSnapshot scratchSnapshot{};
+    if (fx::physics::SnapshotOwnership(&scratchLive, &wrappedSnapshot)
+            != SidecarStatus::Success
+        || fx::physics::SnapshotOwnershipWithScratch(
+               &scratchLive, &scratchSnapshot, &scratch)
+            != SidecarStatus::Success
+        || !SameOwnershipSnapshot(wrappedSnapshot, scratchSnapshot)
+        || fx::physics::RollbackReplacement(
+               &wrapperLive, &wrapperRollback, &wrapperDiscarded)
+            != fx::physics::RollbackReplacementWithScratch(
+                &scratchLive,
+                &scratchRollback,
+                &scratchDiscarded,
+                &scratch))
+    {
+        return false;
+    }
+
+    return SameSidecarShape(&wrapperLive, &scratchLive)
+        && SameSidecarShape(&wrapperRollback, &scratchRollback)
+        && SameSidecarShape(&wrapperDiscarded, &scratchDiscarded)
+        && fx::physics::ValidateWithScratch(&scratchLive, &scratch)
+            == SidecarStatus::Success;
+}
+
 bool TestOwnershipSnapshotExactRecords()
 {
     BodySidecar sidecar{};
@@ -846,7 +1170,21 @@ bool TestOwnershipSnapshotFullCapacity()
     const std::uint64_t revisionBefore =
         fx::physics::SidecarTestAccess::GetRevision(&sidecar);
     OwnershipSnapshot snapshot{};
+    OwnershipSnapshot scratchSnapshot{};
+    BodySidecarSnapshotScratch scratch{};
+    std::array<BodyToken, MAX_ELEMS> expectedTokens{};
+    for (std::size_t owner = 0; owner < tokens.size(); ++owner)
+        expectedTokens[owner] = tokens[owner];
     if (fx::physics::SnapshotOwnership(&sidecar, &snapshot)
+            != SidecarStatus::Success
+        || fx::physics::SnapshotOwnershipWithScratch(
+               &sidecar, &scratchSnapshot, &scratch)
+            != SidecarStatus::Success
+        || !SameOwnershipSnapshot(snapshot, scratchSnapshot)
+        || fx::physics::ValidateWithScratch(&sidecar, &scratch)
+            != SidecarStatus::Success
+        || fx::physics::ValidateSemanticOwnershipWithScratch(
+               &sidecar, expectedTokens, &scratch)
             != SidecarStatus::Success
         || snapshot.count != fx::physics::BODY_LIMIT
         || sidecar.ActiveCount() != fx::physics::BODY_LIMIT
@@ -874,9 +1212,21 @@ bool TestOwnershipSnapshotFailuresAreTransactional()
     const OwnershipSnapshot sentinel =
         MakeOwnershipSnapshotSentinel(&sentinelBody);
     OwnershipSnapshot actual = sentinel;
+    BodySidecarSnapshotScratch scratch{};
+    const auto scratchRejectsWithoutPublishing =
+        [&](const BodySidecar *const sidecar,
+            const SidecarStatus expectedStatus)
+    {
+        actual = sentinel;
+        return fx::physics::SnapshotOwnershipWithScratch(
+                   sidecar, &actual, &scratch) == expectedStatus
+            && SameOwnershipSnapshot(actual, sentinel);
+    };
     if (fx::physics::SnapshotOwnership(nullptr, &actual)
             != SidecarStatus::InvalidArgument
-        || !SameOwnershipSnapshot(actual, sentinel))
+        || !SameOwnershipSnapshot(actual, sentinel)
+        || !scratchRejectsWithoutPublishing(
+            nullptr, SidecarStatus::InvalidArgument))
     {
         return false;
     }
@@ -887,7 +1237,20 @@ bool TestOwnershipSnapshotFailuresAreTransactional()
             != SidecarStatus::Uninitialized
         || !SameOwnershipSnapshot(actual, sentinel)
         || fx::physics::SnapshotOwnership(&uninitialized, nullptr)
-            != SidecarStatus::InvalidArgument)
+            != SidecarStatus::InvalidArgument
+        || fx::physics::SnapshotOwnershipWithScratch(
+               &uninitialized, nullptr, &scratch)
+            != SidecarStatus::InvalidArgument
+        || !scratchRejectsWithoutPublishing(
+            &uninitialized, SidecarStatus::Uninitialized))
+    {
+        return false;
+    }
+    actual = sentinel;
+    if (fx::physics::SnapshotOwnershipWithScratch(
+            &uninitialized, &actual, nullptr)
+            != SidecarStatus::InvalidArgument
+        || !SameOwnershipSnapshot(actual, sentinel))
     {
         return false;
     }
@@ -903,7 +1266,9 @@ bool TestOwnershipSnapshotFailuresAreTransactional()
     actual = sentinel;
     if (fx::physics::SnapshotOwnership(&countCorrupt, &actual)
             != SidecarStatus::ActiveCountCorrupt
-        || !SameOwnershipSnapshot(actual, sentinel))
+        || !SameOwnershipSnapshot(actual, sentinel)
+        || !scratchRejectsWithoutPublishing(
+            &countCorrupt, SidecarStatus::ActiveCountCorrupt))
     {
         return false;
     }
@@ -923,7 +1288,9 @@ bool TestOwnershipSnapshotFailuresAreTransactional()
     actual = sentinel;
     if (fx::physics::SnapshotOwnership(&generationCorrupt, &actual)
             != SidecarStatus::CorruptGeneration
-        || !SameOwnershipSnapshot(actual, sentinel))
+        || !SameOwnershipSnapshot(actual, sentinel)
+        || !scratchRejectsWithoutPublishing(
+            &generationCorrupt, SidecarStatus::CorruptGeneration))
     {
         return false;
     }
@@ -942,7 +1309,9 @@ bool TestOwnershipSnapshotFailuresAreTransactional()
     actual = sentinel;
     if (fx::physics::SnapshotOwnership(&duplicate, &actual)
             != SidecarStatus::DuplicateBody
-        || !SameOwnershipSnapshot(actual, sentinel))
+        || !SameOwnershipSnapshot(actual, sentinel)
+        || !scratchRejectsWithoutPublishing(
+            &duplicate, SidecarStatus::DuplicateBody))
     {
         return false;
     }
@@ -959,7 +1328,10 @@ bool TestOwnershipSnapshotFailuresAreTransactional()
     actual = sentinel;
     return fx::physics::SnapshotOwnership(&provenanceCorrupt, &actual)
             == SidecarStatus::TransactionProvenanceMismatch
-        && SameOwnershipSnapshot(actual, sentinel);
+        && SameOwnershipSnapshot(actual, sentinel)
+        && scratchRejectsWithoutPublishing(
+            &provenanceCorrupt,
+            SidecarStatus::TransactionProvenanceMismatch);
 }
 
 bool TestCorruptBindAndTakeAreNonMutating()
@@ -1482,20 +1854,6 @@ bool TestFailedRollbackIsNonMutating()
         && ResolvesTo(&rollback, 1u, oldBind.token, &oldBody);
 }
 
-bool DrainFixtureSidecar(BodySidecar *const sidecar)
-{
-    if (!sidecar)
-        return false;
-    while (sidecar->ActiveCount() != 0u)
-    {
-        if (!fx::physics::TakeFirst(sidecar))
-            return false;
-    }
-    return fx::physics::ResetEmpty(sidecar) == SidecarStatus::Success
-        && fx::physics::ValidateVacantDestination(sidecar)
-            == SidecarStatus::Success;
-}
-
 bool TestFullCapacityRetireRollbackAndRebind()
 {
     constexpr std::size_t retiredCount = fx::physics::BODY_LIMIT;
@@ -1503,6 +1861,7 @@ bool TestFullCapacityRetireRollbackAndRebind()
     BodySidecar staged{};
     BodySidecar rollback{};
     BodySidecar discarded{};
+    BodySidecarSnapshotScratch scratch{};
     AllowUndrainedFixture(&live, &staged, &rollback, &discarded);
     if (!Initialize(&live))
         return false;
@@ -1521,8 +1880,8 @@ bool TestFullCapacityRetireRollbackAndRebind()
         oldBodies[owner].id = static_cast<std::uint32_t>(owner + 1u);
         desiredBodies[owner].id =
             static_cast<std::uint32_t>(owner + 1001u);
-        const TokenResult bound =
-            fx::physics::Bind(&live, owner, &oldBodies[owner]);
+        const TokenResult bound = fx::physics::BindWithScratch(
+            &live, owner, &oldBodies[owner], &scratch);
         if (!bound)
             return false;
         oldTokens[owner] = bound.token;
@@ -1532,8 +1891,8 @@ bool TestFullCapacityRetireRollbackAndRebind()
     // PrepareReplacement captures the post-retirement revision/generations.
     for (std::size_t owner = 0; owner < retiredCount; ++owner)
     {
-        const BodyResult retired =
-            fx::physics::Take(&live, owner, oldTokens[owner]);
+        const BodyResult retired = fx::physics::TakeWithScratch(
+            &live, owner, oldTokens[owner], &scratch);
         if (!retired || retired.body != &oldBodies[owner]
             || retiredLedger[owner])
         {
@@ -1542,21 +1901,23 @@ bool TestFullCapacityRetireRollbackAndRebind()
         retiredLedger[owner] = true;
     }
     if (live.ActiveCount() != 0u
-        || fx::physics::PrepareReplacement(&live, &staged)
+        || fx::physics::PrepareReplacementWithScratch(
+               &live, &staged, &scratch)
             != SidecarStatus::Success)
     {
         return false;
     }
     for (std::size_t owner = 0; owner < fx::physics::BODY_LIMIT; ++owner)
     {
-        const TokenResult bound =
-            fx::physics::Bind(&staged, owner, &desiredBodies[owner]);
+        const TokenResult bound = fx::physics::BindWithScratch(
+            &staged, owner, &desiredBodies[owner], &scratch);
         if (!bound)
             return false;
         desiredTokens[owner] = bound.token;
     }
     if (staged.ActiveCount() != fx::physics::BODY_LIMIT
-        || fx::physics::PublishReplacement(&live, &staged, &rollback)
+        || fx::physics::PublishReplacementWithScratch(
+               &live, &staged, &rollback, &scratch)
             != SidecarStatus::Success
         || rollback.ActiveCount() != 0u)
     {
@@ -1573,8 +1934,8 @@ bool TestFullCapacityRetireRollbackAndRebind()
             return false;
         }
     }
-    if (fx::physics::RollbackReplacement(
-            &live, &rollback, &discarded)
+    if (fx::physics::RollbackReplacementWithScratch(
+            &live, &rollback, &discarded, &scratch)
             != SidecarStatus::Success
         || live.ActiveCount() != 0u
         || discarded.ActiveCount() != fx::physics::BODY_LIMIT)
@@ -1600,7 +1961,7 @@ bool TestFullCapacityRetireRollbackAndRebind()
          ++count)
     {
         const IndexedBodyResult taken =
-            fx::physics::TakeFirst(&discarded);
+            fx::physics::TakeFirstWithScratch(&discarded, &scratch);
         if (!taken
             || taken.ownerIndex >= fx::physics::BODY_LIMIT
             || discardedLedger[taken.ownerIndex]
@@ -1612,7 +1973,7 @@ bool TestFullCapacityRetireRollbackAndRebind()
         discardedLedger[taken.ownerIndex] = true;
     }
     if (discarded.ActiveCount() != 0u
-        || fx::physics::ResetEmpty(&discarded)
+        || fx::physics::ResetEmptyWithScratch(&discarded, &scratch)
             != SidecarStatus::Success
         || fx::physics::ValidateVacantDestination(&discarded)
             != SidecarStatus::Success)
@@ -1625,8 +1986,8 @@ bool TestFullCapacityRetireRollbackAndRebind()
     {
         reconstructedBodies[owner].id =
             static_cast<std::uint32_t>(owner + 2001u);
-        const TokenResult rebound = fx::physics::Bind(
-            &live, owner, &reconstructedBodies[owner]);
+        const TokenResult rebound = fx::physics::BindWithScratch(
+            &live, owner, &reconstructedBodies[owner], &scratch);
         if (!rebound || rebound.token != desiredTokens[owner]
             || fx::physics::Resolve(&live, owner, oldTokens[owner]).status
                 != SidecarStatus::StaleToken)
@@ -1651,7 +2012,8 @@ bool TestFullCapacityRetireRollbackAndRebind()
         }
     }
     if (live.ActiveCount() != fx::physics::BODY_LIMIT
-        || fx::physics::ValidateSemanticOwnership(&live, expected)
+        || fx::physics::ValidateSemanticOwnershipWithScratch(
+               &live, expected, &scratch)
             != SidecarStatus::Success
         || fx::physics::ValidateVacantDestination(&staged)
             != SidecarStatus::Success
@@ -1665,7 +2027,8 @@ bool TestFullCapacityRetireRollbackAndRebind()
     // registration is transferred exactly once with the expected identity.
     for (std::size_t count = 0; count < retiredCount; ++count)
     {
-        const IndexedBodyResult taken = fx::physics::TakeFirst(&live);
+        const IndexedBodyResult taken =
+            fx::physics::TakeFirstWithScratch(&live, &scratch);
         if (!taken
             || taken.ownerIndex >= retiredCount
             || reconstructedLedger[taken.ownerIndex]
@@ -1681,9 +2044,18 @@ bool TestFullCapacityRetireRollbackAndRebind()
         if (!reconstructedLedger[owner])
             return false;
     }
-    return DrainFixtureSidecar(&live)
-        && DrainFixtureSidecar(&staged)
-        && DrainFixtureSidecar(&rollback);
+    return fx::physics::ResetEmptyWithScratch(&live, &scratch)
+            == SidecarStatus::Success
+        && fx::physics::ResetEmptyWithScratch(&staged, &scratch)
+            == SidecarStatus::Success
+        && fx::physics::ResetEmptyWithScratch(&rollback, &scratch)
+            == SidecarStatus::Success
+        && fx::physics::ValidateVacantDestination(&live)
+            == SidecarStatus::Success
+        && fx::physics::ValidateVacantDestination(&staged)
+            == SidecarStatus::Success
+        && fx::physics::ValidateVacantDestination(&rollback)
+            == SidecarStatus::Success;
 }
 } // namespace
 
@@ -1705,6 +2077,8 @@ int main()
         return Fail("generation wrap or reset invalidation");
     if (!TestSemanticValidation())
         return Fail("semantic validation");
+    if (!TestScratchWrapperParityAndReuse())
+        return Fail("caller-owned sidecar scratch parity or reuse");
     if (!TestOwnershipSnapshotExactRecords())
         return Fail("ownership snapshot records or read-only contract");
     if (!TestOwnershipSnapshotFullCapacity())

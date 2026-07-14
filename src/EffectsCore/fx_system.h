@@ -16,7 +16,10 @@
 namespace fx::physics
 {
 class BodySidecar;
+class BodySidecarValidationScratch;
 }
+
+struct FxPoolAllocationGraphScratch;
 
 enum $FFE723C3A54D7F6DDF86A219D7944B2F : int32_t
 {
@@ -76,6 +79,9 @@ void __cdecl FX_LinkSystemBuffers(FxSystem *system, FxSystemBuffers *systemBuffe
 bool __cdecl FX_RebuildPoolAllocationStates(FxSystem *system);
 bool __cdecl FX_RebuildPoolAllocationStatesNoReport(
     FxSystem *system) noexcept;
+bool __cdecl FX_ValidatePoolAllocationGraphStateWithScratch(
+    FxSystem *system,
+    FxPoolAllocationGraphScratch *scratch) noexcept;
 bool __cdecl FX_ValidatePoolAllocationGraphState(FxSystem *system);
 bool __cdecl FX_ValidateEffectKillExclusiveState(
     FxSystem *system) noexcept;
@@ -93,6 +99,12 @@ bool __cdecl FX_CanPublishArchiveSafeEmptyStateLocked(
     const FxSystem *system) noexcept;
 // Archive restore holds CRITSECT_PHYSICS while calling this fallback. The live
 // physics sidecar must already be valid, transaction-neutral, and empty.
+bool __cdecl FX_PublishArchiveSafeEmptyStateLockedWithScratch(
+    FxSystem *system,
+    fx::physics::BodySidecarValidationScratch *sidecarScratch,
+    FxPoolAllocationGraphScratch *poolGraphScratch) noexcept;
+// Compatibility entry point for non-transaction callers that do not retain
+// reusable validation scratch.
 bool __cdecl FX_PublishArchiveSafeEmptyStateLocked(
     FxSystem *system) noexcept;
 bool __cdecl FX_EndArchive(FxSystem *system);

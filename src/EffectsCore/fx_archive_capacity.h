@@ -39,6 +39,14 @@ struct PhysicsRetirementPlan
     PhysicsResourceCount released{};
 };
 
+// Caller-owned working storage for retirement planning. Long-lived callers can
+// keep this outside their stack frame and reuse it across independent plans.
+struct PhysicsRetirementPlanScratch
+{
+    std::array<PhysicsRetirementCandidate, physics::BODY_LIMIT>
+        orderedCandidates{};
+};
+
 [[nodiscard]] inline bool PhysicsResourceCountCanAdd(
     const std::size_t left,
     const std::size_t right) noexcept
@@ -59,14 +67,15 @@ struct PhysicsRetirementPlan
 // geometry cost makes the minimum-count choice deterministic; owner and entry
 // indices provide stable tie breaks. The output remains unchanged on failure.
 [[nodiscard]] inline PhysicsRetirementPlanStatus
-BuildPhysicsRetirementPlan(
+BuildPhysicsRetirementPlanWithScratch(
     const PhysicsResourceCount &freeCapacity,
     const PhysicsResourceCount &desired,
     const PhysicsRetirementCandidate *const candidates,
     const std::size_t candidateCount,
+    PhysicsRetirementPlanScratch *const scratch,
     PhysicsRetirementPlan *const outPlan) noexcept
 {
-    if (!outPlan || (candidateCount != 0 && !candidates)
+    if (!scratch || !outPlan || (candidateCount != 0 && !candidates)
         || candidateCount > physics::BODY_LIMIT
         || desired.bodies > physics::BODY_LIMIT
         || desired.userData > physics::BODY_LIMIT
@@ -75,7 +84,7 @@ BuildPhysicsRetirementPlan(
         return PhysicsRetirementPlanStatus::InvalidArgument;
     }
 
-    std::array<PhysicsRetirementCandidate, physics::BODY_LIMIT> ordered{};
+    auto &ordered = scratch->orderedCandidates;
     PhysicsResourceCount totalRetirable{};
     for (std::size_t index = 0; index < candidateCount; ++index)
     {
@@ -162,5 +171,25 @@ BuildPhysicsRetirementPlan(
 
     *outPlan = plan;
     return PhysicsRetirementPlanStatus::Success;
+}
+
+// Convenience wrapper for callers that do not need to control scratch
+// placement. This preserves the original API and behavior.
+[[nodiscard]] inline PhysicsRetirementPlanStatus
+BuildPhysicsRetirementPlan(
+    const PhysicsResourceCount &freeCapacity,
+    const PhysicsResourceCount &desired,
+    const PhysicsRetirementCandidate *const candidates,
+    const std::size_t candidateCount,
+    PhysicsRetirementPlan *const outPlan) noexcept
+{
+    PhysicsRetirementPlanScratch scratch{};
+    return BuildPhysicsRetirementPlanWithScratch(
+        freeCapacity,
+        desired,
+        candidates,
+        candidateCount,
+        &scratch,
+        outPlan);
 }
 } // namespace fx::archive
