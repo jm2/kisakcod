@@ -10,6 +10,7 @@
 #include <universal/memfile.h>
 #include <universal/pool_allocator.h>
 
+#include <cstddef>
 #include <cstdint>
 
 enum $B7C75F5EC8C61F46B3FEFC285D8D85F1 : __int32
@@ -46,6 +47,43 @@ struct BodyState // sizeof=0x70
     int timeLastAsleep;
     int type;
     int underwater;
+};
+
+// Result of validating a live body as an independently reconstructible
+// archive rollback recipe. These checks are intentionally more restrictive
+// than the legacy assertion-based physics accessors: failure must leave every
+// caller-owned output empty and must not publish or destroy native resources.
+enum class PhysBodyRollbackStatus : std::uint8_t
+{
+    Success,
+    InvalidArgument,
+    PhysicsUnavailable,
+    ModelInvalid,
+    ResourceDemandOverflow,
+    BodyPoolInvalid,
+    UserDataPoolInvalid,
+    GeomPoolInvalid,
+    WorldTopologyInvalid,
+    BodyNotOwned,
+    UserDataOwnershipMismatch,
+    GeomTopologyInvalid,
+    NonReconstructibleJoints,
+    ResourceDemandMismatch,
+    StateInvalid,
+};
+
+struct PhysBodyResourceDemand
+{
+    std::size_t bodyCount;
+    std::size_t userDataCount;
+    std::size_t geomCount;
+};
+
+struct PhysBodyRollbackRecipe
+{
+    BodyState state;
+    const XModel *model;
+    PhysBodyResourceDemand demand;
 };
 
 enum class PhysBodyModelCreateStatus : std::uint8_t
@@ -329,6 +367,16 @@ dxBody *__cdecl Phys_CreateBodyFromState(PhysWorld worldIndex, const BodyState *
     const BodyState *state,
     const XModel *model,
     dxBody **outBody) noexcept;
+// Caller owns CRITSECT_PHYSICS. This archive rollback variant validates the
+// complete state/model recipe before allocation and returns failures without
+// emitting assertions, warnings, or errors. Failure leaves *outBody null and
+// releases any partially constructed body/user-data/geom resources.
+[[nodiscard]] PhysBodyModelCreateStatus __cdecl
+Phys_TryCreateBodyFromStateAndXModelLockedNoReport(
+    PhysWorld worldIndex,
+    const BodyState *state,
+    const XModel *model,
+    dxBody **outBody) noexcept;
 // Checked spawn-time variant used by FX. Body creation and model collision are
 // one transaction: failure leaves *outBody null and releases every resource.
 [[nodiscard]] PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromPresetAndXModel(
@@ -339,6 +387,50 @@ dxBody *__cdecl Phys_CreateBodyFromState(PhysWorld worldIndex, const BodyState *
     const PhysPreset *physPreset,
     const XModel *model,
     dxBody **outBody) noexcept;
+// Computes the complete fixed-pool demand of a fresh body built from model.
+// A directly attached brush/default box consumes one geom slot; each oriented
+// primitive consumes an outer transform plus its owned inner geom.
+[[nodiscard]] PhysBodyRollbackStatus __cdecl Phys_TryGetBodyModelResourceDemand(
+    const XModel *model,
+    PhysBodyResourceDemand *outDemand) noexcept;
+// Caller owns CRITSECT_PHYSICS. Silently validates all fixed-pool metadata and
+// returns the currently free body/user-data/geom slots. This query deliberately
+// does not require a live world or collision space: an all-zero archive has no
+// world resources to allocate.
+[[nodiscard]] PhysBodyRollbackStatus __cdecl
+Phys_TryGetFreeResourceCapacityLockedNoReport(
+    PhysBodyResourceDemand *outCapacity) noexcept;
+// Caller owns CRITSECT_PHYSICS. The function proves body and its user-data
+// record are allocated members of the requested world's bounded topology
+// before dereferencing them, zero-initializes *outState on every entry, and
+// publishes a complete finite/reconstructible state only on success.
+[[nodiscard]] PhysBodyRollbackStatus __cdecl Phys_TryCaptureBodyStateLocked(
+    PhysWorld worldIndex,
+    dxBody *body,
+    BodyState *outState) noexcept;
+// Destructive-retirement preflight for archive rollback. In addition to state
+// capture, this proves the complete target-space topology, unique transform
+// ownership, and exact model collision identity before rejecting attached
+// joints that BodyState cannot reconstruct. Caller owns CRITSECT_PHYSICS.
+[[nodiscard]] PhysBodyRollbackStatus __cdecl Phys_TryBuildBodyRollbackRecipeLocked(
+    PhysWorld worldIndex,
+    dxBody *body,
+    const XModel *model,
+    PhysBodyRollbackRecipe *outRecipe) noexcept;
+// Caller owns CRITSECT_PHYSICS. Preflights the exact body, user-data, world,
+// space, geom, and transform-inner ownership needed by the no-report destroy
+// path. Failure is non-destructive and emits no assertion or diagnostic.
+[[nodiscard]] PhysBodyRollbackStatus __cdecl
+Phys_TryValidateBodyDestroyLockedNoReport(
+    PhysWorld worldIndex,
+    dxBody *body) noexcept;
+// Caller owns CRITSECT_PHYSICS. Performs the same complete preflight and then
+// unlinks and returns every owned fixed-pool slot through no-fail, non-reporting
+// commit operations. Failure leaves the body and every pool untouched.
+[[nodiscard]] PhysBodyRollbackStatus __cdecl
+Phys_TryDestroyBodyLockedNoReport(
+    PhysWorld worldIndex,
+    dxBody *body) noexcept;
 void __cdecl Phys_BodyGetCenterOfMass(dxBody *body, float *outPosition);
 void __cdecl Phys_BodyAddGeomAndSetMass(
     PhysWorld worldIndex,

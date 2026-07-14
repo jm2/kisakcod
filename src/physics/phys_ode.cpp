@@ -13,8 +13,11 @@
 #include <universal/profile.h>
 #include "ode/collision_transform.h"
 
+#include <array>
 #include <climits>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <cmath>
 #include <limits>
 
@@ -42,6 +45,15 @@ namespace
 poolslotstate_t physUserDataPoolSlotState[512]{};
 poolcontrol_t physUserDataPoolControl =
     Pool_ControlFor(physUserDataPoolSlotState);
+
+void Phys_ReturnValidatedPoolSlotNoReport(
+    poolstorage_t storage,
+    pooldata_t *poolData,
+    std::size_t index) noexcept;
+bool Phys_TryGetExactPoolSlotIndex(
+    poolstorage_t storage,
+    const void *item,
+    std::size_t *outIndex) noexcept;
 
 template <std::size_t Size>
 constexpr int PhysTrackedSize() noexcept
@@ -566,7 +578,80 @@ static void Phys_DestroyBodyResource(
         dBodyDestroy(static_cast<dxBody *>(body));
 }
 
-dxBody *__cdecl Phys_CreateBodyFromState(PhysWorld worldIndex, const BodyState *state)
+static void Phys_DestroyFreshBodyResourceNoReport(
+    void *const opaque,
+    physics::allocation::ResourceHandle resource) noexcept
+{
+    const auto *const context =
+        static_cast<const PhysBodyResourceContext *>(opaque);
+    auto *const body = static_cast<dxBody *>(resource);
+    dObject **const worldHead = context && context->world
+        ? reinterpret_cast<dObject **>(&context->world->firstbody)
+        : nullptr;
+    if (!context || !context->world || !body
+        || body->world != context->world || body->userdata
+        || body->firstjoint || body->geom
+        || context->world->firstbody != body
+        || body->tome != worldHead
+        || context->world->nb <= 0)
+    {
+        return;
+    }
+    const poolstorage_t storage = ODE_BodyPoolStorage();
+    std::size_t bodyIndex = 0;
+    if (!Phys_TryGetExactPoolSlotIndex(
+            storage, body, &bodyIndex)
+        || !storage.control || !storage.control->slotState
+        || storage.control->slotState[bodyIndex]
+            != POOL_SLOT_ALLOCATED)
+    {
+        return;
+    }
+
+    context->world->firstbody = static_cast<dxBody *>(body->next);
+    if (body->next)
+        body->next->tome = worldHead;
+    body->next = nullptr;
+    body->tome = nullptr;
+    --context->world->nb;
+    Phys_ReturnValidatedPoolSlotNoReport(
+        storage, &odeGlob.bodyPool, bodyIndex);
+}
+
+static PhysBodyModelCreateStatus Phys_TryInitializeBodyMass(
+    PhysWorld worldIndex,
+    dxBody *body,
+    float totalMass,
+    GeomState *geomState,
+    const float *centerOfMass,
+    bool reportFailure) noexcept;
+
+static bool Phys_ReleaseCreatedBodyResources(
+    dxBody *const body,
+    PhysObjUserData *const userData) noexcept
+{
+    if (!body || !userData)
+        return false;
+    dBodyDestroy(body);
+#ifdef USE_POOL_ALLOCATOR
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    const bool userDataFreed = Pool_Free(
+        Phys_UserDataPoolStorage(),
+        &physGlob.userDataPool,
+        userData);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    return userDataFreed;
+#else
+    free(userData);
+    return true;
+#endif
+}
+
+static PhysBodyModelCreateStatus Phys_TryCreateBodyFromStateInternal(
+    const PhysWorld worldIndex,
+    const BodyState *const state,
+    dxBody **const outBody,
+    const bool reportFailure) noexcept
 {
     float *savedPos; // [esp+14h] [ebp-A4h]
     GeomState geomState; // [esp+28h] [ebp-90h] BYREF
@@ -575,18 +660,25 @@ dxBody *__cdecl Phys_CreateBodyFromState(PhysWorld worldIndex, const BodyState *
     dxBody *body; // [esp+A8h] [ebp-10h]
     float centerOfMass[3]; // [esp+ACh] [ebp-Ch] BYREF
 
+    if (!outBody)
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    *outBody = nullptr;
     if (!state || worldIndex < PHYS_WORLD_DYNENT || worldIndex >= PHYS_WORLD_COUNT
         || !(state->mass > 0.0f) || !std::isfinite(state->mass))
     {
-        iassert(
-            state && worldIndex >= PHYS_WORLD_DYNENT && worldIndex < PHYS_WORLD_COUNT
-            && state->mass > 0.0f && std::isfinite(state->mass));
-        return nullptr;
+        if (reportFailure)
+        {
+            iassert(
+                state && worldIndex >= PHYS_WORLD_DYNENT && worldIndex < PHYS_WORLD_COUNT
+                && state->mass > 0.0f && std::isfinite(state->mass));
+        }
+        return PhysBodyModelCreateStatus::InvalidArgument;
     }
     if (!physGlob.world[worldIndex] || !physGlob.space[worldIndex])
     {
-        iassert(physGlob.world[worldIndex] && physGlob.space[worldIndex]);
-        return nullptr;
+        if (reportFailure)
+            iassert(physGlob.world[worldIndex] && physGlob.space[worldIndex]);
+        return PhysBodyModelCreateStatus::InvalidArgument;
     }
 
     dWorldSetAutoDisableLinearThreshold(physGlob.world[worldIndex], phys_autoDisableLinear->current.value);
@@ -597,24 +689,29 @@ dxBody *__cdecl Phys_CreateBodyFromState(PhysWorld worldIndex, const BodyState *
         &resourceContext,
         Phys_CreateBodyResource,
         Phys_CreateBodyUserDataResource,
-        Phys_DestroyBodyResource,
+        reportFailure
+            ? Phys_DestroyBodyResource
+            : Phys_DestroyFreshBodyResourceNoReport,
     };
     const physics::allocation::ResourcePairResult resources =
         physics::allocation::TryCreateResourcePair(resourceCallbacks, true);
     if (resources.status == physics::allocation::ResourcePairStatus::PrimaryUnavailable)
     {
-        Com_PrintWarning(20, "Maximum number of physics bodies exceeded (more than %i)\n", 512);
-        return nullptr;
+        if (reportFailure)
+            Com_PrintWarning(20, "Maximum number of physics bodies exceeded (more than %i)\n", 512);
+        return PhysBodyModelCreateStatus::BodyResourcesExhausted;
     }
     if (resources.status == physics::allocation::ResourcePairStatus::CompanionUnavailable)
     {
-        Com_PrintWarning(20, "Maximum number of physics body user-data records exceeded (more than %i)\n", 512);
-        return nullptr;
+        if (reportFailure)
+            Com_PrintWarning(20, "Maximum number of physics body user-data records exceeded (more than %i)\n", 512);
+        return PhysBodyModelCreateStatus::BodyResourcesExhausted;
     }
     if (resources.status != physics::allocation::ResourcePairStatus::Success)
     {
-        iassert(resources.status == physics::allocation::ResourcePairStatus::Success);
-        return nullptr;
+        if (reportFailure)
+            iassert(resources.status == physics::allocation::ResourcePairStatus::Success);
+        return PhysBodyModelCreateStatus::InvalidArgument;
     }
 
     body = static_cast<dxBody *>(resources.primary);
@@ -623,6 +720,7 @@ dxBody *__cdecl Phys_CreateBodyFromState(PhysWorld worldIndex, const BodyState *
         dBodySetFiniteRotationMode(body, 1);
     memset((uint8_t *)userData, 0, sizeof(PhysObjUserData));
     dBodySetData(body, userData);
+    userData->body = body;
     dBodySetPosition(body, state->position[0], state->position[1], state->position[2]);
     dBodySetLinearVel(body, state->velocity[0], state->velocity[1], state->velocity[2]);
     dBodySetAngularVel(body, state->angVelocity[0], state->angVelocity[1], state->angVelocity[2]);
@@ -636,8 +734,22 @@ dxBody *__cdecl Phys_CreateBodyFromState(PhysWorld worldIndex, const BodyState *
     userData->translation[0] = state->centerOfMassOffset[0];
     userData->translation[1] = state->centerOfMassOffset[1];
     userData->translation[2] = state->centerOfMassOffset[2];
-    Phys_BodyAddGeomAndSetMass(worldIndex, body, state->mass, &geomState, centerOfMass);
-    userData->body = body;
+    const PhysBodyModelCreateStatus massStatus =
+        Phys_TryInitializeBodyMass(
+            worldIndex,
+            body,
+            state->mass,
+            &geomState,
+            centerOfMass,
+            reportFailure);
+    if (massStatus != PhysBodyModelCreateStatus::Success)
+    {
+        if (reportFailure)
+            (void)Phys_ReleaseCreatedBodyResources(body, userData);
+        else
+            (void)Phys_TryDestroyBodyLockedNoReport(worldIndex, body);
+        return massStatus;
+    }
     savedPos = userData->savedPos;
     userData->savedPos[0] = state->position[0];
     savedPos[1] = state->position[1];
@@ -651,6 +763,17 @@ dxBody *__cdecl Phys_CreateBodyFromState(PhysWorld worldIndex, const BodyState *
     userData->sndClass = state->type;
     if (!LOBYTE(state->underwater))
         dBodyDisable(body);
+    outBody[0] = body;
+    return PhysBodyModelCreateStatus::Success;
+}
+
+dxBody *__cdecl Phys_CreateBodyFromState(
+    const PhysWorld worldIndex,
+    const BodyState *const state)
+{
+    dxBody *body = nullptr;
+    (void)Phys_TryCreateBodyFromStateInternal(
+        worldIndex, state, &body, true);
     return body;
 }
 
@@ -737,6 +860,52 @@ static void Phys_DestroyPrimaryGeomResource(
 {
     if (geom)
         ODE_GeomDestruct(static_cast<dxGeom *>(geom));
+}
+
+static void Phys_DestroyFreshPrimaryGeomResourceNoReport(
+    void *const opaque,
+    physics::allocation::ResourceHandle resource) noexcept
+{
+    const auto *const context =
+        static_cast<const PhysGeomResourceContext *>(opaque);
+    auto *const geom = static_cast<dxGeom *>(resource);
+    if (!context || !context->space || !context->body || !geom
+        || context->space->lock_count != 0
+        || context->space->first != geom
+        || context->body->geom != geom
+        || geom->parent_space != context->space
+        || geom->tome != &context->space->first
+        || geom->body != context->body
+        || geom->type == dGeomTransformClass
+        || context->space->count <= 0)
+    {
+        return;
+    }
+    const poolstorage_t storage = ODE_GeomPoolStorage();
+    std::size_t geomIndex = 0;
+    if (!Phys_TryGetExactPoolSlotIndex(
+            storage, geom, &geomIndex)
+        || !storage.control || !storage.control->slotState
+        || storage.control->slotState[geomIndex]
+            != POOL_SLOT_ALLOCATED)
+    {
+        return;
+    }
+
+    context->space->first = geom->next;
+    if (geom->next)
+        geom->next->tome = &context->space->first;
+    --context->space->count;
+    context->space->current_geom = nullptr;
+    context->space->gflags |= GEOM_DIRTY | GEOM_AABB_BAD;
+    context->body->geom = geom->body_next;
+    geom->next = nullptr;
+    geom->tome = nullptr;
+    geom->parent_space = nullptr;
+    geom->body = nullptr;
+    geom->body_next = nullptr;
+    Phys_ReturnValidatedPoolSlotNoReport(
+        storage, &odeGlob.geomPool, geomIndex);
 }
 
 static PhysBodyModelCreateStatus Phys_TryBodyAddGeomAndSetMass(
@@ -832,7 +1001,9 @@ static PhysBodyModelCreateStatus Phys_TryBodyAddGeomAndSetMass(
         &resourceContext,
         Phys_CreatePrimaryGeomResource,
         Phys_CreateTransformGeomResource,
-        Phys_DestroyPrimaryGeomResource,
+        reportFailure
+            ? Phys_DestroyPrimaryGeomResource
+            : Phys_DestroyFreshPrimaryGeomResourceNoReport,
     };
     const physics::allocation::ResourcePairResult resources =
         physics::allocation::TryCreateResourcePair(
@@ -876,6 +1047,23 @@ static PhysBodyModelCreateStatus Phys_TryBodyAddGeomAndSetMass(
     dSpaceAdd(physGlob.space[worldIndex], outerGeom);
     dBodySetMass(body, &mass);
     return PhysBodyModelCreateStatus::Success;
+}
+
+static PhysBodyModelCreateStatus Phys_TryInitializeBodyMass(
+    const PhysWorld worldIndex,
+    dxBody *const body,
+    const float totalMass,
+    GeomState *const geomState,
+    const float *const centerOfMass,
+    const bool reportFailure) noexcept
+{
+    return Phys_TryBodyAddGeomAndSetMass(
+        worldIndex,
+        body,
+        totalMass,
+        geomState,
+        centerOfMass,
+        reportFailure);
 }
 
 void __cdecl Phys_BodyAddGeomAndSetMass(
@@ -1384,6 +1572,1937 @@ void __cdecl Phys_ObjAddGeomCapsule(
     Phys_BodyAddGeomAndSetMass(worldIndex, body, mass.mass, &geomState, centerOfMass);
 }
 
+namespace
+{
+constexpr std::size_t PHYS_BODY_POOL_COUNT = 512;
+constexpr float PHYS_ROLLBACK_VECTOR_LIMIT = 1048576.0f;
+constexpr float PHYS_ROLLBACK_ANGULAR_VELOCITY_LIMIT = 65536.0f;
+constexpr float PHYS_ROLLBACK_MASS_MIN = 0.0001f;
+constexpr float PHYS_ROLLBACK_MASS_MAX = 1000000.0f;
+constexpr float PHYS_ROLLBACK_FRICTION_MAX = 10000.0f;
+constexpr float PHYS_ROLLBACK_INERTIA_LIMIT = 1.0e12f;
+constexpr float PHYS_MODEL_FALLBACK_BOX_HALF_LENGTH = 50.0f;
+constexpr double PHYS_ROLLBACK_BASIS_TOLERANCE = 0.025;
+constexpr std::uint32_t PHYS_ROLLBACK_POOL_MAGIC = 0x504F4F4Cu;
+
+struct PhysRollbackAddressRange
+{
+    std::uintptr_t begin;
+    std::uintptr_t end;
+};
+
+bool Phys_RollbackFloatIsBounded(
+    const float value,
+    const float magnitudeLimit) noexcept
+{
+    return std::isfinite(value)
+        && value >= -magnitudeLimit
+        && value <= magnitudeLimit;
+}
+
+void Phys_GetCanonicalModelBoxBounds(
+    const XModel &model,
+    float *const outMins,
+    float *const outMaxs) noexcept
+{
+    XModelGetBounds(&model, outMins, outMaxs);
+
+    // Preserve the legacy collision builder's whole-box fallback exactly:
+    // one degenerate axis discards all model bounds, including invalid values
+    // on the other axes, before strict archive validation sees them.
+    if (outMaxs[0] == outMins[0]
+        || outMaxs[1] == outMins[1]
+        || outMaxs[2] == outMins[2])
+    {
+        for (std::size_t component = 0; component < 3; ++component)
+        {
+            outMins[component] = -PHYS_MODEL_FALLBACK_BOX_HALF_LENGTH;
+            outMaxs[component] = PHYS_MODEL_FALLBACK_BOX_HALF_LENGTH;
+        }
+    }
+}
+
+bool Phys_TryGetValidatedModelBoxBounds(
+    const XModel &model,
+    float *const outMins,
+    float *const outMaxs) noexcept
+{
+    Phys_GetCanonicalModelBoxBounds(model, outMins, outMaxs);
+    for (std::size_t component = 0; component < 3; ++component)
+    {
+        if (!Phys_RollbackFloatIsBounded(
+                outMins[component], PHYS_ROLLBACK_VECTOR_LIMIT)
+            || !Phys_RollbackFloatIsBounded(
+                outMaxs[component], PHYS_ROLLBACK_VECTOR_LIMIT)
+            || outMins[component] >= outMaxs[component])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Phys_RollbackVectorIsBounded(
+    const float *const values,
+    const std::size_t count,
+    const float magnitudeLimit) noexcept
+{
+    if (!values)
+        return false;
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        if (!Phys_RollbackFloatIsBounded(values[index], magnitudeLimit))
+            return false;
+    }
+    return true;
+}
+
+bool Phys_RollbackBasisIsValid(const float (*const basis)[3]) noexcept
+{
+    if (!basis)
+        return false;
+    for (std::size_t row = 0; row < 3; ++row)
+    {
+        if (!Phys_RollbackVectorIsBounded(basis[row], 3, 1.001f))
+            return false;
+        double lengthSquared = 0.0;
+        for (std::size_t component = 0; component < 3; ++component)
+        {
+            const double value = basis[row][component];
+            lengthSquared += value * value;
+        }
+        if (lengthSquared < 1.0 - PHYS_ROLLBACK_BASIS_TOLERANCE
+            || lengthSquared > 1.0 + PHYS_ROLLBACK_BASIS_TOLERANCE)
+        {
+            return false;
+        }
+    }
+    for (std::size_t first = 0; first < 3; ++first)
+    {
+        for (std::size_t second = first + 1; second < 3; ++second)
+        {
+            double dot = 0.0;
+            for (std::size_t component = 0; component < 3; ++component)
+            {
+                dot += static_cast<double>(basis[first][component])
+                    * basis[second][component];
+            }
+            if (dot < -PHYS_ROLLBACK_BASIS_TOLERANCE
+                || dot > PHYS_ROLLBACK_BASIS_TOLERANCE)
+            {
+                return false;
+            }
+        }
+    }
+
+    const double determinant =
+        static_cast<double>(basis[0][0])
+            * (static_cast<double>(basis[1][1]) * basis[2][2]
+                - static_cast<double>(basis[1][2]) * basis[2][1])
+        - static_cast<double>(basis[0][1])
+            * (static_cast<double>(basis[1][0]) * basis[2][2]
+                - static_cast<double>(basis[1][2]) * basis[2][0])
+        + static_cast<double>(basis[0][2])
+            * (static_cast<double>(basis[1][0]) * basis[2][1]
+                - static_cast<double>(basis[1][1]) * basis[2][0]);
+    return determinant >= 1.0 - PHYS_ROLLBACK_BASIS_TOLERANCE
+        && determinant <= 1.0 + PHYS_ROLLBACK_BASIS_TOLERANCE;
+}
+
+bool Phys_RollbackBodyStateIsValid(const BodyState &state) noexcept
+{
+    const bool frictionValid =
+        (Phys_RollbackFloatIsBounded(
+             state.friction, PHYS_ROLLBACK_FRICTION_MAX)
+            && state.friction >= 0.0f)
+        || state.friction == (std::numeric_limits<float>::max)();
+    return Phys_RollbackVectorIsBounded(
+               state.position, 3, PHYS_ROLLBACK_VECTOR_LIMIT)
+        && Phys_RollbackBasisIsValid(state.rotation)
+        && Phys_RollbackVectorIsBounded(
+            state.velocity, 3, PHYS_ROLLBACK_VECTOR_LIMIT)
+        && Phys_RollbackVectorIsBounded(
+            state.angVelocity,
+            3,
+            PHYS_ROLLBACK_ANGULAR_VELOCITY_LIMIT)
+        && Phys_RollbackVectorIsBounded(
+            state.centerOfMassOffset, 3, PHYS_ROLLBACK_VECTOR_LIMIT)
+        && Phys_RollbackFloatIsBounded(
+            state.mass, PHYS_ROLLBACK_MASS_MAX)
+        && state.mass >= PHYS_ROLLBACK_MASS_MIN
+        && frictionValid
+        && Phys_RollbackFloatIsBounded(state.bounce, 1.0f)
+        && state.bounce >= 0.0f
+        && state.state >= PHYS_OBJ_STATE_POSSIBLY_STUCK
+        && state.state <= PHYS_OBJ_STATE_FREE
+        && state.type >= 0 && state.type < 50
+        && (state.underwater == 0 || state.underwater == 1);
+}
+
+bool Phys_RollbackMassTensorIsReconstructible(
+    const PhysMass &mass) noexcept
+{
+    const double diagonal[3]{
+        mass.momentsOfInertia[0] > 0.0f
+            ? mass.momentsOfInertia[0]
+            : 100.0,
+        mass.momentsOfInertia[1] > 0.0f
+            ? mass.momentsOfInertia[1]
+            : 100.0,
+        mass.momentsOfInertia[2] > 0.0f
+            ? mass.momentsOfInertia[2]
+            : 100.0,
+    };
+    const double xy = mass.productsOfInertia[0];
+    const double xz = mass.productsOfInertia[1];
+    const double yz = mass.productsOfInertia[2];
+    const double leadingMinor =
+        diagonal[0] * diagonal[1] - xy * xy;
+    const double determinant =
+        diagonal[0]
+            * (diagonal[1] * diagonal[2] - yz * yz)
+        - xy * (xy * diagonal[2] - yz * xz)
+        + xz * (xy * yz - diagonal[1] * xz);
+    return diagonal[0] > 0.0
+        && leadingMinor > 0.0
+        && determinant > 0.0
+        && std::isfinite(determinant);
+}
+
+bool Phys_TryGetExactPoolSlotIndex(
+    const poolstorage_t storage,
+    const void *const item,
+    std::size_t *const outIndex) noexcept
+{
+    if (!outIndex)
+        return false;
+    *outIndex = 0;
+    if (!storage.base || !item || storage.itemSize == 0
+        || storage.itemCount == 0
+        || storage.itemSize
+            > (std::numeric_limits<std::size_t>::max)()
+                / storage.itemCount)
+    {
+        return false;
+    }
+    const std::size_t byteCount = storage.itemSize * storage.itemCount;
+    const std::uintptr_t begin =
+        reinterpret_cast<std::uintptr_t>(storage.base);
+    if (begin > (std::numeric_limits<std::uintptr_t>::max)() - byteCount)
+        return false;
+    const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(item);
+    const std::uintptr_t end = begin + byteCount;
+    if (address < begin || address >= end)
+        return false;
+    const std::size_t offset = static_cast<std::size_t>(address - begin);
+    if (offset % storage.itemSize != 0)
+        return false;
+    const std::size_t index = offset / storage.itemSize;
+    if (index >= storage.itemCount)
+        return false;
+    *outIndex = index;
+    return true;
+}
+
+bool Phys_PoolSlotIsAllocated(
+    const poolstorage_t storage,
+    const pooldata_t *const poolData,
+    const std::size_t index) noexcept
+{
+    if (!poolData || !storage.control
+        || !storage.control->slotState
+        || storage.control->slotStateCount != storage.itemCount
+        || storage.control->boundBase != storage.base
+        || storage.control->boundData != poolData
+        || storage.control->boundStride != storage.itemSize
+        || storage.control->boundCount != storage.itemCount
+        || index >= storage.itemCount)
+    {
+        return false;
+    }
+    return storage.control->slotState[index] == POOL_SLOT_ALLOCATED;
+}
+
+bool Phys_TryMakeRollbackAddressRange(
+    const void *const address,
+    const std::size_t byteCount,
+    PhysRollbackAddressRange *const outRange) noexcept
+{
+    if (!address || !outRange || byteCount == 0)
+        return false;
+    const std::uintptr_t begin =
+        reinterpret_cast<std::uintptr_t>(address);
+    if (begin
+        > (std::numeric_limits<std::uintptr_t>::max)() - byteCount)
+    {
+        return false;
+    }
+    outRange->begin = begin;
+    outRange->end = begin + byteCount;
+    return true;
+}
+
+bool Phys_RollbackAddressRangesAreSeparate(
+    const PhysRollbackAddressRange first,
+    const PhysRollbackAddressRange second) noexcept
+{
+    return first.begin >= second.end || second.begin >= first.end;
+}
+
+bool Phys_RollbackPoolIsValid(
+    const poolstorage_t storage,
+    const pooldata_t *const poolData) noexcept
+{
+    if (!storage.base || !storage.control || !poolData
+        || storage.itemSize < sizeof(void *)
+        || storage.itemCount < 2
+        || storage.itemCount > ODE_GEOM_POOL_COUNT
+        || storage.itemSize
+            > (std::numeric_limits<std::size_t>::max)()
+                / storage.itemCount)
+    {
+        return false;
+    }
+
+    PhysRollbackAddressRange itemRange{};
+    PhysRollbackAddressRange controlRange{};
+    PhysRollbackAddressRange metadataRange{};
+    if (!Phys_TryMakeRollbackAddressRange(
+            storage.base,
+            storage.itemSize * storage.itemCount,
+            &itemRange)
+        || !Phys_TryMakeRollbackAddressRange(
+            storage.control, sizeof(*storage.control), &controlRange)
+        || !Phys_TryMakeRollbackAddressRange(
+            poolData, sizeof(*poolData), &metadataRange)
+        || !Phys_RollbackAddressRangesAreSeparate(
+            itemRange, controlRange)
+        || !Phys_RollbackAddressRangesAreSeparate(
+            itemRange, metadataRange)
+        || !Phys_RollbackAddressRangesAreSeparate(
+            controlRange, metadataRange))
+    {
+        return false;
+    }
+
+    const poolcontrol_t &control = *storage.control;
+    if (!control.slotState
+        || control.slotStateCount != storage.itemCount
+        || control.slotStateCount
+            > (std::numeric_limits<std::size_t>::max)()
+                / sizeof(*control.slotState))
+    {
+        return false;
+    }
+    PhysRollbackAddressRange slotStateRange{};
+    if (!Phys_TryMakeRollbackAddressRange(
+            control.slotState,
+            sizeof(*control.slotState) * control.slotStateCount,
+            &slotStateRange)
+        || !Phys_RollbackAddressRangesAreSeparate(
+            slotStateRange, itemRange)
+        || !Phys_RollbackAddressRangesAreSeparate(
+            slotStateRange, controlRange)
+        || !Phys_RollbackAddressRangesAreSeparate(
+            slotStateRange, metadataRange)
+        || control.initMagic != PHYS_ROLLBACK_POOL_MAGIC
+        || control.boundBase != storage.base
+        || control.boundData != poolData
+        || control.boundStride != storage.itemSize
+        || control.boundCount != storage.itemCount
+        || poolData->activeCount < 0
+        || control.activeCount != poolData->activeCount)
+    {
+        return false;
+    }
+
+    const std::size_t activeCount =
+        static_cast<std::size_t>(poolData->activeCount);
+    if (activeCount > storage.itemCount)
+        return false;
+
+    std::size_t allocatedCount = 0;
+    for (std::size_t index = 0; index < storage.itemCount; ++index)
+    {
+        const poolslotstate_t state = control.slotState[index];
+        if (state == POOL_SLOT_ALLOCATED)
+        {
+            ++allocatedCount;
+            continue;
+        }
+        if (state != POOL_SLOT_END && state >= storage.itemCount)
+            return false;
+    }
+    if (allocatedCount != activeCount)
+        return false;
+
+    const std::size_t freeCount = storage.itemCount - activeCount;
+    if (freeCount == 0)
+    {
+        return !poolData->firstFree
+            && control.headIndex == POOL_SLOT_END;
+    }
+    if (control.headIndex >= storage.itemCount)
+        return false;
+
+    auto *const itemBytes =
+        static_cast<unsigned char *>(storage.base);
+    void *const expectedHead = itemBytes
+        + storage.itemSize * control.headIndex;
+    if (poolData->firstFree != expectedHead)
+        return false;
+
+    std::array<bool, ODE_GEOM_POOL_COUNT> visitedFree{};
+    poolslotstate_t index = control.headIndex;
+    for (std::size_t visitedCount = 0;
+         visitedCount < freeCount;
+         ++visitedCount)
+    {
+        if (index == POOL_SLOT_END || index >= storage.itemCount
+            || visitedFree[index])
+        {
+            return false;
+        }
+        visitedFree[index] = true;
+        const poolslotstate_t nextIndex = control.slotState[index];
+        if (nextIndex == POOL_SLOT_ALLOCATED
+            || (nextIndex != POOL_SLOT_END
+                && nextIndex >= storage.itemCount))
+        {
+            return false;
+        }
+        void *const expectedNext = nextIndex == POOL_SLOT_END
+            ? nullptr
+            : itemBytes + storage.itemSize * nextIndex;
+        const void *const slot =
+            itemBytes + storage.itemSize * index;
+        if (std::memcmp(slot, &expectedNext, sizeof(expectedNext)) != 0)
+            return false;
+        index = nextIndex;
+    }
+    if (index != POOL_SLOT_END)
+        return false;
+    for (std::size_t slot = 0; slot < storage.itemCount; ++slot)
+    {
+        if ((control.slotState[slot] != POOL_SLOT_ALLOCATED)
+            != visitedFree[slot])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+PhysBodyRollbackStatus Phys_ValidateModelResourceDemand(
+    const XModel *const model,
+    PhysBodyResourceDemand *const outDemand) noexcept
+{
+    if (!outDemand)
+        return PhysBodyRollbackStatus::InvalidArgument;
+    *outDemand = {};
+    if (!model)
+        return PhysBodyRollbackStatus::InvalidArgument;
+
+    PhysBodyResourceDemand demand{1, 1, 0};
+    if (!model->physGeoms)
+    {
+        float mins[3]{};
+        float maxs[3]{};
+        if (!Phys_TryGetValidatedModelBoxBounds(*model, mins, maxs))
+            return PhysBodyRollbackStatus::ModelInvalid;
+        demand.geomCount = 1;
+        *outDemand = demand;
+        return PhysBodyRollbackStatus::Success;
+    }
+
+    const PhysGeomList &geomList = *model->physGeoms;
+    if (geomList.count > ODE_GEOM_POOL_COUNT
+        || (geomList.count != 0 && !geomList.geoms)
+        || !Phys_RollbackVectorIsBounded(
+            geomList.mass.centerOfMass, 3, PHYS_ROLLBACK_VECTOR_LIMIT)
+        || !Phys_RollbackVectorIsBounded(
+            geomList.mass.momentsOfInertia,
+            3,
+            PHYS_ROLLBACK_INERTIA_LIMIT)
+        || !Phys_RollbackVectorIsBounded(
+            geomList.mass.productsOfInertia,
+            3,
+            PHYS_ROLLBACK_INERTIA_LIMIT)
+        || !Phys_RollbackMassTensorIsReconstructible(geomList.mass))
+    {
+        return PhysBodyRollbackStatus::ModelInvalid;
+    }
+
+    for (std::uint32_t index = 0; index < geomList.count; ++index)
+    {
+        const PhysGeomInfo &geom = geomList.geoms[index];
+        if (!Phys_RollbackVectorIsBounded(
+                geom.orientation[0], 9, 1.001f)
+            || !Phys_RollbackVectorIsBounded(
+                geom.offset, 3, PHYS_ROLLBACK_VECTOR_LIMIT)
+            || !Phys_RollbackVectorIsBounded(
+                geom.halfLengths, 3, PHYS_ROLLBACK_VECTOR_LIMIT))
+        {
+            return PhysBodyRollbackStatus::ModelInvalid;
+        }
+
+        std::size_t required = 0;
+        switch (geom.type)
+        {
+        case PHYS_GEOM_NONE:
+            if (!geom.brush)
+                return PhysBodyRollbackStatus::ModelInvalid;
+            for (std::size_t component = 0; component < 3; ++component)
+            {
+                if (!Phys_RollbackFloatIsBounded(
+                        geom.brush->mins[component],
+                        PHYS_ROLLBACK_VECTOR_LIMIT)
+                    || !Phys_RollbackFloatIsBounded(
+                        geom.brush->maxs[component],
+                        PHYS_ROLLBACK_VECTOR_LIMIT)
+                    || geom.brush->mins[component]
+                        > geom.brush->maxs[component])
+                {
+                    return PhysBodyRollbackStatus::ModelInvalid;
+                }
+            }
+            required = 1;
+            break;
+        case PHYS_GEOM_BOX:
+            if (geom.brush
+                || !Phys_RollbackBasisIsValid(geom.orientation)
+                || geom.halfLengths[0] <= 0.0f
+                || geom.halfLengths[1] <= 0.0f
+                || geom.halfLengths[2] <= 0.0f)
+            {
+                return PhysBodyRollbackStatus::ModelInvalid;
+            }
+            required = 2;
+            break;
+        case PHYS_GEOM_CYLINDER:
+            if (geom.brush
+                || !Phys_RollbackBasisIsValid(geom.orientation)
+                || geom.halfLengths[0] <= 0.0f
+                || geom.halfLengths[1] <= 0.0f)
+            {
+                return PhysBodyRollbackStatus::ModelInvalid;
+            }
+            required = 2;
+            break;
+        default:
+            return PhysBodyRollbackStatus::ModelInvalid;
+        }
+        if (demand.geomCount > ODE_GEOM_POOL_COUNT - required)
+            return PhysBodyRollbackStatus::ResourceDemandOverflow;
+        demand.geomCount += required;
+    }
+    *outDemand = demand;
+    return PhysBodyRollbackStatus::Success;
+}
+
+PhysBodyRollbackStatus Phys_ValidateLiveBodyOwnershipLocked(
+    const PhysWorld worldIndex,
+    dxBody *const body,
+    PhysObjUserData **const outUserData) noexcept
+{
+    if (!outUserData)
+        return PhysBodyRollbackStatus::InvalidArgument;
+    *outUserData = nullptr;
+    if (worldIndex < PHYS_WORLD_DYNENT || worldIndex >= PHYS_WORLD_COUNT
+        || !body)
+    {
+        return PhysBodyRollbackStatus::InvalidArgument;
+    }
+    dxWorld *const world = physGlob.world[worldIndex];
+    if (!physInited || !world || !physGlob.space[worldIndex])
+        return PhysBodyRollbackStatus::PhysicsUnavailable;
+
+    const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
+    std::size_t bodyIndex = 0;
+    if (!Phys_TryGetExactPoolSlotIndex(
+            bodyStorage, body, &bodyIndex))
+    {
+        return PhysBodyRollbackStatus::BodyNotOwned;
+    }
+    if (!Phys_RollbackPoolIsValid(bodyStorage, &odeGlob.bodyPool))
+        return PhysBodyRollbackStatus::BodyPoolInvalid;
+    if (!Phys_PoolSlotIsAllocated(
+            bodyStorage, &odeGlob.bodyPool, bodyIndex))
+    {
+        return PhysBodyRollbackStatus::BodyNotOwned;
+    }
+    if (world->nb < 0
+        || static_cast<std::size_t>(world->nb) > PHYS_BODY_POOL_COUNT)
+    {
+        return PhysBodyRollbackStatus::WorldTopologyInvalid;
+    }
+
+    std::array<bool, PHYS_BODY_POOL_COUNT> visitedBodies{};
+    const void *expectedBacklink = &world->firstbody;
+    std::size_t traversedCount = 0;
+    bool foundBody = false;
+    for (dxBody *cursor = world->firstbody; cursor; )
+    {
+        if (traversedCount == visitedBodies.size())
+            return PhysBodyRollbackStatus::WorldTopologyInvalid;
+        std::size_t cursorIndex = 0;
+        if (!Phys_TryGetExactPoolSlotIndex(
+                bodyStorage, cursor, &cursorIndex)
+            || !Phys_PoolSlotIsAllocated(
+                bodyStorage, &odeGlob.bodyPool, cursorIndex)
+            || visitedBodies[cursorIndex])
+        {
+            return PhysBodyRollbackStatus::WorldTopologyInvalid;
+        }
+        visitedBodies[cursorIndex] = true;
+        if (cursor->world != world
+            || static_cast<const void *>(cursor->tome)
+                != expectedBacklink)
+        {
+            return PhysBodyRollbackStatus::WorldTopologyInvalid;
+        }
+        if (cursor == body)
+            foundBody = true;
+        ++traversedCount;
+        expectedBacklink = &cursor->next;
+        cursor = static_cast<dxBody *>(cursor->next);
+    }
+    if (traversedCount != static_cast<std::size_t>(world->nb))
+        return PhysBodyRollbackStatus::WorldTopologyInvalid;
+    if (!foundBody)
+        return PhysBodyRollbackStatus::BodyNotOwned;
+
+    void *const rawUserData = body->userdata;
+    const poolstorage_t userDataStorage = Phys_UserDataPoolStorage();
+    std::size_t userDataIndex = 0;
+    if (!Phys_TryGetExactPoolSlotIndex(
+            userDataStorage, rawUserData, &userDataIndex))
+    {
+        return PhysBodyRollbackStatus::UserDataOwnershipMismatch;
+    }
+    if (!Phys_RollbackPoolIsValid(
+            userDataStorage, &physGlob.userDataPool))
+        return PhysBodyRollbackStatus::UserDataPoolInvalid;
+    if (!Phys_PoolSlotIsAllocated(
+            userDataStorage, &physGlob.userDataPool, userDataIndex))
+    {
+        return PhysBodyRollbackStatus::UserDataOwnershipMismatch;
+    }
+    auto *const userData = static_cast<PhysObjUserData *>(rawUserData);
+    if (userData->body != body)
+        return PhysBodyRollbackStatus::UserDataOwnershipMismatch;
+    *outUserData = userData;
+    return PhysBodyRollbackStatus::Success;
+}
+
+const float *Phys_RollbackModelGeomCenter(
+    const PhysGeomList &geomList,
+    const std::size_t modelIndex) noexcept
+{
+    return geomList.geoms[modelIndex].type == PHYS_GEOM_NONE
+        ? geomList.mass.centerOfMass
+        : geomList.geoms[modelIndex].offset;
+}
+
+bool Phys_RollbackVectorMatches(
+    const float *const actual,
+    const float *const expected,
+    const std::size_t componentCount) noexcept
+{
+    if (!actual || !expected)
+        return false;
+    for (std::size_t component = 0;
+         component < componentCount;
+         ++component)
+    {
+        if (actual[component] != expected[component])
+            return false;
+    }
+    return true;
+}
+
+bool Phys_RollbackStateCenterMatchesModel(
+    const XModel &model,
+    const BodyState &state) noexcept
+{
+    float defaultMins[3]{};
+    float defaultMaxs[3]{};
+    float defaultCenter[3]{};
+    const float *expectedCenter = nullptr;
+    if (model.physGeoms)
+    {
+        expectedCenter = model.physGeoms->mass.centerOfMass;
+    }
+    else
+    {
+        if (!Phys_TryGetValidatedModelBoxBounds(
+                model, defaultMins, defaultMaxs))
+        {
+            return false;
+        }
+        Vec3Avg(defaultMins, defaultMaxs, defaultCenter);
+        expectedCenter = defaultCenter;
+    }
+    for (std::size_t component = 0; component < 3; ++component)
+    {
+        if (state.centerOfMassOffset[component]
+            != -expectedCenter[component])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+PhysBodyRollbackStatus Phys_ValidateTargetSpaceTopologyLocked(
+    const PhysWorld worldIndex,
+    const poolstorage_t geomStorage,
+    std::array<bool, ODE_GEOM_POOL_COUNT> *const outMembership) noexcept
+{
+    if (!outMembership)
+        return PhysBodyRollbackStatus::InvalidArgument;
+    *outMembership = {};
+    dxSpace *const space = physGlob.space[worldIndex];
+    if (!space || space->type != dSimpleSpaceClass
+        || space->parent_space || space->lock_count != 0
+        || space->count < 0
+        || static_cast<std::size_t>(space->count)
+            > geomStorage.itemCount)
+    {
+        return PhysBodyRollbackStatus::GeomTopologyInvalid;
+    }
+
+    const void *expectedBacklink = &space->first;
+    std::size_t traversedCount = 0;
+    for (dxGeom *cursor = space->first; cursor; )
+    {
+        if (traversedCount == outMembership->size())
+            return PhysBodyRollbackStatus::GeomTopologyInvalid;
+        std::size_t cursorIndex = 0;
+        if (!Phys_TryGetExactPoolSlotIndex(
+                geomStorage, cursor, &cursorIndex)
+            || !Phys_PoolSlotIsAllocated(
+                geomStorage, &odeGlob.geomPool, cursorIndex)
+            || (*outMembership)[cursorIndex])
+        {
+            return PhysBodyRollbackStatus::GeomTopologyInvalid;
+        }
+        (*outMembership)[cursorIndex] = true;
+        if (cursor->parent_space != space
+            || static_cast<const void *>(cursor->tome)
+                != expectedBacklink)
+        {
+            return PhysBodyRollbackStatus::GeomTopologyInvalid;
+        }
+        ++traversedCount;
+        expectedBacklink = &cursor->next;
+        cursor = cursor->next;
+    }
+    return traversedCount == static_cast<std::size_t>(space->count)
+        ? PhysBodyRollbackStatus::Success
+        : PhysBodyRollbackStatus::GeomTopologyInvalid;
+}
+
+constexpr std::size_t PHYS_ROLLBACK_NO_OWNER =
+    (std::numeric_limits<std::size_t>::max)();
+
+struct PhysGlobalTopologySnapshot
+{
+    std::array<std::size_t, PHYS_BODY_POOL_COUNT> worldForBody{};
+    std::array<std::size_t, PHYS_BODY_POOL_COUNT> bodyForUserData{};
+    std::array<std::size_t, ODE_GEOM_POOL_COUNT> spaceForGeom{};
+    std::array<std::size_t, ODE_GEOM_POOL_COUNT> bodyForGeom{};
+    std::array<std::size_t, ODE_GEOM_POOL_COUNT> transformForInner{};
+};
+
+PhysBodyRollbackStatus Phys_TryValidateGlobalTopologyLockedNoReport(
+    PhysGlobalTopologySnapshot *const outSnapshot) noexcept
+{
+    if (!outSnapshot)
+        return PhysBodyRollbackStatus::InvalidArgument;
+    *outSnapshot = {};
+    if (!physInited)
+        return PhysBodyRollbackStatus::PhysicsUnavailable;
+
+    PhysGlobalTopologySnapshot snapshot{};
+    snapshot.worldForBody.fill(PHYS_ROLLBACK_NO_OWNER);
+    snapshot.bodyForUserData.fill(PHYS_ROLLBACK_NO_OWNER);
+    snapshot.spaceForGeom.fill(PHYS_ROLLBACK_NO_OWNER);
+    snapshot.bodyForGeom.fill(PHYS_ROLLBACK_NO_OWNER);
+    snapshot.transformForInner.fill(PHYS_ROLLBACK_NO_OWNER);
+
+    const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
+    const poolstorage_t userDataStorage = Phys_UserDataPoolStorage();
+    const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    if (!Phys_RollbackPoolIsValid(bodyStorage, &odeGlob.bodyPool))
+        return PhysBodyRollbackStatus::BodyPoolInvalid;
+    if (!Phys_RollbackPoolIsValid(
+            userDataStorage, &physGlob.userDataPool))
+    {
+        return PhysBodyRollbackStatus::UserDataPoolInvalid;
+    }
+    if (!Phys_RollbackPoolIsValid(geomStorage, &odeGlob.geomPool))
+        return PhysBodyRollbackStatus::GeomPoolInvalid;
+
+    for (int worldIndex = PHYS_WORLD_DYNENT;
+         worldIndex < PHYS_WORLD_COUNT;
+         ++worldIndex)
+    {
+        dxWorld *const world = physGlob.world[worldIndex];
+        if (!world || world->nb < 0
+            || static_cast<std::size_t>(world->nb)
+                > bodyStorage.itemCount)
+        {
+            return PhysBodyRollbackStatus::WorldTopologyInvalid;
+        }
+        for (int previous = PHYS_WORLD_DYNENT;
+             previous < worldIndex;
+             ++previous)
+        {
+            if (physGlob.world[previous] == world
+                || physGlob.space[previous]
+                    == physGlob.space[worldIndex])
+            {
+                return PhysBodyRollbackStatus::WorldTopologyInvalid;
+            }
+        }
+        const void *expectedBacklink = &world->firstbody;
+        std::size_t traversed = 0;
+        for (dxBody *cursor = world->firstbody; cursor; )
+        {
+            if (traversed == bodyStorage.itemCount)
+                return PhysBodyRollbackStatus::WorldTopologyInvalid;
+            std::size_t bodyIndex = 0;
+            if (!Phys_TryGetExactPoolSlotIndex(
+                    bodyStorage, cursor, &bodyIndex)
+                || !Phys_PoolSlotIsAllocated(
+                    bodyStorage, &odeGlob.bodyPool, bodyIndex)
+                || snapshot.worldForBody[bodyIndex]
+                    != PHYS_ROLLBACK_NO_OWNER
+                || cursor->world != world
+                || static_cast<const void *>(cursor->tome)
+                    != expectedBacklink)
+            {
+                return PhysBodyRollbackStatus::WorldTopologyInvalid;
+            }
+            snapshot.worldForBody[bodyIndex] =
+                static_cast<std::size_t>(worldIndex);
+            ++traversed;
+            expectedBacklink = &cursor->next;
+            cursor = static_cast<dxBody *>(cursor->next);
+        }
+        if (traversed != static_cast<std::size_t>(world->nb))
+            return PhysBodyRollbackStatus::WorldTopologyInvalid;
+
+        std::array<bool, ODE_GEOM_POOL_COUNT> membership{};
+        const PhysBodyRollbackStatus spaceStatus =
+            Phys_ValidateTargetSpaceTopologyLocked(
+                static_cast<PhysWorld>(worldIndex),
+                geomStorage,
+                &membership);
+        if (spaceStatus != PhysBodyRollbackStatus::Success)
+            return spaceStatus;
+        for (std::size_t geomIndex = 0;
+             geomIndex < membership.size();
+             ++geomIndex)
+        {
+            if (!membership[geomIndex])
+                continue;
+            if (snapshot.spaceForGeom[geomIndex]
+                != PHYS_ROLLBACK_NO_OWNER)
+            {
+                return PhysBodyRollbackStatus::GeomTopologyInvalid;
+            }
+            snapshot.spaceForGeom[geomIndex] =
+                static_cast<std::size_t>(worldIndex);
+        }
+    }
+
+    const auto *const bodyBytes =
+        static_cast<const unsigned char *>(bodyStorage.base);
+    for (std::size_t bodyIndex = 0;
+         bodyIndex < bodyStorage.itemCount;
+         ++bodyIndex)
+    {
+        if (!Phys_PoolSlotIsAllocated(
+                bodyStorage, &odeGlob.bodyPool, bodyIndex))
+        {
+            continue;
+        }
+        if (snapshot.worldForBody[bodyIndex]
+            == PHYS_ROLLBACK_NO_OWNER)
+        {
+            return PhysBodyRollbackStatus::WorldTopologyInvalid;
+        }
+        const auto *const body = reinterpret_cast<const dxBody *>(
+            bodyBytes + bodyStorage.itemSize * bodyIndex);
+        std::size_t userDataIndex = 0;
+        if (!Phys_TryGetExactPoolSlotIndex(
+                userDataStorage, body->userdata, &userDataIndex)
+            || !Phys_PoolSlotIsAllocated(
+                userDataStorage,
+                &physGlob.userDataPool,
+                userDataIndex)
+            || snapshot.bodyForUserData[userDataIndex]
+                != PHYS_ROLLBACK_NO_OWNER)
+        {
+            return PhysBodyRollbackStatus::UserDataOwnershipMismatch;
+        }
+        const auto *const userData =
+            static_cast<const PhysObjUserData *>(body->userdata);
+        if (userData->body != body)
+            return PhysBodyRollbackStatus::UserDataOwnershipMismatch;
+        snapshot.bodyForUserData[userDataIndex] = bodyIndex;
+
+        std::size_t traversed = 0;
+        for (const dxGeom *geom = body->geom;
+             geom;
+             geom = geom->body_next)
+        {
+            if (traversed++ == geomStorage.itemCount)
+                return PhysBodyRollbackStatus::GeomTopologyInvalid;
+            std::size_t geomIndex = 0;
+            if (!Phys_TryGetExactPoolSlotIndex(
+                    geomStorage, geom, &geomIndex)
+                || !Phys_PoolSlotIsAllocated(
+                    geomStorage, &odeGlob.geomPool, geomIndex)
+                || snapshot.bodyForGeom[geomIndex]
+                    != PHYS_ROLLBACK_NO_OWNER
+                || snapshot.spaceForGeom[geomIndex]
+                    != snapshot.worldForBody[bodyIndex]
+                || geom->body != body
+                || geom->pos != body->info.pos
+                || geom->R != body->info.R)
+            {
+                return PhysBodyRollbackStatus::GeomTopologyInvalid;
+            }
+            snapshot.bodyForGeom[geomIndex] = bodyIndex;
+        }
+    }
+
+    const auto *const userDataBytes =
+        static_cast<const unsigned char *>(userDataStorage.base);
+    for (std::size_t userDataIndex = 0;
+         userDataIndex < userDataStorage.itemCount;
+         ++userDataIndex)
+    {
+        if (!Phys_PoolSlotIsAllocated(
+                userDataStorage,
+                &physGlob.userDataPool,
+                userDataIndex))
+        {
+            continue;
+        }
+        const auto *const userData =
+            reinterpret_cast<const PhysObjUserData *>(
+                userDataBytes
+                    + userDataStorage.itemSize * userDataIndex);
+        if (snapshot.bodyForUserData[userDataIndex]
+                == PHYS_ROLLBACK_NO_OWNER
+            || !userData->body)
+        {
+            return PhysBodyRollbackStatus::UserDataOwnershipMismatch;
+        }
+    }
+
+    const auto *const geomBytes =
+        static_cast<const unsigned char *>(geomStorage.base);
+    for (std::size_t geomIndex = 0;
+         geomIndex < geomStorage.itemCount;
+         ++geomIndex)
+    {
+        if (!Phys_PoolSlotIsAllocated(
+                geomStorage, &odeGlob.geomPool, geomIndex))
+        {
+            continue;
+        }
+        const auto *const geom = reinterpret_cast<const dxGeom *>(
+            geomBytes + geomStorage.itemSize * geomIndex);
+        if (geom->type != dGeomTransformClass)
+            continue;
+        const auto *const transform =
+            static_cast<const dxGeomTransform *>(geom);
+        std::size_t innerIndex = 0;
+        if (snapshot.bodyForGeom[geomIndex]
+                == PHYS_ROLLBACK_NO_OWNER
+            || transform->cleanup != 1 || !transform->obj
+            || !Phys_TryGetExactPoolSlotIndex(
+                geomStorage, transform->obj, &innerIndex)
+            || !Phys_PoolSlotIsAllocated(
+                geomStorage, &odeGlob.geomPool, innerIndex)
+            || snapshot.bodyForGeom[innerIndex]
+                != PHYS_ROLLBACK_NO_OWNER
+            || snapshot.spaceForGeom[innerIndex]
+                != PHYS_ROLLBACK_NO_OWNER
+            || snapshot.transformForInner[innerIndex]
+                != PHYS_ROLLBACK_NO_OWNER
+            || transform->obj->body || transform->obj->body_next
+            || transform->obj->next || transform->obj->tome
+            || transform->obj->parent_space
+            || transform->obj->type == dGeomTransformClass)
+        {
+            return PhysBodyRollbackStatus::GeomTopologyInvalid;
+        }
+        snapshot.transformForInner[innerIndex] = geomIndex;
+    }
+
+    for (std::size_t geomIndex = 0;
+         geomIndex < geomStorage.itemCount;
+         ++geomIndex)
+    {
+        if (!Phys_PoolSlotIsAllocated(
+                geomStorage, &odeGlob.geomPool, geomIndex))
+            continue;
+        const bool isOuter =
+            snapshot.bodyForGeom[geomIndex] != PHYS_ROLLBACK_NO_OWNER
+            && snapshot.spaceForGeom[geomIndex] != PHYS_ROLLBACK_NO_OWNER
+            && snapshot.transformForInner[geomIndex]
+                == PHYS_ROLLBACK_NO_OWNER;
+        const bool isInner =
+            snapshot.bodyForGeom[geomIndex] == PHYS_ROLLBACK_NO_OWNER
+            && snapshot.spaceForGeom[geomIndex] == PHYS_ROLLBACK_NO_OWNER
+            && snapshot.transformForInner[geomIndex]
+                != PHYS_ROLLBACK_NO_OWNER;
+        if (!isOuter && !isInner)
+            return PhysBodyRollbackStatus::GeomTopologyInvalid;
+    }
+
+    *outSnapshot = snapshot;
+    return PhysBodyRollbackStatus::Success;
+}
+
+bool Phys_RollbackTransformHasUniqueInnerOwnership(
+    const poolstorage_t geomStorage,
+    const dxGeom *const inner,
+    const dxGeomTransform *const expectedOwner) noexcept
+{
+    std::size_t ownerCount = 0;
+    const auto *const itemBytes =
+        static_cast<const unsigned char *>(geomStorage.base);
+    for (std::size_t index = 0;
+         index < geomStorage.itemCount;
+         ++index)
+    {
+        if (!Phys_PoolSlotIsAllocated(
+                geomStorage, &odeGlob.geomPool, index))
+        {
+            continue;
+        }
+        const auto *const candidate = reinterpret_cast<const dxGeom *>(
+            itemBytes + geomStorage.itemSize * index);
+        if (candidate->type != dGeomTransformClass)
+            continue;
+        const auto *const transform =
+            static_cast<const dxGeomTransform *>(candidate);
+        if (transform->obj != inner)
+            continue;
+        ++ownerCount;
+        if (transform != expectedOwner || ownerCount != 1)
+            return false;
+    }
+    return ownerCount == 1;
+}
+
+bool Phys_RollbackTransformPoseMatchesModel(
+    const dxGeomTransform &transform,
+    const PhysGeomList &geomList,
+    const std::size_t modelIndex) noexcept
+{
+    const PhysGeomInfo &geom = geomList.geoms[modelIndex];
+    float expectedRotation[12]{};
+    Phys_AxisToOdeMatrix3(geom.orientation, expectedRotation);
+    if (!Phys_RollbackVectorMatches(
+            transform.localR, expectedRotation, 12))
+    {
+        return false;
+    }
+
+    float expectedOffset[3]{};
+    const float *previousCenter = geom.offset;
+    for (std::size_t nextIndex = modelIndex + 1;
+         nextIndex < geomList.count;
+         ++nextIndex)
+    {
+        const float *const nextCenter =
+            Phys_RollbackModelGeomCenter(geomList, nextIndex);
+        Vec3Add(expectedOffset, previousCenter, expectedOffset);
+        Vec3Sub(expectedOffset, nextCenter, expectedOffset);
+        previousCenter = nextCenter;
+    }
+    Vec3Add(expectedOffset, previousCenter, expectedOffset);
+    Vec3Sub(
+        expectedOffset,
+        geomList.mass.centerOfMass,
+        expectedOffset);
+    return Phys_RollbackVectorMatches(
+        transform.localPos, expectedOffset, 3);
+}
+
+bool Phys_RollbackBoxMatchesLengths(
+    dxGeom *const box,
+    const float *const expectedLengths) noexcept
+{
+    if (!box || box->type != dBoxClass || !expectedLengths)
+        return false;
+    dVector3 actualLengths{};
+    dGeomBoxGetLengths(box, actualLengths);
+    return Phys_RollbackVectorMatches(
+        actualLengths, expectedLengths, 3);
+}
+
+bool Phys_RollbackBrushMatchesModel(
+    const dxGeom &liveGeom,
+    const PhysGeomList &geomList,
+    const PhysGeomInfo &modelGeom) noexcept
+{
+    if (liveGeom.type != GEOM_CLASS_BRUSH)
+        return false;
+    BrushInfo classData{};
+    const auto &userGeom = static_cast<const dxUserGeom &>(liveGeom);
+    std::memcpy(&classData, userGeom.user_data, sizeof(classData));
+    return classData.u.brush
+            == reinterpret_cast<const cbrush_t *>(modelGeom.brush)
+        && Phys_RollbackVectorMatches(
+            classData.centerOfMass,
+            geomList.mass.centerOfMass,
+            3);
+}
+
+bool Phys_RollbackPrimitiveMatchesModel(
+    dxGeom *const inner,
+    const dxGeomTransform &transform,
+    const PhysGeomList &geomList,
+    const std::size_t modelIndex) noexcept
+{
+    if (!inner
+        || !Phys_RollbackTransformPoseMatchesModel(
+            transform, geomList, modelIndex))
+    {
+        return false;
+    }
+    const PhysGeomInfo &modelGeom = geomList.geoms[modelIndex];
+    if (modelGeom.type == PHYS_GEOM_BOX)
+    {
+        float expectedLengths[3]{};
+        Vec3Scale(modelGeom.halfLengths, 2.0f, expectedLengths);
+        return Phys_RollbackBoxMatchesLengths(inner, expectedLengths);
+    }
+    if (modelGeom.type != PHYS_GEOM_CYLINDER
+        || inner->type != GEOM_CLASS_CYLINDER)
+    {
+        return false;
+    }
+    GeomStateCylinder classData{};
+    const auto &userGeom = static_cast<const dxUserGeom &>(*inner);
+    std::memcpy(&classData, userGeom.user_data, sizeof(classData));
+    return classData.direction == 1
+        && classData.radius == modelGeom.halfLengths[1]
+        && classData.halfHeight == modelGeom.halfLengths[0];
+}
+
+PhysBodyRollbackStatus Phys_ValidateBodyGeomTopologyLocked(
+    const PhysWorld worldIndex,
+    dxBody *const body,
+    const XModel *const model,
+    const BodyState &state,
+    const PhysBodyResourceDemand &expectedDemand) noexcept
+{
+    if (!body || !model)
+        return PhysBodyRollbackStatus::InvalidArgument;
+    const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    if (!Phys_RollbackPoolIsValid(geomStorage, &odeGlob.geomPool))
+        return PhysBodyRollbackStatus::GeomPoolInvalid;
+
+    std::array<bool, ODE_GEOM_POOL_COUNT> spaceMembership{};
+    const PhysBodyRollbackStatus spaceStatus =
+        Phys_ValidateTargetSpaceTopologyLocked(
+            worldIndex, geomStorage, &spaceMembership);
+    if (spaceStatus != PhysBodyRollbackStatus::Success)
+        return spaceStatus;
+    if (!Phys_RollbackStateCenterMatchesModel(*model, state))
+        return PhysBodyRollbackStatus::GeomTopologyInvalid;
+
+    const PhysGeomList *const geomList = model->physGeoms;
+    const std::size_t expectedOuterCount = geomList
+        ? static_cast<std::size_t>(geomList->count)
+        : 1u;
+    std::array<bool, ODE_GEOM_POOL_COUNT> visitedGeoms{};
+    std::size_t outerCount = 0;
+    std::size_t resourceCount = 0;
+    for (dxGeom *outer = body->geom; outer; )
+    {
+        if (outerCount >= expectedOuterCount)
+            return PhysBodyRollbackStatus::GeomTopologyInvalid;
+        std::size_t outerIndex = 0;
+        if (!Phys_TryGetExactPoolSlotIndex(
+                geomStorage, outer, &outerIndex)
+            || !Phys_PoolSlotIsAllocated(
+                geomStorage, &odeGlob.geomPool, outerIndex)
+            || !spaceMembership[outerIndex]
+            || visitedGeoms[outerIndex])
+        {
+            return PhysBodyRollbackStatus::GeomTopologyInvalid;
+        }
+        visitedGeoms[outerIndex] = true;
+        if (outer->body != body
+            || outer->parent_space != physGlob.space[worldIndex]
+            || outer->pos != body->info.pos
+            || outer->R != body->info.R)
+        {
+            return PhysBodyRollbackStatus::GeomTopologyInvalid;
+        }
+
+        ++resourceCount;
+        if (!geomList)
+        {
+            float expectedMins[3]{};
+            float expectedMaxs[3]{};
+            float expectedLengths[3]{};
+            if (!Phys_TryGetValidatedModelBoxBounds(
+                    *model, expectedMins, expectedMaxs))
+                return PhysBodyRollbackStatus::ModelInvalid;
+            Vec3Sub(expectedMaxs, expectedMins, expectedLengths);
+            if (!Phys_RollbackBoxMatchesLengths(
+                    outer, expectedLengths))
+            {
+                return PhysBodyRollbackStatus::GeomTopologyInvalid;
+            }
+        }
+        else
+        {
+            const std::size_t modelIndex =
+                geomList->count - 1u - outerCount;
+            const PhysGeomInfo &modelGeom = geomList->geoms[modelIndex];
+            if (modelGeom.type == PHYS_GEOM_NONE)
+            {
+                if (!Phys_RollbackBrushMatchesModel(
+                        *outer, *geomList, modelGeom))
+                {
+                    return PhysBodyRollbackStatus::GeomTopologyInvalid;
+                }
+            }
+            else
+            {
+                if (outer->type != dGeomTransformClass)
+                    return PhysBodyRollbackStatus::GeomTopologyInvalid;
+                const auto *const transform =
+                    static_cast<const dxGeomTransform *>(outer);
+                dxGeom *const inner = transform->obj;
+                std::size_t innerIndex = 0;
+                if (transform->cleanup != 1 || !inner
+                    || !Phys_TryGetExactPoolSlotIndex(
+                        geomStorage, inner, &innerIndex)
+                    || !Phys_PoolSlotIsAllocated(
+                        geomStorage, &odeGlob.geomPool, innerIndex)
+                    || spaceMembership[innerIndex]
+                    || visitedGeoms[innerIndex])
+                {
+                    return PhysBodyRollbackStatus::GeomTopologyInvalid;
+                }
+                visitedGeoms[innerIndex] = true;
+                if (inner->body || inner->body_next || inner->next
+                    || inner->tome || inner->parent_space
+                    || inner->type == dGeomTransformClass
+                    || !Phys_RollbackTransformHasUniqueInnerOwnership(
+                        geomStorage, inner, transform)
+                    || !Phys_RollbackPrimitiveMatchesModel(
+                        inner, *transform, *geomList, modelIndex))
+                {
+                    return PhysBodyRollbackStatus::GeomTopologyInvalid;
+                }
+                ++resourceCount;
+            }
+        }
+        ++outerCount;
+        outer = outer->body_next;
+    }
+    if (outerCount != expectedOuterCount
+        || resourceCount != expectedDemand.geomCount)
+    {
+        return PhysBodyRollbackStatus::ResourceDemandMismatch;
+    }
+    return PhysBodyRollbackStatus::Success;
+}
+
+bool Phys_DestroySupportsGeomClass(const int type) noexcept
+{
+    switch (type)
+    {
+    case dBoxClass:
+    case GEOM_CLASS_BRUSHMODEL:
+    case GEOM_CLASS_BRUSH:
+    case GEOM_CLASS_CYLINDER:
+    case GEOM_CLASS_CAPSULE:
+        return true;
+    default:
+        return false;
+    }
+}
+
+struct PhysBodyDestroyPlan
+{
+    dxWorld *world{};
+    dxSpace *space{};
+    PhysObjUserData *userData{};
+    std::size_t bodyIndex{};
+    std::size_t userDataIndex{};
+    std::array<std::size_t, ODE_GEOM_POOL_COUNT> outerIndices{};
+    std::array<std::size_t, ODE_GEOM_POOL_COUNT> resourceIndices{};
+    std::size_t outerCount{};
+    std::size_t resourceCount{};
+};
+
+PhysBodyRollbackStatus Phys_TryBuildBodyDestroyPlanLocked(
+    const PhysWorld worldIndex,
+    dxBody *const body,
+    PhysBodyDestroyPlan *const outPlan) noexcept
+{
+    if (!outPlan)
+        return PhysBodyRollbackStatus::InvalidArgument;
+    *outPlan = {};
+
+    PhysGlobalTopologySnapshot topology{};
+    PhysBodyRollbackStatus status =
+        Phys_TryValidateGlobalTopologyLockedNoReport(&topology);
+    if (status != PhysBodyRollbackStatus::Success)
+        return status;
+
+    PhysObjUserData *userData = nullptr;
+    status = Phys_ValidateLiveBodyOwnershipLocked(
+        worldIndex, body, &userData);
+    if (status != PhysBodyRollbackStatus::Success)
+        return status;
+    if (body->firstjoint)
+        return PhysBodyRollbackStatus::NonReconstructibleJoints;
+
+    const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
+    const poolstorage_t userDataStorage = Phys_UserDataPoolStorage();
+    const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    std::size_t bodyIndex = 0;
+    std::size_t userDataIndex = 0;
+    if (!Phys_TryGetExactPoolSlotIndex(
+            bodyStorage, body, &bodyIndex)
+        || !Phys_TryGetExactPoolSlotIndex(
+            userDataStorage, userData, &userDataIndex))
+    {
+        return PhysBodyRollbackStatus::UserDataOwnershipMismatch;
+    }
+    std::array<bool, ODE_GEOM_POOL_COUNT> resources{};
+    PhysBodyDestroyPlan plan{};
+    plan.world = physGlob.world[worldIndex];
+    plan.space = physGlob.space[worldIndex];
+    plan.userData = userData;
+    plan.bodyIndex = bodyIndex;
+    plan.userDataIndex = userDataIndex;
+
+    for (dxGeom *outer = body->geom; outer; outer = outer->body_next)
+    {
+        if (plan.outerCount == plan.outerIndices.size())
+            return PhysBodyRollbackStatus::GeomTopologyInvalid;
+        std::size_t outerIndex = 0;
+        if (!Phys_TryGetExactPoolSlotIndex(
+                geomStorage, outer, &outerIndex)
+            || !Phys_PoolSlotIsAllocated(
+                geomStorage, &odeGlob.geomPool, outerIndex)
+            || resources[outerIndex]
+            || topology.spaceForGeom[outerIndex]
+                != static_cast<std::size_t>(worldIndex)
+            || topology.bodyForGeom[outerIndex] != bodyIndex
+            || outer->body != body
+            || outer->parent_space != plan.space
+            || outer->pos != body->info.pos
+            || outer->R != body->info.R)
+        {
+            return PhysBodyRollbackStatus::GeomTopologyInvalid;
+        }
+        resources[outerIndex] = true;
+        plan.outerIndices[plan.outerCount++] = outerIndex;
+        plan.resourceIndices[plan.resourceCount++] = outerIndex;
+
+        if (outer->type != dGeomTransformClass)
+        {
+            if (!Phys_DestroySupportsGeomClass(outer->type))
+                return PhysBodyRollbackStatus::GeomTopologyInvalid;
+            continue;
+        }
+
+        auto *const transform =
+            static_cast<dxGeomTransform *>(outer);
+        dxGeom *const inner = transform->obj;
+        std::size_t innerIndex = 0;
+        if (transform->cleanup != 1 || !inner
+            || !Phys_TryGetExactPoolSlotIndex(
+                geomStorage, inner, &innerIndex)
+            || !Phys_PoolSlotIsAllocated(
+                geomStorage, &odeGlob.geomPool, innerIndex)
+            || resources[innerIndex]
+            || topology.transformForInner[innerIndex] != outerIndex
+            || inner->body || inner->body_next || inner->next
+            || inner->tome || inner->parent_space
+            || !Phys_DestroySupportsGeomClass(inner->type))
+        {
+            return PhysBodyRollbackStatus::GeomTopologyInvalid;
+        }
+        resources[innerIndex] = true;
+        plan.resourceIndices[plan.resourceCount++] = innerIndex;
+    }
+
+    // The global classification already proves exact transform-inner and
+    // body-list ownership. Reject any remaining raw pose alias that is not an
+    // owned resource before the body's position/rotation storage is returned.
+    const auto *const geomBytes =
+        static_cast<const unsigned char *>(geomStorage.base);
+    for (std::size_t index = 0;
+         index < geomStorage.itemCount;
+         ++index)
+    {
+        if (!Phys_PoolSlotIsAllocated(
+                geomStorage, &odeGlob.geomPool, index))
+        {
+            continue;
+        }
+        const auto *const candidate = reinterpret_cast<const dxGeom *>(
+            geomBytes + geomStorage.itemSize * index);
+        if (!resources[index]
+            && (candidate->body == body
+                || candidate->pos == body->info.pos
+                || candidate->R == body->info.R))
+        {
+            return PhysBodyRollbackStatus::GeomTopologyInvalid;
+        }
+    }
+
+    *outPlan = plan;
+    return PhysBodyRollbackStatus::Success;
+}
+
+void Phys_ReturnValidatedPoolSlotNoReport(
+    const poolstorage_t storage,
+    pooldata_t *const poolData,
+    const std::size_t index) noexcept
+{
+    auto *const item = static_cast<unsigned char *>(storage.base)
+        + storage.itemSize * index;
+    void *const previousHead = poolData->firstFree;
+    std::memcpy(item, &previousHead, sizeof(previousHead));
+    storage.control->slotState[index] = storage.control->headIndex;
+    storage.control->headIndex = static_cast<poolslotstate_t>(index);
+    --storage.control->activeCount;
+    poolData->firstFree = item;
+    --poolData->activeCount;
+}
+
+void Phys_CommitBodyDestroyPlanLockedNoReport(
+    dxBody *const body,
+    const PhysBodyDestroyPlan &plan) noexcept
+{
+    const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    auto *const geomBytes =
+        static_cast<unsigned char *>(geomStorage.base);
+    for (std::size_t index = 0; index < plan.outerCount; ++index)
+    {
+        auto *const outer = reinterpret_cast<dxGeom *>(
+            geomBytes
+                + geomStorage.itemSize * plan.outerIndices[index]);
+        dxGeom **const backlink = outer->tome;
+        dxGeom *const next = outer->next;
+        *backlink = next;
+        if (next)
+            next->tome = backlink;
+        outer->next = nullptr;
+        outer->tome = nullptr;
+        outer->parent_space = nullptr;
+        outer->body = nullptr;
+        outer->body_next = nullptr;
+    }
+    plan.space->count -= static_cast<int>(plan.outerCount);
+    plan.space->current_geom = nullptr;
+    plan.space->gflags |= GEOM_DIRTY | GEOM_AABB_BAD;
+    body->geom = nullptr;
+
+    if (body->next)
+        body->next->tome = body->tome;
+    *body->tome = body->next;
+    body->next = nullptr;
+    body->tome = nullptr;
+    --plan.world->nb;
+    plan.userData->body = nullptr;
+
+    for (std::size_t index = 0; index < plan.resourceCount; ++index)
+    {
+        Phys_ReturnValidatedPoolSlotNoReport(
+            geomStorage,
+            &odeGlob.geomPool,
+            plan.resourceIndices[index]);
+    }
+    Phys_ReturnValidatedPoolSlotNoReport(
+        ODE_BodyPoolStorage(),
+        &odeGlob.bodyPool,
+        plan.bodyIndex);
+    Phys_ReturnValidatedPoolSlotNoReport(
+        Phys_UserDataPoolStorage(),
+        &physGlob.userDataPool,
+        plan.userDataIndex);
+}
+} // namespace
+
+PhysBodyRollbackStatus __cdecl Phys_TryGetBodyModelResourceDemand(
+    const XModel *const model,
+    PhysBodyResourceDemand *const outDemand) noexcept
+{
+    return Phys_ValidateModelResourceDemand(model, outDemand);
+}
+
+PhysBodyRollbackStatus __cdecl
+Phys_TryGetFreeResourceCapacityLockedNoReport(
+    PhysBodyResourceDemand *const outCapacity) noexcept
+{
+    if (!outCapacity)
+        return PhysBodyRollbackStatus::InvalidArgument;
+    *outCapacity = {};
+    if (!physInited)
+        return PhysBodyRollbackStatus::PhysicsUnavailable;
+
+    const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
+    if (!Phys_RollbackPoolIsValid(bodyStorage, &odeGlob.bodyPool))
+        return PhysBodyRollbackStatus::BodyPoolInvalid;
+    const poolstorage_t userDataStorage = Phys_UserDataPoolStorage();
+    if (!Phys_RollbackPoolIsValid(
+            userDataStorage, &physGlob.userDataPool))
+    {
+        return PhysBodyRollbackStatus::UserDataPoolInvalid;
+    }
+    const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    if (!Phys_RollbackPoolIsValid(geomStorage, &odeGlob.geomPool))
+        return PhysBodyRollbackStatus::GeomPoolInvalid;
+
+    *outCapacity = {
+        bodyStorage.itemCount
+            - static_cast<std::size_t>(odeGlob.bodyPool.activeCount),
+        userDataStorage.itemCount
+            - static_cast<std::size_t>(physGlob.userDataPool.activeCount),
+        geomStorage.itemCount
+            - static_cast<std::size_t>(odeGlob.geomPool.activeCount),
+    };
+    return PhysBodyRollbackStatus::Success;
+}
+
+PhysBodyRollbackStatus __cdecl Phys_TryCaptureBodyStateLocked(
+    const PhysWorld worldIndex,
+    dxBody *const body,
+    BodyState *const outState) noexcept
+{
+    if (!outState)
+        return PhysBodyRollbackStatus::InvalidArgument;
+    *outState = {};
+
+    PhysObjUserData *userData = nullptr;
+    const PhysBodyRollbackStatus ownershipStatus =
+        Phys_ValidateLiveBodyOwnershipLocked(
+            worldIndex, body, &userData);
+    if (ownershipStatus != PhysBodyRollbackStatus::Success)
+        return ownershipStatus;
+
+    BodyState captured{};
+    for (std::size_t component = 0; component < 3; ++component)
+    {
+        captured.position[component] = body->info.pos[component];
+        captured.velocity[component] = body->info.lvel[component];
+        captured.angVelocity[component] = body->info.avel[component];
+        captured.centerOfMassOffset[component] =
+            userData->translation[component];
+    }
+    Phys_OdeMatrix3ToAxis(body->info.R, captured.rotation);
+    captured.mass = body->mass.mass;
+    captured.bounce = userData->bounce;
+    captured.friction = userData->friction;
+    captured.state = userData->state;
+    captured.timeLastAsleep = userData->timeLastAsleep;
+    captured.type = userData->sndClass;
+    captured.underwater = (body->flags & dxBodyDisabled) == 0 ? 1 : 0;
+    if (!Phys_RollbackBodyStateIsValid(captured))
+        return PhysBodyRollbackStatus::StateInvalid;
+
+    *outState = captured;
+    return PhysBodyRollbackStatus::Success;
+}
+
+PhysBodyRollbackStatus __cdecl Phys_TryBuildBodyRollbackRecipeLocked(
+    const PhysWorld worldIndex,
+    dxBody *const body,
+    const XModel *const model,
+    PhysBodyRollbackRecipe *const outRecipe) noexcept
+{
+    if (!outRecipe)
+        return PhysBodyRollbackStatus::InvalidArgument;
+    *outRecipe = {};
+
+    PhysBodyResourceDemand demand{};
+    PhysBodyRollbackStatus status =
+        Phys_TryGetBodyModelResourceDemand(model, &demand);
+    if (status != PhysBodyRollbackStatus::Success)
+        return status;
+
+    BodyState state{};
+    status = Phys_TryCaptureBodyStateLocked(
+        worldIndex, body, &state);
+    if (status != PhysBodyRollbackStatus::Success)
+        return status;
+    if (body->firstjoint)
+        return PhysBodyRollbackStatus::NonReconstructibleJoints;
+
+    status = Phys_ValidateBodyGeomTopologyLocked(
+        worldIndex, body, model, state, demand);
+    if (status != PhysBodyRollbackStatus::Success)
+        return status;
+
+    outRecipe->state = state;
+    outRecipe->model = model;
+    outRecipe->demand = demand;
+    return PhysBodyRollbackStatus::Success;
+}
+
+PhysBodyRollbackStatus __cdecl
+Phys_TryValidateBodyDestroyLockedNoReport(
+    const PhysWorld worldIndex,
+    dxBody *const body) noexcept
+{
+    PhysBodyDestroyPlan plan{};
+    return Phys_TryBuildBodyDestroyPlanLocked(
+        worldIndex, body, &plan);
+}
+
+PhysBodyRollbackStatus __cdecl
+Phys_TryDestroyBodyLockedNoReport(
+    const PhysWorld worldIndex,
+    dxBody *const body) noexcept
+{
+    PhysBodyDestroyPlan plan{};
+    const PhysBodyRollbackStatus status =
+        Phys_TryBuildBodyDestroyPlanLocked(
+            worldIndex, body, &plan);
+    if (status != PhysBodyRollbackStatus::Success)
+        return status;
+    Phys_CommitBodyDestroyPlanLockedNoReport(body, plan);
+    return PhysBodyRollbackStatus::Success;
+}
+
+namespace
+{
+bool Phys_TryBuildRoundedMassTensorNoReport(
+    const float totalMass,
+    const PhysMass *const physMass,
+    dMass *const outMass,
+    float (*const outInverse)[12],
+    float *const outInverseMass) noexcept
+{
+    if (!outMass || !outInverse || !outInverseMass)
+        return false;
+    *outMass = {};
+    std::memset(*outInverse, 0, sizeof(**outInverse) * 12);
+    *outInverseMass = 0.0f;
+    if (!physMass || !(totalMass > 0.0f) || !std::isfinite(totalMass)
+        || !Phys_RollbackMassTensorIsReconstructible(*physMass))
+    {
+        return false;
+    }
+
+    const double scaledDiagonal[3]{
+        static_cast<double>(totalMass)
+            * (physMass->momentsOfInertia[0] > 0.0f
+                ? physMass->momentsOfInertia[0] : 100.0),
+        static_cast<double>(totalMass)
+            * (physMass->momentsOfInertia[1] > 0.0f
+                ? physMass->momentsOfInertia[1] : 100.0),
+        static_cast<double>(totalMass)
+            * (physMass->momentsOfInertia[2] > 0.0f
+                ? physMass->momentsOfInertia[2] : 100.0),
+    };
+    const double productXY = static_cast<double>(totalMass)
+        * physMass->productsOfInertia[0];
+    const double productXZ = static_cast<double>(totalMass)
+        * physMass->productsOfInertia[1];
+    const double productYZ = static_cast<double>(totalMass)
+        * physMass->productsOfInertia[2];
+    dMass mass{};
+    mass.mass = totalMass;
+    mass.I[0] = static_cast<float>(scaledDiagonal[0]);
+    mass.I[1] = static_cast<float>(productXY);
+    mass.I[2] = static_cast<float>(productXZ);
+    mass.I[4] = static_cast<float>(productXY);
+    mass.I[5] = static_cast<float>(scaledDiagonal[1]);
+    mass.I[6] = static_cast<float>(productYZ);
+    mass.I[8] = static_cast<float>(productXZ);
+    mass.I[9] = static_cast<float>(productYZ);
+    mass.I[10] = static_cast<float>(scaledDiagonal[2]);
+    for (const float value : mass.I)
+    {
+        if (!std::isfinite(value))
+            return false;
+    }
+
+    const double leadingMinor =
+        static_cast<double>(mass.I[0]) * mass.I[5]
+        - static_cast<double>(mass.I[1]) * mass.I[1];
+    const double determinant =
+        static_cast<double>(mass.I[0])
+            * (static_cast<double>(mass.I[5]) * mass.I[10]
+                - static_cast<double>(mass.I[6]) * mass.I[6])
+        - static_cast<double>(mass.I[1])
+            * (static_cast<double>(mass.I[1]) * mass.I[10]
+                - static_cast<double>(mass.I[6]) * mass.I[2])
+        + static_cast<double>(mass.I[2])
+            * (static_cast<double>(mass.I[1]) * mass.I[6]
+                - static_cast<double>(mass.I[5]) * mass.I[2]);
+    if (!(mass.I[0] > 0.0f) || !(leadingMinor > 0.0)
+        || !(determinant > 0.0) || !std::isfinite(leadingMinor)
+        || !std::isfinite(determinant))
+    {
+        return false;
+    }
+
+    // Silent fixed-size clone of ODE's float dInvertPDMatrix path. Keeping the
+    // same Cholesky/solve operation order preserves rollback determinism while
+    // avoiding dAASSERT/dDEBUGMSG on corrupted tensors.
+    float lower[12]{};
+    std::memcpy(lower, mass.I, sizeof(lower));
+    float reciprocal[3]{};
+    for (std::size_t row = 0; row < 3; ++row)
+    {
+        for (std::size_t column = 0; column < row; ++column)
+        {
+            float sum = lower[row * 4 + column];
+            for (std::size_t prior = 0; prior < column; ++prior)
+            {
+                sum -= lower[row * 4 + prior]
+                    * lower[column * 4 + prior];
+            }
+            lower[row * 4 + column] = sum * reciprocal[column];
+        }
+        float sum = lower[row * 4 + row];
+        for (std::size_t prior = 0; prior < row; ++prior)
+            sum -= lower[row * 4 + prior] * lower[row * 4 + prior];
+        if (!(sum > 0.0f) || !std::isfinite(sum))
+            return false;
+        lower[row * 4 + row] = dSqrt(sum);
+        reciprocal[row] = dRecip(lower[row * 4 + row]);
+        if (!std::isfinite(reciprocal[row]))
+            return false;
+    }
+
+    float inverse[12]{};
+    for (std::size_t column = 0; column < 3; ++column)
+    {
+        float solved[3]{};
+        solved[column] = 1.0f;
+        float forward[3]{};
+        for (std::size_t row = 0; row < 3; ++row)
+        {
+            float sum = 0.0f;
+            for (std::size_t prior = 0; prior < row; ++prior)
+                sum += lower[row * 4 + prior] * forward[prior];
+            forward[row] =
+                (solved[row] - sum) / lower[row * 4 + row];
+        }
+        for (std::size_t reverse = 3; reverse != 0; --reverse)
+        {
+            const std::size_t row = reverse - 1;
+            float sum = 0.0f;
+            for (std::size_t next = row + 1; next < 3; ++next)
+                sum += lower[next * 4 + row] * solved[next];
+            solved[row] =
+                (forward[row] - sum) / lower[row * 4 + row];
+        }
+        for (std::size_t row = 0; row < 3; ++row)
+        {
+            if (!std::isfinite(solved[row]))
+                return false;
+            inverse[row * 4 + column] = solved[row];
+        }
+    }
+    const float inverseMass = dRecip(totalMass);
+    if (!std::isfinite(inverseMass))
+        return false;
+
+    *outMass = mass;
+    std::memcpy(*outInverse, inverse, sizeof(inverse));
+    *outInverseMass = inverseMass;
+    return true;
+}
+
+bool Phys_TrySetInertialTensorLockedNoReport(
+    const PhysWorld worldIndex,
+    dxBody *const body,
+    const PhysMass *const physMass) noexcept
+{
+    if (worldIndex < PHYS_WORLD_DYNENT || worldIndex >= PHYS_WORLD_COUNT
+        || !body || !physMass
+        || body->world != physGlob.world[worldIndex]
+        || !physGlob.space[worldIndex]
+        || physGlob.space[worldIndex]->lock_count != 0
+        || !Phys_RollbackMassTensorIsReconstructible(*physMass)
+        || !Phys_RollbackVectorIsBounded(
+            physMass->centerOfMass, 3, PHYS_ROLLBACK_VECTOR_LIMIT)
+        || !(body->mass.mass > 0.0f)
+        || !std::isfinite(body->mass.mass))
+    {
+        return false;
+    }
+
+    PhysBodyDestroyPlan destroyPlan{};
+    if (Phys_TryBuildBodyDestroyPlanLocked(
+            worldIndex, body, &destroyPlan)
+        != PhysBodyRollbackStatus::Success)
+    {
+        return false;
+    }
+    PhysObjUserData *const userData = destroyPlan.userData;
+    if (!userData || userData->body != body
+        || !Phys_RollbackVectorIsBounded(
+            body->info.pos, 3, PHYS_ROLLBACK_VECTOR_LIMIT)
+        || !Phys_RollbackVectorIsBounded(
+            body->info.R, 12, 1.001f)
+        || !Phys_RollbackVectorIsBounded(
+            userData->translation, 3, PHYS_ROLLBACK_VECTOR_LIMIT))
+    {
+        return false;
+    }
+
+    std::array<dxGeomTransform *, ODE_GEOM_POOL_COUNT> transforms{};
+    std::array<std::array<float, 3>, ODE_GEOM_POOL_COUNT>
+        newTransformOffsets{};
+    std::size_t transformCount = 0;
+    std::size_t geomCount = 0;
+    for (dxGeom *geom = body->geom; geom; geom = geom->body_next)
+    {
+        if (geomCount == destroyPlan.outerCount
+            || geom->body != body
+            || geom->parent_space != physGlob.space[worldIndex]
+            || geom->pos != body->info.pos
+            || geom->R != body->info.R
+            || (geom->gflags & GEOM_DIRTY) == 0)
+        {
+            return false;
+        }
+        ++geomCount;
+        if (geom->type == dGeomTransformClass)
+        {
+            auto *const transform =
+                static_cast<dxGeomTransform *>(geom);
+            if (transformCount == transforms.size()
+                || !Phys_RollbackVectorIsBounded(
+                    transform->localPos,
+                    3,
+                    PHYS_ROLLBACK_VECTOR_LIMIT))
+            {
+                return false;
+            }
+            transforms[transformCount++] = transform;
+        }
+    }
+    if (geomCount != destroyPlan.outerCount)
+        return false;
+
+    float rotation[3][3]{};
+    Phys_OdeMatrix3ToAxis(body->info.R, rotation);
+    if (!Phys_RollbackBasisIsValid(rotation))
+        return false;
+
+    const auto transformVector = [&rotation](
+        const float *const vector,
+        float *const out) noexcept
+    {
+        for (std::size_t component = 0; component < 3; ++component)
+        {
+            out[component] = vector[0] * rotation[0][component]
+                + vector[1] * rotation[1][component]
+                + vector[2] * rotation[2][component];
+        }
+    };
+    float rotatedOldTranslation[3]{};
+    float rotatedNewCenter[3]{};
+    transformVector(userData->translation, rotatedOldTranslation);
+    transformVector(physMass->centerOfMass, rotatedNewCenter);
+
+    float newBodyPosition[3]{};
+    float oldRelativeCenter[3]{};
+    for (std::size_t component = 0; component < 3; ++component)
+    {
+        const double objectPosition =
+            static_cast<double>(body->info.pos[component])
+            + rotatedOldTranslation[component];
+        const double nextPosition = objectPosition
+            + rotatedNewCenter[component];
+        if (!std::isfinite(nextPosition)
+            || nextPosition < -PHYS_ROLLBACK_VECTOR_LIMIT
+            || nextPosition > PHYS_ROLLBACK_VECTOR_LIMIT)
+        {
+            return false;
+        }
+        newBodyPosition[component] = static_cast<float>(nextPosition);
+        oldRelativeCenter[component] = -userData->translation[component];
+    }
+    for (std::size_t index = 0; index < transformCount; ++index)
+    {
+        for (std::size_t component = 0; component < 3; ++component)
+        {
+            const double offset =
+                static_cast<double>(transforms[index]->localPos[component])
+                + oldRelativeCenter[component]
+                - physMass->centerOfMass[component];
+            if (!std::isfinite(offset)
+                || offset < -PHYS_ROLLBACK_VECTOR_LIMIT
+                || offset > PHYS_ROLLBACK_VECTOR_LIMIT)
+            {
+                return false;
+            }
+            newTransformOffsets[index][component] =
+                static_cast<float>(offset);
+        }
+    }
+
+    dMass newMass{};
+    dMatrix3 newInverse{};
+    float inverseMass = 0.0f;
+    if (!Phys_TryBuildRoundedMassTensorNoReport(
+            body->mass.mass,
+            physMass,
+            &newMass,
+            &newInverse,
+            &inverseMass))
+    {
+        return false;
+    }
+
+    // All fallible checks are complete. The remaining stores cannot fail and
+    // preserve the dirty-prefix invariant because construction geoms were
+    // required to already be dirty above.
+    for (std::size_t component = 0; component < 3; ++component)
+    {
+        userData->translation[component] =
+            -physMass->centerOfMass[component];
+        body->info.pos[component] = newBodyPosition[component];
+        userData->savedPos[component] = newBodyPosition[component];
+    }
+    for (std::size_t index = 0; index < transformCount; ++index)
+    {
+        for (std::size_t component = 0; component < 3; ++component)
+        {
+            transforms[index]->localPos[component] =
+                newTransformOffsets[index][component];
+        }
+        transforms[index]->finalR[0] = 0.0f;
+    }
+    for (dxGeom *geom = body->geom; geom; geom = geom->body_next)
+        geom->gflags |= GEOM_DIRTY | GEOM_AABB_BAD;
+    physGlob.space[worldIndex]->gflags |= GEOM_DIRTY | GEOM_AABB_BAD;
+    body->mass = newMass;
+    std::memcpy(body->invI, newInverse, sizeof(newInverse));
+    body->invMass = inverseMass;
+    return true;
+}
+} // namespace
+
 static PhysBodyModelCreateStatus Phys_TryBuildCollisionFromXModel(
     const XModel *model,
     PhysWorld worldIndex,
@@ -1456,20 +3575,19 @@ static PhysBodyModelCreateStatus Phys_TryBuildCollisionFromXModel(
             ++geomIndex;
             ++geom;
         }
-        Phys_ObjSetInertialTensor(physId, &geomList->mass);
+        if (reportFailure)
+        {
+            Phys_ObjSetInertialTensor(physId, &geomList->mass);
+        }
+        else if (!Phys_TrySetInertialTensorLockedNoReport(
+                     worldIndex, physId, &geomList->mass))
+        {
+            return PhysBodyModelCreateStatus::InvalidArgument;
+        }
     }
     else
     {
-        XModelGetBounds(model, mins, maxs);
-        if (maxs[0] == mins[0] || maxs[1] == mins[1] || maxs[2] == mins[2])
-        {
-            mins[0] = -50.0;
-            mins[1] = -50.0;
-            mins[2] = -50.0;
-            maxs[0] = 50.0;
-            maxs[1] = 50.0;
-            maxs[2] = 50.0;
-        }
+        Phys_GetCanonicalModelBoxBounds(*model, mins, maxs);
         firstFailure = Phys_TryObjAddGeomBox(
             worldIndex, physId, mins, maxs, reportFailure);
     }
@@ -1481,11 +3599,109 @@ void __cdecl Phys_ObjSetCollisionFromXModel(const XModel *model, PhysWorld world
     (void)Phys_TryBuildCollisionFromXModel(model, worldIndex, physId, false, true);
 }
 
+static PhysBodyModelCreateStatus
+Phys_TryCreateBodyFromStateAndXModelInternal(
+    const PhysWorld worldIndex,
+    const BodyState *const state,
+    const XModel *const model,
+    dxBody **const outBody,
+    const bool reportFailure,
+    const bool requireRollbackValidation) noexcept
+{
+    if (!outBody)
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    *outBody = nullptr;
+    if (worldIndex < PHYS_WORLD_DYNENT || worldIndex >= PHYS_WORLD_COUNT
+        || !state || !model || !physInited
+        || !physGlob.world[worldIndex] || !physGlob.space[worldIndex])
+    {
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    }
+    if (!(state->mass > 0.0f) || !std::isfinite(state->mass))
+        return PhysBodyModelCreateStatus::InvalidArgument;
+    if (requireRollbackValidation)
+    {
+        PhysBodyResourceDemand demand{};
+        if (!Phys_RollbackBodyStateIsValid(*state)
+            || Phys_TryGetBodyModelResourceDemand(model, &demand)
+                != PhysBodyRollbackStatus::Success
+            || !Phys_RollbackStateCenterMatchesModel(*model, *state))
+        {
+            return PhysBodyModelCreateStatus::InvalidArgument;
+        }
+
+        // Establish the complete global ownership baseline before the first
+        // allocation. Under the caller-held PHYSICS lock, successful resource
+        // construction and the no-report rollback callbacks preserve it.
+        PhysGlobalTopologySnapshot topology{};
+        if (Phys_TryValidateGlobalTopologyLockedNoReport(&topology)
+            != PhysBodyRollbackStatus::Success)
+        {
+            return PhysBodyModelCreateStatus::InvalidArgument;
+        }
+        PhysBodyResourceDemand capacity{};
+        if (Phys_TryGetFreeResourceCapacityLockedNoReport(&capacity)
+                != PhysBodyRollbackStatus::Success
+            || capacity.bodyCount < demand.bodyCount
+            || capacity.userDataCount < demand.userDataCount)
+        {
+            return PhysBodyModelCreateStatus::BodyResourcesExhausted;
+        }
+        if (capacity.geomCount < demand.geomCount)
+            return PhysBodyModelCreateStatus::PrimaryGeomAllocationFailed;
+
+        if (model->physGeoms)
+        {
+            dMass checkedMass{};
+            dMatrix3 checkedInverse{};
+            float checkedInverseMass = 0.0f;
+            if (!Phys_TryBuildRoundedMassTensorNoReport(
+                    state->mass,
+                    &model->physGeoms->mass,
+                    &checkedMass,
+                    &checkedInverse,
+                    &checkedInverseMass))
+            {
+                return PhysBodyModelCreateStatus::InvalidArgument;
+            }
+        }
+    }
+
+    dxBody *body = nullptr;
+    const PhysBodyModelCreateStatus bodyStatus =
+        Phys_TryCreateBodyFromStateInternal(
+            worldIndex, state, &body, reportFailure);
+    if (bodyStatus != PhysBodyModelCreateStatus::Success)
+        return bodyStatus;
+
+    const PhysBodyModelCreateStatus collisionStatus =
+        Phys_TryBuildCollisionFromXModel(
+            model, worldIndex, body, true, reportFailure);
+    if (collisionStatus != PhysBodyModelCreateStatus::Success)
+    {
+        if (reportFailure)
+        {
+            auto *const userData =
+                static_cast<PhysObjUserData *>(body->userdata);
+            (void)Phys_ReleaseCreatedBodyResources(body, userData);
+        }
+        else
+        {
+            (void)Phys_TryDestroyBodyLockedNoReport(
+                worldIndex, body);
+        }
+        return collisionStatus;
+    }
+
+    *outBody = body;
+    return PhysBodyModelCreateStatus::Success;
+}
+
 PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromStateAndXModel(
-    PhysWorld worldIndex,
-    const BodyState *state,
-    const XModel *model,
-    dxBody **outBody) noexcept
+    const PhysWorld worldIndex,
+    const BodyState *const state,
+    const XModel *const model,
+    dxBody **const outBody) noexcept
 {
     if (!outBody)
         return PhysBodyModelCreateStatus::InvalidArgument;
@@ -1513,6 +3729,17 @@ PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromStateAndXModel(
 
     *outBody = body;
     return PhysBodyModelCreateStatus::Success;
+}
+
+PhysBodyModelCreateStatus __cdecl
+Phys_TryCreateBodyFromStateAndXModelLockedNoReport(
+    const PhysWorld worldIndex,
+    const BodyState *const state,
+    const XModel *const model,
+    dxBody **const outBody) noexcept
+{
+    return Phys_TryCreateBodyFromStateAndXModelInternal(
+        worldIndex, state, model, outBody, false, true);
 }
 
 PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromPresetAndXModel(

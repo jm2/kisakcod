@@ -127,8 +127,8 @@ endif()
 
 require_slice_matches(
     _resource_pair_scope
-    "ResourcePairCallbacks[ \t\r\n]+resourceCallbacks[ \t\r\n]*\\{[ \t\r\n]*&resourceContext[ \t\r\n]*,[ \t\r\n]*Phys_CreatePrimaryGeomResource[ \t\r\n]*,[ \t\r\n]*Phys_CreateTransformGeomResource[ \t\r\n]*,[ \t\r\n]*Phys_DestroyPrimaryGeomResource[ \t\r\n]*,[ \t\r\n]*\\};"
-    "the transform allocator must wire primary creation, transform creation, and primary rollback in that order")
+    "ResourcePairCallbacks[ \t\r\n]+resourceCallbacks[ \t\r\n]*\\{[ \t\r\n]*&resourceContext[ \t\r\n]*,[ \t\r\n]*Phys_CreatePrimaryGeomResource[ \t\r\n]*,[ \t\r\n]*Phys_CreateTransformGeomResource[ \t\r\n]*,[ \t\r\n]*reportFailure[ \t\r\n]*\\?[ \t\r\n]*Phys_DestroyPrimaryGeomResource[ \t\r\n]*:[ \t\r\n]*Phys_DestroyFreshPrimaryGeomResourceNoReport[ \t\r\n]*,[ \t\r\n]*\\};"
+    "the transform allocator must wire primary creation, transform creation, and diagnostic/no-report rollback in that order")
 
 require_slice_contains(
     _try_geom_scope

@@ -518,6 +518,13 @@ add_test(
 )
 
 add_test(
+    NAME physics-rollback-recipe-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/physics_rollback_recipe_source_test.cmake
+)
+
+add_test(
     NAME effectscore-archive-physics-transaction
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
