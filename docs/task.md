@@ -6,11 +6,12 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Branch: `agent/fx-live-physics-sidecar`; branch point: merged native physics-pool commit
-  `8ce11763`; upstream-integration baseline: `2b759db`.
+- Branch: `agent/fx-archive-full-capacity`; branch point: merged live FX physics integration
+  `da273589`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: the current branch completes the first production integration of the merged FX physics
-  sidecar. Live model spawn, draw, element/spotlight free, reset, initialization, shutdown, and legacy-x86
+- Active work: PR #11 merged the first production integration of the FX physics sidecar as
+  `da273589` after replacement run **29335570405 passed all nine CI jobs**. Live model spawn, draw,
+  element/spotlight free, reset, initialization, shutdown, and legacy-x86
   archive save/restore now transfer generation-checked native-body ownership without storing pointer bits
   in `FxElem::physObjId`. Lifecycle claims close archive/kill admission, hold iterator exclusivity through
   bulk mutation, reject work that crosses a reset/shutdown generation, and discard stale kill-exclusive
@@ -19,11 +20,12 @@ work item changes. Do not create session-specific handoff files.
   where a delayed draw could otherwise resolve a newly reused element's body. Archive replacement validates
   capacity and both body/graph ownership domains, publishes sidecar ownership before the staged graph,
   retains old bodies through validation, and rolls back both domains on failure. It fails safely without
-  publication when the old and replacement body sets cannot coexist; recoverable recipe-based replacement
-  at the global 512-body limit and production fault-injection/runtime fixtures remain the next gate.
+  publication when the old and replacement body sets cannot coexist. The current branch is implementing
+  recoverable recipe-based replacement at the global 512-body limit plus production fault-injection/runtime
+  fixtures, without relaxing the two-domain commit/rollback or sidecar provenance invariants.
   Local validation is **40/40** under GCC, Clang, ASan/UBSan (leak detection disabled under the ptrace
   runner), and TSan; the expanded sidecar fixture also compiles and links under strict x86-32 and AArch64.
-  Windows x86 production translation-unit validation is pending this branch's PR CI. PR #9's native
+  Windows x86 Debug, Release, no-Steam, and headless production builds passed on PR #11. PR #9's native
   physics-pool prerequisite merged at `8ce11763` after run **29300663478 passed all nine jobs**.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
