@@ -6,25 +6,32 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Branch: `agent/physics-resource-cleanup-status`; branch point: merged full-capacity FX archive recovery
-  `a9994b6b`; upstream-integration baseline: `2b759db`.
+- Branch: `agent/fx-restore-control`; branch point: merged status-bearing physics cleanup
+  `48906d26`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: this branch closes the first prerequisite for executable production restore fault injection.
-  The generic body/user-data and primary-geom/transform resource-pair transaction now makes its rollback
-  callback status-bearing, retains explicit primary ownership when rollback refuses, and returns a dedicated
-  cleanup-failure result. Both production acquisition paths translate that result to the existing
-  `PhysBodyModelCreateStatus::CleanupFailed`, so the archive reconstruction caller can fail-stop instead of
-  silently assuming a preflighted fresh-resource cleanup succeeded. Portable fake-pool tests cover injected
-  cleanup refusal, exact ownership/counter preservation, event ordering, and caller retirement of the
-  retained primary. Fresh no-report callbacks reject only before mutation and report success after their
-  exact no-fail release; both archive callers are pinned to fail-stop on retained cleanup ownership.
-  Diagnostic body and geometry rollback now hold recursive PHYSICS exclusion across the complete legacy
-  destructor call. Local validation is **42/42** under GCC, Clang, ASan/UBSan (leak detection disabled under
-  the ptrace runner), and TSan, and the resource-pair fixture compiles and links with strict warnings under
-  x86-32 and AArch64. Production `phys_ode.cpp` compilation remains a Windows x86 CI gate because portable
-  utility targets do not compile that engine translation unit. The next item is a pure restore-control seam
-  with executable nth-operation failure coverage, followed by checked heap transaction scratch, archive-gate
-  waiters, real competing ODE occupancy, and measured x86 stack/runtime bounds.
+- Active work: this branch completes the pure FX archive restore-control seam. The production transaction now
+  delegates its branch tree to an allocation-free, engine-independent controller with explicit
+  desired-published, original-restored, safe-empty, and unsafe outcomes. Its portable fake backend injects
+  recoverable, unsafe, and invalid results at every primary and recovery operation boundary and verifies exact
+  live-graph, snapshot, commit-cleanup, and safe-empty traces. The engine adapter maps all 21 operations to the
+  existing helpers while retaining archive/iterator and PHYSICS exclusion through a proven terminal state;
+  post-transfer cleanup failure reaches one centralized fail-stop before admission or scratch ownership can
+  escape. Source contracts pin the production lock interval, exhaustive mapping, tri-state cleanup propagation,
+  desired-only success, and removal of the obsolete inline branch state. Independent semantic review found no
+  remaining ownership, recovery-boundary, lock-order, ABI, or build-list defect. Local validation is **43/43**
+  under GCC, Clang, ASan/UBSan (leak detection disabled under the ptrace runner), and TSan, plus strict x86-32
+  and AArch64 controller compile/link checks. The next item is checked heap transaction scratch, followed by an
+  executable archive-gate controller with deterministic waiters, portable ODE runtime extraction and real
+  competing occupancy, then measured x86 stack/runtime bounds.
+  PR #13 merged the status-bearing resource cleanup prerequisite as `48906d26` after run
+  **29356956952 passed all nine CI jobs** and Gemini reported no findings. The generic body/user-data and
+  primary-geom/transform transaction retains explicit primary ownership when rollback refuses and returns a
+  dedicated cleanup-failure result. Both production acquisition paths translate it to
+  `PhysBodyModelCreateStatus::CleanupFailed`; both FX reconstruction callers fail-stop, and diagnostic body
+  and geometry rollback holds recursive PHYSICS exclusion across each complete legacy destructor call.
+  Local validation was **42/42** under GCC, Clang, ASan/UBSan, and TSan, with strict x86-32 and AArch64
+  resource-pair compilation. Production `phys_ode.cpp` remains covered by the four Windows x86 engine jobs
+  until a narrow portable ODE runtime translation unit exists.
   PR #11 merged the live generation-checked sidecar baseline as `da273589` after replacement run
   **29335570405 passed all nine CI jobs**; PR #9's native physics-pool prerequisite merged at `8ce11763`
   after run **29300663478 passed all nine jobs**.

@@ -6101,12 +6101,9 @@ require_source_ordered(
     "FX_ValidatePoolAllocationGraphState(system)"
     "memcpy(&systemSnapshot, system, sizeof(systemSnapshot));"
     "save must validate the complete live graph before staging its snapshot")
-require_source_ordered(
+require_source_matches(
     "EffectsCore/fx_archive.cpp"
-    "validCommittedState = restoredExclusiveState
-            && FX_RebuildPoolAllocationStatesNoReport(system)"
-    "&& FX_ValidateArchivePhysicsOwnershipLocked(
-                livePhysicsSidecar,"
+    "case[ \t]+Operation::ValidateDesiredState:[ \t\r\n]*return[ \t]+FX_ArchiveRestoreControlStatus\\([ \t\r\n]*FX_RebuildPoolAllocationStatesNoReport\\(context.system\\)[ \t\r\n]*&&[ \t]*FX_ValidatePoolAllocationGraphState\\(context.system\\)[ \t\r\n]*&&[ \t]*FX_ValidateArchivePhysicsOwnershipLocked\\("
     "restore publication must rebuild and revalidate pool/physics sidecars before reopening admission")
 foreach(_fx_pool_sidecar_use
     "elems;7"
@@ -6376,7 +6373,7 @@ require_source_not_contains(
     "archive graph publication must never reacquire overwritten iterator state")
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
-    "Sys_AtomicStore(&restoredSystem.iteratorCount, -1);"
+    "Sys_AtomicStore(&context.desiredSystem->iteratorCount, -1);"
     "the desired graph image must preserve archive-exclusive iterator state")
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
@@ -6402,14 +6399,48 @@ require_source_contains(
     "EffectsCore/fx_archive.cpp"
     "Sys_Error(\"FX archive restore could not recover a safe runtime state\")"
     "unrecoverable archive restore must fail-stop before releasing ownership")
-require_source_contains(
+require_source_matches(
     "EffectsCore/fx_archive.cpp"
-    "Sys_Error(\"FX archive native-body cleanup failed after ownership transfer\")"
-    "post-transfer native cleanup failure must terminate before safe-empty publication")
+    "if[ \t]*\\(restoreOutcome[ \t\r\n]*==[ \t]*fx::archive::RestoreControlOutcome::UnsafeFailure\\)[ \t\r\n]*\\{[^}]*Sys_Error\\(\"FX archive restore could not recover a safe runtime state\"\\)[ \t]*[;][^}]*std::abort\\(\\)[ \t]*[;][^}]*\\}[ \t\r\n]*Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)[ \t]*[;]"
+    "unsafe controller outcome must abort before PHYSICS exclusion is released")
+require_source_not_contains(
+    "EffectsCore/fx_archive.cpp"
+    "FX_FailArchivePhysicsCleanupLocked"
+    "native cleanup failure must propagate through controller status")
+require_source_not_contains(
+    "EffectsCore/fx_archive.cpp"
+    "FX archive native-body cleanup failed after ownership transfer"
+    "native cleanup failure must use the centralized controller fail-stop")
 require_source_not_contains(
     "EffectsCore/fx_archive.cpp"
     "(void)Phys_TryDestroyBodyLockedNoReport("
     "archive restore must never discard a fallible native cleanup result")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "fx::archive::RunRestoreControl(restoreCallbacks)"
+    "restore must delegate terminal-state sequencing to the portable controller")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "!= fx::archive::RestoreControlOutcome::DesiredPublished"
+    "only desired publication may report restore success")
+foreach(_obsolete_restore_control
+    livePhysicsCaptured
+    retirementPlanned
+    retirementComplete
+    replacementPrepared
+    replacementCreated
+    stagedPhysicsValid
+    replacementPublished
+    restoreSucceeded
+    validCommittedState
+    oldStateRestored
+    safeEmptyPublished
+    safeTerminalState)
+    require_source_not_contains(
+        "EffectsCore/fx_archive.cpp"
+        "${_obsolete_restore_control}"
+        "the obsolete inline restore controller must remain absent")
+endforeach()
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
     "FxSystem systemSnapshot{};"
