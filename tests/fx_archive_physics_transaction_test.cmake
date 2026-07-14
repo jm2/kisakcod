@@ -6,6 +6,10 @@ endif()
 
 set(_archive_source_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp")
+set(_physics_batch_control_header_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive_physics_batch_control.h")
+set(_physics_batch_control_source_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive_physics_batch_control.cpp")
 set(_restore_control_header_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive_restore_control.h")
 set(_restore_control_source_path
@@ -16,23 +20,33 @@ set(_archive_gate_source_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive_gate_control.cpp")
 set(_system_source_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_system.cpp")
+set(_common_files_path
+    "${SOURCE_ROOT}/scripts/common_files.cmake")
 foreach(_required_source IN ITEMS
     "${_archive_source_path}"
+    "${_physics_batch_control_header_path}"
+    "${_physics_batch_control_source_path}"
     "${_restore_control_header_path}"
     "${_restore_control_source_path}"
     "${_archive_gate_header_path}"
     "${_archive_gate_source_path}"
-    "${_system_source_path}")
+    "${_system_source_path}"
+    "${_common_files_path}")
     if(NOT EXISTS "${_required_source}")
         message(FATAL_ERROR "FX source not found: ${_required_source}")
     endif()
 endforeach()
 file(READ "${_archive_source_path}" _archive_source)
+file(READ "${_physics_batch_control_header_path}"
+    _physics_batch_control_header)
+file(READ "${_physics_batch_control_source_path}"
+    _physics_batch_control_source)
 file(READ "${_restore_control_header_path}" _restore_control_header)
 file(READ "${_restore_control_source_path}" _restore_control_source)
 file(READ "${_archive_gate_header_path}" _archive_gate_header)
 file(READ "${_archive_gate_source_path}" _archive_gate_source)
 file(READ "${_system_source_path}" _system_source)
+file(READ "${_common_files_path}" _common_files)
 
 function(require_position source needle out_position description)
     string(FIND "${source}" "${needle}" _position)
@@ -129,10 +143,10 @@ require_occurrence_count(
     "both desired creation and retired-body reconstruction must classify retained cleanup ownership")
 extract_slice(
     "${_archive_source}"
+    "FX_PerformArchivePhysicsReconstructionBatchOperation("
     "FX_ReconstructRetiredArchivePhysicsLocked("
-    "bool FX_ArchiveRetiredTokenTargetsMatch("
     _reconstruct_physics_scope
-    "retired-body reconstruction")
+    "retired-body reconstruction callback")
 extract_slice(
     "${_reconstruct_physics_scope}"
     "if (bodyStatus != PhysBodyModelCreateStatus::Success"
@@ -163,6 +177,27 @@ require_absent(
     "${_reconstruct_physics_scope}"
     "fx::physics::Bind("
     "retired-body reconstruction must not allocate wrapper scratch")
+extract_slice(
+    "${_reconstruct_physics_scope}"
+    "if (!bound)"
+    "entry.reconstructedToken = bound.token;"
+    _reconstruct_bind_failure_scope
+    "retired-body reconstruction bind failure")
+require_ordered(
+    "${_reconstruct_bind_failure_scope}"
+    "bound.status == fx::physics::SidecarStatus::DuplicateBody"
+    "return Status::UnsafeFailure;"
+    "duplicate reconstructed-body ownership must fail unsafe")
+require_ordered(
+    "${_reconstruct_bind_failure_scope}"
+    "return Status::UnsafeFailure;"
+    "Phys_TryDestroyBodyLockedNoReport("
+    "duplicate-body failure must retain ambiguous ownership rather than destroying another registration")
+require_ordered(
+    "${_reconstruct_physics_scope}"
+    "return Status::RecoverableFailure;"
+    "entry.reconstructedToken = bound.token;"
+    "recoverable reconstruction failure must precede current-entry mutation")
 
 extract_slice(
     "${_archive_source}"
@@ -340,10 +375,10 @@ endforeach()
 
 extract_slice(
     "${_archive_source}"
+    "FX_PerformArchivePhysicsRetirementBatchOperation("
     "FX_RetireArchivePhysicsLocked("
-    "FX_ReconstructRetiredArchivePhysicsLocked("
     _retire_helper
-    "bounded retirement helper")
+    "bounded retirement callback")
 require_ordered(
     "${_retire_helper}"
     "Phys_TryValidateBodyDestroyLockedNoReport("
@@ -364,7 +399,174 @@ foreach(_forbidden_destroy IN ITEMS
     require_absent(
         "${_retire_helper}"
         "${_forbidden_destroy}"
-        "bounded retirement must remain checked and non-reporting")
+        "bounded retirement callback must remain checked and non-reporting")
+endforeach()
+
+# Production wrappers retain their recoverable input classification while the
+# engine-free batch controller owns the only retirement/reconstruction pass
+# sequencing. The callbacks are deliberately narrow: PHYSICS remains owned by
+# FX_Restore and no reporting, heap/Z allocation, or lock transition can occur
+# inside an entry operation. Reconstruction intentionally allocates native
+# fixed-pool resources through its checked callback.
+require_occurrence_count(
+    "${_archive_source}"
+    "#include \"fx_archive_physics_batch_control.h\""
+    1
+    "production archive must include the portable physics batch controller")
+foreach(_batch_build_file IN ITEMS
+    "EffectsCore/fx_archive_physics_batch_control.cpp"
+    "EffectsCore/fx_archive_physics_batch_control.h")
+    require_occurrence_count(
+        "${_common_files}"
+        "${_batch_build_file}"
+        1
+        "production EFFECTSCORE sources must include the physics batch controller")
+endforeach()
+
+foreach(_engine_type IN ITEMS
+    "FxArchivePhysicsEntry"
+    "BodySidecar"
+    "dxBody"
+    "Phys_Try")
+    require_absent(
+        "${_physics_batch_control_header}"
+        "${_engine_type}"
+        "portable physics batch API must remain engine-type-free")
+endforeach()
+
+extract_slice(
+    "${_physics_batch_control_source}"
+    "RestoreControlOperationStatus RunArchivePhysicsBatch("
+    "} // namespace"
+    _physics_batch_driver
+    "portable physics batch driver")
+require_occurrence_count(
+    "${_physics_batch_driver}"
+    "callbacks.perform("
+    2
+    "physics batch driver must have one preflight and one commit callback site")
+require_occurrence_count(
+    "${_physics_batch_driver}"
+    "for (std::size_t index = 0; index < selectedCount; ++index)"
+    2
+    "physics batch driver must retain separate preflight and commit passes")
+require_ordered(
+    "${_physics_batch_driver}"
+    "SelectionIsValid(planIndices, selectedCount, entryCount)"
+    "preflightOperation,\n                planIndices[index]));"
+    "the complete selection must validate before the first preflight callback")
+require_ordered(
+    "${_physics_batch_driver}"
+    "preflightOperation,\n                planIndices[index]));"
+    "commitOperation,\n                planIndices[index]));"
+    "every preflight callback site must precede the commit pass")
+require_ordered(
+    "${_physics_batch_driver}"
+    "commitOperation,\n                planIndices[index]));"
+    "++*outCompletedCount;"
+    "the completed prefix may advance only after a successful commit callback")
+
+extract_slice(
+    "${_archive_source}"
+    "FX_RetireArchivePhysicsLocked("
+    "struct FxArchivePhysicsReconstructionBatchContext"
+    _retirement_batch_wrapper
+    "production retirement batch wrapper")
+extract_slice(
+    "${_archive_source}"
+    "FX_ReconstructRetiredArchivePhysicsLocked("
+    "bool FX_ArchiveRetiredTokenTargetsMatch("
+    _reconstruction_batch_wrapper
+    "production reconstruction batch wrapper")
+require_occurrence_count(
+    "${_archive_source}"
+    "fx::archive::RunArchivePhysicsRetirementBatch("
+    1
+    "production retirement must route through the portable batch controller")
+require_occurrence_count(
+    "${_archive_source}"
+    "fx::archive::RunArchivePhysicsReconstructionBatch("
+    1
+    "production reconstruction must route through the portable batch controller")
+require_ordered(
+    "${_retirement_batch_wrapper}"
+    "return Status::RecoverableFailure;"
+    "fx::archive::RunArchivePhysicsRetirementBatch("
+    "retirement wrapper arguments must remain recoverable before delegation")
+require_ordered(
+    "${_retirement_batch_wrapper}"
+    "FX_ArchivePhysicsBatchSelectionIsValidForWrapper("
+    "fx::archive::RunArchivePhysicsRetirementBatch("
+    "retirement must preserve wrapper classification for invalid selections")
+require_ordered(
+    "${_reconstruction_batch_wrapper}"
+    "return Status::RecoverableFailure;"
+    "fx::archive::RunArchivePhysicsReconstructionBatch("
+    "reconstruction wrapper arguments must remain recoverable before delegation")
+require_ordered(
+    "${_reconstruction_batch_wrapper}"
+    "FX_ArchivePhysicsBatchSelectionIsValidForWrapper("
+    "fx::archive::RunArchivePhysicsReconstructionBatch("
+    "reconstruction must preserve wrapper classification for invalid selections")
+require_ordered(
+    "${_reconstruction_batch_wrapper}"
+    "std::size_t reconstructedCount = 0;"
+    "&reconstructedCount);"
+    "reconstruction must provide disjoint exact-prefix output storage")
+
+foreach(_batch_wrapper_scope_name IN ITEMS
+    _retirement_batch_wrapper
+    _reconstruction_batch_wrapper)
+    require_absent(
+        "${${_batch_wrapper_scope_name}}"
+        "for ("
+        "production wrapper must not retain an inline physics batch loop")
+    foreach(_forbidden_wrapper_primitive IN ITEMS
+        "Phys_TryValidateBodyDestroyLockedNoReport("
+        "Phys_TryDestroyBodyLockedNoReport("
+        "Phys_TryCreateBodyFromStateAndXModelLockedNoReport("
+        "fx::physics::TakeWithScratch("
+        "fx::physics::BindWithScratch(")
+        require_absent(
+            "${${_batch_wrapper_scope_name}}"
+            "${_forbidden_wrapper_primitive}"
+            "production wrapper must delegate entry operations to its callback")
+    endforeach()
+endforeach()
+
+foreach(_batch_callback_scope_name IN ITEMS
+    _retire_helper
+    _reconstruct_physics_scope)
+    foreach(_forbidden_callback_operation IN ITEMS
+        "Sys_EnterCriticalSection("
+        "Sys_LeaveCriticalSection("
+        "Com_Error("
+        "Com_Print"
+        "MyAssertHandler("
+        "Sys_Error("
+        "std::abort("
+        "Z_Malloc("
+        "Z_Free(")
+        require_absent(
+            "${${_batch_callback_scope_name}}"
+            "${_forbidden_callback_operation}"
+            "physics batch callbacks must remain non-reporting and caller-locked")
+    endforeach()
+endforeach()
+foreach(_forbidden_batch_driver_operation IN ITEMS
+    "Sys_EnterCriticalSection("
+    "Sys_LeaveCriticalSection("
+    "Com_Error("
+    "Com_Print"
+    "MyAssertHandler("
+    "Sys_Error("
+    "std::abort("
+    "Z_Malloc("
+    "Z_Free(")
+    require_absent(
+        "${_physics_batch_driver}"
+        "${_forbidden_batch_driver_operation}"
+        "portable physics batch sequencing must remain non-reporting and lock-free")
 endforeach()
 
 extract_slice(
