@@ -14,7 +14,9 @@ work item changes. Do not create session-specific handoff files.
   commit `202cce76` passed all nine jobs in run **29293356200**; the PR remains open while the substantiated
   review findings are corrected. The replacement 39-test GCC, Clang, ASan/UBSan, and TSan suites plus
   strict x86-32/AArch64 compile-link checks are locally green; replacement CI and automated review remain.
-  The protected licensed headless smoke continues to wait for its self-hosted runners.
+  The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
+  `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
+  currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
 - Progress estimate: approximately **32% complete by engineering effort** (plausible range 28–37%).
   The foundation/checklist view is about 47–52% and the shared foundation is roughly 84–90% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
@@ -466,7 +468,7 @@ work item changes. Do not create session-specific handoff files.
 
 | Target | Engine status |
 |---|---|
-| Windows x86 | MP and legacy dedicated compile in Debug/Release; dependency-free headless dedicated also links in Release; licensed gameplay smoke still pending. |
+| Windows x86 | MP and legacy dedicated compile in Debug/Release; dependency-free headless dedicated also links in Release; licensed gameplay smoke is deferred because its runner and secret are not provisioned. |
 | Windows amd64 | Utility tests only; engine gated by ABI/asset/dependency work. |
 | Windows ARM64 | Utility tests only; engine gated by ABI, ARM, renderer, and dependency work. |
 | Linux amd64 | Utility tests only; engine configuration intentionally blocked pending POSIX/headless work. |
@@ -487,8 +489,9 @@ work item changes. Do not create session-specific handoff files.
    proven. Fast-file `FxEffectDef` widening remains a separate nested-payload batch.
 4. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
-5. Monitor the protected licensed-content headless startup/map/`getstatus` workflow, and implement the
-   designed handle-relative recursive deletion service without symlink/reparse traversal.
+5. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
+   and `KISAKCOD_GAME_DIR` secret are absent. Implement the designed handle-relative recursive deletion
+   service without symlink/reparse traversal instead; surface the smoke infrastructure blocker if asked.
 6. Extract standard-stream console services, then process/event services and Linux signal-park plus
    macOS Mach crash freezing behind the already isolated terminal API.
 7. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
@@ -498,8 +501,9 @@ work item changes. Do not create session-specific handoff files.
 - Headless source composition now configures, compiles, and links. Runs 29121929895, 29127753640,
   and 29128702142 reduced unresolved symbols from 106 to 45 to zero while keeping all established
   jobs green. The binary is not release-ready until the protected licensed-content startup/map-load
-  smoke succeeds; the local runtime batch fixes its known base-path, redirected-output, GUI-error,
-  and exit-status blockers, but that protected workflow has not yet run. Twenty-one client/media
+  smoke eventually succeeds; the local runtime batch fixes its known base-path, redirected-output,
+  GUI-error, and exit-status blockers. Testing is currently deferred and must not be dispatched because
+  neither its self-hosted runner nor `KISAKCOD_GAME_DIR` secret exists. Twenty-one client/media
   includes remain allowlisted. Headless script-created console channels currently retain the
   default script channel because the client console filter graph is absent; extract a shared channel
   registry if per-channel filtering is required for dedicated administration.

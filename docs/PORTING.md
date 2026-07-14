@@ -62,8 +62,9 @@ Completed foundation work:
 
 Remaining gates, in implementation order:
 
-1. Run the protected licensed headless startup/map/network smoke and repair any
-   runtime-only lifecycle gaps it exposes.
+1. Keep the protected licensed headless startup/map/network smoke deferred and do not dispatch it until
+   its `[self-hosted, kisakcod, windows, x86]` runner and `KISAKCOD_GAME_DIR` secret are provisioned;
+   surface that infrastructure blocker rather than creating a permanently queued run.
 2. Wire the merged native physics sidecar through live spawn/draw/free/reset/archive paths and add
    kill/rewind/archive fixtures. Transactional ODE body/model construction is merged, and the current
    reviewed batch has widened and bounded the generic pool allocator without changing its x86 metadata;
