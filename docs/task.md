@@ -28,12 +28,15 @@ work item changes. Do not create session-specific handoff files.
   optimized/unoptimized GCC decoder frames are 1,184/1,216 bytes, below the portable 4 KiB gate. Two independent audits
   found and verified the spotlight-state, end-of-address-space, and post-mutation failure-contract additions and report no
   remaining implementation or integration blocker.
-- PR #24 is open. Initial run **29422678108** passed Linux amd64/arm64, macOS arm64, and headless Windows x86 while the
-  remaining Windows jobs continued. Portable Windows amd64/arm64 compiled the production decoder successfully but failed
-  the fixture under `/W4 /WX`: class-template argument deduction built a temporary `pair<size_t, int>` before converting
-  it to `pair<size_t, uint8_t>`, producing C4244 inside the standard library. Commit `337cfe9c` replaces that initializer
-  with an explicit fixed-width `U8Mutation` array; focused GCC/Clang compile and execution remain green. A replacement
-  exact-head run is required before merge.
+- PR #24 is open, and replacement run **29423014541 passed all nine jobs** at exact correction head `6671f87b`: Linux
+  amd64/arm64, portable Windows amd64/arm64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86, and
+  headless Windows x86. Initial run **29422678108** had already passed Linux amd64/arm64, macOS arm64, and headless
+  Windows x86, but portable Windows amd64/arm64 stopped on a fixture-only `/W4 /WX` C4244: class-template argument
+  deduction built a temporary `pair<size_t, int>` before converting it to `pair<size_t, uint8_t>`. Commit `337cfe9c`
+  replaces that initializer with an explicit fixed-width `U8Mutation` array. Gemini reported no findings at core
+  implementation head `b373429e`; the later change is confined to that fixture correction and status documentation. The
+  thread-level review query is empty, and two independent local audits found no remaining blocker. This documentation-only
+  final head requires one last nine-job pass before squash merge.
 - PR #22 squash-merged as `56760d80` from final documentation head `b86ab94d`. Final run **29418054504 passed all nine
   jobs**; implementation head `f48b04c1` also passed all nine in run **29417195541**. Gemini provided no review comments,
   and Codex found no major issue at the exact implementation head. The merged leaf layer separates full-width native
