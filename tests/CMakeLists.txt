@@ -510,6 +510,26 @@ add_test(
 set_tests_properties(
     effectscore-archive-restore-candidate-disk32 PROPERTIES TIMEOUT 60)
 
+add_executable(kisakcod-fx-fastfile-disk32-tests
+    fx_fastfile_disk32_tests.cpp
+)
+target_include_directories(
+    kisakcod-fx-fastfile-disk32-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-fx-fastfile-disk32-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-fx-fastfile-disk32-tests PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-fx-fastfile-disk32-tests)
+set_target_properties(kisakcod-fx-fastfile-disk32-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-fastfile-disk32-schema
+    COMMAND kisakcod-fx-fastfile-disk32-tests
+)
+set_tests_properties(
+    effectscore-fastfile-disk32-schema PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-db-relocation-tests
     db_relocation_tests.cpp
     ${SRC_DIR}/database/db_relocation.cpp
