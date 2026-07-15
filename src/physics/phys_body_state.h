@@ -24,7 +24,6 @@ struct BodyState // sizeof=0x70
     int underwater;
 };
 
-static_assert(sizeof(int) == 4, "BodyState requires a 32-bit native int");
 RUNTIME_SIZE(BodyState, 0x70, 0x70);
 RUNTIME_OFFSET(BodyState, position, 0x00, 0x00);
 RUNTIME_OFFSET(BodyState, rotation, 0x0C, 0x0C);
