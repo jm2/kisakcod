@@ -17,9 +17,10 @@ work item changes. Do not create session-specific handoff files.
   trips through the legacy MemoryFile codec, including the 1,024-entry limit. Portable compiler reports cap every extracted
   save/restore helper frame at 4 KiB, and a constrained-stack runtime fixture exercises maximum capacity. Source-scoped
   MSVC analysis now measures production `fx_archive.cpp` with distinct 4 KiB save, 8 KiB restore, and 16 KiB absolute
-  ceilings. The first Windows x86 PR run measured `FX_Save` at 2,752 bytes and `FX_Restore` at 6,124 bytes, then exposed
-  one 10,256-byte physics-validation convenience wrapper. The local follow-up removes that wrapper, passes a preallocated
-  heap-owned scratch image through save capture, and corrects MSVC ruleset argument binding; replacement CI is pending.
+  ceilings. The first Windows x86 PR run exposed a 10,256-byte physics-validation convenience wrapper; the follow-up
+  removes it, passes checked heap-owned scratch through save capture, and corrects MSVC ruleset argument binding.
+  Authoritative Debug and Release reports now measure `FX_Save` at 2,756 bytes, `FX_Restore` at 6,124 bytes, and the
+  largest other helper at 2,064 bytes, within their respective 4 KiB, 8 KiB, and 4 KiB limits.
 - Current-branch validation: GCC and Clang full suites are **53/53** green. ASan+UBSan (leak detection disabled under the
   command runner) and TSan are **52/52** green; their compiler-generated static-frame test is intentionally omitted because
   sanitizer instrumentation creates dynamic frames, while their maximum-capacity runtime still runs on a bounded 1 MiB
@@ -36,7 +37,10 @@ work item changes. Do not create session-specific handoff files.
   `/WX` helper gate, uses MSVC's following-value form for the XML log, and replaces the large wrapper with caller-owned
   checked heap scratch allocated before archive exclusion and destroyed on every save exit. Gemini's two review findings
   are also addressed: an impossible effect-table snapshot destruction failure now fail-stops before storage release, and
-  the PowerShell report sort quotes its `Function` property. Replacement nine-job CI remains the authoritative gate.
+  the PowerShell report sort quotes its `Function` property. Replacement run **29392268431 passed all nine jobs** at
+  `46922c78`; both production configurations emitted and passed the complete XML gate. Review-fix head `2b6bf32e` is
+  running follow-up matrix **29392548515**; this evidence-only documentation follow-up will receive the final exact-head
+  matrix.
 - PR #19 squash-merged as `885ec28a` after run **29387860025 passed all nine CI jobs**. Gemini reported no findings,
   Codex found no major issue at reviewed head `cd0f1363a4`, and there were no inline review threads. The legacy
   `FX_RestoreEffectDefTable` stack image is now a bounded lifecycle-owned
@@ -106,7 +110,7 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: complete replacement CI and automated review for this bounded save snapshot. Then make the remaining
+- Next: complete final-head CI and Codex re-review for this bounded save snapshot. Then make the remaining
   camera/scalar/visibility archive publication stable and begin fixed Disk32 FX archive mirrors, codecs, native handle
   remapping, and reader-first converters.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
@@ -252,8 +256,8 @@ work item changes. Do not create session-specific handoff files.
   exact fixed-pool competition plus intrinsically silent live creation/impact/rollback transactions. Remaining
   FX-specific work is now real 64-bit Disk32 archive/fast-file conversion plus stable camera/scalar snapshot publication;
   the bounded save-side definition snapshot and portable stack/runtime gates are implemented on the current branch, with
-  initial production MSVC measurements inside budget after removal of the discovered 10,256-byte convenience wrapper;
-  replacement PR CI must confirm the corrected report wiring and new frame.
+  authoritative production MSVC Debug/Release measurements at 2,756-byte save, 6,124-byte restore, and 2,064-byte
+  maximum other frames after removal of the discovered 10,256-byte convenience wrapper.
   Audit of that transaction exposed prerequisite ODE exhaustion defects: `dBodyCreate` and user-data allocation
   dereference null, while primary/transform geometry failures can publish incomplete collision bodies.
   PR #7 checks body exhaustion before world publication, pairs the dormant heap
@@ -638,8 +642,8 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Finish automated review and replacement nine-job CI for the bounded effect-definition save snapshot, confirming the
-   corrected source-scoped Windows x86 report and removal of the 10,256-byte validation wrapper.
+1. Finish final-head automated review and nine-job CI for the bounded effect-definition save snapshot; corrected
+   source-scoped Windows x86 calibration has already passed all nine jobs with the 10,256-byte wrapper absent.
 2. Stabilize the camera/scalar/visibility archive snapshot, then add packed FX savegame Disk32 schemas, native handle
    remapping, opaque effect-definition keys,
    and byte-level malformed/round-trip fixtures; retain the legacy x86 writer until equivalence is
@@ -707,8 +711,8 @@ work item changes. Do not create session-specific handoff files.
   integration. The current branch completes competing non-FX occupancy and the silent production ODE mutation boundary.
   The effect-table restore lease closes the parsing/registration stack boundary, and the current save snapshot closes
   database-owned enumeration plus extracted-helper stack enforcement. Remaining blockers are stable camera/scalar
-  publication, replacement confirmation of the corrected production MSVC stack report, and real Disk32 FX
-  archive/fast-file conversion.
+  publication and real Disk32 FX archive/fast-file conversion; the corrected production MSVC stack report is calibrated
+  and enforced in Debug and Release.
   `R_FilterXModelIntoScene` still retains an
   FX element's cached-lighting handle pointer beyond the per-effect draw lock; current renderer scheduling
   consumes it before the next FX mutation, but a generation-aware scene-owned cache is required before that
