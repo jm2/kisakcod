@@ -524,22 +524,15 @@ bool FX_NormalizeArchiveEffectRing(FxSystem *const system) noexcept
 bool FX_ReadArchiveDataNoDrop(
     MemoryFile *const memFile,
     const int byteCount,
-    void *const data)
+    void *const data) noexcept
 {
-    if (!memFile || byteCount < 0 || (byteCount != 0 && !data)
-        || memFile->memoryOverflow)
-    {
+    if (!memFile || memFile->memoryOverflow)
         return false;
-    }
-
-    const bool errorOnOverflow = memFile->errorOnOverflow;
-    memFile->errorOnOverflow = false;
-    MemFile_ReadData(
-        memFile,
-        byteCount,
-        static_cast<std::uint8_t *>(data));
-    memFile->errorOnOverflow = errorOnOverflow;
-    return !memFile->memoryOverflow;
+    return MemFile_TryReadDataNoReport(
+               memFile,
+               byteCount,
+               static_cast<std::uint8_t *>(data))
+        == MemFileReadStatus::Success;
 }
 
 bool FX_WriteArchiveDataNoDrop(

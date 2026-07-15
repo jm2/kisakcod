@@ -9,16 +9,21 @@ work item changes. Do not create session-specific handoff files.
 - Active branch: `agent/memfile-silent-read`; branch point: merged ODE occupancy checkpoint
   `288c2b78`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: establish the archive effect-definition table's genuinely no-longjmp input boundary. The first
-  independently committable slice adds status-bearing `MemoryFile` data and bounded-C-string readers that directly
-  validate the legacy RLE/zlib decoder, preserve exact raw/compressed behavior, enforce the active segment rather than
-  reading into its successor, and never assert, print, or drop. Executable parity, malformed-input, truncation, and
-  no-report tests will cover both codecs before `FX_ReadArchiveDataNoDrop` moves to the new primitive. The follow-on
-  moves `FX_RestoreEffectDefTable` behind a bounded lifecycle-owned BSS lease: it currently leaves its 32-bit key
-  temporary uninitialized when a read truncates, registers definitions while parsing is still fallible, and places the
-  1,024-entry resolved table (8,196 bytes on x86; 16,392 on native64) on the stack. That transaction will parse exact
-  little-endian names/keys before registration, publish only complete entries, release scratch before `FX_BeginArchive`
-  or PHYSICS admission, and let error abandonment reclaim the lease without diagnostics under ownership.
+- Active work: move `FX_RestoreEffectDefTable` behind a bounded lifecycle-owned BSS lease. Its prerequisite no-longjmp
+  input boundary is complete on this branch: status-bearing `MemoryFile` data and caller-bounded C-string readers decode
+  the production legacy RLE/zlib stream without assertions, prints, or drops; validate exact segment lengths and
+  little-endian headers; reject cross-segment, malformed, and truncated input; preserve legacy partial-output and
+  sticky-overflow behavior; and reset the process-global codec on failure. `FX_ReadArchiveDataNoDrop` now uses that primitive
+  directly instead of temporarily suppressing reports around the legacy reader. TLS records the exact stream owner, and
+  both global `Com_Error` longjmp paths abandon same-thread inflate/deflate state outside the client-only cleanup guard;
+  foreign threads cannot release it, mismatch cleanup cannot corrupt a newer owner's RLE caches, and raw/compressed read,
+  compressed-write, idempotence, immediate-reuse, and foreign-thread behavior are executable contracts. The complete
+  **48/48** suite passes under GCC, Clang, ASan+UBSan, and TSan; strict x86-32 and AArch64 compile/link pass; and two
+  independent final audits approve the slice. Checked whole-segment compressed finalization remains a later integrity
+  API because SND intentionally skips/copies segments and FX performs multiple mid-segment reads. The next transaction
+  must parse all exact little-endian names/keys before registration, eliminate the uninitialized truncated-key path,
+  publish only complete entries, replace the 1,024-entry stack table (8,196 bytes on x86; 16,392 on native64), release
+  scratch before `FX_BeginArchive` or PHYSICS admission, and let error abandonment reclaim the lease without diagnostics.
 - ODE occupancy runtime on this branch is otherwise complete. The engine-free physics batch controller rejects invalid,
   duplicate, overlapping-output, and unknown-status inputs before callbacks; preflights every selected retirement or
   reconstruction before mutation; and reports the exact successful commit prefix. Production FX archive retirement and
@@ -61,7 +66,7 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: complete the effect-definition-table no-longjmp boundary, then add measured stack/runtime gates.
+- Next: implement the transactional effect-definition-table BSS lease, then add measured stack/runtime gates.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,

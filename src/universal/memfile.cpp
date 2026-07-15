@@ -5,6 +5,11 @@
 #include <qcommon/threads.h>
 #include <zlib/zlib.h>
 
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+
 static int g_cacheSize;
 static int g_nonZeroCount;
 static int g_zeroCount;
@@ -13,6 +18,7 @@ static int g_cacheBufferLen;
 static bool g_compress;
 
 #define CODE_LEN_MASK 63
+#define SAVE_SEGMENT_COUNT 8
 
 static byte g_cacheBuffer[CODE_LEN_MASK + 2];
 static byte g_saveBuffer[8192];
@@ -21,6 +27,14 @@ static int streamModeThread;
 static MemFileMode streamMode;
 
 static z_stream_s stream;
+
+// The legacy codec is process-global.  Keep its owner and the selected read
+// segment out of MemoryFile so the disk/runtime structure remains ABI-neutral.
+static MemoryFile* g_streamOwner;
+static thread_local MemoryFile* g_currentThreadStreamOwner;
+static int g_activeSegmentIndex = -1;
+static size_t g_activeSegmentDataStart;
+static size_t g_activeSegmentEnd;
 
 static const char* MemFileModeNames[] = // idb
 {
@@ -41,6 +55,8 @@ static const char* MemFileThreadNames[] = // idb
     "sndStreamPacketCallback"
 };
 
+static int GetThreadID();
+
 /*
 
 ===== MEMFILE DATA FORMAT =====
@@ -54,11 +70,202 @@ The header byte is encoded as follows:
 MAYBE_NZ_COUNT: 2
 AUX: 6
 
-if MAYBE_NZ_COUNT is zero, then the data is a run of zero bytes with length (AUX + 1). otherwise, the data is a 'raw' set of of nonzero bytes with length (AUX + 1).
+if MAYBE_NZ_COUNT is zero, the header is followed by a raw run of
+(AUX + 1) bytes. Otherwise it describes MAYBE_NZ_COUNT raw bytes followed by
+(AUX + 1) zero bytes.
 
 This continues until there is no data left in the file.
 
 */
+
+namespace
+{
+
+uint32_t MemFile_ReadLittleEndianU32(const uint8_t* input) noexcept
+{
+    return static_cast<uint32_t>(input[0])
+        | (static_cast<uint32_t>(input[1]) << 8)
+        | (static_cast<uint32_t>(input[2]) << 16)
+        | (static_cast<uint32_t>(input[3]) << 24);
+}
+
+void MemFile_WriteLittleEndianU32(
+    uint8_t* const output,
+    const uint32_t value) noexcept
+{
+    output[0] = static_cast<uint8_t>(value);
+    output[1] = static_cast<uint8_t>(value >> 8);
+    output[2] = static_cast<uint8_t>(value >> 16);
+    output[3] = static_cast<uint8_t>(value >> 24);
+}
+
+bool MemFile_TryLocateSegmentNoReport(
+    const MemoryFile* memFile,
+    uint32_t index,
+    size_t* segmentStart,
+    size_t* segmentEnd) noexcept
+{
+    if (!memFile || !segmentStart || !segmentEnd || !memFile->buffer
+        || memFile->bufferSize < 0 || index >= SAVE_SEGMENT_COUNT)
+    {
+        return false;
+    }
+
+    const size_t bufferSize = static_cast<size_t>(memFile->bufferSize);
+    size_t offset = 0;
+    for (uint32_t current = 0; current <= index; ++current)
+    {
+        if (offset > bufferSize || bufferSize - offset < sizeof(uint32_t))
+            return false;
+
+        const uint32_t encodedLength = MemFile_ReadLittleEndianU32(memFile->buffer + offset);
+        const size_t length = static_cast<size_t>(encodedLength);
+        if (length < sizeof(uint32_t) || length > bufferSize - offset)
+            return false;
+
+        if (current == index)
+        {
+            *segmentStart = offset;
+            *segmentEnd = offset + length;
+            return true;
+        }
+        offset += length;
+    }
+
+    return false;
+}
+
+void MemFile_ClearStreamSidecar() noexcept
+{
+    g_streamOwner = nullptr;
+    g_currentThreadStreamOwner = nullptr;
+    g_activeSegmentIndex = -1;
+    g_activeSegmentDataStart = 0;
+    g_activeSegmentEnd = 0;
+}
+
+void MemFile_ResetOwnedStreamNoReport(MemoryFile* memFile) noexcept
+{
+    if (g_streamOwner != memFile)
+    {
+        if (g_currentThreadStreamOwner == memFile)
+            g_currentThreadStreamOwner = nullptr;
+        return;
+    }
+
+    if (g_compress && stream.state)
+    {
+        if (streamMode == MEM_FILE_MODE_INFLATE)
+            (void)inflateEnd(&stream);
+        else if (streamMode == MEM_FILE_MODE_DEFLATE)
+            (void)deflateEnd(&stream);
+    }
+
+    std::memset(&stream, 0, sizeof(stream));
+    streamMode = MEM_FILE_MODE_DEFAULT;
+    streamModeThread = 0;
+    g_compress = false;
+    MemFile_ClearStreamSidecar();
+    g_nonZeroCount = 0;
+    g_zeroCount = 0;
+    g_cacheSize = 0;
+    g_cacheBufferLen = 0;
+}
+
+bool MemFile_HasValidReadObject(const MemoryFile* memFile) noexcept
+{
+    return memFile && memFile->archiveProc == MemFile_ReadData && memFile->buffer
+        && memFile->bufferSize >= 0 && memFile->bytesUsed >= 0
+        && memFile->bytesUsed <= memFile->bufferSize;
+}
+
+bool MemFile_HasValidReadDecoder(const MemoryFile* memFile) noexcept
+{
+    if (!MemFile_HasValidReadObject(memFile) || memFile->segmentIndex < 0
+        || memFile->segmentIndex >= SAVE_SEGMENT_COUNT || g_streamOwner != memFile
+        || g_activeSegmentIndex != memFile->segmentIndex
+        || streamMode != MEM_FILE_MODE_INFLATE || streamModeThread != GetThreadID()
+        || g_currentThreadStreamOwner != memFile
+        || g_compress != memFile->compress || g_nonZeroCount < 0 || g_nonZeroCount > 64
+        || g_zeroCount < 0 || g_zeroCount > 64
+        || (g_zeroCount > 0 && g_nonZeroCount > 3))
+    {
+        return false;
+    }
+
+    const size_t bufferSize = static_cast<size_t>(memFile->bufferSize);
+    const size_t bytesUsed = static_cast<size_t>(memFile->bytesUsed);
+    if (g_activeSegmentDataStart < sizeof(uint32_t)
+        || g_activeSegmentDataStart > g_activeSegmentEnd
+        || g_activeSegmentEnd > bufferSize || bytesUsed < g_activeSegmentDataStart
+        || bytesUsed > g_activeSegmentEnd)
+    {
+        return false;
+    }
+
+    if (!memFile->compress)
+        return true;
+
+    if (!stream.state || stream.next_in != memFile->buffer + bytesUsed)
+        return false;
+
+    const size_t remaining = g_activeSegmentEnd - bytesUsed;
+    return remaining <= (std::numeric_limits<uInt>::max)()
+        && stream.avail_in == static_cast<uInt>(remaining);
+}
+
+MemFileReadStatus MemFile_ReadEncodedByteNoReport(
+    MemoryFile* memFile,
+    uint8_t* output) noexcept
+{
+    *output = 0;
+    if (!memFile->compress)
+    {
+        const size_t bytesUsed = static_cast<size_t>(memFile->bytesUsed);
+        if (bytesUsed < g_activeSegmentEnd)
+        {
+            *output = memFile->buffer[bytesUsed];
+            ++memFile->bytesUsed;
+            return MemFileReadStatus::Success;
+        }
+    }
+    else
+    {
+        stream.next_out = output;
+        stream.avail_out = 1;
+
+        const int err = inflate(&stream, Z_SYNC_FLUSH);
+        const uintptr_t bufferAddress = reinterpret_cast<uintptr_t>(memFile->buffer);
+        const uintptr_t nextAddress = reinterpret_cast<uintptr_t>(stream.next_in);
+        const size_t bufferSize = static_cast<size_t>(memFile->bufferSize);
+        bool positionIsValid = bufferAddress <= (std::numeric_limits<uintptr_t>::max)() - bufferSize;
+        if (positionIsValid)
+        {
+            const uintptr_t bufferEndAddress = bufferAddress + bufferSize;
+            positionIsValid = nextAddress >= bufferAddress && nextAddress <= bufferEndAddress;
+        }
+
+        if (positionIsValid)
+        {
+            const size_t nextOffset = static_cast<size_t>(nextAddress - bufferAddress);
+            positionIsValid = nextOffset >= g_activeSegmentDataStart
+                && nextOffset <= g_activeSegmentEnd
+                && stream.avail_in <= g_activeSegmentEnd - nextOffset
+                && nextOffset + stream.avail_in == g_activeSegmentEnd;
+            if (positionIsValid)
+                memFile->bytesUsed = static_cast<int>(nextOffset);
+        }
+
+        if (positionIsValid && (err == Z_OK || err == Z_STREAM_END) && stream.avail_out == 0)
+            return MemFileReadStatus::Success;
+    }
+
+    memFile->memoryOverflow = true;
+    MemFile_ResetOwnedStreamNoReport(memFile);
+    return MemFileReadStatus::Overflow;
+}
+
+} // namespace
 
 static void AssertStreamMode(MemFileMode mode)
 {
@@ -109,6 +316,9 @@ void MemFile_CommonInit(MemoryFile* memFile, int size, byte* buffer, bool errorO
     iassert(buffer);
     vassert(size > 0, "(size = %d)", size);
 
+    if (g_streamOwner == memFile)
+        MemFile_ResetOwnedStreamNoReport(memFile);
+
     memFile->buffer = buffer;
     memFile->bufferSize = size;
     memFile->bytesUsed = 0;
@@ -154,8 +364,6 @@ double MemFile_ReadFloat(MemoryFile* memFile)
     return value;
 }
 
-#define SAVE_SEGMENT_COUNT 8
-
 // KISAKTODO cleaning this up is going to be such a headache
 
 void MemFile_StartSegment(MemoryFile* memFile, int index)
@@ -177,6 +385,17 @@ void MemFile_StartSegment(MemoryFile* memFile, int index)
             return;
     }
 
+    if (index >= 0 && (streamMode != MEM_FILE_MODE_DEFAULT || g_streamOwner))
+    {
+        MyAssertHandler(
+            ".\\universal\\memfile.cpp",
+            185,
+            0,
+            "%s",
+            "no other memfile owns the global stream");
+        return;
+    }
+
     // start new segment, for real this time.
     memFile->segmentIndex = index;
     if (index >= 0)
@@ -193,6 +412,12 @@ void MemFile_StartSegment(MemoryFile* memFile, int index)
                 &memFile->buffer[memFile->bytesUsed],
                 memFile->bufferSize - memFile->bytesUsed,
                 memFile->compress);
+
+            g_streamOwner = memFile;
+            g_currentThreadStreamOwner = memFile;
+            g_activeSegmentIndex = index;
+            g_activeSegmentDataStart = 0;
+            g_activeSegmentEnd = 0;
 
             g_cacheSize = 1;
             g_nonZeroCount = 0;
@@ -227,7 +452,7 @@ void __cdecl MemFile_deflateInit(uint8_t* next_out, uint32_t avail_out, bool com
         memset((uint8_t*)&stream, 0, sizeof(stream));
         stream.next_out = next_out;
         stream.avail_out = avail_out;
-        if (deflateInit_(&stream, 1, "1.1.4", 52))
+        if (deflateInit_(&stream, 1, ZLIB_VERSION, static_cast<int>(sizeof(stream))))
             MyAssertHandler(".\\universal\\memfile.cpp", 224, 0, "%s", "err == Z_OK");
     }
     SetStreamMode(MEM_FILE_MODE_DEFLATE);
@@ -286,7 +511,10 @@ void __cdecl MemFile_EndSegment(MemoryFile* memFile)
             if (MemFile_deflateEnd(memFile->compress))
                 MyAssertHandler(".\\universal\\memfile.cpp", 362, 0, "%s", "err == Z_OK");
             memFile->segmentIndex = -1;
-            *(uint32_t*)&memFile->buffer[memFile->segmentStart] = memFile->bytesUsed - memFile->segmentStart;
+            MemFile_WriteLittleEndianU32(
+                &memFile->buffer[memFile->segmentStart],
+                static_cast<uint32_t>(
+                    memFile->bytesUsed - memFile->segmentStart));
         }
         else
         {
@@ -317,15 +545,20 @@ uint32_t __cdecl MemFile_deflateEnd(bool compress)
     else
         err = 0;
     SetStreamMode(MEM_FILE_MODE_DEFAULT);
+    g_compress = false;
+    MemFile_ClearStreamSidecar();
     return err;
 }
 
 void __cdecl MemFile_MoveToSegment(MemoryFile* memFile, int index)
 {
-    uint8_t* data; // [esp+4h] [ebp-8h]
-    uint32_t len; // [esp+8h] [ebp-4h]
-
+    if (!memFile)
+    {
+        MyAssertHandler(".\\universal\\memfile.cpp", 445, 0, "%s", "memFile");
+        return;
+    }
     if (index < -1 || index >= 8)
+    {
         MyAssertHandler(
             ".\\universal\\memfile.cpp",
             446,
@@ -333,17 +566,74 @@ void __cdecl MemFile_MoveToSegment(MemoryFile* memFile, int index)
             "%s\n\t(index) = %i",
             "((index >= -1) && (index < SAVE_SEGMENT_COUNT))",
             index);
+        return;
+    }
     if (!memFile->memoryOverflow)
     {
-        if (memFile->segmentIndex >= 0 && MemFile_inflateEnd(memFile->compress))
-            MyAssertHandler(".\\universal\\memfile.cpp", 454, 0, "%s", "err == Z_OK");
+        if (memFile->segmentIndex >= 0)
+        {
+            if (g_streamOwner != memFile || streamMode != MEM_FILE_MODE_INFLATE
+                || g_compress != memFile->compress)
+            {
+                MyAssertHandler(
+                    ".\\universal\\memfile.cpp",
+                    454,
+                    0,
+                    "%s",
+                    "memFile owns the active inflate stream");
+                return;
+            }
+            if (MemFile_inflateEnd(memFile->compress))
+                MyAssertHandler(".\\universal\\memfile.cpp", 454, 0, "%s", "err == Z_OK");
+        }
         memFile->segmentIndex = index;
         if (index >= 0)
         {
-            data = MemFile_GetSegmentAddess(memFile, index);
-            len = *(uint32_t*)data - 4;
-            memFile->bytesUsed = data - memFile->buffer + 4;
-            MemFile_inflateInit(&memFile->buffer[memFile->bytesUsed], len, memFile->compress);
+            if (streamMode != MEM_FILE_MODE_DEFAULT || g_streamOwner)
+            {
+                MyAssertHandler(
+                    ".\\universal\\memfile.cpp",
+                    459,
+                    0,
+                    "%s",
+                    "no other memfile owns the global stream");
+                memFile->segmentIndex = -1;
+                return;
+            }
+
+            size_t segmentStart = 0;
+            size_t segmentEnd = 0;
+            if (!MemFile_TryLocateSegmentNoReport(
+                    memFile,
+                    static_cast<uint32_t>(index),
+                    &segmentStart,
+                    &segmentEnd))
+            {
+                MyAssertHandler(
+                    ".\\universal\\memfile.cpp",
+                    464,
+                    0,
+                    "%s",
+                    "segment header and length are within the memfile buffer");
+                memFile->segmentIndex = -1;
+                memFile->memoryOverflow = true;
+                g_nonZeroCount = 0;
+                g_zeroCount = 0;
+                return;
+            }
+
+            const size_t dataStart = segmentStart + sizeof(uint32_t);
+            const size_t dataLength = segmentEnd - dataStart;
+            memFile->bytesUsed = static_cast<int>(dataStart);
+            MemFile_inflateInit(
+                &memFile->buffer[dataStart],
+                static_cast<uint32_t>(dataLength),
+                memFile->compress);
+            g_streamOwner = memFile;
+            g_currentThreadStreamOwner = memFile;
+            g_activeSegmentIndex = index;
+            g_activeSegmentDataStart = dataStart;
+            g_activeSegmentEnd = segmentEnd;
             g_nonZeroCount = 0;
             g_zeroCount = 0;
         }
@@ -358,7 +648,7 @@ void __cdecl MemFile_inflateInit(uint8_t* next_in, uint32_t len, bool compress)
         memset((uint8_t*)&stream, 0, sizeof(stream));
         stream.next_in = next_in;
         stream.avail_in = len;
-        if (inflateInit_(&stream, "1.1.4", 52))
+        if (inflateInit_(&stream, ZLIB_VERSION, static_cast<int>(sizeof(stream))))
             MyAssertHandler(".\\universal\\memfile.cpp", 387, 0, "%s", "err == Z_OK");
     }
     SetStreamMode(MEM_FILE_MODE_INFLATE);
@@ -375,14 +665,15 @@ int __cdecl MemFile_inflateEnd(bool compress)
     else
         err = 0;
     SetStreamMode(MEM_FILE_MODE_DEFAULT);
+    g_compress = false;
+    MemFile_ClearStreamSidecar();
     return err;
 }
 
 uint8_t* __cdecl MemFile_GetSegmentAddess(MemoryFile* memFile, uint32_t index)
 {
-    int segmentStart; // [esp+0h] [ebp-4h]
-
     if (index >= 8)
+    {
         MyAssertHandler(
             ".\\universal\\memfile.cpp",
             418,
@@ -390,28 +681,31 @@ uint8_t* __cdecl MemFile_GetSegmentAddess(MemoryFile* memFile, uint32_t index)
             "%s\n\t(index) = %i",
             "((index >= 0) && (index < SAVE_SEGMENT_COUNT))",
             index);
-    if (memFile->memoryOverflow)
-        MyAssertHandler(".\\universal\\memfile.cpp", 419, 0, "%s", "!memFile->memoryOverflow");
-    segmentStart = 0;
-    while (index)
-    {
-        if (segmentStart + 4 > memFile->bufferSize)
-            MyAssertHandler(
-                ".\\universal\\memfile.cpp",
-                424,
-                0,
-                "%s",
-                "segmentStart + static_cast< int >( sizeof( int ) ) <= memFile->bufferSize");
-        segmentStart += *(uint32_t*)&memFile->buffer[segmentStart];
-        --index;
+        return nullptr;
     }
-    if (segmentStart + 4 > memFile->bufferSize)
+    if (!memFile)
+    {
+        MyAssertHandler(".\\universal\\memfile.cpp", 419, 0, "%s", "memFile");
+        return nullptr;
+    }
+    if (memFile->memoryOverflow)
+    {
+        MyAssertHandler(".\\universal\\memfile.cpp", 419, 0, "%s", "!memFile->memoryOverflow");
+        return nullptr;
+    }
+
+    size_t segmentStart = 0;
+    size_t segmentEnd = 0;
+    if (!MemFile_TryLocateSegmentNoReport(memFile, index, &segmentStart, &segmentEnd))
+    {
         MyAssertHandler(
             ".\\universal\\memfile.cpp",
             429,
             0,
             "%s",
-            "segmentStart + static_cast< int >( sizeof( int ) ) <= memFile->bufferSize");
+            "segment header and length are within the memfile buffer");
+        return nullptr;
+    }
     return &memFile->buffer[segmentStart];
 }
 
@@ -897,6 +1191,125 @@ void __cdecl MemFile_ReadData(MemoryFile* memFile, int byteCount, uint8_t* p)
     }
 }
 
+MemFileReadStatus MemFile_TryReadDataNoReport(
+    MemoryFile* memFile,
+    int byteCount,
+    uint8_t* output) noexcept
+{
+    if (!memFile || byteCount < 0 || (byteCount > 0 && !output))
+        return MemFileReadStatus::InvalidArgument;
+    if (!MemFile_HasValidReadObject(memFile))
+        return MemFileReadStatus::InvalidState;
+    if (byteCount == 0)
+        return MemFileReadStatus::Success;
+    if (memFile->memoryOverflow)
+        return MemFileReadStatus::Overflow;
+    if (!MemFile_HasValidReadDecoder(memFile))
+        return MemFileReadStatus::InvalidState;
+
+    int remaining = byteCount;
+    uint8_t* destination = output;
+    while (true)
+    {
+        while (g_nonZeroCount)
+        {
+            --g_nonZeroCount;
+            --remaining;
+
+            uint8_t value = 0;
+            const MemFileReadStatus status = MemFile_ReadEncodedByteNoReport(memFile, &value);
+            *destination++ = value;
+            if (status != MemFileReadStatus::Success)
+                return status;
+            if (!remaining)
+                return MemFileReadStatus::Success;
+        }
+
+        while (g_zeroCount)
+        {
+            --g_zeroCount;
+            --remaining;
+            *destination++ = 0;
+            if (!remaining)
+                return MemFileReadStatus::Success;
+        }
+
+        uint8_t code = 0;
+        const MemFileReadStatus status = MemFile_ReadEncodedByteNoReport(memFile, &code);
+        if (status != MemFileReadStatus::Success)
+            return status;
+
+        if ((code & 0xC0) != 0)
+        {
+            g_nonZeroCount = static_cast<int>(code >> 6);
+            g_zeroCount = static_cast<int>(code & CODE_LEN_MASK) + 1;
+        }
+        else
+        {
+            g_nonZeroCount = static_cast<int>(code & CODE_LEN_MASK) + 1;
+            g_zeroCount = 0;
+        }
+    }
+}
+
+MemFileReadStatus MemFile_TryReadCStringNoReport(
+    MemoryFile* memFile,
+    char* output,
+    size_t outputSize,
+    size_t* outputLength) noexcept
+{
+    if (!memFile || !output || !outputLength || outputSize == 0)
+        return MemFileReadStatus::InvalidArgument;
+    if (!MemFile_HasValidReadObject(memFile))
+        return MemFileReadStatus::InvalidState;
+    if (!memFile->memoryOverflow && !MemFile_HasValidReadDecoder(memFile))
+        return MemFileReadStatus::InvalidState;
+
+    output[0] = '\0';
+    *outputLength = 0;
+    if (memFile->memoryOverflow)
+        return MemFileReadStatus::Overflow;
+
+    size_t retainedLength = 0;
+    for (size_t consumed = 0; consumed < outputSize; ++consumed)
+    {
+        uint8_t value = 0;
+        const MemFileReadStatus status = MemFile_TryReadDataNoReport(memFile, 1, &value);
+        if (status != MemFileReadStatus::Success)
+        {
+            output[retainedLength] = '\0';
+            *outputLength = retainedLength;
+            return status;
+        }
+
+        if (!value)
+        {
+            output[retainedLength] = '\0';
+            *outputLength = retainedLength;
+            return MemFileReadStatus::Success;
+        }
+
+        if (consumed + 1 < outputSize)
+        {
+            output[retainedLength++] = static_cast<char>(value);
+            continue;
+        }
+
+        output[retainedLength] = '\0';
+        *outputLength = retainedLength;
+        return MemFileReadStatus::OutputTooSmall;
+    }
+
+    return MemFileReadStatus::OutputTooSmall;
+}
+
+void MemFile_AbandonCurrentThreadForError() noexcept
+{
+    MemoryFile* const owner = g_currentThreadStreamOwner;
+    if (owner)
+        MemFile_ResetOwnedStreamNoReport(owner);
+}
+
 uint8_t __cdecl MemFile_ReadByteInternal(MemoryFile* memFile)
 {
     uint32_t err; // [esp+0h] [ebp-8h]
@@ -920,7 +1333,16 @@ uint8_t __cdecl MemFile_ReadByteInternal(MemoryFile* memFile)
     if (memFile->memoryOverflow)
         MyAssertHandler(".\\universal\\memfile.cpp", 855, 0, "%s", "!memFile->memoryOverflow");
     AssertStreamMode(MEM_FILE_MODE_INFLATE);
-    if (memFile->compress)
+    if (!MemFile_HasValidReadDecoder(memFile))
+    {
+        MyAssertHandler(
+            ".\\universal\\memfile.cpp",
+            857,
+            0,
+            "%s",
+            "memFile owns a valid active read segment");
+    }
+    else if (memFile->compress)
     {
         stream.next_out = &result;
         stream.avail_out = 1;
@@ -938,7 +1360,7 @@ uint8_t __cdecl MemFile_ReadByteInternal(MemoryFile* memFile)
         if (!stream.avail_out)
             return result;
     }
-    else if (memFile->bytesUsed < memFile->bufferSize)
+    else if (static_cast<size_t>(memFile->bytesUsed) < g_activeSegmentEnd)
     {
         return memFile->buffer[memFile->bytesUsed++];
     }
@@ -953,19 +1375,35 @@ void MemFile_Shutdown(MemoryFile *memFile)
 {
     iassert(memFile);
 
+    if (g_streamOwner == memFile)
+        MemFile_ResetOwnedStreamNoReport(memFile);
+
     memFile->buffer = 0;
 }
 
 uint8_t *MemFile_CopySegments(MemoryFile *memFile, int index, void *buf)
 {
-    const uint8_t *SegmentAddess; // r4
-    uint8_t *v7; // r31
-
     iassert(!memFile->memoryOverflow);
 
-    SegmentAddess = MemFile_GetSegmentAddess(memFile, index);
-    v7 = &memFile->buffer[memFile->bufferSize - (_DWORD)SegmentAddess];
+    if (index < 0)
+    {
+        MyAssertHandler(
+            ".\\universal\\memfile.cpp",
+            960,
+            0,
+            "%s\n\t(index) = %i",
+            "((index >= 0) && (index < SAVE_SEGMENT_COUNT))",
+            index);
+        return nullptr;
+    }
+
+    const uint8_t* segmentAddress = MemFile_GetSegmentAddess(memFile, static_cast<uint32_t>(index));
+    if (!segmentAddress)
+        return nullptr;
+
+    const size_t segmentOffset = static_cast<size_t>(segmentAddress - memFile->buffer);
+    const size_t copySize = static_cast<size_t>(memFile->bufferSize) - segmentOffset;
     if (buf)
-        memcpy(buf, SegmentAddess, (size_t)v7);
-    return v7;
+        memcpy(buf, segmentAddress, copySize);
+    return reinterpret_cast<uint8_t*>(copySize);
 }

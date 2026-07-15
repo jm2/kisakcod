@@ -93,6 +93,13 @@ function(require_security_slice_contains SLICE_VAR NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+function(forbid_security_slice_contains SLICE_VAR NEEDLE DESCRIPTION)
+    string(FIND "${${SLICE_VAR}}" "${NEEDLE}" _position)
+    if(NOT _position EQUAL -1)
+        message(FATAL_ERROR "Forbidden security regression (${DESCRIPTION})")
+    endif()
+endfunction()
+
 function(require_security_slice_ordered SLICE_VAR FIRST SECOND DESCRIPTION)
     string(FIND "${${SLICE_VAR}}" "${FIRST}" _first_position)
     string(FIND "${${SLICE_VAR}}" "${SECOND}" _second_position)
@@ -3603,6 +3610,129 @@ require_source_contains(
     if (errorOnOverflow && memFile->memoryOverflow)
         Com_Error("
     "FX archive overflow must drop only after database enumeration")
+
+file(READ "${SOURCE_ROOT}/src/universal/memfile.cpp" _memfile_source)
+extract_security_slice(
+    _memfile_source
+    "MemFileReadStatus MemFile_ReadEncodedByteNoReport("
+    "} // namespace"
+    _memfile_silent_byte
+    "silent MemoryFile encoded-byte reader")
+extract_security_slice(
+    _memfile_source
+    "MemFileReadStatus MemFile_TryReadDataNoReport("
+    "uint8_t __cdecl MemFile_ReadByteInternal("
+    _memfile_silent_public
+    "silent MemoryFile public readers")
+foreach(_forbidden_memfile_read_report
+    "MyAssertHandler("
+    "Com_Error("
+    "Com_Printf("
+    "MemFile_ReadData("
+    "MemFile_ReadByteInternal("
+    "AssertStreamMode(")
+    forbid_security_slice_contains(
+        _memfile_silent_byte
+        "${_forbidden_memfile_read_report}"
+        "silent encoded-byte reads cannot report or enter legacy readers")
+    forbid_security_slice_contains(
+        _memfile_silent_public
+        "${_forbidden_memfile_read_report}"
+        "silent public reads cannot report or enter legacy readers")
+endforeach()
+require_security_slice_contains(
+    _memfile_silent_public
+    "MemFile_ReadEncodedByteNoReport(memFile, &value)"
+    "silent data reads must use the bounded encoded-byte primitive")
+extract_security_slice(
+    _memfile_source
+    "void MemFile_AbandonCurrentThreadForError()"
+    "uint8_t __cdecl MemFile_ReadByteInternal("
+    _memfile_error_abandon
+    "MemoryFile error abandonment")
+require_security_slice_contains(
+    _memfile_error_abandon
+    "MemoryFile* const owner = g_currentThreadStreamOwner;"
+    "MemoryFile error abandonment must only release the calling thread's stream")
+foreach(_forbidden_memfile_abandon_dependency
+    "g_streamOwner"
+    "streamModeThread"
+    "GetThreadID("
+    "MyAssertHandler("
+    "Com_Error("
+    "Com_Printf(")
+    forbid_security_slice_contains(
+        _memfile_error_abandon
+        "${_forbidden_memfile_abandon_dependency}"
+        "MemoryFile error abandonment must be TLS-first and report-free")
+endforeach()
+
+file(READ "${SOURCE_ROOT}/src/qcommon/common.cpp" _common_error_source)
+extract_security_slice(
+    _common_error_source
+    "ERR_JMP:"
+    "    if (code == ERR_SCRIPT_DROP)"
+    _com_error_jump
+    "Com_Error longjmp cleanup")
+extract_security_slice(
+    _common_error_source
+    "void Com_CheckError()"
+    "#ifdef KISAK_SP"
+    _com_check_error
+    "Com_CheckError longjmp cleanup")
+foreach(_common_error_jump_slice _com_error_jump _com_check_error)
+    require_security_slice_contains(
+        ${_common_error_jump_slice}
+        "MemFile_AbandonCurrentThreadForError();"
+        "error longjmp paths must abandon the calling thread's MemoryFile stream")
+    require_security_slice_ordered(
+        ${_common_error_jump_slice}
+        "MemFile_AbandonCurrentThreadForError();"
+        "longjmp("
+        "MemoryFile state must be abandoned before error control leaves the stack")
+endforeach()
+require_security_slice_ordered(
+    _com_error_jump
+    "Sys_LeaveCriticalSection(CRITSECT_COM_ERROR);"
+    "MemFile_AbandonCurrentThreadForError();"
+    "Com_Error must release its error lock before abandoning the MemoryFile stream")
+require_source_match_count(
+    "qcommon/common.cpp"
+    "MemFile_AbandonCurrentThreadForError\\(\\);"
+    2
+    "both error longjmp paths must abandon active MemoryFile state")
+require_source_match_count(
+    "qcommon/common.cpp"
+    "MemFile_AbandonCurrentThreadForError\\(\\);[ \t\r\n]*#ifndef[ \t]+KISAK_DEDI_HEADLESS"
+    2
+    "MemoryFile error abandonment must remain outside client-only cleanup guards")
+
+file(READ "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp" _fx_archive_read_source)
+extract_security_slice(
+    _fx_archive_read_source
+    "bool FX_ReadArchiveDataNoDrop("
+    "bool FX_WriteArchiveDataNoDrop("
+    _fx_archive_silent_read
+    "FX archive silent read adapter")
+require_security_slice_contains(
+    _fx_archive_silent_read
+    "MemFile_TryReadDataNoReport("
+    "FX archive reads must use the status-bearing silent MemoryFile boundary")
+require_security_slice_contains(
+    _fx_archive_silent_read
+    "if (!memFile || memFile->memoryOverflow)"
+    "FX archive zero-byte reads must preserve sticky-overflow rejection")
+foreach(_forbidden_fx_archive_read_behavior
+    "MemFile_ReadData("
+    "errorOnOverflow"
+    "MyAssertHandler("
+    "Com_Error("
+    "Com_Printf(")
+    forbid_security_slice_contains(
+        _fx_archive_silent_read
+        "${_forbidden_fx_archive_read_behavior}"
+        "FX archive silent reads cannot toggle diagnostics or report")
+endforeach()
 require_source_contains(
     "database/db_load.cpp"
     "DB_ConvertOffsetToAlias(

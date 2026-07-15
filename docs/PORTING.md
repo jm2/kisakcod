@@ -56,6 +56,8 @@ Completed foundation work:
   headless-dedi defect (see §10 H2);
 - a portable callback-driven FX archive admission controller with typed, fail-closed gate values,
   phase-aware TLS ownership, deterministic cleanup/generation tests, and production integration;
+- status-bearing, segment-bounded legacy `MemoryFile` RLE/zlib reads with caller-owned C-string capacity,
+  exact little-endian segment headers, report-free FX integration, and TLS-owned error-unwind cleanup;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -70,8 +72,9 @@ Remaining gates, in implementation order:
 2. Complete FX archive runtime closure. Live generation-checked sidecars, full-capacity rollback, exhaustive
    pure restore control, checked heap transaction/preflight scratch, and the normal archive admission gate with
    deterministic waiter/error-unwind coverage are implemented. Exact competing non-FX ODE occupancy and silent
-   live creation/impact/rollback transactions are also implemented. Next replace the stack-backed effect-definition
-   restore table with a no-longjmp `MemoryFile` parser and bounded BSS lease, followed by measured frame/runtime gates.
+   live creation/impact/rollback transactions are also implemented. The report-free, segment-bounded `MemoryFile`
+   parser prerequisite is complete. Next replace the stack-backed effect-definition restore table with a transactional
+   bounded BSS lease, followed by measured frame/runtime gates.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -997,22 +1000,35 @@ proof to bypass admission, and safe-empty reset performs checked generation refr
 shutdown two-gate lifecycle protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan
 (leak detection disabled), and TSan; strict x86-32 and AArch64 controller compile/link checks and all three focused
 source scripts pass. Two independent audits found and fixed three concrete fail-closed issues and found no
-remaining PR-scope issue. The current `agent/ode-fixed-pool-occupancy` batch completes the next prerequisite: an
+remaining PR-scope issue. PR #17 completed the next prerequisite: an
 exact 512-body/512-userdata/2,048-geom competing-occupancy fixture and intrinsically silent production ODE
 create/model-collision/inertial/bullet-impact/destroy transactions. CG SP/MP, DynEnt, and live FX retain PHYSICS through
 rollback or ownership publication, then report outside the lock; unrecoverable cleanup and ambiguous sidecar ownership
 fail-stop only after unlocking. FX structurally validates its complete sidecar from a bounded BSS workspace before body
 allocation and reuses that workspace for binding. Exact legacy mass/COM/list order, bullet arithmetic, the DynEnt
 DYNENT-parameter/FX-body world split, and RNG consumption are pinned by source and executable contracts. Two independent
-final audits approve the x86 scope, and all **47/47** tests pass under GCC, Clang, ASan+UBSan, and TSan. Windows x86 CI
-remains the production translation-unit compile gate for the forthcoming PR.
+final audits approve the x86 scope, and all **47/47** tests pass under GCC, Clang, ASan+UBSan, and TSan. PR #17 merged
+at `288c2b78` after replacement run **29382870200 passed all nine jobs**.
 
-Overall porting progress is approximately **38%** (plausible range **34–43%**), while target delivery remains **0/5**.
-The next sequence is the no-longjmp effect-definition-table boundary, followed by measured x86/native64 stack/runtime
-ceilings. That parser must replace the uninitialized truncated-key path, the assertion/drop-capable `MemoryFile` reads,
-and the 8,196-byte x86 / 16,392-byte native64 stack table with exact little-endian checked reads and a bounded BSS lease
-released before archive/PHYSICS admission. Remaining FX work also includes camera/scalar snapshot publication and real
-Disk32 archive/fast-file conversion. A separate hard M4 blocker remains: MP `cpose_t::physObjId` and
+The current `agent/memfile-silent-read` batch completes the no-longjmp archive-input prerequisite. Production
+`MemoryFile` now exposes report-free status-bearing data and bounded-C-string reads over the actual legacy RLE/zlib
+decoder. Explicit little-endian headers and bounded segment discovery reject malformed length chains and prevent a read
+from crossing into its successor; failure poisons the reader and releases the singleton decoder, while invalid arguments
+do not mutate outputs. `FX_ReadArchiveDataNoDrop` uses this boundary directly. A TLS owner sidecar lets both global
+`Com_Error` longjmp paths abandon same-thread inflate/deflate state before unwinding, remains active in headless builds,
+and prevents a foreign error path from touching the global codec. Runtime tests cover handcrafted codec parity, raw and
+compressed round trips, corruption/truncation, exact C-string capacities, partial writes, sticky overflow, foreign-thread
+isolation, semantic-error abandonment, and immediate read/write reuse. The complete **48/48** GCC, Clang, ASan+UBSan,
+and TSan suites pass; strict x86-32 and AArch64 compile/link pass; and two independent audits report no blocker.
+
+Overall porting progress remains approximately **38%** (plausible range **34–43%**), while target delivery remains
+**0/5**. The next sequence is the transactional effect-definition-table BSS lease, followed by measured x86/native64
+stack/runtime ceilings. It must replace the uninitialized truncated-key path and the 8,196-byte x86 / 16,392-byte
+native64 stack table, parse every exact little-endian name/key before registration, publish only the complete table, and
+release the lease before archive/PHYSICS admission. A checked whole-segment compressed-finalization boundary remains a
+later integrity item because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work also
+includes camera/scalar snapshot publication and real Disk32 archive/fast-file conversion. A separate hard M4 blocker
+remains: MP `cpose_t::physObjId` and
 `BreakablePiece::physObjId` still truncate ODE pointers into `int32_t`; native-width storage or a token/sidecar is required
 before any native64 engine runtime can be enabled. The
 unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
