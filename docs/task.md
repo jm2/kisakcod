@@ -9,8 +9,10 @@ work item changes. Do not create session-specific handoff files.
 - Active branch: `agent/fx-snapshot-publication`; branch point: merged bounded save-snapshot checkpoint `92ad1429`;
   upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint: the coherent FX camera/scalar/visibility save-snapshot implementation is complete locally and is
-  awaiting branch publication, automated review, and PR CI before Disk32 conversion starts. Camera/time publication is
+- Active checkpoint: PR #21's coherent FX camera/scalar/visibility save-snapshot implementation gate is complete; exact
+  implementation head `7895f7a9` passed all nine CI jobs in run **29397910131**, Codex found no major issue at that commit,
+  and the sole Gemini finding was fixed and its thread resolved. This documentation-only checkpoint is the final merge
+  gate before Disk32 conversion starts. Camera/time publication is
   assembled off-side and invalidated/published through atomic markers. An external fixed-width shared/exclusive camera gate
   serializes ordinary publishers with draw, mark, vertex-generation, spawn-cull, and sprite-sort readers without changing
   frozen `FxSystem`; every camera owner nests inside cooperative archive admission. Visibility swap/query paths likewise
@@ -26,9 +28,10 @@ work item changes. Do not create session-specific handoff files.
   runner) and TSan are **54/54** green, with the compiler-generated static-frame test intentionally omitted under sanitizer
   instrumentation. Strict warnings-as-errors compilation passes for the new iterator, snapshot-publication, and bounded
   effect-table fixtures on x86-32 and AArch64. Focused source/security contracts, Clang analyzer checks, and
-  `git diff --check` pass. Independent camera-census and archive/provenance audits found no blocker. Windows x86 production
-  compilation, the linked production TLS/error-unwind path, legacy save integration, and measured stack budgets remain
-  authoritative in PR CI.
+  `git diff --check` pass. Independent camera-census and archive/provenance audits found no blocker. PR run
+  **29397910131** then passed Linux amd64/arm64, Windows amd64/arm64, macOS arm64, Windows x86 headless/no-Steam, and
+  measured Windows x86 Debug/Release, including the linked production TLS/error-unwind path, legacy save integration,
+  and stack-budget enforcement.
 - Merged-baseline validation: master run **29393277892 passed all nine jobs**. GCC and Clang full suites are **53/53**
   green. ASan+UBSan (leak detection disabled under the
   command runner) and TSan are **52/52** green; their compiler-generated static-frame test is intentionally omitted because
@@ -120,8 +123,8 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: finish review/CI and merge the coherent snapshot branch, then begin fixed Disk32 FX archive mirrors, codecs,
-  native handle remapping, and reader-first converters.
+- Next: merge PR #21 after this documentation-only head passes CI, then begin fixed Disk32 FX archive mirrors, codecs,
+  native handle remapping, opaque definition keys, and reader-first converters on a fresh branch.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,
@@ -652,9 +655,9 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Publish, review, run authoritative Windows x86 production/stack CI, and merge the locally complete coherent
-   camera/scalar/visibility archive-snapshot branch. Do not start overlapping Disk32 production edits before that PR is
-   clean; portable Disk32 schema design/fixtures may proceed independently.
+1. Merge PR #21 after its documentation-only final head passes CI. Implementation head `7895f7a9` already passed all nine
+   jobs and exact-head automated review; portable Disk32 schema design/fixture research is complete enough to start the
+   next reader-first production batch immediately after merge.
 2. Add packed FX savegame Disk32 schemas, native handle
    remapping, opaque effect-definition keys,
    and byte-level malformed/round-trip fixtures; retain the legacy x86 writer until equivalence is
