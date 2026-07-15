@@ -36,6 +36,8 @@ enum class FxFastFileDisk32SourceSpanKind : std::uint8_t
     TrailVertices,
     TrailIndices,
     String,
+    ImpactTableHeader,
+    ImpactEntries,
 };
 
 using FxFastFileDisk32ValidateSourceSpanCallback = bool (*)(
@@ -79,6 +81,7 @@ enum class FxFastFileDisk32ReferenceKind : std::uint8_t
     Model,
     SoundName,
     EffectNameReference,
+    EffectAssetHandle,
 };
 
 struct FxFastFileDisk32ResolvedReference
