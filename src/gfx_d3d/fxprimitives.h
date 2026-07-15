@@ -137,20 +137,29 @@ struct FxSpawnDefLooping // sizeof=0x8
     int intervalMsec;
     int count;
 };
+RUNTIME_SIZE(FxSpawnDefLooping, 0x8, 0x8);
+RUNTIME_OFFSET(FxSpawnDefLooping, intervalMsec, 0x0, 0x0);
+RUNTIME_OFFSET(FxSpawnDefLooping, count, 0x4, 0x4);
 struct FxIntRange // sizeof=0x8
 {                                       // ...
     int base;
     int amplitude;
 };
+RUNTIME_SIZE(FxIntRange, 0x8, 0x8);
+RUNTIME_OFFSET(FxIntRange, base, 0x0, 0x0);
+RUNTIME_OFFSET(FxIntRange, amplitude, 0x4, 0x4);
 struct FxSpawnDefOneShot // sizeof=0x8
 {                                       // ...
     FxIntRange count;
 };
+RUNTIME_SIZE(FxSpawnDefOneShot, 0x8, 0x8);
+RUNTIME_OFFSET(FxSpawnDefOneShot, count, 0x0, 0x0);
 union FxSpawnDef // sizeof=0x8
 {                                       // ...
     FxSpawnDefLooping looping;
     FxSpawnDefOneShot oneShot;
 };
+RUNTIME_SIZE(FxSpawnDef, 0x8, 0x8);
 struct FxElemAtlas // sizeof=0x8
 {                                       // ...
     uint8_t behavior;
@@ -216,6 +225,7 @@ union FxElemVisuals // sizeof=0x4
 
     FxElemVisuals(Material *mat) : material(mat) { }
 };
+RUNTIME_SIZE(FxElemVisuals, 0x4, 0x8);
 struct FxElemMarkVisuals // sizeof=0x8
 {                                       // ...
     struct Material *materials[2];
@@ -242,6 +252,10 @@ struct FxTrailDef // sizeof=0x1C
     int indCount;
     uint16_t *inds;
 };
+RUNTIME_SIZE(FxTrailDef, 0x1C, 0x28);
+RUNTIME_OFFSET(FxTrailDef, scrollTimeMsec, 0x0, 0x0);
+RUNTIME_OFFSET(FxTrailDef, repeatDist, 0x4, 0x4);
+RUNTIME_OFFSET(FxTrailDef, splitDist, 0x8, 0x8);
 const struct FxElemDef // sizeof=0xFC
 {
     int flags;

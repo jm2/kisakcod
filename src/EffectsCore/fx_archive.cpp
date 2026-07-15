@@ -3,6 +3,7 @@
 #include "fx_archive_physics_batch_control.h"
 #include "fx_archive_restore_control.h"
 #include "fx_archive_restore_workspace.h"
+#include "fx_archive_semantics.h"
 #include "fx_effect_table_save.h"
 #include "fx_effect_table_restore.h"
 #include "fx_physics_sidecar.h"
@@ -27,6 +28,49 @@
 
 namespace
 {
+static_assert(
+    FX_ELEM_DEF_RUNTIME_SIZE
+    == fx::archive::layout::ELEM_DEF_STRIDE);
+static_assert(
+    alignof(FxElemDef) == FX_ELEM_DEF_RUNTIME_ALIGNMENT);
+static_assert(
+    offsetof(FxElemDef, flags)
+    == fx::archive::layout::ELEM_DEF_FLAGS_OFFSET);
+static_assert(
+    offsetof(FxElemDef, spawn)
+    == fx::archive::layout::ELEM_DEF_SPAWN_OFFSET);
+static_assert(
+    offsetof(FxElemDef, spawnDelayMsec)
+    == fx::archive::layout::ELEM_DEF_SPAWN_DELAY_OFFSET);
+static_assert(
+    offsetof(FxElemDef, lifeSpanMsec)
+    == fx::archive::layout::ELEM_DEF_LIFE_SPAN_OFFSET);
+static_assert(
+    offsetof(FxElemDef, elemType)
+    == fx::archive::layout::ELEM_DEF_ELEM_TYPE_OFFSET);
+static_assert(
+    offsetof(FxElemDef, visualCount)
+    == fx::archive::layout::ELEM_DEF_VISUAL_COUNT_OFFSET);
+static_assert(
+    offsetof(FxElemDef, visuals)
+    == fx::archive::layout::ELEM_DEF_VISUALS_OFFSET);
+static_assert(
+    offsetof(FxElemDef, trailDef)
+    == fx::archive::layout::ELEM_DEF_TRAIL_DEF_OFFSET);
+static_assert(FX_ELEM_TYPE_SPRITE_BILLBOARD == 0);
+static_assert(FX_ELEM_TYPE_SPRITE_ORIENTED == 1);
+static_assert(FX_ELEM_TYPE_TAIL == 2);
+static_assert(FX_ELEM_TYPE_TRAIL == 3);
+static_assert(FX_ELEM_TYPE_CLOUD == 4);
+static_assert(FX_ELEM_TYPE_MODEL == 5);
+static_assert(FX_ELEM_TYPE_OMNI_LIGHT == 6);
+static_assert(FX_ELEM_TYPE_SPOT_LIGHT == 7);
+static_assert(FX_ELEM_TYPE_COUNT == 11);
+static_assert(MAX_GENTITIES == 1024);
+static_assert(CLIENT_DOBJ_HANDLE_MAX == MAX_GENTITIES + 128);
+static_assert(FX_DOBJ_HANDLE_NONE == 4095);
+static_assert(FX_BONE_INDEX_NONE == 2047);
+
 struct FxArchivePoolAllocationStates
 {
     FxPoolAllocationState<MAX_ELEMS> elems;

@@ -1,10 +1,12 @@
 #include <EffectsCore/fx_archive_native_disk32.h>
 
+#include <EffectsCore/fx_archive_semantics.h>
 #include <EffectsCore/fx_snapshot_publication.h>
 
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <type_traits>
 
@@ -295,6 +297,55 @@ bool WorkspaceLinksAndSelectorsRoundTrip(
         && readSelector == metadata.readVisibilitySelector
         && writeSelector == metadata.writeVisibilitySelector;
 }
+
+bool ActivateDefinitionSelectedElemPayload(
+    void *,
+    FxSystem *,
+    FxEffect *,
+    FxElem *const elem,
+    const FxElemDef *,
+    const FxArchiveElemPayloadKind payloadKind) noexcept
+{
+    if (!elem)
+        return false;
+
+    if (payloadKind == FxArchiveElemPayloadKind::PhysicsLighting)
+    {
+        std::uint8_t physicsTokenBytes[sizeof(std::int32_t)]{};
+        std::memcpy(
+            physicsTokenBytes,
+            static_cast<const void *>(elem->origin),
+            sizeof(physicsTokenBytes));
+        std::construct_at(std::addressof(elem->physObjId));
+        std::memcpy(
+            static_cast<void *>(std::addressof(elem->physObjId)),
+            physicsTokenBytes,
+            sizeof(physicsTokenBytes));
+    }
+    else if (payloadKind
+             == FxArchiveElemPayloadKind::OriginTrailTexCoord)
+    {
+        std::uint8_t trailTexCoordBytes[sizeof(float)]{};
+        std::memcpy(
+            trailTexCoordBytes,
+            static_cast<const void *>(std::addressof(elem->u)),
+            sizeof(trailTexCoordBytes));
+        std::construct_at(std::addressof(elem->u.trailTexCoord));
+        std::memcpy(
+            static_cast<void *>(std::addressof(elem->u)),
+            trailTexCoordBytes,
+            sizeof(trailTexCoordBytes));
+    }
+    else if (payloadKind != FxArchiveElemPayloadKind::OriginLighting)
+    {
+        return false;
+    }
+
+    // The structural decoder already activated origin and lightingHandle.
+    // Their representations stay live unless a definition explicitly selects
+    // one of the alternate members above.
+    return true;
+}
 } // namespace
 
 FxArchiveDisk32StructuralStatus
@@ -433,6 +484,97 @@ bool TryGetFxArchiveDisk32StructuralView(
         &workspace->buffers_,
         &workspace->poolStates_,
         &workspace->metadata_};
+    *outView = view;
+    return true;
+}
+
+FxArchiveDisk32ReadyStatus
+TryFinalizeFxArchiveDisk32NativeImage(
+    FxArchiveDisk32NativeWorkspace *const workspace) noexcept
+{
+    if (!workspace)
+        return FxArchiveDisk32ReadyStatus::InvalidArgument;
+    if (workspace->building_
+        || workspace->phase_
+            != FxArchiveDisk32WorkspacePhase::StructurallyValid)
+    {
+        return FxArchiveDisk32ReadyStatus::InvalidPhase;
+    }
+
+    // Definition-selected union lifetimes can change below. Invalidate every
+    // prior view first, and require a structural rebuild after any failure.
+    workspace->phase_ = FxArchiveDisk32WorkspacePhase::Empty;
+    workspace->physicsBodyCount_ = 0;
+    workspace->building_ = true;
+    const auto finish = [workspace](
+                            const FxArchiveDisk32ReadyStatus status)
+        noexcept {
+            workspace->building_ = false;
+            return status;
+        };
+
+    if (!WorkspaceLinksAndSelectorsRoundTrip(
+            workspace->system_,
+            workspace->buffers_,
+            workspace->metadata_)
+        || !FxValidatePoolAllocationGraphWithScratch(
+            &workspace->system_,
+            workspace->poolStates_.elems,
+            workspace->poolStates_.trails,
+            workspace->poolStates_.trailElems,
+            &workspace->graphScratch_))
+    {
+        return finish(FxArchiveDisk32ReadyStatus::InvalidGraph);
+    }
+
+    FxArchiveSemanticResult semanticResult{};
+    const FxArchiveSemanticCallbacks callbacks{
+        nullptr, ActivateDefinitionSelectedElemPayload, nullptr};
+    if (!TryValidateFxArchiveSemanticsNoReport(
+            &workspace->system_, callbacks, &semanticResult))
+    {
+        return finish(FxArchiveDisk32ReadyStatus::InvalidSemantics);
+    }
+
+    for (std::int64_t activeIndex = workspace->system_.firstActiveEffect;
+         activeIndex < workspace->system_.firstFreeEffect;
+         ++activeIndex)
+    {
+        FxEffect *const effect = FxDecodeHandle<
+            FxEffect, MAX_EFFECTS, FxEffect::HANDLE_SCALE>(
+                workspace->system_.effects,
+                workspace->system_.allEffectHandles[
+                    static_cast<std::size_t>(activeIndex)
+                    & (MAX_EFFECTS - 1)]);
+        if (!effect)
+            return finish(FxArchiveDisk32ReadyStatus::InvalidSemantics);
+        Sys_AtomicStore(&effect->frameCount, 0);
+    }
+    workspace->system_.activeSpotLightBoltDobj =
+        semanticResult.spotLightBoltDobj;
+    workspace->physicsBodyCount_ = semanticResult.physicsBodyCount;
+
+    workspace->building_ = false;
+    workspace->phase_ = FxArchiveDisk32WorkspacePhase::Ready;
+    return FxArchiveDisk32ReadyStatus::Success;
+}
+
+bool TryGetFxArchiveDisk32ReadyView(
+    const FxArchiveDisk32NativeWorkspace *const workspace,
+    FxArchiveDisk32ReadyView *const outView) noexcept
+{
+    if (!workspace || !outView
+        || workspace->phase_ != FxArchiveDisk32WorkspacePhase::Ready)
+    {
+        return false;
+    }
+
+    const FxArchiveDisk32ReadyView view{
+        &workspace->system_,
+        &workspace->buffers_,
+        &workspace->poolStates_,
+        &workspace->metadata_,
+        workspace->physicsBodyCount_};
     *outView = view;
     return true;
 }

@@ -8,13 +8,20 @@
 
 namespace fx::archive
 {
-// Ready is reserved for a later definition-aware semantic conversion pass.
-// This checkpoint can publish only StructurallyValid staging storage.
 enum class FxArchiveDisk32WorkspacePhase : std::uint8_t
 {
     Empty,
     StructurallyValid,
     Ready
+};
+
+enum class FxArchiveDisk32ReadyStatus : std::uint8_t
+{
+    Success,
+    InvalidArgument,
+    InvalidPhase,
+    InvalidGraph,
+    InvalidSemantics
 };
 
 enum class FxArchiveDisk32StructuralStatus : std::uint8_t
@@ -42,6 +49,7 @@ struct FxArchiveDisk32Resolver
 
 class alignas(8) FxArchiveDisk32NativeWorkspace;
 struct FxArchiveDisk32StructuralView;
+struct FxArchiveDisk32ReadyView;
 
 // Builds a report-free native structural image in caller-owned heap storage.
 // The resolver is required even when the active-effect ring is empty; it is
@@ -66,6 +74,28 @@ TryBuildFxArchiveDisk32StructuralImage(
 [[nodiscard]] bool TryGetFxArchiveDisk32StructuralView(
     const FxArchiveDisk32NativeWorkspace *workspace,
     FxArchiveDisk32StructuralView *outView) noexcept;
+
+// Performs the definition-aware, report-free semantic pass. Every definition
+// pointer resolved by the structural builder, its element-definition array,
+// and any referenced trail/model payload must remain readable and unchanged
+// throughout this call and every later operation that dereferences the staged
+// identities. Production restore satisfies that contract by retaining its
+// effect-table lifecycle lease through semantic and physics staging.
+//
+// Only StructurallyValid storage may enter this transition. The phase becomes
+// Empty before any definition-selected union lifetime changes; any failure
+// therefore requires a complete structural rebuild. Success canonicalizes
+// active effect frame counters and the spotlight bolt, records the validated
+// physics-body count, and publishes Ready as the final workspace mutation.
+[[nodiscard]] FxArchiveDisk32ReadyStatus
+TryFinalizeFxArchiveDisk32NativeImage(
+    FxArchiveDisk32NativeWorkspace *workspace) noexcept;
+
+// Commits the output only for Ready storage. Null arguments or every other
+// phase return false without changing the caller's view.
+[[nodiscard]] bool TryGetFxArchiveDisk32ReadyView(
+    const FxArchiveDisk32NativeWorkspace *workspace,
+    FxArchiveDisk32ReadyView *outView) noexcept;
 
 // Heap-owned native staging storage. Copy and move are disabled because the
 // linked FxSystem contains pointers into this exact object's buffer member.
@@ -103,6 +133,12 @@ private:
     friend bool TryGetFxArchiveDisk32StructuralView(
         const FxArchiveDisk32NativeWorkspace *workspace,
         FxArchiveDisk32StructuralView *outView) noexcept;
+    friend FxArchiveDisk32ReadyStatus
+    TryFinalizeFxArchiveDisk32NativeImage(
+        FxArchiveDisk32NativeWorkspace *workspace) noexcept;
+    friend bool TryGetFxArchiveDisk32ReadyView(
+        const FxArchiveDisk32NativeWorkspace *workspace,
+        FxArchiveDisk32ReadyView *outView) noexcept;
 
     FxSystem system_{};
     FxSystemBuffers buffers_{};
@@ -112,18 +148,35 @@ private:
     FxArchiveDisk32WorkspacePhase phase_ =
         FxArchiveDisk32WorkspacePhase::Empty;
     bool building_ = false;
+    std::uint32_t physicsBodyCount_ = 0;
 };
 
 // A structural view is deliberately read-only and non-publishable. Definition
 // pointers are opaque identities at this phase, and no definition-dependent
 // FxElem payload member may be accessed until a later pass reaches Ready.
-// Rebuilding or destroying the workspace invalidates every returned pointer.
+// Constness is necessarily shallow because legacy FxSystem contains pointer
+// members; callers must not cast away const or mutate any reachable staging
+// object. Rebuilding or destroying the workspace invalidates every pointer.
 struct FxArchiveDisk32StructuralView
 {
     const FxSystem *system = nullptr;
     const FxSystemBuffers *buffers = nullptr;
     const FxSystemBuffersDisk32PoolStates *poolStates = nullptr;
     const FxSystemDisk32Metadata *metadata = nullptr;
+};
+
+// Ready storage has completed definition-dependent union selection and the
+// shared archive semantic oracle. Rebuilding, a failed re-finalization, or
+// destroying the workspace invalidates every returned pointer. As with the
+// structural view, callers must treat all transitively reachable staging as
+// read-only even though legacy pointer members make the C++ constness shallow.
+struct FxArchiveDisk32ReadyView
+{
+    const FxSystem *system = nullptr;
+    const FxSystemBuffers *buffers = nullptr;
+    const FxSystemBuffersDisk32PoolStates *poolStates = nullptr;
+    const FxSystemDisk32Metadata *metadata = nullptr;
+    std::uint32_t physicsBodyCount = 0;
 };
 
 RUNTIME_SIZE(FxArchiveDisk32NativeWorkspace, 0x4BD90, 0x4FDD8);

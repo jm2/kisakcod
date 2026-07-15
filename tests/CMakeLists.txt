@@ -65,6 +65,16 @@ add_test(
 set_tests_properties(universal-memfile-bounded-read PROPERTIES TIMEOUT 20)
 
 function(kisakcod_fx_helper_stack_budget target)
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" _stack_build_type_upper)
+    set(_stack_active_cxx_flags
+        "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${_stack_build_type_upper}}")
+    if(NOT MSVC
+        AND _stack_active_cxx_flags MATCHES "(^|[ ;])-fsanitize=")
+        # Sanitizer redzones intentionally inflate otherwise bounded helper
+        # frames. Runtime sanitizer fixtures still execute these paths; the
+        # 4 KiB static budget is enforced on every production-style build.
+        return()
+    endif()
     if(MSVC)
         target_compile_options(${target} PRIVATE
             /analyze
@@ -312,6 +322,7 @@ set_tests_properties(
 
 add_library(kisakcod-fx-archive-native-disk32-subject OBJECT
     ${SRC_DIR}/EffectsCore/fx_archive_native_disk32.cpp
+    ${SRC_DIR}/EffectsCore/fx_archive_semantics.cpp
 )
 target_include_directories(
     kisakcod-fx-archive-native-disk32-subject PRIVATE ${SRC_DIR})
