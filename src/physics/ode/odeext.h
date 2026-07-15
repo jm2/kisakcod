@@ -13,6 +13,28 @@ void __cdecl ODE_LeakCheck();
 
 bool __cdecl ODE_Init();
 
+enum class odebodycleanupstatus_t : std::uint8_t
+{
+    Success,
+    InvalidArgument,
+    GeometryCleanupFailed,
+    BodyPoolStateInvalid,
+};
+
+// Caller holds CRITSECT_PHYSICS for these operations (the lower layer cannot
+// acquire it without making rollback paths recursively lock). They preserve
+// normal ODE body-list and joint-detach semantics for KisakCOD's fixed
+// hinge/ball/AMotor stores and contact groups, but never report allocator or
+// topology failures. Other ODE in-place joint stores are deliberately rejected
+// by the silent preflight.
+[[nodiscard]] poolmutationstatus_t ODE_TryBodyCreateNoReport(
+    dxWorld *world,
+    dxBody **outBody) noexcept;
+[[nodiscard]] bool ODE_TryValidateBodyDestroyNoReport(
+    dxBody *body) noexcept;
+[[nodiscard]] odebodycleanupstatus_t ODE_TryBodyDestroyNoReport(
+    dxBody *body) noexcept;
+
 // These descriptors carry the out-of-line ownership controls paired with the
 // ABI-frozen ODE pool metadata. All production users must share these exact
 // descriptors rather than rebuilding an extent without its control.

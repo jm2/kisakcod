@@ -23,6 +23,8 @@
 #include <bgame/bg_local.h>
 #include <cgame/cg_pose_atomic.h>
 
+#include <cstdlib>
+
 void __cdecl LocalConvertQuatToMat(const DObjAnimMat *mat, float (*axis)[3])
 {
     double v4; // fp5
@@ -1538,49 +1540,67 @@ void __cdecl CG_CreatePhysicsObject(int localClientNum, centity_s *cent)
     PhysPreset = DObjGetPhysPreset(ClientDObj);
     if (PhysPreset)
     {
+        const XModel *const physicsModel = DObjGetModel(ClientDObj, 0);
+        PhysBodyModelCreateStatus status = PhysBodyModelCreateStatus::InvalidArgument;
+        PhysBodyCreateResourceFailure resourceFailure =
+            PhysBodyCreateResourceFailure::None;
+        bool cleanupFailed = false;
+        v7 = nullptr;
         Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-        v7 = Phys_ObjCreate(PHYS_WORLD_FX, v15, v17, v14, PhysPreset);
-        if (v7)
+        status = Phys_TryCreateBodyFromPresetAndXModelLockedNoReport(
+            PHYS_WORLD_FX,
+            v15,
+            v17,
+            v14,
+            PhysPreset,
+            physicsModel,
+            &v7,
+            &resourceFailure);
+        if (status == PhysBodyModelCreateStatus::Success)
         {
-            DObjPhysicsSetCollisionFromXModel(ClientDObj, PHYS_WORLD_FX, v7);
             v9 = cent->currentState.apos.trDelta[2];
-
             v10 = sqrtf((float)((float)(cent->currentState.apos.trDelta[0] * cent->currentState.apos.trDelta[0])
                 + (float)((float)(cent->currentState.apos.trDelta[2] * cent->currentState.apos.trDelta[2])
                     + (float)(cent->currentState.apos.trDelta[1] * cent->currentState.apos.trDelta[1]))));
 
-            // aislop
-            //float _FP10 = -v10;
-            //__asm { fsel      f10, f10, f11, f1 }
-            //v13 = (float)(cent->currentState.apos.trDelta[1] * (float)((float)1.0 / (float)_FP10));
-            //v16[0] = (float)((float)1.0 / (float)_FP10) * cent->currentState.apos.trDelta[0];
-            //v16[1] = v13;
-            //v16[2] = (float)v9 * (float)((float)1.0 / (float)_FP10);
+            // PPC: _FP10 = -v10; fsel f10, f10, f11, f1.  The selected
+            // zero-speed divisor keeps a zero angular trajectory finite.
+            const float reciprocal = (v10 > 0.0f) ? (1.0f / v10) : 0.0f;
+            v13 = cent->currentState.apos.trDelta[1] * reciprocal;
+            v16[0] = reciprocal * cent->currentState.apos.trDelta[0];
+            v16[1] = v13;
+            v16[2] = v9 * reciprocal;
 
+            if (!Phys_TryObjBulletImpactLockedNoReport(
+                    PHYS_WORLD_FX,
+                    v7,
+                    cent->currentState.pos.trDelta,
+                    v16,
+                    v10,
+                    PhysPreset->bulletForceScale))
             {
-                // PPC: _FP10 = -v10; fsel f10, f10, f11, f1
-                // v10 = sqrtf(...) >= 0, so -v10 <= 0; only >= 0 when v10 == 0.
-                // fsel result picks safe divisor when angular speed is zero (avoids 1/0).
-                // When v10 == 0 trDelta is (0,0,0), so the normalized axis stays (0,0,0).
-                float reciprocal = (v10 > 0.0f) ? (1.0f / v10) : 0.0f;
-                v13 = cent->currentState.apos.trDelta[1] * reciprocal;
-                v16[0] = reciprocal * cent->currentState.apos.trDelta[0];
-                v16[1] = v13;
-                v16[2] = v9 * reciprocal;
+                status = PhysBodyModelCreateStatus::InvalidArgument;
+                cleanupFailed = Phys_TryDestroyBodyLockedNoReport(
+                    PHYS_WORLD_FX, v7) != PhysBodyRollbackStatus::Success;
+                v7 = nullptr;
             }
-            
-
-            Phys_ObjBulletImpact(PHYS_WORLD_FX, v7, cent->currentState.pos.trDelta, v16, v10, PhysPreset->bulletForceScale);
-            Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
-            cent->pose.physObjId = (uintptr_t)v7;
         }
-        else
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+
+        if (cleanupFailed
+            || status == PhysBodyModelCreateStatus::CleanupFailed)
         {
+            std::abort();
+        }
+        if (status != PhysBodyModelCreateStatus::Success)
+        {
+            Phys_ReportBodyModelCreateFailure(status, resourceFailure);
             Name = DObjGetName(ClientDObj);
             Com_PrintWarning(1, "Failed to create physics object for '%s'.\n", Name);
             cent->pose.physObjId = -1;
-            Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+            return;
         }
+        cent->pose.physObjId = (uintptr_t)v7;
     }
     else
     {

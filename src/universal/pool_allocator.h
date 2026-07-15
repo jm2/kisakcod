@@ -84,6 +84,19 @@ struct poolindexresult_t
     std::size_t index;
 };
 
+enum class poolmutationstatus_t : std::uint8_t
+{
+    Success,
+    Unavailable,
+    InvalidState,
+};
+
+struct poolallocresult_t
+{
+    poolmutationstatus_t status;
+    void *item;
+};
+
 inline poolstorage_t Pool_StorageFor(
     void *const base,
     const std::size_t itemSize,
@@ -126,6 +139,25 @@ bool __cdecl Pool_Free(
     poolstorage_t storage,
     pooldata_t *pooldata,
     void *item) noexcept;
+// Physics transaction code invokes these while holding CRITSECT_PHYSICS.
+// They preserve the O(1) mutation rules of Pool_Alloc/Pool_Free, but never
+// report through MyAssertHandler. InvalidState is returned without mutation;
+// Unavailable is the valid full-pool result for allocation.
+[[nodiscard]] poolallocresult_t __cdecl Pool_TryAllocNoReport(
+    poolstorage_t storage,
+    pooldata_t *pooldata) noexcept;
+[[nodiscard]] poolmutationstatus_t __cdecl Pool_TryFreeNoReport(
+    poolstorage_t storage,
+    pooldata_t *pooldata,
+    void *item) noexcept;
+[[nodiscard]] poolmutationstatus_t __cdecl
+Pool_TryValidateAllocatedNoReport(
+    poolstorage_t storage,
+    const pooldata_t *pooldata,
+    const void *item) noexcept;
+[[nodiscard]] poolmutationstatus_t __cdecl Pool_TryValidateFullNoReport(
+    poolstorage_t storage,
+    const pooldata_t *pooldata) noexcept;
 [[nodiscard]] bool __cdecl Pool_ValidateFull(
     poolstorage_t storage,
     const pooldata_t *pooldata) noexcept;

@@ -56,6 +56,27 @@ dxGeomTransform::dxGeomTransform (dSpaceID space, dxBody *body) : dxGeom (space,
   dSetZero(finalPos, 3);
 }
 
+dxGeomTransform::dxGeomTransform(const ode_no_report_init_t init) noexcept
+    : dxGeom(init, 1)
+{
+  type = dGeomTransformClass;
+  obj = nullptr;
+  cleanup = 1;
+  infomode = 0;
+  for (int index = 0; index < 12; ++index)
+  {
+    localR[index] = 0;
+    finalR[index] = 0;
+  }
+  localR[0] = localR[5] = localR[10] = 1;
+  finalR[0] = finalR[5] = finalR[10] = 1;
+  for (int index = 0; index < 4; ++index)
+  {
+    localPos[index] = 0;
+    finalPos[index] = 0;
+  }
+}
+
 dxGeomTransform::~dxGeomTransform()
 {
  //  if (obj && cleanup) delete obj;
@@ -189,6 +210,38 @@ dGeomID dCreateGeomTransform (dSpaceID space, dxBody *body)
 	}
 
 	return new ((void *)geom) dxGeomTransform(space, body);
+}
+
+poolmutationstatus_t ODE_TryCreateGeomTransformNoReport(
+    dxSpace *const space,
+    dxBody *const body,
+    dxGeom **const outGeom) noexcept
+{
+    if (!outGeom)
+        return poolmutationstatus_t::InvalidState;
+    *outGeom = nullptr;
+    if (!space || !body
+        || !ODE_TryValidateGeomAttachmentNoReport(space, body))
+    {
+        return poolmutationstatus_t::InvalidState;
+    }
+
+    dxGeom *storage = nullptr;
+    const poolmutationstatus_t allocationStatus =
+        ODE_TryAllocateGeomNoReport(&storage);
+    if (allocationStatus != poolmutationstatus_t::Success)
+        return allocationStatus;
+
+    auto *const geom = new (storage) dxGeomTransform(ODE_NO_REPORT_INIT);
+    const poolmutationstatus_t attachStatus =
+        ODE_TryAttachGeomNoReport(geom, space, body);
+    if (attachStatus != poolmutationstatus_t::Success)
+    {
+        (void)ODE_TryGeomDestructNoReport(geom);
+        return attachStatus;
+    }
+    *outGeom = geom;
+    return poolmutationstatus_t::Success;
 }
 
 

@@ -66,6 +66,13 @@ int dCollideRayPlane (dxGeom *o1, dxGeom *o2, int flags,
 
 // LWSS ADD - Custom for COD4
 dxGeom *__cdecl ODE_AllocateGeom();
+[[nodiscard]] poolmutationstatus_t ODE_TryCreateBoxNoReport(
+	dxSpace *space,
+	dxBody *body,
+	dReal lx,
+	dReal ly,
+	dReal lz,
+	dxGeom **outGeom) noexcept;
 int __cdecl ODE_CollideCapsuleBox(
 	const float *boxPos,
 	const float *boxRot,

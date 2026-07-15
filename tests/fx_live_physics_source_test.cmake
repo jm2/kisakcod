@@ -515,10 +515,15 @@ extract_source_slice(
     "bool FX_CurrentThreadOwnsAnyEffectLock("
     _vacancy_helper_source
     "FX_PhysicsOwnerIsVacantLocked")
-require_slice_contains(
+require_slice_ordered(
     _vacancy_helper_source
-    "*outStatus = fx::physics::ValidateVacantOwner(sidecar, ownerIndex);"
-    "live owner admission must use the checked O(1) vacancy primitive")
+    "fx::physics::ValidateWithScratch("
+    "fx::physics::ValidateVacantOwner(sidecar, ownerIndex);"
+    "live owner admission must prove whole-sidecar structure before the O(1) vacancy check")
+require_slice_contains(
+    _fx_system_source
+    "fx_liveSidecarValidationScratch;"
+    "live sidecar admission must use a bounded non-stack validation workspace")
 
 # Model physics creation/configuration/binding finishes under PHYSICS before
 # FX_SpawnElem publishes either graph link.
@@ -541,23 +546,27 @@ require_slice_ordered(
 require_slice_ordered(
     _spawn_physics_source
     "FX_PhysicsOwnerIsVacantLocked("
-    "Phys_TryCreateBodyFromPresetAndXModel("
+    "Phys_TryCreateBodyFromPresetAndXModelLockedNoReport("
     "model spawn must prove owner vacancy before native creation")
 require_slice_ordered(
     _spawn_physics_source
-    "Phys_TryCreateBodyFromPresetAndXModel("
-    "Phys_ObjSetAngularVelocity(body, angularVelocity);"
+    "Phys_TryCreateBodyFromPresetAndXModelLockedNoReport("
+    "Phys_TryObjSetAngularVelocityLockedNoReport("
     "native body construction must finish before final configuration")
 require_slice_ordered(
     _spawn_physics_source
-    "Phys_ObjSetAngularVelocity(body, angularVelocity);"
-    "const fx::physics::TokenResult binding = fx::physics::Bind("
+    "Phys_TryObjSetAngularVelocityLockedNoReport("
+    "const fx::physics::TokenResult binding = fx::physics::BindWithScratch("
     "native body configuration must precede sidecar binding")
 require_slice_ordered(
     _spawn_physics_source
-    "const fx::physics::TokenResult binding = fx::physics::Bind("
+    "const fx::physics::TokenResult binding = fx::physics::BindWithScratch("
     "elem->physObjId = fx::physics::TokenToLegacyField(binding.token);"
     "sidecar binding must precede token publication")
+require_slice_contains(
+    _spawn_physics_source
+    "&fx_liveSidecarValidationScratch);"
+    "model binding must reuse the lock-owned non-stack validation workspace")
 require_slice_contains(
     _spawn_physics_source
     "constexpr float MAX_FX_PHYSICS_ANGULAR_VELOCITY = 65536.0f;"
@@ -570,8 +579,55 @@ require_slice_ordered(
 require_slice_ordered(
     _spawn_physics_source
     "component > MAX_FX_PHYSICS_ANGULAR_VELOCITY"
-    "Phys_TryCreateBodyFromPresetAndXModel("
+    "Phys_TryCreateBodyFromPresetAndXModelLockedNoReport("
     "angular-velocity validation must precede native body allocation")
+foreach(_reporting_physics_call IN ITEMS
+    "Phys_TryCreateBodyFromPresetAndXModel("
+    "Phys_ObjSetAngularVelocity("
+    "Phys_ObjDestroy(")
+    require_slice_not_contains(
+        _spawn_physics_source
+        "${_reporting_physics_call}"
+        "FX model spawn cannot invoke a reporting physics API under PHYSICS")
+endforeach()
+
+extract_source_slice(
+    _spawn_physics_source
+    "if (result.physicsStatus != PhysBodyModelCreateStatus::Success)"
+    "if (!Phys_TryObjSetAngularVelocityLockedNoReport("
+    _spawn_create_failure_source
+    "model-spawn body creation failure")
+require_slice_ordered(
+    _spawn_create_failure_source
+    "const bool cleanupFailed = result.physicsStatus"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "unrecoverable creation cleanup is classified before unlocking")
+require_slice_contains(
+    _spawn_create_failure_source
+    "== PhysBodyModelCreateStatus::CleanupFailed;"
+    "unrecoverable creation cleanup remains a distinct fail-stop status")
+require_slice_ordered(
+    _spawn_create_failure_source
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "std::abort();"
+    "unrecoverable creation cleanup fail-stops only after unlock")
+
+extract_source_slice(
+    _spawn_physics_source
+    "if (!Phys_TryObjSetAngularVelocityLockedNoReport("
+    "const fx::physics::TokenResult binding = fx::physics::BindWithScratch("
+    _spawn_configuration_failure_source
+    "model-spawn configuration rollback")
+require_slice_ordered(
+    _spawn_configuration_failure_source
+    "Phys_TryDestroyBodyLockedNoReport(PHYS_WORLD_FX, body)"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "configuration failure silently destroys the fresh body before unlock")
+require_slice_ordered(
+    _spawn_configuration_failure_source
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "std::abort();"
+    "configuration cleanup fail-stop occurs only after unlock")
 
 extract_source_slice(
     _spawn_physics_source
@@ -581,14 +637,19 @@ extract_source_slice(
     "model-spawn bind failure")
 require_slice_ordered(
     _spawn_bind_failure_source
-    "binding.status != fx::physics::SidecarStatus::DuplicateBody"
-    "Phys_ObjDestroy(PHYS_WORLD_FX, body);"
+    "binding.status == fx::physics::SidecarStatus::DuplicateBody"
+    "Phys_TryDestroyBodyLockedNoReport("
     "duplicate ownership rejection must not destroy another slot's body")
 require_slice_ordered(
     _spawn_bind_failure_source
-    "Phys_ObjDestroy(PHYS_WORLD_FX, body);"
+    "Phys_TryDestroyBodyLockedNoReport("
     "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
-    "failed binding must destroy the unowned body before unlock")
+    "failed binding must silently destroy the unowned body before unlock")
+require_slice_ordered(
+    _spawn_bind_failure_source
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "std::abort();"
+    "ambiguous ownership or cleanup failure must fail-stop only after releasing PHYSICS")
 
 extract_source_slice(
     _spawn_physics_source
@@ -613,10 +674,10 @@ require_slice_not_contains(
 
 extract_source_slice(
     _phys_ode_source
-    "PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromPresetAndXModel("
-    "void __cdecl Phys_ObjSetAngularVelocity("
+    "static PhysBodyModelCreateStatus\nPhys_TryCreateBodyFromPresetAndXModelInternal("
+    "bool __cdecl Phys_TryObjSetAngularVelocityLockedNoReport("
     _preset_body_create_source
-    "Phys_TryCreateBodyFromPresetAndXModel")
+    "preset/model creation transaction")
 foreach(_required_preset_bound
     "physPreset->mass < 0.0001f"
     "physPreset->mass > 1000000.0f"
@@ -653,42 +714,28 @@ require_slice_ordered(
     "position/velocity validation must precede BodyState construction")
 require_slice_ordered(
     _preset_body_create_source
-    "if (!std::isfinite(quat[index]))"
     "BodyState state{};"
-    "quaternion validation must precede BodyState construction")
+    "Phys_TryQuaternionToAxisNoReport(quat, state.rotation)"
+    "quaternion conversion must use the silent finite/bounded helper")
 require_slice_ordered(
     _preset_body_create_source
-    "double quaternionMagnitudeSquared = 0.0;"
-    "if (!std::isfinite(quaternionMagnitudeSquared)"
-    "quaternion magnitude must be accumulated before validation")
+    "Phys_TryQuaternionToAxisNoReport(quat, state.rotation)"
+    "Phys_TryCreateBodyFromStateAndXModelInternal("
+    "validated quaternion conversion precedes complete native construction")
+require_slice_ordered(
+    _preset_body_create_source
+    "Phys_TryCreateBodyFromPresetAndXModelInternal("
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "the public wrapper retains PHYSICS through the silent core")
+require_slice_ordered(
+    _preset_body_create_source
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICS);"
+    "Phys_ReportBodyModelCreateFailure(status, resourceFailure);"
+    "public preset diagnostics occur only after PHYSICS is released")
 require_slice_contains(
     _preset_body_create_source
-    "quaternionMagnitudeSquared\n            < static_cast<double>((std::numeric_limits<float>::min)())"
-    "degenerate quaternions must be rejected")
-require_slice_contains(
-    _preset_body_create_source
-    "quaternionMagnitudeSquared\n            > static_cast<double>((std::numeric_limits<float>::max)())"
-    "overflowing quaternion magnitudes must be rejected")
-require_slice_ordered(
-    _preset_body_create_source
-    "if (!std::isfinite(quaternionMagnitudeSquared)"
-    "BodyState state{};"
-    "quaternion magnitude validation must precede state construction")
-require_slice_ordered(
-    _preset_body_create_source
-    "BodyState state{};"
-    "QuatToAxis(quat, state.rotation);"
-    "validated quaternion input must precede rotation construction")
-require_slice_ordered(
-    _preset_body_create_source
-    "QuatToAxis(quat, state.rotation);"
-    "for (const auto &row : state.rotation)"
-    "rotation output must receive finite validation")
-require_slice_ordered(
-    _preset_body_create_source
-    "for (const auto &row : state.rotation)"
-    "Phys_TryCreateBodyFromStateAndXModel("
-    "finite rotation validation must precede transactional native construction")
+    "outBody,\n        outResourceFailure);"
+    "the caller-locked wrapper propagates diagnostic resource output")
 
 extract_source_slice(
     _fx_system_source

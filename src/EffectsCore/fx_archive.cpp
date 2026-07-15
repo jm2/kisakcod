@@ -1,5 +1,6 @@
 #include "fx_system.h"
 #include "fx_archive_capacity.h"
+#include "fx_archive_physics_batch_control.h"
 #include "fx_archive_restore_control.h"
 #include "fx_archive_restore_workspace.h"
 #include "fx_physics_sidecar.h"
@@ -1306,6 +1307,101 @@ bool FX_BuildArchivePhysicsRetirementPlanLocked(
         == fx::archive::PhysicsRetirementPlanStatus::Success;
 }
 
+bool FX_ArchivePhysicsBatchSelectionIsValidForWrapper(
+    const std::size_t *const entryIndices,
+    const std::size_t selectedCount,
+    const std::size_t entryCount) noexcept
+{
+    if (selectedCount > entryCount
+        || (selectedCount != 0 && !entryIndices))
+    {
+        return false;
+    }
+    for (std::size_t index = 0; index < selectedCount; ++index)
+    {
+        if (entryIndices[index] >= entryCount)
+            return false;
+        for (std::size_t prior = 0; prior < index; ++prior)
+        {
+            if (entryIndices[prior] == entryIndices[index])
+                return false;
+        }
+    }
+    return true;
+}
+
+struct FxArchivePhysicsRetirementBatchContext
+{
+    fx::physics::BodySidecar *liveSidecar;
+    FxArchivePhysicsEntry *liveEntries;
+    std::size_t liveEntryCount;
+    fx::physics::BodySidecarSnapshotScratch *scratch;
+};
+
+fx::archive::RestoreControlOperationStatus
+FX_PerformArchivePhysicsRetirementBatchOperation(
+    void *const opaqueContext,
+    const fx::archive::ArchivePhysicsBatchOperation operation,
+    const std::size_t entryIndex) noexcept
+{
+    using Operation = fx::archive::ArchivePhysicsBatchOperation;
+    using Status = fx::archive::RestoreControlOperationStatus;
+
+    if (!opaqueContext)
+        return Status::UnsafeFailure;
+    auto &context = *static_cast<
+        FxArchivePhysicsRetirementBatchContext *>(opaqueContext);
+    if (!context.liveSidecar || !context.liveEntries || !context.scratch
+        || entryIndex >= context.liveEntryCount)
+    {
+        return Status::UnsafeFailure;
+    }
+
+    FxArchivePhysicsEntry &entry = context.liveEntries[entryIndex];
+    switch (operation)
+    {
+    case Operation::ValidateRetirement:
+    {
+        const fx::physics::BodyResult resolved = fx::physics::Resolve(
+            context.liveSidecar, entry.ownerIndex, entry.token);
+        return !entry.retired && entry.rollbackRecipe.model
+                && entry.rollbackRecipe.model == entry.model && resolved
+                && Phys_TryValidateBodyDestroyLockedNoReport(
+                       PHYS_WORLD_FX, resolved.body)
+                    == PhysBodyRollbackStatus::Success
+            ? Status::Success
+            : Status::RecoverableFailure;
+    }
+
+    case Operation::Retire:
+    {
+        if (entry.retired || !entry.rollbackRecipe.model
+            || entry.rollbackRecipe.model != entry.model)
+        {
+            return Status::RecoverableFailure;
+        }
+        const fx::physics::BodyResult taken =
+            fx::physics::TakeWithScratch(
+                context.liveSidecar,
+                entry.ownerIndex,
+                entry.token,
+                context.scratch);
+        if (!taken)
+            return Status::RecoverableFailure;
+        entry.reconstructedToken = fx::physics::INVALID_BODY_TOKEN;
+        entry.retired = true;
+        return Phys_TryDestroyBodyLockedNoReport(
+                   PHYS_WORLD_FX, taken.body)
+                == PhysBodyRollbackStatus::Success
+            ? Status::Success
+            : Status::UnsafeFailure;
+    }
+
+    default:
+        return Status::UnsafeFailure;
+    }
+}
+
 fx::archive::RestoreControlOperationStatus
 FX_RetireArchivePhysicsLocked(
     fx::physics::BodySidecar *const liveSidecar,
@@ -1324,59 +1420,122 @@ FX_RetireArchivePhysicsLocked(
         return Status::RecoverableFailure;
     }
     *outRetiredCount = 0;
-
-    // Prove every selected native body can be destroyed before detaching the
-    // first registration. With PHYSICS held, each subsequent checked destroy
-    // is then a no-fail commit over the validated prefix.
-    for (std::size_t index = 0; index < plan.count; ++index)
+    if (!FX_ArchivePhysicsBatchSelectionIsValidForWrapper(
+            plan.entryIndices.data(), plan.count, liveEntryCount))
     {
-        const std::size_t entryIndex = plan.entryIndices[index];
-        if (entryIndex >= liveEntryCount)
-            return Status::RecoverableFailure;
-        const FxArchivePhysicsEntry &entry = liveEntries[entryIndex];
-        const fx::physics::BodyResult resolved = fx::physics::Resolve(
-            liveSidecar, entry.ownerIndex, entry.token);
-        if (entry.retired || !entry.rollbackRecipe.model
-            || entry.rollbackRecipe.model != entry.model || !resolved
-            || Phys_TryValidateBodyDestroyLockedNoReport(
-                   PHYS_WORLD_FX, resolved.body)
-                != PhysBodyRollbackStatus::Success)
-        {
-            return Status::RecoverableFailure;
-        }
+        return Status::RecoverableFailure;
     }
 
-    for (std::size_t index = 0; index < plan.count; ++index)
+    FxArchivePhysicsRetirementBatchContext context{
+        liveSidecar,
+        liveEntries,
+        liveEntryCount,
+        scratch,
+    };
+    const fx::archive::ArchivePhysicsBatchCallbacks callbacks{
+        &context,
+        FX_PerformArchivePhysicsRetirementBatchOperation,
+    };
+    return fx::archive::RunArchivePhysicsRetirementBatch(
+        callbacks,
+        plan.entryIndices.data(),
+        plan.count,
+        liveEntryCount,
+        outRetiredCount);
+}
+
+struct FxArchivePhysicsReconstructionBatchContext
+{
+    fx::physics::BodySidecar *liveSidecar;
+    FxArchivePhysicsEntry *liveEntries;
+    std::size_t liveEntryCount;
+    fx::physics::BodySidecarSnapshotScratch *scratch;
+};
+
+fx::archive::RestoreControlOperationStatus
+FX_PerformArchivePhysicsReconstructionBatchOperation(
+    void *const opaqueContext,
+    const fx::archive::ArchivePhysicsBatchOperation operation,
+    const std::size_t entryIndex) noexcept
+{
+    using Operation = fx::archive::ArchivePhysicsBatchOperation;
+    using Status = fx::archive::RestoreControlOperationStatus;
+
+    if (!opaqueContext)
+        return Status::UnsafeFailure;
+    auto &context = *static_cast<
+        FxArchivePhysicsReconstructionBatchContext *>(opaqueContext);
+    if (!context.liveSidecar || !context.liveEntries || !context.scratch
+        || entryIndex >= context.liveEntryCount)
     {
-        const std::size_t entryIndex = plan.entryIndices[index];
-        if (entryIndex >= liveEntryCount)
-            return Status::RecoverableFailure;
-        FxArchivePhysicsEntry &entry = liveEntries[entryIndex];
-        if (entry.retired || !entry.rollbackRecipe.model
-            || entry.rollbackRecipe.model != entry.model)
+        return Status::UnsafeFailure;
+    }
+
+    FxArchivePhysicsEntry &entry = context.liveEntries[entryIndex];
+    const PhysBodyRollbackRecipe &recipe = entry.rollbackRecipe;
+    switch (operation)
+    {
+    case Operation::ValidateReconstruction:
+        return entry.retired && entry.ownerIndex < MAX_ELEMS
+                && recipe.model && recipe.model == entry.model
+                && entry.token != fx::physics::INVALID_BODY_TOKEN
+                && entry.reconstructedToken
+                    == fx::physics::INVALID_BODY_TOKEN
+                && recipe.demand.bodyCount == 1
+                && recipe.demand.userDataCount == 1
+                && fx::physics::ValidateVacantOwner(
+                       context.liveSidecar, entry.ownerIndex)
+                    == fx::physics::SidecarStatus::Success
+            ? Status::Success
+            : Status::RecoverableFailure;
+
+    case Operation::Reconstruct:
+    {
+        dxBody *createdBody = nullptr;
+        const PhysBodyModelCreateStatus bodyStatus =
+            Phys_TryCreateBodyFromStateAndXModelLockedNoReport(
+                PHYS_WORLD_FX,
+                &recipe.state,
+                recipe.model,
+                &createdBody);
+        if (bodyStatus != PhysBodyModelCreateStatus::Success
+            || !createdBody)
         {
-            return Status::RecoverableFailure;
+            if (bodyStatus == PhysBodyModelCreateStatus::CleanupFailed)
+                return Status::UnsafeFailure;
+            return createdBody
+                ? Status::UnsafeFailure
+                : Status::RecoverableFailure;
         }
 
-        const fx::physics::BodyResult taken =
-            fx::physics::TakeWithScratch(
-                liveSidecar,
+        const fx::physics::TokenResult bound =
+            fx::physics::BindWithScratch(
+                context.liveSidecar,
                 entry.ownerIndex,
-                entry.token,
-                scratch);
-        if (!taken)
-            return Status::RecoverableFailure;
-        entry.reconstructedToken = fx::physics::INVALID_BODY_TOKEN;
-        entry.retired = true;
-        ++*outRetiredCount;
-        if (Phys_TryDestroyBodyLockedNoReport(
-                PHYS_WORLD_FX, taken.body)
-            != PhysBodyRollbackStatus::Success)
+                createdBody,
+                context.scratch);
+        if (!bound)
         {
-            return Status::UnsafeFailure;
+            // A newly created address that is already registered has
+            // ambiguous native ownership. Destroying it could invalidate the
+            // existing registration, while retaining it cannot be recovered.
+            if (bound.status == fx::physics::SidecarStatus::DuplicateBody)
+                return Status::UnsafeFailure;
+            if (Phys_TryDestroyBodyLockedNoReport(
+                    PHYS_WORLD_FX, createdBody)
+                != PhysBodyRollbackStatus::Success)
+            {
+                return Status::UnsafeFailure;
+            }
+            return Status::RecoverableFailure;
         }
+        entry.reconstructedToken = bound.token;
+        return Status::Success;
     }
-    return Status::Success;
+
+    default:
+        return Status::UnsafeFailure;
+    }
 }
 
 fx::archive::RestoreControlOperationStatus
@@ -1397,73 +1556,29 @@ FX_ReconstructRetiredArchivePhysicsLocked(
     {
         return Status::RecoverableFailure;
     }
-
-    for (std::size_t index = 0; index < retiredCount; ++index)
+    if (!FX_ArchivePhysicsBatchSelectionIsValidForWrapper(
+            plan.entryIndices.data(), retiredCount, liveEntryCount))
     {
-        const std::size_t entryIndex = plan.entryIndices[index];
-        if (entryIndex >= liveEntryCount)
-            return Status::RecoverableFailure;
-        FxArchivePhysicsEntry &entry = liveEntries[entryIndex];
-        const PhysBodyRollbackRecipe &recipe = entry.rollbackRecipe;
-        if (!entry.retired || entry.ownerIndex >= MAX_ELEMS
-            || !recipe.model || recipe.model != entry.model
-            || entry.token == fx::physics::INVALID_BODY_TOKEN
-            || entry.reconstructedToken
-                != fx::physics::INVALID_BODY_TOKEN
-            || recipe.demand.bodyCount != 1
-            || recipe.demand.userDataCount != 1
-            || fx::physics::ValidateVacantOwner(
-                   liveSidecar, entry.ownerIndex)
-                != fx::physics::SidecarStatus::Success)
-        {
-            return Status::RecoverableFailure;
-        }
+        return Status::RecoverableFailure;
     }
 
-    for (std::size_t index = 0; index < retiredCount; ++index)
-    {
-        const std::size_t entryIndex = plan.entryIndices[index];
-        FxArchivePhysicsEntry &entry = liveEntries[entryIndex];
-        const PhysBodyRollbackRecipe &recipe = entry.rollbackRecipe;
-        dxBody *createdBody = nullptr;
-        const PhysBodyModelCreateStatus bodyStatus =
-            Phys_TryCreateBodyFromStateAndXModelLockedNoReport(
-                PHYS_WORLD_FX,
-                &recipe.state,
-                recipe.model,
-                &createdBody);
-        if (bodyStatus != PhysBodyModelCreateStatus::Success
-            || !createdBody)
-        {
-            if (bodyStatus == PhysBodyModelCreateStatus::CleanupFailed)
-                return Status::UnsafeFailure;
-            return createdBody
-                ? Status::UnsafeFailure
-                : Status::RecoverableFailure;
-        }
-
-        const fx::physics::TokenResult bound =
-            fx::physics::BindWithScratch(
-                liveSidecar,
-                entry.ownerIndex,
-                createdBody,
-                scratch);
-        if (!bound)
-        {
-            if (bound.status != fx::physics::SidecarStatus::DuplicateBody)
-            {
-                if (Phys_TryDestroyBodyLockedNoReport(
-                        PHYS_WORLD_FX, createdBody)
-                    != PhysBodyRollbackStatus::Success)
-                {
-                    return Status::UnsafeFailure;
-                }
-            }
-            return Status::RecoverableFailure;
-        }
-        entry.reconstructedToken = bound.token;
-    }
-    return Status::Success;
+    FxArchivePhysicsReconstructionBatchContext context{
+        liveSidecar,
+        liveEntries,
+        liveEntryCount,
+        scratch,
+    };
+    const fx::archive::ArchivePhysicsBatchCallbacks callbacks{
+        &context,
+        FX_PerformArchivePhysicsReconstructionBatchOperation,
+    };
+    std::size_t reconstructedCount = 0;
+    return fx::archive::RunArchivePhysicsReconstructionBatch(
+        callbacks,
+        plan.entryIndices.data(),
+        retiredCount,
+        liveEntryCount,
+        &reconstructedCount);
 }
 
 bool FX_ArchiveRetiredTokenTargetsMatch(

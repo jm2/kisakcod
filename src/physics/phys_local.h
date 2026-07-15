@@ -96,6 +96,21 @@ enum class PhysBodyModelCreateStatus : std::uint8_t
     CleanupFailed,
 };
 
+enum class PhysBodyCreateResourceFailure : std::uint8_t
+{
+    None,
+    BodyPool,
+    UserDataPool,
+};
+
+// Emits the legacy diagnostic for a status returned by an intrinsically
+// silent transaction. Call only after releasing caller-owned exclusion.
+void __cdecl Phys_ReportBodyModelCreateFailure(
+    PhysBodyModelCreateStatus status) noexcept;
+void __cdecl Phys_ReportBodyModelCreateFailure(
+    PhysBodyModelCreateStatus status,
+    PhysBodyCreateResourceFailure resourceFailure) noexcept;
+
 enum physStuckState_t : __int32
 {                                       // ...
     PHYS_OBJ_STATE_POSSIBLY_STUCK = 0x0,
@@ -359,6 +374,17 @@ dxBody *__cdecl Phys_ObjCreateAxis(
     const float (*axis)[3],
     float *velocity,
     const PhysPreset *physPreset);
+// Caller owns CRITSECT_PHYSICS. Creates only the body/user-data pair and
+// returns validation/capacity failures without assertions or diagnostics.
+[[nodiscard]] PhysBodyModelCreateStatus __cdecl
+Phys_TryObjCreateLockedNoReport(
+    PhysWorld worldIndex,
+    const float *position,
+    const float *quat,
+    const float *velocity,
+    const PhysPreset *physPreset,
+    dxBody **outBody,
+    PhysBodyCreateResourceFailure *outResourceFailure = nullptr) noexcept;
 dxBody *__cdecl Phys_CreateBodyFromState(PhysWorld worldIndex, const BodyState *state);
 // Creates a fresh body and all collision owned by model as one transaction.
 // Failure leaves *outBody null and releases every body/user-data/geom resource;
@@ -388,6 +414,18 @@ Phys_TryCreateBodyFromStateAndXModelLockedNoReport(
     const PhysPreset *physPreset,
     const XModel *model,
     dxBody **outBody) noexcept;
+// Caller owns CRITSECT_PHYSICS. This is the intrinsically silent form used by
+// transactions that must retain outer physics exclusion through publication.
+[[nodiscard]] PhysBodyModelCreateStatus __cdecl
+Phys_TryCreateBodyFromPresetAndXModelLockedNoReport(
+    PhysWorld worldIndex,
+    const float *position,
+    const float *quat,
+    const float *velocity,
+    const PhysPreset *physPreset,
+    const XModel *model,
+    dxBody **outBody,
+    PhysBodyCreateResourceFailure *outResourceFailure = nullptr) noexcept;
 // Computes the complete fixed-pool demand of a fresh body built from model.
 // A directly attached brush/default box consumes one geom slot; each oriented
 // primitive consumes an outer transform plus its owned inner geom.
@@ -460,6 +498,22 @@ void __cdecl Phys_ObjSetOrientation(
     const float *newPosition,
     const float *newOrientation);
 void __cdecl Phys_ObjAddGeomBox(PhysWorld worldIndex, dxBody *id, const float *boxMin, const float *boxMax);
+// Acquires CRITSECT_PHYSICS but emits no assertion or diagnostic. The caller
+// reports the returned status after this function releases exclusion.
+[[nodiscard]] PhysBodyModelCreateStatus __cdecl
+Phys_TryObjAddGeomBoxNoReport(
+    PhysWorld worldIndex,
+    dxBody *id,
+    const float *boxMin,
+    const float *boxMax) noexcept;
+// Caller owns CRITSECT_PHYSICS. This intrinsically silent form retains
+// exclusion through the caller's rollback or publication transaction.
+[[nodiscard]] PhysBodyModelCreateStatus __cdecl
+Phys_TryObjAddGeomBoxLockedNoReport(
+    PhysWorld worldIndex,
+    dxBody *id,
+    const float *boxMin,
+    const float *boxMax) noexcept;
 void __cdecl Phys_ObjAddGeomBoxRotated(
     PhysWorld worldIndex,
     dxBody *id,
@@ -495,14 +549,36 @@ void __cdecl Phys_ObjAddGeomCapsule(
     float radius,
     float halfHeight,
     const float *centerOfMass);
+// Caller owns CRITSECT_PHYSICS. Attaches the model collision through the
+// shared status-bearing core and emits no assertion, warning, or error.
+[[nodiscard]] PhysBodyModelCreateStatus __cdecl
+Phys_TryObjSetCollisionFromXModelLockedNoReport(
+    const XModel *model,
+    PhysWorld worldIndex,
+    dxBody *physId) noexcept;
 void __cdecl Phys_ObjSetCollisionFromXModel(const XModel *model, PhysWorld worldIndex, dxBody *physId);
 void __cdecl Phys_ObjSetAngularVelocity(dxBody *id, float *angularVel);
+// Caller owns CRITSECT_PHYSICS. Validates the body and vector before directly
+// publishing the same component permutation as Phys_ObjSetAngularVelocity.
+[[nodiscard]] bool __cdecl Phys_TryObjSetAngularVelocityLockedNoReport(
+    dxBody *id,
+    const float *angularVel) noexcept;
 void __cdecl Phys_ObjSetAngularVelocityRaw(dxBody *id, float *angularVel);
 void __cdecl Phys_ObjSetVelocity(dxBody *id, float *velocity);
 void __cdecl Phys_ObjGetPosition(dxBody *id, float *outPosition, float (*outRotation)[3]);
 void __cdecl Phys_ObjGetCenterOfMass(dxBody *id, float *outPosition);
 void __cdecl Phys_ObjDestroy(PhysWorld worldIndex, dxBody *id);
 void __cdecl Phys_ObjAddForce(PhysWorld worldIndex, dxBody *id, float *worldPos, const float *impulse);
+// Caller owns CRITSECT_PHYSICS. Validates the complete body transaction and
+// publishes force, torque, wake state, and sleep time only after all numeric
+// work succeeds. Failure emits no assertion or diagnostic and mutates nothing.
+[[nodiscard]] bool __cdecl Phys_TryObjBulletImpactLockedNoReport(
+    PhysWorld worldIndex,
+    dxBody *id,
+    const float *worldPosRaw,
+    const float *bulletDirRaw,
+    float bulletSpeed,
+    float scale) noexcept;
 int __cdecl Phys_IndexFromODEWorld(dxWorld *world);
 void __cdecl Phys_ObjBulletImpact(
     PhysWorld worldIndex,

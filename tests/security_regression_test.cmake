@@ -480,11 +480,40 @@ require_source_ordered(
     "new (std::nothrow) dxBody;"
     "if (!b)\n        return nullptr;"
     "ODE body allocation failure must be checked before initialization")
-require_source_ordered(
-    "physics/ode/ode.cpp"
+file(READ "${SOURCE_ROOT}/src/physics/ode/ode.cpp" _ode_body_source)
+extract_security_slice(
+    _ode_body_source
+    "dxBody *dBodyCreate(dxWorld *w)"
+    "poolmutationstatus_t ODE_TryBodyCreateNoReport("
+    _diagnostic_body_create
+    "diagnostic ODE body creation")
+require_security_slice_ordered(
+    _diagnostic_body_create
     "if (!b)\n        return nullptr;"
-    "initObject(b, w);"
-    "failed ODE bodies must not enter their world list")
+    "return ODE_InitializeAllocatedBody(w, b);"
+    "failed diagnostic ODE bodies must not enter their world list")
+
+extract_security_slice(
+    _ode_body_source
+    "poolmutationstatus_t ODE_TryBodyCreateNoReport("
+    "dxJointGroup *__cdecl dGetContactJointGroup("
+    _silent_body_create
+    "silent ODE body creation")
+require_security_slice_ordered(
+    _silent_body_create
+    "*outBody = nullptr;"
+    "ODE_NoReportBodyAllocationCandidateHasNoAliases("
+    "silent body output clears before free-head alias validation")
+require_security_slice_ordered(
+    _silent_body_create
+    "ODE_NoReportBodyAllocationCandidateHasNoAliases("
+    "Pool_TryAllocNoReport("
+    "prospective body ownership validates before pool mutation")
+require_security_slice_ordered(
+    _silent_body_create
+    "if (allocation.status != poolmutationstatus_t::Success)"
+    "*outBody = ODE_InitializeAllocatedBody(world, body);"
+    "failed silent ODE bodies must not enter their world list")
 require_source_not_contains(
     "physics/ode/ode.cpp"
     "free(b);"
@@ -494,68 +523,48 @@ require_source_match_count(
     "delete[ \t]+b[ \t]*;"
     2
     "both ODE body destruction paths must match the fallback new-expression")
-foreach(_resource_pair_callback
-    "ResourceHandle (*createPrimary)(void *context) noexcept = nullptr;"
-    "ResourceHandle (*createCompanion)("
-    "bool (*destroyPrimary)("
-    "TryCreateResourcePair("
-)
-    require_source_contains(
-        "physics/phys_resource_pair.h"
-        "${_resource_pair_callback}"
-        "resource-pair rollback callbacks must retain their noexcept contract")
+# Production physics no longer composes callback resource pairs. The body,
+# user-data, primary geom, and optional transform now use status-bearing silent
+# fixed-pool operations, with explicit rollback and one unified destroy core.
+foreach(_obsolete_pair_use
+    "physics::allocation::TryCreateResourcePair("
+    "ResourcePairCallbacks"
+    "PhysBodyDestroyPlan")
+    require_source_not_contains(
+        "physics/phys_ode.cpp"
+        "${_obsolete_pair_use}"
+        "production physics must not retain divergent callback/manual transactions")
 endforeach()
-require_source_contains(
-    "physics/phys_resource_pair.h"
-    "PrimaryCleanupFailed,"
-    "resource-pair rollback must distinguish refused primary cleanup")
-require_source_ordered(
-    "physics/phys_resource_pair.cpp"
-    "callbacks.createCompanion(callbacks.context, primary);"
-    "!callbacks.destroyPrimary(callbacks.context, primary))"
-    "failed companion creation must return its primary resource")
-require_source_ordered(
-    "physics/phys_resource_pair.cpp"
-    "!callbacks.destroyPrimary(callbacks.context, primary))"
-    "return {ResourcePairStatus::CompanionUnavailable, nullptr, nullptr};"
-    "successful primary rollback must publish no stale ownership")
-require_source_matches(
-    "physics/phys_resource_pair.cpp"
-    "if[ \t\r\n]*\\([ \t\r\n]*!callbacks\\.destroyPrimary\\([ \t\r\n]*callbacks\\.context,[ \t\r\n]*primary[ \t\r\n]*\\)[ \t\r\n]*\\)[ \t\r\n]*\\{[ \t\r\n]*return[ \t\r\n]*\\{[ \t\r\n]*ResourcePairStatus::PrimaryCleanupFailed,[ \t\r\n]*primary,[ \t\r\n]*nullptr[ \t\r\n]*\\}[ \t\r\n]*;[ \t\r\n]*\\}"
-    "refused primary cleanup must preserve its still-owned primary handle")
-require_source_not_matches(
-    "physics/phys_resource_pair.cpp"
-    "ResourcePairStatus::PrimaryCleanupFailed,[ \t\r\n]*nullptr,[ \t\r\n]*nullptr"
-    "failed primary cleanup must not erase recoverable ownership")
-require_source_contains(
-    "physics/phys_ode.cpp"
-    "physics::allocation::TryCreateResourcePair(resourceCallbacks, true);"
-    "physics bodies and user data must be acquired transactionally")
-require_source_contains(
-    "physics/phys_ode.cpp"
-    "resourceCallbacks, geomState->isOriented);"
-    "primary collision and optional transforms must be acquired transactionally")
-require_source_match_count(
-    "physics/phys_ode.cpp"
-    "if[ \t\r\n]*\\([ \t\r\n]*resources\\.status[ \t\r\n]*==[ \t\r\n]*physics::allocation::ResourcePairStatus::PrimaryCleanupFailed[ \t\r\n]*\\)[ \t\r\n]*(\\{[ \t\r\n]*)?return[ \t\r\n]+PhysBodyModelCreateStatus::CleanupFailed[ \t\r\n]*;"
-    2
-    "both production resource-pair users must surface refused cleanup")
+foreach(_silent_transaction_api
+    "ODE_TryBodyCreateNoReport("
+    "Pool_TryAllocNoReport("
+    "ODE_TryCreateGeomTransformNoReport("
+    "ODE_TryGeomTransformSetGeomNoReport("
+    "ODE_TryGeomDestructNoReport("
+    "ODE_TryBodyDestroyNoReport("
+    "Pool_TryFreeNoReport(")
+    require_source_contains(
+        "physics/phys_ode.cpp"
+        "${_silent_transaction_api}"
+        "physics mutations must use the silent fixed-pool transaction layer")
+endforeach()
 require_source_ordered(
     "physics/phys_ode.cpp"
-    "dSpaceRemove(physGlob.space[worldIndex], outerGeom);"
-    "dSpaceAdd(physGlob.space[worldIndex], outerGeom);"
-    "successful geom construction must preserve legacy simple-space ordering")
-require_source_contains(
+    "geom->spaceRemove();"
+    "geom->spaceAdd(&space->first);"
+    "successful COM adjustment must preserve the simple-space dirty prefix")
+require_source_ordered(
     "physics/phys_ode.cpp"
-    "dBodyDestroy(static_cast<dxBody *>(body));"
-    "user-data exhaustion must return its newly created body")
+    "ODE_TryBodyCreateNoReport("
+    "ODE_TryBodyDestroyNoReport(body)"
+    "user-data exhaustion must silently return its newly created body")
 require_source_not_contains(
     "physics/phys_ode.cpp"
     "iassert(userData);\n        memset((uint8_t *)userData"
     "physics user-data exhaustion must not reach memset through an assertion")
 require_source_contains(
     "physics/phys_ode.cpp"
-    "!(state->mass > 0.0f) || !std::isfinite(state->mass)"
+    "!Phys_RollbackBodyStateIsValid(*state)"
     "body construction must reject nonpositive or nonfinite mass before allocation")
 require_source_contains(
     "physics/phys_ode.cpp"
@@ -605,8 +614,14 @@ require_source_not_matches(
 require_source_match_count(
     "physics/phys_ode.cpp"
     "geomState->u\\.boxState\\.extent\\[[012]\\]"
-    6
-    "box mass and geometry creation must use typed box extents")
+    3
+    "box geometry creation must use typed box extents")
+foreach(_box_mass_component x y z)
+    require_source_contains(
+        "physics/phys_ode.cpp"
+        "const float ${_box_mass_component} = geomState.u.boxState.extent["
+        "silent box mass must snapshot each typed extent before arithmetic")
+endforeach()
 require_source_not_contains(
     "physics/phys_ode.cpp"
     "geomState->u.boxState.extent[0],\n            geomState->u.cylinderState.radius"
@@ -627,18 +642,25 @@ require_source_contains(
     "physics/phys_local.h"
     "void __cdecl Phys_ObjSetCollisionFromXModel("
     "legacy collision callers must retain their source-compatible wrapper")
-require_source_ordered(
-    "physics/phys_ode.cpp"
+file(READ "${SOURCE_ROOT}/src/physics/phys_ode.cpp" _phys_transaction_source)
+extract_security_slice(
+    _phys_transaction_source
+    "static PhysBodyModelCreateStatus\nPhys_TryCreateBodyFromStateAndXModelInternal("
+    "PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromStateAndXModel("
+    _complete_model_create
+    "complete body/model construction")
+require_security_slice_ordered(
+    _complete_model_create
     "*outBody = nullptr;"
-    "Phys_TryBuildCollisionFromXModel(model, worldIndex, body, true, true);"
+    "Phys_TryBuildCollisionFromXModel("
     "checked construction must clear output ownership before building collision")
-require_source_ordered(
-    "physics/phys_ode.cpp"
-    "Phys_TryBuildCollisionFromXModel(model, worldIndex, body, true, true);"
-    "Phys_ObjDestroy(worldIndex, body);"
-    "checked collision failure must destroy the complete fresh body")
-require_source_ordered(
-    "physics/phys_ode.cpp"
+require_security_slice_ordered(
+    _complete_model_create
+    "Phys_TryBuildCollisionFromXModel("
+    "Phys_TryDestroyBodyAndUserDataLockedNoReport(worldIndex, body)"
+    "checked collision failure must silently destroy the complete fresh body")
+require_security_slice_ordered(
+    _complete_model_create
     "return collisionStatus;"
     "*outBody = body;"
     "checked construction must publish ownership only after every failure exit")

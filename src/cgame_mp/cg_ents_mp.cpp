@@ -28,6 +28,8 @@
 #include <universal/profile.h>
 #include <cgame/cg_pose_atomic.h>
 
+#include <cstdlib>
+
 float g_entMoveTolVec[3] = { 16.0f, 16.0f, 16.0f };
 
 void __cdecl CG_Player_PreControllers(DObj_s *obj, centity_s *cent)
@@ -1069,7 +1071,7 @@ void __cdecl CG_CreatePhysicsObject(int32_t localClientNum, centity_s *cent)
     const char *v2; // eax
     const char *Name; // eax
     float velocity[3]; // [esp+1Ch] [ebp-44h] BYREF
-    int32_t physObjId; // [esp+28h] [ebp-38h]
+    dxBody *physObjId; // [esp+28h] [ebp-38h]
     DObj_s *obj; // [esp+2Ch] [ebp-34h]
     PhysPreset *physPreset; // [esp+30h] [ebp-30h]
     float quat[4]; // [esp+34h] [ebp-2Ch] BYREF
@@ -1090,32 +1092,59 @@ void __cdecl CG_CreatePhysicsObject(int32_t localClientNum, centity_s *cent)
     physPreset = DObjGetPhysPreset(obj);
     if (physPreset)
     {
+        const XModel *const physicsModel = DObjGetModel(obj, 0);
+        PhysBodyModelCreateStatus status = PhysBodyModelCreateStatus::InvalidArgument;
+        PhysBodyCreateResourceFailure resourceFailure =
+            PhysBodyCreateResourceFailure::None;
+        bool cleanupFailed = false;
+        physObjId = nullptr;
         Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-        physObjId = (int)Phys_ObjCreate(PHYS_WORLD_FX, position, quat, velocity, physPreset);
-        if (physObjId)
+        status = Phys_TryCreateBodyFromPresetAndXModelLockedNoReport(
+            PHYS_WORLD_FX,
+            position,
+            quat,
+            velocity,
+            physPreset,
+            physicsModel,
+            &physObjId,
+            &resourceFailure);
+        if (status == PhysBodyModelCreateStatus::Success)
         {
-            DObjPhysicsSetCollisionFromXModel(obj, PHYS_WORLD_FX, (dxBody *)physObjId);
             direction[0] = cent->currentState.apos.trDelta[0];
             direction[1] = cent->currentState.apos.trDelta[1];
             direction[2] = cent->currentState.apos.trDelta[2];
             speed = Vec3Normalize(direction);
-            Phys_ObjBulletImpact(
-                PHYS_WORLD_FX,
-                (dxBody *)physObjId,
-                cent->currentState.pos.trDelta,
-                direction,
-                speed,
-                physPreset->bulletForceScale);
-            Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
-            cent->pose.physObjId = physObjId;
+            if (!Phys_TryObjBulletImpactLockedNoReport(
+                    PHYS_WORLD_FX,
+                    physObjId,
+                    cent->currentState.pos.trDelta,
+                    direction,
+                    speed,
+                    physPreset->bulletForceScale))
+            {
+                status = PhysBodyModelCreateStatus::InvalidArgument;
+                cleanupFailed = Phys_TryDestroyBodyLockedNoReport(
+                    PHYS_WORLD_FX, physObjId)
+                    != PhysBodyRollbackStatus::Success;
+                physObjId = nullptr;
+            }
         }
-        else
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+
+        if (cleanupFailed
+            || status == PhysBodyModelCreateStatus::CleanupFailed)
         {
+            std::abort();
+        }
+        if (status != PhysBodyModelCreateStatus::Success)
+        {
+            Phys_ReportBodyModelCreateFailure(status, resourceFailure);
             Name = DObjGetName(obj);
             Com_PrintWarning(1, "Failed to create physics object for '%s'.\n", Name);
             cent->pose.physObjId = -1;
-            Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+            return;
         }
+        cent->pose.physObjId = (int32_t)(uintptr_t)physObjId;
     }
     else
     {

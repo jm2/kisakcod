@@ -35,6 +35,7 @@ internal data structures and functions for collision detection.
 #include "objects.h"
 #include "user_geom_storage.h"
 #include <universal/assertive.h>
+#include <universal/pool_allocator.h>
 
 #include <new>
 
@@ -57,6 +58,15 @@ struct dxPosR {
   dVector3 pos;
   dMatrix3 R;
 };
+
+// Selects the constructor variants used by the PHYSICS-locked transaction
+// path.  Those variants initialize only object-local state; publication into
+// the body and space lists is performed separately after complete topology
+// validation.
+struct ode_no_report_init_t
+{
+};
+inline constexpr ode_no_report_init_t ODE_NO_REPORT_INIT{};
 
 
 // geom flags.
@@ -106,6 +116,7 @@ struct dxGeom : public dBase {
   unsigned long category_bits,collide_bits;
 
   dxGeom (dSpaceID _space, int is_placeable, dxBody *new_body); // MOD
+  dxGeom (ode_no_report_init_t, int is_placeable) noexcept;
   virtual ~dxGeom() = default; // LWSS: make default
 
   virtual void computeAABB()=0;
@@ -229,6 +240,7 @@ struct dxUserGeom : public dxGeom {
         unsigned char user_data[physics::ode::kUserGeomClassDataBytes]; // MOD
 
     dxUserGeom(int class_num = dFirstUserClass, dxSpace *space = nullptr, dxBody *body = nullptr); // MOD
+    dxUserGeom(ode_no_report_init_t, int class_num) noexcept;
 
     void ReInit(int class_num, dxSpace *space, dxBody *body)
     {
@@ -270,6 +282,7 @@ struct dxGeomTransform : public dxGeom {
     dVector3 finalPos;
 
     dxGeomTransform(dSpaceID space, dxBody* body); // MOD
+    explicit dxGeomTransform(ode_no_report_init_t) noexcept;
     ~dxGeomTransform();
     void computeAABB() override;
     void computeFinalTx();
@@ -286,5 +299,35 @@ static_assert(
 dxGeom *ODE_CreateGeom(int classnum, dxSpace *space, dxBody *body);
 dxGeom *ODE_AllocateGeom();
 void ODE_GeomDestruct(dxGeom* g);
+enum class odegeomcleanupstatus_t : std::uint8_t
+{
+    Success,
+    InvalidArgument,
+    NestedCleanupFailed,
+    PoolStateInvalid,
+};
+// Silent geometry mutations are lower-layer pieces of PHYSICS-locked
+// transactions. Callers must hold CRITSECT_PHYSICS across preflight, mutation,
+// and any rollback so the validated fixed-pool topology cannot change between
+// those phases.
+[[nodiscard]] poolmutationstatus_t ODE_TryAllocateGeomNoReport(
+    dxGeom **outGeom) noexcept;
+[[nodiscard]] poolmutationstatus_t ODE_TryCreateGeomNoReport(
+    int classnum,
+    dxSpace *space,
+    dxBody *body,
+    dxGeom **outGeom) noexcept;
+[[nodiscard]] poolmutationstatus_t ODE_TryAttachGeomNoReport(
+    dxGeom *geom,
+    dxSpace *space,
+    dxBody *body) noexcept;
+[[nodiscard]] bool ODE_TryValidateGeomAttachmentNoReport(
+    dxSpace *space,
+    dxBody *body) noexcept;
+[[nodiscard]] bool ODE_TryValidateGeomDestructNoReport(
+    dxGeom *geom) noexcept;
+[[nodiscard]] bool ODE_TryValidateGlobalGeomListsNoReport() noexcept;
+[[nodiscard]] odegeomcleanupstatus_t ODE_TryGeomDestructNoReport(
+    dxGeom *geom) noexcept;
 // LWSS END
 #endif

@@ -1434,6 +1434,8 @@ extern "C" void dTestDataStructures()
 #include <win32/win_local.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <string>
 
 odeGlob_t odeGlob;
@@ -1571,6 +1573,51 @@ bool __cdecl ODE_Init()
 
 // MOD
 #include <xanim/dobj.h>
+#include <physics/phys_local.h>
+
+static bool ODE_NoReportWorldBodyListIsValid(
+    dxWorld *world,
+    dxBody *target = nullptr) noexcept;
+static bool ODE_NoReportGlobalBodyListsAreValid() noexcept;
+static bool ODE_NoReportBodyAllocationCandidateHasNoAliases(
+    dxBody *candidate) noexcept;
+
+static dxBody *ODE_InitializeAllocatedBody(
+    dxWorld *const world,
+    dxBody *const body) noexcept
+{
+    initObject(body, world);
+    body->firstjoint = 0;
+    body->flags = 0;
+    body->geom = 0;
+    body->mass.mass = 1;
+    std::memset(body->mass.c, 0, sizeof(body->mass.c));
+    std::memset(body->mass.I, 0, sizeof(body->mass.I));
+    body->mass.I[0] = 1;
+    body->mass.I[5] = 1;
+    body->mass.I[10] = 1;
+    std::memset(body->invI, 0, sizeof(body->invI));
+    body->invI[0] = 1;
+    body->invI[5] = 1;
+    body->invI[10] = 1;
+    body->invMass = 1;
+    std::memset(&body->info, 0, sizeof(body->info));
+    body->info.q[0] = 1;
+    body->info.R[0] = 1;
+    body->info.R[5] = 1;
+    body->info.R[10] = 1;
+    std::memset(body->facc, 0, sizeof(body->facc));
+    std::memset(body->tacc, 0, sizeof(body->tacc));
+    std::memset(body->finite_rot_axis, 0, sizeof(body->finite_rot_axis));
+    body->adis = world->adis;
+    if (world->adis_flag)
+        body->flags |= dxBodyAutoDisable;
+    body->adis_stepsleft = body->adis.idle_steps;
+    body->adis_timeleft = body->adis.idle_time;
+    addObjectToList(body, reinterpret_cast<dObject **>(&world->firstbody));
+    ++world->nb;
+    return body;
+}
 
 dxBody *dBodyCreate(dxWorld *w)
 {
@@ -1586,35 +1633,42 @@ dxBody *dBodyCreate(dxWorld *w)
 
     if (!b)
         return nullptr;
+    return ODE_InitializeAllocatedBody(w, b);
+}
 
-    initObject(b, w);
-    b->firstjoint = 0;
-    b->flags = 0;
-    b->geom = 0;
-    dMassSetParameters(&b->mass, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0);
-    dSetZero(b->invI, 4 * 3);
-    b->invI[0] = 1;
-    b->invI[5] = 1;
-    b->invI[10] = 1;
-    b->invMass = 1;
-    dSetZero(b->info.pos, 4);
-    dSetZero(b->info.q, 4);
-    b->info.q[0] = 1;
-    dRSetIdentity(b->info.R);
-    dSetZero(b->info.lvel, 4);
-    dSetZero(b->info.avel, 4);
-    dSetZero(b->facc, 4);
-    dSetZero(b->tacc, 4);
-    dSetZero(b->finite_rot_axis, 4);
-    addObjectToList(b, (dObject **)&w->firstbody);
-    w->nb++;
+poolmutationstatus_t ODE_TryBodyCreateNoReport(
+    dxWorld *const world,
+    dxBody **const outBody) noexcept
+{
+    if (!outBody)
+        return poolmutationstatus_t::InvalidState;
+    *outBody = nullptr;
+    if (!world || !ODE_NoReportGlobalBodyListsAreValid()
+        || !ODE_NoReportWorldBodyListIsValid(world))
+        return poolmutationstatus_t::InvalidState;
 
-    // set auto-disable parameters
-    dBodySetAutoDisableDefaults(b);	// must do this after adding to world
-    b->adis_stepsleft = b->adis.idle_steps;
-    b->adis_timeleft = b->adis.idle_time;
-
-    return b;
+#ifdef USE_POOL_ALLOCATOR
+    auto *const allocationCandidate =
+        static_cast<dxBody *>(odeGlob.bodyPool.firstFree);
+    if (!allocationCandidate)
+        return poolmutationstatus_t::Unavailable;
+    if (!ODE_NoReportBodyAllocationCandidateHasNoAliases(
+            allocationCandidate))
+    {
+        return poolmutationstatus_t::InvalidState;
+    }
+    const poolallocresult_t allocation = Pool_TryAllocNoReport(
+        ODE_BodyPoolStorage(), &odeGlob.bodyPool);
+    if (allocation.status != poolmutationstatus_t::Success)
+        return allocation.status;
+    auto *const body = static_cast<dxBody *>(allocation.item);
+#else
+    auto *const body = new (std::nothrow) dxBody;
+    if (!body)
+        return poolmutationstatus_t::Unavailable;
+#endif
+    *outBody = ODE_InitializeAllocatedBody(world, body);
+    return poolmutationstatus_t::Success;
 }
 
 dxJointGroup *__cdecl dGetContactJointGroup(PhysWorld worldIndex)
@@ -1745,6 +1799,748 @@ void dWorldDestroy(dxWorld* w)
 }
 
 
+static bool ODE_NoReportWorldBodyListIsValid(
+    dxWorld *const world,
+    dxBody *const target) noexcept
+{
+    bool knownWorld = false;
+    for (int index = 0; index < 3; ++index)
+    {
+        if (world == &odeGlob.world[index])
+        {
+            knownWorld = true;
+            break;
+        }
+    }
+    if (!knownWorld || world->nb < 0 || world->nb > 512
+        || Pool_TryValidateFullNoReport(
+               ODE_BodyPoolStorage(), &odeGlob.bodyPool)
+            != poolmutationstatus_t::Success)
+    {
+        return false;
+    }
+
+    bool foundTarget = false;
+    dObject **expectedBacklink =
+        reinterpret_cast<dObject **>(&world->firstbody);
+    dxBody *candidate = world->firstbody;
+    int visited = 0;
+    while (candidate)
+    {
+        if (visited >= world->nb || visited >= 512
+            || Pool_TryValidateAllocatedNoReport(
+                   ODE_BodyPoolStorage(), &odeGlob.bodyPool, candidate)
+                != poolmutationstatus_t::Success
+            || candidate->world != world
+            || candidate->tome != expectedBacklink)
+        {
+            return false;
+        }
+        if (candidate == target)
+            foundTarget = true;
+        expectedBacklink = &candidate->next;
+        candidate = static_cast<dxBody *>(candidate->next);
+        ++visited;
+    }
+    return visited == world->nb && (!target || foundTarget);
+}
+
+template <typename JointType, int Count>
+static bool ODE_NoReportTryGetJointArrayIndex(
+    const PhysStaticArray<JointType, Count> &array,
+    const dxJoint *const joint,
+    std::size_t *const outIndex) noexcept
+{
+    const std::uintptr_t begin =
+        reinterpret_cast<std::uintptr_t>(&array.entries[0]);
+    const std::uintptr_t address =
+        reinterpret_cast<std::uintptr_t>(joint);
+    const std::uintptr_t end = begin + sizeof(array.entries);
+    if (address < begin || address >= end
+        || (address - begin) % sizeof(JointType) != 0)
+    {
+        return false;
+    }
+    *outIndex = static_cast<std::size_t>(address - begin)
+        / sizeof(JointType);
+    return true;
+}
+
+constexpr std::size_t ODE_NO_REPORT_JOINT_HASH_SIZE = 8192;
+static_assert(
+    ODE_NO_REPORT_JOINT_HASH_SIZE
+        >= static_cast<std::size_t>(ODE_WORLD_MAX_JOINT_COUNT) * 2,
+    "silent joint hash must remain below 50 percent occupancy");
+static_assert(
+    (ODE_NO_REPORT_JOINT_HASH_SIZE
+        & (ODE_NO_REPORT_JOINT_HASH_SIZE - 1)) == 0,
+    "silent joint hash size must be a power of two");
+
+struct ODENoReportJointValidationWorkspace
+{
+    bool hingeAllocated[192];
+    bool ballAllocated[160];
+    bool aMotorAllocated[160];
+    bool bodyInWorld[512];
+    dxJoint *jointKeys[ODE_NO_REPORT_JOINT_HASH_SIZE];
+    std::uint16_t jointValues[ODE_NO_REPORT_JOINT_HASH_SIZE];
+    std::uint8_t nodeMembership[ODE_WORLD_MAX_JOINT_COUNT][2];
+};
+
+// ODE_TryBodyDestroyNoReport requires the documented CRITSECT_PHYSICS lock.
+// Keeping this bounded scratch state out of the legacy thread's small stack
+// also avoids the prior repeated-list validation blowup at the 4096-joint
+// limit.
+static ODENoReportJointValidationWorkspace odeNoReportJointWorkspace{};
+
+template <typename JointType, int Count>
+static bool ODE_NoReportBuildJointAllocationMask(
+    const PhysStaticArray<JointType, Count> &array,
+    bool (&allocated)[Count]) noexcept
+{
+    for (bool &slotAllocated : allocated)
+        slotAllocated = true;
+    int freeIndex = array.freeEntry;
+    while (freeIndex != -1)
+    {
+        if (freeIndex < 0 || freeIndex >= Count || !allocated[freeIndex])
+            return false;
+        allocated[freeIndex] = false;
+        int nextFree = -1;
+        std::memcpy(&nextFree, &array.entries[freeIndex], sizeof(nextFree));
+        freeIndex = nextFree;
+    }
+    return true;
+}
+
+template <typename JointType, int Count>
+static bool ODE_NoReportJointIsAllocatedArrayElement(
+    const PhysStaticArray<JointType, Count> &array,
+    const bool (&allocated)[Count],
+    const dxJoint *const joint) noexcept
+{
+    std::size_t index = 0;
+    if (!ODE_NoReportTryGetJointArrayIndex(array, joint, &index))
+        return false;
+    return allocated[index];
+}
+
+static bool ODE_NoReportContactJointIsActive(
+    const dxJoint *const joint) noexcept
+{
+    const std::uintptr_t address =
+        reinterpret_cast<std::uintptr_t>(joint);
+    for (int worldIndex = 0; worldIndex < 3; ++worldIndex)
+    {
+        const dxJointGroup &group = odeGlob.contactsGroup[worldIndex];
+        if (group.num < 0 || group.num > ODE_WORLD_MAX_JOINT_COUNT)
+            return false;
+        const std::uintptr_t begin =
+            reinterpret_cast<std::uintptr_t>(&group.joints[0]);
+        const std::uintptr_t end = begin
+            + static_cast<std::size_t>(group.num) * sizeof(group.joints[0]);
+        if (address >= begin && address < end
+            && (address - begin) % sizeof(group.joints[0]) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool ODE_NoReportJointPointerIsKnown(
+    const ODENoReportJointValidationWorkspace &workspace,
+    const dxJoint *const joint) noexcept
+{
+    return joint
+        && (ODE_NoReportJointIsAllocatedArrayElement(
+                physGlob.hingeArray, workspace.hingeAllocated, joint)
+            || ODE_NoReportJointIsAllocatedArrayElement(
+                physGlob.ballArray, workspace.ballAllocated, joint)
+            || ODE_NoReportJointIsAllocatedArrayElement(
+                physGlob.aMotorArray, workspace.aMotorAllocated, joint)
+            || ODE_NoReportContactJointIsActive(joint));
+}
+
+static std::size_t ODE_NoReportJointHash(
+    const dxJoint *const joint) noexcept
+{
+    return (reinterpret_cast<std::uintptr_t>(joint) >> 4)
+        & (ODE_NO_REPORT_JOINT_HASH_SIZE - 1);
+}
+
+static bool ODE_NoReportInsertJoint(
+    ODENoReportJointValidationWorkspace &workspace,
+    dxJoint *const joint,
+    const std::uint16_t worldListIndex) noexcept
+{
+    std::size_t hash = ODE_NoReportJointHash(joint);
+    for (std::size_t probe = 0;
+         probe < ODE_NO_REPORT_JOINT_HASH_SIZE;
+         ++probe)
+    {
+        dxJoint *&key = workspace.jointKeys[hash];
+        if (!key)
+        {
+            key = joint;
+            workspace.jointValues[hash] = worldListIndex;
+            return true;
+        }
+        if (key == joint)
+            return false;
+        hash = (hash + 1) & (ODE_NO_REPORT_JOINT_HASH_SIZE - 1);
+    }
+    return false;
+}
+
+static int ODE_NoReportFindJointIndex(
+    const ODENoReportJointValidationWorkspace &workspace,
+    const dxJoint *const joint) noexcept
+{
+    std::size_t hash = ODE_NoReportJointHash(joint);
+    for (std::size_t probe = 0;
+         probe < ODE_NO_REPORT_JOINT_HASH_SIZE;
+         ++probe)
+    {
+        dxJoint *const key = workspace.jointKeys[hash];
+        if (!key)
+            return -1;
+        if (key == joint)
+            return workspace.jointValues[hash];
+        hash = (hash + 1) & (ODE_NO_REPORT_JOINT_HASH_SIZE - 1);
+    }
+    return -1;
+}
+
+template <typename JointType, int Count>
+static bool ODE_NoReportResolveJointArrayNode(
+    const PhysStaticArray<JointType, Count> &array,
+    const bool (&allocated)[Count],
+    const dxJointNode *const node,
+    dxJoint **const outJoint,
+    int *const outNodeIndex) noexcept
+{
+    const std::uintptr_t address =
+        reinterpret_cast<std::uintptr_t>(node);
+    for (int nodeIndex = 0; nodeIndex < 2; ++nodeIndex)
+    {
+        const std::uintptr_t firstNode = reinterpret_cast<std::uintptr_t>(
+            &array.entries[0].node[nodeIndex]);
+        if (address < firstNode)
+            continue;
+        const std::uintptr_t delta = address - firstNode;
+        if (delta % sizeof(JointType) != 0)
+            continue;
+        const std::size_t entryIndex =
+            static_cast<std::size_t>(delta / sizeof(JointType));
+        if (entryIndex >= static_cast<std::size_t>(Count))
+            continue;
+        auto *const joint = const_cast<JointType *>(
+            &array.entries[entryIndex]);
+        if (!allocated[entryIndex])
+            return false;
+        *outJoint = joint;
+        *outNodeIndex = nodeIndex;
+        return true;
+    }
+    return false;
+}
+
+static bool ODE_NoReportResolveKnownJointNode(
+    const ODENoReportJointValidationWorkspace &workspace,
+    const dxJointNode *const node,
+    dxJoint **const outJoint,
+    int *const outNodeIndex) noexcept
+{
+    if (!node || !outJoint || !outNodeIndex)
+        return false;
+    if (ODE_NoReportResolveJointArrayNode(
+            physGlob.hingeArray,
+            workspace.hingeAllocated,
+            node,
+            outJoint,
+            outNodeIndex)
+        || ODE_NoReportResolveJointArrayNode(
+            physGlob.ballArray,
+            workspace.ballAllocated,
+            node,
+            outJoint,
+            outNodeIndex)
+        || ODE_NoReportResolveJointArrayNode(
+            physGlob.aMotorArray,
+            workspace.aMotorAllocated,
+            node,
+            outJoint,
+            outNodeIndex))
+    {
+        return true;
+    }
+
+    const std::uintptr_t address =
+        reinterpret_cast<std::uintptr_t>(node);
+    for (int worldIndex = 0; worldIndex < 3; ++worldIndex)
+    {
+        const dxJointGroup &group = odeGlob.contactsGroup[worldIndex];
+        if (group.num < 0 || group.num > ODE_WORLD_MAX_JOINT_COUNT)
+            return false;
+        for (int nodeIndex = 0; nodeIndex < 2; ++nodeIndex)
+        {
+            const std::uintptr_t firstNode =
+                reinterpret_cast<std::uintptr_t>(
+                    &group.joints[0].node[nodeIndex]);
+            if (address < firstNode)
+                continue;
+            const std::uintptr_t delta = address - firstNode;
+            if (delta % sizeof(group.joints[0]) != 0)
+                continue;
+            const std::size_t entryIndex =
+                static_cast<std::size_t>(delta / sizeof(group.joints[0]));
+            if (entryIndex >= static_cast<std::size_t>(group.num))
+                continue;
+            *outJoint = const_cast<dxJointContact *>(
+                &group.joints[entryIndex]);
+            *outNodeIndex = nodeIndex;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool ODE_NoReportTryGetBodyPoolIndex(
+    const dxBody *const body,
+    std::size_t *const outIndex) noexcept
+{
+    if (!body || !outIndex)
+        return false;
+    const poolstorage_t storage = ODE_BodyPoolStorage();
+    if (!storage.base || !storage.control
+        || storage.itemSize != sizeof(dxBody) || storage.itemCount != 512)
+    {
+        return false;
+    }
+    const std::uintptr_t begin =
+        reinterpret_cast<std::uintptr_t>(storage.base);
+    const std::uintptr_t address =
+        reinterpret_cast<std::uintptr_t>(body);
+    const std::size_t byteCount = storage.itemSize * storage.itemCount;
+    if (address < begin || address >= begin + byteCount
+        || (address - begin) % storage.itemSize != 0)
+    {
+        return false;
+    }
+    *outIndex = static_cast<std::size_t>(address - begin)
+        / storage.itemSize;
+    return storage.control->slotState[*outIndex] == POOL_SLOT_ALLOCATED;
+}
+
+static bool ODE_NoReportGlobalBodyListsAreValid() noexcept
+{
+    const poolstorage_t storage = ODE_BodyPoolStorage();
+    if (storage.itemCount != 512
+        || Pool_TryValidateFullNoReport(storage, &odeGlob.bodyPool)
+            != poolmutationstatus_t::Success)
+    {
+        return false;
+    }
+
+    bool bodySeen[512]{};
+    const std::uintptr_t begin =
+        reinterpret_cast<std::uintptr_t>(storage.base);
+    for (int worldIndex = 0; worldIndex < 3; ++worldIndex)
+    {
+        dxWorld *const world = &odeGlob.world[worldIndex];
+        if (!ODE_NoReportWorldBodyListIsValid(world))
+            return false;
+        for (dxBody *body = world->firstbody; body;
+             body = static_cast<dxBody *>(body->next))
+        {
+            const std::uintptr_t address =
+                reinterpret_cast<std::uintptr_t>(body);
+            const std::size_t bodyIndex = static_cast<std::size_t>(
+                (address - begin) / storage.itemSize);
+            if (bodyIndex >= storage.itemCount || bodySeen[bodyIndex])
+                return false;
+            bodySeen[bodyIndex] = true;
+        }
+    }
+    for (std::size_t index = 0; index < storage.itemCount; ++index)
+    {
+        const bool allocated = storage.control->slotState[index]
+            == POOL_SLOT_ALLOCATED;
+        if (allocated != bodySeen[index])
+            return false;
+    }
+    return true;
+}
+
+static bool ODE_NoReportBodyAllocationCandidateHasNoAliases(
+    dxBody *const candidate) noexcept
+{
+    const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
+    const std::uintptr_t bodyBegin =
+        reinterpret_cast<std::uintptr_t>(bodyStorage.base);
+    const std::uintptr_t candidateAddress =
+        reinterpret_cast<std::uintptr_t>(candidate);
+    const std::size_t bodyByteCount =
+        bodyStorage.itemSize * bodyStorage.itemCount;
+    if (!candidate || candidate != odeGlob.bodyPool.firstFree
+        || candidateAddress < bodyBegin
+        || candidateAddress >= bodyBegin + bodyByteCount
+        || (candidateAddress - bodyBegin) % bodyStorage.itemSize != 0)
+    {
+        return false;
+    }
+    const std::size_t candidateIndex =
+        static_cast<std::size_t>(candidateAddress - bodyBegin)
+        / bodyStorage.itemSize;
+    if (bodyStorage.control->headIndex != candidateIndex
+        || bodyStorage.control->slotState[candidateIndex]
+            == POOL_SLOT_ALLOCATED
+        || !ODE_TryValidateGlobalGeomListsNoReport())
+    {
+        return false;
+    }
+
+    const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    const auto *const geomBytes =
+        static_cast<const unsigned char *>(geomStorage.base);
+    for (std::size_t index = 0; index < geomStorage.itemCount; ++index)
+    {
+        if (geomStorage.control->slotState[index] != POOL_SLOT_ALLOCATED)
+            continue;
+        const auto *const geom = reinterpret_cast<const dxGeom *>(
+            geomBytes + index * geomStorage.itemSize);
+        if (geom->body == candidate
+            || geom->pos == candidate->info.pos
+            || geom->R == candidate->info.R)
+        {
+            return false;
+        }
+    }
+
+    bool hingeAllocated[192];
+    bool ballAllocated[160];
+    bool aMotorAllocated[160];
+    if (!ODE_NoReportBuildJointAllocationMask(
+            physGlob.hingeArray, hingeAllocated)
+        || !ODE_NoReportBuildJointAllocationMask(
+            physGlob.ballArray, ballAllocated)
+        || !ODE_NoReportBuildJointAllocationMask(
+            physGlob.aMotorArray, aMotorAllocated))
+    {
+        return false;
+    }
+    const auto aliasesCandidate = [candidate](const dxJoint &joint) {
+        return joint.node[0].body == candidate
+            || joint.node[1].body == candidate;
+    };
+    for (std::size_t index = 0; index < 192; ++index)
+    {
+        if (hingeAllocated[index]
+            && aliasesCandidate(physGlob.hingeArray.entries[index]))
+        {
+            return false;
+        }
+    }
+    for (std::size_t index = 0; index < 160; ++index)
+    {
+        if ((ballAllocated[index]
+                && aliasesCandidate(physGlob.ballArray.entries[index]))
+            || (aMotorAllocated[index]
+                && aliasesCandidate(physGlob.aMotorArray.entries[index])))
+        {
+            return false;
+        }
+    }
+    for (int worldIndex = 0; worldIndex < 3; ++worldIndex)
+    {
+        const dxJointGroup &group = odeGlob.contactsGroup[worldIndex];
+        if (group.num < 0 || group.num > ODE_WORLD_MAX_JOINT_COUNT)
+            return false;
+        for (int index = 0; index < group.num; ++index)
+        {
+            if (aliasesCandidate(group.joints[index]))
+                return false;
+        }
+    }
+    return true;
+}
+
+static bool ODE_NoReportIndexWorldJoints(
+    dxWorld *const world,
+    ODENoReportJointValidationWorkspace &workspace) noexcept
+{
+    int visited = 0;
+    dObject **expectedBacklink =
+        reinterpret_cast<dObject **>(&world->firstjoint);
+    dxJoint *joint = world->firstjoint;
+    while (joint)
+    {
+        if (visited >= world->nj || visited >= ODE_WORLD_MAX_JOINT_COUNT
+            || !ODE_NoReportJointPointerIsKnown(workspace, joint)
+            || !ODE_NoReportInsertJoint(
+                workspace, joint, static_cast<std::uint16_t>(visited))
+            || joint->world != world || joint->tome != expectedBacklink)
+        {
+            return false;
+        }
+        expectedBacklink = &joint->next;
+        joint = static_cast<dxJoint *>(joint->next);
+        ++visited;
+    }
+    return visited == world->nj;
+}
+
+static bool ODE_NoReportIndexBodyJointList(
+    dxBody *const body,
+    ODENoReportJointValidationWorkspace &workspace,
+    std::size_t *const totalNodeCount) noexcept
+{
+    std::size_t visited = 0;
+    dxJointNode *node = body->firstjoint;
+    while (node)
+    {
+        dxJoint *joint = nullptr;
+        int nodeIndex = -1;
+        if (visited >= static_cast<std::size_t>(body->world->nj)
+            || visited >= ODE_WORLD_MAX_JOINT_COUNT
+            || !ODE_NoReportResolveKnownJointNode(
+                workspace, node, &joint, &nodeIndex)
+            || node->joint != joint || joint->world != body->world)
+        {
+            return false;
+        }
+
+        const int jointIndex = ODE_NoReportFindJointIndex(workspace, joint);
+        if (jointIndex < 0
+            || workspace.nodeMembership[jointIndex][nodeIndex] != 0
+            || *totalNodeCount
+                >= static_cast<std::size_t>(body->world->nj) * 2)
+        {
+            return false;
+        }
+        workspace.nodeMembership[jointIndex][nodeIndex] = 1;
+        ++*totalNodeCount;
+
+        const int oppositeIndex = 1 - nodeIndex;
+        if (joint->node[oppositeIndex].body != body)
+            return false;
+        if (node->body)
+        {
+            std::size_t otherBodyIndex = 0;
+            if (node->body == body
+                || !ODE_NoReportTryGetBodyPoolIndex(
+                    node->body, &otherBodyIndex)
+                || !workspace.bodyInWorld[otherBodyIndex])
+            {
+                return false;
+            }
+        }
+        node = node->next;
+        ++visited;
+    }
+    return true;
+}
+
+static bool ODE_NoReportBodyHasValidJointList(
+    dxBody *const body) noexcept
+{
+    dxWorld *const world = body->world;
+    if (!world || world->nj < 0 || world->nj > ODE_WORLD_MAX_JOINT_COUNT
+        || !ODE_NoReportWorldBodyListIsValid(world))
+    {
+        return false;
+    }
+
+    auto &workspace = odeNoReportJointWorkspace;
+    std::memset(&workspace, 0, sizeof(workspace));
+    if (!ODE_NoReportBuildJointAllocationMask(
+            physGlob.hingeArray, workspace.hingeAllocated)
+        || !ODE_NoReportBuildJointAllocationMask(
+            physGlob.ballArray, workspace.ballAllocated)
+        || !ODE_NoReportBuildJointAllocationMask(
+            physGlob.aMotorArray, workspace.aMotorAllocated))
+    {
+        return false;
+    }
+    for (int worldIndex = 0; worldIndex < 3; ++worldIndex)
+    {
+        if (odeGlob.contactsGroup[worldIndex].num < 0
+            || odeGlob.contactsGroup[worldIndex].num
+                > ODE_WORLD_MAX_JOINT_COUNT)
+        {
+            return false;
+        }
+    }
+    if (!ODE_NoReportIndexWorldJoints(world, workspace))
+        return false;
+
+    for (dxBody *candidateBody = world->firstbody; candidateBody;
+         candidateBody = static_cast<dxBody *>(candidateBody->next))
+    {
+        std::size_t bodyIndex = 0;
+        if (!ODE_NoReportTryGetBodyPoolIndex(candidateBody, &bodyIndex)
+            || workspace.bodyInWorld[bodyIndex])
+        {
+            return false;
+        }
+        workspace.bodyInWorld[bodyIndex] = true;
+    }
+
+    std::size_t totalNodeCount = 0;
+    for (dxBody *candidateBody = world->firstbody; candidateBody;
+         candidateBody = static_cast<dxBody *>(candidateBody->next))
+    {
+        if (!ODE_NoReportIndexBodyJointList(
+                candidateBody, workspace, &totalNodeCount))
+        {
+            return false;
+        }
+    }
+
+    for (dxJoint *joint = world->firstjoint; joint;
+         joint = static_cast<dxJoint *>(joint->next))
+    {
+        if (joint->node[0].joint != joint
+            || joint->node[1].joint != joint
+            || (joint->node[0].body
+                && joint->node[0].body == joint->node[1].body))
+        {
+            return false;
+        }
+        const int jointIndex = ODE_NoReportFindJointIndex(workspace, joint);
+        if (jointIndex < 0)
+            return false;
+        for (int nodeIndex = 0; nodeIndex < 2; ++nodeIndex)
+        {
+            dxBody *const attachedBody = joint->node[nodeIndex].body;
+            const std::uint8_t expectedMembership = attachedBody ? 1 : 0;
+            if (workspace.nodeMembership[jointIndex][1 - nodeIndex]
+                != expectedMembership)
+            {
+                return false;
+            }
+            if (attachedBody)
+            {
+                std::size_t bodyIndex = 0;
+                if (!ODE_NoReportTryGetBodyPoolIndex(
+                        attachedBody, &bodyIndex)
+                    || !workspace.bodyInWorld[bodyIndex])
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
+    const auto aliasesTarget = [body, &workspace](const dxJoint &joint) {
+        return ODE_NoReportFindJointIndex(workspace, &joint) < 0
+            && (joint.node[0].body == body || joint.node[1].body == body);
+    };
+    for (std::size_t index = 0; index < 192; ++index)
+    {
+        if (workspace.hingeAllocated[index]
+            && aliasesTarget(physGlob.hingeArray.entries[index]))
+            return false;
+    }
+    for (std::size_t index = 0; index < 160; ++index)
+    {
+        if ((workspace.ballAllocated[index]
+                && aliasesTarget(physGlob.ballArray.entries[index]))
+            || (workspace.aMotorAllocated[index]
+                && aliasesTarget(physGlob.aMotorArray.entries[index])))
+        {
+            return false;
+        }
+    }
+    for (int worldIndex = 0; worldIndex < 3; ++worldIndex)
+    {
+        const dxJointGroup &group = odeGlob.contactsGroup[worldIndex];
+        for (int index = 0; index < group.num; ++index)
+        {
+            if (aliasesTarget(group.joints[index]))
+                return false;
+        }
+    }
+    return true;
+}
+
+static bool ODE_NoReportBodyCleanupOwnsGeom(
+    const dxBody *const body,
+    const dxGeom *const target) noexcept
+{
+    for (dxGeom *root = body->geom; root; root = root->body_next)
+    {
+        dxGeom *geom = root;
+        for (std::size_t depth = 0;
+             geom && depth <= 8;
+             ++depth)
+        {
+            if (geom == target)
+                return true;
+            if (geom->type != dGeomTransformClass)
+                break;
+            auto *const transform = static_cast<dxGeomTransform *>(geom);
+            if (!transform->cleanup)
+                break;
+            geom = transform->obj;
+        }
+    }
+    return false;
+}
+
+static bool ODE_ValidateBodyDestroyNoReport(
+    dxBody *const body) noexcept
+{
+    if (!body
+        || Pool_TryValidateAllocatedNoReport(
+               ODE_BodyPoolStorage(), &odeGlob.bodyPool, body)
+            != poolmutationstatus_t::Success
+        || !ODE_NoReportWorldBodyListIsValid(body->world, body)
+        || !ODE_NoReportBodyHasValidJointList(body)
+        || !ODE_TryValidateGlobalGeomListsNoReport())
+    {
+        return false;
+    }
+
+    dxGeom *geom = body->geom;
+    for (std::size_t visited = 0; geom; ++visited)
+    {
+        if (visited >= ODE_GEOM_POOL_COUNT
+            || !ODE_TryValidateGeomDestructNoReport(geom)
+            || geom->body != body)
+        {
+            return false;
+        }
+        geom = geom->body_next;
+    }
+
+    const poolstorage_t geomStorage = ODE_GeomPoolStorage();
+    const auto *const geomBytes =
+        static_cast<const unsigned char *>(geomStorage.base);
+    for (std::size_t index = 0; index < geomStorage.itemCount; ++index)
+    {
+        if (geomStorage.control->slotState[index] != POOL_SLOT_ALLOCATED)
+            continue;
+        const auto *const candidate = reinterpret_cast<const dxGeom *>(
+            geomBytes + index * geomStorage.itemSize);
+        if ((candidate->body == body
+                || candidate->pos == body->info.pos
+                || candidate->R == body->info.R)
+            && !ODE_NoReportBodyCleanupOwnsGeom(body, candidate))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ODE_TryValidateBodyDestroyNoReport(
+    dxBody *const body) noexcept
+{
+    return ODE_ValidateBodyDestroyNoReport(body);
+}
+
 void dBodyDestroy(dxBody* b)
 {
     dAASSERT(b);
@@ -1791,5 +2587,44 @@ void dBodyDestroy(dxBody* b)
             "body pool free succeeded");
 #else
     delete b;
+#endif
+}
+
+odebodycleanupstatus_t ODE_TryBodyDestroyNoReport(
+    dxBody *const body) noexcept
+{
+    if (!ODE_ValidateBodyDestroyNoReport(body))
+        return odebodycleanupstatus_t::InvalidArgument;
+
+    while (body->geom)
+    {
+        if (ODE_TryGeomDestructNoReport(body->geom)
+            != odegeomcleanupstatus_t::Success)
+        {
+            return odebodycleanupstatus_t::GeometryCleanupFailed;
+        }
+    }
+
+    dxJointNode *node = body->firstjoint;
+    while (node)
+    {
+        node->joint->node[(node == node->joint->node)].body = nullptr;
+        dxJointNode *const next = node->next;
+        node->next = nullptr;
+        removeJointReferencesFromAttachedBodies(node->joint);
+        node = next;
+    }
+    removeObjectFromList(body);
+    --body->world->nb;
+
+#ifdef USE_POOL_ALLOCATOR
+    return Pool_TryFreeNoReport(
+               ODE_BodyPoolStorage(), &odeGlob.bodyPool, body)
+            == poolmutationstatus_t::Success
+        ? odebodycleanupstatus_t::Success
+        : odebodycleanupstatus_t::BodyPoolStateInvalid;
+#else
+    delete body;
+    return odebodycleanupstatus_t::Success;
 #endif
 }

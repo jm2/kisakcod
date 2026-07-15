@@ -6,11 +6,42 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-archive-gate-control`; branch point: post-merge restore-workspace checkpoint
-  `6ce9e14`; upstream-integration baseline: `2b759db`. Portable controller/tests commit: `a393c9a`;
-  production integration/guards commit: `2384d00`; review-contract hardening commit: `ebc6654`.
+- Active branch: `agent/ode-fixed-pool-occupancy`; branch point: merged archive-gate checkpoint
+  `5455c778`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Archive-gate checkpoint: normal FX archive admission now uses a portable callback-driven controller with typed
+- Active work: move the archive effect-definition table behind a genuinely no-longjmp parser and bounded non-stack
+  workspace. `FX_RestoreEffectDefTable` currently leaves its 32-bit key temporary uninitialized when a read truncates,
+  registers definitions while parsing is still fallible, and relies on `MemFile_ReadCString`/`MemFile_ReadData` paths
+  that can assert, print, or drop. The enclosing 1,024-entry table also consumes 8,196 bytes on x86 and 16,392 bytes on
+  native64. The next batch will add a silent checked `MemoryFile` read primitive, parse exact little-endian names/keys
+  into a bounded lifecycle-owned BSS lease, publish/register only complete entries, release scratch before `FX_BeginArchive`
+  or PHYSICS admission, and make error abandonment reclaim the lease without invoking diagnostics under ownership.
+- ODE occupancy runtime on this branch is otherwise complete. The engine-free physics batch controller rejects invalid,
+  duplicate, overlapping-output, and unknown-status inputs before callbacks; preflights every selected retirement or
+  reconstruction before mutation; and reports the exact successful commit prefix. Production FX archive retirement and
+  reconstruction now delegate to it while retaining recoverable wrapper validation, caller-owned PHYSICS, prefix recovery,
+  and centralized fail-stop ownership for ambiguous duplicate bindings. A real exact-size fixture fills 512 body and 512
+  user-data slots plus 2,048 geom slots with 500/500/2,024 competing non-FX resources and 12/12/24 FX resources. It proves
+  full and mixed-demand retirement/reconstruction, deterministic minimum plans, recoverable failure after a committed
+  prefix, transactional capacity/selection rejection, cleanup-refusal ownership, exact non-FX identity preservation,
+  and pool conservation. The **47/47** GCC suite passes; focused GCC/Clang/ASan/UBSan/TSan execution and strict x86-32/
+  AArch64 compile-link also pass. Independent integration review found no functional issue; a wording-only source-test
+  correction now distinguishes prohibited heap/Z allocation from intentional native fixed-pool reconstruction.
+- The production ODE transaction-hardening follow-on is complete in commits `f9a7e24`, `c10dcc25`, and `8d3ba0a`.
+  Exact body/user-data/geom/joint topology validation, silent allocation and joint-aware destruction, complete
+  body-plus-model construction, inertial/center-of-mass publication, and bullet-impact prepare/commit now remain
+  intrinsically report-free while the caller owns PHYSICS. CG SP/MP, DynEnt pieces, and live FX keep one ownership
+  transaction through initial impact, binding, rollback, and publication; resource subtype diagnostics occur only after
+  the outermost leave, and cleanup or ambiguous duplicate ownership fail-stops only after unlocking. DynEnt retains the
+  legacy DYNENT timestep applied to an FX-world body and consumes its three RNG values only after successful creation.
+  FX performs full sidecar validation from a bounded BSS workspace before native allocation and reuses it for binding.
+  Two independent final audits approved the frozen x86 scope. All **47/47** tests pass under GCC, Clang, ASan+UBSan,
+  and TSan; strict lower-ODE Clang syntax with warnings-as-errors also passes. Windows x86 CI is still the production-TU
+  compile gate until the PR runs.
+- Archive-gate checkpoint: PR #16 merged as `5455c778` after CI run **29374832707 passed all nine jobs**. Gemini's
+  two comments were resolved as false positives: the generation lookup is intentionally null-safe and the requested
+  standard headers were already explicit. Codex reviewed the exact merge head `5c3a96a0cd` and found no major issue.
+  Normal FX archive admission now uses a portable callback-driven controller with typed
   `Open`, `Pending`, and `Exclusive` gate values; unknown encodings fail closed. Durable TLS records exact
   `Pending`, `PendingExclusive`, `Acquired`, and `ExclusiveGateOnly` ownership so waiter cancellation, promotion
   rollback, partial release retry, and error abandonment cannot discard a still-owned resource. Deterministic
@@ -23,8 +54,7 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next work: extract the portable ODE runtime needed for real competing non-FX occupancy/exhaustion tests, then
-  move the effect-definition table behind a no-longjmp parsing boundary and add measured stack/runtime gates.
+- Next: complete the effect-definition-table no-longjmp boundary, then add measured stack/runtime gates.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,
@@ -45,8 +75,8 @@ work item changes. Do not create session-specific handoff files.
   change, but an actual production frame gate remains pending because `fx_archive.cpp` is not yet portable outside
   the Windows engine build. The early 8,196-byte x86 effect-definition table remains stack-backed because
   registration can longjmp before cleanup; moving it requires a separate no-leak parsing boundary. The archive-gate
-  follow-on is now complete; the remaining sequence begins with portable ODE competing-occupancy extraction, then
-  the effect-table boundary and measured per-function stack gates.
+  and portable ODE occupancy follow-ons are now complete; the remaining sequence begins with the effect-table boundary
+  and measured per-function stack gates.
   PR #15's initial run **29361544758** passed the Linux amd64/arm64 and macOS arm64 portable suites plus the
   headless Windows x86 engine build, but both MSVC portable jobs rejected the intentionally over-aligned workspace
   fixture with C4324 under `/WX`. The exact-payload fixture correction passed all nine jobs in replacement run
@@ -83,7 +113,7 @@ work item changes. Do not create session-specific handoff files.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **37% complete by engineering effort** (plausible range 33–42%).
+- Progress estimate: approximately **38% complete by engineering effort** (plausible range 34–43%).
   The foundation/checklist view is about 50–55% and the shared foundation is roughly 88–93% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
@@ -165,9 +195,10 @@ work item changes. Do not create session-specific handoff files.
   old-graph rollback. Desired, rollback, and safe-empty publication keep archive iterator exclusion intact;
   unexpected cleanup failure terminates before reopening admission. PR #15 moved its bounded transaction and
   validation scratch to checked heap lifetimes without weakening fail-stop ownership, and the current branch now
-  supplies executable normal archive-gate control and production integration. Remaining FX-specific work is real
-  64-bit Disk32 archive/fast-file conversion, camera/scalar snapshot publication, portable competing ODE occupancy,
-  the no-longjmp effect-table parsing boundary, and measured stack/runtime gates.
+  supplies executable normal archive-gate control and production integration. The current ODE occupancy follow-on adds
+  exact fixed-pool competition plus intrinsically silent live creation/impact/rollback transactions. Remaining
+  FX-specific work is real 64-bit Disk32 archive/fast-file conversion, camera/scalar snapshot publication, the
+  no-longjmp effect-table parsing boundary, and measured stack/runtime gates.
   Audit of that transaction exposed prerequisite ODE exhaustion defects: `dBodyCreate` and user-data allocation
   dereference null, while primary/transform geometry failures can publish incomplete collision bodies.
   PR #7 checks body exhaustion before world publication, pairs the dormant heap
@@ -535,7 +566,7 @@ work item changes. Do not create session-specific handoff files.
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration/IWD search contexts, fixed-width fast locks, native dvar/script/XAnim/DObj/database/IWD/loopback/skeleton/pose/EffectsCore, bounded renderer/model-surface reservations, and a typed fixed-width worker queue exist. The executable engine has zero direct `Interlocked` calls; remaining work is broader raw-width/layout debt and platform integration. |
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 46 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path/FX graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, complete graphics-world AABB topology validation, bounded XSurface/XModel skin/skeleton/collision contracts, transactional FX pool/handle ownership validation, allocation-safe ODE body/user-data/model-collision construction, and a bounded transactional native-width physics pool allocator have landed or are in the current reviewed batch; production-path fuzz fixtures and the load-object bounded cursor remain. |
 | M3 platform services | In progress: thread, memory, and filesystem enumeration integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, virtual-memory lifecycle, UTF-8 mkdir/cwd/executable paths, bounded directory enumeration, and a cooperative worker gate used by renderer workers. Linux/macOS engine/headless sets remain empty and engine-gated; handle-relative recursive deletion, POSIX crash freezing, process/console, and socket backends remain. |
-| M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table, DObj runtime/saved layouts, allocations, preview buffers, SP corpse pointers, EffectsCore effect/pool handle codecs, ODE user-geometry storage, and the generic physics pool allocator are native-width exact. XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads remain 32-bit-layout-bound. |
+| M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table, DObj runtime/saved layouts, allocations, preview buffers, SP corpse pointers, EffectsCore effect/pool handle codecs, ODE user-geometry storage, and the generic physics pool allocator are native-width exact. MP `cpose_t::physObjId` and `BreakablePiece::physObjId` still store ODE pointers in `int32_t` and are a hard native64 blocker; XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads also remain 32-bit-layout-bound. |
 | M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, all legacy direct references migrated to bounded resolution, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush, portal/cell, and path-tree spans, and 18 exact completed object types exist; packed mirrors, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
@@ -552,12 +583,12 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Extract the narrow portable ODE rollback/runtime surface needed for real competing non-FX
-   occupancy/exhaustion tests. Normal archive admission now has deterministic waiter, cancellation/error-unwind,
-   owner-generation, fail-closed gate-value, and reopen-order coverage, including the former same-thread sort
-   self-deadlock and partial-release state loss. After ODE occupancy, move the effect-definition table behind a
-   no-longjmp parsing boundary, measure the Windows x86 production frame, and enforce source-scoped MSVC plus
-   portable extracted-TU stack limits.
+1. Replace `FX_RestoreEffectDefTable`'s fallible stack parser with a bounded no-longjmp transaction. Add
+   `MemFile_TryReadDataNoReport` (and the narrow CString cursor built on it), decode each key explicitly as little-endian,
+   reject truncation/capacity/name failures before registration or table publication, and hold the 1,024-entry candidate
+   in a checked BSS lease whose error-abandon path cannot leak. Release that lease before `FX_BeginArchive`, PHYSICS, or
+   any reporting call. Then measure the Windows x86 production frame and enforce source-scoped MSVC plus portable
+   extracted-TU stack limits; follow with a save-side definition snapshot outside database read ownership.
 2. Add packed FX savegame Disk32 schemas, native handle remapping, opaque effect-definition keys,
    and byte-level malformed/round-trip fixtures; retain the legacy x86 writer until equivalence is
    proven. Fast-file `FxEffectDef` widening remains a separate nested-payload batch.
@@ -619,14 +650,19 @@ work item changes. Do not create session-specific handoff files.
   admission revalidation prevents old iterator jobs from crossing lifecycle generations. The merged full-capacity
   and restore-workspace batches use exact silent topology recipes, bounded retirement/reconstruction, preserved
   archive exclusion, canonical safe-empty reset, fail-stop handling after lost native ownership, and checked heap
-  transaction/validation scratch including early malformed-graph preflight. The current archive-gate branch adds
+  transaction/validation scratch including early malformed-graph preflight. PR #16 adds
   executable normal admission, durable partial-cleanup ownership, fail-closed typed values, and checked production
-  integration. Remaining blockers are camera/scalar publication, real Disk32 FX archive/fast-file conversion,
-  competing non-FX occupancy coverage, the effect-table parsing boundary, and measured stack/runtime enforcement.
+  integration. The current branch completes competing non-FX occupancy and the silent production ODE mutation boundary.
+  Remaining blockers are camera/scalar publication, real Disk32 FX archive/fast-file conversion, the effect-table parsing
+  boundary, and measured stack/runtime enforcement.
   `R_FilterXModelIntoScene` still retains an
   FX element's cached-lighting handle pointer beyond the per-effect draw lock; current renderer scheduling
   consumes it before the next FX mutation, but a generation-aware scene-owned cache is required before that
   ordering can be relaxed. The unbounded load-object cursor is tracked separately under XAnim/XModel.
+- MP `cpose_t::physObjId` and `BreakablePiece::physObjId` remain frozen `int32_t` fields that publish and later recast
+  ODE body pointers. That is valid only for the current x86 engine and truncates on native64; introduce a generation-
+  checked token/sidecar (preferred where ABI must remain frozen) or native-width runtime storage before enabling any
+  64-bit engine target. The current pointer-truncation tripwire intentionally records rather than hides this blocker.
 - XAnim tree/table ownership and DObj runtime storage are native-width-safe, but the animation payload
   is not: `XAnimIndices` and `XAnimParts` still freeze the retail 32-bit layout, `XAnimClone` still
   allocates 88 bytes, and load-object code contains matching 32-bit payload assumptions. The actual
