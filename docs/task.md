@@ -6,10 +6,10 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-disk32-native-ready`; branch point: merged native structural checkpoint `6642d0d2`;
+- Active branch: `agent/fx-archive-semantic-delegation`; branch point: merged semantic Ready checkpoint `07e3a8a0`;
   current upstream-integration baseline: merge `11a9e08c` through upstream `312a9d2e`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Current Ready checkpoint: the shared, portable `FxArchive` semantic oracle keeps renderer-owned `FxElemDef` opaque,
+- Merged Ready checkpoint: the shared, portable `FxArchive` semantic oracle keeps renderer-owned `FxElemDef` opaque,
   pins every native-width field/nested-layout assumption in a renderer-facing translation unit, and performs a complete
   callback-free semantic preflight before a bounded second traversal may activate definition-selected union members or
   emit physics descriptors. It validates system/camera/visibility state, effect timing and definition counts, ordinary
@@ -29,7 +29,7 @@ work item changes. Do not create session-specific handoff files.
   selector pointers, round-trips those selectors through the shared helper, and validates the complete allocation graph
   with workspace-owned scratch. Same-workspace resolver reentry is rejected, every failure leaves the phase `Empty`, and
   `StructurallyValid` is the final successful workspace mutation. Its gated read-only view remains non-publishable and
-  unsuitable for definition-dependent payload access until this branch's separate semantic finalizer reaches `Ready`.
+  unsuitable for definition-dependent payload access until the merged semantic finalizer reaches `Ready`.
   `MemoryFile`, live publication, production archive I/O, and both native64 production guards are unchanged.
 - PR #26 initial run **29430362954 passed four of nine jobs** at `d34e2d09`: Linux amd64/arm64, macOS arm64, and
   headless Windows x86 were green. Portable Windows amd64/ARM64 rejected an uncalled header-only graph-validation
@@ -65,7 +65,9 @@ work item changes. Do not create session-specific handoff files.
   header. Focused GCC, Clang, ASan+UBSan, TSan, analyzers, actual x86-32 execution, AArch64 linking, ABI debt, and source
   invariants pass. Replacement run **29439953821 passed all nine jobs** at exact correction head `d6699d75`: Linux
   amd64/arm64, portable Windows amd64/ARM64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86, and
-  headless Windows x86 are green.
+  headless Windows x86 are green. Gemini reported no findings and the thread-level review query is empty. PR #27 then
+  squash-merged as `07e3a8a0` from final documentation head `cdd6f7d3`; documentation-only run **29440697547** is in
+  progress and is being monitored independently of the already-green implementation head.
 - PR #25 squash-merged as `09c05e5f` from final review-fix head `5abf9cbb`. Final run **29427215187 passed all nine jobs**:
   Linux amd64/arm64, portable Windows amd64/arm64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86,
   and headless Windows x86. Initial implementation/docs head `d9ad05ff` also passed all nine jobs in run **29426792491**.
