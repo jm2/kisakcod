@@ -88,36 +88,60 @@ namespace
     {
         return RestoreControlOperationStatus::UnsafeFailure;
     }
-    *outCompletedCount = 0;
 
-    if (!callbacks.context || !callbacks.perform
+    void *const callbackContext = callbacks.context;
+    const ArchivePhysicsBatchPerformCallback perform = callbacks.perform;
+    std::size_t completedCount = 0;
+    *outCompletedCount = completedCount;
+
+    if (!callbackContext || !perform
         || !SelectionIsValid(planIndices, selectedCount, entryCount))
     {
+        *outCompletedCount = completedCount;
         return RestoreControlOperationStatus::UnsafeFailure;
     }
 
     for (std::size_t index = 0; index < selectedCount; ++index)
     {
-        const RestoreControlOperationStatus status = NormalizeStatus(
-            callbacks.perform(
-                callbacks.context,
+        const RestoreControlOperationStatus callbackStatus =
+            perform(
+                callbackContext,
                 preflightOperation,
-                planIndices[index]));
+                planIndices[index]);
+        *outCompletedCount = completedCount;
+        const RestoreControlOperationStatus status =
+            NormalizeStatus(callbackStatus);
         if (status != RestoreControlOperationStatus::Success)
             return status;
     }
 
     for (std::size_t index = 0; index < selectedCount; ++index)
     {
-        const RestoreControlOperationStatus status = NormalizeStatus(
-            callbacks.perform(
-                callbacks.context,
+        const RestoreControlOperationStatus callbackStatus =
+            perform(
+                callbackContext,
                 commitOperation,
-                planIndices[index]));
+                planIndices[index]);
+        *outCompletedCount = completedCount;
+        const RestoreControlOperationStatus status =
+            NormalizeStatus(callbackStatus);
         if (status != RestoreControlOperationStatus::Success)
             return status;
-        ++*outCompletedCount;
+
+        // A representable, non-overlapping plan extent bounds selectedCount
+        // below SIZE_MAX. Keep this guard so the successful-prefix counter
+        // also fails closed if that precondition ever changes.
+        if (completedCount >= selectedCount
+            || completedCount
+                == (std::numeric_limits<std::size_t>::max)())
+        {
+            *outCompletedCount = completedCount;
+            return RestoreControlOperationStatus::UnsafeFailure;
+        }
+        ++completedCount;
+        *outCompletedCount = completedCount;
     }
+    *outCompletedCount = completedCount;
     return RestoreControlOperationStatus::Success;
 }
 } // namespace

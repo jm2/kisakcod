@@ -33,12 +33,21 @@ struct ArchivePhysicsBatchCallbacks
 // Runs an all-preflight-then-commit retirement batch in plan order. Selection
 // indices must be unique and less than entryCount. A null plan is valid only
 // for an empty selection. The plan must remain stable for the complete
-// synchronous call and cannot overlap outCompletedCount. The output is cleared
-// before any callback and counts only commit callbacks that returned Success.
+// synchronous call and cannot overlap outCompletedCount. Once the plan extent
+// is proven representable and non-overlapping, the output is cleared before
+// any callback and counts only commit callbacks that returned Success. The
+// controller republishes that count from private state after every callback,
+// so callback writes to the output cannot corrupt successful-prefix accounting.
+// The callback descriptor is also snapshotted before the first callback, so
+// descriptor writes made through the callback context affect only later
+// controller calls.
+//
 // A RecoverableFailure from a commit callback must leave that current entry
 // unmodified; an UnsafeFailure denotes ownership that cannot be recovered by
 // this controller. Invalid arguments or callback results fail closed as
-// UnsafeFailure. An overlapping output is rejected without modifying the plan.
+// UnsafeFailure. An overlapping output or a nonempty plan extent whose byte
+// range cannot be represented without integer wrap is rejected before the
+// controller modifies either the plan or the output or invokes a callback.
 [[nodiscard]] RestoreControlOperationStatus RunArchivePhysicsRetirementBatch(
     const ArchivePhysicsBatchCallbacks &callbacks,
     const std::size_t *planIndices,

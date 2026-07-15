@@ -75,6 +75,12 @@ struct Fixture
     std::size_t traceCount = 0;
     bool traceOverflow = false;
     bool callbackArgumentInvalid = false;
+    std::array<bool, kOperationCount> corruptCompletedOutput{};
+    std::size_t *completedOutputToCorrupt = nullptr;
+    std::size_t corruptCompletedOutputValue =
+        (std::numeric_limits<std::size_t>::max)();
+    archive::ArchivePhysicsBatchCallbacks *callbacksToCorrupt = nullptr;
+    bool replacementCallbackInvoked = false;
 
     Fixture() noexcept
     {
@@ -144,6 +150,17 @@ constexpr Operation CommitOperation(const BatchKind kind) noexcept
         : Operation::Reconstruct;
 }
 
+Status ReplacementPerform(
+    void *const opaque,
+    const Operation,
+    const std::size_t) noexcept
+{
+    auto *const fixture = static_cast<Fixture *>(opaque);
+    if (fixture)
+        fixture->replacementCallbackInvoked = true;
+    return Status::UnsafeFailure;
+}
+
 Status Perform(
     void *const opaque,
     const Operation operation,
@@ -175,6 +192,18 @@ Status Perform(
             fixture->retired[entryIndex] = true;
         else if (operation == Operation::Reconstruct)
             fixture->reconstructed[entryIndex] = true;
+    }
+    if (fixture->corruptCompletedOutput[operationIndex]
+        && fixture->completedOutputToCorrupt)
+    {
+        *fixture->completedOutputToCorrupt =
+            fixture->corruptCompletedOutputValue;
+    }
+    if (fixture->callbacksToCorrupt)
+    {
+        fixture->callbacksToCorrupt->context = fixture;
+        fixture->callbacksToCorrupt->perform = ReplacementPerform;
+        fixture->callbacksToCorrupt = nullptr;
     }
     return status;
 }
@@ -450,6 +479,163 @@ void TestInvalidArguments()
               "overlap rejection invokes no callback");
         Check(MutationMatchesPrefix(fixture, kind, nullptr, 0),
               "overlap rejection mutates no entry");
+
+        fixture.ResetObservations();
+        std::size_t extentOutput = 73;
+        const std::size_t ignoredPlan = 0;
+        const std::uintptr_t maximumPlanElementCount =
+            (std::numeric_limits<std::uintptr_t>::max)()
+            / sizeof(std::size_t);
+        if (maximumPlanElementCount
+            < (std::numeric_limits<std::size_t>::max)())
+        {
+            const std::size_t unrepresentableCount =
+                static_cast<std::size_t>(maximumPlanElementCount) + 1;
+            const Status unrepresentableExtentStatus = RunBatch(
+                kind,
+                validCallbacks,
+                &ignoredPlan,
+                unrepresentableCount,
+                unrepresentableCount,
+                &extentOutput);
+            Check(unrepresentableExtentStatus == Status::UnsafeFailure,
+                  "unrepresentable plan byte extent fails closed");
+            Check(extentOutput == 73,
+                  "unrepresentable plan byte extent leaves output untouched");
+            Check(fixture.traceCount == 0,
+                  "unrepresentable plan byte extent invokes no callback");
+        }
+
+        fixture.ResetObservations();
+        extentOutput = 74;
+        const auto *const wrappedPlan =
+            reinterpret_cast<const std::size_t *>(
+                (std::numeric_limits<std::uintptr_t>::max)());
+        const Status wrappedExtentStatus = RunBatch(
+            kind,
+            validCallbacks,
+            wrappedPlan,
+            1,
+            1,
+            &extentOutput);
+        Check(wrappedExtentStatus == Status::UnsafeFailure,
+              "address-wrapped plan byte extent fails closed");
+        Check(extentOutput == 74,
+              "address-wrapped plan byte extent leaves output untouched");
+        Check(fixture.traceCount == 0,
+              "address-wrapped plan byte extent invokes no callback");
+    }
+}
+
+void TestHostileCallbackOutputMutation()
+{
+    constexpr std::array<std::size_t, 3> plan{6, 1, 4};
+    for (const BatchKind kind :
+         {BatchKind::Retirement, BatchKind::Reconstruction})
+    {
+        const std::size_t preflightIndex =
+            OperationIndex(PreflightOperation(kind));
+        const std::size_t commitIndex =
+            OperationIndex(CommitOperation(kind));
+
+        Fixture preflightFailure{};
+        std::size_t completedCount = 19;
+        preflightFailure.completedOutputToCorrupt = &completedCount;
+        preflightFailure.corruptCompletedOutput[preflightIndex] = true;
+        preflightFailure.results[preflightIndex][plan[1]] =
+            Status::RecoverableFailure;
+        Status status = RunBatch(
+            kind,
+            CallbacksFor(&preflightFailure),
+            plan.data(),
+            plan.size(),
+            kEntryCapacity,
+            &completedCount);
+        Check(status == Status::RecoverableFailure,
+              "hostile preflight callback result is preserved");
+        Check(completedCount == 0,
+              "hostile preflight callback cannot corrupt completed output");
+        Check(TraceMatches(
+                  preflightFailure, kind, plan.data(), 2, 0),
+              "hostile preflight mutation still stops before commit");
+
+        Fixture commitSuccess{};
+        completedCount = 20;
+        commitSuccess.completedOutputToCorrupt = &completedCount;
+        commitSuccess.corruptCompletedOutput[commitIndex] = true;
+        status = RunBatch(
+            kind,
+            CallbacksFor(&commitSuccess),
+            plan.data(),
+            plan.size(),
+            kEntryCapacity,
+            &completedCount);
+        Check(status == Status::Success,
+              "hostile successful commit callbacks preserve success");
+        Check(completedCount == plan.size(),
+              "hostile successful commit callbacks cannot wrap accounting");
+        Check(MutationMatchesPrefix(
+                  commitSuccess, kind, plan.data(), plan.size()),
+              "hostile successful commit callbacks retain exact mutations");
+
+        Fixture commitFailure{};
+        completedCount = 21;
+        commitFailure.completedOutputToCorrupt = &completedCount;
+        commitFailure.corruptCompletedOutput[commitIndex] = true;
+        commitFailure.results[commitIndex][plan[1]] =
+            Status::UnsafeFailure;
+        status = RunBatch(
+            kind,
+            CallbacksFor(&commitFailure),
+            plan.data(),
+            plan.size(),
+            kEntryCapacity,
+            &completedCount);
+        Check(status == Status::UnsafeFailure,
+              "hostile failing commit callback result is preserved");
+        Check(completedCount == 1,
+              "hostile failing commit callback cannot corrupt completed prefix");
+        Check(TraceMatches(
+                  commitFailure, kind, plan.data(), plan.size(), 2),
+              "hostile failing commit callback stops in plan order");
+        Check(MutationMatchesPrefix(
+                  commitFailure, kind, plan.data(), 1),
+              "hostile failing commit callback retains exact prefix");
+    }
+}
+
+void TestHostileCallbackDescriptorMutation()
+{
+    constexpr std::array<std::size_t, 3> plan{7, 2, 5};
+    for (const BatchKind kind :
+         {BatchKind::Retirement, BatchKind::Reconstruction})
+    {
+        Fixture fixture{};
+        archive::ArchivePhysicsBatchCallbacks callbacks =
+            CallbacksFor(&fixture);
+        fixture.callbacksToCorrupt = &callbacks;
+        std::size_t completedCount = 27;
+        const Status status = RunBatch(
+            kind,
+            callbacks,
+            plan.data(),
+            plan.size(),
+            kEntryCapacity,
+            &completedCount);
+        Check(status == Status::Success,
+              "callback descriptor mutation cannot redirect an active batch");
+        Check(callbacks.perform == ReplacementPerform,
+              "hostile callback mutated its caller-owned descriptor");
+        Check(!fixture.replacementCallbackInvoked,
+              "active batch invokes only its callback snapshot");
+        Check(completedCount == plan.size(),
+              "descriptor mutation preserves exact completed accounting");
+        Check(TraceMatches(
+                  fixture, kind, plan.data(), plan.size(), plan.size()),
+              "descriptor mutation preserves two-pass plan order");
+        Check(MutationMatchesPrefix(
+                  fixture, kind, plan.data(), plan.size()),
+              "descriptor mutation preserves exact entry mutations");
     }
 }
 
@@ -659,6 +845,8 @@ int main()
 {
     TestEmptySelections();
     TestInvalidArguments();
+    TestHostileCallbackOutputMutation();
+    TestHostileCallbackDescriptorMutation();
     TestSuccessfulTraceOrder();
     TestEveryPreflightResultAtEveryPosition();
     TestEveryCommitResultAtEveryPosition();
