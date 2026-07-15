@@ -267,6 +267,7 @@ TryBuildFxArchiveRestoreCandidateDisk32(
         FxArchiveRestoreCandidateDisk32Phase::Empty;
     candidateWorkspace->physicsBodyCount_ = 0;
     candidateWorkspace->archivedSystemAddress_ = ArchiveAddress32{};
+    candidateWorkspace->lease_ = FxArchiveDisk32ReaderLeaseIdentity{};
     if (!sourceWorkspace)
         return FxArchiveRestoreCandidateDisk32Status::InvalidArgument;
     if (sourceWorkspace->operating_)
@@ -457,6 +458,7 @@ TryBuildFxArchiveRestoreCandidateDisk32(
         return finish(FxArchiveRestoreCandidateDisk32Status::InvalidGraph);
     }
 
+    candidateWorkspace->lease_ = SnapshotLease(lease);
     candidateWorkspace->physicsBodyCount_ = source.physicsBodyCount;
     sourceWorkspace->operating_ = false;
     candidateWorkspace->operating_ = false;
@@ -467,16 +469,32 @@ TryBuildFxArchiveRestoreCandidateDisk32(
 
 bool TryGetFxArchiveRestoreCandidateDisk32ReadyView(
     FxArchiveRestoreCandidateDisk32Workspace *const workspace,
+    const EffectTableRestoreLease &lease,
     FxArchiveRestoreCandidateDisk32ReadyView *const outView) noexcept
 {
     if (!workspace || !outView || workspace->operating_
         || workspace->phase_
             != FxArchiveRestoreCandidateDisk32Phase::Ready
+        || !LeaseMatches(workspace->lease_, lease)
         || workspace->physicsBodyCount_
             > FX_ARCHIVE_PHYSICS_BODY_LIMIT
         || workspace->archivedSystemAddress_.value == 0)
     {
         return false;
+    }
+
+    workspace->operating_ = true;
+    const auto finish = [workspace](const bool result) noexcept {
+        workspace->operating_ = false;
+        return result;
+    };
+    if (ValidateEffectTableRestoreLease(lease)
+            != EffectTableRestoreStatus::Success
+        || workspace->phase_
+            != FxArchiveRestoreCandidateDisk32Phase::Ready
+        || !LeaseMatches(workspace->lease_, lease))
+    {
+        return finish(false);
     }
 
     const FxArchiveRestoreCandidateDisk32ReadyView view{
@@ -487,6 +505,7 @@ bool TryGetFxArchiveRestoreCandidateDisk32ReadyView(
             ? &workspace->physicsBodies_[0]
             : nullptr,
         workspace->physicsBodyCount_};
+    workspace->operating_ = false;
     *outView = view;
     return true;
 }

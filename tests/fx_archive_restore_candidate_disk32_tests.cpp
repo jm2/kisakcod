@@ -455,6 +455,9 @@ struct RestoreState final
     bool nestedReaderView = true;
     archive::FxArchiveRestoreCandidateDisk32Status nestedCandidate =
         archive::FxArchiveRestoreCandidateDisk32Status::Success;
+    bool reenterCandidateGetter = false;
+    bool nestedCandidateGetter = true;
+    bool nestedCandidateOutputPreserved = false;
 };
 
 bool ValidateLifecycle(
@@ -475,6 +478,30 @@ bool ValidateLifecycle(
         state->nestedReaderView =
             archive::TryGetFxArchiveDisk32ReaderReadyView(
                 state->reader, *state->lease, &nestedView);
+        state->nestedCandidate =
+            archive::TryBuildFxArchiveRestoreCandidateDisk32(
+                state->reader, *state->lease, state->candidate);
+    }
+    if (state->reenterCandidateGetter && state->reader
+        && state->candidate && state->lease)
+    {
+        state->reenterCandidateGetter = false;
+        archive::FxArchiveRestoreCandidateDisk32ReadyView nestedView{
+            reinterpret_cast<FxSystem *>(
+                static_cast<std::uintptr_t>(0x10)),
+            reinterpret_cast<FxSystemBuffers *>(
+                static_cast<std::uintptr_t>(0x20)),
+            archive::ArchiveAddress32{UINT32_C(0xDEADBEEF)},
+            reinterpret_cast<
+                archive::FxArchiveRestoreCandidateDisk32PhysicsBody *>(
+                static_cast<std::uintptr_t>(0x30)),
+            99};
+        const auto before = nestedView;
+        state->nestedCandidateGetter =
+            archive::TryGetFxArchiveRestoreCandidateDisk32ReadyView(
+                state->candidate, *state->lease, &nestedView);
+        state->nestedCandidateOutputPreserved =
+            std::memcmp(&nestedView, &before, sizeof(nestedView)) == 0;
         state->nestedCandidate =
             archive::TryBuildFxArchiveRestoreCandidateDisk32(
                 state->reader, *state->lease, state->candidate);
@@ -618,8 +645,9 @@ void CheckCandidateHidden(
           == archive::FxArchiveRestoreCandidateDisk32Phase::Empty);
     auto output = PoisonCandidateView();
     const auto before = output;
+    const archive::EffectTableRestoreLease emptyLease{};
     CHECK(!archive::TryGetFxArchiveRestoreCandidateDisk32ReadyView(
-        workspace, &output));
+        workspace, emptyLease, &output));
     CHECK(std::memcmp(&output, &before, sizeof(output)) == 0);
 }
 
@@ -631,6 +659,17 @@ archive::FxArchiveRestoreCandidateDisk32Status BuildCandidate(
         return archive::FxArchiveRestoreCandidateDisk32Status::InvalidArgument;
     return archive::TryBuildFxArchiveRestoreCandidateDisk32(
         fixture->reader_, fixture->table_.lease, fixture->candidate_);
+}
+
+void CheckCandidateGetterRejected(
+    archive::FxArchiveRestoreCandidateDisk32Workspace *const workspace,
+    const archive::EffectTableRestoreLease &lease)
+{
+    auto output = PoisonCandidateView();
+    const auto before = output;
+    CHECK(!archive::TryGetFxArchiveRestoreCandidateDisk32ReadyView(
+        workspace, lease, &output));
+    CHECK(std::memcmp(&output, &before, sizeof(output)) == 0);
 }
 
 void CheckReadyCandidate(
@@ -648,7 +687,7 @@ void CheckReadyCandidate(
 
     archive::FxArchiveRestoreCandidateDisk32ReadyView candidate{};
     CHECK(archive::TryGetFxArchiveRestoreCandidateDisk32ReadyView(
-        fixture->candidate_, &candidate));
+        fixture->candidate_, fixture->table_.lease, &candidate));
     CHECK(candidate.system != nullptr);
     CHECK(candidate.buffers != nullptr);
     CHECK(candidate.system != fixture->readerView_.graph.system);
@@ -726,7 +765,7 @@ void TestWorkspaceABIAndArgumentGates()
                   == (KISAK_ARCH_64BIT ? 0x28u : 0x14u));
     static_assert(sizeof(
                       archive::FxArchiveRestoreCandidateDisk32Workspace)
-                  == (KISAK_ARCH_64BIT ? 0x61DE8u : 0x5BD98u));
+                  == (KISAK_ARCH_64BIT ? 0x61E08u : 0x5BDB0u));
 
     AllocationState allocation{};
     const archive::ArchiveRestoreWorkspaceMemoryCallbacks callbacks{
@@ -749,10 +788,10 @@ void TestWorkspaceABIAndArgumentGates()
     auto output = PoisonCandidateView();
     const auto before = output;
     CHECK(!archive::TryGetFxArchiveRestoreCandidateDisk32ReadyView(
-        nullptr, &output));
+        nullptr, emptyLease, &output));
     CHECK(std::memcmp(&output, &before, sizeof(output)) == 0);
     CHECK(!archive::TryGetFxArchiveRestoreCandidateDisk32ReadyView(
-        workspace, nullptr));
+        workspace, emptyLease, nullptr));
     CHECK(archive::DestroyArchiveRestoreWorkspace(workspace, callbacks));
     CHECK(allocation.allocations == 1);
     CHECK(allocation.frees == 1);
@@ -782,7 +821,7 @@ void TestMaximumPhysicsCapacity()
           == archive::FxArchiveRestoreCandidateDisk32Status::Success);
     archive::FxArchiveRestoreCandidateDisk32ReadyView candidate{};
     CHECK(archive::TryGetFxArchiveRestoreCandidateDisk32ReadyView(
-        fixture.candidate_, &candidate));
+        fixture.candidate_, fixture.table_.lease, &candidate));
     CHECK(candidate.physicsBodyCount
           == archive::FX_ARCHIVE_PHYSICS_BODY_LIMIT);
     if (!candidate.physicsBodies || !candidate.buffers)
@@ -892,6 +931,42 @@ void TestLeaseBindingReentryAndFailureAtomicity()
     CHECK(BuildCandidate(&fixture)
           == archive::FxArchiveRestoreCandidateDisk32Status::Success);
 
+    std::array<archive::EffectTableRestoreLease, 4> forgedGetters{
+        fixture.table_.lease,
+        fixture.table_.lease,
+        fixture.table_.lease,
+        fixture.table_.lease};
+    ++forgedGetters[0].serial;
+    ++forgedGetters[1].lifecycleGeneration;
+    forgedGetters[2].identity = &forgedGetters;
+    forgedGetters[3].ownerCookie = &forgedGetters;
+    for (const archive::EffectTableRestoreLease &forged : forgedGetters)
+        CheckCandidateGetterRejected(fixture.candidate_, forged);
+    CHECK(fixture.candidate_->phase()
+          == archive::FxArchiveRestoreCandidateDisk32Phase::Ready);
+
+    fixture.restore_.lifecycleValid = false;
+    CheckCandidateGetterRejected(
+        fixture.candidate_, fixture.table_.lease);
+    CHECK(fixture.candidate_->phase()
+          == archive::FxArchiveRestoreCandidateDisk32Phase::Ready);
+    fixture.restore_.lifecycleValid = true;
+
+    fixture.restore_.reader = fixture.reader_;
+    fixture.restore_.candidate = fixture.candidate_;
+    fixture.restore_.lease = &fixture.table_.lease;
+    fixture.restore_.reenterCandidateGetter = true;
+    archive::FxArchiveRestoreCandidateDisk32ReadyView outerView{};
+    CHECK(archive::TryGetFxArchiveRestoreCandidateDisk32ReadyView(
+        fixture.candidate_, fixture.table_.lease, &outerView));
+    CHECK(outerView.system != nullptr);
+    CHECK(!fixture.restore_.nestedCandidateGetter);
+    CHECK(fixture.restore_.nestedCandidateOutputPreserved);
+    CHECK(fixture.restore_.nestedCandidate
+          == archive::FxArchiveRestoreCandidateDisk32Status::Busy);
+    CHECK(fixture.candidate_->phase()
+          == archive::FxArchiveRestoreCandidateDisk32Phase::Ready);
+
     archive::EffectTableRestoreLease forged = fixture.table_.lease;
     ++forged.serial;
     CHECK(archive::TryBuildFxArchiveRestoreCandidateDisk32(
@@ -899,9 +974,6 @@ void TestLeaseBindingReentryAndFailureAtomicity()
           == archive::FxArchiveRestoreCandidateDisk32Status::InvalidLease);
     CheckCandidateHidden(fixture.candidate_);
 
-    fixture.restore_.reader = fixture.reader_;
-    fixture.restore_.candidate = fixture.candidate_;
-    fixture.restore_.lease = &fixture.table_.lease;
     fixture.restore_.reenter = true;
     CHECK(BuildCandidate(&fixture)
           == archive::FxArchiveRestoreCandidateDisk32Status::Success);
@@ -929,6 +1001,23 @@ void TestLeaseBindingReentryAndFailureAtomicity()
               fixture.reader_, fixture.table_.lease, fixture.candidate_)
           == archive::FxArchiveRestoreCandidateDisk32Status::InvalidGraph);
     CheckCandidateHidden(fixture.candidate_);
+}
+
+void TestReleasedLeaseHidesReadyCandidate()
+{
+    PreparedFixture fixture{1};
+    CHECK(fixture.ready());
+    if (!fixture.ready())
+        return;
+    CHECK(BuildCandidate(&fixture)
+          == archive::FxArchiveRestoreCandidateDisk32Status::Success);
+    const archive::EffectTableRestoreLease released = fixture.table_.lease;
+    CHECK(archive::ReleaseEffectTableRestore(released)
+          == archive::EffectTableRestoreStatus::Success);
+    fixture.table_.lease = archive::EffectTableRestoreLease{};
+    CheckCandidateGetterRejected(fixture.candidate_, released);
+    CHECK(fixture.candidate_->phase()
+          == archive::FxArchiveRestoreCandidateDisk32Phase::Ready);
 }
 } // namespace
 
@@ -989,6 +1078,7 @@ int main()
     TestMaximumPhysicsCapacity();
     TestDescriptorBodyAndGraphForgery();
     TestLeaseBindingReentryAndFailureAtomicity();
+    TestReleasedLeaseHidesReadyCandidate();
     CHECK(unexpectedReports == 0);
 
     if (archive::EffectTableRestoreLeaseIsActive())

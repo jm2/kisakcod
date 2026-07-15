@@ -76,11 +76,16 @@ TryBuildFxArchiveRestoreCandidateDisk32(
     const EffectTableRestoreLease &lease,
     FxArchiveRestoreCandidateDisk32Workspace *candidateWorkspace) noexcept;
 
-// Commits a mutable candidate view only while the workspace is Ready. Every
-// pointer remains valid until the next build attempt or workspace destruction.
-// Concurrent access to one workspace remains caller-synchronized.
+// Commits a mutable candidate view only while the workspace is Ready and the
+// caller still owns the exact active effect-table lease retained during its
+// build. Definition and model pointers remain valid only while that lease is
+// retained. Every candidate-owned pointer remains valid until the next build
+// attempt or workspace destruction. Concurrent access to one workspace
+// remains caller-synchronized; the operation gate rejects callback reentry
+// but is not a cross-thread lock.
 [[nodiscard]] bool TryGetFxArchiveRestoreCandidateDisk32ReadyView(
     FxArchiveRestoreCandidateDisk32Workspace *workspace,
+    const EffectTableRestoreLease &lease,
     FxArchiveRestoreCandidateDisk32ReadyView *outView) noexcept;
 
 // Roughly 375--400 KiB of heap-only mutable staging. Copy and move are
@@ -116,6 +121,7 @@ private:
         noexcept;
     friend bool TryGetFxArchiveRestoreCandidateDisk32ReadyView(
         FxArchiveRestoreCandidateDisk32Workspace *workspace,
+        const EffectTableRestoreLease &lease,
         FxArchiveRestoreCandidateDisk32ReadyView *outView) noexcept;
 
     FxSystem system_{};
@@ -125,6 +131,7 @@ private:
     FxPoolAllocationGraphScratch graphScratch_{};
     FxArchiveRestoreCandidateDisk32PhysicsBody
         physicsBodies_[FX_ARCHIVE_PHYSICS_BODY_LIMIT]{};
+    FxArchiveDisk32ReaderLeaseIdentity lease_{};
     ArchiveAddress32 archivedSystemAddress_{};
     std::uint32_t physicsBodyCount_ = 0;
     FxArchiveRestoreCandidateDisk32Phase phase_ =
@@ -146,5 +153,5 @@ static_assert(
 static_assert(
     std::is_trivially_destructible_v<
         FxArchiveRestoreCandidateDisk32Workspace>);
-RUNTIME_SIZE(FxArchiveRestoreCandidateDisk32Workspace, 0x5BD98, 0x61DE8);
+RUNTIME_SIZE(FxArchiveRestoreCandidateDisk32Workspace, 0x5BDB0, 0x61E08);
 } // namespace fx::archive
