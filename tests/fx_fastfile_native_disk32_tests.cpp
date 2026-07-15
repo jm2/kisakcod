@@ -14,16 +14,6 @@
 #include <utility>
 #include <vector>
 
-// The production definition lives in the renderer-facing header.  This
-// dependency-free test needs only its exact native storage and reads selected
-// pointer fields through the exported ABI offsets below.
-struct alignas(FX_ELEM_DEF_RUNTIME_ALIGNMENT) FxElemDef
-{
-    std::uint8_t bytes[FX_ELEM_DEF_RUNTIME_SIZE];
-};
-static_assert(sizeof(FxElemDef) == FX_ELEM_DEF_RUNTIME_SIZE);
-static_assert(alignof(FxElemDef) == FX_ELEM_DEF_RUNTIME_ALIGNMENT);
-
 namespace
 {
 namespace fastfile = fx::fastfile;
@@ -371,6 +361,43 @@ fastfile::FxElemDefDisk32 MinimalElem(
     return elem;
 }
 
+void PopulateScalarFields(fastfile::FxElemDefDisk32 *const elem)
+{
+    CHECK(elem != nullptr);
+    if (!elem)
+        return;
+    elem->flags = 0x10203040;
+    elem->spawn.intervalMsecOrCountBase = 37;
+    elem->spawn.loopCountOrCountAmplitude = 11;
+    elem->spawnRange = {1.25f, 2.5f};
+    elem->fadeInRange = {3.25f, 4.5f};
+    elem->fadeOutRange = {5.25f, 6.5f};
+    elem->spawnFrustumCullRadius = 7.75f;
+    elem->spawnDelayMsec = {83, 19};
+    elem->lifeSpanMsec = {1200, 345};
+    for (std::size_t axis = 0; axis < 3; ++axis)
+    {
+        const float value = static_cast<float>(axis + 1u);
+        elem->spawnOrigin[axis] = {10.0f + value, 20.0f + value};
+        elem->spawnAngles[axis] = {30.0f + value, 40.0f + value};
+        elem->angularVelocity[axis] = {50.0f + value, 60.0f + value};
+        elem->collMins[axis] = -70.0f - value;
+        elem->collMaxs[axis] = 80.0f + value;
+    }
+    elem->spawnOffsetRadius = {90.25f, 91.5f};
+    elem->spawnOffsetHeight = {92.25f, 93.5f};
+    elem->initialRotation = {94.25f, 95.5f};
+    elem->gravity = {96.25f, 97.5f};
+    elem->reflectionFactor = {98.25f, 99.5f};
+    elem->atlas = {1, 2, 24, 3, 4, 5, 321};
+    elem->emitDist = {101.25f, 102.5f};
+    elem->emitDistVariance = {103.25f, 104.5f};
+    elem->sortOrder = 17;
+    elem->lightingFrac = 193;
+    elem->useItemClip = 1;
+    elem->unused[0] = 0x5A;
+}
+
 EffectFixture MakeEffect(
     std::vector<fastfile::FxElemDefDisk32> elems,
     const std::int32_t looping,
@@ -451,7 +478,8 @@ std::uint32_t ComputeDisk32CompactBytes(const EffectFixture &fixture)
             bytes = AlignSize(
                 bytes, alignof(fastfile::FxElemVelStateSampleDisk32));
             bytes += (static_cast<std::uint32_t>(elem.velIntervalCount) + 1u)
-                * sizeof(fastfile::FxElemVelStateSampleDisk32);
+                * static_cast<std::uint32_t>(
+                    sizeof(fastfile::FxElemVelStateSampleDisk32));
         }
         if (!elem.visSamples.token.isNull())
         {
@@ -459,7 +487,8 @@ std::uint32_t ComputeDisk32CompactBytes(const EffectFixture &fixture)
                 bytes, alignof(fastfile::FxElemVisStateSampleDisk32));
             bytes +=
                 (static_cast<std::uint32_t>(elem.visStateIntervalCount) + 1u)
-                * sizeof(fastfile::FxElemVisStateSampleDisk32);
+                * static_cast<std::uint32_t>(
+                    sizeof(fastfile::FxElemVisStateSampleDisk32));
         }
         if (elem.elemType == fastfile::FxElemTypeDisk32::Decal
             && !elem.visuals.token.isNull())
@@ -467,14 +496,16 @@ std::uint32_t ComputeDisk32CompactBytes(const EffectFixture &fixture)
             bytes = AlignSize(
                 bytes, alignof(fastfile::FxElemMarkVisualsDisk32));
             bytes += static_cast<std::uint32_t>(elem.visualCount)
-                * sizeof(fastfile::FxElemMarkVisualsDisk32);
+                * static_cast<std::uint32_t>(
+                    sizeof(fastfile::FxElemMarkVisualsDisk32));
         }
         else if (elem.visualCount > 1u
                  && !elem.visuals.token.isNull())
         {
             bytes = AlignSize(bytes, alignof(fastfile::FxElemVisualsDisk32));
             bytes += static_cast<std::uint32_t>(elem.visualCount)
-                * sizeof(fastfile::FxElemVisualsDisk32);
+                * static_cast<std::uint32_t>(
+                    sizeof(fastfile::FxElemVisualsDisk32));
         }
         if (!elem.trailDef.token.isNull())
         {
@@ -487,10 +518,11 @@ std::uint32_t ComputeDisk32CompactBytes(const EffectFixture &fixture)
             bytes += sizeof(fastfile::FxTrailDefDisk32);
             bytes = AlignSize(bytes, alignof(fastfile::FxTrailVertexDisk32));
             bytes += static_cast<std::uint32_t>(trail->indCount)
-                * sizeof(fastfile::FxTrailVertexDisk32);
+                * static_cast<std::uint32_t>(
+                    sizeof(fastfile::FxTrailVertexDisk32));
             bytes = AlignSize(bytes, alignof(std::uint16_t));
             bytes += static_cast<std::uint32_t>(trail->indCount)
-                * sizeof(std::uint16_t);
+                * static_cast<std::uint32_t>(sizeof(std::uint16_t));
         }
     }
     bytes = AlignSize(bytes, alignof(char));
@@ -518,6 +550,14 @@ struct ProvenanceState final
     bool failEnabled = false;
     const void *externalString = nullptr;
     std::uint32_t externalStringBytes = 0;
+    fastfile::FxFastFileElemDefDisk32View *velocityMutationTarget = nullptr;
+    const fastfile::FxElemVelStateSampleDisk32 *replacementVelocity = nullptr;
+    bool mutateVelocity = false;
+    bool velocityMutated = false;
+    const void *stringMutationTarget = nullptr;
+    char stringReplacement = 'g';
+    bool mutateString = false;
+    bool stringMutated = false;
 };
 
 bool ValidateSourceSpan(
@@ -568,9 +608,32 @@ bool ValidateSourceSpan(
         }
         return false;
     }
-    return sourceField
+    const bool valid = sourceField
         && state->image->ValidateRange(
             token, address, byteCount, alignment);
+    if (valid && state->mutateString && !state->stringMutated
+        && kind == fastfile::FxFastFileDisk32SourceSpanKind::String
+        && address == state->stringMutationTarget && byteCount >= 2u)
+    {
+        // Change a resolver-returned, already valid C string only after its
+        // provenance callback has attested the original contents.
+        static_cast<char *>(const_cast<void *>(address))[0] =
+            state->stringReplacement;
+        state->stringMutated = true;
+    }
+    if (valid && state->mutateVelocity && !state->velocityMutated
+        && kind
+            == fastfile::FxFastFileDisk32SourceSpanKind::VelocitySamples
+        && state->velocityMutationTarget && state->replacementVelocity)
+    {
+        // Substitute after the callback has attested the original address.
+        // The replacement is readable and structurally valid but deliberately
+        // absent from the DiskImage provenance registry.
+        state->velocityMutationTarget->velocitySamples.data =
+            state->replacementVelocity;
+        state->velocityMutated = true;
+    }
+    return valid;
 }
 
 class EffectViewOwner final
@@ -722,6 +785,11 @@ struct ResolverState final
     bool reentered = false;
     bool mutateSourceDuringResolve = false;
     bool sourceMutated = false;
+    std::size_t mutateAcceptedStringAt =
+        (std::numeric_limits<std::size_t>::max)();
+    char *acceptedStringMutationTarget = nullptr;
+    char acceptedStringReplacement = 'g';
+    bool acceptedStringMutated = false;
     fastfile::FxFastFileNativeDisk32Workspace *workspace = nullptr;
     const fastfile::FxFastFileEffectDefDisk32View *source = nullptr;
     const fastfile::FxFastFileDisk32Resolvers *resolvers = nullptr;
@@ -776,6 +844,15 @@ bool ResolveReference(
     }
 
     const std::size_t callIndex = state->calls++;
+    if (callIndex == state->mutateAcceptedStringAt
+        && state->acceptedStringMutationTarget)
+    {
+        // A later resolver callback mutates a string that an earlier resolver
+        // and provenance callback already accepted.
+        state->acceptedStringMutationTarget[0] =
+            state->acceptedStringReplacement;
+        state->acceptedStringMutated = true;
+    }
     if (state->mutateSourceDuringResolve && !state->sourceMutated
         && state->source && state->source->elements.data
         && state->source->elements.count != 0)
@@ -783,7 +860,7 @@ bool ResolveReference(
         state->sourceMutated = true;
         auto *const elements = const_cast<fastfile::FxElemDefDisk32 *>(
             state->source->elements.data);
-        elements[0].flags ^= 1u;
+        elements[0].flags ^= INT32_C(1);
     }
     if (state->reenter && !state->reentered)
     {
@@ -947,60 +1024,6 @@ private:
     std::size_t capacity_ = 0;
 };
 
-template <typename POINTER>
-POINTER LoadNativePointer(
-    const FxElemDef &elem,
-    const std::size_t offset) noexcept
-{
-    static_assert(std::is_pointer_v<POINTER>);
-    POINTER result = nullptr;
-    CHECK(offset <= sizeof(elem.bytes));
-    CHECK(sizeof(result) <= sizeof(elem.bytes) - offset);
-    if (offset <= sizeof(elem.bytes)
-        && sizeof(result) <= sizeof(elem.bytes) - offset)
-    {
-        std::memcpy(&result, elem.bytes + offset, sizeof(result));
-    }
-    return result;
-}
-
-constexpr std::size_t kNativeElemTypeOffset = 0xB0;
-constexpr std::size_t kNativeVisualCountOffset = 0xB1;
-constexpr std::size_t kNativeVelocitySamplesOffset =
-    KISAK_ARCH_64BIT ? 0xB8 : 0xB4;
-constexpr std::size_t kNativeVisibilitySamplesOffset =
-    KISAK_ARCH_64BIT ? 0xC0 : 0xB8;
-constexpr std::size_t kNativeVisualsOffset =
-    KISAK_ARCH_64BIT ? 0xC8 : 0xBC;
-constexpr std::size_t kNativeEffectOnImpactOffset =
-    KISAK_ARCH_64BIT ? 0xE8 : 0xD8;
-constexpr std::size_t kNativeEffectOnDeathOffset =
-    KISAK_ARCH_64BIT ? 0xF0 : 0xDC;
-constexpr std::size_t kNativeEffectEmittedOffset =
-    KISAK_ARCH_64BIT ? 0xF8 : 0xE0;
-constexpr std::size_t kNativeTrailOffset =
-    KISAK_ARCH_64BIT ? 0x110 : 0xF4;
-
-struct NativeTrailVertex final
-{
-    float pos[2];
-    float normal[2];
-    float texCoord;
-};
-static_assert(sizeof(NativeTrailVertex) == 0x14);
-
-struct NativeTrailDef final
-{
-    std::int32_t scrollTimeMsec;
-    std::int32_t repeatDist;
-    std::int32_t splitDist;
-    std::int32_t vertCount;
-    NativeTrailVertex *verts;
-    std::int32_t indCount;
-    std::uint16_t *inds;
-};
-static_assert(sizeof(NativeTrailDef) == (KISAK_ARCH_64BIT ? 0x28 : 0x1C));
-
 fastfile::FxFastFileNativeDisk32Status PlanEffect(
     WorkspaceOwner *const workspace,
     EffectViewOwner *const view,
@@ -1028,6 +1051,98 @@ bool PlansEqual(
     return std::memcmp(&left, &right, sizeof(left)) == 0;
 }
 
+void CheckFloatRange(
+    const FxFloatRange &native,
+    const fastfile::FxFloatRangeDisk32 &disk)
+{
+    CHECK(native.base == disk.base);
+    CHECK(native.amplitude == disk.amplitude);
+}
+
+void CheckIntRange(
+    const FxIntRange &native,
+    const fastfile::FxIntRangeDisk32 &disk)
+{
+    CHECK(native.base == disk.base);
+    CHECK(native.amplitude == disk.amplitude);
+}
+
+void CheckNativeElementScalars(
+    const fastfile::FxElemDefDisk32 &disk,
+    const FxElemDef &native,
+    const bool looping)
+{
+    CHECK(native.flags == disk.flags);
+    if (looping)
+    {
+        CHECK(native.spawn.looping.intervalMsec
+              == disk.spawn.intervalMsecOrCountBase);
+        CHECK(native.spawn.looping.count
+              == disk.spawn.loopCountOrCountAmplitude);
+    }
+    else
+    {
+        CHECK(native.spawn.oneShot.count.base
+              == disk.spawn.intervalMsecOrCountBase);
+        CHECK(native.spawn.oneShot.count.amplitude
+              == disk.spawn.loopCountOrCountAmplitude);
+    }
+    CheckFloatRange(native.spawnRange, disk.spawnRange);
+    CheckFloatRange(native.fadeInRange, disk.fadeInRange);
+    CheckFloatRange(native.fadeOutRange, disk.fadeOutRange);
+    CHECK(native.spawnFrustumCullRadius == disk.spawnFrustumCullRadius);
+    CheckIntRange(native.spawnDelayMsec, disk.spawnDelayMsec);
+    CheckIntRange(native.lifeSpanMsec, disk.lifeSpanMsec);
+    for (std::size_t axis = 0; axis < 3; ++axis)
+    {
+        CheckFloatRange(native.spawnOrigin[axis], disk.spawnOrigin[axis]);
+        CheckFloatRange(native.spawnAngles[axis], disk.spawnAngles[axis]);
+        CheckFloatRange(
+            native.angularVelocity[axis], disk.angularVelocity[axis]);
+        CHECK(native.collMins[axis] == disk.collMins[axis]);
+        CHECK(native.collMaxs[axis] == disk.collMaxs[axis]);
+    }
+    CheckFloatRange(native.spawnOffsetRadius, disk.spawnOffsetRadius);
+    CheckFloatRange(native.spawnOffsetHeight, disk.spawnOffsetHeight);
+    CheckFloatRange(native.initialRotation, disk.initialRotation);
+    CheckFloatRange(native.gravity, disk.gravity);
+    CheckFloatRange(native.reflectionFactor, disk.reflectionFactor);
+    CHECK(native.atlas.behavior == disk.atlas.behavior);
+    CHECK(native.atlas.index == disk.atlas.index);
+    CHECK(native.atlas.fps == disk.atlas.fps);
+    CHECK(native.atlas.loopCount == disk.atlas.loopCount);
+    CHECK(native.atlas.colIndexBits == disk.atlas.colIndexBits);
+    CHECK(native.atlas.rowIndexBits == disk.atlas.rowIndexBits);
+    CHECK(native.atlas.entryCount == disk.atlas.entryCount);
+    CHECK(native.elemType == static_cast<std::uint8_t>(disk.elemType));
+    CHECK(native.visualCount == disk.visualCount);
+    CHECK(native.velIntervalCount == disk.velIntervalCount);
+    CHECK(native.visStateIntervalCount == disk.visStateIntervalCount);
+    CheckFloatRange(native.emitDist, disk.emitDist);
+    CheckFloatRange(native.emitDistVariance, disk.emitDistVariance);
+    CHECK(native.sortOrder == disk.sortOrder);
+    CHECK(native.lightingFrac == disk.lightingFrac);
+    CHECK(native.useItemClip == disk.useItemClip);
+    CHECK(native.unused[0] == disk.unused[0]);
+}
+
+const void *NativeVisualIdentity(
+    const FxElemVisuals &visual,
+    const fastfile::FxElemTypeDisk32 type)
+{
+    switch (type)
+    {
+    case fastfile::FxElemTypeDisk32::Model:
+        return static_cast<const void *>(visual.model);
+    case fastfile::FxElemTypeDisk32::Sound:
+        return static_cast<const void *>(visual.soundName);
+    case fastfile::FxElemTypeDisk32::Runner:
+        return static_cast<const void *>(visual.effectDef.handle);
+    default:
+        return static_cast<const void *>(visual.material);
+    }
+}
+
 void CheckNativeVisualReferences(
     const EffectFixture &fixture,
     const FxEffectDef &effect,
@@ -1044,33 +1159,31 @@ void CheckNativeVisualReferences(
     {
         const fastfile::FxElemDefDisk32 &source = fixture.elems()[elemIndex];
         const FxElemDef &output = effect.elemDefs[elemIndex];
-        CHECK(output.bytes[kNativeElemTypeOffset]
-              == static_cast<std::uint8_t>(source.elemType));
-        CHECK(output.bytes[kNativeVisualCountOffset] == source.visualCount);
+        CHECK(output.elemType == static_cast<std::uint8_t>(source.elemType));
+        CHECK(output.visualCount == source.visualCount);
 
         if (source.elemType == fastfile::FxElemTypeDisk32::OmniLight
             || source.elemType == fastfile::FxElemTypeDisk32::SpotLight)
         {
-            CHECK(LoadNativePointer<const void *>(
-                      output, kNativeVisualsOffset)
-                  == nullptr);
+            CHECK(output.visuals.instance.anonymous == nullptr);
             continue;
         }
 
         if (source.elemType == fastfile::FxElemTypeDisk32::Decal)
         {
-            const void *const rawArray = LoadNativePointer<const void *>(
-                output, kNativeVisualsOffset);
+            const FxElemMarkVisuals *const nativeVisuals =
+                output.visuals.markArray;
             CHECK(storage.Contains(
-                rawArray,
+                nativeVisuals,
                 static_cast<std::size_t>(source.visualCount)
-                    * 2u * sizeof(void *)));
-            if (!rawArray)
+                    * sizeof(*nativeVisuals)));
+            if (!nativeVisuals)
                 continue;
-            const auto *const pointers =
-                static_cast<const void *const *>(rawArray);
             const auto *const sourceVisuals = fixture.image.Resolve<
                 fastfile::FxElemMarkVisualsDisk32>(source.visuals.token);
+            CHECK(sourceVisuals != nullptr);
+            if (!sourceVisuals)
+                continue;
             for (std::size_t visual = 0;
                  visual < source.visualCount;
                  ++visual)
@@ -1079,7 +1192,8 @@ void CheckNativeVisualReferences(
                 {
                     const disk32::PointerToken *const field =
                         &sourceVisuals[visual].materials[material].token;
-                    CHECK(pointers[visual * 2u + material]
+                    CHECK(static_cast<const void *>(
+                              nativeVisuals[visual].materials[material])
                           == FindResolved(
                               resolver,
                               field,
@@ -1099,27 +1213,29 @@ void CheckNativeVisualReferences(
             : fastfile::FxFastFileDisk32ReferenceKind::Material;
         if (source.visualCount == 1u)
         {
-            CHECK(LoadNativePointer<const void *>(
-                      output, kNativeVisualsOffset)
+            CHECK(NativeVisualIdentity(output.visuals.instance, source.elemType)
                   == FindResolved(resolver, &source.visuals.token, kind));
             continue;
         }
 
-        const void *const rawArray = LoadNativePointer<const void *>(
-            output, kNativeVisualsOffset);
+        const FxElemVisuals *const nativeVisuals = output.visuals.array;
         CHECK(storage.Contains(
-            rawArray,
-            static_cast<std::size_t>(source.visualCount) * sizeof(void *)));
-        if (!rawArray)
+            nativeVisuals,
+            static_cast<std::size_t>(source.visualCount)
+                * sizeof(*nativeVisuals)));
+        if (!nativeVisuals)
             continue;
-        const auto *const pointers = static_cast<const void *const *>(rawArray);
         const auto *const sourceVisuals = fixture.image.Resolve<
             fastfile::FxElemVisualsDisk32>(source.visuals.token);
+        CHECK(sourceVisuals != nullptr);
+        if (!sourceVisuals)
+            continue;
         for (std::size_t visual = 0;
              visual < source.visualCount;
              ++visual)
         {
-            CHECK(pointers[visual]
+            CHECK(NativeVisualIdentity(
+                      nativeVisuals[visual], source.elemType)
                   == FindResolved(
                       resolver,
                       &sourceVisuals[visual].token,
@@ -1218,20 +1334,60 @@ void CheckValidEffect(
     {
         const fastfile::FxElemDefDisk32 &source = fixture->elems()[index];
         const FxElemDef &native = output->elemDefs[index];
+        const bool looping = index
+            < static_cast<std::size_t>(
+                fixture->effect()->elemDefCountLooping);
+        CheckNativeElementScalars(source, native, looping);
+
         if (!source.velSamples.token.isNull())
         {
-            CHECK(storage.Contains(LoadNativePointer<const void *>(
-                native, kNativeVelocitySamplesOffset)));
+            const std::size_t sampleCount =
+                static_cast<std::size_t>(source.velIntervalCount) + 1u;
+            const auto *const diskSamples = fixture->image.Resolve<
+                fastfile::FxElemVelStateSampleDisk32>(
+                    source.velSamples.token);
+            CHECK(storage.Contains(
+                native.velSamples,
+                sampleCount * sizeof(*native.velSamples)));
+            CHECK(diskSamples != nullptr);
+            if (native.velSamples && diskSamples)
+            {
+                CHECK(std::memcmp(
+                          native.velSamples,
+                          diskSamples,
+                          sampleCount * sizeof(*native.velSamples))
+                      == 0);
+            }
         }
+        else
+            CHECK(native.velSamples == nullptr);
+
         if (!source.visSamples.token.isNull())
         {
-            CHECK(storage.Contains(LoadNativePointer<const void *>(
-                native, kNativeVisibilitySamplesOffset)));
+            const std::size_t sampleCount =
+                static_cast<std::size_t>(source.visStateIntervalCount) + 1u;
+            const auto *const diskSamples = fixture->image.Resolve<
+                fastfile::FxElemVisStateSampleDisk32>(
+                    source.visSamples.token);
+            CHECK(storage.Contains(
+                native.visSamples,
+                sampleCount * sizeof(*native.visSamples)));
+            CHECK(diskSamples != nullptr);
+            if (native.visSamples && diskSamples)
+            {
+                CHECK(std::memcmp(
+                          native.visSamples,
+                          diskSamples,
+                          sampleCount * sizeof(*native.visSamples))
+                      == 0);
+            }
         }
-        const auto checkEffectReference = [&resolver, &native](
-                                              const std::size_t offset,
-                                              const disk32::PointerToken *const
-                                                  sourceField) {
+        else
+            CHECK(native.visSamples == nullptr);
+
+        const auto expectedEffectReference = [&resolver](
+                                                 const disk32::PointerToken *const
+                                                     sourceField) {
             const void *const expected = sourceField->isNull()
                 ? nullptr
                 : FindResolved(
@@ -1239,25 +1395,27 @@ void CheckValidEffect(
                       sourceField,
                       fastfile::FxFastFileDisk32ReferenceKind::
                           EffectNameReference);
-            CHECK(LoadNativePointer<const void *>(native, offset)
-                  == expected);
+            return expected;
         };
-        checkEffectReference(
-            kNativeEffectOnImpactOffset, &source.effectOnImpact.token);
-        checkEffectReference(
-            kNativeEffectOnDeathOffset, &source.effectOnDeath.token);
-        checkEffectReference(
-            kNativeEffectEmittedOffset, &source.effectEmitted.token);
+        CHECK(static_cast<const void *>(native.effectOnImpact.handle)
+              == expectedEffectReference(&source.effectOnImpact.token));
+        CHECK(static_cast<const void *>(native.effectOnDeath.handle)
+              == expectedEffectReference(&source.effectOnDeath.token));
+        CHECK(static_cast<const void *>(native.effectEmitted.handle)
+              == expectedEffectReference(&source.effectEmitted.token));
+
         if (!source.trailDef.token.isNull())
         {
-            const auto *const trail =
-                LoadNativePointer<const NativeTrailDef *>(
-                    native, kNativeTrailOffset);
+            const FxTrailDef *const trail = native.trailDef;
             const auto *const sourceTrail = fixture->image.Resolve<
                 fastfile::FxTrailDefDisk32>(source.trailDef.token);
             CHECK(storage.Contains(trail, sizeof(*trail)));
+            CHECK(sourceTrail != nullptr);
             if (trail && sourceTrail)
             {
+                CHECK(trail->scrollTimeMsec == sourceTrail->scrollTimeMsec);
+                CHECK(trail->repeatDist == sourceTrail->repeatDist);
+                CHECK(trail->splitDist == sourceTrail->splitDist);
                 CHECK(trail->vertCount == sourceTrail->vertCount);
                 CHECK(trail->indCount == sourceTrail->indCount);
                 CHECK(storage.Contains(
@@ -1268,11 +1426,36 @@ void CheckValidEffect(
                     trail->inds,
                     static_cast<std::size_t>(sourceTrail->indCount)
                         * sizeof(*trail->inds)));
+                const auto *const sourceVertices = fixture->image.Resolve<
+                    fastfile::FxTrailVertexDisk32>(
+                        sourceTrail->verts.token);
+                const auto *const sourceIndices = fixture->image.Resolve<
+                    std::uint16_t>(sourceTrail->inds.token);
+                CHECK(sourceVertices != nullptr);
+                CHECK(sourceIndices != nullptr);
+                if (trail->verts && sourceVertices)
+                {
+                    CHECK(std::memcmp(
+                              trail->verts,
+                              sourceVertices,
+                              static_cast<std::size_t>(sourceTrail->vertCount)
+                                  * sizeof(*trail->verts))
+                          == 0);
+                }
+                if (trail->inds && sourceIndices)
+                {
+                    CHECK(std::memcmp(
+                              trail->inds,
+                              sourceIndices,
+                              static_cast<std::size_t>(sourceTrail->indCount)
+                                  * sizeof(*trail->inds))
+                          == 0);
+                }
                 for (std::int32_t tail = sourceTrail->vertCount;
                      tail < sourceTrail->indCount;
                      ++tail)
                 {
-                    const NativeTrailVertex zero{};
+                    const FxTrailVertex zero{};
                     CHECK(std::memcmp(
                               &trail->verts[tail],
                               &zero,
@@ -1281,6 +1464,8 @@ void CheckValidEffect(
                 }
             }
         }
+        else
+            CHECK(native.trailDef == nullptr);
     }
 }
 
@@ -1326,11 +1511,29 @@ void TestValidDefinitions()
     EffectFixture minimal = MakeMinimalEffect();
     CheckValidEffect(&minimal, 2);
 
+    EffectFixture scalarOneShot = MakeMinimalEffect();
+    PopulateScalarFields(&scalarOneShot.elems()[0]);
+    CheckValidEffect(&scalarOneShot, 2);
+
+    EffectFixture scalarLooping = MakeEffect({MinimalElem()}, 1, 0, 0);
+    AttachSamples(&scalarLooping, 0, 1, 0);
+    AttachVisuals(
+        &scalarLooping,
+        0,
+        fastfile::FxElemTypeDisk32::SpriteBillboard,
+        {AddOpaqueReference(&scalarLooping, UINT32_C(0xB101))});
+    PopulateScalarFields(&scalarLooping.elems()[0]);
+    CheckValidEffect(&scalarLooping, 2);
+
+    EffectFixture visibility = MakeMinimalEffect();
+    AttachSamples(&visibility, 0, 1, 2);
+    CheckValidEffect(&visibility, 2);
+
     EffectFixture allVisuals = MakeAllVisualKindsEffect();
     CheckValidEffect(&allVisuals, 24);
 
-    // The compact native blob reserves indCount vertices and copies only the
-    // serialized vertCount prefix.  A zero-filled capacity tail is required.
+    // Retail totalSize parity reserves indCount vertex capacity but copies
+    // only the serialized vertCount prefix; the capacity tail stays zero.
     EffectFixture trailCapacity = MakeEffect(
         {MinimalElem(fastfile::FxElemTypeDisk32::Trail)}, 0, 1, 0);
     AttachSamples(&trailCapacity, 0, 1, 0);
@@ -1341,6 +1544,93 @@ void TestValidDefinitions()
         {AddOpaqueReference(&trailCapacity, UINT32_C(0xC001))});
     AttachTrail(&trailCapacity, 0, 2, 8);
     CheckValidEffect(&trailCapacity, 2);
+}
+
+void TestMaximumGraphAndResolverJournal()
+{
+    std::vector<fastfile::FxElemDefDisk32> elements(
+        fastfile::kFxFastFileDisk32MaxEffectElements, MinimalElem());
+    EffectFixture fixture = MakeEffect(
+        std::move(elements),
+        0,
+        static_cast<std::int32_t>(
+            fastfile::kFxFastFileDisk32MaxEffectElements),
+        0);
+    const disk32::PointerToken sharedReference =
+        AddOpaqueReference(&fixture, UINT32_C(0xF001));
+    const std::vector<disk32::PointerToken> visuals(
+        fastfile::kFxFastFileDisk32MaxVisuals, sharedReference);
+    for (std::size_t index = 0; index < fixture.elemCount; ++index)
+    {
+        AttachSamples(&fixture, index, 1, 0);
+        AttachVisuals(
+            &fixture,
+            index,
+            fastfile::FxElemTypeDisk32::SpriteBillboard,
+            visuals);
+        fastfile::FxElemDefDisk32 &element = fixture.elems()[index];
+        element.effectOnImpact.token = sharedReference;
+        element.effectOnDeath.token = sharedReference;
+        element.effectEmitted.token = sharedReference;
+    }
+    FinalizeEffectTotalSize(&fixture);
+
+    EffectViewOwner view(&fixture);
+    ResolverOwner resolver(&fixture.image);
+    WorkspaceOwner workspace;
+    fastfile::FxFastFileNativeDisk32Plan plan{};
+    CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+          == fastfile::FxFastFileNativeDisk32Status::Success);
+    CHECK(plan.elementCount()
+          == fastfile::kFxFastFileDisk32MaxEffectElements);
+    CHECK(plan.resolvedReferenceCount()
+          == fastfile::kFxFastFileDisk32MaxResolvedReferences);
+    CHECK(resolver.state.calls
+          == fastfile::kFxFastFileDisk32MaxResolvedReferences);
+    CHECK(workspace.get()->phase()
+          == fastfile::FxFastFileNativeDisk32Phase::Planned);
+
+    OutputStorage storage(plan.outputBytes(), plan.outputAlignment());
+    FxEffectDef *output = nullptr;
+    const std::size_t calls = resolver.state.calls;
+    CHECK(fastfile::TryMaterializeFxEffectDefDisk32(
+              workspace.get(),
+              plan,
+              storage.data(),
+              storage.capacity(),
+              &output)
+          == fastfile::FxFastFileNativeDisk32Status::Success);
+    CHECK(output == storage.data());
+    CHECK(output != nullptr);
+    CHECK(output && output->elemDefs != nullptr);
+    CHECK(output && output->elemDefCountOneShot
+              == static_cast<std::int32_t>(
+                  fastfile::kFxFastFileDisk32MaxEffectElements));
+    if (output && output->elemDefs)
+    {
+        for (const std::size_t index : {
+                 std::size_t{0},
+                 static_cast<std::size_t>(
+                     fastfile::kFxFastFileDisk32MaxEffectElements - 1u)})
+        {
+            const FxElemDef &element = output->elemDefs[index];
+            CHECK(element.visualCount
+                  == fastfile::kFxFastFileDisk32MaxVisuals);
+            CHECK(element.visStateIntervalCount == 0);
+            CHECK(element.visSamples == nullptr);
+            CHECK(storage.Contains(
+                element.visuals.array,
+                static_cast<std::size_t>(element.visualCount)
+                    * sizeof(*element.visuals.array)));
+            CHECK(element.effectOnImpact.handle != nullptr);
+            CHECK(element.effectOnDeath.handle != nullptr);
+            CHECK(element.effectEmitted.handle != nullptr);
+        }
+    }
+    CHECK(storage.TailGuardIsIntact());
+    CHECK(resolver.state.calls == calls);
+    CHECK(workspace.get()->phase()
+          == fastfile::FxFastFileNativeDisk32Phase::Empty);
 }
 
 void TestArgumentsCountsAndOutputPlanPreservation()
@@ -1607,6 +1897,82 @@ void TestPointerSpanAndProvenanceFailures()
         CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
               == fastfile::FxFastFileNativeDisk32Status::InvalidSourceLayout);
     }
+}
+
+void TestProvenanceCallbackMutation()
+{
+    EffectFixture fixture = MakeMinimalEffect();
+    FinalizeEffectTotalSize(&fixture);
+    EffectViewOwner view(&fixture);
+    std::array<fastfile::FxElemVelStateSampleDisk32, 2> replacement{};
+    replacement[0].local.velocity.base[0] = 101.0f;
+    replacement[1].local.velocity.base[0] = 202.0f;
+    view.provenance().velocityMutationTarget = &view.elementViews()[0];
+    view.provenance().replacementVelocity = replacement.data();
+    view.provenance().mutateVelocity = true;
+
+    ResolverOwner resolver(&fixture.image);
+    WorkspaceOwner workspace;
+    fastfile::FxFastFileNativeDisk32Plan plan{};
+    const fastfile::FxFastFileNativeDisk32Plan snapshot = plan;
+    CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+          == fastfile::FxFastFileNativeDisk32Status::SourceChanged);
+    CHECK(view.provenance().velocityMutated);
+    CHECK(PlansEqual(plan, snapshot));
+    CHECK(!static_cast<bool>(plan));
+    CHECK(resolver.state.calls == 0);
+    CHECK(workspace.get()->phase()
+          == fastfile::FxFastFileNativeDisk32Phase::Empty);
+}
+
+void TestResolvedStringMutation()
+{
+    {
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        EffectViewOwner view(&fixture);
+        char *const name = fixture.image.Resolve<char>(fixture.nameToken);
+        CHECK(name != nullptr);
+        view.provenance().stringMutationTarget = name;
+        view.provenance().mutateString = true;
+
+        ResolverOwner resolver(&fixture.image);
+        WorkspaceOwner workspace;
+        fastfile::FxFastFileNativeDisk32Plan plan{};
+        const fastfile::FxFastFileNativeDisk32Plan snapshot = plan;
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::SourceChanged);
+        CHECK(view.provenance().stringMutated);
+        CHECK(resolver.state.calls == 1);
+        CHECK(PlansEqual(plan, snapshot));
+        CHECK(!static_cast<bool>(plan));
+        CHECK(workspace.get()->phase()
+              == fastfile::FxFastFileNativeDisk32Phase::Empty);
+    }
+
+    {
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        resolver.state.mutateAcceptedStringAt = 1;
+        resolver.state.acceptedStringMutationTarget =
+            fixture.image.Resolve<char>(fixture.nameToken);
+        CHECK(resolver.state.acceptedStringMutationTarget != nullptr);
+
+        WorkspaceOwner workspace;
+        fastfile::FxFastFileNativeDisk32Plan plan{};
+        const fastfile::FxFastFileNativeDisk32Plan snapshot = plan;
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::SourceChanged);
+        CHECK(resolver.state.acceptedStringMutated);
+        CHECK(resolver.state.calls == 2);
+        CHECK(PlansEqual(plan, snapshot));
+        CHECK(!static_cast<bool>(plan));
+        CHECK(workspace.get()->phase()
+              == fastfile::FxFastFileNativeDisk32Phase::Empty);
+    }
+
 }
 
 void TestVisualValidation()
@@ -2019,6 +2385,125 @@ void TestResolverFailuresAndReentry()
 void TestPlanningOutputAliases()
 {
     using Plan = fastfile::FxFastFileNativeDisk32Plan;
+    using SourceView = fastfile::FxFastFileEffectDefDisk32View;
+    using Resolvers = fastfile::FxFastFileDisk32Resolvers;
+    {
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        WorkspaceOwner workspace;
+
+        constexpr std::size_t kBytes = sizeof(Plan) > sizeof(SourceView)
+            ? sizeof(Plan)
+            : sizeof(SourceView);
+        alignas(Plan) std::array<std::uint8_t, kBytes> backing{};
+        SourceView *const aliasedSource = std::construct_at(
+            reinterpret_cast<SourceView *>(backing.data()), view.view());
+        const auto snapshot = backing;
+        Plan *const aliasedPlan =
+            reinterpret_cast<Plan *>(backing.data());
+
+        CHECK(fastfile::TryPlanFxEffectDefDisk32(
+                  workspace.get(),
+                  *aliasedSource,
+                  resolver.callbacks,
+                  aliasedPlan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
+        CHECK(std::memcmp(
+                  backing.data(), snapshot.data(), backing.size())
+              == 0);
+        CHECK(resolver.state.calls == 0);
+        CHECK(workspace.get()->phase()
+              == fastfile::FxFastFileNativeDisk32Phase::Empty);
+        std::destroy_at(aliasedSource);
+    }
+
+    {
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        WorkspaceOwner workspace;
+
+        constexpr std::size_t kBytes = sizeof(Plan) > sizeof(Resolvers)
+            ? sizeof(Plan)
+            : sizeof(Resolvers);
+        alignas(Plan) std::array<std::uint8_t, kBytes> backing{};
+        Resolvers *const aliasedResolvers = std::construct_at(
+            reinterpret_cast<Resolvers *>(backing.data()),
+            resolver.callbacks);
+        const auto snapshot = backing;
+        Plan *const aliasedPlan =
+            reinterpret_cast<Plan *>(backing.data());
+
+        CHECK(fastfile::TryPlanFxEffectDefDisk32(
+                  workspace.get(),
+                  view.view(),
+                  *aliasedResolvers,
+                  aliasedPlan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
+        CHECK(std::memcmp(
+                  backing.data(), snapshot.data(), backing.size())
+              == 0);
+        CHECK(resolver.state.calls == 0);
+        CHECK(workspace.get()->phase()
+              == fastfile::FxFastFileNativeDisk32Phase::Empty);
+        std::destroy_at(aliasedResolvers);
+    }
+
+    {
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        WorkspaceOwner workspace;
+        // Alias the source header into workspace storage.  The planner must
+        // reject this before reading or mutating either overlapping object.
+        view.view().effect =
+            reinterpret_cast<const fastfile::FxEffectDefDisk32 *>(
+                workspace.get());
+        Plan plan{};
+        const Plan snapshot = plan;
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
+        CHECK(PlansEqual(plan, snapshot));
+        CHECK(resolver.state.calls == 0);
+        CHECK(workspace.get()->phase()
+              == fastfile::FxFastFileNativeDisk32Phase::Empty);
+    }
+
+    {
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        const std::uint32_t originalNameBytes =
+            fixture.image.CStringBytes(fixture.nameToken);
+        CHECK(originalNameBytes >= 2);
+        fixture.effect()->totalSize -=
+            static_cast<std::int32_t>(originalNameBytes - 2u);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        WorkspaceOwner workspace;
+
+        // Reject the retained span before provenance or C-string inspection;
+        // workspace object bytes are never valid borrowed string storage.
+        const char *const workspaceString =
+            reinterpret_cast<const char *>(workspace.get());
+        resolver.state.effectNameResult = workspaceString;
+        resolver.state.effectNameResultBytes = 2;
+        view.provenance().externalString = workspaceString;
+        view.provenance().externalStringBytes = 2;
+        Plan plan{};
+        const Plan snapshot = plan;
+
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
+        CHECK(PlansEqual(plan, snapshot));
+        CHECK(!static_cast<bool>(plan));
+        CHECK(workspace.get()->phase()
+              == fastfile::FxFastFileNativeDisk32Phase::Empty);
+    }
+
     {
         EffectFixture fixture = MakeMinimalEffect();
         FinalizeEffectTotalSize(&fixture);
@@ -2066,6 +2551,84 @@ void TestPlanningOutputAliases()
         CHECK(PlanEffect(&workspace, &view, &resolver, &aliasedPlan)
               == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
         CHECK(PlansEqual(aliasedPlan, snapshot));
+        CHECK(workspace.get()->phase()
+              == fastfile::FxFastFileNativeDisk32Phase::Empty);
+    }
+
+    {
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        WorkspaceOwner workspace;
+        Plan plan{};
+        const Plan snapshot = plan;
+        resolver.state.assetResultAt = 1;
+        resolver.state.assetResult = workspace.get();
+
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
+        CHECK(PlansEqual(plan, snapshot));
+        CHECK(resolver.state.calls == 2);
+        CHECK(workspace.get()->phase()
+              == fastfile::FxFastFileNativeDisk32Phase::Empty);
+    }
+
+    {
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        resolver.state.assetResultAt = 1;
+        resolver.state.assetResult = fixture.elems();
+        WorkspaceOwner workspace;
+        Plan plan{};
+        const Plan snapshot = plan;
+
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
+        CHECK(PlansEqual(plan, snapshot));
+        CHECK(!static_cast<bool>(plan));
+        CHECK(resolver.state.calls == 2);
+        CHECK(workspace.get()->phase()
+              == fastfile::FxFastFileNativeDisk32Phase::Empty);
+    }
+
+    {
+        EffectFixture fixture = MakeEffect(
+            {MinimalElem(fastfile::FxElemTypeDisk32::Sound)}, 0, 1, 0);
+        AttachSamples(&fixture, 0, 1, 0);
+        AttachVisuals(
+            &fixture,
+            0,
+            fastfile::FxElemTypeDisk32::Sound,
+            {fixture.image.AppendString(kDataBlock, "s")});
+        auto *const velocity = fixture.image.Resolve<
+            fastfile::FxElemVelStateSampleDisk32>(
+                fixture.elems()[0].velSamples.token);
+        CHECK(velocity != nullptr);
+        if (!velocity)
+            return;
+        char *const sourceString = reinterpret_cast<char *>(velocity);
+        sourceString[0] = 'x';
+        sourceString[1] = '\0';
+        FinalizeEffectTotalSize(&fixture);
+
+        EffectViewOwner view(&fixture);
+        view.provenance().externalString = sourceString;
+        view.provenance().externalStringBytes = 2;
+        ResolverOwner resolver(&fixture.image);
+        resolver.state.assetResultAt = 1;
+        resolver.state.assetResult = sourceString;
+        WorkspaceOwner workspace;
+        Plan plan{};
+        const Plan snapshot = plan;
+
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
+        CHECK(PlansEqual(plan, snapshot));
+        CHECK(!static_cast<bool>(plan));
+        CHECK(resolver.state.calls == 2);
         CHECK(workspace.get()->phase()
               == fastfile::FxFastFileNativeDisk32Phase::Empty);
     }
@@ -2363,7 +2926,7 @@ void TestPlanBindingAndSourceChanges()
                   &changedResolver,
                   &changedPlan)
               == fastfile::FxFastFileNativeDisk32Status::Success);
-        changed.elems()[0].flags ^= 1u;
+        changed.elems()[0].flags ^= INT32_C(1);
         OutputStorage changedStorage(
             changedPlan.outputBytes(), changedPlan.outputAlignment());
         FxEffectDef *changedOutput = sentinel;
@@ -2477,19 +3040,31 @@ void AttachSamples(
     elem.visStateIntervalCount = visIntervals;
     std::vector<fastfile::FxElemVelStateSampleDisk32> velocity(
         static_cast<std::size_t>(velIntervals) + 1u);
-    std::vector<fastfile::FxElemVisStateSampleDisk32> visibility(
-        static_cast<std::size_t>(visIntervals) + 1u);
     for (std::size_t index = 0; index < velocity.size(); ++index)
         velocity[index].local.velocity.base[0] = static_cast<float>(index + 1u);
-    for (std::size_t index = 0; index < visibility.size(); ++index)
-        visibility[index].base.scale = static_cast<float>(index + 2u);
     const disk32::PointerToken velocityToken = fixture->image.AppendArray(
         kDataBlock, velocity.data(), velocity.size());
+    fixture->velSampleTokens.push_back(velocityToken);
+
+    // This is the canonical compiler representation: a zero interval count
+    // has no visibility payload at all (rather than a one-sample array).
+    if (visIntervals == 0)
+    {
+        fastfile::FxElemDefDisk32 &updated = fixture->elems()[elemIndex];
+        updated.velSamples.token = velocityToken;
+        updated.visSamples.token = {};
+        return;
+    }
+
+    std::vector<fastfile::FxElemVisStateSampleDisk32> visibility(
+        static_cast<std::size_t>(visIntervals) + 1u);
+    for (std::size_t index = 0; index < visibility.size(); ++index)
+        visibility[index].base.scale = static_cast<float>(index + 2u);
     const disk32::PointerToken visibilityToken = fixture->image.AppendArray(
         kDataBlock, visibility.data(), visibility.size());
-    elem.velSamples.token = velocityToken;
-    elem.visSamples.token = visibilityToken;
-    fixture->velSampleTokens.push_back(velocityToken);
+    fastfile::FxElemDefDisk32 &updated = fixture->elems()[elemIndex];
+    updated.velSamples.token = velocityToken;
+    updated.visSamples.token = visibilityToken;
     fixture->visSampleTokens.push_back(visibilityToken);
 }
 
@@ -2574,8 +3149,9 @@ void AttachVisuals(
         }
         const disk32::PointerToken visualsToken = fixture->image.AppendArray(
             kDataBlock, visuals.data(), visuals.size());
-        elem.visualCount = static_cast<std::uint8_t>(visualCount);
-        elem.visuals.token = visualsToken;
+        fastfile::FxElemDefDisk32 &updated = fixture->elems()[elemIndex];
+        updated.visualCount = static_cast<std::uint8_t>(visualCount);
+        updated.visuals.token = visualsToken;
         fixture->visualTokens.push_back(visualsToken);
         return;
     }
@@ -2594,7 +3170,7 @@ void AttachVisuals(
         visuals[index].token = references[index];
     const disk32::PointerToken visualsToken = fixture->image.AppendArray(
         kDataBlock, visuals.data(), visuals.size());
-    elem.visuals.token = visualsToken;
+    fixture->elems()[elemIndex].visuals.token = visualsToken;
     fixture->visualTokens.push_back(visualsToken);
 }
 
@@ -2727,8 +3303,11 @@ int main()
 {
     FixtureSelfTest();
     TestValidDefinitions();
+    TestMaximumGraphAndResolverJournal();
     TestArgumentsCountsAndOutputPlanPreservation();
     TestPointerSpanAndProvenanceFailures();
+    TestProvenanceCallbackMutation();
+    TestResolvedStringMutation();
     TestVisualValidation();
     TestTrailValidation();
     TestResolverFailuresAndReentry();
