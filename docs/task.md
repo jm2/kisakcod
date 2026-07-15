@@ -12,8 +12,8 @@ work item changes. Do not create session-specific handoff files.
 - Active work: move `FX_RestoreEffectDefTable` behind a bounded lifecycle-owned BSS lease. Its prerequisite no-longjmp
   input boundary is complete on this branch: status-bearing `MemoryFile` data and caller-bounded C-string readers decode
   the production legacy RLE/zlib stream without assertions, prints, or drops; validate exact segment lengths and
-  little-endian headers; reject cross-segment, malformed, and truncated input; preserve legacy partial-output and
-  sticky-overflow behavior while leaving the first unread destination byte unchanged; and reset the process-global codec
+  little-endian headers; reject cross-segment, malformed, and truncated input; preserve successfully decoded prefixes and
+  sticky-overflow state while leaving the first unread destination byte unchanged; and reset the process-global codec
   on failure. `FX_ReadArchiveDataNoDrop` now uses that primitive
   directly instead of temporarily suppressing reports around the legacy reader. TLS records the exact stream owner, and
   both global `Com_Error` longjmp paths abandon same-thread inflate/deflate state outside the client-only cleanup guard;
