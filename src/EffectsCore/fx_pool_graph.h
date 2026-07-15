@@ -579,21 +579,3 @@ inline bool FxValidatePoolAllocationGraphWithScratch(
             visitedTrailElems,
             visitedTrailElemCount);
 }
-
-// Convenience wrapper for callers that do not need to control scratch
-// placement. This preserves the original API and behavior.
-inline bool FxValidatePoolAllocationGraph(
-    const FxSystem *const system,
-    const FxPoolAllocationState<MAX_ELEMS> &elemAllocationState,
-    const FxPoolAllocationState<MAX_TRAILS> &trailAllocationState,
-    const FxPoolAllocationState<MAX_TRAIL_ELEMS>
-        &trailElemAllocationState) noexcept
-{
-    FxPoolAllocationGraphScratch scratch{};
-    return FxValidatePoolAllocationGraphWithScratch(
-        system,
-        elemAllocationState,
-        trailAllocationState,
-        trailElemAllocationState,
-        &scratch);
-}

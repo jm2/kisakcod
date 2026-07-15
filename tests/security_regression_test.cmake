@@ -6477,10 +6477,10 @@ foreach(_fx_graph_consumer
         "#include \"fx_pool_graph.h\""
         "production FX graph consumers must include the shared validator")
 endforeach()
-require_source_contains(
+require_source_not_contains(
     "EffectsCore/fx_pool_graph.h"
     "inline bool FxValidatePoolAllocationGraph("
-    "FX archive ownership validation must remain a shared pure helper")
+    "graph validation must not restore an implicit large-stack wrapper")
 require_source_contains(
     "EffectsCore/fx_pool_graph.h"
     "struct FxPoolAllocationGraphScratch"

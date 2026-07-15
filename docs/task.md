@@ -6,19 +6,51 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-disk32-buffer-schema`; branch point: merged FxSystem Disk32 checkpoint `2b92e7a7`;
+- Active branch: `agent/fx-disk32-native-structural`; branch point: merged FxSystemBuffers Disk32 checkpoint `09c05e5f`;
   current upstream-integration baseline: merge `11a9e08c` through upstream `312a9d2e`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint implementation is complete on the branch in `847279ab` and `fb379e5c`: exact
-  `FxSystemBuffersDisk32` (`0x47480`) and nested elem/trail/trail-elem/visibility records use fixed-width fields, while
-  each legacy pool slot is an aligned raw byte span rather than a C++ union. A pure transactional helper reconstructs all
-  three allocation bitmaps by interpreting only each visited free slot's explicit little-endian signed 32-bit word. It
-  rejects invalid heads/counts, negative or out-of-range links, cycles, duplicates, self-links, overlong chains, and count
-  mismatches without constructing native pool members or changing either input or a failed output. Exhaustive layouts,
-  hand-authored records/free lists, a complete x86 `0x47480` byte oracle, strict x86/AArch64 builds, sanitizers, analyzers,
-  stack gates, source invariants, and measured Windows x86 CI wiring are present. Production archive I/O is unchanged.
-  Heap-backed native construction, definition resolution, full graph/semantic validation, MemoryFile integration,
-  physics records, and both native64 production guards remain later batches.
+- Active checkpoint implementation is complete in `7bd25acb`: the 327,128-byte native64 / 310,672-byte x86 heap-owned
+  `FxArchiveDisk32NativeWorkspace` decodes the fixed system and metadata, reconstructs all three pool free lists, resolves
+  only active definition keys without dereferencing returned definitions, converts every effect, and placement-constructs
+  the correct native member of every pool slot. It preserves validated free links plus opaque trailing bytes under exact
+  representation contracts, copies visibility/deferred/padding state, links all workspace-local base and exact read/write
+  selector pointers, round-trips those selectors through the shared helper, and validates the complete allocation graph
+  with workspace-owned scratch. Same-workspace resolver reentry is rejected, every failure leaves the phase `Empty`, and
+  `StructurallyValid` is the final successful workspace mutation. The gated read-only view remains non-publishable and
+  unsuitable for definition-dependent payload access; `Ready` is reserved for the semantic follow-on. `MemoryFile`, live
+  publication, production archive I/O, and both native64 production guards are unchanged.
+- PR #26 initial run **29430362954 passed four of nine jobs** at `d34e2d09`: Linux amd64/arm64, macOS arm64, and
+  headless Windows x86 were green. Portable Windows amd64/ARM64 rejected an uncalled header-only graph-validation
+  convenience wrapper whose implicit scratch consumed 22,688 bytes under MSVC analysis; measured Windows x86
+  Debug/Release and no-Steam builds independently showed that the private workspace's 310,668-byte GCC i386 total
+  needed four bytes of MSVC x86 tail padding. The correction removes the wrapper completely (all production callers
+  already provide checked scratch), moves the fixture's former wrapper call to heap-owned scratch, and explicitly aligns
+  the private workspace to 8 bytes so every ILP32 compiler has the same 310,672-byte contract without changing any member
+  offset. It also addresses both actionable Gemini threads: visibility selectors are redundantly bounded before native
+  pointer derivation, and fixed/native padding extents are compile-time equal. Replacement run **29435390924 passed all nine
+  jobs** at exact implementation head `cbd82d79`; both threads are answered and resolved, and an independent correction
+  audit found no remaining correctness, ABI, security, portability, test, or documentation blocker.
+- Current structural checkpoint validation: GCC and Clang suites are **62/62** green after the CI/review correction.
+  ASan+UBSan (leak detection disabled under the command runner) and TSan are **61/61** green, with the compiler-generated
+  static-frame test intentionally
+  omitted under instrumentation. The correction's focused native/pool/source/security set is also green under ASan+UBSan
+  and TSan, and newly rebuilt x86-32 native and pool fixtures execute successfully. The 1,371-line fixture covers heap
+  allocation/size/alignment, empty/mixed/full and sparse non-prefix graphs, all three free-link decoder boundaries,
+  active-only opaque resolution, exact relinking/selectors,
+  complete record/visibility/deferred/padding copies, nonzero free-slot tail preservation, failure gating/retry, resolver
+  reentry, source immutability, same-workspace item/free lifetime transitions, and a true x86 whole-buffer oracle. Strict
+  GCC/Clang plus conversion warnings, Clang analyzer, AArch64 compile/link, actual x86-32 execution, source/security
+  contracts, and `git diff --check` pass. Optimized GCC frames are 192 bytes for the builder and 224 bytes for the graph
+  validator, below the portable 4 KiB gate. An independent security/lifetime/ABI/portability audit found no blocker; its
+  sole non-blocking sparse-transition coverage suggestion was added and sanitizer/x86-validated. The authoritative
+  five-target and measured Windows x86 CI matrix remains the PR gate.
+- PR #25 squash-merged as `09c05e5f` from final review-fix head `5abf9cbb`. Final run **29427215187 passed all nine jobs**:
+  Linux amd64/arm64, portable Windows amd64/arm64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86,
+  and headless Windows x86. Initial implementation/docs head `d9ad05ff` also passed all nine jobs in run **29426792491**.
+  Gemini's real finding added a compile-time raw-slot extent contract without introducing native `sizeof` ABI debt; its
+  request to replace the bounds-proven `.data()` access was declined because hardened indexing could add an assertion/report
+  path to the report-free decoder. Both threads were answered and resolved, and an independent exact-head audit found no
+  remaining security, lifetime, ABI, malformed-input, portability, documentation, or CI-integration defect.
 - Merged FxSystem checkpoint: the first fixed full-system seam introduces a
   strong numeric `ArchiveAddress32` distinct from fast-file tokens and definition keys, exact `FxCameraDisk32` (`0xB0`),
   `FxSpriteInfoDisk32` (`0x10`), and `FxSystemDisk32` (`0xA60`) layouts, plus a pure transactional decoder. It proves the
@@ -27,7 +59,7 @@ work item changes. Do not create session-specific handoff files.
   permutation, emits a physical active-slot bitmap, and conditionally validates/remaps spotlight handles. Every native
   pool, sprite, and visibility pointer remains null for later full-image linking; malformed input leaves both outputs
   byte-for-byte unchanged. Production archive I/O and both native64 production guards are intentionally unchanged.
-- Current buffer checkpoint validation: GCC and Clang suites are **60/60** green. ASan+UBSan (leak detection disabled
+- Merged buffer checkpoint validation: GCC and Clang suites are **60/60** green. ASan+UBSan (leak detection disabled
   under the command runner) and TSan are **59/59** green, with the compiler-generated static-frame test intentionally
   omitted under instrumentation. The hand-authored fixture covers exact nested/top-level offsets, full/empty/sparse and
   maximum-capacity lists in all three pools, first/middle/last heads, every malformed head/link/count/cycle class, ignored
@@ -174,10 +206,10 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: publish this exact buffer/nested-schema and raw-slot free-list checkpoint without production I/O. Then add a
-  roughly 320 KiB heap-owned native staging workspace,
-  definition-resolver callback, native pool construction, selector/metadata cross-checks, and complete graph/semantic
-  validation. Production reader integration follows only after full-image malformed-input and x86-equivalence fixtures.
+- Next: land PR #26 after its documentation-only final head inherits the clean review and nine-job matrix. Then add
+  definition-dependent
+  payload activation plus report-free semantic validation to transition the candidate to `Ready`. Full-image raw/zlib
+  preflight reading and production reader integration follow only after malformed-input and x86-equivalence fixtures.
   That integration must relink visibility read/write selectors to the live buffers during desired and rollback publication;
   `FX_LinkSystemBuffers` currently links only the base visibility pointer, so copying staged selector pointers would dangle.
   Retain the legacy x86 writer and native64 save guard until a later pure encoder/full-image equivalence batch.
@@ -238,8 +270,8 @@ work item changes. Do not create session-specific handoff files.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **43% complete by engineering effort** (plausible range 39–48%).
-  The foundation/checklist view is about 53–58% and the shared foundation is roughly 91–94% mature,
+- Progress estimate: approximately **44% complete by engineering effort** (plausible range 40–49%).
+  The foundation/checklist view is about 55–60% and the shared foundation is roughly 92–95% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Initial upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
   (nine commits; upstream was not ahead at merge time) while preserving the port's pointer-width and
