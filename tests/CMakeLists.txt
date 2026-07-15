@@ -450,6 +450,66 @@ add_test(
 set_tests_properties(
     effectscore-archive-reader-disk32 PROPERTIES TIMEOUT 60)
 
+add_library(kisakcod-fx-archive-restore-candidate-disk32-subject OBJECT
+    ${SRC_DIR}/EffectsCore/fx_archive_restore_candidate_disk32.cpp
+)
+target_include_directories(
+    kisakcod-fx-archive-restore-candidate-disk32-subject PRIVATE
+        ${SRC_DIR}/EffectsCore
+)
+target_include_directories(
+    kisakcod-fx-archive-restore-candidate-disk32-subject SYSTEM PRIVATE
+        ${SRC_DIR}
+)
+target_compile_features(
+    kisakcod-fx-archive-restore-candidate-disk32-subject PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-fx-archive-restore-candidate-disk32-subject PRIVATE KISAK_MP)
+kisakcod_test_warnings(
+    kisakcod-fx-archive-restore-candidate-disk32-subject)
+kisakcod_fx_helper_stack_budget(
+    kisakcod-fx-archive-restore-candidate-disk32-subject)
+
+add_executable(kisakcod-fx-archive-restore-candidate-disk32-tests
+    fx_archive_restore_candidate_disk32_tests.cpp
+    ${SRC_DIR}/EffectsCore/fx_archive_disk32.cpp
+    $<TARGET_OBJECTS:kisakcod-fx-archive-system-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-archive-buffers-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-archive-native-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-archive-body-state-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-archive-reader-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-archive-restore-candidate-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-effect-table-restore-subject>
+)
+target_include_directories(
+    kisakcod-fx-archive-restore-candidate-disk32-tests PRIVATE
+        ${SRC_DIR}/EffectsCore
+)
+target_include_directories(
+    kisakcod-fx-archive-restore-candidate-disk32-tests SYSTEM PRIVATE
+        ${SRC_DIR}
+)
+target_compile_features(
+    kisakcod-fx-archive-restore-candidate-disk32-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-fx-archive-restore-candidate-disk32-tests PRIVATE KISAK_MP)
+target_link_libraries(
+    kisakcod-fx-archive-restore-candidate-disk32-tests PRIVATE
+        kisakcod-memfile-test-subject
+        Threads::Threads)
+kisakcod_test_warnings(
+    kisakcod-fx-archive-restore-candidate-disk32-tests)
+set_target_properties(
+    kisakcod-fx-archive-restore-candidate-disk32-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-archive-restore-candidate-disk32
+    COMMAND kisakcod-fx-archive-restore-candidate-disk32-tests
+)
+set_tests_properties(
+    effectscore-archive-restore-candidate-disk32 PROPERTIES TIMEOUT 60)
+
 add_executable(kisakcod-db-relocation-tests
     db_relocation_tests.cpp
     ${SRC_DIR}/database/db_relocation.cpp
