@@ -65,6 +65,11 @@ Completed foundation work:
   or output, preserves valid legacy raw/zlib bytes, rejects unsafe names and invalid/conflicting Disk32 keys before the
   first write, and carries portable constrained-stack plus compiler-frame gates; source-scoped Windows x86 production
   measurement is calibrated and enforced in Debug and Release PR CI;
+- a coherent FX save-snapshot publication boundary (PR #21 implementation gate green) that admits camera/time/visibility
+  publishers and readers against archive exclusion, adds an external fixed-width shared/exclusive camera gate for normal
+  workers without changing frozen `FxSystem`, publishes camera validity only after its payload, stages raw system and
+  buffer bytes once, validates through a separately relinked heap image, derives bounded visibility selectors, and proves
+  every copied effect-definition pointer belongs to the retained table before dereference or output;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -83,8 +88,9 @@ Remaining gates, in implementation order:
    parser prerequisite, transactional BSS effect-definition restore lease, bounded save snapshot, and portable extracted-
    helper frame/runtime gates are complete. Windows x86 production analysis exposed and removed a 10,256-byte convenience
    wrapper; authoritative Debug and Release reports now measure `FX_Save` at 2,756 bytes, `FX_Restore` at 6,124 bytes,
-   and the largest other helper at 2,064 bytes. Then stabilize camera/scalar/visibility snapshot publication and start the
-   fixed Disk32 archive schema.
+   and the largest other helper at 2,064 bytes. Coherent camera/scalar/visibility snapshot publication passed all nine CI
+   jobs plus exact-head Codex review in PR #21, and its sole Gemini finding is fixed and resolved; merge its documentation
+   checkpoint, then start the fixed Disk32 archive schema.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -1042,15 +1048,18 @@ registration failure, reentry, abandonment, stale/foreign ownership, reuse, and 
 under GCC, Clang, ASan+UBSan, and TSan; strict x86-32/AArch64 compilation and two independent audits are green. Windows
 x86 production compilation and the five native utility runners remain the authoritative PR CI gate.
 
-Overall porting progress is approximately **40%** (plausible range **36–45%**), while target delivery remains **0/5**.
+Overall porting progress is approximately **41%** (plausible range **37–46%**), while target delivery remains **0/5**.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
 Windows x86 Debug and Release production reports now enforce 2,756-byte `FX_Save`, 6,124-byte `FX_Restore`, and
-2,064-byte maximum-other frames after replacing the discovered 10,256-byte helper with checked heap scratch. The next
-sequence is stable camera/scalar/visibility snapshot publication followed by the Disk32 FX archive schema. A checked
+2,064-byte maximum-other frames after replacing the discovered 10,256-byte helper with checked heap scratch. Coherent
+camera/scalar/visibility publication, copied-image validation, visibility selectors, and staged effect-definition
+membership passed all nine jobs in PR #21 run **29397910131** at implementation head `7895f7a9`; Codex found no major
+issue at that exact commit and the sole Gemini finding was fixed and resolved. The next sequence is the documentation-only
+merge checkpoint followed by the Disk32 FX archive schema. A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
-because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work also includes camera/scalar
-snapshot publication and real Disk32 archive/fast-file conversion. A separate hard M4 blocker
+because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work is real Disk32
+archive/fast-file conversion plus that later segment-finalization boundary. A separate hard M4 blocker
 remains: MP `cpose_t::physObjId` and
 `BreakablePiece::physObjId` still truncate ODE pointers into `int32_t`; native-width storage or a token/sidecar is required
 before any native64 engine runtime can be enabled. The

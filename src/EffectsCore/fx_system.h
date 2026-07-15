@@ -859,7 +859,19 @@ bool __cdecl FX_CullElementForDraw_Light(const FxDrawState *draw);
 void __cdecl FX_DrawElem_SpotLight(FxDrawState *draw);
 void __cdecl FX_DrawNonSpriteElems(FxSystem *system);
 void __cdecl FX_BeginIteratingOverEffects_Cooperative(FxSystem *system);
+bool __cdecl FX_TryBeginIteratingOverEffects_Cooperative(
+    FxSystem *system) noexcept;
 void __cdecl FX_EndIteratingOverEffects_Cooperative(FxSystem *system);
+// Camera/time payload publication has a separate reader/writer gate because
+// normal FX jobs share cooperative iterator ownership. Callers must acquire
+// the main cooperative iterator first and release this gate before releasing
+// that iterator. Shared camera reads may nest on the same thread/system;
+// writer nesting and reader/writer mode changes are deliberately unsupported.
+void __cdecl FX_BeginReadingCameraPublication(FxSystem *system);
+void __cdecl FX_EndReadingCameraPublication(FxSystem *system);
+void __cdecl FX_BeginWritingCameraPublication(FxSystem *system);
+void __cdecl FX_EndWritingCameraPublication(FxSystem *system);
+void __cdecl FX_AbandonCurrentThreadCameraPublicationForError() noexcept;
 void __cdecl FX_DrawNonSpriteEffect(FxSystem *system, FxEffect *effect, uint32_t elemClass, int32_t drawTime);
 void __cdecl FX_DrawElement(FxSystem *system, const FxElemDef *elemDef, const FxElem *elem, FxDrawState *draw);
 void __cdecl FX_DrawSpotLight(FxSystem *system);

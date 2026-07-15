@@ -1,5 +1,6 @@
 #include "fx_system.h"
 #include "fx_iterator_atomic.h"
+#include "fx_snapshot_publication.h"
 
 #include <xanim/xanim.h>
 #include <xanim/dobj.h>
@@ -2616,8 +2617,15 @@ void __cdecl FX_EndUpdate(int32_t localClientNum)
 
     system = FX_GetSystem(localClientNum);
     iassert(system);
-    memcpy(&system->cameraPrev, system, sizeof(system->cameraPrev));
-    iassert(system->cameraPrev.isValid);
+    FX_BeginIteratingOverEffects_Cooperative(system);
+    FX_BeginWritingCameraPublication(system);
+    const std::int32_t cameraIsValid =
+        Sys_AtomicLoad(&system->camera.isValid);
+    FX_PublishCamera(
+        &system->cameraPrev, system->camera, cameraIsValid != 0);
+    iassert(Sys_AtomicLoad(&system->cameraPrev.isValid));
+    FX_EndWritingCameraPublication(system);
+    FX_EndIteratingOverEffects_Cooperative(system);
 }
 
 void __cdecl FX_AddNonSpriteDrawSurfs(FxCmd *cmd)
@@ -2814,45 +2822,66 @@ void __cdecl FX_SetNextUpdateCamera(int32_t localClientNum, const refdef_s *refd
     float cosHalfFov; // [esp+5Ch] [ebp-8h]
     float cosHalfFova; // [esp+5Ch] [ebp-8h]
     uint32_t planeIndex; // [esp+60h] [ebp-4h]
+    FxCamera nextCamera{};
 
     if (!refdef)
         MyAssertHandler(".\\EffectsCore\\fx_update.cpp", 2150, 0, "%s", "refdef");
     system = FX_GetSystem(localClientNum);
-    system->camera.origin[0] = refdef->vieworg[0];
-    system->camera.origin[1] = refdef->vieworg[1];
-    system->camera.origin[2] = refdef->vieworg[2];
-    AxisCopy(refdef->viewaxis, system->camera.axis);
-    system->camera.frustum[0][0] = refdef->viewaxis[0][0];
-    system->camera.frustum[0][1] = refdef->viewaxis[0][1];
-    system->camera.frustum[0][2] = refdef->viewaxis[0][2];
-    system->camera.viewOffset[0] = refdef->viewOffset[0];
-    system->camera.viewOffset[1] = refdef->viewOffset[1];
-    system->camera.viewOffset[2] = refdef->viewOffset[2];
+    nextCamera.origin[0] = refdef->vieworg[0];
+    nextCamera.origin[1] = refdef->vieworg[1];
+    nextCamera.origin[2] = refdef->vieworg[2];
+    AxisCopy(refdef->viewaxis, nextCamera.axis);
+    nextCamera.frustum[0][0] = refdef->viewaxis[0][0];
+    nextCamera.frustum[0][1] = refdef->viewaxis[0][1];
+    nextCamera.frustum[0][2] = refdef->viewaxis[0][2];
+    nextCamera.viewOffset[0] = refdef->viewOffset[0];
+    nextCamera.viewOffset[1] = refdef->viewOffset[1];
+    nextCamera.viewOffset[2] = refdef->viewOffset[2];
     v10 = refdef->tanHalfFovX * refdef->tanHalfFovX + 1.0;
     v8 = sqrt(v10);
     cosHalfFov = 1.0 / v8;
     sinHalfFov = refdef->tanHalfFovX * cosHalfFov;
-    Vec3ScaleMad(sinHalfFov, refdef->viewaxis[0], cosHalfFov, refdef->viewaxis[1], system->camera.frustum[1]);
+    Vec3ScaleMad(
+        sinHalfFov,
+        refdef->viewaxis[0],
+        cosHalfFov,
+        refdef->viewaxis[1],
+        nextCamera.frustum[1]);
     scale1 = -cosHalfFov;
-    Vec3ScaleMad(sinHalfFov, refdef->viewaxis[0], scale1, refdef->viewaxis[1], system->camera.frustum[2]);
+    Vec3ScaleMad(
+        sinHalfFov,
+        refdef->viewaxis[0],
+        scale1,
+        refdef->viewaxis[1],
+        nextCamera.frustum[2]);
     v9 = refdef->tanHalfFovY * refdef->tanHalfFovY + 1.0;
     v7 = sqrt(v9);
     cosHalfFova = 1.0 / v7;
     sinHalfFova = refdef->tanHalfFovY * cosHalfFova;
-    Vec3ScaleMad(sinHalfFova, refdef->viewaxis[0], cosHalfFova, refdef->viewaxis[2], system->camera.frustum[3]);
+    Vec3ScaleMad(
+        sinHalfFova,
+        refdef->viewaxis[0],
+        cosHalfFova,
+        refdef->viewaxis[2],
+        nextCamera.frustum[3]);
     scale1a = -cosHalfFova;
-    Vec3ScaleMad(sinHalfFova, refdef->viewaxis[0], scale1a, refdef->viewaxis[2], system->camera.frustum[4]);
-    system->camera.frustumPlaneCount = 5;
-    for (planeIndex = 0; planeIndex < system->camera.frustumPlaneCount; ++planeIndex)
+    Vec3ScaleMad(
+        sinHalfFova,
+        refdef->viewaxis[0],
+        scale1a,
+        refdef->viewaxis[2],
+        nextCamera.frustum[4]);
+    nextCamera.frustumPlaneCount = 5;
+    for (planeIndex = 0; planeIndex < nextCamera.frustumPlaneCount; ++planeIndex)
     {
-        if (!Vec3IsNormalized(system->camera.frustum[planeIndex]))
+        if (!Vec3IsNormalized(nextCamera.frustum[planeIndex]))
         {
-            v6 = Vec3Length(system->camera.frustum[planeIndex]);
+            v6 = Vec3Length(nextCamera.frustum[planeIndex]);
             v3 = va(
                 "(%g %g %g) len %g",
-                system->camera.frustum[planeIndex][0],
-                system->camera.frustum[planeIndex][1],
-                system->camera.frustum[planeIndex][2],
+                nextCamera.frustum[planeIndex][0],
+                nextCamera.frustum[planeIndex][1],
+                nextCamera.frustum[planeIndex][2],
                 v6);
             MyAssertHandler(
                 ".\\EffectsCore\\fx_update.cpp",
@@ -2862,17 +2891,22 @@ void __cdecl FX_SetNextUpdateCamera(int32_t localClientNum, const refdef_s *refd
                 "Vec3IsNormalized( system->camera.frustum[planeIndex] )",
                 v3);
         }
-        system->camera.frustum[planeIndex][3] = Vec3Dot(system->camera.origin, system->camera.frustum[planeIndex]);
+        nextCamera.frustum[planeIndex][3] =
+            Vec3Dot(nextCamera.origin, nextCamera.frustum[planeIndex]);
     }
     if (zfar > 0.0)
     {
-        system->camera.frustum[5][0] = -refdef->viewaxis[0][0];
-        system->camera.frustum[5][1] = -refdef->viewaxis[0][1];
-        system->camera.frustum[5][2] = -refdef->viewaxis[0][2];
-        system->camera.frustum[5][3] = -system->camera.frustum[0][3] - zfar;
-        system->camera.frustumPlaneCount = 6;
+        nextCamera.frustum[5][0] = -refdef->viewaxis[0][0];
+        nextCamera.frustum[5][1] = -refdef->viewaxis[0][1];
+        nextCamera.frustum[5][2] = -refdef->viewaxis[0][2];
+        nextCamera.frustum[5][3] = -nextCamera.frustum[0][3] - zfar;
+        nextCamera.frustumPlaneCount = 6;
     }
-    Sys_AtomicExchange(&system->camera.isValid, 1);
+    FX_BeginIteratingOverEffects_Cooperative(system);
+    FX_BeginWritingCameraPublication(system);
+    FX_PublishCamera(&system->camera, nextCamera, true);
+    FX_EndWritingCameraPublication(system);
+    FX_EndIteratingOverEffects_Cooperative(system);
 }
 
 void __cdecl FX_SetNextUpdateTime(int32_t localClientNum, int32_t time)
@@ -2880,6 +2914,8 @@ void __cdecl FX_SetNextUpdateTime(int32_t localClientNum, int32_t time)
     FxSystem *system; // [esp+0h] [ebp-4h]
 
     system = FX_GetSystem(localClientNum);
+    FX_BeginIteratingOverEffects_Cooperative(system);
+    FX_BeginWritingCameraPublication(system);
     if (time < system->msecNow)
         MyAssertHandler(
             ".\\EffectsCore\\fx_update.cpp",
@@ -2888,11 +2924,13 @@ void __cdecl FX_SetNextUpdateTime(int32_t localClientNum, int32_t time)
             "time >= system->msecNow\n\t%i, %i",
             time,
             system->msecNow);
-    Sys_AtomicExchange(&system->camera.isValid, 0);
+    FX_InvalidateCameraPublication(&system->camera);
     Sys_AtomicExchange(&system->msecDraw, time);
     system->msecNow = time;
     if (++system->frameCount <= 0)
         system->frameCount = 1;
+    FX_EndWritingCameraPublication(system);
+    FX_EndIteratingOverEffects_Cooperative(system);
 }
 
 void __cdecl FX_FillUpdateCmd(int32_t localClientNum, FxCmd *cmd)

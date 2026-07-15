@@ -3635,6 +3635,30 @@ require_security_slice_ordered(
     "FX_ForEachEffectDef("
     "ValidateEffectTableSaveSnapshotNoReport("
     "FX archive effect-table validation must occur after enumeration returns")
+extract_security_slice(
+    _fx_archive_save_source
+    "bool FX_ValidateArchiveEffectDefinitionReferences("
+    "bool FX_ValidateArchiveCopiedSnapshot("
+    _fx_effect_table_graph_admission
+    "FX copied effect-definition admission")
+require_security_slice_contains(
+    _fx_effect_table_graph_admission
+    "EffectTableSaveSnapshotContainsKey("
+    "copied effect-definition pointers must be represented by the staged table")
+require_security_slice_contains(
+    _fx_effect_table_graph_admission
+    "reinterpret_cast<std::uintptr_t>(effect->def)"
+    "effect-definition admission must compare full pointer values")
+foreach(_forbidden_unadmitted_definition_read
+    "effect->def->"
+    "effect->def."
+    "FX_GetArchiveEffectDefCount("
+    "FX_ValidateArchiveEffectDefTiming(")
+    forbid_security_slice_contains(
+        _fx_effect_table_graph_admission
+        "${_forbidden_unadmitted_definition_read}"
+        "unadmitted copied effect definitions must not be dereferenced")
+endforeach()
 
 file(READ "${SOURCE_ROOT}/src/universal/memfile.cpp" _memfile_source)
 extract_security_slice(
@@ -5673,7 +5697,7 @@ require_source_contains(
 require_all_occurrences_wrapped(
     "EffectsCore/fx_draw.cpp"
     "&system->iteratorCount"
-    "(FxIterator(BeginCooperative|EndCooperative|DowngradeExclusiveToCooperative)|Sys_Atomic(Load|CompareExchange))[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
+    "(FxIterator(BeginCooperative|TryBeginCooperative|EndCooperative|DowngradeExclusiveToCooperative)|Sys_Atomic(Load|CompareExchange))[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
     "FX cooperative iterator ownership")
 require_all_occurrences_wrapped(
     "EffectsCore/fx_sort.cpp"
@@ -5688,8 +5712,8 @@ require_all_occurrences_wrapped(
 require_source_match_count(
     "EffectsCore/fx_draw.cpp"
     "FxIterator(BeginCooperative|EndCooperative)[ \t\r\n]*\\([ \t\r\n]*&system->iteratorCount"
-    5
-    "nested/cooperative admission, rollback, release, and error unwind must use their shared helpers")
+    6
+    "nested/cooperative admission, both rollbacks, release, and error unwind must use their shared helpers")
 require_source_match_count(
     "EffectsCore/fx_sort.cpp"
     "FxIterator(WaitBeginExclusive|EndExclusive)[ \t\r\n]*\\([ \t\r\n]*&(state\\.)?system->iteratorCount"
@@ -5698,7 +5722,7 @@ require_source_match_count(
 require_source_match_count(
     "EffectsCore/fx_draw.cpp"
     "system->iteratorCount"
-    7
+    10
     "all cooperative iterator references must remain accounted for")
 require_source_match_count(
     "EffectsCore/fx_sort.cpp"
@@ -6534,9 +6558,9 @@ require_source_contains(
     "production graph validation must inspect live sidecars while allocator state is stable")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
-    "FX_ValidatePoolAllocationGraphState(system)"
-    "memcpy(&systemSnapshot, system, sizeof(systemSnapshot));"
-    "save must validate the complete live graph before staging its snapshot")
+    "FX_LinkSystemBuffers(validationSystem, bufferSnapshot);"
+    "if (!FX_RebuildArchivePoolAllocationStates("
+    "save must relink and validate the complete copied graph")
 require_source_matches(
     "EffectsCore/fx_archive.cpp"
     "case[ \t]+Operation::ValidateDesiredState:[ \t\r\n]*return[ \t]+FX_ArchiveRestoreControlStatus\\([ \t\r\n]*FX_RebuildPoolAllocationStatesNoReport\\(context.system\\)[ \t\r\n]*&&[ \t]*FX_ValidatePoolAllocationGraphStateWithScratch\\([ \t\r\n]*context.system,[ \t\r\n]*&context.physicsScratch->poolGraph\\)[ \t\r\n]*&&[ \t]*FX_ValidateArchivePhysicsOwnershipLockedWithScratch\\("
@@ -6895,41 +6919,57 @@ foreach(_obsolete_restore_control
 endforeach()
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
-    "FxSystem systemSnapshot{};"
-    "save must stage system metadata outside live state")
+    "struct FxArchiveSaveSnapshotWorkspace"
+    "save must own one checked heap workspace for its copied image")
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
-    "FxSystemBuffers *const bufferSnapshot ="
+    "FxSystem serializedSystem{};"
+    "save must preserve a distinct raw serialized system image")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "FxSystem validationSystem{};"
+    "save must validate through a separately relinked system image")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "FxSystemBuffers *const bufferSnapshot = &snapshotWorkspace->buffers;"
     "save must stage pool buffers outside live state")
 require_source_match_count(
     "EffectsCore/fx_archive.cpp"
-    "FxArchivePhysicsOwnershipScratch[ \t]*\\*[ \t]*const[ \t]+physicsOwnershipScratch[ \t]*=[ \t\r\n]*FX_AllocateArchiveSavePhysicsOwnershipScratch\\(\\)"
+    "FxArchiveSaveSnapshotWorkspace[ \t]*\\*[ \t]*const[ \t]+snapshotWorkspace[ \t]*=[ \t\r\n]*FX_AllocateArchiveSaveSnapshotWorkspace\\(\\)"
     1
-    "save must stage bounded physics validation scratch outside the worker stack")
+    "save must allocate its bounded snapshot workspace outside the worker stack")
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
     "RUNTIME_SIZE(FxArchivePhysicsOwnershipScratch, 0x5808, 0x7010);"
     "save physics scratch must retain exact checked native layouts")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "FxArchivePhysicsOwnershipScratch physics{};"
+    "the checked save workspace must retain nested physics ownership scratch")
 require_source_matches(
     "EffectsCore/fx_archive.cpp"
-    "AllocateArchiveRestoreWorkspace<[ \t\r\n]*FxArchivePhysicsOwnershipScratch>[ \t]*\\([ \t\r\n]*FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY\\)"
-    "save physics scratch must use checked construction and allocation")
+    "AllocateArchiveRestoreWorkspace<[ \t\r\n]*FxArchiveSaveSnapshotWorkspace>[ \t]*\\([ \t\r\n]*FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY\\)"
+    "save workspace must use checked construction and allocation")
 require_source_matches(
     "EffectsCore/fx_archive.cpp"
-    "DestroyArchiveRestoreWorkspace\\([ \t\r\n]*scratch,[ \t\r\n]*FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY\\)"
-    "save physics scratch must be destroyed before its storage is freed")
+    "DestroyArchiveRestoreWorkspace\\([ \t\r\n]*workspace,[ \t\r\n]*FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY\\)"
+    "save workspace must be destroyed before its storage is freed")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
-    "FxArchivePhysicsOwnershipScratch *const physicsOwnershipScratch ="
+    "FX_AllocateArchiveSaveSnapshotWorkspace();"
     "if (!FX_BeginArchive(system))"
-    "save must allocate physics validation scratch before archive exclusion")
+    "save must allocate checked snapshot storage before archive exclusion")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "&snapshotWorkspace->physics;"
+    "save physics cross-check must use nested workspace scratch")
 require_source_matches(
     "EffectsCore/fx_archive.cpp"
-    "&physicsEntryCount,[ \t\r\n]*true,[ \t\r\n]*physicsOwnershipScratch,[ \t\r\n]*&snapshotSpotLightBoltDobj"
-    "save physics capture must reuse caller-owned validation scratch")
+    "FX_CaptureArchivePhysicsStates\\([ \t\r\n]*system,[ \t\r\n]*systemSnapshot.msecNow,[ \t\r\n]*physicsEntries,[ \t\r\n]*physicsEntryCount,[ \t\r\n]*physicsOwnershipScratch\\)"
+    "save physics capture must cross-check live ownership with workspace scratch")
 require_source_matches(
     "EffectsCore/fx_archive.cpp"
-    "if[ \t]*\\(\\(entryCount[ \t]*!=[ \t]*0[ \t]*&&[ \t]*!entries\\)[ \t]*\\|\\|[ \t]*!ownershipScratch\\)"
+    "if[ \t]*\\([ \t]*!liveOwner[ \t]*\\|\\|[ \t]*\\(entryCount[ \t]*!=[ \t]*0[ \t]*&&[ \t]*!entries\\)[ \t]*\\|\\|[ \t]*!ownershipScratch\\)"
     "state capture must reject missing caller-owned validation scratch")
 require_source_not_contains(
     "EffectsCore/fx_archive.cpp"
@@ -6937,22 +6977,53 @@ require_source_not_contains(
     "archive validation must not restore the large stack-owning wrapper")
 require_source_match_count(
     "EffectsCore/fx_archive.cpp"
-    "FX_DestroyArchiveSavePhysicsOwnershipScratch\\([ \t\r\n]*physicsOwnershipScratch\\)"
-    5
-    "save must destroy and free physics validation scratch on every owned exit")
+    "FX_DestroyArchiveSaveSnapshotWorkspace\\([ \t\r\n]*snapshotWorkspace\\)"
+    7
+    "save must destroy its complete snapshot workspace on every owned exit")
+require_source_match_count(
+    "EffectsCore/fx_archive.cpp"
+    "FX_DestroyArchiveSaveSnapshotWorkspace\\([ \t\r\n]*snapshotWorkspace\\)[ \t]*[;][^}]*return[ \t]*[;]"
+    7
+    "every returning save path with workspace ownership must destroy it first")
+foreach(_obsolete_save_scratch_wrapper
+    FX_AllocateArchiveSavePhysicsOwnershipScratch
+    FX_DestroyArchiveSavePhysicsOwnershipScratch)
+    require_source_not_contains(
+        "EffectsCore/fx_archive.cpp"
+        "${_obsolete_save_scratch_wrapper}"
+        "save scratch ownership must remain inside the complete workspace")
+endforeach()
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "void[ \t]+FX_DestroyArchiveSaveSnapshotWorkspace\\([^}]*DestroyArchiveRestoreWorkspace\\([^}]*std::abort\\(\\)"
+    "save workspace destruction must fail-stop if nested cleanup is refused")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "Sys_EnterCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;][ \t\r\n]*snapshotCapturedExclusive[ \t]*=[ \t]*FX_ValidateArchiveExclusiveState\\(system\\)[ \t]*[;][ \t\r\n]*if[ \t]*\\(snapshotCapturedExclusive\\)[ \t\r\n]*\\{[ \t\r\n]*memcpy\\(&systemSnapshot,[ \t]*system,[ \t]*sizeof\\(systemSnapshot\\)\\)[ \t]*[;][ \t\r\n]*memcpy\\(bufferSnapshot,[ \t]*systemBuffers,[ \t]*sizeof\\(\\*bufferSnapshot\\)\\)[ \t]*[;][ \t\r\n]*\\}[ \t\r\n]*Sys_LeaveCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;]"
+    "save must copy both raw images inside one proven-exclusive allocator interval")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
-    "if (!FX_BeginArchive(system))"
-    "const bool snapshotValid = FX_ArchiveEffectRingIsValid(system)"
-    "save must acquire archive exclusion before validating the live snapshot")
+    "memcpy(bufferSnapshot, systemBuffers, sizeof(*bufferSnapshot));"
+    "&& FX_ValidateArchiveCopiedSnapshot("
+    "save must stage both raw images before validating the copied graph")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FxSystem *const validationSystem = &workspace->validationSystem;"
+    "FX_LinkSystemBuffers(validationSystem, bufferSnapshot);"
+    "save must relink only the separate validation system")
+require_source_not_contains(
+    "EffectsCore/fx_archive.cpp"
+    "FX_LinkSystemBuffers(&systemSnapshot"
+    "save must never relink the raw serialized pointer image")
 require_source_matches(
     "EffectsCore/fx_archive.cpp"
-    "const[ \t]+bool[ \t]+snapshotValid[ \t]*=[ \t]*FX_ArchiveEffectRingIsValid\\(system\\)[^;]*&&[ \t]*FX_ValidatePoolAllocationGraphState\\(system\\)[^;]*&&[ \t]*FX_CollectArchivePhysicsEntries\\("
-    "save must validate pool ownership before collecting physics entries")
-require_source_matches(
+    "FX_CollectArchivePhysicsEntries\\([ \t\r\n]*validationSystem,[^;]*[ \t\r\n]*false,[ \t\r\n]*nullptr,[ \t\r\n]*&spotLightBoltDobj\\)"
+    "save must collect copied graph semantics without capturing live physics")
+require_source_ordered(
     "EffectsCore/fx_archive.cpp"
-    "Sys_EnterCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;][ \t\r\n]*memcpy\\(&systemSnapshot,[ \t]*system,[ \t]*sizeof\\(systemSnapshot\\)\\)[ \t]*[;][ \t\r\n]*memcpy\\(bufferSnapshot,[ \t]*systemBuffers,[ \t]*sizeof\\(\\*bufferSnapshot\\)\\)[ \t]*[;][ \t\r\n]*Sys_LeaveCriticalSection\\(CRITSECT_FX_ALLOC\\)[ \t]*[;]"
-    "save must copy system and pool state under one stable allocator interval")
+    "&& FX_ValidateArchiveCopiedSnapshot("
+    "&& FX_CaptureArchivePhysicsStates("
+    "save must validate copied semantics before live physics cross-check")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "systemSnapshot.activeSpotLightBoltDobj ="
@@ -6961,8 +7032,23 @@ require_source_ordered(
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "if (!releasedArchive)"
-    "bool archiveWritten = FX_WriteArchiveDataNoDrop("
+    "FX_WriteStagedEffectTableNoDrop(&effectTableStaging, memFile)"
     "save must release live ownership before fallible archive writes")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FX_StageEffectTableNoDrop(&effectTableStaging)"
+    "if (!FX_BeginArchive(system))"
+    "save must stage and validate the effect table before graph capture")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FX_ValidateArchiveEffectDefinitionReferences("
+    "if (!FX_RebuildArchivePoolAllocationStates("
+    "copied definition pointers must be admitted before graph traversal")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FX_WriteStagedEffectTableNoDrop(&effectTableStaging, memFile)"
+    "memFile, FX_ARCHIVE_SYSTEM_SIZE, &systemSnapshot"
+    "the wire-compatible effect table must precede the staged system image")
 require_source_matches(
     "EffectsCore/fx_archive.cpp"
     "FX_WriteArchiveDataNoDrop[ \t\r\n]*\\([ \t\r\n]*memFile,[ \t]*FX_ARCHIVE_BUFFER_SIZE,[ \t]*bufferSnapshot\\)"
@@ -7004,8 +7090,8 @@ require_source_match_count(
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "FX archive save requires Disk32 conversion on this target"
-    "FX_SaveEffectTableNoDrop(memFile);"
-    "unsupported native save addresses must fail before writing archive payload")
+    "FX_StageEffectTableNoDrop(&effectTableStaging)"
+    "unsupported native save addresses must fail before staging archive payload")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "FX archive restore requires Disk32 conversion on this target"

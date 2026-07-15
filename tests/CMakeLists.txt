@@ -512,6 +512,26 @@ add_test(
 )
 set_tests_properties(effectscore-iterator-atomic-protocol PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-fx-snapshot-publication-tests
+    fx_snapshot_publication_tests.cpp
+)
+target_include_directories(
+    kisakcod-fx-snapshot-publication-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-fx-snapshot-publication-tests PRIVATE cxx_std_20)
+target_link_libraries(
+    kisakcod-fx-snapshot-publication-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-fx-snapshot-publication-tests)
+set_target_properties(kisakcod-fx-snapshot-publication-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-snapshot-publication-coherence
+    COMMAND kisakcod-fx-snapshot-publication-tests
+)
+set_tests_properties(
+    effectscore-snapshot-publication-coherence PROPERTIES TIMEOUT 30)
+
 add_executable(kisakcod-fx-pool-tests
     fx_pool_tests.cpp
 )
@@ -828,6 +848,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_live_physics_source_test.cmake
+)
+
+add_test(
+    NAME effectscore-archive-snapshot-publication-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_snapshot_publication_source_test.cmake
 )
 
 add_test(

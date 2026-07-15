@@ -19,7 +19,8 @@ bool BasicTransitions()
     alignas(4) volatile std::int32_t state = 0;
     std::int32_t remaining = -1;
 
-    FxIteratorBeginCooperative(&state);
+    if (!FxIteratorTryBeginCooperative(&state))
+        return false;
     FxIteratorBeginCooperative(&state);
     if (Sys_AtomicLoad(&state) != 2 || FxIteratorTryBeginExclusive(&state))
         return false;
@@ -27,7 +28,8 @@ bool BasicTransitions()
         return false;
     if (!FxIteratorEndCooperative(&state, &remaining) || remaining != 0)
         return false;
-    if (!FxIteratorTryBeginExclusive(&state) || Sys_AtomicLoad(&state) != -1)
+    if (!FxIteratorTryBeginExclusive(&state) || Sys_AtomicLoad(&state) != -1
+        || FxIteratorTryBeginCooperative(&state))
         return false;
     if (FxIteratorTryBeginExclusive(&state))
         return false;
@@ -147,6 +149,8 @@ bool HandlesSaturatedCountWithoutOverflow()
     alignas(4) volatile std::int32_t state = (std::numeric_limits<std::int32_t>::max)();
     std::atomic<bool> started{false};
     std::atomic<bool> acquired{false};
+    if (FxIteratorTryBeginCooperative(&state))
+        return false;
     std::thread waiter([&] {
         started.store(true, std::memory_order_release);
         FxIteratorBeginCooperative(&state);

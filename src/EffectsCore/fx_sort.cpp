@@ -361,6 +361,7 @@ void __cdecl FX_SortNewElemsInEffect(FxSystem *system, FxEffect *effect)
 
     if (!system || !effect)
         FX_DropCorruptSortList("missing system or effect");
+    FX_BeginReadingCameraPublication(system);
     elemHandle = effect->firstElemHandle[0];
     stopElemHandle = effect->firstSortedElemHandle;
     // Validate both the unsorted prefix and existing sorted suffix, including
@@ -410,6 +411,7 @@ void __cdecl FX_SortNewElemsInEffect(FxSystem *system, FxEffect *effect)
                 FX_DropCorruptSortList("non-sprite element in sorted list");
         }
     }
+    FX_EndReadingCameraPublication(system);
 }
 
 void __cdecl FX_SortSpriteElemIntoEffect(FxSystem *system, FxEffect *effect, FxElem *elem)
