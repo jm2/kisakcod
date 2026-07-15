@@ -6,25 +6,28 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-disk32-record-codec`; branch point: merged coherent snapshot checkpoint `0f878ff4`;
+- Active branch: `agent/fx-disk32-system-codec`; branch point: merged Disk32 leaf checkpoint `56760d80`;
   upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint: the first reader-first FX Disk32 batch is implemented without changing production archive I/O. A
-  strong `EffectDefinitionKey32` separates full-width native definition identity from serialized keys; x86 preserves exact
-  legacy pointer bits, while native64 assigns deterministic first-seen opaque keys. Restore parsing and lookup use the same
-  fixed-width key type. Exact `0x1C` `FxSpatialFrameDisk32` and `0x80` `FxEffectDisk32` mirrors pin every field offset,
-  explicitly pack the bolt/sort word, and transactionally convert effect-owner handles between Disk32 stride 32 and the
-  native stride. Active records require a resolved definition and valid owner; inactive records remain inert. Full
-  `FxSystem`/`FxSystemBuffers` conversion, MemoryFile integration, physics records, and removal of the 64-bit save/restore
+- Active checkpoint: implement the first fixed full-system seam without changing production archive I/O. Add a strong
+  archive-address type distinct from fast-file tokens and effect-definition keys, exact `FxCameraDisk32`,
+  `FxSpriteInfoDisk32`, and `FxSystemDisk32` (`0xA60`) layouts, and a pure transactional metadata decoder. It must validate
+  scalar and byte-boolean representations, checked buffer-address topology, exact visibility selectors, the complete
+  1,024-entry effect-handle permutation, active-ring membership, and conditional spotlight handle conversion before
+  publishing any output. Full buffer conversion, MemoryFile integration, physics records, and both native64 production
   guards remain later batches.
-- Current Disk32 validation: GCC and Clang are **56/56** green; ASan+UBSan (leak detection disabled under the command
+- PR #22 squash-merged as `56760d80` from final documentation head `b86ab94d`. Final run **29418054504 passed all nine
+  jobs**; implementation head `f48b04c1` also passed all nine in run **29417195541**. Gemini provided no review comments,
+  and Codex found no major issue at the exact implementation head. The merged leaf layer separates full-width native
+  definition identity from serialized keys, preserves exact legacy x86 pointer-bit keys, assigns deterministic native64
+  opaque keys, pins exact `0x1C` spatial-frame and `0x80` effect-record layouts, explicitly packs the bolt/sort word, and
+  transactionally converts owner handles between Disk32 and native strides without enabling native64 archive I/O.
+- Merged Disk32 leaf validation: GCC and Clang are **56/56** green; ASan+UBSan (leak detection disabled under the command
   runner) and TSan are **55/55** green. The codec fixture exhausts all 65,536 possible values in both handle directions,
   preserves outputs on every failure, verifies a hand-authored little-endian `0x80` record and high native64 definition
   identities, and proves conditional x86 raw-record equivalence. Strict warnings-as-errors x86-32 and AArch64 compilation,
   x86-32 execution, focused source/security contracts, Clang analyzer checks, exact legacy raw/zlib table parity, and
-  `git diff --check` pass. PR #22 implementation head `f48b04c1` passed all nine jobs in run **29417195541**. Gemini
-  provided no review comments, and Codex found no major issues at that exact head. Final documentation-head CI remains
-  pending before merge.
+  `git diff --check` pass.
 - PR #21 squash-merged as `0f878ff4` from final documentation head `cb731d6e`. Final run **29414351528 passed all nine
   jobs**; implementation head `7895f7a9` also passed all nine in run **29397910131**, Codex found no major issue at that
   exact implementation commit, and the sole Gemini finding was fixed and resolved. Camera/time publication is
@@ -138,10 +141,10 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: expand the proven key, handle, and leaf-record primitives into fixed `FxSystemDisk32` (`0xA60`) and
-  `FxSystemBuffersDisk32` (`0x47480`) mirrors, native pool linking, complete system/effect-handle remapping,
-  visibility-selector validation, and a transactional reader. Retain the legacy x86 writer and both native64 production
-  guards until full-image malformed-input, round-trip, and x86 byte-equivalence fixtures pass.
+- Next: land the fixed `FxSystemDisk32` schema and pure metadata decoder, then add heap-backed
+  `FxSystemBuffersDisk32` (`0x47480`) conversion, native pool linking, effect-definition resolution, and full graph
+  validation. Integrate the transactional native64 reader only after full-image malformed-input, round-trip, and x86
+  byte-equivalence fixtures pass; retain the legacy x86 writer and native64 save guard until encoder equivalence follows.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,
