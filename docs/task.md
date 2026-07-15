@@ -6,19 +6,26 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-disk32-buffer-schema`; branch point: merged FxSystem Disk32 checkpoint `2b92e7a7`;
+- Active branch: `agent/fx-disk32-native-structural`; branch point: merged FxSystemBuffers Disk32 checkpoint `09c05e5f`;
   current upstream-integration baseline: merge `11a9e08c` through upstream `312a9d2e`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint implementation is complete on the branch in `847279ab` and `fb379e5c`: exact
-  `FxSystemBuffersDisk32` (`0x47480`) and nested elem/trail/trail-elem/visibility records use fixed-width fields, while
-  each legacy pool slot is an aligned raw byte span rather than a C++ union. A pure transactional helper reconstructs all
-  three allocation bitmaps by interpreting only each visited free slot's explicit little-endian signed 32-bit word. It
-  rejects invalid heads/counts, negative or out-of-range links, cycles, duplicates, self-links, overlong chains, and count
-  mismatches without constructing native pool members or changing either input or a failed output. Exhaustive layouts,
-  hand-authored records/free lists, a complete x86 `0x47480` byte oracle, strict x86/AArch64 builds, sanitizers, analyzers,
-  stack gates, source invariants, and measured Windows x86 CI wiring are present. Production archive I/O is unchanged.
-  Heap-backed native construction, definition resolution, full graph/semantic validation, MemoryFile integration,
-  physics records, and both native64 production guards remain later batches.
+- Active checkpoint: add a roughly 320 KiB heap-owned `FxArchiveDisk32NativeWorkspace` that decodes the fixed system and
+  metadata, reconstructs all three pool free lists, resolves only active definition keys without dereferencing the returned
+  definitions, converts every effect, placement-constructs the correct native member of every pool slot, copies visibility/
+  deferred/padding state, links all workspace-local base and exact read/write selector pointers, and validates the complete
+  allocation graph with caller-owned scratch. Its phases are `Empty`, `StructurallyValid`, and reserved `Ready`; the final
+  successful structural operation alone publishes `StructurallyValid`. A read-only structural accessor is intentionally
+  non-publishable and unsuitable for definition-dependent payload access. The workspace is compile-probed at 327,128 bytes
+  with alignment 8 on native64 and 310,668 bytes with alignment 4 on x86. This batch does not change `MemoryFile`, production
+  archive I/O, or either native64 production guard. A later semantic-finalization batch will safely activate definition-
+  dependent element payload members and transition the candidate to `Ready`.
+- PR #25 squash-merged as `09c05e5f` from final review-fix head `5abf9cbb`. Final run **29427215187 passed all nine jobs**:
+  Linux amd64/arm64, portable Windows amd64/arm64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86,
+  and headless Windows x86. Initial implementation/docs head `d9ad05ff` also passed all nine jobs in run **29426792491**.
+  Gemini's real finding added a compile-time raw-slot extent contract without introducing native `sizeof` ABI debt; its
+  request to replace the bounds-proven `.data()` access was declined because hardened indexing could add an assertion/report
+  path to the report-free decoder. Both threads were answered and resolved, and an independent exact-head audit found no
+  remaining security, lifetime, ABI, malformed-input, portability, documentation, or CI-integration defect.
 - Merged FxSystem checkpoint: the first fixed full-system seam introduces a
   strong numeric `ArchiveAddress32` distinct from fast-file tokens and definition keys, exact `FxCameraDisk32` (`0xB0`),
   `FxSpriteInfoDisk32` (`0x10`), and `FxSystemDisk32` (`0xA60`) layouts, plus a pure transactional decoder. It proves the
@@ -27,7 +34,7 @@ work item changes. Do not create session-specific handoff files.
   permutation, emits a physical active-slot bitmap, and conditionally validates/remaps spotlight handles. Every native
   pool, sprite, and visibility pointer remains null for later full-image linking; malformed input leaves both outputs
   byte-for-byte unchanged. Production archive I/O and both native64 production guards are intentionally unchanged.
-- Current buffer checkpoint validation: GCC and Clang suites are **60/60** green. ASan+UBSan (leak detection disabled
+- Merged buffer checkpoint validation: GCC and Clang suites are **60/60** green. ASan+UBSan (leak detection disabled
   under the command runner) and TSan are **59/59** green, with the compiler-generated static-frame test intentionally
   omitted under instrumentation. The hand-authored fixture covers exact nested/top-level offsets, full/empty/sparse and
   maximum-capacity lists in all three pools, first/middle/last heads, every malformed head/link/count/cycle class, ignored
@@ -174,10 +181,9 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: publish this exact buffer/nested-schema and raw-slot free-list checkpoint without production I/O. Then add a
-  roughly 320 KiB heap-owned native staging workspace,
-  definition-resolver callback, native pool construction, selector/metadata cross-checks, and complete graph/semantic
-  validation. Production reader integration follows only after full-image malformed-input and x86-equivalence fixtures.
+- Next: complete and publish the heap-owned native structural staging boundary described above. Then add definition-dependent
+  payload activation plus report-free semantic validation to transition the candidate to `Ready`. Full-image raw/zlib
+  preflight reading and production reader integration follow only after malformed-input and x86-equivalence fixtures.
   That integration must relink visibility read/write selectors to the live buffers during desired and rollback publication;
   `FX_LinkSystemBuffers` currently links only the base visibility pointer, so copying staged selector pointers would dangle.
   Retain the legacy x86 writer and native64 save guard until a later pure encoder/full-image equivalence batch.
