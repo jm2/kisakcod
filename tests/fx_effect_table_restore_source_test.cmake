@@ -116,6 +116,7 @@ foreach(_public_contract IN ITEMS
     "EffectDefinitionKey32 *key"
     "EffectDefinitionKey32 key) noexcept"
     "RestoreEffectTableNoReport("
+    "ValidateEffectTableRestoreLease("
     "ReleaseEffectTableRestore("
     "AbandonCurrentThreadEffectTableRestoreForError() noexcept"
     "EffectTableRestoreLeaseIsActive() noexcept")
@@ -225,6 +226,25 @@ require_ordered(
     "Sys_AtomicCompareExchangePointer("
     "status = ValidateActiveLifecycle(lease);"
     "owner acquisition must be followed by a lifecycle handshake")
+
+extract_slice(
+    "${_restore_source}"
+    "EffectTableRestoreStatus ValidateEffectTableRestoreLease("
+    "bool EffectTableRestoreGetEntry("
+    _lease_validation
+    "effect-table exact lease validation")
+require_contains(
+    "${_lease_validation}"
+    "return ValidateActiveLifecycle(lease);"
+    "public lease validation must delegate to the exact active lifecycle guard")
+require_absent(
+    "${_lease_validation}"
+    "CloseCurrentThreadLease("
+    "lease validation must not close the caller-owned lease")
+require_absent(
+    "${_lease_validation}"
+    "ClearRestoreWorkspace("
+    "lease validation must not mutate the published table")
 
 extract_slice(
     "${_restore_source}"
