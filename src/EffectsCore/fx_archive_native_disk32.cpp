@@ -236,6 +236,9 @@ void CopyVisibilityAndDeferredBuffers(
 
     for (std::size_t index = 0; index < MAX_ELEMS; ++index)
         destination->deferredElems[index] = source.deferredElems[index];
+    static_assert(
+        std::extent_v<decltype(destination->padBuffer)>
+        == std::extent_v<decltype(source.padBuffer)>);
     for (std::size_t index = 0;
          index < sizeof(destination->padBuffer);
          ++index)
@@ -319,7 +322,9 @@ TryBuildFxArchiveDisk32StructuralImage(
     if (!TryUnpackFxSystemDisk32(
             sourceSystem,
             &workspace->system_,
-            &workspace->metadata_))
+            &workspace->metadata_)
+        || workspace->metadata_.readVisibilitySelector > 1
+        || workspace->metadata_.writeVisibilitySelector > 1)
     {
         return finish(FxArchiveDisk32StructuralStatus::InvalidSystem);
     }

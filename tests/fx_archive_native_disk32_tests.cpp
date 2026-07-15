@@ -772,10 +772,10 @@ void TestWorkspaceContractAndEmptyGate()
                   archive::FxArchiveDisk32NativeWorkspace>);
     static_assert(
         sizeof(archive::FxArchiveDisk32NativeWorkspace)
-        == (KISAK_PTR_BITS == 32 ? 310668u : 327128u));
+        == (KISAK_PTR_BITS == 32 ? 310672u : 327128u));
     static_assert(
         alignof(archive::FxArchiveDisk32NativeWorkspace)
-        == (KISAK_PTR_BITS == 32 ? 4u : 8u));
+        == 8u);
     static_assert(noexcept(std::declval<
                            const archive::FxArchiveDisk32NativeWorkspace &>()
                                .phase()));
@@ -1107,6 +1107,17 @@ void TestFailureStatusAndTransactionalGating()
           == archive::FxArchiveDisk32StructuralStatus::InvalidSystem);
     CheckViewIsGated(owner.get());
     fixture.system->isInitialized = savedInitialized;
+
+    const auto savedReadVisibility =
+        fixture.system->visStateBufferRead;
+    fixture.system->visStateBufferRead = archive::ArchiveAddress32{
+        fixture.system->visState.value + 2u * VIS_STATE_STRIDE};
+    const std::size_t callsBeforeInvalidSelector = resolver.calls;
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::InvalidSystem);
+    CHECK(resolver.calls == callsBeforeInvalidSelector);
+    CheckViewIsGated(owner.get());
+    fixture.system->visStateBufferRead = savedReadVisibility;
 
     const std::int32_t savedFirstFree = fixture.system->firstFreeElem;
     const auto savedFreeSlot = fixture.buffers->elems[1];

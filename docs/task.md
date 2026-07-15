@@ -9,7 +9,7 @@ work item changes. Do not create session-specific handoff files.
 - Active branch: `agent/fx-disk32-native-structural`; branch point: merged FxSystemBuffers Disk32 checkpoint `09c05e5f`;
   current upstream-integration baseline: merge `11a9e08c` through upstream `312a9d2e`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint implementation is complete in `7bd25acb`: the 327,128-byte native64 / 310,668-byte x86 heap-owned
+- Active checkpoint implementation is complete in `7bd25acb`: the 327,128-byte native64 / 310,672-byte x86 heap-owned
   `FxArchiveDisk32NativeWorkspace` decodes the fixed system and metadata, reconstructs all three pool free lists, resolves
   only active definition keys without dereferencing returned definitions, converts every effect, and placement-constructs
   the correct native member of every pool slot. It preserves validated free links plus opaque trailing bytes under exact
@@ -19,10 +19,22 @@ work item changes. Do not create session-specific handoff files.
   `StructurallyValid` is the final successful workspace mutation. The gated read-only view remains non-publishable and
   unsuitable for definition-dependent payload access; `Ready` is reserved for the semantic follow-on. `MemoryFile`, live
   publication, production archive I/O, and both native64 production guards are unchanged.
-- Current structural checkpoint validation: GCC and Clang suites are **62/62** green. ASan+UBSan (leak detection disabled
-  under the command runner) and TSan are **61/61** green, with the compiler-generated static-frame test intentionally
-  omitted under instrumentation. The 1,360-line fixture covers heap allocation/size/alignment, empty/mixed/full and sparse
-  non-prefix graphs, all three free-link decoder boundaries, active-only opaque resolution, exact relinking/selectors,
+- PR #26 initial run **29430362954 passed four of nine jobs** at `d34e2d09`: Linux amd64/arm64, macOS arm64, and
+  headless Windows x86 were green. Portable Windows amd64/ARM64 rejected an uncalled header-only graph-validation
+  convenience wrapper whose implicit scratch consumed 22,688 bytes under MSVC analysis; measured Windows x86
+  Debug/Release and no-Steam builds independently showed that the private workspace's 310,668-byte GCC i386 total
+  needed four bytes of MSVC x86 tail padding. The correction removes the wrapper completely (all production callers
+  already provide checked scratch), heap-backs the remaining fixture caller, and explicitly aligns the private workspace
+  to 8 bytes so every ILP32 compiler has the same 310,672-byte contract without changing any member offset. It also
+  addresses both actionable Gemini threads: visibility selectors are redundantly bounded before native pointer
+  derivation, and fixed/native padding extents are compile-time equal. Replacement CI and thread resolution are pending.
+- Current structural checkpoint validation: GCC and Clang suites are **62/62** green after the CI/review correction.
+  ASan+UBSan (leak detection disabled under the command runner) and TSan are **61/61** green, with the compiler-generated
+  static-frame test intentionally
+  omitted under instrumentation. The correction's focused native/pool/source/security set is also green under ASan+UBSan
+  and TSan, and newly rebuilt x86-32 native and pool fixtures execute successfully. The 1,371-line fixture covers heap
+  allocation/size/alignment, empty/mixed/full and sparse non-prefix graphs, all three free-link decoder boundaries,
+  active-only opaque resolution, exact relinking/selectors,
   complete record/visibility/deferred/padding copies, nonzero free-slot tail preservation, failure gating/retry, resolver
   reentry, source immutability, same-workspace item/free lifetime transitions, and a true x86 whole-buffer oracle. Strict
   GCC/Clang plus conversion warnings, Clang analyzer, AArch64 compile/link, actual x86-32 execution, source/security
@@ -192,7 +204,7 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: publish the exact heap-owned native structural staging checkpoint described above. Then add definition-dependent
+- Next: land PR #26 after its replacement nine-job matrix and both review threads are clean. Then add definition-dependent
   payload activation plus report-free semantic validation to transition the candidate to `Ready`. Full-image raw/zlib
   preflight reading and production reader integration follow only after malformed-input and x86-equivalence fixtures.
   That integration must relink visibility read/write selectors to the live buffers during desired and rollback publication;

@@ -102,8 +102,9 @@ foreach(_marker IN ITEMS
     "InvalidGraph"
     "FxArchiveDisk32ResolveDefinitionCallback"
     "struct FxArchiveDisk32Resolver"
-    "class FxArchiveDisk32NativeWorkspace final"
+    "class alignas(8) FxArchiveDisk32NativeWorkspace final"
     "FxArchiveDisk32WorkspacePhase phase() const noexcept"
+    "RUNTIME_SIZE(FxArchiveDisk32NativeWorkspace, 0x4BD90, 0x4FDD8);"
     "struct FxArchiveDisk32StructuralView"
     "const FxSystem *system"
     "const FxSystemBuffers *buffers"
@@ -140,6 +141,10 @@ foreach(_marker IN ITEMS
     "static_assert(PoolSlotRepresentationIsCompatible< FxTrailElem, FxTrailElemPoolSlotDisk32>);")
     require_contains(_source "${_marker}" "safe complete free-slot representation copy")
 endforeach()
+require_contains(
+    _source
+    "static_assert( std::extent_v<decltype(destination->padBuffer)> == std::extent_v<decltype(source.padBuffer)>);"
+    "fixed and native padding extents must match before copying")
 
 # The builder writes directly into caller-owned workspace, reconstructs every
 # pool member with the proper lifetime, validates the linked native graph with
@@ -173,6 +178,19 @@ extract_slice(
     "bool TryGetFxArchiveDisk32StructuralView("
     _guarded_build
     "guarded structural build body")
+foreach(_selector_guard IN ITEMS
+    "workspace->metadata_.readVisibilitySelector > 1"
+    "workspace->metadata_.writeVisibilitySelector > 1")
+    require_contains(
+        _guarded_build
+        "${_selector_guard}"
+        "visibility selectors are bounded before native pointer derivation")
+endforeach()
+require_ordered(
+    _guarded_build
+    "workspace->metadata_.writeVisibilitySelector > 1"
+    "LinkWorkspaceBuffers("
+    "visibility selectors are bounded before native pointer derivation")
 string(REPLACE
     "return FxArchiveDisk32StructuralStatus::Success;"
     ""

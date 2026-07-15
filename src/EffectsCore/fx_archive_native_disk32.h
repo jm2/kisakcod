@@ -40,7 +40,7 @@ struct FxArchiveDisk32Resolver
     FxArchiveDisk32ResolveDefinitionCallback resolve = nullptr;
 };
 
-class FxArchiveDisk32NativeWorkspace;
+class alignas(8) FxArchiveDisk32NativeWorkspace;
 struct FxArchiveDisk32StructuralView;
 
 // Builds a report-free native structural image in caller-owned heap storage.
@@ -70,8 +70,10 @@ TryBuildFxArchiveDisk32StructuralImage(
 // Heap-owned native staging storage. Copy and move are disabled because the
 // linked FxSystem contains pointers into this exact object's buffer member.
 // Allocate this object through the checked archive-workspace allocator rather
-// than placing its roughly 300 KiB image on a thread stack.
-class FxArchiveDisk32NativeWorkspace final
+// than placing its roughly 300 KiB image on a thread stack. Explicit 8-byte
+// alignment normalizes the private ILP32 layout across compilers whose native
+// uint64_t alignment differs and is enforced by that allocator.
+class alignas(8) FxArchiveDisk32NativeWorkspace final
 {
 public:
     FxArchiveDisk32NativeWorkspace() noexcept = default;
@@ -124,7 +126,7 @@ struct FxArchiveDisk32StructuralView
     const FxSystemDisk32Metadata *metadata = nullptr;
 };
 
-RUNTIME_SIZE(FxArchiveDisk32NativeWorkspace, 0x4BD8C, 0x4FDD8);
+RUNTIME_SIZE(FxArchiveDisk32NativeWorkspace, 0x4BD90, 0x4FDD8);
 static_assert(
     std::is_nothrow_default_constructible_v<
         FxArchiveDisk32NativeWorkspace>);
