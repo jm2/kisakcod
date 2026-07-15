@@ -24,8 +24,6 @@ EffectsCore/fx_system.h|static_assert:sizeof(FxEditorEffectDef)==0x10B44|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxEditorElemAtlas)==0x1C|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxEditorElemDef)==0x858|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxEditorTrailDef)==0x608|1
-EffectsCore/fx_system.h|static_assert:sizeof(FxEffectDefTable)==0x2004|1
-EffectsCore/fx_system.h|static_assert:sizeof(FxEffectDefTableEntry)==0x8|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxElemField)==0x8|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxFlagDef)==0x10|1
 EffectsCore/fx_system.h|static_assert:sizeof(FxFlagOutputSet)==0xC|1

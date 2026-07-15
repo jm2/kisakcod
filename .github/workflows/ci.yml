@@ -86,15 +86,17 @@ jobs:
         run: >
           cmake --build "build-${{ matrix.config }}"
           --config "${{ matrix.config }}"
-          --target KisakCOD-mp KisakCOD-dedi kisakcod-pool-allocator-tests
+          --target KisakCOD-mp KisakCOD-dedi
+          kisakcod-pool-allocator-tests
+          kisakcod-fx-effect-table-restore-tests
           --parallel
 
-      - name: Run native-width pool test
+      - name: Run portable transaction tests
         shell: pwsh
         run: >
           ctest --test-dir "build-${{ matrix.config }}"
           -C "${{ matrix.config }}" --output-on-failure
-          -R "^pool-native-pointer-freelist$"
+          -R "^(pool-native-pointer-freelist|effectscore-effect-table-transactional-restore)$"
 
       - uses: actions/upload-artifact@v4
         with:

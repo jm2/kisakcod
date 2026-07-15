@@ -89,10 +89,16 @@ bool __cdecl FX_ArchiveGateIsActive(const FxSystem *system);
 bool __cdecl FX_EffectKillGateIsActive(const FxSystem *system) noexcept;
 std::uint32_t __cdecl FX_GetCooperativeIteratorGeneration(
     const FxSystem *system);
+bool __cdecl FX_EffectTableRestoreLifecycleIsCurrent(
+    const FxSystem *system,
+    std::uint32_t expectedGeneration) noexcept;
 bool __cdecl FX_CurrentThreadOwnsCooperativeIterator(const FxSystem *system);
 void __cdecl FX_WaitForArchiveGate(const FxSystem *system);
 void __cdecl FX_WaitForEffectKillGate(const FxSystem *system) noexcept;
 bool __cdecl FX_BeginArchive(FxSystem *system);
+bool __cdecl FX_BeginArchive(
+    FxSystem *system,
+    std::uint32_t expectedGeneration);
 bool __cdecl FX_ValidateArchiveExclusiveState(
     const FxSystem *system) noexcept;
 bool __cdecl FX_CanPublishArchiveSafeEmptyStateLocked(
@@ -997,26 +1003,8 @@ bool __cdecl FX_ExistingElemSortsBeforeNewElem(
 
 
 // fx_archive
-struct FxEffectDefTableEntry // sizeof=0x8
-{                                       // ...
-    uint32_t key;
-    const FxEffectDef *effectDef;
-};
-static_assert(sizeof(FxEffectDefTableEntry) == 0x8);
-
-struct FxEffectDefTable // sizeof=0x2004
-{                                       // ...
-    int32_t count;
-    FxEffectDefTableEntry entries[1024];
-};
-static_assert(sizeof(FxEffectDefTable) == 0x2004);
-
 void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile);
-void __cdecl FX_RestoreEffectDefTable(MemoryFile *memFile, FxEffectDefTable *table);
-void __cdecl FX_AddEffectDefTableEntry(FxEffectDefTable *table, uint32_t key, const FxEffectDef *effectDef);
-bool __cdecl FX_FixupEffectDefHandles(FxSystem *system, FxEffectDefTable *table);
 FxEffect *__cdecl FX_EffectFromHandle(FxSystem *system, uint16_t handle);
-const FxEffectDef *__cdecl FX_FindEffectDefInTable(const FxEffectDefTable *table, uint32_t key);
 FxElemVisuals __cdecl FX_GetElemVisuals(const FxElemDef *elemDef, int32_t randomSeed);
 void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile);
 void __cdecl FX_SaveEffectDefTable(FxSystem *system, MemoryFile *memFile);

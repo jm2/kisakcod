@@ -64,6 +64,42 @@ add_test(
 )
 set_tests_properties(universal-memfile-bounded-read PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-fx-effect-table-restore-tests
+    fx_effect_table_restore_tests.cpp
+    ${SRC_DIR}/EffectsCore/fx_effect_table_restore.cpp
+)
+target_include_directories(
+    kisakcod-fx-effect-table-restore-tests PRIVATE
+        ${SRC_DIR}/EffectsCore
+)
+target_include_directories(
+    kisakcod-fx-effect-table-restore-tests SYSTEM PRIVATE
+        ${SRC_DIR}
+)
+target_compile_features(
+    kisakcod-fx-effect-table-restore-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-fx-effect-table-restore-tests PRIVATE KISAK_MP)
+target_link_libraries(
+    kisakcod-fx-effect-table-restore-tests PRIVATE
+        kisakcod-memfile-test-subject
+        Threads::Threads)
+kisakcod_test_warnings(kisakcod-fx-effect-table-restore-tests)
+if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    target_compile_options(
+        kisakcod-fx-effect-table-restore-tests PRIVATE
+            -Wframe-larger-than=4096)
+endif()
+set_target_properties(kisakcod-fx-effect-table-restore-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-effect-table-transactional-restore
+    COMMAND kisakcod-fx-effect-table-restore-tests
+)
+set_tests_properties(
+    effectscore-effect-table-transactional-restore PROPERTIES TIMEOUT 30)
+
 add_executable(kisakcod-huffman-tests
     huffman_tests.cpp
     ${SRC_DIR}/qcommon/huffman.cpp
@@ -667,6 +703,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_physics_transaction_test.cmake
+)
+
+add_test(
+    NAME effectscore-effect-table-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_effect_table_restore_source_test.cmake
 )
 
 add_test(
