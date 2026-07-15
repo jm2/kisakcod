@@ -6,11 +6,18 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-disk32-system-codec`; branch point: merged Disk32 leaf checkpoint `56760d80`;
-  implementation commits: `4c27aa1d`, `9abb332e`, and MSVC fixture correction `337cfe9c`; upstream-integration baseline:
-  `2b759db`.
+- Active branch: `agent/fx-disk32-buffer-schema`; branch point: merged FxSystem Disk32 checkpoint `2b92e7a7`;
+  current upstream-integration baseline: merge `11a9e08c` through upstream `312a9d2e`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint implementation is complete and awaiting PR review. The first fixed full-system seam introduces a
+- Active checkpoint: add the exact `FxSystemBuffersDisk32` (`0x47480`) and nested elem/trail/trail-elem/visibility records,
+  represent each pool slot as aligned raw bytes rather than a C++ union, and reconstruct bounded allocation state by
+  interpreting only each free slot's first signed 32-bit word. The pure helper must reject out-of-range links, cycles,
+  duplicates, self-links, overlong chains, and active-count mismatches without constructing a native pool or changing
+  production archive I/O. Add exhaustive static offsets, hand-authored raw/free-slot fixtures, x86 byte equivalence,
+  strict x86/AArch64 builds, sanitizers, stack gates, source invariants, and measured Windows x86 coverage. Heap-backed
+  native buffer construction, definition resolution, full graph validation, MemoryFile integration, physics records, and
+  both native64 production guards remain later batches.
+- Merged FxSystem checkpoint: the first fixed full-system seam introduces a
   strong numeric `ArchiveAddress32` distinct from fast-file tokens and definition keys, exact `FxCameraDisk32` (`0xB0`),
   `FxSpriteInfoDisk32` (`0x10`), and `FxSystemDisk32` (`0xA60`) layouts, plus a pure transactional decoder. It proves the
   complete `0x47480` buffer-address span and exact internal topology without forming pointers, derives distinct visibility
@@ -28,15 +35,17 @@ work item changes. Do not create session-specific handoff files.
   optimized/unoptimized GCC decoder frames are 1,184/1,216 bytes, below the portable 4 KiB gate. Two independent audits
   found and verified the spotlight-state, end-of-address-space, and post-mutation failure-contract additions and report no
   remaining implementation or integration blocker.
-- PR #24 is open, and replacement run **29423014541 passed all nine jobs** at exact correction head `6671f87b`: Linux
+- PR #24 squash-merged as `2b92e7a7` from final documentation head `94d9ba1a`. Replacement run **29423014541 passed all
+  nine jobs** at exact correction head `6671f87b`: Linux
   amd64/arm64, portable Windows amd64/arm64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86, and
   headless Windows x86. Initial run **29422678108** had already passed Linux amd64/arm64, macOS arm64, and headless
   Windows x86, but portable Windows amd64/arm64 stopped on a fixture-only `/W4 /WX` C4244: class-template argument
   deduction built a temporary `pair<size_t, int>` before converting it to `pair<size_t, uint8_t>`. Commit `337cfe9c`
   replaces that initializer with an explicit fixed-width `U8Mutation` array. Gemini reported no findings at core
   implementation head `b373429e`; the later change is confined to that fixture correction and status documentation. The
-  thread-level review query is empty, and two independent local audits found no remaining blocker. This documentation-only
-  final head requires one last nine-job pass before squash merge.
+  thread-level review query is empty, and two independent local audits found no remaining blocker. Documentation-only
+  run **29423861013** was still in progress when GitHub merged immediately rather than retaining the requested auto-merge;
+  monitor it to completion, but no implementation changed after the all-green run.
 - PR #22 squash-merged as `56760d80` from final documentation head `b86ab94d`. Final run **29418054504 passed all nine
   jobs**; implementation head `f48b04c1` also passed all nine in run **29417195541**. Gemini provided no review comments,
   and Codex found no major issue at the exact implementation head. The merged leaf layer separates full-width native
@@ -162,9 +171,8 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: publish and merge the fixed `FxSystemDisk32` checkpoint, then implement the buffer phase in bounded PRs. First add
-  exact `FxSystemBuffersDisk32` (`0x47480`) and nested effect/elem/trail/trail-elem/visibility schemas plus raw-slot
-  free-list reconstruction without production I/O. Then add a roughly 320 KiB heap-owned native staging workspace,
+- Next: complete and publish the exact buffer/nested schemas and raw-slot free-list reconstruction without production I/O.
+  Then add a roughly 320 KiB heap-owned native staging workspace,
   definition-resolver callback, native pool construction, selector/metadata cross-checks, and complete graph/semantic
   validation. Production reader integration follows only after full-image malformed-input and x86-equivalence fixtures.
   That integration must relink visibility read/write selectors to the live buffers during desired and rollback publication;
@@ -230,7 +238,7 @@ work item changes. Do not create session-specific handoff files.
 - Progress estimate: approximately **42% complete by engineering effort** (plausible range 38–47%).
   The foundation/checklist view is about 52–57% and the shared foundation is roughly 90–94% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
-- Upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
+- Initial upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
   (nine commits; upstream was not ahead at merge time) while preserving the port's pointer-width and
   security changes. It restores several primarily SP features plus real shared renderer, XAnim, and
   unzip fixes; the accidental
