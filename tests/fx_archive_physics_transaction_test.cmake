@@ -1283,6 +1283,11 @@ require_absent(
     "desired graph publication must never create a nonexclusive window")
 require_ordered(
     "${_desired_publication}"
+    "if (!context.system || !context.systemBuffers)"
+    "const bool stagedSelectorsValid ="
+    "desired publication must reject a missing live graph before validation")
+require_ordered(
+    "${_desired_publication}"
     "const bool stagedSelectorsValid ="
     "const bool liveSelectorsResolved ="
     "desired staged roles must validate before live role resolution")
@@ -1377,6 +1382,11 @@ require_absent(
     "${_rollback_publication}"
     "iteratorCount, 0"
     "rollback graph publication must never create a nonexclusive window")
+require_ordered(
+    "${_rollback_publication}"
+    "if (!context.system || !context.systemBuffers)"
+    "const bool stagedSelectorsValid ="
+    "rollback publication must reject a missing live graph before validation")
 require_ordered(
     "${_rollback_publication}"
     "const bool stagedSelectorsValid ="

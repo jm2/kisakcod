@@ -2155,13 +2155,13 @@ FX_PerformArchiveRestoreControlOperation(
 
     case Operation::PublishDesiredGraph:
     {
+        if (!context.system || !context.systemBuffers)
+            return Status::RecoverableFailure;
         const bool stagedSelectorsValid =
             FX_ArchiveVisibilitySelectorsMatch(
                 context.desiredSystem,
                 context.desiredBuffers,
                 context.desiredVisibilitySelectors);
-        if (!context.systemBuffers)
-            return Status::RecoverableFailure;
         const FxVisState *liveReadState = nullptr;
         FxVisState *liveWriteState = nullptr;
         const bool liveSelectorsResolved =
@@ -2308,13 +2308,13 @@ FX_PerformArchiveRestoreControlOperation(
 
     case Operation::PublishOriginalGraph:
     {
+        if (!context.system || !context.systemBuffers)
+            return Status::RecoverableFailure;
         const bool stagedSelectorsValid =
             FX_ArchiveVisibilitySelectorsMatch(
                 context.originalSystem,
                 context.originalBuffers,
                 context.originalVisibilitySelectors);
-        if (!context.systemBuffers)
-            return Status::RecoverableFailure;
         const FxVisState *liveReadState = nullptr;
         FxVisState *liveWriteState = nullptr;
         const bool liveSelectorsResolved =
