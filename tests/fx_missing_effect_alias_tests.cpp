@@ -6,10 +6,6 @@
 #include <cstring>
 #include <limits>
 
-struct alignas(FX_ELEM_DEF_RUNTIME_ALIGNMENT) FxElemDef
-{
-    std::uint8_t bytes[FX_ELEM_DEF_RUNTIME_SIZE];
-};
 static_assert(sizeof(FxElemDef) == FX_ELEM_DEF_RUNTIME_SIZE);
 static_assert(alignof(FxElemDef) == FX_ELEM_DEF_RUNTIME_ALIGNMENT);
 
@@ -57,8 +53,8 @@ int main()
         char name[sizeof("misc/missing_fx")];
     };
     SourceBlob sourceBlob{};
-    sourceBlob.elemDefs[0].bytes[0] = 0x40u;
-    sourceBlob.elemDefs[1].bytes[0] = 0x80u;
+    sourceBlob.elemDefs[0].flags = 0x40;
+    sourceBlob.elemDefs[1].flags = 0x80;
     std::memcpy(
         sourceBlob.name, "misc/missing_fx", sizeof(sourceBlob.name));
     sourceBlob.effect = {

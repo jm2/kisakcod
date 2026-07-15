@@ -8,15 +8,33 @@ set(_disk32_path "${SOURCE_ROOT}/src/database/db_disk32.h")
 set(_schema_path "${SOURCE_ROOT}/src/EffectsCore/fx_fastfile_disk32.h")
 set(_native_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_fastfile_native_disk32.h")
+set(_native_impl_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_fastfile_native_disk32.cpp")
+set(_effect_def_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_effect_def.h")
+set(_impact_native_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_fastfile_impact_native_disk32.h")
+set(_impact_native_impl_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_fastfile_impact_native_disk32.cpp")
 set(_db_load_path "${SOURCE_ROOT}/src/database/db_load.cpp")
 set(_archive_path "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp")
+set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
+set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
+set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
 
 foreach(_path IN ITEMS
     "${_disk32_path}"
     "${_schema_path}"
     "${_native_path}"
+    "${_native_impl_path}"
+    "${_effect_def_path}"
+    "${_impact_native_path}"
+    "${_impact_native_impl_path}"
     "${_db_load_path}"
-    "${_archive_path}")
+    "${_archive_path}"
+    "${_manifest_path}"
+    "${_tests_path}"
+    "${_ci_path}")
     if(NOT EXISTS "${_path}")
         message(FATAL_ERROR "Missing FX fast-file Disk32 source: ${_path}")
     endif()
@@ -25,10 +43,29 @@ endforeach()
 file(READ "${_disk32_path}" _disk32)
 file(READ "${_schema_path}" _schema)
 file(READ "${_native_path}" _native)
+file(READ "${_native_impl_path}" _native_impl)
+file(READ "${_effect_def_path}" _effect_def)
+file(READ "${_impact_native_path}" _impact_native)
+file(READ "${_impact_native_impl_path}" _impact_native_impl)
 file(READ "${_db_load_path}" _db_load)
 file(READ "${_archive_path}" _archive)
+file(READ "${_manifest_path}" _manifest)
+file(READ "${_tests_path}" _tests)
+file(READ "${_ci_path}" _ci)
 
-foreach(_var IN ITEMS _disk32 _schema _native _db_load _archive)
+foreach(_var IN ITEMS
+    _disk32
+    _schema
+    _native
+    _native_impl
+    _effect_def
+    _impact_native
+    _impact_native_impl
+    _db_load
+    _archive
+    _manifest
+    _tests
+    _ci)
     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${${_var}}")
     set(${_var} "${_normalized}")
 endforeach()
@@ -94,6 +131,30 @@ function(extract_slice SOURCE_VAR START END OUT_VAR DESCRIPTION)
     string(SUBSTRING "${_tail}" 0 ${_end} _slice)
     set(${OUT_VAR} "${_slice}" PARENT_SCOPE)
 endfunction()
+
+# The converter constructs the one canonical portable runtime definition
+# family. It must not publish layout-compatible private lookalikes through an
+# unrelated FxElemDef pointer type.
+foreach(_marker IN ITEMS
+    "constexpr std::size_t FX_ELEM_DEF_RUNTIME_SIZE ="
+    "struct FxEffectDef"
+    "struct FxElemDef"
+    "RUNTIME_SIZE(FxEffectDef, 0x20, 0x28);"
+    "RUNTIME_SIZE(FxElemDef, 0xFC, 0x120);"
+    "RUNTIME_OFFSET(FxElemDef, visuals, 0xBC, 0xC8);"
+    "RUNTIME_OFFSET(FxElemDef, trailDef, 0xF4, 0x110);"
+    "std::is_trivially_copyable_v<FxEffectDef>"
+    "std::is_trivially_copyable_v<FxElemDef>"
+    "std::is_nothrow_default_constructible_v<FxElemDef>")
+    require_contains(
+        _effect_def "${_marker}" "canonical native FX definition ABI")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "namespace fx::fastfile::native_detail"
+    "reinterpret_cast<const FxElemDef *>")
+    require_not_contains(
+        _native_impl "${_forbidden}" "canonical runtime object identity")
+endforeach()
 
 # All packed FX records reuse the tree's one canonical token/Ptr32 vocabulary.
 # The schema must never grow a parallel pointer wrapper or a native pointer.
@@ -299,12 +360,15 @@ foreach(_marker IN ITEMS
     "TrailVertices"
     "TrailIndices"
     "String"
+    "ImpactTableHeader"
+    "ImpactEntries"
     "enum class FxFastFileDisk32ReferenceKind : std::uint8_t"
     "EffectName"
     "Material"
     "Model"
     "SoundName"
     "EffectNameReference"
+    "EffectAssetHandle"
     "enum class FxFastFileNativeDisk32Status : std::uint8_t"
     "Success"
     "Busy"
@@ -414,7 +478,7 @@ endforeach()
 # records the exact workspace generation plus the validated source fingerprint.
 extract_slice(
     _native
-    "class FxFastFileNativeDisk32Plan final"
+    "class alignas(8) FxFastFileNativeDisk32Plan final"
     "// Heap-only scratch."
     _plan_type
     "opaque plan type")
@@ -437,6 +501,260 @@ require_ordered(
     "private:"
     "const FxFastFileNativeDisk32Workspace *workspaceIdentity_ = nullptr;"
     "plan binding is private")
+foreach(_marker IN ITEMS
+    "class alignas(8) FxFastFileNativeDisk32Plan final"
+    "RUNTIME_SIZE(FxFastFileNativeDisk32Plan, 0x30, 0x30);"
+    "RUNTIME_SIZE(FxFastFileNativeDisk32Workspace, 0x11868, 0x23088);")
+    require_contains(_native "${_marker}" "cross-compiler plan/workspace extent")
+endforeach()
+
+# The implementation remains a bounded, allocation-free two-pass converter.
+# Planning validates the legacy compact x86 extent separately from the widened
+# native extent, binds every callback result once, and materialization performs
+# every fallible check before clearing caller storage.
+foreach(_forbidden IN ITEMS
+    "Com_Error"
+    "Com_Printf"
+    "MemoryFile"
+    "MemFile_"
+    "ERR_DROP"
+    "throw "
+    "setjmp"
+    "longjmp"
+    "std::vector"
+    "std::malloc"
+    "std::realloc")
+    require_not_contains(
+        _native_impl "${_forbidden}" "converter implementation stays report/allocation-free")
+endforeach()
+foreach(_marker IN ITEMS
+    "constexpr std::int32_t kMaxTrailVertices = 64;"
+    "constexpr std::int32_t kMaxTrailIndices = 128;"
+    "if (elem.velSamples.token.isNull() || elem.velIntervalCount == 0)"
+    "Status PlanDisk32Layout("
+    "Status PlanLayout("
+    "ComputeSourceFingerprint(source) != sourceFingerprint"
+    "ComputeBoundFingerprint( source, workspace->resolved_, workspace->resolvedCount_)"
+    "ComputeResolvedStringsFingerprint(journal, *journalCount)"
+    "if (workspace->phase_ != FxFastFileNativeDisk32Phase::Empty) return Status::InvalidPhase;"
+    "(std::numeric_limits<std::int32_t>::max)()"
+    "std::memset(storage, 0, plan.outputBytes_);"
+    "static_cast<std::uint32_t>(view.trail->indCount)"
+    "std::construct_at(nativeEffect);"
+    "std::construct_at(&native);"
+    "std::construct_at(trail);"
+    "resolvedIndex != workspace->resolvedCount_"
+    "*outEffect = nativeEffect;")
+    require_contains(_native_impl "${_marker}" "transactional converter implementation")
+endforeach()
+require_occurrence_count(
+    _native_impl
+    "resolvers.resolve("
+    1
+    "one resolver call site confined to planning")
+
+extract_slice(
+    _native_impl
+    "Status ResolveOne("
+    "Status ResolveGraph("
+    _resolve_one_impl
+    "single-reference resolver")
+foreach(_marker IN ITEMS
+    "if (!IsExactCString(resolved))"
+    "const std::uint64_t stringFingerprint = ComputeResolvedStringFingerprint(resolved);"
+    "source.provenance.validateSpan("
+    "ComputeResolvedStringFingerprint(resolved) != stringFingerprint"
+    "HashResolvedString(expectedStrings, resolved, resolvedIndex)"
+    "journal[resolvedIndex] = resolved;")
+    require_contains(
+        _resolve_one_impl "${_marker}" "resolved-string callback binding")
+endforeach()
+require_ordered(
+    _resolve_one_impl
+    "const std::uint64_t stringFingerprint = ComputeResolvedStringFingerprint(resolved);"
+    "source.provenance.validateSpan("
+    "resolved string bytes bind before external provenance")
+require_ordered(
+    _resolve_one_impl
+    "source.provenance.validateSpan("
+    "ComputeResolvedStringFingerprint(resolved) != stringFingerprint"
+    "resolved string bytes revalidate after external provenance")
+
+extract_slice(
+    _native_impl
+    "FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32("
+    "} // namespace fx::fastfile"
+    _materialize_impl
+    "effect materializer implementation")
+foreach(_forbidden IN ITEMS
+    "resolvers.resolve("
+    "source.provenance.validateSpan(")
+    require_not_contains(
+        _materialize_impl "${_forbidden}" "materialization cannot invoke callbacks")
+endforeach()
+require_ordered(
+    _materialize_impl
+    "ComputeBoundFingerprint("
+    "std::memset(storage, 0, plan.outputBytes_);"
+    "all fingerprint preflight precedes caller-storage mutation")
+require_ordered(
+    _materialize_impl
+    "OverlapsSource("
+    "std::memset(storage, 0, plan.outputBytes_);"
+    "all overlap preflight precedes caller-storage mutation")
+
+# Impact tables use the same report-free transaction boundary while preserving
+# the legacy loader's boolean interpretation of the table pointer word. Every
+# physical non-null handle is resolved once into a fixed-slot journal; nulls
+# keep their slots and bypass callbacks.
+foreach(_marker IN ITEMS
+    "kFxFastFileImpactDisk32HandleCount = kImpactSurfaceCount * (kImpactNonFleshEffectCount + kImpactFleshEffectCount);"
+    "kFxFastFileImpactDisk32JournalCount = 1u + kFxFastFileImpactDisk32HandleCount;"
+    "struct FxFastFileImpactTableDisk32View final"
+    "class alignas(8) FxFastFileImpactNativeDisk32Plan final"
+    "class alignas(8) FxFastFileImpactNativeDisk32Workspace final"
+    "resolved_[kFxFastFileImpactDisk32JournalCount]{};"
+    "TryPlanFxImpactTableDisk32("
+    "TryMaterializeFxImpactTableDisk32("
+    "kFxFastFileImpactDisk32HandleCount == 396"
+    "RUNTIME_SIZE(FxFastFileImpactNativeDisk32Plan, 0x38, 0x38);"
+    "RUNTIME_SIZE(FxFastFileImpactNativeDisk32Workspace, 0x1300, 0x1F78);"
+    "db_load treated this field as a boolean"
+    "outPlan unchanged"
+    "Materialization performs no"
+    "must remain readable and byte-for-byte immutable throughout planning"
+    "Successful output retains the resolver-returned"
+    "Every failure preserves both storage and outTable")
+    require_contains(
+        _impact_native "${_marker}" "transactional impact-table API")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "Com_Error"
+    "Com_Printf"
+    "MemoryFile"
+    "MemFile_"
+    "ERR_DROP"
+    "throw "
+    "setjmp"
+    "longjmp"
+    "std::vector"
+    "std::malloc"
+    "std::realloc"
+    ".isInline()"
+    ".isSharedInline()")
+    require_not_contains(
+        _impact_native_impl
+        "${_forbidden}"
+        "impact conversion stays allocation-free and legacy-compatible")
+endforeach()
+foreach(_marker IN ITEMS
+    "class PlanningFailureReset final"
+    "workspace->sourceHeaderSnapshot_ = *source.impactTable;"
+    "workspace->sourceEntrySnapshots_"
+    "if (header.table.token.isNull())"
+    "if (header.name.token.isNull())"
+    "const std::uint64_t nameBeforeProvenanceFingerprint = ComputeSourceFingerprint(source, name);"
+    "const FxFastFileDisk32Resolvers resolverSnapshot = resolvers;"
+    "const void *const nameAddress = name.pointer;"
+    "name.pointer != nameAddress || name.stringByteCount != nameByteCount"
+    "constexpr std::size_t identityBytes = sizeof(FxEffectDef);"
+    "IsAligned(resolved.pointer, alignof(FxEffectDef))"
+    "const FxImpactEntryDisk32 &entry = workspace->sourceEntrySnapshots_[entryIndex];"
+    "const disk32::PointerToken token ="
+    "if (!SourceMatchesSnapshots("
+    "ComputeBoundFingerprint(source, workspace->resolved_, resolvedCount)"
+    "std::construct_at(reinterpret_cast<FxImpactTable *>(bytes))"
+    "std::construct_at(&entries[index])"
+    "*outTable = table;")
+    require_contains(
+        _impact_native_impl "${_marker}" "hardened impact conversion")
+endforeach()
+
+extract_slice(
+    _impact_native_impl
+    "FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32("
+    "FxFastFileNativeDisk32Status TryMaterializeFxImpactTableDisk32("
+    _impact_plan_impl
+    "impact planner implementation")
+require_ordered(
+    _impact_plan_impl
+    "workspace->sourceHeaderSnapshot_ = *source.impactTable;"
+    "source.provenance.validateSpan("
+    "impact source snapshot precedes the first provenance callback")
+require_ordered(
+    _impact_plan_impl
+    "const std::uint64_t nameBeforeProvenanceFingerprint = ComputeSourceFingerprint(source, name);"
+    "source.provenance.validateSpan(source.provenance.context, FxFastFileDisk32SourceSpanKind::String"
+    "impact name bytes bind before string provenance")
+require_ordered(
+    _impact_plan_impl
+    "source.provenance.validateSpan(source.provenance.context, FxFastFileDisk32SourceSpanKind::String"
+    "name.pointer != nameAddress || name.stringByteCount != nameByteCount"
+    "impact name descriptor revalidates before a post-callback dereference")
+require_ordered(
+    _impact_plan_impl
+    "const FxFastFileDisk32Resolvers resolverSnapshot = resolvers;"
+    "resolverSnapshot.resolve("
+    "impact callbacks use the pre-callback resolver snapshot")
+require_ordered(
+    _impact_plan_impl
+    "const bool resolvedSuccessfully = resolverSnapshot.resolve("
+    "if (!SourceMatchesSnapshots("
+    "each impact-handle callback is followed by full source verification")
+require_occurrence_count(
+    _impact_plan_impl
+    "resolverSnapshot.resolve("
+    3
+    "impact callbacks remain confined to the three planner call sites")
+
+extract_slice(
+    _impact_native_impl
+    "FxFastFileNativeDisk32Status TryMaterializeFxImpactTableDisk32("
+    "} // namespace fx::fastfile"
+    _impact_materialize_impl
+    "impact materializer implementation")
+foreach(_forbidden IN ITEMS
+    "resolvers.resolve("
+    "source.provenance.validateSpan(")
+    require_not_contains(
+        _impact_materialize_impl
+        "${_forbidden}"
+        "impact materialization consumes only its bound journal")
+endforeach()
+require_ordered(
+    _impact_materialize_impl
+    "ComputeBoundFingerprint("
+    "std::construct_at(reinterpret_cast<FxImpactTable *>(bytes))"
+    "impact fingerprint preflight precedes output construction")
+require_occurrence_count(
+    _impact_materialize_impl
+    "identity, sizeof(FxEffectDef)"
+    2
+    "impact output rejects partial overlap with complete retained effects")
+
+# Both converters are production sources and explicit measured-Windows test
+# targets. The focused CTest names remain in the Windows x86 execution gate.
+foreach(_marker IN ITEMS
+    "fx_effect_def.h"
+    "fx_fastfile_native_disk32.cpp"
+    "fx_fastfile_native_disk32.h"
+    "fx_fastfile_impact_native_disk32.cpp"
+    "fx_fastfile_impact_native_disk32.h")
+    require_contains(_manifest "${_marker}" "production source manifest")
+endforeach()
+foreach(_marker IN ITEMS
+    "kisakcod-fx-fastfile-native-disk32-tests"
+    "kisakcod-fx-fastfile-impact-native-disk32-tests"
+    "effectscore-fastfile-native-disk32-conversion"
+    "effectscore-fastfile-impact-native-disk32-conversion")
+    require_contains(_tests "${_marker}" "portable converter CTest target")
+endforeach()
+foreach(_marker IN ITEMS
+    "kisakcod-fx-fastfile-native-disk32-tests"
+    "kisakcod-fx-fastfile-impact-native-disk32-tests"
+    "effectscore-fastfile-(native|impact-native)-disk32-conversion")
+    require_contains(_ci "${_marker}" "measured Windows converter gate")
+endforeach()
 
 # This reader-first checkpoint deliberately leaves the stateful x86 FX loader
 # and archive writer in place. Source markers pin that deferral without relying

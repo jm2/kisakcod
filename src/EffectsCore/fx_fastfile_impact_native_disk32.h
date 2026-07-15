@@ -158,7 +158,8 @@ TryPlanFxImpactTableDisk32(FxFastFileImpactNativeDisk32Workspace *workspace,
 // consumes the exact workspace/serial/source-bound plan.  The source header,
 // entries, and resolver-returned name described above remain caller-owned and
 // must stay readable and immutable while the workspace remains Planned and
-// throughout this call.
+// throughout this call.  Successful output retains the resolver-returned
+// effect identities, whose lifetime remains externally owned by the caller.
 [[nodiscard]] FxFastFileNativeDisk32Status TryMaterializeFxImpactTableDisk32(
     FxFastFileImpactNativeDisk32Workspace *workspace,
     const FxFastFileImpactNativeDisk32Plan &plan,
