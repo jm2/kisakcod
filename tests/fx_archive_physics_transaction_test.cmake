@@ -984,51 +984,88 @@ require_absent(
     "FxValidatePoolAllocationGraph("
     "archive preflight must not allocate the legacy graph wrapper frame")
 
+# Reader, mutable candidate, physics arrays, rollback buffers, and controller
+# workspace share one centralized staging owner. The exact definition lease
+# covers all reader/candidate work and every fallible allocation.
+extract_slice(
+    "${_archive_source}"
+    "struct FxArchiveDisk32RestoreStaging final"
+    "[[nodiscard]] bool FX_PrepareArchiveDisk32PhysicsEntries("
+    _disk32_staging_owner
+    "centralized Disk32 restore staging")
+foreach(_staging_member IN ITEMS
+    "FxArchiveDisk32ReaderWorkspace *reader = nullptr;"
+    "FxArchiveRestoreCandidateDisk32Workspace *candidate ="
+    "FxArchivePhysicsEntry *desiredPhysicsEntries = nullptr;"
+    "FxArchivePhysicsEntry *replacedPhysicsEntries = nullptr;"
+    "FxSystemBuffers *rollbackBuffers = nullptr;"
+    "FxArchiveRestoreTransactionWorkspace *transaction = nullptr;")
+    require_position(
+        "${_disk32_staging_owner}"
+        "${_staging_member}"
+        _staging_member_position
+        "centralized staging must own every fallible restore allocation")
+endforeach()
+foreach(_centralized_cleanup IN ITEMS
+    "FX_DestroyArchiveRestoreTransactionWorkspace("
+    "FX_DestroyArchiveDisk32ReaderWorkspace("
+    "FX_DestroyArchiveRestoreCandidateDisk32Workspace("
+    "Z_Free(staging->rollbackBuffers, 10);"
+    "Z_Free(staging->replacedPhysicsEntries, 10);"
+    "Z_Free(staging->desiredPhysicsEntries, 10);")
+    require_position(
+        "${_disk32_staging_owner}"
+        "${_centralized_cleanup}"
+        _centralized_cleanup_position
+        "centralized staging cleanup must cover every owned allocation")
+endforeach()
+require_ordered(
+    "${_restore_source}"
+    "TryReadFxArchiveDisk32NoReport("
+    "TryBuildFxArchiveRestoreCandidateDisk32("
+    "the complete reader image must precede candidate construction")
 extract_slice(
     "${_restore_source}"
-    "FxPoolAllocationGraphScratch *const poolGraphScratch ="
-    "if (!FX_FixupEffectDefHandlesNoDrop("
-    _pool_graph_preflight_lifetime
-    "archive pool-graph scratch lifetime")
+    "fx::archive::TryBuildFxArchiveRestoreCandidateDisk32("
+    "if (candidateStatus"
+    _candidate_build_call
+    "exact reader/candidate build call")
 require_ordered(
-    "${_pool_graph_preflight_lifetime}"
-    "AllocateArchiveRestoreWorkspace<"
-    "if (!poolGraphScratch)"
-    "pool graph scratch allocation must be checked before validation")
+    "${_candidate_build_call}"
+    "staging.reader,"
+    "tableResult.lease,"
+    "candidate construction must consume the exact reader before its lease")
 require_ordered(
-    "${_pool_graph_preflight_lifetime}"
-    "if (!poolGraphScratch)"
-    "FX_RebuildArchivePoolAllocationStates("
-    "archive pool reconstruction must not run after allocation failure")
-require_ordered(
-    "${_pool_graph_preflight_lifetime}"
-    "FX_RebuildArchivePoolAllocationStates("
-    "DestroyArchiveRestoreWorkspace("
-    "archive graph scratch must be destroyed immediately after preflight")
-require_ordered(
-    "${_pool_graph_preflight_lifetime}"
-    "DestroyArchiveRestoreWorkspace("
-    "if (!restoredPoolStateValid)"
-    "archive graph scratch must be gone before invalid pool state is reported")
-require_ordered(
-    "${_pool_graph_preflight_lifetime}"
-    "if (!restoredPoolStateValid)"
-    "\"Invalid FX pool state in archive\""
-    "invalid pool state may report only after scratch destruction")
-require_absent(
-    "${_pool_graph_preflight_lifetime}"
-    "FxPoolAllocationGraphScratch poolGraphScratch{};"
-    "archive preflight must not recreate graph scratch on the restore stack")
-require_ordered(
-    "${_restore_source}"
-    "DestroyArchiveRestoreWorkspace("
-    "FX_AllocateArchiveRestoreTransactionWorkspace()"
-    "short-lived graph scratch must be destroyed before transaction workspace allocation")
+    "${_candidate_build_call}"
+    "tableResult.lease,"
+    "staging.candidate);"
+    "candidate construction must bind the lease before mutable output")
 require_ordered(
     "${_restore_source}"
     "FX_AllocateArchiveRestoreTransactionWorkspace()"
+    "FX_DestroyArchiveDisk32ReaderWorkspace(staging.reader)"
+    "all fallible staging must finish before reader destruction")
+require_ordered(
+    "${_restore_source}"
+    "FX_DestroyArchiveDisk32ReaderWorkspace(staging.reader)"
+    "ReleaseEffectTableRestore(tableResult.lease)"
+    "reader destruction and a final lease handshake must precede release")
+extract_slice(
+    "${_restore_source}"
+    "staging.reader = nullptr;"
+    "const fx::archive::EffectTableRestoreStatus tableReleaseStatus ="
+    _post_reader_lease_handshake
+    "post-reader exact lease handshake")
+require_position(
+    "${_post_reader_lease_handshake}"
+    "ValidateEffectTableRestoreLease(tableResult.lease)"
+    _post_reader_lease_validation
+    "the exact lease must validate after reader destruction")
+require_ordered(
+    "${_restore_source}"
+    "ReleaseEffectTableRestore(tableResult.lease)"
     "FX_BeginArchive(system, restoreGeneration)"
-    "the checked restore workspace must exist before archive ownership is acquired")
+    "archive admission must immediately follow successful lease release")
 extract_slice(
     "${_restore_source}"
     "if (!FX_BeginArchive(system, restoreGeneration))"
@@ -1037,14 +1074,9 @@ extract_slice(
     "archive begin failure cleanup")
 require_ordered(
     "${_begin_archive_failure}"
-    "FX_DestroyArchiveRestoreTransactionWorkspace("
-    "Z_Free(rollbackBuffers, 10);"
-    "begin failure must destroy the empty workspace before staging storage")
-require_ordered(
-    "${_begin_archive_failure}"
-    "FX_DestroyArchiveRestoreTransactionWorkspace("
+    "FX_DestroyArchiveDisk32RestoreStaging(&staging)"
     "Com_Error(ERR_DROP"
-    "begin failure must destroy the empty workspace before reporting")
+    "begin failure must destroy all staging before reporting")
 
 foreach(_former_restore_stack_local IN ITEMS
     "FxSystem rollbackSystem{};"
@@ -1074,68 +1106,56 @@ require_ordered(
     "&restoreWorkspace->physicsScratch"
     "FX_Restore must bind caller scratch after its workspace sidecars")
 
-# The desired pair is derived solely from validated Disk32 relocation equality,
-# then resolved into the staged buffer image. No relocated address is ever
-# reinterpreted as a native live pointer.
+# The portable candidate owns already-relocated native storage. Production
+# derives visibility selectors only from that candidate, validates the exact
+# owner/element mapping and every body, and mutates output entries only in a
+# second pass after complete validation.
 extract_slice(
-    "${_restore_source}"
-    "const bool readVisStateValid ="
-    "bool physicsDataValid = true;"
+    "${_archive_source}"
+    "[[nodiscard]] bool FX_PrepareArchiveDisk32PhysicsEntries("
+    "[[noreturn]] void FX_ReportArchiveDisk32RestoreFailure("
     _desired_selector_staging
-    "desired visibility selector staging")
+    "candidate visibility and physics staging")
 require_ordered(
     "${_desired_selector_staging}"
-    "if (!readVisStateValid || !writeVisStateValid"
-    "const FxVisibilityBufferSelectors desiredVisibilitySelectors{"
-    "both relocated addresses must validate before selector construction")
-extract_slice(
-    "${_restore_source}"
-    "const FxVisibilityBufferSelectors desiredVisibilitySelectors{"
-    "if (!FX_TryResolveVisibilitySelectors("
-    _desired_selector_pair
-    "desired visibility selector pair")
-foreach(_desired_equality_marker IN ITEMS
-    "relocatedReadAddress == secondLiveVisAddress\n            ? std::uint8_t{1}\n            : std::uint8_t{0}"
-    "relocatedWriteAddress == secondLiveVisAddress\n            ? std::uint8_t{1}\n            : std::uint8_t{0}")
-    require_position(
-        "${_desired_selector_pair}"
-        "${_desired_equality_marker}"
-        _desired_equality_position
-        "validated second-slot equality must map to one and first-slot equality to zero")
-endforeach()
-require_ordered(
-    "${_desired_selector_staging}"
-    "FX_TryResolveVisibilitySelectors("
-    "&restoredSystem.visStateBufferRead"
-    "desired read/write roles must resolve into staged storage before binding")
+    "FX_TryDeriveVisibilitySelectorPair("
+    "FX_ArchiveVisibilitySelectorsMatch("
+    "candidate visibility roles must round-trip before physics traversal")
 foreach(_desired_staged_slot IN ITEMS
-    "&restoredBuffers->visState[0]"
-    "&restoredBuffers->visState[1]")
+    "&view.buffers->visState[0]"
+    "&view.buffers->visState[1]")
     require_position(
         "${_desired_selector_staging}"
         "${_desired_staged_slot}"
         _desired_staged_slot_position
-        "desired selectors must resolve only against restored buffers")
+        "desired selectors must derive only from candidate-owned buffers")
 endforeach()
 require_ordered(
     "${_desired_selector_staging}"
-    "&restoredSystem.visStateBufferRead"
-    "&restoredSystem.visStateBufferWrite"
-    "staged read and write roles must retain their order")
+    "body.elem
+                != &view.buffers->elems[body.ownerIndex].item"
+    "FX_ValidateArchiveBodyState(body.state)"
+    "exact element provenance must validate before body-state acceptance")
+require_occurrence_count(
+    "${_desired_selector_staging}"
+    "for (std::size_t index = 0;"
+    2
+    "candidate physics validation and output mutation must remain separate passes")
 require_ordered(
     "${_desired_selector_staging}"
-    "&restoredSystem.visStateBufferWrite"
-    "FX_ArchiveVisibilitySelectorsMatch("
-    "the staged graph must round-trip after both selector bindings")
+    "FX_ValidateArchiveBodyState(body.state)"
+    "std::memset(&entry, 0, sizeof(entry));"
+    "all body validation must precede output entry mutation")
 foreach(_forbidden_desired_pointer_publish IN ITEMS
     "reinterpret_cast<const FxVisState *>"
     "reinterpret_cast<FxVisState *>"
-    "restoredSystem.visStateBufferRead = context."
-    "restoredSystem.visStateBufferWrite = context.")
+    "relocationBits"
+    "relocatedReadAddress"
+    "relocatedWriteAddress")
     require_absent(
-        "${_desired_selector_staging}"
+        "${_restore_source}"
         "${_forbidden_desired_pointer_publish}"
-        "restore must never publish relocated or foreign staged pointers")
+        "restore must never revive raw relocation or foreign staged pointers")
 endforeach()
 
 # Capture selector values, the rollback system, and its buffers in one coherent
@@ -1693,7 +1713,7 @@ require_ordered(
 require_ordered(
     "${_restore_completion}"
     "std::abort();"
-    "Z_Free(rollbackBuffers, 10);"
+    "FX_DestroyArchiveDisk32RestoreStaging(&staging)"
     "unsafe restore must terminate before transaction scratch can be released")
 extract_slice(
     "${_restore_completion}"
@@ -1703,6 +1723,7 @@ extract_slice(
     "unsafe restore fail-stop branch")
 foreach(_unsafe_cleanup IN ITEMS
     "FX_DestroyArchiveRestoreTransactionWorkspace("
+    "FX_DestroyArchiveDisk32RestoreStaging("
     "FX_FreeArchiveRestoreWorkspaceMemory("
     "Z_Free("
     "Sys_LeaveCriticalSection("
@@ -1766,16 +1787,11 @@ string(SUBSTRING "${_restore_source}" ${_physics_leave} -1 _after_physics)
 require_ordered(
     "${_after_physics}"
     "FX_EndArchive(system);"
-    "FX_DestroyArchiveRestoreTransactionWorkspace(restoreWorkspace)"
-    "safe restore cleanup must destroy the workspace only after archive release")
+    "FX_DestroyArchiveDisk32RestoreStaging(&staging)"
+    "safe restore cleanup must destroy centralized staging only after archive release")
 require_ordered(
     "${_after_physics}"
-    "FX_DestroyArchiveRestoreTransactionWorkspace(restoreWorkspace)"
-    "Z_Free(rollbackBuffers, 10);"
-    "safe restore cleanup must destroy the workspace before staging memory is freed")
-require_ordered(
-    "${_after_physics}"
-    "Z_Free(restoredBuffers, 10);"
+    "FX_DestroyArchiveDisk32RestoreStaging(&staging)"
     "if (restoreOutcome"
     "terminal outcome must be checked only after transaction storage is released")
 require_position(
@@ -1800,9 +1816,23 @@ require_occurrence_count(
     "UnsafeFailure must have one centralized fail-stop")
 require_occurrence_count(
     "${_restore_source}"
+    "FX_DestroyArchiveDisk32RestoreStaging(&staging)"
+    3
+    "centralized cleanup must cover release failure, begin failure, and safe completion")
+require_absent(
+    "${_restore_source}"
     "FX_DestroyArchiveRestoreTransactionWorkspace("
-    2
-    "workspace destruction must occur only on begin failure and safe terminal cleanup")
+    "FX_Restore must not bypass centralized staging cleanup")
+foreach(_obsolete_direct_free IN ITEMS
+    "Z_Free(restoredBuffers, 10);"
+    "Z_Free(rollbackBuffers, 10);"
+    "Z_Free(replacedPhysicsEntries, 10);"
+    "Z_Free(physicsEntries, 10);")
+    require_absent(
+        "${_restore_source}"
+        "${_obsolete_direct_free}"
+        "FX_Restore must not directly free centralized staging members")
+endforeach()
 foreach(_non_success_outcome IN ITEMS OriginalRestored SafeEmptyPublished)
     require_absent(
         "${_restore_source}"

@@ -8,21 +8,27 @@ set(_header_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive_reader_disk32.h")
 set(_source_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive_reader_disk32.cpp")
+set(_candidate_header_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive_restore_candidate_disk32.h")
 set(_archive_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
 set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
 set(_fixture_path
     "${SOURCE_ROOT}/tests/fx_archive_reader_disk32_tests.cpp")
+set(_candidate_fixture_path
+    "${SOURCE_ROOT}/tests/fx_archive_restore_candidate_disk32_tests.cpp")
 set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
 
 foreach(_path IN ITEMS
     "${_header_path}"
     "${_source_path}"
+    "${_candidate_header_path}"
     "${_archive_path}"
     "${_manifest_path}"
     "${_tests_path}"
     "${_fixture_path}"
+    "${_candidate_fixture_path}"
     "${_ci_path}")
     if(NOT EXISTS "${_path}")
         message(FATAL_ERROR "Missing FX Disk32 reader source: ${_path}")
@@ -31,14 +37,17 @@ endforeach()
 
 file(READ "${_header_path}" _header)
 file(READ "${_source_path}" _source)
+file(READ "${_candidate_header_path}" _candidate_header)
 file(READ "${_archive_path}" _archive)
 file(READ "${_manifest_path}" _manifest)
 file(READ "${_tests_path}" _tests)
 file(READ "${_fixture_path}" _fixture)
+file(READ "${_candidate_fixture_path}" _candidate_fixture)
 file(READ "${_ci_path}" _ci)
 
 foreach(_var IN ITEMS
-    _header _source _archive _manifest _tests _fixture _ci)
+    _header _source _candidate_header _archive _manifest _tests _fixture
+    _candidate_fixture _ci)
     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${${_var}}")
     set(${_var} "${_normalized}")
 endforeach()
@@ -159,12 +168,17 @@ foreach(_marker IN ITEMS
     "const FxArchiveDisk32ReaderPhysicsBody *physicsBodies = nullptr;"
     "std::uint32_t physicsBodyCount = 0;"
     "static_assert(alignof(FxArchiveDisk32ReaderWorkspace) == 8);"
+    "std::is_trivially_destructible_v<FxArchiveDisk32ReaderWorkspace>"
     "RUNTIME_SIZE(FxArchiveDisk32ReaderPhysicsBody, 0x80, 0x90);"
     "RUNTIME_SIZE(FxArchiveDisk32ReaderWorkspace, 0xA3D00, 0xA9D58);"
     "roughly 650--700 KiB object on the Windows x86"
     "thread stack; production integration must use the checked archive allocator")
     require_contains(_header "${_marker}" "bounded heap-owned public API")
 endforeach()
+require_contains(
+    _candidate_header
+    "std::is_trivially_destructible_v< FxArchiveRestoreCandidateDisk32Workspace>"
+    "candidate destruction cannot dereference lease-borrowed assets")
 
 # The stored Ready identity is a fixed-layout, bit-exact snapshot of the
 # public lease.  Split serial halves avoid i386 ABI alignment differences
@@ -535,31 +549,135 @@ foreach(_large_type IN ITEMS
         "large disk/native/workspace images cannot be local values")
 endforeach()
 
-# This checkpoint intentionally stages but does not replace production.  Both
-# legacy x86 entry points and native64 guards remain, and production cannot
-# include or invoke the new reader before the next equivalence/rollback PR.
+# Production restore consumes the legacy wire image only through the portable
+# reader and an independently owned mutable candidate. Save still has its one
+# native64 guard until a portable writer exists; restore must not retain that
+# guard or any of the former raw/native-pointer parser.
 foreach(_marker IN ITEMS
     "void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)"
     "void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)"
-    "FX archive restore requires Disk32 conversion on 64-bit targets"
-    "FX archive save requires Disk32 conversion on 64-bit targets")
-    require_contains(_archive "${_marker}" "production guard remains unchanged")
+    "#include \"fx_archive_reader_disk32.h\""
+    "#include \"fx_archive_restore_candidate_disk32.h\""
+    "FX archive save requires Disk32 conversion on 64-bit targets"
+    "FX_AllocateArchiveDisk32ReaderWorkspace()"
+    "FX_AllocateArchiveRestoreCandidateDisk32Workspace()"
+    "FX_DestroyArchiveDisk32RestoreStaging(")
+    require_contains(_archive "${_marker}" "portable production restore integration")
 endforeach()
 require_occurrence_count(
-    _archive "if (sizeof(void *) != 4)" 2 "restore and save native64 guards")
+    _archive "if (sizeof(void *) != 4)" 1 "one remaining save native64 guard")
 foreach(_forbidden IN ITEMS
-    "fx_archive_reader_disk32"
-    "TryReadFxArchiveDisk32NoReport"
-    "TryGetFxArchiveDisk32ReaderReadyView")
+    "FX archive restore requires Disk32 conversion on 64-bit targets"
+    "FX archive restore requires Disk32 conversion on this target")
     require_not_contains(
-        _archive "${_forbidden}" "portable reader remains nonproduction")
+        _archive "${_forbidden}" "portable restore cannot retain a native-width guard")
+endforeach()
+
+extract_slice(
+    _archive
+    "void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)"
+    "FxEffect *__cdecl FX_EffectFromHandle("
+    _production_restore
+    "portable production restore")
+require_ordered(
+    _production_restore
+    "RestoreEffectTableNoReport("
+    "FX_AllocateArchiveDisk32ReaderWorkspace()"
+    "effect registration must precede fallible reader staging")
+require_ordered(
+    _production_restore
+    "TryReadFxArchiveDisk32NoReport("
+    "FX_AllocateArchiveRestoreCandidateDisk32Workspace()"
+    "the complete reader image must precede candidate allocation")
+require_ordered(
+    _production_restore
+    "FX_AllocateArchiveRestoreCandidateDisk32Workspace()"
+    "TryBuildFxArchiveRestoreCandidateDisk32("
+    "candidate storage must exist before the exact lease-bound copy")
+require_contains(
+    _production_restore
+    "staging.reader, tableResult.lease, staging.candidate"
+    "candidate construction must consume the exact reader and retained lease")
+require_ordered(
+    _production_restore
+    "TryBuildFxArchiveRestoreCandidateDisk32("
+    "TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "only a successful candidate build may expose mutable staging")
+require_ordered(
+    _production_restore
+    "FX_AllocateArchiveRestoreTransactionWorkspace()"
+    "ValidateEffectTableRestoreLease(tableResult.lease)"
+    "all fallible transaction storage must exist before the final lease handshake")
+require_ordered(
+    _production_restore
+    "ValidateEffectTableRestoreLease(tableResult.lease)"
+    "FX_DestroyArchiveDisk32ReaderWorkspace(staging.reader)"
+    "the reader must remain alive through complete candidate staging")
+require_ordered(
+    _production_restore
+    "FX_DestroyArchiveDisk32ReaderWorkspace(staging.reader)"
+    "staging.reader = nullptr;"
+    "successful reader destruction must clear centralized ownership")
+extract_slice(
+    _production_restore
+    "staging.reader = nullptr;"
+    "const fx::archive::EffectTableRestoreStatus tableReleaseStatus ="
+    _post_reader_lease_handshake
+    "post-reader lease handshake")
+require_contains(
+    _post_reader_lease_handshake
+    "ValidateEffectTableRestoreLease(tableResult.lease)"
+    "the exact lease must validate after reader destruction")
+require_ordered(
+    _production_restore
+    "staging.reader = nullptr;"
+    "ReleaseEffectTableRestore(tableResult.lease)"
+    "the exact lease must validate again after reader destruction and before release")
+require_ordered(
+    _production_restore
+    "ReleaseEffectTableRestore(tableResult.lease)"
+    "FX_BeginArchive(system, restoreGeneration)"
+    "effect-table ownership must close before archive admission")
+
+extract_slice(
+    _production_restore
+    "const fx::archive::EffectTableRestoreStatus tableReleaseStatus ="
+    "if (!FX_BeginArchive(system, restoreGeneration))"
+    _release_to_admission
+    "effect-table release to archive admission")
+foreach(_forbidden IN ITEMS
+    "Z_Malloc("
+    "MemFile_"
+    "TryReadFxArchiveDisk32NoReport("
+    "TryBuildFxArchiveRestoreCandidateDisk32("
+    "TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "FX_CollectArchivePhysicsEntries("
+    "FX_RebuildArchivePoolAllocationStates(")
+    require_not_contains(
+        _release_to_admission
+        "${_forbidden}"
+        "archive admission must immediately follow a successful lease release")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "FX_ReadArchiveDataNoDrop("
+    "FX_FixupEffectDefHandlesNoDrop("
+    "TryBuildFxArchiveDisk32StructuralImage("
+    "TryFinalizeFxArchiveDisk32NativeImage("
+    "FxSystem restoredSystem{};"
+    "Z_Free(restoredBuffers, 10);")
+    require_not_contains(
+        _production_restore
+        "${_forbidden}"
+        "production restore must not revive raw Disk32 reads or detached staging")
 endforeach()
 
 # Keep engine compilation, all portable runners, measured Windows x86, the
 # executable raw/zlib fixture, and this source contract wired together.
 foreach(_marker IN ITEMS
     "fx_archive_reader_disk32.cpp"
-    "fx_archive_reader_disk32.h")
+    "fx_archive_reader_disk32.h"
+    "fx_archive_restore_candidate_disk32.cpp"
+    "fx_archive_restore_candidate_disk32.h")
     require_contains(_manifest "${_marker}" "engine source manifest")
 endforeach()
 foreach(_marker IN ITEMS
@@ -577,6 +695,9 @@ foreach(_marker IN ITEMS
     "Threads::Threads"
     "effectscore-archive-reader-disk32"
     "effectscore-archive-reader-disk32-source-invariants"
+    "add_executable(kisakcod-fx-archive-restore-candidate-disk32-tests"
+    "fx_archive_restore_candidate_disk32_tests.cpp"
+    "effectscore-archive-restore-candidate-disk32"
     "fx_archive_reader_disk32_source_test.cmake")
     require_contains(_tests "${_marker}" "portable reader fixture and contract")
 endforeach()
@@ -614,6 +735,22 @@ require_not_matches(
     _fixture
     "FxArchiveDisk32ReaderWorkspace +[A-Za-z_][A-Za-z0-9_]*"
     "the roughly 700 KiB reader workspace cannot enter the test stack")
+require_not_matches(
+    _candidate_fixture
+    "FxArchiveRestoreCandidateDisk32Workspace +[A-Za-z_][A-Za-z0-9_]*"
+    "the roughly 400 KiB candidate workspace cannot enter the test stack")
+require_not_matches(
+    _production_restore
+    "FxArchiveRestoreCandidateDisk32Workspace +[A-Za-z_][A-Za-z0-9_]*"
+    "the production candidate workspace must remain heap-only")
+foreach(_candidate_heap_marker IN ITEMS
+    "AllocateArchiveRestoreWorkspace< archive::FxArchiveRestoreCandidateDisk32Workspace>"
+    "DestroyArchiveRestoreWorkspace( candidate_, callbacks_)")
+    require_contains(
+        _candidate_fixture
+        "${_candidate_heap_marker}"
+        "candidate fixture must use checked heap workspace lifetime")
+endforeach()
 foreach(_marker IN ITEMS
     "Linux amd64"
     "Linux arm64"
@@ -621,7 +758,9 @@ foreach(_marker IN ITEMS
     "Windows arm64"
     "macOS arm64"
     "kisakcod-fx-archive-reader-disk32-tests"
-    "effectscore-archive-reader-disk32")
+    "effectscore-archive-reader-disk32"
+    "kisakcod-fx-archive-restore-candidate-disk32-tests"
+    "effectscore-archive-restore-candidate-disk32")
     require_contains(_ci "${_marker}" "portable and Windows x86 CI coverage")
 endforeach()
 

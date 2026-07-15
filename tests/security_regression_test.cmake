@@ -3756,21 +3756,31 @@ require_source_match_count(
     2
     "MemoryFile error abandonment must remain outside client-only cleanup guards")
 
-file(READ "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp" _fx_archive_read_source)
+file(READ
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive_reader_disk32.cpp"
+    _fx_archive_read_source)
 extract_security_slice(
     _fx_archive_read_source
-    "bool FX_ReadArchiveDataNoDrop("
-    "bool FX_WriteArchiveDataNoDrop("
+    "[[nodiscard]] FxArchiveDisk32ReaderStatus ReadExact("
+    "struct DefinitionResolverContext"
     _fx_archive_silent_read
-    "FX archive silent read adapter")
+    "portable FX archive silent read adapter")
 require_security_slice_contains(
     _fx_archive_silent_read
     "MemFile_TryReadDataNoReport("
     "FX archive reads must use the status-bearing silent MemoryFile boundary")
-require_security_slice_contains(
-    _fx_archive_silent_read
-    "if (!memFile || memFile->memoryOverflow)"
-    "FX archive zero-byte reads must preserve sticky-overflow rejection")
+foreach(_fx_archive_read_status
+    "MemFileReadStatus::Success"
+    "MemFileReadStatus::InvalidArgument"
+    "MemFileReadStatus::InvalidState"
+    "MemFileReadStatus::Overflow"
+    "MemFileReadStatus::OutputTooSmall"
+    "FxArchiveDisk32ReaderStatus::TruncatedInput")
+    require_security_slice_contains(
+        _fx_archive_silent_read
+        "${_fx_archive_read_status}"
+        "portable FX archive reads must preserve complete status classification")
+endforeach()
 foreach(_forbidden_fx_archive_read_behavior
     "MemFile_ReadData("
     "errorOnOverflow"
@@ -6824,16 +6834,31 @@ foreach(_restore_selector_context_member
         "${_restore_selector_context_member}"
         "restore control must own both selector values with its staged graphs")
 endforeach()
-require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "if (!readVisStateValid || !writeVisStateValid"
-    "const FxVisibilityBufferSelectors desiredVisibilitySelectors{"
-    "restore must validate relocated addresses before deriving desired roles")
-require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "&restoredBuffers->visState[1]"
-    "&restoredSystem.visStateBufferRead"
-    "desired role resolution must bind into the staged graph, not a live address")
+file(READ
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp"
+    _fx_archive_visibility_source)
+extract_security_slice(
+    _fx_archive_visibility_source
+    "[[nodiscard]] bool FX_PrepareArchiveDisk32PhysicsEntries("
+    "[[noreturn]] void FX_ReportArchiveDisk32RestoreFailure("
+    _fx_candidate_visibility_staging
+    "candidate visibility staging")
+require_security_slice_ordered(
+    _fx_candidate_visibility_staging
+    "FX_TryDeriveVisibilitySelectorPair("
+    "FX_ArchiveVisibilitySelectorsMatch("
+    "restore must derive and round-trip candidate-owned visibility roles")
+extract_security_slice(
+    _fx_archive_visibility_source
+    "void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)"
+    "FxEffect *__cdecl FX_EffectFromHandle("
+    _fx_portable_restore_source
+    "portable FX restore")
+require_security_slice_ordered(
+    _fx_portable_restore_source
+    "TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "FX_PrepareArchiveDisk32PhysicsEntries("
+    "desired roles must derive only after the candidate Ready view commits")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "restoreContext.originalVisibilitySelectors ="
@@ -6896,19 +6921,27 @@ require_source_matches(
     "EffectsCore/fx_archive_semantics.cpp"
     "firstNewEffect[ \t]*==[ \t]*firstFreeEffect[^;]*allocatedEffectCount[ \t]*>=[ \t]*0[^;]*allocatedEffectCount[^;]*<=[^;]*MAX_EFFECTS"
     "archive effect rings must be quiescent, forward, and pool-bounded")
-require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "if (!FX_NormalizeArchiveEffectRing(&restoredSystem))"
-    "FX_LinkSystemBuffers(&restoredSystem, restoredBuffers);"
-    "restore must validate staged ring counters before linking staged runtime buffers")
-
-# Only the complete archive transaction is public. Definition fixup remains a
-# checked internal operation over an exact restore lease; the obsolete
-# stack-backed table and partial archive/removal entry points must not reappear.
+# Only the complete archive transaction is public. Definition resolution and
+# graph normalization now remain inside the lease-bound portable reader and
+# independently owned candidate; obsolete raw fixup and partial APIs must not
+# reappear.
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
-    "bool FX_FixupEffectDefHandlesNoDrop("
-    "effect-definition fixup must propagate validation failure internally")
+    "#include \"fx_archive_reader_disk32.h\""
+    "production restore must compile the unified portable reader")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "#include \"fx_archive_restore_candidate_disk32.h\""
+    "production restore must compile the mutable candidate boundary")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "TryReadFxArchiveDisk32NoReport("
+    "TryBuildFxArchiveRestoreCandidateDisk32("
+    "the complete reader image must precede candidate copying")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "TryBuildFxArchiveRestoreCandidateDisk32\\([ \t\r\n]*staging.reader,[ \t\r\n]*tableResult.lease,[ \t\r\n]*staging.candidate\\)"
+    "candidate construction must bind exact reader and lease provenance")
 foreach(_fx_removed_effect_table_api
     FxEffectDefTable
     FX_RestoreEffectDefTable
@@ -6923,6 +6956,7 @@ foreach(_fx_removed_effect_table_impl
     FxEffectDefTable
     FX_RestoreEffectDefTable
     FX_AddEffectDefTableEntry
+    "bool FX_FixupEffectDefHandlesNoDrop("
     "bool __cdecl FX_FixupEffectDefHandles(")
     require_source_not_contains(
         "EffectsCore/fx_archive.cpp"
@@ -6949,46 +6983,116 @@ foreach(_fx_removed_archive_api
 endforeach()
 
 # Archive parsing and serialization stage complete native snapshots. Restore
-# validates/fixes the temporary graph and physics payload before acquiring live
-# ownership, while save releases exclusion before fallible serialization.
+# validates a private reader image, copies it into an independently owned
+# mutable candidate, and completes every fallible allocation before acquiring
+# live ownership; save releases exclusion before fallible serialization.
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
-    "FxSystem restoredSystem{};"
-    "restore must stage persisted system metadata outside live state")
+    "FxArchiveDisk32RestoreStaging staging{};"
+    "restore must centralize ownership for every staged allocation")
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
-    "FxSystemBuffers *const restoredBuffers ="
-    "restore must stage persisted pool buffers outside live state")
-require_source_ordered(
+    "FxSystem *const restoredSystem = candidateView.system;"
+    "restore must publish only candidate-owned system staging")
+require_source_contains(
     "EffectsCore/fx_archive.cpp"
-    "FX_ValidateArchiveSystemBooleanBytes("
-    "std::memcpy(\n        &restoredSystem,"
-    "restore must validate serialized bool representations before forming a typed system")
-require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "Sys_AtomicLoad(&restoredSystem.iteratorCount) != 0"
-    "FX_LinkSystemBuffers(&restoredSystem, restoredBuffers);"
-    "restore must validate lifecycle, client, and iterator state before linking staged buffers")
-require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "FX_ReadArchiveDataNoDrop(\n            memFile,\n            FX_ARCHIVE_BUFFER_SIZE,"
-    "const bool restoredPoolStateValid =\n        FX_RebuildArchivePoolAllocationStates("
-    "restore must read staged pool storage before reconstructing ownership")
-require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "const bool restoredPoolStateValid =\n        FX_RebuildArchivePoolAllocationStates("
-    "FX_FixupEffectDefHandlesNoDrop(\n            &restoredSystem, tableResult.lease)"
-    "restore must validate staged allocation state before traversing effect records")
-require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "if (!readVisStateValid || !writeVisStateValid"
-    "FX_ReadArchiveDataNoDrop(\n                memFile,\n                FX_ARCHIVE_BODY_STATE_SIZE,"
-    "restore must validate relocated visibility pointers before reading physics payloads")
-require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "FX_ValidateArchiveBodyState(\n                physicsEntries[index].state)"
+    "FxSystemBuffers *const restoredBuffers = candidateView.buffers;"
+    "restore must publish only candidate-owned buffer staging")
+require_security_slice_ordered(
+    _fx_portable_restore_source
+    "TryReadFxArchiveDisk32NoReport("
+    "TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "the complete portable graph must validate before candidate publication")
+require_security_slice_ordered(
+    _fx_portable_restore_source
+    "TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "FX_PrepareArchiveDisk32PhysicsEntries("
+    "candidate graph publication must precede physics-entry preparation")
+require_security_slice_ordered(
+    _fx_portable_restore_source
+    "FX_PrepareArchiveDisk32PhysicsEntries("
+    "FX_AllocateArchiveRestoreTransactionWorkspace()"
+    "candidate physics must validate before final transaction allocation")
+require_security_slice_ordered(
+    _fx_portable_restore_source
+    "FX_DestroyArchiveDisk32ReaderWorkspace(staging.reader)"
+    "staging.reader = nullptr;"
+    "the reader must be destroyed before centralized ownership is cleared")
+extract_security_slice(
+    _fx_portable_restore_source
+    "staging.reader = nullptr;"
+    "if (tableReleaseStatus"
+    _fx_post_reader_lease_handshake
+    "post-reader exact lease handshake")
+require_security_slice_contains(
+    _fx_post_reader_lease_handshake
+    "ValidateEffectTableRestoreLease(tableResult.lease)"
+    "the exact lease must be revalidated after reader destruction")
+require_security_slice_ordered(
+    _fx_post_reader_lease_handshake
+    "ValidateEffectTableRestoreLease(tableResult.lease)"
+    "ReleaseEffectTableRestore(tableResult.lease)"
+    "the final exact lease handshake must precede release")
+require_security_slice_ordered(
+    _fx_portable_restore_source
+    "ReleaseEffectTableRestore(tableResult.lease)"
     "if (!FX_BeginArchive(system, restoreGeneration))"
-    "restore must validate every staged physics body before acquiring live ownership")
+    "archive admission must immediately follow successful definition-lease release")
+file(READ
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp"
+    _fx_archive_production_source)
+extract_security_slice(
+    _fx_archive_production_source
+    "const fx::archive::EffectTableRestoreStatus tableReleaseStatus ="
+    "if (!FX_BeginArchive(system, restoreGeneration))"
+    _fx_restore_release_to_admission
+    "definition release to archive admission")
+foreach(_forbidden_release_gap_work
+    "Z_Malloc("
+    "MemFile_"
+    "candidateView"
+    "restoredSystem->"
+    "restoredBuffers->"
+    "TryReadFxArchiveDisk32NoReport("
+    "TryBuildFxArchiveRestoreCandidateDisk32("
+    "TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "FX_PrepareArchiveDisk32PhysicsEntries("
+    "FX_CollectArchivePhysicsEntries(")
+    forbid_security_slice_contains(
+        _fx_restore_release_to_admission
+        "${_forbidden_release_gap_work}"
+        "successful definition release must flow directly into generation-checked admission")
+endforeach()
+foreach(_large_restore_local
+    "FxArchiveDisk32ReaderWorkspace"
+    "FxArchiveRestoreCandidateDisk32Workspace")
+    require_source_not_matches(
+        "EffectsCore/fx_archive.cpp"
+        "(^|[^A-Za-z0-9_])${_large_restore_local}[ \t]+[A-Za-z_][A-Za-z0-9_]*"
+        "large reader/candidate workspaces must remain heap-only")
+endforeach()
+foreach(_forbidden_candidate_interior_free
+    "Z_Free(staging->candidate"
+    "Z_Free(candidateView"
+    "Z_Free(restoredSystem"
+    "Z_Free(restoredBuffers")
+    require_source_not_contains(
+        "EffectsCore/fx_archive.cpp"
+        "${_forbidden_candidate_interior_free}"
+        "candidate interiors remain owned solely by the candidate workspace")
+endforeach()
+foreach(_obsolete_raw_restore
+    "FX_ReadArchiveDataNoDrop("
+    "FX_FixupEffectDefHandlesNoDrop("
+    "FxSystem restoredSystem{};"
+    "relocationBits"
+    "relocatedReadAddress"
+    "relocatedWriteAddress")
+    require_source_not_contains(
+        "EffectsCore/fx_archive.cpp"
+        "${_obsolete_raw_restore}"
+        "portable production restore must not revive raw native-pointer parsing")
+endforeach()
 # Restore publication must preserve the archive owner's existing iterator -1
 # across both desired and rollback graph copies. Reacquiring after overwriting
 # the iterator would expose live sidecars behind a nonexclusive graph window.
@@ -7203,18 +7307,15 @@ require_source_matches(
     "FX_WriteArchiveDataNoDrop[ \t\r\n]*\\([ \t\r\n]*memFile,[ \t]*FX_ARCHIVE_BUFFER_SIZE,[ \t]*bufferSnapshot\\)"
     "save must serialize staged pool buffers rather than mutable live storage")
 
-# The legacy archive is Disk32. Native system pointers must be proven
-# representable before narrowing; physics ownership is serialized only as a
-# stable per-owner marker and never as native pointer bits.
+# The legacy archive is Disk32. Restore now decodes fixed-width addresses inside
+# the portable reader, so only the not-yet-ported save path may inspect and
+# narrow a native system pointer. Physics ownership remains a stable per-owner
+# marker and never native pointer bits.
 require_source_match_count(
     "EffectsCore/fx_archive.cpp"
     "reinterpret_cast<std::uintptr_t>\\(system\\)"
-    2
-    "both save and restore must inspect the full native system address")
-require_source_matches(
-    "EffectsCore/fx_archive.cpp"
-    "currentSystemAddress[ \t\r\n]*>[ \t\r\n]*\\(std::numeric_limits<std::uint32_t>::max\\)\\(\\)"
-    "restore must reject native system addresses outside Disk32")
+    1
+    "only save may inspect the native system address")
 require_source_matches(
     "EffectsCore/fx_archive.cpp"
     "systemAddress[ \t]*>[ \t\r\n]*\\(std::numeric_limits<std::uint32_t>::max\\)\\(\\)"
@@ -7234,8 +7335,8 @@ require_source_matches(
 require_source_match_count(
     "EffectsCore/fx_archive.cpp"
     "if[ \t\r\n]*\\([ \t\r\n]*sizeof\\(void[ \t]*\\*\\)[ \t]*!=[ \t]*4[ \t\r\n]*\\)"
-    2
-    "save and restore must fail closed until explicit 64-bit archive conversion exists")
+    1
+    "only save remains guarded until a portable Disk32 writer exists")
 
 # Portable BodyState conversion must not revive the legacy three-byte stack
 # disclosure, and the non-publishing reader must keep every partial archive
@@ -7313,20 +7414,18 @@ require_source_ordered(
     "FX archive save requires Disk32 conversion on this target"
     "FX_StageEffectTableNoDrop(&effectTableStaging)"
     "unsupported native save addresses must fail before staging archive payload")
-require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
+foreach(_obsolete_restore_width_guard
+    "FX archive restore requires Disk32 conversion on 64-bit targets"
     "FX archive restore requires Disk32 conversion on this target"
-    "static_cast<std::uint32_t>(currentSystemAddress)"
-    "restore must reject an unrepresentable native address before narrowing it")
-require_source_matches(
-    "EffectsCore/fx_archive.cpp"
-    "const[ \t]+std::uint32_t[ \t]+relocationBits[ \t]*=[ \t\r\n]*static_cast<std::uint32_t>\\(currentSystemAddress\\)[ \t\r\n]*-[ \t]*archivedSystemAddress[ \t]*[;]"
-    "Disk32 relocation must use defined unsigned modular subtraction")
-require_source_match_count(
-    "EffectsCore/fx_archive.cpp"
-    "const[ \t]+std::uint32_t[ \t]+relocated(Read|Write)Address[ \t]*=[ \t\r\n]*archived(Read|Write)Address[ \t]*\\+[ \t]*relocationBits[ \t]*[;]"
-    2
-    "Disk32 pointer relocation must use defined unsigned modular addition")
+    "currentSystemAddress"
+    "relocationBits"
+    "relocatedReadAddress"
+    "relocatedWriteAddress")
+    require_source_not_contains(
+        "EffectsCore/fx_archive.cpp"
+        "${_obsolete_restore_width_guard}"
+        "portable restore must not depend on native pointer width or raw relocation")
+endforeach()
 require_source_ordered(
     "EffectsCore/fx_effect_table_restore.cpp"
     "status = ParseEffectTable(memFile, lease, &entryCount);"
@@ -7343,8 +7442,8 @@ require_source_ordered(
     "g_restoreEntryCount = entryCount;"
     "archive effect-definition lookup must publish only after every registration")
 require_source_contains(
-    "EffectsCore/fx_archive.cpp"
-    "fx::archive::EffectTableRestoreFind(lease, key)"
+    "EffectsCore/fx_archive_reader_disk32.cpp"
+    "EffectTableRestoreFind(*context->lease, key)"
     "archive effect-definition lookup must require the exact active lease")
 require_source_contains(
     "EffectsCore/fx_archive_semantics.cpp"
