@@ -6,9 +6,9 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-archive-disk32-production-restore`; PR #31; branch point: merged portable-reader checkpoint
-  `7cbe7070`; current implementation/review-fix head: `57c5fa0a`; current upstream-integration baseline: merge
-  `11a9e08c` through upstream `312a9d2e`.
+- Active branch: `agent/fx-fastfile-disk32-converter`; branch point: merged production-restore checkpoint `1a966369`;
+  active work item: exact FX fast-file Disk32 schemas plus a report-free transactional native planner/materializer. Current
+  upstream-integration baseline remains merge `11a9e08c` through upstream `312a9d2e`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
 - Current production-restore checkpoint: `FX_Restore` now consumes the legacy Disk32 tail through the unified portable
   reader and an independently owned mutable candidate. The 670,976-byte x86 / 695,640-byte native64 reader and
@@ -125,7 +125,8 @@ work item changes. Do not create session-specific handoff files.
   idempotent-null destruction contract, and its claimed `BodyState` padding conflicts with the complete pinned 0x00--0x70
   field layout. Those three threads have evidence-backed replies, and all four review threads are resolved. Exact PR head
   `21dae5ca` passed all nine required jobs in run **29453934377**, including all four measured Windows x86 engine
-  variants. Final documentation-head CI and merge are the active gate.
+  variants. PR #31 squash-merged as `1a966369` from final documentation head `9fb7dafd`; its post-merge
+  documentation-only run **29454579529** is in progress while the next reader-first M5 branch begins.
 - PR #27 initial run **29439592615** at `ff59ef7e` passed Linux amd64/arm64, but portable Windows amd64/ARM64 exposed an
   include-boundary issue before their tests linked: the semantic translation unit imported the complete physics-sidecar
   header only for its token/512-body constants, causing MSVC analysis to charge an unrelated 4,104-byte inline convenience
@@ -869,17 +870,21 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Push the final PR #31 documentation checkpoint, verify all nine required jobs remain green, and merge the PR.
-2. Begin the next M5 runtime Disk32/fast-file widening seam while retaining the legacy writer, wire format, and native64
-   save guard until their separately validated encoder/equivalence checkpoint.
-3. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
+1. Implement exact FX fast-file Disk32 schemas, including every pointer-bearing definition/visual/trail/impact record and
+   complete size/offset/golden-byte contracts.
+2. Implement and test a pure two-pass effect-definition planner/materializer with exact source provenance, resolve-once
+   full-width callbacks, failure-atomic publication, and `indCount` trail-vertex capacity parity. Keep `db_load.cpp`, raw
+   XBlocks, asset registration, the legacy x86 loader, writer, wire format, and native64 save guard unchanged.
+3. Add the parallel impact-table planner/materializer and focused source/security contracts, then update this file before
+   opening the next PR and drive all CI/review threads to clean.
+4. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
-4. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
+5. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
    and `KISAKCOD_GAME_DIR` secret are absent. Implement the designed handle-relative recursive deletion
    service without symlink/reparse traversal instead; surface the smoke infrastructure blocker if asked.
-5. Extract standard-stream console services, then process/event services and Linux signal-park plus
+6. Extract standard-stream console services, then process/event services and Linux signal-park plus
    macOS Mach crash freezing behind the already isolated terminal API.
-6. Widen/tokenize the remaining MP physics pointer fields, continue M1/M5 ABI cleanup, and add production fast-file
+7. Widen/tokenize the remaining MP physics pointer fields, continue M1/M5 ABI cleanup, and add production fast-file
    fixtures/fuzzing before enabling any native64 engine target.
 
 ## Known release blockers

@@ -1135,8 +1135,10 @@ measured Windows x86 engine variants. Review hardening binds Ready views to the 
 same-owner lease reacquisition; Gemini's valid const-correctness cleanup is applied, while its null-cleanup and claimed
 `BodyState`-padding reports are contradicted by pinned tests/layout contracts and have evidence-backed replies. All four
 threads are resolved, and exact review-fix/documentation head `21dae5ca` passed all nine required jobs in run
-**29453934377**. Final documentation-head CI and merge are the active gate; the next implementation batch is the next M5
-runtime Disk32/fast-file widening seam. Guarded writer replacement follows later after exact x86 full-image equivalence.
+**29453934377**. PR #31 squash-merged as `1a966369` from final documentation head `9fb7dafd`; post-merge run
+**29454579529** is in progress. The active next batch adds exact FX fast-file Disk32 definition/visual/trail/impact schemas
+and a report-free transactional native planner/materializer without touching the stateful production loader. Guarded
+production integration and writer replacement follow later after exact x86 full-image equivalence.
 A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
