@@ -541,6 +541,16 @@ void FinalizeEffectTotalSize(EffectFixture *const fixture)
     fixture->effect()->totalSize = static_cast<std::int32_t>(bytes);
 }
 
+bool RejectReference(
+    void *,
+    fastfile::FxFastFileDisk32ReferenceKind,
+    const disk32::PointerToken *,
+    disk32::PointerToken,
+    fastfile::FxFastFileDisk32ResolvedReference *) noexcept
+{
+    return false;
+}
+
 struct ProvenanceState final
 {
     DiskImage *image = nullptr;
@@ -558,6 +568,10 @@ struct ProvenanceState final
     char stringReplacement = 'g';
     bool mutateString = false;
     bool stringMutated = false;
+    fastfile::FxFastFileDisk32Resolvers *resolverMutationTarget = nullptr;
+    void *resolverReplacementContext = nullptr;
+    bool mutateResolver = false;
+    bool resolverMutated = false;
 };
 
 bool ValidateSourceSpan(
@@ -575,6 +589,14 @@ bool ValidateSourceSpan(
     ++state->calls;
     if (state->failEnabled && state->failKind == kind)
         return false;
+    if (state->mutateResolver && !state->resolverMutated
+        && state->resolverMutationTarget)
+    {
+        state->resolverMutationTarget->context =
+            state->resolverReplacementContext;
+        state->resolverMutationTarget->resolve = RejectReference;
+        state->resolverMutated = true;
+    }
     if (sourceField && sourceField->value != token.value)
         return false;
     if (kind == fastfile::FxFastFileDisk32SourceSpanKind::String
@@ -790,6 +812,23 @@ struct ResolverState final
     char *acceptedStringMutationTarget = nullptr;
     char acceptedStringReplacement = 'g';
     bool acceptedStringMutated = false;
+    disk32::PointerToken *futureTokenMutationTarget = nullptr;
+    disk32::PointerToken originalFutureToken{};
+    disk32::PointerToken substituteFutureToken{};
+    std::size_t mutateFutureTokenAt =
+        (std::numeric_limits<std::size_t>::max)();
+    std::size_t restoreFutureTokenAt =
+        (std::numeric_limits<std::size_t>::max)();
+    bool futureTokenMutated = false;
+    bool futureTokenRestored = false;
+    bool useFutureTokenResults = false;
+    const void *originalFutureResult = nullptr;
+    const void *substituteFutureResult = nullptr;
+    fastfile::FxFastFileDisk32Resolvers *resolverMutationTarget = nullptr;
+    void *resolverReplacementContext = nullptr;
+    std::size_t mutateResolverAt =
+        (std::numeric_limits<std::size_t>::max)();
+    bool resolverMutated = false;
     fastfile::FxFastFileNativeDisk32Workspace *workspace = nullptr;
     const fastfile::FxFastFileEffectDefDisk32View *source = nullptr;
     const fastfile::FxFastFileDisk32Resolvers *resolvers = nullptr;
@@ -837,13 +876,38 @@ bool ResolveReference(
     fastfile::FxFastFileDisk32ResolvedReference *const outReference) noexcept
 {
     auto *const state = static_cast<ResolverState *>(context);
-    if (!state || !state->image || !sourceField || !outReference
-        || sourceField->value != token.value)
+    if (!state || !state->image || !sourceField || !outReference)
     {
         return false;
     }
+    const bool frozenFutureRequest = state->futureTokenMutationTarget
+        && sourceField == state->futureTokenMutationTarget
+        && token.value == state->originalFutureToken.value
+        && sourceField->value == state->substituteFutureToken.value;
+    if (sourceField->value != token.value && !frozenFutureRequest)
+        return false;
 
     const std::size_t callIndex = state->calls++;
+    if (callIndex == state->mutateResolverAt
+        && state->resolverMutationTarget)
+    {
+        state->resolverMutationTarget->context =
+            state->resolverReplacementContext;
+        state->resolverMutationTarget->resolve = RejectReference;
+        state->resolverMutated = true;
+    }
+    if (callIndex == state->mutateFutureTokenAt
+        && state->futureTokenMutationTarget)
+    {
+        *state->futureTokenMutationTarget = state->substituteFutureToken;
+        state->futureTokenMutated = true;
+    }
+    if (callIndex == state->restoreFutureTokenAt
+        && state->futureTokenMutationTarget)
+    {
+        *state->futureTokenMutationTarget = state->originalFutureToken;
+        state->futureTokenRestored = true;
+    }
     if (callIndex == state->mutateAcceptedStringAt
         && state->acceptedStringMutationTarget)
     {
@@ -897,6 +961,14 @@ bool ResolveReference(
     else
     {
         resolved.pointer = HighIdentity(kind, callIndex);
+    }
+    if (state->useFutureTokenResults
+        && kind == fastfile::FxFastFileDisk32ReferenceKind::Material)
+    {
+        if (token.value == state->originalFutureToken.value)
+            resolved.pointer = state->originalFutureResult;
+        else if (token.value == state->substituteFutureToken.value)
+            resolved.pointer = state->substituteFutureResult;
     }
     if (callIndex == state->assetResultAt)
         resolved.pointer = state->assetResult;
@@ -1973,6 +2045,177 @@ void TestResolvedStringMutation()
               == fastfile::FxFastFileNativeDisk32Phase::Empty);
     }
 
+}
+
+void TestFutureTokenMutationRestore()
+{
+    EffectFixture fixture = MakeEffect({MinimalElem()}, 0, 1, 0);
+    AttachSamples(&fixture, 0, 1, 0);
+    const disk32::PointerToken firstVisual =
+        AddOpaqueReference(&fixture, UINT32_C(0xFA01));
+    const disk32::PointerToken originalFuture =
+        AddOpaqueReference(&fixture, UINT32_C(0xFA02));
+    const disk32::PointerToken substituteFuture =
+        AddOpaqueReference(&fixture, UINT32_C(0xFA03));
+    AttachVisuals(
+        &fixture,
+        0,
+        fastfile::FxElemTypeDisk32::SpriteBillboard,
+        {firstVisual, originalFuture});
+    fixture.elems()[0].effectOnImpact.token =
+        AddOpaqueReference(&fixture, UINT32_C(0xFA04));
+    auto *const visualRequests = fixture.image.Resolve<
+        fastfile::FxElemVisualsDisk32>(fixture.elems()[0].visuals.token);
+    CHECK(visualRequests != nullptr);
+    if (!visualRequests)
+        return;
+    FinalizeEffectTotalSize(&fixture);
+
+    EffectViewOwner view(&fixture);
+    ResolverOwner resolver(&fixture.image);
+    std::uint32_t originalIdentity = UINT32_C(0x0A11CE01);
+    std::uint32_t substituteIdentity = UINT32_C(0x0BADF00D);
+    resolver.state.futureTokenMutationTarget = &visualRequests[1].token;
+    resolver.state.originalFutureToken = originalFuture;
+    resolver.state.substituteFutureToken = substituteFuture;
+    resolver.state.mutateFutureTokenAt = 1;
+    resolver.state.restoreFutureTokenAt = 3;
+    resolver.state.useFutureTokenResults = true;
+    resolver.state.originalFutureResult = &originalIdentity;
+    resolver.state.substituteFutureResult = &substituteIdentity;
+
+    WorkspaceOwner workspace;
+    fastfile::FxFastFileNativeDisk32Plan plan{};
+    CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+          == fastfile::FxFastFileNativeDisk32Status::Success);
+    CHECK(resolver.state.futureTokenMutated);
+    CHECK(resolver.state.futureTokenRestored);
+    CHECK(visualRequests[1].token.value == originalFuture.value);
+    CHECK(resolver.state.calls == 4);
+    CHECK(plan.resolvedReferenceCount() == 4);
+    CHECK(workspace.get()->phase()
+          == fastfile::FxFastFileNativeDisk32Phase::Planned);
+
+    bool originalWasResolved = false;
+    bool substituteWasResolved = false;
+    for (std::size_t index = 0;
+         index < resolver.state.calls
+             && index < resolver.state.observations.size();
+         ++index)
+    {
+        const ResolverObservation &observation =
+            resolver.state.observations[index];
+        if (observation.kind
+            != fastfile::FxFastFileDisk32ReferenceKind::Material)
+        {
+            continue;
+        }
+        if (observation.token == originalFuture.value)
+        {
+            originalWasResolved = true;
+            CHECK(observation.result == &originalIdentity);
+        }
+        if (observation.token == substituteFuture.value)
+        {
+            substituteWasResolved = true;
+            CHECK(observation.result != &substituteIdentity);
+        }
+    }
+    CHECK(originalWasResolved);
+    CHECK(!substituteWasResolved);
+
+    OutputStorage storage(plan.outputBytes(), plan.outputAlignment());
+    FxEffectDef *output = nullptr;
+    CHECK(fastfile::TryMaterializeFxEffectDefDisk32(
+              workspace.get(),
+              plan,
+              storage.data(),
+              storage.capacity(),
+              &output)
+          == fastfile::FxFastFileNativeDisk32Status::Success);
+    CHECK(output == storage.data());
+    CHECK(output && output->elemDefs != nullptr);
+    if (output && output->elemDefs)
+    {
+        const FxElemVisuals *const visuals =
+            output->elemDefs[0].visuals.array;
+        CHECK(storage.Contains(visuals, 2u * sizeof(*visuals)));
+        if (visuals)
+        {
+            CHECK(NativeVisualIdentity(
+                      visuals[1],
+                      fastfile::FxElemTypeDisk32::SpriteBillboard)
+                  == &originalIdentity);
+            CHECK(NativeVisualIdentity(
+                      visuals[1],
+                      fastfile::FxElemTypeDisk32::SpriteBillboard)
+                  != &substituteIdentity);
+        }
+    }
+    CHECK(storage.TailGuardIsIntact());
+    CHECK(workspace.get()->phase()
+          == fastfile::FxFastFileNativeDisk32Phase::Empty);
+}
+
+void TestResolverDescriptorSnapshot()
+{
+    for (const bool mutateDuringProvenance : {true, false})
+    {
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        std::uint32_t replacementContext = UINT32_C(0x5A17C0DE);
+        if (mutateDuringProvenance)
+        {
+            view.provenance().resolverMutationTarget = &resolver.callbacks;
+            view.provenance().resolverReplacementContext =
+                &replacementContext;
+            view.provenance().mutateResolver = true;
+        }
+        else
+        {
+            resolver.state.resolverMutationTarget = &resolver.callbacks;
+            resolver.state.resolverReplacementContext = &replacementContext;
+            resolver.state.mutateResolverAt = 0;
+        }
+
+        WorkspaceOwner workspace;
+        fastfile::FxFastFileNativeDisk32Plan plan{};
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::Success);
+        CHECK(mutateDuringProvenance
+                  ? view.provenance().resolverMutated
+                  : resolver.state.resolverMutated);
+        CHECK(resolver.callbacks.context == &replacementContext);
+        CHECK(resolver.callbacks.resolve == RejectReference);
+        CHECK(resolver.state.calls == 2);
+        CHECK(plan.resolvedReferenceCount() == 2);
+        CHECK(workspace.get()->phase()
+              == fastfile::FxFastFileNativeDisk32Phase::Planned);
+
+        OutputStorage storage(plan.outputBytes(), plan.outputAlignment());
+        FxEffectDef *output = nullptr;
+        CHECK(fastfile::TryMaterializeFxEffectDefDisk32(
+                  workspace.get(),
+                  plan,
+                  storage.data(),
+                  storage.capacity(),
+                  &output)
+              == fastfile::FxFastFileNativeDisk32Status::Success);
+        CHECK(output == storage.data());
+        CHECK(output && output->elemDefs != nullptr);
+        if (output && output->elemDefs)
+        {
+            CHECK(NativeVisualIdentity(
+                      output->elemDefs[0].visuals.instance,
+                      fastfile::FxElemTypeDisk32::SpriteBillboard)
+                  == resolver.state.observations[1].result);
+        }
+        CHECK(storage.TailGuardIsIntact());
+        CHECK(workspace.get()->phase()
+              == fastfile::FxFastFileNativeDisk32Phase::Empty);
+    }
 }
 
 void TestVisualValidation()
@@ -3308,6 +3551,8 @@ int main()
     TestPointerSpanAndProvenanceFailures();
     TestProvenanceCallbackMutation();
     TestResolvedStringMutation();
+    TestFutureTokenMutationRestore();
+    TestResolverDescriptorSnapshot();
     TestVisualValidation();
     TestTrailValidation();
     TestResolverFailuresAndReentry();
