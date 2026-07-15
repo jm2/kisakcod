@@ -194,6 +194,12 @@ struct VisibilitySelectorFixture
     FxVisState foreign{};
 };
 
+union VisibilitySelectorOutputAlias
+{
+    const FxVisState *read;
+    FxVisState *write;
+};
+
 bool SelectorPairsEqual(
     const FxVisibilityBufferSelectors &left,
     const FxVisibilityBufferSelectors &right) noexcept
@@ -286,6 +292,10 @@ bool TestVisibilitySelectorDerivation()
         || !RejectsSelectorsWithoutChangingOutputs(
             &slots[0], &slots[1], &slots[0], foreign)
         || !RejectsSelectorsWithoutChangingOutputs(
+            &slots[0], &slots[1], &slots[2], &slots[1])
+        || !RejectsSelectorsWithoutChangingOutputs(
+            &slots[0], &slots[1], &slots[0], &slots[2])
+        || !RejectsSelectorsWithoutChangingOutputs(
             &slots[0], &slots[1], &slots[0], &slots[0])
         || !RejectsSelectorsWithoutChangingOutputs(
             &slots[0], &slots[1], &slots[1], &slots[1]))
@@ -375,6 +385,10 @@ bool TestVisibilitySelectorPairDerivation()
             &slots[0], &slots[1], foreign, &slots[1])
         || !RejectsSelectorPairWithoutChangingOutput(
             &slots[0], &slots[1], &slots[0], foreign)
+        || !RejectsSelectorPairWithoutChangingOutput(
+            &slots[0], &slots[1], &slots[2], &slots[1])
+        || !RejectsSelectorPairWithoutChangingOutput(
+            &slots[0], &slots[1], &slots[0], &slots[2])
         || !RejectsSelectorPairWithoutChangingOutput(
             &slots[0], &slots[1], &slots[0], &slots[0])
         || !RejectsSelectorPairWithoutChangingOutput(
@@ -511,6 +525,19 @@ bool TestVisibilitySelectorResolution()
         return false;
     }
 
+    VisibilitySelectorOutputAlias aliasedOutput{};
+    aliasedOutput.read = foreign;
+    if (FX_TryResolveVisibilitySelectors(
+            &live[0],
+            &live[1],
+            canonical,
+            &aliasedOutput.read,
+            &aliasedOutput.write)
+        || aliasedOutput.read != foreign)
+    {
+        return false;
+    }
+
     return FX_VisibilitySelectorsRoundTrip(
         &live[0],
         &live[1],
@@ -575,6 +602,10 @@ bool TestVisibilitySelectorRoundTripRejection()
             &live[0], &live[1], foreign, &live[1], canonical)
         && !FX_VisibilitySelectorsRoundTrip(
             &live[0], &live[1], &live[0], foreign, canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &live[2], &live[1], canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &live[0], &live[2], canonical)
         && !FX_VisibilitySelectorsRoundTrip(
             &live[0], &live[1], &live[0], &live[0], canonical)
         && !FX_VisibilitySelectorsRoundTrip(
