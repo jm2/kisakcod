@@ -132,8 +132,6 @@ struct FxArchiveRestorePhysicsScratch
 constexpr int FX_ARCHIVE_SYSTEM_SIZE = 2656;
 constexpr int FX_ARCHIVE_BUFFER_SIZE = 291968;
 constexpr int FX_ARCHIVE_BODY_STATE_SIZE = 112;
-constexpr std::uint16_t FX_ARCHIVE_INVALID_HANDLE = 0xFFFFu;
-constexpr std::uint32_t FX_ARCHIVE_PHYSICS_FLAG = 0x08000000u;
 // Restored timestamps feed legacy signed-int additions and differences. Bound
 // each accepted delay/lifespan/loop horizon to one day, then reserve four such
 // horizons around every absolute time: finite loop offset + spawn delay +
@@ -142,14 +140,11 @@ constexpr std::int64_t FX_ARCHIVE_DURATION_LIMIT_MSEC =
     24ll * 60ll * 60ll * 1000ll;
 constexpr std::int64_t FX_ARCHIVE_TIME_HEADROOM_MSEC =
     4ll * FX_ARCHIVE_DURATION_LIMIT_MSEC;
-constexpr std::int32_t FX_ARCHIVE_RANDOM_RANGE_AMPLITUDE_MAX = 32767;
 
 // CoD4 maps conventionally live inside +/-131072 units. The archive permits
 // eight times that range for custom content, while rejecting finite values
 // large enough to overflow common squared-distance and integration math.
 constexpr float FX_ARCHIVE_SPATIAL_COMPONENT_MAX = 1048576.0f;
-constexpr float FX_ARCHIVE_DISTANCE_MAX = 16777216.0f;
-constexpr std::int32_t FX_ARCHIVE_DISTANCE_INTEGER_MAX = 16777216;
 constexpr float FX_ARCHIVE_LINEAR_VELOCITY_MAX = 1048576.0f;
 constexpr float FX_ARCHIVE_ANGULAR_VELOCITY_MAX = 65536.0f;
 constexpr float FX_ARCHIVE_PHYSICS_MASS_MIN = 0.0001f;
@@ -204,18 +199,6 @@ bool FX_ValidateArchiveVector(
             return false;
     }
     return true;
-}
-
-bool FX_ValidateArchiveUnitQuaternion(const float (&quat)[4]) noexcept
-{
-    if (!FX_ValidateArchiveVector(quat, 1.001f))
-        return false;
-
-    double lengthSquared = 0.0;
-    for (const float value : quat)
-        lengthSquared += static_cast<double>(value) * value;
-    return lengthSquared >= 1.0 - FX_ARCHIVE_UNIT_LENGTH_TOLERANCE
-        && lengthSquared <= 1.0 + FX_ARCHIVE_UNIT_LENGTH_TOLERANCE;
 }
 
 bool FX_ValidateArchiveOrthonormalBasis(
@@ -327,130 +310,6 @@ bool FX_ArchiveTimeDifferenceFits(
             <= static_cast<std::int64_t>(
                 (std::numeric_limits<std::int32_t>::max)())
                 - FX_ARCHIVE_TIME_HEADROOM_MSEC;
-}
-
-bool FX_ValidateArchiveSpatialFrame(
-    const FxSpatialFrame &frame) noexcept
-{
-    return FX_ValidateArchiveUnitQuaternion(frame.quat)
-        && FX_ValidateArchiveVector(
-            frame.origin, FX_ARCHIVE_SPATIAL_COMPONENT_MAX);
-}
-
-bool FX_ValidateArchiveSampledLifespan(
-    const FxEffect *const effect,
-    const FxElemDef *const elemDef,
-    const std::int32_t msecBegin,
-    const std::uint8_t sequence) noexcept
-{
-    if (!effect || !elemDef || effect->randomSeed >= 0x1DFu
-        || elemDef->lifeSpanMsec.amplitude < 0
-        || elemDef->lifeSpanMsec.amplitude
-            > FX_ARCHIVE_RANDOM_RANGE_AMPLITUDE_MAX)
-    {
-        return false;
-    }
-
-    const std::uint32_t randomSeed =
-        (296u * sequence
-            + static_cast<std::uint32_t>(msecBegin)
-            + effect->randomSeed)
-        % 0x1DFu;
-    std::uint32_t randomBits = 0;
-    std::memcpy(
-        &randomBits,
-        &fx_randomTable[randomSeed + 17u],
-        sizeof(randomBits));
-    const std::int64_t sampledLifespan =
-        static_cast<std::int64_t>(elemDef->lifeSpanMsec.base)
-        + ((static_cast<std::int64_t>(
-                elemDef->lifeSpanMsec.amplitude)
-                + 1)
-            * (randomBits & 0xFFFFu)
-            >> 16);
-    const std::int64_t msecEnd =
-        static_cast<std::int64_t>(msecBegin) + sampledLifespan;
-    return sampledLifespan > 0
-        && sampledLifespan <= FX_ARCHIVE_DURATION_LIMIT_MSEC
-        && msecEnd >= (std::numeric_limits<std::int32_t>::min)()
-        && msecEnd <= (std::numeric_limits<std::int32_t>::max)();
-}
-
-bool FX_ValidateArchiveEffectRuntime(
-    const FxSystem *const system,
-    const FxEffect *const effect) noexcept
-{
-    if (!system || !effect
-        || !FX_ValidateArchiveSpatialFrame(effect->frameAtSpawn)
-        || !FX_ValidateArchiveSpatialFrame(effect->frameNow)
-        || !FX_ValidateArchiveSpatialFrame(effect->framePrev)
-        || !FX_ArchiveFloatIsBounded(
-            effect->distanceTraveled, FX_ARCHIVE_DISTANCE_MAX)
-        || effect->distanceTraveled < 0.0f
-        || effect->randomSeed >= 0x1DFu
-        || effect->msecLastUpdate < effect->msecBegin
-        || !FX_ArchiveTimeDifferenceFits(
-            system->msecNow, effect->msecBegin)
-        || !FX_ArchiveTimeDifferenceFits(
-            system->msecNow, effect->msecLastUpdate)
-        || !FX_ArchiveTimeDifferenceFits(
-            effect->msecLastUpdate, effect->msecBegin)
-        || !FX_ArchiveTimeDifferenceFits(
-            system->msecDraw, effect->msecBegin))
-    {
-        return false;
-    }
-
-    const std::uint32_t dobjHandle = effect->boltAndSortOrder.dobjHandle;
-    const std::uint32_t boneIndex = effect->boltAndSortOrder.boneIndex;
-    if (boneIndex == FX_BONE_INDEX_NONE)
-    {
-        // A no-bone effect is either world-oriented (the sentinel pair) or
-        // carries a mark entity.  Mark consumers index the entity arrays.
-        return dobjHandle == FX_DOBJ_HANDLE_NONE
-            || dobjHandle < MAX_GENTITIES;
-    }
-
-    // Bolted consumers pass the handle to Com_GetClientDObj before checking
-    // whether the referenced object still exists.
-    return dobjHandle < CLIENT_DOBJ_HANDLE_MAX;
-}
-
-bool FX_ValidateArchiveElemRuntime(
-    const FxSystem *const system,
-    const FxEffect *const effect,
-    const FxElem *const elem,
-    const FxElemDef *const elemDef) noexcept
-{
-    if (!system || !effect || !elem || !elemDef
-        || !FX_ArchiveTimeDifferenceFits(
-            system->msecNow, elem->msecBegin)
-        || !FX_ArchiveTimeDifferenceFits(
-            system->msecDraw, elem->msecBegin)
-        || !FX_ValidateArchiveSampledLifespan(
-            effect, elemDef, elem->msecBegin, elem->sequence))
-    {
-        return false;
-    }
-    if (!FX_ValidateArchiveVector(
-            elem->baseVel, FX_ARCHIVE_LINEAR_VELOCITY_MAX))
-    {
-        return false;
-    }
-
-    const bool storesPhysicsBody = elemDef->elemType == FX_ELEM_TYPE_MODEL
-        && (static_cast<std::uint32_t>(elemDef->flags)
-            & FX_ARCHIVE_PHYSICS_FLAG)
-            != 0;
-    if (!storesPhysicsBody)
-    {
-        if (!FX_ValidateArchiveVector(
-                elem->origin, FX_ARCHIVE_SPATIAL_COMPONENT_MAX))
-        {
-            return false;
-        }
-    }
-    return true;
 }
 
 template <typename POINTER_TYPE>
@@ -850,147 +709,6 @@ bool FX_EffectTableRestoreReleaseIsSafe(
     std::abort();
 }
 
-bool FX_GetArchiveEffectDefCount(
-    const FxEffect *const effect,
-    std::size_t *const outCount) noexcept
-{
-    if (!effect || !effect->def || !outCount
-        || effect->def->elemDefCountLooping < 0
-        || effect->def->elemDefCountOneShot < 0
-        || effect->def->elemDefCountEmission < 0)
-    {
-        return false;
-    }
-
-    const std::int64_t count =
-        static_cast<std::int64_t>(effect->def->elemDefCountLooping)
-        + effect->def->elemDefCountOneShot
-        + effect->def->elemDefCountEmission;
-    if (count < 0
-        || count
-            > static_cast<std::int64_t>(
-                (std::numeric_limits<std::uint8_t>::max)()) + 1
-        || (count != 0 && !effect->def->elemDefs))
-    {
-        return false;
-    }
-
-    *outCount = static_cast<std::size_t>(count);
-    return true;
-}
-
-bool FX_ValidateArchiveTimeRange(const FxIntRange &range) noexcept
-{
-    // Sampling uses (amplitude + 1) * uint16_random in signed int math.
-    // The amplitude cap keeps that multiplication representable as well as
-    // bounding the resulting delay/lifespan to the archive time horizon.
-    if (range.amplitude < 0
-        || range.amplitude > FX_ARCHIVE_RANDOM_RANGE_AMPLITUDE_MAX)
-    {
-        return false;
-    }
-    const std::int64_t minimum = range.base;
-    const std::int64_t maximum =
-        static_cast<std::int64_t>(range.base) + range.amplitude;
-    return minimum >= -FX_ARCHIVE_DURATION_LIMIT_MSEC
-        && minimum <= FX_ARCHIVE_DURATION_LIMIT_MSEC
-        && maximum >= -FX_ARCHIVE_DURATION_LIMIT_MSEC
-        && maximum <= FX_ARCHIVE_DURATION_LIMIT_MSEC;
-}
-
-bool FX_ValidateArchiveOneShotCount(const FxIntRange &range) noexcept
-{
-    if (range.base < 0 || range.amplitude < 0
-        || range.amplitude > FX_ARCHIVE_RANDOM_RANGE_AMPLITUDE_MAX)
-    {
-        return false;
-    }
-    const std::int64_t maximum =
-        static_cast<std::int64_t>(range.base) + range.amplitude;
-    return maximum <= static_cast<std::int64_t>(MAX_ELEMS);
-}
-
-bool FX_ValidateArchiveEffectDefTiming(
-    const FxEffectDef *const def,
-    const std::size_t elemDefCount) noexcept
-{
-    if (!def || elemDefCount > std::size_t{256}
-        || (elemDefCount != 0 && !def->elemDefs))
-    {
-        return false;
-    }
-
-    std::int64_t maximumLoopingLife = 0;
-    bool hasInfiniteLoop = false;
-    for (std::size_t index = 0; index < elemDefCount; ++index)
-    {
-        const FxElemDef &elemDef = def->elemDefs[index];
-        if (!FX_ValidateArchiveTimeRange(elemDef.spawnDelayMsec)
-            || !FX_ValidateArchiveTimeRange(elemDef.lifeSpanMsec))
-        {
-            return false;
-        }
-
-        if (index < static_cast<std::size_t>(def->elemDefCountLooping))
-        {
-            const std::int32_t interval =
-                elemDef.spawn.looping.intervalMsec;
-            const std::int32_t count = elemDef.spawn.looping.count;
-            if (interval < 0
-                || (interval == 0
-                    && elemDef.elemType != FX_ELEM_TYPE_TRAIL)
-                || interval > FX_ARCHIVE_DURATION_LIMIT_MSEC
-                || count < 0)
-            {
-                return false;
-            }
-            if (count == (std::numeric_limits<std::int32_t>::max)())
-            {
-                hasInfiniteLoop = true;
-                continue;
-            }
-
-            const std::int64_t lastSpawn = count > 1
-                ? static_cast<std::int64_t>(interval) * (count - 1)
-                : 0;
-            if (lastSpawn > FX_ARCHIVE_DURATION_LIMIT_MSEC)
-                return false;
-            if (maximumLoopingLife < lastSpawn)
-                maximumLoopingLife = lastSpawn;
-        }
-        else if (!FX_ValidateArchiveOneShotCount(
-                     elemDef.spawn.oneShot.count))
-        {
-            return false;
-        }
-    }
-
-    const std::int32_t expectedLoopingLife = hasInfiniteLoop
-        ? (std::numeric_limits<std::int32_t>::max)()
-        : static_cast<std::int32_t>(maximumLoopingLife);
-    return def->msecLoopingLife == expectedLoopingLife;
-}
-
-bool FX_ArchiveElemTypeMatchesClass(
-    const std::uint8_t elemType,
-    const std::size_t elemClass) noexcept
-{
-    switch (elemClass)
-    {
-    case 0:
-        return elemType == FX_ELEM_TYPE_SPRITE_BILLBOARD
-            || elemType == FX_ELEM_TYPE_SPRITE_ORIENTED
-            || elemType == FX_ELEM_TYPE_TAIL;
-    case 1:
-        return elemType == FX_ELEM_TYPE_MODEL
-            || elemType == FX_ELEM_TYPE_OMNI_LIGHT;
-    case 2:
-        return elemType == FX_ELEM_TYPE_CLOUD;
-    default:
-        return false;
-    }
-}
-
 bool FX_ValidateArchiveBodyState(const BodyState &state) noexcept
 {
     std::uint32_t underwaterBits = 0;
@@ -1047,108 +765,6 @@ void FX_NormalizeArchiveBodyState(
     // body's object state.  Rebasing it prevents an untrusted absolute value
     // from overflowing timeNow - timeLastAsleep on the first physics tick.
     state->timeLastAsleep = archiveTime;
-}
-
-bool FX_ValidateArchiveCamera(const FxCamera &camera) noexcept
-{
-    const std::int32_t isValid = Sys_AtomicLoad(&camera.isValid);
-    if ((isValid != 0 && isValid != 1)
-        || camera.frustumPlaneCount > 6
-        || (isValid == 0 && camera.frustumPlaneCount != 0))
-        return false;
-    if (!FX_ValidateArchiveVector(
-            camera.origin, FX_ARCHIVE_SPATIAL_COMPONENT_MAX))
-    {
-        return false;
-    }
-    for (std::size_t planeIndex = 0; planeIndex < 6; ++planeIndex)
-    {
-        const float (&plane)[4] = camera.frustum[planeIndex];
-        if (!FX_ArchiveFloatIsBounded(plane[0], 2.0f)
-            || !FX_ArchiveFloatIsBounded(plane[1], 2.0f)
-            || !FX_ArchiveFloatIsBounded(plane[2], 2.0f)
-            || !FX_ArchiveFloatIsBounded(
-                plane[3], FX_ARCHIVE_DISTANCE_MAX))
-        {
-            return false;
-        }
-        if (planeIndex < camera.frustumPlaneCount)
-        {
-            const double normalLengthSquared =
-                static_cast<double>(plane[0]) * plane[0]
-                + static_cast<double>(plane[1]) * plane[1]
-                + static_cast<double>(plane[2]) * plane[2];
-            if (normalLengthSquared
-                    < 1.0 - FX_ARCHIVE_UNIT_LENGTH_TOLERANCE
-                || normalLengthSquared
-                    > 1.0 + FX_ARCHIVE_UNIT_LENGTH_TOLERANCE)
-            {
-                return false;
-            }
-        }
-    }
-    if (isValid != 0 && camera.frustumPlaneCount != 0)
-    {
-        if (!FX_ValidateArchiveOrthonormalBasis(camera.axis))
-            return false;
-    }
-    else
-    {
-        for (const auto &row : camera.axis)
-        {
-            if (!FX_ValidateArchiveVector(row, 1.001f))
-                return false;
-        }
-    }
-    return FX_ValidateArchiveVector(
-        camera.viewOffset, FX_ARCHIVE_SPATIAL_COMPONENT_MAX);
-}
-
-bool FX_ValidateArchiveVisibilityStates(
-    const FxVisState *const visStates) noexcept
-{
-    if (!visStates)
-        return false;
-    for (std::size_t stateIndex = 0; stateIndex < 2; ++stateIndex)
-    {
-        const FxVisState &state = visStates[stateIndex];
-        const std::int32_t blockerCount =
-            Sys_AtomicLoad(&state.blockerCount);
-        if (blockerCount < 0 || blockerCount > 256)
-            return false;
-        for (std::int32_t blockerIndex = 0;
-             blockerIndex < blockerCount;
-             ++blockerIndex)
-        {
-            if (!FX_ValidateArchiveVector(
-                    state.blocker[blockerIndex].origin,
-                    FX_ARCHIVE_SPATIAL_COMPONENT_MAX))
-            {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-bool FX_ValidateArchiveSystemState(
-    const FxSystem *const system,
-    const FxVisState *const visStates) noexcept
-{
-    if (!system)
-        return false;
-    return FX_ArchiveEffectRingIsValid(system)
-        && system->isInitialized && system->localClientNum == 0
-        && system->msecNow >= 0 && system->msecDraw >= -1
-        && FX_AreArchiveCamerasReady(
-            system->camera, system->cameraPrev, system->msecDraw)
-        && Sys_AtomicLoad(&system->deferredElemCount) == 0
-        && system->sprite.indexCount == 0
-        && FX_ArchiveTimeDifferenceFits(
-            system->msecNow, system->msecDraw)
-        && FX_ValidateArchiveCamera(system->camera)
-        && FX_ValidateArchiveCamera(system->cameraPrev)
-        && FX_ValidateArchiveVisibilityStates(visStates);
 }
 
 bool FX_BuildArchiveExpectedTokens(
@@ -1931,63 +1547,33 @@ FX_PublishArchivePhysicsSafeEmptyLocked(
         : Status::RecoverableFailure;
 }
 
-bool FX_AppendArchivePhysicsEntry(
-    FxSystem *const system,
-    FxEffect *const effect,
-    FxElem *const elem,
-    const FxElemDef *const elemDef,
-    FxArchivePhysicsEntry *const entries,
-    const std::size_t entryCapacity,
-    std::size_t *const entryCount) noexcept
+struct FxArchivePhysicsEntrySink
 {
-    if (!system || !effect || !elem || !elemDef || !entryCount)
+    FxArchivePhysicsEntry *entries;
+    std::size_t entryCapacity;
+};
+
+bool FX_AppendArchivePhysicsEntry(
+    void *const opaqueContext,
+    const fx::archive::FxArchiveSemanticPhysicsDescriptor &descriptor,
+    const std::size_t physicsIndex) noexcept
+{
+    if (!opaqueContext)
         return false;
-    if (elemDef->elemType != FX_ELEM_TYPE_MODEL
-        || (static_cast<std::uint32_t>(elemDef->flags)
-            & FX_ARCHIVE_PHYSICS_FLAG)
-            == 0)
-    {
+
+    auto &context =
+        *static_cast<FxArchivePhysicsEntrySink *>(opaqueContext);
+    if (!context.entries)
         return true;
-    }
-    if (elemDef->visualCount == 0
-        || (elemDef->visualCount > 1 && !elemDef->visuals.array)
-        || *entryCount >= fx::physics::BODY_LIMIT
-        || (entries && *entryCount >= entryCapacity))
-    {
-        return false;
-    }
-
-    const std::uint32_t randomSeed =
-        (296u * static_cast<std::uint32_t>(elem->sequence)
-            + static_cast<std::uint32_t>(elem->msecBegin)
-            + static_cast<std::uint32_t>(effect->randomSeed))
-        % 0x1DFu;
-    const XModel *const model =
-        FX_GetElemVisuals(elemDef, static_cast<std::int32_t>(randomSeed)).model;
-    if (!model)
+    if (physicsIndex >= context.entryCapacity)
         return false;
 
-    std::int32_t ownerIndex = -1;
-    const fx::physics::BodyToken token =
-        fx::physics::TokenFromLegacyField(elem->physObjId);
-    if (!FxPoolItemIndex<FxElem, MAX_ELEMS>(
-            system->elems, elem, &ownerIndex)
-        || ownerIndex < 0
-        || token == fx::physics::INVALID_BODY_TOKEN)
-    {
-        return false;
-    }
-
-    if (entries)
-    {
-        FxArchivePhysicsEntry &entry = entries[*entryCount];
-        std::memset(&entry, 0, sizeof(entry));
-        entry.elem = elem;
-        entry.model = model;
-        entry.ownerIndex = static_cast<std::size_t>(ownerIndex);
-        entry.token = token;
-    }
-    ++*entryCount;
+    FxArchivePhysicsEntry &entry = context.entries[physicsIndex];
+    std::memset(&entry, 0, sizeof(entry));
+    entry.elem = descriptor.elem;
+    entry.model = descriptor.model;
+    entry.ownerIndex = descriptor.ownerIndex;
+    entry.token = static_cast<fx::physics::BodyToken>(descriptor.token);
     return true;
 }
 
@@ -2035,253 +1621,34 @@ bool FX_CollectArchivePhysicsEntries(
     FxArchivePhysicsOwnershipScratch *const ownershipScratch,
     std::int16_t *const outSpotLightBoltDobj) noexcept
 {
-    if (!system || !outEntryCount
-        || !system->effects || !system->elems || !system->trails
-        || !system->trailElems)
+    if (!outEntryCount)
+        return false;
+
+    FxArchivePhysicsEntrySink sink{entries, entryCapacity};
+    const fx::archive::FxArchiveSemanticCallbacks callbacks{
+        &sink, nullptr, FX_AppendArchivePhysicsEntry};
+    fx::archive::FxArchiveSemanticResult result{};
+    if (!fx::archive::TryValidateFxArchiveSemanticsNoReport(
+            system, callbacks, &result))
     {
         return false;
     }
-    if (!FX_ValidateArchiveSystemState(system, system->visState))
+
+    const std::size_t entryCount =
+        static_cast<std::size_t>(result.physicsBodyCount);
+    if (captureStates
+        && !FX_CaptureArchivePhysicsStates(
+            system,
+            system->msecNow,
+            entries,
+            entryCount,
+            ownershipScratch))
     {
         return false;
-    }
-
-    std::size_t entryCount = 0;
-    for (std::int64_t activeIndex = system->firstActiveEffect;
-         activeIndex < system->firstFreeEffect;
-         ++activeIndex)
-    {
-        FxEffect *const effect = FxDecodeHandle<
-            FxEffect, MAX_EFFECTS, FxEffect::HANDLE_SCALE>(
-                system->effects,
-                system->allEffectHandles[
-                    static_cast<std::size_t>(activeIndex)
-                    & (MAX_EFFECTS - 1)]);
-        std::size_t elemDefCount = 0;
-        if (!effect || !FX_ValidateArchiveEffectRuntime(system, effect)
-            || !FX_GetArchiveEffectDefCount(effect, &elemDefCount)
-            || !FX_ValidateArchiveEffectDefTiming(
-                effect->def, elemDefCount))
-            return false;
-        std::size_t spotLightDefCount = 0;
-        for (std::size_t elemDefIndex = 0;
-             elemDefIndex < elemDefCount;
-             ++elemDefIndex)
-        {
-            const std::uint8_t elemType =
-                effect->def->elemDefs[elemDefIndex].elemType;
-            if (elemType >= FX_ELEM_TYPE_COUNT)
-                return false;
-            if (elemType == FX_ELEM_TYPE_SPOT_LIGHT
-                && ++spotLightDefCount > 1)
-            {
-                return false;
-            }
-        }
-
-        for (std::size_t elemClass = 0; elemClass < 3; ++elemClass)
-        {
-            std::uint16_t elemHandle = effect->firstElemHandle[elemClass];
-            std::size_t chainLength = 0;
-            while (elemHandle != FX_ARCHIVE_INVALID_HANDLE)
-            {
-                if (chainLength++ == MAX_ELEMS)
-                    return false;
-                FxPool<FxElem> *const remoteElem = FxDecodeHandle<
-                    FxPool<FxElem>, MAX_ELEMS, FxElem::HANDLE_SCALE>(
-                        system->elems, elemHandle);
-                if (!remoteElem || remoteElem->item.defIndex >= elemDefCount)
-                    return false;
-                FxElem *const elem = &remoteElem->item;
-                const FxElemDef *const elemDef =
-                    &effect->def->elemDefs[elem->defIndex];
-                if (!FX_ValidateArchiveElemRuntime(
-                        system, effect, elem, elemDef)
-                    || !FX_ArchiveElemTypeMatchesClass(
-                        elemDef->elemType, elemClass)
-                    || !FX_AppendArchivePhysicsEntry(
-                        system,
-                        effect,
-                        elem,
-                        elemDef,
-                        entries,
-                        entryCapacity,
-                        &entryCount))
-                {
-                    return false;
-                }
-                elemHandle = elem->nextElemHandleInEffect;
-            }
-        }
-
-        std::uint16_t trailHandle = effect->firstTrailHandle;
-        std::size_t trailCount = 0;
-        while (trailHandle != FX_ARCHIVE_INVALID_HANDLE)
-        {
-            if (trailCount++ == MAX_TRAILS)
-                return false;
-            FxPool<FxTrail> *const remoteTrail = FxDecodeHandle<
-                FxPool<FxTrail>, MAX_TRAILS, FxTrail::HANDLE_SCALE>(
-                    system->trails, trailHandle);
-            if (!remoteTrail
-                || remoteTrail->item.defIndex >= elemDefCount)
-            {
-                return false;
-            }
-            const FxElemDef &trailDef =
-                effect->def->elemDefs[remoteTrail->item.defIndex];
-            if (trailDef.elemType != FX_ELEM_TYPE_TRAIL
-                || !trailDef.trailDef
-                || trailDef.trailDef->splitDist <= 0
-                || trailDef.trailDef->repeatDist <= 0
-                || trailDef.trailDef->splitDist
-                    > FX_ARCHIVE_DISTANCE_INTEGER_MAX
-                || trailDef.trailDef->repeatDist
-                    > FX_ARCHIVE_DISTANCE_INTEGER_MAX
-                || (remoteTrail->item.defIndex
-                        >= effect->def->elemDefCountLooping
-                    && remoteTrail->item.defIndex
-                        < effect->def->elemDefCountLooping
-                            + effect->def->elemDefCountOneShot))
-            {
-                return false;
-            }
-
-            std::uint16_t trailElemHandle =
-                remoteTrail->item.firstElemHandle;
-            std::size_t trailElemCount = 0;
-            while (trailElemHandle != FX_ARCHIVE_INVALID_HANDLE)
-            {
-                if (trailElemCount++ == MAX_TRAIL_ELEMS)
-                    return false;
-                FxPool<FxTrailElem> *const remoteTrailElem =
-                    FxDecodeHandle<
-                        FxPool<FxTrailElem>,
-                        MAX_TRAIL_ELEMS,
-                        FxTrailElem::HANDLE_SCALE>(
-                            system->trailElems, trailElemHandle);
-                if (!remoteTrailElem
-                    || !FX_ArchiveTimeDifferenceFits(
-                        system->msecNow,
-                        remoteTrailElem->item.msecBegin)
-                    || !FX_ArchiveTimeDifferenceFits(
-                        system->msecDraw,
-                        remoteTrailElem->item.msecBegin)
-                    || !FX_ValidateArchiveSampledLifespan(
-                        effect,
-                        &trailDef,
-                        remoteTrailElem->item.msecBegin,
-                        remoteTrailElem->item.sequence))
-                {
-                    return false;
-                }
-                if (!FX_ValidateArchiveVector(
-                        remoteTrailElem->item.origin,
-                        FX_ARCHIVE_SPATIAL_COMPONENT_MAX)
-                    || !FX_ArchiveFloatIsBounded(
-                        remoteTrailElem->item.spawnDist,
-                        FX_ARCHIVE_DISTANCE_MAX)
-                    || remoteTrailElem->item.spawnDist < 0.0f)
-                {
-                    return false;
-                }
-                trailElemHandle =
-                    remoteTrailElem->item.nextTrailElemHandle;
-            }
-            trailHandle = remoteTrail->item.nextTrailHandle;
-        }
-    }
-
-    const std::int32_t spotEffectCount =
-        Sys_AtomicLoad(&system->activeSpotLightEffectCount);
-    const std::int32_t spotElemCount =
-        Sys_AtomicLoad(&system->activeSpotLightElemCount);
-    if (spotEffectCount < 0 || spotEffectCount > 1
-        || spotElemCount < 0 || spotElemCount > 1
-        || (spotElemCount != 0 && spotEffectCount != 1))
-    {
-        return false;
-    }
-    FxEffect *spotLightEffect = nullptr;
-    std::size_t spotLightEffectDefCount = 0;
-    if (spotEffectCount == 1)
-    {
-        spotLightEffect = FxDecodeHandle<
-            FxEffect, MAX_EFFECTS, FxEffect::HANDLE_SCALE>(
-                system->effects, system->activeSpotLightEffectHandle);
-        if (!spotLightEffect
-            || !FX_GetArchiveEffectDefCount(
-                spotLightEffect, &spotLightEffectDefCount)
-            || !FX_ValidateArchiveEffectRuntime(
-                system, spotLightEffect)
-            || !FX_ValidateArchiveEffectDefTiming(
-                spotLightEffect->def, spotLightEffectDefCount))
-        {
-            return false;
-        }
-        bool hasSpotLightDefinition = false;
-        for (std::size_t elemDefIndex = 0;
-             elemDefIndex < spotLightEffectDefCount;
-             ++elemDefIndex)
-        {
-            if (spotLightEffect->def->elemDefs[elemDefIndex].elemType
-                == FX_ELEM_TYPE_SPOT_LIGHT)
-            {
-                hasSpotLightDefinition = true;
-                break;
-            }
-        }
-        if (!hasSpotLightDefinition)
-            return false;
-    }
-    if (spotElemCount == 1)
-    {
-        FxPool<FxElem> *const remoteElem = FxDecodeHandle<
-            FxPool<FxElem>, MAX_ELEMS, FxElem::HANDLE_SCALE>(
-                system->elems, system->activeSpotLightElemHandle);
-        if (!spotLightEffect || !remoteElem
-            || remoteElem->item.defIndex >= spotLightEffectDefCount
-            || spotLightEffect->def
-                    ->elemDefs[remoteElem->item.defIndex].elemType
-                != FX_ELEM_TYPE_SPOT_LIGHT
-            || !FX_ValidateArchiveElemRuntime(
-                system,
-                spotLightEffect,
-                &remoteElem->item,
-                &spotLightEffect->def
-                    ->elemDefs[remoteElem->item.defIndex])
-            || remoteElem->item.nextElemHandleInEffect
-                != FX_ARCHIVE_INVALID_HANDLE
-            || remoteElem->item.prevElemHandleInEffect
-                != FX_ARCHIVE_INVALID_HANDLE)
-        {
-            return false;
-        }
     }
 
     if (outSpotLightBoltDobj)
-    {
-        *outSpotLightBoltDobj = spotLightEffect
-                && spotLightEffect->boltAndSortOrder.boneIndex
-                    != FX_BONE_INDEX_NONE
-            ? static_cast<std::int16_t>(
-                spotLightEffect->boltAndSortOrder.dobjHandle)
-            : static_cast<std::int16_t>(-1);
-    }
-
-    if (captureStates)
-    {
-        if (!FX_CaptureArchivePhysicsStates(
-                system,
-                system->msecNow,
-                entries,
-                entryCount,
-                ownershipScratch))
-        {
-            return false;
-        }
-    }
-
+        *outSpotLightBoltDobj = result.spotLightBoltDobj;
     *outEntryCount = entryCount;
     return true;
 }
@@ -3113,28 +2480,6 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
             "Invalid FX effect definition in archive");
     }
 
-    // The pool graph is proven before any staged definition pointer is
-    // rewritten. Once every handle is fixed up, release the singleton BSS
-    // table immediately; only its captured lifecycle generation is needed by
-    // the later archive admission.
-    const fx::archive::EffectTableRestoreStatus tableReleaseStatus =
-        fx::archive::ReleaseEffectTableRestore(tableResult.lease);
-    if (tableReleaseStatus
-        != fx::archive::EffectTableRestoreStatus::Success)
-    {
-        Z_Free(restoredBuffers, 10);
-        if (tableReleaseStatus
-            != fx::archive::EffectTableRestoreStatus::LifecycleChanged)
-        {
-            Sys_Error(
-                "Unable to release FX effect-definition restore ownership safely");
-            std::abort();
-        }
-        Com_Error(
-            ERR_DROP,
-            "FX lifecycle changed while restoring effect definitions");
-        return;
-    }
     for (std::int64_t activeIndex = restoredSystem.firstActiveEffect;
          activeIndex < restoredSystem.firstFreeEffect;
          ++activeIndex)
@@ -3147,9 +2492,10 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
                     & (MAX_EFFECTS - 1)]);
         if (!effect)
         {
-            Z_Free(restoredBuffers, 10);
-            Com_Error(ERR_DROP, "Invalid FX effect frame state in archive");
-            return;
+            FX_ReportEffectTableRestoreFailure(
+                &tableResult.lease,
+                restoredBuffers,
+                "Invalid FX effect frame state in archive");
         }
         Sys_AtomicStore(&effect->frameCount, 0);
     }
@@ -3165,9 +2511,10 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
             nullptr,
             &restoredSpotLightBoltDobj))
     {
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Invalid FX element semantics in archive");
-        return;
+        FX_ReportEffectTableRestoreFailure(
+            &tableResult.lease,
+            restoredBuffers,
+            "Invalid FX element semantics in archive");
     }
     restoredSystem.activeSpotLightBoltDobj =
         restoredSpotLightBoltDobj;
@@ -3181,9 +2528,10 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
                 &physicsEntryByteCount,
                 &physicsEntryAllocationSize))
         {
-            Z_Free(restoredBuffers, 10);
-            Com_Error(ERR_DROP, "Invalid FX physics staging size");
-            return;
+            FX_ReportEffectTableRestoreFailure(
+                &tableResult.lease,
+                restoredBuffers,
+                "Invalid FX physics staging size");
         }
         physicsEntries = static_cast<FxArchivePhysicsEntry *>(Z_Malloc(
             physicsEntryAllocationSize,
@@ -3191,9 +2539,10 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
             10));
         if (!physicsEntries)
         {
-            Z_Free(restoredBuffers, 10);
-            Com_Error(ERR_DROP, "Unable to allocate FX physics restore staging");
-            return;
+            FX_ReportEffectTableRestoreFailure(
+                &tableResult.lease,
+                restoredBuffers,
+                "Unable to allocate FX physics restore staging");
         }
         std::memset(
             physicsEntries,
@@ -3214,10 +2563,36 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
                 != restoredSpotLightBoltDobj)
         {
             Z_Free(physicsEntries, 10);
-            Z_Free(restoredBuffers, 10);
-            Com_Error(ERR_DROP, "Unstable FX physics state in archive");
-            return;
+            FX_ReportEffectTableRestoreFailure(
+                &tableResult.lease,
+                restoredBuffers,
+                "Unstable FX physics state in archive");
         }
+    }
+
+    // Keep the effect-table lease through both semantic passes so every
+    // resolved definition and selected model remains stable while traversed.
+    // No staged identity is dereferenced again until generation-checked
+    // archive admission, so release it before continuing with archive I/O.
+    const fx::archive::EffectTableRestoreStatus tableReleaseStatus =
+        fx::archive::ReleaseEffectTableRestore(tableResult.lease);
+    if (tableReleaseStatus
+        != fx::archive::EffectTableRestoreStatus::Success)
+    {
+        if (physicsEntries)
+            Z_Free(physicsEntries, 10);
+        Z_Free(restoredBuffers, 10);
+        if (tableReleaseStatus
+            != fx::archive::EffectTableRestoreStatus::LifecycleChanged)
+        {
+            Sys_Error(
+                "Unable to release FX effect-definition restore ownership safely");
+            std::abort();
+        }
+        Com_Error(
+            ERR_DROP,
+            "FX lifecycle changed while restoring effect definitions");
+        return;
     }
 
     std::uint32_t archivedSystemAddress = 0;

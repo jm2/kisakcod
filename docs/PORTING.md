@@ -1077,11 +1077,13 @@ also passed all nine jobs before squash merge `0f878ff4`. The reader-first Disk3
 fixed buffer/raw-free-list batches, heap-owned structural native conversion, and definition-aware semantic `Ready`
 finalization are implemented and locally validated, but are not yet a production native64 reader or writer. The shared
 semantic oracle uses callback-free preflight, representation-preserving union activation, bounded physics descriptors,
-and failure-to-Empty publication gating. The current checkpoint passes **62/62** GCC and Clang suites plus **61/61**
+and failure-to-Empty publication gating. The production physics collector now delegates to that oracle through a bounded
+sink, and restore retains definition ownership through both semantic passes before generation-checked archive admission.
+The current checkpoint passes **62/62** GCC and Clang suites plus **61/61**
 ASan+UBSan and TSan suites, strict x86-32 execution, AArch64 linking, analyzers, source contracts, and two independent
 audits; the five-target and measured Windows x86 PR matrix remains its authoritative gate. The active sequence is to
-delegate the legacy physics collector to the shared oracle, implement live visibility-selector-aware publication, add
-exact physics-body wire staging and transactional reader integration, and only then remove the restore guard. Guarded
+implement live visibility-selector-aware publication, add exact physics-body wire staging and transactional reader
+integration, and only then remove the restore guard. Guarded
 writer replacement follows later after exact x86 full-image equivalence. A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
