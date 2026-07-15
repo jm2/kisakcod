@@ -1019,6 +1019,35 @@ void TestReleasedLeaseHidesReadyCandidate()
     CHECK(fixture.candidate_->phase()
           == archive::FxArchiveRestoreCandidateDisk32Phase::Ready);
 }
+
+void TestReacquiredLeaseCannotAccessReadyCandidate()
+{
+    PreparedFixture fixture{1};
+    CHECK(fixture.ready());
+    if (!fixture.ready())
+        return;
+    CHECK(BuildCandidate(&fixture)
+          == archive::FxArchiveRestoreCandidateDisk32Status::Success);
+
+    const archive::EffectTableRestoreLease original = fixture.table_.lease;
+    CHECK(archive::ReleaseEffectTableRestore(original)
+          == archive::EffectTableRestoreStatus::Success);
+    fixture.table_.lease = archive::EffectTableRestoreLease{};
+
+    fixture.table_ = AcquireLease(&fixture.restore_);
+    CHECK(fixture.table_.lease.identity == original.identity);
+    CHECK(fixture.table_.lease.lifecycleGeneration
+          == original.lifecycleGeneration);
+    CHECK(fixture.table_.lease.ownerCookie == original.ownerCookie);
+    CHECK(fixture.table_.lease.serial != original.serial);
+    CHECK(archive::ValidateEffectTableRestoreLease(fixture.table_.lease)
+          == archive::EffectTableRestoreStatus::Success);
+
+    CheckCandidateGetterRejected(
+        fixture.candidate_, fixture.table_.lease);
+    CHECK(fixture.candidate_->phase()
+          == archive::FxArchiveRestoreCandidateDisk32Phase::Ready);
+}
 } // namespace
 
 void MyAssertHandler(
@@ -1079,6 +1108,7 @@ int main()
     TestDescriptorBodyAndGraphForgery();
     TestLeaseBindingReentryAndFailureAtomicity();
     TestReleasedLeaseHidesReadyCandidate();
+    TestReacquiredLeaseCannotAccessReadyCandidate();
     CHECK(unexpectedReports == 0);
 
     if (archive::EffectTableRestoreLeaseIsActive())
