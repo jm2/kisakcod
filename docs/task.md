@@ -18,9 +18,10 @@ work item changes. Do not create session-specific handoff files.
   captures and rebinds its live selector pair inside the coherent `FX_ALLOC` interval, while safe-empty recovery retains
   canonical read-zero/write-one roles. GCC and Clang suites are **62/62** green; ASan+UBSan and TSan are **61/61** green.
   Strict GCC/Clang x86-32 compilation, strict AArch64 compilation, Clang static analysis, the three changed source/security
-  contracts, and `git diff --check` pass. This sandbox cannot execute the threaded i386 fixture, so the PR's Windows x86
-  jobs remain the authoritative production compile/runtime and frame-budget gate. No wire bytes, native64 guard, writer,
-  safe-empty controller sequence, or licensed-content workflow changed.
+  contracts, and `git diff --check` pass. This sandbox cannot execute the threaded i386 fixture; exact implementation/
+  review-fix head `0fbee229` passed all nine jobs in run **29445375084**, including measured Windows x86 production
+  compilation, runtime contracts, and frame budgets. No wire bytes, native64 guard, writer, safe-empty controller sequence,
+  or licensed-content workflow changed.
 - Current semantic-delegation checkpoint: the production `FX_CollectArchivePhysicsEntries` wrapper is now a bounded output
   adapter over the shared semantic oracle instead of maintaining a second definition-aware graph traversal. Count-only
   collection preserves the legacy capacity behavior; population checks capacity before every write; optional native state
@@ -101,6 +102,14 @@ work item changes. Do not create session-specific handoff files.
   lease/bounds/cleanup audit found no double free, use-after-free, capacity, failure-atomicity, or post-release lifetime
   defect. Final documentation-only run **29442813157 passed all nine jobs**, and PR #28 squash-merged as `4c454449` from
   final head `6792f3b5`.
+- PR #29 implementation/review-fix run **29445375084 passed all nine jobs** at `0fbee229`: Linux amd64/arm64, portable
+  Windows amd64/ARM64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86, and headless Windows x86
+  are green. Gemini's two actionable threads added local null-context rejection to desired and rollback publication before
+  any live-system dereference; both are answered and resolved. Independent review found no production correctness,
+  security, locking, pointer-provenance, x86 ABI, or stack blocker. Its concrete regression-protection findings now pin the
+  exact relocation-to-selector mapping, matcher/copy/null ordering, subscript-free pointer resolution, exact iterator
+  sentinel, aliased outputs, and non-owned one-past roles. Behavioral whole-graph publication/rollback coverage is required
+  in the later production-reader integration PR rather than modeled by a duplicate test-only adapter.
 - PR #25 squash-merged as `09c05e5f` from final review-fix head `5abf9cbb`. Final run **29427215187 passed all nine jobs**:
   Linux amd64/arm64, portable Windows amd64/arm64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86,
   and headless Windows x86. Initial implementation/docs head `d9ad05ff` also passed all nine jobs in run **29426792491**.
@@ -272,9 +281,16 @@ work item changes. Do not create session-specific handoff files.
   physics header (the current `phys_local.h` transitively imports D3D9), add the exact `0x70` `BodyStateDisk32` decoder,
   expose Ready-only semantic physics enumeration, and build one heap-owned report-free reader workspace for system,
   buffers, nonzero legacy address, and at most 512 body records. It must retain the caller's definition lease, support retry
-  after failure, gate all views until every raw/zlib read and conversion succeeds, and leave `FX_Restore`, `FX_Save`, and
-  both native64 guards unchanged. Production x86 integration and restore-guard removal belong in the following equivalence
-  and rollback PR.
+  after failure with a freshly initialized/repositioned `MemoryFile`, gate all views until every raw/zlib read and conversion
+  succeeds, and leave `FX_Restore`, `FX_Save`, and both native64 guards unchanged; streaming input cursor rollback is not
+  promised. Ready-physics enumeration is logically const and must retain `Ready` after callback rejection or validation
+  failure, while the outer reader hides any callback prefix behind its own final Ready gate. Production x86 integration and
+  restore-guard removal belong in the following equivalence and rollback PR.
+- The same BodyState slice must close a confirmed legacy information leak before introducing the codec: `Phys_ObjSave`
+  currently leaves `BodyState` uninitialized while `Phys_GetStateFromBody` writes only the low byte of `underwater`, so its
+  raw 112-byte record can disclose three indeterminate stack bytes and vary nondeterministically. Zero-initialize the state,
+  assign the complete integer field, and pin deterministic raw-wire behavior without changing the low-byte compatibility
+  accepted by the reader.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,

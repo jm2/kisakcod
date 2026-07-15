@@ -1070,8 +1070,10 @@ staged buffers, and round-tripped before controller admission. Publication resol
 buffers before the system image under archive/allocator exclusion, relinks the system, assigns read then write roles, and
 round-trips the result before admitting the graph. Rollback capture derives and rebinds its pair inside one coherent
 `FX_ALLOC` interval; safe-empty recovery remains canonical read-zero/write-one. The complete local GCC/Clang and sanitizer
-matrices, strict x86-32/AArch64 compilation, Clang analysis, and focused source/security contracts are green. Wire I/O,
-both native64 guards, and the writer remain unchanged pending the unified Disk32 reader.
+matrices, strict x86-32/AArch64 compilation, Clang analysis, and focused source/security contracts are green. Exact
+implementation/review-fix head `0fbee229` passed all nine CI jobs in run **29445375084** after both actionable Gemini
+null-context findings were fixed, answered, and resolved. Wire I/O, both native64 guards, and the writer remain unchanged
+pending the unified Disk32 reader.
 
 Overall porting progress is approximately **45%** (plausible range **41–50%**), while target delivery remains **0/5**.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
@@ -1091,8 +1093,10 @@ ASan+UBSan and TSan suites, strict GCC/Clang x86-32 and AArch64 compilation, ana
 audit; the five-target and measured Windows x86 PR matrix remains its authoritative production/runtime gate. The active
 sequence is to land the implemented visibility-selector-aware publication, then add a portable, non-publishing reader
 workspace with a lightweight `BodyState` header, exact `BodyStateDisk32` decode, Ready-only physics enumeration, and
-transactional raw/zlib staging. That first reader PR leaves production and both guards unchanged. The following integration
-PR must add behavioral publication/rollback and exact x86 equivalence fixtures before removing only the restore guard.
+transactional raw/zlib staging. That slice must also zero-initialize generic `Phys_ObjSave` records and assign the complete
+`underwater` word; the current low-byte-only write can serialize three indeterminate stack bytes. The first reader PR leaves
+production restore and both guards unchanged. The following integration PR must add behavioral publication/rollback and
+exact x86 equivalence fixtures before removing only the restore guard.
 Guarded writer replacement follows later after exact x86 full-image equivalence. A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
