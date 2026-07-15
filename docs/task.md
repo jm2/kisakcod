@@ -34,8 +34,9 @@ work item changes. Do not create session-specific handoff files.
   production jobs nevertheless established the 2,752/6,124-byte save/restore frames and found the 10,256-byte wrapper.
   The current correction binds `/analyze:ruleset<path>` as one compiler argument while preserving the portable 4 KiB
   `/WX` helper gate, uses MSVC's following-value form for the XML log, and replaces the large wrapper with caller-owned
-  heap scratch allocated before archive exclusion and released on every save exit. Replacement nine-job CI remains the
-  authoritative gate.
+  checked heap scratch allocated before archive exclusion and destroyed on every save exit. Gemini's two review findings
+  are also addressed: an impossible effect-table snapshot destruction failure now fail-stops before storage release, and
+  the PowerShell report sort quotes its `Function` property. Replacement nine-job CI remains the authoritative gate.
 - PR #19 squash-merged as `885ec28a` after run **29387860025 passed all nine CI jobs**. Gemini reported no findings,
   Codex found no major issue at reviewed head `cd0f1363a4`, and there were no inline review threads. The legacy
   `FX_RestoreEffectDefTable` stack image is now a bounded lifecycle-owned

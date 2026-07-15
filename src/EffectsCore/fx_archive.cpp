@@ -655,9 +655,9 @@ FxEffectTableSaveOutcome FX_SaveEffectTableNoDrop(
 
     const bool destroyed =
         fx::archive::DestroyEffectTableSaveSnapshot(snapshot);
-    Z_Free(storage, 10);
     if (!destroyed)
-        return FxEffectTableSaveOutcome::InvalidTable;
+        std::abort();
+    Z_Free(storage, 10);
     if (status == fx::archive::EffectTableSaveStatus::Success)
         return FxEffectTableSaveOutcome::Success;
     if (status == fx::archive::EffectTableSaveStatus::WriterFailed)

@@ -587,7 +587,7 @@ function Invoke-FxArchiveStackGate {
 
     $violations = New-Object 'System.Collections.Generic.List[string]'
     foreach ($measurement in @($maximumByFunction.Values |
-            Sort-Object -Property @{ Expression = 'Bytes'; Descending = $true }, Function)) {
+            Sort-Object -Property @{ Expression = 'Bytes'; Descending = $true }, 'Function')) {
         $limit = Get-FunctionLimit -Kind $measurement.Kind
         Write-Host ("  {0}: {1} bytes (function limit {2}, absolute limit {3})" -f `
             $measurement.Function, $measurement.Bytes, $limit, $AbsoluteLimitBytes)

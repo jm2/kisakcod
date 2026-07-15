@@ -361,14 +361,24 @@ require_ordered(
 extract_slice(
     "${_production_save}"
     "const bool destroyed ="
-    "if (!destroyed)"
+    "if (status == fx::archive::EffectTableSaveStatus::Success)"
     _production_cleanup
     "production save-table cleanup")
 require_ordered(
     "${_production_cleanup}"
     "DestroyEffectTableSaveSnapshot(snapshot)"
+    "if (!destroyed)"
+    "destruction failure must be handled before storage release")
+require_ordered(
+    "${_production_cleanup}"
+    "if (!destroyed)"
+    "std::abort();"
+    "an indestructible live snapshot must fail-stop")
+require_ordered(
+    "${_production_cleanup}"
+    "std::abort();"
     "Z_Free(storage, 10);"
-    "destruction must precede storage release")
+    "storage release must be unreachable after destruction failure")
 require_absent(
     "${_production_save}"
     "Com_Error("
