@@ -13,7 +13,8 @@ work item changes. Do not create session-specific handoff files.
   input boundary is complete on this branch: status-bearing `MemoryFile` data and caller-bounded C-string readers decode
   the production legacy RLE/zlib stream without assertions, prints, or drops; validate exact segment lengths and
   little-endian headers; reject cross-segment, malformed, and truncated input; preserve legacy partial-output and
-  sticky-overflow behavior; and reset the process-global codec on failure. `FX_ReadArchiveDataNoDrop` now uses that primitive
+  sticky-overflow behavior while leaving the first unread destination byte unchanged; and reset the process-global codec
+  on failure. `FX_ReadArchiveDataNoDrop` now uses that primitive
   directly instead of temporarily suppressing reports around the legacy reader. TLS records the exact stream owner, and
   both global `Com_Error` longjmp paths abandon same-thread inflate/deflate state outside the client-only cleanup guard;
   foreign threads cannot release it, mismatch cleanup cannot corrupt a newer owner's RLE caches, and raw/compressed read,
@@ -28,7 +29,10 @@ work item changes. Do not create session-specific handoff files.
   its `Byte` typedef whenever modern AppleClang defines the legacy `TARGET_OS_MAC` marker, although modern Darwin no
   longer makes that classic-Mac typedef visible. The focused correction keeps the classic compiler exception while making
   zlib self-contained on Apple Mach targets. All ten bundled C translation units compile under simulated Darwin macros;
-  focused GCC/Clang/ASan+UBSan/TSan execution and strict x86-32/AArch64 compile-link pass. Replacement CI is pending.
+  replacement run **29385256836 passed all nine jobs**. Gemini then found that one failed raw byte decode still wrote a
+  synthetic zero into the first unread output position; the reader now publishes only successfully decoded bytes, and
+  the complete **48/48** GCC, Clang, ASan+UBSan, and TSan suites pass again. Codex found no major issue at `300e7dd3`;
+  final CI after the review correction is pending.
 - ODE occupancy runtime on this branch is otherwise complete. The engine-free physics batch controller rejects invalid,
   duplicate, overlapping-output, and unknown-status inputs before callbacks; preflights every selected retirement or
   reconstruction before mutation; and reports the exact successful commit prefix. Production FX archive retirement and

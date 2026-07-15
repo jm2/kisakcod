@@ -209,7 +209,7 @@ void TestSegmentBoundaryAndPartialFailure()
         == MemFileReadStatus::Overflow);
     CHECK(partial[0] == 0xD1);
     CHECK(partial[1] == 'Q');
-    CHECK(partial[2] == 0);
+    CHECK(partial[2] == 0xD3);
     CHECK(partial[3] == 0xD4);
     CloseReader(partialReader);
 }

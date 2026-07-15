@@ -1218,9 +1218,9 @@ MemFileReadStatus MemFile_TryReadDataNoReport(
 
             uint8_t value = 0;
             const MemFileReadStatus status = MemFile_ReadEncodedByteNoReport(memFile, &value);
-            *destination++ = value;
             if (status != MemFileReadStatus::Success)
                 return status;
+            *destination++ = value;
             if (!remaining)
                 return MemFileReadStatus::Success;
         }
