@@ -40,6 +40,7 @@ struct FxFloatRange
     float base;
     float amplitude;
 };
+RUNTIME_SIZE(FxFloatRange, 0x8, 0x8);
 
 struct FxSpawnDefLooping
 {
@@ -83,12 +84,14 @@ struct FxElemAtlas
     std::uint8_t rowIndexBits;
     std::int16_t entryCount;
 };
+RUNTIME_SIZE(FxElemAtlas, 0x8, 0x8);
 
 struct FxElemVec3Range
 {
     float base[3];
     float amplitude[3];
 };
+RUNTIME_SIZE(FxElemVec3Range, 0x18, 0x18);
 
 struct FxElemVisualState
 {
@@ -98,24 +101,28 @@ struct FxElemVisualState
     float size[2];
     float scale;
 };
+RUNTIME_SIZE(FxElemVisualState, 0x18, 0x18);
 
 struct FxElemVisStateSample
 {
     FxElemVisualState base;
     FxElemVisualState amplitude;
 };
+RUNTIME_SIZE(FxElemVisStateSample, 0x30, 0x30);
 
 struct FxElemVelStateInFrame
 {
     FxElemVec3Range velocity;
     FxElemVec3Range totalDelta;
 };
+RUNTIME_SIZE(FxElemVelStateInFrame, 0x30, 0x30);
 
 struct FxElemVelStateSample
 {
     FxElemVelStateInFrame local;
     FxElemVelStateInFrame world;
 };
+RUNTIME_SIZE(FxElemVelStateSample, 0x60, 0x60);
 
 union FxEffectDefRef
 {
@@ -223,13 +230,6 @@ RUNTIME_OFFSET(FxElemDef, effectOnDeath, 0xDC, 0xF0);
 RUNTIME_OFFSET(FxElemDef, effectEmitted, 0xE0, 0xF8);
 RUNTIME_OFFSET(FxElemDef, trailDef, 0xF4, 0x110);
 
-static_assert(sizeof(FxFloatRange) == 0x08);
-static_assert(sizeof(FxElemAtlas) == 0x08);
-static_assert(sizeof(FxElemVec3Range) == 0x18);
-static_assert(sizeof(FxElemVisualState) == 0x18);
-static_assert(sizeof(FxElemVisStateSample) == 0x30);
-static_assert(sizeof(FxElemVelStateInFrame) == 0x30);
-static_assert(sizeof(FxElemVelStateSample) == 0x60);
 static_assert(alignof(FxEffectDef) == (KISAK_ARCH_64BIT ? 8u : 4u));
 static_assert(alignof(FxElemDef) == FX_ELEM_DEF_RUNTIME_ALIGNMENT);
 static_assert(std::is_standard_layout_v<FxEffectDef>);

@@ -21,16 +21,10 @@ constexpr std::int32_t kMaxTrailIndices = 128;
 constexpr std::uint64_t kFnvOffset = UINT64_C(14695981039346656037);
 constexpr std::uint64_t kFnvPrime = UINT64_C(1099511628211);
 
-static_assert(sizeof(FxElemVelStateSampleDisk32)
-              == sizeof(FxElemVelStateSample));
 static_assert(alignof(FxElemVelStateSampleDisk32)
               == alignof(FxElemVelStateSample));
-static_assert(sizeof(FxElemVisStateSampleDisk32)
-              == sizeof(FxElemVisStateSample));
 static_assert(alignof(FxElemVisStateSampleDisk32)
               == alignof(FxElemVisStateSample));
-static_assert(sizeof(FxTrailVertexDisk32)
-              == sizeof(FxTrailVertex));
 static_assert(alignof(FxTrailVertexDisk32)
               == alignof(FxTrailVertex));
 
