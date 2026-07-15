@@ -60,6 +60,10 @@ struct FxPoolAllocationStates
 FxPoolAllocationStates fx_poolAllocationStates[1];
 fx::physics::BodySidecar fx_physicsBodySidecars[
     std::size(fx_poolAllocationStates)];
+// Every user holds CRITSECT_PHYSICS, so one bounded BSS workspace can validate
+// live sidecar structure without adding 4/8 KiB to legacy call stacks.
+fx::physics::BodySidecarValidationScratch
+    fx_liveSidecarValidationScratch;
 
 static_assert(
     std::size(fx_physicsBodySidecars) == std::size(fx_systemPool),
@@ -143,6 +147,8 @@ struct FxModelPhysicsSpawnResult
         FxModelPhysicsSpawnOutcome::InvalidState;
     PhysBodyModelCreateStatus physicsStatus =
         PhysBodyModelCreateStatus::InvalidArgument;
+    PhysBodyCreateResourceFailure resourceFailure =
+        PhysBodyCreateResourceFailure::None;
     fx::physics::SidecarStatus sidecarStatus =
         fx::physics::SidecarStatus::InvalidArgument;
 };
@@ -735,7 +741,13 @@ bool FX_PhysicsOwnerIsVacantLocked(
 {
     if (!outStatus)
         return false;
-    *outStatus = fx::physics::ValidateVacantOwner(sidecar, ownerIndex);
+    *outStatus = fx::physics::ValidateWithScratch(
+        sidecar, &fx_liveSidecarValidationScratch);
+    if (*outStatus == fx::physics::SidecarStatus::Success)
+    {
+        *outStatus =
+            fx::physics::ValidateVacantOwner(sidecar, ownerIndex);
+    }
     return *outStatus == fx::physics::SidecarStatus::Success;
 }
 
@@ -6690,7 +6702,8 @@ FxModelPhysicsSpawnResult FX_TrySpawnModelPhysics(
         velocity,
         visuals.model->physPreset,
         visuals.model,
-        &body);
+        &body,
+        &result.resourceFailure);
     if (result.physicsStatus != PhysBodyModelCreateStatus::Success)
     {
         const bool cleanupFailed = result.physicsStatus
@@ -6702,6 +6715,9 @@ FxModelPhysicsSpawnResult FX_TrySpawnModelPhysics(
         Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
         if (cleanupFailed)
             std::abort();
+        if (result.physicsStatus != PhysBodyModelCreateStatus::InvalidArgument)
+            Phys_ReportBodyModelCreateFailure(
+                result.physicsStatus, result.resourceFailure);
         return result;
     }
 
@@ -6717,17 +6733,24 @@ FxModelPhysicsSpawnResult FX_TrySpawnModelPhysics(
         return result;
     }
 
-    const fx::physics::TokenResult binding = fx::physics::Bind(
-        sidecar, static_cast<std::size_t>(ownerIndex), body);
+    const fx::physics::TokenResult binding = fx::physics::BindWithScratch(
+        sidecar,
+        static_cast<std::size_t>(ownerIndex),
+        body,
+        &fx_liveSidecarValidationScratch);
     result.sidecarStatus = binding.status;
     if (!binding)
     {
-        // DuplicateBody means the allocator returned an address already owned
-        // by a live registration. That registration retains the sole right to
-        // destroy it; all other Bind failures leave this fresh body caller-owned.
+        // The complete sidecar was validated immediately before allocation
+        // under this same lock. DuplicateBody can therefore identify only the
+        // address returned by the allocator, whose existing registration keeps
+        // the sole right to destroy it. Every other failure leaves this fresh
+        // body caller-owned.
+        const bool ownershipAmbiguous =
+            binding.status == fx::physics::SidecarStatus::DuplicateBody;
         PhysBodyRollbackStatus cleanupStatus =
             PhysBodyRollbackStatus::Success;
-        if (binding.status != fx::physics::SidecarStatus::DuplicateBody)
+        if (!ownershipAmbiguous)
         {
             cleanupStatus = Phys_TryDestroyBodyLockedNoReport(
                 PHYS_WORLD_FX, body);
@@ -6737,8 +6760,11 @@ FxModelPhysicsSpawnResult FX_TrySpawnModelPhysics(
             ? FxModelPhysicsSpawnOutcome::ResourceUnavailable
             : FxModelPhysicsSpawnOutcome::OwnershipRejected;
         Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
-        if (cleanupStatus != PhysBodyRollbackStatus::Success)
+        if (ownershipAmbiguous
+            || cleanupStatus != PhysBodyRollbackStatus::Success)
+        {
             std::abort();
+        }
         return result;
     }
 

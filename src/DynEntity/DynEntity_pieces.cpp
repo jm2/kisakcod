@@ -3,12 +3,91 @@
 #include <gfx_d3d/r_dpvs.h>
 #include <universal/profile.h>
 
+#include <cmath>
+#include <cstdlib>
+
 const dvar_t *dynEntPieces_velocity;
 const dvar_t *dynEntPieces_angularVelocity;
 const dvar_t *dynEntPieces_impactForce;
 
 int32_t numPieces;
 BreakablePiece g_breakablePieces[100];
+
+namespace
+{
+struct DynEntPiecesPhysSpawnResult
+{
+    dxBody *body;
+    PhysBodyModelCreateStatus status;
+    PhysBodyCreateResourceFailure resourceFailure;
+    bool capacityExceeded;
+    bool cleanupFailed;
+};
+
+// The caller owns the outer CRITSECT_PHYSICS.  Every fallible pool mutation
+// is silent, and a geom failure retires the fresh body before returning.
+DynEntPiecesPhysSpawnResult DynEntPieces_TrySpawnPhysObjLockedNoReport(
+    const float *const mins,
+    const float *const maxs,
+    const float *const position,
+    const float *const quat,
+    const float *const velocity,
+    const float *const angularVelocity,
+    const PhysPreset *const physPreset) noexcept
+{
+    DynEntPiecesPhysSpawnResult result{
+        nullptr,
+        PhysBodyModelCreateStatus::InvalidArgument,
+        PhysBodyCreateResourceFailure::None,
+        false,
+        false};
+    if (numPieces >= 100)
+    {
+        result.capacityExceeded = true;
+        return result;
+    }
+    if (!physPreset)
+        return result;
+
+    result.status = Phys_TryObjCreateLockedNoReport(
+        PHYS_WORLD_FX,
+        position,
+        quat,
+        velocity,
+        physPreset,
+        &result.body,
+        &result.resourceFailure);
+    if (result.status != PhysBodyModelCreateStatus::Success)
+    {
+        result.cleanupFailed =
+            result.status == PhysBodyModelCreateStatus::CleanupFailed;
+        return result;
+    }
+
+    result.status = Phys_TryObjAddGeomBoxLockedNoReport(
+        PHYS_WORLD_FX, result.body, mins, maxs);
+    if (result.status != PhysBodyModelCreateStatus::Success)
+    {
+        const bool geomCleanupFailed =
+            result.status == PhysBodyModelCreateStatus::CleanupFailed;
+        const bool bodyCleanupFailed = Phys_TryDestroyBodyLockedNoReport(
+            PHYS_WORLD_FX, result.body) != PhysBodyRollbackStatus::Success;
+        result.cleanupFailed = geomCleanupFailed || bodyCleanupFailed;
+        result.body = nullptr;
+        return result;
+    }
+
+    if (!Phys_TryObjSetAngularVelocityLockedNoReport(
+            result.body, angularVelocity))
+    {
+        result.status = PhysBodyModelCreateStatus::InvalidArgument;
+        result.cleanupFailed = Phys_TryDestroyBodyLockedNoReport(
+            PHYS_WORLD_FX, result.body) != PhysBodyRollbackStatus::Success;
+        result.body = nullptr;
+    }
+    return result;
+}
+} // namespace
 
 void __cdecl DynEntPieces_RegisterDvars()
 {
@@ -105,11 +184,13 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
     float forceDir[3]; // [esp+10h] [ebp-5Ch] BYREF
     float velocity[3]; // [esp+1Ch] [ebp-50h] BYREF
     float angularVelocity[3]; // [esp+28h] [ebp-44h] BYREF
-    int32_t physObjId; // [esp+34h] [ebp-38h]
+    dxBody *physObjId; // [esp+34h] [ebp-38h]
     float mins[3]; // [esp+38h] [ebp-34h] BYREF
     float quat[4]; // [esp+44h] [ebp-28h] BYREF
     float maxs[3]; // [esp+54h] [ebp-18h] BYREF
     float worldOffset[3]; // [esp+60h] [ebp-Ch] BYREF
+    float impactPosition[3];
+    float impactDirection[3];
 
     if (!model)
     {
@@ -132,6 +213,45 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
                 model->name ? model->name : "<unnamed>");
             return false;
         }
+        const dvar_t *const impactForceDvar = dynEntPieces_impactForce;
+        if (!hitPos || !hitDir || !impactForceDvar
+            || impactForceDvar->type != DVAR_TYPE_FLOAT)
+        {
+            Com_PrintWarning(
+                1,
+                "Failed to create physics object for '%s': invalid impact inputs.\n",
+                model->name ? model->name : "<unnamed>");
+            return false;
+        }
+        for (std::size_t component = 0; component < 3; ++component)
+        {
+            impactPosition[component] = hitPos[component];
+            impactDirection[component] = hitDir[component];
+            if (!std::isfinite(impactPosition[component])
+                || !std::isfinite(impactDirection[component]))
+            {
+                Com_PrintWarning(
+                    1,
+                    "Failed to create physics object for '%s': invalid impact inputs.\n",
+                    model->name ? model->name : "<unnamed>");
+                return false;
+            }
+        }
+        const float impactForce = impactForceDvar->current.value;
+        const float spreadFraction =
+            model->physPreset->piecesSpreadFraction;
+        const float bulletForceScale =
+            model->physPreset->bulletForceScale;
+        if (!std::isfinite(impactForce)
+            || !std::isfinite(spreadFraction)
+            || !std::isfinite(bulletForceScale))
+        {
+            Com_PrintWarning(
+                1,
+                "Failed to create physics object for '%s': invalid impact inputs.\n",
+                model->name ? model->name : "<unnamed>");
+            return false;
+        }
         MatrixTransformVector(offset, *(const mat3x3*)axis, worldOffset);
         Vec3Add(worldOffset, origin, worldOffset);
         AxisToQuat(axis, quat);
@@ -143,27 +263,55 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
         angularVelocity[2] = dynEntPieces_angularVelocity->current.vector[2];
         velocity[2] = velocity[2] + model->physPreset->piecesUpwardVelocity;
         Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-        physObjId = (int)DynEntPieces_SpawnPhysObj(
-            model->name,
-            mins,
-            maxs,
-            worldOffset,
-            quat,
-            velocity,
-            angularVelocity,
-            model->physPreset);
-        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
-        if (physObjId)
+        DynEntPiecesPhysSpawnResult spawnResult =
+            DynEntPieces_TrySpawnPhysObjLockedNoReport(
+                mins,
+                maxs,
+                worldOffset,
+                quat,
+                velocity,
+                angularVelocity,
+                model->physPreset);
+        if (spawnResult.status == PhysBodyModelCreateStatus::Success)
         {
-            DynEntPieces_CalcForceDir(hitDir, model->physPreset->piecesSpreadFraction, forceDir);
-            Phys_ObjBulletImpact(
-                PHYS_WORLD_DYNENT,
-                (dxBody *)physObjId,
-                hitPos,
-                forceDir,
-                dynEntPieces_impactForce->current.value,
-                model->physPreset->bulletForceScale);
-            g_breakablePieces[numPieces].physObjId = physObjId;
+            DynEntPieces_CalcForceDir(
+                impactDirection,
+                spreadFraction,
+                forceDir);
+            if (!Phys_TryObjBulletImpactLockedNoReport(
+                    PHYS_WORLD_DYNENT,
+                    spawnResult.body,
+                    impactPosition,
+                    forceDir,
+                    impactForce,
+                    bulletForceScale))
+            {
+                spawnResult.status =
+                    PhysBodyModelCreateStatus::InvalidArgument;
+                spawnResult.cleanupFailed =
+                    Phys_TryDestroyBodyLockedNoReport(
+                        PHYS_WORLD_FX,
+                        spawnResult.body)
+                    != PhysBodyRollbackStatus::Success;
+                spawnResult.body = nullptr;
+            }
+        }
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+
+        if (spawnResult.cleanupFailed)
+            std::abort();
+        if (spawnResult.capacityExceeded)
+        {
+            Com_PrintWarning(
+                1,
+                "Failed to create physics object for '%s': piece capacity exhausted.\n",
+                model->name ? model->name : "<unnamed>");
+            return false;
+        }
+        physObjId = spawnResult.body;
+        if (spawnResult.status == PhysBodyModelCreateStatus::Success)
+        {
+            g_breakablePieces[numPieces].physObjId = (int32_t)(uintptr_t)physObjId;
             g_breakablePieces[numPieces].model = model;
             result = 1;
             g_breakablePieces[numPieces].lightingHandle = 0;
@@ -171,7 +319,13 @@ bool __cdecl DynEntPieces_SpawnPhysicsModel(
         }
         else
         {
-            return 0;
+            Phys_ReportBodyModelCreateFailure(
+                spawnResult.status, spawnResult.resourceFailure);
+            Com_PrintWarning(
+                1,
+                "Failed to create physics object for '%s'.\n",
+                model->name ? model->name : "<unnamed>");
+            return false;
         }
     }
     return result;
@@ -187,28 +341,50 @@ dxBody *__cdecl DynEntPieces_SpawnPhysObj(
     float *angularVelocity,
     const PhysPreset *physPreset)
 {
-    dxBody *physObjId; // [esp+0h] [ebp-4h]
+    const char *const safeModelName = modelName ? modelName : "<unnamed>";
+    if (numPieces >= 100 || !physPreset)
+    {
+        Com_PrintWarning(
+            1,
+            "Failed to spawn pieces model '%s'.  It is missing physics preset.\n",
+            safeModelName);
+        return nullptr;
+    }
 
-    if (numPieces < 100 && physPreset)
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    const DynEntPiecesPhysSpawnResult spawnResult =
+        DynEntPieces_TrySpawnPhysObjLockedNoReport(
+            mins,
+            maxs,
+            position,
+            quat,
+            velocity,
+            angularVelocity,
+            physPreset);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+
+    if (spawnResult.cleanupFailed)
+        std::abort();
+    if (spawnResult.capacityExceeded)
     {
-        physObjId = Phys_ObjCreate(PHYS_WORLD_FX, position, quat, velocity, physPreset);
-        if (physObjId)
-        {
-            Phys_ObjAddGeomBox(PHYS_WORLD_FX, physObjId, mins, maxs);
-            Phys_ObjSetAngularVelocity(physObjId, angularVelocity);
-            return physObjId;
-        }
-        else
-        {
-            Com_PrintWarning(1, "Failed to create physics object for '%s'.\n", modelName);
-            return 0;
-        }
+        Com_PrintWarning(
+            1,
+            "Failed to create physics object for '%s': piece capacity exhausted.\n",
+            safeModelName);
+        return nullptr;
     }
-    else
+    if (spawnResult.status != PhysBodyModelCreateStatus::Success)
     {
-        Com_PrintWarning(1, "Failed to spawn pieces model '%s'.  It is missing physics preset.\n", modelName);
-        return 0;
+        Phys_ReportBodyModelCreateFailure(
+            spawnResult.status, spawnResult.resourceFailure);
+        Com_PrintWarning(
+            1,
+            "Failed to create physics object for '%s'.\n",
+            safeModelName);
+        return nullptr;
     }
+
+    return spawnResult.body;
 }
 
 void __cdecl DynEntPieces_CalcForceDir(const float *hitDir, float spreadFraction, float *forceDir)
