@@ -32,11 +32,15 @@ bool ValidatePoolHeader(
     return poolIsFull == (firstFree == -1);
 }
 
-template <typename SLOT_TYPE>
+template <std::size_t LIMIT, typename SLOT_TYPE>
 bool ReadFreeLink(
     const SLOT_TYPE &slot,
     std::int32_t *const outNextFree) noexcept
 {
+    static_assert(LIMIT > 0);
+    static_assert(
+        LIMIT <= static_cast<std::size_t>(
+                     (std::numeric_limits<std::int32_t>::max)()));
     static_assert(std::extent_v<decltype(SLOT_TYPE::bytes)> >= 4);
     if (!outNextFree)
         return false;
@@ -46,18 +50,15 @@ bool ReadFreeLink(
         | (std::uint32_t{slot.bytes[1]} << 8u)
         | (std::uint32_t{slot.bytes[2]} << 16u)
         | (std::uint32_t{slot.bytes[3]} << 24u);
-    if (raw == (std::numeric_limits<std::uint32_t>::max)())
+    std::int32_t nextFree = -1;
+    if (raw != (std::numeric_limits<std::uint32_t>::max)())
     {
-        *outNextFree = -1;
-        return true;
-    }
-    if (raw > static_cast<std::uint32_t>(
-                  (std::numeric_limits<std::int32_t>::max)()))
-    {
-        return false;
+        if (raw >= LIMIT)
+            return false;
+        nextFree = static_cast<std::int32_t>(raw);
     }
 
-    *outNextFree = static_cast<std::int32_t>(raw);
+    *outNextFree = nextFree;
     return true;
 }
 
@@ -110,7 +111,7 @@ bool RebuildPoolState(
         }
 
         std::int32_t nextFree = -1;
-        if (!ReadFreeLink(slots[index], &nextFree)
+        if (!ReadFreeLink<LIMIT>(slots[index], &nextFree)
             || nextFree == freeIndex)
         {
             return false;
@@ -133,6 +134,27 @@ bool RebuildPoolState(
     return true;
 }
 } // namespace
+
+bool TryDecodeFxPoolSlotFreeLinkDisk32(
+    const FxElemPoolSlotDisk32 &slot,
+    std::int32_t *const outNextFree) noexcept
+{
+    return ReadFreeLink<MAX_ELEMS>(slot, outNextFree);
+}
+
+bool TryDecodeFxPoolSlotFreeLinkDisk32(
+    const FxTrailPoolSlotDisk32 &slot,
+    std::int32_t *const outNextFree) noexcept
+{
+    return ReadFreeLink<MAX_TRAILS>(slot, outNextFree);
+}
+
+bool TryDecodeFxPoolSlotFreeLinkDisk32(
+    const FxTrailElemPoolSlotDisk32 &slot,
+    std::int32_t *const outNextFree) noexcept
+{
+    return ReadFreeLink<MAX_TRAIL_ELEMS>(slot, outNextFree);
+}
 
 bool TryRebuildFxSystemBuffersDisk32PoolStates(
     const FxSystemBuffersDisk32 &buffers,

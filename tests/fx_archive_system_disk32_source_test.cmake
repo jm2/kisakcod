@@ -222,5 +222,5 @@ require_contains(
     "measured Windows x86 build")
 require_contains(
     _ci
-    "effectscore-archive-(disk32|system-disk32|buffers-disk32)-codec"
+    "effectscore-archive-(disk32|system-disk32|buffers-disk32|native-disk32)-codec"
     "measured Windows x86 execution")

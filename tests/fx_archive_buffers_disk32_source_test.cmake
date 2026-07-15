@@ -152,8 +152,11 @@ foreach(_marker IN ITEMS
     "std::uint32_t{slot.bytes[1]} << 8u"
     "std::uint32_t{slot.bytes[2]} << 16u"
     "std::uint32_t{slot.bytes[3]} << 24u"
-    "raw == (std::numeric_limits<std::uint32_t>::max)()"
-    "raw > static_cast<std::uint32_t>( (std::numeric_limits<std::int32_t>::max)())"
+    "std::int32_t nextFree = -1;"
+    "raw != (std::numeric_limits<std::uint32_t>::max)()"
+    "raw >= LIMIT"
+    "nextFree = static_cast<std::int32_t>(raw);"
+    "*outNextFree = nextFree;"
     "rebuilt.allocatedWords.fill( (std::numeric_limits<std::uint64_t>::max)())"
     "rebuilt.allocatedWords.data()[index / wordBits]"
     "freeCount >= LIMIT"
@@ -167,6 +170,18 @@ foreach(_marker IN ITEMS
     "return true;")
     require_contains(_source "${_marker}" "bounded transactional free-list reconstruction")
 endforeach()
+foreach(_marker IN ITEMS
+    "TryDecodeFxPoolSlotFreeLinkDisk32("
+    "return ReadFreeLink<MAX_ELEMS>(slot, outNextFree);"
+    "return ReadFreeLink<MAX_TRAILS>(slot, outNextFree);"
+    "return ReadFreeLink<MAX_TRAIL_ELEMS>(slot, outNextFree);")
+    require_contains(
+        _source "${_marker}" "shared pool-specific free-link decoder")
+endforeach()
+require_contains(
+    _header
+    "TryDecodeFxPoolSlotFreeLinkDisk32("
+    "public pool-specific free-link decoder")
 require_ordered(
     _source
     "FxSystemBuffersDisk32PoolStates rebuilt{};"
@@ -242,5 +257,5 @@ require_contains(
     "measured Windows x86 build")
 require_contains(
     _ci
-    "effectscore-archive-(disk32|system-disk32|buffers-disk32)-codec"
+    "effectscore-archive-(disk32|system-disk32|buffers-disk32|native-disk32)-codec"
     "measured Windows x86 execution")

@@ -199,6 +199,21 @@ static_assert(std::is_trivially_copyable_v<FxSystemBuffersDisk32>);
 static_assert(std::is_standard_layout_v<FxSystemBuffersDisk32PoolStates>);
 static_assert(std::is_trivially_copyable_v<FxSystemBuffersDisk32PoolStates>);
 
+// Decodes the explicitly little-endian first word of one raw free slot.  The
+// accepted values are -1 or a nonnegative index in that slot's exact pool.
+// Null output or a malformed word returns false without changing the output.
+[[nodiscard]] bool TryDecodeFxPoolSlotFreeLinkDisk32(
+    const FxElemPoolSlotDisk32 &slot,
+    std::int32_t *outNextFree) noexcept;
+
+[[nodiscard]] bool TryDecodeFxPoolSlotFreeLinkDisk32(
+    const FxTrailPoolSlotDisk32 &slot,
+    std::int32_t *outNextFree) noexcept;
+
+[[nodiscard]] bool TryDecodeFxPoolSlotFreeLinkDisk32(
+    const FxTrailElemPoolSlotDisk32 &slot,
+    std::int32_t *outNextFree) noexcept;
+
 // Reconstructs all three allocation bitmaps by following only the first four
 // explicitly little-endian bytes of each visited free slot.  Only the three
 // corresponding firstFree/activeCount pairs in system are consumed; its other
