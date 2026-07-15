@@ -63,7 +63,9 @@ work item changes. Do not create session-specific handoff files.
   directly as its unsigned object representation, owns a narrow 512-body semantic constant, and pins it against the
   production sidecar where both APIs are already visible. A source contract now forbids reintroducing the stack-heavy
   header. Focused GCC, Clang, ASan+UBSan, TSan, analyzers, actual x86-32 execution, AArch64 linking, ABI debt, and source
-  invariants pass; the remaining initial jobs were still running when this correction superseded that head.
+  invariants pass. Replacement run **29439953821 passed all nine jobs** at exact correction head `d6699d75`: Linux
+  amd64/arm64, portable Windows amd64/ARM64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86, and
+  headless Windows x86 are green.
 - PR #25 squash-merged as `09c05e5f` from final review-fix head `5abf9cbb`. Final run **29427215187 passed all nine jobs**:
   Linux amd64/arm64, portable Windows amd64/arm64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86,
   and headless Windows x86. Initial implementation/docs head `d9ad05ff` also passed all nine jobs in run **29426792491**.
