@@ -70,6 +70,12 @@ static_assert(MAX_GENTITIES == 1024);
 static_assert(CLIENT_DOBJ_HANDLE_MAX == MAX_GENTITIES + 128);
 static_assert(FX_DOBJ_HANDLE_NONE == 4095);
 static_assert(FX_BONE_INDEX_NONE == 2047);
+static_assert(
+    fx::physics::BODY_LIMIT
+    == fx::archive::FX_ARCHIVE_PHYSICS_BODY_LIMIT);
+static_assert(
+    fx::physics::INVALID_BODY_TOKEN
+    == fx::archive::FX_ARCHIVE_INVALID_PHYSICS_TOKEN);
 
 struct FxArchivePoolAllocationStates
 {

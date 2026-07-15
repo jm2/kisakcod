@@ -56,6 +56,14 @@ work item changes. Do not create session-specific handoff files.
   produced the representation-preservation check and negative regression. Production-style builds retain the portable
   4 KiB helper-frame gate; sanitizer builds execute the same maximum-capacity paths without applying redzone-inflated
   static frame diagnostics. The authoritative five-target and measured Windows x86 CI matrix remains the PR gate.
+- PR #27 initial run **29439592615** at `ff59ef7e` passed Linux amd64/arm64, but portable Windows amd64/ARM64 exposed an
+  include-boundary issue before their tests linked: the semantic translation unit imported the complete physics-sidecar
+  header only for its token/512-body constants, causing MSVC analysis to charge an unrelated 4,104-byte inline convenience
+  wrapper against the semantic target's 4 KiB helper gate. The correction removes that dependency, reads the stored token
+  directly as its unsigned object representation, owns a narrow 512-body semantic constant, and pins it against the
+  production sidecar where both APIs are already visible. A source contract now forbids reintroducing the stack-heavy
+  header. Focused GCC, Clang, ASan+UBSan, TSan, analyzers, actual x86-32 execution, AArch64 linking, ABI debt, and source
+  invariants pass; the remaining initial jobs were still running when this correction superseded that head.
 - PR #25 squash-merged as `09c05e5f` from final review-fix head `5abf9cbb`. Final run **29427215187 passed all nine jobs**:
   Linux amd64/arm64, portable Windows amd64/arm64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86,
   and headless Windows x86. Initial implementation/docs head `d9ad05ff` also passed all nine jobs in run **29426792491**.

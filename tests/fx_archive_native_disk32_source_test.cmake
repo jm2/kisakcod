@@ -183,6 +183,8 @@ endforeach()
 foreach(_marker IN ITEMS
     "#include <universal/kisak_abi.h>"
     "namespace layout"
+    "FX_ARCHIVE_PHYSICS_BODY_LIMIT = 512u"
+    "FX_ARCHIVE_INVALID_PHYSICS_TOKEN = 0u"
     "KISAK_ARCH_64BIT ? 0x120u : 0xFCu"
     "KISAK_ARCH_64BIT ? 0xC8u : 0xBCu"
     "KISAK_ARCH_64BIT ? 0x110u : 0xF4u"
@@ -642,12 +644,12 @@ foreach(_marker IN ITEMS
     "bytes + index * layout::ELEM_DEF_STRIDE"
     "void CopyArchiveElemOrigin("
     "std::memcpy(origin, bytes + offsetof(FxElem, physObjId), sizeof(origin));"
-    "std::int32_t CopyArchiveElemPhysicsToken("
-    "ReadRepresentation<std::int32_t>( &elem, offsetof(FxElem, physObjId))"
+    "std::uint32_t CopyArchiveElemPhysicsToken("
+    "ReadRepresentation<std::uint32_t>( &elem, offsetof(FxElem, physObjId))"
     "TrySelectPhysicsModelNoReport("
     "ReadRepresentation<const XModel *>"
     "FxPoolItemIndex<FxElem, MAX_ELEMS>("
-    "fx::physics::TokenFromLegacyField(")
+    "const std::uint32_t token = CopyArchiveElemPhysicsToken(*elem);")
     require_contains(
         _semantics_source
         "${_marker}"
@@ -695,7 +697,7 @@ foreach(_bound IN ITEMS
     "if (chainLength++ == MAX_ELEMS)"
     "if (trailCount++ == MAX_TRAILS)"
     "if (trailElemCount++ == MAX_TRAIL_ELEMS)"
-    "*physicsBodyCount >= fx::physics::BODY_LIMIT")
+    "*physicsBodyCount >= FX_ARCHIVE_PHYSICS_BODY_LIMIT")
     require_contains(
         _semantics_source
         "${_bound}"
@@ -755,7 +757,7 @@ require_ordered(
     "physics model selection must finish before owner-index validation")
 require_ordered(
     _physics_acceptance
-    "token == fx::physics::INVALID_BODY_TOKEN"
+    "token == FX_ARCHIVE_INVALID_PHYSICS_TOKEN"
     "const FxArchiveSemanticPhysicsDescriptor descriptor{"
     "physics identity must validate before descriptor construction")
 require_ordered(
@@ -878,6 +880,10 @@ foreach(_var IN ITEMS _source _semantics_source)
             "native conversion and semantics stay nonblocking and side-effect-free")
     endforeach()
 endforeach()
+require_not_contains(
+    _semantics_source
+    "fx_physics_sidecar.h"
+    "portable semantics must not import unrelated sidecar stack-heavy helpers")
 foreach(_large_type IN ITEMS
     "FxSystem"
     "FxSystemDisk32"

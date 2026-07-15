@@ -13,6 +13,9 @@ struct XModel;
 
 namespace fx::archive
 {
+inline constexpr std::size_t FX_ARCHIVE_PHYSICS_BODY_LIMIT = 512u;
+inline constexpr std::uint32_t FX_ARCHIVE_INVALID_PHYSICS_TOKEN = 0u;
+
 // Platform-neutral byte layout used to inspect the renderer-owned FxElemDef
 // without including its legacy Direct3D-facing definition.  A production TU
 // that sees the complete type must static-assert these values against

@@ -1,6 +1,5 @@
 #include <EffectsCore/fx_archive_semantics.h>
 
-#include <EffectsCore/fx_physics_sidecar.h>
 #include <EffectsCore/fx_pool.h>
 #include <EffectsCore/fx_runtime.h>
 #include <EffectsCore/fx_snapshot_publication.h>
@@ -56,7 +55,7 @@ static_assert(layout::ELEM_DEF_STRIDE == FX_ELEM_DEF_RUNTIME_SIZE);
 static_assert(std::is_standard_layout_v<FxElem>);
 static_assert(std::is_trivially_copyable_v<FxElem>);
 static_assert(
-    fx::physics::BODY_LIMIT
+    FX_ARCHIVE_PHYSICS_BODY_LIMIT
     <= static_cast<std::size_t>(
         (std::numeric_limits<std::uint32_t>::max)()));
 
@@ -158,9 +157,9 @@ void CopyArchiveElemOrigin(
     std::memcpy(origin, bytes + offsetof(FxElem, physObjId), sizeof(origin));
 }
 
-std::int32_t CopyArchiveElemPhysicsToken(const FxElem &elem) noexcept
+std::uint32_t CopyArchiveElemPhysicsToken(const FxElem &elem) noexcept
 {
-    return ReadRepresentation<std::int32_t>(
+    return ReadRepresentation<std::uint32_t>(
         &elem, offsetof(FxElem, physObjId));
 }
 
@@ -760,7 +759,7 @@ bool AcceptPhysicsElem(
         return false;
     if (!ElemStoresPhysicsBody(elemDef))
         return true;
-    if (*physicsBodyCount >= fx::physics::BODY_LIMIT)
+    if (*physicsBodyCount >= FX_ARCHIVE_PHYSICS_BODY_LIMIT)
         return false;
 
     const XModel *model = nullptr;
@@ -771,13 +770,11 @@ bool AcceptPhysicsElem(
     }
 
     std::int32_t ownerIndex = -1;
-    const fx::physics::BodyToken token =
-        fx::physics::TokenFromLegacyField(
-            CopyArchiveElemPhysicsToken(*elem));
+    const std::uint32_t token = CopyArchiveElemPhysicsToken(*elem);
     if (!FxPoolItemIndex<FxElem, MAX_ELEMS>(
             system->elems, elem, &ownerIndex)
         || ownerIndex < 0
-        || token == fx::physics::INVALID_BODY_TOKEN)
+        || token == FX_ARCHIVE_INVALID_PHYSICS_TOKEN)
     {
         return false;
     }
@@ -786,7 +783,7 @@ bool AcceptPhysicsElem(
         elem,
         model,
         static_cast<std::size_t>(ownerIndex),
-        static_cast<std::uint32_t>(token)};
+        token};
     if (callbacks.acceptPhysics
         && !callbacks.acceptPhysics(
             callbacks.context, descriptor, *physicsBodyCount))

@@ -1,7 +1,6 @@
 #include <EffectsCore/fx_archive_native_disk32.h>
 #include <EffectsCore/fx_archive_restore_workspace.h>
 #include <EffectsCore/fx_archive_semantics.h>
-#include <EffectsCore/fx_physics_sidecar.h>
 
 #include <array>
 #include <bit>
@@ -2098,16 +2097,18 @@ void TestReadyPhysicsCapacityBoundary()
         return;
 
     ConfigurePhysicsCapacityFixture(
-        &fixture, &definition, fx::physics::BODY_LIMIT);
+        &fixture, &definition, archive::FX_ARCHIVE_PHYSICS_BODY_LIMIT);
     CHECK(Build(fixture, resolver, owner.get())
           == archive::FxArchiveDisk32StructuralStatus::Success);
     CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
           == archive::FxArchiveDisk32ReadyStatus::Success);
     CHECK(GetReadyView(owner.get()).physicsBodyCount
-          == fx::physics::BODY_LIMIT);
+          == archive::FX_ARCHIVE_PHYSICS_BODY_LIMIT);
 
     ConfigurePhysicsCapacityFixture(
-        &fixture, &definition, fx::physics::BODY_LIMIT + 1u);
+        &fixture,
+        &definition,
+        archive::FX_ARCHIVE_PHYSICS_BODY_LIMIT + 1u);
     CHECK(Build(fixture, resolver, owner.get())
           == archive::FxArchiveDisk32StructuralStatus::Success);
     CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
