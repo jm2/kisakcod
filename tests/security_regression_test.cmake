@@ -6563,8 +6563,8 @@ require_source_ordered(
     "save must relink and validate the complete copied graph")
 require_source_matches(
     "EffectsCore/fx_archive.cpp"
-    "case[ \t]+Operation::ValidateDesiredState:[ \t\r\n]*return[ \t]+FX_ArchiveRestoreControlStatus\\([ \t\r\n]*FX_RebuildPoolAllocationStatesNoReport\\(context.system\\)[ \t\r\n]*&&[ \t]*FX_ValidatePoolAllocationGraphStateWithScratch\\([ \t\r\n]*context.system,[ \t\r\n]*&context.physicsScratch->poolGraph\\)[ \t\r\n]*&&[ \t]*FX_ValidateArchivePhysicsOwnershipLockedWithScratch\\("
-    "restore publication must rebuild and revalidate pool/physics sidecars before reopening admission")
+    "case[ \t]+Operation::ValidateDesiredState:[ \t\r\n]*return[ \t]+FX_ArchiveRestoreControlStatus\\([ \t\r\n]*FX_ArchiveVisibilitySelectorsMatch\\([ \t\r\n]*context.system,[ \t\r\n]*context.systemBuffers,[ \t\r\n]*context.desiredVisibilitySelectors\\)[ \t\r\n]*&&[ \t]*FX_RebuildPoolAllocationStatesNoReport\\(context.system\\)[ \t\r\n]*&&[ \t]*FX_ValidatePoolAllocationGraphStateWithScratch\\([ \t\r\n]*context.system,[ \t\r\n]*&context.physicsScratch->poolGraph\\)[ \t\r\n]*&&[ \t]*FX_ValidateArchivePhysicsOwnershipLockedWithScratch\\("
+    "restore publication must round-trip selectors, then rebuild and revalidate pool/physics sidecars before admission")
 foreach(_fx_pool_sidecar_use
     "elems;7"
     "trails;4"
@@ -6785,6 +6785,82 @@ foreach(_removed_archive_semantic_helper
         "removed semantic helper ${_removed_archive_semantic_helper} must remain owned by the shared oracle")
 endforeach()
 
+# Visibility roles cross the legacy archive boundary only as a validated,
+# distinct selector pair. Shared helpers must use exact pointer equality, and
+# restore publication must resolve fresh pointers in the destination buffers
+# rather than copying or reinterpreting staged pointer values.
+require_source_contains(
+    "EffectsCore/fx_snapshot_publication.h"
+    "std::uint8_t read = 0;\n    std::uint8_t write = 0;"
+    "the zero-initialized visibility selector pair must remain invalid")
+require_source_contains(
+    "EffectsCore/fx_snapshot_publication.h"
+    "selectors.read >= 2 || selectors.write >= 2\n        || selectors.read == selectors.write"
+    "visibility selector resolution must reject out-of-range or aliased roles")
+require_source_contains(
+    "EffectsCore/fx_snapshot_publication.h"
+    "readState == slot1"
+    "visibility selector derivation must use exact owned-slot equality")
+foreach(_forbidden_visibility_helper_codec
+    "reinterpret_cast"
+    "uintptr_t"
+    "readState -"
+    "writeState -"
+    "slot1 - slot0")
+    require_source_not_contains(
+        "EffectsCore/fx_snapshot_publication.h"
+        "${_forbidden_visibility_helper_codec}"
+        "visibility selector helpers must not use integer or pointer-arithmetic codecs")
+endforeach()
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "FX_ArchiveVisibilitySelectorsMatch\\([^}]*system->visState[ \t]*==[ \t]*buffers->visState[^}]*FX_VisibilitySelectorsRoundTrip\\([^}]*&buffers->visState\\[0\\][^}]*&buffers->visState\\[1\\][^}]*system->visStateBufferRead[^}]*system->visStateBufferWrite"
+    "archive graph admission must round-trip selector roles against its exact buffers")
+foreach(_restore_selector_context_member
+    "FxVisibilityBufferSelectors desiredVisibilitySelectors{};"
+    "FxVisibilityBufferSelectors originalVisibilitySelectors{};")
+    require_source_contains(
+        "EffectsCore/fx_archive.cpp"
+        "${_restore_selector_context_member}"
+        "restore control must own both selector values with its staged graphs")
+endforeach()
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "if (!readVisStateValid || !writeVisStateValid"
+    "const FxVisibilityBufferSelectors desiredVisibilitySelectors{"
+    "restore must validate relocated addresses before deriving desired roles")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "&restoredBuffers->visState[1]"
+    "&restoredSystem.visStateBufferRead"
+    "desired role resolution must bind into the staged graph, not a live address")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "restoreContext.originalVisibilitySelectors ="
+    "fx::archive::RunRestoreControl(restoreCallbacks)"
+    "both selector pairs must enter controller ownership before dispatch")
+foreach(_forbidden_restore_selector_publication
+    "reinterpret_cast<const FxVisState *>"
+    "reinterpret_cast<FxVisState *>"
+    "context.system->visStateBufferRead = context.desiredSystem"
+    "context.system->visStateBufferWrite = context.desiredSystem"
+    "context.system->visStateBufferRead = context.originalSystem"
+    "context.system->visStateBufferWrite = context.originalSystem")
+    require_source_not_contains(
+        "EffectsCore/fx_archive.cpp"
+        "${_forbidden_restore_selector_publication}"
+        "restore must not publish staged or reinterpreted visibility pointers")
+endforeach()
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "case[ \t]+Operation::ValidateOriginalGraph:[^;]*FX_ArchiveVisibilitySelectorsMatch\\([ \t\r\n]*context.system,[ \t\r\n]*context.systemBuffers,[ \t\r\n]*context.originalVisibilitySelectors\\)[ \t\r\n]*&&[ \t]*\\(!context.originalGraphPublished"
+    "rollback graph admission must lead with an exact selector round-trip")
+require_source_ordered(
+    "EffectsCore/fx_system.cpp"
+    "system->visStateBufferRead = system->visState;"
+    "system->visStateBufferWrite = system->visState + 1;"
+    "safe-empty recovery must canonicalize visibility roles to read-zero/write-one")
+
 # Restore uses nullable codecs and completes all raw validation before it can
 # publish live state. The legacy public wrappers for partial physics
 # restore/save have been removed so callers cannot bypass the transaction.
@@ -6924,9 +7000,9 @@ require_source_contains(
     "EffectsCore/fx_archive.cpp"
     "Sys_AtomicStore(&context.desiredSystem->iteratorCount, -1);"
     "the desired graph image must preserve archive-exclusive iterator state")
-require_source_contains(
+require_source_matches(
     "EffectsCore/fx_archive.cpp"
-    "Sys_AtomicLoad(&rollbackSystem.iteratorCount) == -1;"
+    "Sys_AtomicLoad\\(&rollbackSystem.iteratorCount\\)[ \t]*==[ \t]*-1[ \t\r\n]*&&[ \t]*FX_ValidateArchiveExclusiveState\\(system\\);"
     "the rollback graph image must preserve archive-exclusive iterator state")
 require_source_matches(
     "EffectsCore/fx_system.cpp"

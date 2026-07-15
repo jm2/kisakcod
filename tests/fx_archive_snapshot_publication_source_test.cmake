@@ -277,45 +277,154 @@ require_slice_contains(
     "previousCameraIsValid == 1 || FX_IsCanonicalInvalidCamera(previousCamera)"
     "pre-draw previous cameras must be valid or canonical invalid")
 
-# Selector derivation accepts only exact owned slots, proves read/write are
-# distinct, and commits both outputs after the complete validation transaction.
-extract_source_tail(
+# Visibility-buffer role values use one deliberately invalid zero-initialized
+# pair. Derivation and resolution accept only exact owned slots, prove the two
+# roles are distinct and in range, and publish outputs only after complete
+# validation. No helper may turn persisted or foreign pointer bits into an
+# index through integer casts or pointer arithmetic.
+extract_source_slice(
     _snapshot_header
+    "struct FxVisibilityBufferSelectors"
+    "inline bool FX_TryDeriveVisibilitySelectorPair("
+    _selector_pair_declaration
+    "FxVisibilityBufferSelectors")
+foreach(_zero_invalid_member IN ITEMS
+    "std::uint8_t read = 0;"
+    "std::uint8_t write = 0;")
+    require_slice_contains(
+        _selector_pair_declaration
+        "${_zero_invalid_member}"
+        "zero-initialized visibility selector pairs remain invalid")
+endforeach()
+
+extract_source_slice(
+    _snapshot_header
+    "inline bool FX_TryDeriveVisibilitySelectorPair("
     "inline bool FX_TryDeriveVisibilitySelectors("
-    _selector_source
-    "FX_TryDeriveVisibilitySelectors")
-foreach(_selector_marker IN ITEMS
+    _selector_pair_derivation
+    "FX_TryDeriveVisibilitySelectorPair")
+foreach(_selector_derivation_marker IN ITEMS
+    "slot0 == slot1"
     "readState == writeState"
-    "outReadSelector == outWriteSelector"
+    "!outSelectors"
     "readState == slot1"
     "readState != slot0"
     "writeState == slot1"
     "writeState != slot0"
-    "readSelector == writeSelector")
+    "selectors.read == selectors.write")
     require_slice_contains(
-        _selector_source
-        "${_selector_marker}"
-        "visibility selectors require exact, distinct owned slots")
+        _selector_pair_derivation
+        "${_selector_derivation_marker}"
+        "selector-pair derivation requires exact distinct owned slots")
 endforeach()
 require_slice_ordered(
-    _selector_source
-    "if (readSelector == writeSelector)"
-    "*outReadSelector = readSelector;"
-    "selector outputs remain untouched until both inputs validate")
+    _selector_pair_derivation
+    "if (selectors.read == selectors.write)"
+    "*outSelectors = selectors;"
+    "pair derivation leaves its output untouched until all checks pass")
+require_literal_count(
+    _selector_pair_derivation
+    "*outSelectors ="
+    1
+    "pair derivation has one final aggregate publication")
+
+extract_source_slice(
+    _snapshot_header
+    "inline bool FX_TryDeriveVisibilitySelectors("
+    "inline bool FX_TryResolveVisibilitySelectors("
+    _selector_compatibility_wrapper
+    "FX_TryDeriveVisibilitySelectors")
+foreach(_compatibility_marker IN ITEMS
+    "!outReadSelector"
+    "!outWriteSelector"
+    "outReadSelector == outWriteSelector"
+    "FX_TryDeriveVisibilitySelectorPair("
+    "*outReadSelector = selectors.read;"
+    "*outWriteSelector = selectors.write;")
+    require_slice_contains(
+        _selector_compatibility_wrapper
+        "${_compatibility_marker}"
+        "the legacy selector API delegates to the aggregate transaction")
+endforeach()
 require_slice_ordered(
-    _selector_source
-    "*outReadSelector = readSelector;"
-    "*outWriteSelector = writeSelector;"
-    "selector outputs commit as one ordered result")
+    _selector_compatibility_wrapper
+    "FX_TryDeriveVisibilitySelectorPair("
+    "*outReadSelector = selectors.read;"
+    "legacy scalar outputs remain untouched until aggregate validation")
+require_slice_ordered(
+    _selector_compatibility_wrapper
+    "*outReadSelector = selectors.read;"
+    "*outWriteSelector = selectors.write;"
+    "legacy scalar outputs retain their distinct ordered roles")
+
+extract_source_slice(
+    _snapshot_header
+    "inline bool FX_TryResolveVisibilitySelectors("
+    "inline bool FX_VisibilitySelectorsRoundTrip("
+    _selector_resolution
+    "FX_TryResolveVisibilitySelectors")
+foreach(_selector_resolution_marker IN ITEMS
+    "slot0 == slot1"
+    "selectors.read >= 2"
+    "selectors.write >= 2"
+    "selectors.read == selectors.write"
+    "!outReadState"
+    "!outWriteState"
+    "static_cast<const void *>(outReadState) == static_cast<const void *>(outWriteState)"
+    "selectors.read == 0 ? slot0 : slot1"
+    "selectors.write == 0 ? slot0 : slot1"
+    "readState == writeState")
+    require_slice_contains(
+        _selector_resolution
+        "${_selector_resolution_marker}"
+        "selector resolution checks bounds, roles, slots, and outputs")
+endforeach()
+require_slice_ordered(
+    _selector_resolution
+    "if (readState == writeState)"
+    "*outReadState = readState;"
+    "resolved pointer outputs remain untouched until both roles validate")
+require_slice_ordered(
+    _selector_resolution
+    "*outReadState = readState;"
+    "*outWriteState = writeState;"
+    "resolved pointer roles publish as one ordered result")
+
+extract_source_tail(
+    _snapshot_header
+    "inline bool FX_VisibilitySelectorsRoundTrip("
+    _selector_roundtrip
+    "FX_VisibilitySelectorsRoundTrip")
+require_slice_ordered(
+    _selector_roundtrip
+    "FX_TryDeriveVisibilitySelectorPair("
+    "observedSelectors.read == expectedSelectors.read"
+    "round-trip validation first derives exact staged pointer roles")
+require_slice_ordered(
+    _selector_roundtrip
+    "observedSelectors.read == expectedSelectors.read"
+    "observedSelectors.write == expectedSelectors.write"
+    "round-trip validation matches both selector roles")
+
+extract_source_tail(
+    _snapshot_header
+    "struct FxVisibilityBufferSelectors"
+    _selector_helpers
+    "visibility selector helpers")
 foreach(_forbidden_selector_codec IN ITEMS
     "reinterpret_cast"
     "uintptr_t"
     "readState -"
-    "writeState -")
+    "writeState -"
+    "slot1 - slot0"
+    "slot0 +"
+    "slot1 +"
+    "slot0["
+    "slot1[")
     require_slice_not_contains(
-        _selector_source
+        _selector_helpers
         "${_forbidden_selector_codec}"
-        "visibility selectors never derive indices through pointer arithmetic")
+        "visibility helpers never derive or resolve roles through pointer arithmetic")
 endforeach()
 
 # The camera gate nests inside the main cooperative iterator: readers share
