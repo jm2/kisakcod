@@ -1,5 +1,6 @@
 #include <EffectsCore/fx_archive_native_disk32.h>
 #include <EffectsCore/fx_archive_restore_workspace.h>
+#include <EffectsCore/fx_archive_semantics.h>
 
 #include <array>
 #include <bit>
@@ -13,6 +14,34 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+// The production target obtains this deterministic table from fx_random.cpp.
+// Preserve its prefix through every offset used by the seed-zero semantic
+// fixtures; the remaining entries are zero because this isolated executable
+// never selects them.
+extern const float fx_randomTable[507]{
+    0.4300513f,
+    0.58586591f,
+    0.14015682f,
+    0.3638894f,
+    0.87767053f,
+    0.67589945f,
+    0.18348631f,
+    0.28799689f,
+    0.68363762f,
+    0.071270868f,
+    0.94988143f,
+    0.45510319f,
+    0.87240946f,
+    0.84151697f,
+    0.37590459f,
+    0.64859152f,
+    0.85434818f,
+    0.0097696204f,
+    0.49672353f,
+    0.43216714f,
+    0.43313825f,
+    0.23515075f};
 
 namespace
 {
@@ -40,6 +69,13 @@ constexpr std::uint16_t INVALID_HANDLE =
     (std::numeric_limits<std::uint16_t>::max)();
 constexpr std::uint32_t SELF_OWNED_STATUS_BIT = UINT32_C(0x10000000);
 constexpr std::uint32_t DEFINITION_KEY = UINT32_C(0x00013579);
+constexpr std::uint32_t DOBJ_HANDLE_NONE = UINT32_C(4095);
+constexpr std::uint32_t BONE_INDEX_NONE = UINT32_C(2047);
+constexpr std::uint8_t ELEM_TYPE_SPRITE_BILLBOARD = UINT8_C(0);
+constexpr std::uint8_t ELEM_TYPE_TRAIL = UINT8_C(3);
+constexpr std::uint8_t ELEM_TYPE_CLOUD = UINT8_C(4);
+constexpr std::uint8_t ELEM_TYPE_MODEL = UINT8_C(5);
+constexpr std::uint8_t ELEM_TYPE_SPOT_LIGHT = UINT8_C(7);
 
 int failures = 0;
 
@@ -545,6 +581,228 @@ private:
         }
     }
 };
+
+struct alignas(FX_ELEM_DEF_RUNTIME_ALIGNMENT) SemanticElemDefinition final
+{
+    std::array<std::uint8_t, archive::layout::ELEM_DEF_STRIDE> bytes{};
+};
+static_assert(archive::layout::ELEM_DEF_STRIDE
+              == FX_ELEM_DEF_RUNTIME_SIZE);
+static_assert(sizeof(SemanticElemDefinition)
+              == archive::layout::ELEM_DEF_STRIDE);
+static_assert(alignof(SemanticElemDefinition)
+              == FX_ELEM_DEF_RUNTIME_ALIGNMENT);
+
+template <typename VALUE>
+void StoreSemanticDefinitionField(
+    SemanticElemDefinition *const definition,
+    const std::size_t offset,
+    const VALUE &value) noexcept
+{
+    CHECK(definition != nullptr);
+    const bool rangeIsValid = definition
+        && offset <= definition->bytes.size()
+        && sizeof(value) <= definition->bytes.size() - offset;
+    CHECK(rangeIsValid);
+    if (rangeIsValid)
+    {
+        std::memcpy(
+            definition->bytes.data() + offset,
+            &value,
+            sizeof(value));
+    }
+}
+
+struct SemanticDefinition final
+{
+    std::array<SemanticElemDefinition, 3> elemDefs{};
+    FxEffectDef effect{};
+
+    void Configure(const std::size_t count) noexcept
+    {
+        CHECK(count <= elemDefs.size());
+        if (count > elemDefs.size())
+            return;
+        effect = {};
+        effect.msecLoopingLife = 0;
+        effect.elemDefCountOneShot = static_cast<std::int32_t>(count);
+        effect.elemDefs = reinterpret_cast<const FxElemDef *>(
+            elemDefs.data());
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            elemDefs[index] = {};
+            const std::int32_t oneShotCount = 1;
+            const std::int32_t lifespan = 1000;
+            StoreSemanticDefinitionField(
+                &elemDefs[index],
+                archive::layout::ELEM_DEF_SPAWN_OFFSET,
+                oneShotCount);
+            StoreSemanticDefinitionField(
+                &elemDefs[index],
+                archive::layout::ELEM_DEF_LIFE_SPAN_OFFSET,
+                lifespan);
+        }
+    }
+
+    void SetType(
+        const std::size_t index,
+        const std::uint8_t type) noexcept
+    {
+        CHECK(index < elemDefs.size());
+        if (index < elemDefs.size())
+        {
+            StoreSemanticDefinitionField(
+                &elemDefs[index],
+                archive::layout::ELEM_DEF_ELEM_TYPE_OFFSET,
+                type);
+        }
+    }
+
+    void SetPhysicsModel(
+        const std::size_t index,
+        const std::uintptr_t model) noexcept
+    {
+        CHECK(index < elemDefs.size());
+        if (index >= elemDefs.size())
+            return;
+        const std::int32_t flags = 0x08000000;
+        const std::uint8_t visualCount = 1;
+        StoreSemanticDefinitionField(
+            &elemDefs[index],
+            archive::layout::ELEM_DEF_FLAGS_OFFSET,
+            flags);
+        SetType(index, ELEM_TYPE_MODEL);
+        StoreSemanticDefinitionField(
+            &elemDefs[index],
+            archive::layout::ELEM_DEF_VISUAL_COUNT_OFFSET,
+            visualCount);
+        StoreSemanticDefinitionField(
+            &elemDefs[index],
+            archive::layout::ELEM_DEF_VISUALS_OFFSET,
+            model);
+    }
+
+    void SetTrail(
+        const std::size_t index,
+        const std::uintptr_t trailDefinition) noexcept
+    {
+        CHECK(index < elemDefs.size());
+        if (index >= elemDefs.size())
+            return;
+        SetType(index, ELEM_TYPE_TRAIL);
+        StoreSemanticDefinitionField(
+            &elemDefs[index],
+            archive::layout::ELEM_DEF_TRAIL_DEF_OFFSET,
+            trailDefinition);
+    }
+};
+
+struct SemanticTrailDefinitionHeader final
+{
+    std::int32_t scrollTimeMsec = 0;
+    std::int32_t repeatDist = 1;
+    std::int32_t splitDist = 1;
+};
+static_assert(sizeof(SemanticTrailDefinitionHeader) == 12);
+
+struct SemanticCallbackProbe final
+{
+    std::uint32_t expectedToken = 0;
+    std::size_t prepareCalls = 0;
+    std::size_t sinkCalls = 0;
+    bool valid = true;
+    bool mutatePayload = false;
+};
+
+bool PrepareSemanticPayloadProbe(
+    void *const context,
+    FxSystem *const system,
+    FxEffect *const effect,
+    FxElem *const elem,
+    const FxElemDef *const elemDef,
+    const archive::FxArchiveElemPayloadKind payloadKind) noexcept
+{
+    auto *const probe = static_cast<SemanticCallbackProbe *>(context);
+    if (!probe)
+        return false;
+    ++probe->prepareCalls;
+    probe->valid = probe->valid && system && effect && elem && elemDef
+        && payloadKind
+            == archive::FxArchiveElemPayloadKind::PhysicsLighting;
+    if (probe->valid && probe->mutatePayload)
+    {
+        const std::uint32_t changedToken = probe->expectedToken ^ 1u;
+        auto *const elemBytes = reinterpret_cast<std::uint8_t *>(elem);
+        std::memcpy(
+            elemBytes + offsetof(FxElem, physObjId),
+            &changedToken,
+            sizeof(changedToken));
+    }
+    return probe->valid;
+}
+
+bool AcceptSemanticPhysicsProbe(
+    void *const context,
+    const archive::FxArchiveSemanticPhysicsDescriptor &descriptor,
+    const std::size_t physicsIndex) noexcept
+{
+    auto *const probe = static_cast<SemanticCallbackProbe *>(context);
+    if (!probe)
+        return false;
+    ++probe->sinkCalls;
+    probe->valid = probe->valid && physicsIndex == 0
+        && descriptor.elem != nullptr && descriptor.model != nullptr
+        && descriptor.ownerIndex == 0
+        && descriptor.token == probe->expectedToken;
+    return probe->valid;
+}
+
+void MakeEffectRuntimeSemanticallyValid(Fixture *const fixture) noexcept
+{
+    CHECK(fixture != nullptr);
+    if (!fixture)
+        return;
+    archive::FxEffectDisk32 &effect = fixture->buffers->effects[0];
+    effect.randomSeed = 0;
+    effect.boltAndSortOrder =
+        DOBJ_HANDLE_NONE | (BONE_INDEX_NONE << 13u);
+    effect.msecBegin = 700;
+    effect.msecLastUpdate = 900;
+    effect.frameAtSpawn = {};
+    effect.frameNow = {};
+    effect.framePrev = {};
+    effect.frameAtSpawn.quat[0] = 1.0f;
+    effect.frameNow.quat[0] = 1.0f;
+    effect.framePrev.quat[0] = 1.0f;
+    effect.distanceTraveled = 0.0f;
+}
+
+archive::FxElemDisk32 LoadElemDisk32(
+    const Fixture &fixture,
+    const std::size_t index) noexcept
+{
+    archive::FxElemDisk32 elem{};
+    CHECK(index < MAX_ELEMS);
+    if (index < MAX_ELEMS)
+    {
+        std::memcpy(
+            &elem,
+            fixture.buffers->elems[index].bytes,
+            sizeof(elem));
+    }
+    return elem;
+}
+
+void StoreElemDisk32(
+    Fixture *const fixture,
+    const std::size_t index,
+    const archive::FxElemDisk32 &elem) noexcept
+{
+    CHECK(fixture != nullptr);
+    CHECK(index < MAX_ELEMS);
+    if (fixture && index < MAX_ELEMS)
+        StoreRecord(elem, fixture->buffers->elems[index].bytes);
+}
 
 template <typename SLOT, std::size_t LIMIT>
 std::int32_t ConfigureSparseFreeChain(
@@ -1346,6 +1604,517 @@ void TestSourceImagesRemainReadOnlyAcrossSuccessAndFailure()
           == 0);
     CheckViewIsGated(owner.get());
 }
+
+archive::FxArchiveDisk32ReadyView GetReadyView(
+    const archive::FxArchiveDisk32NativeWorkspace *const workspace)
+{
+    archive::FxArchiveDisk32ReadyView view{};
+    CHECK(archive::TryGetFxArchiveDisk32ReadyView(workspace, &view));
+    CHECK(view.system != nullptr);
+    CHECK(view.buffers != nullptr);
+    CHECK(view.poolStates != nullptr);
+    CHECK(view.metadata != nullptr);
+    return view;
+}
+
+void TestReadyEmptyImageAndPhaseGates()
+{
+    Fixture fixture{};
+    fixture.system->frameCount = 0;
+    ResolverState resolver{};
+    AllocationState allocation{};
+    WorkspaceOwner owner{&allocation};
+    CHECK(owner.get() != nullptr);
+    if (!owner.get())
+        return;
+
+    const auto poison = reinterpret_cast<const void *>(
+        static_cast<std::uintptr_t>(UINT32_C(0x2468A)));
+    archive::FxArchiveDisk32ReadyView output{
+        static_cast<const FxSystem *>(poison),
+        static_cast<const FxSystemBuffers *>(poison),
+        static_cast<const archive::FxSystemBuffersDisk32PoolStates *>(
+            poison),
+        static_cast<const archive::FxSystemDisk32Metadata *>(poison),
+        UINT32_C(0xA5A55A5A)};
+    const auto outputBefore = output;
+    CHECK(!archive::TryGetFxArchiveDisk32ReadyView(
+        owner.get(), &output));
+    CHECK(std::memcmp(&output, &outputBefore, sizeof(output)) == 0);
+    CHECK(!archive::TryGetFxArchiveDisk32ReadyView(nullptr, &output));
+    CHECK(std::memcmp(&output, &outputBefore, sizeof(output)) == 0);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(nullptr)
+          == archive::FxArchiveDisk32ReadyStatus::InvalidArgument);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::InvalidPhase);
+
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    CHECK(!archive::TryGetFxArchiveDisk32ReadyView(
+        owner.get(), &output));
+    CHECK(std::memcmp(&output, &outputBefore, sizeof(output)) == 0);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::Success);
+    CHECK(owner.get()->phase()
+          == archive::FxArchiveDisk32WorkspacePhase::Ready);
+    const auto ready = GetReadyView(owner.get());
+    CHECK(ready.physicsBodyCount == 0);
+    CHECK(ready.system->activeSpotLightBoltDobj == -1);
+    CHECK(ready.system->frameCount == 1);
+    archive::FxArchiveDisk32StructuralView structural{};
+    CHECK(archive::TryGetFxArchiveDisk32StructuralView(
+        owner.get(), &structural));
+    CHECK(structural.system == ready.system);
+
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::InvalidPhase);
+    CHECK(owner.get()->phase()
+          == archive::FxArchiveDisk32WorkspacePhase::Ready);
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    CHECK(owner.get()->phase()
+          == archive::FxArchiveDisk32WorkspacePhase::StructurallyValid);
+    CHECK(!archive::TryGetFxArchiveDisk32ReadyView(
+        owner.get(), &output));
+}
+
+void TestReadyOriginLightingAndCanonicalization()
+{
+    Fixture fixture{};
+    fixture.PopulateGraph(1, 0, 0);
+    MakeEffectRuntimeSemanticallyValid(&fixture);
+
+    SemanticDefinition definition{};
+    definition.Configure(1);
+    definition.SetType(0, ELEM_TYPE_SPRITE_BILLBOARD);
+    ResolverState resolver{};
+    resolver.result = &definition.effect;
+
+    archive::FxElemDisk32 elem = LoadElemDisk32(fixture, 0);
+    elem.defIndex = 0;
+    const float origin[3]{1.25f, -2.5f, 3.75f};
+    std::memcpy(elem.payload, origin, sizeof(origin));
+    const std::array<std::uint8_t, 4> value{
+        UINT8_C(0xEF), UINT8_C(0xBE), UINT8_C(0xC3), UINT8_C(0x7A)};
+    std::memcpy(elem.value, value.data(), value.size());
+    StoreElemDisk32(&fixture, 0, elem);
+
+    AllocationState allocation{};
+    WorkspaceOwner owner{&allocation};
+    CHECK(owner.get() != nullptr);
+    if (!owner.get())
+        return;
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    const auto structural = GetView(owner.get());
+    std::vector<std::uint8_t> expectedSystem(
+        reinterpret_cast<const std::uint8_t *>(structural.system),
+        reinterpret_cast<const std::uint8_t *>(structural.system)
+            + sizeof(*structural.system));
+    std::vector<std::uint8_t> expectedBuffers(
+        reinterpret_cast<const std::uint8_t *>(structural.buffers),
+        reinterpret_cast<const std::uint8_t *>(structural.buffers)
+            + sizeof(*structural.buffers));
+    const std::int32_t zeroFrameCount = 0;
+    std::memcpy(
+        expectedBuffers.data()
+            + offsetof(FxSystemBuffers, effects)
+            + offsetof(FxEffect, frameCount),
+        &zeroFrameCount,
+        sizeof(zeroFrameCount));
+    const std::int16_t noSpotLightBolt = -1;
+    std::memcpy(
+        expectedSystem.data()
+            + offsetof(FxSystem, activeSpotLightBoltDobj),
+        &noSpotLightBolt,
+        sizeof(noSpotLightBolt));
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::Success);
+
+    const auto ready = GetReadyView(owner.get());
+    CHECK(ready.physicsBodyCount == 0);
+    CHECK(Sys_AtomicLoad(&ready.buffers->effects[0].frameCount) == 0);
+    const FxElem &readyElem = ready.buffers->elems[0].item;
+    CHECK(std::memcmp(readyElem.origin, origin, sizeof(origin)) == 0);
+    CHECK(readyElem.u.lightingHandle == UINT16_C(0xBEEF));
+    CHECK(std::memcmp(
+              reinterpret_cast<const std::uint8_t *>(&readyElem)
+                  + offsetof(FxElem, u),
+              value.data(),
+              value.size())
+          == 0);
+    CHECK(std::memcmp(
+              ready.system,
+              expectedSystem.data(),
+              expectedSystem.size())
+          == 0);
+    CHECK(std::memcmp(
+              ready.buffers,
+              expectedBuffers.data(),
+              expectedBuffers.size())
+          == 0);
+}
+
+void ConfigurePhysicsModelFixture(
+    Fixture *const fixture,
+    SemanticDefinition *const definition,
+    const std::uint32_t token) noexcept
+{
+    CHECK(fixture != nullptr);
+    CHECK(definition != nullptr);
+    if (!fixture || !definition)
+        return;
+    fixture->PopulateGraph(1, 0, 0);
+    MakeEffectRuntimeSemanticallyValid(fixture);
+    archive::FxEffectDisk32 &effect = fixture->buffers->effects[0];
+    effect.firstElemHandle[0] = INVALID_HANDLE;
+    effect.firstElemHandle[1] = ElemHandle(0);
+    effect.firstSortedElemHandle = INVALID_HANDLE;
+
+    definition->Configure(1);
+    definition->SetPhysicsModel(
+        0, static_cast<std::uintptr_t>(UINT32_C(0x135790)));
+
+    archive::FxElemDisk32 elem = LoadElemDisk32(*fixture, 0);
+    elem.defIndex = 0;
+    std::memcpy(elem.payload, &token, sizeof(token));
+    for (std::size_t index = sizeof(token);
+         index < sizeof(elem.payload);
+         ++index)
+    {
+        elem.payload[index] = static_cast<std::uint8_t>(0x80u + index);
+    }
+    StoreElemDisk32(fixture, 0, elem);
+}
+
+void TestReadyPhysicsSelectionAndFailureGating()
+{
+    constexpr std::uint32_t token = UINT32_C(0xF1234567);
+    Fixture fixture{};
+    SemanticDefinition definition{};
+    ConfigurePhysicsModelFixture(&fixture, &definition, token);
+    ResolverState resolver{};
+    resolver.result = &definition.effect;
+
+    const archive::FxElemDisk32 sourceElem =
+        LoadElemDisk32(fixture, 0);
+    AllocationState allocation{};
+    WorkspaceOwner owner{&allocation};
+    CHECK(owner.get() != nullptr);
+    if (!owner.get())
+        return;
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    SemanticCallbackProbe successfulProbe{token};
+    const archive::FxArchiveSemanticCallbacks probeCallbacks{
+        &successfulProbe,
+        PrepareSemanticPayloadProbe,
+        AcceptSemanticPhysicsProbe};
+    archive::FxArchiveSemanticResult probedResult{};
+    const auto probedStructural = GetView(owner.get());
+    CHECK(archive::TryValidateFxArchiveSemanticsNoReport(
+        const_cast<FxSystem *>(probedStructural.system),
+        probeCallbacks,
+        &probedResult));
+    CHECK(successfulProbe.valid);
+    CHECK(successfulProbe.prepareCalls == 1);
+    CHECK(successfulProbe.sinkCalls == 1);
+    CHECK(probedResult.physicsBodyCount == 1);
+
+    SemanticCallbackProbe mutatingProbe{token};
+    mutatingProbe.mutatePayload = true;
+    const archive::FxArchiveSemanticCallbacks mutatingCallbacks{
+        &mutatingProbe,
+        PrepareSemanticPayloadProbe,
+        AcceptSemanticPhysicsProbe};
+    archive::FxArchiveSemanticResult mutationResult{
+        UINT32_C(0x55AAAA55), -321};
+    const auto mutationResultBefore = mutationResult;
+    CHECK(!archive::TryValidateFxArchiveSemanticsNoReport(
+        const_cast<FxSystem *>(probedStructural.system),
+        mutatingCallbacks,
+        &mutationResult));
+    CHECK(mutatingProbe.valid);
+    CHECK(mutatingProbe.prepareCalls == 1);
+    CHECK(mutatingProbe.sinkCalls == 0);
+    CHECK(std::memcmp(
+              &mutationResult,
+              &mutationResultBefore,
+              sizeof(mutationResult))
+          == 0);
+
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::Success);
+    const auto ready = GetReadyView(owner.get());
+    CHECK(ready.physicsBodyCount == 1);
+    std::uint32_t observedToken = 0;
+    std::memcpy(
+        &observedToken,
+        &ready.buffers->elems[0].item.physObjId,
+        sizeof(observedToken));
+    CHECK(observedToken == token);
+    CHECK(std::memcmp(
+              reinterpret_cast<const std::uint8_t *>(
+                  &ready.buffers->elems[0].item)
+                  + offsetof(FxElem, physObjId),
+              sourceElem.payload,
+              sizeof(sourceElem.payload))
+          == 0);
+
+    ConfigurePhysicsModelFixture(&fixture, &definition, 0);
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    SemanticCallbackProbe failedProbe{0};
+    const archive::FxArchiveSemanticCallbacks failedCallbacks{
+        &failedProbe,
+        PrepareSemanticPayloadProbe,
+        AcceptSemanticPhysicsProbe};
+    archive::FxArchiveSemanticResult failedResult{
+        UINT32_C(0xA5A55A5A), -123};
+    const auto failedResultBefore = failedResult;
+    const auto failedStructural = GetView(owner.get());
+    CHECK(!archive::TryValidateFxArchiveSemanticsNoReport(
+        const_cast<FxSystem *>(failedStructural.system),
+        failedCallbacks,
+        &failedResult));
+    CHECK(failedProbe.prepareCalls == 0);
+    CHECK(failedProbe.sinkCalls == 0);
+    CHECK(std::memcmp(
+              &failedResult,
+              &failedResultBefore,
+              sizeof(failedResult))
+          == 0);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::InvalidSemantics);
+    CheckViewIsGated(owner.get());
+    archive::FxArchiveDisk32ReadyView failedView{};
+    CHECK(!archive::TryGetFxArchiveDisk32ReadyView(
+        owner.get(), &failedView));
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::InvalidPhase);
+
+    ConfigurePhysicsModelFixture(&fixture, &definition, token);
+    definition.SetPhysicsModel(0, 0);
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::InvalidSemantics);
+    CheckViewIsGated(owner.get());
+}
+
+void TestReadySpotlightSelectionAndDerivedBolt()
+{
+    Fixture fixture{};
+    fixture.PopulateGraph(1, 0, 0);
+    MakeEffectRuntimeSemanticallyValid(&fixture);
+    archive::FxEffectDisk32 &effect = fixture.buffers->effects[0];
+    effect.firstElemHandle[0] = INVALID_HANDLE;
+    effect.firstSortedElemHandle = INVALID_HANDLE;
+    constexpr std::uint32_t boltDobj = 123;
+    constexpr std::uint32_t boltBone = 5;
+    effect.boltAndSortOrder = boltDobj | (boltBone << 13u);
+    fixture.system->activeSpotLightEffectCount = 1;
+    fixture.system->activeSpotLightElemCount = 1;
+    fixture.system->activeSpotLightEffectHandle = DiskEffectHandle(0);
+    fixture.system->activeSpotLightElemHandle = ElemHandle(0);
+    fixture.system->activeSpotLightBoltDobj = -77;
+
+    SemanticDefinition definition{};
+    definition.Configure(1);
+    definition.SetType(0, ELEM_TYPE_SPOT_LIGHT);
+    ResolverState resolver{};
+    resolver.result = &definition.effect;
+
+    archive::FxElemDisk32 elem = LoadElemDisk32(fixture, 0);
+    elem.defIndex = 0;
+    const float origin[3]{25.0f, -50.0f, 75.0f};
+    std::memcpy(elem.payload, origin, sizeof(origin));
+    StoreElemDisk32(&fixture, 0, elem);
+
+    AllocationState allocation{};
+    WorkspaceOwner owner{&allocation};
+    CHECK(owner.get() != nullptr);
+    if (!owner.get())
+        return;
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::Success);
+    const auto ready = GetReadyView(owner.get());
+    CHECK(ready.buffers != nullptr);
+    if (!ready.buffers)
+        return;
+    CHECK(ready.physicsBodyCount == 0);
+    CHECK(ready.system->activeSpotLightBoltDobj
+          == static_cast<std::int16_t>(boltDobj));
+    CHECK(std::memcmp(
+              ready.buffers->elems[0].item.origin,
+              origin,
+              sizeof(origin))
+          == 0);
+}
+
+void TestReadyAllOrdinaryClasses()
+{
+    Fixture fixture{};
+    fixture.PopulateGraph(3, 0, 0);
+    MakeEffectRuntimeSemanticallyValid(&fixture);
+    archive::FxEffectDisk32 &effect = fixture.buffers->effects[0];
+    effect.firstElemHandle[0] = ElemHandle(0);
+    effect.firstElemHandle[1] = ElemHandle(1);
+    effect.firstElemHandle[2] = ElemHandle(2);
+    effect.firstSortedElemHandle = ElemHandle(0);
+
+    SemanticDefinition definition{};
+    definition.Configure(3);
+    definition.SetType(0, ELEM_TYPE_SPRITE_BILLBOARD);
+    definition.SetType(1, ELEM_TYPE_MODEL);
+    definition.SetType(2, ELEM_TYPE_CLOUD);
+    const std::array<std::array<float, 3>, 3> origins{{
+        {{1.0f, 2.0f, 3.0f}},
+        {{4.0f, 5.0f, 6.0f}},
+        {{7.0f, 8.0f, 9.0f}}}};
+    for (std::size_t index = 0; index < origins.size(); ++index)
+    {
+        archive::FxElemDisk32 elem = LoadElemDisk32(fixture, index);
+        elem.defIndex = static_cast<std::uint8_t>(index);
+        elem.nextElemHandleInEffect = INVALID_HANDLE;
+        elem.prevElemHandleInEffect = INVALID_HANDLE;
+        std::memcpy(
+            elem.payload,
+            origins[index].data(),
+            sizeof(elem.payload));
+        StoreElemDisk32(&fixture, index, elem);
+    }
+
+    ResolverState resolver{};
+    resolver.result = &definition.effect;
+    AllocationState allocation{};
+    WorkspaceOwner owner{&allocation};
+    CHECK(owner.get() != nullptr);
+    if (!owner.get())
+        return;
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::Success);
+    const auto ready = GetReadyView(owner.get());
+    CHECK(ready.buffers != nullptr);
+    if (!ready.buffers)
+        return;
+    CHECK(ready.physicsBodyCount == 0);
+    for (std::size_t index = 0; index < origins.size(); ++index)
+    {
+        CHECK(std::memcmp(
+                  ready.buffers->elems[index].item.origin,
+                  origins[index].data(),
+                  sizeof(ready.buffers->elems[index].item.origin))
+              == 0);
+    }
+}
+
+void TestReadyTrailSemanticsAndFailureGating()
+{
+    Fixture fixture{};
+    fixture.PopulateGraph(0, 1, 1);
+    MakeEffectRuntimeSemanticallyValid(&fixture);
+    SemanticTrailDefinitionHeader trailDefinition{};
+    SemanticDefinition definition{};
+    definition.Configure(1);
+    definition.effect.elemDefCountOneShot = 0;
+    definition.effect.elemDefCountEmission = 1;
+    definition.SetTrail(
+        0, reinterpret_cast<std::uintptr_t>(&trailDefinition));
+    ResolverState resolver{};
+    resolver.result = &definition.effect;
+
+    AllocationState allocation{};
+    WorkspaceOwner owner{&allocation};
+    CHECK(owner.get() != nullptr);
+    if (!owner.get())
+        return;
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::Success);
+    const auto ready = GetReadyView(owner.get());
+    CHECK(ready.physicsBodyCount == 0);
+    CHECK(ready.buffers->trails[0].item.defIndex == 0);
+    CHECK(ready.buffers->trailElems[0].item.spawnDist == 0.0f);
+
+    trailDefinition.splitDist = 0;
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::InvalidSemantics);
+    CheckViewIsGated(owner.get());
+}
+
+void ConfigurePhysicsCapacityFixture(
+    Fixture *const fixture,
+    SemanticDefinition *const definition,
+    const std::size_t elemCount) noexcept
+{
+    CHECK(fixture != nullptr);
+    CHECK(definition != nullptr);
+    CHECK(elemCount <= MAX_ELEMS);
+    if (!fixture || !definition || elemCount > MAX_ELEMS)
+        return;
+    fixture->PopulateGraph(elemCount, 0, 0);
+    MakeEffectRuntimeSemanticallyValid(fixture);
+    archive::FxEffectDisk32 &effect = fixture->buffers->effects[0];
+    effect.firstElemHandle[0] = INVALID_HANDLE;
+    effect.firstElemHandle[1] =
+        elemCount == 0 ? INVALID_HANDLE : ElemHandle(0);
+    effect.firstSortedElemHandle = INVALID_HANDLE;
+    definition->Configure(1);
+    definition->SetPhysicsModel(
+        0, static_cast<std::uintptr_t>(UINT32_C(0x2468A0)));
+
+    for (std::size_t index = 0; index < elemCount; ++index)
+    {
+        archive::FxElemDisk32 elem = LoadElemDisk32(*fixture, index);
+        elem.defIndex = 0;
+        const std::uint32_t token =
+            static_cast<std::uint32_t>(index + 1u);
+        std::memcpy(elem.payload, &token, sizeof(token));
+        StoreElemDisk32(fixture, index, elem);
+    }
+}
+
+void TestReadyPhysicsCapacityBoundary()
+{
+    Fixture fixture{};
+    SemanticDefinition definition{};
+    ResolverState resolver{};
+    resolver.result = &definition.effect;
+    AllocationState allocation{};
+    WorkspaceOwner owner{&allocation};
+    CHECK(owner.get() != nullptr);
+    if (!owner.get())
+        return;
+
+    ConfigurePhysicsCapacityFixture(
+        &fixture, &definition, archive::FX_ARCHIVE_PHYSICS_BODY_LIMIT);
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::Success);
+    CHECK(GetReadyView(owner.get()).physicsBodyCount
+          == archive::FX_ARCHIVE_PHYSICS_BODY_LIMIT);
+
+    ConfigurePhysicsCapacityFixture(
+        &fixture,
+        &definition,
+        archive::FX_ARCHIVE_PHYSICS_BODY_LIMIT + 1u);
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::InvalidSemantics);
+    CheckViewIsGated(owner.get());
+}
 } // namespace
 
 int main()
@@ -1360,6 +2129,13 @@ int main()
     TestSameWorkspaceResolverReentrancyIsRejected();
     TestSameWorkspaceSparsePoolMemberTransitions();
     TestSourceImagesRemainReadOnlyAcrossSuccessAndFailure();
+    TestReadyEmptyImageAndPhaseGates();
+    TestReadyOriginLightingAndCanonicalization();
+    TestReadyPhysicsSelectionAndFailureGating();
+    TestReadySpotlightSelectionAndDerivedBolt();
+    TestReadyAllOrdinaryClasses();
+    TestReadyTrailSemanticsAndFailureGating();
+    TestReadyPhysicsCapacityBoundary();
 
     if (failures != 0)
     {

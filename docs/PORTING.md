@@ -1066,7 +1066,7 @@ registration failure, reentry, abandonment, stale/foreign ownership, reuse, and 
 under GCC, Clang, ASan+UBSan, and TSan; strict x86-32/AArch64 compilation and two independent audits are green. Windows
 x86 production compilation and the five native utility runners remain the authoritative PR CI gate.
 
-Overall porting progress is approximately **44%** (plausible range **40–49%**), while target delivery remains **0/5**.
+Overall porting progress is approximately **45%** (plausible range **41–50%**), while target delivery remains **0/5**.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
 Windows x86 Debug and Release production reports now enforce 2,756-byte `FX_Save`, 6,124-byte `FX_Restore`, and
 2,064-byte maximum-other frames after replacing the discovered 10,256-byte helper with checked heap scratch. Coherent
@@ -1074,12 +1074,15 @@ camera/scalar/visibility publication, copied-image validation, visibility select
 membership passed all nine jobs in PR #21 run **29397910131** at implementation head `7895f7a9`; Codex found no major
 issue at that exact commit and the sole Gemini finding was fixed and resolved; final documentation run **29414351528**
 also passed all nine jobs before squash merge `0f878ff4`. The reader-first Disk32 FX key/effect-record, fixed system, and
-fixed buffer/raw-free-list batches and heap-owned structural native conversion are implemented and locally validated, but
-are not yet a production native64 reader or writer. The current checkpoint passes **62/62** GCC and Clang suites plus
-**61/61** ASan+UBSan and TSan suites, strict x86-32 execution, AArch64 linking, analyzers, source contracts, and independent
-audit; the five-target and measured Windows x86 PR matrix remains its authoritative gate. The active sequence is
-definition-dependent payload activation and semantic `Ready` validation, transactional reader integration with live
-visibility-selector relinking, and only then guarded writer replacement after exact x86 equivalence. A checked
+fixed buffer/raw-free-list batches, heap-owned structural native conversion, and definition-aware semantic `Ready`
+finalization are implemented and locally validated, but are not yet a production native64 reader or writer. The shared
+semantic oracle uses callback-free preflight, representation-preserving union activation, bounded physics descriptors,
+and failure-to-Empty publication gating. The current checkpoint passes **62/62** GCC and Clang suites plus **61/61**
+ASan+UBSan and TSan suites, strict x86-32 execution, AArch64 linking, analyzers, source contracts, and two independent
+audits; the five-target and measured Windows x86 PR matrix remains its authoritative gate. The active sequence is to
+delegate the legacy physics collector to the shared oracle, implement live visibility-selector-aware publication, add
+exact physics-body wire staging and transactional reader integration, and only then remove the restore guard. Guarded
+writer replacement follows later after exact x86 full-image equivalence. A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
 because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work is real Disk32
