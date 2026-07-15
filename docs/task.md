@@ -24,10 +24,12 @@ work item changes. Do not create session-specific handoff files.
   convenience wrapper whose implicit scratch consumed 22,688 bytes under MSVC analysis; measured Windows x86
   Debug/Release and no-Steam builds independently showed that the private workspace's 310,668-byte GCC i386 total
   needed four bytes of MSVC x86 tail padding. The correction removes the wrapper completely (all production callers
-  already provide checked scratch), heap-backs the remaining fixture caller, and explicitly aligns the private workspace
-  to 8 bytes so every ILP32 compiler has the same 310,672-byte contract without changing any member offset. It also
-  addresses both actionable Gemini threads: visibility selectors are redundantly bounded before native pointer
-  derivation, and fixed/native padding extents are compile-time equal. Replacement CI and thread resolution are pending.
+  already provide checked scratch), moves the fixture's former wrapper call to heap-owned scratch, and explicitly aligns
+  the private workspace to 8 bytes so every ILP32 compiler has the same 310,672-byte contract without changing any member
+  offset. It also addresses both actionable Gemini threads: visibility selectors are redundantly bounded before native
+  pointer derivation, and fixed/native padding extents are compile-time equal. Replacement run **29435390924 passed all nine
+  jobs** at exact implementation head `cbd82d79`; both threads are answered and resolved, and an independent correction
+  audit found no remaining correctness, ABI, security, portability, test, or documentation blocker.
 - Current structural checkpoint validation: GCC and Clang suites are **62/62** green after the CI/review correction.
   ASan+UBSan (leak detection disabled under the command runner) and TSan are **61/61** green, with the compiler-generated
   static-frame test intentionally
@@ -204,7 +206,8 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: land PR #26 after its replacement nine-job matrix and both review threads are clean. Then add definition-dependent
+- Next: land PR #26 after its documentation-only final head inherits the clean review and nine-job matrix. Then add
+  definition-dependent
   payload activation plus report-free semantic validation to transition the candidate to `Ready`. Full-image raw/zlib
   preflight reading and production reader integration follow only after malformed-input and x86-equivalence fixtures.
   That integration must relink visibility read/write selectors to the live buffers during desired and rollback publication;
