@@ -20,6 +20,8 @@ set(_fx_system_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_system.cpp")
 set(_fx_archive_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp")
+set(_fx_archive_semantics_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive_semantics.cpp")
 
 foreach(_source_path IN ITEMS
     "${_snapshot_header_path}"
@@ -29,7 +31,8 @@ foreach(_source_path IN ITEMS
     "${_fx_marks_path}"
     "${_fx_sort_path}"
     "${_fx_system_path}"
-    "${_fx_archive_path}")
+    "${_fx_archive_path}"
+    "${_fx_archive_semantics_path}")
     if(NOT EXISTS "${_source_path}")
         message(FATAL_ERROR
             "Missing FX snapshot-publication source: ${_source_path}")
@@ -44,6 +47,7 @@ file(READ "${_fx_marks_path}" _fx_marks_source)
 file(READ "${_fx_sort_path}" _fx_sort_source)
 file(READ "${_fx_system_path}" _fx_system_source)
 file(READ "${_fx_archive_path}" _fx_archive_source)
+file(READ "${_fx_archive_semantics_path}" _fx_archive_semantics_source)
 
 # These contracts care about ownership and publication order, not formatting.
 foreach(_source_var IN ITEMS
@@ -54,7 +58,8 @@ foreach(_source_var IN ITEMS
     _fx_marks_source
     _fx_sort_source
     _fx_system_source
-    _fx_archive_source)
+    _fx_archive_source
+    _fx_archive_semantics_source)
     string(REGEX REPLACE
         "[ \t\r\n]+" " " _normalized_source "${${_source_var}}")
     set(${_source_var} "${_normalized_source}")
@@ -1141,14 +1146,14 @@ require_slice_ordered(
     "failed to roll back report-free cooperative iterator admission"
     "failed report-free admission cannot silently strand reader ownership")
 
-# Archive validation delegates the active-frame busy rule and exact pre-draw
-# canonical-reset policy to the portable readiness helper.
+# Shared archive validation delegates the active-frame busy rule and exact
+# pre-draw canonical-reset policy to the portable readiness helper.
 extract_source_slice(
-    _fx_archive_source
-    "bool FX_ValidateArchiveSystemState("
-    "bool FX_BuildArchiveExpectedTokens("
+    _fx_archive_semantics_source
+    "bool ValidateArchiveSystemState("
+    "bool PrepareElemPayload("
     _archive_system_validation_source
-    "FX_ValidateArchiveSystemState")
+    "shared ValidateArchiveSystemState")
 require_slice_contains(
     _archive_system_validation_source
     "FX_AreArchiveCamerasReady( system->camera, system->cameraPrev, system->msecDraw)"

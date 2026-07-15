@@ -72,6 +72,28 @@ function(require_ordered source first second description)
     endif()
 endfunction()
 
+function(require_literal_count source needle expected_count description)
+    set(_remaining "${source}")
+    set(_count 0)
+    string(LENGTH "${needle}" _needle_length)
+    if(_needle_length EQUAL 0)
+        message(FATAL_ERROR "${description}: needle cannot be empty")
+    endif()
+    while(TRUE)
+        string(FIND "${_remaining}" "${needle}" _position)
+        if(_position EQUAL -1)
+            break()
+        endif()
+        math(EXPR _count "${_count} + 1")
+        math(EXPR _next "${_position} + ${_needle_length}")
+        string(SUBSTRING "${_remaining}" ${_next} -1 _remaining)
+    endwhile()
+    if(NOT _count EQUAL expected_count)
+        message(FATAL_ERROR
+            "${description}: expected ${expected_count}, found ${_count}")
+    endif()
+endfunction()
+
 function(extract_slice source begin_marker end_marker out_slice description)
     string(FIND "${source}" "${begin_marker}" _begin)
     if(_begin EQUAL -1)
@@ -256,9 +278,10 @@ foreach(_atomic_contract IN ITEMS
         "pointer-width owner CAS must remain portable")
 endforeach()
 
-# Production integration retains the lease across staged pool validation and
-# pointer fixup, releases it before later allocation/physics work, then admits
-# the archive only against the generation captured before parsing.
+# Production integration retains the lease across staged pool validation,
+# pointer fixup, and both shared semantic-collector passes. It releases the
+# lease before archive admission, which still uses the lifecycle generation
+# captured before parsing.
 foreach(_listed_source IN ITEMS
     "EffectsCore/fx_effect_table_restore.cpp"
     "EffectsCore/fx_effect_table_restore.h")
@@ -304,6 +327,17 @@ require_ordered(
     "FX_FixupEffectDefHandlesNoDrop("
     "const fx::archive::EffectTableRestoreStatus tableReleaseStatus"
     "the live lease must cover all definition fixup")
+extract_slice(
+    "${_archive_restore}"
+    "FX_FixupEffectDefHandlesNoDrop("
+    "const fx::archive::EffectTableRestoreStatus tableReleaseStatus"
+    _leased_semantic_collection
+    "effect-table lease semantic collection interval")
+require_literal_count(
+    "${_leased_semantic_collection}"
+    "FX_CollectArchivePhysicsEntries("
+    2
+    "the effect-table lease must cover both semantic collector passes")
 require_ordered(
     "${_archive_restore}"
     "const fx::archive::EffectTableRestoreStatus tableReleaseStatus"
@@ -313,7 +347,7 @@ require_ordered(
 extract_slice(
     "${_archive_source}"
     "[[noreturn]] void FX_ReportEffectTableRestoreFailure("
-    "bool FX_GetArchiveEffectDefCount("
+    "bool FX_ValidateArchiveBodyState("
     _restore_failure
     "effect-table reporting boundary")
 require_ordered(

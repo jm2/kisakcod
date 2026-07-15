@@ -682,6 +682,33 @@ struct SemanticDefinition final
             model);
     }
 
+    void SetPhysicsModels(
+        const std::size_t index,
+        const XModel *const *const models,
+        const std::uint8_t modelCount) noexcept
+    {
+        CHECK(index < elemDefs.size());
+        CHECK(models != nullptr);
+        CHECK(modelCount > 1);
+        if (index >= elemDefs.size() || !models || modelCount <= 1)
+            return;
+        const std::int32_t flags = 0x08000000;
+        const void *const modelStorage = models;
+        StoreSemanticDefinitionField(
+            &elemDefs[index],
+            archive::layout::ELEM_DEF_FLAGS_OFFSET,
+            flags);
+        SetType(index, ELEM_TYPE_MODEL);
+        StoreSemanticDefinitionField(
+            &elemDefs[index],
+            archive::layout::ELEM_DEF_VISUAL_COUNT_OFFSET,
+            modelCount);
+        StoreSemanticDefinitionField(
+            &elemDefs[index],
+            archive::layout::ELEM_DEF_VISUALS_OFFSET,
+            modelStorage);
+    }
+
     void SetTrail(
         const std::size_t index,
         const std::uintptr_t trailDefinition) noexcept
@@ -754,6 +781,33 @@ bool AcceptSemanticPhysicsProbe(
         && descriptor.elem != nullptr && descriptor.model != nullptr
         && descriptor.ownerIndex == 0
         && descriptor.token == probe->expectedToken;
+    return probe->valid;
+}
+
+struct SemanticPhysicsSequenceProbe final
+{
+    std::array<std::uint32_t, 2> observedTokens{};
+    std::array<const XModel *, 2> observedModels{};
+    std::array<std::size_t, 2> observedOwnerIndices{};
+    std::size_t sinkCalls = 0;
+    bool valid = true;
+};
+
+bool AcceptSemanticPhysicsSequenceProbe(
+    void *const context,
+    const archive::FxArchiveSemanticPhysicsDescriptor &descriptor,
+    const std::size_t physicsIndex) noexcept
+{
+    auto *const probe = static_cast<SemanticPhysicsSequenceProbe *>(context);
+    if (!probe || physicsIndex >= probe->observedTokens.size())
+        return false;
+    probe->valid = probe->valid
+        && physicsIndex == probe->sinkCalls
+        && descriptor.elem != nullptr;
+    probe->observedTokens[physicsIndex] = descriptor.token;
+    probe->observedModels[physicsIndex] = descriptor.model;
+    probe->observedOwnerIndices[physicsIndex] = descriptor.ownerIndex;
+    ++probe->sinkCalls;
     return probe->valid;
 }
 
@@ -1904,6 +1958,70 @@ void TestReadyPhysicsSelectionAndFailureGating()
     CheckViewIsGated(owner.get());
 }
 
+void TestSemanticMultiVisualSelectionWithoutPrepare()
+{
+    constexpr std::array<std::uint32_t, 2> tokens{
+        UINT32_C(0x81234567), UINT32_C(0xF2345678)};
+    const std::array<const XModel *, 2> models{
+        reinterpret_cast<const XModel *>(
+            static_cast<std::uintptr_t>(UINT32_C(0x00135790))),
+        reinterpret_cast<const XModel *>(
+            static_cast<std::uintptr_t>(UINT32_C(0x002468A0)))};
+
+    Fixture fixture{};
+    fixture.PopulateGraph(2, 0, 0);
+    MakeEffectRuntimeSemanticallyValid(&fixture);
+    archive::FxEffectDisk32 &effect = fixture.buffers->effects[0];
+    effect.firstElemHandle[0] = INVALID_HANDLE;
+    effect.firstElemHandle[1] = ElemHandle(0);
+    effect.firstElemHandle[2] = INVALID_HANDLE;
+    effect.firstSortedElemHandle = INVALID_HANDLE;
+
+    SemanticDefinition definition{};
+    definition.Configure(1);
+    definition.SetPhysicsModels(
+        0, models.data(), static_cast<std::uint8_t>(models.size()));
+    for (std::size_t index = 0; index < tokens.size(); ++index)
+    {
+        archive::FxElemDisk32 elem = LoadElemDisk32(fixture, index);
+        elem.defIndex = 0;
+        elem.sequence = 0;
+        // 479 modulo the 479-entry random period selects seed zero. The
+        // production-exact table prefix makes a two-visual lookup choose slot
+        // one, covering the native pointer-stride array path deterministically.
+        elem.msecBegin = 479;
+        std::memcpy(elem.payload, &tokens[index], sizeof(tokens[index]));
+        StoreElemDisk32(&fixture, index, elem);
+    }
+
+    ResolverState resolver{};
+    resolver.result = &definition.effect;
+    AllocationState allocation{};
+    WorkspaceOwner owner{&allocation};
+    CHECK(owner.get() != nullptr);
+    if (!owner.get())
+        return;
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+
+    SemanticPhysicsSequenceProbe probe{};
+    const archive::FxArchiveSemanticCallbacks callbacks{
+        &probe, nullptr, AcceptSemanticPhysicsSequenceProbe};
+    archive::FxArchiveSemanticResult result{};
+    const auto structural = GetView(owner.get());
+    CHECK(archive::TryValidateFxArchiveSemanticsNoReport(
+        const_cast<FxSystem *>(structural.system), callbacks, &result));
+    CHECK(probe.valid);
+    CHECK(probe.sinkCalls == tokens.size());
+    CHECK(probe.observedTokens == tokens);
+    CHECK(probe.observedModels[0] == models[1]);
+    CHECK(probe.observedModels[1] == models[1]);
+    CHECK(probe.observedOwnerIndices[0] == 0);
+    CHECK(probe.observedOwnerIndices[1] == 1);
+    CHECK(result.physicsBodyCount == tokens.size());
+    CHECK(result.spotLightBoltDobj == -1);
+}
+
 void TestReadySpotlightSelectionAndDerivedBolt()
 {
     Fixture fixture{};
@@ -2132,6 +2250,7 @@ int main()
     TestReadyEmptyImageAndPhaseGates();
     TestReadyOriginLightingAndCanonicalization();
     TestReadyPhysicsSelectionAndFailureGating();
+    TestSemanticMultiVisualSelectionWithoutPrepare();
     TestReadySpotlightSelectionAndDerivedBolt();
     TestReadyAllOrdinaryClasses();
     TestReadyTrailSemanticsAndFailureGating();

@@ -6711,10 +6711,83 @@ require_source_match_count(
     3
     "FX profiling must snapshot all three shared pool counts atomically")
 
-# Archive traversal consumes externally persisted handles. Restore uses
-# nullable codecs and completes all raw validation before it can publish live
-# state. The legacy public wrappers for partial physics restore/save have been
-# removed so callers cannot bypass the transaction.
+# Archive traversal consumes externally persisted handles. The production
+# collector is only an output adapter over the shared semantic oracle: it must
+# not grow a second graph traversal, must not activate staged payloads, and
+# must publish scalar outputs only after all optional state capture succeeds.
+extract_security_slice(
+    _fx_archive_save_source
+    "struct FxArchivePhysicsEntrySink"
+    "bool FX_ValidateArchiveEffectDefinitionReferences("
+    _fx_archive_semantic_adapter
+    "FX shared semantic collector adapter")
+extract_security_slice(
+    _fx_archive_save_source
+    "bool FX_CollectArchivePhysicsEntries("
+    "bool FX_ValidateArchiveEffectDefinitionReferences("
+    _fx_archive_semantic_collector
+    "FX shared semantic collector wrapper")
+require_security_slice_ordered(
+    _fx_archive_semantic_adapter
+    "if (!context.entries)"
+    "if (physicsIndex >= context.entryCapacity)"
+    "count-only collection must bypass storage before the bounded sink check")
+require_security_slice_ordered(
+    _fx_archive_semantic_adapter
+    "if (physicsIndex >= context.entryCapacity)"
+    "context.entries[physicsIndex]"
+    "the semantic sink must prove capacity before indexing output storage")
+require_security_slice_contains(
+    _fx_archive_semantic_collector
+    "&sink, nullptr, FX_AppendArchivePhysicsEntry"
+    "production collection must disable staged-payload preparation")
+require_security_slice_contains(
+    _fx_archive_semantic_collector
+    "fx::archive::TryValidateFxArchiveSemanticsNoReport("
+    "production collection must delegate to the shared semantic oracle")
+require_security_slice_ordered(
+    _fx_archive_semantic_collector
+    "fx::archive::TryValidateFxArchiveSemanticsNoReport("
+    "FX_CaptureArchivePhysicsStates("
+    "semantic validation and bounded collection must precede native state capture")
+require_security_slice_ordered(
+    _fx_archive_semantic_collector
+    "FX_CaptureArchivePhysicsStates("
+    "*outSpotLightBoltDobj = result.spotLightBoltDobj;"
+    "optional native state capture must succeed before spotlight publication")
+require_security_slice_ordered(
+    _fx_archive_semantic_collector
+    "*outSpotLightBoltDobj = result.spotLightBoltDobj;"
+    "*outEntryCount = entryCount;"
+    "entry count must be the collector's final scalar publication")
+foreach(_duplicate_semantic_traversal_marker
+    "firstActiveEffect"
+    "firstElemHandle"
+    "firstTrailHandle"
+    "activeSpotLightEffectHandle"
+    "ValidateArchiveEffectRuntime("
+    "ValidateArchiveElemRuntime(")
+    forbid_security_slice_contains(
+        _fx_archive_semantic_collector
+        "${_duplicate_semantic_traversal_marker}"
+        "the production collector must not duplicate shared semantic traversal")
+endforeach()
+foreach(_removed_archive_semantic_helper
+    FX_GetArchiveEffectDefCount
+    FX_ValidateArchiveEffectDefTiming
+    FX_ArchiveElemTypeMatchesClass
+    FX_ValidateArchiveElemRuntime
+    FX_ValidateArchiveEffectRuntime
+    FX_ValidateArchiveSampledLifespan)
+    require_source_not_contains(
+        "EffectsCore/fx_archive.cpp"
+        "${_removed_archive_semantic_helper}"
+        "removed semantic helper ${_removed_archive_semantic_helper} must remain owned by the shared oracle")
+endforeach()
+
+# Restore uses nullable codecs and completes all raw validation before it can
+# publish live state. The legacy public wrappers for partial physics
+# restore/save have been removed so callers cannot bypass the transaction.
 require_source_matches(
     "EffectsCore/fx_archive.cpp"
     "\\[\\[noreturn\\]\\][ \t]+void[ \t]+FX_DropInvalidEffectHandle[^}]*Com_Error[ \t\r\n]*\\([ \t\r\n]*ERR_DROP[^;]*\\)[ \t]*[;][ \t\r\n]*std::abort[ \t\r\n]*\\([ \t\r\n]*\\)[ \t]*[;]"
@@ -6724,28 +6797,28 @@ require_source_matches(
     "FxDecodeHandle<FxEffect,[ \t]*FX_EFFECT_LIMIT,[ \t]*FxEffect::HANDLE_SCALE>[ \t\r\n]*\\([^;]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!effect[ \t\r\n]*\\)[ \t\r\n]*\\{[^}]*FX_DropInvalidEffectHandle[ \t\r\n]*\\([ \t\r\n]*handle[ \t\r\n]*\\)[ \t]*[;][ \t\r\n]*\\}[ \t\r\n]*return[ \t]+effect[ \t]*[;]"
     "effect decoding must route invalid codec results through its central drop hook")
 require_source_matches(
-    "EffectsCore/fx_archive.cpp"
-    "FxDecodeHandle<[ \t\r\n]*FxEffect,[ \t]*MAX_EFFECTS,[ \t]*FxEffect::HANDLE_SCALE>[ \t\r\n]*\\([^;]*\\)[ \t]*[;][ \t\r\n]*std::size_t[ \t]+elemDefCount[ \t]*=[ \t]*0[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!effect[ \t]*\\|\\|[ \t]*!FX_ValidateArchiveEffectRuntime"
+    "EffectsCore/fx_archive_semantics.cpp"
+    "FxDecodeHandle<[ \t\r\n]*FxEffect,[ \t]*MAX_EFFECTS,[ \t]*FxEffect::HANDLE_SCALE>[ \t\r\n]*\\([^;]*\\)[ \t]*[;][ \t\r\n]*std::size_t[ \t]+elemDefCount[ \t]*=[ \t]*0[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!effect[ \t]*\\|\\|[ \t]*!ValidateArchiveEffectRuntime"
     "archive traversal must reject an invalid effect handle before using runtime fields")
 require_source_matches(
-    "EffectsCore/fx_archive.cpp"
-    "FxDecodeHandle<[ \t\r\n]*FxPool<FxElem>,[ \t]*MAX_ELEMS,[ \t]*FxElem::HANDLE_SCALE>[ \t\r\n]*\\([^;]*\\)[ \t]*[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!remoteElem[ \t]*\\|\\|[ \t]*remoteElem->item.defIndex[ \t]*>=[ \t]*elemDefCount"
+    "EffectsCore/fx_archive_semantics.cpp"
+    "remoteElem[ \t]*=[ \t]*FxDecodeHandle<[^;]+[;][ \t\r\n]*if[ \t\r\n]*\\([ \t\r\n]*!remoteElem[ \t\r\n]*\\|\\|[ \t]*remoteElem->item.defIndex[ \t]*>=[ \t]*elemDefCount"
     "archive element traversal must reject invalid handles and definition indices")
 require_source_contains(
-    "EffectsCore/fx_archive.cpp"
+    "EffectsCore/fx_archive_semantics.cpp"
     "if (chainLength++ == MAX_ELEMS)"
     "archive element chains must remain bounded by the shared pool")
 require_source_contains(
-    "EffectsCore/fx_archive.cpp"
+    "EffectsCore/fx_archive_semantics.cpp"
     "if (trailCount++ == MAX_TRAILS)"
     "archive trail chains must remain bounded by the shared pool")
 require_source_contains(
-    "EffectsCore/fx_archive.cpp"
+    "EffectsCore/fx_archive_semantics.cpp"
     "if (trailElemCount++ == MAX_TRAIL_ELEMS)"
     "archive trail-element chains must remain bounded by the shared pool")
 require_source_matches(
-    "EffectsCore/fx_archive.cpp"
-    "firstNewEffect[ \t]*==[ \t]*firstFreeEffect[^;]*allocatedEffectCount[ \t]*>=[ \t]*0[^;]*allocatedEffectCount[ \t]*<=[ \t]*FX_EFFECT_LIMIT"
+    "EffectsCore/fx_archive_semantics.cpp"
+    "firstNewEffect[ \t]*==[ \t]*firstFreeEffect[^;]*allocatedEffectCount[ \t]*>=[ \t]*0[^;]*allocatedEffectCount[^;]*<=[^;]*MAX_EFFECTS"
     "archive effect rings must be quiescent, forward, and pool-bounded")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
@@ -7126,7 +7199,7 @@ require_source_contains(
     "fx::archive::EffectTableRestoreFind(lease, key)"
     "archive effect-definition lookup must require the exact active lease")
 require_source_contains(
-    "EffectsCore/fx_archive.cpp"
+    "EffectsCore/fx_archive_semantics.cpp"
     "if (!effect || !effect->def || !outCount"
     "archive definition-count validation must reject missing owning pointers")
 foreach(_fx_archive_elem_count
@@ -7134,21 +7207,21 @@ foreach(_fx_archive_elem_count
     elemDefCountOneShot
     elemDefCountEmission)
     require_source_contains(
-        "EffectsCore/fx_archive.cpp"
+        "EffectsCore/fx_archive_semantics.cpp"
         "effect->def->${_fx_archive_elem_count} < 0"
         "archive element-definition lookup must reject a negative ${_fx_archive_elem_count}")
 endforeach()
 require_source_contains(
-    "EffectsCore/fx_archive.cpp"
+    "EffectsCore/fx_archive_semantics.cpp"
     "|| (count != 0 && !effect->def->elemDefs))"
     "archive definition-count validation must require storage for nonempty definitions")
 require_source_matches(
-    "EffectsCore/fx_archive.cpp"
-    "if[ \t\r\n]*\\([ \t\r\n]*!effect[ \t]*\\|\\|[ \t]*!FX_ValidateArchiveEffectRuntime\\(system,[ \t]*effect\\)[^;]*!FX_ValidateArchiveEffectDefTiming"
+    "EffectsCore/fx_archive_semantics.cpp"
+    "if[ \t\r\n]*\\([ \t\r\n]*!effect[ \t]*\\|\\|[ \t]*!ValidateArchiveEffectRuntime\\(system,[ \t]*effect\\)[^;]*!TryGetArchiveEffectDefCount[^;]*!ValidateArchiveEffectDefTiming"
     "unified archive traversal must validate effect runtime and definition timing before pool links")
 require_source_matches(
-    "EffectsCore/fx_archive.cpp"
-    "if[ \t\r\n]*\\([ \t\r\n]*!FX_ValidateArchiveElemRuntime[^;]*!FX_ArchiveElemTypeMatchesClass[^;]*!FX_AppendArchivePhysicsEntry"
+    "EffectsCore/fx_archive_semantics.cpp"
+    "if[ \t\r\n]*\\([^;]*!ValidateArchiveElemRuntime[^;]*!ArchiveElemTypeMatchesClass[^;]*!AcceptPhysicsElem"
     "unified archive traversal must validate element runtime and class before physics collection")
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
