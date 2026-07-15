@@ -88,8 +88,10 @@ work item changes. Do not create session-specific handoff files.
   most 288 bytes, below the portable 4 KiB helper-frame gate. Independent security, failure-atomicity, ABI, lease,
   integration, stack, and portability audits found no remaining blocker after correcting late lease-loss classification,
   explicit test dependencies, and source-contract false positives. The sandbox cannot execute the threaded i386 fixture;
-  these results are from exact implementation head `aa09e0bb`, and branch CI has not run yet. The authoritative five-target
-  and measured Windows x86 CI matrix remains this PR's production/runtime gate.
+  the local implementation results are from exact head `aa09e0bb`. Exact PR #30 checkpoint head `42d1c4bb` passed all nine
+  jobs in run **29449586954**: Linux amd64/arm64, portable Windows amd64/ARM64, macOS arm64, measured Windows x86
+  Debug/Release, no-Steam Windows x86, and headless Windows x86 are green. Gemini reviewed that exact head with no comments
+  or additional feedback, and the thread-aware query is empty. The next documentation-only head remains the final PR gate.
 - PR #27 initial run **29439592615** at `ff59ef7e` passed Linux amd64/arm64, but portable Windows amd64/ARM64 exposed an
   include-boundary issue before their tests linked: the semantic translation unit imported the complete physics-sidecar
   header only for its token/512-body constants, causing MSVC analysis to charge an unrelated 4,104-byte inline convenience

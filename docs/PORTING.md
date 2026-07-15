@@ -1095,7 +1095,8 @@ and failure-to-Empty publication gating. The production physics collector now de
 sink, and restore retains definition ownership through both semantic passes before generation-checked archive admission.
 The current portable-reader checkpoint passes **66/66** GCC and Clang suites plus **65/65** ASan+UBSan and TSan suites,
 strict GCC/Clang x86-32 and AArch64 compilation, Clang analysis, source/security/ABI contracts, and independent audits; the
-five-target and measured Windows x86 PR matrix remains its authoritative production/runtime gate. The
+exact PR #30 checkpoint head `42d1c4bb` also passed all nine five-target/measured-Windows jobs in run **29449586954**.
+Gemini reviewed that head with no comments or additional feedback, and the thread-aware query is empty. The
 `agent/fx-archive-portable-reader-disk32` sequence implements a 670,976-byte x86 / 695,640-byte native64 heap-owned,
 non-publishing workspace with a lightweight `BodyState` header, exact `BodyStateDisk32` decode, Ready-only physics
 enumeration, exact definition-lease validation, and transactional raw/zlib staging of the complete legacy
