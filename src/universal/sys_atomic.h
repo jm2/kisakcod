@@ -195,4 +195,23 @@ KISAK_ATOMIC_INLINE T *Sys_AtomicExchangePointer(
 #endif
 }
 
+template <class T>
+KISAK_ATOMIC_INLINE T *Sys_AtomicCompareExchangePointer(
+    T *volatile *destination,
+    T *exchange,
+    T *comparand) noexcept
+{
+#if defined(_MSC_VER)
+    return static_cast<T *>(_InterlockedCompareExchangePointer(
+        reinterpret_cast<void *volatile *>(destination),
+        static_cast<void *>(exchange),
+        static_cast<void *>(comparand)));
+#else
+    T *expected = comparand;
+    (void)__atomic_compare_exchange_n(destination, &expected, exchange, false,
+                                      __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    return expected;
+#endif
+}
+
 #undef KISAK_ATOMIC_INLINE

@@ -98,5 +98,19 @@ int main()
         return fail("ExchangePointer must swap and return the OLD pointer");
     }
 
+    int replacement = 0;
+    pv = &dummy;
+    if (Sys_AtomicCompareExchangePointer(&pv, &replacement, &dummy) != &dummy
+        || pv != &replacement)
+    {
+        return fail("CompareExchangePointer must swap and return OLD on match");
+    }
+    if (Sys_AtomicCompareExchangePointer(&pv, static_cast<int *>(nullptr), &dummy)
+            != &replacement
+        || pv != &replacement)
+    {
+        return fail("CompareExchangePointer must return OLD without swapping on mismatch");
+    }
+
     return 0;
 }
