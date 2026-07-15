@@ -9,11 +9,20 @@ work item changes. Do not create session-specific handoff files.
 - Active branch: `agent/fx-disk32-record-codec`; branch point: merged coherent snapshot checkpoint `0f878ff4`;
   upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint: begin the first reader-first FX Disk32 batch without changing production archive I/O. This bounded
-  checkpoint separates full-width native effect-definition identity from an explicit nonzero 32-bit archive key, retains
-  exact legacy pointer-bit keys under the x86 policy, adds deterministic first-seen opaque keys for native64, and proves
-  serialized-effect handle remapping plus a fixed `0x80` effect-record codec. Full `FxSystem`/`FxSystemBuffers` conversion,
-  MemoryFile integration, physics records, and removal of the 64-bit save/restore guards remain later batches.
+- Active checkpoint: the first reader-first FX Disk32 batch is implemented without changing production archive I/O. A
+  strong `EffectDefinitionKey32` separates full-width native definition identity from serialized keys; x86 preserves exact
+  legacy pointer bits, while native64 assigns deterministic first-seen opaque keys. Restore parsing and lookup use the same
+  fixed-width key type. Exact `0x1C` `FxSpatialFrameDisk32` and `0x80` `FxEffectDisk32` mirrors pin every field offset,
+  explicitly pack the bolt/sort word, and transactionally convert effect-owner handles between Disk32 stride 32 and the
+  native stride. Active records require a resolved definition and valid owner; inactive records remain inert. Full
+  `FxSystem`/`FxSystemBuffers` conversion, MemoryFile integration, physics records, and removal of the 64-bit save/restore
+  guards remain later batches.
+- Current Disk32 validation: GCC and Clang are **56/56** green; ASan+UBSan (leak detection disabled under the command
+  runner) and TSan are **55/55** green. The codec fixture exhausts all 65,536 possible values in both handle directions,
+  preserves outputs on every failure, verifies a hand-authored little-endian `0x80` record and high native64 definition
+  identities, and proves conditional x86 raw-record equivalence. Strict warnings-as-errors x86-32 and AArch64 compilation,
+  x86-32 execution, focused source/security contracts, Clang analyzer checks, exact legacy raw/zlib table parity, and
+  `git diff --check` pass. Authoritative exact-head nine-job PR CI and automated review remain pending.
 - PR #21 squash-merged as `0f878ff4` from final documentation head `cb731d6e`. Final run **29414351528 passed all nine
   jobs**; implementation head `7895f7a9` also passed all nine in run **29397910131**, Codex found no major issue at that
   exact implementation commit, and the sole Gemini finding was fixed and resolved. Camera/time publication is
@@ -127,8 +136,10 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: land the opaque-key policy and primitive effect-record/handle codec with exhaustive portable byte fixtures, then
-  expand the proven primitives into fixed `FxSystem`/`FxSystemBuffers` mirrors and a transactional reader.
+- Next: expand the proven key, handle, and leaf-record primitives into fixed `FxSystemDisk32` (`0xA60`) and
+  `FxSystemBuffersDisk32` (`0x47480`) mirrors, native pool linking, complete system/effect-handle remapping,
+  visibility-selector validation, and a transactional reader. Retain the legacy x86 writer and both native64 production
+  guards until full-image malformed-input, round-trip, and x86 byte-equivalence fixtures pass.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,
@@ -213,10 +224,11 @@ work item changes. Do not create session-specific handoff files.
   complete 12-pointer curve copies, bounded paired trail indices, correct single-decal deep copies,
   native impact-table allocations, and a native `FxProfileEntry` sort stride. A shared checked blob
   cursor now gives every pointer-bearing converted payload its native alignment, zeroes padding, rejects
-  signed-size/capacity overflow transactionally, and verifies planner/writer parity. Disk32 work remains
-  for `fx_archive` and fast-file effect/impact-table reads; the loose-file missing-effect fallback is
-  native-width-safe, and the merged physics sidecar is now wired through live and legacy-x86 archive
-  ownership paths. Freelist allocation/free
+  signed-size/capacity overflow transactionally, and verifies planner/writer parity. The first archive Disk32 primitives
+  now provide explicit definition-key policy, exact effect-record mirrors, and checked owner-handle stride conversion.
+  Disk32 work remains for complete `FxSystem`/`FxSystemBuffers` archive integration and fast-file effect/impact-table reads;
+  the loose-file missing-effect fallback is native-width-safe, and the merged physics sidecar is wired through live and
+  legacy-x86 archive ownership paths. Freelist allocation/free
   now validates heads, links, strides, counts, and ownership before mutation, clears payloads before
   publication, maintains atomic active counts, and leaves failed mutations transactional. Native-size
   effect handle codecs remove the x86-only `0x8000` ceiling and reject malformed/misaligned handles.
@@ -643,7 +655,7 @@ work item changes. Do not create session-specific handoff files.
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 46 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path/FX graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, complete graphics-world AABB topology validation, bounded XSurface/XModel skin/skeleton/collision contracts, transactional FX pool/handle ownership validation, allocation-safe ODE body/user-data/model-collision construction, and a bounded transactional native-width physics pool allocator have landed or are in the current reviewed batch; production-path fuzz fixtures and the load-object bounded cursor remain. |
 | M3 platform services | In progress: thread, memory, and filesystem enumeration integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, virtual-memory lifecycle, UTF-8 mkdir/cwd/executable paths, bounded directory enumeration, and a cooperative worker gate used by renderer workers. Linux/macOS engine/headless sets remain empty and engine-gated; handle-relative recursive deletion, POSIX crash freezing, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table, DObj runtime/saved layouts, allocations, preview buffers, SP corpse pointers, EffectsCore effect/pool handle codecs, ODE user-geometry storage, and the generic physics pool allocator are native-width exact. MP `cpose_t::physObjId` and `BreakablePiece::physObjId` still store ODE pointers in `int32_t` and are a hard native64 blocker; XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads also remain 32-bit-layout-bound. |
-| M5 disk32 widening loader | Seed plus provenance registries | `disk32::PointerToken`, a native-width typed alias/completed-slot side table, all legacy direct references migrated to bounded resolution, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush, portal/cell, and path-tree spans, and 18 exact completed object types exist; packed mirrors, broader completed-object relocation, and runtime widening remain. |
+| M5 disk32 widening loader | First archive leaf schema plus provenance registries | `disk32::PointerToken`, a distinct strong FX archive-key type with legacy/opaque policies, exact `0x1C` spatial-frame and `0x80` effect mirrors, exhaustive owner-handle conversion, a native-width typed alias/completed-slot side table, all legacy direct references migrated to bounded resolution, 23 full-span raw/POD fields, one bounded completed script-string-handle array, exact registered direct strings/holders, graph-validated clipmap brush, portal/cell, and path-tree spans, and 18 exact completed object types exist; full FX system/buffer mirrors, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
 ## Target matrix
@@ -659,20 +671,18 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Implement explicit legacy/opaque effect-definition key policies, a strong archive-key type, exhaustive serialized
-   effect-handle remapping, and the fixed `0x80` effect-record codec. Prove high-address native identities, exact x86 bytes,
-   malformed-key output preservation, and hand-authored little-endian fixtures on all portable targets.
-2. Expand the proven primitives into packed `FxSystem`/`FxSystemBuffers` schemas, native pool linking, full graph-handle
-   remapping, visibility selectors, and transactional byte-level malformed/round-trip fixtures. Retain the legacy x86
-   writer until full-image equivalence is proven. Fast-file `FxEffectDef` widening remains a separate nested-payload batch.
-3. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
+1. Implement fixed `FxSystemDisk32` (`0xA60`) and `FxSystemBuffersDisk32` (`0x47480`) schemas, native pool linking, all
+   system/effect-owner/spotlight handle remapping, visibility selectors, and transactional malformed/round-trip fixtures.
+   Retain the legacy x86 writer until full-image equivalence is proven. Fast-file `FxEffectDef` widening remains a separate
+   nested-payload batch.
+2. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
-4. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
+3. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
    and `KISAKCOD_GAME_DIR` secret are absent. Implement the designed handle-relative recursive deletion
    service without symlink/reparse traversal instead; surface the smoke infrastructure blocker if asked.
-5. Extract standard-stream console services, then process/event services and Linux signal-park plus
+4. Extract standard-stream console services, then process/event services and Linux signal-park plus
    macOS Mach crash freezing behind the already isolated terminal API.
-6. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
+5. Continue M1/M5 ABI cleanup and production fast-file fixtures/fuzzing.
 
 ## Known release blockers
 
@@ -727,10 +737,11 @@ work item changes. Do not create session-specific handoff files.
   executable normal admission, durable partial-cleanup ownership, fail-closed typed values, and checked production
   integration. PR #17 completes competing non-FX occupancy and the silent production ODE mutation boundary.
   The effect-table restore lease and bounded save table close the parsing/registration and database-enumeration stack
-  boundaries. The current snapshot branch adds copied-image validation, staged-definition membership, coherent
-  camera/scalar/visibility publication, and portable concurrency contracts. After its authoritative Windows x86 gate,
-  the remaining FX blocker is real Disk32 archive/fast-file conversion; the corrected production MSVC stack report is
-  calibrated and enforced in Debug and Release.
+  boundaries. PR #21 merged copied-image validation, staged-definition membership, and coherent camera/scalar/visibility
+  publication. The active Disk32 leaf batch adds address-independent native64 definition keys plus fixed effect-record and
+  owner-handle conversion without changing production archive I/O. Full system/buffer conversion and transactional
+  integration remain the current FX blocker; the corrected production MSVC stack report remains calibrated and enforced
+  in Debug and Release.
   `R_FilterXModelIntoScene` still retains an
   FX element's cached-lighting handle pointer beyond the per-effect draw lock; current renderer scheduling
   consumes it before the next FX mutation, but a generation-aware scene-owned cache is required before that
