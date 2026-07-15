@@ -123,8 +123,9 @@ work item changes. Do not create session-specific handoff files.
   `cfc3454a` passed all nine required jobs in run **29452814892**, including all four measured Windows x86 engine
   variants. Gemini's valid const-correctness cleanup is implemented; its two null-cleanup reports conflict with the tested
   idempotent-null destruction contract, and its claimed `BodyState` padding conflicts with the complete pinned 0x00--0x70
-  field layout. Those three threads have evidence-backed replies. Exact review-fix-head CI, thread resolution,
-  documentation refresh, and merge are the active gate.
+  field layout. Those three threads have evidence-backed replies, and all four review threads are resolved. Exact PR head
+  `21dae5ca` passed all nine required jobs in run **29453934377**, including all four measured Windows x86 engine
+  variants. Final documentation-head CI and merge are the active gate.
 - PR #27 initial run **29439592615** at `ff59ef7e` passed Linux amd64/arm64, but portable Windows amd64/ARM64 exposed an
   include-boundary issue before their tests linked: the semantic translation unit imported the complete physics-sidecar
   header only for its token/512-body constants, causing MSVC analysis to charge an unrelated 4,104-byte inline convenience
@@ -868,8 +869,7 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Push the exact PR #31 review-fix head, run all required CI jobs, close every review thread with evidence, update this
-   file with final exact-head evidence, and merge the PR when green.
+1. Push the final PR #31 documentation checkpoint, verify all nine required jobs remain green, and merge the PR.
 2. Begin the next M5 runtime Disk32/fast-file widening seam while retaining the legacy writer, wire format, and native64
    save guard until their separately validated encoder/equivalence checkpoint.
 3. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional

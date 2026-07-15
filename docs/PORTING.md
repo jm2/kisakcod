@@ -1133,10 +1133,11 @@ by `SIGSYS`; AArch64 linking, Clang analysis, all focused source/security contra
 audits pass. Initial PR #31 head `cfc3454a` passed all nine required jobs in run **29452814892**, including all four
 measured Windows x86 engine variants. Review hardening binds Ready views to the exact still-active lease and tests
 same-owner lease reacquisition; Gemini's valid const-correctness cleanup is applied, while its null-cleanup and claimed
-`BodyState`-padding reports are contradicted by pinned tests/layout contracts and have evidence-backed replies. Exact
-review-fix-head CI, thread resolution, documentation refresh, and merge are the active gate; the next implementation batch
-is the next M5 runtime Disk32/fast-file widening seam. Guarded writer replacement follows later after exact x86 full-image
-equivalence. A checked
+`BodyState`-padding reports are contradicted by pinned tests/layout contracts and have evidence-backed replies. All four
+threads are resolved, and exact review-fix/documentation head `21dae5ca` passed all nine required jobs in run
+**29453934377**. Final documentation-head CI and merge are the active gate; the next implementation batch is the next M5
+runtime Disk32/fast-file widening seam. Guarded writer replacement follows later after exact x86 full-image equivalence.
+A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
 because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work is checked writer/save-guard
