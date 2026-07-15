@@ -6,7 +6,7 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-archive-semantic-delegation`; branch point: merged semantic Ready checkpoint `07e3a8a0`;
+- Active branch: `agent/fx-archive-selector-publication`; branch point: merged semantic-delegation checkpoint `4c454449`;
   current upstream-integration baseline: merge `11a9e08c` through upstream `312a9d2e`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
 - Current semantic-delegation checkpoint: the production `FX_CollectArchivePhysicsEntries` wrapper is now a bounded output
@@ -17,8 +17,8 @@ work item changes. Do not create session-specific handoff files.
   with physics staging freed first where applicable. The portable native fixture now also covers two physics elements,
   multi-visual model selection, high-bit tokens, native owner indices, deterministic sink order, and a null payload-prepare
   callback. Source contracts pin the shared-oracle delegation, output ordering, absence of duplicate traversal, and the
-  complete leased interval. The exact implementation and review-fix heads have both passed the complete
-  five-target/measured-Windows PR gate; PR #28 is awaiting only final documentation-head verification and merge.
+  complete leased interval. PR #28 is merged after its implementation, review-fix, and final documentation heads each
+  passed the complete five-target/measured-Windows gate.
 - Merged Ready checkpoint: the shared, portable `FxArchive` semantic oracle keeps renderer-owned `FxElemDef` opaque,
   pins every native-width field/nested-layout assumption in a renderer-facing translation unit, and performs a complete
   callback-free semantic preflight before a bounded second traversal may activate definition-selected union members or
@@ -86,7 +86,8 @@ work item changes. Do not create session-specific handoff files.
   evidence: a nonzero count with null entries fails immediately, while the zero-count loop performs no access. Both threads
   are answered and resolved. Replacement run **29442093763 passed all nine jobs** at that review-fix head. A separate
   lease/bounds/cleanup audit found no double free, use-after-free, capacity, failure-atomicity, or post-release lifetime
-  defect; the final documentation-only head remains the merge gate.
+  defect. Final documentation-only run **29442813157 passed all nine jobs**, and PR #28 squash-merged as `4c454449` from
+  final head `6792f3b5`.
 - PR #25 squash-merged as `09c05e5f` from final review-fix head `5abf9cbb`. Final run **29427215187 passed all nine jobs**:
   Linux amd64/arm64, portable Windows amd64/arm64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86,
   and headless Windows x86. Initial implementation/docs head `d9ad05ff` also passed all nine jobs in run **29426792491**.
@@ -788,7 +789,7 @@ work item changes. Do not create session-specific handoff files.
 ## Immediate queue
 
 1. Extend restore-control publication with explicit desired/original visibility selectors so staged workspace pointers can
-   never escape into the live system; the shared semantic-collector delegation prerequisite is complete on the active branch.
+   never escape into the live system; the shared semantic-collector delegation prerequisite is merged.
 2. Add exact `BodyStateDisk32` conversion and transactional raw/zlib full-image staging in legacy wire order, retain the
    definition lease through Ready/physics preparation, then integrate the unified reader into production x86. Remove the
    restore-side native64 guard only after raw/zlib malformed-input, rollback, selector, and exact x86 equivalence fixtures;
