@@ -10,197 +10,6 @@
 #include <memory>
 #include <type_traits>
 
-namespace fx::fastfile::native_detail
-{
-struct FloatRange final
-{
-    float base;
-    float amplitude;
-};
-
-struct IntRange final
-{
-    std::int32_t base;
-    std::int32_t amplitude;
-};
-
-union SpawnDef final
-{
-    struct
-    {
-        std::int32_t intervalMsec;
-        std::int32_t count;
-    } looping;
-    struct
-    {
-        IntRange count;
-    } oneShot;
-};
-
-struct ElemAtlas final
-{
-    std::uint8_t behavior;
-    std::uint8_t index;
-    std::uint8_t fps;
-    std::uint8_t loopCount;
-    std::uint8_t colIndexBits;
-    std::uint8_t rowIndexBits;
-    std::int16_t entryCount;
-};
-
-struct ElemVec3Range final
-{
-    float base[3];
-    float amplitude[3];
-};
-
-struct ElemVisualState final
-{
-    std::uint8_t color[4];
-    float rotationDelta;
-    float rotationTotal;
-    float size[2];
-    float scale;
-};
-
-struct ElemVisStateSample final
-{
-    ElemVisualState base;
-    ElemVisualState amplitude;
-};
-
-struct ElemVelStateInFrame final
-{
-    ElemVec3Range velocity;
-    ElemVec3Range totalDelta;
-};
-
-struct ElemVelStateSample final
-{
-    ElemVelStateInFrame local;
-    ElemVelStateInFrame world;
-};
-
-union EffectDefRef final
-{
-    const FxEffectDef *handle;
-    const char *name;
-};
-
-union ElemVisuals final
-{
-    const void *anonymous;
-    void *asset;
-    EffectDefRef effectDef;
-    const char *soundName;
-};
-
-struct ElemMarkVisuals final
-{
-    const void *materials[2];
-};
-
-union ElemDefVisuals final
-{
-    ElemMarkVisuals *markArray;
-    ElemVisuals *array;
-    ElemVisuals instance;
-};
-
-struct TrailVertex final
-{
-    float pos[2];
-    float normal[2];
-    float texCoord;
-};
-
-struct TrailDef final
-{
-    std::int32_t scrollTimeMsec;
-    std::int32_t repeatDist;
-    std::int32_t splitDist;
-    std::int32_t vertCount;
-    TrailVertex *verts;
-    std::int32_t indCount;
-    std::uint16_t *inds;
-};
-
-struct ElemDef final
-{
-    std::int32_t flags;
-    SpawnDef spawn;
-    FloatRange spawnRange;
-    FloatRange fadeInRange;
-    FloatRange fadeOutRange;
-    float spawnFrustumCullRadius;
-    IntRange spawnDelayMsec;
-    IntRange lifeSpanMsec;
-    FloatRange spawnOrigin[3];
-    FloatRange spawnOffsetRadius;
-    FloatRange spawnOffsetHeight;
-    FloatRange spawnAngles[3];
-    FloatRange angularVelocity[3];
-    FloatRange initialRotation;
-    FloatRange gravity;
-    FloatRange reflectionFactor;
-    ElemAtlas atlas;
-    std::uint8_t elemType;
-    std::uint8_t visualCount;
-    std::uint8_t velIntervalCount;
-    std::uint8_t visStateIntervalCount;
-    ElemVelStateSample *velSamples;
-    ElemVisStateSample *visSamples;
-    ElemDefVisuals visuals;
-    float collMins[3];
-    float collMaxs[3];
-    EffectDefRef effectOnImpact;
-    EffectDefRef effectOnDeath;
-    EffectDefRef effectEmitted;
-    FloatRange emitDist;
-    FloatRange emitDistVariance;
-    TrailDef *trailDef;
-    std::uint8_t sortOrder;
-    std::uint8_t lightingFrac;
-    std::uint8_t useItemClip;
-    std::uint8_t unused[1];
-};
-
-static_assert(sizeof(FloatRange) == 0x08);
-static_assert(sizeof(IntRange) == 0x08);
-static_assert(sizeof(SpawnDef) == 0x08);
-static_assert(sizeof(ElemAtlas) == 0x08);
-static_assert(sizeof(ElemVisStateSample) == 0x30);
-static_assert(sizeof(ElemVelStateSample) == 0x60);
-static_assert(sizeof(ElemVisuals) == sizeof(void *));
-static_assert(sizeof(ElemMarkVisuals) == 2 * sizeof(void *));
-static_assert(sizeof(TrailVertex) == 0x14);
-static_assert(sizeof(TrailDef) == (KISAK_ARCH_64BIT ? 0x28u : 0x1Cu));
-static_assert(sizeof(ElemDef) == FX_ELEM_DEF_RUNTIME_SIZE);
-static_assert(alignof(ElemDef) == FX_ELEM_DEF_RUNTIME_ALIGNMENT);
-static_assert(offsetof(ElemDef, elemType) == 0xB0);
-static_assert(
-    offsetof(ElemDef, velSamples)
-    == (KISAK_ARCH_64BIT ? 0xB8u : 0xB4u));
-static_assert(
-    offsetof(ElemDef, visSamples)
-    == (KISAK_ARCH_64BIT ? 0xC0u : 0xB8u));
-static_assert(
-    offsetof(ElemDef, visuals)
-    == (KISAK_ARCH_64BIT ? 0xC8u : 0xBCu));
-static_assert(
-    offsetof(ElemDef, effectOnImpact)
-    == (KISAK_ARCH_64BIT ? 0xE8u : 0xD8u));
-static_assert(
-    offsetof(ElemDef, effectOnDeath)
-    == (KISAK_ARCH_64BIT ? 0xF0u : 0xDCu));
-static_assert(
-    offsetof(ElemDef, effectEmitted)
-    == (KISAK_ARCH_64BIT ? 0xF8u : 0xE0u));
-static_assert(
-    offsetof(ElemDef, trailDef)
-    == (KISAK_ARCH_64BIT ? 0x110u : 0xF4u));
-} // namespace fx::fastfile::native_detail
-
 namespace fx::fastfile
 {
 namespace
@@ -213,22 +22,17 @@ constexpr std::uint64_t kFnvOffset = UINT64_C(14695981039346656037);
 constexpr std::uint64_t kFnvPrime = UINT64_C(1099511628211);
 
 static_assert(sizeof(FxElemVelStateSampleDisk32)
-              == sizeof(native_detail::ElemVelStateSample));
+              == sizeof(FxElemVelStateSample));
 static_assert(alignof(FxElemVelStateSampleDisk32)
-              == alignof(native_detail::ElemVelStateSample));
+              == alignof(FxElemVelStateSample));
 static_assert(sizeof(FxElemVisStateSampleDisk32)
-              == sizeof(native_detail::ElemVisStateSample));
+              == sizeof(FxElemVisStateSample));
 static_assert(alignof(FxElemVisStateSampleDisk32)
-              == alignof(native_detail::ElemVisStateSample));
+              == alignof(FxElemVisStateSample));
 static_assert(sizeof(FxTrailVertexDisk32)
-              == sizeof(native_detail::TrailVertex));
+              == sizeof(FxTrailVertex));
 static_assert(alignof(FxTrailVertexDisk32)
-              == alignof(native_detail::TrailVertex));
-static_assert(
-    std::is_trivially_copyable_v<native_detail::ElemVelStateSample>);
-static_assert(
-    std::is_trivially_copyable_v<native_detail::ElemVisStateSample>);
-static_assert(std::is_trivially_copyable_v<native_detail::TrailVertex>);
+              == alignof(FxTrailVertex));
 
 template <typename T>
 [[nodiscard]] bool IsAligned(const T *const pointer) noexcept
@@ -596,7 +400,7 @@ template <typename T>
     FxRuntimeBlobCursor *const cursor) noexcept
 {
     if (!cursor || !cursor->ReserveArray<FxEffectDef>(1)
-        || !cursor->ReserveArray<native_detail::ElemDef>(
+        || !cursor->ReserveArray<FxElemDef>(
             source.elements.count))
     {
         return Status::SizeOverflow;
@@ -607,33 +411,33 @@ template <typename T>
         const FxFastFileElemDefDisk32View &view =
             source.elementViews.data[index];
         if (!elem.velSamples.token.isNull()
-            && !cursor->ReserveArray<native_detail::ElemVelStateSample>(
+            && !cursor->ReserveArray<FxElemVelStateSample>(
                 view.velocitySamples.count))
         {
             return Status::SizeOverflow;
         }
         if (!elem.visSamples.token.isNull()
-            && !cursor->ReserveArray<native_detail::ElemVisStateSample>(
+            && !cursor->ReserveArray<FxElemVisStateSample>(
                 view.visibilitySamples.count))
         {
             return Status::SizeOverflow;
         }
         if (elem.elemType == FxElemTypeDisk32::Decal)
         {
-            if (!cursor->ReserveArray<native_detail::ElemMarkVisuals>(
+            if (!cursor->ReserveArray<FxElemMarkVisuals>(
                     elem.visualCount))
                 return Status::SizeOverflow;
         }
         else if (!IsLight(elem.elemType) && elem.visualCount > 1
-                 && !cursor->ReserveArray<native_detail::ElemVisuals>(
+                 && !cursor->ReserveArray<FxElemVisuals>(
                      elem.visualCount))
         {
             return Status::SizeOverflow;
         }
         if (view.trail)
         {
-            if (!cursor->ReserveArray<native_detail::TrailDef>(1)
-                || !cursor->ReserveArray<native_detail::TrailVertex>(
+            if (!cursor->ReserveArray<FxTrailDef>(1)
+                || !cursor->ReserveArray<FxTrailVertex>(
                     static_cast<std::uint32_t>(view.trail->indCount))
                 || !cursor->ReserveArray<std::uint16_t>(
                     static_cast<std::uint32_t>(view.trail->indCount)))
@@ -798,151 +602,486 @@ void HashSpan(Fingerprint *const hash, const FxFastFileDisk32Span<T> span)
         && !std::memchr(text, '\0', reference.stringByteCount - 1);
 }
 
-[[nodiscard]] Status ResolveOne(
+[[nodiscard]] std::uint64_t ComputeResolvedStringFingerprint(
+    const FxFastFileDisk32ResolvedReference &reference) noexcept
+{
+    Fingerprint hash;
+    hash.Scalar(reinterpret_cast<std::uintptr_t>(reference.pointer));
+    hash.Scalar(reference.stringByteCount);
+    hash.Bytes(reference.pointer, reference.stringByteCount);
+    return hash.Value();
+}
+
+void HashResolvedString(
+    Fingerprint *const hash,
+    const FxFastFileDisk32ResolvedReference &reference,
+    const std::uint32_t index) noexcept
+{
+    hash->Scalar(index);
+    hash->Scalar(reinterpret_cast<std::uintptr_t>(reference.pointer));
+    hash->Scalar(reference.stringByteCount);
+    hash->Bytes(reference.pointer, reference.stringByteCount);
+}
+
+[[nodiscard]] std::uint64_t ComputeResolvedStringsFingerprint(
+    const FxFastFileDisk32ResolvedReference *const resolved,
+    const std::uint32_t resolvedCount) noexcept
+{
+    Fingerprint hash;
+    for (std::uint32_t index = 0; index < resolvedCount; ++index)
+    {
+        if (resolved[index].stringByteCount)
+            HashResolvedString(&hash, resolved[index], index);
+    }
+    hash.Scalar(resolvedCount);
+    return hash.Value();
+}
+
+[[nodiscard]] bool RangesOverlap(
+    const void *left,
+    std::size_t leftBytes,
+    const void *right,
+    std::size_t rightBytes) noexcept;
+
+[[nodiscard]] bool OverlapsSource(
+    const void *storage,
+    std::size_t storageBytes,
     const FxFastFileEffectDefDisk32View &source,
+    const FxFastFileDisk32ResolvedReference *resolved,
+    std::uint32_t resolvedCount) noexcept;
+
+[[nodiscard]] Status ResolveOne(
+    const FxFastFileNativeDisk32Workspace *const workspace,
+    const FxFastFileEffectDefDisk32View &source,
+    const FxFastFileEffectDefDisk32View *const sourceArgument,
     const FxFastFileDisk32Resolvers &resolvers,
+    const FxFastFileDisk32Resolvers *const resolverArgument,
+    const FxFastFileNativeDisk32Plan *const outPlan,
     const FxFastFileDisk32ReferenceKind kind,
     const disk32::PointerToken *const sourceField,
+    const disk32::PointerToken token,
     FxFastFileDisk32ResolvedReference *const journal,
-    std::uint32_t *const journalCount) noexcept
+    std::uint32_t *const journalCount,
+    Fingerprint *const expectedStrings) noexcept
 {
-    if (!sourceField || sourceField->isNull() || !journal || !journalCount
+    if (!workspace || !sourceArgument || !resolverArgument || !outPlan
+        || !sourceField || token.isNull()
+        || !journal || !journalCount || !expectedStrings
         || *journalCount >= kFxFastFileDisk32MaxResolvedReferences)
     {
         return Status::InvalidPointerCount;
     }
     FxFastFileDisk32ResolvedReference resolved{};
-    if (!resolvers.resolve(
-            resolvers.context, kind, sourceField, *sourceField, &resolved)
-        || !resolved.pointer)
+    const bool wasResolved = resolvers.resolve(
+        resolvers.context, kind, sourceField, token, &resolved);
+    if (!wasResolved || !resolved.pointer)
     {
         return Status::UnresolvedReference;
     }
     const bool isString = kind == FxFastFileDisk32ReferenceKind::EffectName
         || kind == FxFastFileDisk32ReferenceKind::SoundName;
+    const std::size_t retainedBytes = isString
+        ? resolved.stringByteCount
+        : 1u;
+    if (RangesOverlap(
+            resolved.pointer, retainedBytes, workspace, sizeof(*workspace))
+        || RangesOverlap(
+            resolved.pointer, retainedBytes, &source, sizeof(source))
+        || RangesOverlap(
+            resolved.pointer,
+            retainedBytes,
+            sourceArgument,
+            sizeof(*sourceArgument))
+        || RangesOverlap(
+            resolved.pointer, retainedBytes, &resolvers, sizeof(resolvers))
+        || RangesOverlap(
+            resolved.pointer,
+            retainedBytes,
+            resolverArgument,
+            sizeof(*resolverArgument))
+        || RangesOverlap(
+            resolved.pointer, retainedBytes, outPlan, sizeof(*outPlan))
+        || OverlapsSource(
+            resolved.pointer, retainedBytes, source, nullptr, 0))
+    {
+        return Status::InvalidArgument;
+    }
     if (isString)
     {
         if (resolved.stringByteCount < 2)
             return Status::InvalidString;
-        if (!source.provenance.validateSpan(
-                source.provenance.context,
-                FxFastFileDisk32SourceSpanKind::String,
-                sourceField,
-                *sourceField,
-                resolved.pointer,
-                resolved.stringByteCount,
-                alignof(char)))
+
+        // The resolver contract keeps this returned span readable for the
+        // transaction. Bind it before invoking provenance so that callback
+        // cannot silently replace the bytes it was asked to attest.
+        if (!IsExactCString(resolved))
+            return Status::InvalidString;
+        const void *const stringAddress = resolved.pointer;
+        const std::uint32_t stringByteCount = resolved.stringByteCount;
+        const std::uint64_t stringFingerprint =
+            ComputeResolvedStringFingerprint(resolved);
+        const bool provenanceIsValid = source.provenance.validateSpan(
+            source.provenance.context,
+            FxFastFileDisk32SourceSpanKind::String,
+            sourceField,
+            token,
+            resolved.pointer,
+            resolved.stringByteCount,
+            alignof(char));
+        if (!provenanceIsValid)
         {
             return Status::InvalidProvenance;
         }
-        if (!IsExactCString(resolved))
-            return Status::InvalidString;
+        if (resolved.pointer != stringAddress
+            || resolved.stringByteCount != stringByteCount
+            || !IsExactCString(resolved)
+            || ComputeResolvedStringFingerprint(resolved)
+                != stringFingerprint)
+        {
+            return Status::SourceChanged;
+        }
     }
     else if (resolved.stringByteCount != 0)
     {
         return Status::InvalidString;
     }
-    journal[(*journalCount)++] = resolved;
+    const std::uint32_t resolvedIndex = *journalCount;
+    if (isString)
+        HashResolvedString(expectedStrings, resolved, resolvedIndex);
+    journal[resolvedIndex] = resolved;
+    ++*journalCount;
     return Status::Success;
 }
 
-[[nodiscard]] Status ResolveGraph(
+constexpr std::uint32_t kMaxElementResolveRequests =
+    kFxFastFileDisk32MaxVisuals + 3u;
+
+struct FrozenResolveRequest final
+{
+    FxFastFileDisk32ReferenceKind kind{};
+    const disk32::PointerToken *sourceField = nullptr;
+    disk32::PointerToken token{};
+};
+
+void HashResolveRequest(
+    Fingerprint *const hash,
+    const FxFastFileDisk32ReferenceKind kind,
+    const disk32::PointerToken *const sourceField,
+    const disk32::PointerToken token) noexcept
+{
+    hash->Scalar(kind);
+    hash->Scalar(reinterpret_cast<std::uintptr_t>(sourceField));
+    hash->Scalar(token.value);
+}
+
+[[nodiscard]] bool AppendFrozenRequest(
+    FrozenResolveRequest *const requests,
+    std::uint32_t *const requestCount,
+    Fingerprint *const schedule,
+    const FxFastFileDisk32ReferenceKind kind,
+    const disk32::PointerToken *const sourceField,
+    const disk32::PointerToken token,
+    const bool optional) noexcept
+{
+    if (!requests || !requestCount || !sourceField)
+        return false;
+    if (schedule)
+        HashResolveRequest(schedule, kind, sourceField, token);
+    if (token.isNull() && optional)
+        return true;
+    if (*requestCount >= kMaxElementResolveRequests)
+        return false;
+    requests[(*requestCount)++] = {kind, sourceField, token};
+    return true;
+}
+
+[[nodiscard]] bool FreezeElementResolveRequests(
     const FxFastFileEffectDefDisk32View &source,
+    const std::uint32_t index,
+    FrozenResolveRequest *const requests,
+    std::uint32_t *const requestCount,
+    Fingerprint *const schedule) noexcept
+{
+    if (!requests || !requestCount || index >= source.elements.count
+        || index >= source.elementViews.count || !source.elements.data
+        || !source.elementViews.data)
+    {
+        return false;
+    }
+    *requestCount = 0;
+    const FxElemDefDisk32 &elem = source.elements.data[index];
+    const FxFastFileElemDefDisk32View &view =
+        source.elementViews.data[index];
+    if (schedule)
+    {
+        schedule->Scalar(index);
+        schedule->Scalar(reinterpret_cast<std::uintptr_t>(&elem));
+        schedule->Scalar(reinterpret_cast<std::uintptr_t>(&view));
+        schedule->Scalar(elem.elemType);
+        schedule->Scalar(elem.visualCount);
+    }
+    if (elem.elemType >= FxElemTypeDisk32::Count
+        || elem.visualCount > kFxFastFileDisk32MaxVisuals)
+    {
+        return false;
+    }
+
+    if (elem.elemType == FxElemTypeDisk32::Decal)
+    {
+        if (elem.visualCount == 0
+            || elem.visualCount > kFxFastFileDisk32MaxDecalVisuals
+            || !view.markVisuals.data)
+        {
+            return false;
+        }
+        for (std::uint32_t visual = 0; visual < elem.visualCount; ++visual)
+        {
+            for (std::uint32_t material = 0; material < 2; ++material)
+            {
+                const disk32::PointerToken *const field =
+                    &view.markVisuals.data[visual]
+                         .materials[material].token;
+                if (!AppendFrozenRequest(
+                        requests,
+                        requestCount,
+                        schedule,
+                        FxFastFileDisk32ReferenceKind::Material,
+                        field,
+                        *field,
+                        false))
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    else if (!IsLight(elem.elemType) && elem.visualCount)
+    {
+        const FxFastFileDisk32ReferenceKind kind =
+            VisualReferenceKind(elem.elemType);
+        if (elem.visualCount == 1)
+        {
+            if (!AppendFrozenRequest(
+                    requests,
+                    requestCount,
+                    schedule,
+                    kind,
+                    &elem.visuals.token,
+                    elem.visuals.token,
+                    false))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            if (!view.visuals.data)
+                return false;
+            for (std::uint32_t visual = 0; visual < elem.visualCount;
+                 ++visual)
+            {
+                const disk32::PointerToken *const field =
+                    &view.visuals.data[visual].token;
+                if (!AppendFrozenRequest(
+                        requests,
+                        requestCount,
+                        schedule,
+                        kind,
+                        field,
+                        *field,
+                        false))
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
+    const disk32::PointerToken *const effectReferences[] = {
+        &elem.effectOnImpact.token,
+        &elem.effectOnDeath.token,
+        &elem.effectEmitted.token,
+    };
+    for (const disk32::PointerToken *const reference : effectReferences)
+    {
+        if (!AppendFrozenRequest(
+                requests,
+                requestCount,
+                schedule,
+                FxFastFileDisk32ReferenceKind::EffectNameReference,
+                reference,
+                *reference,
+                true))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool ComputeResolutionScheduleFingerprint(
+    const FxFastFileEffectDefDisk32View &source,
+    std::uint64_t *const outFingerprint) noexcept
+{
+    if (!outFingerprint || !source.effect
+        || source.elements.count > kFxFastFileDisk32MaxEffectElements
+        || source.elements.count != source.elementViews.count
+        || (source.elements.count
+            && (!source.elements.data || !source.elementViews.data)))
+    {
+        return false;
+    }
+
+    Fingerprint schedule;
+    schedule.Scalar(reinterpret_cast<std::uintptr_t>(source.effect));
+    schedule.Scalar(reinterpret_cast<std::uintptr_t>(source.elements.data));
+    schedule.Scalar(source.elements.count);
+    schedule.Scalar(
+        reinterpret_cast<std::uintptr_t>(source.elementViews.data));
+    schedule.Scalar(source.elementViews.count);
+    schedule.Scalar(source.effect->elemDefCountLooping);
+    schedule.Scalar(source.effect->elemDefCountOneShot);
+    schedule.Scalar(source.effect->elemDefCountEmission);
+    HashResolveRequest(
+        &schedule,
+        FxFastFileDisk32ReferenceKind::EffectName,
+        &source.effect->name.token,
+        source.effect->name.token);
+    if (source.effect->name.token.isNull())
+        return false;
+
+    std::uint32_t totalRequests = 1;
+    for (std::uint32_t index = 0; index < source.elements.count; ++index)
+    {
+        FrozenResolveRequest requests[kMaxElementResolveRequests]{};
+        std::uint32_t requestCount = 0;
+        if (!FreezeElementResolveRequests(
+                source, index, requests, &requestCount, &schedule))
+        {
+            return false;
+        }
+        totalRequests += requestCount;
+    }
+    schedule.Scalar(totalRequests);
+    *outFingerprint = schedule.Value();
+    return true;
+}
+
+[[nodiscard]] bool ResolutionScheduleMatches(
+    const FxFastFileEffectDefDisk32View &source,
+    const std::uint64_t expectedFingerprint) noexcept
+{
+    std::uint64_t fingerprint = 0;
+    return ComputeResolutionScheduleFingerprint(source, &fingerprint)
+        && fingerprint == expectedFingerprint;
+}
+
+[[nodiscard]] Status ResolveFrozenGroup(
+    const FxFastFileNativeDisk32Workspace *const workspace,
+    const FxFastFileEffectDefDisk32View &source,
+    const FxFastFileEffectDefDisk32View *const sourceArgument,
     const FxFastFileDisk32Resolvers &resolvers,
+    const FxFastFileDisk32Resolvers *const resolverArgument,
+    const FxFastFileNativeDisk32Plan *const outPlan,
+    const std::uint64_t scheduleFingerprint,
+    const FrozenResolveRequest *const requests,
+    const std::uint32_t requestCount,
+    FxFastFileDisk32ResolvedReference *const journal,
+    std::uint32_t *const journalCount,
+    Fingerprint *const expectedStrings) noexcept
+{
+    for (std::uint32_t index = 0; index < requestCount; ++index)
+    {
+        const FrozenResolveRequest &request = requests[index];
+        const Status status = ResolveOne(
+            workspace,
+            source,
+            sourceArgument,
+            resolvers,
+            resolverArgument,
+            outPlan,
+            request.kind,
+            request.sourceField,
+            request.token,
+            journal,
+            journalCount,
+            expectedStrings);
+        if (status != Status::Success)
+        {
+            return ResolutionScheduleMatches(source, scheduleFingerprint)
+                ? status
+                : Status::SourceChanged;
+        }
+    }
+    return ResolutionScheduleMatches(source, scheduleFingerprint)
+        ? Status::Success
+        : Status::SourceChanged;
+}
+
+[[nodiscard]] Status ResolveGraph(
+    const FxFastFileNativeDisk32Workspace *const workspace,
+    const FxFastFileEffectDefDisk32View &source,
+    const FxFastFileEffectDefDisk32View *const sourceArgument,
+    const FxFastFileDisk32Resolvers &resolvers,
+    const FxFastFileDisk32Resolvers *const resolverArgument,
+    const FxFastFileNativeDisk32Plan *const outPlan,
+    const std::uint64_t scheduleFingerprint,
     FxFastFileDisk32ResolvedReference *const journal,
     std::uint32_t *const journalCount) noexcept
 {
     *journalCount = 0;
-    Status status = ResolveOne(
-        source,
-        resolvers,
+    Fingerprint expectedStrings;
+    const FrozenResolveRequest rootRequest{
         FxFastFileDisk32ReferenceKind::EffectName,
         &source.effect->name.token,
+        source.effect->name.token,
+    };
+    Status status = ResolveFrozenGroup(
+        workspace,
+        source,
+        sourceArgument,
+        resolvers,
+        resolverArgument,
+        outPlan,
+        scheduleFingerprint,
+        &rootRequest,
+        1,
         journal,
-        journalCount);
+        journalCount,
+        &expectedStrings);
     if (status != Status::Success)
         return status;
 
     for (std::uint32_t index = 0; index < source.elements.count; ++index)
     {
-        const FxElemDefDisk32 &elem = source.elements.data[index];
-        const FxFastFileElemDefDisk32View &view =
-            source.elementViews.data[index];
-        if (elem.elemType == FxElemTypeDisk32::Decal)
+        FrozenResolveRequest requests[kMaxElementResolveRequests]{};
+        std::uint32_t requestCount = 0;
+        if (!FreezeElementResolveRequests(
+                source, index, requests, &requestCount, nullptr))
         {
-            for (std::uint32_t visual = 0; visual < elem.visualCount;
-                 ++visual)
-            {
-                for (std::uint32_t material = 0; material < 2; ++material)
-                {
-                    status = ResolveOne(
-                        source,
-                        resolvers,
-                        FxFastFileDisk32ReferenceKind::Material,
-                        &view.markVisuals.data[visual]
-                             .materials[material].token,
-                        journal,
-                        journalCount);
-                    if (status != Status::Success)
-                        return status;
-                }
-            }
+            return Status::SourceChanged;
         }
-        else if (!IsLight(elem.elemType) && elem.visualCount)
-        {
-            const FxFastFileDisk32ReferenceKind kind =
-                VisualReferenceKind(elem.elemType);
-            if (elem.visualCount == 1)
-            {
-                status = ResolveOne(
-                    source,
-                    resolvers,
-                    kind,
-                    &elem.visuals.token,
-                    journal,
-                    journalCount);
-                if (status != Status::Success)
-                    return status;
-            }
-            else
-            {
-                for (std::uint32_t visual = 0; visual < elem.visualCount;
-                     ++visual)
-                {
-                    status = ResolveOne(
-                        source,
-                        resolvers,
-                        kind,
-                        &view.visuals.data[visual].token,
-                        journal,
-                        journalCount);
-                    if (status != Status::Success)
-                        return status;
-                }
-            }
-        }
-
-        const disk32::PointerToken *const effectReferences[] = {
-            &elem.effectOnImpact.token,
-            &elem.effectOnDeath.token,
-            &elem.effectEmitted.token,
-        };
-        for (const disk32::PointerToken *const reference : effectReferences)
-        {
-            if (reference->isNull())
-                continue;
-            status = ResolveOne(
-                source,
-                resolvers,
-                FxFastFileDisk32ReferenceKind::EffectNameReference,
-                reference,
-                journal,
-                journalCount);
-            if (status != Status::Success)
-                return status;
-        }
+        status = ResolveFrozenGroup(
+            workspace,
+            source,
+            sourceArgument,
+            resolvers,
+            resolverArgument,
+            outPlan,
+            scheduleFingerprint,
+            requests,
+            requestCount,
+            journal,
+            journalCount,
+            &expectedStrings);
+        if (status != Status::Success)
+            return status;
     }
-    return Status::Success;
+    expectedStrings.Scalar(*journalCount);
+    return expectedStrings.Value()
+            == ComputeResolvedStringsFingerprint(journal, *journalCount)
+        ? Status::Success
+        : Status::SourceChanged;
 }
 
 template <typename T>
@@ -954,7 +1093,7 @@ void CopyFloatRange(T *const destination, const FxFloatRangeDisk32 &source)
 }
 
 void CopyIntRange(
-    native_detail::IntRange *const destination,
+    FxIntRange *const destination,
     const FxIntRangeDisk32 &source) noexcept
 {
     destination->base = source.base;
@@ -1044,7 +1183,7 @@ template <typename T>
 }
 
 void AssignVisual(
-    native_detail::ElemVisuals *const destination,
+    FxElemVisuals *const destination,
     const FxElemTypeDisk32 type,
     const FxFastFileDisk32ResolvedReference &reference) noexcept
 {
@@ -1058,26 +1197,37 @@ void AssignVisual(
         destination->effectDef.handle =
             static_cast<const FxEffectDef *>(reference.pointer);
     }
+    else if (type == FxElemTypeDisk32::Model)
+    {
+        destination->model = const_cast<XModel *>(
+            static_cast<const XModel *>(reference.pointer));
+    }
     else
     {
-        destination->anonymous = reference.pointer;
+        destination->material = const_cast<Material *>(
+            static_cast<const Material *>(reference.pointer));
     }
 }
 } // namespace
 
 FxFastFileNativeDisk32Status TryPlanFxEffectDefDisk32(
     FxFastFileNativeDisk32Workspace *const workspace,
-    const FxFastFileEffectDefDisk32View &source,
+    const FxFastFileEffectDefDisk32View &sourceArgument,
     const FxFastFileDisk32Resolvers &resolvers,
     FxFastFileNativeDisk32Plan *const outPlan) noexcept
 {
-    if (!workspace || !outPlan || !resolvers.resolve
-        || !source.provenance.validateSpan)
+    if (!workspace)
+        return Status::InvalidArgument;
+    if (workspace->operating_)
+        return Status::Busy;
+    if (!outPlan || !resolvers.resolve
+        || !sourceArgument.provenance.validateSpan
+        || reinterpret_cast<std::uintptr_t>(outPlan)
+                % alignof(FxFastFileNativeDisk32Plan)
+            != 0)
     {
         return Status::InvalidArgument;
     }
-    if (workspace->operating_)
-        return Status::Busy;
     if (RangesOverlap(
             outPlan, sizeof(*outPlan), workspace, sizeof(*workspace)))
     {
@@ -1085,6 +1235,65 @@ FxFastFileNativeDisk32Status TryPlanFxEffectDefDisk32(
     }
     if (workspace->phase_ != FxFastFileNativeDisk32Phase::Empty)
         return Status::InvalidPhase;
+
+    // Reject aliases whose addresses can be checked without dereferencing an
+    // unvalidated graph. The full reachable-span check follows validation.
+    if (RangesOverlap(
+            &sourceArgument,
+            sizeof(sourceArgument),
+            workspace,
+            sizeof(*workspace))
+        || RangesOverlap(
+            &resolvers, sizeof(resolvers), workspace, sizeof(*workspace))
+        || RangesOverlap(
+            outPlan,
+            sizeof(*outPlan),
+            &sourceArgument,
+            sizeof(sourceArgument))
+        || RangesOverlap(
+            outPlan, sizeof(*outPlan), &resolvers, sizeof(resolvers))
+        || RangesOverlap(
+            sourceArgument.effect,
+            sourceArgument.effect ? sizeof(*sourceArgument.effect) : 0,
+            workspace,
+            sizeof(*workspace))
+        || RangesOverlap(
+            sourceArgument.elements.data,
+            sourceArgument.elements.data ? 1 : 0,
+            workspace,
+            sizeof(*workspace))
+        || RangesOverlap(
+            sourceArgument.elementViews.data,
+            sourceArgument.elementViews.data ? 1 : 0,
+            workspace,
+            sizeof(*workspace)))
+    {
+        return Status::InvalidArgument;
+    }
+
+    // Validate and bind the complete caller-owned graph before changing any
+    // workspace byte. Otherwise a source view placed inside the workspace
+    // could be destroyed by the operation gate or journal initialization.
+    Status status = ValidateGraph(sourceArgument, false);
+    if (status != Status::Success)
+        return status;
+    if (OverlapsSource(
+            workspace, sizeof(*workspace), sourceArgument, nullptr, 0)
+        || OverlapsSource(
+            outPlan, sizeof(*outPlan), sourceArgument, nullptr, 0))
+    {
+        return Status::InvalidArgument;
+    }
+    const FxFastFileEffectDefDisk32View source = sourceArgument;
+    const FxFastFileDisk32Resolvers resolverSnapshot = resolvers;
+    const std::uint64_t sourceFingerprint =
+        ComputeSourceFingerprint(source);
+    std::uint64_t scheduleFingerprint = 0;
+    if (!ComputeResolutionScheduleFingerprint(
+            source, &scheduleFingerprint))
+    {
+        return Status::InvalidSourceLayout;
+    }
 
     workspace->operating_ = true;
     const auto finish = [workspace](const Status status) noexcept {
@@ -1099,25 +1308,27 @@ FxFastFileNativeDisk32Status TryPlanFxEffectDefDisk32(
     };
     clearPlan();
 
-    Status status = ValidateGraph(source, true);
+    // The source-view contract requires every reachable byte to remain
+    // readable and immutable for the transaction. Revalidate after each
+    // external callback phase against the pre-operation binding above.
+    status = ValidateGraph(source, true);
     if (status != Status::Success)
         return finish(status);
-    // A provenance callback is external code and may have mutated an earlier
-    // record. Re-run every pure graph invariant after the last callback.
     status = ValidateGraph(source, false);
-    if (status != Status::Success)
-        return finish(Status::SourceChanged);
-    if (OverlapsSource(
-            outPlan, sizeof(*outPlan), source, nullptr, 0))
+    if (status != Status::Success
+        || ComputeSourceFingerprint(source) != sourceFingerprint)
     {
-        return finish(Status::InvalidArgument);
+        clearPlan();
+        return finish(Status::SourceChanged);
     }
-
-    const std::uint64_t sourceFingerprint =
-        ComputeSourceFingerprint(source);
     status = ResolveGraph(
+        workspace,
         source,
-        resolvers,
+        &sourceArgument,
+        resolverSnapshot,
+        &resolvers,
+        outPlan,
+        scheduleFingerprint,
         workspace->resolved_,
         &workspace->resolvedCount_);
     if (status != Status::Success)
@@ -1175,6 +1386,13 @@ FxFastFileNativeDisk32Status TryPlanFxEffectDefDisk32(
         clearPlan();
         return finish(status);
     }
+    if (planner.Offset()
+        > static_cast<std::uint32_t>(
+            (std::numeric_limits<std::int32_t>::max)()))
+    {
+        clearPlan();
+        return finish(Status::SizeOverflow);
+    }
 
     FxFastFileNativeDisk32Plan candidate{};
     candidate.workspaceIdentity_ = workspace;
@@ -1187,7 +1405,7 @@ FxFastFileNativeDisk32Status TryPlanFxEffectDefDisk32(
         source, workspace->resolved_, workspace->resolvedCount_);
     candidate.outputBytes_ = planner.Offset();
     candidate.outputAlignment_ = static_cast<std::uint32_t>(
-        alignof(native_detail::ElemDef));
+        alignof(FxElemDef));
     candidate.elementCount_ = source.elements.count;
     candidate.resolvedReferenceCount_ = workspace->resolvedCount_;
     candidate.effectNameBytes_ = effectNameBytes;
@@ -1206,14 +1424,16 @@ FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(
     const std::size_t capacity,
     FxEffectDef **const outEffect) noexcept
 {
-    if (!workspace || !storage || !outEffect
+    if (!workspace)
+        return Status::InvalidArgument;
+    if (workspace->operating_)
+        return Status::Busy;
+    if (!storage || !outEffect
         || reinterpret_cast<std::uintptr_t>(outEffect)
             % alignof(FxEffectDef *) != 0)
     {
         return Status::InvalidArgument;
     }
-    if (workspace->operating_)
-        return Status::Busy;
 
     workspace->operating_ = true;
     const auto finish = [workspace](const Status status) noexcept {
@@ -1248,7 +1468,7 @@ FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(
         return finish(Status::InvalidPlan);
 #endif
     if (plan.outputBytes_ == 0
-        || plan.outputAlignment_ != alignof(native_detail::ElemDef)
+        || plan.outputAlignment_ != alignof(FxElemDef)
         || plan.elementCount_ != workspace->source_.elements.count
         || plan.resolvedReferenceCount_ != workspace->resolvedCount_
         || plan.effectNameBytes_ < 2)
@@ -1326,13 +1546,14 @@ FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(
     FxRuntimeBlobCursor writer(
         static_cast<std::uint8_t *>(storage), plan.outputBytes_);
     FxEffectDef *nativeEffect = nullptr;
-    native_detail::ElemDef *nativeElements = nullptr;
+    FxElemDef *nativeElements = nullptr;
     if (!writer.ReserveArray(1, &nativeEffect)
         || !writer.ReserveArray(plan.elementCount_, &nativeElements))
     {
         invalidate();
         return finish(Status::InvalidPlan);
     }
+    std::construct_at(nativeEffect);
 
     const FxEffectDefDisk32 &diskEffect = *workspace->source_.effect;
     std::uint32_t resolvedIndex = 1;
@@ -1341,7 +1562,8 @@ FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(
         const FxElemDefDisk32 &disk = workspace->source_.elements.data[index];
         const FxFastFileElemDefDisk32View &view =
             workspace->source_.elementViews.data[index];
-        native_detail::ElemDef &native = nativeElements[index];
+        FxElemDef &native = nativeElements[index];
+        std::construct_at(&native);
 
         native.flags = disk.flags;
         if (index
@@ -1421,24 +1643,28 @@ FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(
 
         if (disk.elemType == FxElemTypeDisk32::Decal)
         {
-            if (!writer.ReserveArray(
-                    disk.visualCount, &native.visuals.markArray))
+            FxElemMarkVisuals *markVisuals = nullptr;
+            if (!writer.ReserveArray(disk.visualCount, &markVisuals))
             {
                 invalidate();
                 return finish(Status::InvalidPlan);
             }
+            native.visuals.markArray = markVisuals;
             for (std::uint32_t visual = 0; visual < disk.visualCount;
                  ++visual)
             {
+                std::construct_at(&markVisuals[visual]);
                 for (std::uint32_t material = 0; material < 2; ++material)
                 {
-                    native.visuals.markArray[visual].materials[material] =
-                        workspace->resolved_[resolvedIndex++].pointer;
+                    markVisuals[visual].materials[material] =
+                        const_cast<Material *>(static_cast<const Material *>(
+                            workspace->resolved_[resolvedIndex++].pointer));
                 }
             }
         }
         else if (!IsLight(disk.elemType) && disk.visualCount == 1)
         {
+            std::construct_at(&native.visuals.instance);
             AssignVisual(
                 &native.visuals.instance,
                 disk.elemType,
@@ -1446,20 +1672,27 @@ FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(
         }
         else if (!IsLight(disk.elemType) && disk.visualCount > 1)
         {
-            if (!writer.ReserveArray(
-                    disk.visualCount, &native.visuals.array))
+            FxElemVisuals *visuals = nullptr;
+            if (!writer.ReserveArray(disk.visualCount, &visuals))
             {
                 invalidate();
                 return finish(Status::InvalidPlan);
             }
+            native.visuals.array = visuals;
             for (std::uint32_t visual = 0; visual < disk.visualCount;
                  ++visual)
             {
+                std::construct_at(&visuals[visual]);
                 AssignVisual(
-                    &native.visuals.array[visual],
+                    &visuals[visual],
                     disk.elemType,
                     workspace->resolved_[resolvedIndex++]);
             }
+        }
+        else
+        {
+            std::construct_at(&native.visuals.instance);
+            native.visuals.instance.anonymous = nullptr;
         }
 
         native.effectOnImpact.handle = disk.effectOnImpact.token.isNull()
@@ -1479,34 +1712,39 @@ FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(
 
         if (view.trail)
         {
-            native_detail::TrailVertex *vertices = nullptr;
-            if (!writer.ReserveArray(1, &native.trailDef)
+            FxTrailDef *trail = nullptr;
+            FxTrailVertex *vertices = nullptr;
+            std::uint16_t *indices = nullptr;
+            if (!writer.ReserveArray(1, &trail)
                 || !writer.ReserveArray(
                     static_cast<std::uint32_t>(view.trail->indCount),
                     &vertices)
                 || !writer.ReserveArray(
                     static_cast<std::uint32_t>(view.trail->indCount),
-                    &native.trailDef->inds))
+                    &indices))
             {
                 invalidate();
                 return finish(Status::InvalidPlan);
             }
-            native.trailDef->scrollTimeMsec = view.trail->scrollTimeMsec;
-            native.trailDef->repeatDist = view.trail->repeatDist;
-            native.trailDef->splitDist = view.trail->splitDist;
-            native.trailDef->vertCount = view.trail->vertCount;
-            native.trailDef->verts = vertices;
-            native.trailDef->indCount = view.trail->indCount;
+            std::construct_at(trail);
+            native.trailDef = trail;
+            trail->scrollTimeMsec = view.trail->scrollTimeMsec;
+            trail->repeatDist = view.trail->repeatDist;
+            trail->splitDist = view.trail->splitDist;
+            trail->vertCount = view.trail->vertCount;
+            trail->verts = vertices;
+            trail->indCount = view.trail->indCount;
+            trail->inds = indices;
             std::memcpy(
                 vertices,
                 view.trailVertices.data,
                 static_cast<std::size_t>(view.trail->vertCount)
                     * sizeof(*vertices));
             std::memcpy(
-                native.trailDef->inds,
+                indices,
                 view.trailIndices.data,
                 static_cast<std::size_t>(view.trail->indCount)
-                    * sizeof(*native.trailDef->inds));
+                    * sizeof(*indices));
         }
         native.sortOrder = disk.sortOrder;
         native.lightingFrac = disk.lightingFrac;
@@ -1532,7 +1770,7 @@ FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(
     nativeEffect->elemDefCountOneShot = diskEffect.elemDefCountOneShot;
     nativeEffect->elemDefCountEmission = diskEffect.elemDefCountEmission;
     nativeEffect->elemDefs = plan.elementCount_
-        ? reinterpret_cast<const FxElemDef *>(nativeElements)
+        ? nativeElements
         : nullptr;
 
     if (resolvedIndex != workspace->resolvedCount_
