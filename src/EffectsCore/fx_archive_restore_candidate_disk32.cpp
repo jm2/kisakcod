@@ -186,10 +186,8 @@ struct PhysicsValidationContext
 
     const FxArchiveRestoreCandidateDisk32PhysicsBody &body =
         context->candidateBodies[physicsIndex];
-    FxElem *const exactElem = std::addressof(
-        const_cast<FxSystemBuffers *>(context->buffers)
-            ->elems[descriptor.ownerIndex]
-            .item);
+    const FxElem *const exactElem = std::addressof(
+        context->buffers->elems[descriptor.ownerIndex].item);
     if (descriptor.elem != exactElem || body.elem != exactElem
         || body.model != descriptor.model
         || body.ownerIndex != descriptor.ownerIndex
