@@ -135,7 +135,7 @@ enum class FxFastFileNativeDisk32Phase : std::uint8_t
 
 class FxFastFileNativeDisk32Workspace;
 
-class FxFastFileNativeDisk32Plan final
+class alignas(8) FxFastFileNativeDisk32Plan final
 {
 public:
     constexpr FxFastFileNativeDisk32Plan() noexcept = default;
@@ -180,6 +180,11 @@ private:
     friend class FxFastFileNativeDisk32Workspace;
 
     const FxFastFileNativeDisk32Workspace *workspaceIdentity_ = nullptr;
+#if !KISAK_ARCH_64BIT
+    // Keep the following uint64_t members at the MSVC x86 offset on every
+    // ILP32 compiler; alignas controls class alignment, not member placement.
+    std::uint32_t workspaceIdentityPadding_ = 0;
+#endif
     std::uint64_t serial_ = 0;
     std::uint64_t sourceFingerprint_ = 0;
     std::uint32_t outputBytes_ = 0;
@@ -266,4 +271,6 @@ static_assert(
         FxFastFileNativeDisk32Workspace>);
 static_assert(
     std::is_nothrow_destructible_v<FxFastFileNativeDisk32Workspace>);
+RUNTIME_SIZE(FxFastFileNativeDisk32Plan, 0x30, 0x30);
+RUNTIME_SIZE(FxFastFileNativeDisk32Workspace, 0x11868, 0x23088);
 } // namespace fx::fastfile
