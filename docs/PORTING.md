@@ -61,6 +61,10 @@ Completed foundation work:
 - a transactional FX effect-definition restore table backed by one bounded BSS image, with exact TLS/serial ownership,
   symmetric archive/lifecycle admission, full parse-before-registration, explicit little-endian keys, Win32-safe asset
   names, longjmp abandonment, and raw/zlib concurrency/malformed-input coverage;
+- a bounded heap-owned FX effect-definition save snapshot that releases database enumeration ownership before validation
+  or output, preserves valid legacy raw/zlib bytes, rejects unsafe names and invalid/conflicting Disk32 keys before the
+  first write, and carries portable constrained-stack plus compiler-frame gates; source-scoped Windows x86 production
+  measurement is calibrated and enforced in Debug and Release PR CI;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -76,8 +80,11 @@ Remaining gates, in implementation order:
    pure restore control, checked heap transaction/preflight scratch, and the normal archive admission gate with
    deterministic waiter/error-unwind coverage are implemented. Exact competing non-FX ODE occupancy and silent
    live creation/impact/rollback transactions are also implemented. The report-free, segment-bounded `MemoryFile`
-   parser prerequisite and the transactional BSS effect-definition lease are complete. Next bound the save-side
-   definition snapshot and add measured source-scoped Windows x86 plus portable extracted-TU frame/runtime gates.
+   parser prerequisite, transactional BSS effect-definition restore lease, bounded save snapshot, and portable extracted-
+   helper frame/runtime gates are complete. Windows x86 production analysis exposed and removed a 10,256-byte convenience
+   wrapper; authoritative Debug and Release reports now measure `FX_Save` at 2,756 bytes, `FX_Restore` at 6,124 bytes,
+   and the largest other helper at 2,064 bytes. Then stabilize camera/scalar/visibility snapshot publication and start the
+   fixed Disk32 archive schema.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -1035,9 +1042,13 @@ registration failure, reentry, abandonment, stale/foreign ownership, reuse, and 
 under GCC, Clang, ASan+UBSan, and TSan; strict x86-32/AArch64 compilation and two independent audits are green. Windows
 x86 production compilation and the five native utility runners remain the authoritative PR CI gate.
 
-Overall porting progress is approximately **39%** (plausible range **35–44%**), while target delivery remains **0/5**.
-The next sequence is bounded save-side definition capture and measured x86/native64 stack/runtime ceilings, followed by
-the Disk32 FX archive schema. A checked whole-segment compressed-finalization boundary remains a later integrity item
+Overall porting progress is approximately **40%** (plausible range **36–45%**), while target delivery remains **0/5**.
+Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
+Windows x86 Debug and Release production reports now enforce 2,756-byte `FX_Save`, 6,124-byte `FX_Restore`, and
+2,064-byte maximum-other frames after replacing the discovered 10,256-byte helper with checked heap scratch. The next
+sequence is stable camera/scalar/visibility snapshot publication followed by the Disk32 FX archive schema. A checked
+whole-segment compressed-finalization boundary remains a
+later integrity item
 because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work also includes camera/scalar
 snapshot publication and real Disk32 archive/fast-file conversion. A separate hard M4 blocker
 remains: MP `cpose_t::physObjId` and

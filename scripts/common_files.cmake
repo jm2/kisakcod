@@ -22,6 +22,8 @@ set(EFFECTSCORE
     "${SRC_DIR}/EffectsCore/fx_archive_restore_control.cpp"
     "${SRC_DIR}/EffectsCore/fx_archive_restore_control.h"
     "${SRC_DIR}/EffectsCore/fx_archive_restore_workspace.h"
+    "${SRC_DIR}/EffectsCore/fx_effect_table_save.cpp"
+    "${SRC_DIR}/EffectsCore/fx_effect_table_save.h"
     "${SRC_DIR}/EffectsCore/fx_effect_table_restore.cpp"
     "${SRC_DIR}/EffectsCore/fx_effect_table_restore.h"
     "${SRC_DIR}/EffectsCore/fx_beam.cpp"

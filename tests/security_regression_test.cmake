@@ -3599,17 +3599,42 @@ require_source_contains(
     "gfx_d3d/r_material_load_obj.cpp"
     "Material_ForEachTechniqueSet(Material_ReleaseTechniqueSetResources, true);"
     "load-object technique cleanup must occur after database enumeration")
-require_source_contains(
-    "EffectsCore/fx_archive.cpp"
-    "memFile->errorOnOverflow = false;
-    DB_EnumXAssets("
-    "FX archive overflow must be deferred during database enumeration")
-require_source_contains(
-    "EffectsCore/fx_archive.cpp"
-    "memFile->errorOnOverflow = errorOnOverflow;
-    if (errorOnOverflow && memFile->memoryOverflow)
-        Com_Error("
-    "FX archive overflow must drop only after database enumeration")
+file(READ
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp"
+    _fx_archive_save_source)
+extract_security_slice(
+    _fx_archive_save_source
+    "void __cdecl FX_CaptureEffectTableEntry_LoadObj("
+    "fx::archive::EffectTableSaveStatus FX_CaptureEffectTableNoReport("
+    _fx_effect_table_capture_callbacks
+    "bounded FX effect-table capture callbacks")
+require_security_slice_contains(
+    _fx_effect_table_capture_callbacks
+    "AppendEffectTableSaveEntryNoReport("
+    "FX archive database callbacks must only append bounded records")
+foreach(_forbidden_effect_table_callback_call
+    "MemFile_"
+    "Com_"
+    "Z_Malloc("
+    "Z_Free("
+    "ValidateEffectTableSaveSnapshotNoReport("
+    "WriteEffectTableSaveSnapshotNoReport(")
+    forbid_security_slice_contains(
+        _fx_effect_table_capture_callbacks
+        "${_forbidden_effect_table_callback_call}"
+        "FX archive database callbacks must not allocate, report, validate, or write")
+endforeach()
+extract_security_slice(
+    _fx_archive_save_source
+    "fx::archive::EffectTableSaveStatus FX_CaptureEffectTableNoReport("
+    "bool FX_WriteEffectTableSaveBytes("
+    _fx_effect_table_capture_transaction
+    "FX effect-table capture and post-enumeration validation")
+require_security_slice_ordered(
+    _fx_effect_table_capture_transaction
+    "FX_ForEachEffectDef("
+    "ValidateEffectTableSaveSnapshotNoReport("
+    "FX archive effect-table validation must occur after enumeration returns")
 
 file(READ "${SOURCE_ROOT}/src/universal/memfile.cpp" _memfile_source)
 extract_security_slice(
@@ -6876,6 +6901,45 @@ require_source_contains(
     "EffectsCore/fx_archive.cpp"
     "FxSystemBuffers *const bufferSnapshot ="
     "save must stage pool buffers outside live state")
+require_source_match_count(
+    "EffectsCore/fx_archive.cpp"
+    "FxArchivePhysicsOwnershipScratch[ \t]*\\*[ \t]*const[ \t]+physicsOwnershipScratch[ \t]*=[ \t\r\n]*FX_AllocateArchiveSavePhysicsOwnershipScratch\\(\\)"
+    1
+    "save must stage bounded physics validation scratch outside the worker stack")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "RUNTIME_SIZE(FxArchivePhysicsOwnershipScratch, 0x5808, 0x7010);"
+    "save physics scratch must retain exact checked native layouts")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "AllocateArchiveRestoreWorkspace<[ \t\r\n]*FxArchivePhysicsOwnershipScratch>[ \t]*\\([ \t\r\n]*FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY\\)"
+    "save physics scratch must use checked construction and allocation")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "DestroyArchiveRestoreWorkspace\\([ \t\r\n]*scratch,[ \t\r\n]*FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY\\)"
+    "save physics scratch must be destroyed before its storage is freed")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FxArchivePhysicsOwnershipScratch *const physicsOwnershipScratch ="
+    "if (!FX_BeginArchive(system))"
+    "save must allocate physics validation scratch before archive exclusion")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "&physicsEntryCount,[ \t\r\n]*true,[ \t\r\n]*physicsOwnershipScratch,[ \t\r\n]*&snapshotSpotLightBoltDobj"
+    "save physics capture must reuse caller-owned validation scratch")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "if[ \t]*\\(\\(entryCount[ \t]*!=[ \t]*0[ \t]*&&[ \t]*!entries\\)[ \t]*\\|\\|[ \t]*!ownershipScratch\\)"
+    "state capture must reject missing caller-owned validation scratch")
+require_source_not_contains(
+    "EffectsCore/fx_archive.cpp"
+    "bool FX_ValidateArchivePhysicsOwnershipLocked("
+    "archive validation must not restore the large stack-owning wrapper")
+require_source_match_count(
+    "EffectsCore/fx_archive.cpp"
+    "FX_DestroyArchiveSavePhysicsOwnershipScratch\\([ \t\r\n]*physicsOwnershipScratch\\)"
+    5
+    "save must destroy and free physics validation scratch on every owned exit")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "if (!FX_BeginArchive(system))"
@@ -6940,7 +7004,7 @@ require_source_match_count(
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "FX archive save requires Disk32 conversion on this target"
-    "FX_SaveEffectDefTable(system, memFile);"
+    "FX_SaveEffectTableNoDrop(memFile);"
     "unsupported native save addresses must fail before writing archive payload")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"

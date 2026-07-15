@@ -79,7 +79,8 @@ jobs:
             -DCICD=ON "-DDXSDK_DIR=$env:DXSDK_NATIVE" `
             -DKISAK_BUILD_MP=ON `
             -DKISAK_BUILD_DEDICATED=ON `
-            -DKISAK_BUILD_SP=OFF
+            -DKISAK_BUILD_SP=OFF `
+            -DKISAK_MEASURE_FX_ARCHIVE_STACK=ON
 
       - name: Build
         shell: pwsh
@@ -89,14 +90,22 @@ jobs:
           --target KisakCOD-mp KisakCOD-dedi
           kisakcod-pool-allocator-tests
           kisakcod-fx-effect-table-restore-tests
+          kisakcod-fx-effect-table-save-tests
           --parallel
+
+      - name: Enforce FX archive stack budgets
+        shell: pwsh
+        run: >
+          ./scripts/ci/check-fx-archive-stack.ps1
+          -InputPath
+          "build-${{ matrix.config }}/scripts/mp/fx_archive_stack_${{ matrix.config }}.xml"
 
       - name: Run portable transaction tests
         shell: pwsh
         run: >
           ctest --test-dir "build-${{ matrix.config }}"
           -C "${{ matrix.config }}" --output-on-failure
-          -R "^(pool-native-pointer-freelist|effectscore-effect-table-transactional-restore)$"
+          -R "^(pool-native-pointer-freelist|effectscore-effect-table-(transactional-restore|bounded-save))$"
 
       - uses: actions/upload-artifact@v4
         with:

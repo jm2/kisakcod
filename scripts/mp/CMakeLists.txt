@@ -59,6 +59,11 @@ add_executable(${PROJECT_NAME}
     ${STEAM_HEADERS}
 )
 
+if (KISAK_MEASURE_FX_ARCHIVE_STACK)
+    include(${SCRIPTS_DIR}/stack_budget.cmake)
+    kisakcod_enable_fx_archive_stack_measurement(${PROJECT_NAME})
+endif()
+
 # Add multiplayer flag
 target_compile_definitions(${PROJECT_NAME} PUBLIC KISAK_MP CINEMA USE_SEPARATE_BLIT_TEXTURE)
 set(KISAK_TARGET_NEEDS_CLIENT_MEDIA ON)
