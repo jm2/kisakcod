@@ -68,13 +68,6 @@ enum class PhysBodyDestroyStatus : std::uint8_t
     UserDataCleanupFailed,
 };
 
-enum class PhysBodyCreateResourceFailure : std::uint8_t
-{
-    None,
-    BodyPool,
-    UserDataPool,
-};
-
 bool Phys_RollbackBodyStateIsValid(const BodyState &state) noexcept;
 bool Phys_TryBuildBodyRotationNoReport(
     const float (*axis)[3],
@@ -716,7 +709,7 @@ static PhysBodyModelCreateStatus Phys_TryCreateBodyFromStateInternal(
     return PhysBodyModelCreateStatus::Success;
 }
 
-static void Phys_ReportBodyModelCreateFailure(
+void __cdecl Phys_ReportBodyModelCreateFailure(
     const PhysBodyModelCreateStatus status,
     const PhysBodyCreateResourceFailure resourceFailure) noexcept
 {
@@ -760,6 +753,13 @@ static void Phys_ReportBodyModelCreateFailure(
     std::abort();
 }
 
+void __cdecl Phys_ReportBodyModelCreateFailure(
+    const PhysBodyModelCreateStatus status) noexcept
+{
+    Phys_ReportBodyModelCreateFailure(
+        status, PhysBodyCreateResourceFailure::None);
+}
+
 static PhysBodyModelCreateStatus
 Phys_TryObjCreateAxisLockedNoReportInternal(
     const PhysWorld worldIndex,
@@ -770,6 +770,8 @@ Phys_TryObjCreateAxisLockedNoReportInternal(
     dxBody **const outBody,
     PhysBodyCreateResourceFailure *const outResourceFailure) noexcept
 {
+    if (outResourceFailure)
+        *outResourceFailure = PhysBodyCreateResourceFailure::None;
     if (!outBody)
         return PhysBodyModelCreateStatus::InvalidArgument;
     *outBody = nullptr;
@@ -808,6 +810,8 @@ Phys_TryObjCreateLockedNoReportInternal(
     dxBody **const outBody,
     PhysBodyCreateResourceFailure *const outResourceFailure) noexcept
 {
+    if (outResourceFailure)
+        *outResourceFailure = PhysBodyCreateResourceFailure::None;
     if (!outBody)
         return PhysBodyModelCreateStatus::InvalidArgument;
     *outBody = nullptr;
@@ -830,7 +834,8 @@ PhysBodyModelCreateStatus __cdecl Phys_TryObjCreateLockedNoReport(
     const float *const quat,
     const float *const velocity,
     const PhysPreset *const physPreset,
-    dxBody **const outBody) noexcept
+    dxBody **const outBody,
+    PhysBodyCreateResourceFailure *const outResourceFailure) noexcept
 {
     return Phys_TryObjCreateLockedNoReportInternal(
         worldIndex,
@@ -839,7 +844,7 @@ PhysBodyModelCreateStatus __cdecl Phys_TryObjCreateLockedNoReport(
         velocity,
         physPreset,
         outBody,
-        nullptr);
+        outResourceFailure);
 }
 
 dxBody *__cdecl Phys_ObjCreateAxis(
@@ -1369,7 +1374,7 @@ static bool Phys_TryReadBodyMassNoReport(
     return true;
 }
 
-static PhysBodyModelCreateStatus Phys_TryObjAddGeomBoxLockedNoReport(
+PhysBodyModelCreateStatus __cdecl Phys_TryObjAddGeomBoxLockedNoReport(
     const PhysWorld worldIndex,
     dxBody *const body,
     const float *const boxMin,
@@ -4471,7 +4476,8 @@ Phys_TryCreateBodyFromPresetAndXModelLockedNoReport(
     const float *const velocity,
     const PhysPreset *const physPreset,
     const XModel *const model,
-    dxBody **const outBody) noexcept
+    dxBody **const outBody,
+    PhysBodyCreateResourceFailure *const outResourceFailure) noexcept
 {
     return Phys_TryCreateBodyFromPresetAndXModelInternal(
         worldIndex,
@@ -4481,7 +4487,7 @@ Phys_TryCreateBodyFromPresetAndXModelLockedNoReport(
         physPreset,
         model,
         outBody,
-        nullptr);
+        outResourceFailure);
 }
 
 bool __cdecl Phys_TryObjSetAngularVelocityLockedNoReport(
@@ -4663,6 +4669,404 @@ void __cdecl Phys_ObjAddForce(PhysWorld worldIndex, dxBody *id, float *worldPos,
         return;
     userData->timeLastAsleep =
         physGlob.worldData[bodyWorldIndex].timeLastUpdate;
+}
+
+namespace
+{
+bool Phys_TryBulletDotNoReport(
+    const float *const first,
+    const float *const second,
+    float *const outDot) noexcept
+{
+    if (!first || !second || !outDot)
+        return false;
+    *outDot = 0.0f;
+    // Vec3Dot is intrinsically report-free and preserves the exact legacy
+    // expression grouping used by Phys_ObjBulletImpact.
+    const float dot = Vec3Dot(first, second);
+    if (!std::isfinite(dot))
+        return false;
+    *outDot = dot;
+    return true;
+}
+
+bool Phys_TryBulletCrossNoReport(
+    const float *const first,
+    const float *const second,
+    float *const outCross) noexcept
+{
+    if (!first || !second || !outCross)
+        return false;
+    const float cross0 =
+        first[1] * second[2] - first[2] * second[1];
+    const float cross1 =
+        first[2] * second[0] - first[0] * second[2];
+    const float cross2 =
+        first[0] * second[1] - first[1] * second[0];
+    if (!std::isfinite(cross0) || !std::isfinite(cross1)
+        || !std::isfinite(cross2))
+    {
+        return false;
+    }
+    outCross[0] = cross0;
+    outCross[1] = cross1;
+    outCross[2] = cross2;
+    return true;
+}
+
+bool Phys_TryBulletNormalizeNoReport(
+    float *const vector,
+    float *const outLength) noexcept
+{
+    if (!vector || !outLength)
+        return false;
+    *outLength = 0.0f;
+    // Vec3Normalize contains no assertion/report path. Calling the original
+    // helper keeps its sqrt overload, expression grouping, and float stores.
+    const float length = Vec3Normalize(vector);
+    if (!std::isfinite(length) || !std::isfinite(vector[0])
+        || !std::isfinite(vector[1]) || !std::isfinite(vector[2]))
+    {
+        return false;
+    }
+    *outLength = length;
+    return true;
+}
+
+bool Phys_TryBulletMatrixTransformNoReport(
+    const float *const vector,
+    const float (*const matrix)[3],
+    float *const outVector) noexcept
+{
+    if (!vector || !matrix || !outVector || vector == outVector)
+        return false;
+    for (std::size_t component = 0; component < 3; ++component)
+    {
+        const float column[3]{
+            matrix[0][component],
+            matrix[1][component],
+            matrix[2][component],
+        };
+        if (!Phys_TryBulletDotNoReport(
+                vector, column, &outVector[component]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+} // namespace
+
+bool __cdecl Phys_TryObjBulletImpactLockedNoReport(
+    const PhysWorld worldIndex,
+    dxBody *const body,
+    const float *const worldPosRaw,
+    const float *const bulletDirRaw,
+    const float bulletSpeed,
+    const float scale) noexcept
+{
+    if (!physInited
+        || worldIndex < PHYS_WORLD_DYNENT || worldIndex >= PHYS_WORLD_COUNT
+        || !body || !worldPosRaw || !bulletDirRaw
+        || !phys_bulletUpBias || !phys_bulletSpinScale
+        || phys_bulletUpBias->type != DVAR_TYPE_FLOAT
+        || phys_bulletSpinScale->type != DVAR_TYPE_FLOAT
+        || g_phys_msecStep[worldIndex] <= 0
+        || !std::isfinite(bulletSpeed) || !std::isfinite(scale))
+    {
+        return false;
+    }
+
+    const float upBias = phys_bulletUpBias->current.value;
+    const float spinScale = phys_bulletSpinScale->current.value;
+    if (!std::isfinite(upBias) || !std::isfinite(spinScale)
+        || !std::isfinite(phys_bulletUpBias->domain.value.min)
+        || !std::isfinite(phys_bulletUpBias->domain.value.max)
+        || !std::isfinite(phys_bulletSpinScale->domain.value.min)
+        || !std::isfinite(phys_bulletSpinScale->domain.value.max)
+        || phys_bulletUpBias->domain.value.min
+            > phys_bulletUpBias->domain.value.max
+        || phys_bulletSpinScale->domain.value.min
+            > phys_bulletSpinScale->domain.value.max
+        || upBias < phys_bulletUpBias->domain.value.min
+        || upBias > phys_bulletUpBias->domain.value.max
+        || spinScale < phys_bulletSpinScale->domain.value.min
+        || spinScale > phys_bulletSpinScale->domain.value.max)
+    {
+        return false;
+    }
+
+    for (std::size_t component = 0; component < 3; ++component)
+    {
+        if (!std::isfinite(worldPosRaw[component])
+            || !std::isfinite(bulletDirRaw[component]))
+        {
+            return false;
+        }
+    }
+
+    const poolstorage_t bodyStorage = ODE_BodyPoolStorage();
+    if (Pool_TryValidateAllocatedNoReport(
+            bodyStorage, &odeGlob.bodyPool, body)
+            != poolmutationstatus_t::Success
+        || !Phys_TryValidateBodyUserDataBindingsLockedNoReport())
+    {
+        return false;
+    }
+
+    int bodyWorldIndex = PHYS_WORLD_COUNT;
+    for (int candidate = PHYS_WORLD_DYNENT;
+         candidate < PHYS_WORLD_COUNT;
+         ++candidate)
+    {
+        if (body->world == physGlob.world[candidate])
+        {
+            bodyWorldIndex = candidate;
+            break;
+        }
+    }
+    if (bodyWorldIndex == PHYS_WORLD_COUNT)
+        return false;
+
+    auto *const userData =
+        static_cast<PhysObjUserData *>(body->userdata);
+    if (Pool_TryValidateAllocatedNoReport(
+            Phys_UserDataPoolStorage(),
+            &physGlob.userDataPool,
+            userData)
+            != poolmutationstatus_t::Success
+        || userData->body != body
+        || body->adis.idle_steps < 0
+        || !std::isfinite(body->adis.idle_time))
+    {
+        return false;
+    }
+
+    dMass validatedMass{};
+    float validatedInverse[12]{};
+    float validatedInverseMass = 0.0f;
+    if (!Phys_TryFinalizeMassTensorNoReport(
+            body->mass,
+            &validatedMass,
+            &validatedInverse,
+            &validatedInverseMass))
+    {
+        return false;
+    }
+
+    for (std::size_t component = 0; component < 3; ++component)
+    {
+        if (!std::isfinite(body->info.pos[component])
+            || !std::isfinite(body->info.lvel[component])
+            || !std::isfinite(body->info.avel[component])
+            || !std::isfinite(body->facc[component])
+            || !std::isfinite(body->tacc[component]))
+        {
+            return false;
+        }
+    }
+    for (std::size_t row = 0; row < 3; ++row)
+    {
+        for (std::size_t column = 0; column < 3; ++column)
+        {
+            if (!std::isfinite(body->info.R[row * 4 + column]))
+                return false;
+        }
+    }
+
+    const float forceScale = static_cast<float>(
+        1000.0 / static_cast<double>(g_phys_msecStep[worldIndex]));
+    if (!std::isfinite(forceScale))
+        return false;
+
+    float bulletDir[3]{
+        bulletDirRaw[0],
+        bulletDirRaw[1],
+        bulletDirRaw[2],
+    };
+    bulletDir[2] = bulletDir[2] + upBias;
+    if (!std::isfinite(bulletDir[2]))
+        return false;
+    float bulletDirectionLength = 0.0f;
+    if (!Phys_TryBulletNormalizeNoReport(
+            bulletDir, &bulletDirectionLength))
+    {
+        return false;
+    }
+
+    const float centerOfMass[3]{
+        body->info.pos[0],
+        body->info.pos[1],
+        body->info.pos[2],
+    };
+    float worldPos[3]{
+        worldPosRaw[0],
+        worldPosRaw[1],
+        worldPosRaw[2],
+    };
+    float offset[3]{};
+    for (std::size_t component = 0; component < 3; ++component)
+    {
+        offset[component] = worldPos[component] - centerOfMass[component];
+        if (!std::isfinite(offset[component]))
+            return false;
+        offset[component] = spinScale * offset[component];
+        if (!std::isfinite(offset[component]))
+            return false;
+        worldPos[component] = worldPos[component] + offset[component];
+        if (!std::isfinite(worldPos[component]))
+            return false;
+    }
+
+    float bodyVelocityDotDirection = 0.0f;
+    if (!Phys_TryBulletDotNoReport(
+            body->info.lvel,
+            bulletDir,
+            &bodyVelocityDotDirection))
+    {
+        return false;
+    }
+    const float relativeBulletSpeed =
+        bulletSpeed - bodyVelocityDotDirection;
+    if (!std::isfinite(relativeBulletSpeed))
+        return false;
+
+    float impactRelativeToBody[3]{};
+    for (std::size_t component = 0; component < 3; ++component)
+    {
+        impactRelativeToBody[component] =
+            worldPos[component] - centerOfMass[component];
+        if (!std::isfinite(impactRelativeToBody[component]))
+            return false;
+    }
+    float torqueAxis[3]{};
+    if (!Phys_TryBulletCrossNoReport(
+            impactRelativeToBody, bulletDir, torqueAxis))
+    {
+        return false;
+    }
+    float radius = 0.0f;
+    if (!Phys_TryBulletNormalizeNoReport(torqueAxis, &radius))
+        return false;
+
+    float inertiaTensor[3][3]{};
+    float rotation[3][3]{};
+    for (std::size_t row = 0; row < 3; ++row)
+    {
+        for (std::size_t column = 0; column < 3; ++column)
+        {
+            inertiaTensor[column][row] =
+                body->mass.I[row * 4 + column];
+            rotation[column][row] =
+                body->info.R[row * 4 + column];
+        }
+    }
+    float torqueAxisRelativeToBody[3]{};
+    float doubleDotTemp[3]{};
+    if (!Phys_TryBulletMatrixTransformNoReport(
+            torqueAxis, rotation, torqueAxisRelativeToBody)
+        || !Phys_TryBulletMatrixTransformNoReport(
+            torqueAxisRelativeToBody,
+            inertiaTensor,
+            doubleDotTemp))
+    {
+        return false;
+    }
+    float momentOfInertia = 0.0f;
+    if (!Phys_TryBulletDotNoReport(
+            doubleDotTemp,
+            torqueAxisRelativeToBody,
+            &momentOfInertia)
+        || (radius != 0.0f && !(momentOfInertia > 0.0f)))
+    {
+        return false;
+    }
+
+    float bodyAngularVelAroundAxis = 0.0f;
+    if (!Phys_TryBulletDotNoReport(
+            body->info.avel,
+            torqueAxis,
+            &bodyAngularVelAroundAxis))
+    {
+        return false;
+    }
+    const float angularSurfaceSpeed =
+        bodyAngularVelAroundAxis * radius;
+    const float closingSpeed = relativeBulletSpeed - angularSurfaceSpeed;
+    constexpr float BULLET_MASS = 0.5f;
+    const float numerator =
+        (relativeBulletSpeed - bodyAngularVelAroundAxis * radius)
+        * 2.0 * BULLET_MASS;
+    if (!std::isfinite(angularSurfaceSpeed)
+        || !std::isfinite(closingSpeed)
+        || !std::isfinite(numerator))
+    {
+        return false;
+    }
+    if (numerator <= 0.0f)
+        return true;
+
+    float denominator = body->mass.mass + BULLET_MASS;
+    if (!std::isfinite(denominator))
+        return false;
+    if (radius != 0.0f)
+    {
+        denominator = radius * radius * body->mass.mass * BULLET_MASS
+            / momentOfInertia + denominator;
+    }
+    if (!(denominator > 0.0f) || !std::isfinite(denominator))
+        return false;
+
+    const float momentumScale =
+        scale * body->mass.mass * numerator / denominator;
+    if (!std::isfinite(momentumScale))
+        return false;
+
+    float force[3]{};
+    float newForceAccumulator[3]{};
+    for (std::size_t component = 0; component < 3; ++component)
+    {
+        const float momentum = momentumScale * bulletDir[component];
+        force[component] = momentum * forceScale;
+        newForceAccumulator[component] =
+            body->facc[component] + force[component];
+        if (!std::isfinite(momentum) || !std::isfinite(force[component])
+            || !std::isfinite(newForceAccumulator[component]))
+        {
+            return false;
+        }
+    }
+
+    float torque[3]{};
+    if (!Phys_TryBulletCrossNoReport(
+            impactRelativeToBody, force, torque))
+    {
+        return false;
+    }
+    float newTorqueAccumulator[3]{};
+    for (std::size_t component = 0; component < 3; ++component)
+    {
+        newTorqueAccumulator[component] =
+            body->tacc[component] + torque[component];
+        if (!std::isfinite(newTorqueAccumulator[component]))
+            return false;
+    }
+
+    // All fallible work is complete. Publish exactly the dBodyAddForceAtPos,
+    // dBodyEnable, and Phys_ObjAddForce fields without assertion-bearing ODE
+    // accessors. The parameter world supplies the historical impulse scaling;
+    // the body's actual world supplies its sleep timestamp.
+    for (std::size_t component = 0; component < 3; ++component)
+    {
+        body->facc[component] = newForceAccumulator[component];
+        body->tacc[component] = newTorqueAccumulator[component];
+    }
+    body->flags &= ~dxBodyDisabled;
+    body->adis_stepsleft = body->adis.idle_steps;
+    body->adis_timeleft = body->adis.idle_time;
+    userData->timeLastAsleep =
+        physGlob.worldData[bodyWorldIndex].timeLastUpdate;
+    return true;
 }
 
 int __cdecl Phys_IndexFromODEWorld(dxWorld *world)
