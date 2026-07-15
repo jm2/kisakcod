@@ -9,14 +9,28 @@ work item changes. Do not create session-specific handoff files.
 - Active branch: `agent/fx-snapshot-publication`; branch point: merged bounded save-snapshot checkpoint `92ad1429`;
   upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint: make FX archive camera/scalar/visibility snapshots coherent before introducing Disk32 conversion.
-  `FX_Save` currently validates mutable live state, then copies it later, while camera/time publishers, the visibility
-  buffer swap, the full vertex-generation read interval, and client-visibility traversal do not all participate in archive
-  admission. The bounded batch will reuse cooperative/exclusive iterator ownership without changing frozen `FxSystem`
-  layout, publish camera markers last, validate the copied heap-staged system/buffer image, canonicalize the intentional
-  invalid-camera update interval, and represent visibility buffers as validated 0/1 selectors. Portable camera/selector
-  fixtures, source contracts, and a TSan writer-versus-exclusive snapshot stress will precede production integration.
-- Merged-baseline validation: GCC and Clang full suites are **53/53** green. ASan+UBSan (leak detection disabled under the
+- Active checkpoint: the coherent FX camera/scalar/visibility save-snapshot implementation is complete locally and is
+  awaiting branch publication, automated review, and PR CI before Disk32 conversion starts. Camera/time publication is
+  assembled off-side and invalidated/published through atomic markers. An external fixed-width shared/exclusive camera gate
+  serializes ordinary publishers with draw, mark, vertex-generation, spawn-cull, and sprite-sort readers without changing
+  frozen `FxSystem`; every camera owner nests inside cooperative archive admission. Visibility swap/query paths likewise
+  retain cooperative admission through pointer/payload use. The neutral visibility query now has a report-free try-admission
+  path that reads no mutable `FxSystem` state before ownership. Active archives reject the intentional time-to-camera gap,
+  while only an exact reset camera is accepted before the first draw frame.
+- `FX_Save` now retains the validated effect-definition table, captures raw system and buffer images once under proven
+  archive/allocator exclusion, derives exact 0/1 visibility selectors, and relinks only a distinct heap-owned validation
+  view. It validates copied pool/definition/physics semantics before any legacy bytes are emitted, rejects effect-definition
+  pointers not present in the staged table before dereference, then releases archive ownership and writes the unchanged x86
+  sequence (table, system, buffers, system address, physics states). The serialized raw-pointer view is never relinked.
+- Current-branch validation: GCC and Clang are **55/55** green; ASan+UBSan (leak detection disabled under the command
+  runner) and TSan are **54/54** green, with the compiler-generated static-frame test intentionally omitted under sanitizer
+  instrumentation. Strict warnings-as-errors compilation passes for the new iterator, snapshot-publication, and bounded
+  effect-table fixtures on x86-32 and AArch64. Focused source/security contracts, Clang analyzer checks, and
+  `git diff --check` pass. Independent camera-census and archive/provenance audits found no blocker. Windows x86 production
+  compilation, the linked production TLS/error-unwind path, legacy save integration, and measured stack budgets remain
+  authoritative in PR CI.
+- Merged-baseline validation: master run **29393277892 passed all nine jobs**. GCC and Clang full suites are **53/53**
+  green. ASan+UBSan (leak detection disabled under the
   command runner) and TSan are **52/52** green; their compiler-generated static-frame test is intentionally omitted because
   sanitizer instrumentation creates dynamic frames, while their maximum-capacity runtime still runs on a bounded 1 MiB
   worker stack. Strict helper/test builds pass for x86-32 and AArch64. Optimized save-helper reports peak at 80 bytes on
@@ -106,9 +120,8 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: gate camera/time/visibility publishers and readers, validate/canonicalize the copied archive image, and prove
-  coherent selector/camera snapshots under TSan. Then begin fixed Disk32 FX archive mirrors, codecs, native handle
-  remapping, and reader-first converters.
+- Next: finish review/CI and merge the coherent snapshot branch, then begin fixed Disk32 FX archive mirrors, codecs,
+  native handle remapping, and reader-first converters.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,
@@ -127,7 +140,7 @@ work item changes. Do not create session-specific handoff files.
   ownership, cleanup, lock-order, or scratch-reuse defect. The prior measured restore peaks were approximately
   **58–66 KiB x86 / 105–121 KiB native64**; structural census projects roughly **15 KiB / 23 KiB** after this
   change, but an actual production frame gate remains pending because `fx_archive.cpp` is not yet portable outside
-  the Windows engine build. The current effect-table checkpoint removes the remaining 8,196-byte x86 definition-table
+  the Windows engine build. The effect-table checkpoint removes the remaining 8,196-byte x86 definition-table
   frame through a no-leak BSS lease that survives registration longjmp cleanup. The archive-gate and portable ODE
   occupancy follow-ons are also complete; the remaining sequence begins with measured per-function stack gates.
   PR #15's initial run **29361544758** passed the Linux amd64/arm64 and macOS arm64 portable suites plus the
@@ -166,7 +179,7 @@ work item changes. Do not create session-specific handoff files.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **40% complete by engineering effort** (plausible range 36–45%).
+- Progress estimate: approximately **41% complete by engineering effort** (plausible range 37–46%).
   The foundation/checklist view is about 51–56% and the shared foundation is roughly 90–94% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
@@ -247,11 +260,12 @@ work item changes. Do not create session-specific handoff files.
   retiring only owned old FX bodies needed for capacity, and reconstructing every retired body before an
   old-graph rollback. Desired, rollback, and safe-empty publication keep archive iterator exclusion intact;
   unexpected cleanup failure terminates before reopening admission. PR #15 moved its bounded transaction and
-  validation scratch to checked heap lifetimes without weakening fail-stop ownership, and the current branch now
-  supplies executable normal archive-gate control and production integration. The current ODE occupancy follow-on adds
-  exact fixed-pool competition plus intrinsically silent live creation/impact/rollback transactions. Remaining
-  FX-specific work is now real 64-bit Disk32 archive/fast-file conversion plus stable camera/scalar snapshot publication;
-  the bounded save-side definition snapshot and portable stack/runtime gates are merged in PR #20, with
+  validation scratch to checked heap lifetimes without weakening fail-stop ownership, and PR #16 supplies executable
+  normal archive-gate control and production integration. The merged ODE occupancy follow-on adds
+  exact fixed-pool competition plus intrinsically silent live creation/impact/rollback transactions. Coherent
+  camera/scalar/visibility snapshot publication is locally complete on the active branch; remaining FX-specific work is
+  now real 64-bit Disk32 archive/fast-file conversion after its production/review gate.
+  The bounded save-side definition snapshot and portable stack/runtime gates are merged in PR #20, with
   authoritative production MSVC Debug/Release measurements at 2,756-byte save, 6,124-byte restore, and 2,064-byte
   maximum other frames after removal of the discovered 10,256-byte convenience wrapper.
   Audit of that transaction exposed prerequisite ODE exhaustion defects: `dBodyCreate` and user-data allocation
@@ -638,8 +652,9 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Stabilize the camera/scalar/visibility archive snapshot through cooperative publisher/reader admission, copied-image
-   validation, canonical camera state, visibility selectors, and portable concurrency/source contracts.
+1. Publish, review, run authoritative Windows x86 production/stack CI, and merge the locally complete coherent
+   camera/scalar/visibility archive-snapshot branch. Do not start overlapping Disk32 production edits before that PR is
+   clean; portable Disk32 schema design/fixtures may proceed independently.
 2. Add packed FX savegame Disk32 schemas, native handle
    remapping, opaque effect-definition keys,
    and byte-level malformed/round-trip fixtures; retain the legacy x86 writer until equivalence is
@@ -704,11 +719,12 @@ work item changes. Do not create session-specific handoff files.
   archive exclusion, canonical safe-empty reset, fail-stop handling after lost native ownership, and checked heap
   transaction/validation scratch including early malformed-graph preflight. PR #16 adds
   executable normal admission, durable partial-cleanup ownership, fail-closed typed values, and checked production
-  integration. The current branch completes competing non-FX occupancy and the silent production ODE mutation boundary.
-  The effect-table restore lease closes the parsing/registration stack boundary, and the current save snapshot closes
-  database-owned enumeration plus extracted-helper stack enforcement. Remaining blockers are stable camera/scalar
-  publication and real Disk32 FX archive/fast-file conversion; the corrected production MSVC stack report is calibrated
-  and enforced in Debug and Release.
+  integration. PR #17 completes competing non-FX occupancy and the silent production ODE mutation boundary.
+  The effect-table restore lease and bounded save table close the parsing/registration and database-enumeration stack
+  boundaries. The current snapshot branch adds copied-image validation, staged-definition membership, coherent
+  camera/scalar/visibility publication, and portable concurrency contracts. After its authoritative Windows x86 gate,
+  the remaining FX blocker is real Disk32 archive/fast-file conversion; the corrected production MSVC stack report is
+  calibrated and enforced in Debug and Release.
   `R_FilterXModelIntoScene` still retains an
   FX element's cached-lighting handle pointer beyond the per-effect draw lock; current renderer scheduling
   consumes it before the next FX mutation, but a generation-aware scene-owned cache is required before that
