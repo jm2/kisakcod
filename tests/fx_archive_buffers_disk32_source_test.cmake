@@ -147,6 +147,7 @@ foreach(_marker IN ITEMS
     "activeCount < 0"
     "firstFree < -1"
     "poolIsFull == (firstFree == -1)"
+    "std::extent_v<decltype(SLOT_TYPE::bytes)> >= 4"
     "std::uint32_t{slot.bytes[0]}"
     "std::uint32_t{slot.bytes[1]} << 8u"
     "std::uint32_t{slot.bytes[2]} << 16u"

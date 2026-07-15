@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <type_traits>
 
 namespace fx::archive
 {
@@ -36,6 +37,7 @@ bool ReadFreeLink(
     const SLOT_TYPE &slot,
     std::int32_t *const outNextFree) noexcept
 {
+    static_assert(std::extent_v<decltype(SLOT_TYPE::bytes)> >= 4);
     if (!outNextFree)
         return false;
 
@@ -98,6 +100,8 @@ bool RebuildPoolState(
             FxPoolAllocationState<LIMIT>::WORD_BITS;
         const std::uint64_t allocatedBit =
             std::uint64_t{1} << (index % wordBits);
+        // index < LIMIT above proves the word index. Avoid std::array::operator[]
+        // so hardened library assertion/report paths cannot enter this decoder.
         if ((rebuilt.allocatedWords.data()[index / wordBits]
              & allocatedBit)
             == 0)
