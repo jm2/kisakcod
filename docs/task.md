@@ -6,33 +6,29 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/memfile-silent-read`; branch point: merged ODE occupancy checkpoint
-  `288c2b78`; upstream-integration baseline: `2b759db`.
+- Active branch: `agent/fx-effect-table-restore`; branch point: merged silent MemoryFile checkpoint
+  `4f84ffca`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: move `FX_RestoreEffectDefTable` behind a bounded lifecycle-owned BSS lease. Its prerequisite no-longjmp
-  input boundary is complete on this branch: status-bearing `MemoryFile` data and caller-bounded C-string readers decode
-  the production legacy RLE/zlib stream without assertions, prints, or drops; validate exact segment lengths and
-  little-endian headers; reject cross-segment, malformed, and truncated input; preserve successfully decoded prefixes and
-  sticky-overflow state while leaving the first unread destination byte unchanged; and reset the process-global codec
-  on failure. `FX_ReadArchiveDataNoDrop` now uses that primitive
-  directly instead of temporarily suppressing reports around the legacy reader. TLS records the exact stream owner, and
-  both global `Com_Error` longjmp paths abandon same-thread inflate/deflate state outside the client-only cleanup guard;
-  foreign threads cannot release it, mismatch cleanup cannot corrupt a newer owner's RLE caches, and raw/compressed read,
-  compressed-write, idempotence, immediate-reuse, and foreign-thread behavior are executable contracts. The complete
-  **48/48** suite passes under GCC, Clang, ASan+UBSan, and TSan; strict x86-32 and AArch64 compile/link pass; and two
-  independent final audits approve the slice. Checked whole-segment compressed finalization remains a later integrity
-  API because SND intentionally skips/copies segments and FX performs multiple mid-segment reads. The next transaction
-  must parse all exact little-endian names/keys before registration, eliminate the uninitialized truncated-key path,
-  publish only complete entries, replace the 1,024-entry stack table (8,196 bytes on x86; 16,392 on native64), release
-  scratch before `FX_BeginArchive` or PHYSICS admission, and let error abandonment reclaim the lease without diagnostics.
-- PR #18 is open. Initial run **29385108870** exposed one macOS arm64-only build seam: the bundled zlib header suppresses
-  its `Byte` typedef whenever modern AppleClang defines the legacy `TARGET_OS_MAC` marker, although modern Darwin no
-  longer makes that classic-Mac typedef visible. The focused correction keeps the classic compiler exception while making
-  zlib self-contained on Apple Mach targets. All ten bundled C translation units compile under simulated Darwin macros;
+- Active work: replace `FX_RestoreEffectDefTable` with a bounded lifecycle-owned BSS transaction. The implementation will
+  cap raw records at 1,024, read every 1--63 byte name and four-byte key through the report-free MemoryFile boundary,
+  decode keys explicitly little-endian, reject zero and conflicting duplicate keys, and collapse only byte-identical
+  duplicate key/name pairs before the first registration. A pointer-sized atomic cookie identifies the exact TLS owner;
+  a real Closing sentinel reserves cleanup while BSS is cleared, so stale, nested, or foreign cleanup cannot erase a
+  newer transaction. FX lifecycle and archive admission must fail closed on an active lease, while the restore claim
+  rechecks an exact Open archive gate and unchanged cooperative generation. Registration occurs only after the complete
+  empty-name terminator is parsed, publication occurs once after every registration succeeds, and error cleanup silently
+  abandons same-thread ownership. Preserve allocation-graph validation before staged effect-pointer fixup, then release
+  the lease immediately after fixup and pass its captured generation into later archive admission. This removes the
+  8,196-byte x86 / 16,392-byte native64 table frame and the uninitialized truncated-key path without moving scratch to
+  fallible heap ownership.
+- PR #18 squash-merged as `4f84ffca`. Initial run **29385108870** exposed one macOS arm64-only build seam: the bundled
+  zlib header suppresses its `Byte` typedef whenever modern AppleClang defines the legacy `TARGET_OS_MAC` marker, although
+  modern Darwin no longer makes that classic-Mac typedef visible. The focused correction keeps the classic compiler
+  exception while making zlib self-contained on Apple Mach targets. All ten bundled C translation units compile under simulated Darwin macros;
   replacement run **29385256836 passed all nine jobs**. Gemini then found that one failed raw byte decode still wrote a
   synthetic zero into the first unread output position; the reader now publishes only successfully decoded bytes, and
-  the complete **48/48** GCC, Clang, ASan+UBSan, and TSan suites pass again. Codex found no major issue at `300e7dd3`;
-  final CI after the review correction is pending.
+  the complete **48/48** GCC, Clang, ASan+UBSan, and TSan suites pass again. Codex found no major issue at the original or
+  review-fix heads, both Gemini threads were resolved, and final run **29385881598 passed all nine jobs**.
 - ODE occupancy runtime on this branch is otherwise complete. The engine-free physics batch controller rejects invalid,
   duplicate, overlapping-output, and unknown-status inputs before callbacks; preflights every selected retirement or
   reconstruction before mutation; and reports the exact successful commit prefix. Production FX archive retirement and
@@ -604,12 +600,10 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Replace `FX_RestoreEffectDefTable`'s fallible stack parser with a bounded no-longjmp transaction. Add
-   `MemFile_TryReadDataNoReport` (and the narrow CString cursor built on it), decode each key explicitly as little-endian,
-   reject truncation/capacity/name failures before registration or table publication, and hold the 1,024-entry candidate
-   in a checked BSS lease whose error-abandon path cannot leak. Release that lease before `FX_BeginArchive`, PHYSICS, or
-   any reporting call. Then measure the Windows x86 production frame and enforce source-scoped MSVC plus portable
-   extracted-TU stack limits; follow with a save-side definition snapshot outside database read ownership.
+1. Complete the transactional effect-definition BSS lease described above with real raw/zlib fixtures, current-thread and
+   lifecycle race coverage, strict frame warnings, x86-32/AArch64 compile-link gates, and production/source integration.
+   Then bound the save-side definition snapshot outside database read ownership and measure the Windows x86 production
+   frame with source-scoped MSVC plus portable extracted-TU stack limits.
 2. Add packed FX savegame Disk32 schemas, native handle remapping, opaque effect-definition keys,
    and byte-level malformed/round-trip fixtures; retain the legacy x86 writer until equivalence is
    proven. Fast-file `FxEffectDef` widening remains a separate nested-payload batch.
