@@ -70,10 +70,11 @@ Completed foundation work:
   workers without changing frozen `FxSystem`, publishes camera validity only after its payload, stages raw system and
   buffer bytes once, validates through a separately relinked heap image, derives bounded visibility selectors, and proves
   every copied effect-definition pointer belongs to the retained table before dereference or output;
-- a reader-first FX Disk32 leaf layer with a distinct strong archive-definition key, exact legacy x86 and deterministic
-  native64 key policies, fixed `0x1C` spatial-frame and `0x80` effect-record mirrors, explicit compiler-independent
-  bolt/sort packing, and exhaustive transactional owner-handle conversion; production archive I/O remains unchanged
-  pending full system/buffer integration;
+- a reader-first FX Disk32 layer with distinct strong archive-definition-key and archive-address types, exact legacy x86
+  and deterministic native64 key policies, fixed `0x1C` spatial-frame, `0x80` effect-record, `0xB0` camera, `0x10`
+  sprite, and `0xA60` system mirrors, explicit compiler-independent bolt/sort packing, exhaustive owner/all-effect-handle
+  conversion, numeric full-buffer topology and visibility-selector validation, and transactional output publication;
+  production archive I/O remains unchanged pending full buffer integration;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -96,7 +97,9 @@ Remaining gates, in implementation order:
    jobs plus exact-head Codex review in PR #21, and its sole Gemini finding is fixed and resolved. The first reader-first
    Disk32 batch now separates native definition identity from explicit archive keys, preserves exact x86 keys, assigns
    deterministic native64 keys, and proves fixed effect-record/owner-handle conversion with exhaustive portable fixtures.
-   Full `FxSystem`/`FxSystemBuffers` mirrors, transactional MemoryFile integration, physics records, and native64 guard
+   The exact `FxSystemDisk32` mirror and pure decoder are also complete, including checked `0x47480` address topology,
+   visibility selectors, all-effect-handle permutation, active-ring metadata, and spotlight conversion. The
+   `FxSystemBuffersDisk32` mirror/converter, transactional MemoryFile integration, physics records, and native64 guard
    retirement remain.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
@@ -1055,17 +1058,18 @@ registration failure, reentry, abandonment, stale/foreign ownership, reuse, and 
 under GCC, Clang, ASan+UBSan, and TSan; strict x86-32/AArch64 compilation and two independent audits are green. Windows
 x86 production compilation and the five native utility runners remain the authoritative PR CI gate.
 
-Overall porting progress is approximately **41%** (plausible range **37–46%**), while target delivery remains **0/5**.
+Overall porting progress is approximately **42%** (plausible range **38–47%**), while target delivery remains **0/5**.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
 Windows x86 Debug and Release production reports now enforce 2,756-byte `FX_Save`, 6,124-byte `FX_Restore`, and
 2,064-byte maximum-other frames after replacing the discovered 10,256-byte helper with checked heap scratch. Coherent
 camera/scalar/visibility publication, copied-image validation, visibility selectors, and staged effect-definition
 membership passed all nine jobs in PR #21 run **29397910131** at implementation head `7895f7a9`; Codex found no major
 issue at that exact commit and the sole Gemini finding was fixed and resolved; final documentation run **29414351528**
-also passed all nine jobs before squash merge `0f878ff4`. The first reader-first Disk32 FX key/effect-record batch is
-implemented and locally validated, but is not yet a production native64 reader or writer. The active sequence is full
-fixed system/buffer mirrors, complete handle and visibility remapping, transactional reader integration, and only then
-guarded writer replacement after exact x86 equivalence. A checked
+also passed all nine jobs before squash merge `0f878ff4`. The reader-first Disk32 FX key/effect-record and fixed system
+batches are implemented and locally validated, but are not yet a production native64 reader or writer. The active
+sequence is the fixed buffer mirror, raw-slot/free-list reconstruction, heap-owned full-graph conversion and definition
+resolution, transactional reader integration with live visibility-selector relinking, and only then guarded writer
+replacement after exact x86 equivalence. A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
 because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work is real Disk32

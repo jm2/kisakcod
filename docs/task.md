@@ -7,15 +7,26 @@ work item changes. Do not create session-specific handoff files.
 ## Current state
 
 - Active branch: `agent/fx-disk32-system-codec`; branch point: merged Disk32 leaf checkpoint `56760d80`;
-  upstream-integration baseline: `2b759db`.
+  implementation commits: `4c27aa1d` and `9abb332e`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint: implement the first fixed full-system seam without changing production archive I/O. Add a strong
-  archive-address type distinct from fast-file tokens and effect-definition keys, exact `FxCameraDisk32`,
-  `FxSpriteInfoDisk32`, and `FxSystemDisk32` (`0xA60`) layouts, and a pure transactional metadata decoder. It must validate
-  scalar and byte-boolean representations, checked buffer-address topology, exact visibility selectors, the complete
-  1,024-entry effect-handle permutation, active-ring membership, and conditional spotlight handle conversion before
-  publishing any output. Full buffer conversion, MemoryFile integration, physics records, and both native64 production
-  guards remain later batches.
+- Active checkpoint implementation is complete and awaiting PR review. The first fixed full-system seam introduces a
+  strong numeric `ArchiveAddress32` distinct from fast-file tokens and definition keys, exact `FxCameraDisk32` (`0xB0`),
+  `FxSpriteInfoDisk32` (`0x10`), and `FxSystemDisk32` (`0xA60`) layouts, plus a pure transactional decoder. It proves the
+  complete `0x47480` buffer-address span and exact internal topology without forming pointers, derives distinct visibility
+  selectors, validates scalar/byte-boolean/camera/time/pool/ring state, remaps the complete 1,024-entry effect-handle
+  permutation, emits a physical active-slot bitmap, and conditionally validates/remaps spotlight handles. Every native
+  pool, sprite, and visibility pointer remains null for later full-image linking; malformed input leaves both outputs
+  byte-for-byte unchanged. Production archive I/O and both native64 production guards are intentionally unchanged.
+- Current checkpoint validation: GCC and Clang suites are **58/58** green. ASan+UBSan (leak detection disabled under the
+  command runner) and TSan are **57/57** green, with the compiler-generated static-frame test intentionally omitted under
+  instrumentation. The hand-authored little-endian fixture covers every field/offset, both selector orientations, exact
+  last-fitting/first-overflow archive addresses, finite camera/basis/time bounds, free-head/count consistency, widened
+  ring arithmetic, permutation/duplicate/misaligned handles, all valid spotlight cardinalities, null outputs, and a real
+  x86 raw-layout oracle. Strict warnings-as-errors x86-32 execution and AArch64 linking pass; GCC/Clang analyzer checks,
+  extra conversion warnings on the new decoder, the focused source/security contract, and `git diff --check` pass. The
+  optimized/unoptimized GCC decoder frames are 1,184/1,216 bytes, below the portable 4 KiB gate. Two independent audits
+  found and verified the spotlight-state, end-of-address-space, and post-mutation failure-contract additions and report no
+  remaining implementation or integration blocker.
 - PR #22 squash-merged as `56760d80` from final documentation head `b86ab94d`. Final run **29418054504 passed all nine
   jobs**; implementation head `f48b04c1` also passed all nine in run **29417195541**. Gemini provided no review comments,
   and Codex found no major issue at the exact implementation head. The merged leaf layer separates full-width native
@@ -141,10 +152,14 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: land the fixed `FxSystemDisk32` schema and pure metadata decoder, then add heap-backed
-  `FxSystemBuffersDisk32` (`0x47480`) conversion, native pool linking, effect-definition resolution, and full graph
-  validation. Integrate the transactional native64 reader only after full-image malformed-input, round-trip, and x86
-  byte-equivalence fixtures pass; retain the legacy x86 writer and native64 save guard until encoder equivalence follows.
+- Next: publish and merge the fixed `FxSystemDisk32` checkpoint, then implement the buffer phase in bounded PRs. First add
+  exact `FxSystemBuffersDisk32` (`0x47480`) and nested effect/elem/trail/trail-elem/visibility schemas plus raw-slot
+  free-list reconstruction without production I/O. Then add a roughly 320 KiB heap-owned native staging workspace,
+  definition-resolver callback, native pool construction, selector/metadata cross-checks, and complete graph/semantic
+  validation. Production reader integration follows only after full-image malformed-input and x86-equivalence fixtures.
+  That integration must relink visibility read/write selectors to the live buffers during desired and rollback publication;
+  `FX_LinkSystemBuffers` currently links only the base visibility pointer, so copying staged selector pointers would dangle.
+  Retain the legacy x86 writer and native64 save guard until a later pure encoder/full-image equivalence batch.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,
@@ -202,8 +217,8 @@ work item changes. Do not create session-specific handoff files.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **41% complete by engineering effort** (plausible range 37–46%).
-  The foundation/checklist view is about 51–56% and the shared foundation is roughly 90–94% mature,
+- Progress estimate: approximately **42% complete by engineering effort** (plausible range 38–47%).
+  The foundation/checklist view is about 52–57% and the shared foundation is roughly 90–94% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
   (nine commits; upstream was not ahead at merge time) while preserving the port's pointer-width and
