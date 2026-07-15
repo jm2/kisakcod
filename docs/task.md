@@ -6,23 +6,28 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-archive-disk32-production-restore`; branch point: merged portable-reader checkpoint `7cbe7070`;
-  current implementation head: `e1174d33`; current upstream-integration baseline: merge `11a9e08c` through upstream
-  `312a9d2e`.
+- Active branch: `agent/fx-archive-disk32-production-restore`; PR #31; branch point: merged portable-reader checkpoint
+  `7cbe7070`; current implementation/review-fix head: `57c5fa0a`; current upstream-integration baseline: merge
+  `11a9e08c` through upstream `312a9d2e`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
 - Current production-restore checkpoint: `FX_Restore` now consumes the legacy Disk32 tail through the unified portable
   reader and an independently owned mutable candidate. The 670,976-byte x86 / 695,640-byte native64 reader and
-  376,216-byte x86 / 400,872-byte native64 candidate are checked heap workspaces. Candidate construction holds the
+  376,240-byte x86 / 400,904-byte native64 candidate are checked heap workspaces. Candidate construction holds the
   reader's private operation gate across complete source validation and copy, requires the exact lease identity stored by
   the reader plus a currently valid lifecycle lease, revalidates graph/metadata/semantics/physics, relinks every candidate
-  pointer to candidate-owned buffers, and publishes `Ready` last. Production destroys the reader, validates and releases
-  that exact lease, and immediately calls generation-checked `FX_BeginArchive` before any copied asset identity can be
-  dereferenced. Centralized staging cleanup owns both workspaces plus desired/replaced physics entries, rollback buffers,
-  and transaction scratch; the established publication/rollback/safe-empty controller remains the sole live-state commit
-  path. The former raw restore parser, restore-only pointer-width/ABI/address-relocation path, and native64 restore guard are
-  removed. `FX_Save`, the legacy writer and save-side native64 guard, wire bytes, and licensed workflow are unchanged.
+  pointer to candidate-owned buffers, and publishes `Ready` last. Ready-view access now requires, validates, and rechecks
+  that same exact active lease while holding the candidate operation gate; stale, released, forged, reacquired, and
+  callback-reentrant access fails without changing the caller's output. Production destroys the reader, validates and
+  releases that exact lease, and immediately calls generation-checked `FX_BeginArchive` before any copied asset identity
+  can be dereferenced. Centralized staging cleanup owns both workspaces plus desired/replaced physics entries, rollback
+  buffers, and transaction scratch; the established publication/rollback/safe-empty controller remains the sole live-state
+  commit path. The former raw restore parser, restore-only pointer-width/ABI/address-relocation path, and native64 restore
+  guard are removed. `FX_Save`, the legacy writer and save-side native64 guard, wire bytes, and licensed workflow are
+  unchanged.
   Implementation commits are reader coverage `78a14fbc`, updated contracts `0f689d9b`, candidate adapter `8d94e7c5`, and
-  production switch `e1174d33`.
+  production switch `e1174d33`; exact-lease Ready-view hardening and its production/contracts/regression follow-ups are
+  `597bc6f7`, `9f7ce4c7`, `3d46d8b1`, and `c0b72ed7`. Review cleanup `57c5fa0a` removes an unnecessary const cast without
+  changing validation semantics.
 - Merged portable-reader prerequisite: the lightweight native `BodyState` leaf and exact `BodyStateDisk32` semantic decoder
   are implemented, the generic `Phys_ObjSave` three-byte disclosure is closed, logically-const Ready-only physics
   enumeration and exact active effect-table lease validation are public, and the complete legacy
@@ -114,8 +119,12 @@ work item changes. Do not create session-specific handoff files.
   blocks the resulting i386 runtime with `SIGSYS`, so Windows x86 CI remains the executable production-width authority.
   AArch64 compilation/linking, Clang static analysis, the reader/native/effect-table/physics/security source contracts,
   stack/ABI checks, independent
-  lease/lifetime/cleanup audits, and `git diff --check` pass at implementation head `e1174d33`. CI has **not run yet** for
-  this branch; exact CI, automated review, documentation refresh, and merge are the active gate.
+  lease/lifetime/cleanup audits, and `git diff --check` pass through review-fix head `57c5fa0a`. Initial PR head
+  `cfc3454a` passed all nine required jobs in run **29452814892**, including all four measured Windows x86 engine
+  variants. Gemini's valid const-correctness cleanup is implemented; its two null-cleanup reports conflict with the tested
+  idempotent-null destruction contract, and its claimed `BodyState` padding conflicts with the complete pinned 0x00--0x70
+  field layout. Those three threads have evidence-backed replies. Exact review-fix-head CI, thread resolution,
+  documentation refresh, and merge are the active gate.
 - PR #27 initial run **29439592615** at `ff59ef7e` passed Linux amd64/arm64, but portable Windows amd64/ARM64 exposed an
   include-boundary issue before their tests linked: the semantic translation unit imported the complete physics-sidecar
   header only for its token/512-body constants, causing MSVC analysis to charge an unrelated 4,104-byte inline convenience
@@ -859,8 +868,8 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Push the exact `e1174d33` production-switch head, run all required CI jobs, address substantiated automated-review
-   findings, resolve every actionable thread, update this file with exact evidence, and merge the PR when green.
+1. Push the exact PR #31 review-fix head, run all required CI jobs, close every review thread with evidence, update this
+   file with final exact-head evidence, and merge the PR when green.
 2. Begin the next M5 runtime Disk32/fast-file widening seam while retaining the legacy writer, wire format, and native64
    save guard until their separately validated encoder/equivalence checkpoint.
 3. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional

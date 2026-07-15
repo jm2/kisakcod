@@ -82,7 +82,9 @@ Completed foundation work:
   Ready image into an independent mutable candidate while holding the reader's operation gate and exact stored definition
   lease, destroys the reader, validates/releases the lease, and immediately enters generation-checked archive ownership
   before reusing the existing live publication/rollback controller. The reader is 670,976 bytes on x86 / 695,640 bytes on
-  native64; the candidate is 376,216 / 400,872 bytes, respectively, and both are checked heap workspaces. The old raw
+  native64; the candidate is 376,240 / 400,904 bytes, respectively, and both are checked heap workspaces. Ready-view
+  access validates and rechecks that exact active lease under the candidate operation gate, rejecting stale, released,
+  forged, reacquired, or callback-reentrant access without publishing an output. The old raw
   restore parser, restore-only width/ABI/address-relocation path, and native64 restore guard are removed. `FX_Save`, its
   native64 guard, the legacy writer, wire format, and licensed workflow remain unchanged;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
@@ -1120,15 +1122,21 @@ binds the exact private lease identity, revalidates graph metadata/semantics/phy
 pointers before publishing `Ready`. Production centrally owns and cleans both checked heap workspaces plus physics,
 rollback, and controller staging; it destroys the reader, validates and releases the lease, then immediately calls
 generation-checked `FX_BeginArchive` before the existing publication/rollback/safe-empty controller consumes copied asset
-identities. The reader is 670,976 bytes on x86 / 695,640 bytes on native64 and the candidate is 376,216 / 400,872 bytes.
+identities. Ready-view access independently requires and revalidates the exact active lease, including its full serial,
+while the operation gate rejects callback reentry; failure preserves the caller's output. The reader is 670,976 bytes on
+x86 / 695,640 bytes on native64 and the candidate is 376,240 / 400,904 bytes.
 The old raw restore parser, restore width/ABI/address guard and relocation path, and native64 restore guard are gone. The
 save guard, legacy writer, wire format, and licensed workflow are unchanged. The complete local GCC suite is **67/67**
 green and the complete Clang suite is **67/67** green; the complete ASan+UBSan and TSan suites are **66/66** green with
 only the compiler-generated stack-usage test omitted under instrumentation. Strict i386 compilation/linking passes although sandbox execution is blocked
 by `SIGSYS`; AArch64 linking, Clang analysis, all focused source/security contracts, stack/ABI checks, and independent
-audits pass. CI has **not run yet** on this branch. Exact CI and automated review, any substantiated fixes, documentation
-refresh, and merge are the active gate; the next implementation batch is the next M5 runtime Disk32/fast-file widening
-seam. Guarded writer replacement follows later after exact x86 full-image equivalence. A checked
+audits pass. Initial PR #31 head `cfc3454a` passed all nine required jobs in run **29452814892**, including all four
+measured Windows x86 engine variants. Review hardening binds Ready views to the exact still-active lease and tests
+same-owner lease reacquisition; Gemini's valid const-correctness cleanup is applied, while its null-cleanup and claimed
+`BodyState`-padding reports are contradicted by pinned tests/layout contracts and have evidence-backed replies. Exact
+review-fix-head CI, thread resolution, documentation refresh, and merge are the active gate; the next implementation batch
+is the next M5 runtime Disk32/fast-file widening seam. Guarded writer replacement follows later after exact x86 full-image
+equivalence. A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
 because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work is checked writer/save-guard
