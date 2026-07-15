@@ -9,6 +9,18 @@ work item changes. Do not create session-specific handoff files.
 - Active branch: `agent/fx-archive-selector-publication`; branch point: merged semantic-delegation checkpoint `4c454449`;
   current upstream-integration baseline: merge `11a9e08c` through upstream `312a9d2e`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
+- Current selector-publication checkpoint: restore now carries visibility-buffer roles as one bounded, deliberately
+  zero-invalid `{read, write}` selector pair. Exact-pointer derivation, bounded resolution, and round-trip validation are
+  failure-atomic and reject null, foreign, aliased, or out-of-range roles without pointer arithmetic or integer codecs.
+  Desired and rollback graph images bind their selectors only to their own staged buffers; publication preflights both
+  roles, copies buffers before the system image under archive/allocator exclusion, relinks every base pointer, resolves
+  fresh pointers against the live buffers, and validates the exact roles before graph admission. The rollback snapshot
+  captures and rebinds its live selector pair inside the coherent `FX_ALLOC` interval, while safe-empty recovery retains
+  canonical read-zero/write-one roles. GCC and Clang suites are **62/62** green; ASan+UBSan and TSan are **61/61** green.
+  Strict GCC/Clang x86-32 compilation, strict AArch64 compilation, Clang static analysis, the three changed source/security
+  contracts, and `git diff --check` pass. This sandbox cannot execute the threaded i386 fixture, so the PR's Windows x86
+  jobs remain the authoritative production compile/runtime and frame-budget gate. No wire bytes, native64 guard, writer,
+  safe-empty controller sequence, or licensed-content workflow changed.
 - Current semantic-delegation checkpoint: the production `FX_CollectArchivePhysicsEntries` wrapper is now a bounded output
   adapter over the shared semantic oracle instead of maintaining a second definition-aware graph traversal. Count-only
   collection preserves the legacy capacity behavior; population checks capacity before every write; optional native state
@@ -30,8 +42,9 @@ work item changes. Do not create session-specific handoff files.
   frame counts and spotlight state, records the physics-body count, and publishes `Ready` as its final mutation. Any failure
   leaves `Empty` and requires a structural rebuild. Definition provenance remains a caller-held lifetime lease; the views
   are shallow-const, staging-only, and non-publishable. At that merge point, production `MemoryFile` integration, live
-  publication, the legacy collector, writer, and both native64 archive guards remained unchanged; the current branch above
-  removes the duplicate collector traversal without yet changing wire I/O or either guard.
+  publication, the legacy collector, writer, and both native64 archive guards remained unchanged. PR #28 subsequently
+  removed the duplicate collector traversal; the active branch adds selector-aware live publication without changing wire
+  I/O, the writer, or either guard.
 - Merged structural checkpoint: the 327,128-byte native64 / 310,672-byte x86 heap-owned
   `FxArchiveDisk32NativeWorkspace` decodes the fixed system and metadata, reconstructs all three pool free lists, resolves
   only active definition keys without dereferencing returned definitions, converts every effect, and placement-constructs
@@ -250,12 +263,18 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Active work after this checkpoint: make desired/rollback publication explicitly restore live read/write visibility
-  selectors. `FX_LinkSystemBuffers` currently links only the base visibility pointer, so copying staged selector pointers
-  would dangle. Then add exact `BodyStateDisk32` staging plus transactional raw/zlib full-image preflight under the retained
-  definition lease, integrate the unified reader into production x86, and remove only the restore-side native64 guard once
-  equivalence and rollback tests pass. Retain the legacy x86 writer and native64 save guard until a later pure encoder and
-  full-image equivalence batch.
+- Active work after this checkpoint: land the selector-aware publication branch through the complete CI/review gate, then
+  add exact `BodyStateDisk32` staging plus transactional raw/zlib full-image preflight under the retained definition lease,
+  integrate the unified reader into production x86, and remove only the restore-side native64 guard once equivalence and
+  rollback tests pass. Retain the legacy x86 writer and native64 save guard until a later pure encoder and full-image
+  equivalence batch.
+- Next M5 slice after merge: keep the first reader PR portable and non-publishing. Move only `BodyState` into a lightweight
+  physics header (the current `phys_local.h` transitively imports D3D9), add the exact `0x70` `BodyStateDisk32` decoder,
+  expose Ready-only semantic physics enumeration, and build one heap-owned report-free reader workspace for system,
+  buffers, nonzero legacy address, and at most 512 body records. It must retain the caller's definition lease, support retry
+  after failure, gate all views until every raw/zlib read and conversion succeeds, and leave `FX_Restore`, `FX_Save`, and
+  both native64 guards unchanged. Production x86 integration and restore-guard removal belong in the following equivalence
+  and rollback PR.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,
@@ -772,7 +791,7 @@ work item changes. Do not create session-specific handoff files.
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 46 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path/FX graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, complete graphics-world AABB topology validation, bounded XSurface/XModel skin/skeleton/collision contracts, transactional FX pool/handle ownership validation, allocation-safe ODE body/user-data/model-collision construction, and a bounded transactional native-width physics pool allocator have landed or are in the current reviewed batch; production-path fuzz fixtures and the load-object bounded cursor remain. |
 | M3 platform services | In progress: thread, memory, and filesystem enumeration integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, virtual-memory lifecycle, UTF-8 mkdir/cwd/executable paths, bounded directory enumeration, and a cooperative worker gate used by renderer workers. Linux/macOS engine/headless sets remain empty and engine-gated; handle-relative recursive deletion, POSIX crash freezing, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table, DObj runtime/saved layouts, allocations, preview buffers, SP corpse pointers, EffectsCore effect/pool handle codecs, ODE user-geometry storage, and the generic physics pool allocator are native-width exact. MP `cpose_t::physObjId` and `BreakablePiece::physObjId` still store ODE pointers in `int32_t` and are a hard native64 blocker; XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads also remain 32-bit-layout-bound. |
-| M5 disk32 widening loader | FX full-image structural and semantic staging in progress | `disk32::PointerToken`, strong FX archive-key/address types, exact effect/system/buffer mirrors, exhaustive handle remapping, checked native pool reconstruction/linking, definition-provenance resolution, complete allocation-graph validation, and a definition-aware semantic `Ready` transition now exist with x86 whole-image evidence. The production physics collector now consumes that same oracle, eliminating its duplicate semantic traversal. Typed alias/completed-slot registries and 23 full-span raw/POD fields also remain available. Exact physics-body wire staging, transactional full-image `MemoryFile` integration, live selector-aware publication, broader completed-object relocation, and runtime widening remain. |
+| M5 disk32 widening loader | FX full-image structural and semantic staging in progress | `disk32::PointerToken`, strong FX archive-key/address types, exact effect/system/buffer mirrors, exhaustive handle remapping, checked native pool reconstruction/linking, definition-provenance resolution, complete allocation-graph validation, and a definition-aware semantic `Ready` transition now exist with x86 whole-image evidence. The production physics collector consumes that same oracle, eliminating its duplicate semantic traversal. The active branch also carries desired/rollback visibility roles as bounded selectors and resolves them only against destination buffers during publication. Typed alias/completed-slot registries and 23 full-span raw/POD fields remain available. Exact physics-body wire staging, transactional full-image `MemoryFile` integration, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
 ## Target matrix
@@ -788,12 +807,13 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Extend restore-control publication with explicit desired/original visibility selectors so staged workspace pointers can
-   never escape into the live system; the shared semantic-collector delegation prerequisite is merged.
+1. Land the implemented desired/original visibility-selector publication through review and the complete nine-job gate;
+   staged workspace pointers are rebound to their own buffers and fresh live roles are resolved before publication.
 2. Add exact `BodyStateDisk32` conversion and transactional raw/zlib full-image staging in legacy wire order, retain the
    definition lease through Ready/physics preparation, then integrate the unified reader into production x86. Remove the
-   restore-side native64 guard only after raw/zlib malformed-input, rollback, selector, and exact x86 equivalence fixtures;
-   retain the legacy writer and native64 save guard.
+   restore-side native64 guard only after raw/zlib malformed-input, opposite selector-orientation, poison-after-publication
+   recovery, rejected-publication preservation, rollback, and exact x86 equivalence fixtures; retain the legacy writer and
+   native64 save guard.
 3. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
 4. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
