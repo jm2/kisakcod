@@ -70,7 +70,7 @@ function(kisakcod_fx_helper_stack_budget target)
             /analyze
             /analyze:autolog-
             "SHELL:/analyze:stacksize 4096"
-            "SHELL:/analyze:ruleset \"${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_stack.ruleset\"")
+            "/analyze:ruleset${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_stack.ruleset")
     elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_compile_options(${target} PRIVATE
             -Wstack-usage=4096

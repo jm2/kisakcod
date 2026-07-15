@@ -81,8 +81,10 @@ Remaining gates, in implementation order:
    deterministic waiter/error-unwind coverage are implemented. Exact competing non-FX ODE occupancy and silent
    live creation/impact/rollback transactions are also implemented. The report-free, segment-bounded `MemoryFile`
    parser prerequisite, transactional BSS effect-definition restore lease, bounded save snapshot, and portable extracted-
-   helper frame/runtime gates are complete. Next calibrate the source-scoped Windows x86 production report in PR CI,
-   stabilize camera/scalar/visibility snapshot publication, and start the fixed Disk32 archive schema.
+   helper frame/runtime gates are complete. Initial Windows x86 production analysis measured `FX_Save` at 2,752 bytes and
+   `FX_Restore` at 6,124 bytes and exposed a 10,256-byte convenience wrapper; the wrapper now uses caller-owned heap
+   scratch and replacement CI must confirm the corrected report binding. Then stabilize camera/scalar/visibility
+   snapshot publication and start the fixed Disk32 archive schema.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -1041,9 +1043,11 @@ under GCC, Clang, ASan+UBSan, and TSan; strict x86-32/AArch64 compilation and tw
 x86 production compilation and the five native utility runners remain the authoritative PR CI gate.
 
 Overall porting progress is approximately **40%** (plausible range **36–45%**), while target delivery remains **0/5**.
-Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented; the source-scoped
-Windows x86 production report awaits authoritative PR CI. The next sequence is stable camera/scalar/visibility snapshot
-publication followed by the Disk32 FX archive schema. A checked whole-segment compressed-finalization boundary remains a
+Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Initial
+source-scoped Windows x86 production measurements put `FX_Save` and `FX_Restore` within their budgets and found one
+10,256-byte helper, now replaced by caller-owned heap scratch; replacement PR CI must confirm the corrected report
+binding. The next sequence is stable camera/scalar/visibility snapshot publication followed by the Disk32 FX archive
+schema. A checked whole-segment compressed-finalization boundary remains a
 later integrity item
 because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work also includes camera/scalar
 snapshot publication and real Disk32 archive/fast-file conversion. A separate hard M4 blocker

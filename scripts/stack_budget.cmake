@@ -34,8 +34,7 @@ function(kisakcod_enable_fx_archive_stack_measurement target)
             /analyze:log:format:xml
             /analyze:stacksize
             1
-            /analyze:ruleset
-            "${_kisak_fx_archive_ruleset}"
+            "/analyze:ruleset${_kisak_fx_archive_ruleset}"
             /analyze:log
             "${_kisak_fx_archive_log}")
 endfunction()

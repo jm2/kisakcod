@@ -6901,6 +6901,45 @@ require_source_contains(
     "EffectsCore/fx_archive.cpp"
     "FxSystemBuffers *const bufferSnapshot ="
     "save must stage pool buffers outside live state")
+require_source_match_count(
+    "EffectsCore/fx_archive.cpp"
+    "FxArchivePhysicsOwnershipScratch[ \t]*\\*[ \t]*const[ \t]+physicsOwnershipScratch[ \t]*=[ \t\r\n]*FX_AllocateArchiveSavePhysicsOwnershipScratch\\(\\)"
+    1
+    "save must stage bounded physics validation scratch outside the worker stack")
+require_source_contains(
+    "EffectsCore/fx_archive.cpp"
+    "RUNTIME_SIZE(FxArchivePhysicsOwnershipScratch, 0x5808, 0x7010);"
+    "save physics scratch must retain exact checked native layouts")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "AllocateArchiveRestoreWorkspace<[ \t\r\n]*FxArchivePhysicsOwnershipScratch>[ \t]*\\([ \t\r\n]*FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY\\)"
+    "save physics scratch must use checked construction and allocation")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "DestroyArchiveRestoreWorkspace\\([ \t\r\n]*scratch,[ \t\r\n]*FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY\\)"
+    "save physics scratch must be destroyed before its storage is freed")
+require_source_ordered(
+    "EffectsCore/fx_archive.cpp"
+    "FxArchivePhysicsOwnershipScratch *const physicsOwnershipScratch ="
+    "if (!FX_BeginArchive(system))"
+    "save must allocate physics validation scratch before archive exclusion")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "&physicsEntryCount,[ \t\r\n]*true,[ \t\r\n]*physicsOwnershipScratch,[ \t\r\n]*&snapshotSpotLightBoltDobj"
+    "save physics capture must reuse caller-owned validation scratch")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "if[ \t]*\\(\\(entryCount[ \t]*!=[ \t]*0[ \t]*&&[ \t]*!entries\\)[ \t]*\\|\\|[ \t]*!ownershipScratch\\)"
+    "state capture must reject missing caller-owned validation scratch")
+require_source_not_contains(
+    "EffectsCore/fx_archive.cpp"
+    "bool FX_ValidateArchivePhysicsOwnershipLocked("
+    "archive validation must not restore the large stack-owning wrapper")
+require_source_match_count(
+    "EffectsCore/fx_archive.cpp"
+    "FX_DestroyArchiveSavePhysicsOwnershipScratch\\([ \t\r\n]*physicsOwnershipScratch\\)"
+    5
+    "save must destroy and free physics validation scratch on every owned exit")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "if (!FX_BeginArchive(system))"

@@ -51,6 +51,7 @@ struct FxArchivePhysicsOwnershipScratch
     fx::physics::OwnershipSnapshot drainOwnership{};
     fx::physics::BodySidecarSnapshotScratch sidecar{};
 };
+RUNTIME_SIZE(FxArchivePhysicsOwnershipScratch, 0x5808, 0x7010);
 
 struct FxArchiveRestorePhysicsScratch
 {
@@ -1107,23 +1108,6 @@ bool FX_ValidateArchivePhysicsOwnershipLockedWithScratch(
     return true;
 }
 
-bool FX_ValidateArchivePhysicsOwnershipLocked(
-    const fx::physics::BodySidecar *const sidecar,
-    FxArchivePhysicsEntry *const entries,
-    const std::size_t entryCount,
-    const bool captureStates) noexcept
-{
-    std::array<fx::physics::BodyToken, MAX_ELEMS> expectedTokens{};
-    fx::physics::BodySidecarValidationScratch sidecarScratch{};
-    return FX_ValidateArchivePhysicsOwnershipLockedWithScratch(
-        sidecar,
-        entries,
-        entryCount,
-        captureStates,
-        &expectedTokens,
-        &sidecarScratch);
-}
-
 bool FX_CaptureArchivePhysicsRollbackRecipesLockedWithScratch(
     const fx::physics::BodySidecar *const sidecar,
     FxArchivePhysicsEntry *const entries,
@@ -1890,6 +1874,7 @@ bool FX_CollectArchivePhysicsEntries(
     const std::size_t entryCapacity,
     std::size_t *const outEntryCount,
     const bool captureStates,
+    FxArchivePhysicsOwnershipScratch *const ownershipScratch,
     std::int16_t *const outSpotLightBoltDobj) noexcept
 {
     if (!system || !outEntryCount || !FX_ArchiveEffectRingIsValid(system)
@@ -2136,14 +2121,19 @@ bool FX_CollectArchivePhysicsEntries(
 
     if (captureStates)
     {
-        if (entryCount != 0 && !entries)
+        if ((entryCount != 0 && !entries) || !ownershipScratch)
             return false;
         const fx::physics::BodySidecar *const sidecar =
             FX_GetPhysicsBodySidecar(system);
         Sys_EnterCriticalSection(CRITSECT_PHYSICS);
         const bool physicsStatesValid =
-            FX_ValidateArchivePhysicsOwnershipLocked(
-                sidecar, entries, entryCount, true);
+            FX_ValidateArchivePhysicsOwnershipLockedWithScratch(
+                sidecar,
+                entries,
+                entryCount,
+                true,
+                &ownershipScratch->expectedTokens,
+                &ownershipScratch->sidecar);
         Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
         if (!physicsStatesValid)
             return false;
@@ -2334,7 +2324,7 @@ void *FX_AllocateArchiveRestoreWorkspaceMemory(
 {
     return Z_Malloc(
         byteCount,
-        "FX_Restore checked workspace",
+        "FX archive checked workspace",
         10);
 }
 
@@ -2352,6 +2342,25 @@ constexpr fx::archive::ArchiveRestoreWorkspaceMemoryCallbacks
         FX_AllocateArchiveRestoreWorkspaceMemory,
         FX_FreeArchiveRestoreWorkspaceMemory,
     };
+
+[[nodiscard]] FxArchivePhysicsOwnershipScratch *
+FX_AllocateArchiveSavePhysicsOwnershipScratch() noexcept
+{
+    return fx::archive::AllocateArchiveRestoreWorkspace<
+        FxArchivePhysicsOwnershipScratch>(
+        FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
+}
+
+void FX_DestroyArchiveSavePhysicsOwnershipScratch(
+    FxArchivePhysicsOwnershipScratch *const scratch) noexcept
+{
+    if (!fx::archive::DestroyArchiveRestoreWorkspace(
+            scratch,
+            FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY))
+    {
+        std::abort();
+    }
+}
 
 [[nodiscard]] FxArchiveRestoreTransactionWorkspace *
 FX_AllocateArchiveRestoreTransactionWorkspace() noexcept
@@ -2407,6 +2416,7 @@ FX_PerformArchiveRestoreControlOperation(
                 fx::physics::BODY_LIMIT,
                 &context.originalPhysicsEntryCount,
                 false,
+                nullptr,
                 nullptr)
             && FX_CaptureArchivePhysicsRollbackRecipesLockedWithScratch(
                 context.livePhysicsSidecar,
@@ -2875,6 +2885,7 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
             0,
             &physicsEntryCount,
             false,
+            nullptr,
             &restoredSpotLightBoltDobj))
     {
         Z_Free(restoredBuffers, 10);
@@ -2919,6 +2930,7 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
                 physicsEntryCount,
                 &populatedEntryCount,
                 false,
+                nullptr,
                 &populatedSpotLightBoltDobj)
             || populatedEntryCount != physicsEntryCount
             || populatedSpotLightBoltDobj
@@ -3309,8 +3321,20 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
         0,
         physicsEntryByteCount);
 
+    FxArchivePhysicsOwnershipScratch *const physicsOwnershipScratch =
+        FX_AllocateArchiveSavePhysicsOwnershipScratch();
+    if (!physicsOwnershipScratch)
+    {
+        Z_Free(physicsEntries, 10);
+        Z_Free(bufferSnapshot, 10);
+        Com_Error(ERR_DROP, "Unable to allocate FX physics save scratch");
+        return;
+    }
+
     if (!FX_BeginArchive(system))
     {
+        FX_DestroyArchiveSavePhysicsOwnershipScratch(
+            physicsOwnershipScratch);
         Z_Free(physicsEntries, 10);
         Z_Free(bufferSnapshot, 10);
         Com_Error(ERR_DROP, "FX archive save could not acquire exclusive ownership");
@@ -3328,11 +3352,14 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
             fx::physics::BODY_LIMIT,
             &physicsEntryCount,
             true,
+            physicsOwnershipScratch,
             &snapshotSpotLightBoltDobj);
     if (!snapshotValid)
     {
         system->isArchiving = 0;
         const bool releasedArchive = FX_EndArchive(system);
+        FX_DestroyArchiveSavePhysicsOwnershipScratch(
+            physicsOwnershipScratch);
         Z_Free(physicsEntries, 10);
         Z_Free(bufferSnapshot, 10);
         Com_Error(
@@ -3370,6 +3397,8 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
     {
         system->isArchiving = 0;
         const bool releasedArchive = FX_EndArchive(system);
+        FX_DestroyArchiveSavePhysicsOwnershipScratch(
+            physicsOwnershipScratch);
         Z_Free(physicsEntries, 10);
         Z_Free(bufferSnapshot, 10);
         Com_Error(
@@ -3400,6 +3429,8 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
     const bool releasedArchive = FX_EndArchive(system);
     if (!releasedArchive)
     {
+        FX_DestroyArchiveSavePhysicsOwnershipScratch(
+            physicsOwnershipScratch);
         Z_Free(physicsEntries, 10);
         Z_Free(bufferSnapshot, 10);
         Com_Error(ERR_DROP, "Unable to release FX archive snapshot");
@@ -3431,6 +3462,8 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
             &physicsEntries[index].state);
     }
 
+    FX_DestroyArchiveSavePhysicsOwnershipScratch(
+        physicsOwnershipScratch);
     Z_Free(physicsEntries, 10);
     Z_Free(bufferSnapshot, 10);
     if (!archiveWritten)
