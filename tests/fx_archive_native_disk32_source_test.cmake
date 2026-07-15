@@ -1009,18 +1009,37 @@ foreach(_large_type IN ITEMS
         "semantic traversal cannot stage large native images or scratch by value")
 endforeach()
 
-# Ready conversion is compiled into the engine and portable fixture, but this
-# checkpoint still does not replace the legacy MemoryFile reader or publish a
-# native candidate into the live FX system. Production integration follows.
-foreach(_var IN ITEMS _archive _system)
-    foreach(_forbidden IN ITEMS
-        "fx_archive_native_disk32"
-        "TryBuildFxArchiveDisk32StructuralImage"
-        "TryFinalizeFxArchiveDisk32NativeImage"
-        "TryGetFxArchiveDisk32ReadyView")
-        require_not_contains(
-            ${_var} "${_forbidden}" "production archive/publication remains unchanged")
-    endforeach()
+# Production reaches this conversion only through the lease-bound Disk32
+# reader and independently owned restore candidate. The live system layer stays
+# unaware of conversion internals, and FX_Restore must not bypass the reader by
+# calling the low-level structural/Ready stages directly.
+foreach(_marker IN ITEMS
+    "#include \"fx_archive_reader_disk32.h\""
+    "#include \"fx_archive_restore_candidate_disk32.h\""
+    "TryReadFxArchiveDisk32NoReport("
+    "TryBuildFxArchiveRestoreCandidateDisk32("
+    "TryGetFxArchiveRestoreCandidateDisk32ReadyView(")
+    require_contains(
+        _archive "${_marker}" "production uses the unified native Disk32 boundary")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "TryBuildFxArchiveDisk32StructuralImage("
+    "TryFinalizeFxArchiveDisk32NativeImage("
+    "TryGetFxArchiveDisk32ReadyView(")
+    require_not_contains(
+        _archive "${_forbidden}" "production cannot bypass the unified reader")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "fx_archive_native_disk32"
+    "fx_archive_reader_disk32"
+    "fx_archive_restore_candidate_disk32"
+    "TryBuildFxArchiveDisk32StructuralImage"
+    "TryFinalizeFxArchiveDisk32NativeImage"
+    "TryGetFxArchiveDisk32ReadyView"
+    "TryReadFxArchiveDisk32NoReport"
+    "TryBuildFxArchiveRestoreCandidateDisk32")
+    require_not_contains(
+        _system "${_forbidden}" "live-system code stays conversion-independent")
 endforeach()
 
 # Keep production compilation, all five portable runners, measured Windows
@@ -1029,7 +1048,9 @@ foreach(_marker IN ITEMS
     "fx_archive_native_disk32.cpp"
     "fx_archive_native_disk32.h"
     "fx_archive_semantics.cpp"
-    "fx_archive_semantics.h")
+    "fx_archive_semantics.h"
+    "fx_archive_restore_candidate_disk32.cpp"
+    "fx_archive_restore_candidate_disk32.h")
     require_contains(_manifest "${_marker}" "engine source manifest")
 endforeach()
 extract_slice(
@@ -1056,6 +1077,8 @@ foreach(_marker IN ITEMS
     "kisakcod-fx-archive-native-disk32-tests"
     "effectscore-archive-native-disk32-codec"
     "effectscore-archive-native-disk32-source-invariants"
+    "kisakcod-fx-archive-restore-candidate-disk32-tests"
+    "effectscore-archive-restore-candidate-disk32"
     "fx_archive_native_disk32_source_test.cmake")
     require_contains(_tests "${_marker}" "portable fixture and source-contract target")
 endforeach()
@@ -1067,6 +1090,8 @@ foreach(_marker IN ITEMS
     "macOS arm64"
     "ctest --test-dir build-tests -C Release --output-on-failure"
     "kisakcod-fx-archive-native-disk32-tests"
-    "effectscore-archive-(disk32|system-disk32|buffers-disk32|native-disk32)-codec")
+    "effectscore-archive-(disk32|system-disk32|buffers-disk32|native-disk32)-codec"
+    "kisakcod-fx-archive-restore-candidate-disk32-tests"
+    "effectscore-archive-restore-candidate-disk32")
     require_contains(_ci "${_marker}" "portable and measured Windows x86 execution")
 endforeach()

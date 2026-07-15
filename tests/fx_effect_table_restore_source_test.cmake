@@ -298,10 +298,10 @@ foreach(_atomic_contract IN ITEMS
         "pointer-width owner CAS must remain portable")
 endforeach()
 
-# Production integration retains the lease across staged pool validation,
-# pointer fixup, and both shared semantic-collector passes. It releases the
-# lease before archive admission, which still uses the lifecycle generation
-# captured before parsing.
+# Production integration retains the exact lease across the complete portable
+# reader and mutable-candidate build. All fallible staging is prepared while
+# definitions/models are protected, the reader is destroyed and the lease is
+# revalidated before release, and archive admission follows without new work.
 foreach(_listed_source IN ITEMS
     "EffectsCore/fx_effect_table_restore.cpp"
     "EffectsCore/fx_effect_table_restore.h")
@@ -335,51 +335,117 @@ extract_slice(
 require_ordered(
     "${_archive_restore}"
     "RestoreEffectTableNoReport("
-    "Z_Malloc("
+    "FX_AllocateArchiveDisk32ReaderWorkspace()"
     "effect registration must finish before fallible heap staging")
 require_ordered(
     "${_archive_restore}"
-    "FX_RebuildArchivePoolAllocationStates("
-    "FX_FixupEffectDefHandlesNoDrop("
-    "pool ownership must validate before definition pointers are mutated")
-require_ordered(
-    "${_archive_restore}"
-    "FX_FixupEffectDefHandlesNoDrop("
-    "const fx::archive::EffectTableRestoreStatus tableReleaseStatus"
-    "the live lease must cover all definition fixup")
+    "TryReadFxArchiveDisk32NoReport("
+    "TryBuildFxArchiveRestoreCandidateDisk32("
+    "the lease-bound reader must validate the complete image before candidate copying")
 extract_slice(
     "${_archive_restore}"
-    "FX_FixupEffectDefHandlesNoDrop("
-    "const fx::archive::EffectTableRestoreStatus tableReleaseStatus"
-    _leased_semantic_collection
-    "effect-table lease semantic collection interval")
-require_literal_count(
-    "${_leased_semantic_collection}"
-    "FX_CollectArchivePhysicsEntries("
-    2
-    "the effect-table lease must cover both semantic collector passes")
+    "fx::archive::TryBuildFxArchiveRestoreCandidateDisk32("
+    "if (candidateStatus"
+    _candidate_build_call
+    "exact reader/candidate build call")
+require_ordered(
+    "${_candidate_build_call}"
+    "staging.reader,"
+    "tableResult.lease,"
+    "candidate construction must consume the exact reader before its lease")
+require_ordered(
+    "${_candidate_build_call}"
+    "tableResult.lease,"
+    "staging.candidate);"
+    "candidate construction must bind the retained lease before mutable output")
 require_ordered(
     "${_archive_restore}"
-    "const fx::archive::EffectTableRestoreStatus tableReleaseStatus"
+    "TryBuildFxArchiveRestoreCandidateDisk32("
+    "TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "only a complete candidate may expose mutable production staging")
+extract_slice(
+    "${_archive_restore}"
+    "if (!fx::archive::TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "FxSystem *const restoredSystem"
+    _candidate_getter_call
+    "exact-lease candidate Ready lookup")
+require_ordered(
+    "${_candidate_getter_call}"
+    "staging.candidate,"
+    "tableResult.lease,"
+    "candidate Ready lookup must consume the built workspace before its lease")
+require_ordered(
+    "${_candidate_getter_call}"
+    "tableResult.lease,"
+    "&candidateView)"
+    "candidate Ready lookup must bind the exact lease before output")
+require_ordered(
+    "${_archive_restore}"
+    "FX_AllocateArchiveRestoreTransactionWorkspace()"
+    "FX_DestroyArchiveDisk32ReaderWorkspace(staging.reader)"
+    "all fallible transaction staging must precede reader destruction")
+require_ordered(
+    "${_archive_restore}"
+    "FX_DestroyArchiveDisk32ReaderWorkspace(staging.reader)"
+    "ReleaseEffectTableRestore(tableResult.lease)"
+    "the reader must be destroyed while exact lease ownership remains active")
+extract_slice(
+    "${_archive_restore}"
+    "staging.reader = nullptr;"
+    "const fx::archive::EffectTableRestoreStatus tableReleaseStatus ="
+    _post_reader_lease_handshake
+    "post-reader exact lease handshake")
+require_contains(
+    "${_post_reader_lease_handshake}"
+    "ValidateEffectTableRestoreLease(tableResult.lease)"
+    "the exact lease must validate after reader destruction")
+require_ordered(
+    "${_archive_restore}"
+    "staging.reader = nullptr;"
+    "ReleaseEffectTableRestore(tableResult.lease)"
+    "the lease must be revalidated after successful reader destruction")
+require_ordered(
+    "${_archive_restore}"
+    "ReleaseEffectTableRestore(tableResult.lease)"
     "FX_BeginArchive(system, restoreGeneration)"
-    "the effect-table lease must release before later archive admission")
+    "the effect-table lease must release immediately before archive admission")
+foreach(_obsolete_raw_restore IN ITEMS
+    "FX_ReadArchiveDataNoDrop("
+    "FX_FixupEffectDefHandlesNoDrop("
+    "FX_RebuildArchivePoolAllocationStates("
+    "FX_CollectArchivePhysicsEntries(")
+    require_absent(
+        "${_archive_restore}"
+        "${_obsolete_raw_restore}"
+        "production restore must not bypass unified reader/candidate validation")
+endforeach()
 
 extract_slice(
     "${_archive_source}"
-    "[[noreturn]] void FX_ReportEffectTableRestoreFailure("
-    "bool FX_ValidateArchiveBodyState("
+    "[[noreturn]] void FX_ReportArchiveDisk32RestoreFailure("
+    "fx::archive::RestoreControlOperationStatus"
     _restore_failure
-    "effect-table reporting boundary")
+    "portable restore reporting boundary")
+require_ordered(
+    "${_restore_failure}"
+    "FX_DestroyArchiveDisk32ReaderWorkspace(staging->reader)"
+    "staging->reader = nullptr;"
+    "the reader must be destroyed and disowned while its exact lease is active")
+require_ordered(
+    "${_restore_failure}"
+    "staging->reader = nullptr;"
+    "ReleaseEffectTableRestore(*lease)"
+    "failure cleanup must release the exact lease only after reader destruction")
 require_ordered(
     "${_restore_failure}"
     "ReleaseEffectTableRestore(*lease)"
-    "Z_Free(restoredBuffers, 10);"
-    "restore ownership must release before staged storage is freed")
+    "FX_DestroyArchiveDisk32RestoreStaging(staging)"
+    "remaining self-owned staging must be destroyed after lease release")
 require_ordered(
     "${_restore_failure}"
-    "ReleaseEffectTableRestore(*lease)"
+    "FX_DestroyArchiveDisk32RestoreStaging(staging)"
     "Com_Error(ERR_DROP"
-    "restore ownership must release before ERR_DROP can longjmp")
+    "all staging and restore ownership must close before ERR_DROP can longjmp")
 
 foreach(_admission_guard IN ITEMS
     "EffectTableRestoreLeaseIsActive()"

@@ -97,6 +97,7 @@ jobs:
           kisakcod-fx-archive-buffers-disk32-tests
           kisakcod-fx-archive-native-disk32-tests
           kisakcod-fx-archive-reader-disk32-tests
+          kisakcod-fx-archive-restore-candidate-disk32-tests
           --parallel
 
       - name: Enforce FX archive stack budgets
@@ -111,7 +112,7 @@ jobs:
         run: >
           ctest --test-dir "build-${{ matrix.config }}"
           -C "${{ matrix.config }}" --output-on-failure
-          -R "^(pool-native-pointer-freelist|effectscore-effect-table-(transactional-restore|bounded-save)|effectscore-archive-(disk32|system-disk32|buffers-disk32|native-disk32)-codec|effectscore-archive-body-state-disk32-codec|effectscore-archive-reader-disk32)$"
+          -R "^(pool-native-pointer-freelist|effectscore-effect-table-(transactional-restore|bounded-save)|effectscore-archive-(disk32|system-disk32|buffers-disk32|native-disk32)-codec|effectscore-archive-body-state-disk32-codec|effectscore-archive-reader-disk32|effectscore-archive-restore-candidate-disk32)$"
 
       - uses: actions/upload-artifact@v4
         with:

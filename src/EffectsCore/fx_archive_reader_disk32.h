@@ -63,6 +63,14 @@ static_assert(
 
 class alignas(8) FxArchiveDisk32ReaderWorkspace;
 struct FxArchiveDisk32ReaderReadyView;
+enum class FxArchiveRestoreCandidateDisk32Status : std::uint8_t;
+class FxArchiveRestoreCandidateDisk32Workspace;
+
+[[nodiscard]] FxArchiveRestoreCandidateDisk32Status
+TryBuildFxArchiveRestoreCandidateDisk32(
+    FxArchiveDisk32ReaderWorkspace *sourceWorkspace,
+    const EffectTableRestoreLease &lease,
+    FxArchiveRestoreCandidateDisk32Workspace *candidateWorkspace) noexcept;
 
 // Reads the fixed FX archive tail after the caller has restored the effect
 // table and retained its exact same-thread lease. The logical wire order is
@@ -124,6 +132,12 @@ private:
         const FxArchiveDisk32ReaderWorkspace *workspace,
         const EffectTableRestoreLease &lease,
         FxArchiveDisk32ReaderReadyView *outView) noexcept;
+    friend FxArchiveRestoreCandidateDisk32Status
+    TryBuildFxArchiveRestoreCandidateDisk32(
+        FxArchiveDisk32ReaderWorkspace *sourceWorkspace,
+        const EffectTableRestoreLease &lease,
+        FxArchiveRestoreCandidateDisk32Workspace *candidateWorkspace)
+        noexcept;
 
     FxSystemDisk32 sourceSystem_{};
     FxSystemBuffersDisk32 sourceBuffers_{};
@@ -152,5 +166,7 @@ static_assert(
         FxArchiveDisk32ReaderWorkspace>);
 static_assert(
     std::is_nothrow_destructible_v<FxArchiveDisk32ReaderWorkspace>);
+static_assert(
+    std::is_trivially_destructible_v<FxArchiveDisk32ReaderWorkspace>);
 RUNTIME_SIZE(FxArchiveDisk32ReaderWorkspace, 0xA3D00, 0xA9D58);
 } // namespace fx::archive

@@ -27,6 +27,8 @@ set(EFFECTSCORE
     "${SRC_DIR}/EffectsCore/fx_archive_native_disk32.h"
     "${SRC_DIR}/EffectsCore/fx_archive_reader_disk32.cpp"
     "${SRC_DIR}/EffectsCore/fx_archive_reader_disk32.h"
+    "${SRC_DIR}/EffectsCore/fx_archive_restore_candidate_disk32.cpp"
+    "${SRC_DIR}/EffectsCore/fx_archive_restore_candidate_disk32.h"
     "${SRC_DIR}/EffectsCore/fx_archive_semantics.cpp"
     "${SRC_DIR}/EffectsCore/fx_archive_semantics.h"
     "${SRC_DIR}/EffectsCore/fx_archive_physics_batch_control.cpp"

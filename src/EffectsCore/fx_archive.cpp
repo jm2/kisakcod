@@ -1,6 +1,8 @@
 #include "fx_system.h"
 #include "fx_archive_capacity.h"
 #include "fx_archive_physics_batch_control.h"
+#include "fx_archive_reader_disk32.h"
+#include "fx_archive_restore_candidate_disk32.h"
 #include "fx_archive_restore_control.h"
 #include "fx_archive_restore_workspace.h"
 #include "fx_archive_semantics.h"
@@ -253,35 +255,6 @@ bool FX_ValidateArchiveOrthonormalBasis(
 
 RUNTIME_SIZE(BodyState, 0x70, 0x70);
 
-bool FX_ArchiveByteIsBool(const std::uint8_t value) noexcept
-{
-    return value == 0 || value == 1;
-}
-
-bool FX_ValidateArchiveSystemBooleanBytes(
-    const std::uint8_t *const bytes,
-    const std::size_t byteCount) noexcept
-{
-    if (!bytes)
-        return false;
-
-    const std::size_t initializedOffset =
-        offsetof(FxSystem, isInitialized);
-    const std::size_t garbageCollectionOffset =
-        offsetof(FxSystem, needsGarbageCollection);
-    const std::size_t archivingOffset = offsetof(FxSystem, isArchiving);
-    if (initializedOffset >= byteCount
-        || garbageCollectionOffset >= byteCount
-        || archivingOffset >= byteCount)
-    {
-        return false;
-    }
-
-    return bytes[initializedOffset] == 1
-        && FX_ArchiveByteIsBool(bytes[garbageCollectionOffset])
-        && bytes[archivingOffset] == 1;
-}
-
 bool FX_ArchiveTimeDifferenceFits(
     const std::int32_t lhs,
     const std::int32_t rhs) noexcept
@@ -310,14 +283,6 @@ bool FX_ArchiveTimeDifferenceFits(
             <= static_cast<std::int64_t>(
                 (std::numeric_limits<std::int32_t>::max)())
                 - FX_ARCHIVE_TIME_HEADROOM_MSEC;
-}
-
-template <typename POINTER_TYPE>
-std::uint32_t FX_ArchivePointerBits(POINTER_TYPE *const pointer) noexcept
-{
-    std::uint32_t bits = 0;
-    std::memcpy(&bits, &pointer, sizeof(std::uint32_t));
-    return bits;
 }
 
 bool FX_RebuildArchivePoolAllocationStates(
@@ -409,20 +374,6 @@ bool FX_NormalizeArchiveEffectRing(FxSystem *const system) noexcept
     system->firstNewEffect = normalizedFirstActive + activeEffectCount;
     system->firstFreeEffect = normalizedFirstActive + activeEffectCount;
     return true;
-}
-
-bool FX_ReadArchiveDataNoDrop(
-    MemoryFile *const memFile,
-    const int byteCount,
-    void *const data) noexcept
-{
-    if (!memFile || memFile->memoryOverflow)
-        return false;
-    return MemFile_TryReadDataNoReport(
-               memFile,
-               byteCount,
-               static_cast<std::uint8_t *>(data))
-        == MemFileReadStatus::Success;
 }
 
 bool FX_WriteArchiveDataNoDrop(
@@ -643,40 +594,6 @@ const void *FX_RegisterEffectTableRestoreDefinition(
     return FX_Register(name);
 }
 
-bool FX_FixupEffectDefHandlesNoDrop(
-    FxSystem *const system,
-    const fx::archive::EffectTableRestoreLease &lease) noexcept
-{
-    if (!system || !lease.ownerCookie || !system->isArchiving
-        || !FX_ArchiveEffectRingIsValid(system))
-    {
-        return false;
-    }
-
-    for (std::int64_t activeIndex = system->firstActiveEffect;
-         activeIndex < system->firstFreeEffect;
-         ++activeIndex)
-    {
-        FxEffect *const effect = FxDecodeHandle<
-            FxEffect, MAX_EFFECTS, FxEffect::HANDLE_SCALE>(
-                system->effects,
-                system->allEffectHandles[
-                    static_cast<std::size_t>(activeIndex)
-                    & (MAX_EFFECTS - 1)]);
-        if (!effect)
-            return false;
-
-        const fx::archive::EffectDefinitionKey32 key{
-            FX_ArchivePointerBits(effect->def)};
-        const auto *const effectDef = static_cast<const FxEffectDef *>(
-            fx::archive::EffectTableRestoreFind(lease, key));
-        if (!effectDef)
-            return false;
-        effect->def = effectDef;
-    }
-    return true;
-}
-
 bool FX_EffectTableRestoreReleaseIsSafe(
     const fx::archive::EffectTableRestoreStatus status) noexcept
 {
@@ -687,7 +604,6 @@ bool FX_EffectTableRestoreReleaseIsSafe(
 
 [[noreturn]] void FX_ReportEffectTableRestoreFailure(
     const fx::archive::EffectTableRestoreLease *const lease,
-    FxSystemBuffers *const restoredBuffers,
     const char *const message)
 {
     fx::archive::EffectTableRestoreStatus releaseStatus =
@@ -697,8 +613,6 @@ bool FX_EffectTableRestoreReleaseIsSafe(
         releaseStatus =
             fx::archive::ReleaseEffectTableRestore(*lease);
     }
-    if (restoredBuffers)
-        Z_Free(restoredBuffers, 10);
     if (!FX_EffectTableRestoreReleaseIsSafe(releaseStatus))
     {
         Sys_Error(
@@ -2004,6 +1918,39 @@ constexpr fx::archive::ArchiveRestoreWorkspaceMemoryCallbacks
         FX_FreeArchiveRestoreWorkspaceMemory,
     };
 
+[[nodiscard]] fx::archive::FxArchiveDisk32ReaderWorkspace *
+FX_AllocateArchiveDisk32ReaderWorkspace() noexcept
+{
+    return fx::archive::AllocateArchiveRestoreWorkspace<
+        fx::archive::FxArchiveDisk32ReaderWorkspace>(
+            FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
+}
+
+[[nodiscard]] bool FX_DestroyArchiveDisk32ReaderWorkspace(
+    fx::archive::FxArchiveDisk32ReaderWorkspace *const workspace) noexcept
+{
+    return fx::archive::DestroyArchiveRestoreWorkspace(
+        workspace,
+        FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
+}
+
+[[nodiscard]] fx::archive::FxArchiveRestoreCandidateDisk32Workspace *
+FX_AllocateArchiveRestoreCandidateDisk32Workspace() noexcept
+{
+    return fx::archive::AllocateArchiveRestoreWorkspace<
+        fx::archive::FxArchiveRestoreCandidateDisk32Workspace>(
+            FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
+}
+
+[[nodiscard]] bool FX_DestroyArchiveRestoreCandidateDisk32Workspace(
+    fx::archive::FxArchiveRestoreCandidateDisk32Workspace *const workspace)
+    noexcept
+{
+    return fx::archive::DestroyArchiveRestoreWorkspace(
+        workspace,
+        FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
+}
+
 [[nodiscard]] FxArchiveSaveSnapshotWorkspace *
 FX_AllocateArchiveSaveSnapshotWorkspace() noexcept
 {
@@ -2037,6 +1984,222 @@ FX_AllocateArchiveRestoreTransactionWorkspace() noexcept
     return fx::archive::DestroyArchiveRestoreWorkspace(
         workspace,
         FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
+}
+
+struct FxArchiveDisk32RestoreStaging final
+{
+    fx::archive::FxArchiveDisk32ReaderWorkspace *reader = nullptr;
+    fx::archive::FxArchiveRestoreCandidateDisk32Workspace *candidate =
+        nullptr;
+    FxArchivePhysicsEntry *desiredPhysicsEntries = nullptr;
+    FxArchivePhysicsEntry *replacedPhysicsEntries = nullptr;
+    FxSystemBuffers *rollbackBuffers = nullptr;
+    FxArchiveRestoreTransactionWorkspace *transaction = nullptr;
+};
+
+[[nodiscard]] bool FX_DestroyArchiveDisk32RestoreStaging(
+    FxArchiveDisk32RestoreStaging *const staging) noexcept
+{
+    if (!staging)
+        return false;
+
+    bool destroyed = true;
+    if (!FX_DestroyArchiveRestoreTransactionWorkspace(
+            staging->transaction))
+    {
+        destroyed = false;
+    }
+    else
+    {
+        staging->transaction = nullptr;
+    }
+    if (!FX_DestroyArchiveDisk32ReaderWorkspace(staging->reader))
+    {
+        destroyed = false;
+    }
+    else
+    {
+        staging->reader = nullptr;
+    }
+    if (!FX_DestroyArchiveRestoreCandidateDisk32Workspace(
+            staging->candidate))
+    {
+        destroyed = false;
+    }
+    else
+    {
+        staging->candidate = nullptr;
+    }
+
+    if (staging->rollbackBuffers)
+    {
+        Z_Free(staging->rollbackBuffers, 10);
+        staging->rollbackBuffers = nullptr;
+    }
+    if (staging->replacedPhysicsEntries)
+    {
+        Z_Free(staging->replacedPhysicsEntries, 10);
+        staging->replacedPhysicsEntries = nullptr;
+    }
+    if (staging->desiredPhysicsEntries)
+    {
+        Z_Free(staging->desiredPhysicsEntries, 10);
+        staging->desiredPhysicsEntries = nullptr;
+    }
+    return destroyed;
+}
+
+[[nodiscard]] bool FX_PrepareArchiveDisk32PhysicsEntries(
+    const fx::archive::FxArchiveRestoreCandidateDisk32ReadyView &view,
+    FxArchivePhysicsEntry *const entries,
+    const std::size_t entryCapacity,
+    FxVisibilityBufferSelectors *const outSelectors) noexcept
+{
+    if (!view.system || !view.buffers || !outSelectors
+        || view.archivedSystemAddress.value == 0
+        || view.physicsBodyCount > fx::physics::BODY_LIMIT
+        || (view.physicsBodyCount != 0 && !view.physicsBodies)
+        || (view.physicsBodyCount == 0 && view.physicsBodies)
+        || view.physicsBodyCount > entryCapacity
+        || (view.physicsBodyCount != 0 && !entries))
+    {
+        return false;
+    }
+
+    FxVisibilityBufferSelectors selectors{};
+    if (!FX_TryDeriveVisibilitySelectorPair(
+            &view.buffers->visState[0],
+            &view.buffers->visState[1],
+            view.system->visStateBufferRead,
+            view.system->visStateBufferWrite,
+            &selectors)
+        || !FX_ArchiveVisibilitySelectorsMatch(
+            view.system,
+            view.buffers,
+            selectors))
+    {
+        return false;
+    }
+
+    for (std::size_t index = 0;
+         index < view.physicsBodyCount;
+         ++index)
+    {
+        const auto &body = view.physicsBodies[index];
+        if (body.ownerIndex >= MAX_ELEMS
+            || body.elem
+                != &view.buffers->elems[body.ownerIndex].item
+            || !body.model
+            || body.token == fx::archive::FX_ARCHIVE_INVALID_PHYSICS_TOKEN
+            || !FX_ValidateArchiveBodyState(body.state))
+        {
+            return false;
+        }
+    }
+
+    for (std::size_t index = 0;
+         index < view.physicsBodyCount;
+         ++index)
+    {
+        const auto &body = view.physicsBodies[index];
+        FxArchivePhysicsEntry &entry = entries[index];
+        std::memset(&entry, 0, sizeof(entry));
+        entry.elem = body.elem;
+        entry.model = body.model;
+        entry.state = body.state;
+        entry.ownerIndex = body.ownerIndex;
+        entry.token = static_cast<fx::physics::BodyToken>(body.token);
+    }
+
+    *outSelectors = selectors;
+    return true;
+}
+
+[[noreturn]] void FX_ReportArchiveDisk32RestoreFailure(
+    const fx::archive::EffectTableRestoreLease *const lease,
+    FxArchiveDisk32RestoreStaging *const staging,
+    const char *const message)
+{
+    if (!staging
+        || !FX_DestroyArchiveDisk32ReaderWorkspace(staging->reader))
+    {
+        Sys_Error(
+            "Unable to destroy FX Disk32 reader staging safely");
+        std::abort();
+    }
+    staging->reader = nullptr;
+
+    fx::archive::EffectTableRestoreStatus releaseStatus =
+        fx::archive::EffectTableRestoreStatus::Success;
+    if (lease && lease->ownerCookie)
+        releaseStatus = fx::archive::ReleaseEffectTableRestore(*lease);
+    if (!FX_EffectTableRestoreReleaseIsSafe(releaseStatus))
+    {
+        Sys_Error(
+            "Unable to release FX effect-definition restore ownership safely");
+        std::abort();
+    }
+    if (!FX_DestroyArchiveDisk32RestoreStaging(staging))
+    {
+        Sys_Error(
+            "Unable to destroy FX Disk32 restore staging safely");
+        std::abort();
+    }
+    Com_Error(ERR_DROP, "%s", message);
+    std::abort();
+}
+
+[[nodiscard]] const char *FX_ArchiveDisk32ReaderFailureMessage(
+    const fx::archive::FxArchiveDisk32ReaderStatus status) noexcept
+{
+    using Status = fx::archive::FxArchiveDisk32ReaderStatus;
+    switch (status)
+    {
+    case Status::Success:
+        return "Unexpected successful FX archive reader status";
+    case Status::Busy:
+        return "FX archive reader is already active";
+    case Status::InvalidArgument:
+        return "Invalid FX archive reader request";
+    case Status::InvalidLease:
+        return "FX lifecycle changed while reading the archive";
+    case Status::InvalidMemoryFile:
+        return "Invalid FX archive stream state";
+    case Status::TruncatedInput:
+        return "Truncated FX archive tail";
+    case Status::InvalidStructuralImage:
+        return "Invalid FX archive graph";
+    case Status::InvalidSemanticImage:
+        return "Invalid FX archive semantics";
+    case Status::InvalidRelocation:
+        return "Invalid FX archive relocation record";
+    case Status::InvalidBodyState:
+        return "Invalid FX archive physics state";
+    }
+    return "Unknown FX archive reader failure";
+}
+
+[[nodiscard]] const char *FX_ArchiveDisk32CandidateFailureMessage(
+    const fx::archive::FxArchiveRestoreCandidateDisk32Status status) noexcept
+{
+    using Status =
+        fx::archive::FxArchiveRestoreCandidateDisk32Status;
+    switch (status)
+    {
+    case Status::Success:
+        return "Unexpected successful FX restore candidate status";
+    case Status::Busy:
+        return "FX restore candidate is already active";
+    case Status::InvalidArgument:
+        return "Invalid FX restore candidate request";
+    case Status::InvalidLease:
+        return "FX lifecycle changed while materializing the restore";
+    case Status::InvalidGraph:
+        return "Invalid FX restore candidate graph";
+    case Status::InvalidPhysics:
+        return "Invalid FX restore candidate physics";
+    }
+    return "Unknown FX restore candidate failure";
 }
 
 fx::archive::RestoreControlOperationStatus
@@ -2385,17 +2548,6 @@ FX_PerformArchiveRestoreControlOperation(
 
 void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
 {
-    if (sizeof(void *) != 4)
-    {
-        Com_Error(ERR_DROP, "FX archive restore requires Disk32 conversion on 64-bit targets");
-        return;
-    }
-    if (sizeof(FxSystem) != FX_ARCHIVE_SYSTEM_SIZE
-        || sizeof(FxSystemBuffers) != FX_ARCHIVE_BUFFER_SIZE)
-    {
-        Com_Error(ERR_DROP, "FX archive restore ABI does not match the legacy format");
-        return;
-    }
     if (!memFile || clientIndex != 0)
     {
         Com_Error(ERR_DROP, "Invalid FX archive restore request");
@@ -2407,14 +2559,6 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     {
         MyAssertHandler(".\\EffectsCore\\fx_archive.cpp", 220, 0, "%s", "system");
         Com_Error(ERR_DROP, "Missing FX system while restoring archive");
-        return;
-    }
-    const std::uintptr_t currentSystemAddress =
-        reinterpret_cast<std::uintptr_t>(system);
-    if (currentSystemAddress
-        > (std::numeric_limits<std::uint32_t>::max)())
-    {
-        Com_Error(ERR_DROP, "FX archive restore requires Disk32 conversion on this target");
         return;
     }
     FxSystemBuffers *const systemBuffers = FX_GetSystemBuffers(clientIndex);
@@ -2448,164 +2592,72 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
             tableResult.lease.ownerCookie ? &tableResult.lease : nullptr;
         FX_ReportEffectTableRestoreFailure(
             retainedLease,
-            nullptr,
             "Invalid FX effect-definition table in archive");
     }
 
-    FxSystemBuffers *const restoredBuffers =
-        static_cast<FxSystemBuffers *>(Z_Malloc(
-            static_cast<int>(sizeof(FxSystemBuffers)),
-            "FX_Restore system buffers",
-            10));
-    if (!restoredBuffers)
+    FxArchiveDisk32RestoreStaging staging{};
+    staging.reader = FX_AllocateArchiveDisk32ReaderWorkspace();
+    if (!staging.reader)
     {
-        FX_ReportEffectTableRestoreFailure(
+        FX_ReportArchiveDisk32RestoreFailure(
             &tableResult.lease,
-            nullptr,
-            "Unable to allocate FX restore staging buffers");
+            &staging,
+            "Unable to allocate FX Disk32 reader workspace");
     }
-    memset(restoredBuffers, 0, sizeof(*restoredBuffers));
-
-    alignas(FxSystem) std::uint8_t
-        restoredSystemBytes[FX_ARCHIVE_SYSTEM_SIZE]{};
-    if (!FX_ReadArchiveDataNoDrop(
+    const fx::archive::FxArchiveDisk32ReaderStatus readerStatus =
+        fx::archive::TryReadFxArchiveDisk32NoReport(
             memFile,
-            FX_ARCHIVE_SYSTEM_SIZE,
-            restoredSystemBytes)
-        || !FX_ValidateArchiveSystemBooleanBytes(
-            restoredSystemBytes, sizeof(restoredSystemBytes)))
+            tableResult.lease,
+            staging.reader);
+    if (readerStatus
+        != fx::archive::FxArchiveDisk32ReaderStatus::Success)
     {
-        FX_ReportEffectTableRestoreFailure(
-            &tableResult.lease, restoredBuffers, "Invalid save file");
+        FX_ReportArchiveDisk32RestoreFailure(
+            &tableResult.lease,
+            &staging,
+            FX_ArchiveDisk32ReaderFailureMessage(readerStatus));
     }
 
-    // Do not form a typed FxSystem until every serialized bool has a valid
-    // object representation.  Reading an arbitrary byte through bool is UB.
-    FxSystem restoredSystem{};
-    std::memcpy(
-        &restoredSystem,
-        restoredSystemBytes,
-        sizeof(restoredSystemBytes));
-    if (!restoredSystem.isInitialized || !restoredSystem.isArchiving
-        || restoredSystem.localClientNum != 0
-        || Sys_AtomicLoad(&restoredSystem.iteratorCount) != 0)
+    staging.candidate =
+        FX_AllocateArchiveRestoreCandidateDisk32Workspace();
+    if (!staging.candidate)
     {
-        FX_ReportEffectTableRestoreFailure(
-            &tableResult.lease, restoredBuffers, "Invalid save file");
-    }
-    if (restoredSystem.frameCount <= 0
-        || restoredSystem.frameCount
-            >= (std::numeric_limits<std::int32_t>::max)() - 1)
-    {
-        // FX_SetNextUpdateTime pre-increments this signed counter.
-        restoredSystem.frameCount = 1;
-    }
-    if (!FX_NormalizeArchiveEffectRing(&restoredSystem))
-    {
-        FX_ReportEffectTableRestoreFailure(
+        FX_ReportArchiveDisk32RestoreFailure(
             &tableResult.lease,
-            restoredBuffers,
-            "Invalid FX effect ring in archive");
+            &staging,
+            "Unable to allocate FX restore candidate workspace");
     }
-    FX_LinkSystemBuffers(&restoredSystem, restoredBuffers);
-    if (!FX_ReadArchiveDataNoDrop(
-            memFile,
-            FX_ARCHIVE_BUFFER_SIZE,
-            restoredBuffers))
+    const fx::archive::FxArchiveRestoreCandidateDisk32Status
+        candidateStatus =
+            fx::archive::TryBuildFxArchiveRestoreCandidateDisk32(
+                staging.reader,
+                tableResult.lease,
+                staging.candidate);
+    if (candidateStatus
+        != fx::archive::FxArchiveRestoreCandidateDisk32Status::Success)
     {
-        FX_ReportEffectTableRestoreFailure(
+        FX_ReportArchiveDisk32RestoreFailure(
             &tableResult.lease,
-            restoredBuffers,
-            "Truncated FX pool data in archive");
+            &staging,
+            FX_ArchiveDisk32CandidateFailureMessage(candidateStatus));
     }
 
-    FxPoolAllocationGraphScratch *const poolGraphScratch =
-        fx::archive::AllocateArchiveRestoreWorkspace<
-            FxPoolAllocationGraphScratch>(
-            FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
-    if (!poolGraphScratch)
+    fx::archive::FxArchiveRestoreCandidateDisk32ReadyView candidateView{};
+    if (!fx::archive::TryGetFxArchiveRestoreCandidateDisk32ReadyView(
+            staging.candidate,
+            tableResult.lease,
+            &candidateView))
     {
-        FX_ReportEffectTableRestoreFailure(
+        FX_ReportArchiveDisk32RestoreFailure(
             &tableResult.lease,
-            restoredBuffers,
-            "Unable to allocate FX pool validation workspace");
-    }
-    FxArchivePoolAllocationStates restoredStates{};
-    const bool restoredPoolStateValid =
-        FX_RebuildArchivePoolAllocationStates(
-            &restoredSystem,
-            &restoredStates,
-            poolGraphScratch);
-    const bool poolGraphScratchDestroyed =
-        fx::archive::DestroyArchiveRestoreWorkspace(
-            poolGraphScratch,
-            FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
-    if (!poolGraphScratchDestroyed)
-    {
-        const fx::archive::EffectTableRestoreStatus releaseStatus =
-            fx::archive::ReleaseEffectTableRestore(tableResult.lease);
-        Z_Free(restoredBuffers, 10);
-        Sys_Error(
-            "Unable to destroy FX pool validation workspace safely "
-            "(effect-table release %u)",
-            static_cast<unsigned>(releaseStatus));
-        std::abort();
-    }
-    if (!restoredPoolStateValid)
-    {
-        FX_ReportEffectTableRestoreFailure(
-            &tableResult.lease,
-            restoredBuffers,
-            "Invalid FX pool state in archive");
-    }
-    if (!FX_FixupEffectDefHandlesNoDrop(
-            &restoredSystem, tableResult.lease))
-    {
-        FX_ReportEffectTableRestoreFailure(
-            &tableResult.lease,
-            restoredBuffers,
-            "Invalid FX effect definition in archive");
+            &staging,
+            "Invalid FX restore candidate view");
     }
 
-    for (std::int64_t activeIndex = restoredSystem.firstActiveEffect;
-         activeIndex < restoredSystem.firstFreeEffect;
-         ++activeIndex)
-    {
-        FxEffect *const effect = FxDecodeHandle<
-            FxEffect, MAX_EFFECTS, FxEffect::HANDLE_SCALE>(
-                restoredSystem.effects,
-                restoredSystem.allEffectHandles[
-                    static_cast<std::size_t>(activeIndex)
-                    & (MAX_EFFECTS - 1)]);
-        if (!effect)
-        {
-            FX_ReportEffectTableRestoreFailure(
-                &tableResult.lease,
-                restoredBuffers,
-                "Invalid FX effect frame state in archive");
-        }
-        Sys_AtomicStore(&effect->frameCount, 0);
-    }
-
-    std::size_t physicsEntryCount = 0;
-    std::int16_t restoredSpotLightBoltDobj = -1;
-    if (!FX_CollectArchivePhysicsEntries(
-            &restoredSystem,
-            nullptr,
-            0,
-            &physicsEntryCount,
-            false,
-            nullptr,
-            &restoredSpotLightBoltDobj))
-    {
-        FX_ReportEffectTableRestoreFailure(
-            &tableResult.lease,
-            restoredBuffers,
-            "Invalid FX element semantics in archive");
-    }
-    restoredSystem.activeSpotLightBoltDobj =
-        restoredSpotLightBoltDobj;
-    FxArchivePhysicsEntry *physicsEntries = nullptr;
+    FxSystem *const restoredSystem = candidateView.system;
+    FxSystemBuffers *const restoredBuffers = candidateView.buffers;
+    const std::size_t physicsEntryCount =
+        static_cast<std::size_t>(candidateView.physicsBodyCount);
     std::size_t physicsEntryByteCount = 0;
     int physicsEntryAllocationSize = 0;
     if (physicsEntryCount != 0)
@@ -2615,174 +2667,39 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
                 &physicsEntryByteCount,
                 &physicsEntryAllocationSize))
         {
-            FX_ReportEffectTableRestoreFailure(
+            FX_ReportArchiveDisk32RestoreFailure(
                 &tableResult.lease,
-                restoredBuffers,
+                &staging,
                 "Invalid FX physics staging size");
         }
-        physicsEntries = static_cast<FxArchivePhysicsEntry *>(Z_Malloc(
-            physicsEntryAllocationSize,
-            "FX_Restore physics staging",
-            10));
-        if (!physicsEntries)
+        staging.desiredPhysicsEntries =
+            static_cast<FxArchivePhysicsEntry *>(Z_Malloc(
+                physicsEntryAllocationSize,
+                "FX_Restore physics staging",
+                10));
+        if (!staging.desiredPhysicsEntries)
         {
-            FX_ReportEffectTableRestoreFailure(
+            FX_ReportArchiveDisk32RestoreFailure(
                 &tableResult.lease,
-                restoredBuffers,
+                &staging,
                 "Unable to allocate FX physics restore staging");
         }
-        std::memset(
-            physicsEntries,
-            0,
-            physicsEntryByteCount);
-        std::size_t populatedEntryCount = 0;
-        std::int16_t populatedSpotLightBoltDobj = -1;
-        if (!FX_CollectArchivePhysicsEntries(
-                &restoredSystem,
-                physicsEntries,
-                physicsEntryCount,
-                &populatedEntryCount,
-                false,
-                nullptr,
-                &populatedSpotLightBoltDobj)
-            || populatedEntryCount != physicsEntryCount
-            || populatedSpotLightBoltDobj
-                != restoredSpotLightBoltDobj)
-        {
-            Z_Free(physicsEntries, 10);
-            FX_ReportEffectTableRestoreFailure(
-                &tableResult.lease,
-                restoredBuffers,
-                "Unstable FX physics state in archive");
-        }
     }
 
-    // Keep the effect-table lease through both semantic passes so every
-    // resolved definition and selected model remains stable while traversed.
-    // No staged identity is dereferenced again until generation-checked
-    // archive admission, so release it before continuing with archive I/O.
-    const fx::archive::EffectTableRestoreStatus tableReleaseStatus =
-        fx::archive::ReleaseEffectTableRestore(tableResult.lease);
-    if (tableReleaseStatus
-        != fx::archive::EffectTableRestoreStatus::Success)
+    FxVisibilityBufferSelectors desiredVisibilitySelectors{};
+    if (!FX_PrepareArchiveDisk32PhysicsEntries(
+            candidateView,
+            staging.desiredPhysicsEntries,
+            physicsEntryCount,
+            &desiredVisibilitySelectors))
     {
-        if (physicsEntries)
-            Z_Free(physicsEntries, 10);
-        Z_Free(restoredBuffers, 10);
-        if (tableReleaseStatus
-            != fx::archive::EffectTableRestoreStatus::LifecycleChanged)
-        {
-            Sys_Error(
-                "Unable to release FX effect-definition restore ownership safely");
-            std::abort();
-        }
-        Com_Error(
-            ERR_DROP,
-            "FX lifecycle changed while restoring effect definitions");
-        return;
+        FX_ReportArchiveDisk32RestoreFailure(
+            &tableResult.lease,
+            &staging,
+            "Invalid FX restore physics candidate");
     }
-
-    std::uint32_t archivedSystemAddress = 0;
-    if (!FX_ReadArchiveDataNoDrop(
-            memFile,
-            static_cast<int>(sizeof(archivedSystemAddress)),
-            &archivedSystemAddress)
-        || archivedSystemAddress == 0)
-    {
-        if (physicsEntries)
-            Z_Free(physicsEntries, 10);
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Invalid FX relocation record in archive");
-        return;
-    }
-    const std::uint32_t relocationBits =
-        static_cast<std::uint32_t>(currentSystemAddress)
-        - archivedSystemAddress;
-    const FxVisState *const firstLiveVisState = &systemBuffers->visState[0];
-    const FxVisState *const secondLiveVisState = &systemBuffers->visState[1];
-    const std::uint32_t archivedReadAddress = FX_ArchivePointerBits(
-        restoredSystem.visStateBufferRead);
-    const std::uint32_t archivedWriteAddress = FX_ArchivePointerBits(
-        restoredSystem.visStateBufferWrite);
-    const std::uint32_t relocatedReadAddress =
-        archivedReadAddress + relocationBits;
-    const std::uint32_t relocatedWriteAddress =
-        archivedWriteAddress + relocationBits;
-    const std::uint32_t firstLiveVisAddress =
-        FX_ArchivePointerBits(firstLiveVisState);
-    const std::uint32_t secondLiveVisAddress =
-        FX_ArchivePointerBits(secondLiveVisState);
-    const bool readVisStateValid = relocatedReadAddress
-            == firstLiveVisAddress
-        || relocatedReadAddress == secondLiveVisAddress;
-    const bool writeVisStateValid = relocatedWriteAddress
-            == firstLiveVisAddress
-        || relocatedWriteAddress == secondLiveVisAddress;
-    if (!readVisStateValid || !writeVisStateValid
-        || relocatedReadAddress == relocatedWriteAddress)
-    {
-        if (physicsEntries)
-            Z_Free(physicsEntries, 10);
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Invalid FX visibility buffers in archive");
-        return;
-    }
-    const FxVisibilityBufferSelectors desiredVisibilitySelectors{
-        relocatedReadAddress == secondLiveVisAddress
-            ? std::uint8_t{1}
-            : std::uint8_t{0},
-        relocatedWriteAddress == secondLiveVisAddress
-            ? std::uint8_t{1}
-            : std::uint8_t{0}};
-    if (!FX_TryResolveVisibilitySelectors(
-            &restoredBuffers->visState[0],
-            &restoredBuffers->visState[1],
-            desiredVisibilitySelectors,
-            &restoredSystem.visStateBufferRead,
-            &restoredSystem.visStateBufferWrite))
-    {
-        if (physicsEntries)
-            Z_Free(physicsEntries, 10);
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Invalid FX visibility buffers in archive");
-        return;
-    }
-    if (!FX_ArchiveVisibilitySelectorsMatch(
-            &restoredSystem,
-            restoredBuffers,
-            desiredVisibilitySelectors))
-    {
-        if (physicsEntries)
-            Z_Free(physicsEntries, 10);
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Invalid FX visibility buffers in archive");
-        return;
-    }
-
-    bool physicsDataValid = true;
-    for (std::size_t index = 0;
-         index < physicsEntryCount;
-         ++index)
-    {
-        if (!FX_ReadArchiveDataNoDrop(
-                memFile,
-                FX_ARCHIVE_BODY_STATE_SIZE,
-                &physicsEntries[index].state)
-            || !FX_ValidateArchiveBodyState(
-                physicsEntries[index].state))
-        {
-            physicsDataValid = false;
-            break;
-        }
-    }
-    if (!physicsDataValid)
-    {
-        if (physicsEntries)
-            Z_Free(physicsEntries, 10);
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Invalid FX physics state in archive");
-        return;
-    }
+    FxArchivePhysicsEntry *const physicsEntries =
+        staging.desiredPhysicsEntries;
 
     std::size_t replacedPhysicsEntryByteCount = 0;
     int replacedPhysicsEntryAllocationSize = 0;
@@ -2791,70 +2708,110 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
             &replacedPhysicsEntryByteCount,
             &replacedPhysicsEntryAllocationSize))
     {
-        if (physicsEntries)
-            Z_Free(physicsEntries, 10);
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Invalid current FX physics staging size");
-        return;
+        FX_ReportArchiveDisk32RestoreFailure(
+            &tableResult.lease,
+            &staging,
+            "Invalid current FX physics staging size");
     }
-    FxArchivePhysicsEntry *const replacedPhysicsEntries =
+    staging.replacedPhysicsEntries =
         static_cast<FxArchivePhysicsEntry *>(Z_Malloc(
             replacedPhysicsEntryAllocationSize,
             "FX_Restore replaced physics staging",
             10));
-    if (!replacedPhysicsEntries)
+    if (!staging.replacedPhysicsEntries)
     {
-        if (physicsEntries)
-            Z_Free(physicsEntries, 10);
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Unable to allocate current FX physics staging");
-        return;
+        FX_ReportArchiveDisk32RestoreFailure(
+            &tableResult.lease,
+            &staging,
+            "Unable to allocate current FX physics staging");
     }
     std::memset(
-        replacedPhysicsEntries,
+        staging.replacedPhysicsEntries,
         0,
         replacedPhysicsEntryByteCount);
+    FxArchivePhysicsEntry *const replacedPhysicsEntries =
+        staging.replacedPhysicsEntries;
 
-    FxSystemBuffers *const rollbackBuffers =
+    staging.rollbackBuffers =
         static_cast<FxSystemBuffers *>(Z_Malloc(
             static_cast<int>(sizeof(FxSystemBuffers)),
             "FX_Restore rollback buffers",
             10));
-    if (!rollbackBuffers)
+    if (!staging.rollbackBuffers)
     {
-        Z_Free(replacedPhysicsEntries, 10);
-        if (physicsEntries)
-            Z_Free(physicsEntries, 10);
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Unable to allocate FX restore rollback state");
-        return;
+        FX_ReportArchiveDisk32RestoreFailure(
+            &tableResult.lease,
+            &staging,
+            "Unable to allocate FX restore rollback state");
+    }
+    FxSystemBuffers *const rollbackBuffers = staging.rollbackBuffers;
+
+    staging.transaction =
+        FX_AllocateArchiveRestoreTransactionWorkspace();
+    if (!staging.transaction)
+    {
+        FX_ReportArchiveDisk32RestoreFailure(
+            &tableResult.lease,
+            &staging,
+            "Unable to allocate FX restore transaction workspace");
+    }
+    FxArchiveRestoreTransactionWorkspace *const restoreWorkspace =
+        staging.transaction;
+
+    if (fx::archive::ValidateEffectTableRestoreLease(tableResult.lease)
+        != fx::archive::EffectTableRestoreStatus::Success)
+    {
+        FX_ReportArchiveDisk32RestoreFailure(
+            &tableResult.lease,
+            &staging,
+            "FX lifecycle changed while preparing restore staging");
+    }
+    if (!FX_DestroyArchiveDisk32ReaderWorkspace(staging.reader))
+    {
+        Sys_Error("Unable to destroy FX Disk32 reader workspace safely");
+        std::abort();
+    }
+    staging.reader = nullptr;
+    if (fx::archive::ValidateEffectTableRestoreLease(tableResult.lease)
+        != fx::archive::EffectTableRestoreStatus::Success)
+    {
+        FX_ReportArchiveDisk32RestoreFailure(
+            &tableResult.lease,
+            &staging,
+            "FX lifecycle changed before archive admission");
     }
 
-    FxArchiveRestoreTransactionWorkspace *const restoreWorkspace =
-        FX_AllocateArchiveRestoreTransactionWorkspace();
-    if (!restoreWorkspace)
+    const fx::archive::EffectTableRestoreStatus tableReleaseStatus =
+        fx::archive::ReleaseEffectTableRestore(tableResult.lease);
+    if (tableReleaseStatus
+        != fx::archive::EffectTableRestoreStatus::Success)
     {
-        Z_Free(rollbackBuffers, 10);
-        Z_Free(replacedPhysicsEntries, 10);
-        if (physicsEntries)
-            Z_Free(physicsEntries, 10);
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Unable to allocate FX restore transaction workspace");
+        const bool stagingDestroyed =
+            FX_DestroyArchiveDisk32RestoreStaging(&staging);
+        if (!stagingDestroyed
+            || tableReleaseStatus
+                != fx::archive::EffectTableRestoreStatus::LifecycleChanged)
+        {
+            Sys_Error(
+                "Unable to close FX restore staging safely "
+                "(effect-table release %u)",
+                static_cast<unsigned>(tableReleaseStatus));
+            std::abort();
+        }
+        Com_Error(
+            ERR_DROP,
+            "FX lifecycle changed while restoring effect definitions");
         return;
     }
 
     if (!FX_BeginArchive(system, restoreGeneration))
     {
-        const bool workspaceDestroyed =
-            FX_DestroyArchiveRestoreTransactionWorkspace(
-                restoreWorkspace);
-        if (!workspaceDestroyed)
+        if (!FX_DestroyArchiveDisk32RestoreStaging(&staging))
+        {
+            Sys_Error(
+                "Unable to destroy rejected FX restore staging safely");
             std::abort();
-        Z_Free(rollbackBuffers, 10);
-        Z_Free(replacedPhysicsEntries, 10);
-        if (physicsEntries)
-            Z_Free(physicsEntries, 10);
-        Z_Free(restoredBuffers, 10);
+        }
         Com_Error(ERR_DROP, "FX archive restore could not acquire exclusive ownership");
         return;
     }
@@ -2923,7 +2880,7 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
         restoreWorkspace->control;
     restoreContext.system = system;
     restoreContext.systemBuffers = systemBuffers;
-    restoreContext.desiredSystem = &restoredSystem;
+    restoreContext.desiredSystem = restoredSystem;
     restoreContext.desiredBuffers = restoredBuffers;
     restoreContext.desiredVisibilitySelectors =
         desiredVisibilitySelectors;
@@ -2961,17 +2918,12 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
     system->isArchiving = false;
     const bool releasedArchive = FX_EndArchive(system);
-    const bool workspaceDestroyed =
-        FX_DestroyArchiveRestoreTransactionWorkspace(restoreWorkspace);
-    Z_Free(rollbackBuffers, 10);
-    Z_Free(replacedPhysicsEntries, 10);
-    if (physicsEntries)
-        Z_Free(physicsEntries, 10);
-    Z_Free(restoredBuffers, 10);
+    const bool stagingDestroyed =
+        FX_DestroyArchiveDisk32RestoreStaging(&staging);
     if (restoreOutcome
             != fx::archive::RestoreControlOutcome::DesiredPublished
         || !releasedArchive
-        || !workspaceDestroyed)
+        || !stagingDestroyed)
     {
         Com_Error(
             ERR_DROP,

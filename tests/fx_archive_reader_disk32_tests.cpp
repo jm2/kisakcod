@@ -109,6 +109,24 @@ void AppendLittleEndianU32(
     output->push_back(static_cast<std::uint8_t>(value >> 24u));
 }
 
+void StoreLittleEndianU32(
+    std::vector<std::uint8_t> *const output,
+    const std::size_t offset,
+    const std::uint32_t value)
+{
+    CHECK(output != nullptr);
+    const bool rangeIsValid = output
+        && offset <= output->size()
+        && sizeof(value) <= output->size() - offset;
+    CHECK(rangeIsValid);
+    if (!rangeIsValid)
+        return;
+    (*output)[offset + 0u] = static_cast<std::uint8_t>(value);
+    (*output)[offset + 1u] = static_cast<std::uint8_t>(value >> 8u);
+    (*output)[offset + 2u] = static_cast<std::uint8_t>(value >> 16u);
+    (*output)[offset + 3u] = static_cast<std::uint8_t>(value >> 24u);
+}
+
 template <typename RECORD>
 void AppendRecord(
     std::vector<std::uint8_t> *const output,
@@ -680,6 +698,28 @@ archive::FxArchiveDisk32ReaderStatus ReadTail(
     return status;
 }
 
+archive::FxArchiveDisk32ReaderStatus ReadArchiveBytes(
+    archive::FxArchiveDisk32ReaderWorkspace *const workspace,
+    const archive::EffectTableRestoreLease &lease,
+    std::vector<std::uint8_t> archiveBytes,
+    const bool compress)
+{
+    CHECK(archiveBytes.size()
+          <= static_cast<std::size_t>(
+              (std::numeric_limits<std::int32_t>::max)()));
+    MemoryFile reader{};
+    MemFile_InitForReading(
+        &reader,
+        static_cast<int>(archiveBytes.size()),
+        archiveBytes.data(),
+        compress);
+    const archive::FxArchiveDisk32ReaderStatus status =
+        archive::TryReadFxArchiveDisk32NoReport(
+            &reader, lease, workspace);
+    CloseReader(&reader);
+    return status;
+}
+
 void CheckBody(
     const archive::FxArchiveDisk32ReaderPhysicsBody &body,
     const archive::BodyStateDisk32 &source,
@@ -701,6 +741,161 @@ void CheckBody(
     CHECK(body.state.type == source.type);
     CHECK(body.state.underwater
           == static_cast<int>(source.underwater & UINT32_C(0xFF)));
+}
+
+void CheckReadyViewInternalLinks(
+    const archive::FxArchiveDisk32ReaderReadyView &view,
+    const std::uint8_t expectedReadSelector,
+    const std::uint8_t expectedWriteSelector)
+{
+    CHECK(view.graph.system != nullptr);
+    CHECK(view.graph.buffers != nullptr);
+    CHECK(view.graph.poolStates != nullptr);
+    CHECK(view.graph.metadata != nullptr);
+    if (!view.graph.system || !view.graph.buffers
+        || !view.graph.metadata)
+    {
+        return;
+    }
+
+    CHECK(view.graph.metadata->readVisibilitySelector
+          == expectedReadSelector);
+    CHECK(view.graph.metadata->writeVisibilitySelector
+          == expectedWriteSelector);
+    CHECK(view.graph.system->effects == view.graph.buffers->effects);
+    CHECK(view.graph.system->elems == view.graph.buffers->elems);
+    CHECK(view.graph.system->trails == view.graph.buffers->trails);
+    CHECK(view.graph.system->trailElems
+          == view.graph.buffers->trailElems);
+    CHECK(view.graph.system->deferredElems
+          == view.graph.buffers->deferredElems);
+    CHECK(view.graph.system->visState == view.graph.buffers->visState);
+    CHECK(view.graph.system->visStateBufferRead
+          == &view.graph.buffers->visState[expectedReadSelector]);
+    CHECK(view.graph.system->visStateBufferWrite
+          == &view.graph.buffers->visState[expectedWriteSelector]);
+}
+
+void ClearWorkspaceLocalSystemPointers(FxSystem *const system)
+{
+    CHECK(system != nullptr);
+    if (!system)
+        return;
+    system->effects = nullptr;
+    system->elems = nullptr;
+    system->trails = nullptr;
+    system->trailElems = nullptr;
+    system->deferredElems = nullptr;
+    system->visState = nullptr;
+    system->visStateBufferRead = nullptr;
+    system->visStateBufferWrite = nullptr;
+}
+
+template <std::size_t LIMIT>
+void CheckEquivalentPoolAllocationStates(
+    const FxPoolAllocationState<LIMIT> &left,
+    const FxPoolAllocationState<LIMIT> &right)
+{
+    CHECK(left.allocatedWords == right.allocatedWords);
+    CHECK(left.allocatedCount == right.allocatedCount);
+    CHECK(left.initialized == right.initialized);
+}
+
+void CheckLogicallyEquivalentReadyViews(
+    const archive::FxArchiveDisk32ReaderReadyView &left,
+    const archive::FxArchiveDisk32ReaderReadyView &right)
+{
+    CHECK(left.graph.system != nullptr);
+    CHECK(left.graph.buffers != nullptr);
+    CHECK(left.graph.poolStates != nullptr);
+    CHECK(left.graph.metadata != nullptr);
+    CHECK(right.graph.system != nullptr);
+    CHECK(right.graph.buffers != nullptr);
+    CHECK(right.graph.poolStates != nullptr);
+    CHECK(right.graph.metadata != nullptr);
+    if (!left.graph.system || !left.graph.buffers
+        || !left.graph.poolStates || !left.graph.metadata
+        || !right.graph.system || !right.graph.buffers
+        || !right.graph.poolStates || !right.graph.metadata)
+    {
+        return;
+    }
+
+    CHECK(left.archivedSystemAddress.value
+          == right.archivedSystemAddress.value);
+    CHECK(left.graph.physicsBodyCount
+          == right.graph.physicsBodyCount);
+    CHECK(left.physicsBodyCount == right.physicsBodyCount);
+    CHECK(std::memcmp(
+              left.graph.buffers,
+              right.graph.buffers,
+              sizeof(*left.graph.buffers))
+          == 0);
+    CheckEquivalentPoolAllocationStates(
+        left.graph.poolStates->elems,
+        right.graph.poolStates->elems);
+    CheckEquivalentPoolAllocationStates(
+        left.graph.poolStates->trails,
+        right.graph.poolStates->trails);
+    CheckEquivalentPoolAllocationStates(
+        left.graph.poolStates->trailElems,
+        right.graph.poolStates->trailElems);
+    CHECK(std::memcmp(
+              left.graph.metadata,
+              right.graph.metadata,
+              sizeof(*left.graph.metadata))
+          == 0);
+
+    // The only expected native-system representation difference is the set
+    // of pointers into each workspace's own buffer image.  Normalize those
+    // exact links, then compare every remaining system byte.
+    FxSystem leftSystem{};
+    FxSystem rightSystem{};
+    std::memcpy(&leftSystem, left.graph.system, sizeof(leftSystem));
+    std::memcpy(&rightSystem, right.graph.system, sizeof(rightSystem));
+    ClearWorkspaceLocalSystemPointers(&leftSystem);
+    ClearWorkspaceLocalSystemPointers(&rightSystem);
+    CHECK(std::memcmp(&leftSystem, &rightSystem, sizeof(leftSystem)) == 0);
+
+    CHECK((left.physicsBodies == nullptr)
+          == (left.physicsBodyCount == 0));
+    CHECK((right.physicsBodies == nullptr)
+          == (right.physicsBodyCount == 0));
+    if (!left.physicsBodies || !right.physicsBodies)
+        return;
+    const std::size_t comparableBodyCount = (std::min)(
+        static_cast<std::size_t>(left.physicsBodyCount),
+        static_cast<std::size_t>(right.physicsBodyCount));
+    for (std::size_t index = 0;
+         index < comparableBodyCount;
+         ++index)
+    {
+        const auto &leftBody = left.physicsBodies[index];
+        const auto &rightBody = right.physicsBodies[index];
+        CHECK(leftBody.descriptor.ownerIndex
+              == rightBody.descriptor.ownerIndex);
+        CHECK(leftBody.descriptor.token
+              == rightBody.descriptor.token);
+        CHECK(leftBody.descriptor.model
+              == rightBody.descriptor.model);
+        if (leftBody.descriptor.ownerIndex < MAX_ELEMS)
+        {
+            CHECK(leftBody.descriptor.elem
+                  == &left.graph.buffers->elems[
+                      leftBody.descriptor.ownerIndex].item);
+        }
+        if (rightBody.descriptor.ownerIndex < MAX_ELEMS)
+        {
+            CHECK(rightBody.descriptor.elem
+                  == &right.graph.buffers->elems[
+                      rightBody.descriptor.ownerIndex].item);
+        }
+        CHECK(std::memcmp(
+                  &leftBody.state,
+                  &rightBody.state,
+                  sizeof(leftBody.state))
+              == 0);
+    }
 }
 
 void TestWorkspaceAndViewGates()
@@ -866,6 +1061,82 @@ void TestRawAndCompressedEmptyAndPhysics()
                 CheckViewGated(owner.get(), table.lease);
             CloseReader(&reader);
         }
+    }
+}
+
+void TestRawCompressedEquivalenceAndVisibilityOrientations()
+{
+    constexpr std::array<std::array<std::uint8_t, 2>, 2> orientations{{
+        {{UINT8_C(0), UINT8_C(1)}},
+        {{UINT8_C(1), UINT8_C(0)}},
+    }};
+
+    for (const auto &orientation : orientations)
+    {
+        SemanticDefinition definition{};
+        ImageFixture fixture{2};
+        fixture.system->visStateBufferRead = archive::ArchiveAddress32{
+            fixture.system->visState.value
+            + static_cast<std::uint32_t>(orientation[0])
+                * VIS_STATE_STRIDE};
+        fixture.system->visStateBufferWrite = archive::ArchiveAddress32{
+            fixture.system->visState.value
+            + static_cast<std::uint32_t>(orientation[1])
+                * VIS_STATE_STRIDE};
+        fixture.buffers->visState[0].blockerCount = 1;
+        fixture.buffers->visState[0].blocker[0].origin[0] = 1.25f;
+        fixture.buffers->visState[0].blocker[0].radius = UINT16_C(17);
+        fixture.buffers->visState[0].blocker[0].visibility =
+            UINT16_C(0x1234);
+        fixture.buffers->visState[1].blockerCount = 1;
+        fixture.buffers->visState[1].blocker[0].origin[2] = -3.5f;
+        fixture.buffers->visState[1].blocker[0].radius = UINT16_C(29);
+        fixture.buffers->visState[1].blocker[0].visibility =
+            UINT16_C(0x5678);
+        const std::vector<std::uint8_t> tail = MakeTail(
+            fixture, UINT32_C(0x89ABCDEF));
+
+        RestoreState restoreState{};
+        restoreState.definition = &definition;
+        restoreState.identity = &restoreState;
+        const archive::EffectTableRestoreResult table =
+            AcquireTableLease(&restoreState);
+        if (table.status
+            != archive::EffectTableRestoreStatus::Success)
+        {
+            continue;
+        }
+
+        AllocationState rawAllocation{};
+        AllocationState compressedAllocation{};
+        WorkspaceOwner rawOwner{&rawAllocation};
+        WorkspaceOwner compressedOwner{&compressedAllocation};
+        CHECK(rawOwner.get() != nullptr);
+        CHECK(compressedOwner.get() != nullptr);
+        if (rawOwner.get() && compressedOwner.get())
+        {
+            CHECK(ReadTail(
+                      rawOwner.get(), table.lease, tail, false)
+                  == archive::FxArchiveDisk32ReaderStatus::Success);
+            CHECK(ReadTail(
+                      compressedOwner.get(), table.lease, tail, true)
+                  == archive::FxArchiveDisk32ReaderStatus::Success);
+
+            archive::FxArchiveDisk32ReaderReadyView rawView{};
+            archive::FxArchiveDisk32ReaderReadyView compressedView{};
+            CHECK(archive::TryGetFxArchiveDisk32ReaderReadyView(
+                rawOwner.get(), table.lease, &rawView));
+            CHECK(archive::TryGetFxArchiveDisk32ReaderReadyView(
+                compressedOwner.get(), table.lease, &compressedView));
+            CheckReadyViewInternalLinks(
+                rawView, orientation[0], orientation[1]);
+            CheckReadyViewInternalLinks(
+                compressedView, orientation[0], orientation[1]);
+            CheckLogicallyEquivalentReadyViews(
+                rawView, compressedView);
+        }
+
+        ReleaseLease(table.lease);
     }
 }
 
@@ -1063,6 +1334,100 @@ void TestMalformedTailAndFreshReaderRetry()
     CHECK(archive::TryGetFxArchiveDisk32ReaderReadyView(
         owner.get(), table.lease, &view));
     CHECK(view.physicsBodyCount == 2);
+
+    ReleaseLease(table.lease);
+}
+
+void TestPhysicalCompressedStreamFailures()
+{
+    SemanticDefinition definition{};
+    RestoreState restoreState{};
+    restoreState.definition = &definition;
+    restoreState.identity = &restoreState;
+    const archive::EffectTableRestoreResult table =
+        AcquireTableLease(&restoreState);
+    if (table.status != archive::EffectTableRestoreStatus::Success)
+        return;
+
+    ImageFixture fixture{2};
+    const std::vector<std::uint8_t> validTail =
+        MakeTail(fixture, UINT32_C(0x76543210));
+    const std::vector<std::uint8_t> validArchive =
+        WriteArchive(validTail, true);
+    constexpr std::size_t SEGMENT_HEADER_SIZE = sizeof(std::uint32_t);
+    CHECK(validArchive.size() > SEGMENT_HEADER_SIZE + 8u);
+
+    AllocationState allocation{};
+    WorkspaceOwner owner{&allocation};
+    CHECK(owner.get() != nullptr);
+    if (!owner.get()
+        || validArchive.size() <= SEGMENT_HEADER_SIZE + 8u)
+    {
+        ReleaseLease(table.lease);
+        return;
+    }
+
+    // Establish a Ready image first: every malformed physical stream must
+    // hide it immediately and leave both phase and getter output failure-
+    // atomic, even though the logical uncompressed tail itself is complete.
+    CHECK(ReadArchiveBytes(
+              owner.get(), table.lease, validArchive, true)
+          == archive::FxArchiveDisk32ReaderStatus::Success);
+    CHECK(owner.get()->phase()
+          == archive::FxArchiveDisk32ReaderPhase::Ready);
+
+    const std::size_t encodedSize =
+        validArchive.size() - SEGMENT_HEADER_SIZE;
+    const std::array<std::size_t, 3> retainedEncodedSizes{{
+        1u,
+        2u,
+        encodedSize / 2u,
+    }};
+    for (const std::size_t retainedEncodedSize : retainedEncodedSizes)
+    {
+        CHECK(retainedEncodedSize < encodedSize);
+        std::vector<std::uint8_t> truncated = validArchive;
+        truncated.resize(SEGMENT_HEADER_SIZE + retainedEncodedSize);
+        StoreLittleEndianU32(
+            &truncated,
+            0,
+            static_cast<std::uint32_t>(truncated.size()));
+        CHECK(ReadArchiveBytes(
+                  owner.get(), table.lease, truncated, true)
+              == archive::FxArchiveDisk32ReaderStatus::TruncatedInput);
+        CHECK(owner.get()->phase()
+              == archive::FxArchiveDisk32ReaderPhase::Empty);
+        CheckViewGated(owner.get(), table.lease);
+    }
+
+    // Damage each physical zlib header byte independently.  Segment framing
+    // remains valid, but inflate must reject the stream before any fixed
+    // image prefix can become observable.
+    for (const std::size_t corruptOffset : {
+             SEGMENT_HEADER_SIZE,
+             SEGMENT_HEADER_SIZE + 1u})
+    {
+        std::vector<std::uint8_t> corrupt = validArchive;
+        corrupt[corruptOffset] ^= corruptOffset == SEGMENT_HEADER_SIZE
+            ? UINT8_C(0xFF)
+            : UINT8_C(0x01);
+        CHECK(ReadArchiveBytes(
+                  owner.get(), table.lease, corrupt, true)
+              == archive::FxArchiveDisk32ReaderStatus::TruncatedInput);
+        CHECK(owner.get()->phase()
+              == archive::FxArchiveDisk32ReaderPhase::Empty);
+        CheckViewGated(owner.get(), table.lease);
+    }
+
+    // Both the singleton decoder and this workspace remain reusable after
+    // physical zlib failures when the caller supplies a fresh MemoryFile.
+    CHECK(ReadArchiveBytes(
+              owner.get(), table.lease, validArchive, true)
+          == archive::FxArchiveDisk32ReaderStatus::Success);
+    archive::FxArchiveDisk32ReaderReadyView ready{};
+    CHECK(archive::TryGetFxArchiveDisk32ReaderReadyView(
+        owner.get(), table.lease, &ready));
+    CHECK(ready.physicsBodyCount == 2);
 
     ReleaseLease(table.lease);
 }
@@ -1276,8 +1641,10 @@ int main()
 {
     TestWorkspaceAndViewGates();
     TestRawAndCompressedEmptyAndPhysics();
+    TestRawCompressedEquivalenceAndVisibilityOrientations();
     TestMaximumPhysicsCapacity();
     TestMalformedTailAndFreshReaderRetry();
+    TestPhysicalCompressedStreamFailures();
     TestLeaseGatesAndCallbackReentry();
     TestLateLifecycleInvalidationClassification();
     CHECK(unexpectedReports == 0);
