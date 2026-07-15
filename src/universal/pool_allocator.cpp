@@ -31,9 +31,13 @@ struct PoolFastState
     void *next;
 };
 
-bool Pool_Reject(const int line, const char *const expression) noexcept
+bool Pool_Reject(
+    const int line,
+    const char *const expression,
+    const bool reportFailure = true) noexcept
 {
-    MyAssertHandler(__FILE__, line, 0, "%s", expression);
+    if (reportFailure)
+        MyAssertHandler(__FILE__, line, 0, "%s", expression);
     return false;
 }
 
@@ -43,13 +47,14 @@ bool Pool_TryMakeRange(
     const void *const address,
     const std::size_t byteCount,
     const char *const overflowExpression,
-    PoolRange *const outRange) noexcept
+    PoolRange *const outRange,
+    const bool reportFailure = true) noexcept
 {
     const std::uintptr_t begin = reinterpret_cast<std::uintptr_t>(address);
     if (begin
         > (std::numeric_limits<std::uintptr_t>::max)() - byteCount)
     {
-        return Pool_Reject(__LINE__, overflowExpression);
+        return Pool_Reject(__LINE__, overflowExpression, reportFailure);
     }
 
     outRange->begin = begin;
@@ -60,41 +65,48 @@ bool Pool_TryMakeRange(
 bool Pool_RangesAreSeparate(
     const PoolRange first,
     const PoolRange second,
-    const char *const expression) noexcept
+    const char *const expression,
+    const bool reportFailure = true) noexcept
 {
     if (first.begin < second.end && second.begin < first.end)
-        return Pool_Reject(__LINE__, expression);
+        return Pool_Reject(__LINE__, expression, reportFailure);
     return true;
 }
 
 bool Pool_StorageIsValid(
     const poolstorage_t storage,
-    PoolDescriptorRanges *const outRanges = nullptr) noexcept
+    PoolDescriptorRanges *const outRanges = nullptr,
+    const bool reportFailure = true) noexcept
 {
     if (!storage.base)
-        return POOL_REJECT("storage.base");
+        return Pool_Reject(__LINE__, "storage.base", reportFailure);
     if (storage.itemSize < sizeof(void *))
-        return POOL_REJECT("storage.itemSize >= sizeof(void *)");
+        return Pool_Reject(
+            __LINE__, "storage.itemSize >= sizeof(void *)", reportFailure);
     if (storage.itemCount < 2)
-        return POOL_REJECT("storage.itemCount >= 2");
+        return Pool_Reject(__LINE__, "storage.itemCount >= 2", reportFailure);
 
     constexpr std::size_t maxActiveCount =
         static_cast<std::size_t>((std::numeric_limits<int>::max)());
     if (storage.itemCount > maxActiveCount)
-        return POOL_REJECT("storage.itemCount <= INT_MAX");
+        return Pool_Reject(
+            __LINE__, "storage.itemCount <= INT_MAX", reportFailure);
     if (storage.itemSize
         > (std::numeric_limits<std::size_t>::max)() / storage.itemCount)
     {
-        return POOL_REJECT(
-            "storage.itemSize * storage.itemCount does not overflow");
+        return Pool_Reject(
+            __LINE__,
+            "storage.itemSize * storage.itemCount does not overflow",
+            reportFailure);
     }
 
     if (!storage.control)
-        return POOL_REJECT("storage.control");
+        return Pool_Reject(__LINE__, "storage.control", reportFailure);
     if (reinterpret_cast<std::uintptr_t>(storage.control)
         % alignof(poolcontrol_t) != 0)
     {
-        return POOL_REJECT("storage.control is aligned");
+        return Pool_Reject(
+            __LINE__, "storage.control is aligned", reportFailure);
     }
 
     PoolDescriptorRanges ranges{};
@@ -102,42 +114,53 @@ bool Pool_StorageIsValid(
             storage.control,
             sizeof(*storage.control),
             "control address range does not wrap",
-            &ranges.control))
+            &ranges.control,
+            reportFailure))
     {
         return false;
     }
 
     if (!storage.control->slotState)
-        return POOL_REJECT("storage.control->slotState");
+        return Pool_Reject(
+            __LINE__, "storage.control->slotState", reportFailure);
     if (storage.control->slotStateCount != storage.itemCount)
     {
-        return POOL_REJECT(
-            "storage.control->slotStateCount == storage.itemCount");
+        return Pool_Reject(
+            __LINE__,
+            "storage.control->slotStateCount == storage.itemCount",
+            reportFailure);
     }
     if (storage.control->slotStateCount
         > (std::numeric_limits<std::size_t>::max)()
             / sizeof(*storage.control->slotState))
     {
-        return POOL_REJECT(
-            "slot-state byte count does not overflow");
+        return Pool_Reject(
+            __LINE__,
+            "slot-state byte count does not overflow",
+            reportFailure);
     }
     if (reinterpret_cast<std::uintptr_t>(storage.control->slotState)
         % alignof(poolslotstate_t) != 0)
     {
-        return POOL_REJECT("storage.control->slotState is aligned");
+        return Pool_Reject(
+            __LINE__,
+            "storage.control->slotState is aligned",
+            reportFailure);
     }
 
     if (!Pool_TryMakeRange(
             storage.base,
             storage.itemSize * storage.itemCount,
             "storage address range does not wrap",
-            &ranges.items)
+            &ranges.items,
+            reportFailure)
         || !Pool_TryMakeRange(
             storage.control->slotState,
             sizeof(*storage.control->slotState)
                 * storage.control->slotStateCount,
             "slot-state address range does not wrap",
-            &ranges.slotState))
+            &ranges.slotState,
+            reportFailure))
     {
         return false;
     }
@@ -145,15 +168,18 @@ bool Pool_StorageIsValid(
     if (!Pool_RangesAreSeparate(
             ranges.items,
             ranges.control,
-            "pool control does not overlap pool storage")
+            "pool control does not overlap pool storage",
+            reportFailure)
         || !Pool_RangesAreSeparate(
             ranges.items,
             ranges.slotState,
-            "slot-state table does not overlap pool storage")
+            "slot-state table does not overlap pool storage",
+            reportFailure)
         || !Pool_RangesAreSeparate(
             ranges.control,
             ranges.slotState,
-            "slot-state table does not overlap pool control"))
+            "slot-state table does not overlap pool control",
+            reportFailure))
     {
         return false;
     }
@@ -165,14 +191,15 @@ bool Pool_StorageIsValid(
 
 bool Pool_MetadataIsSeparate(
     const pooldata_t *const pooldata,
-    const PoolDescriptorRanges &ranges) noexcept
+    const PoolDescriptorRanges &ranges,
+    const bool reportFailure = true) noexcept
 {
     if (!pooldata)
-        return POOL_REJECT("pooldata");
+        return Pool_Reject(__LINE__, "pooldata", reportFailure);
     if (reinterpret_cast<std::uintptr_t>(pooldata)
         % alignof(pooldata_t) != 0)
     {
-        return POOL_REJECT("pooldata is aligned");
+        return Pool_Reject(__LINE__, "pooldata is aligned", reportFailure);
     }
 
     PoolRange metadata{};
@@ -180,7 +207,8 @@ bool Pool_MetadataIsSeparate(
             pooldata,
             sizeof(*pooldata),
             "pooldata address range does not wrap",
-            &metadata))
+            &metadata,
+            reportFailure))
     {
         return false;
     }
@@ -188,15 +216,18 @@ bool Pool_MetadataIsSeparate(
     return Pool_RangesAreSeparate(
                metadata,
                ranges.items,
-               "pooldata does not overlap pool storage")
+               "pooldata does not overlap pool storage",
+               reportFailure)
         && Pool_RangesAreSeparate(
                metadata,
                ranges.control,
-               "pooldata does not overlap pool control")
+               "pooldata does not overlap pool control",
+               reportFailure)
         && Pool_RangesAreSeparate(
                metadata,
                ranges.slotState,
-               "pooldata does not overlap slot-state storage");
+               "pooldata does not overlap slot-state storage",
+               reportFailure);
 }
 
 bool Pool_TryGetSlotIndex(
@@ -248,17 +279,22 @@ bool Pool_LinkMatches(
 
 bool Pool_ControlBindingIsValid(
     const poolstorage_t storage,
-    const pooldata_t *const pooldata) noexcept
+    const pooldata_t *const pooldata,
+    const bool reportFailure = true) noexcept
 {
     const poolcontrol_t &control = *storage.control;
     if (control.initMagic != POOL_CONTROL_INIT_MAGIC)
-        return POOL_REJECT("pool control is initialized");
+        return Pool_Reject(
+            __LINE__, "pool control is initialized", reportFailure);
     if (control.boundBase != storage.base
         || control.boundData != pooldata
         || control.boundStride != storage.itemSize
         || control.boundCount != storage.itemCount)
     {
-        return POOL_REJECT("pool control binding matches its descriptor");
+        return Pool_Reject(
+            __LINE__,
+            "pool control binding matches its descriptor",
+            reportFailure);
     }
     return true;
 }
@@ -266,7 +302,8 @@ bool Pool_ControlBindingIsValid(
 bool Pool_TryDecodeNext(
     const poolstorage_t storage,
     const poolslotstate_t nextIndex,
-    void **const outNext) noexcept
+    void **const outNext,
+    const bool reportFailure = true) noexcept
 {
     if (nextIndex == POOL_SLOT_END)
     {
@@ -274,7 +311,8 @@ bool Pool_TryDecodeNext(
         return true;
     }
     if (nextIndex >= storage.itemCount)
-        return POOL_REJECT("slot-state next index is in range");
+        return Pool_Reject(
+            __LINE__, "slot-state next index is in range", reportFailure);
 
     *outNext = Pool_SlotAt(storage, nextIndex);
     return true;
@@ -283,26 +321,32 @@ bool Pool_TryDecodeNext(
 bool Pool_FastStateIsValid(
     const poolstorage_t storage,
     const pooldata_t *const pooldata,
-    PoolFastState *const outState) noexcept
+    PoolFastState *const outState,
+    const bool reportFailure = true) noexcept
 {
     PoolDescriptorRanges ranges{};
-    if (!Pool_StorageIsValid(storage, &ranges)
-        || !Pool_MetadataIsSeparate(pooldata, ranges)
-        || !Pool_ControlBindingIsValid(storage, pooldata))
+    if (!Pool_StorageIsValid(storage, &ranges, reportFailure)
+        || !Pool_MetadataIsSeparate(pooldata, ranges, reportFailure)
+        || !Pool_ControlBindingIsValid(storage, pooldata, reportFailure))
     {
         return false;
     }
 
     const poolcontrol_t &control = *storage.control;
     if (pooldata->activeCount < 0)
-        return POOL_REJECT("pooldata->activeCount >= 0");
+        return Pool_Reject(
+            __LINE__, "pooldata->activeCount >= 0", reportFailure);
     if (control.activeCount != pooldata->activeCount)
-        return POOL_REJECT("control.activeCount == pooldata->activeCount");
+        return Pool_Reject(
+            __LINE__,
+            "control.activeCount == pooldata->activeCount",
+            reportFailure);
 
     const std::size_t activeCount =
         static_cast<std::size_t>(pooldata->activeCount);
     if (activeCount > storage.itemCount)
-        return POOL_REJECT("activeCount <= storage.itemCount");
+        return Pool_Reject(
+            __LINE__, "activeCount <= storage.itemCount", reportFailure);
 
     PoolFastState state{
         activeCount,
@@ -314,9 +358,15 @@ bool Pool_FastStateIsValid(
     if (activeCount == storage.itemCount)
     {
         if (pooldata->firstFree)
-            return POOL_REJECT("a full pool requires a null free-list head");
+            return Pool_Reject(
+                __LINE__,
+                "a full pool requires a null free-list head",
+                reportFailure);
         if (control.headIndex != POOL_SLOT_END)
-            return POOL_REJECT("a full pool requires an end control head");
+            return Pool_Reject(
+                __LINE__,
+                "a full pool requires an end control head",
+                reportFailure);
         if (outState)
             *outState = state;
         return true;
@@ -324,29 +374,51 @@ bool Pool_FastStateIsValid(
 
     std::size_t headIndex = 0;
     if (!Pool_TryGetSlotIndex(storage, pooldata->firstFree, &headIndex))
-        return POOL_REJECT("free-list head is an exact pool slot");
+        return Pool_Reject(
+            __LINE__,
+            "free-list head is an exact pool slot",
+            reportFailure);
     if (headIndex != control.headIndex)
-        return POOL_REJECT("free-list head matches the control head");
+        return Pool_Reject(
+            __LINE__,
+            "free-list head matches the control head",
+            reportFailure);
 
     const poolslotstate_t nextIndex = control.slotState[headIndex];
     if (nextIndex == POOL_SLOT_ALLOCATED)
-        return POOL_REJECT("free-list head is not marked allocated");
+        return Pool_Reject(
+            __LINE__,
+            "free-list head is not marked allocated",
+            reportFailure);
 
     void *expectedNext = nullptr;
-    if (!Pool_TryDecodeNext(storage, nextIndex, &expectedNext))
+    if (!Pool_TryDecodeNext(
+            storage, nextIndex, &expectedNext, reportFailure))
         return false;
     if (!Pool_LinkMatches(pooldata->firstFree, expectedNext))
-        return POOL_REJECT("free-list head link matches slot-state control");
+        return Pool_Reject(
+            __LINE__,
+            "free-list head link matches slot-state control",
+            reportFailure);
 
     const bool allocationWouldFill = activeCount + 1 == storage.itemCount;
     if (allocationWouldFill != (nextIndex == POOL_SLOT_END))
-        return POOL_REJECT("free-list end matches inactive slot count");
+        return Pool_Reject(
+            __LINE__,
+            "free-list end matches inactive slot count",
+            reportFailure);
     if (nextIndex != POOL_SLOT_END)
     {
         if (nextIndex == headIndex)
-            return POOL_REJECT("free-list head does not link to itself");
+            return Pool_Reject(
+                __LINE__,
+                "free-list head does not link to itself",
+                reportFailure);
         if (control.slotState[nextIndex] == POOL_SLOT_ALLOCATED)
-            return POOL_REJECT("free-list next slot is not marked allocated");
+            return Pool_Reject(
+                __LINE__,
+                "free-list next slot is not marked allocated",
+                reportFailure);
     }
 
     state.headIndex = static_cast<poolslotstate_t>(headIndex);
@@ -503,12 +575,89 @@ bool __cdecl Pool_Free(
     return true;
 }
 
-bool __cdecl Pool_ValidateFull(
+poolallocresult_t __cdecl Pool_TryAllocNoReport(
     const poolstorage_t storage,
-    const pooldata_t *const pooldata) noexcept
+    pooldata_t *const pooldata) noexcept
 {
     PoolFastState state{};
-    if (!Pool_FastStateIsValid(storage, pooldata, &state))
+    if (!Pool_FastStateIsValid(storage, pooldata, &state, false))
+        return {poolmutationstatus_t::InvalidState, nullptr};
+    if (state.activeCount == storage.itemCount)
+        return {poolmutationstatus_t::Unavailable, nullptr};
+
+    poolcontrol_t &control = *storage.control;
+    control.slotState[state.headIndex] = POOL_SLOT_ALLOCATED;
+    control.headIndex = state.nextIndex;
+    ++control.activeCount;
+    pooldata->firstFree = state.next;
+    ++pooldata->activeCount;
+    return {poolmutationstatus_t::Success, state.head};
+}
+
+poolmutationstatus_t __cdecl Pool_TryFreeNoReport(
+    const poolstorage_t storage,
+    pooldata_t *const pooldata,
+    void *const item) noexcept
+{
+    if (!item)
+        return poolmutationstatus_t::InvalidState;
+
+    PoolFastState state{};
+    if (!Pool_FastStateIsValid(storage, pooldata, &state, false)
+        || state.activeCount == 0)
+    {
+        return poolmutationstatus_t::InvalidState;
+    }
+
+    std::size_t itemIndex = 0;
+    if (!Pool_TryGetSlotIndex(storage, item, &itemIndex))
+        return poolmutationstatus_t::InvalidState;
+
+    poolcontrol_t &control = *storage.control;
+    if (control.slotState[itemIndex] != POOL_SLOT_ALLOCATED)
+        return poolmutationstatus_t::InvalidState;
+
+    Pool_WriteNext(item, state.head);
+    control.slotState[itemIndex] = state.headIndex;
+    control.headIndex = static_cast<poolslotstate_t>(itemIndex);
+    --control.activeCount;
+    pooldata->firstFree = item;
+    --pooldata->activeCount;
+    return poolmutationstatus_t::Success;
+}
+
+poolmutationstatus_t __cdecl Pool_TryValidateAllocatedNoReport(
+    const poolstorage_t storage,
+    const pooldata_t *const pooldata,
+    const void *const item) noexcept
+{
+    if (!item)
+        return poolmutationstatus_t::InvalidState;
+
+    PoolFastState state{};
+    if (!Pool_FastStateIsValid(storage, pooldata, &state, false)
+        || state.activeCount == 0)
+    {
+        return poolmutationstatus_t::InvalidState;
+    }
+
+    std::size_t itemIndex = 0;
+    if (!Pool_TryGetSlotIndex(storage, item, &itemIndex)
+        || storage.control->slotState[itemIndex] != POOL_SLOT_ALLOCATED)
+    {
+        return poolmutationstatus_t::InvalidState;
+    }
+    return poolmutationstatus_t::Success;
+}
+
+static bool Pool_ValidateFullImpl(
+    const poolstorage_t storage,
+    const pooldata_t *const pooldata,
+    const bool reportFailure) noexcept
+{
+    PoolFastState state{};
+    if (!Pool_FastStateIsValid(
+            storage, pooldata, &state, reportFailure))
         return false;
 
     const poolcontrol_t &control = *storage.control;
@@ -522,36 +671,68 @@ bool __cdecl Pool_ValidateFull(
             continue;
         }
         if (slotState != POOL_SLOT_END && slotState >= storage.itemCount)
-            return POOL_REJECT("every slot-state value is valid");
+            return Pool_Reject(
+                __LINE__, "every slot-state value is valid", reportFailure);
     }
     if (allocatedCount != state.activeCount)
-        return POOL_REJECT("allocated slot-state count matches activeCount");
+        return Pool_Reject(
+            __LINE__,
+            "allocated slot-state count matches activeCount",
+            reportFailure);
 
     const std::size_t expectedFreeCount = storage.itemCount - state.activeCount;
     poolslotstate_t index = control.headIndex;
     for (std::size_t visited = 0; visited < expectedFreeCount; ++visited)
     {
         if (index == POOL_SLOT_END || index >= storage.itemCount)
-            return POOL_REJECT("free-list contains every inactive slot");
+            return Pool_Reject(
+                __LINE__,
+                "free-list contains every inactive slot",
+                reportFailure);
 
         const poolslotstate_t nextIndex = control.slotState[index];
         if (nextIndex == POOL_SLOT_ALLOCATED)
-            return POOL_REJECT("free-list node is not marked allocated");
+            return Pool_Reject(
+                __LINE__,
+                "free-list node is not marked allocated",
+                reportFailure);
 
         void *expectedNext = nullptr;
-        if (!Pool_TryDecodeNext(storage, nextIndex, &expectedNext))
+        if (!Pool_TryDecodeNext(
+                storage, nextIndex, &expectedNext, reportFailure))
             return false;
         if (!Pool_LinkMatches(Pool_SlotAt(storage, index), expectedNext))
         {
-            return POOL_REJECT(
-                "every free-list link matches slot-state control");
+            return Pool_Reject(
+                __LINE__,
+                "every free-list link matches slot-state control",
+                reportFailure);
         }
         index = nextIndex;
     }
 
     if (index != POOL_SLOT_END)
-        return POOL_REJECT("free-list length matches inactive slot count");
+        return Pool_Reject(
+            __LINE__,
+            "free-list length matches inactive slot count",
+            reportFailure);
     return true;
+}
+
+bool __cdecl Pool_ValidateFull(
+    const poolstorage_t storage,
+    const pooldata_t *const pooldata) noexcept
+{
+    return Pool_ValidateFullImpl(storage, pooldata, true);
+}
+
+poolmutationstatus_t __cdecl Pool_TryValidateFullNoReport(
+    const poolstorage_t storage,
+    const pooldata_t *const pooldata) noexcept
+{
+    return Pool_ValidateFullImpl(storage, pooldata, false)
+        ? poolmutationstatus_t::Success
+        : poolmutationstatus_t::InvalidState;
 }
 
 poolcountresult_t __cdecl Pool_GetFreeCount(

@@ -238,6 +238,17 @@ void TestLayoutAndFactories()
         "alloc noexcept");
     static_assert(noexcept(Pool_Free(poolstorage_t{}, nullptr, nullptr)),
         "free noexcept");
+    static_assert(noexcept(Pool_TryAllocNoReport(poolstorage_t{}, nullptr)),
+        "silent alloc noexcept");
+    static_assert(noexcept(
+        Pool_TryFreeNoReport(poolstorage_t{}, nullptr, nullptr)),
+        "silent free noexcept");
+    static_assert(noexcept(Pool_TryValidateAllocatedNoReport(
+        poolstorage_t{}, nullptr, nullptr)),
+        "silent allocated validation noexcept");
+    static_assert(noexcept(
+        Pool_TryValidateFullNoReport(poolstorage_t{}, nullptr)),
+        "silent full validation noexcept");
     static_assert(noexcept(Pool_ValidateFull(poolstorage_t{}, nullptr)),
         "full validation noexcept");
     static_assert(noexcept(Pool_GetFreeCount(poolstorage_t{}, nullptr)),
@@ -1147,6 +1158,75 @@ void TestInvalidation()
         "wrong-binding Pool_Invalidate did not assert",
         "wrong-binding Pool_Invalidate mutated state");
 }
+
+void TestNoReportMutationPrimitives()
+{
+    PoolFixture fixture;
+    Check(fixture.Initialize(), "silent-operation fixture did not initialize");
+    const std::size_t assertionsBefore = g_assertionCount;
+
+    Check(Pool_TryValidateFullNoReport(fixture.storage, &fixture.data)
+            == poolmutationstatus_t::Success,
+        "silent full validation rejected a valid pool");
+    Check(Pool_TryValidateAllocatedNoReport(
+              fixture.storage, &fixture.data, fixture.Slot(0))
+            == poolmutationstatus_t::InvalidState,
+        "silent allocated validation accepted a free slot");
+
+    std::array<void *, kSlotCount> allocated{};
+    for (std::size_t index = 0; index < kSlotCount; ++index)
+    {
+        const poolallocresult_t result =
+            Pool_TryAllocNoReport(fixture.storage, &fixture.data);
+        allocated[index] = result.item;
+        Check(result.status == poolmutationstatus_t::Success
+                && result.item == fixture.Slot(index),
+            "silent allocation returned the wrong result");
+        Check(Pool_TryValidateAllocatedNoReport(
+                  fixture.storage, &fixture.data, result.item)
+                == poolmutationstatus_t::Success,
+            "silent allocated validation rejected a live slot");
+    }
+
+    const PoolSnapshot exhausted = Capture(fixture);
+    const poolallocresult_t unavailable =
+        Pool_TryAllocNoReport(fixture.storage, &fixture.data);
+    Check(unavailable.status == poolmutationstatus_t::Unavailable
+            && unavailable.item == nullptr,
+        "silent exhaustion did not return Unavailable");
+    CheckUnchanged(fixture, exhausted,
+        "silent exhaustion mutated allocator state");
+
+    alignas(void *) unsigned char foreign[sizeof(void *)]{};
+    const PoolSnapshot beforeInvalidFree = Capture(fixture);
+    Check(Pool_TryFreeNoReport(
+              fixture.storage, &fixture.data, foreign)
+            == poolmutationstatus_t::InvalidState,
+        "silent free accepted a foreign pointer");
+    CheckUnchanged(fixture, beforeInvalidFree,
+        "rejected silent free mutated allocator state");
+
+    Check(Pool_TryFreeNoReport(
+              fixture.storage, &fixture.data, allocated[3])
+            == poolmutationstatus_t::Success,
+        "silent free rejected an allocated slot");
+    Check(Pool_TryValidateAllocatedNoReport(
+              fixture.storage, &fixture.data, allocated[3])
+            == poolmutationstatus_t::InvalidState,
+        "silent allocated validation accepted a freed slot");
+
+    PoolFixture corrupt;
+    PrepareOneAllocated(corrupt);
+    corrupt.slotState[7] = 7;
+    const PoolSnapshot corruptSnapshot = Capture(corrupt);
+    Check(Pool_TryValidateFullNoReport(corrupt.storage, &corrupt.data)
+            == poolmutationstatus_t::InvalidState,
+        "silent full validation accepted dormant corruption");
+    CheckUnchanged(corrupt, corruptSnapshot,
+        "silent full validation mutated corrupt state");
+    Check(g_assertionCount == assertionsBefore,
+        "a no-report pool primitive raised an assertion");
+}
 } // namespace
 
 void MyAssertHandler(const char *, int, int, const char *, ...)
@@ -1165,6 +1245,7 @@ int main()
     TestDuplicateFreeAndLocalCorruption();
     TestDormantCorruptionAndFullValidation();
     TestInvalidation();
+    TestNoReportMutationPrimitives();
 
     if (g_failureCount != 0)
     {
