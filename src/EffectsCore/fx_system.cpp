@@ -6683,7 +6683,7 @@ FxModelPhysicsSpawnResult FX_TrySpawnModelPhysics(
     }
 
     dxBody *body = nullptr;
-    result.physicsStatus = Phys_TryCreateBodyFromPresetAndXModel(
+    result.physicsStatus = Phys_TryCreateBodyFromPresetAndXModelLockedNoReport(
         PHYS_WORLD_FX,
         worldOrigin,
         quat,
@@ -6701,7 +6701,18 @@ FxModelPhysicsSpawnResult FX_TrySpawnModelPhysics(
         return result;
     }
 
-    Phys_ObjSetAngularVelocity(body, angularVelocity);
+    if (!Phys_TryObjSetAngularVelocityLockedNoReport(
+            body, angularVelocity))
+    {
+        result.outcome = FxModelPhysicsSpawnOutcome::InvalidState;
+        const PhysBodyRollbackStatus cleanupStatus =
+            Phys_TryDestroyBodyLockedNoReport(PHYS_WORLD_FX, body);
+        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        if (cleanupStatus != PhysBodyRollbackStatus::Success)
+            std::abort();
+        return result;
+    }
+
     const fx::physics::TokenResult binding = fx::physics::Bind(
         sidecar, static_cast<std::size_t>(ownerIndex), body);
     result.sidecarStatus = binding.status;
@@ -6710,13 +6721,20 @@ FxModelPhysicsSpawnResult FX_TrySpawnModelPhysics(
         // DuplicateBody means the allocator returned an address already owned
         // by a live registration. That registration retains the sole right to
         // destroy it; all other Bind failures leave this fresh body caller-owned.
+        PhysBodyRollbackStatus cleanupStatus =
+            PhysBodyRollbackStatus::Success;
         if (binding.status != fx::physics::SidecarStatus::DuplicateBody)
-            Phys_ObjDestroy(PHYS_WORLD_FX, body);
+        {
+            cleanupStatus = Phys_TryDestroyBodyLockedNoReport(
+                PHYS_WORLD_FX, body);
+        }
         result.outcome = binding.status
                 == fx::physics::SidecarStatus::CapacityExceeded
             ? FxModelPhysicsSpawnOutcome::ResourceUnavailable
             : FxModelPhysicsSpawnOutcome::OwnershipRejected;
         Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        if (cleanupStatus != PhysBodyRollbackStatus::Success)
+            std::abort();
         return result;
     }
 
