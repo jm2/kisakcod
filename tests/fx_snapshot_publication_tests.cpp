@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <thread>
 
 namespace
@@ -186,10 +187,68 @@ bool RejectsSelectorsWithoutChangingOutputs(
         && writeSelector == UINT8_C(0x5A);
 }
 
+struct VisibilitySelectorFixture
+{
+    FxVisState live[2]{};
+    FxVisState staged[2]{};
+    FxVisState foreign{};
+};
+
+union VisibilitySelectorOutputAlias
+{
+    const FxVisState *read;
+    FxVisState *write;
+};
+
+bool SelectorPairsEqual(
+    const FxVisibilityBufferSelectors &left,
+    const FxVisibilityBufferSelectors &right) noexcept
+{
+    return left.read == right.read && left.write == right.write;
+}
+
+bool RejectsSelectorPairWithoutChangingOutput(
+    const FxVisState *const slot0,
+    const FxVisState *const slot1,
+    const FxVisState *const readState,
+    const FxVisState *const writeState) noexcept
+{
+    const FxVisibilityBufferSelectors sentinel{
+        UINT8_C(0xA5), UINT8_C(0x5A)};
+    FxVisibilityBufferSelectors selectors = sentinel;
+    return !FX_TryDeriveVisibilitySelectorPair(
+               slot0,
+               slot1,
+               readState,
+               writeState,
+               &selectors)
+        && SelectorPairsEqual(selectors, sentinel);
+}
+
+bool RejectsResolutionWithoutChangingOutputs(
+    FxVisState *const slot0,
+    FxVisState *const slot1,
+    const FxVisibilityBufferSelectors &selectors,
+    const FxVisState *const readSentinel,
+    FxVisState *const writeSentinel) noexcept
+{
+    const FxVisState *readState = readSentinel;
+    FxVisState *writeState = writeSentinel;
+    return !FX_TryResolveVisibilitySelectors(
+               slot0,
+               slot1,
+               selectors,
+               &readState,
+               &writeState)
+        && readState == readSentinel
+        && writeState == writeSentinel;
+}
+
 bool TestVisibilitySelectorDerivation()
 {
-    FxVisState slots[2]{};
-    FxVisState foreign{};
+    const auto fixture = std::make_unique<VisibilitySelectorFixture>();
+    FxVisState *const slots = fixture->live;
+    FxVisState *const foreign = &fixture->foreign;
     std::uint8_t readSelector = UINT8_C(0xFF);
     std::uint8_t writeSelector = UINT8_C(0xFF);
 
@@ -229,9 +288,13 @@ bool TestVisibilitySelectorDerivation()
         || !RejectsSelectorsWithoutChangingOutputs(
             &slots[0], &slots[1], &slots[0], nullptr)
         || !RejectsSelectorsWithoutChangingOutputs(
-            &slots[0], &slots[1], &foreign, &slots[1])
+            &slots[0], &slots[1], foreign, &slots[1])
         || !RejectsSelectorsWithoutChangingOutputs(
-            &slots[0], &slots[1], &slots[0], &foreign)
+            &slots[0], &slots[1], &slots[0], foreign)
+        || !RejectsSelectorsWithoutChangingOutputs(
+            &slots[0], &slots[1], &slots[2], &slots[1])
+        || !RejectsSelectorsWithoutChangingOutputs(
+            &slots[0], &slots[1], &slots[0], &slots[2])
         || !RejectsSelectorsWithoutChangingOutputs(
             &slots[0], &slots[1], &slots[0], &slots[0])
         || !RejectsSelectorsWithoutChangingOutputs(
@@ -276,6 +339,277 @@ bool TestVisibilitySelectorDerivation()
                &aliasedOutput,
                &aliasedOutput)
         && aliasedOutput == UINT8_C(0xCC);
+}
+
+bool TestVisibilitySelectorPairDerivation()
+{
+    const auto fixture = std::make_unique<VisibilitySelectorFixture>();
+    FxVisState *const slots = fixture->live;
+    FxVisState *const foreign = &fixture->foreign;
+    FxVisibilityBufferSelectors selectors{
+        UINT8_C(0xFF), UINT8_C(0xFF)};
+
+    if (!FX_TryDeriveVisibilitySelectorPair(
+            &slots[0],
+            &slots[1],
+            &slots[0],
+            &slots[1],
+            &selectors)
+        || !SelectorPairsEqual(selectors, {0u, 1u}))
+    {
+        return false;
+    }
+    selectors = {UINT8_C(0xFF), UINT8_C(0xFF)};
+    if (!FX_TryDeriveVisibilitySelectorPair(
+            &slots[0],
+            &slots[1],
+            &slots[1],
+            &slots[0],
+            &selectors)
+        || !SelectorPairsEqual(selectors, {1u, 0u}))
+    {
+        return false;
+    }
+
+    if (!RejectsSelectorPairWithoutChangingOutput(
+            nullptr, &slots[1], &slots[0], &slots[1])
+        || !RejectsSelectorPairWithoutChangingOutput(
+            &slots[0], nullptr, &slots[0], &slots[1])
+        || !RejectsSelectorPairWithoutChangingOutput(
+            &slots[0], &slots[0], &slots[0], &slots[0])
+        || !RejectsSelectorPairWithoutChangingOutput(
+            &slots[0], &slots[1], nullptr, &slots[1])
+        || !RejectsSelectorPairWithoutChangingOutput(
+            &slots[0], &slots[1], &slots[0], nullptr)
+        || !RejectsSelectorPairWithoutChangingOutput(
+            &slots[0], &slots[1], foreign, &slots[1])
+        || !RejectsSelectorPairWithoutChangingOutput(
+            &slots[0], &slots[1], &slots[0], foreign)
+        || !RejectsSelectorPairWithoutChangingOutput(
+            &slots[0], &slots[1], &slots[2], &slots[1])
+        || !RejectsSelectorPairWithoutChangingOutput(
+            &slots[0], &slots[1], &slots[0], &slots[2])
+        || !RejectsSelectorPairWithoutChangingOutput(
+            &slots[0], &slots[1], &slots[0], &slots[0])
+        || !RejectsSelectorPairWithoutChangingOutput(
+            &slots[0], &slots[1], &slots[1], &slots[1]))
+    {
+        return false;
+    }
+
+    const FxVisibilityBufferSelectors sentinel{
+        UINT8_C(0xA5), UINT8_C(0x5A)};
+    selectors = sentinel;
+    return !FX_TryDeriveVisibilitySelectorPair(
+               &slots[0],
+               &slots[1],
+               &slots[0],
+               &slots[1],
+               nullptr)
+        && SelectorPairsEqual(selectors, sentinel);
+}
+
+bool TestVisibilitySelectorResolution()
+{
+    const auto fixture = std::make_unique<VisibilitySelectorFixture>();
+    FxVisState *const live = fixture->live;
+    FxVisState *const staged = fixture->staged;
+    FxVisState *const foreign = &fixture->foreign;
+    const FxVisibilityBufferSelectors canonical{0u, 1u};
+    const FxVisibilityBufferSelectors swapped{1u, 0u};
+    const FxVisibilityBufferSelectors zeroInitialized{};
+    if (zeroInitialized.read != 0u || zeroInitialized.write != 0u
+        || !RejectsResolutionWithoutChangingOutputs(
+            &live[0],
+            &live[1],
+            zeroInitialized,
+            foreign,
+            &staged[0]))
+    {
+        return false;
+    }
+
+    const FxVisState *readState = foreign;
+    FxVisState *writeState = &staged[0];
+    if (!FX_TryResolveVisibilitySelectors(
+            &live[0],
+            &live[1],
+            canonical,
+            &readState,
+            &writeState)
+        || readState != &live[0] || writeState != &live[1]
+        || readState == &staged[0] || readState == &staged[1]
+        || writeState == &staged[0] || writeState == &staged[1])
+    {
+        return false;
+    }
+
+    readState = foreign;
+    writeState = &staged[0];
+    if (!FX_TryResolveVisibilitySelectors(
+            &live[0],
+            &live[1],
+            swapped,
+            &readState,
+            &writeState)
+        || readState != &live[1] || writeState != &live[0]
+        || readState == &staged[0] || readState == &staged[1]
+        || writeState == &staged[0] || writeState == &staged[1])
+    {
+        return false;
+    }
+
+    const FxVisibilityBufferSelectors invalidPairs[] = {
+        {0u, 0u},
+        {1u, 1u},
+        {2u, 0u},
+        {0u, 2u},
+        {UINT8_C(0xFF), 1u},
+        {1u, UINT8_C(0xFF)},
+    };
+    for (const FxVisibilityBufferSelectors &invalid : invalidPairs)
+    {
+        if (!RejectsResolutionWithoutChangingOutputs(
+                &live[0],
+                &live[1],
+                invalid,
+                foreign,
+                &staged[0]))
+        {
+            return false;
+        }
+    }
+
+    if (!RejectsResolutionWithoutChangingOutputs(
+            nullptr,
+            &live[1],
+            canonical,
+            foreign,
+            &staged[0])
+        || !RejectsResolutionWithoutChangingOutputs(
+            &live[0],
+            nullptr,
+            canonical,
+            foreign,
+            &staged[0])
+        || !RejectsResolutionWithoutChangingOutputs(
+            &live[0],
+            &live[0],
+            canonical,
+            foreign,
+            &staged[0]))
+    {
+        return false;
+    }
+
+    readState = foreign;
+    writeState = &staged[0];
+    if (FX_TryResolveVisibilitySelectors(
+            &live[0],
+            &live[1],
+            canonical,
+            nullptr,
+            &writeState)
+        || writeState != &staged[0])
+    {
+        return false;
+    }
+    if (FX_TryResolveVisibilitySelectors(
+            &live[0],
+            &live[1],
+            canonical,
+            &readState,
+            nullptr)
+        || readState != foreign)
+    {
+        return false;
+    }
+
+    VisibilitySelectorOutputAlias aliasedOutput{};
+    aliasedOutput.read = foreign;
+    if (FX_TryResolveVisibilitySelectors(
+            &live[0],
+            &live[1],
+            canonical,
+            &aliasedOutput.read,
+            &aliasedOutput.write)
+        || aliasedOutput.read != foreign)
+    {
+        return false;
+    }
+
+    return FX_VisibilitySelectorsRoundTrip(
+        &live[0],
+        &live[1],
+        &live[0],
+        &live[1],
+        canonical);
+}
+
+bool TestVisibilitySelectorRoundTripRejection()
+{
+    const auto fixture = std::make_unique<VisibilitySelectorFixture>();
+    FxVisState *const live = fixture->live;
+    FxVisState *const staged = fixture->staged;
+    FxVisState *const foreign = &fixture->foreign;
+    const FxVisibilityBufferSelectors canonical{0u, 1u};
+    const FxVisibilityBufferSelectors swapped{1u, 0u};
+
+    if (!FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &live[0], &live[1], canonical)
+        || !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &live[1], &live[0], swapped)
+        || FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &live[0], &live[1], swapped)
+        || FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &live[1], &live[0], canonical))
+    {
+        return false;
+    }
+
+    const FxVisibilityBufferSelectors invalidPairs[] = {
+        {0u, 0u},
+        {1u, 1u},
+        {2u, 0u},
+        {0u, 2u},
+        {UINT8_C(0xFF), 1u},
+        {1u, UINT8_C(0xFF)},
+    };
+    for (const FxVisibilityBufferSelectors &invalid : invalidPairs)
+    {
+        if (FX_VisibilitySelectorsRoundTrip(
+                &live[0], &live[1], &live[0], &live[1], invalid))
+        {
+            return false;
+        }
+    }
+
+    return !FX_VisibilitySelectorsRoundTrip(
+               nullptr, &live[1], &live[0], &live[1], canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], nullptr, &live[0], &live[1], canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[0], &live[0], &live[0], canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], nullptr, &live[1], canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &live[0], nullptr, canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &staged[0], &live[1], canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &live[0], &staged[1], canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], foreign, &live[1], canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &live[0], foreign, canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &live[2], &live[1], canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &live[0], &live[2], canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &live[0], &live[0], canonical)
+        && !FX_VisibilitySelectorsRoundTrip(
+            &live[0], &live[1], &live[1], &live[1], swapped);
 }
 
 struct PublicationFixture
@@ -524,6 +858,12 @@ int main()
         return Fail("archive camera readiness");
     if (!TestVisibilitySelectorDerivation())
         return Fail("visibility selector derivation and rejection");
+    if (!TestVisibilitySelectorPairDerivation())
+        return Fail("visibility selector-pair derivation and rejection");
+    if (!TestVisibilitySelectorResolution())
+        return Fail("visibility selector resolution and failure atomicity");
+    if (!TestVisibilitySelectorRoundTripRejection())
+        return Fail("visibility selector roundtrip and rejection");
     if (!TestCooperativeWriterVersusExclusiveSnapshot())
         return Fail("cooperative writer versus exclusive snapshot coherence");
     if (!TestSharedCameraReadersExcludeWriter())

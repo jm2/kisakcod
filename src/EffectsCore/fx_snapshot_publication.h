@@ -115,10 +115,54 @@ inline bool FX_AreArchiveCamerasReady(
             || FX_IsCanonicalInvalidCamera(previousCamera));
 }
 
+// Zero initialization is deliberately invalid. Restore publication must
+// explicitly capture both distinct roles before this pair can resolve any
+// live visibility-buffer pointer.
+struct FxVisibilityBufferSelectors
+{
+    std::uint8_t read = 0;
+    std::uint8_t write = 0;
+};
+
 // Derive the read/write state selectors as one checked transaction. Exact
 // pointer equality is intentional: neither foreign interior pointers nor an
 // archived process address may be interpreted as a visibility-buffer index.
-// Outputs are committed only after both selectors are known to be distinct.
+// The pair output is committed only after both selectors are known to be
+// distinct.
+inline bool FX_TryDeriveVisibilitySelectorPair(
+    const FxVisState *const slot0,
+    const FxVisState *const slot1,
+    const FxVisState *const readState,
+    const FxVisState *const writeState,
+    FxVisibilityBufferSelectors *const outSelectors) noexcept
+{
+    if (!slot0 || !slot1 || slot0 == slot1 || !readState || !writeState
+        || readState == writeState || !outSelectors)
+    {
+        return false;
+    }
+
+    FxVisibilityBufferSelectors selectors{};
+    if (readState == slot1)
+        selectors.read = 1;
+    else if (readState != slot0)
+        return false;
+
+    if (writeState == slot1)
+        selectors.write = 1;
+    else if (writeState != slot0)
+        return false;
+
+    if (selectors.read == selectors.write)
+        return false;
+
+    *outSelectors = selectors;
+    return true;
+}
+
+// Preserve the original two-output API while delegating validation to the
+// single-pair transaction above. Aliased outputs remain invalid, and neither
+// byte is changed when any validation fails.
 inline bool FX_TryDeriveVisibilitySelectors(
     const FxVisState *const slot0,
     const FxVisState *const slot1,
@@ -127,29 +171,78 @@ inline bool FX_TryDeriveVisibilitySelectors(
     std::uint8_t *const outReadSelector,
     std::uint8_t *const outWriteSelector) noexcept
 {
-    if (!slot0 || !slot1 || slot0 == slot1 || !readState || !writeState
-        || readState == writeState || !outReadSelector || !outWriteSelector
+    if (!outReadSelector || !outWriteSelector
         || outReadSelector == outWriteSelector)
     {
         return false;
     }
 
-    std::uint8_t readSelector = 0;
-    if (readState == slot1)
-        readSelector = 1;
-    else if (readState != slot0)
+    FxVisibilityBufferSelectors selectors{};
+    if (!FX_TryDeriveVisibilitySelectorPair(
+            slot0,
+            slot1,
+            readState,
+            writeState,
+            &selectors))
+    {
         return false;
+    }
 
-    std::uint8_t writeSelector = 0;
-    if (writeState == slot1)
-        writeSelector = 1;
-    else if (writeState != slot0)
-        return false;
-
-    if (readSelector == writeSelector)
-        return false;
-
-    *outReadSelector = readSelector;
-    *outWriteSelector = writeSelector;
+    *outReadSelector = selectors.read;
+    *outWriteSelector = selectors.write;
     return true;
+}
+
+// Resolve a validated selector pair only against the two exact slots supplied
+// by the caller. Pointer outputs are committed after every slot, selector, and
+// output check succeeds, so failure cannot publish a partial role update.
+inline bool FX_TryResolveVisibilitySelectors(
+    FxVisState *const slot0,
+    FxVisState *const slot1,
+    const FxVisibilityBufferSelectors &selectors,
+    const FxVisState **const outReadState,
+    FxVisState **const outWriteState) noexcept
+{
+    if (!slot0 || !slot1 || slot0 == slot1
+        || selectors.read >= 2 || selectors.write >= 2
+        || selectors.read == selectors.write
+        || !outReadState || !outWriteState
+        || static_cast<const void *>(outReadState)
+            == static_cast<const void *>(outWriteState))
+    {
+        return false;
+    }
+
+    const FxVisState *const readState = selectors.read == 0
+        ? slot0
+        : slot1;
+    FxVisState *const writeState = selectors.write == 0
+        ? slot0
+        : slot1;
+    if (readState == writeState)
+        return false;
+
+    *outReadState = readState;
+    *outWriteState = writeState;
+    return true;
+}
+
+// Re-derive the exact pointer roles and compare them with the expected pair.
+// This is a pure validation operation and cannot repair or publish pointers.
+inline bool FX_VisibilitySelectorsRoundTrip(
+    const FxVisState *const slot0,
+    const FxVisState *const slot1,
+    const FxVisState *const readState,
+    const FxVisState *const writeState,
+    const FxVisibilityBufferSelectors &expectedSelectors) noexcept
+{
+    FxVisibilityBufferSelectors observedSelectors{};
+    return FX_TryDeriveVisibilitySelectorPair(
+               slot0,
+               slot1,
+               readState,
+               writeState,
+               &observedSelectors)
+        && observedSelectors.read == expectedSelectors.read
+        && observedSelectors.write == expectedSelectors.write;
 }

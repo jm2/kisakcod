@@ -1912,14 +1912,31 @@ FX_CreateArchivePhysicsLocked(
     return Status::Success;
 }
 
+bool FX_ArchiveVisibilitySelectorsMatch(
+    const FxSystem *const system,
+    const FxSystemBuffers *const buffers,
+    const FxVisibilityBufferSelectors &expectedSelectors) noexcept
+{
+    return system && buffers
+        && system->visState == buffers->visState
+        && FX_VisibilitySelectorsRoundTrip(
+            &buffers->visState[0],
+            &buffers->visState[1],
+            system->visStateBufferRead,
+            system->visStateBufferWrite,
+            expectedSelectors);
+}
+
 struct FxArchiveRestoreControlContext
 {
     FxSystem *system;
     FxSystemBuffers *systemBuffers;
     FxSystem *desiredSystem;
     FxSystemBuffers *desiredBuffers;
+    FxVisibilityBufferSelectors desiredVisibilitySelectors{};
     FxSystem *originalSystem;
     FxSystemBuffers *originalBuffers;
+    FxVisibilityBufferSelectors originalVisibilitySelectors{};
     FxArchivePhysicsEntry *desiredPhysicsEntries;
     std::size_t desiredPhysicsEntryCount;
     FxArchivePhysicsEntry *originalPhysicsEntries;
@@ -2050,6 +2067,18 @@ FX_PerformArchiveRestoreControlOperation(
     case Operation::CaptureOriginal:
         return FX_ArchiveRestoreControlStatus(
             context.originalSnapshotExclusive
+            && FX_ArchiveVisibilitySelectorsMatch(
+                context.desiredSystem,
+                context.desiredBuffers,
+                context.desiredVisibilitySelectors)
+            && FX_ArchiveVisibilitySelectorsMatch(
+                context.originalSystem,
+                context.originalBuffers,
+                context.originalVisibilitySelectors)
+            && FX_ArchiveVisibilitySelectorsMatch(
+                context.system,
+                context.systemBuffers,
+                context.originalVisibilitySelectors)
             && FX_ArchiveEffectRingIsValid(context.system)
             && FX_ValidatePoolAllocationGraphStateWithScratch(
                 context.system,
@@ -2126,6 +2155,25 @@ FX_PerformArchiveRestoreControlOperation(
 
     case Operation::PublishDesiredGraph:
     {
+        if (!context.system || !context.systemBuffers)
+            return Status::RecoverableFailure;
+        const bool stagedSelectorsValid =
+            FX_ArchiveVisibilitySelectorsMatch(
+                context.desiredSystem,
+                context.desiredBuffers,
+                context.desiredVisibilitySelectors);
+        const FxVisState *liveReadState = nullptr;
+        FxVisState *liveWriteState = nullptr;
+        const bool liveSelectorsResolved =
+            FX_TryResolveVisibilitySelectors(
+                &context.systemBuffers->visState[0],
+                &context.systemBuffers->visState[1],
+                context.desiredVisibilitySelectors,
+                &liveReadState,
+                &liveWriteState);
+        if (!stagedSelectorsValid || !liveSelectorsResolved)
+            return Status::RecoverableFailure;
+
         context.desiredSystem->isArchiving = false;
         Sys_AtomicStore(&context.desiredSystem->iteratorCount, -1);
 
@@ -2143,8 +2191,14 @@ FX_PerformArchiveRestoreControlOperation(
                 context.desiredSystem,
                 sizeof(*context.system));
             FX_LinkSystemBuffers(context.system, context.systemBuffers);
+            context.system->visStateBufferRead = liveReadState;
+            context.system->visStateBufferWrite = liveWriteState;
             desiredExclusiveState =
-                FX_ValidateArchiveExclusiveState(context.system);
+                FX_ArchiveVisibilitySelectorsMatch(
+                    context.system,
+                    context.systemBuffers,
+                    context.desiredVisibilitySelectors)
+                && FX_ValidateArchiveExclusiveState(context.system);
         }
         Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
         return FX_ArchiveRestoreControlStatus(desiredExclusiveState);
@@ -2152,7 +2206,11 @@ FX_PerformArchiveRestoreControlOperation(
 
     case Operation::ValidateDesiredState:
         return FX_ArchiveRestoreControlStatus(
-            FX_RebuildPoolAllocationStatesNoReport(context.system)
+            FX_ArchiveVisibilitySelectorsMatch(
+                context.system,
+                context.systemBuffers,
+                context.desiredVisibilitySelectors)
+            && FX_RebuildPoolAllocationStatesNoReport(context.system)
             && FX_ValidatePoolAllocationGraphStateWithScratch(
                 context.system,
                 &context.physicsScratch->poolGraph)
@@ -2250,6 +2308,25 @@ FX_PerformArchiveRestoreControlOperation(
 
     case Operation::PublishOriginalGraph:
     {
+        if (!context.system || !context.systemBuffers)
+            return Status::RecoverableFailure;
+        const bool stagedSelectorsValid =
+            FX_ArchiveVisibilitySelectorsMatch(
+                context.originalSystem,
+                context.originalBuffers,
+                context.originalVisibilitySelectors);
+        const FxVisState *liveReadState = nullptr;
+        FxVisState *liveWriteState = nullptr;
+        const bool liveSelectorsResolved =
+            FX_TryResolveVisibilitySelectors(
+                &context.systemBuffers->visState[0],
+                &context.systemBuffers->visState[1],
+                context.originalVisibilitySelectors,
+                &liveReadState,
+                &liveWriteState);
+        if (!stagedSelectorsValid || !liveSelectorsResolved)
+            return Status::RecoverableFailure;
+
         Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
         bool originalExclusiveState =
             FX_ValidateArchiveExclusiveState(context.system);
@@ -2264,9 +2341,15 @@ FX_PerformArchiveRestoreControlOperation(
                 context.originalSystem,
                 sizeof(*context.system));
             FX_LinkSystemBuffers(context.system, context.systemBuffers);
+            context.system->visStateBufferRead = liveReadState;
+            context.system->visStateBufferWrite = liveWriteState;
             context.originalGraphPublished = true;
             originalExclusiveState =
-                FX_ValidateArchiveExclusiveState(context.system);
+                FX_ArchiveVisibilitySelectorsMatch(
+                    context.system,
+                    context.systemBuffers,
+                    context.originalVisibilitySelectors)
+                && FX_ValidateArchiveExclusiveState(context.system);
         }
         Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
         return FX_ArchiveRestoreControlStatus(originalExclusiveState);
@@ -2277,7 +2360,11 @@ FX_PerformArchiveRestoreControlOperation(
         // allocation sidecars. Snapshot recovery copied the saved graph and
         // must rebuild those sidecars before validating the restored image.
         return FX_ArchiveRestoreControlStatus(
-            (!context.originalGraphPublished
+            FX_ArchiveVisibilitySelectorsMatch(
+                context.system,
+                context.systemBuffers,
+                context.originalVisibilitySelectors)
+            && (!context.originalGraphPublished
                 || FX_RebuildPoolAllocationStatesNoReport(context.system))
             && FX_ValidatePoolAllocationGraphStateWithScratch(
                 context.system,
@@ -2640,12 +2727,37 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
         Com_Error(ERR_DROP, "Invalid FX visibility buffers in archive");
         return;
     }
-    restoredSystem.visStateBufferRead =
-        reinterpret_cast<const FxVisState *>(
-            static_cast<std::uintptr_t>(relocatedReadAddress));
-    restoredSystem.visStateBufferWrite =
-        reinterpret_cast<FxVisState *>(
-            static_cast<std::uintptr_t>(relocatedWriteAddress));
+    const FxVisibilityBufferSelectors desiredVisibilitySelectors{
+        relocatedReadAddress == secondLiveVisAddress
+            ? std::uint8_t{1}
+            : std::uint8_t{0},
+        relocatedWriteAddress == secondLiveVisAddress
+            ? std::uint8_t{1}
+            : std::uint8_t{0}};
+    if (!FX_TryResolveVisibilitySelectors(
+            &restoredBuffers->visState[0],
+            &restoredBuffers->visState[1],
+            desiredVisibilitySelectors,
+            &restoredSystem.visStateBufferRead,
+            &restoredSystem.visStateBufferWrite))
+    {
+        if (physicsEntries)
+            Z_Free(physicsEntries, 10);
+        Z_Free(restoredBuffers, 10);
+        Com_Error(ERR_DROP, "Invalid FX visibility buffers in archive");
+        return;
+    }
+    if (!FX_ArchiveVisibilitySelectorsMatch(
+            &restoredSystem,
+            restoredBuffers,
+            desiredVisibilitySelectors))
+    {
+        if (physicsEntries)
+            Z_Free(physicsEntries, 10);
+        Z_Free(restoredBuffers, 10);
+        Com_Error(ERR_DROP, "Invalid FX visibility buffers in archive");
+        return;
+    }
 
     bool physicsDataValid = true;
     for (std::size_t index = 0;
@@ -2751,16 +2863,49 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     // old body is captured as a validated reconstruction recipe before any
     // selected body is detached and destroyed to make replacement capacity.
     FxSystem &rollbackSystem = restoreWorkspace->rollbackSystem;
+    FxVisibilityBufferSelectors originalVisibilitySelectors{};
+    bool rollbackSnapshotExclusive = false;
     Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-    std::memcpy(&rollbackSystem, system, sizeof(rollbackSystem));
-    std::memcpy(rollbackBuffers, systemBuffers, sizeof(*rollbackBuffers));
+    rollbackSnapshotExclusive =
+        FX_ValidateArchiveExclusiveState(system)
+        && FX_TryDeriveVisibilitySelectorPair(
+            &systemBuffers->visState[0],
+            &systemBuffers->visState[1],
+            system->visStateBufferRead,
+            system->visStateBufferWrite,
+            &originalVisibilitySelectors);
+    if (rollbackSnapshotExclusive)
+    {
+        std::memcpy(&rollbackSystem, system, sizeof(rollbackSystem));
+        std::memcpy(
+            rollbackBuffers,
+            systemBuffers,
+            sizeof(*rollbackBuffers));
+        FX_LinkSystemBuffers(&rollbackSystem, rollbackBuffers);
+
+        rollbackSnapshotExclusive =
+            FX_TryResolveVisibilitySelectors(
+                &rollbackBuffers->visState[0],
+                &rollbackBuffers->visState[1],
+                originalVisibilitySelectors,
+                &rollbackSystem.visStateBufferRead,
+                &rollbackSystem.visStateBufferWrite);
+        if (rollbackSnapshotExclusive)
+        {
+            rollbackSnapshotExclusive =
+                FX_ArchiveVisibilitySelectorsMatch(
+                    &rollbackSystem,
+                    rollbackBuffers,
+                    originalVisibilitySelectors)
+                && Sys_AtomicLoad(&rollbackSystem.iteratorCount) == -1
+                && FX_ValidateArchiveExclusiveState(system);
+        }
+    }
     Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
     // The archive owner keeps iterator exclusivity throughout the transaction.
-    // Both staged graph images retain -1 so publication never creates a window
-    // that must be repaired by reacquiring the iterator after the copy.
-    const bool rollbackSnapshotExclusive =
-        FX_ValidateArchiveExclusiveState(system)
-        && Sys_AtomicLoad(&rollbackSystem.iteratorCount) == -1;
+    // Both staged graph images retain -1 and bind visibility selectors only
+    // to their own buffers, so publication never exposes staged pointers or
+    // creates a window that must reacquire the iterator after the copy.
 
     // Lock order for archive restore is archive gate/exclusive iterator, a
     // completed FX_ALLOC snapshot interval, then PHYSICS. The snapshot lock is
@@ -2780,8 +2925,12 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     restoreContext.systemBuffers = systemBuffers;
     restoreContext.desiredSystem = &restoredSystem;
     restoreContext.desiredBuffers = restoredBuffers;
+    restoreContext.desiredVisibilitySelectors =
+        desiredVisibilitySelectors;
     restoreContext.originalSystem = &rollbackSystem;
     restoreContext.originalBuffers = rollbackBuffers;
+    restoreContext.originalVisibilitySelectors =
+        originalVisibilitySelectors;
     restoreContext.desiredPhysicsEntries = physicsEntries;
     restoreContext.desiredPhysicsEntryCount = physicsEntryCount;
     restoreContext.originalPhysicsEntries = replacedPhysicsEntries;

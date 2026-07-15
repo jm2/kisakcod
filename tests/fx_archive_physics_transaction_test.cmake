@@ -712,6 +712,23 @@ foreach(_canonical_graph_pointer IN ITEMS
         "graph reset must reject noncanonical system-buffer pointers")
 endforeach()
 
+extract_slice(
+    "${_system_source}"
+    "fx::physics::SidecarStatus FX_ResetSystemGraphUnderExclusiveClaim("
+    "fx::physics::SidecarStatus FX_ResetSystemUnderLifecycleClaim("
+    _canonical_safe_empty_reset
+    "canonical safe-empty visibility reset")
+require_ordered(
+    "${_canonical_safe_empty_reset}"
+    "system->visStateBufferRead = system->visState;"
+    "system->visStateBufferWrite = system->visState + 1;"
+    "safe-empty publication must restore canonical read-zero/write-one roles")
+require_ordered(
+    "${_canonical_safe_empty_reset}"
+    "system->visStateBufferWrite = system->visState + 1;"
+    "return fx::physics::SidecarStatus::Success;"
+    "safe-empty visibility canonicalization must precede successful reset")
+
 # The shared validator is the proof that the controller remains fully acquired
 # with an Exclusive gate and iterator -1. Publication copies preserve -1 and
 # validate that proof on both sides of graph memcpy operations.
@@ -834,6 +851,55 @@ require_ordered(
 
 extract_slice(
     "${_archive_source}"
+    "bool FX_ArchiveVisibilitySelectorsMatch("
+    "struct FxArchiveRestoreControlContext"
+    _visibility_selector_matcher
+    "archive visibility selector matcher")
+foreach(_selector_match_marker IN ITEMS
+    "system && buffers"
+    "system->visState == buffers->visState"
+    "FX_VisibilitySelectorsRoundTrip("
+    "&buffers->visState[0]"
+    "&buffers->visState[1]"
+    "system->visStateBufferRead"
+    "system->visStateBufferWrite"
+    "expectedSelectors")
+    require_position(
+        "${_visibility_selector_matcher}"
+        "${_selector_match_marker}"
+        _selector_match_position
+        "archive graph admission must round-trip exact visibility roles")
+endforeach()
+require_ordered(
+    "${_visibility_selector_matcher}"
+    "system && buffers"
+    "system->visState == buffers->visState"
+    "selector matching must reject null inputs before dereferencing either graph")
+require_ordered(
+    "${_visibility_selector_matcher}"
+    "system->visState == buffers->visState"
+    "FX_VisibilitySelectorsRoundTrip("
+    "selector matching must prove base-buffer identity before role derivation")
+
+extract_slice(
+    "${_archive_source}"
+    "struct FxArchiveRestoreControlContext"
+    "// The sidecars are last"
+    _restore_context
+    "archive restore controller context")
+require_ordered(
+    "${_restore_context}"
+    "FxSystemBuffers *desiredBuffers;"
+    "FxVisibilityBufferSelectors desiredVisibilitySelectors{};"
+    "the controller context must own the desired selector pair beside its graph")
+require_ordered(
+    "${_restore_context}"
+    "FxSystemBuffers *originalBuffers;"
+    "FxVisibilityBufferSelectors originalVisibilitySelectors{};"
+    "the controller context must own the rollback selector pair beside its graph")
+
+extract_slice(
+    "${_archive_source}"
     "struct FxArchiveRestoreTransactionWorkspace final"
     "static_assert(std::is_nothrow_default_constructible_v<"
     _restore_workspace
@@ -893,7 +959,7 @@ require_absent(
     "graph publication must never reacquire overwritten iterator state")
 require_position(
     "${_restore_source}"
-    "Sys_AtomicLoad(&rollbackSystem.iteratorCount) == -1"
+    "Sys_AtomicLoad(&rollbackSystem.iteratorCount) == -1\n                && FX_ValidateArchiveExclusiveState(system);"
     _rollback_snapshot_exclusive
     "the rollback graph image must preserve iterator -1")
 
@@ -1008,12 +1074,193 @@ require_ordered(
     "&restoreWorkspace->physicsScratch"
     "FX_Restore must bind caller scratch after its workspace sidecars")
 
+# The desired pair is derived solely from validated Disk32 relocation equality,
+# then resolved into the staged buffer image. No relocated address is ever
+# reinterpreted as a native live pointer.
+extract_slice(
+    "${_restore_source}"
+    "const bool readVisStateValid ="
+    "bool physicsDataValid = true;"
+    _desired_selector_staging
+    "desired visibility selector staging")
+require_ordered(
+    "${_desired_selector_staging}"
+    "if (!readVisStateValid || !writeVisStateValid"
+    "const FxVisibilityBufferSelectors desiredVisibilitySelectors{"
+    "both relocated addresses must validate before selector construction")
+extract_slice(
+    "${_restore_source}"
+    "const FxVisibilityBufferSelectors desiredVisibilitySelectors{"
+    "if (!FX_TryResolveVisibilitySelectors("
+    _desired_selector_pair
+    "desired visibility selector pair")
+foreach(_desired_equality_marker IN ITEMS
+    "relocatedReadAddress == secondLiveVisAddress\n            ? std::uint8_t{1}\n            : std::uint8_t{0}"
+    "relocatedWriteAddress == secondLiveVisAddress\n            ? std::uint8_t{1}\n            : std::uint8_t{0}")
+    require_position(
+        "${_desired_selector_pair}"
+        "${_desired_equality_marker}"
+        _desired_equality_position
+        "validated second-slot equality must map to one and first-slot equality to zero")
+endforeach()
+require_ordered(
+    "${_desired_selector_staging}"
+    "FX_TryResolveVisibilitySelectors("
+    "&restoredSystem.visStateBufferRead"
+    "desired read/write roles must resolve into staged storage before binding")
+foreach(_desired_staged_slot IN ITEMS
+    "&restoredBuffers->visState[0]"
+    "&restoredBuffers->visState[1]")
+    require_position(
+        "${_desired_selector_staging}"
+        "${_desired_staged_slot}"
+        _desired_staged_slot_position
+        "desired selectors must resolve only against restored buffers")
+endforeach()
+require_ordered(
+    "${_desired_selector_staging}"
+    "&restoredSystem.visStateBufferRead"
+    "&restoredSystem.visStateBufferWrite"
+    "staged read and write roles must retain their order")
+require_ordered(
+    "${_desired_selector_staging}"
+    "&restoredSystem.visStateBufferWrite"
+    "FX_ArchiveVisibilitySelectorsMatch("
+    "the staged graph must round-trip after both selector bindings")
+foreach(_forbidden_desired_pointer_publish IN ITEMS
+    "reinterpret_cast<const FxVisState *>"
+    "reinterpret_cast<FxVisState *>"
+    "restoredSystem.visStateBufferRead = context."
+    "restoredSystem.visStateBufferWrite = context.")
+    require_absent(
+        "${_desired_selector_staging}"
+        "${_forbidden_desired_pointer_publish}"
+        "restore must never publish relocated or foreign staged pointers")
+endforeach()
+
+# Capture selector values, the rollback system, and its buffers in one coherent
+# FX_ALLOC interval. The rollback graph is immediately relinked and rebound to
+# its own storage before that interval closes.
+extract_slice(
+    "${_restore_source}"
+    "FxVisibilityBufferSelectors originalVisibilitySelectors{};"
+    "// The archive owner keeps iterator exclusivity"
+    _original_selector_snapshot
+    "original visibility selector snapshot")
+require_ordered(
+    "${_original_selector_snapshot}"
+    "Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);"
+    "FX_TryDeriveVisibilitySelectorPair("
+    "original selectors must be captured only after allocator exclusion")
+foreach(_live_original_marker IN ITEMS
+    "&systemBuffers->visState[0]"
+    "&systemBuffers->visState[1]"
+    "system->visStateBufferRead"
+    "system->visStateBufferWrite"
+    "&originalVisibilitySelectors")
+    require_position(
+        "${_original_selector_snapshot}"
+        "${_live_original_marker}"
+        _live_original_position
+        "original selectors must derive from exact live-buffer roles")
+endforeach()
+require_ordered(
+    "${_original_selector_snapshot}"
+    "FX_TryDeriveVisibilitySelectorPair("
+    "std::memcpy(&rollbackSystem, system, sizeof(rollbackSystem));"
+    "live selector derivation must precede rollback image capture")
+require_ordered(
+    "${_original_selector_snapshot}"
+    "std::memcpy(&rollbackSystem, system, sizeof(rollbackSystem));"
+    "std::memcpy(\n            rollbackBuffers,"
+    "the rollback system and buffers must share one coherent snapshot")
+require_ordered(
+    "${_original_selector_snapshot}"
+    "std::memcpy(\n            rollbackBuffers,"
+    "FX_LinkSystemBuffers(&rollbackSystem, rollbackBuffers);"
+    "rollback base pointers must relink only after both images are copied")
+require_ordered(
+    "${_original_selector_snapshot}"
+    "FX_LinkSystemBuffers(&rollbackSystem, rollbackBuffers);"
+    "FX_TryResolveVisibilitySelectors("
+    "rollback visibility roles must resolve after base relinking")
+foreach(_rollback_staged_slot IN ITEMS
+    "&rollbackBuffers->visState[0]"
+    "&rollbackBuffers->visState[1]")
+    require_position(
+        "${_original_selector_snapshot}"
+        "${_rollback_staged_slot}"
+        _rollback_staged_slot_position
+        "rollback selectors must resolve only against rollback buffers")
+endforeach()
+require_ordered(
+    "${_original_selector_snapshot}"
+    "&rollbackSystem.visStateBufferRead"
+    "&rollbackSystem.visStateBufferWrite"
+    "rollback read and write roles must retain their order")
+require_ordered(
+    "${_original_selector_snapshot}"
+    "&rollbackSystem.visStateBufferWrite"
+    "FX_ArchiveVisibilitySelectorsMatch("
+    "rollback selector bindings must round-trip before snapshot admission")
+require_ordered(
+    "${_original_selector_snapshot}"
+    "FX_ArchiveVisibilitySelectorsMatch("
+    "Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);"
+    "rollback selector admission must finish inside the coherent snapshot")
+
+# Both selector values are copied into the heap-owned controller context before
+# the portable restore controller can dispatch any operation.
+require_ordered(
+    "${_restore_source}"
+    "restoreContext.desiredVisibilitySelectors ="
+    "restoreContext.originalVisibilitySelectors ="
+    "controller selector pairs must retain desired then original ownership")
+require_ordered(
+    "${_restore_source}"
+    "restoreContext.originalVisibilitySelectors ="
+    "fx::archive::RunRestoreControl(restoreCallbacks)"
+    "both selector pairs must be assigned before controller dispatch")
+
 extract_slice(
     "${_archive_source}"
     "FX_PerformArchiveRestoreControlOperation("
     "void __cdecl FX_Restore("
     _restore_adapter
     "restore controller production adapter")
+extract_slice(
+    "${_restore_adapter}"
+    "case Operation::CaptureOriginal:"
+    "case Operation::PlanRetirement:"
+    _capture_original
+    "restore original-graph admission")
+set(_desired_staged_roundtrip
+    "FX_ArchiveVisibilitySelectorsMatch(\n                context.desiredSystem,\n                context.desiredBuffers,\n                context.desiredVisibilitySelectors)")
+set(_original_staged_roundtrip
+    "FX_ArchiveVisibilitySelectorsMatch(\n                context.originalSystem,\n                context.originalBuffers,\n                context.originalVisibilitySelectors)")
+set(_live_original_roundtrip
+    "FX_ArchiveVisibilitySelectorsMatch(\n                context.system,\n                context.systemBuffers,\n                context.originalVisibilitySelectors)")
+require_ordered(
+    "${_capture_original}"
+    "${_desired_staged_roundtrip}"
+    "${_original_staged_roundtrip}"
+    "CaptureOriginal must preflight desired before rollback staged selectors")
+require_ordered(
+    "${_capture_original}"
+    "${_original_staged_roundtrip}"
+    "${_live_original_roundtrip}"
+    "CaptureOriginal must preflight rollback staged before live selectors")
+require_ordered(
+    "${_capture_original}"
+    "${_live_original_roundtrip}"
+    "FX_ArchiveEffectRingIsValid(context.system)"
+    "all selector round trips must precede original graph traversal")
+require_ordered(
+    "${_capture_original}"
+    "${_live_original_roundtrip}"
+    "FX_CollectArchivePhysicsEntries("
+    "all selector round trips must precede original semantic collection")
+
 extract_slice(
     "${_restore_adapter}"
     "case Operation::PublishDesiredGraph:"
@@ -1034,6 +1281,91 @@ require_absent(
     "${_desired_publication}"
     "iteratorCount, 0"
     "desired graph publication must never create a nonexclusive window")
+require_ordered(
+    "${_desired_publication}"
+    "if (!context.system || !context.systemBuffers)"
+    "const bool stagedSelectorsValid ="
+    "desired publication must reject a missing live graph before validation")
+require_ordered(
+    "${_desired_publication}"
+    "const bool stagedSelectorsValid ="
+    "const bool liveSelectorsResolved ="
+    "desired staged roles must validate before live role resolution")
+foreach(_desired_live_slot IN ITEMS
+    "&context.systemBuffers->visState[0]"
+    "&context.systemBuffers->visState[1]")
+    require_position(
+        "${_desired_publication}"
+        "${_desired_live_slot}"
+        _desired_live_slot_position
+        "desired publication must resolve pointers against live buffers")
+endforeach()
+require_ordered(
+    "${_desired_publication}"
+    "const bool liveSelectorsResolved ="
+    "if (!stagedSelectorsValid || !liveSelectorsResolved)"
+    "desired publication must resolve both roles before its failure branch")
+set(_desired_buffer_copy
+    "std::memcpy(\n                context.systemBuffers,\n                context.desiredBuffers,")
+set(_desired_system_copy
+    "std::memcpy(\n                context.system,\n                context.desiredSystem,")
+require_ordered(
+    "${_desired_publication}"
+    "if (!stagedSelectorsValid || !liveSelectorsResolved)"
+    "${_desired_buffer_copy}"
+    "desired selector preflight must finish before the first graph copy")
+require_ordered(
+    "${_desired_publication}"
+    "${_desired_buffer_copy}"
+    "${_desired_system_copy}"
+    "desired publication must copy buffers before the system image")
+require_ordered(
+    "${_desired_publication}"
+    "${_desired_system_copy}"
+    "FX_LinkSystemBuffers(context.system, context.systemBuffers);"
+    "desired base pointers must relink only after both graph copies")
+require_ordered(
+    "${_desired_publication}"
+    "FX_LinkSystemBuffers(context.system, context.systemBuffers);"
+    "context.system->visStateBufferRead = liveReadState;"
+    "desired read role must bind only after base-pointer relinking")
+require_ordered(
+    "${_desired_publication}"
+    "context.system->visStateBufferRead = liveReadState;"
+    "context.system->visStateBufferWrite = liveWriteState;"
+    "desired live selector roles must publish in read/write order")
+require_ordered(
+    "${_desired_publication}"
+    "context.system->visStateBufferWrite = liveWriteState;"
+    "desiredExclusiveState =\n                FX_ArchiveVisibilitySelectorsMatch("
+    "desired live selector roles must round-trip after publication")
+require_ordered(
+    "${_desired_publication}"
+    "desiredExclusiveState =\n                FX_ArchiveVisibilitySelectorsMatch("
+    "Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);"
+    "desired selector round-trip must finish inside FX_ALLOC")
+foreach(_forbidden_desired_staged_pointer IN ITEMS
+    "context.system->visStateBufferRead = context.desiredSystem"
+    "context.system->visStateBufferWrite = context.desiredSystem"
+    "reinterpret_cast<const FxVisState *>"
+    "reinterpret_cast<FxVisState *>")
+    require_absent(
+        "${_desired_publication}"
+        "${_forbidden_desired_staged_pointer}"
+        "desired publication must not copy or reinterpret staged selector pointers")
+endforeach()
+
+extract_slice(
+    "${_restore_adapter}"
+    "case Operation::ValidateDesiredState:"
+    "case Operation::ValidateDiscardedOriginalPhysics:"
+    _desired_graph_admission
+    "desired graph post-publication admission")
+require_ordered(
+    "${_desired_graph_admission}"
+    "FX_ArchiveVisibilitySelectorsMatch("
+    "FX_RebuildPoolAllocationStatesNoReport(context.system)"
+    "desired selector round-trip must lead graph admission")
 
 extract_slice(
     "${_restore_adapter}"
@@ -1050,6 +1382,91 @@ require_absent(
     "${_rollback_publication}"
     "iteratorCount, 0"
     "rollback graph publication must never create a nonexclusive window")
+require_ordered(
+    "${_rollback_publication}"
+    "if (!context.system || !context.systemBuffers)"
+    "const bool stagedSelectorsValid ="
+    "rollback publication must reject a missing live graph before validation")
+require_ordered(
+    "${_rollback_publication}"
+    "const bool stagedSelectorsValid ="
+    "const bool liveSelectorsResolved ="
+    "rollback staged roles must validate before live role resolution")
+foreach(_original_live_slot IN ITEMS
+    "&context.systemBuffers->visState[0]"
+    "&context.systemBuffers->visState[1]")
+    require_position(
+        "${_rollback_publication}"
+        "${_original_live_slot}"
+        _original_live_slot_position
+        "rollback publication must resolve pointers against live buffers")
+endforeach()
+set(_original_buffer_copy
+    "std::memcpy(\n                context.systemBuffers,\n                context.originalBuffers,")
+set(_original_system_copy
+    "std::memcpy(\n                context.system,\n                context.originalSystem,")
+require_ordered(
+    "${_rollback_publication}"
+    "if (!stagedSelectorsValid || !liveSelectorsResolved)"
+    "${_original_buffer_copy}"
+    "rollback selector preflight must finish before the first graph copy")
+require_ordered(
+    "${_rollback_publication}"
+    "${_original_buffer_copy}"
+    "${_original_system_copy}"
+    "rollback publication must copy buffers before the system image")
+require_ordered(
+    "${_rollback_publication}"
+    "${_original_system_copy}"
+    "FX_LinkSystemBuffers(context.system, context.systemBuffers);"
+    "rollback base pointers must relink only after both graph copies")
+require_ordered(
+    "${_rollback_publication}"
+    "FX_LinkSystemBuffers(context.system, context.systemBuffers);"
+    "context.system->visStateBufferRead = liveReadState;"
+    "rollback read role must bind only after base-pointer relinking")
+require_ordered(
+    "${_rollback_publication}"
+    "context.system->visStateBufferRead = liveReadState;"
+    "context.system->visStateBufferWrite = liveWriteState;"
+    "rollback live selector roles must publish in read/write order")
+require_ordered(
+    "${_rollback_publication}"
+    "context.system->visStateBufferWrite = liveWriteState;"
+    "context.originalGraphPublished = true;"
+    "rollback publication must mark graph mutation before fallible postchecks")
+require_ordered(
+    "${_rollback_publication}"
+    "context.originalGraphPublished = true;"
+    "originalExclusiveState =\n                FX_ArchiveVisibilitySelectorsMatch("
+    "rollback mutation state must publish before selector round-trip")
+require_ordered(
+    "${_rollback_publication}"
+    "originalExclusiveState =\n                FX_ArchiveVisibilitySelectorsMatch("
+    "Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);"
+    "rollback selector round-trip must finish inside FX_ALLOC")
+foreach(_forbidden_original_staged_pointer IN ITEMS
+    "context.system->visStateBufferRead = context.originalSystem"
+    "context.system->visStateBufferWrite = context.originalSystem"
+    "reinterpret_cast<const FxVisState *>"
+    "reinterpret_cast<FxVisState *>")
+    require_absent(
+        "${_rollback_publication}"
+        "${_forbidden_original_staged_pointer}"
+        "rollback publication must not copy or reinterpret staged selector pointers")
+endforeach()
+
+extract_slice(
+    "${_restore_adapter}"
+    "case Operation::ValidateOriginalGraph:"
+    "case Operation::PublishSafeEmpty:"
+    _original_graph_admission
+    "original graph post-publication admission")
+require_ordered(
+    "${_original_graph_admission}"
+    "FX_ArchiveVisibilitySelectorsMatch("
+    "(!context.originalGraphPublished"
+    "original selector round-trip must lead graph admission")
 
 # Keep the production adapter as a thin, one-case-per-operation translation
 # layer. The portable controller owns sequencing and terminal-state choice.
