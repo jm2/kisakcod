@@ -7,7 +7,8 @@ work item changes. Do not create session-specific handoff files.
 ## Current state
 
 - Active branch: `agent/fx-disk32-system-codec`; branch point: merged Disk32 leaf checkpoint `56760d80`;
-  implementation commits: `4c27aa1d` and `9abb332e`; upstream-integration baseline: `2b759db`.
+  implementation commits: `4c27aa1d`, `9abb332e`, and MSVC fixture correction `337cfe9c`; upstream-integration baseline:
+  `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
 - Active checkpoint implementation is complete and awaiting PR review. The first fixed full-system seam introduces a
   strong numeric `ArchiveAddress32` distinct from fast-file tokens and definition keys, exact `FxCameraDisk32` (`0xB0`),
@@ -27,6 +28,12 @@ work item changes. Do not create session-specific handoff files.
   optimized/unoptimized GCC decoder frames are 1,184/1,216 bytes, below the portable 4 KiB gate. Two independent audits
   found and verified the spotlight-state, end-of-address-space, and post-mutation failure-contract additions and report no
   remaining implementation or integration blocker.
+- PR #24 is open. Initial run **29422678108** passed Linux amd64/arm64, macOS arm64, and headless Windows x86 while the
+  remaining Windows jobs continued. Portable Windows amd64/arm64 compiled the production decoder successfully but failed
+  the fixture under `/W4 /WX`: class-template argument deduction built a temporary `pair<size_t, int>` before converting
+  it to `pair<size_t, uint8_t>`, producing C4244 inside the standard library. Commit `337cfe9c` replaces that initializer
+  with an explicit fixed-width `U8Mutation` array; focused GCC/Clang compile and execution remain green. A replacement
+  exact-head run is required before merge.
 - PR #22 squash-merged as `56760d80` from final documentation head `b86ab94d`. Final run **29418054504 passed all nine
   jobs**; implementation head `f48b04c1` also passed all nine in run **29417195541**. Gemini provided no review comments,
   and Codex found no major issue at the exact implementation head. The merged leaf layer separates full-width native
