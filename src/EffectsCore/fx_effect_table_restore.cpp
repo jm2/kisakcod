@@ -31,7 +31,7 @@ struct EffectTableRestoreOwner
 char g_restoreNames[EFFECT_TABLE_RESTORE_CAPACITY]
                    [EFFECT_TABLE_RESTORE_NAME_CAPACITY];
 std::uint8_t g_restoreNameLengths[EFFECT_TABLE_RESTORE_CAPACITY];
-std::uint32_t g_restoreKeys[EFFECT_TABLE_RESTORE_CAPACITY];
+EffectDefinitionKey32 g_restoreKeys[EFFECT_TABLE_RESTORE_CAPACITY];
 const void *g_restoreDefinitions[EFFECT_TABLE_RESTORE_CAPACITY];
 char g_capacityProbe[EFFECT_TABLE_RESTORE_NAME_CAPACITY];
 std::size_t g_restoreEntryCount;
@@ -101,9 +101,11 @@ void ClearRestoreWorkspace() noexcept
     g_restoreEntryCount = 0;
     std::memset(g_restoreNames, 0, sizeof(g_restoreNames));
     std::memset(g_restoreNameLengths, 0, sizeof(g_restoreNameLengths));
-    std::memset(g_restoreKeys, 0, sizeof(g_restoreKeys));
     for (std::size_t index = 0; index < EFFECT_TABLE_RESTORE_CAPACITY; ++index)
+    {
+        g_restoreKeys[index] = EffectDefinitionKey32{};
         g_restoreDefinitions[index] = nullptr;
+    }
     std::memset(g_capacityProbe, 0, sizeof(g_capacityProbe));
 }
 
@@ -295,18 +297,18 @@ EffectTableRestoreStatus ParseEffectTable(
         if (keyStatus != MemFileReadStatus::Success)
             return MapDataReadFailure(keyStatus);
 
-        const std::uint32_t key =
+        const EffectDefinitionKey32 key{
             static_cast<std::uint32_t>(keyBytes[0])
             | (static_cast<std::uint32_t>(keyBytes[1]) << 8u)
             | (static_cast<std::uint32_t>(keyBytes[2]) << 16u)
-            | (static_cast<std::uint32_t>(keyBytes[3]) << 24u);
-        if (key == 0)
+            | (static_cast<std::uint32_t>(keyBytes[3]) << 24u)};
+        if (!EffectDefinitionKeyIsValid(key))
             return EffectTableRestoreStatus::InvalidKey;
 
         bool duplicate = false;
         for (std::size_t index = 0; index < entryCount; ++index)
         {
-            if (g_restoreKeys[index] != key)
+            if (g_restoreKeys[index].value != key.value)
                 continue;
             if (g_restoreNameLengths[index] != nameLength
                 || std::memcmp(
@@ -578,7 +580,7 @@ EffectTableRestoreResult RestoreEffectTableNoReport(
 bool EffectTableRestoreGetEntry(
     const EffectTableRestoreLease &lease,
     const std::size_t index,
-    std::uint32_t *const key,
+    EffectDefinitionKey32 *const key,
     const void **const definition) noexcept
 {
     if (!key || !definition || !CurrentThreadOwnsLease(lease, false)
@@ -596,9 +598,10 @@ bool EffectTableRestoreGetEntry(
 
 const void *EffectTableRestoreFind(
     const EffectTableRestoreLease &lease,
-    const std::uint32_t key) noexcept
+    const EffectDefinitionKey32 key) noexcept
 {
-    if (key == 0 || !CurrentThreadOwnsLease(lease, false)
+    if (!EffectDefinitionKeyIsValid(key)
+        || !CurrentThreadOwnsLease(lease, false)
         || ValidateActiveLifecycle(lease)
             != EffectTableRestoreStatus::Success)
     {
@@ -607,7 +610,7 @@ const void *EffectTableRestoreFind(
 
     for (std::size_t index = 0; index < g_restoreEntryCount; ++index)
     {
-        if (g_restoreKeys[index] == key)
+        if (g_restoreKeys[index].value == key.value)
             return g_restoreDefinitions[index];
     }
     return nullptr;

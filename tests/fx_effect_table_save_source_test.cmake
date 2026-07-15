@@ -6,6 +6,8 @@ endif()
 
 set(_save_header_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_effect_table_save.h")
+set(_key_header_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive_key.h")
 set(_save_source_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_effect_table_save.cpp")
 set(_archive_source_path
@@ -16,6 +18,7 @@ set(_common_files_path
     "${SOURCE_ROOT}/scripts/common_files.cmake")
 
 foreach(_required_path IN ITEMS
+    "${_key_header_path}"
     "${_save_header_path}"
     "${_save_source_path}"
     "${_archive_source_path}"
@@ -27,6 +30,7 @@ foreach(_required_path IN ITEMS
     endif()
 endforeach()
 
+file(READ "${_key_header_path}" _key_header)
 file(READ "${_save_header_path}" _save_header)
 file(READ "${_save_source_path}" _save_source)
 file(READ "${_archive_source_path}" _archive_source)
@@ -78,15 +82,27 @@ foreach(_api_marker IN ITEMS
     "EffectTableSaveSnapshotAlignment() noexcept"
     "ConstructEffectTableSaveSnapshot("
     "DestroyEffectTableSaveSnapshot("
-    "AppendEffectTableSaveEntryNoReport("
+    "AppendEffectTableSaveDefinitionNoReport("
     "ValidateEffectTableSaveSnapshotNoReport("
-    "EffectTableSaveSnapshotContainsKey("
+    "FindEffectTableSaveDefinitionKey("
     "WriteEffectTableSaveSnapshotNoReport("
     "EffectTableSaveEntryCount(")
     require_contains(
         "${_save_header}"
         "${_api_marker}"
         "save helper must retain its opaque bounded API")
+endforeach()
+
+foreach(_key_contract IN ITEMS
+    "struct EffectDefinitionKey32 final"
+    "std::uint32_t value = 0;"
+    "LegacyPointerBits"
+    "OpaqueSequential"
+    "ONDISK_SIZE(EffectDefinitionKey32, 4)")
+    require_contains(
+        "${_key_header}"
+        "${_key_contract}"
+        "save helper must use one strong fixed-width archive key contract")
 endforeach()
 
 foreach(_status_marker IN ITEMS
@@ -105,15 +121,17 @@ endforeach()
 foreach(_workspace_marker IN ITEMS
     "Record records[EFFECT_TABLE_RESTORE_CAPACITY]"
     "char name[EFFECT_TABLE_RESTORE_NAME_CAPACITY]"
-    "std::uint32_t key;"
+    "std::uintptr_t nativeIdentity;"
+    "EffectDefinitionKey32 diskKey;"
+    "std::uint32_t nextOpaqueKey;"
     "static_assert(EFFECT_TABLE_RESTORE_CAPACITY == 1024)"
     "static_assert(EFFECT_TABLE_RESTORE_NAME_CAPACITY == 64)"
-    "RUNTIME_SIZE(EffectTableSaveSnapshot::Record, 0x44, 0x44)"
-    "RUNTIME_SIZE(EffectTableSaveSnapshot, 0x11008, 0x11010)")
+    "RUNTIME_SIZE(EffectTableSaveSnapshot::Record, 0x48, 0x50)"
+    "RUNTIME_SIZE(EffectTableSaveSnapshot, 0x1200C, 0x14010)")
     require_contains(
         "${_save_source}"
         "${_workspace_marker}"
-        "save snapshot must retain its fixed Disk32 contract")
+        "save snapshot must retain bounded native identities and Disk32 keys")
 endforeach()
 
 foreach(_forbidden_helper_call IN ITEMS
@@ -138,22 +156,27 @@ endforeach()
 
 extract_slice(
     "${_save_source}"
-    "EffectTableSaveStatus AppendEffectTableSaveEntryNoReport("
+    "EffectTableSaveStatus AppendEffectTableSaveDefinitionNoReport("
     "EffectTableSaveStatus ValidateEffectTableSaveSnapshotNoReport("
     _append_source
     "effect-table capture phase")
 foreach(_append_marker IN ITEMS
     "snapshot->phase != EffectTableSaveSnapshot::Phase::Capturing"
-    "key == 0"
-    "key > static_cast<std::uintptr_t>("
+    "nativeIdentity == 0"
     "snapshot->entryCount >= EFFECT_TABLE_RESTORE_CAPACITY"
     "BoundedNameLength(name, &nameLength)"
+    "EffectTableSaveKeyPolicy::LegacyPointerBits"
+    "nativeIdentity > static_cast<std::uintptr_t>("
+    "EffectTableSaveKeyPolicy::OpaqueSequential"
+    "snapshot->records[index].nativeIdentity == nativeIdentity"
+    "diskKey.value = snapshot->nextOpaqueKey"
     "std::memcpy(record.name, name, nameLength + 1u)"
-    "record.key = static_cast<std::uint32_t>(key)")
+    "record.nativeIdentity = nativeIdentity"
+    "record.diskKey = diskKey")
     require_contains(
         "${_append_source}"
         "${_append_marker}"
-        "capture callback must only perform bounded copy and narrowing")
+        "capture must map full native identities to bounded archive keys")
 endforeach()
 foreach(_forbidden_capture_call IN ITEMS
     "EffectTableRestoreNameIsValid("
@@ -182,34 +205,40 @@ require_contains(
     "every earlier key must participate in duplicate validation")
 require_contains(
     "${_validate_source}"
-    "other.key == record.key"
-    "duplicate policy must be key-based")
+    "other.diskKey.value == record.diskKey.value"
+    "duplicate policy must be archive-key-based")
+require_contains(
+    "${_validate_source}"
+    "other.nativeIdentity != record.nativeIdentity"
+    "one archive key must never identify two native definitions")
 require_contains(
     "${_validate_source}"
     "!RecordNamesEqual(other, record)"
-    "only conflicting same-key names must fail")
+    "only exact repeated identity/name records may share a key")
 
 extract_slice(
     "${_save_source}"
-    "bool EffectTableSaveSnapshotContainsKey("
+    "bool FindEffectTableSaveDefinitionKey("
     "EffectTableSaveStatus WriteEffectTableSaveSnapshotNoReport("
     _membership_source
     "validated effect-table membership")
 foreach(_membership_marker IN ITEMS
     "snapshot->status != EffectTableSaveStatus::Success"
     "snapshot->phase != EffectTableSaveSnapshot::Phase::Validated"
-    "key == 0"
-    "key > static_cast<std::uintptr_t>("
-    "snapshot->records[index].key == narrowedKey")
+    "nativeIdentity == 0"
+    "!outKey"
+    "snapshot->records[index].nativeIdentity == nativeIdentity"
+    "*outKey = snapshot->records[index].diskKey")
     require_contains(
         "${_membership_source}"
         "${_membership_marker}"
-        "definition membership must fail closed and compare bounded keys")
+        "definition lookup must fail closed and return only bounded keys")
 endforeach()
 foreach(_forbidden_membership_operation IN ITEMS
     "callbacks.write("
     "record.name"
     "std::memcpy("
+    "static_cast<std::uint32_t>(nativeIdentity)"
     "strlen("
     "strcmp(")
     require_absent(
@@ -238,6 +267,19 @@ foreach(_key_shift IN ITEMS ">> 8u" ">> 16u" ">> 24u")
         "${_write_source}"
         "${_key_shift}"
         "effect keys must serialize explicitly little-endian")
+endforeach()
+require_contains(
+    "${_write_source}"
+    "record.diskKey.value"
+    "serialization must emit the mapped archive key")
+foreach(_forbidden_identity_write IN ITEMS
+    "&record.nativeIdentity"
+    "sizeof(record)"
+    "&record,")
+    require_absent(
+        "${_write_source}"
+        "${_forbidden_identity_write}"
+        "native identities and record padding must never reach the writer")
 endforeach()
 require_contains(
     "${_write_source}"
@@ -288,22 +330,23 @@ foreach(_forbidden_production_callback IN ITEMS
 endforeach()
 require_contains(
     "${_production_callbacks}"
-    "AppendEffectTableSaveEntryNoReport("
+    "AppendEffectTableSaveDefinitionNoReport("
     "database callbacks must delegate to the bounded capture helper")
 require_contains(
     "${_production_callbacks}"
     "reinterpret_cast<std::uintptr_t>(effectDef)"
-    "production capture must preserve all pointer bits for checked narrowing")
+    "production capture must preserve all native identity bits")
 require_contains(
     "${_production_callbacks}"
     "capture->snapshot,
-        name,
-        key"
-    "production capture must pass the full-width key to the helper")
+            name,
+            nativeIdentity"
+    "production capture must pass the full-width identity to the helper")
 foreach(_forbidden_production_narrowing IN ITEMS
     "static_cast<std::uint32_t>"
     "reinterpret_cast<std::uint32_t>"
-    "std::uint32_t key")
+    "std::uint32_t key"
+    "EffectDefinitionKey32")
     require_absent(
         "${_production_callbacks}"
         "${_forbidden_production_narrowing}"
@@ -378,6 +421,14 @@ require_ordered(
     "ConstructEffectTableSaveSnapshot("
     "FX_CaptureEffectTableNoReport(snapshot)"
     "capture must begin only after construction")
+require_contains(
+    "${_production_stage}"
+    "EffectTableSaveKeyPolicy::LegacyPointerBits"
+    "x86 staging must retain exact legacy pointer-bit keys")
+require_contains(
+    "${_production_stage}"
+    "EffectTableSaveKeyPolicy::OpaqueSequential"
+    "native64 staging must select address-independent keys")
 require_ordered(
     "${_production_stage}"
     "FX_CaptureEffectTableNoReport(snapshot)"
@@ -442,8 +493,12 @@ extract_slice(
     "copied graph definition admission")
 require_contains(
     "${_production_graph_membership}"
-    "EffectTableSaveSnapshotContainsKey("
-    "copied definitions must be admitted by the staged table")
+    "FindEffectTableSaveDefinitionKey("
+    "copied definitions must resolve through the staged table")
+require_contains(
+    "${_production_graph_membership}"
+    "EffectDefinitionKey32 diskKey{};"
+    "definition admission must produce a bounded key for Disk32 encoding")
 require_contains(
     "${_production_graph_membership}"
     "reinterpret_cast<std::uintptr_t>(effect->def)"

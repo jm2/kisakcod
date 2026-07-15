@@ -1,5 +1,7 @@
 #pragma once
 
+#include <EffectsCore/fx_archive_key.h>
+
 #include <cstddef>
 #include <cstdint>
 
@@ -67,12 +69,12 @@ struct EffectTableRestoreResult
 [[nodiscard]] bool EffectTableRestoreGetEntry(
     const EffectTableRestoreLease &lease,
     std::size_t index,
-    std::uint32_t *key,
+    EffectDefinitionKey32 *key,
     const void **definition) noexcept;
 
 [[nodiscard]] const void *EffectTableRestoreFind(
     const EffectTableRestoreLease &lease,
-    std::uint32_t key) noexcept;
+    EffectDefinitionKey32 key) noexcept;
 
 [[nodiscard]] EffectTableRestoreStatus ReleaseEffectTableRestore(
     const EffectTableRestoreLease &lease) noexcept;

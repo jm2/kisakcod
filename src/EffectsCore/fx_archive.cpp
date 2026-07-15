@@ -585,12 +585,13 @@ void __cdecl FX_CaptureEffectTableEntry_LoadObj(
     }
 
     const char *const name = effectDef ? effectDef->name : nullptr;
-    const std::uintptr_t key =
+    const std::uintptr_t nativeIdentity =
         reinterpret_cast<std::uintptr_t>(effectDef);
-    capture->status = fx::archive::AppendEffectTableSaveEntryNoReport(
-        capture->snapshot,
-        name,
-        key);
+    capture->status =
+        fx::archive::AppendEffectTableSaveDefinitionNoReport(
+            capture->snapshot,
+            name,
+            nativeIdentity);
 }
 
 void __cdecl FX_CaptureEffectTableEntry_FastFile(
@@ -673,7 +674,10 @@ FxEffectTableSaveOutcome FX_StageEffectTableNoDrop(
     fx::archive::EffectTableSaveSnapshot *const snapshot =
         fx::archive::ConstructEffectTableSaveSnapshot(
             storage,
-            workspaceSize);
+            workspaceSize,
+            sizeof(void *) == sizeof(std::uint32_t)
+                ? fx::archive::EffectTableSaveKeyPolicy::LegacyPointerBits
+                : fx::archive::EffectTableSaveKeyPolicy::OpaqueSequential);
     if (!snapshot)
     {
         Z_Free(storage, 10);
@@ -753,7 +757,8 @@ bool FX_FixupEffectDefHandlesNoDrop(
         if (!effect)
             return false;
 
-        const std::uint32_t key = FX_ArchivePointerBits(effect->def);
+        const fx::archive::EffectDefinitionKey32 key{
+            FX_ArchivePointerBits(effect->def)};
         const auto *const effectDef = static_cast<const FxEffectDef *>(
             fx::archive::EffectTableRestoreFind(lease, key));
         if (!effectDef)
@@ -2244,10 +2249,13 @@ bool FX_ValidateArchiveEffectDefinitionReferences(
 
     const auto definitionIsStaged =
         [effectTableSnapshot](const FxEffect *const effect) noexcept {
-            return effect
-                && fx::archive::EffectTableSaveSnapshotContainsKey(
-                    effectTableSnapshot,
-                    reinterpret_cast<std::uintptr_t>(effect->def));
+            if (!effect)
+                return false;
+            fx::archive::EffectDefinitionKey32 diskKey{};
+            return fx::archive::FindEffectTableSaveDefinitionKey(
+                effectTableSnapshot,
+                reinterpret_cast<std::uintptr_t>(effect->def),
+                &diskKey);
         };
     for (std::int64_t activeIndex = system->firstActiveEffect;
          activeIndex < system->firstFreeEffect;

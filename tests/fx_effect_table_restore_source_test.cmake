@@ -6,6 +6,8 @@ endif()
 
 set(_restore_header_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_effect_table_restore.h")
+set(_key_header_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive_key.h")
 set(_restore_source_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_effect_table_restore.cpp")
 set(_archive_source_path
@@ -22,6 +24,7 @@ set(_common_files_path
     "${SOURCE_ROOT}/scripts/common_files.cmake")
 
 foreach(_required_source IN ITEMS
+    "${_key_header_path}"
     "${_restore_header_path}"
     "${_restore_source_path}"
     "${_archive_source_path}"
@@ -35,6 +38,7 @@ foreach(_required_source IN ITEMS
     endif()
 endforeach()
 
+file(READ "${_key_header_path}" _key_header)
 file(READ "${_restore_header_path}" _restore_header)
 file(READ "${_restore_source_path}" _restore_source)
 file(READ "${_archive_source_path}" _archive_source)
@@ -87,6 +91,8 @@ endfunction()
 foreach(_public_contract IN ITEMS
     "EFFECT_TABLE_RESTORE_CAPACITY = 1024"
     "EFFECT_TABLE_RESTORE_NAME_CAPACITY = 64"
+    "EffectDefinitionKey32 *key"
+    "EffectDefinitionKey32 key) noexcept"
     "RestoreEffectTableNoReport("
     "ReleaseEffectTableRestore("
     "AbandonCurrentThreadEffectTableRestoreForError() noexcept"
@@ -97,10 +103,20 @@ foreach(_public_contract IN ITEMS
         "effect-table restore API must retain its bounded lease contract")
 endforeach()
 
+foreach(_key_contract IN ITEMS
+    "struct EffectDefinitionKey32 final"
+    "std::uint32_t value = 0;"
+    "ONDISK_SIZE(EffectDefinitionKey32, 4)")
+    require_contains(
+        "${_key_header}"
+        "${_key_contract}"
+        "restore must use the shared fixed-width effect key")
+endforeach()
+
 foreach(_workspace_member IN ITEMS
     "char g_restoreNames[EFFECT_TABLE_RESTORE_CAPACITY]"
     "std::uint8_t g_restoreNameLengths[EFFECT_TABLE_RESTORE_CAPACITY]"
-    "std::uint32_t g_restoreKeys[EFFECT_TABLE_RESTORE_CAPACITY]"
+    "EffectDefinitionKey32 g_restoreKeys[EFFECT_TABLE_RESTORE_CAPACITY]"
     "const void *g_restoreDefinitions[EFFECT_TABLE_RESTORE_CAPACITY]"
     "std::size_t g_restoreEntryCount;"
     "void *volatile g_restoreOwnerCookie;")
@@ -148,6 +164,14 @@ foreach(_little_endian_shift IN ITEMS "<< 8u" "<< 16u" "<< 24u")
         "${_little_endian_shift}"
         "effect keys must be decoded explicitly little-endian")
 endforeach()
+require_contains(
+    "${_parse_source}"
+    "const EffectDefinitionKey32 key{"
+    "parsed bytes must remain a strong archive key rather than a pointer")
+require_contains(
+    "${_parse_source}"
+    "EffectDefinitionKeyIsValid(key)"
+    "zero archive keys must fail before registration")
 require_absent(
     "${_parse_source}"
     "registerEffect("
