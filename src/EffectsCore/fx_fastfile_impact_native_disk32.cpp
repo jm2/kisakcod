@@ -257,7 +257,11 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
     const FxFastFileDisk32Resolvers &resolvers,
     FxFastFileImpactNativeDisk32Plan *const outPlan) noexcept
 {
-    if (!workspace || !outPlan || !sourceArgument.impactTable ||
+    if (!workspace)
+        return FxFastFileNativeDisk32Status::InvalidArgument;
+    if (workspace->operating_)
+        return FxFastFileNativeDisk32Status::Busy;
+    if (!outPlan || !sourceArgument.impactTable ||
         !sourceArgument.provenance.validateSpan || !resolvers.resolve ||
         reinterpret_cast<std::uintptr_t>(outPlan) %
                 alignof(FxFastFileImpactNativeDisk32Plan) !=
@@ -265,14 +269,12 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
     {
         return FxFastFileNativeDisk32Status::InvalidArgument;
     }
-    if (workspace->operating_)
-        return FxFastFileNativeDisk32Status::Busy;
-    if (workspace->phase_ != FxFastFileNativeDisk32Phase::Empty)
-        return FxFastFileNativeDisk32Status::InvalidPhase;
     if (RangesOverlap(&sourceArgument,
                       sizeof(sourceArgument),
                       workspace,
                       sizeof(*workspace)) ||
+        RangesOverlap(
+            &resolvers, sizeof(resolvers), workspace, sizeof(*workspace)) ||
         RangesOverlap(sourceArgument.impactTable,
                       sizeof(*sourceArgument.impactTable),
                       workspace,
@@ -282,10 +284,28 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
                        sizeof(FxImpactEntryDisk32) * kImpactSurfaceCount,
                        workspace,
                        sizeof(*workspace))) ||
-        RangesOverlap(outPlan, sizeof(*outPlan), workspace, sizeof(*workspace)))
+        RangesOverlap(
+            outPlan, sizeof(*outPlan), workspace, sizeof(*workspace)) ||
+        RangesOverlap(outPlan,
+                      sizeof(*outPlan),
+                      &sourceArgument,
+                      sizeof(sourceArgument)) ||
+        RangesOverlap(
+            outPlan, sizeof(*outPlan), &resolvers, sizeof(resolvers)) ||
+        RangesOverlap(outPlan,
+                      sizeof(*outPlan),
+                      sourceArgument.impactTable,
+                      sizeof(*sourceArgument.impactTable)) ||
+        (sourceArgument.entries.data &&
+         RangesOverlap(outPlan,
+                       sizeof(*outPlan),
+                       sourceArgument.entries.data,
+                       sizeof(FxImpactEntryDisk32) * kImpactSurfaceCount)))
     {
         return FxFastFileNativeDisk32Status::OverlappingStorage;
     }
+    if (workspace->phase_ != FxFastFileNativeDisk32Phase::Empty)
+        return FxFastFileNativeDisk32Status::InvalidPhase;
     workspace->operating_ = true;
     const OperationReset operationReset(&workspace->operating_);
     const FxFastFileImpactTableDisk32View source = sourceArgument;
@@ -406,6 +426,28 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
     {
         return FxFastFileNativeDisk32Status::OverlappingStorage;
     }
+    if (RangesOverlap(
+            outPlan, sizeof(*outPlan), name.pointer, name.stringByteCount))
+    {
+        return FxFastFileNativeDisk32Status::OverlappingStorage;
+    }
+    if (RangesOverlap(name.pointer,
+                      name.stringByteCount,
+                      source.impactTable,
+                      sizeof(*source.impactTable)) ||
+        RangesOverlap(name.pointer,
+                      name.stringByteCount,
+                      source.entries.data,
+                      sizeof(FxImpactEntryDisk32) * kImpactSurfaceCount) ||
+        RangesOverlap(name.pointer,
+                      name.stringByteCount,
+                      &sourceArgument,
+                      sizeof(sourceArgument)) ||
+        RangesOverlap(
+            name.pointer, name.stringByteCount, &resolvers, sizeof(resolvers)))
+    {
+        return FxFastFileNativeDisk32Status::InvalidSourceLayout;
+    }
     if (!IsExactCString(name))
         return FxFastFileNativeDisk32Status::InvalidString;
     const std::uint64_t nameBeforeProvenanceFingerprint =
@@ -432,25 +474,9 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
         ComputeSourceFingerprint(source, name);
     if (initialSourceFingerprint != nameBeforeProvenanceFingerprint)
         return FxFastFileNativeDisk32Status::SourceChanged;
-    if (RangesOverlap(name.pointer,
-                      name.stringByteCount,
-                      source.impactTable,
-                      sizeof(*source.impactTable)) ||
-        RangesOverlap(name.pointer,
-                      name.stringByteCount,
-                      source.entries.data,
-                      sizeof(FxImpactEntryDisk32) * kImpactSurfaceCount))
-    {
-        return FxFastFileNativeDisk32Status::InvalidSourceLayout;
-    }
-    if (RangesOverlap(
-            outPlan, sizeof(*outPlan), name.pointer, name.stringByteCount))
-    {
-        return FxFastFileNativeDisk32Status::OverlappingStorage;
-    }
     workspace->resolved_[0] = name;
     const auto identityOverlapsOwnedInput =
-        [workspace, &source, &name, outPlan](
+        [workspace, &source, &sourceArgument, &resolvers, &name, outPlan](
             const void *const identity) noexcept
     {
         return RangesOverlap(identity, 1u, workspace, sizeof(*workspace)) ||
@@ -465,6 +491,9 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
                                  kImpactSurfaceCount) ||
                RangesOverlap(
                    identity, 1u, name.pointer, name.stringByteCount) ||
+               RangesOverlap(
+                   identity, 1u, &sourceArgument, sizeof(sourceArgument)) ||
+               RangesOverlap(identity, 1u, &resolvers, sizeof(resolvers)) ||
                RangesOverlap(identity, 1u, outPlan, sizeof(*outPlan));
     };
 
@@ -473,23 +502,34 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
     for (std::size_t entryIndex = 0; entryIndex < kImpactSurfaceCount;
          ++entryIndex)
     {
-        const FxImpactEntryDisk32 &entry = source.entries.data[entryIndex];
+        const FxImpactEntryDisk32 &entry =
+            workspace->sourceEntrySnapshots_[entryIndex];
+        const FxImpactEntryDisk32 &physicalEntry =
+            source.entries.data[entryIndex];
         for (std::size_t effectIndex = 0;
              effectIndex < kImpactNonFleshEffectCount;
              ++effectIndex, ++journalIndex)
         {
             const disk32::PointerToken *const sourceField =
-                &entry.nonflesh[effectIndex].token;
-            if (sourceField->isNull())
+                &physicalEntry.nonflesh[effectIndex].token;
+            const disk32::PointerToken token =
+                entry.nonflesh[effectIndex].token;
+            if (token.isNull())
                 continue;
             FxFastFileDisk32ResolvedReference resolved{};
-            if (!resolvers.resolve(
-                    resolvers.context,
-                    FxFastFileDisk32ReferenceKind::EffectAssetHandle,
-                    sourceField,
-                    *sourceField,
-                    &resolved) ||
-                !resolved.pointer)
+            const bool resolvedSuccessfully = resolvers.resolve(
+                resolvers.context,
+                FxFastFileDisk32ReferenceKind::EffectAssetHandle,
+                sourceField,
+                token,
+                &resolved);
+            if (!SourceMatchesSnapshots(source,
+                                        workspace->sourceHeaderSnapshot_,
+                                        workspace->sourceEntrySnapshots_))
+            {
+                return FxFastFileNativeDisk32Status::SourceChanged;
+            }
+            if (!resolvedSuccessfully || !resolved.pointer)
             {
                 return FxFastFileNativeDisk32Status::UnresolvedReference;
             }
@@ -506,17 +546,24 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
              ++effectIndex, ++journalIndex)
         {
             const disk32::PointerToken *const sourceField =
-                &entry.flesh[effectIndex].token;
-            if (sourceField->isNull())
+                &physicalEntry.flesh[effectIndex].token;
+            const disk32::PointerToken token = entry.flesh[effectIndex].token;
+            if (token.isNull())
                 continue;
             FxFastFileDisk32ResolvedReference resolved{};
-            if (!resolvers.resolve(
-                    resolvers.context,
-                    FxFastFileDisk32ReferenceKind::EffectAssetHandle,
-                    sourceField,
-                    *sourceField,
-                    &resolved) ||
-                !resolved.pointer)
+            const bool resolvedSuccessfully = resolvers.resolve(
+                resolvers.context,
+                FxFastFileDisk32ReferenceKind::EffectAssetHandle,
+                sourceField,
+                token,
+                &resolved);
+            if (!SourceMatchesSnapshots(source,
+                                        workspace->sourceHeaderSnapshot_,
+                                        workspace->sourceEntrySnapshots_))
+            {
+                return FxFastFileNativeDisk32Status::SourceChanged;
+            }
+            if (!resolvedSuccessfully || !resolved.pointer)
             {
                 return FxFastFileNativeDisk32Status::UnresolvedReference;
             }
@@ -592,14 +639,16 @@ FxFastFileNativeDisk32Status TryMaterializeFxImpactTableDisk32(
     const std::size_t capacity,
     FxImpactTable **const outTable) noexcept
 {
-    if (!workspace || !storage || !outTable ||
+    if (!workspace)
+        return FxFastFileNativeDisk32Status::InvalidArgument;
+    if (workspace->operating_)
+        return FxFastFileNativeDisk32Status::Busy;
+    if (!storage || !outTable ||
         reinterpret_cast<std::uintptr_t>(outTable) % alignof(FxImpactTable *) !=
             0)
     {
         return FxFastFileNativeDisk32Status::InvalidArgument;
     }
-    if (workspace->operating_)
-        return FxFastFileNativeDisk32Status::Busy;
     workspace->operating_ = true;
     const OperationReset operationReset(&workspace->operating_);
 
