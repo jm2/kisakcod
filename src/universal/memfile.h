@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+
 #include <qcommon/qcommon.h>
 
 struct MemoryFile // (SP/MP Same)
@@ -22,6 +25,15 @@ enum MemFileMode : __int32
     MEM_FILE_MODE_INFLATE = 0x1,
     MEM_FILE_MODE_DEFLATE = 0x2,
     MEM_FILE_MODENUM      = 0x3,
+};
+
+enum class MemFileReadStatus : uint8_t
+{
+    Success,
+    InvalidArgument,
+    InvalidState,
+    Overflow,
+    OutputTooSmall,
 };
 
 void MemFile_ArchiveData(MemoryFile* memFile, int bytes, void* data);
@@ -56,6 +68,16 @@ void __cdecl MemFile_WriteData(MemoryFile* memFile, int byteCount, const void* p
 void __cdecl MemFile_WriteCString(MemoryFile* memFile, const char* string);
 const char* __cdecl MemFile_ReadCString(MemoryFile* memFile);
 void __cdecl MemFile_ReadData(MemoryFile* memFile, int byteCount, uint8_t* p);
+[[nodiscard]] MemFileReadStatus MemFile_TryReadDataNoReport(
+    MemoryFile* memFile,
+    int byteCount,
+    uint8_t* output) noexcept;
+[[nodiscard]] MemFileReadStatus MemFile_TryReadCStringNoReport(
+    MemoryFile* memFile,
+    char* output,
+    size_t outputSize,
+    size_t* outputLength) noexcept;
+void MemFile_AbandonCurrentThreadForError() noexcept;
 uint8_t __cdecl MemFile_ReadByteInternal(MemoryFile* memFile);
 void MemFile_Shutdown(MemoryFile *memFile);
 uint8_t *MemFile_CopySegments(MemoryFile *memFile, int index, void *buf);

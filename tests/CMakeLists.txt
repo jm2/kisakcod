@@ -14,6 +14,56 @@ include("${PLATFORM_DIR}/${KISAK_PLATFORM}/platform.cmake")
 kisakcod_require_platform_source_sets()
 find_package(Threads REQUIRED)
 
+# Exercise the production MemoryFile reader instead of an extracted model.
+# The inherited zlib 1.1.4 and memfile translation units predate the warning
+# policy used by the portable tests, so isolate those legacy diagnostics while
+# keeping the test harness itself warning-clean.
+set(_kisakcod_memfile_zlib_sources
+    ${DEPS_DIR}/zlib/adler32.c
+    ${DEPS_DIR}/zlib/deflate.c
+    ${DEPS_DIR}/zlib/trees.c
+    ${DEPS_DIR}/zlib/zutil.c
+    ${DEPS_DIR}/zlib/inflate.c
+    ${DEPS_DIR}/zlib/infblock.c
+    ${DEPS_DIR}/zlib/infcodes.c
+    ${DEPS_DIR}/zlib/inffast.c
+    ${DEPS_DIR}/zlib/inftrees.c
+    ${DEPS_DIR}/zlib/infutil.c
+)
+add_library(kisakcod-memfile-test-subject STATIC
+    ${SRC_DIR}/universal/memfile.cpp
+    ${_kisakcod_memfile_zlib_sources}
+)
+target_include_directories(kisakcod-memfile-test-subject PRIVATE
+    ${SRC_DIR}
+    ${DEPS_DIR}
+)
+target_compile_features(kisakcod-memfile-test-subject PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-memfile-test-subject PRIVATE KISAK_MP)
+if (MSVC)
+    target_compile_options(kisakcod-memfile-test-subject PRIVATE /W0)
+else()
+    target_compile_options(kisakcod-memfile-test-subject PRIVATE -w)
+endif()
+
+add_executable(kisakcod-memfile-tests memfile_tests.cpp)
+target_include_directories(kisakcod-memfile-tests SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-memfile-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-memfile-tests PRIVATE KISAK_MP)
+target_link_libraries(
+    kisakcod-memfile-tests PRIVATE
+        kisakcod-memfile-test-subject
+        Threads::Threads)
+kisakcod_test_warnings(kisakcod-memfile-tests)
+set_target_properties(kisakcod-memfile-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME universal-memfile-bounded-read
+    COMMAND kisakcod-memfile-tests
+)
+set_tests_properties(universal-memfile-bounded-read PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-huffman-tests
     huffman_tests.cpp
     ${SRC_DIR}/qcommon/huffman.cpp

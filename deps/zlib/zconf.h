@@ -210,7 +210,10 @@
 #   define FAR
 #endif
 
-#if !defined(MACOS) && !defined(TARGET_OS_MAC)
+/* Classic Mac headers supplied Byte themselves. Modern Darwin toolchains may
+ * still define TARGET_OS_MAC without making that legacy typedef visible. */
+#if (!defined(MACOS) && !defined(TARGET_OS_MAC)) \
+    || (defined(__APPLE__) && defined(__MACH__))
 typedef unsigned char  Byte;  /* 8 bits */
 #endif
 typedef unsigned int   uInt;  /* 16 bits or more */

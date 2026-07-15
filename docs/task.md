@@ -6,16 +6,33 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/ode-fixed-pool-occupancy`; branch point: merged archive-gate checkpoint
-  `5455c778`; upstream-integration baseline: `2b759db`.
+- Active branch: `agent/memfile-silent-read`; branch point: merged ODE occupancy checkpoint
+  `288c2b78`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: move the archive effect-definition table behind a genuinely no-longjmp parser and bounded non-stack
-  workspace. `FX_RestoreEffectDefTable` currently leaves its 32-bit key temporary uninitialized when a read truncates,
-  registers definitions while parsing is still fallible, and relies on `MemFile_ReadCString`/`MemFile_ReadData` paths
-  that can assert, print, or drop. The enclosing 1,024-entry table also consumes 8,196 bytes on x86 and 16,392 bytes on
-  native64. The next batch will add a silent checked `MemoryFile` read primitive, parse exact little-endian names/keys
-  into a bounded lifecycle-owned BSS lease, publish/register only complete entries, release scratch before `FX_BeginArchive`
-  or PHYSICS admission, and make error abandonment reclaim the lease without invoking diagnostics under ownership.
+- Active work: move `FX_RestoreEffectDefTable` behind a bounded lifecycle-owned BSS lease. Its prerequisite no-longjmp
+  input boundary is complete on this branch: status-bearing `MemoryFile` data and caller-bounded C-string readers decode
+  the production legacy RLE/zlib stream without assertions, prints, or drops; validate exact segment lengths and
+  little-endian headers; reject cross-segment, malformed, and truncated input; preserve successfully decoded prefixes and
+  sticky-overflow state while leaving the first unread destination byte unchanged; and reset the process-global codec
+  on failure. `FX_ReadArchiveDataNoDrop` now uses that primitive
+  directly instead of temporarily suppressing reports around the legacy reader. TLS records the exact stream owner, and
+  both global `Com_Error` longjmp paths abandon same-thread inflate/deflate state outside the client-only cleanup guard;
+  foreign threads cannot release it, mismatch cleanup cannot corrupt a newer owner's RLE caches, and raw/compressed read,
+  compressed-write, idempotence, immediate-reuse, and foreign-thread behavior are executable contracts. The complete
+  **48/48** suite passes under GCC, Clang, ASan+UBSan, and TSan; strict x86-32 and AArch64 compile/link pass; and two
+  independent final audits approve the slice. Checked whole-segment compressed finalization remains a later integrity
+  API because SND intentionally skips/copies segments and FX performs multiple mid-segment reads. The next transaction
+  must parse all exact little-endian names/keys before registration, eliminate the uninitialized truncated-key path,
+  publish only complete entries, replace the 1,024-entry stack table (8,196 bytes on x86; 16,392 on native64), release
+  scratch before `FX_BeginArchive` or PHYSICS admission, and let error abandonment reclaim the lease without diagnostics.
+- PR #18 is open. Initial run **29385108870** exposed one macOS arm64-only build seam: the bundled zlib header suppresses
+  its `Byte` typedef whenever modern AppleClang defines the legacy `TARGET_OS_MAC` marker, although modern Darwin no
+  longer makes that classic-Mac typedef visible. The focused correction keeps the classic compiler exception while making
+  zlib self-contained on Apple Mach targets. All ten bundled C translation units compile under simulated Darwin macros;
+  replacement run **29385256836 passed all nine jobs**. Gemini then found that one failed raw byte decode still wrote a
+  synthetic zero into the first unread output position; the reader now publishes only successfully decoded bytes, and
+  the complete **48/48** GCC, Clang, ASan+UBSan, and TSan suites pass again. Codex found no major issue at `300e7dd3`;
+  final CI after the review correction is pending.
 - ODE occupancy runtime on this branch is otherwise complete. The engine-free physics batch controller rejects invalid,
   duplicate, overlapping-output, and unknown-status inputs before callbacks; preflights every selected retirement or
   reconstruction before mutation; and reports the exact successful commit prefix. Production FX archive retirement and
@@ -36,8 +53,12 @@ work item changes. Do not create session-specific handoff files.
   legacy DYNENT timestep applied to an FX-world body and consumes its three RNG values only after successful creation.
   FX performs full sidecar validation from a bounded BSS workspace before native allocation and reuses it for binding.
   Two independent final audits approved the frozen x86 scope. All **47/47** tests pass under GCC, Clang, ASan+UBSan,
-  and TSan; strict lower-ODE Clang syntax with warnings-as-errors also passes. Windows x86 CI is still the production-TU
-  compile gate until the PR runs.
+  and TSan; strict lower-ODE Clang syntax with warnings-as-errors also passes. PR #17 squash-merged as `288c2b78`
+  after replacement run **29382870200 passed all nine jobs**. The replacement fixed one missing MSVC helper
+  declaration and one omitted lambda reference capture, then added an exact 512-slot guard before fixed-workspace
+  indexing. Gemini's nullable-physics-preset comment was resolved from the immediately dominating null-return guard;
+  its workspace-bound comment produced the exact fail-closed descriptor check. Both review threads were resolved and
+  a final independent audit approved commit `488314be` without another finding.
 - Archive-gate checkpoint: PR #16 merged as `5455c778` after CI run **29374832707 passed all nine jobs**. Gemini's
   two comments were resolved as false positives: the generation lookup is intentionally null-safe and the requested
   standard headers were already explicit. Codex reviewed the exact merge head `5c3a96a0cd` and found no major issue.
@@ -54,7 +75,7 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: complete the effect-definition-table no-longjmp boundary, then add measured stack/runtime gates.
+- Next: implement the transactional effect-definition-table BSS lease, then add measured stack/runtime gates.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,

@@ -5,6 +5,7 @@
 #include "../win32/win_local.h"
 
 #include <universal/com_memory.h>
+#include <universal/memfile.h>
 #ifndef KISAK_DEDI_HEADLESS
 #include <client/client.h>
 #endif
@@ -925,6 +926,7 @@ void Com_Error(errorParm_t code, const char* fmt, ...)
         iassert(com_errorEntered);
         errorcode = code;
         Sys_LeaveCriticalSection(CRITSECT_COM_ERROR);
+        MemFile_AbandonCurrentThreadForError();
 #ifndef KISAK_DEDI_HEADLESS
         FX_ErrorCleanup();
 #endif
@@ -2668,6 +2670,7 @@ void Com_CheckError()
     Sys_LeaveCriticalSection(CRITSECT_COM_ERROR);
     if (v0)
     {
+        MemFile_AbandonCurrentThreadForError();
 #ifndef KISAK_DEDI_HEADLESS
         FX_ErrorCleanup();
 #endif
