@@ -69,8 +69,9 @@ Remaining gates, in implementation order:
    surface that infrastructure blocker rather than creating a permanently queued run.
 2. Complete FX archive runtime closure. Live generation-checked sidecars, full-capacity rollback, exhaustive
    pure restore control, checked heap transaction/preflight scratch, and the normal archive admission gate with
-   deterministic waiter/error-unwind coverage are implemented. Next extract the narrow ODE rollback runtime for
-   real competing non-FX occupancy, followed by the no-longjmp effect-table boundary and measured frame/runtime gates.
+   deterministic waiter/error-unwind coverage are implemented. Exact competing non-FX ODE occupancy and silent
+   live creation/impact/rollback transactions are also implemented. Next replace the stack-backed effect-definition
+   restore table with a no-longjmp `MemoryFile` parser and bounded BSS lease, followed by measured frame/runtime gates.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -982,9 +983,9 @@ heap image also covers malformed graph preflight before archive admission. Safe 
 admission, destroy scratch, and then free referenced buffers, while unsafe outcomes use the explicit `[[noreturn]]`
 platform fatal boundary without cleanup. Wrapper/scratch parity, failure preservation/reuse, full capacity, and
 source cleanup order are covered by the **44/44** GCC/Clang/ASan/UBSan/TSan matrix plus strict x86-32/AArch64
-compile/link fixtures. On branch `agent/fx-archive-gate-control`, based on `6ce9e14`, commits `a393c9a`,
-`2384d00`, and `ebc6654` add the portable normal-admission controller, production adapter, and strengthened source
-contracts. Typed `Open`, `Pending`, and `Exclusive` gate values reject unknown encodings, while durable `Pending`,
+compile/link fixtures. PR #16 merged the portable normal-admission controller, production adapter, and strengthened
+source contracts at `5455c778` after all nine jobs passed. Typed `Open`, `Pending`, and `Exclusive` gate values reject
+unknown encodings, while durable `Pending`,
 `PendingExclusive`, `Acquired`, and
 `ExclusiveGateOnly` TLS phases preserve exact ownership through waiter cancellation, promotion rollback, partial
 release retry, and error abandonment. Deterministic tests cover waiters, cancellation, rollback, every partial
@@ -996,10 +997,24 @@ proof to bypass admission, and safe-empty reset performs checked generation refr
 shutdown two-gate lifecycle protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan
 (leak detection disabled), and TSan; strict x86-32 and AArch64 controller compile/link checks and all three focused
 source scripts pass. Two independent audits found and fixed three concrete fail-closed issues and found no
-remaining PR-scope issue. Overall porting progress is approximately **37%** (plausible range **33–42%**), while
-target delivery remains **0/5**. The next sequence is portable ODE rollback runtime for real competing non-FX
-occupancy, then the no-longjmp effect-table boundary and measured x86/native64 stack/runtime ceilings. Remaining FX
-work also includes camera/scalar snapshot publication and real Disk32 archive/fast-file conversion. The
+remaining PR-scope issue. The current `agent/ode-fixed-pool-occupancy` batch completes the next prerequisite: an
+exact 512-body/512-userdata/2,048-geom competing-occupancy fixture and intrinsically silent production ODE
+create/model-collision/inertial/bullet-impact/destroy transactions. CG SP/MP, DynEnt, and live FX retain PHYSICS through
+rollback or ownership publication, then report outside the lock; unrecoverable cleanup and ambiguous sidecar ownership
+fail-stop only after unlocking. FX structurally validates its complete sidecar from a bounded BSS workspace before body
+allocation and reuses that workspace for binding. Exact legacy mass/COM/list order, bullet arithmetic, the DynEnt
+DYNENT-parameter/FX-body world split, and RNG consumption are pinned by source and executable contracts. Two independent
+final audits approve the x86 scope, and all **47/47** tests pass under GCC, Clang, ASan+UBSan, and TSan. Windows x86 CI
+remains the production translation-unit compile gate for the forthcoming PR.
+
+Overall porting progress is approximately **38%** (plausible range **34–43%**), while target delivery remains **0/5**.
+The next sequence is the no-longjmp effect-definition-table boundary, followed by measured x86/native64 stack/runtime
+ceilings. That parser must replace the uninitialized truncated-key path, the assertion/drop-capable `MemoryFile` reads,
+and the 8,196-byte x86 / 16,392-byte native64 stack table with exact little-endian checked reads and a bounded BSS lease
+released before archive/PHYSICS admission. Remaining FX work also includes camera/scalar snapshot publication and real
+Disk32 archive/fast-file conversion. A separate hard M4 blocker remains: MP `cpose_t::physObjId` and
+`BreakablePiece::physObjId` still truncate ODE pointers into `int32_t`; native-width storage or a token/sidecar is required
+before any native64 engine runtime can be enabled. The
 unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
 a separate transactional `current/end` cursor migration. Detailed live blockers and sequencing remain in
 `docs/task.md` and `docs/CODEBASE_AUDIT.md`.
