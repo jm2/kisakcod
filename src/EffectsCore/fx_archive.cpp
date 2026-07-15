@@ -2645,6 +2645,7 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     fx::archive::FxArchiveRestoreCandidateDisk32ReadyView candidateView{};
     if (!fx::archive::TryGetFxArchiveRestoreCandidateDisk32ReadyView(
             staging.candidate,
+            tableResult.lease,
             &candidateView))
     {
         FX_ReportArchiveDisk32RestoreFailure(
