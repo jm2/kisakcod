@@ -22,7 +22,9 @@ work item changes. Do not create session-specific handoff files.
   preserves outputs on every failure, verifies a hand-authored little-endian `0x80` record and high native64 definition
   identities, and proves conditional x86 raw-record equivalence. Strict warnings-as-errors x86-32 and AArch64 compilation,
   x86-32 execution, focused source/security contracts, Clang analyzer checks, exact legacy raw/zlib table parity, and
-  `git diff --check` pass. Authoritative exact-head nine-job PR CI and automated review remain pending.
+  `git diff --check` pass. PR #22 implementation head `f48b04c1` passed all nine jobs in run **29417195541**. Gemini
+  provided no review comments, and Codex found no major issues at that exact head. Final documentation-head CI remains
+  pending before merge.
 - PR #21 squash-merged as `0f878ff4` from final documentation head `cb731d6e`. Final run **29414351528 passed all nine
   jobs**; implementation head `7895f7a9` also passed all nine in run **29397910131**, Codex found no major issue at that
   exact implementation commit, and the sole Gemini finding was fixed and resolved. Camera/time publication is
