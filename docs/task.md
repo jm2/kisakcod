@@ -9,16 +9,27 @@ work item changes. Do not create session-specific handoff files.
 - Active branch: `agent/fx-disk32-native-structural`; branch point: merged FxSystemBuffers Disk32 checkpoint `09c05e5f`;
   current upstream-integration baseline: merge `11a9e08c` through upstream `312a9d2e`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint: add a roughly 320 KiB heap-owned `FxArchiveDisk32NativeWorkspace` that decodes the fixed system and
-  metadata, reconstructs all three pool free lists, resolves only active definition keys without dereferencing the returned
-  definitions, converts every effect, placement-constructs the correct native member of every pool slot, copies visibility/
-  deferred/padding state, links all workspace-local base and exact read/write selector pointers, and validates the complete
-  allocation graph with caller-owned scratch. Its phases are `Empty`, `StructurallyValid`, and reserved `Ready`; the final
-  successful structural operation alone publishes `StructurallyValid`. A read-only structural accessor is intentionally
-  non-publishable and unsuitable for definition-dependent payload access. The workspace is compile-probed at 327,128 bytes
-  with alignment 8 on native64 and 310,668 bytes with alignment 4 on x86. This batch does not change `MemoryFile`, production
-  archive I/O, or either native64 production guard. A later semantic-finalization batch will safely activate definition-
-  dependent element payload members and transition the candidate to `Ready`.
+- Active checkpoint implementation is complete in `7bd25acb`: the 327,128-byte native64 / 310,668-byte x86 heap-owned
+  `FxArchiveDisk32NativeWorkspace` decodes the fixed system and metadata, reconstructs all three pool free lists, resolves
+  only active definition keys without dereferencing returned definitions, converts every effect, and placement-constructs
+  the correct native member of every pool slot. It preserves validated free links plus opaque trailing bytes under exact
+  representation contracts, copies visibility/deferred/padding state, links all workspace-local base and exact read/write
+  selector pointers, round-trips those selectors through the shared helper, and validates the complete allocation graph
+  with workspace-owned scratch. Same-workspace resolver reentry is rejected, every failure leaves the phase `Empty`, and
+  `StructurallyValid` is the final successful workspace mutation. The gated read-only view remains non-publishable and
+  unsuitable for definition-dependent payload access; `Ready` is reserved for the semantic follow-on. `MemoryFile`, live
+  publication, production archive I/O, and both native64 production guards are unchanged.
+- Current structural checkpoint validation: GCC and Clang suites are **62/62** green. ASan+UBSan (leak detection disabled
+  under the command runner) and TSan are **61/61** green, with the compiler-generated static-frame test intentionally
+  omitted under instrumentation. The 1,360-line fixture covers heap allocation/size/alignment, empty/mixed/full and sparse
+  non-prefix graphs, all three free-link decoder boundaries, active-only opaque resolution, exact relinking/selectors,
+  complete record/visibility/deferred/padding copies, nonzero free-slot tail preservation, failure gating/retry, resolver
+  reentry, source immutability, same-workspace item/free lifetime transitions, and a true x86 whole-buffer oracle. Strict
+  GCC/Clang plus conversion warnings, Clang analyzer, AArch64 compile/link, actual x86-32 execution, source/security
+  contracts, and `git diff --check` pass. Optimized GCC frames are 192 bytes for the builder and 224 bytes for the graph
+  validator, below the portable 4 KiB gate. An independent security/lifetime/ABI/portability audit found no blocker; its
+  sole non-blocking sparse-transition coverage suggestion was added and sanitizer/x86-validated. The authoritative
+  five-target and measured Windows x86 CI matrix remains the PR gate.
 - PR #25 squash-merged as `09c05e5f` from final review-fix head `5abf9cbb`. Final run **29427215187 passed all nine jobs**:
   Linux amd64/arm64, portable Windows amd64/arm64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86,
   and headless Windows x86. Initial implementation/docs head `d9ad05ff` also passed all nine jobs in run **29426792491**.
@@ -181,7 +192,7 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: complete and publish the heap-owned native structural staging boundary described above. Then add definition-dependent
+- Next: publish the exact heap-owned native structural staging checkpoint described above. Then add definition-dependent
   payload activation plus report-free semantic validation to transition the candidate to `Ready`. Full-image raw/zlib
   preflight reading and production reader integration follow only after malformed-input and x86-equivalence fixtures.
   That integration must relink visibility read/write selectors to the live buffers during desired and rollback publication;
@@ -244,8 +255,8 @@ work item changes. Do not create session-specific handoff files.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **43% complete by engineering effort** (plausible range 39–48%).
-  The foundation/checklist view is about 53–58% and the shared foundation is roughly 91–94% mature,
+- Progress estimate: approximately **44% complete by engineering effort** (plausible range 40–49%).
+  The foundation/checklist view is about 55–60% and the shared foundation is roughly 92–95% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Initial upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
   (nine commits; upstream was not ahead at merge time) while preserving the port's pointer-width and

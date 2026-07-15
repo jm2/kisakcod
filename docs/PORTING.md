@@ -74,8 +74,11 @@ Completed foundation work:
   and deterministic native64 key policies, fixed `0x1C` spatial-frame, `0x80` effect-record, `0xB0` camera, `0x10`
   sprite, `0xA60` system, and `0x47480` buffer mirrors, explicit compiler-independent bolt/sort packing, exhaustive
   owner/all-effect-handle conversion, numeric full-buffer topology and visibility-selector validation, raw aligned pool
-  slots, bounded free-list allocation reconstruction, and transactional output publication; production archive I/O
-  remains unchanged pending heap-backed native graph construction and full buffer integration;
+  slots, bounded free-list allocation reconstruction, and a checked heap-owned native structural workspace. The workspace
+  resolves active definition identities without dereference, explicitly constructs every native pool member, preserves
+  opaque free-slot tails, relinks local pointers/selectors, rejects resolver reentry, and publishes only after scratch-backed
+  allocation-graph validation. Production archive I/O remains unchanged pending definition-aware semantic finalization and
+  full buffer integration;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -101,8 +104,11 @@ Remaining gates, in implementation order:
    The exact `FxSystemDisk32` mirror and pure decoder are also complete, including checked `0x47480` address topology,
    visibility selectors, all-effect-handle permutation, active-ring metadata, and spotlight conversion. The exact
    `FxSystemBuffersDisk32` and nested record mirror plus bounded raw-slot free-list allocation reconstruction are also
-   complete. Heap-owned native buffer construction, definition resolution, complete graph/semantic validation,
-   transactional MemoryFile integration, physics records, and native64 guard retirement remain.
+   complete. The exact heap-owned native structural image is now complete as well: it performs active-only opaque
+   definition resolution, explicit native union-member construction, local pointer/selector relinking, and complete
+   allocation-graph validation before exposing a non-publishable `StructurallyValid` view. Definition-dependent payload
+   activation and semantic `Ready` validation, transactional MemoryFile integration, physics records, and native64 guard
+   retirement remain.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -1060,7 +1066,7 @@ registration failure, reentry, abandonment, stale/foreign ownership, reuse, and 
 under GCC, Clang, ASan+UBSan, and TSan; strict x86-32/AArch64 compilation and two independent audits are green. Windows
 x86 production compilation and the five native utility runners remain the authoritative PR CI gate.
 
-Overall porting progress is approximately **43%** (plausible range **39–48%**), while target delivery remains **0/5**.
+Overall porting progress is approximately **44%** (plausible range **40–49%**), while target delivery remains **0/5**.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
 Windows x86 Debug and Release production reports now enforce 2,756-byte `FX_Save`, 6,124-byte `FX_Restore`, and
 2,064-byte maximum-other frames after replacing the discovered 10,256-byte helper with checked heap scratch. Coherent
@@ -1068,12 +1074,12 @@ camera/scalar/visibility publication, copied-image validation, visibility select
 membership passed all nine jobs in PR #21 run **29397910131** at implementation head `7895f7a9`; Codex found no major
 issue at that exact commit and the sole Gemini finding was fixed and resolved; final documentation run **29414351528**
 also passed all nine jobs before squash merge `0f878ff4`. The reader-first Disk32 FX key/effect-record, fixed system, and
-fixed buffer/raw-free-list batches are implemented and locally validated, but are not yet a production native64 reader or
-writer. The buffer checkpoint passes **60/60** GCC and Clang suites plus **59/59** ASan+UBSan and TSan suites, strict
-x86-32 execution, AArch64 linking, analyzers, source contracts, and two independent audits; the five-target and measured
-Windows x86 PR matrix remains its authoritative gate. The active sequence is heap-owned full-graph conversion and
-definition resolution, transactional reader integration with live visibility-selector relinking, and only then guarded
-writer replacement after exact x86 equivalence. A checked
+fixed buffer/raw-free-list batches and heap-owned structural native conversion are implemented and locally validated, but
+are not yet a production native64 reader or writer. The current checkpoint passes **62/62** GCC and Clang suites plus
+**61/61** ASan+UBSan and TSan suites, strict x86-32 execution, AArch64 linking, analyzers, source contracts, and independent
+audit; the five-target and measured Windows x86 PR matrix remains its authoritative gate. The active sequence is
+definition-dependent payload activation and semantic `Ready` validation, transactional reader integration with live
+visibility-selector relinking, and only then guarded writer replacement after exact x86 equivalence. A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
 because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work is real Disk32
