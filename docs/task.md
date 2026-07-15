@@ -44,8 +44,8 @@ work item changes. Do not create session-specific handoff files.
   replaces that initializer with an explicit fixed-width `U8Mutation` array. Gemini reported no findings at core
   implementation head `b373429e`; the later change is confined to that fixture correction and status documentation. The
   thread-level review query is empty, and two independent local audits found no remaining blocker. Documentation-only
-  run **29423861013** was still in progress when GitHub merged immediately rather than retaining the requested auto-merge;
-  monitor it to completion, but no implementation changed after the all-green run.
+  run **29423861013 passed all nine jobs** after GitHub merged immediately rather than retaining the requested auto-merge;
+  no implementation changed after the prior all-green run.
 - PR #22 squash-merged as `56760d80` from final documentation head `b86ab94d`. Final run **29418054504 passed all nine
   jobs**; implementation head `f48b04c1` also passed all nine in run **29417195541**. Gemini provided no review comments,
   and Codex found no major issue at the exact implementation head. The merged leaf layer separates full-width native
