@@ -125,8 +125,8 @@ work item changes. Do not create session-specific handoff files.
   idempotent-null destruction contract, and its claimed `BodyState` padding conflicts with the complete pinned 0x00--0x70
   field layout. Those three threads have evidence-backed replies, and all four review threads are resolved. Exact PR head
   `21dae5ca` passed all nine required jobs in run **29453934377**, including all four measured Windows x86 engine
-  variants. PR #31 squash-merged as `1a966369` from final documentation head `9fb7dafd`; its post-merge
-  documentation-only run **29454579529** is in progress while the next reader-first M5 branch begins.
+  variants. PR #31 squash-merged as `1a966369` from final documentation head `9fb7dafd`; post-merge run
+  **29454579529** also passed all nine jobs, including all four measured Windows x86 engine variants.
 - PR #27 initial run **29439592615** at `ff59ef7e` passed Linux amd64/arm64, but portable Windows amd64/ARM64 exposed an
   include-boundary issue before their tests linked: the semantic translation unit imported the complete physics-sidecar
   header only for its token/512-body constants, causing MSVC analysis to charge an unrelated 4,104-byte inline convenience
