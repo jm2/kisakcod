@@ -6,11 +6,20 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-disk32-system-codec`; branch point: merged Disk32 leaf checkpoint `56760d80`;
-  implementation commits: `4c27aa1d`, `9abb332e`, and MSVC fixture correction `337cfe9c`; upstream-integration baseline:
-  `2b759db`.
+- Active branch: `agent/fx-disk32-buffer-schema`; branch point: merged FxSystem Disk32 checkpoint `2b92e7a7`;
+  current upstream-integration baseline: merge `11a9e08c` through upstream `312a9d2e`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint implementation is complete and awaiting PR review. The first fixed full-system seam introduces a
+- Active checkpoint implementation is complete on the branch in `847279ab` and `fb379e5c`: exact
+  `FxSystemBuffersDisk32` (`0x47480`) and nested elem/trail/trail-elem/visibility records use fixed-width fields, while
+  each legacy pool slot is an aligned raw byte span rather than a C++ union. A pure transactional helper reconstructs all
+  three allocation bitmaps by interpreting only each visited free slot's explicit little-endian signed 32-bit word. It
+  rejects invalid heads/counts, negative or out-of-range links, cycles, duplicates, self-links, overlong chains, and count
+  mismatches without constructing native pool members or changing either input or a failed output. Exhaustive layouts,
+  hand-authored records/free lists, a complete x86 `0x47480` byte oracle, strict x86/AArch64 builds, sanitizers, analyzers,
+  stack gates, source invariants, and measured Windows x86 CI wiring are present. Production archive I/O is unchanged.
+  Heap-backed native construction, definition resolution, full graph/semantic validation, MemoryFile integration,
+  physics records, and both native64 production guards remain later batches.
+- Merged FxSystem checkpoint: the first fixed full-system seam introduces a
   strong numeric `ArchiveAddress32` distinct from fast-file tokens and definition keys, exact `FxCameraDisk32` (`0xB0`),
   `FxSpriteInfoDisk32` (`0x10`), and `FxSystemDisk32` (`0xA60`) layouts, plus a pure transactional decoder. It proves the
   complete `0x47480` buffer-address span and exact internal topology without forming pointers, derives distinct visibility
@@ -18,25 +27,28 @@ work item changes. Do not create session-specific handoff files.
   permutation, emits a physical active-slot bitmap, and conditionally validates/remaps spotlight handles. Every native
   pool, sprite, and visibility pointer remains null for later full-image linking; malformed input leaves both outputs
   byte-for-byte unchanged. Production archive I/O and both native64 production guards are intentionally unchanged.
-- Current checkpoint validation: GCC and Clang suites are **58/58** green. ASan+UBSan (leak detection disabled under the
-  command runner) and TSan are **57/57** green, with the compiler-generated static-frame test intentionally omitted under
-  instrumentation. The hand-authored little-endian fixture covers every field/offset, both selector orientations, exact
-  last-fitting/first-overflow archive addresses, finite camera/basis/time bounds, free-head/count consistency, widened
-  ring arithmetic, permutation/duplicate/misaligned handles, all valid spotlight cardinalities, null outputs, and a real
-  x86 raw-layout oracle. Strict warnings-as-errors x86-32 execution and AArch64 linking pass; GCC/Clang analyzer checks,
-  extra conversion warnings on the new decoder, the focused source/security contract, and `git diff --check` pass. The
-  optimized/unoptimized GCC decoder frames are 1,184/1,216 bytes, below the portable 4 KiB gate. Two independent audits
-  found and verified the spotlight-state, end-of-address-space, and post-mutation failure-contract additions and report no
-  remaining implementation or integration blocker.
-- PR #24 is open, and replacement run **29423014541 passed all nine jobs** at exact correction head `6671f87b`: Linux
+- Current buffer checkpoint validation: GCC and Clang suites are **60/60** green. ASan+UBSan (leak detection disabled
+  under the command runner) and TSan are **59/59** green, with the compiler-generated static-frame test intentionally
+  omitted under instrumentation. The hand-authored fixture covers exact nested/top-level offsets, full/empty/sparse and
+  maximum-capacity lists in all three pools, first/middle/last heads, every malformed head/link/count/cycle class, ignored
+  active-slot and unrelated bytes, null output, composite all-or-nothing behavior, and input/output byte preservation.
+  The true x86 oracle explicitly starts class-valued union members, populates a nonzero effect plus active/free pool
+  records, visibility/deferred/padding state, and compares the complete `0x47480` native image. Strict warnings-as-errors
+  x86-32 execution and AArch64 linking, extra conversion warnings, Clang analyzers, ABI/pointer/security/source contracts,
+  and `git diff --check` pass. Reported GCC/Clang helper frames peak at 912/870 bytes, below the portable 4 KiB gate. Two
+  independent audits found and verified the x86 fixture lifetime correction and report no remaining implementation or
+  integration blocker. The authoritative five-target and measured Windows x86 CI matrix remains the PR gate.
+- PR #24 squash-merged as `2b92e7a7` from final documentation head `94d9ba1a`. Replacement run **29423014541 passed all
+  nine jobs** at exact correction head `6671f87b`: Linux
   amd64/arm64, portable Windows amd64/arm64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86, and
   headless Windows x86. Initial run **29422678108** had already passed Linux amd64/arm64, macOS arm64, and headless
   Windows x86, but portable Windows amd64/arm64 stopped on a fixture-only `/W4 /WX` C4244: class-template argument
   deduction built a temporary `pair<size_t, int>` before converting it to `pair<size_t, uint8_t>`. Commit `337cfe9c`
   replaces that initializer with an explicit fixed-width `U8Mutation` array. Gemini reported no findings at core
   implementation head `b373429e`; the later change is confined to that fixture correction and status documentation. The
-  thread-level review query is empty, and two independent local audits found no remaining blocker. This documentation-only
-  final head requires one last nine-job pass before squash merge.
+  thread-level review query is empty, and two independent local audits found no remaining blocker. Documentation-only
+  run **29423861013 passed all nine jobs** after GitHub merged immediately rather than retaining the requested auto-merge;
+  no implementation changed after the prior all-green run.
 - PR #22 squash-merged as `56760d80` from final documentation head `b86ab94d`. Final run **29418054504 passed all nine
   jobs**; implementation head `f48b04c1` also passed all nine in run **29417195541**. Gemini provided no review comments,
   and Codex found no major issue at the exact implementation head. The merged leaf layer separates full-width native
@@ -162,9 +174,8 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: publish and merge the fixed `FxSystemDisk32` checkpoint, then implement the buffer phase in bounded PRs. First add
-  exact `FxSystemBuffersDisk32` (`0x47480`) and nested effect/elem/trail/trail-elem/visibility schemas plus raw-slot
-  free-list reconstruction without production I/O. Then add a roughly 320 KiB heap-owned native staging workspace,
+- Next: publish this exact buffer/nested-schema and raw-slot free-list checkpoint without production I/O. Then add a
+  roughly 320 KiB heap-owned native staging workspace,
   definition-resolver callback, native pool construction, selector/metadata cross-checks, and complete graph/semantic
   validation. Production reader integration follows only after full-image malformed-input and x86-equivalence fixtures.
   That integration must relink visibility read/write selectors to the live buffers during desired and rollback publication;
@@ -227,10 +238,10 @@ work item changes. Do not create session-specific handoff files.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **42% complete by engineering effort** (plausible range 38–47%).
-  The foundation/checklist view is about 52–57% and the shared foundation is roughly 90–94% mature,
+- Progress estimate: approximately **43% complete by engineering effort** (plausible range 39–48%).
+  The foundation/checklist view is about 53–58% and the shared foundation is roughly 91–94% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
-- Upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
+- Initial upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
   (nine commits; upstream was not ahead at merge time) while preserving the port's pointer-width and
   security changes. It restores several primarily SP features plus real shared renderer, XAnim, and
   unzip fixes; the accidental
@@ -255,8 +266,9 @@ work item changes. Do not create session-specific handoff files.
   native impact-table allocations, and a native `FxProfileEntry` sort stride. A shared checked blob
   cursor now gives every pointer-bearing converted payload its native alignment, zeroes padding, rejects
   signed-size/capacity overflow transactionally, and verifies planner/writer parity. The first archive Disk32 primitives
-  now provide explicit definition-key policy, exact effect-record mirrors, and checked owner-handle stride conversion.
-  Disk32 work remains for complete `FxSystem`/`FxSystemBuffers` archive integration and fast-file effect/impact-table reads;
+  now provide explicit definition-key policy, exact effect/system/buffer mirrors, checked owner-handle stride conversion,
+  and bounded raw-slot free-list reconstruction. Disk32 work remains for heap-backed native buffer construction, complete
+  graph/semantic validation, production archive integration, and fast-file effect/impact-table reads;
   the loose-file missing-effect fallback is native-width-safe, and the merged physics sidecar is wired through live and
   legacy-x86 archive ownership paths. Freelist allocation/free
   now validates heads, links, strides, counts, and ownership before mutation, clears payloads before

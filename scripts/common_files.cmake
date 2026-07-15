@@ -19,6 +19,8 @@ set(EFFECTSCORE
     "${SRC_DIR}/EffectsCore/fx_archive_disk32.h"
     "${SRC_DIR}/EffectsCore/fx_archive_system_disk32.cpp"
     "${SRC_DIR}/EffectsCore/fx_archive_system_disk32.h"
+    "${SRC_DIR}/EffectsCore/fx_archive_buffers_disk32.cpp"
+    "${SRC_DIR}/EffectsCore/fx_archive_buffers_disk32.h"
     "${SRC_DIR}/EffectsCore/fx_archive_physics_batch_control.cpp"
     "${SRC_DIR}/EffectsCore/fx_archive_physics_batch_control.h"
     "${SRC_DIR}/EffectsCore/fx_archive_gate_control.cpp"
