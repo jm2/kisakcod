@@ -81,7 +81,9 @@ struct FxArchiveSemanticPhysicsDescriptor
 // selected model, owner index, and token have all validated.  physicsIndex is
 // zero-based and strictly less than the final physicsBodyCount.  Returning
 // false rejects the complete validation; partial sink output is caller-owned
-// and must be ignored on failure.
+// and must be ignored on failure.  The synchronous sink must not mutate or
+// reenter the system, its graph, or its definition/visual storage; retained
+// descriptor pointers remain subject to the caller's graph and asset leases.
 using FxArchiveSemanticPhysicsSinkCallback = bool (*)(
     void *context,
     const FxArchiveSemanticPhysicsDescriptor &descriptor,

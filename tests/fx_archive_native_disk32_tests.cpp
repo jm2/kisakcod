@@ -2202,6 +2202,356 @@ void ConfigurePhysicsCapacityFixture(
     }
 }
 
+struct ReadyPhysicsCountProbe final
+{
+    const FxSystemBuffers *buffers = nullptr;
+    std::size_t calls = 0;
+    bool valid = true;
+};
+
+bool AcceptReadyPhysicsCount(
+    void *const context,
+    const archive::FxArchiveDisk32ReadyPhysicsDescriptor &descriptor,
+    const std::size_t physicsIndex) noexcept
+{
+    auto *const probe = static_cast<ReadyPhysicsCountProbe *>(context);
+    if (!probe || !probe->buffers)
+        return false;
+    probe->valid = probe->valid
+        && physicsIndex == probe->calls
+        && descriptor.ownerIndex == physicsIndex
+        && descriptor.ownerIndex < MAX_ELEMS
+        && descriptor.elem
+            == &probe->buffers->elems[descriptor.ownerIndex].item
+        && descriptor.model != nullptr
+        && descriptor.token
+            == static_cast<std::uint32_t>(physicsIndex + 1u);
+    ++probe->calls;
+    return probe->valid;
+}
+
+struct ReadyPhysicsSequenceProbe final
+{
+    const FxSystemBuffers *buffers = nullptr;
+    std::array<std::uint32_t, 2> expectedTokens{};
+    const XModel *expectedModel = nullptr;
+    std::array<archive::FxArchiveDisk32ReadyPhysicsDescriptor, 2>
+        observed{};
+    std::size_t rejectIndex = (std::numeric_limits<std::size_t>::max)();
+    std::size_t calls = 0;
+    bool valid = true;
+};
+
+bool AcceptReadyPhysicsSequence(
+    void *const context,
+    const archive::FxArchiveDisk32ReadyPhysicsDescriptor &descriptor,
+    const std::size_t physicsIndex) noexcept
+{
+    auto *const probe = static_cast<ReadyPhysicsSequenceProbe *>(context);
+    if (!probe || !probe->buffers
+        || physicsIndex >= probe->observed.size())
+    {
+        return false;
+    }
+
+    probe->valid = probe->valid
+        && physicsIndex == probe->calls
+        && descriptor.ownerIndex == physicsIndex
+        && descriptor.elem
+            == &probe->buffers->elems[physicsIndex].item
+        && descriptor.model == probe->expectedModel
+        && descriptor.token == probe->expectedTokens[physicsIndex];
+    probe->observed[physicsIndex] = descriptor;
+    ++probe->calls;
+    return probe->valid && physicsIndex != probe->rejectIndex;
+}
+
+void ConfigureReadyPhysicsEnumerationFixture(
+    Fixture *const fixture,
+    SemanticDefinition *const definition,
+    const std::array<std::uint32_t, 2> &tokens,
+    const std::array<const XModel *, 2> &models) noexcept
+{
+    CHECK(fixture != nullptr);
+    CHECK(definition != nullptr);
+    if (!fixture || !definition)
+        return;
+
+    fixture->PopulateGraph(tokens.size(), 0, 0);
+    MakeEffectRuntimeSemanticallyValid(fixture);
+    archive::FxEffectDisk32 &effect = fixture->buffers->effects[0];
+    effect.firstElemHandle[0] = INVALID_HANDLE;
+    effect.firstElemHandle[1] = ElemHandle(0);
+    effect.firstElemHandle[2] = INVALID_HANDLE;
+    effect.firstSortedElemHandle = INVALID_HANDLE;
+
+    definition->Configure(1);
+    definition->SetPhysicsModels(
+        0, models.data(), static_cast<std::uint8_t>(models.size()));
+    for (std::size_t index = 0; index < tokens.size(); ++index)
+    {
+        archive::FxElemDisk32 elem = LoadElemDisk32(*fixture, index);
+        elem.defIndex = 0;
+        elem.sequence = 0;
+        elem.msecBegin = 479;
+        std::memcpy(elem.payload, &tokens[index], sizeof(tokens[index]));
+        StoreElemDisk32(fixture, index, elem);
+    }
+}
+
+void TestReadyPhysicsEnumerationPhaseAndZeroGates()
+{
+    Fixture fixture{};
+    fixture.system->frameCount = 0;
+    ResolverState resolver{};
+    AllocationState allocation{};
+    WorkspaceOwner owner{&allocation};
+    CHECK(owner.get() != nullptr);
+    if (!owner.get())
+        return;
+
+    ReadyPhysicsCountProbe probe{};
+    CHECK(!archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+        nullptr, &probe, AcceptReadyPhysicsCount));
+    CHECK(!archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+        owner.get(), &probe, AcceptReadyPhysicsCount));
+    CHECK(!archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+        owner.get(), &probe, nullptr));
+    CHECK(probe.calls == 0);
+
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    CHECK(!archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+        owner.get(), &probe, AcceptReadyPhysicsCount));
+    CHECK(probe.calls == 0);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::Success);
+    const auto ready = GetReadyView(owner.get());
+    CHECK(ready.physicsBodyCount == 0);
+    CHECK(!archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+        owner.get(), nullptr, nullptr));
+    CHECK(owner.get()->phase()
+          == archive::FxArchiveDisk32WorkspacePhase::Ready);
+
+    // A callback is required to make the enumeration boundary explicit, but
+    // a zero-body Ready image invokes it zero times and remains retryable.
+    CHECK(archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+        owner.get(), nullptr, AcceptReadyPhysicsCount));
+    CHECK(probe.calls == 0);
+    CHECK(owner.get()->phase()
+          == archive::FxArchiveDisk32WorkspacePhase::Ready);
+    CHECK(archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+        owner.get(), nullptr, AcceptReadyPhysicsCount));
+}
+
+void TestReadyPhysicsEnumerationOrderRetryAndPreservation()
+{
+    constexpr std::array<std::uint32_t, 2> tokens{
+        UINT32_C(0x81234567), UINT32_C(0xF2345678)};
+    const std::array<const XModel *, 2> models{
+        reinterpret_cast<const XModel *>(
+            static_cast<std::uintptr_t>(UINT32_C(0x00135790))),
+        reinterpret_cast<const XModel *>(
+            static_cast<std::uintptr_t>(UINT32_C(0x002468A0)))};
+    Fixture fixture{};
+    SemanticDefinition definition{};
+    ConfigureReadyPhysicsEnumerationFixture(
+        &fixture, &definition, tokens, models);
+    ResolverState resolver{};
+    resolver.result = &definition.effect;
+    AllocationState allocation{};
+    WorkspaceOwner owner{&allocation};
+    CHECK(owner.get() != nullptr);
+    if (!owner.get())
+        return;
+
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::Success);
+    const auto ready = GetReadyView(owner.get());
+    CHECK(ready.physicsBodyCount == tokens.size());
+
+    const std::vector<std::uint8_t> systemBefore(
+        reinterpret_cast<const std::uint8_t *>(ready.system),
+        reinterpret_cast<const std::uint8_t *>(ready.system)
+            + sizeof(*ready.system));
+    const std::vector<std::uint8_t> buffersBefore(
+        reinterpret_cast<const std::uint8_t *>(ready.buffers),
+        reinterpret_cast<const std::uint8_t *>(ready.buffers)
+            + sizeof(*ready.buffers));
+    const std::vector<std::uint8_t> poolStatesBefore(
+        reinterpret_cast<const std::uint8_t *>(ready.poolStates),
+        reinterpret_cast<const std::uint8_t *>(ready.poolStates)
+            + sizeof(*ready.poolStates));
+    const std::vector<std::uint8_t> metadataBefore(
+        reinterpret_cast<const std::uint8_t *>(ready.metadata),
+        reinterpret_cast<const std::uint8_t *>(ready.metadata)
+            + sizeof(*ready.metadata));
+
+    definition.SetPhysicsModel(0, 0);
+    ReadyPhysicsSequenceProbe invalidSemantics{
+        ready.buffers, tokens, models[1]};
+    CHECK(!archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+        owner.get(),
+        &invalidSemantics,
+        AcceptReadyPhysicsSequence));
+    CHECK(invalidSemantics.calls == 0);
+    CHECK(owner.get()->phase()
+          == archive::FxArchiveDisk32WorkspacePhase::Ready);
+    definition.SetPhysicsModels(
+        0, models.data(), static_cast<std::uint8_t>(models.size()));
+
+    ReadyPhysicsSequenceProbe rejected{
+        ready.buffers, tokens, models[1]};
+    rejected.rejectIndex = 1;
+    CHECK(!archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+        owner.get(), &rejected, AcceptReadyPhysicsSequence));
+    CHECK(rejected.valid);
+    CHECK(rejected.calls == 2);
+    CHECK(owner.get()->phase()
+          == archive::FxArchiveDisk32WorkspacePhase::Ready);
+    CHECK(std::memcmp(
+              ready.system, systemBefore.data(), systemBefore.size())
+          == 0);
+    CHECK(std::memcmp(
+              ready.buffers, buffersBefore.data(), buffersBefore.size())
+          == 0);
+    CHECK(std::memcmp(
+              ready.poolStates,
+              poolStatesBefore.data(),
+              poolStatesBefore.size())
+          == 0);
+    CHECK(std::memcmp(
+              ready.metadata,
+              metadataBefore.data(),
+              metadataBefore.size())
+          == 0);
+
+    ReadyPhysicsSequenceProbe accepted{
+        ready.buffers, tokens, models[1]};
+    CHECK(archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+        owner.get(), &accepted, AcceptReadyPhysicsSequence));
+    CHECK(accepted.valid);
+    CHECK(accepted.calls == tokens.size());
+    for (std::size_t index = 0; index < tokens.size(); ++index)
+    {
+        CHECK(accepted.observed[index].elem
+              == &ready.buffers->elems[index].item);
+        CHECK(accepted.observed[index].model == models[1]);
+        CHECK(accepted.observed[index].ownerIndex == index);
+        CHECK(accepted.observed[index].token == tokens[index]);
+    }
+
+    CHECK(std::memcmp(
+              ready.system, systemBefore.data(), systemBefore.size())
+          == 0);
+    CHECK(std::memcmp(
+              ready.buffers, buffersBefore.data(), buffersBefore.size())
+          == 0);
+    CHECK(std::memcmp(
+              ready.poolStates,
+              poolStatesBefore.data(),
+              poolStatesBefore.size())
+          == 0);
+    CHECK(std::memcmp(
+              ready.metadata,
+              metadataBefore.data(),
+              metadataBefore.size())
+          == 0);
+}
+
+struct ReadyPhysicsReentryProbe final
+{
+    Fixture *fixture = nullptr;
+    ResolverState *resolver = nullptr;
+    archive::FxArchiveDisk32NativeWorkspace *workspace = nullptr;
+    bool nestedEnumerationResult = true;
+    archive::FxArchiveDisk32StructuralStatus nestedBuildStatus =
+        archive::FxArchiveDisk32StructuralStatus::Success;
+    std::size_t calls = 0;
+    bool valid = true;
+};
+
+bool AcceptReadyPhysicsReentrantly(
+    void *const context,
+    const archive::FxArchiveDisk32ReadyPhysicsDescriptor &descriptor,
+    const std::size_t physicsIndex) noexcept
+{
+    auto *const probe = static_cast<ReadyPhysicsReentryProbe *>(context);
+    if (!probe || !probe->fixture || !probe->resolver
+        || !probe->workspace)
+    {
+        return false;
+    }
+    ++probe->calls;
+    probe->valid = probe->valid && physicsIndex == 0
+        && descriptor.ownerIndex == 0 && descriptor.elem != nullptr
+        && descriptor.model != nullptr && descriptor.token != 0;
+    if (probe->calls == 1)
+    {
+        probe->nestedEnumerationResult =
+            archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+                probe->workspace,
+                probe,
+                AcceptReadyPhysicsReentrantly);
+        probe->nestedBuildStatus =
+            Build(*probe->fixture, *probe->resolver, probe->workspace);
+        probe->valid = probe->valid
+            && !probe->nestedEnumerationResult
+            && probe->nestedBuildStatus
+                == archive::FxArchiveDisk32StructuralStatus::InvalidArgument
+            && probe->workspace->phase()
+                == archive::FxArchiveDisk32WorkspacePhase::Ready;
+    }
+    return probe->valid;
+}
+
+void TestReadyPhysicsEnumerationReentryIsRejected()
+{
+    constexpr std::uint32_t token = UINT32_C(0xF1234567);
+    Fixture fixture{};
+    SemanticDefinition definition{};
+    ConfigurePhysicsModelFixture(&fixture, &definition, token);
+    ResolverState resolver{};
+    resolver.result = &definition.effect;
+    AllocationState allocation{};
+    WorkspaceOwner owner{&allocation};
+    CHECK(owner.get() != nullptr);
+    if (!owner.get())
+        return;
+
+    CHECK(Build(fixture, resolver, owner.get())
+          == archive::FxArchiveDisk32StructuralStatus::Success);
+    CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
+          == archive::FxArchiveDisk32ReadyStatus::Success);
+
+    ReadyPhysicsReentryProbe probe{
+        &fixture, &resolver, owner.get()};
+    CHECK(archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+        owner.get(), &probe, AcceptReadyPhysicsReentrantly));
+    CHECK(probe.valid);
+    CHECK(probe.calls == 1);
+    CHECK(!probe.nestedEnumerationResult);
+    CHECK(probe.nestedBuildStatus
+          == archive::FxArchiveDisk32StructuralStatus::InvalidArgument);
+    CHECK(owner.get()->phase()
+          == archive::FxArchiveDisk32WorkspacePhase::Ready);
+
+    ReadyPhysicsSequenceProbe retry{};
+    retry.buffers = GetReadyView(owner.get()).buffers;
+    retry.expectedTokens[0] = token;
+    retry.expectedModel = reinterpret_cast<const XModel *>(
+        static_cast<std::uintptr_t>(UINT32_C(0x135790)));
+    // This one-body image uses the first descriptor slot only.
+    retry.observed[1].token = UINT32_C(0xA5A55A5A);
+    CHECK(archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+        owner.get(), &retry, AcceptReadyPhysicsSequence));
+    CHECK(retry.valid);
+    CHECK(retry.calls == 1);
+    CHECK(retry.observed[1].token == UINT32_C(0xA5A55A5A));
+}
+
 void TestReadyPhysicsCapacityBoundary()
 {
     Fixture fixture{};
@@ -2220,8 +2570,16 @@ void TestReadyPhysicsCapacityBoundary()
           == archive::FxArchiveDisk32StructuralStatus::Success);
     CHECK(archive::TryFinalizeFxArchiveDisk32NativeImage(owner.get())
           == archive::FxArchiveDisk32ReadyStatus::Success);
-    CHECK(GetReadyView(owner.get()).physicsBodyCount
+    const auto ready = GetReadyView(owner.get());
+    CHECK(ready.physicsBodyCount
           == archive::FX_ARCHIVE_PHYSICS_BODY_LIMIT);
+    ReadyPhysicsCountProbe enumeration{ready.buffers};
+    CHECK(archive::TryEnumerateFxArchiveDisk32ReadyPhysics(
+        owner.get(), &enumeration, AcceptReadyPhysicsCount));
+    CHECK(enumeration.valid);
+    CHECK(enumeration.calls == archive::FX_ARCHIVE_PHYSICS_BODY_LIMIT);
+    CHECK(owner.get()->phase()
+          == archive::FxArchiveDisk32WorkspacePhase::Ready);
 
     ConfigurePhysicsCapacityFixture(
         &fixture,
@@ -2254,6 +2612,9 @@ int main()
     TestReadySpotlightSelectionAndDerivedBolt();
     TestReadyAllOrdinaryClasses();
     TestReadyTrailSemanticsAndFailureGating();
+    TestReadyPhysicsEnumerationPhaseAndZeroGates();
+    TestReadyPhysicsEnumerationOrderRetryAndPreservation();
+    TestReadyPhysicsEnumerationReentryIsRejected();
     TestReadyPhysicsCapacityBoundary();
 
     if (failures != 0)

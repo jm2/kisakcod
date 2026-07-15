@@ -162,6 +162,15 @@ foreach(_marker IN ITEMS
     "TryGetFxArchiveDisk32ReadyView("
     "struct FxArchiveDisk32ReadyView"
     "std::uint32_t physicsBodyCount = 0;"
+    "struct FxArchiveDisk32ReadyPhysicsDescriptor"
+    "const FxElem *elem = nullptr;"
+    "const XModel *model = nullptr;"
+    "std::size_t ownerIndex = 0;"
+    "std::uint32_t token = 0;"
+    "FxArchiveDisk32ReadyPhysicsSinkCallback"
+    "TryEnumerateFxArchiveDisk32ReadyPhysics("
+    "const FxArchiveDisk32NativeWorkspace *workspace"
+    "The operation is logically const"
     "callers must not cast away const or mutate any reachable staging")
     require_contains(
         _header "${_marker}" "bounded structural and Ready API")
@@ -322,13 +331,19 @@ foreach(_marker IN ITEMS
     require_contains(_source "${_marker}" "transactional structural reconstruction")
 endforeach()
 foreach(_marker IN ITEMS
-    "workspace->building_ || !resolver.resolve"
+    "if (workspace->building_)"
+    "if (!resolver.resolve)"
     "workspace->building_ = true;"
     "const auto finish = [workspace]"
     "workspace->building_ = false;"
     "return FxArchiveDisk32StructuralStatus::Success;")
     require_contains(_source "${_marker}" "same-workspace resolver reentrancy gate and cleanup")
 endforeach()
+require_ordered(
+    _source
+    "if (workspace->building_) return FxArchiveDisk32StructuralStatus::InvalidArgument;"
+    "workspace->phase_ = FxArchiveDisk32WorkspacePhase::Empty;"
+    "an active Ready enumeration must reject nested build before phase invalidation")
 extract_slice(
     _source
     "workspace->building_ = true;"
@@ -529,6 +544,102 @@ require_not_contains(
     _after_ready_publication
     "workspace->"
     "no workspace access may follow Ready publication")
+
+# Ready-only physics enumeration is logically const. It reuses the semantic
+# oracle with no payload preparation, verifies every descriptor against the
+# exact allocated workspace slot, and always clears its same-workspace guard
+# without changing or republishing the Ready phase.
+extract_slice(
+    _source
+    "bool TryEnumerateFxArchiveDisk32ReadyPhysics("
+    "bool TryGetFxArchiveDisk32ReadyView("
+    _ready_physics_enumeration
+    "Ready-only physics enumeration")
+foreach(_marker IN ITEMS
+    "workspace->building_"
+    "workspace->phase_ != FxArchiveDisk32WorkspacePhase::Ready"
+    "WorkspaceLinksAndSelectorsRoundTrip("
+    "workspace->physicsBodyCount_ > FX_ARCHIVE_PHYSICS_BODY_LIMIT"
+    "const std::size_t expectedCount = workspace->physicsBodyCount_;"
+    "workspace->system_.activeSpotLightBoltDobj"
+    "workspace->building_ = true;"
+    "const FxArchiveSemanticCallbacks callbacks{ &sink, nullptr, AcceptFxArchiveDisk32ReadyPhysics};"
+    "TryValidateFxArchiveSemanticsNoReport("
+    "workspace->building_ = false;"
+    "semanticResult.physicsBodyCount == expectedCount"
+    "sink.forwardedCount == expectedCount"
+    "semanticResult.spotLightBoltDobj == expectedSpotLightBoltDobj")
+    require_contains(
+        _ready_physics_enumeration
+        "${_marker}"
+        "Ready enumeration phase, traversal, and result contract")
+endforeach()
+require_ordered(
+    _ready_physics_enumeration
+    "workspace->phase_ != FxArchiveDisk32WorkspacePhase::Ready"
+    "WorkspaceLinksAndSelectorsRoundTrip("
+    "Ready and exact workspace links must validate before traversal")
+require_ordered(
+    _ready_physics_enumeration
+    "workspace->building_ = true;"
+    "TryValidateFxArchiveSemanticsNoReport("
+    "same-workspace reentry must close before callbacks")
+require_ordered(
+    _ready_physics_enumeration
+    "TryValidateFxArchiveSemanticsNoReport("
+    "workspace->building_ = false;"
+    "the enumeration guard must clear after the synchronous oracle")
+require_not_contains(
+    _ready_physics_enumeration
+    "workspace->phase_ ="
+    "enumeration cannot invalidate or republish Ready")
+
+extract_slice(
+    _source
+    "bool AcceptFxArchiveDisk32ReadyPhysics("
+    "} // namespace"
+    _ready_physics_adapter
+    "immutable Ready physics sink adapter")
+foreach(_marker IN ITEMS
+    "physicsIndex != context->forwardedCount"
+    "physicsIndex >= context->expectedCount"
+    "descriptor.ownerIndex >= MAX_ELEMS"
+    "FxPoolAllocationStateIsAllocated( context->poolStates->elems, descriptor.ownerIndex)"
+    "descriptor.elem != std::addressof( context->buffers->elems[descriptor.ownerIndex].item)"
+    "!descriptor.model"
+    "descriptor.token == FX_ARCHIVE_INVALID_PHYSICS_TOKEN"
+    "const FxArchiveDisk32ReadyPhysicsDescriptor readyDescriptor{"
+    "context->acceptPhysics( context->callerContext, readyDescriptor, physicsIndex)"
+    "++context->forwardedCount;")
+    require_contains(
+        _ready_physics_adapter
+        "${_marker}"
+        "every public descriptor is exact, immutable, and bounded")
+endforeach()
+require_ordered(
+    _ready_physics_adapter
+    "descriptor.token == FX_ARCHIVE_INVALID_PHYSICS_TOKEN"
+    "const FxArchiveDisk32ReadyPhysicsDescriptor readyDescriptor{"
+    "all descriptor checks must precede public construction")
+require_ordered(
+    _ready_physics_adapter
+    "const FxArchiveDisk32ReadyPhysicsDescriptor readyDescriptor{"
+    "context->acceptPhysics( context->callerContext, readyDescriptor, physicsIndex)"
+    "only the immutable descriptor may reach the caller")
+require_ordered(
+    _ready_physics_adapter
+    "context->acceptPhysics( context->callerContext, readyDescriptor, physicsIndex)"
+    "++context->forwardedCount;"
+    "a rejected callback cannot advance the accepted count")
+
+foreach(_marker IN ITEMS
+    "must not mutate or"
+    "reenter the system, its graph, or its definition/visual storage")
+    require_contains(
+        _semantics_header
+        "${_marker}"
+        "shared semantic sink contract forbids graph mutation and reentry")
+endforeach()
 
 # Ready views are gated by phase and committed only after a complete local
 # view has been formed; every rejection preserves the caller's output bytes.
