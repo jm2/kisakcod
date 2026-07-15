@@ -44,6 +44,8 @@ dContactGeom::g1 and dContactGeom::g2.
 #pragma warning(disable:4291)  // for VC++, no complaints about "no matching operator delete found"
 #endif
 
+#include <cmath>
+
 //****************************************************************************
 // the basic geometry objects
 // MOD constructors to add dxBody* param
@@ -58,6 +60,7 @@ struct dxSphere : public dxGeom {
 struct dxBox : public dxGeom {
   dVector3 side;	// side lengths (x,y,z)
   dxBox (dSpaceID space, dxBody *body, dReal lx, dReal ly, dReal lz);
+  dxBox (ode_no_report_init_t, dReal lx, dReal ly, dReal lz) noexcept;
   void computeAABB() override;
 };
 
@@ -139,6 +142,20 @@ dxBox::dxBox (dSpaceID space, dxBody *body, dReal lx, dReal ly, dReal lz) : dxGe
   side[2] = lz;
 }
 
+dxBox::dxBox(
+    const ode_no_report_init_t init,
+    const dReal lx,
+    const dReal ly,
+    const dReal lz) noexcept
+    : dxGeom(init, 1)
+{
+  type = dBoxClass;
+  side[0] = lx;
+  side[1] = ly;
+  side[2] = lz;
+  side[3] = 0;
+}
+
 
 void dxBox::computeAABB()
 {
@@ -172,6 +189,44 @@ dGeomID dCreateBox (dSpaceID space, dxBody* body, dReal lx, dReal ly, dReal lz)
 
     return new ((void *)newBox) dxBox(space, body, lx, ly, lz);
   //return new dxBox (space,body,lx,ly,lz);
+}
+
+poolmutationstatus_t ODE_TryCreateBoxNoReport(
+    dxSpace *const space,
+    dxBody *const body,
+    const dReal lx,
+    const dReal ly,
+    const dReal lz,
+    dxGeom **const outGeom) noexcept
+{
+    if (!outGeom)
+        return poolmutationstatus_t::InvalidState;
+    *outGeom = nullptr;
+    if (!space || !body || !(lx > 0) || !(ly > 0) || !(lz > 0)
+        || !std::isfinite(static_cast<double>(lx))
+        || !std::isfinite(static_cast<double>(ly))
+        || !std::isfinite(static_cast<double>(lz))
+        || !ODE_TryValidateGeomAttachmentNoReport(space, body))
+    {
+        return poolmutationstatus_t::InvalidState;
+    }
+
+    dxGeom *storage = nullptr;
+    const poolmutationstatus_t allocationStatus =
+        ODE_TryAllocateGeomNoReport(&storage);
+    if (allocationStatus != poolmutationstatus_t::Success)
+        return allocationStatus;
+
+    auto *const geom = new (storage) dxBox(ODE_NO_REPORT_INIT, lx, ly, lz);
+    const poolmutationstatus_t attachStatus =
+        ODE_TryAttachGeomNoReport(geom, space, body);
+    if (attachStatus != poolmutationstatus_t::Success)
+    {
+        (void)ODE_TryGeomDestructNoReport(geom);
+        return attachStatus;
+    }
+    *outGeom = geom;
+    return poolmutationstatus_t::Success;
 }
 
 
