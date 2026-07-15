@@ -6,10 +6,19 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-archive-portable-reader-disk32`; branch point: merged selector-publication checkpoint `559cad41`;
+- Active branch: `agent/fx-archive-disk32-production-restore`; branch point: merged portable-reader checkpoint `7cbe7070`;
   current upstream-integration baseline: merge `11a9e08c` through upstream `312a9d2e`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Current portable-reader checkpoint: the lightweight native `BodyState` leaf and exact `BodyStateDisk32` semantic decoder
+- Current production-restore scope: replace only `FX_Restore`'s legacy archive-tail parser with the unified Disk32 reader.
+  Under the exact retained definition lease, allocate the heap reader, reach `Ready`, and materialize an independent mutable
+  system/buffer/physics candidate whose selectors bind only to its own buffers and whose element pointers are remapped by
+  validated owner index. Destroy the reader, validate and release the lease, then immediately acquire generation-checked
+  archive ownership before dereferencing copied asset identities or entering the existing physics/publication/rollback
+  controller. Remove the restore-only pointer-width/ABI/address/relocation path and native64 guard only after exact raw/zlib
+  x86 equivalence, physical compressed corruption, both selector orientations, 0/ordinary/512-body boundaries, malformed
+  no-publication behavior, rejected-publication preservation, post-publication poison recovery, and rollback fixtures pass.
+  `FX_Save`, the legacy writer, native64 save guard, wire format, and licensed workflow remain unchanged.
+- Merged portable-reader checkpoint: the lightweight native `BodyState` leaf and exact `BodyStateDisk32` semantic decoder
   are implemented, the generic `Phys_ObjSave` three-byte disclosure is closed, logically-const Ready-only physics
   enumeration and exact active effect-table lease validation are public, and the complete legacy
   system/buffers/address/body tail is staged transactionally in one heap-owned, report-free reader workspace. The exact
@@ -81,7 +90,7 @@ work item changes. Do not create session-specific handoff files.
   audit found no remaining correctness, ABI, security, portability, test, or documentation blocker. PR #26 then
   squash-merged as `6642d0d2` from final documentation head `0a07f546`; documentation-only run **29436148095 passed all
   nine jobs**.
-- Current portable-reader checkpoint validation: GCC and Clang suites are **66/66** green. ASan+UBSan (leak detection
+- Merged portable-reader checkpoint validation: GCC and Clang suites are **66/66** green. ASan+UBSan (leak detection
   disabled under the traced command runner) and TSan are **65/65** green, with only the compiler-generated static-frame
   test intentionally omitted under instrumentation. Strict GCC/Clang x86-32 and AArch64 compilation, Clang analysis,
   ABI/pointer/security/source contracts, and `git diff --check` pass. The reader's maximum locally observed frame is at
@@ -91,7 +100,8 @@ work item changes. Do not create session-specific handoff files.
   the local implementation results are from exact head `aa09e0bb`. Exact PR #30 checkpoint head `42d1c4bb` passed all nine
   jobs in run **29449586954**: Linux amd64/arm64, portable Windows amd64/ARM64, macOS arm64, measured Windows x86
   Debug/Release, no-Steam Windows x86, and headless Windows x86 are green. Gemini reviewed that exact head with no comments
-  or additional feedback, and the thread-aware query is empty. The next documentation-only head remains the final PR gate.
+  or additional feedback, and the thread-aware query is empty. Final documentation head `6ce201f4` passed all nine jobs
+  again in run **29450294896**, and PR #30 squash-merged as `7cbe7070`.
 - PR #27 initial run **29439592615** at `ff59ef7e` passed Linux amd64/arm64, but portable Windows amd64/ARM64 exposed an
   include-boundary issue before their tests linked: the semantic translation unit imported the complete physics-sidecar
   header only for its token/512-body constants, causing MSVC analysis to charge an unrelated 4,104-byte inline convenience
@@ -283,10 +293,10 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Active work after this checkpoint: land the implemented portable reader through the complete CI/review gate, then
-  integrate it into production x86 and remove only the restore-side native64 guard after exact raw/zlib equivalence, malformed
-  input, rejected-publication preservation, poison-after-publication recovery, and rollback tests pass. Retain the legacy
-  x86 writer and native64 save guard until a later pure encoder and full-image equivalence batch.
+- Active work after this checkpoint: implement the failure-atomic mutable candidate adapter and exact lease-to-archive
+  lifetime handoff, extend reader/equivalence/corruption/selector coverage, then switch production restore to the unified
+  reader and remove only the restore-side native64 guard. Retain the legacy x86 writer and native64 save guard until a
+  later pure encoder and full-image equivalence batch.
 - Completed M5 portable-reader slice: `BodyState` now lives in a lightweight physics leaf instead of importing D3D9 through
   `phys_local.h`; the exact `0x70` `BodyStateDisk32` decoder canonicalizes legacy low-byte `underwater` and archive time;
   Ready-only semantic enumeration emits at most 512 immutable physics descriptors; and the outer heap workspace reads the
@@ -814,7 +824,7 @@ work item changes. Do not create session-specific handoff files.
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 46 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path/FX graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, complete graphics-world AABB topology validation, bounded XSurface/XModel skin/skeleton/collision contracts, transactional FX pool/handle ownership validation, allocation-safe ODE body/user-data/model-collision construction, and a bounded transactional native-width physics pool allocator have landed or are in the current reviewed batch; production-path fuzz fixtures and the load-object bounded cursor remain. |
 | M3 platform services | In progress: thread, memory, and filesystem enumeration integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, virtual-memory lifecycle, UTF-8 mkdir/cwd/executable paths, bounded directory enumeration, and a cooperative worker gate used by renderer workers. Linux/macOS engine/headless sets remain empty and engine-gated; handle-relative recursive deletion, POSIX crash freezing, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table, DObj runtime/saved layouts, allocations, preview buffers, SP corpse pointers, EffectsCore effect/pool handle codecs, ODE user-geometry storage, and the generic physics pool allocator are native-width exact. MP `cpose_t::physObjId` and `BreakablePiece::physObjId` still store ODE pointers in `int32_t` and are a hard native64 blocker; XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads also remain 32-bit-layout-bound. |
-| M5 disk32 widening loader | FX portable archive-tail reader complete; production integration next | `disk32::PointerToken`, strong FX archive-key/address types, exact effect/system/buffer/body mirrors, exhaustive handle remapping, checked native pool reconstruction/linking, definition-provenance resolution, complete allocation-graph validation, a definition-aware semantic `Ready` transition, Ready-only physics enumeration, and transactional raw/zlib `MemoryFile` staging after the separately leased definition table now exist with x86 whole-image evidence. The production physics collector consumes the same semantic oracle, and live publication resolves bounded visibility selectors only against destination buffers. Typed alias/completed-slot registries and 23 full-span raw/POD fields remain available. Production restore still uses the legacy path: exact x86 equivalence, publication/rollback integration, broader completed-object relocation, and runtime widening remain. |
+| M5 disk32 widening loader | FX production restore integration in progress | `disk32::PointerToken`, strong FX archive-key/address types, exact effect/system/buffer/body mirrors, exhaustive handle remapping, checked native pool reconstruction/linking, definition-provenance resolution, complete allocation-graph validation, a definition-aware semantic `Ready` transition, Ready-only physics enumeration, and transactional raw/zlib `MemoryFile` staging after the separately leased definition table now exist with x86 whole-image evidence. The active branch is materializing that shallow-const image into independent mutable publication storage, preserving the exact lease-to-generation handoff, and wiring it into the existing rollback controller. The production physics collector consumes the same semantic oracle, and live publication resolves bounded visibility selectors only against destination buffers. Typed alias/completed-slot registries and 23 full-span raw/POD fields remain available. The legacy writer, broader completed-object relocation, and runtime widening remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
 ## Target matrix
@@ -830,9 +840,10 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Land the implemented portable FX Disk32 reader through review and the complete nine-job gate; it is deliberately
-   non-publishing and leaves production restore, save, and both native64 guards unchanged.
-2. Integrate the unified reader into production x86 while retaining the definition lease through Ready/physics preparation.
+1. Integrate the unified reader into production restore while retaining the definition lease through Ready and independent
+   candidate materialization.
+2. Destroy the reader, release its exact lease, and immediately acquire generation-checked archive ownership before the
+   existing physics/publication controller may consume copied identities.
    Remove the restore-side native64 guard only after exact raw/zlib x86 equivalence, malformed-input, opposite
    selector-orientation, poison-after-publication recovery, rejected-publication preservation, and rollback fixtures;
    retain the legacy writer and native64 save guard.

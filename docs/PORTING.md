@@ -1093,11 +1093,12 @@ finalization are implemented and locally validated, but are not yet a production
 semantic oracle uses callback-free preflight, representation-preserving union activation, bounded physics descriptors,
 and failure-to-Empty publication gating. The production physics collector now delegates to that oracle through a bounded
 sink, and restore retains definition ownership through both semantic passes before generation-checked archive admission.
-The current portable-reader checkpoint passes **66/66** GCC and Clang suites plus **65/65** ASan+UBSan and TSan suites,
+The merged portable-reader checkpoint passes **66/66** GCC and Clang suites plus **65/65** ASan+UBSan and TSan suites,
 strict GCC/Clang x86-32 and AArch64 compilation, Clang analysis, source/security/ABI contracts, and independent audits; the
 exact PR #30 checkpoint head `42d1c4bb` also passed all nine five-target/measured-Windows jobs in run **29449586954**.
-Gemini reviewed that head with no comments or additional feedback, and the thread-aware query is empty. The
-`agent/fx-archive-portable-reader-disk32` sequence implements a 670,976-byte x86 / 695,640-byte native64 heap-owned,
+Gemini reviewed that head with no comments or additional feedback, and the thread-aware query is empty. Final documentation
+head `6ce201f4` passed all nine jobs again in run **29450294896**, and PR #30 squash-merged as `7cbe7070`. The merged
+sequence implements a 670,976-byte x86 / 695,640-byte native64 heap-owned,
 non-publishing workspace with a lightweight `BodyState` header, exact `BodyStateDisk32` decode, Ready-only physics
 enumeration, exact definition-lease validation, and transactional raw/zlib staging of the complete legacy
 system/buffers/address/body tail. Partial reads, callback prefixes, stale leases, and failed views remain hidden behind a
@@ -1106,7 +1107,7 @@ fresh/repositioned input. Generic `Phys_ObjSave` now zero-initializes the comple
 `Phys_GetStateFromBody` assigns the whole `underwater` word, closing the three-byte stack disclosure while the reader keeps
 legacy low-byte compatibility. Production restore, save, live publication, both native64 guards, and wire bytes are
 unchanged. The following integration PR must add behavioral publication/rollback and exact x86 equivalence fixtures before
-removing only the restore guard.
+removing only the restore guard. That integration is now active on `agent/fx-archive-disk32-production-restore`.
 Guarded writer replacement follows later after exact x86 full-image equivalence. A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
