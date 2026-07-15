@@ -401,6 +401,16 @@ void __cdecl FX_AddVisBlocker(FxSystem *system, const float *posWorld, float rad
         MyAssertHandler(".\\EffectsCore\\fx_update_util.cpp", 377, 0, "%s", "system && posWorld");
         return;
     }
+    if (!FX_CurrentThreadOwnsCooperativeIterator(system))
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_update_util.cpp",
+            383,
+            0,
+            "%s",
+            "FX_CurrentThreadOwnsCooperativeIterator(system)");
+        return;
+    }
     if (!fx::visibility::IsFiniteOrigin(posWorld)
         || !fx::visibility::TryPackBlockerScalars(radius, opacity, &packed))
     {
@@ -450,8 +460,22 @@ void __cdecl FX_ToggleVisBlockerFrame(FxSystem *system)
     FxVisState *visStateSwapCache; // [esp+0h] [ebp-4h]
 
     if (!system)
+    {
         MyAssertHandler(".\\EffectsCore\\fx_update_util.cpp", 400, 0, "%s", "system");
+        return;
+    }
+    if (!FX_CurrentThreadOwnsCooperativeIterator(system))
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_update_util.cpp",
+            454,
+            0,
+            "%s",
+            "FX_CurrentThreadOwnsCooperativeIterator(system)");
+        return;
+    }
     // FX_GenerateVerts calls this after its last blocker payload is published.
+    // Cooperative ownership keeps archive snapshots away from the pointer swap.
     // These pointer stores remain non-atomic: callers must not observe the swap
     // until the WRKCMD_GENERATE_FX_VERTS completion boundary has been crossed.
     visStateSwapCache = (FxVisState *)system->visStateBufferRead;
@@ -469,7 +493,7 @@ char __cdecl FX_CullSphere(const FxCamera *camera, uint32_t frustumPlaneCount, c
     float pointToPlaneDist; // [esp+28h] [ebp-8h]
     uint32_t planeIndex; // [esp+2Ch] [ebp-4h]
 
-    if (!camera->isValid)
+    if (!Sys_AtomicLoad(&camera->isValid))
         MyAssertHandler(".\\EffectsCore\\fx_update_util.cpp", 439, 0, "%s", "camera->isValid");
     if (frustumPlaneCount != camera->frustumPlaneCount && frustumPlaneCount != 5)
     {

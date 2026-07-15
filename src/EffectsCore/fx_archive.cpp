@@ -8,6 +8,7 @@
 #include "fx_physics_sidecar.h"
 #include "fx_pool.h"
 #include "fx_pool_graph.h"
+#include "fx_snapshot_publication.h"
 
 #include <database/database.h>
 
@@ -52,6 +53,21 @@ struct FxArchivePhysicsOwnershipScratch
     fx::physics::BodySidecarSnapshotScratch sidecar{};
 };
 RUNTIME_SIZE(FxArchivePhysicsOwnershipScratch, 0x5808, 0x7010);
+
+struct FxArchiveSaveSnapshotWorkspace
+{
+    FxSystem serializedSystem{};
+    FxSystem validationSystem{};
+    FxSystemBuffers buffers{};
+    FxArchivePoolAllocationStates allocationStates{};
+    FxPoolAllocationGraphScratch poolGraph{};
+    FxArchivePhysicsOwnershipScratch physics{};
+    std::uint8_t readVisibilitySelector = 0;
+    std::uint8_t writeVisibilitySelector = 0;
+};
+static_assert(
+    fx::archive::IsSupportedArchiveRestoreWorkspace<
+        FxArchiveSaveSnapshotWorkspace>);
 
 struct FxArchiveRestorePhysicsScratch
 {
@@ -532,6 +548,29 @@ enum class FxEffectTableSaveOutcome : std::uint8_t
     WriteFailed,
 };
 
+struct FxEffectTableSaveStaging
+{
+    void *storage = nullptr;
+    fx::archive::EffectTableSaveSnapshot *snapshot = nullptr;
+};
+
+void FX_DestroyEffectTableSaveStaging(
+    FxEffectTableSaveStaging *const staging) noexcept
+{
+    if (!staging)
+        return;
+    if (staging->snapshot
+        && !fx::archive::DestroyEffectTableSaveSnapshot(
+            staging->snapshot))
+    {
+        std::abort();
+    }
+    if (staging->storage)
+        Z_Free(staging->storage, 10);
+    staging->storage = nullptr;
+    staging->snapshot = nullptr;
+}
+
 void __cdecl FX_CaptureEffectTableEntry_LoadObj(
     const FxEffectDef *const effectDef,
     void *const data)
@@ -611,12 +650,13 @@ bool FX_WriteEffectTableSaveBytes(
         data);
 }
 
-FxEffectTableSaveOutcome FX_SaveEffectTableNoDrop(
-    MemoryFile *const memFile)
+FxEffectTableSaveOutcome FX_StageEffectTableNoDrop(
+    FxEffectTableSaveStaging *const staging)
 {
     const std::size_t workspaceSize =
         fx::archive::EffectTableSaveSnapshotSize();
-    if (!memFile || workspaceSize == 0
+    if (!staging || staging->storage || staging->snapshot
+        || workspaceSize == 0
         || workspaceSize
             > static_cast<std::size_t>((std::numeric_limits<int>::max)()))
     {
@@ -640,24 +680,31 @@ FxEffectTableSaveOutcome FX_SaveEffectTableNoDrop(
         return FxEffectTableSaveOutcome::InvalidTable;
     }
 
-    fx::archive::EffectTableSaveStatus status =
+    staging->storage = storage;
+    staging->snapshot = snapshot;
+    const fx::archive::EffectTableSaveStatus status =
         FX_CaptureEffectTableNoReport(snapshot);
     if (status == fx::archive::EffectTableSaveStatus::Success)
-    {
-        const fx::archive::EffectTableSaveCallbacks callbacks{
-            memFile,
-            FX_WriteEffectTableSaveBytes,
-        };
-        status = fx::archive::WriteEffectTableSaveSnapshotNoReport(
-            snapshot,
-            callbacks);
-    }
+        return FxEffectTableSaveOutcome::Success;
+    FX_DestroyEffectTableSaveStaging(staging);
+    return FxEffectTableSaveOutcome::InvalidTable;
+}
 
-    const bool destroyed =
-        fx::archive::DestroyEffectTableSaveSnapshot(snapshot);
-    if (!destroyed)
-        std::abort();
-    Z_Free(storage, 10);
+FxEffectTableSaveOutcome FX_WriteStagedEffectTableNoDrop(
+    FxEffectTableSaveStaging *const staging,
+    MemoryFile *const memFile) noexcept
+{
+    if (!staging || !staging->storage || !staging->snapshot || !memFile)
+        return FxEffectTableSaveOutcome::InvalidTable;
+
+    const fx::archive::EffectTableSaveCallbacks callbacks{
+        memFile,
+        FX_WriteEffectTableSaveBytes,
+    };
+    const fx::archive::EffectTableSaveStatus status =
+        fx::archive::WriteEffectTableSaveSnapshotNoReport(
+            staging->snapshot,
+            callbacks);
     if (status == fx::archive::EffectTableSaveStatus::Success)
         return FxEffectTableSaveOutcome::Success;
     if (status == fx::archive::EffectTableSaveStatus::WriterFailed)
@@ -1002,13 +1049,14 @@ bool FX_ValidateArchiveCamera(const FxCamera &camera) noexcept
         camera.viewOffset, FX_ARCHIVE_SPATIAL_COMPONENT_MAX);
 }
 
-bool FX_ValidateArchiveVisibility(const FxSystem *const system) noexcept
+bool FX_ValidateArchiveVisibilityStates(
+    const FxVisState *const visStates) noexcept
 {
-    if (!system || !system->visState)
+    if (!visStates)
         return false;
     for (std::size_t stateIndex = 0; stateIndex < 2; ++stateIndex)
     {
-        const FxVisState &state = system->visState[stateIndex];
+        const FxVisState &state = visStates[stateIndex];
         const std::int32_t blockerCount =
             Sys_AtomicLoad(&state.blockerCount);
         if (blockerCount < 0 || blockerCount > 256)
@@ -1026,6 +1074,26 @@ bool FX_ValidateArchiveVisibility(const FxSystem *const system) noexcept
         }
     }
     return true;
+}
+
+bool FX_ValidateArchiveSystemState(
+    const FxSystem *const system,
+    const FxVisState *const visStates) noexcept
+{
+    if (!system)
+        return false;
+    return FX_ArchiveEffectRingIsValid(system)
+        && system->isInitialized && system->localClientNum == 0
+        && system->msecNow >= 0 && system->msecDraw >= -1
+        && FX_AreArchiveCamerasReady(
+            system->camera, system->cameraPrev, system->msecDraw)
+        && Sys_AtomicLoad(&system->deferredElemCount) == 0
+        && system->sprite.indexCount == 0
+        && FX_ArchiveTimeDifferenceFits(
+            system->msecNow, system->msecDraw)
+        && FX_ValidateArchiveCamera(system->camera)
+        && FX_ValidateArchiveCamera(system->cameraPrev)
+        && FX_ValidateArchiveVisibilityStates(visStates);
 }
 
 bool FX_BuildArchiveExpectedTokens(
@@ -1868,6 +1936,41 @@ bool FX_AppendArchivePhysicsEntry(
     return true;
 }
 
+bool FX_CaptureArchivePhysicsStates(
+    const FxSystem *const liveOwner,
+    const std::int32_t archiveTime,
+    FxArchivePhysicsEntry *const entries,
+    const std::size_t entryCount,
+    FxArchivePhysicsOwnershipScratch *const ownershipScratch) noexcept
+{
+    if (!liveOwner || (entryCount != 0 && !entries) || !ownershipScratch)
+        return false;
+
+    const fx::physics::BodySidecar *const sidecar =
+        FX_GetPhysicsBodySidecar(liveOwner);
+    Sys_EnterCriticalSection(CRITSECT_PHYSICS);
+    const bool physicsStatesValid =
+        FX_ValidateArchivePhysicsOwnershipLockedWithScratch(
+            sidecar,
+            entries,
+            entryCount,
+            true,
+            &ownershipScratch->expectedTokens,
+            &ownershipScratch->sidecar);
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+    if (!physicsStatesValid)
+        return false;
+
+    for (std::size_t index = 0; index < entryCount; ++index)
+    {
+        if (!FX_ValidateArchiveBodyState(entries[index].state))
+            return false;
+        FX_NormalizeArchiveBodyState(
+            &entries[index].state, archiveTime);
+    }
+    return true;
+}
+
 bool FX_CollectArchivePhysicsEntries(
     FxSystem *const system,
     FxArchivePhysicsEntry *const entries,
@@ -1877,21 +1980,13 @@ bool FX_CollectArchivePhysicsEntries(
     FxArchivePhysicsOwnershipScratch *const ownershipScratch,
     std::int16_t *const outSpotLightBoltDobj) noexcept
 {
-    if (!system || !outEntryCount || !FX_ArchiveEffectRingIsValid(system)
+    if (!system || !outEntryCount
         || !system->effects || !system->elems || !system->trails
         || !system->trailElems)
     {
         return false;
     }
-    if (!system->isInitialized || system->localClientNum != 0
-        || system->msecNow < 0 || system->msecDraw < -1
-        || Sys_AtomicLoad(&system->deferredElemCount) != 0
-        || system->sprite.indexCount != 0
-        || !FX_ArchiveTimeDifferenceFits(
-            system->msecNow, system->msecDraw)
-        || !FX_ValidateArchiveCamera(system->camera)
-        || !FX_ValidateArchiveCamera(system->cameraPrev)
-        || !FX_ValidateArchiveVisibility(system))
+    if (!FX_ValidateArchiveSystemState(system, system->visState))
     {
         return false;
     }
@@ -2121,32 +2216,156 @@ bool FX_CollectArchivePhysicsEntries(
 
     if (captureStates)
     {
-        if ((entryCount != 0 && !entries) || !ownershipScratch)
-            return false;
-        const fx::physics::BodySidecar *const sidecar =
-            FX_GetPhysicsBodySidecar(system);
-        Sys_EnterCriticalSection(CRITSECT_PHYSICS);
-        const bool physicsStatesValid =
-            FX_ValidateArchivePhysicsOwnershipLockedWithScratch(
-                sidecar,
+        if (!FX_CaptureArchivePhysicsStates(
+                system,
+                system->msecNow,
                 entries,
                 entryCount,
-                true,
-                &ownershipScratch->expectedTokens,
-                &ownershipScratch->sidecar);
-        Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
-        if (!physicsStatesValid)
-            return false;
-        for (std::size_t index = 0; index < entryCount; ++index)
+                ownershipScratch))
         {
-            if (!FX_ValidateArchiveBodyState(entries[index].state))
-                return false;
-            FX_NormalizeArchiveBodyState(
-                &entries[index].state, system->msecNow);
+            return false;
         }
     }
 
     *outEntryCount = entryCount;
+    return true;
+}
+
+bool FX_ValidateArchiveEffectDefinitionReferences(
+    const FxSystem *const system,
+    const fx::archive::EffectTableSaveSnapshot *const effectTableSnapshot)
+    noexcept
+{
+    if (!system || !system->effects || !effectTableSnapshot
+        || !FX_ArchiveEffectRingIsValid(system))
+    {
+        return false;
+    }
+
+    const auto definitionIsStaged =
+        [effectTableSnapshot](const FxEffect *const effect) noexcept {
+            return effect
+                && fx::archive::EffectTableSaveSnapshotContainsKey(
+                    effectTableSnapshot,
+                    reinterpret_cast<std::uintptr_t>(effect->def));
+        };
+    for (std::int64_t activeIndex = system->firstActiveEffect;
+         activeIndex < system->firstFreeEffect;
+         ++activeIndex)
+    {
+        const FxEffect *const effect = FxDecodeHandle<
+            FxEffect, MAX_EFFECTS, FxEffect::HANDLE_SCALE>(
+                system->effects,
+                system->allEffectHandles[
+                    static_cast<std::size_t>(activeIndex)
+                    & (MAX_EFFECTS - 1)]);
+        if (!definitionIsStaged(effect))
+            return false;
+    }
+
+    const std::int32_t spotEffectCount =
+        Sys_AtomicLoad(&system->activeSpotLightEffectCount);
+    if (spotEffectCount < 0 || spotEffectCount > 1)
+        return false;
+    if (spotEffectCount == 1)
+    {
+        const FxEffect *const spotLightEffect = FxDecodeHandle<
+            FxEffect, MAX_EFFECTS, FxEffect::HANDLE_SCALE>(
+                system->effects, system->activeSpotLightEffectHandle);
+        if (!definitionIsStaged(spotLightEffect))
+            return false;
+    }
+    return true;
+}
+
+bool FX_ValidateArchiveCopiedSnapshot(
+    const FxSystem *const serializedSystem,
+    FxSystemBuffers *const bufferSnapshot,
+    const FxSystemBuffers *const liveBuffers,
+    const fx::archive::EffectTableSaveSnapshot *const effectTableSnapshot,
+    FxArchiveSaveSnapshotWorkspace *const workspace,
+    FxArchivePhysicsEntry *const physicsEntries,
+    const std::size_t physicsEntryCapacity,
+    std::size_t *const outPhysicsEntryCount,
+    std::int16_t *const outSpotLightBoltDobj) noexcept
+{
+    if (!serializedSystem || !bufferSnapshot || !liveBuffers
+        || !effectTableSnapshot || !workspace
+        || !outPhysicsEntryCount || !outSpotLightBoltDobj
+        || serializedSystem->effects != liveBuffers->effects
+        || serializedSystem->elems != liveBuffers->elems
+        || serializedSystem->trails != liveBuffers->trails
+        || serializedSystem->trailElems != liveBuffers->trailElems
+        || serializedSystem->visState != liveBuffers->visState
+        || serializedSystem->deferredElems != liveBuffers->deferredElems
+        || !serializedSystem->isArchiving
+        || Sys_AtomicLoad(&serializedSystem->iteratorCount) != -1)
+    {
+        return false;
+    }
+
+    // Preserve the serialized legacy pointer image untouched. Resolve its two
+    // visibility pointers to bounded selectors, then relink only the separate
+    // validation view to the copied buffers. Disk32 can consume the same 0/1
+    // selector semantics without treating process addresses as pointers.
+    std::uint8_t readSelector = 0;
+    std::uint8_t writeSelector = 0;
+    if (!FX_TryDeriveVisibilitySelectors(
+            &liveBuffers->visState[0],
+            &liveBuffers->visState[1],
+            serializedSystem->visStateBufferRead,
+            serializedSystem->visStateBufferWrite,
+            &readSelector,
+            &writeSelector))
+    {
+        return false;
+    }
+
+    FxSystem *const validationSystem = &workspace->validationSystem;
+    std::memcpy(
+        validationSystem, serializedSystem, sizeof(*validationSystem));
+    FX_LinkSystemBuffers(validationSystem, bufferSnapshot);
+    validationSystem->visStateBufferRead =
+        &bufferSnapshot->visState[readSelector];
+    validationSystem->visStateBufferWrite =
+        &bufferSnapshot->visState[writeSelector];
+
+    // Registered definitions follow the same lifetime contract as ordinary
+    // lock-free FX update/draw readers: they remain live while the FX system
+    // is initialized, and archive ownership excludes FX lifecycle teardown
+    // (including LoadObj unregistration).  The copied graph can nevertheless
+    // contain arbitrary pointer bits when runtime state is corrupt.  Prove
+    // every live definition's provenance against the already validated table
+    // using pointer values alone before any validation below reads definition
+    // fields or follows elemDefs.
+    if (!FX_ValidateArchiveEffectDefinitionReferences(
+            validationSystem, effectTableSnapshot))
+    {
+        return false;
+    }
+
+    std::size_t physicsEntryCount = 0;
+    std::int16_t spotLightBoltDobj = -1;
+    if (!FX_RebuildArchivePoolAllocationStates(
+            validationSystem,
+            &workspace->allocationStates,
+            &workspace->poolGraph)
+        || !FX_CollectArchivePhysicsEntries(
+            validationSystem,
+            physicsEntries,
+            physicsEntryCapacity,
+            &physicsEntryCount,
+            false,
+            nullptr,
+            &spotLightBoltDobj))
+    {
+        return false;
+    }
+
+    workspace->readVisibilitySelector = readSelector;
+    workspace->writeVisibilitySelector = writeSelector;
+    *outPhysicsEntryCount = physicsEntryCount;
+    *outSpotLightBoltDobj = spotLightBoltDobj;
     return true;
 }
 
@@ -2343,19 +2562,19 @@ constexpr fx::archive::ArchiveRestoreWorkspaceMemoryCallbacks
         FX_FreeArchiveRestoreWorkspaceMemory,
     };
 
-[[nodiscard]] FxArchivePhysicsOwnershipScratch *
-FX_AllocateArchiveSavePhysicsOwnershipScratch() noexcept
+[[nodiscard]] FxArchiveSaveSnapshotWorkspace *
+FX_AllocateArchiveSaveSnapshotWorkspace() noexcept
 {
     return fx::archive::AllocateArchiveRestoreWorkspace<
-        FxArchivePhysicsOwnershipScratch>(
+        FxArchiveSaveSnapshotWorkspace>(
         FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
 }
 
-void FX_DestroyArchiveSavePhysicsOwnershipScratch(
-    FxArchivePhysicsOwnershipScratch *const scratch) noexcept
+void FX_DestroyArchiveSaveSnapshotWorkspace(
+    FxArchiveSaveSnapshotWorkspace *const workspace) noexcept
 {
     if (!fx::archive::DestroyArchiveRestoreWorkspace(
-            scratch,
+            workspace,
             FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY))
     {
         std::abort();
@@ -3256,23 +3475,17 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
         return;
     }
 
-    const FxEffectTableSaveOutcome effectTableOutcome =
-        FX_SaveEffectTableNoDrop(memFile);
-    if (effectTableOutcome != FxEffectTableSaveOutcome::Success)
+    FxEffectTableSaveStaging effectTableStaging{};
+    const FxEffectTableSaveOutcome effectTableStageOutcome =
+        FX_StageEffectTableNoDrop(&effectTableStaging);
+    if (effectTableStageOutcome != FxEffectTableSaveOutcome::Success)
     {
-        if (effectTableOutcome
+        if (effectTableStageOutcome
             == FxEffectTableSaveOutcome::AllocationFailed)
         {
             Com_Error(
                 ERR_DROP,
                 "Unable to allocate FX effect-definition save snapshot");
-        }
-        else if (effectTableOutcome
-                 == FxEffectTableSaveOutcome::WriteFailed)
-        {
-            Com_Error(
-                ERR_DROP,
-                "FX effect-definition archive ran out of memory");
         }
         else
         {
@@ -3283,16 +3496,18 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
         return;
     }
 
-    FxSystemBuffers *const bufferSnapshot =
-        static_cast<FxSystemBuffers *>(Z_Malloc(
-            static_cast<int>(sizeof(FxSystemBuffers)),
-            "FX_Save system buffers",
-            10));
-    if (!bufferSnapshot)
+    FxArchiveSaveSnapshotWorkspace *const snapshotWorkspace =
+        FX_AllocateArchiveSaveSnapshotWorkspace();
+    if (!snapshotWorkspace)
     {
-        Com_Error(ERR_DROP, "Unable to allocate FX save staging buffers");
+        FX_DestroyEffectTableSaveStaging(&effectTableStaging);
+        Com_Error(ERR_DROP, "Unable to allocate FX save snapshot workspace");
         return;
     }
+    FxSystem &systemSnapshot = snapshotWorkspace->serializedSystem;
+    FxSystemBuffers *const bufferSnapshot = &snapshotWorkspace->buffers;
+    FxArchivePhysicsOwnershipScratch *const physicsOwnershipScratch =
+        &snapshotWorkspace->physics;
 
     std::size_t physicsEntryByteCount = 0;
     int physicsEntryAllocationSize = 0;
@@ -3301,7 +3516,8 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
             &physicsEntryByteCount,
             &physicsEntryAllocationSize))
     {
-        Z_Free(bufferSnapshot, 10);
+        FX_DestroyArchiveSaveSnapshotWorkspace(snapshotWorkspace);
+        FX_DestroyEffectTableSaveStaging(&effectTableStaging);
         Com_Error(ERR_DROP, "Invalid FX physics save staging size");
         return;
     }
@@ -3312,7 +3528,8 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
             10));
     if (!physicsEntries)
     {
-        Z_Free(bufferSnapshot, 10);
+        FX_DestroyArchiveSaveSnapshotWorkspace(snapshotWorkspace);
+        FX_DestroyEffectTableSaveStaging(&effectTableStaging);
         Com_Error(ERR_DROP, "Unable to allocate FX physics save staging");
         return;
     }
@@ -3321,22 +3538,11 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
         0,
         physicsEntryByteCount);
 
-    FxArchivePhysicsOwnershipScratch *const physicsOwnershipScratch =
-        FX_AllocateArchiveSavePhysicsOwnershipScratch();
-    if (!physicsOwnershipScratch)
-    {
-        Z_Free(physicsEntries, 10);
-        Z_Free(bufferSnapshot, 10);
-        Com_Error(ERR_DROP, "Unable to allocate FX physics save scratch");
-        return;
-    }
-
     if (!FX_BeginArchive(system))
     {
-        FX_DestroyArchiveSavePhysicsOwnershipScratch(
-            physicsOwnershipScratch);
         Z_Free(physicsEntries, 10);
-        Z_Free(bufferSnapshot, 10);
+        FX_DestroyArchiveSaveSnapshotWorkspace(snapshotWorkspace);
+        FX_DestroyEffectTableSaveStaging(&effectTableStaging);
         Com_Error(ERR_DROP, "FX archive save could not acquire exclusive ownership");
         return;
     }
@@ -3344,37 +3550,47 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
 
     std::size_t physicsEntryCount = 0;
     std::int16_t snapshotSpotLightBoltDobj = -1;
-    const bool snapshotValid = FX_ArchiveEffectRingIsValid(system)
-        && FX_ValidatePoolAllocationGraphState(system)
-        && FX_CollectArchivePhysicsEntries(
-            system,
+    bool snapshotCapturedExclusive = false;
+    Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
+    snapshotCapturedExclusive = FX_ValidateArchiveExclusiveState(system);
+    if (snapshotCapturedExclusive)
+    {
+        memcpy(&systemSnapshot, system, sizeof(systemSnapshot));
+        memcpy(bufferSnapshot, systemBuffers, sizeof(*bufferSnapshot));
+    }
+    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
+    const bool copiedSnapshotValid = snapshotCapturedExclusive
+        && FX_ValidateArchiveExclusiveState(system)
+        && FX_ValidateArchiveCopiedSnapshot(
+            &systemSnapshot,
+            bufferSnapshot,
+            systemBuffers,
+            effectTableStaging.snapshot,
+            snapshotWorkspace,
             physicsEntries,
             fx::physics::BODY_LIMIT,
             &physicsEntryCount,
-            true,
-            physicsOwnershipScratch,
-            &snapshotSpotLightBoltDobj);
-    if (!snapshotValid)
+            &snapshotSpotLightBoltDobj)
+        && FX_CaptureArchivePhysicsStates(
+            system,
+            systemSnapshot.msecNow,
+            physicsEntries,
+            physicsEntryCount,
+            physicsOwnershipScratch);
+    if (!copiedSnapshotValid)
     {
         system->isArchiving = 0;
         const bool releasedArchive = FX_EndArchive(system);
-        FX_DestroyArchiveSavePhysicsOwnershipScratch(
-            physicsOwnershipScratch);
         Z_Free(physicsEntries, 10);
-        Z_Free(bufferSnapshot, 10);
+        FX_DestroyArchiveSaveSnapshotWorkspace(snapshotWorkspace);
+        FX_DestroyEffectTableSaveStaging(&effectTableStaging);
         Com_Error(
             ERR_DROP,
             releasedArchive
-                ? "Invalid FX state while saving archive"
-                : "Unable to release invalid FX archive snapshot");
+                ? "Invalid copied FX state while saving archive"
+                : "Unable to release invalid copied FX archive snapshot");
         return;
     }
-
-    FxSystem systemSnapshot{};
-    Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
-    memcpy(&systemSnapshot, system, sizeof(systemSnapshot));
-    memcpy(bufferSnapshot, systemBuffers, sizeof(*bufferSnapshot));
-    Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
     bool snapshotTokensCanonical = true;
     for (std::size_t index = 0; index < physicsEntryCount; ++index)
     {
@@ -3397,10 +3613,9 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
     {
         system->isArchiving = 0;
         const bool releasedArchive = FX_EndArchive(system);
-        FX_DestroyArchiveSavePhysicsOwnershipScratch(
-            physicsOwnershipScratch);
         Z_Free(physicsEntries, 10);
-        Z_Free(bufferSnapshot, 10);
+        FX_DestroyArchiveSaveSnapshotWorkspace(snapshotWorkspace);
+        FX_DestroyEffectTableSaveStaging(&effectTableStaging);
         Com_Error(
             ERR_DROP,
             releasedArchive
@@ -3429,10 +3644,9 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
     const bool releasedArchive = FX_EndArchive(system);
     if (!releasedArchive)
     {
-        FX_DestroyArchiveSavePhysicsOwnershipScratch(
-            physicsOwnershipScratch);
         Z_Free(physicsEntries, 10);
-        Z_Free(bufferSnapshot, 10);
+        FX_DestroyArchiveSaveSnapshotWorkspace(snapshotWorkspace);
+        FX_DestroyEffectTableSaveStaging(&effectTableStaging);
         Com_Error(ERR_DROP, "Unable to release FX archive snapshot");
         return;
     }
@@ -3440,18 +3654,29 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
     // The live graph and iterator gate are released before any potentially
     // failing archive write. Overflow reporting is deferred until all heap
     // staging has been freed.
-    bool archiveWritten = FX_WriteArchiveDataNoDrop(
-        memFile, FX_ARCHIVE_SYSTEM_SIZE, &systemSnapshot);
-    archiveWritten = FX_WriteArchiveDataNoDrop(
-        memFile, FX_ARCHIVE_BUFFER_SIZE, bufferSnapshot)
-        && archiveWritten;
+    const FxEffectTableSaveOutcome effectTableWriteOutcome =
+        FX_WriteStagedEffectTableNoDrop(&effectTableStaging, memFile);
+    bool archiveWritten =
+        effectTableWriteOutcome == FxEffectTableSaveOutcome::Success;
+    if (archiveWritten)
+    {
+        archiveWritten = FX_WriteArchiveDataNoDrop(
+            memFile, FX_ARCHIVE_SYSTEM_SIZE, &systemSnapshot);
+    }
+    if (archiveWritten)
+    {
+        archiveWritten = FX_WriteArchiveDataNoDrop(
+            memFile, FX_ARCHIVE_BUFFER_SIZE, bufferSnapshot);
+    }
     const std::uint32_t archivedSystemAddress =
         static_cast<std::uint32_t>(systemAddress);
-    archiveWritten = FX_WriteArchiveDataNoDrop(
-        memFile,
-        static_cast<int>(sizeof(archivedSystemAddress)),
-        &archivedSystemAddress)
-        && archiveWritten;
+    if (archiveWritten)
+    {
+        archiveWritten = FX_WriteArchiveDataNoDrop(
+            memFile,
+            static_cast<int>(sizeof(archivedSystemAddress)),
+            &archivedSystemAddress);
+    }
     for (std::size_t index = 0;
          index < physicsEntryCount && archiveWritten;
          ++index)
@@ -3462,10 +3687,19 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
             &physicsEntries[index].state);
     }
 
-    FX_DestroyArchiveSavePhysicsOwnershipScratch(
-        physicsOwnershipScratch);
     Z_Free(physicsEntries, 10);
-    Z_Free(bufferSnapshot, 10);
+    FX_DestroyArchiveSaveSnapshotWorkspace(snapshotWorkspace);
+    FX_DestroyEffectTableSaveStaging(&effectTableStaging);
+    if (effectTableWriteOutcome
+        != FxEffectTableSaveOutcome::Success)
+    {
+        Com_Error(
+            ERR_DROP,
+            effectTableWriteOutcome == FxEffectTableSaveOutcome::WriteFailed
+                ? "FX effect-definition archive ran out of memory"
+                : "Invalid staged FX effect-definition table while saving archive");
+        return;
+    }
     if (!archiveWritten)
     {
         Com_Error(ERR_DROP, "FX archive snapshot ran out of memory");

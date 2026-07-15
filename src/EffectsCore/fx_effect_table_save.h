@@ -52,6 +52,16 @@ struct EffectTableSaveCallbacks
     std::uintptr_t key) noexcept;
 [[nodiscard]] EffectTableSaveStatus ValidateEffectTableSaveSnapshotNoReport(
     EffectTableSaveSnapshot *snapshot) noexcept;
+
+// A validated snapshot is also the admission set for definition pointers in
+// the separately captured FX graph.  This lookup compares only the numeric
+// key and never dereferences the candidate pointer.  It fails closed outside
+// the Validated phase so callers cannot prove graph ownership against a table
+// that is incomplete, failed, or already being written.
+[[nodiscard]] bool EffectTableSaveSnapshotContainsKey(
+    const EffectTableSaveSnapshot *snapshot,
+    std::uintptr_t key) noexcept;
+
 [[nodiscard]] EffectTableSaveStatus WriteEffectTableSaveSnapshotNoReport(
     EffectTableSaveSnapshot *snapshot,
     const EffectTableSaveCallbacks &callbacks) noexcept;

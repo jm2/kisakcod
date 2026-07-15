@@ -80,6 +80,7 @@ foreach(_api_marker IN ITEMS
     "DestroyEffectTableSaveSnapshot("
     "AppendEffectTableSaveEntryNoReport("
     "ValidateEffectTableSaveSnapshotNoReport("
+    "EffectTableSaveSnapshotContainsKey("
     "WriteEffectTableSaveSnapshotNoReport("
     "EffectTableSaveEntryCount(")
     require_contains(
@@ -187,6 +188,35 @@ require_contains(
     "${_validate_source}"
     "!RecordNamesEqual(other, record)"
     "only conflicting same-key names must fail")
+
+extract_slice(
+    "${_save_source}"
+    "bool EffectTableSaveSnapshotContainsKey("
+    "EffectTableSaveStatus WriteEffectTableSaveSnapshotNoReport("
+    _membership_source
+    "validated effect-table membership")
+foreach(_membership_marker IN ITEMS
+    "snapshot->status != EffectTableSaveStatus::Success"
+    "snapshot->phase != EffectTableSaveSnapshot::Phase::Validated"
+    "key == 0"
+    "key > static_cast<std::uintptr_t>("
+    "snapshot->records[index].key == narrowedKey")
+    require_contains(
+        "${_membership_source}"
+        "${_membership_marker}"
+        "definition membership must fail closed and compare bounded keys")
+endforeach()
+foreach(_forbidden_membership_operation IN ITEMS
+    "callbacks.write("
+    "record.name"
+    "std::memcpy("
+    "strlen("
+    "strcmp(")
+    require_absent(
+        "${_membership_source}"
+        "${_forbidden_membership_operation}"
+        "definition membership must not emit bytes or inspect names")
+endforeach()
 
 extract_slice(
     "${_save_source}"
@@ -314,7 +344,7 @@ require_ordered(
 extract_slice(
     "${_archive_source}"
     "bool FX_WriteEffectTableSaveBytes("
-    "FxEffectTableSaveOutcome FX_SaveEffectTableNoDrop("
+    "FxEffectTableSaveOutcome FX_StageEffectTableNoDrop("
     _production_writer
     "production effect-table writer adapter")
 require_contains(
@@ -334,61 +364,150 @@ endforeach()
 
 extract_slice(
     "${_archive_source}"
-    "FxEffectTableSaveOutcome FX_SaveEffectTableNoDrop("
-    "bool FX_ValidateEffectTableRestoreLifecycle("
-    _production_save
-    "production save-table lifetime")
+    "FxEffectTableSaveOutcome FX_StageEffectTableNoDrop("
+    "FxEffectTableSaveOutcome FX_WriteStagedEffectTableNoDrop("
+    _production_stage
+    "production save-table staging lifetime")
 require_ordered(
-    "${_production_save}"
+    "${_production_stage}"
     "Z_Malloc("
     "ConstructEffectTableSaveSnapshot("
     "save workspace must be heap-backed and explicitly constructed")
 require_ordered(
-    "${_production_save}"
+    "${_production_stage}"
     "ConstructEffectTableSaveSnapshot("
     "FX_CaptureEffectTableNoReport(snapshot)"
     "capture must begin only after construction")
 require_ordered(
-    "${_production_save}"
+    "${_production_stage}"
     "FX_CaptureEffectTableNoReport(snapshot)"
+    "return FxEffectTableSaveOutcome::Success;"
+    "a fully validated table must remain staged for graph admission")
+require_absent(
+    "${_production_stage}"
     "WriteEffectTableSaveSnapshotNoReport("
-    "the complete table must capture and validate before the first write")
-require_ordered(
-    "${_production_save}"
-    "WriteEffectTableSaveSnapshotNoReport("
-    "DestroyEffectTableSaveSnapshot(snapshot)"
-    "the write must finish before snapshot destruction")
+    "table staging must not emit archive bytes")
+require_absent(
+    "${_production_stage}"
+    "MemFile_"
+    "table staging must not mutate a MemoryFile")
+require_absent(
+    "${_production_stage}"
+    "Com_Error("
+    "ERR_DROP reporting must remain outside the owned snapshot lifetime")
+
 extract_slice(
-    "${_production_save}"
-    "const bool destroyed ="
-    "if (status == fx::archive::EffectTableSaveStatus::Success)"
+    "${_archive_source}"
+    "FxEffectTableSaveOutcome FX_WriteStagedEffectTableNoDrop("
+    "bool FX_ValidateEffectTableRestoreLifecycle("
+    _production_staged_write
+    "production staged table write")
+require_contains(
+    "${_production_staged_write}"
+    "WriteEffectTableSaveSnapshotNoReport("
+    "only the explicit staged-write phase may emit the table")
+foreach(_forbidden_staged_write_operation IN ITEMS
+    "Z_Malloc("
+    "Z_Free("
+    "Com_Error("
+    "FX_CaptureEffectTableNoReport(")
+    require_absent(
+        "${_production_staged_write}"
+        "${_forbidden_staged_write_operation}"
+        "staged table output must not recapture, allocate, free, or report")
+endforeach()
+
+extract_slice(
+    "${_archive_source}"
+    "void FX_DestroyEffectTableSaveStaging("
+    "void __cdecl FX_CaptureEffectTableEntry_LoadObj("
     _production_cleanup
     "production save-table cleanup")
 require_ordered(
     "${_production_cleanup}"
-    "DestroyEffectTableSaveSnapshot(snapshot)"
-    "if (!destroyed)"
+    "DestroyEffectTableSaveSnapshot("
+    "std::abort();"
     "destruction failure must be handled before storage release")
 require_ordered(
     "${_production_cleanup}"
-    "if (!destroyed)"
     "std::abort();"
-    "an indestructible live snapshot must fail-stop")
-require_ordered(
-    "${_production_cleanup}"
-    "std::abort();"
-    "Z_Free(storage, 10);"
+    "Z_Free(staging->storage, 10);"
     "storage release must be unreachable after destruction failure")
-require_absent(
+
+extract_slice(
+    "${_archive_source}"
+    "bool FX_ValidateArchiveEffectDefinitionReferences("
+    "bool FX_ValidateArchiveCopiedSnapshot("
+    _production_graph_membership
+    "copied graph definition admission")
+require_contains(
+    "${_production_graph_membership}"
+    "EffectTableSaveSnapshotContainsKey("
+    "copied definitions must be admitted by the staged table")
+require_contains(
+    "${_production_graph_membership}"
+    "reinterpret_cast<std::uintptr_t>(effect->def)"
+    "definition admission must compare pointer bits without dereference")
+foreach(_forbidden_definition_dereference IN ITEMS
+    "effect->def->"
+    "effect->def."
+    "FX_GetArchiveEffectDefCount("
+    "FX_ValidateArchiveEffectDefTiming(")
+    require_absent(
+        "${_production_graph_membership}"
+        "${_forbidden_definition_dereference}"
+        "unadmitted definition pointers must never be dereferenced")
+endforeach()
+
+extract_slice(
+    "${_archive_source}"
+    "bool FX_ValidateArchiveCopiedSnapshot("
+    "// The archive restore transaction owns"
+    _production_copied_snapshot
+    "copied snapshot validation")
+require_ordered(
+    "${_production_copied_snapshot}"
+    "FX_ValidateArchiveEffectDefinitionReferences("
+    "FX_RebuildArchivePoolAllocationStates("
+    "definition admission must precede copied graph traversal")
+require_ordered(
+    "${_production_copied_snapshot}"
+    "FX_ValidateArchiveEffectDefinitionReferences("
+    "FX_CollectArchivePhysicsEntries("
+    "definition admission must precede definition field traversal")
+
+extract_slice(
+    "${_archive_source}"
+    "void __cdecl FX_Save("
+    "void __cdecl FX_Archive("
+    _production_save
+    "production FX save transaction")
+require_ordered(
     "${_production_save}"
-    "Com_Error("
-    "ERR_DROP reporting must remain outside the owned snapshot lifetime")
+    "FX_StageEffectTableNoDrop(&effectTableStaging)"
+    "FX_BeginArchive(system)"
+    "effect-table capture must complete before graph exclusion")
+require_ordered(
+    "${_production_save}"
+    "FX_ValidateArchiveCopiedSnapshot("
+    "FX_EndArchive(system)"
+    "copied graph admission must finish before archive release")
+require_ordered(
+    "${_production_save}"
+    "FX_EndArchive(system)"
+    "FX_WriteStagedEffectTableNoDrop(&effectTableStaging, memFile)"
+    "archive ownership must be released before any staged output")
+require_ordered(
+    "${_production_save}"
+    "FX_WriteStagedEffectTableNoDrop(&effectTableStaging, memFile)"
+    "FX_ARCHIVE_SYSTEM_SIZE, &systemSnapshot"
+    "legacy table bytes must still precede the system snapshot")
 
 require_ordered(
     "${_archive_source}"
     "FX archive save requires Disk32 conversion on this target"
-    "FX_SaveEffectTableNoDrop(memFile);"
-    "unsupported native targets must fail before effect-table capture/write")
+    "FX_StageEffectTableNoDrop(&effectTableStaging)"
+    "unsupported native targets must fail before effect-table capture")
 require_absent(
     "${_system_header}"
     "FX_SaveEffectDefTable"

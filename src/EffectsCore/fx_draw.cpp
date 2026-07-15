@@ -32,6 +32,46 @@ struct FxCooperativeIteratorThreadState
 thread_local FxCooperativeIteratorThreadState
     fx_cooperativeIteratorThreadState{};
 
+// FxSystem is a frozen archive/binary layout, so camera publication ownership
+// lives beside it. The runtime currently owns one FxSystem; keeping the gate
+// external also makes the publication protocol independent of pointer width.
+alignas(4) volatile std::int32_t fx_cameraPublicationIteratorCount = 0;
+
+enum class FxCameraPublicationThreadMode : std::uint8_t
+{
+    None,
+    Read,
+    Write,
+};
+
+struct FxCameraPublicationThreadState
+{
+    const FxSystem *system = nullptr;
+    std::uint32_t generation = 0;
+    std::uint32_t depth = 0;
+    FxCameraPublicationThreadMode mode =
+        FxCameraPublicationThreadMode::None;
+};
+
+thread_local FxCameraPublicationThreadState
+    fx_cameraPublicationThreadState{};
+
+[[noreturn]] void FX_DropCameraPublicationGate(const char *const reason)
+{
+    Com_Error(ERR_DROP, "Invalid FX camera publication ownership: %s", reason);
+    std::abort();
+}
+
+bool FX_CurrentThreadOwnsExactCooperativeIterator(
+    const FxSystem *const system) noexcept
+{
+    return system
+        && fx_cooperativeIteratorThreadState.depth != 0
+        && fx_cooperativeIteratorThreadState.system == system
+        && fx_cooperativeIteratorThreadState.generation
+            == FX_GetCooperativeIteratorGeneration(system);
+}
+
 void FX_AbandonCurrentThreadCooperativeIteratorsForError() noexcept
 {
     FxSystem *const system = const_cast<FxSystem *>(
@@ -192,6 +232,10 @@ void __cdecl FX_ErrorCleanup() noexcept
     FX_AbandonCurrentThreadEffectKillForError();
     FX_AbandonCurrentThreadEffectRestartGateForError();
     FX_AbandonCurrentThreadEffectKillExclusiveForError();
+    // Camera ownership nests inside the main cooperative iterator. Release it
+    // first so a publication waiter cannot remain blocked while cleanup drops
+    // the outer lifetime/admission ownership.
+    FX_AbandonCurrentThreadCameraPublicationForError();
     FX_AbandonCurrentThreadCooperativeIteratorsForError();
     FX_AbandonCurrentThreadSortExclusiveForError();
     FX_AbandonCurrentThreadArchiveForError();
@@ -218,6 +262,153 @@ bool __cdecl FX_CurrentThreadOwnsCooperativeIterator(
     // deadlock even if a future multi-client build supplied another system.
     (void)system;
     return true;
+}
+
+void __cdecl FX_BeginReadingCameraPublication(FxSystem *const system)
+{
+    if (!FX_CurrentThreadOwnsExactCooperativeIterator(system))
+    {
+        FX_DropCameraPublicationGate(
+            "camera reader requires exact cooperative iterator ownership");
+    }
+
+    if (fx_cameraPublicationThreadState.depth != 0)
+    {
+        if (fx_cameraPublicationThreadState.system != system
+            || fx_cameraPublicationThreadState.generation
+                != FX_GetCooperativeIteratorGeneration(system))
+        {
+            FX_DropCameraPublicationGate(
+                "cross-system or stale camera reader nesting");
+        }
+        if (fx_cameraPublicationThreadState.mode
+            != FxCameraPublicationThreadMode::Read)
+        {
+            FX_DropCameraPublicationGate(
+                "camera writer cannot be downgraded to a nested reader");
+        }
+        if (fx_cameraPublicationThreadState.depth
+            == (std::numeric_limits<std::uint32_t>::max)())
+        {
+            FX_DropCameraPublicationGate("camera reader nesting overflow");
+        }
+        ++fx_cameraPublicationThreadState.depth;
+        return;
+    }
+
+    FxIteratorBeginCooperative(&fx_cameraPublicationIteratorCount);
+    fx_cameraPublicationThreadState.system = system;
+    fx_cameraPublicationThreadState.generation =
+        FX_GetCooperativeIteratorGeneration(system);
+    fx_cameraPublicationThreadState.depth = 1;
+    fx_cameraPublicationThreadState.mode =
+        FxCameraPublicationThreadMode::Read;
+}
+
+void __cdecl FX_EndReadingCameraPublication(FxSystem *const system)
+{
+    if (!FX_CurrentThreadOwnsExactCooperativeIterator(system)
+        || fx_cameraPublicationThreadState.depth == 0
+        || fx_cameraPublicationThreadState.system != system
+        || fx_cameraPublicationThreadState.generation
+            != FX_GetCooperativeIteratorGeneration(system)
+        || fx_cameraPublicationThreadState.mode
+            != FxCameraPublicationThreadMode::Read)
+    {
+        FX_DropCameraPublicationGate(
+            "camera reader ended without matching ownership");
+    }
+
+    if (fx_cameraPublicationThreadState.depth > 1)
+    {
+        --fx_cameraPublicationThreadState.depth;
+        return;
+    }
+
+    std::int32_t remaining = -1;
+    if (!FxIteratorEndCooperative(
+            &fx_cameraPublicationIteratorCount, &remaining))
+    {
+        // Preserve TLS ownership for FX_ErrorCleanup. Its abandonment path
+        // will terminate if the fixed-width gate cannot be released either.
+        FX_DropCameraPublicationGate("camera reader gate release failed");
+    }
+    fx_cameraPublicationThreadState = {};
+}
+
+void __cdecl FX_BeginWritingCameraPublication(FxSystem *const system)
+{
+    if (!FX_CurrentThreadOwnsExactCooperativeIterator(system))
+    {
+        FX_DropCameraPublicationGate(
+            "camera writer requires exact cooperative iterator ownership");
+    }
+    if (fx_cameraPublicationThreadState.depth != 0)
+    {
+        FX_DropCameraPublicationGate(
+            "camera publication mode upgrades and writer nesting are unsafe");
+    }
+
+    FxIteratorWaitBeginExclusive(&fx_cameraPublicationIteratorCount);
+    fx_cameraPublicationThreadState.system = system;
+    fx_cameraPublicationThreadState.generation =
+        FX_GetCooperativeIteratorGeneration(system);
+    fx_cameraPublicationThreadState.depth = 1;
+    fx_cameraPublicationThreadState.mode =
+        FxCameraPublicationThreadMode::Write;
+}
+
+void __cdecl FX_EndWritingCameraPublication(FxSystem *const system)
+{
+    if (!FX_CurrentThreadOwnsExactCooperativeIterator(system)
+        || fx_cameraPublicationThreadState.depth != 1
+        || fx_cameraPublicationThreadState.system != system
+        || fx_cameraPublicationThreadState.generation
+            != FX_GetCooperativeIteratorGeneration(system)
+        || fx_cameraPublicationThreadState.mode
+            != FxCameraPublicationThreadMode::Write)
+    {
+        FX_DropCameraPublicationGate(
+            "camera writer ended without matching ownership");
+    }
+
+    if (!FxIteratorEndExclusive(&fx_cameraPublicationIteratorCount))
+    {
+        FX_DropCameraPublicationGate("camera writer gate release failed");
+    }
+    fx_cameraPublicationThreadState = {};
+}
+
+void __cdecl FX_AbandonCurrentThreadCameraPublicationForError() noexcept
+{
+    if (fx_cameraPublicationThreadState.depth == 0)
+    {
+        fx_cameraPublicationThreadState = {};
+        return;
+    }
+
+    bool released = false;
+    if (fx_cameraPublicationThreadState.mode
+        == FxCameraPublicationThreadMode::Read)
+    {
+        std::int32_t remaining = -1;
+        released = FxIteratorEndCooperative(
+            &fx_cameraPublicationIteratorCount, &remaining);
+    }
+    else if (fx_cameraPublicationThreadState.mode
+        == FxCameraPublicationThreadMode::Write)
+    {
+        released =
+            FxIteratorEndExclusive(&fx_cameraPublicationIteratorCount);
+    }
+
+    fx_cameraPublicationThreadState = {};
+    if (!released)
+    {
+        // Continuing after losing track of an external writer/read count can
+        // expose torn camera payloads or leave future jobs blocked forever.
+        std::abort();
+    }
 }
 
 #ifdef KISAK_MP
@@ -862,7 +1053,7 @@ char __cdecl FX_CullCylinder(
     float pointToPlaneDista; // [esp+28h] [ebp-8h]
     uint32_t planeIndex; // [esp+2Ch] [ebp-4h]
 
-    if (!camera->isValid)
+    if (!Sys_AtomicLoad(&camera->isValid))
         MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 620, 0, "%s", "camera->isValid");
     if (frustumPlaneCount != camera->frustumPlaneCount && frustumPlaneCount != 5)
     {
@@ -1165,9 +1356,10 @@ void __cdecl FX_DrawNonSpriteElems(FxSystem *system)
     PROF_SCOPED("FX_DrawElems");
     if (!system)
         MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1370, 0, "%s", "system");
-    if (!system->camera.isValid)
-        MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1371, 0, "%s", "system->camera.isValid");
     FX_BeginIteratingOverEffects_Cooperative(system);
+    FX_BeginReadingCameraPublication(system);
+    if (!Sys_AtomicLoad(&system->camera.isValid))
+        MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1371, 0, "%s", "system->camera.isValid");
     const std::int32_t firstActiveEffect =
         Sys_AtomicLoad(&system->firstActiveEffect);
     const std::int32_t firstNewEffect =
@@ -1192,6 +1384,7 @@ void __cdecl FX_DrawNonSpriteElems(FxSystem *system)
             FX_UnlockEffect(system, effect);
         }
     }
+    FX_EndReadingCameraPublication(system);
     FX_EndIteratingOverEffects_Cooperative(system);
 }
 
@@ -1250,6 +1443,75 @@ void __cdecl FX_BeginIteratingOverEffects_Cooperative(FxSystem *system)
                 "cooperative iterator entered an uninitialized FX system");
         }
     }
+}
+
+bool __cdecl FX_TryBeginIteratingOverEffects_Cooperative(
+    FxSystem *const system) noexcept
+{
+    if (!system)
+        return false;
+
+    const std::uint32_t admissionGeneration =
+        FX_GetCooperativeIteratorGeneration(system);
+    if (fx_cooperativeIteratorThreadState.depth != 0
+        && fx_cooperativeIteratorThreadState.system != system)
+    {
+        const FxSystem *const ownedSystem =
+            fx_cooperativeIteratorThreadState.system;
+        if (!ownedSystem
+            || fx_cooperativeIteratorThreadState.generation
+                != FX_GetCooperativeIteratorGeneration(ownedSystem))
+        {
+            fx_cooperativeIteratorThreadState = {};
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    if (FX_CurrentThreadOwnsCooperativeIterator(system))
+    {
+        if (fx_cooperativeIteratorThreadState.system != system
+            || !FxIteratorTryBeginCooperative(&system->iteratorCount))
+        {
+            return false;
+        }
+        ++fx_cooperativeIteratorThreadState.depth;
+        return true;
+    }
+
+    // This report-free path is used by queries whose legacy result is neutral
+    // outside an active FX lifetime. Do not inspect any mutable FxSystem field
+    // until cooperative admission excludes archive/restore/reset mutation.
+    if (FX_ArchiveGateIsActive(system)
+        || FX_EffectKillGateIsActive(system)
+        || !FxIteratorTryBeginCooperative(&system->iteratorCount))
+    {
+        return false;
+    }
+
+    const std::uint32_t currentGeneration =
+        FX_GetCooperativeIteratorGeneration(system);
+    const bool initialized = system->isInitialized != 0;
+    const bool archiveActive = FX_ArchiveGateIsActive(system);
+    const bool killActive = FX_EffectKillGateIsActive(system);
+    if (initialized && !archiveActive && !killActive
+        && currentGeneration == admissionGeneration)
+    {
+        fx_cooperativeIteratorThreadState.system = system;
+        fx_cooperativeIteratorThreadState.generation = currentGeneration;
+        fx_cooperativeIteratorThreadState.depth = 1;
+        return true;
+    }
+
+    std::int32_t remaining = -1;
+    if (!FxIteratorEndCooperative(&system->iteratorCount, &remaining))
+    {
+        FX_DropCorruptDrawList(
+            "failed to roll back report-free cooperative iterator admission");
+    }
+    return false;
 }
 
 bool __cdecl FX_DowngradeEffectKillExclusiveToCooperative(
@@ -1450,9 +1712,10 @@ void __cdecl FX_DrawSpotLight(FxSystem *system)
 
     if (!system)
         MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1389, 0, "%s", "system");
-    if (!system->camera.isValid)
-        MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1390, 0, "%s", "system->camera.isValid");
     FX_BeginIteratingOverEffects_Cooperative(system);
+    FX_BeginReadingCameraPublication(system);
+    if (!Sys_AtomicLoad(&system->camera.isValid))
+        MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1390, 0, "%s", "system->camera.isValid");
     FxSpotLightStateSnapshot spotLightSnapshot{};
     if (!FX_GetSpotLightStateSnapshot(system, &spotLightSnapshot))
         FX_DropCorruptDrawList("missing spotlight state");
@@ -1465,6 +1728,7 @@ void __cdecl FX_DrawSpotLight(FxSystem *system)
         || activeSpotLightElemCount < 0
         || activeSpotLightElemCount > activeSpotLightEffectCount)
     {
+        FX_EndReadingCameraPublication(system);
         FX_EndIteratingOverEffects_Cooperative(system);
         FX_DropCorruptDrawList("invalid spotlight count pair");
     }
@@ -1487,6 +1751,7 @@ void __cdecl FX_DrawSpotLight(FxSystem *system)
         if (effectLocked)
             FX_UnlockEffect(system, v1);
     }
+    FX_EndReadingCameraPublication(system);
     FX_EndIteratingOverEffects_Cooperative(system);
 }
 
@@ -1543,7 +1808,9 @@ void __cdecl FX_DrawSpriteElems(FxSystem *system, int32_t drawTime)
     PROF_SCOPED("FX_DrawElems");
     if (!system)
         MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1510, 0, "%s", "system");
-    if (!system->camera.isValid)
+    FX_BeginIteratingOverEffects_Cooperative(system);
+    FX_BeginReadingCameraPublication(system);
+    if (!Sys_AtomicLoad(&system->camera.isValid))
         MyAssertHandler(".\\EffectsCore\\fx_draw.cpp", 1511, 0, "%s", "system->camera.isValid");
     Sys_AtomicStore(&system->gfxCloudCount, 0);
     sprite = &system->sprite;
@@ -1552,7 +1819,6 @@ void __cdecl FX_DrawSpriteElems(FxSystem *system, int32_t drawTime)
     system->sprite.name = 0;
     system->sprite.material = 0;
     numTrailEffects = 0;
-    FX_BeginIteratingOverEffects_Cooperative(system);
     const std::int32_t firstActiveEffect =
         Sys_AtomicLoad(&system->firstActiveEffect);
     const std::int32_t firstNewEffect =
@@ -1596,7 +1862,6 @@ void __cdecl FX_DrawSpriteElems(FxSystem *system, int32_t drawTime)
             }
         }
     }
-    FX_EndIteratingOverEffects_Cooperative(system);
     if (system->sprite.indexCount)
     {
         if (!system->sprite.name)
@@ -1615,6 +1880,8 @@ void __cdecl FX_DrawSpriteElems(FxSystem *system, int32_t drawTime)
         system->sprite.indexCount = 0;
         sprite->indices = 0;
     }
+    FX_EndReadingCameraPublication(system);
+    FX_EndIteratingOverEffects_Cooperative(system);
 }
 
 void __cdecl FX_DrawTrailsForEffect(FxSystem *system, FxEffect *effect, int32_t drawTime)
@@ -2092,6 +2359,8 @@ void __cdecl FX_GenerateVerts(FxGenerateVertsCmd *cmd)
     PROF_SCOPED("FX_GenerateVerts");
 
     localSystem = cmd->system;
+    FX_BeginIteratingOverEffects_Cooperative(localSystem);
+    FX_BeginReadingCameraPublication(localSystem);
     R_BeginCodeMeshVerts();
     drawTime = localSystem->msecDraw;
     if (drawTime >= 0)
@@ -2108,6 +2377,8 @@ void __cdecl FX_GenerateVerts(FxGenerateVertsCmd *cmd)
     {
         R_EndCodeMeshVerts();
     }
+    FX_EndReadingCameraPublication(localSystem);
+    FX_EndIteratingOverEffects_Cooperative(localSystem);
 }
 
 void __cdecl FX_FillGenerateVertsCmd(int32_t localClientNum, FxGenerateVertsCmd* cmd)

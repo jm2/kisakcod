@@ -28,6 +28,22 @@ inline void FxIteratorBeginCooperative(volatile std::int32_t *const state) noexc
     }
 }
 
+inline bool FxIteratorTryBeginCooperative(
+    volatile std::int32_t *const state) noexcept
+{
+    std::int32_t observed = Sys_AtomicLoad(state);
+    while (observed >= 0
+        && observed != (std::numeric_limits<std::int32_t>::max)())
+    {
+        const std::int32_t previous =
+            Sys_AtomicCompareExchange(state, observed + 1, observed);
+        if (previous == observed)
+            return true;
+        observed = previous;
+    }
+    return false;
+}
+
 inline bool FxIteratorEndCooperative(
     volatile std::int32_t *const state,
     std::int32_t *const remaining) noexcept

@@ -542,6 +542,50 @@ void TestDuplicatePolicies()
     CheckSuccessfulWrite(sameNameDifferentKeys);
 }
 
+void TestValidatedKeyMembership()
+{
+    SnapshotStorage storage;
+    archive::EffectTableSaveSnapshot *const snapshot = storage.get();
+    CHECK(!archive::EffectTableSaveSnapshotContainsKey(nullptr, 1u));
+    CHECK(!archive::EffectTableSaveSnapshotContainsKey(snapshot, 1u));
+
+    const std::vector<EntrySpec> entries{
+        {"fx/first", 0x01020304u},
+        {"fx/last", 0xFFFFFFFFu},
+    };
+    AppendEntries(snapshot, entries);
+    CHECK(!archive::EffectTableSaveSnapshotContainsKey(
+        snapshot, entries.front().key));
+    CHECK(archive::ValidateEffectTableSaveSnapshotNoReport(snapshot)
+        == archive::EffectTableSaveStatus::Success);
+    CHECK(archive::EffectTableSaveSnapshotContainsKey(
+        snapshot, entries.front().key));
+    CHECK(archive::EffectTableSaveSnapshotContainsKey(
+        snapshot, entries.back().key));
+    CHECK(!archive::EffectTableSaveSnapshotContainsKey(snapshot, 0u));
+    CHECK(!archive::EffectTableSaveSnapshotContainsKey(
+        snapshot, 0x11223344u));
+#if UINTPTR_MAX > UINT32_MAX
+    CHECK(!archive::EffectTableSaveSnapshotContainsKey(
+        snapshot,
+        static_cast<std::uintptr_t>(
+            (std::numeric_limits<std::uint32_t>::max)())
+            + std::uintptr_t{1}));
+#endif
+
+    const std::vector<std::uint8_t> expected =
+        MakeLogicalBytes(entries);
+    const std::vector<std::vector<std::uint8_t>> chunks =
+        MakeLogicalChunks(entries);
+    ByteWriterState writer(expected.size(), chunks.size());
+    CHECK(archive::WriteEffectTableSaveSnapshotNoReport(
+        snapshot, Callbacks(&writer))
+        == archive::EffectTableSaveStatus::Success);
+    CHECK(!archive::EffectTableSaveSnapshotContainsKey(
+        snapshot, entries.front().key));
+    storage.CheckCanaries();
+}
+
 void TestInvalidStateAndMissingWriter()
 {
     {
@@ -1126,6 +1170,7 @@ int main()
     TestCaptureFailures();
     TestInvalidNames();
     TestDuplicatePolicies();
+    TestValidatedKeyMembership();
     TestInvalidStateAndMissingWriter();
     TestWriterFailures();
     TestWriterReentry();

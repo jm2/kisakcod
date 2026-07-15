@@ -239,6 +239,29 @@ EffectTableSaveStatus ValidateEffectTableSaveSnapshotNoReport(
     return EffectTableSaveStatus::Success;
 }
 
+bool EffectTableSaveSnapshotContainsKey(
+    const EffectTableSaveSnapshot *const snapshot,
+    const std::uintptr_t key) noexcept
+{
+    if (!snapshot
+        || snapshot->status != EffectTableSaveStatus::Success
+        || snapshot->phase != EffectTableSaveSnapshot::Phase::Validated
+        || key == 0
+        || key > static_cast<std::uintptr_t>(
+            (std::numeric_limits<std::uint32_t>::max)()))
+    {
+        return false;
+    }
+
+    const std::uint32_t narrowedKey = static_cast<std::uint32_t>(key);
+    for (std::size_t index = 0; index < snapshot->entryCount; ++index)
+    {
+        if (snapshot->records[index].key == narrowedKey)
+            return true;
+    }
+    return false;
+}
+
 EffectTableSaveStatus WriteEffectTableSaveSnapshotNoReport(
     EffectTableSaveSnapshot *const snapshot,
     const EffectTableSaveCallbacks &callbacks) noexcept

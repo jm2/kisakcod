@@ -3848,8 +3848,15 @@ static FxEffect* FX_SpawnEffect_Internal(
             return nullptr;
         }
     }
-    if (fx_cull_effect_spawn->current.enabled && FX_CullEffectForSpawn(&system->cameraPrev, remoteDef, origin))
-        return 0;
+    if (fx_cull_effect_spawn->current.enabled)
+    {
+        FX_BeginReadingCameraPublication(system);
+        const bool cullEffect =
+            FX_CullEffectForSpawn(&system->cameraPrev, remoteDef, origin);
+        FX_EndReadingCameraPublication(system);
+        if (cullEffect)
+            return 0;
+    }
 
     if (!isSpotLightEffect || FX_CanAllocSpotLightEffect(system))
     {
@@ -6103,7 +6110,14 @@ void __cdecl FX_SpawnTrailElem_Cull(
             elemDef->elemType);
         return;
     }
-    if (FX_CullTrailElem(&system->cameraPrev, elemDef, effectFrameWhenPlayed->origin, trail->sequence))
+    FX_BeginReadingCameraPublication(system);
+    const bool cullTrailElem = FX_CullTrailElem(
+        &system->cameraPrev,
+        elemDef,
+        effectFrameWhenPlayed->origin,
+        trail->sequence);
+    FX_EndReadingCameraPublication(system);
+    if (cullTrailElem)
         ++trail->sequence;
     else
         FX_SpawnTrailElem_NoCull(system, effect, trail, effectFrameWhenPlayed, msecWhenPlayed, distanceWhenPlayed);
@@ -6360,7 +6374,17 @@ void __cdecl FX_SpawnElem(
         return;
     }
 
-    if (!fx_cull_elem_spawn->current.enabled || !FX_CullElemForSpawn(&system->cameraPrev, elemDef, effectFrameWhenPlayed->origin))
+    bool cullElem = false;
+    if (fx_cull_elem_spawn->current.enabled)
+    {
+        FX_BeginReadingCameraPublication(system);
+        cullElem = FX_CullElemForSpawn(
+            &system->cameraPrev,
+            elemDef,
+            effectFrameWhenPlayed->origin);
+        FX_EndReadingCameraPublication(system);
+    }
+    if (!cullElem)
     {
         msecBegin = elemDef->spawnDelayMsec.base + msecWhenPlayed;
         if (elemDef->spawnDelayMsec.amplitude)
@@ -7449,14 +7473,17 @@ double __cdecl FX_GetClientVisibility(int32_t localClientNum, const float *start
     float dot; // [esp+A4h] [ebp-Ch]
     float distSq; // [esp+A8h] [ebp-8h]
     float blockerRadius; // [esp+ACh] [ebp-4h]
+    double visibility = 1.0;
 
     system = FX_GetSystem(localClientNum);
+    // Preserve the legacy neutral result before initialization and after
+    // shutdown without sampling mutable system state outside admission.
+    if (!FX_TryBeginIteratingOverEffects_Cooperative(system))
+        return visibility;
     visState = system->visStateBufferRead;
-    if (!visState)
-        return 1.0;
-    rawBlockerCount = Sys_AtomicLoad(&visState->blockerCount);
-    if (rawBlockerCount <= 0)
+    if (visState)
     {
+        rawBlockerCount = Sys_AtomicLoad(&visState->blockerCount);
         if (rawBlockerCount < 0)
         {
             MyAssertHandler(
@@ -7466,52 +7493,59 @@ double __cdecl FX_GetClientVisibility(int32_t localClientNum, const float *start
                 "%s",
                 "visState->blockerCount >= 0");
         }
-        return 1.0;
-    }
-    blockerCount = static_cast<std::uint32_t>(rawBlockerCount);
-    if (blockerCount > fx::visibility::kBlockerCapacity)
-    {
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_system.cpp",
-            2355,
-            0,
-            "visState->blockerCount <= FX_VIS_BLOCKER_LIMIT\n\t%u, %u",
-            blockerCount,
-            fx::visibility::kBlockerCapacity);
-        blockerCount = fx::visibility::kBlockerCapacity;
-    }
-
-    PROF_SCOPED("FX_GetVisibility");
-
-    Vec3Sub(end, start, dir);
-    len = Vec3Normalize(dir);
-    if (fx_visMinTraceDist->current.value <= (double)len)
-    {
-        halfLen = len * 0.5;
-        totalVis = 1.0;
-        for (blockerIndex = 0; blockerIndex < blockerCount; ++blockerIndex)
+        else if (rawBlockerCount > 0)
         {
-            visBlocker = &visState->blocker[blockerIndex];
-            Vec3Sub(visBlocker->origin, start, projDir);
-            dot = Vec3Dot(projDir, dir);
-            v5 = dot - halfLen;
-            v4 = I_fabs(v5);
-            if (halfLen >= (double)v4)
+            blockerCount = static_cast<std::uint32_t>(rawBlockerCount);
+            if (blockerCount > fx::visibility::kBlockerCapacity)
             {
-                Vec3Mad(start, dot, dir, projPt);
-                Vec3Sub(projPt, visBlocker->origin, diff);
-                distSq = Vec3LengthSq(diff);
-                blockerRadius = (double)visBlocker->radius * 0.0625;
-                if (distSq < blockerRadius * blockerRadius)
-                    totalVis = (double)visBlocker->visibility * 0.0000152587890625 * totalVis;
+                MyAssertHandler(
+                    ".\\EffectsCore\\fx_system.cpp",
+                    2355,
+                    0,
+                    "visState->blockerCount <= FX_VIS_BLOCKER_LIMIT\n\t%u, %u",
+                    blockerCount,
+                    fx::visibility::kBlockerCapacity);
+                blockerCount = fx::visibility::kBlockerCapacity;
+            }
+
+            PROF_SCOPED("FX_GetVisibility");
+
+            Vec3Sub(end, start, dir);
+            len = Vec3Normalize(dir);
+            if (fx_visMinTraceDist->current.value <= (double)len)
+            {
+                halfLen = len * 0.5;
+                totalVis = 1.0;
+                for (blockerIndex = 0;
+                     blockerIndex < blockerCount;
+                     ++blockerIndex)
+                {
+                    visBlocker = &visState->blocker[blockerIndex];
+                    Vec3Sub(visBlocker->origin, start, projDir);
+                    dot = Vec3Dot(projDir, dir);
+                    v5 = dot - halfLen;
+                    v4 = I_fabs(v5);
+                    if (halfLen >= (double)v4)
+                    {
+                        Vec3Mad(start, dot, dir, projPt);
+                        Vec3Sub(projPt, visBlocker->origin, diff);
+                        distSq = Vec3LengthSq(diff);
+                        blockerRadius =
+                            (double)visBlocker->radius * 0.0625;
+                        if (distSq < blockerRadius * blockerRadius)
+                        {
+                            totalVis =
+                                (double)visBlocker->visibility
+                                * 0.0000152587890625 * totalVis;
+                        }
+                    }
+                }
+                visibility = totalVis;
             }
         }
-        return totalVis;
     }
-    else
-    {
-        return 1.0;
-    }
+    FX_EndIteratingOverEffects_Cooperative(system);
+    return visibility;
 }
 
 double FX_GetServerVisibility(const float *start, const float *end)

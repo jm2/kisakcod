@@ -220,6 +220,7 @@ void __cdecl FX_ImpactMark_Generate(
     FxMarkTri tris[256]; // [esp+230h] [ebp-1058h] BYREF
     MarkInfo markInfo; // [esp+E28h] [ebp-460h] BYREF
     FxSystem *System; // [esp+1274h] [ebp-14h]
+    float cameraViewOffset[3];
 
     struct FX_ImpactMark_Generate_CB callbackContext
     {
@@ -236,7 +237,12 @@ void __cdecl FX_ImpactMark_Generate(
             || fx_marks_ents->current.enabled
             || fx_marks_smodels->current.enabled))
     {
-        R_MarkFragments_Begin(&markInfo, markAgainst, origin, axis, radius, System->camera.viewOffset, material);
+        FX_BeginIteratingOverEffects_Cooperative(System);
+        FX_BeginReadingCameraPublication(System);
+        Vec3Copy(System->camera.viewOffset, cameraViewOffset);
+        FX_EndReadingCameraPublication(System);
+        FX_EndIteratingOverEffects_Cooperative(System);
+        R_MarkFragments_Begin(&markInfo, markAgainst, origin, axis, radius, cameraViewOffset, material);
         if (fx_marks_ents->current.enabled)
         {
             iassert(markAgainst == MARK_FRAGMENTS_AGAINST_MODELS || markAgainst == MARK_FRAGMENTS_AGAINST_BRUSHES);
@@ -1344,6 +1350,10 @@ void __cdecl FX_BeginGeneratingMarkVertsForEntModels(int32_t localClientNum, uin
             localClientNum);
     fx_marksSystemPool[0].hasCarryIndex = 0;
     *indexCount = 0;
+    FX_BeginIteratingOverEffects_Cooperative(
+        FX_GetSystem(localClientNum));
+    FX_BeginReadingCameraPublication(
+        FX_GetSystem(localClientNum));
 }
 
 void __cdecl FX_GenerateMarkVertsForEntXModel(
@@ -2105,6 +2115,10 @@ void __cdecl FX_EndGeneratingMarkVertsForEntModels(int32_t localClientNum)
             "%s",
             "Sys_AtomicDecrement( &g_markThread[localClientNum] ) == 0");
     R_EndMarkMeshVerts();
+    FX_EndReadingCameraPublication(
+        FX_GetSystem(localClientNum));
+    FX_EndIteratingOverEffects_Cooperative(
+        FX_GetSystem(localClientNum));
 }
 
 void __cdecl FX_FinishGeneratingMarkVerts(FxMarksSystem *marksSystem)
@@ -2156,6 +2170,8 @@ void __cdecl FX_GenerateMarkVertsForStaticModels(
             "(clientIndex == 0)",
             localClientNum);
     system = FX_GetSystem(localClientNum);
+    FX_BeginIteratingOverEffects_Cooperative(system);
+    FX_BeginReadingCameraPublication(system);
     camera = system;
     fx_marksSystemPool[0].hasCarryIndex = 0;
     indexCount = 0;
@@ -2180,6 +2196,8 @@ void __cdecl FX_GenerateMarkVertsForStaticModels(
             "%s",
             "Sys_AtomicDecrement( &g_markThread[localClientNum] ) == 0");
     R_EndMarkMeshVerts();
+    FX_EndReadingCameraPublication(system);
+    FX_EndIteratingOverEffects_Cooperative(system);
 }
 
 void __cdecl FX_ExpandMarkVerts_NoTransform_GfxPackedVertex_(
@@ -2441,6 +2459,8 @@ void __cdecl FX_GenerateMarkVertsForWorld(int32_t localClientNum)
                 "(clientIndex == 0)",
                 localClientNum);
         System = FX_GetSystem(localClientNum);
+        FX_BeginIteratingOverEffects_Cooperative(System);
+        FX_BeginReadingCameraPublication(System);
         indexCount[1] = (uint32_t)System;
         fx_marksSystemPool[0].hasCarryIndex = 0;
         indexCount[0] = 0;
@@ -2458,6 +2478,8 @@ void __cdecl FX_GenerateMarkVertsForWorld(int32_t localClientNum)
                 "%s",
                 "Sys_AtomicDecrement( &g_markThread[localClientNum] ) == 0");
         R_EndMarkMeshVerts();
+        FX_EndReadingCameraPublication(System);
+        FX_EndIteratingOverEffects_Cooperative(System);
     }
 }
 
