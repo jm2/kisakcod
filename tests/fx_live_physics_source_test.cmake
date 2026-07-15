@@ -446,9 +446,18 @@ extract_source_slice(
     "archive-exclusive FX iterator admission")
 require_slice_ordered(
     _archive_admission_source
-    "const std::uint32_t admissionGeneration ="
+    "FX_GetCooperativeIteratorGeneration(system));"
     "fx::archive::AcquireArchiveGate("
-    "archive admission must capture generation before controller acquisition")
+    "default archive admission must capture generation before controller acquisition")
+require_slice_ordered(
+    _archive_admission_source
+    "FX_GetCooperativeIteratorGeneration(system)\n            != expectedGeneration"
+    "fx::archive::AcquireArchiveGate("
+    "generation-bound archive admission must reject a stale caller before controller acquisition")
+require_slice_contains(
+    _archive_admission_source
+    "expectedGeneration,\n            callbacks)"
+    "archive admission must pass the caller's exact generation into the controller")
 require_slice_ordered(
     _archive_admission_source
     "FX_CurrentThreadOwnsSortExclusive(system)"

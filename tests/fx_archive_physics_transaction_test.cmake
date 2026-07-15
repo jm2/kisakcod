@@ -884,7 +884,7 @@ endforeach()
 extract_slice(
     "${_archive_source}"
     "void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)"
-    "void __cdecl FX_RestoreEffectDefTable("
+    "FxEffect *__cdecl FX_EffectFromHandle("
     _restore_source
     "FX_Restore transaction")
 require_absent(
@@ -961,11 +961,11 @@ require_ordered(
 require_ordered(
     "${_restore_source}"
     "FX_AllocateArchiveRestoreTransactionWorkspace()"
-    "FX_BeginArchive(system)"
+    "FX_BeginArchive(system, restoreGeneration)"
     "the checked restore workspace must exist before archive ownership is acquired")
 extract_slice(
     "${_restore_source}"
-    "if (!FX_BeginArchive(system))"
+    "if (!FX_BeginArchive(system, restoreGeneration))"
     "// Nothing below this point performs archive I/O"
     _begin_archive_failure
     "archive begin failure cleanup")

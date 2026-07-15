@@ -3,6 +3,7 @@
 #include "fx_archive_physics_batch_control.h"
 #include "fx_archive_restore_control.h"
 #include "fx_archive_restore_workspace.h"
+#include "fx_effect_table_restore.h"
 #include "fx_physics_sidecar.h"
 #include "fx_pool.h"
 #include "fx_pool_graph.h"
@@ -199,44 +200,6 @@ bool FX_ValidateArchiveOrthonormalBasis(
         && determinant <= 1.0 + 3.0 * FX_ARCHIVE_UNIT_LENGTH_TOLERANCE;
 }
 
-bool FX_ArchiveEffectNameIsValid(const char *const name) noexcept
-{
-    if (!name || !name[0])
-        return false;
-    std::size_t componentStart = 0;
-    for (std::size_t index = 0; index < 64; ++index)
-    {
-        const unsigned char value =
-            static_cast<unsigned char>(name[index]);
-        if (value == 0)
-        {
-            const std::size_t componentLength = index - componentStart;
-            return componentLength != 0
-                && !(componentLength == 1
-                    && name[componentStart] == '.')
-                && !(componentLength == 2
-                    && name[componentStart] == '.'
-                    && name[componentStart + 1] == '.');
-        }
-        if (value < 0x20u || value == 0x7Fu || value == ':')
-            return false;
-        if (value == '/' || value == '\\')
-        {
-            const std::size_t componentLength = index - componentStart;
-            if (componentLength == 0
-                || (componentLength == 1
-                    && name[componentStart] == '.')
-                || (componentLength == 2
-                    && name[componentStart] == '.'
-                    && name[componentStart + 1] == '.'))
-            {
-                return false;
-            }
-            componentStart = index + 1;
-        }
-    }
-    return false;
-}
 RUNTIME_SIZE(BodyState, 0x70, 0x70);
 
 bool FX_ArchiveByteIsBool(const std::uint8_t value) noexcept
@@ -553,26 +516,29 @@ bool FX_WriteArchiveDataNoDrop(
     return !memFile->memoryOverflow;
 }
 
-const FxEffectDef *FX_FindEffectDefInTableNoDrop(
-    const FxEffectDefTable *const table,
-    const std::uint32_t key) noexcept
+bool FX_ValidateEffectTableRestoreLifecycle(
+    void *const context,
+    const void *const identity,
+    const std::uint32_t lifecycleGeneration) noexcept
 {
-    if (!table || table->count < 0 || table->count > 1024)
-        return nullptr;
+    const auto *const system = static_cast<const FxSystem *>(context);
+    return system && identity == system
+        && FX_EffectTableRestoreLifecycleIsCurrent(
+            system, lifecycleGeneration);
+}
 
-    for (std::int32_t index = 0; index < table->count; ++index)
-    {
-        if (table->entries[index].key == key)
-            return table->entries[index].effectDef;
-    }
-    return nullptr;
+const void *FX_RegisterEffectTableRestoreDefinition(
+    void *,
+    const char *const name) noexcept
+{
+    return FX_Register(name);
 }
 
 bool FX_FixupEffectDefHandlesNoDrop(
     FxSystem *const system,
-    const FxEffectDefTable *const table) noexcept
+    const fx::archive::EffectTableRestoreLease &lease) noexcept
 {
-    if (!system || !table || !system->isArchiving
+    if (!system || !lease.ownerCookie || !system->isArchiving
         || !FX_ArchiveEffectRingIsValid(system))
     {
         return false;
@@ -592,13 +558,45 @@ bool FX_FixupEffectDefHandlesNoDrop(
             return false;
 
         const std::uint32_t key = FX_ArchivePointerBits(effect->def);
-        const FxEffectDef *const effectDef =
-            FX_FindEffectDefInTableNoDrop(table, key);
+        const auto *const effectDef = static_cast<const FxEffectDef *>(
+            fx::archive::EffectTableRestoreFind(lease, key));
         if (!effectDef)
             return false;
         effect->def = effectDef;
     }
     return true;
+}
+
+bool FX_EffectTableRestoreReleaseIsSafe(
+    const fx::archive::EffectTableRestoreStatus status) noexcept
+{
+    return status == fx::archive::EffectTableRestoreStatus::Success
+        || status
+            == fx::archive::EffectTableRestoreStatus::LifecycleChanged;
+}
+
+[[noreturn]] void FX_ReportEffectTableRestoreFailure(
+    const fx::archive::EffectTableRestoreLease *const lease,
+    FxSystemBuffers *const restoredBuffers,
+    const char *const message)
+{
+    fx::archive::EffectTableRestoreStatus releaseStatus =
+        fx::archive::EffectTableRestoreStatus::Success;
+    if (lease && lease->ownerCookie)
+    {
+        releaseStatus =
+            fx::archive::ReleaseEffectTableRestore(*lease);
+    }
+    if (restoredBuffers)
+        Z_Free(restoredBuffers, 10);
+    if (!FX_EffectTableRestoreReleaseIsSafe(releaseStatus))
+    {
+        Sys_Error(
+            "Unable to release FX effect-definition restore ownership safely");
+        std::abort();
+    }
+    Com_Error(ERR_DROP, "%s", message);
+    std::abort();
 }
 
 bool FX_GetArchiveEffectDefCount(
@@ -2538,14 +2536,31 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
         return;
     }
 
-    // Effect registration may report a malformed table. Keep it ahead of all
-    // heap staging so an engine-level ERR_DROP cannot leak staged resources.
-    FxEffectDefTable table{};
-    FX_RestoreEffectDefTable(memFile, &table);
-    if (memFile->memoryOverflow)
+    // Parse and validate the complete serialized table before the first asset
+    // registration. Registration may ERR_DROP via longjmp, so keep it ahead of
+    // all heap staging; FX_ErrorCleanup abandons this exact TLS-owned lease.
+    const std::uint32_t restoreGeneration =
+        FX_GetCooperativeIteratorGeneration(system);
+    const fx::archive::EffectTableRestoreCallbacks tableCallbacks{
+        system,
+        FX_ValidateEffectTableRestoreLifecycle,
+        FX_RegisterEffectTableRestoreDefinition,
+    };
+    const fx::archive::EffectTableRestoreResult tableResult =
+        fx::archive::RestoreEffectTableNoReport(
+            memFile,
+            system,
+            restoreGeneration,
+            tableCallbacks);
+    if (tableResult.status
+        != fx::archive::EffectTableRestoreStatus::Success)
     {
-        Com_Error(ERR_DROP, "Invalid FX effect-definition table in archive");
-        return;
+        const fx::archive::EffectTableRestoreLease *const retainedLease =
+            tableResult.lease.ownerCookie ? &tableResult.lease : nullptr;
+        FX_ReportEffectTableRestoreFailure(
+            retainedLease,
+            nullptr,
+            "Invalid FX effect-definition table in archive");
     }
 
     FxSystemBuffers *const restoredBuffers =
@@ -2555,8 +2570,10 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
             10));
     if (!restoredBuffers)
     {
-        Com_Error(ERR_DROP, "Unable to allocate FX restore staging buffers");
-        return;
+        FX_ReportEffectTableRestoreFailure(
+            &tableResult.lease,
+            nullptr,
+            "Unable to allocate FX restore staging buffers");
     }
     memset(restoredBuffers, 0, sizeof(*restoredBuffers));
 
@@ -2569,9 +2586,8 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
         || !FX_ValidateArchiveSystemBooleanBytes(
             restoredSystemBytes, sizeof(restoredSystemBytes)))
     {
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Invalid save file");
-        return;
+        FX_ReportEffectTableRestoreFailure(
+            &tableResult.lease, restoredBuffers, "Invalid save file");
     }
 
     // Do not form a typed FxSystem until every serialized bool has a valid
@@ -2585,9 +2601,8 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
         || restoredSystem.localClientNum != 0
         || Sys_AtomicLoad(&restoredSystem.iteratorCount) != 0)
     {
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Invalid save file");
-        return;
+        FX_ReportEffectTableRestoreFailure(
+            &tableResult.lease, restoredBuffers, "Invalid save file");
     }
     if (restoredSystem.frameCount <= 0
         || restoredSystem.frameCount
@@ -2598,9 +2613,10 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     }
     if (!FX_NormalizeArchiveEffectRing(&restoredSystem))
     {
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Invalid FX effect ring in archive");
-        return;
+        FX_ReportEffectTableRestoreFailure(
+            &tableResult.lease,
+            restoredBuffers,
+            "Invalid FX effect ring in archive");
     }
     FX_LinkSystemBuffers(&restoredSystem, restoredBuffers);
     if (!FX_ReadArchiveDataNoDrop(
@@ -2608,9 +2624,10 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
             FX_ARCHIVE_BUFFER_SIZE,
             restoredBuffers))
     {
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Truncated FX pool data in archive");
-        return;
+        FX_ReportEffectTableRestoreFailure(
+            &tableResult.lease,
+            restoredBuffers,
+            "Truncated FX pool data in archive");
     }
 
     FxPoolAllocationGraphScratch *const poolGraphScratch =
@@ -2619,9 +2636,10 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
             FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
     if (!poolGraphScratch)
     {
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Unable to allocate FX pool validation workspace");
-        return;
+        FX_ReportEffectTableRestoreFailure(
+            &tableResult.lease,
+            restoredBuffers,
+            "Unable to allocate FX pool validation workspace");
     }
     FxArchivePoolAllocationStates restoredStates{};
     const bool restoredPoolStateValid =
@@ -2634,17 +2652,52 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
             poolGraphScratch,
             FX_ARCHIVE_RESTORE_WORKSPACE_MEMORY);
     if (!poolGraphScratchDestroyed)
+    {
+        const fx::archive::EffectTableRestoreStatus releaseStatus =
+            fx::archive::ReleaseEffectTableRestore(tableResult.lease);
+        Z_Free(restoredBuffers, 10);
+        Sys_Error(
+            "Unable to destroy FX pool validation workspace safely "
+            "(effect-table release %u)",
+            static_cast<unsigned>(releaseStatus));
         std::abort();
+    }
     if (!restoredPoolStateValid)
     {
-        Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Invalid FX pool state in archive");
-        return;
+        FX_ReportEffectTableRestoreFailure(
+            &tableResult.lease,
+            restoredBuffers,
+            "Invalid FX pool state in archive");
     }
-    if (!FX_FixupEffectDefHandlesNoDrop(&restoredSystem, &table))
+    if (!FX_FixupEffectDefHandlesNoDrop(
+            &restoredSystem, tableResult.lease))
+    {
+        FX_ReportEffectTableRestoreFailure(
+            &tableResult.lease,
+            restoredBuffers,
+            "Invalid FX effect definition in archive");
+    }
+
+    // The pool graph is proven before any staged definition pointer is
+    // rewritten. Once every handle is fixed up, release the singleton BSS
+    // table immediately; only its captured lifecycle generation is needed by
+    // the later archive admission.
+    const fx::archive::EffectTableRestoreStatus tableReleaseStatus =
+        fx::archive::ReleaseEffectTableRestore(tableResult.lease);
+    if (tableReleaseStatus
+        != fx::archive::EffectTableRestoreStatus::Success)
     {
         Z_Free(restoredBuffers, 10);
-        Com_Error(ERR_DROP, "Invalid FX effect definition in archive");
+        if (tableReleaseStatus
+            != fx::archive::EffectTableRestoreStatus::LifecycleChanged)
+        {
+            Sys_Error(
+                "Unable to release FX effect-definition restore ownership safely");
+            std::abort();
+        }
+        Com_Error(
+            ERR_DROP,
+            "FX lifecycle changed while restoring effect definitions");
         return;
     }
     for (std::int64_t activeIndex = restoredSystem.firstActiveEffect;
@@ -2866,7 +2919,7 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
         return;
     }
 
-    if (!FX_BeginArchive(system))
+    if (!FX_BeginArchive(system, restoreGeneration))
     {
         const bool workspaceDestroyed =
             FX_DestroyArchiveRestoreTransactionWorkspace(
@@ -2966,93 +3019,6 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile)
     }
 }
 
-void __cdecl FX_RestoreEffectDefTable(MemoryFile *memFile, FxEffectDefTable *table)
-{
-    uint32_t p; // [esp+0h] [ebp-10h] BYREF
-    const FxEffectDef *effectDef; // [esp+4h] [ebp-Ch]
-    uint32_t key; // [esp+8h] [ebp-8h]
-    const char *effectDefName; // [esp+Ch] [ebp-4h]
-
-    table->count = 0;
-    while (1)
-    {
-        effectDefName = MemFile_ReadCString(memFile);
-        if (!*effectDefName)
-            break;
-        if (!FX_ArchiveEffectNameIsValid(effectDefName))
-        {
-            Com_Error(ERR_DROP, "Invalid FX effect name in archive");
-            return;
-        }
-        if (table->count >= 1024)
-        {
-            Com_Error(ERR_DROP, "FX effect-definition table exceeds capacity");
-            return;
-        }
-        MemFile_ReadData(memFile, 4, (uint8_t *)&p);
-        key = p;
-        effectDef = FX_Register((char *)effectDefName);
-        FX_AddEffectDefTableEntry(table, key, effectDef);
-    }
-}
-
-void __cdecl FX_AddEffectDefTableEntry(FxEffectDefTable *table, uint32_t key, const FxEffectDef *effectDef)
-{
-    if (!table)
-    {
-        MyAssertHandler(".\\EffectsCore\\fx_archive.cpp", 47, 0, "%s", "table");
-        Com_Error(ERR_DROP, "Missing FX effect-definition table");
-        return;
-    }
-    if (table->count < 0 || table->count >= 1024)
-    {
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_archive.cpp",
-            48,
-            0,
-            "table->count doesn't index ARRAY_COUNT( table->entries )\n\t%i not in [0, %i)",
-            table->count,
-            1024);
-        Com_Error(ERR_DROP, "FX effect-definition table exceeds capacity");
-        return;
-    }
-    if (!effectDef)
-    {
-        MyAssertHandler(".\\EffectsCore\\fx_archive.cpp", 49, 0, "%s", "effectDef");
-        Com_Error(ERR_DROP, "Missing FX effect definition while restoring");
-        return;
-    }
-    table->entries[table->count].key = key;
-    table->entries[table->count++].effectDef = effectDef;
-}
-
-bool __cdecl FX_FixupEffectDefHandles(FxSystem *system, FxEffectDefTable *table)
-{
-    if (!system || !table)
-    {
-        MyAssertHandler(
-            ".\\EffectsCore\\fx_archive.cpp",
-            131,
-            0,
-            "%s",
-            "system && table");
-        Com_Error(ERR_DROP, "Missing FX archive fixup state");
-        return false;
-    }
-    if (!system->isArchiving)
-    {
-        MyAssertHandler(".\\EffectsCore\\fx_archive.cpp", 132, 0, "%s", "system->isArchiving");
-        Com_Error(ERR_DROP, "FX archive fixup requires archive mode");
-        return false;
-    }
-    if (!FX_FixupEffectDefHandlesNoDrop(system, table))
-    {
-        Com_Error(ERR_DROP, "Invalid FX effect definition fixup state");
-        return false;
-    }
-    return true;
-}
-
 FxEffect *__cdecl FX_EffectFromHandle(FxSystem *system, uint16_t handle)
 {
     if (!system)
@@ -3078,16 +3044,6 @@ FxEffect *__cdecl FX_EffectFromHandle(FxSystem *system, uint16_t handle)
         FX_DropInvalidEffectHandle(handle);
     }
     return effect;
-}
-
-const FxEffectDef *__cdecl FX_FindEffectDefInTable(const FxEffectDefTable *table, uint32_t key)
-{
-    if (!table || table->count < 0 || table->count > 1024)
-    {
-        Com_Error(ERR_DROP, "Invalid FX effect-definition table while restoring");
-        return nullptr;
-    }
-    return FX_FindEffectDefInTableNoDrop(table, key);
 }
 
 FxElemVisuals __cdecl FX_GetElemVisuals(const FxElemDef *elemDef, int32_t randomSeed)

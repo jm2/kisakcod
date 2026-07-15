@@ -9,18 +9,23 @@ work item changes. Do not create session-specific handoff files.
 - Active branch: `agent/fx-effect-table-restore`; branch point: merged silent MemoryFile checkpoint
   `4f84ffca`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: replace `FX_RestoreEffectDefTable` with a bounded lifecycle-owned BSS transaction. The implementation will
-  cap raw records at 1,024, read every 1--63 byte name and four-byte key through the report-free MemoryFile boundary,
-  decode keys explicitly little-endian, reject zero and conflicting duplicate keys, and collapse only byte-identical
-  duplicate key/name pairs before the first registration. A pointer-sized atomic cookie identifies the exact TLS owner;
-  a real Closing sentinel reserves cleanup while BSS is cleared, so stale, nested, or foreign cleanup cannot erase a
-  newer transaction. FX lifecycle and archive admission must fail closed on an active lease, while the restore claim
-  rechecks an exact Open archive gate and unchanged cooperative generation. Registration occurs only after the complete
-  empty-name terminator is parsed, publication occurs once after every registration succeeds, and error cleanup silently
-  abandons same-thread ownership. Preserve allocation-graph validation before staged effect-pointer fixup, then release
-  the lease immediately after fixup and pass its captured generation into later archive admission. This removes the
-  8,196-byte x86 / 16,392-byte native64 table frame and the uninitialized truncated-key path without moving scratch to
-  fallible heap ownership.
+- Active checkpoint: the legacy `FX_RestoreEffectDefTable` stack image has been replaced by a bounded lifecycle-owned
+  BSS transaction. It caps raw records at 1,024, reads every 1--63 byte name and four-byte key through the report-free
+  MemoryFile boundary, decodes keys explicitly little-endian, rejects zero/conflicting keys, and collapses only exact
+  duplicate key/name pairs before the first registration. Name validation now also blocks traversal, Win32-invalid
+  characters, trailing dot/space normalization, and DOS device components (including extension and superscript-digit
+  forms). A pointer-width atomic cookie, exact TLS identity, monotonic serial, and real Closing sentinel make stale,
+  nested, foreign, and partial cleanup non-destructive. Archive and lifecycle admission use symmetric pre/CAS/post
+  handshakes; error cleanup abandons the lease before every other FX gate. Production restore preserves pool/allocation
+  graph validation before staged pointer fixup, releases the lease immediately afterward, and passes the captured
+  generation into later archive admission. The obsolete public table types/APIs and their two frozen-ABI debt rows are
+  gone, eliminating the 8,196-byte x86 / 16,392-byte native64 table frame and the uninitialized truncated-key path
+  without fallible heap ownership. Real raw/zlib fixtures cover full capacity, late malformed input (including 0--3
+  key bytes), duplicate/registration policy, reentry, abandonment, stale/foreign ownership, immediate reuse, and held-
+  owner contention with zero engine reports. Local GCC, Clang, ASan+UBSan, and TSan suites are **50/50** green; strict
+  helper/test/atomic compilation passes for x86-32 and AArch64; two independent audits found and verified the late-key
+  coverage and Win32 device-name fixes and report no remaining batch issue. The authoritative Windows x86 production
+  compile and five-target utility matrix remain the PR CI gate.
 - PR #18 squash-merged as `4f84ffca`. Initial run **29385108870** exposed one macOS arm64-only build seam: the bundled
   zlib header suppresses its `Byte` typedef whenever modern AppleClang defines the legacy `TARGET_OS_MAC` marker, although
   modern Darwin no longer makes that classic-Mac typedef visible. The focused correction keeps the classic compiler
@@ -71,7 +76,8 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: implement the transactional effect-definition-table BSS lease, then add measured stack/runtime gates.
+- Next: finish review/CI for the effect-table checkpoint, then bound the save-side definition snapshot outside database
+  read ownership and add measured source-scoped Windows x86 plus portable extracted-TU stack/runtime gates.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,
@@ -90,10 +96,9 @@ work item changes. Do not create session-specific handoff files.
   ownership, cleanup, lock-order, or scratch-reuse defect. The prior measured restore peaks were approximately
   **58–66 KiB x86 / 105–121 KiB native64**; structural census projects roughly **15 KiB / 23 KiB** after this
   change, but an actual production frame gate remains pending because `fx_archive.cpp` is not yet portable outside
-  the Windows engine build. The early 8,196-byte x86 effect-definition table remains stack-backed because
-  registration can longjmp before cleanup; moving it requires a separate no-leak parsing boundary. The archive-gate
-  and portable ODE occupancy follow-ons are now complete; the remaining sequence begins with the effect-table boundary
-  and measured per-function stack gates.
+  the Windows engine build. The current effect-table checkpoint removes the remaining 8,196-byte x86 definition-table
+  frame through a no-leak BSS lease that survives registration longjmp cleanup. The archive-gate and portable ODE
+  occupancy follow-ons are also complete; the remaining sequence begins with measured per-function stack gates.
   PR #15's initial run **29361544758** passed the Linux amd64/arm64 and macOS arm64 portable suites plus the
   headless Windows x86 engine build, but both MSVC portable jobs rejected the intentionally over-aligned workspace
   fixture with C4324 under `/WX`. The exact-payload fixture correction passed all nine jobs in replacement run
@@ -130,8 +135,8 @@ work item changes. Do not create session-specific handoff files.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **38% complete by engineering effort** (plausible range 34–43%).
-  The foundation/checklist view is about 50–55% and the shared foundation is roughly 88–93% mature,
+- Progress estimate: approximately **39% complete by engineering effort** (plausible range 35–44%).
+  The foundation/checklist view is about 51–56% and the shared foundation is roughly 90–94% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
   (nine commits; upstream was not ahead at merge time) while preserving the port's pointer-width and
@@ -214,8 +219,8 @@ work item changes. Do not create session-specific handoff files.
   validation scratch to checked heap lifetimes without weakening fail-stop ownership, and the current branch now
   supplies executable normal archive-gate control and production integration. The current ODE occupancy follow-on adds
   exact fixed-pool competition plus intrinsically silent live creation/impact/rollback transactions. Remaining
-  FX-specific work is real 64-bit Disk32 archive/fast-file conversion, camera/scalar snapshot publication, the
-  no-longjmp effect-table parsing boundary, and measured stack/runtime gates.
+  FX-specific work is real 64-bit Disk32 archive/fast-file conversion, camera/scalar snapshot publication, a bounded
+  save-side definition snapshot, and measured stack/runtime gates.
   Audit of that transaction exposed prerequisite ODE exhaustion defects: `dBodyCreate` and user-data allocation
   dereference null, while primary/transform geometry failures can publish incomplete collision bodies.
   PR #7 checks body exhaustion before world publication, pairs the dormant heap
@@ -600,8 +605,7 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Complete the transactional effect-definition BSS lease described above with real raw/zlib fixtures, current-thread and
-   lifecycle race coverage, strict frame warnings, x86-32/AArch64 compile-link gates, and production/source integration.
+1. Finish automated review and the nine-job CI gate for the transactional effect-definition BSS lease described above.
    Then bound the save-side definition snapshot outside database read ownership and measure the Windows x86 production
    frame with source-scoped MSVC plus portable extracted-TU stack limits.
 2. Add packed FX savegame Disk32 schemas, native handle remapping, opaque effect-definition keys,
@@ -668,8 +672,9 @@ work item changes. Do not create session-specific handoff files.
   transaction/validation scratch including early malformed-graph preflight. PR #16 adds
   executable normal admission, durable partial-cleanup ownership, fail-closed typed values, and checked production
   integration. The current branch completes competing non-FX occupancy and the silent production ODE mutation boundary.
-  Remaining blockers are camera/scalar publication, real Disk32 FX archive/fast-file conversion, the effect-table parsing
-  boundary, and measured stack/runtime enforcement.
+  The current effect-table lease closes the remaining parsing/registration stack boundary. Remaining blockers are
+  camera/scalar publication, real Disk32 FX archive/fast-file conversion, bounded save-side definition capture, and
+  measured stack/runtime enforcement.
   `R_FilterXModelIntoScene` still retains an
   FX element's cached-lighting handle pointer beyond the per-effect draw lock; current renderer scheduling
   consumes it before the next FX mutation, but a generation-aware scene-owned cache is required before that

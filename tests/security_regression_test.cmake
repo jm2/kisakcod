@@ -5797,8 +5797,12 @@ require_source_contains(
     "archive admission must reject same-thread sort/effect-lock ownership before controller acquisition")
 require_source_contains(
     "EffectsCore/fx_system.cpp"
-    "return fx::archive::AcquireArchiveGate("
+    "fx::archive::AcquireArchiveGate("
     "normal archive admission must delegate to the portable controller")
+require_source_contains(
+    "EffectsCore/fx_system.cpp"
+    "if (acquireStatus\n        == fx::archive::ArchiveGateControlStatus::UnsafeFailure)"
+    "indeterminate normal archive acquisition must fail-stop")
 require_source_contains(
     "EffectsCore/fx_system.cpp"
     "return fx::archive::ReleaseArchiveGate("
@@ -5874,8 +5878,8 @@ extract_security_slice(
     "ValidateAdmission adapter operation")
 require_security_slice_contains(
     _archive_adapter_validate_admission_source
-    "if (Sys_AtomicLoad(context.gate) != exclusive\n            || Sys_AtomicLoad(&context.system->iteratorCount) != -1)\n        {\n            return Status::UnsafeFailure;\n        }\n        return context.system->isInitialized\n                && !context.system->isArchiving\n                && FX_GetCooperativeIteratorGeneration(context.system)\n                    == context.expectedGeneration\n            ? Status::Success\n            : Status::Cancelled;"
-    "admission validation must require exclusive gate/iterator ownership and an unchanged live lifecycle")
+    "if (Sys_AtomicLoad(context.gate) != exclusive\n            || Sys_AtomicLoad(&context.system->iteratorCount) != -1)\n        {\n            return Status::UnsafeFailure;\n        }\n        return context.system->isInitialized\n                && !context.system->isArchiving\n                && !fx::archive::EffectTableRestoreLeaseIsActive()\n                && FX_GetCooperativeIteratorGeneration(context.system)\n                    == context.expectedGeneration\n            ? Status::Success\n            : Status::Cancelled;"
+    "admission validation must require exclusive gate/iterator ownership, no effect-table lease, and an unchanged live lifecycle")
 
 extract_security_slice(
     _archive_adapter_source
@@ -5911,7 +5915,7 @@ require_security_slice_contains(
     "error cleanup must clear the production archiving flag before succeeding")
 require_source_contains(
     "EffectsCore/fx_system.cpp"
-    "context.gate, pending, open)\n                == open"
+    "context.gate, pending, open) != open"
     "normal archive acquisition must claim Pending only from Open")
 require_source_contains(
     "EffectsCore/fx_system.cpp"
@@ -6700,17 +6704,33 @@ require_source_ordered(
     "FX_LinkSystemBuffers(&restoredSystem, restoredBuffers);"
     "restore must validate staged ring counters before linking staged runtime buffers")
 
-# Only the complete archive transaction is public. Definition fixup keeps its
-# checked result, while obsolete partial archive/removal entry points must not
-# reappear in the shared header or as externally linked implementations.
-require_source_contains(
-    "EffectsCore/fx_system.h"
-    "bool __cdecl FX_FixupEffectDefHandles"
-    "effect-definition fixup must expose archive validation failure")
+# Only the complete archive transaction is public. Definition fixup remains a
+# checked internal operation over an exact restore lease; the obsolete
+# stack-backed table and partial archive/removal entry points must not reappear.
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
-    "bool __cdecl FX_FixupEffectDefHandles"
-    "effect-definition fixup implementation must propagate validation failure")
+    "bool FX_FixupEffectDefHandlesNoDrop("
+    "effect-definition fixup must propagate validation failure internally")
+foreach(_fx_removed_effect_table_api
+    FxEffectDefTable
+    FX_RestoreEffectDefTable
+    FX_AddEffectDefTableEntry
+    FX_FixupEffectDefHandles)
+    require_source_not_contains(
+        "EffectsCore/fx_system.h"
+        "${_fx_removed_effect_table_api}"
+        "obsolete public ${_fx_removed_effect_table_api} contract must remain absent")
+endforeach()
+foreach(_fx_removed_effect_table_impl
+    FxEffectDefTable
+    FX_RestoreEffectDefTable
+    FX_AddEffectDefTableEntry
+    "bool __cdecl FX_FixupEffectDefHandles(")
+    require_source_not_contains(
+        "EffectsCore/fx_archive.cpp"
+        "${_fx_removed_effect_table_impl}"
+        "obsolete ${_fx_removed_effect_table_impl} implementation must remain absent")
+endforeach()
 foreach(_fx_removed_public_api
     FX_RestorePhysicsData
     FX_SavePhysicsData
@@ -6759,7 +6779,7 @@ require_source_ordered(
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "const bool restoredPoolStateValid =\n        FX_RebuildArchivePoolAllocationStates("
-    "FX_FixupEffectDefHandlesNoDrop(&restoredSystem, &table)"
+    "FX_FixupEffectDefHandlesNoDrop(\n            &restoredSystem, tableResult.lease)"
     "restore must validate staged allocation state before traversing effect records")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
@@ -6769,7 +6789,7 @@ require_source_ordered(
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "FX_ValidateArchiveBodyState(\n                physicsEntries[index].state)"
-    "if (!FX_BeginArchive(system))"
+    "if (!FX_BeginArchive(system, restoreGeneration))"
     "restore must validate every staged physics body before acquiring live ownership")
 # Restore publication must preserve the archive owner's existing iterator -1
 # across both desired and rollback graph copies. Reacquiring after overwriting
@@ -6937,20 +6957,24 @@ require_source_match_count(
     2
     "Disk32 pointer relocation must use defined unsigned modular addition")
 require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "if (table->count < 0 || table->count >= 1024)"
-    "table->entries[table->count].key = key;"
-    "archive effect-definition insertion must validate table capacity before writing")
+    "EffectsCore/fx_effect_table_restore.cpp"
+    "status = ParseEffectTable(memFile, lease, &entryCount);"
+    "stableCallbacks.registerEffect("
+    "archive effect definitions must all parse before the first registration")
 require_source_ordered(
-    "EffectsCore/fx_archive.cpp"
-    "if (!effectDef)"
-    "table->entries[table->count].key = key;"
-    "archive effect-definition insertion must reject a null definition before writing")
+    "EffectsCore/fx_effect_table_restore.cpp"
+    "if (!definition)"
+    "g_restoreDefinitions[index] = definition;"
+    "archive effect-definition registration must reject null before staging")
 require_source_ordered(
+    "EffectsCore/fx_effect_table_restore.cpp"
+    "g_restoreDefinitions[index] = definition;"
+    "g_restoreEntryCount = entryCount;"
+    "archive effect-definition lookup must publish only after every registration")
+require_source_contains(
     "EffectsCore/fx_archive.cpp"
-    "if (!table || table->count < 0 || table->count > 1024)"
-    "for (std::int32_t index = 0; index < table->count; ++index)"
-    "archive effect-definition lookup must validate the persisted count before iteration")
+    "fx::archive::EffectTableRestoreFind(lease, key)"
+    "archive effect-definition lookup must require the exact active lease")
 require_source_contains(
     "EffectsCore/fx_archive.cpp"
     "if (!effect || !effect->def || !outCount"

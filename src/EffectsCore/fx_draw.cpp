@@ -1,4 +1,5 @@
 #include "fx_system.h"
+#include "fx_effect_table_restore.h"
 #include "fx_iterator_atomic.h"
 #include "fx_physics_sidecar.h"
 #include "fx_pool.h"
@@ -175,6 +176,11 @@ void __cdecl FX_ErrorCleanup() noexcept
     // Com_Error uses longjmp, so C++ destructors cannot release iterator
     // ownership. This hook runs at the very start of Com_ErrorCleanup, before
     // thread synchronization can wait behind a gate abandoned by this thread.
+    // Effect-table staging never overlaps acquired archive ownership. Release
+    // it first so lifecycle/archive cleanup cannot remain blocked behind this
+    // thread after a registration-time ERR_DROP.
+    fx::archive::AbandonCurrentThreadEffectTableRestoreForError();
+
     // A pre-publication spotlight can already be visible through the
     // spotlight side channel. Withdraw/tombstone it while its effect lock is
     // still held, then release the recorded locks so stale waiters observe a

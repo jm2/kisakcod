@@ -1,5 +1,6 @@
 #include "fx_system.h"
 #include "fx_archive_gate_control.h"
+#include "fx_effect_table_restore.h"
 #include "fx_iterator_atomic.h"
 #include "fx_physics_sidecar.h"
 #include "fx_pool.h"
@@ -206,11 +207,23 @@ FX_PerformArchiveGateControlOperation(
     switch (operation)
     {
     case Operation::ClaimPending:
+        // The effect-table lease and archive gate form a symmetric admission
+        // handshake: either side may win, but neither can remain admitted
+        // after observing the other side active.  Recheck after the CAS to
+        // close the race with a restore that passed its own Open precheck.
+        if (fx::archive::EffectTableRestoreLeaseIsActive())
+            return Status::Rejected;
+        if (Sys_AtomicCompareExchange(
+                context.gate, pending, open) != open)
+        {
+            return Status::Rejected;
+        }
+        if (!fx::archive::EffectTableRestoreLeaseIsActive())
+            return Status::Success;
         return Sys_AtomicCompareExchange(
-                   context.gate, pending, open)
-                == open
-            ? Status::Success
-            : Status::Rejected;
+                   context.gate, open, pending) == pending
+            ? Status::Cancelled
+            : Status::UnsafeFailure;
     case Operation::TryAcquireIterator:
         return FxIteratorTryBeginExclusive(
                    &context.system->iteratorCount)
@@ -240,6 +253,7 @@ FX_PerformArchiveGateControlOperation(
         }
         return context.system->isInitialized
                 && !context.system->isArchiving
+                && !fx::archive::EffectTableRestoreLeaseIsActive()
                 && FX_GetCooperativeIteratorGeneration(context.system)
                     == context.expectedGeneration
             ? Status::Success
@@ -1519,6 +1533,22 @@ bool __cdecl FX_ArchiveGateIsActive(const FxSystem *const system)
                 Sys_AtomicLoad(gate)));
 }
 
+bool __cdecl FX_EffectTableRestoreLifecycleIsCurrent(
+    const FxSystem *const system,
+    const std::uint32_t expectedGeneration) noexcept
+{
+    volatile std::int32_t *const gate = FX_GetArchiveGate(system);
+    // This predicate is also the restore lease's pre-CAS check. Do not sample
+    // mutable non-atomic FxSystem fields until the post-CAS handshake has
+    // excluded lifecycle mutation; later archive admission validates them.
+    return system && gate
+        && Sys_AtomicLoad(gate)
+            == static_cast<std::int32_t>(
+                fx::archive::ArchiveGateValue::Open)
+        && FX_GetCooperativeIteratorGeneration(system)
+            == expectedGeneration;
+}
+
 bool __cdecl FX_EffectKillGateIsActive(
     const FxSystem *const system) noexcept
 {
@@ -1734,11 +1764,21 @@ void __cdecl FX_AbandonCurrentThreadEffectKillExclusiveForError() noexcept
 
 bool __cdecl FX_BeginArchive(FxSystem *const system)
 {
+    return system
+        && FX_BeginArchive(
+            system,
+            FX_GetCooperativeIteratorGeneration(system));
+}
+
+bool __cdecl FX_BeginArchive(
+    FxSystem *const system,
+    const std::uint32_t expectedGeneration)
+{
     volatile std::int32_t *const gate = FX_GetArchiveGate(system);
-    if (!system || !gate)
+    if (!system || !gate
+        || FX_GetCooperativeIteratorGeneration(system)
+            != expectedGeneration)
         return false;
-    const std::uint32_t admissionGeneration =
-        FX_GetCooperativeIteratorGeneration(system);
     if (FX_CurrentThreadOwnsCooperativeIterator(system)
         || FX_ThreadOwnsEffectKillExclusive(system)
         || FX_CurrentThreadOwnsArchive(system)
@@ -1753,17 +1793,25 @@ bool __cdecl FX_BeginArchive(FxSystem *const system)
     FxArchiveGateControlContext context{
         system,
         gate,
-        admissionGeneration,
+        expectedGeneration,
     };
     const fx::archive::ArchiveGateControlCallbacks callbacks{
         &context,
         FX_PerformArchiveGateControlOperation,
     };
-    return fx::archive::AcquireArchiveGate(
-               &fx_archiveThreadState,
-               system,
-               admissionGeneration,
-               callbacks)
+    const fx::archive::ArchiveGateControlStatus acquireStatus =
+        fx::archive::AcquireArchiveGate(
+            &fx_archiveThreadState,
+            system,
+            expectedGeneration,
+            callbacks);
+    if (acquireStatus
+        == fx::archive::ArchiveGateControlStatus::UnsafeFailure)
+    {
+        Sys_Error("Unable to acquire FX archive ownership safely");
+        std::abort();
+    }
+    return acquireStatus
         == fx::archive::ArchiveGateControlStatus::Success;
 }
 
@@ -2125,6 +2173,7 @@ enum class FxLifecycleClaimStatus : std::uint8_t
     Success,
     InvalidState,
     ArchiveBusy,
+    EffectTableRestoreBusy,
     KillBusy,
     IteratorsActive,
     GateChanged,
@@ -2150,8 +2199,22 @@ FxLifecycleClaimStatus FX_BeginLifecycleClaim(
         FX_GetEffectKillGate(system);
     if (!archiveGate || !killGate)
         return FxLifecycleClaimStatus::InvalidState;
+    if (fx::archive::EffectTableRestoreLeaseIsActive())
+        return FxLifecycleClaimStatus::EffectTableRestoreBusy;
     if (Sys_AtomicCompareExchange(archiveGate, 2, 0) != 0)
         return FxLifecycleClaimStatus::ArchiveBusy;
+    if (fx::archive::EffectTableRestoreLeaseIsActive())
+    {
+        const bool reopened =
+            Sys_AtomicCompareExchange(archiveGate, 0, 2) == 2;
+        if (!reopened)
+        {
+            Sys_Error(
+                "Unable to roll back FX lifecycle ownership safely");
+            std::abort();
+        }
+        return FxLifecycleClaimStatus::EffectTableRestoreBusy;
+    }
     claim->archiveGate = archiveGate;
 
     // Claim archive exclusion before the kill gate. If a kill already owns
@@ -2169,7 +2232,8 @@ FxLifecycleClaimStatus FX_BeginLifecycleClaim(
     // changed. Gate state 2 prevents every new archive-aware entrant.
     Sys_EnterCriticalSection(CRITSECT_FX_ALLOC);
     Sys_LeaveCriticalSection(CRITSECT_FX_ALLOC);
-    if (Sys_AtomicLoad(archiveGate) != 2
+    if (fx::archive::EffectTableRestoreLeaseIsActive()
+        || Sys_AtomicLoad(archiveGate) != 2
         || Sys_AtomicLoad(killGate) != 1)
     {
         (void)Sys_AtomicCompareExchange(killGate, 0, 1);
@@ -2190,7 +2254,8 @@ FxLifecycleClaimStatus FX_BeginLifecycleClaim(
         return FxLifecycleClaimStatus::IteratorsActive;
     }
     claim->system = system;
-    if (Sys_AtomicLoad(archiveGate) != 2
+    if (fx::archive::EffectTableRestoreLeaseIsActive()
+        || Sys_AtomicLoad(archiveGate) != 2
         || Sys_AtomicLoad(killGate) != 1)
     {
         (void)FxIteratorEndExclusive(&system->iteratorCount);
