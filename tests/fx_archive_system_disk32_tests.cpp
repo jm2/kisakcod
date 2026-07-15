@@ -10,7 +10,6 @@
 #include <cstring>
 #include <limits>
 #include <type_traits>
-#include <utility>
 
 namespace
 {
@@ -652,6 +651,12 @@ struct I32Mutation
     std::int32_t value;
 };
 
+struct U8Mutation
+{
+    std::size_t offset;
+    std::uint8_t value;
+};
+
 void TestInvalidScalarAndBooleanFields()
 {
     constexpr std::array<I32Mutation, 24> invalidI32{{
@@ -697,13 +702,15 @@ void TestInvalidScalarAndBooleanFields()
         CheckFailurePreservesOutputs(SystemFromBytes(bytes));
     }
 
-    for (const std::pair<std::size_t, std::uint8_t> mutation : {
-             std::pair{IS_INITIALIZED_OFFSET, UINT8_C(0)},
-             std::pair{IS_ARCHIVING_OFFSET, UINT8_C(0)},
-             std::pair{LOCAL_CLIENT_NUM_OFFSET, UINT8_C(1)}})
+    constexpr std::array<U8Mutation, 3> invalidU8{{
+        {IS_INITIALIZED_OFFSET, 0},
+        {IS_ARCHIVING_OFFSET, 0},
+        {LOCAL_CLIENT_NUM_OFFSET, 1},
+    }};
+    for (const U8Mutation &mutation : invalidU8)
     {
         auto bytes = MakeGoldenBytes();
-        StoreU8(&bytes, mutation.first, mutation.second);
+        StoreU8(&bytes, mutation.offset, mutation.value);
         CheckFailurePreservesOutputs(SystemFromBytes(bytes));
     }
 
