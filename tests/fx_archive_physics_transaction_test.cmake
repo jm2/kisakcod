@@ -1040,6 +1040,22 @@ require_ordered(
     "tableResult.lease,"
     "staging.candidate);"
     "candidate construction must bind the lease before mutable output")
+extract_slice(
+    "${_restore_source}"
+    "if (!fx::archive::TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "FxSystem *const restoredSystem"
+    _candidate_getter_call
+    "exact-lease candidate Ready lookup")
+require_ordered(
+    "${_candidate_getter_call}"
+    "staging.candidate,"
+    "tableResult.lease,"
+    "candidate Ready lookup must consume the workspace before its exact lease")
+require_ordered(
+    "${_candidate_getter_call}"
+    "tableResult.lease,"
+    "&candidateView)"
+    "candidate Ready lookup must bind the exact lease before output")
 require_ordered(
     "${_restore_source}"
     "FX_AllocateArchiveRestoreTransactionWorkspace()"

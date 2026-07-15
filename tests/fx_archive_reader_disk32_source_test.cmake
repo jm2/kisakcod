@@ -10,6 +10,8 @@ set(_source_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive_reader_disk32.cpp")
 set(_candidate_header_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive_restore_candidate_disk32.h")
+set(_candidate_source_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive_restore_candidate_disk32.cpp")
 set(_archive_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
@@ -24,6 +26,7 @@ foreach(_path IN ITEMS
     "${_header_path}"
     "${_source_path}"
     "${_candidate_header_path}"
+    "${_candidate_source_path}"
     "${_archive_path}"
     "${_manifest_path}"
     "${_tests_path}"
@@ -38,6 +41,7 @@ endforeach()
 file(READ "${_header_path}" _header)
 file(READ "${_source_path}" _source)
 file(READ "${_candidate_header_path}" _candidate_header)
+file(READ "${_candidate_source_path}" _candidate_source)
 file(READ "${_archive_path}" _archive)
 file(READ "${_manifest_path}" _manifest)
 file(READ "${_tests_path}" _tests)
@@ -46,8 +50,8 @@ file(READ "${_candidate_fixture_path}" _candidate_fixture)
 file(READ "${_ci_path}" _ci)
 
 foreach(_var IN ITEMS
-    _header _source _candidate_header _archive _manifest _tests _fixture
-    _candidate_fixture _ci)
+    _header _source _candidate_header _candidate_source _archive _manifest
+    _tests _fixture _candidate_fixture _ci)
     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${${_var}}")
     set(${_var} "${_normalized}")
 endforeach()
@@ -179,6 +183,137 @@ require_contains(
     _candidate_header
     "std::is_trivially_destructible_v< FxArchiveRestoreCandidateDisk32Workspace>"
     "candidate destruction cannot dereference lease-borrowed assets")
+
+# Candidate Ready views borrow registered definitions and models, so the
+# workspace snapshots the exact build lease and the getter must prove the same
+# live lease before exposing any interior pointer.
+foreach(_marker IN ITEMS
+    "TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "FxArchiveRestoreCandidateDisk32Workspace *workspace, const EffectTableRestoreLease &lease, FxArchiveRestoreCandidateDisk32ReadyView *outView) noexcept;"
+    "FxArchiveDisk32ReaderLeaseIdentity lease_{};"
+    "RUNTIME_SIZE(FxArchiveRestoreCandidateDisk32Workspace, 0x5BDB0, 0x61E08);")
+    require_contains(
+        _candidate_header
+        "${_marker}"
+        "exact-lease candidate Ready boundary")
+endforeach()
+foreach(_marker IN ITEMS
+    "FxArchiveDisk32ReaderLeaseIdentity SnapshotLease("
+    "static_cast<std::uint32_t>(lease.serial)"
+    "static_cast<std::uint32_t>(lease.serial >> 32u)"
+    "const FxArchiveDisk32ReaderLeaseIdentity candidate = SnapshotLease(lease);"
+    "stored.identity == candidate.identity"
+    "stored.ownerCookie == candidate.ownerCookie"
+    "stored.lifecycleGeneration == candidate.lifecycleGeneration"
+    "stored.serialLow == candidate.serialLow"
+    "stored.serialHigh == candidate.serialHigh")
+    require_contains(
+        _candidate_source
+        "${_marker}"
+        "candidate exact lease snapshot and match")
+endforeach()
+
+extract_slice(
+    _candidate_source
+    "TryBuildFxArchiveRestoreCandidateDisk32("
+    "bool TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    _candidate_builder
+    "lease-bound candidate builder")
+require_ordered(
+    _candidate_builder
+    "candidateWorkspace->phase_ = FxArchiveRestoreCandidateDisk32Phase::Empty;"
+    "candidateWorkspace->lease_ = FxArchiveDisk32ReaderLeaseIdentity{};"
+    "every idle build attempt must clear the prior Ready lease")
+require_ordered(
+    _candidate_builder
+    "candidateWorkspace->lease_ = FxArchiveDisk32ReaderLeaseIdentity{};"
+    "candidateWorkspace->operating_ = true;"
+    "the prior lease must clear before callback-capable build work")
+require_ordered(
+    _candidate_builder
+    "ValidateEffectTableRestoreLease(lease)"
+    "candidateWorkspace->lease_ = SnapshotLease(lease);"
+    "candidate Ready publication must follow final exact-lease validation")
+require_ordered(
+    _candidate_builder
+    "candidateWorkspace->lease_ = SnapshotLease(lease);"
+    "candidateWorkspace->phase_ = FxArchiveRestoreCandidateDisk32Phase::Ready;"
+    "the exact lease snapshot must publish before Ready")
+require_occurrence_count(
+    _candidate_builder
+    "candidateWorkspace->lease_ = SnapshotLease(lease);"
+    1
+    "one candidate lease publication point")
+
+extract_slice(
+    _candidate_source
+    "bool TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "} // namespace fx::archive"
+    _candidate_getter
+    "exact-lease candidate Ready getter")
+require_occurrence_count(
+    _candidate_getter
+    "!LeaseMatches(workspace->lease_, lease)"
+    2
+    "exact stored lease must gate both sides of lifecycle validation")
+require_ordered(
+    _candidate_getter
+    "!LeaseMatches(workspace->lease_, lease)"
+    "workspace->operating_ = true;"
+    "exact identity must reject before the operation gate closes")
+extract_slice(
+    _candidate_getter
+    "workspace->operating_ = true;"
+    "const FxArchiveRestoreCandidateDisk32ReadyView view{"
+    _candidate_getter_callback
+    "candidate Ready lifecycle callback interval")
+require_ordered(
+    _candidate_getter_callback
+    "workspace->operating_ = true;"
+    "ValidateEffectTableRestoreLease(lease)"
+    "the operation gate must close before lifecycle validation")
+require_ordered(
+    _candidate_getter_callback
+    "ValidateEffectTableRestoreLease(lease)"
+    "!LeaseMatches(workspace->lease_, lease)"
+    "exact identity must be rechecked after callback-capable validation")
+require_contains(
+    _candidate_getter_callback
+    "return finish(false);"
+    "callback failure must reopen the operation gate")
+require_ordered(
+    _candidate_getter
+    "const FxArchiveRestoreCandidateDisk32ReadyView view{"
+    "workspace->operating_ = false;"
+    "a complete local view must form before reopening the gate")
+require_ordered(
+    _candidate_getter
+    "workspace->operating_ = false;"
+    "*outView = view;"
+    "Ready output may commit only after callback-capable work ends")
+extract_slice(
+    _candidate_getter
+    "bool TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "*outView = view;"
+    _candidate_getter_precommit
+    "candidate Ready failure paths")
+require_not_contains(
+    _candidate_getter_precommit
+    "*outView ="
+    "candidate Ready failures must preserve caller output")
+require_occurrence_count(
+    _candidate_getter
+    "*outView = view;"
+    1
+    "one candidate Ready output commit")
+foreach(_forbidden IN ITEMS
+    "workspace->phase_ ="
+    "workspace->lease_ =")
+    require_not_contains(
+        _candidate_getter
+        "${_forbidden}"
+        "candidate Ready lookup must not mutate publication identity")
+endforeach()
 
 # The stored Ready identity is a fixed-layout, bit-exact snapshot of the
 # public lease.  Split serial halves avoid i386 ABI alignment differences
@@ -603,6 +738,15 @@ require_ordered(
     "TryBuildFxArchiveRestoreCandidateDisk32("
     "TryGetFxArchiveRestoreCandidateDisk32ReadyView("
     "only a successful candidate build may expose mutable staging")
+require_contains(
+    _production_restore
+    "staging.candidate, tableResult.lease, &candidateView"
+    "production Ready lookup must retain exact candidate lease ownership")
+require_ordered(
+    _production_restore
+    "staging.candidate, tableResult.lease, &candidateView"
+    "FX_DestroyArchiveDisk32ReaderWorkspace(staging.reader)"
+    "the exact-lease candidate view must commit before reader destruction")
 require_ordered(
     _production_restore
     "FX_AllocateArchiveRestoreTransactionWorkspace()"
@@ -750,6 +894,20 @@ foreach(_candidate_heap_marker IN ITEMS
         _candidate_fixture
         "${_candidate_heap_marker}"
         "candidate fixture must use checked heap workspace lifetime")
+endforeach()
+foreach(_candidate_lease_fixture_marker IN ITEMS
+    "std::array<archive::EffectTableRestoreLease, 4> forgedGetters"
+    "reenterCandidateGetter = false;"
+    "nestedCandidateGetter = true;"
+    "nestedCandidateOutputPreserved = false;"
+    "fixture.restore_.lifecycleValid = false;"
+    "CHECK(!fixture.restore_.nestedCandidateGetter);"
+    "CHECK(fixture.restore_.nestedCandidateOutputPreserved);"
+    "TestReleasedLeaseHidesReadyCandidate();")
+    require_contains(
+        _candidate_fixture
+        "${_candidate_lease_fixture_marker}"
+        "candidate exact-lease getter executable coverage")
 endforeach()
 foreach(_marker IN ITEMS
     "Linux amd64"

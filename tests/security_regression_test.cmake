@@ -6942,6 +6942,10 @@ require_source_matches(
     "EffectsCore/fx_archive.cpp"
     "TryBuildFxArchiveRestoreCandidateDisk32\\([ \t\r\n]*staging.reader,[ \t\r\n]*tableResult.lease,[ \t\r\n]*staging.candidate\\)"
     "candidate construction must bind exact reader and lease provenance")
+require_source_matches(
+    "EffectsCore/fx_archive.cpp"
+    "TryGetFxArchiveRestoreCandidateDisk32ReadyView\\([ \t\r\n]*staging.candidate,[ \t\r\n]*tableResult.lease,[ \t\r\n]*&candidateView\\)"
+    "candidate Ready lookup must retain the exact build lease")
 foreach(_fx_removed_effect_table_api
     FxEffectDefTable
     FX_RestoreEffectDefTable
@@ -7408,6 +7412,85 @@ foreach(_forbidden_reader_operation
         "${_forbidden_reader_operation}"
         "portable reader must remain bounded, borrowed, report-free, and non-publishing")
 endforeach()
+
+require_source_contains(
+    "EffectsCore/fx_archive_restore_candidate_disk32.h"
+    "FxArchiveDisk32ReaderLeaseIdentity lease_{};"
+    "the mutable candidate must snapshot exact build-lease identity")
+require_source_contains(
+    "EffectsCore/fx_archive_restore_candidate_disk32.h"
+    "RUNTIME_SIZE(FxArchiveRestoreCandidateDisk32Workspace, 0x5BDB0, 0x61E08);"
+    "lease-bound candidate workspace must retain measured x86/native64 bounds")
+require_source_matches(
+    "EffectsCore/fx_archive_restore_candidate_disk32.h"
+    "TryGetFxArchiveRestoreCandidateDisk32ReadyView\\([^;]*const EffectTableRestoreLease[ \t]*&lease,[^;]*FxArchiveRestoreCandidateDisk32ReadyView[ \t]*\\*outView\\)[ \t]*noexcept"
+    "candidate Ready API must require the exact retained lease")
+require_source_ordered(
+    "EffectsCore/fx_archive_restore_candidate_disk32.cpp"
+    "candidateWorkspace->lease_ = FxArchiveDisk32ReaderLeaseIdentity{};"
+    "candidateWorkspace->operating_ = true;"
+    "every idle build must clear old lease identity before callback-capable work")
+require_source_ordered(
+    "EffectsCore/fx_archive_restore_candidate_disk32.cpp"
+    "candidateWorkspace->lease_ = SnapshotLease(lease);"
+    "candidateWorkspace->phase_ =\n        FxArchiveRestoreCandidateDisk32Phase::Ready;"
+    "candidate success must snapshot its exact lease before Ready publication")
+require_source_match_count(
+    "EffectsCore/fx_archive_restore_candidate_disk32.cpp"
+    "!LeaseMatches\\(workspace->lease_,[ \t]*lease\\)"
+    2
+    "candidate getter must check exact identity before and after lifecycle validation")
+file(READ
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive_restore_candidate_disk32.cpp"
+    _fx_candidate_source)
+extract_security_slice(
+    _fx_candidate_source
+    "bool TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "} // namespace fx::archive"
+    _fx_candidate_getter
+    "lease-bound candidate Ready getter")
+extract_security_slice(
+    _fx_candidate_getter
+    "workspace->operating_ = true;"
+    "const FxArchiveRestoreCandidateDisk32ReadyView view{"
+    _fx_candidate_getter_callback
+    "candidate Ready lifecycle callback interval")
+require_security_slice_ordered(
+    _fx_candidate_getter_callback
+    "workspace->operating_ = true;"
+    "ValidateEffectTableRestoreLease(lease)"
+    "candidate operation gate must close before lifecycle validation")
+require_security_slice_ordered(
+    _fx_candidate_getter_callback
+    "ValidateEffectTableRestoreLease(lease)"
+    "!LeaseMatches(workspace->lease_, lease)"
+    "candidate identity must be rechecked after callback-capable validation")
+extract_security_slice(
+    _fx_candidate_getter
+    "const FxArchiveRestoreCandidateDisk32ReadyView view{"
+    "return true;"
+    _fx_candidate_getter_success
+    "candidate Ready output commit")
+require_security_slice_ordered(
+    _fx_candidate_getter_success
+    "const FxArchiveRestoreCandidateDisk32ReadyView view{"
+    "workspace->operating_ = false;"
+    "a complete candidate view must form before reopening the gate")
+require_security_slice_ordered(
+    _fx_candidate_getter_success
+    "workspace->operating_ = false;"
+    "*outView = view;"
+    "candidate output commits only after callback-capable work completes")
+extract_security_slice(
+    _fx_candidate_getter
+    "bool TryGetFxArchiveRestoreCandidateDisk32ReadyView("
+    "*outView = view;"
+    _fx_candidate_getter_precommit
+    "candidate Ready rejection paths")
+forbid_security_slice_contains(
+    _fx_candidate_getter_precommit
+    "*outView ="
+    "failed candidate Ready lookup must preserve caller output")
 
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
