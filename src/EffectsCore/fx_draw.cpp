@@ -1472,8 +1472,7 @@ bool __cdecl FX_TryBeginIteratingOverEffects_Cooperative(
 
     if (FX_CurrentThreadOwnsCooperativeIterator(system))
     {
-        if (fx_cooperativeIteratorThreadState.system != system
-            || !FxIteratorTryBeginCooperative(&system->iteratorCount))
+        if (!FxIteratorTryBeginCooperative(&system->iteratorCount))
         {
             return false;
         }
