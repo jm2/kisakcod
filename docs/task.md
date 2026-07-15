@@ -6,13 +6,17 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-snapshot-publication`; branch point: merged bounded save-snapshot checkpoint `92ad1429`;
+- Active branch: `agent/fx-disk32-record-codec`; branch point: merged coherent snapshot checkpoint `0f878ff4`;
   upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint: PR #21's coherent FX camera/scalar/visibility save-snapshot implementation gate is complete; exact
-  implementation head `7895f7a9` passed all nine CI jobs in run **29397910131**, Codex found no major issue at that commit,
-  and the sole Gemini finding was fixed and its thread resolved. This documentation-only checkpoint is the final merge
-  gate before Disk32 conversion starts. Camera/time publication is
+- Active checkpoint: begin the first reader-first FX Disk32 batch without changing production archive I/O. This bounded
+  checkpoint separates full-width native effect-definition identity from an explicit nonzero 32-bit archive key, retains
+  exact legacy pointer-bit keys under the x86 policy, adds deterministic first-seen opaque keys for native64, and proves
+  serialized-effect handle remapping plus a fixed `0x80` effect-record codec. Full `FxSystem`/`FxSystemBuffers` conversion,
+  MemoryFile integration, physics records, and removal of the 64-bit save/restore guards remain later batches.
+- PR #21 squash-merged as `0f878ff4` from final documentation head `cb731d6e`. Final run **29414351528 passed all nine
+  jobs**; implementation head `7895f7a9` also passed all nine in run **29397910131**, Codex found no major issue at that
+  exact implementation commit, and the sole Gemini finding was fixed and resolved. Camera/time publication is
   assembled off-side and invalidated/published through atomic markers. An external fixed-width shared/exclusive camera gate
   serializes ordinary publishers with draw, mark, vertex-generation, spawn-cull, and sprite-sort readers without changing
   frozen `FxSystem`; every camera owner nests inside cooperative archive admission. Visibility swap/query paths likewise
@@ -24,7 +28,7 @@ work item changes. Do not create session-specific handoff files.
   view. It validates copied pool/definition/physics semantics before any legacy bytes are emitted, rejects effect-definition
   pointers not present in the staged table before dereference, then releases archive ownership and writes the unchanged x86
   sequence (table, system, buffers, system address, physics states). The serialized raw-pointer view is never relinked.
-- Current-branch validation: GCC and Clang are **55/55** green; ASan+UBSan (leak detection disabled under the command
+- Merged snapshot validation: GCC and Clang are **55/55** green; ASan+UBSan (leak detection disabled under the command
   runner) and TSan are **54/54** green, with the compiler-generated static-frame test intentionally omitted under sanitizer
   instrumentation. Strict warnings-as-errors compilation passes for the new iterator, snapshot-publication, and bounded
   effect-table fixtures on x86-32 and AArch64. Focused source/security contracts, Clang analyzer checks, and
@@ -123,8 +127,8 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: merge PR #21 after this documentation-only head passes CI, then begin fixed Disk32 FX archive mirrors, codecs,
-  native handle remapping, opaque definition keys, and reader-first converters on a fresh branch.
+- Next: land the opaque-key policy and primitive effect-record/handle codec with exhaustive portable byte fixtures, then
+  expand the proven primitives into fixed `FxSystem`/`FxSystemBuffers` mirrors and a transactional reader.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,
@@ -655,13 +659,12 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Merge PR #21 after its documentation-only final head passes CI. Implementation head `7895f7a9` already passed all nine
-   jobs and exact-head automated review; portable Disk32 schema design/fixture research is complete enough to start the
-   next reader-first production batch immediately after merge.
-2. Add packed FX savegame Disk32 schemas, native handle
-   remapping, opaque effect-definition keys,
-   and byte-level malformed/round-trip fixtures; retain the legacy x86 writer until equivalence is
-   proven. Fast-file `FxEffectDef` widening remains a separate nested-payload batch.
+1. Implement explicit legacy/opaque effect-definition key policies, a strong archive-key type, exhaustive serialized
+   effect-handle remapping, and the fixed `0x80` effect-record codec. Prove high-address native identities, exact x86 bytes,
+   malformed-key output preservation, and hand-authored little-endian fixtures on all portable targets.
+2. Expand the proven primitives into packed `FxSystem`/`FxSystemBuffers` schemas, native pool linking, full graph-handle
+   remapping, visibility selectors, and transactional byte-level malformed/round-trip fixtures. Retain the legacy x86
+   writer until full-image equivalence is proven. Fast-file `FxEffectDef` widening remains a separate nested-payload batch.
 3. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
 4. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner

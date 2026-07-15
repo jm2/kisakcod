@@ -65,7 +65,7 @@ Completed foundation work:
   or output, preserves valid legacy raw/zlib bytes, rejects unsafe names and invalid/conflicting Disk32 keys before the
   first write, and carries portable constrained-stack plus compiler-frame gates; source-scoped Windows x86 production
   measurement is calibrated and enforced in Debug and Release PR CI;
-- a coherent FX save-snapshot publication boundary (PR #21 implementation gate green) that admits camera/time/visibility
+- a coherent FX save-snapshot publication boundary (merged in PR #21) that admits camera/time/visibility
   publishers and readers against archive exclusion, adds an external fixed-width shared/exclusive camera gate for normal
   workers without changing frozen `FxSystem`, publishes camera validity only after its payload, stages raw system and
   buffer bytes once, validates through a separately relinked heap image, derives bounded visibility selectors, and proves
@@ -89,8 +89,9 @@ Remaining gates, in implementation order:
    helper frame/runtime gates are complete. Windows x86 production analysis exposed and removed a 10,256-byte convenience
    wrapper; authoritative Debug and Release reports now measure `FX_Save` at 2,756 bytes, `FX_Restore` at 6,124 bytes,
    and the largest other helper at 2,064 bytes. Coherent camera/scalar/visibility snapshot publication passed all nine CI
-   jobs plus exact-head Codex review in PR #21, and its sole Gemini finding is fixed and resolved; merge its documentation
-   checkpoint, then start the fixed Disk32 archive schema.
+   jobs plus exact-head Codex review in PR #21, and its sole Gemini finding is fixed and resolved. The first reader-first
+   Disk32 batch now separates native definition identity from explicit archive keys and proves fixed effect-record/handle
+   conversion before full-system archive integration.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -1054,8 +1055,9 @@ Windows x86 Debug and Release production reports now enforce 2,756-byte `FX_Save
 2,064-byte maximum-other frames after replacing the discovered 10,256-byte helper with checked heap scratch. Coherent
 camera/scalar/visibility publication, copied-image validation, visibility selectors, and staged effect-definition
 membership passed all nine jobs in PR #21 run **29397910131** at implementation head `7895f7a9`; Codex found no major
-issue at that exact commit and the sole Gemini finding was fixed and resolved. The next sequence is the documentation-only
-merge checkpoint followed by the Disk32 FX archive schema. A checked
+issue at that exact commit and the sole Gemini finding was fixed and resolved; final documentation run **29414351528**
+also passed all nine jobs before squash merge `0f878ff4`. The active sequence is the reader-first Disk32 FX key/effect-record
+codec followed by full system/buffer mirrors and transactional integration. A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
 because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work is real Disk32
