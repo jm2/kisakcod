@@ -17,7 +17,8 @@ work item changes. Do not create session-specific handoff files.
   with physics staging freed first where applicable. The portable native fixture now also covers two physics elements,
   multi-visual model selection, high-bit tokens, native owner indices, deterministic sink order, and a null payload-prepare
   callback. Source contracts pin the shared-oracle delegation, output ordering, absence of duplicate traversal, and the
-  complete leased interval. This branch is locally validated and awaiting the five-target/measured-Windows PR gate.
+  complete leased interval. The exact implementation and review-fix heads have both passed the complete
+  five-target/measured-Windows PR gate; PR #28 is awaiting only final documentation-head verification and merge.
 - Merged Ready checkpoint: the shared, portable `FxArchive` semantic oracle keeps renderer-owned `FxElemDef` opaque,
   pins every native-width field/nested-layout assumption in a renderer-facing translation unit, and performs a complete
   callback-free semantic preflight before a bounded second traversal may activate definition-selected union members or
@@ -78,6 +79,14 @@ work item changes. Do not create session-specific handoff files.
   headless Windows x86 are green. Gemini reported no findings and the thread-level review query is empty. PR #27 then
   squash-merged as `07e3a8a0` from final documentation head `cdd6f7d3`; documentation-only run **29440697547 passed all
   nine jobs**.
+- PR #28 implementation run **29441864655 passed all nine jobs** at `e77539cd`: Linux amd64/arm64, portable Windows
+  amd64/ARM64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86, and headless Windows x86 are green.
+  Gemini identified one real defensive gap in the new source-contract literal counter; `34f1dc4f` rejects an empty needle
+  before its loop. Its reported collector null dereference was declined with the callee's explicit pre-index guard as
+  evidence: a nonzero count with null entries fails immediately, while the zero-count loop performs no access. Both threads
+  are answered and resolved. Replacement run **29442093763 passed all nine jobs** at that review-fix head. A separate
+  lease/bounds/cleanup audit found no double free, use-after-free, capacity, failure-atomicity, or post-release lifetime
+  defect; the final documentation-only head remains the merge gate.
 - PR #25 squash-merged as `09c05e5f` from final review-fix head `5abf9cbb`. Final run **29427215187 passed all nine jobs**:
   Linux amd64/arm64, portable Windows amd64/arm64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86,
   and headless Windows x86. Initial implementation/docs head `d9ad05ff` also passed all nine jobs in run **29426792491**.
