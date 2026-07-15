@@ -6693,11 +6693,15 @@ FxModelPhysicsSpawnResult FX_TrySpawnModelPhysics(
         &body);
     if (result.physicsStatus != PhysBodyModelCreateStatus::Success)
     {
+        const bool cleanupFailed = result.physicsStatus
+            == PhysBodyModelCreateStatus::CleanupFailed;
         result.outcome = result.physicsStatus
                 == PhysBodyModelCreateStatus::InvalidArgument
             ? FxModelPhysicsSpawnOutcome::InvalidState
             : FxModelPhysicsSpawnOutcome::ResourceUnavailable;
         Sys_LeaveCriticalSection(CRITSECT_PHYSICS);
+        if (cleanupFailed)
+            std::abort();
         return result;
     }
 
