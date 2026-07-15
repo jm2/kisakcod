@@ -6,16 +6,19 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/ode-fixed-pool-occupancy`; branch point: merged archive-gate checkpoint
-  `5455c778`; upstream-integration baseline: `2b759db`.
+- Active branch: `agent/memfile-silent-read`; branch point: merged ODE occupancy checkpoint
+  `288c2b78`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active work: move the archive effect-definition table behind a genuinely no-longjmp parser and bounded non-stack
-  workspace. `FX_RestoreEffectDefTable` currently leaves its 32-bit key temporary uninitialized when a read truncates,
-  registers definitions while parsing is still fallible, and relies on `MemFile_ReadCString`/`MemFile_ReadData` paths
-  that can assert, print, or drop. The enclosing 1,024-entry table also consumes 8,196 bytes on x86 and 16,392 bytes on
-  native64. The next batch will add a silent checked `MemoryFile` read primitive, parse exact little-endian names/keys
-  into a bounded lifecycle-owned BSS lease, publish/register only complete entries, release scratch before `FX_BeginArchive`
-  or PHYSICS admission, and make error abandonment reclaim the lease without invoking diagnostics under ownership.
+- Active work: establish the archive effect-definition table's genuinely no-longjmp input boundary. The first
+  independently committable slice adds status-bearing `MemoryFile` data and bounded-C-string readers that directly
+  validate the legacy RLE/zlib decoder, preserve exact raw/compressed behavior, enforce the active segment rather than
+  reading into its successor, and never assert, print, or drop. Executable parity, malformed-input, truncation, and
+  no-report tests will cover both codecs before `FX_ReadArchiveDataNoDrop` moves to the new primitive. The follow-on
+  moves `FX_RestoreEffectDefTable` behind a bounded lifecycle-owned BSS lease: it currently leaves its 32-bit key
+  temporary uninitialized when a read truncates, registers definitions while parsing is still fallible, and places the
+  1,024-entry resolved table (8,196 bytes on x86; 16,392 on native64) on the stack. That transaction will parse exact
+  little-endian names/keys before registration, publish only complete entries, release scratch before `FX_BeginArchive`
+  or PHYSICS admission, and let error abandonment reclaim the lease without diagnostics under ownership.
 - ODE occupancy runtime on this branch is otherwise complete. The engine-free physics batch controller rejects invalid,
   duplicate, overlapping-output, and unknown-status inputs before callbacks; preflights every selected retirement or
   reconstruction before mutation; and reports the exact successful commit prefix. Production FX archive retirement and
@@ -36,8 +39,12 @@ work item changes. Do not create session-specific handoff files.
   legacy DYNENT timestep applied to an FX-world body and consumes its three RNG values only after successful creation.
   FX performs full sidecar validation from a bounded BSS workspace before native allocation and reuses it for binding.
   Two independent final audits approved the frozen x86 scope. All **47/47** tests pass under GCC, Clang, ASan+UBSan,
-  and TSan; strict lower-ODE Clang syntax with warnings-as-errors also passes. Windows x86 CI is still the production-TU
-  compile gate until the PR runs.
+  and TSan; strict lower-ODE Clang syntax with warnings-as-errors also passes. PR #17 squash-merged as `288c2b78`
+  after replacement run **29382870200 passed all nine jobs**. The replacement fixed one missing MSVC helper
+  declaration and one omitted lambda reference capture, then added an exact 512-slot guard before fixed-workspace
+  indexing. Gemini's nullable-physics-preset comment was resolved from the immediately dominating null-return guard;
+  its workspace-bound comment produced the exact fail-closed descriptor check. Both review threads were resolved and
+  a final independent audit approved commit `488314be` without another finding.
 - Archive-gate checkpoint: PR #16 merged as `5455c778` after CI run **29374832707 passed all nine jobs**. Gemini's
   two comments were resolved as false positives: the generation lookup is intentionally null-safe and the requested
   standard headers were already explicit. Codex reviewed the exact merge head `5c3a96a0cd` and found no major issue.
