@@ -306,6 +306,7 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
     }
     if (workspace->phase_ != FxFastFileNativeDisk32Phase::Empty)
         return FxFastFileNativeDisk32Status::InvalidPhase;
+    const FxFastFileDisk32Resolvers resolverSnapshot = resolvers;
     workspace->operating_ = true;
     const OperationReset operationReset(&workspace->operating_);
     const FxFastFileImpactTableDisk32View source = sourceArgument;
@@ -405,11 +406,11 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
         resolved = {};
 
     FxFastFileDisk32ResolvedReference name{};
-    if (!resolvers.resolve(resolvers.context,
-                           FxFastFileDisk32ReferenceKind::EffectName,
-                           &source.impactTable->name.token,
-                           header.name.token,
-                           &name))
+    if (!resolverSnapshot.resolve(resolverSnapshot.context,
+                                  FxFastFileDisk32ReferenceKind::EffectName,
+                                  &source.impactTable->name.token,
+                                  header.name.token,
+                                  &name))
     {
         return FxFastFileNativeDisk32Status::UnresolvedReference;
     }
@@ -450,15 +451,21 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
     }
     if (!IsExactCString(name))
         return FxFastFileNativeDisk32Status::InvalidString;
+    const void *const nameAddress = name.pointer;
+    const std::uint32_t nameByteCount = name.stringByteCount;
     const std::uint64_t nameBeforeProvenanceFingerprint =
         ComputeSourceFingerprint(source, name);
-    if (!source.provenance.validateSpan(source.provenance.context,
-                                        FxFastFileDisk32SourceSpanKind::String,
-                                        &source.impactTable->name.token,
-                                        header.name.token,
-                                        name.pointer,
-                                        name.stringByteCount,
-                                        alignof(char)))
+    const bool nameProvenanceIsValid =
+        source.provenance.validateSpan(source.provenance.context,
+                                       FxFastFileDisk32SourceSpanKind::String,
+                                       &source.impactTable->name.token,
+                                       header.name.token,
+                                       nameAddress,
+                                       nameByteCount,
+                                       alignof(char));
+    if (name.pointer != nameAddress || name.stringByteCount != nameByteCount)
+        return FxFastFileNativeDisk32Status::SourceChanged;
+    if (!nameProvenanceIsValid)
     {
         return FxFastFileNativeDisk32Status::InvalidProvenance;
     }
@@ -479,22 +486,30 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
         [workspace, &source, &sourceArgument, &resolvers, &name, outPlan](
             const void *const identity) noexcept
     {
-        return RangesOverlap(identity, 1u, workspace, sizeof(*workspace)) ||
+        constexpr std::size_t identityBytes = sizeof(FxEffectDef);
+        return RangesOverlap(
+                   identity, identityBytes, workspace, sizeof(*workspace)) ||
                RangesOverlap(identity,
-                             1u,
+                             identityBytes,
                              source.impactTable,
                              sizeof(*source.impactTable)) ||
                RangesOverlap(identity,
-                             1u,
+                             identityBytes,
                              source.entries.data,
                              sizeof(FxImpactEntryDisk32) *
                                  kImpactSurfaceCount) ||
+               RangesOverlap(identity,
+                             identityBytes,
+                             name.pointer,
+                             name.stringByteCount) ||
+               RangesOverlap(identity,
+                             identityBytes,
+                             &sourceArgument,
+                             sizeof(sourceArgument)) ||
                RangesOverlap(
-                   identity, 1u, name.pointer, name.stringByteCount) ||
+                   identity, identityBytes, &resolvers, sizeof(resolvers)) ||
                RangesOverlap(
-                   identity, 1u, &sourceArgument, sizeof(sourceArgument)) ||
-               RangesOverlap(identity, 1u, &resolvers, sizeof(resolvers)) ||
-               RangesOverlap(identity, 1u, outPlan, sizeof(*outPlan));
+                   identity, identityBytes, outPlan, sizeof(*outPlan));
     };
 
     std::uint32_t resolvedCount = 1;
@@ -517,8 +532,8 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
             if (token.isNull())
                 continue;
             FxFastFileDisk32ResolvedReference resolved{};
-            const bool resolvedSuccessfully = resolvers.resolve(
-                resolvers.context,
+            const bool resolvedSuccessfully = resolverSnapshot.resolve(
+                resolverSnapshot.context,
                 FxFastFileDisk32ReferenceKind::EffectAssetHandle,
                 sourceField,
                 token,
@@ -535,6 +550,8 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
             }
             if (resolved.stringByteCount != 0)
                 return FxFastFileNativeDisk32Status::InvalidString;
+            if (!IsAligned(resolved.pointer, alignof(FxEffectDef)))
+                return FxFastFileNativeDisk32Status::InvalidSourceLayout;
             if (identityOverlapsOwnedInput(resolved.pointer))
             {
                 return FxFastFileNativeDisk32Status::OverlappingStorage;
@@ -551,8 +568,8 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
             if (token.isNull())
                 continue;
             FxFastFileDisk32ResolvedReference resolved{};
-            const bool resolvedSuccessfully = resolvers.resolve(
-                resolvers.context,
+            const bool resolvedSuccessfully = resolverSnapshot.resolve(
+                resolverSnapshot.context,
                 FxFastFileDisk32ReferenceKind::EffectAssetHandle,
                 sourceField,
                 token,
@@ -569,6 +586,8 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
             }
             if (resolved.stringByteCount != 0)
                 return FxFastFileNativeDisk32Status::InvalidString;
+            if (!IsAligned(resolved.pointer, alignof(FxEffectDef)))
+                return FxFastFileNativeDisk32Status::InvalidSourceLayout;
             if (identityOverlapsOwnedInput(resolved.pointer))
             {
                 return FxFastFileNativeDisk32Status::OverlappingStorage;
@@ -583,7 +602,9 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
          ++index)
     {
         const void *const identity = workspace->resolved_[index].pointer;
-        if (identity && RangesOverlap(outPlan, sizeof(*outPlan), identity, 1u))
+        if (identity &&
+            RangesOverlap(
+                outPlan, sizeof(*outPlan), identity, sizeof(FxEffectDef)))
             return FxFastFileNativeDisk32Status::OverlappingStorage;
     }
     if (std::memcmp(source.impactTable,
@@ -746,10 +767,13 @@ FxFastFileNativeDisk32Status TryMaterializeFxImpactTableDisk32(
          ++index)
     {
         const void *const identity = workspace->resolved_[index].pointer;
-        if (identity && RangesOverlap(storage, plan.outputBytes_, identity, 1u))
+        if (identity &&
+            RangesOverlap(
+                storage, plan.outputBytes_, identity, sizeof(FxEffectDef)))
             return FxFastFileNativeDisk32Status::OverlappingStorage;
         if (identity &&
-            RangesOverlap(outTable, sizeof(*outTable), identity, 1u))
+            RangesOverlap(
+                outTable, sizeof(*outTable), identity, sizeof(FxEffectDef)))
         {
             return FxFastFileNativeDisk32Status::OverlappingStorage;
         }

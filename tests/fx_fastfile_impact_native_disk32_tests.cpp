@@ -59,6 +59,12 @@ struct ProvenanceState final
     fastfile::FxFastFileDisk32SourceSpanKind mutateKind =
         fastfile::FxFastFileDisk32SourceSpanKind::ImpactTableHeader;
     MutationKind mutation = MutationKind::None;
+    fastfile::FxFastFileDisk32Resolvers *resolverDescriptor = nullptr;
+    fastfile::FxFastFileDisk32ResolvedReference *retainedReference = nullptr;
+    bool mutateResolverDescriptor = false;
+    bool mutateReturnedDescriptor = false;
+    const void *returnedDescriptorPointer = nullptr;
+    std::uint32_t returnedDescriptorBytes = 0;
 };
 
 struct ResolverObservation final
@@ -89,6 +95,7 @@ struct ResolverState final
     bool reenterPlanWithInvalidArguments = false;
     bool reenterMaterializeWithInvalidArguments = false;
     const void *forcedAssetIdentity = nullptr;
+    ProvenanceState *provenance = nullptr;
     fastfile::FxFastFileImpactNativeDisk32Workspace *workspace = nullptr;
     const fastfile::FxFastFileImpactTableDisk32View *source = nullptr;
     const fastfile::FxFastFileDisk32Resolvers *resolvers = nullptr;
@@ -165,6 +172,17 @@ bool ValidateSourceSpan(void *const context,
     {
         MutateSource(
             state->mutation, state->header, state->entries, state->name);
+    }
+    if (valid && state->mutateResolverDescriptor && state->resolverDescriptor)
+    {
+        state->resolverDescriptor->context = nullptr;
+    }
+    if (valid && kind == fastfile::FxFastFileDisk32SourceSpanKind::String &&
+        state->mutateReturnedDescriptor && state->retainedReference)
+    {
+        state->retainedReference->pointer = state->returnedDescriptorPointer;
+        state->retainedReference->stringByteCount =
+            state->returnedDescriptorBytes;
     }
     return valid;
 }
@@ -263,6 +281,11 @@ bool ResolveReference(
         };
     }
     *outReference = resolved;
+    if (kind == fastfile::FxFastFileDisk32ReferenceKind::EffectName &&
+        state->provenance)
+    {
+        state->provenance->retainedReference = outReference;
+    }
     return true;
 }
 
@@ -328,12 +351,14 @@ struct alignas(8) Fixture final
         resolver.header = &header;
         resolver.entries = entries.data();
         resolver.name = name.data();
+        resolver.provenance = &provenance;
         view = {
             &header,
             {entries.data(), static_cast<std::uint32_t>(entries.size())},
             {&provenance, ValidateSourceSpan},
         };
         resolvers = {&resolver, ResolveReference};
+        provenance.resolverDescriptor = &resolvers;
         resolver.source = &view;
         resolver.resolvers = &resolvers;
     }
@@ -643,6 +668,13 @@ void TestPlanStructuralAndCallbackFailures()
     ExpectPlanFailure(Status::InvalidString,
                       [](auto &f, auto &, auto &)
                       { f.resolver.assetStringBytesAt = 1; });
+    ExpectPlanFailure(
+        Status::InvalidSourceLayout,
+        [](auto &f, auto &, auto &)
+        {
+            f.resolver.forcedAssetIdentity =
+                reinterpret_cast<const std::uint8_t *>(&f.header) + 1u;
+        });
 
     ExpectPlanFailure(Status::InvalidString,
                       [](auto &f, auto &, auto &)
@@ -842,6 +874,41 @@ void TestCallbackMutationAndReentry()
                                   mutation == MutationKind::Header ? 0u : 1u;
                               f.resolver.mutation = mutation;
                           });
+    }
+
+    {
+        Fixture fixture{};
+        fixture.provenance.mutateResolverDescriptor = true;
+        fastfile::FxFastFileImpactNativeDisk32Workspace workspace{};
+        fastfile::FxFastFileImpactNativeDisk32Plan plan{};
+        CHECK(Plan(&fixture, &workspace, &plan) == Status::Success);
+        CHECK(fixture.resolvers.context == nullptr);
+        CHECK(fixture.provenance.calls == 3u);
+        CHECK(fixture.resolver.calls == kJournalCount);
+
+        AlignedStorage storage(plan.outputBytes(), plan.outputAlignment());
+        FxImpactTable *output = nullptr;
+        CHECK(fastfile::TryMaterializeFxImpactTableDisk32(
+                  &workspace, plan, storage.data(), storage.size(), &output) ==
+              Status::Success);
+        CHECK(output == storage.data());
+    }
+
+    {
+        Fixture fixture{};
+        fixture.provenance.mutateReturnedDescriptor = true;
+        fixture.provenance.returnedDescriptorPointer =
+            reinterpret_cast<const void *>(static_cast<std::uintptr_t>(1u));
+        fixture.provenance.returnedDescriptorBytes =
+            (std::numeric_limits<std::uint32_t>::max)();
+        fastfile::FxFastFileImpactNativeDisk32Workspace workspace{};
+        fastfile::FxFastFileImpactNativeDisk32Plan plan{};
+        CHECK(Plan(&fixture, &workspace, &plan) == Status::SourceChanged);
+        CHECK(fixture.provenance.calls == 3u);
+        CHECK(fixture.resolver.calls == 1u);
+        CHECK(!static_cast<bool>(plan));
+        CHECK(workspace.phase() ==
+              fastfile::FxFastFileNativeDisk32Phase::Empty);
     }
 
     {
@@ -1074,7 +1141,9 @@ void TestMaterializationPreflightAndRetry()
 void TestResolvedIdentityAliasing()
 {
     {
-        AlignedStorage storage(8192, alignof(FxImpactEntry));
+        const std::size_t alignment =
+            (std::max)(alignof(FxEffectDef), alignof(FxImpactEntry));
+        AlignedStorage storage(8192 + alignof(FxEffectDef), alignment);
         Fixture fixture{};
         fixture.resolver.forcedAssetIdentity = storage.data();
         fastfile::FxFastFileImpactNativeDisk32Workspace workspace{};
@@ -1082,30 +1151,74 @@ void TestResolvedIdentityAliasing()
         CHECK(Plan(&fixture, &workspace, &plan) == Status::Success);
         FxImpactTable *output = nullptr;
         const auto before = storage.Snapshot();
+        void *const partiallyOverlappingStorage =
+            storage.bytes() + alignof(FxEffectDef);
         CHECK(fastfile::TryMaterializeFxImpactTableDisk32(
-                  &workspace, plan, storage.data(), storage.size(), &output) ==
-              Status::OverlappingStorage);
+                  &workspace,
+                  plan,
+                  partiallyOverlappingStorage,
+                  storage.size() - alignof(FxEffectDef),
+                  &output) == Status::OverlappingStorage);
         CHECK(output == nullptr);
         CHECK(storage.Snapshot() == before);
         CHECK(workspace.phase() ==
               fastfile::FxFastFileNativeDisk32Phase::Planned);
     }
     {
+        struct alignas(8) OutputCaller final
+        {
+            std::array<std::uint8_t, sizeof(FxEffectDef)> prefix{};
+            FxImpactTable *output = nullptr;
+            std::array<std::uint8_t, sizeof(FxEffectDef)> suffix{};
+        } caller{};
+
         Fixture fixture{};
         fastfile::FxFastFileImpactNativeDisk32Workspace workspace{};
         fastfile::FxFastFileImpactNativeDisk32Plan plan{};
-        FxImpactTable *output = nullptr;
-        fixture.resolver.forcedAssetIdentity = &output;
+        const auto *const outputAddress =
+            reinterpret_cast<const std::uint8_t *>(&caller.output);
+        fixture.resolver.forcedAssetIdentity =
+            outputAddress - alignof(FxEffectDef);
         CHECK(Plan(&fixture, &workspace, &plan) == Status::Success);
         AlignedStorage storage(plan.outputBytes(), plan.outputAlignment());
-        const auto before = storage.Snapshot();
-        CHECK(fastfile::TryMaterializeFxImpactTableDisk32(
-                  &workspace, plan, storage.data(), storage.size(), &output) ==
+        const auto storageBefore = storage.Snapshot();
+        std::array<std::uint8_t, sizeof(caller)> callerBefore{};
+        std::memcpy(callerBefore.data(), &caller, sizeof(caller));
+        CHECK(fastfile::TryMaterializeFxImpactTableDisk32(&workspace,
+                                                          plan,
+                                                          storage.data(),
+                                                          storage.size(),
+                                                          &caller.output) ==
               Status::OverlappingStorage);
-        CHECK(output == nullptr);
-        CHECK(storage.Snapshot() == before);
+        CHECK(caller.output == nullptr);
+        CHECK(std::memcmp(callerBefore.data(), &caller, sizeof(caller)) == 0);
+        CHECK(storage.Snapshot() == storageBefore);
         CHECK(workspace.phase() ==
               fastfile::FxFastFileNativeDisk32Phase::Planned);
+    }
+    {
+        struct alignas(8) PlanCaller final
+        {
+            std::array<std::uint8_t, sizeof(FxEffectDef)> prefix{};
+            fastfile::FxFastFileImpactNativeDisk32Plan plan{};
+            std::array<std::uint8_t, sizeof(FxEffectDef)> suffix{};
+        } caller{};
+
+        Fixture fixture{};
+        fastfile::FxFastFileImpactNativeDisk32Workspace workspace{};
+        const auto *const planAddress =
+            reinterpret_cast<const std::uint8_t *>(&caller.plan);
+        fixture.resolver.forcedAssetIdentity =
+            planAddress - alignof(FxEffectDef);
+        std::array<std::uint8_t, sizeof(caller)> callerBefore{};
+        std::memcpy(callerBefore.data(), &caller, sizeof(caller));
+
+        CHECK(Plan(&fixture, &workspace, &caller.plan) ==
+              Status::OverlappingStorage);
+        CHECK(!static_cast<bool>(caller.plan));
+        CHECK(std::memcmp(callerBefore.data(), &caller, sizeof(caller)) == 0);
+        CHECK(workspace.phase() ==
+              fastfile::FxFastFileNativeDisk32Phase::Empty);
     }
 }
 

@@ -140,8 +140,12 @@ class alignas(8) FxFastFileImpactNativeDisk32Workspace final
 // correspond to exactly twelve provenance-validated Disk32 entries; legacy
 // db_load treated this field as a boolean, so inline/shared/alias spellings are
 // all accepted.  The root name and every non-null effect handle are resolved
-// exactly once while the workspace's reentry gate is held. Failure leaves
-// outPlan unchanged.
+// exactly once while the workspace's reentry gate is held.  Each resolved
+// effect handle must identify one aligned, complete native FxEffectDef extent.
+// The source header, all twelve source entries, and the resolver-returned name
+// span must remain readable and byte-for-byte immutable throughout planning and
+// for as long as the workspace remains Planned, including through every
+// matching materialization attempt.  Failure leaves outPlan unchanged.
 [[nodiscard]] FxFastFileNativeDisk32Status
 TryPlanFxImpactTableDisk32(FxFastFileImpactNativeDisk32Workspace *workspace,
                            const FxFastFileImpactTableDisk32View &source,
@@ -151,7 +155,10 @@ TryPlanFxImpactTableDisk32(FxFastFileImpactNativeDisk32Workspace *workspace,
 // Writes FxImpactTable, its twelve FxImpactEntry records, and an owned root
 // name into one aligned caller-owned blob.  Materialization performs no
 // callbacks.  Every failure preserves both storage and outTable; success
-// consumes the exact workspace/serial/source-bound plan.
+// consumes the exact workspace/serial/source-bound plan.  The source header,
+// entries, and resolver-returned name described above remain caller-owned and
+// must stay readable and immutable while the workspace remains Planned and
+// throughout this call.
 [[nodiscard]] FxFastFileNativeDisk32Status TryMaterializeFxImpactTableDisk32(
     FxFastFileImpactNativeDisk32Workspace *workspace,
     const FxFastFileImpactNativeDisk32Plan &plan,
