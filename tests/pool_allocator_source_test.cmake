@@ -276,52 +276,102 @@ require_pool_function_contains(
 require_pool_function_not_matches(
     "${_pool_cpp}"
     "bool __cdecl Pool_Free("
-    "bool __cdecl Pool_ValidateFull("
+    "poolallocresult_t __cdecl Pool_TryAllocNoReport("
     "${_pool_loop_pattern}"
     "Pool_Free must remain O(1)")
 require_pool_function_not_contains(
     "${_pool_cpp}"
     "bool __cdecl Pool_Free("
-    "bool __cdecl Pool_ValidateFull("
+    "poolallocresult_t __cdecl Pool_TryAllocNoReport("
     "Pool_ValidateFull("
     "Pool_Free must not invoke full validation")
 require_pool_function_contains(
     "${_pool_cpp}"
     "bool __cdecl Pool_Free("
-    "bool __cdecl Pool_ValidateFull("
+    "poolallocresult_t __cdecl Pool_TryAllocNoReport("
     "control.slotState[itemIndex] != POOL_SLOT_ALLOCATED"
     "free must reject duplicate ownership in O(1)")
 require_pool_function_contains(
     "${_pool_cpp}"
     "bool __cdecl Pool_Free("
-    "bool __cdecl Pool_ValidateFull("
+    "poolallocresult_t __cdecl Pool_TryAllocNoReport("
     "control.slotState[itemIndex] = state.headIndex;"
     "free must push through the shadow chain")
 
 require_pool_function_contains(
     "${_pool_cpp}"
+    "static bool Pool_ValidateFullImpl("
     "bool __cdecl Pool_ValidateFull("
-    "poolcountresult_t __cdecl Pool_GetFreeCount("
     "for (std::size_t"
     "full validation must explicitly scan bounded state")
 require_pool_function_contains(
     "${_pool_cpp}"
+    "static bool Pool_ValidateFullImpl("
     "bool __cdecl Pool_ValidateFull("
-    "poolcountresult_t __cdecl Pool_GetFreeCount("
     "expectedFreeCount"
     "the free-chain walk must be bounded by the inactive count")
 require_pool_function_contains(
     "${_pool_cpp}"
+    "static bool Pool_ValidateFullImpl("
     "bool __cdecl Pool_ValidateFull("
-    "poolcountresult_t __cdecl Pool_GetFreeCount("
     "allocatedCount != state.activeCount"
     "full validation must reconcile allocation ownership")
 require_pool_function_contains(
     "${_pool_cpp}"
+    "static bool Pool_ValidateFullImpl("
     "bool __cdecl Pool_ValidateFull("
-    "poolcountresult_t __cdecl Pool_GetFreeCount("
     "every free-list link matches slot-state control"
     "full validation must reconcile every compatibility edge")
+
+# Silent transaction primitives share the O(1) fast mutations but suppress
+# assertion/report callbacks. Full validation remains deliberately bounded
+# O(N), with diagnostic and no-report wrappers selecting the reporting mode.
+foreach(_silent_api IN ITEMS
+    "Pool_TryAllocNoReport("
+    "Pool_TryFreeNoReport("
+    "Pool_TryValidateAllocatedNoReport("
+    "Pool_TryValidateFullNoReport(")
+    require_pool_source_contains(
+        "universal/pool_allocator.h"
+        "${_silent_api}"
+        "silent fixed-pool API must remain publicly declared")
+endforeach()
+require_pool_function_not_matches(
+    "${_pool_cpp}"
+    "poolallocresult_t __cdecl Pool_TryAllocNoReport("
+    "poolmutationstatus_t __cdecl Pool_TryFreeNoReport("
+    "${_pool_loop_pattern}"
+    "silent allocation must remain O(1)")
+require_pool_function_not_contains(
+    "${_pool_cpp}"
+    "poolallocresult_t __cdecl Pool_TryAllocNoReport("
+    "poolmutationstatus_t __cdecl Pool_TryFreeNoReport("
+    "POOL_REJECT("
+    "silent allocation cannot report")
+require_pool_function_not_matches(
+    "${_pool_cpp}"
+    "poolmutationstatus_t __cdecl Pool_TryFreeNoReport("
+    "poolmutationstatus_t __cdecl Pool_TryValidateAllocatedNoReport("
+    "${_pool_loop_pattern}"
+    "silent free must remain O(1)")
+require_pool_function_not_contains(
+    "${_pool_cpp}"
+    "poolmutationstatus_t __cdecl Pool_TryFreeNoReport("
+    "poolmutationstatus_t __cdecl Pool_TryValidateAllocatedNoReport("
+    "POOL_REJECT("
+    "silent free cannot report")
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "bool __cdecl Pool_ValidateFull("
+    "poolcountresult_t __cdecl Pool_GetFreeCount("
+    "Pool_ValidateFullImpl(storage, pooldata, true)"
+    "diagnostic full validation explicitly enables reporting")
+require_pool_function_contains(
+    "${_pool_cpp}"
+    "bool __cdecl Pool_ValidateFull("
+    "poolcountresult_t __cdecl Pool_GetFreeCount("
+    "Pool_ValidateFullImpl(storage, pooldata, false)"
+    "silent full validation explicitly suppresses reporting")
 
 require_pool_function_not_matches(
     "${_pool_cpp}"

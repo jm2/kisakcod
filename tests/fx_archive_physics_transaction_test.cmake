@@ -442,9 +442,14 @@ extract_slice(
     "portable physics batch driver")
 require_occurrence_count(
     "${_physics_batch_driver}"
-    "callbacks.perform("
+    "perform("
     2
     "physics batch driver must have one preflight and one commit callback site")
+require_occurrence_count(
+    "${_physics_batch_driver}"
+    "const ArchivePhysicsBatchPerformCallback perform = callbacks.perform;"
+    1
+    "physics batch driver must snapshot its callback before either pass")
 require_occurrence_count(
     "${_physics_batch_driver}"
     "for (std::size_t index = 0; index < selectedCount; ++index)"
@@ -453,17 +458,17 @@ require_occurrence_count(
 require_ordered(
     "${_physics_batch_driver}"
     "SelectionIsValid(planIndices, selectedCount, entryCount)"
-    "preflightOperation,\n                planIndices[index]));"
+    "preflightOperation,\n                planIndices[index]);"
     "the complete selection must validate before the first preflight callback")
 require_ordered(
     "${_physics_batch_driver}"
-    "preflightOperation,\n                planIndices[index]));"
-    "commitOperation,\n                planIndices[index]));"
+    "preflightOperation,\n                planIndices[index]);"
+    "commitOperation,\n                planIndices[index]);"
     "every preflight callback site must precede the commit pass")
 require_ordered(
     "${_physics_batch_driver}"
-    "commitOperation,\n                planIndices[index]));"
-    "++*outCompletedCount;"
+    "commitOperation,\n                planIndices[index]);"
+    "++completedCount;"
     "the completed prefix may advance only after a successful commit callback")
 
 extract_slice(

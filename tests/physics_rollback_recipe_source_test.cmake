@@ -6,23 +6,66 @@ endif()
 
 set(_header_path "${SOURCE_ROOT}/src/physics/phys_local.h")
 set(_source_path "${SOURCE_ROOT}/src/physics/phys_ode.cpp")
-foreach(_path IN ITEMS "${_header_path}" "${_source_path}")
+set(_ode_path "${SOURCE_ROOT}/src/physics/ode/ode.cpp")
+set(_geom_path "${SOURCE_ROOT}/src/physics/ode/collision_kernel.cpp")
+set(_box_path "${SOURCE_ROOT}/src/physics/ode/collision_std.cpp")
+set(_transform_path "${SOURCE_ROOT}/src/physics/ode/collision_transform.cpp")
+foreach(_path IN ITEMS
+    "${_header_path}" "${_source_path}" "${_ode_path}"
+    "${_geom_path}" "${_box_path}" "${_transform_path}")
     if(NOT EXISTS "${_path}")
         message(FATAL_ERROR "Missing physics rollback source: ${_path}")
     endif()
 endforeach()
 file(READ "${_header_path}" _header)
 file(READ "${_source_path}" _source)
+file(READ "${_ode_path}" _ode)
+file(READ "${_geom_path}" _geom)
+file(READ "${_box_path}" _box)
+file(READ "${_transform_path}" _transform)
 
-function(require_regex haystack pattern description)
-    string(REGEX MATCH "${pattern}" _match "${haystack}")
-    if(_match STREQUAL "")
-        message(FATAL_ERROR
-            "Missing physics rollback invariant: ${description}")
+function(extract_slice source start_marker end_marker out_var description)
+    string(FIND "${source}" "${start_marker}" _start)
+    if(_start EQUAL -1)
+        message(FATAL_ERROR "Could not find start of ${description}")
+    endif()
+    string(SUBSTRING "${source}" ${_start} -1 _tail)
+    string(FIND "${_tail}" "${end_marker}" _end)
+    if(_end LESS_EQUAL 0)
+        message(FATAL_ERROR "Could not find ordered end of ${description}")
+    endif()
+    string(SUBSTRING "${_tail}" 0 ${_end} _slice)
+    set(${out_var} "${_slice}" PARENT_SCOPE)
+endfunction()
+
+function(require_contains haystack needle description)
+    string(FIND "${haystack}" "${needle}" _position)
+    if(_position EQUAL -1)
+        message(FATAL_ERROR "Missing physics rollback invariant: ${description}")
     endif()
 endfunction()
 
-function(forbid_regex haystack pattern description)
+function(require_matches haystack pattern description)
+    string(REGEX MATCH "${pattern}" _match "${haystack}")
+    if(_match STREQUAL "")
+        message(FATAL_ERROR "Missing physics rollback invariant: ${description}")
+    endif()
+endfunction()
+
+function(require_ordered haystack first second description)
+    string(FIND "${haystack}" "${first}" _first)
+    if(_first EQUAL -1)
+        message(FATAL_ERROR "Missing first physics rollback invariant: ${description}")
+    endif()
+    string(SUBSTRING "${haystack}" ${_first} -1 _tail)
+    string(FIND "${_tail}" "${second}" _second)
+    if(_second LESS_EQUAL 0)
+        message(FATAL_ERROR
+            "Missing or unordered physics rollback invariant: ${description}")
+    endif()
+endfunction()
+
+function(forbid_matches haystack pattern description)
     string(REGEX MATCH "${pattern}" _match "${haystack}")
     if(NOT _match STREQUAL "")
         message(FATAL_ERROR
@@ -30,845 +73,418 @@ function(forbid_regex haystack pattern description)
     endif()
 endfunction()
 
-function(extract_slice source start_marker end_marker out_var description)
-    string(FIND "${source}" "${start_marker}" _start)
-    string(FIND "${source}" "${end_marker}" _end)
-    if(_start EQUAL -1 OR _end EQUAL -1 OR NOT _start LESS _end)
-        message(FATAL_ERROR "Could not isolate ${description}")
-    endif()
-    math(EXPR _length "${_end} - ${_start}")
-    string(SUBSTRING "${source}" ${_start} ${_length} _slice)
-    set(${out_var} "${_slice}" PARENT_SCOPE)
-endfunction()
+set(_reporting_pattern
+    "(MyAssertHandler|Com_Print[A-Za-z0-9_]*|Com_Error|Sys_Error|iassert|vassert|dAASSERT|dUASSERT|dDEBUGMSG|fprintf)[ \\t\\r\\n]*\\(")
 
-function(require_regex_ordered haystack first second description)
-    string(REGEX MATCH "${first}" _first_match "${haystack}")
-    if(_first_match STREQUAL "")
-        message(FATAL_ERROR
-            "Missing first ordered rollback invariant: ${description}")
-    endif()
-    string(FIND "${haystack}" "${_first_match}" _first_position)
-    string(LENGTH "${_first_match}" _first_length)
-    math(EXPR _tail_start "${_first_position} + ${_first_length}")
-    string(SUBSTRING "${haystack}" ${_tail_start} -1 _tail)
-    string(REGEX MATCH "${second}" _second_match "${_tail}")
-    if(_second_match STREQUAL "")
-        message(FATAL_ERROR
-            "Missing or unordered rollback invariant: ${description}")
-    endif()
-endfunction()
-
-function(require_physics_transaction
-    source start_marker end_marker mutation_pattern description)
-    extract_slice(
-        "${source}"
-        "${start_marker}"
-        "${end_marker}"
-        _transaction_scope
-        "${description}")
-    require_regex_ordered("${_transaction_scope}"
-        "Sys_EnterCriticalSection\\(CRITSECT_PHYSICS\\)"
-        "${mutation_pattern}"
-        "${description} enters PHYSICS before topology mutation")
-    require_regex_ordered("${_transaction_scope}"
-        "${mutation_pattern}"
-        "Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)"
-        "${description} leaves PHYSICS after topology mutation")
-    string(REGEX MATCHALL
-        "Sys_EnterCriticalSection\\(CRITSECT_PHYSICS\\)"
-        _transaction_enters "${_transaction_scope}")
-    string(REGEX MATCHALL
-        "Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)"
-        _transaction_leaves "${_transaction_scope}")
-    list(LENGTH _transaction_enters _transaction_enter_count)
-    list(LENGTH _transaction_leaves _transaction_leave_count)
-    if(NOT _transaction_enter_count EQUAL 1
-        OR NOT _transaction_leave_count EQUAL 1)
-        message(FATAL_ERROR
-            "Unbalanced physics transaction invariant: ${description}")
-    endif()
-    forbid_regex("${_transaction_scope}"
-        "(Com_Error|Sys_Error)[ \\t\\r\\n]*\\("
-        "${description} cannot longjmp while PHYSICS is held")
-endfunction()
-
-foreach(_status_api IN ITEMS
-    Phys_TryGetBodyModelResourceDemand
+# These APIs are intentionally status-bearing and noexcept. Callers that own
+# CRITSECT_PHYSICS can compose body creation, collision, configuration,
+# sidecar publication, and rollback without invoking legacy diagnostics.
+foreach(_api IN ITEMS
+    Phys_TryObjCreateLockedNoReport
+    Phys_TryCreateBodyFromStateAndXModelLockedNoReport
+    Phys_TryCreateBodyFromPresetAndXModelLockedNoReport
     Phys_TryGetFreeResourceCapacityLockedNoReport
-    Phys_TryCaptureBodyStateLocked
-    Phys_TryBuildBodyRollbackRecipeLocked
     Phys_TryValidateBodyDestroyLockedNoReport
-    Phys_TryDestroyBodyLockedNoReport)
-    require_regex(
-        "${_header}"
-        "\\[\\[nodiscard\\]\\][ \t\r\n]+PhysBodyRollbackStatus[ \t\r\n]+__cdecl[ \t\r\n]+${_status_api}\\([^;]*\\)[ \t\r\n]*noexcept[ \t\r\n]*;"
-        "${_status_api} is a nodiscard noexcept status API")
+    Phys_TryDestroyBodyLockedNoReport
+    Phys_TryObjAddGeomBoxNoReport
+    Phys_TryObjSetCollisionFromXModelLockedNoReport
+    Phys_TryObjSetAngularVelocityLockedNoReport
+    Phys_TryObjBulletImpactLockedNoReport)
+    require_matches("${_header}"
+        "\\[\\[nodiscard\\]\\][ \\t\\r\\n]+[^;{}]+${_api}\\([^;{}]*\\)[ \\t\\r\\n]*noexcept[ \\t\\r\\n]*;"
+        "${_api} remains a nodiscard noexcept API")
 endforeach()
+
+# The old callback resource-pair and manual body-destroy implementations had
+# divergent cleanup semantics. Production now uses the fixed-pool no-report
+# primitives and one unified body/user-data destroy core.
+foreach(_obsolete IN ITEMS
+    "physics::allocation::TryCreateResourcePair("
+    "ResourcePairCallbacks"
+    "PhysBodyDestroyPlan"
+    "Phys_CommitBodyDestroyPlanLockedNoReport("
+    "Phys_ReturnValidatedPoolSlotNoReport(")
+    string(FIND "${_source}" "${_obsolete}" _position)
+    if(NOT _position EQUAL -1)
+        message(FATAL_ERROR
+            "Obsolete physics transaction implementation remains: ${_obsolete}")
+    endif()
+endforeach()
+
+# Archive topology classification is large but serialized by PHYSICS. Keep it
+# in static storage, clear it on each use, and never put a copy on the small
+# engine thread stack.
+extract_slice(
+    "${_source}"
+    "struct PhysGlobalTopologySnapshot"
+    "bool Phys_RollbackTransformHasUniqueInnerOwnership("
+    _global_topology
+    "static archive topology classification")
+require_ordered("${_global_topology}"
+    "struct PhysGlobalTopologySnapshot"
+    "PhysGlobalTopologySnapshot physGlobalTopologyScratch{};"
+    "the bounded classification arrays have static storage")
+require_ordered("${_global_topology}"
+    "PhysGlobalTopologySnapshot physGlobalTopologyScratch{};"
+    "PhysGlobalTopologySnapshot &snapshot = physGlobalTopologyScratch;"
+    "validation borrows the serialized scratch object")
+foreach(_classification IN ITEMS
+    "snapshot.worldForBody.fill(PHYS_ROLLBACK_NO_OWNER);"
+    "snapshot.bodyForUserData.fill(PHYS_ROLLBACK_NO_OWNER);"
+    "snapshot.spaceForGeom.fill(PHYS_ROLLBACK_NO_OWNER);"
+    "snapshot.bodyForGeom.fill(PHYS_ROLLBACK_NO_OWNER);"
+    "snapshot.transformForInner.fill(PHYS_ROLLBACK_NO_OWNER);"
+    "if (!isOuter && !isInner)")
+    require_contains("${_global_topology}" "${_classification}"
+        "every allocated resource receives one exact topology classification")
+endforeach()
+forbid_matches("${_global_topology}" "${_reporting_pattern}"
+    "archive topology validation must not report")
+forbid_matches("${_global_topology}"
+    "(Pool_Free|ODE_GeomDestruct|dBodyDestroy|Phys_ObjDestroy)[ \\t\\r\\n]*\\("
+    "archive topology validation must remain non-destructive")
 
 extract_slice(
     "${_source}"
-    "Phys_TryGetFreeResourceCapacityLockedNoReport("
+    "PhysBodyRollbackStatus __cdecl\nPhys_TryGetFreeResourceCapacityLockedNoReport("
     "PhysBodyRollbackStatus __cdecl Phys_TryCaptureBodyStateLocked("
-    _capacity_scope
-    "silent fixed-pool free-capacity query")
-require_regex_ordered("${_capacity_scope}"
-    "\\*outCapacity[ \t\r\n]*=[ \t\r\n]*\\{\\}[ \t\r\n]*;"
-    "Phys_RollbackPoolIsValid\\(bodyStorage"
+    _capacity
+    "silent free-capacity query")
+require_ordered("${_capacity}"
+    "*outCapacity = {};"
+    "Pool_TryValidateFullNoReport(bodyStorage, &odeGlob.bodyPool)"
     "capacity output is cleared before pool inspection")
-foreach(_capacity_pool IN ITEMS
-    "Phys_RollbackPoolIsValid\\(bodyStorage"
-    "Phys_RollbackPoolIsValid\\([ \t\r\n]*userDataStorage"
-    "Phys_RollbackPoolIsValid\\(geomStorage")
-    require_regex("${_capacity_scope}" "${_capacity_pool}"
-        "capacity query silently full-validates every fixed pool")
-endforeach()
-require_regex("${_header}"
-    "struct[ \t\r\n]+PhysBodyResourceDemand[ \t\r\n]*\\{[ \t\r\n]*std::size_t[ \t\r\n]+bodyCount[ \t\r\n]*;[ \t\r\n]*std::size_t[ \t\r\n]+userDataCount[ \t\r\n]*;[ \t\r\n]*std::size_t[ \t\r\n]+geomCount[ \t\r\n]*;[ \t\r\n]*\\}"
-    "capacity aggregate field order maps body, user-data, and geom counts exactly")
-require_regex("${_capacity_scope}"
-    "\\*outCapacity[ \t\r\n]*=[ \t\r\n]*\\{[ \t\r\n]*bodyStorage\\.itemCount[ \t\r\n]*-[ \t\r\n]*static_cast<std::size_t>\\(odeGlob\\.bodyPool\\.activeCount\\)[ \t\r\n]*,[ \t\r\n]*userDataStorage\\.itemCount[ \t\r\n]*-[ \t\r\n]*static_cast<std::size_t>\\(physGlob\\.userDataPool\\.activeCount\\)[ \t\r\n]*,[ \t\r\n]*geomStorage\\.itemCount[ \t\r\n]*-[ \t\r\n]*static_cast<std::size_t>\\(odeGlob\\.geomPool\\.activeCount\\)[ \t\r\n]*,[ \t\r\n]*\\}"
-    "free capacity is the exact per-pool itemCount minus activeCount mapping")
-forbid_regex("${_capacity_scope}"
-    "(Pool_ValidateFull|Pool_GetFreeCount|MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
-    "capacity query cannot report through diagnostic pool APIs")
+require_ordered("${_capacity}"
+    "Pool_TryValidateFullNoReport(geomStorage, &odeGlob.geomPool)"
+    "Phys_TryValidateBodyUserDataBindingsLockedNoReport()"
+    "all pools validate before reciprocal body/user-data classification")
+require_ordered("${_capacity}"
+    "Phys_TryValidateBodyUserDataBindingsLockedNoReport()"
+    "*outCapacity = {"
+    "capacity publishes only after exact ownership validation")
+forbid_matches("${_capacity}" "${_reporting_pattern}"
+    "capacity validation is intrinsically silent")
 
+# Archive reconstruction publishes no body until its complete model collision
+# succeeds. Collision failure uses the same unified destroy core as public and
+# FX cleanup; a cleanup refusal becomes a terminal status, never lost ownership.
 extract_slice(
     "${_source}"
-    "PhysBodyRollbackStatus Phys_TryValidateGlobalTopologyLockedNoReport("
-    "bool Phys_RollbackTransformHasUniqueInnerOwnership("
-    _global_topology_scope
-    "global no-report native topology classification")
-foreach(_global_capacity_guard IN ITEMS
-    "bodyStorage\\.itemCount[ \t\r\n]*>[ \t\r\n]*snapshot\\.worldForBody\\.size\\(\\)"
-    "userDataStorage\\.itemCount[ \t\r\n]*>[ \t\r\n]*snapshot\\.bodyForUserData\\.size\\(\\)"
-    "geomStorage\\.itemCount[ \t\r\n]*>[ \t\r\n]*snapshot\\.spaceForGeom\\.size\\(\\)")
-    require_regex("${_global_topology_scope}" "${_global_capacity_guard}"
-        "pool descriptors fit every fixed-capacity topology snapshot")
-endforeach()
-require_regex_ordered("${_global_topology_scope}"
-    "bodyStorage\\.itemCount[ \t\r\n]*>[ \t\r\n]*snapshot\\.worldForBody\\.size\\(\\)"
-    "snapshot\\.worldForBody\\[bodyIndex\\]"
-    "body descriptor capacity is proven before snapshot indexing")
-require_regex_ordered("${_global_topology_scope}"
-    "userDataStorage\\.itemCount[ \t\r\n]*>[ \t\r\n]*snapshot\\.bodyForUserData\\.size\\(\\)"
-    "snapshot\\.bodyForUserData\\[userDataIndex\\]"
-    "user-data descriptor capacity is proven before snapshot indexing")
-foreach(_global_invariant IN ITEMS
-    "worldForBody\\.fill\\(PHYS_ROLLBACK_NO_OWNER\\)"
-    "bodyForUserData\\.fill\\(PHYS_ROLLBACK_NO_OWNER\\)"
-    "spaceForGeom\\.fill\\(PHYS_ROLLBACK_NO_OWNER\\)"
-    "bodyForGeom\\.fill\\(PHYS_ROLLBACK_NO_OWNER\\)"
-    "transformForInner\\.fill\\(PHYS_ROLLBACK_NO_OWNER\\)"
-    "snapshot\\.spaceForGeom\\[geomIndex\\][ \t\r\n]*!=[ \t\r\n]*snapshot\\.worldForBody\\[bodyIndex\\]"
-    "const bool isOuter"
-    "const bool isInner"
-    "!isOuter[ \t\r\n]*&&[ \t\r\n]*!isInner")
-    require_regex("${_global_topology_scope}" "${_global_invariant}"
-        "every allocated native slot has one reciprocal owner classification")
-endforeach()
-forbid_regex("${_global_topology_scope}"
-    "(Pool_Free|Phys_ObjDestroy|ODE_GeomDestruct|dBodyDestroy|MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
-    "global topology preflight is silent and non-destructive")
-
-extract_slice(
-    "${_source}"
-    "PhysBodyRollbackStatus Phys_TryBuildBodyDestroyPlanLocked("
-    "void Phys_ReturnValidatedPoolSlotNoReport(\n    const poolstorage_t storage,"
-    _destroy_preflight_scope
-    "non-mutating body-destroy preflight")
-foreach(_destroy_invariant IN ITEMS
-    "Phys_TryValidateGlobalTopologyLockedNoReport\\("
-    "Phys_ValidateLiveBodyOwnershipLocked\\("
-    "body->firstjoint"
-    "transform->cleanup[ \t\r\n]*!=[ \t\r\n]*1"
-    "resources\\[innerIndex\\]"
-    "candidate->pos[ \t\r\n]*==[ \t\r\n]*body->info\\.pos"
-    "candidate->R[ \t\r\n]*==[ \t\r\n]*body->info\\.R"
-    "topology\\.transformForInner\\[innerIndex\\][ \t\r\n]*!=[ \t\r\n]*outerIndex")
-    require_regex("${_destroy_preflight_scope}" "${_destroy_invariant}"
-        "destroy preflight proves exact native ownership")
-endforeach()
-forbid_regex("${_destroy_preflight_scope}"
-    "(Pool_Free|Phys_ReturnValidatedPoolSlotNoReport|Phys_ObjDestroy|ODE_GeomDestruct|dBodyDestroy|MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
-    "destroy preflight is silent and non-destructive")
-
-extract_slice(
-    "${_source}"
-    "void Phys_CommitBodyDestroyPlanLockedNoReport("
-    "} // namespace"
-    _destroy_commit_scope
-    "no-report body-destroy commit")
-require_regex_ordered("${_destroy_commit_scope}"
-    "\\*backlink[ \t\r\n]*=[ \t\r\n]*next"
-    "Phys_ReturnValidatedPoolSlotNoReport\\("
-    "all native links are removed before any slot is returned")
-foreach(_destroy_release IN ITEMS
-    "&odeGlob\\.geomPool"
-    "&odeGlob\\.bodyPool"
-    "&physGlob\\.userDataPool")
-    require_regex("${_destroy_commit_scope}" "${_destroy_release}"
-        "destroy commit returns every owned fixed-pool resource")
-endforeach()
-forbid_regex("${_destroy_commit_scope}"
-    "(Pool_Free|Phys_ObjDestroy|ODE_GeomDestruct|dBodyDestroy|dSpaceRemove|MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
-    "destroy commit has no assertion/report-capable callees")
-
-extract_slice(
-    "${_source}"
-    "bool Phys_TryBuildRoundedMassTensorNoReport("
-    "static PhysBodyModelCreateStatus Phys_TryBuildCollisionFromXModel("
-    _inertia_scope
-    "no-report inertial tensor setup")
-require_regex_ordered("${_inertia_scope}"
-    "Phys_RollbackMassTensorIsReconstructible\\(\\*physMass\\)"
-    "const double determinant"
-    "inertia inputs are validated before matrix inversion")
-require_regex_ordered("${_inertia_scope}"
-    "const double leadingMinor"
-    "!\\(leadingMinor[ \t\r\n]*>[ \t\r\n]*0\\.0\\)"
-    "rounded inertia uses the complete Sylvester positive-definite test")
-require_regex_ordered("${_inertia_scope}"
-    "const float inverseMass"
-    "userData->translation\\[component\\]"
-    "all fallible inertia calculations precede mutation")
-foreach(_float_parity IN ITEMS
-    "dSqrt\\(sum\\)"
-    "dRecip\\(lower\\[row \\* 4 \\+ row\\]\\)"
-    "dRecip\\(totalMass\\)")
-    require_regex("${_inertia_scope}" "${_float_parity}"
-        "silent inversion preserves ODE float operation parity")
-endforeach()
-forbid_regex("${_inertia_scope}"
-    "(Phys_ObjSetInertialTensor|Phys_AdjustForNewCenterOfMass|Phys_MassSetBrushTotal|dBodySetMass|dMassSetParameters|MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
-    "no-report inertia path cannot reach legacy diagnostic helpers")
-
-extract_slice(
-    "${_source}"
-    "static bool Phys_DestroyFreshBodyResourceNoReport("
-    "static PhysBodyModelCreateStatus Phys_TryInitializeBodyMass("
-    _fresh_body_rollback_scope
-    "fresh body no-report rollback callback")
-require_regex("${_fresh_body_rollback_scope}"
-    "static[ \t\r\n]+bool[ \t\r\n]+Phys_DestroyFreshBodyResourceNoReport\\("
-    "fresh body rollback publishes its cleanup result")
-require_regex_ordered("${_fresh_body_rollback_scope}"
-    "return[ \t\r\n]+false[ \t\r\n]*;"
-    "Phys_ReturnValidatedPoolSlotNoReport\\("
-    "fresh body rollback rejects failed ownership preflight before release")
-require_regex("${_fresh_body_rollback_scope}"
-    "Phys_ReturnValidatedPoolSlotNoReport\\("
-    "fresh body rollback returns its validated pool slot directly")
-require_regex_ordered("${_fresh_body_rollback_scope}"
-    "Phys_ReturnValidatedPoolSlotNoReport\\("
-    "return[ \t\r\n]+true[ \t\r\n]*;"
-    "fresh body rollback reports success only after exact pool release")
-extract_slice(
-    "${_fresh_body_rollback_scope}"
-    "context->world->firstbody ="
-    "return true;"
-    _fresh_body_commit_scope
-    "fresh body rollback commit tail")
-forbid_regex("${_fresh_body_commit_scope}"
-    "return[ \t\r\n]+false[ \t\r\n]*;"
-    "fresh body rollback cannot reject after its first topology mutation")
-forbid_regex("${_fresh_body_rollback_scope}"
-    "return[ \t\r\n]*;"
-    "fresh body rollback cannot silently discard cleanup status")
-forbid_regex("${_fresh_body_rollback_scope}"
-    "(Pool_Free|dBodyDestroy|MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
-    "fresh body rollback cannot report through legacy destruction")
-
-extract_slice(
-    "${_source}"
-    "static bool Phys_DestroyFreshPrimaryGeomResourceNoReport("
-    "static PhysBodyModelCreateStatus Phys_TryBodyAddGeomAndSetMass("
-    _fresh_geom_rollback_scope
-    "fresh geom no-report rollback callback")
-require_regex("${_fresh_geom_rollback_scope}"
-    "static[ \t\r\n]+bool[ \t\r\n]+Phys_DestroyFreshPrimaryGeomResourceNoReport\\("
-    "fresh geom rollback publishes its cleanup result")
-require_regex_ordered("${_fresh_geom_rollback_scope}"
-    "return[ \t\r\n]+false[ \t\r\n]*;"
-    "Phys_ReturnValidatedPoolSlotNoReport\\("
-    "fresh geom rollback rejects failed ownership preflight before release")
-require_regex("${_fresh_geom_rollback_scope}"
-    "Phys_ReturnValidatedPoolSlotNoReport\\("
-    "fresh geom rollback returns its validated pool slot directly")
-require_regex_ordered("${_fresh_geom_rollback_scope}"
-    "Phys_ReturnValidatedPoolSlotNoReport\\("
-    "return[ \t\r\n]+true[ \t\r\n]*;"
-    "fresh geom rollback reports success only after exact pool release")
-extract_slice(
-    "${_fresh_geom_rollback_scope}"
-    "context->space->first = geom->next;"
-    "return true;"
-    _fresh_geom_commit_scope
-    "fresh geometry rollback commit tail")
-forbid_regex("${_fresh_geom_commit_scope}"
-    "return[ \t\r\n]+false[ \t\r\n]*;"
-    "fresh geom rollback cannot reject after its first topology mutation")
-forbid_regex("${_fresh_geom_rollback_scope}"
-    "return[ \t\r\n]*;"
-    "fresh geom rollback cannot silently discard cleanup status")
-forbid_regex("${_fresh_geom_rollback_scope}"
-    "(Pool_Free|ODE_GeomDestruct|dSpaceRemove|MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
-    "fresh geom rollback cannot report through legacy destruction")
-require_regex(
-    "${_header}"
-    "\\[\\[nodiscard\\]\\][ \t\r\n]+PhysBodyModelCreateStatus[ \t\r\n]+__cdecl[ \t\r\n]+Phys_TryCreateBodyFromStateAndXModelLockedNoReport\\([^;]*\\)[ \t\r\n]*noexcept[ \t\r\n]*;"
-    "locked archive reconstruction is nodiscard and noexcept")
-require_regex("${_header}" "struct[ \t\r\n]+PhysBodyResourceDemand"
-    "explicit body/user-data/geom resource demand")
-require_regex("${_header}" "struct[ \t\r\n]+PhysBodyRollbackRecipe"
-    "state/model/demand rollback recipe")
-require_regex("${_header}"
-    "PhysBodyModelCreateStatus[^}]*CleanupFailed"
-    "archive reconstruction exposes an unrecoverable cleanup status")
-require_regex("${_header}" "Caller owns CRITSECT_PHYSICS"
-    "transaction lock ownership contract")
-
-extract_slice(
-    "${_source}"
-    "bool Phys_RollbackPoolIsValid("
-    "PhysBodyRollbackStatus Phys_ValidateModelResourceDemand("
-    _pool_scope
-    "silent full pool validation")
-foreach(_pool_invariant IN ITEMS
-    "control\\.initMagic[ \t\r\n]*!=[ \t\r\n]*PHYS_ROLLBACK_POOL_MAGIC"
-    "control\\.boundData[ \t\r\n]*!=[ \t\r\n]*poolData"
-    "allocatedCount[ \t\r\n]*!=[ \t\r\n]*activeCount"
-    "std::array<bool,[ \t\r\n]*ODE_GEOM_POOL_COUNT>[ \t\r\n]+visitedFree"
-    "std::memcmp\\(slot,[ \t\r\n]*&expectedNext"
-    "control\\.slotState\\[slot\\][ \t\r\n]*!=[ \t\r\n]*POOL_SLOT_ALLOCATED")
-    require_regex("${_pool_scope}" "${_pool_invariant}"
-        "pool metadata, allocation bitmap, and free-list agree")
-endforeach()
-forbid_regex(
-    "${_pool_scope}"
-    "(Pool_ValidateFull|MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
-    "fallible pool validation must be silent")
-
-extract_slice(
-    "${_source}"
-    "void Phys_GetCanonicalModelBoxBounds("
-    "bool Phys_RollbackVectorIsBounded("
-    _fallback_box_scope
-    "canonical default-model collision bounds")
-foreach(_degenerate_axis IN ITEMS 0 1 2)
-    require_regex("${_fallback_box_scope}"
-        "outMaxs\\[${_degenerate_axis}\\][ \t\r\n]*==[ \t\r\n]*outMins\\[${_degenerate_axis}\\]"
-        "fallback box detects exact degeneracy on axis ${_degenerate_axis}")
-endforeach()
-require_regex_ordered("${_fallback_box_scope}"
-    "outMaxs\\[0\\][ \t\r\n]*==[ \t\r\n]*outMins\\[0\\]"
-    "outMins\\[component\\][ \t\r\n]*=[ \t\r\n]*-PHYS_MODEL_FALLBACK_BOX_HALF_LENGTH"
-    "the whole fallback box is canonicalized before validation")
-require_regex_ordered("${_fallback_box_scope}"
-    "Phys_GetCanonicalModelBoxBounds\\(model,[ \t\r\n]*outMins,[ \t\r\n]*outMaxs\\)"
-    "outMins\\[component\\][ \t\r\n]*>=[ \t\r\n]*outMaxs\\[component\\]"
-    "strict ordering is checked only after legacy fallback canonicalization")
-forbid_regex("${_fallback_box_scope}"
-    "(MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
-    "fallback box canonicalization and validation are silent")
-
-extract_slice(
-    "${_source}"
-    "PhysBodyRollbackStatus Phys_ValidateModelResourceDemand("
-    "PhysBodyRollbackStatus Phys_ValidateLiveBodyOwnershipLocked("
-    _model_scope
-    "model resource-demand preflight")
-require_regex_ordered("${_model_scope}"
-    "\\*outDemand[ \t\r\n]*=[ \t\r\n]*\\{\\}[ \t\r\n]*;"
-    "if[ \t\r\n]*\\([ \t\r\n]*!model"
-    "demand output is cleared before model inspection")
-require_regex("${_model_scope}"
-    "PhysBodyResourceDemand[ \t\r\n]+demand[ \t\r\n]*\\{[ \t\r\n]*1[ \t\r\n]*,[ \t\r\n]*1[ \t\r\n]*,[ \t\r\n]*0[ \t\r\n]*\\}"
-    "every reconstruction reserves one body and one user-data slot")
-require_regex("${_model_scope}"
-    "geomList\\.count[ \t\r\n]*!=[ \t\r\n]*0[ \t\r\n]*&&[ \t\r\n]*!geomList\\.geoms"
-    "a zero-count PhysGeomList preserves the legacy no-collision body")
-require_regex("${_model_scope}"
-    "Phys_TryGetValidatedModelBoxBounds\\(\\*model,[ \t\r\n]*mins,[ \t\r\n]*maxs\\)"
-    "default-model demand validates canonical fallback-box bounds")
-foreach(_model_type IN ITEMS PHYS_GEOM_NONE PHYS_GEOM_BOX PHYS_GEOM_CYLINDER)
-    require_regex("${_model_scope}" "case[ \t]+${_model_type}[ \t\r\n]*:"
-        "canonical model type ${_model_type}")
-endforeach()
-require_regex_ordered("${_model_scope}"
-    "case[ \t]+PHYS_GEOM_NONE"
-    "if[ \t\r\n]*\\([ \t\r\n]*!geom\\.brush"
-    "brush type requires brush identity")
-require_regex_ordered("${_model_scope}"
-    "case[ \t]+PHYS_GEOM_BOX"
-    "required[ \t\r\n]*=[ \t\r\n]*2"
-    "box reconstruction owns primitive and transform slots")
-require_regex_ordered("${_model_scope}"
-    "case[ \t]+PHYS_GEOM_CYLINDER"
-    "required[ \t\r\n]*=[ \t\r\n]*2"
-    "cylinder reconstruction owns primitive and transform slots")
-require_regex("${_model_scope}"
-    "demand\\.geomCount[ \t\r\n]*>[ \t\r\n]*ODE_GEOM_POOL_COUNT[ \t\r\n]*-[ \t\r\n]*required"
-    "geom demand is overflow checked")
-require_regex("${_model_scope}"
-    "Phys_RollbackMassTensorIsReconstructible\\(geomList\\.mass\\)"
-    "model inertia is reconstructible without downstream diagnostics")
-require_regex_ordered("${_model_scope}"
-    "geom\\.brush->mins\\[component\\]"
-    "geom\\.brush->maxs\\[component\\]"
-    "brush bounds are checked before no-report reconstruction")
-
-extract_slice(
-    "${_source}"
-    "PhysBodyRollbackStatus Phys_ValidateLiveBodyOwnershipLocked("
-    "const float *Phys_RollbackModelGeomCenter("
-    _ownership_scope
-    "live body ownership validation")
-require_regex_ordered("${_ownership_scope}"
-    "Phys_TryGetExactPoolSlotIndex\\([ \t\r\n]*bodyStorage"
-    "Phys_RollbackPoolIsValid\\([ \t\r\n]*bodyStorage"
-    "foreign body pointers are range-proven before pool traversal")
-require_regex_ordered("${_ownership_scope}"
-    "bodyStorage\\.itemCount[ \t\r\n]*>[ \t\r\n]*PHYS_BODY_POOL_COUNT"
-    "visitedBodies\\[cursorIndex\\]"
-    "body descriptor capacity is proven before fixed cycle-set indexing")
-require_regex("${_ownership_scope}"
-    "std::array<bool,[ \t\r\n]*PHYS_BODY_POOL_COUNT>[ \t\r\n]+visitedBodies"
-    "world traversal has a fixed cycle bound")
-require_regex_ordered("${_ownership_scope}"
-    "cursor->world[ \t\r\n]*!=[ \t\r\n]*world"
-    "cursor->tome"
-    "every body has exact world and backlink ownership")
-require_regex_ordered("${_ownership_scope}"
-    "Phys_TryGetExactPoolSlotIndex\\([ \t\r\n]*userDataStorage"
-    "static_cast<PhysObjUserData[ \t]*\\*>\\(rawUserData\\)"
-    "user data is range-proven before typed dereference")
-require_regex("${_ownership_scope}"
-    "userData->body[ \t\r\n]*!=[ \t\r\n]*body"
-    "user-data back ownership is exact")
-
-extract_slice(
-    "${_source}"
-    "bool Phys_RollbackStateCenterMatchesModel("
-    "PhysBodyRollbackStatus Phys_ValidateTargetSpaceTopologyLocked("
-    _state_center_scope
-    "canonical rollback center validation")
-require_regex_ordered("${_state_center_scope}"
-    "Phys_TryGetValidatedModelBoxBounds\\("
-    "Vec3Avg\\(defaultMins,[ \t\r\n]*defaultMaxs,[ \t\r\n]*defaultCenter\\)"
-    "fallback-box center derives from canonical collision bounds")
-
-extract_slice(
-    "${_source}"
-    "PhysBodyRollbackStatus Phys_ValidateTargetSpaceTopologyLocked("
-    "bool Phys_RollbackTransformHasUniqueInnerOwnership("
-    _space_scope
-    "target-space topology validation")
-require_regex_ordered("${_space_scope}"
-    "space->count[ \t\r\n]*<[ \t\r\n]*0"
-    "space->count\\)[ \t\r\n]*>[ \t\r\n]*geomStorage\\.itemCount"
-    "target-space count is bounded")
-require_regex("${_space_scope}"
-    "Phys_TryGetExactPoolSlotIndex\\([ \t\r\n]*geomStorage,[ \t\r\n]*cursor"
-    "every target-space member is an exact geom-pool slot")
-require_regex_ordered("${_space_scope}"
-    "cursor->parent_space[ \t\r\n]*!=[ \t\r\n]*space"
-    "cursor->tome"
-    "target-space membership and backlinks are exact")
-require_regex("${_space_scope}"
-    "traversedCount[ \t\r\n]*==[ \t\r\n]*static_cast<std::size_t>\\(space->count\\)"
-    "bounded traversal reconciles the complete target-space count")
-
-extract_slice(
-    "${_source}"
-    "bool Phys_RollbackTransformHasUniqueInnerOwnership("
-    "bool Phys_RollbackTransformPoseMatchesModel("
-    _transform_owner_scope
-    "unique transform ownership proof")
-require_regex("${_transform_owner_scope}"
-    "index[ \t\r\n]*<[ \t\r\n]*geomStorage\\.itemCount"
-    "every allocated geom slot is considered as a potential owner")
-require_regex("${_transform_owner_scope}"
-    "candidate->type[ \t\r\n]*!=[ \t\r\n]*dGeomTransformClass"
-    "only allocated transforms can own inner geoms")
-require_regex("${_transform_owner_scope}"
-    "transform->obj[ \t\r\n]*!=[ \t\r\n]*inner"
-    "transform owner identity is compared directly")
-require_regex_ordered("${_transform_owner_scope}"
-    "transform[ \t\r\n]*!=[ \t\r\n]*expectedOwner"
-    "ownerCount[ \t\r\n]*!=[ \t\r\n]*1"
-    "exactly one expected allocated transform owns an inner geom")
-
-extract_slice(
-    "${_source}"
-    "bool Phys_RollbackTransformPoseMatchesModel("
-    "PhysBodyRollbackStatus Phys_ValidateBodyGeomTopologyLocked("
-    _identity_scope
-    "model collision identity validators")
-foreach(_identity_invariant IN ITEMS
-    "Phys_AxisToOdeMatrix3\\(geom\\.orientation,[ \t\r\n]*expectedRotation\\)"
-    "transform\\.localR"
-    "transform\\.localPos"
-    "Vec3Add\\(expectedOffset"
-    "Vec3Sub\\(expectedOffset"
-    "dGeomBoxGetLengths\\(box,[ \t\r\n]*actualLengths\\)"
-    "classData\\.direction[ \t\r\n]*==[ \t\r\n]*1"
-    "classData\\.radius[ \t\r\n]*==[ \t\r\n]*modelGeom\\.halfLengths\\[1\\]"
-    "classData\\.halfHeight[ \t\r\n]*==[ \t\r\n]*modelGeom\\.halfLengths\\[0\\]")
-    require_regex("${_identity_scope}" "${_identity_invariant}"
-        "live collision class/pose/dimension/brush identity")
-endforeach()
-require_regex_ordered("${_identity_scope}"
-    "classData\\.u\\.brush"
-    "modelGeom\\.brush"
-    "live brush identity is pointer-exact")
-
-extract_slice(
-    "${_source}"
-    "PhysBodyRollbackStatus Phys_ValidateBodyGeomTopologyLocked("
-    "} // namespace"
-    _geom_scope
-    "body geom destroyability validation")
-require_regex_ordered("${_geom_scope}"
-    "Phys_RollbackPoolIsValid\\([ \t\r\n]*geomStorage"
-    "Phys_ValidateTargetSpaceTopologyLocked\\("
-    "full geom pool validation precedes complete target-space validation")
-require_regex("${_geom_scope}"
-    "spaceMembership\\[outerIndex\\]"
-    "each retiring outer geom is a proven target-space member")
-require_regex("${_geom_scope}"
-    "transform->cleanup[ \t\r\n]*!=[ \t\r\n]*1"
-    "transform destruction owns its inner geom")
-foreach(_detached_field IN ITEMS
-    "inner->body"
-    "inner->body_next"
-    "inner->next"
-    "inner->tome"
-    "inner->parent_space")
-    require_regex("${_geom_scope}" "${_detached_field}"
-        "nested inner geom detachment field ${_detached_field}")
-endforeach()
-require_regex_ordered("${_geom_scope}"
-    "inner->body"
-    "inner->parent_space"
-    "nested inner geoms are detached from body and space topology")
-require_regex("${_geom_scope}"
-    "Phys_RollbackTransformHasUniqueInnerOwnership\\("
-    "inner geom destruction has one exact transform owner")
-require_regex("${_geom_scope}"
-    "Phys_RollbackPrimitiveMatchesModel\\("
-    "primitive class, pose, and dimensions match the supplied model")
-require_regex("${_geom_scope}"
-    "Phys_RollbackBrushMatchesModel\\("
-    "brush collision identity matches the supplied model")
-require_regex("${_geom_scope}"
-    "resourceCount[ \t\r\n]*!=[ \t\r\n]*expectedDemand\\.geomCount"
-    "live topology matches exact reconstruction demand")
-require_regex_ordered("${_geom_scope}"
-    "Phys_TryGetValidatedModelBoxBounds\\("
-    "Vec3Sub\\(expectedMaxs,[ \t\r\n]*expectedMins,[ \t\r\n]*expectedLengths\\)"
-    "default-box topology matches canonical fallback dimensions")
-
-extract_slice(
-    "${_source}"
-    "constexpr std::size_t PHYS_BODY_POOL_COUNT"
-    "static PhysBodyModelCreateStatus Phys_TryBuildCollisionFromXModel("
-    _preflight_scope
-    "complete rollback preflight implementation")
-forbid_regex(
-    "${_preflight_scope}"
-    "(Phys_ObjDestroy|ODE_GeomDestruct|dBodyDestroy|dWorldDestroy|dSpaceDestroy|dSpaceAdd|dSpaceRemove)[ \t\r\n]*\\("
-    "preflight must not destroy or relink native resources")
-forbid_regex(
-    "${_preflight_scope}"
-    "(Pool_Alloc|Pool_Free|dBodyCreate|dCreate[A-Za-z0-9_]*|Phys_TryCreateBody[A-Za-z0-9_]*)[ \t\r\n]*\\("
-    "preflight must not allocate or create resources")
-forbid_regex(
-    "${_preflight_scope}"
-    "(MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
-    "preflight must not report or assert")
-forbid_regex(
-    "${_preflight_scope}"
-    "Sys_(Enter|Leave)CriticalSection[ \t\r\n]*\\("
-    "preflight honors rather than mutates caller lock ownership")
-
-extract_slice(
-    "${_source}"
-    "PhysBodyRollbackStatus __cdecl Phys_TryCaptureBodyStateLocked("
-    "PhysBodyRollbackStatus __cdecl Phys_TryBuildBodyRollbackRecipeLocked("
-    _capture_scope
-    "fallible live-body state capture")
-require_regex_ordered("${_capture_scope}"
-    "\\*outState[ \t\r\n]*=[ \t\r\n]*\\{\\}[ \t\r\n]*;"
-    "Phys_ValidateLiveBodyOwnershipLocked\\("
-    "capture output is cleared before ownership validation")
-require_regex_ordered("${_capture_scope}"
-    "Phys_ValidateLiveBodyOwnershipLocked\\("
-    "body->info\\.pos\\[component\\]"
-    "native body fields are read only after ownership validation")
-require_regex_ordered("${_capture_scope}"
-    "Phys_RollbackBodyStateIsValid\\(captured\\)"
-    "\\*outState[ \t\r\n]*=[ \t\r\n]*captured"
-    "only a completely validated state is published")
-
-extract_slice(
-    "${_source}"
-    "PhysBodyRollbackStatus __cdecl Phys_TryBuildBodyRollbackRecipeLocked("
-    "static PhysBodyModelCreateStatus Phys_TryBuildCollisionFromXModel("
-    _recipe_scope
-    "destructive retirement preflight")
-require_regex_ordered("${_recipe_scope}"
-    "\\*outRecipe[ \t\r\n]*=[ \t\r\n]*\\{\\}[ \t\r\n]*;"
-    "Phys_TryGetBodyModelResourceDemand\\("
-    "recipe output is cleared before fallible validation")
-require_regex_ordered("${_recipe_scope}"
-    "Phys_TryCaptureBodyStateLocked\\("
-    "body->firstjoint"
-    "joint inspection follows proven live-body ownership")
-require_regex("${_recipe_scope}"
-    "PhysBodyRollbackStatus::NonReconstructibleJoints"
-    "attached joints are rejected")
-require_regex_ordered("${_recipe_scope}"
-    "Phys_ValidateBodyGeomTopologyLocked\\("
-    "outRecipe->state[ \t\r\n]*=[ \t\r\n]*state"
-    "recipe publication follows complete destroyability validation")
-
-extract_slice(
-    "${_source}"
-    "static PhysBodyModelCreateStatus Phys_TryCreateBodyFromStateInternal("
-    "dxBody *__cdecl Phys_CreateBodyFromState("
-    _body_create_scope
-    "transactional state-only body creation")
-require_regex_ordered("${_body_create_scope}"
-    "Phys_TryDestroyBodyLockedNoReport\\(worldIndex,[ \t\r\n]*body\\)"
-    "PhysBodyModelCreateStatus::CleanupFailed"
-    "state-only no-report rollback must expose native cleanup failure")
-forbid_regex("${_body_create_scope}"
-    "\\(void\\)[ \t\r\n]*Phys_TryDestroyBodyLockedNoReport"
-    "state-only no-report rollback cannot discard cleanup failure")
-forbid_regex("${_body_create_scope}"
-    "(Com_Error|Sys_Error)[ \t\r\n]*\\("
-    "state-only creation cannot longjmp through a public PHYSICS transaction")
-
-require_physics_transaction(
-    "${_source}"
-    "dxBody *__cdecl Phys_CreateBodyFromState("
-    "void __cdecl Phys_BodyGetCenterOfMass("
-    "Phys_TryCreateBodyFromStateInternal\\("
-    "state-only body creation transaction")
-require_physics_transaction(
-    "${_source}"
-    "void __cdecl Phys_BodyAddGeomAndSetMass("
-    "void __cdecl Phys_AdjustForNewCenterOfMass("
-    "Phys_TryBodyAddGeomAndSetMass\\("
-    "geometry and mass publication transaction")
-require_physics_transaction(
-    "${_source}"
-    "void __cdecl Phys_ObjAddGeomBox("
-    "static PhysBodyModelCreateStatus Phys_TryObjAddGeomBoxRotated("
-    "Phys_TryObjAddGeomBox\\("
-    "box geometry transaction")
-require_physics_transaction(
-    "${_source}"
-    "void __cdecl Phys_ObjAddGeomBoxRotated("
-    "void __cdecl Phys_ObjAddGeomBrushModel("
-    "Phys_TryObjAddGeomBoxRotated\\("
-    "rotated box geometry transaction")
-require_physics_transaction(
-    "${_source}"
-    "void __cdecl Phys_ObjAddGeomBrushModel("
-    "static PhysBodyModelCreateStatus Phys_TryObjAddGeomBrush("
-    "Phys_BodyAddGeomAndSetMass\\("
-    "brush-model geometry transaction")
-require_physics_transaction(
-    "${_source}"
-    "void __cdecl Phys_ObjAddGeomBrush("
-    "void __cdecl Phys_ObjAddGeomCylinder("
-    "Phys_TryObjAddGeomBrush\\("
-    "brush geometry transaction")
-require_physics_transaction(
-    "${_source}"
-    "void __cdecl Phys_ObjAddGeomCylinder("
-    "void __cdecl Phys_ObjAddGeomCylinderDirection("
-    "Phys_BodyAddGeomAndSetMass\\("
-    "cylinder geometry transaction")
-require_physics_transaction(
-    "${_source}"
-    "void __cdecl Phys_ObjAddGeomCylinderDirection("
-    "static PhysBodyModelCreateStatus Phys_TryObjAddGeomCylinderRotated("
-    "Phys_BodyAddGeomAndSetMass\\("
-    "directed cylinder geometry transaction")
-require_physics_transaction(
-    "${_source}"
-    "void __cdecl Phys_ObjAddGeomCylinderRotated("
-    "void __cdecl Phys_ObjAddGeomCapsule("
-    "Phys_TryObjAddGeomCylinderRotated\\("
-    "rotated cylinder geometry transaction")
-require_physics_transaction(
-    "${_source}"
-    "void __cdecl Phys_ObjAddGeomCapsule("
-    "namespace\n{\nconstexpr std::size_t PHYS_BODY_POOL_COUNT"
-    "Phys_BodyAddGeomAndSetMass\\("
-    "capsule geometry transaction")
-
-extract_slice(
-    "${_source}"
-    "Phys_TryCreateBodyFromStateAndXModelInternal("
+    "static PhysBodyModelCreateStatus\nPhys_TryCreateBodyFromStateAndXModelInternal("
     "PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromStateAndXModel("
-    _create_internal_scope
-    "shared transactional state/model creation")
-require_regex_ordered("${_create_internal_scope}"
-    "\\*outBody[ \t\r\n]*=[ \t\r\n]*nullptr"
-    "Phys_TryCreateBodyFromStateInternal\\("
-    "creation output is empty before allocation")
-require_regex_ordered("${_create_internal_scope}"
-    "Phys_RollbackBodyStateIsValid\\(\\*state\\)"
-    "Phys_TryCreateBodyFromStateInternal\\("
-    "strict rollback state validation precedes allocation")
-require_regex_ordered("${_create_internal_scope}"
-    "Phys_TryGetBodyModelResourceDemand\\(model,[ \t\r\n]*&demand\\)"
-    "Phys_TryCreateBodyFromStateInternal\\("
-    "strict model validation precedes allocation")
-require_regex_ordered("${_create_internal_scope}"
-    "Phys_TryValidateGlobalTopologyLockedNoReport\\("
-    "Phys_TryCreateBodyFromStateInternal\\("
-    "global native topology is validated before allocation")
-require_regex_ordered("${_create_internal_scope}"
-    "Phys_TryGetFreeResourceCapacityLockedNoReport\\("
-    "Phys_TryCreateBodyFromStateInternal\\("
-    "exact fixed-pool capacity is validated before allocation")
-require_regex_ordered("${_create_internal_scope}"
-    "Phys_TryBuildRoundedMassTensorNoReport\\("
-    "Phys_TryCreateBodyFromStateInternal\\("
-    "rounded float inertia is proven reconstructible before allocation")
-require_regex_ordered("${_create_internal_scope}"
-    "Phys_TryBuildCollisionFromXModel\\("
-    "reportFailure\\)"
-    "diagnostic policy is shared by body and collision creation")
-require_regex("${_create_internal_scope}"
-    "Phys_ReleaseCreatedBodyResources\\(body,[ \t\r\n]*userData\\)"
-    "partial collision construction is rolled back")
-require_regex_ordered("${_create_internal_scope}"
-    "Phys_TryDestroyBodyLockedNoReport\\(worldIndex,[ \t\r\n]*body\\)"
-    "PhysBodyModelCreateStatus::CleanupFailed"
-    "collision rollback must expose native cleanup failure")
-forbid_regex("${_create_internal_scope}"
-    "\\(void\\)[ \t\r\n]*Phys_TryDestroyBodyLockedNoReport"
-    "collision rollback cannot discard native cleanup failure")
-require_regex("${_source}"
-    "reportFailure[ \t\r\n]*\\?[ \t\r\n]*Phys_DestroyBodyResource[ \t\r\n]*:[ \t\r\n]*Phys_DestroyFreshBodyResourceNoReport"
-    "strict body companion rollback selects the no-report callback")
-require_regex("${_source}"
-    "reportFailure[ \t\r\n]*\\?[ \t\r\n]*Phys_DestroyPrimaryGeomResource[ \t\r\n]*:[ \t\r\n]*Phys_DestroyFreshPrimaryGeomResourceNoReport"
-    "strict geom companion rollback selects the no-report callback")
+    _model_create
+    "complete body/model transaction")
+require_ordered("${_model_create}"
+    "*outBody = nullptr;"
+    "Phys_TryGetBodyModelResourceDemand(model, &demand)"
+    "complete-model output is cleared before recipe validation")
+require_ordered("${_model_create}"
+    "Phys_ClassifyModelGeomCapacityFailure("
+    "Phys_TryCreateBodyFromStateInternal("
+    "complete resource demand is proven before body allocation")
+require_ordered("${_model_create}"
+    "Phys_TryCreateBodyFromStateInternal("
+    "Phys_TryBuildCollisionFromXModel("
+    "body acquisition precedes model collision construction")
+require_ordered("${_model_create}"
+    "Phys_TryBuildCollisionFromXModel("
+    "Phys_TryDestroyBodyAndUserDataLockedNoReport(worldIndex, body)"
+    "collision failure silently returns every body-owned resource")
+require_ordered("${_model_create}"
+    "return PhysBodyModelCreateStatus::CleanupFailed;"
+    "*outBody = body;"
+    "cleanup failure returns before ownership publication")
+forbid_matches("${_model_create}" "${_reporting_pattern}"
+    "complete-model construction cannot report under caller ownership")
 
 extract_slice(
     "${_source}"
-    "PhysBodyModelCreateStatus __cdecl\nPhys_TryCreateBodyFromStateAndXModelLockedNoReport("
-    "PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromPresetAndXModel("
-    _locked_create_scope
-    "locked no-report reconstruction API")
-require_regex("${_locked_create_scope}"
-    "Phys_TryCreateBodyFromStateAndXModelInternal\\([^;]*false[ \t\r\n]*,[ \t\r\n]*true\\)"
-    "locked reconstruction disables diagnostics and enables strict validation")
-forbid_regex(
-    "${_locked_create_scope}"
-    "(MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
-    "locked reconstruction entry point is silent")
-forbid_regex(
-    "${_locked_create_scope}"
-    "Sys_(Enter|Leave)CriticalSection[ \t\r\n]*\\("
-    "locked reconstruction preserves caller PHYSICS ownership")
+    "PhysBodyDestroyStatus Phys_TryDestroyBodyAndUserDataLockedNoReport(\n    const PhysWorld worldIndex,\n    dxBody *const body) noexcept\n{"
+    "} // namespace\n\nvoid __cdecl Phys_ObjDestroy("
+    _unified_destroy
+    "unified body/user-data destroy core")
+require_ordered("${_unified_destroy}"
+    "Pool_TryValidateAllocatedNoReport(\n            ODE_BodyPoolStorage()"
+    "body->world != physGlob.world[worldIndex]"
+    "the body pool address is classified before body fields are trusted")
+require_ordered("${_unified_destroy}"
+    "userData->body != body"
+    "ODE_TryValidateBodyDestroyNoReport(body)"
+    "reciprocal user-data ownership is proven before native destroy validation")
+require_ordered("${_unified_destroy}"
+    "ODE_TryValidateBodyDestroyNoReport(body)"
+    "ODE_TryBodyDestroyNoReport(body)"
+    "native destruction has a complete non-mutating preflight")
+require_ordered("${_unified_destroy}"
+    "ODE_TryBodyDestroyNoReport(body)"
+    "Pool_TryFreeNoReport("
+    "native body/geom retirement precedes companion user-data release")
+forbid_matches("${_unified_destroy}" "${_reporting_pattern}"
+    "unified destruction cannot report while PHYSICS is owned")
+forbid_matches("${_unified_destroy}"
+    "(Pool_Free|dBodyDestroy|ODE_GeomDestruct)[ \\t\\r\\n]*\\("
+    "unified destruction cannot call legacy assertion-bearing cleanup")
 
 extract_slice(
     "${_source}"
     "PhysBodyRollbackStatus __cdecl\nPhys_TryDestroyBodyLockedNoReport("
-    "namespace\n{\nbool Phys_TryBuildRoundedMassTensorNoReport("
-    _locked_destroy_scope
-    "locked no-report destruction API")
-forbid_regex(
-    "${_locked_destroy_scope}"
-    "Sys_(Enter|Leave)CriticalSection[ \t\r\n]*\\("
-    "locked destruction preserves caller PHYSICS ownership")
-forbid_regex(
-    "${_locked_destroy_scope}"
-    "(Com_Error|Sys_Error|MyAssertHandler|Com_Print[A-Za-z0-9_]*|iassert|vassert|fprintf)[ \t\r\n]*\\("
-    "locked destruction is report-free")
+    "namespace\n{\nbool Phys_TryFinalizeMassTensorNoReport("
+    _archive_destroy
+    "archive destroy adapter")
+require_ordered("${_archive_destroy}"
+    "Phys_TryValidateArchiveBodyDestroyGateLockedNoReport("
+    "Phys_TryDestroyBodyAndUserDataLockedNoReport("
+    "archive-specific gating precedes the shared destroy core")
+forbid_matches("${_archive_destroy}" "${_reporting_pattern}"
+    "archive destruction remains non-reporting")
+
+# Brush tensors reject NaN before applying the legacy nonpositive fallback,
+# then preserve float multiplication order and ODE's fixed-size float inverse.
+extract_slice(
+    "${_source}"
+    "bool Phys_RollbackMassTensorIsReconstructible("
+    "bool Phys_TryGetExactPoolSlotIndex("
+    _mass_validation
+    "brush tensor validation")
+require_ordered("${_mass_validation}"
+    "if (!std::isfinite(value))"
+    "const double diagonal[3]"
+    "nonfinite moments/products are rejected before fallback selection")
+require_contains("${_mass_validation}"
+    "leadingMinor > 0.0"
+    "brush tensor validation retains the complete Sylvester test")
 
 extract_slice(
     "${_source}"
-    "static PhysBodyModelCreateStatus Phys_TryBuildCollisionFromXModel("
-    "void __cdecl Phys_ObjSetCollisionFromXModel("
-    _collision_builder_scope
-    "shared model collision builder")
-require_regex("${_collision_builder_scope}"
-    "Phys_GetCanonicalModelBoxBounds\\(\\*model,[ \t\r\n]*mins,[ \t\r\n]*maxs\\)"
-    "creation uses the same canonical fallback bounds as archive validation")
-require_regex("${_collision_builder_scope}"
-    "geomList->count[ \t\r\n]*!=[ \t\r\n]*0[ \t\r\n]*&&[ \t\r\n]*!geomList->geoms"
-    "creation preserves a zero-count no-collision PhysGeomList")
-forbid_regex("${_collision_builder_scope}"
-    "(Com_Error|Sys_Error)[ \t\r\n]*\\("
-    "collision creation cannot longjmp through a public PHYSICS transaction")
+    "bool Phys_TryBuildRoundedMassTensorNoReport(\n    const float totalMass,\n    const PhysMass *const physMass,\n    dMass *const outMass,\n    float (*const outInverse)[12],\n    float *const outInverseMass) noexcept\n{"
+    "bool Phys_TrySetInertialTensorLockedNoReport("
+    _brush_mass
+    "silent brush mass construction")
+require_ordered("${_brush_mass}"
+    "Phys_RollbackMassTensorIsReconstructible(*physMass)"
+    "const float selectedI33"
+    "finite/positive-definite validation precedes legacy fallback")
+foreach(_brush_expression IN ITEMS
+    "const float i23 = totalMass * physMass->productsOfInertia[2];"
+    "const float i13 = totalMass * physMass->productsOfInertia[1];"
+    "const float i12 = totalMass * physMass->productsOfInertia[0];"
+    "const float i33 = totalMass * selectedI33;"
+    "const float i22 = totalMass * selectedI22;"
+    "const float i11 = totalMass * selectedI11;"
+    "Phys_TryFinalizeMassTensorNoReport(")
+    require_contains("${_brush_mass}" "${_brush_expression}"
+        "brush inertia retains exact float expression order")
+endforeach()
+forbid_matches("${_brush_mass}" "${_reporting_pattern}"
+    "brush mass construction remains silent")
 
-require_physics_transaction(
-    "${_source}"
-    "void __cdecl Phys_ObjSetCollisionFromXModel("
-    "static PhysBodyModelCreateStatus\nPhys_TryCreateBodyFromStateAndXModelInternal("
-    "Phys_TryBuildCollisionFromXModel\\("
-    "complete XModel collision transaction")
-
+# Initial impact is part of CG/DynEnt ownership publication. The silent core
+# validates the exact body/user-data pair and computes every force/torque value
+# in temporaries; only a compact suffix mutates accumulators and wake state.
 extract_slice(
     "${_source}"
-    "PhysBodyModelCreateStatus __cdecl Phys_TryCreateBodyFromStateAndXModel("
-    "PhysBodyModelCreateStatus __cdecl\nPhys_TryCreateBodyFromStateAndXModelLockedNoReport("
-    _public_model_create_scope
-    "public body and XModel transaction")
-require_regex_ordered("${_public_model_create_scope}"
-    "Sys_EnterCriticalSection\\(CRITSECT_PHYSICS\\)"
-    "Phys_CreateBodyFromState\\(worldIndex,[ \t\r\n]*state\\)"
-    "body and XModel creation enters PHYSICS before allocation")
-require_regex("${_public_model_create_scope}"
-    "if[ \t\r\n]*\\([ \t\r\n]*!body[ \t\r\n]*\\)[ \t\r\n]*\\{[ \t\r\n]*Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)[ \t\r\n]*;[ \t\r\n]*return[ \t\r\n]+PhysBodyModelCreateStatus::BodyResourcesExhausted"
-    "body allocation failure releases the public PHYSICS transaction")
-require_regex_ordered("${_public_model_create_scope}"
-    "Phys_ObjDestroy\\(worldIndex,[ \t\r\n]*body\\)"
-    "Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)[ \t\r\n]*;[ \t\r\n]*return[ \t\r\n]+collisionStatus"
-    "collision rollback completes before releasing PHYSICS")
-require_regex_ordered("${_public_model_create_scope}"
-    "\\*outBody[ \t\r\n]*=[ \t\r\n]*body"
-    "Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)[ \t\r\n]*;[ \t\r\n]*return[ \t\r\n]+PhysBodyModelCreateStatus::Success"
-    "successful body and XModel publication releases PHYSICS last")
-forbid_regex("${_public_model_create_scope}"
-    "(Com_Error|Sys_Error)[ \t\r\n]*\\("
-    "body and XModel creation cannot longjmp while PHYSICS is held")
+    "bool __cdecl Phys_TryObjBulletImpactLockedNoReport("
+    "int __cdecl Phys_IndexFromODEWorld("
+    _bullet_impact
+    "silent bullet-impact transaction")
+require_ordered("${_bullet_impact}"
+    "Pool_TryValidateAllocatedNoReport(\n            bodyStorage, &odeGlob.bodyPool, body)"
+    "body->world == physGlob.world[candidate]"
+    "the exact body pool address is validated before world dereference")
+require_ordered("${_bullet_impact}"
+    "Phys_TryValidateBodyUserDataBindingsLockedNoReport()"
+    "Phys_TryFinalizeMassTensorNoReport("
+    "reciprocal body/user-data ownership precedes tensor validation")
+require_ordered("${_bullet_impact}"
+    "Phys_TryFinalizeMassTensorNoReport("
+    "const float forceScale ="
+    "body tensor validation precedes impact arithmetic")
+require_ordered("${_bullet_impact}"
+    "// All fallible work is complete. Publish exactly the dBodyAddForceAtPos,"
+    "body->facc[component] = newForceAccumulator[component];"
+    "force publication begins only after every finite calculation")
+require_ordered("${_bullet_impact}"
+    "body->facc[component] = newForceAccumulator[component];"
+    "body->flags &= ~dxBodyDisabled;"
+    "force and torque publish before wake state")
+require_ordered("${_bullet_impact}"
+    "body->flags &= ~dxBodyDisabled;"
+    "physGlob.worldData[bodyWorldIndex].timeLastUpdate;"
+    "the body's actual world supplies its sleep timestamp")
+require_contains("${_bullet_impact}"
+    "g_phys_msecStep[worldIndex]"
+    "the parameter world retains historical impulse scaling")
+forbid_matches("${_bullet_impact}" "${_reporting_pattern}"
+    "bullet impact cannot report while caller owns PHYSICS")
+forbid_matches("${_bullet_impact}"
+    "Sys_(Enter|Leave)CriticalSection[ \\t\\r\\n]*\\("
+    "caller-locked bullet impact cannot alter lock depth")
+forbid_matches("${_bullet_impact}"
+    "(^|[\\r\\n])[ \\t]*(dBody|Phys_ObjAddForce)[A-Za-z0-9_]*[ \\t\\r\\n]*\\("
+    "bullet impact cannot invoke assertion-bearing mutation helpers")
 
 extract_slice(
-    "${_source}"
-    "void __cdecl Phys_ObjDestroy("
-    "void __cdecl Phys_ObjAddForce("
-    _public_destroy_scope
-    "public body destruction transaction")
-require_regex_ordered("${_public_destroy_scope}"
-    "Sys_EnterCriticalSection\\(CRITSECT_PHYSICS\\)"
-    "userData[ \t\r\n]*=[^;]*dBodyGetData\\(id\\)"
-    "body destruction enters PHYSICS before ownership dereference")
-require_regex("${_public_destroy_scope}"
-    "if[ \t\r\n]*\\([ \t\r\n]*id->world[ \t\r\n]*!=[ \t\r\n]*physGlob\\.world\\[worldIndex\\][ \t\r\n]*\\)[ \t\r\n]*\\{[ \t\r\n]*Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)[ \t\r\n]*;[ \t\r\n]*MyAssertHandler"
-    "world-ownership rejection releases PHYSICS before diagnostics")
-require_regex_ordered("${_public_destroy_scope}"
-    "dBodyDestroy\\(id\\)"
-    "Pool_Free\\("
-    "body topology is removed before its user-data slot")
-require_regex_ordered("${_public_destroy_scope}"
-    "Pool_Free\\("
-    "Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)"
-    "body and user-data retirement are one PHYSICS transaction")
-require_regex_ordered("${_public_destroy_scope}"
-    "Sys_LeaveCriticalSection\\(CRITSECT_PHYSICS\\)"
-    "if[ \t\r\n]*\\([ \t\r\n]*!userDataFreed[ \t\r\n]*\\)"
-    "pool-free diagnostics run only after releasing PHYSICS")
-forbid_regex("${_public_destroy_scope}"
-    "(Com_Error|Sys_Error)[ \t\r\n]*\\("
-    "body destruction cannot longjmp while PHYSICS is held")
+    "${_bullet_impact}"
+    "bool __cdecl Phys_TryObjBulletImpactLockedNoReport("
+    "// All fallible work is complete. Publish exactly the dBodyAddForceAtPos,"
+    _bullet_prepare
+    "bullet-impact prepare pass")
+foreach(_premature_publication IN ITEMS
+    "body->facc[component] ="
+    "body->tacc[component] ="
+    "body->flags &="
+    "body->adis_stepsleft ="
+    "body->adis_timeleft ="
+    "userData->timeLastAsleep =")
+    string(FIND "${_bullet_prepare}" "${_premature_publication}" _position)
+    if(NOT _position EQUAL -1)
+        message(FATAL_ERROR
+            "Bullet-impact state mutates before commit: ${_premature_publication}")
+    endif()
+endforeach()
 
-message(STATUS "Physics rollback recipe source invariants verified")
+# ODE's exact occupancy preflights use a single static bounded joint workspace.
+# Creation validates the prospective free-head against every geom/joint alias;
+# destruction validates all body, geom, joint, and list ownership before commit.
+extract_slice(
+    "${_ode}"
+    "struct ODENoReportJointValidationWorkspace"
+    "static bool ODE_ValidateBodyDestroyNoReport("
+    _ode_preflight
+    "ODE fixed-pool topology preflight")
+require_ordered("${_ode_preflight}"
+    "struct ODENoReportJointValidationWorkspace"
+    "static ODENoReportJointValidationWorkspace odeNoReportJointWorkspace{};"
+    "joint topology scratch has static storage")
+foreach(_ode_invariant IN ITEMS
+    "ODE_NoReportBodyAllocationCandidateHasNoAliases("
+    "geom->body == candidate"
+    "joint.node[0].body == candidate"
+    "ODE_NoReportIndexWorldJoints("
+    "ODE_NoReportIndexBodyJointList("
+    "auto &workspace = odeNoReportJointWorkspace;")
+    require_contains("${_ode_preflight}" "${_ode_invariant}"
+        "ODE preflight classifies exact global body/joint occupancy")
+endforeach()
+forbid_matches("${_ode_preflight}" "${_reporting_pattern}"
+    "ODE topology preflight is intrinsically silent")
+
+extract_slice(
+    "${_ode}"
+    "poolmutationstatus_t ODE_TryBodyCreateNoReport("
+    "dxJointGroup *__cdecl dGetContactJointGroup("
+    _ode_create
+    "ODE silent body creation")
+require_ordered("${_ode_create}"
+    "*outBody = nullptr;"
+    "ODE_NoReportBodyAllocationCandidateHasNoAliases("
+    "body output is cleared before prospective free-head validation")
+require_ordered("${_ode_create}"
+    "ODE_NoReportBodyAllocationCandidateHasNoAliases("
+    "Pool_TryAllocNoReport("
+    "all alias checks precede body pool mutation")
+require_ordered("${_ode_create}"
+    "if (allocation.status != poolmutationstatus_t::Success)"
+    "*outBody = ODE_InitializeAllocatedBody(world, body);"
+    "failed pool allocation cannot enter the world list")
+forbid_matches("${_ode_create}" "${_reporting_pattern}"
+    "ODE body creation remains silent")
+
+extract_slice(
+    "${_ode}"
+    "odebodycleanupstatus_t ODE_TryBodyDestroyNoReport("
+    "#endif\n}"
+    _ode_destroy
+    "ODE silent body destruction")
+require_ordered("${_ode_destroy}"
+    "ODE_ValidateBodyDestroyNoReport(body)"
+    "while (body->geom)"
+    "complete topology validation precedes the first geom mutation")
+require_ordered("${_ode_destroy}"
+    "while (body->geom)"
+    "removeObjectFromList(body);"
+    "owned geoms are retired before world unlink")
+require_ordered("${_ode_destroy}"
+    "removeObjectFromList(body);"
+    "Pool_TryFreeNoReport("
+    "world unlink precedes body slot release")
+forbid_matches("${_ode_destroy}" "${_reporting_pattern}"
+    "ODE body destruction remains silent")
+
+# Global geom validation recognizes only exact published roots or uniquely
+# owned transform children. Silent construction clears outputs, validates
+# attachment topology before allocation, and silently destroys a fresh geom if
+# attachment fails.
+extract_slice(
+    "${_geom}"
+    "poolmutationstatus_t ODE_TryCreateGeomNoReport("
+    "poolmutationstatus_t ODE_TryGeomTransformSetGeomNoReport("
+    _geom_create
+    "ODE silent custom-geom creation")
+require_ordered("${_geom_create}"
+    "*outGeom = nullptr;"
+    "ODE_NoReportAttachmentTargetsAreValid(space, body)"
+    "geom output is cleared before attachment validation")
+require_ordered("${_geom_create}"
+    "ODE_TryAllocateGeomNoReport(&storage)"
+    "ODE_TryAttachGeomNoReport(geom, space, body)"
+    "allocation precedes checked attachment")
+require_ordered("${_geom_create}"
+    "ODE_TryAttachGeomNoReport(geom, space, body)"
+    "ODE_TryGeomDestructNoReport(geom)"
+    "failed attachment silently returns its allocation")
+require_ordered("${_geom_create}"
+    "ODE_TryGeomDestructNoReport(geom)"
+    "*outGeom = geom;"
+    "ownership publishes only after attachment succeeds")
+forbid_matches("${_geom_create}" "${_reporting_pattern}"
+    "custom-geom creation remains silent")
+
+extract_slice(
+    "${_geom}"
+    "odegeomcleanupstatus_t ODE_TryGeomDestructNoReport("
+    "bool ODE_TryValidateGeomDestructNoReport("
+    _geom_destroy
+    "ODE silent geom destruction")
+require_ordered("${_geom_destroy}"
+    "ODE_NoReportGlobalGeomListsAreValid()"
+    "ODE_ValidateGeomDestructNoReport(geom)"
+    "global occupancy validates before target ownership")
+require_ordered("${_geom_destroy}"
+    "ODE_ValidateGeomDestructNoReport(geom)"
+    "ODE_CommitGeomDestructNoReport(geom)"
+    "all geom validation precedes commit")
+forbid_matches("${_geom_destroy}" "${_reporting_pattern}"
+    "geom destruction remains silent")
+
+function(require_silent_constructor source start end description)
+    extract_slice("${source}" "${start}" "${end}"
+        _constructor "ODE silent ${description} constructor")
+    require_ordered("${_constructor}"
+        "*outGeom = nullptr;"
+        "ODE_TryValidateGeomAttachmentNoReport(space, body)"
+        "${description} output is cleared before topology validation")
+    require_ordered("${_constructor}"
+        "ODE_TryAllocateGeomNoReport(&storage)"
+        "ODE_TryAttachGeomNoReport(geom, space, body)"
+        "${description} allocation precedes attachment")
+    require_ordered("${_constructor}"
+        "ODE_TryAttachGeomNoReport(geom, space, body)"
+        "ODE_TryGeomDestructNoReport(geom)"
+        "${description} attachment failure silently rolls back")
+    forbid_matches("${_constructor}" "${_reporting_pattern}"
+        "${description} construction remains silent")
+endfunction()
+
+require_silent_constructor(
+    "${_box}"
+    "poolmutationstatus_t ODE_TryCreateBoxNoReport("
+    "//void dGeomBoxSetLengths ("
+    "box")
+require_silent_constructor(
+    "${_transform}"
+    "poolmutationstatus_t ODE_TryCreateGeomTransformNoReport("
+    "void dGeomTransformSetGeom ("
+    "transform")
+
+message(STATUS "Physics rollback source invariants verified")
