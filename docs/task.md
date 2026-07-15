@@ -24,6 +24,11 @@ work item changes. Do not create session-specific handoff files.
   must parse all exact little-endian names/keys before registration, eliminate the uninitialized truncated-key path,
   publish only complete entries, replace the 1,024-entry stack table (8,196 bytes on x86; 16,392 on native64), release
   scratch before `FX_BeginArchive` or PHYSICS admission, and let error abandonment reclaim the lease without diagnostics.
+- PR #18 is open. Initial run **29385108870** exposed one macOS arm64-only build seam: the bundled zlib header suppresses
+  its `Byte` typedef whenever modern AppleClang defines the legacy `TARGET_OS_MAC` marker, although modern Darwin no
+  longer makes that classic-Mac typedef visible. The focused correction keeps the classic compiler exception while making
+  zlib self-contained on Apple Mach targets. All ten bundled C translation units compile under simulated Darwin macros;
+  focused GCC/Clang/ASan+UBSan/TSan execution and strict x86-32/AArch64 compile-link pass. Replacement CI is pending.
 - ODE occupancy runtime on this branch is otherwise complete. The engine-free physics batch controller rejects invalid,
   duplicate, overlapping-output, and unknown-status inputs before callbacks; preflights every selected retirement or
   reconstruction before mutation; and reports the exact successful commit prefix. Production FX archive retirement and
