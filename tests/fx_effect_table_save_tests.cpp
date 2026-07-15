@@ -116,7 +116,9 @@ std::vector<std::vector<std::uint8_t>> MakeLogicalChunks(
 class SnapshotStorage
 {
 public:
-    SnapshotStorage()
+    explicit SnapshotStorage(
+        const archive::EffectTableSaveKeyPolicy keyPolicy =
+            archive::EffectTableSaveKeyPolicy::LegacyPointerBits)
         : snapshotSize_(archive::EffectTableSaveSnapshotSize()),
           snapshotAlignment_(archive::EffectTableSaveSnapshotAlignment()),
           storage_(snapshotSize_ + snapshotAlignment_ - 1u
@@ -143,7 +145,7 @@ public:
             return;
 
         snapshot_ = archive::ConstructEffectTableSaveSnapshot(
-            storage_.data() + snapshotOffset_, snapshotSize_);
+            storage_.data() + snapshotOffset_, snapshotSize_, keyPolicy);
         CHECK(snapshot_ != nullptr);
         CheckCanaries();
     }
@@ -192,7 +194,7 @@ void AppendEntries(
 {
     for (const EntrySpec &entry : entries)
     {
-        CHECK(archive::AppendEffectTableSaveEntryNoReport(
+        CHECK(archive::AppendEffectTableSaveDefinitionNoReport(
             snapshot, entry.name.c_str(), entry.key)
             == archive::EffectTableSaveStatus::Success);
     }
@@ -331,6 +333,17 @@ std::vector<EntrySpec> MakeCapacityEntries(const std::size_t count)
     return entries;
 }
 
+std::uintptr_t OpaqueIdentity(const std::uintptr_t ordinal)
+{
+#if UINTPTR_MAX > UINT32_MAX
+    return static_cast<std::uintptr_t>(
+               (std::numeric_limits<std::uint32_t>::max)())
+        + 0x1000u + ordinal;
+#else
+    return 0x10000u + ordinal;
+#endif
+}
+
 void TestConstructionAndCanaries()
 {
     const std::size_t size = archive::EffectTableSaveSnapshotSize();
@@ -341,7 +354,10 @@ void TestConstructionAndCanaries()
     CHECK((alignment & (alignment - 1u)) == 0);
     CHECK(archive::EffectTableSaveEntryCount(nullptr) == 0);
     CHECK(archive::DestroyEffectTableSaveSnapshot(nullptr));
-    CHECK(archive::ConstructEffectTableSaveSnapshot(nullptr, size)
+    CHECK(archive::ConstructEffectTableSaveSnapshot(
+        nullptr,
+        size,
+        archive::EffectTableSaveKeyPolicy::LegacyPointerBits)
         == nullptr);
 
     std::vector<std::uint8_t> raw(size + alignment + 1u, 0xC7u);
@@ -352,12 +368,20 @@ void TestConstructionAndCanaries()
         & ~(static_cast<std::uintptr_t>(alignment - 1u));
     auto *const alignedStorage = reinterpret_cast<void *>(aligned);
     CHECK(archive::ConstructEffectTableSaveSnapshot(
-        alignedStorage, size - 1u) == nullptr);
+        alignedStorage,
+        size,
+        static_cast<archive::EffectTableSaveKeyPolicy>(0xFFu)) == nullptr);
+    CHECK(archive::ConstructEffectTableSaveSnapshot(
+        alignedStorage,
+        size - 1u,
+        archive::EffectTableSaveKeyPolicy::LegacyPointerBits) == nullptr);
     if (alignment > 1u)
     {
         auto *const misaligned = reinterpret_cast<void *>(aligned + 1u);
         CHECK(archive::ConstructEffectTableSaveSnapshot(
-            misaligned, size) == nullptr);
+            misaligned,
+            size,
+            archive::EffectTableSaveKeyPolicy::LegacyPointerBits) == nullptr);
     }
 
     SnapshotStorage storage;
@@ -396,7 +420,7 @@ void CheckStickyCaptureFailure(
 {
     SnapshotStorage storage;
     archive::EffectTableSaveSnapshot *const snapshot = storage.get();
-    CHECK(archive::AppendEffectTableSaveEntryNoReport(
+    CHECK(archive::AppendEffectTableSaveDefinitionNoReport(
         snapshot, name, key) == expectedStatus);
     CHECK(archive::EffectTableSaveEntryCount(snapshot) == 0);
     CHECK(archive::ValidateEffectTableSaveSnapshotNoReport(snapshot)
@@ -472,7 +496,7 @@ void TestCaptureFailures()
     AppendEntries(snapshot, entries);
     CHECK(archive::EffectTableSaveEntryCount(snapshot)
         == archive::EFFECT_TABLE_RESTORE_CAPACITY);
-    CHECK(archive::AppendEffectTableSaveEntryNoReport(
+    CHECK(archive::AppendEffectTableSaveDefinitionNoReport(
         snapshot, "fx/overflow", 2001u)
         == archive::EffectTableSaveStatus::CapacityExceeded);
     CHECK(archive::EffectTableSaveEntryCount(snapshot)
@@ -542,35 +566,140 @@ void TestDuplicatePolicies()
     CheckSuccessfulWrite(sameNameDifferentKeys);
 }
 
+void TestOpaqueSequentialKeys()
+{
+    const std::uintptr_t firstIdentity = OpaqueIdentity(1u);
+    const std::uintptr_t secondIdentity = OpaqueIdentity(2u);
+    const std::vector<EntrySpec> expected{
+        {"fx/repeated", 1u},
+        {"fx/repeated", 1u},
+        {"fx/repeated", 2u},
+    };
+
+    const auto capture = [&](const std::uintptr_t first,
+                             const std::uintptr_t second) {
+        SnapshotStorage storage(
+            archive::EffectTableSaveKeyPolicy::OpaqueSequential);
+        archive::EffectTableSaveSnapshot *const snapshot = storage.get();
+        CHECK(archive::AppendEffectTableSaveDefinitionNoReport(
+            snapshot, "fx/repeated", first)
+            == archive::EffectTableSaveStatus::Success);
+        CHECK(archive::AppendEffectTableSaveDefinitionNoReport(
+            snapshot, "fx/repeated", first)
+            == archive::EffectTableSaveStatus::Success);
+        CHECK(archive::AppendEffectTableSaveDefinitionNoReport(
+            snapshot, "fx/repeated", second)
+            == archive::EffectTableSaveStatus::Success);
+        CHECK(archive::ValidateEffectTableSaveSnapshotNoReport(snapshot)
+            == archive::EffectTableSaveStatus::Success);
+
+        archive::EffectDefinitionKey32 key{0xDEADBEEFu};
+        CHECK(archive::FindEffectTableSaveDefinitionKey(
+            snapshot, first, &key));
+        CHECK(key.value == 1u);
+        CHECK(archive::FindEffectTableSaveDefinitionKey(
+            snapshot, second, &key));
+        CHECK(key.value == 2u);
+
+        const std::vector<std::uint8_t> expectedBytes =
+            MakeLogicalBytes(expected);
+        ByteWriterState writer(expectedBytes.size(), expected.size() * 2u + 1u);
+        CHECK(archive::WriteEffectTableSaveSnapshotNoReport(
+            snapshot, Callbacks(&writer))
+            == archive::EffectTableSaveStatus::Success);
+        CHECK(ObservedBytes(writer) == expectedBytes);
+        storage.CheckCanaries();
+        return ObservedBytes(writer);
+    };
+
+    const std::vector<std::uint8_t> firstBytes =
+        capture(firstIdentity, secondIdentity);
+    const std::vector<std::uint8_t> relocatedBytes =
+        capture(OpaqueIdentity(101u), OpaqueIdentity(202u));
+    CHECK(firstBytes == relocatedBytes);
+
+    {
+        SnapshotStorage storage(
+            archive::EffectTableSaveKeyPolicy::OpaqueSequential);
+        archive::EffectTableSaveSnapshot *const snapshot = storage.get();
+        CHECK(archive::AppendEffectTableSaveDefinitionNoReport(
+            snapshot, "fx/first", firstIdentity)
+            == archive::EffectTableSaveStatus::Success);
+        CHECK(archive::AppendEffectTableSaveDefinitionNoReport(
+            snapshot, "fx/second", firstIdentity)
+            == archive::EffectTableSaveStatus::Success);
+        CHECK(archive::ValidateEffectTableSaveSnapshotNoReport(snapshot)
+            == archive::EffectTableSaveStatus::ConflictingDuplicate);
+    }
+
+    {
+        SnapshotStorage storage(
+            archive::EffectTableSaveKeyPolicy::OpaqueSequential);
+        archive::EffectTableSaveSnapshot *const snapshot = storage.get();
+        for (std::size_t index = 0;
+             index < archive::EFFECT_TABLE_RESTORE_CAPACITY;
+             ++index)
+        {
+            const std::string name = "fx/opaque" + std::to_string(index);
+            CHECK(archive::AppendEffectTableSaveDefinitionNoReport(
+                snapshot, name.c_str(), OpaqueIdentity(index + 1u))
+                == archive::EffectTableSaveStatus::Success);
+        }
+        CHECK(archive::ValidateEffectTableSaveSnapshotNoReport(snapshot)
+            == archive::EffectTableSaveStatus::Success);
+        archive::EffectDefinitionKey32 key{};
+        CHECK(archive::FindEffectTableSaveDefinitionKey(
+            snapshot,
+            OpaqueIdentity(archive::EFFECT_TABLE_RESTORE_CAPACITY),
+            &key));
+        CHECK(key.value == archive::EFFECT_TABLE_RESTORE_CAPACITY);
+    }
+}
+
 void TestValidatedKeyMembership()
 {
     SnapshotStorage storage;
     archive::EffectTableSaveSnapshot *const snapshot = storage.get();
-    CHECK(!archive::EffectTableSaveSnapshotContainsKey(nullptr, 1u));
-    CHECK(!archive::EffectTableSaveSnapshotContainsKey(snapshot, 1u));
+    archive::EffectDefinitionKey32 diskKey{0xA5A5A5A5u};
+    CHECK(!archive::FindEffectTableSaveDefinitionKey(
+        nullptr, 1u, &diskKey));
+    CHECK(diskKey.value == 0xA5A5A5A5u);
+    CHECK(!archive::FindEffectTableSaveDefinitionKey(
+        snapshot, 1u, &diskKey));
+    CHECK(diskKey.value == 0xA5A5A5A5u);
 
     const std::vector<EntrySpec> entries{
         {"fx/first", 0x01020304u},
         {"fx/last", 0xFFFFFFFFu},
     };
     AppendEntries(snapshot, entries);
-    CHECK(!archive::EffectTableSaveSnapshotContainsKey(
-        snapshot, entries.front().key));
+    CHECK(!archive::FindEffectTableSaveDefinitionKey(
+        snapshot, entries.front().key, &diskKey));
+    CHECK(diskKey.value == 0xA5A5A5A5u);
     CHECK(archive::ValidateEffectTableSaveSnapshotNoReport(snapshot)
         == archive::EffectTableSaveStatus::Success);
-    CHECK(archive::EffectTableSaveSnapshotContainsKey(
-        snapshot, entries.front().key));
-    CHECK(archive::EffectTableSaveSnapshotContainsKey(
-        snapshot, entries.back().key));
-    CHECK(!archive::EffectTableSaveSnapshotContainsKey(snapshot, 0u));
-    CHECK(!archive::EffectTableSaveSnapshotContainsKey(
-        snapshot, 0x11223344u));
+    CHECK(archive::FindEffectTableSaveDefinitionKey(
+        snapshot, entries.front().key, &diskKey));
+    CHECK(diskKey.value == entries.front().key);
+    CHECK(archive::FindEffectTableSaveDefinitionKey(
+        snapshot, entries.back().key, &diskKey));
+    CHECK(diskKey.value == entries.back().key);
+    diskKey.value = 0xA5A5A5A5u;
+    CHECK(!archive::FindEffectTableSaveDefinitionKey(
+        snapshot, 0u, &diskKey));
+    CHECK(!archive::FindEffectTableSaveDefinitionKey(
+        snapshot, 0x11223344u, &diskKey));
+    CHECK(!archive::FindEffectTableSaveDefinitionKey(
+        snapshot, entries.front().key, nullptr));
+    CHECK(diskKey.value == 0xA5A5A5A5u);
 #if UINTPTR_MAX > UINT32_MAX
-    CHECK(!archive::EffectTableSaveSnapshotContainsKey(
+    CHECK(!archive::FindEffectTableSaveDefinitionKey(
         snapshot,
         static_cast<std::uintptr_t>(
             (std::numeric_limits<std::uint32_t>::max)())
-            + std::uintptr_t{1}));
+            + std::uintptr_t{1},
+        &diskKey));
+    CHECK(diskKey.value == 0xA5A5A5A5u);
 #endif
 
     const std::vector<std::uint8_t> expected =
@@ -581,8 +710,8 @@ void TestValidatedKeyMembership()
     CHECK(archive::WriteEffectTableSaveSnapshotNoReport(
         snapshot, Callbacks(&writer))
         == archive::EffectTableSaveStatus::Success);
-    CHECK(!archive::EffectTableSaveSnapshotContainsKey(
-        snapshot, entries.front().key));
+    CHECK(!archive::FindEffectTableSaveDefinitionKey(
+        snapshot, entries.front().key, &diskKey));
     storage.CheckCanaries();
 }
 
@@ -602,12 +731,12 @@ void TestInvalidStateAndMissingWriter()
     {
         SnapshotStorage storage;
         archive::EffectTableSaveSnapshot *const snapshot = storage.get();
-        CHECK(archive::AppendEffectTableSaveEntryNoReport(
+        CHECK(archive::AppendEffectTableSaveDefinitionNoReport(
             snapshot, "fx/state", 41u)
             == archive::EffectTableSaveStatus::Success);
         CHECK(archive::ValidateEffectTableSaveSnapshotNoReport(snapshot)
             == archive::EffectTableSaveStatus::Success);
-        CHECK(archive::AppendEffectTableSaveEntryNoReport(
+        CHECK(archive::AppendEffectTableSaveDefinitionNoReport(
             snapshot, "fx/late", 42u)
             == archive::EffectTableSaveStatus::InvalidState);
         ByteWriterState writer(32, 3);
@@ -628,7 +757,7 @@ void TestInvalidStateAndMissingWriter()
             == archive::EffectTableSaveStatus::InvalidArgument);
     }
 
-    CHECK(archive::AppendEffectTableSaveEntryNoReport(
+    CHECK(archive::AppendEffectTableSaveDefinitionNoReport(
         nullptr, "fx/null", 1u)
         == archive::EffectTableSaveStatus::InvalidArgument);
     CHECK(archive::ValidateEffectTableSaveSnapshotNoReport(nullptr)
@@ -718,7 +847,7 @@ bool ReenterSaveSnapshot(
     {
     case ReentryOperation::Append:
         state->nestedStatus =
-            archive::AppendEffectTableSaveEntryNoReport(
+            archive::AppendEffectTableSaveDefinitionNoReport(
                 state->snapshot, "fx/reentrant", 0x42u);
         break;
     case ReentryOperation::Validate:
@@ -751,7 +880,7 @@ void TestWriterReentry()
     {
         SnapshotStorage storage;
         archive::EffectTableSaveSnapshot *const snapshot = storage.get();
-        CHECK(archive::AppendEffectTableSaveEntryNoReport(
+        CHECK(archive::AppendEffectTableSaveDefinitionNoReport(
             snapshot, "fx/outer", 0x41u)
             == archive::EffectTableSaveStatus::Success);
         CHECK(archive::ValidateEffectTableSaveSnapshotNoReport(snapshot)
@@ -980,11 +1109,11 @@ void RunMemFileRoundTrip(
     CHECK(!restoreState.mismatch);
     for (std::size_t index = 0; index < restoredEntries.size(); ++index)
     {
-        std::uint32_t key = 0;
+        archive::EffectDefinitionKey32 key{};
         const void *definition = nullptr;
         CHECK(archive::EffectTableRestoreGetEntry(
             restored.lease, index, &key, &definition));
-        CHECK(key
+        CHECK(key.value
             == static_cast<std::uint32_t>(restoredEntries[index].key));
         CHECK(definition == &restoreState.definitions[index]);
     }
@@ -1170,6 +1299,7 @@ int main()
     TestCaptureFailures();
     TestInvalidNames();
     TestDuplicatePolicies();
+    TestOpaqueSequentialKeys();
     TestValidatedKeyMembership();
     TestInvalidStateAndMissingWriter();
     TestWriterFailures();

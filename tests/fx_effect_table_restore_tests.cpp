@@ -291,19 +291,20 @@ void CheckLeaseEntries(
     CHECK(result.entryCount == expectedEntries.size());
     for (std::size_t index = 0; index < expectedEntries.size(); ++index)
     {
-        std::uint32_t key = 0xFFFFFFFFu;
+        archive::EffectDefinitionKey32 key{0xFFFFFFFFu};
         const void *definition = reinterpret_cast<const void *>(
             static_cast<std::uintptr_t>(1));
         CHECK(archive::EffectTableRestoreGetEntry(
             result.lease, index, &key, &definition));
-        CHECK(key == expectedEntries[index].key);
+        CHECK(key.value == expectedEntries[index].key);
         CHECK(definition == &state.definitions[index]);
         CHECK(archive::EffectTableRestoreFind(
-            result.lease, expectedEntries[index].key)
+            result.lease,
+            archive::EffectDefinitionKey32{expectedEntries[index].key})
             == &state.definitions[index]);
     }
 
-    std::uint32_t sentinelKey = 0xA5A5A5A5u;
+    archive::EffectDefinitionKey32 sentinelKey{0xA5A5A5A5u};
     const void *sentinelDefinition = reinterpret_cast<const void *>(
         static_cast<std::uintptr_t>(3));
     CHECK(!archive::EffectTableRestoreGetEntry(
@@ -311,14 +312,15 @@ void CheckLeaseEntries(
         expectedEntries.size(),
         &sentinelKey,
         &sentinelDefinition));
-    CHECK(sentinelKey == 0xA5A5A5A5u);
+    CHECK(sentinelKey.value == 0xA5A5A5A5u);
     CHECK(sentinelDefinition == reinterpret_cast<const void *>(
         static_cast<std::uintptr_t>(3)));
     CHECK(!archive::EffectTableRestoreGetEntry(
         result.lease, 0, nullptr, &sentinelDefinition));
     CHECK(!archive::EffectTableRestoreGetEntry(
         result.lease, 0, &sentinelKey, nullptr));
-    CHECK(archive::EffectTableRestoreFind(result.lease, 0) == nullptr);
+    CHECK(archive::EffectTableRestoreFind(
+        result.lease, archive::EffectDefinitionKey32{0}) == nullptr);
 }
 
 void RunSuccessfulRestore(
@@ -366,11 +368,12 @@ void RunSuccessfulRestore(
     CHECK(archive::ReleaseEffectTableRestore(result.lease)
         == archive::EffectTableRestoreStatus::Success);
     CHECK(!archive::EffectTableRestoreLeaseIsActive());
-    std::uint32_t key = 0;
+    archive::EffectDefinitionKey32 key{};
     const void *definition = nullptr;
     CHECK(!archive::EffectTableRestoreGetEntry(
         result.lease, 0, &key, &definition));
-    CHECK(archive::EffectTableRestoreFind(result.lease, 1) == nullptr);
+    CHECK(archive::EffectTableRestoreFind(
+        result.lease, archive::EffectDefinitionKey32{1}) == nullptr);
     CloseReader(reader);
 }
 
@@ -937,14 +940,17 @@ void TestBusyStaleLeaseAndReuse()
             402u,
             MakeCallbacks(&secondState));
     CHECK(second.status == archive::EffectTableRestoreStatus::Success);
-    CHECK(archive::EffectTableRestoreFind(second.lease, 301u) == nullptr);
-    CHECK(archive::EffectTableRestoreFind(second.lease, 401u)
+    CHECK(archive::EffectTableRestoreFind(
+        second.lease, archive::EffectDefinitionKey32{301u}) == nullptr);
+    CHECK(archive::EffectTableRestoreFind(
+        second.lease, archive::EffectDefinitionKey32{401u})
         == &secondState.definitions[0]);
 
     CHECK(archive::ReleaseEffectTableRestore(first.lease)
         == archive::EffectTableRestoreStatus::OwnerMismatch);
     CHECK(archive::EffectTableRestoreLeaseIsActive());
-    CHECK(archive::EffectTableRestoreFind(second.lease, 401u)
+    CHECK(archive::EffectTableRestoreFind(
+        second.lease, archive::EffectDefinitionKey32{401u})
         == &secondState.definitions[0]);
     CHECK(archive::ReleaseEffectTableRestore(second.lease)
         == archive::EffectTableRestoreStatus::Success);
@@ -1031,7 +1037,8 @@ void TestForeignOwnerAndContention()
     CHECK(contenderStatus == archive::EffectTableRestoreStatus::Busy);
     CHECK(contenderCursorUnchanged);
     CHECK(archive::EffectTableRestoreLeaseIsActive());
-    CHECK(archive::EffectTableRestoreFind(held.lease, 501u)
+    CHECK(archive::EffectTableRestoreFind(
+        held.lease, archive::EffectDefinitionKey32{501u})
         == &state.definitions[0]);
     CHECK(archive::ReleaseEffectTableRestore(held.lease)
         == archive::EffectTableRestoreStatus::Success);
@@ -1063,8 +1070,10 @@ void TestFailedCapacityClearsStaleWorkspace()
             MakeCallbacks(&state));
     CHECK(result.status == archive::EffectTableRestoreStatus::Success);
     CHECK(result.entryCount == 1u);
-    CHECK(archive::EffectTableRestoreFind(result.lease, 1u) == nullptr);
-    CHECK(archive::EffectTableRestoreFind(result.lease, 7001u)
+    CHECK(archive::EffectTableRestoreFind(
+        result.lease, archive::EffectDefinitionKey32{1u}) == nullptr);
+    CHECK(archive::EffectTableRestoreFind(
+        result.lease, archive::EffectDefinitionKey32{7001u})
         == &state.definitions[0]);
     CHECK(archive::ReleaseEffectTableRestore(result.lease)
         == archive::EffectTableRestoreStatus::Success);

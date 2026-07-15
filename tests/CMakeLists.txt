@@ -225,6 +225,22 @@ set_target_properties(kisakcod-disk32-tests PROPERTIES
 )
 add_test(NAME disk32-pointer-token-bounds COMMAND kisakcod-disk32-tests)
 
+add_executable(kisakcod-fx-archive-disk32-tests
+    fx_archive_disk32_tests.cpp
+    ${SRC_DIR}/EffectsCore/fx_archive_disk32.cpp
+)
+target_include_directories(kisakcod-fx-archive-disk32-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-fx-archive-disk32-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-fx-archive-disk32-tests)
+set_target_properties(kisakcod-fx-archive-disk32-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-archive-disk32-codec
+    COMMAND kisakcod-fx-archive-disk32-tests
+)
+set_tests_properties(effectscore-archive-disk32-codec PROPERTIES TIMEOUT 10)
+
 add_executable(kisakcod-db-relocation-tests
     db_relocation_tests.cpp
     ${SRC_DIR}/database/db_relocation.cpp

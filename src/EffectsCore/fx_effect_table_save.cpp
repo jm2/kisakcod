@@ -17,7 +17,8 @@ struct EffectTableSaveSnapshot final
     struct Record
     {
         char name[EFFECT_TABLE_RESTORE_NAME_CAPACITY];
-        std::uint32_t key;
+        std::uintptr_t nativeIdentity;
+        EffectDefinitionKey32 diskKey;
     };
 
     enum class Phase : std::uint8_t
@@ -31,13 +32,18 @@ struct EffectTableSaveSnapshot final
 
     Record records[EFFECT_TABLE_RESTORE_CAPACITY];
     std::size_t entryCount;
+    std::uint32_t nextOpaqueKey;
     Phase phase;
     EffectTableSaveStatus status;
+    EffectTableSaveKeyPolicy keyPolicy;
 
-    EffectTableSaveSnapshot() noexcept
+    explicit EffectTableSaveSnapshot(
+        const EffectTableSaveKeyPolicy policy) noexcept
         : entryCount(0),
+          nextOpaqueKey(1),
           phase(Phase::Capturing),
-          status(EffectTableSaveStatus::Success)
+          status(EffectTableSaveStatus::Success),
+          keyPolicy(policy)
     {
     }
 
@@ -46,8 +52,8 @@ struct EffectTableSaveSnapshot final
 
 static_assert(EFFECT_TABLE_RESTORE_CAPACITY == 1024);
 static_assert(EFFECT_TABLE_RESTORE_NAME_CAPACITY == 64);
-RUNTIME_SIZE(EffectTableSaveSnapshot::Record, 0x44, 0x44);
-RUNTIME_SIZE(EffectTableSaveSnapshot, 0x11008, 0x11010);
+RUNTIME_SIZE(EffectTableSaveSnapshot::Record, 0x48, 0x50);
+RUNTIME_SIZE(EffectTableSaveSnapshot, 0x1200C, 0x14010);
 
 namespace
 {
@@ -91,6 +97,12 @@ bool RecordNamesEqual(
             return true;
     }
     return false;
+}
+
+bool KeyPolicyIsValid(const EffectTableSaveKeyPolicy policy) noexcept
+{
+    return policy == EffectTableSaveKeyPolicy::LegacyPointerBits
+        || policy == EffectTableSaveKeyPolicy::OpaqueSequential;
 }
 
 EffectTableSaveStatus WriteBytes(
@@ -141,9 +153,11 @@ std::size_t EffectTableSaveSnapshotAlignment() noexcept
 
 EffectTableSaveSnapshot *ConstructEffectTableSaveSnapshot(
     void *const storage,
-    const std::size_t storageSize) noexcept
+    const std::size_t storageSize,
+    const EffectTableSaveKeyPolicy keyPolicy) noexcept
 {
     if (!storage || storageSize < sizeof(EffectTableSaveSnapshot)
+        || !KeyPolicyIsValid(keyPolicy)
         || reinterpret_cast<std::uintptr_t>(storage)
                 % alignof(EffectTableSaveSnapshot)
             != 0)
@@ -151,7 +165,7 @@ EffectTableSaveSnapshot *ConstructEffectTableSaveSnapshot(
         return nullptr;
     }
 
-    return ::new (storage) EffectTableSaveSnapshot();
+    return ::new (storage) EffectTableSaveSnapshot(keyPolicy);
 }
 
 bool DestroyEffectTableSaveSnapshot(
@@ -165,10 +179,10 @@ bool DestroyEffectTableSaveSnapshot(
     return true;
 }
 
-EffectTableSaveStatus AppendEffectTableSaveEntryNoReport(
+EffectTableSaveStatus AppendEffectTableSaveDefinitionNoReport(
     EffectTableSaveSnapshot *const snapshot,
     const char *const name,
-    const std::uintptr_t key) noexcept
+    const std::uintptr_t nativeIdentity) noexcept
 {
     if (!snapshot)
         return EffectTableSaveStatus::InvalidArgument;
@@ -178,12 +192,8 @@ EffectTableSaveStatus AppendEffectTableSaveEntryNoReport(
         return Fail(snapshot, EffectTableSaveStatus::InvalidState);
     if (!name)
         return Fail(snapshot, EffectTableSaveStatus::InvalidArgument);
-    if (key == 0
-        || key > static_cast<std::uintptr_t>(
-            (std::numeric_limits<std::uint32_t>::max)()))
-    {
+    if (nativeIdentity == 0)
         return Fail(snapshot, EffectTableSaveStatus::InvalidKey);
-    }
     if (snapshot->entryCount >= EFFECT_TABLE_RESTORE_CAPACITY)
         return Fail(snapshot, EffectTableSaveStatus::CapacityExceeded);
 
@@ -191,10 +201,46 @@ EffectTableSaveStatus AppendEffectTableSaveEntryNoReport(
     if (!BoundedNameLength(name, &nameLength))
         return Fail(snapshot, EffectTableSaveStatus::NameTooLong);
 
+    EffectDefinitionKey32 diskKey{};
+    if (snapshot->keyPolicy
+        == EffectTableSaveKeyPolicy::LegacyPointerBits)
+    {
+        if (nativeIdentity > static_cast<std::uintptr_t>(
+                (std::numeric_limits<std::uint32_t>::max)()))
+        {
+            return Fail(snapshot, EffectTableSaveStatus::InvalidKey);
+        }
+        diskKey.value = static_cast<std::uint32_t>(nativeIdentity);
+    }
+    else if (snapshot->keyPolicy
+             == EffectTableSaveKeyPolicy::OpaqueSequential)
+    {
+        for (std::size_t index = 0; index < snapshot->entryCount; ++index)
+        {
+            if (snapshot->records[index].nativeIdentity == nativeIdentity)
+            {
+                diskKey = snapshot->records[index].diskKey;
+                break;
+            }
+        }
+        if (!EffectDefinitionKeyIsValid(diskKey))
+        {
+            if (snapshot->nextOpaqueKey == 0)
+                return Fail(snapshot, EffectTableSaveStatus::InvalidKey);
+            diskKey.value = snapshot->nextOpaqueKey;
+            ++snapshot->nextOpaqueKey;
+        }
+    }
+    else
+    {
+        return Fail(snapshot, EffectTableSaveStatus::InvalidState);
+    }
+
     EffectTableSaveSnapshot::Record &record =
         snapshot->records[snapshot->entryCount];
     std::memcpy(record.name, name, nameLength + 1u);
-    record.key = static_cast<std::uint32_t>(key);
+    record.nativeIdentity = nativeIdentity;
+    record.diskKey = diskKey;
     ++snapshot->entryCount;
     return EffectTableSaveStatus::Success;
 }
@@ -218,15 +264,31 @@ EffectTableSaveStatus ValidateEffectTableSaveSnapshotNoReport(
             return Fail(snapshot, EffectTableSaveStatus::NameTooLong);
         if (!EffectTableRestoreNameIsValid(record.name))
             return Fail(snapshot, EffectTableSaveStatus::InvalidName);
-        if (record.key == 0)
+        if (record.nativeIdentity == 0
+            || !EffectDefinitionKeyIsValid(record.diskKey))
             return Fail(snapshot, EffectTableSaveStatus::InvalidKey);
+        if (snapshot->keyPolicy
+                == EffectTableSaveKeyPolicy::LegacyPointerBits
+            && (record.nativeIdentity > static_cast<std::uintptr_t>(
+                    (std::numeric_limits<std::uint32_t>::max)())
+                || record.diskKey.value
+                    != static_cast<std::uint32_t>(record.nativeIdentity)))
+        {
+            return Fail(snapshot, EffectTableSaveStatus::InvalidKey);
+        }
 
         for (std::size_t previous = 0; previous < index; ++previous)
         {
             const EffectTableSaveSnapshot::Record &other =
                 snapshot->records[previous];
-            if (other.key == record.key
-                && !RecordNamesEqual(other, record))
+            if (other.nativeIdentity == record.nativeIdentity
+                && other.diskKey.value != record.diskKey.value)
+            {
+                return Fail(snapshot, EffectTableSaveStatus::InvalidState);
+            }
+            if (other.diskKey.value == record.diskKey.value
+                && (other.nativeIdentity != record.nativeIdentity
+                    || !RecordNamesEqual(other, record)))
             {
                 return Fail(
                     snapshot,
@@ -239,25 +301,26 @@ EffectTableSaveStatus ValidateEffectTableSaveSnapshotNoReport(
     return EffectTableSaveStatus::Success;
 }
 
-bool EffectTableSaveSnapshotContainsKey(
+bool FindEffectTableSaveDefinitionKey(
     const EffectTableSaveSnapshot *const snapshot,
-    const std::uintptr_t key) noexcept
+    const std::uintptr_t nativeIdentity,
+    EffectDefinitionKey32 *const outKey) noexcept
 {
     if (!snapshot
         || snapshot->status != EffectTableSaveStatus::Success
         || snapshot->phase != EffectTableSaveSnapshot::Phase::Validated
-        || key == 0
-        || key > static_cast<std::uintptr_t>(
-            (std::numeric_limits<std::uint32_t>::max)()))
+        || nativeIdentity == 0 || !outKey)
     {
         return false;
     }
 
-    const std::uint32_t narrowedKey = static_cast<std::uint32_t>(key);
     for (std::size_t index = 0; index < snapshot->entryCount; ++index)
     {
-        if (snapshot->records[index].key == narrowedKey)
+        if (snapshot->records[index].nativeIdentity == nativeIdentity)
+        {
+            *outKey = snapshot->records[index].diskKey;
             return true;
+        }
     }
     return false;
 }
@@ -284,7 +347,8 @@ EffectTableSaveStatus WriteEffectTableSaveSnapshotNoReport(
             snapshot->records[index];
         std::size_t nameLength = 0;
         if (!BoundedNameLength(record.name, &nameLength)
-            || record.key == 0)
+            || record.nativeIdentity == 0
+            || !EffectDefinitionKeyIsValid(record.diskKey))
         {
             const EffectTableSaveStatus status =
                 Fail(snapshot, EffectTableSaveStatus::InvalidState);
@@ -301,10 +365,10 @@ EffectTableSaveStatus WriteEffectTableSaveSnapshotNoReport(
             return status;
 
         const std::uint8_t keyBytes[4]{
-            static_cast<std::uint8_t>(record.key),
-            static_cast<std::uint8_t>(record.key >> 8u),
-            static_cast<std::uint8_t>(record.key >> 16u),
-            static_cast<std::uint8_t>(record.key >> 24u),
+            static_cast<std::uint8_t>(record.diskKey.value),
+            static_cast<std::uint8_t>(record.diskKey.value >> 8u),
+            static_cast<std::uint8_t>(record.diskKey.value >> 16u),
+            static_cast<std::uint8_t>(record.diskKey.value >> 24u),
         };
         status = WriteBytes(
             snapshot,

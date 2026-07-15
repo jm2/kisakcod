@@ -3610,7 +3610,7 @@ extract_security_slice(
     "bounded FX effect-table capture callbacks")
 require_security_slice_contains(
     _fx_effect_table_capture_callbacks
-    "AppendEffectTableSaveEntryNoReport("
+    "AppendEffectTableSaveDefinitionNoReport("
     "FX archive database callbacks must only append bounded records")
 foreach(_forbidden_effect_table_callback_call
     "MemFile_"
@@ -3643,7 +3643,7 @@ extract_security_slice(
     "FX copied effect-definition admission")
 require_security_slice_contains(
     _fx_effect_table_graph_admission
-    "EffectTableSaveSnapshotContainsKey("
+    "FindEffectTableSaveDefinitionKey("
     "copied effect-definition pointers must be represented by the staged table")
 require_security_slice_contains(
     _fx_effect_table_graph_admission
