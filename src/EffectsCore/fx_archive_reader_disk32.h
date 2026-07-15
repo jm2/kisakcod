@@ -75,6 +75,8 @@ struct FxArchiveDisk32ReaderReadyView;
 // because the streaming cursor is not rolled back. The lease is borrowed and
 // is never released or abandoned by this helper. Production graph publication
 // and live physics are deliberately outside this portable staging boundary.
+// All access to one workspace, including phase/view reads, requires caller
+// synchronization; the reentry guard is not a cross-thread lock.
 [[nodiscard]] FxArchiveDisk32ReaderStatus TryReadFxArchiveDisk32NoReport(
     MemoryFile *memFile,
     const EffectTableRestoreLease &lease,
