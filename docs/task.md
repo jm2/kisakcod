@@ -6,10 +6,19 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-effect-table-restore`; branch point: merged silent MemoryFile checkpoint
-  `4f84ffca`; upstream-integration baseline: `2b759db`.
+- Active branch: `agent/fx-effect-table-save-snapshot`; branch point: merged transactional effect-table restore
+  checkpoint `885ec28a`; upstream-integration baseline: `2b759db`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint: the legacy `FX_RestoreEffectDefTable` stack image has been replaced by a bounded lifecycle-owned
+- Active checkpoint: capture the save-side FX definition table into a bounded heap-owned snapshot while the database
+  read lock is held, then validate and serialize only after enumeration releases that ownership. The batch will preserve
+  valid legacy Disk32 bytes and enumeration order, use explicit little-endian keys, reject unrepresentable/zero/conflicting
+  keys and archive-unsafe names before the first write, keep callbacks allocation/report/write-free, and pair raw/zlib
+  round trips with source-scoped 4 KiB helper frame gates plus a constrained-stack runtime exercise. Windows x86
+  production compilation remains authoritative; a narrowly scoped MSVC analysis gate will be calibrated without enabling
+  noisy repository-wide analysis.
+- PR #19 squash-merged as `885ec28a` after run **29387860025 passed all nine CI jobs**. Gemini reported no findings,
+  Codex found no major issue at reviewed head `cd0f1363a4`, and there were no inline review threads. The legacy
+  `FX_RestoreEffectDefTable` stack image is now a bounded lifecycle-owned
   BSS transaction. It caps raw records at 1,024, reads every 1--63 byte name and four-byte key through the report-free
   MemoryFile boundary, decodes keys explicitly little-endian, rejects zero/conflicting keys, and collapses only exact
   duplicate key/name pairs before the first registration. Name validation now also blocks traversal, Win32-invalid
@@ -25,7 +34,7 @@ work item changes. Do not create session-specific handoff files.
   owner contention with zero engine reports. Local GCC, Clang, ASan+UBSan, and TSan suites are **50/50** green; strict
   helper/test/atomic compilation passes for x86-32 and AArch64; two independent audits found and verified the late-key
   coverage and Win32 device-name fixes and report no remaining batch issue. The authoritative Windows x86 production
-  compile and five-target utility matrix remain the PR CI gate.
+  compile and five-target utility matrix passed at the merge head.
 - PR #18 squash-merged as `4f84ffca`. Initial run **29385108870** exposed one macOS arm64-only build seam: the bundled
   zlib header suppresses its `Byte` typedef whenever modern AppleClang defines the legacy `TARGET_OS_MAC` marker, although
   modern Darwin no longer makes that classic-Mac typedef visible. The focused correction keeps the classic compiler
@@ -76,8 +85,8 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: finish review/CI for the effect-table checkpoint, then bound the save-side definition snapshot outside database
-  read ownership and add measured source-scoped Windows x86 plus portable extracted-TU stack/runtime gates.
+- Next: complete the bounded save-side definition snapshot outside database read ownership and its measured source-scoped
+  Windows x86 plus portable extracted-TU stack/runtime gates; then begin fixed Disk32 FX archive mirrors and converters.
 - Restore-workspace checkpoint: PR #15 merged as `1ea12d76` after final CI run **29364493294 passed all nine
   jobs**; duplicate merge-push run **29365086642** also passed. This checkpoint completed checked heap-backed FX
   archive restore scratch. One explicitly constructed,
