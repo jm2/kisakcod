@@ -6,10 +6,10 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-disk32-native-structural`; branch point: merged FxSystemBuffers Disk32 checkpoint `09c05e5f`;
+- Active branch: `agent/fx-disk32-native-ready`; branch point: merged native structural checkpoint `6642d0d2`;
   current upstream-integration baseline: merge `11a9e08c` through upstream `312a9d2e`.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
-- Active checkpoint implementation is complete in `7bd25acb`: the 327,128-byte native64 / 310,672-byte x86 heap-owned
+- Merged structural checkpoint: the 327,128-byte native64 / 310,672-byte x86 heap-owned
   `FxArchiveDisk32NativeWorkspace` decodes the fixed system and metadata, reconstructs all three pool free lists, resolves
   only active definition keys without dereferencing returned definitions, converts every effect, and placement-constructs
   the correct native member of every pool slot. It preserves validated free links plus opaque trailing bytes under exact
@@ -29,7 +29,9 @@ work item changes. Do not create session-specific handoff files.
   offset. It also addresses both actionable Gemini threads: visibility selectors are redundantly bounded before native
   pointer derivation, and fixed/native padding extents are compile-time equal. Replacement run **29435390924 passed all nine
   jobs** at exact implementation head `cbd82d79`; both threads are answered and resolved, and an independent correction
-  audit found no remaining correctness, ABI, security, portability, test, or documentation blocker.
+  audit found no remaining correctness, ABI, security, portability, test, or documentation blocker. PR #26 then
+  squash-merged as `6642d0d2` from final documentation head `0a07f546`; its documentation-only run **29436148095** is
+  still in progress and is being monitored independently of the already-green implementation head.
 - Current structural checkpoint validation: GCC and Clang suites are **62/62** green after the CI/review correction.
   ASan+UBSan (leak detection disabled under the command runner) and TSan are **61/61** green, with the compiler-generated
   static-frame test intentionally
@@ -206,9 +208,8 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Next: land PR #26 after its documentation-only final head inherits the clean review and nine-job matrix. Then add
-  definition-dependent
-  payload activation plus report-free semantic validation to transition the candidate to `Ready`. Full-image raw/zlib
+- Active work: add definition-dependent payload activation plus report-free semantic validation to transition the
+  structural candidate to `Ready`. Full-image raw/zlib
   preflight reading and production reader integration follow only after malformed-input and x86-equivalence fixtures.
   That integration must relink visibility read/write selectors to the live buffers during desired and rollback publication;
   `FX_LinkSystemBuffers` currently links only the base visibility pointer, so copying staged selector pointers would dangle.
