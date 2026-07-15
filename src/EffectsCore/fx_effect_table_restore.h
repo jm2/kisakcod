@@ -66,6 +66,14 @@ struct EffectTableRestoreResult
     std::uint32_t lifecycleGeneration,
     const EffectTableRestoreCallbacks &callbacks) noexcept;
 
+// Revalidates the exact active same-thread lease and its lifecycle handshake
+// without closing the lease or changing the published table. Stale, forged,
+// released, foreign-thread, or callback-abandoned ownership returns
+// OwnerMismatch; a still-owned lease whose lifecycle changed returns
+// LifecycleChanged.
+[[nodiscard]] EffectTableRestoreStatus ValidateEffectTableRestoreLease(
+    const EffectTableRestoreLease &lease) noexcept;
+
 [[nodiscard]] bool EffectTableRestoreGetEntry(
     const EffectTableRestoreLease &lease,
     std::size_t index,

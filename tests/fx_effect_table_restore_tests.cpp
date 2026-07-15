@@ -52,6 +52,8 @@ struct CallbackState
     bool lifecycleValid = true;
     bool lifecycleMismatch = false;
     std::size_t validateCalls = 0;
+    std::size_t abandonOnValidateCall =
+        std::numeric_limits<std::size_t>::max();
 
     std::vector<std::string> expectedNames;
     std::vector<FakeDefinition> definitions;
@@ -92,13 +94,15 @@ bool ValidateLifecycle(
     const std::uint32_t lifecycleGeneration) noexcept
 {
     auto *const state = static_cast<CallbackState *>(context);
-    ++state->validateCalls;
+    const std::size_t attempt = state->validateCalls++;
     if (identity != state->expectedIdentity
         || lifecycleGeneration != state->expectedGeneration)
     {
         state->lifecycleMismatch = true;
         return false;
     }
+    if (attempt == state->abandonOnValidateCall)
+        archive::AbandonCurrentThreadEffectTableRestoreForError();
     return state->lifecycleValid;
 }
 
@@ -797,6 +801,173 @@ void TestLifecycleRejectionAndRelease()
     CloseReader(reader);
 }
 
+void TestExactLeaseValidation()
+{
+    const archive::EffectTableRestoreLease emptyLease{};
+    CHECK(archive::ValidateEffectTableRestoreLease(emptyLease)
+        == archive::EffectTableRestoreStatus::OwnerMismatch);
+    CHECK(!archive::EffectTableRestoreLeaseIsActive());
+
+    {
+        const std::vector<EntrySpec> entries;
+        std::vector<std::uint8_t> archiveBytes =
+            WriteArchive(MakeLogicalTable(entries), false);
+        MemoryFile reader{};
+        InitReader(reader, archiveBytes, false);
+        int identity = 0;
+        constexpr std::uint32_t generation = 74u;
+        CallbackState state = MakeState(&identity, generation, entries);
+        const archive::EffectTableRestoreResult result =
+            archive::RestoreEffectTableNoReport(
+                &reader,
+                &identity,
+                generation,
+                MakeCallbacks(&state));
+        CHECK(result.status == archive::EffectTableRestoreStatus::Success);
+        CHECK(result.entryCount == 0);
+        const std::size_t validateCalls = state.validateCalls;
+        CHECK(archive::ValidateEffectTableRestoreLease(result.lease)
+            == archive::EffectTableRestoreStatus::Success);
+        CHECK(state.validateCalls == validateCalls + 1u);
+        CHECK(archive::EffectTableRestoreLeaseIsActive());
+        CHECK(archive::ReleaseEffectTableRestore(result.lease)
+            == archive::EffectTableRestoreStatus::Success);
+        CHECK(archive::ValidateEffectTableRestoreLease(result.lease)
+            == archive::EffectTableRestoreStatus::OwnerMismatch);
+        CloseReader(reader);
+    }
+
+    archive::EffectTableRestoreLease staleLease{};
+    {
+        const std::vector<EntrySpec> entries{{"fx/lease", 741u}};
+        std::vector<std::uint8_t> archiveBytes =
+            WriteArchive(MakeLogicalTable(entries), true);
+        MemoryFile reader{};
+        InitReader(reader, archiveBytes, true);
+        int identity = 0;
+        constexpr std::uint32_t generation = 742u;
+        CallbackState state = MakeState(&identity, generation, entries);
+        const archive::EffectTableRestoreResult result =
+            archive::RestoreEffectTableNoReport(
+                &reader,
+                &identity,
+                generation,
+                MakeCallbacks(&state));
+        CHECK(result.status == archive::EffectTableRestoreStatus::Success);
+        staleLease = result.lease;
+        CHECK(archive::ValidateEffectTableRestoreLease(result.lease)
+            == archive::EffectTableRestoreStatus::Success);
+
+        const std::size_t validateCalls = state.validateCalls;
+        int foreignIdentity = 0;
+        archive::EffectTableRestoreLease forged = result.lease;
+        forged.identity = &foreignIdentity;
+        CHECK(archive::ValidateEffectTableRestoreLease(forged)
+            == archive::EffectTableRestoreStatus::OwnerMismatch);
+        forged = result.lease;
+        ++forged.lifecycleGeneration;
+        CHECK(archive::ValidateEffectTableRestoreLease(forged)
+            == archive::EffectTableRestoreStatus::OwnerMismatch);
+        forged = result.lease;
+        ++forged.serial;
+        CHECK(archive::ValidateEffectTableRestoreLease(forged)
+            == archive::EffectTableRestoreStatus::OwnerMismatch);
+        forged = result.lease;
+        forged.ownerCookie = &foreignIdentity;
+        CHECK(archive::ValidateEffectTableRestoreLease(forged)
+            == archive::EffectTableRestoreStatus::OwnerMismatch);
+        CHECK(state.validateCalls == validateCalls);
+
+        archive::EffectTableRestoreStatus foreignThreadStatus =
+            archive::EffectTableRestoreStatus::UnsafeFailure;
+        std::thread foreignThread([&]() {
+            foreignThreadStatus =
+                archive::ValidateEffectTableRestoreLease(result.lease);
+        });
+        foreignThread.join();
+        CHECK(foreignThreadStatus
+            == archive::EffectTableRestoreStatus::OwnerMismatch);
+        CHECK(state.validateCalls == validateCalls);
+        CHECK(archive::EffectTableRestoreLeaseIsActive());
+
+        archive::EffectDefinitionKey32 key{0xA5A5A5A5u};
+        const void *definition = reinterpret_cast<const void *>(
+            static_cast<std::uintptr_t>(3));
+        CHECK(archive::EffectTableRestoreGetEntry(
+            result.lease, 0, &key, &definition));
+        CHECK(key.value == entries[0].key);
+        CHECK(definition == &state.definitions[0]);
+
+        state.lifecycleValid = false;
+        CHECK(archive::ValidateEffectTableRestoreLease(result.lease)
+            == archive::EffectTableRestoreStatus::LifecycleChanged);
+        CHECK(archive::EffectTableRestoreLeaseIsActive());
+        state.lifecycleValid = true;
+        CHECK(archive::ValidateEffectTableRestoreLease(result.lease)
+            == archive::EffectTableRestoreStatus::Success);
+        CHECK(archive::EffectTableRestoreFind(
+            result.lease,
+            archive::EffectDefinitionKey32{entries[0].key})
+            == &state.definitions[0]);
+
+        CHECK(archive::ReleaseEffectTableRestore(result.lease)
+            == archive::EffectTableRestoreStatus::Success);
+        CHECK(archive::ValidateEffectTableRestoreLease(result.lease)
+            == archive::EffectTableRestoreStatus::OwnerMismatch);
+        CloseReader(reader);
+    }
+
+    {
+        const std::vector<EntrySpec> entries{{"fx/new-lease", 751u}};
+        std::vector<std::uint8_t> archiveBytes =
+            WriteArchive(MakeLogicalTable(entries), false);
+        MemoryFile reader{};
+        InitReader(reader, archiveBytes, false);
+        int identity = 0;
+        constexpr std::uint32_t generation = 752u;
+        CallbackState state = MakeState(&identity, generation, entries);
+        const archive::EffectTableRestoreResult result =
+            archive::RestoreEffectTableNoReport(
+                &reader,
+                &identity,
+                generation,
+                MakeCallbacks(&state));
+        CHECK(result.status == archive::EffectTableRestoreStatus::Success);
+        CHECK(archive::ValidateEffectTableRestoreLease(staleLease)
+            == archive::EffectTableRestoreStatus::OwnerMismatch);
+        CHECK(archive::ValidateEffectTableRestoreLease(result.lease)
+            == archive::EffectTableRestoreStatus::Success);
+        CHECK(archive::ReleaseEffectTableRestore(result.lease)
+            == archive::EffectTableRestoreStatus::Success);
+        CloseReader(reader);
+    }
+
+    {
+        const std::vector<EntrySpec> entries{{"fx/abandon-lease", 761u}};
+        std::vector<std::uint8_t> archiveBytes =
+            WriteArchive(MakeLogicalTable(entries), false);
+        MemoryFile reader{};
+        InitReader(reader, archiveBytes, false);
+        int identity = 0;
+        constexpr std::uint32_t generation = 762u;
+        CallbackState state = MakeState(&identity, generation, entries);
+        const archive::EffectTableRestoreResult result =
+            archive::RestoreEffectTableNoReport(
+                &reader,
+                &identity,
+                generation,
+                MakeCallbacks(&state));
+        CHECK(result.status == archive::EffectTableRestoreStatus::Success);
+        state.abandonOnValidateCall = state.validateCalls;
+        CHECK(archive::ValidateEffectTableRestoreLease(result.lease)
+            == archive::EffectTableRestoreStatus::OwnerMismatch);
+        CHECK(!archive::EffectTableRestoreLeaseIsActive());
+        CHECK(archive::ValidateEffectTableRestoreLease(result.lease)
+            == archive::EffectTableRestoreStatus::OwnerMismatch);
+        CloseReader(reader);
+    }
+}
+
 void TestReentryIsBusyBeforeRead()
 {
     const std::vector<EntrySpec> entries{
@@ -1142,6 +1313,7 @@ int main()
     TestRegistrationFailureAtomicity();
     TestInvalidArgumentsAndState();
     TestLifecycleRejectionAndRelease();
+    TestExactLeaseValidation();
     TestReentryIsBusyBeforeRead();
     TestCallbackAbandonment();
     TestRegistrationUsesStagedNames();

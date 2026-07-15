@@ -7236,6 +7236,78 @@ require_source_match_count(
     "if[ \t\r\n]*\\([ \t\r\n]*sizeof\\(void[ \t]*\\*\\)[ \t]*!=[ \t]*4[ \t\r\n]*\\)"
     2
     "save and restore must fail closed until explicit 64-bit archive conversion exists")
+
+# Portable BodyState conversion must not revive the legacy three-byte stack
+# disclosure, and the non-publishing reader must keep every partial archive
+# image hidden behind an exact lease and final Ready transition.
+require_source_contains(
+    "physics/phys_body_state.h"
+    "RUNTIME_SIZE(BodyState, 0x70, 0x70);"
+    "native BodyState must retain its exact pointer-free ABI")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "BodyState state{};"
+    "generic physics serialization must initialize the complete wire record")
+require_source_contains(
+    "physics/phys_ode.cpp"
+    "state->underwater = dBodyIsEnabled(body) ? 1 : 0;"
+    "generic physics capture must initialize the complete underwater word")
+require_source_not_contains(
+    "physics/phys_ode.cpp"
+    "LOBYTE(state->underwater)"
+    "physics serialization must not disclose uninitialized underwater bytes")
+require_source_ordered(
+    "physics/phys_ode.cpp"
+    "BodyState state{};"
+    "MemFile_WriteData(memFile, 112, &state);"
+    "deterministic BodyState initialization must precede raw serialization")
+
+require_source_contains(
+    "EffectsCore/fx_archive_reader_disk32.h"
+    "RUNTIME_SIZE(FxArchiveDisk32ReaderWorkspace, 0xA3D00, 0xA9D58);"
+    "the heap-only reader workspace must retain exact x86/native64 bounds")
+require_source_ordered(
+    "EffectsCore/fx_archive_reader_disk32.cpp"
+    "memFile, sizeof(workspace->sourceSystem_)"
+    "memFile, sizeof(workspace->sourceBuffers_)"
+    "the reader must consume the fixed system before its buffer image")
+require_source_ordered(
+    "EffectsCore/fx_archive_reader_disk32.cpp"
+    "memFile, sizeof(workspace->sourceBuffers_)"
+    "memFile, sizeof(workspace->archivedSystemAddress_)"
+    "the reader must consume the legacy address after the fixed graph")
+require_source_ordered(
+    "EffectsCore/fx_archive_reader_disk32.cpp"
+    "memFile, sizeof(workspace->archivedSystemAddress_)"
+    "memFile, sizeof(workspace->bodyScratch_)"
+    "the reader must consume semantic-counted bodies after the address")
+require_source_ordered(
+    "EffectsCore/fx_archive_reader_disk32.cpp"
+    "ValidateEffectTableRestoreLease(leaseSnapshot)"
+    "ReadExact(\n        memFile, sizeof(workspace->sourceSystem_)"
+    "the exact definition lease must validate before fixed-tail consumption")
+require_source_ordered(
+    "EffectsCore/fx_archive_reader_disk32.cpp"
+    "workspace->lease_ = SnapshotLease(leaseSnapshot);"
+    "workspace->phase_ = FxArchiveDisk32ReaderPhase::Ready;"
+    "reader Ready publication must follow its complete validated lease snapshot")
+foreach(_forbidden_reader_operation
+    "MemFile_ReadData("
+    "ReleaseEffectTableRestore("
+    "AbandonCurrentThreadEffectTableRestoreForError("
+    "reinterpret_cast"
+    "Z_Malloc"
+    "operator new"
+    "Com_Error"
+    "Com_Print"
+    "Sys_Error"
+    "Sys_EnterCriticalSection")
+    require_source_not_contains(
+        "EffectsCore/fx_archive_reader_disk32.cpp"
+        "${_forbidden_reader_operation}"
+        "portable reader must remain bounded, borrowed, report-free, and non-publishing")
+endforeach()
+
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "FX archive save requires Disk32 conversion on this target"

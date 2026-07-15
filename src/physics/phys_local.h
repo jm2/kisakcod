@@ -10,6 +10,8 @@
 #include <universal/memfile.h>
 #include <universal/pool_allocator.h>
 
+#include <physics/phys_body_state.h>
+
 #include <cstddef>
 #include <cstdint>
 
@@ -31,22 +33,6 @@ enum BodyState_t : __int32
     BS_RUNNING = 0x4,
     BS_IDLE = 0x5,
     RAGDOLL_NUM_STATES = 0x6,
-};
-
-struct BodyState // sizeof=0x70
-{                                       // ...
-    float position[3];                  // ...
-    float rotation[3][3];               // ...
-    float velocity[3];                  // ...
-    float angVelocity[3];               // ...
-    float centerOfMassOffset[3];        // ...
-    float mass;
-    float friction;
-    float bounce;
-    int state;
-    int timeLastAsleep;
-    int type;
-    int underwater;
 };
 
 // Result of validating a live body as an independently reconstructible

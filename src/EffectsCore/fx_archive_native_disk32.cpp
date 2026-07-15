@@ -346,6 +346,54 @@ bool ActivateDefinitionSelectedElemPayload(
     // one of the alternate members above.
     return true;
 }
+
+struct FxArchiveDisk32ReadyPhysicsSinkContext
+{
+    void *callerContext = nullptr;
+    FxArchiveDisk32ReadyPhysicsSinkCallback acceptPhysics = nullptr;
+    const FxSystemBuffers *buffers = nullptr;
+    const FxSystemBuffersDisk32PoolStates *poolStates = nullptr;
+    std::size_t expectedCount = 0;
+    std::size_t forwardedCount = 0;
+};
+
+bool AcceptFxArchiveDisk32ReadyPhysics(
+    void *const opaqueContext,
+    const FxArchiveSemanticPhysicsDescriptor &descriptor,
+    const std::size_t physicsIndex) noexcept
+{
+    auto *const context =
+        static_cast<FxArchiveDisk32ReadyPhysicsSinkContext *>(
+            opaqueContext);
+    if (!context || !context->acceptPhysics || !context->buffers
+        || !context->poolStates
+        || physicsIndex != context->forwardedCount
+        || physicsIndex >= context->expectedCount
+        || descriptor.ownerIndex >= MAX_ELEMS
+        || !FxPoolAllocationStateIsAllocated(
+            context->poolStates->elems, descriptor.ownerIndex)
+        || descriptor.elem
+            != std::addressof(
+                context->buffers->elems[descriptor.ownerIndex].item)
+        || !descriptor.model
+        || descriptor.token == FX_ARCHIVE_INVALID_PHYSICS_TOKEN)
+    {
+        return false;
+    }
+
+    const FxArchiveDisk32ReadyPhysicsDescriptor readyDescriptor{
+        descriptor.elem,
+        descriptor.model,
+        descriptor.ownerIndex,
+        descriptor.token};
+    if (!context->acceptPhysics(
+            context->callerContext, readyDescriptor, physicsIndex))
+    {
+        return false;
+    }
+    ++context->forwardedCount;
+    return true;
+}
 } // namespace
 
 FxArchiveDisk32StructuralStatus
@@ -358,9 +406,15 @@ TryBuildFxArchiveDisk32StructuralImage(
     if (!workspace)
         return FxArchiveDisk32StructuralStatus::InvalidArgument;
 
-    // A retry invalidates every earlier view before any staged byte changes.
+    // A same-workspace callback cannot invalidate a published image before
+    // the active operation rejects its nested build attempt.
+    if (workspace->building_)
+        return FxArchiveDisk32StructuralStatus::InvalidArgument;
+
+    // An ordinary retry invalidates every earlier view before any staged byte
+    // changes, including an idle call with an invalid resolver.
     workspace->phase_ = FxArchiveDisk32WorkspacePhase::Empty;
-    if (workspace->building_ || !resolver.resolve)
+    if (!resolver.resolve)
         return FxArchiveDisk32StructuralStatus::InvalidArgument;
     workspace->building_ = true;
     const auto finish = [workspace](
@@ -557,6 +611,55 @@ TryFinalizeFxArchiveDisk32NativeImage(
     workspace->building_ = false;
     workspace->phase_ = FxArchiveDisk32WorkspacePhase::Ready;
     return FxArchiveDisk32ReadyStatus::Success;
+}
+
+bool TryEnumerateFxArchiveDisk32ReadyPhysics(
+    const FxArchiveDisk32NativeWorkspace *const workspace,
+    void *const context,
+    const FxArchiveDisk32ReadyPhysicsSinkCallback acceptPhysics) noexcept
+{
+    if (!workspace || !acceptPhysics || workspace->building_
+        || workspace->phase_ != FxArchiveDisk32WorkspacePhase::Ready
+        || workspace->physicsBodyCount_
+            > FX_ARCHIVE_PHYSICS_BODY_LIMIT
+        || !WorkspaceLinksAndSelectorsRoundTrip(
+            workspace->system_,
+            workspace->buffers_,
+            workspace->metadata_))
+    {
+        return false;
+    }
+
+    const std::size_t expectedCount = workspace->physicsBodyCount_;
+    const std::int16_t expectedSpotLightBoltDobj =
+        workspace->system_.activeSpotLightBoltDobj;
+    FxArchiveDisk32ReadyPhysicsSinkContext sink{
+        context,
+        acceptPhysics,
+        &workspace->buffers_,
+        &workspace->poolStates_,
+        expectedCount,
+        0};
+
+    // Finalization already activated the selected payload members.  The
+    // shared oracle's mutable system parameter exists only for its optional
+    // preparation callback; this logically const pass deliberately supplies
+    // none and the private adapter exposes only const element identities.
+    workspace->building_ = true;
+    FxArchiveSemanticResult semanticResult{};
+    const FxArchiveSemanticCallbacks callbacks{
+        &sink, nullptr, AcceptFxArchiveDisk32ReadyPhysics};
+    const bool semanticsValid = TryValidateFxArchiveSemanticsNoReport(
+        const_cast<FxSystem *>(std::addressof(workspace->system_)),
+        callbacks,
+        &semanticResult);
+    workspace->building_ = false;
+
+    return semanticsValid
+        && semanticResult.physicsBodyCount == expectedCount
+        && sink.forwardedCount == expectedCount
+        && semanticResult.spotLightBoltDobj
+            == expectedSpotLightBoltDobj;
 }
 
 bool TryGetFxArchiveDisk32ReadyView(

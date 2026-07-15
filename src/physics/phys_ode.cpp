@@ -6278,7 +6278,7 @@ void __cdecl Phys_Shutdown()
 
 void __cdecl Phys_ObjSave(dxBody *id, MemoryFile *memFile)
 {
-    BodyState state; // [esp+0h] [ebp-70h] BYREF
+    BodyState state{}; // [esp+0h] [ebp-70h] BYREF
 
     if (!physInited)
         MyAssertHandler(".\\physics\\phys_ode.cpp", 2439, 0, "%s", "physInited");
@@ -6334,7 +6334,7 @@ void __cdecl Phys_GetStateFromBody(dxBody *body, BodyState *state)
     state->state = userData->state;
     state->timeLastAsleep = userData->timeLastAsleep;
     state->type = userData->sndClass;
-    LOBYTE(state->underwater) = dBodyIsEnabled(body);
+    state->underwater = dBodyIsEnabled(body) ? 1 : 0;
 }
 
 dxBody *__cdecl Phys_ObjLoad(PhysWorld worldIndex, MemoryFile *memFile)

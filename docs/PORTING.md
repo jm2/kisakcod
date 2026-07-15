@@ -77,8 +77,9 @@ Completed foundation work:
   slots, bounded free-list allocation reconstruction, and a checked heap-owned native structural workspace. The workspace
   resolves active definition identities without dereference, explicitly constructs every native pool member, preserves
   opaque free-slot tails, relinks local pointers/selectors, rejects resolver reentry, and publishes only after scratch-backed
-  allocation-graph validation. Production archive I/O remains unchanged pending definition-aware semantic finalization and
-  full buffer integration;
+  allocation-graph validation. Definition-aware semantic `Ready`, exact Ready-only physics enumeration, and a portable
+  transactional reader for the post-definition system/buffers/address/body tail are also complete. Production
+  `FX_Restore`, `FX_Save`, and both native64 guards remain unchanged pending reader integration and exact equivalence;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -107,8 +108,10 @@ Remaining gates, in implementation order:
    complete. The exact heap-owned native structural image is now complete as well: it performs active-only opaque
    definition resolution, explicit native union-member construction, local pointer/selector relinking, and complete
    allocation-graph validation before exposing a non-publishable `StructurallyValid` view. Definition-dependent payload
-   activation and semantic `Ready` validation, transactional MemoryFile integration, physics records, and native64 guard
-   retirement remain.
+   activation, semantic `Ready` validation, exact body-record decoding, and transactional report-free `MemoryFile` staging
+   of the post-definition archive tail are complete in the portable reader. Production x86 wiring, exact raw/zlib
+   equivalence, publication/rollback tests, and restore-side native64 guard retirement remain; the writer and save guard
+   follow later.
 3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
    structures.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -1064,7 +1067,7 @@ traversal, Win32-invalid bytes, normalization aliases, and reserved DOS device c
 1,024 records, late 0--3-byte key truncation, duplicate/registration policy, reentry, abandonment, stale/foreign ownership,
 reuse, and contention; all nine CI jobs passed in run **29387860025**.
 
-The current `agent/fx-archive-selector-publication` checkpoint closes the live-publication pointer-provenance seam.
+PR #29 closed the live-publication pointer-provenance seam and squash-merged as `559cad41`.
 Desired and rollback visibility roles are captured as one bounded, zero-invalid selector pair, rebound only to their own
 staged buffers, and round-tripped before controller admission. Publication resolves fresh destination pointers, copies
 buffers before the system image under archive/allocator exclusion, relinks the system, assigns read then write roles, and
@@ -1072,10 +1075,12 @@ round-trips the result before admitting the graph. Rollback capture derives and 
 `FX_ALLOC` interval; safe-empty recovery remains canonical read-zero/write-one. The complete local GCC/Clang and sanitizer
 matrices, strict x86-32/AArch64 compilation, Clang analysis, and focused source/security contracts are green. Exact
 implementation/review-fix head `0fbee229` passed all nine CI jobs in run **29445375084** after both actionable Gemini
-null-context findings were fixed, answered, and resolved. Wire I/O, both native64 guards, and the writer remain unchanged
-pending the unified Disk32 reader.
+null-context findings were fixed, answered, and resolved. Final documentation head `4fdc0ba7` passed all nine jobs again
+in run **29446277872** before merge. At that merge, production wire I/O, both native64 guards, and the writer remained
+unchanged pending the unified Disk32 reader; this branch implements that non-publishing reader without wiring it into
+production yet.
 
-Overall porting progress is approximately **45%** (plausible range **41–50%**), while target delivery remains **0/5**.
+Overall porting progress is approximately **47%** (plausible range **43–52%**), while target delivery remains **0/5**.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
 Windows x86 Debug and Release production reports now enforce 2,756-byte `FX_Save`, 6,124-byte `FX_Restore`, and
 2,064-byte maximum-other frames after replacing the discovered 10,256-byte helper with checked heap scratch. Coherent
@@ -1088,20 +1093,26 @@ finalization are implemented and locally validated, but are not yet a production
 semantic oracle uses callback-free preflight, representation-preserving union activation, bounded physics descriptors,
 and failure-to-Empty publication gating. The production physics collector now delegates to that oracle through a bounded
 sink, and restore retains definition ownership through both semantic passes before generation-checked archive admission.
-The current checkpoint passes **62/62** GCC and Clang suites plus **61/61**
-ASan+UBSan and TSan suites, strict GCC/Clang x86-32 and AArch64 compilation, analyzers, source contracts, and independent
-audit; the five-target and measured Windows x86 PR matrix remains its authoritative production/runtime gate. The active
-sequence is to land the implemented visibility-selector-aware publication, then add a portable, non-publishing reader
-workspace with a lightweight `BodyState` header, exact `BodyStateDisk32` decode, Ready-only physics enumeration, and
-transactional raw/zlib staging. That slice must also zero-initialize generic `Phys_ObjSave` records and assign the complete
-`underwater` word; the current low-byte-only write can serialize three indeterminate stack bytes. The first reader PR leaves
-production restore and both guards unchanged. The following integration PR must add behavioral publication/rollback and
-exact x86 equivalence fixtures before removing only the restore guard.
+The current portable-reader checkpoint passes **66/66** GCC and Clang suites plus **65/65** ASan+UBSan and TSan suites,
+strict GCC/Clang x86-32 and AArch64 compilation, Clang analysis, source/security/ABI contracts, and independent audits; the
+exact PR #30 checkpoint head `42d1c4bb` also passed all nine five-target/measured-Windows jobs in run **29449586954**.
+Gemini reviewed that head with no comments or additional feedback, and the thread-aware query is empty. The
+`agent/fx-archive-portable-reader-disk32` sequence implements a 670,976-byte x86 / 695,640-byte native64 heap-owned,
+non-publishing workspace with a lightweight `BodyState` header, exact `BodyStateDisk32` decode, Ready-only physics
+enumeration, exact definition-lease validation, and transactional raw/zlib staging of the complete legacy
+system/buffers/address/body tail. Partial reads, callback prefixes, stale leases, and failed views remain hidden behind a
+final `Ready` gate; the reader validates but never acquires or releases the caller-retained lease, and retry uses
+fresh/repositioned input. Generic `Phys_ObjSave` now zero-initializes the complete record and
+`Phys_GetStateFromBody` assigns the whole `underwater` word, closing the three-byte stack disclosure while the reader keeps
+legacy low-byte compatibility. Production restore, save, live publication, both native64 guards, and wire bytes are
+unchanged. The following integration PR must add behavioral publication/rollback and exact x86 equivalence fixtures before
+removing only the restore guard.
 Guarded writer replacement follows later after exact x86 full-image equivalence. A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
-because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work is real Disk32
-archive/fast-file conversion plus that later segment-finalization boundary. A separate hard M4 blocker
+because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work is production restore
+integration, a checked writer/save-guard retirement, broader completed-object/fast-file conversion,
+and that later segment-finalization boundary. A separate hard M4 blocker
 remains: MP `cpose_t::physObjId` and
 `BreakablePiece::physObjId` still truncate ODE pointers into `int32_t`; native-width storage or a token/sidecar is required
 before any native64 engine runtime can be enabled. The

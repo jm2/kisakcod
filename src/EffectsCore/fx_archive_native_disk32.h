@@ -1,8 +1,10 @@
 #pragma once
 
 #include <EffectsCore/fx_archive_buffers_disk32.h>
+#include <EffectsCore/fx_archive_semantics.h>
 #include <EffectsCore/fx_pool_graph.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
@@ -50,6 +52,12 @@ struct FxArchiveDisk32Resolver
 class alignas(8) FxArchiveDisk32NativeWorkspace;
 struct FxArchiveDisk32StructuralView;
 struct FxArchiveDisk32ReadyView;
+struct FxArchiveDisk32ReadyPhysicsDescriptor;
+
+using FxArchiveDisk32ReadyPhysicsSinkCallback = bool (*)(
+    void *context,
+    const FxArchiveDisk32ReadyPhysicsDescriptor &descriptor,
+    std::size_t physicsIndex) noexcept;
 
 // Builds a report-free native structural image in caller-owned heap storage.
 // The resolver is required even when the active-effect ring is empty; it is
@@ -97,6 +105,23 @@ TryFinalizeFxArchiveDisk32NativeImage(
     const FxArchiveDisk32NativeWorkspace *workspace,
     FxArchiveDisk32ReadyView *outView) noexcept;
 
+// Enumerates the definition-validated physics elements of one Ready image in
+// deterministic semantic traversal order.  The operation is logically const:
+// it never changes the graph or workspace phase, and a rejected sink may be
+// retried against the same Ready image.  The sink can observe a provisional
+// prefix when it returns false, so caller-owned output must remain unpublished
+// unless this function succeeds.  Same-workspace mutating reentry is rejected.
+//
+// The caller must retain the effect-definition lifetime lease and synchronize
+// the workspace for the complete synchronous call.  The sink must not mutate
+// or rebuild the workspace or any reachable graph/definition storage.  Copied
+// descriptor pointers remain valid only until the workspace is rebuilt or
+// destroyed and while the corresponding asset lease remains held.
+[[nodiscard]] bool TryEnumerateFxArchiveDisk32ReadyPhysics(
+    const FxArchiveDisk32NativeWorkspace *workspace,
+    void *context,
+    FxArchiveDisk32ReadyPhysicsSinkCallback acceptPhysics) noexcept;
+
 // Heap-owned native staging storage. Copy and move are disabled because the
 // linked FxSystem contains pointers into this exact object's buffer member.
 // Allocate this object through the checked archive-workspace allocator rather
@@ -139,6 +164,10 @@ private:
     friend bool TryGetFxArchiveDisk32ReadyView(
         const FxArchiveDisk32NativeWorkspace *workspace,
         FxArchiveDisk32ReadyView *outView) noexcept;
+    friend bool TryEnumerateFxArchiveDisk32ReadyPhysics(
+        const FxArchiveDisk32NativeWorkspace *workspace,
+        void *context,
+        FxArchiveDisk32ReadyPhysicsSinkCallback acceptPhysics) noexcept;
 
     FxSystem system_{};
     FxSystemBuffers buffers_{};
@@ -147,7 +176,7 @@ private:
     FxSystemDisk32Metadata metadata_{};
     FxArchiveDisk32WorkspacePhase phase_ =
         FxArchiveDisk32WorkspacePhase::Empty;
-    bool building_ = false;
+    mutable bool building_ = false;
     std::uint32_t physicsBodyCount_ = 0;
 };
 
@@ -177,6 +206,18 @@ struct FxArchiveDisk32ReadyView
     const FxSystemBuffersDisk32PoolStates *poolStates = nullptr;
     const FxSystemDisk32Metadata *metadata = nullptr;
     std::uint32_t physicsBodyCount = 0;
+};
+
+// A shallow, read-only snapshot of one validated physics element.  elem points
+// into the Ready workspace; model remains owned by the caller-retained asset
+// lease.  ownerIndex is the native physical FxElem pool slot and token keeps
+// the complete unsigned legacy object representation.
+struct FxArchiveDisk32ReadyPhysicsDescriptor
+{
+    const FxElem *elem = nullptr;
+    const XModel *model = nullptr;
+    std::size_t ownerIndex = 0;
+    std::uint32_t token = 0;
 };
 
 RUNTIME_SIZE(FxArchiveDisk32NativeWorkspace, 0x4BD90, 0x4FDD8);

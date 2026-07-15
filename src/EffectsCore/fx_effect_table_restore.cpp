@@ -577,6 +577,12 @@ EffectTableRestoreResult RestoreEffectTableNoReport(
     return result;
 }
 
+EffectTableRestoreStatus ValidateEffectTableRestoreLease(
+    const EffectTableRestoreLease &lease) noexcept
+{
+    return ValidateActiveLifecycle(lease);
+}
+
 bool EffectTableRestoreGetEntry(
     const EffectTableRestoreLease &lease,
     const std::size_t index,
