@@ -2113,6 +2113,11 @@ static bool ODE_NoReportTryGetBodyPoolIndex(
     if (!body || !outIndex)
         return false;
     const poolstorage_t storage = ODE_BodyPoolStorage();
+    if (!storage.base || !storage.control
+        || storage.itemSize != sizeof(dxBody) || storage.itemCount != 512)
+    {
+        return false;
+    }
     const std::uintptr_t begin =
         reinterpret_cast<std::uintptr_t>(storage.base);
     const std::uintptr_t address =
@@ -2428,7 +2433,7 @@ static bool ODE_NoReportBodyHasValidJointList(
         }
     }
 
-    const auto aliasesTarget = [body](const dxJoint &joint) {
+    const auto aliasesTarget = [body, &workspace](const dxJoint &joint) {
         return ODE_NoReportFindJointIndex(workspace, &joint) < 0
             && (joint.node[0].body == body || joint.node[1].body == body);
     };

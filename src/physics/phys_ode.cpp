@@ -69,6 +69,7 @@ enum class PhysBodyDestroyStatus : std::uint8_t
 };
 
 bool Phys_RollbackBodyStateIsValid(const BodyState &state) noexcept;
+bool Phys_RollbackBasisIsValid(const float (*basis)[3]) noexcept;
 bool Phys_TryBuildBodyRotationNoReport(
     const float (*axis)[3],
     float *outRotation,

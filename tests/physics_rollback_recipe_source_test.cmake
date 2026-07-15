@@ -360,9 +360,11 @@ foreach(_ode_invariant IN ITEMS
     "ODE_NoReportBodyAllocationCandidateHasNoAliases("
     "geom->body == candidate"
     "joint.node[0].body == candidate"
+    "storage.itemSize != sizeof(dxBody) || storage.itemCount != 512"
     "ODE_NoReportIndexWorldJoints("
     "ODE_NoReportIndexBodyJointList("
-    "auto &workspace = odeNoReportJointWorkspace;")
+    "auto &workspace = odeNoReportJointWorkspace;"
+    "[body, &workspace](const dxJoint &joint)")
     require_contains("${_ode_preflight}" "${_ode_invariant}"
         "ODE preflight classifies exact global body/joint occupancy")
 endforeach()
