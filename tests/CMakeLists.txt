@@ -64,9 +64,66 @@ add_test(
 )
 set_tests_properties(universal-memfile-bounded-read PROPERTIES TIMEOUT 20)
 
+function(kisakcod_fx_helper_stack_budget target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE
+            /analyze
+            /analyze:autolog-
+            "SHELL:/analyze:stacksize 4096"
+            "SHELL:/analyze:ruleset \"${CMAKE_CURRENT_SOURCE_DIR}/fx_archive_stack.ruleset\"")
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(${target} PRIVATE
+            -Wstack-usage=4096
+            -fstack-usage)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "^(Clang|AppleClang)$")
+        target_compile_options(${target} PRIVATE
+            -Wframe-larger-than=4096
+            -Walloca
+            -fstack-usage)
+    endif()
+endfunction()
+
+add_library(kisakcod-fx-effect-table-restore-subject OBJECT
+    ${SRC_DIR}/EffectsCore/fx_effect_table_restore.cpp
+)
+target_include_directories(
+    kisakcod-fx-effect-table-restore-subject PRIVATE
+        ${SRC_DIR}/EffectsCore
+)
+target_include_directories(
+    kisakcod-fx-effect-table-restore-subject SYSTEM PRIVATE
+        ${SRC_DIR}
+)
+target_compile_features(
+    kisakcod-fx-effect-table-restore-subject PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-fx-effect-table-restore-subject PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-fx-effect-table-restore-subject)
+kisakcod_fx_helper_stack_budget(
+    kisakcod-fx-effect-table-restore-subject)
+
+add_library(kisakcod-fx-effect-table-save-subject OBJECT
+    ${SRC_DIR}/EffectsCore/fx_effect_table_save.cpp
+)
+target_include_directories(
+    kisakcod-fx-effect-table-save-subject PRIVATE
+        ${SRC_DIR}/EffectsCore
+)
+target_include_directories(
+    kisakcod-fx-effect-table-save-subject SYSTEM PRIVATE
+        ${SRC_DIR}
+)
+target_compile_features(
+    kisakcod-fx-effect-table-save-subject PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-fx-effect-table-save-subject PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-fx-effect-table-save-subject)
+kisakcod_fx_helper_stack_budget(
+    kisakcod-fx-effect-table-save-subject)
+
 add_executable(kisakcod-fx-effect-table-restore-tests
     fx_effect_table_restore_tests.cpp
-    ${SRC_DIR}/EffectsCore/fx_effect_table_restore.cpp
+    $<TARGET_OBJECTS:kisakcod-fx-effect-table-restore-subject>
 )
 target_include_directories(
     kisakcod-fx-effect-table-restore-tests PRIVATE
@@ -85,11 +142,6 @@ target_link_libraries(
         kisakcod-memfile-test-subject
         Threads::Threads)
 kisakcod_test_warnings(kisakcod-fx-effect-table-restore-tests)
-if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-    target_compile_options(
-        kisakcod-fx-effect-table-restore-tests PRIVATE
-            -Wframe-larger-than=4096)
-endif()
 set_target_properties(kisakcod-fx-effect-table-restore-tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
@@ -99,6 +151,58 @@ add_test(
 )
 set_tests_properties(
     effectscore-effect-table-transactional-restore PROPERTIES TIMEOUT 30)
+
+add_executable(kisakcod-fx-effect-table-save-tests
+    fx_effect_table_save_tests.cpp
+    $<TARGET_OBJECTS:kisakcod-fx-effect-table-save-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-effect-table-restore-subject>
+)
+target_include_directories(
+    kisakcod-fx-effect-table-save-tests PRIVATE
+        ${SRC_DIR}/EffectsCore
+)
+target_include_directories(
+    kisakcod-fx-effect-table-save-tests SYSTEM PRIVATE
+        ${SRC_DIR}
+)
+target_compile_features(
+    kisakcod-fx-effect-table-save-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-fx-effect-table-save-tests PRIVATE KISAK_MP)
+target_link_libraries(
+    kisakcod-fx-effect-table-save-tests PRIVATE
+        kisakcod-memfile-test-subject
+        Threads::Threads)
+kisakcod_test_warnings(kisakcod-fx-effect-table-save-tests)
+set_target_properties(kisakcod-fx-effect-table-save-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-effect-table-bounded-save
+    COMMAND kisakcod-fx-effect-table-save-tests
+)
+set_tests_properties(
+    effectscore-effect-table-bounded-save PROPERTIES TIMEOUT 60)
+
+string(TOUPPER "${CMAKE_BUILD_TYPE}" _kisakcod_build_type_upper)
+set(_kisakcod_active_cxx_flags
+    "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${_kisakcod_build_type_upper}}")
+if(NOT MSVC AND NOT _kisakcod_active_cxx_flags MATCHES "(^|[ ;])-fsanitize=")
+    # Sanitizer instrumentation intentionally introduces dynamic helper frames.
+    # Its runtime remains covered above with a bounded 1 MiB worker stack; the
+    # static .su contract measures the production, non-instrumented objects.
+    set(_kisakcod_fx_save_stack_report_dir
+        "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/kisakcod-fx-effect-table-save-subject.dir")
+    set(_kisakcod_fx_restore_stack_report_dir
+        "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/kisakcod-fx-effect-table-restore-subject.dir")
+    add_test(
+        NAME effectscore-effect-table-stack-usage
+        COMMAND ${CMAKE_COMMAND}
+            "-DSTACK_USAGE_FILES=${_kisakcod_fx_save_stack_report_dir};${_kisakcod_fx_restore_stack_report_dir}"
+            -DSTACK_USAGE_LIMIT_BYTES=4096
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_stack_usage_report_test.cmake
+    )
+endif()
 
 add_executable(kisakcod-huffman-tests
     huffman_tests.cpp
@@ -710,6 +814,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_effect_table_restore_source_test.cmake
+)
+
+add_test(
+    NAME effectscore-effect-table-save-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_effect_table_save_source_test.cmake
 )
 
 add_test(

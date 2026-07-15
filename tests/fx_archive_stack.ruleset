@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RuleSet Name="FX archive stack gate"
+         Description="Run only the MSVC excessive-stack-usage analysis rule."
+         ToolsVersion="15.0">
+  <Rules AnalyzerId="Microsoft.Analyzers.NativeCodeAnalysis"
+         RuleNamespace="Microsoft.Rules.Native">
+    <Rule Id="C6262" Action="Warning" />
+  </Rules>
+</RuleSet>

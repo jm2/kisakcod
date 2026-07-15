@@ -3,6 +3,7 @@
 #include "fx_archive_physics_batch_control.h"
 #include "fx_archive_restore_control.h"
 #include "fx_archive_restore_workspace.h"
+#include "fx_effect_table_save.h"
 #include "fx_effect_table_restore.h"
 #include "fx_physics_sidecar.h"
 #include "fx_pool.h"
@@ -501,7 +502,7 @@ bool FX_ReadArchiveDataNoDrop(
 bool FX_WriteArchiveDataNoDrop(
     MemoryFile *const memFile,
     const int byteCount,
-    const void *const data)
+    const void *const data) noexcept
 {
     if (!memFile || byteCount < 0 || (byteCount != 0 && !data)
         || memFile->memoryOverflow)
@@ -514,6 +515,153 @@ bool FX_WriteArchiveDataNoDrop(
     MemFile_WriteData(memFile, byteCount, data);
     memFile->errorOnOverflow = errorOnOverflow;
     return !memFile->memoryOverflow;
+}
+
+struct FxEffectTableSaveCapture
+{
+    fx::archive::EffectTableSaveSnapshot *snapshot;
+    fx::archive::EffectTableSaveStatus status;
+};
+
+enum class FxEffectTableSaveOutcome : std::uint8_t
+{
+    Success,
+    AllocationFailed,
+    InvalidTable,
+    WriteFailed,
+};
+
+void __cdecl FX_CaptureEffectTableEntry_LoadObj(
+    const FxEffectDef *const effectDef,
+    void *const data)
+{
+    auto *const capture =
+        static_cast<FxEffectTableSaveCapture *>(data);
+    if (!capture
+        || capture->status
+            != fx::archive::EffectTableSaveStatus::Success)
+    {
+        return;
+    }
+
+    const char *const name = effectDef ? effectDef->name : nullptr;
+    const std::uintptr_t key =
+        reinterpret_cast<std::uintptr_t>(effectDef);
+    capture->status = fx::archive::AppendEffectTableSaveEntryNoReport(
+        capture->snapshot,
+        name,
+        key);
+}
+
+void __cdecl FX_CaptureEffectTableEntry_FastFile(
+    const XAssetHeader header,
+    void *const data)
+{
+    FX_CaptureEffectTableEntry_LoadObj(header.fx, data);
+}
+
+fx::archive::EffectTableSaveStatus FX_CaptureEffectTableNoReport(
+    fx::archive::EffectTableSaveSnapshot *const snapshot) noexcept
+{
+    if (!snapshot)
+        return fx::archive::EffectTableSaveStatus::InvalidArgument;
+
+    FxEffectTableSaveCapture capture{
+        snapshot,
+        fx::archive::EffectTableSaveStatus::Success,
+    };
+    if (IsFastFileLoad())
+    {
+        DB_EnumXAssets(
+            ASSET_TYPE_FX,
+            FX_CaptureEffectTableEntry_FastFile,
+            &capture,
+            false);
+    }
+    else
+    {
+        FX_ForEachEffectDef(
+            FX_CaptureEffectTableEntry_LoadObj,
+            &capture);
+    }
+
+    if (capture.status
+        != fx::archive::EffectTableSaveStatus::Success)
+    {
+        return capture.status;
+    }
+    return fx::archive::ValidateEffectTableSaveSnapshotNoReport(
+        snapshot);
+}
+
+bool FX_WriteEffectTableSaveBytes(
+    void *const context,
+    const void *const data,
+    const std::size_t byteCount) noexcept
+{
+    if (byteCount
+        > static_cast<std::size_t>((std::numeric_limits<int>::max)()))
+    {
+        return false;
+    }
+    return FX_WriteArchiveDataNoDrop(
+        static_cast<MemoryFile *>(context),
+        static_cast<int>(byteCount),
+        data);
+}
+
+FxEffectTableSaveOutcome FX_SaveEffectTableNoDrop(
+    MemoryFile *const memFile)
+{
+    const std::size_t workspaceSize =
+        fx::archive::EffectTableSaveSnapshotSize();
+    if (!memFile || workspaceSize == 0
+        || workspaceSize
+            > static_cast<std::size_t>((std::numeric_limits<int>::max)()))
+    {
+        return FxEffectTableSaveOutcome::InvalidTable;
+    }
+
+    void *const storage = Z_Malloc(
+        static_cast<int>(workspaceSize),
+        "FX_Save effect table snapshot",
+        10);
+    if (!storage)
+        return FxEffectTableSaveOutcome::AllocationFailed;
+
+    fx::archive::EffectTableSaveSnapshot *const snapshot =
+        fx::archive::ConstructEffectTableSaveSnapshot(
+            storage,
+            workspaceSize);
+    if (!snapshot)
+    {
+        Z_Free(storage, 10);
+        return FxEffectTableSaveOutcome::InvalidTable;
+    }
+
+    fx::archive::EffectTableSaveStatus status =
+        FX_CaptureEffectTableNoReport(snapshot);
+    if (status == fx::archive::EffectTableSaveStatus::Success)
+    {
+        const fx::archive::EffectTableSaveCallbacks callbacks{
+            memFile,
+            FX_WriteEffectTableSaveBytes,
+        };
+        status = fx::archive::WriteEffectTableSaveSnapshotNoReport(
+            snapshot,
+            callbacks);
+    }
+
+    const bool destroyed =
+        fx::archive::DestroyEffectTableSaveSnapshot(snapshot);
+    Z_Free(storage, 10);
+    if (!destroyed)
+        return FxEffectTableSaveOutcome::InvalidTable;
+    if (status == fx::archive::EffectTableSaveStatus::Success)
+        return FxEffectTableSaveOutcome::Success;
+    if (status == fx::archive::EffectTableSaveStatus::WriterFailed)
+        return FxEffectTableSaveOutcome::WriteFailed;
+    return FxEffectTableSaveOutcome::InvalidTable;
 }
 
 bool FX_ValidateEffectTableRestoreLifecycle(
@@ -3096,10 +3244,30 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
         return;
     }
 
-    FX_SaveEffectDefTable(system, memFile);
-    if (memFile->memoryOverflow)
+    const FxEffectTableSaveOutcome effectTableOutcome =
+        FX_SaveEffectTableNoDrop(memFile);
+    if (effectTableOutcome != FxEffectTableSaveOutcome::Success)
     {
-        Com_Error(ERR_DROP, "FX effect-definition archive ran out of memory");
+        if (effectTableOutcome
+            == FxEffectTableSaveOutcome::AllocationFailed)
+        {
+            Com_Error(
+                ERR_DROP,
+                "Unable to allocate FX effect-definition save snapshot");
+        }
+        else if (effectTableOutcome
+                 == FxEffectTableSaveOutcome::WriteFailed)
+        {
+            Com_Error(
+                ERR_DROP,
+                "FX effect-definition archive ran out of memory");
+        }
+        else
+        {
+            Com_Error(
+                ERR_DROP,
+                "Invalid FX effect-definition table while saving archive");
+        }
         return;
     }
 
@@ -3270,57 +3438,6 @@ void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile)
         Com_Error(ERR_DROP, "FX archive snapshot ran out of memory");
         return;
     }
-}
-
-void __cdecl FX_SaveEffectDefTable(FxSystem *system, MemoryFile *memFile)
-{
-    if (IsFastFileLoad())
-        FX_SaveEffectDefTable_FastFile(memFile);
-    else
-        FX_SaveEffectDefTable_LoadObj(memFile);
-    MemFile_WriteCString(memFile, "");
-}
-
-void __cdecl FX_SaveEffectDefTableEntry_FileLoadObj(
-    const FxEffectDef *effectDef,
-    void *data)
-{
-    const FxEffectDef* p; // [esp+0h] [ebp-4h] BYREF
-    MemoryFile *memFile = static_cast<MemoryFile *>(data);
-
-    if (!effectDef || !memFile)
-        return;
-    MemFile_WriteCString(memFile, (char*)effectDef->name);
-    p = effectDef;
-    MemFile_WriteData(memFile, 4, &p);
-}
-
-void __cdecl FX_SaveEffectDefTableEntry_FastFile(
-    XAssetHeader header,
-    void *data)
-{
-    FX_SaveEffectDefTableEntry_FileLoadObj(header.fx, data);
-}
-
-void __cdecl FX_SaveEffectDefTable_LoadObj(MemoryFile* memFile)
-{
-    FX_ForEachEffectDef(FX_SaveEffectDefTableEntry_FileLoadObj, memFile);
-}
-
-void __cdecl FX_SaveEffectDefTable_FastFile(MemoryFile *memFile)
-{
-    if (!memFile)
-        return;
-    const bool errorOnOverflow = memFile->errorOnOverflow;
-    memFile->errorOnOverflow = false;
-    DB_EnumXAssets(
-        ASSET_TYPE_FX,
-        FX_SaveEffectDefTableEntry_FastFile,
-        memFile,
-        0);
-    memFile->errorOnOverflow = errorOnOverflow;
-    if (errorOnOverflow && memFile->memoryOverflow)
-        Com_Error(ERR_DROP, "FX effect table archive ran out of memory");
 }
 
 void __cdecl FX_Archive(int32_t clientIndex, MemoryFile *memFile)

@@ -3599,17 +3599,42 @@ require_source_contains(
     "gfx_d3d/r_material_load_obj.cpp"
     "Material_ForEachTechniqueSet(Material_ReleaseTechniqueSetResources, true);"
     "load-object technique cleanup must occur after database enumeration")
-require_source_contains(
-    "EffectsCore/fx_archive.cpp"
-    "memFile->errorOnOverflow = false;
-    DB_EnumXAssets("
-    "FX archive overflow must be deferred during database enumeration")
-require_source_contains(
-    "EffectsCore/fx_archive.cpp"
-    "memFile->errorOnOverflow = errorOnOverflow;
-    if (errorOnOverflow && memFile->memoryOverflow)
-        Com_Error("
-    "FX archive overflow must drop only after database enumeration")
+file(READ
+    "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp"
+    _fx_archive_save_source)
+extract_security_slice(
+    _fx_archive_save_source
+    "void __cdecl FX_CaptureEffectTableEntry_LoadObj("
+    "fx::archive::EffectTableSaveStatus FX_CaptureEffectTableNoReport("
+    _fx_effect_table_capture_callbacks
+    "bounded FX effect-table capture callbacks")
+require_security_slice_contains(
+    _fx_effect_table_capture_callbacks
+    "AppendEffectTableSaveEntryNoReport("
+    "FX archive database callbacks must only append bounded records")
+foreach(_forbidden_effect_table_callback_call
+    "MemFile_"
+    "Com_"
+    "Z_Malloc("
+    "Z_Free("
+    "ValidateEffectTableSaveSnapshotNoReport("
+    "WriteEffectTableSaveSnapshotNoReport(")
+    forbid_security_slice_contains(
+        _fx_effect_table_capture_callbacks
+        "${_forbidden_effect_table_callback_call}"
+        "FX archive database callbacks must not allocate, report, validate, or write")
+endforeach()
+extract_security_slice(
+    _fx_archive_save_source
+    "fx::archive::EffectTableSaveStatus FX_CaptureEffectTableNoReport("
+    "bool FX_WriteEffectTableSaveBytes("
+    _fx_effect_table_capture_transaction
+    "FX effect-table capture and post-enumeration validation")
+require_security_slice_ordered(
+    _fx_effect_table_capture_transaction
+    "FX_ForEachEffectDef("
+    "ValidateEffectTableSaveSnapshotNoReport("
+    "FX archive effect-table validation must occur after enumeration returns")
 
 file(READ "${SOURCE_ROOT}/src/universal/memfile.cpp" _memfile_source)
 extract_security_slice(
@@ -6940,7 +6965,7 @@ require_source_match_count(
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"
     "FX archive save requires Disk32 conversion on this target"
-    "FX_SaveEffectDefTable(system, memFile);"
+    "FX_SaveEffectTableNoDrop(memFile);"
     "unsupported native save addresses must fail before writing archive payload")
 require_source_ordered(
     "EffectsCore/fx_archive.cpp"

@@ -1007,9 +1007,6 @@ void __cdecl FX_Restore(int32_t clientIndex, MemoryFile *memFile);
 FxEffect *__cdecl FX_EffectFromHandle(FxSystem *system, uint16_t handle);
 FxElemVisuals __cdecl FX_GetElemVisuals(const FxElemDef *elemDef, int32_t randomSeed);
 void __cdecl FX_Save(int32_t clientIndex, MemoryFile *memFile);
-void __cdecl FX_SaveEffectDefTable(FxSystem *system, MemoryFile *memFile);
-void __cdecl FX_SaveEffectDefTable_FastFile(MemoryFile *memFile);
-void __cdecl FX_SaveEffectDefTable_LoadObj(MemoryFile* memFile);
 void __cdecl FX_Archive(int32_t clientIndex, MemoryFile *memFile);
 
 // fx_beam
