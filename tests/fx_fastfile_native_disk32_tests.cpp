@@ -364,6 +364,16 @@ fastfile::FxElemDefDisk32 MinimalElem(
     return elem;
 }
 
+bool UsesMaterialVisuals(const fastfile::FxElemTypeDisk32 type) noexcept
+{
+    return type == fastfile::FxElemTypeDisk32::SpriteBillboard
+        || type == fastfile::FxElemTypeDisk32::SpriteOriented
+        || type == fastfile::FxElemTypeDisk32::Tail
+        || type == fastfile::FxElemTypeDisk32::Trail
+        || type == fastfile::FxElemTypeDisk32::Cloud
+        || type == fastfile::FxElemTypeDisk32::Decal;
+}
+
 void PopulateScalarFields(fastfile::FxElemDefDisk32 *const elem)
 {
     CHECK(elem != nullptr);
@@ -392,7 +402,7 @@ void PopulateScalarFields(fastfile::FxElemDefDisk32 *const elem)
     elem->initialRotation = {94.25f, 95.5f};
     elem->gravity = {96.25f, 97.5f};
     elem->reflectionFactor = {98.25f, 99.5f};
-    elem->atlas = {1, 2, 24, 3, 4, 5, 321};
+    elem->atlas = {1, 2, 24, 3, 4, 4, 256};
     elem->emitDist = {101.25f, 102.5f};
     elem->emitDistVariance = {103.25f, 104.5f};
     elem->sortOrder = 17;
@@ -408,6 +418,19 @@ EffectFixture MakeEffect(
     const std::int32_t emission)
 {
     EffectFixture fixture{};
+    if (looping > 0)
+    {
+        const std::size_t loopingCount = (std::min)(
+            static_cast<std::size_t>(looping), elems.size());
+        for (std::size_t index = 0; index < loopingCount; ++index)
+        {
+            if (elems[index].spawn.loopCountOrCountAmplitude == 0)
+            {
+                elems[index].spawn.loopCountOrCountAmplitude =
+                    (std::numeric_limits<std::int32_t>::max)();
+            }
+        }
+    }
     fixture.elemCount = elems.size();
     fixture.nameToken = fixture.image.AppendString(
         kDataBlock, "fx/fastfile_native_disk32_test");
@@ -422,7 +445,7 @@ EffectFixture MakeEffect(
     effect.flags = 0x12345678;
     // Builders finalize this after every owned payload is attached.
     effect.totalSize = 0;
-    effect.msecLoopingLife = 2500;
+    effect.msecLoopingLife = 0;
     effect.elemDefCountLooping = looping;
     effect.elemDefCountOneShot = oneShot;
     effect.elemDefCountEmission = emission;
@@ -542,6 +565,38 @@ void FinalizeEffectTotalSize(EffectFixture *const fixture)
     CHECK(bytes <= static_cast<std::uint32_t>(
         (std::numeric_limits<std::int32_t>::max)()));
     fixture->effect()->totalSize = static_cast<std::int32_t>(bytes);
+
+    std::int64_t maximumLoopingLife = 0;
+    bool hasInfiniteLoop = false;
+    const std::int32_t loopingCount = fixture->effect()->elemDefCountLooping;
+    if (loopingCount >= 0
+        && static_cast<std::size_t>(loopingCount) <= fixture->elemCount)
+    {
+        for (std::int32_t index = 0; index < loopingCount; ++index)
+        {
+            const fastfile::FxSpawnDefDisk32 &spawn =
+                fixture->elems()[index].spawn;
+            if (spawn.loopCountOrCountAmplitude
+                == (std::numeric_limits<std::int32_t>::max)())
+            {
+                hasInfiniteLoop = true;
+                continue;
+            }
+            if (spawn.intervalMsecOrCountBase > 0
+                && spawn.loopCountOrCountAmplitude > 1)
+            {
+                const std::int64_t lastSpawn =
+                    static_cast<std::int64_t>(
+                        spawn.intervalMsecOrCountBase)
+                    * (spawn.loopCountOrCountAmplitude - 1);
+                maximumLoopingLife =
+                    (std::max)(maximumLoopingLife, lastSpawn);
+            }
+        }
+    }
+    fixture->effect()->msecLoopingLife = hasInfiniteLoop
+        ? (std::numeric_limits<std::int32_t>::max)()
+        : static_cast<std::int32_t>(maximumLoopingLife);
 }
 
 bool RejectReference(
@@ -1661,7 +1716,17 @@ void CheckPlanFailure(
     ResolverOwner resolver(&fixture->image);
     WorkspaceOwner workspace;
     fastfile::FxFastFileNativeDisk32Plan plan{};
-    CHECK(PlanEffect(&workspace, &view, &resolver, &plan) == expected);
+    const fastfile::FxFastFileNativeDisk32Status actual =
+        PlanEffect(&workspace, &view, &resolver, &plan);
+    if (actual != expected)
+    {
+        std::fprintf(
+            stderr,
+            "unexpected plan status: actual=%u expected=%u\n",
+            static_cast<unsigned>(actual),
+            static_cast<unsigned>(expected));
+    }
+    CHECK(actual == expected);
     CHECK(workspace.get()->phase()
           == fastfile::FxFastFileNativeDisk32Phase::Empty);
     CHECK(!static_cast<bool>(plan));
@@ -1672,8 +1737,8 @@ EffectFixture MakeTrailEffect(
     const std::int32_t indCount = 4)
 {
     EffectFixture fixture = MakeEffect(
-        {MinimalElem(fastfile::FxElemTypeDisk32::Trail)}, 0, 1, 0);
-    AttachSamples(&fixture, 0, 1, 0);
+        {MinimalElem(fastfile::FxElemTypeDisk32::Trail)}, 1, 0, 0);
+    AttachSamples(&fixture, 0, 1, 1);
     AttachVisuals(
         &fixture,
         0,
@@ -1696,7 +1761,7 @@ void TestValidDefinitions()
     CheckValidEffect(&scalarOneShot, 2);
 
     EffectFixture scalarLooping = MakeEffect({MinimalElem()}, 1, 0, 0);
-    AttachSamples(&scalarLooping, 0, 1, 0);
+    AttachSamples(&scalarLooping, 0, 1, 1);
     AttachVisuals(
         &scalarLooping,
         0,
@@ -1715,8 +1780,8 @@ void TestValidDefinitions()
     // Retail totalSize parity reserves indCount vertex capacity but copies
     // only the serialized vertCount prefix; the capacity tail stays zero.
     EffectFixture trailCapacity = MakeEffect(
-        {MinimalElem(fastfile::FxElemTypeDisk32::Trail)}, 0, 1, 0);
-    AttachSamples(&trailCapacity, 0, 1, 0);
+        {MinimalElem(fastfile::FxElemTypeDisk32::Trail)}, 1, 0, 0);
+    AttachSamples(&trailCapacity, 0, 1, 1);
     AttachVisuals(
         &trailCapacity,
         0,
@@ -1742,7 +1807,7 @@ void TestMaximumGraphAndResolverJournal()
         fastfile::kFxFastFileDisk32MaxVisuals, sharedReference);
     for (std::size_t index = 0; index < fixture.elemCount; ++index)
     {
-        AttachSamples(&fixture, index, 1, 0);
+        AttachSamples(&fixture, index, 1, 1);
         AttachVisuals(
             &fixture,
             index,
@@ -1796,8 +1861,9 @@ void TestMaximumGraphAndResolverJournal()
             const FxElemDef &element = output->elemDefs[index];
             CHECK(element.visualCount
                   == fastfile::kFxFastFileDisk32MaxVisuals);
-            CHECK(element.visStateIntervalCount == 0);
-            CHECK(element.visSamples == nullptr);
+            CHECK(element.visStateIntervalCount == 1);
+            CHECK(storage.Contains(
+                element.visSamples, 2u * sizeof(*element.visSamples)));
             CHECK(storage.Contains(
                 element.visuals.array,
                 static_cast<std::size_t>(element.visualCount)
@@ -1946,12 +2012,12 @@ void TestPointerSpanAndProvenanceFailures()
             {AddOpaqueReference(&invalid, 0xB101u)});
         CheckPlanFailure(
             &invalid,
-            fastfile::FxFastFileNativeDisk32Status::InvalidPointerCount);
+            fastfile::FxFastFileNativeDisk32Status::InvalidVisual);
     }
 
     {
         EffectFixture invalid = MakeEffect({MinimalElem()}, 0, 1, 0);
-        AttachSamples(&invalid, 0, 0, 0);
+        AttachSamples(&invalid, 0, 0, 1);
         AttachVisuals(
             &invalid,
             0,
@@ -2020,7 +2086,7 @@ void TestPointerSpanAndProvenanceFailures()
         WorkspaceOwner workspace;
         fastfile::FxFastFileNativeDisk32Plan plan{};
         CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
-              == fastfile::FxFastFileNativeDisk32Status::InvalidPointerCount);
+              == fastfile::FxFastFileNativeDisk32Status::InvalidVisual);
     }
 
     for (const auto failKind : {
@@ -2192,7 +2258,7 @@ void TestResolvedStringMutation()
 void TestFutureTokenMutationRestore()
 {
     EffectFixture fixture = MakeEffect({MinimalElem()}, 0, 1, 0);
-    AttachSamples(&fixture, 0, 1, 0);
+    AttachSamples(&fixture, 0, 1, 1);
     const disk32::PointerToken firstVisual =
         AddOpaqueReference(&fixture, UINT32_C(0xFA01));
     const disk32::PointerToken originalFuture =
@@ -2373,7 +2439,7 @@ void TestVisualValidation()
 
     {
         EffectFixture invalid = MakeEffect({MinimalElem()}, 0, 1, 0);
-        AttachSamples(&invalid, 0, 1, 0);
+        AttachSamples(&invalid, 0, 1, 1);
         std::vector<disk32::PointerToken> references;
         for (std::uint32_t index = 0;
              index < fastfile::kFxFastFileDisk32MaxVisuals + 1u;
@@ -2393,7 +2459,7 @@ void TestVisualValidation()
     {
         EffectFixture invalid = MakeEffect(
             {MinimalElem(fastfile::FxElemTypeDisk32::Decal)}, 0, 1, 0);
-        AttachSamples(&invalid, 0, 1, 0);
+        AttachSamples(&invalid, 0, 1, 1);
         std::vector<disk32::PointerToken> references;
         for (std::uint32_t index = 0;
              index < (fastfile::kFxFastFileDisk32MaxDecalVisuals + 1u) * 2u;
@@ -2426,7 +2492,7 @@ void TestVisualValidation()
     {
         EffectFixture invalid = MakeEffect(
             {MinimalElem(fastfile::FxElemTypeDisk32::Runner)}, 0, 1, 0);
-        AttachSamples(&invalid, 0, 1, 0);
+        AttachSamples(&invalid, 0, 1, 1);
         CheckPlanFailure(
             &invalid, fastfile::FxFastFileNativeDisk32Status::InvalidVisual);
     }
@@ -2456,7 +2522,7 @@ void TestVisualValidation()
 
     {
         EffectFixture invalid = MakeEffect({MinimalElem()}, 0, 1, 0);
-        AttachSamples(&invalid, 0, 1, 0);
+        AttachSamples(&invalid, 0, 1, 1);
         AttachVisuals(
             &invalid,
             0,
@@ -2476,7 +2542,7 @@ void TestVisualValidation()
     {
         EffectFixture invalid = MakeEffect(
             {MinimalElem(fastfile::FxElemTypeDisk32::Decal)}, 0, 1, 0);
-        AttachSamples(&invalid, 0, 1, 0);
+        AttachSamples(&invalid, 0, 1, 1);
         AttachVisuals(
             &invalid,
             0,
@@ -2495,7 +2561,7 @@ void TestVisualValidation()
 
     {
         EffectFixture invalid = MakeEffect({MinimalElem()}, 0, 1, 0);
-        AttachSamples(&invalid, 0, 1, 0);
+        AttachSamples(&invalid, 0, 1, 1);
         AttachVisuals(
             &invalid,
             0,
@@ -2522,12 +2588,158 @@ void TestVisualValidation()
     }
 }
 
+void TestSemanticValidation()
+{
+    const auto expectInvalidCount = [](const auto &mutate) {
+        EffectFixture invalid = MakeMinimalEffect();
+        mutate(invalid);
+        CheckPlanFailure(
+            &invalid, fastfile::FxFastFileNativeDisk32Status::InvalidCount);
+    };
+
+    expectInvalidCount([](EffectFixture &fixture) {
+        fixture.elems()[0].spawnDelayMsec.amplitude = -1;
+    });
+    expectInvalidCount([](EffectFixture &fixture) {
+        fixture.elems()[0].spawnDelayMsec.amplitude = 32768;
+    });
+    expectInvalidCount([](EffectFixture &fixture) {
+        fixture.elems()[0].spawnDelayMsec.base = 86'400'001;
+    });
+    expectInvalidCount([](EffectFixture &fixture) {
+        fixture.elems()[0].lifeSpanMsec.base = 0;
+    });
+    expectInvalidCount([](EffectFixture &fixture) {
+        fixture.elems()[0].lifeSpanMsec = {86'400'000, 1};
+    });
+    expectInvalidCount([](EffectFixture &fixture) {
+        fixture.elems()[0].spawn.intervalMsecOrCountBase =
+            static_cast<std::int32_t>(MAX_ELEMS);
+        fixture.elems()[0].spawn.loopCountOrCountAmplitude = 1;
+    });
+    expectInvalidCount([](EffectFixture &fixture) {
+        fixture.elems()[0].spawn.loopCountOrCountAmplitude = 32768;
+    });
+
+    for (const int mutation : {0, 1, 2})
+    {
+        EffectFixture invalid = MakeEffect({MinimalElem()}, 1, 0, 0);
+        AttachSamples(&invalid, 0, 1, 1);
+        AttachVisuals(
+            &invalid,
+            0,
+            fastfile::FxElemTypeDisk32::SpriteBillboard,
+            {AddOpaqueReference(&invalid, 0xD601u)});
+        if (mutation == 0)
+            invalid.elems()[0].spawn.intervalMsecOrCountBase = 0;
+        else if (mutation == 1)
+            invalid.elems()[0].spawn.loopCountOrCountAmplitude = 0;
+        else
+            invalid.elems()[0].spawn.intervalMsecOrCountBase = 86'400'001;
+        CheckPlanFailure(
+            &invalid, fastfile::FxFastFileNativeDisk32Status::InvalidCount);
+    }
+
+    {
+        EffectFixture valid = MakeEffect({MinimalElem()}, 1, 0, 0);
+        valid.elems()[0].spawn.intervalMsecOrCountBase = 5;
+        valid.elems()[0].spawn.loopCountOrCountAmplitude = 3;
+        AttachSamples(&valid, 0, 1, 1);
+        AttachVisuals(
+            &valid,
+            0,
+            fastfile::FxElemTypeDisk32::SpriteBillboard,
+            {AddOpaqueReference(&valid, 0xD602u)});
+        CheckValidEffect(&valid, 2);
+        CHECK(valid.effect()->msecLoopingLife == 10);
+    }
+
+    {
+        EffectFixture invalid = MakeEffect({MinimalElem()}, 1, 0, 0);
+        invalid.elems()[0].spawn.intervalMsecOrCountBase = 5;
+        invalid.elems()[0].spawn.loopCountOrCountAmplitude = 3;
+        AttachSamples(&invalid, 0, 1, 1);
+        AttachVisuals(
+            &invalid,
+            0,
+            fastfile::FxElemTypeDisk32::SpriteBillboard,
+            {AddOpaqueReference(&invalid, 0xD603u)});
+        FinalizeEffectTotalSize(&invalid);
+        invalid.effect()->msecLoopingLife = 11;
+        EffectViewOwner view(&invalid);
+        ResolverOwner resolver(&invalid.image);
+        WorkspaceOwner workspace;
+        fastfile::FxFastFileNativeDisk32Plan plan{};
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidCount);
+    }
+
+    const auto expectInvalidAtlas = [](const auto &mutate) {
+        EffectFixture invalid = MakeMinimalEffect();
+        mutate(invalid.elems()[0].atlas, invalid.elems()[0]);
+        CheckPlanFailure(
+            &invalid, fastfile::FxFastFileNativeDisk32Status::InvalidVisual);
+    };
+    expectInvalidAtlas([](fastfile::FxElemAtlasDisk32 &atlas, auto &) {
+        atlas.colIndexBits = 8;
+        atlas.rowIndexBits = 1;
+        atlas.entryCount = 256;
+    });
+    expectInvalidAtlas([](fastfile::FxElemAtlasDisk32 &atlas, auto &) {
+        atlas.entryCount = 2;
+    });
+    expectInvalidAtlas([](fastfile::FxElemAtlasDisk32 &atlas, auto &) {
+        atlas.behavior = 3;
+    });
+    expectInvalidAtlas([](
+                           fastfile::FxElemAtlasDisk32 &atlas,
+                           fastfile::FxElemDefDisk32 &elem) {
+        atlas.fps = 25;
+        elem.lifeSpanMsec.base = 86'400'000;
+    });
+
+    {
+        EffectFixture valid = MakeMinimalEffect();
+        valid.elems()[0].atlas.colIndexBits = 8;
+        valid.elems()[0].atlas.entryCount = 256;
+        CheckValidEffect(&valid, 2);
+    }
+
+    {
+        EffectFixture invalid = MakeEffect(
+            {MinimalElem(fastfile::FxElemTypeDisk32::Model)}, 0, 1, 0);
+        AttachSamples(&invalid, 0, 1, 1);
+        AttachVisuals(
+            &invalid,
+            0,
+            fastfile::FxElemTypeDisk32::Model,
+            {AddOpaqueReference(&invalid, 0xD604u)});
+        invalid.elems()[0].atlas.entryCount = 1;
+        CheckPlanFailure(
+            &invalid, fastfile::FxFastFileNativeDisk32Status::InvalidVisual);
+    }
+
+    {
+        EffectFixture invalid = MakeEffect(
+            {MinimalElem(fastfile::FxElemTypeDisk32::Trail)}, 0, 1, 0);
+        AttachSamples(&invalid, 0, 1, 1);
+        AttachVisuals(
+            &invalid,
+            0,
+            fastfile::FxElemTypeDisk32::Trail,
+            {AddOpaqueReference(&invalid, 0xD605u)});
+        AttachTrail(&invalid, 0, 3, 4);
+        CheckPlanFailure(
+            &invalid, fastfile::FxFastFileNativeDisk32Status::InvalidTrail);
+    }
+}
+
 void TestTrailValidation()
 {
     {
         EffectFixture invalid = MakeEffect(
-            {MinimalElem(fastfile::FxElemTypeDisk32::Trail)}, 0, 1, 0);
-        AttachSamples(&invalid, 0, 1, 0);
+            {MinimalElem(fastfile::FxElemTypeDisk32::Trail)}, 1, 0, 0);
+        AttachSamples(&invalid, 0, 1, 1);
         AttachVisuals(
             &invalid,
             0,
@@ -2982,7 +3194,7 @@ void TestPlanningOutputAliases()
     {
         EffectFixture fixture = MakeEffect(
             {MinimalElem(fastfile::FxElemTypeDisk32::Sound)}, 0, 1, 0);
-        AttachSamples(&fixture, 0, 1, 0);
+        AttachSamples(&fixture, 0, 1, 1);
         AttachVisuals(
             &fixture,
             0,
@@ -3023,7 +3235,11 @@ EffectFixture MakeSingleIdentityEffect(
     const fastfile::FxElemTypeDisk32 type)
 {
     EffectFixture fixture = MakeEffect({MinimalElem(type)}, 0, 1, 0);
-    AttachSamples(&fixture, 0, 1, 0);
+    AttachSamples(
+        &fixture,
+        0,
+        1,
+        type == fastfile::FxElemTypeDisk32::Runner ? 0 : 1);
     AttachVisuals(
         &fixture,
         0,
@@ -3629,7 +3845,7 @@ EffectFixture MakeEmptyEffect()
 EffectFixture MakeMinimalEffect()
 {
     EffectFixture fixture = MakeEffect({MinimalElem()}, 0, 1, 0);
-    AttachSamples(&fixture, 0, 1, 0);
+    AttachSamples(&fixture, 0, 1, 1);
     AttachVisuals(
         &fixture,
         0,
@@ -3750,6 +3966,15 @@ void AttachVisuals(
 
     fastfile::FxElemDefDisk32 &elem = fixture->elems()[elemIndex];
     elem.elemType = type;
+    if (UsesMaterialVisuals(type) && elem.atlas.behavior == 0
+        && elem.atlas.index == 0 && elem.atlas.fps == 0
+        && elem.atlas.loopCount == 0 && elem.atlas.colIndexBits == 0
+        && elem.atlas.rowIndexBits == 0 && elem.atlas.entryCount == 0)
+    {
+        // FX_ConvertAtlas canonicalizes an active non-atlased material to a
+        // one-entry, zero-bit atlas rather than leaving entryCount zero.
+        elem.atlas.entryCount = 1;
+    }
     if (type == fastfile::FxElemTypeDisk32::Decal)
     {
         CHECK(references.size() % 2u == 0);
@@ -3809,12 +4034,16 @@ EffectFixture MakeAllVisualKindsEffect()
         elems.push_back(MinimalElem(type));
     EffectFixture fixture = MakeEffect(
         std::move(elems),
-        3,
         4,
+        3,
         static_cast<std::int32_t>(kTypes.size() - 7u));
 
     for (std::size_t index = 0; index < kTypes.size(); ++index)
-        AttachSamples(&fixture, index, 1, 0);
+        AttachSamples(
+            &fixture,
+            index,
+            1,
+            kTypes[index] == fastfile::FxElemTypeDisk32::Runner ? 0 : 1);
 
     for (std::size_t index = 0; index < kTypes.size(); ++index)
     {
@@ -3903,8 +4132,8 @@ void FixtureSelfTest()
     EffectFixture allVisuals = MakeAllVisualKindsEffect();
     CHECK(allVisuals.effect() != nullptr);
     CHECK(allVisuals.elems() != nullptr);
-    CHECK(allVisuals.effect()->elemDefCountLooping == 3);
-    CHECK(allVisuals.effect()->elemDefCountOneShot == 4);
+    CHECK(allVisuals.effect()->elemDefCountLooping == 4);
+    CHECK(allVisuals.effect()->elemDefCountOneShot == 3);
     CHECK(allVisuals.effect()->elemDefCountEmission == 4);
     CHECK(allVisuals.elems()[5].elemType
           == fastfile::FxElemTypeDisk32::Model);
@@ -3937,6 +4166,7 @@ int main()
     TestFutureTokenMutationRestore();
     TestResolverDescriptorSnapshot();
     TestVisualValidation();
+    TestSemanticValidation();
     TestTrailValidation();
     TestResolverFailuresAndReentry();
     TestPlanningOutputAliases();
