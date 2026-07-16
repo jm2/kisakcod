@@ -68,6 +68,18 @@ function(require_not_contains SOURCE_VAR NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+function(require_no_loop_tokens SOURCE_VAR DESCRIPTION)
+    string(REGEX MATCH
+        "(^|[^A-Za-z0-9_])(for|while|do)([^A-Za-z0-9_]|$)"
+        _loop_token
+        "${${SOURCE_VAR}}")
+    if(NOT _loop_token STREQUAL "")
+        message(FATAL_ERROR
+            "Forbidden script-string journal loop (${DESCRIPTION}): "
+            "'${_loop_token}'")
+    endif()
+endfunction()
+
 function(require_ordered SOURCE_VAR FIRST SECOND DESCRIPTION)
     string(FIND "${${SOURCE_VAR}}" "${FIRST}" _first)
     string(FIND "${${SOURCE_VAR}}" "${SECOND}" _second)
@@ -238,10 +250,22 @@ foreach(_marker IN ITEMS
     "std::uint8_t flags_ = 0;")
     require_contains(_journal_class "${_marker}" "fixed persistent state")
 endforeach()
-require_contains(
+extract_slice(
     _journal_class
+    "private:"
+    "zone_load::ZoneLoadContextKey key_{};"
+    _journal_private_methods
+    "journal private method declarations")
+require_contains(
+    _journal_private_methods
     "void detachBacking() noexcept;"
     "rollback detach helper remains private")
+foreach(_access_label IN ITEMS "public:" "protected:")
+    require_not_contains(
+        _journal_private_methods
+        "${_access_label}"
+        "detach helper cannot escape the private method section")
+endforeach()
 foreach(_forbidden IN ITEMS
     "std::size_t"
     "size_t"
@@ -387,10 +411,28 @@ extract_slice(
     "void ScriptStringJournal::finishRollback() noexcept"
     _detach_backing
     "rollback detach helper")
-require_contains(
-    _detach_backing
-    "void ScriptStringJournal::detachBacking() noexcept { storage_ = nullptr; capacity_ = 0; }"
-    "exact rollback detach helper body")
+string(STRIP "${_detach_backing}" _detach_backing_exact)
+set(_expected_detach_backing
+    "void ScriptStringJournal::detachBacking() noexcept { storage_ = nullptr; capacity_ = 0; }")
+if(NOT _detach_backing_exact STREQUAL _expected_detach_backing)
+    message(FATAL_ERROR
+        "The private rollback detach helper must contain exactly its two "
+        "backing-store assignments")
+endif()
+extract_slice(
+    _source
+    "void ScriptStringJournal::finishRollback() noexcept"
+    "bool ScriptStringJournal::initialized() const noexcept"
+    _finish_rollback
+    "rollback terminal receipt")
+string(STRIP "${_finish_rollback}" _finish_rollback_exact)
+set(_expected_finish_rollback
+    "void ScriptStringJournal::finishRollback() noexcept { rollbackCursor_ = 0; phase_ = ScriptStringJournalPhase::RolledBack; flags_ = kInitializedFlag; detachBacking(); }")
+if(NOT _finish_rollback_exact STREQUAL _expected_finish_rollback)
+    message(FATAL_ERROR
+        "The rollback terminal must normalize its receipt and invoke the "
+        "exact private detach helper")
+endif()
 extract_slice(
     _source
     "[[nodiscard]] bool EntriesMatchPhase("
@@ -402,22 +444,16 @@ require_literal_count(
     "for (std::uint32_t index = 0; index < entryCount; ++index)"
     1
     "one linear scan loop")
-require_literal_count(
-    _source
-    "for ("
-    1
-    "EntriesMatchPhase owns the journal source's sole loop")
-foreach(_forbidden_loop IN ITEMS
-    "for("
-    "while ("
-    "while("
-    "do {"
-    "do{")
-    require_not_contains(
-        _source
-        "${_forbidden_loop}"
-        "prepare/transfer/rollback cannot hide another loop")
-endforeach()
+string(REGEX MATCHALL
+    "(^|[^A-Za-z0-9_])(for|while|do)([^A-Za-z0-9_]|$)"
+    _source_loop_tokens
+    "${_source}")
+list(LENGTH _source_loop_tokens _source_loop_count)
+if(NOT _source_loop_count EQUAL 1)
+    message(FATAL_ERROR
+        "EntriesMatchPhase must own the journal implementation's sole loop; "
+        "found ${_source_loop_count} loop tokens")
+endif()
 require_literal_count(
     _source
     "EntriesMatchPhase("
@@ -440,6 +476,15 @@ require_ordered(
     "if (journal->phase_ == ScriptStringJournalPhase::Sealed)"
     "if (!EntriesMatchPhase("
     "idempotent sealed receipt precedes its one-time scan")
+extract_slice(
+    _source
+    "ScriptStringJournalStatus TryBeginScriptStringTransfer("
+    "ScriptStringJournalStatus TryTransferNextScriptString("
+    _begin_transfer
+    "callback-free transfer boundary")
+require_no_loop_tokens(
+    _begin_transfer
+    "begin-transfer must remain constant-time")
 extract_slice(
     _source
     "ScriptStringJournalStatus TryPrepareScriptStringJournalCommit("
@@ -467,6 +512,9 @@ require_ordered(
     "journal->phase_ == ScriptStringJournalPhase::RollingBack"
     "if (!EntriesMatchPhase("
     "idempotent rollback receipt precedes its one-time scan")
+require_no_loop_tokens(
+    _begin_rollback
+    "begin-rollback delegates its sole scan to EntriesMatchPhase")
 
 # Every mutating operation validates the exact key. Acquisition publishes one
 # entry only after a durable nonzero ID, preserving multiplicity and output
@@ -508,6 +556,9 @@ extract_slice(
     "ScriptStringJournalStatus TryPrepareScriptStringJournalCommit("
     _transfer
     "one-entry transfer operation")
+require_no_loop_tokens(
+    _transfer
+    "one-entry transfer operation")
 foreach(_marker IN ITEMS
     "journal->storage_[journal->transferCursor_]"
     "if (!EntryMatchesPhase("
@@ -545,6 +596,9 @@ extract_slice(
     "void FinalizeScriptStringJournalCommit("
     _prepare
     "status-bearing pre-Live commit preparation")
+require_no_loop_tokens(
+    _prepare
+    "prepare delegates its sole scan to EntriesMatchPhase")
 foreach(_forbidden IN ITEMS
     "callbacks"
     "callbackStatus"
@@ -647,6 +701,15 @@ require_ordered(
     "reverse entry selected before release publication")
 extract_slice(
     _source
+    "ScriptStringJournalStatus TryRollbackNextScriptString("
+    "bool ScriptStringJournalKeyMatches("
+    _rollback_step
+    "one-entry rollback operation")
+require_no_loop_tokens(
+    _rollback_step
+    "one-entry rollback operation")
+extract_slice(
+    _source
     "ScriptStringReleaseCallbackStatus callbackStatus ="
     "bool ScriptStringJournalKeyMatches("
     _rollback_callback
@@ -715,6 +778,31 @@ require_ordered(
     "TryCommitZoneLoadContext(&slot, key)"
     "FinalizeScriptStringJournalCommit(value)"
     "real lifecycle publication precedes journal finalization")
+extract_slice(
+    _composed_commit_success
+    "TryPrepareScriptStringJournalCommit(&value, key)"
+    "TryCommitZoneLoadContext(&slot, key)"
+    _prepared_controller_window
+    "post-prepare pre-commit controller state")
+require_contains(
+    _prepared_controller_window
+    "slot.phase() == ZoneLoadContextPhase::Loading"
+    "successful prepare leaves the controller Loading")
+extract_slice(
+    _composed_commit_success
+    "if (commitStatus == ZoneLoadContextStatus::Success)"
+    "CHECK(commitStatus == ZoneLoadContextStatus::Success);"
+    _successful_finalize_guard
+    "successful lifecycle commit finalizer guard")
+string(STRIP "${_successful_finalize_guard}" _successful_finalize_guard_exact)
+set(_expected_successful_finalize_guard
+    "if (commitStatus == ZoneLoadContextStatus::Success) FinalizeScriptStringJournalCommit(value);")
+if(NOT _successful_finalize_guard_exact
+    STREQUAL _expected_successful_finalize_guard)
+    message(FATAL_ERROR
+        "The composed fixture must finalize only after the real lifecycle "
+        "commit reports Success")
+endif()
 foreach(_marker IN ITEMS
     "TryPrepareScriptStringJournalCommit(&value, key)"
     "TryCommitZoneLoadContext(&slot, key)"
