@@ -10,6 +10,7 @@ set(_helper_path "${SOURCE_ROOT}/src/database/db_referenced_fastfile.h")
 set(_fixture_path "${SOURCE_ROOT}/tests/db_referenced_fastfile_tests.cpp")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
 set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
+set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
 
 foreach(_path IN ITEMS
     "${_registry_path}"
@@ -17,7 +18,8 @@ foreach(_path IN ITEMS
     "${_helper_path}"
     "${_fixture_path}"
     "${_manifest_path}"
-    "${_tests_path}")
+    "${_tests_path}"
+    "${_ci_path}")
     if(NOT EXISTS "${_path}")
         message(FATAL_ERROR "Missing zone-slot range source: ${_path}")
     endif()
@@ -29,8 +31,9 @@ file(READ "${_helper_path}" _helper)
 file(READ "${_fixture_path}" _fixture)
 file(READ "${_manifest_path}" _manifest)
 file(READ "${_tests_path}" _tests)
+file(READ "${_ci_path}" _ci)
 
-foreach(_var IN ITEMS _registry _asset_header _helper _fixture _manifest _tests)
+foreach(_var IN ITEMS _registry _asset_header _helper _fixture _manifest _tests _ci)
     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${${_var}}")
     set(${_var} "${_normalized}")
 endforeach()
@@ -212,6 +215,12 @@ foreach(_marker IN ITEMS
     "COMMAND kisakcod-db-referenced-fastfile-tests")
     require_contains(
         _tests "${_marker}" "portable behavior test registration")
+endforeach()
+foreach(_marker IN ITEMS
+    "kisakcod-db-referenced-fastfile-tests"
+    "database-referenced-fastfile-format")
+    require_contains(
+        _ci "${_marker}" "measured Windows x86 CI integration")
 endforeach()
 
 extract_slice(
