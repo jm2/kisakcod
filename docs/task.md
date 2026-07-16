@@ -78,7 +78,7 @@ work item changes. Do not create session-specific handoff files.
   and native-type-tripwire hardening. PR #34 run **29521272126** passed all nine required jobs: Linux amd64/arm64,
   portable Windows amd64/ARM64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86, and headless
   Windows x86. Hosted Codex found no major issue, Gemini reported no review comments, and there are no unresolved review
-  threads. Authoritative post-merge master run **29522252342** is in progress.
+  threads. Authoritative post-merge master run **29522252342** also passed all nine jobs at squash commit `3e9b51b0`.
 - Current Disk32 script-string-walk checkpoint: branch `agent/disk32-script-string-walk` adds the exact
   `ScriptStringTokenDisk32` 0x4 record plus a separate pure report-free header/span/iterator layer. Header validation
   computes checked `count * 4` bytes before the 65536-entry policy cap and enforces root count/token presence parity.
@@ -89,18 +89,19 @@ work item changes. Do not create session-specific handoff files.
   output and cursor unchanged; every failure and `End` is output/cursor atomic. The empty Span/Begin/End route and the full
   65,536-entry array are covered. Production streams, script-string registration, PMem, zone state, `Com_Error`, native
   `const char **` representations, the legacy x86 loader, and retail bytes remain untouched.
-- Current script-string-walk validation: rebased commits `06a3e1f7` and `4d2d2cad` pass focused GCC 16 and Clang 22
-  warning-as-error CMake builds and execution for both the new walk and the existing XAsset envelope; direct
-  conversion/sign-conversion builds; ASan+UBSan and TSan execution; strict i386 compilation/linking and AArch64
-  compilation/linking; both dedicated source contracts; and `git diff --check`. The sandbox blocks the linked i386
-  executable with its established `SIGSYS`, and no AArch64 emulator is available. Portable CMake runs the runtime and
-  source-contract tests on all five utility targets; measured Windows x86 Debug/Release explicitly builds and runs the
-  new target. Candidate CI and hosted review are pending.
+- Current script-string-walk validation: exact audited head `638baace`, including rebased commits `06a3e1f7` and
+  `4d2d2cad`, passes the complete GCC and Clang suites **78/78**; focused GCC 16 and Clang 22 warning-as-error CMake
+  builds and execution for both the new walk and the existing XAsset envelope; direct conversion/sign-conversion builds;
+  ASan+UBSan, MSan, and TSan execution; strict i386 compilation/linking and AArch64 compilation/linking; Clang static
+  analysis; both dedicated source contracts; and `git diff --check`. The sandbox blocks the linked i386 executable with
+  its established `SIGSYS`, and no AArch64 emulator is available. Portable CMake runs the runtime and source-contract
+  tests on all five utility targets; measured Windows x86 Debug/Release explicitly builds and runs the new target.
+  Independent security/logic and build/test/CI audits found no blocker. Candidate CI and hosted review are pending.
 - Production dispatch now needs a generation-keyed, explicitly constructed per-zone native sidecar plus transactional
   script-string ownership and centralized abandonment in the same rollback batch. `XZone` cannot directly embed the
   nontrivial arena because the legacy registry zeroes each slot with `memset`. The first arena integration may use a
-  checked fixed compatibility budget
-  that fails the whole zone atomically on exhaustion; stable on-demand PMem chunks remain the general solution because
+  checked fixed compatibility budget that fails the whole zone atomically on exhaustion; stable on-demand PMem chunks
+  remain the general solution because
   the one-pass walk cannot precompute exact widened FX storage and the physical-memory reservation is only 128 MiB. Unload
   already removes registered assets before zone memory, but recoverable `Com_Error` uses `longjmp`, so production
   enablement also requires one explicit abandon path that cancels I/O, aborts nested adapter transactions, removes partial
@@ -1010,9 +1011,8 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Rebase the current pure `ScriptStringTokenDisk32` walk onto merged PR #34, complete hosted review and all-nine-job
-   candidate CI, then merge it without changing production stream globals, script-string registration, or the legacy x86
-   route.
+1. Complete hosted review and all-nine-job candidate CI for the current pure `ScriptStringTokenDisk32` walk, then merge
+   it without changing production stream globals, script-string registration, or the legacy x86 route.
 2. Add the generation-keyed per-zone FX ownership sidecar, stage script-string IDs with ordinary references before
    transferring them to database user ownership at commit, and implement centralized longjmp-safe zone-load abandonment.
    Allocate explicitly constructed state/workspace/storage inside the existing named PMem scope, treat the first fixed

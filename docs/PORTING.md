@@ -1210,13 +1210,15 @@ the record span remains alignment-agnostic. Source tripwires forbid native `XAss
 Focused GCC/Clang/ASan+UBSan/TSan execution, strict i386/AArch64 compilation/linking, Clang analysis, source-contract
 validation, and two independent clean audits pass. Exact reviewed head `ac619d3e` passed all nine jobs in run
 **29521272126**; hosted Codex found no major issue, Gemini reported no review comments, and no review threads remain.
-Authoritative post-merge master run **29522252342** is in progress. The current branch then adds the exact 0x4
+Authoritative post-merge master run **29522252342** also passed all nine jobs at squash commit `3e9b51b0`. The current
+branch then adds the exact 0x4
 `ScriptStringTokenDisk32` and a separate pure header/span/iterator layer. It computes checked four-byte extents before
 the 65536-entry cap, validates root/span parity, fully preflights the array, preserves null/inline/offset bits, rejects
 shared-inline explicitly, supports unaligned borrowed bytes, ignores trailing bytes, and revalidates mutation before
 failure-atomic output/cursor publication. Focused GCC/Clang/ASan+UBSan/TSan execution, strict i386 and AArch64
-compilation/linking, the existing XAsset regressions, and both source contracts pass locally; candidate CI/review for this
-stack is pending. The following ownership batch combines transactional ordinary-reference script-string staging, an
+compilation/linking, Clang analysis, the complete GCC/Clang **78/78** suites, the existing XAsset regressions, and both
+source contracts pass locally; two independent exact-head audits found no blocker. Candidate CI/review for this stack is
+pending. The following ownership batch combines transactional ordinary-reference script-string staging, an
 explicitly constructed generation-keyed per-zone sidecar, and centralized `Com_Error`/longjmp-safe rollback. `XZone`
 remains ABI-unchanged because the registry zeroes it with `memset`; native FX storage is allocated inside the existing
 named PMem zone scope. A checked fixed arena budget is acceptable only as an initial compatibility cap that atomically
