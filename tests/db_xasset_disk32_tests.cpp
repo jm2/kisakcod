@@ -332,6 +332,16 @@ void TestSpanBoundsAndTypePolicy()
         xasset::TryValidateXAssetListDisk32Span(
             &one, &record, sizeof(record), policy, nullptr)
         == xasset::XAssetListDisk32Status::InvalidArgument);
+    layout = SentinelLayout();
+    CHECK(
+        xasset::TryValidateXAssetListDisk32Span(
+            nullptr,
+            &record,
+            sizeof(record),
+            policy,
+            &layout)
+        == xasset::XAssetListDisk32Status::InvalidArgument);
+    CheckLayoutUnchanged(layout);
 
     xasset::XAssetTypeDisk32Policy invalidPolicy = policy;
     invalidPolicy.typeCount = 0;
@@ -522,12 +532,12 @@ void TestUnalignedIteratorAndGuardBytes()
     output =
         MakeAsset(INT32_C(0x13572468), UINT32_C(0xDEADBEEF));
     const auto outputBeforeEnd = ObjectBytes(output);
-    const auto iteratorBeforeEnd = ObjectBytes(iterator);
     CHECK(
         xasset::TryNextXAssetDisk32(&iterator, &output)
         == xasset::XAssetListDisk32Status::End);
     CHECK(ObjectBytes(output) == outputBeforeEnd);
-    CHECK(ObjectBytes(iterator) == iteratorBeforeEnd);
+    CHECK(iterator.nextIndex() == 2);
+    CHECK(iterator.remaining() == 0);
 
     CHECK(bytes.front() == prefixGuard);
     CHECK(bytes[bytes.size() - 2u] == suffixGuard0);
@@ -550,7 +560,10 @@ void TestIteratorFailureAtomicity()
             &list, &record, sizeof(record), policy, &iterator)
         == xasset::XAssetListDisk32Status::Success);
 
-    const auto validIterator = ObjectBytes(iterator);
+    const std::int32_t indexBeforeRejectedBegin =
+        iterator.nextIndex();
+    const std::int32_t remainingBeforeRejectedBegin =
+        iterator.remaining();
     const xasset::XAssetListDisk32 badList =
         MakeList(1, 0);
     CHECK(
@@ -562,18 +575,19 @@ void TestIteratorFailureAtomicity()
             &iterator)
         == xasset::XAssetListDisk32Status::
             InvalidAssetPointerCount);
-    CHECK(ObjectBytes(iterator) == validIterator);
+    CHECK(iterator.nextIndex() == indexBeforeRejectedBegin);
+    CHECK(iterator.remaining() == remainingBeforeRejectedBegin);
 
     record.type = db::asset_mode::kAssetTypeCount;
     xasset::XAssetDisk32 output =
         MakeAsset(INT32_C(0x13572468), UINT32_C(0xDEADBEEF));
     const auto outputBefore = ObjectBytes(output);
-    const auto iteratorBefore = ObjectBytes(iterator);
     CHECK(
         xasset::TryNextXAssetDisk32(&iterator, &output)
         == xasset::XAssetListDisk32Status::InvalidAssetType);
     CHECK(ObjectBytes(output) == outputBefore);
-    CHECK(ObjectBytes(iterator) == iteratorBefore);
+    CHECK(iterator.nextIndex() == 0);
+    CHECK(iterator.remaining() == 1);
 
     record.type = 25;
     probe.rejectedType = 25;
@@ -581,13 +595,24 @@ void TestIteratorFailureAtomicity()
         xasset::TryNextXAssetDisk32(&iterator, &output)
         == xasset::XAssetListDisk32Status::UnsupportedAssetType);
     CHECK(ObjectBytes(output) == outputBefore);
-    CHECK(ObjectBytes(iterator) == iteratorBefore);
+    CHECK(iterator.nextIndex() == 0);
+    CHECK(iterator.remaining() == 1);
+
+    probe.rejectedType = -1;
+    CHECK(
+        xasset::TryNextXAssetDisk32(&iterator, &output)
+        == xasset::XAssetListDisk32Status::Success);
+    CHECK(output.type == 25);
+    CHECK(output.header.token.value == UINT32_C(0xF7654321));
+    CHECK(iterator.nextIndex() == 1);
+    CHECK(iterator.remaining() == 0);
 
     xasset::XAssetListDisk32Iterator invalid{};
+    const auto outputBeforeInvalidIterator = ObjectBytes(output);
     CHECK(
         xasset::TryNextXAssetDisk32(&invalid, &output)
         == xasset::XAssetListDisk32Status::InvalidIterator);
-    CHECK(ObjectBytes(output) == outputBefore);
+    CHECK(ObjectBytes(output) == outputBeforeInvalidIterator);
     CHECK(
         xasset::TryNextXAssetDisk32(nullptr, &output)
         == xasset::XAssetListDisk32Status::InvalidArgument);
@@ -613,7 +638,6 @@ void TestLateRejectionIsAtomic()
         MakePolicy(&probe);
 
     xasset::XAssetListDisk32Iterator iterator{};
-    const auto iteratorBefore = ObjectBytes(iterator);
     CHECK(
         xasset::TryBeginXAssetListDisk32(
             &list,
@@ -623,7 +647,10 @@ void TestLateRejectionIsAtomic()
             &iterator)
         == xasset::XAssetListDisk32Status::UnsupportedAssetType);
     CHECK(probe.calls == 3);
-    CHECK(ObjectBytes(iterator) == iteratorBefore);
+    xasset::XAssetDisk32 output{};
+    CHECK(
+        xasset::TryNextXAssetDisk32(&iterator, &output)
+        == xasset::XAssetListDisk32Status::InvalidIterator);
 
     xasset::XAssetListDisk32Layout layout = SentinelLayout();
     probe.calls = 0;

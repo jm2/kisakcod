@@ -140,7 +140,7 @@ XAssetListDisk32Status TryValidateXAssetListDisk32Span(
     const XAssetTypeDisk32Policy &policy,
     XAssetListDisk32Layout *const outLayout) noexcept
 {
-    if (!outLayout)
+    if (!list || !outLayout)
         return XAssetListDisk32Status::InvalidArgument;
     if (!TypePolicyIsValid(policy))
         return XAssetListDisk32Status::InvalidTypePolicy;
