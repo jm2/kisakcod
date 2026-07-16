@@ -55,7 +55,7 @@ work item changes. Do not create session-specific handoff files.
   security, lifetime, malformed-input, ABI/portability, test, or documentation blocker at `ca080971`. PR #33
   squash-merged as `a004701d` from final documentation head `73472a50`; authoritative post-merge master run
   **29506653705** passed all nine jobs. The canceled final PR-branch run is intentionally non-authoritative.
-- Current Disk32 XAsset-envelope checkpoint: branch `agent/disk32-xasset-envelope` now defines exact portable
+- Current Disk32 XAsset-envelope checkpoint: PR #34 on `agent/disk32-xasset-envelope` defines exact portable
   `XAssetHeaderDisk32` (0x4), `XAssetDisk32` (0x8), `ScriptStringListDisk32` (0x8), and `XAssetListDisk32` (0x10)
   records without importing the widened native `xanim.h` types. A pure report-free layer validates the 32768-asset and
   65536-script-string limits, count/token parity, checked `count * 8` extent, caller-provided bounded record span, raw
@@ -68,14 +68,17 @@ work item changes. Do not create session-specific handoff files.
   alignment-agnostic. Checked arithmetic distinguishes negative counts, true `count * 8` overflow, and the lower
   32768-entry policy cap. Source tripwires forbid importing or iterating native `XAsset`/`XAssetList` representations.
   Production stream globals, `db_load.cpp`, PMem, zone ownership, the legacy x86 route, and retail bytes are unchanged.
-- Current XAsset-envelope validation: rebased commits `d520e174`, `b108d344`, `77fe04f7`, `c639a3fa`, and `ae49ca7c`
-  pass focused GCC and Clang warning-as-error builds and execution, including Clang conversion/sign-conversion diagnostics;
-  ASan+UBSan and TSan execution; strict GCC i386 and AArch64 compilation/linking; Clang static analysis; the dedicated
-  source contract; and `git diff --check`. The sandbox blocks the linked i386 executable with its established `SIGSYS`,
-  and no AArch64 emulator is available. Portable CMake integration executes the runtime and source-contract tests on all
-  five utility targets; measured Windows x86 Debug/Release explicitly builds and runs the new target. Independent
-  security/logic and test/build audits found no remaining blocker after the empty-list, overflow, aligned-root,
-  deterministic-admission, and native-type-tripwire hardening. Candidate CI and hosted review are pending.
+- Current XAsset-envelope validation: exact reviewed head `ac619d3e` passes the complete GCC and Clang portable suites
+  **76/76**, focused warning-as-error execution including Clang conversion/sign-conversion diagnostics, ASan+UBSan and
+  TSan execution, strict GCC i386 and AArch64 compilation/linking, Clang static analysis, the dedicated source contract,
+  and `git diff --check`. The sandbox blocks the linked i386 executable with its established `SIGSYS`, and no AArch64
+  emulator is available. Portable CMake integration executes the runtime and source-contract tests on all five utility
+  targets; measured Windows x86 Debug/Release explicitly builds and runs the new target. Independent security/logic and
+  test/build audits found no remaining blocker after the empty-list, overflow, aligned-root, deterministic-admission,
+  and native-type-tripwire hardening. PR #34 run **29521272126** passed all nine required jobs: Linux amd64/arm64,
+  portable Windows amd64/ARM64, macOS arm64, measured Windows x86 Debug/Release, no-Steam Windows x86, and headless
+  Windows x86. Hosted Codex found no major issue, Gemini reported no review comments, and there are no unresolved review
+  threads. The only subsequent branch change is this status documentation.
 - Production dispatch now needs the Disk32 script-string walk and a generation-keyed, explicitly constructed per-zone
   native sidecar in the same ownership/rollback batch. `XZone` cannot directly embed the nontrivial arena because the
   legacy registry zeroes each slot with `memset`. The first arena integration may use a checked fixed compatibility budget

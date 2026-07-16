@@ -1193,7 +1193,7 @@ detailed below.
 The production-wiring audit found one earlier native64 boundary that must land before stream integration: the retail
 `XAssetHeader`/`XAsset`/`ScriptStringList`/`XAssetList` envelopes are fixed 0x4/0x8/0x8/0x10 Disk32 records, while the
 corresponding native types widen to 0x8/0x10/0x10/0x20. A native64 loader that branches only at the FX payload has already
-read the wrong list size and offsets and iterated the asset array at the wrong stride. The current M5 branch therefore adds
+read the wrong list size and offsets and iterated the asset array at the wrong stride. PR #34 therefore adds
 exact Disk32 envelope schemas and a pure bounded validator/iterator without changing production streams. That prerequisite is
 implemented on `agent/disk32-xasset-envelope`: it preflights count/token parity, the checked 32768-entry eight-byte span,
 raw signed type range, required portable build admission, unaligned exact-stride reads, trailing guard bytes, high-bit
@@ -1201,7 +1201,9 @@ tokens, late rejection, the callback-free empty path, meaningful arithmetic over
 output/cursor atomicity. A typed root must be four-byte aligned and receive an exact 0x10-byte copy when sourced from wire;
 the record span remains alignment-agnostic. Source tripwires forbid native `XAsset`/`XAssetList` imports and iteration.
 Focused GCC/Clang/ASan+UBSan/TSan execution, strict i386/AArch64 compilation/linking, Clang analysis, source-contract
-validation, and two independent clean audits pass; candidate CI is pending. The following
+validation, and two independent clean audits pass. Exact reviewed head `ac619d3e` passed all nine jobs in run
+**29521272126**; hosted Codex found no major issue, Gemini reported no review comments, and no review threads remain.
+The only later branch change is the final status documentation. The following
 ownership batch combines the four-byte-stride Disk32 script-string walk, an explicitly constructed generation-keyed
 per-zone sidecar, and centralized `Com_Error`/longjmp-safe rollback. `XZone` remains ABI-unchanged because the registry
 zeroes it with `memset`; native FX storage is allocated inside the existing named PMem zone scope. A checked fixed arena
