@@ -18,6 +18,16 @@ using Status = FxFastFileNativeDisk32Status;
 
 constexpr std::int32_t kMaxTrailVertices = 64;
 constexpr std::int32_t kMaxTrailIndices = 128;
+// Keep static definition timing inside the same bounded domain used by the
+// archive semantic validator.  Besides limiting hostile fast-file work, this
+// leaves headroom for the runtime's signed additions of delay, lifespan and
+// last-looping-spawn time.
+constexpr std::int64_t kDurationLimitMsec =
+    INT64_C(24) * 60 * 60 * 1000;
+// A sampled integer range evaluates `(amplitude + 1) * random16` in signed
+// 32-bit arithmetic.  32767 is the largest amplitude for which that product
+// cannot overflow.
+constexpr std::int32_t kRandomRangeAmplitudeMax = 32767;
 constexpr std::uint64_t kFnvOffset = UINT64_C(14695981039346656037);
 constexpr std::uint64_t kFnvPrime = UINT64_C(1099511628211);
 
@@ -204,6 +214,152 @@ template <typename T>
         || type == FxElemTypeDisk32::SpotLight;
 }
 
+[[nodiscard]] bool UsesMaterial(const FxElemTypeDisk32 type) noexcept
+{
+    return type == FxElemTypeDisk32::SpriteBillboard
+        || type == FxElemTypeDisk32::SpriteOriented
+        || type == FxElemTypeDisk32::Tail
+        || type == FxElemTypeDisk32::Trail
+        || type == FxElemTypeDisk32::Cloud
+        || type == FxElemTypeDisk32::Decal;
+}
+
+[[nodiscard]] bool ValidateTimeRange(
+    const FxIntRangeDisk32 &range,
+    const bool requirePositiveMinimum) noexcept
+{
+    if (range.amplitude < 0
+        || range.amplitude > kRandomRangeAmplitudeMax)
+    {
+        return false;
+    }
+    const std::int64_t minimum = range.base;
+    const std::int64_t maximum =
+        static_cast<std::int64_t>(range.base) + range.amplitude;
+    return (!requirePositiveMinimum || minimum > 0)
+        && minimum >= -kDurationLimitMsec
+        && minimum <= kDurationLimitMsec
+        && maximum >= -kDurationLimitMsec
+        && maximum <= kDurationLimitMsec;
+}
+
+[[nodiscard]] bool ValidateOneShotCount(
+    const FxSpawnDefDisk32 &spawn) noexcept
+{
+    if (spawn.intervalMsecOrCountBase < 0
+        || spawn.loopCountOrCountAmplitude < 0
+        || spawn.loopCountOrCountAmplitude > kRandomRangeAmplitudeMax)
+    {
+        return false;
+    }
+    const std::int64_t maximum =
+        static_cast<std::int64_t>(spawn.intervalMsecOrCountBase)
+        + spawn.loopCountOrCountAmplitude;
+    return maximum <= static_cast<std::int64_t>(MAX_ELEMS);
+}
+
+[[nodiscard]] bool IsCanonicalZeroAtlas(
+    const FxElemAtlasDisk32 &atlas) noexcept
+{
+    return atlas.behavior == 0 && atlas.index == 0 && atlas.fps == 0
+        && atlas.loopCount == 0 && atlas.colIndexBits == 0
+        && atlas.rowIndexBits == 0 && atlas.entryCount == 0;
+}
+
+[[nodiscard]] bool ValidateAtlas(
+    const FxElemDefDisk32 &elem) noexcept
+{
+    // FX_ConvertAtlas zeroes the complete record for non-material elements and
+    // material elements without visuals.  Preserve that canonical inactive
+    // representation so untrusted shift counts cannot become live later.
+    if (!UsesMaterial(elem.elemType) || elem.visualCount == 0)
+        return IsCanonicalZeroAtlas(elem.atlas);
+
+    const std::int32_t entryCount = elem.atlas.entryCount;
+    const std::uint32_t colBits = elem.atlas.colIndexBits;
+    const std::uint32_t rowBits = elem.atlas.rowIndexBits;
+    const std::uint32_t totalBits = colBits + rowBits;
+    if (entryCount <= 0 || entryCount > 256 || colBits > 8
+        || rowBits > 8 || totalBits > 8
+        || static_cast<std::uint32_t>(entryCount) != (1u << totalBits)
+        || (elem.atlas.behavior & 3u) == 3u)
+    {
+        return false;
+    }
+
+    // FX_GetSpriteTexCoords multiplies fps by the signed millisecond age
+    // before dividing by 1000.  Bound the product for every possible sampled
+    // lifespan when time-based atlas animation is active.
+    const std::int64_t maximumLife =
+        static_cast<std::int64_t>(elem.lifeSpanMsec.base)
+        + elem.lifeSpanMsec.amplitude;
+    return (elem.atlas.behavior & 4u) != 0 || elem.atlas.fps == 0
+        || maximumLife
+            <= (std::numeric_limits<std::int32_t>::max)()
+                / elem.atlas.fps;
+}
+
+[[nodiscard]] Status ValidateElementSemantics(
+    const FxEffectDefDisk32 &effect,
+    const std::uint32_t index,
+    const FxElemDefDisk32 &elem,
+    std::int64_t *const maximumLoopingLife,
+    bool *const hasInfiniteLoop) noexcept
+{
+    if (!maximumLoopingLife || !hasInfiniteLoop
+        || !ValidateTimeRange(elem.spawnDelayMsec, false)
+        || !ValidateTimeRange(elem.lifeSpanMsec, true))
+    {
+        return Status::InvalidCount;
+    }
+
+    if (index < static_cast<std::uint32_t>(effect.elemDefCountLooping))
+    {
+        const std::int32_t interval = elem.spawn.intervalMsecOrCountBase;
+        const std::int32_t count = elem.spawn.loopCountOrCountAmplitude;
+        if (interval < 0
+            || (interval == 0 && elem.elemType != FxElemTypeDisk32::Trail)
+            || interval > kDurationLimitMsec || count < 0)
+        {
+            return Status::InvalidCount;
+        }
+        if (count == (std::numeric_limits<std::int32_t>::max)())
+        {
+            *hasInfiniteLoop = true;
+        }
+        else
+        {
+            const std::int64_t lastSpawn = count > 1
+                ? static_cast<std::int64_t>(interval) * (count - 1)
+                : 0;
+            if (lastSpawn > kDurationLimitMsec)
+                return Status::InvalidCount;
+            if (*maximumLoopingLife < lastSpawn)
+                *maximumLoopingLife = lastSpawn;
+        }
+    }
+    else if (!ValidateOneShotCount(elem.spawn))
+    {
+        return Status::InvalidCount;
+    }
+
+    // Every compiler routing except Runner has at least one visual channel;
+    // FX_SetupVisualState then unconditionally dereferences two samples.
+    const bool requiresVisibilitySamples =
+        elem.elemType != FxElemTypeDisk32::Runner;
+    if ((requiresVisibilitySamples
+            && (elem.visStateIntervalCount == 0
+                || elem.visSamples.token.isNull()))
+        || (!requiresVisibilitySamples
+            && (elem.visStateIntervalCount != 0
+                || !elem.visSamples.token.isNull()))
+        || !ValidateAtlas(elem))
+    {
+        return Status::InvalidVisual;
+    }
+    return Status::Success;
+}
+
 [[nodiscard]] FxFastFileDisk32ReferenceKind VisualReferenceKind(
     const FxElemTypeDisk32 type) noexcept
 {
@@ -283,6 +439,8 @@ template <typename T>
     if (effect.name.token.isNull())
         return Status::InvalidPointerCount;
 
+    std::int64_t maximumLoopingLife = 0;
+    bool hasInfiniteLoop = false;
     for (std::uint32_t index = 0; index < elementCount; ++index)
     {
         const FxElemDefDisk32 &elem = source.elements.data[index];
@@ -290,6 +448,15 @@ template <typename T>
             source.elementViews.data[index];
         if (elem.elemType >= FxElemTypeDisk32::Count)
             return Status::InvalidVisual;
+
+        status = ValidateElementSemantics(
+            effect,
+            index,
+            elem,
+            &maximumLoopingLife,
+            &hasInfiniteLoop);
+        if (status != Status::Success)
+            return status;
 
         if (elem.velSamples.token.isNull() || elem.velIntervalCount == 0)
             return Status::InvalidPointerCount;
@@ -453,7 +620,12 @@ template <typename T>
                 return Status::InvalidTrail;
         }
     }
-    return Status::Success;
+    const std::int32_t expectedLoopingLife = hasInfiniteLoop
+        ? (std::numeric_limits<std::int32_t>::max)()
+        : static_cast<std::int32_t>(maximumLoopingLife);
+    return effect.msecLoopingLife == expectedLoopingLife
+        ? Status::Success
+        : Status::InvalidCount;
 }
 
 [[nodiscard]] Status PlanLayout(
