@@ -107,11 +107,17 @@ Completed foundation work:
   XBlock/XAsset loader, retail bytes, legacy x86 path, archive writer, and save-side guard remain unchanged pending the
   production wiring and whole-zone ownership/rollback batch;
 - exact portable top-level fast-file envelopes for `XAssetHeaderDisk32` (0x4), `XAssetDisk32` (0x8),
-  `ScriptStringListDisk32` (0x8), and `XAssetListDisk32` (0x10), plus a pure bounded preflight/iterator layer on the
-  current branch. It enforces the 32768-asset and 65536-script-string limits, count/token parity, checked eight-byte
+  `ScriptStringListDisk32` (0x8), and `XAssetListDisk32` (0x10), plus a pure bounded preflight/iterator layer merged in
+  PR #34 as `3e9b51b0`. It enforces the 32768-asset and 65536-script-string limits, count/token parity, checked eight-byte
   record extents, raw signed type range, caller-supplied portable build admission, unaligned exact-stride reads,
   high-bit-token preservation, and failure-atomic outputs without importing native `xanim.h` layouts or changing
   production stream/PMem/zone state;
+- an exact `ScriptStringTokenDisk32` (0x4) record and pure bounded script-string header/span/iterator layer on the current
+  stacked branch. It computes checked `count * 4` extents before the 65536-entry cap, enforces root and bounded-span
+  presence parity, preflights the complete caller-owned array, preserves null/inline/ordinary-offset tokens verbatim,
+  rejects the unsupported shared-inline sentinel, reads unaligned entries with exact-stride `memcpy`, ignores trailing
+  bytes, revalidates sequential mutation before each publication, and leaves output/cursor state unchanged on failure or
+  `End`. Production streams, script-string registration, PMem/zone state, and retail bytes remain unchanged;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -149,10 +155,11 @@ Remaining gates, in implementation order:
    pure transactional native converters with local GCC/Clang, complete sanitizer, strict i386/AArch64, source-contract,
    and all-nine-job candidate CI clean. PR #33 merged the zone-owned aligned native arena and guarded stateful zone adapter
    over the XBlock cursor walk with adversarial sequence/provenance/nesting and canonical-publication coverage; it
-   squash-merged as `a004701d`, and post-merge run **29506653705** passed all nine jobs. The current branch adds the fixed
-   top-level XAsset envelopes and bounded eight-byte iterator prerequisite. Next, add the four-byte Disk32 script-string
-   walk and generation-keyed per-zone sidecar with centralized longjmp-safe rollback, then wire the adapter into production
-   with completed-object/alias registration and lifetime tests before replacing any legacy loader path. Retail wire bytes
+   squash-merged as `a004701d`, and post-merge run **29506653705** passed all nine jobs. PR #34 merged the fixed top-level
+   XAsset envelopes and bounded eight-byte iterator prerequisite as `3e9b51b0`; the current stacked branch adds the pure
+   four-byte Disk32 script-string token walk. Next, add transactional script-string ownership, the generation-keyed
+   per-zone sidecar, and centralized longjmp-safe rollback, then wire the adapter into production with
+   completed-object/alias registration and lifetime tests before replacing any legacy loader path. Retail wire bytes
    remain frozen.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
 5. Implement the remaining platform services (sockets, filesystem,
@@ -1193,9 +1200,9 @@ detailed below.
 The production-wiring audit found one earlier native64 boundary that must land before stream integration: the retail
 `XAssetHeader`/`XAsset`/`ScriptStringList`/`XAssetList` envelopes are fixed 0x4/0x8/0x8/0x10 Disk32 records, while the
 corresponding native types widen to 0x8/0x10/0x10/0x20. A native64 loader that branches only at the FX payload has already
-read the wrong list size and offsets and iterated the asset array at the wrong stride. PR #34 therefore adds
-exact Disk32 envelope schemas and a pure bounded validator/iterator without changing production streams. That prerequisite is
-implemented on `agent/disk32-xasset-envelope`: it preflights count/token parity, the checked 32768-entry eight-byte span,
+read the wrong list size and offsets and iterated the asset array at the wrong stride. PR #34 therefore merged exact
+Disk32 envelope schemas and a pure bounded validator/iterator as `3e9b51b0` without changing production streams. That
+prerequisite preflights count/token parity, the checked 32768-entry eight-byte span,
 raw signed type range, required portable build admission, unaligned exact-stride reads, trailing guard bytes, high-bit
 tokens, late rejection, the callback-free empty path, meaningful arithmetic overflow before the lower policy cap, and
 output/cursor atomicity. A typed root must be four-byte aligned and receive an exact 0x10-byte copy when sourced from wire;
@@ -1203,13 +1210,19 @@ the record span remains alignment-agnostic. Source tripwires forbid native `XAss
 Focused GCC/Clang/ASan+UBSan/TSan execution, strict i386/AArch64 compilation/linking, Clang analysis, source-contract
 validation, and two independent clean audits pass. Exact reviewed head `ac619d3e` passed all nine jobs in run
 **29521272126**; hosted Codex found no major issue, Gemini reported no review comments, and no review threads remain.
-The only later branch change is the final status documentation. The following
-ownership batch combines the four-byte-stride Disk32 script-string walk, an explicitly constructed generation-keyed
-per-zone sidecar, and centralized `Com_Error`/longjmp-safe rollback. `XZone` remains ABI-unchanged because the registry
-zeroes it with `memset`; native FX storage is allocated inside the existing named PMem zone scope. A checked fixed arena
-budget is acceptable only as an initial compatibility cap that atomically rejects an oversized zone. Stable on-demand
-PMem chunks remain the general solution, and registered assets must be removed before sidecar unbind/destruction and
-`PMem_EndAlloc` must precede rollback `PMem_Free`.
+Authoritative post-merge master run **29522252342** is in progress. The current branch then adds the exact 0x4
+`ScriptStringTokenDisk32` and a separate pure header/span/iterator layer. It computes checked four-byte extents before
+the 65536-entry cap, validates root/span parity, fully preflights the array, preserves null/inline/offset bits, rejects
+shared-inline explicitly, supports unaligned borrowed bytes, ignores trailing bytes, and revalidates mutation before
+failure-atomic output/cursor publication. Focused GCC/Clang/ASan+UBSan/TSan execution, strict i386 and AArch64
+compilation/linking, the existing XAsset regressions, and both source contracts pass locally; candidate CI/review for this
+stack is pending. The following ownership batch combines transactional ordinary-reference script-string staging, an
+explicitly constructed generation-keyed per-zone sidecar, and centralized `Com_Error`/longjmp-safe rollback. `XZone`
+remains ABI-unchanged because the registry zeroes it with `memset`; native FX storage is allocated inside the existing
+named PMem zone scope. A checked fixed arena budget is acceptable only as an initial compatibility cap that atomically
+rejects an oversized zone. Stable on-demand PMem chunks remain the general solution, and registered assets must be removed
+before sidecar unbind/destruction, staged string references must be released on abandonment, and `PMem_EndAlloc` must
+precede rollback `PMem_Free`.
 Writer replacement follows later after exact x86
 full-image equivalence.
 A checked
