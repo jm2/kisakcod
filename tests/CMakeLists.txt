@@ -294,6 +294,26 @@ add_test(
 set_tests_properties(
     database-zone-load-context-lifecycle PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-db-script-string-journal-tests
+    db_script_string_journal_tests.cpp
+    ${SRC_DIR}/database/db_script_string_journal.cpp
+)
+target_include_directories(
+    kisakcod-db-script-string-journal-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-script-string-journal-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-db-script-string-journal-tests)
+set_target_properties(
+    kisakcod-db-script-string-journal-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-script-string-transaction-journal
+    COMMAND kisakcod-db-script-string-journal-tests
+)
+set_tests_properties(
+    database-script-string-transaction-journal PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-fx-archive-disk32-tests
     fx_archive_disk32_tests.cpp
     ${SRC_DIR}/EffectsCore/fx_archive_disk32.cpp
