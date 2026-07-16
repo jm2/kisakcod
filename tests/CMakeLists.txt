@@ -297,6 +297,7 @@ set_tests_properties(
 add_executable(kisakcod-db-script-string-journal-tests
     db_script_string_journal_tests.cpp
     ${SRC_DIR}/database/db_script_string_journal.cpp
+    ${SRC_DIR}/database/db_zone_load_context.cpp
 )
 target_include_directories(
     kisakcod-db-script-string-journal-tests PRIVATE ${SRC_DIR})

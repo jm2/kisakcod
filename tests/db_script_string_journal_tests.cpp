@@ -33,7 +33,19 @@ using journal::TryRollbackNextScriptString;
 using journal::TrySealScriptStringJournal;
 using journal::TryStageScriptString;
 using journal::TryTransferNextScriptString;
+using zone_load::TryBeginZoneLoadContextAbandonment;
+using zone_load::TryClaimZoneLoadContext;
+using zone_load::TryCommitZoneLoadContext;
+using zone_load::TryFinishZoneLoadContextAbandonment;
+using zone_load::TryInitializeZoneLoadContextSlot;
+using zone_load::TryUnloadZoneLoadContext;
+using zone_load::ZoneLoadCleanupCallbacks;
+using zone_load::ZoneLoadCleanupCallbackStatus;
+using zone_load::ZoneLoadCleanupOperation;
 using zone_load::ZoneLoadContextKey;
+using zone_load::ZoneLoadContextPhase;
+using zone_load::ZoneLoadContextSlot;
+using zone_load::ZoneLoadContextStatus;
 
 int failures = 0;
 
@@ -218,6 +230,19 @@ ScriptStringJournalCallbacks MakeCallbacks(
         TransferToDatabaseUser,
         RemoveOrdinary,
         RemoveDatabaseUser};
+}
+
+ZoneLoadCleanupCallbackStatus CompleteZoneCleanup(
+    void *,
+    ZoneLoadCleanupOperation) noexcept
+{
+    return ZoneLoadCleanupCallbackStatus::Success;
+}
+
+constexpr ZoneLoadCleanupCallbacks MakeCompleteZoneCleanupCallbacks(
+    void *const context) noexcept
+{
+    return {context, CompleteZoneCleanup};
 }
 
 struct ScaleCallbackRecorder final
@@ -497,6 +522,8 @@ void TestLayoutNoexceptAndInitialization()
         std::declval<const ZoneLoadContextKey &>(),
         std::declval<const ScriptStringJournalCallbacks &>())));
     static_assert(noexcept(TryPrepareScriptStringJournalCommit(
+        nullptr, std::declval<const ZoneLoadContextKey &>())));
+    static_assert(noexcept(TryCommitZoneLoadContext(
         nullptr, std::declval<const ZoneLoadContextKey &>())));
     static_assert(noexcept(FinalizeScriptStringJournalCommit(
         std::declval<ScriptStringJournal &>())));
@@ -1119,6 +1146,140 @@ void TestTransferredAndCommitReadyRemainRollbackCapable()
         == ScriptStringJournalStatus::Success);
 }
 
+void TestComposedZoneCommitFinalizationOrdering()
+{
+    ZoneLoadContextSlot slot{};
+    CHECK(
+        TryInitializeZoneLoadContextSlot(&slot, 16)
+        == ZoneLoadContextStatus::Success);
+    ZoneLoadContextKey key{};
+    CHECK(
+        TryClaimZoneLoadContext(&slot, &key)
+        == ZoneLoadContextStatus::Success);
+    CHECK(slot.phase() == ZoneLoadContextPhase::Loading);
+    CHECK(zone_load::ZoneLoadContextKeyMatches(&slot, key));
+
+    std::array<ScriptStringJournalEntry, 1> storage{};
+    ScriptStringJournal value{};
+    CallbackRecorder recorder{};
+    Initialize(
+        &value,
+        key,
+        storage.data(),
+        storage.size(),
+        storage.size());
+    Stage(&value, key, &recorder, 1601);
+    SealAndBeginTransfer(&value, key);
+    CHECK(
+        TryTransferNextScriptString(
+            &value, key, MakeCallbacks(&recorder))
+        == ScriptStringJournalStatus::Success);
+    const ScriptStringJournalEntry *const backing = value.storage();
+    const std::size_t eventCount = recorder.eventCount;
+    CHECK(
+        TryPrepareScriptStringJournalCommit(&value, key)
+        == ScriptStringJournalStatus::Success);
+    CHECK(value.phase() == ScriptStringJournalPhase::CommitReady);
+    CHECK(value.storage() == backing);
+    CHECK(slot.phase() == ZoneLoadContextPhase::Loading);
+
+    const ZoneLoadContextStatus commitStatus =
+        TryCommitZoneLoadContext(&slot, key);
+    if (commitStatus == ZoneLoadContextStatus::Success)
+        FinalizeScriptStringJournalCommit(value);
+
+    CHECK(commitStatus == ZoneLoadContextStatus::Success);
+    CHECK(slot.phase() == ZoneLoadContextPhase::Live);
+    CHECK(value.phase() == ScriptStringJournalPhase::Committed);
+    CHECK(value.storage() == nullptr);
+    CHECK(value.capacity() == 0);
+    CHECK(recorder.eventCount == eventCount);
+    CHECK(zone_load::ZoneLoadContextKeyMatches(&slot, key));
+    CHECK(journal::ScriptStringJournalKeyMatches(&value, key));
+    CHECK(
+        TryUnloadZoneLoadContext(
+            &slot,
+            key,
+            MakeCompleteZoneCleanupCallbacks(&slot))
+        == ZoneLoadContextStatus::Success);
+    CHECK(slot.phase() == ZoneLoadContextPhase::Empty);
+}
+
+void TestComposedZoneCommitFailureRollback()
+{
+    ZoneLoadContextSlot slot{};
+    CHECK(
+        TryInitializeZoneLoadContextSlot(&slot, 17)
+        == ZoneLoadContextStatus::Success);
+    ZoneLoadContextKey key{};
+    CHECK(
+        TryClaimZoneLoadContext(&slot, &key)
+        == ZoneLoadContextStatus::Success);
+    CHECK(slot.phase() == ZoneLoadContextPhase::Loading);
+
+    std::array<ScriptStringJournalEntry, 1> storage{};
+    ScriptStringJournal value{};
+    CallbackRecorder recorder{};
+    Initialize(
+        &value,
+        key,
+        storage.data(),
+        storage.size(),
+        storage.size());
+    Stage(&value, key, &recorder, 1701);
+    SealAndBeginTransfer(&value, key);
+    CHECK(
+        TryTransferNextScriptString(
+            &value, key, MakeCallbacks(&recorder))
+        == ScriptStringJournalStatus::Success);
+    const ScriptStringJournalEntry *const backing = value.storage();
+    const std::size_t eventsBeforeFailure = recorder.eventCount;
+    CHECK(
+        TryPrepareScriptStringJournalCommit(&value, key)
+        == ScriptStringJournalStatus::Success);
+    CHECK(value.phase() == ScriptStringJournalPhase::CommitReady);
+    CHECK(value.storage() == backing);
+
+    ZoneLoadContextKey staleCommitKey = key;
+    ++staleCommitKey.generation;
+    CHECK(
+        TryCommitZoneLoadContext(&slot, staleCommitKey)
+        == ZoneLoadContextStatus::StaleKey);
+    CHECK(slot.phase() == ZoneLoadContextPhase::Loading);
+    CHECK(zone_load::ZoneLoadContextKeyMatches(&slot, key));
+    CHECK(value.phase() == ScriptStringJournalPhase::CommitReady);
+    CHECK(value.storage() == backing);
+    CHECK(journal::ScriptStringJournalKeyMatches(&value, key));
+    CHECK(
+        TryBeginScriptStringRollback(&value, key)
+        == ScriptStringJournalStatus::Success);
+    CHECK(value.phase() == ScriptStringJournalPhase::RollingBack);
+    CHECK(slot.phase() == ZoneLoadContextPhase::Loading);
+    CHECK(recorder.eventCount == eventsBeforeFailure);
+    CHECK(
+        TryRollbackNextScriptString(
+            &value, key, MakeCallbacks(&recorder))
+        == ScriptStringJournalStatus::Success);
+    CHECK(value.phase() == ScriptStringJournalPhase::RolledBack);
+    CHECK(value.storage() == nullptr);
+    CHECK(recorder.eventCount == eventsBeforeFailure + 1);
+    CHECK(
+        recorder.events[eventsBeforeFailure].kind
+        == EventKind::RemoveDatabaseUser);
+    CHECK(recorder.events[eventsBeforeFailure].stringId == 1701);
+    CHECK(slot.phase() == ZoneLoadContextPhase::Loading);
+    CHECK(
+        TryBeginZoneLoadContextAbandonment(&slot, key)
+        == ZoneLoadContextStatus::Success);
+    CHECK(
+        TryFinishZoneLoadContextAbandonment(
+            &slot,
+            key,
+            MakeCompleteZoneCleanupCallbacks(&slot))
+        == ZoneLoadContextStatus::Success);
+    CHECK(slot.phase() == ZoneLoadContextPhase::Empty);
+}
+
 void TestMaximumCountLinearLifecycle()
 {
     static std::array<
@@ -1168,6 +1329,10 @@ void TestMaximumCountLinearLifecycle()
         recorder.transferCount
         == journal::kMaxScriptStringJournalEntries);
     CHECK(value.phase() == ScriptStringJournalPhase::Transferred);
+    CHECK(
+        TryPrepareScriptStringJournalCommit(&value, key)
+        == ScriptStringJournalStatus::Success);
+    CHECK(value.phase() == ScriptStringJournalPhase::CommitReady);
     CHECK(
         TryBeginScriptStringRollback(&value, key)
         == ScriptStringJournalStatus::Success);
@@ -1848,6 +2013,8 @@ int main()
     TestReverseRollbackFromStaging();
     TestPartialTransferRollbackOwnershipSelection();
     TestTransferredAndCommitReadyRemainRollbackCapable();
+    TestComposedZoneCommitFinalizationOrdering();
+    TestComposedZoneCommitFailureRollback();
     TestMaximumCountLinearLifecycle();
     TestSequentialRepeatedIdOwnershipModel();
     TestControllerAndEntryCorruptionFailClosed();

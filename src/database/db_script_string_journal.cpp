@@ -708,7 +708,8 @@ void FinalizeScriptStringJournalCommit(
 {
     journal.phase_ = ScriptStringJournalPhase::Committed;
     journal.flags_ = kInitializedFlag;
-    journal.detachBacking();
+    journal.storage_ = nullptr;
+    journal.capacity_ = 0;
 }
 
 ScriptStringJournalStatus TryBeginScriptStringRollback(

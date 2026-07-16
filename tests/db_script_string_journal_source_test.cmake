@@ -238,6 +238,10 @@ foreach(_marker IN ITEMS
     "std::uint8_t flags_ = 0;")
     require_contains(_journal_class "${_marker}" "fixed persistent state")
 endforeach()
+require_contains(
+    _journal_class
+    "void detachBacking() noexcept;"
+    "rollback detach helper remains private")
 foreach(_forbidden IN ITEMS
     "std::size_t"
     "size_t"
@@ -379,6 +383,16 @@ foreach(_marker IN ITEMS
 endforeach()
 extract_slice(
     _source
+    "void ScriptStringJournal::detachBacking() noexcept"
+    "void ScriptStringJournal::finishRollback() noexcept"
+    _detach_backing
+    "rollback detach helper")
+require_contains(
+    _detach_backing
+    "void ScriptStringJournal::detachBacking() noexcept { storage_ = nullptr; capacity_ = 0; }"
+    "exact rollback detach helper body")
+extract_slice(
+    _source
     "[[nodiscard]] bool EntriesMatchPhase("
     "[[nodiscard]] bool IsUsedStorageSpanValid("
     _entry_scan
@@ -388,6 +402,22 @@ require_literal_count(
     "for (std::uint32_t index = 0; index < entryCount; ++index)"
     1
     "one linear scan loop")
+require_literal_count(
+    _source
+    "for ("
+    1
+    "EntriesMatchPhase owns the journal source's sole loop")
+foreach(_forbidden_loop IN ITEMS
+    "for("
+    "while ("
+    "while("
+    "do {"
+    "do{")
+    require_not_contains(
+        _source
+        "${_forbidden_loop}"
+        "prepare/transfer/rollback cannot hide another loop")
+endforeach()
 require_literal_count(
     _source
     "EntriesMatchPhase("
@@ -537,6 +567,14 @@ extract_slice(
     "ScriptStringJournalStatus TryBeginScriptStringRollback("
     _finalize
     "unconditional post-Live final commit")
+string(STRIP "${_finalize}" _finalize_exact)
+set(_expected_finalize
+    "void FinalizeScriptStringJournalCommit( ScriptStringJournal &journal) noexcept { journal.phase_ = ScriptStringJournalPhase::Committed; journal.flags_ = kInitializedFlag; journal.storage_ = nullptr; journal.capacity_ = 0; }")
+if(NOT _finalize_exact STREQUAL _expected_finalize)
+    message(FATAL_ERROR
+        "The post-Live script-string finalizer must contain exactly its four "
+        "unconditional publication/detach assignments")
+endif()
 foreach(_forbidden IN ITEMS
     "if ("
     "switch ("
@@ -552,6 +590,7 @@ foreach(_forbidden IN ITEMS
     "removeOrdinary"
     "removeDatabaseUser"
     "Com_Error"
+    "detachBacking("
     "return "
     "status"
     "throw ")
@@ -560,7 +599,7 @@ foreach(_forbidden IN ITEMS
 endforeach()
 require_contains(
     _finalize
-    "void FinalizeScriptStringJournalCommit( ScriptStringJournal &journal) noexcept { journal.phase_ = ScriptStringJournalPhase::Committed; journal.flags_ = kInitializedFlag; journal.detachBacking(); }"
+    "void FinalizeScriptStringJournalCommit( ScriptStringJournal &journal) noexcept { journal.phase_ = ScriptStringJournalPhase::Committed; journal.flags_ = kInitializedFlag; journal.storage_ = nullptr; journal.capacity_ = 0; }"
     "exact no-fail finalizer body")
 require_ordered(
     _finalize
@@ -570,8 +609,13 @@ require_ordered(
 require_ordered(
     _finalize
     "journal.flags_ = kInitializedFlag;"
-    "journal.detachBacking();"
+    "journal.storage_ = nullptr;"
     "flags normalize before backing detach")
+require_ordered(
+    _finalize
+    "journal.storage_ = nullptr;"
+    "journal.capacity_ = 0;"
+    "backing pointer clears before capacity")
 
 extract_slice(
     _source
@@ -620,8 +664,8 @@ require_ordered(
 require_literal_count(
     _source
     "detachBacking();"
-    2
-    "backing detaches only at committed or rolled-back terminals")
+    1
+    "rollback is the only terminal that calls the detach helper")
 
 # Callback reentry is Busy, unknown or unsafe results poison without cursor
 # advancement, and complete representation validation rejects corrupt entries.
@@ -638,6 +682,144 @@ foreach(_marker IN ITEMS
     require_contains(_source "${_marker}" "canonical fail-closed state")
 endforeach()
 
+# Exercise the lifecycle and journal as one transaction without adding
+# production wiring. Success prepares while Loading, publishes Live through
+# the real controller, and only then finalizes. A stale-key controller failure
+# leaves the canonical controller Loading so the CommitReady journal can be
+# rolled back with its real key.
+extract_slice(
+    _fixture
+    "void TestComposedZoneCommitFinalizationOrdering()"
+    "void TestComposedZoneCommitFailureRollback()"
+    _composed_commit_success
+    "composed zone/journal commit success")
+foreach(_marker IN ITEMS
+    "ScriptStringJournalPhase::CommitReady"
+    "ZoneLoadContextPhase::Loading"
+    "ZoneLoadContextPhase::Live"
+    "ScriptStringJournalPhase::Committed"
+    "value.storage() == nullptr"
+    "value.capacity() == 0")
+    require_contains(
+        _composed_commit_success
+        "${_marker}"
+        "composed commit success state")
+endforeach()
+require_ordered(
+    _composed_commit_success
+    "TryPrepareScriptStringJournalCommit(&value, key)"
+    "TryCommitZoneLoadContext(&slot, key)"
+    "journal prepare precedes real lifecycle publication")
+require_ordered(
+    _composed_commit_success
+    "TryCommitZoneLoadContext(&slot, key)"
+    "FinalizeScriptStringJournalCommit(value)"
+    "real lifecycle publication precedes journal finalization")
+foreach(_marker IN ITEMS
+    "TryPrepareScriptStringJournalCommit(&value, key)"
+    "TryCommitZoneLoadContext(&slot, key)"
+    "FinalizeScriptStringJournalCommit(value)")
+    require_literal_count(
+        _composed_commit_success
+        "${_marker}"
+        1
+        "one composed success transition")
+endforeach()
+require_not_contains(
+    _composed_commit_success
+    "TryBeginScriptStringRollback("
+    "successful composed commit cannot roll back")
+
+extract_slice(
+    _fixture
+    "void TestComposedZoneCommitFailureRollback()"
+    "void TestMaximumCountLinearLifecycle()"
+    _composed_commit_failure
+    "composed zone/journal commit failure")
+foreach(_marker IN ITEMS
+    "ScriptStringJournalPhase::CommitReady"
+    "ZoneLoadContextStatus::StaleKey"
+    "ZoneLoadContextPhase::Loading"
+    "ScriptStringJournalPhase::RollingBack"
+    "ScriptStringJournalPhase::RolledBack"
+    "EventKind::RemoveDatabaseUser")
+    require_contains(
+        _composed_commit_failure
+        "${_marker}"
+        "constrained pre-Live rollback state")
+endforeach()
+require_ordered(
+    _composed_commit_failure
+    "TryPrepareScriptStringJournalCommit(&value, key)"
+    "TryCommitZoneLoadContext(&slot, staleCommitKey)"
+    "prepare precedes forced lifecycle commit failure")
+require_ordered(
+    _composed_commit_failure
+    "TryCommitZoneLoadContext(&slot, staleCommitKey)"
+    "TryBeginScriptStringRollback(&value, key)"
+    "failed pre-Live lifecycle commit precedes journal rollback")
+require_ordered(
+    _composed_commit_failure
+    "TryBeginScriptStringRollback(&value, key)"
+    "TryRollbackNextScriptString("
+    "rollback begins before its targeted release")
+extract_slice(
+    _composed_commit_failure
+    "TryCommitZoneLoadContext(&slot, staleCommitKey)"
+    "TryBeginScriptStringRollback(&value, key)"
+    _failed_lifecycle_commit
+    "failed lifecycle commit receipt")
+foreach(_marker IN ITEMS
+    "ZoneLoadContextStatus::StaleKey"
+    "slot.phase() == ZoneLoadContextPhase::Loading"
+    "value.phase() == ScriptStringJournalPhase::CommitReady"
+    "value.storage() == backing")
+    require_contains(
+        _failed_lifecycle_commit
+        "${_marker}"
+        "stale commit cannot publish Live or detach backing")
+endforeach()
+foreach(_marker IN ITEMS
+    "TryPrepareScriptStringJournalCommit(&value, key)"
+    "TryCommitZoneLoadContext(&slot, staleCommitKey)"
+    "TryBeginScriptStringRollback(&value, key)")
+    require_literal_count(
+        _composed_commit_failure
+        "${_marker}"
+        1
+        "one composed failure transition")
+endforeach()
+require_not_contains(
+    _composed_commit_failure
+    "FinalizeScriptStringJournalCommit("
+    "failed lifecycle commit cannot finalize the journal")
+
+extract_slice(
+    _fixture
+    "void TestMaximumCountLinearLifecycle()"
+    "bool SequenceContains("
+    _maximum_count_lifecycle
+    "maximum-count journal lifecycle")
+require_ordered(
+    _maximum_count_lifecycle
+    "TryPrepareScriptStringJournalCommit(&value, key)"
+    "value.phase() == ScriptStringJournalPhase::CommitReady"
+    "maximum-count scan publishes CommitReady")
+require_ordered(
+    _maximum_count_lifecycle
+    "value.phase() == ScriptStringJournalPhase::CommitReady"
+    "TryBeginScriptStringRollback(&value, key)"
+    "maximum-count CommitReady remains rollback-capable")
+foreach(_test_name IN ITEMS
+    "TestComposedZoneCommitFinalizationOrdering"
+    "TestComposedZoneCommitFailureRollback")
+    require_literal_count(
+        _fixture
+        "${_test_name}()"
+        2
+        "composed fixture definition and main invocation")
+endforeach()
+
 # The focused fixture pins full-width and duplicate IDs, no-callback capacity
 # rejection, retries/reentry, claimed-vs-duplicate outcomes, reverse partial
 # rollback, reversible Transferred/CommitReady, empty receipts, and poison paths.
@@ -648,6 +830,8 @@ foreach(_marker IN ITEMS
     "void TestReverseRollbackFromStaging()"
     "void TestPartialTransferRollbackOwnershipSelection()"
     "void TestTransferredAndCommitReadyRemainRollbackCapable()"
+    "void TestComposedZoneCommitFinalizationOrdering()"
+    "void TestComposedZoneCommitFailureRollback()"
     "void TestUnsafeAndUnknownResultsPoison()"
     "journal::kMaxScriptStringJournalEntries"
     "(std::numeric_limits<std::uint32_t>::max)()"
@@ -671,6 +855,7 @@ foreach(_marker IN ITEMS
     "static_assert(sizeof(ScriptStringJournal) == 0x30);"
     "static_assert(alignof(ScriptStringJournal) == 8);"
     "std::is_standard_layout_v<ScriptStringJournal>"
+    "static_assert(noexcept(TryCommitZoneLoadContext("
     "void TestMaximumCountLinearLifecycle()"
     "journal::kMaxScriptStringJournalEntries"
     "ScaleCallbackRecorder"
@@ -710,6 +895,21 @@ foreach(_marker IN ITEMS
     "\${SRC_DIR}/database/db_script_string_journal.cpp"
     "\${SRC_DIR}/database/db_script_string_journal.h")
     require_contains(_manifest "${_marker}" "production manifest coverage")
+endforeach()
+extract_slice(
+    _tests
+    "add_executable(kisakcod-db-script-string-journal-tests"
+    "target_include_directories("
+    _journal_test_target
+    "journal runtime test target")
+foreach(_marker IN ITEMS
+    "db_script_string_journal_tests.cpp"
+    "\${SRC_DIR}/database/db_script_string_journal.cpp"
+    "\${SRC_DIR}/database/db_zone_load_context.cpp")
+    require_contains(
+        _journal_test_target
+        "${_marker}"
+        "composed runtime target linkage")
 endforeach()
 foreach(_marker IN ITEMS
     "add_executable(kisakcod-db-script-string-journal-tests"
