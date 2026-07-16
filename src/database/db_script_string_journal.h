@@ -120,6 +120,11 @@ struct ScriptStringJournalCallbacks final
 // UnsafeFailure, an unknown callback value, or Acquired with ID zero makes
 // ownership indeterminate and permanently poisons the journal.
 //
+// Callback results must truthfully report the exact ownership outcome.
+// Callbacks may not mutate the journal control object or any attached entry
+// storage, including through a saved caller pointer. Violating either rule
+// makes the ownership record untrustworthy.
+//
 // Callbacks must not throw, longjmp, call Com_Error, or otherwise leave
 // nonlocally. A nonlocal exit deliberately leaves callbackActive set, causing
 // every later transition to fail closed as Busy. The callback context and
@@ -127,10 +132,16 @@ struct ScriptStringJournalCallbacks final
 //
 // This object has no internal synchronization. The caller must externally
 // serialize initialization, every transition, every accessor, callback
-// execution, and destruction. The same serializer must exclude the global
-// database-user ownership sweep/transfer (the legacy user 4 -> 8 GC path)
-// throughout staging, transfer, rollback, and commit. Busy detects callback
-// reentry only; it is not a cross-thread synchronization mechanism.
+// execution, and destruction. One global transaction serializer, not a
+// per-zone or per-journal lock, must be acquired before initialization and
+// held continuously until terminal commit or rollback returns. It must exclude
+// every other journal transaction; every raw database-user add, transfer,
+// remove, or publication; and the global database-user ownership sweep/
+// transfer (the legacy user 4 -> 8 GC path). It cannot be dropped between
+// journal calls. Overlapping journal transactions are forbidden unless a
+// future shared database-user claim-accounting layer replaces this exclusive
+// contract. Busy detects callback reentry only; it is not a cross-thread
+// synchronization mechanism.
 //
 // The journal never allocates, never deduplicates, is non-copyable, and performs
 // no destructor cleanup. TryCommit and completed rollback detach the backing
@@ -138,7 +149,11 @@ struct ScriptStringJournalCallbacks final
 // is attached, the journal exclusively owns the used entry span. The caller
 // cannot have its original pointer revoked and must therefore neither read nor
 // mutate that span except through externally serialized diagnostics.
-class ScriptStringJournal final
+#ifdef KISAK_DB_SCRIPT_STRING_JOURNAL_TESTING
+struct ScriptStringJournalTestAccess;
+#endif
+
+class alignas(8) ScriptStringJournal final
 {
 public:
     ScriptStringJournal() noexcept = default;
@@ -197,6 +212,9 @@ private:
     friend bool ScriptStringJournalKeyMatches(
         const ScriptStringJournal *journal,
         const zone_load::ZoneLoadContextKey &key) noexcept;
+#ifdef KISAK_DB_SCRIPT_STRING_JOURNAL_TESTING
+    friend struct ScriptStringJournalTestAccess;
+#endif
 
     [[nodiscard]] bool isCanonical() const noexcept;
     [[nodiscard]] ScriptStringJournalStatus validate() const noexcept;
@@ -217,6 +235,87 @@ private:
         ScriptStringJournalPhase::Staging;
     std::uint8_t flags_ = 0;
 };
+
+RUNTIME_SIZE(ScriptStringJournal, 0x30, 0x30);
+
+#ifdef KISAK_DB_SCRIPT_STRING_JOURNAL_TESTING
+// Tests opt in before including this header. Production code has no mutation
+// escape hatch around the checked journal API.
+struct ScriptStringJournalTestAccess final
+{
+    static void SetKey(
+        ScriptStringJournal *const journal,
+        const zone_load::ZoneLoadContextKey &key) noexcept
+    {
+        if (journal)
+            journal->key_ = key;
+    }
+
+    static void SetStorage(
+        ScriptStringJournal *const journal,
+        ScriptStringJournalEntry *const storage) noexcept
+    {
+        if (journal)
+            journal->storage_ = storage;
+    }
+
+    static void SetCapacity(
+        ScriptStringJournal *const journal,
+        const std::uint32_t capacity) noexcept
+    {
+        if (journal)
+            journal->capacity_ = capacity;
+    }
+
+    static void SetExpectedCount(
+        ScriptStringJournal *const journal,
+        const std::uint32_t expectedCount) noexcept
+    {
+        if (journal)
+            journal->expectedCount_ = expectedCount;
+    }
+
+    static void SetEntryCount(
+        ScriptStringJournal *const journal,
+        const std::uint32_t entryCount) noexcept
+    {
+        if (journal)
+            journal->entryCount_ = entryCount;
+    }
+
+    static void SetTransferCursor(
+        ScriptStringJournal *const journal,
+        const std::uint32_t transferCursor) noexcept
+    {
+        if (journal)
+            journal->transferCursor_ = transferCursor;
+    }
+
+    static void SetRollbackCursor(
+        ScriptStringJournal *const journal,
+        const std::uint32_t rollbackCursor) noexcept
+    {
+        if (journal)
+            journal->rollbackCursor_ = rollbackCursor;
+    }
+
+    static void SetPhase(
+        ScriptStringJournal *const journal,
+        const ScriptStringJournalPhase phase) noexcept
+    {
+        if (journal)
+            journal->phase_ = phase;
+    }
+
+    static void SetFlags(
+        ScriptStringJournal *const journal,
+        const std::uint8_t flags) noexcept
+    {
+        if (journal)
+            journal->flags_ = flags;
+    }
+};
+#endif
 
 // Binds this journal to exactly one nonzero zone-load generation and preflights
 // the complete expected entry count before any acquisition callback can run.

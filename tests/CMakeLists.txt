@@ -302,6 +302,9 @@ target_include_directories(
     kisakcod-db-script-string-journal-tests PRIVATE ${SRC_DIR})
 target_compile_features(
     kisakcod-db-script-string-journal-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-script-string-journal-tests PRIVATE
+    KISAK_DB_SCRIPT_STRING_JOURNAL_TESTING=1)
 kisakcod_test_warnings(kisakcod-db-script-string-journal-tests)
 set_target_properties(
     kisakcod-db-script-string-journal-tests PROPERTIES
@@ -1450,6 +1453,14 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_load_context_source_test.cmake
+)
+
+add_test(
+    NAME database-script-string-journal-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P
+        ${CMAKE_CURRENT_SOURCE_DIR}/db_script_string_journal_source_test.cmake
 )
 
 add_test(

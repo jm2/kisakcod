@@ -1,6 +1,5 @@
 #include <database/db_script_string_journal.h>
 
-#include <cstddef>
 #include <cstdint>
 #include <limits>
 
@@ -123,6 +122,67 @@ constexpr std::uint8_t kKnownFlags =
         && entry.reserved[2] == 0;
 }
 
+[[nodiscard]] bool EntryMatchesPhase(
+    const ScriptStringJournalEntry &entry,
+    const ScriptStringJournalPhase phase,
+    const std::uint32_t index,
+    const std::uint32_t transferCursor,
+    const std::uint32_t rollbackCursor) noexcept
+{
+    if (!EntryIsCanonical(entry))
+        return false;
+
+    switch (phase)
+    {
+    case ScriptStringJournalPhase::Staging:
+    case ScriptStringJournalPhase::Sealed:
+        return entry.state
+            == ScriptStringJournalEntryState::OrdinaryStaged;
+    case ScriptStringJournalPhase::Transferring:
+    case ScriptStringJournalPhase::Transferred:
+        return index < transferCursor
+            ? IsTransferredState(entry.state)
+            : entry.state
+                == ScriptStringJournalEntryState::OrdinaryStaged;
+    case ScriptStringJournalPhase::RollingBack:
+        if (index >= rollbackCursor)
+        {
+            return entry.state
+                == ScriptStringJournalEntryState::Released;
+        }
+        return index < transferCursor
+            ? IsTransferredState(entry.state)
+            : entry.state
+                == ScriptStringJournalEntryState::OrdinaryStaged;
+    case ScriptStringJournalPhase::Committed:
+    case ScriptStringJournalPhase::RolledBack:
+    default:
+        return false;
+    }
+}
+
+[[nodiscard]] bool EntriesMatchPhase(
+    const ScriptStringJournalEntry *const storage,
+    const std::uint32_t entryCount,
+    const ScriptStringJournalPhase phase,
+    const std::uint32_t transferCursor,
+    const std::uint32_t rollbackCursor) noexcept
+{
+    for (std::uint32_t index = 0; index < entryCount; ++index)
+    {
+        if (!EntryMatchesPhase(
+                storage[index],
+                phase,
+                index,
+                transferCursor,
+                rollbackCursor))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] bool IsUsedStorageSpanValid(
     const ScriptStringJournal *const journal,
     ScriptStringJournalEntry *const storage,
@@ -137,13 +197,10 @@ constexpr std::uint8_t kKnownFlags =
         reinterpret_cast<std::uintptr_t>(storage);
     if ((storageBegin % alignof(ScriptStringJournalEntry)) != 0)
         return false;
-    static_assert(
-        kMaxScriptStringJournalEntries
-        <= (std::numeric_limits<std::size_t>::max)()
-            / sizeof(ScriptStringJournalEntry));
-    const std::size_t storageBytes =
-        static_cast<std::size_t>(expectedCount)
-        * sizeof(ScriptStringJournalEntry);
+    const std::uintptr_t storageBytes =
+        static_cast<std::uintptr_t>(expectedCount)
+        * static_cast<std::uintptr_t>(
+            sizeof(ScriptStringJournalEntry));
     if (storageBegin
         > (std::numeric_limits<std::uintptr_t>::max)()
             - storageBytes)
@@ -185,7 +242,7 @@ bool ScriptStringJournal::isCanonical() const noexcept
         (flags_ & kPoisonedFlag) != 0;
     if (!isInitialized)
     {
-        return !IsValidKey(key_)
+        return key_ == zone_load::ZoneLoadContextKey{}
             && storage_ == nullptr
             && capacity_ == 0
             && expectedCount_ == 0
@@ -198,6 +255,8 @@ bool ScriptStringJournal::isCanonical() const noexcept
     }
 
     if (!IsValidKey(key_)
+        || capacity_ > kMaxScriptStringJournalEntries
+        || expectedCount_ > kMaxScriptStringJournalEntries
         || (isCallbackActive && isPoisoned))
     {
         return false;
@@ -227,7 +286,9 @@ bool ScriptStringJournal::isCanonical() const noexcept
         || entryCount_ > expectedCount_
         || transferCursor_ > entryCount_
         || rollbackCursor_ > entryCount_
-        || (expectedCount_ != 0 && storage_ == nullptr))
+        || (expectedCount_ != 0 && storage_ == nullptr)
+        || !IsUsedStorageSpanValid(
+            this, storage_, expectedCount_))
     {
         return false;
     }
@@ -262,6 +323,8 @@ bool ScriptStringJournal::isCanonical() const noexcept
         }
         break;
     case ScriptStringJournalPhase::RollingBack:
+        if (rollbackCursor_ == 0)
+            return false;
         break;
     case ScriptStringJournalPhase::Committed:
     case ScriptStringJournalPhase::RolledBack:
@@ -269,45 +332,6 @@ bool ScriptStringJournal::isCanonical() const noexcept
         return false;
     }
 
-    for (std::uint32_t index = 0; index < entryCount_; ++index)
-    {
-        const ScriptStringJournalEntry &entry = storage_[index];
-        if (!EntryIsCanonical(entry))
-            return false;
-
-        ScriptStringJournalEntryState expectedState =
-            ScriptStringJournalEntryState::OrdinaryStaged;
-        bool acceptsEitherTransferredState = false;
-        if (phase_ == ScriptStringJournalPhase::Transferring
-            || phase_ == ScriptStringJournalPhase::Transferred)
-        {
-            acceptsEitherTransferredState =
-                index < transferCursor_;
-        }
-        else if (phase_ == ScriptStringJournalPhase::RollingBack)
-        {
-            if (index >= rollbackCursor_)
-            {
-                expectedState =
-                    ScriptStringJournalEntryState::Released;
-            }
-            else
-            {
-                acceptsEitherTransferredState =
-                    index < transferCursor_;
-            }
-        }
-
-        if (acceptsEitherTransferredState)
-        {
-            if (!IsTransferredState(entry.state))
-                return false;
-        }
-        else if (entry.state != expectedState)
-        {
-            return false;
-        }
-    }
     return true;
 }
 
@@ -527,6 +551,15 @@ ScriptStringJournalStatus TrySealScriptStringJournal(
         return ScriptStringJournalStatus::InvalidPhase;
     if (journal->entryCount_ != journal->expectedCount_)
         return ScriptStringJournalStatus::CountMismatch;
+    if (!EntriesMatchPhase(
+            journal->storage_,
+            journal->entryCount_,
+            journal->phase_,
+            journal->transferCursor_,
+            journal->rollbackCursor_))
+    {
+        return ScriptStringJournalStatus::InvalidState;
+    }
 
     journal->phase_ = ScriptStringJournalPhase::Sealed;
     return ScriptStringJournalStatus::Success;
@@ -584,11 +617,19 @@ ScriptStringJournalStatus TryTransferNextScriptString(
             ScriptStringJournalPhase::Transferred;
         return ScriptStringJournalStatus::Success;
     }
-    if (!callbacks.transferToDatabaseUser)
-        return ScriptStringJournalStatus::InvalidArgument;
-
     ScriptStringJournalEntry &entry =
         journal->storage_[journal->transferCursor_];
+    if (!EntryMatchesPhase(
+            entry,
+            journal->phase_,
+            journal->transferCursor_,
+            journal->transferCursor_,
+            journal->rollbackCursor_))
+    {
+        return ScriptStringJournalStatus::InvalidState;
+    }
+    if (!callbacks.transferToDatabaseUser)
+        return ScriptStringJournalStatus::InvalidArgument;
     journal->flags_ = static_cast<std::uint8_t>(
         journal->flags_ | kCallbackActiveFlag);
     const ScriptStringTransferCallbackStatus callbackStatus =
@@ -642,6 +683,15 @@ ScriptStringJournalStatus TryCommitScriptStringJournal(
     {
         return ScriptStringJournalStatus::InvalidPhase;
     }
+    if (!EntriesMatchPhase(
+            journal->storage_,
+            journal->entryCount_,
+            journal->phase_,
+            journal->transferCursor_,
+            journal->rollbackCursor_))
+    {
+        return ScriptStringJournalStatus::InvalidState;
+    }
 
     journal->phase_ = ScriptStringJournalPhase::Committed;
     journal->flags_ = kInitializedFlag;
@@ -678,6 +728,15 @@ ScriptStringJournalStatus TryBeginScriptStringRollback(
     case ScriptStringJournalPhase::RolledBack:
     default:
         return ScriptStringJournalStatus::InvalidPhase;
+    }
+    if (!EntriesMatchPhase(
+            journal->storage_,
+            journal->entryCount_,
+            journal->phase_,
+            journal->transferCursor_,
+            journal->rollbackCursor_))
+    {
+        return ScriptStringJournalStatus::InvalidState;
     }
 
     journal->phase_ = ScriptStringJournalPhase::RollingBack;
@@ -716,6 +775,15 @@ ScriptStringJournalStatus TryRollbackNextScriptString(
         journal->rollbackCursor_ - 1;
     ScriptStringJournalEntry &entry =
         journal->storage_[entryIndex];
+    if (!EntryMatchesPhase(
+            entry,
+            journal->phase_,
+            entryIndex,
+            journal->transferCursor_,
+            journal->rollbackCursor_))
+    {
+        return ScriptStringJournalStatus::InvalidState;
+    }
     if (entry.state
         == ScriptStringJournalEntryState::DuplicateReleased)
     {

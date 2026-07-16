@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <new>
 #include <type_traits>
 #include <utility>
 
@@ -20,6 +21,7 @@ using journal::ScriptStringJournalEntry;
 using journal::ScriptStringJournalEntryState;
 using journal::ScriptStringJournalPhase;
 using journal::ScriptStringJournalStatus;
+using journal::ScriptStringJournalTestAccess;
 using journal::ScriptStringReleaseCallbackStatus;
 using journal::ScriptStringTransferCallbackStatus;
 using journal::TryBeginScriptStringRollback;
@@ -217,6 +219,186 @@ ScriptStringJournalCallbacks MakeCallbacks(
         RemoveDatabaseUser};
 }
 
+struct ScaleCallbackRecorder final
+{
+    std::uint32_t nextId = 1;
+    std::uint32_t acquireCount = 0;
+    std::uint32_t transferCount = 0;
+    std::uint32_t ordinaryRemoveCount = 0;
+    std::uint32_t databaseRemoveCount = 0;
+};
+
+ScriptStringAcquireCallbackStatus ScaleAcquireOrdinary(
+    void *const context,
+    std::uint32_t *const outStringId) noexcept
+{
+    ScaleCallbackRecorder *const recorder =
+        static_cast<ScaleCallbackRecorder *>(context);
+    if (!recorder || !outStringId || recorder->nextId == 0)
+        return ScriptStringAcquireCallbackStatus::UnsafeFailure;
+    *outStringId = recorder->nextId;
+    ++recorder->nextId;
+    ++recorder->acquireCount;
+    return ScriptStringAcquireCallbackStatus::Acquired;
+}
+
+ScriptStringTransferCallbackStatus ScaleTransferToDatabaseUser(
+    void *const context,
+    const std::uint32_t stringId) noexcept
+{
+    ScaleCallbackRecorder *const recorder =
+        static_cast<ScaleCallbackRecorder *>(context);
+    if (!recorder || stringId == 0)
+        return ScriptStringTransferCallbackStatus::UnsafeFailure;
+    ++recorder->transferCount;
+    return ScriptStringTransferCallbackStatus::DatabaseUserClaimed;
+}
+
+ScriptStringReleaseCallbackStatus ScaleRemoveOrdinary(
+    void *const context,
+    const std::uint32_t stringId) noexcept
+{
+    ScaleCallbackRecorder *const recorder =
+        static_cast<ScaleCallbackRecorder *>(context);
+    if (!recorder || stringId == 0)
+        return ScriptStringReleaseCallbackStatus::UnsafeFailure;
+    ++recorder->ordinaryRemoveCount;
+    return ScriptStringReleaseCallbackStatus::Success;
+}
+
+ScriptStringReleaseCallbackStatus ScaleRemoveDatabaseUser(
+    void *const context,
+    const std::uint32_t stringId) noexcept
+{
+    ScaleCallbackRecorder *const recorder =
+        static_cast<ScaleCallbackRecorder *>(context);
+    if (!recorder || stringId == 0)
+        return ScriptStringReleaseCallbackStatus::UnsafeFailure;
+    ++recorder->databaseRemoveCount;
+    return ScriptStringReleaseCallbackStatus::Success;
+}
+
+ScriptStringJournalCallbacks MakeScaleCallbacks(
+    ScaleCallbackRecorder *const recorder) noexcept
+{
+    return {
+        recorder,
+        ScaleAcquireOrdinary,
+        ScaleTransferToDatabaseUser,
+        ScaleRemoveOrdinary,
+        ScaleRemoveDatabaseUser};
+}
+
+struct OwnershipRecord final
+{
+    std::uint32_t stringId = 0;
+    std::uint32_t refCount = 0;
+    bool databaseUser = false;
+};
+
+struct OwnershipModel final
+{
+    std::array<OwnershipRecord, 2> records{{
+        {UINT32_C(0xA0A0), 0, false},
+        {UINT32_C(0xB0B0), 0, false},
+    }};
+    std::uint32_t acquireId = 0;
+};
+
+OwnershipRecord *FindOwnershipRecord(
+    OwnershipModel *const model,
+    const std::uint32_t stringId) noexcept
+{
+    if (!model)
+        return nullptr;
+    for (OwnershipRecord &record : model->records)
+    {
+        if (record.stringId == stringId)
+            return &record;
+    }
+    return nullptr;
+}
+
+ScriptStringAcquireCallbackStatus ModelAcquireOrdinary(
+    void *const context,
+    std::uint32_t *const outStringId) noexcept
+{
+    OwnershipModel *const model =
+        static_cast<OwnershipModel *>(context);
+    OwnershipRecord *const record = FindOwnershipRecord(
+        model, model ? model->acquireId : 0);
+    if (!record || !outStringId
+        || record->refCount == UINT32_MAX)
+    {
+        return ScriptStringAcquireCallbackStatus::UnsafeFailure;
+    }
+    ++record->refCount;
+    *outStringId = record->stringId;
+    return ScriptStringAcquireCallbackStatus::Acquired;
+}
+
+ScriptStringTransferCallbackStatus ModelTransferToDatabaseUser(
+    void *const context,
+    const std::uint32_t stringId) noexcept
+{
+    OwnershipRecord *const record = FindOwnershipRecord(
+        static_cast<OwnershipModel *>(context), stringId);
+    if (!record || record->refCount == 0)
+        return ScriptStringTransferCallbackStatus::UnsafeFailure;
+    if (!record->databaseUser)
+    {
+        record->databaseUser = true;
+        return ScriptStringTransferCallbackStatus::
+            DatabaseUserClaimed;
+    }
+    if (record->refCount == 1)
+        return ScriptStringTransferCallbackStatus::UnsafeFailure;
+    --record->refCount;
+    return ScriptStringTransferCallbackStatus::DuplicateReleased;
+}
+
+ScriptStringReleaseCallbackStatus ModelRemoveOrdinary(
+    void *const context,
+    const std::uint32_t stringId) noexcept
+{
+    OwnershipRecord *const record = FindOwnershipRecord(
+        static_cast<OwnershipModel *>(context), stringId);
+    if (!record || record->refCount == 0
+        || (record->refCount == 1 && record->databaseUser))
+    {
+        return ScriptStringReleaseCallbackStatus::UnsafeFailure;
+    }
+    --record->refCount;
+    return ScriptStringReleaseCallbackStatus::Success;
+}
+
+ScriptStringReleaseCallbackStatus ModelRemoveDatabaseUser(
+    void *const context,
+    const std::uint32_t stringId) noexcept
+{
+    OwnershipRecord *const record = FindOwnershipRecord(
+        static_cast<OwnershipModel *>(context), stringId);
+    if (!record || !record->databaseUser
+        || record->refCount == 0)
+    {
+        return ScriptStringReleaseCallbackStatus::UnsafeFailure;
+    }
+    record->databaseUser = false;
+    --record->refCount;
+    return ScriptStringReleaseCallbackStatus::Success;
+}
+
+ScriptStringJournalCallbacks MakeModelCallbacks(
+    OwnershipModel *const model) noexcept
+{
+    return {
+        model,
+        ModelAcquireOrdinary,
+        ModelTransferToDatabaseUser,
+        ModelRemoveOrdinary,
+        ModelRemoveDatabaseUser};
+}
+
 constexpr ZoneLoadContextKey MakeKey(
     const std::uint64_t generation = UINT64_C(17),
     const std::uint32_t slot = 3) noexcept
@@ -273,8 +455,11 @@ void TestLayoutNoexceptAndInitialization()
 {
     static_assert(sizeof(ScriptStringJournalEntry) == 0x8);
     static_assert(alignof(ScriptStringJournalEntry) == 4);
+    static_assert(sizeof(ScriptStringJournal) == 0x30);
+    static_assert(alignof(ScriptStringJournal) == 8);
     static_assert(
         std::is_standard_layout_v<ScriptStringJournalEntry>);
+    static_assert(std::is_standard_layout_v<ScriptStringJournal>);
     static_assert(
         std::is_trivially_copyable_v<ScriptStringJournalEntry>);
     static_assert(
@@ -652,6 +837,18 @@ void TestTransferRetryReentryCommitAndReceipt()
     CHECK(value.transferCursor() == 2);
     CHECK(originalStorage == storage.data());
     CHECK(journal::ScriptStringJournalKeyMatches(&value, key));
+    for (ScriptStringJournalEntry &entry : storage)
+    {
+        entry = {
+            0,
+            ScriptStringJournalEntryState::Released,
+            {UINT8_C(0xAA), UINT8_C(0xBB), UINT8_C(0xCC)}};
+    }
+    CHECK(value.initialized());
+    CHECK(journal::ScriptStringJournalKeyMatches(&value, key));
+    CHECK(value.expectedCount() == 2);
+    CHECK(value.entryCount() == 2);
+    CHECK(value.transferCursor() == 2);
     CHECK(
         TryCommitScriptStringJournal(&value, key)
         == ScriptStringJournalStatus::Success);
@@ -745,6 +942,17 @@ void TestReverseRollbackFromStaging()
     CHECK(recorder.events[last - 2].stringId == 202);
     CHECK(recorder.events[last - 1].stringId == 101);
 
+    for (ScriptStringJournalEntry &entry : storage)
+    {
+        entry = {
+            0,
+            ScriptStringJournalEntryState::OrdinaryStaged,
+            {UINT8_C(0xDD), UINT8_C(0xEE), UINT8_C(0xFF)}};
+    }
+    CHECK(value.initialized());
+    CHECK(journal::ScriptStringJournalKeyMatches(&value, key));
+    CHECK(value.entryCount() == 3);
+    CHECK(value.rollbackCursor() == 0);
     const std::size_t eventsBeforeReceipt = recorder.eventCount;
     CHECK(
         TryBeginScriptStringRollback(&value, key)
@@ -885,6 +1093,568 @@ void TestTransferredRemainsRollbackCapableAndEmptyJournal()
         == ScriptStringJournalStatus::Success);
 }
 
+void TestMaximumCountLinearLifecycle()
+{
+    static std::array<
+        ScriptStringJournalEntry,
+        journal::kMaxScriptStringJournalEntries>
+        storage{};
+    const ZoneLoadContextKey key = MakeKey(63, 15);
+    ScriptStringJournal value{};
+    ScaleCallbackRecorder recorder{};
+    const ScriptStringJournalCallbacks callbacks =
+        MakeScaleCallbacks(&recorder);
+    Initialize(
+        &value,
+        key,
+        storage.data(),
+        storage.size(),
+        storage.size());
+
+    for (std::uint32_t index = 0;
+         index < journal::kMaxScriptStringJournalEntries;
+         ++index)
+    {
+        CHECK(
+            TryStageScriptString(&value, key, callbacks)
+            == ScriptStringJournalStatus::Success);
+    }
+    CHECK(
+        recorder.acquireCount
+        == journal::kMaxScriptStringJournalEntries);
+    CHECK(
+        TrySealScriptStringJournal(&value, key)
+        == ScriptStringJournalStatus::Success);
+    CHECK(
+        TryBeginScriptStringTransfer(&value, key)
+        == ScriptStringJournalStatus::Success);
+
+    for (std::uint32_t index = 0;
+         index < journal::kMaxScriptStringJournalEntries;
+         ++index)
+    {
+        CHECK(
+            TryTransferNextScriptString(
+                &value, key, callbacks)
+            == ScriptStringJournalStatus::Success);
+    }
+    CHECK(
+        recorder.transferCount
+        == journal::kMaxScriptStringJournalEntries);
+    CHECK(value.phase() == ScriptStringJournalPhase::Transferred);
+    CHECK(
+        TryBeginScriptStringRollback(&value, key)
+        == ScriptStringJournalStatus::Success);
+
+    for (std::uint32_t index = 0;
+         index < journal::kMaxScriptStringJournalEntries;
+         ++index)
+    {
+        CHECK(
+            TryRollbackNextScriptString(
+                &value, key, callbacks)
+            == ScriptStringJournalStatus::Success);
+    }
+    CHECK(value.phase() == ScriptStringJournalPhase::RolledBack);
+    CHECK(
+        recorder.databaseRemoveCount
+        == journal::kMaxScriptStringJournalEntries);
+    CHECK(recorder.ordinaryRemoveCount == 0);
+}
+
+bool SequenceContains(
+    const std::array<std::uint32_t, 3> &sequence,
+    const std::uint32_t count,
+    const std::uint32_t stringId) noexcept
+{
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        if (sequence[index] == stringId)
+            return true;
+    }
+    return false;
+}
+
+void RunSequentialOwnershipScenario(
+    const std::array<std::uint32_t, 3> &sequence,
+    const std::uint32_t count,
+    const bool preexistingDatabaseUser,
+    const bool rollback,
+    const std::uint64_t generation)
+{
+    OwnershipModel model{};
+    for (OwnershipRecord &record : model.records)
+    {
+        record.databaseUser = preexistingDatabaseUser;
+        record.refCount = preexistingDatabaseUser ? 1u : 0u;
+    }
+
+    std::array<ScriptStringJournalEntry, 3> storage{};
+    ScriptStringJournal value{};
+    const ZoneLoadContextKey key = MakeKey(generation, 19);
+    const ScriptStringJournalCallbacks callbacks =
+        MakeModelCallbacks(&model);
+    Initialize(
+        &value,
+        key,
+        storage.data(),
+        storage.size(),
+        count);
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        model.acquireId = sequence[index];
+        CHECK(
+            TryStageScriptString(&value, key, callbacks)
+            == ScriptStringJournalStatus::Success);
+    }
+    SealAndBeginTransfer(&value, key);
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        CHECK(
+            TryTransferNextScriptString(
+                &value, key, callbacks)
+            == ScriptStringJournalStatus::Success);
+    }
+    CHECK(value.phase() == ScriptStringJournalPhase::Transferred);
+    for (const OwnershipRecord &record : model.records)
+    {
+        const bool used = SequenceContains(
+            sequence, count, record.stringId);
+        CHECK(
+            record.databaseUser
+            == (preexistingDatabaseUser || used));
+        CHECK(
+            record.refCount
+            == (preexistingDatabaseUser || used ? 1u : 0u));
+    }
+
+    if (rollback)
+    {
+        CHECK(
+            TryBeginScriptStringRollback(&value, key)
+            == ScriptStringJournalStatus::Success);
+        for (std::uint32_t index = 0; index < count; ++index)
+        {
+            CHECK(
+                TryRollbackNextScriptString(
+                    &value, key, callbacks)
+                == ScriptStringJournalStatus::Success);
+        }
+        CHECK(value.phase() == ScriptStringJournalPhase::RolledBack);
+    }
+    else
+    {
+        CHECK(
+            TryCommitScriptStringJournal(&value, key)
+            == ScriptStringJournalStatus::Success);
+    }
+
+    for (const OwnershipRecord &record : model.records)
+    {
+        const bool used = SequenceContains(
+            sequence, count, record.stringId);
+        const bool expectedDatabaseUser = rollback
+            ? preexistingDatabaseUser
+            : preexistingDatabaseUser || used;
+        CHECK(record.databaseUser == expectedDatabaseUser);
+        CHECK(
+            record.refCount
+            == (expectedDatabaseUser ? 1u : 0u));
+    }
+}
+
+void TestSequentialRepeatedIdOwnershipModel()
+{
+    constexpr std::uint32_t kA = UINT32_C(0xA0A0);
+    constexpr std::uint32_t kB = UINT32_C(0xB0B0);
+    const std::array<std::uint32_t, 3> repeatedA{
+        kA, kA, 0};
+    const std::array<std::uint32_t, 3> interleaved{
+        kA, kB, kA};
+
+    std::uint64_t generation = 80;
+    for (const bool preexisting : {false, true})
+    {
+        for (const bool rollback : {false, true})
+        {
+            RunSequentialOwnershipScenario(
+                repeatedA,
+                2,
+                preexisting,
+                rollback,
+                generation++);
+            RunSequentialOwnershipScenario(
+                interleaved,
+                3,
+                preexisting,
+                rollback,
+                generation++);
+        }
+    }
+}
+
+void TestControllerAndEntryCorruptionFailClosed()
+{
+    const ZoneLoadContextKey key = MakeKey(90, 21);
+    std::array<ScriptStringJournalEntry, 2> storage{};
+    CallbackRecorder recorder{};
+    const ScriptStringJournalCallbacks callbacks =
+        MakeCallbacks(&recorder);
+
+    ScriptStringJournal nonDefaultNullKey{};
+    ZoneLoadContextKey malformedDefault{};
+    malformedDefault.slot = 0;
+    ScriptStringJournalTestAccess::SetKey(
+        &nonDefaultNullKey, malformedDefault);
+    CHECK(
+        TryInitializeScriptStringJournal(
+            &nonDefaultNullKey,
+            key,
+            storage.data(),
+            1,
+            1)
+        == ScriptStringJournalStatus::InvalidState);
+
+    ScriptStringJournal corruptCapacity{};
+    Initialize(
+        &corruptCapacity, key, storage.data(), 1, 1);
+    ScriptStringJournalTestAccess::SetCapacity(
+        &corruptCapacity,
+        journal::kMaxScriptStringJournalEntries + 1);
+    CHECK(
+        TryStageScriptString(
+            &corruptCapacity, key, callbacks)
+        == ScriptStringJournalStatus::InvalidState);
+    CHECK(recorder.eventCount == 0);
+
+    ScriptStringJournal corruptExpected{};
+    Initialize(
+        &corruptExpected,
+        MakeKey(91, 21),
+        storage.data(),
+        1,
+        1);
+    ScriptStringJournalTestAccess::SetExpectedCount(
+        &corruptExpected,
+        journal::kMaxScriptStringJournalEntries + 1);
+    CHECK(
+        TryStageScriptString(
+            &corruptExpected, MakeKey(91, 21), callbacks)
+        == ScriptStringJournalStatus::InvalidState);
+    CHECK(recorder.eventCount == 0);
+
+    alignas(ScriptStringJournalEntry)
+        std::array<std::uint8_t, sizeof(ScriptStringJournalEntry) + 1>
+            misalignedBytes{};
+    ScriptStringJournal corruptSpan{};
+    Initialize(
+        &corruptSpan,
+        MakeKey(92, 21),
+        storage.data(),
+        1,
+        1);
+    ScriptStringJournalTestAccess::SetStorage(
+        &corruptSpan,
+        reinterpret_cast<ScriptStringJournalEntry *>(
+            misalignedBytes.data() + 1));
+    CHECK(
+        TryStageScriptString(
+            &corruptSpan, MakeKey(92, 21), callbacks)
+        == ScriptStringJournalStatus::InvalidState);
+
+    ScriptStringJournal overlappingSpan{};
+    Initialize(
+        &overlappingSpan,
+        MakeKey(93, 21),
+        storage.data(),
+        1,
+        1);
+    ScriptStringJournalTestAccess::SetStorage(
+        &overlappingSpan,
+        reinterpret_cast<ScriptStringJournalEntry *>(
+            &overlappingSpan));
+    CHECK(
+        TryStageScriptString(
+            &overlappingSpan, MakeKey(93, 21), callbacks)
+        == ScriptStringJournalStatus::InvalidState);
+
+    std::array<ScriptStringJournalEntry, 1> sealStorage{};
+    ScriptStringJournal corruptSealEntry{};
+    CallbackRecorder sealRecorder{};
+    const ZoneLoadContextKey sealKey = MakeKey(94, 21);
+    Initialize(
+        &corruptSealEntry,
+        sealKey,
+        sealStorage.data(),
+        sealStorage.size(),
+        sealStorage.size());
+    Stage(&corruptSealEntry, sealKey, &sealRecorder, 9400);
+    sealStorage[0].reserved[1] = 1;
+    CHECK(
+        TrySealScriptStringJournal(
+            &corruptSealEntry, sealKey)
+        == ScriptStringJournalStatus::InvalidState);
+
+    std::array<ScriptStringJournalEntry, 1> transferStorage{};
+    ScriptStringJournal corruptTransferEntry{};
+    CallbackRecorder transferRecorder{};
+    const ZoneLoadContextKey transferKey = MakeKey(95, 21);
+    Initialize(
+        &corruptTransferEntry,
+        transferKey,
+        transferStorage.data(),
+        transferStorage.size(),
+        transferStorage.size());
+    Stage(
+        &corruptTransferEntry,
+        transferKey,
+        &transferRecorder,
+        9500);
+    SealAndBeginTransfer(&corruptTransferEntry, transferKey);
+    transferStorage[0].state =
+        ScriptStringJournalEntryState::Released;
+    const std::size_t transferEvents =
+        transferRecorder.eventCount;
+    CHECK(
+        TryTransferNextScriptString(
+            &corruptTransferEntry, transferKey, {})
+        == ScriptStringJournalStatus::InvalidState);
+    CHECK(transferRecorder.eventCount == transferEvents);
+
+    std::array<ScriptStringJournalEntry, 2> boundaryStorage{};
+    ScriptStringJournal corruptRollbackBoundary{};
+    CallbackRecorder boundaryRecorder{};
+    const ZoneLoadContextKey boundaryKey = MakeKey(96, 21);
+    Initialize(
+        &corruptRollbackBoundary,
+        boundaryKey,
+        boundaryStorage.data(),
+        boundaryStorage.size(),
+        boundaryStorage.size());
+    Stage(
+        &corruptRollbackBoundary,
+        boundaryKey,
+        &boundaryRecorder,
+        9600);
+    Stage(
+        &corruptRollbackBoundary,
+        boundaryKey,
+        &boundaryRecorder,
+        9601);
+    SealAndBeginTransfer(
+        &corruptRollbackBoundary, boundaryKey);
+    CHECK(
+        TryTransferNextScriptString(
+            &corruptRollbackBoundary,
+            boundaryKey,
+            MakeCallbacks(&boundaryRecorder))
+        == ScriptStringJournalStatus::Success);
+    boundaryStorage[0].state =
+        ScriptStringJournalEntryState::OrdinaryStaged;
+    CHECK(
+        TryBeginScriptStringRollback(
+            &corruptRollbackBoundary, boundaryKey)
+        == ScriptStringJournalStatus::InvalidState);
+
+    std::array<ScriptStringJournalEntry, 1> cursorStorage{};
+    ScriptStringJournal corruptRollbackCursor{};
+    CallbackRecorder cursorRecorder{};
+    const ZoneLoadContextKey cursorKey = MakeKey(97, 21);
+    Initialize(
+        &corruptRollbackCursor,
+        cursorKey,
+        cursorStorage.data(),
+        cursorStorage.size(),
+        cursorStorage.size());
+    Stage(
+        &corruptRollbackCursor,
+        cursorKey,
+        &cursorRecorder,
+        9700);
+    CHECK(
+        TryBeginScriptStringRollback(
+            &corruptRollbackCursor, cursorKey)
+        == ScriptStringJournalStatus::Success);
+    ScriptStringJournalTestAccess::SetRollbackCursor(
+        &corruptRollbackCursor, 0);
+    CHECK(
+        TryRollbackNextScriptString(
+            &corruptRollbackCursor,
+            cursorKey,
+            MakeCallbacks(&cursorRecorder))
+        == ScriptStringJournalStatus::InvalidState);
+    CHECK(corruptRollbackCursor.storage() == cursorStorage.data());
+
+    std::array<ScriptStringJournalEntry, 1> commitStorage{};
+    ScriptStringJournal corruptCommitEntry{};
+    CallbackRecorder commitRecorder{};
+    const ZoneLoadContextKey commitKey = MakeKey(98, 21);
+    Initialize(
+        &corruptCommitEntry,
+        commitKey,
+        commitStorage.data(),
+        commitStorage.size(),
+        commitStorage.size());
+    Stage(
+        &corruptCommitEntry, commitKey, &commitRecorder, 9800);
+    SealAndBeginTransfer(&corruptCommitEntry, commitKey);
+    CHECK(
+        TryTransferNextScriptString(
+            &corruptCommitEntry,
+            commitKey,
+            MakeCallbacks(&commitRecorder))
+        == ScriptStringJournalStatus::Success);
+    commitStorage[0].reserved[2] = 1;
+    CHECK(
+        TryCommitScriptStringJournal(
+            &corruptCommitEntry, commitKey)
+        == ScriptStringJournalStatus::InvalidState);
+    CHECK(corruptCommitEntry.storage() == commitStorage.data());
+}
+
+void TestDatabaseUserReleaseStatuses()
+{
+    const auto prepareClaimed =
+        [](ScriptStringJournal *const value,
+           ScriptStringJournalEntry *const storage,
+           CallbackRecorder *const recorder,
+           const ZoneLoadContextKey &key)
+    {
+        Initialize(value, key, storage, 1, 1);
+        Stage(value, key, recorder, 12345);
+        SealAndBeginTransfer(value, key);
+        recorder->transferStatus =
+            ScriptStringTransferCallbackStatus::
+                DatabaseUserClaimed;
+        CHECK(
+            TryTransferNextScriptString(
+                value, key, MakeCallbacks(recorder))
+            == ScriptStringJournalStatus::Success);
+        CHECK(
+            TryBeginScriptStringRollback(value, key)
+            == ScriptStringJournalStatus::Success);
+    };
+
+    ScriptStringJournalEntry retryStorage{};
+    ScriptStringJournal retryJournal{};
+    CallbackRecorder retryRecorder{};
+    const ZoneLoadContextKey retryKey = MakeKey(100, 23);
+    prepareClaimed(
+        &retryJournal,
+        &retryStorage,
+        &retryRecorder,
+        retryKey);
+    retryRecorder.databaseReleaseStatus =
+        ScriptStringReleaseCallbackStatus::RetryNoChange;
+    CHECK(
+        TryRollbackNextScriptString(
+            &retryJournal,
+            retryKey,
+            MakeCallbacks(&retryRecorder))
+        == ScriptStringJournalStatus::RetryNoChange);
+    CHECK(retryJournal.rollbackCursor() == 1);
+    CHECK(
+        retryStorage.state
+        == ScriptStringJournalEntryState::DatabaseUserClaimed);
+    retryRecorder.databaseReleaseStatus =
+        ScriptStringReleaseCallbackStatus::Success;
+    CHECK(
+        TryRollbackNextScriptString(
+            &retryJournal,
+            retryKey,
+            MakeCallbacks(&retryRecorder))
+        == ScriptStringJournalStatus::Success);
+    CHECK(retryJournal.phase() == ScriptStringJournalPhase::RolledBack);
+
+    ScriptStringJournalEntry unsafeStorage{};
+    ScriptStringJournal unsafeJournal{};
+    CallbackRecorder unsafeRecorder{};
+    const ZoneLoadContextKey unsafeKey = MakeKey(101, 23);
+    prepareClaimed(
+        &unsafeJournal,
+        &unsafeStorage,
+        &unsafeRecorder,
+        unsafeKey);
+    unsafeRecorder.databaseReleaseStatus =
+        ScriptStringReleaseCallbackStatus::UnsafeFailure;
+    CHECK(
+        TryRollbackNextScriptString(
+            &unsafeJournal,
+            unsafeKey,
+            MakeCallbacks(&unsafeRecorder))
+        == ScriptStringJournalStatus::UnsafeFailure);
+    CHECK(unsafeJournal.poisoned());
+    CHECK(unsafeJournal.rollbackCursor() == 1);
+    CHECK(
+        unsafeStorage.state
+        == ScriptStringJournalEntryState::DatabaseUserClaimed);
+
+    ScriptStringJournalEntry unknownStorage{};
+    ScriptStringJournal unknownJournal{};
+    CallbackRecorder unknownRecorder{};
+    const ZoneLoadContextKey unknownKey = MakeKey(102, 23);
+    prepareClaimed(
+        &unknownJournal,
+        &unknownStorage,
+        &unknownRecorder,
+        unknownKey);
+    unknownRecorder.databaseReleaseStatus =
+        static_cast<ScriptStringReleaseCallbackStatus>(
+            UINT8_C(0xFF));
+    CHECK(
+        TryRollbackNextScriptString(
+            &unknownJournal,
+            unknownKey,
+            MakeCallbacks(&unknownRecorder))
+        == ScriptStringJournalStatus::UnsafeFailure);
+    CHECK(unknownJournal.poisoned());
+    CHECK(unknownJournal.rollbackCursor() == 1);
+    CHECK(
+        unknownStorage.state
+        == ScriptStringJournalEntryState::DatabaseUserClaimed);
+}
+
+void TestPlacementReconstructionRejectsOldKey()
+{
+    alignas(ScriptStringJournal)
+        std::array<std::byte, sizeof(ScriptStringJournal)> bytes{};
+    ScriptStringJournal *value =
+        ::new (bytes.data()) ScriptStringJournal{};
+    const ZoneLoadContextKey oldKey = MakeKey(110, 25);
+    Initialize(value, oldKey, nullptr, 0, 0);
+    CHECK(
+        TryBeginScriptStringRollback(value, oldKey)
+        == ScriptStringJournalStatus::Success);
+    CHECK(value->phase() == ScriptStringJournalPhase::RolledBack);
+    value->~ScriptStringJournal();
+
+    value = ::new (bytes.data()) ScriptStringJournal{};
+    const ZoneLoadContextKey newKey = MakeKey(111, 25);
+    Initialize(value, newKey, nullptr, 0, 0);
+    CHECK(
+        !journal::ScriptStringJournalKeyMatches(
+            value, oldKey));
+    CHECK(
+        TrySealScriptStringJournal(value, oldKey)
+        == ScriptStringJournalStatus::StaleKey);
+    CHECK(
+        journal::ScriptStringJournalKeyMatches(
+            value, newKey));
+    CHECK(
+        TrySealScriptStringJournal(value, newKey)
+        == ScriptStringJournalStatus::Success);
+    CHECK(
+        TryBeginScriptStringTransfer(value, newKey)
+        == ScriptStringJournalStatus::Success);
+    CHECK(
+        TryTransferNextScriptString(value, newKey, {})
+        == ScriptStringJournalStatus::Success);
+    CHECK(
+        TryCommitScriptStringJournal(value, newKey)
+        == ScriptStringJournalStatus::Success);
+    value->~ScriptStringJournal();
+}
+
 void TestUnsafeAndUnknownResultsPoison()
 {
     const ZoneLoadContextKey unsafeKey = MakeKey(70, 17);
@@ -1006,6 +1776,11 @@ int main()
     TestReverseRollbackFromStaging();
     TestPartialTransferRollbackOwnershipSelection();
     TestTransferredRemainsRollbackCapableAndEmptyJournal();
+    TestMaximumCountLinearLifecycle();
+    TestSequentialRepeatedIdOwnershipModel();
+    TestControllerAndEntryCorruptionFailClosed();
+    TestDatabaseUserReleaseStatuses();
+    TestPlacementReconstructionRejectsOldKey();
     TestUnsafeAndUnknownResultsPoison();
 
     if (failures != 0)
