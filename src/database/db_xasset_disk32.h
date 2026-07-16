@@ -165,8 +165,8 @@ static_assert(std::is_standard_layout_v<XAssetListDisk32Iterator>);
 static_assert(std::is_trivially_copyable_v<XAssetListDisk32Iterator>);
 
 // Every root API requires list to point to a live, four-byte-aligned
-// XAssetListDisk32 object populated by an exact 0x10-byte copy; never cast an
-// unaligned wire cursor to this type.
+// XAssetListDisk32 object. When sourced from wire bytes, populate it with an
+// exact 0x10-byte copy; never cast an unaligned wire cursor to this type.
 // Only the separately supplied assetRecords byte span is alignment-agnostic.
 //
 // Validates only the fixed root envelope and computes its exact serialized

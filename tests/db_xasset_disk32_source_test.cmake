@@ -122,7 +122,8 @@ foreach(_var IN ITEMS _header _source)
 endforeach()
 foreach(_marker IN ITEMS
     "Every root API requires list to point to a live, four-byte-aligned"
-    "populated by an exact 0x10-byte copy"
+    "When sourced from wire bytes, populate it with an"
+    "exact 0x10-byte copy"
     "Only the separately supplied assetRecords byte span is alignment-agnostic."
     "context may collect diagnostics"
     "State that affects admission must remain"
