@@ -28,11 +28,13 @@ namespace fx::fastfile
 // materialization has fully succeeded.  The arena reservation is committed
 // immediately after successful materialization and before publication, so a
 // rejected publication strands only unreferenced retired zone storage and a
-// completed effect/impact XAsset is never observable half-built.  Any failure
-// tears the complete adapter transaction down: open arena reservations are
-// abandoned, both converter workspaces are structurally reset, and the
-// adapter returns to Idle while committed sibling publications keep their
-// storage.
+// completed effect/impact XAsset is never observable half-built.  Once a wire
+// transaction is open, sequence, validation, conversion, and publication
+// failures tear the complete adapter transaction down: open arena
+// reservations are abandoned, both converter workspaces are structurally
+// reset, and the adapter returns to Idle while committed sibling
+// publications keep their storage.  Busy and invalid-argument precondition
+// failures preserve an active transaction so its trusted caller may retry.
 //
 // One impact-table transaction may nest inline effect-definition transactions
 // (legacy sentinel handles); an effect transaction never nests another
@@ -48,7 +50,10 @@ inline constexpr std::uint64_t kFxFastFileZoneAdapterMaxNameBytes = 4096;
 
 // Span-provenance oracle implemented over the production XBlock cursor
 // (or a test fake).  It must return true only when the complete extent lies
-// within storage the cursor has materialized for the current zone.
+// within storage the cursor has materialized for the current zone.  The
+// cursor-owned wire storage, adapter workspace, arena backing, and publication
+// output locations must be mutually disjoint.  Cursor callbacks must not
+// mutate recorded wire bytes or manipulate the shared arena.
 using FxFastFileZoneAdapterValidateWireSpanCallback = bool (*)(
     void *context,
     const void *address,
@@ -66,7 +71,9 @@ struct FxFastFileZoneAdapterCursor
 // through outPublished; this may differ from the materialized arena root
 // because DB_AddXAsset shallow-copies roots into its asset pools.  Returning
 // false must leave external publication state unchanged.  Rejection strands
-// the committed arena reservation as retired zone storage.
+// the committed arena reservation as retired zone storage.  Publication
+// callbacks must not mutate recorded wire bytes, manipulate the shared arena,
+// or call adapter APIs recursively.
 using FxFastFileZoneAdapterPublishEffectCallback = bool (*)(
     void *context,
     FxEffectDef *materialized,
@@ -167,6 +174,8 @@ TryRecordFxElemDefArrayZoneDisk32(
 [[nodiscard]] FxFastFileZoneAdapterDisk32Status TrySealFxEffectDefZoneDisk32(
     FxFastFileZoneAdapterDisk32Workspace *workspace) noexcept;
 
+// outEffect storage is part of the caller-owned publication output and must
+// satisfy the disjointness contract above.
 [[nodiscard]] FxFastFileZoneAdapterDisk32Status TryPublishFxEffectDefZoneDisk32(
     FxFastFileZoneAdapterDisk32Workspace *workspace,
     const FxFastFileZoneAdapterPublication &publication,
@@ -204,6 +213,8 @@ TryRecordFxImpactHandleZoneDisk32(
 [[nodiscard]] FxFastFileZoneAdapterDisk32Status TrySealFxImpactTableZoneDisk32(
     FxFastFileZoneAdapterDisk32Workspace *workspace) noexcept;
 
+// outTable storage is part of the caller-owned publication output and must
+// satisfy the disjointness contract above.
 [[nodiscard]] FxFastFileZoneAdapterDisk32Status
 TryPublishFxImpactTableZoneDisk32(
     FxFastFileZoneAdapterDisk32Workspace *workspace,
