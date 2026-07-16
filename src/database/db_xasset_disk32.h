@@ -34,6 +34,13 @@ struct ScriptStringListDisk32 final
     disk32::Ptr32<disk32::Ptr32<const char>> strings;
 };
 
+// One entry in ScriptStringListDisk32::strings. This remains an opaque
+// four-byte wire token until the stateful loader resolves or interns it.
+struct ScriptStringTokenDisk32 final
+{
+    disk32::PointerToken token;
+};
+
 struct XAssetListDisk32 final
 {
     ScriptStringListDisk32 stringList;
@@ -68,6 +75,13 @@ static_assert(std::is_trivial_v<ScriptStringListDisk32>);
 static_assert(std::is_standard_layout_v<ScriptStringListDisk32>);
 static_assert(std::is_trivially_copyable_v<ScriptStringListDisk32>);
 
+ONDISK_SIZE(ScriptStringTokenDisk32, 0x04);
+ONDISK_OFFSET(ScriptStringTokenDisk32, token, 0x00);
+static_assert(alignof(ScriptStringTokenDisk32) == 4);
+static_assert(std::is_trivial_v<ScriptStringTokenDisk32>);
+static_assert(std::is_standard_layout_v<ScriptStringTokenDisk32>);
+static_assert(std::is_trivially_copyable_v<ScriptStringTokenDisk32>);
+
 ONDISK_SIZE(XAssetListDisk32, 0x10);
 ONDISK_OFFSET(XAssetListDisk32, stringList, 0x00);
 ONDISK_OFFSET(XAssetListDisk32, assetCount, 0x08);
@@ -76,6 +90,119 @@ static_assert(alignof(XAssetListDisk32) == 4);
 static_assert(std::is_trivial_v<XAssetListDisk32>);
 static_assert(std::is_standard_layout_v<XAssetListDisk32>);
 static_assert(std::is_trivially_copyable_v<XAssetListDisk32>);
+
+enum class ScriptStringListDisk32Status : std::uint8_t
+{
+    Success,
+    End,
+    InvalidArgument,
+    InvalidStringCount,
+    InvalidStringPointerCount,
+    SizeOverflow,
+    InvalidTokenSpan,
+    TruncatedTokenSpan,
+    UnsupportedSharedInline,
+    InvalidIterator,
+};
+
+struct ScriptStringListDisk32Layout final
+{
+    std::uint32_t tokenBytes = 0;
+    std::int32_t stringCount = 0;
+};
+
+// The iterator borrows a validated byte span. The caller must keep it alive
+// and externally synchronized until iteration ends. Sequential mutation is
+// permitted, but each token is re-read and revalidated before publication;
+// the iterator does not snapshot or rewrite the wire array. Default
+// construction creates an invalid iterator. Copying a live iterator creates
+// an independent cursor over the same borrowed bytes.
+class ScriptStringListDisk32Iterator final
+{
+public:
+    ScriptStringListDisk32Iterator() noexcept = default;
+
+    [[nodiscard]] std::int32_t nextIndex() const noexcept
+    {
+        return nextIndex_;
+    }
+
+    [[nodiscard]] std::int32_t remaining() const noexcept
+    {
+        return nextIndex_ >= 0 && nextIndex_ <= stringCount_
+            ? stringCount_ - nextIndex_
+            : 0;
+    }
+
+private:
+    friend ScriptStringListDisk32Status
+    TryBeginScriptStringListDisk32(
+        const ScriptStringListDisk32 *list,
+        const void *tokenRecords,
+        std::size_t tokenRecordBytes,
+        ScriptStringListDisk32Iterator *outIterator) noexcept;
+    friend ScriptStringListDisk32Status
+    TryNextScriptStringTokenDisk32(
+        ScriptStringListDisk32Iterator *iterator,
+        ScriptStringTokenDisk32 *outToken) noexcept;
+
+    [[nodiscard]] bool isValid() const noexcept;
+
+    const std::uint8_t *records_ = nullptr;
+    std::uint32_t requiredBytes_ = 0;
+    std::int32_t stringCount_ = 0;
+    std::int32_t nextIndex_ = 0;
+    bool valid_ = false;
+};
+
+static_assert(
+    std::is_standard_layout_v<ScriptStringListDisk32Iterator>);
+static_assert(
+    std::is_trivially_copyable_v<ScriptStringListDisk32Iterator>);
+
+// Every root API requires list to point to a live, four-byte-aligned
+// ScriptStringListDisk32 object. When sourced from wire bytes, populate it
+// with an exact 0x8-byte copy. Only the separately supplied tokenRecords byte
+// span is alignment-agnostic.
+//
+// Validates the fixed root and computes the exact count * 4 token extent.
+// The root strings token is a presence marker here: any nonzero value is
+// accepted when count is nonzero. outLayout is unchanged on every failure.
+[[nodiscard]] ScriptStringListDisk32Status
+TryValidateScriptStringListDisk32Header(
+    const ScriptStringListDisk32 *list,
+    ScriptStringListDisk32Layout *outLayout) noexcept;
+
+// Validates the root, caller-provided bounded token span, and every token
+// before publishing outLayout. Null, inline, and ordinary offset tokens are
+// preserved verbatim. The legacy script-string walk has no shared-inline
+// protocol, so 0xFFFFFFFE is rejected explicitly. Extra trailing bytes are
+// permitted and never inspected. outLayout is unchanged on every failure.
+[[nodiscard]] ScriptStringListDisk32Status
+TryValidateScriptStringListDisk32Span(
+    const ScriptStringListDisk32 *list,
+    const void *tokenRecords,
+    std::size_t tokenRecordBytes,
+    ScriptStringListDisk32Layout *outLayout) noexcept;
+
+// Begins only after the complete token span preflights successfully.
+// outIterator is unchanged on failure, including a shared-inline token late
+// in the borrowed array.
+[[nodiscard]] ScriptStringListDisk32Status
+TryBeginScriptStringListDisk32(
+    const ScriptStringListDisk32 *list,
+    const void *tokenRecords,
+    std::size_t tokenRecordBytes,
+    ScriptStringListDisk32Iterator *outIterator) noexcept;
+
+// Reads exactly one 0x4 token with memcpy, revalidates it to fail closed if
+// borrowed input changed to shared-inline, and advances only after publishing
+// the complete local copy. Both iterator and outToken are unchanged on
+// failure or End.
+[[nodiscard]] ScriptStringListDisk32Status
+TryNextScriptStringTokenDisk32(
+    ScriptStringListDisk32Iterator *iterator,
+    ScriptStringTokenDisk32 *outToken) noexcept;
 
 using XAssetTypeDisk32AdmissionCallback =
     bool (*)(void *context, std::int32_t rawType) noexcept;

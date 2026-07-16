@@ -7,6 +7,68 @@ namespace db::xasset
 {
 namespace
 {
+[[nodiscard]] ScriptStringListDisk32Status CheckedScriptStringTokenBytes(
+    const std::int32_t count,
+    std::uint32_t *const outBytes) noexcept
+{
+    if (!outBytes)
+        return ScriptStringListDisk32Status::InvalidArgument;
+    if (count < 0)
+        return ScriptStringListDisk32Status::InvalidStringCount;
+
+    constexpr std::uint32_t stride =
+        sizeof(ScriptStringTokenDisk32);
+    const std::uint32_t unsignedCount =
+        static_cast<std::uint32_t>(count);
+    if (unsignedCount
+        > (std::numeric_limits<std::uint32_t>::max)() / stride)
+    {
+        return ScriptStringListDisk32Status::SizeOverflow;
+    }
+    if (count > kMaxScriptStringListStrings)
+        return ScriptStringListDisk32Status::InvalidStringCount;
+
+    *outBytes = unsignedCount * stride;
+    return ScriptStringListDisk32Status::Success;
+}
+
+[[nodiscard]] ScriptStringListDisk32Status ValidateScriptStringToken(
+    const ScriptStringTokenDisk32 &token) noexcept
+{
+    if (token.token.isSharedInline())
+        return ScriptStringListDisk32Status::UnsupportedSharedInline;
+    return ScriptStringListDisk32Status::Success;
+}
+
+[[nodiscard]] ScriptStringListDisk32Status
+ValidateScriptStringTokenSpan(
+    const ScriptStringListDisk32Layout &layout,
+    const void *const tokenRecords,
+    const std::size_t tokenRecordBytes) noexcept
+{
+    const bool hasRecords = tokenRecords != nullptr;
+    const bool hasRequiredRecords = layout.tokenBytes != 0;
+    if (hasRecords != hasRequiredRecords)
+        return ScriptStringListDisk32Status::InvalidTokenSpan;
+    if (!hasRequiredRecords && tokenRecordBytes != 0)
+        return ScriptStringListDisk32Status::InvalidTokenSpan;
+    if (tokenRecordBytes < layout.tokenBytes)
+        return ScriptStringListDisk32Status::TruncatedTokenSpan;
+    return ScriptStringListDisk32Status::Success;
+}
+
+[[nodiscard]] ScriptStringTokenDisk32 ReadScriptStringToken(
+    const std::uint8_t *const records,
+    const std::int32_t index) noexcept
+{
+    ScriptStringTokenDisk32 token{};
+    const std::size_t offset =
+        static_cast<std::size_t>(index)
+        * sizeof(ScriptStringTokenDisk32);
+    std::memcpy(&token, records + offset, sizeof(token));
+    return token;
+}
+
 [[nodiscard]] bool TypePolicyIsValid(
     const XAssetTypeDisk32Policy &policy) noexcept
 {
@@ -78,6 +140,144 @@ namespace
 }
 
 } // namespace
+
+bool ScriptStringListDisk32Iterator::isValid() const noexcept
+{
+    if (!valid_
+        || stringCount_ < 0
+        || stringCount_ > kMaxScriptStringListStrings
+        || nextIndex_ < 0
+        || nextIndex_ > stringCount_)
+    {
+        return false;
+    }
+
+    std::uint32_t expectedBytes = 0;
+    if (CheckedScriptStringTokenBytes(stringCount_, &expectedBytes)
+            != ScriptStringListDisk32Status::Success
+        || requiredBytes_ != expectedBytes)
+    {
+        return false;
+    }
+    return (records_ != nullptr) == (expectedBytes != 0);
+}
+
+ScriptStringListDisk32Status
+TryValidateScriptStringListDisk32Header(
+    const ScriptStringListDisk32 *const list,
+    ScriptStringListDisk32Layout *const outLayout) noexcept
+{
+    if (!list || !outLayout)
+        return ScriptStringListDisk32Status::InvalidArgument;
+
+    ScriptStringListDisk32Layout candidate{};
+    const ScriptStringListDisk32Status status =
+        CheckedScriptStringTokenBytes(
+            list->count, &candidate.tokenBytes);
+    if (status != ScriptStringListDisk32Status::Success)
+        return status;
+
+    const bool hasStrings = !list->strings.token.isNull();
+    if (hasStrings != (list->count != 0))
+    {
+        return ScriptStringListDisk32Status::
+            InvalidStringPointerCount;
+    }
+
+    candidate.stringCount = list->count;
+    *outLayout = candidate;
+    return ScriptStringListDisk32Status::Success;
+}
+
+ScriptStringListDisk32Status
+TryValidateScriptStringListDisk32Span(
+    const ScriptStringListDisk32 *const list,
+    const void *const tokenRecords,
+    const std::size_t tokenRecordBytes,
+    ScriptStringListDisk32Layout *const outLayout) noexcept
+{
+    if (!list || !outLayout)
+        return ScriptStringListDisk32Status::InvalidArgument;
+
+    ScriptStringListDisk32Layout candidate{};
+    ScriptStringListDisk32Status status =
+        TryValidateScriptStringListDisk32Header(
+            list, &candidate);
+    if (status != ScriptStringListDisk32Status::Success)
+        return status;
+
+    status = ValidateScriptStringTokenSpan(
+        candidate, tokenRecords, tokenRecordBytes);
+    if (status != ScriptStringListDisk32Status::Success)
+        return status;
+
+    const auto *const records =
+        static_cast<const std::uint8_t *>(tokenRecords);
+    for (std::int32_t index = 0;
+         index < candidate.stringCount;
+         ++index)
+    {
+        const ScriptStringTokenDisk32 token =
+            ReadScriptStringToken(records, index);
+        status = ValidateScriptStringToken(token);
+        if (status != ScriptStringListDisk32Status::Success)
+            return status;
+    }
+
+    *outLayout = candidate;
+    return ScriptStringListDisk32Status::Success;
+}
+
+ScriptStringListDisk32Status TryBeginScriptStringListDisk32(
+    const ScriptStringListDisk32 *const list,
+    const void *const tokenRecords,
+    const std::size_t tokenRecordBytes,
+    ScriptStringListDisk32Iterator *const outIterator) noexcept
+{
+    if (!outIterator)
+        return ScriptStringListDisk32Status::InvalidArgument;
+
+    ScriptStringListDisk32Layout layout{};
+    const ScriptStringListDisk32Status status =
+        TryValidateScriptStringListDisk32Span(
+            list, tokenRecords, tokenRecordBytes, &layout);
+    if (status != ScriptStringListDisk32Status::Success)
+        return status;
+
+    ScriptStringListDisk32Iterator candidate{};
+    candidate.records_ =
+        static_cast<const std::uint8_t *>(tokenRecords);
+    candidate.requiredBytes_ = layout.tokenBytes;
+    candidate.stringCount_ = layout.stringCount;
+    candidate.nextIndex_ = 0;
+    candidate.valid_ = true;
+    *outIterator = candidate;
+    return ScriptStringListDisk32Status::Success;
+}
+
+ScriptStringListDisk32Status TryNextScriptStringTokenDisk32(
+    ScriptStringListDisk32Iterator *const iterator,
+    ScriptStringTokenDisk32 *const outToken) noexcept
+{
+    if (!iterator || !outToken)
+        return ScriptStringListDisk32Status::InvalidArgument;
+    if (!iterator->isValid())
+        return ScriptStringListDisk32Status::InvalidIterator;
+    if (iterator->nextIndex_ == iterator->stringCount_)
+        return ScriptStringListDisk32Status::End;
+
+    const ScriptStringTokenDisk32 token =
+        ReadScriptStringToken(
+            iterator->records_, iterator->nextIndex_);
+    const ScriptStringListDisk32Status status =
+        ValidateScriptStringToken(token);
+    if (status != ScriptStringListDisk32Status::Success)
+        return status;
+
+    *outToken = token;
+    ++iterator->nextIndex_;
+    return ScriptStringListDisk32Status::Success;
+}
 
 bool XAssetListDisk32Iterator::isValid() const noexcept
 {

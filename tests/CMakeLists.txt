@@ -254,6 +254,26 @@ add_test(
 set_tests_properties(
     database-xasset-disk32-envelope PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-db-script-string-disk32-tests
+    db_script_string_disk32_tests.cpp
+    ${SRC_DIR}/database/db_xasset_disk32.cpp
+)
+target_include_directories(
+    kisakcod-db-script-string-disk32-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-script-string-disk32-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-db-script-string-disk32-tests)
+set_target_properties(
+    kisakcod-db-script-string-disk32-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-script-string-disk32-walk
+    COMMAND kisakcod-db-script-string-disk32-tests
+)
+set_tests_properties(
+    database-script-string-disk32-walk PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-fx-archive-disk32-tests
     fx_archive_disk32_tests.cpp
     ${SRC_DIR}/EffectsCore/fx_archive_disk32.cpp
