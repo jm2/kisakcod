@@ -94,10 +94,12 @@ Completed foundation work:
   and native identity exactly once, detects callback/source mutation and partial overlap within every resolver-reported
   retained extent, and validates both legacy and widened layouts. Callback-free materialization placement-constructs
   actual runtime objects into an aligned caller-owned blob, owns copied strings/records, preserves legacy trail capacity
-  semantics, and publishes only after all fallible checks. The exact effect workspace is 325,904 bytes on x86 and 325,928
-  bytes on native64; the impact workspace is 11,216 and 11,232 bytes, respectively. The stateful XBlock/XAsset loader,
-  retail bytes, legacy x86 path, archive writer, and save-side guard remain unchanged pending a zone-owned arena and
-  guarded production adapter;
+  semantics, and publishes only after all fallible checks. Review hardening validates retail time/count/visibility/atlas
+  canonicalization, rejects trail definitions outside the runtime-supported looping range, and prevents the normalized
+  visibility endpoint from indexing beyond the final adjacent sample pair. The exact effect workspace is 325,904 bytes
+  on x86 and 325,928 bytes on native64; the impact workspace is 11,216 and 11,232 bytes, respectively. The stateful
+  XBlock/XAsset loader, retail bytes, legacy x86 path, archive writer, and save-side guard remain unchanged pending a
+  zone-owned arena and guarded production adapter;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -131,10 +133,11 @@ Remaining gates, in implementation order:
    through the exact-lease-bound mutable candidate, centralized staging cleanup, immediate lease-release-to-archive-admission
    handoff, and the existing publication/rollback controller. That production-restore checkpoint is merged. The writer and
    save guard follow later.
-3. Continue fixed-width `disk32` fast-file widening. Exact FX effect/visual/trail/impact schemas and pure transactional
-  native converters are implemented on the active branch; their local/audit gate is clean and CI/review/merge remain. Next, add a
-   zone-owned aligned native arena and guarded stateful XBlock/XAsset adapter with exact rollback, completed-object/alias
-   registration, and lifetime tests before replacing any legacy loader path. Retail wire bytes remain frozen.
+3. Continue fixed-width `disk32` fast-file widening. Exact FX effect/visual/trail/impact schemas and hardened pure
+   transactional native converters are implemented in PR #32; local GCC/Clang, complete sanitizer, strict i386/AArch64,
+   and source-contract checks are clean while replacement CI/review/merge remain. Next, add a zone-owned aligned native
+   arena and guarded stateful XBlock/XAsset adapter with exact rollback, completed-object/alias registration, and lifetime
+   tests before replacing any legacy loader path. Retail wire bytes remain frozen.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
 5. Implement the remaining platform services (sockets, filesystem,
    virtual memory, console/process) for Windows/POSIX.
@@ -1153,13 +1156,13 @@ threads are resolved, and exact review-fix/documentation head `21dae5ca` passed 
 definition/visual/trail/impact schemas plus separate report-free transactional effect-definition and impact-table
 planner/materializers without touching the stateful production loader. Canonical native objects, frozen resolver
 transactions, full source/name provenance, bounded journals, callback-free publication, retained-extent overlap rejection,
-and adversarial mutation/alias tests are included. Exact implementation head `dc069313` passes GCC and Clang **71/71**,
-ASan+UBSan and TSan **70/70**, strict i386 compilation/linking, strict AArch64 syntax checks, both static analyzers, and an
-enforced 4 KiB converter-frame gate (1,056-byte GCC / 984-byte Clang maximum). The sandbox blocks the i386 executables with
-`SIGSYS`, so Windows x86 CI remains the runtime authority. A Clang/MSan-exposed padding read in an immutability test was
-fixed with an object-representation snapshot, and an independent audit found no remaining blocker. CI/review/merge are the
-current gate; a zone-owned native arena and guarded XBlock/XAsset adapter are next. Writer replacement follows later after
-exact x86 full-image equivalence.
+and adversarial mutation/alias tests are included. Current implementation/test head `654798ac` passes GCC and Clang
+**71/71**, ASan+UBSan and TSan **70/70**, a focused MemorySanitizer run, strict i386 compilation/linking, strict AArch64
+compilation/linking, and the updated source contract. The sandbox blocks the i386 executable with `SIGSYS`, so Windows x86
+CI remains the runtime authority. Prior CI run **29462535215** at `0f376a92` passed five jobs and exposed test-only MSVC
+warning-as-error failures in the other four; the local branch contains their fixed-width/representation-safe corrections
+plus the semantic/runtime hardening above. Replacement CI/review/merge are the current gate; a zone-owned native arena and
+guarded XBlock/XAsset adapter are next. Writer replacement follows later after exact x86 full-image equivalence.
 A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
