@@ -18,6 +18,7 @@ set(_impact_native_impl_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_fastfile_impact_native_disk32.cpp")
 set(_db_load_path "${SOURCE_ROOT}/src/database/db_load.cpp")
 set(_archive_path "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp")
+set(_draw_path "${SOURCE_ROOT}/src/EffectsCore/fx_draw.cpp")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
 set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
 set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
@@ -32,6 +33,7 @@ foreach(_path IN ITEMS
     "${_impact_native_impl_path}"
     "${_db_load_path}"
     "${_archive_path}"
+    "${_draw_path}"
     "${_manifest_path}"
     "${_tests_path}"
     "${_ci_path}")
@@ -49,6 +51,7 @@ file(READ "${_impact_native_path}" _impact_native)
 file(READ "${_impact_native_impl_path}" _impact_native_impl)
 file(READ "${_db_load_path}" _db_load)
 file(READ "${_archive_path}" _archive)
+file(READ "${_draw_path}" _draw)
 file(READ "${_manifest_path}" _manifest)
 file(READ "${_tests_path}" _tests)
 file(READ "${_ci_path}" _ci)
@@ -63,6 +66,7 @@ foreach(_var IN ITEMS
     _impact_native_impl
     _db_load
     _archive
+    _draw
     _manifest
     _tests
     _ci)
@@ -131,6 +135,43 @@ function(extract_slice SOURCE_VAR START END OUT_VAR DESCRIPTION)
     string(SUBSTRING "${_tail}" 0 ${_end} _slice)
     set(${OUT_VAR} "${_slice}" PARENT_SCOPE)
 endfunction()
+
+# Runtime visual interpolation consumes a pair of adjacent samples. The final
+# normalized endpoint therefore belongs to the last segment (N - 1, N) with a
+# lerp of one; selecting endpoint N as a new segment would read sample N + 1.
+extract_slice(
+    _draw
+    "void __cdecl FX_SetupVisualState("
+    "void __cdecl FX_EvaluateSize("
+    _setup_visual_state
+    "runtime visual-state setup")
+foreach(_marker IN ITEMS
+    "!elemDef || !preVisState || !elemDef->visSamples"
+    "elemDef->visStateIntervalCount == 0"
+    "!(normTimeUpdateEnd >= 0.0f && normTimeUpdateEnd <= 1.0f)"
+    "const int32_t intervalCount = elemDef->visStateIntervalCount;"
+    "int32_t sampleIndex = static_cast<int32_t>(std::floor(samplePoint));"
+    "if (sampleIndex >= intervalCount)"
+    "sampleIndex = intervalCount - 1;"
+    "preVisState->sampleLerp = 1.0f;"
+    "preVisState->refState = &elemDef->visSamples[sampleIndex];")
+    require_contains(
+        _setup_visual_state "${_marker}" "bounded runtime visual interpolation")
+endforeach()
+require_ordered(
+    _setup_visual_state
+    "sampleIndex = intervalCount - 1;"
+    "preVisState->sampleLerp = 1.0f;"
+    "final visual endpoint selects the last segment before its endpoint")
+require_ordered(
+    _setup_visual_state
+    "if (sampleIndex >= intervalCount)"
+    "preVisState->refState = &elemDef->visSamples[sampleIndex];"
+    "visual sample index is clamped before forming the adjacent pair")
+require_not_contains(
+    _setup_visual_state
+    "refState = &elemDef->visSamples[(int)v5]"
+    "unclamped visual endpoint indexing")
 
 # The converter constructs the one canonical portable runtime definition
 # family. It must not publish layout-compatible private lookalikes through an
