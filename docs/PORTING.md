@@ -112,12 +112,21 @@ Completed foundation work:
   record extents, raw signed type range, caller-supplied portable build admission, unaligned exact-stride reads,
   high-bit-token preservation, and failure-atomic outputs without importing native `xanim.h` layouts or changing
   production stream/PMem/zone state;
-- an exact `ScriptStringTokenDisk32` (0x4) record and pure bounded script-string header/span/iterator layer on the current
-  stacked branch. It computes checked `count * 4` extents before the 65536-entry cap, enforces root and bounded-span
+- an exact `ScriptStringTokenDisk32` (0x4) record and pure bounded script-string header/span/iterator layer merged in
+  PR #35 as `3271b8d6`. It computes checked `count * 4` extents before the 65536-entry cap, enforces root and bounded-span
   presence parity, preflights the complete caller-owned array, preserves null/inline/ordinary-offset tokens verbatim,
   rejects the unsupported shared-inline sentinel, reads unaligned entries with exact-stride `memcpy`, ignores trailing
   bytes, revalidates sequential mutation before each publication, and leaves output/cursor state unchanged on failure or
   `End`. Production streams, script-string registration, PMem/zone state, and retail bytes remain unchanged;
+- a pure, production-neutral generation-keyed zone-load lifecycle controller. One explicitly constructed 16-byte slot
+  outside `XZone` tracks `Empty`/`Loading`/`Live`/`Abandoning` ownership through a nonzero 64-bit generation plus slot key,
+  rejects stale/cross-slot/ABA use, fails closed at wrap, and preserves idempotent terminal receipts. Loading abandonment
+  has the exact nine-step cancel/abort/unpublish/reset/geometry/native-storage/EndAlloc/free/registry-gate recipe, while
+  committed Live unload has a distinct six-step live-owned recipe that cannot replay load-only cancel, adapter abort,
+  `PMem_EndAlloc`, or loading-gate/signal work. Retry cursors, callback reentry, unsafe poisoning, corrupt-state
+  validation, and internal slot release are covered without production registry/PMem/stream/adapter wiring. The static
+  controller slot and callback metadata must outlive zone PMem so they survive `PMem_Free` and can publish `Empty`;
+  per-generation arena/workspace/journal/backing belongs in the named PMem scope;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -156,11 +165,14 @@ Remaining gates, in implementation order:
    and all-nine-job candidate CI clean. PR #33 merged the zone-owned aligned native arena and guarded stateful zone adapter
    over the XBlock cursor walk with adversarial sequence/provenance/nesting and canonical-publication coverage; it
    squash-merged as `a004701d`, and post-merge run **29506653705** passed all nine jobs. PR #34 merged the fixed top-level
-   XAsset envelopes and bounded eight-byte iterator prerequisite as `3e9b51b0`; the current stacked branch adds the pure
-   four-byte Disk32 script-string token walk. Next, add transactional script-string ownership, the generation-keyed
-   per-zone sidecar, and centralized longjmp-safe rollback, then wire the adapter into production with
-   completed-object/alias registration and lifetime tests before replacing any legacy loader path. Retail wire bytes
-   remain frozen.
+   XAsset envelopes and bounded eight-byte iterator prerequisite as `3e9b51b0`; PR #35 merged the pure four-byte Disk32
+   script-string token walk as `3271b8d6`. The current pure external lifecycle controller adds generation-keyed slot
+   ownership and distinct load-abandon/live-unload recipes. Next, complete transactional script-string ownership and the
+   constructed whole-zone sidecar table, keeping static controller slots outside PMem and per-generation native storage
+   inside the named scope, then bind the recipes and adapter into production with completed-object/alias registration and
+   lifetime tests before replacing any legacy loader path. Current DB-thread longjmp remains process-fatal, so the
+   controller is a longjmp-safe prerequisite rather than recoverable production abandonment. Retail wire bytes remain
+   frozen.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
 5. Implement the remaining platform services (sockets, filesystem,
    virtual memory, console/process) for Windows/POSIX.
@@ -1210,23 +1222,40 @@ the record span remains alignment-agnostic. Source tripwires forbid native `XAss
 Focused GCC/Clang/ASan+UBSan/TSan execution, strict i386/AArch64 compilation/linking, Clang analysis, source-contract
 validation, and two independent clean audits pass. Exact reviewed head `ac619d3e` passed all nine jobs in run
 **29521272126**; hosted Codex found no major issue, Gemini reported no review comments, and no review threads remain.
-Authoritative post-merge master run **29522252342** also passed all nine jobs at squash commit `3e9b51b0`. The current
-branch then adds the exact 0x4
-`ScriptStringTokenDisk32` and a separate pure header/span/iterator layer. It computes checked four-byte extents before
+Authoritative post-merge master run **29522252342** also passed all nine jobs at squash commit `3e9b51b0`. PR #35 then
+merged the exact 0x4 `ScriptStringTokenDisk32` and a separate pure header/span/iterator layer as `3271b8d6`. It computes
+checked four-byte extents before
 the 65536-entry cap, validates root/span parity, fully preflights the array, preserves null/inline/offset bits, rejects
 shared-inline explicitly, supports unaligned borrowed bytes, ignores trailing bytes, and revalidates mutation before
 failure-atomic output/cursor publication. Focused GCC/Clang/ASan+UBSan/TSan execution, strict i386 and AArch64
 compilation/linking, Clang analysis, the complete GCC/Clang **78/78** suites, the existing XAsset regressions, and both
 source contracts pass locally; two independent exact-head audits found no blocker. Exact reviewed head `c5246f67` passed
 all nine jobs in PR #35 run **29523406607**; hosted Codex found no major issue, Gemini reported no review comments, and
-no review threads remain. The only later branch change is the final status documentation. The following ownership batch
-combines transactional ordinary-reference script-string staging, an
-explicitly constructed generation-keyed per-zone sidecar, and centralized `Com_Error`/longjmp-safe rollback. `XZone`
-remains ABI-unchanged because the registry zeroes it with `memset`; native FX storage is allocated inside the existing
-named PMem zone scope. A checked fixed arena budget is acceptable only as an initial compatibility cap that atomically
-rejects an oversized zone. Stable on-demand PMem chunks remain the general solution, and registered assets must be removed
-before sidecar unbind/destruction, staged string references must be released on abandonment, and `PMem_EndAlloc` must
-precede rollback `PMem_Free`.
+no review threads remain.
+The next pure prerequisite now implements an explicitly constructed generation-keyed external zone-load context without
+changing `XZone` or production lifecycle behavior. A fixed 16-byte slot and 16-byte `{generation, slot}` key track
+`Empty`, `Loading`, `Live`, and `Abandoning`; reject stale, cross-slot, malformed, and ABA keys; preserve exact
+claim/commit/abandon/unload receipts; and fail closed before generation wrap. Loading abandonment drives the reviewed
+nine-stage order: cancel input/inflate, abort native-adapter transactions, make partial assets/staged references/copy
+records unreachable, invalidate alias/direct/stream/delay state, release geometry, tear down arena/workspace/sidecars,
+end the PMem allocation, free PMem, clear registry/loading/queue/recovery-gate/signal state, then release the slot
+internally. Committed Live unload instead drives only live-owned teardown: remove live assets/references, reset shared
+runtime state, release geometry, tear down native storage, free PMem, remove live registry/handles, then release the slot.
+It cannot replay load-only cancellation, adapter abort, `PMem_EndAlloc`, or loading-gate/signal work. Retry retains the
+first incomplete cursor; unsafe or unknown callback completion poisons the generation permanently; callback reentry is
+`Busy`; state is private outside test fixtures; and terminal receipts stop matching active ownership after release.
+The complete GCC and Clang suites are **80/80** green, with focused warning-as-error, conversion/sign-conversion,
+ASan+UBSan, MSan, TSan, static-analysis, strict i386/AArch64, source-contract, and diff checks also clean. Candidate CI and
+hosted review for this new primitive remain pending.
+The following ownership batch combines transactional ordinary-reference script-string staging with a constructed
+whole-zone table around that external controller. Static context slots and callback metadata must live outside and outlast
+zone PMem so the controller survives `PMem_Free` and can publish `Empty`; only per-generation
+arena/workspace/journal/backing belongs inside the existing named PMem zone scope. `XZone` remains ABI-unchanged because
+the registry zeroes it with `memset`. A checked fixed arena budget is acceptable only as an initial compatibility cap that
+atomically rejects an oversized zone. Stable on-demand PMem chunks remain the general solution, and registered assets
+must be removed before sidecar unbind/destruction, staged string references must be released on abandonment, and
+`PMem_EndAlloc` must precede abandonment `PMem_Free`. Current DB-thread longjmp remains process-fatal; this pure controller
+is a longjmp-safe prerequisite, not production-recoverable abandonment.
 Writer replacement follows later after exact x86
 full-image equivalence.
 A checked
