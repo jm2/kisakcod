@@ -90,7 +90,8 @@ class alignas(8) FxFastFileImpactNativeDisk32Plan final
 // the resolved root name; each remaining slot maps one physical effect-handle
 // token in entry/nonflesh/flesh order.  Null tokens keep an empty slot and do
 // not invoke the resolver, preserving exact source-slot identity for every
-// non-null callback even when token words repeat.
+// non-null callback even when token words repeat.  Every retained descriptor
+// and complete retained range is fingerprinted as part of the bound plan.
 class alignas(8) FxFastFileImpactNativeDisk32Workspace final
 {
   public:
@@ -141,11 +142,13 @@ class alignas(8) FxFastFileImpactNativeDisk32Workspace final
 // db_load treated this field as a boolean, so inline/shared/alias spellings are
 // all accepted.  The root name and every non-null effect handle are resolved
 // exactly once while the workspace's reentry gate is held.  Each resolved
-// effect handle must identify one aligned, complete native FxEffectDef extent.
-// The source header, all twelve source entries, and the resolver-returned name
-// span must remain readable and byte-for-byte immutable throughout planning and
-// for as long as the workspace remains Planned, including through every
-// matching materialization attempt.  Failure leaves outPlan unchanged.
+// effect handle must identify exactly one aligned, complete native FxEffectDef
+// extent.  The source header, all twelve source entries, and every complete
+// resolver-returned retained span must remain readable and byte-for-byte
+// immutable throughout planning and for as long as the workspace remains
+// Planned, including through every matching materialization attempt.  Resolver
+// output descriptors must remain valid through callback return.  Failure
+// leaves outPlan unchanged.
 [[nodiscard]] FxFastFileNativeDisk32Status
 TryPlanFxImpactTableDisk32(FxFastFileImpactNativeDisk32Workspace *workspace,
                            const FxFastFileImpactTableDisk32View &source,
@@ -159,7 +162,8 @@ TryPlanFxImpactTableDisk32(FxFastFileImpactNativeDisk32Workspace *workspace,
 // entries, and resolver-returned name described above remain caller-owned and
 // must stay readable and immutable while the workspace remains Planned and
 // throughout this call.  Successful output retains the resolver-returned
-// effect identities, whose lifetime remains externally owned by the caller.
+// effect identities without copying them; they must remain readable and valid
+// for every use of the output.
 [[nodiscard]] FxFastFileNativeDisk32Status TryMaterializeFxImpactTableDisk32(
     FxFastFileImpactNativeDisk32Workspace *workspace,
     const FxFastFileImpactNativeDisk32Plan &plan,
@@ -176,5 +180,5 @@ static_assert(
 static_assert(alignof(FxFastFileImpactNativeDisk32Plan) == 8);
 static_assert(alignof(FxFastFileImpactNativeDisk32Workspace) == 8);
 RUNTIME_SIZE(FxFastFileImpactNativeDisk32Plan, 0x38, 0x38);
-RUNTIME_SIZE(FxFastFileImpactNativeDisk32Workspace, 0x1300, 0x1F78);
+RUNTIME_SIZE(FxFastFileImpactNativeDisk32Workspace, 0x2BD0, 0x2BE0);
 } // namespace fx::fastfile

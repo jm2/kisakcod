@@ -53,15 +53,90 @@ template <typename T>
         || *bytes / sizeof(T) == static_cast<std::uint64_t>(span.count);
 }
 
-template <typename T>
-[[nodiscard]] Status ValidateOwnedSpan(
-    const FxFastFileEffectDefDisk32View &source,
+[[nodiscard]] bool ComputeContentFingerprint(
+    const void *const address,
+    const std::uint64_t byteCount,
+    std::uint64_t *const outFingerprint) noexcept
+{
+    if (!address || !outFingerprint
+        || byteCount > (std::numeric_limits<std::size_t>::max)())
+    {
+        return false;
+    }
+    const std::uintptr_t begin = reinterpret_cast<std::uintptr_t>(address);
+    const std::size_t bytes = static_cast<std::size_t>(byteCount);
+    if (bytes > (std::numeric_limits<std::uintptr_t>::max)() - begin)
+        return false;
+
+    std::uint64_t fingerprint = kFnvOffset;
+    const auto *const data = static_cast<const std::uint8_t *>(address);
+    for (std::size_t index = 0; index < bytes; ++index)
+    {
+        fingerprint ^= data[index];
+        fingerprint *= kFnvPrime;
+    }
+    *outFingerprint = fingerprint;
+    return true;
+}
+
+struct ProvenanceScheduleState final
+{
+    FxFastFileDisk32FrozenProvenanceRequest *recorded = nullptr;
+    std::uint32_t count = 0;
+};
+
+[[nodiscard]] Status AppendProvenanceRequest(
+    ProvenanceScheduleState *const schedule,
     const FxFastFileDisk32SourceSpanKind kind,
     const disk32::PointerToken *const sourceField,
     const disk32::PointerToken token,
-    const FxFastFileDisk32Span<T> span,
+    const void *const addressField,
+    const std::uint32_t *const countField,
+    const std::uint32_t countValue,
+    const void *const address,
+    const std::uint64_t byteCount,
+    const std::size_t alignment) noexcept
+{
+    if (!schedule)
+        return Status::Success;
+    if (!addressField || alignment == 0
+        || alignment > (std::numeric_limits<std::uint32_t>::max)()
+        || schedule->count >= kFxFastFileDisk32MaxProvenanceRequests)
+    {
+        return Status::SizeOverflow;
+    }
+
+    if (!schedule->recorded)
+        return Status::InvalidArgument;
+
+    FxFastFileDisk32FrozenProvenanceRequest request{};
+    request.kind = kind;
+    request.sourceField = sourceField;
+    request.token = token;
+    request.addressField = addressField;
+    request.countField = countField;
+    request.countValue = countValue;
+    request.address = address;
+    request.byteCount = byteCount;
+    request.alignment = static_cast<std::uint32_t>(alignment);
+    if (!ComputeContentFingerprint(
+            address, byteCount, &request.contentFingerprint))
+    {
+        return Status::SizeOverflow;
+    }
+    schedule->recorded[schedule->count++] = request;
+    return Status::Success;
+}
+
+template <typename T>
+[[nodiscard]] Status ValidateOwnedSpan(
+    const FxFastFileEffectDefDisk32View &,
+    const FxFastFileDisk32SourceSpanKind kind,
+    const disk32::PointerToken *const sourceField,
+    const disk32::PointerToken token,
+    const FxFastFileDisk32Span<T> &span,
     const std::uint32_t expectedCount,
-    const bool callProvenance) noexcept
+    ProvenanceScheduleState *const schedule) noexcept
 {
     if (token.isNull())
     {
@@ -81,47 +156,46 @@ template <typename T>
     std::uint64_t byteCount = 0;
     if (!SpanBytes(span, &byteCount))
         return Status::SizeOverflow;
-    if (callProvenance
-        && !source.provenance.validateSpan(
-            source.provenance.context,
-            kind,
-            sourceField,
-            token,
-            span.data,
-            byteCount,
-            alignof(T)))
-    {
-        return Status::InvalidProvenance;
-    }
-    return Status::Success;
+    return AppendProvenanceRequest(
+        schedule,
+        kind,
+        sourceField,
+        token,
+        &span.data,
+        &span.count,
+        span.count,
+        span.data,
+        byteCount,
+        alignof(T));
 }
 
 [[nodiscard]] Status ValidateUnownedSpan(
-    const FxFastFileEffectDefDisk32View &source,
+    const FxFastFileEffectDefDisk32View &,
     const FxFastFileDisk32SourceSpanKind kind,
+    const disk32::PointerToken *const sourceField,
+    const disk32::PointerToken token,
+    const void *const addressField,
     const void *const address,
     const std::uint64_t byteCount,
     const std::size_t alignment,
-    const bool callProvenance) noexcept
+    ProvenanceScheduleState *const schedule) noexcept
 {
     if (!address
         || reinterpret_cast<std::uintptr_t>(address) % alignment != 0)
     {
         return Status::InvalidSourceLayout;
     }
-    if (callProvenance
-        && !source.provenance.validateSpan(
-            source.provenance.context,
-            kind,
-            nullptr,
-            {},
-            address,
-            byteCount,
-            alignment))
-    {
-        return Status::InvalidProvenance;
-    }
-    return Status::Success;
+    return AppendProvenanceRequest(
+        schedule,
+        kind,
+        sourceField,
+        token,
+        addressField,
+        nullptr,
+        0,
+        address,
+        byteCount,
+        alignment);
 }
 
 [[nodiscard]] bool IsLight(const FxElemTypeDisk32 type) noexcept
@@ -144,7 +218,7 @@ template <typename T>
 
 [[nodiscard]] Status ValidateGraph(
     const FxFastFileEffectDefDisk32View &source,
-    const bool callProvenance) noexcept
+    ProvenanceScheduleState *const schedule) noexcept
 {
     if (!source.effect || !source.provenance.validateSpan)
         return Status::InvalidArgument;
@@ -152,10 +226,13 @@ template <typename T>
     Status status = ValidateUnownedSpan(
         source,
         FxFastFileDisk32SourceSpanKind::EffectHeader,
+        nullptr,
+        {},
+        &source.effect,
         source.effect,
         sizeof(*source.effect),
         alignof(FxEffectDefDisk32),
-        callProvenance);
+        schedule);
     if (status != Status::Success)
         return status;
 
@@ -194,7 +271,7 @@ template <typename T>
             effect.elemDefs.token,
             source.elements,
             static_cast<std::uint32_t>(elementCount),
-            callProvenance);
+            schedule);
         if (status != Status::Success)
             return status;
         if (!source.elementViews.data
@@ -223,7 +300,7 @@ template <typename T>
             elem.velSamples.token,
             view.velocitySamples,
             static_cast<std::uint32_t>(elem.velIntervalCount) + 1u,
-            callProvenance);
+            schedule);
         if (status != Status::Success)
             return status;
 
@@ -244,7 +321,7 @@ template <typename T>
                 elem.visSamples.token,
                 view.visibilitySamples,
                 static_cast<std::uint32_t>(elem.visStateIntervalCount) + 1u,
-                callProvenance);
+                schedule);
             if (status != Status::Success)
                 return status;
         }
@@ -272,7 +349,7 @@ template <typename T>
                 elem.visuals.token,
                 view.markVisuals,
                 elem.visualCount,
-                callProvenance);
+                schedule);
             if (status != Status::Success)
                 return status;
         }
@@ -304,7 +381,7 @@ template <typename T>
                     elem.visuals.token,
                     view.visuals,
                     elem.visualCount,
-                    callProvenance);
+                    schedule);
                 if (status != Status::Success)
                     return status;
             }
@@ -325,24 +402,15 @@ template <typename T>
         status = ValidateUnownedSpan(
             source,
             FxFastFileDisk32SourceSpanKind::TrailDefinition,
+            &elem.trailDef.token,
+            elem.trailDef.token,
+            &view.trail,
             view.trail,
             sizeof(*view.trail),
             alignof(FxTrailDefDisk32),
-            false);
+            schedule);
         if (status != Status::Success)
             return status;
-        if (callProvenance
-            && !source.provenance.validateSpan(
-                source.provenance.context,
-                FxFastFileDisk32SourceSpanKind::TrailDefinition,
-                &elem.trailDef.token,
-                elem.trailDef.token,
-                view.trail,
-                sizeof(*view.trail),
-                alignof(FxTrailDefDisk32)))
-        {
-            return Status::InvalidProvenance;
-        }
 
         const FxTrailDefDisk32 &trail = *view.trail;
         if (trail.repeatDist <= 0 || trail.splitDist <= 0
@@ -360,7 +428,7 @@ template <typename T>
             trail.verts.token,
             view.trailVertices,
             static_cast<std::uint32_t>(trail.vertCount),
-            callProvenance);
+            schedule);
         if (status != Status::Success)
             return status == Status::InvalidProvenance
                 ? status
@@ -372,7 +440,7 @@ template <typename T>
             trail.inds.token,
             view.trailIndices,
             static_cast<std::uint32_t>(trail.indCount),
-            callProvenance);
+            schedule);
         if (status != Status::Success)
             return status == Status::InvalidProvenance
                 ? status
@@ -528,13 +596,194 @@ private:
     std::uint64_t value_ = kFnvOffset;
 };
 
+void HashProvenanceRequest(
+    Fingerprint *const hash,
+    const FxFastFileDisk32FrozenProvenanceRequest &request) noexcept
+{
+    hash->Scalar(reinterpret_cast<std::uintptr_t>(request.sourceField));
+#if !KISAK_ARCH_64BIT
+    hash->Scalar(request.sourceFieldPadding_);
+#endif
+    hash->Scalar(reinterpret_cast<std::uintptr_t>(request.addressField));
+#if !KISAK_ARCH_64BIT
+    hash->Scalar(request.addressFieldPadding_);
+#endif
+    hash->Scalar(reinterpret_cast<std::uintptr_t>(request.countField));
+#if !KISAK_ARCH_64BIT
+    hash->Scalar(request.countFieldPadding_);
+#endif
+    hash->Scalar(reinterpret_cast<std::uintptr_t>(request.address));
+#if !KISAK_ARCH_64BIT
+    hash->Scalar(request.addressPadding_);
+#endif
+    hash->Scalar(request.byteCount);
+    hash->Scalar(request.alignment);
+    hash->Scalar(request.contentFingerprint);
+    hash->Scalar(request.token.value);
+    hash->Scalar(request.countValue);
+    hash->Scalar(request.kind);
+    hash->Bytes(request.reserved_, sizeof(request.reserved_));
+}
+
+[[nodiscard]] std::uint64_t ComputeProvenanceRequestChecksum(
+    const FxFastFileDisk32FrozenProvenanceRequest &request) noexcept
+{
+    Fingerprint hash;
+    HashProvenanceRequest(&hash, request);
+    return hash.Value();
+}
+
+[[nodiscard]] std::uint64_t ComputeProvenanceJournalFingerprint(
+    const FxFastFileDisk32FrozenProvenanceRequest *const requests,
+    const std::uint64_t *const checksums,
+    const std::uint32_t requestCount) noexcept
+{
+    Fingerprint hash;
+    hash.Scalar(requestCount);
+    for (std::uint32_t index = 0; index < requestCount; ++index)
+    {
+        HashProvenanceRequest(&hash, requests[index]);
+        hash.Scalar(checksums[index]);
+    }
+    return hash.Value();
+}
+
+[[nodiscard]] bool IsCanonicalProvenanceRequest(
+    const FxFastFileDisk32FrozenProvenanceRequest &request) noexcept
+{
+#if !KISAK_ARCH_64BIT
+    if (request.sourceFieldPadding_ != 0
+        || request.addressFieldPadding_ != 0
+        || request.countFieldPadding_ != 0
+        || request.addressPadding_ != 0)
+        return false;
+#endif
+    return request.addressField && request.address
+        && request.byteCount != 0
+        && request.alignment != 0
+        && (request.countField || request.countValue == 0)
+        && request.reserved_[0] == 0 && request.reserved_[1] == 0
+        && request.reserved_[2] == 0;
+}
+
+[[nodiscard]] bool FrozenProvenanceJournalMatches(
+    const FxFastFileDisk32FrozenProvenanceRequest *const requests,
+    const std::uint64_t *const checksums,
+    const std::uint32_t requestCount,
+    const std::uint64_t journalFingerprint) noexcept
+{
+    if (!requests || !checksums || requestCount == 0
+        || requestCount > kFxFastFileDisk32MaxProvenanceRequests
+        || ComputeProvenanceJournalFingerprint(
+               requests, checksums, requestCount)
+            != journalFingerprint)
+    {
+        return false;
+    }
+    for (std::uint32_t index = 0; index < requestCount; ++index)
+    {
+        if (checksums[index]
+            != ComputeProvenanceRequestChecksum(requests[index]))
+            return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool FrozenProvenanceBindingMatches(
+    const FxFastFileDisk32FrozenProvenanceRequest &request,
+    const std::uint64_t checksum) noexcept
+{
+    if (!IsCanonicalProvenanceRequest(request)
+        || checksum != ComputeProvenanceRequestChecksum(request))
+    {
+        return false;
+    }
+    const void *liveAddress = nullptr;
+    std::memcpy(&liveAddress, request.addressField, sizeof(liveAddress));
+    return liveAddress == request.address
+        && (!request.countField
+            || *request.countField == request.countValue)
+        && (!request.sourceField
+            ? request.token.isNull()
+            : request.sourceField->value == request.token.value);
+}
+
+[[nodiscard]] bool FrozenProvenanceContentMatches(
+    const FxFastFileDisk32FrozenProvenanceRequest &request) noexcept
+{
+    std::uint64_t contentFingerprint = 0;
+    return ComputeContentFingerprint(
+               request.address,
+               request.byteCount,
+               &contentFingerprint)
+        && contentFingerprint == request.contentFingerprint;
+}
+
+[[nodiscard]] Status InvokeFrozenProvenanceRequests(
+    const FxFastFileDisk32Provenance &provenance,
+    FxFastFileDisk32FrozenProvenanceRequest *const requests,
+    std::uint64_t *const checksums,
+    const std::uint32_t requestCount,
+    const std::uint64_t journalFingerprint) noexcept
+{
+    if (!provenance.validateSpan || !requests || !checksums
+        || requestCount == 0
+        || requestCount > kFxFastFileDisk32MaxProvenanceRequests)
+    {
+        return Status::InvalidArgument;
+    }
+    if (!FrozenProvenanceJournalMatches(
+            requests, checksums, requestCount, journalFingerprint))
+    {
+        return Status::SourceChanged;
+    }
+
+    for (std::uint32_t index = 0; index < requestCount; ++index)
+    {
+        if (!FrozenProvenanceBindingMatches(
+                requests[index], checksums[index])
+            || !FrozenProvenanceContentMatches(requests[index]))
+        {
+            return Status::SourceChanged;
+        }
+        const FxFastFileDisk32FrozenProvenanceRequest request =
+            requests[index];
+
+        const bool accepted = provenance.validateSpan(
+            provenance.context,
+            request.kind,
+            request.sourceField,
+            request.token,
+            request.address,
+            request.byteCount,
+            static_cast<std::size_t>(request.alignment));
+
+        if (!FrozenProvenanceBindingMatches(
+                requests[index], checksums[index])
+            || !FrozenProvenanceContentMatches(requests[index]))
+        {
+            return Status::SourceChanged;
+        }
+        if (!accepted)
+            return Status::InvalidProvenance;
+    }
+    return FrozenProvenanceJournalMatches(
+               requests, checksums, requestCount, journalFingerprint)
+        ? Status::Success
+        : Status::SourceChanged;
+}
+
 template <typename T>
 void HashSpan(Fingerprint *const hash, const FxFastFileDisk32Span<T> span)
     noexcept
 {
     hash->Scalar(reinterpret_cast<std::uintptr_t>(span.data));
     hash->Scalar(span.count);
-    hash->Bytes(span.data, static_cast<std::size_t>(span.count) * sizeof(T));
+    if (span.data && span.count)
+    {
+        hash->Bytes(
+            span.data, static_cast<std::size_t>(span.count) * sizeof(T));
+    }
 }
 
 [[nodiscard]] std::uint64_t ComputeSourceFingerprint(
@@ -542,6 +791,11 @@ void HashSpan(Fingerprint *const hash, const FxFastFileDisk32Span<T> span)
 {
     Fingerprint hash;
     hash.Scalar(reinterpret_cast<std::uintptr_t>(source.effect));
+    if (!source.effect
+        || (source.elementViews.count && !source.elementViews.data))
+    {
+        return hash.Value();
+    }
     hash.Bytes(source.effect, sizeof(*source.effect));
     HashSpan(&hash, source.elements);
     hash.Scalar(reinterpret_cast<std::uintptr_t>(source.elementViews.data));
@@ -575,13 +829,11 @@ void HashSpan(Fingerprint *const hash, const FxFastFileDisk32Span<T> span)
     for (std::uint32_t index = 0; index < resolvedCount; ++index)
     {
         hash.Scalar(reinterpret_cast<std::uintptr_t>(resolved[index].pointer));
-        hash.Scalar(resolved[index].stringByteCount);
-        if (resolved[index].stringByteCount)
-        {
-            hash.Bytes(
-                resolved[index].pointer,
-                resolved[index].stringByteCount);
-        }
+        hash.Scalar(resolved[index].retainedByteCount);
+        hash.Scalar(resolved[index].retainedAlignment);
+        hash.Bytes(
+            resolved[index].pointer,
+            static_cast<std::size_t>(resolved[index].retainedByteCount));
     }
     return hash.Value();
 }
@@ -589,46 +841,156 @@ void HashSpan(Fingerprint *const hash, const FxFastFileDisk32Span<T> span)
 [[nodiscard]] bool IsExactCString(
     const FxFastFileDisk32ResolvedReference &reference) noexcept
 {
-    if (!reference.pointer || reference.stringByteCount < 2)
+    if (!reference.pointer || reference.retainedByteCount < 2
+        || reference.retainedByteCount
+            > (std::numeric_limits<std::size_t>::max)())
+    {
         return false;
+    }
+    const std::size_t bytes =
+        static_cast<std::size_t>(reference.retainedByteCount);
     const auto *text = static_cast<const char *>(reference.pointer);
-    return text[reference.stringByteCount - 1] == '\0'
-        && !std::memchr(text, '\0', reference.stringByteCount - 1);
+    return text[bytes - 1] == '\0'
+        && !std::memchr(text, '\0', bytes - 1);
 }
 
-[[nodiscard]] std::uint64_t ComputeResolvedStringFingerprint(
+[[nodiscard]] std::uint64_t ComputeResolvedReferenceFingerprint(
     const FxFastFileDisk32ResolvedReference &reference) noexcept
 {
     Fingerprint hash;
     hash.Scalar(reinterpret_cast<std::uintptr_t>(reference.pointer));
-    hash.Scalar(reference.stringByteCount);
-    hash.Bytes(reference.pointer, reference.stringByteCount);
+    hash.Scalar(reference.retainedByteCount);
+    hash.Scalar(reference.retainedAlignment);
+    hash.Bytes(
+        reference.pointer,
+        static_cast<std::size_t>(reference.retainedByteCount));
     return hash.Value();
 }
 
-void HashResolvedString(
+void HashResolvedReference(
     Fingerprint *const hash,
     const FxFastFileDisk32ResolvedReference &reference,
     const std::uint32_t index) noexcept
 {
     hash->Scalar(index);
     hash->Scalar(reinterpret_cast<std::uintptr_t>(reference.pointer));
-    hash->Scalar(reference.stringByteCount);
-    hash->Bytes(reference.pointer, reference.stringByteCount);
+    hash->Scalar(reference.retainedByteCount);
+    hash->Scalar(reference.retainedAlignment);
+    hash->Bytes(
+        reference.pointer,
+        static_cast<std::size_t>(reference.retainedByteCount));
 }
 
-[[nodiscard]] std::uint64_t ComputeResolvedStringsFingerprint(
+[[nodiscard]] std::uint64_t ComputeResolvedReferencesFingerprint(
     const FxFastFileDisk32ResolvedReference *const resolved,
     const std::uint32_t resolvedCount) noexcept
 {
     Fingerprint hash;
     for (std::uint32_t index = 0; index < resolvedCount; ++index)
-    {
-        if (resolved[index].stringByteCount)
-            HashResolvedString(&hash, resolved[index], index);
-    }
+        HashResolvedReference(&hash, resolved[index], index);
     hash.Scalar(resolvedCount);
     return hash.Value();
+}
+
+[[nodiscard]] bool IsPowerOfTwo(const std::uint64_t value) noexcept
+{
+    return value != 0 && (value & (value - 1u)) == 0;
+}
+
+[[nodiscard]] Status ValidateRetainedDescriptor(
+    const FxFastFileDisk32ReferenceKind kind,
+    const FxFastFileDisk32ResolvedReference &reference,
+    std::size_t *const outBytes) noexcept
+{
+    const bool isString = kind == FxFastFileDisk32ReferenceKind::EffectName
+        || kind == FxFastFileDisk32ReferenceKind::SoundName;
+    const Status invalid = isString ? Status::InvalidString
+                                    : Status::InvalidArgument;
+#if !KISAK_ARCH_64BIT
+    if (reference.pointerPadding_ != 0)
+        return invalid;
+#endif
+    if (!reference.pointer || !outBytes || reference.retainedByteCount == 0
+        || reference.retainedByteCount
+            > (std::numeric_limits<std::size_t>::max)()
+        || !IsPowerOfTwo(reference.retainedAlignment)
+        || reference.retainedAlignment
+            > (std::numeric_limits<std::size_t>::max)())
+    {
+        return invalid;
+    }
+
+    const std::size_t bytes =
+        static_cast<std::size_t>(reference.retainedByteCount);
+    const std::size_t alignment =
+        static_cast<std::size_t>(reference.retainedAlignment);
+    const std::uintptr_t begin =
+        reinterpret_cast<std::uintptr_t>(reference.pointer);
+    if (begin % alignment != 0
+        || bytes > (std::numeric_limits<std::uintptr_t>::max)() - begin)
+    {
+        return invalid;
+    }
+    *outBytes = bytes;
+    return Status::Success;
+}
+
+[[nodiscard]] Status ValidateResolvedReference(
+    const FxFastFileDisk32ReferenceKind kind,
+    const FxFastFileDisk32ResolvedReference &reference,
+    std::size_t *const outBytes) noexcept
+{
+    Status status = ValidateRetainedDescriptor(kind, reference, outBytes);
+    if (status != Status::Success)
+        return status;
+
+    switch (kind)
+    {
+    case FxFastFileDisk32ReferenceKind::EffectName:
+    case FxFastFileDisk32ReferenceKind::SoundName:
+        return reference.retainedAlignment == alignof(char)
+                && IsExactCString(reference)
+            ? Status::Success
+            : Status::InvalidString;
+
+    case FxFastFileDisk32ReferenceKind::EffectNameReference:
+    case FxFastFileDisk32ReferenceKind::EffectAssetHandle:
+        return reference.retainedByteCount == sizeof(FxEffectDef)
+                && reference.retainedAlignment == alignof(FxEffectDef)
+            ? Status::Success
+            : Status::InvalidArgument;
+
+    case FxFastFileDisk32ReferenceKind::Material:
+    case FxFastFileDisk32ReferenceKind::Model:
+        return reference.retainedAlignment >= alignof(void *)
+            ? Status::Success
+            : Status::InvalidArgument;
+    }
+    return Status::InvalidArgument;
+}
+
+[[nodiscard]] bool ValidateRetainedJournalRanges(
+    const FxFastFileDisk32ResolvedReference *const resolved,
+    const std::uint32_t resolvedCount) noexcept
+{
+    if (!resolved || resolvedCount == 0
+        || resolvedCount > kFxFastFileDisk32MaxResolvedReferences)
+    {
+        return false;
+    }
+    for (std::uint32_t index = 0; index < resolvedCount; ++index)
+    {
+        std::size_t bytes = 0;
+        if (ValidateRetainedDescriptor(
+                FxFastFileDisk32ReferenceKind::Material,
+                resolved[index],
+                &bytes)
+            != Status::Success)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 [[nodiscard]] bool RangesOverlap(
@@ -656,11 +1018,11 @@ void HashResolvedString(
     const disk32::PointerToken token,
     FxFastFileDisk32ResolvedReference *const journal,
     std::uint32_t *const journalCount,
-    Fingerprint *const expectedStrings) noexcept
+    Fingerprint *const expectedReferences) noexcept
 {
     if (!workspace || !sourceArgument || !resolverArgument || !outPlan
         || !sourceField || token.isNull()
-        || !journal || !journalCount || !expectedStrings
+        || !journal || !journalCount || !expectedReferences
         || *journalCount >= kFxFastFileDisk32MaxResolvedReferences)
     {
         return Status::InvalidPointerCount;
@@ -672,11 +1034,18 @@ void HashResolvedString(
     {
         return Status::UnresolvedReference;
     }
-    const bool isString = kind == FxFastFileDisk32ReferenceKind::EffectName
-        || kind == FxFastFileDisk32ReferenceKind::SoundName;
-    const std::size_t retainedBytes = isString
-        ? resolved.stringByteCount
-        : 1u;
+    std::size_t retainedBytes = 0;
+    Status status = ValidateRetainedDescriptor(kind, resolved, &retainedBytes);
+    if (status != Status::Success)
+        return status;
+    if (RangesOverlap(
+            resolved.pointer,
+            retainedBytes,
+            &resolved,
+            sizeof(resolved)))
+    {
+        return Status::InvalidArgument;
+    }
     if (RangesOverlap(
             resolved.pointer, retainedBytes, workspace, sizeof(*workspace))
         || RangesOverlap(
@@ -700,48 +1069,50 @@ void HashResolvedString(
     {
         return Status::InvalidArgument;
     }
+    status = ValidateResolvedReference(kind, resolved, &retainedBytes);
+    if (status != Status::Success)
+        return status;
+
+    const bool isString = kind == FxFastFileDisk32ReferenceKind::EffectName
+        || kind == FxFastFileDisk32ReferenceKind::SoundName;
+    const void *const retainedAddress = resolved.pointer;
+    const std::uint64_t retainedByteCount = resolved.retainedByteCount;
+    const std::uint64_t retainedAlignment = resolved.retainedAlignment;
+    const std::uint64_t retainedFingerprint =
+        ComputeResolvedReferenceFingerprint(resolved);
     if (isString)
     {
-        if (resolved.stringByteCount < 2)
-            return Status::InvalidString;
-
         // The resolver contract keeps this returned span readable for the
         // transaction. Bind it before invoking provenance so that callback
         // cannot silently replace the bytes it was asked to attest.
-        if (!IsExactCString(resolved))
-            return Status::InvalidString;
-        const void *const stringAddress = resolved.pointer;
-        const std::uint32_t stringByteCount = resolved.stringByteCount;
-        const std::uint64_t stringFingerprint =
-            ComputeResolvedStringFingerprint(resolved);
         const bool provenanceIsValid = source.provenance.validateSpan(
             source.provenance.context,
             FxFastFileDisk32SourceSpanKind::String,
             sourceField,
             token,
             resolved.pointer,
-            resolved.stringByteCount,
-            alignof(char));
-        if (!provenanceIsValid)
-        {
-            return Status::InvalidProvenance;
-        }
-        if (resolved.pointer != stringAddress
-            || resolved.stringByteCount != stringByteCount
-            || !IsExactCString(resolved)
-            || ComputeResolvedStringFingerprint(resolved)
-                != stringFingerprint)
+            resolved.retainedByteCount,
+            static_cast<std::size_t>(resolved.retainedAlignment));
+        std::size_t verifiedBytes = 0;
+        if (resolved.pointer != retainedAddress
+            || resolved.retainedByteCount != retainedByteCount
+            || resolved.retainedAlignment != retainedAlignment
+#if !KISAK_ARCH_64BIT
+            || resolved.pointerPadding_ != 0
+#endif
+            || ValidateResolvedReference(kind, resolved, &verifiedBytes)
+                != Status::Success
+            || verifiedBytes != retainedBytes
+            || ComputeResolvedReferenceFingerprint(resolved)
+                != retainedFingerprint)
         {
             return Status::SourceChanged;
         }
-    }
-    else if (resolved.stringByteCount != 0)
-    {
-        return Status::InvalidString;
+        if (!provenanceIsValid)
+            return Status::InvalidProvenance;
     }
     const std::uint32_t resolvedIndex = *journalCount;
-    if (isString)
-        HashResolvedString(expectedStrings, resolved, resolvedIndex);
+    HashResolvedReference(expectedReferences, resolved, resolvedIndex);
     journal[resolvedIndex] = resolved;
     ++*journalCount;
     return Status::Success;
@@ -982,7 +1353,7 @@ void HashResolveRequest(
     const std::uint32_t requestCount,
     FxFastFileDisk32ResolvedReference *const journal,
     std::uint32_t *const journalCount,
-    Fingerprint *const expectedStrings) noexcept
+    Fingerprint *const expectedReferences) noexcept
 {
     for (std::uint32_t index = 0; index < requestCount; ++index)
     {
@@ -999,7 +1370,7 @@ void HashResolveRequest(
             request.token,
             journal,
             journalCount,
-            expectedStrings);
+            expectedReferences);
         if (status != Status::Success)
         {
             return ResolutionScheduleMatches(source, scheduleFingerprint)
@@ -1024,7 +1395,7 @@ void HashResolveRequest(
     std::uint32_t *const journalCount) noexcept
 {
     *journalCount = 0;
-    Fingerprint expectedStrings;
+    Fingerprint expectedReferences;
     const FrozenResolveRequest rootRequest{
         FxFastFileDisk32ReferenceKind::EffectName,
         &source.effect->name.token,
@@ -1042,7 +1413,7 @@ void HashResolveRequest(
         1,
         journal,
         journalCount,
-        &expectedStrings);
+        &expectedReferences);
     if (status != Status::Success)
         return status;
 
@@ -1067,13 +1438,13 @@ void HashResolveRequest(
             requestCount,
             journal,
             journalCount,
-            &expectedStrings);
+            &expectedReferences);
         if (status != Status::Success)
             return status;
     }
-    expectedStrings.Scalar(*journalCount);
-    return expectedStrings.Value()
-            == ComputeResolvedStringsFingerprint(journal, *journalCount)
+    expectedReferences.Scalar(*journalCount);
+    return expectedReferences.Value()
+            == ComputeResolvedReferencesFingerprint(journal, *journalCount)
         ? Status::Success
         : Status::SourceChanged;
 }
@@ -1160,15 +1531,12 @@ template <typename T>
     }
     for (std::uint32_t index = 0; index < resolvedCount; ++index)
     {
-        const std::size_t retainedBytes =
-            resolved[index].stringByteCount
-            ? resolved[index].stringByteCount
-            : 1u;
         if (RangesOverlap(
                 storage,
                 storageBytes,
                 resolved[index].pointer,
-                retainedBytes))
+                static_cast<std::size_t>(
+                    resolved[index].retainedByteCount)))
         {
             return true;
         }
@@ -1268,7 +1636,7 @@ FxFastFileNativeDisk32Status TryPlanFxEffectDefDisk32(
     // Validate and bind the complete caller-owned graph before changing any
     // workspace byte. Otherwise a source view placed inside the workspace
     // could be destroyed by the operation gate or journal initialization.
-    Status status = ValidateGraph(sourceArgument, false);
+    Status status = ValidateGraph(sourceArgument, nullptr);
     if (status != Status::Success)
         return status;
     if (OverlapsSource(
@@ -1298,18 +1666,56 @@ FxFastFileNativeDisk32Status TryPlanFxEffectDefDisk32(
         workspace->source_ = {};
         workspace->plan_ = {};
         workspace->resolvedCount_ = 0;
+        workspace->provenanceRequestCount_ = 0;
         workspace->phase_ = FxFastFileNativeDisk32Phase::Empty;
     };
     clearPlan();
 
-    // The source-view contract requires every reachable byte to remain
-    // readable and immutable for the transaction. Revalidate after each
-    // external callback phase against the pre-operation binding above.
-    status = ValidateGraph(source, true);
+    // Freeze the complete source-provenance schedule before callback one.
+    // Each callback is invoked only from this fixed heap-workspace journal.
+    // A side checksum binds each current request in O(1); whole-journal
+    // integrity is checked once at each callback-phase boundary.
+    ProvenanceScheduleState provenanceSchedule{
+        workspace->provenanceRequests_};
+    status = ValidateGraph(source, &provenanceSchedule);
+    workspace->provenanceRequestCount_ = provenanceSchedule.count;
     if (status != Status::Success)
+    {
+        clearPlan();
         return finish(status);
-    status = ValidateGraph(source, false);
-    if (status != Status::Success
+    }
+    if (ComputeSourceFingerprint(source) != sourceFingerprint)
+    {
+        clearPlan();
+        return finish(Status::SourceChanged);
+    }
+    const std::uint32_t provenanceRequestCount =
+        workspace->provenanceRequestCount_;
+    for (std::uint32_t index = 0; index < provenanceRequestCount; ++index)
+    {
+        workspace->provenanceRequestChecksums_[index] =
+            ComputeProvenanceRequestChecksum(
+                workspace->provenanceRequests_[index]);
+    }
+    const std::uint64_t provenanceJournalFingerprint =
+        ComputeProvenanceJournalFingerprint(
+            workspace->provenanceRequests_,
+            workspace->provenanceRequestChecksums_,
+            provenanceRequestCount);
+    status = InvokeFrozenProvenanceRequests(
+        source.provenance,
+        workspace->provenanceRequests_,
+        workspace->provenanceRequestChecksums_,
+        provenanceRequestCount,
+        provenanceJournalFingerprint);
+    if (status != Status::Success)
+    {
+        clearPlan();
+        return finish(status);
+    }
+    status = ValidateGraph(source, nullptr);
+    if (workspace->provenanceRequestCount_ != provenanceRequestCount
+        || status != Status::Success
         || ComputeSourceFingerprint(source) != sourceFingerprint)
     {
         clearPlan();
@@ -1330,21 +1736,12 @@ FxFastFileNativeDisk32Status TryPlanFxEffectDefDisk32(
         clearPlan();
         return finish(status);
     }
-    status = ValidateGraph(source, false);
+    status = ValidateGraph(source, nullptr);
     if (status != Status::Success
         || ComputeSourceFingerprint(source) != sourceFingerprint)
     {
         clearPlan();
         return finish(Status::SourceChanged);
-    }
-    for (std::uint32_t index = 0; index < workspace->resolvedCount_; ++index)
-    {
-        if (workspace->resolved_[index].stringByteCount
-            && !IsExactCString(workspace->resolved_[index]))
-        {
-            clearPlan();
-            return finish(Status::SourceChanged);
-        }
     }
     if (OverlapsSource(
             outPlan,
@@ -1357,8 +1754,14 @@ FxFastFileNativeDisk32Status TryPlanFxEffectDefDisk32(
         return finish(Status::InvalidArgument);
     }
 
-    const std::uint32_t effectNameBytes =
-        workspace->resolved_[0].stringByteCount;
+    if (workspace->resolved_[0].retainedByteCount
+        > (std::numeric_limits<std::uint32_t>::max)())
+    {
+        clearPlan();
+        return finish(Status::SizeOverflow);
+    }
+    const std::uint32_t effectNameBytes = static_cast<std::uint32_t>(
+        workspace->resolved_[0].retainedByteCount);
     FxRuntimeBlobCursor disk32Planner;
     status = PlanDisk32Layout(source, effectNameBytes, &disk32Planner);
     if (status != Status::Success)
@@ -1438,6 +1841,7 @@ FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(
         workspace->source_ = {};
         workspace->plan_ = {};
         workspace->resolvedCount_ = 0;
+        workspace->provenanceRequestCount_ = 0;
         workspace->phase_ = FxFastFileNativeDisk32Phase::Empty;
     };
 
@@ -1468,6 +1872,20 @@ FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(
         || plan.effectNameBytes_ < 2)
     {
         return finish(Status::InvalidPlan);
+    }
+
+    std::size_t rootNameBytes = 0;
+    if (!ValidateRetainedJournalRanges(
+            workspace->resolved_, workspace->resolvedCount_)
+        || ValidateResolvedReference(
+               FxFastFileDisk32ReferenceKind::EffectName,
+               workspace->resolved_[0],
+               &rootNameBytes)
+            != Status::Success
+        || rootNameBytes != plan.effectNameBytes_)
+    {
+        invalidate();
+        return finish(Status::SourceChanged);
     }
 
     const std::uintptr_t storageAddress =
@@ -1505,7 +1923,7 @@ FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(
         return finish(Status::OverlappingStorage);
     }
 
-    Status status = ValidateGraph(workspace->source_, false);
+    Status status = ValidateGraph(workspace->source_, nullptr);
     if (status != Status::Success
         || ComputeBoundFingerprint(
                workspace->source_,
@@ -1515,15 +1933,6 @@ FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(
     {
         invalidate();
         return finish(Status::SourceChanged);
-    }
-    for (std::uint32_t index = 0; index < workspace->resolvedCount_; ++index)
-    {
-        if (workspace->resolved_[index].stringByteCount
-            && !IsExactCString(workspace->resolved_[index]))
-        {
-            invalidate();
-            return finish(Status::SourceChanged);
-        }
     }
     FxRuntimeBlobCursor verifier(nullptr, plan.outputBytes_);
     status = PlanLayout(

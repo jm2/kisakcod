@@ -16,6 +16,8 @@ inline constexpr std::uint32_t kFxFastFileDisk32MaxDecalVisuals = 16;
 inline constexpr std::size_t kFxFastFileDisk32MaxResolvedReferences =
     1u + static_cast<std::size_t>(kFxFastFileDisk32MaxEffectElements)
         * (3u + kFxFastFileDisk32MaxVisuals);
+inline constexpr std::size_t kFxFastFileDisk32MaxProvenanceRequests =
+    2u + static_cast<std::size_t>(kFxFastFileDisk32MaxEffectElements) * 6u;
 
 template <typename T>
 struct FxFastFileDisk32Span
@@ -84,12 +86,58 @@ enum class FxFastFileDisk32ReferenceKind : std::uint8_t
     EffectAssetHandle,
 };
 
-struct FxFastFileDisk32ResolvedReference
+struct alignas(8) FxFastFileDisk32ResolvedReference
 {
     const void *pointer = nullptr;
-    // Required for EffectName and SoundName, including the terminating NUL;
-    // must be zero for native asset identities.
-    std::uint32_t stringByteCount = 0;
+#if !KISAK_ARCH_64BIT
+    // Keep the retained extent fields at their LP64 offsets on ILP32 targets.
+    // Resolvers must leave this reserved field zero.
+    std::uint32_t pointerPadding_ = 0;
+#endif
+    // The complete externally retained object range.  Names include their
+    // terminating NUL and use alignment one.  Effect identities describe one
+    // complete FxEffectDef.  As a hard resolver precondition, an opaque asset
+    // count must describe its complete readable, immutable retained range; the
+    // converter cannot independently infer that type-erased extent.  Its
+    // reported alignment must be a power of two of at least alignof(void *).
+    std::uint64_t retainedByteCount = 0;
+    std::uint64_t retainedAlignment = 0;
+};
+
+// One immutable caller-owned source-graph provenance request.  Effect planning
+// fills the complete fixed-capacity source journal before its first provenance
+// callback, then invokes only these frozen descriptors while checking each
+// source span immediately before and after its callback.  Resolver-returned
+// strings receive a separate immediate resolution-time attestation because
+// their ranges do not exist until their resolver callback returns.
+struct alignas(8) FxFastFileDisk32FrozenProvenanceRequest
+{
+    const disk32::PointerToken *sourceField = nullptr;
+#if !KISAK_ARCH_64BIT
+    std::uint32_t sourceFieldPadding_ = 0;
+#endif
+    // Addresses of the live pointer/count descriptor fields from which this
+    // request was frozen.  countField is null for fixed-size records.
+    const void *addressField = nullptr;
+#if !KISAK_ARCH_64BIT
+    std::uint32_t addressFieldPadding_ = 0;
+#endif
+    const std::uint32_t *countField = nullptr;
+#if !KISAK_ARCH_64BIT
+    std::uint32_t countFieldPadding_ = 0;
+#endif
+    const void *address = nullptr;
+#if !KISAK_ARCH_64BIT
+    std::uint32_t addressPadding_ = 0;
+#endif
+    std::uint64_t byteCount = 0;
+    std::uint64_t contentFingerprint = 0;
+    disk32::PointerToken token{};
+    std::uint32_t countValue = 0;
+    std::uint32_t alignment = 0;
+    FxFastFileDisk32SourceSpanKind kind =
+        FxFastFileDisk32SourceSpanKind::EffectHeader;
+    std::uint8_t reserved_[3]{};
 };
 
 using FxFastFileDisk32ResolveReferenceCallback = bool (*)(
@@ -194,11 +242,13 @@ private:
     std::uint32_t effectNameBytes_ = 0;
 };
 
-// Heap-only scratch.  The fixed journal holds the maximum number of resolved
-// identities representable by 256 elements with 32 visual references apiece
-// (including 16 two-material decals). Planning calls each resolver exactly
-// once and publishes Planned as its final mutation; materialization consumes
-// only this journal.
+// Heap-only scratch.  The fixed journals hold every source-provenance request
+// and the maximum number of resolved identities representable by 256 elements
+// with 32 visual references apiece (including 16 two-material decals).
+// Planning freezes the complete caller-owned source request schedule before
+// callback one, calls each resolver exactly once, immediately binds and
+// attests returned strings, and publishes Planned as its final mutation;
+// materialization consumes only these journals.
 class alignas(8) FxFastFileNativeDisk32Workspace final
 {
 public:
@@ -236,17 +286,26 @@ private:
     FxFastFileNativeDisk32Plan plan_{};
     FxFastFileDisk32ResolvedReference
         resolved_[kFxFastFileDisk32MaxResolvedReferences]{};
+    FxFastFileDisk32FrozenProvenanceRequest
+        provenanceRequests_[kFxFastFileDisk32MaxProvenanceRequests]{};
+    std::uint64_t provenanceRequestChecksums_[
+        kFxFastFileDisk32MaxProvenanceRequests]{};
     std::uint64_t nextSerial_ = 1;
     std::uint32_t resolvedCount_ = 0;
+    std::uint32_t provenanceRequestCount_ = 0;
     FxFastFileNativeDisk32Phase phase_ =
         FxFastFileNativeDisk32Phase::Empty;
     bool operating_ = false;
 };
 
-// The source view and every reachable source byte must remain immutable and
-// readable between planning and materialization. Planning resolves each
-// retained native identity exactly once under the operation gate and commits
-// outPlan only after the full graph, journal, and native layout validate.
+// The source view, every reachable source byte, and every complete
+// resolver-returned retained range must remain readable and byte-for-byte
+// immutable for as long as the workspace remains Planned, including through
+// every matching materialization attempt.  Resolvers must also keep each
+// returned pointer/count/alignment descriptor valid through callback return.
+// Planning resolves each retained native identity exactly once under the
+// operation gate and commits outPlan only after the full graph, journals, and
+// native layout validate.
 [[nodiscard]] FxFastFileNativeDisk32Status TryPlanFxEffectDefDisk32(
     FxFastFileNativeDisk32Workspace *workspace,
     const FxFastFileEffectDefDisk32View &source,
@@ -257,8 +316,9 @@ private:
 // plan/journal binding.  It performs no resolver callbacks.  Failure never
 // changes outEffect; storage is changed only after plan, source fingerprint,
 // capacity, alignment, and overlap checks complete.  Successful output owns
-// all copied records and its effect name; resolved assets/sound names retain
-// the resolver's external lifetime.
+// all copied records and its effect name.  Resolver-retained sound names,
+// materials, models, and effect identities are not copied and must remain
+// readable and valid for every use of the successful output.
 [[nodiscard]] FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(
     FxFastFileNativeDisk32Workspace *workspace,
     const FxFastFileNativeDisk32Plan &plan,
@@ -271,6 +331,10 @@ static_assert(
         FxFastFileNativeDisk32Workspace>);
 static_assert(
     std::is_nothrow_destructible_v<FxFastFileNativeDisk32Workspace>);
+static_assert(alignof(FxFastFileDisk32ResolvedReference) == 8);
+static_assert(alignof(FxFastFileDisk32FrozenProvenanceRequest) == 8);
+RUNTIME_SIZE(FxFastFileDisk32ResolvedReference, 0x18, 0x18);
+RUNTIME_SIZE(FxFastFileDisk32FrozenProvenanceRequest, 0x40, 0x40);
 RUNTIME_SIZE(FxFastFileNativeDisk32Plan, 0x30, 0x30);
-RUNTIME_SIZE(FxFastFileNativeDisk32Workspace, 0x11868, 0x23088);
+RUNTIME_SIZE(FxFastFileNativeDisk32Workspace, 0x4F910, 0x4F928);
 } // namespace fx::fastfile

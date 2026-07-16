@@ -157,8 +157,48 @@ ComputeSourceFingerprint(const FxFastFileImpactTableDisk32View &source,
               source.entries.data,
               sizeof(FxImpactEntryDisk32) * kImpactSurfaceCount);
     HashValue(&hash, nameAddress);
-    HashValue(&hash, name.stringByteCount);
-    HashBytes(&hash, name.pointer, name.stringByteCount);
+    HashValue(&hash, name.retainedByteCount);
+    HashValue(&hash, name.retainedAlignment);
+    HashBytes(&hash,
+              name.pointer,
+              static_cast<std::size_t>(name.retainedByteCount));
+    return hash;
+}
+
+void HashResolvedReference(
+    std::uint64_t *const hash,
+    const std::size_t index,
+    const FxFastFileDisk32ResolvedReference &reference) noexcept
+{
+    const std::uintptr_t address =
+        reinterpret_cast<std::uintptr_t>(reference.pointer);
+    HashValue(hash, index);
+    HashValue(hash, address);
+#if !KISAK_ARCH_64BIT
+    HashValue(hash, reference.pointerPadding_);
+#endif
+    HashValue(hash, reference.retainedByteCount);
+    HashValue(hash, reference.retainedAlignment);
+    if (reference.pointer)
+    {
+        HashBytes(hash,
+                  reference.pointer,
+                  static_cast<std::size_t>(reference.retainedByteCount));
+    }
+}
+
+std::uint64_t ComputeResolvedJournalFingerprint(
+    const FxFastFileDisk32ResolvedReference *const resolved,
+    const std::uint32_t resolvedCount) noexcept
+{
+    std::uint64_t hash = kFnvOffset;
+    for (std::size_t index = 0;
+         index < kFxFastFileImpactDisk32JournalCount;
+         ++index)
+    {
+        HashResolvedReference(&hash, index, resolved[index]);
+    }
+    HashValue(&hash, resolvedCount);
     return hash;
 }
 
@@ -168,27 +208,103 @@ ComputeBoundFingerprint(const FxFastFileImpactTableDisk32View &source,
                         const std::uint32_t resolvedCount) noexcept
 {
     std::uint64_t hash = ComputeSourceFingerprint(source, resolved[0]);
-    HashValue(&hash, resolvedCount);
-    for (std::size_t index = 0; index < kFxFastFileImpactDisk32JournalCount;
-         ++index)
-    {
-        const std::uintptr_t identity =
-            reinterpret_cast<std::uintptr_t>(resolved[index].pointer);
-        HashValue(&hash, identity);
-        HashValue(&hash, resolved[index].stringByteCount);
-    }
+    const std::uint64_t journalFingerprint =
+        ComputeResolvedJournalFingerprint(resolved, resolvedCount);
+    HashValue(&hash, journalFingerprint);
     return hash;
 }
 
 bool IsExactCString(const FxFastFileDisk32ResolvedReference &reference) noexcept
 {
-    if (!reference.pointer || reference.stringByteCount < 2u)
+    if (!reference.pointer || reference.retainedByteCount < 2u
+        || reference.retainedByteCount
+            > (std::numeric_limits<std::size_t>::max)())
+    {
         return false;
+    }
     const auto *const string = static_cast<const char *>(reference.pointer);
-    const std::size_t bytes = reference.stringByteCount;
+    const std::size_t bytes =
+        static_cast<std::size_t>(reference.retainedByteCount);
     if (string[bytes - 1u] != '\0')
         return false;
     return std::memchr(string, '\0', bytes - 1u) == nullptr;
+}
+
+bool IsPowerOfTwo(const std::uint64_t value) noexcept
+{
+    return value != 0 && (value & (value - 1u)) == 0;
+}
+
+FxFastFileNativeDisk32Status ValidateRetainedDescriptor(
+    const FxFastFileDisk32ResolvedReference &reference,
+    const FxFastFileNativeDisk32Status invalidStatus,
+    std::size_t *const outBytes) noexcept
+{
+#if !KISAK_ARCH_64BIT
+    if (reference.pointerPadding_ != 0)
+        return invalidStatus;
+#endif
+    if (!reference.pointer || !outBytes || reference.retainedByteCount == 0
+        || reference.retainedByteCount
+            > (std::numeric_limits<std::size_t>::max)()
+        || !IsPowerOfTwo(reference.retainedAlignment)
+        || reference.retainedAlignment
+            > (std::numeric_limits<std::size_t>::max)())
+    {
+        return invalidStatus;
+    }
+    const std::size_t bytes =
+        static_cast<std::size_t>(reference.retainedByteCount);
+    const std::size_t alignment =
+        static_cast<std::size_t>(reference.retainedAlignment);
+    const std::uintptr_t begin =
+        reinterpret_cast<std::uintptr_t>(reference.pointer);
+    if (begin % alignment != 0
+        || bytes > (std::numeric_limits<std::uintptr_t>::max)() - begin)
+    {
+        return invalidStatus;
+    }
+    *outBytes = bytes;
+    return FxFastFileNativeDisk32Status::Success;
+}
+
+FxFastFileNativeDisk32Status ValidateNameReference(
+    const FxFastFileDisk32ResolvedReference &reference,
+    std::size_t *const outBytes) noexcept
+{
+    const FxFastFileNativeDisk32Status status = ValidateRetainedDescriptor(
+        reference, FxFastFileNativeDisk32Status::InvalidString, outBytes);
+    if (status != FxFastFileNativeDisk32Status::Success)
+        return status;
+    return reference.retainedAlignment == alignof(char)
+            && IsExactCString(reference)
+        ? FxFastFileNativeDisk32Status::Success
+        : FxFastFileNativeDisk32Status::InvalidString;
+}
+
+FxFastFileNativeDisk32Status ValidateEffectReference(
+    const FxFastFileDisk32ResolvedReference &reference,
+    std::size_t *const outBytes) noexcept
+{
+    const FxFastFileNativeDisk32Status status = ValidateRetainedDescriptor(
+        reference, FxFastFileNativeDisk32Status::InvalidArgument, outBytes);
+    if (status != FxFastFileNativeDisk32Status::Success)
+        return status;
+    return reference.retainedByteCount == sizeof(FxEffectDef)
+            && reference.retainedAlignment == alignof(FxEffectDef)
+        ? FxFastFileNativeDisk32Status::Success
+        : FxFastFileNativeDisk32Status::InvalidArgument;
+}
+
+bool IsCanonicalEmptyReference(
+    const FxFastFileDisk32ResolvedReference &reference) noexcept
+{
+#if !KISAK_ARCH_64BIT
+    if (reference.pointerPadding_ != 0)
+        return false;
+#endif
+    return !reference.pointer && reference.retainedByteCount == 0
+        && reference.retainedAlignment == 0;
 }
 
 bool ComputeNativeLayout(const std::uint32_t nameBytes,
@@ -248,6 +364,67 @@ bool SourceMatchesSnapshots(
            std::memcmp(source.entries.data,
                        entrySnapshots,
                        sizeof(FxImpactEntryDisk32) * kImpactSurfaceCount) == 0;
+}
+
+bool ValidateResolvedJournal(
+    const FxImpactEntryDisk32 *const entrySnapshots,
+    const FxFastFileDisk32ResolvedReference *const resolved,
+    const std::uint32_t resolvedCount,
+    std::size_t *const outNameBytes) noexcept
+{
+    if (!entrySnapshots || !resolved || !outNameBytes
+        || resolvedCount == 0
+        || resolvedCount > kFxFastFileImpactDisk32JournalCount
+        || ValidateNameReference(resolved[0], outNameBytes)
+            != FxFastFileNativeDisk32Status::Success)
+    {
+        return false;
+    }
+
+    std::uint32_t actualResolvedCount = 1;
+    std::size_t journalIndex = 1;
+    for (std::size_t entryIndex = 0; entryIndex < kImpactSurfaceCount;
+         ++entryIndex)
+    {
+        for (std::size_t effectIndex = 0;
+             effectIndex < kImpactNonFleshEffectCount;
+             ++effectIndex, ++journalIndex)
+        {
+            const bool isNull =
+                entrySnapshots[entryIndex]
+                    .nonflesh[effectIndex].token.isNull();
+            std::size_t bytes = 0;
+            if (isNull ? !IsCanonicalEmptyReference(resolved[journalIndex])
+                       : ValidateEffectReference(
+                             resolved[journalIndex], &bytes)
+                             != FxFastFileNativeDisk32Status::Success)
+            {
+                return false;
+            }
+            if (!isNull)
+                ++actualResolvedCount;
+        }
+        for (std::size_t effectIndex = 0;
+             effectIndex < kImpactFleshEffectCount;
+             ++effectIndex, ++journalIndex)
+        {
+            const bool isNull =
+                entrySnapshots[entryIndex]
+                    .flesh[effectIndex].token.isNull();
+            std::size_t bytes = 0;
+            if (isNull ? !IsCanonicalEmptyReference(resolved[journalIndex])
+                       : ValidateEffectReference(
+                             resolved[journalIndex], &bytes)
+                             != FxFastFileNativeDisk32Status::Success)
+            {
+                return false;
+            }
+            if (!isNull)
+                ++actualResolvedCount;
+        }
+    }
+    return journalIndex == kFxFastFileImpactDisk32JournalCount
+        && actualResolvedCount == resolvedCount;
 }
 } // namespace
 
@@ -420,39 +597,54 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
     {
         return FxFastFileNativeDisk32Status::SourceChanged;
     }
-    if (!name.pointer || name.stringByteCount == 0)
-        return FxFastFileNativeDisk32Status::InvalidString;
-    if (RangesOverlap(
-            name.pointer, name.stringByteCount, workspace, sizeof(*workspace)))
+    std::size_t nameBytes = 0;
+    FxFastFileNativeDisk32Status referenceStatus =
+        ValidateRetainedDescriptor(
+            name,
+            FxFastFileNativeDisk32Status::InvalidString,
+            &nameBytes);
+    if (referenceStatus != FxFastFileNativeDisk32Status::Success)
+        return referenceStatus;
+    if (RangesOverlap(name.pointer, nameBytes, &name, sizeof(name)))
+        return FxFastFileNativeDisk32Status::OverlappingStorage;
+    if (RangesOverlap(name.pointer, nameBytes, workspace, sizeof(*workspace)))
     {
         return FxFastFileNativeDisk32Status::OverlappingStorage;
     }
-    if (RangesOverlap(
-            outPlan, sizeof(*outPlan), name.pointer, name.stringByteCount))
+    if (RangesOverlap(outPlan, sizeof(*outPlan), name.pointer, nameBytes))
     {
         return FxFastFileNativeDisk32Status::OverlappingStorage;
     }
     if (RangesOverlap(name.pointer,
-                      name.stringByteCount,
+                      nameBytes,
                       source.impactTable,
                       sizeof(*source.impactTable)) ||
         RangesOverlap(name.pointer,
-                      name.stringByteCount,
+                      nameBytes,
                       source.entries.data,
                       sizeof(FxImpactEntryDisk32) * kImpactSurfaceCount) ||
         RangesOverlap(name.pointer,
-                      name.stringByteCount,
+                      nameBytes,
                       &sourceArgument,
                       sizeof(sourceArgument)) ||
-        RangesOverlap(
-            name.pointer, name.stringByteCount, &resolvers, sizeof(resolvers)))
+        RangesOverlap(name.pointer, nameBytes, &source, sizeof(source)) ||
+        RangesOverlap(name.pointer, nameBytes, &resolvers, sizeof(resolvers)) ||
+        RangesOverlap(name.pointer,
+                      nameBytes,
+                      &resolverSnapshot,
+                      sizeof(resolverSnapshot)))
     {
         return FxFastFileNativeDisk32Status::InvalidSourceLayout;
     }
-    if (!IsExactCString(name))
-        return FxFastFileNativeDisk32Status::InvalidString;
+    referenceStatus = ValidateNameReference(name, &nameBytes);
+    if (referenceStatus != FxFastFileNativeDisk32Status::Success)
+        return referenceStatus;
     const void *const nameAddress = name.pointer;
-    const std::uint32_t nameByteCount = name.stringByteCount;
+    const std::uint64_t nameByteCount = name.retainedByteCount;
+    const std::uint64_t nameAlignment = name.retainedAlignment;
+#if !KISAK_ARCH_64BIT
+    const std::uint32_t namePointerPadding = name.pointerPadding_;
+#endif
     const std::uint64_t nameBeforeProvenanceFingerprint =
         ComputeSourceFingerprint(source, name);
     const bool nameProvenanceIsValid =
@@ -462,9 +654,18 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
                                        header.name.token,
                                        nameAddress,
                                        nameByteCount,
-                                       alignof(char));
-    if (name.pointer != nameAddress || name.stringByteCount != nameByteCount)
+                                       static_cast<std::size_t>(
+                                           nameAlignment));
+    if (name.pointer != nameAddress
+        || name.retainedByteCount != nameByteCount
+        || name.retainedAlignment != nameAlignment
+#if !KISAK_ARCH_64BIT
+        || name.pointerPadding_ != namePointerPadding
+#endif
+    )
+    {
         return FxFastFileNativeDisk32Status::SourceChanged;
+    }
     if (!nameProvenanceIsValid)
     {
         return FxFastFileNativeDisk32Status::InvalidProvenance;
@@ -475,44 +676,135 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
     {
         return FxFastFileNativeDisk32Status::SourceChanged;
     }
-    if (!IsExactCString(name))
-        return FxFastFileNativeDisk32Status::InvalidString;
-    const std::uint64_t initialSourceFingerprint =
-        ComputeSourceFingerprint(source, name);
-    if (initialSourceFingerprint != nameBeforeProvenanceFingerprint)
+    referenceStatus = ValidateNameReference(name, &nameBytes);
+    if (referenceStatus != FxFastFileNativeDisk32Status::Success)
         return FxFastFileNativeDisk32Status::SourceChanged;
     workspace->resolved_[0] = name;
+    const FxFastFileDisk32ResolvedReference &boundName =
+        workspace->resolved_[0];
+    const std::uint64_t initialSourceFingerprint =
+        ComputeSourceFingerprint(source, boundName);
+    if (initialSourceFingerprint != nameBeforeProvenanceFingerprint)
+        return FxFastFileNativeDisk32Status::SourceChanged;
+    std::uint64_t expectedResolvedFingerprint = kFnvOffset;
+    HashResolvedReference(
+        &expectedResolvedFingerprint, 0, boundName);
     const auto identityOverlapsOwnedInput =
-        [workspace, &source, &sourceArgument, &resolvers, &name, outPlan](
-            const void *const identity) noexcept
+        [workspace,
+         &source,
+         &sourceArgument,
+         &resolvers,
+         &resolverSnapshot,
+         outPlan](const FxFastFileDisk32ResolvedReference &identity) noexcept
     {
-        constexpr std::size_t identityBytes = sizeof(FxEffectDef);
+        const std::size_t identityBytes =
+            static_cast<std::size_t>(identity.retainedByteCount);
         return RangesOverlap(
-                   identity, identityBytes, workspace, sizeof(*workspace)) ||
-               RangesOverlap(identity,
+                   identity.pointer,
+                   identityBytes,
+                   workspace,
+                   sizeof(*workspace)) ||
+               RangesOverlap(identity.pointer,
                              identityBytes,
                              source.impactTable,
                              sizeof(*source.impactTable)) ||
-               RangesOverlap(identity,
+               RangesOverlap(identity.pointer,
                              identityBytes,
                              source.entries.data,
                              sizeof(FxImpactEntryDisk32) *
                                  kImpactSurfaceCount) ||
-               RangesOverlap(identity,
+               RangesOverlap(identity.pointer,
                              identityBytes,
-                             name.pointer,
-                             name.stringByteCount) ||
-               RangesOverlap(identity,
+                             workspace->resolved_[0].pointer,
+                             static_cast<std::size_t>(
+                                 workspace->resolved_[0]
+                                     .retainedByteCount)) ||
+               RangesOverlap(identity.pointer,
                              identityBytes,
                              &sourceArgument,
                              sizeof(sourceArgument)) ||
-               RangesOverlap(
-                   identity, identityBytes, &resolvers, sizeof(resolvers)) ||
-               RangesOverlap(
-                   identity, identityBytes, outPlan, sizeof(*outPlan));
+               RangesOverlap(identity.pointer,
+                             identityBytes,
+                             &source,
+                             sizeof(source)) ||
+               RangesOverlap(identity.pointer,
+                             identityBytes,
+                             &resolvers,
+                             sizeof(resolvers)) ||
+               RangesOverlap(identity.pointer,
+                             identityBytes,
+                             &resolverSnapshot,
+                             sizeof(resolverSnapshot)) ||
+               RangesOverlap(identity.pointer,
+                             identityBytes,
+                             outPlan,
+                             sizeof(*outPlan));
     };
 
     std::uint32_t resolvedCount = 1;
+    const auto resolveEffectReference =
+        [&resolverSnapshot,
+         &source,
+         workspace,
+         &identityOverlapsOwnedInput,
+         &expectedResolvedFingerprint,
+         &resolvedCount](const disk32::PointerToken *const sourceField,
+                         const disk32::PointerToken token,
+                         const std::size_t journalIndex) noexcept
+        -> FxFastFileNativeDisk32Status
+    {
+        if (token.isNull())
+        {
+            HashResolvedReference(&expectedResolvedFingerprint,
+                                  journalIndex,
+                                  workspace->resolved_[journalIndex]);
+            return FxFastFileNativeDisk32Status::Success;
+        }
+
+        FxFastFileDisk32ResolvedReference resolved{};
+        const bool resolvedSuccessfully = resolverSnapshot.resolve(
+            resolverSnapshot.context,
+            FxFastFileDisk32ReferenceKind::EffectAssetHandle,
+            sourceField,
+            token,
+            &resolved);
+        if (!SourceMatchesSnapshots(source,
+                                    workspace->sourceHeaderSnapshot_,
+                                    workspace->sourceEntrySnapshots_))
+        {
+            return FxFastFileNativeDisk32Status::SourceChanged;
+        }
+        if (!resolvedSuccessfully || !resolved.pointer)
+            return FxFastFileNativeDisk32Status::UnresolvedReference;
+
+        std::size_t identityBytes = 0;
+        FxFastFileNativeDisk32Status status = ValidateRetainedDescriptor(
+            resolved,
+            FxFastFileNativeDisk32Status::InvalidArgument,
+            &identityBytes);
+        if (status != FxFastFileNativeDisk32Status::Success)
+            return status;
+        if (RangesOverlap(resolved.pointer,
+                          identityBytes,
+                          &resolved,
+                          sizeof(resolved)))
+        {
+            return FxFastFileNativeDisk32Status::OverlappingStorage;
+        }
+        status = ValidateEffectReference(resolved, &identityBytes);
+        if (status != FxFastFileNativeDisk32Status::Success)
+            return status;
+        if (identityOverlapsOwnedInput(resolved))
+            return FxFastFileNativeDisk32Status::OverlappingStorage;
+
+        workspace->resolved_[journalIndex] = resolved;
+        HashResolvedReference(&expectedResolvedFingerprint,
+                              journalIndex,
+                              workspace->resolved_[journalIndex]);
+        ++resolvedCount;
+        return FxFastFileNativeDisk32Status::Success;
+    };
+
     std::size_t journalIndex = 1;
     for (std::size_t entryIndex = 0; entryIndex < kImpactSurfaceCount;
          ++entryIndex)
@@ -529,35 +821,10 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
                 &physicalEntry.nonflesh[effectIndex].token;
             const disk32::PointerToken token =
                 entry.nonflesh[effectIndex].token;
-            if (token.isNull())
-                continue;
-            FxFastFileDisk32ResolvedReference resolved{};
-            const bool resolvedSuccessfully = resolverSnapshot.resolve(
-                resolverSnapshot.context,
-                FxFastFileDisk32ReferenceKind::EffectAssetHandle,
-                sourceField,
-                token,
-                &resolved);
-            if (!SourceMatchesSnapshots(source,
-                                        workspace->sourceHeaderSnapshot_,
-                                        workspace->sourceEntrySnapshots_))
-            {
-                return FxFastFileNativeDisk32Status::SourceChanged;
-            }
-            if (!resolvedSuccessfully || !resolved.pointer)
-            {
-                return FxFastFileNativeDisk32Status::UnresolvedReference;
-            }
-            if (resolved.stringByteCount != 0)
-                return FxFastFileNativeDisk32Status::InvalidString;
-            if (!IsAligned(resolved.pointer, alignof(FxEffectDef)))
-                return FxFastFileNativeDisk32Status::InvalidSourceLayout;
-            if (identityOverlapsOwnedInput(resolved.pointer))
-            {
-                return FxFastFileNativeDisk32Status::OverlappingStorage;
-            }
-            workspace->resolved_[journalIndex] = resolved;
-            ++resolvedCount;
+            referenceStatus = resolveEffectReference(
+                sourceField, token, journalIndex);
+            if (referenceStatus != FxFastFileNativeDisk32Status::Success)
+                return referenceStatus;
         }
         for (std::size_t effectIndex = 0; effectIndex < kImpactFleshEffectCount;
              ++effectIndex, ++journalIndex)
@@ -565,35 +832,10 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
             const disk32::PointerToken *const sourceField =
                 &physicalEntry.flesh[effectIndex].token;
             const disk32::PointerToken token = entry.flesh[effectIndex].token;
-            if (token.isNull())
-                continue;
-            FxFastFileDisk32ResolvedReference resolved{};
-            const bool resolvedSuccessfully = resolverSnapshot.resolve(
-                resolverSnapshot.context,
-                FxFastFileDisk32ReferenceKind::EffectAssetHandle,
-                sourceField,
-                token,
-                &resolved);
-            if (!SourceMatchesSnapshots(source,
-                                        workspace->sourceHeaderSnapshot_,
-                                        workspace->sourceEntrySnapshots_))
-            {
-                return FxFastFileNativeDisk32Status::SourceChanged;
-            }
-            if (!resolvedSuccessfully || !resolved.pointer)
-            {
-                return FxFastFileNativeDisk32Status::UnresolvedReference;
-            }
-            if (resolved.stringByteCount != 0)
-                return FxFastFileNativeDisk32Status::InvalidString;
-            if (!IsAligned(resolved.pointer, alignof(FxEffectDef)))
-                return FxFastFileNativeDisk32Status::InvalidSourceLayout;
-            if (identityOverlapsOwnedInput(resolved.pointer))
-            {
-                return FxFastFileNativeDisk32Status::OverlappingStorage;
-            }
-            workspace->resolved_[journalIndex] = resolved;
-            ++resolvedCount;
+            referenceStatus = resolveEffectReference(
+                sourceField, token, journalIndex);
+            if (referenceStatus != FxFastFileNativeDisk32Status::Success)
+                return referenceStatus;
         }
     }
     if (journalIndex != kFxFastFileImpactDisk32JournalCount)
@@ -601,10 +843,14 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
     for (std::size_t index = 1; index < kFxFastFileImpactDisk32JournalCount;
          ++index)
     {
-        const void *const identity = workspace->resolved_[index].pointer;
-        if (identity &&
-            RangesOverlap(
-                outPlan, sizeof(*outPlan), identity, sizeof(FxEffectDef)))
+        const FxFastFileDisk32ResolvedReference &identity =
+            workspace->resolved_[index];
+        if (identity.pointer
+            && RangesOverlap(outPlan,
+                             sizeof(*outPlan),
+                             identity.pointer,
+                             static_cast<std::size_t>(
+                                 identity.retainedByteCount)))
             return FxFastFileNativeDisk32Status::OverlappingStorage;
     }
     if (std::memcmp(source.impactTable,
@@ -616,14 +862,29 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
     {
         return FxFastFileNativeDisk32Status::SourceChanged;
     }
+    HashValue(&expectedResolvedFingerprint, resolvedCount);
+    std::size_t validatedNameBytes = 0;
+    if (!ValidateResolvedJournal(workspace->sourceEntrySnapshots_,
+                                 workspace->resolved_,
+                                 resolvedCount,
+                                 &validatedNameBytes)
+        || validatedNameBytes != nameBytes
+        || expectedResolvedFingerprint
+            != ComputeResolvedJournalFingerprint(
+                workspace->resolved_, resolvedCount))
+    {
+        return FxFastFileNativeDisk32Status::SourceChanged;
+    }
     const std::uint64_t finalSourceFingerprint =
-        ComputeSourceFingerprint(source, name);
-    if (!IsExactCString(name) ||
-        finalSourceFingerprint != initialSourceFingerprint)
+        ComputeSourceFingerprint(source, boundName);
+    if (finalSourceFingerprint != initialSourceFingerprint)
         return FxFastFileNativeDisk32Status::SourceChanged;
 
     FxFastFileImpactNativeDisk32Plan planned{};
-    if (!ComputeNativeLayout(name.stringByteCount,
+    if (boundName.retainedByteCount
+            > (std::numeric_limits<std::uint32_t>::max)()
+        || !ComputeNativeLayout(static_cast<std::uint32_t>(
+                                    boundName.retainedByteCount),
                              &planned.outputBytes_,
                              &planned.outputAlignment_,
                              &planned.entriesOffset_,
@@ -642,7 +903,8 @@ FxFastFileNativeDisk32Status TryPlanFxImpactTableDisk32(
         ComputeBoundFingerprint(source, workspace->resolved_, resolvedCount);
     planned.entryCount_ = static_cast<std::uint32_t>(kImpactSurfaceCount);
     planned.resolvedReferenceCount_ = resolvedCount;
-    planned.nameBytes_ = name.stringByteCount;
+    planned.nameBytes_ = static_cast<std::uint32_t>(
+        boundName.retainedByteCount);
 
     workspace->source_ = source;
     workspace->resolvedCount_ = resolvedCount;
@@ -672,6 +934,17 @@ FxFastFileNativeDisk32Status TryMaterializeFxImpactTableDisk32(
     }
     workspace->operating_ = true;
     const OperationReset operationReset(&workspace->operating_);
+    const auto invalidate = [workspace]() noexcept {
+        workspace->source_ = {};
+        workspace->plan_ = {};
+        for (FxFastFileDisk32ResolvedReference &resolved :
+             workspace->resolved_)
+        {
+            resolved = {};
+        }
+        workspace->resolvedCount_ = 0;
+        workspace->phase_ = FxFastFileNativeDisk32Phase::Empty;
+    };
 
     const FxFastFileImpactNativeDisk32Plan &expected = workspace->plan_;
     if (plan.workspaceIdentity_ != workspace || plan.serial_ == 0)
@@ -713,6 +986,16 @@ FxFastFileNativeDisk32Status TryMaterializeFxImpactTableDisk32(
     {
         return FxFastFileNativeDisk32Status::InvalidPlan;
     }
+    std::size_t retainedNameBytes = 0;
+    if (!ValidateResolvedJournal(workspace->sourceEntrySnapshots_,
+                                 workspace->resolved_,
+                                 workspace->resolvedCount_,
+                                 &retainedNameBytes)
+        || retainedNameBytes != plan.nameBytes_)
+    {
+        invalidate();
+        return FxFastFileNativeDisk32Status::SourceChanged;
+    }
     if (!IsAligned(storage, plan.outputAlignment_))
         return FxFastFileNativeDisk32Status::MisalignedStorage;
     if (capacity < plan.outputBytes_)
@@ -741,7 +1024,7 @@ FxFastFileNativeDisk32Status TryMaterializeFxImpactTableDisk32(
         RangesOverlap(storage,
                       plan.outputBytes_,
                       workspace->resolved_[0].pointer,
-                      workspace->resolved_[0].stringByteCount))
+                      retainedNameBytes))
     {
         return FxFastFileNativeDisk32Status::OverlappingStorage;
     }
@@ -759,21 +1042,28 @@ FxFastFileNativeDisk32Status TryMaterializeFxImpactTableDisk32(
         RangesOverlap(outTable,
                       sizeof(*outTable),
                       workspace->resolved_[0].pointer,
-                      workspace->resolved_[0].stringByteCount))
+                      retainedNameBytes))
     {
         return FxFastFileNativeDisk32Status::OverlappingStorage;
     }
     for (std::size_t index = 1; index < kFxFastFileImpactDisk32JournalCount;
          ++index)
     {
-        const void *const identity = workspace->resolved_[index].pointer;
-        if (identity &&
-            RangesOverlap(
-                storage, plan.outputBytes_, identity, sizeof(FxEffectDef)))
+        const FxFastFileDisk32ResolvedReference &identity =
+            workspace->resolved_[index];
+        if (identity.pointer
+            && RangesOverlap(storage,
+                             plan.outputBytes_,
+                             identity.pointer,
+                             static_cast<std::size_t>(
+                                 identity.retainedByteCount)))
             return FxFastFileNativeDisk32Status::OverlappingStorage;
-        if (identity &&
-            RangesOverlap(
-                outTable, sizeof(*outTable), identity, sizeof(FxEffectDef)))
+        if (identity.pointer
+            && RangesOverlap(outTable,
+                             sizeof(*outTable),
+                             identity.pointer,
+                             static_cast<std::size_t>(
+                                 identity.retainedByteCount)))
         {
             return FxFastFileNativeDisk32Status::OverlappingStorage;
         }
@@ -782,18 +1072,12 @@ FxFastFileNativeDisk32Status TryMaterializeFxImpactTableDisk32(
     if (!SourceMatchesSnapshots(workspace->source_,
                                 workspace->sourceHeaderSnapshot_,
                                 workspace->sourceEntrySnapshots_) ||
-        !IsExactCString(workspace->resolved_[0]) ||
         ComputeBoundFingerprint(workspace->source_,
                                 workspace->resolved_,
                                 workspace->resolvedCount_) !=
             plan.sourceFingerprint_)
     {
-        workspace->source_ = {};
-        workspace->plan_ = {};
-        for (FxFastFileDisk32ResolvedReference &resolved : workspace->resolved_)
-            resolved = {};
-        workspace->resolvedCount_ = 0;
-        workspace->phase_ = FxFastFileNativeDisk32Phase::Empty;
+        invalidate();
         return FxFastFileNativeDisk32Status::SourceChanged;
     }
 
@@ -807,7 +1091,7 @@ FxFastFileNativeDisk32Status TryMaterializeFxImpactTableDisk32(
     auto *const name = reinterpret_cast<char *>(bytes + plan.nameOffset_);
     std::memcpy(name,
                 workspace->resolved_[0].pointer,
-                workspace->resolved_[0].stringByteCount);
+                retainedNameBytes);
 
     table->name = name;
     table->table = entries;
