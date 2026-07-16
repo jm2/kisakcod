@@ -317,9 +317,7 @@ template <typename T>
     {
         const std::int32_t interval = elem.spawn.intervalMsecOrCountBase;
         const std::int32_t count = elem.spawn.loopCountOrCountAmplitude;
-        if (interval < 0
-            || (interval == 0 && elem.elemType != FxElemTypeDisk32::Trail)
-            || interval > kDurationLimitMsec || count < 0)
+        if (interval <= 0 || interval > kDurationLimitMsec || count <= 0)
         {
             return Status::InvalidCount;
         }
