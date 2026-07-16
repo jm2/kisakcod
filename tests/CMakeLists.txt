@@ -599,6 +599,77 @@ add_test(
 set_tests_properties(
     effectscore-fastfile-impact-native-disk32-conversion PROPERTIES TIMEOUT 60)
 
+add_library(kisakcod-fx-fastfile-native-arena-subject OBJECT
+    ${SRC_DIR}/EffectsCore/fx_fastfile_native_arena.cpp
+)
+target_include_directories(
+    kisakcod-fx-fastfile-native-arena-subject PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-fx-fastfile-native-arena-subject PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-fx-fastfile-native-arena-subject PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-fx-fastfile-native-arena-subject)
+kisakcod_fx_helper_stack_budget(kisakcod-fx-fastfile-native-arena-subject)
+
+add_executable(kisakcod-fx-fastfile-native-arena-tests
+    fx_fastfile_native_arena_tests.cpp
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject>
+)
+target_include_directories(
+    kisakcod-fx-fastfile-native-arena-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-fx-fastfile-native-arena-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-fx-fastfile-native-arena-tests PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-fx-fastfile-native-arena-tests)
+set_target_properties(kisakcod-fx-fastfile-native-arena-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-fastfile-native-arena
+    COMMAND kisakcod-fx-fastfile-native-arena-tests
+)
+set_tests_properties(
+    effectscore-fastfile-native-arena PROPERTIES TIMEOUT 20)
+
+add_library(kisakcod-fx-fastfile-zone-adapter-disk32-subject OBJECT
+    ${SRC_DIR}/EffectsCore/fx_fastfile_zone_adapter_disk32.cpp
+)
+target_include_directories(
+    kisakcod-fx-fastfile-zone-adapter-disk32-subject PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-fx-fastfile-zone-adapter-disk32-subject PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-fx-fastfile-zone-adapter-disk32-subject PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-fx-fastfile-zone-adapter-disk32-subject)
+kisakcod_fx_helper_stack_budget(
+    kisakcod-fx-fastfile-zone-adapter-disk32-subject)
+
+add_executable(kisakcod-fx-fastfile-zone-adapter-disk32-tests
+    fx_fastfile_zone_adapter_disk32_tests.cpp
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject>
+)
+target_include_directories(
+    kisakcod-fx-fastfile-zone-adapter-disk32-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-fx-fastfile-zone-adapter-disk32-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-fx-fastfile-zone-adapter-disk32-tests PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-fx-fastfile-zone-adapter-disk32-tests)
+set_target_properties(
+    kisakcod-fx-fastfile-zone-adapter-disk32-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME effectscore-fastfile-zone-adapter-disk32
+    COMMAND kisakcod-fx-fastfile-zone-adapter-disk32-tests
+)
+set_tests_properties(
+    effectscore-fastfile-zone-adapter-disk32 PROPERTIES TIMEOUT 60)
+
 add_executable(kisakcod-db-relocation-tests
     db_relocation_tests.cpp
     ${SRC_DIR}/database/db_relocation.cpp
@@ -1271,6 +1342,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_fastfile_disk32_source_test.cmake
+)
+
+add_test(
+    NAME effectscore-fastfile-zone-adapter-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_fastfile_zone_adapter_source_test.cmake
 )
 
 add_test(
