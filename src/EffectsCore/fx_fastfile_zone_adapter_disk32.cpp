@@ -51,7 +51,10 @@ private:
     const void *const address,
     const std::size_t alignment) noexcept
 {
-    return reinterpret_cast<std::uintptr_t>(address) % alignment == 0;
+    // Callers pass compile-time alignof constants or converter-validated
+    // power-of-two alignments, so the mask form is exact.
+    return (reinterpret_cast<std::uintptr_t>(address)
+            & (static_cast<std::uintptr_t>(alignment) - 1u)) == 0;
 }
 
 [[nodiscard]] bool OracleValidates(
@@ -628,11 +631,14 @@ FxFastFileZoneAdapterDisk32Status TryRecordFxEffectDefNameZoneDisk32(
         return Workspace::FailTransaction(*workspace, Status::InvalidSequence);
     }
     // The materializer copies the effect's own name into its output and
-    // requires at least a one-character name.
-    if (nameBytes < 2 || !IsExactWireCString(name, nameBytes))
+    // requires at least a one-character name.  Bound the reported extent and
+    // validate it against the cursor oracle before inspecting any byte.
+    if (nameBytes < 2 || nameBytes > kFxFastFileZoneAdapterMaxNameBytes)
         return Workspace::FailTransaction(*workspace, Status::InvalidString);
     if (!OracleValidates(workspace->cursor_, name, nameBytes))
         return Workspace::FailTransaction(*workspace, Status::InvalidSpan);
+    if (!IsExactWireCString(name, nameBytes))
+        return Workspace::FailTransaction(*workspace, Status::InvalidString);
 
     Workspace::RecordedReference reference;
     reference.sourceField = &frame.effectHeader->name.token;
@@ -1019,10 +1025,14 @@ FxFastFileZoneAdapterDisk32Status TryRecordFxSoundNameZoneDisk32(
     {
         return Workspace::FailTransaction(*workspace, Status::InvalidSequence);
     }
-    if (!IsExactWireCString(name, nameBytes))
+    // Bound the reported extent and validate it against the cursor oracle
+    // before inspecting any byte.
+    if (nameBytes == 0 || nameBytes > kFxFastFileZoneAdapterMaxNameBytes)
         return Workspace::FailTransaction(*workspace, Status::InvalidString);
     if (!OracleValidates(workspace->cursor_, name, nameBytes))
         return Workspace::FailTransaction(*workspace, Status::InvalidSpan);
+    if (!IsExactWireCString(name, nameBytes))
+        return Workspace::FailTransaction(*workspace, Status::InvalidString);
 
     // The converter retains sound names instead of copying them, so the name
     // must live as long as the zone: copy it into the arena inside this
@@ -1305,10 +1315,14 @@ FxFastFileZoneAdapterDisk32Status TryRecordFxImpactTableNameZoneDisk32(
     {
         return Workspace::FailTransaction(*workspace, Status::InvalidSequence);
     }
-    if (nameBytes < 2 || !IsExactWireCString(name, nameBytes))
+    // Bound the reported extent and validate it against the cursor oracle
+    // before inspecting any byte.
+    if (nameBytes < 2 || nameBytes > kFxFastFileZoneAdapterMaxNameBytes)
         return Workspace::FailTransaction(*workspace, Status::InvalidString);
     if (!OracleValidates(workspace->cursor_, name, nameBytes))
         return Workspace::FailTransaction(*workspace, Status::InvalidSpan);
+    if (!IsExactWireCString(name, nameBytes))
+        return Workspace::FailTransaction(*workspace, Status::InvalidString);
 
     Workspace::RecordedReference reference;
     reference.sourceField = &frame.impactHeader->name.token;

@@ -69,6 +69,23 @@ function(require_not_contains SOURCE_VAR NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+function(require_occurrence_count SOURCE_VAR NEEDLE EXPECTED DESCRIPTION)
+    string(LENGTH "${NEEDLE}" _needle_length)
+    if(_needle_length EQUAL 0)
+        message(FATAL_ERROR "Cannot count an empty invariant: ${DESCRIPTION}")
+    endif()
+    string(LENGTH "${${SOURCE_VAR}}" _source_length)
+    string(REPLACE "${NEEDLE}" "" _without "${${SOURCE_VAR}}")
+    string(LENGTH "${_without}" _without_length)
+    math(EXPR _removed_length "${_source_length} - ${_without_length}")
+    math(EXPR _count "${_removed_length} / ${_needle_length}")
+    if(NOT _count EQUAL EXPECTED)
+        message(FATAL_ERROR
+            "Wrong FX zone adapter invariant count (${DESCRIPTION}): "
+            "expected ${EXPECTED}, found ${_count} for '${NEEDLE}'")
+    endif()
+endfunction()
+
 function(require_ordered SOURCE_VAR FIRST SECOND DESCRIPTION)
     string(FIND "${${SOURCE_VAR}}" "${FIRST}" _first)
     if(_first EQUAL -1)
@@ -164,6 +181,13 @@ require_contains(_adapter_impl
 require_contains(_adapter_impl
     "if (!sourceField->isOffset())"
     "alias handle reports require a real offset token")
+
+# Every reported wire string validates its extent against the cursor oracle
+# before any byte of it is inspected, in all three string recorders.
+require_occurrence_count(_adapter_impl
+    "if (!OracleValidates(workspace->cursor_, name, nameBytes)) return Workspace::FailTransaction(*workspace, Status::InvalidSpan); if (!IsExactWireCString(name, nameBytes)) return Workspace::FailTransaction(*workspace, Status::InvalidString);"
+    3
+    "string extents validate through the oracle before content inspection")
 
 # Sound names are retained (not copied) by the converter, so the adapter must
 # copy them into the zone-owned arena inside the open transaction.
