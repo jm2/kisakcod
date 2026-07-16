@@ -68,7 +68,7 @@ FxFastFileNativeArenaStatus FxFastFileNativeArena::TryBind(
     {
         return Status::SizeOverflow;
     }
-    if (transactionDepth_ != 0)
+    if (storage_ || transactionDepth_ != 0)
         return Status::InvalidPhase;
 
     storage_ = storage;

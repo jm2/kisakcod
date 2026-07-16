@@ -308,11 +308,59 @@ void TestBindWhileOpenFails()
     CHECK(fixture.arena.zoneIdentity() == 7);
     CHECK(fixture.arena.TryCommit(transaction) == Status::Success);
 
-    // Rebinding after close resets accounting for the new zone.
+    // A closed transaction does not waive the explicit lifetime boundary.
+    CHECK(fixture.arena.TryBind(
+              replacement.bytes, sizeof(replacement.bytes), 11)
+          == Status::InvalidPhase);
+    CHECK(fixture.arena.zoneIdentity() == 7);
+    CHECK(fixture.arena.TryUnbind() == Status::Success);
     CHECK(fixture.arena.TryBind(
               replacement.bytes, sizeof(replacement.bytes), 11)
           == Status::Success);
     CHECK(fixture.arena.zoneIdentity() == 11);
+    CHECK(fixture.arena.usedBytes() == 0);
+    CHECK(fixture.arena.committedBytes() == 0);
+}
+
+void TestCommittedStorageRequiresExplicitUnbind()
+{
+    Fixture fixture;
+    Transaction transaction;
+    CHECK(fixture.arena.TryBeginTransaction(&transaction) == Status::Success);
+    void *published = nullptr;
+    CHECK(fixture.arena.TryReserve(transaction, 32, 8, &published)
+          == Status::Success);
+    std::memset(published, 0xD7, 32);
+    CHECK(fixture.arena.TryCommit(transaction) == Status::Success);
+
+    Storage replacement;
+    CHECK(fixture.arena.TryBind(
+              replacement.bytes, sizeof(replacement.bytes), 13)
+          == Status::InvalidPhase);
+    CHECK(fixture.arena.TryBind(
+              fixture.storage.bytes, sizeof(fixture.storage.bytes), 13)
+          == Status::InvalidPhase);
+    CHECK(fixture.arena.zoneIdentity() == 7);
+    CHECK(fixture.arena.usedBytes() == 32);
+    CHECK(fixture.arena.committedBytes() == 32);
+    for (std::size_t index = 0; index < 32; ++index)
+        CHECK(static_cast<std::uint8_t *>(published)[index] == 0xD7);
+
+    // The committed extent remains owned and cannot be reissued before the
+    // caller explicitly crosses the documented lifetime boundary.
+    Transaction next;
+    CHECK(fixture.arena.TryBeginTransaction(&next) == Status::Success);
+    void *following = nullptr;
+    CHECK(fixture.arena.TryReserve(next, 16, 8, &following)
+          == Status::Success);
+    CHECK(following == fixture.storage.bytes + 32);
+    CHECK(fixture.arena.TryCommit(next) == Status::Success);
+
+    CHECK(fixture.arena.TryUnbind() == Status::Success);
+    CHECK(fixture.arena.TryBind(
+              replacement.bytes, sizeof(replacement.bytes), 13)
+          == Status::Success);
+    CHECK(fixture.arena.zoneIdentity() == 13);
     CHECK(fixture.arena.usedBytes() == 0);
     CHECK(fixture.arena.committedBytes() == 0);
 }
@@ -361,6 +409,7 @@ int main()
     TestAbandonAboveCommittedWatermark();
     TestForeignAndStaleTransactions();
     TestBindWhileOpenFails();
+    TestCommittedStorageRequiresExplicitUnbind();
     TestSequentialTransactionsRatchet();
     TestHighAlignmentUsesAbsoluteAddress();
 

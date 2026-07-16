@@ -81,10 +81,12 @@ public:
     FxFastFileNativeArena &operator=(FxFastFileNativeArena &&) = delete;
 
     // Binds one zone-owned storage region and resets all cursors and
-    // accounting.  storage must be aligned to
+    // accounting.  The arena must currently be unbound; replacing a bound
+    // region requires an explicit TryUnbind after every published consumer of
+    // its committed storage is unreachable.  storage must be aligned to
     // kFxFastFileNativeArenaStorageAlignment, capacity must be nonzero, and
     // zoneIdentity must be nonzero so an unbound arena is distinguishable.
-    // Rebinding while any transaction is open fails InvalidPhase.
+    // Binding an already-bound arena fails InvalidPhase.
     [[nodiscard]] FxFastFileNativeArenaStatus TryBind(
         void *storage,
         std::size_t capacity,
