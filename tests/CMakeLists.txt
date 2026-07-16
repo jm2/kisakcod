@@ -235,6 +235,25 @@ set_target_properties(kisakcod-disk32-tests PROPERTIES
 )
 add_test(NAME disk32-pointer-token-bounds COMMAND kisakcod-disk32-tests)
 
+add_executable(kisakcod-db-xasset-disk32-tests
+    db_xasset_disk32_tests.cpp
+    ${SRC_DIR}/database/db_xasset_disk32.cpp
+)
+target_include_directories(
+    kisakcod-db-xasset-disk32-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-xasset-disk32-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-db-xasset-disk32-tests)
+set_target_properties(kisakcod-db-xasset-disk32-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-xasset-disk32-envelope
+    COMMAND kisakcod-db-xasset-disk32-tests
+)
+set_tests_properties(
+    database-xasset-disk32-envelope PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-fx-archive-disk32-tests
     fx_archive_disk32_tests.cpp
     ${SRC_DIR}/EffectsCore/fx_archive_disk32.cpp
@@ -1349,6 +1368,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/fx_fastfile_zone_adapter_source_test.cmake
+)
+
+add_test(
+    NAME database-xasset-disk32-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/db_xasset_disk32_source_test.cmake
 )
 
 add_test(
