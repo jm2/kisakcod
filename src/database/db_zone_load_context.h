@@ -127,7 +127,9 @@ struct ZoneLoadCleanupCallbacks final
 // every accessor and KeyMatches, callback execution, and destruction for each
 // slot. Busy detects callback reentry while cleanup is active; it is not
 // cross-thread synchronization.
+#ifdef KISAK_DB_ZONE_LOAD_CONTEXT_TESTING
 struct ZoneLoadContextSlotTestAccess;
+#endif
 
 class alignas(8) ZoneLoadContextSlot final
 {
@@ -175,7 +177,9 @@ private:
     friend bool ZoneLoadContextKeyMatches(
         const ZoneLoadContextSlot *slot,
         const ZoneLoadContextKey &key) noexcept;
+#ifdef KISAK_DB_ZONE_LOAD_CONTEXT_TESTING
     friend struct ZoneLoadContextSlotTestAccess;
+#endif
 
     [[nodiscard]] bool isCanonical() const noexcept;
     [[nodiscard]] ZoneLoadContextStatus validate() const noexcept;

@@ -145,6 +145,14 @@ foreach(_marker IN ITEMS
     "TryFinish/TryUnload returns")
     require_contains(_header "${_marker}" "explicit no-destructor cleanup")
 endforeach()
+require_contains(
+    _header
+    "#ifdef KISAK_DB_ZONE_LOAD_CONTEXT_TESTING struct ZoneLoadContextSlotTestAccess; #endif class alignas(8) ZoneLoadContextSlot final"
+    "test access forward declaration is test-only")
+require_contains(
+    _header
+    "#ifdef KISAK_DB_ZONE_LOAD_CONTEXT_TESTING friend struct ZoneLoadContextSlotTestAccess; #endif"
+    "test access friendship is test-only")
 require_ordered(
     _header
     "private:"
