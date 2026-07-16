@@ -116,8 +116,10 @@ struct alignas(8) FxFastFileDisk32FrozenProvenanceRequest
 #if !KISAK_ARCH_64BIT
     std::uint32_t sourceFieldPadding_ = 0;
 #endif
-    // Addresses of the live pointer/count descriptor fields from which this
-    // request was frozen.  countField is null for fixed-size records.
+    // Addresses of the pointer/count descriptor fields bound to this
+    // transaction.  Top-level view fields are copied before the journal is
+    // built; nested fields remain caller-owned.  countField is null for
+    // fixed-size records.
     const void *addressField = nullptr;
 #if !KISAK_ARCH_64BIT
     std::uint32_t addressFieldPadding_ = 0;

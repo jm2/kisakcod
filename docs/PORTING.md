@@ -87,6 +87,17 @@ Completed foundation work:
   forged, reacquired, or callback-reentrant access without publishing an output. The old raw
   restore parser, restore-only width/ABI/address-relocation path, and native64 restore guard are removed. `FX_Save`, its
   native64 guard, the legacy writer, wire format, and licensed workflow remain unchanged;
+- exact pointer-bearing FX fast-file Disk32 effect, element, velocity/visibility, visual/decal, trail, and impact-table
+  schemas with compiler-independent size/offset and golden-byte contracts. The active widening branch extracts one
+  canonical portable native effect-definition type family and implements bounded two-pass effect and impact-table
+  converters. Planning freezes resolver requests, snapshots callback descriptors and source records, binds every string
+  and native identity exactly once, detects callback/source mutation and partial overlap within every resolver-reported
+  retained extent, and validates both legacy and widened layouts. Callback-free materialization placement-constructs
+  actual runtime objects into an aligned caller-owned blob, owns copied strings/records, preserves legacy trail capacity
+  semantics, and publishes only after all fallible checks. The exact effect workspace is 325,904 bytes on x86 and 325,928
+  bytes on native64; the impact workspace is 11,216 and 11,232 bytes, respectively. The stateful XBlock/XAsset loader,
+  retail bytes, legacy x86 path, archive writer, and save-side guard remain unchanged pending a zone-owned arena and
+  guarded production adapter;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -118,10 +129,12 @@ Remaining gates, in implementation order:
    activation, semantic `Ready` validation, exact body-record decoding, and transactional report-free `MemoryFile` staging
    of the post-definition archive tail are complete in the portable reader. Production restore now consumes that image
    through the exact-lease-bound mutable candidate, centralized staging cleanup, immediate lease-release-to-archive-admission
-   handoff, and the existing publication/rollback controller. Exact CI/review/merge remains for this checkpoint; the next
-   implementation batch moves to the next M5 runtime Disk32/fast-file widening seam. The writer and save guard follow later.
-3. Introduce fixed-width `disk32` fast-file/archive schemas and checked conversion into native runtime
-   structures.
+   handoff, and the existing publication/rollback controller. That production-restore checkpoint is merged. The writer and
+   save guard follow later.
+3. Continue fixed-width `disk32` fast-file widening. Exact FX effect/visual/trail/impact schemas and pure transactional
+  native converters are implemented on the active branch; their local/audit gate is clean and CI/review/merge remain. Next, add a
+   zone-owned aligned native arena and guarded stateful XBlock/XAsset adapter with exact rollback, completed-object/alias
+   registration, and lifetime tests before replacing any legacy loader path. Retail wire bytes remain frozen.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
 5. Implement the remaining platform services (sockets, filesystem,
    virtual memory, console/process) for Windows/POSIX.
@@ -1088,8 +1101,8 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **48%** (plausible range **44–53%**). The foundation/checklist view is about
-**60%**, the shared foundation is **95%+** mature, and target delivery remains **0/5**.
+Overall porting progress is approximately **49%** (plausible range **46–54%**). The foundation/checklist view is about
+**61%**, the shared foundation is **95%+** mature, and target delivery remains **0/5**.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
 Windows x86 Debug and Release production reports now enforce 2,756-byte `FX_Save`, 6,124-byte `FX_Restore`, and
 2,064-byte maximum-other frames after replacing the discovered 10,256-byte helper with checked heap scratch. Coherent
@@ -1136,9 +1149,17 @@ same-owner lease reacquisition; Gemini's valid const-correctness cleanup is appl
 `BodyState`-padding reports are contradicted by pinned tests/layout contracts and have evidence-backed replies. All four
 threads are resolved, and exact review-fix/documentation head `21dae5ca` passed all nine required jobs in run
 **29453934377**. PR #31 squash-merged as `1a966369` from final documentation head `9fb7dafd`; post-merge run
-**29454579529** also passed all nine jobs. The active next batch adds exact FX fast-file Disk32 definition/visual/trail/impact schemas
-and a report-free transactional native planner/materializer without touching the stateful production loader. Guarded
-production integration and writer replacement follow later after exact x86 full-image equivalence.
+**29454579529** also passed all nine jobs. The active branch now implements exact FX fast-file Disk32
+definition/visual/trail/impact schemas plus separate report-free transactional effect-definition and impact-table
+planner/materializers without touching the stateful production loader. Canonical native objects, frozen resolver
+transactions, full source/name provenance, bounded journals, callback-free publication, retained-extent overlap rejection,
+and adversarial mutation/alias tests are included. Exact implementation head `dc069313` passes GCC and Clang **71/71**,
+ASan+UBSan and TSan **70/70**, strict i386 compilation/linking, strict AArch64 syntax checks, both static analyzers, and an
+enforced 4 KiB converter-frame gate (1,056-byte GCC / 984-byte Clang maximum). The sandbox blocks the i386 executables with
+`SIGSYS`, so Windows x86 CI remains the runtime authority. A Clang/MSan-exposed padding read in an immutability test was
+fixed with an object-representation snapshot, and an independent audit found no remaining blocker. CI/review/merge are the
+current gate; a zone-owned native arena and guarded XBlock/XAsset adapter are next. Writer replacement follows later after
+exact x86 full-image equivalence.
 A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
