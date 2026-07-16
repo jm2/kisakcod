@@ -97,9 +97,15 @@ Completed foundation work:
   semantics, and publishes only after all fallible checks. Review hardening validates retail time/count/visibility/atlas
   canonicalization, rejects trail definitions outside the runtime-supported looping range, and prevents the normalized
   visibility endpoint from indexing beyond the final adjacent sample pair. The exact effect workspace is 325,904 bytes
-  on x86 and 325,928 bytes on native64; the impact workspace is 11,216 and 11,232 bytes, respectively. The stateful
-  XBlock/XAsset loader, retail bytes, legacy x86 path, archive writer, and save-side guard remain unchanged pending a
-  zone-owned arena and guarded production adapter;
+  on x86 and 325,928 bytes on native64; the impact workspace is 11,216 and 11,232 bytes, respectively. The zone-owned
+  aligned native arena and the guarded stateful zone adapter that drives those converters from the legacy wire walk are
+  implemented as portable primitives with exact workspace contracts (774,216-byte x86 / 799,944-byte native64 adapter
+  scratch), watermark-ratcheting LIFO arena transactions, nested impact/inline-effect conversion, and
+  materialize-commit-then-publish ordering. Arena rebinding now requires an explicit unbind lifetime boundary, and
+  publication returns the canonical registered root identity while keeping shallow-owned children arena-backed. The
+  stateful
+  XBlock/XAsset loader, retail bytes, legacy x86 path, archive writer, and save-side guard remain unchanged pending the
+  production wiring and whole-zone ownership/rollback batch;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -135,8 +141,9 @@ Remaining gates, in implementation order:
    save guard follow later.
 3. Continue fixed-width `disk32` fast-file widening. PR #32 merged exact FX effect/visual/trail/impact schemas and hardened
    pure transactional native converters with local GCC/Clang, complete sanitizer, strict i386/AArch64, source-contract,
-   and all-nine-job candidate CI clean. Next, add a zone-owned aligned native
-   arena and guarded stateful XBlock/XAsset adapter with exact rollback, completed-object/alias registration, and lifetime
+   and all-nine-job candidate CI clean. The zone-owned aligned native arena and the guarded stateful zone adapter over the
+   XBlock cursor walk are implemented as portable primitives with adversarial sequence/provenance/nesting coverage. Next,
+   wire them into production db_load.cpp with exact whole-zone rollback, completed-object/alias registration, and lifetime
    tests before replacing any legacy loader path. Retail wire bytes remain frozen.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
 5. Implement the remaining platform services (sockets, filesystem,
@@ -1166,8 +1173,24 @@ hardening above are now present. Replacement run **29464935543** passed seven jo
 and the no-Steam/headless Windows x86 variants; measured Debug/Release exposed only one redundant test-fixture alignment,
 fixed by `1153eefe`. Codex found no major issue at review head `e5b755a4`, and exact final candidate run **29465922917**
 passed all nine jobs. PR #32 squash-merged as `9860617b` from final branch head `0658dcd0`; independent post-merge run
-**29466158837** also passed all nine jobs. A zone-owned native arena and guarded XBlock/XAsset adapter are next. Writer
-replacement follows later after exact x86
+**29466158837** also passed all nine jobs. The zone-owned native arena and guarded stateful XBlock/XAsset zone adapter
+are now implemented as portable primitives. Final independent review found and fixed a live-arena rebind bypass and the
+missing canonical `DB_AddXAsset` identity return in `503e0b54`/`bf7645d2`; focused GCC/Clang/ASan+UBSan/TSan coverage is
+green. Exact hardening head `ca080971` passed all nine required jobs in run **29503163189**. The fresh hosted Codex
+review found no major issue at `4ab63c1b`; only trusted-caller contract documentation changed afterward, and an independent
+exact-head audit found no blocker at `ca080971`. Production sequencing is detailed below.
+The production-wiring audit found one earlier native64 boundary that must land first: the retail
+`XAssetHeader`/`XAsset`/`ScriptStringList`/`XAssetList` envelopes are fixed 0x4/0x8/0x8/0x10 Disk32 records, while the
+corresponding native types widen to 0x8/0x10/0x10/0x20. A native64 loader that branches only at the FX payload has already
+read the wrong list size and offsets and iterated the asset array at the wrong stride. The next M5 PR therefore adds exact
+Disk32 envelope schemas and a pure bounded validator/iterator without changing production streams. The following
+ownership batch combines the four-byte-stride Disk32 script-string walk, an explicitly constructed generation-keyed
+per-zone sidecar, and centralized `Com_Error`/longjmp-safe rollback. `XZone` remains ABI-unchanged because the registry
+zeroes it with `memset`; native FX storage is allocated inside the existing named PMem zone scope. A checked fixed arena
+budget is acceptable only as an initial compatibility cap that atomically rejects an oversized zone. Stable on-demand
+PMem chunks remain the general solution, and registered assets must be removed before sidecar unbind/destruction and
+`PMem_EndAlloc` must precede rollback `PMem_Free`.
+Writer replacement follows later after exact x86
 full-image equivalence.
 A checked
 whole-segment compressed-finalization boundary remains a
