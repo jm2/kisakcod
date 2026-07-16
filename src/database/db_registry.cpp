@@ -414,7 +414,7 @@ XZone g_zones[ASSET_TYPE_COUNT]{ 0 };
 uint8_t g_zoneHandles[32];
 // Slot zero owns default assets; the live-zone handle table covers slots 1..32.
 static_assert(ARRAY_COUNT(g_zones) == ARRAY_COUNT(g_zoneHandles) + 1);
-char g_zoneNameList[2080];
+char g_zoneNameList[BIG_INFO_VALUE];
 XAssetPool<XModelPieces, POOLSIZE_XMODELPIECES> g_XModelPiecesPool;
 XAssetPool<PhysPreset, POOLSIZE_PHYSPRESET> g_PhysPresetPool;
 XAssetPool<XAnimParts, POOLSIZE_XANIMPARTS> g_XAnimPartsPool;
@@ -490,6 +490,7 @@ char *__cdecl DB_ReferencedFFChecksums()
 {
     int32_t v0; // kr00_4
     char zoneSizeStr[16]; // [esp+1Ch] [ebp-14h] BYREF
+    bool checksumFormatFailed = false;
 
     v0 = strlen("localized_");
     g_zoneNameList[0] = 0;
@@ -501,12 +502,25 @@ char *__cdecl DB_ReferencedFFChecksums()
         },
         [&](const std::size_t, const XZone &zone)
         {
+            if (checksumFormatFailed)
+                return;
+            if (!db::referenced_fastfile::FormatSignedDecimal(
+                    zone.fileSize,
+                    zoneSizeStr,
+                    ARRAY_COUNT(zoneSizeStr)))
+            {
+                checksumFormatFailed = true;
+                return;
+            }
             if (g_zoneNameList[0])
-                I_strncat(g_zoneNameList, 2080, " ");
-            //itoa(zone.fileSize, zoneSizeStr, 0xAu);
-            _itoa(zone.fileSize, zoneSizeStr, 0xAu);
-            I_strncat(g_zoneNameList, 2080, zoneSizeStr);
+                I_strncat(g_zoneNameList, BIG_INFO_VALUE, " ");
+            I_strncat(g_zoneNameList, BIG_INFO_VALUE, zoneSizeStr);
         });
+    if (checksumFormatFailed)
+    {
+        g_zoneNameList[0] = 0;
+        Com_Error(ERR_DROP, "Could not format a referenced fast-file size");
+    }
     return g_zoneNameList;
 }
 
@@ -516,17 +530,22 @@ char *__cdecl DB_ReferencedFFNameList()
 
     v0 = strlen("localized_");
     g_zoneNameList[0] = 0;
-    db::referenced_fastfile::EmitReferencedFastFileNames(
-        g_zones,
-        fs_gameDirVar->current.string,
-        [v0](const char *zoneName)
-        {
-            return I_strncmp(zoneName, "localized_", v0) == 0;
-        },
-        [](const char *part)
-        {
-            I_strncat(g_zoneNameList, 2080, part);
-        });
+    if (!db::referenced_fastfile::FormatReferencedFastFileNames(
+            g_zones,
+            fs_gameDirVar->current.string,
+            [v0](const char *zoneName)
+            {
+                return I_strncmp(zoneName, "localized_", v0) == 0;
+            },
+            g_zoneNameList,
+            ARRAY_COUNT(g_zoneNameList)))
+    {
+        g_zoneNameList[0] = 0;
+        Com_Error(
+            ERR_DROP,
+            "Referenced fast-file name list exceeds the %u-character SYSTEMINFO limit",
+            static_cast<uint32_t>(ARRAY_COUNT(g_zoneNameList) - 1));
+    }
     return g_zoneNameList;
 }
 
@@ -648,7 +667,8 @@ void __cdecl TRACK_db_registry()
     track_static_alloc_internal(g_copyInfo, 0x2000, "g_copyInfo", 10);
     track_static_alloc_internal(g_zones, 5544, "g_zones", 10);
     track_static_alloc_internal(g_zoneHandles, 32, "g_zoneHandles", 10);
-    track_static_alloc_internal(g_zoneNameList, 2080, "g_zoneNameList", 10);
+    track_static_alloc_internal(
+        g_zoneNameList, sizeof(g_zoneNameList), "g_zoneNameList", 10);
     track_static_alloc_internal(&g_XModelPiecesPool, 772, "g_XModelPiecesPool", 10);
     track_static_alloc_internal(&g_PhysPresetPool, 2820, "g_PhysPresetPool", 10);
     track_static_alloc_internal(&g_XAnimPartsPool, 360452, "g_XAnimPartsPool", 10);

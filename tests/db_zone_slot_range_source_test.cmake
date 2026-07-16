@@ -6,6 +6,7 @@ endif()
 
 set(_registry_path "${SOURCE_ROOT}/src/database/db_registry.cpp")
 set(_asset_header_path "${SOURCE_ROOT}/src/xanim/xanim.h")
+set(_shared_header_path "${SOURCE_ROOT}/src/universal/q_shared.h")
 set(_helper_path "${SOURCE_ROOT}/src/database/db_referenced_fastfile.h")
 set(_fixture_path "${SOURCE_ROOT}/tests/db_referenced_fastfile_tests.cpp")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
@@ -15,6 +16,7 @@ set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
 foreach(_path IN ITEMS
     "${_registry_path}"
     "${_asset_header_path}"
+    "${_shared_header_path}"
     "${_helper_path}"
     "${_fixture_path}"
     "${_manifest_path}"
@@ -27,13 +29,22 @@ endforeach()
 
 file(READ "${_registry_path}" _registry)
 file(READ "${_asset_header_path}" _asset_header)
+file(READ "${_shared_header_path}" _shared_header)
 file(READ "${_helper_path}" _helper)
 file(READ "${_fixture_path}" _fixture)
 file(READ "${_manifest_path}" _manifest)
 file(READ "${_tests_path}" _tests)
 file(READ "${_ci_path}" _ci)
 
-foreach(_var IN ITEMS _registry _asset_header _helper _fixture _manifest _tests _ci)
+foreach(_var IN ITEMS
+    _registry
+    _asset_header
+    _shared_header
+    _helper
+    _fixture
+    _manifest
+    _tests
+    _ci)
     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${${_var}}")
     set(${_var} "${_normalized}")
 endforeach()
@@ -92,6 +103,22 @@ require_contains(
     _registry
     "static_assert(ARRAY_COUNT(g_zones) == ARRAY_COUNT(g_zoneHandles) + 1);"
     "the reserved-slot relationship is compile-time checked")
+require_contains(
+    _shared_header
+    "#define BIG_INFO_VALUE 8192"
+    "SYSTEMINFO values retain their 8192-byte protocol capacity")
+require_contains(
+    _registry
+    "char g_zoneNameList[BIG_INFO_VALUE];"
+    "referenced fast-file output uses the SYSTEMINFO value capacity")
+require_contains(
+    _registry
+    "g_zoneNameList, sizeof(g_zoneNameList), \"g_zoneNameList\", 10);"
+    "static allocation tracking follows the expanded native buffer")
+require_not_contains(
+    _registry
+    "g_zoneNameList[2080]"
+    "the saturating legacy output buffer cannot return")
 
 # The executable walk/formatter remains header-only and structural. It must not
 # import the registry, XZone, dvar, qcommon strings, or a dynamic container.
@@ -104,7 +131,11 @@ foreach(_forbidden IN ITEMS
     "XZone"
     "dvar_s"
     "std::string"
-    "std::vector")
+    "std::vector"
+    "malloc("
+    "calloc("
+    "realloc("
+    "operator new")
     require_not_contains(
         _helper "${_forbidden}" "the range helper stays production-neutral")
 endforeach()
@@ -116,27 +147,84 @@ foreach(_marker IN ITEMS
     "static_assert(N == kZoneSlotCount);"
     "for (std::size_t slot = kFirstFastFileZoneSlot; slot < N; ++slot)"
     "if (zone.name[0] && !isExcluded(zone.name))"
-    "visit(slot, zone);"
-    "void EmitReferencedFastFileNames("
-    "bool emitted = false;")
+    "visit(slot, zone);")
     require_contains(
         _helper "${_marker}" "the pure helper owns the exact usable-slot walk")
 endforeach()
+
+extract_slice(
+    _helper
+    "template <typename Integer>"
+    "// Zone is intentionally structural"
+    _decimal_formatter
+    "FormatSignedDecimal")
+foreach(_marker IN ITEMS
+    "bool FormatSignedDecimal("
+    "static_assert(std::is_integral_v<Integer>);"
+    "static_assert(std::is_signed_v<Integer>);"
+    "std::to_chars(output, output + capacity - 1, value, 10);"
+    "if (result.ec != std::errc{})"
+    "return false;"
+    "return true;")
+    require_contains(
+        _decimal_formatter
+        "${_marker}"
+        "portable bounded signed-decimal formatting")
+endforeach()
+require_contains(
+    _decimal_formatter
+    [=[*result.ptr = '\0';]=]
+    "signed decimal output reserves and writes its NUL")
+require_not_contains(
+    _decimal_formatter
+    "_itoa"
+    "MS-only integer conversion cannot return")
+
+extract_slice(
+    _helper
+    "// The destination, zone names, and mod directory must not overlap."
+    "} // namespace db::referenced_fastfile"
+    _name_formatter
+    "FormatReferencedFastFileNames")
+foreach(_marker IN ITEMS
+    "bool FormatReferencedFastFileNames("
+    "std::array<SelectedName, kLiveFastFileZoneCount> selected{};"
+    "const std::size_t outputLimit = capacity - 1;"
+    "detail::TryAccumulateLength("
+    "selected[selectedCount++] = {"
+    "if (!fits) return false;"
+    "char *cursor = output;"
+    "std::memcpy(cursor, part, length);"
+    "return true;")
+    require_contains(
+        _name_formatter
+        "${_marker}"
+        "fixed-storage failure-atomic name formatting")
+endforeach()
+require_contains(
+    _name_formatter
+    [=[*cursor = '\0';]=]
+    "successful name output is explicitly terminated")
 require_ordered(
-    _helper "if (emitted) emit(\" \");" "if (zone.modZone)"
-    "inter-zone separators precede the next name")
+    _name_formatter
+    "ForEachReferencedFastFile("
+    "if (!fits) return false;"
+    "the complete selection is preflighted before failure returns")
 require_ordered(
-    _helper "if (zone.modZone)" "emit(modDirectory);"
-    "mod-zone formatting begins with the requested directory")
+    _name_formatter
+    "if (!fits) return false;"
+    "char *cursor = output;"
+    "no destination write occurs before successful preflight")
 require_ordered(
-    _helper "emit(modDirectory);" "emit(\"/\");"
+    _name_formatter
+    "append(modDirectory, modDirectoryLength);"
+    "*cursor++ = '/';"
     "the mod directory precedes its slash")
 require_ordered(
-    _helper "emit(\"/\");" "emit(zone.name);"
+    _name_formatter
+    "*cursor++ = '/';"
+    "append(entry.name, entry.nameLength);"
     "the mod prefix precedes the zone name")
-require_ordered(
-    _helper "emit(zone.name);" "emitted = true;"
-    "the separator state publishes only after a name")
 
 require_contains(
     _registry
@@ -168,20 +256,58 @@ require_contains(
     "checksum reporting uses the shared usable-slot walk")
 require_contains(
     _checksum_list
-    "_itoa(zone.fileSize, zoneSizeStr, 0xAu);"
-    "checksum reporting retains retail decimal conversion")
+    "db::referenced_fastfile::FormatSignedDecimal("
+    "checksum reporting uses bounded portable integer conversion")
+foreach(_marker IN ITEMS
+    "zone.fileSize,"
+    "zoneSizeStr,"
+    "ARRAY_COUNT(zoneSizeStr)"
+    "bool checksumFormatFailed = false;"
+    "g_zoneNameList[0] = 0;"
+    "Com_Error(ERR_DROP, \"Could not format a referenced fast-file size\");"
+    "I_strncat(g_zoneNameList, BIG_INFO_VALUE, zoneSizeStr);")
+    require_contains(
+        _checksum_list
+        "${_marker}"
+        "portable checksum formatting and fail-closed publication")
+endforeach()
+foreach(_forbidden IN ITEMS "_itoa(" "itoa(" "2080")
+    require_not_contains(
+        _checksum_list
+        "${_forbidden}"
+        "nonportable or legacy-capacity checksum formatting")
+endforeach()
 require_contains(
     _name_list
-    "db::referenced_fastfile::EmitReferencedFastFileNames("
-    "name reporting uses the shared formatter")
+    "db::referenced_fastfile::FormatReferencedFastFileNames("
+    "name reporting uses the capacity-aware shared formatter")
 require_contains(
     _name_list
     "fs_gameDirVar->current.string,"
     "mod-zone prefixes use the native-width dvar string pointer")
+foreach(_marker IN ITEMS
+    "g_zoneNameList,"
+    "ARRAY_COUNT(g_zoneNameList)"
+    "g_zoneNameList[0] = 0;"
+    "Com_Error("
+    "ERR_DROP,"
+    "Referenced fast-file name list exceeds the %u-character SYSTEMINFO limit"
+    "static_cast<uint32_t>(ARRAY_COUNT(g_zoneNameList) - 1)")
+    require_contains(
+        _name_list
+        "${_marker}"
+        "oversized name lists fail explicitly and remain unpublished")
+endforeach()
 require_not_contains(
     _name_list
     "fs_gameDirVar->current.integer"
     "the dvar pointer cannot be truncated through its integer member")
+foreach(_forbidden IN ITEMS "I_strncat(" "2080")
+    require_not_contains(
+        _name_list
+        "${_forbidden}"
+        "name reporting cannot truncate incrementally")
+endforeach()
 foreach(_var IN ITEMS _checksum_list _name_list)
     require_contains(
         ${_var}
@@ -196,16 +322,31 @@ endforeach()
 # Portable behavior coverage executes the production helper rather than a
 # source-shaped reimplementation.
 foreach(_marker IN ITEMS
-    "zones[kDefaultZoneSlot] = {\"slot0-default\", false};"
-    "zones[31] = {\"slot31\", false};"
-    "zones[32] = {\"slot32\", false};"
+    "zones[kDefaultZoneSlot] = {\"slot0-default\", false, -100};"
+    "zones[31] = {\"slot31\", false, 31};"
+    "zones[32] = {\"slot32\", false, 32};"
     "visited[1] == 31"
     "visited[2] == 32"
-    "output == \"mods/example/slot31 slot32\""
+    "visitedFileSizes == std::array<std::int32_t, 3>{-1, 31, 32}"
+    "FormatSignedDecimal("
+    "std::strcmp(exact.data(), \"-2147483648\") == 0"
+    "exact.back() == "
+    "sizeof(expected) - 1"
+    "tooSmall == unchanged"
+    "emptyOutput[0] == "
     "zones[32].name = \"localized_slot32\";"
-    "output == \"mods/example/slot31\"")
+    "std::strcmp(localizedOutput.data(), \"mods/example/slot31\") == 0"
+    "constexpr std::size_t kLegacyCapacity = 2080;"
+    "constexpr std::size_t kSystemInfoCapacity = 8192;"
+    "kLiveFastFileZoneCount * (kModPrefixLength + kZoneNameLength)"
+    "legacyOutput == unchangedLegacyOutput"
+    "the complete 32-zone mod list must fit the SYSTEMINFO value buffer"
+    "std::strlen(systemInfoOutput.data()) == kExpectedLength"
+    "systemInfoOutput[kExpectedLength] == ")
     require_contains(
-        _fixture "${_marker}" "portable range and formatting behavior coverage")
+        _fixture
+        "${_marker}"
+        "portable range, conversion, saturation, and atomicity coverage")
 endforeach()
 foreach(_marker IN ITEMS
     "add_executable(kisakcod-db-referenced-fastfile-tests db_referenced_fastfile_tests.cpp)"
