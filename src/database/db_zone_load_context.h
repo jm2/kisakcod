@@ -91,11 +91,13 @@ struct ZoneLoadCleanupCallbacks final
     // every later retry. Retry means it is not durably complete, retains all
     // required ownership, and is safe to invoke again even if it made visible
     // partial progress. UnsafeFailure means completion is indeterminate and
-    // permanently poisons the slot. The callback context and every referenced
-    // resource must outlive the complete Abandoning interval; callers must
-    // externally serialize every access to the slot and context. The final
-    // callback must retain that serialization until the controller publishes
-    // Empty and TryFinish/TryUnload returns.
+    // permanently poisons the slot. The callback context and all metadata
+    // needed to invoke remaining operations must outlive the complete
+    // Abandoning interval. A resource being released must remain valid until
+    // its corresponding callback returns Success. Callers must externally
+    // serialize every access to the slot and context. The final callback must
+    // retain that serialization until the controller publishes Empty and
+    // TryFinish/TryUnload returns.
     //
     // The callback must not throw, longjmp, call Com_Error, or otherwise leave
     // nonlocally; a nonlocal exit leaves cleanupActive set so the slot remains
@@ -110,10 +112,13 @@ struct ZoneLoadCleanupCallbacks final
 // destructor deliberately performs no cleanup: every transition, including
 // error abandonment, must be driven through the functions below.
 //
-// The object is non-copyable so duplicating a live slot cannot duplicate
-// ownership. Read-only accessors expose its fixed-layout state for portable
-// diagnostics. Production callers have no mutation escape hatch; every public
-// transition validates the complete representation and fails closed.
+// The slot storage must live outside and outlast every per-generation PMem
+// allocation that a cleanup recipe can free: the controller must remain valid
+// after FreePhysicalMemory so it can publish Empty and return. The object is
+// non-copyable so duplicating a live slot cannot duplicate ownership. Read-only
+// accessors expose its fixed-layout state for portable diagnostics. Production
+// callers have no mutation escape hatch; every public transition validates the
+// complete representation and fails closed.
 struct ZoneLoadContextSlotTestAccess;
 
 class alignas(8) ZoneLoadContextSlot final

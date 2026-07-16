@@ -126,11 +126,15 @@ foreach(_marker IN ITEMS
     "ZoneLoadContextSlot(ZoneLoadContextSlot &&) = delete;"
     "struct ZoneLoadContextSlotTestAccess;"
     "#ifdef KISAK_DB_ZONE_LOAD_CONTEXT_TESTING"
-    "Production callers have no mutation escape hatch"
+    "callers have no mutation escape hatch"
+    "slot storage must live outside and outlast every per-generation PMem"
+    "after FreePhysicalMemory so it can publish Empty and return"
+    "needed to invoke remaining operations must outlive"
+    "resource being released must remain valid until"
     "must not throw, longjmp, call Com_Error"
     "a nonlocal exit leaves cleanupActive set"
     "retain that serialization until the controller publishes"
-    "Empty and TryFinish/TryUnload returns")
+    "TryFinish/TryUnload returns")
     require_contains(_header "${_marker}" "explicit no-destructor cleanup")
 endforeach()
 require_ordered(
