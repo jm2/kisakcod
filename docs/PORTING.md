@@ -134,9 +134,9 @@ Completed foundation work:
   its sole test-friendship finding was fixed and resolved. PR #36 squash-merged as `15469b3d`, and authoritative
   post-merge master run **29531440687** passed all nine jobs;
 - a production-neutral transactional script-string journal at baseline core `70ef96fc`, hardened/integrated checkpoint
-  `d158d5e9`, prepare/finalize implementation `aa295367`, and exact boundary-hardened candidate `81ded193`. It binds to
-  one exact generation/slot key, preflights the complete expected count and fixed caller-owned capacity before
-  acquisition, and preserves one full nonzero
+  `d158d5e9`, prepare/finalize implementation `aa295367`, boundary-hardened implementation `81ded193`, and exact
+  source-contract head `83a545ad`. It binds to one exact generation/slot key, preflights the complete expected count and
+  fixed caller-owned capacity before acquisition, and preserves one full nonzero
   `uint32_t` ID for every ordinary-reference
   acquisition, including duplicate IDs. Transfer records the exact `DatabaseUserClaimed` or `DuplicateReleased` result
   per occurrence. The status-bearing pre-publication API performs its final full scan and moves reversible `Transferred`
@@ -156,11 +156,12 @@ Completed foundation work:
   forbidden without future shared claim accounting. Production `SL_*`, loader, registry, PMem, and native-pointer wiring
   deliberately remain absent. Disk32 permits 65,536 occurrences while the current packed refcount permits only 65,535
   identical ordinary refs, so the final acquisition may reject and require exact rollback. The journal retains
-  future-facing full-u32 IDs, while current runtime adapters must enforce `0 < id < 65536`. Exact candidate `81ded193`
-  passes the complete GCC and Clang **82/82** suites, strict warning/conversion builds, ASan+UBSan, MSan, TSan, strict
-  i386/AArch64 compile/link, production-TU/test-access isolation, and ABI/source contracts. The real lifecycle controller
-  is linked into composed success/pre-`Live` failure tests, the finalizer is pinned to four direct assignments, and the
-  65,536-entry path passes through rollback-capable `CommitReady`; candidate CI and hosted review remain pending;
+  future-facing full-u32 IDs, while current runtime adapters must enforce `0 < id < 65536`. Exact code/test head
+  `83a545ad` passes the complete GCC and Clang **82/82** suites, strict warning/conversion builds, ASan+UBSan, MSan,
+  TSan, strict i386/AArch64 compile/link, production-TU/test-access isolation, and ABI/source contracts. The real
+  lifecycle controller is linked into composed success/pre-`Live` failure tests, the finalizer is pinned to four direct
+  assignments, and the 65,536-entry path passes through rollback-capable `CommitReady`; candidate CI and hosted review
+  remain pending;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -202,9 +203,9 @@ Remaining gates, in implementation order:
    XAsset envelopes and bounded eight-byte iterator prerequisite as `3e9b51b0`; PR #35 merged the pure four-byte Disk32
    script-string token walk as `3271b8d6`. PR #36 merged the generation-keyed external slot and distinct
    load-abandon/live-unload recipes as `15469b3d`; post-merge master run **29531440687** passed all nine jobs. Baseline
-   journal core `70ef96fc`, hardened/integrated checkpoint `d158d5e9`, prepare/finalize implementation `aa295367`, and
-   exact boundary-hardening candidate `81ded193` complete the production-neutral transactional ownership primitive with
-   fixed caller storage, full-u32 per-occurrence IDs, exact
+   journal core `70ef96fc`, hardened/integrated checkpoint `d158d5e9`, prepare/finalize implementation `aa295367`,
+   boundary-hardening implementation `81ded193`, and exact source-contract head `83a545ad` complete the
+   production-neutral transactional ownership primitive with fixed caller storage, full-u32 per-occurrence IDs, exact
    claimed-versus-duplicate transfer records, reverse outcome-specific rollback, O(1) controller validation, linear
    phase-boundary scans, fail-closed status operations, and portable/Windows x86 build admission. Before production
    wiring, the caller must prepare `Transferred -> CommitReady`, attempt lifecycle publication, roll back from
@@ -1330,14 +1331,15 @@ return. It cannot be dropped between calls; on success it stays held through pre
 finalization, and the no-fail/no-drop gate/signal release. It excludes every other journal transaction, every raw
 database-user add/transfer/remove/publication, and the global database-user 4 -> 8 sweep; overlapping journals remain
 forbidden without shared claim accounting.
-At exact candidate `81ded193`, the complete GCC and Clang suites are **82/82** green. Strict warning/conversion
+At exact code/test head `83a545ad`, the complete GCC and Clang suites are **82/82** green. Strict warning/conversion
 builds, ASan+UBSan, MSan, TSan, strict i386 and AArch64 compilation/linking, production-TU/test-access isolation, the
 ABI/source contracts, and `git diff --check` pass. The i386 runtime reaches the established sandbox `SIGSYS`; no AArch64
 emulator is available.
 CI definitions configure all five portable utility jobs to build/run the target and measured Windows x86 to build it
 explicitly. The source contract pins the finalizer to four direct assignments, the real lifecycle controller is linked
 into composed success/pre-`Live` failure tests, and the maximum-count path prepares to `CommitReady` before exact
-rollback. Candidate CI and hosted review remain pending.
+rollback. It also pins private rollback-detach bodies, loop-token exclusion, the post-prepare `Loading` state, and the
+success-only finalizer guard. Candidate CI and hosted review remain pending.
 The next ownership batch builds the constructed whole-zone table and no-report script-string adapters around these two
 primitives. Static context slots and callback metadata must live outside and outlast zone PMem so the controller survives
 `PMem_Free` and can publish `Empty`; only per-generation arena/workspace/journal/backing belongs inside the existing named
