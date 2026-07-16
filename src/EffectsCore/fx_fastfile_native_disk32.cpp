@@ -617,6 +617,15 @@ template <typename T>
             if (view.trailIndices.data[trailIndex] >= trail.vertCount)
                 return Status::InvalidTrail;
         }
+
+        // The runtime's trail updater only accepts trail definitions from the
+        // looping range.  Validate the complete serialized trail first so a
+        // malformed span still reports its structural failure deterministically.
+        if (index
+            >= static_cast<std::uint32_t>(effect.elemDefCountLooping))
+        {
+            return Status::InvalidTrail;
+        }
     }
     const std::int32_t expectedLoopingLife = hasInfiniteLoop
         ? (std::numeric_limits<std::int32_t>::max)()
