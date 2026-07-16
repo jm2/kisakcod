@@ -104,6 +104,7 @@ jobs:
           kisakcod-fx-fastfile-native-arena-tests
           kisakcod-fx-fastfile-zone-adapter-disk32-tests
           kisakcod-db-xasset-disk32-tests
+          kisakcod-db-script-string-disk32-tests
           --parallel
 
       - name: Enforce FX archive stack budgets
@@ -118,7 +119,7 @@ jobs:
         run: >
           ctest --test-dir "build-${{ matrix.config }}"
           -C "${{ matrix.config }}" --output-on-failure
-          -R "^(pool-native-pointer-freelist|database-xasset-disk32-envelope|effectscore-effect-table-(transactional-restore|bounded-save)|effectscore-archive-(disk32|system-disk32|buffers-disk32|native-disk32)-codec|effectscore-archive-body-state-disk32-codec|effectscore-archive-reader-disk32|effectscore-archive-restore-candidate-disk32|effectscore-fastfile-disk32-schema|effectscore-fastfile-(native|impact-native)-disk32-conversion|effectscore-fastfile-native-arena|effectscore-fastfile-zone-adapter-disk32)$"
+          -R "^(pool-native-pointer-freelist|database-xasset-disk32-envelope|database-script-string-disk32-walk|effectscore-effect-table-(transactional-restore|bounded-save)|effectscore-archive-(disk32|system-disk32|buffers-disk32|native-disk32)-codec|effectscore-archive-body-state-disk32-codec|effectscore-archive-reader-disk32|effectscore-archive-restore-candidate-disk32|effectscore-fastfile-disk32-schema|effectscore-fastfile-(native|impact-native)-disk32-conversion|effectscore-fastfile-native-arena|effectscore-fastfile-zone-adapter-disk32)$"
 
       - uses: actions/upload-artifact@v4
         with:

@@ -246,7 +246,7 @@ require_not_contains(
     "return XAssetListDisk32Status::Invalid"
     "no iterator failure after output publication")
 require_ordered(
-    _source
+    _next_publication_tail
     "*outAsset = asset;"
     "++iterator->nextIndex_;"
     "complete record publishes before cursor advance")
