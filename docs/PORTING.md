@@ -126,7 +126,10 @@ Completed foundation work:
   `PMem_EndAlloc`, or loading-gate/signal work. Retry cursors, callback reentry, unsafe poisoning, corrupt-state
   validation, and internal slot release are covered without production registry/PMem/stream/adapter wiring. The static
   controller slot and callback metadata must outlive zone PMem so they survive `PMem_Free` and can publish `Empty`;
-  per-generation arena/workspace/journal/backing belongs in the named PMem scope;
+  per-generation arena/workspace/journal/backing belongs in the named PMem scope. The non-atomic API requires one external
+  serializer across every transition/query/callback/destruction; cleanup callbacks are convergent ensure-postcondition
+  operations. Successful loading keeps admission closed through all fallible work and `PMem_EndAlloc`, publishes `Live`
+  through `TryCommit`, then performs an infallible no-drop gate/signal release before dropping that serializer;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -172,7 +175,9 @@ Remaining gates, in implementation order:
    inside the named scope, then bind the recipes and adapter into production with completed-object/alias registration and
    lifetime tests before replacing any legacy loader path. Current DB-thread longjmp remains process-fatal, so the
    controller is a longjmp-safe prerequisite rather than recoverable production abandonment. Retail wire bytes remain
-   frozen.
+   frozen. Production commit must keep admission closed through all fallible work, publish `Live` under the external
+   serializer, and only then perform a no-fail/no-drop gate/signal release before dropping that serializer; otherwise add
+   an admission-pending state before integration.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
 5. Implement the remaining platform services (sockets, filesystem,
    virtual memory, console/process) for Windows/POSIX.
@@ -1244,6 +1249,12 @@ runtime state, release geometry, tear down native storage, free PMem, remove liv
 It cannot replay load-only cancellation, adapter abort, `PMem_EndAlloc`, or loading-gate/signal work. Retry retains the
 first incomplete cursor; unsafe or unknown callback completion poisons the generation permanently; callback reentry is
 `Busy`; state is private outside test fixtures; and terminal receipts stop matching active ownership after release.
+The controller has no internal synchronization: one external serializer covers every transition, query, callback, and
+destruction, while `Busy` detects callback reentry only. Cleanup callbacks are convergent ensure-postcondition operations,
+so normal-path work that is already complete returns Success without replaying one-shot effects. Successful loading keeps
+admission closed through all fallible work and `PMem_EndAlloc`, calls `TryCommit` to publish `Live`, then performs an
+infallible no-drop gate/signal release before dropping the same serializer. A production release that can fail or exit
+nonlocally requires an explicit committing/admission-pending state first.
 The complete GCC and Clang suites are **80/80** green, with focused warning-as-error, conversion/sign-conversion,
 ASan+UBSan, MSan, TSan, static-analysis, strict i386/AArch64, source-contract, and diff checks also clean. Candidate CI and
 hosted review for this new primitive remain pending.

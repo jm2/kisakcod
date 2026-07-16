@@ -87,17 +87,19 @@ enum class ZoneLoadContextStatus : std::uint8_t
 struct ZoneLoadCleanupCallbacks final
 {
     void *context = nullptr;
-    // Success means the named cleanup is durably complete and safe to skip on
-    // every later retry. Retry means it is not durably complete, retains all
-    // required ownership, and is safe to invoke again even if it made visible
-    // partial progress. UnsafeFailure means completion is indeterminate and
-    // permanently poisons the slot. The callback context and all metadata
-    // needed to invoke remaining operations must outlive the complete
-    // Abandoning interval. A resource being released must remain valid until
-    // its corresponding callback returns Success. Callers must externally
-    // serialize every access to the slot and context. The final callback must
-    // retain that serialization until the controller publishes Empty and
-    // TryFinish/TryUnload returns.
+    // Every callback is a convergent ensure-postcondition operation. If the
+    // named postcondition already holds, including because normal-path loading
+    // completed it, return Success without replaying one-shot side effects.
+    // Success means the cleanup is durably complete and safe to skip on every
+    // later retry. Retry means it is not durably complete, retains
+    // all required ownership and metadata, and is safe to invoke again even if
+    // it made visible partial progress. UnsafeFailure means completion is
+    // indeterminate and permanently poisons the slot. The callback context
+    // and all metadata needed to invoke remaining operations must outlive the
+    // complete Abandoning interval. A released resource must remain valid until
+    // its corresponding callback returns Success. The final callback must
+    // retain external serialization until the controller
+    // publishes Empty and TryFinish/TryUnload returns.
     //
     // The callback must not throw, longjmp, call Com_Error, or otherwise leave
     // nonlocally; a nonlocal exit leaves cleanupActive set so the slot remains
@@ -119,6 +121,12 @@ struct ZoneLoadCleanupCallbacks final
 // accessors expose its fixed-layout state for portable diagnostics. Production
 // callers have no mutation escape hatch; every public transition validates the
 // complete representation and fails closed.
+//
+// This object has no internal synchronization. Callers must externally
+// serialize initialization and every transition. They must also serialize
+// every accessor and KeyMatches, callback execution, and destruction for each
+// slot. Busy detects callback reentry while cleanup is active; it is not
+// cross-thread synchronization.
 struct ZoneLoadContextSlotTestAccess;
 
 class alignas(8) ZoneLoadContextSlot final
@@ -245,10 +253,17 @@ struct ZoneLoadContextSlotTestAccess final
     ZoneLoadContextSlot *slot,
     ZoneLoadContextKey *inOutKey) noexcept;
 
-// Loading -> Live. Before calling, production integration must have completed
-// all load-only work: input/inflate cancellation or completion, native-adapter
-// transaction closure, PMem EndAlloc, and loading/queue/recovery-gate/signal
-// release. Repeating the exact commit while Live is a no-op success.
+// Loading -> Live. Under one external serializer, production integration must
+// first complete every fallible conversion/registration/publication step and
+// all load-only closure work, including input/inflate completion or
+// cancellation, native-adapter transaction closure, and PMem EndAlloc. Keep
+// loading/queue/recovery admission closed while final live state is assembled.
+// TryCommit then publishes Live. Only after Success may the caller
+// perform the infallible, no-drop gate/signal release that admits the zone, with
+// no fallible or nonlocal operation in between. Drop the same external
+// serializer last. Repeating the exact commit while Live is a no-op success.
+// The subsequent admission release must also ensure its postcondition without
+// replaying one-shot side effects.
 [[nodiscard]] ZoneLoadContextStatus TryCommitZoneLoadContext(
     ZoneLoadContextSlot *slot,
     const ZoneLoadContextKey &key) noexcept;
@@ -267,9 +282,11 @@ struct ZoneLoadContextSlotTestAccess final
 // alias/direct/stream/delay state; release geometry; destroy native arena,
 // workspace, and sidecars; end the physical-memory allocation; free physical
 // memory; clear registry/loading/queue/recovery-gate/signal state; then release
-// the slot internally. The exact next operation is retained across Retry.
-// UnsafeFailure (or an unknown callback value) poisons the slot and fails
-// closed. The Abandoned terminal receipt permits an exact final retry.
+// the slot internally. Normal-path loading may already have satisfied an early
+// stage; convergent callbacks report Success without replaying its side effects.
+// The exact next operation is retained across Retry. UnsafeFailure (or an
+// unknown callback value) poisons the slot and fails closed. The Abandoned
+// terminal receipt permits an exact final retry.
 [[nodiscard]] ZoneLoadContextStatus TryFinishZoneLoadContextAbandonment(
     ZoneLoadContextSlot *slot,
     const ZoneLoadContextKey &key,

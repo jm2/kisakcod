@@ -129,11 +129,19 @@ foreach(_marker IN ITEMS
     "callers have no mutation escape hatch"
     "slot storage must live outside and outlast every per-generation PMem"
     "after FreePhysicalMemory so it can publish Empty and return"
+    "object has no internal synchronization"
+    "serialize initialization and every transition"
+    "every accessor and KeyMatches"
+    "Busy detects callback reentry"
+    "cross-thread synchronization."
+    "Every callback is a convergent ensure-postcondition operation"
+    "already holds, including because normal-path loading"
+    "return Success without replaying one-shot side effects"
     "needed to invoke remaining operations must outlive"
-    "resource being released must remain valid until"
+    "released resource must remain valid until"
     "must not throw, longjmp, call Com_Error"
     "a nonlocal exit leaves cleanupActive set"
-    "retain that serialization until the controller publishes"
+    "retain external serialization until the controller"
     "TryFinish/TryUnload returns")
     require_contains(_header "${_marker}" "explicit no-destructor cleanup")
 endforeach()
@@ -253,12 +261,33 @@ foreach(_marker IN ITEMS
     require_contains(_header "${_marker}" "mandatory cleanup vocabulary")
 endforeach()
 foreach(_marker IN ITEMS
-    "all load-only work: input/inflate cancellation or completion"
+    "complete every fallible conversion/registration/publication step"
+    "loading/queue/recovery admission closed"
+    "TryCommit then publishes Live"
+    "infallible, no-drop gate/signal release"
+    "no fallible or nonlocal operation in between"
+    "Drop the same external"
+    "admission release must also ensure its postcondition"
     "A committed Live slot must use TryUnload instead"
     "never replay load-only cancel/abort, PMem EndAlloc"
     "loading-gate/signal")
     require_contains(_header "${_marker}" "phase-specific cleanup contract")
 endforeach()
+require_ordered(
+    _header
+    "loading/queue/recovery admission closed"
+    "TryCommit then publishes Live"
+    "commit publishes before admission")
+require_ordered(
+    _header
+    "TryCommit then publishes Live"
+    "infallible, no-drop gate/signal release"
+    "admission follows Live publication")
+require_ordered(
+    _header
+    "infallible, no-drop gate/signal release"
+    "Drop the same external"
+    "serializer outlives admission release")
 foreach(_marker IN ITEMS
     "case ZoneLoadCleanupOperation::CancelLoadInputAndInflate:"
     "*operation = ZoneLoadCleanupOperation::AbortNativeAdapterTransactions;"

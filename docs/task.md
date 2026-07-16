@@ -116,6 +116,13 @@ work item changes. Do not create session-specific handoff files.
   adapter abort, `PMem_EndAlloc`, or loading-gate/signal work. `Retry` preserves the first incomplete cursor, unsafe
   completion fails closed, terminal receipts remain usable only until the next generation, and the final callback must
   retain external serialization until `Empty` is published and the controller returns.
+- The controller is deliberately non-atomic: one external serializer must cover every transition, accessor/key query,
+  callback, and destruction; `Busy` detects callback reentry only. Cleanup callbacks are convergent
+  ensure-postcondition operations, so stages already completed by normal-path loading return `Success` without replaying
+  one-shot side effects. Successful publication keeps loading/queue/recovery admission closed while all fallible work and
+  `PMem_EndAlloc` finish, calls `TryCommit` to publish `Live`, then performs an infallible no-drop gate/signal release and
+  drops the same serializer last. A fallible admission release will require a future committing/admission-pending state
+  rather than weakening this ordering.
 - Current zone-load-context validation: the complete GCC and Clang suites are **80/80** green. Focused GCC/Clang
   warning-as-error builds, Clang conversion/sign-conversion diagnostics, ASan+UBSan, MSan, TSan, Clang static analysis,
   strict i386 compilation/linking, AArch64 compilation/linking, the dedicated source contract, and `git diff --check`
@@ -1045,7 +1052,9 @@ work item changes. Do not create session-specific handoff files.
    through centralized callbacks, treat the first fixed arena budget as a checked compatibility cap, remove partial
    assets before unbinding, release every staged ordinary string reference on failure, and enforce `PMem_EndAlloc` before
    abandonment `PMem_Free`. This is a prerequisite for a future checked error-unwind boundary; current DB-thread longjmp
-   remains process-fatal and is not made recoverable by this primitive.
+   remains process-fatal and is not made recoverable by this primitive. Keep admission closed through all fallible commit
+   work, publish `Live` under the external serializer, then use a no-fail/no-drop gate/signal release before dropping that
+   serializer; introduce an admission-pending state first if production cannot satisfy that contract.
 3. Wire the guarded adapter into the native production FX/impact route behind the explicit legacy-x86 boundary. Preserve
    retail bytes and the writer; use full-width `DB_ResolveInsertedPointer`, publish `-2` roots through
    `DB_SetInsertedPointer` with the canonical `DB_AddXAsset` identity, and add nested-impact, alias, high-address,
