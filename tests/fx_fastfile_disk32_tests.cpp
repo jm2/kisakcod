@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <type_traits>
 
 namespace
@@ -23,6 +24,29 @@ void Check(const bool condition, const char *const expression, const int line)
 }
 
 #define CHECK(expression) Check((expression), #expression, __LINE__)
+
+std::uint8_t CheckedAddU8(const std::uint8_t base,
+                          const std::size_t increment)
+{
+    const std::size_t maximumIncrement =
+        static_cast<std::size_t>((std::numeric_limits<std::uint8_t>::max)())
+        - base;
+    CHECK(increment <= maximumIncrement);
+    if (increment > maximumIncrement)
+        return 0;
+    return static_cast<std::uint8_t>(base + increment);
+}
+
+std::uint32_t CheckedAddU32(const std::uint32_t base,
+                            const std::size_t increment)
+{
+    const std::size_t maximumIncrement = static_cast<std::size_t>(
+        (std::numeric_limits<std::uint32_t>::max)() - base);
+    CHECK(increment <= maximumIncrement);
+    if (increment > maximumIncrement)
+        return 0;
+    return base + static_cast<std::uint32_t>(increment);
+}
 
 template <typename TYPE>
 std::array<std::uint8_t, sizeof(TYPE)> ObjectBytes(const TYPE &object)
@@ -167,7 +191,7 @@ void SetVisualState(fastfile::FxElemVisualStateDisk32 *const state,
     if (!state)
         return;
     for (std::size_t component = 0; component < 4u; ++component)
-        state->color[component] = colorBase + component;
+        state->color[component] = CheckedAddU8(colorBase, component);
     state->rotationDelta = scalarBase;
     state->rotationTotal = scalarBase + 1.0f;
     state->size[0] = scalarBase + 2.0f;
@@ -182,7 +206,9 @@ void StoreVisualState(std::array<std::uint8_t, SIZE> *const bytes,
                       const float scalarBase)
 {
     for (std::size_t component = 0; component < 4u; ++component)
-        StoreU8(bytes, offset + component, colorBase + component);
+        StoreU8(bytes,
+                offset + component,
+                CheckedAddU8(colorBase, component));
     for (std::size_t scalar = 0; scalar < 5u; ++scalar)
     {
         StoreFloat(bytes,
@@ -286,7 +312,9 @@ void TestNestedGoldenBytes()
     vertex.texCoord = 5.0f;
     std::array<std::uint8_t, sizeof(vertex)> vertexExpected{};
     for (std::size_t value = 0; value < 5u; ++value)
-        StoreFloat(&vertexExpected, value * 4u, 1.0f + value);
+        StoreFloat(&vertexExpected,
+                   value * 4u,
+                   1.0f + static_cast<float>(value));
     CHECK(ObjectBytes(vertex) == vertexExpected);
 }
 
@@ -328,9 +356,10 @@ void TestElementDefinitionGoldenBytes()
     SetIntRange(&elem.lifeSpanMsec, 60);
     for (std::size_t index = 0; index < 3u; ++index)
     {
-        SetRange(&elem.spawnOrigin[index], 10.0f + index);
-        SetRange(&elem.spawnAngles[index], 20.0f + index);
-        SetRange(&elem.angularVelocity[index], 30.0f + index);
+        const float component = static_cast<float>(index);
+        SetRange(&elem.spawnOrigin[index], 10.0f + component);
+        SetRange(&elem.spawnAngles[index], 20.0f + component);
+        SetRange(&elem.angularVelocity[index], 30.0f + component);
     }
     SetRange(&elem.spawnOffsetRadius, 13.0f);
     SetRange(&elem.spawnOffsetHeight, 14.0f);
@@ -347,8 +376,9 @@ void TestElementDefinitionGoldenBytes()
     elem.visuals.token.value = UINT32_C(0x33333333);
     for (std::size_t component = 0; component < 3u; ++component)
     {
-        elem.collMins[component] = 40.0f + component;
-        elem.collMaxs[component] = 50.0f + component;
+        const float componentValue = static_cast<float>(component);
+        elem.collMins[component] = 40.0f + componentValue;
+        elem.collMaxs[component] = 50.0f + componentValue;
     }
     elem.effectOnImpact.token.value = UINT32_C(0x44444444);
     elem.effectOnDeath.token.value = UINT32_C(0x55555555);
@@ -373,9 +403,10 @@ void TestElementDefinitionGoldenBytes()
     StoreIntRange(&expected, 0x30, 60);
     for (std::size_t index = 0; index < 3u; ++index)
     {
-        StoreRange(&expected, 0x38 + index * 8u, 10.0f + index);
-        StoreRange(&expected, 0x60 + index * 8u, 20.0f + index);
-        StoreRange(&expected, 0x78 + index * 8u, 30.0f + index);
+        const float component = static_cast<float>(index);
+        StoreRange(&expected, 0x38 + index * 8u, 10.0f + component);
+        StoreRange(&expected, 0x60 + index * 8u, 20.0f + component);
+        StoreRange(&expected, 0x78 + index * 8u, 30.0f + component);
     }
     StoreRange(&expected, 0x50, 13.0f);
     StoreRange(&expected, 0x58, 14.0f);
@@ -398,8 +429,11 @@ void TestElementDefinitionGoldenBytes()
     StoreU32(&expected, 0xBC, UINT32_C(0x33333333));
     for (std::size_t component = 0; component < 3u; ++component)
     {
-        StoreFloat(&expected, 0xC0 + component * 4u, 40.0f + component);
-        StoreFloat(&expected, 0xCC + component * 4u, 50.0f + component);
+        const float componentValue = static_cast<float>(component);
+        StoreFloat(
+            &expected, 0xC0 + component * 4u, 40.0f + componentValue);
+        StoreFloat(
+            &expected, 0xCC + component * 4u, 50.0f + componentValue);
     }
     StoreU32(&expected, 0xD8, UINT32_C(0x44444444));
     StoreU32(&expected, 0xDC, UINT32_C(0x55555555));
@@ -442,14 +476,16 @@ void TestImpactGoldenBytes()
     for (std::size_t index = 0; index < fastfile::kImpactNonFleshEffectCount;
          ++index)
     {
-        const std::uint32_t token = UINT32_C(0x10000000) + index;
+        const std::uint32_t token =
+            CheckedAddU32(UINT32_C(0x10000000), index);
         entry.nonflesh[index].token.value = token;
         StoreU32(&entryExpected, index * 4u, token);
     }
     for (std::size_t index = 0; index < fastfile::kImpactFleshEffectCount;
          ++index)
     {
-        const std::uint32_t token = UINT32_C(0x20000000) + index;
+        const std::uint32_t token =
+            CheckedAddU32(UINT32_C(0x20000000), index);
         entry.flesh[index].token.value = token;
         StoreU32(&entryExpected, 0x74 + index * 4u, token);
     }
