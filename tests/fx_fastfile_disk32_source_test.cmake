@@ -614,6 +614,39 @@ require_occurrence_count(
     1
     "one resolver call site confined to planning")
 
+# Untrusted compiler output must satisfy the same bounded scalar grammar that
+# the runtime assumes when sampling ranges, advancing loops, animating atlases,
+# and selecting adjacent visibility samples.
+extract_slice(
+    _native_impl
+    "bool ValidateTimeRange("
+    "FxFastFileDisk32ReferenceKind VisualReferenceKind("
+    _element_semantics
+    "effect element semantic validation")
+foreach(_marker IN ITEMS
+    "range.amplitude < 0 || range.amplitude > kRandomRangeAmplitudeMax"
+    "(!requirePositiveMinimum || minimum > 0)"
+    "maximum <= static_cast<std::int64_t>(MAX_ELEMS)"
+    "bool ValidateAtlas("
+    "totalBits > 8"
+    "static_cast<std::uint32_t>(entryCount) != (1u << totalBits)"
+    "(elem.atlas.behavior & 3u) == 3u"
+    "ValidateElementSemantics("
+    "interval <= 0 || interval > kDurationLimitMsec || count <= 0"
+    "elem.elemType != FxElemTypeDisk32::Runner"
+    "elem.visStateIntervalCount == 0 || elem.visSamples.token.isNull()")
+    require_contains(
+        _element_semantics "${_marker}" "bounded effect element semantics")
+endforeach()
+require_contains(
+    _native_impl
+    "return effect.msecLoopingLife == expectedLoopingLife ? Status::Success : Status::InvalidCount;"
+    "serialized looping life matches canonical element timing")
+require_contains(
+    _native_impl
+    "index >= static_cast<std::uint32_t>(effect.elemDefCountLooping)"
+    "trail definitions remain in the runtime-supported looping range")
+
 extract_slice(
     _native_impl
     "Status ResolveOne("
