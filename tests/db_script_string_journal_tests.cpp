@@ -24,10 +24,11 @@ using journal::ScriptStringJournalStatus;
 using journal::ScriptStringJournalTestAccess;
 using journal::ScriptStringReleaseCallbackStatus;
 using journal::ScriptStringTransferCallbackStatus;
+using journal::FinalizeScriptStringJournalCommit;
 using journal::TryBeginScriptStringRollback;
 using journal::TryBeginScriptStringTransfer;
-using journal::TryCommitScriptStringJournal;
 using journal::TryInitializeScriptStringJournal;
+using journal::TryPrepareScriptStringJournalCommit;
 using journal::TryRollbackNextScriptString;
 using journal::TrySealScriptStringJournal;
 using journal::TryStageScriptString;
@@ -495,8 +496,14 @@ void TestLayoutNoexceptAndInitialization()
         nullptr,
         std::declval<const ZoneLoadContextKey &>(),
         std::declval<const ScriptStringJournalCallbacks &>())));
-    static_assert(noexcept(TryCommitScriptStringJournal(
+    static_assert(noexcept(TryPrepareScriptStringJournalCommit(
         nullptr, std::declval<const ZoneLoadContextKey &>())));
+    static_assert(noexcept(FinalizeScriptStringJournalCommit(
+        std::declval<ScriptStringJournal &>())));
+    static_assert(std::is_same_v<
+        decltype(FinalizeScriptStringJournalCommit(
+            std::declval<ScriptStringJournal &>())),
+        void>);
     static_assert(noexcept(TryBeginScriptStringRollback(
         nullptr, std::declval<const ZoneLoadContextKey &>())));
     static_assert(noexcept(TryRollbackNextScriptString(
@@ -757,7 +764,7 @@ void TestAcquirePreflightNoDedupAndFailureAtomicity()
     CHECK(partial.phase() == ScriptStringJournalPhase::Staging);
 }
 
-void TestTransferRetryReentryCommitAndReceipt()
+void TestTransferRetryReentryPrepareFinalizeAndReceipt()
 {
     const ZoneLoadContextKey key = MakeKey(31, 9);
     std::array<ScriptStringJournalEntry, 2> storage{};
@@ -827,8 +834,16 @@ void TestTransferRetryReentryCommitAndReceipt()
     const ScriptStringJournalEntry *const originalStorage =
         value.storage();
     CHECK(
-        TryCommitScriptStringJournal(&value, key)
+        TryPrepareScriptStringJournalCommit(&value, key)
         == ScriptStringJournalStatus::Success);
+    CHECK(value.phase() == ScriptStringJournalPhase::CommitReady);
+    CHECK(value.storage() == originalStorage);
+    CHECK(value.capacity() == 2);
+    CHECK(
+        TryPrepareScriptStringJournalCommit(&value, key)
+        == ScriptStringJournalStatus::Success);
+    CHECK(recorder.eventCount == eventsBeforeReceipt);
+    FinalizeScriptStringJournalCommit(value);
     CHECK(value.phase() == ScriptStringJournalPhase::Committed);
     CHECK(value.storage() == nullptr);
     CHECK(value.capacity() == 0);
@@ -850,8 +865,12 @@ void TestTransferRetryReentryCommitAndReceipt()
     CHECK(value.entryCount() == 2);
     CHECK(value.transferCursor() == 2);
     CHECK(
-        TryCommitScriptStringJournal(&value, key)
+        TryPrepareScriptStringJournalCommit(&value, key)
         == ScriptStringJournalStatus::Success);
+    FinalizeScriptStringJournalCommit(value);
+    CHECK(value.phase() == ScriptStringJournalPhase::Committed);
+    CHECK(value.storage() == nullptr);
+    CHECK(value.capacity() == 0);
     CHECK(
         TryBeginScriptStringRollback(&value, key)
         == ScriptStringJournalStatus::InvalidPhase);
@@ -1032,7 +1051,7 @@ void TestPartialTransferRollbackOwnershipSelection()
     CHECK(value.storage() == nullptr);
 }
 
-void TestTransferredRemainsRollbackCapableAndEmptyJournal()
+void TestTransferredAndCommitReadyRemainRollbackCapable()
 {
     const ZoneLoadContextKey key = MakeKey(61, 15);
     std::array<ScriptStringJournalEntry, 2> storage{};
@@ -1057,6 +1076,13 @@ void TestTransferredRemainsRollbackCapableAndEmptyJournal()
         == ScriptStringJournalStatus::Success);
     CHECK(value.phase() == ScriptStringJournalPhase::Transferred);
 
+    CHECK(
+        TryPrepareScriptStringJournalCommit(&value, key)
+        == ScriptStringJournalStatus::Success);
+    CHECK(value.phase() == ScriptStringJournalPhase::CommitReady);
+    CHECK(
+        TryPrepareScriptStringJournalCommit(&value, key)
+        == ScriptStringJournalStatus::Success);
     CHECK(
         TryBeginScriptStringRollback(&value, key)
         == ScriptStringJournalStatus::Success);
@@ -1245,8 +1271,15 @@ void RunSequentialOwnershipScenario(
     else
     {
         CHECK(
-            TryCommitScriptStringJournal(&value, key)
+            TryPrepareScriptStringJournalCommit(&value, key)
             == ScriptStringJournalStatus::Success);
+        CHECK(
+            value.phase()
+            == ScriptStringJournalPhase::CommitReady);
+        FinalizeScriptStringJournalCommit(value);
+        CHECK(
+            value.phase()
+            == ScriptStringJournalPhase::Committed);
     }
 
     for (const OwnershipRecord &record : model.records)
@@ -1506,10 +1539,27 @@ void TestControllerAndEntryCorruptionFailClosed()
         == ScriptStringJournalStatus::Success);
     commitStorage[0].reserved[2] = 1;
     CHECK(
-        TryCommitScriptStringJournal(
+        TryPrepareScriptStringJournalCommit(
             &corruptCommitEntry, commitKey)
         == ScriptStringJournalStatus::InvalidState);
+    CHECK(
+        corruptCommitEntry.phase()
+        == ScriptStringJournalPhase::Transferred);
     CHECK(corruptCommitEntry.storage() == commitStorage.data());
+    commitStorage[0].reserved[2] = 0;
+    CHECK(
+        TryBeginScriptStringRollback(
+            &corruptCommitEntry, commitKey)
+        == ScriptStringJournalStatus::Success);
+    CHECK(
+        TryRollbackNextScriptString(
+            &corruptCommitEntry,
+            commitKey,
+            MakeCallbacks(&commitRecorder))
+        == ScriptStringJournalStatus::Success);
+    CHECK(
+        corruptCommitEntry.phase()
+        == ScriptStringJournalPhase::RolledBack);
 }
 
 void TestDatabaseUserReleaseStatuses()
@@ -1650,7 +1700,29 @@ void TestPlacementReconstructionRejectsOldKey()
         TryTransferNextScriptString(value, newKey, {})
         == ScriptStringJournalStatus::Success);
     CHECK(
-        TryCommitScriptStringJournal(value, newKey)
+        TryPrepareScriptStringJournalCommit(value, oldKey)
+        == ScriptStringJournalStatus::StaleKey);
+    CHECK(
+        value->phase()
+        == ScriptStringJournalPhase::Transferred);
+    CHECK(
+        TryPrepareScriptStringJournalCommit(value, newKey)
+        == ScriptStringJournalStatus::Success);
+    CHECK(
+        value->phase()
+        == ScriptStringJournalPhase::CommitReady);
+    CHECK(
+        TryPrepareScriptStringJournalCommit(value, oldKey)
+        == ScriptStringJournalStatus::StaleKey);
+    CHECK(
+        value->phase()
+        == ScriptStringJournalPhase::CommitReady);
+    FinalizeScriptStringJournalCommit(*value);
+    CHECK(
+        TryPrepareScriptStringJournalCommit(value, oldKey)
+        == ScriptStringJournalStatus::StaleKey);
+    CHECK(
+        TryPrepareScriptStringJournalCommit(value, newKey)
         == ScriptStringJournalStatus::Success);
     value->~ScriptStringJournal();
 }
@@ -1772,10 +1844,10 @@ int main()
 {
     TestLayoutNoexceptAndInitialization();
     TestAcquirePreflightNoDedupAndFailureAtomicity();
-    TestTransferRetryReentryCommitAndReceipt();
+    TestTransferRetryReentryPrepareFinalizeAndReceipt();
     TestReverseRollbackFromStaging();
     TestPartialTransferRollbackOwnershipSelection();
-    TestTransferredRemainsRollbackCapableAndEmptyJournal();
+    TestTransferredAndCommitReadyRemainRollbackCapable();
     TestMaximumCountLinearLifecycle();
     TestSequentialRepeatedIdOwnershipModel();
     TestControllerAndEntryCorruptionFailClosed();

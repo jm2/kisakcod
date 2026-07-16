@@ -271,6 +271,7 @@ foreach(_marker IN ITEMS
     "Sealed"
     "Transferring"
     "Transferred"
+    "CommitReady"
     "Committed"
     "RollingBack"
     "RolledBack"
@@ -301,7 +302,12 @@ foreach(_marker IN ITEMS
     "Callbacks may not mutate the journal control object"
     "results must truthfully report the exact ownership outcome"
     "Callbacks must not throw, longjmp, call Com_Error"
-    "Repeated IDs are distinct references and are never deduplicated.")
+    "Repeated IDs are distinct references and are never deduplicated."
+    "status-bearing Transferred -> CommitReady step"
+    "publish the matching lifecycle controller as Live"
+    "invoke this unchecked finalizer"
+    "It cannot validate, branch, report status"
+    "Repeating it on the resulting Committed journal is harmless.")
     require_contains(_header "${_marker}" "public ownership contract")
 endforeach()
 foreach(_marker IN ITEMS
@@ -341,7 +347,7 @@ require_ordered(
     "staging capacity is checked before acquisition")
 
 # Controller validation is O(1). The complete used-entry scan exists in one
-# helper and runs only on the first Seal, BeginRollback, or Commit transition;
+# helper and runs only on the first Seal, BeginRollback, or Prepare transition;
 # exact idempotent receipts return before it. One-entry transfer/rollback calls
 # validate only the current entry immediately before acting.
 extract_slice(
@@ -386,7 +392,7 @@ require_literal_count(
     _source
     "EntriesMatchPhase("
     4
-    "definition plus Seal/Commit/BeginRollback boundary scans")
+    "definition plus Seal/Prepare/BeginRollback boundary scans")
 require_literal_count(
     _source
     "EntryMatchesPhase("
@@ -406,15 +412,20 @@ require_ordered(
     "idempotent sealed receipt precedes its one-time scan")
 extract_slice(
     _source
-    "ScriptStringJournalStatus TryCommitScriptStringJournal("
-    "ScriptStringJournalStatus TryBeginScriptStringRollback("
-    _commit_boundary
-    "commit boundary")
+    "ScriptStringJournalStatus TryPrepareScriptStringJournalCommit("
+    "void FinalizeScriptStringJournalCommit("
+    _prepare_boundary
+    "pre-Live commit-prepare boundary")
 require_ordered(
-    _commit_boundary
-    "if (journal->phase_ == ScriptStringJournalPhase::Committed)"
+    _prepare_boundary
+    "journal->phase_ == ScriptStringJournalPhase::CommitReady"
     "if (!EntriesMatchPhase("
-    "idempotent commit receipt precedes its one-time scan")
+    "idempotent prepare receipt precedes its one-time scan")
+require_ordered(
+    _prepare_boundary
+    "if (!EntriesMatchPhase("
+    "journal->phase_ = ScriptStringJournalPhase::CommitReady;"
+    "complete scan precedes CommitReady publication")
 extract_slice(
     _source
     "ScriptStringJournalStatus TryBeginScriptStringRollback("
@@ -434,7 +445,7 @@ require_literal_count(
     _source
     "status = journal->validateKey(key);"
     7
-    "all seven post-initialization mutators bind the exact key")
+    "all seven status-bearing post-initialization mutators bind the exact key")
 foreach(_marker IN ITEMS
     "if (!(key == key_))"
     "return ScriptStringJournalStatus::StaleKey;"
@@ -464,7 +475,7 @@ require_ordered(
 extract_slice(
     _source
     "ScriptStringJournalStatus TryTransferNextScriptString("
-    "ScriptStringJournalStatus TryCommitScriptStringJournal("
+    "ScriptStringJournalStatus TryPrepareScriptStringJournalCommit("
     _transfer
     "one-entry transfer operation")
 foreach(_marker IN ITEMS
@@ -494,15 +505,16 @@ require_ordered(
     "++journal->transferCursor_;"
     "durable outcome publishes before cursor")
 
-# Transferred remains reversible. Final commit is callback-free, detaches
-# caller storage, and cannot be rolled back. Rollback walks in reverse and
-# selects the exact release operation from each recorded outcome.
+# Transferred prepares to CommitReady before Live while remaining reversible.
+# The post-Live finalizer is an unconditional no-fail publication/detach step.
+# Rollback walks in reverse and selects the exact release operation from each
+# recorded outcome.
 extract_slice(
     _source
-    "ScriptStringJournalStatus TryCommitScriptStringJournal("
-    "ScriptStringJournalStatus TryBeginScriptStringRollback("
-    _commit
-    "callback-free final commit")
+    "ScriptStringJournalStatus TryPrepareScriptStringJournalCommit("
+    "void FinalizeScriptStringJournalCommit("
+    _prepare
+    "status-bearing pre-Live commit preparation")
 foreach(_forbidden IN ITEMS
     "callbacks"
     "callbackStatus"
@@ -511,13 +523,55 @@ foreach(_forbidden IN ITEMS
     "removeOrdinary"
     "removeDatabaseUser")
     require_not_contains(
-        _commit "${_forbidden}" "final commit cannot invoke callbacks")
+        _prepare "${_forbidden}" "prepare cannot invoke callbacks")
 endforeach()
 foreach(_marker IN ITEMS
-    "journal->phase_ = ScriptStringJournalPhase::Committed;"
-    "journal->detachBacking();")
-    require_contains(_commit "${_marker}" "terminal commit receipt")
+    "if (!EntriesMatchPhase("
+    "journal->phase_ = ScriptStringJournalPhase::CommitReady;")
+    require_contains(_prepare "${_marker}" "rollback-capable commit preparation")
 endforeach()
+
+extract_slice(
+    _source
+    "void FinalizeScriptStringJournalCommit("
+    "ScriptStringJournalStatus TryBeginScriptStringRollback("
+    _finalize
+    "unconditional post-Live final commit")
+foreach(_forbidden IN ITEMS
+    "if ("
+    "switch ("
+    "for ("
+    "while ("
+    "validate"
+    "EntriesMatchPhase"
+    "EntryMatchesPhase"
+    "callbacks"
+    "callbackStatus"
+    "acquireOrdinary"
+    "transferToDatabaseUser"
+    "removeOrdinary"
+    "removeDatabaseUser"
+    "Com_Error"
+    "return "
+    "status"
+    "throw ")
+    require_not_contains(
+        _finalize "${_forbidden}" "finalizer must remain unconditional/no-fail")
+endforeach()
+require_contains(
+    _finalize
+    "void FinalizeScriptStringJournalCommit( ScriptStringJournal &journal) noexcept { journal.phase_ = ScriptStringJournalPhase::Committed; journal.flags_ = kInitializedFlag; journal.detachBacking(); }"
+    "exact no-fail finalizer body")
+require_ordered(
+    _finalize
+    "journal.phase_ = ScriptStringJournalPhase::Committed;"
+    "journal.flags_ = kInitializedFlag;"
+    "Committed publishes before flag normalization")
+require_ordered(
+    _finalize
+    "journal.flags_ = kInitializedFlag;"
+    "journal.detachBacking();"
+    "flags normalize before backing detach")
 
 extract_slice(
     _source
@@ -527,6 +581,7 @@ extract_slice(
     "reverse rollback protocol")
 foreach(_marker IN ITEMS
     "case ScriptStringJournalPhase::Transferred:"
+    "case ScriptStringJournalPhase::CommitReady:"
     "journal->rollbackCursor_ = journal->entryCount_;"
     "journal->rollbackCursor_ - 1"
     "if (!EntryMatchesPhase("
@@ -585,14 +640,14 @@ endforeach()
 
 # The focused fixture pins full-width and duplicate IDs, no-callback capacity
 # rejection, retries/reentry, claimed-vs-duplicate outcomes, reverse partial
-# rollback, reversible Transferred, empty receipts, and poison paths.
+# rollback, reversible Transferred/CommitReady, empty receipts, and poison paths.
 foreach(_marker IN ITEMS
     "void TestLayoutNoexceptAndInitialization()"
     "void TestAcquirePreflightNoDedupAndFailureAtomicity()"
-    "void TestTransferRetryReentryCommitAndReceipt()"
+    "void TestTransferRetryReentryPrepareFinalizeAndReceipt()"
     "void TestReverseRollbackFromStaging()"
     "void TestPartialTransferRollbackOwnershipSelection()"
-    "void TestTransferredRemainsRollbackCapableAndEmptyJournal()"
+    "void TestTransferredAndCommitReadyRemainRollbackCapable()"
     "void TestUnsafeAndUnknownResultsPoison()"
     "journal::kMaxScriptStringJournalEntries"
     "(std::numeric_limits<std::uint32_t>::max)()"
@@ -606,6 +661,7 @@ foreach(_marker IN ITEMS
     "EventKind::RemoveOrdinary"
     "EventKind::RemoveDatabaseUser"
     "ScriptStringJournalPhase::Transferred"
+    "ScriptStringJournalPhase::CommitReady"
     "ScriptStringJournalPhase::Committed"
     "ScriptStringJournalPhase::RolledBack"
     "static_cast<ScriptStringTransferCallbackStatus>( UINT8_C(0xFF))")
@@ -636,6 +692,12 @@ foreach(_marker IN ITEMS
     "void TestPlacementReconstructionRejectsOldKey()"
     "::new (bytes.data()) ScriptStringJournal{}"
     "TrySealScriptStringJournal(value, oldKey)"
+    "TryPrepareScriptStringJournalCommit(value, oldKey)"
+    "TryPrepareScriptStringJournalCommit(value, newKey)"
+    "FinalizeScriptStringJournalCommit(*value)"
+    "TryPrepareScriptStringJournalCommit( &corruptCommitEntry, commitKey)"
+    "corruptCommitEntry.phase() == ScriptStringJournalPhase::Transferred"
+    "TryBeginScriptStringRollback( &corruptCommitEntry, commitKey)"
     "entry = { 0, ScriptStringJournalEntryState::Released"
     "entry = { 0, ScriptStringJournalEntryState::OrdinaryStaged")
     require_contains(_fixture "${_marker}" "hardening regression coverage")

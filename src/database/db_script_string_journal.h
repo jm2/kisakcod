@@ -37,6 +37,7 @@ enum class ScriptStringJournalPhase : std::uint8_t
     Sealed,
     Transferring,
     Transferred,
+    CommitReady,
     Committed,
     RollingBack,
     RolledBack,
@@ -144,11 +145,12 @@ struct ScriptStringJournalCallbacks final
 // synchronization mechanism.
 //
 // The journal never allocates, never deduplicates, is non-copyable, and performs
-// no destructor cleanup. TryCommit and completed rollback detach the backing
-// storage only after all ownership has reached a terminal state. While backing
-// is attached, the journal exclusively owns the used entry span. The caller
-// cannot have its original pointer revoked and must therefore neither read nor
-// mutate that span except through externally serialized diagnostics.
+// no destructor cleanup. FinalizeScriptStringJournalCommit and completed
+// rollback detach the backing storage only after all ownership has reached a
+// terminal state. While backing is attached, the journal exclusively owns the
+// used entry span. The caller cannot have its original pointer revoked and
+// must therefore neither read nor mutate that span except through externally
+// serialized diagnostics.
 #ifdef KISAK_DB_SCRIPT_STRING_JOURNAL_TESTING
 struct ScriptStringJournalTestAccess;
 #endif
@@ -199,9 +201,11 @@ private:
         ScriptStringJournal *journal,
         const zone_load::ZoneLoadContextKey &key,
         const ScriptStringJournalCallbacks &callbacks) noexcept;
-    friend ScriptStringJournalStatus TryCommitScriptStringJournal(
+    friend ScriptStringJournalStatus TryPrepareScriptStringJournalCommit(
         ScriptStringJournal *journal,
         const zone_load::ZoneLoadContextKey &key) noexcept;
+    friend void FinalizeScriptStringJournalCommit(
+        ScriptStringJournal &journal) noexcept;
     friend ScriptStringJournalStatus TryBeginScriptStringRollback(
         ScriptStringJournal *journal,
         const zone_load::ZoneLoadContextKey &key) noexcept;
@@ -363,21 +367,35 @@ struct ScriptStringJournalTestAccess final
     const ScriptStringJournalCallbacks &callbacks) noexcept;
 
 // Transferred remains rollback-capable while any whole-zone operation can
-// still fail. The caller may invoke this callback-free
-// Transferred -> Committed step only after the lifecycle controller has
-// published the whole zone as Live, still under the same serializer and before
-// releasing admission. It detaches caller storage and preserves the exact
-// key/count receipt. Repeating it with the exact key is a no-op success.
-// Committed ownership cannot be rolled back.
-[[nodiscard]] ScriptStringJournalStatus TryCommitScriptStringJournal(
+// still fail. Immediately before publishing the lifecycle controller as Live,
+// the caller invokes this status-bearing Transferred -> CommitReady step under
+// the shared serializer. It performs the final complete ownership-record scan.
+// Validation failure leaves Transferred and its backing attached so rollback
+// remains available after the caller restores any externally corrupted record.
+// Exact retries while CommitReady or Committed are no-op successes.
+[[nodiscard]] ScriptStringJournalStatus
+TryPrepareScriptStringJournalCommit(
     ScriptStringJournal *journal,
     const zone_load::ZoneLoadContextKey &key) noexcept;
 
-// Staging/Sealed/Transferring/Transferred -> RollingBack, preserving the
-// transfer cursor and setting the reverse cursor to entryCount. This
-// callback-free step also makes a later RetryNoChange mutation-free. An empty
-// journal completes and detaches immediately. Exact retries while RollingBack
-// or RolledBack are no-op successes.
+// After successful prepare, the caller must
+// publish the matching lifecycle controller as Live under the same serializer,
+// with no fallible or nonlocal operation in between, and then
+// invoke this unchecked finalizer before releasing admission. The body is
+// deliberately unconditional: it only publishes Committed, resets flags, and
+// detaches backing.
+// It cannot validate, branch, report status, invoke callbacks, or scan storage
+// after Live publication. Calling it without a successful matching prepare
+// violates the ownership protocol.
+// Repeating it on the resulting Committed journal is harmless.
+void FinalizeScriptStringJournalCommit(
+    ScriptStringJournal &journal) noexcept;
+
+// Staging/Sealed/Transferring/Transferred/CommitReady -> RollingBack,
+// preserving the transfer cursor and setting the reverse cursor to entryCount.
+// This callback-free step also makes a later RetryNoChange mutation-free. An
+// empty journal completes and detaches immediately. Exact retries while
+// RollingBack or RolledBack are no-op successes.
 [[nodiscard]] ScriptStringJournalStatus TryBeginScriptStringRollback(
     ScriptStringJournal *journal,
     const zone_load::ZoneLoadContextKey &key) noexcept;

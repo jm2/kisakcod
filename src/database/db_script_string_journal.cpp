@@ -52,6 +52,7 @@ constexpr std::uint8_t kKnownFlags =
     case ScriptStringJournalPhase::Sealed:
     case ScriptStringJournalPhase::Transferring:
     case ScriptStringJournalPhase::Transferred:
+    case ScriptStringJournalPhase::CommitReady:
     case ScriptStringJournalPhase::Committed:
     case ScriptStringJournalPhase::RollingBack:
     case ScriptStringJournalPhase::RolledBack:
@@ -140,6 +141,7 @@ constexpr std::uint8_t kKnownFlags =
             == ScriptStringJournalEntryState::OrdinaryStaged;
     case ScriptStringJournalPhase::Transferring:
     case ScriptStringJournalPhase::Transferred:
+    case ScriptStringJournalPhase::CommitReady:
         return index < transferCursor
             ? IsTransferredState(entry.state)
             : entry.state
@@ -315,6 +317,7 @@ bool ScriptStringJournal::isCanonical() const noexcept
         }
         break;
     case ScriptStringJournalPhase::Transferred:
+    case ScriptStringJournalPhase::CommitReady:
         if (entryCount_ != expectedCount_
             || transferCursor_ != entryCount_
             || rollbackCursor_ != 0)
@@ -665,7 +668,7 @@ ScriptStringJournalStatus TryTransferNextScriptString(
     return ScriptStringJournalStatus::Success;
 }
 
-ScriptStringJournalStatus TryCommitScriptStringJournal(
+ScriptStringJournalStatus TryPrepareScriptStringJournalCommit(
     ScriptStringJournal *const journal,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
@@ -676,8 +679,11 @@ ScriptStringJournalStatus TryCommitScriptStringJournal(
         status = journal->validateKey(key);
     if (status != ScriptStringJournalStatus::Success)
         return status;
-    if (journal->phase_ == ScriptStringJournalPhase::Committed)
+    if (journal->phase_ == ScriptStringJournalPhase::CommitReady
+        || journal->phase_ == ScriptStringJournalPhase::Committed)
+    {
         return ScriptStringJournalStatus::Success;
+    }
     if (journal->phase_
         != ScriptStringJournalPhase::Transferred)
     {
@@ -693,10 +699,16 @@ ScriptStringJournalStatus TryCommitScriptStringJournal(
         return ScriptStringJournalStatus::InvalidState;
     }
 
-    journal->phase_ = ScriptStringJournalPhase::Committed;
-    journal->flags_ = kInitializedFlag;
-    journal->detachBacking();
+    journal->phase_ = ScriptStringJournalPhase::CommitReady;
     return ScriptStringJournalStatus::Success;
+}
+
+void FinalizeScriptStringJournalCommit(
+    ScriptStringJournal &journal) noexcept
+{
+    journal.phase_ = ScriptStringJournalPhase::Committed;
+    journal.flags_ = kInitializedFlag;
+    journal.detachBacking();
 }
 
 ScriptStringJournalStatus TryBeginScriptStringRollback(
@@ -722,6 +734,7 @@ ScriptStringJournalStatus TryBeginScriptStringRollback(
     case ScriptStringJournalPhase::Sealed:
     case ScriptStringJournalPhase::Transferring:
     case ScriptStringJournalPhase::Transferred:
+    case ScriptStringJournalPhase::CommitReady:
         break;
     case ScriptStringJournalPhase::Committed:
     case ScriptStringJournalPhase::RollingBack:
