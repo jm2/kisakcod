@@ -471,15 +471,22 @@ BuiltEffect BuildEffect(
 // ---------------------------------------------------------------------------
 // Resolution pool and publication sink.
 
-struct alignas(16) OpaqueAsset final
+// Plain 64-byte records stand in for retained material/model assets.  The
+// heap arrays below give every element at least pointer alignment without
+// embedding an alignment specifier in any test aggregate (MSVC /W4 rejects
+// the resulting padding as C4324).
+struct OpaqueAsset final
 {
     std::uint8_t bytes[64];
 };
+static_assert(sizeof(OpaqueAsset) % 16 == 0);
 
 struct ResolutionPool final
 {
-    OpaqueAsset assets[64] = {};
-    FxEffectDef identities[8] = {};
+    std::unique_ptr<OpaqueAsset[]> assets =
+        std::make_unique<OpaqueAsset[]>(64);
+    std::unique_ptr<FxEffectDef[]> identities =
+        std::make_unique<FxEffectDef[]>(8);
     std::uint32_t nextAsset = 0;
     std::uint32_t nextIdentity = 0;
 
@@ -488,7 +495,7 @@ struct ResolutionPool final
         Resolution resolution;
         resolution.pointer = &assets[nextAsset++ % 64];
         resolution.retainedByteCount = sizeof(OpaqueAsset);
-        resolution.retainedAlignment = alignof(OpaqueAsset);
+        resolution.retainedAlignment = alignof(void *);
         return resolution;
     }
 
@@ -499,6 +506,12 @@ struct ResolutionPool final
         resolution.retainedByteCount = sizeof(FxEffectDef);
         resolution.retainedAlignment = alignof(FxEffectDef);
         return resolution;
+    }
+
+    [[nodiscard]] const FxEffectDef *identity(
+        const std::uint32_t index) const noexcept
+    {
+        return &identities[index];
     }
 };
 
@@ -550,11 +563,14 @@ struct alignas(fastfile::kFxFastFileNativeArenaStorageAlignment)
     std::uint8_t bytes[kArenaBytes];
 };
 
+// Every over-aligned or alignment-specified object lives on the heap so the
+// environment aggregate itself needs no alignment padding (MSVC C4324).
 struct Environment final
 {
     std::unique_ptr<Adapter> adapter = std::make_unique<Adapter>();
     std::unique_ptr<ArenaStorage> storage = std::make_unique<ArenaStorage>();
-    Arena arena{};
+    std::unique_ptr<Arena> arenaOwner = std::make_unique<Arena>();
+    Arena &arena = *arenaOwner;
     WireImage image{};
     ResolutionPool pool{};
     PublicationSink sink{};

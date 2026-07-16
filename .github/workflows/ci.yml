@@ -101,6 +101,8 @@ jobs:
           kisakcod-fx-fastfile-disk32-tests
           kisakcod-fx-fastfile-native-disk32-tests
           kisakcod-fx-fastfile-impact-native-disk32-tests
+          kisakcod-fx-fastfile-native-arena-tests
+          kisakcod-fx-fastfile-zone-adapter-disk32-tests
           --parallel
 
       - name: Enforce FX archive stack budgets

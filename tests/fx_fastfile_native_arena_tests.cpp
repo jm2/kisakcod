@@ -35,10 +35,15 @@ struct alignas(fastfile::kFxFastFileNativeArenaStorageAlignment) Storage final
     std::uint8_t bytes[kStorageBytes];
 };
 
+// The arena and its over-aligned storage live on the heap so no test
+// aggregate embeds an alignment specifier (MSVC /W4 rejects the padding
+// as C4324).
 struct Fixture final
 {
-    Arena arena{};
-    Storage storage{};
+    std::unique_ptr<Arena> arenaOwner = std::make_unique<Arena>();
+    std::unique_ptr<Storage> storageOwner = std::make_unique<Storage>();
+    Arena &arena = *arenaOwner;
+    Storage &storage = *storageOwner;
 
     Fixture()
     {

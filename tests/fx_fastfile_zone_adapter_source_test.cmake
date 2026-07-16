@@ -217,5 +217,9 @@ require_contains(_ci "effectscore-fastfile-native-arena"
     "measured Windows x86 CI runs the arena suite")
 require_contains(_ci "effectscore-fastfile-zone-adapter-disk32"
     "measured Windows x86 CI runs the adapter suite")
+require_contains(_ci "kisakcod-fx-fastfile-native-arena-tests"
+    "the measured Windows x86 build step compiles the arena suite")
+require_contains(_ci "kisakcod-fx-fastfile-zone-adapter-disk32-tests"
+    "the measured Windows x86 build step compiles the adapter suite")
 
 message(STATUS "FX fast-file zone adapter source invariants hold")
