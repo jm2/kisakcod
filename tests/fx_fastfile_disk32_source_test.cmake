@@ -393,7 +393,12 @@ foreach(_marker IN ITEMS
     "disk32::PointerToken token"
     "const void *address"
     "std::uint64_t byteCount"
-    "struct FxFastFileDisk32ResolvedReference { const void *pointer = nullptr;"
+    "struct alignas(8) FxFastFileDisk32ResolvedReference { const void *pointer = nullptr;"
+    "std::uint64_t retainedByteCount = 0;"
+    "std::uint64_t retainedAlignment = 0;"
+    "As a hard resolver precondition, an opaque asset"
+    "reported alignment must be a power of two of at least alignof(void *)."
+    "struct alignas(8) FxFastFileDisk32FrozenProvenanceRequest"
     "FxFastFileNativeDisk32Status TryPlanFxEffectDefDisk32("
     "FxFastFileNativeDisk32Status TryMaterializeFxEffectDefDisk32(")
     require_contains(_native "${_marker}" "report-free native conversion boundary")
@@ -408,14 +413,14 @@ foreach(_forbidden IN ITEMS
     "setjmp"
     "longjmp"
     "std::uintptr_t"
-    "std::uint32_t pointer")
+    "std::uint32_t pointer =")
     require_not_contains(
         _native "${_forbidden}" "converter API stays silent and full-width")
 endforeach()
 
 extract_slice(
     _native
-    "// The source view and every reachable source byte"
+    "// The source view, every reachable source byte, and every complete"
     "// Materializes into aligned caller-owned storage"
     _plan_api
     "public planning API")
@@ -425,9 +430,9 @@ foreach(_marker IN ITEMS
     "const FxFastFileEffectDefDisk32View &source"
     "const FxFastFileDisk32Resolvers &resolvers"
     "FxFastFileNativeDisk32Plan *outPlan) noexcept;"
-    "Planning resolves each"
-    "retained native identity exactly once under the operation gate and commits"
-    "outPlan only after the full graph, journal, and native layout validate")
+    "Planning resolves each retained native identity exactly once under the"
+    "operation gate and commits outPlan only after the full graph, journals, and"
+    "native layout validate.")
     require_contains(_plan_api "${_marker}" "transactional planning contract")
 endforeach()
 
@@ -467,6 +472,8 @@ foreach(_marker IN ITEMS
     "FxFastFileNativeDisk32Workspace( FxFastFileNativeDisk32Workspace &&) = delete;"
     "FxFastFileNativeDisk32Workspace &operator=( FxFastFileNativeDisk32Workspace &&) = delete;"
     "FxFastFileDisk32ResolvedReference resolved_[kFxFastFileDisk32MaxResolvedReferences]{};"
+    "FxFastFileDisk32FrozenProvenanceRequest provenanceRequests_[kFxFastFileDisk32MaxProvenanceRequests]{};"
+    "std::uint64_t provenanceRequestChecksums_[ kFxFastFileDisk32MaxProvenanceRequests]{};"
     "FxFastFileNativeDisk32Phase phase_ = FxFastFileNativeDisk32Phase::Empty;"
     "bool operating_ = false;"
     "std::is_nothrow_default_constructible_v< FxFastFileNativeDisk32Workspace>"
@@ -503,8 +510,10 @@ require_ordered(
     "plan binding is private")
 foreach(_marker IN ITEMS
     "class alignas(8) FxFastFileNativeDisk32Plan final"
+    "RUNTIME_SIZE(FxFastFileDisk32ResolvedReference, 0x18, 0x18);"
+    "RUNTIME_SIZE(FxFastFileDisk32FrozenProvenanceRequest, 0x40, 0x40);"
     "RUNTIME_SIZE(FxFastFileNativeDisk32Plan, 0x30, 0x30);"
-    "RUNTIME_SIZE(FxFastFileNativeDisk32Workspace, 0x11868, 0x23088);")
+    "RUNTIME_SIZE(FxFastFileNativeDisk32Workspace, 0x4F910, 0x4F928);")
     require_contains(_native "${_marker}" "cross-compiler plan/workspace extent")
 endforeach()
 
@@ -535,7 +544,14 @@ foreach(_marker IN ITEMS
     "Status PlanLayout("
     "ComputeSourceFingerprint(source) != sourceFingerprint"
     "ComputeBoundFingerprint( source, workspace->resolved_, workspace->resolvedCount_)"
-    "ComputeResolvedStringsFingerprint(journal, *journalCount)"
+    "ComputeResolvedReferencesFingerprint(journal, *journalCount)"
+    "InvokeFrozenProvenanceRequests("
+    "FrozenProvenanceJournalMatches("
+    "FrozenProvenanceBindingMatches("
+    "FrozenProvenanceContentMatches("
+    "ComputeProvenanceRequestChecksum("
+    "ComputeProvenanceJournalFingerprint("
+    "reference.retainedAlignment >= alignof(void *)"
     "if (workspace->phase_ != FxFastFileNativeDisk32Phase::Empty) return Status::InvalidPhase;"
     "(std::numeric_limits<std::int32_t>::max)()"
     "std::memset(storage, 0, plan.outputBytes_);"
@@ -547,6 +563,10 @@ foreach(_marker IN ITEMS
     "*outEffect = nativeEffect;")
     require_contains(_native_impl "${_marker}" "transactional converter implementation")
 endforeach()
+require_not_contains(
+    _native_impl
+    "FrozenProvenanceGraphMatches("
+    "provenance callbacks cannot rescan the complete source graph")
 require_occurrence_count(
     _native_impl
     "resolvers.resolve("
@@ -560,24 +580,30 @@ extract_slice(
     _resolve_one_impl
     "single-reference resolver")
 foreach(_marker IN ITEMS
-    "if (!IsExactCString(resolved))"
-    "const std::uint64_t stringFingerprint = ComputeResolvedStringFingerprint(resolved);"
+    "status = ValidateResolvedReference(kind, resolved, &retainedBytes);"
+    "const std::uint64_t retainedFingerprint = ComputeResolvedReferenceFingerprint(resolved);"
+    "const std::uint64_t retainedByteCount = resolved.retainedByteCount;"
+    "const std::uint64_t retainedAlignment = resolved.retainedAlignment;"
     "source.provenance.validateSpan("
-    "ComputeResolvedStringFingerprint(resolved) != stringFingerprint"
-    "HashResolvedString(expectedStrings, resolved, resolvedIndex)"
+    "ComputeResolvedReferenceFingerprint(resolved) != retainedFingerprint"
+    "HashResolvedReference(expectedReferences, resolved, resolvedIndex)"
     "journal[resolvedIndex] = resolved;")
     require_contains(
         _resolve_one_impl "${_marker}" "resolved-string callback binding")
 endforeach()
+require_contains(
+    _native_impl
+    "reference.retainedAlignment == alignof(char) && IsExactCString(reference)"
+    "resolved strings require exact byte and alignment contracts")
 require_ordered(
     _resolve_one_impl
-    "const std::uint64_t stringFingerprint = ComputeResolvedStringFingerprint(resolved);"
+    "const std::uint64_t retainedFingerprint = ComputeResolvedReferenceFingerprint(resolved);"
     "source.provenance.validateSpan("
     "resolved string bytes bind before external provenance")
 require_ordered(
     _resolve_one_impl
     "source.provenance.validateSpan("
-    "ComputeResolvedStringFingerprint(resolved) != stringFingerprint"
+    "ComputeResolvedReferenceFingerprint(resolved) != retainedFingerprint"
     "resolved string bytes revalidate after external provenance")
 
 extract_slice(
@@ -618,11 +644,12 @@ foreach(_marker IN ITEMS
     "TryMaterializeFxImpactTableDisk32("
     "kFxFastFileImpactDisk32HandleCount == 396"
     "RUNTIME_SIZE(FxFastFileImpactNativeDisk32Plan, 0x38, 0x38);"
-    "RUNTIME_SIZE(FxFastFileImpactNativeDisk32Workspace, 0x1300, 0x1F78);"
+    "RUNTIME_SIZE(FxFastFileImpactNativeDisk32Workspace, 0x2BD0, 0x2BE0);"
     "db_load treated this field as a boolean"
     "outPlan unchanged"
     "Materialization performs no"
-    "must remain readable and byte-for-byte immutable throughout planning"
+    "resolver-returned retained span must remain readable and byte-for-byte"
+    "immutable throughout planning and for as long as the workspace remains"
     "Successful output retains the resolver-returned"
     "Every failure preserves both storage and outTable")
     require_contains(
@@ -656,9 +683,13 @@ foreach(_marker IN ITEMS
     "const std::uint64_t nameBeforeProvenanceFingerprint = ComputeSourceFingerprint(source, name);"
     "const FxFastFileDisk32Resolvers resolverSnapshot = resolvers;"
     "const void *const nameAddress = name.pointer;"
-    "name.pointer != nameAddress || name.stringByteCount != nameByteCount"
-    "constexpr std::size_t identityBytes = sizeof(FxEffectDef);"
-    "IsAligned(resolved.pointer, alignof(FxEffectDef))"
+    "name.pointer != nameAddress || name.retainedByteCount != nameByteCount"
+    "workspace->resolved_[0] = name;"
+    "const FxFastFileDisk32ResolvedReference &boundName = workspace->resolved_[0];"
+    "RangesOverlap(name.pointer, nameBytes, &name, sizeof(name))"
+    "RangesOverlap(resolved.pointer, identityBytes, &resolved, sizeof(resolved))"
+    "const std::size_t identityBytes = static_cast<std::size_t>(identity.retainedByteCount);"
+    "ValidateEffectReference(resolved, &identityBytes)"
     "const FxImpactEntryDisk32 &entry = workspace->sourceEntrySnapshots_[entryIndex];"
     "const disk32::PointerToken token ="
     "if (!SourceMatchesSnapshots("
@@ -689,7 +720,7 @@ require_ordered(
 require_ordered(
     _impact_plan_impl
     "source.provenance.validateSpan(source.provenance.context, FxFastFileDisk32SourceSpanKind::String"
-    "name.pointer != nameAddress || name.stringByteCount != nameByteCount"
+    "name.pointer != nameAddress || name.retainedByteCount != nameByteCount"
     "impact name descriptor revalidates before a post-callback dereference")
 require_ordered(
     _impact_plan_impl
@@ -704,8 +735,8 @@ require_ordered(
 require_occurrence_count(
     _impact_plan_impl
     "resolverSnapshot.resolve("
-    3
-    "impact callbacks remain confined to the three planner call sites")
+    2
+    "impact callbacks remain confined to the root and shared-handle planner call sites")
 
 extract_slice(
     _impact_native_impl
@@ -728,7 +759,7 @@ require_ordered(
     "impact fingerprint preflight precedes output construction")
 require_occurrence_count(
     _impact_materialize_impl
-    "identity, sizeof(FxEffectDef)"
+    "identity.retainedByteCount"
     2
     "impact output rejects partial overlap with complete retained effects")
 
