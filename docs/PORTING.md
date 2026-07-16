@@ -1176,7 +1176,20 @@ passed all nine jobs. PR #32 squash-merged as `9860617b` from final branch head 
 **29466158837** also passed all nine jobs. The zone-owned native arena and guarded stateful XBlock/XAsset zone adapter
 are now implemented as portable primitives. Final independent review found and fixed a live-arena rebind bypass and the
 missing canonical `DB_AddXAsset` identity return in `503e0b54`/`bf7645d2`; focused GCC/Clang/ASan+UBSan/TSan coverage is
-green and replacement CI is pending. Production wiring with whole-zone rollback and registration tests is next.
+green. Exact hardening head `ca080971` passed all nine required jobs in run **29503163189**. The fresh hosted Codex
+review found no major issue at `4ab63c1b`; only trusted-caller contract documentation changed afterward, and an independent
+exact-head audit found no blocker at `ca080971`. Production sequencing is detailed below.
+The production-wiring audit found one earlier native64 boundary that must land first: the retail
+`XAssetHeader`/`XAsset`/`ScriptStringList`/`XAssetList` envelopes are fixed 0x4/0x8/0x8/0x10 Disk32 records, while the
+corresponding native types widen to 0x8/0x10/0x10/0x20. A native64 loader that branches only at the FX payload has already
+read the wrong list size and offsets and iterated the asset array at the wrong stride. The next M5 PR therefore adds exact
+Disk32 envelope schemas and a pure bounded validator/iterator without changing production streams. The following
+ownership batch combines the four-byte-stride Disk32 script-string walk, an explicitly constructed generation-keyed
+per-zone sidecar, and centralized `Com_Error`/longjmp-safe rollback. `XZone` remains ABI-unchanged because the registry
+zeroes it with `memset`; native FX storage is allocated inside the existing named PMem zone scope. A checked fixed arena
+budget is acceptable only as an initial compatibility cap that atomically rejects an oversized zone. Stable on-demand
+PMem chunks remain the general solution, and registered assets must be removed before sidecar unbind/destruction and
+`PMem_EndAlloc` must precede rollback `PMem_Free`.
 Writer replacement follows later after exact x86
 full-image equivalence.
 A checked
