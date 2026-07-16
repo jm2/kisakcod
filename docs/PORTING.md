@@ -161,7 +161,8 @@ Completed foundation work:
   TSan, strict i386/AArch64 compile/link, production-TU/test-access isolation, and ABI/source contracts. The real
   lifecycle controller is linked into composed success/pre-`Live` failure tests, the finalizer is pinned to four direct
   assignments, and the 65,536-entry path passes through rollback-capable `CommitReady`; candidate CI and hosted review
-  remain pending;
+  are clean at exact PR #37 head `ea47caf5`: run **29538874418** passed all nine jobs, Gemini reported no comments, hosted
+  Codex found no major issue, and no review threads remain;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -1339,10 +1340,15 @@ CI definitions configure all five portable utility jobs to build/run the target 
 explicitly. The source contract pins the finalizer to four direct assignments, the real lifecycle controller is linked
 into composed success/pre-`Live` failure tests, and the maximum-count path prepares to `CommitReady` before exact
 rollback. It also pins private rollback-detach bodies, loop-token exclusion, the post-prepare `Loading` state, and the
-success-only finalizer guard. Candidate CI and hosted review remain pending.
-The next ownership batch builds the constructed whole-zone table and no-report script-string adapters around these two
-primitives. Static context slots and callback metadata must live outside and outlast zone PMem so the controller survives
-`PMem_Free` and can publish `Empty`; only per-generation arena/workspace/journal/backing belongs inside the existing named
+success-only finalizer guard. Exact PR #37 head `ea47caf5` passed all nine jobs in run **29538874418**. Gemini reported no
+comments, hosted Codex found no major issue, and no review threads remain.
+Before the next ownership batch, correct the two existing referenced-fast-file name/checksum loops that iterate indices
+0..31: the registry allocation truth is 33 physical slots, reserved/default slot 0, and usable fast-file slots 1..32, so
+those loops currently include the reserved slot and omit valid slot 32.
+The next ownership batch then builds the constructed whole-zone table and no-report script-string adapters around these
+two primitives. Static context slots and callback metadata must live outside and outlast zone PMem. They must survive
+`PMem_Free` and allow the controller to publish `Empty`; only per-generation arena/workspace/journal/backing belongs
+inside the existing named
 PMem zone scope. `XZone` remains ABI-unchanged because the registry zeroes it with `memset`. A checked fixed arena budget
 is acceptable only as an initial compatibility cap that atomically rejects an oversized zone. Stable on-demand PMem
 chunks remain the general solution, and registered assets must be removed before sidecar unbind/destruction, staged string
