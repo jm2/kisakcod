@@ -6,8 +6,18 @@ endif()
 
 set(_registry_path "${SOURCE_ROOT}/src/database/db_registry.cpp")
 set(_asset_header_path "${SOURCE_ROOT}/src/xanim/xanim.h")
+set(_helper_path "${SOURCE_ROOT}/src/database/db_referenced_fastfile.h")
+set(_fixture_path "${SOURCE_ROOT}/tests/db_referenced_fastfile_tests.cpp")
+set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
+set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
 
-foreach(_path IN ITEMS "${_registry_path}" "${_asset_header_path}")
+foreach(_path IN ITEMS
+    "${_registry_path}"
+    "${_asset_header_path}"
+    "${_helper_path}"
+    "${_fixture_path}"
+    "${_manifest_path}"
+    "${_tests_path}")
     if(NOT EXISTS "${_path}")
         message(FATAL_ERROR "Missing zone-slot range source: ${_path}")
     endif()
@@ -15,8 +25,12 @@ endforeach()
 
 file(READ "${_registry_path}" _registry)
 file(READ "${_asset_header_path}" _asset_header)
+file(READ "${_helper_path}" _helper)
+file(READ "${_fixture_path}" _fixture)
+file(READ "${_manifest_path}" _manifest)
+file(READ "${_tests_path}" _tests)
 
-foreach(_var IN ITEMS _registry _asset_header)
+foreach(_var IN ITEMS _registry _asset_header _helper _fixture _manifest _tests)
     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${${_var}}")
     set(${_var} "${_normalized}")
 endforeach()
@@ -26,6 +40,15 @@ function(require_contains SOURCE_VAR NEEDLE DESCRIPTION)
     if(_position EQUAL -1)
         message(FATAL_ERROR
             "Missing zone-slot invariant (${DESCRIPTION}): '${NEEDLE}'")
+    endif()
+endfunction()
+
+function(require_ordered SOURCE_VAR FIRST SECOND DESCRIPTION)
+    string(FIND "${${SOURCE_VAR}}" "${FIRST}" _first)
+    string(FIND "${${SOURCE_VAR}}" "${SECOND}" _second)
+    if(_first EQUAL -1 OR _second EQUAL -1 OR _first GREATER_EQUAL _second)
+        message(FATAL_ERROR
+            "Missing or unordered zone-slot invariant (${DESCRIPTION})")
     endif()
 endfunction()
 
@@ -67,6 +90,60 @@ require_contains(
     "static_assert(ARRAY_COUNT(g_zones) == ARRAY_COUNT(g_zoneHandles) + 1);"
     "the reserved-slot relationship is compile-time checked")
 
+# The executable walk/formatter remains header-only and structural. It must not
+# import the registry, XZone, dvar, qcommon strings, or a dynamic container.
+foreach(_forbidden IN ITEMS
+    "database.h"
+    "db_registry"
+    "xanim/"
+    "qcommon/"
+    "universal/"
+    "XZone"
+    "dvar_s"
+    "std::string"
+    "std::vector")
+    require_not_contains(
+        _helper "${_forbidden}" "the range helper stays production-neutral")
+endforeach()
+foreach(_marker IN ITEMS
+    "inline constexpr std::size_t kDefaultZoneSlot = 0;"
+    "inline constexpr std::size_t kFirstFastFileZoneSlot = 1;"
+    "inline constexpr std::size_t kLiveFastFileZoneCount = 32;"
+    "kFirstFastFileZoneSlot + kLiveFastFileZoneCount;"
+    "static_assert(N == kZoneSlotCount);"
+    "for (std::size_t slot = kFirstFastFileZoneSlot; slot < N; ++slot)"
+    "if (zone.name[0] && !isExcluded(zone.name))"
+    "visit(slot, zone);"
+    "void EmitReferencedFastFileNames("
+    "bool emitted = false;")
+    require_contains(
+        _helper "${_marker}" "the pure helper owns the exact usable-slot walk")
+endforeach()
+require_ordered(
+    _helper "if (emitted) emit(\" \");" "if (zone.modZone)"
+    "inter-zone separators precede the next name")
+require_ordered(
+    _helper "if (zone.modZone)" "emit(modDirectory);"
+    "mod-zone formatting begins with the requested directory")
+require_ordered(
+    _helper "emit(modDirectory);" "emit(\"/\");"
+    "the mod directory precedes its slash")
+require_ordered(
+    _helper "emit(\"/\");" "emit(zone.name);"
+    "the mod prefix precedes the zone name")
+require_ordered(
+    _helper "emit(zone.name);" "emitted = true;"
+    "the separator state publishes only after a name")
+
+require_contains(
+    _registry
+    "#include \"db_referenced_fastfile.h\""
+    "the registry uses the production-neutral helper")
+require_contains(
+    _manifest
+    "database/db_referenced_fastfile.h"
+    "the helper is part of the database source manifest")
+
 extract_slice(
     _registry
     "char *__cdecl DB_ReferencedFFChecksums()"
@@ -80,17 +157,61 @@ extract_slice(
     _name_list
     "DB_ReferencedFFNameList")
 
-# ARRAY_COUNT(g_zones) is 33, so both walks visit exactly 1..32: slot zero is
-# excluded and the highest usable slot is no longer silently omitted.
+# Both output paths use the executable 1..32 walk and retain the retail
+# localized-prefix comparison. The native pointer member is required on 64-bit.
+require_contains(
+    _checksum_list
+    "db::referenced_fastfile::ForEachReferencedFastFile("
+    "checksum reporting uses the shared usable-slot walk")
+require_contains(
+    _checksum_list
+    "_itoa(zone.fileSize, zoneSizeStr, 0xAu);"
+    "checksum reporting retains retail decimal conversion")
+require_contains(
+    _name_list
+    "db::referenced_fastfile::EmitReferencedFastFileNames("
+    "name reporting uses the shared formatter")
+require_contains(
+    _name_list
+    "fs_gameDirVar->current.string,"
+    "mod-zone prefixes use the native-width dvar string pointer")
+require_not_contains(
+    _name_list
+    "fs_gameDirVar->current.integer"
+    "the dvar pointer cannot be truncated through its integer member")
 foreach(_var IN ITEMS _checksum_list _name_list)
     require_contains(
         ${_var}
-        "for (i = 1; i < static_cast<int32_t>(ARRAY_COUNT(g_zones)); ++i)"
-        "referenced fast-file reporting covers slots 1 through 32")
+        "return I_strncmp(zoneName, \"localized_\", v0) == 0;"
+        "retail localized fast-file exclusion is preserved")
     require_not_contains(
         ${_var}
         "for (i = 0;"
         "reserved slot zero cannot enter referenced fast-file reporting")
+endforeach()
+
+# Portable behavior coverage executes the production helper rather than a
+# source-shaped reimplementation.
+foreach(_marker IN ITEMS
+    "zones[kDefaultZoneSlot] = {\"slot0-default\", false};"
+    "zones[31] = {\"slot31\", false};"
+    "zones[32] = {\"slot32\", false};"
+    "visited[1] == 31"
+    "visited[2] == 32"
+    "output == \"mods/example/slot31 slot32\""
+    "zones[32].name = \"localized_slot32\";"
+    "output == \"mods/example/slot31\"")
+    require_contains(
+        _fixture "${_marker}" "portable range and formatting behavior coverage")
+endforeach()
+foreach(_marker IN ITEMS
+    "add_executable(kisakcod-db-referenced-fastfile-tests db_referenced_fastfile_tests.cpp)"
+    "target_compile_features(kisakcod-db-referenced-fastfile-tests PRIVATE cxx_std_20)"
+    "kisakcod_test_warnings(kisakcod-db-referenced-fastfile-tests)"
+    "NAME database-referenced-fastfile-format"
+    "COMMAND kisakcod-db-referenced-fastfile-tests")
+    require_contains(
+        _tests "${_marker}" "portable behavior test registration")
 endforeach()
 
 extract_slice(

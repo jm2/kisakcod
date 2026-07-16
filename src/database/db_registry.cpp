@@ -1,5 +1,6 @@
 #include "database.h"
 #include "db_load_atomic.h"
+#include "db_referenced_fastfile.h"
 #include "db_validation.h"
 
 #include <qcommon/files.h>
@@ -488,46 +489,44 @@ void DB_CompleteLoadingAsset()
 char *__cdecl DB_ReferencedFFChecksums()
 {
     int32_t v0; // kr00_4
-    int32_t i; // [esp+10h] [ebp-20h]
     char zoneSizeStr[16]; // [esp+1Ch] [ebp-14h] BYREF
 
     v0 = strlen("localized_");
     g_zoneNameList[0] = 0;
-    for (i = 1; i < static_cast<int32_t>(ARRAY_COUNT(g_zones)); ++i)
-    {
-        if (g_zones[i].name[0] && I_strncmp(g_zones[i].name, "localized_", v0))
+    db::referenced_fastfile::ForEachReferencedFastFile(
+        g_zones,
+        [v0](const char *zoneName)
+        {
+            return I_strncmp(zoneName, "localized_", v0) == 0;
+        },
+        [&](const std::size_t, const XZone &zone)
         {
             if (g_zoneNameList[0])
                 I_strncat(g_zoneNameList, 2080, " ");
-            //itoa(g_zones[i].fileSize, zoneSizeStr, 0xAu);
-            _itoa(g_zones[i].fileSize, zoneSizeStr, 0xAu);
+            //itoa(zone.fileSize, zoneSizeStr, 0xAu);
+            _itoa(zone.fileSize, zoneSizeStr, 0xAu);
             I_strncat(g_zoneNameList, 2080, zoneSizeStr);
-        }
-    }
+        });
     return g_zoneNameList;
 }
 
 char *__cdecl DB_ReferencedFFNameList()
 {
     int32_t v0; // kr00_4
-    int32_t i; // [esp+10h] [ebp-Ch]
 
     v0 = strlen("localized_");
     g_zoneNameList[0] = 0;
-    for (i = 1; i < static_cast<int32_t>(ARRAY_COUNT(g_zones)); ++i)
-    {
-        if (g_zones[i].name[0] && I_strncmp(g_zones[i].name, "localized_", v0))
+    db::referenced_fastfile::EmitReferencedFastFileNames(
+        g_zones,
+        fs_gameDirVar->current.string,
+        [v0](const char *zoneName)
         {
-            if (g_zoneNameList[0])
-                I_strncat(g_zoneNameList, 2080, " ");
-            if (g_zones[i].modZone)
-            {
-                I_strncat(g_zoneNameList, 2080, (const char*)fs_gameDirVar->current.integer);
-                I_strncat(g_zoneNameList, 2080, "/");
-            }
-            I_strncat(g_zoneNameList, 2080, g_zones[i].name);
-        }
-    }
+            return I_strncmp(zoneName, "localized_", v0) == 0;
+        },
+        [](const char *part)
+        {
+            I_strncat(g_zoneNameList, 2080, part);
+        });
     return g_zoneNameList;
 }
 
