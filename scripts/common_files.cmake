@@ -144,6 +144,8 @@ set(DATABASE
     "${SRC_DIR}/database/database.h"
     "${SRC_DIR}/database/db_asset_mode.h"
     "${SRC_DIR}/database/db_disk32.h"
+    "${SRC_DIR}/database/db_xasset_disk32.cpp"
+    "${SRC_DIR}/database/db_xasset_disk32.h"
     "${SRC_DIR}/database/db_validation.h"
     "${SRC_DIR}/database/db_assetnames.cpp"
     "${SRC_DIR}/database/db_auth.cpp"
