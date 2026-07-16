@@ -11,7 +11,7 @@ work item changes. Do not create session-specific handoff files.
   effect-definition and impact-table planner/materializers are implemented. Review hardening now also enforces retail
   timing/count/visibility/atlas canonicalization, rejects non-looping trail definitions that the runtime cannot spawn,
   and clamps the normalized visibility endpoint to the final valid sample pair. The complete local GCC/Clang matrix is
-  clean at the current implementation head; replacement CI/review/merge are the current work item. Current
+  clean at the current implementation head; final replacement CI and merge are the current work item. Current
   upstream-integration baseline remains merge `11a9e08c` through upstream `312a9d2e`.
 - Current fast-file widening checkpoint: one canonical portable `FxEffectDef`/`FxElemDef`/visual/trail runtime type family
   now replaces the renderer-only duplicate definition boundary. The effect converter validates exact Disk32 graph
@@ -29,15 +29,19 @@ work item changes. Do not create session-specific handoff files.
   The stateful `db_load.cpp`/XBlock cursor, XAsset registration, legacy x86 loader, archive writer/wire bytes, save-side
   native64 guard, and licensed workflow remain unchanged; a zone-owned native arena and guarded stateful adapter are the
   next M5 seam after this PR.
-- Current fast-file validation: implementation/test head `654798ac` passes GCC and Clang **71/71**, ASan+UBSan and TSan
+- Current fast-file validation: implementation/test head through `1153eefe` passes GCC and Clang **71/71**, ASan+UBSan
+  and TSan
   **70/70**, the focused effect converter under Clang MemorySanitizer, and the updated fast-file source/security contract.
   Only the generated static-stack test is intentionally absent under instrumentation. Strict GCC i386 and AArch64
   compilation/linking also pass; the sandbox blocks i386 execution with `SIGSYS` and has no AArch64 emulator. The prior remote head
   `0f376a92` passed Linux amd64/arm64, macOS arm64, and the Windows x86 no-Steam/headless jobs in run **29462535215**;
   portable Windows amd64/ARM64 and measured Windows x86 Debug/Release found test-only `/W4 /WX` conversion, unary-minus,
   and over-alignment diagnostics. Commits `83ae1414`, `dd58dbef`, and `55685e95` remove those representation and compiler
-  hazards; the semantic/runtime corrections and canonical regression fixtures follow through `654798ac`. Extra Clang
-  conversion/sign-conversion diagnostics are clean for all three new fixtures. Replacement CI is pending. The enforced
+  hazards; the semantic/runtime corrections and canonical regression fixtures follow through `654798ac`. Replacement run
+  **29464935543** then passed Linux amd64/arm64, portable Windows amd64/ARM64, macOS arm64, Windows x86 no-Steam, and
+  headless Windows x86. Its measured Debug/Release jobs found one remaining test-only MSVC C4324 diagnostic; `1153eefe`
+  removes that redundant fixture alignment. Extra Clang conversion/sign-conversion diagnostics are clean for all three
+  new fixtures, and Codex found no major issue at review head `e5b755a4`. Final replacement CI is pending. The enforced
   4 KiB helper-frame gate previously measured 1,056 bytes maximum under GCC and 984 under Clang. No licensed workflow was
   dispatched.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.

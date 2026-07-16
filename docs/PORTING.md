@@ -1156,13 +1156,17 @@ threads are resolved, and exact review-fix/documentation head `21dae5ca` passed 
 definition/visual/trail/impact schemas plus separate report-free transactional effect-definition and impact-table
 planner/materializers without touching the stateful production loader. Canonical native objects, frozen resolver
 transactions, full source/name provenance, bounded journals, callback-free publication, retained-extent overlap rejection,
-and adversarial mutation/alias tests are included. Current implementation/test head `654798ac` passes GCC and Clang
+and adversarial mutation/alias tests are included. Current implementation/test head through `1153eefe` passes GCC and
+Clang
 **71/71**, ASan+UBSan and TSan **70/70**, a focused MemorySanitizer run, strict i386 compilation/linking, strict AArch64
 compilation/linking, and the updated source contract. The sandbox blocks the i386 executable with `SIGSYS`, so Windows x86
 CI remains the runtime authority. Prior CI run **29462535215** at `0f376a92` passed five jobs and exposed test-only MSVC
-warning-as-error failures in the other four; the local branch contains their fixed-width/representation-safe corrections
-plus the semantic/runtime hardening above. Replacement CI/review/merge are the current gate; a zone-owned native arena and
-guarded XBlock/XAsset adapter are next. Writer replacement follows later after exact x86 full-image equivalence.
+warning-as-error failures in the other four; their fixed-width/representation-safe corrections plus the semantic/runtime
+hardening above are now present. Replacement run **29464935543** passed seven jobs, including both portable Windows targets
+and the no-Steam/headless Windows x86 variants; measured Debug/Release exposed only one redundant test-fixture alignment,
+fixed by `1153eefe`. Codex found no major issue at review head `e5b755a4`. Final replacement CI/merge are the current gate;
+a zone-owned native arena and guarded XBlock/XAsset adapter are next. Writer replacement follows later after exact x86
+full-image equivalence.
 A checked
 whole-segment compressed-finalization boundary remains a
 later integrity item
