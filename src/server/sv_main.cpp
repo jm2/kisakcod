@@ -371,7 +371,15 @@ void __cdecl SV_PreFrame()
     }
     if ((v0 & 8) != 0)
     {
-        v2 = Dvar_InfoString_Big(8);
+        bool complete = false;
+        v2 = Dvar_InfoString_Big(8, &complete);
+        if (!complete)
+        {
+            Com_Error(
+                ERR_DROP,
+                "SYSTEMINFO cannot be represented within protocol limits");
+            return;
+        }
         SV_SetConfigstring(1u, v2);
         dvar_modifiedFlags &= ~8u;
     }
@@ -1228,4 +1236,3 @@ bool __cdecl SV_SaveMemory_IsRecentlyLoaded()
     SV_RecordIsRecentlyLoaded(IsRecentlyLoaded);
     return IsRecentlyLoaded;
 }
-

@@ -11,6 +11,7 @@
 #include <game_mp/g_main_mp.h>
 #include <qcommon/files.h>
 #include <universal/com_files.h>
+#include <universal/info_string.h>
 #include <qcommon/threads.h>
 #include <script/scr_variable.h>
 #ifndef KISAK_DEDI_HEADLESS
@@ -1146,15 +1147,53 @@ void __cdecl SV_SetSystemInfoConfig()
 {
     char *v0; // eax
     char dest[0x2000]; // [esp+24h] [ebp-2008h] BYREF
+    bool complete = false;
 
-    v0 = Dvar_InfoString_Big(8);
-    I_strncpyz(dest, v0, 0x2000);
-    if (!fs_gameDirVar->current.integer)
+    v0 = Dvar_InfoString_Big(8, &complete);
+    if (!complete)
     {
-        if (strlen(dest) + strlen("\\fs_game\\\\") <= 0x400)
-            I_strncat(dest, 1024, "\\fs_game\\\\");
-        else
-            Com_Printf(16, "Info string length exceeded key: fs_game Info string: %s", dest);
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO cannot be represented within protocol limits");
+        return;
+    }
+    if (strcmp(
+            Info_ValueForKey(v0, "sv_referencedFFCheckSums"),
+            sv_referencedFFCheckSums->current.string))
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO overflow or sanitization altered sv_referencedFFCheckSums");
+        return;
+    }
+    if (strcmp(
+            Info_ValueForKey(v0, "sv_referencedFFNames"),
+            sv_referencedFFNames->current.string))
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO overflow or sanitization altered sv_referencedFFNames");
+        return;
+    }
+    I_strncpyz(dest, v0, 0x2000);
+    if (!*fs_gameDirVar->current.string
+        && !info_string::AppendPreformattedSuffix(
+            dest, sizeof(dest), "\\fs_game\\"))
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO overflow while adding the explicit empty fs_game value");
+        return;
+    }
+    if (!info_string::HasExactKey(dest, "fs_game")
+        || strcmp(
+            Info_ValueForKey(dest, "fs_game"),
+            fs_gameDirVar->current.string))
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO overflow or sanitization altered fs_game");
+        return;
     }
     SV_SetConfigstring(1, dest);
     dvar_modifiedFlags &= ~8u;

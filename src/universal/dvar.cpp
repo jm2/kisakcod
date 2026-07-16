@@ -180,22 +180,54 @@ void __cdecl Dvar_InfoStringSingle(const dvar_s *dvar, uint32_t *userData)
     }
 }
 
-char *__cdecl Dvar_InfoString_Big(int bit)
+namespace
 {
+struct DvarInfoStringBigContext
+{
+    uint32_t flags;
+    bool complete;
+};
+
+void __cdecl Dvar_InfoStringSingle_Big(
+    const dvar_s *dvar,
+    void *userData)
+{
+    DvarInfoStringBigContext &context =
+        *static_cast<DvarInfoStringBigContext *>(userData);
+    if (!context.complete || (context.flags & dvar->flags) == 0)
+        return;
+
+    const char *const value = Dvar_DisplayableValue(dvar);
+    context.complete = Info_SetValueForKey_Big(info2, dvar->name, value);
+}
+} // namespace
+
+char *__cdecl Dvar_InfoString_Big(int bit, bool *complete)
+{
+    DvarInfoStringBigContext context{
+        static_cast<uint32_t>(bit),
+        true,
+    };
+
     info2[0] = 0;
-    Dvar_ForEach((void(__cdecl *)(const dvar_s *, void *))Dvar_InfoStringSingle_Big, &bit);
+    Dvar_ForEach(Dvar_InfoStringSingle_Big, &context);
+    if (complete)
+        *complete = context.complete;
     return info2;
 }
 
-void __cdecl Dvar_InfoStringSingle_Big(const dvar_s *dvar, uint32_t *userData)
+char *__cdecl Dvar_InfoString_Big(int bit)
 {
-    const char *v2; // eax
-
-    if ((*userData & dvar->flags) != 0)
+    bool complete = false;
+    char *const result = Dvar_InfoString_Big(bit, &complete);
+    if (!complete)
     {
-        v2 = Dvar_DisplayableValue(dvar);
-        Info_SetValueForKey_Big(info2, (char *)dvar->name, v2);
+        result[0] = 0;
+        Com_Error(
+            ERR_DROP,
+            "Info string cannot be represented within the BIG_INFO_STRING protocol limit");
     }
+    return result;
 }
 
 void __cdecl Dvar_ForEach(void(__cdecl *callback)(const dvar_s *, void *), void *userData)

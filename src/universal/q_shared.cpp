@@ -1,4 +1,5 @@
 #include "q_shared.h"
+#include "info_string.h"
 
 #include "../qcommon/qcommon.h"
 #include <qcommon/mem_track.h>
@@ -869,7 +870,7 @@ void __cdecl Info_SetValueForKey(char *s, const char *key, const char *value)
     }
 }
 
-void __cdecl Info_SetValueForKey_Big(char *s, const char *key, const char *value)
+bool __cdecl Info_SetValueForKey_Big(char *s, const char *key, const char *value)
 {
     int j;
     char c;
@@ -877,13 +878,17 @@ void __cdecl Info_SetValueForKey_Big(char *s, const char *key, const char *value
     int len;
     char newi[BIG_INFO_STRING];
     int i;
+    bool hasCleanValue;
+    bool valueComplete = false;
 
     iassert(value);
+    if (!value)
+        return false;
 
     if (strlen(s) >= BIG_INFO_STRING)
     {
         Com_Printf(16, "Info_SetValueForKey_Big: oversize infostring");
-        return;
+        return false;
     }
 
     // Copy the value, stripping the info-string delimiters ('\', ';', '"').
@@ -892,7 +897,10 @@ void __cdecl Info_SetValueForKey_Big(char *s, const char *key, const char *value
     {
         c = value[i];
         if (!c)
+        {
+            valueComplete = true;
             break;
+        }
         if (c != '\\' && c != ';' && c != '"')
         {
             iassert(j < BIG_INFO_STRING);
@@ -900,41 +908,62 @@ void __cdecl Info_SetValueForKey_Big(char *s, const char *key, const char *value
         }
     }
 
+    if (!valueComplete)
+    {
+        Com_Printf(16, "Info buffer length exceeded, not including key/value pair in response.");
+        return false;
+    }
+
     iassert(j < BIG_INFO_STRING);
     cleanValue[j] = 0;
+    hasCleanValue = cleanValue[0] != 0;
 
     // Keys may not contain the delimiters either.
     if (strchr(key, '\\'))
     {
         Com_Printf(16, "Can't use keys with a \\ key: %s value: %s", key, value);
-        return;
+        return false;
     }
     if (strchr(key, ';'))
     {
         Com_Printf(16, "Can't use keys with a semicolon. key: %s value: %s", key, value);
-        return;
+        return false;
     }
     if (strchr(key, '"'))
     {
         Com_Printf(16, "Can't use keys with a \". key: %s value: %s", key, value);
-        return;
+        return false;
     }
 
-    Info_RemoveKey_Big(s, key);
-    if (!cleanValue[0])
-        return;
-
-    len = Com_sprintf(newi, BIG_INFO_STRING, "\\%s\\%s", key, cleanValue);
-    if (len <= 0)
+    if (hasCleanValue)
     {
-        Com_Printf(16, "Info buffer length exceeded, not including key/value pair in response.");
-        return;
+        len = Com_sprintf(newi, BIG_INFO_STRING, "\\%s\\%s", key, cleanValue);
+        if (len <= 0 || len >= BIG_INFO_STRING)
+        {
+            Com_Printf(16, "Info buffer length exceeded, not including key/value pair in response.");
+            return false;
+        }
     }
 
-    if (strlen(s) + strlen(newi) <= BIG_INFO_STRING)
-        strcat(s, newi);
-    else
+    // Build the replacement in cleanValue so a failed append cannot remove an
+    // existing value from the published string.
+    memcpy(cleanValue, s, strlen(s) + 1);
+    Info_RemoveKey_Big(cleanValue, key);
+    if (!hasCleanValue)
+    {
+        memcpy(s, cleanValue, strlen(cleanValue) + 1);
+        return true;
+    }
+
+    if (!info_string::AppendPreformattedSuffix(
+            cleanValue, BIG_INFO_STRING, newi))
+    {
         Com_Printf(16, "Info string length exceeded. key: %s value: %s Info string: %s", key, value, s);
+        return false;
+    }
+
+    memcpy(s, cleanValue, strlen(cleanValue) + 1);
+    return true;
 }
 
 bool __cdecl ParseConfigStringToStruct(

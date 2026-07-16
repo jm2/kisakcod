@@ -94,6 +94,247 @@ void TestSignedDecimalFormatting()
         "signed decimal formatting must reject a buffer without NUL capacity");
 }
 
+void TestInfoStringPredicates()
+{
+    using info_string::IsSafeUnquotedPathTokenComponent;
+    using info_string::IsSafeUnquotedValueComponent;
+
+    static constexpr char controlValue[] = {
+        'o', 'k', static_cast<char>(0x1f), '\0'};
+    struct PredicateCase
+    {
+        const char *value;
+        const char *description;
+    };
+    constexpr PredicateCase unsafeValues[] = {
+        {"two words", "whitespace"},
+        {"tab\tvalue", "tab whitespace"},
+        {"bad\\value", "backslash"},
+        {"bad;value", "semicolon"},
+        {"bad\"value", "quote"},
+        {controlValue, "control byte"},
+        {"bad//value", "line-comment introducer"},
+        {"bad/*value", "block-comment introducer"},
+    };
+
+    Expect(
+        !IsSafeUnquotedValueComponent(nullptr),
+        "a null value component must be rejected");
+    Expect(
+        IsSafeUnquotedValueComponent(""),
+        "the base value predicate must permit an explicitly empty value");
+    Expect(
+        IsSafeUnquotedValueComponent("mods/example-zone_1"),
+        "ordinary portable token characters must be accepted");
+    for (const PredicateCase &testCase : unsafeValues)
+    {
+        Expect(
+            !IsSafeUnquotedValueComponent(testCase.value),
+            testCase.description);
+        Expect(
+            !IsSafeUnquotedPathTokenComponent(testCase.value),
+            testCase.description);
+    }
+
+    Expect(
+        !IsSafeUnquotedPathTokenComponent(nullptr),
+        "a null path component must be rejected");
+    Expect(
+        IsSafeUnquotedPathTokenComponent(""),
+        "the path primitive must leave nonempty policy to its callers");
+    Expect(
+        IsSafeUnquotedPathTokenComponent("mods/example-zone_1"),
+        "a safe relative path component must be accepted");
+    Expect(
+        !IsSafeUnquotedPathTokenComponent("/absolute"),
+        "a leading slash must be rejected for path components");
+    Expect(
+        !IsSafeUnquotedPathTokenComponent("*wildcard"),
+        "a leading star must be rejected for path components");
+    Expect(
+        !IsSafeUnquotedPathTokenComponent("mods/example/"),
+        "a trailing slash must be rejected for path components");
+}
+
+void ExpectRejectedNameFormatting(
+    const char *const zoneName,
+    const bool modZone,
+    const char *const modDirectory,
+    const char *const description)
+{
+    using namespace db::referenced_fastfile;
+
+    ZoneFixture zones[kZoneSlotCount]{};
+    zones[kFirstFastFileZoneSlot] = {zoneName, modZone};
+    std::array<char, 96> output{};
+    output.fill('#');
+    const auto unchanged = output;
+    Expect(
+        !FormatReferencedFastFileNames(
+            zones,
+            modDirectory,
+            IsLocalized,
+            output.data(),
+            output.size()),
+        description);
+    Expect(
+        output == unchanged,
+        "invalid referenced-name input must leave output unchanged");
+}
+
+void TestRejectedNameComponents()
+{
+    static constexpr char controlName[] = {
+        'z', 'o', 'n', 'e', static_cast<char>(0x1f), '\0'};
+    static constexpr char controlDirectory[] = {
+        'm', 'o', 'd', 's', static_cast<char>(0x1f), '\0'};
+    struct RejectedCase
+    {
+        const char *value;
+        const char *description;
+    };
+    constexpr RejectedCase rejectedNames[] = {
+        {"zone name", "a zone name containing whitespace must fail"},
+        {"zone\\name", "a zone name containing backslash must fail"},
+        {"zone;name", "a zone name containing semicolon must fail"},
+        {"zone\"name", "a zone name containing quote must fail"},
+        {controlName, "a zone name containing a control byte must fail"},
+        {"zone//name", "a zone name containing // must fail"},
+        {"zone/*name", "a zone name containing /* must fail"},
+        {"/zone", "a zone name beginning with slash must fail"},
+        {"*zone", "a zone name beginning with star must fail"},
+        {"zone/", "a zone name ending with slash must fail"},
+    };
+    for (const RejectedCase &testCase : rejectedNames)
+    {
+        ExpectRejectedNameFormatting(
+            testCase.value,
+            false,
+            "mods/example",
+            testCase.description);
+    }
+
+    constexpr RejectedCase rejectedDirectories[] = {
+        {nullptr, "a mod zone requires a non-null mod directory"},
+        {"", "a mod zone requires a nonempty mod directory"},
+        {"mods example", "a mod directory containing whitespace must fail"},
+        {"mods\\example", "a mod directory containing backslash must fail"},
+        {"mods;example", "a mod directory containing semicolon must fail"},
+        {"mods\"example", "a mod directory containing quote must fail"},
+        {controlDirectory, "a mod directory containing a control byte must fail"},
+        {"mods//example", "a mod directory containing // must fail"},
+        {"mods/*example", "a mod directory containing /* must fail"},
+        {"/mods", "a mod directory beginning with slash must fail"},
+        {"*mods", "a mod directory beginning with star must fail"},
+        {"mods/example/", "a mod directory ending with slash must fail"},
+    };
+    for (const RejectedCase &testCase : rejectedDirectories)
+    {
+        ExpectRejectedNameFormatting(
+            "zone",
+            true,
+            testCase.value,
+            testCase.description);
+    }
+}
+
+void TestInfoStringAppend()
+{
+    using info_string::AppendPreformattedSuffix;
+    using info_string::CanAppendPreformattedSuffix;
+
+    std::array<char, 6> exact = {'a', 'b', '\0', '#', '#', '#'};
+    Expect(
+        AppendPreformattedSuffix(exact.data(), exact.size(), "cde"),
+        "an append ending at capacity minus one must succeed");
+    Expect(
+        std::strcmp(exact.data(), "abcde") == 0,
+        "an exact representable append must copy its terminator");
+
+    std::array<char, 6> full = {'a', 'b', '\0', '#', '#', '#'};
+    const auto unchangedFull = full;
+    Expect(
+        !AppendPreformattedSuffix(full.data(), full.size(), "cdef"),
+        "an append whose content length equals capacity must fail");
+    Expect(full == unchangedFull, "capacity failure must be output-atomic");
+
+    Expect(
+        !AppendPreformattedSuffix(nullptr, 6, "suffix"),
+        "a null append destination must fail");
+    std::array<char, 6> nullSuffix = {'a', '\0', '#', '#', '#', '#'};
+    const auto unchangedNullSuffix = nullSuffix;
+    Expect(
+        !AppendPreformattedSuffix(
+            nullSuffix.data(), nullSuffix.size(), nullptr),
+        "a null suffix must fail");
+    Expect(
+        nullSuffix == unchangedNullSuffix,
+        "a null suffix must not change the destination");
+
+    std::array<char, 2> zeroCapacity = {'a', '\0'};
+    const auto unchangedZeroCapacity = zeroCapacity;
+    Expect(
+        !AppendPreformattedSuffix(zeroCapacity.data(), 0, "b"),
+        "zero append capacity must fail");
+    Expect(
+        zeroCapacity == unchangedZeroCapacity,
+        "zero capacity must not change the destination");
+
+    std::array<char, 1> emptyOnly = {'\0'};
+    Expect(
+        AppendPreformattedSuffix(
+            emptyOnly.data(), emptyOnly.size(), ""),
+        "capacity one must represent an empty string and its terminator");
+    const auto unchangedEmptyOnly = emptyOnly;
+    Expect(
+        !AppendPreformattedSuffix(
+            emptyOnly.data(), emptyOnly.size(), "x"),
+        "capacity one must reject every nonempty suffix");
+    Expect(
+        emptyOnly == unchangedEmptyOnly,
+        "capacity-one failure must leave the empty string unchanged");
+
+    std::array<char, 4> unterminated = {'a', 'b', 'c', 'd'};
+    const auto unchangedUnterminated = unterminated;
+    Expect(
+        !AppendPreformattedSuffix(
+            unterminated.data(), unterminated.size(), "e"),
+        "an unterminated current value must fail");
+    Expect(
+        unterminated == unchangedUnterminated,
+        "unterminated-input failure must be output-atomic");
+
+    constexpr std::size_t maximum = (std::numeric_limits<std::size_t>::max)();
+    static_assert(!CanAppendPreformattedSuffix(0, 0, 0));
+    static_assert(!CanAppendPreformattedSuffix(maximum, 0, maximum));
+    static_assert(!CanAppendPreformattedSuffix(maximum - 1, 1, maximum));
+    static_assert(CanAppendPreformattedSuffix(maximum - 1, 0, maximum));
+    static_assert(CanAppendPreformattedSuffix(0, maximum - 1, maximum));
+    static_assert(!CanAppendPreformattedSuffix(1, maximum, maximum));
+}
+
+void TestExactKeyDetection()
+{
+    using info_string::HasExactKey;
+
+    constexpr char info[] =
+        "\\alpha\\one\\explicit_empty\\\\last\\value";
+    Expect(HasExactKey(info, "alpha"), "the first exact key must be found");
+    Expect(
+        HasExactKey(info, "explicit_empty"),
+        "an explicitly present empty value must retain key presence");
+    Expect(HasExactKey(info, "last"), "the final exact key must be found");
+    Expect(
+        !HasExactKey("\\other\\target", "target"),
+        "text appearing only as a value must not be reported as a key");
+    Expect(
+        !HasExactKey("\\alpha_extra\\one", "alpha"),
+        "a key prefix must not produce a false positive");
+    Expect(!HasExactKey(nullptr, "alpha"), "a null info string must fail");
+    Expect(!HasExactKey(info, nullptr), "a null key must fail");
+    Expect(!HasExactKey(info, ""), "an empty key must fail");
+}
+
 void TestNameFormatting()
 {
     using namespace db::referenced_fastfile;
@@ -154,6 +395,19 @@ void TestNameFormatting()
     Expect(
         std::strcmp(localizedOutput.data(), "mods/example/slot31") == 0,
         "a localized fast file in slot 32 must be excluded");
+
+    zones[32].name = "localized_unsafe name";
+    Expect(
+        FormatReferencedFastFileNames(
+            zones,
+            "mods/example",
+            IsLocalized,
+            localizedOutput.data(),
+            localizedOutput.size()),
+        "an excluded localized name need not be token-safe");
+    Expect(
+        std::strcmp(localizedOutput.data(), "mods/example/slot31") == 0,
+        "unsafe excluded names must not enter the formatted output");
 }
 
 void TestExpandedSystemInfoCapacity()
@@ -221,14 +475,155 @@ void TestExpandedSystemInfoCapacity()
         systemInfoOutput[kExpectedLength] == '\0',
         "the expanded list must be explicitly terminated");
 }
+
+void TestSystemInfoSuffixAssembly()
+{
+    using namespace db::referenced_fastfile;
+    using info_string::AppendPreformattedSuffix;
+    using info_string::HasExactKey;
+
+    ZoneFixture zones[kZoneSlotCount]{};
+    zones[kFirstFastFileZoneSlot] = {"zone1", true};
+    zones[kFirstFastFileZoneSlot + 1] = {"zone2", false};
+
+    constexpr char expectedNames[] = "mods/example/zone1 zone2";
+    std::array<char, sizeof(expectedNames)> names{};
+    Expect(
+        FormatReferencedFastFileNames(
+            zones,
+            "mods/example",
+            IsLocalized,
+            names.data(),
+            names.size()),
+        "a representable referenced-name value must format successfully");
+    Expect(
+        std::strcmp(names.data(), expectedNames) == 0,
+        "the representable referenced-name value must round-trip exactly");
+
+    std::array<char, 256> systemInfo{};
+    Expect(
+        AppendPreformattedSuffix(
+            systemInfo.data(),
+            systemInfo.size(),
+            "\\sv_referencedFFCheckSums\\-1 2"),
+        "the referenced-checksum pair must fit the test SYSTEMINFO");
+    Expect(
+        AppendPreformattedSuffix(
+            systemInfo.data(),
+            systemInfo.size(),
+            "\\sv_referencedFFNames\\"),
+        "the referenced-name key suffix must fit the test SYSTEMINFO");
+    Expect(
+        AppendPreformattedSuffix(
+            systemInfo.data(), systemInfo.size(), names.data()),
+        "the referenced-name value suffix must fit the test SYSTEMINFO");
+
+    constexpr char expectedSystemInfo[] =
+        "\\sv_referencedFFCheckSums\\-1 2"
+        "\\sv_referencedFFNames\\mods/example/zone1 zone2";
+    Expect(
+        std::strcmp(systemInfo.data(), expectedSystemInfo) == 0,
+        "representable referenced pairs must assemble without alteration");
+    Expect(
+        HasExactKey(systemInfo.data(), "sv_referencedFFCheckSums"),
+        "the assembled checksum key must survive an exact-key round trip");
+    Expect(
+        HasExactKey(systemInfo.data(), "sv_referencedFFNames"),
+        "the assembled names key must survive an exact-key round trip");
+
+    constexpr std::size_t kSystemInfoCapacity = 8192;
+    constexpr std::size_t kZoneNameLength = 63;
+    ZoneFixture longZones[kZoneSlotCount]{};
+    std::array<std::array<char, kZoneNameLength + 1>, kLiveFastFileZoneCount>
+        zoneNames{};
+    for (std::size_t index = 0; index < zoneNames.size(); ++index)
+    {
+        zoneNames[index].fill(static_cast<char>('a' + index % 26));
+        zoneNames[index].back() = '\0';
+        longZones[index + kFirstFastFileZoneSlot] = {
+            zoneNames[index].data(),
+            true,
+            static_cast<std::int32_t>(index),
+        };
+    }
+
+    std::array<char, kSystemInfoCapacity> longNames{};
+    Expect(
+        FormatReferencedFastFileNames(
+            longZones,
+            "mods/example",
+            IsLocalized,
+            longNames.data(),
+            longNames.size()),
+        "the long referenced-name value must fit its standalone buffer");
+    Expect(
+        std::strlen(longNames.data()) >= 2080,
+        "the aggregate boundary must exercise a genuinely long names value");
+
+    std::array<char, kSystemInfoCapacity> namesSuffix{};
+    Expect(
+        AppendPreformattedSuffix(
+            namesSuffix.data(),
+            namesSuffix.size(),
+            "\\sv_referencedFFNames\\"),
+        "the long names key must fit its standalone suffix buffer");
+    Expect(
+        AppendPreformattedSuffix(
+            namesSuffix.data(),
+            namesSuffix.size(),
+            longNames.data()),
+        "the long names value must fit its standalone suffix buffer");
+    Expect(
+        HasExactKey(namesSuffix.data(), "sv_referencedFFNames"),
+        "the long names suffix must contain the intended exact key");
+
+    const std::size_t suffixLength = std::strlen(namesSuffix.data());
+    Expect(
+        suffixLength < kSystemInfoCapacity,
+        "the long names suffix must be representable by itself");
+    if (suffixLength == 0 || suffixLength >= kSystemInfoCapacity)
+        return;
+
+    const std::size_t existingLength = kSystemInfoCapacity - suffixLength;
+    constexpr char existingPairPrefix[] = "\\existing\\";
+    Expect(
+        existingLength >= sizeof(existingPairPrefix),
+        "the aggregate fixture must leave room for an existing pair");
+    if (existingLength < sizeof(existingPairPrefix))
+        return;
+
+    std::array<char, kSystemInfoCapacity> aggregate{};
+    aggregate.fill('x');
+    std::memcpy(
+        aggregate.data(),
+        existingPairPrefix,
+        sizeof(existingPairPrefix) - 1);
+    aggregate[existingLength] = '\0';
+    Expect(
+        HasExactKey(aggregate.data(), "existing"),
+        "the aggregate fixture must begin with a formatted existing pair");
+    const auto unchangedAggregate = aggregate;
+    Expect(
+        !AppendPreformattedSuffix(
+            aggregate.data(), aggregate.size(), namesSuffix.data()),
+        "an aggregate reaching exactly 8192 bytes must be rejected");
+    Expect(
+        aggregate == unchangedAggregate,
+        "aggregate SYSTEMINFO overflow must leave existing pairs unchanged");
+}
 } // namespace
 
 int main()
 {
     TestSlotWalk();
     TestSignedDecimalFormatting();
+    TestInfoStringPredicates();
+    TestRejectedNameComponents();
+    TestInfoStringAppend();
+    TestExactKeyDetection();
     TestNameFormatting();
     TestExpandedSystemInfoCapacity();
+    TestSystemInfoSuffixAssembly();
 
     if (g_failures != 0)
         return 1;

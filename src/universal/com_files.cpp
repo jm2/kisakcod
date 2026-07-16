@@ -1,5 +1,6 @@
 #include "com_files.h"
 #include "q_shared.h"
+#include "info_string.h"
 
 #include <universal/com_memory.h>
 #include <universal/sys_atomic.h>
@@ -1289,27 +1290,23 @@ void __cdecl FS_ConvertPath(char *s)
 
 bool __cdecl FS_GameDirDomainFunc(dvar_s *dvar, DvarValue newValue)
 {
-    bool result; // al
-    int v3; // eax
-    int v4; // eax
-
     if (!dvar)
         MyAssertHandler(".\\universal\\com_files.cpp", 4241, 0, "%s", "dvar");
-    if (!*(_BYTE *)newValue.integer)
-        return 1;
-    if (I_strnicmp(newValue.string, "mods", 4))
-        return 0;
-    if (strlen(newValue.string) < 6 || *(_BYTE *)(newValue.integer + 4) != 47 && *(_BYTE *)(newValue.integer + 4) != 92)
-        return 0;
-    v3 = (int)strstr((char*)newValue.integer, "..");
-    result = 0;
-    if (!v3)
-    {
-        v4 = (int)strstr((char*)newValue.integer, "::");
-        if (!v4)
-            return 1;
-    }
-    return result;
+
+    const char *const gameDir = newValue.string;
+    if (!gameDir)
+        return false;
+    if (!*gameDir)
+        return true;
+    if (!info_string::IsSafeUnquotedPathTokenComponent(gameDir))
+        return false;
+    if (I_strnicmp(gameDir, "mods", 4))
+        return false;
+    if (gameDir[4] != '/' || !gameDir[5])
+        return false;
+    if (strstr(gameDir, "..") || strstr(gameDir, "::"))
+        return false;
+    return true;
 }
 
 void FS_RegisterDvars()

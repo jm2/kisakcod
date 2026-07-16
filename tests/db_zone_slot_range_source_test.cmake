@@ -7,6 +7,14 @@ endif()
 set(_registry_path "${SOURCE_ROOT}/src/database/db_registry.cpp")
 set(_asset_header_path "${SOURCE_ROOT}/src/xanim/xanim.h")
 set(_shared_header_path "${SOURCE_ROOT}/src/universal/q_shared.h")
+set(_shared_source_path "${SOURCE_ROOT}/src/universal/q_shared.cpp")
+set(_info_helper_path "${SOURCE_ROOT}/src/universal/info_string.h")
+set(_dvar_source_path "${SOURCE_ROOT}/src/universal/dvar.cpp")
+set(_qcommon_header_path "${SOURCE_ROOT}/src/qcommon/qcommon.h")
+set(_files_source_path "${SOURCE_ROOT}/src/universal/com_files.cpp")
+set(_mp_server_path "${SOURCE_ROOT}/src/server_mp/sv_main_mp.cpp")
+set(_sp_init_path "${SOURCE_ROOT}/src/server/sv_init.cpp")
+set(_sp_server_path "${SOURCE_ROOT}/src/server/sv_main.cpp")
 set(_helper_path "${SOURCE_ROOT}/src/database/db_referenced_fastfile.h")
 set(_fixture_path "${SOURCE_ROOT}/tests/db_referenced_fastfile_tests.cpp")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
@@ -17,6 +25,14 @@ foreach(_path IN ITEMS
     "${_registry_path}"
     "${_asset_header_path}"
     "${_shared_header_path}"
+    "${_shared_source_path}"
+    "${_info_helper_path}"
+    "${_dvar_source_path}"
+    "${_qcommon_header_path}"
+    "${_files_source_path}"
+    "${_mp_server_path}"
+    "${_sp_init_path}"
+    "${_sp_server_path}"
     "${_helper_path}"
     "${_fixture_path}"
     "${_manifest_path}"
@@ -30,6 +46,14 @@ endforeach()
 file(READ "${_registry_path}" _registry)
 file(READ "${_asset_header_path}" _asset_header)
 file(READ "${_shared_header_path}" _shared_header)
+file(READ "${_shared_source_path}" _shared_source)
+file(READ "${_info_helper_path}" _info_helper)
+file(READ "${_dvar_source_path}" _dvar_source)
+file(READ "${_qcommon_header_path}" _qcommon_header)
+file(READ "${_files_source_path}" _files_source)
+file(READ "${_mp_server_path}" _mp_server)
+file(READ "${_sp_init_path}" _sp_init)
+file(READ "${_sp_server_path}" _sp_server)
 file(READ "${_helper_path}" _helper)
 file(READ "${_fixture_path}" _fixture)
 file(READ "${_manifest_path}" _manifest)
@@ -40,6 +64,14 @@ foreach(_var IN ITEMS
     _registry
     _asset_header
     _shared_header
+    _shared_source
+    _info_helper
+    _dvar_source
+    _qcommon_header
+    _files_source
+    _mp_server
+    _sp_init
+    _sp_server
     _helper
     _fixture
     _manifest
@@ -131,7 +163,6 @@ foreach(_forbidden IN ITEMS
     "db_registry"
     "xanim/"
     "qcommon/"
-    "universal/"
     "XZone"
     "dvar_s"
     "std::string"
@@ -143,6 +174,10 @@ foreach(_forbidden IN ITEMS
     require_not_contains(
         _helper "${_forbidden}" "the range helper stays production-neutral")
 endforeach()
+require_contains(
+    _helper
+    "#include <universal/info_string.h>"
+    "the database formatter consumes the shared token-safety primitive")
 foreach(_marker IN ITEMS
     "inline constexpr std::size_t kDefaultZoneSlot = 0;"
     "inline constexpr std::size_t kFirstFastFileZoneSlot = 1;"
@@ -205,6 +240,16 @@ foreach(_marker IN ITEMS
         "${_marker}"
         "fixed-storage failure-atomic name formatting")
 endforeach()
+foreach(_marker IN ITEMS
+    "info_string::IsSafeUnquotedPathTokenComponent(zone.name)"
+    "!modDirectory"
+    "!*modDirectory"
+    "info_string::IsSafeUnquotedPathTokenComponent( modDirectory)")
+    require_contains(
+        _name_formatter
+        "${_marker}"
+        "selected zone and mod-directory tokens are validated before sizing")
+endforeach()
 require_contains(
     _name_formatter
     [=[*cursor = '\0';]=]
@@ -238,6 +283,380 @@ require_contains(
     _manifest
     "database/db_referenced_fastfile.h"
     "the helper is part of the database source manifest")
+require_contains(
+    _manifest
+    "universal/info_string.h"
+    "the shared protocol helper is part of the universal source manifest")
+
+# The shared info-string primitives are dependency-free, allocation-free, and
+# usable by both the engine and portable runtime tests.
+foreach(_forbidden IN ITEMS
+    "qcommon/"
+    "database/"
+    "dvar_s"
+    "Com_Error"
+    "Com_Printf"
+    "std::string"
+    "std::vector"
+    "malloc("
+    "calloc("
+    "realloc("
+    "operator new")
+    require_not_contains(
+        _info_helper "${_forbidden}" "the info helper remains engine-neutral")
+endforeach()
+foreach(_marker IN ITEMS
+    "inline bool IsSafeUnquotedValueComponent("
+    "if (!value) return false;"
+    "*cursor <= static_cast<unsigned char>(' ')"
+    "cursor[1] == static_cast<unsigned char>('/')"
+    "cursor[1] == static_cast<unsigned char>('*')"
+    "inline bool IsSafeUnquotedPathTokenComponent("
+    "value[0] != '/'"
+    "value[0] != '*'"
+    "value[length - 1] != '/'"
+    "inline bool HasExactKey("
+    "std::memcmp(info, key, keyLength) == 0"
+    "constexpr bool CanAppendPreformattedSuffix("
+    "suffixLength < capacity - currentLength"
+    [=[std::memchr(current, '\0', capacity)]=]
+    "std::memmove( current + currentLength, suffix, suffixLength + 1);"
+    "return true;")
+    require_contains(
+        _info_helper "${_marker}" "bounded shared info-string behavior")
+endforeach()
+require_contains(
+    _info_helper
+    "*cursor == static_cast<unsigned char>('\\\\')"
+    "backslash is rejected as an info-string delimiter")
+require_contains(
+    _info_helper
+    [=[*cursor == static_cast<unsigned char>(';')]=]
+    "semicolon is rejected as a command delimiter")
+require_contains(
+    _info_helper
+    [=[*cursor == static_cast<unsigned char>('"')]=]
+    "quotes are rejected from unquoted tokens")
+require_not_contains(
+    _info_helper
+    "strcat("
+    "the shared append cannot use an unbounded string copy")
+
+# The production big setter builds replacements in scratch storage, commits
+# only after a strict NUL-reserving append, and reports every failure to its
+# caller. Empty sanitized values intentionally commit key removal.
+require_contains(
+    _shared_header
+    "bool __cdecl Info_SetValueForKey_Big(char *s, const char *key, const char *value);"
+    "big info insertion exposes status")
+extract_slice(
+    _shared_source
+    "bool __cdecl Info_SetValueForKey_Big"
+    "bool __cdecl ParseConfigStringToStruct"
+    _big_setter
+    "Info_SetValueForKey_Big")
+foreach(_marker IN ITEMS
+    "bool valueComplete = false;"
+    "valueComplete = true;"
+    "if (!valueComplete)"
+    "return false;"
+    "hasCleanValue = cleanValue[0] != 0;"
+    "Com_sprintf(newi, BIG_INFO_STRING, \"\\\\%s\\\\%s\", key, cleanValue);"
+    "len <= 0 || len >= BIG_INFO_STRING"
+    "memcpy(cleanValue, s, strlen(s) + 1);"
+    "Info_RemoveKey_Big(cleanValue, key);"
+    "if (!hasCleanValue)"
+    "info_string::AppendPreformattedSuffix( cleanValue, BIG_INFO_STRING, newi)"
+    "memcpy(s, cleanValue, strlen(cleanValue) + 1);"
+    "return true;")
+    require_contains(
+        _big_setter "${_marker}" "complete transactional big-info replacement")
+endforeach()
+foreach(_marker IN ITEMS
+    "c != '\\\\'"
+    "c != ';'"
+    "c != '\"'"
+    "Can't use keys with a"
+    "Info buffer length exceeded, not including key/value pair in response."
+    "Info string length exceeded. key: %s value: %s Info string: %s")
+    require_contains(
+        _big_setter "${_marker}" "legacy sanitization and diagnostics remain")
+endforeach()
+require_ordered(
+    _big_setter
+    "Com_sprintf(newi, BIG_INFO_STRING"
+    "memcpy(cleanValue, s, strlen(s) + 1);"
+    "the replacement suffix is formatted before scratch is reused")
+require_ordered(
+    _big_setter
+    "Info_RemoveKey_Big(cleanValue, key);"
+    "info_string::AppendPreformattedSuffix( cleanValue, BIG_INFO_STRING, newi)"
+    "the old pair is removed only from the candidate before append")
+extract_slice(
+    _big_setter
+    "if (!info_string::AppendPreformattedSuffix("
+    "return true;"
+    _big_append_commit
+    "successful big-info append commit")
+require_ordered(
+    _big_append_commit
+    "info_string::AppendPreformattedSuffix( cleanValue, BIG_INFO_STRING, newi)"
+    "memcpy(s, cleanValue, strlen(cleanValue) + 1);"
+    "a successful append precedes destination commit")
+foreach(_forbidden IN ITEMS
+    "Info_RemoveKey_Big(s, key)"
+    "strcat("
+    "<= BIG_INFO_STRING")
+    require_not_contains(
+        _big_setter "${_forbidden}" "replacement and append stay failure-atomic")
+endforeach()
+
+# Big Dvar aggregation carries setter failure in per-call state while
+# Dvar_ForEach owns the read lock. Reporting is deferred until after unlock.
+foreach(_marker IN ITEMS
+    "char *__cdecl Dvar_InfoString_Big(int bit);"
+    "char *__cdecl Dvar_InfoString_Big(int bit, bool *complete);")
+    require_contains(
+        _qcommon_header "${_marker}" "legacy and checked big-info APIs coexist")
+endforeach()
+extract_slice(
+    _dvar_source
+    "namespace { struct DvarInfoStringBigContext"
+    "char *__cdecl Dvar_InfoString_Big(int bit, bool *complete)"
+    _big_callback
+    "Dvar_InfoStringSingle_Big")
+foreach(_marker IN ITEMS
+    "uint32_t flags; bool complete;"
+    "if (!context.complete || (context.flags & dvar->flags) == 0) return;"
+    "context.complete = Info_SetValueForKey_Big(info2, dvar->name, value);")
+    require_contains(
+        _big_callback "${_marker}" "each selected Dvar insertion propagates status")
+endforeach()
+require_not_contains(
+    _big_callback
+    "Com_Error("
+    "the Dvar callback cannot longjmp while the read lock is held")
+extract_slice(
+    _dvar_source
+    "char *__cdecl Dvar_InfoString_Big(int bit, bool *complete)"
+    "char *__cdecl Dvar_InfoString_Big(int bit)"
+    _checked_big_builder
+    "checked Dvar_InfoString_Big")
+foreach(_marker IN ITEMS
+    "DvarInfoStringBigContext context{"
+    "Dvar_ForEach(Dvar_InfoStringSingle_Big, &context);"
+    "*complete = context.complete;"
+    "return info2;")
+    require_contains(
+        _checked_big_builder "${_marker}" "checked aggregate build completion")
+endforeach()
+require_ordered(
+    _checked_big_builder
+    "Dvar_ForEach(Dvar_InfoStringSingle_Big, &context);"
+    "*complete = context.complete;"
+    "completion is exposed only after Dvar_ForEach unlocks")
+require_not_contains(
+    _checked_big_builder
+    "Com_Error("
+    "the checked builder itself never errors under iteration")
+extract_slice(
+    _dvar_source
+    "char *__cdecl Dvar_InfoString_Big(int bit)"
+    "void __cdecl Dvar_ForEach(void(__cdecl *callback)"
+    _legacy_big_builder
+    "legacy Dvar_InfoString_Big")
+foreach(_marker IN ITEMS
+    "Dvar_InfoString_Big(bit, &complete)"
+    "if (!complete)"
+    "Com_Error("
+    "result[0] = 0;"
+    "return result;")
+    require_contains(
+        _legacy_big_builder "${_marker}" "legacy callers fail closed after unlock")
+endforeach()
+require_ordered(
+    _legacy_big_builder
+    "Dvar_InfoString_Big(bit, &complete)"
+    "result[0] = 0;"
+    "legacy fail-closed clearing follows the completed checked build")
+require_ordered(
+    _legacy_big_builder
+    "result[0] = 0;"
+    "Com_Error("
+    "legacy global output is cleared before ERR_DROP longjmps")
+extract_slice(
+    _dvar_source
+    "void __cdecl Dvar_ForEach(void(__cdecl *callback)"
+    "bool __cdecl CompareDvars"
+    _dvar_foreach
+    "Dvar_ForEach")
+require_ordered(
+    _dvar_foreach
+    "Sys_LockRead(&g_dvarCritSect);"
+    "callback(sortedDvars[dvarIter], userData);"
+    "callbacks execute under the established read lock")
+require_ordered(
+    _dvar_foreach
+    "callback(sortedDvars[dvarIter], userData);"
+    "Sys_UnlockRead(&g_dvarCritSect);"
+    "iteration unlocks after every callback returns")
+
+# The filesystem domain consumes the native pointer lane and rejects every
+# delimiter, tokenizer comment, traversal, and noncanonical mod path.
+extract_slice(
+    _files_source
+    "bool __cdecl FS_GameDirDomainFunc"
+    "void FS_RegisterDvars"
+    _game_dir_domain
+    "FS_GameDirDomainFunc")
+foreach(_marker IN ITEMS
+    "const char *const gameDir = newValue.string;"
+    "if (!gameDir) return false;"
+    "if (!*gameDir) return true;"
+    "info_string::IsSafeUnquotedPathTokenComponent(gameDir)"
+    "I_strnicmp(gameDir, \"mods\", 4)"
+    "gameDir[4] != '/' || !gameDir[5]"
+    "strstr(gameDir, \"..\")"
+    "strstr(gameDir, \"::\")"
+    "return true;")
+    require_contains(
+        _game_dir_domain "${_marker}" "native safe fs_game validation")
+endforeach()
+require_not_contains(
+    _game_dir_domain
+    "newValue.integer"
+    "fs_game validation cannot truncate or forge the string pointer")
+
+# Every SP/MP systeminfo publication consumes checked aggregation and returns
+# before publication on failure. MP additionally verifies critical round trips
+# and emits one canonical explicit-empty fs_game pair.
+extract_slice(
+    _sp_init
+    "void SV_SaveSystemInfo()"
+    "void __cdecl SV_SetExpectedHunkUsage"
+    _sp_save_systeminfo
+    "SP SV_SaveSystemInfo")
+foreach(_marker IN ITEMS
+    "Dvar_InfoString_Big(8, &complete)"
+    "if (!complete)"
+    "SYSTEMINFO cannot be represented within protocol limits"
+    "I_strncpyz(str, systemInfo, 0x2000);"
+    "SV_SetConfigstring(1, str);"
+    "dvar_modifiedFlags &= ~8u;")
+    require_contains(
+        _sp_save_systeminfo "${_marker}" "checked SP initial systeminfo publication")
+endforeach()
+require_contains(
+    _sp_save_systeminfo
+    "return;"
+    "SP initial failure exits before publication")
+require_not_contains(
+    _sp_save_systeminfo
+    "Dvar_InfoString_Big(8)"
+    "SP initial publication cannot use unchecked aggregation")
+require_ordered(
+    _sp_save_systeminfo
+    "if (!complete)"
+    "SV_SetConfigstring(1, str);"
+    "SP publication follows aggregate completion")
+require_ordered(
+    _sp_save_systeminfo
+    "SV_SetConfigstring(1, str);"
+    "dvar_modifiedFlags &= ~8u;"
+    "SP clears modification only after publication")
+extract_slice(
+    _sp_server
+    "void __cdecl SV_PreFrame()"
+    "int __cdecl SV_RunFrame"
+    _sp_preframe
+    "SP SV_PreFrame")
+foreach(_marker IN ITEMS
+    "Dvar_InfoString_Big(8, &complete)"
+    "if (!complete)"
+    "SYSTEMINFO cannot be represented within protocol limits"
+    "SV_SetConfigstring(1u, v2);"
+    "dvar_modifiedFlags &= ~8u;")
+    require_contains(
+        _sp_preframe "${_marker}" "checked SP modified systeminfo publication")
+endforeach()
+require_contains(
+    _sp_preframe
+    "return;"
+    "SP modified failure exits before publication")
+require_not_contains(
+    _sp_preframe
+    "Dvar_InfoString_Big(8)"
+    "SP modified publication cannot use unchecked aggregation")
+require_ordered(
+    _sp_preframe
+    "if (!complete)"
+    "SV_SetConfigstring(1u, v2);"
+    "SP modified publication follows aggregate completion")
+require_ordered(
+    _sp_preframe
+    "SV_SetConfigstring(1u, v2);"
+    "dvar_modifiedFlags &= ~8u;"
+    "SP modified flag clears only after publication")
+
+extract_slice(
+    _mp_server
+    "void __cdecl SV_SetSystemInfoConfig()"
+    "void __cdecl SV_PreFrame()"
+    _mp_systeminfo
+    "MP SV_SetSystemInfoConfig")
+foreach(_marker IN ITEMS
+    "Dvar_InfoString_Big(8, &complete)"
+    "if (!complete)"
+    "Info_ValueForKey(v0, \"sv_referencedFFCheckSums\")"
+    "sv_referencedFFCheckSums->current.string"
+    "Info_ValueForKey(v0, \"sv_referencedFFNames\")"
+    "sv_referencedFFNames->current.string"
+    "I_strncpyz(dest, v0, 0x2000);"
+    "!*fs_gameDirVar->current.string"
+    "info_string::AppendPreformattedSuffix( dest, sizeof(dest), \"\\\\fs_game\\\\\")"
+    "info_string::HasExactKey(dest, \"fs_game\")"
+    "Info_ValueForKey(dest, \"fs_game\")"
+    "fs_gameDirVar->current.string"
+    "SV_SetConfigstring(1, dest);"
+    "dvar_modifiedFlags &= ~8u;")
+    require_contains(
+        _mp_systeminfo "${_marker}" "complete verified MP systeminfo publication")
+endforeach()
+require_contains(
+    _mp_systeminfo
+    "return;"
+    "MP representation failure exits before publication")
+require_not_contains(
+    _mp_systeminfo
+    "Dvar_InfoString_Big(8)"
+    "MP publication cannot use unchecked aggregation")
+require_ordered(
+    _mp_systeminfo
+    "if (!complete)"
+    "Info_ValueForKey(v0, \"sv_referencedFFCheckSums\")"
+    "aggregate completion precedes field round trips")
+require_ordered(
+    _mp_systeminfo
+    "Info_ValueForKey(v0, \"sv_referencedFFCheckSums\")"
+    "Info_ValueForKey(v0, \"sv_referencedFFNames\")"
+    "rotating Info_ValueForKey results are consumed in separate checks")
+require_ordered(
+    _mp_systeminfo
+    "info_string::HasExactKey(dest, \"fs_game\")"
+    "SV_SetConfigstring(1, dest);"
+    "explicit fs_game presence is verified before publication")
+require_ordered(
+    _mp_systeminfo
+    "SV_SetConfigstring(1, dest);"
+    "dvar_modifiedFlags &= ~8u;"
+    "MP clears modification only after verified publication")
+foreach(_forbidden IN ITEMS
+    "fs_gameDirVar->current.integer"
+    "I_strncat(dest, 1024"
+    "strlen(dest) + strlen")
+    require_not_contains(
+        _mp_systeminfo "${_forbidden}" "legacy truncating fs_game fallback")
+endforeach()
 
 extract_slice(
     _registry
@@ -337,8 +756,7 @@ foreach(_marker IN ITEMS
     "g_zoneNameList[0] = 0;"
     "Com_Error("
     "ERR_DROP,"
-    "Referenced fast-file name list exceeds the %u-character SYSTEMINFO limit"
-    "static_cast<uint32_t>(ARRAY_COUNT(g_zoneNameList) - 1)")
+    "Referenced fast-file name list cannot be represented within SYSTEMINFO protocol limits")
     require_contains(
         _name_list
         "${_marker}"
@@ -388,7 +806,30 @@ foreach(_marker IN ITEMS
     "legacyOutput == unchangedLegacyOutput"
     "the complete 32-zone mod list must fit the SYSTEMINFO value buffer"
     "std::strlen(systemInfoOutput.data()) == kExpectedLength"
-    "systemInfoOutput[kExpectedLength] == ")
+    "systemInfoOutput[kExpectedLength] == "
+    "void TestInfoStringPredicates()"
+    "IsSafeUnquotedValueComponent(nullptr)"
+    "bad//value"
+    "bad/*value"
+    "void TestRejectedNameComponents()"
+    "invalid referenced-name input must leave output unchanged"
+    "a mod zone requires a nonempty mod directory"
+    "mods/example/"
+    "void TestInfoStringAppend()"
+    "an append ending at capacity minus one must succeed"
+    "capacity one must represent an empty string and its terminator"
+    "static_assert(!CanAppendPreformattedSuffix(maximum - 1, 1, maximum));"
+    "static_assert(CanAppendPreformattedSuffix(maximum - 1, 0, maximum));"
+    "void TestExactKeyDetection()"
+    "an explicitly present empty value must retain key presence"
+    "text appearing only as a value must not be reported as a key"
+    "localized_unsafe name"
+    "an excluded localized name need not be token-safe"
+    "void TestSystemInfoSuffixAssembly()"
+    "representable referenced pairs must assemble without alteration"
+    "constexpr std::size_t kSystemInfoCapacity = 8192;"
+    "an aggregate reaching exactly 8192 bytes must be rejected"
+    "aggregate == unchangedAggregate")
     require_contains(
         _fixture
         "${_marker}"

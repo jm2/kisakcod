@@ -1,5 +1,7 @@
 #pragma once
 
+#include <universal/info_string.h>
+
 #include <array>
 #include <charconv>
 #include <cstddef>
@@ -105,14 +107,24 @@ bool FormatReferencedFastFileNames(
             if (!fits)
                 return;
 
+            if (!info_string::IsSafeUnquotedPathTokenComponent(zone.name)
+                || (zone.modZone
+                    && (!modDirectory
+                        || !*modDirectory
+                        || !info_string::IsSafeUnquotedPathTokenComponent(
+                            modDirectory))))
+            {
+                fits = false;
+                return;
+            }
+
             const std::size_t nameLength = std::strlen(zone.name);
             if (selectedCount >= selected.size()
                 || (selectedCount != 0
                     && !detail::TryAccumulateLength(
                         1, outputLimit, requiredLength))
                 || (zone.modZone
-                    && (!modDirectory
-                        || !detail::TryAccumulateLength(
+                    && (!detail::TryAccumulateLength(
                             modDirectoryLength, outputLimit, requiredLength)
                         || !detail::TryAccumulateLength(
                             1, outputLimit, requiredLength)))

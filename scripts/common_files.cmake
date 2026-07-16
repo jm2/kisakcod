@@ -615,6 +615,7 @@ set(UNIVERSAL
     "${SRC_DIR}/universal/dvar_cmds.cpp"
     "${SRC_DIR}/universal/fft.cpp"
     "${SRC_DIR}/universal/fft.h"
+    "${SRC_DIR}/universal/info_string.h"
     "${SRC_DIR}/universal/memfile.cpp"
     "${SRC_DIR}/universal/memfile.h"
     "${SRC_DIR}/universal/physicalmemory.cpp"

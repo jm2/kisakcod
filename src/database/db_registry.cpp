@@ -543,8 +543,7 @@ char *__cdecl DB_ReferencedFFNameList()
         g_zoneNameList[0] = 0;
         Com_Error(
             ERR_DROP,
-            "Referenced fast-file name list exceeds the %u-character SYSTEMINFO limit",
-            static_cast<uint32_t>(ARRAY_COUNT(g_zoneNameList) - 1));
+            "Referenced fast-file name list cannot be represented within SYSTEMINFO protocol limits");
     }
     return g_zoneNameList;
 }
