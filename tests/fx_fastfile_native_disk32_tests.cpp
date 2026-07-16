@@ -3009,7 +3009,7 @@ void TestResolvedIdentityExtentContract()
             {kOpaqueAssetBytes,
              (std::numeric_limits<std::uint64_t>::max)()},
         }};
-    for (const auto descriptor : invalidOpaqueDescriptors)
+    for (const auto &descriptor : invalidOpaqueDescriptors)
     {
         EffectFixture fixture = MakeMinimalEffect();
         FinalizeEffectTotalSize(&fixture);
@@ -3103,7 +3103,7 @@ void TestResolvedIdentityExtentContract()
             {sizeof(FxEffectDef) + 1u, alignof(FxEffectDef)},
             {sizeof(FxEffectDef), alignof(FxEffectDef) * 2u},
         }};
-    for (const auto descriptor : invalidEffectDescriptors)
+    for (const auto &descriptor : invalidEffectDescriptors)
     {
         EffectFixture fixture = MakeSingleIdentityEffect(
             fastfile::FxElemTypeDisk32::Runner);

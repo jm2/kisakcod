@@ -915,7 +915,7 @@ void TestPlanAliasChecksPrecedeCallbacks()
 
 void TestCallbackMutationAndReentry()
 {
-    for (const auto pair : {
+    for (const auto &pair : {
              std::pair{
                  fastfile::FxFastFileDisk32SourceSpanKind::ImpactTableHeader,
                  MutationKind::Header},
