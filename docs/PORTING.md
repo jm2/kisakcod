@@ -6,7 +6,7 @@
 
 ---
 
-## Implementation status (July 15, 2026)
+## Implementation status (July 16, 2026)
 
 Target policy is fixed: preserve retail assets and wire interoperability; use a
 shared **native Vulkan RHI** (MoltenVK on macOS) that replaces D3D9, OpenAL Soft,
@@ -106,6 +106,12 @@ Completed foundation work:
   stateful
   XBlock/XAsset loader, retail bytes, legacy x86 path, archive writer, and save-side guard remain unchanged pending the
   production wiring and whole-zone ownership/rollback batch;
+- exact portable top-level fast-file envelopes for `XAssetHeaderDisk32` (0x4), `XAssetDisk32` (0x8),
+  `ScriptStringListDisk32` (0x8), and `XAssetListDisk32` (0x10), plus a pure bounded preflight/iterator layer on the
+  current branch. It enforces the 32768-asset and 65536-script-string limits, count/token parity, checked eight-byte
+  record extents, raw signed type range, caller-supplied portable build admission, unaligned exact-stride reads,
+  high-bit-token preservation, and failure-atomic outputs without importing native `xanim.h` layouts or changing
+  production stream/PMem/zone state;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -141,10 +147,12 @@ Remaining gates, in implementation order:
    save guard follow later.
 3. Continue fixed-width `disk32` fast-file widening. PR #32 merged exact FX effect/visual/trail/impact schemas and hardened
    pure transactional native converters with local GCC/Clang, complete sanitizer, strict i386/AArch64, source-contract,
-   and all-nine-job candidate CI clean. The zone-owned aligned native arena and the guarded stateful zone adapter over the
-   XBlock cursor walk are implemented as portable primitives with adversarial sequence/provenance/nesting coverage. Next,
-   wire them into production db_load.cpp with exact whole-zone rollback, completed-object/alias registration, and lifetime
-   tests before replacing any legacy loader path. Retail wire bytes remain frozen.
+   and all-nine-job candidate CI clean. PR #33 merged the zone-owned aligned native arena and guarded stateful zone adapter
+   over the XBlock cursor walk with adversarial sequence/provenance/nesting and canonical-publication coverage. The current
+   branch adds the fixed top-level XAsset envelopes and bounded eight-byte iterator prerequisite. Next, add the four-byte
+   Disk32 script-string walk and generation-keyed per-zone sidecar with centralized longjmp-safe rollback, then wire the
+   adapter into production with completed-object/alias registration and lifetime tests before replacing any legacy loader
+   path. Retail wire bytes remain frozen.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
 5. Implement the remaining platform services (sockets, filesystem,
    virtual memory, console/process) for Windows/POSIX.
@@ -1179,11 +1187,15 @@ missing canonical `DB_AddXAsset` identity return in `503e0b54`/`bf7645d2`; focus
 green. Exact hardening head `ca080971` passed all nine required jobs in run **29503163189**. The fresh hosted Codex
 review found no major issue at `4ab63c1b`; only trusted-caller contract documentation changed afterward, and an independent
 exact-head audit found no blocker at `ca080971`. Production sequencing is detailed below.
-The production-wiring audit found one earlier native64 boundary that must land first: the retail
+The production-wiring audit found one earlier native64 boundary that must land before stream integration: the retail
 `XAssetHeader`/`XAsset`/`ScriptStringList`/`XAssetList` envelopes are fixed 0x4/0x8/0x8/0x10 Disk32 records, while the
 corresponding native types widen to 0x8/0x10/0x10/0x20. A native64 loader that branches only at the FX payload has already
-read the wrong list size and offsets and iterated the asset array at the wrong stride. The next M5 PR therefore adds exact
-Disk32 envelope schemas and a pure bounded validator/iterator without changing production streams. The following
+read the wrong list size and offsets and iterated the asset array at the wrong stride. The current M5 branch therefore adds
+exact Disk32 envelope schemas and a pure bounded validator/iterator without changing production streams. That prerequisite is
+implemented on `agent/disk32-xasset-envelope`: it preflights count/token parity, the checked 32768-entry eight-byte span,
+raw signed type range, required portable build admission, unaligned exact-stride reads, trailing guard bytes, high-bit
+tokens, late rejection, and output/cursor atomicity. Focused GCC/Clang/ASan+UBSan/TSan execution, strict i386/AArch64
+compilation/linking, and source-contract validation pass; candidate CI is pending. The following
 ownership batch combines the four-byte-stride Disk32 script-string walk, an explicitly constructed generation-keyed
 per-zone sidecar, and centralized `Com_Error`/longjmp-safe rollback. `XZone` remains ABI-unchanged because the registry
 zeroes it with `memset`; native FX storage is allocated inside the existing named PMem zone scope. A checked fixed arena
