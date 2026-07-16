@@ -274,6 +274,26 @@ add_test(
 set_tests_properties(
     database-script-string-disk32-walk PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-db-zone-load-context-tests
+    db_zone_load_context_tests.cpp
+    ${SRC_DIR}/database/db_zone_load_context.cpp
+)
+target_include_directories(
+    kisakcod-db-zone-load-context-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-load-context-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-db-zone-load-context-tests)
+set_target_properties(
+    kisakcod-db-zone-load-context-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-zone-load-context-lifecycle
+    COMMAND kisakcod-db-zone-load-context-tests
+)
+set_tests_properties(
+    database-zone-load-context-lifecycle PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-fx-archive-disk32-tests
     fx_archive_disk32_tests.cpp
     ${SRC_DIR}/EffectsCore/fx_archive_disk32.cpp
@@ -1403,6 +1423,13 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P
         ${CMAKE_CURRENT_SOURCE_DIR}/db_script_string_disk32_source_test.cmake
+)
+
+add_test(
+    NAME database-zone-load-context-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_load_context_source_test.cmake
 )
 
 add_test(
