@@ -1337,7 +1337,7 @@ void TestResolvedIdentityAliasing()
               fastfile::FxFastFileNativeDisk32Phase::Planned);
     }
     {
-        struct alignas(8) OutputCaller final
+        struct OutputCaller final
         {
             std::array<std::uint8_t, sizeof(FxEffectDef)> prefix{};
             FxImpactTable *output = nullptr;
@@ -1371,7 +1371,7 @@ void TestResolvedIdentityAliasing()
               fastfile::FxFastFileNativeDisk32Phase::Planned);
     }
     {
-        struct alignas(8) PlanCaller final
+        struct PlanCaller final
         {
             std::array<std::uint8_t, sizeof(FxEffectDef)> prefix{};
             fastfile::FxFastFileImpactNativeDisk32Plan plan{};
