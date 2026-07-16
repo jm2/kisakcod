@@ -19,7 +19,7 @@ namespace
 {
     if (!outBytes)
         return XAssetListDisk32Status::InvalidArgument;
-    if (count < 0 || count > kMaxXAssetListAssets)
+    if (count < 0)
         return XAssetListDisk32Status::InvalidAssetCount;
 
     constexpr std::uint32_t stride = sizeof(XAssetDisk32);
@@ -30,6 +30,8 @@ namespace
     {
         return XAssetListDisk32Status::SizeOverflow;
     }
+    if (count > kMaxXAssetListAssets)
+        return XAssetListDisk32Status::InvalidAssetCount;
 
     *outBytes = unsignedCount * stride;
     return XAssetListDisk32Status::Success;

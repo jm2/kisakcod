@@ -106,6 +106,12 @@ foreach(_var IN ITEMS _header _source)
         "xanim/xanim.h"
         "database/database.h"
         "database/db_load.cpp"
+        "sizeof(XAsset)"
+        "sizeof(XAssetList)"
+        "XAsset *"
+        "XAssetList *"
+        "XAssetHeader *"
+        "varXAsset"
         "DB_PushStreamPos"
         "Load_Stream("
         "PMem_"
@@ -113,6 +119,15 @@ foreach(_var IN ITEMS _header _source)
         require_not_contains(
             ${_var} "${_forbidden}" "pure native-independent boundary")
     endforeach()
+endforeach()
+foreach(_marker IN ITEMS
+    "Every root API requires list to point to a live, four-byte-aligned"
+    "populated by an exact 0x10-byte copy"
+    "Only the separately supplied assetRecords byte span is alignment-agnostic."
+    "context may collect diagnostics"
+    "State that affects admission must remain"
+    "with stable admission results")
+    require_contains(_header "${_marker}" "public borrowing/alignment contract")
 endforeach()
 
 # Freeze the exact retail x86 root and element layouts. Serialized pointers
@@ -184,9 +199,10 @@ foreach(_marker IN ITEMS
     require_contains(_header "${_marker}" "fixed list limits")
 endforeach()
 foreach(_marker IN ITEMS
-    "if (count < 0 || count > kMaxXAssetListAssets)"
+    "if (count < 0)"
     "constexpr std::uint32_t stride = sizeof(XAssetDisk32);"
     "(std::numeric_limits<std::uint32_t>::max)() / stride"
+    "if (count > kMaxXAssetListAssets)"
     "*outBytes = unsignedCount * stride;"
     "hasAssets != (list->assetCount != 0)"
     "hasStrings != (list->stringList.count != 0)"
@@ -194,6 +210,11 @@ foreach(_marker IN ITEMS
     "std::memcpy(&asset, records + offset, sizeof(asset));")
     require_contains(_source "${_marker}" "bounded envelope validation")
 endforeach()
+require_ordered(
+    _source
+    "(std::numeric_limits<std::uint32_t>::max)() / stride"
+    "if (count > kMaxXAssetListAssets)"
+    "checked extent overflow is distinguished before the policy cap")
 require_ordered(
     _source
     "status = ValidateAssetSpan(candidate, assetRecords, assetRecordBytes);"
@@ -241,11 +262,16 @@ foreach(_marker IN ITEMS
     "void TestIteratorFailureAtomicity()"
     "void TestLateRejectionIsAtomic()"
     "void TestMaximumAssetIteration()"
+    "std::memcpy( &copiedRoot, copiedRootBytes.data(), sizeof(copiedRoot));"
     "UINT32_C(0xFEDCBA98)"
     "UINT32_C(262144)"
     "TruncatedAssetSpan"
     "InvalidAssetType"
     "UnsupportedAssetType"
+    "TryValidateXAssetListDisk32Span( &empty, nullptr, 0, policy, &layout)"
+    "TryBeginXAssetListDisk32( &empty, nullptr, 0, policy, &emptyIterator)"
+    "== xasset::XAssetListDisk32Status::End"
+    "probe.calls == 0"
     "iterator.nextIndex() == 0"
     "iterator.remaining() == 1"
     "bytes.front() == prefixGuard"

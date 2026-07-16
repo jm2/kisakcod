@@ -180,6 +180,26 @@ void TestExactSchemaBytes()
     StoreU32(&listExpected, 0x08, UINT32_C(0x01020304));
     StoreU32(&listExpected, 0x0C, UINT32_C(0x87654321));
     CHECK(ObjectBytes(list) == listExpected);
+
+    std::array<std::uint8_t, sizeof(xasset::XAssetListDisk32)>
+        copiedRootBytes{};
+    StoreU32(&copiedRootBytes, 0x00, UINT32_C(1));
+    StoreU32(&copiedRootBytes, 0x04, UINT32_C(0xF0000001));
+    StoreU32(&copiedRootBytes, 0x08, UINT32_C(1));
+    StoreU32(&copiedRootBytes, 0x0C, UINT32_C(0x80000001));
+    xasset::XAssetListDisk32 copiedRoot{};
+    std::memcpy(
+        &copiedRoot,
+        copiedRootBytes.data(),
+        sizeof(copiedRoot));
+    xasset::XAssetListDisk32Layout copiedLayout{};
+    CHECK(
+        xasset::TryValidateXAssetListDisk32Header(
+            &copiedRoot, &copiedLayout)
+        == xasset::XAssetListDisk32Status::Success);
+    CHECK(copiedLayout.assetBytes == UINT32_C(8));
+    CHECK(copiedLayout.assetCount == 1);
+    CHECK(copiedLayout.scriptStringCount == 1);
 }
 
 void TestHeaderValidationAndLimits()
@@ -233,10 +253,14 @@ void TestHeaderValidationAndLimits()
             &empty, nullptr)
         == xasset::XAssetListDisk32Status::InvalidArgument);
 
+    constexpr std::int32_t largestNonoverflowingAssetCount =
+        static_cast<std::int32_t>(
+            (std::numeric_limits<std::uint32_t>::max)()
+            / sizeof(xasset::XAssetDisk32));
     for (const std::int32_t count : {
              -1,
              xasset::kMaxXAssetListAssets + 1,
-             (std::numeric_limits<std::int32_t>::max)()})
+             largestNonoverflowingAssetCount})
     {
         const xasset::XAssetListDisk32 invalid =
             MakeList(count, disk32::kInline);
@@ -245,6 +269,20 @@ void TestHeaderValidationAndLimits()
             xasset::TryValidateXAssetListDisk32Header(
                 &invalid, &layout)
             == xasset::XAssetListDisk32Status::InvalidAssetCount);
+        CheckLayoutUnchanged(layout);
+    }
+
+    for (const std::int32_t count : {
+             largestNonoverflowingAssetCount + 1,
+             (std::numeric_limits<std::int32_t>::max)()})
+    {
+        const xasset::XAssetListDisk32 overflowing =
+            MakeList(count, disk32::kInline);
+        layout = SentinelLayout();
+        CHECK(
+            xasset::TryValidateXAssetListDisk32Header(
+                &overflowing, &layout)
+            == xasset::XAssetListDisk32Status::SizeOverflow);
         CheckLayoutUnchanged(layout);
     }
 
@@ -319,6 +357,40 @@ void TestSpanBoundsAndTypePolicy()
     CheckLayoutUnchanged(layout);
 
     const xasset::XAssetListDisk32 empty = MakeList(0, 0);
+    probe.calls = 0;
+    layout = SentinelLayout();
+    CHECK(
+        xasset::TryValidateXAssetListDisk32Span(
+            &empty, nullptr, 0, policy, &layout)
+        == xasset::XAssetListDisk32Status::Success);
+    CHECK(layout.assetBytes == 0);
+    CHECK(layout.assetCount == 0);
+    CHECK(layout.scriptStringCount == 0);
+    CHECK(probe.calls == 0);
+
+    xasset::XAssetListDisk32Iterator emptyIterator{};
+    CHECK(
+        xasset::TryBeginXAssetListDisk32(
+            &empty,
+            nullptr,
+            0,
+            policy,
+            &emptyIterator)
+        == xasset::XAssetListDisk32Status::Success);
+    CHECK(emptyIterator.nextIndex() == 0);
+    CHECK(emptyIterator.remaining() == 0);
+    xasset::XAssetDisk32 emptyOutput =
+        MakeAsset(INT32_C(0x13572468), UINT32_C(0xDEADBEEF));
+    const auto emptyOutputBefore = ObjectBytes(emptyOutput);
+    CHECK(
+        xasset::TryNextXAssetDisk32(
+            &emptyIterator, &emptyOutput)
+        == xasset::XAssetListDisk32Status::End);
+    CHECK(ObjectBytes(emptyOutput) == emptyOutputBefore);
+    CHECK(emptyIterator.nextIndex() == 0);
+    CHECK(emptyIterator.remaining() == 0);
+    CHECK(probe.calls == 0);
+
     CHECK(
         xasset::TryValidateXAssetListDisk32Span(
             &empty, &record, 0, policy, &layout)

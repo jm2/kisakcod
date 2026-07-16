@@ -83,8 +83,10 @@ using XAssetTypeDisk32AdmissionCallback =
 // typeCount supplies the serialized enum's exclusive upper bound without
 // importing the native XAssetType declaration. admitType applies the caller's
 // MP/SP/build-specific support policy after the raw range check. It must be
-// deterministic, may be invoked more than once per record, and must not mutate
-// the borrowed list/record bytes or iterator outputs.
+// deterministic for each raw type, may be invoked more than once per record,
+// and must not mutate the borrowed list/record bytes or iterator outputs. The
+// context may collect diagnostics. State that affects admission must remain
+// stable for the complete validation/iteration lifetime.
 struct XAssetTypeDisk32Policy final
 {
     std::int32_t typeCount = 0;
@@ -118,9 +120,9 @@ struct XAssetListDisk32Layout final
 };
 
 // The iterator borrows a validated byte span. The caller must keep that span
-// and the admission-policy context alive and immutable until iteration ends.
-// Default construction creates an invalid iterator. Copying a live iterator
-// creates an independent cursor over the same immutable input.
+// and the admission-policy context alive, with stable admission results, until
+// iteration ends. Default construction creates an invalid iterator. Copying a
+// live iterator creates an independent cursor over the same immutable input.
 class XAssetListDisk32Iterator final
 {
 public:
@@ -162,6 +164,11 @@ private:
 static_assert(std::is_standard_layout_v<XAssetListDisk32Iterator>);
 static_assert(std::is_trivially_copyable_v<XAssetListDisk32Iterator>);
 
+// Every root API requires list to point to a live, four-byte-aligned
+// XAssetListDisk32 object populated by an exact 0x10-byte copy; never cast an
+// unaligned wire cursor to this type.
+// Only the separately supplied assetRecords byte span is alignment-agnostic.
+//
 // Validates only the fixed root envelope and computes its exact serialized
 // asset-array extent. outLayout is unchanged on every failure.
 [[nodiscard]] XAssetListDisk32Status TryValidateXAssetListDisk32Header(
