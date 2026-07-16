@@ -1217,8 +1217,10 @@ the 65536-entry cap, validates root/span parity, fully preflights the array, pre
 shared-inline explicitly, supports unaligned borrowed bytes, ignores trailing bytes, and revalidates mutation before
 failure-atomic output/cursor publication. Focused GCC/Clang/ASan+UBSan/TSan execution, strict i386 and AArch64
 compilation/linking, Clang analysis, the complete GCC/Clang **78/78** suites, the existing XAsset regressions, and both
-source contracts pass locally; two independent exact-head audits found no blocker. Candidate CI/review for this stack is
-pending. The following ownership batch combines transactional ordinary-reference script-string staging, an
+source contracts pass locally; two independent exact-head audits found no blocker. Exact reviewed head `c5246f67` passed
+all nine jobs in PR #35 run **29523406607**; hosted Codex found no major issue, Gemini reported no review comments, and
+no review threads remain. The only later branch change is the final status documentation. The following ownership batch
+combines transactional ordinary-reference script-string staging, an
 explicitly constructed generation-keyed per-zone sidecar, and centralized `Com_Error`/longjmp-safe rollback. `XZone`
 remains ABI-unchanged because the registry zeroes it with `memset`; native FX storage is allocated inside the existing
 named PMem zone scope. A checked fixed arena budget is acceptable only as an initial compatibility cap that atomically
