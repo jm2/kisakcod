@@ -31,6 +31,16 @@ work item changes. Do not create session-specific handoff files.
   pass locally (they are single-threaded, so the sandbox `SIGSYS` limitation does not apply), as do strict AArch64
   compilation, Clang static analysis, the new `fx_fastfile_zone_adapter` source contract, the existing
   ABI/pointer/security contracts, the 4 KiB helper-frame gate on both new subjects, and `git diff --check`.
+  Initial PR #33 run **29469267456** passed five portable/headless jobs and exposed two integration seams: MSVC `/W4 /WX`
+  C4324 on test fixtures embedding alignment-specified members (fixed by heap-allocating every over-aligned fixture
+  object), and the measured Windows x86 jobs' explicit build-target list not compiling the new suites (fixed and now
+  pinned by the source contract alongside the ctest filter). Codex independently reported the build-list gap and one
+  real ordering defect — the three string recorders inspected reported name bytes before the cursor oracle validated the
+  extent; each recorder now bounds the length, validates through the oracle, then inspects content, with the exact
+  sequence counted three times by the source contract. Gemini's alignment-mask suggestion is applied with its
+  power-of-two precondition documented. All three review threads are answered and resolved. Exact review-fix head
+  `f7a96827` passed all nine jobs in run **29469989032**, including both measured Windows x86 variants executing the new
+  arena and adapter suites.
 - Merged fast-file widening checkpoint: PR #32 squash-merged as `9860617b` from final branch head `0658dcd0`, based on
   production-restore checkpoint `1a966369`. Exact FX fast-file Disk32 effect/visual/trail/impact schemas and report-free
   transactional effect-definition and impact-table planner/materializers are implemented. Review hardening now also
