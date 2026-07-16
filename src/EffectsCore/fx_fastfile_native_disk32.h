@@ -215,6 +215,9 @@ public:
         return workspaceIdentity_ != nullptr && serial_ != 0;
     }
 
+    [[nodiscard]] constexpr bool operator==(
+        const FxFastFileNativeDisk32Plan &) const noexcept = default;
+
 private:
     friend FxFastFileNativeDisk32Status TryPlanFxEffectDefDisk32(
         FxFastFileNativeDisk32Workspace *,

@@ -842,7 +842,8 @@ struct ResolverState final
 {
     DiskImage *image = nullptr;
     std::array<ResolverObservation, 4096> observations{};
-    ResolverAssetStorage assetStorage{};
+    std::unique_ptr<ResolverAssetStorage> assetStorage =
+        std::make_unique<ResolverAssetStorage>();
     std::size_t calls = 0;
     std::size_t failAt = (std::numeric_limits<std::size_t>::max)();
     std::size_t nullResultAt = (std::numeric_limits<std::size_t>::max)();
@@ -1006,7 +1007,7 @@ bool ResolveReference(
     }
     else
     {
-        resolved.pointer = state->assetStorage.bytes.data();
+        resolved.pointer = state->assetStorage->bytes.data();
         if (kind
                 == fastfile::FxFastFileDisk32ReferenceKind::EffectNameReference
             || kind
@@ -1188,7 +1189,46 @@ bool PlansEqual(
     const fastfile::FxFastFileNativeDisk32Plan &left,
     const fastfile::FxFastFileNativeDisk32Plan &right) noexcept
 {
-    return std::memcmp(&left, &right, sizeof(left)) == 0;
+    return left == right;
+}
+
+template <typename T>
+bool SpansEqual(
+    const fastfile::FxFastFileDisk32Span<T> &left,
+    const fastfile::FxFastFileDisk32Span<T> &right) noexcept
+{
+    return left.data == right.data && left.count == right.count;
+}
+
+bool ElementViewsEqual(
+    const fastfile::FxFastFileElemDefDisk32View &left,
+    const fastfile::FxFastFileElemDefDisk32View &right) noexcept
+{
+    return SpansEqual(left.velocitySamples, right.velocitySamples)
+        && SpansEqual(left.visibilitySamples, right.visibilitySamples)
+        && SpansEqual(left.visuals, right.visuals)
+        && SpansEqual(left.markVisuals, right.markVisuals)
+        && left.trail == right.trail
+        && SpansEqual(left.trailVertices, right.trailVertices)
+        && SpansEqual(left.trailIndices, right.trailIndices);
+}
+
+bool EffectViewsEqual(
+    const fastfile::FxFastFileEffectDefDisk32View &left,
+    const fastfile::FxFastFileEffectDefDisk32View &right) noexcept
+{
+    return left.effect == right.effect
+        && SpansEqual(left.elements, right.elements)
+        && SpansEqual(left.elementViews, right.elementViews)
+        && left.provenance.context == right.provenance.context
+        && left.provenance.validateSpan == right.provenance.validateSpan;
+}
+
+bool ResolversEqual(
+    const fastfile::FxFastFileDisk32Resolvers &left,
+    const fastfile::FxFastFileDisk32Resolvers &right) noexcept
+{
+    return left.context == right.context && left.resolve == right.resolve;
 }
 
 void CheckFloatRange(
@@ -2749,7 +2789,7 @@ void TestPlanningOutputAliases()
         alignas(Plan) std::array<std::uint8_t, kBytes> backing{};
         SourceView *const aliasedSource = std::construct_at(
             reinterpret_cast<SourceView *>(backing.data()), view.view());
-        const auto snapshot = backing;
+        const SourceView snapshot = *aliasedSource;
         Plan *const aliasedPlan =
             reinterpret_cast<Plan *>(backing.data());
 
@@ -2759,9 +2799,7 @@ void TestPlanningOutputAliases()
                   resolver.callbacks,
                   aliasedPlan)
               == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
-        CHECK(std::memcmp(
-                  backing.data(), snapshot.data(), backing.size())
-              == 0);
+        CHECK(EffectViewsEqual(*aliasedSource, snapshot));
         CHECK(resolver.state.calls == 0);
         CHECK(workspace.get()->phase()
               == fastfile::FxFastFileNativeDisk32Phase::Empty);
@@ -2782,7 +2820,7 @@ void TestPlanningOutputAliases()
         Resolvers *const aliasedResolvers = std::construct_at(
             reinterpret_cast<Resolvers *>(backing.data()),
             resolver.callbacks);
-        const auto snapshot = backing;
+        const Resolvers snapshot = *aliasedResolvers;
         Plan *const aliasedPlan =
             reinterpret_cast<Plan *>(backing.data());
 
@@ -2792,9 +2830,7 @@ void TestPlanningOutputAliases()
                   *aliasedResolvers,
                   aliasedPlan)
               == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
-        CHECK(std::memcmp(
-                  backing.data(), snapshot.data(), backing.size())
-              == 0);
+        CHECK(ResolversEqual(*aliasedResolvers, snapshot));
         CHECK(resolver.state.calls == 0);
         CHECK(workspace.get()->phase()
               == fastfile::FxFastFileNativeDisk32Phase::Empty);
@@ -3037,7 +3073,7 @@ void TestResolvedIdentityExtentContract()
         EffectViewOwner view(&fixture);
         ResolverOwner resolver(&fixture.image);
         resolver.state.assetResultAt = 1;
-        resolver.state.assetResult = resolver.state.assetStorage.bytes.data()
+        resolver.state.assetResult = resolver.state.assetStorage->bytes.data()
             + 1u;
         resolver.state.retainedDescriptorOverrideAt = 1;
         resolver.state.retainedByteCountOverride = kOpaqueAssetBytes - 1u;
@@ -3159,19 +3195,19 @@ void TestResolvedIdentityPartialOverlaps()
     }
 
     {
-        struct alignas(16) OutputCaller final
-        {
-            std::array<std::uint8_t, 16> prefix{};
-            FxEffectDef *output = nullptr;
-            std::array<std::uint8_t, kOpaqueAssetBytes> suffix{};
-        } caller{};
+        alignas(kOpaqueAssetAlignment)
+            std::array<std::uint8_t, kOpaqueAssetBytes> caller{};
+        FxEffectDef **const outputSlot = std::construct_at(
+            reinterpret_cast<FxEffectDef **>(
+                caller.data() + kOpaqueAssetAlignment),
+            nullptr);
 
         EffectFixture fixture = MakeSingleIdentityEffect(
             fastfile::FxElemTypeDisk32::Model);
         EffectViewOwner view(&fixture);
         ResolverOwner resolver(&fixture.image);
         resolver.state.assetResultAt = 1;
-        resolver.state.assetResult = caller.prefix.data();
+        resolver.state.assetResult = caller.data();
         WorkspaceOwner workspace;
         fastfile::FxFastFileNativeDisk32Plan plan{};
         CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
@@ -3183,10 +3219,11 @@ void TestResolvedIdentityPartialOverlaps()
                   plan,
                   storage.data(),
                   storage.capacity(),
-                  &caller.output)
+                  outputSlot)
               == fastfile::FxFastFileNativeDisk32Status::OverlappingStorage);
-        CHECK(caller.output == nullptr);
+        CHECK(*outputSlot == nullptr);
         CHECK(storage.IsFilled());
+        std::destroy_at(outputSlot);
     }
 
     {
@@ -3202,9 +3239,8 @@ void TestResolvedIdentityPartialOverlaps()
         EffectViewOwner view(&fixture);
         ResolverOwner resolver(&fixture.image);
         resolver.state.assetResultAt = 1;
-        const auto *const planAddress =
-            reinterpret_cast<const std::uint8_t *>(&caller.plan);
-        resolver.state.assetResult = planAddress - alignof(FxEffectDef);
+        resolver.state.assetResult = caller.prefix.data()
+            + caller.prefix.size() - alignof(FxEffectDef);
         WorkspaceOwner workspace;
 
         CHECK(PlanEffect(&workspace, &view, &resolver, &caller.plan)
@@ -3320,11 +3356,7 @@ void TestMaterializationGuardsAndRetry()
               reinterpret_cast<FxEffectDef **>(
                   view.elementViews().data()))
           == fastfile::FxFastFileNativeDisk32Status::OverlappingStorage);
-    CHECK(std::memcmp(
-              &firstViewSnapshot,
-              &view.elementViews()[0],
-              sizeof(firstViewSnapshot))
-          == 0);
+    CHECK(ElementViewsEqual(firstViewSnapshot, view.elementViews()[0]));
 
     CHECK(output == sentinel);
     CHECK(storage.IsFilled());
