@@ -540,6 +540,8 @@ target_compile_features(
 target_compile_definitions(
     kisakcod-fx-fastfile-native-disk32-subject PRIVATE KISAK_MP)
 kisakcod_test_warnings(kisakcod-fx-fastfile-native-disk32-subject)
+kisakcod_fx_helper_stack_budget(
+    kisakcod-fx-fastfile-native-disk32-subject)
 
 add_executable(kisakcod-fx-fastfile-native-disk32-tests
     fx_fastfile_native_disk32_tests.cpp
@@ -572,6 +574,8 @@ target_compile_features(
 target_compile_definitions(
     kisakcod-fx-fastfile-impact-native-disk32-subject PRIVATE KISAK_MP)
 kisakcod_test_warnings(kisakcod-fx-fastfile-impact-native-disk32-subject)
+kisakcod_fx_helper_stack_budget(
+    kisakcod-fx-fastfile-impact-native-disk32-subject)
 
 add_executable(kisakcod-fx-fastfile-impact-native-disk32-tests
     fx_fastfile_impact_native_disk32_tests.cpp
