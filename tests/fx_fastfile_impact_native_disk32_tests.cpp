@@ -64,7 +64,8 @@ struct ProvenanceState final
     bool mutateResolverDescriptor = false;
     bool mutateReturnedDescriptor = false;
     const void *returnedDescriptorPointer = nullptr;
-    std::uint32_t returnedDescriptorBytes = 0;
+    std::uint64_t returnedDescriptorBytes = 0;
+    std::uint64_t returnedDescriptorAlignment = 0;
 };
 
 struct ResolverObservation final
@@ -87,7 +88,8 @@ struct ResolverState final
     std::size_t failAt = (std::numeric_limits<std::size_t>::max)();
     std::size_t nullAt = (std::numeric_limits<std::size_t>::max)();
     std::size_t zeroStringBytesAt = (std::numeric_limits<std::size_t>::max)();
-    std::size_t assetStringBytesAt = (std::numeric_limits<std::size_t>::max)();
+    std::size_t invalidAssetExtentAt =
+        (std::numeric_limits<std::size_t>::max)();
     std::size_t reenterAt = (std::numeric_limits<std::size_t>::max)();
     std::size_t mutateAt = (std::numeric_limits<std::size_t>::max)();
     MutationKind mutation = MutationKind::None;
@@ -95,6 +97,15 @@ struct ResolverState final
     bool reenterPlanWithInvalidArguments = false;
     bool reenterMaterializeWithInvalidArguments = false;
     const void *forcedAssetIdentity = nullptr;
+    bool assetResultUsesOutReference = false;
+    bool mutateRetainedNameDescriptor = false;
+    bool retainedNameDescriptorMutated = false;
+    std::size_t retainedDescriptorOverrideAt =
+        (std::numeric_limits<std::size_t>::max)();
+    std::uint64_t retainedByteCountOverride = 0;
+    std::uint64_t retainedAlignmentOverride = 0;
+    alignas(FxEffectDef) std::array<std::uint8_t, sizeof(FxEffectDef)>
+        assetStorage{};
     ProvenanceState *provenance = nullptr;
     fastfile::FxFastFileImpactNativeDisk32Workspace *workspace = nullptr;
     const fastfile::FxFastFileImpactTableDisk32View *source = nullptr;
@@ -181,19 +192,12 @@ bool ValidateSourceSpan(void *const context,
         state->mutateReturnedDescriptor && state->retainedReference)
     {
         state->retainedReference->pointer = state->returnedDescriptorPointer;
-        state->retainedReference->stringByteCount =
+        state->retainedReference->retainedByteCount =
             state->returnedDescriptorBytes;
+        state->retainedReference->retainedAlignment =
+            state->returnedDescriptorAlignment;
     }
     return valid;
-}
-
-const void *HighIdentity(const std::size_t callIndex) noexcept
-{
-    std::uintptr_t identity =
-        UINT32_C(0x01000000) + callIndex * UINT32_C(0x100);
-    if constexpr (sizeof(std::uintptr_t) > sizeof(std::uint32_t))
-        identity += UINT64_C(0x100000000);
-    return reinterpret_cast<const void *>(identity);
 }
 
 bool ResolveReference(
@@ -245,6 +249,17 @@ bool ResolveReference(
         MutateSource(
             state->mutation, state->header, state->entries, state->name);
     }
+    if (callIndex == 1u && state->mutateRetainedNameDescriptor &&
+        state->provenance && state->provenance->retainedReference)
+    {
+        state->provenance->retainedReference->pointer =
+            reinterpret_cast<const void *>(static_cast<std::uintptr_t>(1u));
+        state->provenance->retainedReference->retainedByteCount =
+            (std::numeric_limits<std::uint64_t>::max)();
+        state->provenance->retainedReference->retainedAlignment =
+            alignof(char);
+        state->retainedNameDescriptorMutated = true;
+    }
     if (callIndex == state->failAt)
         return false;
 
@@ -252,13 +267,18 @@ bool ResolveReference(
     if (kind == fastfile::FxFastFileDisk32ReferenceKind::EffectName)
     {
         resolved.pointer = state->name;
-        resolved.stringByteCount = state->nameBytes;
+        resolved.retainedByteCount = state->nameBytes;
+        resolved.retainedAlignment = alignof(char);
     }
     else if (kind == fastfile::FxFastFileDisk32ReferenceKind::EffectAssetHandle)
     {
-        resolved.pointer = state->forcedAssetIdentity
-                               ? state->forcedAssetIdentity
-                               : HighIdentity(callIndex);
+        resolved.pointer = state->assetResultUsesOutReference
+            ? outReference
+            : state->forcedAssetIdentity
+                ? state->forcedAssetIdentity
+                : state->assetStorage.data();
+        resolved.retainedByteCount = sizeof(FxEffectDef);
+        resolved.retainedAlignment = alignof(FxEffectDef);
     }
     else
     {
@@ -268,9 +288,14 @@ bool ResolveReference(
     if (callIndex == state->nullAt)
         resolved.pointer = nullptr;
     if (callIndex == state->zeroStringBytesAt)
-        resolved.stringByteCount = 0;
-    if (callIndex == state->assetStringBytesAt)
-        resolved.stringByteCount = 4;
+        resolved.retainedByteCount = 0;
+    if (callIndex == state->invalidAssetExtentAt)
+        resolved.retainedByteCount = 0;
+    if (callIndex == state->retainedDescriptorOverrideAt)
+    {
+        resolved.retainedByteCount = state->retainedByteCountOverride;
+        resolved.retainedAlignment = state->retainedAlignmentOverride;
+    }
     if (callIndex < state->observations.size())
     {
         state->observations[callIndex] = {
@@ -661,20 +686,68 @@ void TestPlanStructuralAndCallbackFailures()
     ExpectPlanFailure(Status::InvalidString,
                       [](auto &f, auto &, auto &)
                       { f.resolver.zeroStringBytesAt = 0; });
+    ExpectPlanFailure(
+        Status::InvalidString,
+        [](auto &f, auto &, auto &)
+        {
+            f.resolver.retainedDescriptorOverrideAt = 0;
+            f.resolver.retainedByteCountOverride = f.resolver.nameBytes;
+            f.resolver.retainedAlignmentOverride = 2;
+        });
     ExpectPlanFailure(Status::UnresolvedReference,
                       [](auto &f, auto &, auto &) { f.resolver.failAt = 1; });
     ExpectPlanFailure(Status::UnresolvedReference,
                       [](auto &f, auto &, auto &) { f.resolver.nullAt = 1; });
-    ExpectPlanFailure(Status::InvalidString,
+    ExpectPlanFailure(Status::InvalidArgument,
                       [](auto &f, auto &, auto &)
-                      { f.resolver.assetStringBytesAt = 1; });
+                      { f.resolver.invalidAssetExtentAt = 1; });
     ExpectPlanFailure(
-        Status::InvalidSourceLayout,
+        Status::InvalidArgument,
+        [](auto &f, auto &, auto &)
+        {
+            f.resolver.retainedDescriptorOverrideAt = 1;
+            f.resolver.retainedByteCountOverride = sizeof(FxEffectDef) - 1u;
+            f.resolver.retainedAlignmentOverride = alignof(FxEffectDef);
+        });
+    ExpectPlanFailure(
+        Status::InvalidArgument,
+        [](auto &f, auto &, auto &)
+        {
+            f.resolver.retainedDescriptorOverrideAt = 1;
+            f.resolver.retainedByteCountOverride = sizeof(FxEffectDef);
+            f.resolver.retainedAlignmentOverride =
+                alignof(FxEffectDef) * 2u;
+        });
+    ExpectPlanFailure(
+        Status::InvalidArgument,
+        [](auto &f, auto &, auto &)
+        {
+            f.resolver.retainedDescriptorOverrideAt = 1;
+            f.resolver.retainedByteCountOverride =
+                (std::numeric_limits<std::uint64_t>::max)();
+            f.resolver.retainedAlignmentOverride = alignof(FxEffectDef);
+        });
+    ExpectPlanFailure(
+        Status::InvalidArgument,
+        [](auto &f, auto &, auto &)
+        {
+            const std::uintptr_t wrapped =
+                (std::numeric_limits<std::uintptr_t>::max)() &
+                ~(static_cast<std::uintptr_t>(alignof(FxEffectDef)) - 1u);
+            f.resolver.forcedAssetIdentity =
+                reinterpret_cast<const void *>(wrapped);
+        });
+    ExpectPlanFailure(
+        Status::InvalidArgument,
         [](auto &f, auto &, auto &)
         {
             f.resolver.forcedAssetIdentity =
                 reinterpret_cast<const std::uint8_t *>(&f.header) + 1u;
         });
+    ExpectPlanFailure(
+        Status::OverlappingStorage,
+        [](auto &f, auto &, auto &)
+        { f.resolver.assetResultUsesOutReference = true; });
 
     ExpectPlanFailure(Status::InvalidString,
                       [](auto &f, auto &, auto &)
@@ -900,13 +973,40 @@ void TestCallbackMutationAndReentry()
         fixture.provenance.returnedDescriptorPointer =
             reinterpret_cast<const void *>(static_cast<std::uintptr_t>(1u));
         fixture.provenance.returnedDescriptorBytes =
-            (std::numeric_limits<std::uint32_t>::max)();
+            (std::numeric_limits<std::uint64_t>::max)();
+        fixture.provenance.returnedDescriptorAlignment =
+            (std::numeric_limits<std::uint64_t>::max)();
         fastfile::FxFastFileImpactNativeDisk32Workspace workspace{};
         fastfile::FxFastFileImpactNativeDisk32Plan plan{};
         CHECK(Plan(&fixture, &workspace, &plan) == Status::SourceChanged);
         CHECK(fixture.provenance.calls == 3u);
         CHECK(fixture.resolver.calls == 1u);
         CHECK(!static_cast<bool>(plan));
+        CHECK(workspace.phase() ==
+              fastfile::FxFastFileNativeDisk32Phase::Empty);
+    }
+
+    {
+        Fixture fixture{};
+        fixture.resolver.mutateRetainedNameDescriptor = true;
+        fastfile::FxFastFileImpactNativeDisk32Workspace workspace{};
+        fastfile::FxFastFileImpactNativeDisk32Plan plan{};
+        CHECK(Plan(&fixture, &workspace, &plan) == Status::Success);
+        CHECK(fixture.resolver.retainedNameDescriptorMutated);
+        CHECK(fixture.resolver.calls == kJournalCount);
+        CHECK(static_cast<bool>(plan));
+        CHECK(workspace.phase() ==
+              fastfile::FxFastFileNativeDisk32Phase::Planned);
+
+        AlignedStorage storage(plan.outputBytes(), plan.outputAlignment());
+        FxImpactTable *output = nullptr;
+        CHECK(fastfile::TryMaterializeFxImpactTableDisk32(
+                  &workspace, plan, storage.data(), storage.size(), &output) ==
+              Status::Success);
+        CHECK(output == storage.data());
+        CHECK(output && output->name);
+        if (output && output->name)
+            CHECK(std::strcmp(output->name, fixture.name.data()) == 0);
         CHECK(workspace.phase() ==
               fastfile::FxFastFileNativeDisk32Phase::Empty);
     }
@@ -1288,12 +1388,16 @@ int main()
 {
     static_assert(kHandleCount == 396);
     static_assert(kJournalCount == 397);
+    static_assert(
+        sizeof(fastfile::FxFastFileDisk32ResolvedReference) == 0x18);
+    static_assert(
+        alignof(fastfile::FxFastFileDisk32ResolvedReference) == 8);
     static_assert(alignof(fastfile::FxFastFileImpactNativeDisk32Plan) == 8);
     static_assert(alignof(fastfile::FxFastFileImpactNativeDisk32Workspace) ==
                   8);
     static_assert(sizeof(fastfile::FxFastFileImpactNativeDisk32Plan) == 0x38);
     static_assert(sizeof(fastfile::FxFastFileImpactNativeDisk32Workspace) ==
-                  (KISAK_PTR_BITS == 32 ? 0x1300 : 0x1F78));
+                  (KISAK_PTR_BITS == 32 ? 0x2BD0 : 0x2BE0));
 
     TestHappyPathAndFullWidthIdentities();
     TestNullHandlesBypassResolver();

@@ -2,6 +2,7 @@
 #include <EffectsCore/fx_fastfile_native_disk32.h>
 #include <EffectsCore/fx_runtime.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -21,6 +22,8 @@ namespace fastfile = fx::fastfile;
 constexpr std::uint32_t kDataBlock = 4;
 constexpr std::size_t kBlockCount = 9;
 constexpr std::uint8_t kOutputGuard = UINT8_C(0xA5);
+constexpr std::size_t kOpaqueAssetBytes = 64;
+constexpr std::size_t kOpaqueAssetAlignment = 16;
 
 int failures = 0;
 
@@ -564,6 +567,15 @@ struct ProvenanceState final
     const fastfile::FxElemVelStateSampleDisk32 *replacementVelocity = nullptr;
     bool mutateVelocity = false;
     bool velocityMutated = false;
+    fastfile::FxFastFileElemDefDisk32View *futureSpanMutationTarget = nullptr;
+    fastfile::FxFastFileDisk32Span<fastfile::FxElemVelStateSampleDisk32>
+        originalFutureVelocity{};
+    const fastfile::FxElemVelStateSampleDisk32 *substituteFutureVelocity =
+        nullptr;
+    bool exerciseFutureSpanRestoreEvasion = false;
+    bool futureSpanSubstituted = false;
+    bool futureSpanAttested = false;
+    bool futureSpanRestored = false;
     const void *stringMutationTarget = nullptr;
     char stringReplacement = 'g';
     bool mutateString = false;
@@ -597,8 +609,40 @@ bool ValidateSourceSpan(
         state->resolverMutationTarget->resolve = RejectReference;
         state->resolverMutated = true;
     }
+    if (state->exerciseFutureSpanRestoreEvasion
+        && kind == fastfile::FxFastFileDisk32SourceSpanKind::EffectHeader
+        && !state->futureSpanSubstituted && state->futureSpanMutationTarget
+        && state->substituteFutureVelocity)
+    {
+        state->futureSpanMutationTarget->velocitySamples.data =
+            state->substituteFutureVelocity;
+        state->futureSpanSubstituted = true;
+    }
+    if (state->exerciseFutureSpanRestoreEvasion
+        && kind
+            == fastfile::FxFastFileDisk32SourceSpanKind::VisibilitySamples
+        && state->futureSpanSubstituted && !state->futureSpanRestored
+        && state->futureSpanMutationTarget)
+    {
+        state->futureSpanMutationTarget->velocitySamples =
+            state->originalFutureVelocity;
+        state->futureSpanRestored = true;
+    }
     if (sourceField && sourceField->value != token.value)
         return false;
+    if (state->exerciseFutureSpanRestoreEvasion
+        && kind == fastfile::FxFastFileDisk32SourceSpanKind::VelocitySamples
+        && address == state->substituteFutureVelocity
+        && state->futureSpanMutationTarget
+        && byteCount
+            == static_cast<std::uint64_t>(
+                   state->futureSpanMutationTarget->velocitySamples.count)
+                * sizeof(fastfile::FxElemVelStateSampleDisk32)
+        && alignment == alignof(fastfile::FxElemVelStateSampleDisk32))
+    {
+        state->futureSpanAttested = true;
+        return true;
+    }
     if (kind == fastfile::FxFastFileDisk32SourceSpanKind::String
         && address == state->externalString
         && byteCount == state->externalStringBytes
@@ -787,20 +831,33 @@ struct ResolverObservation final
     const void *result = nullptr;
 };
 
+struct alignas(16) ResolverAssetStorage final
+{
+    std::array<std::uint8_t, kOpaqueAssetBytes> bytes{};
+};
+
+static_assert(alignof(ResolverAssetStorage) == kOpaqueAssetAlignment);
+
 struct ResolverState final
 {
     DiskImage *image = nullptr;
     std::array<ResolverObservation, 4096> observations{};
+    ResolverAssetStorage assetStorage{};
     std::size_t calls = 0;
     std::size_t failAt = (std::numeric_limits<std::size_t>::max)();
     std::size_t nullResultAt = (std::numeric_limits<std::size_t>::max)();
-    std::size_t zeroStringBytesAt =
+    std::size_t zeroRetainedBytesAt =
         (std::numeric_limits<std::size_t>::max)();
-    std::size_t assetStringBytesAt =
+    std::size_t invalidAssetExtentAt =
         (std::numeric_limits<std::size_t>::max)();
     std::size_t assetResultAt =
         (std::numeric_limits<std::size_t>::max)();
     const void *assetResult = nullptr;
+    bool assetResultUsesOutReference = false;
+    std::size_t retainedDescriptorOverrideAt =
+        (std::numeric_limits<std::size_t>::max)();
+    std::uint64_t retainedByteCountOverride = 0;
+    std::uint64_t retainedAlignmentOverride = 0;
     const char *effectNameResult = nullptr;
     std::uint32_t effectNameResultBytes = 0;
     bool reenter = false;
@@ -836,18 +893,6 @@ struct ResolverState final
         fastfile::FxFastFileNativeDisk32Status::Success;
     fastfile::FxFastFileNativeDisk32Plan nestedPlan{};
 };
-
-const void *HighIdentity(
-    const fastfile::FxFastFileDisk32ReferenceKind kind,
-    const std::size_t index) noexcept
-{
-    std::uintptr_t identity = UINT32_C(0x01000000)
-        + static_cast<std::uintptr_t>(kind) * UINT32_C(0x00100000)
-        + index * UINT32_C(0x100);
-    if constexpr (sizeof(std::uintptr_t) > sizeof(std::uint32_t))
-        identity += UINT64_C(0x100000000);
-    return reinterpret_cast<const void *>(identity);
-}
 
 const void *FindResolved(
     const ResolverState &state,
@@ -948,19 +993,33 @@ bool ResolveReference(
             && state->effectNameResult)
         {
             resolved.pointer = state->effectNameResult;
-            resolved.stringByteCount = state->effectNameResultBytes;
+            resolved.retainedByteCount = state->effectNameResultBytes;
         }
         else
         {
             resolved.pointer = state->image->Resolve<char>(token);
-            resolved.stringByteCount = state->image->CStringBytes(token);
+            resolved.retainedByteCount = state->image->CStringBytes(token);
         }
-        if (!resolved.pointer || !resolved.stringByteCount)
+        resolved.retainedAlignment = alignof(char);
+        if (!resolved.pointer || !resolved.retainedByteCount)
             return false;
     }
     else
     {
-        resolved.pointer = HighIdentity(kind, callIndex);
+        resolved.pointer = state->assetStorage.bytes.data();
+        if (kind
+                == fastfile::FxFastFileDisk32ReferenceKind::EffectNameReference
+            || kind
+                == fastfile::FxFastFileDisk32ReferenceKind::EffectAssetHandle)
+        {
+            resolved.retainedByteCount = sizeof(FxEffectDef);
+            resolved.retainedAlignment = alignof(FxEffectDef);
+        }
+        else
+        {
+            resolved.retainedByteCount = kOpaqueAssetBytes;
+            resolved.retainedAlignment = kOpaqueAssetAlignment;
+        }
     }
     if (state->useFutureTokenResults
         && kind == fastfile::FxFastFileDisk32ReferenceKind::Material)
@@ -971,13 +1030,22 @@ bool ResolveReference(
             resolved.pointer = state->substituteFutureResult;
     }
     if (callIndex == state->assetResultAt)
-        resolved.pointer = state->assetResult;
+    {
+        resolved.pointer = state->assetResultUsesOutReference
+            ? outReference
+            : state->assetResult;
+    }
     if (callIndex == state->nullResultAt)
         resolved.pointer = nullptr;
-    if (callIndex == state->zeroStringBytesAt)
-        resolved.stringByteCount = 0;
-    if (callIndex == state->assetStringBytesAt)
-        resolved.stringByteCount = 4;
+    if (callIndex == state->zeroRetainedBytesAt)
+        resolved.retainedByteCount = 0;
+    if (callIndex == state->invalidAssetExtentAt)
+        resolved.retainedByteCount = 0;
+    if (callIndex == state->retainedDescriptorOverrideAt)
+    {
+        resolved.retainedByteCount = state->retainedByteCountOverride;
+        resolved.retainedAlignment = state->retainedAlignmentOverride;
+    }
 
     if (callIndex < state->observations.size())
     {
@@ -1997,6 +2065,40 @@ void TestProvenanceCallbackMutation()
           == fastfile::FxFastFileNativeDisk32Phase::Empty);
 }
 
+void TestFutureSpanProvenanceRestorationEvasion()
+{
+    EffectFixture fixture = MakeMinimalEffect();
+    AttachSamples(&fixture, 0, 1, 1);
+    FinalizeEffectTotalSize(&fixture);
+    EffectViewOwner view(&fixture);
+    std::array<fastfile::FxElemVelStateSampleDisk32, 2> substitute{};
+    substitute[0].local.velocity.base[0] = 301.0f;
+    substitute[1].local.velocity.base[0] = 302.0f;
+
+    ProvenanceState &provenance = view.provenance();
+    provenance.futureSpanMutationTarget = &view.elementViews()[0];
+    provenance.originalFutureVelocity =
+        view.elementViews()[0].velocitySamples;
+    provenance.substituteFutureVelocity = substitute.data();
+    provenance.exerciseFutureSpanRestoreEvasion = true;
+
+    ResolverOwner resolver(&fixture.image);
+    WorkspaceOwner workspace;
+    fastfile::FxFastFileNativeDisk32Plan plan{};
+    const fastfile::FxFastFileNativeDisk32Plan planBefore = plan;
+    CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+          == fastfile::FxFastFileNativeDisk32Status::SourceChanged);
+    CHECK(provenance.futureSpanSubstituted);
+    CHECK(!provenance.futureSpanAttested);
+    CHECK(!provenance.futureSpanRestored);
+    CHECK(view.elementViews()[0].velocitySamples.data == substitute.data());
+    CHECK(PlansEqual(plan, planBefore));
+    CHECK(!static_cast<bool>(plan));
+    CHECK(resolver.state.calls == 0u);
+    CHECK(workspace.get()->phase()
+          == fastfile::FxFastFileNativeDisk32Phase::Empty);
+}
+
 void TestResolvedStringMutation()
 {
     {
@@ -2073,16 +2175,18 @@ void TestFutureTokenMutationRestore()
 
     EffectViewOwner view(&fixture);
     ResolverOwner resolver(&fixture.image);
-    std::uint32_t originalIdentity = UINT32_C(0x0A11CE01);
-    std::uint32_t substituteIdentity = UINT32_C(0x0BADF00D);
+    ResolverAssetStorage originalIdentity{};
+    ResolverAssetStorage substituteIdentity{};
+    originalIdentity.bytes[0] = UINT8_C(0xA1);
+    substituteIdentity.bytes[0] = UINT8_C(0xB2);
     resolver.state.futureTokenMutationTarget = &visualRequests[1].token;
     resolver.state.originalFutureToken = originalFuture;
     resolver.state.substituteFutureToken = substituteFuture;
     resolver.state.mutateFutureTokenAt = 1;
     resolver.state.restoreFutureTokenAt = 3;
     resolver.state.useFutureTokenResults = true;
-    resolver.state.originalFutureResult = &originalIdentity;
-    resolver.state.substituteFutureResult = &substituteIdentity;
+    resolver.state.originalFutureResult = originalIdentity.bytes.data();
+    resolver.state.substituteFutureResult = substituteIdentity.bytes.data();
 
     WorkspaceOwner workspace;
     fastfile::FxFastFileNativeDisk32Plan plan{};
@@ -2113,12 +2217,12 @@ void TestFutureTokenMutationRestore()
         if (observation.token == originalFuture.value)
         {
             originalWasResolved = true;
-            CHECK(observation.result == &originalIdentity);
+            CHECK(observation.result == originalIdentity.bytes.data());
         }
         if (observation.token == substituteFuture.value)
         {
             substituteWasResolved = true;
-            CHECK(observation.result != &substituteIdentity);
+            CHECK(observation.result != substituteIdentity.bytes.data());
         }
     }
     CHECK(originalWasResolved);
@@ -2145,11 +2249,11 @@ void TestFutureTokenMutationRestore()
             CHECK(NativeVisualIdentity(
                       visuals[1],
                       fastfile::FxElemTypeDisk32::SpriteBillboard)
-                  == &originalIdentity);
+                  == originalIdentity.bytes.data());
             CHECK(NativeVisualIdentity(
-                      visuals[1],
-                      fastfile::FxElemTypeDisk32::SpriteBillboard)
-                  != &substituteIdentity);
+                  visuals[1],
+                  fastfile::FxElemTypeDisk32::SpriteBillboard)
+                  != substituteIdentity.bytes.data());
         }
     }
     CHECK(storage.TailGuardIsIntact());
@@ -2549,17 +2653,19 @@ void TestResolverFailuresAndReentry()
             resolver.state.nullResultAt = 0;
             break;
         case 2:
-            resolver.state.zeroStringBytesAt = 0;
+            resolver.state.zeroRetainedBytesAt = 0;
             break;
         case 3:
-            resolver.state.assetStringBytesAt = 1;
+            resolver.state.invalidAssetExtentAt = 1;
             break;
         }
 
         fastfile::FxFastFileNativeDisk32Plan plan{};
         const auto expected = mode < 2
             ? fastfile::FxFastFileNativeDisk32Status::UnresolvedReference
-            : fastfile::FxFastFileNativeDisk32Status::InvalidString;
+            : mode == 2
+                ? fastfile::FxFastFileNativeDisk32Status::InvalidString
+                : fastfile::FxFastFileNativeDisk32Status::InvalidArgument;
         CHECK(PlanEffect(&workspace, &view, &resolver, &plan) == expected);
         CHECK(!static_cast<bool>(plan));
         CHECK(workspace.get()->phase()
@@ -2877,6 +2983,238 @@ void TestPlanningOutputAliases()
     }
 }
 
+EffectFixture MakeSingleIdentityEffect(
+    const fastfile::FxElemTypeDisk32 type)
+{
+    EffectFixture fixture = MakeEffect({MinimalElem(type)}, 0, 1, 0);
+    AttachSamples(&fixture, 0, 1, 0);
+    AttachVisuals(
+        &fixture,
+        0,
+        type,
+        {AddOpaqueReference(&fixture, UINT32_C(0xE771))});
+    FinalizeEffectTotalSize(&fixture);
+    return fixture;
+}
+
+void TestResolvedIdentityExtentContract()
+{
+    constexpr std::array<std::pair<std::uint64_t, std::uint64_t>, 5>
+        invalidOpaqueDescriptors{{
+            {0, kOpaqueAssetAlignment},
+            {kOpaqueAssetBytes, 0},
+            {kOpaqueAssetBytes, 3},
+            {(std::numeric_limits<std::uint64_t>::max)(),
+             kOpaqueAssetAlignment},
+            {kOpaqueAssetBytes,
+             (std::numeric_limits<std::uint64_t>::max)()},
+        }};
+    for (const auto descriptor : invalidOpaqueDescriptors)
+    {
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        resolver.state.retainedDescriptorOverrideAt = 1;
+        resolver.state.retainedByteCountOverride = descriptor.first;
+        resolver.state.retainedAlignmentOverride = descriptor.second;
+        WorkspaceOwner workspace;
+        fastfile::FxFastFileNativeDisk32Plan plan{};
+
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
+        CHECK(!static_cast<bool>(plan));
+        CHECK(workspace.get()->phase()
+              == fastfile::FxFastFileNativeDisk32Phase::Empty);
+    }
+
+    for (const auto type : {
+             fastfile::FxElemTypeDisk32::SpriteBillboard,
+             fastfile::FxElemTypeDisk32::Model,
+         })
+    {
+        EffectFixture fixture = MakeSingleIdentityEffect(type);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        resolver.state.assetResultAt = 1;
+        resolver.state.assetResult = resolver.state.assetStorage.bytes.data()
+            + 1u;
+        resolver.state.retainedDescriptorOverrideAt = 1;
+        resolver.state.retainedByteCountOverride = kOpaqueAssetBytes - 1u;
+        resolver.state.retainedAlignmentOverride = alignof(char);
+        WorkspaceOwner workspace;
+        fastfile::FxFastFileNativeDisk32Plan plan{};
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
+    }
+
+    {
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        resolver.state.assetResultAt = 1;
+        const std::uintptr_t wrapped =
+            (std::numeric_limits<std::uintptr_t>::max)()
+            & ~(static_cast<std::uintptr_t>(kOpaqueAssetAlignment) - 1u);
+        resolver.state.assetResult = reinterpret_cast<const void *>(wrapped);
+        WorkspaceOwner workspace;
+        fastfile::FxFastFileNativeDisk32Plan plan{};
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
+    }
+
+    {
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        resolver.state.assetResultAt = 1;
+        resolver.state.assetResultUsesOutReference = true;
+        resolver.state.retainedDescriptorOverrideAt = 1;
+        resolver.state.retainedByteCountOverride =
+            sizeof(fastfile::FxFastFileDisk32ResolvedReference);
+        resolver.state.retainedAlignmentOverride =
+            alignof(fastfile::FxFastFileDisk32ResolvedReference);
+        WorkspaceOwner workspace;
+        fastfile::FxFastFileNativeDisk32Plan plan{};
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
+    }
+
+    {
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        resolver.state.retainedDescriptorOverrideAt = 0;
+        resolver.state.retainedByteCountOverride =
+            fixture.image.CStringBytes(fixture.nameToken);
+        resolver.state.retainedAlignmentOverride = 2;
+        WorkspaceOwner workspace;
+        fastfile::FxFastFileNativeDisk32Plan plan{};
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidString);
+    }
+
+    constexpr std::array<std::pair<std::uint64_t, std::uint64_t>, 3>
+        invalidEffectDescriptors{{
+            {sizeof(FxEffectDef) - 1u, alignof(FxEffectDef)},
+            {sizeof(FxEffectDef) + 1u, alignof(FxEffectDef)},
+            {sizeof(FxEffectDef), alignof(FxEffectDef) * 2u},
+        }};
+    for (const auto descriptor : invalidEffectDescriptors)
+    {
+        EffectFixture fixture = MakeSingleIdentityEffect(
+            fastfile::FxElemTypeDisk32::Runner);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        resolver.state.retainedDescriptorOverrideAt = 1;
+        resolver.state.retainedByteCountOverride = descriptor.first;
+        resolver.state.retainedAlignmentOverride = descriptor.second;
+        WorkspaceOwner workspace;
+        fastfile::FxFastFileNativeDisk32Plan plan{};
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
+    }
+
+    {
+        EffectFixture fixture = MakeSingleIdentityEffect(
+            fastfile::FxElemTypeDisk32::Runner);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        WorkspaceOwner workspace;
+        fastfile::FxFastFileNativeDisk32Plan plan{};
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::Success);
+    }
+}
+
+void TestResolvedIdentityPartialOverlaps()
+{
+    {
+        OutputStorage backing(8192, kOpaqueAssetAlignment);
+        EffectFixture fixture = MakeMinimalEffect();
+        FinalizeEffectTotalSize(&fixture);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        resolver.state.assetResultAt = 1;
+        resolver.state.assetResult = backing.data();
+        WorkspaceOwner workspace;
+        fastfile::FxFastFileNativeDisk32Plan plan{};
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::Success);
+
+        FxEffectDef *output = nullptr;
+        CHECK(fastfile::TryMaterializeFxEffectDefDisk32(
+                  workspace.get(),
+                  plan,
+                  static_cast<std::uint8_t *>(backing.data())
+                      + kOpaqueAssetAlignment,
+                  backing.capacity() - kOpaqueAssetAlignment,
+                  &output)
+              == fastfile::FxFastFileNativeDisk32Status::OverlappingStorage);
+        CHECK(output == nullptr);
+        CHECK(backing.IsFilled());
+    }
+
+    {
+        struct alignas(16) OutputCaller final
+        {
+            std::array<std::uint8_t, 16> prefix{};
+            FxEffectDef *output = nullptr;
+            std::array<std::uint8_t, kOpaqueAssetBytes> suffix{};
+        } caller{};
+
+        EffectFixture fixture = MakeSingleIdentityEffect(
+            fastfile::FxElemTypeDisk32::Model);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        resolver.state.assetResultAt = 1;
+        resolver.state.assetResult = caller.prefix.data();
+        WorkspaceOwner workspace;
+        fastfile::FxFastFileNativeDisk32Plan plan{};
+        CHECK(PlanEffect(&workspace, &view, &resolver, &plan)
+              == fastfile::FxFastFileNativeDisk32Status::Success);
+        OutputStorage storage(plan.outputBytes(), plan.outputAlignment());
+
+        CHECK(fastfile::TryMaterializeFxEffectDefDisk32(
+                  workspace.get(),
+                  plan,
+                  storage.data(),
+                  storage.capacity(),
+                  &caller.output)
+              == fastfile::FxFastFileNativeDisk32Status::OverlappingStorage);
+        CHECK(caller.output == nullptr);
+        CHECK(storage.IsFilled());
+    }
+
+    {
+        struct alignas(8) PlanCaller final
+        {
+            std::array<std::uint8_t, sizeof(FxEffectDef)> prefix{};
+            fastfile::FxFastFileNativeDisk32Plan plan{};
+            std::array<std::uint8_t, sizeof(FxEffectDef)> suffix{};
+        } caller{};
+
+        EffectFixture fixture = MakeSingleIdentityEffect(
+            fastfile::FxElemTypeDisk32::Runner);
+        EffectViewOwner view(&fixture);
+        ResolverOwner resolver(&fixture.image);
+        resolver.state.assetResultAt = 1;
+        const auto *const planAddress =
+            reinterpret_cast<const std::uint8_t *>(&caller.plan);
+        resolver.state.assetResult = planAddress - alignof(FxEffectDef);
+        WorkspaceOwner workspace;
+
+        CHECK(PlanEffect(&workspace, &view, &resolver, &caller.plan)
+              == fastfile::FxFastFileNativeDisk32Status::InvalidArgument);
+        CHECK(!static_cast<bool>(caller.plan));
+        CHECK(workspace.get()->phase()
+              == fastfile::FxFastFileNativeDisk32Phase::Empty);
+    }
+}
+
 void TestMaterializationGuardsAndRetry()
 {
     EffectFixture fixture = MakeMinimalEffect();
@@ -3007,8 +3345,7 @@ void TestMaterializationGuardsAndRetry()
           == fastfile::FxFastFileNativeDisk32Phase::Empty);
     CHECK(resolver.state.calls == resolverCalls);
 
-    // Retained non-string identities are an overlap hazard even though their
-    // byte extent is opaque.  Treat the identity itself as one retained byte.
+    // Retained non-string identities protect their complete reported extent.
     EffectFixture assetFixture = MakeMinimalEffect();
     FinalizeEffectTotalSize(&assetFixture);
     EffectViewOwner probeView(&assetFixture);
@@ -3019,7 +3356,9 @@ void TestMaterializationGuardsAndRetry()
               &probeWorkspace, &probeView, &probeResolver, &probePlan)
           == fastfile::FxFastFileNativeDisk32Status::Success);
     OutputStorage assetStorage(
-        probePlan.outputBytes(), probePlan.outputAlignment());
+        probePlan.outputBytes(),
+        (std::max<std::size_t>)(probePlan.outputAlignment(),
+                                kOpaqueAssetAlignment));
 
     EffectViewOwner assetView(&assetFixture);
     ResolverOwner assetResolver(&assetFixture.image);
@@ -3544,12 +3883,24 @@ void FixtureSelfTest()
 
 int main()
 {
+    static_assert(
+        sizeof(fastfile::FxFastFileDisk32ResolvedReference) == 0x18);
+    static_assert(
+        alignof(fastfile::FxFastFileDisk32ResolvedReference) == 8);
+    static_assert(
+        sizeof(fastfile::FxFastFileDisk32FrozenProvenanceRequest) == 0x40);
+    static_assert(
+        alignof(fastfile::FxFastFileDisk32FrozenProvenanceRequest) == 8);
+    static_assert(sizeof(fastfile::FxFastFileNativeDisk32Workspace)
+                  == (KISAK_PTR_BITS == 32 ? 0x4F910 : 0x4F928));
+
     FixtureSelfTest();
     TestValidDefinitions();
     TestMaximumGraphAndResolverJournal();
     TestArgumentsCountsAndOutputPlanPreservation();
     TestPointerSpanAndProvenanceFailures();
     TestProvenanceCallbackMutation();
+    TestFutureSpanProvenanceRestorationEvasion();
     TestResolvedStringMutation();
     TestFutureTokenMutationRestore();
     TestResolverDescriptorSnapshot();
@@ -3557,6 +3908,8 @@ int main()
     TestTrailValidation();
     TestResolverFailuresAndReentry();
     TestPlanningOutputAliases();
+    TestResolvedIdentityExtentContract();
+    TestResolvedIdentityPartialOverlaps();
     TestMaterializationGuardsAndRetry();
     TestPlanBindingAndSourceChanges();
     return failures == 0 ? 0 : 1;
