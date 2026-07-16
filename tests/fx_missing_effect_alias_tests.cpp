@@ -6,10 +6,6 @@
 #include <cstring>
 #include <limits>
 
-struct alignas(FX_ELEM_DEF_RUNTIME_ALIGNMENT) FxElemDef
-{
-    std::uint8_t bytes[FX_ELEM_DEF_RUNTIME_SIZE];
-};
 static_assert(sizeof(FxElemDef) == FX_ELEM_DEF_RUNTIME_SIZE);
 static_assert(alignof(FxElemDef) == FX_ELEM_DEF_RUNTIME_ALIGNMENT);
 
@@ -57,8 +53,8 @@ int main()
         char name[sizeof("misc/missing_fx")];
     };
     SourceBlob sourceBlob{};
-    sourceBlob.elemDefs[0].bytes[0] = 0x40u;
-    sourceBlob.elemDefs[1].bytes[0] = 0x80u;
+    sourceBlob.elemDefs[0].flags = 0x40;
+    sourceBlob.elemDefs[1].flags = 0x80;
     std::memcpy(
         sourceBlob.name, "misc/missing_fx", sizeof(sourceBlob.name));
     sourceBlob.effect = {
@@ -73,8 +69,15 @@ int main()
     };
     FxEffectDef &source = sourceBlob.effect;
     const FxEffectDef sourceSnapshot = source;
-    const std::array<FxElemDef, 2> elemDefSnapshot{
-        sourceBlob.elemDefs[0], sourceBlob.elemDefs[1]};
+    // Snapshot the complete object representation.  Copy construction is not
+    // required to preserve padding bytes, so a typed snapshot makes the
+    // subsequent immutability check compiler-dependent for the canonical
+    // native FxElemDef.
+    std::array<std::uint8_t, sizeof(sourceBlob.elemDefs)> elemDefSnapshot{};
+    std::memcpy(
+        elemDefSnapshot.data(),
+        sourceBlob.elemDefs,
+        sizeof(sourceBlob.elemDefs));
 
     char requestedName[] = "weapons/rifle/muzzle_flash";
     FxMissingEffectAliasPlan plan{};

@@ -5557,8 +5557,11 @@ require_source_match_count(
     "alignas\\(4\\)[ \\t]+volatile[ \\t]+std::int32_t"
     19
     "all EffectsCore runtime atomic words must remain explicit int32_t storage")
+require_source_contains(
+    "EffectsCore/fx_effect_def.h"
+    "RUNTIME_SIZE(FxEffectDef, 0x20, 0x28);"
+    "the canonical effect definition must freeze both native layouts")
 foreach(_fx_runtime_layout
-    "FxEffectDef, 0x20, 0x28"
     "FxEffect, 0x80, 0x88"
     "FxCamera, 0xB0, 0xB0"
     "FxSpriteInfo, 0x10, 0x20"

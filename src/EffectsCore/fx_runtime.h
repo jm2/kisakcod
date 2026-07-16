@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <EffectsCore/fx_effect_def.h>
 #include <universal/kisak_abi.h>
 
 constexpr std::size_t MAX_EFFECTS = 1024;
@@ -11,16 +12,6 @@ constexpr std::size_t MAX_TRAILS = 128;
 constexpr std::size_t MAX_TRAIL_ELEMS = 2048;
 
 struct Material;
-struct FxElemDef;
-
-// FxElemDef is defined in the renderer-facing FX header, but portable helpers
-// need its native span without pulling that platform-heavy definition in.
-// The complete type is frozen to these same values by RUNTIME_SIZE where it is
-// defined and contains native pointers, so its alignment follows pointer width.
-constexpr std::size_t FX_ELEM_DEF_RUNTIME_SIZE =
-    KISAK_ARCH_64BIT ? 0x120u : 0xFCu;
-constexpr std::size_t FX_ELEM_DEF_RUNTIME_ALIGNMENT =
-    KISAK_ARCH_64BIT ? 8u : 4u;
 
 struct r_double_index_t
 {
@@ -54,19 +45,6 @@ struct FxSpatialFrame
     float quat[4];
     float origin[3];
 };
-
-struct FxEffectDef
-{
-    const char *name;
-    int flags;
-    int totalSize;
-    int msecLoopingLife;
-    int elemDefCountLooping;
-    int elemDefCountOneShot;
-    int elemDefCountEmission;
-    const FxElemDef *elemDefs;
-};
-RUNTIME_SIZE(FxEffectDef, 0x20, 0x28);
 
 struct FxProfileEntry
 {

@@ -14,6 +14,8 @@ set(_semantics_source_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_archive_semantics.cpp")
 set(_fxprimitives_path
     "${SOURCE_ROOT}/src/gfx_d3d/fxprimitives.h")
+set(_fx_effect_def_path
+    "${SOURCE_ROOT}/src/EffectsCore/fx_effect_def.h")
 set(_archive_path "${SOURCE_ROOT}/src/EffectsCore/fx_archive.cpp")
 set(_system_path "${SOURCE_ROOT}/src/EffectsCore/fx_system.cpp")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
@@ -25,6 +27,7 @@ foreach(_path IN ITEMS
     "${_source_path}"
     "${_semantics_header_path}"
     "${_semantics_source_path}"
+    "${_fx_effect_def_path}"
     "${_fxprimitives_path}"
     "${_archive_path}"
     "${_system_path}"
@@ -40,6 +43,7 @@ file(READ "${_header_path}" _header)
 file(READ "${_source_path}" _source)
 file(READ "${_semantics_header_path}" _semantics_header)
 file(READ "${_semantics_source_path}" _semantics_source)
+file(READ "${_fx_effect_def_path}" _fx_effect_def)
 file(READ "${_fxprimitives_path}" _fxprimitives)
 file(READ "${_archive_path}" _archive)
 file(READ "${_system_path}" _system)
@@ -52,6 +56,7 @@ foreach(_var IN ITEMS
     _source
     _semantics_header
     _semantics_source
+    _fx_effect_def
     _fxprimitives
     _archive
     _system
@@ -271,7 +276,7 @@ foreach(_layout_pin IN ITEMS
 endforeach()
 
 # The byte-view helpers also depend on nested range/union/trail layouts. Pin
-# those assumptions where the complete renderer types are defined.
+# those assumptions where the portable canonical types are defined.
 foreach(_nested_layout_pin IN ITEMS
     "RUNTIME_SIZE(FxIntRange, 0x8, 0x8);"
     "RUNTIME_OFFSET(FxIntRange, base, 0x0, 0x0);"
@@ -288,9 +293,9 @@ foreach(_nested_layout_pin IN ITEMS
     "RUNTIME_OFFSET(FxTrailDef, repeatDist, 0x4, 0x4);"
     "RUNTIME_OFFSET(FxTrailDef, splitDist, 0x8, 0x8);")
     require_contains(
-        _fxprimitives
+        _fx_effect_def
         "${_nested_layout_pin}"
-        "renderer nested semantic ABI assumption")
+        "canonical nested semantic ABI assumption")
 endforeach()
 
 # Raw free-slot tail preservation is valid only while the native union and

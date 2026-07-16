@@ -18,6 +18,7 @@
 
 #include <cstring>
 #include <cstdlib>
+#include <cmath>
 #include <limits>
 
 namespace
@@ -459,16 +460,41 @@ void __cdecl FX_SetupVisualState(
     float normTimeUpdateEnd,
     FxElemPreVisualState *preVisState)
 {
-    float v5; // [esp+8h] [ebp-10h]
-    float samplePoint; // [esp+10h] [ebp-8h]
+    if (!elemDef || !preVisState || !elemDef->visSamples
+        || elemDef->visStateIntervalCount == 0
+        || !(normTimeUpdateEnd >= 0.0f && normTimeUpdateEnd <= 1.0f))
+    {
+        MyAssertHandler(
+            ".\\EffectsCore\\fx_draw.cpp",
+            152,
+            0,
+            "%s",
+            "elemDef && preVisState && elemDef->visSamples && "
+            "elemDef->visStateIntervalCount > 0 && normTimeUpdateEnd >= 0.0f "
+            "&& normTimeUpdateEnd <= 1.0f");
+        std::abort();
+    }
 
-    samplePoint = (double)elemDef->visStateIntervalCount * normTimeUpdateEnd;
-    v5 = floor(samplePoint);
-    preVisState->sampleLerp = samplePoint - (double)(int)v5;
+    const int32_t intervalCount = elemDef->visStateIntervalCount;
+    const float samplePoint = static_cast<float>(
+        static_cast<double>(intervalCount) * normTimeUpdateEnd);
+    int32_t sampleIndex = static_cast<int32_t>(std::floor(samplePoint));
+    if (sampleIndex >= intervalCount)
+    {
+        // The samples describe intervalCount segments using intervalCount + 1
+        // endpoints. At normalized time 1, interpolate the final segment to
+        // its second endpoint instead of treating that endpoint as a segment.
+        sampleIndex = intervalCount - 1;
+        preVisState->sampleLerp = 1.0f;
+    }
+    else
+    {
+        preVisState->sampleLerp = samplePoint - sampleIndex;
+    }
     preVisState->sampleLerpInv = 1.0 - preVisState->sampleLerp;
     preVisState->elemDef = elemDef;
     preVisState->effect = effect;
-    preVisState->refState = &elemDef->visSamples[(int)v5];
+    preVisState->refState = &elemDef->visSamples[sampleIndex];
     preVisState->randomSeed = randomSeed;
     preVisState->distanceFade = 255;
 }

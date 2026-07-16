@@ -6,9 +6,44 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Active branch: `agent/fx-archive-disk32-production-restore`; PR #31; branch point: merged portable-reader checkpoint
-  `7cbe7070`; current implementation/review-fix head: `57c5fa0a`; current upstream-integration baseline: merge
-  `11a9e08c` through upstream `312a9d2e`.
+- Active branch: `agent/fx-fastfile-disk32-converter`; PR #32; branch point: merged production-restore checkpoint
+  `1a966369`. Exact FX fast-file Disk32 effect/visual/trail/impact schemas and report-free transactional
+  effect-definition and impact-table planner/materializers are implemented. Review hardening now also enforces retail
+  timing/count/visibility/atlas canonicalization, rejects non-looping trail definitions that the runtime cannot spawn,
+  and clamps the normalized visibility endpoint to the final valid sample pair. The complete local GCC/Clang matrix is
+  clean at the current implementation head; final replacement CI and merge are the current work item. Current
+  upstream-integration baseline remains merge `11a9e08c` through upstream `312a9d2e`.
+- Current fast-file widening checkpoint: one canonical portable `FxEffectDef`/`FxElemDef`/visual/trail runtime type family
+  now replaces the renderer-only duplicate definition boundary. The effect converter validates exact Disk32 graph
+  provenance, freezes each bounded resolver request group before callbacks, snapshots the resolver descriptor, binds
+  strings and native identities once, detects source/callback mutation, plans both legacy and widened layouts, and
+  placement-constructs the canonical native graph into caller-owned storage. Trail allocation preserves the legacy
+  `indCount` vertex-capacity rule while copying only `vertCount` initialized vertices and clearing the tail. The parallel
+  impact converter preserves the legacy boolean interpretation of the table token, snapshots all twelve entries, resolves
+  396 fixed handle slots plus the owned table name, and materializes actual `FxImpactTable`/`FxImpactEntry` objects. Both
+  converters are heap-workspace, allocation-free, callback-free during materialization, failure-atomic before output
+  mutation, and guarded against reentry, source/resolver mutation, caller-storage aliasing, partial overlap within every
+  resolver-reported retained extent, and stale/tampered plans. The effect workspace is exactly 325,904 bytes on x86 and
+  325,928 bytes on native64; the impact workspace is 11,216 and 11,232 bytes, respectively. They are production-manifest
+  sources with portable and measured Windows x86 test targets.
+  The stateful `db_load.cpp`/XBlock cursor, XAsset registration, legacy x86 loader, archive writer/wire bytes, save-side
+  native64 guard, and licensed workflow remain unchanged; a zone-owned native arena and guarded stateful adapter are the
+  next M5 seam after this PR.
+- Current fast-file validation: implementation/test head through `1153eefe` passes GCC and Clang **71/71**, ASan+UBSan
+  and TSan
+  **70/70**, the focused effect converter under Clang MemorySanitizer, and the updated fast-file source/security contract.
+  Only the generated static-stack test is intentionally absent under instrumentation. Strict GCC i386 and AArch64
+  compilation/linking also pass; the sandbox blocks i386 execution with `SIGSYS` and has no AArch64 emulator. The prior remote head
+  `0f376a92` passed Linux amd64/arm64, macOS arm64, and the Windows x86 no-Steam/headless jobs in run **29462535215**;
+  portable Windows amd64/ARM64 and measured Windows x86 Debug/Release found test-only `/W4 /WX` conversion, unary-minus,
+  and over-alignment diagnostics. Commits `83ae1414`, `dd58dbef`, and `55685e95` remove those representation and compiler
+  hazards; the semantic/runtime corrections and canonical regression fixtures follow through `654798ac`. Replacement run
+  **29464935543** then passed Linux amd64/arm64, portable Windows amd64/ARM64, macOS arm64, Windows x86 no-Steam, and
+  headless Windows x86. Its measured Debug/Release jobs found one remaining test-only MSVC C4324 diagnostic; `1153eefe`
+  removes that redundant fixture alignment. Extra Clang conversion/sign-conversion diagnostics are clean for all three
+  new fixtures, and Codex found no major issue at review head `e5b755a4`. Final replacement CI is pending. The enforced
+  4 KiB helper-frame gate previously measured 1,056 bytes maximum under GCC and 984 under Clang. No licensed workflow was
+  dispatched.
 - Scope: multiplayer client and headless dedicated server; single-player is deferred.
 - Current production-restore checkpoint: `FX_Restore` now consumes the legacy Disk32 tail through the unified portable
   reader and an independently owned mutable candidate. The 670,976-byte x86 / 695,640-byte native64 reader and
@@ -125,7 +160,8 @@ work item changes. Do not create session-specific handoff files.
   idempotent-null destruction contract, and its claimed `BodyState` padding conflicts with the complete pinned 0x00--0x70
   field layout. Those three threads have evidence-backed replies, and all four review threads are resolved. Exact PR head
   `21dae5ca` passed all nine required jobs in run **29453934377**, including all four measured Windows x86 engine
-  variants. Final documentation-head CI and merge are the active gate.
+  variants. PR #31 squash-merged as `1a966369` from final documentation head `9fb7dafd`; post-merge run
+  **29454579529** also passed all nine jobs, including all four measured Windows x86 engine variants.
 - PR #27 initial run **29439592615** at `ff59ef7e` passed Linux amd64/arm64, but portable Windows amd64/ARM64 exposed an
   include-boundary issue before their tests linked: the semantic translation unit imported the complete physics-sidecar
   header only for its token/512-body constants, causing MSVC analysis to charge an unrelated 4,104-byte inline convenience
@@ -320,11 +356,11 @@ work item changes. Do not create session-specific handoff files.
   protocol is unchanged. Local validation is **45/45** under GCC, Clang, ASan/UBSan (leak detection disabled), and
   TSan; strict x86-32 and AArch64 controller compile/link plus all three focused source scripts pass. Two independent
   audits found and verified three concrete fail-closed corrections and found no remaining PR-scope issue.
-- Active work after this checkpoint: push the exact production-switch head, run the complete CI matrix, address only
-  substantiated Codex/Gemini review findings, keep `docs/task.md` synchronized, and merge the PR once every required check
-  is green and review threads are resolved. The following implementation batch begins the next M5 runtime Disk32/fast-file
-  widening seam. Retain the legacy x86 writer and native64 save guard until a later pure encoder and full-image equivalence
-  batch.
+- Active work after this checkpoint: push the hardened PR #32 head, run the complete CI matrix, address only substantiated
+  Codex/Gemini review findings, keep `docs/task.md` synchronized, and merge once every required check is green and review
+  thread is resolved. The following implementation batch begins the zone-owned M5 native fast-file arena/adapter seam.
+  Retain the legacy x86 loader/writer and native64 save guard until their parity fixtures and transactional replacements
+  are complete.
 - Completed M5 portable-reader slice: `BodyState` now lives in a lightweight physics leaf instead of importing D3D9 through
   `phys_local.h`; the exact `0x70` `BodyStateDisk32` decoder canonicalizes legacy low-byte `underwater` and archive time;
   Ready-only semantic enumeration emits at most 512 immutable physics descriptors; and the outer heap workspace reads the
@@ -394,8 +430,8 @@ work item changes. Do not create session-specific handoff files.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **48% complete by engineering effort** (plausible range 44–53%).
-  The foundation/checklist view is about 60% and the shared foundation is at least 95% mature,
+- Progress estimate: approximately **49% complete by engineering effort** (plausible range 46–54%).
+  The foundation/checklist view is about 61% and the shared foundation is at least 95% mature,
   but none of the five requested 64-bit/non-Windows engine targets builds yet; target delivery is 0/5.
 - Initial upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
   (nine commits; upstream was not ahead at merge time) while preserving the port's pointer-width and
@@ -853,7 +889,7 @@ work item changes. Do not create session-specific handoff files.
 | M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 46 pointer fixes, tripwire, remote-input hardening, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path/FX graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, complete graphics-world AABB topology validation, bounded XSurface/XModel skin/skeleton/collision contracts, transactional FX pool/handle ownership validation, allocation-safe ODE body/user-data/model-collision construction, and a bounded transactional native-width physics pool allocator have landed or are in the current reviewed batch; production-path fuzz fixtures and the load-object bounded cursor remain. |
 | M3 platform services | In progress: thread, memory, and filesystem enumeration integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, virtual-memory lifecycle, UTF-8 mkdir/cwd/executable paths, bounded directory enumeration, and a cooperative worker gate used by renderer workers. Linux/macOS engine/headless sets remain empty and engine-gated; handle-relative recursive deletion, POSIX crash freezing, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table, DObj runtime/saved layouts, allocations, preview buffers, SP corpse pointers, EffectsCore effect/pool handle codecs, ODE user-geometry storage, and the generic physics pool allocator are native-width exact. MP `cpose_t::physObjId` and `BreakablePiece::physObjId` still store ODE pointers in `int32_t` and are a hard native64 blocker; XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads also remain 32-bit-layout-bound. |
-| M5 disk32 widening loader | FX production restore integrated; broader runtime widening next | `disk32::PointerToken`, strong FX archive-key/address types, exact effect/system/buffer/body mirrors, exhaustive handle remapping, checked native pool reconstruction/linking, definition-provenance resolution, complete allocation-graph validation, a definition-aware semantic `Ready` transition, Ready-only physics enumeration, and transactional raw/zlib `MemoryFile` staging after the separately leased definition table now exist with x86 whole-image evidence. Production restore now builds a reader-gated, exact-lease-bound independent mutable candidate, destroys the reader, releases the lease immediately before generation-checked archive admission, and reuses the established rollback controller with centralized staging cleanup. The restore-only native64 guard/raw parser are gone; the writer and save guard remain. Typed alias/completed-slot registries and 23 full-span raw/POD fields remain available. Exact CI/review/merge is the current gate; broader completed-object relocation and the next runtime Disk32/fast-file widening seam follow. |
+| M5 disk32 widening loader | FX restore integrated; hardened fast-file effect/impact conversion in review | `disk32::PointerToken`, strong FX archive-key/address types, exact archive effect/system/buffer/body mirrors, exhaustive handle remapping, checked native pool reconstruction/linking, definition-provenance resolution, semantic `Ready`, Ready-only physics enumeration, and transactional raw/zlib restore staging are merged with x86 whole-image evidence. PR #32 adds exact pointer-bearing fast-file effect/visual/trail/impact schemas, canonical native runtime definitions, and bounded two-pass effect/impact converters with frozen resolver transactions, retained-extent overlap checks, callback-free materialization, retail semantic validation, and bounded runtime visibility interpolation. Production restore uses the exact-lease-bound reader/candidate path; the restore-side native64 guard/raw parser are gone. The stateful fast-file XBlock/XAsset adapter, zone-owned widened arena, broader completed-object relocation, writer, and save-side guard remain. Complete local GCC/Clang/sanitizer plus strict i386/AArch64 checks are clean; replacement CI/review/merge remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
 ## Target matrix
@@ -869,17 +905,21 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Push the final PR #31 documentation checkpoint, verify all nine required jobs remain green, and merge the PR.
-2. Begin the next M5 runtime Disk32/fast-file widening seam while retaining the legacy writer, wire format, and native64
-   save guard until their separately validated encoder/equivalence checkpoint.
-3. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
+1. Push the hardened PR #32 head and merge only when all nine required CI jobs and actionable review threads are clean.
+2. Add a zone-owned aligned native arena plus a guarded stateful adapter that derives provenance-bounded views from the
+   production XBlock cursor, invokes the reviewed pure planners/materializers, and publishes completed effect/impact XAssets
+   only after the full transaction succeeds. Preserve the legacy x86 path behind an explicit compatibility boundary while
+   native64 parity fixtures mature; do not change retail wire bytes or the writer in this adapter batch.
+3. Add exact whole-zone ownership/rollback, alias/completed-object registration, and reference-lifetime tests around that
+   adapter before widening the next XAsset family or removing any legacy loader path.
+4. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
-4. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
+5. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
    and `KISAKCOD_GAME_DIR` secret are absent. Implement the designed handle-relative recursive deletion
    service without symlink/reparse traversal instead; surface the smoke infrastructure blocker if asked.
-5. Extract standard-stream console services, then process/event services and Linux signal-park plus
+6. Extract standard-stream console services, then process/event services and Linux signal-park plus
    macOS Mach crash freezing behind the already isolated terminal API.
-6. Widen/tokenize the remaining MP physics pointer fields, continue M1/M5 ABI cleanup, and add production fast-file
+7. Widen/tokenize the remaining MP physics pointer fields, continue M1/M5 ABI cleanup, and add production fast-file
    fixtures/fuzzing before enabling any native64 engine target.
 
 ## Known release blockers
