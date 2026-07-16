@@ -52,22 +52,30 @@ work item changes. Do not create session-specific handoff files.
   **29503163189**: Linux amd64/arm64, portable Windows amd64/ARM64, macOS arm64, measured Windows x86 Debug/Release,
   no-Steam Windows x86, and headless Windows x86. The fresh hosted Codex review found no major issue at `4ab63c1b`; the
   only later committed change documents trusted-caller isolation, and a separate exact-head audit found no correctness,
-  security, lifetime, malformed-input, ABI/portability, test, or documentation blocker at `ca080971`.
+  security, lifetime, malformed-input, ABI/portability, test, or documentation blocker at `ca080971`. PR #33
+  squash-merged as `a004701d` from final documentation head `73472a50`; authoritative post-merge master run
+  **29506653705** passed all nine jobs. The canceled final PR-branch run is intentionally non-authoritative.
 - Current Disk32 XAsset-envelope checkpoint: branch `agent/disk32-xasset-envelope` now defines exact portable
   `XAssetHeaderDisk32` (0x4), `XAssetDisk32` (0x8), `ScriptStringListDisk32` (0x8), and `XAssetListDisk32` (0x10)
   records without importing the widened native `xanim.h` types. A pure report-free layer validates the 32768-asset and
   65536-script-string limits, count/token parity, checked `count * 8` extent, caller-provided bounded record span, raw
   signed type range, and deterministic build admission through a required portable callback. It preflights the complete
   array before publishing an iterator, reads unaligned records with exact-stride `memcpy`, permits but never inspects
-  trailing guard bytes, revalidates each borrowed record before output, preserves high-bit/sentinel tokens byte-for-byte,
-  and leaves layout, iterator, record, and cursor outputs unchanged on every failure or `End`. Production stream globals,
-  `db_load.cpp`, PMem, zone ownership, the legacy x86 route, and retail bytes are unchanged.
-- Current XAsset-envelope validation: rebased commits `d520e174`, `b108d344`, and `77fe04f7` pass focused GCC and Clang
-  warning-as-error builds and execution, including Clang conversion/sign-conversion diagnostics; ASan+UBSan and TSan
-  execution; strict GCC i386 and AArch64 compilation/linking; the dedicated source contract; and `git diff --check`.
-  The sandbox blocks the linked i386 executable with its established `SIGSYS`, and no AArch64 emulator is available.
-  Portable CMake integration executes the runtime and source-contract tests on all five utility targets; measured Windows
-  x86 Debug/Release explicitly builds and runs the new target. Candidate CI and hosted review are pending.
+  trailing guard bytes, accepts the exact empty-list Span/Begin/End path without invoking admission, revalidates each
+  borrowed record before output, preserves high-bit/sentinel tokens byte-for-byte, and leaves layout, iterator, record,
+  and cursor outputs unchanged on every failure or `End`. Root validation requires a live four-byte-aligned object
+  populated by an exact 0x10-byte copy when sourced from wire bytes; only the separately bounded record span is
+  alignment-agnostic. Checked arithmetic distinguishes negative counts, true `count * 8` overflow, and the lower
+  32768-entry policy cap. Source tripwires forbid importing or iterating native `XAsset`/`XAssetList` representations.
+  Production stream globals, `db_load.cpp`, PMem, zone ownership, the legacy x86 route, and retail bytes are unchanged.
+- Current XAsset-envelope validation: rebased commits `d520e174`, `b108d344`, `77fe04f7`, `c639a3fa`, and `ae49ca7c`
+  pass focused GCC and Clang warning-as-error builds and execution, including Clang conversion/sign-conversion diagnostics;
+  ASan+UBSan and TSan execution; strict GCC i386 and AArch64 compilation/linking; Clang static analysis; the dedicated
+  source contract; and `git diff --check`. The sandbox blocks the linked i386 executable with its established `SIGSYS`,
+  and no AArch64 emulator is available. Portable CMake integration executes the runtime and source-contract tests on all
+  five utility targets; measured Windows x86 Debug/Release explicitly builds and runs the new target. Independent
+  security/logic and test/build audits found no remaining blocker after the empty-list, overflow, aligned-root,
+  deterministic-admission, and native-type-tripwire hardening. Candidate CI and hosted review are pending.
 - Production dispatch now needs the Disk32 script-string walk and a generation-keyed, explicitly constructed per-zone
   native sidecar in the same ownership/rollback batch. `XZone` cannot directly embed the nontrivial arena because the
   legacy registry zeroes each slot with `memset`. The first arena integration may use a checked fixed compatibility budget
