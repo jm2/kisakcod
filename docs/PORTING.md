@@ -97,9 +97,13 @@ Completed foundation work:
   semantics, and publishes only after all fallible checks. Review hardening validates retail time/count/visibility/atlas
   canonicalization, rejects trail definitions outside the runtime-supported looping range, and prevents the normalized
   visibility endpoint from indexing beyond the final adjacent sample pair. The exact effect workspace is 325,904 bytes
-  on x86 and 325,928 bytes on native64; the impact workspace is 11,216 and 11,232 bytes, respectively. The stateful
-  XBlock/XAsset loader, retail bytes, legacy x86 path, archive writer, and save-side guard remain unchanged pending a
-  zone-owned arena and guarded production adapter;
+  on x86 and 325,928 bytes on native64; the impact workspace is 11,216 and 11,232 bytes, respectively. The zone-owned
+  aligned native arena and the guarded stateful zone adapter that drives those converters from the legacy wire walk are
+  implemented as portable primitives with exact workspace contracts (774,216-byte x86 / 799,944-byte native64 adapter
+  scratch), watermark-ratcheting LIFO arena transactions, nested impact/inline-effect conversion, and
+  materialize-commit-then-publish ordering. The stateful
+  XBlock/XAsset loader, retail bytes, legacy x86 path, archive writer, and save-side guard remain unchanged pending the
+  production wiring and whole-zone ownership/rollback batch;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -135,8 +139,9 @@ Remaining gates, in implementation order:
    save guard follow later.
 3. Continue fixed-width `disk32` fast-file widening. PR #32 merged exact FX effect/visual/trail/impact schemas and hardened
    pure transactional native converters with local GCC/Clang, complete sanitizer, strict i386/AArch64, source-contract,
-   and all-nine-job candidate CI clean. Next, add a zone-owned aligned native
-   arena and guarded stateful XBlock/XAsset adapter with exact rollback, completed-object/alias registration, and lifetime
+   and all-nine-job candidate CI clean. The zone-owned aligned native arena and the guarded stateful zone adapter over the
+   XBlock cursor walk are implemented as portable primitives with adversarial sequence/provenance/nesting coverage. Next,
+   wire them into production db_load.cpp with exact whole-zone rollback, completed-object/alias registration, and lifetime
    tests before replacing any legacy loader path. Retail wire bytes remain frozen.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
 5. Implement the remaining platform services (sockets, filesystem,
@@ -1166,8 +1171,9 @@ hardening above are now present. Replacement run **29464935543** passed seven jo
 and the no-Steam/headless Windows x86 variants; measured Debug/Release exposed only one redundant test-fixture alignment,
 fixed by `1153eefe`. Codex found no major issue at review head `e5b755a4`, and exact final candidate run **29465922917**
 passed all nine jobs. PR #32 squash-merged as `9860617b` from final branch head `0658dcd0`; independent post-merge run
-**29466158837** also passed all nine jobs. A zone-owned native arena and guarded XBlock/XAsset adapter are next. Writer
-replacement follows later after exact x86
+**29466158837** also passed all nine jobs. The zone-owned native arena and guarded stateful XBlock/XAsset zone adapter
+are now implemented as portable primitives; production wiring with whole-zone rollback and registration tests is next.
+Writer replacement follows later after exact x86
 full-image equivalence.
 A checked
 whole-segment compressed-finalization boundary remains a
