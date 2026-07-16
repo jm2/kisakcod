@@ -133,9 +133,9 @@ Remaining gates, in implementation order:
    through the exact-lease-bound mutable candidate, centralized staging cleanup, immediate lease-release-to-archive-admission
    handoff, and the existing publication/rollback controller. That production-restore checkpoint is merged. The writer and
    save guard follow later.
-3. Continue fixed-width `disk32` fast-file widening. Exact FX effect/visual/trail/impact schemas and hardened pure
-   transactional native converters are implemented in PR #32; local GCC/Clang, complete sanitizer, strict i386/AArch64,
-   and source-contract checks are clean while replacement CI/review/merge remain. Next, add a zone-owned aligned native
+3. Continue fixed-width `disk32` fast-file widening. PR #32 merged exact FX effect/visual/trail/impact schemas and hardened
+   pure transactional native converters with local GCC/Clang, complete sanitizer, strict i386/AArch64, source-contract,
+   and all-nine-job candidate CI clean. Next, add a zone-owned aligned native
    arena and guarded stateful XBlock/XAsset adapter with exact rollback, completed-object/alias registration, and lifetime
    tests before replacing any legacy loader path. Retail wire bytes remain frozen.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
@@ -1104,7 +1104,7 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **49%** (plausible range **46–54%**). The foundation/checklist view is about
+Overall porting progress is approximately **50%** (plausible range **47–55%**). The foundation/checklist view is about
 **61%**, the shared foundation is **95%+** mature, and target delivery remains **0/5**.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
 Windows x86 Debug and Release production reports now enforce 2,756-byte `FX_Save`, 6,124-byte `FX_Restore`, and
@@ -1152,7 +1152,7 @@ same-owner lease reacquisition; Gemini's valid const-correctness cleanup is appl
 `BodyState`-padding reports are contradicted by pinned tests/layout contracts and have evidence-backed replies. All four
 threads are resolved, and exact review-fix/documentation head `21dae5ca` passed all nine required jobs in run
 **29453934377**. PR #31 squash-merged as `1a966369` from final documentation head `9fb7dafd`; post-merge run
-**29454579529** also passed all nine jobs. The active branch now implements exact FX fast-file Disk32
+**29454579529** also passed all nine jobs. PR #32 merged exact FX fast-file Disk32
 definition/visual/trail/impact schemas plus separate report-free transactional effect-definition and impact-table
 planner/materializers without touching the stateful production loader. Canonical native objects, frozen resolver
 transactions, full source/name provenance, bounded journals, callback-free publication, retained-extent overlap rejection,
@@ -1164,8 +1164,10 @@ CI remains the runtime authority. Prior CI run **29462535215** at `0f376a92` pas
 warning-as-error failures in the other four; their fixed-width/representation-safe corrections plus the semantic/runtime
 hardening above are now present. Replacement run **29464935543** passed seven jobs, including both portable Windows targets
 and the no-Steam/headless Windows x86 variants; measured Debug/Release exposed only one redundant test-fixture alignment,
-fixed by `1153eefe`. Codex found no major issue at review head `e5b755a4`. Final replacement CI/merge are the current gate;
-a zone-owned native arena and guarded XBlock/XAsset adapter are next. Writer replacement follows later after exact x86
+fixed by `1153eefe`. Codex found no major issue at review head `e5b755a4`, and exact final candidate run **29465922917**
+passed all nine jobs. PR #32 squash-merged as `9860617b` from final branch head `0658dcd0`; independent post-merge run
+**29466158837** also passed all nine jobs. A zone-owned native arena and guarded XBlock/XAsset adapter are next. Writer
+replacement follows later after exact x86
 full-image equivalence.
 A checked
 whole-segment compressed-finalization boundary remains a
