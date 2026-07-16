@@ -144,6 +144,8 @@ set(DATABASE
     "${SRC_DIR}/database/database.h"
     "${SRC_DIR}/database/db_asset_mode.h"
     "${SRC_DIR}/database/db_disk32.h"
+    "${SRC_DIR}/database/db_script_string_journal.cpp"
+    "${SRC_DIR}/database/db_script_string_journal.h"
     "${SRC_DIR}/database/db_xasset_disk32.cpp"
     "${SRC_DIR}/database/db_xasset_disk32.h"
     "${SRC_DIR}/database/db_zone_load_context.cpp"
