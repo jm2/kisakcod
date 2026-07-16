@@ -8,7 +8,8 @@ work item changes. Do not create session-specific handoff files.
 
 - Current zone-adapter checkpoint: the zone-owned aligned native arena (`FxFastFileNativeArena`) and the guarded stateful
   zone adapter (`FxFastFileZoneAdapterDisk32Workspace`) are implemented as portable EffectsCore sources with no production
-  wiring. The arena binds caller/zone-owned 16-byte-aligned storage, issues zero-filled absolute-address-aligned
+  wiring. The arena binds caller/zone-owned 16-byte-aligned storage only while unbound, so replacing or reusing storage
+  must cross the explicit lifetime-checked unbind boundary. It issues zero-filled absolute-address-aligned
   reservations only inside an exact two-deep LIFO transaction protocol, ratchets a committed watermark on commit, and
   reclaims/rezeroes only above that watermark on abandonment, so committed (published) storage is never reissued while a
   failed outer impact transaction strands its interleaved bytes as permanently retired zone storage. The adapter is a
@@ -17,9 +18,11 @@ work item changes. Do not create session-specific handoff files.
   against the caller's XBlock cursor oracle, arena-copies retained sound names inside the open transaction, assembles the
   provenance-bounded converter views, replays recorded resolutions and extents through the reviewed pure
   planner/materializer callbacks exactly once, reserves plan-sized output from the arena, commits, and only then publishes
-  through the caller's sink, so a rejected publication strands only unreferenced retired storage. One impact-table
-  transaction may nest legacy inline-sentinel effect transactions and auto-binds each published nested effect to its
-  pending slot; effect-under-effect and impact-under-impact nesting fail closed. Any failure abandons open reservations
+  through the caller's sink. The sink returns the canonical registered root identity (which may differ from the arena root
+  after `DB_AddXAsset` shallow-copies it); callers and nested impact slots receive that canonical identity while its
+  pointer-owned children remain arena-backed. A rejected publication strands only unreferenced retired storage. One
+  impact-table transaction may nest legacy inline-sentinel effect transactions; effect-under-effect and
+  impact-under-impact nesting fail closed. Any failure abandons open reservations
   innermost-first, structurally resets both converter workspaces, and returns the adapter to Idle with committed sibling
   publications intact. The exact adapter workspace is 774,216 bytes on x86 and 799,944 bytes on native64; the arena is
   0x58 bytes with 0x18-byte transaction tokens. The stateful db_load.cpp legacy x86 path, XAsset registration, wire
@@ -40,7 +43,12 @@ work item changes. Do not create session-specific handoff files.
   sequence counted three times by the source contract. Gemini's alignment-mask suggestion is applied with its
   power-of-two precondition documented. All three review threads are answered and resolved. Exact review-fix head
   `f7a96827` passed all nine jobs in run **29469989032**, including both measured Windows x86 variants executing the new
-  arena and adapter suites.
+  arena and adapter suites. A final independent audit then found two production-wiring blockers hidden by the otherwise
+  green primitive tests: `TryBind` could bypass `TryUnbind` and reset accounting for still-published storage, and the
+  publication callback could not return the canonical pool identity produced by `DB_AddXAsset`. Commits `503e0b54` and
+  `bf7645d2` close those lifetime/identity gaps, add canonical-root and rebind regressions, correct the public commit-order
+  contract, and pin both invariants in the source test. Focused GCC, Clang, ASan+UBSan, and TSan arena/adapter/source
+  suites are green at `bf7645d2`; replacement CI is pending.
 - Merged fast-file widening checkpoint: PR #32 squash-merged as `9860617b` from final branch head `0658dcd0`, based on
   production-restore checkpoint `1a966369`. Exact FX fast-file Disk32 effect/visual/trail/impact schemas and report-free
   transactional effect-definition and impact-table planner/materializers are implemented. Review hardening now also

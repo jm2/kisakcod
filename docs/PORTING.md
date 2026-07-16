@@ -101,7 +101,9 @@ Completed foundation work:
   aligned native arena and the guarded stateful zone adapter that drives those converters from the legacy wire walk are
   implemented as portable primitives with exact workspace contracts (774,216-byte x86 / 799,944-byte native64 adapter
   scratch), watermark-ratcheting LIFO arena transactions, nested impact/inline-effect conversion, and
-  materialize-commit-then-publish ordering. The stateful
+  materialize-commit-then-publish ordering. Arena rebinding now requires an explicit unbind lifetime boundary, and
+  publication returns the canonical registered root identity while keeping shallow-owned children arena-backed. The
+  stateful
   XBlock/XAsset loader, retail bytes, legacy x86 path, archive writer, and save-side guard remain unchanged pending the
   production wiring and whole-zone ownership/rollback batch;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
@@ -1172,7 +1174,9 @@ and the no-Steam/headless Windows x86 variants; measured Debug/Release exposed o
 fixed by `1153eefe`. Codex found no major issue at review head `e5b755a4`, and exact final candidate run **29465922917**
 passed all nine jobs. PR #32 squash-merged as `9860617b` from final branch head `0658dcd0`; independent post-merge run
 **29466158837** also passed all nine jobs. The zone-owned native arena and guarded stateful XBlock/XAsset zone adapter
-are now implemented as portable primitives; production wiring with whole-zone rollback and registration tests is next.
+are now implemented as portable primitives. Final independent review found and fixed a live-arena rebind bypass and the
+missing canonical `DB_AddXAsset` identity return in `503e0b54`/`bf7645d2`; focused GCC/Clang/ASan+UBSan/TSan coverage is
+green and replacement CI is pending. Production wiring with whole-zone rollback and registration tests is next.
 Writer replacement follows later after exact x86
 full-image equivalence.
 A checked
