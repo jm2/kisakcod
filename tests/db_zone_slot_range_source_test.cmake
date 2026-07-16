@@ -119,6 +119,10 @@ require_not_contains(
     _registry
     "g_zoneNameList[2080]"
     "the saturating legacy output buffer cannot return")
+require_not_contains(
+    _registry
+    "fs_gameDirVar->current.integer"
+    "semantic string dvars must never be read through their 32-bit integer member")
 
 # The executable walk/formatter remains header-only and structural. It must not
 # import the registry, XZone, dvar, qcommon strings, or a dynamic container.
@@ -234,6 +238,48 @@ require_contains(
     _manifest
     "database/db_referenced_fastfile.h"
     "the helper is part of the database source manifest")
+
+extract_slice(
+    _registry
+    "void __cdecl DB_BuildOSPath_Mod"
+    "bool __cdecl DB_ModFileExists"
+    _mod_path
+    "DB_BuildOSPath_Mod")
+foreach(_marker IN ITEMS
+    "if (!*fs_gameDirVar->current.string)"
+    "string = fs_gameDirVar->current.string;"
+    "Com_sprintf(filename, size, \"%s\\\\%s\\\\%s.ff\"")
+    require_contains(
+        _mod_path
+        "${_marker}"
+        "mod-path construction uses the native-width string dvar")
+endforeach()
+require_ordered(
+    _mod_path
+    "if (!*fs_gameDirVar->current.string)"
+    "string = fs_gameDirVar->current.string;"
+    "mod-path construction validates the string before using it")
+
+extract_slice(
+    _registry
+    "bool __cdecl DB_ModFileExists"
+    "static void DB_WaitForRecoveryAndClaimAssets"
+    _mod_exists
+    "DB_ModFileExists")
+foreach(_marker IN ITEMS
+    "if (!*fs_gameDirVar->current.string)"
+    "return 0;"
+    "DB_BuildOSPath_Mod(\"mod\", 0x100u, filename);")
+    require_contains(
+        _mod_exists
+        "${_marker}"
+        "mod-file probing uses native-width string truthiness")
+endforeach()
+require_ordered(
+    _mod_exists
+    "if (!*fs_gameDirVar->current.string)"
+    "DB_BuildOSPath_Mod(\"mod\", 0x100u, filename);"
+    "an empty mod directory is rejected before path construction")
 
 extract_slice(
     _registry
@@ -370,6 +416,19 @@ extract_slice(
     "void __cdecl DB_BuildOSPath"
     _allocation
     "DB_TryLoadXFileInternal")
+foreach(_marker IN ITEMS
+    "if (*fs_gameDirVar->current.string && DB_ShouldLoadFromModDir(zoneName))"
+    "DB_BuildOSPath_Mod(zoneName, 256, filename);")
+    require_contains(
+        _allocation
+        "${_marker}"
+        "mod fast-file loading uses native-width string truthiness")
+endforeach()
+require_ordered(
+    _allocation
+    "if (*fs_gameDirVar->current.string && DB_ShouldLoadFromModDir(zoneName))"
+    "DB_BuildOSPath_Mod(zoneName, 256, filename);"
+    "mod fast-file loading validates the native string before path construction")
 foreach(_marker IN ITEMS
     "g_zoneIndex = 0;"
     "for (i = 1; i < 0x21; ++i)"
