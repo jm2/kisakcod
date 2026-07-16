@@ -411,6 +411,8 @@ XAssetEntry *g_copyInfo[0x800];
 uint32_t g_copyInfoCount;
 XZone g_zones[ASSET_TYPE_COUNT]{ 0 };
 uint8_t g_zoneHandles[32];
+// Slot zero owns default assets; the live-zone handle table covers slots 1..32.
+static_assert(ARRAY_COUNT(g_zones) == ARRAY_COUNT(g_zoneHandles) + 1);
 char g_zoneNameList[2080];
 XAssetPool<XModelPieces, POOLSIZE_XMODELPIECES> g_XModelPiecesPool;
 XAssetPool<PhysPreset, POOLSIZE_PHYSPRESET> g_PhysPresetPool;
@@ -491,7 +493,7 @@ char *__cdecl DB_ReferencedFFChecksums()
 
     v0 = strlen("localized_");
     g_zoneNameList[0] = 0;
-    for (i = 0; i < 32; ++i)
+    for (i = 1; i < static_cast<int32_t>(ARRAY_COUNT(g_zones)); ++i)
     {
         if (g_zones[i].name[0] && I_strncmp(g_zones[i].name, "localized_", v0))
         {
@@ -512,7 +514,7 @@ char *__cdecl DB_ReferencedFFNameList()
 
     v0 = strlen("localized_");
     g_zoneNameList[0] = 0;
-    for (i = 0; i < 32; ++i)
+    for (i = 1; i < static_cast<int32_t>(ARRAY_COUNT(g_zones)); ++i)
     {
         if (g_zones[i].name[0] && I_strncmp(g_zones[i].name, "localized_", v0))
         {
