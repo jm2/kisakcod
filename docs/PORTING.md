@@ -129,7 +129,9 @@ Completed foundation work:
   per-generation arena/workspace/journal/backing belongs in the named PMem scope. The non-atomic API requires one external
   serializer across every transition/query/callback/destruction; cleanup callbacks are convergent ensure-postcondition
   operations. Successful loading keeps admission closed through all fallible work and `PMem_EndAlloc`, publishes `Live`
-  through `TryCommit`, then performs an infallible no-drop gate/signal release before dropping that serializer;
+  through `TryCommit`, then performs an infallible no-drop gate/signal release before dropping that serializer. Exact
+  candidate `f8efc613` passed all nine jobs in PR #36 run **29530465823** and received a clean hosted Codex review after
+  its sole test-friendship finding was fixed and resolved;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -169,7 +171,7 @@ Remaining gates, in implementation order:
    over the XBlock cursor walk with adversarial sequence/provenance/nesting and canonical-publication coverage; it
    squash-merged as `a004701d`, and post-merge run **29506653705** passed all nine jobs. PR #34 merged the fixed top-level
    XAsset envelopes and bounded eight-byte iterator prerequisite as `3e9b51b0`; PR #35 merged the pure four-byte Disk32
-   script-string token walk as `3271b8d6`. The current pure external lifecycle controller adds generation-keyed slot
+   script-string token walk as `3271b8d6`. PR #36's all-nine-green reviewed candidate adds generation-keyed external slot
    ownership and distinct load-abandon/live-unload recipes. Next, complete transactional script-string ownership and the
    constructed whole-zone sidecar table, keeping static controller slots outside PMem and per-generation native storage
    inside the named scope, then bind the recipes and adapter into production with completed-object/alias registration and
@@ -1256,8 +1258,10 @@ admission closed through all fallible work and `PMem_EndAlloc`, calls `TryCommit
 infallible no-drop gate/signal release before dropping the same serializer. A production release that can fail or exit
 nonlocally requires an explicit committing/admission-pending state first.
 The complete GCC and Clang suites are **80/80** green, with focused warning-as-error, conversion/sign-conversion,
-ASan+UBSan, MSan, TSan, static-analysis, strict i386/AArch64, source-contract, and diff checks also clean. Candidate CI and
-hosted review for this new primitive remain pending.
+ASan+UBSan, MSan, TSan, static-analysis, strict i386/AArch64, source-contract, and diff checks also clean. Exact candidate
+`f8efc613` passed all nine jobs in PR #36 run **29530465823**. Hosted Codex found no major issue at that head; Gemini
+reported no comments on the initial candidate. Codex's sole earlier test-friendship finding is fixed and resolved, and no
+review threads remain.
 The following ownership batch combines transactional ordinary-reference script-string staging with a constructed
 whole-zone table around that external controller. Static context slots and callback metadata must live outside and outlast
 zone PMem so the controller survives `PMem_Free` and can publish `Empty`; only per-generation
