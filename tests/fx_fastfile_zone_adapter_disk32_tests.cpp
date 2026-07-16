@@ -517,17 +517,24 @@ struct ResolutionPool final
 
 struct PublicationSink final
 {
+    FxEffectDef canonicalEffects[8] = {};
     FxEffectDef *effects[8] = {};
     std::uint32_t effectCount = 0;
+    FxImpactTable canonicalTables[4] = {};
     FxImpactTable *tables[4] = {};
     std::uint32_t tableCount = 0;
     bool rejectEffect = false;
     bool rejectImpact = false;
+    bool nullEffectIdentity = false;
+    bool nullImpactIdentity = false;
     Adapter *reenterTarget = nullptr;
     Status reentryStatus = Status::Success;
 };
 
-bool PublishEffect(void *const context, FxEffectDef *const effect) noexcept
+bool PublishEffect(
+    void *const context,
+    FxEffectDef *const effect,
+    FxEffectDef **const outPublished) noexcept
 {
     PublicationSink &sink = *static_cast<PublicationSink *>(context);
     if (sink.reenterTarget)
@@ -535,20 +542,37 @@ bool PublishEffect(void *const context, FxEffectDef *const effect) noexcept
         sink.reentryStatus =
             fastfile::TrySealFxEffectDefZoneDisk32(sink.reenterTarget);
     }
-    if (sink.rejectEffect)
+    if (sink.rejectEffect || !outPublished || sink.effectCount >= 8)
         return false;
-    if (sink.effectCount < 8)
-        sink.effects[sink.effectCount++] = effect;
+    if (sink.nullEffectIdentity)
+    {
+        *outPublished = nullptr;
+        return true;
+    }
+    FxEffectDef *const canonical = &sink.canonicalEffects[sink.effectCount];
+    *canonical = *effect;
+    sink.effects[sink.effectCount++] = canonical;
+    *outPublished = canonical;
     return true;
 }
 
-bool PublishImpact(void *const context, FxImpactTable *const table) noexcept
+bool PublishImpact(
+    void *const context,
+    FxImpactTable *const table,
+    FxImpactTable **const outPublished) noexcept
 {
     PublicationSink &sink = *static_cast<PublicationSink *>(context);
-    if (sink.rejectImpact)
+    if (sink.rejectImpact || !outPublished || sink.tableCount >= 4)
         return false;
-    if (sink.tableCount < 4)
-        sink.tables[sink.tableCount++] = table;
+    if (sink.nullImpactIdentity)
+    {
+        *outPublished = nullptr;
+        return true;
+    }
+    FxImpactTable *const canonical = &sink.canonicalTables[sink.tableCount];
+    *canonical = *table;
+    sink.tables[sink.tableCount++] = canonical;
+    *outPublished = canonical;
     return true;
 }
 
@@ -904,7 +928,7 @@ void TestZeroElementEffect()
     CHECK(published != nullptr);
     CHECK(env.sink.effectCount == 1);
     CHECK(env.sink.effects[0] == published);
-    CHECK(env.InArena(published));
+    CHECK(!env.InArena(published));
     CHECK(std::strcmp(published->name, "fx/zero_elements") == 0);
     CHECK(published->elemDefCountLooping == 0);
     CHECK(published->elemDefs == nullptr);
@@ -945,7 +969,7 @@ void TestAllVisualKindsEffect()
     FxEffectDef *published = nullptr;
     CHECK(DriveEffect(env, effect, &published) == Status::Success);
     CHECK(published != nullptr);
-    CHECK(env.InArena(published));
+    CHECK(!env.InArena(published));
     CHECK(std::strcmp(published->name, "fx/all_kinds") == 0);
     CHECK(published->elemDefCountLooping == 4);
     CHECK(published->elemDefCountOneShot == 3);
@@ -1021,6 +1045,22 @@ void TestPublicationRejectionStrandsCommittedStorage()
         BuildEffect(&env.image, "fx/retry", 0, 1, 0, {ElemSpec{}});
     CHECK(DriveEffect(env, retry, &published) == Status::Success);
     CHECK(published != nullptr);
+}
+
+void TestEffectPublicationRequiresCanonicalIdentity()
+{
+    Environment env;
+    env.sink.nullEffectIdentity = true;
+    const BuiltEffect effect =
+        BuildEffect(&env.image, "fx/null_identity", 0, 1, 0, {ElemSpec{}});
+    FxEffectDef *published = nullptr;
+    CHECK(DriveEffect(env, effect, &published)
+          == Status::PublicationFailed);
+    CHECK(published == nullptr);
+    CHECK(env.sink.effectCount == 0);
+    CHECK(env.adapter->phase() == Phase::Idle);
+    CHECK(env.arena.openTransactionDepth() == 0);
+    CHECK(env.arena.committedBytes() != 0);
 }
 
 void TestConverterRejectionTearsDown()
@@ -1437,7 +1477,7 @@ void TestImpactAliasHandles()
     CHECK(DriveImpact(env, impact, &published) == Status::Success);
     CHECK(published != nullptr);
     CHECK(env.sink.tableCount == 1);
-    CHECK(env.InArena(published));
+    CHECK(!env.InArena(published));
     CHECK(std::strcmp(published->name, "impact/alias_only") == 0);
     CHECK(published->table != nullptr);
     CHECK(env.InArena(published->table));
@@ -1465,6 +1505,8 @@ void TestImpactWithNestedInlineEffects()
     // Both inline effects published before the impact table, in wire order.
     CHECK(env.sink.effectCount == 2);
     CHECK(env.sink.tableCount == 1);
+    CHECK(!env.InArena(env.sink.effects[0]));
+    CHECK(!env.InArena(env.sink.effects[1]));
     CHECK(std::strcmp(env.sink.effects[0]->name, "fx/inline_2") == 0);
     CHECK(std::strcmp(env.sink.effects[1]->name, "fx/inline_70") == 0);
 
@@ -1626,6 +1668,22 @@ void TestImpactPublicationRejected()
     CHECK(env.arena.openTransactionDepth() == 0);
 }
 
+void TestImpactPublicationRequiresCanonicalIdentity()
+{
+    Environment env;
+    env.sink.nullImpactIdentity = true;
+    const BuiltImpact impact = BuildImpact(
+        &env.image, "impact/null_identity", {{7, SlotPlan::Alias}});
+    FxImpactTable *published = nullptr;
+    CHECK(DriveImpact(env, impact, &published)
+          == Status::PublicationFailed);
+    CHECK(published == nullptr);
+    CHECK(env.sink.tableCount == 0);
+    CHECK(env.adapter->phase() == Phase::Idle);
+    CHECK(env.arena.openTransactionDepth() == 0);
+    CHECK(env.arena.committedBytes() != 0);
+}
+
 void TestWorkspaceStartsIdle()
 {
     Environment env;
@@ -1657,6 +1715,7 @@ int main()
     TestAllVisualKindsEffect();
     TestSequentialEffectsShareArena();
     TestPublicationRejectionStrandsCommittedStorage();
+    TestEffectPublicationRequiresCanonicalIdentity();
     TestConverterRejectionTearsDown();
     TestArenaExhaustionFailsClosed();
     TestBeginValidation();
@@ -1671,6 +1730,7 @@ int main()
     TestNestedCommitSurvivesOuterFailure();
     TestImpactSequenceGuards();
     TestImpactPublicationRejected();
+    TestImpactPublicationRequiresCanonicalIdentity();
 
     if (failures != 0)
     {

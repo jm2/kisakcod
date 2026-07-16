@@ -1188,8 +1188,15 @@ FxFastFileZoneAdapterDisk32Status TryPublishFxEffectDefZoneDisk32(
     }
     frame.arenaTransaction = FxFastFileNativeArenaTransaction{};
 
-    if (!publication.publishEffect(publication.context, effect))
-        return Workspace::FailTransaction(*workspace, Status::PublicationFailed);
+    FxEffectDef *publishedEffect = nullptr;
+    if (!publication.publishEffect(
+            publication.context, effect, &publishedEffect)
+        || !publishedEffect
+        || !IsAlignedAddress(publishedEffect, alignof(FxEffectDef)))
+    {
+        return Workspace::FailTransaction(
+            *workspace, Status::PublicationFailed);
+    }
 
     // Pop the effect frame and roll its recording slices back.
     workspace->referenceCount_ = frame.referenceBase;
@@ -1211,7 +1218,7 @@ FxFastFileZoneAdapterDisk32Status TryPublishFxEffectDefZoneDisk32(
         }
         Workspace::RecordedReference handle;
         handle.sourceField = pendingField;
-        handle.resolution.pointer = effect;
+        handle.resolution.pointer = publishedEffect;
         handle.resolution.retainedByteCount = sizeof(FxEffectDef);
         handle.resolution.retainedAlignment = alignof(FxEffectDef);
         handle.token = *pendingField;
@@ -1229,7 +1236,7 @@ FxFastFileZoneAdapterDisk32Status TryPublishFxEffectDefZoneDisk32(
         Workspace::ResetRecordingState(*workspace);
     }
 
-    *outEffect = effect;
+    *outEffect = publishedEffect;
     return Status::Success;
 }
 
@@ -1546,11 +1553,18 @@ FxFastFileZoneAdapterDisk32Status TryPublishFxImpactTableZoneDisk32(
     }
     frame.arenaTransaction = FxFastFileNativeArenaTransaction{};
 
-    if (!publication.publishImpact(publication.context, table))
-        return Workspace::FailTransaction(*workspace, Status::PublicationFailed);
+    FxImpactTable *publishedTable = nullptr;
+    if (!publication.publishImpact(
+            publication.context, table, &publishedTable)
+        || !publishedTable
+        || !IsAlignedAddress(publishedTable, alignof(FxImpactTable)))
+    {
+        return Workspace::FailTransaction(
+            *workspace, Status::PublicationFailed);
+    }
 
     Workspace::ResetRecordingState(*workspace);
-    *outTable = table;
+    *outTable = publishedTable;
     return Status::Success;
 }
 

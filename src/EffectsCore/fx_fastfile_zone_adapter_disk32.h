@@ -60,16 +60,21 @@ struct FxFastFileZoneAdapterCursor
     FxFastFileZoneAdapterValidateWireSpanCallback validateWireSpan = nullptr;
 };
 
-// Publication sink.  Each callback is invoked exactly once per successful
-// materialization, after complete conversion and before the arena commit.
-// Returning false rejects publication and fails the whole transaction
-// without leaking storage.
+// Publication sink.  Each callback is invoked exactly once after complete
+// conversion and after the arena reservation has been committed.  A
+// successful callback must return the canonical registered asset identity
+// through outPublished; this may differ from the materialized arena root
+// because DB_AddXAsset shallow-copies roots into its asset pools.  Returning
+// false must leave external publication state unchanged.  Rejection strands
+// the committed arena reservation as retired zone storage.
 using FxFastFileZoneAdapterPublishEffectCallback = bool (*)(
     void *context,
-    FxEffectDef *effect) noexcept;
+    FxEffectDef *materialized,
+    FxEffectDef **outPublished) noexcept;
 using FxFastFileZoneAdapterPublishImpactCallback = bool (*)(
     void *context,
-    FxImpactTable *impactTable) noexcept;
+    FxImpactTable *materialized,
+    FxImpactTable **outPublished) noexcept;
 
 struct FxFastFileZoneAdapterPublication
 {

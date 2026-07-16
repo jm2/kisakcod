@@ -130,6 +130,9 @@ require_ordered(_arena_impl
 require_contains(_arena_impl
     "return value != 0 && (value & (value - 1u)) == 0;"
     "power-of-two alignment validation")
+require_contains(_arena_impl
+    "if (storage_ || transactionDepth_ != 0) return Status::InvalidPhase;"
+    "rebinding requires the explicit lifetime-checked unbind boundary")
 
 # --- Guarded stateful zone adapter --------------------------------------------
 
@@ -147,16 +150,25 @@ require_contains(_adapter_header
 # only then) invoke the publication sink, for both asset families.
 require_ordered(_adapter_impl
     "converterStatus = TryMaterializeFxEffectDefDisk32("
-    "if (!publication.publishEffect(publication.context, effect))"
+    "publication.publishEffect( publication.context, effect, &publishedEffect)"
     "effects publish only after complete materialization")
 require_ordered(_adapter_impl
     "arenaStatus = workspace->arena_->TryCommit(frame.arenaTransaction);"
-    "if (!publication.publishEffect(publication.context, effect))"
+    "publication.publishEffect( publication.context, effect, &publishedEffect)"
     "a rejected effect publication strands only retired storage")
 require_ordered(_adapter_impl
     "converterStatus = TryMaterializeFxImpactTableDisk32("
-    "if (!publication.publishImpact(publication.context, table))"
+    "publication.publishImpact( publication.context, table, &publishedTable)"
     "impact tables publish only after complete materialization")
+require_contains(_adapter_impl
+    "handle.resolution.pointer = publishedEffect;"
+    "nested impact handles bind the canonical effect identity")
+require_contains(_adapter_impl
+    "*outEffect = publishedEffect;"
+    "effect callers receive the canonical publication identity")
+require_contains(_adapter_impl
+    "*outTable = publishedTable;"
+    "impact callers receive the canonical publication identity")
 
 # Failure teardown must structurally reset both pure converter workspaces so
 # a poisoned Planned phase can never leak into the next transaction.
