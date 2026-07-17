@@ -296,22 +296,27 @@ work item changes. Do not create session-specific handoff files.
 - Current SP target-table portability candidate: `0a1e89b2` replaces truncated pointers and raw 28-byte walks with a
   native-width typed 32-entry table; `c63bb68e` adds the shared dependency-light target protocol, dual-width layout and
   executable/source contracts; `d981527f` hardens publication boundaries; and `653fdfdb` scopes the contract's build and
-  test assertions to measured Windows x86. The shared parser rejects malformed or duplicate recognized keys, WORLD/NONE
-  and out-of-level entities, noncanonical material/offset/flag values, and unsafe lock durations. Load validates every
-  live entity identity, duplicate reference, and registered material before authoritatively resetting live `FL_TARGET`
-  bits, discarding stale table storage without dereferencing it, and publishing the complete staged table. Target and
-  shader producers validate the same domain before mutation, flags round-trip symmetrically, and weapon lock consumers
-  fail closed on invalid or stale indices while preserving the retail x86 configstring representation.
-- Target candidate validation at exact head `653fdfdb`: fresh GCC 16 and Clang 22 builds each pass **97/97** tests, and
+  test assertions to measured Windows x86. Audit hardening `7ab3e174` makes regular info-string replacement bounded and
+  failure-atomic while preserving the legacy `void` API, stages all target wire changes before native publication, and
+  replaces the unbounded SP/MP material-name copies. The shared parser rejects malformed or duplicate recognized keys and
+  noncanonical material/offset/flag values; the server supplies `min(level.num_entities, ENTITYNUM_WORLD)` as its
+  ordinary-entity limit, so load also rejects WORLD/NONE and out-of-level references. Load validates every live entity
+  identity, duplicate reference, and registered material before authoritatively resetting live `FL_TARGET` bits,
+  discarding stale table storage without dereferencing it, and publishing the complete staged table. Target and shader
+  producers validate the same domain before mutation, flags round-trip symmetrically, and weapon lock consumers fail
+  closed on invalid or stale indices while preserving the retail x86 configstring representation.
+- Target candidate validation at exact code head `7ab3e174`: fresh GCC 16 and Clang 22 builds each pass **97/97** tests, and
   the focused target runtime/source, pointer-tripwire, and PR #44 source-contract set passes **4/4** under each compiler.
-  At production/test head `d981527f` (before only the final CMake source-assertion commit), the runtime contract passes
-  Clang ASan+UBSan; strict GCC/Clang i386 object compilation and AArch64 GCC object compilation pass. The sandbox kills
-  i386 execution with exit 159, so no i386 runtime result is claimed. A separate throwaway manual audit—not a built-in CI
-  mutation mode—proved that all nine stale-init, broad entity-domain, material-zero, offset-overflow, missing-third-arg,
-  unsafe-duration, unvalidated-producer, unregistered-load-material, and shader-publication mutations are rejected.
-  `git diff --check` is clean. SP production translation units remain unbuilt: direct probes stop before this code on
-  pre-existing ILP32 layout assertions, an undeclared `IsValidSeed`, and missing DirectX `d3d9.h`, while every current CI
-  engine job still uses `KISAK_BUILD_SP=OFF`.
+  The same head passes Clang ASan+UBSan plus strict GCC/Clang i386 and AArch64 GCC object compilation. Runtime cases cover
+  exact 1023-byte success, 1024-byte rejection, replacement/removal, delimiter cleaning and placement, malformed or
+  duplicate configs, and unchanged wire/native state on failure. The sandbox kills i386 execution with exit 159, so no
+  i386 runtime result is claimed. A separate throwaway manual audit—not a built-in CI mutation mode—proved that all nine
+  stale-init, broad entity-domain, material-zero, offset-overflow, missing-third-arg, unsafe-duration,
+  unvalidated-producer, unregistered-load-material, and shader-publication mutations are rejected. Two follow-up
+  read-only audits are clean after their capacity, material-copy, runtime-coverage, ABI, and optional-leading-delimiter
+  findings were fixed. `git diff --check` is clean. SP production translation units remain unbuilt: direct probes stop
+  before this code on pre-existing ILP32 layout assertions, an undeclared `IsValidSeed`, and missing DirectX `d3d9.h`,
+  while every current CI engine job still uses `KISAK_BUILD_SP=OFF`.
 - Remaining upstream content stays subsystem-scoped: publish the reviewed server target table before implementing a
   strict transactional `CG_TargetsChanged` plus bounded vehicle/Javelin HUD consumers; handle the separately identified
   squared-distance-versus-unsquared grenade safe-radius defect in its own batch; and leave dynent save/load `ba3c79f3`

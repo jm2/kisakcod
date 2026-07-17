@@ -218,24 +218,30 @@ Completed foundation work:
   selection, and exposed failed child-mutation diagnostics. Exact final head `da1ea81f` passed all nine jobs in PR run
   **29584250420**; exact-head Codex found no major issue, both Gemini threads were resolved, and no unresolved review
   threads remained. Squash `cbb8bdb0` and authoritative post-merge run **29585012405** also passed all nine jobs;
-- the current four-commit SP target-table portability candidate (`0a1e89b2`, `c63bb68e`, `d981527f`, `653fdfdb`)
-  replaces pointer truncation and raw 28-byte walks with bounded typed 32-entry native storage. It freezes `target_t` and
-  `TargetGlob` at `0x1c`/`0x384` on x86 and `0x20`/`0x408` on native64, removes the `game/g_targets.cpp` pointer allowlist
-  entry, and validates every target configstring before publication. Checks cover ordinary live-entity identity,
-  WORLD/NONE and level bounds, duplicate references, finite int-encodable offsets, exact flags, and registered material
-  indices. Stale storage is cleared without dereferencing old-generation pointers, authoritative live `FL_TARGET` state
-  is rebuilt, and shader, lock-on, and SP locked-weapon publication fail closed on invalid input. This is the 47th M2
-  pointer fix and adds the native-width SP target table to M4 evidence;
-- fresh GCC 16 and Clang 22 builds at exact target head `653fdfdb` each pass **97/97** tests; the focused target
+- the current SP target-table portability candidate combines four initial implementation/contract commits (`0a1e89b2`,
+  `c63bb68e`, `d981527f`, `653fdfdb`) with audit hardening `7ab3e174`. It replaces pointer truncation and raw 28-byte walks
+  with bounded typed 32-entry native storage. It freezes `target_t` and `TargetGlob` at `0x1c`/`0x384` on x86 and
+  `0x20`/`0x408` on native64, removes the `game/g_targets.cpp` pointer allowlist entry, and validates every target
+  configstring before publication. Checks cover ordinary live-entity identity, WORLD/NONE and level bounds, duplicate
+  references, finite int-encodable offsets, exact flags, and registered material indices. Stale storage is cleared without
+  dereferencing old-generation pointers, authoritative live `FL_TARGET` state is rebuilt, and shader, lock-on, and SP
+  locked-weapon publication fail closed on invalid input. The audit also made regular info-string replacement bounded and
+  failure-atomic without changing its legacy ABI, stages every target wire update before native mutation, and replaces
+  the unbounded SP/MP material-name copies. This is the 47th M2 pointer fix and adds the native-width SP target table to
+  M4 evidence;
+- fresh GCC 16 and Clang 22 builds at exact target code head `7ab3e174` each pass **97/97** tests; the focused target
   runtime/source, pointer-tripwire, and PR #44 contract set passes **4/4** under each compiler. At production-identical
-  head `d981527f`, Clang ASan+UBSan passed, as did strict GCC/Clang i386 object compilation and AArch64 GCC object
-  compilation. The sandbox killed i386 execution with exit 159, so no i386 runtime result is claimed. A separate
+  head `7ab3e174`, Clang ASan+UBSan passed, as did strict GCC/Clang i386 object compilation and AArch64 GCC object
+  compilation. Exact-capacity, overflow, replacement/removal, delimiter-cleaning, malformed/duplicate, and atomic-failure
+  cases execute the same checked info-string core used by production. The sandbox killed i386 execution with exit
+  159, so no i386 runtime result is claimed. A separate
   throwaway manual audit—not a built-in CI mutation mode—rejected nine regressions covering stale initialization, broad
   entity domains, material zero, offset overflow, two-argument screen parsing, unsafe duration, unvalidated producers,
-  unregistered load materials, and shader publication. SP production remains outside hosted coverage: every engine CI
-  job sets `KISAK_BUILD_SP=OFF`, the portable executable exercises the shared parser/layout model, and the source contract
-  textually pins `g_targets.cpp`. Direct SP probes stop earlier on existing ILP32 assertions, undeclared `IsValidSeed`,
-  and missing DirectX `d3d9.h`;
+  unregistered load materials, and shader publication. Two follow-up read-only audits are clean after the capacity,
+  material-copy, runtime-coverage, ABI, and optional-leading-delimiter findings were fixed. SP production remains outside
+  hosted coverage: every engine CI job sets `KISAK_BUILD_SP=OFF`, the portable executable exercises the shared parser and
+  layout model, and the source contract textually pins the SP implementation. Direct SP probes stop earlier on existing
+  ILP32 assertions, undeclared `IsValidSeed`, and missing DirectX `d3d9.h`;
 - remaining upstream content stays subsystem-specific: publish the reviewed server target table, then implement strict,
   failure-atomic `CG_TargetsChanged` parsing and bounded `CG_GetTargetPos`/vehicle/Javelin/bouncing-diamond consumers
   without importing d592's raw pointer-bound loop. Fix the squared-distance-versus-unsquared grenade safe-radius defect
