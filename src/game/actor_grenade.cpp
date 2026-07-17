@@ -4,6 +4,7 @@
 
 #include "actor_grenade.h"
 #include "actor_grenade_prediction_cache.h"
+#include "actor_grenade_safety.h"
 #include "g_main.h"
 #include "g_local.h"
 
@@ -866,7 +867,6 @@ bool __cdecl Actor_GrenadeLauncher_CheckPos(
 int Actor_Grenade_IsSafeTarget(actor_s *self, const float *vTargetPos, unsigned int iWeapID)
 {
     WeaponDef *weapDef; // r28
-    float explosionCutoff; // fp31
     int v9; // r30
     sentient_s *Sentient; // r31
     float sentOrigin[3]; // [sp+58h] [-48h] BYREF // v12
@@ -876,7 +876,6 @@ int Actor_Grenade_IsSafeTarget(actor_s *self, const float *vTargetPos, unsigned 
     weapDef = BG_GetWeaponDef(iWeapID);
     iassert(weapDef);
 
-    explosionCutoff = (float)((float)weapDef->iExplosionRadius * (float)1.1);
     v9 = ~(1 << Sentient_EnemyTeam(self->sentient->eTeam));
     Sentient = Sentient_FirstSentient(v9);
     if (!Sentient)
@@ -884,9 +883,8 @@ int Actor_Grenade_IsSafeTarget(actor_s *self, const float *vTargetPos, unsigned 
     while (1)
     {
         Sentient_GetOrigin(Sentient, sentOrigin);
-        if ((((vTargetPos[1] - sentOrigin[1]) * (vTargetPos[1] - sentOrigin[1]))
-            + (((vTargetPos[2] - sentOrigin[2]) * (vTargetPos[2] - sentOrigin[2]))
-                + ((vTargetPos[0] - sentOrigin[0]) * (vTargetPos[0] - sentOrigin[0])))) <= explosionCutoff)
+        if (actor_grenade_safety::IsTargetWithinSafetyRadius(
+                vTargetPos, sentOrigin, weapDef->iExplosionRadius))
             break;
         Sentient = Sentient_NextSentient(Sentient, v9);
         if (!Sentient)

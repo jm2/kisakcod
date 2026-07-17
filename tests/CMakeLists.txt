@@ -31,6 +31,23 @@ add_test(
     COMMAND kisakcod-actor-grenade-prediction-cache-tests
 )
 
+add_executable(kisakcod-actor-grenade-safety-tests
+    actor_grenade_safety_tests.cpp
+)
+target_include_directories(
+    kisakcod-actor-grenade-safety-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-actor-grenade-safety-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-actor-grenade-safety-tests)
+set_target_properties(
+    kisakcod-actor-grenade-safety-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME actor-grenade-safe-target-radius-contracts
+    COMMAND kisakcod-actor-grenade-safety-tests
+)
+
 add_executable(kisakcod-target-table-tests
     target_table_tests.cpp
 )
