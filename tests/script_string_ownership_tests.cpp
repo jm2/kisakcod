@@ -385,12 +385,15 @@ struct StateImage final
 
     constexpr std::array<char, 4> firstBytes{'a', '\0', 'b', '\0'};
     constexpr std::array<char, 4> secondBytes{'a', '\0', 'c', '\0'};
+    constexpr std::uint32_t byteCount =
+        static_cast<std::uint32_t>(firstBytes.size());
+    static_assert(firstBytes.size() == secondBytes.size());
     const auto first = script_string::TryAcquireOrdinaryStringOfSize(
-        firstBytes.data(), firstBytes.size(), 15);
+        firstBytes.data(), byteCount, 15);
     const auto repeated = script_string::TryAcquireOrdinaryStringOfSize(
-        firstBytes.data(), firstBytes.size(), 15);
+        firstBytes.data(), byteCount, 15);
     const auto second = script_string::TryAcquireOrdinaryStringOfSize(
-        secondBytes.data(), secondBytes.size(), 15);
+        secondBytes.data(), byteCount, 15);
     if (!Check(first.status == script_string::AcquireStatus::Acquired,
             "embedded-NUL intern failed")
         || !Check(repeated.stringId == first.stringId,
@@ -440,14 +443,16 @@ struct StateImage final
 
     constexpr std::array<char, 3> shortBytes{
         static_cast<char>(123), static_cast<char>(97), '\0'};
-    if (!Check(GetHashCode(shortBytes.data(), shortBytes.size()) == 1217,
+    constexpr std::uint32_t shortByteCount =
+        static_cast<std::uint32_t>(shortBytes.size());
+    if (!Check(GetHashCode(shortBytes.data(), shortByteCount) == 1217,
             "short bounds-regression hash changed"))
     {
         return false;
     }
 
     const auto shortResult = script_string::TryAcquireOrdinaryStringOfSize(
-        shortBytes.data(), shortBytes.size(), 15);
+        shortBytes.data(), shortByteCount, 15);
     if (!Check(shortResult.status == script_string::AcquireStatus::Acquired,
             "short collision intern failed"))
     {
@@ -460,13 +465,15 @@ struct StateImage final
     // earlier NUL also makes this value unrepresentable in RefString's packed
     // length format, so it must be rejected before any table mutation.
     std::vector<char> longBytes(4867);
+    const std::uint32_t longByteCount =
+        static_cast<std::uint32_t>(longBytes.size());
     std::memcpy(
         longBytes.data(),
         GetRefString(shortResult.stringId)->str,
         longBytes.size());
     if (!Check(longBytes.back() == '\0',
             "bounds-regression mirrored source lost its terminator")
-        || !Check(GetHashCode(longBytes.data(), longBytes.size()) == 1217,
+        || !Check(GetHashCode(longBytes.data(), longByteCount) == 1217,
             "long bounds-regression hash changed")
         || !Check((shortBytes.size() & 0xFFu) == (longBytes.size() & 0xFFu),
             "bounds-regression byte-length aliases changed"))
@@ -476,7 +483,7 @@ struct StateImage final
 
     const StateImage shortOnly = CaptureState();
     const auto longResult = script_string::TryAcquireOrdinaryStringOfSize(
-        longBytes.data(), longBytes.size(), 15);
+        longBytes.data(), longByteCount, 15);
     if (!Check(
             longResult.status
                 == script_string::AcquireStatus::InvalidArgumentNoChange,

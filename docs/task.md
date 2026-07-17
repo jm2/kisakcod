@@ -29,7 +29,10 @@ work item changes. Do not create session-specific handoff files.
   same-hash/low-byte over-read and packed-length-ambiguity regression plus malformed hash/debug/allocator rejection. Its
   strict i386 build passes; local execution reaches the
   established sandbox `SIGSYS`. The complete GCC Debug and Clang Release suites are **103/103** green. Hosted review
-  and all-nine-job CI are the remaining publication gates.
+  and all-nine-job CI are the remaining publication gates. Initial PR #48 run **29615362286** passed both Linux utility
+  jobs but exposed only MSVC warning-as-error portability debt in the new fixtures: one 32-bit shift before a 64-bit
+  multiplication and seven `size_t`-to-`uint32_t` arguments. The review fix uses an explicit 64-bit shift and
+  fixed-size conversions; focused GCC runtime/source/security gates are green and replacement CI is pending.
 - This candidate is deliberately not the whole-zone controller. The raw database user-4/user-8 paths and global
   4 -> 8 sweep still bypass the serializer; the adapter has no production caller; and a token is not yet bound to one
   journal/key from initialization through terminal finalization/rollback. Full allocator partition validation also

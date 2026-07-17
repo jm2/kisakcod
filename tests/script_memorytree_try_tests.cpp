@@ -56,7 +56,9 @@ struct Allocation final
     if (size == 0)
         return 1;
     return static_cast<int>(
-        (UINT32_C(1) << (size - 1u)) * sizeof(MemoryNode) + 1u);
+        (UINT64_C(1) << (size - 1u))
+            * static_cast<std::uint64_t>(sizeof(MemoryNode))
+        + UINT64_C(1));
 }
 
 [[nodiscard]] bool QueryAllocation(

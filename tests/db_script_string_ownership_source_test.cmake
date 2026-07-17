@@ -649,8 +649,8 @@ foreach(_marker IN ITEMS
     "TestMalformedStateFailsClosed()"
     "std::vector<char> longBytes(4867);"
     "GetRefString(shortResult.stringId)->str"
-    "GetHashCode(shortBytes.data(), shortBytes.size()) == 1217"
-    "GetHashCode(longBytes.data(), longBytes.size()) == 1217"
+    "GetHashCode(shortBytes.data(), shortByteCount) == 1217"
+    "GetHashCode(longBytes.data(), longByteCount) == 1217"
     "StateMatches(corruptHash)"
     "StateMatches(corruptDebug)"
     "StateMatches(corruptAllocation)")
