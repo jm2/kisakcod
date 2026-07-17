@@ -17,10 +17,13 @@ work item changes. Do not create session-specific handoff files.
   disjoint 65,536-bucket partition before mutation, rejects cycles/aliases/interior overlaps, and reports unsafe legacy
   failures without traversing corrupt trees. String lookup validates the allocator-backed full byte count before
   comparison, including the old modulo-256 length collision, rejects an earlier same-residue NUL that the packed length
-  cannot represent, and validates exact allocation/hash/free-list/debug ownership before mutation. The supporting
+  cannot represent, and validates exact allocation/hash/free-list/debug ownership before mutation. Final-release
+  planning now walks the complete bounded free list, rejects out-of-range links and cycles, verifies every reverse link
+  plus the sentinel tail, and publishes no unlink plan against malformed state. The supporting
   profile record retains its intended MSVC-compatible 0x38/8-byte layout on LP64 hosts. Typed commits use assertion-free
   helpers, while packed length plus the exact allocator class preserves repeated <=256-byte legacy binary interning such
-  as the non-NUL XAnim map record.
+  as the non-NUL XAnim map record. Memory-tree score decoding uses explicit fixed-width byte extraction instead of
+  reading an inactive union member.
 - Active-candidate validation: the actual memory-tree production translation unit passes native GCC/Clang,
   `RELEASE_ASSERTS`, ASan+UBSan, GCC i386 execution, full-capacity and randomized allocation recovery, and corruption
   fixtures. MP/SP production `scr_memorytree.cpp`, `scr_stringlist.cpp`, transaction, and adapter sources pass native
@@ -37,7 +40,13 @@ work item changes. Do not create session-specific handoff files.
   legacy lengths were recovered for repeated intern/hash validation but not typed transfer/release resolution. The
   shared resolver now uses the same packed-length plus exact-allocation-class rule, with direct legacy and report-free
   transfer/ordinary/database rollback coverage. Focused GCC/Clang, `RELEASE_ASSERTS`, ASan+UBSan, source, and security
-  gates are green; exact-head replacement CI and review resolution are pending.
+  gates passed, and exact resolver-fix head `c6127e9c` passed all nine jobs in run **29615991877**. A fresh review of that
+  exact head found a second real P2: last-reference unlink planning checked only the free-list head entry and could
+  mutate against a corrupt forward or sentinel-tail link. The current correction performs the complete bounded list
+  walk before publishing a plan and adds failure-atomic ordinary/database-release regressions for out-of-range forward
+  and corrupt sentinel-tail links; the independent audit also removed inactive-union-member score decoding. The complete
+  GCC Debug and Clang Release suites are again **103/103** green, as are focused `RELEASE_ASSERTS`, ASan+UBSan, i386,
+  source, and security gates. Exact-head replacement CI and review-thread resolution remain the publication gates.
 - This candidate is deliberately not the whole-zone controller. The raw database user-4/user-8 paths and global
   4 -> 8 sweep still bypass the serializer; the adapter has no production caller; and a token is not yet bound to one
   journal/key from initialization through terminal finalization/rollback. Full allocator partition validation also

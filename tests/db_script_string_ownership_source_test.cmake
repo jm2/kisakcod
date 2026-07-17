@@ -178,6 +178,10 @@ require_contains(
     _string_source
     "#include \"scr_string_transaction.h\""
     "private implementation binding")
+require_not_contains(
+    _memory_source
+    "union MTnum_t"
+    "inactive-union-member score decoding")
 
 # Each ID-taking operation validates before entering the table, authenticates
 # a live hash-linked allocation, and never falls back to a reporting legacy
@@ -225,6 +229,35 @@ extract_slice(
     "bool SL_CanDebugRemoveRefNoReport("
     _resolve
     "typed live-string resolution")
+extract_slice(
+    _string_source
+    "bool SL_IsFreeListHeadValidNoReport()"
+    "bool SL_IsFreeEntryReachableNoReport("
+    _free_list_validation
+    "complete free-list validation")
+extract_slice(
+    _string_source
+    "bool SL_TryBuildUnlinkPlanNoReport("
+    "SL_ResolveStatus SL_TryResolveLiveStringNoReport("
+    _unlink_plan
+    "report-free unlink planning")
+
+require_contains(
+    _free_list_validation
+    "memset(sl_freeListVisited, 0, sizeof(sl_freeListVisited));"
+    "free-list cycle detection")
+require_contains(
+    _free_list_validation
+    "if (currentIndex >= STRINGLIST_SIZE) return false;"
+    "free-list link bounds before scratch and table indexing")
+require_contains(
+    _free_list_validation
+    "return scrStringGlob.hashTable[0].u.prev == previousIndex;"
+    "free-list sentinel tail validation")
+require_contains(
+    _unlink_plan
+    "if (!SL_IsFreeListHeadValidNoReport()) return false;"
+    "complete free-list validation before unlink publication")
 
 foreach(_var IN ITEMS
     _acquire

@@ -79,24 +79,25 @@ namespace
 constexpr int kMemoryTreeTypeCount =
     static_cast<int>(sizeof(mt_type_names) / sizeof(mt_type_names[0]));
 
+int MT_GetScoreFromDeltaNoReport(const int value) noexcept
+{
+    const uint32_t representation = static_cast<uint32_t>(value);
+    const uint8_t lowByte = static_cast<uint8_t>(representation);
+    const uint8_t highByte = static_cast<uint8_t>(representation >> 8);
+    uint8_t bits = scrMemTreeGlob.leftBits[lowByte];
+    if (lowByte == 0)
+        bits = static_cast<uint8_t>(
+            bits + scrMemTreeGlob.leftBits[highByte]);
+    return value
+        - (scrMemTreeGlob.numBits[highByte]
+            + scrMemTreeGlob.numBits[lowByte])
+        + (1 << bits);
+}
+
 int MT_GetScoreNoReport(const uint16_t nodeNum) noexcept
 {
-    union MTnum_t
-    {
-        int i;
-        uint8_t b[4];
-    };
-
-    MTnum_t value{};
-    value.i = MEMORY_NODE_COUNT - nodeNum;
-    uint8_t bits = scrMemTreeGlob.leftBits[value.b[0]];
-    if (value.b[0] == 0)
-        bits = static_cast<uint8_t>(
-            bits + scrMemTreeGlob.leftBits[value.b[1]]);
-    return value.i
-        - (scrMemTreeGlob.numBits[value.b[1]]
-            + scrMemTreeGlob.numBits[value.b[0]])
-        + (1 << bits);
+    return MT_GetScoreFromDeltaNoReport(
+        MEMORY_NODE_COUNT - static_cast<int>(nodeNum));
 }
 
 bool MT_TryGetSizeNoReport(int numBytes, int *outSize) noexcept
@@ -1378,29 +1379,11 @@ int MT_GetSize(int numBytes)
 
 int MT_GetScore(int num)
 {
-    char bits;
-
     iassert(num != 0);
 
-    union MTnum_t
-    {
-        int i;
-        uint8_t b[4];
-    };
-
-    MTnum_t mtnum;
-
-    mtnum.i = MEMORY_NODE_COUNT - num;
-    iassert(mtnum.i != 0);
-
-    bits = scrMemTreeGlob.leftBits[mtnum.b[0]];
-
-    if (!mtnum.b[0])
-    {
-        bits += scrMemTreeGlob.leftBits[mtnum.b[1]];
-    }
-
-    return mtnum.i - (scrMemTreeGlob.numBits[mtnum.b[1]] + scrMemTreeGlob.numBits[mtnum.b[0]]) + (1 << bits);
+    const int value = MEMORY_NODE_COUNT - num;
+    iassert(value != 0);
+    return MT_GetScoreFromDeltaNoReport(value);
 }
 
 int MT_GetSubTreeSize(int nodeNum)

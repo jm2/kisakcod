@@ -1310,19 +1310,36 @@ bool SL_IsFreeListHeadValidNoReport() noexcept
 		static_cast<uint16_t>(scrStringGlob.hashTable[0].status_next);
 	if (freeHead == 0)
 		return scrStringGlob.hashTable[0].u.prev == 0;
-	if (freeHead >= STRINGLIST_SIZE
-		|| (scrStringGlob.hashTable[freeHead].status_next
-			& HASH_STAT_MASK) != HASH_STAT_FREE
-		|| scrStringGlob.hashTable[freeHead].u.prev != 0)
-	{
+	if (freeHead >= STRINGLIST_SIZE)
 		return false;
+
+	memset(sl_freeListVisited, 0, sizeof(sl_freeListVisited));
+	uint32_t previousIndex = 0;
+	uint32_t currentIndex = freeHead;
+	for (uint32_t visited = 0; visited < STRINGLIST_SIZE; ++visited)
+	{
+		if (currentIndex == 0)
+			return scrStringGlob.hashTable[0].u.prev == previousIndex;
+		if (currentIndex >= STRINGLIST_SIZE)
+			return false;
+
+		const uint32_t visitedByte = currentIndex >> 3;
+		const uint8_t visitedBit =
+			static_cast<uint8_t>(1u << (currentIndex & 7u));
+		if ((sl_freeListVisited[visitedByte] & visitedBit) != 0)
+			return false;
+		sl_freeListVisited[visitedByte] |= visitedBit;
+
+		const HashEntry &entry = scrStringGlob.hashTable[currentIndex];
+		if ((entry.status_next & HASH_STAT_MASK) != HASH_STAT_FREE
+			|| entry.u.prev != previousIndex)
+		{
+			return false;
+		}
+		previousIndex = currentIndex;
+		currentIndex = static_cast<uint16_t>(entry.status_next);
 	}
-	const uint32_t nextFree = static_cast<uint16_t>(
-		scrStringGlob.hashTable[freeHead].status_next);
-	return nextFree < STRINGLIST_SIZE && nextFree != freeHead
-		&& (scrStringGlob.hashTable[nextFree].status_next
-			& HASH_STAT_MASK) == HASH_STAT_FREE
-		&& scrStringGlob.hashTable[nextFree].u.prev == freeHead;
+	return false;
 }
 
 bool SL_IsFreeEntryReachableNoReport(
@@ -1557,18 +1574,10 @@ bool SL_TryBuildUnlinkPlanNoReport(
 	if (!foundTarget || !terminated)
 		return false;
 
-	if ((scrStringGlob.hashTable[0].status_next & HASH_STAT_MASK)
-		!= HASH_STAT_FREE)
+	if (!SL_IsFreeListHeadValidNoReport())
 		return false;
 	plan.freeHead =
 		static_cast<uint16_t>(scrStringGlob.hashTable[0].status_next);
-	if (plan.freeHead >= STRINGLIST_SIZE
-		|| (scrStringGlob.hashTable[plan.freeHead].status_next
-			& HASH_STAT_MASK) != HASH_STAT_FREE
-		|| scrStringGlob.hashTable[plan.freeHead].u.prev != 0)
-	{
-		return false;
-	}
 
 	*outPlan = plan;
 	return true;

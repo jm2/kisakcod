@@ -25,8 +25,10 @@ Completed foundation work:
   private journal callbacks, exact ordinary/database-user ownership results, full allocator-backed byte-count/hash/debug
   validation, rejection of packed-length-ambiguous earlier NULs, and failure-atomic memory-tree allocate/query/free
   operations with assertion-free typed commits and complete disjoint-partition/corruption fixtures. Exact allocator-class
-  recovery preserves the established compact non-NUL legacy binary records. This is not yet a production exclusion
-  boundary: the adapter has no production caller, tokens are
+  recovery preserves the established compact non-NUL legacy binary records. Final-release planning validates the complete
+  bounded free list, including every forward/reverse link, cycle rejection, and the sentinel tail, before mutation;
+  memory-tree scoring uses fixed-width byte extraction without inactive-union-member reads. This is not yet a production
+  exclusion boundary: the adapter has no production caller, tokens are
   not yet bound to one journal/key for a whole lifecycle, and legacy raw user-4/user-8 operations plus the 4 -> 8 sweep
   remain outside the serializer. Its correctness-first O(65,536)-per-operation allocator validation must be benchmarked
   and replaced by a proven retained-transaction fast path before production enrollment;

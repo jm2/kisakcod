@@ -586,6 +586,72 @@ struct StateImage final
     if (!BeginTest())
         return false;
 
+    constexpr char freeListValue[] = "free-list-corrupt";
+    const auto freeListString = script_string::TryAcquireOrdinaryStringOfSize(
+        freeListValue, sizeof(freeListValue), 15);
+    const std::uint32_t freeHead = static_cast<std::uint16_t>(
+        scrStringGlob.hashTable[0].status_next);
+    if (!Check(
+            freeListString.status == script_string::AcquireStatus::Acquired,
+            "free-list-corruption setup failed")
+        || !Check(freeHead != 0, "free-list-corruption setup has no head"))
+    {
+        return false;
+    }
+
+    const HashEntry savedFreeHead = scrStringGlob.hashTable[freeHead];
+    scrStringGlob.hashTable[freeHead].status_next =
+        (savedFreeHead.status_next & HASH_STAT_MASK)
+        | UINT16_MAX;
+    const StateImage corruptFreeForward = CaptureState();
+    if (!Check(
+            script_string::TryRemoveOrdinaryReference(
+                freeListString.stringId)
+                == script_string::ReleaseStatus::UnsafeFailure,
+            "malformed free-list forward link was trusted by release")
+        || !Check(StateMatches(corruptFreeForward),
+            "malformed free-list forward rejection changed state")
+        || !Check(ReportersUnused(),
+            "malformed free-list forward rejection invoked a reporter"))
+    {
+        return false;
+    }
+    scrStringGlob.hashTable[freeHead] = savedFreeHead;
+
+    if (!Check(
+            script_string::TryTransferOrdinaryToDatabaseUser(
+                freeListString.stringId)
+                == script_string::TransferStatus::DatabaseUserClaimed,
+            "free-list tail-corruption transfer setup failed"))
+    {
+        return false;
+    }
+    const std::uint32_t savedFreeTail = scrStringGlob.hashTable[0].u.prev;
+    scrStringGlob.hashTable[0].u.prev = savedFreeTail ^ UINT32_C(1);
+    const StateImage corruptFreeTail = CaptureState();
+    if (!Check(
+            script_string::TryRemoveDatabaseUserReference(
+                freeListString.stringId)
+                == script_string::ReleaseStatus::UnsafeFailure,
+            "malformed free-list sentinel tail was trusted by release")
+        || !Check(StateMatches(corruptFreeTail),
+            "malformed free-list tail rejection changed state")
+        || !Check(ReportersUnused(),
+            "malformed free-list tail rejection invoked a reporter"))
+    {
+        return false;
+    }
+    scrStringGlob.hashTable[0].u.prev = savedFreeTail;
+    if (!Check(
+            script_string::TryRemoveDatabaseUserReference(
+                freeListString.stringId)
+                == script_string::ReleaseStatus::Success,
+            "free-list-corruption cleanup failed")
+        || !CheckFreed(freeListString.stringId))
+    {
+        return false;
+    }
+
     constexpr char hashValue[] = "hash-corrupt";
     const auto hashString = script_string::TryAcquireOrdinaryStringOfSize(
         hashValue, sizeof(hashValue), 15);
