@@ -900,7 +900,7 @@ void __cdecl Actor_PredictGrenadeLandPos(gentity_s *pGrenade)
     int clipmask; // r30
     int nextthink; // r10
     int v4; // r3
-    int v7; // [sp+50h] [-30h] BYREF
+    int v7 = 0; // [sp+50h] [-30h] BYREF
     float v8[4]; // [sp+58h] [-28h] BYREF
 
     if (!pGrenade)
@@ -2284,4 +2284,3 @@ actor_think_result_t __cdecl Actor_Grenade_Think(actor_s *self)
     }
     return result;
 }
-

@@ -483,6 +483,7 @@ require_count(
     2
     "success and fallback each publish one prediction")
 foreach(_required IN ITEMS
+    "int v7 = 0"
     "actor_grenade_prediction_cache::IsValid(pGrenade->missile.predictLandTime)"
     "G_PredictMissile(pGrenade, nextthink - level.time, v8, 1, &v7)"
     "pGrenade->missile.predictLandPos, pGrenade->missile.predictLandTime, v8, v7"
