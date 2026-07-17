@@ -1,4 +1,5 @@
 #include "database/db_referenced_fastfile.h"
+#include "database/db_zone_slots.h"
 
 #include <array>
 #include <cstddef>
@@ -37,12 +38,17 @@ void TestSlotWalk()
 {
     using namespace db::referenced_fastfile;
 
-    ZoneFixture zones[kZoneSlotCount]{};
-    zones[kDefaultZoneSlot] = {"slot0-default", false, -100};
-    zones[1] = {"slot1", false, -1};
-    zones[2] = {"localized_slot2", false, -2};
-    zones[31] = {"slot31", false, 31};
-    zones[32] = {"slot32", false, 32};
+    ZoneFixture zones[db::zone_slots::kPhysicalZoneSlotCount]{};
+    zones[db::zone_slots::kDefaultZoneSlot] = {
+        "slot0-default", false, -100};
+    zones[db::zone_slots::kFirstUsableZoneSlot] = {
+        "slot1", false, -1};
+    zones[db::zone_slots::kFirstUsableZoneSlot + 1] = {
+        "localized_slot2", false, -2};
+    zones[db::zone_slots::kPhysicalZoneSlotCount - 2] = {
+        "slot31", false, 31};
+    zones[db::zone_slots::kPhysicalZoneSlotCount - 1] = {
+        "slot32", false, 32};
 
     std::array<std::size_t, 3> visited{};
     std::array<std::int32_t, 3> visitedFileSizes{};
@@ -67,6 +73,35 @@ void TestSlotWalk()
     Expect(
         visitedFileSizes == std::array<std::int32_t, 3>{-1, 31, 32},
         "checksum inputs must have the same filtering and slot order as names");
+}
+
+void TestZoneSlotConstants()
+{
+    using namespace db::zone_slots;
+
+    static_assert(kDefaultZoneSlot == 0);
+    static_assert(kFirstUsableZoneSlot == 1);
+    static_assert(kUsableZoneSlotCount == 32);
+    static_assert(kPhysicalZoneSlotCount == 33);
+    static_assert(!IsUsableZoneSlot(kDefaultZoneSlot));
+    static_assert(IsUsableZoneSlot(kFirstUsableZoneSlot));
+    static_assert(IsUsableZoneSlot(kPhysicalZoneSlotCount - 1));
+    static_assert(!IsUsableZoneSlot(kPhysicalZoneSlotCount));
+    static_assert(
+        !IsUsableZoneSlot((std::numeric_limits<std::size_t>::max)()));
+
+    Expect(
+        !IsUsableZoneSlot(kDefaultZoneSlot),
+        "the reserved/default slot must not be usable");
+    Expect(
+        IsUsableZoneSlot(kFirstUsableZoneSlot),
+        "slot one must be the first usable fast-file slot");
+    Expect(
+        IsUsableZoneSlot(kPhysicalZoneSlotCount - 1),
+        "slot 32 must be the highest usable fast-file slot");
+    Expect(
+        !IsUsableZoneSlot(kPhysicalZoneSlotCount),
+        "the first out-of-range physical slot must not be usable");
 }
 
 void TestSignedDecimalFormatting()
@@ -164,8 +199,8 @@ void ExpectRejectedNameFormatting(
 {
     using namespace db::referenced_fastfile;
 
-    ZoneFixture zones[kZoneSlotCount]{};
-    zones[kFirstFastFileZoneSlot] = {zoneName, modZone};
+    ZoneFixture zones[db::zone_slots::kPhysicalZoneSlotCount]{};
+    zones[db::zone_slots::kFirstUsableZoneSlot] = {zoneName, modZone};
     std::array<char, 96> output{};
     output.fill('#');
     const auto unchanged = output;
@@ -339,10 +374,12 @@ void TestNameFormatting()
 {
     using namespace db::referenced_fastfile;
 
-    ZoneFixture zones[kZoneSlotCount]{};
-    zones[kDefaultZoneSlot] = {"slot0-default", true};
-    zones[31] = {"slot31", true};
-    zones[32] = {"slot32", false};
+    ZoneFixture zones[db::zone_slots::kPhysicalZoneSlotCount]{};
+    zones[db::zone_slots::kDefaultZoneSlot] = {"slot0-default", true};
+    zones[db::zone_slots::kPhysicalZoneSlotCount - 2] = {
+        "slot31", true};
+    zones[db::zone_slots::kPhysicalZoneSlotCount - 1] = {
+        "slot32", false};
 
     constexpr char expected[] = "mods/example/slot31 slot32";
     std::array<char, sizeof(expected)> exact{};
@@ -382,7 +419,8 @@ void TestNameFormatting()
         "the production-equivalent empty destination must reject overflow");
     Expect(emptyOutput[0] == '\0', "failed production output must remain empty");
 
-    zones[32].name = "localized_slot32";
+    zones[db::zone_slots::kPhysicalZoneSlotCount - 1].name =
+        "localized_slot32";
     std::array<char, 128> localizedOutput{};
     Expect(
         FormatReferencedFastFileNames(
@@ -396,7 +434,8 @@ void TestNameFormatting()
         std::strcmp(localizedOutput.data(), "mods/example/slot31") == 0,
         "a localized fast file in slot 32 must be excluded");
 
-    zones[32].name = "localized_unsafe name";
+    zones[db::zone_slots::kPhysicalZoneSlotCount - 1].name =
+        "localized_unsafe name";
     Expect(
         FormatReferencedFastFileNames(
             zones,
@@ -419,19 +458,22 @@ void TestExpandedSystemInfoCapacity()
     constexpr std::size_t kZoneNameLength = 63;
     constexpr std::size_t kModPrefixLength = sizeof("mods/example/") - 1;
     constexpr std::size_t kExpectedLength =
-        kLiveFastFileZoneCount * (kModPrefixLength + kZoneNameLength)
-        + (kLiveFastFileZoneCount - 1);
+        db::zone_slots::kUsableZoneSlotCount
+            * (kModPrefixLength + kZoneNameLength)
+        + (db::zone_slots::kUsableZoneSlotCount - 1);
     static_assert(kExpectedLength >= kLegacyCapacity);
     static_assert(kExpectedLength < kSystemInfoCapacity);
 
-    ZoneFixture zones[kZoneSlotCount]{};
-    std::array<std::array<char, kZoneNameLength + 1>, kLiveFastFileZoneCount>
+    ZoneFixture zones[db::zone_slots::kPhysicalZoneSlotCount]{};
+    std::array<
+        std::array<char, kZoneNameLength + 1>,
+        db::zone_slots::kUsableZoneSlotCount>
         zoneNames{};
     for (std::size_t index = 0; index < zoneNames.size(); ++index)
     {
         zoneNames[index].fill(static_cast<char>('a' + index % 26));
         zoneNames[index].back() = '\0';
-        zones[index + kFirstFastFileZoneSlot] = {
+        zones[index + db::zone_slots::kFirstUsableZoneSlot] = {
             zoneNames[index].data(),
             true,
             static_cast<std::int32_t>(index),
@@ -482,9 +524,9 @@ void TestSystemInfoSuffixAssembly()
     using info_string::AppendPreformattedSuffix;
     using info_string::HasExactKey;
 
-    ZoneFixture zones[kZoneSlotCount]{};
-    zones[kFirstFastFileZoneSlot] = {"zone1", true};
-    zones[kFirstFastFileZoneSlot + 1] = {"zone2", false};
+    ZoneFixture zones[db::zone_slots::kPhysicalZoneSlotCount]{};
+    zones[db::zone_slots::kFirstUsableZoneSlot] = {"zone1", true};
+    zones[db::zone_slots::kFirstUsableZoneSlot + 1] = {"zone2", false};
 
     constexpr char expectedNames[] = "mods/example/zone1 zone2";
     std::array<char, sizeof(expectedNames)> names{};
@@ -533,14 +575,16 @@ void TestSystemInfoSuffixAssembly()
 
     constexpr std::size_t kSystemInfoCapacity = 8192;
     constexpr std::size_t kZoneNameLength = 63;
-    ZoneFixture longZones[kZoneSlotCount]{};
-    std::array<std::array<char, kZoneNameLength + 1>, kLiveFastFileZoneCount>
+    ZoneFixture longZones[db::zone_slots::kPhysicalZoneSlotCount]{};
+    std::array<
+        std::array<char, kZoneNameLength + 1>,
+        db::zone_slots::kUsableZoneSlotCount>
         zoneNames{};
     for (std::size_t index = 0; index < zoneNames.size(); ++index)
     {
         zoneNames[index].fill(static_cast<char>('a' + index % 26));
         zoneNames[index].back() = '\0';
-        longZones[index + kFirstFastFileZoneSlot] = {
+        longZones[index + db::zone_slots::kFirstUsableZoneSlot] = {
             zoneNames[index].data(),
             true,
             static_cast<std::int32_t>(index),
@@ -615,6 +659,7 @@ void TestSystemInfoSuffixAssembly()
 
 int main()
 {
+    TestZoneSlotConstants();
     TestSlotWalk();
     TestSignedDecimalFormatting();
     TestInfoStringPredicates();

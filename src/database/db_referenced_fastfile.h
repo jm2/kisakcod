@@ -1,5 +1,7 @@
 #pragma once
 
+#include "db_zone_slots.h"
+
 #include <universal/info_string.h>
 
 #include <array>
@@ -11,12 +13,6 @@
 
 namespace db::referenced_fastfile
 {
-inline constexpr std::size_t kDefaultZoneSlot = 0;
-inline constexpr std::size_t kFirstFastFileZoneSlot = 1;
-inline constexpr std::size_t kLiveFastFileZoneCount = 32;
-inline constexpr std::size_t kZoneSlotCount =
-    kFirstFastFileZoneSlot + kLiveFastFileZoneCount;
-
 namespace detail
 {
 constexpr bool TryAccumulateLength(
@@ -61,9 +57,11 @@ void ForEachReferencedFastFile(
     IsExcluded isExcluded,
     Visit visit)
 {
-    static_assert(N == kZoneSlotCount);
+    static_assert(N == db::zone_slots::kPhysicalZoneSlotCount);
 
-    for (std::size_t slot = kFirstFastFileZoneSlot; slot < N; ++slot)
+    for (std::size_t slot = db::zone_slots::kFirstUsableZoneSlot;
+        slot < N;
+        ++slot)
     {
         const Zone &zone = zones[slot];
         if (zone.name[0] && !isExcluded(zone.name))
@@ -91,7 +89,7 @@ bool FormatReferencedFastFileNames(
         bool modZone;
     };
 
-    std::array<SelectedName, kLiveFastFileZoneCount> selected{};
+    std::array<SelectedName, db::zone_slots::kUsableZoneSlotCount> selected{};
     std::size_t selectedCount = 0;
     std::size_t requiredLength = 0;
     const std::size_t outputLimit = capacity - 1;

@@ -15,6 +15,7 @@ set(_files_source_path "${SOURCE_ROOT}/src/universal/com_files.cpp")
 set(_mp_server_path "${SOURCE_ROOT}/src/server_mp/sv_main_mp.cpp")
 set(_sp_init_path "${SOURCE_ROOT}/src/server/sv_init.cpp")
 set(_sp_server_path "${SOURCE_ROOT}/src/server/sv_main.cpp")
+set(_zone_slots_path "${SOURCE_ROOT}/src/database/db_zone_slots.h")
 set(_helper_path "${SOURCE_ROOT}/src/database/db_referenced_fastfile.h")
 set(_fixture_path "${SOURCE_ROOT}/tests/db_referenced_fastfile_tests.cpp")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
@@ -33,6 +34,7 @@ foreach(_path IN ITEMS
     "${_mp_server_path}"
     "${_sp_init_path}"
     "${_sp_server_path}"
+    "${_zone_slots_path}"
     "${_helper_path}"
     "${_fixture_path}"
     "${_manifest_path}"
@@ -54,6 +56,7 @@ file(READ "${_files_source_path}" _files_source)
 file(READ "${_mp_server_path}" _mp_server)
 file(READ "${_sp_init_path}" _sp_init)
 file(READ "${_sp_server_path}" _sp_server)
+file(READ "${_zone_slots_path}" _zone_slots)
 file(READ "${_helper_path}" _helper)
 file(READ "${_fixture_path}" _fixture)
 file(READ "${_manifest_path}" _manifest)
@@ -72,6 +75,7 @@ foreach(_var IN ITEMS
     _mp_server
     _sp_init
     _sp_server
+    _zone_slots
     _helper
     _fixture
     _manifest
@@ -120,21 +124,67 @@ function(extract_slice SOURCE_VAR START END OUT_VAR DESCRIPTION)
     set(${OUT_VAR} "${_slice}" PARENT_SCOPE)
 endfunction()
 
-# The physical zone table has one reserved/default entry plus the 32 live
-# fast-file entries tracked by g_zoneHandles. This keeps the ABI-sized storage
-# unchanged while making the usable range explicit.
+# The neutral slot header, not the unrelated asset-type enum, owns the physical
+# registry range and the reserved/default-to-usable relationship.
 require_contains(
     _asset_header
     "ASSET_TYPE_COUNT = 0x21,"
-    "the backing-zone count remains 33")
-require_contains(
-    _registry
-    "XZone g_zones[ASSET_TYPE_COUNT]{ 0 }; uint8_t g_zoneHandles[32];"
-    "33 physical slots back a 32-entry live-zone table")
+    "the independent retail asset-type enum remains ABI-unchanged")
+foreach(_forbidden IN ITEMS
+    "database.h"
+    "db_registry"
+    "xanim/"
+    "qcommon/"
+    "XZone"
+    "ASSET_TYPE_COUNT"
+    "std::string"
+    "std::vector"
+    "malloc("
+    "calloc("
+    "realloc("
+    "operator new")
+    require_not_contains(
+        _zone_slots "${_forbidden}" "zone-slot truth remains neutral")
+endforeach()
+foreach(_marker IN ITEMS
+    "namespace db::zone_slots"
+    "inline constexpr std::size_t kDefaultZoneSlot = 0;"
+    "inline constexpr std::size_t kFirstUsableZoneSlot = 1;"
+    "inline constexpr std::size_t kUsableZoneSlotCount = 32;"
+    "inline constexpr std::size_t kPhysicalZoneSlotCount = 33;"
+    "kFirstUsableZoneSlot == kDefaultZoneSlot + 1"
+    "kPhysicalZoneSlotCount == kFirstUsableZoneSlot + kUsableZoneSlotCount"
+    "constexpr bool IsUsableZoneSlot(const std::size_t slot) noexcept"
+    "slot >= kFirstUsableZoneSlot"
+    "slot < kPhysicalZoneSlotCount")
+    require_contains(
+        _zone_slots "${_marker}" "canonical neutral zone-slot contract")
+endforeach()
+foreach(_marker IN ITEMS
+    "#include \"db_zone_slots.h\""
+    "XZone g_zones[db::zone_slots::kPhysicalZoneSlotCount]{ 0 };"
+    "uint8_t g_zoneHandles[db::zone_slots::kUsableZoneSlotCount];"
+    "ARRAY_COUNT(g_zones) == db::zone_slots::kPhysicalZoneSlotCount"
+    "ARRAY_COUNT(g_zoneHandles) == db::zone_slots::kUsableZoneSlotCount"
+    "sizeof(g_zones) <= static_cast<std::size_t>(INT_MAX)"
+    "sizeof(g_zoneHandles) <= static_cast<std::size_t>(INT_MAX)"
+    "sizeof(g_zoneNameList) <= static_cast<std::size_t>(INT_MAX)"
+    "g_zones, static_cast<int>(sizeof(g_zones)), \"g_zones\", 10);"
+    "static_cast<int>(sizeof(g_zoneHandles))"
+    "static_cast<int>(sizeof(g_zoneNameList))")
+    require_contains(
+        _registry "${_marker}" "registry storage consumes canonical slot truth")
+endforeach()
 require_contains(
     _registry
     "static_assert(ARRAY_COUNT(g_zones) == ARRAY_COUNT(g_zoneHandles) + 1);"
     "the reserved-slot relationship is compile-time checked")
+foreach(_forbidden IN ITEMS
+    "g_zones[ASSET_TYPE_COUNT]"
+    "g_zoneHandles[32]")
+    require_not_contains(
+        _registry "${_forbidden}" "registry extents cannot recouple to magic values")
+endforeach()
 require_contains(
     _shared_header
     "#define BIG_INFO_VALUE 8192"
@@ -145,7 +195,7 @@ require_contains(
     "referenced fast-file output uses the SYSTEMINFO value capacity")
 require_contains(
     _registry
-    "g_zoneNameList, sizeof(g_zoneNameList), \"g_zoneNameList\", 10);"
+    "g_zoneNameList, static_cast<int>(sizeof(g_zoneNameList)), \"g_zoneNameList\", 10);"
     "static allocation tracking follows the expanded native buffer")
 require_not_contains(
     _registry
@@ -176,19 +226,27 @@ foreach(_forbidden IN ITEMS
 endforeach()
 require_contains(
     _helper
+    "#include \"db_zone_slots.h\""
+    "the formatter consumes canonical neutral slot truth")
+require_contains(
+    _helper
     "#include <universal/info_string.h>"
     "the database formatter consumes the shared token-safety primitive")
 foreach(_marker IN ITEMS
-    "inline constexpr std::size_t kDefaultZoneSlot = 0;"
-    "inline constexpr std::size_t kFirstFastFileZoneSlot = 1;"
-    "inline constexpr std::size_t kLiveFastFileZoneCount = 32;"
-    "kFirstFastFileZoneSlot + kLiveFastFileZoneCount;"
-    "static_assert(N == kZoneSlotCount);"
-    "for (std::size_t slot = kFirstFastFileZoneSlot; slot < N; ++slot)"
+    "static_assert(N == db::zone_slots::kPhysicalZoneSlotCount);"
+    "for (std::size_t slot = db::zone_slots::kFirstUsableZoneSlot; slot < N; ++slot)"
     "if (zone.name[0] && !isExcluded(zone.name))"
     "visit(slot, zone);")
     require_contains(
         _helper "${_marker}" "the pure helper owns the exact usable-slot walk")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "kDefaultZoneSlot ="
+    "kFirstFastFileZoneSlot"
+    "kLiveFastFileZoneCount"
+    "kZoneSlotCount")
+    require_not_contains(
+        _helper "${_forbidden}" "the formatter cannot own duplicate slot constants")
 endforeach()
 
 extract_slice(
@@ -227,7 +285,7 @@ extract_slice(
     "FormatReferencedFastFileNames")
 foreach(_marker IN ITEMS
     "bool FormatReferencedFastFileNames("
-    "std::array<SelectedName, kLiveFastFileZoneCount> selected{};"
+    "std::array<SelectedName, db::zone_slots::kUsableZoneSlotCount> selected{};"
     "const std::size_t outputLimit = capacity - 1;"
     "detail::TryAccumulateLength("
     "selected[selectedCount++] = {"
@@ -283,6 +341,10 @@ require_contains(
     _manifest
     "database/db_referenced_fastfile.h"
     "the helper is part of the database source manifest")
+require_contains(
+    _manifest
+    "database/db_zone_slots.h"
+    "the canonical slot header is part of the database source manifest")
 require_contains(
     _manifest
     "universal/info_string.h"
@@ -786,9 +848,19 @@ endforeach()
 # Portable behavior coverage executes the production helper rather than a
 # source-shaped reimplementation.
 foreach(_marker IN ITEMS
-    "zones[kDefaultZoneSlot] = {\"slot0-default\", false, -100};"
-    "zones[31] = {\"slot31\", false, 31};"
-    "zones[32] = {\"slot32\", false, 32};"
+    "#include \"database/db_zone_slots.h\""
+    "void TestZoneSlotConstants()"
+    "static_assert(kDefaultZoneSlot == 0);"
+    "static_assert(kFirstUsableZoneSlot == 1);"
+    "static_assert(kUsableZoneSlotCount == 32);"
+    "static_assert(kPhysicalZoneSlotCount == 33);"
+    "static_assert(!IsUsableZoneSlot(kDefaultZoneSlot));"
+    "static_assert(IsUsableZoneSlot(kPhysicalZoneSlotCount - 1));"
+    "!IsUsableZoneSlot((std::numeric_limits<std::size_t>::max)())"
+    "ZoneFixture zones[db::zone_slots::kPhysicalZoneSlotCount]{};"
+    "zones[db::zone_slots::kDefaultZoneSlot]"
+    "zones[db::zone_slots::kPhysicalZoneSlotCount - 2]"
+    "zones[db::zone_slots::kPhysicalZoneSlotCount - 1]"
     "visited[1] == 31"
     "visited[2] == 32"
     "visitedFileSizes == std::array<std::int32_t, 3>{-1, 31, 32}"
@@ -798,11 +870,11 @@ foreach(_marker IN ITEMS
     "sizeof(expected) - 1"
     "tooSmall == unchanged"
     "emptyOutput[0] == "
-    "zones[32].name = \"localized_slot32\";"
+    "zones[db::zone_slots::kPhysicalZoneSlotCount - 1].name = \"localized_slot32\";"
     "std::strcmp(localizedOutput.data(), \"mods/example/slot31\") == 0"
     "constexpr std::size_t kLegacyCapacity = 2080;"
     "constexpr std::size_t kSystemInfoCapacity = 8192;"
-    "kLiveFastFileZoneCount * (kModPrefixLength + kZoneNameLength)"
+    "db::zone_slots::kUsableZoneSlotCount * (kModPrefixLength + kZoneNameLength)"
     "legacyOutput == unchangedLegacyOutput"
     "the complete 32-zone mod list must fit the SYSTEMINFO value buffer"
     "std::strlen(systemInfoOutput.data()) == kExpectedLength"
@@ -834,6 +906,13 @@ foreach(_marker IN ITEMS
         _fixture
         "${_marker}"
         "portable range, conversion, saturation, and atomicity coverage")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "kFirstFastFileZoneSlot"
+    "kLiveFastFileZoneCount"
+    "kZoneSlotCount")
+    require_not_contains(
+        _fixture "${_forbidden}" "runtime tests use canonical neutral slot names")
 endforeach()
 foreach(_marker IN ITEMS
     "add_executable(kisakcod-db-referenced-fastfile-tests db_referenced_fastfile_tests.cpp)"
@@ -872,13 +951,19 @@ require_ordered(
     "mod fast-file loading validates the native string before path construction")
 foreach(_marker IN ITEMS
     "g_zoneIndex = 0;"
-    "for (i = 1; i < 0x21; ++i)"
+    "for (i = static_cast<int32_t>(db::zone_slots::kFirstUsableZoneSlot); i < static_cast<int32_t>(db::zone_slots::kPhysicalZoneSlotCount); ++i)"
     "g_zoneIndex = i;"
-    "if (!g_zoneIndex)"
-    "g_zoneCount < 0 || g_zoneCount >= 32"
+    "if (!db::zone_slots::IsUsableZoneSlot(g_zoneIndex))"
+    "static_cast<int32_t>( db::zone_slots::kUsableZoneSlotCount)"
     "g_zoneHandles[g_zoneCount] = g_zoneIndex;")
     require_contains(
         _allocation "${_marker}" "allocation is limited to live slots 1 through 32")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "for (i = 1; i < 0x21; ++i)"
+    "g_zoneCount >= 32")
+    require_not_contains(
+        _allocation "${_forbidden}" "allocation cannot regress to magic slot bounds")
 endforeach()
 
 extract_slice(
@@ -889,12 +974,18 @@ extract_slice(
     "DB_LoadXZone")
 require_contains(
     _queue
-    "g_zoneCount < 0 || g_zoneCount >= 32"
+    "static_cast<int32_t>(db::zone_slots::kUsableZoneSlotCount)"
     "the live-zone count is capped at 32")
 require_contains(
     _queue
-    "zoneInfoCount > static_cast<uint32_t>(32 - g_zoneCount)"
+    "static_cast<int32_t>(db::zone_slots::kUsableZoneSlotCount) - g_zoneCount"
     "queued loads cannot exceed the remaining live-zone capacity")
+foreach(_forbidden IN ITEMS
+    "g_zoneCount >= 32"
+    "static_cast<uint32_t>(32 - g_zoneCount)")
+    require_not_contains(
+        _queue "${_forbidden}" "queue admission cannot use magic slot capacity")
+endforeach()
 
 extract_slice(
     _registry
@@ -904,7 +995,7 @@ extract_slice(
     "DB_IsXAssetDefault")
 require_contains(
     _default_check
-    "return assetEntry->entry.zoneIndex == 0;"
+    "return assetEntry->entry.zoneIndex == db::zone_slots::kDefaultZoneSlot;"
     "zone slot zero remains the default-asset sentinel")
 
 extract_slice(
@@ -915,5 +1006,5 @@ extract_slice(
     "DB_UnloadXZone")
 require_contains(
     _unload
-    "iassert(zoneIndex);"
+    "iassert(db::zone_slots::IsUsableZoneSlot(zoneIndex));"
     "the reserved/default slot cannot be unloaded as a live zone")
