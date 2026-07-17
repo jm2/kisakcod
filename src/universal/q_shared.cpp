@@ -791,83 +791,37 @@ bool __cdecl Info_Validate(const char *s)
     return v3 == 0;
 }
 
-void __cdecl Info_SetValueForKey(char *s, const char *key, const char *value)
+bool __cdecl Info_TrySetValueForKey(
+    char *s,
+    const char *key,
+    const char *value)
 {
-    int v3; // eax
-    int v4; // eax
-    int v5; // eax
-    int j; // [esp+54h] [ebp-818h]
-    char c; // [esp+5Bh] [ebp-811h]
-    char cleanValue[1028]; // [esp+5Ch] [ebp-810h] BYREF
-    int len; // [esp+460h] [ebp-40Ch]
-    char newi[1024]; // [esp+464h] [ebp-408h] BYREF
-    int i; // [esp+868h] [ebp-4h]
+    iassert(s);
+    iassert(key);
+    iassert(value);
+    char scratch[MAX_INFO_STRING];
+    if (!info_string::TrySetValueForKey(
+            s,
+            MAX_INFO_STRING,
+            scratch,
+            sizeof(scratch),
+            key,
+            value))
+    {
+        Com_Printf(
+            16,
+            "Info_TrySetValueForKey: invalid or oversized info string");
+        return false;
+    }
+    return true;
+}
 
-    if (!value)
-        MyAssertHandler(".\\universal\\q_shared.cpp", 1254, 0, "%s", "value");
-    if (strlen(s) < 0x400)
-    {
-        j = 0;
-        for (i = 0; i < 1023; ++i)
-        {
-            c = value[i];
-            if (!c)
-                break;
-            if (c != 92 && c != 59 && c != 34)
-            {
-                if (j >= 1024)
-                    MyAssertHandler(".\\universal\\q_shared.cpp", 1270, 0, "%s", "j < MAX_INFO_STRING");
-                cleanValue[j++] = c;
-            }
-        }
-        if (j >= 1024)
-            MyAssertHandler(".\\universal\\q_shared.cpp", 1275, 0, "%s", "j < MAX_INFO_STRING");
-        cleanValue[j] = 0;
-        v3 = (int)strchr(key, 0x5Cu);
-        if (v3)
-        {
-            Com_Printf(16, "Can't use keys with a \\ key: %s value: %s", key, value);
-        }
-        else
-        {
-            v4 = (int)strchr(key, 0x3Bu);
-            if (v4)
-            {
-                Com_Printf(16, "Can't use keys with a semicolon. key: %s value: %s", key, value);
-            }
-            else
-            {
-                v5 = (int)strchr(key, 0x22u);
-                if (v5)
-                {
-                    Com_Printf(16, "Can't use keys with a \". key: %s value: %s", key, value);
-                }
-                else
-                {
-                    Info_RemoveKey(s, key);
-                    if (cleanValue[0])
-                    {
-                        len = Com_sprintf(newi, 0x400u, "\\%s\\%s", key, cleanValue);
-                        if (len > 0)
-                        {
-                            if (strlen(s) + &newi[strlen(newi) + 1] - &newi[1] <= 0x400)
-                                memcpy(&s[strlen(s)], newi, &newi[strlen(newi) + 1] - newi);
-                            else
-                                Com_Printf(16, "Info string length exceeded. key: %s value: %s Info string: %s", key, value, s);
-                        }
-                        else
-                        {
-                            Com_Printf(16, "Info buffer length exceeded, not including key/value pair in response.");
-                        }
-                    }
-                }
-            }
-        }
-    }
-    else
-    {
-        Com_Printf(16, "Info_SetValueForKey: oversize infostring");
-    }
+void __cdecl Info_SetValueForKey(
+    char *s,
+    const char *key,
+    const char *value)
+{
+    (void)Info_TrySetValueForKey(s, key, value);
 }
 
 bool __cdecl Info_SetValueForKey_Big(char *s, const char *key, const char *value)

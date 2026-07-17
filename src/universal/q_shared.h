@@ -685,6 +685,7 @@ void __cdecl Info_NextPair(const char **head, char *key, char *value);
 void __cdecl Info_RemoveKey(const char *s, const char *key);
 void __cdecl Info_RemoveKey_Big(const char *s, const char *key);
 bool __cdecl Info_Validate(const char *s);
+bool __cdecl Info_TrySetValueForKey(char *s, const char *key, const char *value);
 void __cdecl Info_SetValueForKey(char *s, const char *key, const char *value);
 bool __cdecl Info_SetValueForKey_Big(char *s, const char *key, const char *value);
 bool __cdecl ParseConfigStringToStruct(

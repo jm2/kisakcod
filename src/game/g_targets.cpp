@@ -17,6 +17,127 @@ namespace
 {
 namespace target_protocol = bg::target_protocol;
 constexpr int kMaxTargets = target_protocol::kMaxTargets;
+constexpr std::size_t kSpMaterialNameCapacity = 96;
+
+int OrdinaryEntityLimit()
+{
+    if (!level.gentities || level.num_entities <= 0)
+        return 0;
+    return level.num_entities < ENTITYNUM_WORLD
+        ? level.num_entities
+        : ENTITYNUM_WORLD;
+}
+
+bool ValidateStagedTargetConfig(
+    const char *const configString,
+    const int expectedEntityNumber,
+    target_protocol::ParsedConfig *const parsed)
+{
+    const target_protocol::ConfigParseError error =
+        target_protocol::ParseConfig(
+            configString, OrdinaryEntityLimit(), parsed);
+    if (error != target_protocol::ConfigParseError::None)
+    {
+        Scr_Error(va(
+            "Target configstring update is invalid (%s)",
+            target_protocol::ConfigParseErrorName(error)));
+        return false;
+    }
+    if (parsed->entityNumber != expectedEntityNumber)
+    {
+        Scr_Error("Target configstring entity does not match the live target");
+        return false;
+    }
+    return true;
+}
+
+bool StageTargetScalarConfig(
+    const int targetIndex,
+    const int expectedEntityNumber,
+    const char *const key,
+    const int value,
+    char (&stagedConfigString)[MAX_INFO_STRING],
+    target_protocol::ParsedConfig *const parsed)
+{
+    char currentConfigString[MAX_INFO_STRING];
+    SV_GetConfigstring(
+        CS_TARGETS + targetIndex,
+        currentConfigString,
+        MAX_INFO_STRING);
+    I_strncpyz(
+        stagedConfigString,
+        currentConfigString,
+        MAX_INFO_STRING);
+
+    char valueString[16];
+    const int valueLength = Com_sprintf(
+        valueString, sizeof(valueString), "%i", value);
+    if (valueLength <= 0
+        || !Info_TrySetValueForKey(stagedConfigString, key, valueString))
+    {
+        Scr_Error("Target configstring is too large to update safely");
+        return false;
+    }
+
+    return ValidateStagedTargetConfig(
+        stagedConfigString, expectedEntityNumber, parsed);
+}
+
+bool BuildTargetConfig(
+    const int entityNumber,
+    const float (&offset)[3],
+    const int materialIndex,
+    const int offscreenMaterialIndex,
+    const int flags,
+    char (&configString)[MAX_INFO_STRING])
+{
+    const int encodedOffset[3] = {
+        static_cast<int>(offset[0]),
+        static_cast<int>(offset[1]),
+        static_cast<int>(offset[2]),
+    };
+
+    if (!Info_TrySetValueForKey(
+            configString, "ent", va("%i", entityNumber))
+        || !Info_TrySetValueForKey(
+            configString,
+            "offs",
+            va(
+                "%i %i %i",
+                encodedOffset[0],
+                encodedOffset[1],
+                encodedOffset[2]))
+        || !Info_TrySetValueForKey(
+            configString, "mat", va("%i", materialIndex))
+        || !Info_TrySetValueForKey(
+            configString,
+            "offmat",
+            va("%i", offscreenMaterialIndex))
+        || !Info_TrySetValueForKey(
+            configString, "flags", va("%i", flags)))
+    {
+        Scr_Error("Target configstring could not be built safely");
+        return false;
+    }
+
+    target_protocol::ParsedConfig parsed{};
+    if (!ValidateStagedTargetConfig(
+            configString, entityNumber, &parsed))
+    {
+        return false;
+    }
+    if (parsed.offset[0] != static_cast<float>(encodedOffset[0])
+        || parsed.offset[1] != static_cast<float>(encodedOffset[1])
+        || parsed.offset[2] != static_cast<float>(encodedOffset[2])
+        || parsed.materialIndex != materialIndex
+        || parsed.offscreenMaterialIndex != offscreenMaterialIndex
+        || parsed.flags != flags)
+    {
+        Scr_Error("Target configstring did not preserve the staged values");
+        return false;
+    }
+    return true;
+}
 
 void DetachTargetEntry(target_t *const target)
 {
@@ -277,6 +398,11 @@ void __cdecl Scr_Target_SetShader()
     int materialIndex = target_protocol::kNoMaterial;
     if (*materialName)
     {
+        if (strlen(materialName) >= kSpMaterialNameCapacity)
+        {
+            Scr_ParamError(1u, "Target shader name is too long");
+            return;
+        }
         materialIndex = G_MaterialIndex(materialName);
         if (!target_protocol::IsValidMaterialIndex(materialIndex)
             || !IsPublishedMaterialIndex(materialIndex))
@@ -289,16 +415,22 @@ void __cdecl Scr_Target_SetShader()
     }
 
     target_t &target = targGlob.targets[targetIndex];
-    target.materialIndex = materialIndex;
+    target_protocol::ParsedConfig parsed{};
+    char stagedConfigString[MAX_INFO_STRING];
+    if (!StageTargetScalarConfig(
+            targetIndex,
+            target.ent->s.number,
+            "mat",
+            materialIndex,
+            stagedConfigString,
+            &parsed)
+        || parsed.materialIndex != materialIndex)
+    {
+        return;
+    }
 
-    char configString[MAX_INFO_STRING];
-    SV_GetConfigstring(
-        CS_TARGETS + targetIndex,
-        configString,
-        MAX_INFO_STRING);
-    Info_SetValueForKey(
-        configString, "mat", va("%i", target.materialIndex));
-    SV_SetConfigstring(CS_TARGETS + targetIndex, configString);
+    target.materialIndex = materialIndex;
+    SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString);
 }
 
 void __cdecl Scr_Target_SetOffscreenShader()
@@ -321,6 +453,11 @@ void __cdecl Scr_Target_SetOffscreenShader()
     int materialIndex = target_protocol::kNoMaterial;
     if (*materialName)
     {
+        if (strlen(materialName) >= kSpMaterialNameCapacity)
+        {
+            Scr_ParamError(1u, "Target offscreen shader name is too long");
+            return;
+        }
         materialIndex = G_MaterialIndex(materialName);
         if (!target_protocol::IsValidMaterialIndex(materialIndex)
             || !IsPublishedMaterialIndex(materialIndex))
@@ -333,18 +470,22 @@ void __cdecl Scr_Target_SetOffscreenShader()
     }
 
     target_t &target = targGlob.targets[targetIndex];
-    target.offscreenMaterialIndex = materialIndex;
+    target_protocol::ParsedConfig parsed{};
+    char stagedConfigString[MAX_INFO_STRING];
+    if (!StageTargetScalarConfig(
+            targetIndex,
+            target.ent->s.number,
+            "offmat",
+            materialIndex,
+            stagedConfigString,
+            &parsed)
+        || parsed.offscreenMaterialIndex != materialIndex)
+    {
+        return;
+    }
 
-    char configString[MAX_INFO_STRING];
-    SV_GetConfigstring(
-        CS_TARGETS + targetIndex,
-        configString,
-        MAX_INFO_STRING);
-    Info_SetValueForKey(
-        configString,
-        "offmat",
-        va("%i", target.offscreenMaterialIndex));
-    SV_SetConfigstring(CS_TARGETS + targetIndex, configString);
+    target.offscreenMaterialIndex = materialIndex;
+    SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString);
 }
 
 void __cdecl Scr_Target_GetArray()
@@ -413,6 +554,30 @@ void __cdecl Scr_Target_Set()
     }
 
     int targetIndex = GetTargetIdx(ent);
+    const bool isNewTarget = targetIndex == kMaxTargets;
+    int materialIndex = target_protocol::kNoMaterial;
+    int offscreenMaterialIndex = target_protocol::kNoMaterial;
+    int flags = 0;
+    if (!isNewTarget)
+    {
+        materialIndex = targGlob.targets[targetIndex].materialIndex;
+        offscreenMaterialIndex =
+            targGlob.targets[targetIndex].offscreenMaterialIndex;
+        flags = targGlob.targets[targetIndex].flags;
+    }
+
+    char stagedConfigString[MAX_INFO_STRING]{};
+    if (!BuildTargetConfig(
+            entityNumber,
+            requestedOffset,
+            materialIndex,
+            offscreenMaterialIndex,
+            flags,
+            stagedConfigString))
+    {
+        return;
+    }
+
     if (targetIndex == kMaxTargets)
     {
         if (targGlob.targetCount >= kMaxTargets)
@@ -444,28 +609,9 @@ void __cdecl Scr_Target_Set()
     target.offset[0] = requestedOffset[0];
     target.offset[1] = requestedOffset[1];
     target.offset[2] = requestedOffset[2];
-
-    char configString[MAX_INFO_STRING]{};
-    Info_SetValueForKey(configString, "ent", va("%i", entityNumber));
-    // Keep the retail x86 configstring/save representation: offsets are
-    // truncated to signed decimal integers even though the live table is float.
-    Info_SetValueForKey(
-        configString,
-        "offs",
-        va(
-            "%i %i %i",
-            static_cast<int>(target.offset[0]),
-            static_cast<int>(target.offset[1]),
-            static_cast<int>(target.offset[2])));
-    Info_SetValueForKey(
-        configString, "mat", va("%i", target.materialIndex));
-    Info_SetValueForKey(
-        configString,
-        "offmat",
-        va("%i", target.offscreenMaterialIndex));
-    Info_SetValueForKey(
-        configString, "flags", va("%i", target.flags));
-    SV_SetConfigstring(CS_TARGETS + targetIndex, configString);
+    // BuildTargetConfig retained the retail x86 save representation by
+    // truncating live floating-point offsets to signed decimal integers.
+    SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString);
 }
 
 bool Targ_Remove(gentity_s *ent)
@@ -731,16 +877,15 @@ void __cdecl Scr_Target_SetAttackMode()
         return;
     }
 
+    int stagedFlags = targGlob.targets[targetIndex].flags;
     const unsigned int mode = Scr_GetConstString(1);
     if (mode == scr_const.top)
     {
-        targGlob.targets[targetIndex].flags |=
-            target_protocol::kAttackProfileTop;
+        stagedFlags |= target_protocol::kAttackProfileTop;
     }
     else if (mode == scr_const.direct)
     {
-        targGlob.targets[targetIndex].flags &=
-            ~target_protocol::kAttackProfileTop;
+        stagedFlags &= ~target_protocol::kAttackProfileTop;
     }
     else
     {
@@ -748,16 +893,22 @@ void __cdecl Scr_Target_SetAttackMode()
         return;
     }
 
-    char configString[MAX_INFO_STRING];
-    SV_GetConfigstring(
-        CS_TARGETS + targetIndex,
-        configString,
-        MAX_INFO_STRING);
-    Info_SetValueForKey(
-        configString,
-        "flags",
-        va("%i", targGlob.targets[targetIndex].flags));
-    SV_SetConfigstring(CS_TARGETS + targetIndex, configString);
+    target_protocol::ParsedConfig parsed{};
+    char stagedConfigString[MAX_INFO_STRING];
+    if (!StageTargetScalarConfig(
+            targetIndex,
+            targGlob.targets[targetIndex].ent->s.number,
+            "flags",
+            stagedFlags,
+            stagedConfigString,
+            &parsed)
+        || parsed.flags != stagedFlags)
+    {
+        return;
+    }
+
+    targGlob.targets[targetIndex].flags = stagedFlags;
+    SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString);
 }
 
 void __cdecl Scr_Target_SetJavelinOnly()
@@ -776,19 +927,26 @@ void __cdecl Scr_Target_SetJavelinOnly()
         return;
     }
 
+    int stagedFlags = targGlob.targets[targetIndex].flags;
     if (Scr_GetInt(1))
-        targGlob.targets[targetIndex].flags |= target_protocol::kJavelinOnly;
+        stagedFlags |= target_protocol::kJavelinOnly;
     else
-        targGlob.targets[targetIndex].flags &= ~target_protocol::kJavelinOnly;
+        stagedFlags &= ~target_protocol::kJavelinOnly;
 
-    char configString[MAX_INFO_STRING];
-    SV_GetConfigstring(
-        CS_TARGETS + targetIndex,
-        configString,
-        MAX_INFO_STRING);
-    Info_SetValueForKey(
-        configString,
-        "flags",
-        va("%i", targGlob.targets[targetIndex].flags));
-    SV_SetConfigstring(CS_TARGETS + targetIndex, configString);
+    target_protocol::ParsedConfig parsed{};
+    char stagedConfigString[MAX_INFO_STRING];
+    if (!StageTargetScalarConfig(
+            targetIndex,
+            targGlob.targets[targetIndex].ent->s.number,
+            "flags",
+            stagedFlags,
+            stagedConfigString,
+            &parsed)
+        || parsed.flags != stagedFlags)
+    {
+        return;
+    }
+
+    targGlob.targets[targetIndex].flags = stagedFlags;
+    SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString);
 }

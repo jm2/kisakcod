@@ -76,6 +76,21 @@ read_normalized(
 read_normalized(
     "${SOURCE_ROOT}/.github/workflows/ci.yml" _workflow
     "CI workflow")
+read_normalized(
+    "${SOURCE_ROOT}/src/universal/q_shared.h" _q_shared_header
+    "info-string API")
+read_normalized(
+    "${SOURCE_ROOT}/src/universal/q_shared.cpp" _q_shared
+    "info-string implementation")
+read_normalized(
+    "${SOURCE_ROOT}/src/universal/info_string.h" _info_string
+    "dependency-light info-string contracts")
+read_normalized(
+    "${SOURCE_ROOT}/src/game/g_utils.cpp" _sp_utils
+    "SP material registry")
+read_normalized(
+    "${SOURCE_ROOT}/src/game_mp/g_utils_mp.cpp" _mp_utils
+    "MP material registry")
 
 foreach(_required IN ITEMS
     "namespace bg::target_protocol"
@@ -130,6 +145,96 @@ foreach(_forbidden IN ITEMS
         _protocol "${_forbidden}" "protocol must remain engine-neutral")
 endforeach()
 
+require_contains(
+    _q_shared_header
+    "bool __cdecl Info_TrySetValueForKey(char *s, const char *key, const char *value);"
+    "the checked regular setter must report publication failure")
+require_contains(
+    _q_shared_header
+    "void __cdecl Info_SetValueForKey(char *s, const char *key, const char *value);"
+    "the legacy regular setter must retain its ABI")
+extract_slice(
+    _q_shared "bool __cdecl Info_TrySetValueForKey("
+    "bool __cdecl Info_SetValueForKey_Big("
+    _regular_info_set "failure-atomic regular info-string setter")
+foreach(_required IN ITEMS
+    "char scratch[MAX_INFO_STRING];"
+    "if (!info_string::TrySetValueForKey( s, MAX_INFO_STRING, scratch, sizeof(scratch), key, value))"
+    "return false;"
+    "return true;"
+    "void __cdecl Info_SetValueForKey("
+    "(void)Info_TrySetValueForKey(s, key, value);")
+    require_contains(
+        _regular_info_set "${_required}"
+        "checked core delegation and legacy ABI wrapper")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "Info_RemoveKey(s, key)"
+    "<= 0x400"
+    "memcpy(&s[strlen(s)]")
+    forbid_contains(
+        _regular_info_set "${_forbidden}"
+        "regular setter must not remove or append in published storage")
+endforeach()
+
+extract_slice(
+    _info_string "inline bool TrySetValueForKey("
+    "constexpr bool CanAppendPreformattedSuffix("
+    _checked_info_core "dependency-light checked info setter")
+foreach(_required IN ITEMS
+    "current == scratch"
+    "std::memchr(current, '\\0', capacity)"
+    "!IsWellFormed(current)"
+    "key[keyLength] == '\\\\'"
+    "rawValueLength < capacity"
+    "bool removedFirstMatch = false;"
+    "const bool hadLeadingDelimiter = *current == '\\\\';"
+    "removedFirstInputPair = firstInputPair;"
+    "hasRetainedPair || hadLeadingDelimiter || removedFirstInputPair"
+    "matches && !removedFirstMatch"
+    "pairLength >= capacity - outputLength"
+    "*output = '\\0';"
+    "std::memmove(current, scratch, outputLength + 1);"
+    "return true;")
+    require_contains(
+        _checked_info_core "${_required}"
+        "bounded exact-key replacement core")
+endforeach()
+string(FIND "${_checked_info_core}" "std::memchr(current, '\\0', capacity)" _core_bound)
+string(FIND "${_checked_info_core}" "pairLength >= capacity - outputLength" _core_capacity)
+string(FIND "${_checked_info_core}" "std::memmove(current, scratch, outputLength + 1);" _core_commit)
+if(_core_bound EQUAL -1
+    OR _core_capacity LESS_EQUAL _core_bound
+    OR _core_commit LESS_EQUAL _core_capacity)
+    message(FATAL_ERROR
+        "Checked info replacement must validate bounds before commit")
+endif()
+
+foreach(_utils_var IN ITEMS _sp_utils _mp_utils)
+    extract_slice(
+        ${_utils_var} "int __cdecl G_MaterialIndex("
+        "int __cdecl G_ModelIndex("
+        _material_index "bounded material-name copy")
+    foreach(_required IN ITEMS
+        "if (!name || !name[0])"
+        "if (strlen(name) >= sizeof("
+        "Com_Error( ERR_DROP,"
+        "I_strncpyz("
+        "I_strlwr(")
+        require_contains(
+            _material_index "${_required}"
+            "material registry rejects overlong names before copying")
+    endforeach()
+    foreach(_forbidden IN ITEMS
+        "do {"
+        "v5 - name"
+        "*v3++ = *v4++")
+        forbid_contains(
+            _material_index "${_forbidden}"
+            "material registry must not use the legacy unbounded copy")
+    endforeach()
+endforeach()
+
 foreach(_required IN ITEMS
     "#include <bgame/bg_target_protocol.h>"
     "struct target_t"
@@ -153,18 +258,22 @@ foreach(_required IN ITEMS
     "Scr_ObjectError(\"Target must be a live ordinary entity\");"
     "return;"
     "int targetIndex = GetTargetIdx(ent);"
+    "char stagedConfigString[MAX_INFO_STRING]{};"
+    "if (!BuildTargetConfig("
     "AttachTargetEntry(&targGlob.targets[targetIndex], ent);"
-    "Info_SetValueForKey(configString, \"ent\", va(\"%i\", entityNumber));")
+    "SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString);")
     require_contains(
         _target_set "${_required}" "validated target producer domain")
 endforeach()
 string(FIND "${_target_set}" "IsOrdinaryLiveEntity(ent, &entityNumber)" _producer_validate)
 string(FIND "${_target_set}" "GetTargetIdx(ent)" _producer_lookup)
+string(FIND "${_target_set}" "if (!BuildTargetConfig(" _producer_stage)
 string(FIND "${_target_set}" "AttachTargetEntry(" _producer_attach)
-string(FIND "${_target_set}" "Info_SetValueForKey(configString, \"ent\"" _producer_wire)
+string(FIND "${_target_set}" "SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString);" _producer_wire)
 if(_producer_validate EQUAL -1
     OR _producer_lookup LESS_EQUAL _producer_validate
-    OR _producer_attach LESS_EQUAL _producer_lookup
+    OR _producer_stage LESS_EQUAL _producer_lookup
+    OR _producer_attach LESS_EQUAL _producer_stage
     OR _producer_wire LESS_EQUAL _producer_attach)
     message(FATAL_ERROR
         "Target producer must validate and stage identity before publication")
@@ -172,6 +281,40 @@ endif()
 forbid_contains(
     _target_set "va(\"%i\", ent->s.number)"
     "target producer must serialize the validated staged entity number")
+
+extract_slice(
+    _targets "int OrdinaryEntityLimit()" "void DetachTargetEntry("
+    _target_wire_stage "failure-atomic target wire staging")
+foreach(_required IN ITEMS
+    "level.num_entities < ENTITYNUM_WORLD ? level.num_entities : ENTITYNUM_WORLD;"
+    "target_protocol::ParseConfig( configString, OrdinaryEntityLimit(), parsed)"
+    "parsed->entityNumber != expectedEntityNumber"
+    "char currentConfigString[MAX_INFO_STRING];"
+    "I_strncpyz( stagedConfigString, currentConfigString, MAX_INFO_STRING);"
+    "!Info_TrySetValueForKey(stagedConfigString, key, valueString)"
+    "return ValidateStagedTargetConfig( stagedConfigString, expectedEntityNumber, parsed);"
+    "const int encodedOffset[3]"
+    "!Info_TrySetValueForKey( configString, \"ent\", va(\"%i\", entityNumber))"
+    "|| !Info_TrySetValueForKey( configString, \"flags\", va(\"%i\", flags))"
+    "if (!ValidateStagedTargetConfig( configString, entityNumber, &parsed))")
+    require_contains(
+        _target_wire_stage "${_required}"
+        "all target wire writes are checked before native publication")
+endforeach()
+extract_slice(
+    _targets "bool StageTargetScalarConfig(" "bool BuildTargetConfig("
+    _scalar_wire_stage "scalar target wire staging")
+string(FIND "${_scalar_wire_stage}" "SV_GetConfigstring(" _wire_fetch)
+string(FIND "${_scalar_wire_stage}" "I_strncpyz(" _wire_copy)
+string(FIND "${_scalar_wire_stage}" "!Info_TrySetValueForKey(stagedConfigString" _wire_replace)
+string(FIND "${_scalar_wire_stage}" "return ValidateStagedTargetConfig(" _wire_parse)
+if(_wire_fetch EQUAL -1
+    OR _wire_copy LESS_EQUAL _wire_fetch
+    OR _wire_replace LESS_EQUAL _wire_copy
+    OR _wire_parse LESS_EQUAL _wire_replace)
+    message(FATAL_ERROR
+        "Target scalar updates must fetch, stage, replace, then parse")
+endif()
 
 extract_slice(
     _layout "inline void ClearTargetEntry(" "RUNTIME_SIZE(target_t,"
@@ -323,18 +466,27 @@ extract_slice(
     "void __cdecl Scr_Target_SetOffscreenShader()"
     _shader "transactional target shader setter")
 foreach(_required IN ITEMS
+    "strlen(materialName) >= kSpMaterialNameCapacity"
+    "Scr_ParamError(1u, \"Target shader name is too long\");"
     "materialIndex = G_MaterialIndex(materialName);"
     "!target_protocol::IsValidMaterialIndex(materialIndex)"
     "!IsPublishedMaterialIndex(materialIndex)"
     "return;"
+    "if (!StageTargetScalarConfig("
+    "|| parsed.materialIndex != materialIndex"
     "target.materialIndex = materialIndex;")
     require_contains(_shader "${_required}" "validated shader publication")
 endforeach()
+string(FIND "${_shader}" "strlen(materialName) >= kSpMaterialNameCapacity" _shader_length)
 string(FIND "${_shader}" "materialIndex = G_MaterialIndex(materialName);" _shader_resolve)
+string(FIND "${_shader}" "if (!StageTargetScalarConfig(" _shader_stage)
 string(FIND "${_shader}" "target.materialIndex = materialIndex;" _shader_publish)
-if(_shader_resolve EQUAL -1 OR _shader_publish LESS_EQUAL _shader_resolve)
+if(_shader_length EQUAL -1
+    OR _shader_resolve LESS_EQUAL _shader_length
+    OR _shader_stage LESS_EQUAL _shader_resolve
+    OR _shader_publish LESS_EQUAL _shader_stage)
     message(FATAL_ERROR
-        "Target shader must resolve and validate before live publication")
+        "Target shader must bound, stage, and validate before publication")
 endif()
 
 extract_slice(
@@ -342,20 +494,69 @@ extract_slice(
     "void __cdecl Scr_Target_GetArray()"
     _offscreen_shader "transactional offscreen shader setter")
 foreach(_required IN ITEMS
+    "strlen(materialName) >= kSpMaterialNameCapacity"
+    "Scr_ParamError(1u, \"Target offscreen shader name is too long\");"
     "materialIndex = G_MaterialIndex(materialName);"
     "!target_protocol::IsValidMaterialIndex(materialIndex)"
     "!IsPublishedMaterialIndex(materialIndex)"
     "return;"
+    "if (!StageTargetScalarConfig("
+    "|| parsed.offscreenMaterialIndex != materialIndex"
     "target.offscreenMaterialIndex = materialIndex;")
     require_contains(
         _offscreen_shader "${_required}" "validated offscreen publication")
 endforeach()
+string(FIND "${_offscreen_shader}" "strlen(materialName) >= kSpMaterialNameCapacity" _offscreen_length)
 string(FIND "${_offscreen_shader}" "materialIndex = G_MaterialIndex(materialName);" _offscreen_resolve)
+string(FIND "${_offscreen_shader}" "if (!StageTargetScalarConfig(" _offscreen_stage)
 string(FIND "${_offscreen_shader}" "target.offscreenMaterialIndex = materialIndex;" _offscreen_publish)
-if(_offscreen_resolve EQUAL -1
-    OR _offscreen_publish LESS_EQUAL _offscreen_resolve)
+if(_offscreen_length EQUAL -1
+    OR _offscreen_resolve LESS_EQUAL _offscreen_length
+    OR _offscreen_stage LESS_EQUAL _offscreen_resolve
+    OR _offscreen_publish LESS_EQUAL _offscreen_stage)
     message(FATAL_ERROR
-        "Offscreen shader must resolve and validate before live publication")
+        "Offscreen shader must bound, stage, and validate before publication")
+endif()
+
+extract_slice(
+    _targets "void __cdecl Scr_Target_SetAttackMode()"
+    "void __cdecl Scr_Target_SetJavelinOnly()"
+    _attack_mode "failure-atomic attack-mode setter")
+foreach(_required IN ITEMS
+    "int stagedFlags = targGlob.targets[targetIndex].flags;"
+    "if (!StageTargetScalarConfig("
+    "|| parsed.flags != stagedFlags"
+    "targGlob.targets[targetIndex].flags = stagedFlags;"
+    "SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString);")
+    require_contains(
+        _attack_mode "${_required}"
+        "attack-mode wire validation precedes native publication")
+endforeach()
+string(FIND "${_attack_mode}" "if (!StageTargetScalarConfig(" _attack_stage)
+string(FIND "${_attack_mode}" "targGlob.targets[targetIndex].flags = stagedFlags;" _attack_publish)
+if(_attack_stage EQUAL -1 OR _attack_publish LESS_EQUAL _attack_stage)
+    message(FATAL_ERROR
+        "Attack-mode setter must stage before changing live flags")
+endif()
+
+extract_slice(
+    _targets "void __cdecl Scr_Target_SetJavelinOnly()"
+    "SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString); }"
+    _javelin_mode "failure-atomic Javelin-only setter")
+foreach(_required IN ITEMS
+    "int stagedFlags = targGlob.targets[targetIndex].flags;"
+    "if (!StageTargetScalarConfig("
+    "|| parsed.flags != stagedFlags"
+    "targGlob.targets[targetIndex].flags = stagedFlags;")
+    require_contains(
+        _javelin_mode "${_required}"
+        "Javelin-only wire validation precedes native publication")
+endforeach()
+string(FIND "${_javelin_mode}" "if (!StageTargetScalarConfig(" _javelin_stage)
+string(FIND "${_javelin_mode}" "targGlob.targets[targetIndex].flags = stagedFlags;" _javelin_publish)
+if(_javelin_stage EQUAL -1 OR _javelin_publish LESS_EQUAL _javelin_stage)
+    message(FATAL_ERROR
+        "Javelin-only setter must stage before changing live flags")
 endif()
 
 foreach(_required IN ITEMS
@@ -364,7 +565,7 @@ foreach(_required IN ITEMS
     "void ClearLiveTargetFlags()"
     "ent->flags |= FL_TARGET;"
     "if (!target_protocol::CanEncodeLegacyOffset(requestedOffset))"
-    "static_cast<int>(target.offset[0])"
+    "static_cast<int>(offset[0])"
     "DetachTargetEntry(&targGlob.targets[targetIndex]);"
     "targGlob.targetCount = 0;"
     "target.flags = source.flags;")
@@ -448,6 +649,23 @@ foreach(_required IN ITEMS
     "TestOffsetFailures();"
     "TestScalarRangeFailures();"
     "TestLockOnDurationEncoding();"
+    "TestCheckedInfoValueReplacement();"
+    "TestFailureAtomicTargetConfigStaging();"
+    "TryPublishMissingMaterialModel("
+    "info_string::TrySetValueForKey("
+    "BuildPaddedTargetConfig(&exactStorage, 1017)"
+    "BuildPaddedTargetConfig(&rejectedStorage, currentLength)"
+    "for (const std::size_t currentLength : {1018u, 1019u})"
+    "rejectedStorage == before && liveMaterial == 17"
+    "the checked setter must allow exactly 1023 content bytes"
+    "a 1024-byte result must fail without changing its source"
+    "replacement must remove the first old value and shrink to fit"
+    "an empty clean value must remove the existing key"
+    "checked replacement must retain legacy delimiter cleaning"
+    "replacement must preserve an optional missing leading delimiter"
+    "removing a leading first pair must retain legacy delimiter placement"
+    "an overlong value must preserve an existing value atomically"
+    "\\\\ent\\\\1\\\\mat\\\\2\\\\mat\\\\3"
     "ClearTargetEntry(&target);"
     "std::uintptr_t{1}"
     "\\\\ent\\\\2174"

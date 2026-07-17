@@ -167,22 +167,27 @@ LABEL_11:
 
 int __cdecl G_MaterialIndex(const char *name)
 {
-    char v2; // [esp+3h] [ebp-55h]
-    char *v3; // [esp+8h] [ebp-50h]
-    const char *v4; // [esp+Ch] [ebp-4Ch]
     char shaderName[68]; // [esp+10h] [ebp-48h] BYREF
 
-    if (!name)
-        MyAssertHandler(".\\game_mp\\g_utils_mp.cpp", 201, 0, "%s", "name");
-    if (!*name)
-        MyAssertHandler(".\\game_mp\\g_utils_mp.cpp", 202, 0, "%s", "name[0]");
-    v4 = name;
-    v3 = shaderName;
-    do
+    iassert(name);
+    if (!name || !name[0])
     {
-        v2 = *v4;
-        *v3++ = *v4++;
-    } while (v2);
+        Com_Error(ERR_DROP, "G_MaterialIndex: material name is empty");
+        return 0;
+    }
+    if (strlen(name) >= sizeof(shaderName))
+    {
+        Com_Error(
+            ERR_DROP,
+            "G_MaterialIndex: material name exceeds %i bytes",
+            static_cast<int>(sizeof(shaderName) - 1));
+        return 0;
+    }
+
+    I_strncpyz(
+        shaderName,
+        name,
+        static_cast<int>(sizeof(shaderName)));
     I_strlwr(shaderName);
     return G_FindConfigstringIndex(shaderName, 2002, 256, level.initializing, "material");
 }

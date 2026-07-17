@@ -1,8 +1,10 @@
 #include "bgame/bg_target_protocol.h"
 #include "game/g_target_table.h"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <initializer_list>
 #include <limits>
@@ -413,6 +415,245 @@ void TestLockOnDurationEncoding()
             + 1.0,
         "lock-on seconds above the signed millisecond range must fail");
 }
+
+template <std::size_t StorageSize>
+char *BuildPaddedTargetConfig(
+    std::array<char, StorageSize> *const storage,
+    const std::size_t configLength)
+{
+    constexpr char prefix[] = "\\ent\\1\\future\\";
+    static_assert(StorageSize >= 1026);
+
+    storage->fill(static_cast<char>(0x5a));
+    char *const config = storage->data() + 1;
+    const std::size_t prefixLength = sizeof(prefix) - 1;
+    Check(configLength >= prefixLength && configLength < 1024,
+        "padded target fixture length must fit the wire buffer");
+    std::memcpy(config, prefix, prefixLength);
+    std::memset(
+        config + prefixLength,
+        'x',
+        configLength - prefixLength);
+    config[configLength] = '\0';
+    return config;
+}
+
+void TestCheckedInfoValueReplacement()
+{
+    constexpr std::size_t capacity = 1024;
+    std::array<char, capacity + 2> guarded{};
+    std::array<char, capacity> scratch{};
+
+    char *const exact = BuildPaddedTargetConfig(&guarded, 1017);
+    Check(info_string::TrySetValueForKey(
+              exact,
+              capacity,
+              scratch.data(),
+              scratch.size(),
+              "mat",
+              "1"),
+        "the checked setter must allow exactly 1023 content bytes");
+    Check(std::strlen(exact) == 1023
+            && exact[1023] == '\0'
+            && guarded.front() == static_cast<char>(0x5a)
+            && guarded.back() == static_cast<char>(0x5a),
+        "the checked setter must terminate in-bounds and preserve canaries");
+
+    char *const full = BuildPaddedTargetConfig(&guarded, 1018);
+    const std::array<char, capacity + 2> fullBefore = guarded;
+    Check(!info_string::TrySetValueForKey(
+              full,
+              capacity,
+              scratch.data(),
+              scratch.size(),
+              "mat",
+              "1")
+            && guarded == fullBefore,
+        "a 1024-byte result must fail without changing its source");
+
+    const auto Load = [&guarded](const char *const value) {
+        guarded.fill(static_cast<char>(0x5a));
+        char *const destination = guarded.data() + 1;
+        std::memcpy(destination, value, std::strlen(value) + 1);
+        return destination;
+    };
+
+    char *current = Load("\\ent\\1\\mat\\123456789\\future\\x");
+    Check(info_string::TrySetValueForKey(
+              current,
+              capacity,
+              scratch.data(),
+              scratch.size(),
+              "mat",
+              "2")
+            && std::strcmp(
+                   current, "\\ent\\1\\future\\x\\mat\\2") == 0,
+        "replacement must remove the first old value and shrink to fit");
+
+    Check(info_string::TrySetValueForKey(
+              current,
+              capacity,
+              scratch.data(),
+              scratch.size(),
+              "mat",
+              "")
+            && std::strcmp(current, "\\ent\\1\\future\\x") == 0,
+        "an empty clean value must remove the existing key");
+
+    current = Load("\\ent\\1");
+    Check(info_string::TrySetValueForKey(
+              current,
+              capacity,
+              scratch.data(),
+              scratch.size(),
+              "future",
+              "a\\b;c\"d")
+            && std::strcmp(current, "\\ent\\1\\future\\abcd") == 0,
+        "checked replacement must retain legacy delimiter cleaning");
+
+    current = Load("ent\\1\\future\\x");
+    Check(info_string::TrySetValueForKey(
+              current,
+              capacity,
+              scratch.data(),
+              scratch.size(),
+              "mat",
+              "1")
+            && std::strcmp(
+                   current, "ent\\1\\future\\x\\mat\\1") == 0,
+        "replacement must preserve an optional missing leading delimiter");
+
+    current = Load("mat\\2\\ent\\1");
+    Check(info_string::TrySetValueForKey(
+              current,
+              capacity,
+              scratch.data(),
+              scratch.size(),
+              "mat",
+              "3")
+            && std::strcmp(current, "\\ent\\1\\mat\\3") == 0,
+        "removing a leading first pair must retain legacy delimiter placement");
+
+    for (const char *const invalidKey : {
+             "", "bad\\key", "bad;key", "bad\"key"})
+    {
+        current = Load("\\ent\\1\\mat\\2");
+        const std::array<char, capacity + 2> before = guarded;
+        Check(!info_string::TrySetValueForKey(
+                  current,
+                  capacity,
+                  scratch.data(),
+                  scratch.size(),
+                  invalidKey,
+                  "1")
+                && guarded == before,
+            "invalid keys must leave the published info string unchanged");
+    }
+
+    std::array<char, capacity + 1> overlongValue{};
+    overlongValue.fill('x');
+    overlongValue.back() = '\0';
+    current = Load("\\ent\\1\\mat\\2");
+    const std::array<char, capacity + 2> before = guarded;
+    Check(!info_string::TrySetValueForKey(
+              current,
+              capacity,
+              scratch.data(),
+              scratch.size(),
+              "mat",
+              overlongValue.data())
+            && guarded == before,
+        "an overlong value must preserve an existing value atomically");
+}
+
+bool TryPublishMissingMaterialModel(
+    char *const publishedConfig,
+    const std::size_t capacity,
+    int *const liveMaterial)
+{
+    if (!publishedConfig || capacity != 1024 || !liveMaterial)
+        return false;
+
+    std::array<char, 1024> staged{};
+    const std::size_t currentLength = std::strlen(publishedConfig);
+    if (currentLength >= staged.size())
+        return false;
+    std::memcpy(staged.data(), publishedConfig, currentLength + 1);
+    std::array<char, 1024> scratch{};
+    if (!info_string::TrySetValueForKey(
+            staged.data(),
+            staged.size(),
+            scratch.data(),
+            scratch.size(),
+            "mat",
+            "1"))
+    {
+        return false;
+    }
+
+    protocol::ParsedConfig parsed{};
+    if (protocol::ParseConfig(staged.data(), 8, &parsed)
+            != protocol::ConfigParseError::None
+        || parsed.entityNumber != 1
+        || parsed.materialIndex != 1)
+    {
+        return false;
+    }
+
+    std::memcpy(publishedConfig, staged.data(), std::strlen(staged.data()) + 1);
+    *liveMaterial = parsed.materialIndex;
+    return true;
+}
+
+void TestFailureAtomicTargetConfigStaging()
+{
+    constexpr std::size_t capacity = 1024;
+
+    std::array<char, capacity + 2> exactStorage{};
+    char *const exact = BuildPaddedTargetConfig(&exactStorage, 1017);
+    int liveMaterial = 17;
+    Check(TryPublishMissingMaterialModel(
+              exact, capacity, &liveMaterial),
+        "an absent material key must fit when content ends at byte 1023");
+    Check(std::strlen(exact) == 1023
+            && exact[1023] == '\0'
+            && liveMaterial == 1,
+        "an exact bounded update must publish wire and native state together");
+    Check(exactStorage.front() == static_cast<char>(0x5a)
+            && exactStorage.back() == static_cast<char>(0x5a),
+        "an exact bounded update must preserve both wire-buffer canaries");
+
+    for (const std::size_t currentLength : {1018u, 1019u})
+    {
+        std::array<char, capacity + 2> rejectedStorage{};
+        char *const rejected =
+            BuildPaddedTargetConfig(&rejectedStorage, currentLength);
+        const std::array<char, capacity + 2> before = rejectedStorage;
+        liveMaterial = 17;
+        Check(!TryPublishMissingMaterialModel(
+                  rejected, capacity, &liveMaterial),
+            "a target update at or above full content capacity must fail");
+        Check(rejectedStorage == before && liveMaterial == 17,
+            "a failed capacity update must leave wire/native state unchanged");
+    }
+
+    for (const char *const invalid : {
+             "\\ent",
+             "\\ent\\1\\mat\\2\\mat\\3"})
+    {
+        std::array<char, capacity + 2> invalidStorage{};
+        invalidStorage.fill(static_cast<char>(0x5a));
+        char *const published = invalidStorage.data() + 1;
+        std::memcpy(published, invalid, std::strlen(invalid) + 1);
+        const std::array<char, capacity + 2> before = invalidStorage;
+        liveMaterial = 17;
+        Check(!TryPublishMissingMaterialModel(
+                  published, capacity, &liveMaterial),
+            "malformed or duplicate target configs must not publish");
+        Check(invalidStorage == before && liveMaterial == 17,
+            "parse rejection must preserve published and native sentinels");
+    }
+}
 } // namespace
 
 int main()
@@ -425,5 +666,7 @@ int main()
     TestOffsetFailures();
     TestScalarRangeFailures();
     TestLockOnDurationEncoding();
+    TestCheckedInfoValueReplacement();
+    TestFailureAtomicTargetConfigStaging();
     return failures == 0 ? 0 : 1;
 }
