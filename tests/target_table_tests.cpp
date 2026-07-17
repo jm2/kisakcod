@@ -2,6 +2,8 @@
 #include "game/g_target_table.h"
 
 #include <array>
+#include <cerrno>
+#include <cfenv>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -167,7 +169,7 @@ void TestProducerEntityDomainModel()
             && stagedEntityNumber == 1,
         "the producer model must stage a live ordinary entity identity");
 
-    for (const auto failure : {
+    for (const auto &failure : {
              std::pair{&entities[3], "the producer must reject WORLD"},
              std::pair{&entities[4], "the producer must reject NONE"},
              std::pair{&entities[2], "the producer must reject the live bound"}})
@@ -231,6 +233,21 @@ void TestCompleteAndDefaultConfigs()
             && parsed.offset[0] == -2147483648.0f
             && parsed.offset[2] == 2147483520.0f,
         "binary32 offsets at the safe signed-int endpoints must parse");
+
+    error = protocol::ParseConfig(
+        "\\ent\\1\\offs\\.5 1. -2E+2", 2174, &parsed);
+    Check(error == protocol::ConfigParseError::None
+            && parsed.offset[0] == 0.5f
+            && parsed.offset[1] == 1.0f
+            && parsed.offset[2] == -200.0f,
+        "strict decimal offsets must retain supported decimal spellings");
+
+    error = protocol::ParseConfig(
+        "\\ent\\1\\offs\\1e-40 0 0", 2174, &parsed);
+    Check(error == protocol::ConfigParseError::None
+            && parsed.offset[0] != 0.0f
+            && std::fpclassify(parsed.offset[0]) == FP_SUBNORMAL,
+        "representable finite subnormal offsets must remain valid");
 
     parsed = {77, {4.0f, 5.0f, 6.0f}, 8, 9, 3};
     error = protocol::ParseConfig("\\ent\\0", 2174, &parsed);
@@ -324,6 +341,12 @@ void TestOffsetFailures()
              "\\ent\\1\\offs\\nan 2 3",
              "\\ent\\1\\offs\\inf 2 3",
              "\\ent\\1\\offs\\1e100 2 3",
+             "\\ent\\1\\offs\\1e-50 2 3",
+             "\\ent\\1\\offs\\+1 2 3",
+             "\\ent\\1\\offs\\. 2 3",
+             "\\ent\\1\\offs\\1e 2 3",
+             "\\ent\\1\\offs\\1e+ 2 3",
+             "\\ent\\1\\offs\\0x1p0 2 3",
              "\\ent\\1\\offs\\2147483648 2 3",
              "\\ent\\1\\offs\\-2147483904 2 3",
              "\\ent\\1\\offs\\1\n2 3"})
@@ -332,6 +355,81 @@ void TestOffsetFailures()
             protocol::ConfigParseError::InvalidOffset,
             "non-finite, out-of-range, or non-triplet offsets must fail");
     }
+}
+
+void TestPortableFloatFallback()
+{
+#if defined(__APPLE__) || defined(__linux__) || defined(__unix__)
+    const std::array<char, 3> unterminated = {'1', '.', '5'};
+    float parsed = 0.0f;
+    Check(protocol::detail::TryParseFloatTokenFallback(
+              unterminated.data(),
+              unterminated.data() + unterminated.size(),
+              &parsed)
+            && parsed == 1.5f,
+        "the libc fallback must parse a bounded non-NUL-terminated range");
+
+    std::array<char, protocol::kMaxNumericTokenLength + 1> overlong{};
+    overlong.fill('0');
+    parsed = 17.0f;
+    Check(!protocol::detail::TryParseFloatTokenFallback(
+              overlong.data(),
+              overlong.data() + overlong.size(),
+              &parsed)
+            && parsed == 17.0f,
+        "the libc fallback must reject an overlong token atomically");
+
+    constexpr char subnormal[] = "1e-40";
+    parsed = 0.0f;
+    Check(protocol::detail::TryParseFloatTokenFallback(
+              subnormal,
+              subnormal + sizeof(subnormal) - 1,
+              &parsed)
+            && parsed != 0.0f
+            && std::fpclassify(parsed) == FP_SUBNORMAL,
+        "the libc fallback must retain representable subnormal offsets");
+
+    constexpr char underflow[] = "1e-50";
+    parsed = 17.0f;
+    Check(!protocol::detail::TryParseFloatTokenFallback(
+              underflow,
+              underflow + sizeof(underflow) - 1,
+              &parsed)
+            && parsed == 17.0f,
+        "the libc fallback must reject underflow-to-zero atomically");
+
+    constexpr char exactZero[] = "0e-999";
+    parsed = 17.0f;
+    Check(protocol::detail::TryParseFloatTokenFallback(
+              exactZero,
+              exactZero + sizeof(exactZero) - 1,
+              &parsed)
+            && parsed == 0.0f,
+        "the libc fallback must accept an exact zero with a large exponent");
+
+    constexpr char midpoint[] = "1.000000059604644775390625";
+    const int originalRoundingMode = std::fegetround();
+    Check(originalRoundingMode != -1,
+        "the float fallback test requires a readable rounding mode");
+    if (originalRoundingMode != -1
+        && std::fesetround(FE_UPWARD) == 0)
+    {
+        errno = EDOM;
+        parsed = 0.0f;
+        Check(protocol::detail::TryParseFloatTokenFallback(
+                  midpoint,
+                  midpoint + sizeof(midpoint) - 1,
+                  &parsed)
+                && parsed == 1.0f,
+            "the libc fallback must always use ties-to-even rounding");
+        Check(std::fegetround() == FE_UPWARD,
+            "the libc fallback must restore the caller's rounding mode");
+        Check(errno == EDOM,
+            "the libc fallback must restore the caller's errno");
+        Check(std::fesetround(originalRoundingMode) == 0,
+            "the float fallback test must restore its rounding mode");
+    }
+#endif
 }
 
 void TestScalarRangeFailures()
@@ -664,6 +762,7 @@ int main()
     TestArgumentAndGrammarFailures();
     TestEntityFailures();
     TestOffsetFailures();
+    TestPortableFloatFallback();
     TestScalarRangeFailures();
     TestLockOnDurationEncoding();
     TestCheckedInfoValueReplacement();

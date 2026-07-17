@@ -387,6 +387,9 @@ void __cdecl Scr_Target_SetShader()
     }
 
     gentity_s *const ent = Scr_GetEntity(0);
+    if (!ent)
+        return;
+
     const int targetIndex = GetTargetIdx(ent);
     if (targetIndex == kMaxTargets)
     {
@@ -442,6 +445,9 @@ void __cdecl Scr_Target_SetOffscreenShader()
     }
 
     gentity_s *const ent = Scr_GetEntity(0);
+    if (!ent)
+        return;
+
     const int targetIndex = GetTargetIdx(ent);
     if (targetIndex == kMaxTargets)
     {
@@ -710,7 +716,13 @@ int __cdecl ScrGetTargetScreenPos(float *screenPos)
     }
 
     gentity_s *const targetEntity = Scr_GetEntity(0);
+    if (!targetEntity)
+        return 0;
+
     const gentity_s *const player = Scr_GetEntity(1);
+    if (!player)
+        return 0;
+
     if (!player->client)
     {
         Scr_ObjectError(va("entity %i is not a player", player->s.number));
@@ -870,6 +882,9 @@ void __cdecl Scr_Target_SetAttackMode()
     }
 
     gentity_s *const ent = Scr_GetEntity(0);
+    if (!ent)
+        return;
+
     const int targetIndex = GetTargetIdx(ent);
     if (targetIndex == kMaxTargets)
     {
@@ -920,6 +935,9 @@ void __cdecl Scr_Target_SetJavelinOnly()
     }
 
     gentity_s *const ent = Scr_GetEntity(0);
+    if (!ent)
+        return;
+
     const int targetIndex = GetTargetIdx(ent);
     if (targetIndex == kMaxTargets)
     {

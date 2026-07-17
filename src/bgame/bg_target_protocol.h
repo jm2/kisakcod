@@ -1,9 +1,13 @@
 #pragma once
 
+#include <cerrno>
 #include <charconv>
+#include <cfenv>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <limits>
+#include <locale.h>
 #include <system_error>
 
 #include <universal/info_string.h>
@@ -16,6 +20,7 @@ constexpr int kMaxMaterialIndex = 127;
 constexpr int kAttackProfileTop = 1;
 constexpr int kJavelinOnly = 2;
 constexpr int kKnownFlags = kAttackProfileTop | kJavelinOnly;
+constexpr std::size_t kMaxNumericTokenLength = 1023;
 
 constexpr bool IsValidMaterialIndex(const int materialIndex) noexcept
 {
@@ -136,6 +141,215 @@ constexpr bool IsOffsetSeparator(const char value) noexcept
     return value == ' ' || value == '\t';
 }
 
+inline bool IsStrictDecimalFloatToken(
+    const char *value,
+    const char *const end) noexcept
+{
+    if (!value || value == end)
+        return false;
+
+    if (*value == '-')
+    {
+        ++value;
+        if (value == end)
+            return false;
+    }
+
+    bool hasDigit = false;
+    while (value != end && *value >= '0' && *value <= '9')
+    {
+        hasDigit = true;
+        ++value;
+    }
+    if (value != end && *value == '.')
+    {
+        ++value;
+        while (value != end && *value >= '0' && *value <= '9')
+        {
+            hasDigit = true;
+            ++value;
+        }
+    }
+    if (!hasDigit)
+        return false;
+
+    if (value != end && (*value == 'e' || *value == 'E'))
+    {
+        ++value;
+        if (value != end && (*value == '+' || *value == '-'))
+            ++value;
+
+        const char *const exponent = value;
+        while (value != end && *value >= '0' && *value <= '9')
+            ++value;
+        if (value == exponent)
+            return false;
+    }
+
+    return value == end;
+}
+
+inline bool HasNonzeroDecimalDigit(
+    const char *value,
+    const char *const end) noexcept
+{
+    while (value != end)
+    {
+        if (*value >= '1' && *value <= '9')
+            return true;
+        ++value;
+    }
+    return false;
+}
+
+struct NumericCLocale final
+{
+#if defined(__APPLE__) || defined(__linux__) || defined(__unix__)
+    using Handle = locale_t;
+
+    NumericCLocale() noexcept
+        : handle(newlocale(LC_NUMERIC_MASK, "C", nullptr))
+    {
+    }
+
+    ~NumericCLocale()
+    {
+        if (handle)
+            freelocale(handle);
+    }
+#else
+    using Handle = const void *;
+
+    NumericCLocale() noexcept
+        : handle(nullptr)
+    {
+    }
+#endif
+
+    NumericCLocale(const NumericCLocale &) = delete;
+    NumericCLocale &operator=(const NumericCLocale &) = delete;
+
+    Handle handle;
+};
+
+inline const NumericCLocale &GetNumericCLocale() noexcept
+{
+    static const NumericCLocale locale;
+    return locale;
+}
+
+// Apple libc++ 16 does not provide floating-point from_chars. Keep its
+// fallback independent of the process locale and rounding mode, and restore
+// the caller's errno and complete floating-point environment after parsing.
+inline bool TryParseFloatTokenFallback(
+    const char *const value,
+    const char *const end,
+    float *const output) noexcept
+{
+    if (!output || !IsStrictDecimalFloatToken(value, end))
+        return false;
+
+    const int savedErrno = errno;
+    char token[kMaxNumericTokenLength + 1];
+    std::size_t tokenLength = 0;
+    for (const char *cursor = value; cursor != end; ++cursor)
+    {
+        if (tokenLength == kMaxNumericTokenLength)
+        {
+            errno = savedErrno;
+            return false;
+        }
+        token[tokenLength++] = *cursor;
+    }
+    token[tokenLength] = '\0';
+
+    const NumericCLocale &locale = GetNumericCLocale();
+    if (!locale.handle)
+    {
+        errno = savedErrno;
+        return false;
+    }
+
+    std::fenv_t savedEnvironment{};
+    if (std::feholdexcept(&savedEnvironment) != 0)
+    {
+        errno = savedErrno;
+        return false;
+    }
+    if (std::fesetround(FE_TONEAREST) != 0)
+    {
+        (void)std::fesetenv(&savedEnvironment);
+        errno = savedErrno;
+        return false;
+    }
+
+    errno = 0;
+    char *parsedEnd = nullptr;
+#if defined(__APPLE__) || defined(__linux__) || defined(__unix__)
+    const float parsed = strtof_l(token, &parsedEnd, locale.handle);
+#else
+    const float parsed = 0.0f;
+#endif
+    const int parseErrno = errno;
+    const int restoreResult = std::fesetenv(&savedEnvironment);
+    errno = savedErrno;
+    if (restoreResult != 0
+        || parsedEnd != token + tokenLength
+        || (parseErrno != 0 && parseErrno != ERANGE)
+        || (parseErrno == ERANGE
+            && parsed == 0.0f
+            && HasNonzeroDecimalDigit(token, token + tokenLength))
+        || !CanEncodeLegacyOffsetComponent(parsed))
+    {
+        return false;
+    }
+
+    *output = parsed;
+    return true;
+}
+
+template <typename Float>
+inline bool TryParseFloatTokenImpl(
+    const char *const value,
+    const char *const end,
+    Float *const output) noexcept
+{
+    if constexpr (requires(Float &candidate) {
+                      std::from_chars(
+                          value,
+                          end,
+                          candidate,
+                          std::chars_format::general);
+                  })
+    {
+        Float parsed{};
+        const std::from_chars_result result = std::from_chars(
+            value, end, parsed, std::chars_format::general);
+        if (result.ec != std::errc{} || result.ptr != end
+            || !CanEncodeLegacyOffsetComponent(parsed))
+        {
+            return false;
+        }
+
+        *output = parsed;
+        return true;
+    }
+    else
+    {
+        return TryParseFloatTokenFallback(value, end, output);
+    }
+}
+
+inline bool TryParseFloatToken(
+    const char *const value,
+    const char *const end,
+    float *const output) noexcept
+{
+    if (!output || !IsStrictDecimalFloatToken(value, end))
+        return false;
+    return TryParseFloatTokenImpl(value, end, output);
+}
+
 inline bool TryParseOffsetView(
     const char *value,
     const std::size_t length,
@@ -153,16 +367,13 @@ inline bool TryParseOffsetView(
         if (value == end)
             return false;
 
-        const std::from_chars_result result = std::from_chars(
-            value, end, parsed[component], std::chars_format::general);
-        if (result.ec != std::errc{}
-            || result.ptr == value
-            || !CanEncodeLegacyOffsetComponent(parsed[component]))
-        {
+        const char *tokenEnd = value;
+        while (tokenEnd != end && !IsOffsetSeparator(*tokenEnd))
+            ++tokenEnd;
+        if (!TryParseFloatToken(value, tokenEnd, &parsed[component]))
             return false;
-        }
 
-        value = result.ptr;
+        value = tokenEnd;
         if (component != 2
             && (value == end || !IsOffsetSeparator(*value)))
         {

@@ -120,8 +120,22 @@ foreach(_required IN ITEMS
     "info_string::IsWellFormed(info)"
     "info_string::TryGetExactValueView(info, key, value, length)"
     "std::from_chars(value, end, parsed, 10)"
-    "std::from_chars( value, end, parsed[component], std::chars_format::general)"
-    "!CanEncodeLegacyOffsetComponent(parsed[component])"
+    "inline bool IsStrictDecimalFloatToken("
+    "inline bool TryParseFloatToken("
+    "inline bool TryParseFloatTokenFallback("
+    "constexpr std::size_t kMaxNumericTokenLength = 1023;"
+    "if (tokenLength == kMaxNumericTokenLength)"
+    "token[tokenLength] = '\\0';"
+    "newlocale(LC_NUMERIC_MASK, \"C\", nullptr)"
+    "std::feholdexcept(&savedEnvironment)"
+    "std::fesetround(FE_TONEAREST)"
+    "const float parsed = strtof_l(token, &parsedEnd, locale.handle);"
+    "const int restoreResult = std::fesetenv(&savedEnvironment);"
+    "parseErrno == ERANGE && parsed == 0.0f"
+    "if constexpr (requires(Float &candidate) { std::from_chars( value, end, candidate, std::chars_format::general); })"
+    "std::from_chars( value, end, parsed, std::chars_format::general)"
+    "!CanEncodeLegacyOffsetComponent(parsed)"
+    "!TryParseFloatToken(value, tokenEnd, &parsed[component])"
     "parsed.entityNumber < 0"
     "parsed.entityNumber >= maxEntityCount"
     "!IsValidMaterialIndex(parsed.materialIndex)"
@@ -466,6 +480,7 @@ extract_slice(
     "void __cdecl Scr_Target_SetOffscreenShader()"
     _shader "transactional target shader setter")
 foreach(_required IN ITEMS
+    "if (!ent) return;"
     "strlen(materialName) >= kSpMaterialNameCapacity"
     "Scr_ParamError(1u, \"Target shader name is too long\");"
     "materialIndex = G_MaterialIndex(materialName);"
@@ -477,11 +492,17 @@ foreach(_required IN ITEMS
     "target.materialIndex = materialIndex;")
     require_contains(_shader "${_required}" "validated shader publication")
 endforeach()
+string(FIND "${_shader}" "gentity_s *const ent = Scr_GetEntity(0);" _shader_entity)
+string(FIND "${_shader}" "if (!ent) return;" _shader_entity_guard)
+string(FIND "${_shader}" "const int targetIndex = GetTargetIdx(ent);" _shader_lookup)
 string(FIND "${_shader}" "strlen(materialName) >= kSpMaterialNameCapacity" _shader_length)
 string(FIND "${_shader}" "materialIndex = G_MaterialIndex(materialName);" _shader_resolve)
 string(FIND "${_shader}" "if (!StageTargetScalarConfig(" _shader_stage)
 string(FIND "${_shader}" "target.materialIndex = materialIndex;" _shader_publish)
-if(_shader_length EQUAL -1
+if(_shader_entity EQUAL -1
+    OR _shader_entity_guard LESS_EQUAL _shader_entity
+    OR _shader_lookup LESS_EQUAL _shader_entity_guard
+    OR _shader_length EQUAL -1
     OR _shader_resolve LESS_EQUAL _shader_length
     OR _shader_stage LESS_EQUAL _shader_resolve
     OR _shader_publish LESS_EQUAL _shader_stage)
@@ -494,6 +515,7 @@ extract_slice(
     "void __cdecl Scr_Target_GetArray()"
     _offscreen_shader "transactional offscreen shader setter")
 foreach(_required IN ITEMS
+    "if (!ent) return;"
     "strlen(materialName) >= kSpMaterialNameCapacity"
     "Scr_ParamError(1u, \"Target offscreen shader name is too long\");"
     "materialIndex = G_MaterialIndex(materialName);"
@@ -506,11 +528,17 @@ foreach(_required IN ITEMS
     require_contains(
         _offscreen_shader "${_required}" "validated offscreen publication")
 endforeach()
+string(FIND "${_offscreen_shader}" "gentity_s *const ent = Scr_GetEntity(0);" _offscreen_entity)
+string(FIND "${_offscreen_shader}" "if (!ent) return;" _offscreen_entity_guard)
+string(FIND "${_offscreen_shader}" "const int targetIndex = GetTargetIdx(ent);" _offscreen_lookup)
 string(FIND "${_offscreen_shader}" "strlen(materialName) >= kSpMaterialNameCapacity" _offscreen_length)
 string(FIND "${_offscreen_shader}" "materialIndex = G_MaterialIndex(materialName);" _offscreen_resolve)
 string(FIND "${_offscreen_shader}" "if (!StageTargetScalarConfig(" _offscreen_stage)
 string(FIND "${_offscreen_shader}" "target.offscreenMaterialIndex = materialIndex;" _offscreen_publish)
-if(_offscreen_length EQUAL -1
+if(_offscreen_entity EQUAL -1
+    OR _offscreen_entity_guard LESS_EQUAL _offscreen_entity
+    OR _offscreen_lookup LESS_EQUAL _offscreen_entity_guard
+    OR _offscreen_length EQUAL -1
     OR _offscreen_resolve LESS_EQUAL _offscreen_length
     OR _offscreen_stage LESS_EQUAL _offscreen_resolve
     OR _offscreen_publish LESS_EQUAL _offscreen_stage)
@@ -523,6 +551,7 @@ extract_slice(
     "void __cdecl Scr_Target_SetJavelinOnly()"
     _attack_mode "failure-atomic attack-mode setter")
 foreach(_required IN ITEMS
+    "if (!ent) return;"
     "int stagedFlags = targGlob.targets[targetIndex].flags;"
     "if (!StageTargetScalarConfig("
     "|| parsed.flags != stagedFlags"
@@ -532,9 +561,16 @@ foreach(_required IN ITEMS
         _attack_mode "${_required}"
         "attack-mode wire validation precedes native publication")
 endforeach()
+string(FIND "${_attack_mode}" "gentity_s *const ent = Scr_GetEntity(0);" _attack_entity)
+string(FIND "${_attack_mode}" "if (!ent) return;" _attack_entity_guard)
+string(FIND "${_attack_mode}" "const int targetIndex = GetTargetIdx(ent);" _attack_lookup)
 string(FIND "${_attack_mode}" "if (!StageTargetScalarConfig(" _attack_stage)
 string(FIND "${_attack_mode}" "targGlob.targets[targetIndex].flags = stagedFlags;" _attack_publish)
-if(_attack_stage EQUAL -1 OR _attack_publish LESS_EQUAL _attack_stage)
+if(_attack_entity EQUAL -1
+    OR _attack_entity_guard LESS_EQUAL _attack_entity
+    OR _attack_lookup LESS_EQUAL _attack_entity_guard
+    OR _attack_stage EQUAL -1
+    OR _attack_publish LESS_EQUAL _attack_stage)
     message(FATAL_ERROR
         "Attack-mode setter must stage before changing live flags")
 endif()
@@ -544,6 +580,7 @@ extract_slice(
     "SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString); }"
     _javelin_mode "failure-atomic Javelin-only setter")
 foreach(_required IN ITEMS
+    "if (!ent) return;"
     "int stagedFlags = targGlob.targets[targetIndex].flags;"
     "if (!StageTargetScalarConfig("
     "|| parsed.flags != stagedFlags"
@@ -552,9 +589,16 @@ foreach(_required IN ITEMS
         _javelin_mode "${_required}"
         "Javelin-only wire validation precedes native publication")
 endforeach()
+string(FIND "${_javelin_mode}" "gentity_s *const ent = Scr_GetEntity(0);" _javelin_entity)
+string(FIND "${_javelin_mode}" "if (!ent) return;" _javelin_entity_guard)
+string(FIND "${_javelin_mode}" "const int targetIndex = GetTargetIdx(ent);" _javelin_lookup)
 string(FIND "${_javelin_mode}" "if (!StageTargetScalarConfig(" _javelin_stage)
 string(FIND "${_javelin_mode}" "targGlob.targets[targetIndex].flags = stagedFlags;" _javelin_publish)
-if(_javelin_stage EQUAL -1 OR _javelin_publish LESS_EQUAL _javelin_stage)
+if(_javelin_entity EQUAL -1
+    OR _javelin_entity_guard LESS_EQUAL _javelin_entity
+    OR _javelin_lookup LESS_EQUAL _javelin_entity_guard
+    OR _javelin_stage EQUAL -1
+    OR _javelin_publish LESS_EQUAL _javelin_stage)
     message(FATAL_ERROR
         "Javelin-only setter must stage before changing live flags")
 endif()
@@ -585,6 +629,29 @@ extract_slice(
 require_contains(
     _screen_pos "if (Scr_GetNumParam() < 3)"
     "screen-position helper requires target, player, and FOV")
+foreach(_required IN ITEMS
+    "gentity_s *const targetEntity = Scr_GetEntity(0);"
+    "if (!targetEntity) return 0;"
+    "const gentity_s *const player = Scr_GetEntity(1);"
+    "if (!player) return 0;"
+    "if (!player->client)")
+    require_contains(
+        _screen_pos "${_required}"
+        "screen-position entity validation")
+endforeach()
+string(FIND "${_screen_pos}" "gentity_s *const targetEntity = Scr_GetEntity(0);" _screen_target)
+string(FIND "${_screen_pos}" "if (!targetEntity) return 0;" _screen_target_guard)
+string(FIND "${_screen_pos}" "const gentity_s *const player = Scr_GetEntity(1);" _screen_player)
+string(FIND "${_screen_pos}" "if (!player) return 0;" _screen_player_guard)
+string(FIND "${_screen_pos}" "if (!player->client)" _screen_player_client)
+if(_screen_target EQUAL -1
+    OR _screen_target_guard LESS_EQUAL _screen_target
+    OR _screen_player LESS_EQUAL _screen_target_guard
+    OR _screen_player_guard LESS_EQUAL _screen_player
+    OR _screen_player_client LESS_EQUAL _screen_player_guard)
+    message(FATAL_ERROR
+        "Screen-position helper must null-check each script entity before use")
+endif()
 
 extract_slice(
     _targets "void __cdecl Scr_Target_StartLockOn()"
