@@ -274,7 +274,8 @@ Completed foundation work:
   TUs and real native64 target ABI remain an explicit unclosed
   compile gate because every hosted engine configuration still disables
   SP; direct probes caught and fixed one brace imbalance, then reached pre-existing ILP32/vendor/header blockers;
-- the focused grenade safe-target candidate (`baccb1f9`, `ff519381`) compares its exact three-dimensional squared
+- the focused grenade safe-target candidate (`baccb1f9`, `ff519381`, plus review hardening `1bf38bae`) compares its exact
+  three-dimensional squared
   distance with the squared 1.1-times weapon explosion radius through one dependency-free production helper. It preserves
   the inclusive boundary, arithmetic order, invalid-negative-radius behavior, and the separate intentional squared
   ten-unit `Actor_Grenade_ShouldIgnore` tolerance. Portable boundary tests plus a mutation-sensitive live-call source

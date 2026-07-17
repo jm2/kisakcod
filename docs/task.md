@@ -357,7 +357,8 @@ work item changes. Do not create session-specific handoff files.
   fixed one accidental brace imbalance, then reached only pre-existing ILP32/vendor/header blockers. This remains an explicitly
   unclosed compile gate: all hosted engine jobs still use `KISAK_BUILD_SP=OFF`, so the production SP translation units and
   actual `targetInfo_t` native64 assertion are source-contract/probe covered rather than compiled by CI.
-- Current grenade safe-target candidate: `baccb1f9` and `ff519381` move the exact SP AI toss predicate into a
+- Current grenade safe-target candidate: `baccb1f9`, `ff519381`, and review hardening `1bf38bae` move the exact SP AI
+  toss predicate into a
   dependency-free helper and compare its three-dimensional squared distance with the squared 1.1-times explosion
   radius. The helper preserves the original inclusive boundary, arithmetic order, and fail-open behavior for invalid
   negative weapon radii. Portable runtime cases cover the old dimensional defect, ten-percent margin, exact 110-unit
