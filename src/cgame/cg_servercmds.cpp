@@ -3,6 +3,7 @@
 #endif
 
 #include "cg_servercmds.h"
+#include <bgame/bg_target_protocol.h>
 #include <client/client.h>
 #include <qcommon/com_bsp.h>
 #include <gfx_d3d/r_dpvs.h>
@@ -210,6 +211,7 @@ void __cdecl CG_ConfigStringModifiedInternal(int localClientNum, unsigned int st
     shellshock_parms_t *ShellshockParms; // r3
 
     if (localClientNum)
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_local.h",
             910,
@@ -217,6 +219,17 @@ void __cdecl CG_ConfigStringModifiedInternal(int localClientNum, unsigned int st
             "%s\n\t(localClientNum) = %i",
             "(localClientNum == 0)",
             localClientNum);
+        return;
+    }
+    if (stringIndex >= CLIENT_CONFIGSTRING_COUNT)
+    {
+        Com_Error(
+            ERR_DROP,
+            "CG_ConfigStringModifiedInternal: configstring index %u is outside [0, %u)",
+            stringIndex,
+            CLIENT_CONFIGSTRING_COUNT);
+        return;
+    }
     ConfigString = CL_GetConfigString(localClientNum, stringIndex);
     v5 = ConfigString;
     if (stringIndex == CS_ITEMS)
@@ -317,7 +330,22 @@ void __cdecl CG_ConfigStringModifiedInternal(int localClientNum, unsigned int st
 
 void __cdecl CG_ConfigStringModified(int localClientNum)
 {
-    CG_ConfigStringModifiedInternal(localClientNum, atol(Cmd_Argv(1)));
+    int stringIndex = 0;
+    if (!info_string::TryParseSignedDecimalToken(
+            Cmd_Argv(1), &stringIndex)
+        || stringIndex < 0
+        || static_cast<unsigned int>(stringIndex)
+            >= CLIENT_CONFIGSTRING_COUNT)
+    {
+        Com_Error(
+            ERR_DROP,
+            "CG_ConfigStringModified: invalid configstring index");
+        return;
+    }
+
+    CG_ConfigStringModifiedInternal(
+        localClientNum,
+        static_cast<unsigned int>(stringIndex));
 }
 
 void __cdecl CG_ShutdownPhysics(int localClientNum)
@@ -1090,6 +1118,36 @@ void __cdecl CG_ParsePhysGravityDir(int localClientNum)
     }
 }
 
+namespace
+{
+void CG_ReticleLockOnCommand(const int localClientNum)
+{
+    bg::target_protocol::LockOnPayload payload{
+        ENTITYNUM_NONE,
+        0,
+    };
+    if (Cmd_Argc() != 3
+        || !bg::target_protocol::TryParseLockOnPayload(
+            Cmd_Argv(1),
+            Cmd_Argv(2),
+            ENTITYNUM_WORLD,
+            ENTITYNUM_NONE,
+            &payload))
+    {
+        Com_PrintError(
+            14,
+            "Ignoring malformed ret_lock_on command; clearing lock state\n");
+        payload.entityNumber = ENTITYNUM_NONE;
+        payload.durationMilliseconds = 0;
+    }
+
+    CG_ReticleStartLockOn(
+        localClientNum,
+        payload.entityNumber,
+        payload.durationMilliseconds);
+}
+} // namespace
+
 void __cdecl CG_DispatchServerCommand(int localClientNum)
 {
     int nesting; // r7
@@ -1268,10 +1326,6 @@ void __cdecl CG_DispatchServerCommand(int localClientNum)
     const char *v181; // r10
     const char *v182; // r11
     int v183; // r8
-    const char *v184; // r3
-    int v185; // r31
-    const char *v186; // r3
-    int v187; // r3
     const char *v188; // r10
     const char *v189; // r11
     int v190; // r8
@@ -1880,14 +1934,7 @@ void __cdecl CG_DispatchServerCommand(int localClientNum)
                                                                                                                                                                     }
                                                                                                                                                                     else
                                                                                                                                                                     {
-                                                                                                                                                                        v184 = Cmd_Argv(2);
-                                                                                                                                                                        v185 = atol(v184);
-                                                                                                                                                                        v186 = Cmd_Argv(1);
-                                                                                                                                                                        v187 = atol(v186);
-                                                                                                                                                                        CG_ReticleStartLockOn(
-                                                                                                                                                                            localClientNum,
-                                                                                                                                                                            v187,
-                                                                                                                                                                            v185);
+                                                                                                                                                                        CG_ReticleLockOnCommand(localClientNum);
                                                                                                                                                                     }
                                                                                                                                                                 }
                                                                                                                                                                 else
@@ -2208,7 +2255,6 @@ void __cdecl CG_ExecuteNewServerCommands(int localClientNum, int latestSequence)
 void __cdecl CG_MapInit(int restart)
 {
     signed int i; // r31
-    int j; // r31
     const char *ConfigString; // r3
     long double v5; // fp2
 
@@ -2224,8 +2270,13 @@ void __cdecl CG_MapInit(int restart)
     R_ClearShadowedPrimaryLightHistory(0);
     for (i = 11; i < 27; ++i)
         CG_ParseObjectiveChange(0, i);
-    for (j = 27; j < 59; ++j)
-        CG_TargetsChanged(0, j);
+    for (int targetConfig = CS_TARGETS;
+         targetConfig
+            < CS_TARGETS + bg::target_protocol::kMaxTargets;
+         ++targetConfig)
+    {
+        CG_TargetsChanged(0, targetConfig);
+    }
     ConfigString = CL_GetConfigString(0, CS_CULLDIST);
     v5 = atof(ConfigString);
     R_SetCullDist((float)*(double *)&v5);
@@ -2245,4 +2296,3 @@ void __cdecl CG_MapInit(int restart)
     cg_waitingScriptMenu.name[0] = 0;
     CG_Respawn(0);
 }
-
