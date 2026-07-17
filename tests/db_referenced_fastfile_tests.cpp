@@ -186,6 +186,46 @@ void TestInfoStringPredicates()
     Expect(
         IsSafeUnquotedPathTokenComponent("mods/example.v1/zone.v2"),
         "single dots must remain valid filename characters");
+    constexpr PredicateCase unsafePortablePaths[] = {
+        {"zone.ff:stream", "an NTFS alternate-data-stream name must fail"},
+        {"C:/zone.ff", "a drive/colon namespace path must fail"},
+        {"mods/zone<copy", "a less-than metacharacter must fail"},
+        {"mods/zone>copy", "a greater-than metacharacter must fail"},
+        {"mods/zone|copy", "a pipe metacharacter must fail"},
+        {"mods/zone?copy", "a question-mark wildcard must fail"},
+        {"mods/zone*copy", "a non-leading star wildcard must fail"},
+        {"CON", "a root CON device component must fail"},
+        {"nul.ff", "a root NUL device name before an extension must fail"},
+        {"mods/PrN.cfg", "a case-insensitive PRN component must fail"},
+        {"mods/AUX/zone", "an intermediate AUX component must fail"},
+        {"mods/COM1.ff", "a COM1 device name before an extension must fail"},
+        {"mods/lPt9/zone", "a case-insensitive LPT9 component must fail"},
+    };
+    for (const PredicateCase &testCase : unsafePortablePaths)
+    {
+        Expect(
+            !IsSafeUnquotedPathTokenComponent(testCase.value),
+            testCase.description);
+    }
+
+    constexpr PredicateCase safePortableNearMisses[] = {
+        {"console", "CON must not reject a longer ordinary name"},
+        {"mods/printer/zone", "PRN must not reject an ordinary prefix"},
+        {"auxiliary.ff", "AUX must not reject an ordinary prefix"},
+        {"null.ff", "NUL must not reject an ordinary prefix"},
+        {"mods/COM0.ff", "COM0 is not a reserved DOS device"},
+        {"mods/com10.ff", "COM10 is not a reserved DOS device"},
+        {"mods/LPT0/zone", "LPT0 is not a reserved DOS device"},
+        {"mods/lpt10/zone", "LPT10 is not a reserved DOS device"},
+        {"mods/xcom1.cfg", "an embedded device spelling is ordinary text"},
+    };
+    for (const PredicateCase &testCase : safePortableNearMisses)
+    {
+        Expect(
+            IsSafeUnquotedPathTokenComponent(testCase.value),
+            testCase.description);
+    }
+
     Expect(
         !IsSafeUnquotedPathTokenComponent("/absolute"),
         "a leading slash must be rejected for path components");
@@ -301,6 +341,9 @@ void TestRejectedNameComponents()
         {"zone..name", "a zone name containing .. must fail"},
         {"zone::name", "a zone name containing :: must fail"},
         {"zone@name", "a zone name containing @ must fail"},
+        {"zone:stream", "a zone name containing an ADS colon must fail"},
+        {"zone?name", "a zone name containing a wildcard must fail"},
+        {"NUL.ff", "a zone name resolving to a DOS device must fail"},
         {"/zone", "a zone name beginning with slash must fail"},
         {"*zone", "a zone name beginning with star must fail"},
         {"zone/", "a zone name ending with slash must fail"},
@@ -327,6 +370,9 @@ void TestRejectedNameComponents()
         {"mods/../example", "a mod directory containing .. must fail"},
         {"mods::example", "a mod directory containing :: must fail"},
         {"mods@example", "a mod directory containing @ must fail"},
+        {"mods/example:stream", "a mod directory containing an ADS colon must fail"},
+        {"mods/example|copy", "a mod directory containing a metacharacter must fail"},
+        {"mods/COM3", "a mod directory containing a DOS device must fail"},
         {"/mods", "a mod directory beginning with slash must fail"},
         {"*mods", "a mod directory beginning with star must fail"},
         {"mods/example/", "a mod directory ending with slash must fail"},

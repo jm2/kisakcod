@@ -36,11 +36,62 @@ inline bool IsSafeUnquotedValueComponent(const char *const value) noexcept
     return true;
 }
 
+namespace detail
+{
+constexpr unsigned char FoldAsciiCase(const unsigned char value) noexcept
+{
+    return value >= static_cast<unsigned char>('A')
+            && value <= static_cast<unsigned char>('Z')
+        ? static_cast<unsigned char>(
+            value + static_cast<unsigned char>('a' - 'A'))
+        : value;
+}
+
+// Windows resolves these names as devices even when a filename extension is
+// present. Check each slash-delimited path component without allocating or
+// applying locale-sensitive case conversion.
+inline bool IsWindowsDosDevicePathComponent(
+    const char *const begin,
+    const char *const end) noexcept
+{
+    const char *baseEnd = begin;
+    while (baseEnd != end && *baseEnd != '.')
+        ++baseEnd;
+
+    const std::size_t baseLength =
+        static_cast<std::size_t>(baseEnd - begin);
+    if (baseLength != 3 && baseLength != 4)
+        return false;
+
+    const unsigned char first = FoldAsciiCase(
+        static_cast<unsigned char>(begin[0]));
+    const unsigned char second = FoldAsciiCase(
+        static_cast<unsigned char>(begin[1]));
+    const unsigned char third = FoldAsciiCase(
+        static_cast<unsigned char>(begin[2]));
+
+    if (baseLength == 3)
+    {
+        return (first == 'c' && second == 'o' && third == 'n')
+            || (first == 'p' && second == 'r' && third == 'n')
+            || (first == 'a' && second == 'u' && third == 'x')
+            || (first == 'n' && second == 'u' && third == 'l');
+    }
+
+    const unsigned char suffix = static_cast<unsigned char>(begin[3]);
+    return suffix >= static_cast<unsigned char>('1')
+        && suffix <= static_cast<unsigned char>('9')
+        && ((first == 'c' && second == 'o' && third == 'm')
+            || (first == 'l' && second == 'p' && third == 't'));
+}
+} // namespace detail
+
 // Path-like token components may contain ordinary forward slashes, but not a
 // leading/trailing separator, either tokenizer comment introducer, the
-// download-list field delimiter, or traversal/namespace spellings rejected by
-// the filesystem domain. Single dots remain valid filename characters. This
-// also makes adjoining two independently validated components with '/' safe.
+// download-list field delimiter, a Windows namespace/metacharacter, a DOS
+// device component, or traversal spellings rejected by the filesystem domain.
+// Single dots remain valid filename characters. This also makes adjoining two
+// independently validated components with '/' safe.
 inline bool IsSafeUnquotedPathTokenComponent(
     const char *const value) noexcept
 {
@@ -48,14 +99,27 @@ inline bool IsSafeUnquotedPathTokenComponent(
         return false;
 
     if (std::strchr(value, '@')
+        || std::strpbrk(value, ":<>|?*")
         || std::strstr(value, "..")
         || std::strstr(value, "::"))
         return false;
 
+    const char *component = value;
+    for (const char *cursor = value;; ++cursor)
+    {
+        if (*cursor != '/' && *cursor != '\0')
+            continue;
+
+        if (detail::IsWindowsDosDevicePathComponent(component, cursor))
+            return false;
+        if (*cursor == '\0')
+            break;
+        component = cursor + 1;
+    }
+
     const std::size_t length = std::strlen(value);
     return length == 0
         || (value[0] != '/'
-            && value[0] != '*'
             && value[length - 1] != '/');
 }
 
