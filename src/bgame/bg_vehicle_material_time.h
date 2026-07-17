@@ -1,6 +1,7 @@
 #pragma once
 
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 
@@ -69,7 +70,7 @@ inline constexpr std::int32_t kDefault = 0;
     // Normal frame interpolation is in [0, 1]. Keep malformed/extrapolated
     // values defined too, instead of relying on an out-of-range float-to-int
     // conversion.
-    const std::int32_t offset = scaled != scaled
+    const std::int32_t offset = std::isnan(scaled)
         ? 0
         : (scaled <= minimum
             ? (std::numeric_limits<std::int32_t>::min)()
