@@ -177,18 +177,27 @@ Completed foundation work:
   info-string field delimiter. Exact final head `9fb4fc18` and squash commit `a7c485fd` each passed all nine jobs in runs
   **29551519068** and **29551990840**, respectively; exact-head Codex review found no major issue and no review threads
   remain;
-- a curated first reconciliation of the audited nine-commit upstream delta from shared base `312a9d2e` through
-  `ba3c79f3`. Complete cherry-picks `526d59fb`, `9e6c5836`, and `d27803d2` fix the renderer scoped-list indices,
+- PR #39 merged the first curated reconciliation of the audited nine-commit upstream delta from shared base `312a9d2e`
+  through `ba3c79f3`. Complete cherry-picks `526d59fb`, `9e6c5836`, and `d27803d2` fix the renderer scoped-list indices,
   zero-valued actor sight assertions, and zero-node output initialization. Only the direct blur-radius return from
-  `d6b4c5e4` is adapted; its Xbox safe-area/startup changes remain excluded. A portable source contract pins all four
-  corrections because three affected SP-only translation units are not compiled by the present engine CI matrix;
-- deferred upstream content requires subsystem-specific adaptation and focused tests. Radius-damage/missile/HUD changes
-  from `d592fb4a` must be split; navigation from `3f256654` must not import the squared-Z defect; tank timing from
-  `b31ea047` must preserve the negative sentinel; omnibus `77404c61` must be reduced to individually justified fixlets;
-  and dynent save/load `ba3c79f3` remains deferred until it has bounded transactional Disk32/native-sidecar semantics;
-- fresh strict GCC 16 and Clang 22 builds of the curated candidate pass all **86/86** tests, including the new source
-  contract. `git diff --check` and an independent patch/provenance audit are clean; hosted Windows production compilation
-  and automated review remain the PR gates;
+  `d6b4c5e4` was adapted; its Xbox safe-area/startup changes remain excluded. A portable source contract pins all four
+  corrections because three affected SP-only translation units are not compiled by the present engine CI matrix. Exact
+  branch head `dd0cfee9` passed all nine jobs in run **29553056639**; Gemini and exact-head Codex review were clean, no
+  review threads remained, and the PR squash-merged as `f1007fbb`. Authoritative post-merge master run
+  **29553509114** passed all nine jobs;
+- the current focused reconciliation candidate adapts only the radius-damage correction from `d592fb4a`. Both
+  unobstructed trace paths now return success rather than breaking out of the sample loop and falling through to failure.
+  Its portable source contract rejects either `break` regression and requires the sole failure return after loop
+  exhaustion. The affected SP translation unit is outside the current engine compile matrix, so this remains source-level
+  rather than executable gameplay coverage;
+- deferred upstream content requires subsystem-specific adaptation and focused tests. Missile/HUD changes from
+  `d592fb4a` must be split; navigation from `3f256654` must not import the squared-Z defect; tank timing from `b31ea047`
+  must preserve the negative sentinel; omnibus `77404c61` must be reduced to individually justified fixlets; and dynent
+  save/load `ba3c79f3` remains deferred until it has bounded transactional Disk32/native-sidecar semantics;
+- fresh strict GCC 16 and Clang 22 builds of the radius-damage candidate pass all **86/86** tests. The source contract
+  passes directly and rejects deliberate mutations of either success branch and the placement of the loop-exhaustion
+  failure return. `git diff --check` and an independent patch/provenance audit are clean; hosted Windows production
+  compilation and automated review remain the PR gates;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
