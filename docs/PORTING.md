@@ -256,7 +256,7 @@ Completed foundation work:
   `KISAK_BUILD_SP=OFF`, the portable executable exercises the shared parser and layout model, and the source contract
   textually pins the SP implementation. Direct SP probes stop earlier on existing ILP32 assertions, undeclared
   `IsValidSeed`, and missing DirectX `d3d9.h`;
-- the current client-target safety candidate (`97024d7d`, `3cfb16d1`, `14887046`, `799cf462`, plus review hardening
+- the merged client-target safety checkpoint (`97024d7d`, `3cfb16d1`, `14887046`, `799cf462`, plus review hardening
   `62e317dc`) completes the next audited consumer half without importing d592's raw pointer-bound loop. Shared strict
   parsers reject malformed/overflowing
   configstring indices and lock-on payloads, cap target info at 1,023 bytes, and publish only complete staged values.
@@ -268,12 +268,22 @@ Completed foundation work:
   endpoint, malformed-token, failure-atomic, overlong, and exact unterminated-buffer cases. A portable source contract is
   selected by measured Windows x86 and pins the live dispatch and range/order invariants; review hardening binds the exact
   guard returns and sole lock-state publication to their validated control flow. Independent production logic/security
-  and portability/ABI audits are clean. The production SP TUs and real native64 target ABI remain an explicit unclosed
+  and portability/ABI audits are clean. Codex's full-table replacement finding was fixed in `09be2243`; exact-head run
+  **29603408182** passed all nine jobs, exact-head Codex was clean, and the only review thread is resolved. PR #46
+  squash-merged as `0eb06224`, and authoritative post-merge run **29604449127** passed all nine jobs. The production SP
+  TUs and real native64 target ABI remain an explicit unclosed
   compile gate because every hosted engine configuration still disables
   SP; direct probes caught and fixed one brace imbalance, then reached pre-existing ILP32/vendor/header blockers;
-- remaining upstream content stays subsystem-specific: publish the reviewed client target/HUD candidate, then fix the
-  squared-distance-versus-unsquared grenade safe-radius defect separately. Keep dynent save/load `ba3c79f3` deferred
-  until bounded transactional Disk32/native-sidecar semantics exist, and keep unrelated weapon-fire changes excluded;
+- the focused grenade safe-target candidate (`baccb1f9`, `ff519381`, plus review hardening `1bf38bae`) compares its exact
+  three-dimensional squared
+  distance with the squared 1.1-times weapon explosion radius through one dependency-free production helper. It preserves
+  the inclusive boundary, arithmetic order, invalid-negative-radius behavior, and the separate intentional squared
+  ten-unit `Actor_Grenade_ShouldIgnore` tolerance. Portable boundary tests plus a mutation-sensitive live-call source
+  contract are selected in measured Windows x86; complete GCC and Clang builds and **100/100** suites pass. This is a
+  high-confidence dimensional gameplay correction rather than a claimed retail-binary restoration, and the SP production
+  translation unit remains outside hosted compilation;
+- remaining upstream content stays subsystem-specific: keep dynent save/load `ba3c79f3` deferred until bounded
+  transactional Disk32/native-sidecar semantics exist, and keep unrelated weapon-fire changes excluded;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
