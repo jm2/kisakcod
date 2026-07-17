@@ -189,7 +189,7 @@ work item changes. Do not create session-specific handoff files.
   precisely; count-valid input is not guaranteed to stage. The journal retains arbitrary nonzero 32-bit IDs for the
   future widened runtime, while a current-runtime adapter must reject IDs outside `0 < id < 65536` before `GetRefString`
   or debug-table indexing.
-- Current referenced-fast-file and SYSTEMINFO hardening checkpoint centralizes the database registry at 33 physical zone
+- Merged referenced-fast-file and SYSTEMINFO hardening checkpoint centralizes the database registry at 33 physical zone
   slots: reserved/default slot 0 plus usable slots 1..32 and a 32-live-zone cap. Referenced checksum/name collection now
   visits exactly the usable range, uses bounded native formatting, and publishes no partial result on capacity or
   conversion failure. Referenced IWD names/checksums now use the same staged, bounded, token-safe publication model,
@@ -206,7 +206,8 @@ work item changes. Do not create session-specific handoff files.
   is consequently
   canonicalized to forward-slash relative form; legacy `mods\name` input is rejected because backslash is an info-string
   field delimiter.
-- The same candidate closes the server's arbitrary download-name boundary. A client may request only an exact canonical
+- The same merged checkpoint closes the server's arbitrary download-name boundary. A client may request only an exact
+  canonical
   `.iwd` or `.ff` whose stem appears in the published SYSTEMINFO list for the active mod, fits the 64-byte protocol field,
   and is not an `_svr_` server-only IWD. Authorization is repeated immediately before the first file open, while comparison
   refuses to advertise names the protocol field cannot store. Begin/reset/error/redirect paths now close owned handles and
@@ -214,12 +215,15 @@ work item changes. Do not create session-specific handoff files.
   oversized OS paths nonfatally; an empty CD base cannot fall back to a drive root. The unauthenticated legacy
   `updates/...` request route therefore fails closed, while HTTP/www redirect transport remains separately nonfunctional.
   Legacy update code also uses the native dvar string pointer and tests filename content instead of an array address.
-- Candidate validation: complete strict GCC and Clang suites are **85/85** green; ASan+UBSan (leak detection disabled
+- PR #38 validation: complete strict GCC and Clang suites are **85/85** green; ASan+UBSan (leak detection disabled
   under the traced runner) and TSan suites are **84/84** green. Focused helper/security suites pass after the final
   absent-empty and invalid-key grammar fixes. Strict GCC i386 compilation and execution pass outside the seccomp sandbox,
   strict AArch64 compilation/linking passes, the IWD serializer passes GCC/Clang warning-as-error, i386, static-analysis,
-  and ASan/UBSan harnesses, and `git diff --check` is clean. Windows production translation-unit/runtime coverage remains
-  the pending PR CI gate.
+  and ASan/UBSan harnesses, and `git diff --check` is clean. Exact final head `9fb4fc18` passed all nine jobs in run
+  **29551519068**, including portable Windows amd64/ARM64 and measured Windows x86 Debug/Release. Hosted Codex found no
+  major issue at that exact head. Gemini's sole claimed `Info_SetValueForKey_Big` overflow was disproved by the independent
+  runtime loop bound and resolved; no review threads remain. PR #38 squash-merged as `a7c485fd`, and authoritative
+  post-merge master run **29551990840** passed all nine jobs.
 - Production dispatch now needs a constructed per-zone table that owns this lifecycle slot alongside the journal and
   native arena/adapter state, plus no-report script-string adapters and centralized callbacks that bind the pure recipes
   to a future checked error-unwind boundary. The static lifecycle slot must live outside and outlast zone PMem so it
@@ -238,16 +242,22 @@ work item changes. Do not create session-specific handoff files.
   clean at the merged implementation head. PR #33 subsequently merged the zone-owned native arena and guarded
   XBlock/XAsset adapter primitives; PR #34 merged the generic Disk32 envelope, and PR #35 merged the separate
   four-byte script-string token stride before production wiring. The prior upstream-integration baseline remains merge
-  `11a9e08c` through upstream `312a9d2e`; upstream is now nine commits ahead through `ba3c79f3`.
-- The current nine-commit upstream delta has been audited before integration. `526d59fb`, `9e6c5836`, and `d27803d2`
-  are narrow assertion/initialization fixes suitable for a low-risk batch, and only the isolated blur correction from
-  `d6b4c5e4` should accompany them. `d592fb4a` contains real radius-damage, missile, HUD, and weapon fixes but must be
-  split around current pointer-width hardening. `3f256654` fixes a null argument but also activates an invalid squared-Z
-  filter and therefore needs a corrected three-component navigation adaptation. `b31ea047` mishandles the negative
-  material-time sentinel and needs a semantic rewrite. Omnibus `77404c61` contains useful fixlets mixed with stance,
-  prone, sprint, trace-cost, lifecycle, localization, and command regressions and must not be cherry-picked wholesale.
-  Dynent save/load `ba3c79f3` needs bounded counts, native pointer sidecars, transactional body/collision restoration, and
-  linked-pose cleanup before it is safe.
+  `11a9e08c` through upstream `312a9d2e`; upstream remains nine commits ahead by ancestry through `ba3c79f3`, so
+  reconciliation tracks reviewed content selectively.
+- The current curated upstream-reconciliation candidate applies four independently audited corrections with explicit
+  upstream provenance: `526d59fb` fixes the two `r_marks` scoped-list indices; `9e6c5836` accepts zero-valued sight
+  thresholds in the affected assertions; only the `cg_draw` blur correction from `d6b4c5e4` is adapted, returning the
+  float directly without pointer punning or double conversion; and `d27803d2` initializes `nodesWritten` for the
+  zero-node path. A portable source contract pins all four because three affected SP-only translation units are not
+  compiled by the present engine CI matrix. The unrelated Xbox safe-area/startup changes from `d6b4c5e4` remain excluded.
+- Remaining upstream content stays deferred for subsystem-specific adaptation and focused tests: split radius-damage,
+  missile, and HUD fixes from `d592fb4a`; correct the navigation change from `3f256654` without importing its squared-Z
+  defect; preserve the negative material-time sentinel when adapting `b31ea047`; select only individually justified
+  fixlets from regression-prone omnibus `77404c61`; and leave dynent save/load `ba3c79f3` deferred until bounded
+  transactional Disk32/native-sidecar semantics exist.
+- Current upstream-candidate validation: fresh strict GCC 16 and Clang 22 builds pass all **86/86** tests, the source
+  contract passes directly, `git diff --check` is clean, and an independent patch/provenance audit found no unrelated
+  hunk or behavioral blocker. Hosted Windows production compilation and automated review remain the PR gates.
 - Current fast-file widening checkpoint: one canonical portable `FxEffectDef`/`FxElemDef`/visual/trail runtime type family
   now replaces the renderer-only duplicate definition boundary. The effect converter validates exact Disk32 graph
   provenance, freezes each bounded resolver request group before callbacks, snapshots the resolver descriptor, binds
@@ -1125,10 +1135,10 @@ work item changes. Do not create session-specific handoff files.
 |---|---|---|
 | M0 build/CI foundation | Partial | Windows x86 client/legacy-dedicated builds, a green Release headless-dedicated compile/link gate, retained headless artifact, protected legacy/headless gameplay-smoke definitions, and five native utility-test runners exist. The licensed headless smoke has not run, and release workflows remain Windows x86-only. |
 | M1 compiler/ABI hygiene | Partial | `platform_compat.h`, `kisak_abi.h`, the cross-compiler `Sys_Atomic*` boundary, portable compile/contention tests, an exact ABI debt ledger, native-width database enumeration/IWD search contexts, fixed-width fast locks, native dvar/script/XAnim/DObj/database/IWD/loopback/skeleton/pose/EffectsCore, bounded renderer/model-surface reservations, and a typed fixed-width worker queue exist. The executable engine has zero direct `Interlocked` calls; remaining work is broader raw-width/layout debt and platform integration. |
-| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 46 pointer fixes, tripwire, remote-input hardening, exact published-list server-download authorization, bounded/failure-atomic referenced-file and SYSTEMINFO publication, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path/FX graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, complete graphics-world AABB topology validation, bounded XSurface/XModel skin/skeleton/collision contracts, transactional FX pool/handle ownership validation, allocation-safe ODE body/user-data/model-collision construction, and a bounded transactional native-width physics pool allocator have landed or are in the current reviewed batch; handle-relative no-follow/reparse-point file opening, production-path fuzz fixtures, and the load-object bounded cursor remain. |
+| M2 pointer/security cleanup | In progress | Huffman/disk32 bounds tests, 46 pointer fixes, tripwire, remote-input hardening, exact published-list server-download authorization, bounded/failure-atomic referenced-file and SYSTEMINFO publication, loader/BSP boundaries, generated counts, exact alias/completed-holder provenance, all 50 direct references bounded, pre-publication material/sound/world/model/surface/physics/clipmap-brush/portal/path/FX graph and state validation, build-mode-specific asset admission, bounded runtime material/collision consumers, complete graphics-world AABB topology validation, bounded XSurface/XModel skin/skeleton/collision contracts, transactional FX pool/handle ownership validation, allocation-safe ODE body/user-data/model-collision construction, and a bounded transactional native-width physics pool allocator have landed; handle-relative no-follow/reparse-point file opening, production-path fuzz fixtures, and the load-object bounded cursor remain. |
 | M3 platform services | In progress: thread, memory, and filesystem enumeration integrated | Portable contracts and target-owned source sets select tested native Win32/POSIX clock, sleep/yield, recursive/reader-write lock, opaque event/thread lifecycle, processor/priority policy, virtual-memory lifecycle, UTF-8 mkdir/cwd/executable paths, bounded directory enumeration, and a cooperative worker gate used by renderer workers. Linux/macOS engine/headless sets remain empty and engine-gated; handle-relative recursive deletion, POSIX crash freezing, process/console, and socket backends remain. |
 | M4 runtime 64-bit ABI | First runtime families in progress | XAnim tree/table, DObj runtime/saved layouts, allocations, preview buffers, SP corpse pointers, EffectsCore effect/pool handle codecs, ODE user-geometry storage, and the generic physics pool allocator are native-width exact. MP `cpose_t::physObjId` and `BreakablePiece::physObjId` still store ODE pointers in `int32_t` and are a hard native64 blocker; XAnimParts/XAnimIndices, the script VM, most runtime structures, and asset payloads also remain 32-bit-layout-bound. |
-| M5 disk32 widening loader | FX restore, conversion, zone primitives, generic asset envelopes, script-string walking/journaling, and zone lifecycle control in progress | `disk32::PointerToken`, strong FX archive-key/address types, exact archive effect/system/buffer/body mirrors, exhaustive handle remapping, checked native pool reconstruction/linking, definition-provenance resolution, semantic `Ready`, Ready-only physics enumeration, and transactional raw/zlib restore staging are merged with x86 whole-image evidence. PR #32 merged exact pointer-bearing fast-file effect/visual/trail/impact schemas, canonical native runtime definitions, and bounded two-pass effect/impact converters with frozen resolver transactions, retained-extent overlap checks, callback-free materialization, retail semantic validation, and bounded runtime visibility interpolation. Production restore uses the exact-lease-bound reader/candidate path; the restore-side native64 guard/raw parser are gone. PR #33 merged the zone-owned aligned native arena and guarded stateful zone adapter with exact workspace contracts, nested impact/effect transactions, canonical post-registration identities, and publish-after-materialize ordering. PR #34 merged the fixed 0x4/0x8/0x8/0x10 top-level Disk32 envelopes and bounded, failure-atomic eight-byte asset iterator with portable build admission. PR #35 merged the pure bounded four-byte script-string walker with checked extent/parity, full preflight, raw-token preservation, explicit shared-inline rejection, unaligned reads, mutation revalidation, and failure-atomic outputs. PR #36 merged generation-keyed external slot ownership, stale/ABA rejection, distinct load-abandon and live-unload recipes, exact Retry cursors, fail-closed poisoning, and terminal idempotency as `15469b3d`; post-merge master run **29531440687** passed all nine jobs. PR #37 merged the full-u32 per-acquisition journal, exact key binding, reversible claimed-vs-duplicate transfers, reverse outcome-specific rollback, reversible `CommitReady`, unconditional post-`Live` finalization, fixed caller storage, O(1) controller validation, and linear phase-boundary scans as `7a9bce34`; post-merge run **29542960583** passed all nine jobs. The current candidate fixes the referenced-fast-file 0..31 range error with canonical 33-physical/32-usable slot constants and adds failure-atomic native/IWD formatting, exact SYSTEMINFO serialization, remote metadata validation, exact bounded server-download authorization, and native-width server-file comparison. The constructed whole-zone sidecar table, no-report script-string adapters, production callback routing, canonical alias/publication lifecycle tests, broader completed-object relocation, the writer, and the save-side guard remain. |
+| M5 disk32 widening loader | FX restore, conversion, zone primitives, generic asset envelopes, script-string walking/journaling, and zone lifecycle control in progress | `disk32::PointerToken`, strong FX archive-key/address types, exact archive effect/system/buffer/body mirrors, exhaustive handle remapping, checked native pool reconstruction/linking, definition-provenance resolution, semantic `Ready`, Ready-only physics enumeration, and transactional raw/zlib restore staging are merged with x86 whole-image evidence. PR #32 merged exact pointer-bearing fast-file effect/visual/trail/impact schemas, canonical native runtime definitions, and bounded two-pass effect/impact converters with frozen resolver transactions, retained-extent overlap checks, callback-free materialization, retail semantic validation, and bounded runtime visibility interpolation. Production restore uses the exact-lease-bound reader/candidate path; the restore-side native64 guard/raw parser are gone. PR #33 merged the zone-owned aligned native arena and guarded stateful zone adapter with exact workspace contracts, nested impact/effect transactions, canonical post-registration identities, and publish-after-materialize ordering. PR #34 merged the fixed 0x4/0x8/0x8/0x10 top-level Disk32 envelopes and bounded, failure-atomic eight-byte asset iterator with portable build admission. PR #35 merged the pure bounded four-byte script-string walker with checked extent/parity, full preflight, raw-token preservation, explicit shared-inline rejection, unaligned reads, mutation revalidation, and failure-atomic outputs. PR #36 merged generation-keyed external slot ownership, stale/ABA rejection, distinct load-abandon and live-unload recipes, exact Retry cursors, fail-closed poisoning, and terminal idempotency as `15469b3d`; post-merge master run **29531440687** passed all nine jobs. PR #37 merged the full-u32 per-acquisition journal, exact key binding, reversible claimed-vs-duplicate transfers, reverse outcome-specific rollback, reversible `CommitReady`, unconditional post-`Live` finalization, fixed caller storage, O(1) controller validation, and linear phase-boundary scans as `7a9bce34`; post-merge run **29542960583** passed all nine jobs. PR #38 merged the referenced-fast-file 0..31 range correction, canonical 33-physical/32-usable slot constants, failure-atomic native/IWD formatting, exact SYSTEMINFO serialization, remote metadata validation, exact bounded server-download authorization, and native-width server-file comparison as `a7c485fd`; post-merge run **29551990840** passed all nine jobs. The constructed whole-zone sidecar table, no-report script-string adapters, production callback routing, canonical alias/publication lifecycle tests, broader completed-object relocation, the writer, and the save-side guard remain. |
 | M6-M14 target deliverables | Not started | No non-Windows or 64-bit engine target builds yet. |
 
 ## Target matrix
@@ -1144,17 +1154,14 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Finish validation and review of the referenced-fast-file/SYSTEMINFO hardening candidate, publish it as a focused PR,
-   and merge only after all nine CI jobs and automated review are clean. The candidate fixes the reserved-slot/slot-32
-   range error, centralizes 33-physical/32-usable zone-slot bounds, makes info/name publication failure-atomic, validates
-   remote referenced metadata before mutation, removes native pointer truncation in server-file comparisons, and closes
-   arbitrary server-file requests with exact published-list authorization, protocol-length checks, `_svr_` denial,
-   pre-open revalidation, bounded nonfatal path construction, and download/WWW handle cleanup.
-2. On a fresh branch, reconcile the nine commits by which upstream is ahead. Cherry-pick only the three independently
-   safe assertion/initialization fixes (`526d59fb`, `9e6c5836`, and `d27803d2`) and the isolated blur fix from
-   `d6b4c5e4`; split and adapt the useful radius-damage, missile, HUD, navigation, stance, lifecycle, and tank-tread
-   changes with focused tests. Do not import omnibus `77404c61` or dynent save/load `ba3c79f3` wholesale: the former
-   contains gameplay/lifecycle regressions, and the latter requires a bounded transactional Disk32/native-sidecar design.
+1. Finish validation and review of the current four-fix curated upstream candidate, publish it as a focused PR, and merge
+   only after all nine CI jobs and automated review are clean. Preserve explicit provenance for the three complete
+   cherry-picks and isolated `d6b4c5e4` blur hunk; a source contract pins all four corrections because present engine CI
+   does not compile three affected SP-only translation units.
+2. Reconcile the remaining upstream content one subsystem at a time with focused tests: radius damage first; corrected
+   three-component navigation without the squared-Z defect; sentinel-correct tank material timing; missile/HUD fixes;
+   then only audited `77404c61` fixlets. Keep dynent save/load deferred until its Disk32/native-sidecar transaction is
+   designed.
 3. Build the constructed whole-zone ownership table and no-report script-string adapter layer around the external
    lifecycle slot and completed journal. The adapter must acquire one ordinary reference per occurrence, report the exact
    claimed-versus-duplicate database-user transfer outcome, remove ordinary references, and remove only the targeted
