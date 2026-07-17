@@ -79,6 +79,9 @@ read_normalized(
     "${SOURCE_ROOT}/tests/CMakeLists.txt"
     _tests "portable test registration")
 read_normalized(
+    "${SOURCE_ROOT}/scripts/sp/sp_files.cmake"
+    _sp_files "single-player source manifest")
+read_normalized(
     "${SOURCE_ROOT}/.github/workflows/ci.yml"
     _ci "measured Windows x86 workflow")
 
@@ -99,6 +102,26 @@ if(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
             "actor_grenade_safety::IsTargetWithinSafetyRadius( vTargetPos, sentOrigin, weapDef->iExplosionRadius)"
             "false"
             _actor "${_actor}")
+    elseif(CONTRACT_MUTATION STREQUAL "discarded_result")
+        string(REPLACE
+            "if (actor_grenade_safety::IsTargetWithinSafetyRadius( vTargetPos, sentOrigin, weapDef->iExplosionRadius)) break;"
+            "(void)actor_grenade_safety::IsTargetWithinSafetyRadius( vTargetPos, sentOrigin, weapDef->iExplosionRadius); if (false) break;"
+            _actor "${_actor}")
+    elseif(CONTRACT_MUTATION STREQUAL "x86_build_omission")
+        string(REPLACE
+            "kisakcod-actor-grenade-safety-tests"
+            ""
+            _ci "${_ci}")
+    elseif(CONTRACT_MUTATION STREQUAL "x86_run_omission")
+        string(REPLACE
+            "actor-grenade-safe-target-(radius-contracts|source-invariants)"
+            "actor-grenade-safe-target-radius-contracts"
+            _ci "${_ci}")
+    elseif(CONTRACT_MUTATION STREQUAL "sp_manifest_omission")
+        string(REPLACE
+            "\"\${SRC_DIR}/game/actor_grenade_safety.h\""
+            ""
+            _sp_files "${_sp_files}")
     else()
         message(FATAL_ERROR
             "Unknown grenade-safety mutation: ${CONTRACT_MUTATION}")
@@ -115,12 +138,16 @@ extract_slice(
     _safe_target "Actor_Grenade_IsSafeTarget")
 set(_production_call
     "actor_grenade_safety::IsTargetWithinSafetyRadius( vTargetPos, sentOrigin, weapDef->iExplosionRadius)")
+set(_production_guard "if (${_production_call}) break;")
 require_contains(
-    _safe_target "${_production_call}"
-    "the live toss gate uses the portable squared-radius predicate")
+    _safe_target "${_production_guard}"
+    "the portable predicate result controls the live unsafe-target branch")
 require_count(
     _safe_target "actor_grenade_safety::IsTargetWithinSafetyRadius(" 1
     "the live toss gate evaluates the predicate exactly once per sentient")
+require_count(
+    _sp_files "\"\${SRC_DIR}/game/actor_grenade_safety.h\"" 1
+    "the single-player source manifest owns the production helper")
 foreach(_legacy IN ITEMS
     "explosionCutoff"
     "vTargetPos[0] - sentOrigin[0]"
@@ -166,19 +193,38 @@ foreach(_required IN ITEMS
         _tests "${_required}"
         "portable grenade-safety test registration")
 endforeach()
-require_contains(
-    _ci "kisakcod-actor-grenade-safety-tests"
-    "measured Windows x86 explicitly builds the runtime predicate test")
-require_contains(
+extract_slice(
     _ci
-    "actor-grenade-safe-target-(radius-contracts|source-invariants)"
+    "windows-x86: name: Windows x86 /"
+    "windows-x86-nosteam:"
+    _measured_x86 "measured Windows x86 job")
+extract_slice(
+    _measured_x86
+    "- name: Build shell: pwsh run: >"
+    "- name: Enforce FX archive stack budgets"
+    _measured_x86_build "measured Windows x86 build step")
+extract_slice(
+    _measured_x86
+    "- name: Run portable transaction tests"
+    "- uses: actions/upload-artifact@v4"
+    _measured_x86_tests "measured Windows x86 test step")
+require_count(
+    _measured_x86_build "kisakcod-actor-grenade-safety-tests" 1
+    "measured Windows x86 explicitly builds the runtime predicate test")
+require_count(
+    _measured_x86_tests
+    "actor-grenade-safe-target-(radius-contracts|source-invariants)" 1
     "measured Windows x86 selects both grenade-safety contracts")
 
 if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
     foreach(_mutation IN ITEMS
         linear_threshold
         missing_negative_guard
-        production_bypass)
+        production_bypass
+        discarded_result
+        x86_build_omission
+        x86_run_omission
+        sp_manifest_omission)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
                 "-DSOURCE_ROOT=${SOURCE_ROOT}"
