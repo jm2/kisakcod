@@ -19,6 +19,17 @@ documented for completeness but are off the current critical path.
 
 Completed foundation work:
 
+- the audited upstream/gameplay reconciliation through PR #47 (`eeffe519`), with authoritative post-merge run
+  **29606403222** green across all nine Windows x86 and portable host jobs;
+- an active report-free script-string ownership foundation candidate: dedicated recursive outer DB serialization,
+  private journal callbacks, exact ordinary/database-user ownership results, full allocator-backed byte-count/hash/debug
+  validation, rejection of packed-length-ambiguous earlier NULs, and failure-atomic memory-tree allocate/query/free
+  operations with assertion-free typed commits and complete disjoint-partition/corruption fixtures. Exact allocator-class
+  recovery preserves the established compact non-NUL legacy binary records. This is not yet a production exclusion
+  boundary: the adapter has no production caller, tokens are
+  not yet bound to one journal/key for a whole lifecycle, and legacy raw user-4/user-8 operations plus the 4 -> 8 sweep
+  remain outside the serializer. Its correctness-first O(65,536)-per-operation allocator validation must be benchmarked
+  and replaced by a proven retained-transaction fast path before production enrollment;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -332,9 +343,11 @@ Remaining gates, in implementation order:
    phase-boundary scans, fail-closed status operations, and portable/Windows x86 build admission. Before production
    wiring, the caller must prepare `Transferred -> CommitReady`, attempt lifecycle publication, roll back from
    `CommitReady` if publication fails, or invoke the unconditional journal finalizer immediately after successful `Live`
-   publication. Next, build the
-   constructed whole-zone sidecar table plus no-report script-string adapters, keeping static controller slots outside
-   PMem and per-generation native storage inside the named scope, then bind the recipes and adapter into production with
+   publication. The active candidate now supplies the no-report ownership primitives, private journal adapter, dedicated
+   serializer, and checked allocator foundation. Next, build the constructed whole-zone sidecar/controller, bind one
+   token to one journal/key for its complete lifecycle, enroll all raw ownership paths, and keep static controller slots
+   outside PMem with per-generation native storage inside the named scope. Benchmark and optimize the complete allocator
+   validation before binding the recipes and adapter into production with
    completed-object/alias registration and lifetime tests before replacing any legacy loader path.
    The journal merged in PR #37 as `7a9bce34`; post-merge run **29542960583** passed all nine jobs. PR #38 merged the
    referenced-fast-file/SYSTEMINFO range and bounded metadata hardening as `a7c485fd` before the ownership table depends
@@ -1310,7 +1323,8 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **71%** by engineering effort. Windows x86 is about **93%**, shared
+Overall porting progress is approximately **71% by merged engineering effort**, or **72% including the active
+script-string ownership candidate**. Windows x86 is about **93%**, shared
 foundations/security about **85%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
 **39%**, and macOS arm64 about **30%**. Strict delivered-target status remains **0/5** because no requested
 64-bit/non-Windows engine target is enabled end to end yet.
@@ -1480,8 +1494,13 @@ nonfunctional. Complete local GCC/Clang suites are 85/85 green, ASan+UBSan/TSan 
 execution and AArch64 compilation/linking pass. Exact final head `9fb4fc18` passed all nine jobs in run **29551519068**;
 hosted Codex found no major issue at that head and no review threads remain. PR #38 squash-merged as `a7c485fd`, and
 authoritative post-merge master run **29551990840** passed all nine jobs.
-The next ownership batch then builds the constructed whole-zone table and no-report script-string adapters around these
-two primitives. Static context slots and callback metadata must live outside and outlast zone PMem. They must survive
+The active ownership-foundation candidate now supplies the no-report script-string primitives, private journal adapter,
+dedicated serializer, and checked allocator surface around the two merged lifecycle primitives. The next batch builds the
+constructed whole-zone table/controller, binds exactly one token to one journal/key through terminal finalization or
+rollback, and enrolls every raw database-user mutation/publication and the global 4 -> 8 sweep before replacing a legacy
+route. It must also benchmark representative retail-zone loading and introduce a retained-transaction validation lease
+or equivalent proven fast path; the correctness-first complete allocator scan is not an acceptable unmeasured production
+hot path. Static context slots and callback metadata must live outside and outlast zone PMem. They must survive
 `PMem_Free` and allow the controller to publish `Empty`; only per-generation arena/workspace/journal/backing belongs
 inside the existing named
 PMem zone scope. `XZone` remains ABI-unchanged because the registry zeroes it with `memset`. A checked fixed arena budget
