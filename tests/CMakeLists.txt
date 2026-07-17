@@ -14,6 +14,23 @@ include("${PLATFORM_DIR}/${KISAK_PLATFORM}/platform.cmake")
 kisakcod_require_platform_source_sets()
 find_package(Threads REQUIRED)
 
+add_executable(kisakcod-actor-grenade-prediction-cache-tests
+    actor_grenade_prediction_cache_tests.cpp
+)
+target_include_directories(
+    kisakcod-actor-grenade-prediction-cache-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-actor-grenade-prediction-cache-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-actor-grenade-prediction-cache-tests)
+set_target_properties(
+    kisakcod-actor-grenade-prediction-cache-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME actor-grenade-prediction-cache-contracts
+    COMMAND kisakcod-actor-grenade-prediction-cache-tests
+)
+
 # Exercise the production MemoryFile reader instead of an extracted model.
 # The inherited zlib 1.1.4 and memfile translation units predate the warning
 # policy used by the portable tests, so isolate those legacy diagnostics while
@@ -1553,6 +1570,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/actor_navigation_source_test.cmake
+)
+
+add_test(
+    NAME missile-union-layout-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/missile_layout_source_test.cmake
 )
 
 add_test(

@@ -3,6 +3,7 @@
 #endif
 
 #include "actor_grenade.h"
+#include "actor_grenade_prediction_cache.h"
 #include "g_main.h"
 #include "g_local.h"
 
@@ -899,33 +900,32 @@ void __cdecl Actor_PredictGrenadeLandPos(gentity_s *pGrenade)
     int clipmask; // r30
     int nextthink; // r10
     int v4; // r3
-    double v5; // fp13
-    double v6; // fp12
     int v7; // [sp+50h] [-30h] BYREF
     float v8[4]; // [sp+58h] [-28h] BYREF
 
     if (!pGrenade)
         MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\game\\actor_grenade.cpp", 967, 0, "%s", "pGrenade");
-    if (pGrenade->mover.decelTime == 0.0 && pGrenade->mover.aDecelTime == 0.0 && pGrenade->mover.speed == 0.0)
+    if (!actor_grenade_prediction_cache::IsValid(pGrenade->missile.predictLandTime))
     {
         clipmask = pGrenade->clipmask;
         nextthink = pGrenade->nextthink;
         pGrenade->clipmask = clipmask & 0xFDFF3FFF;
         v4 = G_PredictMissile(pGrenade, nextthink - level.time, v8, 1, &v7);
-        pGrenade->item[1].ammoCount = v7;
         if (v4)
         {
-            v5 = v8[1];
-            v6 = v8[2];
-            pGrenade->mover.decelTime = v8[0];
-            pGrenade->mover.aDecelTime = v5;
-            pGrenade->mover.speed = v6;
+            actor_grenade_prediction_cache::Store(
+                pGrenade->missile.predictLandPos,
+                pGrenade->missile.predictLandTime,
+                v8,
+                v7);
         }
         else
         {
-            pGrenade->mover.decelTime = pGrenade->r.currentOrigin[0];
-            pGrenade->mover.aDecelTime = pGrenade->r.currentOrigin[1];
-            pGrenade->mover.speed = pGrenade->r.currentOrigin[2];
+            actor_grenade_prediction_cache::Store(
+                pGrenade->missile.predictLandPos,
+                pGrenade->missile.predictLandTime,
+                pGrenade->r.currentOrigin,
+                v7);
         }
         pGrenade->clipmask = clipmask;
     }
@@ -987,7 +987,7 @@ float __cdecl Actor_Grenade_EscapePlane(actor_s *self, float *normal)
         normal[1] = TargetEntity->r.currentOrigin[1] - ent->r.currentOrigin[1];
         v8 = self->pGrenade.ent();
         float *v9 = (float)((float)(*normal * *normal) + (float)(normal[1] * normal[1])) 
-            >= (double)(float)((float)(*normal * (float)(TargetEntity->r.currentOrigin[0] - v8->mover.decelTime)) + (float)(normal[1] * (float)(TargetEntity->r.currentOrigin[1] - v8->mover.aDecelTime)))
+            >= (double)(float)((float)(*normal * (float)(TargetEntity->r.currentOrigin[0] - v8->missile.predictLandPos[0])) + (float)(normal[1] * (float)(TargetEntity->r.currentOrigin[1] - v8->missile.predictLandPos[1])))
             ? self->pGrenade.ent()->missile.predictLandPos
             : self->ent->r.currentOrigin;
         v10 = normal[1];
@@ -1038,16 +1038,16 @@ void __cdecl Actor_Grenade_GetPickupPos(actor_s *self, const float *enemyPos, fl
 
     v6 = self->pGrenade.ent();
     v7 = enemyPos[1];
-    dir[0] = v6->mover.decelTime - *enemyPos;
-    dir[1] = v6->mover.aDecelTime - (float)v7;
+    dir[0] = v6->missile.predictLandPos[0] - *enemyPos;
+    dir[1] = v6->missile.predictLandPos[1] - (float)v7;
     Vec2Normalize(dir);
     v13 = 0.0;
     v8 = self->pGrenade.ent();
     v9 = dir[1];
     v10 = v13;
-    *vGrenadePickupPos = (float)(dir[0] * (float)29.5) + v8->mover.decelTime;
-    vGrenadePickupPos[1] = (float)((float)v9 * (float)29.5) + v8->mover.aDecelTime;
-    vGrenadePickupPos[2] = (float)((float)v10 * (float)29.5) + v8->mover.speed;
+    *vGrenadePickupPos = (float)(dir[0] * (float)29.5) + v8->missile.predictLandPos[0];
+    vGrenadePickupPos[1] = (float)((float)v9 * (float)29.5) + v8->missile.predictLandPos[1];
+    vGrenadePickupPos[2] = (float)((float)v10 * (float)29.5) + v8->missile.predictLandPos[2];
 }
 
 bool __cdecl Actor_Grenade_ShouldIgnore(actor_s *self, gentity_s *grenade)
@@ -1069,8 +1069,8 @@ bool __cdecl Actor_Grenade_ShouldIgnore(actor_s *self, gentity_s *grenade)
         return 0;
 
     ent = self->ent;
-    dir[0] = grenade->mover.decelTime - self->ent->r.currentOrigin[0];
-    dir[1] = grenade->mover.aDecelTime - ent->r.currentOrigin[1];
+    dir[0] = grenade->missile.predictLandPos[0] - self->ent->r.currentOrigin[0];
+    dir[1] = grenade->missile.predictLandPos[1] - ent->r.currentOrigin[1];
     Vec2Normalize(dir);
     v5 = (float)((float)(self->Path.lookaheadDir[1] * dir[1]) + (float)(self->Path.lookaheadDir[0] * dir[0]));
     if (v5 < 0.0)
@@ -1088,9 +1088,9 @@ bool __cdecl Actor_Grenade_ShouldIgnore(actor_s *self, gentity_s *grenade)
     if (v5 <= 0.7f)
         return 0;
 
-    v8 = (float)(self->ent->r.currentOrigin[0] - grenade->mover.decelTime);
-    v9 = (float)(self->ent->r.currentOrigin[2] - grenade->mover.speed);
-    v10 = (float)(self->ent->r.currentOrigin[1] - grenade->mover.aDecelTime);
+    v8 = (float)(self->ent->r.currentOrigin[0] - grenade->missile.predictLandPos[0]);
+    v9 = (float)(self->ent->r.currentOrigin[2] - grenade->missile.predictLandPos[2]);
+    v10 = (float)(self->ent->r.currentOrigin[1] - grenade->missile.predictLandPos[1]);
     return (float)((float)((float)v10 * (float)v10)
         + (float)((float)((float)v8 * (float)v8) + (float)((float)v9 * (float)v9))) > 100.0;
 }
@@ -1112,7 +1112,6 @@ int __cdecl Actor_IsAwareOfGrenade(actor_s *self)
 void __cdecl Actor_GrenadePing(actor_s *self, gentity_s *pGrenade)
 {
     unsigned int stateLevel; // r11
-    gentity_s *v5; // r3
     sentient_s *sentient; // r30
     float v7[16]; // [sp+50h] [-40h] BYREF
 
@@ -1125,9 +1124,8 @@ void __cdecl Actor_GrenadePing(actor_s *self, gentity_s *pGrenade)
         if (self->eState[stateLevel] != AIS_GRENADE_RESPONSE || self->eSubState[stateLevel] != STATE_GRENADE_THROWBACK)
         {
             if (!self->pGrenade.isDefined()
-                || (v5 = self->pGrenade.ent(), v5->mover.decelTime == 0.0)
-                && v5->mover.aDecelTime == 0.0
-                && v5->mover.speed == 0.0)
+                || !actor_grenade_prediction_cache::IsValid(
+                    self->pGrenade.ent()->missile.predictLandTime))
             {
                 if ((unsigned __int8)Actor_IsAwareOfGrenade(self))
                 {
@@ -1215,9 +1213,7 @@ void __cdecl Actor_Grenade_Detach(actor_s *self)
     svFlags = v2->r.svFlags;
     v2->activator = 0;
     v2->r.svFlags = svFlags & 0xFE;
-    v2->mover.decelTime = 0.0f;
-    v2->mover.aDecelTime = 0.0f;
-    v2->mover.speed = 0.0f;
+    actor_grenade_prediction_cache::Invalidate(v2->missile.predictLandTime);
 }
 
 int __cdecl Actor_Grenade_InActorHands(gentity_s *grenade)
@@ -1753,19 +1749,17 @@ int __cdecl Actor_Grenade_AttemptReturn(actor_s *self)
     if (WeaponDef->weapType == WEAPTYPE_PROJECTILE)
         return 0;
     currentOrigin = self->ent->r.currentOrigin;
-    decelTime = v2->mover.decelTime;
-    aDecelTime = v2->mover.aDecelTime;
-    speed = v2->mover.speed;
-    if (Vec2Distance(currentOrigin, (const float *)&v2->missile.predictLandPos) > 150.0)
+    decelTime = v2->missile.predictLandPos[0];
+    aDecelTime = v2->missile.predictLandPos[1];
+    speed = v2->missile.predictLandPos[2];
+    if (Vec2Distance(currentOrigin, v2->missile.predictLandPos) > 150.0)
         return 0;
     v7 = p_parent->ent();
     Sentient_GetOrigin(v7->sentient, v24);
-    v8 = Actor_PointAt(self->ent->r.currentOrigin, (const float *)&v2->missile.predictLandPos);
+    v8 = Actor_PointAt(self->ent->r.currentOrigin, v2->missile.predictLandPos);
     if (v8)
     {
-        v25[0] = v2->mover.decelTime;
-        v25[1] = v2->mover.aDecelTime;
-        v25[2] = v2->mover.speed;
+        Vec3Copy(v2->missile.predictLandPos, v25);
     }
     else
     {
@@ -2095,9 +2089,7 @@ void __cdecl Actor_GrenadeBounced(gentity_s *pGrenade, gentity_s *pHitEnt)
 
     if ((pHitEnt->r.contents & 0x200C000) != 0)
     {
-        pGrenade->mover.decelTime = 0.0;
-        pGrenade->mover.aDecelTime = 0.0;
-        pGrenade->mover.speed = 0.0;
+        actor_grenade_prediction_cache::Invalidate(pGrenade->missile.predictLandTime);
         Actor_PredictGrenadeLandPos(pGrenade);
         for (i = Actor_FirstActor(-1); i; i = Actor_NextActor(i, -1))
         {
@@ -2212,14 +2204,14 @@ actor_think_result_t __cdecl Actor_Grenade_Acquire(actor_s *self)
         }
         ent = self->ent;
         v6 = self->pGrenade.ent();
-        dir[0] = v6->mover.decelTime - ent->r.currentOrigin[0];
-        dir[1] = v6->mover.aDecelTime - ent->r.currentOrigin[1];
-        dir[2] = v6->mover.speed - ent->r.currentOrigin[2];
+        dir[0] = v6->missile.predictLandPos[0] - ent->r.currentOrigin[0];
+        dir[1] = v6->missile.predictLandPos[1] - ent->r.currentOrigin[1];
+        dir[2] = v6->missile.predictLandPos[2] - ent->r.currentOrigin[2];
         if ((float)((float)(dir[0] * dir[0]) + (float)(dir[1] * dir[1])) >= 1.0)
             Actor_FaceVector(&self->CodeOrient, dir);
         Actor_SetOrientMode(self, AI_ORIENT_DONT_CHANGE);
         self->ScriptOrient.eMode = AI_ORIENT_INVALID;
-        if (self->pGrenade.ent()->item[1].ammoCount <= level.time)
+        if (self->pGrenade.ent()->missile.predictLandTime <= level.time)
         {
             self->pGrenade.ent()->missile.thrownBack = 1;
             Actor_SetSubState(self, STATE_GRENADE_THROWBACK);
