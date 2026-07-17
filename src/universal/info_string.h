@@ -1,7 +1,9 @@
 #pragma once
 
+#include <charconv>
 #include <cstddef>
 #include <cstring>
+#include <system_error>
 
 namespace info_string
 {
@@ -35,12 +37,17 @@ inline bool IsSafeUnquotedValueComponent(const char *const value) noexcept
 }
 
 // Path-like token components may contain ordinary forward slashes, but not a
-// leading/trailing separator or either tokenizer comment introducer. This also
-// makes adjoining two independently validated components with '/' safe.
+// leading/trailing separator, either tokenizer comment introducer, or the
+// traversal/namespace spellings rejected by the filesystem domain. Single
+// dots remain valid filename characters. This also makes adjoining two
+// independently validated components with '/' safe.
 inline bool IsSafeUnquotedPathTokenComponent(
     const char *const value) noexcept
 {
     if (!IsSafeUnquotedValueComponent(value))
+        return false;
+
+    if (std::strstr(value, "..") || std::strstr(value, "::"))
         return false;
 
     const std::size_t length = std::strlen(value);
@@ -48,6 +55,26 @@ inline bool IsSafeUnquotedPathTokenComponent(
         || (value[0] != '/'
             && value[0] != '*'
             && value[length - 1] != '/');
+}
+
+// Parse one complete signed-decimal token. The destination remains
+// unchanged on null, empty, non-decimal, trailing-junk, or range failure.
+inline bool TryParseSignedDecimalToken(
+    const char *const value,
+    int *const output) noexcept
+{
+    if (!value || !*value || !output)
+        return false;
+
+    int parsed = 0;
+    const char *const end = value + std::strlen(value);
+    const std::from_chars_result result =
+        std::from_chars(value, end, parsed, 10);
+    if (result.ec != std::errc{} || result.ptr != end)
+        return false;
+
+    *output = parsed;
+    return true;
 }
 
 // Info_ValueForKey cannot distinguish an absent key from a present empty

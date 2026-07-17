@@ -2,9 +2,13 @@
 #include <universal/assertive.h>
 #include <universal/q_shared.h>
 #include <universal/com_files.h>
+#include <universal/info_string.h>
 #include "qcommon.h"
 #include <database/database.h>
 #include "cmd.h"
+
+#include <array>
+#include <climits>
 #ifndef KISAK_DEDI_HEADLESS
 #include <sound/snd_public.h>
 #endif
@@ -274,60 +278,110 @@ int __cdecl FS_ServerSetReferencedFiles(
     int *fs_sums,
     const char **fs_names)
 {
-    const char *v5; // eax
-    char *v6; // eax
-    int c; // [esp+0h] [ebp-Ch]
-    int d; // [esp+4h] [ebp-8h]
-    int i; // [esp+8h] [ebp-4h]
-    int ia; // [esp+8h] [ebp-4h]
+    static_assert(
+        ARRAY_COUNT(fs_serverReferencedIwds)
+        <= static_cast<std::size_t>(INT_MAX));
+    constexpr int kChecksumScratchCount =
+        static_cast<int>(ARRAY_COUNT(fs_serverReferencedIwds));
+    std::array<int, ARRAY_COUNT(fs_serverReferencedIwds)> parsedChecksums{};
 
-    if (!fileSums || !fileNames || maxFiles <= 0 || !fs_sums || !fs_names)
+    if (!fileSums
+        || !fileNames
+        || maxFiles <= 0
+        || maxFiles > kChecksumScratchCount
+        || !fs_sums
+        || !fs_names)
     {
         Com_Error(ERR_DROP, "Invalid referenced-file list");
         return 0;
     }
+
     Cmd_TokenizeString(fileSums);
-    c = Cmd_Argc();
-    if (c > maxFiles)
+    const int checksumCount = Cmd_Argc();
+    Cmd_EndTokenizedString();
+    if (checksumCount > maxFiles)
     {
-        Cmd_EndTokenizedString();
-        Com_Error(ERR_DROP, "Too many referenced-file checksums (%d > %d)", c, maxFiles);
+        Com_Error(
+            ERR_DROP,
+            "Too many referenced-file checksums (%d > %d)",
+            checksumCount,
+            maxFiles);
         return 0;
     }
-    for (i = 0; i < c; ++i)
+    Cmd_TokenizeString(fileSums);
+    for (int i = 0; i < checksumCount; ++i)
     {
-        v5 = Cmd_Argv(i);
-        fs_sums[i] = atoi(v5);
+        if (!info_string::TryParseSignedDecimalToken(
+                Cmd_Argv(i),
+                &parsedChecksums[static_cast<std::size_t>(i)]))
+        {
+            Cmd_EndTokenizedString();
+            Com_Error(
+                ERR_DROP,
+                "Invalid referenced-file checksum at index %d",
+                i);
+            return 0;
+        }
     }
     Cmd_EndTokenizedString();
+
     if (fileNames && *fileNames)
     {
         Cmd_TokenizeString(fileNames);
-        d = Cmd_Argc();
-        if (d > maxFiles)
+        const int nameCount = Cmd_Argc();
+        if (nameCount > maxFiles)
         {
             Cmd_EndTokenizedString();
-            Com_Error(ERR_DROP, "Too many referenced-file names (%d > %d)", d, maxFiles);
+            Com_Error(
+                ERR_DROP,
+                "Too many referenced-file names (%d > %d)",
+                nameCount,
+                maxFiles);
             return 0;
         }
-        if (c != d)
+        if (checksumCount != nameCount)
         {
             Cmd_EndTokenizedString();
             Com_Error(ERR_DROP, "file sum/name mismatch");
             return 0;
         }
-        for (ia = 0; ia < d; ++ia)
+
+        // Validate every remote component before allocating or publishing any
+        // entry so a bad later name cannot leave a partially replaced list.
+        for (int i = 0; i < nameCount; ++i)
         {
-            v6 = (char *)Cmd_Argv(ia);
-            fs_names[ia] = CopyString(v6);
+            const char *const name = Cmd_Argv(i);
+            if (!name
+                || !*name
+                || !info_string::IsSafeUnquotedPathTokenComponent(name))
+            {
+                Cmd_EndTokenizedString();
+                Com_Error(
+                    ERR_DROP,
+                    "Invalid referenced-file name at index %d",
+                    i);
+                return 0;
+            }
+        }
+        for (int i = 0; i < nameCount; ++i)
+        {
+            fs_names[i] = CopyString(Cmd_Argv(i));
         }
         Cmd_EndTokenizedString();
     }
-    else if (c)
+    else if (checksumCount)
     {
         Com_Error(ERR_DROP, "file sum/name mismatch");
+        return 0;
     }
-    return c;
+
+    // Checksums are committed only after the paired name list passes its full
+    // preflight, preserving the caller's arrays on every validation failure.
+    for (int i = 0; i < checksumCount; ++i)
+    {
+        fs_sums[i] = parsedChecksums[static_cast<std::size_t>(i)];
+    }
+    return checksumCount;
 }
 
 void __cdecl FS_ServerSetReferencedIwds(char *iwdSums, char *iwdNames)

@@ -181,6 +181,9 @@ void TestInfoStringPredicates()
         IsSafeUnquotedPathTokenComponent("mods/example-zone_1"),
         "a safe relative path component must be accepted");
     Expect(
+        IsSafeUnquotedPathTokenComponent("mods/example.v1/zone.v2"),
+        "single dots must remain valid filename characters");
+    Expect(
         !IsSafeUnquotedPathTokenComponent("/absolute"),
         "a leading slash must be rejected for path components");
     Expect(
@@ -189,6 +192,59 @@ void TestInfoStringPredicates()
     Expect(
         !IsSafeUnquotedPathTokenComponent("mods/example/"),
         "a trailing slash must be rejected for path components");
+    Expect(
+        !IsSafeUnquotedPathTokenComponent("mods/../example"),
+        "a traversal spelling must be rejected for path components");
+    Expect(
+        !IsSafeUnquotedPathTokenComponent("mods::example"),
+        "a namespace spelling must be rejected for path components");
+}
+
+void TestSignedDecimalTokenParsing()
+{
+    using info_string::TryParseSignedDecimalToken;
+
+    int parsed = 17;
+    Expect(
+        TryParseSignedDecimalToken("2147483647", &parsed)
+            && parsed == (std::numeric_limits<int>::max)(),
+        "INT_MAX must parse as one complete signed-decimal token");
+    Expect(
+        TryParseSignedDecimalToken("-2147483648", &parsed)
+            && parsed == (std::numeric_limits<int>::min)(),
+        "INT_MIN must parse without intermediate signed overflow");
+    Expect(
+        TryParseSignedDecimalToken("0", &parsed) && parsed == 0,
+        "zero must parse as a signed-decimal token");
+
+    struct RejectedCase
+    {
+        const char *value;
+        const char *description;
+    };
+    constexpr RejectedCase rejected[] = {
+        {nullptr, "a null checksum token must fail"},
+        {"", "an empty checksum token must fail"},
+        {"+1", "a leading plus must fail"},
+        {" 1", "leading whitespace must fail"},
+        {"1 ", "trailing whitespace must fail"},
+        {"1junk", "trailing junk must fail"},
+        {"--1", "multiple signs must fail"},
+        {"2147483648", "positive signed-int overflow must fail"},
+        {"-2147483649", "negative signed-int overflow must fail"},
+    };
+    for (const RejectedCase &testCase : rejected)
+    {
+        parsed = 17;
+        Expect(
+            !TryParseSignedDecimalToken(testCase.value, &parsed),
+            testCase.description);
+        Expect(parsed == 17, "failed checksum parsing must be output-atomic");
+    }
+
+    Expect(
+        !TryParseSignedDecimalToken("1", nullptr),
+        "a null checksum destination must fail");
 }
 
 void ExpectRejectedNameFormatting(
@@ -236,6 +292,8 @@ void TestRejectedNameComponents()
         {controlName, "a zone name containing a control byte must fail"},
         {"zone//name", "a zone name containing // must fail"},
         {"zone/*name", "a zone name containing /* must fail"},
+        {"zone..name", "a zone name containing .. must fail"},
+        {"zone::name", "a zone name containing :: must fail"},
         {"/zone", "a zone name beginning with slash must fail"},
         {"*zone", "a zone name beginning with star must fail"},
         {"zone/", "a zone name ending with slash must fail"},
@@ -259,6 +317,8 @@ void TestRejectedNameComponents()
         {controlDirectory, "a mod directory containing a control byte must fail"},
         {"mods//example", "a mod directory containing // must fail"},
         {"mods/*example", "a mod directory containing /* must fail"},
+        {"mods/../example", "a mod directory containing .. must fail"},
+        {"mods::example", "a mod directory containing :: must fail"},
         {"/mods", "a mod directory beginning with slash must fail"},
         {"*mods", "a mod directory beginning with star must fail"},
         {"mods/example/", "a mod directory ending with slash must fail"},
@@ -663,6 +723,7 @@ int main()
     TestSlotWalk();
     TestSignedDecimalFormatting();
     TestInfoStringPredicates();
+    TestSignedDecimalTokenParsing();
     TestRejectedNameComponents();
     TestInfoStringAppend();
     TestExactKeyDetection();

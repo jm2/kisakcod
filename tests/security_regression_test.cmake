@@ -1084,6 +1084,61 @@ require_source_contains(
     "qcommon/files.cpp"
     "strlen(iwd) >= sizeof(szFile)"
     "IWD names must be bounded before copying")
+
+# Referenced IWD/fast-file names are remote SYSTEMINFO input. Preflight the
+# complete paired list before allocating names or publishing checksums so a
+# malicious later token cannot create traversal paths or partial state.
+file(READ "${SOURCE_ROOT}/src/qcommon/files.cpp" _qcommon_files_security_source)
+extract_security_slice(
+    _qcommon_files_security_source
+    "int __cdecl FS_ServerSetReferencedFiles("
+    "void __cdecl FS_ServerSetReferencedIwds"
+    _server_referenced_files
+    "server referenced-file list ingestion")
+require_source_contains(
+    "qcommon/files.cpp"
+    "#include <universal/info_string.h>"
+    "referenced-file ingestion uses the shared path-token policy")
+foreach(_marker IN ITEMS
+    "std::array<int, ARRAY_COUNT(fs_serverReferencedIwds)> parsedChecksums{};"
+    "const int checksumCount = Cmd_Argc();"
+    "info_string::TryParseSignedDecimalToken("
+    "Invalid referenced-file checksum at index %d"
+    "const int nameCount = Cmd_Argc();"
+    "if (checksumCount != nameCount)"
+    "!info_string::IsSafeUnquotedPathTokenComponent(name)"
+    "Invalid referenced-file name at index %d"
+    "fs_names[i] = CopyString(Cmd_Argv(i));"
+    "fs_sums[i] = parsedChecksums[static_cast<std::size_t>(i)];")
+    require_security_slice_contains(
+        _server_referenced_files
+        "${_marker}"
+        "remote referenced-file names require fail-closed paired preflight")
+endforeach()
+require_security_slice_ordered(
+    _server_referenced_files
+    "info_string::TryParseSignedDecimalToken("
+    "!info_string::IsSafeUnquotedPathTokenComponent(name)"
+    "every checksum is validated before the paired name preflight")
+require_security_slice_ordered(
+    _server_referenced_files
+    "!info_string::IsSafeUnquotedPathTokenComponent(name)"
+    "fs_names[i] = CopyString(Cmd_Argv(i));"
+    "every remote name is validated before any allocation")
+require_security_slice_ordered(
+    _server_referenced_files
+    "!info_string::IsSafeUnquotedPathTokenComponent(name)"
+    "fs_sums[i] = parsedChecksums[static_cast<std::size_t>(i)];"
+    "every remote name is validated before checksum publication")
+require_security_slice_ordered(
+    _server_referenced_files
+    "fs_names[i] = CopyString(Cmd_Argv(i));"
+    "fs_sums[i] = parsedChecksums[static_cast<std::size_t>(i)];"
+    "paired checksum publication follows successful name preflight")
+forbid_security_slice_contains(
+    _server_referenced_files
+    "atoi("
+    "remote checksums cannot use undefined-overflow or prefix parsing")
 require_source_contains(
     "database/db_stream_load.cpp"
     "CheckedArrayBytes(count, stride, &byteCount)"
