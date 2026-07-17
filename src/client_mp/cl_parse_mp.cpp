@@ -973,7 +973,10 @@ void __cdecl CL_InitDownloads(int localClientNum)
     {
         if (strlen(cl_updatefiles->current.string) > 4)
         {
-            I_strncpyz(autoupdateFilename, (char *)cl_updatefiles->current.integer, 64);
+            I_strncpyz(
+                autoupdateFilename,
+                cl_updatefiles->current.string,
+                ARRAY_COUNT(autoupdateFilename));
             v1 = va("@%s/%s@%s/%s", dir, cl_updatefiles->current.string, dir, cl_updatefiles->current.string);
             I_strncpyz(cls.downloadList, v1, 1024);
             clientUIActives[localClientNum].connectionState = CA_CONNECTED;

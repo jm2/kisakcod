@@ -57,28 +57,7 @@ bool HasIwdChecksum(void *const rawContext, const int checksum)
 
 bool IsServerPak(void *, const char *const name)
 {
-    constexpr char marker[] = "_svr_";
-    const std::size_t nameLength = std::strlen(name);
-    for (std::size_t offset = 0;
-         offset + sizeof(marker) - 1 <= nameLength;
-         ++offset)
-    {
-        bool match = true;
-        for (std::size_t index = 0; index < sizeof(marker) - 1; ++index)
-        {
-            if (server_file_compare::FoldAscii(
-                    static_cast<unsigned char>(name[offset + index]))
-                != server_file_compare::FoldAscii(
-                    static_cast<unsigned char>(marker[index])))
-            {
-                match = false;
-                break;
-            }
-        }
-        if (match)
-            return true;
-    }
-    return false;
+    return server_file_compare::IsServerOnlyIwdName(name);
 }
 
 bool IsOfficialMainIwd(void *, const char *const name)
@@ -159,6 +138,168 @@ void TestExactGameDirectoryMembership()
         server_file_compare::GameDirectorySuffix(
             "mods/example/zone", "mods") == nullptr,
         "the mods root without a child directory must not be a gameDir");
+}
+
+void TestDownloadRequestAdmission()
+{
+    constexpr char iwdNames[] =
+        "main/iw_00 mods/example/pak1 mods/example/sub/pak2";
+    constexpr char fastFileNames[] =
+        "common_mp mods/example/zone1 mods/example/sub/zone2";
+    const auto isPermitted =
+        [=](const char *const request)
+        {
+            const server_file_compare::DownloadKind kind =
+                server_file_compare::ClassifyServerDownloadRequest(request);
+            const char *const names =
+                kind == server_file_compare::DownloadKind::Iwd
+                ? iwdNames
+                : fastFileNames;
+            return server_file_compare::IsPermittedServerDownloadRequest(
+                request, "mods/example", names, kind);
+        };
+
+    Expect(
+        isPermitted("mods/example/pak1.iwd"),
+        "an exact advertised mod IWD request must be admitted");
+    Expect(
+        isPermitted("mods/example/sub/zone2.ff"),
+        "an exact advertised nested mod FF request must be admitted");
+
+    struct RejectedRequest
+    {
+        const char *request;
+        const char *description;
+    };
+    constexpr RejectedRequest rejected[] = {
+        {nullptr, "a null request must fail"},
+        {"", "an empty request must fail"},
+        {"../../server.cfg", "a traversal request must fail"},
+        {"main/server.cfg", "a safe-looking unadvertised server file must fail"},
+        {"mods/example/server.cfg", "an unadvertised mod file must fail"},
+        {"mods/example/pak1", "a request without an extension must fail"},
+        {"mods/example/pak1.IWD", "a noncanonical extension must fail"},
+        {"mods/example/pak1.iwd/extra", "an extension before the end must fail"},
+        {"mods/example2/pak1.iwd", "a mod prefix collision must fail"},
+        {"mods/example/pak1.ff", "an IWD token cannot authorize an FF request"},
+        {"mods/example/pak1.iwd ", "trailing whitespace must fail"},
+        {"mods/example/CON.iwd", "a Windows device alias must fail"},
+        {"mods/example/pak_SvR_1.iwd", "a server-only IWD must fail"},
+        {"updates/patch.exe", "the unauthenticated legacy update namespace must fail closed"},
+    };
+    for (const RejectedRequest &testCase : rejected)
+    {
+        Expect(!isPermitted(testCase.request), testCase.description);
+    }
+
+    Expect(
+        !isPermitted("MODS/EXAMPLE/pak1.iwd"),
+        "request identity must exactly match the advertised token even when the mod prefix aliases");
+    Expect(
+        !server_file_compare::IsPermittedServerDownloadRequest(
+            "mods/example/pak1.iwd",
+            "",
+            iwdNames,
+            server_file_compare::DownloadKind::Iwd),
+        "an empty active mod must fail closed");
+    Expect(
+        !server_file_compare::IsPermittedServerDownloadRequest(
+            "mods/example/pak1.iwd",
+            "mods/example",
+            nullptr,
+            server_file_compare::DownloadKind::Iwd),
+        "a missing IWD advertisement list must fail closed");
+    Expect(
+        !server_file_compare::IsPermittedServerDownloadRequest(
+            "mods/example/pak_SvR_1.iwd",
+            "mods/example",
+            "mods/example/pak_SvR_1",
+            server_file_compare::DownloadKind::Iwd),
+        "an exactly advertised mixed-case server-only IWD must fail closed");
+
+    constexpr char boundedNames[] =
+        "mods/example/pak1 mods/example/not-in-view";
+    Expect(
+        !server_file_compare::IsPermittedServerDownloadRequest(
+            "mods/example/not-in-view.iwd",
+            "mods/example",
+            boundedNames,
+            std::strlen("mods/example/pak1"),
+            server_file_compare::DownloadKind::Iwd),
+        "authorization must not scan beyond the bounded SYSTEMINFO value");
+
+    std::array<char, server_file_compare::kServerDownloadNameCapacity> exact{};
+    exact.fill('x');
+    constexpr char prefix[] = "mods/example/";
+    std::memcpy(exact.data(), prefix, sizeof(prefix) - 1);
+    constexpr char extension[] = ".ff";
+    std::memcpy(
+        exact.data() + exact.size() - sizeof(extension),
+        extension,
+        sizeof(extension));
+    std::array<char, server_file_compare::kServerDownloadNameCapacity>
+        exactStem{};
+    std::memcpy(
+        exactStem.data(),
+        exact.data(),
+        exact.size() - sizeof(extension));
+    Expect(
+        std::strlen(exact.data())
+            == server_file_compare::kServerDownloadNameCapacity - 1,
+        "the boundary request fixture must occupy 63 bytes plus NUL");
+    Expect(
+        server_file_compare::IsPermittedServerDownloadRequest(
+            exact.data(),
+            "mods/example",
+            exactStem.data(),
+            server_file_compare::DownloadKind::FastFile),
+        "a complete 63-byte advertised request must fit the protocol field");
+
+    std::array<char, server_file_compare::kServerDownloadNameCapacity + 1>
+        tooLong{};
+    tooLong.fill('x');
+    std::memcpy(tooLong.data(), prefix, sizeof(prefix) - 1);
+    std::memcpy(
+        tooLong.data() + tooLong.size() - sizeof(extension),
+        extension,
+        sizeof(extension));
+    Expect(
+        !server_file_compare::IsPermittedServerDownloadRequest(
+            tooLong.data(),
+            "mods/example",
+            tooLong.data(),
+            server_file_compare::DownloadKind::FastFile),
+        "a 64-byte request must be rejected instead of truncated");
+
+    std::array<char, 61> stem{};
+    stem.fill('x');
+    stem.back() = '\0';
+    Expect(
+        !server_file_compare::CanStoreServerDownloadName(
+            stem.data(),
+            ".iwd"),
+        "a 60-byte IWD stem must not be truncated into the protocol field");
+    stem[59] = '\0';
+    Expect(
+        server_file_compare::CanStoreServerDownloadName(
+            stem.data(),
+            ".iwd"),
+        "a 59-byte IWD stem plus extension and NUL must fit");
+    stem[59] = 'x';
+    Expect(
+        server_file_compare::CanStoreServerDownloadName(
+            stem.data(),
+            ".ff"),
+        "a 60-byte FF stem plus extension and NUL must fit");
+    stem[60] = 'x';
+    std::array<char, 62> oversizedFastFileStem{};
+    oversizedFastFileStem.fill('x');
+    oversizedFastFileStem.back() = '\0';
+    Expect(
+        !server_file_compare::CanStoreServerDownloadName(
+            oversizedFastFileStem.data(),
+            ".ff"),
+        "a 61-byte FF stem must not be truncated into the protocol field");
 }
 
 void TestEmptyGameDirectoryIsNotDownloadable()
@@ -249,6 +390,28 @@ void TestMatchingLocalFiles()
     Expect(
         context.unexpectedSizeLookups == 0,
         "matching mod FFs must use the expected game-directory lookup");
+}
+
+void TestServerOnlyIwdIsNotAdvertised()
+{
+    std::array<char, 128> output{};
+    const char *names[] = {"mods/example/pak_SvR_1"};
+    const int checksums[] = {77};
+    TestContext context;
+    const Result result = server_file_compare::CompareAll(
+        output.data(),
+        output.size(),
+        true,
+        "mods/example",
+        {names, checksums, 1},
+        {},
+        MakeCallbacks(context));
+    Expect(
+        result == Result::Match,
+        "a server-only IWD must not be advertised to a client");
+    Expect(
+        output[0] == '\0',
+        "skipping a server-only IWD must leave the download list empty");
 }
 
 void TestExactModDownloadsAndAggregate()
@@ -487,6 +650,71 @@ void TestUnrepresentableSemanticCulpritIsAtomic()
         output == before,
         "an unrepresentable semantic culprit must not publish truncation");
 }
+
+void TestUnstorableDownloadNameIsNotAdvertised()
+{
+    std::array<char, 65> longName{};
+    longName.fill('x');
+    constexpr char prefix[] = "mods/x/";
+    std::memcpy(longName.data(), prefix, sizeof(prefix) - 1);
+    longName.back() = '\0';
+
+    std::array<char, 128> output{};
+    TestContext context;
+    const char *names[] = {longName.data()};
+    const int checksums[] = {123};
+    const Result result = server_file_compare::CompareAll(
+        output.data(),
+        output.size(),
+        true,
+        "mods/x",
+        {names, checksums, 1},
+        {},
+        MakeCallbacks(context));
+    Expect(
+        result == Result::NotDownloadable,
+        "a missing name that cannot fit the server field must not be advertised");
+    Expect(
+        std::strlen(output.data()) == std::strlen(longName.data()) + 4
+            && std::memcmp(
+                output.data(),
+                longName.data(),
+                std::strlen(longName.data())) == 0
+            && std::strcmp(
+                output.data() + std::strlen(longName.data()),
+                ".iwd") == 0,
+        "an unstorable request must publish only a complete diagnostic filename");
+
+    output.fill('\0');
+    TestContext fastFileContext;
+    AddSizeRule(
+        fastFileContext,
+        longName.data() + sizeof(prefix) - 1,
+        true,
+        0);
+    const int fileSizes[] = {456};
+    const Result fastFileResult = server_file_compare::CompareAll(
+        output.data(),
+        output.size(),
+        true,
+        "mods/x",
+        {},
+        {names, fileSizes, 1},
+        MakeCallbacks(fastFileContext));
+    Expect(
+        fastFileResult == Result::NotDownloadable,
+        "an unstorable missing FF name must not be advertised");
+    Expect(
+        std::strlen(output.data()) == std::strlen(longName.data()) + 3
+            && std::memcmp(
+                output.data(),
+                longName.data(),
+                std::strlen(longName.data())) == 0
+            && std::strcmp(
+                output.data() + std::strlen(longName.data()),
+                ".ff") == 0,
+        "an unstorable FF request must publish a complete diagnostic filename");
+}
 }
 
 int main()
@@ -498,8 +726,10 @@ int main()
         && static_cast<int>(Result::NotDownloadable) == 2);
 
     TestExactGameDirectoryMembership();
+    TestDownloadRequestAdmission();
     TestEmptyGameDirectoryIsNotDownloadable();
     TestMatchingLocalFiles();
+    TestServerOnlyIwdIsNotAdvertised();
     TestExactModDownloadsAndAggregate();
     TestPrefixCollisionIsNotDownloadable();
     TestUppercaseNestedModLookup();
@@ -508,6 +738,7 @@ int main()
     TestAggregateRollbackOnLaterOverflow();
     TestHumanListAtomicity();
     TestUnrepresentableSemanticCulpritIsAtomic();
+    TestUnstorableDownloadNameIsNotAdvertised();
 
     if (gFailures != 0)
     {

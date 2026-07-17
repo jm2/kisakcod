@@ -825,9 +825,9 @@ require_source_contains(
     "file close must reject handles before indexing the handle table")
 require_source_match_count(
     "universal/com_files.cpp"
-    "memchr\\("
-    3
-    "IWD construction and reopen must reject embedded NUL names in all three consumers")
+    "file_info\\.size_filename >= sizeof\\(filename_inzip\\)[ \t\r\n]*\\|\\| memchr\\("
+    2
+    "both IWD construction passes must reject embedded NUL names")
 require_source_contains(
     "universal/com_files.cpp"
     "if (unzGoToFirstFile(uf) != UNZ_OK)"
@@ -1078,8 +1078,8 @@ require_source_contains(
     "fast-file reference capacity must be derived from the destination array")
 require_source_contains(
     "qcommon/files.cpp"
-    "strlen(pak) >= sizeof(szFile)"
-    "server pak names must be bounded before copying")
+    "return server_file_compare::IsServerOnlyIwdName(pak);"
+    "server-only IWD detection must use the shared non-copying policy")
 require_source_contains(
     "qcommon/files.cpp"
     "strlen(iwd) >= sizeof(szFile)"
@@ -1089,6 +1089,533 @@ require_source_contains(
 # complete paired list before allocating names or publishing checksums so a
 # malicious later token cannot create traversal paths or partial state.
 file(READ "${SOURCE_ROOT}/src/qcommon/files.cpp" _qcommon_files_security_source)
+file(READ
+    "${SOURCE_ROOT}/src/qcommon/server_file_compare.h"
+    _server_file_compare_security_source)
+file(READ
+    "${SOURCE_ROOT}/src/server_mp/ucmds.cpp"
+    _server_download_command_security_source)
+file(READ
+    "${SOURCE_ROOT}/src/server_mp/sv_snapshot_mp.cpp"
+    _server_download_snapshot_security_source)
+file(READ
+    "${SOURCE_ROOT}/src/universal/com_files.cpp"
+    _server_file_open_security_source)
+extract_security_slice(
+    _server_file_compare_security_source
+    "inline DownloadKind ClassifyServerDownloadRequest("
+    "inline bool TokenListContainsExact("
+    _server_download_classification
+    "server download request classification")
+extract_security_slice(
+    _server_file_compare_security_source
+    "inline bool IsPermittedServerDownloadRequest("
+    "// Preflights the complete append"
+    _server_download_admission
+    "server download request admission")
+extract_security_slice(
+    _server_file_compare_security_source
+    "inline const char *GameDirectorySuffix("
+    "inline std::size_t BoundedLength("
+    _game_directory_suffix
+    "native game-directory membership")
+extract_security_slice(
+    _server_file_compare_security_source
+    "inline bool AppendParts("
+    "inline bool AppendFileName("
+    _server_file_append_parts
+    "atomic server-file list append")
+extract_security_slice(
+    _server_file_compare_security_source
+    "inline Result CompareAll("
+    "\n}\n}"
+    _server_file_compare_all
+    "transactional combined server-file comparison")
+extract_security_slice(
+    _qcommon_files_security_source
+    "bool ServerReferenceCountsAreValid()"
+    "server_file_compare::IwdReferences ServerIwdReferences()"
+    _server_reference_count_validation
+    "server referenced-file count validation")
+extract_security_slice(
+    _qcommon_files_security_source
+    "int __cdecl FS_CompareIwds("
+    "int __cdecl FS_CompareFFs("
+    _server_iwd_compare_wrapper
+    "production IWD comparison")
+extract_security_slice(
+    _qcommon_files_security_source
+    "int __cdecl FS_CompareFFs("
+    "FS_SERVER_COMPARE_RESULT __cdecl FS_CompareWithServerFiles("
+    _server_fastfile_compare_wrapper
+    "production fast-file comparison")
+extract_security_slice(
+    _qcommon_files_security_source
+    "FS_SERVER_COMPARE_RESULT __cdecl FS_CompareWithServerFiles("
+    "void __cdecl FS_ShutdownServerFileReferences"
+    _server_file_compare_wrapper
+    "production combined server-file comparison")
+extract_security_slice(
+    _server_download_command_security_source
+    "bool __cdecl SV_IsDownloadRequestAuthorized("
+    "void __cdecl SV_BeginDownload_f("
+    _server_download_authorization
+    "published server download authorization")
+extract_security_slice(
+    _server_download_command_security_source
+    "void __cdecl SV_BeginDownload_f("
+    "void __cdecl SV_VerifyIwds_f("
+    _server_download_begin
+    "server download command admission")
+extract_security_slice(
+    _server_download_snapshot_security_source
+    "void __cdecl SV_Download_Clear("
+    "void __cdecl SV_WriteDownloadErrorMessage("
+    _server_download_clear
+    "server download resource cleanup")
+extract_security_slice(
+    _server_download_snapshot_security_source
+    "int __cdecl SV_WWWRedirectClient("
+    "void __cdecl SV_WriteDownloadToClient("
+    _server_download_redirect
+    "server download redirect")
+extract_security_slice(
+    _server_download_snapshot_security_source
+    "void __cdecl SV_WriteDownloadToClient("
+    "void __cdecl SV_EndClientSnapshot("
+    _server_download_writer
+    "server download writer")
+extract_security_slice(
+    _server_file_open_security_source
+    "bool FS_TryBuildServerOSPath("
+    "int __cdecl FS_SV_FOpenFileRead("
+    _server_path_builder
+    "nonfatal server path builder")
+extract_security_slice(
+    _server_file_open_security_source
+    "int __cdecl FS_SV_FOpenFileRead("
+    "int __cdecl FS_SV_FOpenFileWrite("
+    _server_file_reader
+    "server file reader")
+extract_security_slice(
+    _server_file_open_security_source
+    "char *__cdecl FS_ReferencedIwdNames()"
+    "char info5[8192];"
+    _referenced_iwd_name_producer
+    "referenced IWD name publication")
+extract_security_slice(
+    _server_file_open_security_source
+    "char *__cdecl FS_ReferencedIwdChecksums()"
+    "char info3[8192];"
+    _referenced_iwd_checksum_producer
+    "referenced IWD checksum publication")
+
+foreach(_marker IN ITEMS
+    "if (!request)"
+    "BoundedLength(request, kServerDownloadNameCapacity)"
+    "requestLength == kServerDownloadNameCapacity"
+    "constexpr char iwdExtension[] = \".iwd\";"
+    "constexpr char fastFileExtension[] = \".ff\";"
+    "return DownloadKind::Invalid;")
+    require_security_slice_contains(
+        _server_download_classification
+        "${_marker}"
+        "download requests are classified only when fully representable")
+endforeach()
+foreach(_marker IN ITEMS
+    "inline constexpr std::size_t kServerDownloadNameCapacity = 64;"
+    "!CanStoreServerDownloadName(name, \".iwd\")"
+    "!CanStoreServerDownloadName(name, \".ff\")")
+    require_source_contains(
+        "qcommon/server_file_compare.h"
+        "${_marker}"
+        "the client cannot advertise a filename the server would truncate")
+endforeach()
+foreach(_marker IN ITEMS
+    "ClassifyServerDownloadRequest(request) != kind"
+    "kind == DownloadKind::Invalid"
+    "kind == DownloadKind::Iwd"
+    "IsServerOnlyIwdName(request)"
+    "info_string::IsSafeUnquotedPathTokenComponent(request)"
+    "info_string::IsSafeUnquotedPathTokenComponent(gameDirectory)"
+    "GameDirectorySuffix(request, gameDirectory)"
+    "TokenListContainsExact("
+    "referencedNamesLength"
+    "requestLength - extensionLength")
+    require_security_slice_contains(
+        _server_download_admission
+        "${_marker}"
+        "download admission requires a safe exact advertised mod child")
+endforeach()
+require_source_contains(
+    "qcommon/files.cpp"
+    "return server_file_compare::IsServerOnlyIwdName(pak);"
+    "comparison and request admission share the server-only IWD policy")
+
+foreach(_marker IN ITEMS
+    "ClassifyServerDownloadRequest(request)"
+    "!sv.configstrings[1]"
+    "SL_ConvertToString(SV_GetConfigstringConst(1))"
+    "info_string::TryGetExactValueView("
+    "\"fs_game\""
+    "gameDirectoryLength >= ARRAY_COUNT(gameDirectory)"
+    "std::memcpy("
+    "\"sv_referencedIwdNames\""
+    "\"sv_referencedFFNames\""
+    "referencedNamesLength"
+    "IsPermittedServerDownloadRequest(")
+    require_security_slice_contains(
+        _server_download_authorization
+        "${_marker}"
+        "authorization uses the exact published SYSTEMINFO snapshot")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "sv_referencedIwdNames->current"
+    "sv_referencedFFNames->current"
+    "fs_serverReferenced"
+    "Info_ValueForKey")
+    forbid_security_slice_contains(
+        _server_download_authorization
+        "${_forbidden}"
+        "authorization cannot trust unpublished or client-side metadata")
+endforeach()
+
+foreach(_marker IN ITEMS
+    "SV_Cmd_Argc() != 2"
+    "!SV_IsDownloadRequestAuthorized(request)"
+    "SV_DropClient(cl, \"invalid download request\", 1);"
+    "ARRAY_COUNT(cl->downloadName)"
+    "kServerDownloadNameCapacity"
+    "const std::size_t requestLength = std::strlen(request);"
+    "SV_CloseDownload(cl);"
+    "cl->downloadSize = 0;"
+    "cl->downloadCount = 0;"
+    "cl->downloadClientBlock = 0;"
+    "cl->downloadCurrentBlock = 0;"
+    "cl->downloadXmitBlock = 0;"
+    "for (int &blockSize : cl->downloadBlockSize)"
+    "cl->downloadEOF = 0;"
+    "cl->downloadSendTime = 0;"
+    "cl->downloadingWWW = 0;"
+    "cl->clientDownloadingWWW = 0;"
+    "std::memcpy(cl->downloadName, request, requestLength + 1);"
+    "cl->downloading = 1;")
+    require_security_slice_contains(
+        _server_download_begin
+        "${_marker}"
+        "a remote path is authorized and copied without truncation")
+endforeach()
+require_security_slice_ordered(
+    _server_download_begin
+    "!SV_IsDownloadRequestAuthorized(request)"
+    "SV_CloseDownload(cl);"
+    "authorization precedes mutation of prior download state")
+require_security_slice_ordered(
+    _server_download_begin
+    "cl->downloadClientBlock = 0;"
+    "std::memcpy(cl->downloadName, request, requestLength + 1);"
+    "download transfer counters reset before a WWW fallback can reuse the open file")
+require_security_slice_ordered(
+    _server_download_begin
+    "std::memcpy(cl->downloadName, request, requestLength + 1);"
+    "cl->downloading = 1;"
+    "the canonical request publishes before the relaxed downloading state")
+forbid_security_slice_contains(
+    _server_download_begin
+    "I_strncpyz"
+    "download requests cannot be truncated into a different path")
+forbid_security_slice_contains(
+    _server_download_begin
+    "cl->wwwFallback = 0"
+    "a failed WWW redirect must retain its one-shot in-band fallback flag")
+
+require_security_slice_contains(
+    _server_download_clear
+    "SV_CloseDownload(cl);"
+    "download clearing closes the file and frees queued blocks")
+require_security_slice_contains(
+    _server_download_clear
+    "return;"
+    "a null client cannot reach download cleanup dereferences")
+require_security_slice_ordered(
+    _server_download_clear
+    "SV_CloseDownload(cl);"
+    "cl->downloading = 0;"
+    "resource cleanup precedes state clearing")
+
+foreach(_marker IN ITEMS
+    "const int downloadSize = cl->downloadSize;"
+    "cl->download && downloadSize > 0"
+    "baseLength > ARRAY_COUNT(cl->downloadURL) - 2"
+    "nameLength > ARRAY_COUNT(cl->downloadURL) - baseLength - 2"
+    "Com_sprintf("
+    "SV_Download_Clear(cl);")
+    require_security_slice_contains(
+        _server_download_redirect
+        "${_marker}"
+        "redirects reuse the authorized open file and preflight their URL")
+endforeach()
+require_security_slice_ordered(
+    _server_download_redirect
+    "nameLength > ARRAY_COUNT(cl->downloadURL) - baseLength - 2"
+    "Com_sprintf("
+    "the redirect URL is bounded before formatting")
+forbid_security_slice_contains(
+    _server_download_redirect
+    "FS_SV_FOpenFileRead"
+    "redirects cannot reopen and leak the in-band file handle")
+
+foreach(_marker IN ITEMS
+    "!SV_IsDownloadRequestAuthorized(cl->downloadName)"
+    "SV_WriteDownloadErrorMessage(cl, msg, errorMessage);"
+    "FS_SV_FOpenFileRead(cl->downloadName, &cl->download)")
+    require_security_slice_contains(
+        _server_download_writer
+        "${_marker}"
+        "authorization is revalidated before the first server file open")
+endforeach()
+require_security_slice_ordered(
+    _server_download_writer
+    "!SV_IsDownloadRequestAuthorized(cl->downloadName)"
+    "FS_SV_FOpenFileRead(cl->downloadName, &cl->download)"
+    "stale authorization fails before filesystem access")
+
+foreach(_marker IN ITEMS
+    "!base || !*base"
+    "!filename || !*filename"
+    "FS_BuildOSPathForThread("
+    "FS_THREAD_SERVER"
+    "const std::size_t length = std::strlen(osPath);"
+    "length == 0"
+    "osPath[length - 1] = '\\0';")
+    require_security_slice_contains(
+        _server_path_builder
+        "${_marker}"
+        "oversized server paths return failure instead of terminating the process")
+endforeach()
+foreach(_marker IN ITEMS
+    "if (!fp)"
+    "*fp = 0;"
+    "if (!filename || !*filename)"
+    "fs_homepath->current.string, filename, ospath"
+    "fs_basepath->current.string, filename, ospath"
+    "fs_cdpath->current.string, filename, ospath")
+    require_security_slice_contains(
+        _server_file_reader
+        "${_marker}"
+        "server file opens validate outputs and use the nonfatal path builder")
+endforeach()
+forbid_security_slice_contains(
+    _server_file_reader
+    "FS_BuildOSPath("
+    "remote server file opens cannot hit the fatal path-length builder")
+
+foreach(_marker IN ITEMS
+    "char staged[sizeof(info8)];"
+    "FS_TryAppendReferencedIwdName("
+    "info8[0] = 0;"
+    "Invalid or oversized referenced IWD name list"
+    "std::memcpy(info8, staged, stagedLength + 1);")
+    require_security_slice_contains(
+        _referenced_iwd_name_producer
+        "${_marker}"
+        "referenced IWD names publish only a complete validated list")
+endforeach()
+foreach(_marker IN ITEMS
+    "char staged[sizeof(info5)];"
+    "FS_TryAppendReferencedIwdChecksum("
+    "info5[0] = 0;"
+    "Invalid or oversized referenced IWD checksum list"
+    "std::memcpy(info5, staged, stagedLength + 1);")
+    require_security_slice_contains(
+        _referenced_iwd_checksum_producer
+        "${_marker}"
+        "referenced IWD checksums publish only a complete validated list")
+endforeach()
+foreach(_producer IN ITEMS
+    _referenced_iwd_name_producer
+    _referenced_iwd_checksum_producer)
+    forbid_security_slice_contains(
+        ${_producer}
+        "I_strncat"
+        "referenced IWD publication cannot silently truncate")
+endforeach()
+foreach(_marker IN ITEMS
+    "std::memchr(component, '\\0', Capacity)"
+    "info_string::IsSafeUnquotedPathTokenComponent(component)"
+    "if (available == 0)"
+    "--available;"
+    "std::to_chars("
+    "available - checksumLength < 1")
+    require_source_contains(
+        "universal/com_files.cpp"
+        "${_marker}"
+        "referenced IWD formatting uses checked portable boundaries")
+endforeach()
+
+require_source_contains(
+    "client_mp/cl_parse_mp.cpp"
+    "cl_updatefiles->current.string"
+    "legacy update filenames use their native string pointer")
+require_source_not_contains(
+    "client_mp/cl_parse_mp.cpp"
+    "(char *)cl_updatefiles->current.integer"
+    "legacy update filenames cannot truncate pointers")
+require_source_contains(
+    "client_mp/cl_main_mp.cpp"
+    "if (autoupdateFilename[0])"
+    "legacy update completion tests filename content rather than array address")
+
+foreach(_marker IN ITEMS
+    "if (!name || !IsModGameDirectory(gameDirectory))"
+    "const std::size_t gameDirectoryLength = std::strlen(gameDirectory);"
+    "const std::size_t nameLength = std::strlen(name);"
+    "nameLength <= gameDirectoryLength"
+    "name[gameDirectoryLength] != '/'"
+    "name[gameDirectoryLength + 1] == '\\0'"
+    "FoldAscii(static_cast<unsigned char>(name[index]))"
+    "FoldAscii(static_cast<unsigned char>(gameDirectory[index]))"
+    "return name + gameDirectoryLength + 1;")
+    require_security_slice_contains(
+        _game_directory_suffix
+        "${_marker}"
+        "mod membership uses an exact native-width case-insensitive component boundary")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "static_cast<int>(gameDirectoryLength)"
+    "uint32_t"
+    "_DWORD")
+    forbid_security_slice_contains(
+        _game_directory_suffix
+        "${_forbidden}"
+        "game-directory membership cannot narrow native lengths or pointers")
+endforeach()
+
+foreach(_marker IN ITEMS
+    "const std::size_t outputLength = BoundedLength(output, capacity);"
+    "if (outputLength == capacity)"
+    "const std::size_t remaining = capacity - finalLength - 1;"
+    "if (partLength > remaining)"
+    "std::memcpy(cursor, parts[index], partLength);"
+    "*cursor = '\\0';")
+    require_security_slice_contains(
+        _server_file_append_parts
+        "${_marker}"
+        "download-list fields require complete bounded preflight")
+endforeach()
+require_security_slice_ordered(
+    _server_file_append_parts
+    "if (partLength > remaining)"
+    "std::memcpy(cursor, parts[index], partLength);"
+    "every complete download-list append is sized before its first write")
+foreach(_forbidden IN ITEMS
+    "I_strncat"
+    "strcat("
+    "strncat(")
+    forbid_security_slice_contains(
+        _server_file_append_parts
+        "${_forbidden}"
+        "atomic download-list construction cannot use truncating concatenation")
+endforeach()
+
+foreach(_marker IN ITEMS
+    "const std::size_t stagingCapacity = capacity < kAggregateCapacity"
+    "std::array<char, kAggregateCapacity> staging{};"
+    "const Outcome iwdOutcome = CompareIwds("
+    "const Outcome fastFileOutcome = CompareFastFiles("
+    "finalOutcome.failure == Failure::OutputCapacity"
+    "finalOutcome.failure == Failure::InvalidInput"
+    "BoundedLength(staging.data(), stagingCapacity)"
+    "std::memcpy(output, staging.data(), stagedLength + 1);")
+    require_security_slice_contains(
+        _server_file_compare_all
+        "${_marker}"
+        "the combined IWD/fast-file result publishes only a complete staged aggregate")
+endforeach()
+require_security_slice_ordered(
+    _server_file_compare_all
+    "finalOutcome.failure == Failure::OutputCapacity"
+    "std::memcpy(output, staging.data(), stagedLength + 1);"
+    "capacity or invalid-input failure returns before aggregate publication")
+
+foreach(_marker IN ITEMS
+    "fs_numServerReferencedIwds >= 0"
+    "static_cast<std::size_t>(fs_numServerReferencedIwds)"
+    "<= ARRAY_COUNT(fs_serverReferencedIwds)"
+    "fs_numServerReferencedFFs >= 0"
+    "static_cast<std::size_t>(fs_numServerReferencedFFs)"
+    "<= ARRAY_COUNT(fs_serverReferencedFFCheckSums)")
+    require_security_slice_contains(
+        _server_reference_count_validation
+        "${_marker}"
+        "signed remote reference counts are bounded before native conversion")
+endforeach()
+require_security_slice_ordered(
+    _server_reference_count_validation
+    "fs_numServerReferencedIwds >= 0"
+    "static_cast<std::size_t>(fs_numServerReferencedIwds)"
+    "the IWD count is nonnegative before conversion")
+require_security_slice_ordered(
+    _server_reference_count_validation
+    "fs_numServerReferencedFFs >= 0"
+    "static_cast<std::size_t>(fs_numServerReferencedFFs)"
+    "the fast-file count is nonnegative before conversion")
+
+foreach(_marker IN ITEMS
+    "if (!neededFiles || len <= 0)"
+    "neededFiles[0] = '\\0';"
+    "if (!ServerReferenceCountsAreValid())"
+    "server_file_compare::CompareAll("
+    "static_cast<std::size_t>(len)"
+    "CurrentGameDirectory()"
+    "ServerIwdReferences()"
+    "ServerFastFileReferences()")
+    require_security_slice_contains(
+        _server_file_compare_wrapper
+        "${_marker}"
+        "production comparison routes bounded inputs through the tested transactional helper")
+endforeach()
+require_security_slice_ordered(
+    _server_file_compare_wrapper
+    "neededFiles[0] = '\\0';"
+    "if (!ServerReferenceCountsAreValid())"
+    "the production destination becomes a valid empty string before count failure")
+require_security_slice_ordered(
+    _server_file_compare_wrapper
+    "if (!ServerReferenceCountsAreValid())"
+    "server_file_compare::CompareAll("
+    "signed reference counts are validated before helper publication")
+foreach(_wrapper_and_destination IN ITEMS
+    "_server_iwd_compare_wrapper|needediwds"
+    "_server_fastfile_compare_wrapper|neededFFs")
+    string(REPLACE "|" ";" _wrapper_fields "${_wrapper_and_destination}")
+    list(GET _wrapper_fields 0 _wrapper)
+    list(GET _wrapper_fields 1 _destination)
+    require_security_slice_contains(
+        ${_wrapper}
+        "${_destination}[0] = '\\0';"
+        "direct server-file comparison initializes its caller output")
+    require_security_slice_ordered(
+        ${_wrapper}
+        "${_destination}[0] = '\\0';"
+        "if (!ServerReferenceCountsAreValid())"
+        "direct server-file output is valid before count failure")
+    require_security_slice_ordered(
+        ${_wrapper}
+        "if (!ServerReferenceCountsAreValid())"
+        "server_file_compare::CompareAll("
+        "direct server-file comparison validates counts before publication")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "I_strncat"
+    "fs_gameDirVar->current.integer"
+    "(uint32_t)&"
+    "_DWORD")
+    forbid_security_slice_contains(
+        _server_file_compare_wrapper
+        "${_forbidden}"
+        "production server-file comparison cannot truncate pointers or partial fields")
+endforeach()
 extract_security_slice(
     _qcommon_files_security_source
     "int __cdecl FS_ServerSetReferencedFiles("
@@ -1103,6 +1630,31 @@ require_source_contains(
     "universal/info_string.h"
     "std::strchr(value, '@')"
     "path tokens cannot inject download-list framing fields")
+require_source_contains(
+    "universal/info_string.h"
+    "*cursor == static_cast<unsigned char>(0x7f)"
+    "path tokens cannot contain the ASCII delete control byte")
+require_source_contains(
+    "universal/info_string.h"
+    "std::strpbrk(value, \":<>|?*\")"
+    "download paths cannot contain Windows namespaces or wildcard metacharacters")
+require_source_contains(
+    "universal/info_string.h"
+    "detail::IsWindowsDosDevicePathComponent(component, cursor)"
+    "download paths cannot resolve through Windows DOS device aliases")
+foreach(_marker IN ITEMS
+    "ComponentStemEquals(begin, baseEnd, \"CONIN$\", 6)"
+    "ComponentStemEquals(begin, baseEnd, \"CONOUT$\", 7)"
+    "ComponentStemEquals(begin, baseEnd, \"CLOCK$\", 6)"
+    "suffix == 0xB9u"
+    "suffix == 0xC2u"
+    "componentLength == 1 && component[0] == '.'"
+    "component[componentLength - 1] == '.'")
+    require_source_contains(
+        "universal/info_string.h"
+        "${_marker}"
+        "download paths reject Win32 device and dot-normalization aliases")
+endforeach()
 foreach(_marker IN ITEMS
     "std::array<int, ARRAY_COUNT(fs_serverReferencedIwds)> parsedChecksums{};"
     "const int checksumCount = Cmd_Argc();"

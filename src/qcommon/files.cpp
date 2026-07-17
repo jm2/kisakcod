@@ -51,14 +51,7 @@ char *__cdecl FS_GetMapBaseName(char *mapname)
 
 int __cdecl FS_serverPak(const char *pak)
 {
-    char szFile[68]; // [esp+10h] [ebp-48h] BYREF
-
-    if (!pak || strlen(pak) >= sizeof(szFile))
-        return 0;
-
-    I_strncpyz(szFile, pak, sizeof(szFile));
-    I_strlwr(szFile);
-    return strstr(szFile, "_svr_") != 0;
+    return server_file_compare::IsServerOnlyIwdName(pak);
 }
 
 int __cdecl FS_iwIwd(char *iwd, char *base)
@@ -212,7 +205,10 @@ FS_SERVER_COMPARE_RESULT LegacyCompareResult(
 
 int __cdecl FS_CompareIwds(char *needediwds, int len, int dlstring)
 {
-    if (!needediwds || len <= 0 || !ServerReferenceCountsAreValid())
+    if (!needediwds || len <= 0)
+        return NOT_DOWNLOADABLE;
+    needediwds[0] = '\0';
+    if (!ServerReferenceCountsAreValid())
         return NOT_DOWNLOADABLE;
 
     const server_file_compare::Result result =
@@ -231,7 +227,10 @@ int __cdecl FS_CompareIwds(char *needediwds, int len, int dlstring)
 
 int __cdecl FS_CompareFFs(char *neededFFs, int len, int dlstring)
 {
-    if (!neededFFs || len <= 0 || !ServerReferenceCountsAreValid())
+    if (!neededFFs || len <= 0)
+        return NOT_DOWNLOADABLE;
+    neededFFs[0] = '\0';
+    if (!ServerReferenceCountsAreValid())
         return NOT_DOWNLOADABLE;
 
     const server_file_compare::Result result =
@@ -250,7 +249,10 @@ int __cdecl FS_CompareFFs(char *neededFFs, int len, int dlstring)
 
 FS_SERVER_COMPARE_RESULT __cdecl FS_CompareWithServerFiles(char *neededFiles, int len, int dlstring)
 {
-    if (!neededFiles || len <= 0 || !ServerReferenceCountsAreValid())
+    if (!neededFiles || len <= 0)
+        return NOT_DOWNLOADABLE;
+    neededFiles[0] = '\0';
+    if (!ServerReferenceCountsAreValid())
         return NOT_DOWNLOADABLE;
 
     return LegacyCompareResult(server_file_compare::CompareAll(

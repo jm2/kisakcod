@@ -136,6 +136,13 @@ void TestInfoStringPredicates()
 
     static constexpr char controlValue[] = {
         'o', 'k', static_cast<char>(0x1f), '\0'};
+    static constexpr char deleteValue[] = {
+        'o', 'k', static_cast<char>(0x7f), '\0'};
+    static constexpr char comSuperscriptOne[] = {
+        'C', 'O', 'M', static_cast<char>(0xB9), '\0'};
+    static constexpr char lptSuperscriptTwoUtf8[] = {
+        'L', 'P', 'T', static_cast<char>(0xC2),
+        static_cast<char>(0xB2), '\0'};
     struct PredicateCase
     {
         const char *value;
@@ -148,6 +155,7 @@ void TestInfoStringPredicates()
         {"bad;value", "semicolon"},
         {"bad\"value", "quote"},
         {controlValue, "control byte"},
+        {deleteValue, "delete control byte"},
         {"bad//value", "line-comment introducer"},
         {"bad/*value", "block-comment introducer"},
     };
@@ -200,6 +208,15 @@ void TestInfoStringPredicates()
         {"mods/AUX/zone", "an intermediate AUX component must fail"},
         {"mods/COM1.ff", "a COM1 device name before an extension must fail"},
         {"mods/lPt9/zone", "a case-insensitive LPT9 component must fail"},
+        {"CONIN$", "the console-input DOS device must fail"},
+        {"mods/conout$.log", "the console-output DOS device must fail"},
+        {"CLOCK$", "the clock DOS device must fail"},
+        {comSuperscriptOne, "an 8-bit superscript COM device must fail"},
+        {lptSuperscriptTwoUtf8, "a UTF-8 superscript LPT device must fail"},
+        {".", "the current-directory component must fail"},
+        {"mods/./zone", "an intermediate current-directory component must fail"},
+        {"mods/zone.", "a trailing-dot component must fail"},
+        {"mods/zone./file", "an intermediate trailing-dot component must fail"},
     };
     for (const PredicateCase &testCase : unsafePortablePaths)
     {
@@ -218,6 +235,9 @@ void TestInfoStringPredicates()
         {"mods/LPT0/zone", "LPT0 is not a reserved DOS device"},
         {"mods/lpt10/zone", "LPT10 is not a reserved DOS device"},
         {"mods/xcom1.cfg", "an embedded device spelling is ordinary text"},
+        {"conin", "CONIN without a dollar is ordinary text"},
+        {"conout", "CONOUT without a dollar is ordinary text"},
+        {"mods/.hidden/zone", "a leading dot in a longer component is valid"},
     };
     for (const PredicateCase &testCase : safePortableNearMisses)
     {
@@ -291,6 +311,127 @@ void TestSignedDecimalTokenParsing()
     Expect(
         !TryParseSignedDecimalToken("1", nullptr),
         "a null checksum destination must fail");
+}
+
+void TestExactInfoValueViews()
+{
+    using info_string::IsWellFormed;
+    using info_string::TryGetExactValueView;
+    using info_string::ValueMatchesExactOrAbsentEmpty;
+
+    Expect(
+        IsWellFormed("")
+            && IsWellFormed("\\empty\\")
+            && IsWellFormed("\\empty\\\\next\\value"),
+        "empty info strings and empty values must have valid pair grammar");
+    Expect(
+        !IsWellFormed(nullptr)
+            && !IsWellFormed("\\")
+            && !IsWellFormed("\\dangling")
+            && !IsWellFormed("\\key\\value\\")
+            && !IsWellFormed("\\key\\value\\\\bad"),
+        "missing values, orphan delimiters, and empty keys must be malformed");
+    Expect(
+        ValueMatchesExactOrAbsentEmpty("", "missing", "")
+            && ValueMatchesExactOrAbsentEmpty(
+                "\\other\\value", "missing", "")
+            && ValueMatchesExactOrAbsentEmpty(
+                "\\target\\", "target", "")
+            && ValueMatchesExactOrAbsentEmpty(
+                "\\target\\value", "target", "value"),
+        "an absent key is equivalent only to the serializer's empty value");
+    Expect(
+        !ValueMatchesExactOrAbsentEmpty(
+            "\\other\\value", "missing", "value")
+            && !ValueMatchesExactOrAbsentEmpty(
+                "\\target\\other", "target", "value")
+            && !ValueMatchesExactOrAbsentEmpty(
+                "\\other\\value\\", "missing", "")
+            && !ValueMatchesExactOrAbsentEmpty(
+                "\\target\\\\target\\", "target", "")
+            && !ValueMatchesExactOrAbsentEmpty(
+                "", "", "")
+            && !ValueMatchesExactOrAbsentEmpty(
+                "", nullptr, ""),
+        "nonempty, malformed, mismatched, and duplicate values must fail");
+
+    static constexpr char info[] =
+        "\\alpha\\one\\empty\\\\target\\first second\\omega\\last";
+    const char *value = nullptr;
+    std::size_t valueLength = 0;
+    Expect(
+        TryGetExactValueView(
+            info,
+            "target",
+            &value,
+            &valueLength),
+        "an exact info key must return a stable value view");
+    Expect(
+        valueLength == std::strlen("first second")
+            && std::string_view(value, valueLength) == "first second",
+        "a value view must stop at its delimiter without requiring a NUL");
+
+    value = nullptr;
+    valueLength = 99;
+    Expect(
+        TryGetExactValueView(
+            info,
+            "empty",
+            &value,
+            &valueLength)
+            && valueLength == 0,
+        "a present-empty info value must remain distinguishable");
+
+    constexpr char sentinel[] = "unchanged";
+    struct RejectedView
+    {
+        const char *info;
+        const char *key;
+        const char *description;
+    };
+    constexpr RejectedView rejected[] = {
+        {info, "missing", "a missing key must fail"},
+        {"\\target\\value\\dangling", "target",
+            "a malformed trailing pair must invalidate the complete view"},
+        {"\\target\\one\\target\\two", "target",
+            "a duplicate key must fail closed"},
+        {"\\target\\one\\\\bad", "target",
+            "an empty trailing key must invalidate the complete view"},
+        {"\\target\\value\\", "target",
+            "a trailing orphan delimiter must invalidate the complete view"},
+        {nullptr, "target", "a null info string must fail"},
+        {info, nullptr, "a null key must fail"},
+        {info, "", "an empty key must fail"},
+    };
+    for (const RejectedView &testCase : rejected)
+    {
+        value = sentinel;
+        valueLength = 77;
+        Expect(
+            !TryGetExactValueView(
+                testCase.info,
+                testCase.key,
+                &value,
+                &valueLength),
+            testCase.description);
+        Expect(
+            value == sentinel && valueLength == 77,
+            "a failed value lookup must leave both outputs unchanged");
+    }
+
+    value = sentinel;
+    Expect(
+        !TryGetExactValueView(
+            info,
+            "target",
+            nullptr,
+            &valueLength)
+            && !TryGetExactValueView(
+                info,
+                "target",
+                &value,
+                nullptr),
+        "null value-view outputs must fail");
 }
 
 void ExpectRejectedNameFormatting(
@@ -778,6 +919,7 @@ int main()
     TestSignedDecimalFormatting();
     TestInfoStringPredicates();
     TestSignedDecimalTokenParsing();
+    TestExactInfoValueViews();
     TestRejectedNameComponents();
     TestInfoStringAppend();
     TestExactKeyDetection();

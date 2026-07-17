@@ -1143,11 +1143,55 @@ void __cdecl SV_KillLocalServer()
         sv.killServer = 1;
 }
 
+static bool SV_SystemInfoValueMatches(
+    const char *const systemInfo,
+    const char *const key,
+    const char *const expected)
+{
+    return info_string::ValueMatchesExactOrAbsentEmpty(
+        systemInfo, key, expected);
+}
+
+static std::size_t SV_CountSystemInfoTokens(const char *const value)
+{
+    if (!value)
+        return 0;
+
+    std::size_t count = 0;
+    bool inToken = false;
+    for (const unsigned char *cursor =
+             reinterpret_cast<const unsigned char *>(value);
+         *cursor;
+         ++cursor)
+    {
+        if (*cursor <= static_cast<unsigned char>(' '))
+        {
+            inToken = false;
+        }
+        else if (!inToken)
+        {
+            ++count;
+            inToken = true;
+        }
+    }
+    return count;
+}
+
 void __cdecl SV_SetSystemInfoConfig()
 {
     char *v0; // eax
     char dest[0x2000]; // [esp+24h] [ebp-2008h] BYREF
     bool complete = false;
+
+    if (SV_CountSystemInfoTokens(sv_referencedIwds->current.string)
+        != SV_CountSystemInfoTokens(
+            sv_referencedIwdNames->current.string))
+    {
+        Com_Error(
+            ERR_DROP,
+            "Referenced IWD checksum/name count mismatch");
+        return;
+    }
 
     v0 = Dvar_InfoString_Big(8, &complete);
     if (!complete)
@@ -1157,8 +1201,29 @@ void __cdecl SV_SetSystemInfoConfig()
             "SYSTEMINFO cannot be represented within protocol limits");
         return;
     }
-    if (strcmp(
-            Info_ValueForKey(v0, "sv_referencedFFCheckSums"),
+    if (!SV_SystemInfoValueMatches(
+            v0,
+            "sv_referencedIwds",
+            sv_referencedIwds->current.string))
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO overflow or sanitization altered sv_referencedIwds");
+        return;
+    }
+    if (!SV_SystemInfoValueMatches(
+            v0,
+            "sv_referencedIwdNames",
+            sv_referencedIwdNames->current.string))
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO overflow or sanitization altered sv_referencedIwdNames");
+        return;
+    }
+    if (!SV_SystemInfoValueMatches(
+            v0,
+            "sv_referencedFFCheckSums",
             sv_referencedFFCheckSums->current.string))
     {
         Com_Error(
@@ -1166,8 +1231,9 @@ void __cdecl SV_SetSystemInfoConfig()
             "SYSTEMINFO overflow or sanitization altered sv_referencedFFCheckSums");
         return;
     }
-    if (strcmp(
-            Info_ValueForKey(v0, "sv_referencedFFNames"),
+    if (!SV_SystemInfoValueMatches(
+            v0,
+            "sv_referencedFFNames",
             sv_referencedFFNames->current.string))
     {
         Com_Error(
@@ -1185,9 +1251,9 @@ void __cdecl SV_SetSystemInfoConfig()
             "SYSTEMINFO overflow while adding the explicit empty fs_game value");
         return;
     }
-    if (!info_string::HasExactKey(dest, "fs_game")
-        || strcmp(
-            Info_ValueForKey(dest, "fs_game"),
+    if (!SV_SystemInfoValueMatches(
+            dest,
+            "fs_game",
             fs_gameDirVar->current.string))
     {
         Com_Error(

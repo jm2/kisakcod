@@ -972,7 +972,7 @@ void __cdecl CL_DownloadsComplete(int32_t localClientNum)
     clc = CL_GetLocalClientConnection(localClientNum);
     if (autoupdateStarted)
     {
-        if (autoupdateFilename)
+        if (autoupdateFilename[0])
         {
             if (strlen(autoupdateFilename) > 4)
             {

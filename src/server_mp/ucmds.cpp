@@ -7,8 +7,12 @@
 
 #include "server_mp.h"
 #include <qcommon/cmd.h>
+#include <qcommon/server_file_compare.h>
+#include <script/scr_stringlist.h>
 #include <universal/com_files.h>
 
+#include <cstddef>
+#include <cstring>
 
 void __cdecl SV_UnmutePlayer_f(client_t *cl)
 {
@@ -171,14 +175,93 @@ void __cdecl SV_NextDownload_f(client_t *cl)
     }
 }
 
+bool __cdecl SV_IsDownloadRequestAuthorized(const char *const request)
+{
+    const server_file_compare::DownloadKind kind =
+        server_file_compare::ClassifyServerDownloadRequest(request);
+    if (kind == server_file_compare::DownloadKind::Invalid
+        || !sv.configstrings[1])
+    {
+        return false;
+    }
+
+    const char *const systemInfo =
+        SL_ConvertToString(SV_GetConfigstringConst(1));
+    const char *gameDirectoryView = nullptr;
+    std::size_t gameDirectoryLength = 0;
+    const char *const referenceKey =
+        kind == server_file_compare::DownloadKind::Iwd
+        ? "sv_referencedIwdNames"
+        : "sv_referencedFFNames";
+    const char *referencedNames = nullptr;
+    std::size_t referencedNamesLength = 0;
+    if (!info_string::TryGetExactValueView(
+            systemInfo,
+            "fs_game",
+            &gameDirectoryView,
+            &gameDirectoryLength)
+        || !info_string::TryGetExactValueView(
+            systemInfo,
+            referenceKey,
+            &referencedNames,
+            &referencedNamesLength))
+    {
+        return false;
+    }
+
+    char gameDirectory[256];
+    if (gameDirectoryLength == 0
+        || gameDirectoryLength >= ARRAY_COUNT(gameDirectory))
+    {
+        return false;
+    }
+    std::memcpy(
+        gameDirectory,
+        gameDirectoryView,
+        gameDirectoryLength);
+    gameDirectory[gameDirectoryLength] = '\0';
+
+    return server_file_compare::IsPermittedServerDownloadRequest(
+        request,
+        gameDirectory,
+        referencedNames,
+        referencedNamesLength,
+        kind);
+}
+
 void __cdecl SV_BeginDownload_f(client_t *cl)
 {
-	const char *v1; // eax
+    const char *const request = SV_Cmd_Argv(1);
+    if (SV_Cmd_Argc() != 2
+        || !SV_IsDownloadRequestAuthorized(request))
+    {
+        Com_PrintWarning(
+            15,
+            "Client '%s' requested an unauthorized download\n",
+            cl->name);
+        SV_DropClient(cl, "invalid download request", 1);
+        return;
+    }
 
-	SV_CloseDownload(cl);
-	cl->downloading = 1;
-	v1 = SV_Cmd_Argv(1);
-	I_strncpyz(cl->downloadName, v1, 64);
+    static_assert(
+        ARRAY_COUNT(cl->downloadName)
+        == server_file_compare::kServerDownloadNameCapacity);
+    const std::size_t requestLength = std::strlen(request);
+    SV_CloseDownload(cl);
+    cl->downloadSize = 0;
+    cl->downloadCount = 0;
+    cl->downloadClientBlock = 0;
+    cl->downloadCurrentBlock = 0;
+    cl->downloadXmitBlock = 0;
+    for (int &blockSize : cl->downloadBlockSize)
+        blockSize = 0;
+    cl->downloadEOF = 0;
+    cl->downloadSendTime = 0;
+    cl->downloadURL[0] = '\0';
+    cl->downloadingWWW = 0;
+    cl->clientDownloadingWWW = 0;
+    std::memcpy(cl->downloadName, request, requestLength + 1);
+    cl->downloading = 1;
 }
 
 void __cdecl SV_VerifyIwds_f(client_t *cl)

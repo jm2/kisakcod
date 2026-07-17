@@ -11,6 +11,9 @@
 #include <qcommon/files.h>
 #include <universal/profile.h>
 
+#include <cstddef>
+#include <cstring>
+
 serverStaticHeader_t svsHeader;
 //struct dvar_s const *const sv_clientArchive 84ff2600     sv_snapshot_mp.obj
 //int svsHeaderValid       84ff262c     sv_snapshot_mp.obj
@@ -1456,10 +1459,12 @@ void __cdecl SV_BeginClientSnapshot(client_t *client, msg_t *msg)
 void __cdecl SV_Download_Clear(client_t *cl)
 {
     if (!cl)
+    {
         MyAssertHandler(".\\server_mp\\sv_client_mp.cpp", 1711, 0, "%s", "cl");
+        return;
+    }
+    SV_CloseDownload(cl);
     cl->downloading = 0;
-    cl->download = 0;
-    cl->downloadName[0] = 0;
 }
 
 void __cdecl SV_WriteDownloadErrorMessage(client_t *cl, msg_t *msg, const char *errorMessage)
@@ -1473,18 +1478,34 @@ void __cdecl SV_WriteDownloadErrorMessage(client_t *cl, msg_t *msg, const char *
 
 int __cdecl SV_WWWRedirectClient(client_t *cl, msg_t *msg)
 {
-    char *v2; // eax
-    int handle; // [esp+0h] [ebp-Ch] BYREF
     int download_flag; // [esp+4h] [ebp-8h]
-    int downloadSize; // [esp+8h] [ebp-4h]
+    const int downloadSize = cl->downloadSize;
 
     download_flag = 0;
-    downloadSize = FS_SV_FOpenFileRead(cl->downloadName, &handle);
-    if (downloadSize)
+    if (cl->download && downloadSize > 0
+        && sv_wwwBaseURL
+        && sv_wwwBaseURL->current.string
+        && *sv_wwwBaseURL->current.string)
     {
-        FS_FCloseFile(handle);
-        v2 = va("%s/%s", sv_wwwBaseURL->current.string, cl->downloadName);
-        I_strncpyz(cl->downloadURL, v2, 256);
+        const std::size_t baseLength =
+            std::strlen(sv_wwwBaseURL->current.string);
+        const std::size_t nameLength = std::strlen(cl->downloadName);
+        if (baseLength > ARRAY_COUNT(cl->downloadURL) - 2
+            || nameLength > ARRAY_COUNT(cl->downloadURL) - baseLength - 2)
+        {
+            Com_PrintWarning(
+                15,
+                "Download redirect URL is too long for '%s'\n",
+                cl->downloadName);
+            return 0;
+        }
+
+        Com_sprintf(
+            cl->downloadURL,
+            ARRAY_COUNT(cl->downloadURL),
+            "%s/%s",
+            sv_wwwBaseURL->current.string,
+            cl->downloadName);
         Com_Printf(15, "Redirecting client '%s' to %s\n", cl->name, cl->downloadURL);
         cl->downloadingWWW = 1;
         MSG_WriteByte(msg, 5u);
@@ -1499,7 +1520,10 @@ int __cdecl SV_WWWRedirectClient(client_t *cl, msg_t *msg)
     }
     else
     {
-        Com_Printf(15, "ERROR: Client '%s': couldn't extract file size for %s\n", cl->downloadName, handle);
+        Com_Printf(
+            15,
+            "ERROR: Client '%s': download is not open for redirect\n",
+            cl->name);
         return 0;
     }
 }
@@ -1580,6 +1604,21 @@ void __cdecl SV_WriteDownloadToClient(client_t *cl, msg_t *msg)
         {
             if (sv_allowDownload->current.enabled)
             {
+                if (!SV_IsDownloadRequestAuthorized(cl->downloadName))
+                {
+                    Com_PrintWarning(
+                        15,
+                        "clientDownload: %d : \"%s\" is no longer authorized\n",
+                        cl - svs.clients,
+                        cl->downloadName);
+                    Com_sprintf(
+                        errorMessage,
+                        sizeof(errorMessage),
+                        "EXE_AUTODL_FILENOTONSERVER %s",
+                        cl->downloadName);
+                    SV_WriteDownloadErrorMessage(cl, msg, errorMessage);
+                    return;
+                }
                 if (FS_iwIwd(cl->downloadName, (char*)"main"))
                 {
                     Com_Printf(

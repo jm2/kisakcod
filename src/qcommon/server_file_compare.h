@@ -1,5 +1,7 @@
 #pragma once
 
+#include <universal/info_string.h>
+
 #include <array>
 #include <cstddef>
 #include <cstring>
@@ -28,6 +30,14 @@ struct Outcome
 };
 
 inline constexpr std::size_t kAggregateCapacity = 1024;
+inline constexpr std::size_t kServerDownloadNameCapacity = 64;
+
+enum class DownloadKind
+{
+    Invalid,
+    Iwd,
+    FastFile,
+};
 
 struct IwdReferences
 {
@@ -63,6 +73,33 @@ inline unsigned char FoldAscii(const unsigned char value) noexcept
                 - static_cast<unsigned char>('A')));
     }
     return value;
+}
+
+inline bool IsServerOnlyIwdName(const char *const name) noexcept
+{
+    if (!name)
+        return false;
+
+    constexpr char marker[] = "_svr_";
+    const std::size_t nameLength = std::strlen(name);
+    for (std::size_t offset = 0;
+         offset + sizeof(marker) - 1 <= nameLength;
+         ++offset)
+    {
+        bool match = true;
+        for (std::size_t index = 0; index < sizeof(marker) - 1; ++index)
+        {
+            if (FoldAscii(static_cast<unsigned char>(name[offset + index]))
+                != FoldAscii(static_cast<unsigned char>(marker[index])))
+            {
+                match = false;
+                break;
+            }
+        }
+        if (match)
+            return true;
+    }
+    return false;
 }
 
 inline bool IsModGameDirectory(const char *const gameDirectory) noexcept
@@ -126,6 +163,143 @@ inline std::size_t BoundedLength(
     while (length < capacity && value[length] != '\0')
         ++length;
     return length;
+}
+
+inline bool CanStoreServerDownloadName(
+    const char *const name,
+    const char *const extension) noexcept
+{
+    if (!name || !extension)
+        return false;
+
+    const std::size_t nameLength = std::strlen(name);
+    const std::size_t extensionLength = std::strlen(extension);
+    return nameLength < kServerDownloadNameCapacity
+        && extensionLength
+            < kServerDownloadNameCapacity - nameLength;
+}
+
+inline DownloadKind ClassifyServerDownloadRequest(
+    const char *const request) noexcept
+{
+    if (!request)
+        return DownloadKind::Invalid;
+
+    const std::size_t requestLength =
+        BoundedLength(request, kServerDownloadNameCapacity);
+    if (requestLength == 0
+        || requestLength == kServerDownloadNameCapacity)
+    {
+        return DownloadKind::Invalid;
+    }
+
+    constexpr char iwdExtension[] = ".iwd";
+    constexpr char fastFileExtension[] = ".ff";
+    if (requestLength > sizeof(iwdExtension) - 1
+        && std::memcmp(
+            request + requestLength - (sizeof(iwdExtension) - 1),
+            iwdExtension,
+            sizeof(iwdExtension) - 1) == 0)
+    {
+        return DownloadKind::Iwd;
+    }
+    if (requestLength > sizeof(fastFileExtension) - 1
+        && std::memcmp(
+            request + requestLength - (sizeof(fastFileExtension) - 1),
+            fastFileExtension,
+            sizeof(fastFileExtension) - 1) == 0)
+    {
+        return DownloadKind::FastFile;
+    }
+    return DownloadKind::Invalid;
+}
+
+inline bool TokenListContainsExact(
+    const char *const list,
+    const std::size_t listLength,
+    const char *const value,
+    const std::size_t valueLength) noexcept
+{
+    if (!list || !value || valueLength == 0)
+        return false;
+
+    std::size_t cursor = 0;
+    while (cursor < listLength)
+    {
+        while (cursor < listLength
+            && static_cast<unsigned char>(list[cursor])
+                <= static_cast<unsigned char>(' '))
+        {
+            ++cursor;
+        }
+
+        const std::size_t tokenStart = cursor;
+        while (cursor < listLength
+            && static_cast<unsigned char>(list[cursor])
+                > static_cast<unsigned char>(' '))
+        {
+            ++cursor;
+        }
+
+        const std::size_t tokenLength = cursor - tokenStart;
+        if (tokenLength == valueLength
+            && std::memcmp(
+                list + tokenStart,
+                value,
+                valueLength) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A client may request only one complete, canonical filename that this server
+// advertised for the active mod. The exact token match prevents arbitrary
+// safe-looking files below the mod directory from becoming downloadable.
+inline bool IsPermittedServerDownloadRequest(
+    const char *const request,
+    const char *const gameDirectory,
+    const char *const referencedNames,
+    const std::size_t referencedNamesLength,
+    const DownloadKind kind) noexcept
+{
+    const std::size_t requestLength =
+        BoundedLength(request, kServerDownloadNameCapacity);
+    if (ClassifyServerDownloadRequest(request) != kind
+        || kind == DownloadKind::Invalid
+        || (kind == DownloadKind::Iwd
+            && IsServerOnlyIwdName(request))
+        || !gameDirectory
+        || !*gameDirectory
+        || !info_string::IsSafeUnquotedPathTokenComponent(request)
+        || !info_string::IsSafeUnquotedPathTokenComponent(gameDirectory)
+        || !GameDirectorySuffix(request, gameDirectory))
+    {
+        return false;
+    }
+
+    const std::size_t extensionLength =
+        kind == DownloadKind::Iwd ? sizeof(".iwd") - 1 : sizeof(".ff") - 1;
+    return TokenListContainsExact(
+        referencedNames,
+        referencedNamesLength,
+        request,
+        requestLength - extensionLength);
+}
+
+inline bool IsPermittedServerDownloadRequest(
+    const char *const request,
+    const char *const gameDirectory,
+    const char *const referencedNames,
+    const DownloadKind kind) noexcept
+{
+    return IsPermittedServerDownloadRequest(
+        request,
+        gameDirectory,
+        referencedNames,
+        referencedNames ? std::strlen(referencedNames) : 0,
+        kind);
 }
 
 // Preflights the complete append, including the final NUL, before changing
@@ -242,7 +416,9 @@ inline Outcome CompareIwds(
             GameDirectorySuffix(name, gameDirectory);
         const bool officialMainIwd = callbacks.isOfficialMainIwd
             && callbacks.isOfficialMainIwd(callbacks.context, name);
-        if (!suffix || officialMainIwd)
+        if (!suffix
+            || officialMainIwd
+            || !CanStoreServerDownloadName(name, ".iwd"))
         {
             // A complete diagnostic is useful when it fits. The safe result is
             // still non-downloadable when even the diagnostic cannot fit.
@@ -313,7 +489,7 @@ inline Outcome CompareFastFiles(
         if (fileSize == references.fileSizes[index])
             continue;
 
-        if (!suffix)
+        if (!suffix || !CanStoreServerDownloadName(name, ".ff"))
         {
             if (!AppendFileName(output, capacity, name, ".ff"))
                 return {Result::NotDownloadable, Failure::OutputCapacity};
