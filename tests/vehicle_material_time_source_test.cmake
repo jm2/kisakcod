@@ -34,6 +34,24 @@ function(forbid_contains SOURCE_VARIABLE NEEDLE DESCRIPTION)
 endfunction()
 
 read_normalized(
+    "bgame/bg_vehicle_material_time.h" _helper
+    "shared vehicle material-time helper")
+foreach(_required IN ITEMS
+    "(std::numeric_limits<std::int32_t>::min)()"
+    "(std::numeric_limits<std::int32_t>::max)()")
+    require_contains(
+        _helper "${_required}"
+        "numeric limits must remain safe with Windows min/max macros")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "std::numeric_limits<std::int32_t>::min()"
+    "std::numeric_limits<std::int32_t>::max()")
+    forbid_contains(
+        _helper "${_forbidden}"
+        "unparenthesized numeric limits collide with Windows macros")
+endforeach()
+
+read_normalized(
     "cgame/cg_ents.cpp" _cg_sp "single-player rendering consumer")
 foreach(_required IN ITEMS
     "#include <bgame/bg_vehicle_material_time.h>"

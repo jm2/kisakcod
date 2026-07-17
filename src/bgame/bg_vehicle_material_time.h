@@ -62,9 +62,9 @@ inline constexpr std::int32_t kDefault = 0;
     const double scaled = static_cast<double>(Difference(next, current))
         * static_cast<double>(fraction);
     const double minimum =
-        static_cast<double>(std::numeric_limits<std::int32_t>::min());
+        static_cast<double>((std::numeric_limits<std::int32_t>::min)());
     const double maximum =
-        static_cast<double>(std::numeric_limits<std::int32_t>::max());
+        static_cast<double>((std::numeric_limits<std::int32_t>::max)());
 
     // Normal frame interpolation is in [0, 1]. Keep malformed/extrapolated
     // values defined too, instead of relying on an out-of-range float-to-int
@@ -72,9 +72,9 @@ inline constexpr std::int32_t kDefault = 0;
     const std::int32_t offset = scaled != scaled
         ? 0
         : (scaled <= minimum
-            ? std::numeric_limits<std::int32_t>::min()
+            ? (std::numeric_limits<std::int32_t>::min)()
             : (scaled >= maximum
-                ? std::numeric_limits<std::int32_t>::max()
+                ? (std::numeric_limits<std::int32_t>::max)()
                 : static_cast<std::int32_t>(scaled)));
     return FromBits(ToBits(current) + ToBits(offset));
 }
