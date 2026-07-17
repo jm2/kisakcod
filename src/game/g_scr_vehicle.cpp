@@ -24,6 +24,7 @@
 
 #include "bullet.h"
 #include <universal/surfaceflags.h>
+#include <bgame/bg_vehicle_material_time.h>
 
 //Line 51763:  0006 : 00006554       unsigned short **s_flashTags      827b6554     g_scr_vehicle.obj
 
@@ -1019,7 +1020,8 @@ void __cdecl VEH_UpdateMaterialTime(gentity_s *ent)
     info = &s_vehicleInfos[veh->infoIdx];
     if (!info->texScroll)
     {
-        ent->s.lerp.u.vehicle.materialTime = -1;
+        ent->s.lerp.u.vehicle.materialTime =
+            bg::vehicle_material_time::kDisabled;
         return;
     }
 
@@ -1049,9 +1051,13 @@ void __cdecl VEH_UpdateMaterialTime(gentity_s *ent)
     else
         scale = (speed * 0.0056818184f) * g_vehicleTexScrollScale->current.value;
 
-    // -1000 * 0.05 frame time, then truncated-to-int subtraction.
-    delta = (int)((scale * 0.050000001f) * -1000.0f);
-    ent->s.lerp.u.vehicle.materialTime -= delta;
+    // Input bounds for this legacy float-to-int conversion are separate from
+    // the signed-overflow fix below and remain to be validated at the script
+    // forcedMaterialSpeed boundary.
+    delta = (int)((scale * 0.050000001f) * 1000.0f);
+    ent->s.lerp.u.vehicle.materialTime =
+        bg::vehicle_material_time::Advance(
+            ent->s.lerp.u.vehicle.materialTime, delta);
 }
 
 // --- VEH_UpdateWeapon (CoD3SP 0x82261670) ---

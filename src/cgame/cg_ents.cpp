@@ -21,6 +21,7 @@
 #include "cg_compassfriendlies.h"
 
 #include <bgame/bg_local.h>
+#include <bgame/bg_vehicle_material_time.h>
 #include <cgame/cg_pose_atomic.h>
 
 #include <cstdlib>
@@ -1171,6 +1172,9 @@ void __cdecl CG_Vehicle(int localClientNum, centity_s *cent)
     entityState_s *p_nextState; // r30
     const DObj_s *obj; // r3
     int RenderFlagForRefEntity; // r3
+    float lightingOrigin[3];
+    cg_s *cgameGlob;
+    float materialTime;
 
     p_nextState = &cent->nextState;
     if ((cent->nextState.lerp.eFlags & 0x20) == 0)
@@ -1179,9 +1183,23 @@ void __cdecl CG_Vehicle(int localClientNum, centity_s *cent)
         if (obj)
         {
             CG_Vehicle_PreControllers(localClientNum, obj, cent);
-            CG_GetLocalClientGlobals(localClientNum);
+            lightingOrigin[0] = cent->pose.origin[0];
+            lightingOrigin[1] = cent->pose.origin[1];
+            lightingOrigin[2] = cent->pose.origin[2] + 32.0f;
+            cgameGlob = CG_GetLocalClientGlobals(localClientNum);
+            materialTime = bg::vehicle_material_time::ForRender(
+                cent->currentState.u.vehicle.materialTime,
+                p_nextState->lerp.u.vehicle.materialTime,
+                cgameGlob->frameInterpolation,
+                cgameGlob->time);
             RenderFlagForRefEntity = CG_GetRenderFlagForRefEntity(p_nextState->lerp.eFlags);
-            R_AddDObjToScene(obj, &cent->pose, p_nextState->number, RenderFlagForRefEntity | 4, cent->pose.origin, 0.0f); // KISAKTODO: is materialTime really 0.0 here?
+            R_AddDObjToScene(
+                obj,
+                &cent->pose,
+                p_nextState->number,
+                RenderFlagForRefEntity | 4,
+                lightingOrigin,
+                materialTime);
             if (p_nextState->eType == 11)
                 CG_CompassUpdateVehicleInfo(localClientNum, p_nextState->number);
         }
