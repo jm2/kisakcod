@@ -161,6 +161,9 @@ void TestInfoStringPredicates()
     Expect(
         IsSafeUnquotedValueComponent("mods/example-zone_1"),
         "ordinary portable token characters must be accepted");
+    Expect(
+        IsSafeUnquotedValueComponent("zone@name"),
+        "the generic value policy must not inherit download-list framing");
     for (const PredicateCase &testCase : unsafeValues)
     {
         Expect(
@@ -198,6 +201,9 @@ void TestInfoStringPredicates()
     Expect(
         !IsSafeUnquotedPathTokenComponent("mods::example"),
         "a namespace spelling must be rejected for path components");
+    Expect(
+        !IsSafeUnquotedPathTokenComponent("mods@example"),
+        "the download-list field delimiter must be rejected for paths");
 }
 
 void TestSignedDecimalTokenParsing()
@@ -294,6 +300,7 @@ void TestRejectedNameComponents()
         {"zone/*name", "a zone name containing /* must fail"},
         {"zone..name", "a zone name containing .. must fail"},
         {"zone::name", "a zone name containing :: must fail"},
+        {"zone@name", "a zone name containing @ must fail"},
         {"/zone", "a zone name beginning with slash must fail"},
         {"*zone", "a zone name beginning with star must fail"},
         {"zone/", "a zone name ending with slash must fail"},
@@ -319,6 +326,7 @@ void TestRejectedNameComponents()
         {"mods/*example", "a mod directory containing /* must fail"},
         {"mods/../example", "a mod directory containing .. must fail"},
         {"mods::example", "a mod directory containing :: must fail"},
+        {"mods@example", "a mod directory containing @ must fail"},
         {"/mods", "a mod directory beginning with slash must fail"},
         {"*mods", "a mod directory beginning with star must fail"},
         {"mods/example/", "a mod directory ending with slash must fail"},

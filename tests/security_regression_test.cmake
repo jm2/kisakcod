@@ -1099,6 +1099,10 @@ require_source_contains(
     "qcommon/files.cpp"
     "#include <universal/info_string.h>"
     "referenced-file ingestion uses the shared path-token policy")
+require_source_contains(
+    "universal/info_string.h"
+    "std::strchr(value, '@')"
+    "path tokens cannot inject download-list framing fields")
 foreach(_marker IN ITEMS
     "std::array<int, ARRAY_COUNT(fs_serverReferencedIwds)> parsedChecksums{};"
     "const int checksumCount = Cmd_Argc();"

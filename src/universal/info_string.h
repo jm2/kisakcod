@@ -37,17 +37,19 @@ inline bool IsSafeUnquotedValueComponent(const char *const value) noexcept
 }
 
 // Path-like token components may contain ordinary forward slashes, but not a
-// leading/trailing separator, either tokenizer comment introducer, or the
-// traversal/namespace spellings rejected by the filesystem domain. Single
-// dots remain valid filename characters. This also makes adjoining two
-// independently validated components with '/' safe.
+// leading/trailing separator, either tokenizer comment introducer, the
+// download-list field delimiter, or traversal/namespace spellings rejected by
+// the filesystem domain. Single dots remain valid filename characters. This
+// also makes adjoining two independently validated components with '/' safe.
 inline bool IsSafeUnquotedPathTokenComponent(
     const char *const value) noexcept
 {
     if (!IsSafeUnquotedValueComponent(value))
         return false;
 
-    if (std::strstr(value, "..") || std::strstr(value, "::"))
+    if (std::strchr(value, '@')
+        || std::strstr(value, "..")
+        || std::strstr(value, "::"))
         return false;
 
     const std::size_t length = std::strlen(value);
