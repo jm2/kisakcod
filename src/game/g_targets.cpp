@@ -9,228 +9,496 @@
 #include <server/sv_game.h>
 #include <script/scr_const.h>
 
+#include <cmath>
+
 TargetGlob targGlob;
+
+namespace
+{
+namespace target_protocol = bg::target_protocol;
+constexpr int kMaxTargets = target_protocol::kMaxTargets;
+constexpr std::size_t kSpMaterialNameCapacity = 96;
+
+int OrdinaryEntityLimit()
+{
+    if (!level.gentities || level.num_entities <= 0)
+        return 0;
+    return level.num_entities < ENTITYNUM_WORLD
+        ? level.num_entities
+        : ENTITYNUM_WORLD;
+}
+
+bool ValidateStagedTargetConfig(
+    const char *const configString,
+    const int expectedEntityNumber,
+    target_protocol::ParsedConfig *const parsed)
+{
+    const target_protocol::ConfigParseError error =
+        target_protocol::ParseConfig(
+            configString, OrdinaryEntityLimit(), parsed);
+    if (error != target_protocol::ConfigParseError::None)
+    {
+        Scr_Error(va(
+            "Target configstring update is invalid (%s)",
+            target_protocol::ConfigParseErrorName(error)));
+        return false;
+    }
+    if (parsed->entityNumber != expectedEntityNumber)
+    {
+        Scr_Error("Target configstring entity does not match the live target");
+        return false;
+    }
+    return true;
+}
+
+bool StageTargetScalarConfig(
+    const int targetIndex,
+    const int expectedEntityNumber,
+    const char *const key,
+    const int value,
+    char (&stagedConfigString)[MAX_INFO_STRING],
+    target_protocol::ParsedConfig *const parsed)
+{
+    char currentConfigString[MAX_INFO_STRING];
+    SV_GetConfigstring(
+        CS_TARGETS + targetIndex,
+        currentConfigString,
+        MAX_INFO_STRING);
+    I_strncpyz(
+        stagedConfigString,
+        currentConfigString,
+        MAX_INFO_STRING);
+
+    char valueString[16];
+    const int valueLength = Com_sprintf(
+        valueString, sizeof(valueString), "%i", value);
+    if (valueLength <= 0
+        || !Info_TrySetValueForKey(stagedConfigString, key, valueString))
+    {
+        Scr_Error("Target configstring is too large to update safely");
+        return false;
+    }
+
+    return ValidateStagedTargetConfig(
+        stagedConfigString, expectedEntityNumber, parsed);
+}
+
+bool BuildTargetConfig(
+    const int entityNumber,
+    const float (&offset)[3],
+    const int materialIndex,
+    const int offscreenMaterialIndex,
+    const int flags,
+    char (&configString)[MAX_INFO_STRING])
+{
+    const int encodedOffset[3] = {
+        static_cast<int>(offset[0]),
+        static_cast<int>(offset[1]),
+        static_cast<int>(offset[2]),
+    };
+
+    if (!Info_TrySetValueForKey(
+            configString, "ent", va("%i", entityNumber))
+        || !Info_TrySetValueForKey(
+            configString,
+            "offs",
+            va(
+                "%i %i %i",
+                encodedOffset[0],
+                encodedOffset[1],
+                encodedOffset[2]))
+        || !Info_TrySetValueForKey(
+            configString, "mat", va("%i", materialIndex))
+        || !Info_TrySetValueForKey(
+            configString,
+            "offmat",
+            va("%i", offscreenMaterialIndex))
+        || !Info_TrySetValueForKey(
+            configString, "flags", va("%i", flags)))
+    {
+        Scr_Error("Target configstring could not be built safely");
+        return false;
+    }
+
+    target_protocol::ParsedConfig parsed{};
+    if (!ValidateStagedTargetConfig(
+            configString, entityNumber, &parsed))
+    {
+        return false;
+    }
+    if (parsed.offset[0] != static_cast<float>(encodedOffset[0])
+        || parsed.offset[1] != static_cast<float>(encodedOffset[1])
+        || parsed.offset[2] != static_cast<float>(encodedOffset[2])
+        || parsed.materialIndex != materialIndex
+        || parsed.offscreenMaterialIndex != offscreenMaterialIndex
+        || parsed.flags != flags)
+    {
+        Scr_Error("Target configstring did not preserve the staged values");
+        return false;
+    }
+    return true;
+}
+
+void DetachTargetEntry(target_t *const target)
+{
+    if (target->ent)
+        target->ent->flags &= ~FL_TARGET;
+
+    ClearTargetEntry(target);
+}
+
+void AttachTargetEntry(
+    target_t *const target,
+    gentity_s *const ent)
+{
+    ClearTargetEntry(target);
+    target->ent = ent;
+    ent->flags |= FL_TARGET;
+}
+
+void ClearLiveTargetFlags()
+{
+    if (!level.gentities)
+        return;
+
+    for (int entityNumber = 0;
+         entityNumber < level.num_entities
+             && entityNumber < ENTITYNUM_WORLD;
+         ++entityNumber)
+    {
+        gentity_s &entity = level.gentities[entityNumber];
+        if (entity.r.inuse)
+            entity.flags &= ~FL_TARGET;
+    }
+}
+
+bool IsPublishedMaterialIndex(const int materialIndex)
+{
+    if (materialIndex == target_protocol::kNoMaterial)
+        return true;
+    if (!target_protocol::IsValidMaterialIndex(materialIndex))
+        return false;
+
+    char materialConfigString[MAX_INFO_STRING];
+    SV_GetConfigstring(
+        CS_SERVER_MATERIALS + materialIndex,
+        materialConfigString,
+        MAX_INFO_STRING);
+    return materialConfigString[0] != '\0';
+}
+
+bool IsOrdinaryLiveEntity(
+    gentity_s *const ent,
+    int *const entityNumber)
+{
+    if (!ent || !entityNumber || !level.gentities)
+        return false;
+
+    const int candidate = ent->s.number;
+    if (candidate < 0
+        || candidate >= level.num_entities
+        || candidate >= ENTITYNUM_WORLD)
+    {
+        return false;
+    }
+
+    gentity_s &liveEntity = level.gentities[candidate];
+    if (&liveEntity != ent
+        || !liveEntity.r.inuse
+        || liveEntity.s.number != candidate)
+    {
+        return false;
+    }
+
+    *entityNumber = candidate;
+    return true;
+}
+} // namespace
 
 void __cdecl G_InitTargets()
 {
     targGlob.targetCount = 0;
 
-    for (int i = 0; i < MAX_TARGETS; ++i)
+    for (int i = 0; i < kMaxTargets; ++i)
     {
-        targGlob.targets[i].ent = 0;
-        SV_SetConfigstring(CS_TARGETS + i, 0);
+        ClearTargetEntry(&targGlob.targets[i]);
+        SV_SetConfigstring(CS_TARGETS + i, "");
     }
 }
 
 void __cdecl G_LoadTargets()
 {
-    int v0; // r20
-    float *v1; // r31
-    const char *v2; // r3
-    const char *v3; // r30
-    unsigned int v4; // r7
-    const char *v5; // r3
-    const char *v6; // r3
-    int v7; // r11
-    const char *v8; // r3
-    int v9; // r3
-    char v10[1032]; // [sp+50h] [-480h] BYREF
-
-    v0 = 0;
-    v1 = &targGlob.targets[0].offset[2];
-    targGlob.targetCount = 0;
-    do
+    struct StagedTarget
     {
-        SV_GetConfigstring(v0 + 27, v10, 1024);
-        if (v10[0])
+        bool active;
+        target_protocol::ParsedConfig config;
+    };
+
+    StagedTarget staged[kMaxTargets]{};
+    unsigned int stagedCount = 0;
+    char configString[MAX_INFO_STRING];
+
+    if (!level.gentities
+        || level.num_entities < 0
+        || level.num_entities > MAX_GENTITIES)
+    {
+        Com_Error(
+            ERR_DROP,
+            "G_LoadTargets: invalid live entity table (%p, %i)",
+            static_cast<void *>(level.gentities),
+            level.num_entities);
+        return;
+    }
+
+    const int ordinaryEntityLimit =
+        level.num_entities < ENTITYNUM_WORLD
+        ? level.num_entities
+        : ENTITYNUM_WORLD;
+
+    // Validate the complete table before changing either the live entries or
+    // their FL_TARGET bits. A corrupt save therefore cannot publish a partial
+    // table even if Com_Error is intercepted by a test or recovery boundary.
+    for (int targetIndex = 0; targetIndex < kMaxTargets; ++targetIndex)
+    {
+        SV_GetConfigstring(
+            CS_TARGETS + targetIndex,
+            configString,
+            MAX_INFO_STRING);
+        if (!configString[0])
+            continue;
+
+        const target_protocol::ConfigParseError error =
+            target_protocol::ParseConfig(
+                configString,
+                ordinaryEntityLimit,
+                &staged[targetIndex].config);
+        if (error != target_protocol::ConfigParseError::None)
         {
-            ++targGlob.targetCount;
-            v2 = Info_ValueForKey(v10, "ent");
-            v3 = v2;
-            if (*v2)
-            {
-                v4 = atol(v2);
-                if (v4 >= 0x880)
-                    MyAssertHandler(
-                        "c:\\trees\\cod3\\cod3src\\src\\game\\g_targets.cpp",
-                        64,
-                        0,
-                        "entNum doesn't index MAX_GENTITIES\n\t%i not in [0, %i)",
-                        v4,
-                        2176);
-                *((unsigned int *)v1 - 3) = (unsigned int)&level.gentities[atol(v3)];
-            }
-            else
-            {
-                *(v1 - 3) = 0.0;
-            }
-            v5 = Info_ValueForKey(v10, "offs");
-            *(v1 - 2) = 0.0;
-            *(v1 - 1) = 0.0;
-            *v1 = 0.0;
-            if (*v5)
-                sscanf(v5, "%f %f %f", v1 - 2, v1 - 1, v1);
-            v6 = Info_ValueForKey(v10, "mat");
-            if (*v6)
-                v7 = atol(v6);
-            else
-                v7 = -1;
-            *((unsigned int *)v1 + 1) = v7;
-            v8 = Info_ValueForKey(v10, "offmat");
-            if (*v8)
-                v9 = atol(v8);
-            else
-                v9 = -1;
-            *((unsigned int *)v1 + 2) = v9;
+            Com_Error(
+                ERR_DROP,
+                "G_LoadTargets: target configstring %i is invalid (%s)",
+                targetIndex,
+                target_protocol::ConfigParseErrorName(error));
+            return;
         }
-        else
+
+        const int entityNumber = staged[targetIndex].config.entityNumber;
+        if (entityNumber < 0
+            || entityNumber >= level.num_entities
+            || entityNumber >= ENTITYNUM_WORLD)
         {
-            *(v1 - 3) = 0.0;
+            Com_Error(
+                ERR_DROP,
+                "G_LoadTargets: target configstring %i references "
+                "out-of-range entity %i",
+                targetIndex,
+                entityNumber);
+            return;
         }
-        v1 += 7;
-        ++v0;
-    } while ((uintptr_t)v1 < (uintptr_t)&targGlob.targets[32]);
+
+        const gentity_s &entity = level.gentities[entityNumber];
+        if (!entity.r.inuse || entity.s.number != entityNumber)
+        {
+            Com_Error(
+                ERR_DROP,
+                "G_LoadTargets: target configstring %i references invalid "
+                "live entity %i",
+                targetIndex,
+                entityNumber);
+            return;
+        }
+
+        const target_protocol::ParsedConfig &source =
+            staged[targetIndex].config;
+        if (!IsPublishedMaterialIndex(source.materialIndex))
+        {
+            Com_Error(
+                ERR_DROP,
+                "G_LoadTargets: target configstring %i references "
+                "unregistered material %i",
+                targetIndex,
+                source.materialIndex);
+            return;
+        }
+        if (!IsPublishedMaterialIndex(source.offscreenMaterialIndex))
+        {
+            Com_Error(
+                ERR_DROP,
+                "G_LoadTargets: target configstring %i references "
+                "unregistered offscreen material %i",
+                targetIndex,
+                source.offscreenMaterialIndex);
+            return;
+        }
+
+        for (int previous = 0; previous < targetIndex; ++previous)
+        {
+            if (staged[previous].active
+                && staged[previous].config.entityNumber == entityNumber)
+            {
+                Com_Error(
+                    ERR_DROP,
+                    "G_LoadTargets: target configstrings %i and %i both "
+                    "reference entity %i",
+                    previous,
+                    targetIndex,
+                    entityNumber);
+                return;
+            }
+        }
+
+        staged[targetIndex].active = true;
+        ++stagedCount;
+    }
+
+    // Entity state was restored independently of this native pointer table.
+    // Clear the authoritative live flags first, then discard table storage
+    // without consulting any pointer left from the previous entity generation.
+    ClearLiveTargetFlags();
+    for (target_t &target : targGlob.targets)
+        ClearTargetEntry(&target);
+
+    for (int targetIndex = 0; targetIndex < kMaxTargets; ++targetIndex)
+    {
+        if (!staged[targetIndex].active)
+            continue;
+
+        const target_protocol::ParsedConfig &source =
+            staged[targetIndex].config;
+        target_t &target = targGlob.targets[targetIndex];
+        AttachTargetEntry(
+            &target, &level.gentities[source.entityNumber]);
+        target.offset[0] = source.offset[0];
+        target.offset[1] = source.offset[1];
+        target.offset[2] = source.offset[2];
+        target.materialIndex = source.materialIndex;
+        target.offscreenMaterialIndex = source.offscreenMaterialIndex;
+        target.flags = source.flags;
+    }
+    targGlob.targetCount = stagedCount;
 }
 
 void __cdecl Scr_Target_SetShader()
 {
-    unsigned int v0; // r4
-    gentity_s *Entity; // r3
-    int v2; // r31
-    target_t *v3; // r11
-    unsigned int v4; // r9
-    const char *v5; // r3
-    const char *String; // r3
-    int v7; // r11
-    int v8; // r30
-    int v9; // r31
-    const char *v10; // r3
-    char v11[1056]; // [sp+50h] [-420h] BYREF
-
     if (Scr_GetNumParam() < 2)
+    {
         Scr_Error("Too few arguments\n");
-    Entity = Scr_GetEntity(0);
-    v2 = 0;
-    v3 = &targGlob.targets[1];
-    v4 = 0;
-    while (v3[-1].ent != Entity)
+        return;
+    }
+
+    gentity_s *const ent = Scr_GetEntity(0);
+    if (!ent)
+        return;
+
+    const int targetIndex = GetTargetIdx(ent);
+    if (targetIndex == kMaxTargets)
     {
-        if (v3->ent == Entity)
+        Scr_Error(va("Entity %i is not a target", ent->s.number));
+        return;
+    }
+
+    const char *const materialName = Scr_GetString(1);
+    int materialIndex = target_protocol::kNoMaterial;
+    if (*materialName)
+    {
+        if (strlen(materialName) >= kSpMaterialNameCapacity)
         {
-            ++v2;
-            break;
+            Scr_ParamError(1u, "Target shader name is too long");
+            return;
         }
-        if (v3[1].ent == Entity)
+        materialIndex = G_MaterialIndex(materialName);
+        if (!target_protocol::IsValidMaterialIndex(materialIndex)
+            || !IsPublishedMaterialIndex(materialIndex))
         {
-            v2 += 2;
-            break;
+            Scr_Error(va(
+                "Target shader '%s' is not a registered material",
+                materialName));
+            return;
         }
-        if (v3[2].ent == Entity)
-        {
-            v2 += 3;
-            break;
-        }
-        v4 += 112;
-        v2 += 4;
-        v3 += 4;
-        if (v4 >= 0x380)
-            break;
     }
-    if (v2 == 32)
+
+    target_t &target = targGlob.targets[targetIndex];
+    target_protocol::ParsedConfig parsed{};
+    char stagedConfigString[MAX_INFO_STRING];
+    if (!StageTargetScalarConfig(
+            targetIndex,
+            target.ent->s.number,
+            "mat",
+            materialIndex,
+            stagedConfigString,
+            &parsed)
+        || parsed.materialIndex != materialIndex)
     {
-        v5 = va("Entity %i is not a target", Entity->s.number);
-        Scr_Error(v5);
+        return;
     }
-    if (*Scr_GetString(1))
-    {
-        String = Scr_GetString(1);
-        v7 = G_MaterialIndex(String);
-    }
-    else
-    {
-        v7 = -1;
-    }
-    v8 = v2;
-    targGlob.targets[v2].materialIndex = v7;
-    v9 = v2 + 27;
-    SV_GetConfigstring(v9, v11, 1024);
-    v10 = va("%i", targGlob.targets[v8].materialIndex);
-    Info_SetValueForKey(v11, "mat", v10);
-    SV_SetConfigstring(v9, v11);
+
+    target.materialIndex = materialIndex;
+    SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString);
 }
 
 void __cdecl Scr_Target_SetOffscreenShader()
 {
-    unsigned int v0; // r4
-    gentity_s *Entity; // r3
-    int v2; // r31
-    target_t *v3; // r11
-    unsigned int v4; // r9
-    const char *v5; // r3
-    const char *String; // r3
-    int v7; // r11
-    int v8; // r30
-    int v9; // r31
-    const char *v10; // r3
-    char v11[1056]; // [sp+50h] [-420h] BYREF
-
     if (Scr_GetNumParam() < 2)
+    {
         Scr_Error("Too few arguments\n");
-    Entity = Scr_GetEntity(0);
-    v2 = 0;
-    v3 = &targGlob.targets[1];
-    v4 = 0;
-    while (v3[-1].ent != Entity)
+        return;
+    }
+
+    gentity_s *const ent = Scr_GetEntity(0);
+    if (!ent)
+        return;
+
+    const int targetIndex = GetTargetIdx(ent);
+    if (targetIndex == kMaxTargets)
     {
-        if (v3->ent == Entity)
+        Scr_Error(va("Entity %i is not a target", ent->s.number));
+        return;
+    }
+
+    const char *const materialName = Scr_GetString(1);
+    int materialIndex = target_protocol::kNoMaterial;
+    if (*materialName)
+    {
+        if (strlen(materialName) >= kSpMaterialNameCapacity)
         {
-            ++v2;
-            break;
+            Scr_ParamError(1u, "Target offscreen shader name is too long");
+            return;
         }
-        if (v3[1].ent == Entity)
+        materialIndex = G_MaterialIndex(materialName);
+        if (!target_protocol::IsValidMaterialIndex(materialIndex)
+            || !IsPublishedMaterialIndex(materialIndex))
         {
-            v2 += 2;
-            break;
+            Scr_Error(va(
+                "Target offscreen shader '%s' is not a registered material",
+                materialName));
+            return;
         }
-        if (v3[2].ent == Entity)
-        {
-            v2 += 3;
-            break;
-        }
-        v4 += 112;
-        v2 += 4;
-        v3 += 4;
-        if (v4 >= 0x380)
-            break;
     }
-    if (v2 == 32)
+
+    target_t &target = targGlob.targets[targetIndex];
+    target_protocol::ParsedConfig parsed{};
+    char stagedConfigString[MAX_INFO_STRING];
+    if (!StageTargetScalarConfig(
+            targetIndex,
+            target.ent->s.number,
+            "offmat",
+            materialIndex,
+            stagedConfigString,
+            &parsed)
+        || parsed.offscreenMaterialIndex != materialIndex)
     {
-        v5 = va("Entity %i is not a target", Entity->s.number);
-        Scr_Error(v5);
+        return;
     }
-    if (*Scr_GetString(1))
-    {
-        String = Scr_GetString(1);
-        v7 = G_MaterialIndex(String);
-    }
-    else
-    {
-        v7 = -1;
-    }
-    v8 = v2;
-    targGlob.targets[v2].offscreenMaterialIndex = v7;
-    v9 = v2 + 27;
-    SV_GetConfigstring(v9, v11, 1024);
-    v10 = va("%i", targGlob.targets[v8].offscreenMaterialIndex);
-    Info_SetValueForKey(v11, "offmat", v10);
-    SV_SetConfigstring(v9, v11);
+
+    target.offscreenMaterialIndex = materialIndex;
+    SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString);
 }
 
 void __cdecl Scr_Target_GetArray()
 {
     Scr_MakeArray();
 
-    for (int targIdx = 0; targIdx < MAX_TARGETS; targIdx++)
+    for (int targIdx = 0; targIdx < kMaxTargets; targIdx++)
     {
         if (targGlob.targets[targIdx].ent)
         {
@@ -245,13 +513,7 @@ void __cdecl Scr_Target_GetArray()
 
 int __cdecl TargetIndex(gentity_s *ent)
 {
-    for (unsigned int targIdx = 0; targIdx < MAX_TARGETS; ++targIdx)
-    {
-        if (targGlob.targets[targIdx].ent == ent)
-            return targIdx;
-    }
-
-    return MAX_TARGETS;
+    return GetTargetIdx(ent);
 }
 
 void __cdecl Scr_Target_IsTarget()
@@ -259,9 +521,12 @@ void __cdecl Scr_Target_IsTarget()
     gentity_s *ent; // [esp+4h] [ebp-4h]
 
     if (!Scr_GetNumParam())
+    {
         Scr_Error("Too few arguments\n");
+        return;
+    }
     ent = Scr_GetEntity(0);
-    if (TargetIndex(ent) == MAX_TARGETS)
+    if (TargetIndex(ent) == kMaxTargets)
         Scr_AddBool(0);
     else
         Scr_AddBool(1);
@@ -269,165 +534,117 @@ void __cdecl Scr_Target_IsTarget()
 
 void __cdecl Scr_Target_Set()
 {
-    unsigned int v0; // r4
-    gentity_s *Entity; // r3
-    gentity_s *v2; // r26
-    unsigned int v3; // r28
-    target_t *v4; // r11
-    unsigned int v5; // r10
-    unsigned int v6; // r10
-    target_t *v7; // r11
-    unsigned int v8; // r11
-    float *offset; // r10
-    unsigned int v10; // r30
-    float *v11; // r27
-    const char *v12; // r3
-    const char *v13; // r3
-    const char *v14; // r3
-    const char *v15; // r3
-    const char *v16; // r3
-    char v17[1024]; // [sp+60h] [-440h] BYREF
-
     if (!Scr_GetNumParam())
+    {
         Scr_Error("Too few arguments\n");
-    Entity = Scr_GetEntity(0);
-    v2 = Entity;
-    v3 = 0;
-    v4 = &targGlob.targets[1];
-    v5 = 0;
-    while (v4[-1].ent != Entity)
-    {
-        if (v4->ent == Entity)
-        {
-            ++v3;
-            break;
-        }
-        if (v4[1].ent == Entity)
-        {
-            v3 += 2;
-            break;
-        }
-        if (v4[2].ent == Entity)
-        {
-            v3 += 3;
-            break;
-        }
-        v5 += 112;
-        v3 += 4;
-        v4 += 4;
-        if (v5 >= 0x380)
-            break;
+        return;
     }
-    if (v3 == 32)
+
+    gentity_s *const ent = Scr_GetEntity(0);
+    int entityNumber = 0;
+    if (!IsOrdinaryLiveEntity(ent, &entityNumber))
     {
-        if (targGlob.targetCount >= 0x20)
-            Scr_Error("Maximum number of targets exceeded");
-        v3 = 0;
-        v6 = 0;
-        v7 = &targGlob.targets[1];
-        while (v7[-1].ent)
+        Scr_ObjectError("Target must be a live ordinary entity");
+        return;
+    }
+
+    float requestedOffset[3]{};
+    if (Scr_GetNumParam() > 1)
+        Scr_GetVector(1u, requestedOffset);
+    if (!target_protocol::CanEncodeLegacyOffset(requestedOffset))
+    {
+        Scr_ParamError(
+            1u,
+            "Target offset components must be finite signed 32-bit values");
+        return;
+    }
+
+    int targetIndex = GetTargetIdx(ent);
+    const bool isNewTarget = targetIndex == kMaxTargets;
+    int materialIndex = target_protocol::kNoMaterial;
+    int offscreenMaterialIndex = target_protocol::kNoMaterial;
+    int flags = 0;
+    if (!isNewTarget)
+    {
+        materialIndex = targGlob.targets[targetIndex].materialIndex;
+        offscreenMaterialIndex =
+            targGlob.targets[targetIndex].offscreenMaterialIndex;
+        flags = targGlob.targets[targetIndex].flags;
+    }
+
+    char stagedConfigString[MAX_INFO_STRING]{};
+    if (!BuildTargetConfig(
+            entityNumber,
+            requestedOffset,
+            materialIndex,
+            offscreenMaterialIndex,
+            flags,
+            stagedConfigString))
+    {
+        return;
+    }
+
+    if (targetIndex == kMaxTargets)
+    {
+        if (targGlob.targetCount >= kMaxTargets)
         {
-            if (!v7->ent)
-            {
-                ++v3;
-                break;
-            }
-            if (!v7[1].ent)
-            {
-                v3 += 2;
-                break;
-            }
-            if (!v7[2].ent)
-            {
-                v3 += 3;
-                break;
-            }
-            v6 += 112;
-            v3 += 4;
-            v7 += 4;
-            if (v6 >= 0x380)
-                goto LABEL_27;
+            Scr_Error("Maximum number of targets exceeded");
+            return;
         }
-        if (v3 < 0x20)
-            goto LABEL_28;
-    LABEL_27:
-        MyAssertHandler(
-            "c:\\trees\\cod3\\cod3src\\src\\game\\g_targets.cpp",
-            263,
-            0,
-            "targetIndex doesn't index MAX_TARGETS\n\t%i not in [0, %i)",
-            v3,
-            32);
-    LABEL_28:
-        v8 = v3;
-        targGlob.targets[v8].ent = v2;
-        offset = targGlob.targets[v3].offset;
-        v2->flags |= FL_TARGET;
-        targGlob.targets[v8].materialIndex = -1;
-        targGlob.targets[v8].offscreenMaterialIndex = -1;
-        *offset = 0.0;
-        offset[1] = 0.0;
-        offset[2] = 0.0;
+
+        for (int candidate = 0; candidate < kMaxTargets; ++candidate)
+        {
+            if (!targGlob.targets[candidate].ent)
+            {
+                targetIndex = candidate;
+                break;
+            }
+        }
+        if (targetIndex == kMaxTargets)
+        {
+            Scr_Error("Target table count is inconsistent");
+            return;
+        }
+
+        AttachTargetEntry(&targGlob.targets[targetIndex], ent);
         ++targGlob.targetCount;
     }
-    v10 = v3;
-    v11 = targGlob.targets[v3].offset;
-    if (Scr_GetNumParam() <= 1)
-    {
-        *v11 = 0.0;
-        v11[1] = 0.0;
-        v11[2] = 0.0;
-    }
-    else
-    {
-        Scr_GetVector(1u, targGlob.targets[v3].offset);
-    }
-    v17[0] = 0;
-    v12 = va("%i", v2->s.number);
-    Info_SetValueForKey(v17, "ent", v12);
-    v13 = va("%i %i %i", (int)*v11, (int)targGlob.targets[v10].offset[1], (int)targGlob.targets[v10].offset[2]);
-    Info_SetValueForKey(v17, "offs", v13);
-    v14 = va("%i", targGlob.targets[v10].materialIndex);
-    Info_SetValueForKey(v17, "mat", v14);
-    v15 = va("%i", targGlob.targets[v10].offscreenMaterialIndex);
-    Info_SetValueForKey(v17, "offmat", v15);
-    v16 = va("%i", targGlob.targets[v10].flags);
-    Info_SetValueForKey(v17, "flags", v16);
-    SV_SetConfigstring(CS_TARGETS + v3, v17);
+
+    target_t &target = targGlob.targets[targetIndex];
+    target.ent->flags |= FL_TARGET;
+    target.offset[0] = requestedOffset[0];
+    target.offset[1] = requestedOffset[1];
+    target.offset[2] = requestedOffset[2];
+    // BuildTargetConfig retained the retail x86 save representation by
+    // truncating live floating-point offsets to signed decimal integers.
+    SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString);
 }
 
 bool Targ_Remove(gentity_s *ent)
 {
-    unsigned int targetIndex; // [esp+0h] [ebp-4h]
+    const int targetIndex = GetTargetIdx(ent);
+    if (targetIndex == kMaxTargets)
+        return false;
 
-    for (targetIndex = 0; ; ++targetIndex)
-    {
-        if (targetIndex >= MAX_TARGETS)
-            return 0;
-        if (targGlob.targets[targetIndex].ent == ent)
-            break;
-    }
-    targGlob.targets[targetIndex].ent = 0;
-    targGlob.targetCount--;
-    bcassert(targGlob.targetCount, MAX_TARGETS);
+    DetachTargetEntry(&targGlob.targets[targetIndex]);
+    if (targGlob.targetCount > 0)
+        --targGlob.targetCount;
+    else
+        targGlob.targetCount = 0;
 
-    SV_SetConfigstring(CS_TARGETS + targetIndex, (char *)"");
-    return 1;
+    SV_SetConfigstring(CS_TARGETS + targetIndex, "");
+    return true;
 }
 
 void __cdecl Targ_RemoveAll()
 {
-    for (unsigned int targetIndex = 0; targetIndex < MAX_TARGETS; ++targetIndex)
+    ClearLiveTargetFlags();
+    for (int targetIndex = 0; targetIndex < kMaxTargets; ++targetIndex)
     {
-        if (targGlob.targets[targetIndex].ent)
-        {
-            targGlob.targets[targetIndex].ent = 0;
-            targGlob.targetCount--;
-            bcassert(targGlob.targetCount, MAX_TARGETS);
-
-            SV_SetConfigstring(CS_TARGETS + targetIndex, (char *)"");
-        }
+        ClearTargetEntry(&targGlob.targets[targetIndex]);
+        SV_SetConfigstring(CS_TARGETS + targetIndex, "");
     }
+    targGlob.targetCount = 0;
 }
 
 void __cdecl Scr_Target_Remove()
@@ -437,12 +654,16 @@ void __cdecl Scr_Target_Remove()
     const char *v2; // r3
 
     if (!Scr_GetNumParam())
+    {
         Scr_Error("Too few arguments\n");
+        return;
+    }
     Entity = Scr_GetEntity(0);
     if (!(unsigned __int8)Targ_Remove(Entity))
     {
         v2 = va("Entity %i is not a target", Entity->s.number);
         Scr_Error(v2);
+        return;
     }
 }
 
@@ -486,69 +707,47 @@ int __cdecl G_WorldDirToScreenPos(
 
 int __cdecl ScrGetTargetScreenPos(float *screenPos)
 {
-    unsigned int v2; // r4
-    gentity_s *Entity; // r28
-    unsigned int v4; // r4
-    gentity_s *v5; // r3
-    const gentity_s *player; // r30
-    const float *v8; // r4
-    double fov_x; // fp31
-    int v10; // r31
-    unsigned int v11; // r10
-    target_t *v12; // r11
-    const char *v13; // r3
-    gentity_s *ent; // r11
-    float *offset; // r10
     float worldDir[3]; // [sp+50h] [-50h] BYREF
 
-    if (Scr_GetNumParam() < 2)
+    if (Scr_GetNumParam() < 3)
+    {
         Scr_Error("Too few arguments\n");
-    Entity = Scr_GetEntity(0);
-    v5 = Scr_GetEntity(1);
-    player = v5;
-    if (!v5->client)
-    {
-        Scr_ObjectError(va("entity %i is not a player", v5->s.number));
+        return 0;
     }
-    fov_x = Scr_GetFloat(2);
-    if (fov_x <= 0.0)
+
+    gentity_s *const targetEntity = Scr_GetEntity(0);
+    if (!targetEntity)
+        return 0;
+
+    const gentity_s *const player = Scr_GetEntity(1);
+    if (!player)
+        return 0;
+
+    if (!player->client)
+    {
+        Scr_ObjectError(va("entity %i is not a player", player->s.number));
+        return 0;
+    }
+
+    const double fov_x = Scr_GetFloat(2);
+    if (!(fov_x > 0.0) || !std::isfinite(fov_x))
+    {
         Scr_ParamError(2u, "FOV must be positive");
-    v10 = 0;
-    v11 = 0;
-    v12 = &targGlob.targets[1];
-    while (v12[-1].ent != Entity)
-    {
-        if (v12->ent == Entity)
-        {
-            ++v10;
-            break;
-        }
-        if (v12[1].ent == Entity)
-        {
-            v10 += 2;
-            break;
-        }
-        if (v12[2].ent == Entity)
-        {
-            v10 += 3;
-            break;
-        }
-        v11 += 112;
-        v10 += 4;
-        v12 += 4;
-        if (v11 >= 0x380)
-            break;
+        return 0;
     }
-    if (v10 == 32)
+
+    const int targetIndex = GetTargetIdx(targetEntity);
+    if (targetIndex == kMaxTargets)
     {
-        v13 = va("Entity %i is not a target", Entity->s.number);
-        Scr_Error(v13);
+        Scr_Error(va(
+            "Entity %i is not a target", targetEntity->s.number));
+        return 0;
     }
-    ent = targGlob.targets[v10].ent;
-    offset = targGlob.targets[v10].offset;
-    worldDir[0] = ent->r.currentOrigin[0] + *offset;
-    worldDir[1] = ent->r.currentOrigin[1] + offset[1];
-    worldDir[2] = ent->r.currentOrigin[2] + offset[2];
+
+    const target_t &target = targGlob.targets[targetIndex];
+    worldDir[0] = target.ent->r.currentOrigin[0] + target.offset[0];
+    worldDir[1] = target.ent->r.currentOrigin[1] + target.offset[1];
+    worldDir[2] = target.ent->r.currentOrigin[2] + target.offset[2];
 
     worldDir[0] -= player->r.currentOrigin[0];
     worldDir[1] -= player->r.currentOrigin[1];
@@ -589,18 +788,35 @@ void __cdecl Scr_Target_IsInRect()
 
 void __cdecl Scr_Target_StartLockOn()
 {
-    gentity_s *Entity; // r31
-    double Float; // fp1
-    int number; // r4
-    const char *v5; // r3
-    int v6; // [sp+50h] [-20h]
+    if (Scr_GetNumParam() < 2)
+    {
+        Scr_Error("Too few arguments\n");
+        return;
+    }
 
-    Entity = Scr_GetEntity(0);
-    Float = Scr_GetFloat(1);
-    number = Entity->s.number;
-    v6 = (int)(float)((float)Float * (float)1000.0);
-    v5 = va("ret_lock_on %i %i", number, v6);
-    SV_GameSendServerCommand(-1, v5);
+    gentity_s *const ent = Scr_GetEntity(0);
+    int entityNumber = 0;
+    if (!IsOrdinaryLiveEntity(ent, &entityNumber))
+    {
+        Scr_ObjectError("Lock-on target must be a live ordinary entity");
+        return;
+    }
+
+    const double seconds = Scr_GetFloat(1);
+    int milliseconds = 0;
+    if (!target_protocol::TryEncodeLockOnDuration(
+            seconds, &milliseconds))
+    {
+        Scr_ParamError(
+            1u,
+            "Lock-on duration must be finite, nonnegative, and encodable "
+            "as signed milliseconds");
+        return;
+    }
+
+    SV_GameSendServerCommand(
+        -1,
+        va("ret_lock_on %i %i", entityNumber, milliseconds));
 }
 
 void __cdecl Scr_Target_ClearLockOn()
@@ -613,32 +829,26 @@ void __cdecl Scr_Target_ClearLockOn()
 
 int __cdecl GetTargetIdx(const gentity_s *ent)
 {
-    int v1; // r9
-    TargetGlob *v2; // r11
-    unsigned int v3; // r10
-
     if (!ent)
-        return 32;
-    v1 = 0;
-    v2 = &targGlob;
-    v3 = 0;
-    while (v2->targets[0].ent != ent)
+        return kMaxTargets;
+
+    for (int targetIndex = 0;
+         targetIndex < kMaxTargets;
+         ++targetIndex)
     {
-        v3 += 28;
-        ++v1;
-        v2 = (TargetGlob *)((char *)v2 + 28);
-        if (v3 >= 0x380)
-            return 32;
+        if (targGlob.targets[targetIndex].ent == ent)
+            return targetIndex;
     }
-    return v1;
+    return kMaxTargets;
 }
 
 int __cdecl G_TargetGetOffset(const gentity_s *targ, float *result)
 {
-    unsigned int targetIndex; // [esp+4h] [ebp-4h]
+    if (!result)
+        return 0;
 
-    targetIndex = GetTargetIdx(targ);
-    if (targetIndex == 32)
+    const int targetIndex = GetTargetIdx(targ);
+    if (targetIndex == kMaxTargets)
     {
         result[0] = 0.0f;
         result[1] = 0.0f;
@@ -656,78 +866,105 @@ int __cdecl G_TargetGetOffset(const gentity_s *targ, float *result)
 
 int __cdecl G_TargetAttackProfileTop(const gentity_s *ent)
 {
-    int TargetIdx; // r3
-
-    TargetIdx = GetTargetIdx(ent);
-    if (TargetIdx == 32)
+    const int targetIndex = GetTargetIdx(ent);
+    if (targetIndex == kMaxTargets)
         return 0;
-    else
-        return targGlob.targets[TargetIdx].flags & 1;
+    return targGlob.targets[targetIndex].flags
+        & target_protocol::kAttackProfileTop;
 }
 
 void __cdecl Scr_Target_SetAttackMode()
 {
-    unsigned int v0; // r4
-    gentity_s *Entity; // r3
-    int TargetIdx; // r29
-    unsigned int ConstString; // r3
-    const char *v6; // r3
-    char v7[1056]; // [sp+50h] [-420h] BYREF
-
     if (Scr_GetNumParam() < 2)
+    {
         Scr_Error("Too few arguments\n");
-    Entity = Scr_GetEntity(0);
-    TargetIdx = GetTargetIdx(Entity);
-    if (TargetIdx == 32)
-    {
-        Scr_Error(va("Entity %i is not a target", Entity->s.number));
+        return;
     }
-    ConstString = Scr_GetConstString(1);
-    if (ConstString == scr_const.top)
+
+    gentity_s *const ent = Scr_GetEntity(0);
+    if (!ent)
+        return;
+
+    const int targetIndex = GetTargetIdx(ent);
+    if (targetIndex == kMaxTargets)
     {
-        targGlob.targets[TargetIdx].flags |= 1u;
+        Scr_Error(va("Entity %i is not a target", ent->s.number));
+        return;
     }
-    else if (ConstString == scr_const.direct)
+
+    int stagedFlags = targGlob.targets[targetIndex].flags;
+    const unsigned int mode = Scr_GetConstString(1);
+    if (mode == scr_const.top)
     {
-        targGlob.targets[TargetIdx].flags &= ~1u;
+        stagedFlags |= target_protocol::kAttackProfileTop;
+    }
+    else if (mode == scr_const.direct)
+    {
+        stagedFlags &= ~target_protocol::kAttackProfileTop;
     }
     else
     {
         Scr_Error("Incorrect mode name passed to target_setAttackMode().\n");
+        return;
     }
-    SV_GetConfigstring(TargetIdx + 27, v7, 1024);
-    v6 = va("%i", targGlob.targets[TargetIdx].flags);
-    Info_SetValueForKey(v7, "flags", v6);
-    SV_SetConfigstring(TargetIdx + 27, v7);
+
+    target_protocol::ParsedConfig parsed{};
+    char stagedConfigString[MAX_INFO_STRING];
+    if (!StageTargetScalarConfig(
+            targetIndex,
+            targGlob.targets[targetIndex].ent->s.number,
+            "flags",
+            stagedFlags,
+            stagedConfigString,
+            &parsed)
+        || parsed.flags != stagedFlags)
+    {
+        return;
+    }
+
+    targGlob.targets[targetIndex].flags = stagedFlags;
+    SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString);
 }
 
 void __cdecl Scr_Target_SetJavelinOnly()
 {
-    int v1; // ecx
-    unsigned int targIdx; // [esp+0h] [ebp-410h]
-    char configString[1024]; // [esp+8h] [ebp-408h] BYREF
-    gentity_s *ent; // [esp+40Ch] [ebp-4h]
-
     if ((unsigned int)Scr_GetNumParam() < 2)
-        Scr_Error("Too few arguments\n");
-
-    ent = Scr_GetEntity(0);
-    targIdx = GetTargetIdx(ent);
-    if (targIdx == 32)
     {
-        Scr_Error(va("Entity %i is not a target", ent->s.number));
+        Scr_Error("Too few arguments\n");
+        return;
     }
 
+    gentity_s *const ent = Scr_GetEntity(0);
+    if (!ent)
+        return;
+
+    const int targetIndex = GetTargetIdx(ent);
+    if (targetIndex == kMaxTargets)
+    {
+        Scr_Error(va("Entity %i is not a target", ent->s.number));
+        return;
+    }
+
+    int stagedFlags = targGlob.targets[targetIndex].flags;
     if (Scr_GetInt(1))
-        v1 = targGlob.targets[targIdx].flags | 2;
+        stagedFlags |= target_protocol::kJavelinOnly;
     else
-        v1 = targGlob.targets[targIdx].flags & 0xFFFFFFFD;
-    targGlob.targets[targIdx].flags = v1;
+        stagedFlags &= ~target_protocol::kJavelinOnly;
 
-    //SV_GetConfigstring(targIdx + 387, configString, 1024);
-    SV_GetConfigstring(CS_TARGETS + targIdx, configString, 1024);
-    Info_SetValueForKey(configString, "flags", va("%i", targGlob.targets[targIdx].flags));
-    //SV_SetConfigstring(targIdx + 387, configString);
-    SV_SetConfigstring(CS_TARGETS + targIdx, configString);
+    target_protocol::ParsedConfig parsed{};
+    char stagedConfigString[MAX_INFO_STRING];
+    if (!StageTargetScalarConfig(
+            targetIndex,
+            targGlob.targets[targetIndex].ent->s.number,
+            "flags",
+            stagedFlags,
+            stagedConfigString,
+            &parsed)
+        || parsed.flags != stagedFlags)
+    {
+        return;
+    }
+
+    targGlob.targets[targetIndex].flags = stagedFlags;
+    SV_SetConfigstring(CS_TARGETS + targetIndex, stagedConfigString);
 }
-

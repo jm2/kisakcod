@@ -93,6 +93,7 @@ set(BGAME
     "${SRC_DIR}/bgame/bg_pmove.cpp"
     "${SRC_DIR}/bgame/bg_public.h"
     "${SRC_DIR}/bgame/bg_slidemove.cpp"
+    "${SRC_DIR}/bgame/bg_target_protocol.h"
     "${SRC_DIR}/bgame/bg_vehicles_mp.cpp"
     "${SRC_DIR}/bgame/bg_weapons.cpp"
     "${SRC_DIR}/bgame/bg_weapons.h"

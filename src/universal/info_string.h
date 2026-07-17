@@ -3,6 +3,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <system_error>
 
 namespace info_string
@@ -347,6 +348,206 @@ inline bool ValueMatchesExactOrAbsentEmpty(
     const std::size_t expectedLength = std::strlen(expected);
     return valueLength == expectedLength
         && std::memcmp(value, expected, expectedLength) == 0;
+}
+
+// Replaces the first exact key in a bounded regular info string and appends
+// the sanitized nonempty value at the end. The source is copied to separate
+// scratch storage and committed only after every grammar and capacity check,
+// so failure leaves the published string unchanged. This retains the legacy
+// delimiter-stripping and first-match replacement behavior.
+inline bool TrySetValueForKey(
+    char *const current,
+    const std::size_t capacity,
+    char *const scratch,
+    const std::size_t scratchCapacity,
+    const char *const key,
+    const char *const value) noexcept
+{
+    if (!current
+        || !scratch
+        || current == scratch
+        || !key
+        || !value
+        || capacity == 0
+        || scratchCapacity < capacity)
+    {
+        return false;
+    }
+
+    const char *const currentEnd = static_cast<const char *>(
+        std::memchr(current, '\0', capacity));
+    if (!currentEnd || !IsWellFormed(current))
+        return false;
+
+    std::size_t keyLength = 0;
+    while (keyLength < capacity && key[keyLength])
+    {
+        if (key[keyLength] == '\\'
+            || key[keyLength] == ';'
+            || key[keyLength] == '"')
+        {
+            return false;
+        }
+        ++keyLength;
+    }
+    if (keyLength == 0 || keyLength == capacity)
+        return false;
+
+    std::size_t rawValueLength = 0;
+    std::size_t cleanValueLength = 0;
+    while (rawValueLength < capacity && value[rawValueLength])
+    {
+        const char character = value[rawValueLength++];
+        if (character != '\\' && character != ';' && character != '"')
+            ++cleanValueLength;
+    }
+    if (rawValueLength == capacity)
+        return false;
+
+    std::size_t outputLength = 0;
+    bool removedFirstMatch = false;
+    const bool hadLeadingDelimiter = *current == '\\';
+    const char *cursor = current;
+    if (hadLeadingDelimiter)
+        ++cursor;
+    bool firstInputPair = true;
+    bool hasRetainedPair = false;
+    bool removedFirstInputPair = false;
+    while (cursor != currentEnd)
+    {
+        const char *const separator = std::strchr(cursor, '\\');
+        if (!separator)
+            return false;
+        const char *const componentValue = separator + 1;
+        const char *componentEnd = std::strchr(componentValue, '\\');
+        if (!componentEnd)
+            componentEnd = currentEnd;
+
+        const std::size_t componentKeyLength =
+            static_cast<std::size_t>(separator - cursor);
+        const std::size_t componentValueLength =
+            static_cast<std::size_t>(componentEnd - componentValue);
+        const bool matches = componentKeyLength == keyLength
+            && std::memcmp(cursor, key, keyLength) == 0;
+        if (matches && !removedFirstMatch)
+        {
+            removedFirstMatch = true;
+            removedFirstInputPair = firstInputPair;
+        }
+        else
+        {
+            const std::size_t delimiterCount =
+                hasRetainedPair
+                    || hadLeadingDelimiter
+                    || removedFirstInputPair
+                ? 2
+                : 1;
+            const std::size_t pairLength =
+                componentKeyLength
+                + componentValueLength
+                + delimiterCount;
+            if (outputLength >= capacity
+                || pairLength >= capacity - outputLength)
+            {
+                return false;
+            }
+            outputLength += pairLength;
+            hasRetainedPair = true;
+        }
+
+        firstInputPair = false;
+        cursor = componentEnd == currentEnd
+            ? currentEnd
+            : componentEnd + 1;
+    }
+
+    if (cleanValueLength != 0)
+    {
+        const std::size_t maximum =
+            (std::numeric_limits<std::size_t>::max)();
+        if (cleanValueLength > maximum - 2
+            || keyLength > maximum - cleanValueLength - 2)
+        {
+            return false;
+        }
+        const std::size_t pairLength = keyLength + cleanValueLength + 2;
+        if (outputLength >= capacity
+            || pairLength >= capacity - outputLength)
+        {
+            return false;
+        }
+        outputLength += pairLength;
+    }
+
+    char *output = scratch;
+    cursor = current;
+    if (hadLeadingDelimiter)
+        ++cursor;
+    removedFirstMatch = false;
+    firstInputPair = true;
+    hasRetainedPair = false;
+    removedFirstInputPair = false;
+    while (cursor != currentEnd)
+    {
+        const char *const separator = std::strchr(cursor, '\\');
+        const char *const componentValue = separator + 1;
+        const char *componentEnd = std::strchr(componentValue, '\\');
+        if (!componentEnd)
+            componentEnd = currentEnd;
+
+        const std::size_t componentKeyLength =
+            static_cast<std::size_t>(separator - cursor);
+        const std::size_t componentValueLength =
+            static_cast<std::size_t>(componentEnd - componentValue);
+        const bool matches = componentKeyLength == keyLength
+            && std::memcmp(cursor, key, keyLength) == 0;
+        if (matches && !removedFirstMatch)
+        {
+            removedFirstMatch = true;
+            removedFirstInputPair = firstInputPair;
+        }
+        else
+        {
+            if (hasRetainedPair
+                || hadLeadingDelimiter
+                || removedFirstInputPair)
+            {
+                *output++ = '\\';
+            }
+            std::memcpy(output, cursor, componentKeyLength);
+            output += componentKeyLength;
+            *output++ = '\\';
+            std::memcpy(output, componentValue, componentValueLength);
+            output += componentValueLength;
+            hasRetainedPair = true;
+        }
+
+        firstInputPair = false;
+        cursor = componentEnd == currentEnd
+            ? currentEnd
+            : componentEnd + 1;
+    }
+
+    if (cleanValueLength != 0)
+    {
+        *output++ = '\\';
+        std::memcpy(output, key, keyLength);
+        output += keyLength;
+        *output++ = '\\';
+        for (std::size_t index = 0; index < rawValueLength; ++index)
+        {
+            const char character = value[index];
+            if (character != '\\' && character != ';' && character != '"')
+                *output++ = character;
+        }
+    }
+
+    *output = '\0';
+    if (static_cast<std::size_t>(output - scratch) != outputLength)
+        return false;
+
+    std::memmove(current, scratch, outputLength + 1);
+    return true;
 }
 
 // This subtraction form proves that currentLength + suffixLength is strictly

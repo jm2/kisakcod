@@ -31,6 +31,22 @@ add_test(
     COMMAND kisakcod-actor-grenade-prediction-cache-tests
 )
 
+add_executable(kisakcod-target-table-tests
+    target_table_tests.cpp
+)
+target_include_directories(
+    kisakcod-target-table-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-target-table-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-target-table-tests)
+set_target_properties(
+    kisakcod-target-table-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME target-table-parse-and-layout-contracts
+    COMMAND kisakcod-target-table-tests
+)
+
 foreach(_missile_variant IN ITEMS MP SP)
     string(TOLOWER "${_missile_variant}" _missile_variant_lower)
     set(_missile_layout_target
@@ -1408,6 +1424,13 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -DALLOWLIST=${CMAKE_CURRENT_SOURCE_DIR}/pointer_truncation.allow
         -P ${CMAKE_CURRENT_SOURCE_DIR}/pointer_truncation_test.cmake
+)
+
+add_test(
+    NAME target-table-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/target_table_source_test.cmake
 )
 
 add_test(

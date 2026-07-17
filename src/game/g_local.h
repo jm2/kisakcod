@@ -8,6 +8,7 @@
 #include <bgame/bg_local.h>
 #include <script/scr_variable.h>
 #include "game_public.h"
+#include "g_target_table.h"
 
 
 enum $854C867908149C343981C8BAF4C9A230 : __int32
@@ -595,23 +596,6 @@ void __cdecl Scr_GetObjectField(unsigned int classnum, unsigned int entnum, unsi
 
 
 // g_targets
-
-#define MAX_TARGETS 32
-
-struct target_t
-{
-    gentity_s *ent;
-    float offset[3];
-    int materialIndex;
-    int offscreenMaterialIndex;
-    int flags;
-};
-
-struct TargetGlob
-{
-    target_t targets[MAX_TARGETS];
-    unsigned int targetCount;
-};
 
 void __cdecl G_InitTargets();
 void __cdecl G_LoadTargets();

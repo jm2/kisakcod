@@ -205,19 +205,24 @@ LABEL_24:
 
 int __cdecl G_MaterialIndex(const char *name)
 {
-    char *v2; // r11
-    int v3; // r10
     char v5[96]; // [sp+50h] [-60h] BYREF
 
     iassert(name);
-    iassert(name[0]);
-
-    v2 = (char*)name;
-    do
+    if (!name || !name[0])
     {
-        v3 = *(unsigned __int8 *)v2;
-        (v2++)[v5 - name] = v3;
-    } while (v3);
+        Com_Error(ERR_DROP, "G_MaterialIndex: material name is empty");
+        return 0;
+    }
+    if (strlen(name) >= sizeof(v5))
+    {
+        Com_Error(
+            ERR_DROP,
+            "G_MaterialIndex: material name exceeds %i bytes",
+            static_cast<int>(sizeof(v5) - 1));
+        return 0;
+    }
+
+    I_strncpyz(v5, name, static_cast<int>(sizeof(v5)));
     I_strlwr(v5);
     return G_FindConfigstringIndex(v5, 2551, 128, level.initializing, "material"); // CS_SERVER_MATERIALS (PC SP, was Xbox 2583)
 }
@@ -3307,4 +3312,3 @@ int __cdecl G_EntAttach(gentity_s *ent, const char *modelName, unsigned int tagN
     //Profile_EndInternal(0);
     return 1;
 }
-

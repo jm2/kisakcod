@@ -160,6 +160,7 @@ set(GAME
     "${SRC_DIR}/game/g_scr_main.cpp"
     "${SRC_DIR}/game/g_scr_main.h"
     "${SRC_DIR}/game/g_spawn.cpp"
+    "${SRC_DIR}/game/g_target_table.h"
     "${SRC_DIR}/game/g_targets.cpp"
     "${SRC_DIR}/game/g_trigger.cpp"
     "${SRC_DIR}/game/g_utils.cpp"
