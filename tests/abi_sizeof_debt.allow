@@ -108,7 +108,6 @@ bgame/bg_local.h|static_assert:sizeof(weaponState_t)==0x54|1
 bgame/bg_public.h|static_assert:sizeof(corpse_ent_t)==0x4|1
 bgame/bg_public.h|static_assert:sizeof(entityShared_t)==0x68|1
 bgame/bg_public.h|static_assert:sizeof(item_ent_t)==0xC|1
-bgame/bg_public.h|static_assert:sizeof(missile_ent_t)==0x3C|1
 bgame/bg_public.h|static_assert:sizeof(mover_ent_t)==0x60|1
 common/brush.h|static_assert:sizeof(SimplePlaneIntersection)==0x18|1
 common/brush.h|static_assert:sizeof(adjacencyWinding_t)==0x34|1
