@@ -600,6 +600,19 @@ require_contains(
     "\"\${SRC_DIR}/game/actor_grenade.cpp\" \"\${SRC_DIR}/game/actor_grenade.h\" \"\${SRC_DIR}/game/actor_grenade_prediction_cache.h\""
     "SP source manifest ships the cache helper with actor_grenade")
 
+read_normalized(".github/workflows/ci.yml" _ci)
+foreach(_required IN ITEMS
+    "kisakcod-actor-grenade-prediction-cache-tests"
+    "kisakcod-missile-layout-mp-compile-tests"
+    "kisakcod-missile-layout-sp-compile-tests"
+    "actor-grenade-prediction-cache-contracts"
+    "missile-layout-(mp|sp)-compile-contracts"
+    "missile-union-layout-source-invariants")
+    require_contains(
+        _ci "${_required}"
+        "measured Windows x86 builds and runs the missile contracts")
+endforeach()
+
 read_normalized("tests/missile_layout_compile_tests.cpp" _compile_probe)
 foreach(_required IN ITEMS
     "enum team_t : __int32"

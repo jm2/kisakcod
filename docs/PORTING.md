@@ -212,7 +212,9 @@ Completed foundation work:
   scoped mutation-resistant source contracts cover the portability boundary;
 - fresh strict GCC 16 and Clang 22 builds of the rebased missile candidate each pass all **94/94** tests. The known dud-
   sentinel, bounce-invalidation, and enum-width mutations are rejected; `git diff --check` and independent audits are
-  clean. Hosted Windows SP/MP production compilation and automated review remain the PR gates;
+  clean. The PR gate compiles shared/MP/dedicated production, explicitly runs the new contracts on measured Windows x86,
+  and also covers them on portable Windows amd64/ARM64. SP production translation units remain unbuilt while SP is
+  deferred and every CI job uses `KISAK_BUILD_SP=OFF`; automated review remains a separate gate;
 - deferred upstream content requires subsystem-specific adaptation: a bounded typed server target table with strict load
   validation and flag lifecycle must precede hardened vehicle/Javelin HUD consumers; only four separately audited safe
   `77404c61` fixlets remain selected; and dynent save/load `ba3c79f3` stays deferred until it has bounded transactional

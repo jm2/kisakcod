@@ -288,8 +288,9 @@ work item changes. Do not create session-specific handoff files.
   each pass all **94/94** tests. Both variant compile probes, the executable cache suite, the function-scoped source
   contract, `git diff --check`, and independent semantic/provenance audits are clean. Mutations that move the dud sentinel
   from `travelDist`, invalidate `timestamp` instead of `predictLandTime`, or mismatch `team_t`'s underlying type are
-  rejected. Full SP/MP production translation units remain a hosted Windows PR gate because the local utility builds do
-  not compile the legacy engine targets.
+  rejected. The PR gate compiles the shared/MP/dedicated production paths and runs the cache/layout/source contracts on
+  measured Windows x86 plus portable Windows amd64/ARM64. SP production translation units remain unbuilt because SP is
+  outside the current project scope and every CI job deliberately configures `KISAK_BUILD_SP=OFF`.
 - Remaining upstream content stays deferred for subsystem-specific adaptation and focused tests: build a pointer-safe,
   strictly validated 32-entry server target table before the bounded vehicle/Javelin HUD consumers; select only the four
   already audited safe fixlets from regression-prone omnibus `77404c61`; and leave dynent save/load `ba3c79f3` deferred
@@ -1191,10 +1192,10 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Publish the focused missile union/layout and SP grenade-cache candidate only after hosted SP/MP compilation, all nine
-   CI jobs, automated review, and thread-aware cleanup are green. Preserve exact variant layouts, typed field access,
-   time-sentinel cache validity, explicit partial-upstream provenance, dual-profile compile probes, and mutation-resistant
-   source contracts.
+1. Publish the focused missile union/layout and SP grenade-cache candidate only after hosted shared/MP/dedicated
+   compilation, measured Windows x86 and portable Windows MP/SP cache/layout contracts, all nine CI jobs, automated
+   review, and thread-aware cleanup are green. Preserve exact variant layouts, typed field access, time-sentinel cache
+   validity, explicit partial-upstream provenance, dual-profile compile probes, and mutation-resistant source contracts.
 2. Reconcile the remaining upstream content one subsystem at a time: first replace the server target table's truncated
    pointer/raw-28-byte walks with bounded typed 32-entry storage plus strict entity-index and flag-lifecycle validation;
    then harden bounded vehicle/Javelin HUD consumers without restoring d592's pointer-cast loop; then publish only the four
