@@ -1506,6 +1506,32 @@ add_test(
         -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_correctness_source_test.cmake
 )
 
+add_executable(
+    kisakcod-actor-navigation-geometry-tests
+    actor_navigation_geometry_tests.cpp
+)
+target_include_directories(
+    kisakcod-actor-navigation-geometry-tests PRIVATE ${SRC_DIR}
+)
+target_compile_features(
+    kisakcod-actor-navigation-geometry-tests PRIVATE cxx_std_20
+)
+kisakcod_test_warnings(kisakcod-actor-navigation-geometry-tests)
+set_target_properties(
+    kisakcod-actor-navigation-geometry-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME actor-navigation-geometry
+    COMMAND kisakcod-actor-navigation-geometry-tests
+)
+add_test(
+    NAME actor-navigation-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/actor_navigation_source_test.cmake
+)
+
 add_test(
     NAME pool-native-pointer-source-invariants
     COMMAND ${CMAKE_COMMAND}
