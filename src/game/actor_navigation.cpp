@@ -4834,6 +4834,10 @@ bool __cdecl Path_FindPathInCylinderWithLOS(
     pathsort_t nodes[64]; // [sp+80h] [-350h] BYREF
     int nodeCount;
 
+    iassert(vGoalPos);
+    if (!vGoalPos)
+        return false;
+
     info.negotiationOverlapCost = ai_pathNegotiationOverlapCost->current.value;
     info.m_pNodeTo = Path_NearestNode(vGoalPos, nodes, -2, 192.0, &nodeCount, 64, NEAREST_NODE_DO_HEIGHT_CHECK);
 
@@ -4878,6 +4882,10 @@ bool __cdecl Path_FindPathInCylinderWithLOSNotCrossPlanes(
     CustomSearchInfo_FindPathInCylinderWithLOSNotCrossPlanes info; // [sp+70h] [-390h] BYREF
     pathsort_t nodes[64]; // [sp+A0h] [-360h] BYREF
     int nodeCount;
+
+    iassert(vGoalPos);
+    if (!vGoalPos)
+        return false;
 
     info.negotiationOverlapCost = ai_pathNegotiationOverlapCost->current.value;
     info.m_pNodeTo = Path_NearestNode(vGoalPos, nodes, -2, 192.0, &nodeCount, 64, NEAREST_NODE_DO_HEIGHT_CHECK);

@@ -108,6 +108,35 @@ require_contains(
     "ActorNavigationGeometry::IsWithinDistance3D( pCurrent->constant.vOrigin, vGoalPos, this->m_fWithinDistSqrd) && Path_NodesVisible(pCurrent, this->m_pNodeTo)"
     "LOS goals require strict 3D proximity and node visibility")
 
+# The two public LOS search boundaries must reject a missing goal before
+# nearest-node lookup, A* goal evaluation, or heuristic evaluation can
+# dereference it. Generic A* intentionally permits null goals for policies
+# such as FindPathAway that do not consume the goal position.
+extract_slice(
+    _source
+    "bool __cdecl Path_FindPathInCylinderWithLOS("
+    "bool __cdecl Path_FindPathInCylinderWithLOSNotCrossPlanes("
+    _los_api
+    "Path_FindPathInCylinderWithLOS")
+extract_slice(
+    _source
+    "bool __cdecl Path_FindPathInCylinderWithLOSNotCrossPlanes("
+    "bool __cdecl Path_FindPathFromInCylinder("
+    _constrained_los_api
+    "Path_FindPathInCylinderWithLOSNotCrossPlanes")
+foreach(_slice IN ITEMS _los_api _constrained_los_api)
+    require_contains(
+        ${_slice}
+        "iassert(vGoalPos); if (!vGoalPos) return false;"
+        "LOS search boundaries reject a missing goal")
+    extract_slice(
+        ${_slice}
+        "if (!vGoalPos) return false;"
+        "Path_NearestNode(vGoalPos"
+        _guarded_los_setup
+        "LOS null guard ordering")
+endforeach()
+
 extract_slice(
     _source
     "template <typename T, bool USE_IGNORE = false, bool CHECK_NODETO = true>"
