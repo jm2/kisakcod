@@ -33,6 +33,15 @@ struct TestContext
 
 int gFailures;
 
+template <std::size_t Capacity, std::size_t Length>
+void SetText(
+    std::array<char, Capacity> &destination,
+    const char (&text)[Length])
+{
+    static_assert(Length <= Capacity, "test text must fit its destination");
+    std::memcpy(destination.data(), text, Length);
+}
+
 void Expect(const bool condition, const char *const message)
 {
     if (!condition)
@@ -327,7 +336,7 @@ void TestEmptyGameDirectoryIsNotDownloadable()
 
     const char *serverPakNames[] = {"custom/pak_svr_1"};
     const int serverPakChecksums[] = {12};
-    std::strcpy(output.data(), "before");
+    SetText(output, "before");
     result = server_file_compare::CompareAll(
         output.data(),
         output.size(),
@@ -365,7 +374,7 @@ void TestEmptyGameDirectoryIsNotDownloadable()
 void TestMatchingLocalFiles()
 {
     std::array<char, 128> output{};
-    std::strcpy(output.data(), "stale");
+    SetText(output, "stale");
     TestContext context;
     context.localIwdChecksums[0] = 77;
     context.localIwdChecksumCount = 1;
@@ -562,7 +571,7 @@ void TestExactCapacityBoundary()
 void TestAggregateRollbackOnLaterOverflow()
 {
     std::array<char, 64> output{};
-    std::strcpy(output.data(), "unchanged");
+    SetText(output, "unchanged");
     const auto before = output;
     TestContext context;
     AddSizeRule(
@@ -595,7 +604,7 @@ void TestAggregateRollbackOnLaterOverflow()
 void TestHumanListAtomicity()
 {
     std::array<char, 96> output{};
-    std::strcpy(output.data(), "first.iwd\n");
+    SetText(output, "first.iwd\n");
     Expect(
         server_file_compare::AppendMissingLine(
             output.data(),
@@ -612,7 +621,7 @@ void TestHumanListAtomicity()
         "the human-readable line must include its annotation and newline");
 
     std::array<char, 32> tooSmall{};
-    std::strcpy(tooSmall.data(), "existing\n");
+    SetText(tooSmall, "existing\n");
     const auto before = tooSmall;
     Expect(
         !server_file_compare::AppendMissingLine(
@@ -630,7 +639,7 @@ void TestHumanListAtomicity()
 void TestUnrepresentableSemanticCulpritIsAtomic()
 {
     std::array<char, 16> output{};
-    std::strcpy(output.data(), "unchanged");
+    SetText(output, "unchanged");
     const auto before = output;
     TestContext context;
     const char *names[] = {"ordinary/path/that/cannot/fit"};
