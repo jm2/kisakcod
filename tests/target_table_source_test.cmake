@@ -466,11 +466,21 @@ foreach(_required IN ITEMS
     require_contains(_fixture "${_required}" "runtime parser/layout coverage")
 endforeach()
 
+extract_slice(
+    _workflow "- name: Build shell: pwsh run: >"
+    "- name: Enforce FX archive stack budgets"
+    _measured_x86_build "measured Windows x86 explicit build targets")
 require_contains(
-    _workflow "kisakcod-target-table-tests"
-    "measured Windows x86 builds the target-table runtime contract")
+    _measured_x86_build "kisakcod-target-table-tests"
+    "measured Windows x86 explicitly builds the target-table runtime contract")
+
+extract_slice(
+    _workflow "- name: Run portable transaction tests"
+    "- uses: actions/upload-artifact@v4"
+    _measured_x86_tests "measured Windows x86 ctest selection")
 require_contains(
-    _workflow "target-table-(parse-and-layout-contracts|source-invariants)"
-    "measured Windows x86 runs both target-table contracts")
+    _measured_x86_tests
+    "target-table-(parse-and-layout-contracts|source-invariants)"
+    "measured Windows x86 selects both target-table contracts")
 
 message(STATUS "Target-table source contract passed")
