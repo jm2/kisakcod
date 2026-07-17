@@ -49,9 +49,14 @@ work item changes. Do not create session-specific handoff files.
   source, and security gates. Exact-head replacement CI and review-thread resolution remain the publication gates.
 - This candidate is deliberately not the whole-zone controller. The raw database user-4/user-8 paths and global
   4 -> 8 sweep still bypass the serializer; the adapter has no production caller; and a token is not yet bound to one
-  journal/key from initialization through terminal finalization/rollback. Full allocator partition validation also
-  costs O(65,536) work per checked operation, so representative retail-zone benchmarking and a retained-transaction or
-  equivalent validated fast path are mandatory before production enrollment.
+  journal/key from initialization through terminal finalization/rollback. A final audit corrected an earlier scope
+  assumption: the validation cost is already production-facing because legacy `SL_GetStringOfSize`/`FindStringOfSize`
+  and `MT_AllocIndex`/`MT_FreeIndex` route through the new checked implementations. A release microbenchmark measured
+  approximately 135 ms for 2,000 unique short interns, 766 ms for 10,000 repeated interns, and 1,056 ms for only 200
+  distinct same-length 300-byte strings; the last case exposes the length-only legacy hash multiplied by a complete
+  allocator scan per collision candidate. This is a PR #48 merge blocker. The branch must either add a proven
+  retained-validation batch covering the actual legacy phase or restore a separately bounded local legacy path that
+  keeps comparison reads inside authenticated allocations without weakening the typed transaction guarantees.
 - Current zone-adapter checkpoint: the zone-owned aligned native arena (`FxFastFileNativeArena`) and the guarded stateful
   zone adapter (`FxFastFileZoneAdapterDisk32Workspace`) are implemented as portable EffectsCore sources with no production
   wiring. The arena binds caller/zone-owned 16-byte-aligned storage only while unbound, so replacing or reusing storage
@@ -1315,8 +1320,9 @@ work item changes. Do not create session-specific handoff files.
 
 1. Finish, review, and publish the script-string ownership foundation candidate. Keep the report-free boundary and
    failure-atomic allocator fixtures linked against the actual production translation units, run all five portable
-   hosts plus measured Windows x86, and resolve automated review. Do not describe the private adapter as production
-   exclusion: it has no production caller and the raw DB ownership paths still bypass its serializer.
+   hosts plus measured Windows x86, resolve automated review, and close the legacy production performance blocker before
+   merge. Do not describe the private adapter as production exclusion: it has no production caller and the raw DB
+   ownership paths still bypass its serializer, while the shared legacy intern/allocator routes are already affected.
 2. Build the constructed whole-zone ownership table/controller around the external lifecycle slot, completed journal,
    and new report-free adapter. Bind exactly one token to one journal/key from initialization through terminal
    finalization or rollback. Acquire the global serializer before journal initialization and hold it continuously through

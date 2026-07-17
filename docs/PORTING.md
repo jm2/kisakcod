@@ -30,8 +30,11 @@ Completed foundation work:
   memory-tree scoring uses fixed-width byte extraction without inactive-union-member reads. This is not yet a production
   exclusion boundary: the adapter has no production caller, tokens are
   not yet bound to one journal/key for a whole lifecycle, and legacy raw user-4/user-8 operations plus the 4 -> 8 sweep
-  remain outside the serializer. Its correctness-first O(65,536)-per-operation allocator validation must be benchmarked
-  and replaced by a proven retained-transaction fast path before production enrollment;
+  remain outside the serializer. However, the shared legacy string intern/find and memory-tree allocate/free routes do
+  already use the correctness-first O(65,536)-per-operation validation. Release measurements show acceptable-looking
+  short unique cases can become a one-second path for only 200 same-length 300-byte collision-chain entries. A proven
+  retained transaction or separately bounded local legacy path is therefore a merge prerequisite, not merely future
+  production-enrollment work;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
