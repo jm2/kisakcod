@@ -144,10 +144,12 @@ void TestInactiveTokenIsRejected()
     const adapter::ScriptStringSourceView source{"x", 1, 7};
     ScriptStringTransactionToken inactive;
 
+    std::uint32_t output = 0xA5A5A5A5u;
     ADAPTER_CHECK(
         adapter::TryStageScriptStringFromSource(
-            nullptr, key, inactive, source)
+            nullptr, key, inactive, source, &output)
         == ScriptStringJournalStatus::InvalidState);
+    ADAPTER_CHECK(output == 0xA5A5A5A5u);
     ADAPTER_CHECK(
         adapter::TryTransferNextScriptStringToDatabaseUser(
             nullptr, key, inactive)
@@ -184,14 +186,18 @@ void TestSourceForwardingAndRepeatedAcquisitions(
     PushAcquireResult(script_string::AcquireStatus::Acquired, 77);
     PushAcquireResult(script_string::AcquireStatus::Acquired, 77);
 
+    std::uint32_t firstOutput = 0;
     ADAPTER_CHECK(
         adapter::TryStageScriptStringFromSource(
-            &value, key, token, source)
+            &value, key, token, source, &firstOutput)
         == ScriptStringJournalStatus::Success);
+    ADAPTER_CHECK(firstOutput == 77);
+    std::uint32_t secondOutput = 1234;
     ADAPTER_CHECK(
         adapter::TryStageScriptStringFromSource(
-            &value, key, token, source)
+            &value, key, token, source, &secondOutput)
         == ScriptStringJournalStatus::Success);
+    ADAPTER_CHECK(secondOutput == 77);
     ADAPTER_CHECK(backend.acquireCallCount == 2);
     for (std::size_t call = 0; call < backend.acquireCallCount; ++call)
     {
@@ -254,17 +260,21 @@ void TestRejectedAcquireStatuses(
 
     for (int attempt = 0; attempt < 3; ++attempt)
     {
+        std::uint32_t output = 0xDEADBEEFu;
         ADAPTER_CHECK(
             adapter::TryStageScriptStringFromSource(
-                &value, key, token, source)
+                &value, key, token, source, &output)
             == ScriptStringJournalStatus::Rejected);
+        ADAPTER_CHECK(output == 0xDEADBEEFu);
         ADAPTER_CHECK(value.entryCount() == 0);
         ADAPTER_CHECK(!value.poisoned());
     }
+    std::uint32_t output = 0;
     ADAPTER_CHECK(
         adapter::TryStageScriptStringFromSource(
-            &value, key, token, source)
+            &value, key, token, source, &output)
         == ScriptStringJournalStatus::Success);
+    ADAPTER_CHECK(output == 91);
     ADAPTER_CHECK(storage.stringId == 91);
 
     ADAPTER_CHECK(
