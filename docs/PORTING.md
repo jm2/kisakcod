@@ -219,7 +219,8 @@ Completed foundation work:
   **29584250420**; exact-head Codex found no major issue, both Gemini threads were resolved, and no unresolved review
   threads remained. Squash `cbb8bdb0` and authoritative post-merge run **29585012405** also passed all nine jobs;
 - the current SP target-table portability candidate combines four initial implementation/contract commits (`0a1e89b2`,
-  `c63bb68e`, `d981527f`, `653fdfdb`) with audit hardening `7ab3e174` and review/CI hardening `d8440271`. It replaces
+  `c63bb68e`, `d981527f`, `653fdfdb`) with audit hardening `7ab3e174`, review/CI hardening `d8440271`, and Apple locale
+  declaration fix `b9844b2e`. It replaces
   pointer truncation and raw 28-byte walks with bounded typed 32-entry native storage. It freezes `target_t` and
   `TargetGlob` at `0x1c`/`0x384` on x86 and
   `0x20`/`0x408` on native64, removes the `game/g_targets.cpp` pointer allowlist entry, and validates every target
@@ -233,9 +234,9 @@ Completed foundation work:
   The fallback restores errno and the full floating environment, preserves finite subnormals, rejects true underflow, and
   never reads past its supplied token range. This is the 47th M2 pointer fix and adds the native-width SP target table to
   M4 evidence;
-- GCC 16 and Clang 22 builds at exact target code head `d8440271` each pass **97/97** tests; the focused target
+- GCC 16 and Clang 22 builds at exact target code head `b9844b2e` each pass **97/97** tests; the focused target
   runtime/source, pointer-tripwire, and PR #44 contract set passes **4/4** under each compiler. At production-identical
-  head `d8440271`, focused Clang ASan+UBSan also passes with leak detection disabled because LSan cannot run under the
+  head `d8440271`, focused Clang ASan+UBSan also passed with leak detection disabled because LSan cannot run under the
   sandbox's ptrace policy. Strict GCC/Clang i386 and AArch64 GCC object compilation passed at `7ab3e174`.
   Exact-capacity, overflow, replacement/removal, delimiter-cleaning, malformed/duplicate, non-NUL token, subnormal,
   rounding-mode, and atomic-failure cases execute the same checked cores used by production. The sandbox killed i386
@@ -244,9 +245,10 @@ Completed foundation work:
   entity domains, material zero, offset overflow, two-argument screen parsing, unsafe duration, unvalidated producers,
   unregistered load materials, and shader publication. Two follow-up read-only audits are clean after the capacity,
   material-copy, runtime-coverage, ABI, optional-leading-delimiter, locale, rounding, subnormal, and range-read findings
-  were fixed. Original PR run **29590010636** passed all six Windows jobs and exposed only the now-fixed Linux range-loop
-  warning and missing Apple floating-`from_chars` overload; replacement exact-head hosted validation is pending. SP
-  production remains outside
+  were fixed. Original PR run **29590010636** passed all six Windows jobs and exposed the now-fixed Linux range-loop
+  warning and missing Apple floating-`from_chars` overload. Run **29591783551** then passed eight jobs and exposed only
+  that Xcode requires `<stdlib.h>` plus `<xlocale.h>` to declare `strtof_l`; `b9844b2e` fixes and contract-pins those
+  Apple-only includes. Replacement exact-head hosted validation is pending. SP production remains outside
   hosted coverage: every engine CI job sets `KISAK_BUILD_SP=OFF`, the portable executable exercises the shared parser and
   layout model, and the source contract textually pins the SP implementation. Direct SP probes stop earlier on existing
   ILP32 assertions, undeclared `IsValidSeed`, and missing DirectX `d3d9.h`;

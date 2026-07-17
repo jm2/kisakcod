@@ -301,7 +301,8 @@ work item changes. Do not create session-specific handoff files.
   replaces the unbounded SP/MP material-name copies. Review/CI hardening `d8440271` guards every reviewed script-entity
   lookup, fixes a warning-as-error range-loop copy, and adds an availability-dispatched floating parser: deterministic
   native `from_chars` where supported and a bounded C-locale, round-to-nearest POSIX fallback for Xcode 16.4 that restores
-  errno/fenv, retains finite subnormals, rejects true underflow, and terminates its copied token in-bounds. The shared
+  errno/fenv, retains finite subnormals, rejects true underflow, and terminates its copied token in-bounds. Its Apple-only
+  locale declarations are completed and contract-pinned by `b9844b2e`. The shared
   parser rejects malformed or duplicate recognized keys and noncanonical material/offset/flag values; the server supplies
   `min(level.num_entities, ENTITYNUM_WORLD)` as its
   ordinary-entity limit, so load also rejects WORLD/NONE and out-of-level references. Load validates every live entity
@@ -309,7 +310,7 @@ work item changes. Do not create session-specific handoff files.
   discarding stale table storage without dereferencing it, and publishing the complete staged table. Target and shader
   producers validate the same domain before mutation, flags round-trip symmetrically, and weapon lock consumers fail
   closed on invalid or stale indices while preserving the retail x86 configstring representation.
-- Target candidate validation at exact code head `d8440271`: GCC 16 and Clang 22 builds each pass **97/97** tests, and
+- Target candidate validation at exact code head `b9844b2e`: GCC 16 and Clang 22 builds each pass **97/97** tests, and
   the focused target runtime/source, pointer-tripwire, and PR #44 source-contract set passes **4/4** under each compiler.
   Focused Clang ASan+UBSan passes at the same head with leak detection disabled because LSan cannot run under the sandbox's
   ptrace policy; strict GCC/Clang i386 and AArch64 GCC object compilation passed at `7ab3e174`. Runtime cases cover exact
@@ -321,8 +322,10 @@ work item changes. Do not create session-specific handoff files.
   unvalidated-producer, unregistered-load-material, and shader-publication mutations are rejected. Two follow-up
   read-only audits are clean after their capacity, material-copy, runtime-coverage, ABI, optional-leading-delimiter,
   locale, rounding, subnormal, and bounded-range findings were fixed. Original PR run **29590010636** passed all six
-  Windows jobs and failed only the now-fixed Linux range-loop warning and Apple floating-`from_chars` gap; replacement
-  exact-head hosted validation is pending. `git diff --check` is clean. SP production translation units remain unbuilt:
+  Windows jobs and exposed the fixed Linux range-loop warning and Apple floating-`from_chars` gap. Run **29591783551**
+  then passed eight jobs and exposed only Xcode's requirement for `<stdlib.h>` plus `<xlocale.h>` before `strtof_l`;
+  `b9844b2e` fixes and contract-pins those Apple-only declarations. Replacement exact-head hosted validation is pending.
+  `git diff --check` is clean. SP production translation units remain unbuilt:
   direct probes stop
   before this code on pre-existing ILP32 layout assertions, an undeclared `IsValidSeed`, and missing DirectX `d3d9.h`,
   while every current CI engine job still uses `KISAK_BUILD_SP=OFF`.
