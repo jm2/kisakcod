@@ -6,8 +6,8 @@ endif()
 
 # These are the four deliberately selected, non-navigation corrections from
 # upstream 77404c6175b710d739bdc1b8aca5b395f72e5758. The objective command
-# contract restores the original 8c2ccbf8 strings after c76d429b appended an
-# objective description to protocol messages that do not accept one.
+# contract restores the original fixed 8c2ccbf8 complete/failed notification
+# payloads after c76d429b appended an objective description.
 
 function(load_source RELATIVE_PATH OUT_VARIABLE)
     set(_path "${SOURCE_ROOT}/src/${RELATIVE_PATH}")
@@ -15,6 +15,7 @@ function(load_source RELATIVE_PATH OUT_VARIABLE)
         message(FATAL_ERROR "Missing safe-fixlet source: ${_path}")
     endif()
     file(READ "${_path}" _source)
+    string(REPLACE "\r\n" "\n" _source "${_source}")
     set(${OUT_VARIABLE} "${_source}" PARENT_SCOPE)
 endfunction()
 
@@ -97,6 +98,22 @@ load_source("bgame/bg_weapons.cpp" _bg_weapons)
 load_source("cgame/cg_snapshot.cpp" _cg_snapshot)
 load_source("game/g_scr_main.cpp" _g_scr_main)
 load_source("game/actor_aim.cpp" _actor_aim)
+
+set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
+if(NOT EXISTS "${_ci_path}")
+    message(FATAL_ERROR "Missing CI workflow: ${_ci_path}")
+endif()
+file(READ "${_ci_path}" _ci)
+string(REPLACE "\r\n" "\n" _ci "${_ci}")
+extract_slice(
+    _ci
+    "- name: Run portable transaction tests"
+    "- uses: actions/upload-artifact@v4"
+    _measured_x86_tests
+    "measured Windows x86 ctest selection")
+require_count(
+    _measured_x86_tests "upstream-safe-fixlets-source-invariants" 1
+    "measured Windows x86 selects the safe-fixlet source contract")
 
 # Mutation mode is used only by the self-tests at the end of this file. Each
 # mutation represents a plausible regression and must make this contract fail.
@@ -332,6 +349,8 @@ if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
             OUTPUT_VARIABLE _mutation_stdout
             ERROR_VARIABLE _mutation_stderr)
         if(_mutation_result EQUAL 0)
+            message(STATUS "Mutation stdout: ${_mutation_stdout}")
+            message(STATUS "Mutation stderr: ${_mutation_stderr}")
             message(FATAL_ERROR
                 "Safe-fixlet contract accepted mutation: ${_mutation}")
         endif()
