@@ -531,8 +531,20 @@ void __cdecl FireWeapon(gentity_s *ent, int gametime)
                     // IDA: lock-on rockets pass the locked target + its offset
                     if ((ent->client->ps.weapLockFlags & 2) != 0)
                     {
-                        target = &level.gentities[ent->client->ps.weapLockedEntnum];
-                        G_TargetGetOffset(target, offset);
+                        const int lockedEntityNumber =
+                            ent->client->ps.weapLockedEntnum;
+                        if (lockedEntityNumber >= 0
+                            && lockedEntityNumber < ENTITYNUM_WORLD
+                            && level.gentities[lockedEntityNumber].r.inuse)
+                        {
+                            target = &level.gentities[lockedEntityNumber];
+                            G_TargetGetOffset(target, offset);
+                        }
+                        else
+                        {
+                            target = NULL;
+                            Vec3Clear(offset);
+                        }
                     }
                     else
 #endif
