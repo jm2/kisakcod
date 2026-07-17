@@ -448,7 +448,7 @@ void __cdecl Actor_HitEnemy(actor_s *self, weaponParms *wp, double accuracy)
     Actor_HitSentient(wp, self->sentient->targetEnt.ent()->sentient, accuracy);
 }
 
-float outerRadius;
+static float outerRadius = 6969.0f;
 void __cdecl Actor_MissSentient(weaponParms *wp, sentient_s *enemy, float accuracy)
 {
     gentity_s *ent = enemy->ent;
@@ -537,7 +537,7 @@ void __cdecl Actor_MissSentient(weaponParms *wp, sentient_s *enemy, float accura
 
 
 // some aislop
-float outerRadius_0;
+static float outerRadius_0 = 6969.0f;
 void __cdecl Actor_MissTarget(const weaponParms *wp, const float *target, float *forward)
 {
     float startX; // fp0
@@ -553,7 +553,7 @@ void __cdecl Actor_MissTarget(const weaponParms *wp, const float *target, float 
     float vec[3];
     float crossVec[3]; // [sp+60h] [-80h] BYREF
 
-    if (outerRadius_0 == 6969.0)
+    if (outerRadius_0 == 6969.0f)
     {
         float a = actorMaxs[1];
         outerRadius_0 = sqrtf(a * a * 2.0f * 3.0f);
