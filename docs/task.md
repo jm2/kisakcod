@@ -333,8 +333,9 @@ work item changes. Do not create session-specific handoff files.
   direct probes stop
   before this code on pre-existing ILP32 layout assertions, an undeclared `IsValidSeed`, and missing DirectX `d3d9.h`,
   while every current CI engine job still uses `KISAK_BUILD_SP=OFF`.
-- Current client-target safety candidate: commits `97024d7d`, `3cfb16d1`, `14887046`, and `799cf462` add a shared strict,
-  failure-atomic lock-on payload parser; a 1,023-byte target-config limit; named and runtime-checked 2,815-entry client and
+- Current client-target safety candidate: commits `97024d7d`, `3cfb16d1`, `14887046`, `799cf462`, and review hardening
+  `62e317dc` add a shared strict, failure-atomic lock-on payload parser; a 1,023-byte target-config limit; named and
+  runtime-checked 2,815-entry client and
   server configstring bounds; acquire-before-publish script-string replacement; and strict cgame command parsing. The
   client target table now has an explicit 28-byte ABI contract and exact 32-entry extent. Vehicle, Javelin, pip-on-stick,
   bouncing-diamond, and target-position consumers use typed iteration plus ordinary-entity snapshot/identity checks;
@@ -346,8 +347,10 @@ work item changes. Do not create session-specific handoff files.
   runtime MP/SP sentinel, overflow/junk, destination-atomicity, overlong, and exact 1,024-byte unterminated-buffer cases.
   The portable source contract pins range-before-access, acquire/publish/release ordering, the live dispatch handoff,
   absence of direct entity-array bypasses in audited consumers, target ABI/init state, bounded material lookup, and the
-  measured Windows x86 ctest selection. `git diff --check` is clean. Direct SP syntax probes caught and fixed one
-  accidental brace imbalance, then reached only pre-existing ILP32/vendor/header blockers. This remains an explicitly
+  measured Windows x86 ctest selection. Independent review found no production security, bounds, refcount, logic,
+  conversion, format, layout, or ABI defect; its sole actionable test finding now ties the exact range returns and sole
+  lock-state publication to their validated control flow. `git diff --check` is clean. Direct SP syntax probes caught and
+  fixed one accidental brace imbalance, then reached only pre-existing ILP32/vendor/header blockers. This remains an explicitly
   unclosed compile gate: all hosted engine jobs still use `KISAK_BUILD_SP=OFF`, so the production SP translation units and
   actual `targetInfo_t` native64 assertion are source-contract/probe covered rather than compiled by CI.
 - Remaining upstream content stays subsystem-scoped: publish the reviewed client target/HUD candidate, then handle the

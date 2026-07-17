@@ -256,16 +256,19 @@ Completed foundation work:
   `KISAK_BUILD_SP=OFF`, the portable executable exercises the shared parser and layout model, and the source contract
   textually pins the SP implementation. Direct SP probes stop earlier on existing ILP32 assertions, undeclared
   `IsValidSeed`, and missing DirectX `d3d9.h`;
-- the current client-target safety candidate (`97024d7d`, `3cfb16d1`, `14887046`, `799cf462`) completes the next audited
-  consumer half without importing d592's raw pointer-bound loop. Shared strict parsers reject malformed/overflowing
+- the current client-target safety candidate (`97024d7d`, `3cfb16d1`, `14887046`, `799cf462`, plus review hardening
+  `62e317dc`) completes the next audited consumer half without importing d592's raw pointer-bound loop. Shared strict
+  parsers reject malformed/overflowing
   configstring indices and lock-on payloads, cap target info at 1,023 bytes, and publish only complete staged values.
   Client/server configstring storage is range-checked before access and replaces script-string handles
   acquire-before-publish-before-release. The 28-byte `targetInfo_t` ABI and exact 32-entry extent are explicit; vehicle,
   Javelin, pip-on-stick, bouncing-diamond, and target-position consumers use typed traversal, live ordinary-entity
   identity, and bounded weapon/material indices. Complete GCC and Clang builds and **98/98** suites pass, including MP/SP
   endpoint, malformed-token, failure-atomic, overlong, and exact unterminated-buffer cases. A portable source contract is
-  selected by measured Windows x86 and pins the live dispatch and range/order invariants. The production SP TUs and real
-  native64 target ABI remain an explicit unclosed compile gate because every hosted engine configuration still disables
+  selected by measured Windows x86 and pins the live dispatch and range/order invariants; review hardening binds the exact
+  guard returns and sole lock-state publication to their validated control flow. Independent production logic/security
+  and portability/ABI audits are clean. The production SP TUs and real native64 target ABI remain an explicit unclosed
+  compile gate because every hosted engine configuration still disables
   SP; direct probes caught and fixed one brace imbalance, then reached pre-existing ILP32/vendor/header blockers;
 - remaining upstream content stays subsystem-specific: publish the reviewed client target/HUD candidate, then fix the
   squared-distance-versus-unsquared grenade safe-radius defect separately. Keep dynent save/load `ba3c79f3` deferred
