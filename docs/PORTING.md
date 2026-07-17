@@ -219,26 +219,34 @@ Completed foundation work:
   **29584250420**; exact-head Codex found no major issue, both Gemini threads were resolved, and no unresolved review
   threads remained. Squash `cbb8bdb0` and authoritative post-merge run **29585012405** also passed all nine jobs;
 - the current SP target-table portability candidate combines four initial implementation/contract commits (`0a1e89b2`,
-  `c63bb68e`, `d981527f`, `653fdfdb`) with audit hardening `7ab3e174`. It replaces pointer truncation and raw 28-byte walks
-  with bounded typed 32-entry native storage. It freezes `target_t` and `TargetGlob` at `0x1c`/`0x384` on x86 and
+  `c63bb68e`, `d981527f`, `653fdfdb`) with audit hardening `7ab3e174` and review/CI hardening `d8440271`. It replaces
+  pointer truncation and raw 28-byte walks with bounded typed 32-entry native storage. It freezes `target_t` and
+  `TargetGlob` at `0x1c`/`0x384` on x86 and
   `0x20`/`0x408` on native64, removes the `game/g_targets.cpp` pointer allowlist entry, and validates every target
   configstring before publication. Checks cover ordinary live-entity identity, WORLD/NONE and level bounds, duplicate
   references, finite int-encodable offsets, exact flags, and registered material indices. Stale storage is cleared without
   dereferencing old-generation pointers, authoritative live `FL_TARGET` state is rebuilt, and shader, lock-on, and SP
   locked-weapon publication fail closed on invalid input. The audit also made regular info-string replacement bounded and
   failure-atomic without changing its legacy ABI, stages every target wire update before native mutation, and replaces
-  the unbounded SP/MP material-name copies. This is the 47th M2 pointer fix and adds the native-width SP target table to
+  the unbounded SP/MP material-name copies. The latest hardening also guards all reviewed script-entity lookups and uses
+  native floating `from_chars` where available plus a bounded, C-locale, round-to-nearest POSIX fallback for Xcode 16.4.
+  The fallback restores errno and the full floating environment, preserves finite subnormals, rejects true underflow, and
+  never reads past its supplied token range. This is the 47th M2 pointer fix and adds the native-width SP target table to
   M4 evidence;
-- fresh GCC 16 and Clang 22 builds at exact target code head `7ab3e174` each pass **97/97** tests; the focused target
+- GCC 16 and Clang 22 builds at exact target code head `d8440271` each pass **97/97** tests; the focused target
   runtime/source, pointer-tripwire, and PR #44 contract set passes **4/4** under each compiler. At production-identical
-  head `7ab3e174`, Clang ASan+UBSan passed, as did strict GCC/Clang i386 object compilation and AArch64 GCC object
-  compilation. Exact-capacity, overflow, replacement/removal, delimiter-cleaning, malformed/duplicate, and atomic-failure
-  cases execute the same checked info-string core used by production. The sandbox killed i386 execution with exit
-  159, so no i386 runtime result is claimed. A separate
-  throwaway manual audit—not a built-in CI mutation mode—rejected nine regressions covering stale initialization, broad
+  head `d8440271`, focused Clang ASan+UBSan also passes with leak detection disabled because LSan cannot run under the
+  sandbox's ptrace policy. Strict GCC/Clang i386 and AArch64 GCC object compilation passed at `7ab3e174`.
+  Exact-capacity, overflow, replacement/removal, delimiter-cleaning, malformed/duplicate, non-NUL token, subnormal,
+  rounding-mode, and atomic-failure cases execute the same checked cores used by production. The sandbox killed i386
+  execution with exit 159, so no i386 runtime result is claimed. A separate throwaway manual audit—not a built-in CI
+  mutation mode—rejected nine regressions covering stale initialization, broad
   entity domains, material zero, offset overflow, two-argument screen parsing, unsafe duration, unvalidated producers,
   unregistered load materials, and shader publication. Two follow-up read-only audits are clean after the capacity,
-  material-copy, runtime-coverage, ABI, and optional-leading-delimiter findings were fixed. SP production remains outside
+  material-copy, runtime-coverage, ABI, optional-leading-delimiter, locale, rounding, subnormal, and range-read findings
+  were fixed. Original PR run **29590010636** passed all six Windows jobs and exposed only the now-fixed Linux range-loop
+  warning and missing Apple floating-`from_chars` overload; replacement exact-head hosted validation is pending. SP
+  production remains outside
   hosted coverage: every engine CI job sets `KISAK_BUILD_SP=OFF`, the portable executable exercises the shared parser and
   layout model, and the source contract textually pins the SP implementation. Direct SP probes stop earlier on existing
   ILP32 assertions, undeclared `IsValidSeed`, and missing DirectX `d3d9.h`;
