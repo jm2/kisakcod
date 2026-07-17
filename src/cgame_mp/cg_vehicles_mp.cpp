@@ -11,6 +11,7 @@
 #include <EffectsCore/fx_system.h>
 #include <game_mp/g_public_mp.h>
 #include <cgame/cg_pose_atomic.h>
+#include <bgame/bg_vehicle_material_time.h>
 
 //struct vehicleEffects(*)[8] vehEffects 8284e650     cg_vehicles_mp.obj
 
@@ -327,7 +328,6 @@ void __cdecl CG_VehProcessEntity(int32_t localClientNum, centity_s *cent)
     DObj_s *obj; // [esp+10h] [ebp-78h]
     vehfx_t fxInfo; // [esp+18h] [ebp-70h] BYREF
     const cgs_t *cgs; // [esp+68h] [ebp-20h]
-    int32_t time; // [esp+6Ch] [ebp-1Ch]
     LerpEntityState *p_currentState; // [esp+70h] [ebp-18h]
     float lightingOrigin[3]; // [esp+74h] [ebp-14h] BYREF
     float materialTime; // [esp+80h] [ebp-8h]
@@ -350,17 +350,11 @@ void __cdecl CG_VehProcessEntity(int32_t localClientNum, centity_s *cent)
             lightingOrigin[2] = lightingOrigin[2] + 32.0;
             cgameGlob = CG_GetLocalClientGlobals(localClientNum);
             
-            if (p_currentState->u.vehicle.materialTime < 0)
-            {
-                materialTime = 0.0;
-            }
-            else
-            {
-                time = p_currentState->u.vehicle.materialTime
-                    + (int)((double)(ns->lerp.u.vehicle.materialTime - p_currentState->u.vehicle.materialTime)
-                        * cgameGlob->frameInterpolation);
-                materialTime = (double)(cgameGlob->time - time) * EQUAL_EPSILON;
-            }
+            materialTime = bg::vehicle_material_time::ForRender(
+                p_currentState->u.vehicle.materialTime,
+                ns->lerp.u.vehicle.materialTime,
+                cgameGlob->frameInterpolation,
+                cgameGlob->time);
             R_AddDObjToScene(obj, &cent->pose, ns->number, 4u, lightingOrigin, materialTime);
         }
     }

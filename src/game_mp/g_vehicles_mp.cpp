@@ -14,6 +14,7 @@
 #include <script/scr_vm.h>
 #include <server/sv_game.h>
 #include <game/bullet.h>
+#include <bgame/bg_vehicle_material_time.h>
 
 
 
@@ -1532,11 +1533,15 @@ void __cdecl VEH_UpdateMaterialTime(gentity_s *ent, float frameTime)
         else
             v2 = veh->speed / 176.0 * frameTime * vehTextureScrollScale->current.value;
         deltaTime = v2;
-        ent->s.lerp.u.vehicle.materialTime += (int)(deltaTime * 1000.0);
+        ent->s.lerp.u.vehicle.materialTime =
+            bg::vehicle_material_time::Advance(
+                ent->s.lerp.u.vehicle.materialTime,
+                (int)(deltaTime * 1000.0));
     }
     else
     {
-        ent->s.lerp.u.vehicle.materialTime = -1;
+        ent->s.lerp.u.vehicle.materialTime =
+            bg::vehicle_material_time::kDisabled;
     }
 }
 

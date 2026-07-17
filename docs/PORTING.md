@@ -190,21 +190,27 @@ Completed foundation work:
   either `break` regression and requires the sole failure return after loop exhaustion. Exact branch head `952fa06d`
   passed all nine jobs in run **29554051839**; Gemini and exact-head Codex review were clean, no review threads remained,
   and the PR squash-merged as `dbc84ec9`. Authoritative post-merge master run **29554663451** passed all nine jobs;
-- the current focused reconciliation candidate manually adapts justified navigation changes from `3f256654` and the
-  navigation-only parts of `77404c61`. It forwards the real goal position, enables ignore filtering for all five newly
-  constrained A* searches, uses strict full-XYZ distance plus visibility for line-of-sight goals, passes the plane normal
-  to away-path nearest-node lookup, and preserves three-component cylinder origins. Vertical distance is correctly
-  measured from `origin.z`, excluding upstream's squared-radius-as-Z defect. A pure geometry helper has executable
-  nonzero-XYZ/boundary tests and a source contract pins the SP integration; unrelated `fMaxNodeDist` and behaviorally
-  identical goal API churn remain excluded;
-- deferred upstream content requires subsystem-specific adaptation and focused tests. Tank timing from `b31ea047` must
-  preserve the exact disabled sentinel `-1`; missile/HUD changes from `d592fb4a` must be split; remaining omnibus `77404c61`
-  content must be reduced to individually justified fixlets; and dynent save/load `ba3c79f3` remains deferred until it
-  has bounded transactional Disk32/native-sidecar semantics;
-- fresh strict GCC 16 and Clang 22 builds of the navigation candidate pass all **88/88** tests, including the executable
-  geometry and SP integration source-contract tests. A Clang-CL header syntax check and `git diff --check` pass, and an
-  independent semantic/provenance audit is clean; hosted Windows SP production compilation and automated review remain
-  the PR gates;
+- PR #41 merged the manually adapted navigation changes from `3f256654` and the navigation-only parts of `77404c61`.
+  It forwards the real goal position, enables all five intended ignore filters, uses strict full-XYZ distance plus
+  visibility, passes the real plane normal, preserves three-component cylinder origins, and excludes upstream's
+  squared-radius-as-Z defect and unrelated API churn. Review hardening also fails closed on missing LOS goals and applies
+  cylinder/plane constraints before accepting the initial/current node. Exact final head `add3b87f` passed all nine jobs
+  in run **29555716499**; both substantive review findings were fixed, exact-head Codex re-review was clean, no unresolved
+  threads remained, and the PR squash-merged as `38025fa5`. Authoritative post-merge master run **29556169431** passed
+  all nine jobs;
+- the current focused reconciliation candidate adapts `b31ea047` vehicle material timing while preserving exact disabled
+  value `-1`; zero and other negative states remain valid for reverse motion. A shared portable helper provides defined
+  modular 32-bit advancement/interpolation, skips the reserved value in the direction of travel, and uses renderer default
+  zero if either snapshot endpoint is disabled. Both SP/MP producers and consumers use the contract, and SP adopts the
+  existing MP `+32` lighting origin. The legacy producer float-to-int range risk remains deferred;
+- deferred upstream content requires subsystem-specific adaptation and focused tests. Missile union, target-table, and
+  HUD changes from `d592fb4a` must be split; remaining omnibus `77404c61` content must be reduced to individually justified
+  fixlets; and dynent save/load `ba3c79f3` remains deferred until it has bounded transactional Disk32/native-sidecar
+  semantics;
+- fresh strict GCC 16 and Clang 22 builds of the rebased vehicle-timing candidate pass all **90/90** tests. Executable
+  timing tests, source contracts, GCC/Clang UBSan helper runs, mutation checks, `git diff --check`, and an independent
+  semantic/provenance audit are clean; hosted Windows SP/MP production compilation and automated review remain the PR
+  gates;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
