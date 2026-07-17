@@ -1,5 +1,6 @@
 #pragma once
-#include <cstdint>
+
+#include <universal/kisak_abi.h>
 
 struct MemoryNode // sizeof=0xC
 {                                       // XREF: scrMemTreeGlob_t/r
@@ -13,7 +14,40 @@ static_assert(sizeof(MemoryNode) == 12);
 #define MEMORY_NODE_COUNT 0x10000
 #define NUM_BUCKETS 256
 
-struct __declspec(align(128)) scrMemTreeGlob_t // sizeof=0xC0380
+enum class MT_AllocIndexStatus : uint8_t
+{
+    Success,
+    InvalidArgumentNoChange,
+    InsufficientCapacityNoChange,
+    UnsafeFailure,
+};
+
+enum class MT_FreeIndexStatus : uint8_t
+{
+    Success,
+    InvalidArgumentNoChange,
+    OwnershipMismatchNoChange,
+    UnsafeFailure,
+};
+
+struct MT_AllocationInfo
+{
+    uint8_t type;
+    uint8_t size;
+    uint16_t reserved;
+    uint32_t capacityBytes;
+};
+RUNTIME_SIZE(MT_AllocationInfo, 0x8, 0x8);
+
+enum class MT_AllocationInfoStatus : uint8_t
+{
+    Success,
+    InvalidArgumentNoChange,
+    NotAllocatedNoChange,
+    UnsafeFailure,
+};
+
+struct KISAK_ALIGNAS(128) scrMemTreeGlob_t // sizeof=0xC0380
 {                                       // XREF: .data:scrMemTreeGlob/r
     MemoryNode nodes[MEMORY_NODE_COUNT];            // XREF: MT_Init(void)+46/w
                                         // MT_Init(void)+4E/w ...
@@ -62,11 +96,29 @@ static const char* mt_type_names[22] =
 int MT_GetSubTreeSize(int nodeNum);
 void MT_DumpTree(void);
 void MT_FreeIndex(uint32_t nodeNum, int numBytes);
+// The try path never reports. Every non-Success result leaves allocation
+// metadata, accounting, and all free-tree links unchanged.
+[[nodiscard]] MT_FreeIndexStatus MT_TryFreeIndex(
+    uint32_t nodeNum,
+    int numBytes) noexcept;
+
+// The query never reports and publishes the complete result only on Success.
+// Every other result leaves *outInfo unchanged.
+[[nodiscard]] MT_AllocationInfoStatus MT_TryGetAllocationInfo(
+    uint32_t nodeNum,
+    MT_AllocationInfo *outInfo) noexcept;
 
 void MT_Free(unsigned char* p, int numBytes);
 bool MT_Realloc(int oldNumBytes, int newNumbytes);
 
 void MT_Init(void);
+// The try path never reports. Every non-Success result leaves both the
+// allocator and *outIndex unchanged; UnsafeFailure denotes a failed internal
+// invariant preflight rather than ordinary capacity exhaustion.
+[[nodiscard]] MT_AllocIndexStatus MT_TryAllocIndex(
+    int numBytes,
+    int type,
+    uint16_t *outIndex) noexcept;
 unsigned short MT_AllocIndex(int numBytes, int type);
 void* MT_Alloc(int numBytes, int type);
 
