@@ -242,6 +242,12 @@ struct  CustomSearchInfo_FindPathInCylinderWithLOS : CustomSearchInfo_FindPathWi
         return !Actor_PointAtGoal(pNode->constant.vOrigin, this->goal);
     }
 
+    bool IsGoal(pathnode_t *pCurrent, const float *vGoalPos)
+    {
+        return !this->IgnoreNode(pCurrent)
+            && CustomSearchInfo_FindPathWithLOS::IsGoal(pCurrent, vGoalPos);
+    }
+
     float EvaluateHeuristic(pathnode_t *pSuccessor, const float *vGoalPos)
     {
         float v[2]; // [esp+18h] [ebp-Ch] BYREF
@@ -292,6 +298,12 @@ struct  CustomSearchInfo_FindPathInCylinderWithLOSNotCrossPlanes : CustomSearchI
 
         return ActorNavigationGeometry::IsOutsideHalfPlanes2D(
             pNode->constant.vOrigin, this->m_vNormal, this->m_fDist, this->m_iPlaneCount);
+    }
+
+    bool IsGoal(pathnode_t *pCurrent, const float *vGoalPos)
+    {
+        return !this->IgnoreNode(pCurrent)
+            && CustomSearchInfo_FindPathWithLOS::IsGoal(pCurrent, vGoalPos);
     }
 };
 

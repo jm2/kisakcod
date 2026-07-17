@@ -108,6 +108,32 @@ require_contains(
     "ActorNavigationGeometry::IsWithinDistance3D( pCurrent->constant.vOrigin, vGoalPos, this->m_fWithinDistSqrd) && Path_NodesVisible(pCurrent, this->m_pNodeTo)"
     "LOS goals require strict 3D proximity and node visibility")
 
+# A* evaluates the initial/current node as a goal before USE_IGNORE filters
+# successors. Each cylinder policy must therefore apply its own constraint
+# before delegating to the shared distance/visibility goal predicate.
+extract_slice(
+    _source
+    "struct CustomSearchInfo_FindPathInCylinderWithLOS :"
+    "/* 10050 */"
+    _cylinder_los_search
+    "CustomSearchInfo_FindPathInCylinderWithLOS")
+extract_slice(
+    _source
+    "struct CustomSearchInfo_FindPathInCylinderWithLOSNotCrossPlanes :"
+    "/* 10051 */"
+    _constrained_cylinder_los_search
+    "CustomSearchInfo_FindPathInCylinderWithLOSNotCrossPlanes")
+foreach(_slice IN ITEMS _cylinder_los_search _constrained_cylinder_los_search)
+    require_contains(
+        ${_slice}
+        "bool IsGoal(pathnode_t *pCurrent, const float *vGoalPos)"
+        "cylinder LOS policies own constraint-aware goal checks")
+    require_contains(
+        ${_slice}
+        "return !this->IgnoreNode(pCurrent) && CustomSearchInfo_FindPathWithLOS::IsGoal(pCurrent, vGoalPos);"
+        "cylinder constraints precede distance and visibility goal acceptance")
+endforeach()
+
 # The two public LOS search boundaries must reject a missing goal before
 # nearest-node lookup, A* goal evaluation, or heuristic evaluation can
 # dereference it. Generic A* intentionally permits null goals for policies
