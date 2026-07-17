@@ -200,3 +200,56 @@ foreach(_forbidden IN ITEMS
     forbid_slice_contains(
         _cg_blur "${_forbidden}" "no double or pointer-pun conversion may return")
 endforeach()
+
+# A successful trace must return success immediately. Breaking either branch
+# exits the sample loop and falls through to the unconditional failure return.
+extract_function_slice(
+    "game/g_combat.cpp"
+    "if (coneAngleCos == -1.0 || !coneDirection)"
+    "else"
+    _radius_damage_unrestricted
+    "G_CanRadiusDamageFromPos unrestricted samples")
+require_slice_contains(
+    _radius_damage_unrestricted
+    "if (G_LocationalTracePassed(centerPos, dest[i], targ->s.number, inflictorNum, contentMask, 0)) return 1;"
+    "an unrestricted passing trace returns success")
+forbid_slice_contains(
+    _radius_damage_unrestricted
+    "break;"
+    "an unrestricted passing trace must not fall through")
+
+extract_function_slice(
+    "game/g_combat.cpp"
+    "if (dot >= coneAngleCos)"
+    "return 0;"
+    _radius_damage_cone
+    "G_CanRadiusDamageFromPos cone-qualified samples")
+require_slice_contains(
+    _radius_damage_cone
+    "if (G_LocationalTracePassed(centerPos, dest[i], targ->s.number, inflictorNum, contentMask, 0)) return 1;"
+    "a cone-qualified passing trace returns success")
+forbid_slice_contains(
+    _radius_damage_cone
+    "break;"
+    "a cone-qualified passing trace must not fall through")
+
+extract_function_slice(
+    "game/g_combat.cpp"
+    "if (coneAngleCos == -1.0 || !coneDirection)"
+    "float __cdecl EntDistToPoint("
+    _radius_damage_tail
+    "G_CanRadiusDamageFromPos sample-loop tail")
+require_slice_match_count(
+    _radius_damage_tail
+    "return 0;"
+    1
+    "radius damage fails only after all samples are exhausted")
+require_slice_contains(
+    _radius_damage_tail
+    "return 1; } } } return 0;"
+    "the failure return remains outside the five-sample loop")
+require_slice_ordered(
+    _radius_damage_tail
+    "if (dot >= coneAngleCos)"
+    "return 0;"
+    "loop-exhaustion failure follows the cone-qualified branch")
