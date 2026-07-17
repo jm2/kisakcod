@@ -1434,6 +1434,13 @@ add_test(
 )
 
 add_test(
+    NAME target-client-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/target_client_source_test.cmake
+)
+
+add_test(
     NAME abi-sizeof-debt-tripwire
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}

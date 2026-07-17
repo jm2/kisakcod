@@ -26,6 +26,7 @@
 #include <server/sv_game.h>
 #include <qcommon/com_bsp.h>
 #include <qcommon/skel_memory_atomic.h>
+#include <universal/info_string.h>
 
 char bigConfigString[8192];
 const float g_color_table[8][4]
@@ -223,43 +224,63 @@ void __cdecl CL_SetExtraButtons(int localClientNum, int buttons)
 
 void CL_ConfigstringModified()
 {
-    int nesting; // r7
-    const char *v1; // r3
-    unsigned int index; // r30
-    int v3; // r7
-    const char *v4; // r26
-    const char *v6; // r29
-    const char *v7; // r10
-    const char *v8; // r11
-    int v9; // r8
+    int index;
+    const char *const indexToken = Cmd_Argv(1);
+    if (!info_string::TryParseSignedDecimalToken(indexToken, &index)
+        || index < 0
+        || static_cast<uint32_t>(index) >= CLIENT_CONFIGSTRING_COUNT)
+    {
+        Com_Error(
+            ERR_DROP,
+            "CL_ConfigstringModified: invalid configstring index (expected 0-%u)",
+            CLIENT_CONFIGSTRING_COUNT - 1);
+        return;
+    }
 
-    v1 = Cmd_Argv(1);
-    index = atol(v1);
-    if (index > 2814)
-        Com_Error(ERR_DROP, "configstring > MAX_CONFIGSTRINGS");
-
-    v4 = Cmd_Argv(2);
-    if (!clients[0].configstrings[index])
+    const uint16_t oldString = clients[0].configstrings[index];
+    if (!oldString)
+    {
         MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\client\\cl_cgame.cpp", 244, 0, "%s", "cl->configstrings[index]");
+        Com_Error(
+            ERR_DROP,
+            "CL_ConfigstringModified: configstring index %d is not initialized",
+            index);
+        return;
+    }
 
-    v6 = SL_ConvertToString(clients[0].configstrings[index]);
-    if (!v6)
+    const char *const oldValue = SL_ConvertToString(oldString);
+    if (!oldValue)
+    {
         MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\client\\cl_cgame.cpp", 246, 0, "%s", "old");
+        Com_Error(
+            ERR_DROP,
+            "CL_ConfigstringModified: configstring index %d has no value",
+            index);
+        return;
+    }
 
-    v7 = v4;
-    v8 = v6;
-    do
+    const char *const newValue = Cmd_Argv(2);
+    if (strcmp(oldValue, newValue))
     {
-        v9 = *(unsigned __int8 *)v8 - *(unsigned __int8 *)v7;
-        if (!*v8)
-            break;
-        ++v8;
-        ++v7;
-    } while (!v9);
-    if (v9)
-    {
-        SL_RemoveRefToString(clients[0].configstrings[index]);
-        clients[0].configstrings[index] = SL_GetString_(v4, 0, 19);
+        // Release the old entry before interning its replacement so a full
+        // script-string table can reuse the slot.  Clear the published handle
+        // first so a reporting path that returns cannot leave a stale handle.
+        clients[0].configstrings[index] = 0;
+        SL_RemoveRefToString(oldString);
+
+        const uint32_t newString = SL_GetString_(newValue, 0, 19);
+        if (!newString || static_cast<uint16_t>(newString) != newString)
+        {
+            if (newString)
+                SL_RemoveRefToString(newString);
+            Com_Error(
+                ERR_DROP,
+                "CL_ConfigstringModified: could not store configstring index %d",
+                index);
+            return;
+        }
+
+        clients[0].configstrings[index] = static_cast<uint16_t>(newString);
     }
 }
 
@@ -622,9 +643,8 @@ void __cdecl CL_SubtitlePrint(int localClientNum, const char *text, int duration
 
 const char *__cdecl CL_GetConfigString(int localClientNum, unsigned int configStringIndex)
 {
-    unsigned int v3; // r30
-
     if (localClientNum)
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\client\\cl_cgame.cpp",
             526,
@@ -632,23 +652,55 @@ const char *__cdecl CL_GetConfigString(int localClientNum, unsigned int configSt
             "%s\n\t(localClientNum) = %i",
             "(localClientNum == 0)",
             localClientNum);
-    if (configStringIndex >= 0xAFF)
+        Com_Error(
+            ERR_DROP,
+            "CL_GetConfigString: invalid local client %d",
+            localClientNum);
+        return "";
+    }
+    if (configStringIndex >= CLIENT_CONFIGSTRING_COUNT)
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\client\\cl_cgame.cpp",
             527,
             0,
             "configStringIndex doesn't index MAX_CONFIGSTRINGS\n\t%i not in [0, %i)",
             configStringIndex,
-            2815);
-    v3 = configStringIndex;
-    if (!clients[0].configstrings[v3])
+            CLIENT_CONFIGSTRING_COUNT);
+        Com_Error(
+            ERR_DROP,
+            "CL_GetConfigString: configstring index %u is outside [0, %u)",
+            configStringIndex,
+            CLIENT_CONFIGSTRING_COUNT);
+        return "";
+    }
+    const uint16_t stringHandle =
+        clients[0].configstrings[configStringIndex];
+    if (!stringHandle)
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\client\\cl_cgame.cpp",
             531,
             0,
             "%s",
             "cl->configstrings[configStringIndex]");
-    return SL_ConvertToString(clients[0].configstrings[v3]);
+        Com_Error(
+            ERR_DROP,
+            "CL_GetConfigString: configstring index %u is not initialized",
+            configStringIndex);
+        return "";
+    }
+
+    const char *const value = SL_ConvertToString(stringHandle);
+    if (!value)
+    {
+        Com_Error(
+            ERR_DROP,
+            "CL_GetConfigString: configstring index %u has no value",
+            configStringIndex);
+        return "";
+    }
+    return value;
 }
 
 // attributes: thunk

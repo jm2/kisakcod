@@ -1,5 +1,9 @@
 #pragma once
+#include <cstddef>
+
+#include <bgame/bg_target_protocol.h>
 #include <client/client.h>
+#include <universal/kisak_abi.h>
 #include <bgame/bg_local.h>
 #include "cg_local.h"
 
@@ -63,6 +67,13 @@ struct targetInfo_t
     int offscreenMaterialIndex;
     int flags;
 };
+
+RUNTIME_SIZE(targetInfo_t, 0x1C, 0x1C);
+RUNTIME_OFFSET(targetInfo_t, entNum, 0x0, 0x0);
+RUNTIME_OFFSET(targetInfo_t, offset, 0x4, 0x4);
+RUNTIME_OFFSET(targetInfo_t, materialIndex, 0x10, 0x10);
+RUNTIME_OFFSET(targetInfo_t, offscreenMaterialIndex, 0x14, 0x14);
+RUNTIME_OFFSET(targetInfo_t, flags, 0x18, 0x18);
 
 struct cg_s_shock
 {
@@ -184,7 +195,7 @@ struct cg_s
     int offhandFadeTime;
     int offhandFlashTime;
     objectiveInfo_t objectives[16];
-    targetInfo_t targets[32];
+    targetInfo_t targets[bg::target_protocol::kMaxTargets];
     shellshock_t shellshock;
     cg_s_shock testShock;
     int holdBreathTime;

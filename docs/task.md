@@ -293,7 +293,8 @@ work item changes. Do not create session-specific handoff files.
   head `da1ea81f` passed all nine jobs in PR run **29584250420**; exact-head Codex found no major issue, both Gemini
   threads were resolved, and no unresolved review threads remained. The PR squash-merged as `cbb8bdb0`, and
   authoritative post-merge run **29585012405** passed all nine jobs.
-- Current SP target-table portability candidate: `0a1e89b2` replaces truncated pointers and raw 28-byte walks with a
+- Merged SP target-table portability checkpoint: PR #45 squash-merged as `d85ed087`. Its reviewed branch sequence starts
+  with `0a1e89b2`, which replaces truncated pointers and raw 28-byte walks with a
   native-width typed 32-entry table; `c63bb68e` adds the shared dependency-light target protocol, dual-width layout and
   executable/source contracts; `d981527f` hardens publication boundaries; and `653fdfdb` scopes the contract's build and
   test assertions to measured Windows x86. Audit hardening `7ab3e174` makes regular info-string replacement bounded and
@@ -310,7 +311,7 @@ work item changes. Do not create session-specific handoff files.
   discarding stale table storage without dereferencing it, and publishing the complete staged table. Target and shader
   producers validate the same domain before mutation, flags round-trip symmetrically, and weapon lock consumers fail
   closed on invalid or stale indices while preserving the retail x86 configstring representation.
-- Target candidate validation at exact code head `b9844b2e`: GCC 16 and Clang 22 builds each pass **97/97** tests, and
+- Merged target-table validation at exact code head `b9844b2e`: GCC 16 and Clang 22 builds each pass **97/97** tests, and
   the focused target runtime/source, pointer-tripwire, and PR #44 source-contract set passes **4/4** under each compiler.
   Focused Clang ASan+UBSan passes at the same head with leak detection disabled because LSan cannot run under the sandbox's
   ptrace policy; strict GCC/Clang i386 and AArch64 GCC object compilation passed at `7ab3e174`. Runtime cases cover exact
@@ -324,17 +325,39 @@ work item changes. Do not create session-specific handoff files.
   locale, rounding, subnormal, and bounded-range findings were fixed. Original PR run **29590010636** passed all six
   Windows jobs and exposed the fixed Linux range-loop warning and Apple floating-`from_chars` gap. Run **29591783551**
   then passed eight jobs and exposed only Xcode's requirement for `<stdlib.h>` plus `<xlocale.h>` before `strtof_l`;
-  `b9844b2e` fixes and contract-pins those Apple-only declarations. Exact PR head `d472e136` passed all nine jobs in run
-  **29593740056**; exact-head Codex found no major issue, all six Gemini threads are resolved, and no unresolved review
-  threads remain. `git diff --check` is clean. SP production translation units remain unbuilt:
+  `b9844b2e` fixes and contract-pins those Apple-only declarations. Intermediate head `d472e136` passed all nine jobs in
+  run **29593740056**. Exact final PR head `7336f10b` passed all nine jobs in run **29594562813**; exact-head Codex found
+  no major issue, all six Gemini threads are resolved, and no unresolved review threads remain. PR #45 squash-merged as
+  `d85ed087`, and authoritative post-merge master run **29595203160** passed all nine jobs. `git diff --check` is clean.
+  SP production translation units remain unbuilt:
   direct probes stop
   before this code on pre-existing ILP32 layout assertions, an undeclared `IsValidSeed`, and missing DirectX `d3d9.h`,
   while every current CI engine job still uses `KISAK_BUILD_SP=OFF`.
-- Remaining upstream content stays subsystem-scoped: publish the reviewed server target table before implementing a
-  strict transactional `CG_TargetsChanged` plus bounded vehicle/Javelin HUD consumers; handle the separately identified
-  squared-distance-versus-unsquared grenade safe-radius defect in its own batch; and leave dynent save/load `ba3c79f3`
-  deferred until bounded transactional Disk32/native-sidecar semantics exist. Do not import d592's raw-pointer-bound
-  `CG_GetTargetPos` loop or unrelated weapon-fire changes.
+- Current client-target safety candidate: commits `97024d7d`, `3cfb16d1`, `14887046`, `799cf462`, and review hardening
+  `62e317dc` add a shared strict, failure-atomic lock-on payload parser; a 1,023-byte target-config limit; named and
+  runtime-checked 2,815-entry client and
+  server configstring bounds; full-table-compatible script-string replacement that unpublishes before release and
+  publishes only a validated replacement; and strict cgame command parsing. The
+  client target table now has an explicit 28-byte ABI contract and exact 32-entry extent. Vehicle, Javelin, pip-on-stick,
+  bouncing-diamond, and target-position consumers use typed iteration plus ordinary-entity snapshot/identity checks;
+  weapon indices are bounded; malformed target configs publish a fully cleared stage; and material lookup retains the
+  registered material with a bounded fallback. The live `ret_lock_on` branch accepts only ordinary/nonnegative payloads
+  or exact `ENTITYNUM_NONE`/zero clearing. Server diagnostics and emitted configstring commands now preserve unsigned
+  varargs types, including Win64-safe size conversions.
+- Current client-target validation: complete GCC 16 and Clang 22 builds and **98/98** suites pass, including the new
+  runtime MP/SP sentinel, overflow/junk, destination-atomicity, overlong, and exact 1,024-byte unterminated-buffer cases.
+  The portable source contract pins range-before-access, unpublish/release/acquire/publish ordering, the live dispatch handoff,
+  absence of direct entity-array bypasses in audited consumers, target ABI/init state, bounded material lookup, and the
+  measured Windows x86 ctest selection. Independent review found no production security, bounds, refcount, logic,
+  conversion, format, layout, or ABI defect; its sole actionable test finding now ties the exact range returns and sole
+  lock-state publication to their validated control flow. `git diff --check` is clean. Direct SP syntax probes caught and
+  fixed one accidental brace imbalance, then reached only pre-existing ILP32/vendor/header blockers. This remains an explicitly
+  unclosed compile gate: all hosted engine jobs still use `KISAK_BUILD_SP=OFF`, so the production SP translation units and
+  actual `targetInfo_t` native64 assertion are source-contract/probe covered rather than compiled by CI.
+- Remaining upstream content stays subsystem-scoped: publish the reviewed client target/HUD candidate, then handle the
+  separately identified squared-distance-versus-unsquared grenade safe-radius defect in its own batch; leave dynent
+  save/load `ba3c79f3` deferred until bounded transactional Disk32/native-sidecar semantics exist. Do not import d592's
+  raw-pointer-bound `CG_GetTargetPos` loop or unrelated weapon-fire changes.
 - Current fast-file widening checkpoint: one canonical portable `FxEffectDef`/`FxElemDef`/visual/trail runtime type family
   now replaces the renderer-only duplicate definition boundary. The effect converter validates exact Disk32 graph
   provenance, freezes each bounded resolver request group before callbacks, snapshots the resolver descriptor, binds
@@ -753,8 +776,8 @@ work item changes. Do not create session-specific handoff files.
   The licensed-content smoke is deferred and must not be dispatched: it requires a self-hosted
   `[self-hosted, kisakcod, windows, x86]` runner and the `KISAKCOD_GAME_DIR` secret, neither of which is
   currently provisioned. Surface that infrastructure blocker instead of triggering the workflow.
-- Progress estimate: approximately **70% complete by engineering effort**. Windows x86 is about **93%**, shared
-  foundations/security about **84%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
+- Progress estimate: approximately **71% complete by engineering effort**. Windows x86 is about **93%**, shared
+  foundations/security about **85%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
   **39%**, and macOS arm64 about **30%**. None of the five requested 64-bit/non-Windows engine targets builds end to end
   yet, so strict target delivery remains **0/5**.
 - Initial upstream integration: merged PR #1 at `2b759db`, incorporating upstream `master` through `8a0f14f`
@@ -1231,16 +1254,15 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Publish the reviewed SP target-table candidate after hosted CI, automated review, and thread-aware cleanup are green.
-   Preserve native pointer layout, strict validate-before-publish loading, stale-storage safety, producer/consumer domain
-   symmetry, registered-material checks, retail x86 wire values, and measured Windows x86 contract coverage.
-2. Implement strict transactional `CG_TargetsChanged` parsing with bounded typed client storage, then harden the
-   vehicle/Javelin HUD consumers without restoring d592's pointer-cast `CG_GetTargetPos` loop. Reuse the shared target
-   protocol so server and client accept the same material, offset, flag, and entity-number domains.
-3. Fix the separately identified squared-distance-versus-unsquared grenade safe-radius comparison in its own focused
+1. Publish the reviewed client target/HUD candidate after hosted CI and automated review are green. Preserve strict
+   configstring and lock-on parsing, full-table-compatible unpublish/release/acquire/publish string ownership, the exact
+   target ABI, live entity identity,
+   typed 32-entry traversal, complete-stage publication, material fallback behavior, and measured Windows x86 source
+   coverage. Keep the missing production-SP compile gate explicit rather than treating text checks as compilation.
+2. Fix the separately identified squared-distance-versus-unsquared grenade safe-radius comparison in its own focused
    correctness batch. Keep dynent save/load `ba3c79f3` deferred until its bounded transactional Disk32/native-sidecar
    design exists; do not fold either change into the target/HUD publication.
-4. Build the constructed whole-zone ownership table and no-report script-string adapter layer around the external
+3. Build the constructed whole-zone ownership table and no-report script-string adapter layer around the external
    lifecycle slot and completed journal. The adapter must acquire one ordinary reference per occurrence, report the exact
    claimed-versus-duplicate database-user transfer outcome, remove ordinary references, and remove only the targeted
    database-user reference without `Com_Error` or nonlocal exit. Validate current runtime IDs as `0 < id < 65536` before
@@ -1248,7 +1270,7 @@ work item changes. Do not create session-specific handoff files.
    serializer before journal initialization and hold it continuously through terminal commit or rollback return. It must
    exclude every other journal transaction, every raw database-user add/transfer/remove/publication, and the global
    database-user 4 -> 8 sweep; overlapping journals remain forbidden without shared claim accounting.
-5. Bind that table to the exact abandonment/unload recipes through centralized callbacks. Static controller slots and
+4. Bind that table to the exact abandonment/unload recipes through centralized callbacks. Static controller slots and
    callback metadata must live outside and outlast zone PMem so the controller can survive `PMem_Free` and publish
    `Empty`; only per-generation arena/workspace/journal/backing belongs inside the existing named PMem scope. Treat the
    first fixed arena budget as a checked compatibility cap, remove partial assets before unbinding, release every staged
@@ -1258,18 +1280,18 @@ work item changes. Do not create session-specific handoff files.
    `Live` under the external serializer, invoke the unconditional journal finalizer, then use a no-fail/no-drop
    gate/signal release before dropping that serializer; introduce an admission-pending state first if production cannot
    satisfy that contract.
-6. Wire the guarded adapter into the native production FX/impact route behind the explicit legacy-x86 boundary. Preserve
+5. Wire the guarded adapter into the native production FX/impact route behind the explicit legacy-x86 boundary. Preserve
    retail bytes and the writer; use full-width `DB_ResolveInsertedPointer`, publish `-2` roots through
    `DB_SetInsertedPointer` with the canonical `DB_AddXAsset` identity, and add nested-impact, alias, high-address,
    failure-after-publication, unload-order, slot-generation-reuse, and rollback tests before widening another XAsset family.
-7. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
+6. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
-8. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
+7. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
    and `KISAKCOD_GAME_DIR` secret are absent. Implement the designed handle-relative recursive deletion
    service without symlink/reparse traversal instead; surface the smoke infrastructure blocker if asked.
-9. Extract standard-stream console services, then process/event services and Linux signal-park plus
+8. Extract standard-stream console services, then process/event services and Linux signal-park plus
    macOS Mach crash freezing behind the already isolated terminal API.
-10. Widen/tokenize the remaining MP physics pointer fields, continue M1/M5 ABI cleanup, and add production fast-file
+9. Widen/tokenize the remaining MP physics pointer fields, continue M1/M5 ABI cleanup, and add production fast-file
    fixtures/fuzzing before enabling any native64 engine target.
 
 ## Known release blockers

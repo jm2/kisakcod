@@ -880,11 +880,13 @@ enum StanceState : int32_t
     CL_STANCE_PRONE = 0x2,
 };
 
+constexpr uint32_t CLIENT_CONFIGSTRING_COUNT = 2815;
+
 struct clientActive_t
 {
     clSnapshot_t snap;
     int32_t serverTime;
-    uint16_t configstrings[2815];
+    uint16_t configstrings[CLIENT_CONFIGSTRING_COUNT];
     char mapname[64];
     bool usingAds;
     int32_t parseEntitiesNum;

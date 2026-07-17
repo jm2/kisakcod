@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <initializer_list>
 #include <limits>
+#include <string>
 #include <utility>
 
 struct gentity_s
@@ -45,6 +46,14 @@ bool SameConfig(
         && lhs.materialIndex == rhs.materialIndex
         && lhs.offscreenMaterialIndex == rhs.offscreenMaterialIndex
         && lhs.flags == rhs.flags;
+}
+
+bool SameLockOnPayload(
+    const protocol::LockOnPayload &lhs,
+    const protocol::LockOnPayload &rhs)
+{
+    return lhs.entityNumber == rhs.entityNumber
+        && lhs.durationMilliseconds == rhs.durationMilliseconds;
 }
 
 template <std::size_t EntityCount>
@@ -305,6 +314,19 @@ void TestArgumentAndGrammarFailures()
     ExpectFailure("\\ent\\", 8,
         protocol::ConfigParseError::MissingEntity,
         "an active config requires a nonempty entity value");
+
+    std::string oversizedConfig = "\\ent\\1\\future\\";
+    oversizedConfig.append(protocol::kMaxConfigInfoLength, 'x');
+    ExpectFailure(oversizedConfig.c_str(), 8,
+        protocol::ConfigParseError::MalformedInfoString,
+        "a target config larger than the producer wire buffer must be rejected");
+
+    std::array<char, protocol::kMaxConfigInfoLength + 1>
+        unterminatedConfig{};
+    unterminatedConfig.fill('x');
+    ExpectFailure(unterminatedConfig.data(), 8,
+        protocol::ConfigParseError::MalformedInfoString,
+        "a full producer-sized buffer without a terminator must be rejected");
 }
 
 void TestEntityFailures()
@@ -512,6 +534,135 @@ void TestLockOnDurationEncoding()
         static_cast<double>((std::numeric_limits<int>::max)()) / 1000.0
             + 1.0,
         "lock-on seconds above the signed millisecond range must fail");
+}
+
+void ExpectLockOnPayloadFailure(
+    const char *const entityToken,
+    const char *const durationToken,
+    const int worldEntityNumber,
+    const int noneEntityNumber,
+    const char *const message)
+{
+    const protocol::LockOnPayload sentinel = {91, 73};
+    protocol::LockOnPayload parsed = sentinel;
+    Check(!protocol::TryParseLockOnPayload(
+              entityToken,
+              durationToken,
+              worldEntityNumber,
+              noneEntityNumber,
+              &parsed),
+        message);
+    Check(SameLockOnPayload(parsed, sentinel),
+        "failed lock-on payload parsing must leave the destination unchanged");
+}
+
+void TestLockOnPayloadParsing()
+{
+    constexpr int worldEntityNumber = 2174;
+    constexpr int noneEntityNumber = 2175;
+
+    protocol::LockOnPayload parsed = {-1, -1};
+    Check(protocol::TryParseLockOnPayload(
+              "0", "0", worldEntityNumber, noneEntityNumber, &parsed)
+            && parsed.entityNumber == 0
+            && parsed.durationMilliseconds == 0,
+        "the first ordinary entity and a zero duration must parse");
+    Check(protocol::TryParseLockOnPayload(
+              "2173",
+              "2147483647",
+              worldEntityNumber,
+              noneEntityNumber,
+              &parsed)
+            && parsed.entityNumber == worldEntityNumber - 1
+            && parsed.durationMilliseconds
+                == (std::numeric_limits<int>::max)(),
+        "the ordinary-entity and signed-duration endpoints must parse");
+    Check(protocol::TryParseLockOnPayload(
+              "2175", "0", worldEntityNumber, noneEntityNumber, &parsed)
+            && parsed.entityNumber == noneEntityNumber
+            && parsed.durationMilliseconds == 0,
+        "the exact NONE/zero clear sentinel must parse");
+
+    Check(!protocol::TryParseLockOnPayload(
+              "0", "0", worldEntityNumber, noneEntityNumber, nullptr),
+        "a null lock-on payload destination must fail explicitly");
+
+    struct RejectedPayload
+    {
+        const char *entityToken;
+        const char *durationToken;
+        const char *description;
+    };
+    constexpr RejectedPayload rejected[] = {
+        {nullptr, "0", "a null lock-on entity token must fail"},
+        {"0", nullptr, "a null lock-on duration token must fail"},
+        {"", "0", "an empty lock-on entity token must fail"},
+        {"0", "", "an empty lock-on duration token must fail"},
+        {"-1", "0", "a negative lock-on entity must fail"},
+        {"-2147483648", "0", "INT_MIN cannot name an entity"},
+        {"2147483647", "0", "INT_MAX cannot name an entity"},
+        {"2174", "0", "WORLD cannot name a lock-on entity"},
+        {"2174", "1", "WORLD cannot start a lock-on"},
+        {"2175", "1", "NONE with a nonzero duration must fail"},
+        {"2175", "-1", "NONE with a negative duration must fail"},
+        {"2176", "0", "other special entity numbers must fail"},
+        {"0", "-1", "a negative lock-on duration must fail"},
+        {"0", "-2147483648", "INT_MIN cannot name a duration"},
+        {"2147483648", "0", "positive entity overflow must fail"},
+        {"-2147483649", "0", "negative entity overflow must fail"},
+        {"0", "2147483648", "positive duration overflow must fail"},
+        {"0", "-2147483649", "negative duration overflow must fail"},
+        {"+1", "0", "a leading entity plus sign must fail"},
+        {"1", "+1", "a leading duration plus sign must fail"},
+        {" 1", "0", "leading entity whitespace must fail"},
+        {"1", "0 ", "trailing duration whitespace must fail"},
+        {"1junk", "0", "entity trailing junk must fail"},
+        {"1", "0junk", "duration trailing junk must fail"},
+    };
+    for (const RejectedPayload &testCase : rejected)
+    {
+        ExpectLockOnPayloadFailure(
+            testCase.entityToken,
+            testCase.durationToken,
+            worldEntityNumber,
+            noneEntityNumber,
+            testCase.description);
+    }
+
+    ExpectLockOnPayloadFailure(
+        "0", "0", 0, noneEntityNumber,
+        "a nonpositive WORLD boundary must fail");
+    ExpectLockOnPayloadFailure(
+        "0", "0", worldEntityNumber, worldEntityNumber,
+        "NONE must remain distinct from WORLD");
+    ExpectLockOnPayloadFailure(
+        "0", "0", worldEntityNumber, worldEntityNumber - 1,
+        "NONE must remain outside the ordinary entity domain");
+
+    constexpr int mpWorldEntityNumber = 1022;
+    constexpr int mpNoneEntityNumber = 1023;
+    Check(protocol::TryParseLockOnPayload(
+              "1021",
+              "2147483647",
+              mpWorldEntityNumber,
+              mpNoneEntityNumber,
+              &parsed)
+            && parsed.entityNumber == mpWorldEntityNumber - 1
+            && parsed.durationMilliseconds
+                == (std::numeric_limits<int>::max)(),
+        "the MP ordinary-entity endpoint must parse");
+    Check(protocol::TryParseLockOnPayload(
+              "1023",
+              "0",
+              mpWorldEntityNumber,
+              mpNoneEntityNumber,
+              &parsed)
+            && parsed.entityNumber == mpNoneEntityNumber
+            && parsed.durationMilliseconds == 0,
+        "the exact MP NONE/zero sentinel must parse");
+    ExpectLockOnPayloadFailure(
+        "1022", "0", mpWorldEntityNumber, mpNoneEntityNumber,
+        "the MP WORLD slot must not name a lock-on entity");
 }
 
 template <std::size_t StorageSize>
@@ -765,6 +916,7 @@ int main()
     TestPortableFloatFallback();
     TestScalarRangeFailures();
     TestLockOnDurationEncoding();
+    TestLockOnPayloadParsing();
     TestCheckedInfoValueReplacement();
     TestFailureAtomicTargetConfigStaging();
     return failures == 0 ? 0 : 1;

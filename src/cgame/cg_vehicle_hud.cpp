@@ -8,6 +8,8 @@
 #include "cg_main.h"
 #include "cg_newdraw.h"
 
+#include <bgame/bg_target_protocol.h>
+
 #include <xanim/xanim.h>
 #include <script/scr_const.h>
 #include "cg_ents.h"
@@ -26,6 +28,32 @@ const dvar_t *vehHudTargetScreenEdgeClampBufferBottom;
 const dvar_t *vehHudReticleBouncingDiamondSize;
 const dvar_t *vehHudReticleBouncingRadius;
 const dvar_t *vehHudReticleBouncingSpeed;
+
+namespace
+{
+centity_s *CG_TryGetLiveOrdinaryEntity(
+    const int localClientNum,
+    const int entityNumber)
+{
+    if (localClientNum != 0
+        || entityNumber < 0
+        || entityNumber >= ENTITYNUM_WORLD)
+        return nullptr;
+
+    centity_s *const entity = CG_GetEntity(
+        localClientNum,
+        static_cast<uint32_t>(entityNumber));
+    if (!entity->nextValid || entity->nextState.number != entityNumber)
+        return nullptr;
+    return entity;
+}
+
+bool CG_IsValidWeaponIndex(const int weaponIndex)
+{
+    return weaponIndex > 0
+        && static_cast<unsigned int>(weaponIndex) < BG_GetNumWeapons();
+}
+} // namespace
 
 bool __cdecl ClampScreenPosToEdges(
     const float *localClientNum,
@@ -504,36 +532,8 @@ LABEL_16:
 
 void __cdecl CG_DrawVehicleTargets(int localClientNum, rectDef_s *rect, float *color, Material *defaultMaterial)
 {
-    float *v6; // r29
-    centity_s *Entity; // r31
-    double v8; // fp12
-    Clip_t v9; // r31
-    Material *v10; // r7
-    const float *v11; // r6
-    int v12; // r5
-    int v13; // r4
-    double v15; // fp0
-    double angle; // fp5
-    float v17; // [sp+8h] [-178h]
-    float v18; // [sp+10h] [-170h]
-    float v19; // [sp+18h] [-168h]
-    float v20; // [sp+20h] [-160h]
-    float v21; // [sp+28h] [-158h]
-    float v22; // [sp+30h] [-150h]
-    float v23; // [sp+38h] [-148h]
-    float v24; // [sp+40h] [-140h]
-    float v25; // [sp+48h] [-138h]
-    float v26; // [sp+50h] [-130h]
-    float v27; // [sp+58h] [-128h]
-    float v28; // [sp+60h] [-120h]
-    float v29; // [sp+80h] [-100h] BYREF
-    float v30; // [sp+84h] [-FCh]
-    float v31; // [sp+88h] [-F8h]
-    float screenpos[2]; // [sp+90h] [-F0h] BYREF
-    //float v33; // [sp+94h] [-ECh]
-    char v34[120]; // [sp+A0h] [-E0h] BYREF
-
     if (localClientNum)
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_local.h",
             910,
@@ -541,127 +541,116 @@ void __cdecl CG_DrawVehicleTargets(int localClientNum, rectDef_s *rect, float *c
             "%s\n\t(localClientNum) = %i",
             "(localClientNum == 0)",
             localClientNum);
-    v6 = &cgArray[0].targets[0].offset[2];
-    do
+        return;
+    }
+
+    for (int targetIndex = 0;
+         targetIndex < bg::target_protocol::kMaxTargets;
+         ++targetIndex)
     {
-        if (*((unsigned int *)v6 - 3) != ENTITYNUM_NONE && (((unsigned int)v6[3] & 2) == 0 || CG_JavelinADS(localClientNum)))
+        const targetInfo_t &target = cgArray[0].targets[targetIndex];
+        if (target.entNum == ENTITYNUM_NONE
+            || ((target.flags & bg::target_protocol::kJavelinOnly) != 0
+                && !CG_JavelinADS(localClientNum)))
         {
-            Entity = CG_GetEntity(localClientNum, *((unsigned int *)v6 - 3));
-            if (!Entity)
-                MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_vehicle_hud.cpp", 209, 0, "%s", "targetEnt");
-            v29 = *(v6 - 2) + Entity->pose.origin[0];
-            v30 = *(v6 - 1) + Entity->pose.origin[1];
-            v8 = (float)(Entity->pose.origin[2] + *v6);
-            v29 = v29 - cgArray[0].refdef.vieworg[0];
-            v30 = v30 - cgArray[0].refdef.vieworg[1];
-            v31 = (float)v8 - cgArray[0].refdef.vieworg[2];
-            WorldDirToScreenPos(localClientNum, &v29, screenpos);
-            v9 = ClampScreenPosToEdges_0(localClientNum, screenpos);
-            if (v9 && (v13 = *((unsigned int *)v6 + 2), v13 != -1) || (v13 = *((unsigned int *)v6 + 1), v13 != -1))
+            continue;
+        }
+
+        const centity_s *const targetEntity =
+            CG_TryGetLiveOrdinaryEntity(localClientNum, target.entNum);
+        if (!targetEntity)
+            continue;
+
+        float worldDirection[3]{
+            targetEntity->pose.origin[0] + target.offset[0]
+                - cgArray[0].refdef.vieworg[0],
+            targetEntity->pose.origin[1] + target.offset[1]
+                - cgArray[0].refdef.vieworg[1],
+            targetEntity->pose.origin[2] + target.offset[2]
+                - cgArray[0].refdef.vieworg[2],
+        };
+        float screenPosition[2]{};
+        WorldDirToScreenPos(localClientNum, worldDirection, screenPosition);
+        const Clip_t clip =
+            ClampScreenPosToEdges_0(localClientNum, screenPosition);
+
+        const int materialIndex =
+            clip != CLIP_NONE
+                && target.offscreenMaterialIndex
+                    != bg::target_protocol::kNoMaterial
+            ? target.offscreenMaterialIndex
+            : target.materialIndex;
+        Material *material = defaultMaterial;
+        char materialName[96];
+        if (materialIndex != bg::target_protocol::kNoMaterial
+            && CG_ServerMaterialName(
+                localClientNum,
+                materialIndex,
+                materialName,
+                static_cast<unsigned int>(sizeof(materialName))))
+        {
+            if (Material *const registeredMaterial =
+                    Material_RegisterHandle(materialName, 7))
             {
-                if (CG_ServerMaterialName(localClientNum, v13, v34, 0x40u))
-                    Material_RegisterHandle(v34, 7);
-            }
-            v15 = (float)(vehHudTargetSize->current.value * (float)0.5);
-            if (v9 == CLIP_NONE || *((unsigned int *)v6 + 2) == -1)
-            {
-                CL_DrawStretchPic(
-                    &scrPlaceView[localClientNum],
-                    (float)(screenpos[0] - (float)v15),
-                    (float)(screenpos[1] - (float)v15),
-                    vehHudTargetSize->current.value,
-                    vehHudTargetSize->current.value,
-                    rect->horzAlign,
-                    rect->vertAlign,
-                    0.0,
-                    0.0,
-                    1.0,
-                    1.0,
-                    color,
-                    defaultMaterial); // KISAKTODO: args sus
-            }
-            else
-            {
-                angle = 0.0;
-                switch (v9)
-                {
-                case CLIP_BOTTOM:
-                    angle = 180.0;
-                    break;
-                case CLIP_RIGHT:
-                    angle = 90.0;
-                    break;
-                case CLIP_LEFT:
-                    angle = 270.0;
-                    break;
-                }
-                CG_DrawRotatedPic(
-                    &scrPlaceView[localClientNum],
-                    (float)(screenpos[0] - (float)v15),
-                    (float)(screenpos[1] - (float)v15),
-                    vehHudTargetSize->current.value,
-                    vehHudTargetSize->current.value,
-                    rect->horzAlign,
-                    rect->vertAlign,
-                    angle,
-                    color,
-                    defaultMaterial); // KISAKTODO: sus args
+                material = registeredMaterial;
             }
         }
-        v6 += 7;
-    } while ((uintptr_t)v6 < (uintptr_t)&cgArray[0].shellshock.loopEndTime);
+
+        const float halfSize = vehHudTargetSize->current.value * 0.5f;
+        if (clip == CLIP_NONE
+            || target.offscreenMaterialIndex
+                == bg::target_protocol::kNoMaterial)
+        {
+            CL_DrawStretchPic(
+                &scrPlaceView[localClientNum],
+                screenPosition[0] - halfSize,
+                screenPosition[1] - halfSize,
+                vehHudTargetSize->current.value,
+                vehHudTargetSize->current.value,
+                rect->horzAlign,
+                rect->vertAlign,
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                color,
+                material);
+            continue;
+        }
+
+        float angle = 0.0f;
+        switch (clip)
+        {
+        case CLIP_BOTTOM:
+            angle = 180.0f;
+            break;
+        case CLIP_RIGHT:
+            angle = 90.0f;
+            break;
+        case CLIP_LEFT:
+            angle = 270.0f;
+            break;
+        default:
+            break;
+        }
+        CG_DrawRotatedPic(
+            &scrPlaceView[localClientNum],
+            screenPosition[0] - halfSize,
+            screenPosition[1] - halfSize,
+            vehHudTargetSize->current.value,
+            vehHudTargetSize->current.value,
+            rect->horzAlign,
+            rect->vertAlign,
+            angle,
+            color,
+            material);
+    }
 }
 
 void __cdecl CG_DrawJavelinTargets(int localClientNum, rectDef_s *rect, float *color, Material *defaultMaterial)
 {
-    const playerState_s *PredictedPlayerState; // r3
-    const playerState_s *v7; // r30
-    int weapLockedEntnum; // r4
-    int v9; // r29
-    targetInfo_t *v10; // r11
-    centity_s *targetEnt; // r30
-    float *offset; // r11
-    double v13; // fp12
-    double v14; // fp0
-    double v15; // fp10
-    double v16; // fp11
-    const float *v17; // r6
-    int v18; // r5
-    int v19; // r4
-    Material *v20; // r7
-    const float *v21; // r6
-    int v22; // r5
-    int v23; // r4
-    float v24; // [sp+8h] [-108h]
-    float v25; // [sp+8h] [-108h]
-    float v26; // [sp+10h] [-100h]
-    float v27; // [sp+10h] [-100h]
-    float v28; // [sp+18h] [-F8h]
-    float v29; // [sp+18h] [-F8h]
-    float v30; // [sp+20h] [-F0h]
-    float v31; // [sp+20h] [-F0h]
-    float v32; // [sp+28h] [-E8h]
-    float v33; // [sp+28h] [-E8h]
-    float v34; // [sp+30h] [-E0h]
-    float v35; // [sp+30h] [-E0h]
-    float v36; // [sp+38h] [-D8h]
-    float v37; // [sp+38h] [-D8h]
-    float v38; // [sp+40h] [-D0h]
-    float v39; // [sp+40h] [-D0h]
-    float v40; // [sp+48h] [-C8h]
-    float v41; // [sp+48h] [-C8h]
-    float v42; // [sp+50h] [-C0h]
-    float v43; // [sp+50h] [-C0h]
-    float v44; // [sp+58h] [-B8h]
-    float v45; // [sp+58h] [-B8h]
-    float v46; // [sp+60h] [-B0h]
-    float v47; // [sp+60h] [-B0h]
-    float v48; // [sp+80h] [-90h] BYREF
-    float v49; // [sp+84h] [-8Ch]
-    float v50; // [sp+88h] [-88h]
-    float screenpos[6]; // [sp+90h] [-80h] BYREF
-
     if (localClientNum)
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_local.h",
             910,
@@ -669,91 +658,79 @@ void __cdecl CG_DrawJavelinTargets(int localClientNum, rectDef_s *rect, float *c
             "%s\n\t(localClientNum) = %i",
             "(localClientNum == 0)",
             localClientNum);
-    PredictedPlayerState = CG_GetPredictedPlayerState(localClientNum);
-    v7 = PredictedPlayerState;
-    if ((PredictedPlayerState->weapLockFlags & 2) != 0)
+        return;
+    }
+
+    const playerState_s *const playerState =
+        CG_GetPredictedPlayerState(localClientNum);
+    if ((playerState->weapLockFlags & 2) == 0)
+        return;
+
+    const int lockedEntityNumber = playerState->weapLockedEntnum;
+    const centity_s *const targetEntity =
+        CG_TryGetLiveOrdinaryEntity(localClientNum, lockedEntityNumber);
+    if (!targetEntity)
+        return;
+
+    const targetInfo_t *target = nullptr;
+    for (int targetIndex = 0;
+         targetIndex < bg::target_protocol::kMaxTargets;
+         ++targetIndex)
     {
-        if (PredictedPlayerState->weapLockedEntnum == ENTITYNUM_NONE)
-            MyAssertHandler(
-                "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_vehicle_hud.cpp",
-                271,
-                0,
-                "%s",
-                "ps->weapLockedEntnum != ENTITYNUM_NONE");
-        weapLockedEntnum = v7->weapLockedEntnum;
-        v9 = 0;
-        v10 = &cgArray[0].targets[1];
-        while (v10[-1].entNum != weapLockedEntnum)
+        if (cgArray[0].targets[targetIndex].entNum
+            == lockedEntityNumber)
         {
-            if (v10->entNum == weapLockedEntnum)
-            {
-                ++v9;
-                break;
-            }
-            if (v10[1].entNum == weapLockedEntnum)
-            {
-                v9 += 2;
-                break;
-            }
-            if (v10[2].entNum == weapLockedEntnum)
-            {
-                v9 += 3;
-                break;
-            }
-            v10 += 4;
-            v9 += 4;
-            if ((uintptr_t)v10 >= (uintptr_t)&cgArray[0].shellshock.hasSavedScreen)
-                break;
-        }
-        if (v9 != 32)
-        {
-            targetEnt = CG_GetEntity(localClientNum, weapLockedEntnum);
-            if (!targetEnt)
-                MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_vehicle_hud.cpp", 283, 0, "%s", "targetEnt");
-            offset = cgArray[0].targets[v9].offset;
-            v13 = offset[1];
-            v14 = (float)(*offset + targetEnt->pose.origin[0]);
-            v15 = offset[2];
-            v48 = *offset + targetEnt->pose.origin[0];
-            v49 = targetEnt->pose.origin[1] + (float)v13;
-            v16 = targetEnt->pose.origin[2];
-            v48 = (float)v14 - cgArray[0].refdef.vieworg[0];
-            v49 = v49 - cgArray[0].refdef.vieworg[1];
-            v50 = (float)((float)v16 + (float)v15) - cgArray[0].refdef.vieworg[2];
-            WorldDirToScreenPos(localClientNum, &v48, screenpos);
-            if (ClampScreenPosToEdges_0(localClientNum, screenpos) == CLIP_NONE)
-            {
-                CL_DrawStretchPic(
-                    &scrPlaceView[localClientNum],
-                    screenpos[0], // x
-                    -240.0, // y
-                    2.0, // w
-                    480.0, // height
-                    rect->horzAlign,
-                    rect->vertAlign,
-                    0.0,
-                    0.0,
-                    1.0,
-                    1.0,
-                    color,
-                    defaultMaterial); // KISAKTODO: again sus args
-                CL_DrawStretchPic(
-                    &scrPlaceView[localClientNum],
-                    -320.0, // x
-                    screenpos[1], // y
-                    640.0, // w
-                    2.0, // h
-                    rect->horzAlign,
-                    rect->vertAlign,
-                    0.0,
-                    0.0,
-                    1.0,
-                    1.0,
-                    color,
-                    defaultMaterial); // KISAKTODO: ^^
-            }
+            target = &cgArray[0].targets[targetIndex];
+            break;
         }
     }
+    if (!target)
+        return;
+
+    float worldDirection[3]{
+        targetEntity->pose.origin[0] + target->offset[0]
+            - cgArray[0].refdef.vieworg[0],
+        targetEntity->pose.origin[1] + target->offset[1]
+            - cgArray[0].refdef.vieworg[1],
+        targetEntity->pose.origin[2] + target->offset[2]
+            - cgArray[0].refdef.vieworg[2],
+    };
+    float screenPosition[2]{};
+    WorldDirToScreenPos(localClientNum, worldDirection, screenPosition);
+    if (ClampScreenPosToEdges_0(localClientNum, screenPosition)
+        != CLIP_NONE)
+    {
+        return;
+    }
+
+    CL_DrawStretchPic(
+        &scrPlaceView[localClientNum],
+        screenPosition[0],
+        -240.0,
+        2.0,
+        480.0,
+        rect->horzAlign,
+        rect->vertAlign,
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        color,
+        defaultMaterial);
+    CL_DrawStretchPic(
+        &scrPlaceView[localClientNum],
+        -320.0,
+        screenPosition[1],
+        640.0,
+        2.0,
+        rect->horzAlign,
+        rect->vertAlign,
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        color,
+        defaultMaterial);
 }
 
 void CG_DrawPipOnAStickReticle(int localClientNum, rectDef_s *rect, float *color)
@@ -792,6 +769,7 @@ void CG_DrawPipOnAStickReticle(int localClientNum, rectDef_s *rect, float *color
     float v35[21]; // [sp+D4h] [-9Ch] BYREF
 
     if (localClientNum)
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_local.h",
             910,
@@ -799,7 +777,13 @@ void CG_DrawPipOnAStickReticle(int localClientNum, rectDef_s *rect, float *color
             "%s\n\t(localClientNum) = %i",
             "(localClientNum == 0)",
             localClientNum);
-    Entity = CG_GetEntity(localClientNum, cgArray[0].predictedPlayerState.viewlocked_entNum);
+        return;
+    }
+    Entity = CG_TryGetLiveOrdinaryEntity(
+        localClientNum,
+        cgArray[0].predictedPlayerState.viewlocked_entNum);
+    if (!Entity || !CG_IsValidWeaponIndex(Entity->nextState.weapon))
+        return;
     ClientDObj = Com_GetClientDObj(Entity->nextState.number, 0);
     WeaponDef = BG_GetWeaponDef(Entity->nextState.weapon);
     if (ClientDObj
@@ -924,6 +908,7 @@ void CG_DrawPipOnAStickReticle(int localClientNum, rectDef_s *rect, float *color
 void __cdecl CG_InitVehicleReticle(int localClientNum)
 {
     if (localClientNum)
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_local.h",
             910,
@@ -931,7 +916,11 @@ void __cdecl CG_InitVehicleReticle(int localClientNum)
             "%s\n\t(localClientNum) = %i",
             "(localClientNum == 0)",
             localClientNum);
+        return;
+    }
     cgArray[0].vehReticleLockOnEntNum = ENTITYNUM_NONE;
+    cgArray[0].vehReticleLockOnStartTime = 0;
+    cgArray[0].vehReticleLockOnDuration = 0;
     cgArray[0].vehReticleOffset[0] = 0.0;
     cgArray[0].vehReticleOffset[1] = 0.0;
     cgArray[0].vehReticleVel[0] = 0.0;
@@ -941,6 +930,7 @@ void __cdecl CG_InitVehicleReticle(int localClientNum)
 void __cdecl CG_ReticleStartLockOn(int localClientNum, int targetEntNum, int msecDuration)
 {
     if (localClientNum)
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_local.h",
             910,
@@ -948,6 +938,21 @@ void __cdecl CG_ReticleStartLockOn(int localClientNum, int targetEntNum, int mse
             "%s\n\t(localClientNum) = %i",
             "(localClientNum == 0)",
             localClientNum);
+        return;
+    }
+
+    const bool isClear =
+        targetEntNum == ENTITYNUM_NONE && msecDuration == 0;
+    const bool isActive =
+        targetEntNum >= 0
+        && targetEntNum < ENTITYNUM_WORLD
+        && msecDuration >= 0;
+    if (!isClear && !isActive)
+    {
+        targetEntNum = ENTITYNUM_NONE;
+        msecDuration = 0;
+    }
+
     cgArray[0].vehReticleLockOnEntNum = targetEntNum;
     cgArray[0].vehReticleLockOnStartTime = cgArray[0].time;
     cgArray[0].vehReticleLockOnDuration = msecDuration;
@@ -955,13 +960,8 @@ void __cdecl CG_ReticleStartLockOn(int localClientNum, int targetEntNum, int mse
 
 int __cdecl CG_GetTargetPos(int localClientNum, int targetEntNum, float *outPos)
 {
-    int v6; // r30
-    targetInfo_t *targets; // r11
-    int result; // r3
-    centity_s *Entity; // r31
-    float *offset; // r11
-
     if (localClientNum)
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_local.h",
             910,
@@ -969,24 +969,39 @@ int __cdecl CG_GetTargetPos(int localClientNum, int targetEntNum, float *outPos)
             "%s\n\t(localClientNum) = %i",
             "(localClientNum == 0)",
             localClientNum);
-    v6 = 0;
-    targets = cgArray[0].targets;
-    while (targets->entNum != targetEntNum)
-    {
-        ++targets;
-        ++v6;
-        if ((uintptr_t)targets >= (uintptr_t)&cgArray[0].shellshock)
-            return 0;
+        return 0;
     }
-    Entity = CG_GetEntity(localClientNum, targetEntNum);
-    if (!Entity)
-        MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_vehicle_hud.cpp", 403, 0, "%s", "targetEnt");
-    result = 1;
-    offset = cgArray[0].targets[v6].offset;
-    *outPos = Entity->pose.origin[0] + *offset;
-    outPos[1] = Entity->pose.origin[1] + offset[1];
-    outPos[2] = Entity->pose.origin[2] + offset[2];
-    return result;
+    if (!outPos)
+        return 0;
+
+    const centity_s *const entity =
+        CG_TryGetLiveOrdinaryEntity(localClientNum, targetEntNum);
+    if (!entity)
+        return 0;
+
+    const targetInfo_t *target = nullptr;
+    for (int targetIndex = 0;
+         targetIndex < bg::target_protocol::kMaxTargets;
+         ++targetIndex)
+    {
+        if (cgArray[0].targets[targetIndex].entNum == targetEntNum)
+        {
+            target = &cgArray[0].targets[targetIndex];
+            break;
+        }
+    }
+    if (!target)
+        return 0;
+
+    const float position[3]{
+        entity->pose.origin[0] + target->offset[0],
+        entity->pose.origin[1] + target->offset[1],
+        entity->pose.origin[2] + target->offset[2],
+    };
+    outPos[0] = position[0];
+    outPos[1] = position[1];
+    outPos[2] = position[2];
+    return 1;
 }
 
 // aislop
@@ -1000,6 +1015,7 @@ void CG_DrawBouncingDiamond(int localClientNum, rectDef_s *rect, float *color)
             "%s\n\t(localClientNum) = %i",
             "(localClientNum == 0)",
             localClientNum);
+        return;
     }
 
     float bounceRadius = vehHudReticleBouncingRadius->current.value;
@@ -1007,14 +1023,14 @@ void CG_DrawBouncingDiamond(int localClientNum, rectDef_s *rect, float *color)
 
     float screenX = 0.0f, screenY = 0.0f;
 
-    if (targetEntNum != 2175) {
+    if (targetEntNum != ENTITYNUM_NONE) {
         float worldPos[3];
 
         if (!CG_GetTargetPos(localClientNum, targetEntNum, &worldPos[0])) {
-            centity_s *ent = CG_GetEntity(localClientNum, targetEntNum);
-            if (!ent) {
-                MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_vehicle_hud.cpp", 442, 0, "%s", "targetEnt");
-            }
+            const centity_s *const ent =
+                CG_TryGetLiveOrdinaryEntity(localClientNum, targetEntNum);
+            if (!ent)
+                return;
             worldPos[0] = ent->pose.origin[0];
             worldPos[1] = ent->pose.origin[1];
             worldPos[2] = ent->pose.origin[2];
@@ -1121,10 +1137,8 @@ void CG_DrawBouncingDiamond(int localClientNum, rectDef_s *rect, float *color)
 
 void __cdecl CG_DrawVehicleReticle(int localClientNum, rectDef_s *rect, float *color)
 {
-    centity_s *vehicle; // r30
-    activeReticleType_t activeReticleType; // r11
-
     if (localClientNum)
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_local.h",
             910,
@@ -1132,44 +1146,33 @@ void __cdecl CG_DrawVehicleReticle(int localClientNum, rectDef_s *rect, float *c
             "%s\n\t(localClientNum) = %i",
             "(localClientNum == 0)",
             localClientNum);
-    if ((cgArray[0].predictedPlayerState.eFlags & 0x20000) != 0
-        && cgArray[0].predictedPlayerState.viewlocked_entNum != ENTITYNUM_NONE)
+        return;
+    }
+    if ((cgArray[0].predictedPlayerState.eFlags & 0x20000) == 0)
+        return;
+
+    const centity_s *const vehicle = CG_TryGetLiveOrdinaryEntity(
+        localClientNum,
+        cgArray[0].predictedPlayerState.viewlocked_entNum);
+    if (!vehicle || !CG_IsValidWeaponIndex(vehicle->nextState.weapon))
+        return;
+
+    const activeReticleType_t activeReticleType =
+        BG_GetWeaponDef(vehicle->nextState.weapon)->activeReticleType;
+    if (activeReticleType == VEH_ACTIVE_RETICLE_PIP_ON_A_STICK)
     {
-        vehicle = CG_GetEntity(localClientNum, cgArray[0].predictedPlayerState.viewlocked_entNum);
-        if (!vehicle)
-            MyAssertHandler("c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_vehicle_hud.cpp", 521, 0, "%s", "vehicle");
-        if (vehicle->nextState.weapon)
-        {
-            activeReticleType = BG_GetWeaponDef(vehicle->nextState.weapon)->activeReticleType;
-            if (activeReticleType == VEH_ACTIVE_RETICLE_PIP_ON_A_STICK)
-            {
-                CG_DrawPipOnAStickReticle(localClientNum, rect, color);
-            }
-            else if (activeReticleType == VEH_ACTIVE_RETICLE_BOUNCING_DIAMOND)
-            {
-                CG_DrawBouncingDiamond(localClientNum, rect, color);
-            }
-        }
+        CG_DrawPipOnAStickReticle(localClientNum, rect, color);
+    }
+    else if (activeReticleType == VEH_ACTIVE_RETICLE_BOUNCING_DIAMOND)
+    {
+        CG_DrawBouncingDiamond(localClientNum, rect, color);
     }
 }
 
 void __cdecl CG_TargetsChanged(int localClientNum, unsigned int num)
 {
-    const char *ConfigString; // r3
-    unsigned int v5; // r31
-    const char *v6; // r30
-    bool v7; // zf
-    targetInfo_t *v8; // r31
-    const char *v9; // r3
-    const char *v10; // r3
-    const char *v11; // r3
-    int v12; // r10
-    const char *v13; // r3
-    int v14; // r10
-    const char *v15; // r3
-    int v16; // r3
-
     if (localClientNum)
+    {
         MyAssertHandler(
             "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_local.h",
             910,
@@ -1177,54 +1180,61 @@ void __cdecl CG_TargetsChanged(int localClientNum, unsigned int num)
             "%s\n\t(localClientNum) = %i",
             "(localClientNum == 0)",
             localClientNum);
-    ConfigString = CL_GetConfigString(localClientNum, num);
-    v5 = num - 27;
-    v7 = num - 27 < 0x20;
-    v6 = ConfigString;
-    if (!v7)
-        MyAssertHandler(
-            "c:\\trees\\cod3\\cod3src\\src\\cgame\\cg_vehicle_hud.cpp",
-            552,
-            0,
-            "targetIndex doesn't index MAX_TARGETS\n\t%i not in [0, %i)",
-            v5,
-            32);
-    v8 = &cgArray[0].targets[v5];
-    if (*v6)
-    {
-        v9 = Info_ValueForKey(v6, "ent");
-        if (*v9)
-            v8->entNum = atol(v9);
-        else
-            v8->entNum = ENTITYNUM_NONE;
-        v10 = Info_ValueForKey(v6, "offs");
-        v8->offset[0] = 0.0;
-        v8->offset[1] = 0.0;
-        v8->offset[2] = 0.0;
-        if (*v10)
-            sscanf(v10, "%f %f %f", v8->offset, &v8->offset[1], &v8->offset[2]);
-        v11 = Info_ValueForKey(v6, "mat");
-        if (*v11)
-            v12 = atol(v11);
-        else
-            v12 = -1;
-        v8->materialIndex = v12;
-        v13 = Info_ValueForKey(v6, "offmat");
-        if (*v13)
-            v14 = atol(v13);
-        else
-            v14 = -1;
-        v8->offscreenMaterialIndex = v14;
-        v15 = Info_ValueForKey(v6, "flags");
-        if (*v15)
-            v16 = atol(v15);
-        else
-            v16 = 0;
-        v8->flags = v16;
+        return;
     }
-    else
-    {
-        v8->entNum = ENTITYNUM_NONE;
-    }
-}
 
+    const unsigned int firstTargetConfig = CS_TARGETS;
+    const unsigned int targetConfigEnd =
+        firstTargetConfig
+        + static_cast<unsigned int>(bg::target_protocol::kMaxTargets);
+    if (num < firstTargetConfig || num >= targetConfigEnd)
+    {
+        Com_Error(
+            ERR_DROP,
+            "CG_TargetsChanged: configstring index %u is outside [%u, %u)",
+            num,
+            firstTargetConfig,
+            targetConfigEnd);
+        return;
+    }
+
+    const unsigned int targetIndex = num - firstTargetConfig;
+    targetInfo_t staged{};
+    staged.entNum = ENTITYNUM_NONE;
+    staged.materialIndex = bg::target_protocol::kNoMaterial;
+    staged.offscreenMaterialIndex = bg::target_protocol::kNoMaterial;
+
+    const char *const configString =
+        CL_GetConfigString(localClientNum, num);
+    if (!*configString)
+    {
+        cgArray[0].targets[targetIndex] = staged;
+        return;
+    }
+
+    bg::target_protocol::ParsedConfig parsed{};
+    const bg::target_protocol::ConfigParseError error =
+        bg::target_protocol::ParseConfig(
+            configString,
+            ENTITYNUM_WORLD,
+            &parsed);
+    if (error != bg::target_protocol::ConfigParseError::None)
+    {
+        cgArray[0].targets[targetIndex] = staged;
+        Com_Error(
+            ERR_DROP,
+            "CG_TargetsChanged: invalid target config %u (%s)",
+            num,
+            bg::target_protocol::ConfigParseErrorName(error));
+        return;
+    }
+
+    staged.entNum = parsed.entityNumber;
+    staged.offset[0] = parsed.offset[0];
+    staged.offset[1] = parsed.offset[1];
+    staged.offset[2] = parsed.offset[2];
+    staged.materialIndex = parsed.materialIndex;
+    staged.offscreenMaterialIndex = parsed.offscreenMaterialIndex;
+    staged.flags = parsed.flags;
+    cgArray[0].targets[targetIndex] = staged;
+}

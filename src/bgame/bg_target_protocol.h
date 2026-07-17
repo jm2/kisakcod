@@ -26,6 +26,7 @@ constexpr int kAttackProfileTop = 1;
 constexpr int kJavelinOnly = 2;
 constexpr int kKnownFlags = kAttackProfileTop | kJavelinOnly;
 constexpr std::size_t kMaxNumericTokenLength = 1023;
+constexpr std::size_t kMaxConfigInfoLength = 1023;
 
 constexpr bool IsValidMaterialIndex(const int materialIndex) noexcept
 {
@@ -75,6 +76,53 @@ inline bool TryEncodeLockOnDuration(
     }
 
     *milliseconds = static_cast<int>(retailMilliseconds);
+    return true;
+}
+
+struct LockOnPayload
+{
+    int entityNumber;
+    int durationMilliseconds;
+};
+
+// Parses the complete ret_lock_on payload without publishing partial output.
+// Ordinary entities may start or clear a lock with any nonnegative signed-int
+// duration. The only non-ordinary spelling is the exact NONE/zero clear
+// sentinel emitted by Scr_Target_ClearLockOn; WORLD and every other special
+// entity number remain invalid.
+inline bool TryParseLockOnPayload(
+    const char *const entityToken,
+    const char *const durationToken,
+    const int worldEntityNumber,
+    const int noneEntityNumber,
+    LockOnPayload *const output) noexcept
+{
+    if (!output
+        || worldEntityNumber <= 0
+        || noneEntityNumber <= worldEntityNumber)
+    {
+        return false;
+    }
+
+    LockOnPayload parsed{};
+    if (!info_string::TryParseSignedDecimalToken(
+            entityToken, &parsed.entityNumber)
+        || !info_string::TryParseSignedDecimalToken(
+            durationToken, &parsed.durationMilliseconds))
+    {
+        return false;
+    }
+
+    const bool isOrdinaryEntity = parsed.entityNumber >= 0
+        && parsed.entityNumber < worldEntityNumber;
+    const bool isActivePayload = isOrdinaryEntity
+        && parsed.durationMilliseconds >= 0;
+    const bool isClearPayload = parsed.entityNumber == noneEntityNumber
+        && parsed.durationMilliseconds == 0;
+    if (!isActivePayload && !isClearPayload)
+        return false;
+
+    *output = parsed;
     return true;
 }
 
@@ -395,6 +443,20 @@ inline bool TryParseOffsetView(
         output[component] = parsed[component];
     return true;
 }
+
+inline bool HasBoundedConfigLength(const char *const info) noexcept
+{
+    if (!info)
+        return false;
+    for (std::size_t length = 0;
+         length <= kMaxConfigInfoLength;
+         ++length)
+    {
+        if (info[length] == '\0')
+            return true;
+    }
+    return false;
+}
 } // namespace detail
 
 // Parses one active CS_TARGETS entry without publishing partial output. The
@@ -408,7 +470,8 @@ inline ConfigParseError ParseConfig(
 {
     if (!info || !*info || maxEntityCount <= 0 || !output)
         return ConfigParseError::InvalidArgument;
-    if (!info_string::IsWellFormed(info))
+    if (!detail::HasBoundedConfigLength(info)
+        || !info_string::IsWellFormed(info))
         return ConfigParseError::MalformedInfoString;
 
     ParsedConfig parsed{};

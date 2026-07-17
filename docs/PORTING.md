@@ -218,7 +218,8 @@ Completed foundation work:
   selection, and exposed failed child-mutation diagnostics. Exact final head `da1ea81f` passed all nine jobs in PR run
   **29584250420**; exact-head Codex found no major issue, both Gemini threads were resolved, and no unresolved review
   threads remained. Squash `cbb8bdb0` and authoritative post-merge run **29585012405** also passed all nine jobs;
-- the current SP target-table portability candidate combines four initial implementation/contract commits (`0a1e89b2`,
+- PR #45 merged the SP target-table portability checkpoint as `d85ed087`. Its reviewed sequence combines four initial
+  implementation/contract commits (`0a1e89b2`,
   `c63bb68e`, `d981527f`, `653fdfdb`) with audit hardening `7ab3e174`, review/CI hardening `d8440271`, and Apple locale
   declaration fix `b9844b2e`. It replaces
   pointer truncation and raw 28-byte walks with bounded typed 32-entry native storage. It freezes `target_t` and
@@ -248,16 +249,31 @@ Completed foundation work:
   were fixed. Original PR run **29590010636** passed all six Windows jobs and exposed the now-fixed Linux range-loop
   warning and missing Apple floating-`from_chars` overload. Run **29591783551** then passed eight jobs and exposed only
   that Xcode requires `<stdlib.h>` plus `<xlocale.h>` to declare `strtof_l`; `b9844b2e` fixes and contract-pins those
-  Apple-only includes. Exact PR head `d472e136` passed all nine jobs in run **29593740056**; exact-head Codex found no
-  major issue, all six Gemini threads are resolved, and no unresolved review threads remain. SP production remains outside
-  hosted coverage: every engine CI job sets `KISAK_BUILD_SP=OFF`, the portable executable exercises the shared parser and
-  layout model, and the source contract textually pins the SP implementation. Direct SP probes stop earlier on existing
-  ILP32 assertions, undeclared `IsValidSeed`, and missing DirectX `d3d9.h`;
-- remaining upstream content stays subsystem-specific: publish the reviewed server target table, then implement strict,
-  failure-atomic `CG_TargetsChanged` parsing and bounded `CG_GetTargetPos`/vehicle/Javelin/bouncing-diamond consumers
-  without importing d592's raw pointer-bound loop. Fix the squared-distance-versus-unsquared grenade safe-radius defect
-  separately, and keep dynent save/load `ba3c79f3` deferred until bounded transactional Disk32/native-sidecar semantics
-  exist. Unrelated weapon-fire changes stay excluded;
+  Apple-only includes. Intermediate PR head `d472e136` passed all nine jobs in run **29593740056**. Exact final head
+  `7336f10b` passed all nine jobs in run **29594562813**; exact-head Codex found no major issue, all six Gemini threads are
+  resolved, and no unresolved review threads remain. PR #45 squash-merged as `d85ed087`, and authoritative post-merge
+  master run **29595203160** passed all nine jobs. SP production remains outside hosted coverage: every engine CI job sets
+  `KISAK_BUILD_SP=OFF`, the portable executable exercises the shared parser and layout model, and the source contract
+  textually pins the SP implementation. Direct SP probes stop earlier on existing ILP32 assertions, undeclared
+  `IsValidSeed`, and missing DirectX `d3d9.h`;
+- the current client-target safety candidate (`97024d7d`, `3cfb16d1`, `14887046`, `799cf462`, plus review hardening
+  `62e317dc`) completes the next audited consumer half without importing d592's raw pointer-bound loop. Shared strict
+  parsers reject malformed/overflowing
+  configstring indices and lock-on payloads, cap target info at 1,023 bytes, and publish only complete staged values.
+  Client/server configstring storage is range-checked before access and replaces script-string handles
+  full-table-compatible unpublish-before-release-before-acquire-before-publish ordering. The 28-byte `targetInfo_t` ABI
+  and exact 32-entry extent are explicit; vehicle,
+  Javelin, pip-on-stick, bouncing-diamond, and target-position consumers use typed traversal, live ordinary-entity
+  identity, and bounded weapon/material indices. Complete GCC and Clang builds and **98/98** suites pass, including MP/SP
+  endpoint, malformed-token, failure-atomic, overlong, and exact unterminated-buffer cases. A portable source contract is
+  selected by measured Windows x86 and pins the live dispatch and range/order invariants; review hardening binds the exact
+  guard returns and sole lock-state publication to their validated control flow. Independent production logic/security
+  and portability/ABI audits are clean. The production SP TUs and real native64 target ABI remain an explicit unclosed
+  compile gate because every hosted engine configuration still disables
+  SP; direct probes caught and fixed one brace imbalance, then reached pre-existing ILP32/vendor/header blockers;
+- remaining upstream content stays subsystem-specific: publish the reviewed client target/HUD candidate, then fix the
+  squared-distance-versus-unsquared grenade safe-radius defect separately. Keep dynent save/load `ba3c79f3` deferred
+  until bounded transactional Disk32/native-sidecar semantics exist, and keep unrelated weapon-fire changes excluded;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -1284,8 +1300,8 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **70%** by engineering effort. Windows x86 is about **93%**, shared
-foundations/security about **84%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
+Overall porting progress is approximately **71%** by engineering effort. Windows x86 is about **93%**, shared
+foundations/security about **85%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
 **39%**, and macOS arm64 about **30%**. Strict delivered-target status remains **0/5** because no requested
 64-bit/non-Windows engine target is enabled end to end yet.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
