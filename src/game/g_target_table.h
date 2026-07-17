@@ -14,6 +14,21 @@ struct target_t
     int flags;
 };
 
+// Storage-only initialization deliberately does not inspect or dereference
+// the previous entity pointer. Startup and save publication may encounter a
+// pointer from an older entity generation, so detaching a known-live target is
+// a separate game-layer operation.
+inline void ClearTargetEntry(target_t *const target) noexcept
+{
+    target->ent = nullptr;
+    target->offset[0] = 0.0f;
+    target->offset[1] = 0.0f;
+    target->offset[2] = 0.0f;
+    target->materialIndex = bg::target_protocol::kNoMaterial;
+    target->offscreenMaterialIndex = bg::target_protocol::kNoMaterial;
+    target->flags = 0;
+}
+
 RUNTIME_SIZE(target_t, 0x1C, 0x20);
 RUNTIME_OFFSET(target_t, ent, 0x0, 0x0);
 RUNTIME_OFFSET(target_t, offset, 0x4, 0x8);

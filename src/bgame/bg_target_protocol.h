@@ -3,6 +3,7 @@
 #include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <system_error>
 
 #include <universal/info_string.h>
@@ -15,6 +16,57 @@ constexpr int kMaxMaterialIndex = 127;
 constexpr int kAttackProfileTop = 1;
 constexpr int kJavelinOnly = 2;
 constexpr int kKnownFlags = kAttackProfileTop | kJavelinOnly;
+
+constexpr bool IsValidMaterialIndex(const int materialIndex) noexcept
+{
+    return materialIndex == kNoMaterial
+        || (materialIndex > 0 && materialIndex <= kMaxMaterialIndex);
+}
+
+inline bool CanEncodeLegacyOffsetComponent(const float component) noexcept
+{
+    return std::isfinite(component)
+        && static_cast<double>(component)
+            >= static_cast<double>((std::numeric_limits<int>::min)())
+        && static_cast<double>(component)
+            <= static_cast<double>((std::numeric_limits<int>::max)());
+}
+
+inline bool CanEncodeLegacyOffset(const float (&offset)[3]) noexcept
+{
+    return CanEncodeLegacyOffsetComponent(offset[0])
+        && CanEncodeLegacyOffsetComponent(offset[1])
+        && CanEncodeLegacyOffsetComponent(offset[2]);
+}
+
+// The retail command first rounds the script float to binary32, multiplies by
+// 1000 in binary32, then truncates to signed milliseconds. Validate both the
+// source-domain bound and the rounded product before performing that cast.
+inline bool TryEncodeLockOnDuration(
+    const double seconds,
+    int *const milliseconds) noexcept
+{
+    if (!milliseconds
+        || !std::isfinite(seconds)
+        || seconds < 0.0
+        || seconds
+            > static_cast<double>((std::numeric_limits<int>::max)())
+                / 1000.0)
+    {
+        return false;
+    }
+
+    const float retailMilliseconds =
+        static_cast<float>(seconds) * 1000.0f;
+    if (!CanEncodeLegacyOffsetComponent(retailMilliseconds)
+        || retailMilliseconds < 0.0f)
+    {
+        return false;
+    }
+
+    *milliseconds = static_cast<int>(retailMilliseconds);
+    return true;
+}
 
 enum class ConfigParseError
 {
@@ -105,7 +157,7 @@ inline bool TryParseOffsetView(
             value, end, parsed[component], std::chars_format::general);
         if (result.ec != std::errc{}
             || result.ptr == value
-            || !std::isfinite(parsed[component]))
+            || !CanEncodeLegacyOffsetComponent(parsed[component]))
         {
             return false;
         }
@@ -131,7 +183,8 @@ inline bool TryParseOffsetView(
 
 // Parses one active CS_TARGETS entry without publishing partial output. The
 // optional fields retain the retail defaults when absent or present-empty;
-// duplicate keys and malformed or out-of-domain values are rejected.
+// duplicate recognized keys and malformed or out-of-domain values are
+// rejected. Unknown keys are ignored for forward wire compatibility.
 inline ConfigParseError ParseConfig(
     const char *const info,
     const int maxEntityCount,
@@ -177,8 +230,7 @@ inline ConfigParseError ParseConfig(
     if (lookup == detail::ValueLookup::Found && length != 0
         && (!detail::TryParseIntView(
                 value, length, &parsed.materialIndex)
-            || parsed.materialIndex < kNoMaterial
-            || parsed.materialIndex > kMaxMaterialIndex))
+            || !IsValidMaterialIndex(parsed.materialIndex)))
     {
         return ConfigParseError::InvalidMaterial;
     }
@@ -189,8 +241,7 @@ inline ConfigParseError ParseConfig(
     if (lookup == detail::ValueLookup::Found && length != 0
         && (!detail::TryParseIntView(
                 value, length, &parsed.offscreenMaterialIndex)
-            || parsed.offscreenMaterialIndex < kNoMaterial
-            || parsed.offscreenMaterialIndex > kMaxMaterialIndex))
+            || !IsValidMaterialIndex(parsed.offscreenMaterialIndex)))
     {
         return ConfigParseError::InvalidOffscreenMaterial;
     }

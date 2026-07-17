@@ -10,7 +10,6 @@
 #include <script/scr_const.h>
 
 #include <cmath>
-#include <limits>
 
 TargetGlob targGlob;
 
@@ -19,42 +18,78 @@ namespace
 namespace target_protocol = bg::target_protocol;
 constexpr int kMaxTargets = target_protocol::kMaxTargets;
 
-void ResetTargetEntry(target_t *const target)
+void DetachTargetEntry(target_t *const target)
 {
     if (target->ent)
         target->ent->flags &= ~FL_TARGET;
 
-    target->ent = nullptr;
-    target->offset[0] = 0.0f;
-    target->offset[1] = 0.0f;
-    target->offset[2] = 0.0f;
-    target->materialIndex = target_protocol::kNoMaterial;
-    target->offscreenMaterialIndex = target_protocol::kNoMaterial;
-    target->flags = 0;
+    ClearTargetEntry(target);
 }
 
-void InitializeTargetEntry(
+void AttachTargetEntry(
     target_t *const target,
     gentity_s *const ent)
 {
-    ResetTargetEntry(target);
+    ClearTargetEntry(target);
     target->ent = ent;
     ent->flags |= FL_TARGET;
 }
 
-bool CanEncodeLegacyOffset(const float (&offset)[3])
+void ClearLiveTargetFlags()
 {
-    for (const float component : offset)
+    if (!level.gentities)
+        return;
+
+    for (int entityNumber = 0;
+         entityNumber < level.num_entities
+             && entityNumber < ENTITYNUM_WORLD;
+         ++entityNumber)
     {
-        if (!std::isfinite(component)
-            || static_cast<double>(component)
-                < static_cast<double>((std::numeric_limits<int>::min)())
-            || static_cast<double>(component)
-                > static_cast<double>((std::numeric_limits<int>::max)()))
-        {
-            return false;
-        }
+        gentity_s &entity = level.gentities[entityNumber];
+        if (entity.r.inuse)
+            entity.flags &= ~FL_TARGET;
     }
+}
+
+bool IsPublishedMaterialIndex(const int materialIndex)
+{
+    if (materialIndex == target_protocol::kNoMaterial)
+        return true;
+    if (!target_protocol::IsValidMaterialIndex(materialIndex))
+        return false;
+
+    char materialConfigString[MAX_INFO_STRING];
+    SV_GetConfigstring(
+        CS_SERVER_MATERIALS + materialIndex,
+        materialConfigString,
+        MAX_INFO_STRING);
+    return materialConfigString[0] != '\0';
+}
+
+bool IsOrdinaryLiveEntity(
+    gentity_s *const ent,
+    int *const entityNumber)
+{
+    if (!ent || !entityNumber || !level.gentities)
+        return false;
+
+    const int candidate = ent->s.number;
+    if (candidate < 0
+        || candidate >= level.num_entities
+        || candidate >= ENTITYNUM_WORLD)
+    {
+        return false;
+    }
+
+    gentity_s &liveEntity = level.gentities[candidate];
+    if (&liveEntity != ent
+        || !liveEntity.r.inuse
+        || liveEntity.s.number != candidate)
+    {
+        return false;
+    }
+
+    *entityNumber = candidate;
     return true;
 }
 } // namespace
@@ -65,7 +100,7 @@ void __cdecl G_InitTargets()
 
     for (int i = 0; i < kMaxTargets; ++i)
     {
-        ResetTargetEntry(&targGlob.targets[i]);
+        ClearTargetEntry(&targGlob.targets[i]);
         SV_SetConfigstring(CS_TARGETS + i, "");
     }
 }
@@ -82,6 +117,23 @@ void __cdecl G_LoadTargets()
     unsigned int stagedCount = 0;
     char configString[MAX_INFO_STRING];
 
+    if (!level.gentities
+        || level.num_entities < 0
+        || level.num_entities > MAX_GENTITIES)
+    {
+        Com_Error(
+            ERR_DROP,
+            "G_LoadTargets: invalid live entity table (%p, %i)",
+            static_cast<void *>(level.gentities),
+            level.num_entities);
+        return;
+    }
+
+    const int ordinaryEntityLimit =
+        level.num_entities < ENTITYNUM_WORLD
+        ? level.num_entities
+        : ENTITYNUM_WORLD;
+
     // Validate the complete table before changing either the live entries or
     // their FL_TARGET bits. A corrupt save therefore cannot publish a partial
     // table even if Com_Error is intercepted by a test or recovery boundary.
@@ -97,7 +149,7 @@ void __cdecl G_LoadTargets()
         const target_protocol::ConfigParseError error =
             target_protocol::ParseConfig(
                 configString,
-                MAX_GENTITIES,
+                ordinaryEntityLimit,
                 &staged[targetIndex].config);
         if (error != target_protocol::ConfigParseError::None)
         {
@@ -110,14 +162,51 @@ void __cdecl G_LoadTargets()
         }
 
         const int entityNumber = staged[targetIndex].config.entityNumber;
-        if (!level.gentities[entityNumber].r.inuse)
+        if (entityNumber < 0
+            || entityNumber >= level.num_entities
+            || entityNumber >= ENTITYNUM_WORLD)
         {
             Com_Error(
                 ERR_DROP,
-                "G_LoadTargets: target configstring %i references unused "
-                "entity %i",
+                "G_LoadTargets: target configstring %i references "
+                "out-of-range entity %i",
                 targetIndex,
                 entityNumber);
+            return;
+        }
+
+        const gentity_s &entity = level.gentities[entityNumber];
+        if (!entity.r.inuse || entity.s.number != entityNumber)
+        {
+            Com_Error(
+                ERR_DROP,
+                "G_LoadTargets: target configstring %i references invalid "
+                "live entity %i",
+                targetIndex,
+                entityNumber);
+            return;
+        }
+
+        const target_protocol::ParsedConfig &source =
+            staged[targetIndex].config;
+        if (!IsPublishedMaterialIndex(source.materialIndex))
+        {
+            Com_Error(
+                ERR_DROP,
+                "G_LoadTargets: target configstring %i references "
+                "unregistered material %i",
+                targetIndex,
+                source.materialIndex);
+            return;
+        }
+        if (!IsPublishedMaterialIndex(source.offscreenMaterialIndex))
+        {
+            Com_Error(
+                ERR_DROP,
+                "G_LoadTargets: target configstring %i references "
+                "unregistered offscreen material %i",
+                targetIndex,
+                source.offscreenMaterialIndex);
             return;
         }
 
@@ -141,8 +230,12 @@ void __cdecl G_LoadTargets()
         ++stagedCount;
     }
 
+    // Entity state was restored independently of this native pointer table.
+    // Clear the authoritative live flags first, then discard table storage
+    // without consulting any pointer left from the previous entity generation.
+    ClearLiveTargetFlags();
     for (target_t &target : targGlob.targets)
-        ResetTargetEntry(&target);
+        ClearTargetEntry(&target);
 
     for (int targetIndex = 0; targetIndex < kMaxTargets; ++targetIndex)
     {
@@ -152,7 +245,7 @@ void __cdecl G_LoadTargets()
         const target_protocol::ParsedConfig &source =
             staged[targetIndex].config;
         target_t &target = targGlob.targets[targetIndex];
-        InitializeTargetEntry(
+        AttachTargetEntry(
             &target, &level.gentities[source.entityNumber]);
         target.offset[0] = source.offset[0];
         target.offset[1] = source.offset[1];
@@ -181,10 +274,22 @@ void __cdecl Scr_Target_SetShader()
     }
 
     const char *const materialName = Scr_GetString(1);
+    int materialIndex = target_protocol::kNoMaterial;
+    if (*materialName)
+    {
+        materialIndex = G_MaterialIndex(materialName);
+        if (!target_protocol::IsValidMaterialIndex(materialIndex)
+            || !IsPublishedMaterialIndex(materialIndex))
+        {
+            Scr_Error(va(
+                "Target shader '%s' is not a registered material",
+                materialName));
+            return;
+        }
+    }
+
     target_t &target = targGlob.targets[targetIndex];
-    target.materialIndex = *materialName
-        ? G_MaterialIndex(materialName)
-        : target_protocol::kNoMaterial;
+    target.materialIndex = materialIndex;
 
     char configString[MAX_INFO_STRING];
     SV_GetConfigstring(
@@ -213,10 +318,22 @@ void __cdecl Scr_Target_SetOffscreenShader()
     }
 
     const char *const materialName = Scr_GetString(1);
+    int materialIndex = target_protocol::kNoMaterial;
+    if (*materialName)
+    {
+        materialIndex = G_MaterialIndex(materialName);
+        if (!target_protocol::IsValidMaterialIndex(materialIndex)
+            || !IsPublishedMaterialIndex(materialIndex))
+        {
+            Scr_Error(va(
+                "Target offscreen shader '%s' is not a registered material",
+                materialName));
+            return;
+        }
+    }
+
     target_t &target = targGlob.targets[targetIndex];
-    target.offscreenMaterialIndex = *materialName
-        ? G_MaterialIndex(materialName)
-        : target_protocol::kNoMaterial;
+    target.offscreenMaterialIndex = materialIndex;
 
     char configString[MAX_INFO_STRING];
     SV_GetConfigstring(
@@ -277,10 +394,17 @@ void __cdecl Scr_Target_Set()
     }
 
     gentity_s *const ent = Scr_GetEntity(0);
+    int entityNumber = 0;
+    if (!IsOrdinaryLiveEntity(ent, &entityNumber))
+    {
+        Scr_ObjectError("Target must be a live ordinary entity");
+        return;
+    }
+
     float requestedOffset[3]{};
     if (Scr_GetNumParam() > 1)
         Scr_GetVector(1u, requestedOffset);
-    if (!CanEncodeLegacyOffset(requestedOffset))
+    if (!target_protocol::CanEncodeLegacyOffset(requestedOffset))
     {
         Scr_ParamError(
             1u,
@@ -311,7 +435,7 @@ void __cdecl Scr_Target_Set()
             return;
         }
 
-        InitializeTargetEntry(&targGlob.targets[targetIndex], ent);
+        AttachTargetEntry(&targGlob.targets[targetIndex], ent);
         ++targGlob.targetCount;
     }
 
@@ -322,7 +446,7 @@ void __cdecl Scr_Target_Set()
     target.offset[2] = requestedOffset[2];
 
     char configString[MAX_INFO_STRING]{};
-    Info_SetValueForKey(configString, "ent", va("%i", ent->s.number));
+    Info_SetValueForKey(configString, "ent", va("%i", entityNumber));
     // Keep the retail x86 configstring/save representation: offsets are
     // truncated to signed decimal integers even though the live table is float.
     Info_SetValueForKey(
@@ -350,7 +474,7 @@ bool Targ_Remove(gentity_s *ent)
     if (targetIndex == kMaxTargets)
         return false;
 
-    ResetTargetEntry(&targGlob.targets[targetIndex]);
+    DetachTargetEntry(&targGlob.targets[targetIndex]);
     if (targGlob.targetCount > 0)
         --targGlob.targetCount;
     else
@@ -362,9 +486,10 @@ bool Targ_Remove(gentity_s *ent)
 
 void __cdecl Targ_RemoveAll()
 {
+    ClearLiveTargetFlags();
     for (int targetIndex = 0; targetIndex < kMaxTargets; ++targetIndex)
     {
-        ResetTargetEntry(&targGlob.targets[targetIndex]);
+        ClearTargetEntry(&targGlob.targets[targetIndex]);
         SV_SetConfigstring(CS_TARGETS + targetIndex, "");
     }
     targGlob.targetCount = 0;
@@ -432,7 +557,7 @@ int __cdecl ScrGetTargetScreenPos(float *screenPos)
 {
     float worldDir[3]; // [sp+50h] [-50h] BYREF
 
-    if (Scr_GetNumParam() < 2)
+    if (Scr_GetNumParam() < 3)
     {
         Scr_Error("Too few arguments\n");
         return 0;
@@ -505,18 +630,35 @@ void __cdecl Scr_Target_IsInRect()
 
 void __cdecl Scr_Target_StartLockOn()
 {
-    gentity_s *Entity; // r31
-    double Float; // fp1
-    int number; // r4
-    const char *v5; // r3
-    int v6; // [sp+50h] [-20h]
+    if (Scr_GetNumParam() < 2)
+    {
+        Scr_Error("Too few arguments\n");
+        return;
+    }
 
-    Entity = Scr_GetEntity(0);
-    Float = Scr_GetFloat(1);
-    number = Entity->s.number;
-    v6 = (int)(float)((float)Float * (float)1000.0);
-    v5 = va("ret_lock_on %i %i", number, v6);
-    SV_GameSendServerCommand(-1, v5);
+    gentity_s *const ent = Scr_GetEntity(0);
+    int entityNumber = 0;
+    if (!IsOrdinaryLiveEntity(ent, &entityNumber))
+    {
+        Scr_ObjectError("Lock-on target must be a live ordinary entity");
+        return;
+    }
+
+    const double seconds = Scr_GetFloat(1);
+    int milliseconds = 0;
+    if (!target_protocol::TryEncodeLockOnDuration(
+            seconds, &milliseconds))
+    {
+        Scr_ParamError(
+            1u,
+            "Lock-on duration must be finite, nonnegative, and encodable "
+            "as signed milliseconds");
+        return;
+    }
+
+    SV_GameSendServerCommand(
+        -1,
+        va("ret_lock_on %i %i", entityNumber, milliseconds));
 }
 
 void __cdecl Scr_Target_ClearLockOn()
