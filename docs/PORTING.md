@@ -160,9 +160,25 @@ Completed foundation work:
   `83a545ad` passes the complete GCC and Clang **82/82** suites, strict warning/conversion builds, ASan+UBSan, MSan,
   TSan, strict i386/AArch64 compile/link, production-TU/test-access isolation, and ABI/source contracts. The real
   lifecycle controller is linked into composed success/pre-`Live` failure tests, the finalizer is pinned to four direct
-  assignments, and the 65,536-entry path passes through rollback-capable `CommitReady`; candidate CI and hosted review
-  are clean at exact PR #37 head `ea47caf5`: run **29538874418** passed all nine jobs, Gemini reported no comments, hosted
-  Codex found no major issue, and no review threads remain;
+  assignments, and the 65,536-entry path passes through rollback-capable `CommitReady`. Final PR #37 head `376ce097`
+  passed all nine jobs in run **29539650666**; Gemini reported no comments, hosted Codex found no major issue, and no
+  review threads remained. PR #37 squash-merged as `7a9bce34`, and authoritative post-merge master run
+  **29542960583** passed all nine jobs;
+- current referenced-fast-file and SYSTEMINFO hardening centralizes 33 physical database zone slots as reserved/default
+  slot 0 plus usable slots 1..32, fixes the prior 0..31 listing range, and makes referenced checksum/name formatting
+  bounded and failure-atomic. SYSTEMINFO serialization distinguishes missing from present-empty keys, validates exact
+  signed-decimal checksum tokens, bounds the terminating byte, preserves prior output on failure, and clears dvar flags
+  only after complete publication. Remote referenced-file admission validates every checksum and path before acquiring
+  strings or publishing state, rejecting traversal, tokenizer, control, quote, download-list-delimiter, NTFS ADS/drive,
+  Windows wildcard/metacharacter, and DOS-device namespace injection. Server-file comparison uses native-width dvar
+  string pointers and prefix lengths without legacy narrowing, exact component boundaries, and an exact
+  case-insensitive `mods/` namespace. `fs_game` now requires forward-slash relative form because backslash is an
+  info-string field delimiter;
+- an audited nine-commit upstream delta from the shared base `312a9d2e` through `ba3c79f3`. Three narrow
+  assertion/initialization fixes and the isolated blur correction are candidates for a low-risk first batch. The
+  radius-damage/missile/HUD, navigation, and tank-tread changes require selective adaptation and focused tests. Omnibus
+  `77404c61` contains gameplay/lifecycle regressions and must not be imported wholesale; dynent save/load `ba3c79f3`
+  remains deferred until it has bounded transactional Disk32/native-sidecar semantics;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -215,7 +231,10 @@ Remaining gates, in implementation order:
    constructed whole-zone sidecar table plus no-report script-string adapters, keeping static controller slots outside
    PMem and per-generation native storage inside the named scope, then bind the recipes and adapter into production with
    completed-object/alias registration and lifetime tests before replacing any legacy loader path.
-   Current DB-thread longjmp remains process-fatal, so the controller is a longjmp-safe prerequisite rather than
+   The journal merged in PR #37 as `7a9bce34`; post-merge run **29542960583** passed all nine jobs. The current
+   referenced-fast-file/SYSTEMINFO candidate fixes the reserved-slot/slot-32 range error and hardens bounded metadata
+   serialization/admission before the ownership table depends on those indices. Current DB-thread longjmp remains
+   process-fatal, so the controller is a longjmp-safe prerequisite rather than
    recoverable production abandonment. Retail wire bytes remain frozen. Production commit must keep admission closed
    through all fallible work, prepare the journal, publish `Live` under the external serializer, unconditionally finalize
    the journal, and only then perform a no-fail/no-drop gate/signal release before dropping that serializer; otherwise
@@ -1187,7 +1206,7 @@ remained unchanged. PR #30 then merged the non-publishing reader prerequisite, a
 production restore to it; only the save-side guard and writer remain.
 
 Overall porting progress is approximately **69%** by engineering effort. Windows x86 is about **93%**, shared
-foundations/security about **82%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
+foundations/security about **83%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
 **39%**, and macOS arm64 about **30%**. Strict delivered-target status remains **0/5** because no requested
 64-bit/non-Windows engine target is enabled end to end yet.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
@@ -1340,11 +1359,20 @@ CI definitions configure all five portable utility jobs to build/run the target 
 explicitly. The source contract pins the finalizer to four direct assignments, the real lifecycle controller is linked
 into composed success/pre-`Live` failure tests, and the maximum-count path prepares to `CommitReady` before exact
 rollback. It also pins private rollback-detach bodies, loop-token exclusion, the post-prepare `Loading` state, and the
-success-only finalizer guard. Exact PR #37 head `ea47caf5` passed all nine jobs in run **29538874418**. Gemini reported no
-comments, hosted Codex found no major issue, and no review threads remain.
-Before the next ownership batch, correct the two existing referenced-fast-file name/checksum loops that iterate indices
-0..31: the registry allocation truth is 33 physical slots, reserved/default slot 0, and usable fast-file slots 1..32, so
-those loops currently include the reserved slot and omit valid slot 32.
+success-only finalizer guard. Final PR #37 head `376ce097` passed all nine jobs in run **29539650666**. Gemini reported
+no comments, hosted Codex found no major issue, and no review threads remained. PR #37 squash-merged as `7a9bce34`;
+authoritative post-merge master run **29542960583** passed all nine jobs.
+The current candidate corrects the two referenced-fast-file name/checksum loops that formerly iterated indices 0..31.
+One canonical definition now pins 33 physical registry entries, reserved/default slot 0, usable slots 1..32, and a
+32-live-zone cap. It also makes referenced fast-file and IWD formatting plus SYSTEMINFO aggregation bounded,
+failure-atomic, count-consistent, and exact-round-trip checked; preflights complete remote checksum/path metadata before
+mutation; and removes native pointer truncation from server-file comparison. Server downloads now admit only a complete
+`.iwd`/`.ff` name present in the published active-mod reference list, reject `_svr_`, traversal/namespace/dot aliases, and
+names that cannot fit the 64-byte protocol field, and revalidate authorization immediately before opening. File-open,
+reset, error, and WWW-redirect paths use nonfatal bounded construction and close/reuse owned resources correctly. The
+legacy unauthenticated update namespace consequently fails closed; HTTP redirect transport remains separately
+nonfunctional. Complete local GCC/Clang suites are 85/85 green, ASan+UBSan/TSan suites are 84/84 green, strict i386
+execution and AArch64 compilation/linking pass, and Windows production compilation remains the PR CI gate.
 The next ownership batch then builds the constructed whole-zone table and no-report script-string adapters around these
 two primitives. Static context slots and callback metadata must live outside and outlast zone PMem. They must survive
 `PMem_Free` and allow the controller to publish `Empty`; only per-generation arena/workspace/journal/backing belongs

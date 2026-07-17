@@ -795,6 +795,34 @@ set_target_properties(kisakcod-db-asset-mode-tests PROPERTIES
 )
 add_test(NAME database-build-mode-asset-policy COMMAND kisakcod-db-asset-mode-tests)
 
+add_executable(kisakcod-db-referenced-fastfile-tests db_referenced_fastfile_tests.cpp)
+target_include_directories(kisakcod-db-referenced-fastfile-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-db-referenced-fastfile-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-db-referenced-fastfile-tests)
+set_target_properties(kisakcod-db-referenced-fastfile-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-referenced-fastfile-format
+    COMMAND kisakcod-db-referenced-fastfile-tests
+)
+
+add_executable(kisakcod-server-file-compare-tests
+    server_file_compare_tests.cpp
+)
+target_include_directories(
+    kisakcod-server-file-compare-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-server-file-compare-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-server-file-compare-tests)
+set_target_properties(kisakcod-server-file-compare-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME qcommon-server-file-compare
+    COMMAND kisakcod-server-file-compare-tests
+)
+
 add_executable(kisakcod-abi-atomics-tests abi_atomics_tests.cpp)
 target_include_directories(kisakcod-abi-atomics-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-abi-atomics-tests PRIVATE cxx_std_20)
@@ -1462,6 +1490,13 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P
         ${CMAKE_CURRENT_SOURCE_DIR}/db_script_string_journal_source_test.cmake
+)
+
+add_test(
+    NAME database-zone-slot-range-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_slot_range_source_test.cmake
 )
 
 add_test(

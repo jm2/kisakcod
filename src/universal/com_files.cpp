@@ -1,5 +1,6 @@
 #include "com_files.h"
 #include "q_shared.h"
+#include "info_string.h"
 
 #include <universal/com_memory.h>
 #include <universal/sys_atomic.h>
@@ -13,9 +14,13 @@
 #include <qcommon/com_bsp.h>
 #include <qcommon/cmd.h>
 #include <qcommon/files.h>
+#include <charconv>
 #include <climits>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
+#include <system_error>
 #include <io.h>
 
 const dvar_t *fs_remotePCDirectory;
@@ -147,41 +152,190 @@ char __cdecl FS_FilesAreLoadedGlobally(const char *filename)
     return 0;
 }
 
+namespace
+{
+template <std::size_t Capacity>
+bool FS_TryGetSafeIwdComponentLength(
+    const char (&component)[Capacity],
+    std::size_t *const length) noexcept
+{
+    if (!length)
+        return false;
+
+    const void *const terminator = std::memchr(component, '\0', Capacity);
+    if (!terminator)
+        return false;
+
+    const std::size_t componentLength = static_cast<std::size_t>(
+        static_cast<const char *>(terminator) - component);
+    if (componentLength == 0
+        || !info_string::IsSafeUnquotedPathTokenComponent(component))
+    {
+        return false;
+    }
+
+    *length = componentLength;
+    return true;
+}
+
+bool FS_TryGetSafeIwdNameLengths(
+    const iwd_t *const iwd,
+    std::size_t *const gameNameLength,
+    std::size_t *const baseNameLength) noexcept
+{
+    return iwd
+        && gameNameLength
+        && baseNameLength
+        && FS_TryGetSafeIwdComponentLength(
+            iwd->iwdGamename, gameNameLength)
+        && FS_TryGetSafeIwdComponentLength(
+            iwd->iwdBasename, baseNameLength);
+}
+
+template <std::size_t Capacity>
+bool FS_TryAppendReferencedIwdName(
+    char (&output)[Capacity],
+    std::size_t *const outputLength,
+    const iwd_t *const iwd) noexcept
+{
+    std::size_t gameNameLength = 0;
+    std::size_t baseNameLength = 0;
+    if (!outputLength
+        || !FS_TryGetSafeIwdNameLengths(
+            iwd, &gameNameLength, &baseNameLength))
+    {
+        return false;
+    }
+
+    if (*outputLength >= Capacity)
+        return false;
+
+    const std::size_t separatorLength = *outputLength != 0 ? 1u : 0u;
+    std::size_t available = Capacity - 1 - *outputLength;
+    if (separatorLength > available)
+        return false;
+    available -= separatorLength;
+    if (gameNameLength > available)
+        return false;
+    available -= gameNameLength;
+    if (available == 0)
+        return false;
+    --available;
+    if (baseNameLength > available)
+        return false;
+
+    char *cursor = output + *outputLength;
+    if (separatorLength)
+        *cursor++ = ' ';
+    std::memcpy(cursor, iwd->iwdGamename, gameNameLength);
+    cursor += gameNameLength;
+    *cursor++ = '/';
+    std::memcpy(cursor, iwd->iwdBasename, baseNameLength);
+    cursor += baseNameLength;
+    *cursor = '\0';
+    *outputLength = static_cast<std::size_t>(cursor - output);
+    return true;
+}
+
+template <std::size_t Capacity>
+bool FS_TryAppendReferencedIwdChecksum(
+    char (&output)[Capacity],
+    std::size_t *const outputLength,
+    const iwd_t *const iwd) noexcept
+{
+    std::size_t gameNameLength = 0;
+    std::size_t baseNameLength = 0;
+    if (!outputLength
+        || !FS_TryGetSafeIwdNameLengths(
+            iwd, &gameNameLength, &baseNameLength))
+    {
+        return false;
+    }
+
+    char checksum[
+        static_cast<std::size_t>(std::numeric_limits<int>::digits10) + 3];
+    const std::to_chars_result formatted = std::to_chars(
+        checksum, checksum + sizeof(checksum), iwd->checksum, 10);
+    if (formatted.ec != std::errc{})
+        return false;
+
+    if (*outputLength >= Capacity)
+        return false;
+
+    const std::size_t checksumLength = static_cast<std::size_t>(
+        formatted.ptr - checksum);
+    const std::size_t available = Capacity - 1 - *outputLength;
+    if (checksumLength > available
+        || available - checksumLength < 1)
+    {
+        return false;
+    }
+
+    char *cursor = output + *outputLength;
+    std::memcpy(cursor, checksum, checksumLength);
+    cursor += checksumLength;
+    *cursor++ = ' ';
+    *cursor = '\0';
+    *outputLength = static_cast<std::size_t>(cursor - output);
+    return true;
+}
+}
+
 char info8[8192];
 char *__cdecl FS_ReferencedIwdNames()
 {
     searchpath_s *search; // [esp+0h] [ebp-4h]
+    char staged[sizeof(info8)];
+    std::size_t stagedLength = 0;
 
     info8[0] = 0;
+    staged[0] = 0;
     for (search = fs_searchpaths; search; search = search->next)
     {
         if (search->iwd && (Sys_AtomicLoad(&search->iwd->referenced) || I_strnicmp(search->iwd->iwdGamename, "main", 4)))
         {
-            if (info8[0])
-                I_strncat(info8, 0x2000, " ");
-            I_strncat(info8, 0x2000, search->iwd->iwdGamename);
-            I_strncat(info8, 0x2000, "/");
-            I_strncat(info8, 0x2000, search->iwd->iwdBasename);
+            if (!FS_TryAppendReferencedIwdName(
+                    staged, &stagedLength, search->iwd))
+            {
+                info8[0] = 0;
+                Com_Error(
+                    ERR_DROP,
+                    "Invalid or oversized referenced IWD name list");
+                return info8;
+            }
         }
     }
+
+    std::memcpy(info8, staged, stagedLength + 1);
     return info8;
 }
 
 char info5[8192];
 char *__cdecl FS_ReferencedIwdChecksums()
 {
-    char *v0; // eax
     searchpath_s *search; // [esp+0h] [ebp-4h]
+    char staged[sizeof(info5)];
+    std::size_t stagedLength = 0;
 
     info5[0] = 0;
+    staged[0] = 0;
     for (search = fs_searchpaths; search; search = search->next)
     {
         if (search->iwd && (Sys_AtomicLoad(&search->iwd->referenced) || I_strnicmp(search->iwd->iwdGamename, "main", 4)))
         {
-            v0 = va("%i ", search->iwd->checksum);
-            I_strncat(info5, 0x2000, v0);
+            if (!FS_TryAppendReferencedIwdChecksum(
+                    staged, &stagedLength, search->iwd))
+            {
+                info5[0] = 0;
+                Com_Error(
+                    ERR_DROP,
+                    "Invalid or oversized referenced IWD checksum list");
+                return info5;
+            }
         }
     }
+
+    std::memcpy(info5, staged, stagedLength + 1);
     return info5;
 }
 
@@ -1289,27 +1443,23 @@ void __cdecl FS_ConvertPath(char *s)
 
 bool __cdecl FS_GameDirDomainFunc(dvar_s *dvar, DvarValue newValue)
 {
-    bool result; // al
-    int v3; // eax
-    int v4; // eax
-
     if (!dvar)
         MyAssertHandler(".\\universal\\com_files.cpp", 4241, 0, "%s", "dvar");
-    if (!*(_BYTE *)newValue.integer)
-        return 1;
-    if (I_strnicmp(newValue.string, "mods", 4))
-        return 0;
-    if (strlen(newValue.string) < 6 || *(_BYTE *)(newValue.integer + 4) != 47 && *(_BYTE *)(newValue.integer + 4) != 92)
-        return 0;
-    v3 = (int)strstr((char*)newValue.integer, "..");
-    result = 0;
-    if (!v3)
-    {
-        v4 = (int)strstr((char*)newValue.integer, "::");
-        if (!v4)
-            return 1;
-    }
-    return result;
+
+    const char *const gameDir = newValue.string;
+    if (!gameDir)
+        return false;
+    if (!*gameDir)
+        return true;
+    if (!info_string::IsSafeUnquotedPathTokenComponent(gameDir))
+        return false;
+    if (I_strnicmp(gameDir, "mods", 4))
+        return false;
+    if (gameDir[4] != '/' || !gameDir[5])
+        return false;
+    if (strstr(gameDir, "..") || strstr(gameDir, "::"))
+        return false;
+    return true;
 }
 
 void FS_RegisterDvars()
@@ -2734,47 +2884,91 @@ char *__cdecl FS_ShiftStr(const char *string, char shift)
     return buf;
 }
 
+namespace
+{
+bool FS_TryBuildServerOSPath(
+    const char *const base,
+    const char *const filename,
+    char *const osPath) noexcept
+{
+    if (!base || !*base || !filename || !*filename || !osPath)
+        return false;
+
+    FS_BuildOSPathForThread(
+        base, filename, "", osPath, FS_THREAD_SERVER);
+    const std::size_t length = std::strlen(osPath);
+    if (length == 0
+        || (osPath[length - 1] != '/'
+            && osPath[length - 1] != '\\'))
+    {
+        return false;
+    }
+
+    osPath[length - 1] = '\0';
+    return true;
+}
+}
+
 int __cdecl FS_SV_FOpenFileRead(const char *filename, int *fp)
 {
     FILE *Binary; // eax
     FILE *v3; // eax
     FILE *v4; // eax
-    char *v6; // [esp+2Ch] [ebp-10Ch]
     char ospath[256]; // [esp+30h] [ebp-108h] BYREF
     int f; // [esp+134h] [ebp-4h]
+
+    if (!fp)
+        return 0;
+    *fp = 0;
+    if (!filename || !*filename)
+        return 0;
 
     FS_CheckFileSystemStarted();
     f = FS_HandleForFile(FS_THREAD_MAIN);
     fsh[f].zipFile = 0;
     I_strncpyz(fsh[f].name, filename, 256);
-    FS_BuildOSPath(fs_homepath->current.string, filename, "", ospath);
-    v6 = ospath;
-    v6 += strlen(v6) + 1;
-    ospath[v6 - &ospath[1] - 1] = 0;
-    if (fs_debug->current.integer)
-        Com_Printf(10, "FS_SV_FOpenFileRead (fs_homepath): %s\n", ospath);
-    Binary = FS_FileOpenReadBinary(ospath);
+    if (FS_TryBuildServerOSPath(
+            fs_homepath->current.string, filename, ospath))
+    {
+        if (fs_debug->current.integer)
+            Com_Printf(10, "FS_SV_FOpenFileRead (fs_homepath): %s\n", ospath);
+        Binary = FS_FileOpenReadBinary(ospath);
+    }
+    else
+    {
+        Binary = nullptr;
+    }
     fsh[f].handleFiles.file.o = Binary;
     fsh[f].handleSync = 0;
     if (!fsh[f].handleFiles.file.o && I_stricmp(fs_homepath->current.string, fs_basepath->current.string))
     {
-        FS_BuildOSPath(fs_basepath->current.string, filename, "", ospath);
-        ospath[&ospath[strlen(ospath) + 1] - &ospath[1] - 1] = 0;
-        if (fs_debug->current.integer)
-            Com_Printf(10, "FS_SV_FOpenFileRead (fs_basepath): %s\n", ospath);
-        v3 = FS_FileOpenReadBinary(ospath);
+        if (FS_TryBuildServerOSPath(
+                fs_basepath->current.string, filename, ospath))
+        {
+            if (fs_debug->current.integer)
+                Com_Printf(10, "FS_SV_FOpenFileRead (fs_basepath): %s\n", ospath);
+            v3 = FS_FileOpenReadBinary(ospath);
+        }
+        else
+        {
+            v3 = nullptr;
+        }
         fsh[f].handleFiles.file.o = v3;
         fsh[f].handleSync = 0;
-        if (!fsh[f].handleFiles.file.o)
-            f = 0;
     }
     if (!fsh[f].handleFiles.file.o)
     {
-        FS_BuildOSPath(fs_cdpath->current.string, filename, "", ospath);
-        ospath[&ospath[strlen(ospath) + 1] - &ospath[1] - 1] = 0;
-        if (fs_debug->current.integer)
-            Com_Printf(10, "FS_SV_FOpenFileRead (fs_cdpath) : %s\n", ospath);
-        v4 = FS_FileOpenReadBinary(ospath);
+        if (FS_TryBuildServerOSPath(
+                fs_cdpath->current.string, filename, ospath))
+        {
+            if (fs_debug->current.integer)
+                Com_Printf(10, "FS_SV_FOpenFileRead (fs_cdpath) : %s\n", ospath);
+            v4 = FS_FileOpenReadBinary(ospath);
+        }
+        else
+        {
+            v4 = nullptr;
+        }
         fsh[f].handleFiles.file.o = v4;
         fsh[f].handleSync = 0;
         if (!fsh[f].handleFiles.file.o)

@@ -364,10 +364,19 @@ void __cdecl SV_SetConfigstring(unsigned int index, const char *val)
 void SV_SaveSystemInfo()
 {
     char str[0x2000]; // [sp+50h] [-2010h] BYREF
+    bool complete = false;
+    char *const systemInfo = Dvar_InfoString_Big(8, &complete);
 
-    I_strncpyz(str, Dvar_InfoString_Big(8), 0x2000);
-    dvar_modifiedFlags &= ~8u;
+    if (!complete)
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO cannot be represented within protocol limits");
+        return;
+    }
+    I_strncpyz(str, systemInfo, 0x2000);
     SV_SetConfigstring(1, str);
+    dvar_modifiedFlags &= ~8u;
     SV_SetConfigstring(0, Dvar_InfoString(0, 4));
     dvar_modifiedFlags &= ~4u;
 }

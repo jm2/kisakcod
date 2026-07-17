@@ -1,6 +1,8 @@
 #include "database.h"
 #include "db_load_atomic.h"
+#include "db_referenced_fastfile.h"
 #include "db_validation.h"
+#include "db_zone_slots.h"
 
 #include <qcommon/files.h>
 #include <qcommon/mem_track.h>
@@ -32,6 +34,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <climits>
 
 #include <setjmp.h>
 #include <game/g_bsp.h>
@@ -409,9 +412,23 @@ XAssetEntryPoolEntry *g_freeAssetEntryHead;
 uint16_t db_hashTable[32768];
 XAssetEntry *g_copyInfo[0x800];
 uint32_t g_copyInfoCount;
-XZone g_zones[ASSET_TYPE_COUNT]{ 0 };
-uint8_t g_zoneHandles[32];
-char g_zoneNameList[2080];
+
+template <std::size_t Size>
+constexpr int DB_CheckedTrackSize() noexcept
+{
+    static_assert(Size <= static_cast<std::size_t>(INT_MAX));
+    return static_cast<int>(Size);
+}
+
+XZone g_zones[db::zone_slots::kPhysicalZoneSlotCount]{ 0 };
+uint8_t g_zoneHandles[db::zone_slots::kUsableZoneSlotCount];
+// Slot zero owns default assets; the live-zone handle table covers slots 1..32.
+static_assert(
+    ARRAY_COUNT(g_zones) == db::zone_slots::kPhysicalZoneSlotCount);
+static_assert(
+    ARRAY_COUNT(g_zoneHandles) == db::zone_slots::kUsableZoneSlotCount);
+static_assert(ARRAY_COUNT(g_zones) == ARRAY_COUNT(g_zoneHandles) + 1);
+char g_zoneNameList[BIG_INFO_VALUE];
 XAssetPool<XModelPieces, POOLSIZE_XMODELPIECES> g_XModelPiecesPool;
 XAssetPool<PhysPreset, POOLSIZE_PHYSPRESET> g_PhysPresetPool;
 XAssetPool<XAnimParts, POOLSIZE_XANIMPARTS> g_XAnimPartsPool;
@@ -486,21 +503,37 @@ void DB_CompleteLoadingAsset()
 char *__cdecl DB_ReferencedFFChecksums()
 {
     int32_t v0; // kr00_4
-    int32_t i; // [esp+10h] [ebp-20h]
     char zoneSizeStr[16]; // [esp+1Ch] [ebp-14h] BYREF
+    bool checksumFormatFailed = false;
 
     v0 = strlen("localized_");
     g_zoneNameList[0] = 0;
-    for (i = 0; i < 32; ++i)
-    {
-        if (g_zones[i].name[0] && I_strncmp(g_zones[i].name, "localized_", v0))
+    db::referenced_fastfile::ForEachReferencedFastFile(
+        g_zones,
+        [v0](const char *zoneName)
         {
+            return I_strncmp(zoneName, "localized_", v0) == 0;
+        },
+        [&](const std::size_t, const XZone &zone)
+        {
+            if (checksumFormatFailed)
+                return;
+            if (!db::referenced_fastfile::FormatSignedDecimal(
+                    zone.fileSize,
+                    zoneSizeStr,
+                    ARRAY_COUNT(zoneSizeStr)))
+            {
+                checksumFormatFailed = true;
+                return;
+            }
             if (g_zoneNameList[0])
-                I_strncat(g_zoneNameList, 2080, " ");
-            //itoa(g_zones[i].fileSize, zoneSizeStr, 0xAu);
-            _itoa(g_zones[i].fileSize, zoneSizeStr, 0xAu);
-            I_strncat(g_zoneNameList, 2080, zoneSizeStr);
-        }
+                I_strncat(g_zoneNameList, BIG_INFO_VALUE, " ");
+            I_strncat(g_zoneNameList, BIG_INFO_VALUE, zoneSizeStr);
+        });
+    if (checksumFormatFailed)
+    {
+        g_zoneNameList[0] = 0;
+        Com_Error(ERR_DROP, "Could not format a referenced fast-file size");
     }
     return g_zoneNameList;
 }
@@ -508,23 +541,23 @@ char *__cdecl DB_ReferencedFFChecksums()
 char *__cdecl DB_ReferencedFFNameList()
 {
     int32_t v0; // kr00_4
-    int32_t i; // [esp+10h] [ebp-Ch]
 
     v0 = strlen("localized_");
     g_zoneNameList[0] = 0;
-    for (i = 0; i < 32; ++i)
-    {
-        if (g_zones[i].name[0] && I_strncmp(g_zones[i].name, "localized_", v0))
-        {
-            if (g_zoneNameList[0])
-                I_strncat(g_zoneNameList, 2080, " ");
-            if (g_zones[i].modZone)
+    if (!db::referenced_fastfile::FormatReferencedFastFileNames(
+            g_zones,
+            fs_gameDirVar->current.string,
+            [v0](const char *zoneName)
             {
-                I_strncat(g_zoneNameList, 2080, (const char*)fs_gameDirVar->current.integer);
-                I_strncat(g_zoneNameList, 2080, "/");
-            }
-            I_strncat(g_zoneNameList, 2080, g_zones[i].name);
-        }
+                return I_strncmp(zoneName, "localized_", v0) == 0;
+            },
+            g_zoneNameList,
+            ARRAY_COUNT(g_zoneNameList)))
+    {
+        g_zoneNameList[0] = 0;
+        Com_Error(
+            ERR_DROP,
+            "Referenced fast-file name list cannot be represented within SYSTEMINFO protocol limits");
     }
     return g_zoneNameList;
 }
@@ -645,9 +678,21 @@ void __cdecl TRACK_db_registry()
 {
     track_static_alloc_internal(db_hashTable, 0x10000, "db_hashTable", 10);
     track_static_alloc_internal(g_copyInfo, 0x2000, "g_copyInfo", 10);
-    track_static_alloc_internal(g_zones, 5544, "g_zones", 10);
-    track_static_alloc_internal(g_zoneHandles, 32, "g_zoneHandles", 10);
-    track_static_alloc_internal(g_zoneNameList, 2080, "g_zoneNameList", 10);
+    track_static_alloc_internal(
+        g_zones,
+        DB_CheckedTrackSize<sizeof(g_zones)>(),
+        "g_zones",
+        10);
+    track_static_alloc_internal(
+        g_zoneHandles,
+        DB_CheckedTrackSize<sizeof(g_zoneHandles)>(),
+        "g_zoneHandles",
+        10);
+    track_static_alloc_internal(
+        g_zoneNameList,
+        DB_CheckedTrackSize<sizeof(g_zoneNameList)>(),
+        "g_zoneNameList",
+        10);
     track_static_alloc_internal(&g_XModelPiecesPool, 772, "g_XModelPiecesPool", 10);
     track_static_alloc_internal(&g_PhysPresetPool, 2820, "g_PhysPresetPool", 10);
     track_static_alloc_internal(&g_XAnimPartsPool, 360452, "g_XAnimPartsPool", 10);
@@ -770,7 +815,7 @@ void __cdecl DB_BuildOSPath_Mod(const char *zoneName, uint32_t size, char *filen
 {
     const char *string; // [esp-8h] [ebp-8h]
 
-    if (!*(_BYTE *)fs_gameDirVar->current.integer)
+    if (!*fs_gameDirVar->current.string)
         MyAssertHandler(".\\database\\db_registry.cpp", 3204, 0, "%s", "IsUsingMods()");
     string = fs_gameDirVar->current.string;
     Com_sprintf(filename, size, "%s\\%s\\%s.ff", DB_GetFastFileBasePath(), string, zoneName);
@@ -781,7 +826,7 @@ bool __cdecl DB_ModFileExists()
     char filename[256]; // [esp+0h] [ebp-108h] BYREF
     void *zoneFile; // [esp+104h] [ebp-4h]
 
-    if (!*(_BYTE *)fs_gameDirVar->current.integer)
+    if (!*fs_gameDirVar->current.string)
         return 0;
     DB_BuildOSPath_Mod("mod", 0x100u, filename);
     zoneFile = CreateFileA(
@@ -1979,7 +2024,8 @@ bool __cdecl DB_IsXAssetDefault(XAssetType type, const char *name)
             if (!I_stricmp(XAssetName, name))
             {
                 Sys_UnlockRead(&db_hashCritSect);
-                return assetEntry->entry.zoneIndex == 0;
+                return assetEntry->entry.zoneIndex
+                    == db::zone_slots::kDefaultZoneSlot;
             }
         }
     }
@@ -2511,7 +2557,9 @@ void __cdecl DB_LoadXZone(XZoneInfo *zoneInfo, uint32_t zoneCount)
     char *zoneName; // [esp+4h] [ebp-8h]
     uint32_t zoneInfoCount; // [esp+8h] [ebp-4h]
 
-    if (g_zoneCount < 0 || g_zoneCount >= 32)
+    if (g_zoneCount < 0
+        || g_zoneCount
+            >= static_cast<int32_t>(db::zone_slots::kUsableZoneSlotCount))
     {
         Com_Error(ERR_DROP, "Max zone count exceeded");
         return;
@@ -2566,7 +2614,10 @@ void __cdecl DB_LoadXZone(XZoneInfo *zoneInfo, uint32_t zoneCount)
         Sys_AtomicStore(&g_loadingAssets, 0u);
         return;
     }
-    if (zoneInfoCount > static_cast<uint32_t>(32 - g_zoneCount))
+    if (zoneInfoCount
+        > static_cast<uint32_t>(
+            static_cast<int32_t>(db::zone_slots::kUsableZoneSlotCount)
+            - g_zoneCount))
     {
         Sys_AtomicStore(&g_loadingAssets, 0u);
         Com_Error(ERR_DROP, "Fast-file zone queue exceeds the remaining zone capacity");
@@ -2911,7 +2962,7 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
     iassert(!Sys_AtomicLoad(&g_zoneInfoCount));
     if (I_stricmp(zoneName, "mp_patch"))
     {
-        if (*(_BYTE *)fs_gameDirVar->current.integer && DB_ShouldLoadFromModDir(zoneName))
+        if (*fs_gameDirVar->current.string && DB_ShouldLoadFromModDir(zoneName))
         {
             DB_BuildOSPath_Mod(zoneName, 256, filename);
             zoneFile = CreateFileA(
@@ -2987,7 +3038,9 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
     else
     {
         g_zoneIndex = 0;
-        for (i = 1; i < 0x21; ++i)
+        for (i = static_cast<int32_t>(db::zone_slots::kFirstUsableZoneSlot);
+            i < static_cast<int32_t>(db::zone_slots::kPhysicalZoneSlotCount);
+            ++i)
         {
             if (!g_zones[i].name[0])
             {
@@ -2996,13 +3049,16 @@ int32_t __cdecl DB_TryLoadXFileInternal(char *zoneName, int32_t zoneFlags)
             }
         }
 
-        if (!g_zoneIndex)
+        if (!db::zone_slots::IsUsableZoneSlot(g_zoneIndex))
         {
             CloseHandle(zoneFile);
             Com_Error(ERR_FATAL, "No free fast-file zone slot");
             return 0;
         }
-        if (g_zoneCount < 0 || g_zoneCount >= 32)
+        if (g_zoneCount < 0
+            || g_zoneCount
+                >= static_cast<int32_t>(
+                    db::zone_slots::kUsableZoneSlotCount))
         {
             CloseHandle(zoneFile);
             Com_Error(ERR_FATAL, "Fast-file zone count is out of range");
@@ -3111,7 +3167,7 @@ void __cdecl DB_UnloadXZone(uint32_t zoneIndex, bool createDefault)
     uint16_t *pOverrideAssetEntryIndex; // [esp+24h] [ebp-8h]
     uint32_t overrideAssetEntryIndex; // [esp+28h] [ebp-4h]
 
-    iassert(zoneIndex);
+    iassert(db::zone_slots::IsUsableZoneSlot(zoneIndex));
     hash = 0;
 
     // KISAKTODO: would be nice

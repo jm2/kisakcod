@@ -11,6 +11,7 @@
 #include <game_mp/g_main_mp.h>
 #include <qcommon/files.h>
 #include <universal/com_files.h>
+#include <universal/info_string.h>
 #include <qcommon/threads.h>
 #include <script/scr_variable.h>
 #ifndef KISAK_DEDI_HEADLESS
@@ -1142,19 +1143,123 @@ void __cdecl SV_KillLocalServer()
         sv.killServer = 1;
 }
 
+static bool SV_SystemInfoValueMatches(
+    const char *const systemInfo,
+    const char *const key,
+    const char *const expected)
+{
+    return info_string::ValueMatchesExactOrAbsentEmpty(
+        systemInfo, key, expected);
+}
+
+static std::size_t SV_CountSystemInfoTokens(const char *const value)
+{
+    if (!value)
+        return 0;
+
+    std::size_t count = 0;
+    bool inToken = false;
+    for (const unsigned char *cursor =
+             reinterpret_cast<const unsigned char *>(value);
+         *cursor;
+         ++cursor)
+    {
+        if (*cursor <= static_cast<unsigned char>(' '))
+        {
+            inToken = false;
+        }
+        else if (!inToken)
+        {
+            ++count;
+            inToken = true;
+        }
+    }
+    return count;
+}
+
 void __cdecl SV_SetSystemInfoConfig()
 {
     char *v0; // eax
     char dest[0x2000]; // [esp+24h] [ebp-2008h] BYREF
+    bool complete = false;
 
-    v0 = Dvar_InfoString_Big(8);
-    I_strncpyz(dest, v0, 0x2000);
-    if (!fs_gameDirVar->current.integer)
+    if (SV_CountSystemInfoTokens(sv_referencedIwds->current.string)
+        != SV_CountSystemInfoTokens(
+            sv_referencedIwdNames->current.string))
     {
-        if (strlen(dest) + strlen("\\fs_game\\\\") <= 0x400)
-            I_strncat(dest, 1024, "\\fs_game\\\\");
-        else
-            Com_Printf(16, "Info string length exceeded key: fs_game Info string: %s", dest);
+        Com_Error(
+            ERR_DROP,
+            "Referenced IWD checksum/name count mismatch");
+        return;
+    }
+
+    v0 = Dvar_InfoString_Big(8, &complete);
+    if (!complete)
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO cannot be represented within protocol limits");
+        return;
+    }
+    if (!SV_SystemInfoValueMatches(
+            v0,
+            "sv_referencedIwds",
+            sv_referencedIwds->current.string))
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO overflow or sanitization altered sv_referencedIwds");
+        return;
+    }
+    if (!SV_SystemInfoValueMatches(
+            v0,
+            "sv_referencedIwdNames",
+            sv_referencedIwdNames->current.string))
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO overflow or sanitization altered sv_referencedIwdNames");
+        return;
+    }
+    if (!SV_SystemInfoValueMatches(
+            v0,
+            "sv_referencedFFCheckSums",
+            sv_referencedFFCheckSums->current.string))
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO overflow or sanitization altered sv_referencedFFCheckSums");
+        return;
+    }
+    if (!SV_SystemInfoValueMatches(
+            v0,
+            "sv_referencedFFNames",
+            sv_referencedFFNames->current.string))
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO overflow or sanitization altered sv_referencedFFNames");
+        return;
+    }
+    I_strncpyz(dest, v0, 0x2000);
+    if (!*fs_gameDirVar->current.string
+        && !info_string::AppendPreformattedSuffix(
+            dest, sizeof(dest), "\\fs_game\\"))
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO overflow while adding the explicit empty fs_game value");
+        return;
+    }
+    if (!SV_SystemInfoValueMatches(
+            dest,
+            "fs_game",
+            fs_gameDirVar->current.string))
+    {
+        Com_Error(
+            ERR_DROP,
+            "SYSTEMINFO overflow or sanitization altered fs_game");
+        return;
     }
     SV_SetConfigstring(1, dest);
     dvar_modifiedFlags &= ~8u;

@@ -1240,6 +1240,7 @@ void __cdecl SV_DoneDownload_f(client_t *cl);
 void __cdecl SV_StopDownload_f(client_t *cl);
 void __cdecl SV_ResetPureClient_f(client_t *cl);
 void __cdecl SV_NextDownload_f(client_t *cl);
+bool __cdecl SV_IsDownloadRequestAuthorized(const char *request);
 void __cdecl SV_BeginDownload_f(client_t *cl);
 void __cdecl SV_VerifyIwds_f(client_t *cl);
 
