@@ -277,9 +277,14 @@ require_contains(
     _cg_config_internal
     "stringIndex >= CLIENT_CONFIGSTRING_COUNT"
     "cgame validates the configstring index at the internal boundary")
+extract_slice(
+    _cg_config_internal
+    "if (stringIndex >= CLIENT_CONFIGSTRING_COUNT)"
+    "ConfigString = CL_GetConfigString(localClientNum, stringIndex);"
+    _cg_config_internal_guard "cgame internal configstring range guard")
 require_contains(
-    _cg_config_internal "return;"
-    "cgame stops after reporting an invalid internal index")
+    _cg_config_internal_guard "return;"
+    "the range guard stops after reporting an invalid internal index")
 require_ordered(
     _cg_config_internal
     "stringIndex >= CLIENT_CONFIGSTRING_COUNT"
@@ -305,6 +310,21 @@ foreach(_forbidden IN ITEMS "atol(" "atoi(" "sscanf(")
         _cg_config_command "${_forbidden}"
         "permissive cgame configstring command parsing")
 endforeach()
+extract_slice(
+    _cg_config_command
+    "int stringIndex = 0;"
+    "CG_ConfigStringModifiedInternal("
+    _cg_config_command_guard "cgame configstring command range guard")
+require_ordered(
+    _cg_config_command_guard
+    "info_string::TryParseSignedDecimalToken("
+    "return;"
+    "strict configstring parsing precedes the guard return")
+require_ordered(
+    _cg_config_command
+    "info_string::TryParseSignedDecimalToken("
+    "CG_ConfigStringModifiedInternal("
+    "strict configstring parsing precedes internal dispatch")
 
 # The extracted handler also makes it possible to audit this one command
 # independently of the legacy generated dispatch tree around it.
@@ -331,6 +351,19 @@ foreach(_forbidden IN ITEMS "atol(" "atoi(" "sscanf(")
         _reticle_command "${_forbidden}"
         "permissive ret_lock_on payload parsing")
 endforeach()
+require_count(
+    _reticle_command "CG_ReticleStartLockOn(" 1
+    "the strict helper publishes the lock state exactly once")
+require_ordered(
+    _reticle_command
+    "bg::target_protocol::TryParseLockOnPayload("
+    "CG_ReticleStartLockOn("
+    "complete lock-on parsing precedes the sole publication")
+require_ordered(
+    _reticle_command
+    "payload.entityNumber = ENTITYNUM_NONE;"
+    "CG_ReticleStartLockOn("
+    "malformed lock-on fallback is normalized before publication")
 require_contains(
     _commands "CG_ReticleLockOnCommand(localClientNum);"
     "the dispatch tree delegates ret_lock_on to the audited handler")
