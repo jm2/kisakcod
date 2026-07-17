@@ -807,6 +807,22 @@ add_test(
     COMMAND kisakcod-db-referenced-fastfile-tests
 )
 
+add_executable(kisakcod-server-file-compare-tests
+    server_file_compare_tests.cpp
+)
+target_include_directories(
+    kisakcod-server-file-compare-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-server-file-compare-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-server-file-compare-tests)
+set_target_properties(kisakcod-server-file-compare-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME qcommon-server-file-compare
+    COMMAND kisakcod-server-file-compare-tests
+)
+
 add_executable(kisakcod-abi-atomics-tests abi_atomics_tests.cpp)
 target_include_directories(kisakcod-abi-atomics-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-abi-atomics-tests PRIVATE cxx_std_20)

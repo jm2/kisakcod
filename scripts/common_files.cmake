@@ -471,6 +471,7 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/ent.h"
     "${SRC_DIR}/qcommon/files.cpp"
     "${SRC_DIR}/qcommon/files.h"
+    "${SRC_DIR}/qcommon/server_file_compare.h"
     "${SRC_DIR}/qcommon/graph.cpp"
     "${SRC_DIR}/qcommon/graph.h"
     "${SRC_DIR}/qcommon/huffman.cpp"

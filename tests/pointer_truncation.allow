@@ -20,8 +20,6 @@ gfx_d3d/r_draw_staticmodel.cpp|2
 gfx_d3d/r_material_load_obj.cpp|1
 gfx_d3d/r_material_load_obj.cpp|2
 qcommon/common.cpp|1
-qcommon/files.cpp|1
-qcommon/files.cpp|2
 qcommon/sv_msg_write_mp.cpp|1
 qcommon/sv_msg_write_mp.cpp|2
 script/scr_debugger.cpp|1

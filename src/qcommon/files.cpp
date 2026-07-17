@@ -4,11 +4,13 @@
 #include <universal/com_files.h>
 #include <universal/info_string.h>
 #include "qcommon.h"
+#include "server_file_compare.h"
 #include <database/database.h>
 #include "cmd.h"
 
 #include <array>
-#include <climits>
+#include <cstddef>
+#include <cstring>
 #ifndef KISAK_DEDI_HEADLESS
 #include <sound/snd_public.h>
 #endif
@@ -17,6 +19,9 @@ int fs_numServerReferencedIwds;
 char basename[64];
 const char *fs_serverReferencedIwdNames[1024];
 int fs_serverReferencedIwds[1024];
+static_assert(
+    ARRAY_COUNT(fs_serverReferencedIwdNames)
+    == ARRAY_COUNT(fs_serverReferencedIwds));
 
 // KISAKTODO header-ify
 extern int fs_fakeChkSum;
@@ -97,158 +102,165 @@ int __cdecl FS_iwIwd(char *iwd, char *base)
     return 0;
 }
 
-int __cdecl FS_CompareIwds(char *needediwds, int len, int dlstring)
-{
-    char *v4; // eax
-    const char *v5; // [esp+8h] [ebp-20h]
-    const char *string; // [esp+Ch] [ebp-1Ch]
-    uint32_t v7; // [esp+Ch] [ebp-1Ch]
-    int haveiwd; // [esp+1Ch] [ebp-Ch]
-    searchpath_s *j; // [esp+20h] [ebp-8h]
-    int i; // [esp+24h] [ebp-4h]
-
-    if (!fs_numServerReferencedIwds)
-        return 0;
-    *needediwds = 0;
-    string = fs_gameDirVar->current.string;
-    v5 = string + 1;
-    v7 = (uint32_t)&string[strlen(string) + 1];
-    for (i = 0; i < fs_numServerReferencedIwds; ++i)
-    {
-        haveiwd = 0;
-        if ((const char *)v7 == v5 || !FS_serverPak(fs_serverReferencedIwdNames[i]))
-        {
-            for (j = fs_searchpaths; j; j = j->next)
-            {
-                if (j->iwd && j->iwd->checksum == fs_serverReferencedIwds[i])
-                {
-                    haveiwd = 1;
-                    break;
-                }
-            }
-            if (!haveiwd && fs_serverReferencedIwdNames[i] && *fs_serverReferencedIwdNames[i])
-            {
-                if ((const char *)v7 == v5
-                    || I_strnicmp(fs_serverReferencedIwdNames[i], fs_gameDirVar->current.string, v7 - (_DWORD)v5)
-                    || FS_iwIwd((char *)fs_serverReferencedIwdNames[i], (char*)"main"))
-                {
-                    I_strncpyz(needediwds, (char *)fs_serverReferencedIwdNames[i], len);
-                    I_strncat(needediwds, len, ".iwd");
-                    return 2;
-                }
-                if (dlstring)
-                {
-                    I_strncat(needediwds, len, "@");
-                    I_strncat(needediwds, len, (char *)fs_serverReferencedIwdNames[i]);
-                    I_strncat(needediwds, len, ".iwd");
-                    I_strncat(needediwds, len, "@");
-                    I_strncat(needediwds, len, (char *)fs_serverReferencedIwdNames[i]);
-                    I_strncat(needediwds, len, ".iwd");
-                }
-                else
-                {
-                    I_strncat(needediwds, len, (char *)fs_serverReferencedIwdNames[i]);
-                    I_strncat(needediwds, len, ".iwd");
-                    v4 = va("%s.iwd", fs_serverReferencedIwdNames[i]);
-                    if (FS_SV_FileExists(v4))
-                        I_strncat(needediwds, len, " (local file exists with wrong checksum)");
-                    I_strncat(needediwds, len, "\n");
-                }
-            }
-        }
-    }
-    if (!*needediwds)
-        return 0;
-    Com_Printf(10, "Need iwds: %s\n", needediwds);
-    return 1;
-}
-
 int fs_numServerReferencedFFs;
 const char *fs_serverReferencedFFNames[32];
 int fs_serverReferencedFFCheckSums[32];
-static_assert(ARRAY_COUNT(fs_serverReferencedFFNames) == ARRAY_COUNT(fs_serverReferencedFFCheckSums));
+static_assert(
+    ARRAY_COUNT(fs_serverReferencedFFNames)
+    == ARRAY_COUNT(fs_serverReferencedFFCheckSums));
+
+namespace
+{
+bool ServerHasIwdChecksum(void *, const int checksum)
+{
+    for (searchpath_s *searchPath = fs_searchpaths;
+         searchPath;
+         searchPath = searchPath->next)
+    {
+        if (searchPath->iwd && searchPath->iwd->checksum == checksum)
+            return true;
+    }
+    return false;
+}
+
+bool ServerNameIsPak(void *, const char *const name)
+{
+    return FS_serverPak(name) != 0;
+}
+
+bool ServerNameIsOfficialMainIwd(void *, const char *const name)
+{
+    return FS_iwIwd(
+        const_cast<char *>(name), const_cast<char *>("main")) != 0;
+}
+
+bool ServerIwdFileExists(void *, const char *const name)
+{
+    return FS_SV_FileExists(va("%s.iwd", name)) != 0;
+}
+
+int ServerFastFileSize(
+    void *,
+    const char *const name,
+    const bool gameDirectory)
+{
+    return DB_FileSize(name, gameDirectory ? 1 : 0);
+}
+
+server_file_compare::Callbacks ServerFileCallbacks()
+{
+    return {
+        nullptr,
+        ServerHasIwdChecksum,
+        ServerNameIsPak,
+        ServerNameIsOfficialMainIwd,
+        ServerIwdFileExists,
+        ServerFastFileSize,
+    };
+}
+
+const char *CurrentGameDirectory()
+{
+    if (!fs_gameDirVar || !fs_gameDirVar->current.string)
+        return "";
+    return fs_gameDirVar->current.string;
+}
+
+bool ServerReferenceCountsAreValid()
+{
+    return fs_numServerReferencedIwds >= 0
+        && static_cast<std::size_t>(fs_numServerReferencedIwds)
+            <= ARRAY_COUNT(fs_serverReferencedIwds)
+        && fs_numServerReferencedFFs >= 0
+        && static_cast<std::size_t>(fs_numServerReferencedFFs)
+            <= ARRAY_COUNT(fs_serverReferencedFFCheckSums);
+}
+
+server_file_compare::IwdReferences ServerIwdReferences()
+{
+    return {
+        fs_serverReferencedIwdNames,
+        fs_serverReferencedIwds,
+        static_cast<std::size_t>(fs_numServerReferencedIwds),
+    };
+}
+
+server_file_compare::FastFileReferences ServerFastFileReferences()
+{
+    return {
+        fs_serverReferencedFFNames,
+        fs_serverReferencedFFCheckSums,
+        static_cast<std::size_t>(fs_numServerReferencedFFs),
+    };
+}
+
+FS_SERVER_COMPARE_RESULT LegacyCompareResult(
+    const server_file_compare::Result result)
+{
+    static_assert(
+        static_cast<int>(server_file_compare::Result::Match)
+        == static_cast<int>(FILES_MATCH));
+    static_assert(
+        static_cast<int>(server_file_compare::Result::NeedDownload)
+        == static_cast<int>(NEED_DOWNLOAD));
+    static_assert(
+        static_cast<int>(server_file_compare::Result::NotDownloadable)
+        == static_cast<int>(NOT_DOWNLOADABLE));
+    return static_cast<FS_SERVER_COMPARE_RESULT>(result);
+}
+}
+
+int __cdecl FS_CompareIwds(char *needediwds, int len, int dlstring)
+{
+    if (!needediwds || len <= 0 || !ServerReferenceCountsAreValid())
+        return NOT_DOWNLOADABLE;
+
+    const server_file_compare::Result result =
+        server_file_compare::CompareAll(
+            needediwds,
+            static_cast<std::size_t>(len),
+            dlstring != 0,
+            CurrentGameDirectory(),
+            ServerIwdReferences(),
+            {},
+            ServerFileCallbacks());
+    if (result == server_file_compare::Result::NeedDownload)
+        Com_Printf(10, "Need iwds: %s\n", needediwds);
+    return LegacyCompareResult(result);
+}
+
 int __cdecl FS_CompareFFs(char *neededFFs, int len, int dlstring)
 {
-    int v4; // eax
-    const char *v5; // [esp+18h] [ebp-28h]
-    const char *string; // [esp+1Ch] [ebp-24h]
-    uint32_t v7; // [esp+1Ch] [ebp-24h]
-    char *ffName; // [esp+2Ch] [ebp-14h]
-    const char *ffNamea; // [esp+2Ch] [ebp-14h]
-    int fileSize; // [esp+30h] [ebp-10h]
-    int i; // [esp+3Ch] [ebp-4h]
+    if (!neededFFs || len <= 0 || !ServerReferenceCountsAreValid())
+        return NOT_DOWNLOADABLE;
 
-    if (!fs_numServerReferencedFFs)
-        return 0;
-    *neededFFs = 0;
-    string = fs_gameDirVar->current.string;
-    v5 = string + 1;
-    v7 = (uint32_t)&string[strlen(string) + 1];
-    for (i = 0; i < fs_numServerReferencedFFs; ++i)
-    {
-        if (I_strncmp(fs_serverReferencedFFNames[i], "mods", 4)
-            || (ffName = strchr((char *)fs_serverReferencedFFNames[i] + 5, 47)) == 0
-            || strlen(ffName) <= 1)
-        {
-            v4 = DB_FileSize(fs_serverReferencedFFNames[i], 0);
-        }
-        else
-        {
-            ffNamea = ffName + 1;
-            iassert( ffName[0] );
-            v4 = DB_FileSize(ffNamea, 1);
-        }
-        fileSize = v4;
-        if (v4 != fs_serverReferencedFFCheckSums[i] && fs_serverReferencedFFNames[i] && *fs_serverReferencedFFNames[i])
-        {
-            if ((const char *)v7 == v5
-                || I_strnicmp(fs_serverReferencedFFNames[i], fs_gameDirVar->current.string, v7 - (_DWORD)v5))
-            {
-                I_strncpyz(neededFFs, (char *)fs_serverReferencedFFNames[i], len);
-                I_strncat(neededFFs, len, ".ff");
-                return 2;
-            }
-            if (dlstring)
-            {
-                I_strncat(neededFFs, len, "@");
-                I_strncat(neededFFs, len, (char *)fs_serverReferencedFFNames[i]);
-                I_strncat(neededFFs, len, ".ff");
-                I_strncat(neededFFs, len, "@");
-                I_strncat(neededFFs, len, (char *)fs_serverReferencedFFNames[i]);
-                I_strncat(neededFFs, len, ".ff");
-            }
-            else
-            {
-                I_strncat(neededFFs, len, (char *)fs_serverReferencedFFNames[i]);
-                I_strncat(neededFFs, len, ".ff");
-                if (fileSize)
-                    I_strncat(neededFFs, len, " (local file exists with wrong filesize)");
-                I_strncat(neededFFs, len, "\n");
-            }
-        }
-    }
-    if (!*neededFFs)
-        return 0;
-    Com_Printf(10, "Need FFs: %s\n", neededFFs);
-    return 1;
+    const server_file_compare::Result result =
+        server_file_compare::CompareAll(
+            neededFFs,
+            static_cast<std::size_t>(len),
+            dlstring != 0,
+            CurrentGameDirectory(),
+            {},
+            ServerFastFileReferences(),
+            ServerFileCallbacks());
+    if (result == server_file_compare::Result::NeedDownload)
+        Com_Printf(10, "Need FFs: %s\n", neededFFs);
+    return LegacyCompareResult(result);
 }
 
 FS_SERVER_COMPARE_RESULT __cdecl FS_CompareWithServerFiles(char *neededFiles, int len, int dlstring)
 {
-    FS_SERVER_COMPARE_RESULT iwdCompareResult; // [esp+10h] [ebp-Ch]
-    int neededIWDStrLen; // [esp+14h] [ebp-8h]
-    FS_SERVER_COMPARE_RESULT ffCompareResult; // [esp+18h] [ebp-4h]
+    if (!neededFiles || len <= 0 || !ServerReferenceCountsAreValid())
+        return NOT_DOWNLOADABLE;
 
-    *neededFiles = 0;
-    iwdCompareResult = (FS_SERVER_COMPARE_RESULT)FS_CompareIwds(neededFiles, len, dlstring);
-    if (iwdCompareResult == NOT_DOWNLOADABLE)
-        return (FS_SERVER_COMPARE_RESULT)2;
-    neededIWDStrLen = strlen(neededFiles);
-    iassert( len >= neededIWDStrLen );
-    ffCompareResult = (FS_SERVER_COMPARE_RESULT)FS_CompareFFs(&neededFiles[neededIWDStrLen], len - neededIWDStrLen, dlstring);
-    if (ffCompareResult == NOT_DOWNLOADABLE)
-        return (FS_SERVER_COMPARE_RESULT)2;
-    return (FS_SERVER_COMPARE_RESULT)(iwdCompareResult == NEED_DOWNLOAD || ffCompareResult == NEED_DOWNLOAD);
+    return LegacyCompareResult(server_file_compare::CompareAll(
+        neededFiles,
+        static_cast<std::size_t>(len),
+        dlstring != 0,
+        CurrentGameDirectory(),
+        ServerIwdReferences(),
+        ServerFastFileReferences(),
+        ServerFileCallbacks()));
 }
 
 void __cdecl FS_ShutdownServerFileReferences(int *numFiles, const char **fileNames)
