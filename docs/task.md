@@ -31,8 +31,13 @@ work item changes. Do not create session-specific handoff files.
   established sandbox `SIGSYS`. The complete GCC Debug and Clang Release suites are **103/103** green. Hosted review
   and all-nine-job CI are the remaining publication gates. Initial PR #48 run **29615362286** passed both Linux utility
   jobs but exposed only MSVC warning-as-error portability debt in the new fixtures: one 32-bit shift before a 64-bit
-  multiplication and seven `size_t`-to-`uint32_t` arguments. The review fix uses an explicit 64-bit shift and
-  fixed-size conversions; focused GCC runtime/source/security gates are green and replacement CI is pending.
+  multiplication and seven `size_t`-to-`uint32_t` arguments. The MSVC fix uses an explicit 64-bit shift and fixed-size
+  conversions; replacement run **29615576494** passed all five portable hosts plus headless Windows x86 before the next
+  review fix superseded it. Hosted Codex then found one real P2 at original head `c916cbfc`: compact <=256-byte non-NUL
+  legacy lengths were recovered for repeated intern/hash validation but not typed transfer/release resolution. The
+  shared resolver now uses the same packed-length plus exact-allocation-class rule, with direct legacy and report-free
+  transfer/ordinary/database rollback coverage. Focused GCC/Clang, `RELEASE_ASSERTS`, ASan+UBSan, source, and security
+  gates are green; exact-head replacement CI and review resolution are pending.
 - This candidate is deliberately not the whole-zone controller. The raw database user-4/user-8 paths and global
   4 -> 8 sweep still bypass the serializer; the adapter has no production caller; and a token is not yet bound to one
   journal/key from initialization through terminal finalization/rollback. Full allocator partition validation also

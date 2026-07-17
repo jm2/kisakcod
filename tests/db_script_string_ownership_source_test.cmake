@@ -308,6 +308,15 @@ require_contains(
     "benign unallocated resolution")
 require_contains(
     _resolve
+    "SL_TryRecoverRefStringByteCountNoReport( info.refString, info.packed, allocationInfo, &info.byteCount)"
+    "compact binary live-string resolution")
+require_literal_count(
+    _string_source
+    "SL_TryRecoverRefStringByteCountNoReport("
+    3
+    "shared compact binary length recovery definition and callers")
+require_contains(
+    _resolve
     "return SL_ResolveStatus::UnsafeFailure;"
     "corrupt live-state resolution")
 require_contains(
@@ -646,6 +655,7 @@ foreach(_marker IN ITEMS
     "TestEmbeddedNulByteCount()"
     "TestCollidingByteLengthBounds()"
     "TestLegacyBinaryInternCompatibility()"
+    "legacy binary report-free transfer failed"
     "TestMalformedStateFailsClosed()"
     "std::vector<char> longBytes(4867);"
     "GetRefString(shortResult.stringId)->str"

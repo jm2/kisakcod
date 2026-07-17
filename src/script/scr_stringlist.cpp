@@ -1172,6 +1172,45 @@ bool SL_IsExactStringAllocationNoReport(
 			== capacityBuckets * sizeof(MemoryNode);
 }
 
+bool SL_TryRecoverRefStringByteCountNoReport(
+	RefString* const refString,
+	const uint32_t packed,
+	const MT_AllocationInfo &allocationInfo,
+	uint32_t* const outByteCount) noexcept
+{
+	if (!refString || !outByteCount || allocationInfo.reserved != 0)
+		return false;
+
+	const uint32_t packedByteCount =
+		scr_string_atomic::ByteLength(packed) == 0
+		? UINT32_C(256)
+		: scr_string_atomic::ByteLength(packed);
+	// Legacy explicit-size callers intern compact binary records whose final
+	// byte is not a NUL (notably XAnimToXModel). For the first 256 bytes the
+	// packed length plus the exact allocator size class recovers their complete
+	// length without scanning. Longer report-free strings retain the bounded
+	// congruent-terminator recovery below.
+	uint32_t byteCount = 0;
+	if (SL_IsExactStringAllocationNoReport(
+			allocationInfo, packedByteCount))
+	{
+		byteCount = packedByteCount;
+	}
+	else if (!SL_TryGetBoundedRefStringByteCount(
+			refString,
+			packed,
+			allocationInfo.capacityBytes,
+			&byteCount)
+		|| !SL_IsExactStringAllocationNoReport(
+			allocationInfo, byteCount))
+	{
+		return false;
+	}
+
+	*outByteCount = byteCount;
+	return true;
+}
+
 uint8_t sl_hashChainVisited[(STRINGLIST_SIZE + 7) / 8];
 uint8_t sl_stringIdVisited[SL_MAX_STRING_INDEX / 8];
 uint8_t sl_freeListVisited[(STRINGLIST_SIZE + 7) / 8];
@@ -1220,26 +1259,12 @@ bool SL_TryGetAllocatedStringByteCountNoReport(
 		return false;
 	}
 	uint32_t byteCount = 0;
-	const uint32_t packedByteCount =
-		scr_string_atomic::ByteLength(packed) == 0
-		? UINT32_C(256)
-		: scr_string_atomic::ByteLength(packed);
-	// Legacy explicit-size callers intern compact binary records whose final
-	// byte is not a NUL (notably XAnimToXModel). For the first 256 bytes the
-	// packed length plus the exact allocator size class recovers their complete
-	// length without scanning. Longer report-free strings retain the bounded
-	// congruent-terminator recovery below.
-	if (SL_IsExactStringAllocationNoReport(allocationInfo, packedByteCount))
-	{
-		byteCount = packedByteCount;
-	}
-	else if (!SL_TryGetBoundedRefStringByteCount(
-			refString, packed, allocationInfo.capacityBytes, &byteCount))
+	if (!SL_TryRecoverRefStringByteCountNoReport(
+			refString, packed, allocationInfo, &byteCount))
 	{
 		return false;
 	}
-	if (!SL_IsExactStringAllocationNoReport(allocationInfo, byteCount)
-		|| !SL_IsDebugOwnershipExactNoReport(stringValue, packed))
+	if (!SL_IsDebugOwnershipExactNoReport(stringValue, packed))
 	{
 		return false;
 	}
@@ -1570,15 +1595,13 @@ SL_ResolveStatus SL_TryResolveLiveStringNoReport(
 	SL_LiveStringInfo info{};
 	info.refString = SL_GetRefStringNoReport(stringValue);
 	info.packed = scr_string_atomic::Load(SL_RefStringWord(info.refString));
-	if (!SL_TryGetBoundedRefStringByteCount(
+	if (!SL_TryRecoverRefStringByteCountNoReport(
 			info.refString,
 			info.packed,
-			allocationInfo.capacityBytes,
+			allocationInfo,
 			&info.byteCount)
 		|| info.byteCount > allocationInfo.capacityBytes
 			- kRefStringHeaderSize
-		|| !SL_IsExactStringAllocationNoReport(
-			allocationInfo, info.byteCount)
 		|| !SL_IsDebugOwnershipExactNoReport(stringValue, info.packed)
 		|| !SL_TryBuildUnlinkPlanNoReport(
 			stringValue,

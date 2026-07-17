@@ -552,6 +552,32 @@ struct StateImage final
     {
         return false;
     }
+
+    const std::uint32_t transferFirst = SL_GetStringOfSize(
+        binaryRecord.data(), 0, byteCount, 11);
+    const std::uint32_t transferSecond = SL_GetStringOfSize(
+        binaryRecord.data(), 0, byteCount, 11);
+    if (!Check(transferFirst != 0 && transferSecond == transferFirst,
+            "legacy binary transfer setup failed")
+        || !Check(
+            script_string::TryTransferOrdinaryToDatabaseUser(transferFirst)
+                == script_string::TransferStatus::DatabaseUserClaimed,
+            "legacy binary report-free transfer failed")
+        || !CheckOwnership(
+            transferFirst, 2, 4, static_cast<std::uint8_t>(byteCount), 2,
+            "legacy binary transferred ownership mismatch")
+        || !Check(
+            script_string::TryRemoveOrdinaryReference(transferFirst)
+                == script_string::ReleaseStatus::Success,
+            "legacy binary ordinary rollback failed")
+        || !Check(
+            script_string::TryRemoveDatabaseUserReference(transferFirst)
+                == script_string::ReleaseStatus::Success,
+            "legacy binary database rollback failed")
+        || !CheckFreed(transferFirst))
+    {
+        return false;
+    }
     return EndTest();
 }
 
