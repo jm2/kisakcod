@@ -185,19 +185,26 @@ Completed foundation work:
   branch head `dd0cfee9` passed all nine jobs in run **29553056639**; Gemini and exact-head Codex review were clean, no
   review threads remained, and the PR squash-merged as `f1007fbb`. Authoritative post-merge master run
   **29553509114** passed all nine jobs;
-- the current focused reconciliation candidate adapts only the radius-damage correction from `d592fb4a`. Both
-  unobstructed trace paths now return success rather than breaking out of the sample loop and falling through to failure.
-  Its portable source contract rejects either `break` regression and requires the sole failure return after loop
-  exhaustion. The affected SP translation unit is outside the current engine compile matrix, so this remains source-level
-  rather than executable gameplay coverage;
-- deferred upstream content requires subsystem-specific adaptation and focused tests. Missile/HUD changes from
-  `d592fb4a` must be split; navigation from `3f256654` must not import the squared-Z defect; tank timing from `b31ea047`
-  must preserve the negative sentinel; omnibus `77404c61` must be reduced to individually justified fixlets; and dynent
-  save/load `ba3c79f3` remains deferred until it has bounded transactional Disk32/native-sidecar semantics;
-- fresh strict GCC 16 and Clang 22 builds of the radius-damage candidate pass all **86/86** tests. The source contract
-  passes directly and rejects deliberate mutations of either success branch and the placement of the loop-exhaustion
-  failure return. `git diff --check` and an independent patch/provenance audit are clean; hosted Windows production
-  compilation and automated review remain the PR gates;
+- PR #40 merged the focused radius-damage correction from `d592fb4a`. Both unobstructed trace paths now return success
+  rather than breaking out of the sample loop and falling through to failure. Its portable source contract rejects
+  either `break` regression and requires the sole failure return after loop exhaustion. Exact branch head `952fa06d`
+  passed all nine jobs in run **29554051839**; Gemini and exact-head Codex review were clean, no review threads remained,
+  and the PR squash-merged as `dbc84ec9`. Authoritative post-merge master run **29554663451** passed all nine jobs;
+- the current focused reconciliation candidate manually adapts justified navigation changes from `3f256654` and the
+  navigation-only parts of `77404c61`. It forwards the real goal position, enables ignore filtering for all five newly
+  constrained A* searches, uses strict full-XYZ distance plus visibility for line-of-sight goals, passes the plane normal
+  to away-path nearest-node lookup, and preserves three-component cylinder origins. Vertical distance is correctly
+  measured from `origin.z`, excluding upstream's squared-radius-as-Z defect. A pure geometry helper has executable
+  nonzero-XYZ/boundary tests and a source contract pins the SP integration; unrelated `fMaxNodeDist` and behaviorally
+  identical goal API churn remain excluded;
+- deferred upstream content requires subsystem-specific adaptation and focused tests. Tank timing from `b31ea047` must
+  preserve the exact disabled sentinel `-1`; missile/HUD changes from `d592fb4a` must be split; remaining omnibus `77404c61`
+  content must be reduced to individually justified fixlets; and dynent save/load `ba3c79f3` remains deferred until it
+  has bounded transactional Disk32/native-sidecar semantics;
+- fresh strict GCC 16 and Clang 22 builds of the navigation candidate pass all **88/88** tests, including the executable
+  geometry and SP integration source-contract tests. A Clang-CL header syntax check and `git diff --check` pass, and an
+  independent semantic/provenance audit is clean; hosted Windows SP production compilation and automated review remain
+  the PR gates;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with

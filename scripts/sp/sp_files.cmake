@@ -108,6 +108,7 @@ set(GAME
     "${SRC_DIR}/game/actor_lookat.cpp"
     "${SRC_DIR}/game/actor_lookat.h"
     "${SRC_DIR}/game/actor_navigation.cpp"
+    "${SRC_DIR}/game/actor_navigation_geometry.h"
     "${SRC_DIR}/game/actor_navigation.h"
     "${SRC_DIR}/game/actor_negotiation.cpp"
     "${SRC_DIR}/game/actor_negotiation.h"

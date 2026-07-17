@@ -3,6 +3,7 @@
 #endif
 
 #include "actor_navigation.h"
+#include "actor_navigation_geometry.h"
 #include <universal/com_math.h>
 #include "g_main.h"
 #include "game_public.h"
@@ -64,7 +65,7 @@ struct CustomSearchInfo_FindPath
         return dist;
     }
 
-    bool IsGoal(pathnode_t *pCurrent)
+    bool IsGoal(pathnode_t *pCurrent, const float *)
     {
         return pCurrent == m_pNodeTo;
     }
@@ -76,7 +77,7 @@ struct CustomSearchInfo_FindPathWithWidth
     float width;
     float perp[2];
 
-    bool IsGoal(pathnode_t *pCurrent) { return pCurrent == m_pNodeTo; }
+    bool IsGoal(pathnode_t *pCurrent, const float *) { return pCurrent == m_pNodeTo; }
 
     float EvaluateHeuristic(pathnode_t *pSuccessor, const float *vGoalPos)
     {
@@ -142,14 +143,8 @@ struct  CustomSearchInfo_FindPathNotCrossPlanes : CustomSearchInfo_FindPath
 
     bool IgnoreNode(pathnode_t *pNode)
     {
-        int i; // [esp+Ch] [ebp-4h]
-
-        for (i = 0; i < this->m_iPlaneCount; ++i)
-        {
-            if ((float)((float)(pNode->constant.vOrigin[0] * this->m_vNormal[i][0]) + (float)(pNode->constant.vOrigin[1] * this->m_vNormal[i][1])) > this->m_fDist[i])
-                return 1;
-        }
-        return 0;
+        return ActorNavigationGeometry::IsOutsideHalfPlanes2D(
+            pNode->constant.vOrigin, this->m_vNormal, this->m_fDist, this->m_iPlaneCount);
     }
 };
 
@@ -171,7 +166,7 @@ struct  CustomSearchInfo_FindPathAway
     }
 
 
-    bool IsGoal(pathnode_t *pCurrent)
+    bool IsGoal(pathnode_t *pCurrent, const float *)
     {
         float dx = pCurrent->constant.vOrigin[0] - this->m_vAwayFromPos[0];
         float dy = pCurrent->constant.vOrigin[1] - this->m_vAwayFromPos[1];
@@ -199,26 +194,8 @@ struct  CustomSearchInfo_FindPathAwayNotCrossPlanes : CustomSearchInfo_FindPathA
 
     bool IgnoreNode(pathnode_t *pNode)
     {
-        int planeCount; // r8
-        int v3; // r9
-        float *fDist; // r10
-        float *i; // r11
-
-        planeCount = this->m_iPlaneCount;
-        v3 = 0;
-        if (planeCount <= 0)
-            return 0;
-        fDist = this->m_fDist;
-        for (i = (float *)this->m_vNormal;
-            (float)((float)(i[1] * pNode->constant.vOrigin[1]) + (float)(pNode->constant.vOrigin[0] * *i)) <= (double)*fDist;
-            i += 2)
-        {
-            ++v3;
-            ++fDist;
-            if (v3 >= planeCount)
-                return 0;
-        }
-        return 1;
+        return ActorNavigationGeometry::IsOutsideHalfPlanes2D(
+            pNode->constant.vOrigin, this->m_vNormal, this->m_fDist, this->m_iPlaneCount);
     }
 };
 
@@ -230,7 +207,12 @@ struct CustomSearchInfo_FindPathWithLOS
     float startPos[3];
     float negotiationOverlapCost;
 
-    bool IsGoal(pathnode_t *pCurrent) { return pCurrent == m_pNodeTo; }
+    bool IsGoal(pathnode_t *pCurrent, const float *vGoalPos)
+    {
+        return ActorNavigationGeometry::IsWithinDistance3D(
+                   pCurrent->constant.vOrigin, vGoalPos, this->m_fWithinDistSqrd)
+            && Path_NodesVisible(pCurrent, this->m_pNodeTo);
+    }
 
     float EvaluateHeuristic(pathnode_t *pSuccessor, const float *vGoalPos)
     {
@@ -254,6 +236,17 @@ struct CustomSearchInfo_FindPathWithLOS
 struct  CustomSearchInfo_FindPathInCylinderWithLOS : CustomSearchInfo_FindPathWithLOS
 {
     const actor_goal_s *goal;
+
+    bool IgnoreNode(pathnode_t *pNode)
+    {
+        return !Actor_PointAtGoal(pNode->constant.vOrigin, this->goal);
+    }
+
+    bool IsGoal(pathnode_t *pCurrent, const float *vGoalPos)
+    {
+        return !this->IgnoreNode(pCurrent)
+            && CustomSearchInfo_FindPathWithLOS::IsGoal(pCurrent, vGoalPos);
+    }
 
     float EvaluateHeuristic(pathnode_t *pSuccessor, const float *vGoalPos)
     {
@@ -300,49 +293,43 @@ struct  CustomSearchInfo_FindPathInCylinderWithLOSNotCrossPlanes : CustomSearchI
 
     bool IgnoreNode(pathnode_t *pNode)
     {
-        float *vOrigin; // r30
-        int planeCount; // r8
-        int v6; // r9
-        float *fDist; // r10
-        float *i; // r11
-
-        vOrigin = pNode->constant.vOrigin;
         if (!Actor_PointAtGoal(pNode->constant.vOrigin, this->goal))
-            return 1;
-        planeCount = this->m_iPlaneCount;
-        v6 = 0;
-        if (planeCount > 0)
-        {
-            fDist = this->m_fDist;
-            for (i = (float *)this->m_vNormal;
-                (float)((float)(i[1] * vOrigin[1]) + (float)(*vOrigin * *i)) <= (double)*fDist;
-                i += 2)
-            {
-                ++v6;
-                ++fDist;
-                if (v6 >= planeCount)
-                    return 0;
-            }
-            return 1;
-        }
-        return 0;
+            return true;
+
+        return ActorNavigationGeometry::IsOutsideHalfPlanes2D(
+            pNode->constant.vOrigin, this->m_vNormal, this->m_fDist, this->m_iPlaneCount);
+    }
+
+    bool IsGoal(pathnode_t *pCurrent, const float *vGoalPos)
+    {
+        return !this->IgnoreNode(pCurrent)
+            && CustomSearchInfo_FindPathWithLOS::IsGoal(pCurrent, vGoalPos);
     }
 };
 
 /* 10051 */
 struct  CustomSearchInfo_FindPathFromInCylinder : CustomSearchInfo_FindPath
 {
-    float m_vOrigin[2];
+    float m_vOrigin[3];
     float m_fRadiusSqrd;
     float m_fHalfHeightSqrd;
 
     // inherits EvaluateHeuristic()
+
+    bool IgnoreNode(pathnode_t *pNode)
+    {
+        return !ActorNavigationGeometry::IsInsideCylinder(
+            pNode->constant.vOrigin,
+            this->m_vOrigin,
+            this->m_fRadiusSqrd,
+            this->m_fHalfHeightSqrd);
+    }
 };
 
 /* 10052 */
 struct  CustomSearchInfo_FindPathFromInCylinderNotCrossPlanes : CustomSearchInfo_FindPath
 {
-    float m_vOrigin[2];
+    float m_vOrigin[3];
     float m_fRadiusSqrd;
     float m_fHalfHeightSqrd;
     int m_iPlaneCount;
@@ -353,38 +340,13 @@ struct  CustomSearchInfo_FindPathFromInCylinderNotCrossPlanes : CustomSearchInfo
 
     bool IgnoreNode(pathnode_t *pNode)
     {
-        double v2; // fp0
-        double v4; // fp0
-        double v5; // fp13
-        int planeCount; // r8
-        int v7; // r9
-        float *fDist; // r10
-        float *i; // r11
-
-        v2 = (float)(pNode->constant.vOrigin[2] - this->m_fRadiusSqrd);
-        if ((float)((float)v2 * (float)v2) > (double)this->m_fHalfHeightSqrd)
-            return 1;
-        v4 = (float)(pNode->constant.vOrigin[0] - this->m_vOrigin[0]);
-        v5 = (float)(pNode->constant.vOrigin[1] - this->m_vOrigin[1]);
-        if ((float)((float)((float)v5 * (float)v5) + (float)((float)v4 * (float)v4)) > (double)this->m_fRadiusSqrd)
-            return 1;
-        planeCount = this->m_iPlaneCount;
-        v7 = 0;
-        if (planeCount > 0)
-        {
-            fDist = this->m_fDist;
-            for (i = (float *)this->m_vNormal;
-                (float)((float)(i[1] * pNode->constant.vOrigin[1]) + (float)(pNode->constant.vOrigin[0] * *i)) <= (double)*fDist;
-                i += 2)
-            {
-                ++v7;
-                ++fDist;
-                if (v7 >= planeCount)
-                    return 0;
-            }
-            return 1;
-        }
-        return 0;
+        return !ActorNavigationGeometry::IsInsideCylinder(
+                   pNode->constant.vOrigin,
+                   this->m_vOrigin,
+                   this->m_fRadiusSqrd,
+                   this->m_fHalfHeightSqrd)
+            || ActorNavigationGeometry::IsOutsideHalfPlanes2D(
+                pNode->constant.vOrigin, this->m_vNormal, this->m_fDist, this->m_iPlaneCount);
     }
 };
 
@@ -400,7 +362,7 @@ struct CustomSearchInfo_CouldAttack
     }
 
 
-    bool IsGoal(pathnode_t *pCurrent)
+    bool IsGoal(pathnode_t *pCurrent, const float *)
     {
         if (Path_NodesVisible(pCurrent, m_pNodeTo))
         {
@@ -420,7 +382,7 @@ struct  CustomSearchInfo_FindPathClosestPossible
     float negotiationOverlapCost;
 
 
-    bool IsGoal(pathnode_t *pCurrent)
+    bool IsGoal(pathnode_t *pCurrent, const float *)
     {
         if (pCurrent == m_pNodeTo)
         {
@@ -2776,7 +2738,7 @@ LABEL_12:
 
     if constexpr (CHECK_NODETO)
     {
-        nodeToCheck = !custom->IsGoal(pCurrent);
+        nodeToCheck = !custom->IsGoal(pCurrent, vGoalPos);
     }
 
     if (nodeToCheck)
@@ -4748,7 +4710,7 @@ bool __cdecl Path_FindPathFromToNotCrossPlanes(
     }
     else
     {
-        return Path_AStarAlgorithm<CustomSearchInfo_FindPathNotCrossPlanes>(
+        return Path_AStarAlgorithm<CustomSearchInfo_FindPathNotCrossPlanes, true>(
             pPath,
             eTeam,
             vStartPos,
@@ -4884,6 +4846,10 @@ bool __cdecl Path_FindPathInCylinderWithLOS(
     pathsort_t nodes[64]; // [sp+80h] [-350h] BYREF
     int nodeCount;
 
+    iassert(vGoalPos);
+    if (!vGoalPos)
+        return false;
+
     info.negotiationOverlapCost = ai_pathNegotiationOverlapCost->current.value;
     info.m_pNodeTo = Path_NearestNode(vGoalPos, nodes, -2, 192.0, &nodeCount, 64, NEAREST_NODE_DO_HEIGHT_CHECK);
 
@@ -4901,7 +4867,7 @@ bool __cdecl Path_FindPathInCylinderWithLOS(
     info.m_fWithinDistSqrd = fWithinDistSqrd;
     info.goal = goal;
 
-    return Path_AStarAlgorithm<CustomSearchInfo_FindPathInCylinderWithLOS>(
+    return Path_AStarAlgorithm<CustomSearchInfo_FindPathInCylinderWithLOS, true>(
         pPath,
         eTeam,
         vStartPos,
@@ -4928,6 +4894,10 @@ bool __cdecl Path_FindPathInCylinderWithLOSNotCrossPlanes(
     CustomSearchInfo_FindPathInCylinderWithLOSNotCrossPlanes info; // [sp+70h] [-390h] BYREF
     pathsort_t nodes[64]; // [sp+A0h] [-360h] BYREF
     int nodeCount;
+
+    iassert(vGoalPos);
+    if (!vGoalPos)
+        return false;
 
     info.negotiationOverlapCost = ai_pathNegotiationOverlapCost->current.value;
     info.m_pNodeTo = Path_NearestNode(vGoalPos, nodes, -2, 192.0, &nodeCount, 64, NEAREST_NODE_DO_HEIGHT_CHECK);
@@ -4960,7 +4930,7 @@ bool __cdecl Path_FindPathInCylinderWithLOSNotCrossPlanes(
     info.m_vNormal = vNormal;
     info.m_fDist = fDist;
 
-    return Path_AStarAlgorithm<CustomSearchInfo_FindPathInCylinderWithLOSNotCrossPlanes>(
+    return Path_AStarAlgorithm<CustomSearchInfo_FindPathInCylinderWithLOSNotCrossPlanes, true>(
         pPath,
         eTeam,
         vStartPos,
@@ -4995,6 +4965,7 @@ bool __cdecl Path_FindPathFromInCylinder(
     {
         info.m_vOrigin[0] = vOrigin[0];
         info.m_vOrigin[1] = vOrigin[1];
+        info.m_vOrigin[2] = vOrigin[2];
 
         info.startPos[0] = vStartPos[0];
         info.startPos[1] = vStartPos[1];
@@ -5004,7 +4975,7 @@ bool __cdecl Path_FindPathFromInCylinder(
         info.m_fRadiusSqrd = fRadiusSqrd;
         info.m_fHalfHeightSqrd = fHalfHeightSqrd;
 
-        return Path_AStarAlgorithm<CustomSearchInfo_FindPathFromInCylinder>(
+        return Path_AStarAlgorithm<CustomSearchInfo_FindPathFromInCylinder, true>(
             pPath,
             eTeam,
             vStartPos,
@@ -5049,6 +5020,7 @@ int __cdecl Path_FindPathFromInCylinderNotCrossPlanes(
 
     info.m_vOrigin[0] = vOrigin[0];
     info.m_vOrigin[1] = vOrigin[1];
+    info.m_vOrigin[2] = vOrigin[2];
     info.m_pNodeTo = pNodeTo;
     info.m_iPlaneCount = iPlaneCount;
     info.m_vNormal = vNormal;
@@ -5062,7 +5034,7 @@ int __cdecl Path_FindPathFromInCylinderNotCrossPlanes(
     if (info.IgnoreNode(pNodeFrom))
         return 0;
     else
-        return Path_AStarAlgorithm<CustomSearchInfo_FindPathFromInCylinderNotCrossPlanes>(
+        return Path_AStarAlgorithm<CustomSearchInfo_FindPathFromInCylinderNotCrossPlanes, true>(
             pPath,
             eTeam,
             vStartPos,
@@ -5345,7 +5317,7 @@ pathnode_t *__cdecl Path_FindPathAwayNotCrossPlanes(
         nodes,
         -2,
         192.0,
-        0,
+        vNormal,
         fDist,
         iPlaneCount,
         &nodeCount,
@@ -5366,4 +5338,3 @@ pathnode_t *__cdecl Path_FindPathAwayNotCrossPlanes(
             bAllowNegotiationLinks);
     return pNodeTo;
 }
-
