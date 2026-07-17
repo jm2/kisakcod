@@ -1323,6 +1323,29 @@ add_test(
     COMMAND kisakcod-net-wire-contract-tests
 )
 
+add_executable(kisakcod-vehicle-material-time-tests
+    vehicle_material_time_tests.cpp
+)
+target_include_directories(
+    kisakcod-vehicle-material-time-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-vehicle-material-time-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-vehicle-material-time-tests)
+set_target_properties(kisakcod-vehicle-material-time-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME vehicle-material-time-contracts
+    COMMAND kisakcod-vehicle-material-time-tests
+)
+
+add_test(
+    NAME vehicle-material-time-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/vehicle_material_time_source_test.cmake
+)
+
 add_test(
     NAME dedi-headless-source-profile
     COMMAND ${CMAKE_COMMAND}
