@@ -34,19 +34,48 @@ void __cdecl TRACK_sv_init()
 
 void __cdecl SV_GetConfigstring(unsigned int index, char *buffer, int bufferSize)
 {
+    if (!buffer)
+    {
+        Com_Error(ERR_DROP, "SV_GetConfigstring: buffer is null");
+        return;
+    }
     if (bufferSize < 1)
+    {
         Com_Error(ERR_DROP, "SV_GetConfigstring: bufferSize == %i", bufferSize);
+        return;
+    }
     if (index >= ARRAY_COUNT(sv.configstrings))
-        Com_Error(ERR_DROP, "SV_GetConfigstring: bad index %i", index);
+    {
+        Com_Error(ERR_DROP, "SV_GetConfigstring: bad index %u", index);
+        return;
+    }
+    if (!sv.configstrings[index])
+    {
+        Com_Error(ERR_DROP, "SV_GetConfigstring: configstring %u is not initialized", index);
+        return;
+    }
 
-    iassert(sv.configstrings[index]);
-    I_strncpyz(buffer, SL_ConvertToString(sv.configstrings[index]), bufferSize);
+    const char *const value = SL_ConvertToString(sv.configstrings[index]);
+    if (!value)
+    {
+        Com_Error(ERR_DROP, "SV_GetConfigstring: configstring %u has no value", index);
+        return;
+    }
+    I_strncpyz(buffer, value, bufferSize);
 }
 
 unsigned int __cdecl SV_GetConfigstringConst(unsigned int index)
 {
-    iassert((unsigned)index < MAX_CONFIGSTRINGS);
-    iassert(sv.configstrings[index]);
+    if (index >= ARRAY_COUNT(sv.configstrings))
+    {
+        Com_Error(ERR_DROP, "SV_GetConfigstringConst: bad index %u", index);
+        return 0;
+    }
+    if (!sv.configstrings[index])
+    {
+        Com_Error(ERR_DROP, "SV_GetConfigstringConst: configstring %u is not initialized", index);
+        return 0;
+    }
 
     return sv.configstrings[index];
 }
@@ -283,11 +312,6 @@ void __cdecl SV_Shutdown(const char *finalmsg)
 
 void __cdecl SV_SetConfigstring(unsigned int index, const char *val)
 {
-    unsigned int v4; // r31
-    const char *v5; // r3
-    const char *v6; // r11
-    int v7; // r9
-    unsigned __int16 v8; // r3
     client_t *clients; // r27
     const char *v10; // r11
     int v12; // r30
@@ -295,28 +319,45 @@ void __cdecl SV_SetConfigstring(unsigned int index, const char *val)
     const char *v14; // r31
     char v15[1120]; // [sp+50h] [-460h] BYREF
 
-    if (index > MAX_CONFIGSTRINGS)
-        Com_Error(ERR_DROP, "SV_SetConfigstring: bad index %i", index);
-    v4 = index;
+    if (index >= ARRAY_COUNT(sv.configstrings))
+    {
+        Com_Error(ERR_DROP, "SV_SetConfigstring: bad index %u", index);
+        return;
+    }
     if (sv.configstrings[index])
     {
         if (!val)
             val = "";
-        v5 = SL_ConvertToString(sv.configstrings[index]);
-        v6 = val;
-        do
+        const unsigned __int16 oldString = sv.configstrings[index];
+        const char *const oldValue = SL_ConvertToString(oldString);
+        if (!oldValue)
         {
-            v7 = *(unsigned __int8 *)v6 - *(unsigned __int8 *)v5;
-            if (!*v6)
-                break;
-            ++v6;
-            ++v5;
-        } while (!v7);
-        if (v7)
+            Com_Error(
+                ERR_DROP,
+                "SV_SetConfigstring: configstring %u has no value",
+                index);
+            return;
+        }
+        if (strcmp(oldValue, val))
         {
-            SL_RemoveRefToString(sv.configstrings[v4]);
-            v8 = (int)index < 1114 ? SL_GetString_(val, 0, 19) : SL_GetLowercaseString_(val, 0, 19);
-            sv.configstrings[v4] = v8;
+            const unsigned int newString = index < 1114u
+                ? SL_GetString_(val, 0, 19)
+                : SL_GetLowercaseString_(val, 0, 19);
+            if (!newString
+                || static_cast<unsigned __int16>(newString) != newString)
+            {
+                if (newString)
+                    SL_RemoveRefToString(newString);
+                Com_Error(
+                    ERR_DROP,
+                    "SV_SetConfigstring: could not store configstring %u",
+                    index);
+                return;
+            }
+
+            sv.configstrings[index] =
+                static_cast<unsigned __int16>(newString);
+            SL_RemoveRefToString(oldString);
             if (sv.state == SS_GAME)
             {
                 clients = svs.clients;
@@ -328,7 +369,7 @@ void __cdecl SV_SetConfigstring(unsigned int index, const char *val)
                     v12 = v10 - val - 1;
                     if (v12 < 1000)
                     {
-                        SV_SendServerCommand(svs.clients, "cs %i %s", index, val);
+                        SV_SendServerCommand(svs.clients, "cs %u %s", index, val);
                     }
                     else
                     {
@@ -346,7 +387,7 @@ void __cdecl SV_SetConfigstring(unsigned int index, const char *val)
                                 v14 = "bcs0";
                             }
                             I_strncpyz(v15, &val[v13], 1000);
-                            SV_SendServerCommand(clients, "%s %i %s", v14, index, v15);
+                            SV_SendServerCommand(clients, "%s %u %s", v14, index, v15);
                             v12 -= 999;
                             v13 += 999;
                         } while (v12 > 0);
