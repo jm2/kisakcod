@@ -261,7 +261,8 @@ Completed foundation work:
   parsers reject malformed/overflowing
   configstring indices and lock-on payloads, cap target info at 1,023 bytes, and publish only complete staged values.
   Client/server configstring storage is range-checked before access and replaces script-string handles
-  acquire-before-publish-before-release. The 28-byte `targetInfo_t` ABI and exact 32-entry extent are explicit; vehicle,
+  full-table-compatible unpublish-before-release-before-acquire-before-publish ordering. The 28-byte `targetInfo_t` ABI
+  and exact 32-entry extent are explicit; vehicle,
   Javelin, pip-on-stick, bouncing-diamond, and target-position consumers use typed traversal, live ordinary-entity
   identity, and bounded weapon/material indices. Complete GCC and Clang builds and **98/98** suites pass, including MP/SP
   endpoint, malformed-token, failure-atomic, overlong, and exact unterminated-buffer cases. A portable source contract is

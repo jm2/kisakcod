@@ -203,12 +203,13 @@ foreach(_required IN ITEMS
     "index < 0"
     "static_cast<uint32_t>(index) >= CLIENT_CONFIGSTRING_COUNT"
     "const uint16_t oldString = clients[0].configstrings[index];"
+    "clients[0].configstrings[index] = 0;"
+    "SL_RemoveRefToString(oldString);"
     "const uint32_t newString = SL_GetString_(newValue, 0, 19);"
-    "clients[0].configstrings[index] = static_cast<uint16_t>(newString);"
-    "SL_RemoveRefToString(oldString);")
+    "clients[0].configstrings[index] = static_cast<uint16_t>(newString);")
     require_contains(
         _cl_config_modified "${_required}"
-        "strict and transactional client configstring replacement")
+        "strict and full-table-compatible client configstring replacement")
 endforeach()
 require_ordered(
     _cl_config_modified
@@ -217,14 +218,19 @@ require_ordered(
     "the client index check precedes the first storage access")
 require_ordered(
     _cl_config_modified
-    "const uint32_t newString = SL_GetString_(newValue, 0, 19);"
-    "clients[0].configstrings[index] = static_cast<uint16_t>(newString);"
-    "replacement storage is acquired before publication")
+    "clients[0].configstrings[index] = 0;"
+    "SL_RemoveRefToString(oldString);"
+    "the old handle is unpublished before its reference is released")
 require_ordered(
     _cl_config_modified
-    "clients[0].configstrings[index] = static_cast<uint16_t>(newString);"
     "SL_RemoveRefToString(oldString);"
-    "the old string stays alive until replacement publication")
+    "const uint32_t newString = SL_GetString_(newValue, 0, 19);"
+    "the old slot is reusable before replacement interning")
+require_ordered(
+    _cl_config_modified
+    "const uint32_t newString = SL_GetString_(newValue, 0, 19);"
+    "clients[0].configstrings[index] = static_cast<uint16_t>(newString);"
+    "only a validated replacement is published")
 foreach(_forbidden IN ITEMS "atol(" "atoi(" "sscanf(")
     forbid_contains(
         _cl_config_modified "${_forbidden}"
@@ -696,6 +702,30 @@ require_contains(
     _sv_set
     "if (index >= ARRAY_COUNT(sv.configstrings)) { Com_Error(ERR_DROP, \"SV_SetConfigstring: bad index %u\", index); return; }"
     "SV_SetConfigstring stops after rejecting the array bound")
+foreach(_required IN ITEMS
+    "const unsigned __int16 oldString = sv.configstrings[index];"
+    "sv.configstrings[index] = 0;"
+    "SL_RemoveRefToString(oldString);"
+    "sv.configstrings[index] = static_cast<unsigned __int16>(newString);")
+    require_contains(
+        _sv_set "${_required}"
+        "full-table-compatible server configstring replacement")
+endforeach()
+require_ordered(
+    _sv_set
+    "sv.configstrings[index] = 0;"
+    "SL_RemoveRefToString(oldString);"
+    "the server unpublishes the old handle before releasing it")
+require_ordered(
+    _sv_set
+    "SL_RemoveRefToString(oldString);"
+    "const unsigned int newString = index < 1114u"
+    "the server releases capacity before replacement interning")
+require_ordered(
+    _sv_set
+    "const unsigned int newString = index < 1114u"
+    "sv.configstrings[index] = static_cast<unsigned __int16>(newString);"
+    "the server publishes only a validated replacement")
 foreach(_required IN ITEMS
     "SV_SendServerCommand(svs.clients, \"cs %u %s\", index, val);"
     "SV_SendServerCommand(clients, \"%s %u %s\", v14, index, v15);")

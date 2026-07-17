@@ -262,6 +262,12 @@ void CL_ConfigstringModified()
     const char *const newValue = Cmd_Argv(2);
     if (strcmp(oldValue, newValue))
     {
+        // Release the old entry before interning its replacement so a full
+        // script-string table can reuse the slot.  Clear the published handle
+        // first so a reporting path that returns cannot leave a stale handle.
+        clients[0].configstrings[index] = 0;
+        SL_RemoveRefToString(oldString);
+
         const uint32_t newString = SL_GetString_(newValue, 0, 19);
         if (!newString || static_cast<uint16_t>(newString) != newString)
         {
@@ -275,7 +281,6 @@ void CL_ConfigstringModified()
         }
 
         clients[0].configstrings[index] = static_cast<uint16_t>(newString);
-        SL_RemoveRefToString(oldString);
     }
 }
 

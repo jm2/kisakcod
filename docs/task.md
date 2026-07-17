@@ -336,7 +336,8 @@ work item changes. Do not create session-specific handoff files.
 - Current client-target safety candidate: commits `97024d7d`, `3cfb16d1`, `14887046`, `799cf462`, and review hardening
   `62e317dc` add a shared strict, failure-atomic lock-on payload parser; a 1,023-byte target-config limit; named and
   runtime-checked 2,815-entry client and
-  server configstring bounds; acquire-before-publish script-string replacement; and strict cgame command parsing. The
+  server configstring bounds; full-table-compatible script-string replacement that unpublishes before release and
+  publishes only a validated replacement; and strict cgame command parsing. The
   client target table now has an explicit 28-byte ABI contract and exact 32-entry extent. Vehicle, Javelin, pip-on-stick,
   bouncing-diamond, and target-position consumers use typed iteration plus ordinary-entity snapshot/identity checks;
   weapon indices are bounded; malformed target configs publish a fully cleared stage; and material lookup retains the
@@ -345,7 +346,7 @@ work item changes. Do not create session-specific handoff files.
   varargs types, including Win64-safe size conversions.
 - Current client-target validation: complete GCC 16 and Clang 22 builds and **98/98** suites pass, including the new
   runtime MP/SP sentinel, overflow/junk, destination-atomicity, overlong, and exact 1,024-byte unterminated-buffer cases.
-  The portable source contract pins range-before-access, acquire/publish/release ordering, the live dispatch handoff,
+  The portable source contract pins range-before-access, unpublish/release/acquire/publish ordering, the live dispatch handoff,
   absence of direct entity-array bypasses in audited consumers, target ABI/init state, bounded material lookup, and the
   measured Windows x86 ctest selection. Independent review found no production security, bounds, refcount, logic,
   conversion, format, layout, or ABI defect; its sole actionable test finding now ties the exact range returns and sole
@@ -1254,7 +1255,8 @@ work item changes. Do not create session-specific handoff files.
 ## Immediate queue
 
 1. Publish the reviewed client target/HUD candidate after hosted CI and automated review are green. Preserve strict
-   configstring and lock-on parsing, acquire-before-publish string ownership, the exact target ABI, live entity identity,
+   configstring and lock-on parsing, full-table-compatible unpublish/release/acquire/publish string ownership, the exact
+   target ABI, live entity identity,
    typed 32-entry traversal, complete-stage publication, material fallback behavior, and measured Windows x86 source
    coverage. Keep the missing production-SP compile gate explicit rather than treating text checks as compilation.
 2. Fix the separately identified squared-distance-versus-unsquared grenade safe-radius comparison in its own focused

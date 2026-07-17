@@ -340,6 +340,12 @@ void __cdecl SV_SetConfigstring(unsigned int index, const char *val)
         }
         if (strcmp(oldValue, val))
         {
+            // Preserve retail's ability to replace the sole releasable entry
+            // in a full script-string table.  Unpublish the old handle before
+            // releasing it so a reporting path cannot leave a dangling value.
+            sv.configstrings[index] = 0;
+            SL_RemoveRefToString(oldString);
+
             const unsigned int newString = index < 1114u
                 ? SL_GetString_(val, 0, 19)
                 : SL_GetLowercaseString_(val, 0, 19);
@@ -357,7 +363,6 @@ void __cdecl SV_SetConfigstring(unsigned int index, const char *val)
 
             sv.configstrings[index] =
                 static_cast<unsigned __int16>(newString);
-            SL_RemoveRefToString(oldString);
             if (sv.state == SS_GAME)
             {
                 clients = svs.clients;
