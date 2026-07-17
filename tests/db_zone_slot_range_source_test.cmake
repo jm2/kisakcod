@@ -166,12 +166,12 @@ foreach(_marker IN ITEMS
     "uint8_t g_zoneHandles[db::zone_slots::kUsableZoneSlotCount];"
     "ARRAY_COUNT(g_zones) == db::zone_slots::kPhysicalZoneSlotCount"
     "ARRAY_COUNT(g_zoneHandles) == db::zone_slots::kUsableZoneSlotCount"
-    "sizeof(g_zones) <= static_cast<std::size_t>(INT_MAX)"
-    "sizeof(g_zoneHandles) <= static_cast<std::size_t>(INT_MAX)"
-    "sizeof(g_zoneNameList) <= static_cast<std::size_t>(INT_MAX)"
-    "g_zones, static_cast<int>(sizeof(g_zones)), \"g_zones\", 10);"
-    "static_cast<int>(sizeof(g_zoneHandles))"
-    "static_cast<int>(sizeof(g_zoneNameList))")
+    "template <std::size_t Size> constexpr int DB_CheckedTrackSize() noexcept"
+    "static_assert(Size <= static_cast<std::size_t>(INT_MAX));"
+    "return static_cast<int>(Size);"
+    "DB_CheckedTrackSize<sizeof(g_zones)>()"
+    "DB_CheckedTrackSize<sizeof(g_zoneHandles)>()"
+    "DB_CheckedTrackSize<sizeof(g_zoneNameList)>()")
     require_contains(
         _registry "${_marker}" "registry storage consumes canonical slot truth")
 endforeach()
@@ -195,7 +195,7 @@ require_contains(
     "referenced fast-file output uses the SYSTEMINFO value capacity")
 require_contains(
     _registry
-    "g_zoneNameList, static_cast<int>(sizeof(g_zoneNameList)), \"g_zoneNameList\", 10);"
+    "g_zoneNameList, DB_CheckedTrackSize<sizeof(g_zoneNameList)>(), \"g_zoneNameList\", 10);"
     "static allocation tracking follows the expanded native buffer")
 require_not_contains(
     _registry

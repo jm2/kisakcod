@@ -412,6 +412,14 @@ XAssetEntryPoolEntry *g_freeAssetEntryHead;
 uint16_t db_hashTable[32768];
 XAssetEntry *g_copyInfo[0x800];
 uint32_t g_copyInfoCount;
+
+template <std::size_t Size>
+constexpr int DB_CheckedTrackSize() noexcept
+{
+    static_assert(Size <= static_cast<std::size_t>(INT_MAX));
+    return static_cast<int>(Size);
+}
+
 XZone g_zones[db::zone_slots::kPhysicalZoneSlotCount]{ 0 };
 uint8_t g_zoneHandles[db::zone_slots::kUsableZoneSlotCount];
 // Slot zero owns default assets; the live-zone handle table covers slots 1..32.
@@ -420,10 +428,7 @@ static_assert(
 static_assert(
     ARRAY_COUNT(g_zoneHandles) == db::zone_slots::kUsableZoneSlotCount);
 static_assert(ARRAY_COUNT(g_zones) == ARRAY_COUNT(g_zoneHandles) + 1);
-static_assert(sizeof(g_zones) <= static_cast<std::size_t>(INT_MAX));
-static_assert(sizeof(g_zoneHandles) <= static_cast<std::size_t>(INT_MAX));
 char g_zoneNameList[BIG_INFO_VALUE];
-static_assert(sizeof(g_zoneNameList) <= static_cast<std::size_t>(INT_MAX));
 XAssetPool<XModelPieces, POOLSIZE_XMODELPIECES> g_XModelPiecesPool;
 XAssetPool<PhysPreset, POOLSIZE_PHYSPRESET> g_PhysPresetPool;
 XAssetPool<XAnimParts, POOLSIZE_XANIMPARTS> g_XAnimPartsPool;
@@ -674,15 +679,18 @@ void __cdecl TRACK_db_registry()
     track_static_alloc_internal(db_hashTable, 0x10000, "db_hashTable", 10);
     track_static_alloc_internal(g_copyInfo, 0x2000, "g_copyInfo", 10);
     track_static_alloc_internal(
-        g_zones, static_cast<int>(sizeof(g_zones)), "g_zones", 10);
+        g_zones,
+        DB_CheckedTrackSize<sizeof(g_zones)>(),
+        "g_zones",
+        10);
     track_static_alloc_internal(
         g_zoneHandles,
-        static_cast<int>(sizeof(g_zoneHandles)),
+        DB_CheckedTrackSize<sizeof(g_zoneHandles)>(),
         "g_zoneHandles",
         10);
     track_static_alloc_internal(
         g_zoneNameList,
-        static_cast<int>(sizeof(g_zoneNameList)),
+        DB_CheckedTrackSize<sizeof(g_zoneNameList)>(),
         "g_zoneNameList",
         10);
     track_static_alloc_internal(&g_XModelPiecesPool, 772, "g_XModelPiecesPool", 10);
