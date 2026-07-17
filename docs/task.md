@@ -324,8 +324,9 @@ work item changes. Do not create session-specific handoff files.
   locale, rounding, subnormal, and bounded-range findings were fixed. Original PR run **29590010636** passed all six
   Windows jobs and exposed the fixed Linux range-loop warning and Apple floating-`from_chars` gap. Run **29591783551**
   then passed eight jobs and exposed only Xcode's requirement for `<stdlib.h>` plus `<xlocale.h>` before `strtof_l`;
-  `b9844b2e` fixes and contract-pins those Apple-only declarations. Replacement exact-head hosted validation is pending.
-  `git diff --check` is clean. SP production translation units remain unbuilt:
+  `b9844b2e` fixes and contract-pins those Apple-only declarations. Exact PR head `d472e136` passed all nine jobs in run
+  **29593740056**; exact-head Codex found no major issue, all six Gemini threads are resolved, and no unresolved review
+  threads remain. `git diff --check` is clean. SP production translation units remain unbuilt:
   direct probes stop
   before this code on pre-existing ILP32 layout assertions, an undeclared `IsValidSeed`, and missing DirectX `d3d9.h`,
   while every current CI engine job still uses `KISAK_BUILD_SP=OFF`.

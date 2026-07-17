@@ -248,7 +248,8 @@ Completed foundation work:
   were fixed. Original PR run **29590010636** passed all six Windows jobs and exposed the now-fixed Linux range-loop
   warning and missing Apple floating-`from_chars` overload. Run **29591783551** then passed eight jobs and exposed only
   that Xcode requires `<stdlib.h>` plus `<xlocale.h>` to declare `strtof_l`; `b9844b2e` fixes and contract-pins those
-  Apple-only includes. Replacement exact-head hosted validation is pending. SP production remains outside
+  Apple-only includes. Exact PR head `d472e136` passed all nine jobs in run **29593740056**; exact-head Codex found no
+  major issue, all six Gemini threads are resolved, and no unresolved review threads remain. SP production remains outside
   hosted coverage: every engine CI job sets `KISAK_BUILD_SP=OFF`, the portable executable exercises the shared parser and
   layout model, and the source contract textually pins the SP implementation. Direct SP probes stop earlier on existing
   ILP32 assertions, undeclared `IsValidSeed`, and missing DirectX `d3d9.h`;
