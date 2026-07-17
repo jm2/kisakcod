@@ -463,6 +463,72 @@ struct Allocation final
         && Check(g_memoryTreeLockDepth == 0, "random paths leaked the lock");
 }
 
+[[nodiscard]] bool TestLegacyLocalValidationScope() noexcept
+{
+    MT_Init();
+    MT_ResetCompleteValidationCountForTesting();
+
+    std::uint16_t legacyId = 0xBEEF;
+    MT_AllocationInfo legacyInfo{};
+    if (!Check(
+            MT_TryAllocIndexLegacy(25, 15, &legacyId)
+                == MT_AllocIndexStatus::Success,
+            "legacy-local allocation failed")
+        || !Check(legacyId != 0 && legacyId != 0xBEEF,
+            "legacy-local allocation did not publish an ID")
+        || !Check(
+            MT_TryGetAllocationInfoLegacy(legacyId, &legacyInfo)
+                == MT_AllocationInfoStatus::Success,
+            "legacy-local query failed")
+        || !Check(legacyInfo.type == 15 && legacyInfo.capacityBytes == 48,
+            "legacy-local query returned the wrong allocation")
+        || !Check(
+            MT_TryFreeIndexLegacy(legacyId, 25)
+                == MT_FreeIndexStatus::Success,
+            "legacy-local free failed")
+        || !Check(MT_CompleteValidationCountForTesting() == 0,
+            "legacy-local operations performed a complete partition scan"))
+    {
+        return false;
+    }
+
+    std::uint16_t typedId = 0;
+    if (!Check(
+            MT_TryAllocIndex(25, 15, &typedId)
+                == MT_AllocIndexStatus::Success,
+            "typed allocation failed after legacy-local operations")
+        || !Check(MT_CompleteValidationCountForTesting() != 0,
+            "typed allocation skipped complete partition validation")
+        || !Check(
+            MT_TryFreeIndex(typedId, 25)
+                == MT_FreeIndexStatus::Success,
+            "typed cleanup failed after legacy-local operations")
+        || !Check(g_memoryTreeLockDepth == 0,
+            "legacy-local validation paths leaked the lock"))
+    {
+        return false;
+    }
+
+    MT_Init();
+    MT_ResetCompleteValidationCountForTesting();
+    const std::uint16_t root = scrMemTreeGlob.head[0];
+    scrMemTreeGlob.nodes[root].prev = root;
+    const TreeImage corruptPath = CaptureTree();
+    legacyId = 0xBEEF;
+    return Check(
+            MT_TryAllocIndexLegacy(1, 1, &legacyId)
+                == MT_AllocIndexStatus::UnsafeFailure,
+            "legacy-local allocation trusted a traversed cycle")
+        && Check(legacyId == 0xBEEF,
+            "legacy-local cycle rejection changed output")
+        && Check(TreeMatches(corruptPath),
+            "legacy-local cycle rejection changed allocator state")
+        && Check(MT_CompleteValidationCountForTesting() == 0,
+            "legacy-local corruption rejection used a complete scan")
+        && Check(g_memoryTreeLockDepth == 0,
+            "legacy-local corruption rejection leaked the lock");
+}
+
 [[nodiscard]] bool TestCorruptionRejection() noexcept
 {
     MT_Init();
@@ -599,6 +665,7 @@ int main()
         || !TestQueryAndFreeContracts()
         || !TestFullExhaustionAndRecovery()
         || !TestRandomizedIntervals()
+        || !TestLegacyLocalValidationScope()
         || !TestCorruptionRejection())
     {
         return 1;

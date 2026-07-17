@@ -163,11 +163,10 @@ bool MT_AreBitTablesValidNoReport() noexcept
     return true;
 }
 
-bool MT_IsBasicCoreStateValidNoReport() noexcept
+bool MT_IsBasicAccountingStateValidNoReport() noexcept
 {
     return scrMemTreePub.mt_buffer
             == reinterpret_cast<char *>(&scrMemTreeGlob.nodes) &&
-        MT_AreBitTablesValidNoReport() &&
         scrMemTreeGlob.nodes[0].prev == 0 &&
         scrMemTreeGlob.nodes[0].next == 0 &&
         scrMemTreeDebugGlob.mt_usage[0] == 0 &&
@@ -179,6 +178,12 @@ bool MT_IsBasicCoreStateValidNoReport() noexcept
         scrMemTreeGlob.totalAlloc <= scrMemTreeGlob.totalAllocBuckets &&
         ((scrMemTreeGlob.totalAlloc == 0) ==
          (scrMemTreeGlob.totalAllocBuckets == 0));
+}
+
+bool MT_IsBasicCoreStateValidNoReport() noexcept
+{
+    return MT_IsBasicAccountingStateValidNoReport()
+        && MT_AreBitTablesValidNoReport();
 }
 
 bool MT_IsValidNodeRangeNoReport(uint32_t nodeNum, int size) noexcept
@@ -256,6 +261,9 @@ constexpr uint32_t kPartitionWordCount =
 uint64_t mt_partitionBuckets[kPartitionWordCount];
 uint64_t mt_partitionFreeNodes[kPartitionWordCount];
 uint16_t mt_partitionStack[MEMORY_NODE_COUNT - 1];
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+uint32_t mt_completeValidationCount = 0;
+#endif
 
 bool MT_TryMarkPartitionRangeNoReport(
     const uint32_t nodeNum,
@@ -315,6 +323,9 @@ bool MT_TryRecordPartitionFreeNodeNoReport(
 
 bool MT_IsGlobalPartitionValidNoReport() noexcept
 {
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+    ++mt_completeValidationCount;
+#endif
     memset(mt_partitionBuckets, 0, sizeof(mt_partitionBuckets));
     memset(mt_partitionFreeNodes, 0, sizeof(mt_partitionFreeNodes));
 
@@ -436,18 +447,40 @@ void MT_UnsafeErrorNoDump(
 // path; the second rejects aliases between paths that will mutate in sequence.
 uint8_t mt_preflightVisited[MEMORY_NODE_COUNT / 8];
 uint8_t mt_preflightTransactionVisited[MEMORY_NODE_COUNT / 8];
+uint16_t mt_preflightVisitedNodes[MEMORY_NODE_COUNT];
+uint16_t mt_preflightTransactionNodes[MEMORY_NODE_COUNT];
+uint32_t mt_preflightVisitedCount = 0;
+uint32_t mt_preflightTransactionCount = 0;
+
+void MT_ClearRecordedNodes(
+    uint8_t *const visited,
+    const uint16_t *const nodes,
+    const uint32_t count) noexcept
+{
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        const uint16_t nodeNum = nodes[index];
+        visited[nodeNum >> 3] &= static_cast<uint8_t>(
+            ~(1u << (nodeNum & 7u)));
+    }
+}
 
 void MT_ResetPreflightNodes() noexcept
 {
-    memset(mt_preflightVisited, 0, sizeof(mt_preflightVisited));
+    MT_ClearRecordedNodes(
+        mt_preflightVisited,
+        mt_preflightVisitedNodes,
+        mt_preflightVisitedCount);
+    mt_preflightVisitedCount = 0;
 }
 
 void MT_ResetPreflightTransaction() noexcept
 {
-    memset(
+    MT_ClearRecordedNodes(
         mt_preflightTransactionVisited,
-        0,
-        sizeof(mt_preflightTransactionVisited));
+        mt_preflightTransactionNodes,
+        mt_preflightTransactionCount);
+    mt_preflightTransactionCount = 0;
 }
 
 bool MT_RecordScanNode(uint16_t nodeNum) noexcept
@@ -459,7 +492,11 @@ bool MT_RecordScanNode(uint16_t nodeNum) noexcept
         return false;
     }
 
+    if (mt_preflightVisitedCount >= MEMORY_NODE_COUNT)
+        return false;
+
     mt_preflightVisited[byteIndex] |= bitMask;
+    mt_preflightVisitedNodes[mt_preflightVisitedCount++] = nodeNum;
     return true;
 }
 
@@ -477,18 +514,22 @@ bool MT_RecordPreflightNode(uint16_t nodeNum) noexcept
         return false;
     }
 
+    if (mt_preflightTransactionCount >= MEMORY_NODE_COUNT)
+        return false;
+
     mt_preflightTransactionVisited[byteIndex] |= bitMask;
+    mt_preflightTransactionNodes[mt_preflightTransactionCount++] = nodeNum;
     return true;
 }
 
 bool MT_ScanIsDisjointFromPreflightTransaction() noexcept
 {
-    for (uint32_t byteIndex = 0;
-         byteIndex < sizeof(mt_preflightVisited);
-         ++byteIndex)
+    for (uint32_t index = 0; index < mt_preflightVisitedCount; ++index)
     {
-        if ((mt_preflightVisited[byteIndex] &
-             mt_preflightTransactionVisited[byteIndex]) != 0)
+        const uint16_t nodeNum = mt_preflightVisitedNodes[index];
+        const uint8_t bitMask =
+            static_cast<uint8_t>(1u << (nodeNum & 7u));
+        if ((mt_preflightTransactionVisited[nodeNum >> 3] & bitMask) != 0)
         {
             return false;
         }
@@ -502,12 +543,18 @@ bool MT_CommitScanToPreflightTransaction() noexcept
     {
         return false;
     }
-    for (uint32_t byteIndex = 0;
-         byteIndex < sizeof(mt_preflightVisited);
-         ++byteIndex)
+    if (mt_preflightVisitedCount
+        > MEMORY_NODE_COUNT - mt_preflightTransactionCount)
     {
-        mt_preflightTransactionVisited[byteIndex] |=
-            mt_preflightVisited[byteIndex];
+        return false;
+    }
+    for (uint32_t index = 0; index < mt_preflightVisitedCount; ++index)
+    {
+        const uint16_t nodeNum = mt_preflightVisitedNodes[index];
+        mt_preflightTransactionVisited[nodeNum >> 3] |=
+            static_cast<uint8_t>(1u << (nodeNum & 7u));
+        mt_preflightTransactionNodes[mt_preflightTransactionCount++] =
+            nodeNum;
     }
     return true;
 }
@@ -947,10 +994,13 @@ void MT_AddMemoryNodeCommitNoReport(
 }
 } // namespace
 
-MT_AllocIndexStatus MT_TryAllocIndex(
+namespace
+{
+MT_AllocIndexStatus MT_TryAllocIndexImpl(
     int numBytes,
     int type,
-    uint16_t *outIndex) noexcept
+    uint16_t *outIndex,
+    const bool completeValidation) noexcept
 {
     int size = 0;
     if (!outIndex || type <= 0 || type >= kMemoryTreeTypeCount ||
@@ -962,7 +1012,9 @@ MT_AllocIndexStatus MT_TryAllocIndex(
     PROF_SCOPED("scriptMemory");
 
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
-    if (!MT_IsCoreStateValidNoReport())
+    if (!(completeValidation
+            ? MT_IsCoreStateValidNoReport()
+            : MT_IsBasicCoreStateValidNoReport()))
     {
         Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return MT_AllocIndexStatus::UnsafeFailure;
@@ -1021,11 +1073,58 @@ MT_AllocIndexStatus MT_TryAllocIndex(
     return MT_AllocIndexStatus::Success;
 }
 
+MT_AllocationInfoStatus MT_TryGetAllocationInfoImpl(
+    uint32_t nodeNum,
+    MT_AllocationInfo *outInfo,
+    const bool completeValidation) noexcept
+{
+    if (!outInfo || nodeNum == 0 || nodeNum >= MEMORY_NODE_COUNT)
+    {
+        return MT_AllocationInfoStatus::InvalidArgumentNoChange;
+    }
+
+    MT_AllocationInfo allocationInfo{};
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    if (!(completeValidation
+            ? MT_IsCoreStateValidNoReport()
+            : MT_IsBasicAccountingStateValidNoReport()))
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+        return MT_AllocationInfoStatus::UnsafeFailure;
+    }
+
+    const MT_AllocationInfoStatus status =
+        MT_GetAllocationInfoLockedNoReport(nodeNum, &allocationInfo);
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+    if (status == MT_AllocationInfoStatus::Success)
+    {
+        *outInfo = allocationInfo;
+    }
+    return status;
+}
+} // namespace
+
+MT_AllocIndexStatus MT_TryAllocIndex(
+    int numBytes,
+    int type,
+    uint16_t *outIndex) noexcept
+{
+    return MT_TryAllocIndexImpl(numBytes, type, outIndex, true);
+}
+
+MT_AllocIndexStatus MT_TryAllocIndexLegacy(
+    int numBytes,
+    int type,
+    uint16_t *outIndex) noexcept
+{
+    return MT_TryAllocIndexImpl(numBytes, type, outIndex, false);
+}
+
 unsigned short MT_AllocIndex(int numBytes, int type)
 {
     uint16_t nodeNum = 0;
     const MT_AllocIndexStatus status =
-        MT_TryAllocIndex(numBytes, type, &nodeNum);
+        MT_TryAllocIndexLegacy(numBytes, type, &nodeNum);
     if (status != MT_AllocIndexStatus::Success)
     {
         if (status == MT_AllocIndexStatus::UnsafeFailure)
@@ -1042,28 +1141,27 @@ MT_AllocationInfoStatus MT_TryGetAllocationInfo(
     uint32_t nodeNum,
     MT_AllocationInfo *outInfo) noexcept
 {
-    if (!outInfo || nodeNum == 0 || nodeNum >= MEMORY_NODE_COUNT)
-    {
-        return MT_AllocationInfoStatus::InvalidArgumentNoChange;
-    }
-
-    MT_AllocationInfo allocationInfo{};
-    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
-    if (!MT_IsCoreStateValidNoReport())
-    {
-        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
-        return MT_AllocationInfoStatus::UnsafeFailure;
-    }
-
-    const MT_AllocationInfoStatus status =
-        MT_GetAllocationInfoLockedNoReport(nodeNum, &allocationInfo);
-    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
-    if (status == MT_AllocationInfoStatus::Success)
-    {
-        *outInfo = allocationInfo;
-    }
-    return status;
+    return MT_TryGetAllocationInfoImpl(nodeNum, outInfo, true);
 }
+
+MT_AllocationInfoStatus MT_TryGetAllocationInfoLegacy(
+    uint32_t nodeNum,
+    MT_AllocationInfo *outInfo) noexcept
+{
+    return MT_TryGetAllocationInfoImpl(nodeNum, outInfo, false);
+}
+
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+void MT_ResetCompleteValidationCountForTesting() noexcept
+{
+    mt_completeValidationCount = 0;
+}
+
+uint32_t MT_CompleteValidationCountForTesting() noexcept
+{
+    return mt_completeValidationCount;
+}
+#endif
 
 bool MT_Realloc(int oldNumBytes, int newNumbytes)
 {
@@ -1133,9 +1231,12 @@ void MT_RemoveHeadMemoryNode(int size)
     }
 }
 
-MT_FreeIndexStatus MT_TryFreeIndex(
+namespace
+{
+MT_FreeIndexStatus MT_TryFreeIndexImpl(
     uint32_t nodeNum,
-    int numBytes) noexcept
+    int numBytes,
+    const bool completeValidation) noexcept
 {
     int size = 0;
     if (nodeNum == 0 || nodeNum >= MEMORY_NODE_COUNT ||
@@ -1147,7 +1248,9 @@ MT_FreeIndexStatus MT_TryFreeIndex(
     PROF_SCOPED("scriptMemory");
 
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
-    if (!MT_IsCoreStateValidNoReport())
+    if (!(completeValidation
+            ? MT_IsCoreStateValidNoReport()
+            : MT_IsBasicCoreStateValidNoReport()))
     {
         Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return MT_FreeIndexStatus::UnsafeFailure;
@@ -1158,8 +1261,17 @@ MT_FreeIndexStatus MT_TryFreeIndex(
         MT_GetAllocationInfoLockedNoReport(nodeNum, &allocationInfo);
     if (allocationStatus == MT_AllocationInfoStatus::NotAllocatedNoChange)
     {
+        bool foundFreeNode = false;
+        MT_ResetPreflightTransaction();
+        const bool freePathValid =
+            !MT_IsValidNodeRangeNoReport(nodeNum, size)
+            || MT_TryPreflightRemoveMemoryNodeNoReport(
+                static_cast<uint16_t>(nodeNum), size, &foundFreeNode);
+        (void)foundFreeNode;
         Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
-        return MT_FreeIndexStatus::OwnershipMismatchNoChange;
+        return freePathValid
+            ? MT_FreeIndexStatus::OwnershipMismatchNoChange
+            : MT_FreeIndexStatus::UnsafeFailure;
     }
     if (allocationStatus != MT_AllocationInfoStatus::Success)
     {
@@ -1229,6 +1341,21 @@ MT_FreeIndexStatus MT_TryFreeIndex(
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
     return MT_FreeIndexStatus::Success;
 }
+} // namespace
+
+MT_FreeIndexStatus MT_TryFreeIndex(
+    uint32_t nodeNum,
+    int numBytes) noexcept
+{
+    return MT_TryFreeIndexImpl(nodeNum, numBytes, true);
+}
+
+MT_FreeIndexStatus MT_TryFreeIndexLegacy(
+    uint32_t nodeNum,
+    int numBytes) noexcept
+{
+    return MT_TryFreeIndexImpl(nodeNum, numBytes, false);
+}
 
 void MT_FreeIndex(uint32_t nodeNum, int numBytes)
 {
@@ -1237,7 +1364,8 @@ void MT_FreeIndex(uint32_t nodeNum, int numBytes)
     iassert(nodeNum > 0 && nodeNum < MEMORY_NODE_COUNT);
     (void)size;
 
-    const MT_FreeIndexStatus status = MT_TryFreeIndex(nodeNum, numBytes);
+    const MT_FreeIndexStatus status =
+        MT_TryFreeIndexLegacy(nodeNum, numBytes);
     if (status != MT_FreeIndexStatus::Success)
     {
         if (status == MT_FreeIndexStatus::UnsafeFailure)

@@ -1295,7 +1295,10 @@ add_executable(kisakcod-script-memorytree-try-tests
 target_include_directories(
     kisakcod-script-memorytree-try-tests SYSTEM PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-script-memorytree-try-tests PRIVATE cxx_std_20)
-target_compile_definitions(kisakcod-script-memorytree-try-tests PRIVATE KISAK_MP)
+target_compile_definitions(
+    kisakcod-script-memorytree-try-tests PRIVATE
+    KISAK_MP
+    KISAK_SCRIPT_STRING_PERF_TESTING=1)
 target_link_libraries(kisakcod-script-memorytree-try-tests PRIVATE Threads::Threads)
 kisakcod_test_warnings(kisakcod-script-memorytree-try-tests)
 set_target_properties(kisakcod-script-memorytree-try-tests PROPERTIES
@@ -1320,7 +1323,9 @@ target_include_directories(
 target_compile_features(
     kisakcod-script-string-ownership-tests PRIVATE cxx_std_20)
 target_compile_definitions(
-    kisakcod-script-string-ownership-tests PRIVATE KISAK_MP)
+    kisakcod-script-string-ownership-tests PRIVATE
+    KISAK_MP
+    KISAK_SCRIPT_STRING_PERF_TESTING=1)
 target_link_libraries(
     kisakcod-script-string-ownership-tests PRIVATE Threads::Threads)
 kisakcod_test_warnings(kisakcod-script-string-ownership-tests)

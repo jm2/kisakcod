@@ -102,9 +102,21 @@ void MT_FreeIndex(uint32_t nodeNum, int numBytes);
     uint32_t nodeNum,
     int numBytes) noexcept;
 
+// Legacy compatibility operations validate the fixed allocator header and
+// every free-tree path they inspect or mutate, but deliberately do not rescan
+// unrelated allocation/free partitions. They remain report-free so a caller
+// holding an outer engine lock can unwind it before invoking a legacy
+// reporter. Typed transaction code must use the complete MT_Try* surface.
+[[nodiscard]] MT_FreeIndexStatus MT_TryFreeIndexLegacy(
+    uint32_t nodeNum,
+    int numBytes) noexcept;
+
 // The query never reports and publishes the complete result only on Success.
 // Every other result leaves *outInfo unchanged.
 [[nodiscard]] MT_AllocationInfoStatus MT_TryGetAllocationInfo(
+    uint32_t nodeNum,
+    MT_AllocationInfo *outInfo) noexcept;
+[[nodiscard]] MT_AllocationInfoStatus MT_TryGetAllocationInfoLegacy(
     uint32_t nodeNum,
     MT_AllocationInfo *outInfo) noexcept;
 
@@ -116,6 +128,10 @@ void MT_Init(void);
 // allocator and *outIndex unchanged; UnsafeFailure denotes a failed internal
 // invariant preflight rather than ordinary capacity exhaustion.
 [[nodiscard]] MT_AllocIndexStatus MT_TryAllocIndex(
+    int numBytes,
+    int type,
+    uint16_t *outIndex) noexcept;
+[[nodiscard]] MT_AllocIndexStatus MT_TryAllocIndexLegacy(
     int numBytes,
     int type,
     uint16_t *outIndex) noexcept;
@@ -135,3 +151,8 @@ int MT_GetSize(int numBytes);
 
 
 extern scrMemTreeGlob_t scrMemTreeGlob;
+
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+void MT_ResetCompleteValidationCountForTesting() noexcept;
+[[nodiscard]] uint32_t MT_CompleteValidationCountForTesting() noexcept;
+#endif
