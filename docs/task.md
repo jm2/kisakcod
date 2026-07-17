@@ -333,7 +333,7 @@ work item changes. Do not create session-specific handoff files.
   direct probes stop
   before this code on pre-existing ILP32 layout assertions, an undeclared `IsValidSeed`, and missing DirectX `d3d9.h`,
   while every current CI engine job still uses `KISAK_BUILD_SP=OFF`.
-- Current client-target safety candidate: commits `97024d7d`, `3cfb16d1`, `14887046`, `799cf462`, and review hardening
+- Merged client-target safety checkpoint: commits `97024d7d`, `3cfb16d1`, `14887046`, `799cf462`, and review hardening
   `62e317dc` add a shared strict, failure-atomic lock-on payload parser; a 1,023-byte target-config limit; named and
   runtime-checked 2,815-entry client and
   server configstring bounds; full-table-compatible script-string replacement that unpublishes before release and
@@ -344,20 +344,31 @@ work item changes. Do not create session-specific handoff files.
   registered material with a bounded fallback. The live `ret_lock_on` branch accepts only ordinary/nonnegative payloads
   or exact `ENTITYNUM_NONE`/zero clearing. Server diagnostics and emitted configstring commands now preserve unsigned
   varargs types, including Win64-safe size conversions.
-- Current client-target validation: complete GCC 16 and Clang 22 builds and **98/98** suites pass, including the new
+- Client-target validation: complete GCC 16 and Clang 22 builds and **98/98** suites pass, including the new
   runtime MP/SP sentinel, overflow/junk, destination-atomicity, overlong, and exact 1,024-byte unterminated-buffer cases.
   The portable source contract pins range-before-access, unpublish/release/acquire/publish ordering, the live dispatch handoff,
   absence of direct entity-array bypasses in audited consumers, target ABI/init state, bounded material lookup, and the
   measured Windows x86 ctest selection. Independent review found no production security, bounds, refcount, logic,
-  conversion, format, layout, or ABI defect; its sole actionable test finding now ties the exact range returns and sole
-  lock-state publication to their validated control flow. `git diff --check` is clean. Direct SP syntax probes caught and
+  conversion, format, layout, or ABI defect; its sole actionable test finding ties the exact range returns and sole
+  lock-state publication to their validated control flow. Codex's full-table replacement finding was fixed in
+  `09be2243`; exact-head run **29603408182** passed all nine jobs, exact-head Codex was clean, and the only review thread
+  is resolved. PR #46 squash-merged as `0eb06224`, and authoritative post-merge run **29604449127** passed all nine jobs.
+  `git diff --check` is clean. Direct SP syntax probes caught and
   fixed one accidental brace imbalance, then reached only pre-existing ILP32/vendor/header blockers. This remains an explicitly
   unclosed compile gate: all hosted engine jobs still use `KISAK_BUILD_SP=OFF`, so the production SP translation units and
   actual `targetInfo_t` native64 assertion are source-contract/probe covered rather than compiled by CI.
-- Remaining upstream content stays subsystem-scoped: publish the reviewed client target/HUD candidate, then handle the
-  separately identified squared-distance-versus-unsquared grenade safe-radius defect in its own batch; leave dynent
-  save/load `ba3c79f3` deferred until bounded transactional Disk32/native-sidecar semantics exist. Do not import d592's
-  raw-pointer-bound `CG_GetTargetPos` loop or unrelated weapon-fire changes.
+- Current grenade safe-target candidate: `baccb1f9` and `ff519381` move the exact SP AI toss predicate into a
+  dependency-free helper and compare its three-dimensional squared distance with the squared 1.1-times explosion
+  radius. The helper preserves the original inclusive boundary, arithmetic order, and fail-open behavior for invalid
+  negative weapon radii. Portable runtime cases cover the old dimensional defect, ten-percent margin, exact 110-unit
+  3D boundary, Z separation, zero radius, and negative radius. A mutation-sensitive source contract binds the live
+  `Actor_Grenade_IsSafeTarget` call, leaves `Actor_Grenade_ShouldIgnore`'s intentional squared ten-unit tolerance
+  unchanged, and pins both contracts in measured Windows x86. Complete GCC 16 and Clang 22 builds and **100/100** suites
+  pass. This is a high-confidence gameplay/dimensional correction, not a claimed retail-binary restoration; the SP
+  production translation unit remains outside hosted compilation.
+- Remaining upstream content stays subsystem-scoped: leave dynent save/load `ba3c79f3` deferred until bounded
+  transactional Disk32/native-sidecar semantics exist. Do not import d592's raw-pointer-bound `CG_GetTargetPos` loop or
+  unrelated weapon-fire changes.
 - Current fast-file widening checkpoint: one canonical portable `FxEffectDef`/`FxElemDef`/visual/trail runtime type family
   now replaces the renderer-only duplicate definition boundary. The effect converter validates exact Disk32 graph
   provenance, freezes each bounded resolver request group before callbacks, snapshots the resolver descriptor, binds
@@ -1254,15 +1265,12 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Publish the reviewed client target/HUD candidate after hosted CI and automated review are green. Preserve strict
-   configstring and lock-on parsing, full-table-compatible unpublish/release/acquire/publish string ownership, the exact
-   target ABI, live entity identity,
-   typed 32-entry traversal, complete-stage publication, material fallback behavior, and measured Windows x86 source
-   coverage. Keep the missing production-SP compile gate explicit rather than treating text checks as compilation.
-2. Fix the separately identified squared-distance-versus-unsquared grenade safe-radius comparison in its own focused
-   correctness batch. Keep dynent save/load `ba3c79f3` deferred until its bounded transactional Disk32/native-sidecar
-   design exists; do not fold either change into the target/HUD publication.
-3. Build the constructed whole-zone ownership table and no-report script-string adapter layer around the external
+1. Publish the focused grenade safe-target candidate after hosted CI and automated review are green. Preserve the exact
+   three-dimensional squared-distance order, squared 1.1-times radius, inclusive boundary, invalid-negative-radius
+   behavior, and intentional separate ten-unit ignore tolerance. Keep the missing production-SP compile gate explicit
+   and classify this as a dimensional gameplay correction rather than proven retail restoration. Keep dynent save/load
+   `ba3c79f3` deferred until its bounded transactional Disk32/native-sidecar design exists.
+2. Build the constructed whole-zone ownership table and no-report script-string adapter layer around the external
    lifecycle slot and completed journal. The adapter must acquire one ordinary reference per occurrence, report the exact
    claimed-versus-duplicate database-user transfer outcome, remove ordinary references, and remove only the targeted
    database-user reference without `Com_Error` or nonlocal exit. Validate current runtime IDs as `0 < id < 65536` before
@@ -1270,7 +1278,7 @@ work item changes. Do not create session-specific handoff files.
    serializer before journal initialization and hold it continuously through terminal commit or rollback return. It must
    exclude every other journal transaction, every raw database-user add/transfer/remove/publication, and the global
    database-user 4 -> 8 sweep; overlapping journals remain forbidden without shared claim accounting.
-4. Bind that table to the exact abandonment/unload recipes through centralized callbacks. Static controller slots and
+3. Bind that table to the exact abandonment/unload recipes through centralized callbacks. Static controller slots and
    callback metadata must live outside and outlast zone PMem so the controller can survive `PMem_Free` and publish
    `Empty`; only per-generation arena/workspace/journal/backing belongs inside the existing named PMem scope. Treat the
    first fixed arena budget as a checked compatibility cap, remove partial assets before unbinding, release every staged
@@ -1280,18 +1288,18 @@ work item changes. Do not create session-specific handoff files.
    `Live` under the external serializer, invoke the unconditional journal finalizer, then use a no-fail/no-drop
    gate/signal release before dropping that serializer; introduce an admission-pending state first if production cannot
    satisfy that contract.
-5. Wire the guarded adapter into the native production FX/impact route behind the explicit legacy-x86 boundary. Preserve
+4. Wire the guarded adapter into the native production FX/impact route behind the explicit legacy-x86 boundary. Preserve
    retail bytes and the writer; use full-width `DB_ResolveInsertedPointer`, publish `-2` roots through
    `DB_SetInsertedPointer` with the canonical `DB_AddXAsset` identity, and add nested-impact, alias, high-address,
    failure-after-publication, unload-order, slot-generation-reuse, and rollback tests before widening another XAsset family.
-6. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
+5. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
-7. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
+6. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
    and `KISAKCOD_GAME_DIR` secret are absent. Implement the designed handle-relative recursive deletion
    service without symlink/reparse traversal instead; surface the smoke infrastructure blocker if asked.
-8. Extract standard-stream console services, then process/event services and Linux signal-park plus
+7. Extract standard-stream console services, then process/event services and Linux signal-park plus
    macOS Mach crash freezing behind the already isolated terminal API.
-9. Widen/tokenize the remaining MP physics pointer fields, continue M1/M5 ABI cleanup, and add production fast-file
+8. Widen/tokenize the remaining MP physics pointer fields, continue M1/M5 ABI cleanup, and add production fast-file
    fixtures/fuzzing before enabling any native64 engine target.
 
 ## Known release blockers
