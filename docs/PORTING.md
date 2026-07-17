@@ -6,7 +6,7 @@
 
 ---
 
-## Implementation status (July 16, 2026)
+## Implementation status (July 17, 2026)
 
 Target policy is fixed: preserve retail assets and wire interoperability; use a
 shared **native Vulkan RHI** (MoltenVK on macOS) that replaces D3D9, OpenAL Soft,
@@ -211,16 +211,36 @@ Completed foundation work:
   `d33e80cc` and squash `2e9c19e7` passed all nine jobs in runs **29582100035** and **29582679571**, respectively.
   Gemini's uninitialized fallback-time finding was fixed and resolved, exact-head Codex was clean, and no threads
   remained. SP production translation units remain unbuilt while every CI job uses `KISAK_BUILD_SP=OFF`;
-- the current two-commit safe-fixlet candidate (`77ae66f0`, `7b146ba0`) selects exactly four `77404c61` corrections:
-  SP friendly-fire melee suppression, removed-snapshot Shutdown -> Unlink -> FX/DObj teardown, fixed objective commands,
-  and both internal actor miss caches initialized to `6969.0f`. All unrelated omnibus hunks and three rejected actor-aim
-  behavior changes remain excluded. Fresh strict GCC 16 and Clang 22 builds each pass **95/95** tests, the source contract
-  rejects all nine mutations, trailers parse, and `git diff --check` is clean;
-- deferred upstream content requires subsystem-specific adaptation: a bounded typed server target table with strict load
-  validation and flag lifecycle must precede hardened vehicle/Javelin HUD consumers; the squared-distance-versus-
-  unsquared grenade safe-radius defect stays separate; and dynent save/load `ba3c79f3` remains deferred until it has
-  bounded transactional Disk32/native-sidecar semantics. The d592 pointer-cast target loop and unrelated weapon-fire
-  changes stay excluded;
+- PR #44 merged exactly four audited `77404c61` safe fixlets: SP friendly-fire melee suppression, removed-snapshot
+  Shutdown -> Unlink -> FX/DObj teardown, fixed complete/failed objective commands, and both translation-unit-local actor
+  miss caches initialized to `6969.0f`. All unrelated omnibus hunks and three rejected actor-aim behavior changes remain
+  excluded. Review hardening normalized CRLF before source slicing, scoped the contract to the measured Windows x86 ctest
+  selection, and exposed failed child-mutation diagnostics. Exact final head `da1ea81f` passed all nine jobs in PR run
+  **29584250420**; exact-head Codex found no major issue, both Gemini threads were resolved, and no unresolved review
+  threads remained. Squash `cbb8bdb0` and authoritative post-merge run **29585012405** also passed all nine jobs;
+- the current four-commit SP target-table portability candidate (`0a1e89b2`, `c63bb68e`, `d981527f`, `653fdfdb`)
+  replaces pointer truncation and raw 28-byte walks with bounded typed 32-entry native storage. It freezes `target_t` and
+  `TargetGlob` at `0x1c`/`0x384` on x86 and `0x20`/`0x408` on native64, removes the `game/g_targets.cpp` pointer allowlist
+  entry, and validates every target configstring before publication. Checks cover ordinary live-entity identity,
+  WORLD/NONE and level bounds, duplicate references, finite int-encodable offsets, exact flags, and registered material
+  indices. Stale storage is cleared without dereferencing old-generation pointers, authoritative live `FL_TARGET` state
+  is rebuilt, and shader, lock-on, and SP locked-weapon publication fail closed on invalid input. This is the 47th M2
+  pointer fix and adds the native-width SP target table to M4 evidence;
+- fresh GCC 16 and Clang 22 builds at exact target head `653fdfdb` each pass **97/97** tests; the focused target
+  runtime/source, pointer-tripwire, and PR #44 contract set passes **4/4** under each compiler. At production-identical
+  head `d981527f`, Clang ASan+UBSan passed, as did strict GCC/Clang i386 object compilation and AArch64 GCC object
+  compilation. The sandbox killed i386 execution with exit 159, so no i386 runtime result is claimed. A separate
+  throwaway manual audit—not a built-in CI mutation mode—rejected nine regressions covering stale initialization, broad
+  entity domains, material zero, offset overflow, two-argument screen parsing, unsafe duration, unvalidated producers,
+  unregistered load materials, and shader publication. SP production remains outside hosted coverage: every engine CI
+  job sets `KISAK_BUILD_SP=OFF`, the portable executable exercises the shared parser/layout model, and the source contract
+  textually pins `g_targets.cpp`. Direct SP probes stop earlier on existing ILP32 assertions, undeclared `IsValidSeed`,
+  and missing DirectX `d3d9.h`;
+- remaining upstream content stays subsystem-specific: publish the reviewed server target table, then implement strict,
+  failure-atomic `CG_TargetsChanged` parsing and bounded `CG_GetTargetPos`/vehicle/Javelin/bouncing-diamond consumers
+  without importing d592's raw pointer-bound loop. Fix the squared-distance-versus-unsquared grenade safe-radius defect
+  separately, and keep dynent save/load `ba3c79f3` deferred until bounded transactional Disk32/native-sidecar semantics
+  exist. Unrelated weapon-fire changes stay excluded;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
