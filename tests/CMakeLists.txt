@@ -1288,6 +1288,52 @@ add_test(
 )
 set_tests_properties(script-string-packed-atomic-contracts PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-script-memorytree-try-tests
+    script_memorytree_try_tests.cpp
+    ${SRC_DIR}/script/scr_memorytree.cpp
+)
+target_include_directories(
+    kisakcod-script-memorytree-try-tests SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-script-memorytree-try-tests PRIVATE cxx_std_20)
+target_compile_definitions(kisakcod-script-memorytree-try-tests PRIVATE KISAK_MP)
+target_link_libraries(kisakcod-script-memorytree-try-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-script-memorytree-try-tests)
+set_target_properties(kisakcod-script-memorytree-try-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME script-memorytree-try-contracts
+    COMMAND kisakcod-script-memorytree-try-tests
+)
+set_tests_properties(script-memorytree-try-contracts PROPERTIES TIMEOUT 30)
+
+# Include the production string-list translation unit directly so this
+# white-box fixture can inspect its file-local persistent state without
+# copying any ownership algorithm. The allocator remains a separately linked
+# production translation unit, matching the engine boundary.
+add_executable(kisakcod-script-string-ownership-tests
+    script_string_ownership_tests.cpp
+    ${SRC_DIR}/script/scr_memorytree.cpp
+)
+target_include_directories(
+    kisakcod-script-string-ownership-tests SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-script-string-ownership-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-script-string-ownership-tests PRIVATE KISAK_MP)
+target_link_libraries(
+    kisakcod-script-string-ownership-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-script-string-ownership-tests)
+set_target_properties(kisakcod-script-string-ownership-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME script-string-report-free-ownership-contracts
+    COMMAND kisakcod-script-string-ownership-tests
+)
+set_tests_properties(
+    script-string-report-free-ownership-contracts PROPERTIES TIMEOUT 30)
+
 foreach(_profile mp sp)
     set(_target "kisakcod-platform-service-${_profile}-tests")
     string(TOUPPER "${_profile}" _profile_upper)
@@ -1306,7 +1352,11 @@ foreach(_profile mp sp)
 endforeach()
 
 add_executable(kisakcod-platform-service-runtime-tests
+    db_script_string_adapter_tests.cpp
     platform_service_runtime_tests.cpp
+    ${SRC_DIR}/database/db_script_string_adapter.cpp
+    ${SRC_DIR}/database/db_script_string_journal.cpp
+    ${SRC_DIR}/database/db_script_string_transaction.cpp
     ${SRC_DIR}/qcommon/sys_sync.cpp
     ${SRC_DIR}/qcommon/sys_worker_gate.cpp
     ${KISAK_PLATFORM_SERVICE_SOURCES}
@@ -1608,6 +1658,14 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P
         ${CMAKE_CURRENT_SOURCE_DIR}/db_script_string_journal_source_test.cmake
+)
+
+add_test(
+    NAME database-script-string-ownership-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P
+        ${CMAKE_CURRENT_SOURCE_DIR}/db_script_string_ownership_source_test.cmake
 )
 
 add_test(

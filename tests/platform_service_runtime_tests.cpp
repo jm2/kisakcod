@@ -6,8 +6,10 @@
 #include <cstdio>
 #include <limits>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
+#include <database/db_script_string_transaction.h>
 #include <qcommon/sys_event.h>
 #include <qcommon/sys_sync.h>
 #include <qcommon/sys_thread.h>
@@ -22,8 +24,172 @@ void MyAssertHandler(const char *, int, int, const char *, ...)
     std::abort();
 }
 
+bool RunDatabaseScriptStringAdapterTests();
+
 namespace
 {
+bool TestScriptStringTransactionSerializer()
+{
+    namespace transaction = db::script_string_transaction;
+    using transaction::ScriptStringTransactionStatus;
+    using transaction::ScriptStringTransactionToken;
+
+    static_assert(!std::is_copy_constructible_v<ScriptStringTransactionToken>);
+    static_assert(!std::is_move_constructible_v<ScriptStringTransactionToken>);
+    static_assert(sizeof(ScriptStringTransactionToken) == 8);
+
+    if (transaction::TryBeginScriptStringTransaction(nullptr)
+            != ScriptStringTransactionStatus::InvalidArgument
+        || transaction::FinishScriptStringTransaction(nullptr)
+            != ScriptStringTransactionStatus::InvalidArgument)
+    {
+        std::fputs("script-string transaction accepted a null token\n", stderr);
+        return false;
+    }
+
+    ScriptStringTransactionToken owner;
+    if (transaction::TryBeginScriptStringTransaction(&owner)
+            != ScriptStringTransactionStatus::Success
+        || !owner.active() || owner.serial() == 0
+        || !transaction::OwnsScriptStringTransaction(owner))
+    {
+        std::fputs("script-string transaction did not publish its owner\n", stderr);
+        return false;
+    }
+    const std::uint32_t firstSerial = owner.serial();
+
+    ScriptStringTransactionToken nested;
+    if (transaction::TryBeginScriptStringTransaction(&nested)
+            != ScriptStringTransactionStatus::Busy
+        || nested.active() || nested.serial() != 0)
+    {
+        std::fputs("recursive script-string transaction was not rejected\n", stderr);
+        return false;
+    }
+    if (transaction::FinishScriptStringTransaction(&nested)
+            != ScriptStringTransactionStatus::InvalidToken
+        || !transaction::OwnsScriptStringTransaction(owner))
+    {
+        std::fputs("invalid finish released the active transaction\n", stderr);
+        return false;
+    }
+
+    std::atomic<bool> contenderReady{false};
+    std::atomic<bool> contenderAcquired{false};
+    std::atomic<int> contenderBeginStatus{
+        static_cast<int>(ScriptStringTransactionStatus::InvalidArgument)};
+    std::atomic<int> contenderFinishStatus{
+        static_cast<int>(ScriptStringTransactionStatus::InvalidArgument)};
+    std::thread contender([&]() {
+        ScriptStringTransactionToken token;
+        contenderReady.store(true, std::memory_order_release);
+        const ScriptStringTransactionStatus beginStatus =
+            transaction::TryBeginScriptStringTransaction(&token);
+        contenderBeginStatus.store(
+            static_cast<int>(beginStatus), std::memory_order_release);
+        if (beginStatus != ScriptStringTransactionStatus::Success)
+            return;
+        contenderAcquired.store(true, std::memory_order_release);
+        contenderFinishStatus.store(
+            static_cast<int>(
+                transaction::FinishScriptStringTransaction(&token)),
+            std::memory_order_release);
+    });
+
+    while (!contenderReady.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    if (contenderAcquired.load(std::memory_order_acquire))
+    {
+        std::fputs("concurrent script-string transaction overlapped\n", stderr);
+        (void)transaction::FinishScriptStringTransaction(&owner);
+        contender.join();
+        return false;
+    }
+
+    if (transaction::FinishScriptStringTransaction(&owner)
+            != ScriptStringTransactionStatus::Success)
+    {
+        std::fputs("script-string transaction finish failed\n", stderr);
+        contender.join();
+        return false;
+    }
+    contender.join();
+    if (owner.active() || owner.serial() != 0
+        || contenderBeginStatus.load(std::memory_order_acquire)
+            != static_cast<int>(ScriptStringTransactionStatus::Success)
+        || contenderFinishStatus.load(std::memory_order_acquire)
+            != static_cast<int>(ScriptStringTransactionStatus::Success))
+    {
+        std::fputs("serialized contender did not complete cleanly\n", stderr);
+        return false;
+    }
+
+    if (transaction::TryBeginScriptStringTransaction(&owner)
+            != ScriptStringTransactionStatus::Success)
+    {
+        std::fputs("script-string foreign-owner test could not begin\n", stderr);
+        return false;
+    }
+    std::atomic<bool> foreignReady{false};
+    std::atomic<bool> foreignCompleted{false};
+    std::atomic<bool> foreignOwns{true};
+    std::atomic<int> foreignFinishStatus{
+        static_cast<int>(ScriptStringTransactionStatus::Success)};
+    std::thread foreign([&]() {
+        foreignReady.store(true, std::memory_order_release);
+        foreignOwns.store(
+            transaction::OwnsScriptStringTransaction(owner),
+            std::memory_order_release);
+        foreignFinishStatus.store(
+            static_cast<int>(
+                transaction::FinishScriptStringTransaction(&owner)),
+            std::memory_order_release);
+        foreignCompleted.store(true, std::memory_order_release);
+    });
+    while (!foreignReady.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    if (foreignCompleted.load(std::memory_order_acquire))
+    {
+        std::fputs(
+            "foreign script-string owner bypassed the serializer\n",
+            stderr);
+        (void)transaction::FinishScriptStringTransaction(&owner);
+        foreign.join();
+        return false;
+    }
+    if (transaction::FinishScriptStringTransaction(&owner)
+            != ScriptStringTransactionStatus::Success)
+    {
+        std::fputs("foreign-owner test could not finish transaction\n", stderr);
+        foreign.join();
+        return false;
+    }
+    foreign.join();
+    if (foreignOwns.load(std::memory_order_acquire)
+        || foreignFinishStatus.load(std::memory_order_acquire)
+            != static_cast<int>(ScriptStringTransactionStatus::InvalidToken)
+        || !foreignCompleted.load(std::memory_order_acquire))
+    {
+        std::fputs(
+            "foreign script-string token authentication did not fail closed\n",
+            stderr);
+        return false;
+    }
+
+    if (transaction::TryBeginScriptStringTransaction(&owner)
+            != ScriptStringTransactionStatus::Success
+        || owner.serial() == 0 || owner.serial() == firstSerial
+        || transaction::FinishScriptStringTransaction(&owner)
+            != ScriptStringTransactionStatus::Success)
+    {
+        std::fputs("script-string transaction token could not be reused\n", stderr);
+        return false;
+    }
+    return true;
+}
+
 bool IsForwardOrEqual(const std::uint32_t before, const std::uint32_t after)
 {
     return after - before <= static_cast<std::uint32_t>(
@@ -1241,6 +1407,10 @@ bool TestFastCriticalSectionReadersAndWriters()
 
 int main()
 {
+    if (!TestScriptStringTransactionSerializer())
+        return 1;
+    if (!RunDatabaseScriptStringAdapterTests())
+        return 1;
     if (!TestAutoResetEvents())
         return 1;
     if (!TestManualResetEvents())
