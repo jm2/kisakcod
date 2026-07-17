@@ -78,6 +78,7 @@ struct scrMemTreePub_t
 {                     
     char *mt_buffer;  //     scrMemTreePub.mt_buffer = (char*)&scrMemTreeGlob.nodes;
 };
+extern scrMemTreePub_t scrMemTreePub;
 
 struct scrStringDebugGlob_t
 {

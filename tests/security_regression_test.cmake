@@ -3586,15 +3586,23 @@ require_source_contains(
 require_source_contains(
     "script/scr_stringlist.cpp"
     "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
-			Com_Error(ERR_DROP, \"exceeded maximum number of script strings (increase STRINGLIST_SIZE)\");
-			return 0;"
-    "primary string-table exhaustion must release the hash lock before dropping")
+			return SL_InternStatus::PrimaryTableCapacityNoChange;"
+    "primary string-table exhaustion must release the hash lock and return without reporting")
 require_source_contains(
     "script/scr_stringlist.cpp"
     "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
-				Com_Error(ERR_DROP, \"exceeded maximum number of script strings\");
-				return 0;"
-    "relocated string-table exhaustion must release the hash lock before dropping")
+				return SL_InternStatus::RelocatedTableCapacityNoChange;"
+    "relocated string-table exhaustion must release the hash lock and return without reporting")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "case SL_InternStatus::PrimaryTableCapacityNoChange:
+		Com_Error(ERR_DROP, \"exceeded maximum number of script strings (increase STRINGLIST_SIZE)\");"
+    "the legacy wrapper must retain the primary-table exhaustion report")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "case SL_InternStatus::RelocatedTableCapacityNoChange:
+		Com_Error(ERR_DROP, \"exceeded maximum number of script strings\");"
+    "the legacy wrapper must retain the relocated-table exhaustion report")
 require_source_contains(
     "script/scr_stringlist.cpp"
     "// Account the old owner before a zero transition can return the memory-tree
@@ -3605,10 +3613,13 @@ require_source_contains(
     "old debug ownership must be removed before a zero-reference slot can be reused")
 require_source_contains(
     "script/scr_stringlist.cpp"
-    "// Serialize the last decrement with hash lookup/unlink. Once zero is
-	// published, interning cannot observe the entry until it has been removed.
-	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);"
-    "the final string reference must be published while owning the hash lock")
+    "void SL_RemoveRefToStringOfSize(uint32_t stringValue, uint32_t len)
+{
+	PROF_SCOPED(\"SL_RemoveRefToStringOfSize\");
+
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	RefString* refStr = GetRefString(stringValue);"
+    "the legacy decrement must own the hash lock before lookup and publication")
 require_source_not_matches(
     "script/scr_stringlist.cpp"
     "(refStr|refString)[ \t\r\n]*->[ \t\r\n]*(refCount|user|byteLen)"
