@@ -46,7 +46,9 @@ work item changes. Do not create session-specific handoff files.
   walk before publishing a plan and adds failure-atomic ordinary/database-release regressions for out-of-range forward
   and corrupt sentinel-tail links; the independent audit also removed inactive-union-member score decoding. The complete
   GCC Debug and Clang Release suites are again **103/103** green, as are focused `RELEASE_ASSERTS`, ASan+UBSan, i386,
-  source, and security gates. Exact-head replacement CI and review-thread resolution remain the publication gates.
+  source, and security gates. Exact review-hardening head `26af1635` passed all nine jobs in run **29617124164**, and both
+  correctness threads are resolved. The fresh review independently confirmed the two production performance P2s
+  described below; those unresolved findings, rather than correctness or platform CI, are now the publication gate.
 - This candidate is deliberately not the whole-zone controller. The raw database user-4/user-8 paths and global
   4 -> 8 sweep still bypass the serializer; the adapter has no production caller; and a token is not yet bound to one
   journal/key from initialization through terminal finalization/rollback. A final audit corrected an earlier scope
