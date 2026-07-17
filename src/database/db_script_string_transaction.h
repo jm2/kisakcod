@@ -31,6 +31,9 @@ public:
     // block until the owning transaction reaches Finish.
     [[nodiscard]] bool active() const noexcept;
     [[nodiscard]] std::uint32_t serial() const noexcept;
+    // Includes reserved-byte validation so a containing controller cannot
+    // silently reuse or discard a corrupted inactive token.
+    [[nodiscard]] bool canonicalInactive() const noexcept;
 
 private:
     friend ScriptStringTransactionStatus TryBeginScriptStringTransaction(

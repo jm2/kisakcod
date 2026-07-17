@@ -154,6 +154,7 @@ foreach(_marker IN ITEMS
     "zone_load::ZoneLoadContextKey key_{};"
     "script_string_journal::ScriptStringJournal *journal_ = nullptr;"
     "script_string_journal::ScriptStringJournalEntry *storage_ = nullptr;"
+    "validateAbandonedReceipt() const noexcept;"
     "RUNTIME_SIZE(ZoneScriptStringOwnershipController, 0x40, 0x58);"
     "UnpublishingCallback,"
     "Busy,")
@@ -245,6 +246,35 @@ require_contains(
     "controller->detachJournalBacking(); controller->phase_ = ZoneScriptStringOwnershipPhase::OwnershipRolledBack;"
     "journal backing detached before full cleanup")
 
+extract_slice(
+    _source
+    "validateAbandonedReceipt() const noexcept"
+    "void ZoneScriptStringOwnershipController::detachJournalBacking() noexcept"
+    _abandoned_receipt
+    "abandoned receipt validation")
+foreach(_marker IN ITEMS
+    "phase_ != ZoneScriptStringOwnershipPhase::Abandoned"
+    "journal_ != nullptr || storage_ != nullptr"
+    "rollbackContext_ != nullptr || ensureUnreachable_ != nullptr"
+    "performCleanup_ != nullptr || storageCapacity_ != 0"
+    "expectedCount_ != 0 || transactionSerial_ != 0"
+    "!transaction_.canonicalInactive()"
+    "resumePhase_ != ZoneScriptStringOwnershipPhase::Empty"
+    "reserved_[0] != 0 || reserved_[1] != 0"
+    "!lifecycle_ || !lifecycle_->initialized()"
+    "lifecycle_->generation() != key_.generation"
+    "ZoneScriptStringOwnershipStatus::StaleKey"
+    "lifecycle::ZoneLoadContextPhase::Empty"
+    "lifecycle::ZoneLoadTerminalKind::Abandoned")
+    require_contains(
+        _abandoned_receipt "${_marker}" "complete abandoned receipt")
+endforeach()
+require_literal_count(
+    _source
+    "controller->validateAbandonedReceipt();"
+    2
+    "terminal retry and reset share receipt authentication")
+
 # Staging may expose an acquired ID only after the journal has appended the
 # reference record successfully. All failed controller and adapter operations
 # preserve the caller's output.
@@ -323,7 +353,10 @@ foreach(_marker IN ITEMS
     "TestPartialRollbackAndCleanupRetry();"
     "TestBindingAndForeignThreadRejection();"
     "TestBeginFailureReleasesSerializer();"
+    "TestAbandonedReceiptAuthentication();"
     "driver.beginReentryStatus == ZoneScriptStringOwnershipStatus::Busy"
-    "foreignOutput == 0x12345678u")
+    "foreignOutput == 0x12345678u"
+    "nextKey.generation != originalKey.generation"
+    "== ZoneScriptStringOwnershipStatus::StaleKey")
     require_contains(_fixture "${_marker}" "controller regression coverage")
 endforeach()

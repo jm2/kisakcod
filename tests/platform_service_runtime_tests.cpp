@@ -48,9 +48,11 @@ bool TestScriptStringTransactionSerializer()
     }
 
     ScriptStringTransactionToken owner;
-    if (transaction::TryBeginScriptStringTransaction(&owner)
+    if (!owner.canonicalInactive()
+        || transaction::TryBeginScriptStringTransaction(&owner)
             != ScriptStringTransactionStatus::Success
         || !owner.active() || owner.serial() == 0
+        || owner.canonicalInactive()
         || !transaction::OwnsScriptStringTransaction(owner))
     {
         std::fputs("script-string transaction did not publish its owner\n", stderr);
@@ -61,7 +63,8 @@ bool TestScriptStringTransactionSerializer()
     ScriptStringTransactionToken nested;
     if (transaction::TryBeginScriptStringTransaction(&nested)
             != ScriptStringTransactionStatus::Busy
-        || nested.active() || nested.serial() != 0)
+        || nested.active() || nested.serial() != 0
+        || !nested.canonicalInactive())
     {
         std::fputs("recursive script-string transaction was not rejected\n", stderr);
         return false;
@@ -116,6 +119,7 @@ bool TestScriptStringTransactionSerializer()
     }
     contender.join();
     if (owner.active() || owner.serial() != 0
+        || !owner.canonicalInactive()
         || contenderBeginStatus.load(std::memory_order_acquire)
             != static_cast<int>(ScriptStringTransactionStatus::Success)
         || contenderFinishStatus.load(std::memory_order_acquire)
@@ -182,7 +186,8 @@ bool TestScriptStringTransactionSerializer()
             != ScriptStringTransactionStatus::Success
         || owner.serial() == 0 || owner.serial() == firstSerial
         || transaction::FinishScriptStringTransaction(&owner)
-            != ScriptStringTransactionStatus::Success)
+            != ScriptStringTransactionStatus::Success
+        || !owner.canonicalInactive())
     {
         std::fputs("script-string transaction token could not be reused\n", stderr);
         return false;

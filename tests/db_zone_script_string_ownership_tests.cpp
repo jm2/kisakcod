@@ -581,6 +581,92 @@ void TestBeginFailureReleasesSerializer()
         controller::TryFinishZoneScriptStringAbandonment(&accepted)
         == ZoneScriptStringOwnershipStatus::Success);
 }
+
+void TestAbandonedReceiptAuthentication()
+{
+    ResetBackend();
+    Fixture fixture;
+    OWNERSHIP_CHECK(fixture.begin(0, 8));
+    RollbackDriver driver{};
+    OWNERSHIP_CHECK(
+        controller::TryBeginZoneScriptStringRollback(
+            &fixture.ownership,
+            MakeRollbackCallbacks(&driver))
+        == ZoneScriptStringOwnershipStatus::Success);
+    OWNERSHIP_CHECK(
+        controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::Success);
+    OWNERSHIP_CHECK(
+        controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::Success);
+
+    ScriptStringJournal swappedJournal{};
+    ZoneScriptStringOwnershipControllerTestAccess::SetJournal(
+        &fixture.ownership, &swappedJournal);
+    OWNERSHIP_CHECK(
+        controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::InvalidState);
+    OWNERSHIP_CHECK(
+        controller::TryResetAbandonedZoneScriptStringOwnership(
+            &fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::InvalidState);
+    OWNERSHIP_CHECK(
+        fixture.ownership.phase()
+        == ZoneScriptStringOwnershipPhase::Abandoned);
+    OWNERSHIP_CHECK(fixture.ownership.key() == fixture.key);
+    ZoneScriptStringOwnershipControllerTestAccess::SetJournal(
+        &fixture.ownership, nullptr);
+
+    ZoneScriptStringOwnershipControllerTestAccess::SetStorage(
+        &fixture.ownership, fixture.storage.data());
+    OWNERSHIP_CHECK(
+        controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::InvalidState);
+    OWNERSHIP_CHECK(
+        controller::TryResetAbandonedZoneScriptStringOwnership(
+            &fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::InvalidState);
+    OWNERSHIP_CHECK(
+        fixture.ownership.phase()
+        == ZoneScriptStringOwnershipPhase::Abandoned);
+    ZoneScriptStringOwnershipControllerTestAccess::SetStorage(
+        &fixture.ownership, nullptr);
+
+    const lifecycle::ZoneLoadContextKey originalKey = fixture.key;
+    ZoneScriptStringOwnershipControllerTestAccess::SetKey(
+        &fixture.ownership,
+        {originalKey.generation + 1, originalKey.slot, 0});
+    OWNERSHIP_CHECK(
+        controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::StaleKey);
+    OWNERSHIP_CHECK(
+        controller::TryResetAbandonedZoneScriptStringOwnership(
+            &fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::StaleKey);
+    OWNERSHIP_CHECK(
+        fixture.ownership.phase()
+        == ZoneScriptStringOwnershipPhase::Abandoned);
+    ZoneScriptStringOwnershipControllerTestAccess::SetKey(
+        &fixture.ownership, originalKey);
+
+    lifecycle::ZoneLoadContextKey nextKey{};
+    OWNERSHIP_CHECK(
+        lifecycle::TryClaimZoneLoadContext(
+            &fixture.lifecycleSlot, &nextKey)
+        == lifecycle::ZoneLoadContextStatus::Success);
+    OWNERSHIP_CHECK(nextKey.generation != originalKey.generation);
+    OWNERSHIP_CHECK(
+        controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::StaleKey);
+    OWNERSHIP_CHECK(
+        controller::TryResetAbandonedZoneScriptStringOwnership(
+            &fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::StaleKey);
+    OWNERSHIP_CHECK(
+        fixture.ownership.phase()
+        == ZoneScriptStringOwnershipPhase::Abandoned);
+    OWNERSHIP_CHECK(fixture.ownership.key() == originalKey);
+}
 } // namespace ownership_test
 
 namespace script_string
@@ -644,6 +730,7 @@ int main()
     TestPartialRollbackAndCleanupRetry();
     TestBindingAndForeignThreadRejection();
     TestBeginFailureReleasesSerializer();
+    TestAbandonedReceiptAuthentication();
     if (failures != 0)
     {
         std::fprintf(

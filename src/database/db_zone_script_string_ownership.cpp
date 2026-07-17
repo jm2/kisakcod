@@ -203,6 +203,7 @@ bool ZoneScriptStringOwnershipController::isEmptyCanonical() const noexcept
         && rollbackContext_ == nullptr && ensureUnreachable_ == nullptr
         && performCleanup_ == nullptr && storageCapacity_ == 0
         && expectedCount_ == 0 && transactionSerial_ == 0
+        && transaction_.canonicalInactive()
         && resumePhase_ == ZoneScriptStringOwnershipPhase::Empty
         && reserved_[0] == 0 && reserved_[1] == 0;
 }
@@ -338,6 +339,38 @@ ZoneScriptStringOwnershipController::validateOwned() const noexcept
                 && lifecycle_->generation() != key_.generation
             ? ZoneScriptStringOwnershipStatus::StaleKey
             : ZoneScriptStringOwnershipStatus::InvalidState;
+    }
+    return ZoneScriptStringOwnershipStatus::Success;
+}
+
+ZoneScriptStringOwnershipStatus
+ZoneScriptStringOwnershipController::validateAbandonedReceipt() const noexcept
+{
+    if (phase_ != ZoneScriptStringOwnershipPhase::Abandoned)
+        return ZoneScriptStringOwnershipStatus::InvalidPhase;
+    if (journal_ != nullptr || storage_ != nullptr
+        || rollbackContext_ != nullptr || ensureUnreachable_ != nullptr
+        || performCleanup_ != nullptr || storageCapacity_ != 0
+        || expectedCount_ != 0 || transactionSerial_ != 0
+        || !transaction_.canonicalInactive()
+        || resumePhase_ != ZoneScriptStringOwnershipPhase::Empty
+        || reserved_[0] != 0 || reserved_[1] != 0)
+    {
+        return ZoneScriptStringOwnershipStatus::InvalidState;
+    }
+    if (!static_cast<bool>(key_))
+        return ZoneScriptStringOwnershipStatus::InvalidKey;
+    if (!lifecycle_ || !lifecycle_->initialized())
+        return ZoneScriptStringOwnershipStatus::InvalidState;
+    if (lifecycle_->slotIndex() != key_.slot)
+        return ZoneScriptStringOwnershipStatus::InvalidKey;
+    if (lifecycle_->generation() != key_.generation)
+        return ZoneScriptStringOwnershipStatus::StaleKey;
+    if (lifecycle_->phase() != lifecycle::ZoneLoadContextPhase::Empty
+        || lifecycle_->terminalKind()
+            != lifecycle::ZoneLoadTerminalKind::Abandoned)
+    {
+        return ZoneScriptStringOwnershipStatus::InvalidState;
     }
     return ZoneScriptStringOwnershipStatus::Success;
 }
@@ -780,7 +813,7 @@ ZoneScriptStringOwnershipStatus TryFinishZoneScriptStringAbandonment(
     if (validation == ZoneScriptStringOwnershipStatus::InvalidPhase
         && controller->phase_ == ZoneScriptStringOwnershipPhase::Abandoned)
     {
-        return ZoneScriptStringOwnershipStatus::Success;
+        return controller->validateAbandonedReceipt();
     }
     if (validation != ZoneScriptStringOwnershipStatus::Success)
         return validation;
@@ -842,20 +875,10 @@ ZoneScriptStringOwnershipStatus TryResetAbandonedZoneScriptStringOwnership(
 {
     if (!controller)
         return ZoneScriptStringOwnershipStatus::InvalidArgument;
-    if (controller->phase_ != ZoneScriptStringOwnershipPhase::Abandoned)
-        return ZoneScriptStringOwnershipStatus::InvalidPhase;
-    if (controller->transactionSerial_ != 0 || !controller->lifecycle_
-        || !static_cast<bool>(controller->key_)
-        || controller->lifecycle_->phase()
-            != lifecycle::ZoneLoadContextPhase::Empty
-        || controller->lifecycle_->terminalKind()
-            != lifecycle::ZoneLoadTerminalKind::Abandoned
-        || controller->lifecycle_->slotIndex() != controller->key_.slot
-        || controller->lifecycle_->generation()
-            != controller->key_.generation)
-    {
-        return ZoneScriptStringOwnershipStatus::InvalidState;
-    }
+    const ZoneScriptStringOwnershipStatus validation =
+        controller->validateAbandonedReceipt();
+    if (validation != ZoneScriptStringOwnershipStatus::Success)
+        return validation;
 
     controller->reset();
     return ZoneScriptStringOwnershipStatus::Success;

@@ -180,6 +180,8 @@ private:
 #endif
 
     [[nodiscard]] ZoneScriptStringOwnershipStatus validateOwned() const noexcept;
+    [[nodiscard]] ZoneScriptStringOwnershipStatus
+    validateAbandonedReceipt() const noexcept;
     [[nodiscard]] bool isEmptyCanonical() const noexcept;
     [[nodiscard]] bool bindingMatchesCurrentPhase() const noexcept;
     static zone_load::ZoneLoadCleanupCallbackStatus PerformBoundCleanup(
