@@ -105,6 +105,7 @@ set(GAME
     "${SRC_DIR}/game/actor_generic.h"
     "${SRC_DIR}/game/actor_grenade.cpp"
     "${SRC_DIR}/game/actor_grenade.h"
+    "${SRC_DIR}/game/actor_grenade_prediction_cache.h"
     "${SRC_DIR}/game/actor_lookat.cpp"
     "${SRC_DIR}/game/actor_lookat.h"
     "${SRC_DIR}/game/actor_navigation.cpp"

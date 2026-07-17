@@ -551,7 +551,7 @@ enum MissileFlightMode : __int32
     MISSILEFLIGHTMODE_DIRECT = 0x1,
 };
 
-enum team_t;
+enum team_t : __int32;
 #ifdef KISAK_MP
 struct corpse_ent_t // sizeof=0x4
 {                                       // ...
@@ -573,7 +573,16 @@ struct missile_ent_t // sizeof=0x3C
     MissileStage stage;
     MissileFlightMode flightMode;
 };
-static_assert(sizeof(missile_ent_t) == 0x3C);
+RUNTIME_SIZE(missile_ent_t, 0x3C, 0x3C);
+RUNTIME_OFFSET(missile_ent_t, time, 0x0, 0x0);
+RUNTIME_OFFSET(missile_ent_t, timeOfBirth, 0x4, 0x4);
+RUNTIME_OFFSET(missile_ent_t, travelDist, 0x8, 0x8);
+RUNTIME_OFFSET(missile_ent_t, surfaceNormal, 0xC, 0xC);
+RUNTIME_OFFSET(missile_ent_t, team, 0x18, 0x18);
+RUNTIME_OFFSET(missile_ent_t, curvature, 0x1C, 0x1C);
+RUNTIME_OFFSET(missile_ent_t, targetOffset, 0x28, 0x28);
+RUNTIME_OFFSET(missile_ent_t, stage, 0x34, 0x34);
+RUNTIME_OFFSET(missile_ent_t, flightMode, 0x38, 0x38);
 
 enum EntHandler_t : uint8_t
 {
@@ -735,7 +744,7 @@ struct gentity_s // sizeof=0x274
 };
 #elif KISAK_SP
 
-struct missile_ent_t
+struct missile_ent_t // sizeof=0x54
 {
     float predictLandPos[3];
     int predictLandTime;
@@ -751,6 +760,20 @@ struct missile_ent_t
     MissileStage stage;
     MissileFlightMode flightMode;
 };
+RUNTIME_SIZE(missile_ent_t, 0x54, 0x54);
+RUNTIME_OFFSET(missile_ent_t, predictLandPos, 0x0, 0x0);
+RUNTIME_OFFSET(missile_ent_t, predictLandTime, 0xC, 0xC);
+RUNTIME_OFFSET(missile_ent_t, timestamp, 0x10, 0x10);
+RUNTIME_OFFSET(missile_ent_t, time, 0x14, 0x14);
+RUNTIME_OFFSET(missile_ent_t, timeOfBirth, 0x18, 0x18);
+RUNTIME_OFFSET(missile_ent_t, travelDist, 0x1C, 0x1C);
+RUNTIME_OFFSET(missile_ent_t, surfaceNormal, 0x20, 0x20);
+RUNTIME_OFFSET(missile_ent_t, team, 0x2C, 0x2C);
+RUNTIME_OFFSET(missile_ent_t, thrownBack, 0x30, 0x30);
+RUNTIME_OFFSET(missile_ent_t, curvature, 0x34, 0x34);
+RUNTIME_OFFSET(missile_ent_t, targetOffset, 0x40, 0x40);
+RUNTIME_OFFSET(missile_ent_t, stage, 0x4C, 0x4C);
+RUNTIME_OFFSET(missile_ent_t, flightMode, 0x50, 0x50);
 
 struct gentity_s_tag
 {

@@ -268,21 +268,34 @@ work item changes. Do not create session-specific handoff files.
   Gemini's null-goal and Codex's current-node-filter findings were fixed, exact-head Codex re-review was clean, no
   unresolved threads remained, and the PR squash-merged as `38025fa5`. Authoritative post-merge master run
   **29556169431** passed all nine jobs.
-- The current focused upstream-reconciliation candidate adapts the vehicle material-timing correction from `b31ea047`
-  without upstream's sentinel regression. Only exact value `-1` disables tread animation; zero and other negative values
-  remain valid, including reverse motion. A portable helper performs defined modular 32-bit advancement/interpolation,
-  skips the reserved value in the direction of travel, and returns the renderer default when either snapshot endpoint is
-  disabled. SP and MP producers and consumers share the contract, and SP uses the established `+32` lighting origin.
-  The legacy producer-side `forcedMaterialSpeed` float-to-int range risk remains explicitly deferred.
-- Remaining upstream content stays deferred for subsystem-specific adaptation and focused tests: split missile union,
-  target-table, and HUD fixes from `d592fb4a`; select only individually justified remaining fixlets from regression-prone
-  omnibus `77404c61`; and leave dynent save/load `ba3c79f3` deferred until bounded transactional Disk32/native-sidecar
-  semantics exist.
-- Current vehicle-timing candidate validation after rebasing onto the navigation merge: fresh strict GCC 16 and Clang 22
-  builds pass all **90/90** tests, including executable timing and source-contract tests; GCC/Clang UBSan helper runs
-  pass; mutation checks reject the prior MP negative-value disable rule and raw SP/MP accumulator regressions;
-  `git diff --check` is clean; and an independent semantic/provenance audit found no blocker. Hosted Windows SP/MP
-  production compilation and automated review remain the PR gates.
+- Merged vehicle material-timing reconciliation checkpoint: PR #42 adapted `b31ea047` without upstream's sentinel
+  regression. Only exact value `-1` disables tread animation; zero and other negative values remain valid, including
+  reverse motion. A shared helper performs defined modular 32-bit advancement/interpolation, skips the reserved value in
+  the direction of travel, and returns the renderer default when either snapshot endpoint is disabled. SP/MP producers
+  and consumers share the contract, and SP uses the established `+32` lighting origin. Review/CI hardening replaced the
+  NaN self-comparison with `std::isnan` and made all numeric-limit calls safe from Windows `min`/`max` macros. Exact final
+  head `614bbabc` passed all nine jobs in run **29557006806**; exact-head Codex found no major issue, both Gemini threads
+  were applied/resolved, and the PR squash-merged as `599dbb88`. Authoritative post-merge run **29557583267** passed all
+  nine jobs. The producer-side `forcedMaterialSpeed` float-to-int range risk remains explicitly deferred.
+- The current focused upstream-reconciliation candidate manually adapts only the missile-field part of `d592fb4a` and the
+  complete grenade-prediction-cache correction from `77404c61`. MP and SP retain exact 0x3c/0x54 missile layouts while
+  typed fields replace mover/item aliases for birth/event time, travel distance, surface normal, curvature, target
+  offset, script setters, team selection, and item-index publication. SP prediction validity now uses only
+  `predictLandTime`, so `{0,0,0}` remains a valid landing position; detach and bounce invalidate that same sentinel before
+  reuse. The fixed-width `team_t` forward declaration is Clang-correct, the new cache header is in the SP manifest, and
+  dependency-light MP/SP compile probes pin every layout and offset.
+- Current missile candidate validation after rebasing onto the vehicle-timing merge: strict GCC 16 and Clang 22 builds
+  each pass all **94/94** tests. Both variant compile probes, the executable cache suite, the function-scoped source
+  contract, `git diff --check`, and independent semantic/provenance audits are clean. Mutations that move the dud sentinel
+  from `travelDist`, invalidate `timestamp` instead of `predictLandTime`, or mismatch `team_t`'s underlying type are
+  rejected. The PR gate compiles the shared/MP/dedicated production paths and runs the cache/layout/source contracts on
+  measured Windows x86 plus portable Windows amd64/ARM64. SP production translation units remain unbuilt because SP is
+  outside the current project scope and every CI job deliberately configures `KISAK_BUILD_SP=OFF`.
+- Remaining upstream content stays deferred for subsystem-specific adaptation and focused tests: build a pointer-safe,
+  strictly validated 32-entry server target table before the bounded vehicle/Javelin HUD consumers; select only the four
+  already audited safe fixlets from regression-prone omnibus `77404c61`; and leave dynent save/load `ba3c79f3` deferred
+  until bounded transactional Disk32/native-sidecar semantics exist. Do not import d592's remaining raw-pointer-bound
+  `CG_GetTargetPos` loop or its unrelated weapon-fire changes.
 - Current fast-file widening checkpoint: one canonical portable `FxEffectDef`/`FxElemDef`/visual/trail runtime type family
   now replaces the renderer-only duplicate definition boundary. The effect converter validates exact Disk32 graph
   provenance, freezes each bounded resolver request group before callbacks, snapshots the resolver descriptor, binds
@@ -1179,12 +1192,15 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Finish review of the focused vehicle material-timing candidate and merge only after all nine CI jobs and automated
-   review are clean. Preserve exact `-1` sentinel semantics, defined forward/reverse wrap, shared SP/MP integration,
-   explicit partial-`b31ea047` provenance, executable helper tests, and the production source contract.
-2. Reconcile the remaining upstream content one subsystem at a time with focused tests: missile union/layout and grenade
-   cache aliases; pointer-safe target tables; bounded HUD consumers; then only audited remaining `77404c61` fixlets.
-   Keep dynent save/load deferred until its Disk32/native-sidecar transaction is designed.
+1. Publish the focused missile union/layout and SP grenade-cache candidate only after hosted shared/MP/dedicated
+   compilation, measured Windows x86 and portable Windows MP/SP cache/layout contracts, all nine CI jobs, automated
+   review, and thread-aware cleanup are green. Preserve exact variant layouts, typed field access, time-sentinel cache
+   validity, explicit partial-upstream provenance, dual-profile compile probes, and mutation-resistant source contracts.
+2. Reconcile the remaining upstream content one subsystem at a time: first replace the server target table's truncated
+   pointer/raw-28-byte walks with bounded typed 32-entry storage plus strict entity-index and flag-lifecycle validation;
+   then harden bounded vehicle/Javelin HUD consumers without restoring d592's pointer-cast loop; then publish only the four
+   already audited safe `77404c61` fixlets. Keep dynent save/load deferred until its Disk32/native-sidecar transaction is
+   designed, and handle the separately identified grenade safe-radius comparison in its own focused correctness batch.
 3. Build the constructed whole-zone ownership table and no-report script-string adapter layer around the external
    lifecycle slot and completed journal. The adapter must acquire one ordinary reference per occurrence, report the exact
    claimed-versus-duplicate database-user transfer outcome, remove ordinary references, and remove only the targeted

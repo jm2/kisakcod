@@ -198,19 +198,28 @@ Completed foundation work:
   in run **29555716499**; both substantive review findings were fixed, exact-head Codex re-review was clean, no unresolved
   threads remained, and the PR squash-merged as `38025fa5`. Authoritative post-merge master run **29556169431** passed
   all nine jobs;
-- the current focused reconciliation candidate adapts `b31ea047` vehicle material timing while preserving exact disabled
-  value `-1`; zero and other negative states remain valid for reverse motion. A shared portable helper provides defined
+- PR #42 merged the focused `b31ea047` vehicle material-timing adaptation while preserving exact disabled value `-1`;
+  zero and other negative states remain valid for reverse motion. Shared SP/MP producer/consumer logic performs defined
   modular 32-bit advancement/interpolation, skips the reserved value in the direction of travel, and uses renderer default
-  zero if either snapshot endpoint is disabled. Both SP/MP producers and consumers use the contract, and SP adopts the
-  existing MP `+32` lighting origin. The legacy producer float-to-int range risk remains deferred;
-- deferred upstream content requires subsystem-specific adaptation and focused tests. Missile union, target-table, and
-  HUD changes from `d592fb4a` must be split; remaining omnibus `77404c61` content must be reduced to individually justified
-  fixlets; and dynent save/load `ba3c79f3` remains deferred until it has bounded transactional Disk32/native-sidecar
-  semantics;
-- fresh strict GCC 16 and Clang 22 builds of the rebased vehicle-timing candidate pass all **90/90** tests. Executable
-  timing tests, source contracts, GCC/Clang UBSan helper runs, mutation checks, `git diff --check`, and an independent
-  semantic/provenance audit are clean; hosted Windows SP/MP production compilation and automated review remain the PR
-  gates;
+  zero if either snapshot endpoint is disabled. Windows macro-safe numeric limits and standard NaN classification were
+  added during review. Exact final head `614bbabc`, squash commit `599dbb88`, and runs **29557006806**/**29557583267**
+  passed all nine jobs; exact-head Codex was clean and both Gemini threads were resolved. The legacy producer float-to-int
+  range risk remains deferred;
+- the current focused candidate splits out only missile union/layout corrections from `d592fb4a` plus the complete SP
+  grenade-cache alias correction from `77404c61`. Exact MP 0x3c and SP 0x54 layouts, typed missile access, variant-aware
+  teams, script target setters, item publication, and time-sentinel cache validity replace overlapping mover/item aliases.
+  The fixed-width `team_t` declaration, SP manifest, dual-profile compile probes, executable cache tests, and function-
+  scoped mutation-resistant source contracts cover the portability boundary;
+- fresh strict GCC 16 and Clang 22 builds of the rebased missile candidate each pass all **94/94** tests. The known dud-
+  sentinel, bounce-invalidation, and enum-width mutations are rejected; `git diff --check` and independent audits are
+  clean. The PR gate compiles shared/MP/dedicated production, explicitly runs the new contracts on measured Windows x86,
+  and also covers them on portable Windows amd64/ARM64. SP production translation units remain unbuilt while SP is
+  deferred and every CI job uses `KISAK_BUILD_SP=OFF`; automated review remains a separate gate;
+- deferred upstream content requires subsystem-specific adaptation: a bounded typed server target table with strict load
+  validation and flag lifecycle must precede hardened vehicle/Javelin HUD consumers; only four separately audited safe
+  `77404c61` fixlets remain selected; and dynent save/load `ba3c79f3` stays deferred until it has bounded transactional
+  Disk32/native-sidecar semantics. The remaining d592 pointer-cast target loop and unrelated weapon-fire changes stay
+  excluded;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with

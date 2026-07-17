@@ -1248,7 +1248,7 @@ void __cdecl G_SpawnItem(gentity_s *ent, const gitem_s *item)
 #ifdef KISAK_MP
     ent->r.contents = 1079771400;
     ent->r.contents |= 0x200000u;
-    ent->s.index.brushmodel = LOWORD(ent->missile.travelDist);
+    ent->s.index.brushmodel = static_cast<uint16_t>(ent->item[0].index);
 #elif KISAK_SP
     ent->r.contents = 1081868552;
     ent->s.index.item = ent->item->index;
