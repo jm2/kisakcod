@@ -253,21 +253,28 @@ work item changes. Do not create session-specific handoff files.
   Exact branch head `dd0cfee9` passed all nine jobs in run **29553056639**; Gemini and exact-head Codex review were clean,
   no review threads remained, and the PR squash-merged as `f1007fbb`. Authoritative post-merge master run
   **29553509114** passed all nine jobs.
-- The current focused upstream-reconciliation candidate adapts only the radius-damage correction from `d592fb4a`: both
-  unobstructed trace paths now return success instead of breaking out of the sample loop and falling through to the
-  failure return. A portable source contract extracts both branches, rejects either `break` regression, and pins the
-  sole failure return after loop exhaustion. This SP translation unit is not compiled by the current engine CI matrix,
-  so the contract is honest source-level coverage rather than an executable gameplay test.
-- Remaining upstream content stays deferred for subsystem-specific adaptation and focused tests: split missile and HUD
-  fixes from `d592fb4a`; correct the navigation change from `3f256654` without importing its squared-Z defect; preserve
-  the negative material-time sentinel when adapting `b31ea047`; select only individually justified fixlets from
-  regression-prone omnibus `77404c61`; and leave dynent save/load `ba3c79f3` deferred until bounded transactional
-  Disk32/native-sidecar semantics exist.
-- Current radius-damage candidate validation: fresh strict GCC 16 and Clang 22 builds pass all **86/86** tests, the
-  source contract passes directly, deliberate mutations of either success return and the loop-exhaustion failure return
-  are rejected, `git diff --check` is clean, and an independent patch/provenance audit found the adapted code
-  byte-identical to the upstream hunk with no unrelated change. Hosted Windows production compilation and automated
-  review remain the PR gates.
+- Merged radius-damage reconciliation checkpoint: PR #40 adapted only the `G_CanRadiusDamageFromPos` correction from
+  `d592fb4a`, so both unobstructed trace paths return success instead of breaking out of the sample loop and falling
+  through to failure. Its mutation-tested portable source contract pins both success branches and the sole
+  loop-exhaustion failure return. Exact branch head `952fa06d` passed all nine jobs in run **29554051839**; Gemini and
+  exact-head Codex review were clean, no review threads remained, and the PR squash-merged as `dbc84ec9`. Authoritative
+  post-merge master run **29554663451** passed all nine jobs.
+- The current focused upstream-reconciliation candidate manually adapts the justified navigation corrections from
+  `3f256654` and the navigation-only parts of `77404c61`. Constrained A* searches now forward the real goal position,
+  apply ignore filtering at all five newly affected call sites, and use a strict full-XYZ distance plus visibility for
+  line-of-sight goals. Away-from-plane lookup receives the actual plane normal. Both cylinder policies retain a
+  three-component origin and calculate vertical distance from `origin.z`, explicitly correcting the upstream
+  squared-radius-as-Z defect. Shared geometry is isolated in a portable helper with executable boundary/nonzero-XYZ
+  tests, while a source contract pins the SP integration. Unrelated `fMaxNodeDist` and behaviorally identical goal API
+  churn remain excluded.
+- Remaining upstream content stays deferred for subsystem-specific adaptation and focused tests: preserve the exact
+  disabled material-time sentinel `-1` when adapting `b31ea047`; split missile and HUD fixes from `d592fb4a`; select only
+  individually justified remaining fixlets from regression-prone omnibus `77404c61`; and leave dynent save/load
+  `ba3c79f3` deferred until bounded transactional Disk32/native-sidecar semantics exist.
+- Current navigation candidate validation: fresh strict GCC 16 and Clang 22 builds pass all **88/88** tests, including
+  the executable geometry and source-contract tests; a Clang-CL header syntax check passes; `git diff --check` is clean;
+  and an independent semantic/provenance audit found no unintended upstream churn or behavioral blocker. Hosted Windows
+  SP production compilation and automated review remain the PR gates.
 - Current fast-file widening checkpoint: one canonical portable `FxEffectDef`/`FxElemDef`/visual/trail runtime type family
   now replaces the renderer-only duplicate definition boundary. The effect converter validates exact Disk32 graph
   provenance, freezes each bounded resolver request group before callbacks, snapshots the resolver descriptor, binds
@@ -1164,12 +1171,12 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Finish review of the focused radius-damage candidate and merge only after all nine CI jobs and automated review are
-   clean. Preserve explicit partial-`d592fb4a` provenance and the mutation-tested source contract because the affected
-   SP translation unit is outside the present engine compile matrix.
-2. Reconcile the remaining upstream content one subsystem at a time with focused tests: corrected three-component
-   navigation without the squared-Z defect; sentinel-correct tank material timing; missile/HUD fixes; then only audited
-   `77404c61` fixlets. Keep dynent save/load deferred until its Disk32/native-sidecar transaction is designed.
+1. Finish review of the focused actor-navigation candidate and merge only after all nine CI jobs and automated review are
+   clean. Preserve explicit `3f256654`/`77404c61` provenance, the corrected three-component cylinder geometry, executable
+   helper tests, and the SP integration source contract.
+2. Reconcile the remaining upstream content one subsystem at a time with focused tests: sentinel-correct tank material
+   timing; missile/HUD fixes; then only audited remaining `77404c61` fixlets. Keep dynent save/load deferred until its
+   Disk32/native-sidecar transaction is designed.
 3. Build the constructed whole-zone ownership table and no-report script-string adapter layer around the external
    lifecycle slot and completed journal. The adapter must acquire one ordinary reference per occurrence, report the exact
    claimed-versus-duplicate database-user transfer outcome, remove ordinary references, and remove only the targeted
