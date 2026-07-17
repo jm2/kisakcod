@@ -277,25 +277,25 @@ work item changes. Do not create session-specific handoff files.
   head `614bbabc` passed all nine jobs in run **29557006806**; exact-head Codex found no major issue, both Gemini threads
   were applied/resolved, and the PR squash-merged as `599dbb88`. Authoritative post-merge run **29557583267** passed all
   nine jobs. The producer-side `forcedMaterialSpeed` float-to-int range risk remains explicitly deferred.
-- The current focused upstream-reconciliation candidate manually adapts only the missile-field part of `d592fb4a` and the
-  complete grenade-prediction-cache correction from `77404c61`. MP and SP retain exact 0x3c/0x54 missile layouts while
-  typed fields replace mover/item aliases for birth/event time, travel distance, surface normal, curvature, target
-  offset, script setters, team selection, and item-index publication. SP prediction validity now uses only
-  `predictLandTime`, so `{0,0,0}` remains a valid landing position; detach and bounce invalidate that same sentinel before
-  reuse. The fixed-width `team_t` forward declaration is Clang-correct, the new cache header is in the SP manifest, and
-  dependency-light MP/SP compile probes pin every layout and offset.
-- Current missile candidate validation after rebasing onto the vehicle-timing merge: strict GCC 16 and Clang 22 builds
-  each pass all **94/94** tests. Both variant compile probes, the executable cache suite, the function-scoped source
-  contract, `git diff --check`, and independent semantic/provenance audits are clean. Mutations that move the dud sentinel
-  from `travelDist`, invalidate `timestamp` instead of `predictLandTime`, or mismatch `team_t`'s underlying type are
-  rejected. The PR gate compiles the shared/MP/dedicated production paths and runs the cache/layout/source contracts on
-  measured Windows x86 plus portable Windows amd64/ARM64. SP production translation units remain unbuilt because SP is
-  outside the current project scope and every CI job deliberately configures `KISAK_BUILD_SP=OFF`.
+- Merged missile-layout reconciliation checkpoint: PR #43 adapted only the missile-field part of `d592fb4a` and the
+  complete grenade-prediction-cache correction from `77404c61`. MP/SP retain exact 0x3c/0x54 layouts, typed fields replace
+  mover/item aliases, and SP cache validity uses only `predictLandTime`, preserving a valid `{0,0,0}` landing position.
+  Exact final head `d33e80cc` passed all nine jobs in run **29582100035**. Gemini's uninitialized fallback prediction-time
+  finding was fixed by zero-initializing the output and pinning it in the source contract; that thread was resolved,
+  exact-head Codex was clean, and no unresolved threads remained. The PR squash-merged as `2e9c19e7`; authoritative
+  post-merge run **29582679571** passed all nine jobs. SP production translation units remain deliberately unbuilt while
+  every CI job uses `KISAK_BUILD_SP=OFF`.
+- Current safe-fixlet candidate: production commit `77ae66f0` and contract commit `7b146ba0` contain exactly four audited
+  `77404c61` corrections: SP friendly-fire melee suppression, removed-snapshot Shutdown -> Unlink -> FX/DObj teardown,
+  fixed complete/failed objective commands, and both translation-unit-local actor miss caches initialized to `6969.0f`.
+  The three rejected actor-aim behavior changes and every unrelated omnibus hunk remain excluded. Fresh strict GCC 16 and
+  Clang 22 builds each pass **95/95** tests; the standalone source contract rejects all nine mutations, trailers parse,
+  and `git diff --check` is clean.
 - Remaining upstream content stays deferred for subsystem-specific adaptation and focused tests: build a pointer-safe,
-  strictly validated 32-entry server target table before the bounded vehicle/Javelin HUD consumers; select only the four
-  already audited safe fixlets from regression-prone omnibus `77404c61`; and leave dynent save/load `ba3c79f3` deferred
-  until bounded transactional Disk32/native-sidecar semantics exist. Do not import d592's remaining raw-pointer-bound
-  `CG_GetTargetPos` loop or its unrelated weapon-fire changes.
+  strictly validated 32-entry server target table before bounded vehicle/Javelin HUD consumers; handle the separately
+  identified squared-distance-versus-unsquared grenade safe-radius defect in its own batch; and leave dynent save/load
+  `ba3c79f3` deferred until bounded transactional Disk32/native-sidecar semantics exist. Do not import d592's raw-pointer-
+  bound `CG_GetTargetPos` loop or unrelated weapon-fire changes.
 - Current fast-file widening checkpoint: one canonical portable `FxEffectDef`/`FxElemDef`/visual/trail runtime type family
   now replaces the renderer-only duplicate definition boundary. The effect converter validates exact Disk32 graph
   provenance, freezes each bounded resolver request group before callbacks, snapshots the resolver descriptor, binds
@@ -1192,15 +1192,12 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Publish the focused missile union/layout and SP grenade-cache candidate only after hosted shared/MP/dedicated
-   compilation, measured Windows x86 and portable Windows MP/SP cache/layout contracts, all nine CI jobs, automated
-   review, and thread-aware cleanup are green. Preserve exact variant layouts, typed field access, time-sentinel cache
-   validity, explicit partial-upstream provenance, dual-profile compile probes, and mutation-resistant source contracts.
-2. Reconcile the remaining upstream content one subsystem at a time: first replace the server target table's truncated
-   pointer/raw-28-byte walks with bounded typed 32-entry storage plus strict entity-index and flag-lifecycle validation;
-   then harden bounded vehicle/Javelin HUD consumers without restoring d592's pointer-cast loop; then publish only the four
-   already audited safe `77404c61` fixlets. Keep dynent save/load deferred until its Disk32/native-sidecar transaction is
-   designed, and handle the separately identified grenade safe-radius comparison in its own focused correctness batch.
+1. After the already prepared safe-fixlet candidate completes its publication gate, replace the server target table's
+   truncated pointer/raw-28-byte walks with bounded typed 32-entry storage plus strict entity-index and flag-lifecycle
+   validation.
+2. Harden bounded vehicle/Javelin HUD consumers without restoring d592's pointer-cast loop, then fix the separately
+   identified squared-distance-versus-unsquared grenade safe-radius comparison in its own focused batch. Keep dynent
+   save/load deferred until its bounded transactional Disk32/native-sidecar design exists.
 3. Build the constructed whole-zone ownership table and no-report script-string adapter layer around the external
    lifecycle slot and completed journal. The adapter must acquire one ordinary reference per occurrence, report the exact
    claimed-versus-duplicate database-user transfer outcome, remove ordinary references, and remove only the targeted

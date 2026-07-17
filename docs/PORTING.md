@@ -205,21 +205,22 @@ Completed foundation work:
   added during review. Exact final head `614bbabc`, squash commit `599dbb88`, and runs **29557006806**/**29557583267**
   passed all nine jobs; exact-head Codex was clean and both Gemini threads were resolved. The legacy producer float-to-int
   range risk remains deferred;
-- the current focused candidate splits out only missile union/layout corrections from `d592fb4a` plus the complete SP
-  grenade-cache alias correction from `77404c61`. Exact MP 0x3c and SP 0x54 layouts, typed missile access, variant-aware
-  teams, script target setters, item publication, and time-sentinel cache validity replace overlapping mover/item aliases.
-  The fixed-width `team_t` declaration, SP manifest, dual-profile compile probes, executable cache tests, and function-
-  scoped mutation-resistant source contracts cover the portability boundary;
-- fresh strict GCC 16 and Clang 22 builds of the rebased missile candidate each pass all **94/94** tests. The known dud-
-  sentinel, bounce-invalidation, and enum-width mutations are rejected; `git diff --check` and independent audits are
-  clean. The PR gate compiles shared/MP/dedicated production, explicitly runs the new contracts on measured Windows x86,
-  and also covers them on portable Windows amd64/ARM64. SP production translation units remain unbuilt while SP is
-  deferred and every CI job uses `KISAK_BUILD_SP=OFF`; automated review remains a separate gate;
+- PR #43 merged the focused missile union/layout corrections from `d592fb4a` plus the complete SP grenade-cache alias
+  correction from `77404c61`. Exact MP 0x3c/SP 0x54 layouts, typed missile access, variant-aware teams, script setters,
+  item publication, and `predictLandTime` cache validity replace overlapping mover/item aliases. Exact final head
+  `d33e80cc` and squash `2e9c19e7` passed all nine jobs in runs **29582100035** and **29582679571**, respectively.
+  Gemini's uninitialized fallback-time finding was fixed and resolved, exact-head Codex was clean, and no threads
+  remained. SP production translation units remain unbuilt while every CI job uses `KISAK_BUILD_SP=OFF`;
+- the current two-commit safe-fixlet candidate (`77ae66f0`, `7b146ba0`) selects exactly four `77404c61` corrections:
+  SP friendly-fire melee suppression, removed-snapshot Shutdown -> Unlink -> FX/DObj teardown, fixed objective commands,
+  and both internal actor miss caches initialized to `6969.0f`. All unrelated omnibus hunks and three rejected actor-aim
+  behavior changes remain excluded. Fresh strict GCC 16 and Clang 22 builds each pass **95/95** tests, the source contract
+  rejects all nine mutations, trailers parse, and `git diff --check` is clean;
 - deferred upstream content requires subsystem-specific adaptation: a bounded typed server target table with strict load
-  validation and flag lifecycle must precede hardened vehicle/Javelin HUD consumers; only four separately audited safe
-  `77404c61` fixlets remain selected; and dynent save/load `ba3c79f3` stays deferred until it has bounded transactional
-  Disk32/native-sidecar semantics. The remaining d592 pointer-cast target loop and unrelated weapon-fire changes stay
-  excluded;
+  validation and flag lifecycle must precede hardened vehicle/Javelin HUD consumers; the squared-distance-versus-
+  unsquared grenade safe-radius defect stays separate; and dynent save/load `ba3c79f3` remains deferred until it has
+  bounded transactional Disk32/native-sidecar semantics. The d592 pointer-cast target loop and unrelated weapon-fire
+  changes stay excluded;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with

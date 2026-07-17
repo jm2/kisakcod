@@ -1604,6 +1604,13 @@ add_test(
 )
 
 add_test(
+    NAME upstream-safe-fixlets-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_safe_fixlets_source_test.cmake
+)
+
+add_test(
     NAME pool-native-pointer-source-invariants
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
