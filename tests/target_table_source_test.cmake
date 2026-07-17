@@ -123,6 +123,7 @@ foreach(_required IN ITEMS
     "inline bool IsStrictDecimalFloatToken("
     "inline bool TryParseFloatToken("
     "inline bool TryParseFloatTokenFallback("
+    "#if defined(__APPLE__) #include <stdlib.h> #include <xlocale.h> #endif"
     "constexpr std::size_t kMaxNumericTokenLength = 1023;"
     "if (tokenLength == kMaxNumericTokenLength)"
     "token[tokenLength] = '\\0';"

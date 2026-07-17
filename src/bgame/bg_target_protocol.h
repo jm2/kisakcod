@@ -10,6 +10,11 @@
 #include <locale.h>
 #include <system_error>
 
+#if defined(__APPLE__)
+#include <stdlib.h>
+#include <xlocale.h>
+#endif
+
 #include <universal/info_string.h>
 
 namespace bg::target_protocol
