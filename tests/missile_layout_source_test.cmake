@@ -75,6 +75,42 @@ require_count(
     "enum team_t : __int32;"
     1
     "team_t forward declaration fixes its ABI width")
+
+extract_scope(
+    _bg_public
+    "struct missile_ent_t // sizeof=0x3C"
+    "enum EntHandler_t : uint8_t"
+    _mp_missile_layout
+    "MP missile declaration")
+foreach(_vector_field IN ITEMS
+    "float surfaceNormal[3]"
+    "float curvature[3]"
+    "float targetOffset[3]")
+    require_count(
+        _mp_missile_layout
+        "${_vector_field}"
+        1
+        "MP missile vector keeps its exact three-component extent")
+endforeach()
+
+extract_scope(
+    _bg_public
+    "struct missile_ent_t // sizeof=0x54"
+    "struct gentity_s_tag"
+    _sp_missile_layout
+    "SP missile declaration")
+foreach(_vector_field IN ITEMS
+    "float predictLandPos[3]"
+    "float surfaceNormal[3]"
+    "float curvature[3]"
+    "float targetOffset[3]")
+    require_count(
+        _sp_missile_layout
+        "${_vector_field}"
+        1
+        "SP missile vector keeps its exact three-component extent")
+endforeach()
+
 foreach(_layout IN ITEMS
     "RUNTIME_SIZE(missile_ent_t, 0x3C, 0x3C)"
     "RUNTIME_OFFSET(missile_ent_t, time, 0x0, 0x0)"
