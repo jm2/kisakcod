@@ -255,7 +255,8 @@ static_assert(CRITSECT_SYS_EVENT_QUEUE == 0xA);
 static_assert(CRITSECT_FATAL_ERROR == 0xC);
 static_assert(CRITSECT_CINEMATIC_TARGET_CHANGE == 0x13);
 static_assert(CRITSECT_CBUF == 0x15);
-static_assert(CRITSECT_COUNT == 0x16);
+static_assert(CRITSECT_DB_SCRIPT_STRING_TRANSACTION == 0x16);
+static_assert(CRITSECT_COUNT == 0x17);
 #elif defined(KISAK_SP)
 static_assert(THREAD_CONTEXT_MAIN == 0);
 static_assert(THREAD_CONTEXT_BACKEND == 1);
@@ -288,7 +289,8 @@ static_assert(CRITSECT_CBUF == 0x1F);
 static_assert(CRITSECT_SYS_EVENT_QUEUE == 0x20);
 static_assert(CRITSECT_FATAL_ERROR == 0x21);
 static_assert(CRITSECT_GPU_FENCE == 0x22);
-static_assert(CRITSECT_COUNT == 0x23);
+static_assert(CRITSECT_DB_SCRIPT_STRING_TRANSACTION == 0x23);
+static_assert(CRITSECT_COUNT == 0x24);
 #else
 #error "Platform service contract tests require KISAK_MP or KISAK_SP"
 #endif

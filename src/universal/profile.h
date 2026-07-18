@@ -1,5 +1,6 @@
 #pragma once
 #include "q_shared.h"
+#include "kisak_abi.h"
 
 #define PROF_NAME0 "",
 #define PROF_NAME1 "Probe1",
@@ -886,7 +887,7 @@ struct ProfileWritable // sizeof=0x1C
     ProfileAtom total;
     ProfileAtom child;
 };
-volatile struct ProfileReadable // sizeof=0xC
+struct ProfileReadable // sizeof=0xC
 {                                       // ...
     uint32_t hits;
     ProfileAtom total;                  // ...
@@ -914,12 +915,16 @@ struct ProfileProbe // sizeof=0x5A8
     ProfileReadable history[120];       // ...
 };
 
-struct __declspec(align(8)) ProfileReadableGlobal // sizeof=0x38
+// MSVC's long double is the same 64-bit representation as double. Preserve
+// that runtime layout explicitly on LP64 hosts, where native long double is
+// otherwise commonly 16 bytes and would silently change the 432-entry table
+// stride used by the profile renderer.
+struct alignas(8) ProfileReadableGlobal // sizeof=0x38
 {                                       // ...
     int sequence;                       // ...
     uint32_t hits;
-    long double totalClks;
-    long double selfClks;
+    double totalClks;
+    double selfClks;
     ProfileAtom maxSelf;                // ...
     uint32_t maxHits;
     ProfileAtom min;
@@ -930,6 +935,8 @@ struct __declspec(align(8)) ProfileReadableGlobal // sizeof=0x38
     // padding byte
     // padding byte
 };
+RUNTIME_SIZE(ProfileReadableGlobal, 0x38, 0x38);
+static_assert(alignof(ProfileReadableGlobal) == 8);
 struct profile_t // sizeof=0x28
 {                                       // ...
     ProfileWritable write;
