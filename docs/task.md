@@ -69,7 +69,10 @@ work item changes. Do not create session-specific handoff files.
   security, and ABI gates pass locally; the complete corrected-head GCC Release suite is **103/103** green, as are Clang
   and ASan+UBSan focused runs (with leak detection disabled under the traced runner), and strict i386 compilation. An
   independent exact-diff audit found no correctness, bounds, failure-atomicity, stale-scratch, performance, or test defect.
-  Exact-head hosted CI and review remain before publication.
+  Exact implementation head `afaa1385` passed all nine hosted jobs in run **29625150954**, and both performance threads
+  are resolved with final evidence. A fresh hosted Codex request was rejected before review because the repository's
+  code-review usage limit was reached; the clean independent exact-diff audit is therefore the final review evidence.
+  The implementation publication gates are complete.
 - This candidate is deliberately not the whole-zone controller. The raw database user-4/user-8 paths and global
   4 -> 8 sweep still bypass the serializer; the adapter has no production caller; and a token is not yet bound to one
   journal/key from initialization through terminal finalization/rollback. The former release measurements were about
