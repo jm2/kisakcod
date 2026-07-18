@@ -183,11 +183,13 @@ struct KISAK_ALIGNAS(128) scrMemTreeGlob_t // sizeof=0xC0380
                                         // MT_GetSize+55/r ...
     uint16_t head[MEMORY_NODE_BITS + 1];// 0x242E200          // XREF: MT_DumpTree(void)+14B/r
                                         // MT_Init(void)+3A/w ...
-    // padding byte
-    // padding byte
+    uint8_t reservedFieldAlignment[2];
     int totalAlloc;                     // XREF: MT_DumpTree(void):loc_59E783/r
                                         // MT_DumpTree(void)+1FB/r ...
     int totalAllocBuckets;              // XREF: MT_DumpTree(void):loc_59E7AE/r
+    // Keep the intentional 128-byte cache-line extent explicit. MSVC ARM64
+    // otherwise diagnoses the implicit tail padding as C4324 under /WX.
+    uint8_t reservedCacheLineAlignment[0x54];
 };
 static_assert(sizeof(scrMemTreeGlob_t) == 0xC0380);
 
