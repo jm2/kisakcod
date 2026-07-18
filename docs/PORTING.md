@@ -96,8 +96,17 @@ Completed foundation work:
   survives `MT_Init`, has no production reset, and report-freely rejects every typed, legacy, leased, raw, reset, query,
   validation, and reporting traversal path with output/state atomicity. Canonical unrelated/finished destruction is a
   no-op, the lease remains 16-byte standard-layout but is intentionally non-trivially destructible, and test-only thaw is
-  macro-gated. The complete GCC Release suite is **107/107** green; focused GCC `RELEASE_ASSERTS`, Clang ASan+UBSan,
-  50 repeated locking runs, strict i386/AArch64 compiles, source/security, and diff gates pass;
+  macro-gated and authenticates retained TLS mirrors before releasing anything (`90f7e0e0`). The GCC Release suite at
+  `b193343b` is **107/107** green. Follow-ups `19602b84`/`847ff969` make blocked snapshots and lease calls authenticate
+  global and local by-value identity before member reads; `81f41b84` gives each raw mutator one locked
+  reject/validate/commit interval. `847ff969` closes the remaining legacy check/use windows, bounds raw size/score/
+  subtree/node/pointer inputs, restricts subtree traversal to a completely authenticated free forest, and captures one
+  fixed-BSS authenticated dump image before releasing the memory-tree lock and emitting numeric IDs. Reporters,
+  assertions, formatting, and script-string callbacks cannot run under the allocator lock. Exact follow-up `847ff969`
+  passes focused GCC Release/`RELEASE_ASSERTS`, the production ownership fixture, Clang ASan+UBSan, 50 repeated locking
+  runs, strict fixture/production i386/AArch64 compiles, source/security, and diff gates. Independent Clang MS-compat
+  and clang-cl x86/x64/ARM64 excerpt checks also place the fixed snapshot/flag in BSS; hosted Windows CI remains the
+  authoritative Microsoft STL/SDK integration check;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -1630,12 +1639,29 @@ validation, raw, reset, and reporting traversal entries reject it without state/
 unrelated and normally finished leases destruct harmlessly. The lease remains 16 bytes and standard-layout, but the
 custom destructor intentionally makes it non-trivially destructible.
 
-The combined GCC Release suite is **107/107** green. Focused GCC `RELEASE_ASSERTS`, Clang ASan+UBSan (leak detection
-disabled under the traced runner), 50 repeated locking/thread runs, strict i386 compilation, AArch64 cross-compilation,
-source/security invariants, and `git diff --check` pass. Runtime coverage includes exact abandonment, foreign wake-and-
-reject, torn token/address/serial/lifecycle mirrors, arbitrary matched integer addresses, same-thread raw/query/reset/
-report rejection, output atomicity, test-only cleanup, and unrelated canonical destruction. This remains an
-allocator-only, production-neutral prerequisite: the private constructor is reserved for the forthcoming script-string
+Lease storage is still caller-owned and must outlive every call that receives its address/reference. The production
+contract is same-thread Begin/Finish/destruction while outer SCRIPT_STRING ownership remains held. `Frozen` makes generic
+and already-blocked abandonment paths reject safely, but it does not legalize arbitrary concurrent destruction such as a
+normal Finish-then-destroy racing a blocked Begin or test-only setter.
+
+Follow-up `847ff969` authenticates global and local token identity before snapshot/member access, wakes blocked
+Begin/Finish/leased/test-setter calls into terminal rejection after abandonment, and closes all separate legacy
+check/use windows. Allocate/free/reallocate and raw queries retain one lock from admission through final state use;
+invalid size/score/subtree/node/pointer inputs are bounded without live-state diagnostics; free-subtree recursion follows
+only a completely authenticated forest; and debug dumps emit a nonblocking fixed-BSS snapshot with numeric string IDs so
+no allocator lock crosses `Com_*`, `iassert`, `va`, or an SL callback.
+
+The GCC Release suite at `b193343b` is **107/107** green. Exact follow-up `847ff969` passes focused GCC Release/
+`RELEASE_ASSERTS`, the production script-string ownership build/fixture, Clang ASan+UBSan (leak detection disabled under
+the traced runner), 50 repeated locking/thread runs, strict i386 compilation, AArch64 cross-compilation,
+source/security invariants, and `git diff --check`. Independent portability validation also passes five focused GCC
+Werror tests, strict fixture and production i386/AArch64 objects, a Clang MS-compat fixture, and clang-cl x86/x64/ARM64
+sensitive excerpts with the 0x200a8-byte snapshot plus one-byte flag in BSS. Hosted Windows CI remains authoritative for
+the unavailable local Microsoft STL/SDK integration. Runtime coverage includes exact abandonment, foreign wake-and-
+reject, blocked snapshots and lease calls, torn token/address/serial/lifecycle/retained-auth mirrors, arbitrary matched
+integer addresses, same-thread raw/query/reset/report rejection, output atomicity, invalid pointer/index/type/subtree
+inputs, test-only cleanup, and unrelated canonical destruction. This remains an allocator-only, production-neutral
+prerequisite: the private constructor is reserved for the forthcoming script-string
 `OwnershipBatch`, and no loader or raw ownership site consumes it yet.
 
 Generation enrollment, stream/PMem/arena/adapter binding, alias/completed-object unpublication, real admission/cleanup
