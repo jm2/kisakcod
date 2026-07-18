@@ -143,6 +143,8 @@ bool MT_IsValidationLeaseBoundaryFrozenLocked() noexcept;
 bool MT_HasRetainedValidationLeaseAuthenticationLocked() noexcept;
 bool MT_HasValidationLeaseRegistryActivityLocked() noexcept;
 bool MT_IsValidationLeaseRegistryConsistentLocked() noexcept;
+bool MT_CanReadValidationLeaseSnapshotLocked(
+    const MT_ValidationLease *lease) noexcept;
 bool MT_OwnsValidationLeaseLocked(
     const MT_ValidationLease &lease) noexcept;
 bool MT_IsValidationLeasePoisonedLocked(
@@ -896,6 +898,18 @@ bool MT_IsValidationLeaseRegistryConsistentLocked() noexcept
     // compared only with an explicit live lease argument in MT_Owns...; generic
     // unleased and reset paths never dereference stack-owned registry storage.
     return true;
+}
+
+bool MT_CanReadValidationLeaseSnapshotLocked(
+    const MT_ValidationLease *const lease) noexcept
+{
+    if (!lease || MT_IsValidationLeaseBoundaryFrozenLocked())
+        return false;
+
+    const uintptr_t leaseAddress = reinterpret_cast<uintptr_t>(lease);
+    return mt_activeValidationLeaseAddress == leaseAddress
+        && mt_activeValidationLeaseAddressMirror == leaseAddress
+        && MT_IsValidationLeaseRegistryConsistentLocked();
 }
 
 bool MT_OwnsValidationLeaseLocked(
@@ -1913,7 +1927,9 @@ MT_ValidationLease::~MT_ValidationLease() noexcept
 bool MT_ValidationLease::active() const noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
-    const bool value = active_;
+    const bool readable =
+        MT_CanReadValidationLeaseSnapshotLocked(this);
+    const bool value = readable && active_;
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
     return value;
 }
@@ -1921,7 +1937,13 @@ bool MT_ValidationLease::active() const noexcept
 bool MT_ValidationLease::poisoned() const noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
-    const bool value = MT_IsValidationLeasePoisonedLocked(*this);
+    const bool readable =
+        MT_CanReadValidationLeaseSnapshotLocked(this);
+    const bool value = readable
+        ? (poisoned_
+            || mt_validationLeaseLifecycle
+                == MT_ValidationLeaseLifecycle::Poisoned)
+        : MT_HasValidationLeaseRegistryActivityLocked();
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
     return value;
 }
@@ -1929,7 +1951,9 @@ bool MT_ValidationLease::poisoned() const noexcept
 uint64_t MT_ValidationLease::serial() const noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
-    const uint64_t value = serial_;
+    const bool readable =
+        MT_CanReadValidationLeaseSnapshotLocked(this);
+    const uint64_t value = readable ? serial_ : 0;
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
     return value;
 }
@@ -1937,7 +1961,9 @@ uint64_t MT_ValidationLease::serial() const noexcept
 uint32_t MT_ValidationLease::mutationCount() const noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
-    const uint32_t value = mutationCount_;
+    const bool readable =
+        MT_CanReadValidationLeaseSnapshotLocked(this);
+    const uint32_t value = readable ? mutationCount_ : 0;
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
     return value;
 }
@@ -2431,6 +2457,9 @@ bool MT_Realloc(int oldNumBytes, int newNumbytes)
 
 void MT_RemoveHeadMemoryNode(int size)
 {
+    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+        return;
+
     iassert(size >= 0 && size <= MEMORY_NODE_BITS);
     if (size < 0 || size > MEMORY_NODE_BITS)
         return;
@@ -2671,6 +2700,9 @@ void MT_FreeIndex(uint32_t nodeNum, int numBytes)
 
 bool __cdecl MT_RemoveMemoryNode(int oldNode, uint32_t size)
 {
+    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+        return false;
+
     iassert(size <= MEMORY_NODE_BITS);
     if (size > MEMORY_NODE_BITS || oldNode <= 0
         || oldNode >= MEMORY_NODE_COUNT)
@@ -2756,6 +2788,9 @@ int MT_GetSubTreeSize(int nodeNum)
 
 void MT_AddMemoryNode(int newNode, int size)
 {
+    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+        return;
+
     iassert(size >= 0 && size <= MEMORY_NODE_BITS);
     if (size < 0 || size > MEMORY_NODE_BITS || newNode <= 0
         || newNode >= MEMORY_NODE_COUNT)

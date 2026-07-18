@@ -176,6 +176,34 @@ foreach(_marker IN ITEMS
 endforeach()
 extract_slice(
     _memory_source
+    "void MT_RemoveHeadMemoryNode(int size)"
+    "namespace { MT_FreeIndexStatus MT_TryFreeIndexImpl("
+    _remove_head_memory_node
+    "raw remove-head memory-tree wrapper")
+extract_slice(
+    _memory_source
+    "bool __cdecl MT_RemoveMemoryNode(int oldNode, uint32_t size)"
+    "void MT_Free(byte* p, int numBytes)"
+    _remove_memory_node
+    "raw remove memory-tree wrapper")
+extract_slice(
+    _memory_source
+    "void MT_AddMemoryNode(int newNode, int size)"
+    "void MT_Error(const char* funcName, int numBytes)"
+    _add_memory_node
+    "raw add memory-tree wrapper")
+foreach(_var IN ITEMS
+    _remove_head_memory_node
+    _remove_memory_node
+    _add_memory_node)
+    require_ordered(
+        ${_var}
+        "MT_RejectUnleasedAccessForActiveLeaseNoReport()"
+        "iassert("
+        "frozen raw memory-tree rejection precedes diagnostics")
+endforeach()
+extract_slice(
+    _memory_source
     "MT_AllocationInfoStatus MT_GetAllocationInfoLockedNoReport("
     "constexpr uint32_t kPartitionWordBits"
     _allocation_info_local
@@ -812,6 +840,7 @@ foreach(_marker IN ITEMS
     "MT_IsValidationLeaseBoundaryFrozenLocked()"
     "enum class MT_ValidationLeaseLifecycle : uint8_t { Idle, Active, Poisoned, Frozen, };"
     "Registry consistency is deliberately by value."
+    "MT_CanReadValidationLeaseSnapshotLocked("
     "mt_activeValidationLeaseAddress == leaseAddress && mt_activeValidationLeaseAddressMirror == leaseAddress"
     "thread_local uintptr_t mt_retainedValidationLeaseAddress = 0;"
     "mt_validationLeaseLifecycle = MT_ValidationLeaseLifecycle::Poisoned; mt_validationLeaseLifecycleMirror = MT_ValidationLeaseLifecycle::Poisoned;"
@@ -1260,6 +1289,7 @@ foreach(_marker IN ITEMS
     "foreign thread entered through a torn retained boundary"
     "unrelated canonical destructor revoked the active lease"
     "arbitrary mirrored address was dereferenced or admitted"
+    "blocked snapshots read a destroyed lease"
     "foreign allocator access bypassed retained lock"
     "mutation counter wrapped"
     "pointer-only registry admitted legacy allocation"

@@ -33,6 +33,8 @@ namespace
 {
 std::recursive_mutex g_memoryTreeMutex;
 thread_local std::uint32_t g_memoryTreeLockDepth = 0;
+std::atomic<bool> g_countMemoryTreeLockAttempts{false};
+std::atomic<unsigned> g_memoryTreeLockAttempts{0};
 std::uint32_t g_comErrorCount = 0;
 std::uint32_t g_assertCount = 0;
 
@@ -1755,6 +1757,60 @@ struct Allocation final
     g_assertCount = 0;
     MT_Init();
 
+    bool waitedActive = true;
+    bool waitedPoisoned = false;
+    std::uint64_t waitedSerial = UINT64_MAX;
+    std::uint32_t waitedMutations = UINT32_MAX;
+    std::thread activeWaiter;
+    std::thread poisonedWaiter;
+    std::thread serialWaiter;
+    std::thread mutationWaiter;
+    {
+        MT_ValidationLease waitedLease;
+        if (!Check(
+                MT_TryBeginValidationLease(
+                    &waitedLease,
+                    MT_ValidationLeaseAdmission::ForTesting())
+                    == MT_ValidationLeaseStatus::Success,
+                "snapshot-waiter lease admission failed"))
+        {
+            return false;
+        }
+
+        g_memoryTreeLockAttempts.store(0, std::memory_order_relaxed);
+        g_countMemoryTreeLockAttempts.store(true, std::memory_order_release);
+        activeWaiter = std::thread([&]() {
+            waitedActive = waitedLease.active();
+        });
+        poisonedWaiter = std::thread([&]() {
+            waitedPoisoned = waitedLease.poisoned();
+        });
+        serialWaiter = std::thread([&]() {
+            waitedSerial = waitedLease.serial();
+        });
+        mutationWaiter = std::thread([&]() {
+            waitedMutations = waitedLease.mutationCount();
+        });
+        while (g_memoryTreeLockAttempts.load(std::memory_order_acquire) != 4)
+            std::this_thread::yield();
+        g_countMemoryTreeLockAttempts.store(false, std::memory_order_release);
+    }
+    activeWaiter.join();
+    poisonedWaiter.join();
+    serialWaiter.join();
+    mutationWaiter.join();
+    if (!Check(!waitedActive && waitedPoisoned
+                && waitedSerial == 0 && waitedMutations == 0,
+            "blocked snapshots read a destroyed lease")
+        || !Check(g_memoryTreeLockDepth == 0,
+            "snapshot-waiter abandonment leaked the owner lock"))
+    {
+        MT_ResetAbandonedValidationLeaseForTesting(false);
+        return false;
+    }
+    MT_ResetAbandonedValidationLeaseForTesting(false);
+    MT_Init();
+
     std::uint16_t owner = 0;
     TreeImage beforeAbandonment;
     std::uint16_t freeRoot = 0;
@@ -1828,6 +1884,10 @@ struct Allocation final
     MT_RemoveHeadMemoryNode(0);
     const bool removed = MT_RemoveMemoryNode(freeRoot, 0);
     MT_AddMemoryNode(freeRoot, 0);
+    MT_RemoveHeadMemoryNode(-1);
+    const bool invalidRemoved = MT_RemoveMemoryNode(
+        -1, static_cast<std::uint32_t>(MEMORY_NODE_BITS + 1));
+    MT_AddMemoryNode(-1, -1);
     MT_Init();
     MT_FreeIndex(owner, 13);
     MT_Free(
@@ -1836,6 +1896,7 @@ struct Allocation final
         MT_AllocIndex(13, 1) == 0
         && MT_Alloc(13, 1) == nullptr
         && !removed
+        && !invalidRemoved
         && !MT_Realloc(13, 13)
         && MT_GetSize(13) == 0
         && MT_GetScore(1) == 0
@@ -1848,7 +1909,7 @@ struct Allocation final
         || !Check(TreeMatches(beforeAbandonment),
             "abandoned boundary changed allocator state")
         || !Check(g_comErrorCount == 0 && g_assertCount == 0,
-            "abandoned boundary entered a reporter")
+            "abandoned boundary or invalid raw input entered a reporter")
         || !Check(g_memoryTreeLockDepth == 0,
             "abandoned boundary leaked a recursive probe acquisition"))
     {
@@ -2094,6 +2155,8 @@ void KISAK_CDECL Sys_EnterCriticalSection(const int critSect)
 {
     if (critSect != CRITSECT_MEMORY_TREE)
         std::abort();
+    if (g_countMemoryTreeLockAttempts.load(std::memory_order_acquire))
+        g_memoryTreeLockAttempts.fetch_add(1, std::memory_order_release);
     g_memoryTreeMutex.lock();
     ++g_memoryTreeLockDepth;
 }
