@@ -196,10 +196,11 @@ work item changes. Do not create session-specific handoff files.
   Abandoned/Unloaded receipts reset only controller ownership, remain generation-authenticated in the lifecycle/table
   until the next claim, and cannot be replayed across slots or generations. The adapters remain unenrolled: production
   does not yet claim a generation or route load, staging, commit, PMem, or cleanup through them. Review cleanup
-  `e8d7a3f6` removes a redundant post-authentication branch without changing the fail-closed result.
-- Terminal-adapter validation passes the complete GCC Release, GCC Debug, and Clang Release suites at **114/114**;
-  focused Clang ASan+UBSan and `RELEASE_ASSERTS`; 50 repetitions apiece across the ownership/retry/reentry and unsafe-
-  boundary matrix (**400/400** invocations);
+  `e8d7a3f6` removes a redundant post-authentication branch without changing the fail-closed result. Codex cleanup
+  `5bee8bba` rejects missing, extra, unknown, and malformed fault-runner arguments and enrolls three negative CTest gates.
+- Terminal-adapter validation passes the complete GCC Release, GCC Debug, and Clang Release suites at **117/117**;
+  the focused terminal runtime/source selection at **12/12** under GCC, Clang, `RELEASE_ASSERTS`, and Clang ASan+UBSan;
+  50 repetitions apiece across the ownership/retry/reentry and unsafe-boundary matrix (**400/400** invocations);
   source/security contracts; strict i386 and AArch64 compilation; and `git diff --check`.
 - This is durable lifecycle metadata initialization, not production loader enrollment. The production stream, PMem,
   arena/adapter, alias/completed-object tables, loading generation, and Live-unload path do not claim the table or call
