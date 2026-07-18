@@ -222,7 +222,9 @@ class BodySidecar;
     BodySidecar *rollback,
     BodySidecar *discarded) noexcept;
 
+#ifdef KISAK_FX_PHYSICS_SIDECAR_TESTING
 struct SidecarTestAccess;
+#endif
 
 namespace detail
 {
@@ -378,7 +380,9 @@ class BodySidecar final
     friend SidecarStatus RollbackReplacementWithScratch(
         BodySidecar *, BodySidecar *, BodySidecar *,
         BodySidecarValidationScratch *) noexcept;
+#ifdef KISAK_FX_PHYSICS_SIDECAR_TESTING
     friend struct SidecarTestAccess;
+#endif
 
     std::array<BodySlot, MAX_ELEMS> slots_{};
     std::size_t activeCount_ = 0;

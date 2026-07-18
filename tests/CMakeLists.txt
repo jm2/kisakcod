@@ -1062,6 +1062,37 @@ add_test(
     COMMAND kisakcod-fx-physics-sidecar-tests
 )
 
+# Keep the test-only corruption helper out of production's namespace and
+# friendship surface. This target is excluded from normal builds because its
+# successful contract is a compile failure: an external definition using the
+# helper's public name must not acquire BodySidecar's private authority.
+add_library(
+    kisakcod-fx-physics-sidecar-production-seal-compile-negative
+    OBJECT EXCLUDE_FROM_ALL
+    fx_physics_sidecar_production_seal_compile_negative.cpp
+)
+target_include_directories(
+    kisakcod-fx-physics-sidecar-production-seal-compile-negative
+    PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-fx-physics-sidecar-production-seal-compile-negative
+    PRIVATE cxx_std_20)
+kisakcod_test_warnings(
+    kisakcod-fx-physics-sidecar-production-seal-compile-negative)
+add_test(
+    NAME effectscore-physics-sidecar-production-test-access-sealed
+    COMMAND ${CMAKE_COMMAND}
+        --build ${CMAKE_BINARY_DIR}
+        --config $<CONFIG>
+        --target
+            kisakcod-fx-physics-sidecar-production-seal-compile-negative
+)
+set_tests_properties(
+    effectscore-physics-sidecar-production-test-access-sealed PROPERTIES
+        RUN_SERIAL TRUE
+        TIMEOUT 30
+        WILL_FAIL TRUE)
+
 add_executable(kisakcod-fx-archive-capacity-tests
     fx_archive_capacity_tests.cpp
 )
