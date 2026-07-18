@@ -89,6 +89,46 @@ struct OwnershipBatchAccess final
         return batch.memoryTreeLease_;
     }
 
+    [[nodiscard]] static MT_ValidationLeaseStatus TryBeginMemoryTreeLease(
+        MT_ValidationLease &lease) noexcept
+    {
+        return OwnershipBatch::TryBeginMemoryTreeLease(lease);
+    }
+
+    [[nodiscard]] static MT_ValidationLeaseStatus FinishMemoryTreeLease(
+        MT_ValidationLease &lease) noexcept
+    {
+        return OwnershipBatch::FinishMemoryTreeLease(lease);
+    }
+
+    [[nodiscard]] static MT_AllocIndexStatus TryAllocateMemoryTreeIndex(
+        MT_ValidationLease &lease,
+        const int numBytes,
+        const int type,
+        std::uint16_t *const outIndex) noexcept
+    {
+        return OwnershipBatch::TryAllocateMemoryTreeIndex(
+            lease, numBytes, type, outIndex);
+    }
+
+    [[nodiscard]] static MT_AllocationInfoStatus TryGetMemoryTreeAllocation(
+        MT_ValidationLease &lease,
+        const std::uint32_t nodeNum,
+        MT_AllocationInfo *const outInfo) noexcept
+    {
+        return OwnershipBatch::TryGetMemoryTreeAllocation(
+            lease, nodeNum, outInfo);
+    }
+
+    [[nodiscard]] static MT_FreeIndexStatus TryFreeMemoryTreeIndex(
+        MT_ValidationLease &lease,
+        const std::uint32_t nodeNum,
+        const int numBytes) noexcept
+    {
+        return OwnershipBatch::TryFreeMemoryTreeIndex(
+            lease, nodeNum, numBytes);
+    }
+
     static void Activate(
         OwnershipBatch &batch,
         const std::uint64_t serial) noexcept
@@ -1095,7 +1135,7 @@ MT_AllocIndexStatus SL_TryAllocateStringMemoryNoReport(
 			: MT_TryAllocIndexLegacy(numBytes, type, outIndex);
 	case SL_ValidationScope::Leased:
 		return validationLease
-			? MT_TryAllocIndexLeased(
+			? script_string::OwnershipBatchAccess::TryAllocateMemoryTreeIndex(
 				*validationLease, numBytes, type, outIndex)
 			: MT_AllocIndexStatus::UnsafeFailure;
 	}
@@ -1120,7 +1160,7 @@ MT_FreeIndexStatus SL_TryFreeStringMemoryNoReport(
 			: MT_TryFreeIndexLegacy(stringValue, numBytes);
 	case SL_ValidationScope::Leased:
 		return validationLease
-			? MT_TryFreeIndexLeased(
+			? script_string::OwnershipBatchAccess::TryFreeMemoryTreeIndex(
 				*validationLease, stringValue, numBytes)
 			: MT_FreeIndexStatus::UnsafeFailure;
 	}
@@ -2192,7 +2232,7 @@ MT_AllocationInfoStatus SL_TryGetAllocationInfoForScopeNoReport(
 			: MT_TryGetAllocationInfoLegacy(stringValue, outInfo);
 	case SL_ValidationScope::Leased:
 		return validationLease
-			? MT_TryGetAllocationInfoLeased(
+			? script_string::OwnershipBatchAccess::TryGetMemoryTreeAllocation(
 				*validationLease, stringValue, outInfo)
 			: MT_AllocationInfoStatus::UnsafeFailure;
 	}
@@ -2753,6 +2793,8 @@ bool SL_IsCompleteStringStateValidForScopeNoReport(
 			}
 			const uint32_t packed =
 				scr_string_atomic::Load(SL_RefStringWord(refString));
+			if (!SL_IsDebugOwnershipExactNoReport(stringValue, packed))
+				return false;
 			aggregateRefCount += scr_string_atomic::RefCount(packed);
 			if (aggregateRefCount > UINT32_MAX)
 				return false;
@@ -3498,10 +3540,52 @@ namespace
 }
 } // namespace
 
-MT_ValidationLeaseAdmission
+const MT_ValidationLeaseAdmission &
 OwnershipBatch::MakeMemoryTreeLeaseAdmission() noexcept
 {
-	return {};
+    return MT_ValidationLeaseAdmission::Canonical();
+}
+
+MT_ValidationLeaseStatus OwnershipBatch::TryBeginMemoryTreeLease(
+    MT_ValidationLease &lease) noexcept
+{
+    return MT_TryBeginValidationLease(
+        &lease, MakeMemoryTreeLeaseAdmission());
+}
+
+MT_ValidationLeaseStatus OwnershipBatch::FinishMemoryTreeLease(
+    MT_ValidationLease &lease) noexcept
+{
+    return MT_FinishValidationLease(
+        &lease, MakeMemoryTreeLeaseAdmission());
+}
+
+MT_AllocIndexStatus OwnershipBatch::TryAllocateMemoryTreeIndex(
+    MT_ValidationLease &lease,
+    const int numBytes,
+    const int type,
+    std::uint16_t *const outIndex) noexcept
+{
+    return MT_TryAllocIndexLeased(
+        lease, numBytes, type, outIndex, MakeMemoryTreeLeaseAdmission());
+}
+
+MT_AllocationInfoStatus OwnershipBatch::TryGetMemoryTreeAllocation(
+    MT_ValidationLease &lease,
+    const std::uint32_t nodeNum,
+    MT_AllocationInfo *const outInfo) noexcept
+{
+    return MT_TryGetAllocationInfoLeased(
+        lease, nodeNum, outInfo, MakeMemoryTreeLeaseAdmission());
+}
+
+MT_FreeIndexStatus OwnershipBatch::TryFreeMemoryTreeIndex(
+    MT_ValidationLease &lease,
+    const std::uint32_t nodeNum,
+    const int numBytes) noexcept
+{
+    return MT_TryFreeIndexLeased(
+        lease, nodeNum, numBytes, MakeMemoryTreeLeaseAdmission());
 }
 
 bool OwnershipBatch::canOperateNoLock() const noexcept
@@ -3855,9 +3939,7 @@ OwnershipBatchStatus TryBeginOwnershipBatch(
 	MT_ValidationLease &memoryTreeLease =
 		OwnershipBatchAccess::MemoryTreeLease(*batch);
 	const MT_ValidationLeaseStatus memoryStatus =
-		MT_TryBeginValidationLease(
-			&memoryTreeLease,
-			OwnershipBatch::MakeMemoryTreeLeaseAdmission());
+		OwnershipBatchAccess::TryBeginMemoryTreeLease(memoryTreeLease);
 	if (memoryStatus != MT_ValidationLeaseStatus::Success)
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -3877,7 +3959,7 @@ OwnershipBatchStatus TryBeginOwnershipBatch(
 	if (!SL_IsCompleteStringStateValidForScopeNoReport(
 			SL_ValidationScope::Leased, &memoryTreeLease))
 	{
-		(void)MT_FinishValidationLease(&memoryTreeLease);
+		(void)OwnershipBatchAccess::FinishMemoryTreeLease(memoryTreeLease);
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return OwnershipBatchStatus::UnsafeFailure;
 	}
@@ -3928,7 +4010,8 @@ OwnershipBatchStatus FinishOwnershipBatch(
 			== SL_OwnershipBatchLifecycle::Poisoned
 		|| !stringStateValid;
 	const MT_ValidationLeaseStatus memoryStatus =
-		MT_FinishValidationLease(&batch->memoryTreeLease_);
+		OwnershipBatchAccess::FinishMemoryTreeLease(
+			batch->memoryTreeLease_);
 	if (memoryStatus == MT_ValidationLeaseStatus::InvalidArgument
 		|| memoryStatus == MT_ValidationLeaseStatus::InvalidToken
 		|| memoryStatus == MT_ValidationLeaseStatus::Busy)

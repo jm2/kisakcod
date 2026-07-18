@@ -31,6 +31,8 @@ set(_platform_runtime_path
     "${SOURCE_ROOT}/tests/platform_service_runtime_tests.cpp")
 set(_memory_fixture_path
     "${SOURCE_ROOT}/tests/script_memorytree_try_tests.cpp")
+set(_memory_lease_seal_path
+    "${SOURCE_ROOT}/tests/script_memorytree_lease_api_seal_compile_tests.cpp")
 set(_ownership_fixture_path
     "${SOURCE_ROOT}/tests/script_string_ownership_tests.cpp")
 set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
@@ -52,6 +54,7 @@ foreach(_path IN ITEMS
     "${_platform_contract_path}"
     "${_platform_runtime_path}"
     "${_memory_fixture_path}"
+    "${_memory_lease_seal_path}"
     "${_ownership_fixture_path}"
     "${_ci_path}"
     "${_manifest_path}"
@@ -76,6 +79,7 @@ file(READ "${_sync_header_path}" _sync_header)
 file(READ "${_platform_contract_path}" _platform_contract)
 file(READ "${_platform_runtime_path}" _platform_runtime)
 file(READ "${_memory_fixture_path}" _memory_fixture)
+file(READ "${_memory_lease_seal_path}" _memory_lease_seal)
 file(READ "${_ownership_fixture_path}" _ownership_fixture)
 file(READ "${_ci_path}" _ci)
 file(READ "${_manifest_path}" _manifest)
@@ -151,6 +155,7 @@ foreach(_var IN ITEMS
     _platform_contract
     _platform_runtime
     _memory_fixture
+    _memory_lease_seal
     _ownership_fixture
     _ci
     _manifest
@@ -445,7 +450,7 @@ extract_slice(
 extract_slice(
     _string_source
     "ReleaseStatus TryRemoveDatabaseUserReferenceInternal("
-    "MT_ValidationLeaseAdmission OwnershipBatch::MakeMemoryTreeLeaseAdmission()"
+    "const MT_ValidationLeaseAdmission & OwnershipBatch::MakeMemoryTreeLeaseAdmission()"
     _release_database
     "database-user rollback")
 extract_slice(
@@ -792,6 +797,7 @@ foreach(_marker IN ITEMS
     "(sl_systemSweepHashEntries[entryByte] & entryMask) != 0"
     "(sl_systemSweepStringIds[stringByte] & stringMask) != 0"
     "GetHashCode(refString->str, byteCount) != owningHash"
+    "SL_IsDebugOwnershipExactNoReport(stringValue, packed)"
     "aggregateRefCount > UINT32_MAX"
     "Sys_AtomicLoad(&scrStringDebugGlob->totalRefCount) != static_cast<uint32_t>(aggregateRefCount)")
     require_contains(
@@ -886,17 +892,29 @@ endforeach()
 foreach(_marker IN ITEMS
     "enum class MT_ValidationLeaseStatus : uint8_t"
     "class MT_ValidationLeaseAdmission final"
+    "static constinit MT_ValidationLeaseAdmission capability;"
+    "return &admission == &Canonical();"
     "friend class script_string::OwnershipBatch;"
+    "static_assert(!std::is_default_constructible_v<MT_ValidationLeaseAdmission>);"
+    "static_assert(!std::is_trivially_copyable_v<MT_ValidationLeaseAdmission>);"
     "class MT_ValidationLease final"
     "~MT_ValidationLease() noexcept;"
     "RUNTIME_SIZE(MT_ValidationLease, 0x10, 0x10);"
-    "MT_TryBeginValidationLease( MT_ValidationLease *lease, MT_ValidationLeaseAdmission admission) noexcept;"
-    "MT_FinishValidationLease( MT_ValidationLease *lease) noexcept;"
-    "MT_TryAllocIndexLeased( MT_ValidationLease &lease, int numBytes, int type, uint16_t *outIndex) noexcept;"
-    "MT_TryGetAllocationInfoLeased( MT_ValidationLease &lease, uint32_t nodeNum, MT_AllocationInfo *outInfo) noexcept;"
-    "MT_TryFreeIndexLeased( MT_ValidationLease &lease, uint32_t nodeNum, int numBytes) noexcept;")
+    "MT_TryBeginValidationLease( MT_ValidationLease *lease, const MT_ValidationLeaseAdmission &admission) noexcept;"
+    "MT_FinishValidationLease( MT_ValidationLease *lease, const MT_ValidationLeaseAdmission &admission) noexcept;"
+    "MT_TryAllocIndexLeased( MT_ValidationLease &lease, int numBytes, int type, uint16_t *outIndex, const MT_ValidationLeaseAdmission &admission) noexcept;"
+    "MT_TryGetAllocationInfoLeased( MT_ValidationLease &lease, uint32_t nodeNum, MT_AllocationInfo *outInfo, const MT_ValidationLeaseAdmission &admission) noexcept;"
+    "MT_TryFreeIndexLeased( MT_ValidationLease &lease, uint32_t nodeNum, int numBytes, const MT_ValidationLeaseAdmission &admission) noexcept;")
     require_contains(
         _memory_header "${_marker}" "authenticated allocator lease API")
+endforeach()
+foreach(_marker IN ITEMS
+    "if (!MT_ValidationLeaseAdmission::Authenticates(admission)) return MT_ValidationLeaseStatus::InvalidArgument;"
+    "if (!MT_ValidationLeaseAdmission::Authenticates(admission)) return MT_AllocIndexStatus::InvalidArgumentNoChange;"
+    "if (!MT_ValidationLeaseAdmission::Authenticates(admission)) return MT_AllocationInfoStatus::InvalidArgumentNoChange;"
+    "if (!MT_ValidationLeaseAdmission::Authenticates(admission)) return MT_FreeIndexStatus::InvalidArgumentNoChange;")
+    require_contains(
+        _memory_source "${_marker}" "allocator lease operation capability")
 endforeach()
 extract_slice(
     _memory_source
@@ -1236,7 +1254,12 @@ foreach(_marker IN ITEMS
     "RUNTIME_SIZE(OwnershipBatch, 0x20, 0x20);"
     "static_assert(std::is_standard_layout_v<OwnershipBatch>);"
     "static_assert(!std::is_trivially_destructible_v<OwnershipBatch>);"
-    "MakeMemoryTreeLeaseAdmission() noexcept;"
+    "static const MT_ValidationLeaseAdmission & MakeMemoryTreeLeaseAdmission() noexcept;"
+    "static MT_ValidationLeaseStatus TryBeginMemoryTreeLease( MT_ValidationLease &lease) noexcept;"
+    "static MT_ValidationLeaseStatus FinishMemoryTreeLease( MT_ValidationLease &lease) noexcept;"
+    "static MT_AllocIndexStatus TryAllocateMemoryTreeIndex( MT_ValidationLease &lease, int numBytes, int type, std::uint16_t *outIndex) noexcept;"
+    "static MT_AllocationInfoStatus TryGetMemoryTreeAllocation( MT_ValidationLease &lease, std::uint32_t nodeNum, MT_AllocationInfo *outInfo) noexcept;"
+    "static MT_FreeIndexStatus TryFreeMemoryTreeIndex( MT_ValidationLease &lease, std::uint32_t nodeNum, int numBytes) noexcept;"
     "TryBeginOwnershipBatch( OwnershipBatch *batch) noexcept;"
     "FinishOwnershipBatch( OwnershipBatch *batch) noexcept;"
     "TryAcquireOrdinaryStringOfSize( OwnershipBatch &batch, const char *bytes, std::uint32_t byteCount, int type) noexcept;"
@@ -1331,16 +1354,16 @@ require_ordered(
 require_ordered(
     _ownership_batch_begin
     "Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);"
-    "MT_TryBeginValidationLease("
+    "OwnershipBatchAccess::TryBeginMemoryTreeLease(memoryTreeLease)"
     "script lock before allocator lease admission")
 require_ordered(
     _ownership_batch_begin
     "sl_nextOwnershipBatchSerial == UINT64_MAX"
-    "MT_TryBeginValidationLease("
+    "OwnershipBatchAccess::TryBeginMemoryTreeLease(memoryTreeLease)"
     "serial exhaustion before retained lock admission")
 require_ordered(
     _ownership_batch_begin
-    "MT_TryBeginValidationLease("
+    "OwnershipBatchAccess::TryBeginMemoryTreeLease(memoryTreeLease)"
     "SL_IsCompleteStringStateValidForScopeNoReport( SL_ValidationScope::Leased, &memoryTreeLease)"
     "allocator lease before complete string validation")
 require_ordered(
@@ -1356,7 +1379,7 @@ require_ordered(
 require_ordered(
     _ownership_batch_finish
     "SL_IsCompleteStringStateValidForScopeNoReport( SL_ValidationScope::Leased, &batch->memoryTreeLease_)"
-    "MT_FinishValidationLease(&batch->memoryTreeLease_)"
+    "OwnershipBatchAccess::FinishMemoryTreeLease( batch->memoryTreeLease_)"
     "complete string close before allocator close")
 require_ordered(
     _ownership_batch_finish
@@ -1553,9 +1576,9 @@ require_ordered(
 
 foreach(_marker IN ITEMS
     "enum class SL_ValidationScope : uint8_t { Complete, LegacyLocal, Leased, };"
-    "MT_TryAllocIndexLeased( *validationLease, numBytes, type, outIndex)"
-    "MT_TryGetAllocationInfoLeased( *validationLease, stringValue, outInfo)"
-    "MT_TryFreeIndexLeased( *validationLease, stringValue, numBytes)"
+    "OwnershipBatchAccess::TryAllocateMemoryTreeIndex( *validationLease, numBytes, type, outIndex)"
+    "OwnershipBatchAccess::TryGetMemoryTreeAllocation( *validationLease, stringValue, outInfo)"
+    "OwnershipBatchAccess::TryFreeMemoryTreeIndex( *validationLease, stringValue, numBytes)"
     "SL_IsFreeListCertificateMemberNoReport( const uint32_t entryIndex) noexcept"
     "SL_SetFreeListCertificateMemberNoReport( const uint32_t entryIndex, const bool member) noexcept"
     "SL_IsLeasedFreeListLocallyValidNoReport() noexcept"
@@ -2007,11 +2030,29 @@ require_contains(
     "\${SRC_DIR}/database/db_script_string_transaction.cpp"
     "serializer runtime target linkage")
 foreach(_marker IN ITEMS
+    "add_library(kisakcod-script-memorytree-lease-api-seal OBJECT"
+    "script_memorytree_lease_api_seal_compile_tests.cpp"
     "add_executable(kisakcod-script-memorytree-try-tests"
     "script_memorytree_try_tests.cpp"
     "\${SRC_DIR}/script/scr_memorytree.cpp"
     "NAME script-memorytree-try-contracts")
     require_contains(_tests "${_marker}" "memory-tree runtime fixture wiring")
+endforeach()
+require_contains(
+    _ci
+    "kisakcod-script-memorytree-lease-api-seal"
+    "production allocator lease API seal in explicit Windows x86 build")
+foreach(_marker IN ITEMS
+    "static_assert(!std::is_default_constructible_v<MT_ValidationLeaseAdmission>);"
+    "static_assert(!std::is_trivially_copyable_v<MT_ValidationLeaseAdmission>);"
+    "static_assert(!std::is_default_constructible_v<MT_ValidationLease>);"
+    "static_assert(!std::is_destructible_v<MT_ValidationLease>);"
+    "static_assert(!HasUngatedFinish<MT_ValidationLease>);"
+    "static_assert(!HasUngatedAllocation<MT_ValidationLease>);"
+    "static_assert(!HasUngatedQuery<MT_ValidationLease>);"
+    "static_assert(!HasUngatedFree<MT_ValidationLease>);")
+    require_contains(
+        _memory_lease_seal "${_marker}" "production allocator lease API seal")
 endforeach()
 foreach(_marker IN ITEMS
     "TestInvalidAndNoChange()"
@@ -2019,6 +2060,9 @@ foreach(_marker IN ITEMS
     "TestLegacyLocalValidationScope()"
     "TestLegacyTouchedIntervalCorruption()"
     "TestLegacyFragmentedForestCost()"
+    "TestValidationLeaseCapabilityAuthentication()"
+    "invalid lease capability reached the allocator lock"
+    "invalid lease operation capability reached the allocator lock"
     "TestValidationLeasePolicies()"
     "TestValidationLeaseAuthenticationAndOverflow()"
     "TestValidationLeaseCorruption()"
@@ -2162,6 +2206,7 @@ foreach(_marker IN ITEMS
     "raw allocator reader entered an ownership batch"
     "raw allocator diagnostic entered an ownership batch"
     "batch admission dereferenced a noncanonical debug pointer"
+    "batch admission trusted shifted per-ID debug accounting"
     "foreign ownership caller bypassed the retained script lock"
     "foreign reader bypassed the retained script lock"
     "blocked snapshots read destroyed ownership-batch storage"

@@ -3598,6 +3598,35 @@ require_source_contains(
     "each nonzero script-string user bit must own exactly one reference")
 require_source_contains(
     "script/scr_stringlist.cpp"
+    "SL_IsDebugOwnershipExactNoReport(stringValue, packed)"
+    "complete ownership validation must authenticate debug references per ID")
+require_source_contains(
+    "script/scr_memorytree.h"
+    "return &admission == &Canonical();"
+    "allocator lease operations must require the exact canonical capability")
+require_source_contains(
+    "script/scr_memorytree.h"
+    "static_assert(!std::is_trivially_copyable_v<MT_ValidationLeaseAdmission>);"
+    "allocator lease capability must not be forgeable by bitwise construction")
+require_source_match_count(
+    "script/scr_memorytree.cpp"
+    "MT_ValidationLeaseAdmission::Authenticates\\(admission\\)"
+    5
+    "every allocator lease entry must authenticate its operation capability")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "OwnershipBatchAccess::TryAllocateMemoryTreeIndex("
+    "leased string allocation must route through the private batch authority")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "OwnershipBatchAccess::TryGetMemoryTreeAllocation("
+    "leased string queries must route through the private batch authority")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "OwnershipBatchAccess::TryFreeMemoryTreeIndex("
+    "leased string release must route through the private batch authority")
+require_source_contains(
+    "script/scr_stringlist.cpp"
     "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 			return SL_InternStatus::PrimaryTableCapacityNoChange;"
     "primary string-table exhaustion must release the hash lock and return without reporting")

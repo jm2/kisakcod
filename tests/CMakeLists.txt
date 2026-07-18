@@ -1388,6 +1388,15 @@ add_test(
 )
 set_tests_properties(script-string-packed-atomic-contracts PROPERTIES TIMEOUT 20)
 
+add_library(kisakcod-script-memorytree-lease-api-seal OBJECT
+    script_memorytree_lease_api_seal_compile_tests.cpp
+)
+target_include_directories(
+    kisakcod-script-memorytree-lease-api-seal SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-script-memorytree-lease-api-seal PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-script-memorytree-lease-api-seal)
+
 add_executable(kisakcod-script-memorytree-try-tests
     script_memorytree_try_tests.cpp
 )

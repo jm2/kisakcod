@@ -126,8 +126,25 @@ private:
         OwnershipBatch &batch,
         std::uint32_t stringId) noexcept;
 
-    [[nodiscard]] static MT_ValidationLeaseAdmission
+    [[nodiscard]] static const MT_ValidationLeaseAdmission &
     MakeMemoryTreeLeaseAdmission() noexcept;
+    [[nodiscard]] static MT_ValidationLeaseStatus TryBeginMemoryTreeLease(
+        MT_ValidationLease &lease) noexcept;
+    [[nodiscard]] static MT_ValidationLeaseStatus FinishMemoryTreeLease(
+        MT_ValidationLease &lease) noexcept;
+    [[nodiscard]] static MT_AllocIndexStatus TryAllocateMemoryTreeIndex(
+        MT_ValidationLease &lease,
+        int numBytes,
+        int type,
+        std::uint16_t *outIndex) noexcept;
+    [[nodiscard]] static MT_AllocationInfoStatus TryGetMemoryTreeAllocation(
+        MT_ValidationLease &lease,
+        std::uint32_t nodeNum,
+        MT_AllocationInfo *outInfo) noexcept;
+    [[nodiscard]] static MT_FreeIndexStatus TryFreeMemoryTreeIndex(
+        MT_ValidationLease &lease,
+        std::uint32_t nodeNum,
+        int numBytes) noexcept;
     [[nodiscard]] bool canOperateNoLock() const noexcept;
     [[nodiscard]] bool tryAuthenticateOperationLocked() noexcept;
 

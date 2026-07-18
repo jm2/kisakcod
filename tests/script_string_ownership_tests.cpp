@@ -2355,6 +2355,15 @@ struct StateImage final
         return false;
     }
 
+    constexpr char secondValue[] = "batch-boundary-debug-peer";
+    const auto secondString = script_string::TryAcquireOrdinaryStringOfSize(
+        secondValue, sizeof(secondValue), 15);
+    if (!Check(secondString.status == script_string::AcquireStatus::Acquired,
+            "boundary-validation peer setup failed"))
+    {
+        return false;
+    }
+
     script_string::OwnershipBatch rejected;
     scrStringDebugGlob_t *const canonicalDebug = scrStringDebugGlob;
     scrStringDebugGlob = nullptr;
@@ -2393,6 +2402,34 @@ struct StateImage final
     scrStringDebugGlob = canonicalDebug;
     if (!debugPointerRejected)
         return false;
+
+    // Preserve the aggregate while shifting one debug reference between live
+    // IDs. Boundary admission must authenticate each ID, not only the total.
+    Sys_AtomicDecrement(&scrStringDebugGlob->refCount[existing.stringId]);
+    Sys_AtomicIncrement(&scrStringDebugGlob->refCount[secondString.stringId]);
+    const StateImage corruptPerIdDebug = CaptureState();
+    const bool perIdDebugRejected = Check(
+            script_string::TryBeginOwnershipBatch(&rejected)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "batch admission trusted shifted per-ID debug accounting")
+        && Check(!rejected.active(),
+            "shifted per-ID debug accounting published a token")
+        && Check(StateMatches(corruptPerIdDebug),
+            "shifted per-ID debug rejection changed corrupt state")
+        && Check(LocksReleased(),
+            "shifted per-ID debug rejection leaked a critical section")
+        && Check(ReportersUnused(),
+            "shifted per-ID debug rejection invoked a reporter");
+    Sys_AtomicIncrement(&scrStringDebugGlob->refCount[existing.stringId]);
+    Sys_AtomicDecrement(&scrStringDebugGlob->refCount[secondString.stringId]);
+    if (!perIdDebugRejected
+        || !Check(
+            script_string::TryRemoveOrdinaryReference(secondString.stringId)
+                == script_string::ReleaseStatus::Success,
+            "boundary-validation peer cleanup failed"))
+    {
+        return false;
+    }
 
     Sys_AtomicIncrement(&scrStringDebugGlob->refCount[existing.stringId]);
     const StateImage corruptAdmission = CaptureState();

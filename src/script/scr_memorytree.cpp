@@ -2157,8 +2157,10 @@ void MT_ValidationLease::SetMutationCountForTesting(
 
 MT_ValidationLeaseStatus MT_TryBeginValidationLease(
     MT_ValidationLease *const lease,
-    const MT_ValidationLeaseAdmission) noexcept
+    const MT_ValidationLeaseAdmission &admission) noexcept
 {
+    if (!MT_ValidationLeaseAdmission::Authenticates(admission))
+        return MT_ValidationLeaseStatus::InvalidArgument;
     if (!lease)
         return MT_ValidationLeaseStatus::InvalidArgument;
 
@@ -2212,8 +2214,11 @@ MT_ValidationLeaseStatus MT_TryBeginValidationLease(
 }
 
 MT_ValidationLeaseStatus MT_FinishValidationLease(
-    MT_ValidationLease *const lease) noexcept
+    MT_ValidationLease *const lease,
+    const MT_ValidationLeaseAdmission &admission) noexcept
 {
+    if (!MT_ValidationLeaseAdmission::Authenticates(admission))
+        return MT_ValidationLeaseStatus::InvalidArgument;
     if (!lease)
         return MT_ValidationLeaseStatus::InvalidArgument;
 
@@ -2514,8 +2519,11 @@ MT_AllocIndexStatus MT_TryAllocIndexLeased(
     MT_ValidationLease &lease,
     int numBytes,
     int type,
-    uint16_t *outIndex) noexcept
+    uint16_t *outIndex,
+    const MT_ValidationLeaseAdmission &admission) noexcept
 {
+    if (!MT_ValidationLeaseAdmission::Authenticates(admission))
+        return MT_AllocIndexStatus::InvalidArgumentNoChange;
     return MT_TryAllocIndexImpl(
         numBytes, type, outIndex, MT_ValidationPolicy::Leased, &lease);
 }
@@ -2564,8 +2572,11 @@ MT_AllocationInfoStatus MT_TryGetAllocationInfoLegacy(
 MT_AllocationInfoStatus MT_TryGetAllocationInfoLeased(
     MT_ValidationLease &lease,
     uint32_t nodeNum,
-    MT_AllocationInfo *outInfo) noexcept
+    MT_AllocationInfo *outInfo,
+    const MT_ValidationLeaseAdmission &admission) noexcept
 {
+    if (!MT_ValidationLeaseAdmission::Authenticates(admission))
+        return MT_AllocationInfoStatus::InvalidArgumentNoChange;
     return MT_TryGetAllocationInfoImpl(
         nodeNum, outInfo, MT_ValidationPolicy::Leased, &lease);
 }
@@ -2859,8 +2870,11 @@ MT_FreeIndexStatus MT_TryFreeIndexLegacy(
 MT_FreeIndexStatus MT_TryFreeIndexLeased(
     MT_ValidationLease &lease,
     uint32_t nodeNum,
-    int numBytes) noexcept
+    int numBytes,
+    const MT_ValidationLeaseAdmission &admission) noexcept
 {
+    if (!MT_ValidationLeaseAdmission::Authenticates(admission))
+        return MT_FreeIndexStatus::InvalidArgumentNoChange;
     return MT_TryFreeIndexImpl(
         nodeNum, numBytes, MT_ValidationPolicy::Leased, &lease);
 }

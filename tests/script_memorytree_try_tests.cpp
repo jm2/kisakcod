@@ -1269,6 +1269,80 @@ struct Allocation final
             "fragmented-forest benchmark leaked the lock");
 }
 
+[[nodiscard]] bool TestValidationLeaseCapabilityAuthentication() noexcept
+{
+    MT_Init();
+    MT_ValidationLease lease;
+    const auto &invalid =
+        MT_ValidationLeaseAdmission::InvalidForTesting();
+    const TreeImage canonical = CaptureTree();
+
+    g_memoryTreeLockAttempts.store(0, std::memory_order_relaxed);
+    g_countMemoryTreeLockAttempts.store(true, std::memory_order_release);
+    const auto invalidBegin = MT_TryBeginValidationLease(&lease, invalid);
+    g_countMemoryTreeLockAttempts.store(false, std::memory_order_release);
+    if (!Check(invalidBegin == MT_ValidationLeaseStatus::InvalidArgument,
+            "invalid lease capability admitted a lease")
+        || !Check(g_memoryTreeLockAttempts.load(std::memory_order_acquire) == 0,
+            "invalid lease capability reached the allocator lock")
+        || !Check(!lease.active() && g_memoryTreeLockDepth == 0,
+            "invalid lease capability changed lease state")
+        || !Check(TreeMatches(canonical),
+            "invalid lease capability changed allocator state")
+        || !Check(
+            MT_TryBeginValidationLease(
+                &lease, MT_ValidationLeaseAdmission::ForTesting())
+                == MT_ValidationLeaseStatus::Success,
+            "valid lease capability was rejected"))
+    {
+        return false;
+    }
+
+    const TreeImage active = CaptureTree();
+    const std::uint64_t serial = lease.serial();
+    std::uint16_t outIndex = 0xBEEF;
+    MT_AllocationInfo outInfo{0xA5, 0x5A, 0xA55A, UINT32_C(0xA55AA55A)};
+    const MT_AllocationInfo expectedInfo = outInfo;
+    g_memoryTreeLockAttempts.store(0, std::memory_order_relaxed);
+    g_countMemoryTreeLockAttempts.store(true, std::memory_order_release);
+    const auto allocStatus =
+        MT_TryAllocIndexLeased(lease, 13, 15, &outIndex, invalid);
+    const auto queryStatus =
+        MT_TryGetAllocationInfoLeased(lease, 1, &outInfo, invalid);
+    const auto freeStatus =
+        MT_TryFreeIndexLeased(lease, 1, 13, invalid);
+    const auto finishStatus = MT_FinishValidationLease(&lease, invalid);
+    g_countMemoryTreeLockAttempts.store(false, std::memory_order_release);
+
+    return Check(allocStatus == MT_AllocIndexStatus::InvalidArgumentNoChange,
+            "invalid lease capability entered allocation")
+        && Check(
+            queryStatus
+                == MT_AllocationInfoStatus::InvalidArgumentNoChange,
+            "invalid lease capability entered allocation query")
+        && Check(freeStatus == MT_FreeIndexStatus::InvalidArgumentNoChange,
+            "invalid lease capability entered free")
+        && Check(finishStatus == MT_ValidationLeaseStatus::InvalidArgument,
+            "invalid lease capability finished the lease")
+        && Check(outIndex == 0xBEEF,
+            "invalid lease capability changed allocation output")
+        && Check(std::memcmp(&outInfo, &expectedInfo, sizeof(outInfo)) == 0,
+            "invalid lease capability changed query output")
+        && Check(g_memoryTreeLockAttempts.load(std::memory_order_acquire) == 0,
+            "invalid lease operation capability reached the allocator lock")
+        && Check(lease.active() && lease.serial() == serial
+                && lease.mutationCount() == 0 && g_memoryTreeLockDepth == 1,
+            "invalid lease capability changed retained authority")
+        && Check(TreeMatches(active),
+            "invalid lease capability changed active allocator state")
+        && Check(
+            MT_FinishValidationLease(&lease)
+                == MT_ValidationLeaseStatus::Success,
+            "valid capability could not finish after rejection")
+        && Check(g_memoryTreeLockDepth == 0,
+            "capability authentication test leaked the lock");
+}
+
 [[nodiscard]] bool TestValidationLeasePolicies() noexcept
 {
     MT_Init();
@@ -2402,6 +2476,7 @@ int main()
         || !TestTopologyShadowCorruptionFailsClosed()
         || !TestLegacyTouchedIntervalCorruption()
         || !TestLegacyFragmentedForestCost()
+        || !TestValidationLeaseCapabilityAuthentication()
         || !TestValidationLeasePolicies()
         || !TestValidationLeaseAuthenticationAndOverflow()
         || !TestValidationLeaseCorruption()
