@@ -966,6 +966,7 @@ foreach(_marker IN ITEMS
     "ScriptStringTransactionToken(ScriptStringTransactionToken &&) = delete;"
     "~ScriptStringTransactionToken() noexcept = default;"
     "RUNTIME_SIZE(ScriptStringTransactionToken, 0x8, 0x8);"
+    "bool canonicalInactive() const noexcept;"
     "TryBeginScriptStringTransaction( ScriptStringTransactionToken *token) noexcept;"
     "FinishScriptStringTransaction( ScriptStringTransactionToken *token) noexcept;"
     "OwnsScriptStringTransaction( const ScriptStringTransactionToken &token) noexcept;")
@@ -1102,6 +1103,8 @@ foreach(_marker IN ITEMS
     "bool TestScriptStringTransactionSerializer()"
     "transaction::TryBeginScriptStringTransaction(nullptr)"
     "transaction::TryBeginScriptStringTransaction(&nested)"
+    "owner.canonicalInactive()"
+    "nested.canonicalInactive()"
     "ScriptStringTransactionStatus::Busy"
     "transaction::FinishScriptStringTransaction(&owner)"
     "if (!TestScriptStringTransactionSerializer())")

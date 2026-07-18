@@ -392,6 +392,42 @@ add_test(
 set_tests_properties(
     database-script-string-transaction-journal PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-db-zone-script-string-ownership-tests
+    db_zone_script_string_ownership_tests.cpp
+    ${SRC_DIR}/database/db_zone_script_string_ownership.cpp
+    ${SRC_DIR}/database/db_script_string_adapter.cpp
+    ${SRC_DIR}/database/db_script_string_journal.cpp
+    ${SRC_DIR}/database/db_script_string_transaction.cpp
+    ${SRC_DIR}/database/db_zone_load_context.cpp
+    ${SRC_DIR}/qcommon/sys_sync.cpp
+    ${KISAK_PLATFORM_SERVICE_SOURCES}
+)
+target_include_directories(
+    kisakcod-db-zone-script-string-ownership-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-script-string-ownership-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-zone-script-string-ownership-tests PRIVATE
+    KISAK_MP
+    KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING=1)
+target_link_libraries(
+    kisakcod-db-zone-script-string-ownership-tests PRIVATE Threads::Threads)
+if (KISAK_PLATFORM STREQUAL "win32")
+    target_link_libraries(
+        kisakcod-db-zone-script-string-ownership-tests PRIVATE winmm)
+endif()
+kisakcod_test_warnings(kisakcod-db-zone-script-string-ownership-tests)
+set_target_properties(
+    kisakcod-db-zone-script-string-ownership-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-zone-script-string-ownership-controller
+    COMMAND kisakcod-db-zone-script-string-ownership-tests
+)
+set_tests_properties(
+    database-zone-script-string-ownership-controller PROPERTIES TIMEOUT 30)
+
 add_executable(kisakcod-fx-archive-disk32-tests
     fx_archive_disk32_tests.cpp
     ${SRC_DIR}/EffectsCore/fx_archive_disk32.cpp
@@ -1670,6 +1706,14 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P
         ${CMAKE_CURRENT_SOURCE_DIR}/db_script_string_ownership_source_test.cmake
+)
+
+add_test(
+    NAME database-zone-script-string-ownership-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P
+        ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_script_string_ownership_source_test.cmake
 )
 
 add_test(

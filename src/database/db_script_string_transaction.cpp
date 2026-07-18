@@ -26,6 +26,15 @@ std::uint32_t ScriptStringTransactionToken::serial() const noexcept
     return serial;
 }
 
+bool ScriptStringTransactionToken::canonicalInactive() const noexcept
+{
+    Sys_EnterCriticalSection(CRITSECT_DB_SCRIPT_STRING_TRANSACTION);
+    const bool canonical = !active_ && serial_ == 0
+        && reserved_[0] == 0 && reserved_[1] == 0 && reserved_[2] == 0;
+    Sys_LeaveCriticalSection(CRITSECT_DB_SCRIPT_STRING_TRANSACTION);
+    return canonical;
+}
+
 ScriptStringTransactionStatus TryBeginScriptStringTransaction(
     ScriptStringTransactionToken *const token) noexcept
 {

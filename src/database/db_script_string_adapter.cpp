@@ -11,6 +11,12 @@ using script_string_journal::ScriptStringJournalCallbacks;
 using script_string_journal::ScriptStringReleaseCallbackStatus;
 using script_string_journal::ScriptStringTransferCallbackStatus;
 
+struct AcquireOrdinaryContext final
+{
+    ScriptStringSourceView source{};
+    std::uint32_t acquiredStringId = 0;
+};
+
 ScriptStringAcquireCallbackStatus AcquireOrdinary(
     void *const context,
     std::uint32_t *const outStringId) noexcept
@@ -18,8 +24,8 @@ ScriptStringAcquireCallbackStatus AcquireOrdinary(
     if (!context || !outStringId)
         return ScriptStringAcquireCallbackStatus::RejectedNoChange;
 
-    const auto &source =
-        *static_cast<const ScriptStringSourceView *>(context);
+    auto &acquire = *static_cast<AcquireOrdinaryContext *>(context);
+    const ScriptStringSourceView &source = acquire.source;
     const script_string::AcquireResult result =
         script_string::TryAcquireOrdinaryStringOfSize(
             source.bytes, source.byteCount, source.type);
@@ -29,6 +35,7 @@ ScriptStringAcquireCallbackStatus AcquireOrdinary(
         if (!script_string::IsCurrentRuntimeStringId(result.stringId))
             return ScriptStringAcquireCallbackStatus::UnsafeFailure;
         *outStringId = result.stringId;
+        acquire.acquiredStringId = result.stringId;
         return ScriptStringAcquireCallbackStatus::Acquired;
     case script_string::AcquireStatus::InvalidArgumentNoChange:
     case script_string::AcquireStatus::CapacityNoChange:
@@ -101,15 +108,23 @@ TryStageScriptStringFromSource(
     script_string_journal::ScriptStringJournal *const journal,
     const zone_load::ZoneLoadContextKey &key,
     const script_string_transaction::ScriptStringTransactionToken &transaction,
-    const ScriptStringSourceView &source) noexcept
+    const ScriptStringSourceView &source,
+    std::uint32_t *const outStringId) noexcept
 {
     if (!script_string_transaction::OwnsScriptStringTransaction(transaction))
         return script_string_journal::ScriptStringJournalStatus::InvalidState;
-    ScriptStringSourceView callbackSource = source;
-    return script_string_journal::TryStageScriptString(
+    AcquireOrdinaryContext callbackContext{source, 0};
+    const script_string_journal::ScriptStringJournalStatus status =
+        script_string_journal::TryStageScriptString(
         journal,
         key,
-        MakeCallbacks(&callbackSource));
+        MakeCallbacks(&callbackContext));
+    if (status == script_string_journal::ScriptStringJournalStatus::Success
+        && outStringId)
+    {
+        *outStringId = callbackContext.acquiredStringId;
+    }
+    return status;
 }
 
 script_string_journal::ScriptStringJournalStatus

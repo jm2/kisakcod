@@ -19,9 +19,10 @@ documented for completeness but are off the current critical path.
 
 Completed foundation work:
 
-- the audited upstream/gameplay reconciliation through PR #47 (`eeffe519`), with authoritative post-merge run
-  **29606403222** green across all nine Windows x86 and portable host jobs;
-- an active report-free script-string ownership foundation candidate: dedicated recursive outer DB serialization,
+- the audited upstream/gameplay reconciliation plus PR #48's report-free script-string ownership foundation through
+  `7d78222d`, with final PR-branch run **29625522997** green across all nine Windows x86 and portable host
+  jobs;
+- the merged report-free script-string ownership foundation: dedicated recursive outer DB serialization,
   private journal callbacks, exact ordinary/database-user ownership results, full allocator-backed byte-count/hash/debug
   validation, rejection of packed-length-ambiguous earlier NULs, and failure-atomic memory-tree allocate/query/free
   operations with assertion-free typed commits and complete disjoint-partition/corruption fixtures. Typed APIs preserve
@@ -35,11 +36,20 @@ Completed foundation work:
   avoids inactive-union-member reads. Comparable GCC Release
   measurements improved from roughly 135/766/1,056 ms to **2.692/1.977/4.148 ms** for 2,000 unique, 10,000 repeated, and
   200 same-length 300-byte interns; a 4,096-singleton legacy allocator probe is about **0.003 ms**, with deterministic
-  counters proving no complete partition, forest, free-list, or collision-scratch scan on those legacy paths. This is not
-  yet a whole-zone
-  production boundary: the adapter has no production caller, tokens are not yet bound to one journal/key for a complete
-  lifecycle, and raw user-4/user-8 operations plus the 4 -> 8 sweep remain outside the serializer. The typed production
-  integration still needs the prepared validation lease/batching work;
+  counters proving no complete partition, forest, free-list, or collision-scratch scan on those legacy paths. The
+  adapter has no production caller, and raw user-4/user-8 operations plus the 4 -> 8 sweep remain outside the serializer;
+- an active constructed, production-neutral lifecycle binding at rebased head `cb61ee01`. One fixed controller acquires
+  the dedicated serializer and binds an exact Loading lifecycle slot/key, journal, fixed backing span/count, private
+  token serial, and owning thread through terminal return. It stages ordinary references with failure-atomic ID output,
+  seals and transfers one occurrence at a time, prepares reversible `CommitReady`, then either publishes lifecycle
+  `Live`, unconditionally finalizes/detaches the journal, performs infallible admission, and releases serialization last,
+  or first convergently unpublishes staged IDs, publishes `Abandoning`, reverses exact journal ownership, detaches backing,
+  completes lifecycle cleanup to `Empty`, and retains an authenticated `Abandoned` receipt until explicit reset. Retry,
+  callback reentry, stale/swapped binding, foreign-thread exclusion, poisoning, and receipt authentication have dedicated
+  runtime/source-contract coverage; the exact GCC Debug suite is **105/105** green. This is not production wiring: the
+  stream, registry, PMem, arena/adapter, aliases/completed objects, external zone table, real callbacks, and Live-unload
+  route do not use it. All seven frozen raw ownership/sweep sites remain outside it, and typed production integration
+  still needs the prepared validation lease/batching work;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -353,11 +363,14 @@ Remaining gates, in implementation order:
    phase-boundary scans, fail-closed status operations, and portable/Windows x86 build admission. Before production
    wiring, the caller must prepare `Transferred -> CommitReady`, attempt lifecycle publication, roll back from
    `CommitReady` if publication fails, or invoke the unconditional journal finalizer immediately after successful `Live`
-   publication. The active candidate now supplies the no-report ownership primitives, private journal adapter, dedicated
-   serializer, and checked allocator foundation. Next, build the constructed whole-zone sidecar/controller, bind one
-   token to one journal/key for its complete lifecycle, enroll all raw ownership paths, and keep static controller slots
-   outside PMem with per-generation native storage inside the named scope. Benchmark and optimize the complete allocator
-   validation before binding the recipes and adapter into production with
+   publication. PR #48 now supplies the merged no-report ownership primitives, private journal adapter, dedicated
+   serializer, and checked allocator foundation as `7d78222d`; final PR-branch run **29625522997** passed all nine jobs.
+   Active controller head `cb61ee01` completes the constructed production-neutral token/journal/key binding through
+   Live finalization or authenticated abandonment. Next, finish its hosted review/CI, construct the production-owned
+   external zone table, enroll all seven raw ownership/sweep paths, and keep static controller slots and callback metadata
+   outside PMem with per-generation native storage inside the named scope. Manually adapt the prepared retained
+   validation lease/batch onto PR #48's mirrors and bounded scratch implementation before binding the recipes and adapter
+   into production with
    completed-object/alias registration and lifetime tests before replacing any legacy loader path.
    The journal merged in PR #37 as `7a9bce34`; post-merge run **29542960583** passed all nine jobs. PR #38 merged the
    referenced-fast-file/SYSTEMINFO range and bounded metadata hardening as `a7c485fd` before the ownership table depends
@@ -1333,8 +1346,8 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **71% by merged engineering effort**, or **72% including the active
-script-string ownership candidate**. Windows x86 is about **93%**, shared
+Overall porting progress is approximately **72% by merged engineering effort**, or **73% including the active
+constructed controller**. Windows x86 is about **93%**, shared
 foundations/security about **85%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
 **39%**, and macOS arm64 about **30%**. Strict delivered-target status remains **0/5** because no requested
 64-bit/non-Windows engine target is enabled end to end yet.
@@ -1504,14 +1517,28 @@ nonfunctional. Complete local GCC/Clang suites are 85/85 green, ASan+UBSan/TSan 
 execution and AArch64 compilation/linking pass. Exact final head `9fb4fc18` passed all nine jobs in run **29551519068**;
 hosted Codex found no major issue at that head and no review threads remain. PR #38 squash-merged as `a7c485fd`, and
 authoritative post-merge master run **29551990840** passed all nine jobs.
-The active ownership-foundation candidate now supplies the no-report script-string primitives, private journal adapter,
-dedicated serializer, checked allocator surface, bounded legacy topology/interval validation, and linear global-sweep
-preflight around the two merged lifecycle primitives. The next batch builds the
-constructed whole-zone table/controller, binds exactly one token to one journal/key through terminal finalization or
-rollback, and enrolls every raw database-user mutation/publication and the global 4 -> 8 sweep before replacing a legacy
-route. It must also benchmark representative retail-zone loading and integrate the prepared retained-transaction
-validation lease/batching work so the typed exhaustive boundary is not repeated per enrolled callback; the bounded
-legacy compatibility surface does not replace that typed guarantee. Static context slots and callback metadata must live
+PR #48 merged the no-report script-string primitives, private journal adapter, dedicated serializer, checked allocator
+surface, bounded legacy topology/interval validation, and linear global-sweep preflight as `7d78222d`; final PR-branch
+run **29625522997** passed all nine jobs. Rebased active head `cb61ee01` adds the constructed production-neutral
+controller:
+it acquires the serializer before journal initialization, authenticates one exact lifecycle slot/key, journal, backing
+span/count, token serial, and owner through every operation, stages acquired IDs only after journal publication, and
+drives seal, transfer, reversible prepare, lifecycle `Live`, unconditional journal finalization, infallible admission,
+and serializer release in order. Its abandonment route convergently makes staged IDs unreachable before `Abandoning`,
+rolls exact ownership back before detaching per-zone backing, drives cleanup until lifecycle `Empty`, releases the
+serializer last, and preserves a fully authenticated `Abandoned` receipt until reset. Dedicated tests cover retries,
+partial rollback, callback reentry, foreign-thread exclusion, stale/swapped bindings, output atomicity, poisoning, and
+receipt authentication; the exact GCC Debug suite is **105/105** green.
+
+That controller is linked into the production manifest but has no production caller. The external production zone table,
+stream/registry/PMem/arena/adapter binding, alias/completed-object unpublication, real admission/cleanup callbacks, and
+Live-unload routing remain. Two `SL_GetStringOfSize`, one `SL_AddUser`, two `SL_GetString`, one `SL_TransferSystem`, and
+one `SL_ShutdownSystem` site are source-frozen outside the controller; every raw database-user mutation/publication and
+the global 4 -> 8 sweep must be enrolled before replacing a legacy route. The prepared retained-transaction validation
+lease/batching work must be manually adapted onto PR #48's fixed-width mirrors, topology/accounting checks, and bounded
+scratch resets so typed exhaustive validation is paid at transaction boundaries rather than once per callback. The
+bounded legacy compatibility surface does not replace that typed guarantee. Static context slots and callback metadata
+must live
 outside and outlast zone PMem. They must survive
 `PMem_Free` and allow the controller to publish `Empty`; only per-generation arena/workspace/journal/backing belongs
 inside the existing named
