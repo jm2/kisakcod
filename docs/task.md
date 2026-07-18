@@ -23,7 +23,9 @@ work item changes. Do not create session-specific handoff files.
   including the old modulo-256 length collision, rejects an earlier same-residue NUL that the packed length cannot
   represent, and validates exact allocation/hash/free-list/debug ownership before mutation. Typed final-release planning
   walks the complete bounded free list before publication; legacy release validates the complete owning collision chain
-  plus the free-list endpoints it will splice. Global shutdown/transfer use one complete linear preflight before a
+  plus the free-list endpoints it will splice. Collision-chain validation records and clears only the hash entries and
+  string IDs touched by the preceding walk, so repeated legacy intern/lookup no longer hides a whole-table bitmap reset.
+  Global shutdown/transfer use one complete linear preflight before a
   separate physical-entry mutation pass, and shutdown splices each already-authenticated chain entry in constant local
   topology work. The supporting
   profile record retains its intended MSVC-compatible 0x38/8-byte layout on LP64 hosts. Typed commits use assertion-free
@@ -59,8 +61,15 @@ work item changes. Do not create session-specific handoff files.
   preflight described above. GCC Release/Debug, Clang Release, ASan+UBSan, strict source/security gates, and GCC i386
   compilation pass; the sandbox blocks only execution of the new i386 binaries with its established `SIGSYS`. Focused
   tests exposed and corrected one ABI-policy-only direct-literal `sizeof` assertion by using the repository's named
-  `RUNTIME_SIZE` contract; the complete corrected-head GCC Release suite is **103/103** green independently. Exact hosted
-  CI and review of that head remain the publication gates.
+  `RUNTIME_SIZE` contract. Exact pre-scratch head `2f61977c` passed all nine hosted jobs in run **29624219417**, and its
+  hosted Codex review found no major issue. A final independent performance audit then found two whole-table scratch
+  clears inside otherwise bounded collision-chain validation. The current correction replaces both with
+  recorded-entry cleanup and adds a deterministic public-path regression: 1,024 occupied one-entry intern/lookup
+  validations perform 1,024 resets and clear exactly 2,046 previously touched entries. Focused runtime, ownership-source,
+  security, and ABI gates pass locally; the complete corrected-head GCC Release suite is **103/103** green, as are Clang
+  and ASan+UBSan focused runs (with leak detection disabled under the traced runner), and strict i386 compilation. An
+  independent exact-diff audit found no correctness, bounds, failure-atomicity, stale-scratch, performance, or test defect.
+  Exact-head hosted CI and review remain before publication.
 - This candidate is deliberately not the whole-zone controller. The raw database user-4/user-8 paths and global
   4 -> 8 sweep still bypass the serializer; the adapter has no production caller; and a token is not yet bound to one
   journal/key from initialization through terminal finalization/rollback. The former release measurements were about
@@ -68,7 +77,9 @@ work item changes. Do not create session-specific handoff files.
   300-byte strings. The comparable final GCC Release fixture now measures approximately **2.692 ms**, **1.977 ms**, and
   **4.148 ms**, respectively. A 4,096-singleton fragmented allocator probe measures about **0.003 ms** per legacy
   allocation, and deterministic counters prove zero complete partition, forest, or free-list scans throughout the
-  legacy benchmark/setup/drain paths. This closes the PR #48 legacy performance blockers. The length-only hash for
+  legacy benchmark/setup/drain paths. A separate touched-entry counter now proves collision-chain scratch cleanup is
+  proportional to the preceding chain walk rather than the 20,000-entry hash table or 65,536-ID space. This closes the
+  PR #48 legacy performance blockers. The length-only hash for
   strings of at least 256 bytes still permits inherent quadratic collision-chain comparison work and remains separately
   tracked. The future production whole-zone typed transaction still needs the prepared validation-lease/batching work so
   its deliberately exhaustive boundary validation is not repeated for every enrolled callback.

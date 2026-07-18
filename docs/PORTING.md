@@ -30,10 +30,13 @@ Completed foundation work:
   mirrors on every path they consume or change. Exact allocator-class recovery preserves compact non-NUL legacy binary
   records. Typed final release validates the complete bounded free list; legacy release validates its complete collision
   chain and local free-list splice, while global shutdown/transfer perform one complete linear preflight followed by a
-  physical-entry mutation pass. Fixed-width score decoding avoids inactive-union-member reads. Comparable GCC Release
+  physical-entry mutation pass. Collision validation records and clears only entries touched by its preceding chain walk;
+  a deterministic public-path counter prevents whole-table scratch resets from returning. Fixed-width score decoding
+  avoids inactive-union-member reads. Comparable GCC Release
   measurements improved from roughly 135/766/1,056 ms to **2.692/1.977/4.148 ms** for 2,000 unique, 10,000 repeated, and
   200 same-length 300-byte interns; a 4,096-singleton legacy allocator probe is about **0.003 ms**, with deterministic
-  counters proving no complete partition, forest, or free-list scan on those legacy paths. This is not yet a whole-zone
+  counters proving no complete partition, forest, free-list, or collision-scratch scan on those legacy paths. This is not
+  yet a whole-zone
   production boundary: the adapter has no production caller, tokens are not yet bound to one journal/key for a complete
   lifecycle, and raw user-4/user-8 operations plus the 4 -> 8 sweep remain outside the serializer. The typed production
   integration still needs the prepared validation lease/batching work;

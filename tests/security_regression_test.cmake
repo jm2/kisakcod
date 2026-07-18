@@ -3655,6 +3655,14 @@ require_source_contains(
     "script/scr_stringlist.cpp"
     "return (entry.status_next & ~kHashEntryBits) == 0;"
     "hash entries must reject reserved high-bit corruption")
+require_source_not_contains(
+    "script/scr_stringlist.cpp"
+    "memset(sl_hashChainVisited"
+    "bounded hash validation must not clear whole-table entry scratch")
+require_source_not_contains(
+    "script/scr_stringlist.cpp"
+    "memset(sl_stringIdVisited"
+    "bounded hash validation must not clear whole-table string-ID scratch")
 extract_security_slice(
     _legacy_string_release_security_source
     "void SL_RemoveRefToStringOfSize(uint32_t stringValue, uint32_t len)"

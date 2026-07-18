@@ -754,6 +754,24 @@ require_not_contains(
     "memset(mt_preflightVisited, 0, sizeof(mt_preflightVisited))"
     "global preflight bitset reset on bounded legacy path")
 foreach(_marker IN ITEMS
+    "uint16_t sl_hashChainVisitedEntries[STRINGLIST_SIZE];"
+    "uint16_t sl_stringIdVisitedEntries[STRINGLIST_SIZE];"
+    "SL_TryRecordHashEntryNoReport(entryIndex)"
+    "sl_hashChainVisitedEntries[sl_hashChainVisitedCount++]"
+    "sl_stringIdVisitedEntries[sl_stringIdVisitedCount++]")
+    require_contains(
+        _string_source "${_marker}"
+        "collision-chain-bounded validation scratch reset")
+endforeach()
+require_not_contains(
+    _string_source
+    "memset(sl_hashChainVisited"
+    "global hash-entry scratch reset on bounded legacy path")
+require_not_contains(
+    _string_source
+    "memset(sl_stringIdVisited"
+    "global string-ID scratch reset on bounded legacy path")
+foreach(_marker IN ITEMS
     "static uint16_t mt_allocationMetadataShadow[MEMORY_NODE_COUNT];"
     "static uint8_t mt_freeNodeSizeShadow[MEMORY_NODE_COUNT];"
     "static uint16_t mt_freeTreeHeadShadow[MEMORY_NODE_BITS + 1];"
@@ -1178,9 +1196,11 @@ foreach(_marker IN ITEMS
     "aggregate debug corruption changed ownership state"
     "forged shutdown entry changed ownership state"
     "TestLegacyCompatibilityAvoidsCompleteScans()"
+    "TestLegacyHashScratchResetIsChainBounded()"
     "TestLegacyLocalCorruptionAndReporterUnwind()"
     "MT_CompleteValidationCountForTesting() == 0"
     "sl_completeFreeListValidationCount == 0"
+    "sl_hashValidationScratchResetEntryCount == expectedResetEntries"
     "g_reporterSawOwnedLock"
     "scrStringGlob.nextFreeEntry == nullptr"
     "legacy binary report-free transfer failed"

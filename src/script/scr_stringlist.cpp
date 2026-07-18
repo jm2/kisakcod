@@ -1335,22 +1335,64 @@ bool SL_TryRecoverRefStringByteCountNoReport(
 
 uint8_t sl_hashChainVisited[(STRINGLIST_SIZE + 7) / 8];
 uint8_t sl_stringIdVisited[SL_MAX_STRING_INDEX / 8];
+uint16_t sl_hashChainVisitedEntries[STRINGLIST_SIZE];
+uint16_t sl_stringIdVisitedEntries[STRINGLIST_SIZE];
+uint32_t sl_hashChainVisitedCount = 0;
+uint32_t sl_stringIdVisitedCount = 0;
 uint8_t sl_systemSweepHashEntries[(STRINGLIST_SIZE + 7) / 8];
 uint8_t sl_systemSweepStringIds[SL_MAX_STRING_INDEX / 8];
 uint8_t sl_freeListVisited[(STRINGLIST_SIZE + 7) / 8];
 #ifdef KISAK_SCRIPT_STRING_PERF_TESTING
 uint32_t sl_completeFreeListValidationCount = 0;
+uint32_t sl_hashValidationScratchResetCount = 0;
+uint64_t sl_hashValidationScratchResetEntryCount = 0;
 #endif
 
 void SL_ResetHashChainValidationNoReport() noexcept
 {
-	memset(sl_hashChainVisited, 0, sizeof(sl_hashChainVisited));
-	memset(sl_stringIdVisited, 0, sizeof(sl_stringIdVisited));
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+	++sl_hashValidationScratchResetCount;
+	sl_hashValidationScratchResetEntryCount +=
+		sl_hashChainVisitedCount + sl_stringIdVisitedCount;
+#endif
+	for (uint32_t entry = 0; entry < sl_hashChainVisitedCount; ++entry)
+	{
+		const uint32_t entryIndex = sl_hashChainVisitedEntries[entry];
+		sl_hashChainVisited[entryIndex >> 3] &=
+			static_cast<uint8_t>(~(1u << (entryIndex & 7u)));
+	}
+	for (uint32_t entry = 0; entry < sl_stringIdVisitedCount; ++entry)
+	{
+		const uint32_t stringId = sl_stringIdVisitedEntries[entry];
+		sl_stringIdVisited[stringId >> 3] &=
+			static_cast<uint8_t>(~(1u << (stringId & 7u)));
+	}
+	sl_hashChainVisitedCount = 0;
+	sl_stringIdVisitedCount = 0;
+}
+
+bool SL_TryRecordHashEntryNoReport(const uint32_t entryIndex) noexcept
+{
+	if (entryIndex >= STRINGLIST_SIZE
+		|| sl_hashChainVisitedCount >= STRINGLIST_SIZE)
+	{
+		return false;
+	}
+	const uint32_t byteIndex = entryIndex >> 3;
+	const uint8_t bitMask =
+		static_cast<uint8_t>(1u << (entryIndex & 7u));
+	if ((sl_hashChainVisited[byteIndex] & bitMask) != 0)
+		return false;
+	sl_hashChainVisited[byteIndex] |= bitMask;
+	sl_hashChainVisitedEntries[sl_hashChainVisitedCount++] =
+		static_cast<uint16_t>(entryIndex);
+	return true;
 }
 
 bool SL_TryRecordStringIdNoReport(const uint32_t stringId) noexcept
 {
-	if (!script_string::IsCurrentRuntimeStringId(stringId))
+	if (!script_string::IsCurrentRuntimeStringId(stringId)
+		|| sl_stringIdVisitedCount >= STRINGLIST_SIZE)
 		return false;
 	const uint32_t byteIndex = stringId >> 3;
 	const uint8_t bitMask =
@@ -1358,6 +1400,8 @@ bool SL_TryRecordStringIdNoReport(const uint32_t stringId) noexcept
 	if ((sl_stringIdVisited[byteIndex] & bitMask) != 0)
 		return false;
 	sl_stringIdVisited[byteIndex] |= bitMask;
+	sl_stringIdVisitedEntries[sl_stringIdVisitedCount++] =
+		static_cast<uint16_t>(stringId);
 	return true;
 }
 
@@ -1633,12 +1677,8 @@ bool SL_IsInternHashStateValidForScopeNoReport(
 		uint32_t entryIndex = hash;
 		for (uint32_t visited = 0; visited < STRINGLIST_SIZE; ++visited)
 		{
-			const uint32_t visitedByte = entryIndex >> 3;
-			const uint8_t visitedBit =
-				static_cast<uint8_t>(1u << (entryIndex & 7u));
-			if ((sl_hashChainVisited[visitedByte] & visitedBit) != 0)
+			if (!SL_TryRecordHashEntryNoReport(entryIndex))
 				return false;
-			sl_hashChainVisited[visitedByte] |= visitedBit;
 
 			const HashEntry &entry = scrStringGlob.hashTable[entryIndex];
 			const uint32_t expectedStatus =
@@ -1687,12 +1727,8 @@ bool SL_IsInternHashStateValidForScopeNoReport(
 		{
 			if (entryIndex == 0 || entryIndex >= STRINGLIST_SIZE)
 				return false;
-			const uint32_t visitedByte = entryIndex >> 3;
-			const uint8_t visitedBit =
-				static_cast<uint8_t>(1u << (entryIndex & 7u));
-			if ((sl_hashChainVisited[visitedByte] & visitedBit) != 0)
+			if (!SL_TryRecordHashEntryNoReport(entryIndex))
 				return false;
-			sl_hashChainVisited[visitedByte] |= visitedBit;
 
 			const HashEntry &entry = scrStringGlob.hashTable[entryIndex];
 			const uint32_t expectedStatus =
@@ -1947,12 +1983,8 @@ bool SL_TryBuildUnlinkPlanForScopeNoReport(
 	bool terminated = false;
 	for (uint32_t visited = 0; visited < STRINGLIST_SIZE; ++visited)
 	{
-		const uint32_t visitedByte = entryIndex >> 3;
-		const uint8_t visitedBit =
-			static_cast<uint8_t>(1u << (entryIndex & 7u));
-		if ((sl_hashChainVisited[visitedByte] & visitedBit) != 0)
+		if (!SL_TryRecordHashEntryNoReport(entryIndex))
 			return false;
-		sl_hashChainVisited[visitedByte] |= visitedBit;
 
 		const HashEntry* const entry = &scrStringGlob.hashTable[entryIndex];
 		const uint32_t expectedStatus =

@@ -1235,6 +1235,67 @@ struct StateImage final
     return EndTest();
 }
 
+[[nodiscard]] bool TestLegacyHashScratchResetIsChainBounded() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char value[] = "legacy-scratch-bounded";
+    constexpr std::uint32_t byteCount =
+        static_cast<std::uint32_t>(sizeof(value));
+    const std::uint32_t stringId =
+        SL_GetStringOfSize(value, 0, byteCount, 15);
+    if (!Check(stringId != 0, "legacy scratch seed intern failed"))
+        return false;
+
+    // Discard scratch retained by earlier validations, then measure only the
+    // occupied one-entry chain below. Each validation leaves one hash index
+    // and one string ID for the following reset to clear.
+    SL_ResetHashChainValidationNoReport();
+    sl_hashValidationScratchResetCount = 0;
+    sl_hashValidationScratchResetEntryCount = 0;
+
+    constexpr std::uint32_t iterationCount = 512;
+    for (std::uint32_t iteration = 0;
+        iteration < iterationCount;
+        ++iteration)
+    {
+        if (!Check(
+                SL_GetStringOfSize(value, 0, byteCount, 15) == stringId,
+                "legacy scratch repeated intern changed identity")
+            || !Check(
+                SL_FindString(value) == stringId,
+                "legacy scratch repeated lookup failed"))
+        {
+            return false;
+        }
+    }
+
+    constexpr std::uint32_t validationCount = iterationCount * 2;
+    constexpr std::uint64_t expectedResetEntries =
+        static_cast<std::uint64_t>(validationCount - 1) * 2;
+    if (!Check(
+            sl_hashValidationScratchResetCount == validationCount,
+            "legacy hash validation reset count changed")
+        || !Check(
+            sl_hashValidationScratchResetEntryCount
+                == expectedResetEntries,
+            "legacy hash validation cleared beyond its touched chain")
+        || !Check(ReportersUnused(),
+            "legacy bounded scratch path invoked a reporter"))
+    {
+        return false;
+    }
+
+    for (std::uint32_t reference = 0;
+        reference <= iterationCount;
+        ++reference)
+    {
+        SL_RemoveRefToStringOfSize(stringId, byteCount);
+    }
+    return EndTest();
+}
+
 [[nodiscard]] bool TestLegacyLocalCorruptionAndReporterUnwind() noexcept
 {
     if (!BeginTest())
@@ -1746,6 +1807,7 @@ int main()
         || !TestSystemIterationAuthenticatesPhysicalEntries()
         || !TestShutdownMixedCollisionChain()
         || !TestLegacyCompatibilityAvoidsCompleteScans()
+        || !TestLegacyHashScratchResetIsChainBounded()
         || !TestLegacyLocalCorruptionAndReporterUnwind()
         || !TestMalformedStateFailsClosed())
     {
