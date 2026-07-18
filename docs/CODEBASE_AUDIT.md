@@ -42,14 +42,18 @@ Fixed in the initial porting implementation:
   names with protocol-length, server-only, path-namespace, pre-open
   revalidation, and resource-cleanup guards. HTTP/www redirect transport remains
   nonfunctional and is still tracked under H4.
-- Script-string ownership paths now authenticate allocator, hash, debug, and provenance boundaries; opaque `RefString`
-  mutation authority is private, and character folding is defined for every byte value. Lifecycle and production-
-  enrollment status belongs in `docs/task.md`.
+- The PR #55 candidate at `e9051955` extends the merged script-string ownership foundation: opaque `RefString` mutation
+  authority is private, character folding is defined for every byte value, complete batch admission validates debug
+  ownership per live ID, and all nested allocator-lease entries require an exact non-forgeable capability. Both
+  namespace-visible friend authority shims are removed; capability storage is constant-initialized and trivially
+  destructible, with no guarded first use or shutdown registration. This remains unmerged and production-neutral;
+  lifecycle and enrollment status belongs in `docs/task.md`.
 - Fixed-width atomic migrations cover dvar/script/XAnim/DObj/database/IWD/network,
   skeleton/pose, worker queues, bounded renderer reservations, and DObj/model-surface streams. The live
   debt ledger and current validation evidence are maintained in `docs/task.md`.
 
-Still open: the broader release-disabled assertion audit (H2), reflection/rate
+Still open: the macro-off `EffectsCore/fx_physics_sidecar.h` test-friend authority leak newly recorded in
+`docs/task.md`, the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.
 
