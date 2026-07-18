@@ -1411,9 +1411,13 @@ void TestUnsafeLiveUnloadBoundary(
 
 int main(const int argc, char **const argv)
 {
-    if (argc == 3
-        && std::string_view(argv[1]) == "--unsafe-live-unload")
+    if (argc != 1)
     {
+        if (argc != 3
+            || std::string_view(argv[1]) != "--unsafe-live-unload")
+        {
+            return 2;
+        }
         const std::string_view boundaryText(argv[2]);
         std::size_t parsed = 0;
         const auto [end, error] = std::from_chars(

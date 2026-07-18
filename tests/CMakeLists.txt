@@ -476,6 +476,21 @@ foreach(_zone_runtime_unsafe_boundary RANGE 0 6)
         database-zone-runtime-table-unload-unsafe-${_zone_runtime_unsafe_boundary}
         PROPERTIES TIMEOUT 30)
 endforeach()
+add_test(
+    NAME database-zone-runtime-table-unload-invalid-missing-value
+    COMMAND kisakcod-db-zone-runtime-table-tests --unsafe-live-unload)
+add_test(
+    NAME database-zone-runtime-table-unload-invalid-extra-value
+    COMMAND kisakcod-db-zone-runtime-table-tests
+        --unsafe-live-unload 0 extra)
+add_test(
+    NAME database-zone-runtime-table-unload-invalid-unknown-option
+    COMMAND kisakcod-db-zone-runtime-table-tests --unknown-option 0)
+set_tests_properties(
+    database-zone-runtime-table-unload-invalid-missing-value
+    database-zone-runtime-table-unload-invalid-extra-value
+    database-zone-runtime-table-unload-invalid-unknown-option
+    PROPERTIES TIMEOUT 30 WILL_FAIL TRUE)
 
 add_executable(kisakcod-fx-archive-disk32-tests
     fx_archive_disk32_tests.cpp

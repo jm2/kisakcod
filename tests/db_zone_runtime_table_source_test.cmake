@@ -398,6 +398,9 @@ foreach(_marker IN ITEMS
     "ZoneScriptStringOwnershipControllerTestAccess::SetReserved("
     "hiddenGenerationLifecycle->generation() == 23"
     "newKey.generation == oldKey.generation + 1"
+    "if (argc != 1)"
+    "if (argc != 3"
+    "std::string_view(argv[1]) != \"--unsafe-live-unload\""
     "Zone runtime table tests passed")
     require_contains(_fixture "${_marker}" "focused runtime coverage")
 endforeach()
@@ -419,13 +422,17 @@ foreach(_marker IN ITEMS
     "NAME database-zone-runtime-table-ownership"
     "database-zone-runtime-table-unload-unsafe-${_zone_runtime_unsafe_boundary}"
     "--unsafe-live-unload ${_zone_runtime_unsafe_boundary}"
+    "database-zone-runtime-table-unload-invalid-missing-value"
+    "database-zone-runtime-table-unload-invalid-extra-value"
+    "database-zone-runtime-table-unload-invalid-unknown-option"
+    "PROPERTIES TIMEOUT 30 WILL_FAIL TRUE"
     "NAME database-zone-runtime-table-source-invariants"
     "db_zone_runtime_table_source_test.cmake")
     require_contains(_tests "${_marker}" "portable CMake test integration")
 endforeach()
 foreach(_marker IN ITEMS
     "kisakcod-db-zone-runtime-table-tests"
-    "database-zone-runtime-table-(ownership|source-invariants|unload-unsafe-[0-6])")
+    "database-zone-runtime-table-(ownership|source-invariants|unload-unsafe-[0-6]|unload-invalid-(missing-value|extra-value|unknown-option))")
     require_contains(_ci "${_marker}" "measured Windows x86 CI integration")
 endforeach()
 
