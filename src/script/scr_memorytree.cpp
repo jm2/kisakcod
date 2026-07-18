@@ -110,16 +110,46 @@ enum class MT_PolicyEntryStatus : uint8_t
     UnsafeFailure,
 };
 
+enum class MT_ValidationLeaseLifecycle : uint8_t
+{
+    Idle,
+    Active,
+    Poisoned,
+    Frozen,
+};
+
 uint64_t mt_nextValidationLeaseSerial = 0;
-MT_ValidationLease *mt_activeValidationLease = nullptr;
+uintptr_t mt_activeValidationLeaseAddress = 0;
 uint64_t mt_activeValidationLeaseSerial = 0;
 uintptr_t mt_activeValidationLeaseAddressMirror = 0;
 uint64_t mt_activeValidationLeaseSerialMirror = 0;
+MT_ValidationLeaseLifecycle mt_validationLeaseLifecycle =
+    MT_ValidationLeaseLifecycle::Idle;
+MT_ValidationLeaseLifecycle mt_validationLeaseLifecycleMirror =
+    MT_ValidationLeaseLifecycle::Idle;
+thread_local uintptr_t mt_retainedValidationLeaseAddress = 0;
+thread_local uintptr_t mt_retainedValidationLeaseAddressMirror = 0;
+thread_local uint64_t mt_retainedValidationLeaseSerial = 0;
+thread_local uint64_t mt_retainedValidationLeaseSerialMirror = 0;
 
+constexpr uint64_t kAbandonedValidationLeasePoison =
+    UINT64_C(0x4D545F4142414E44);
+constexpr uint64_t kAbandonedValidationLeasePoisonMirror =
+    UINT64_C(0xB2ABA0BEBDBEB1BB);
+uint64_t mt_abandonedValidationLeasePoison = 0;
+uint64_t mt_abandonedValidationLeasePoisonMirror = 0;
+
+bool MT_IsValidationLeaseBoundaryFrozenLocked() noexcept;
+bool MT_HasRetainedValidationLeaseAuthenticationLocked() noexcept;
 bool MT_HasValidationLeaseRegistryActivityLocked() noexcept;
 bool MT_IsValidationLeaseRegistryConsistentLocked() noexcept;
 bool MT_OwnsValidationLeaseLocked(
     const MT_ValidationLease &lease) noexcept;
+bool MT_IsValidationLeasePoisonedLocked(
+    const MT_ValidationLease &lease) noexcept;
+void MT_ClearValidationLeaseRegistryLocked() noexcept;
+void MT_ClearRetainedValidationLeaseAuthenticationLocked() noexcept;
+void MT_FreezeValidationLeaseBoundaryLocked() noexcept;
 void MT_PoisonValidationLeaseLocked(
     MT_ValidationLease *lease) noexcept;
 void MT_PoisonActiveValidationLeaseLocked() noexcept;
@@ -263,6 +293,16 @@ int MT_GetScoreNoReport(const uint16_t nodeNum) noexcept
 {
     return MT_GetScoreFromDeltaNoReport(
         MEMORY_NODE_COUNT - static_cast<int>(nodeNum));
+}
+
+int MT_GetSubTreeSizeNoReport(const int nodeNum) noexcept
+{
+    if (!nodeNum)
+        return 0;
+
+    return MT_GetSubTreeSizeNoReport(scrMemTreeGlob.nodes[nodeNum].prev)
+        + MT_GetSubTreeSizeNoReport(scrMemTreeGlob.nodes[nodeNum].next)
+        + 1;
 }
 
 bool MT_TryGetSizeNoReport(int numBytes, int *outSize) noexcept
@@ -786,41 +826,85 @@ bool MT_IsCoreStateValidNoReport() noexcept
 
 bool MT_HasValidationLeaseRegistryActivityLocked() noexcept
 {
-    return mt_activeValidationLease != nullptr
+    return mt_activeValidationLeaseAddress != 0
         || mt_activeValidationLeaseSerial != 0
         || mt_activeValidationLeaseAddressMirror != 0
-        || mt_activeValidationLeaseSerialMirror != 0;
+        || mt_activeValidationLeaseSerialMirror != 0
+        || mt_validationLeaseLifecycle
+            != MT_ValidationLeaseLifecycle::Idle
+        || mt_validationLeaseLifecycleMirror
+            != MT_ValidationLeaseLifecycle::Idle
+        || MT_HasRetainedValidationLeaseAuthenticationLocked()
+        || MT_IsValidationLeaseBoundaryFrozenLocked();
+}
+
+bool MT_IsValidationLeaseBoundaryFrozenLocked() noexcept
+{
+    // Either word is terminal activity. A torn poison publication therefore
+    // fails closed instead of reopening allocator state.
+    return mt_abandonedValidationLeasePoison != 0
+        || mt_abandonedValidationLeasePoisonMirror != 0
+        || mt_validationLeaseLifecycle
+            == MT_ValidationLeaseLifecycle::Frozen
+        || mt_validationLeaseLifecycleMirror
+            == MT_ValidationLeaseLifecycle::Frozen;
+}
+
+bool MT_HasRetainedValidationLeaseAuthenticationLocked() noexcept
+{
+    return mt_retainedValidationLeaseAddress != 0
+        || mt_retainedValidationLeaseAddressMirror != 0
+        || mt_retainedValidationLeaseSerial != 0
+        || mt_retainedValidationLeaseSerialMirror != 0;
 }
 
 bool MT_IsValidationLeaseRegistryConsistentLocked() noexcept
 {
+    if (MT_IsValidationLeaseBoundaryFrozenLocked())
+        return false;
+
     if (!MT_HasValidationLeaseRegistryActivityLocked())
         return true;
 
-    if (!mt_activeValidationLease
+    if (mt_activeValidationLeaseAddress == 0
         || mt_activeValidationLeaseSerial == 0
         || mt_activeValidationLeaseAddressMirror == 0
         || mt_activeValidationLeaseSerialMirror == 0
-        || reinterpret_cast<uintptr_t>(mt_activeValidationLease)
+        || mt_activeValidationLeaseAddress
             != mt_activeValidationLeaseAddressMirror
         || mt_activeValidationLeaseSerial
+            != mt_activeValidationLeaseSerialMirror
+        || mt_validationLeaseLifecycle
+            != mt_validationLeaseLifecycleMirror
+        || (mt_validationLeaseLifecycle
+                != MT_ValidationLeaseLifecycle::Active
+            && mt_validationLeaseLifecycle
+                != MT_ValidationLeaseLifecycle::Poisoned)
+        || mt_retainedValidationLeaseAddress
+            != mt_activeValidationLeaseAddress
+        || mt_retainedValidationLeaseAddressMirror
+            != mt_activeValidationLeaseAddressMirror
+        || mt_retainedValidationLeaseSerial
+            != mt_activeValidationLeaseSerial
+        || mt_retainedValidationLeaseSerialMirror
             != mt_activeValidationLeaseSerialMirror)
     {
         return false;
     }
 
-    return MT_ValidationLeaseAccess::Active(*mt_activeValidationLease)
-        && MT_ValidationLeaseAccess::Serial(*mt_activeValidationLease)
-            == mt_activeValidationLeaseSerial
-        && MT_ValidationLeaseAccess::ReservedClear(
-            *mt_activeValidationLease);
+    // Registry consistency is deliberately by value. Stored addresses are
+    // compared only with an explicit live lease argument in MT_Owns...; generic
+    // unleased and reset paths never dereference stack-owned registry storage.
+    return true;
 }
 
 bool MT_OwnsValidationLeaseLocked(
     const MT_ValidationLease &lease) noexcept
 {
-    return MT_IsValidationLeaseRegistryConsistentLocked()
-        && mt_activeValidationLease == &lease
+    const uintptr_t leaseAddress = reinterpret_cast<uintptr_t>(&lease);
+    return mt_activeValidationLeaseAddress == leaseAddress
+        && mt_activeValidationLeaseAddressMirror == leaseAddress
+        && MT_IsValidationLeaseRegistryConsistentLocked()
         && MT_ValidationLeaseAccess::Active(lease)
         && MT_ValidationLeaseAccess::Serial(lease) != 0
         && MT_ValidationLeaseAccess::Serial(lease)
@@ -828,21 +912,74 @@ bool MT_OwnsValidationLeaseLocked(
         && MT_ValidationLeaseAccess::ReservedClear(lease);
 }
 
+bool MT_IsValidationLeasePoisonedLocked(
+    const MT_ValidationLease &lease) noexcept
+{
+    return MT_ValidationLeaseAccess::Poisoned(lease)
+        || (MT_OwnsValidationLeaseLocked(lease)
+            && mt_validationLeaseLifecycle
+                == MT_ValidationLeaseLifecycle::Poisoned);
+}
+
+void MT_ClearValidationLeaseRegistryLocked() noexcept
+{
+    mt_activeValidationLeaseAddress = 0;
+    mt_activeValidationLeaseSerial = 0;
+    mt_activeValidationLeaseAddressMirror = 0;
+    mt_activeValidationLeaseSerialMirror = 0;
+    mt_validationLeaseLifecycle = MT_ValidationLeaseLifecycle::Idle;
+    mt_validationLeaseLifecycleMirror = MT_ValidationLeaseLifecycle::Idle;
+}
+
+void MT_ClearRetainedValidationLeaseAuthenticationLocked() noexcept
+{
+    mt_retainedValidationLeaseAddress = 0;
+    mt_retainedValidationLeaseAddressMirror = 0;
+    mt_retainedValidationLeaseSerial = 0;
+    mt_retainedValidationLeaseSerialMirror = 0;
+}
+
+void MT_FreezeValidationLeaseBoundaryLocked() noexcept
+{
+    mt_abandonedValidationLeasePoison =
+        kAbandonedValidationLeasePoison;
+    mt_abandonedValidationLeasePoisonMirror =
+        kAbandonedValidationLeasePoisonMirror;
+    mt_activeValidationLeaseAddress = 0;
+    mt_activeValidationLeaseSerial = 0;
+    mt_activeValidationLeaseAddressMirror = 0;
+    mt_activeValidationLeaseSerialMirror = 0;
+    mt_validationLeaseLifecycle = MT_ValidationLeaseLifecycle::Frozen;
+    mt_validationLeaseLifecycleMirror =
+        MT_ValidationLeaseLifecycle::Frozen;
+}
+
 void MT_PoisonValidationLeaseLocked(
     MT_ValidationLease *const lease) noexcept
 {
     if (lease && MT_OwnsValidationLeaseLocked(*lease))
+    {
         MT_ValidationLeaseAccess::Poison(*lease);
+        mt_validationLeaseLifecycle =
+            MT_ValidationLeaseLifecycle::Poisoned;
+        mt_validationLeaseLifecycleMirror =
+            MT_ValidationLeaseLifecycle::Poisoned;
+    }
 }
 
 void MT_PoisonActiveValidationLeaseLocked() noexcept
 {
-    // Authenticate the mirrored address before dereferencing the registry.
-    // A torn/corrupt pointer therefore rejects access without becoming a new
-    // arbitrary-memory write primitive.
+    // Generic callers never dereference the stored address. They poison the
+    // by-value registry so a longjmp, abandoned stack frame, or torn token
+    // cannot turn rejection into a write through dead storage.
     if (MT_HasValidationLeaseRegistryActivityLocked()
         && MT_IsValidationLeaseRegistryConsistentLocked())
-        MT_ValidationLeaseAccess::Poison(*mt_activeValidationLease);
+    {
+        mt_validationLeaseLifecycle =
+            MT_ValidationLeaseLifecycle::Poisoned;
+        mt_validationLeaseLifecycleMirror =
+            MT_ValidationLeaseLifecycle::Poisoned;
+    }
 }
 
 bool MT_RejectUnleasedAccessForActiveLeaseLocked() noexcept
@@ -871,7 +1008,7 @@ MT_PolicyEntryStatus MT_ValidatePolicyEntryLocked(
     {
         if (!lease || !MT_OwnsValidationLeaseLocked(*lease))
             return MT_PolicyEntryStatus::InvalidLease;
-        if (MT_ValidationLeaseAccess::Poisoned(*lease))
+        if (MT_IsValidationLeasePoisonedLocked(*lease))
             return MT_PolicyEntryStatus::UnsafeFailure;
 
         const bool locallyValid = query
@@ -905,7 +1042,7 @@ bool MT_CanCommitPolicyMutationLocked(
     if (policy != MT_ValidationPolicy::Leased)
         return true;
     if (!lease || !MT_OwnsValidationLeaseLocked(*lease)
-        || MT_ValidationLeaseAccess::Poisoned(*lease)
+        || MT_IsValidationLeasePoisonedLocked(*lease)
         || !MT_ValidationLeaseAccess::CanCountMutation(*lease))
     {
         MT_PoisonValidationLeaseLocked(lease);
@@ -1730,6 +1867,49 @@ void MT_AddMemoryNodeCommitNoReport(
 }
 } // namespace
 
+MT_ValidationLease::~MT_ValidationLease() noexcept
+{
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    const uintptr_t address = reinterpret_cast<uintptr_t>(this);
+    const bool boundaryMentionsThis =
+        mt_activeValidationLeaseAddress == address
+        || mt_activeValidationLeaseAddressMirror == address
+        || mt_retainedValidationLeaseAddress == address
+        || mt_retainedValidationLeaseAddressMirror == address;
+    const bool canonical =
+        MT_ValidationLeaseAccess::IsCanonicalClear(*this);
+
+    // A never-admitted object, a successfully finished object, or an
+    // unrelated canonical object nested inside another owner has no lifetime
+    // authority to revoke.
+    if (canonical && !boundaryMentionsThis)
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+        return;
+    }
+
+    // MT_Owns... compares both stored addresses with this live object before
+    // reading its authentication fields. No generic stored address is ever
+    // dereferenced here or elsewhere.
+    const bool ownsRetainedAcquisition =
+        MT_OwnsValidationLeaseLocked(*this);
+
+    // Publish terminal process-lifetime poison before removing the only
+    // address that may name this stack object. This remains frozen even when
+    // allocator state itself is currently valid.
+    MT_FreezeValidationLeaseBoundaryLocked();
+    MT_ValidationLeaseAccess::Poison(*this);
+    if (ownsRetainedAcquisition)
+        MT_ClearRetainedValidationLeaseAuthenticationLocked();
+
+    // Always drop the acquisition made by this destructor. Only exact
+    // address/serial/mirror authentication proves that Begin's retained
+    // acquisition belongs to this object and may also be released.
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+    if (ownsRetainedAcquisition)
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+}
+
 bool MT_ValidationLease::active() const noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
@@ -1741,7 +1921,7 @@ bool MT_ValidationLease::active() const noexcept
 bool MT_ValidationLease::poisoned() const noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
-    const bool value = poisoned_;
+    const bool value = MT_IsValidationLeasePoisonedLocked(*this);
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
     return value;
 }
@@ -1821,11 +2001,21 @@ MT_ValidationLeaseStatus MT_TryBeginValidationLease(
     const uint64_t serial = mt_nextValidationLeaseSerial + UINT64_C(1);
     mt_nextValidationLeaseSerial = serial;
     MT_ValidationLeaseAccess::Activate(*lease, serial);
-    mt_activeValidationLease = lease;
+    mt_activeValidationLeaseAddress =
+        reinterpret_cast<uintptr_t>(lease);
     mt_activeValidationLeaseSerial = serial;
     mt_activeValidationLeaseAddressMirror =
         reinterpret_cast<uintptr_t>(lease);
     mt_activeValidationLeaseSerialMirror = serial;
+    mt_validationLeaseLifecycle = MT_ValidationLeaseLifecycle::Active;
+    mt_validationLeaseLifecycleMirror =
+        MT_ValidationLeaseLifecycle::Active;
+    mt_retainedValidationLeaseAddress =
+        reinterpret_cast<uintptr_t>(lease);
+    mt_retainedValidationLeaseAddressMirror =
+        reinterpret_cast<uintptr_t>(lease);
+    mt_retainedValidationLeaseSerial = serial;
+    mt_retainedValidationLeaseSerialMirror = serial;
     // Retain the acquisition made above until Finish.
     return MT_ValidationLeaseStatus::Success;
 }
@@ -1845,12 +2035,10 @@ MT_ValidationLeaseStatus MT_FinishValidationLease(
         return MT_ValidationLeaseStatus::InvalidToken;
     }
 
-    const bool poisoned = MT_ValidationLeaseAccess::Poisoned(*lease);
+    const bool poisoned = MT_IsValidationLeasePoisonedLocked(*lease);
     const bool valid = MT_IsCoreStateValidNoReport();
-    mt_activeValidationLease = nullptr;
-    mt_activeValidationLeaseSerial = 0;
-    mt_activeValidationLeaseAddressMirror = 0;
-    mt_activeValidationLeaseSerialMirror = 0;
+    MT_ClearValidationLeaseRegistryLocked();
+    MT_ClearRetainedValidationLeaseAuthenticationLocked();
     MT_ValidationLeaseAccess::Clear(*lease);
 
     // Drop this authentication acquisition and then Begin's retained one.
@@ -1876,12 +2064,65 @@ void MT_SetValidationLeaseRegistryForTesting(
     const uint64_t serial) noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
-    mt_activeValidationLease = lease;
+    mt_activeValidationLeaseAddress =
+        reinterpret_cast<uintptr_t>(lease);
     mt_activeValidationLeaseSerial = serial;
     mt_activeValidationLeaseAddressMirror =
         reinterpret_cast<uintptr_t>(lease);
     mt_activeValidationLeaseSerialMirror = serial;
+    const MT_ValidationLeaseLifecycle lifecycle =
+        lease && serial != 0
+        ? MT_ValidationLeaseLifecycle::Active
+        : MT_ValidationLeaseLifecycle::Idle;
+    mt_validationLeaseLifecycle = lifecycle;
+    mt_validationLeaseLifecycleMirror = lifecycle;
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+}
+
+void MT_SetValidationLeaseRegistryMirrorsForTesting(
+    const uintptr_t address,
+    const uint64_t serial,
+    const uintptr_t addressMirror,
+    const uint64_t serialMirror) noexcept
+{
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    mt_activeValidationLeaseAddress = address;
+    mt_activeValidationLeaseSerial = serial;
+    mt_activeValidationLeaseAddressMirror = addressMirror;
+    mt_activeValidationLeaseSerialMirror = serialMirror;
+    const MT_ValidationLeaseLifecycle lifecycle =
+        address != 0 || serial != 0 || addressMirror != 0
+                || serialMirror != 0
+        ? MT_ValidationLeaseLifecycle::Active
+        : MT_ValidationLeaseLifecycle::Idle;
+    mt_validationLeaseLifecycle = lifecycle;
+    mt_validationLeaseLifecycleMirror = lifecycle;
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+}
+
+void MT_SetValidationLeaseLifecycleForTesting(
+    const uint8_t lifecycle,
+    const uint8_t lifecycleMirror) noexcept
+{
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    mt_validationLeaseLifecycle =
+        static_cast<MT_ValidationLeaseLifecycle>(lifecycle);
+    mt_validationLeaseLifecycleMirror =
+        static_cast<MT_ValidationLeaseLifecycle>(lifecycleMirror);
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+}
+
+void MT_ResetAbandonedValidationLeaseForTesting(
+    const bool releaseRetainedAcquisition) noexcept
+{
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    mt_abandonedValidationLeasePoison = 0;
+    mt_abandonedValidationLeasePoisonMirror = 0;
+    MT_ClearValidationLeaseRegistryLocked();
+    MT_ClearRetainedValidationLeaseAuthenticationLocked();
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+    if (releaseRetainedAcquisition)
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
 }
 #endif
 
@@ -2153,6 +2394,8 @@ void MT_CorruptFreeNodeMembershipForTesting(
 
 bool MT_Realloc(int oldNumBytes, int newNumbytes)
 {
+    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+        return false;
     return MT_GetSize(oldNumBytes) >= MT_GetSize(newNumbytes);
 }
 
@@ -2439,6 +2682,9 @@ void MT_Free(byte* p, int numBytes)
 
 int MT_GetSize(int numBytes)
 {
+    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+        return 0;
+
     int numBuckets; // [esp+4h] [ebp-4h]
 
     iassert(numBytes > 0);
@@ -2460,6 +2706,9 @@ int MT_GetSize(int numBytes)
 
 int MT_GetScore(int num)
 {
+    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+        return 0;
+
     iassert(num != 0);
 
     const int value = MEMORY_NODE_COUNT - num;
@@ -2469,10 +2718,10 @@ int MT_GetScore(int num)
 
 int MT_GetSubTreeSize(int nodeNum)
 {
-    if (!nodeNum)
+    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
         return 0;
 
-    return MT_GetSubTreeSize(scrMemTreeGlob.nodes[nodeNum].prev) + MT_GetSubTreeSize(scrMemTreeGlob.nodes[nodeNum].next) + 1;
+    return MT_GetSubTreeSizeNoReport(nodeNum);
 }
 
 void MT_AddMemoryNode(int newNode, int size)
@@ -2503,6 +2752,9 @@ void MT_AddMemoryNode(int newNode, int size)
 
 void MT_Error(const char* funcName, int numBytes)
 {
+    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+        return;
+
     MT_DumpTree();
     Com_Printf(23, "%s: failed memory allocation of %d bytes for script usage\n", funcName, numBytes);
     Com_Error(ERR_FATAL, "MT_Error (KISAK)\n");
@@ -2511,6 +2763,9 @@ void MT_Error(const char* funcName, int numBytes)
 
 void MT_DumpTree()
 {
+    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+        return;
+
     int mt_type_usage[22];
 
     memset(mt_type_usage, 0, sizeof(mt_type_usage));
@@ -2573,6 +2828,9 @@ void MT_DumpTree()
 
 char const* MT_NodeInfoString(uint32_t nodeNum)
 {
+    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+        return "<UNAVAILABLE>";
+
     int type = scrMemTreeDebugGlob.mt_usage[nodeNum];
 
     if (!scrMemTreeDebugGlob.mt_usage[nodeNum])

@@ -741,6 +741,7 @@ foreach(_marker IN ITEMS
     "class MT_ValidationLeaseAdmission final"
     "friend class script_string::OwnershipBatch;"
     "class MT_ValidationLease final"
+    "~MT_ValidationLease() noexcept;"
     "RUNTIME_SIZE(MT_ValidationLease, 0x10, 0x10);"
     "MT_TryBeginValidationLease( MT_ValidationLease *lease, MT_ValidationLeaseAdmission admission) noexcept;"
     "MT_FinishValidationLease( MT_ValidationLease *lease) noexcept;"
@@ -807,12 +808,19 @@ require_contains(
     "free selects authenticated validation policy")
 foreach(_marker IN ITEMS
     "enum class MT_ValidationPolicy : uint8_t { Complete, LegacyLocal, Leased, };"
-    "return mt_activeValidationLease != nullptr || mt_activeValidationLeaseSerial != 0"
+    "return mt_activeValidationLeaseAddress != 0 || mt_activeValidationLeaseSerial != 0"
+    "MT_IsValidationLeaseBoundaryFrozenLocked()"
+    "enum class MT_ValidationLeaseLifecycle : uint8_t { Idle, Active, Poisoned, Frozen, };"
+    "Registry consistency is deliberately by value."
+    "mt_activeValidationLeaseAddress == leaseAddress && mt_activeValidationLeaseAddressMirror == leaseAddress"
+    "thread_local uintptr_t mt_retainedValidationLeaseAddress = 0;"
+    "mt_validationLeaseLifecycle = MT_ValidationLeaseLifecycle::Poisoned; mt_validationLeaseLifecycleMirror = MT_ValidationLeaseLifecycle::Poisoned;"
+    "MT_FreezeValidationLeaseBoundaryLocked(); MT_ValidationLeaseAccess::Poison(*this);"
     "MT_IsBasicAccountingStateValidNoReport() : MT_IsBasicCoreStateValidNoReport()"
     "policy == MT_ValidationPolicy::Complete ? MT_IsCoreStateValidNoReport()"
     "mt_nextValidationLeaseSerial == UINT64_MAX"
     "MT_ValidationLeaseAccess::CanCountMutation(*lease)"
-    "MT_IsCoreStateValidNoReport(); mt_activeValidationLease = nullptr;"
+    "MT_IsCoreStateValidNoReport(); MT_ClearValidationLeaseRegistryLocked();"
     "MT_RejectUnleasedAccessForActiveLeaseLocked()")
     require_contains(
         _memory_source "${_marker}" "fail-closed allocator lease policy")
@@ -1244,6 +1252,12 @@ foreach(_marker IN ITEMS
     "TestValidationLeaseAuthenticationAndOverflow()"
     "TestValidationLeaseCorruption()"
     "TestValidationLeaseReentryAndForeignThread()"
+    "TestValidationLeaseAbandonedLifetime()"
+    "authenticated destructor retained the owner lock"
+    "torn destructor guessed the retained acquisition"
+    "foreign thread entered through a torn retained boundary"
+    "unrelated canonical destructor revoked the active lease"
+    "arbitrary mirrored address was dereferenced or admitted"
     "foreign allocator access bypassed retained lock"
     "mutation counter wrapped"
     "pointer-only registry admitted legacy allocation"

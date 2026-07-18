@@ -22,7 +22,7 @@ static_assert(sizeof(MT_ValidationLeaseStatus) == 1);
 static_assert(sizeof(MT_ValidationLeaseAdmission) == 1);
 static_assert(sizeof(MT_ValidationLease) == 16);
 static_assert(std::is_standard_layout_v<MT_ValidationLease>);
-static_assert(std::is_trivially_destructible_v<MT_ValidationLease>);
+static_assert(!std::is_trivially_destructible_v<MT_ValidationLease>);
 static_assert(!std::is_default_constructible_v<MT_ValidationLeaseAdmission>);
 static_assert(!std::is_copy_constructible_v<MT_ValidationLease>);
 static_assert(!std::is_copy_assignable_v<MT_ValidationLease>);
@@ -1195,6 +1195,14 @@ struct Allocation final
     }
 
     const std::uint64_t firstSerial = lease.serial();
+    {
+        MT_ValidationLease unrelatedCanonical;
+    }
+    if (!Check(lease.active() && g_memoryTreeLockDepth == 1,
+            "unrelated canonical destructor revoked the active lease"))
+    {
+        return false;
+    }
     MT_ValidationLease nested;
     if (!Check(
             MT_TryBeginValidationLease(
@@ -1439,10 +1447,23 @@ struct Allocation final
         MT_TryAllocIndexLegacy(13, 1, &tornOutput)
             == MT_AllocIndexStatus::UnsafeFailure;
     MT_SetValidationLeaseRegistryForTesting(nullptr, 0);
+    const std::uintptr_t arbitraryAddress =
+        std::numeric_limits<std::uintptr_t>::max() - 15u;
+    MT_SetValidationLeaseRegistryMirrorsForTesting(
+        arbitraryAddress, UINT64_C(11), arbitraryAddress, UINT64_C(11));
+    std::uint16_t arbitraryOutput = 0xBEEF;
+    const bool arbitraryRejected =
+        MT_TryAllocIndex(13, 1, &arbitraryOutput)
+            == MT_AllocIndexStatus::UnsafeFailure;
+    MT_SetValidationLeaseRegistryForTesting(nullptr, 0);
     return Check(pointerRejected,
             "pointer-only registry admitted legacy allocation")
         && Check(tornOutput == 0xBEEF,
             "pointer-only registry changed output")
+        && Check(arbitraryRejected,
+            "arbitrary mirrored address was dereferenced or admitted")
+        && Check(arbitraryOutput == 0xBEEF,
+            "arbitrary mirrored address changed output")
         && Check(MT_TryValidateState(),
             "allocator remained unavailable after registry repair")
         && Check(g_memoryTreeLockDepth == 0,
@@ -1728,6 +1749,240 @@ struct Allocation final
         "foreign-thread cleanup leaked the lock");
 }
 
+[[nodiscard]] bool TestValidationLeaseAbandonedLifetime() noexcept
+{
+    g_comErrorCount = 0;
+    g_assertCount = 0;
+    MT_Init();
+
+    std::uint16_t owner = 0;
+    TreeImage beforeAbandonment;
+    std::uint16_t freeRoot = 0;
+    {
+        MT_ValidationLease abandoned;
+        if (!Check(
+                MT_TryBeginValidationLease(
+                    &abandoned,
+                    MT_ValidationLeaseAdmission::ForTesting())
+                    == MT_ValidationLeaseStatus::Success,
+                "abandoned lease admission failed")
+            || !Check(
+                MT_TryAllocIndexLeased(abandoned, 13, 15, &owner)
+                    == MT_AllocIndexStatus::Success,
+                "abandoned lease allocation failed"))
+        {
+            return false;
+        }
+        freeRoot = scrMemTreeGlob.head[0];
+        beforeAbandonment = CaptureTree();
+    }
+
+    if (!Check(g_memoryTreeLockDepth == 0,
+            "authenticated destructor retained the owner lock"))
+    {
+        MT_ResetAbandonedValidationLeaseForTesting(false);
+        return false;
+    }
+
+    std::uint16_t rejected = 0xBEEF;
+    MT_AllocationInfo rejectedInfo{
+        0xA5, 0x5A, 0xA55A, UINT32_C(0xA55AA55A)};
+    const MT_AllocationInfo unchangedInfo = rejectedInfo;
+    MT_ValidationLease frozenLease;
+    const bool typedRejected =
+        MT_TryAllocIndex(13, 1, &rejected)
+                == MT_AllocIndexStatus::UnsafeFailure
+        && MT_TryAllocIndexLegacy(13, 1, &rejected)
+                == MT_AllocIndexStatus::UnsafeFailure
+        && MT_TryAllocIndexLeased(frozenLease, 13, 1, &rejected)
+                == MT_AllocIndexStatus::InvalidArgumentNoChange
+        && MT_TryGetAllocationInfo(owner, &rejectedInfo)
+                == MT_AllocationInfoStatus::UnsafeFailure
+        && MT_TryGetAllocationInfoLegacy(owner, &rejectedInfo)
+                == MT_AllocationInfoStatus::UnsafeFailure
+        && MT_TryGetAllocationInfoLeased(frozenLease, owner, &rejectedInfo)
+                == MT_AllocationInfoStatus::InvalidArgumentNoChange
+        && MT_TryFreeIndex(owner, 13)
+                == MT_FreeIndexStatus::UnsafeFailure
+        && MT_TryFreeIndexLegacy(owner, 13)
+                == MT_FreeIndexStatus::UnsafeFailure
+        && MT_TryFreeIndexLeased(frozenLease, owner, 13)
+                == MT_FreeIndexStatus::InvalidArgumentNoChange
+        && MT_TryBeginValidationLease(
+                &frozenLease, MT_ValidationLeaseAdmission::ForTesting())
+                == MT_ValidationLeaseStatus::UnsafeFailure
+        && !MT_TryValidateState();
+    if (!Check(typedRejected,
+            "typed access reopened an abandoned lease boundary")
+        || !Check(rejected == 0xBEEF,
+            "abandoned typed allocation changed output")
+        || !Check(
+            std::memcmp(&rejectedInfo, &unchangedInfo, sizeof(rejectedInfo))
+                == 0,
+            "abandoned typed query changed output"))
+    {
+        MT_ResetAbandonedValidationLeaseForTesting(false);
+        return false;
+    }
+
+    MT_RemoveHeadMemoryNode(0);
+    const bool removed = MT_RemoveMemoryNode(freeRoot, 0);
+    MT_AddMemoryNode(freeRoot, 0);
+    MT_Init();
+    MT_FreeIndex(owner, 13);
+    MT_Free(
+        reinterpret_cast<byte *>(&scrMemTreeGlob.nodes[owner]), 13);
+    const bool rawRejected =
+        MT_AllocIndex(13, 1) == 0
+        && MT_Alloc(13, 1) == nullptr
+        && !removed
+        && !MT_Realloc(13, 13)
+        && MT_GetSize(13) == 0
+        && MT_GetScore(1) == 0
+        && MT_GetSubTreeSize(freeRoot) == 0
+        && std::strcmp(MT_NodeInfoString(owner), "<UNAVAILABLE>") == 0;
+    MT_DumpTree();
+    MT_Error("abandoned lifetime test", 13);
+    if (!Check(rawRejected,
+            "raw/query access reopened an abandoned lease boundary")
+        || !Check(TreeMatches(beforeAbandonment),
+            "abandoned boundary changed allocator state")
+        || !Check(g_comErrorCount == 0 && g_assertCount == 0,
+            "abandoned boundary entered a reporter")
+        || !Check(g_memoryTreeLockDepth == 0,
+            "abandoned boundary leaked a recursive probe acquisition"))
+    {
+        MT_ResetAbandonedValidationLeaseForTesting(false);
+        return false;
+    }
+
+    std::atomic<bool> foreignFinished{false};
+    MT_AllocationInfoStatus foreignStatus =
+        MT_AllocationInfoStatus::Success;
+    MT_AllocationInfo foreignInfo{
+        0xA5, 0x5A, 0xA55A, UINT32_C(0xA55AA55A)};
+    const MT_AllocationInfo unchangedForeignInfo = foreignInfo;
+    std::thread foreign([&]() {
+        foreignStatus = MT_TryGetAllocationInfo(owner, &foreignInfo);
+        foreignFinished.store(true, std::memory_order_release);
+    });
+    foreign.join();
+    if (!Check(foreignFinished.load(std::memory_order_acquire),
+            "foreign thread remained locked after authenticated abandonment")
+        || !Check(foreignStatus == MT_AllocationInfoStatus::UnsafeFailure,
+            "foreign thread entered a frozen allocator")
+        || !Check(
+            std::memcmp(
+                &foreignInfo, &unchangedForeignInfo, sizeof(foreignInfo)) == 0,
+            "foreign frozen query changed output"))
+    {
+        MT_ResetAbandonedValidationLeaseForTesting(false);
+        return false;
+    }
+
+    MT_ResetAbandonedValidationLeaseForTesting(false);
+    MT_Init();
+    if (!Check(g_memoryTreeLockDepth == 0,
+            "authenticated abandonment cleanup leaked the lock")
+        || !Check(MT_TryValidateState(),
+            "authenticated abandonment cleanup did not restore tests"))
+    {
+        return false;
+    }
+
+    const auto testTornDestructor = [](
+        const unsigned variant) noexcept -> bool {
+        MT_Init();
+        TreeImage beforeTorn;
+        {
+            MT_ValidationLease torn;
+            if (!Check(
+                    MT_TryBeginValidationLease(
+                        &torn,
+                        MT_ValidationLeaseAdmission::ForTesting())
+                        == MT_ValidationLeaseStatus::Success,
+                    "torn destructor lease admission failed"))
+            {
+                return false;
+            }
+
+            const std::uint64_t serial = torn.serial();
+            const std::uintptr_t address =
+                reinterpret_cast<std::uintptr_t>(&torn);
+            if (variant == 0)
+            {
+                torn.SetAuthenticationFieldsForTesting(serial + 1, 0, 0);
+            }
+            else if (variant == 1)
+            {
+                MT_SetValidationLeaseRegistryMirrorsForTesting(
+                    address, serial, address + 1, serial);
+            }
+            else if (variant == 2)
+            {
+                MT_SetValidationLeaseRegistryMirrorsForTesting(
+                    0, serial, 0, serial);
+            }
+            else if (variant == 3)
+            {
+                MT_SetValidationLeaseRegistryMirrorsForTesting(
+                    address, serial, address, serial + 1);
+            }
+            else
+            {
+                MT_SetValidationLeaseLifecycleForTesting(1, 3);
+            }
+            beforeTorn = CaptureTree();
+        }
+
+        std::uint16_t output = 0xBEEF;
+        const bool rejected =
+            MT_TryAllocIndex(13, 1, &output)
+                == MT_AllocIndexStatus::UnsafeFailure;
+        if (!Check(g_memoryTreeLockDepth == 1,
+                "torn destructor guessed the retained acquisition")
+            || !Check(rejected,
+                "torn destructor reopened same-thread allocator access")
+            || !Check(output == 0xBEEF,
+                "torn destructor changed same-thread output")
+            || !Check(TreeMatches(beforeTorn),
+                "torn destructor changed allocator state"))
+        {
+            MT_ResetAbandonedValidationLeaseForTesting(true);
+            return false;
+        }
+
+        std::atomic<bool> started{false};
+        std::atomic<bool> finished{false};
+        bool foreignValid = false;
+        std::thread foreign([&]() {
+            started.store(true, std::memory_order_release);
+            foreignValid = MT_TryValidateState();
+            finished.store(true, std::memory_order_release);
+        });
+        while (!started.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        for (unsigned spin = 0; spin < 1000; ++spin)
+            std::this_thread::yield();
+        const bool blocked = !finished.load(std::memory_order_acquire);
+
+        MT_ResetAbandonedValidationLeaseForTesting(true);
+        foreign.join();
+        return Check(blocked,
+                "foreign thread entered through a torn retained boundary")
+            && Check(foreignValid,
+                "test-only torn-boundary cleanup left invalid state")
+            && Check(g_memoryTreeLockDepth == 0,
+                "torn-boundary cleanup leaked the owner lock");
+    };
+
+    return testTornDestructor(0)
+        && testTornDestructor(1)
+        && testTornDestructor(2)
+        && testTornDestructor(3)
+        && testTornDestructor(4);
+}
+
 [[nodiscard]] bool TestCorruptionRejection() noexcept
 {
     MT_Init();
@@ -1873,6 +2128,7 @@ int main()
         || !TestValidationLeaseAuthenticationAndOverflow()
         || !TestValidationLeaseCorruption()
         || !TestValidationLeaseReentryAndForeignThread()
+        || !TestValidationLeaseAbandonedLifetime()
         || !TestCorruptionRejection())
     {
         return 1;

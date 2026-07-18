@@ -85,12 +85,15 @@ RUNTIME_SIZE(MT_ValidationLeaseAdmission, 0x1, 0x1);
 // validation. Leased operations authenticate the same-thread token and use the
 // bounded mirror-aware path validation shared with LegacyLocal operations.
 // Finish performs complete validation again before releasing the retained
-// acquisition. The destructor intentionally never unlocks.
+// acquisition. Destroying an admitted lease without Finish permanently
+// freezes allocator access. An exactly authenticated destructor can release
+// the retained acquisition after publishing that terminal boundary; a torn
+// token leaves the unauthenticated acquisition held.
 class MT_ValidationLease final
 {
 public:
     MT_ValidationLease() noexcept = default;
-    ~MT_ValidationLease() noexcept = default;
+    ~MT_ValidationLease() noexcept;
 
     MT_ValidationLease(const MT_ValidationLease &) = delete;
     MT_ValidationLease &operator=(const MT_ValidationLease &) = delete;
@@ -291,4 +294,17 @@ void MT_SetNextValidationLeaseSerialForTesting(uint64_t serial) noexcept;
 void MT_SetValidationLeaseRegistryForTesting(
     MT_ValidationLease *lease,
     uint64_t serial) noexcept;
+void MT_SetValidationLeaseRegistryMirrorsForTesting(
+    uintptr_t address,
+    uint64_t serial,
+    uintptr_t addressMirror,
+    uint64_t serialMirror) noexcept;
+void MT_SetValidationLeaseLifecycleForTesting(
+    uint8_t lifecycle,
+    uint8_t lifecycleMirror) noexcept;
+// Test-only recovery for terminal destructor fixtures. Production has no
+// corresponding escape hatch. The caller must state whether the fixture
+// deliberately retained one authenticated owner-thread acquisition.
+void MT_ResetAbandonedValidationLeaseForTesting(
+    bool releaseRetainedAcquisition) noexcept;
 #endif
