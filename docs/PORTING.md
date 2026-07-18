@@ -6,7 +6,7 @@
 
 ---
 
-## Implementation status (July 17, 2026)
+## Implementation status (July 18, 2026)
 
 Target policy is fixed: preserve retail assets and wire interoperability; use a
 shared **native Vulkan RHI** (MoltenVK on macOS) that replaces D3D9, OpenAL Soft,
@@ -21,13 +21,15 @@ Completed foundation work:
 
 - the audited upstream/gameplay reconciliation, PR #48's report-free script-string ownership foundation, PR #49's
   constructed lifecycle controller, PR #50's failure-atomic script-string initialization hardening, and PR #51's
-  generation-keyed runtime table plus PR #52's test-fixture repair through `e792c160`. PR #51 exact-head run
+  generation-keyed runtime table plus PR #52's test-fixture repair and PR #53's authenticated memory-tree validation
+  lease through `445d436f`. PR #51 exact-head run
   **29628040709** and post-merge master run
   **29628132007** each passed eight of nine jobs; Windows x86 Debug alone exposed a missing test-fixture
   `MyAssertHandler` definition required by `qcommon/sys_sync.cpp`, while the production targets and other eight jobs
   passed. PR #52 supplied the established aborting fixture boundary without weakening assertions or changing production
   code and squash-merged as `e792c160`; exact final run **29628599645** and authoritative post-merge run
-  **29628940419** passed all nine jobs;
+  **29628940419** passed all nine jobs. PR #53 exact final run **29649484692** passed all nine jobs before squash merge
+  `445d436f`; authoritative post-merge master run **29649890520** also passed all nine jobs;
 - the merged report-free script-string ownership foundation: dedicated recursive outer DB serialization,
   private journal callbacks, exact ordinary/database-user ownership results, full allocator-backed byte-count/hash/debug
   validation, rejection of packed-length-ambiguous earlier NULs, and failure-atomic memory-tree allocate/query/free
@@ -77,10 +79,10 @@ Completed foundation work:
   serializer checks, then reported the exact transplant clean. PR #51 squash-merged as `beb2925d`; its exact-head run
   **29628040709** and post-merge run **29628132007** each exposed only the same Windows x86 Debug fixture-link omission
   after eight jobs passed. PR #52 repaired the fixture and squash-merged as `e792c160`; exact final run **29628599645**
-  and authoritative post-merge run **29628940419** passed all nine jobs. Production claims/consumption, keyed terminal
-  reset and Live unload, cleanup callbacks, PMem/adapter binding, and all seven raw ownership/sweep sites remain
-  deliberately absent;
-- active PR #53 authenticated memory-tree validation-lease checkpoint. Implementation `34b91875` and contract coverage
+  and authoritative post-merge run **29628940419** passed all nine jobs. Exact-key terminal reset and Live-unload
+  adapters are implemented on the current branch; production claims/consumption, load/stage/commit routing, real cleanup
+  callbacks, PMem/adapter binding, and all seven raw ownership/sweep sites remain deliberately absent;
+- merged PR #53 authenticated memory-tree validation-lease checkpoint. Implementation `34b91875` and contract coverage
   `2154e423` retain the recursive memory-tree lock across one serialized transaction, with distinct Complete,
   LegacyLocal, and Leased policies. Begin and finish each authenticate the full Basic+Forest+Partition state, while
   leased allocate/query/free operations retain PR #48's bounded mirror-aware touched-path validation. Overflow-safe
@@ -106,7 +108,21 @@ Completed foundation work:
   passes focused GCC Release/`RELEASE_ASSERTS`, the production ownership fixture, Clang ASan+UBSan, 50 repeated locking
   runs, strict fixture/production i386/AArch64 compiles, source/security, and diff gates. Independent Clang MS-compat
   and clang-cl x86/x64/ARM64 excerpt checks also place the fixed snapshot/flag in BSS; hosted Windows CI remains the
-  authoritative Microsoft STL/SDK integration check;
+  authoritative Microsoft STL/SDK integration check. Exact final run **29649484692** passed all nine hosted jobs before
+  squash merge `445d436f`;
+- current production-neutral terminal-adapter checkpoint. `d2740fb2` adds retry-safe Live-unload ownership while
+  retaining exact key, lifecycle, callback identity, and the outer transaction serializer through completion;
+  `7764af22` adds exact-key runtime-table Live-unload and terminal-receipt reset adapters; `dc4aee23` hardens the
+  fault-test argument parser; `74002a69` rejects lifecycle generations hidden behind an empty durable table key; and
+  `0eac1f2d` makes fixture parsing exact and pins the public enrollment/receipt contracts. Exact
+  Abandoned/Unloaded receipts reset only controller ownership, retain lifecycle/table generation evidence until the next
+  claim, and reject cross-slot, stale, ABA, swapped-callback, reentrant, malformed-phase, and corrupt-state use. These
+  adapters remain unenrolled: the production loader does not yet claim a generation or route load, staging, commit,
+  PMem, or cleanup through them;
+- terminal-adapter validation passes the complete GCC Release, GCC Debug, and Clang Release suites at **114/114**;
+  focused Clang ASan+UBSan and `RELEASE_ASSERTS`; 50 repetitions apiece across the ownership/retry/reentry and unsafe-
+  boundary matrix (**400/400** invocations);
+  source/security contracts; strict i386 and AArch64 compilation; and `git diff --check`;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -431,12 +447,13 @@ Remaining gates, in implementation order:
    production generation claims as `beb2925d`. Exact-head run **29628040709** and post-merge run **29628132007** each
    passed eight jobs and failed only the Windows x86 Debug fixture link. PR #52 fixed that test-only boundary and
    squash-merged as `e792c160`; exact final run **29628599645** and authoritative post-merge run **29628940419** passed
-   all nine jobs. PR #53's retained memory-tree validation lease is active as `34b91875`/`2154e423`, with lifetime
-   hardening `b193343b` adding by-value registry authority, TLS-authenticated retained-lock release, and terminal
+   all nine jobs. PR #53's retained memory-tree validation lease merged as `445d436f` after exact run **29649484692**
+   passed all nine jobs. Implementation `34b91875`/`2154e423` retains the transaction boundary; lifetime
+   hardening `b193343b` adds by-value registry authority, TLS-authenticated retained-lock release, and terminal
    destructor abandonment. It preserves full transaction-boundary validation and PR #48's bounded leased operation paths
-   without a production caller. Finish that review round next, then give the string OwnershipBatch the same lifetime
-   boundary and finish exact-key terminal
-   reset/Live-unload adapters. Then bind real
+   without a production caller. The current branch implements retry-safe exact-key terminal reset/Live-unload adapters
+   through `d2740fb2`/`7764af22`/`dc4aee23`/`74002a69`/`0eac1f2d`, also without production enrollment. Give the string
+   OwnershipBatch the same lifetime boundary, then bind real
    report-free callbacks and enroll all seven raw ownership/sweep paths while keeping static controller slots and callback
    metadata outside PMem with per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded
    scratch implementation when binding the recipes and adapter into production with
@@ -1415,8 +1432,8 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **73% by merged engineering effort**. Merging the durable runtime-table
-prerequisite and preparing the allocator-only validation lease do not move the rounded total. Windows x86 is about
+Overall porting progress is approximately **73% by merged engineering effort**. The merged allocator validation lease
+and current production-neutral terminal adapters do not move the rounded total. Windows x86 is about
 **93%**, shared
 foundations/security about **85%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
 **39%**, and macOS arm64 about **30%**. Strict delivered-target status remains **0/5** because no requested
@@ -1614,7 +1631,7 @@ narrow test-only repair passed all nine jobs in exact final run **29628599645** 
 **29628940419**, then squash-merged as `e792c160`. The production loader deliberately does not claim or consume the table
 in this batch.
 
-The active PR #53 authenticated memory-tree validation lease is rebased as implementation `34b91875` and tests/source
+The merged PR #53 authenticated memory-tree validation lease was developed as implementation `34b91875` and tests/source
 contracts `2154e423`, with historical exact patch identities preserved from originals `433e9c5e` and `45eb9b80`. A
 private admission token
 begins one retained same-thread lock interval only after a full Basic+Forest+Partition validation. Complete operations
@@ -1662,10 +1679,28 @@ reject, blocked snapshots and lease calls, torn token/address/serial/lifecycle/r
 integer addresses, same-thread raw/query/reset/report rejection, output atomicity, invalid pointer/index/type/subtree
 inputs, test-only cleanup, and unrelated canonical destruction. This remains an allocator-only, production-neutral
 prerequisite: the private constructor is reserved for the forthcoming script-string
-`OwnershipBatch`, and no loader or raw ownership site consumes it yet.
+`OwnershipBatch`, and no loader or raw ownership site consumes it yet. Exact final run **29649484692** passed all nine
+hosted jobs before PR #53 squash-merged as `445d436f`; authoritative post-merge master run **29649890520** also passed
+all nine jobs.
+
+The current terminal-adapter checkpoint extends the production-neutral control surface without enrolling the legacy
+loader. Commit `d2740fb2` adds retry-safe Live-unload ownership while retaining exact key, lifecycle, callback identity,
+and the outer transaction serializer through terminal completion. `7764af22` adds exact-key runtime-table Live-unload
+and Abandoned/Unloaded receipt-reset adapters; `dc4aee23` hardens the fault-test argument parser; `74002a69` rejects a
+lifecycle generation hidden behind an empty durable table key rather than silently normalizing it; and `0eac1f2d` makes
+fixture parsing exact and pins the public enrollment/receipt contracts. Reset makes only the ownership controller
+canonical Empty: lifecycle terminal kind, generation, and the durable table key remain exact receipt evidence until the
+next claim. Retry resumes the exact callback/cursor without replaying prior work; stale, cross-slot, ABA, swapped-
+callback, reentrant, malformed-phase, and corrupt-state paths fail closed.
+
+The complete GCC Release, GCC Debug, and Clang Release suites pass **114/114** at this checkpoint. Focused Clang
+ASan+UBSan and `RELEASE_ASSERTS`, 50 repetitions apiece across the ownership/retry/reentry and unsafe-boundary matrix
+(**400/400** invocations), source/security contracts, strict i386 and AArch64 compilation, and `git diff --check` also
+pass.
 
 Generation enrollment, stream/PMem/arena/adapter binding, alias/completed-object unpublication, real admission/cleanup
-callbacks, and exact-key terminal reset/Live-unload routing remain. Two `SL_GetStringOfSize`, one `SL_AddUser`, two
+callbacks, and exact-key load/stage/commit routing remain; the terminal reset/Live-unload adapters are implemented but
+unenrolled. Two `SL_GetStringOfSize`, one `SL_AddUser`, two
 `SL_GetString`, one `SL_TransferSystem`, and
 one `SL_ShutdownSystem` site are source-frozen outside the controller; every raw database-user mutation/publication and
 the global 4 -> 8 sweep must be enrolled before replacing a legacy route. The string ownership batch must now consume
