@@ -117,6 +117,7 @@ jobs:
           kisakcod-db-referenced-fastfile-tests
           kisakcod-server-file-compare-tests
           kisakcod-script-string-atomic-tests
+          kisakcod-script-memorytree-lease-api-seal
           kisakcod-script-memorytree-try-tests
           kisakcod-script-string-ownership-tests
           kisakcod-platform-service-runtime-tests

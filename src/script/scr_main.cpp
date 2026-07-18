@@ -1,6 +1,8 @@
 #include "scr_main.h"
 #include "scr_stringlist.h"
 
+#include <cstdlib>
+
 #include <universal/assertive.h>
 #include <universal/q_shared.h>
 #include "scr_compiler.h"
@@ -59,8 +61,15 @@ uint32_t __cdecl SL_GetCanonicalString(const char* str)
 
 void SL_BeginLoadScripts()
 {
-    memset((uint8_t*)scrCompilePub.canonicalStrings, 0, sizeof(scrCompilePub.canonicalStrings));
-    scrVarPub.canonicalStrCount = 0;
+    if (!SL_TryResetCanonicalStringState(
+            scrCompilePub.canonicalStrings,
+            &scrVarPub.canonicalStrCount))
+    {
+        // Continuing would mix a new compilation with stale canonical IDs.
+        // The rejection can mean a retained/frozen ownership boundary, so do
+        // not invoke engine reporters that may reenter script-string state.
+        std::abort();
+    }
 }
 
 int __cdecl Scr_ScanFile(unsigned char *buf, int max_size)
@@ -353,4 +362,3 @@ void __cdecl Scr_FreeScripts(uint8_t sys)
     scrVarPub.endScriptBuffer = 0;
     scrVarPub.checksum = 0;
 }
-

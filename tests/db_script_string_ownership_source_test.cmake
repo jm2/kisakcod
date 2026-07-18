@@ -6,8 +6,12 @@ endif()
 
 set(_ownership_header_path
     "${SOURCE_ROOT}/src/script/scr_string_transaction.h")
+set(_string_header_path
+    "${SOURCE_ROOT}/src/script/scr_stringlist.h")
 set(_string_source_path
     "${SOURCE_ROOT}/src/script/scr_stringlist.cpp")
+set(_script_main_source_path
+    "${SOURCE_ROOT}/src/script/scr_main.cpp")
 set(_memory_header_path
     "${SOURCE_ROOT}/src/script/scr_memorytree.h")
 set(_memory_source_path
@@ -27,6 +31,8 @@ set(_platform_runtime_path
     "${SOURCE_ROOT}/tests/platform_service_runtime_tests.cpp")
 set(_memory_fixture_path
     "${SOURCE_ROOT}/tests/script_memorytree_try_tests.cpp")
+set(_memory_lease_seal_path
+    "${SOURCE_ROOT}/tests/script_memorytree_lease_api_seal_compile_tests.cpp")
 set(_ownership_fixture_path
     "${SOURCE_ROOT}/tests/script_string_ownership_tests.cpp")
 set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
@@ -35,7 +41,9 @@ set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
 
 foreach(_path IN ITEMS
     "${_ownership_header_path}"
+    "${_string_header_path}"
     "${_string_source_path}"
+    "${_script_main_source_path}"
     "${_memory_header_path}"
     "${_memory_source_path}"
     "${_transaction_header_path}"
@@ -46,6 +54,7 @@ foreach(_path IN ITEMS
     "${_platform_contract_path}"
     "${_platform_runtime_path}"
     "${_memory_fixture_path}"
+    "${_memory_lease_seal_path}"
     "${_ownership_fixture_path}"
     "${_ci_path}"
     "${_manifest_path}"
@@ -57,7 +66,9 @@ foreach(_path IN ITEMS
 endforeach()
 
 file(READ "${_ownership_header_path}" _ownership_header)
+file(READ "${_string_header_path}" _string_header)
 file(READ "${_string_source_path}" _string_source)
+file(READ "${_script_main_source_path}" _script_main_source)
 file(READ "${_memory_header_path}" _memory_header)
 file(READ "${_memory_source_path}" _memory_source)
 file(READ "${_transaction_header_path}" _transaction_header)
@@ -68,14 +79,72 @@ file(READ "${_sync_header_path}" _sync_header)
 file(READ "${_platform_contract_path}" _platform_contract)
 file(READ "${_platform_runtime_path}" _platform_runtime)
 file(READ "${_memory_fixture_path}" _memory_fixture)
+file(READ "${_memory_lease_seal_path}" _memory_lease_seal)
 file(READ "${_ownership_fixture_path}" _ownership_fixture)
 file(READ "${_ci_path}" _ci)
 file(READ "${_manifest_path}" _manifest)
 file(READ "${_tests_path}" _tests)
 
+# Keep stack-backed/raw script-string representations confined to the audited
+# translation units and established callback-free consumers. New lexical
+# consumers require an explicit ownership-boundary review.
+file(GLOB_RECURSE _script_ownership_census_paths
+    LIST_DIRECTORIES false
+    "${SOURCE_ROOT}/src/*.cpp"
+    "${SOURCE_ROOT}/src/*.h")
+set(_memory_pub_consumers
+    "script/scr_memorytree.cpp"
+    "script/scr_stringlist.cpp"
+    "script/scr_stringlist.h"
+    "script/scr_variable.cpp")
+set(_debug_glob_consumers
+    "script/scr_parser.cpp"
+    "script/scr_parser.h"
+    "script/scr_readwrite.cpp"
+    "script/scr_stringlist.cpp"
+    "script/scr_stringlist.h"
+    "script/scr_variable.cpp"
+    "script/scr_variable.h"
+    "script/scr_vm.cpp")
+foreach(_path IN LISTS _script_ownership_census_paths)
+    file(READ "${_path}" _census_source)
+    file(RELATIVE_PATH _relative "${SOURCE_ROOT}/src" "${_path}")
+    string(FIND "${_census_source}" "SL_RefStringWord(" _word_access)
+    if(NOT _word_access EQUAL -1
+        AND NOT _relative STREQUAL "script/scr_stringlist.cpp")
+        message(FATAL_ERROR
+            "Raw RefString word accessor escaped scr_stringlist.cpp: ${_relative}")
+    endif()
+    string(REGEX MATCH "struct[ \t\r\n]+RefString[ \t\r\n]*\\{" _definition
+        "${_census_source}")
+    if(_definition
+        AND NOT _relative STREQUAL "script/scr_stringlist.cpp")
+        message(FATAL_ERROR
+            "Complete RefString layout escaped scr_stringlist.cpp: ${_relative}")
+    endif()
+    string(FIND "${_census_source}" "scrMemTreePub" _memory_pub)
+    if(NOT _memory_pub EQUAL -1)
+        list(FIND _memory_pub_consumers "${_relative}" _consumer)
+        if(_consumer EQUAL -1)
+            message(FATAL_ERROR
+                "New unaudited scrMemTreePub consumer: ${_relative}")
+        endif()
+    endif()
+    string(FIND "${_census_source}" "scrStringDebugGlob" _debug_glob)
+    if(NOT _debug_glob EQUAL -1)
+        list(FIND _debug_glob_consumers "${_relative}" _consumer)
+        if(_consumer EQUAL -1)
+            message(FATAL_ERROR
+                "New unaudited scrStringDebugGlob consumer: ${_relative}")
+        endif()
+    endif()
+endforeach()
+
 foreach(_var IN ITEMS
     _ownership_header
+    _string_header
     _string_source
+    _script_main_source
     _memory_header
     _memory_source
     _transaction_header
@@ -86,6 +155,7 @@ foreach(_var IN ITEMS
     _platform_contract
     _platform_runtime
     _memory_fixture
+    _memory_lease_seal
     _ownership_fixture
     _ci
     _manifest
@@ -361,26 +431,26 @@ require_ordered(
 # count and final terminator instead of using strlen.
 extract_slice(
     _string_source
-    "AcquireResult TryAcquireOrdinaryStringOfSize("
-    "TransferStatus TryTransferOrdinaryToDatabaseUser("
+    "AcquireResult TryAcquireOrdinaryStringOfSizeInternal("
+    "TransferStatus TryTransferOrdinaryToDatabaseUserInternal("
     _acquire
     "ordinary acquisition")
 extract_slice(
     _string_source
-    "TransferStatus TryTransferOrdinaryToDatabaseUser("
-    "ReleaseStatus TryRemoveOrdinaryReference("
+    "TransferStatus TryTransferOrdinaryToDatabaseUserInternal("
+    "ReleaseStatus TryRemoveOrdinaryReferenceInternal("
     _transfer
     "database-user transfer")
 extract_slice(
     _string_source
-    "ReleaseStatus TryRemoveOrdinaryReference("
-    "ReleaseStatus TryRemoveDatabaseUserReference("
+    "ReleaseStatus TryRemoveOrdinaryReferenceInternal("
+    "ReleaseStatus TryRemoveDatabaseUserReferenceInternal("
     _release_ordinary
     "ordinary rollback")
 extract_slice(
     _string_source
-    "ReleaseStatus TryRemoveDatabaseUserReference("
-    "} // namespace script_string"
+    "ReleaseStatus TryRemoveDatabaseUserReferenceInternal("
+    "const MT_ValidationLeaseAdmission & OwnershipBatch::MakeMemoryTreeLeaseAdmission()"
     _release_database
     "database-user rollback")
 extract_slice(
@@ -463,14 +533,20 @@ extract_slice(
     "legacy final free")
 extract_slice(
     _string_source
+    "bool SL_TryRemoveRefToStringLockedNoReport( const uint32_t stringValue,"
+    "void SL_RemoveRefToStringOfSize("
+    _legacy_remove
+    "legacy ordinary release helper")
+extract_slice(
+    _string_source
     "void SL_RemoveRefToStringOfSize("
     "void __cdecl SL_AddUser("
-    _legacy_remove
-    "legacy ordinary release")
+    _legacy_remove_wrapper
+    "legacy ordinary release wrapper")
 extract_slice(
     _legacy_remove
     "if (!validFree)"
-    "(void)validFree;"
+    "return validFree;"
     _legacy_remove_rollback
     "legacy ordinary release rollback")
 
@@ -488,7 +564,7 @@ require_contains(
     "free-list sentinel tail validation")
 require_contains(
     _unlink_plan
-    "scope == SL_ValidationScope::Complete ? SL_IsFreeListHeadValidNoReport() : SL_IsFreeListLocallyValidNoReport()"
+    "SL_IsFreeListValidForScopeNoReport(scope)"
     "scope-selected free-list validation before unlink publication")
 
 foreach(_marker IN ITEMS
@@ -530,12 +606,12 @@ require_contains(
 foreach(_var IN ITEMS _transfer _release_ordinary _release_database)
     require_ordered(
         ${_var}
+        "SL_IsTypedOwnershipAccessAuthorizedLocked( validationLease, admission)"
         "if (!IsCurrentRuntimeStringId(stringId))"
-        "Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);"
-        "range check before table access")
+        "batch authorization before range classification")
     require_contains(
         ${_var}
-        "SL_TryResolveLiveStringNoReport(stringId, &info)"
+        "SL_TryResolveLiveStringNoReport( stringId, &info,"
         "live allocation and hash authentication")
 endforeach()
 require_contains(
@@ -626,20 +702,19 @@ foreach(_marker IN ITEMS
     "Sys_AtomicStore(SL_RefStringWord(refStr), packed);"
     "SL_DebugAddRefNoReport(stringValue);"
     "SL_DebugRemoveRefNoReport(stringValue);"
-    "!result.reachedZero || SL_FreeString(stringValue, refStr, len)")
+    "!result.reachedZero || SL_FreeString(stringValue, refStr, byteCount)")
     require_contains(
         _legacy_remove "${_marker}" "legacy final-release rollback")
 endforeach()
 require_ordered(
     _legacy_remove_rollback
     "Sys_AtomicStore(SL_RefStringWord(refStr), packed);"
-    "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);"
-    "legacy ownership rollback before unlock")
-require_ordered(
-    _legacy_remove
-    "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);"
-    "iassert(validFree);"
-    "legacy release reporter after unlock")
+    "SL_DebugAddRefNoReport(stringValue);"
+    "legacy ownership rollback restores packed state before debug state")
+require_contains(
+    _legacy_remove_wrapper
+    "const bool released = SL_TryRemoveRefToStringLockedNoReport( stringValue, len, true); Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING); (void)released; iassert(released);"
+    "legacy release completes before unlock and reports after unlock")
 
 foreach(_marker IN ITEMS
     "for (uint32_t owningHash = 1; owningHash < STRINGLIST_SIZE && !invalidTransition; ++owningHash)"
@@ -722,13 +797,17 @@ foreach(_marker IN ITEMS
     "(sl_systemSweepHashEntries[entryByte] & entryMask) != 0"
     "(sl_systemSweepStringIds[stringByte] & stringMask) != 0"
     "GetHashCode(refString->str, byteCount) != owningHash"
+    "SL_IsDebugOwnershipExactNoReport(stringValue, packed)"
     "aggregateRefCount > UINT32_MAX"
-    "Sys_AtomicLoad(&scrStringDebugGlob->totalRefCount) != static_cast<uint32_t>(aggregateRefCount)"
-    "SL_DebugRefCount(stringValue) != 0")
+    "Sys_AtomicLoad(&scrStringDebugGlob->totalRefCount) != static_cast<uint32_t>(aggregateRefCount)")
     require_contains(
         _system_sweep_preflight "${_marker}"
         "linear complete hash/debug/allocator sweep preflight")
 endforeach()
+require_contains(
+    _system_sweep_preflight
+    "if (scope != SL_ValidationScope::Leased)"
+    "legacy system sweeps must retain exclusive debug-slot validation")
 foreach(_marker IN ITEMS
     "constexpr uint32_t kHashEntryBits = HASH_STAT_MASK | UINT32_C(0xFFFF);"
     "return (entry.status_next & ~kHashEntryBits) == 0;")
@@ -813,17 +892,136 @@ endforeach()
 foreach(_marker IN ITEMS
     "enum class MT_ValidationLeaseStatus : uint8_t"
     "class MT_ValidationLeaseAdmission final"
+    "static constinit MT_ValidationLeaseAdmission capability;"
+    "return &admission == &Canonical();"
     "friend class script_string::OwnershipBatch;"
+    "static_assert(!std::is_default_constructible_v<MT_ValidationLeaseAdmission>);"
+    "static_assert(!std::is_trivially_copyable_v<MT_ValidationLeaseAdmission>);"
     "class MT_ValidationLease final"
     "~MT_ValidationLease() noexcept;"
+    "Storage-lifetime contract: the lease object must remain alive until every"
+    "bool isCanonicalClearNoLock() const noexcept;"
+    "void activateNoLock(uint64_t serial) noexcept;"
+    "void poisonNoLock() noexcept;"
+    "void clearNoLock() noexcept;"
     "RUNTIME_SIZE(MT_ValidationLease, 0x10, 0x10);"
-    "MT_TryBeginValidationLease( MT_ValidationLease *lease, MT_ValidationLeaseAdmission admission) noexcept;"
-    "MT_FinishValidationLease( MT_ValidationLease *lease) noexcept;"
-    "MT_TryAllocIndexLeased( MT_ValidationLease &lease, int numBytes, int type, uint16_t *outIndex) noexcept;"
-    "MT_TryGetAllocationInfoLeased( MT_ValidationLease &lease, uint32_t nodeNum, MT_AllocationInfo *outInfo) noexcept;"
-    "MT_TryFreeIndexLeased( MT_ValidationLease &lease, uint32_t nodeNum, int numBytes) noexcept;")
+    "MT_TryBeginValidationLease( MT_ValidationLease *lease, const MT_ValidationLeaseAdmission &admission) noexcept;"
+    "MT_FinishValidationLease( MT_ValidationLease *lease, const MT_ValidationLeaseAdmission &admission) noexcept;"
+    "MT_TryAllocIndexLeased( MT_ValidationLease &lease, int numBytes, int type, uint16_t *outIndex, const MT_ValidationLeaseAdmission &admission) noexcept;"
+    "MT_TryGetAllocationInfoLeased( MT_ValidationLease &lease, uint32_t nodeNum, MT_AllocationInfo *outInfo, const MT_ValidationLeaseAdmission &admission) noexcept;"
+    "MT_TryFreeIndexLeased( MT_ValidationLease &lease, uint32_t nodeNum, int numBytes, const MT_ValidationLeaseAdmission &admission) noexcept;")
     require_contains(
         _memory_header "${_marker}" "authenticated allocator lease API")
+endforeach()
+require_not_contains(
+    _memory_header
+    "MT_ValidationLeaseAccess"
+    "production headers must not expose a reproducible lease authority shim")
+require_not_contains(
+    _memory_source
+    "MT_ValidationLeaseAccess"
+    "allocator implementation must not define a reproducible lease authority shim")
+extract_slice(
+    _memory_source
+    "namespace { enum class MT_ValidationPolicy"
+    "constexpr const char *mt_type_names[22]"
+    _lease_view_private_scope
+    "translation-private allocator lease view scope")
+require_contains(
+    _lease_view_private_scope
+    "struct MT_ValidationLeaseView final"
+    "allocator lease view must remain in the anonymous namespace")
+foreach(_marker IN ITEMS
+    "struct MT_ValidationLeaseView final"
+    "uint32_t *const liveMutationCount;"
+    "bool *const livePoisoned;"
+    "lease->poison();"
+    "lease->countMutation();")
+    require_contains(
+        _memory_source "${_marker}" "translation-private allocator lease view")
+endforeach()
+foreach(_marker IN ITEMS
+    "if (!MT_ValidationLeaseAdmission::Authenticates(admission)) return MT_ValidationLeaseStatus::InvalidArgument;"
+    "if (!MT_ValidationLeaseAdmission::Authenticates(admission)) return MT_AllocIndexStatus::InvalidArgumentNoChange;"
+    "if (!MT_ValidationLeaseAdmission::Authenticates(admission)) return MT_AllocationInfoStatus::InvalidArgumentNoChange;"
+    "if (!MT_ValidationLeaseAdmission::Authenticates(admission)) return MT_FreeIndexStatus::InvalidArgumentNoChange;")
+    require_contains(
+        _memory_source "${_marker}" "allocator lease operation capability")
+endforeach()
+extract_slice(
+    _memory_source
+    "MT_ValidationLeaseStatus MT_TryBeginValidationLease("
+    "MT_ValidationLeaseStatus MT_FinishValidationLease("
+    _lease_begin_entry
+    "allocator lease begin capability entry")
+extract_slice(
+    _memory_source
+    "MT_ValidationLeaseStatus MT_FinishValidationLease("
+    "void MT_SetNextValidationLeaseSerialForTesting("
+    _lease_finish_entry
+    "allocator lease finish capability entry")
+extract_slice(
+    _memory_source
+    "MT_AllocIndexStatus MT_TryAllocIndexLeased("
+    "unsigned short MT_AllocIndex("
+    _lease_alloc_entry
+    "allocator leased allocation capability entry")
+extract_slice(
+    _memory_source
+    "MT_AllocationInfoStatus MT_TryGetAllocationInfoLeased("
+    "bool MT_TryValidateState() noexcept"
+    _lease_query_entry
+    "allocator leased query capability entry")
+extract_slice(
+    _memory_source
+    "MT_FreeIndexStatus MT_TryFreeIndexLeased("
+    "struct MT_LegacyFreeAttempt final"
+    _lease_free_entry
+    "allocator leased free capability entry")
+foreach(_var IN ITEMS _lease_begin_entry _lease_finish_entry)
+    require_literal_count(
+        ${_var}
+        "MT_ValidationLeaseAdmission::Authenticates(admission)"
+        1
+        "one exact capability check per lease lifetime entry")
+    require_ordered(
+        ${_var}
+        "MT_ValidationLeaseAdmission::Authenticates(admission)"
+        "if (!lease)"
+        "lease lifetime capability before pointer access")
+    require_ordered(
+        ${_var}
+        "MT_ValidationLeaseAdmission::Authenticates(admission)"
+        "Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);"
+        "lease lifetime capability before allocator lock")
+endforeach()
+require_ordered(
+    _lease_finish_entry
+    "MT_ValidationLeaseAdmission::Authenticates(admission)"
+    "MT_ValidationLeaseView view{"
+    "lease finish capability before private token-state capture")
+foreach(_spec IN ITEMS
+    "_lease_alloc_entry|MT_TryAllocIndexImpl("
+    "_lease_query_entry|MT_TryGetAllocationInfoImpl("
+    "_lease_free_entry|MT_TryFreeIndexImpl(")
+    string(REPLACE "|" ";" _parts "${_spec}")
+    list(GET _parts 0 _var)
+    list(GET _parts 1 _delegate)
+    require_literal_count(
+        ${_var}
+        "MT_ValidationLeaseAdmission::Authenticates(admission)"
+        1
+        "one exact capability check per leased operation entry")
+    require_ordered(
+        ${_var}
+        "MT_ValidationLeaseAdmission::Authenticates(admission)"
+        "MT_ValidationLeaseView view{"
+        "leased operation capability before private token-state capture")
+    require_ordered(
+        ${_var}
+        "MT_ValidationLeaseView view{"
+        "${_delegate}"
+        "private token-state capture before implementation delegation")
 endforeach()
 extract_slice(
     _memory_source
@@ -858,13 +1056,13 @@ endforeach()
 foreach(_marker IN ITEMS
     "return MT_TryAllocIndexImpl( numBytes, type, outIndex, MT_ValidationPolicy::Complete, nullptr);"
     "return MT_TryAllocIndexImpl( numBytes, type, outIndex, MT_ValidationPolicy::LegacyLocal, nullptr);"
-    "return MT_TryAllocIndexImpl( numBytes, type, outIndex, MT_ValidationPolicy::Leased, &lease);"
+    "return MT_TryAllocIndexImpl( numBytes, type, outIndex, MT_ValidationPolicy::Leased, &view);"
     "return MT_TryGetAllocationInfoImpl( nodeNum, outInfo, MT_ValidationPolicy::Complete, nullptr);"
     "return MT_TryGetAllocationInfoImpl( nodeNum, outInfo, MT_ValidationPolicy::LegacyLocal, nullptr);"
-    "return MT_TryGetAllocationInfoImpl( nodeNum, outInfo, MT_ValidationPolicy::Leased, &lease);"
+    "return MT_TryGetAllocationInfoImpl( nodeNum, outInfo, MT_ValidationPolicy::Leased, &view);"
     "return MT_TryFreeIndexImpl( nodeNum, numBytes, MT_ValidationPolicy::Complete, nullptr);"
     "return MT_TryFreeIndexImpl( nodeNum, numBytes, MT_ValidationPolicy::LegacyLocal, nullptr);"
-    "return MT_TryFreeIndexImpl( nodeNum, numBytes, MT_ValidationPolicy::Leased, &lease);")
+    "return MT_TryFreeIndexImpl( nodeNum, numBytes, MT_ValidationPolicy::Leased, &view);")
     require_contains(
         _memory_source "${_marker}" "allocator validation policy routing")
 endforeach()
@@ -890,12 +1088,12 @@ foreach(_marker IN ITEMS
     "mt_activeValidationLeaseAddress == leaseAddress && mt_activeValidationLeaseAddressMirror == leaseAddress"
     "thread_local uintptr_t mt_retainedValidationLeaseAddress = 0;"
     "mt_validationLeaseLifecycle = MT_ValidationLeaseLifecycle::Poisoned; mt_validationLeaseLifecycleMirror = MT_ValidationLeaseLifecycle::Poisoned;"
-    "MT_FreezeValidationLeaseBoundaryLocked(); MT_ValidationLeaseAccess::Poison(*this);"
+    "MT_FreezeValidationLeaseBoundaryLocked(); poisonNoLock();"
     "releaseRetainedAcquisition && !retainedAuthenticated"
     "MT_IsBasicAccountingStateValidNoReport() : MT_IsBasicCoreStateValidNoReport()"
     "policy == MT_ValidationPolicy::Complete ? MT_IsCoreStateValidNoReport()"
     "mt_nextValidationLeaseSerial == UINT64_MAX"
-    "MT_ValidationLeaseAccess::CanCountMutation(*lease)"
+    "lease->canCountMutation()"
     "MT_IsCoreStateValidNoReport(); MT_ClearValidationLeaseRegistryLocked();"
     "MT_RejectUnleasedAccessForActiveLeaseLocked()")
     require_contains(
@@ -903,8 +1101,8 @@ foreach(_marker IN ITEMS
 endforeach()
 extract_slice(
     _memory_source
-    "bool MT_CanReadValidationLeaseSnapshotLocked( const MT_ValidationLease *const lease) noexcept {"
-    "bool MT_RegistryNamesValidationLeaseStorageLocked( const MT_ValidationLease *const lease) noexcept {"
+    "bool MT_CanReadValidationLeaseSnapshotLocked( const MT_ValidationLeaseView *const lease) noexcept {"
+    "bool MT_RegistryNamesValidationLeaseStorageLocked( const uintptr_t leaseAddress) noexcept {"
     _lease_snapshot_authentication
     "validation lease snapshot authentication")
 require_contains(
@@ -913,25 +1111,25 @@ require_contains(
     "snapshots authenticate the live token before member reads")
 extract_slice(
     _memory_source
-    "bool MT_OwnsValidationLeaseLocked( const MT_ValidationLease *const lease) noexcept {"
-    "bool MT_IsValidationLeasePoisonedLocked( const MT_ValidationLease *const lease) noexcept {"
+    "bool MT_OwnsValidationLeaseLocked( const MT_ValidationLeaseView *const lease) noexcept {"
+    "bool MT_IsValidationLeasePoisonedLocked( const MT_ValidationLeaseView *const lease) noexcept {"
     _lease_owner_authentication
     "validation lease owner authentication")
 require_ordered(
     _lease_owner_authentication
     "if (!lease) return false;"
-    "mt_activeValidationLeaseAddress != leaseAddress"
+    "mt_activeValidationLeaseAddress != lease->address"
     "null rejection precedes validation token address checks")
 require_ordered(
     _lease_owner_authentication
-    "mt_activeValidationLeaseAddressMirror != leaseAddress"
-    "MT_ValidationLeaseAccess::Active(*lease)"
-    "both validation token addresses precede token member reads")
+    "mt_activeValidationLeaseAddressMirror != lease->address"
+    "return lease->active"
+    "both validation token addresses precede copied token-state authentication")
 require_ordered(
     _lease_owner_authentication
     "!MT_IsValidationLeaseRegistryConsistentLocked()"
-    "MT_ValidationLeaseAccess::Active(*lease)"
-    "registry authentication precedes token member reads")
+    "return lease->active"
+    "registry authentication precedes copied token-state authentication")
 foreach(_var IN ITEMS _try_alloc _try_free)
     require_not_contains(
         ${_var}
@@ -954,8 +1152,8 @@ require_literal_count(
     _string_source "MT_TryAllocIndexLegacy(" 1
     "legacy string allocation helper")
 require_literal_count(
-    _string_source "MT_TryGetAllocationInfoLegacy(" 3
-    "legacy string candidate, unlink, and sweep queries")
+    _string_source "MT_TryGetAllocationInfoLegacy(" 2
+    "shared legacy string query helper and system sweep query")
 require_literal_count(
     _string_source "MT_TryFreeIndexLegacy(" 3
     "legacy string cleanup, final, and sweep free")
@@ -1094,36 +1292,6 @@ foreach(_forbidden IN ITEMS
         "${_forbidden}"
         "assert-free allocator commit helpers")
 endforeach()
-extract_slice(
-    _memory_source
-    "void MT_RemoveHeadMemoryNode(int size)"
-    "namespace { MT_FreeIndexStatus MT_TryFreeIndexImpl("
-    _raw_remove_head
-    "synchronized raw head removal")
-extract_slice(
-    _memory_source
-    "bool __cdecl MT_RemoveMemoryNode(int oldNode, uint32_t size)"
-    "void MT_Free(byte* p, int numBytes)"
-    _raw_remove
-    "synchronized raw targeted removal")
-extract_slice(
-    _memory_source
-    "void MT_AddMemoryNode(int newNode, int size)"
-    "void MT_Error(const char* funcName, int numBytes)"
-    _raw_add
-    "synchronized raw insertion")
-require_contains(
-    _raw_remove_head
-    "MT_RemoveHeadMemoryNodeCommitNoReport(size);"
-    "raw head removal delegates to synchronized commit")
-require_contains(
-    _raw_remove
-    "MT_RemoveMemoryNodeCommitNoReport( oldNode, static_cast<int>(size));"
-    "raw targeted removal delegates to synchronized commit")
-require_contains(
-    _raw_add
-    "MT_AddMemoryNodeCommitNoReport(newNode, size);"
-    "raw insertion delegates to synchronized commit")
 foreach(_marker IN ITEMS
     "MT_CompleteForestValidationCountForTesting() == 0"
     "TestRawFreeTreeMutatorsSynchronizeShadows()"
@@ -1178,6 +1346,647 @@ require_contains(
     _unsafe_memory_error
     "Com_Error(ERR_FATAL, \"MT_Error: unsafe memory-tree state (KISAK)\\n\");"
     "bounded terminal unsafe diagnostic")
+
+# Ownership batches retain the string lock before the allocator lease, keep
+# only pointer-free by-value stack identities, rebuild the complete string
+# certificate at the two boundaries, and route operations through leased
+# bounded validation. They deliberately remain below the zone/controller
+# layer and freeze permanently on abandoned lifetime.
+foreach(_marker IN ITEMS
+    "enum class OwnershipBatchStatus : std::uint8_t"
+    "class OwnershipBatch final"
+    "~OwnershipBatch() noexcept;"
+    "OwnershipBatch(const OwnershipBatch &) = delete;"
+    "OwnershipBatch(OwnershipBatch &&) = delete;"
+    "RUNTIME_SIZE(OwnershipBatch, 0x20, 0x20);"
+    "static_assert(std::is_standard_layout_v<OwnershipBatch>);"
+    "static_assert(!std::is_trivially_destructible_v<OwnershipBatch>);"
+    "static const MT_ValidationLeaseAdmission & MakeMemoryTreeLeaseAdmission() noexcept;"
+    "bool isCanonicalClearNoLock() const noexcept;"
+    "bool ownsRegistryNoLock() const noexcept;"
+    "void activateNoLock(std::uint64_t serial) noexcept;"
+    "void poisonNoLock() noexcept;"
+    "void clearNoLock() noexcept;"
+    "void poisonBoundaryLocked() noexcept;"
+    "TryBeginOwnershipBatch( OwnershipBatch *batch) noexcept;"
+    "FinishOwnershipBatch( OwnershipBatch *batch) noexcept;"
+    "TryAcquireOrdinaryStringOfSize( OwnershipBatch &batch, const char *bytes, std::uint32_t byteCount, int type) noexcept;"
+    "TryTransferOrdinaryToDatabaseUser( OwnershipBatch &batch, std::uint32_t stringId) noexcept;"
+    "TryRemoveOrdinaryReference( OwnershipBatch &batch, std::uint32_t stringId) noexcept;"
+    "TryRemoveDatabaseUserReference( OwnershipBatch &batch, std::uint32_t stringId) noexcept;")
+    require_contains(
+        _ownership_header "${_marker}" "authenticated ownership batch API")
+endforeach()
+require_not_contains(
+    _ownership_header
+    "friend struct OwnershipBatchAccess;"
+    "forgeable namespace ownership-batch friend shim")
+require_not_contains(
+    _string_source
+    "OwnershipBatchAccess"
+    "external-linkage ownership-batch authority shim")
+require_literal_count(
+    _string_source
+    "OwnershipBatch::MakeMemoryTreeLeaseAdmission()"
+    7
+    "one private capability definition plus six exact batch entry uses")
+foreach(_marker IN ITEMS
+    "CRITSECT_SCRIPT_STRING first, then CRITSECT_MEMORY_TREE"
+    "one bounded, callback-free ownership loop"
+    "using only the four batch overloads below. No legacy string API, reporter,"
+    "callback, or unrelated memory-tree work may run while a batch is active."
+    "Storage-lifetime and thread-affinity contract"
+    "an exactly authenticated destructor releases only the acquisitions proven to")
+    require_contains(
+        _ownership_header "${_marker}" "ownership batch scope contract")
+endforeach()
+
+foreach(_marker IN ITEMS
+    "std::uint64_t sl_nextOwnershipBatchSerial = 0;"
+    "std::uintptr_t sl_activeOwnershipBatchAddress = 0;"
+    "std::uint64_t sl_activeOwnershipBatchSerial = 0;"
+    "std::uintptr_t sl_activeOwnershipBatchAddressMirror = 0;"
+    "std::uint64_t sl_activeOwnershipBatchSerialMirror = 0;"
+    "std::uintptr_t sl_activeOwnershipBatchNestedLeaseAddress = 0;"
+    "std::uintptr_t sl_activeOwnershipBatchNestedLeaseAddressMirror = 0;"
+    "enum class SL_OwnershipBatchLifecycle : std::uint8_t { Idle, Active, Poisoned, Frozen, };"
+    "thread_local std::uintptr_t sl_retainedOwnershipBatchAddress = 0;"
+    "thread_local std::uintptr_t sl_retainedOwnershipBatchNestedLeaseAddress = 0;"
+    "std::uint64_t sl_abandonedOwnershipBatchPoison = 0;"
+    "std::uint64_t sl_abandonedOwnershipBatchPoisonMirror = 0;"
+    "SL_IsOwnershipBatchRegistryConsistentLocked() noexcept"
+    "sl_activeOwnershipBatchAddress != sl_activeOwnershipBatchAddressMirror"
+    "sl_activeOwnershipBatchSerial != sl_activeOwnershipBatchSerialMirror"
+    "Registry consistency is deliberately pointer-free."
+    "SL_FreezeOwnershipBatchBoundaryLocked() noexcept"
+    "SL_IsAuthorizedOwnershipLeaseLocked( MT_ValidationLease *const lease) noexcept")
+    require_contains(
+        _string_source "${_marker}" "mirrored ownership batch registry")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "script_string::OwnershipBatch *sl_activeOwnershipBatch"
+    "reinterpret_cast<script_string::OwnershipBatch *>("
+    "reinterpret_cast<OwnershipBatch *>("
+    "sl_activeOwnershipBatch->")
+    require_not_contains(
+        _string_source "${_forbidden}"
+        "stored ownership-batch pointer or address conversion")
+endforeach()
+
+extract_slice(
+    _string_source
+    "bool OwnershipBatch::ownsRegistryNoLock() const noexcept {"
+    "#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)"
+    _ownership_batch_auth
+    "ownership batch live-storage authentication")
+require_ordered(
+    _ownership_batch_auth
+    "sl_activeOwnershipBatchAddressMirror != address"
+    "&memoryTreeLease_"
+    "both outer addresses authenticate before nested member access")
+require_ordered(
+    _ownership_batch_auth
+    "!SL_IsOwnershipBatchRegistryConsistentLocked()"
+    "&& active_ && serial_ != 0"
+    "pointer-free registry authentication precedes local member reads")
+
+extract_slice(
+    _string_source
+    "OwnershipBatchStatus TryBeginOwnershipBatch("
+    "OwnershipBatchStatus FinishOwnershipBatch("
+    _ownership_batch_begin
+    "ownership batch admission")
+extract_slice(
+    _string_source
+    "OwnershipBatchStatus FinishOwnershipBatch("
+    "AcquireResult TryAcquireOrdinaryStringOfSize("
+    _ownership_batch_finish
+    "ownership batch close")
+require_ordered(
+    _ownership_batch_begin
+    "Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "SL_HasOwnershipBatchRegistryActivityLocked()"
+    "frozen/active registry rejection precedes supplied token access")
+require_ordered(
+    _ownership_batch_begin
+    "SL_HasOwnershipBatchRegistryActivityLocked()"
+    "batch->isCanonicalClearNoLock()"
+    "begin rejects abandonment before token member reads")
+require_ordered(
+    _ownership_batch_begin
+    "Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "MT_TryBeginValidationLease(&memoryTreeLease, admission)"
+    "script lock before allocator lease admission")
+require_ordered(
+    _ownership_batch_begin
+    "sl_nextOwnershipBatchSerial == UINT64_MAX"
+    "MT_TryBeginValidationLease(&memoryTreeLease, admission)"
+    "serial exhaustion before retained lock admission")
+require_ordered(
+    _ownership_batch_begin
+    "MT_TryBeginValidationLease(&memoryTreeLease, admission)"
+    "SL_IsCompleteStringStateValidForScopeNoReport( SL_ValidationScope::Leased, &memoryTreeLease, &admission)"
+    "allocator lease before complete string validation")
+require_ordered(
+    _ownership_batch_begin
+    "SL_IsCompleteStringStateValidForScopeNoReport( SL_ValidationScope::Leased, &memoryTreeLease, &admission)"
+    "sl_activeOwnershipBatchAddress = address;"
+    "complete validation before ownership publication")
+require_ordered(
+    _ownership_batch_begin
+    "sl_activeOwnershipBatchAddress = address;"
+    "sl_retainedOwnershipBatchAddress = address;"
+    "global stack identity before retained TLS publication")
+require_ordered(
+    _ownership_batch_finish
+    "SL_IsCompleteStringStateValidForScopeNoReport( SL_ValidationScope::Leased, &batch->memoryTreeLease_, &admission)"
+    "MT_FinishValidationLease( &batch->memoryTreeLease_, admission)"
+    "complete string close before allocator close")
+require_ordered(
+    _ownership_batch_finish
+    "SL_ClearOwnershipBatchRegistryLocked();"
+    "batch->clearNoLock();"
+    "registry invalidation before token clear")
+require_ordered(
+    _ownership_batch_finish
+    "SL_ClearOwnershipBatchRegistryLocked();"
+    "SL_ClearRetainedOwnershipBatchAuthenticationLocked();"
+    "normal close clears global identity before retained TLS")
+
+extract_slice(
+    _string_source
+    "OwnershipBatch::~OwnershipBatch() noexcept"
+    "bool OwnershipBatch::active() const noexcept"
+    _ownership_batch_destructor
+    "ownership batch terminal destructor")
+foreach(_marker IN ITEMS
+    "SL_FreezeOwnershipBatchBoundaryLocked();"
+    "MT_ValidationLease::AbandonFromOwnershipBatch( memoryTreeLease_)"
+    "if (ownsRetainedScriptAcquisition && releasedNestedAcquisition) Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);")
+    require_contains(
+        _ownership_batch_destructor "${_marker}"
+        "authenticated terminal ownership abandonment")
+endforeach()
+require_ordered(
+    _ownership_batch_destructor
+    "SL_FreezeOwnershipBatchBoundaryLocked();"
+    "MT_ValidationLease::AbandonFromOwnershipBatch( memoryTreeLease_)"
+    "outer Frozen publication precedes nested abandonment")
+require_ordered(
+    _ownership_batch_destructor
+    "MT_ValidationLease::AbandonFromOwnershipBatch( memoryTreeLease_)"
+    "SL_ClearRetainedOwnershipBatchAuthenticationLocked();"
+    "nested exact release precedes outer retained-auth clear")
+require_contains(
+    _ownership_batch_destructor
+    "} else { SL_FreezeOwnershipBatchBoundaryLocked(); }"
+    "torn outer destructor freezes without a member write")
+
+extract_slice(
+    _memory_source
+    "bool MT_ValidationLease::AbandonFromOwnershipBatch( MT_ValidationLease &lease) noexcept"
+    "bool MT_ValidationLease::active() const noexcept"
+    _nested_abandonment
+    "friend-only nested lease abandonment")
+require_ordered(
+    _nested_abandonment
+    "MT_OwnsValidationLeaseLocked(&view)"
+    "MT_FreezeValidationLeaseBoundaryLocked();"
+    "nested live authentication precedes terminal freeze")
+require_ordered(
+    _nested_abandonment
+    "MT_FreezeValidationLeaseBoundaryLocked();"
+    "MT_ClearRetainedValidationLeaseAuthenticationLocked();"
+    "nested Frozen publication precedes retained-auth clear")
+require_ordered(
+    _nested_abandonment
+    "MT_FreezeValidationLeaseBoundaryLocked();"
+    "Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);"
+    "nested Frozen publication precedes every release")
+require_contains(
+    _nested_abandonment
+    "if (ownsRetainedAcquisition) Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);"
+    "nested retained release requires exact authentication")
+
+require_ordered(
+    _ownership_batch_finish
+    "batch->ownsRegistryNoLock()"
+    "batch->memoryTreeLease_"
+    "finish authenticates the live outer before nested member access")
+extract_slice(
+    _string_source
+    "void OwnershipBatch::poisonBoundaryLocked() noexcept"
+    "bool OwnershipBatch::canOperateNoLock() const noexcept"
+    _ownership_batch_poison
+    "ownership batch poison publication")
+require_ordered(
+    _ownership_batch_poison
+    "ownsRegistryNoLock()"
+    "poisonNoLock()"
+    "local poison requires full live-token authentication")
+extract_slice(
+    _string_source
+    "void OwnershipBatch::SetAuthenticationFieldsForTesting("
+    "void OwnershipBatch::SetOperationCountForTesting("
+    _ownership_batch_test_auth_mutation
+    "test-only ownership authentication mutation")
+extract_slice(
+    _string_source
+    "void OwnershipBatch::SetOperationCountForTesting("
+    "void OwnershipBatch::SetMemoryTreeMutationCountForTesting("
+    _ownership_batch_test_operation_mutation
+    "test-only ownership operation mutation")
+extract_slice(
+    _string_source
+    "void OwnershipBatch::SetMemoryTreeMutationCountForTesting("
+    "void ResetOwnershipValidationCountersForTesting() noexcept"
+    _ownership_batch_test_nested_mutation
+    "test-only nested ownership mutation")
+require_ordered(
+    _ownership_batch_test_auth_mutation
+    "registryNamesStorageNoLock()"
+    "serial_ = serial;"
+    "test-only outer mutation authenticates live storage")
+require_ordered(
+    _ownership_batch_test_operation_mutation
+    "registryNamesStorageNoLock()"
+    "operationCount_ = operationCount;"
+    "test-only operation mutation authenticates live storage")
+require_ordered(
+    _ownership_batch_test_nested_mutation
+    "registryNamesStorageNoLock()"
+    "memoryTreeLease_.SetMutationCountForTesting(mutationCount);"
+    "test-only nested mutation authenticates live outer storage")
+
+require_contains(
+    _string_header
+    "struct RefString;"
+    "public RefString surface is opaque")
+foreach(_forbidden IN ITEMS
+    "volatile uint32_t data;"
+    "SL_RefStringWord("
+    "SL_AddUserInternal("
+    "struct RefString {")
+    require_not_contains(
+        _string_header "${_forbidden}"
+        "public RefString raw ownership surface")
+endforeach()
+require_contains(
+    _string_source
+    "struct RefString { volatile std::uint32_t data; char str[1]; };"
+    "RefString layout is private to its authenticated owner")
+require_not_contains(
+    _string_header
+    "SL_RefStringWord("
+    "ownership API exposes no raw packed-word accessor")
+require_literal_count(
+    _string_source
+    "return &refString->data;"
+    2
+    "private const/nonconst packed-word accessors")
+
+extract_slice(
+    _string_source
+    "static bool SL_AddUserInternal("
+    "void SL_AddRefToString(uint32_t stringValue)"
+    _opaque_user_mutator
+    "private opaque RefString user mutator")
+require_ordered(
+    _opaque_user_mutator
+    "const bool addressValid = refStr != nullptr"
+    "SL_TryResolveLegacyTransferTargetNoReport( static_cast<uint32_t>( (refStringAddress - memoryBegin) / MT_NODE_SIZE), &resolvedRefString, &byteCount)"
+    "opaque RefString mutation validates range before allocation/hash")
+require_ordered(
+    _opaque_user_mutator
+    "&& resolvedRefString == refStr"
+    "&& SL_TryAddUserInternalNoReport(resolvedRefString, user);"
+    "opaque RefString mutation requires exact identity before atomic access")
+extract_slice(
+    _string_source
+    "void SL_AddRefToString(uint32_t stringValue)"
+    "void SL_CheckExists(uint32_t stringValue)"
+    _add_ref_mutator
+    "legacy ID ref mutator")
+require_ordered(
+    _add_ref_mutator
+    "SL_TryResolveLegacyTransferTargetNoReport( stringValue, &refStr, &byteCount)"
+    "SL_TryAddUserInternalNoReport(refStr, 0)"
+    "ID ref mutation authenticates exact string before atomic access")
+extract_slice(
+    _string_source
+    "void __cdecl SL_AddUser(uint32_t stringValue, uint32_t user)"
+    "void __cdecl Scr_SetString(uint16_t *to, uint32_t from)"
+    _add_user_mutator
+    "legacy ID user mutator")
+require_ordered(
+    _add_user_mutator
+    "SL_TryResolveLegacyTransferTargetNoReport( stringValue, &refString, &byteCount)"
+    "SL_TryAddUserInternalNoReport(refString, user)"
+    "ID user mutation authenticates exact string before atomic access")
+extract_slice(
+    _string_source
+    "uint32_t __cdecl SL_ConvertToLowercase("
+    "void __cdecl CreateCanonicalFilename("
+    _lowercase_conversion
+    "lowercase conversion")
+require_ordered(
+    _lowercase_conversion
+    "SL_TryResolveLegacyTransferTargetNoReport( stringValue, &refString, &byteCount)"
+    "static_cast<unsigned char>(refString->str[index])"
+    "lowercase conversion authenticates exact string before bounded access")
+
+foreach(_marker IN ITEMS
+    "enum class SL_ValidationScope : uint8_t { Complete, LegacyLocal, Leased, };"
+    "SL_IsValidationAuthorityWellFormed( const SL_ValidationScope scope, const MT_ValidationLease *const validationLease, const MT_ValidationLeaseAdmission *const admission) noexcept"
+    "MT_TryAllocIndexLeased( *validationLease, numBytes, type, outIndex, *admission)"
+    "MT_TryGetAllocationInfoLeased( *validationLease, stringValue, outInfo, *admission)"
+    "MT_TryFreeIndexLeased( *validationLease, stringValue, numBytes, *admission)"
+    "SL_IsFreeListCertificateMemberNoReport( const uint32_t entryIndex) noexcept"
+    "SL_SetFreeListCertificateMemberNoReport( const uint32_t entryIndex, const bool member) noexcept"
+    "SL_IsLeasedFreeListLocallyValidNoReport() noexcept"
+    "SL_IsCompleteStringStateValidForScopeNoReport( const SL_ValidationScope scope, MT_ValidationLease* const validationLease, const MT_ValidationLeaseAdmission* const admission = nullptr) noexcept"
+    "scrStringDebugGlob != &scrStringDebugGlobBuf"
+    "SL_SetFreeListCertificateMemberNoReport(newIndex, false);"
+    "SL_SetFreeListCertificateMemberNoReport(freedIndex, true);")
+    require_contains(
+        _string_source "${_marker}" "leased bounded string validation")
+endforeach()
+
+foreach(_var IN ITEMS _acquire _transfer _release_ordinary _release_database)
+    require_contains(
+        ${_var}
+        "SL_IsTypedOwnershipAccessAuthorizedLocked( validationLease, admission)"
+        "typed ownership registry authorization")
+    require_not_contains(
+        ${_var}
+        "SL_IsCompleteStringStateValidForScopeNoReport("
+        "batch operation cannot rebuild the complete string certificate")
+    require_not_contains(
+        ${_var}
+        "MT_TryValidateState("
+        "batch operation cannot repeat complete allocator validation")
+    foreach(_callback IN ITEMS
+        "SL_TransferToCanonicalString"
+        "SL_GetCanonicalString")
+        require_not_contains(
+            ${_var} "${_callback}"
+            "callback-free ownership operation surface")
+    endforeach()
+endforeach()
+require_ordered(
+    _acquire
+    "SL_IsTypedOwnershipAccessAuthorizedLocked( validationLease, admission)"
+    "bytes[byteCount - 1]"
+    "ownership authorization precedes caller byte access")
+
+extract_slice(
+    _string_source
+    "int SL_IsLowercaseString(uint32_t stringValue)"
+    "void SL_TransferSystem(uint32_t from, uint32_t to)"
+    _lowercase_reader
+    "lowercase string reader")
+require_ordered(
+    _lowercase_reader
+    "SL_TryResolveLegacyTransferTargetNoReport( stringValue, &refString, &byteCount)"
+    "for (uint32_t index = 0; index + 1 < byteCount; ++index)"
+    "lowercase reader authenticates exact allocation/hash before bounded scan")
+require_contains(
+    _lowercase_reader
+    "static_cast<unsigned char>(tolower(value))"
+    "lowercase reader uses unsigned-char ctype input")
+extract_slice(
+    _string_source
+    "static uint32_t GetLowercaseStringOfSize("
+    "uint32_t SL_GetLowercaseString_("
+    _lowercase_intern
+    "lowercase string intern")
+require_contains(
+    _lowercase_intern
+    "static_cast<unsigned char>(str[i])"
+    "lowercase intern uses unsigned-char ctype input")
+extract_slice(
+    _string_source
+    "uint32_t SL_FindLowercaseString(const char* str)"
+    "bool SL_TryRemoveRefToStringLockedNoReport("
+    _lowercase_find
+    "lowercase string lookup")
+require_contains(
+    _lowercase_find
+    "static_cast<unsigned char>(str[i])"
+    "lowercase lookup uses unsigned-char ctype input")
+extract_slice(
+    _string_source
+    "void __cdecl CreateCanonicalFilename("
+    "uint32_t __cdecl Scr_CreateCanonicalFilename("
+    _canonical_filename
+    "canonical filename folding")
+require_contains(
+    _canonical_filename
+    "c = static_cast<unsigned char>(*filename++);"
+    "canonical filename reads unsigned input bytes")
+require_contains(
+    _canonical_filename
+    "static_cast<unsigned char>(c)"
+    "canonical filename uses unsigned-char ctype input")
+extract_slice(
+    _string_source
+    "const char* SL_ConvertToString(uint32_t stringValue)"
+    "RefString* GetRefString(uint32_t stringValue)"
+    _convert_reader
+    "string conversion reader")
+require_contains(
+    _convert_reader
+    "SL_TryResolveLegacyTransferTargetNoReport( stringValue, &refString, &byteCount)"
+    "string conversion authenticates exact allocation/hash")
+extract_slice(
+    _string_source
+    "RefString* GetRefString(uint32_t stringValue)"
+    "int SL_GetStringLen(uint32_t stringValue)"
+    _ref_string_readers
+    "opaque RefString resolution")
+require_literal_count(
+    _ref_string_readers
+    "SL_TryResolveLegacyTransferTargetNoReport("
+    2
+    "both RefString overloads use exact resolver")
+require_ordered(
+    _ref_string_readers
+    "const bool addressValid = str != nullptr"
+    "&& result->str == str;"
+    "pointer resolution authenticates range before exact string pointer")
+extract_slice(
+    _string_source
+    "int SL_GetStringLen(uint32_t stringValue)"
+    "uint32_t SL_FindString(const char* str)"
+    _string_length_reader
+    "string length reader")
+require_contains(
+    _string_length_reader
+    "SL_TryResolveLegacyTransferTargetNoReport( stringValue, &refString, &byteCount)"
+    "string length authenticates exact allocation/hash")
+extract_slice(
+    _string_source
+    "int SL_GetRefStringLen(RefString* refString)"
+    "void SL_RemoveRefToString(uint32_t stringValue)"
+    _ref_string_length_reader
+    "RefString length reader")
+require_ordered(
+    _ref_string_length_reader
+    "const bool addressValid = memoryBegin != 0"
+    "SL_TryResolveLegacyTransferTargetNoReport( static_cast<uint32_t>( (refStringAddress - memoryBegin) / MT_NODE_SIZE), &resolvedRefString, &byteCount)"
+    "RefString length validates range before exact allocation/hash")
+require_contains(
+    _ref_string_length_reader
+    "&& resolvedRefString == refString;"
+    "RefString length requires exact allocation identity")
+extract_slice(
+    _string_source
+    "const char* __cdecl SL_DebugConvertToString(uint32_t stringValue)"
+    "uint32_t SL_ConvertFromString(const char* str)"
+    _debug_convert_reader
+    "debug string reader")
+require_ordered(
+    _debug_convert_reader
+    "SL_TryResolveLegacyTransferTargetNoReport( stringValue, &refString, &byteCount)"
+    "isprint(static_cast<unsigned char>(refString->str[index]))"
+    "debug reader authenticates and bounds unsigned-char inspection")
+extract_slice(
+    _string_source
+    "uint32_t SL_ConvertFromString(const char* str)"
+    "uint32_t SL_FindLowercaseString(const char* str)"
+    _convert_from_reader
+    "pointer-to-string-ID reader")
+require_ordered(
+    _convert_from_reader
+    "const bool addressValid = str != nullptr"
+    "SL_TryResolveLegacyTransferTargetNoReport( candidate, &refString, &byteCount)"
+    "pointer conversion validates range before allocation/hash")
+require_ordered(
+    _convert_from_reader
+    "SL_TryResolveLegacyTransferTargetNoReport( candidate, &refString, &byteCount)"
+    "refString->str == str;"
+    "pointer conversion requires exact payload identity")
+extract_slice(
+    _string_source
+    "uint32_t SL_GetUser(uint32_t stringValue)"
+    "const char *SL_ConvertToStringSafe(uint32_t stringValue)"
+    _user_reader
+    "string user reader")
+require_ordered(
+    _user_reader
+    "SL_TryResolveLegacyTransferTargetNoReport( stringValue, &refString, &byteCount)"
+    "SL_RefStringWord(refString)"
+    "user reader authenticates exact string before packed read")
+foreach(_marker IN ITEMS
+    "OwnershipBatch::tryAuthenticateOperationLocked() noexcept"
+    "canOperateNoLock()"
+    "sl_ownershipBatchLifecycle == SL_OwnershipBatchLifecycle::Active"
+    "operationCount_ != UINT32_MAX"
+    "memoryTreeLease_.mutationCount() != UINT32_MAX"
+    "++batch.operationCount_;"
+    "batch.poisoned_ = true;")
+    require_contains(
+        _string_source "${_marker}" "overflow-safe batch operation accounting")
+endforeach()
+
+# Same-thread legacy/reporting/raw entries reject before inspecting untrusted
+# caller data. Foreign threads block on the retained recursive script lock and
+# resume normally after close.
+foreach(_marker IN ITEMS
+    "uint32_t __cdecl Scr_AllocString(char *s, int sys) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "void SL_CheckExists(uint32_t stringValue) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "void SL_ShutdownSystem(uint32_t user) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "int SL_IsLowercaseString(uint32_t stringValue) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "void SL_TransferSystem(uint32_t from, uint32_t to) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "uint32_t SL_GetString_(const char* str, uint32_t user, int type) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "uint32_t SL_GetStringOfSize(const char* str, uint32_t user, uint32_t len, int type) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "const char* SL_ConvertToString(uint32_t stringValue) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "RefString* GetRefString(uint32_t stringValue) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "RefString* GetRefString(const char* str) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "int SL_GetStringLen(uint32_t stringValue) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "uint32_t SL_FindString(const char* str) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "void __cdecl SL_TransferRefToUser(uint32_t stringValue, uint32_t user) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "uint32_t SL_GetStringForVector(const float* v) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "uint32_t SL_GetStringForInt(int i) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "uint32_t SL_GetStringForFloat(float f) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "uint32_t SL_GetString(const char* str, uint32_t user) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "uint32_t SL_GetLowercaseString_(const char* str, uint32_t user, int type) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "int SL_GetRefStringLen(RefString* refString) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "void SL_RemoveRefToString(uint32_t stringValue) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "uint32_t SL_FindLowercaseString(const char* str) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "void SL_RemoveRefToStringOfSize(uint32_t stringValue, uint32_t len) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "void __cdecl SL_AddUser(uint32_t stringValue, uint32_t user) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "void __cdecl Scr_SetString(uint16_t *to, uint32_t from) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "uint32_t __cdecl SL_ConvertToLowercase(uint32_t stringValue, uint32_t user, int type) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "const char* __cdecl SL_DebugConvertToString(uint32_t stringValue) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "uint32_t SL_ConvertFromString(const char* str) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "uint32_t __cdecl Scr_CreateCanonicalFilename(const char *filename) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "void Scr_SetStringFromCharString(uint16_t *to, const char *from) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "uint32_t SL_GetUser(uint32_t stringValue) { if (SL_IsOwnershipBatchActiveNoReport())"
+    "const char *SL_ConvertToStringSafe(uint32_t stringValue) { if (SL_IsOwnershipBatchActiveNoReport())")
+    require_contains(
+        _string_source "${_marker}" "same-thread legacy batch exclusion")
+endforeach()
+require_contains(
+    _string_source
+    "uint32_t SL_GetLowercaseString(const char* str, uint32_t user) { return SL_GetLowercaseString_(str, user, 6); }"
+    "lowercase wrapper delegates to the gated implementation")
+foreach(_marker IN ITEMS
+    "void SL_Init() { Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING); if (SL_HasOwnershipBatchRegistryActivityLocked())"
+    "void SL_InitCheckLeaks() { Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING); if (SL_HasOwnershipBatchRegistryActivityLocked())"
+    "void SL_AddRefToString(uint32_t stringValue) { PROF_SCOPED(\"SL_AddRefToString\"); Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING); if (SL_HasOwnershipBatchRegistryActivityLocked())"
+    "void SL_Shutdown() { Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING); if (SL_HasOwnershipBatchRegistryActivityLocked())"
+    "static bool SL_AddUserInternal(RefString* const refStr, const uint32_t user) { Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING); if (SL_HasOwnershipBatchRegistryActivityLocked())"
+    "static bool SL_FreeString( const uint32_t stringValue, RefString* const refString, const uint32_t byteCount) { PROF_SCOPED(\"SL_FreeString\"); Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING); if (SL_HasOwnershipBatchRegistryActivityLocked())"
+    "bool SL_TryFreeSystemSweepEntryNoReport( const uint32_t owningHash, const uint32_t targetIndex, const uint32_t previousIndex, const uint32_t stringValue, RefString* const refString, const uint32_t byteCount) noexcept { if (SL_HasOwnershipBatchRegistryActivityLocked())")
+    require_contains(
+        _string_source "${_marker}" "locked raw mutation batch exclusion")
+endforeach()
+
+extract_slice(
+    _string_source
+    "bool SL_TryResetCanonicalStringState("
+    "static uint32_t SL_DebugRefCount("
+    _canonical_reset
+    "canonical string reset gate")
+require_ordered(
+    _canonical_reset
+    "Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "SL_HasOwnershipBatchRegistryActivityLocked()"
+    "canonical reset acquires before boundary admission")
+require_ordered(
+    _canonical_reset
+    "SL_HasOwnershipBatchRegistryActivityLocked()"
+    "memset(canonicalStrings, 0, sizeof(canonicalStrings));"
+    "canonical reset rejects before supplied storage dereference")
+require_ordered(
+    _canonical_reset
+    "memset(canonicalStrings, 0, sizeof(canonicalStrings));"
+    "*canonicalCount = 0;"
+    "canonical map clear precedes count publication")
+extract_slice(
+    _script_main_source
+    "void SL_BeginLoadScripts()"
+    "int __cdecl Scr_ScanFile("
+    _begin_load_scripts
+    "canonical reset wrapper")
+require_contains(
+    _begin_load_scripts
+    "if (!SL_TryResetCanonicalStringState( scrCompilePub.canonicalStrings, &scrVarPub.canonicalStrCount))"
+    "script-load reset checks the gated helper")
+require_ordered(
+    _begin_load_scripts
+    "if (!SL_TryResetCanonicalStringState("
+    "std::abort();"
+    "script-load reset fails fast without a reporter")
+foreach(_forbidden IN ITEMS
+    "(void)SL_TryResetCanonicalStringState("
+    "memset("
+    "canonicalStrCount =")
+    require_not_contains(
+        _begin_load_scripts "${_forbidden}"
+        "script-load wrapper cannot bypass canonical reset gate")
+endforeach()
 
 # A dedicated outer serializer avoids inverting DB hash and script-string
 # locks. Tokens are explicit, non-copyable, and do not unlock from a destructor.
@@ -1343,11 +2152,43 @@ require_contains(
     "\${SRC_DIR}/database/db_script_string_transaction.cpp"
     "serializer runtime target linkage")
 foreach(_marker IN ITEMS
+    "add_library(kisakcod-script-memorytree-lease-api-seal OBJECT"
+    "script_memorytree_lease_api_seal_compile_tests.cpp"
     "add_executable(kisakcod-script-memorytree-try-tests"
     "script_memorytree_try_tests.cpp"
     "\${SRC_DIR}/script/scr_memorytree.cpp"
     "NAME script-memorytree-try-contracts")
     require_contains(_tests "${_marker}" "memory-tree runtime fixture wiring")
+endforeach()
+require_contains(
+    _ci
+    "kisakcod-script-memorytree-lease-api-seal"
+    "production allocator lease API seal in explicit Windows x86 build")
+foreach(_marker IN ITEMS
+    "static_assert(!std::is_default_constructible_v<MT_ValidationLeaseAdmission>);"
+    "static_assert(!std::is_trivially_copyable_v<MT_ValidationLeaseAdmission>);"
+    "static_assert(!std::is_default_constructible_v<MT_ValidationLease>);"
+    "static_assert(!std::is_destructible_v<MT_ValidationLease>);"
+    "static_assert(!HasUngatedBegin<MT_ValidationLease>);"
+    "static_assert(!HasUngatedFinish<MT_ValidationLease>);"
+    "static_assert(!HasUngatedAllocation<MT_ValidationLease>);"
+    "static_assert(!HasUngatedQuery<MT_ValidationLease>);"
+    "static_assert(!HasUngatedFree<MT_ValidationLease>);"
+    "static_assert(!HasCanonicalTestingAdmission<MT_ValidationLeaseAdmission>);"
+    "static_assert(!HasInvalidTestingAdmission<MT_ValidationLeaseAdmission>);"
+    "static_assert(!HasLeaseAuthenticationSetter<MT_ValidationLease>);"
+    "static_assert(!HasLeaseMutationSetter<MT_ValidationLease>);"
+    "static_assert(!HasLeaseCanonicalInspection<MT_ValidationLease>);"
+    "static_assert(!HasLeaseActivationAuthority<MT_ValidationLease>);"
+    "static_assert(!HasLeasePoisonAuthority<MT_ValidationLease>);"
+    "static_assert(!HasLeaseClearAuthority<MT_ValidationLease>);"
+    "static_assert( !HasBatchAuthenticationSetter<script_string::OwnershipBatch>);"
+    "static_assert(!HasBatchLeaseAccessor<script_string::OwnershipBatch>);"
+    "static_assert(!HasBatchActivationSetter<script_string::OwnershipBatch>);"
+    "static_assert(!HasBatchOperationSetter<script_string::OwnershipBatch>);"
+    "static_assert( !HasBatchMemoryMutationSetter<script_string::OwnershipBatch>);")
+    require_contains(
+        _memory_lease_seal "${_marker}" "production allocator lease API seal")
 endforeach()
 foreach(_marker IN ITEMS
     "TestInvalidAndNoChange()"
@@ -1355,18 +2196,22 @@ foreach(_marker IN ITEMS
     "TestLegacyLocalValidationScope()"
     "TestLegacyTouchedIntervalCorruption()"
     "TestLegacyFragmentedForestCost()"
+    "TestValidationLeaseCapabilityAuthentication()"
+    "invalid lease capability reached the allocator lock"
+    "invalid lease operation capability reached the allocator lock"
     "TestValidationLeasePolicies()"
     "TestValidationLeaseAuthenticationAndOverflow()"
     "TestValidationLeaseCorruption()"
     "TestValidationLeaseReentryAndForeignThread()"
     "TestValidationLeaseAbandonedLifetime()"
+    "The token must outlive every call that received it."
     "authenticated destructor retained the owner lock"
     "torn destructor guessed the retained acquisition"
     "MT_SetRetainedValidationLeaseAuthenticationForTesting("
     "foreign thread entered through a torn retained boundary"
     "unrelated canonical destructor revoked the active lease"
     "arbitrary mirrored address was dereferenced or admitted"
-    "blocked snapshots read a destroyed lease"
+    "blocked snapshots read a finished lease"
     "foreign allocator access bypassed retained lock"
     "mutation counter wrapped"
     "pointer-only registry admitted legacy allocation"
@@ -1397,6 +2242,7 @@ extract_slice(
 foreach(_marker IN ITEMS
     "script_string_ownership_tests.cpp"
     "\${SRC_DIR}/script/scr_memorytree.cpp"
+    "KISAK_MEMORY_TREE_VALIDATION_TESTING=1"
     "KISAK_SCRIPT_STRING_PERF_TESTING=1"
     "NAME script-string-report-free-ownership-contracts")
     require_contains(
@@ -1423,6 +2269,10 @@ foreach(_forbidden IN ITEMS
         _ownership_fixture "${_forbidden}"
         "copied production ownership algorithm")
 endforeach()
+require_not_contains(
+    _ownership_fixture
+    "std::this_thread::sleep_for("
+    "deterministic foreign serialization coverage")
 foreach(_marker IN ITEMS
     "TestInitCheckLeaksRetainsLock()"
     "TestFullInitRejectsDebugOnlyState()"
@@ -1464,7 +2314,54 @@ foreach(_marker IN ITEMS
     "GetHashCode(longBytes.data(), longByteCount) == 1217"
     "StateMatches(corruptHash)"
     "StateMatches(corruptDebug)"
-    "StateMatches(corruptAllocation)")
+    "StateMatches(corruptAllocation)"
+    "TestOwnershipBatchLifecycle()"
+    "TestOwnershipBatchAllowsSharedVectorDebugSlots()"
+    "TestOwnershipBatchRejectsUnauthorizedEntries()"
+    "TestOwnershipBatchLocalPoisoning()"
+    "TestOwnershipBatchBoundaryValidation()"
+    "TestOwnershipBatchAuthenticationAndOverflow()"
+    "TestOwnershipBatchRejectsRawAllocatorMutation()"
+    "TestOwnershipBatchForeignSerialization()"
+    "TestOwnershipBatchForeignReaderSerialization()"
+    "TestOwnershipBatchCanonicalResetGate()"
+    "TestOwnershipBatchLifetimeBoundaries()"
+    "The batch must outlive every call that received it."
+    "TestOwnershipBatchOuterAuthorityTears()"
+    "TestOwnershipBatchNestedAuthorityTears()"
+    "TestOwnershipBatchUnrelatedDestruction()"
+    "TestLegacyReadersAuthenticateExactStrings()"
+    "TestLegacyMutatorsAuthenticateExactStrings()"
+    "TestLegacyCharacterFoldingUsesUnsignedInput()"
+    "batch operation rebuilt the complete string certificate"
+    "inconsistent batch serial mirror authenticated an operation"
+    "inconsistent batch address mirror authenticated an operation"
+    "ownership batch serial wrapped"
+    "ownership operation counter wrapped"
+    "allocator lease mutation counter entered string mutation"
+    "raw allocator mutation entered an ownership batch"
+    "raw targeted removal entered an ownership batch"
+    "raw allocator reader entered an ownership batch"
+    "raw allocator diagnostic entered an ownership batch"
+    "batch admission dereferenced a noncanonical debug pointer"
+    "batch admission trusted shifted per-ID debug accounting"
+    "foreign ownership caller bypassed the retained script lock"
+    "foreign reader bypassed the retained script lock"
+    "blocked snapshots read a finished ownership batch"
+    "torn outer authority released the retained script lock"
+    "torn nested authority released retained allocator lock"
+    "unrelated destructor revoked the live owner"
+    "arbitrary integer string address was dereferenced"
+    "lowercase conversion exposed non-string"
+    "string length exposed non-string"
+    "RefString length exposed non-string"
+    "opaque pointer user mutation accepted non-string storage"
+    "ID ref mutation accepted a non-string allocation"
+    "ID user mutation accepted a non-string allocation"
+    "exact opaque pointer mutation rejected a valid string"
+    "lowercase intern mishandled a high-bit byte"
+    "lowercase lookup mishandled a high-bit byte"
+    "canonical filename mishandled a high-bit byte")
     require_contains(
         _ownership_fixture "${_marker}"
         "string ownership runtime coverage")

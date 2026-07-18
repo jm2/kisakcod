@@ -39,6 +39,7 @@ std::uint32_t g_comErrorCount = 0;
 std::uint32_t g_assertCount = 0;
 
 using TreeImage = std::vector<std::byte>;
+using ValidationLeaseBoundaryImage = std::vector<std::byte>;
 
 struct Allocation final
 {
@@ -87,6 +88,57 @@ struct Allocation final
 [[nodiscard]] bool TreeMatches(const TreeImage &image) noexcept
 {
     return CaptureTree() == image;
+}
+
+[[nodiscard]] ValidationLeaseBoundaryImage CaptureValidationLeaseBoundary(
+    const MT_ValidationLease &lease)
+{
+    ValidationLeaseBoundaryImage image;
+    const auto append = [&image](const void *const source,
+                            const std::size_t size) {
+        const std::size_t offset = image.size();
+        image.resize(offset + size);
+        std::memcpy(image.data() + offset, source, size);
+    };
+    append(&mt_nextValidationLeaseSerial,
+        sizeof(mt_nextValidationLeaseSerial));
+    append(&mt_activeValidationLeaseAddress,
+        sizeof(mt_activeValidationLeaseAddress));
+    append(&mt_activeValidationLeaseSerial,
+        sizeof(mt_activeValidationLeaseSerial));
+    append(&mt_activeValidationLeaseAddressMirror,
+        sizeof(mt_activeValidationLeaseAddressMirror));
+    append(&mt_activeValidationLeaseSerialMirror,
+        sizeof(mt_activeValidationLeaseSerialMirror));
+    append(&mt_validationLeaseLifecycle,
+        sizeof(mt_validationLeaseLifecycle));
+    append(&mt_validationLeaseLifecycleMirror,
+        sizeof(mt_validationLeaseLifecycleMirror));
+    append(&mt_retainedValidationLeaseAddress,
+        sizeof(mt_retainedValidationLeaseAddress));
+    append(&mt_retainedValidationLeaseAddressMirror,
+        sizeof(mt_retainedValidationLeaseAddressMirror));
+    append(&mt_retainedValidationLeaseSerial,
+        sizeof(mt_retainedValidationLeaseSerial));
+    append(&mt_retainedValidationLeaseSerialMirror,
+        sizeof(mt_retainedValidationLeaseSerialMirror));
+    append(&mt_abandonedValidationLeasePoison,
+        sizeof(mt_abandonedValidationLeasePoison));
+    append(&mt_abandonedValidationLeasePoisonMirror,
+        sizeof(mt_abandonedValidationLeasePoisonMirror));
+    append(&mt_completeValidationCount,
+        sizeof(mt_completeValidationCount));
+    append(&mt_completeForestValidationCount,
+        sizeof(mt_completeForestValidationCount));
+    append(&lease, sizeof(lease));
+    return image;
+}
+
+[[nodiscard]] bool ValidationLeaseBoundaryMatches(
+    const MT_ValidationLease &lease,
+    const ValidationLeaseBoundaryImage &image)
+{
+    return CaptureValidationLeaseBoundary(lease) == image;
 }
 
 [[nodiscard]] bool Check(
@@ -1269,6 +1321,89 @@ struct Allocation final
             "fragmented-forest benchmark leaked the lock");
 }
 
+[[nodiscard]] bool TestValidationLeaseCapabilityAuthentication() noexcept
+{
+    MT_Init();
+    MT_ValidationLease lease;
+    const auto &invalid =
+        MT_ValidationLeaseAdmission::InvalidForTesting();
+    const TreeImage canonical = CaptureTree();
+    const ValidationLeaseBoundaryImage canonicalBoundary =
+        CaptureValidationLeaseBoundary(lease);
+
+    g_memoryTreeLockAttempts.store(0, std::memory_order_relaxed);
+    g_countMemoryTreeLockAttempts.store(true, std::memory_order_release);
+    const auto invalidBegin = MT_TryBeginValidationLease(&lease, invalid);
+    g_countMemoryTreeLockAttempts.store(false, std::memory_order_release);
+    if (!Check(invalidBegin == MT_ValidationLeaseStatus::InvalidArgument,
+            "invalid lease capability admitted a lease")
+        || !Check(g_memoryTreeLockAttempts.load(std::memory_order_acquire) == 0,
+            "invalid lease capability reached the allocator lock")
+        || !Check(!lease.active() && g_memoryTreeLockDepth == 0,
+            "invalid lease capability changed lease state")
+        || !Check(TreeMatches(canonical),
+            "invalid lease capability changed allocator state")
+        || !Check(ValidationLeaseBoundaryMatches(
+                lease, canonicalBoundary),
+            "invalid lease capability changed boundary authority")
+        || !Check(
+            MT_TryBeginValidationLease(
+                &lease, MT_ValidationLeaseAdmission::ForTesting())
+                == MT_ValidationLeaseStatus::Success,
+            "valid lease capability was rejected"))
+    {
+        return false;
+    }
+
+    const TreeImage active = CaptureTree();
+    const ValidationLeaseBoundaryImage activeBoundary =
+        CaptureValidationLeaseBoundary(lease);
+    const std::uint64_t serial = lease.serial();
+    std::uint16_t outIndex = 0xBEEF;
+    MT_AllocationInfo outInfo{0xA5, 0x5A, 0xA55A, UINT32_C(0xA55AA55A)};
+    const MT_AllocationInfo expectedInfo = outInfo;
+    g_memoryTreeLockAttempts.store(0, std::memory_order_relaxed);
+    g_countMemoryTreeLockAttempts.store(true, std::memory_order_release);
+    const auto allocStatus =
+        MT_TryAllocIndexLeased(lease, 13, 15, &outIndex, invalid);
+    const auto queryStatus =
+        MT_TryGetAllocationInfoLeased(lease, 1, &outInfo, invalid);
+    const auto freeStatus =
+        MT_TryFreeIndexLeased(lease, 1, 13, invalid);
+    const auto finishStatus = MT_FinishValidationLease(&lease, invalid);
+    g_countMemoryTreeLockAttempts.store(false, std::memory_order_release);
+
+    return Check(allocStatus == MT_AllocIndexStatus::InvalidArgumentNoChange,
+            "invalid lease capability entered allocation")
+        && Check(
+            queryStatus
+                == MT_AllocationInfoStatus::InvalidArgumentNoChange,
+            "invalid lease capability entered allocation query")
+        && Check(freeStatus == MT_FreeIndexStatus::InvalidArgumentNoChange,
+            "invalid lease capability entered free")
+        && Check(finishStatus == MT_ValidationLeaseStatus::InvalidArgument,
+            "invalid lease capability finished the lease")
+        && Check(outIndex == 0xBEEF,
+            "invalid lease capability changed allocation output")
+        && Check(std::memcmp(&outInfo, &expectedInfo, sizeof(outInfo)) == 0,
+            "invalid lease capability changed query output")
+        && Check(g_memoryTreeLockAttempts.load(std::memory_order_acquire) == 0,
+            "invalid lease operation capability reached the allocator lock")
+        && Check(lease.active() && lease.serial() == serial
+                && lease.mutationCount() == 0 && g_memoryTreeLockDepth == 1,
+            "invalid lease capability changed retained authority")
+        && Check(TreeMatches(active),
+            "invalid lease capability changed active allocator state")
+        && Check(ValidationLeaseBoundaryMatches(lease, activeBoundary),
+            "invalid lease operation changed active boundary authority")
+        && Check(
+            MT_FinishValidationLease(&lease)
+                == MT_ValidationLeaseStatus::Success,
+            "valid capability could not finish after rejection")
+        && Check(g_memoryTreeLockDepth == 0,
+            "capability authentication test leaked the lock");
+}
+
 [[nodiscard]] bool TestValidationLeasePolicies() noexcept
 {
     MT_Init();
@@ -1862,7 +1997,7 @@ struct Allocation final
     MT_Init();
 
     bool waitedActive = true;
-    bool waitedPoisoned = false;
+    bool waitedPoisoned = true;
     std::uint64_t waitedSerial = UINT64_MAX;
     std::uint32_t waitedMutations = UINT32_MAX;
     std::uint16_t waitedOwner = 0;
@@ -1875,10 +2010,6 @@ struct Allocation final
     MT_AllocationInfoStatus waitedQueryStatus =
         MT_AllocationInfoStatus::Success;
     MT_FreeIndexStatus waitedFreeStatus = MT_FreeIndexStatus::Success;
-    MT_ValidationLeaseStatus waitedFinishStatus =
-        MT_ValidationLeaseStatus::Success;
-    MT_ValidationLeaseStatus waitedBeginStatus =
-        MT_ValidationLeaseStatus::Success;
     std::thread activeWaiter;
     std::thread poisonedWaiter;
     std::thread serialWaiter;
@@ -1886,10 +2017,8 @@ struct Allocation final
     std::thread allocationWaiter;
     std::thread queryWaiter;
     std::thread freeWaiter;
-    std::thread finishWaiter;
-    std::thread beginWaiter;
-    std::thread authenticationSetterWaiter;
-    std::thread mutationSetterWaiter;
+    MT_ValidationLeaseStatus ownerFinishStatus =
+        MT_ValidationLeaseStatus::UnsafeFailure;
     {
         MT_ValidationLease waitedLease;
         if (!Check(
@@ -1909,8 +2038,6 @@ struct Allocation final
         {
             return false;
         }
-        const std::uint64_t admittedSerial = waitedLease.serial();
-
         g_memoryTreeLockAttempts.store(0, std::memory_order_relaxed);
         g_countMemoryTreeLockAttempts.store(true, std::memory_order_release);
         activeWaiter = std::thread([&]() {
@@ -1937,64 +2064,45 @@ struct Allocation final
             waitedFreeStatus = MT_TryFreeIndexLeased(
                 waitedLease, waitedOwner, 13);
         });
-        finishWaiter = std::thread([&]() {
-            waitedFinishStatus = MT_FinishValidationLease(&waitedLease);
-        });
-        beginWaiter = std::thread([&]() {
-            waitedBeginStatus = MT_TryBeginValidationLease(
-                &waitedLease, MT_ValidationLeaseAdmission::ForTesting());
-        });
-        authenticationSetterWaiter = std::thread([&]() {
-            waitedLease.SetAuthenticationFieldsForTesting(
-                admittedSerial + 1, 1, 1);
-        });
-        mutationSetterWaiter = std::thread([&]() {
-            waitedLease.SetMutationCountForTesting(UINT32_MAX);
-        });
-        while (g_memoryTreeLockAttempts.load(std::memory_order_acquire) != 11)
+        while (g_memoryTreeLockAttempts.load(std::memory_order_acquire) != 7)
             std::this_thread::yield();
         g_countMemoryTreeLockAttempts.store(false, std::memory_order_release);
+        // The token must outlive every call that received it. Release the
+        // retained acquisition with Finish, then join before destruction.
+        ownerFinishStatus = MT_FinishValidationLease(&waitedLease);
+
+        activeWaiter.join();
+        poisonedWaiter.join();
+        serialWaiter.join();
+        mutationWaiter.join();
+        allocationWaiter.join();
+        queryWaiter.join();
+        freeWaiter.join();
+        if (!Check(ownerFinishStatus == MT_ValidationLeaseStatus::Success,
+                "snapshot-waiter lease close failed")
+            || !Check(!waitedActive && !waitedPoisoned
+                    && waitedSerial == 0 && waitedMutations == 0,
+                "blocked snapshots read a finished lease")
+            || !Check(
+                waitedAllocationStatus
+                        == MT_AllocIndexStatus::InvalidArgumentNoChange
+                    && waitedQueryStatus
+                        == MT_AllocationInfoStatus::InvalidArgumentNoChange
+                    && waitedFreeStatus
+                        == MT_FreeIndexStatus::InvalidArgumentNoChange,
+                "blocked leased operation authenticated after lease close")
+            || !Check(waitedAllocation == 0xBEEF,
+                "blocked leased allocation changed output")
+            || !Check(
+                std::memcmp(
+                    &waitedInfo, &unchangedWaitedInfo, sizeof(waitedInfo)) == 0,
+                "blocked leased query changed output")
+            || !Check(g_memoryTreeLockDepth == 0,
+                "snapshot-waiter close leaked the owner lock"))
+        {
+            return false;
+        }
     }
-    activeWaiter.join();
-    poisonedWaiter.join();
-    serialWaiter.join();
-    mutationWaiter.join();
-    allocationWaiter.join();
-    queryWaiter.join();
-    freeWaiter.join();
-    finishWaiter.join();
-    beginWaiter.join();
-    authenticationSetterWaiter.join();
-    mutationSetterWaiter.join();
-    if (!Check(!waitedActive && waitedPoisoned
-                && waitedSerial == 0 && waitedMutations == 0,
-            "blocked snapshots read a destroyed lease")
-        || !Check(
-            waitedAllocationStatus
-                    == MT_AllocIndexStatus::InvalidArgumentNoChange
-                && waitedQueryStatus
-                    == MT_AllocationInfoStatus::InvalidArgumentNoChange
-                && waitedFreeStatus
-                    == MT_FreeIndexStatus::InvalidArgumentNoChange,
-            "blocked leased operation read a destroyed lease")
-        || !Check(waitedAllocation == 0xBEEF,
-            "blocked leased allocation changed output")
-        || !Check(
-            std::memcmp(
-                &waitedInfo, &unchangedWaitedInfo, sizeof(waitedInfo)) == 0,
-            "blocked leased query changed output")
-        || !Check(
-            waitedFinishStatus == MT_ValidationLeaseStatus::InvalidToken
-                && waitedBeginStatus
-                    == MT_ValidationLeaseStatus::UnsafeFailure,
-            "blocked lease boundary operation read a destroyed token")
-        || !Check(g_memoryTreeLockDepth == 0,
-            "snapshot-waiter abandonment leaked the owner lock"))
-    {
-        MT_ResetAbandonedValidationLeaseForTesting(false);
-        return false;
-    }
-    MT_ResetAbandonedValidationLeaseForTesting(false);
     MT_Init();
 
     std::uint16_t owner = 0;
@@ -2402,6 +2510,7 @@ int main()
         || !TestTopologyShadowCorruptionFailsClosed()
         || !TestLegacyTouchedIntervalCorruption()
         || !TestLegacyFragmentedForestCost()
+        || !TestValidationLeaseCapabilityAuthentication()
         || !TestValidationLeasePolicies()
         || !TestValidationLeaseAuthenticationAndOverflow()
         || !TestValidationLeaseCorruption()

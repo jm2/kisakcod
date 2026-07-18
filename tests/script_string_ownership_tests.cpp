@@ -1,5 +1,6 @@
 #include <script/scr_stringlist.cpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -14,6 +15,11 @@
 
 namespace
 {
+static_assert(sizeof(script_string::OwnershipBatch) == 0x20);
+static_assert(std::is_standard_layout_v<script_string::OwnershipBatch>);
+static_assert(
+    !std::is_trivially_destructible_v<script_string::OwnershipBatch>);
+
 std::recursive_mutex g_scriptStringMutex;
 std::recursive_mutex g_memoryTreeMutex;
 thread_local std::uint32_t g_scriptStringLockDepth = 0;
@@ -24,6 +30,8 @@ bool g_reporterSawOwnedLock = false;
 std::atomic<bool> g_pauseDebugMemset{false};
 std::atomic<bool> g_debugMemsetEntered{false};
 std::atomic<bool> g_releaseDebugMemset{false};
+std::atomic<bool> g_countScriptStringLockAttempts{false};
+std::atomic<std::uint32_t> g_scriptStringLockAttempts{0};
 
 struct StateImage final
 {
@@ -149,7 +157,8 @@ struct StateImage final
 
 [[nodiscard]] std::uint32_t Packed(const std::uint32_t stringId) noexcept
 {
-    return scr_string_atomic::Load(SL_RefStringWord(GetRefString(stringId)));
+    return scr_string_atomic::Load(
+        SL_RefStringWord(SL_GetRefStringNoReport(stringId)));
 }
 
 [[nodiscard]] bool TestFullInitRejectsDebugOnlyState() noexcept
@@ -258,6 +267,18 @@ struct StateImage final
         && Check(
             Sys_AtomicLoad(&scrStringDebugGlob->refCount[stringId]) == 0,
             "released string retained debug references");
+}
+
+[[nodiscard]] bool CheckFreedLegacy(const std::uint32_t stringId) noexcept
+{
+    MT_AllocationInfo info{0xA5, 0x5A, 0xA55A, UINT32_C(0xA55AA55A)};
+    return Check(
+            MT_TryGetAllocationInfoLegacy(stringId, &info)
+                == MT_AllocationInfoStatus::NotAllocatedNoChange,
+            "released legacy string allocation is still live")
+        && Check(
+            Sys_AtomicLoad(&scrStringDebugGlob->refCount[stringId]) == 0,
+            "released legacy string retained debug references");
 }
 
 [[nodiscard]] bool BeginTest() noexcept
@@ -1381,8 +1402,22 @@ struct StateImage final
         lastUnique.data(), lastUnique.size(),
         "legacy-short-%04u", uniqueCount - 1);
     const auto lastLong = makeLongValue(longCount - 1);
+    constexpr char transferValue[] = "legacy-transfer-bounded";
+    const std::uint32_t transferId = SL_GetStringOfSize(
+        transferValue, 0, sizeof(transferValue), 15);
+    const std::uint32_t duplicateTransferId = SL_GetStringOfSize(
+        transferValue, 0, sizeof(transferValue), 15);
+    SL_TransferRefToUser(transferId, 4);
+    SL_TransferRefToUser(duplicateTransferId, 4);
+    constexpr char wrapperReleaseValue[] = "legacy-wrapper-release-bounded";
+    const std::uint32_t wrapperReleaseId = SL_GetStringOfSize(
+        wrapperReleaseValue, 0, sizeof(wrapperReleaseValue), 15);
+    SL_RemoveRefToString(wrapperReleaseId);
     if (!Check(lastUniqueLength > 0,
             "legacy lookup benchmark formatting failed")
+        || !Check(transferId != 0 && duplicateTransferId == transferId,
+            "legacy transfer benchmark setup failed")
+        || !CheckFreedLegacy(wrapperReleaseId)
         || !Check(SL_FindString(lastUnique.data())
                 == uniqueReferences.back().stringId,
             "legacy unique lookup failed")
@@ -1416,6 +1451,14 @@ struct StateImage final
             "legacy release path walked the complete free list")
         || !Check(ReportersUnused(),
             "legacy benchmark path invoked a reporter"))
+    {
+        return false;
+    }
+
+    SL_ShutdownSystem(4);
+    if (!CheckFreed(transferId)
+        || !Check(ReportersUnused(),
+            "legacy transfer benchmark cleanup invoked a reporter"))
     {
         return false;
     }
@@ -1925,12 +1968,1681 @@ struct StateImage final
     }
     return EndTest();
 }
+
+[[nodiscard]] bool TestOwnershipBatchLifecycle() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    MT_ResetCompleteValidationCountForTesting();
+    script_string::ResetOwnershipValidationCountersForTesting();
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(nullptr)
+                == script_string::OwnershipBatchStatus::InvalidArgument,
+            "null ownership batch was accepted")
+        || !Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "ownership batch admission failed")
+        || !Check(batch.active() && !batch.poisoned(),
+            "admitted ownership batch has invalid state")
+        || !Check(batch.serial() != 0 && batch.operationCount() == 0,
+            "admitted ownership batch has invalid accounting")
+        || !Check(g_scriptStringLockDepth == 1,
+            "ownership batch did not retain the script lock")
+        || !Check(g_memoryTreeLockDepth == 1,
+            "ownership batch did not retain the allocator lock"))
+    {
+        return false;
+    }
+
+    constexpr char value[] = "ownership-batch-lifecycle";
+    const auto first = script_string::TryAcquireOrdinaryStringOfSize(
+        batch, value, sizeof(value), 15);
+    const auto second = script_string::TryAcquireOrdinaryStringOfSize(
+        batch, value, sizeof(value), 15);
+    if (!Check(first.status == script_string::AcquireStatus::Acquired,
+            "batch first acquisition failed")
+        || !Check(second.status == script_string::AcquireStatus::Acquired,
+            "batch repeated acquisition failed")
+        || !Check(first.stringId == second.stringId,
+            "batch repeated acquisition changed identity")
+        || !Check(
+            script_string::TryTransferOrdinaryToDatabaseUser(
+                batch, first.stringId)
+                == script_string::TransferStatus::DatabaseUserClaimed,
+            "batch database ownership claim failed")
+        || !Check(
+            script_string::TryTransferOrdinaryToDatabaseUser(
+                batch, first.stringId)
+                == script_string::TransferStatus::DuplicateReleased,
+            "batch duplicate ownership collapse failed")
+        || !CheckOwnership(
+            first.stringId,
+            1,
+            static_cast<std::uint8_t>(script_string::kDatabaseUserMask),
+            static_cast<std::uint8_t>(sizeof(value)),
+            1,
+            "batch ownership accounting changed")
+        || !Check(
+            script_string::TryRemoveDatabaseUserReference(
+                batch, first.stringId)
+                == script_string::ReleaseStatus::Success,
+            "batch database rollback failed")
+        || !Check(batch.operationCount() == 5,
+            "batch operation accounting changed"))
+    {
+        return false;
+    }
+
+    const auto openStringCounters =
+        script_string::GetOwnershipValidationCountersForTesting();
+    if (!Check(openStringCounters.completeStringPasses == 1,
+            "batch operations repeated complete string validation")
+        || !Check(MT_CompleteValidationCountForTesting() == 1,
+            "batch operations repeated complete allocator validation")
+        || !Check(MT_CompleteForestValidationCountForTesting() == 1,
+            "batch operations repeated complete forest validation")
+        || !Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "valid ownership batch close failed"))
+    {
+        return false;
+    }
+
+    const auto closedStringCounters =
+        script_string::GetOwnershipValidationCountersForTesting();
+    return Check(closedStringCounters.completeStringPasses == 2,
+            "ownership boundaries did not perform exactly two string passes")
+        && Check(MT_CompleteValidationCountForTesting() == 2,
+            "ownership boundaries did not perform exactly two allocator passes")
+        && Check(MT_CompleteForestValidationCountForTesting() == 2,
+            "ownership boundaries did not perform exactly two forest passes")
+        && Check(!batch.active() && batch.serial() == 0,
+            "closed ownership batch retained authentication")
+        && Check(batch.operationCount() == 0,
+            "closed ownership batch retained operation accounting")
+        && Check(LocksReleased(),
+            "closed ownership batch leaked a critical section")
+        && CheckFreed(first.stringId)
+        && EndTest();
+}
+
+[[nodiscard]] bool TestOwnershipBatchAllowsSharedVectorDebugSlots() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr int foreignAllocationBytes = static_cast<int>(sizeof(RefVector));
+    std::uint16_t foreignIndex = 0;
+    const auto allocationStatus =
+        MT_TryAllocIndex(foreignAllocationBytes, 2, &foreignIndex);
+    if (!Check(allocationStatus == MT_AllocIndexStatus::Success,
+            "shared-debug fixture allocation failed"))
+    {
+        return false;
+    }
+
+    Sys_AtomicIncrement(&scrStringDebugGlob->refCount[foreignIndex]);
+    script_string::OwnershipBatch batch;
+    const auto beginStatus = script_string::TryBeginOwnershipBatch(&batch);
+    const auto finishStatus = beginStatus
+        == script_string::OwnershipBatchStatus::Success
+        ? script_string::FinishOwnershipBatch(&batch)
+        : script_string::OwnershipBatchStatus::UnsafeFailure;
+    const std::uint32_t foreignDebugRefs =
+        Sys_AtomicLoad(&scrStringDebugGlob->refCount[foreignIndex]);
+    const std::uint32_t stringDebugTotal =
+        Sys_AtomicLoad(&scrStringDebugGlob->totalRefCount);
+    Sys_AtomicDecrement(&scrStringDebugGlob->refCount[foreignIndex]);
+    const auto freeStatus =
+        MT_TryFreeIndex(foreignIndex, foreignAllocationBytes);
+
+    return Check(
+            beginStatus == script_string::OwnershipBatchStatus::Success,
+            "vector-only debug slot blocked ownership admission")
+        && Check(
+            finishStatus == script_string::OwnershipBatchStatus::Success,
+            "vector-only debug slot blocked ownership close")
+        && Check(foreignDebugRefs == 1,
+            "ownership validation changed a vector-only debug slot")
+        && Check(stringDebugTotal == 0,
+            "vector-only debug accounting changed the string total")
+        && Check(freeStatus == MT_FreeIndexStatus::Success,
+            "shared-debug fixture cleanup failed")
+        && Check(LocksReleased(),
+            "shared-debug ownership validation leaked a lock")
+        && EndTest();
+}
+
+[[nodiscard]] bool TestOwnershipBatchRejectsUnauthorizedEntries() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "legacy exclusion batch admission failed"))
+    {
+        return false;
+    }
+
+    const StateImage before = CaptureState();
+    constexpr char value[] = "unauthorized-batch-entry";
+    uint16_t callerSlot = UINT16_C(0xA55A);
+    uint32_t rawStringId = UINT32_C(0xA55AA55A);
+    volatile std::uintptr_t rejectedTextAddress = 0;
+    volatile std::uint32_t rejectedStringValueSource = UINT32_MAX;
+    const std::uint32_t rejectedStringValue = rejectedStringValueSource;
+    const char *const rejectedText =
+        reinterpret_cast<const char *>(rejectedTextAddress);
+    char *const rejectedMutableText =
+        reinterpret_cast<char *>(rejectedTextAddress);
+    const float *const rejectedVector =
+        reinterpret_cast<const float *>(rejectedTextAddress);
+    RefString *const rejectedRefString =
+        reinterpret_cast<RefString *>(rejectedTextAddress);
+    const auto typedAcquire = script_string::TryAcquireOrdinaryStringOfSize(
+        value, sizeof(value), 15);
+    const auto rawIntern = SL_TryInternStringOfSize(
+        rejectedText, UINT32_MAX, UINT32_MAX, 0, &rawStringId);
+
+    SL_Init();
+    SL_InitCheckLeaks();
+    SL_Shutdown();
+    SL_ShutdownSystem(UINT32_MAX);
+    SL_TransferSystem(UINT32_MAX, UINT32_MAX);
+    SL_CheckLeaks();
+    SL_AddRefToString(0);
+    SL_TransferRefToUser(0, UINT32_MAX);
+    SL_RemoveRefToString(0);
+    SL_RemoveRefToStringOfSize(0, UINT32_MAX);
+    SL_AddUser(0, UINT32_MAX);
+    Scr_SetString(&callerSlot, 1);
+    Scr_SetStringFromCharString(&callerSlot, rejectedText);
+
+    SL_CheckExists(rejectedStringValue);
+    const int rejectedLowercase = SL_IsLowercaseString(rejectedStringValue);
+    const char *const rejectedConversion =
+        SL_ConvertToString(rejectedStringValue);
+    RefString *const rejectedIndexLookup =
+        GetRefString(rejectedStringValue);
+    RefString *const rejectedPointerLookup = GetRefString(rejectedText);
+    const int rejectedStringLength = SL_GetStringLen(rejectedStringValue);
+    const int rejectedRefStringLength =
+        SL_GetRefStringLen(rejectedRefString);
+    const char *const rejectedDebugConversion =
+        SL_DebugConvertToString(rejectedStringValue);
+    const std::uint32_t rejectedStringId =
+        SL_ConvertFromString(rejectedText);
+    const std::uint32_t rejectedUsers = SL_GetUser(rejectedStringValue);
+    const char *const rejectedSafeConversion =
+        SL_ConvertToStringSafe(rejectedStringValue);
+
+    const bool valid = Check(
+            typedAcquire.status == script_string::AcquireStatus::UnsafeFailure,
+            "unbatched typed acquisition entered an ownership batch")
+        && Check(
+            script_string::TryTransferOrdinaryToDatabaseUser(0)
+                == script_string::TransferStatus::UnsafeFailure,
+            "unbatched typed transfer entered an ownership batch")
+        && Check(
+            script_string::TryRemoveOrdinaryReference(0)
+                == script_string::ReleaseStatus::UnsafeFailure,
+            "unbatched typed release entered an ownership batch")
+        && Check(
+            script_string::TryRemoveDatabaseUserReference(0)
+                == script_string::ReleaseStatus::UnsafeFailure,
+            "unbatched database release entered an ownership batch")
+        && Check(rawIntern == SL_InternStatus::UnsafeFailure,
+            "raw typed intern entered an ownership batch")
+        && Check(rawStringId == UINT32_C(0xA55AA55A),
+            "rejected raw intern published a string ID")
+        && Check(!SL_AddUserInternal(rejectedRefString, UINT32_MAX),
+            "raw user mutation entered an ownership batch")
+        && Check(!SL_FreeString(0, rejectedRefString, 0),
+            "raw free entered an ownership batch")
+        && Check(Scr_AllocString(rejectedMutableText, 0) == 0,
+            "reporting allocation entered an ownership batch")
+        && Check(SL_GetString_(rejectedText, UINT32_MAX, 0) == 0,
+            "legacy intern wrapper entered an ownership batch")
+        && Check(
+            SL_GetStringOfSize(
+                rejectedText, UINT32_MAX, UINT32_MAX, 0) == 0,
+            "legacy sized intern entered an ownership batch")
+        && Check(SL_GetStringForVector(rejectedVector) == 0,
+            "vector formatter entered an ownership batch")
+        && Check(SL_GetStringForInt(1) == 0,
+            "integer formatter entered an ownership batch")
+        && Check(SL_GetStringForFloat(1.0f) == 0,
+            "float formatter entered an ownership batch")
+        && Check(SL_GetString(rejectedText, UINT32_MAX) == 0,
+            "legacy string wrapper entered an ownership batch")
+        && Check(SL_GetLowercaseString_(rejectedText, UINT32_MAX, 0) == 0,
+            "lowercase intern entered an ownership batch")
+        && Check(SL_FindString(rejectedText) == 0,
+            "legacy lookup entered an ownership batch")
+        && Check(SL_FindLowercaseString(rejectedText) == 0,
+            "lowercase lookup entered an ownership batch")
+        && Check(SL_ConvertToLowercase(0, UINT32_MAX, 0) == 0,
+            "lowercase conversion entered an ownership batch")
+        && Check(Scr_CreateCanonicalFilename(rejectedText) == 0,
+            "canonicalization entered an ownership batch")
+        && Check(rejectedLowercase == 0,
+            "lowercase reader entered an ownership batch")
+        && Check(rejectedConversion == nullptr,
+            "string conversion entered an ownership batch")
+        && Check(rejectedIndexLookup == nullptr,
+            "raw string-index lookup entered an ownership batch")
+        && Check(rejectedPointerLookup == nullptr,
+            "raw string-pointer lookup entered an ownership batch")
+        && Check(rejectedStringLength == 0,
+            "string length reader entered an ownership batch")
+        && Check(rejectedRefStringLength == 0,
+            "raw string length reader entered an ownership batch")
+        && Check(rejectedDebugConversion != nullptr
+                && std::strcmp(
+                    rejectedDebugConversion, "<UNAVAILABLE>") == 0,
+            "debug string conversion entered an ownership batch")
+        && Check(rejectedStringId == 0,
+            "raw string conversion entered an ownership batch")
+        && Check(rejectedUsers == 0,
+            "string user reader entered an ownership batch")
+        && Check(rejectedSafeConversion != nullptr
+                && std::strcmp(
+                    rejectedSafeConversion, "<UNAVAILABLE>") == 0,
+            "safe string conversion entered an ownership batch")
+        && Check(callerSlot == UINT16_C(0xA55A),
+            "rejected setter changed caller state")
+        && Check(StateMatches(before),
+            "unauthorized ownership entries changed persistent state")
+        && Check(ReportersUnused(),
+            "unauthorized ownership entry invoked a reporter")
+        && Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "legacy exclusion batch close failed")
+        && Check(LocksReleased(),
+            "legacy exclusion batch leaked a critical section");
+    return valid && EndTest();
+}
+
+[[nodiscard]] bool TestOwnershipBatchLocalPoisoning() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    MT_ResetCompleteValidationCountForTesting();
+    script_string::ResetOwnershipValidationCountersForTesting();
+    script_string::OwnershipBatch batch;
+    constexpr char value[] = "batch-local-corruption";
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "local-corruption batch admission failed"))
+    {
+        return false;
+    }
+    const auto acquired = script_string::TryAcquireOrdinaryStringOfSize(
+        batch, value, sizeof(value), 15);
+    const uint32_t freeHead = static_cast<uint16_t>(
+        scrStringGlob.hashTable[0].status_next);
+    if (!Check(acquired.status == script_string::AcquireStatus::Acquired,
+            "local-corruption acquisition failed")
+        || !Check(freeHead != 0,
+            "local-corruption setup has no free-list head"))
+    {
+        return false;
+    }
+
+    const HashEntry savedFreeHead = scrStringGlob.hashTable[freeHead];
+    scrStringGlob.hashTable[freeHead].u.prev = freeHead;
+    const StateImage corrupt = CaptureState();
+    const auto rejected = script_string::TryRemoveOrdinaryReference(
+        batch, acquired.stringId);
+    const bool noChange = Check(
+            rejected == script_string::ReleaseStatus::UnsafeFailure,
+            "batch operation trusted corrupt local free-list state")
+        && Check(batch.poisoned(),
+            "unsafe batch operation did not poison its token")
+        && Check(StateMatches(corrupt),
+            "unsafe batch operation changed corrupt state")
+        && Check(
+            script_string::GetOwnershipValidationCountersForTesting()
+                    .completeStringPasses
+                == 1,
+            "batch operation rebuilt the complete string certificate")
+        && Check(MT_CompleteValidationCountForTesting() == 1,
+            "batch operation repeated complete allocator validation");
+
+    scrStringGlob.hashTable[freeHead] = savedFreeHead;
+    const bool closeRejected = Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "poisoned ownership batch closed successfully")
+        && Check(
+            script_string::GetOwnershipValidationCountersForTesting()
+                    .completeStringPasses
+                == 2,
+            "poisoned close skipped complete string validation")
+        && Check(MT_CompleteValidationCountForTesting() == 2,
+            "poisoned close skipped complete allocator validation")
+        && Check(LocksReleased(),
+            "poisoned ownership close leaked a critical section");
+    return noChange && closeRejected
+        && Check(
+            script_string::TryRemoveOrdinaryReference(acquired.stringId)
+                == script_string::ReleaseStatus::Success,
+            "poisoned batch cleanup failed")
+        && EndTest();
+}
+
+[[nodiscard]] bool TestOwnershipBatchBoundaryValidation() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char value[] = "batch-boundary-validation";
+    const auto existing = script_string::TryAcquireOrdinaryStringOfSize(
+        value, sizeof(value), 15);
+    if (!Check(existing.status == script_string::AcquireStatus::Acquired,
+            "boundary-validation setup failed"))
+    {
+        return false;
+    }
+
+    constexpr char secondValue[] = "batch-boundary-debug-peer";
+    const auto secondString = script_string::TryAcquireOrdinaryStringOfSize(
+        secondValue, sizeof(secondValue), 15);
+    if (!Check(secondString.status == script_string::AcquireStatus::Acquired,
+            "boundary-validation peer setup failed"))
+    {
+        return false;
+    }
+
+    script_string::OwnershipBatch rejected;
+    scrStringDebugGlob_t *const canonicalDebug = scrStringDebugGlob;
+    scrStringDebugGlob = nullptr;
+    const bool nullDebugRejected = Check(
+            script_string::TryBeginOwnershipBatch(&rejected)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "batch admission trusted missing debug ownership")
+        && Check(!rejected.active(),
+            "missing debug ownership published a token")
+        && Check(scrStringDebugGlob == nullptr,
+            "missing debug ownership admission changed state")
+        && Check(LocksReleased(),
+            "missing debug ownership admission leaked a critical section")
+        && Check(ReportersUnused(),
+            "missing debug ownership admission invoked a reporter");
+    scrStringDebugGlob = canonicalDebug;
+    if (!nullDebugRejected)
+        return false;
+
+    scrStringDebugGlob = reinterpret_cast<scrStringDebugGlob_t *>(
+        static_cast<std::uintptr_t>(1));
+    const bool debugPointerRejected = Check(
+            script_string::TryBeginOwnershipBatch(&rejected)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "batch admission dereferenced a noncanonical debug pointer")
+        && Check(!rejected.active(),
+            "bad debug pointer admission published a token")
+        && Check(scrStringDebugGlob
+                == reinterpret_cast<scrStringDebugGlob_t *>(
+                    static_cast<std::uintptr_t>(1)),
+            "bad debug pointer admission changed corrupt state")
+        && Check(LocksReleased(),
+            "bad debug pointer admission leaked a critical section")
+        && Check(ReportersUnused(),
+            "bad debug pointer admission invoked a reporter");
+    scrStringDebugGlob = canonicalDebug;
+    if (!debugPointerRejected)
+        return false;
+
+    // Preserve the aggregate while shifting one debug reference between live
+    // IDs. Boundary admission must authenticate each ID, not only the total.
+    Sys_AtomicDecrement(&scrStringDebugGlob->refCount[existing.stringId]);
+    Sys_AtomicIncrement(&scrStringDebugGlob->refCount[secondString.stringId]);
+    const StateImage corruptPerIdDebug = CaptureState();
+    const bool perIdDebugRejected = Check(
+            script_string::TryBeginOwnershipBatch(&rejected)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "batch admission trusted shifted per-ID debug accounting")
+        && Check(!rejected.active(),
+            "shifted per-ID debug accounting published a token")
+        && Check(StateMatches(corruptPerIdDebug),
+            "shifted per-ID debug rejection changed corrupt state")
+        && Check(LocksReleased(),
+            "shifted per-ID debug rejection leaked a critical section")
+        && Check(ReportersUnused(),
+            "shifted per-ID debug rejection invoked a reporter");
+    Sys_AtomicIncrement(&scrStringDebugGlob->refCount[existing.stringId]);
+    Sys_AtomicDecrement(&scrStringDebugGlob->refCount[secondString.stringId]);
+    if (!perIdDebugRejected
+        || !Check(
+            script_string::TryRemoveOrdinaryReference(secondString.stringId)
+                == script_string::ReleaseStatus::Success,
+            "boundary-validation peer cleanup failed"))
+    {
+        return false;
+    }
+
+    Sys_AtomicIncrement(&scrStringDebugGlob->refCount[existing.stringId]);
+    const StateImage corruptAdmission = CaptureState();
+    const bool admissionRejected = Check(
+            script_string::TryBeginOwnershipBatch(&rejected)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "batch admission trusted corrupt debug accounting")
+        && Check(!rejected.active(),
+            "rejected batch admission published a token")
+        && Check(StateMatches(corruptAdmission),
+            "rejected batch admission changed corrupt state")
+        && Check(LocksReleased(),
+            "rejected batch admission leaked a critical section");
+    Sys_AtomicDecrement(&scrStringDebugGlob->refCount[existing.stringId]);
+    if (!admissionRejected)
+        return false;
+
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "boundary-close batch admission failed"))
+    {
+        return false;
+    }
+
+    const uint32_t head = static_cast<uint16_t>(
+        scrStringGlob.hashTable[0].status_next);
+    const uint32_t second = static_cast<uint16_t>(
+        scrStringGlob.hashTable[head].status_next);
+    const uint32_t distant = static_cast<uint16_t>(
+        scrStringGlob.hashTable[second].status_next);
+    if (!Check(head != 0 && second != 0 && distant != 0,
+            "boundary-close setup has too few free entries"))
+    {
+        return false;
+    }
+    const HashEntry savedDistant = scrStringGlob.hashTable[distant];
+    scrStringGlob.hashTable[distant].u.prev = distant;
+    const bool closeRejected = Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "batch close trusted untouched free-list corruption")
+        && Check(LocksReleased(),
+            "unsafe boundary close leaked a critical section");
+    scrStringGlob.hashTable[distant] = savedDistant;
+
+    return closeRejected
+        && Check(
+            script_string::TryRemoveOrdinaryReference(existing.stringId)
+                == script_string::ReleaseStatus::Success,
+            "boundary-validation cleanup failed")
+        && EndTest();
+}
+
+[[nodiscard]] bool TestOwnershipBatchAuthenticationAndOverflow() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "authentication batch admission failed"))
+    {
+        return false;
+    }
+    const uint64_t serial = batch.serial();
+    batch.SetAuthenticationFieldsForTesting(serial + 1, 0, 0);
+    if (!Check(
+            script_string::TryAcquireOrdinaryStringOfSize(
+                batch, "x", 2, 15).status
+                == script_string::AcquireStatus::UnsafeFailure,
+            "corrupt batch serial authenticated an operation")
+        || !Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::InvalidToken,
+            "corrupt batch serial authenticated close")
+        || !Check(g_scriptStringLockDepth == 1
+                && g_memoryTreeLockDepth == 1,
+            "invalid batch token released a retained lock"))
+    {
+        return false;
+    }
+    batch.SetAuthenticationFieldsForTesting(serial, 0, 0);
+    if (!Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "restored corrupt-token batch did not close fail-closed"))
+    {
+        return false;
+    }
+
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry-mirror batch admission failed"))
+    {
+        return false;
+    }
+    const uint64_t savedMirror = sl_activeOwnershipBatchSerialMirror;
+    sl_activeOwnershipBatchSerialMirror ^= UINT64_C(1);
+    const bool mirrorRejected = Check(
+            script_string::TryRemoveOrdinaryReference(batch, 0)
+                == script_string::ReleaseStatus::UnsafeFailure,
+            "inconsistent batch serial mirror authenticated an operation")
+        && Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::InvalidToken,
+            "inconsistent batch serial mirror authenticated close")
+        && Check(g_scriptStringLockDepth == 1
+                && g_memoryTreeLockDepth == 1,
+            "inconsistent batch registry released a retained lock");
+    sl_activeOwnershipBatchSerialMirror = savedMirror;
+    if (!mirrorRejected
+        || !Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "restored corrupt-registry batch did not close fail-closed"))
+    {
+        return false;
+    }
+
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "address-mirror batch admission failed"))
+    {
+        return false;
+    }
+    const uintptr_t savedAddressMirror =
+        sl_activeOwnershipBatchAddressMirror;
+    sl_activeOwnershipBatchAddressMirror ^= static_cast<uintptr_t>(1);
+    const bool addressMirrorRejected = Check(
+            script_string::TryAcquireOrdinaryStringOfSize(
+                batch, "m", 2, 15).status
+                == script_string::AcquireStatus::UnsafeFailure,
+            "inconsistent batch address mirror authenticated an operation")
+        && Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::InvalidToken,
+            "inconsistent batch address mirror authenticated close")
+        && Check(g_scriptStringLockDepth == 1
+                && g_memoryTreeLockDepth == 1,
+            "inconsistent batch address registry released a retained lock");
+    sl_activeOwnershipBatchAddressMirror = savedAddressMirror;
+    if (!addressMirrorRejected
+        || !Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "restored corrupt-address batch did not close fail-closed"))
+    {
+        return false;
+    }
+
+    const uint64_t savedNextSerial = sl_nextOwnershipBatchSerial;
+    script_string::SetNextOwnershipBatchSerialForTesting(UINT64_MAX);
+    const bool serialOverflowRejected = Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "ownership batch serial wrapped")
+        && Check(!batch.active() && LocksReleased(),
+            "serial-overflow rejection retained state");
+    script_string::SetNextOwnershipBatchSerialForTesting(savedNextSerial);
+    if (!serialOverflowRejected
+        || !Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "operation-overflow batch admission failed"))
+    {
+        return false;
+    }
+    batch.SetOperationCountForTesting(UINT32_MAX);
+    const bool operationOverflowRejected = Check(
+            script_string::TryAcquireOrdinaryStringOfSize(
+                batch, "y", 2, 15).status
+                == script_string::AcquireStatus::UnsafeFailure,
+            "ownership operation counter wrapped")
+        && Check(batch.poisoned(),
+            "operation-counter overflow did not poison the batch")
+        && Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "overflow-poisoned batch closed successfully")
+        && Check(LocksReleased(),
+            "overflow-poisoned batch leaked a critical section");
+    if (!operationOverflowRejected
+        || !Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "allocator-overflow batch admission failed"))
+    {
+        return false;
+    }
+    batch.SetMemoryTreeMutationCountForTesting(UINT32_MAX);
+    const StateImage beforeAllocatorOverflow = CaptureState();
+    const bool allocatorOverflowRejected = Check(
+            script_string::TryAcquireOrdinaryStringOfSize(
+                batch, "z", 2, 15).status
+                == script_string::AcquireStatus::UnsafeFailure,
+            "allocator lease mutation counter entered string mutation")
+        && Check(StateMatches(beforeAllocatorOverflow),
+            "allocator mutation-count rejection changed ownership state")
+        && Check(batch.poisoned(),
+            "allocator mutation-count overflow did not poison the batch")
+        && Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "allocator-overflow-poisoned batch closed successfully")
+        && Check(LocksReleased(),
+            "allocator-overflow-poisoned batch leaked a critical section");
+    return allocatorOverflowRejected && EndTest();
+}
+
+[[nodiscard]] bool TestOwnershipBatchRejectsRawAllocatorMutation() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    script_string::OwnershipBatch batch;
+    constexpr char value[] = "batch-raw-allocator";
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "raw-allocator batch admission failed"))
+    {
+        return false;
+    }
+    const auto acquired = script_string::TryAcquireOrdinaryStringOfSize(
+        batch, value, sizeof(value), 15);
+    if (!Check(acquired.status == script_string::AcquireStatus::Acquired,
+            "raw-allocator acquisition failed"))
+    {
+        return false;
+    }
+
+    const StateImage before = CaptureState();
+    uint16_t allocated = UINT16_C(0xA55A);
+    const auto rawAlloc = MT_TryAllocIndex(12, 15, &allocated);
+    const auto rawFree = MT_TryFreeIndex(
+        acquired.stringId, static_cast<int>(sizeof(value) + 4));
+    MT_RemoveHeadMemoryNode(-1);
+    const bool rawRemoved = MT_RemoveMemoryNode(-1, UINT32_MAX);
+    MT_AddMemoryNode(-1, -1);
+    const bool rawReallocated = MT_Realloc(-1, -1);
+    const int rawSize = MT_GetSize(-1);
+    const int rawScore = MT_GetScore(0);
+    const int rawSubTreeSize = MT_GetSubTreeSize(-1);
+    const char *const rawNodeInfo = MT_NodeInfoString(UINT32_MAX);
+    MT_DumpTree();
+    MT_Error(nullptr, -1);
+    const bool rejected = Check(
+            rawAlloc == MT_AllocIndexStatus::UnsafeFailure,
+            "raw allocator mutation entered an ownership batch")
+        && Check(allocated == UINT16_C(0xA55A),
+            "rejected raw allocation published an index")
+        && Check(rawFree == MT_FreeIndexStatus::UnsafeFailure,
+            "raw allocator free entered an ownership batch")
+        && Check(!rawRemoved,
+            "raw targeted removal entered an ownership batch")
+        && Check(!rawReallocated && rawSize == 0 && rawScore == 0
+                && rawSubTreeSize == 0,
+            "raw allocator reader entered an ownership batch")
+        && Check(rawNodeInfo != nullptr
+                && std::strcmp(rawNodeInfo, "<UNAVAILABLE>") == 0,
+            "raw allocator diagnostic entered an ownership batch")
+        && Check(StateMatches(before),
+            "raw allocator rejection changed ownership state")
+        && Check(batch.poisoned(),
+            "raw allocator reentry did not poison the batch")
+        && Check(ReportersUnused(),
+            "raw allocator rejection invoked a reporter")
+        && Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "raw-allocator-poisoned batch closed successfully")
+        && Check(LocksReleased(),
+            "raw-allocator-poisoned batch leaked a critical section");
+    return rejected
+        && Check(
+            script_string::TryRemoveOrdinaryReference(acquired.stringId)
+                == script_string::ReleaseStatus::Success,
+            "raw-allocator batch cleanup failed")
+        && EndTest();
+}
+
+[[nodiscard]] bool TestOwnershipBatchForeignSerialization() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "foreign-serialization batch admission failed"))
+    {
+        return false;
+    }
+
+    constexpr char value[] = "batch-foreign-serialization";
+    std::atomic<bool> completed{false};
+    script_string::AcquireResult foreignResult{};
+    g_scriptStringLockAttempts.store(0, std::memory_order_relaxed);
+    g_countScriptStringLockAttempts.store(true, std::memory_order_release);
+    std::thread foreign([&]() {
+        foreignResult = script_string::TryAcquireOrdinaryStringOfSize(
+            value, sizeof(value), 15);
+        completed.store(true, std::memory_order_release);
+    });
+    while (g_scriptStringLockAttempts.load(std::memory_order_acquire) != 1)
+        std::this_thread::yield();
+    g_countScriptStringLockAttempts.store(false, std::memory_order_release);
+    const bool blocked = !completed.load(std::memory_order_acquire);
+    const auto closeStatus = script_string::FinishOwnershipBatch(&batch);
+    foreign.join();
+
+    const bool valid = Check(blocked,
+            "foreign ownership caller bypassed the retained script lock")
+        && Check(closeStatus == script_string::OwnershipBatchStatus::Success,
+            "foreign-serialization batch close failed")
+        && Check(completed.load(std::memory_order_acquire),
+            "foreign ownership caller did not resume after close")
+        && Check(
+            foreignResult.status == script_string::AcquireStatus::Acquired,
+            "resumed foreign ownership caller failed")
+        && Check(LocksReleased(),
+            "foreign ownership serialization leaked a critical section")
+        && Check(ReportersUnused(),
+            "foreign ownership serialization invoked a reporter");
+    return valid
+        && Check(
+            script_string::TryRemoveOrdinaryReference(
+                foreignResult.stringId)
+                == script_string::ReleaseStatus::Success,
+            "foreign ownership serialization cleanup failed")
+        && EndTest();
+}
+
+[[nodiscard]] bool TestOwnershipBatchForeignReaderSerialization() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char value[] = "batch-foreign-reader";
+    const auto existing = script_string::TryAcquireOrdinaryStringOfSize(
+        value, sizeof(value), 15);
+    if (!Check(existing.status == script_string::AcquireStatus::Acquired,
+            "foreign-reader fixture acquisition failed"))
+    {
+        return false;
+    }
+
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "foreign-reader batch admission failed"))
+    {
+        return false;
+    }
+
+    std::atomic<bool> completed{false};
+    int foreignLength = -1;
+    g_scriptStringLockAttempts.store(0, std::memory_order_relaxed);
+    g_countScriptStringLockAttempts.store(true, std::memory_order_release);
+    std::thread foreign([&]() {
+        foreignLength = SL_GetStringLen(existing.stringId);
+        completed.store(true, std::memory_order_release);
+    });
+    while (g_scriptStringLockAttempts.load(std::memory_order_acquire) != 1)
+        std::this_thread::yield();
+    g_countScriptStringLockAttempts.store(false, std::memory_order_release);
+    const bool blocked = !completed.load(std::memory_order_acquire);
+    const auto closeStatus = script_string::FinishOwnershipBatch(&batch);
+    foreign.join();
+
+    return Check(blocked,
+            "foreign reader bypassed the retained script lock")
+        && Check(closeStatus == script_string::OwnershipBatchStatus::Success,
+            "foreign-reader batch close failed")
+        && Check(foreignLength == static_cast<int>(sizeof(value) - 1),
+            "foreign reader did not resume after batch close")
+        && Check(
+            script_string::TryRemoveOrdinaryReference(existing.stringId)
+                == script_string::ReleaseStatus::Success,
+            "foreign-reader fixture cleanup failed")
+        && Check(LocksReleased(),
+            "foreign-reader serialization leaked a critical section")
+        && EndTest();
+}
+
+[[nodiscard]] bool TestOwnershipBatchCanonicalResetGate() noexcept
+{
+    if (!BeginTest())
+        return false;
+    std::array<short, SL_MAX_STRING_INDEX> storage{};
+    storage.front() = 17;
+    storage.back() = 29;
+    std::uint16_t count = 3;
+
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "canonical-reset batch admission failed"))
+    {
+        return false;
+    }
+    auto &canonicalStrings = *reinterpret_cast<
+        short (*)[SL_MAX_STRING_INDEX]>(storage.data());
+    const bool rejected = Check(
+            !SL_TryResetCanonicalStringState(canonicalStrings, &count),
+            "canonical reset entered an ownership batch")
+        && Check(storage.front() == 17 && storage.back() == 29 && count == 3,
+            "rejected canonical reset changed output")
+        && Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "canonical-reset batch close failed")
+        && Check(ReportersUnused(),
+            "canonical reset rejection entered a reporter");
+    const bool reset = SL_TryResetCanonicalStringState(
+        canonicalStrings, &count);
+    return rejected
+        && Check(reset && count == 0,
+            "canonical reset did not publish the cleared count")
+        && Check(std::all_of(
+                storage.begin(), storage.end(),
+                [](const short value) { return value == 0; }),
+            "canonical reset did not clear all entries")
+        && Check(LocksReleased(),
+            "canonical reset leaked a lock")
+        && EndTest();
+}
+
+[[nodiscard]] bool TestOwnershipBatchLifetimeBoundaries() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char value[] = "batch-lifetime-waiters";
+    const auto existing = script_string::TryAcquireOrdinaryStringOfSize(
+        value, sizeof(value), 15);
+    if (!Check(existing.status == script_string::AcquireStatus::Acquired,
+            "lifetime-waiter fixture acquisition failed"))
+    {
+        return false;
+    }
+
+    bool waitedActive = true;
+    bool waitedPoisoned = true;
+    std::uint64_t waitedSerial = UINT64_MAX;
+    std::uint32_t waitedOperations = UINT32_MAX;
+    int waitedLength = -1;
+    script_string::AcquireResult waitedAcquire{
+        script_string::AcquireStatus::Acquired, UINT32_C(0xBEEF)};
+    std::thread activeWaiter;
+    std::thread poisonedWaiter;
+    std::thread serialWaiter;
+    std::thread operationWaiter;
+    std::thread acquireWaiter;
+    std::thread readerWaiter;
+    StateImage beforeClose;
+    {
+        script_string::OwnershipBatch batch;
+        if (!Check(
+                script_string::TryBeginOwnershipBatch(&batch)
+                    == script_string::OwnershipBatchStatus::Success,
+                "lifetime-waiter batch admission failed"))
+        {
+            return false;
+        }
+        beforeClose = CaptureState();
+
+        g_scriptStringLockAttempts.store(0, std::memory_order_relaxed);
+        g_countScriptStringLockAttempts.store(true, std::memory_order_release);
+        activeWaiter = std::thread([&]() { waitedActive = batch.active(); });
+        poisonedWaiter = std::thread(
+            [&]() { waitedPoisoned = batch.poisoned(); });
+        serialWaiter = std::thread([&]() { waitedSerial = batch.serial(); });
+        operationWaiter = std::thread(
+            [&]() { waitedOperations = batch.operationCount(); });
+        acquireWaiter = std::thread([&]() {
+            waitedAcquire = script_string::TryAcquireOrdinaryStringOfSize(
+                batch, "x", 2, 15);
+        });
+        readerWaiter = std::thread([&]() {
+            waitedLength = SL_GetStringLen(existing.stringId);
+        });
+        while (g_scriptStringLockAttempts.load(std::memory_order_acquire) != 6)
+            std::this_thread::yield();
+        g_countScriptStringLockAttempts.store(false, std::memory_order_release);
+        // The batch must outlive every call that received it. Finish on the
+        // admitting thread, then join every waiter before destruction.
+        const auto finishStatus =
+            script_string::FinishOwnershipBatch(&batch);
+
+        activeWaiter.join();
+        poisonedWaiter.join();
+        serialWaiter.join();
+        operationWaiter.join();
+        acquireWaiter.join();
+        readerWaiter.join();
+
+        if (!Check(
+                finishStatus == script_string::OwnershipBatchStatus::Success,
+                "lifetime-waiter batch close failed")
+            || !Check(
+                !waitedActive && !waitedPoisoned && waitedSerial == 0
+                    && waitedOperations == 0,
+                "blocked snapshots read a finished ownership batch")
+            || !Check(
+                waitedAcquire.status
+                        == script_string::AcquireStatus::UnsafeFailure
+                    && waitedAcquire.stringId == 0,
+                "blocked ownership operation authenticated after batch close")
+            || !Check(waitedLength == static_cast<int>(sizeof(value) - 1),
+                "blocked legacy reader failed after batch close")
+            || !Check(StateMatches(beforeClose),
+                "finished waiter changed string/allocator state")
+            || !Check(LocksReleased(),
+                "lifetime-waiter close leaked an owner lock")
+            || !Check(ReportersUnused(),
+                "lifetime waiter entered a reporter"))
+        {
+            return false;
+        }
+    }
+
+    StateImage beforeAbandonment;
+    {
+        script_string::OwnershipBatch abandoned;
+        if (!Check(
+                script_string::TryBeginOwnershipBatch(&abandoned)
+                    == script_string::OwnershipBatchStatus::Success,
+                "exact abandonment batch admission failed"))
+        {
+            return false;
+        }
+        beforeAbandonment = CaptureState();
+    }
+    const auto frozenAcquire = script_string::TryAcquireOrdinaryStringOfSize(
+        "x", 2, 15);
+    const bool rejected = Check(
+            frozenAcquire.status == script_string::AcquireStatus::UnsafeFailure
+                && frozenAcquire.stringId == 0,
+            "exact abandonment admitted a frozen ownership operation")
+        && Check(SL_GetStringLen(existing.stringId) == 0,
+            "exact abandonment admitted a frozen legacy reader")
+        && Check(StateMatches(beforeAbandonment),
+            "exact abandonment changed string/allocator state")
+        && Check(LocksReleased(),
+            "exact ownership abandonment leaked an owner lock")
+        && Check(ReportersUnused(),
+            "exact abandonment entered a reporter");
+
+    script_string::ResetAbandonedOwnershipBatchForTesting(false, false);
+    const bool recovered = Check(LocksReleased(),
+            "exact abandonment recovery leaked a lock")
+        && Check(MT_TryValidateState(),
+            "exact abandonment recovery left allocator frozen")
+        && Check(
+            script_string::TryRemoveOrdinaryReference(existing.stringId)
+                == script_string::ReleaseStatus::Success,
+            "lifetime-waiter fixture cleanup failed");
+    return rejected && recovered && EndTest();
+}
+
+[[nodiscard]] bool TestOwnershipBatchOuterAuthorityTears() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    enum class Tear : std::uint8_t
+    {
+        ActiveAddress,
+        ActiveAddressMirror,
+        ActiveSerial,
+        ActiveSerialMirror,
+        ActiveNestedAddress,
+        ActiveNestedAddressMirror,
+        Lifecycle,
+        LifecycleMirror,
+        RetainedAddress,
+        RetainedAddressMirror,
+        RetainedSerial,
+        RetainedSerialMirror,
+        RetainedNestedAddress,
+        RetainedNestedAddressMirror,
+        ArbitraryAddresses,
+    };
+    constexpr std::array tears{
+        Tear::ActiveAddress,
+        Tear::ActiveAddressMirror,
+        Tear::ActiveSerial,
+        Tear::ActiveSerialMirror,
+        Tear::ActiveNestedAddress,
+        Tear::ActiveNestedAddressMirror,
+        Tear::Lifecycle,
+        Tear::LifecycleMirror,
+        Tear::RetainedAddress,
+        Tear::RetainedAddressMirror,
+        Tear::RetainedSerial,
+        Tear::RetainedSerialMirror,
+        Tear::RetainedNestedAddress,
+        Tear::RetainedNestedAddressMirror,
+        Tear::ArbitraryAddresses,
+    };
+
+    for (const Tear tear : tears)
+    {
+        std::uintptr_t address = 0;
+        std::uint64_t serial = 0;
+        std::uintptr_t nestedAddress = 0;
+        {
+            script_string::OwnershipBatch batch;
+            if (!Check(
+                    script_string::TryBeginOwnershipBatch(&batch)
+                        == script_string::OwnershipBatchStatus::Success,
+                    "outer-tear batch admission failed"))
+            {
+                return false;
+            }
+            address = sl_activeOwnershipBatchAddress;
+            serial = sl_activeOwnershipBatchSerial;
+            nestedAddress = sl_activeOwnershipBatchNestedLeaseAddress;
+            switch (tear)
+            {
+            case Tear::ActiveAddress:
+                sl_activeOwnershipBatchAddress ^= std::uintptr_t{1};
+                break;
+            case Tear::ActiveAddressMirror:
+                sl_activeOwnershipBatchAddressMirror ^= std::uintptr_t{1};
+                break;
+            case Tear::ActiveSerial:
+                sl_activeOwnershipBatchSerial ^= UINT64_C(1);
+                break;
+            case Tear::ActiveSerialMirror:
+                sl_activeOwnershipBatchSerialMirror ^= UINT64_C(1);
+                break;
+            case Tear::ActiveNestedAddress:
+                sl_activeOwnershipBatchNestedLeaseAddress ^=
+                    std::uintptr_t{1};
+                break;
+            case Tear::ActiveNestedAddressMirror:
+                sl_activeOwnershipBatchNestedLeaseAddressMirror ^=
+                    std::uintptr_t{1};
+                break;
+            case Tear::Lifecycle:
+                sl_ownershipBatchLifecycle =
+                    SL_OwnershipBatchLifecycle::Poisoned;
+                break;
+            case Tear::LifecycleMirror:
+                sl_ownershipBatchLifecycleMirror =
+                    SL_OwnershipBatchLifecycle::Poisoned;
+                break;
+            case Tear::RetainedAddress:
+                sl_retainedOwnershipBatchAddress ^= std::uintptr_t{1};
+                break;
+            case Tear::RetainedAddressMirror:
+                sl_retainedOwnershipBatchAddressMirror ^= std::uintptr_t{1};
+                break;
+            case Tear::RetainedSerial:
+                sl_retainedOwnershipBatchSerial ^= UINT64_C(1);
+                break;
+            case Tear::RetainedSerialMirror:
+                sl_retainedOwnershipBatchSerialMirror ^= UINT64_C(1);
+                break;
+            case Tear::RetainedNestedAddress:
+                sl_retainedOwnershipBatchNestedLeaseAddress ^=
+                    std::uintptr_t{1};
+                break;
+            case Tear::RetainedNestedAddressMirror:
+                sl_retainedOwnershipBatchNestedLeaseAddressMirror ^=
+                    std::uintptr_t{1};
+                break;
+            case Tear::ArbitraryAddresses:
+                sl_activeOwnershipBatchAddress =
+                    (std::numeric_limits<std::uintptr_t>::max)();
+                sl_activeOwnershipBatchAddressMirror =
+                    (std::numeric_limits<std::uintptr_t>::max)();
+                sl_activeOwnershipBatchNestedLeaseAddress =
+                    (std::numeric_limits<std::uintptr_t>::max)() - 1;
+                sl_activeOwnershipBatchNestedLeaseAddressMirror =
+                    (std::numeric_limits<std::uintptr_t>::max)() - 1;
+                break;
+            }
+        }
+
+        script_string::OwnershipBatch probe;
+        const bool frozen = Check(g_scriptStringLockDepth == 1,
+                "torn outer authority released the retained script lock")
+            && Check(g_memoryTreeLockDepth == 0,
+                "independently authenticated nested destructor leaked its lock")
+            && Check(
+                script_string::TryBeginOwnershipBatch(&probe)
+                    == script_string::OwnershipBatchStatus::UnsafeFailure,
+                "torn outer authority reopened the frozen boundary")
+            && Check(g_scriptStringLockDepth == 1,
+                "frozen outer probe changed retained lock depth")
+            && Check(ReportersUnused(),
+                "torn outer abandonment entered a reporter");
+
+        script_string::SetRetainedOwnershipBatchAuthenticationForTesting(
+            address,
+            serial,
+            nestedAddress,
+            address,
+            serial,
+            nestedAddress);
+        script_string::ResetAbandonedOwnershipBatchForTesting(true, false);
+        if (!frozen
+            || !Check(LocksReleased(),
+                "authenticated outer-tear recovery leaked a lock")
+            || !Check(MT_TryValidateState(),
+                "outer-tear recovery left allocator frozen"))
+        {
+            return false;
+        }
+    }
+    return EndTest();
+}
+
+[[nodiscard]] bool TestOwnershipBatchNestedAuthorityTears() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    enum class Tear : std::uint8_t
+    {
+        ActiveAddress,
+        ActiveAddressMirror,
+        ActiveSerial,
+        ActiveSerialMirror,
+        Lifecycle,
+        LifecycleMirror,
+        RetainedAddress,
+        RetainedAddressMirror,
+        RetainedSerial,
+        RetainedSerialMirror,
+        LocalSerial,
+        LocalReserved,
+        ArbitraryAddresses,
+    };
+    constexpr std::array tears{
+        Tear::ActiveAddress,
+        Tear::ActiveAddressMirror,
+        Tear::ActiveSerial,
+        Tear::ActiveSerialMirror,
+        Tear::Lifecycle,
+        Tear::LifecycleMirror,
+        Tear::RetainedAddress,
+        Tear::RetainedAddressMirror,
+        Tear::RetainedSerial,
+        Tear::RetainedSerialMirror,
+        Tear::LocalSerial,
+        Tear::LocalReserved,
+        Tear::ArbitraryAddresses,
+    };
+
+    for (const Tear tear : tears)
+    {
+        std::uintptr_t nestedAddress = 0;
+        std::uint64_t nestedSerial = 0;
+        {
+            script_string::OwnershipBatch batch;
+            if (!Check(
+                    script_string::TryBeginOwnershipBatch(&batch)
+                        == script_string::OwnershipBatchStatus::Success,
+                    "nested-tear batch admission failed"))
+            {
+                return false;
+            }
+            MT_ValidationLease &lease =
+                batch.MemoryTreeLeaseForTesting();
+            nestedAddress = reinterpret_cast<std::uintptr_t>(&lease);
+            nestedSerial = lease.serial();
+            switch (tear)
+            {
+            case Tear::ActiveAddress:
+                MT_SetValidationLeaseRegistryMirrorsForTesting(
+                    nestedAddress ^ std::uintptr_t{1},
+                    nestedSerial,
+                    nestedAddress,
+                    nestedSerial);
+                break;
+            case Tear::ActiveAddressMirror:
+                MT_SetValidationLeaseRegistryMirrorsForTesting(
+                    nestedAddress,
+                    nestedSerial,
+                    nestedAddress ^ std::uintptr_t{1},
+                    nestedSerial);
+                break;
+            case Tear::ActiveSerial:
+                MT_SetValidationLeaseRegistryMirrorsForTesting(
+                    nestedAddress,
+                    nestedSerial ^ UINT64_C(1),
+                    nestedAddress,
+                    nestedSerial);
+                break;
+            case Tear::ActiveSerialMirror:
+                MT_SetValidationLeaseRegistryMirrorsForTesting(
+                    nestedAddress,
+                    nestedSerial,
+                    nestedAddress,
+                    nestedSerial ^ UINT64_C(1));
+                break;
+            case Tear::Lifecycle:
+                MT_SetValidationLeaseLifecycleForTesting(2, 1);
+                break;
+            case Tear::LifecycleMirror:
+                MT_SetValidationLeaseLifecycleForTesting(1, 2);
+                break;
+            case Tear::RetainedAddress:
+                MT_SetRetainedValidationLeaseAuthenticationForTesting(
+                    nestedAddress ^ std::uintptr_t{1},
+                    nestedSerial,
+                    nestedAddress,
+                    nestedSerial);
+                break;
+            case Tear::RetainedAddressMirror:
+                MT_SetRetainedValidationLeaseAuthenticationForTesting(
+                    nestedAddress,
+                    nestedSerial,
+                    nestedAddress ^ std::uintptr_t{1},
+                    nestedSerial);
+                break;
+            case Tear::RetainedSerial:
+                MT_SetRetainedValidationLeaseAuthenticationForTesting(
+                    nestedAddress,
+                    nestedSerial ^ UINT64_C(1),
+                    nestedAddress,
+                    nestedSerial);
+                break;
+            case Tear::RetainedSerialMirror:
+                MT_SetRetainedValidationLeaseAuthenticationForTesting(
+                    nestedAddress,
+                    nestedSerial,
+                    nestedAddress,
+                    nestedSerial ^ UINT64_C(1));
+                break;
+            case Tear::LocalSerial:
+                lease.SetAuthenticationFieldsForTesting(
+                    nestedSerial ^ UINT64_C(1), 0, 0);
+                break;
+            case Tear::LocalReserved:
+                lease.SetAuthenticationFieldsForTesting(
+                    nestedSerial, 1, 0);
+                break;
+            case Tear::ArbitraryAddresses:
+                MT_SetValidationLeaseRegistryMirrorsForTesting(
+                    (std::numeric_limits<std::uintptr_t>::max)(),
+                    nestedSerial,
+                    (std::numeric_limits<std::uintptr_t>::max)(),
+                    nestedSerial);
+                break;
+            }
+        }
+
+        script_string::OwnershipBatch probe;
+        const bool frozen = Check(g_scriptStringLockDepth == 1,
+                "torn nested authority released retained script lock")
+            && Check(g_memoryTreeLockDepth == 1,
+                "torn nested authority released retained allocator lock")
+            && Check(
+                script_string::TryBeginOwnershipBatch(&probe)
+                    == script_string::OwnershipBatchStatus::UnsafeFailure,
+                "torn nested authority reopened outer boundary")
+            && Check(ReportersUnused(),
+                "torn nested abandonment entered a reporter");
+
+        MT_SetRetainedValidationLeaseAuthenticationForTesting(
+            nestedAddress,
+            nestedSerial,
+            nestedAddress,
+            nestedSerial);
+        script_string::ResetAbandonedOwnershipBatchForTesting(true, true);
+        if (!frozen
+            || !Check(LocksReleased(),
+                "authenticated nested-tear recovery leaked a lock")
+            || !Check(MT_TryValidateState(),
+                "nested-tear recovery left allocator frozen"))
+        {
+            return false;
+        }
+    }
+
+    {
+        script_string::OwnershipBatch batch;
+        if (!Check(
+                script_string::TryBeginOwnershipBatch(&batch)
+                    == script_string::OwnershipBatchStatus::Success,
+                "nested-mutation exhaustion admission failed"))
+        {
+            return false;
+        }
+        batch.SetMemoryTreeMutationCountForTesting(UINT32_MAX);
+    }
+    const bool exhaustedReleased = Check(LocksReleased(),
+            "authenticated exhausted nested token leaked owner locks")
+        && Check(!MT_TryValidateState(),
+            "abandoned exhausted nested token did not freeze allocator");
+    script_string::ResetAbandonedOwnershipBatchForTesting(false, false);
+    return exhaustedReleased
+        && Check(MT_TryValidateState(),
+            "exhausted nested abandonment recovery failed")
+        && EndTest();
+}
+
+[[nodiscard]] bool TestOwnershipBatchUnrelatedDestruction() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    {
+        script_string::OwnershipBatch malformed;
+        malformed.ActivateForTesting(UINT64_C(0xA55A));
+    }
+    if (!Check(LocksReleased(),
+            "idle malformed unrelated destructor leaked a lock")
+        || !Check(MT_TryValidateState(),
+            "idle malformed unrelated destructor froze allocator"))
+    {
+        return false;
+    }
+
+    script_string::OwnershipBatch owner;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&owner)
+                == script_string::OwnershipBatchStatus::Success,
+            "unrelated-destruction owner admission failed"))
+    {
+        return false;
+    }
+    {
+        script_string::OwnershipBatch canonical;
+    }
+    {
+        script_string::OwnershipBatch malformed;
+        malformed.ActivateForTesting(UINT64_C(0x5AA5));
+    }
+    return Check(owner.active(),
+            "unrelated destructor revoked the live owner")
+        && Check(
+            script_string::FinishOwnershipBatch(&owner)
+                == script_string::OwnershipBatchStatus::Success,
+            "unrelated destructor poisoned live owner close")
+        && Check(LocksReleased(),
+            "unrelated-destruction test leaked a lock")
+        && Check(ReportersUnused(),
+            "unrelated destructor entered a reporter")
+        && EndTest();
+}
+
+[[nodiscard]] bool ReadersRejectNonString(
+    const std::uint32_t stringId,
+    const char *const candidate) noexcept
+{
+    const bool lowercaseRejected = SL_IsLowercaseString(stringId) == 0;
+    const bool lowercaseConversionRejected =
+        SL_ConvertToLowercase(stringId, 0, 0) == 0;
+    const bool conversionRejected = SL_ConvertToString(stringId) == nullptr;
+    const bool idLookupRejected = GetRefString(stringId) == nullptr;
+    const bool pointerLookupRejected = GetRefString(candidate) == nullptr;
+    const bool lengthRejected = SL_GetStringLen(stringId) == 0;
+    const bool refLengthRejected = SL_GetRefStringLen(
+        reinterpret_cast<RefString *>(
+            const_cast<char *>(candidate) - offsetof(RefString, str))) == 0;
+    const bool debugRejected = std::strcmp(
+        SL_DebugConvertToString(stringId), "<UNAVAILABLE>") == 0;
+    const bool reverseRejected = SL_ConvertFromString(candidate) == 0;
+    const bool userRejected = SL_GetUser(stringId) == 0;
+    const bool safeRejected = std::strcmp(
+        SL_ConvertToStringSafe(stringId), "(NULL)") == 0;
+    const bool reporterLockSafe = !g_reporterSawOwnedLock;
+    // Invalid legacy compatibility readers may assert after releasing their
+    // lock in assertion builds. This fixture verifies the lock discipline and
+    // then clears expected diagnostics before the report-free test epilogue.
+    g_assertCount = 0;
+    return Check(lowercaseRejected, "lowercase reader exposed non-string")
+        && Check(lowercaseConversionRejected,
+            "lowercase conversion exposed non-string")
+        && Check(conversionRejected, "string conversion exposed non-string")
+        && Check(idLookupRejected, "ID lookup exposed non-string")
+        && Check(pointerLookupRejected, "pointer lookup exposed non-string")
+        && Check(lengthRejected, "string length exposed non-string")
+        && Check(refLengthRejected, "RefString length exposed non-string")
+        && Check(debugRejected, "debug conversion exposed non-string")
+        && Check(reverseRejected, "reverse conversion exposed non-string")
+        && Check(userRejected, "user reader exposed non-string")
+        && Check(safeRejected, "safe conversion exposed non-string")
+        && Check(reporterLockSafe,
+            "invalid legacy reader asserted under an owned lock");
+}
+
+[[nodiscard]] bool TestLegacyReadersAuthenticateExactStrings() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    std::uint16_t vectorId = 0;
+    if (!Check(
+            MT_TryAllocIndex(
+                static_cast<int>(sizeof(RefVector)), 2, &vectorId)
+                == MT_AllocIndexStatus::Success,
+            "reader-auth vector allocation failed"))
+    {
+        return false;
+    }
+    auto *const vector = reinterpret_cast<RefVector *>(
+        scrMemTreePub.mt_buffer + vectorId * MT_NODE_SIZE);
+    std::memset(vector, 0, sizeof(*vector));
+    const char *const vectorCandidate = reinterpret_cast<const char *>(vector)
+        + offsetof(RefString, str);
+    if (!ReadersRejectNonString(vectorId, vectorCandidate)
+        || !Check(
+            MT_TryFreeIndex(
+                vectorId, static_cast<int>(sizeof(RefVector)))
+                == MT_FreeIndexStatus::Success,
+            "reader-auth vector cleanup failed")
+        || !ReadersRejectNonString(vectorId, vectorCandidate))
+    {
+        return false;
+    }
+
+    constexpr char value[] = "reader-exact-allocation";
+    const auto acquired = script_string::TryAcquireOrdinaryStringOfSize(
+        value, sizeof(value), 15);
+    if (!Check(acquired.status == script_string::AcquireStatus::Acquired,
+            "reader-auth string acquisition failed"))
+    {
+        return false;
+    }
+    RefString *const refString = GetRefString(acquired.stringId);
+    if (!Check(refString != nullptr,
+            "reader-auth could not resolve valid string"))
+    {
+        return false;
+    }
+    refString->str[sizeof(value) - 1] = 'X';
+    const bool corruptRejected = ReadersRejectNonString(
+        acquired.stringId, refString->str);
+    refString->str[sizeof(value) - 1] = '\0';
+
+    const char *const arbitrary = reinterpret_cast<const char *>(
+        (std::numeric_limits<std::uintptr_t>::max)());
+    const bool arbitraryRejected = SL_ConvertFromString(arbitrary) == 0;
+    const bool reporterLockSafe = !g_reporterSawOwnedLock;
+    g_assertCount = 0;
+    return corruptRejected
+        && Check(arbitraryRejected,
+            "arbitrary integer string address was dereferenced")
+        && Check(reporterLockSafe,
+            "arbitrary address rejection asserted under a lock")
+        && Check(
+            script_string::TryRemoveOrdinaryReference(acquired.stringId)
+                == script_string::ReleaseStatus::Success,
+            "reader-auth string cleanup failed")
+        && Check(LocksReleased(),
+            "reader-auth test leaked a lock")
+        && EndTest();
+}
+
+[[nodiscard]] bool TestLegacyMutatorsAuthenticateExactStrings() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    std::uint16_t vectorId = 0;
+    if (!Check(
+            MT_TryAllocIndex(
+                static_cast<int>(sizeof(RefVector)), 2, &vectorId)
+                == MT_AllocIndexStatus::Success,
+            "mutator-auth vector allocation failed"))
+    {
+        return false;
+    }
+    auto *const vector = reinterpret_cast<RefVector *>(
+        scrMemTreePub.mt_buffer + vectorId * MT_NODE_SIZE);
+    std::memset(vector, 0, sizeof(*vector));
+    RefString *const nonString = reinterpret_cast<RefString *>(vector);
+    RefString *const arbitrary = reinterpret_cast<RefString *>(
+        (std::numeric_limits<std::uintptr_t>::max)());
+    const StateImage beforeRejection = CaptureState();
+
+    const bool pointerInputsRejected = Check(
+            !SL_AddUserInternal(nullptr, 8)
+                && !SL_AddUserInternal(arbitrary, 8)
+                && !SL_AddUserInternal(nonString, 8),
+            "opaque pointer user mutation accepted non-string storage")
+        && Check(StateMatches(beforeRejection),
+            "opaque pointer user rejection changed ownership state")
+        && Check(LocksReleased(),
+            "opaque pointer user rejection leaked a lock")
+        && Check(ReportersUnused(),
+            "opaque pointer user rejection invoked a reporter");
+
+    SL_AddRefToString(vectorId);
+    const bool idRefRejected = Check(g_comErrorCount == 1,
+            "ID ref mutation accepted a non-string allocation")
+        && Check(!g_reporterSawOwnedLock,
+            "ID ref rejection reported under an owned lock")
+        && Check(StateMatches(beforeRejection),
+            "ID ref rejection changed ownership state")
+        && Check(LocksReleased(), "ID ref rejection leaked a lock");
+    g_comErrorCount = 0;
+
+    SL_AddUser(vectorId, 8);
+    const bool idUserRejected = Check(g_comErrorCount == 1,
+            "ID user mutation accepted a non-string allocation")
+        && Check(!g_reporterSawOwnedLock,
+            "ID user rejection reported under an owned lock")
+        && Check(StateMatches(beforeRejection),
+            "ID user rejection changed ownership state")
+        && Check(LocksReleased(), "ID user rejection leaked a lock");
+    g_comErrorCount = 0;
+
+    if (!pointerInputsRejected || !idRefRejected || !idUserRejected
+        || !Check(
+            MT_TryFreeIndex(
+                vectorId, static_cast<int>(sizeof(RefVector)))
+                == MT_FreeIndexStatus::Success,
+            "mutator-auth vector cleanup failed"))
+    {
+        return false;
+    }
+
+    constexpr char value[] = "mutator-exact-allocation";
+    const auto acquired = script_string::TryAcquireOrdinaryStringOfSize(
+        value, sizeof(value), 15);
+    if (!Check(acquired.status == script_string::AcquireStatus::Acquired,
+            "mutator-auth string acquisition failed"))
+    {
+        return false;
+    }
+    RefString *const refString = GetRefString(acquired.stringId);
+    const StateImage beforeInvalidUser = CaptureState();
+    const bool validPath = Check(refString != nullptr,
+            "mutator-auth could not resolve valid string")
+        && Check(!SL_AddUserInternal(refString, UINT32_MAX),
+            "opaque pointer mutation accepted invalid user mask")
+        && Check(StateMatches(beforeInvalidUser),
+            "invalid user mask changed ownership state")
+        && Check(SL_AddUserInternal(
+                refString, script_string::kDatabaseUserMask),
+            "exact opaque pointer mutation rejected a valid string")
+        && Check(
+            script_string::TryRemoveOrdinaryReference(acquired.stringId)
+                == script_string::ReleaseStatus::Success,
+            "mutator-auth ordinary cleanup failed")
+        && Check(
+            script_string::TryRemoveDatabaseUserReference(acquired.stringId)
+                == script_string::ReleaseStatus::Success,
+            "mutator-auth database cleanup failed")
+        && Check(LocksReleased(), "mutator-auth test leaked a lock")
+        && Check(ReportersUnused(),
+            "mutator-auth valid path invoked a reporter");
+    return validPath && EndTest();
+}
+
+[[nodiscard]] bool TestLegacyCharacterFoldingUsesUnsignedInput() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char mixedCase[]{
+        static_cast<char>(0xE1), 'A', '\\', 'B', '\0'};
+    const char foldedHigh = static_cast<char>(tolower(
+        static_cast<unsigned char>(mixedCase[0])));
+    const char expectedLower[]{foldedHigh, 'a', '\\', 'b', '\0'};
+    const std::uint32_t stringId =
+        SL_GetLowercaseString_(mixedCase, 0, 15);
+    RefString *const refString = GetRefString(stringId);
+
+    char canonical[32]{};
+    CreateCanonicalFilename(
+        canonical, mixedCase, static_cast<int>(sizeof(canonical)));
+    const char expectedCanonical[]{foldedHigh, 'a', '/', 'b', '\0'};
+
+    const bool valid = Check(refString != nullptr,
+            "unsigned-fold string acquisition failed")
+        && Check(std::memcmp(
+                refString->str, expectedLower, sizeof(expectedLower)) == 0,
+            "lowercase intern mishandled a high-bit byte")
+        && Check(SL_FindLowercaseString(mixedCase) == stringId,
+            "lowercase lookup mishandled a high-bit byte")
+        && Check(std::memcmp(
+                canonical,
+                expectedCanonical,
+                sizeof(expectedCanonical)) == 0,
+            "canonical filename mishandled a high-bit byte")
+        && Check(
+            script_string::TryRemoveOrdinaryReference(stringId)
+                == script_string::ReleaseStatus::Success,
+            "unsigned-fold string cleanup failed")
+        && Check(LocksReleased(), "unsigned-fold test leaked a lock")
+        && Check(ReportersUnused(),
+            "unsigned-fold test invoked a reporter");
+    return valid && EndTest();
+}
 } // namespace
 
 void KISAK_CDECL Sys_EnterCriticalSection(const int critSect)
 {
     if (critSect == CRITSECT_SCRIPT_STRING)
     {
+        if (g_countScriptStringLockAttempts.load(std::memory_order_acquire))
+        {
+            g_scriptStringLockAttempts.fetch_add(
+                1, std::memory_order_acq_rel);
+        }
         g_scriptStringMutex.lock();
         ++g_scriptStringLockDepth;
         return;
@@ -2016,7 +3728,24 @@ int main()
         || !TestLegacyCompatibilityAvoidsCompleteScans()
         || !TestLegacyHashScratchResetIsChainBounded()
         || !TestLegacyLocalCorruptionAndReporterUnwind()
-        || !TestMalformedStateFailsClosed())
+        || !TestMalformedStateFailsClosed()
+        || !TestOwnershipBatchLifecycle()
+        || !TestOwnershipBatchAllowsSharedVectorDebugSlots()
+        || !TestOwnershipBatchRejectsUnauthorizedEntries()
+        || !TestOwnershipBatchLocalPoisoning()
+        || !TestOwnershipBatchBoundaryValidation()
+        || !TestOwnershipBatchAuthenticationAndOverflow()
+        || !TestOwnershipBatchRejectsRawAllocatorMutation()
+        || !TestOwnershipBatchForeignSerialization()
+        || !TestOwnershipBatchForeignReaderSerialization()
+        || !TestOwnershipBatchCanonicalResetGate()
+        || !TestOwnershipBatchLifetimeBoundaries()
+        || !TestOwnershipBatchOuterAuthorityTears()
+        || !TestOwnershipBatchNestedAuthorityTears()
+        || !TestOwnershipBatchUnrelatedDestruction()
+        || !TestLegacyReadersAuthenticateExactStrings()
+        || !TestLegacyMutatorsAuthenticateExactStrings()
+        || !TestLegacyCharacterFoldingUsesUnsignedInput())
     {
         return 1;
     }

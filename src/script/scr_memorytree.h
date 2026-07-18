@@ -2,6 +2,8 @@
 
 #include <universal/kisak_abi.h>
 
+#include <type_traits>
+
 struct MemoryNode // sizeof=0xC
 {                                       // XREF: scrMemTreeGlob_t/r
     uint16_t prev;              // XREF: MT_Init(void)+46/w
@@ -61,25 +63,88 @@ namespace script_string
 class OwnershipBatch;
 }
 
-// Capability proving that lease admission starts at the outer SCRIPT_STRING
-// ownership boundary. Production callers cannot construct it, which preserves
-// the SCRIPT_STRING -> MEMORY_TREE lock order when the retained allocator lock
-// is introduced. The ownership batch itself is added by a later layer.
+class MT_ValidationLease;
+
+// Exact-address capability proving that every retained-lease operation starts
+// at the outer SCRIPT_STRING ownership boundary. The canonical capability is
+// never stored in OwnershipBatch or the lease, is non-trivially copyable, and
+// can be obtained only by OwnershipBatch. Recovering the nested lease address
+// therefore grants no mutation, query, release, or lifetime authority.
 class MT_ValidationLeaseAdmission final
 {
 private:
     MT_ValidationLeaseAdmission() noexcept = default;
+    ~MT_ValidationLeaseAdmission() noexcept = default;
+    // A private user-provided copy constructor keeps the exact-address
+    // capability non-trivially copyable without giving its canonical static a
+    // dynamic destructor or guarded first-use initialization.
+    MT_ValidationLeaseAdmission(
+        const MT_ValidationLeaseAdmission &) noexcept
+    {
+    }
+    MT_ValidationLeaseAdmission &operator=(
+        const MT_ValidationLeaseAdmission &) = delete;
+    MT_ValidationLeaseAdmission(MT_ValidationLeaseAdmission &&) = delete;
+    MT_ValidationLeaseAdmission &operator=(
+        MT_ValidationLeaseAdmission &&) = delete;
+
+    [[nodiscard]] static const MT_ValidationLeaseAdmission &Canonical() noexcept
+    {
+        static constinit MT_ValidationLeaseAdmission capability;
+        return capability;
+    }
+
+    [[nodiscard]] static bool Authenticates(
+        const MT_ValidationLeaseAdmission &admission) noexcept
+    {
+        return &admission == &Canonical();
+    }
+
     friend class script_string::OwnershipBatch;
+    friend MT_ValidationLeaseStatus MT_TryBeginValidationLease(
+        MT_ValidationLease *lease,
+        const MT_ValidationLeaseAdmission &admission) noexcept;
+    friend MT_ValidationLeaseStatus MT_FinishValidationLease(
+        MT_ValidationLease *lease,
+        const MT_ValidationLeaseAdmission &admission) noexcept;
+    friend MT_AllocIndexStatus MT_TryAllocIndexLeased(
+        MT_ValidationLease &lease,
+        int numBytes,
+        int type,
+        uint16_t *outIndex,
+        const MT_ValidationLeaseAdmission &admission) noexcept;
+    friend MT_AllocationInfoStatus MT_TryGetAllocationInfoLeased(
+        MT_ValidationLease &lease,
+        uint32_t nodeNum,
+        MT_AllocationInfo *outInfo,
+        const MT_ValidationLeaseAdmission &admission) noexcept;
+    friend MT_FreeIndexStatus MT_TryFreeIndexLeased(
+        MT_ValidationLease &lease,
+        uint32_t nodeNum,
+        int numBytes,
+        const MT_ValidationLeaseAdmission &admission) noexcept;
 
 #if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
 public:
-    [[nodiscard]] static MT_ValidationLeaseAdmission ForTesting() noexcept
+    [[nodiscard]] static const MT_ValidationLeaseAdmission &ForTesting() noexcept
     {
-        return {};
+        return Canonical();
+    }
+
+    [[nodiscard]] static const MT_ValidationLeaseAdmission &
+    InvalidForTesting() noexcept
+    {
+        static constinit MT_ValidationLeaseAdmission invalid;
+        return invalid;
     }
 #endif
 };
 RUNTIME_SIZE(MT_ValidationLeaseAdmission, 0x1, 0x1);
+static_assert(std::is_standard_layout_v<MT_ValidationLeaseAdmission>);
+static_assert(!std::is_default_constructible_v<MT_ValidationLeaseAdmission>);
+static_assert(!std::is_copy_constructible_v<MT_ValidationLeaseAdmission>);
+static_assert(!std::is_move_constructible_v<MT_ValidationLeaseAdmission>);
+static_assert(!std::is_trivially_copyable_v<MT_ValidationLeaseAdmission>);
 
 // Retains CRITSECT_MEMORY_TREE after complete Basic + Forest + Partition
 // validation. Leased operations authenticate the same-thread token and use the
@@ -95,15 +160,20 @@ RUNTIME_SIZE(MT_ValidationLeaseAdmission, 0x1, 0x1);
 // callers may not race normal Finish followed by destruction against Begin,
 // a leased operation, a snapshot, or a test-only setter. Production admission
 // is same-thread while the owning SCRIPT_STRING transaction remains held, so
-// it satisfies that contract. Terminal Frozen state makes generic and already-
-// blocked abandonment paths fail closed; it does not make arbitrary concurrent
+// it satisfies that contract. Terminal Frozen state makes generic allocator
+// paths fail closed; it does not make pointer/reference calls concurrent with
 // destruction of the caller-owned token storage valid.
 class MT_ValidationLease final
 {
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
 public:
+#else
+private:
+#endif
     MT_ValidationLease() noexcept = default;
     ~MT_ValidationLease() noexcept;
 
+public:
     MT_ValidationLease(const MT_ValidationLease &) = delete;
     MT_ValidationLease &operator=(const MT_ValidationLease &) = delete;
     MT_ValidationLease(MT_ValidationLease &&) = delete;
@@ -125,25 +195,44 @@ public:
 #endif
 
 private:
-    friend struct MT_ValidationLeaseAccess;
+    friend class script_string::OwnershipBatch;
     friend MT_ValidationLeaseStatus MT_TryBeginValidationLease(
         MT_ValidationLease *lease,
-        MT_ValidationLeaseAdmission admission) noexcept;
+        const MT_ValidationLeaseAdmission &admission) noexcept;
     friend MT_ValidationLeaseStatus MT_FinishValidationLease(
-        MT_ValidationLease *lease) noexcept;
+        MT_ValidationLease *lease,
+        const MT_ValidationLeaseAdmission &admission) noexcept;
     friend MT_AllocIndexStatus MT_TryAllocIndexLeased(
         MT_ValidationLease &lease,
         int numBytes,
         int type,
-        uint16_t *outIndex) noexcept;
+        uint16_t *outIndex,
+        const MT_ValidationLeaseAdmission &admission) noexcept;
     friend MT_AllocationInfoStatus MT_TryGetAllocationInfoLeased(
         MT_ValidationLease &lease,
         uint32_t nodeNum,
-        MT_AllocationInfo *outInfo) noexcept;
+        MT_AllocationInfo *outInfo,
+        const MT_ValidationLeaseAdmission &admission) noexcept;
     friend MT_FreeIndexStatus MT_TryFreeIndexLeased(
         MT_ValidationLease &lease,
         uint32_t nodeNum,
-        int numBytes) noexcept;
+        int numBytes,
+        const MT_ValidationLeaseAdmission &admission) noexcept;
+
+    // OwnershipBatch calls this only after authenticating its live outer and
+    // nested storage addresses. The helper independently authenticates the
+    // allocator registry/TLS authority, publishes terminal Frozen state, and
+    // releases the retained allocator acquisition only when exact.
+    [[nodiscard]] static bool AbandonFromOwnershipBatch(
+        MT_ValidationLease &lease) noexcept;
+
+    // These helpers require the caller to hold CRITSECT_MEMORY_TREE. Keeping
+    // token mutation on the token itself avoids granting a reproducible
+    // namespace-scope access shim authority over private lease state.
+    [[nodiscard]] bool isCanonicalClearNoLock() const noexcept;
+    void activateNoLock(uint64_t serial) noexcept;
+    void poisonNoLock() noexcept;
+    void clearNoLock() noexcept;
 
     uint64_t serial_ = 0;
     uint32_t mutationCount_ = 0;
@@ -155,13 +244,22 @@ RUNTIME_SIZE(MT_ValidationLease, 0x10, 0x10);
 
 [[nodiscard]] MT_ValidationLeaseStatus MT_TryBeginValidationLease(
     MT_ValidationLease *lease,
-    MT_ValidationLeaseAdmission admission) noexcept;
+    const MT_ValidationLeaseAdmission &admission) noexcept;
 
 // A correctly authenticated owner releases both recursive acquisitions even
 // when close validation fails. InvalidToken cannot identify a retained
 // acquisition safely and therefore leaves it held.
 [[nodiscard]] MT_ValidationLeaseStatus MT_FinishValidationLease(
-    MT_ValidationLease *lease) noexcept;
+    MT_ValidationLease *lease,
+    const MT_ValidationLeaseAdmission &admission) noexcept;
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+[[nodiscard]] inline MT_ValidationLeaseStatus MT_FinishValidationLease(
+    MT_ValidationLease *lease) noexcept
+{
+    return MT_FinishValidationLease(
+        lease, MT_ValidationLeaseAdmission::ForTesting());
+}
+#endif
 
 struct KISAK_ALIGNAS(128) scrMemTreeGlob_t // sizeof=0xC0380
 {                                       // XREF: .data:scrMemTreeGlob/r
@@ -175,39 +273,15 @@ struct KISAK_ALIGNAS(128) scrMemTreeGlob_t // sizeof=0xC0380
                                         // MT_GetSize+55/r ...
     uint16_t head[MEMORY_NODE_BITS + 1];// 0x242E200          // XREF: MT_DumpTree(void)+14B/r
                                         // MT_Init(void)+3A/w ...
-    // padding byte
-    // padding byte
+    uint8_t reservedFieldAlignment[2];
     int totalAlloc;                     // XREF: MT_DumpTree(void):loc_59E783/r
                                         // MT_DumpTree(void)+1FB/r ...
     int totalAllocBuckets;              // XREF: MT_DumpTree(void):loc_59E7AE/r
+    // Keep the intentional 128-byte cache-line extent explicit. MSVC ARM64
+    // otherwise diagnoses the implicit tail padding as C4324 under /WX.
+    uint8_t reservedCacheLineAlignment[0x54];
 };
 static_assert(sizeof(scrMemTreeGlob_t) == 0xC0380);
-
-static const char* mt_type_names[22] =
-{
-    "empty",
-    "thread",
-    "vector",
-    "notetrack",
-    "anim tree",
-    "small anim tree",
-    "external",
-    "temp",
-    "surface",
-    "anim part",
-    "model part",
-    "model part map",
-    "duplicate parts",
-    "model list",
-    "script parse",
-    "script string",
-    "class",
-    "tag info",
-    "animscripted",
-    "config string",
-    "debugger string",
-    "generic",
-};
 
 int MT_GetSubTreeSize(int nodeNum);
 void MT_DumpTree(void);
@@ -231,7 +305,21 @@ void MT_FreeIndex(uint32_t nodeNum, int numBytes);
 [[nodiscard]] MT_FreeIndexStatus MT_TryFreeIndexLeased(
     MT_ValidationLease &lease,
     uint32_t nodeNum,
-    int numBytes) noexcept;
+    int numBytes,
+    const MT_ValidationLeaseAdmission &admission) noexcept;
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+[[nodiscard]] inline MT_FreeIndexStatus MT_TryFreeIndexLeased(
+    MT_ValidationLease &lease,
+    uint32_t nodeNum,
+    int numBytes) noexcept
+{
+    return MT_TryFreeIndexLeased(
+        lease,
+        nodeNum,
+        numBytes,
+        MT_ValidationLeaseAdmission::ForTesting());
+}
+#endif
 
 // The query never reports and publishes the complete result only on Success.
 // Every other result leaves *outInfo unchanged.
@@ -244,7 +332,21 @@ void MT_FreeIndex(uint32_t nodeNum, int numBytes);
 [[nodiscard]] MT_AllocationInfoStatus MT_TryGetAllocationInfoLeased(
     MT_ValidationLease &lease,
     uint32_t nodeNum,
-    MT_AllocationInfo *outInfo) noexcept;
+    MT_AllocationInfo *outInfo,
+    const MT_ValidationLeaseAdmission &admission) noexcept;
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+[[nodiscard]] inline MT_AllocationInfoStatus MT_TryGetAllocationInfoLeased(
+    MT_ValidationLease &lease,
+    uint32_t nodeNum,
+    MT_AllocationInfo *outInfo) noexcept
+{
+    return MT_TryGetAllocationInfoLeased(
+        lease,
+        nodeNum,
+        outInfo,
+        MT_ValidationLeaseAdmission::ForTesting());
+}
+#endif
 // Performs one report-free exhaustive allocator preflight without mutation.
 [[nodiscard]] bool MT_TryValidateState() noexcept;
 
@@ -267,7 +369,23 @@ void MT_Init(void);
     MT_ValidationLease &lease,
     int numBytes,
     int type,
-    uint16_t *outIndex) noexcept;
+    uint16_t *outIndex,
+    const MT_ValidationLeaseAdmission &admission) noexcept;
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+[[nodiscard]] inline MT_AllocIndexStatus MT_TryAllocIndexLeased(
+    MT_ValidationLease &lease,
+    int numBytes,
+    int type,
+    uint16_t *outIndex) noexcept
+{
+    return MT_TryAllocIndexLeased(
+        lease,
+        numBytes,
+        type,
+        outIndex,
+        MT_ValidationLeaseAdmission::ForTesting());
+}
+#endif
 unsigned short MT_AllocIndex(int numBytes, int type);
 void* MT_Alloc(int numBytes, int type);
 

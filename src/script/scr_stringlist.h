@@ -33,27 +33,7 @@ struct KISAK_ALIGNAS(128) scrStringGlob_t
     HashEntry *nextFreeEntry;
 };
 
-struct RefString
-{
-    volatile uint32_t data;
-    char str[1];
-};
-RUNTIME_OFFSET(RefString, data, 0, 0);
-RUNTIME_OFFSET(RefString, str, 4, 4);
-static_assert(std::is_same_v<decltype(RefString::data), volatile uint32_t>);
-static_assert(std::is_standard_layout_v<RefString>);
-static_assert(std::is_trivially_copyable_v<RefString>);
-
-inline volatile uint32_t *SL_RefStringWord(RefString *refString) noexcept
-{
-    return &refString->data;
-}
-
-inline const volatile uint32_t *SL_RefStringWord(
-    const RefString *refString) noexcept
-{
-    return &refString->data;
-}
+struct RefString;
 
 struct RefVector
 {
@@ -101,10 +81,11 @@ void SL_ShutdownSystem(uint32_t user);
 void SL_TransferSystem(uint32_t from, uint32_t to);
 
 void SL_BeginLoadScripts();
-void SL_EndLoadScripts();
+[[nodiscard]] bool SL_TryResetCanonicalStringState(
+    short (&canonicalStrings)[SL_MAX_STRING_INDEX],
+    uint16_t *canonicalCount) noexcept;
 
 void __cdecl SL_AddUser(uint32_t stringValue, uint32_t user);
-bool SL_AddUserInternal(RefString* refStr, uint32_t user);
 
 void SL_AddRefToString(uint32_t stringValue);
 

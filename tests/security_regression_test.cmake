@@ -3494,24 +3494,37 @@ require_source_not_contains(
 
 require_source_contains(
     "script/scr_stringlist.h"
+    "struct RefString;"
+    "RefString must remain opaque outside its authenticated owner")
+require_source_not_contains(
+    "script/scr_stringlist.h"
     "volatile uint32_t data;"
-    "RefString must retain one aligned fixed-width packed word")
+    "the public header must not expose RefString packed ownership")
+require_source_not_contains(
+    "script/scr_stringlist.h"
+    "SL_RefStringWord("
+    "the public header must not expose raw packed-word access")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "volatile std::uint32_t data;"
+    "the private RefString layout must retain one fixed-width packed word")
 require_source_not_matches(
     "script/scr_stringlist.h"
     "refCount[ \t\r\n]*:[ \t\r\n]*16"
     "RefString readers must not alias its atomic word through bitfields")
 require_source_contains(
-    "script/scr_stringlist.h"
+    "script/scr_stringlist.cpp"
     "RUNTIME_OFFSET(RefString, data, 0, 0);"
     "the packed string word offset must remain frozen")
 require_source_contains(
-    "script/scr_stringlist.h"
+    "script/scr_stringlist.cpp"
     "RUNTIME_OFFSET(RefString, str, 4, 4);"
     "the script string payload offset must remain frozen")
-require_source_contains(
-    "script/scr_stringlist.h"
-    "return &refString->data;"
-    "the validated RefString word accessor must remain the sole lexical member owner")
+require_source_match_count(
+    "script/scr_stringlist.cpp"
+    "return[ \t\r\n]+&refString[ \t\r\n]*->[ \t\r\n]*data;"
+    2
+    "the two private RefString word accessors must remain the sole packed owners")
 require_source_contains(
     "script/scr_stringlist.h"
     "uint16_t refCount;"
@@ -3585,6 +3598,168 @@ require_source_contains(
     "each nonzero script-string user bit must own exactly one reference")
 require_source_contains(
     "script/scr_stringlist.cpp"
+    "SL_IsDebugOwnershipExactNoReport(stringValue, packed)"
+    "complete ownership validation must authenticate debug references per ID")
+require_source_contains(
+    "script/scr_memorytree.h"
+    "return &admission == &Canonical();"
+    "allocator lease operations must require the exact canonical capability")
+require_source_contains(
+    "script/scr_memorytree.h"
+    "static_assert(!std::is_trivially_copyable_v<MT_ValidationLeaseAdmission>);"
+    "allocator lease capability must not be forgeable by bitwise construction")
+require_source_contains(
+    "script/scr_memorytree.h"
+    "~MT_ValidationLeaseAdmission() noexcept = default;"
+    "allocator lease capability must not register a shutdown destructor")
+require_source_contains(
+    "script/scr_memorytree.h"
+    "MT_ValidationLeaseAdmission(
+        const MT_ValidationLeaseAdmission &) noexcept
+    {
+    }"
+    "allocator lease capability must remain non-trivially copyable without dynamic destruction")
+foreach(_marker IN ITEMS
+    "bool isCanonicalClearNoLock() const noexcept;"
+    "void activateNoLock(uint64_t serial) noexcept;"
+    "void poisonNoLock() noexcept;"
+    "void clearNoLock() noexcept;")
+    require_source_contains(
+        "script/scr_memorytree.h"
+        "${_marker}"
+        "lease token mutation must remain private member authority")
+endforeach()
+require_source_not_contains(
+    "script/scr_memorytree.h"
+    "MT_ValidationLeaseAccess"
+    "production headers must not expose a reproducible lease authority shim")
+require_source_not_contains(
+    "script/scr_memorytree.cpp"
+    "MT_ValidationLeaseAccess"
+    "allocator implementation must not define a reproducible lease authority shim")
+file(READ
+    "${SOURCE_ROOT}/src/script/scr_memorytree.cpp"
+    _memory_lease_view_security_source)
+extract_security_slice(
+    _memory_lease_view_security_source
+    "namespace
+{
+enum class MT_ValidationPolicy"
+    "constexpr const char *mt_type_names[22]"
+    _memory_lease_view_security_slice
+    "translation-private allocator lease view")
+require_security_slice_contains(
+    _memory_lease_view_security_slice
+    "struct MT_ValidationLeaseView final"
+    "generic allocator helpers must receive only anonymous-namespace lease state")
+require_source_contains(
+    "script/scr_memorytree.cpp"
+    "return MT_TryAllocIndexImpl(
+        numBytes, type, outIndex, MT_ValidationPolicy::Leased, &view);"
+    "leased allocation must delegate through the translation-private view")
+require_source_contains(
+    "script/scr_memorytree.cpp"
+    "return MT_TryGetAllocationInfoImpl(
+        nodeNum, outInfo, MT_ValidationPolicy::Leased, &view);"
+    "leased query must delegate through the translation-private view")
+require_source_contains(
+    "script/scr_memorytree.cpp"
+    "return MT_TryFreeIndexImpl(
+        nodeNum, numBytes, MT_ValidationPolicy::Leased, &view);"
+    "leased free must delegate through the translation-private view")
+file(READ
+    "${SOURCE_ROOT}/tests/script_memorytree_lease_api_seal_compile_tests.cpp"
+    _memory_lease_seal_security_source)
+foreach(_marker IN ITEMS
+    "static_assert(!HasUngatedBegin<MT_ValidationLease>);"
+    "static_assert(!HasUngatedFinish<MT_ValidationLease>);"
+    "static_assert(!HasUngatedAllocation<MT_ValidationLease>);"
+    "static_assert(!HasUngatedQuery<MT_ValidationLease>);"
+    "static_assert(!HasUngatedFree<MT_ValidationLease>);"
+    "static_assert(!HasCanonicalTestingAdmission<MT_ValidationLeaseAdmission>);"
+    "static_assert(!HasInvalidTestingAdmission<MT_ValidationLeaseAdmission>);"
+    "static_assert(!HasLeaseAuthenticationSetter<MT_ValidationLease>);"
+    "static_assert(!HasLeaseMutationSetter<MT_ValidationLease>);"
+    "static_assert(!HasLeaseCanonicalInspection<MT_ValidationLease>);"
+    "static_assert(!HasLeaseActivationAuthority<MT_ValidationLease>);"
+    "static_assert(!HasLeasePoisonAuthority<MT_ValidationLease>);"
+    "static_assert(!HasLeaseClearAuthority<MT_ValidationLease>);"
+    "static_assert(\n    !HasBatchAuthenticationSetter<script_string::OwnershipBatch>);"
+    "static_assert(!HasBatchLeaseAccessor<script_string::OwnershipBatch>);"
+    "static_assert(!HasBatchActivationSetter<script_string::OwnershipBatch>);"
+    "static_assert(!HasBatchOperationSetter<script_string::OwnershipBatch>);"
+    "static_assert(\n    !HasBatchMemoryMutationSetter<script_string::OwnershipBatch>);")
+    string(FIND
+        "${_memory_lease_seal_security_source}"
+        "${_marker}"
+        _memory_lease_seal_authority_position)
+    if(_memory_lease_seal_authority_position EQUAL -1)
+        message(FATAL_ERROR
+            "Missing security invariant (production code must not reach private no-lock lease authority)")
+    endif()
+endforeach()
+require_source_not_contains(
+    "script/scr_string_transaction.h"
+    "friend struct OwnershipBatchAccess;"
+    "namespace-visible code must not be able to define a batch authority friend")
+require_source_not_contains(
+    "script/scr_stringlist.cpp"
+    "OwnershipBatchAccess"
+    "namespace-visible batch authority shim must remain removed")
+require_source_match_count(
+    "script/scr_memorytree.cpp"
+    "MT_ValidationLeaseAdmission::Authenticates\\(admission\\)"
+    5
+    "every allocator lease entry must authenticate its operation capability")
+file(READ
+    "${SOURCE_ROOT}/src/script/scr_stringlist.cpp"
+    _ownership_capability_security_source)
+extract_security_slice(
+    _ownership_capability_security_source
+    "MT_AllocIndexStatus SL_TryAllocateStringMemoryNoReport("
+    "MT_FreeIndexStatus SL_TryFreeStringMemoryNoReport("
+    _leased_allocation_security_slice
+    "leased string allocation capability flow")
+extract_security_slice(
+    _ownership_capability_security_source
+    "MT_FreeIndexStatus SL_TryFreeStringMemoryNoReport("
+    "SL_InternStatus SL_TryInternStringOfSizeWithValidation("
+    _leased_free_security_slice
+    "leased string release capability flow")
+extract_security_slice(
+    _ownership_capability_security_source
+    "MT_AllocationInfoStatus SL_TryGetAllocationInfoForScopeNoReport("
+    "bool SL_TryGetAllocatedStringByteCountForScopeNoReport("
+    _leased_query_security_slice
+    "leased string query capability flow")
+foreach(_slice IN ITEMS
+    _leased_allocation_security_slice
+    _leased_free_security_slice
+    _leased_query_security_slice)
+    require_security_slice_ordered(
+        ${_slice}
+        "SL_IsValidationAuthorityWellFormed("
+        "case SL_ValidationScope::Leased:"
+        "leased string operations must validate the capability tuple before dispatch")
+    require_security_slice_contains(
+        ${_slice}
+        "*admission);"
+        "leased string operations must pass the private exact-address capability")
+endforeach()
+require_security_slice_contains(
+    _leased_allocation_security_slice
+    "MT_TryAllocIndexLeased("
+    "leased string allocation must call the gated allocator entry")
+require_security_slice_contains(
+    _leased_free_security_slice
+    "MT_TryFreeIndexLeased("
+    "leased string release must call the gated allocator entry")
+require_security_slice_contains(
+    _leased_query_security_slice
+    "MT_TryGetAllocationInfoLeased("
+    "leased string query must call the gated allocator entry")
+require_source_contains(
+    "script/scr_stringlist.cpp"
     "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 			return SL_InternStatus::PrimaryTableCapacityNoChange;"
     "primary string-table exhaustion must release the hash lock and return without reporting")
@@ -3646,8 +3821,14 @@ require_security_slice_ordered(
     "SL_TryGetAllocatedStringByteCountForScopeNoReport("
     "scr_string_atomic::TransferUser("
     "transfer must authenticate allocation/debug ownership before mutation")
+extract_security_slice(
+    _legacy_string_release_security_source
+    "const scr_string_atomic::TransferUserResult result ="
+    "if (invalidTransition)"
+    _legacy_transfer_commit_security_slice
+    "legacy transfer committed transition")
 require_security_slice_ordered(
-    _legacy_transfer_security_slice
+    _legacy_transfer_commit_security_slice
     "SL_DebugRemoveRefNoReport(stringValue);"
     "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);"
     "duplicate transfer debug accounting must remain report-free under lock")
@@ -3665,7 +3846,9 @@ require_source_not_contains(
     "bounded hash validation must not clear whole-table string-ID scratch")
 extract_security_slice(
     _legacy_string_release_security_source
-    "void SL_RemoveRefToStringOfSize(uint32_t stringValue, uint32_t len)"
+    "namespace
+{
+bool SL_TryRemoveRefToStringLockedNoReport("
     "void __cdecl SL_AddUser("
     _legacy_string_release_security_slice
     "legacy script-string release")
@@ -3677,11 +3860,11 @@ require_security_slice_ordered(
 require_security_slice_ordered(
     _legacy_string_release_security_slice
     "SL_DebugRemoveRefNoReport(stringValue);"
-    "SL_FreeString(stringValue, refStr, len);"
+    "SL_FreeString(stringValue, refStr, byteCount);"
     "old debug ownership must be removed before slot reuse")
 require_security_slice_ordered(
     _legacy_string_release_security_slice
-    "SL_FreeString(stringValue, refStr, len);"
+    "SL_FreeString(stringValue, refStr, byteCount);"
     "Sys_AtomicStore(SL_RefStringWord(refStr), packed);"
     "failed final free must restore the packed ownership word")
 require_security_slice_ordered(
@@ -3689,23 +3872,118 @@ require_security_slice_ordered(
     "Sys_AtomicStore(SL_RefStringWord(refStr), packed);"
     "SL_DebugAddRefNoReport(stringValue);"
     "failed final free must restore debug ownership")
-require_source_contains(
+require_source_ordered(
     "script/scr_stringlist.cpp"
-    "void SL_RemoveRefToStringOfSize(uint32_t stringValue, uint32_t len)
-{
-	PROF_SCOPED(\"SL_RemoveRefToStringOfSize\");
-
-	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	RefString* refStr = GetRefString(stringValue);"
-    "the legacy decrement must own the hash lock before lookup and publication")
+    "Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "SL_TryRemoveRefToStringLockedNoReport("
+    "the legacy decrement must own the hash lock before authenticated removal")
 require_source_not_matches(
     "script/scr_stringlist.cpp"
     "(refStr|refString)[ \t\r\n]*->[ \t\r\n]*(refCount|user|byteLen)"
     "packed RefString fields must be decoded from one atomic snapshot")
-require_source_not_contains(
+require_source_match_count(
     "script/scr_stringlist.cpp"
-    "->data"
-    "scr_stringlist.cpp must access RefString packed words only through SL_RefStringWord")
+    "->[ \t\r\n]*data"
+    2
+    "only private accessors may lexically touch RefString packed data")
+require_source_not_contains(
+    "script/scr_stringlist.h"
+    "SL_AddUserInternal("
+    "opaque RefString pointers must not authorize public mutation")
+
+extract_security_slice(
+    _legacy_string_release_security_source
+    "static bool SL_AddUserInternal("
+    "void SL_AddRefToString(uint32_t stringValue)"
+    _legacy_opaque_user_mutator_security_slice
+    "opaque RefString user mutation")
+require_security_slice_ordered(
+    _legacy_opaque_user_mutator_security_slice
+    "const bool addressValid = refStr != nullptr"
+    "SL_TryResolveLegacyTransferTargetNoReport("
+    "opaque RefString mutation must range-check before exact resolution")
+require_security_slice_ordered(
+    _legacy_opaque_user_mutator_security_slice
+    "&& resolvedRefString == refStr"
+    "&& SL_TryAddUserInternalNoReport(resolvedRefString, user);"
+    "opaque RefString mutation must prove exact identity before atomic access")
+forbid_security_slice_contains(
+    _legacy_opaque_user_mutator_security_slice
+    "SL_RefStringWord(refStr)"
+    "opaque RefString mutation must not directly access caller storage")
+
+extract_security_slice(
+    _legacy_string_release_security_source
+    "void SL_AddRefToString(uint32_t stringValue)"
+    "void SL_CheckExists(uint32_t stringValue)"
+    _legacy_add_ref_security_slice
+    "legacy ID ref mutation")
+require_security_slice_ordered(
+    _legacy_add_ref_security_slice
+    "SL_TryResolveLegacyTransferTargetNoReport("
+    "SL_TryAddUserInternalNoReport(refStr, 0)"
+    "legacy ID ref mutation must authenticate before atomic access")
+
+extract_security_slice(
+    _legacy_string_release_security_source
+    "void __cdecl SL_AddUser(uint32_t stringValue, uint32_t user)"
+    "void __cdecl Scr_SetString(uint16_t *to, uint32_t from)"
+    _legacy_add_user_security_slice
+    "legacy ID user mutation")
+require_security_slice_ordered(
+    _legacy_add_user_security_slice
+    "SL_TryResolveLegacyTransferTargetNoReport("
+    "SL_TryAddUserInternalNoReport(refString, user)"
+    "legacy ID user mutation must authenticate before atomic access")
+
+extract_security_slice(
+    _legacy_string_release_security_source
+    "uint32_t __cdecl SL_ConvertToLowercase("
+    "void __cdecl CreateCanonicalFilename("
+    _legacy_lowercase_security_slice
+    "legacy lowercase conversion")
+require_security_slice_ordered(
+    _legacy_lowercase_security_slice
+    "SL_TryResolveLegacyTransferTargetNoReport("
+    "static_cast<unsigned char>(refString->str[index])"
+    "lowercase conversion must authenticate before bounded ctype access")
+
+extract_security_slice(
+    _legacy_string_release_security_source
+    "static uint32_t GetLowercaseStringOfSize("
+    "uint32_t SL_GetLowercaseString_("
+    _legacy_lowercase_intern_security_slice
+    "legacy lowercase intern")
+require_security_slice_contains(
+    _legacy_lowercase_intern_security_slice
+    "static_cast<unsigned char>(str[i])"
+    "lowercase intern must use unsigned-char ctype input")
+
+extract_security_slice(
+    _legacy_string_release_security_source
+    "uint32_t SL_FindLowercaseString(const char* str)"
+    "bool SL_TryRemoveRefToStringLockedNoReport("
+    _legacy_lowercase_find_security_slice
+    "legacy lowercase lookup")
+require_security_slice_contains(
+    _legacy_lowercase_find_security_slice
+    "static_cast<unsigned char>(str[i])"
+    "lowercase lookup must use unsigned-char ctype input")
+
+extract_security_slice(
+    _legacy_string_release_security_source
+    "void __cdecl CreateCanonicalFilename("
+    "uint32_t __cdecl Scr_CreateCanonicalFilename("
+    _legacy_canonical_filename_security_slice
+    "canonical filename folding")
+require_security_slice_contains(
+    _legacy_canonical_filename_security_slice
+    "c = static_cast<unsigned char>(*filename++);"
+    "canonical filename must read unsigned input bytes")
+require_security_slice_contains(
+    _legacy_canonical_filename_security_slice
+    "static_cast<unsigned char>(c)"
+    "canonical filename must use unsigned-char ctype input")
 
 require_all_occurrences_wrapped(
     "script/scr_stringlist.cpp"
