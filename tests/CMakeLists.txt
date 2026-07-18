@@ -428,6 +428,45 @@ add_test(
 set_tests_properties(
     database-zone-script-string-ownership-controller PROPERTIES TIMEOUT 30)
 
+add_executable(kisakcod-db-zone-runtime-table-tests
+    db_zone_runtime_table_tests.cpp
+    ${SRC_DIR}/database/db_zone_runtime_table.cpp
+    ${SRC_DIR}/database/db_zone_script_string_ownership.cpp
+    ${SRC_DIR}/database/db_script_string_adapter.cpp
+    ${SRC_DIR}/database/db_script_string_journal.cpp
+    ${SRC_DIR}/database/db_script_string_transaction.cpp
+    ${SRC_DIR}/database/db_zone_load_context.cpp
+    ${SRC_DIR}/qcommon/sys_sync.cpp
+    ${KISAK_PLATFORM_SERVICE_SOURCES}
+)
+target_include_directories(
+    kisakcod-db-zone-runtime-table-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-runtime-table-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-zone-runtime-table-tests PRIVATE
+    KISAK_MP
+    KISAK_DB_ZONE_LOAD_CONTEXT_TESTING=1
+    KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING=1
+    KISAK_DB_ZONE_RUNTIME_TABLE_TESTING=1)
+target_link_libraries(
+    kisakcod-db-zone-runtime-table-tests PRIVATE Threads::Threads)
+if (KISAK_PLATFORM STREQUAL "win32")
+    target_link_libraries(
+        kisakcod-db-zone-runtime-table-tests PRIVATE winmm)
+endif()
+kisakcod_test_warnings(kisakcod-db-zone-runtime-table-tests)
+set_target_properties(
+    kisakcod-db-zone-runtime-table-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-zone-runtime-table-ownership
+    COMMAND kisakcod-db-zone-runtime-table-tests
+)
+set_tests_properties(
+    database-zone-runtime-table-ownership PROPERTIES TIMEOUT 30)
+
 add_executable(kisakcod-fx-archive-disk32-tests
     fx_archive_disk32_tests.cpp
     ${SRC_DIR}/EffectsCore/fx_archive_disk32.cpp
@@ -1714,6 +1753,13 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P
         ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_script_string_ownership_source_test.cmake
+)
+
+add_test(
+    NAME database-zone-runtime-table-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_runtime_table_source_test.cmake
 )
 
 add_test(

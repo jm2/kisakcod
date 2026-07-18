@@ -460,6 +460,11 @@ bool ZoneLoadContextSlot::cleanupPoisoned() const noexcept
     return (flags_ & kCleanupPoisonedFlag) != 0;
 }
 
+bool ZoneLoadContextSlot::canonical() const noexcept
+{
+    return isCanonical();
+}
+
 ZoneLoadContextStatus TryInitializeZoneLoadContextSlot(
     ZoneLoadContextSlot *const slot,
     const std::uint32_t slotIndex,
