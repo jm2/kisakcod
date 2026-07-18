@@ -28,6 +28,7 @@
 
 #include <qcommon/qcommon.h>
 #include <qcommon/cmd.h>
+#include <qcommon/sys_console.h>
 #include <qcommon/threads.h>
 #include <qcommon/mem_track.h>
 
@@ -66,56 +67,17 @@ WinVars_t	g_wv;
 
 static char sys_processSemaphoreFile[0x20];
 
-#ifndef KISAK_DEDI_HEADLESS
-static bool Win_IsRedirectedHandle(DWORD stream)
-{
-	HANDLE output = GetStdHandle(stream);
-	if (!output || output == INVALID_HANDLE_VALUE)
-		return false;
-
-	const DWORD type = GetFileType(output);
-	return type == FILE_TYPE_DISK || type == FILE_TYPE_PIPE;
-}
-#endif
-
-static void Win_WriteProcessHandle(DWORD stream, const char *msg)
-{
-	if (!msg)
-		return;
-
-	HANDLE output = GetStdHandle(stream);
-	if (!output || output == INVALID_HANDLE_VALUE)
-	{
-		OutputDebugStringA(msg);
-		return;
-	}
-
-	const char *cursor = msg;
-	size_t remaining = strlen(msg);
-	while (remaining)
-	{
-		const DWORD request = remaining > MAXDWORD
-			? MAXDWORD
-			: static_cast<DWORD>(remaining);
-		DWORD written = 0;
-		if (!WriteFile(output, cursor, request, &written, nullptr) || !written)
-			break;
-		cursor += written;
-		remaining -= written;
-	}
-}
-
 [[noreturn]] static void Win_TerminateOnFatalError(const char *message)
 {
 	const char prefix[] = "\nKisakCOD fatal error: ";
 	const char newline[] = "\n";
-	Win_WriteProcessHandle(STD_ERROR_HANDLE, prefix);
-	Win_WriteProcessHandle(STD_ERROR_HANDLE, message);
-	Win_WriteProcessHandle(STD_ERROR_HANDLE, newline);
-
-	HANDLE stderrHandle = GetStdHandle(STD_ERROR_HANDLE);
-	if (stderrHandle && stderrHandle != INVALID_HANDLE_VALUE)
-		FlushFileBuffers(stderrHandle);
+	(void)Sys_ConsoleWrite(
+		SysConsoleOutputStream::StandardError, prefix, sizeof(prefix) - 1);
+	(void)Sys_ConsoleWrite(
+		SysConsoleOutputStream::StandardError, message, strlen(message));
+	(void)Sys_ConsoleWrite(
+		SysConsoleOutputStream::StandardError, newline, sizeof(newline) - 1);
+	(void)Sys_ConsoleFlush(SysConsoleOutputStream::StandardError);
 
 	OutputDebugStringA(prefix);
 	OutputDebugStringA(message);
@@ -406,7 +368,7 @@ int __cdecl Sys_CheckCrashOrRerun()
 #ifdef KISAK_DEDI_HEADLESS
 	Win_TerminateOnFatalError(string);
 #else
-	if (Win_IsRedirectedHandle(STD_ERROR_HANDLE))
+	if (Sys_ConsoleIsRedirected(SysConsoleOutputStream::StandardError))
 		Win_TerminateOnFatalError(string);
 	#ifdef KISAK_MP
 	if (com_dedicated && com_dedicated->current.integer)
@@ -870,8 +832,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 	// KISAK: make a pretty console in debug mode, redirect in/out/err stream
 #ifndef KISAK_DEDI_HEADLESS
-	if (!Win_IsRedirectedHandle(STD_OUTPUT_HANDLE)
-		&& !Win_IsRedirectedHandle(STD_ERROR_HANDLE))
+	if (!Sys_ConsoleIsRedirected(SysConsoleOutputStream::StandardOutput)
+		&& !Sys_ConsoleIsRedirected(SysConsoleOutputStream::StandardError))
 	{
 		AllocConsole();
 

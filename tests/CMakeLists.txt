@@ -1537,6 +1537,32 @@ foreach(_profile mp sp)
     )
 endforeach()
 
+set(_platform_console_sources ${KISAK_PLATFORM_SERVICE_SOURCES})
+list(FILTER _platform_console_sources INCLUDE REGEX "[/\\\\]sys_console\\.cpp$")
+list(LENGTH _platform_console_sources _platform_console_source_count)
+if (NOT _platform_console_source_count EQUAL 1)
+    message(FATAL_ERROR
+        "Expected exactly one selected platform sys_console.cpp, found "
+        "${_platform_console_source_count}")
+endif()
+
+add_executable(kisakcod-platform-console-tests
+    platform_console_tests.cpp
+    ${SRC_DIR}/qcommon/sys_console.cpp
+    ${_platform_console_sources}
+)
+target_include_directories(kisakcod-platform-console-tests PRIVATE ${SRC_DIR})
+target_compile_features(kisakcod-platform-console-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-platform-console-tests)
+set_target_properties(kisakcod-platform-console-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME platform-console-runtime-contracts
+    COMMAND kisakcod-platform-console-tests
+)
+set_tests_properties(platform-console-runtime-contracts PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-platform-service-runtime-tests
     db_script_string_adapter_tests.cpp
     platform_service_runtime_tests.cpp
@@ -1654,6 +1680,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/vehicle_material_time_source_test.cmake
+)
+
+add_test(
+    NAME platform-console-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/platform_console_source_test.cmake
 )
 
 add_test(

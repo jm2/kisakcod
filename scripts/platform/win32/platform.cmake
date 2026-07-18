@@ -10,8 +10,10 @@ foreach(_source_set CLIENT_MP PLATFORM_WIN32 SOUND GFX_D3D GROUPVOICE)
 endforeach()
 
 # Keep the currently buildable Windows engine lists exact while selecting the
-# native event, synchronization, thread-lifecycle, and time implementations explicitly.
+# native console, event, filesystem, memory, synchronization, thread-lifecycle,
+# and time implementations explicitly.
 set(PLATFORM_WIN32_SERVICES
+    "${SRC_DIR}/_platform/win32/sys_console.cpp"
     "${SRC_DIR}/_platform/win32/sys_event.cpp"
     "${SRC_DIR}/_platform/win32/sys_filesystem.cpp"
     "${SRC_DIR}/_platform/win32/sys_memory.cpp"
