@@ -119,6 +119,32 @@ enum class MT_ValidationLeaseLifecycle : uint8_t
     Frozen,
 };
 
+constexpr const char *mt_type_names[22] =
+{
+    "empty",
+    "thread",
+    "vector",
+    "notetrack",
+    "anim tree",
+    "small anim tree",
+    "external",
+    "temp",
+    "surface",
+    "anim part",
+    "model part",
+    "model part map",
+    "duplicate parts",
+    "model list",
+    "script parse",
+    "script string",
+    "class",
+    "tag info",
+    "animscripted",
+    "config string",
+    "debugger string",
+    "generic",
+};
+
 uint64_t mt_nextValidationLeaseSerial = 0;
 uintptr_t mt_activeValidationLeaseAddress = 0;
 uint64_t mt_activeValidationLeaseSerial = 0;
@@ -2013,6 +2039,42 @@ MT_ValidationLease::~MT_ValidationLease() noexcept
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
     if (ownsRetainedAcquisition)
         Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+}
+
+bool MT_ValidationLease::AbandonFromOwnershipBatch(
+    MT_ValidationLease &lease) noexcept
+{
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+
+    // The caller supplies live nested storage. MT_Owns... compares that
+    // address against every by-value registry/TLS mirror before reading any
+    // member. Only that exact identity proves Begin's retained acquisition.
+    const bool ownsRetainedAcquisition =
+        MT_OwnsValidationLeaseLocked(&lease);
+
+    // Terminal state must be visible before the stack address disappears or
+    // either acquisition can be released. A torn nested identity keeps the
+    // unproven retained acquisition held; its automatic destructor repeats the
+    // same fail-closed publication without converting a stored address back to
+    // a pointer.
+    MT_FreezeValidationLeaseBoundaryLocked();
+    if (ownsRetainedAcquisition)
+    {
+        MT_ValidationLeaseAccess::Clear(lease);
+        MT_ClearRetainedValidationLeaseAuthenticationLocked();
+    }
+    else
+    {
+        MT_ValidationLeaseAccess::Poison(lease);
+    }
+
+    // Drop this helper's recursive acquisition. Drop Begin's retained
+    // acquisition only when the live address, serial, lifecycle, and every
+    // global/TLS mirror proved exact above.
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+    if (ownsRetainedAcquisition)
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+    return ownsRetainedAcquisition;
 }
 
 bool MT_ValidationLease::active() const noexcept

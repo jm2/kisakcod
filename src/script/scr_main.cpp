@@ -59,8 +59,9 @@ uint32_t __cdecl SL_GetCanonicalString(const char* str)
 
 void SL_BeginLoadScripts()
 {
-    memset((uint8_t*)scrCompilePub.canonicalStrings, 0, sizeof(scrCompilePub.canonicalStrings));
-    scrVarPub.canonicalStrCount = 0;
+    (void)SL_TryResetCanonicalStringState(
+        scrCompilePub.canonicalStrings,
+        &scrVarPub.canonicalStrCount);
 }
 
 int __cdecl Scr_ScanFile(unsigned char *buf, int max_size)
@@ -353,4 +354,3 @@ void __cdecl Scr_FreeScripts(uint8_t sys)
     scrVarPub.endScriptBuffer = 0;
     scrVarPub.checksum = 0;
 }
-

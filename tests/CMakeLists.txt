@@ -1425,6 +1425,7 @@ target_compile_features(
 target_compile_definitions(
     kisakcod-script-string-ownership-tests PRIVATE
     KISAK_MP
+    KISAK_MEMORY_TREE_VALIDATION_TESTING=1
     KISAK_SCRIPT_STRING_PERF_TESTING=1)
 target_link_libraries(
     kisakcod-script-string-ownership-tests PRIVATE Threads::Threads)

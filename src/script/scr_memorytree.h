@@ -64,7 +64,7 @@ class OwnershipBatch;
 // Capability proving that lease admission starts at the outer SCRIPT_STRING
 // ownership boundary. Production callers cannot construct it, which preserves
 // the SCRIPT_STRING -> MEMORY_TREE lock order when the retained allocator lock
-// is introduced. The ownership batch itself is added by a later layer.
+// is introduced. OwnershipBatch is the sole production admission authority.
 class MT_ValidationLeaseAdmission final
 {
 private:
@@ -125,6 +125,7 @@ public:
 #endif
 
 private:
+    friend class script_string::OwnershipBatch;
     friend struct MT_ValidationLeaseAccess;
     friend MT_ValidationLeaseStatus MT_TryBeginValidationLease(
         MT_ValidationLease *lease,
@@ -144,6 +145,13 @@ private:
         MT_ValidationLease &lease,
         uint32_t nodeNum,
         int numBytes) noexcept;
+
+    // OwnershipBatch calls this only after authenticating its live outer and
+    // nested storage addresses. The helper independently authenticates the
+    // allocator registry/TLS authority, publishes terminal Frozen state, and
+    // releases the retained allocator acquisition only when exact.
+    [[nodiscard]] static bool AbandonFromOwnershipBatch(
+        MT_ValidationLease &lease) noexcept;
 
     uint64_t serial_ = 0;
     uint32_t mutationCount_ = 0;
@@ -182,32 +190,6 @@ struct KISAK_ALIGNAS(128) scrMemTreeGlob_t // sizeof=0xC0380
     int totalAllocBuckets;              // XREF: MT_DumpTree(void):loc_59E7AE/r
 };
 static_assert(sizeof(scrMemTreeGlob_t) == 0xC0380);
-
-static const char* mt_type_names[22] =
-{
-    "empty",
-    "thread",
-    "vector",
-    "notetrack",
-    "anim tree",
-    "small anim tree",
-    "external",
-    "temp",
-    "surface",
-    "anim part",
-    "model part",
-    "model part map",
-    "duplicate parts",
-    "model list",
-    "script parse",
-    "script string",
-    "class",
-    "tag info",
-    "animscripted",
-    "config string",
-    "debugger string",
-    "generic",
-};
 
 int MT_GetSubTreeSize(int nodeNum);
 void MT_DumpTree(void);

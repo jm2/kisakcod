@@ -3494,24 +3494,37 @@ require_source_not_contains(
 
 require_source_contains(
     "script/scr_stringlist.h"
+    "struct RefString;"
+    "RefString must remain opaque outside its authenticated owner")
+require_source_not_contains(
+    "script/scr_stringlist.h"
     "volatile uint32_t data;"
-    "RefString must retain one aligned fixed-width packed word")
+    "the public header must not expose RefString packed ownership")
+require_source_not_contains(
+    "script/scr_stringlist.h"
+    "SL_RefStringWord("
+    "the public header must not expose raw packed-word access")
+require_source_contains(
+    "script/scr_stringlist.cpp"
+    "volatile std::uint32_t data;"
+    "the private RefString layout must retain one fixed-width packed word")
 require_source_not_matches(
     "script/scr_stringlist.h"
     "refCount[ \t\r\n]*:[ \t\r\n]*16"
     "RefString readers must not alias its atomic word through bitfields")
 require_source_contains(
-    "script/scr_stringlist.h"
+    "script/scr_stringlist.cpp"
     "RUNTIME_OFFSET(RefString, data, 0, 0);"
     "the packed string word offset must remain frozen")
 require_source_contains(
-    "script/scr_stringlist.h"
+    "script/scr_stringlist.cpp"
     "RUNTIME_OFFSET(RefString, str, 4, 4);"
     "the script string payload offset must remain frozen")
-require_source_contains(
-    "script/scr_stringlist.h"
-    "return &refString->data;"
-    "the validated RefString word accessor must remain the sole lexical member owner")
+require_source_match_count(
+    "script/scr_stringlist.cpp"
+    "return[ \t\r\n]+&refString[ \t\r\n]*->[ \t\r\n]*data;"
+    2
+    "the two private RefString word accessors must remain the sole packed owners")
 require_source_contains(
     "script/scr_stringlist.h"
     "uint16_t refCount;"
@@ -3646,8 +3659,14 @@ require_security_slice_ordered(
     "SL_TryGetAllocatedStringByteCountForScopeNoReport("
     "scr_string_atomic::TransferUser("
     "transfer must authenticate allocation/debug ownership before mutation")
+extract_security_slice(
+    _legacy_string_release_security_source
+    "const scr_string_atomic::TransferUserResult result ="
+    "if (invalidTransition)"
+    _legacy_transfer_commit_security_slice
+    "legacy transfer committed transition")
 require_security_slice_ordered(
-    _legacy_transfer_security_slice
+    _legacy_transfer_commit_security_slice
     "SL_DebugRemoveRefNoReport(stringValue);"
     "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);"
     "duplicate transfer debug accounting must remain report-free under lock")
@@ -3665,7 +3684,9 @@ require_source_not_contains(
     "bounded hash validation must not clear whole-table string-ID scratch")
 extract_security_slice(
     _legacy_string_release_security_source
-    "void SL_RemoveRefToStringOfSize(uint32_t stringValue, uint32_t len)"
+    "namespace
+{
+bool SL_TryRemoveRefToStringLockedNoReport("
     "void __cdecl SL_AddUser("
     _legacy_string_release_security_slice
     "legacy script-string release")
@@ -3677,11 +3698,11 @@ require_security_slice_ordered(
 require_security_slice_ordered(
     _legacy_string_release_security_slice
     "SL_DebugRemoveRefNoReport(stringValue);"
-    "SL_FreeString(stringValue, refStr, len);"
+    "SL_FreeString(stringValue, refStr, byteCount);"
     "old debug ownership must be removed before slot reuse")
 require_security_slice_ordered(
     _legacy_string_release_security_slice
-    "SL_FreeString(stringValue, refStr, len);"
+    "SL_FreeString(stringValue, refStr, byteCount);"
     "Sys_AtomicStore(SL_RefStringWord(refStr), packed);"
     "failed final free must restore the packed ownership word")
 require_security_slice_ordered(
@@ -3689,23 +3710,20 @@ require_security_slice_ordered(
     "Sys_AtomicStore(SL_RefStringWord(refStr), packed);"
     "SL_DebugAddRefNoReport(stringValue);"
     "failed final free must restore debug ownership")
-require_source_contains(
+require_source_ordered(
     "script/scr_stringlist.cpp"
-    "void SL_RemoveRefToStringOfSize(uint32_t stringValue, uint32_t len)
-{
-	PROF_SCOPED(\"SL_RemoveRefToStringOfSize\");
-
-	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	RefString* refStr = GetRefString(stringValue);"
-    "the legacy decrement must own the hash lock before lookup and publication")
+    "Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "SL_TryRemoveRefToStringLockedNoReport("
+    "the legacy decrement must own the hash lock before authenticated removal")
 require_source_not_matches(
     "script/scr_stringlist.cpp"
     "(refStr|refString)[ \t\r\n]*->[ \t\r\n]*(refCount|user|byteLen)"
     "packed RefString fields must be decoded from one atomic snapshot")
-require_source_not_contains(
+require_source_match_count(
     "script/scr_stringlist.cpp"
-    "->data"
-    "scr_stringlist.cpp must access RefString packed words only through SL_RefStringWord")
+    "->[ \t\r\n]*data"
+    2
+    "only private accessors may lexically touch RefString packed data")
 
 require_all_occurrences_wrapped(
     "script/scr_stringlist.cpp"
