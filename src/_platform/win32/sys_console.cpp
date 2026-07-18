@@ -26,7 +26,8 @@ HANDLE StandardHandle(const DWORD identifier) noexcept
 bool IsEndOfPipeError(const DWORD error) noexcept
 {
     return error == ERROR_BROKEN_PIPE
-        || error == ERROR_HANDLE_EOF;
+        || error == ERROR_HANDLE_EOF
+        || error == ERROR_PIPE_NOT_CONNECTED;
 }
 
 SysConsoleIoStatus OutputErrorStatus(const DWORD error) noexcept
@@ -71,7 +72,7 @@ SysConsoleIoStatus Sys_ConsoleBackendFlush(
         return SysConsoleIoStatus::Unavailable;
     SetLastError(ERROR_SUCCESS);
     const DWORD type = GetFileType(output);
-    if (type == FILE_TYPE_CHAR)
+    if (type == FILE_TYPE_CHAR || type == FILE_TYPE_PIPE)
         return SysConsoleIoStatus::Complete;
     if (type == FILE_TYPE_UNKNOWN)
     {
@@ -131,13 +132,20 @@ SysConsoleRawReadResult Sys_ConsoleBackendTryReadByte() noexcept
     if (!ReadFile(input, &byte, 1, &readCount, nullptr))
     {
         const DWORD error = GetLastError();
+        // Message-mode pipes report ERROR_MORE_DATA even though the requested
+        // byte was consumed successfully.  Preserve that byte so the common
+        // line parser can drain the rest of the message on later reads.
+        if (error == ERROR_MORE_DATA && readCount == 1)
+            return {SysConsoleRawReadStatus::Data, byte};
         if (IsEndOfPipeError(error))
             return {SysConsoleRawReadStatus::EndOfFile, 0};
         if (error == ERROR_NO_DATA)
             return {SysConsoleRawReadStatus::NoData, 0};
         return {SysConsoleRawReadStatus::IoError, 0};
     }
-    return readCount == 1
-        ? SysConsoleRawReadResult{SysConsoleRawReadStatus::Data, byte}
+    if (readCount == 1)
+        return {SysConsoleRawReadStatus::Data, byte};
+    return type == FILE_TYPE_PIPE
+        ? SysConsoleRawReadResult{SysConsoleRawReadStatus::NoData, 0}
         : SysConsoleRawReadResult{SysConsoleRawReadStatus::EndOfFile, 0};
 }

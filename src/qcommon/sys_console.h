@@ -58,6 +58,10 @@ inline constexpr std::size_t SYS_CONSOLE_MAX_LINE_LENGTH = 511;
     SysConsoleOutputStream stream) noexcept;
 
 // Nonblocking, single-consumer line input from the inherited standard input.
+// POSIX terminals and redirected input are supported.  The Win32 backend
+// consumes redirected disk/pipe input; native character-console input remains
+// unsupported in the headless profile and is owned by the GUI console in
+// windowed profiles.
 // Lines are returned without CR/LF and are always NUL-terminated. Empty lines
 // are valid. Overlong lines and lines containing embedded NUL bytes are fully
 // drained before Truncated/InvalidData is returned, so their suffix cannot be

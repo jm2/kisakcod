@@ -79,11 +79,41 @@ foreach(_posix_contract IN ITEMS
     "write(descriptor, bytes, request)"
     "fstat(descriptor, &status)"
     "isatty(descriptor) == 0"
-    "errno == EINTR")
+    "errno == EINTR"
+    "pthread_sigmask(SIG_BLOCK"
+    "pthread_sigmask(SIG_SETMASK"
+    "pendingBefore_"
+    "sigpending(&pending)"
+    "if (membership == 0)"
+    "sigwait(&blocked_"
+    "consumeGenerated(writeError)"
+    "writeError != EPIPE")
     require_contains(
         _posix_source
         "${_posix_contract}"
         "POSIX backend token ${_posix_contract}")
+endforeach()
+
+read_repo_file("tests/CMakeLists.txt" _test_manifest)
+foreach(_manifest_contract IN ITEMS
+    "kisakcod-platform-console-tests PRIVATE Threads::Threads"
+    "platform-console-invalid-eof-contracts"
+    "platform-console-sigpipe-default-contracts"
+    "platform-console-sigpipe-ignore-contracts")
+    require_contains(
+        _test_manifest
+        "${_manifest_contract}"
+        "console test registration token ${_manifest_contract}")
+endforeach()
+foreach(_unsafe_sigpipe_token IN ITEMS
+    "signal(SIGPIPE"
+    "sigaction(SIGPIPE"
+    "MSG_NOSIGNAL"
+    "SO_NOSIGPIPE")
+    forbid_contains(
+        _posix_source
+        "${_unsafe_sigpipe_token}"
+        "process-global or socket-only SIGPIPE workaround ${_unsafe_sigpipe_token}")
 endforeach()
 
 read_repo_file("src/_platform/win32/sys_console.cpp" _win32_source)
@@ -94,11 +124,30 @@ foreach(_win32_contract IN ITEMS
     "PeekNamedPipe("
     "ReadFile("
     "type == FILE_TYPE_CHAR"
+    "type == FILE_TYPE_CHAR || type == FILE_TYPE_PIPE"
+    "ERROR_PIPE_NOT_CONNECTED"
+    "error == ERROR_MORE_DATA && readCount == 1"
     "SysConsoleRawReadStatus::NoData")
     require_contains(
         _win32_source
         "${_win32_contract}"
         "Win32 backend token ${_win32_contract}")
+endforeach()
+
+read_repo_file("tests/platform_console_tests.cpp" _runtime_tests)
+foreach(_runtime_contract IN ITEMS
+    "Sys_ConsoleFlush(stream)"
+    "std::string rejected(4097, 'q')"
+    "--invalid-eof"
+    "--sigpipe-default"
+    "--sigpipe-ignore"
+    "default SIGPIPE containment"
+    "ignored SIGPIPE containment"
+    "message pipe preserves ERROR_MORE_DATA bytes")
+    require_contains(
+        _runtime_tests
+        "${_runtime_contract}"
+        "console runtime regression token ${_runtime_contract}")
 endforeach()
 
 read_repo_file("src/win32/win_syscon.cpp" _win_syscon)

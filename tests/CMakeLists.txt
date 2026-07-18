@@ -1553,6 +1553,7 @@ add_executable(kisakcod-platform-console-tests
 )
 target_include_directories(kisakcod-platform-console-tests PRIVATE ${SRC_DIR})
 target_compile_features(kisakcod-platform-console-tests PRIVATE cxx_std_20)
+target_link_libraries(kisakcod-platform-console-tests PRIVATE Threads::Threads)
 kisakcod_test_warnings(kisakcod-platform-console-tests)
 set_target_properties(kisakcod-platform-console-tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
@@ -1561,7 +1562,29 @@ add_test(
     NAME platform-console-runtime-contracts
     COMMAND kisakcod-platform-console-tests
 )
-set_tests_properties(platform-console-runtime-contracts PROPERTIES TIMEOUT 20)
+add_test(
+    NAME platform-console-invalid-eof-contracts
+    COMMAND kisakcod-platform-console-tests --invalid-eof
+)
+set(_platform_console_runtime_tests
+    platform-console-runtime-contracts
+    platform-console-invalid-eof-contracts
+)
+if (NOT KISAK_PLATFORM STREQUAL "win32")
+    add_test(
+        NAME platform-console-sigpipe-default-contracts
+        COMMAND kisakcod-platform-console-tests --sigpipe-default
+    )
+    add_test(
+        NAME platform-console-sigpipe-ignore-contracts
+        COMMAND kisakcod-platform-console-tests --sigpipe-ignore
+    )
+    list(APPEND _platform_console_runtime_tests
+        platform-console-sigpipe-default-contracts
+        platform-console-sigpipe-ignore-contracts
+    )
+endif()
+set_tests_properties(${_platform_console_runtime_tests} PROPERTIES TIMEOUT 20)
 
 add_executable(kisakcod-platform-service-runtime-tests
     db_script_string_adapter_tests.cpp

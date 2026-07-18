@@ -3,6 +3,7 @@
 #include <array>
 #include <cerrno>
 #include <cstdio>
+#include <cwchar>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -13,6 +14,8 @@
 #endif
 #include <Windows.h>
 #else
+#include <pthread.h>
+#include <signal.h>
 #include <unistd.h>
 #endif
 
@@ -29,6 +32,12 @@ bool Check(const bool condition, const char *const stage)
     }
     return true;
 }
+
+bool ExpectRead(
+    const char *stage,
+    SysConsoleReadStatus expectedStatus,
+    std::string_view expected = {},
+    std::size_t capacity = SYS_CONSOLE_MAX_LINE_LENGTH + 1);
 
 #if defined(_WIN32)
 DWORD OutputIdentifier(const SysConsoleOutputStream stream)
@@ -135,6 +144,114 @@ public:
 private:
     DWORD identifier_;
     HANDLE saved_ = nullptr;
+    bool active_ = false;
+};
+
+class BrokenOutput
+{
+public:
+    explicit BrokenOutput(const SysConsoleOutputStream stream)
+        : identifier_(OutputIdentifier(stream)), saved_(GetStdHandle(identifier_))
+    {
+        HANDLE reader = nullptr;
+        if (CreatePipe(&reader, &write_, nullptr, 0))
+        {
+            CloseHandle(reader);
+            active_ = SetStdHandle(identifier_, write_) != FALSE;
+        }
+    }
+
+    BrokenOutput(const BrokenOutput &) = delete;
+    BrokenOutput &operator=(const BrokenOutput &) = delete;
+
+    ~BrokenOutput()
+    {
+        if (active_)
+            (void)SetStdHandle(identifier_, saved_);
+        if (write_)
+            CloseHandle(write_);
+    }
+
+    [[nodiscard]] bool IsReady() const
+    {
+        return active_;
+    }
+
+private:
+    DWORD identifier_;
+    HANDLE saved_ = nullptr;
+    HANDLE write_ = nullptr;
+    bool active_ = false;
+};
+
+class InputFile
+{
+public:
+    explicit InputFile(const std::string_view bytes)
+        : saved_(GetStdHandle(STD_INPUT_HANDLE))
+    {
+        std::array<WCHAR, MAX_PATH + 1> directory{};
+        std::array<WCHAR, MAX_PATH + 1> path{};
+        const WCHAR prefix[] = {'k', 's', 'i', 0};
+        if (bytes.size() > MAXDWORD
+            || GetTempPathW(
+                static_cast<DWORD>(directory.size()),
+                directory.data()) == 0
+            || GetTempFileNameW(
+                directory.data(), prefix, 0, path.data()) == 0)
+        {
+            return;
+        }
+
+        file_ = CreateFileW(
+            path.data(),
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            nullptr,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE,
+            nullptr);
+        if (file_ == INVALID_HANDLE_VALUE)
+        {
+            (void)DeleteFileW(path.data());
+            return;
+        }
+
+        DWORD written = 0;
+        LARGE_INTEGER beginning{};
+        if (!WriteFile(
+                file_,
+                bytes.data(),
+                static_cast<DWORD>(bytes.size()),
+                &written,
+                nullptr)
+            || written != bytes.size()
+            || !SetFilePointerEx(file_, beginning, nullptr, FILE_BEGIN))
+        {
+            return;
+        }
+        active_ = SetStdHandle(STD_INPUT_HANDLE, file_) != FALSE;
+    }
+
+    InputFile(const InputFile &) = delete;
+    InputFile &operator=(const InputFile &) = delete;
+
+    ~InputFile()
+    {
+        if (active_)
+            (void)SetStdHandle(STD_INPUT_HANDLE, saved_);
+        if (file_ != INVALID_HANDLE_VALUE)
+            CloseHandle(file_);
+    }
+
+    [[nodiscard]] bool IsReady() const
+    {
+        return active_;
+    }
+
+private:
+    HANDLE saved_ = nullptr;
+    HANDLE file_ = INVALID_HANDLE_VALUE;
     bool active_ = false;
 };
 
@@ -254,6 +371,77 @@ bool TestValidFlush()
     (void)DeleteFileW(path.data());
     return Check(passed, "valid disk flush");
 }
+
+bool TestMessageModePipe()
+{
+    std::array<WCHAR, 160> pipeName{};
+    if (std::swprintf(
+            pipeName.data(),
+            pipeName.size(),
+            L"\\\\.\\pipe\\kisakcod-console-%lu-%llu",
+            static_cast<unsigned long>(GetCurrentProcessId()),
+            static_cast<unsigned long long>(GetTickCount64())) < 0)
+    {
+        return Check(false, "format message pipe name");
+    }
+
+    const HANDLE server = CreateNamedPipeW(
+        pipeName.data(),
+        PIPE_ACCESS_INBOUND,
+        PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+        1,
+        256,
+        256,
+        0,
+        nullptr);
+    if (server == INVALID_HANDLE_VALUE)
+        return Check(false, "create message pipe");
+
+    const HANDLE writer = CreateFileW(
+        pipeName.data(),
+        GENERIC_WRITE,
+        0,
+        nullptr,
+        OPEN_EXISTING,
+        0,
+        nullptr);
+    if (writer == INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(server);
+        return Check(false, "open message pipe writer");
+    }
+    const bool connected = ConnectNamedPipe(server, nullptr) != FALSE
+        || GetLastError() == ERROR_PIPE_CONNECTED;
+    const char message[] = "message\n";
+    DWORD written = 0;
+    const bool clientPassed = connected
+        && WriteFile(
+            writer,
+            message,
+            static_cast<DWORD>(sizeof(message) - 1),
+            &written,
+            nullptr) != FALSE
+        && written == sizeof(message) - 1;
+    if (!clientPassed)
+    {
+        CloseHandle(writer);
+        CloseHandle(server);
+        return Check(false, "write message pipe");
+    }
+
+    const HANDLE saved = GetStdHandle(STD_INPUT_HANDLE);
+    const bool redirected = SetStdHandle(STD_INPUT_HANDLE, server) != FALSE;
+    const bool passed = redirected
+        && ExpectRead(
+            "message pipe preserves ERROR_MORE_DATA bytes",
+            SysConsoleReadStatus::LineReady,
+            "message");
+    if (redirected)
+        (void)SetStdHandle(STD_INPUT_HANDLE, saved);
+    CloseHandle(writer);
+    CloseHandle(server);
+    return passed;
+}
 #else
 int OutputDescriptor(const SysConsoleOutputStream stream)
 {
@@ -363,6 +551,85 @@ private:
     bool active_ = false;
 };
 
+class BrokenOutput
+{
+public:
+    explicit BrokenOutput(const SysConsoleOutputStream stream)
+        : descriptor_(OutputDescriptor(stream)), saved_(dup(descriptor_))
+    {
+        int descriptors[2] = {-1, -1};
+        if (saved_ >= 0 && pipe(descriptors) == 0)
+        {
+            close(descriptors[0]);
+            if (dup2(descriptors[1], descriptor_) >= 0)
+                active_ = true;
+            close(descriptors[1]);
+        }
+    }
+
+    BrokenOutput(const BrokenOutput &) = delete;
+    BrokenOutput &operator=(const BrokenOutput &) = delete;
+
+    ~BrokenOutput()
+    {
+        if (active_)
+            (void)dup2(saved_, descriptor_);
+        if (saved_ >= 0)
+            close(saved_);
+    }
+
+    [[nodiscard]] bool IsReady() const
+    {
+        return active_;
+    }
+
+private:
+    int descriptor_ = -1;
+    int saved_ = -1;
+    bool active_ = false;
+};
+
+class InputFile
+{
+public:
+    explicit InputFile(const std::string_view bytes)
+        : saved_(dup(STDIN_FILENO)), file_(std::tmpfile())
+    {
+        if (saved_ < 0 || !file_)
+            return;
+        if (std::fwrite(bytes.data(), 1, bytes.size(), file_) != bytes.size()
+            || std::fflush(file_) != 0
+            || std::fseek(file_, 0, SEEK_SET) != 0)
+        {
+            return;
+        }
+        active_ = dup2(fileno(file_), STDIN_FILENO) >= 0;
+    }
+
+    InputFile(const InputFile &) = delete;
+    InputFile &operator=(const InputFile &) = delete;
+
+    ~InputFile()
+    {
+        if (active_)
+            (void)dup2(saved_, STDIN_FILENO);
+        if (saved_ >= 0)
+            close(saved_);
+        if (file_)
+            std::fclose(file_);
+    }
+
+    [[nodiscard]] bool IsReady() const
+    {
+        return active_;
+    }
+
+private:
+    int saved_ = -1;
+    std::FILE *file_ = nullptr;
+    bool active_ = false;
+};
+
 class InputPipe
 {
 public:
@@ -456,16 +723,30 @@ bool TestOutput(const SysConsoleOutputStream stream)
     const bool redirected = Sys_ConsoleIsRedirected(stream);
     const bool written = Sys_ConsoleWrite(stream, bytes, sizeof(bytes))
         == SysConsoleIoStatus::Complete;
+    const bool flushed = Sys_ConsoleFlush(stream)
+        == SysConsoleIoStatus::Complete;
     std::string captured;
     const bool finished = capture.Finish(&captured);
     return Check(
         redirected
             && written
+            && flushed
             && finished
             && captured == std::string(bytes, sizeof(bytes)),
         stream == SysConsoleOutputStream::StandardOutput
             ? "stdout exact byte write"
             : "stderr exact byte write");
+}
+
+bool TestBrokenOutputWrite()
+{
+    BrokenOutput output(SysConsoleOutputStream::StandardOutput);
+    return Check(
+        output.IsReady()
+            && Sys_ConsoleWrite(
+                SysConsoleOutputStream::StandardOutput, "broken", 6)
+                == SysConsoleIoStatus::IoError,
+        "broken pipe returns I/O error");
 }
 
 bool TestUnavailableOutput()
@@ -486,8 +767,8 @@ bool TestUnavailableOutput()
 bool ExpectRead(
     const char *const stage,
     const SysConsoleReadStatus expectedStatus,
-    const std::string_view expected = {},
-    const std::size_t capacity = SYS_CONSOLE_MAX_LINE_LENGTH + 1)
+    const std::string_view expected,
+    const std::size_t capacity)
 {
     std::array<char, SYS_CONSOLE_MAX_LINE_LENGTH + 1> output{};
     output.fill('x');
@@ -505,6 +786,107 @@ bool ExpectRead(
     }
     return Check(result.length == 0 && output[0] == '\0', stage);
 }
+
+bool TestReadBudget()
+{
+    std::string rejected(4097, 'q');
+    rejected += "\nnext\n";
+    InputFile input(rejected);
+    return Check(input.IsReady(), "create budget input file")
+        && ExpectRead(
+            "rejected line stops at read budget",
+            SysConsoleReadStatus::NoData)
+        && ExpectRead(
+            "rejected line resumes to terminator",
+            SysConsoleReadStatus::Truncated)
+        && ExpectRead(
+            "line after budgeted rejection",
+            SysConsoleReadStatus::LineReady,
+            "next");
+}
+
+bool TestInvalidAtEndOfFile()
+{
+    const char bytes[] = {'b', 'a', 'd', '\0', 't', 'a', 'i', 'l'};
+    InputFile input(std::string_view(bytes, sizeof(bytes)));
+    return Check(input.IsReady(), "create invalid EOF input file")
+        && ExpectRead(
+            "EOF publishes invalid partial line",
+            SysConsoleReadStatus::InvalidData)
+        && ExpectRead("stable invalid EOF", SysConsoleReadStatus::EndOfFile);
+}
+
+#if !defined(_WIN32)
+bool TestSigpipeDisposition(
+    void (*const disposition)(int),
+    const bool verifyPendingPreservation)
+{
+    sigset_t pipeSignal{};
+    sigset_t savedMask{};
+    struct sigaction savedAction{};
+    struct sigaction testAction{};
+    if (sigemptyset(&pipeSignal) != 0
+        || sigaddset(&pipeSignal, SIGPIPE) != 0
+        || pthread_sigmask(SIG_SETMASK, nullptr, &savedMask) != 0
+        || sigaction(SIGPIPE, nullptr, &savedAction) != 0)
+    {
+        return Check(false, "capture SIGPIPE state");
+    }
+
+    testAction.sa_handler = disposition;
+    (void)sigemptyset(&testAction.sa_mask);
+    bool passed = sigaction(SIGPIPE, &testAction, nullptr) == 0
+        && pthread_sigmask(SIG_UNBLOCK, &pipeSignal, nullptr) == 0
+        && TestBrokenOutputWrite();
+
+    sigset_t currentMask{};
+    sigset_t pending{};
+    passed = passed
+        && pthread_sigmask(SIG_SETMASK, nullptr, &currentMask) == 0
+        && sigismember(&currentMask, SIGPIPE) == 0
+        && sigpending(&pending) == 0
+        && sigismember(&pending, SIGPIPE) == 0;
+
+    if (passed && verifyPendingPreservation)
+    {
+        BrokenOutput output(SysConsoleOutputStream::StandardOutput);
+        passed = output.IsReady()
+            && pthread_sigmask(SIG_BLOCK, &pipeSignal, nullptr) == 0
+            && raise(SIGPIPE) == 0
+            && sigpending(&pending) == 0
+            && sigismember(&pending, SIGPIPE) == 1
+            && Sys_ConsoleWrite(
+                SysConsoleOutputStream::StandardOutput, "again", 5)
+                == SysConsoleIoStatus::IoError
+            && sigpending(&pending) == 0
+            && sigismember(&pending, SIGPIPE) == 1;
+        int received = 0;
+        if (passed)
+            passed = sigwait(&pipeSignal, &received) == 0
+                && received == SIGPIPE;
+    }
+
+    sigset_t cleanupPending{};
+    if (sigpending(&cleanupPending) == 0
+        && sigismember(&cleanupPending, SIGPIPE) == 1)
+    {
+        int received = 0;
+        passed = pthread_sigmask(SIG_BLOCK, &pipeSignal, nullptr) == 0
+            && sigwait(&pipeSignal, &received) == 0
+            && received == SIGPIPE
+            && passed;
+    }
+
+    const bool actionRestored = sigaction(SIGPIPE, &savedAction, nullptr) == 0;
+    const bool maskRestored =
+        pthread_sigmask(SIG_SETMASK, &savedMask, nullptr) == 0;
+    return Check(
+        passed && actionRestored && maskRestored,
+        disposition == SIG_DFL
+            ? "default SIGPIPE containment"
+            : "ignored SIGPIPE containment");
+}
+#endif
 
 bool TestInput()
 {
@@ -567,8 +949,22 @@ bool TestInput()
 }
 } // namespace
 
-int main()
+int main(const int argc, char **const argv)
 {
+    if (argc == 2 && std::strcmp(argv[1], "--invalid-eof") == 0)
+        return TestInvalidAtEndOfFile() ? 0 : 1;
+#if !defined(_WIN32)
+    if (argc == 2 && std::strcmp(argv[1], "--sigpipe-default") == 0)
+        return TestSigpipeDisposition(SIG_DFL, true) ? 0 : 1;
+    if (argc == 2 && std::strcmp(argv[1], "--sigpipe-ignore") == 0)
+        return TestSigpipeDisposition(SIG_IGN, false) ? 0 : 1;
+#endif
+    if (argc != 1)
+    {
+        std::fprintf(stderr, "FAIL: unknown platform console test mode\n");
+        return 2;
+    }
+
     const SysConsoleOutputStream invalidStream =
         static_cast<SysConsoleOutputStream>(0xff);
     char output = 'x';
@@ -593,6 +989,11 @@ int main()
         || !TestOutput(SysConsoleOutputStream::StandardError)
         || !TestValidFlush()
         || !TestUnavailableOutput()
+#if defined(_WIN32)
+        || !TestBrokenOutputWrite()
+        || !TestMessageModePipe()
+#endif
+        || !TestReadBudget()
         || !TestInput())
     {
         std::fprintf(stderr, "FAIL: platform console stage: %s\n", checkStage);
