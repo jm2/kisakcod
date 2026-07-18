@@ -3573,7 +3573,7 @@ require_source_contains(
 require_source_contains(
     "script/scr_stringlist.cpp"
     "result == scr_string_atomic::TransferUserResult::ReleasedDuplicate)
-				SL_DebugRemoveRef(stringValue);"
+				SL_DebugRemoveRefNoReport(stringValue);"
     "merging an existing destination user must remove its duplicate debug reference")
 require_source_contains(
     "script/scr_stringlist.cpp"
@@ -3603,14 +3603,84 @@ require_source_contains(
     "case SL_InternStatus::RelocatedTableCapacityNoChange:
 		Com_Error(ERR_DROP, \"exceeded maximum number of script strings\");"
     "the legacy wrapper must retain the relocated-table exhaustion report")
+file(READ
+    "${SOURCE_ROOT}/src/script/scr_stringlist.cpp"
+    _legacy_string_release_security_source)
+extract_security_slice(
+    _legacy_string_release_security_source
+    "void SL_ShutdownSystem(uint32_t user)"
+    "int SL_IsLowercaseString("
+    _legacy_shutdown_security_slice
+    "legacy shutdown physical-entry sweep")
+require_security_slice_ordered(
+    _legacy_shutdown_security_slice
+    "SL_IsCompleteSystemSweepStateValidNoReport()"
+    "for (uint32_t owningHash = 1;"
+    "shutdown must authenticate the complete table before mutation")
+require_security_slice_ordered(
+    _legacy_shutdown_security_slice
+    "SL_TryGetAllocatedStringByteCountForScopeNoReport("
+    "scr_string_atomic::RemoveUserRef("
+    "shutdown must authenticate allocation/debug ownership before removal")
+require_security_slice_contains(
+    _legacy_shutdown_security_slice
+    "SL_TryFreeSystemSweepEntryNoReport("
+    "shutdown must use the authenticated constant-work chain splice")
+forbid_security_slice_contains(
+    _legacy_shutdown_security_slice
+    "SL_FreeString("
+    "shutdown must not rewalk each collision chain during final free")
+extract_security_slice(
+    _legacy_string_release_security_source
+    "void SL_TransferSystem(uint32_t from, uint32_t to)"
+    "uint32_t SL_GetString_("
+    _legacy_transfer_security_slice
+    "legacy transfer physical-entry sweep")
+require_security_slice_ordered(
+    _legacy_transfer_security_slice
+    "SL_IsCompleteSystemSweepStateValidNoReport()"
+    "for (uint32_t hash = 1;"
+    "transfer must authenticate the complete table before mutation")
+require_security_slice_ordered(
+    _legacy_transfer_security_slice
+    "SL_TryGetAllocatedStringByteCountForScopeNoReport("
+    "scr_string_atomic::TransferUser("
+    "transfer must authenticate allocation/debug ownership before mutation")
+require_security_slice_ordered(
+    _legacy_transfer_security_slice
+    "SL_DebugRemoveRefNoReport(stringValue);"
+    "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "duplicate transfer debug accounting must remain report-free under lock")
 require_source_contains(
     "script/scr_stringlist.cpp"
-    "// Account the old owner before a zero transition can return the memory-tree
-	// slot to the allocator and let a new string reuse the same debug index.
-	SL_DebugRemoveRef(stringValue);
-	const bool validFree =
-		!result.reachedZero || SL_FreeString(stringValue, refStr, len);"
-    "old debug ownership must be removed before a zero-reference slot can be reused")
+    "return (entry.status_next & ~kHashEntryBits) == 0;"
+    "hash entries must reject reserved high-bit corruption")
+extract_security_slice(
+    _legacy_string_release_security_source
+    "void SL_RemoveRefToStringOfSize(uint32_t stringValue, uint32_t len)"
+    "void __cdecl SL_AddUser("
+    _legacy_string_release_security_slice
+    "legacy script-string release")
+require_security_slice_ordered(
+    _legacy_string_release_security_slice
+    "SL_IsDebugOwnershipExactNoReport(stringValue, packed);"
+    "SL_DebugRemoveRefNoReport(stringValue);"
+    "debug ownership must be authenticated before decrement")
+require_security_slice_ordered(
+    _legacy_string_release_security_slice
+    "SL_DebugRemoveRefNoReport(stringValue);"
+    "SL_FreeString(stringValue, refStr, len);"
+    "old debug ownership must be removed before slot reuse")
+require_security_slice_ordered(
+    _legacy_string_release_security_slice
+    "SL_FreeString(stringValue, refStr, len);"
+    "Sys_AtomicStore(SL_RefStringWord(refStr), packed);"
+    "failed final free must restore the packed ownership word")
+require_security_slice_ordered(
+    _legacy_string_release_security_slice
+    "Sys_AtomicStore(SL_RefStringWord(refStr), packed);"
+    "SL_DebugAddRefNoReport(stringValue);"
+    "failed final free must restore debug ownership")
 require_source_contains(
     "script/scr_stringlist.cpp"
     "void SL_RemoveRefToStringOfSize(uint32_t stringValue, uint32_t len)

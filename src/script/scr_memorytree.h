@@ -102,11 +102,13 @@ void MT_FreeIndex(uint32_t nodeNum, int numBytes);
     uint32_t nodeNum,
     int numBytes) noexcept;
 
-// Legacy compatibility operations validate the fixed allocator header and
-// every free-tree path they inspect or mutate, but deliberately do not rescan
-// unrelated allocation/free partitions. They remain report-free so a caller
-// holding an outer engine lock can unwind it before invoking a legacy
-// reporter. Typed transaction code must use the complete MT_Try* surface.
+// Legacy compatibility queries authenticate only the touched allocation
+// interval. Legacy allocation/free mutations authenticate every free-tree
+// head plus the mirrored links and membership on paths they consume or
+// change; they never rescan the complete fragmented forest or 64K-bucket
+// allocation partition. All remain report-free so a caller holding an outer
+// engine lock can unwind it before invoking a legacy reporter.
+// Typed transaction code must use the complete MT_Try* surface.
 [[nodiscard]] MT_FreeIndexStatus MT_TryFreeIndexLegacy(
     uint32_t nodeNum,
     int numBytes) noexcept;
@@ -119,6 +121,8 @@ void MT_FreeIndex(uint32_t nodeNum, int numBytes);
 [[nodiscard]] MT_AllocationInfoStatus MT_TryGetAllocationInfoLegacy(
     uint32_t nodeNum,
     MT_AllocationInfo *outInfo) noexcept;
+// Performs one report-free exhaustive allocator preflight without mutation.
+[[nodiscard]] bool MT_TryValidateState() noexcept;
 
 void MT_Free(unsigned char* p, int numBytes);
 bool MT_Realloc(int oldNumBytes, int newNumbytes);
@@ -155,4 +159,12 @@ extern scrMemTreeGlob_t scrMemTreeGlob;
 #ifdef KISAK_SCRIPT_STRING_PERF_TESTING
 void MT_ResetCompleteValidationCountForTesting() noexcept;
 [[nodiscard]] uint32_t MT_CompleteValidationCountForTesting() noexcept;
+[[nodiscard]] uint32_t MT_CompleteForestValidationCountForTesting() noexcept;
+void MT_CorruptAllocationMetadataForTesting(
+    uint32_t nodeNum,
+    uint8_t type,
+    uint8_t size) noexcept;
+void MT_CorruptFreeNodeMembershipForTesting(
+    uint32_t nodeNum,
+    uint8_t membership) noexcept;
 #endif

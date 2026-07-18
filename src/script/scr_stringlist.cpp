@@ -78,6 +78,39 @@ static void SL_DebugRemoveRef(uint32_t stringValue)
 
 static bool SL_FreeString(uint32_t stringValue, RefString* refStr, uint32_t len);
 
+namespace
+{
+enum class SL_ValidationScope : uint8_t
+{
+	Complete,
+	LegacyLocal,
+};
+
+constexpr uint32_t kHashEntryBits = HASH_STAT_MASK | UINT32_C(0xFFFF);
+
+bool SL_IsHashEntryEncodingValidNoReport(const HashEntry &entry) noexcept
+{
+	return (entry.status_next & ~kHashEntryBits) == 0;
+}
+
+bool SL_TryGetAllocatedStringByteCountForScopeNoReport(
+	uint32_t stringValue,
+	RefString** outRefString,
+	uint32_t* outByteCount,
+	SL_ValidationScope scope) noexcept;
+bool SL_IsLegacyLookupHashStateValidNoReport(uint32_t hash) noexcept;
+bool SL_IsCompleteSystemSweepStateValidNoReport() noexcept;
+bool SL_TryFreeSystemSweepEntryNoReport(
+	uint32_t owningHash,
+	uint32_t targetIndex,
+	uint32_t previousIndex,
+	uint32_t stringValue,
+	RefString* refString,
+	uint32_t byteCount) noexcept;
+bool SL_CanDebugRemoveRefNoReport(uint32_t stringValue) noexcept;
+void SL_DebugRemoveRefNoReport(uint32_t stringValue) noexcept;
+} // namespace
+
 static uint32_t __cdecl GetHashCode(const char *str, uint32_t len)
 {
 	uint32_t hash; // [esp+4h] [ebp-8h]
@@ -112,6 +145,7 @@ void SL_Init()
 
 	MT_Init();
 
+	scrStringGlob.nextFreeEntry = nullptr;
 	scrStringGlob.hashTable[0].status_next = 0;
 	uint32_t prev = 0;
 	for (uint32_t hash = 1; hash < STRINGLIST_SIZE; ++hash)
@@ -298,35 +332,117 @@ void SL_ShutdownSystem(uint32_t user)
 
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 
-	bool invalidTransition = false;
-	for (uint32_t hash = 1;
-		hash < STRINGLIST_SIZE && !invalidTransition;
-		++hash)
+	// Pass 1 authenticates the complete table/debug/allocator snapshot before
+	// any ownership change. The held string lock keeps table writers out during
+	// pass 2. Per-entry allocation/free transactions remain fail-closed; an
+	// unexpected pass-2 allocator failure stops the sweep after any earlier
+	// independently committed entries rather than attempting unsafe global
+	// rollback across slots that may already have been returned to the allocator.
+	bool invalidTransition = !SL_IsCompleteSystemSweepStateValidNoReport();
+	if (!invalidTransition)
+		scrStringGlob.nextFreeEntry = nullptr;
+	for (uint32_t owningHash = 1;
+		owningHash < STRINGLIST_SIZE && !invalidTransition;
+		++owningHash)
 	{
-		do
+		if ((scrStringGlob.hashTable[owningHash].status_next & HASH_STAT_MASK)
+			!= HASH_STAT_HEAD)
 		{
-			if ((scrStringGlob.hashTable[hash].status_next & HASH_STAT_MASK) == 0)
-				break;
+			continue;
+		}
 
-			const uint32_t stringValue = scrStringGlob.hashTable[hash].u.prev;
-			RefString* refStr = GetRefString(stringValue);
-			const uint32_t len = static_cast<uint32_t>(SL_GetRefStringLen(refStr) + 1);
+		uint32_t targetIndex = owningHash;
+		uint32_t previousIndex = owningHash;
+		bool chainDone = false;
+		for (uint32_t visited = 0;
+			visited < STRINGLIST_SIZE && !invalidTransition;
+			++visited)
+		{
+			HashEntry &entry = scrStringGlob.hashTable[targetIndex];
+			const uint32_t nextIndex =
+				static_cast<uint16_t>(entry.status_next);
+			const uint32_t stringValue = entry.u.prev;
+			RefString* refStr = nullptr;
+			uint32_t len = 0;
+			if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+					stringValue,
+					&refStr,
+					&len,
+					SL_ValidationScope::LegacyLocal))
+			{
+				invalidTransition = true;
+				break;
+			}
+			const uint32_t packedBefore =
+				scr_string_atomic::Load(SL_RefStringWord(refStr));
 			const scr_string_atomic::RemoveUserRefResult result =
 				scr_string_atomic::RemoveUserRef(
 					SL_RefStringWord(refStr), userByte);
 			if (result.status == scr_string_atomic::RemoveUserRefStatus::NotPresent)
-				break;
+			{
+				if (nextIndex == owningHash)
+				{
+					chainDone = true;
+					break;
+				}
+				previousIndex = targetIndex;
+				targetIndex = nextIndex;
+				continue;
+			}
 			if (result.status == scr_string_atomic::RemoveUserRefStatus::Invalid)
 			{
 				invalidTransition = true;
 				break;
 			}
 
-			scrStringGlob.nextFreeEntry = 0;
-			SL_DebugRemoveRef(stringValue);
-			if (result.reachedZero && !SL_FreeString(stringValue, refStr, len))
-				invalidTransition = true;
-		} while (scrStringGlob.nextFreeEntry);
+			SL_DebugRemoveRefNoReport(stringValue);
+			if (result.reachedZero)
+			{
+				if (!SL_TryFreeSystemSweepEntryNoReport(
+						owningHash,
+						targetIndex,
+						previousIndex,
+						stringValue,
+						refStr,
+						len))
+				{
+					// This entry has not been unlinked/freed on rejection, so its
+					// exact owner/debug state can still be restored safely.
+					Sys_AtomicStore(SL_RefStringWord(refStr), packedBefore);
+					SL_DebugAddRefNoReport(stringValue);
+					invalidTransition = true;
+					break;
+				}
+				if (targetIndex == owningHash)
+				{
+					if (nextIndex == owningHash)
+					{
+						chainDone = true;
+						break;
+					}
+					targetIndex = owningHash;
+					previousIndex = owningHash;
+					continue;
+				}
+				if (nextIndex == owningHash)
+				{
+					chainDone = true;
+					break;
+				}
+				targetIndex = nextIndex;
+				continue;
+			}
+
+			if (nextIndex == owningHash)
+			{
+				chainDone = true;
+				break;
+			}
+			previousIndex = targetIndex;
+			targetIndex = nextIndex;
+		}
+		if (!invalidTransition && !chainDone)
+			invalidTransition = true;
 	}
 
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -365,7 +481,9 @@ void SL_TransferSystem(uint32_t from, uint32_t to)
 
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 
-	bool invalidTransition = false;
+	// The complete first pass makes every physical owner ID safe to consume in
+	// pass 2. The held string lock keeps the hash topology stable for transfer.
+	bool invalidTransition = !SL_IsCompleteSystemSweepStateValidNoReport();
 	for (uint32_t hash = 1;
 		hash < STRINGLIST_SIZE && !invalidTransition;
 		++hash)
@@ -373,12 +491,23 @@ void SL_TransferSystem(uint32_t from, uint32_t to)
 		if ((scrStringGlob.hashTable[hash].status_next & HASH_STAT_MASK) != 0)
 		{
 			const uint32_t stringValue = scrStringGlob.hashTable[hash].u.prev;
-			RefString* refStr = GetRefString(stringValue);
+			RefString* refStr = nullptr;
+			uint32_t byteCount = 0;
+			if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+					stringValue,
+					&refStr,
+					&byteCount,
+					SL_ValidationScope::LegacyLocal))
+			{
+				invalidTransition = true;
+				break;
+			}
+			(void)byteCount;
 			const scr_string_atomic::TransferUserResult result =
 				scr_string_atomic::TransferUser(
-				SL_RefStringWord(refStr), fromByte, toByte);
+					SL_RefStringWord(refStr), fromByte, toByte);
 			if (result == scr_string_atomic::TransferUserResult::ReleasedDuplicate)
-				SL_DebugRemoveRef(stringValue);
+				SL_DebugRemoveRefNoReport(stringValue);
 			else if (result == scr_string_atomic::TransferUserResult::Invalid)
 				invalidTransition = true;
 		}
@@ -397,10 +526,7 @@ uint32_t SL_GetString_(const char* str, uint32_t user, int type)
 namespace
 {
 bool SL_IsInternHashStateValidNoReport(uint32_t hash) noexcept;
-bool SL_TryGetAllocatedStringByteCountNoReport(
-	uint32_t stringValue,
-	RefString** outRefString,
-	uint32_t* outByteCount) noexcept;
+bool SL_IsLegacyInternHashStateValidNoReport(uint32_t hash) noexcept;
 
 bool SL_IsRepresentableRefStringBytesNoReport(
 	const char* const bytes,
@@ -438,12 +564,34 @@ enum class SL_InternStatus : uint8_t
 	UnsafeFailure,
 };
 
-SL_InternStatus SL_TryInternStringOfSize(
+MT_AllocIndexStatus SL_TryAllocateStringMemoryNoReport(
+	const int numBytes,
+	const int type,
+	uint16_t* const outIndex,
+	const SL_ValidationScope scope) noexcept
+{
+	return scope == SL_ValidationScope::Complete
+		? MT_TryAllocIndex(numBytes, type, outIndex)
+		: MT_TryAllocIndexLegacy(numBytes, type, outIndex);
+}
+
+MT_FreeIndexStatus SL_TryFreeStringMemoryNoReport(
+	const uint32_t stringValue,
+	const int numBytes,
+	const SL_ValidationScope scope) noexcept
+{
+	return scope == SL_ValidationScope::Complete
+		? MT_TryFreeIndex(stringValue, numBytes)
+		: MT_TryFreeIndexLegacy(stringValue, numBytes);
+}
+
+SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 	const char* str,
 	uint32_t user,
 	uint32_t len,
 	int type,
-	uint32_t* outStringValue) noexcept
+	uint32_t* outStringValue,
+	const SL_ValidationScope validationScope) noexcept
 {
 	PROF_SCOPED("SL_GetStringOfSize");
 
@@ -461,7 +609,11 @@ SL_InternStatus SL_TryInternStringOfSize(
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return SL_InternStatus::InvalidArgumentNoChange;
 	}
-	if (!SL_IsInternHashStateValidNoReport(hash))
+	const bool hashStateValid =
+		validationScope == SL_ValidationScope::Complete
+		? SL_IsInternHashStateValidNoReport(hash)
+		: SL_IsLegacyInternHashStateValidNoReport(hash);
+	if (!hashStateValid)
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return SL_InternStatus::UnsafeFailure;
@@ -481,8 +633,11 @@ SL_InternStatus SL_TryInternStringOfSize(
 	if ((entry->status_next & HASH_STAT_MASK) == HASH_STAT_HEAD)
 	{
 		uint32_t candidateByteCount = 0;
-		if (!SL_TryGetAllocatedStringByteCountNoReport(
-				entry->u.prev, &refStr, &candidateByteCount))
+		if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+				entry->u.prev,
+				&refStr,
+				&candidateByteCount,
+				validationScope))
 		{
 			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 			return SL_InternStatus::UnsafeFailure;
@@ -510,8 +665,11 @@ SL_InternStatus SL_TryInternStringOfSize(
 
 		for (newEntry = &scrStringGlob.hashTable[newIndex]; newEntry != entry; newEntry = &scrStringGlob.hashTable[newIndex])
 		{
-			if (!SL_TryGetAllocatedStringByteCountNoReport(
-					newEntry->u.prev, &refStr, &candidateByteCount))
+			if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+					newEntry->u.prev,
+					&refStr,
+					&candidateByteCount,
+					validationScope))
 			{
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 				return SL_InternStatus::UnsafeFailure;
@@ -565,8 +723,12 @@ SL_InternStatus SL_TryInternStringOfSize(
 		}
 
 		uint16_t allocatedIndex = 0;
-		const MT_AllocIndexStatus allocationStatus = MT_TryAllocIndex(
-			static_cast<int>(len + 4), type, &allocatedIndex);
+		const MT_AllocIndexStatus allocationStatus =
+			SL_TryAllocateStringMemoryNoReport(
+				static_cast<int>(len + 4),
+				type,
+				&allocatedIndex,
+				validationScope);
 		if (allocationStatus != MT_AllocIndexStatus::Success)
 		{
 			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -579,7 +741,10 @@ SL_InternStatus SL_TryInternStringOfSize(
 		if (!SL_CanDebugInitializeStringNoReport(stringValue))
 		{
 			const MT_FreeIndexStatus cleanupStatus =
-				MT_TryFreeIndex(stringValue, static_cast<int>(len + 4));
+				SL_TryFreeStringMemoryNoReport(
+					stringValue,
+					static_cast<int>(len + 4),
+					validationScope);
 			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 			return cleanupStatus == MT_FreeIndexStatus::Success
 				? SL_InternStatus::UnsafeFailure
@@ -624,8 +789,12 @@ SL_InternStatus SL_TryInternStringOfSize(
 			}
 
 			uint16_t allocatedIndex = 0;
-			const MT_AllocIndexStatus allocationStatus = MT_TryAllocIndex(
-				static_cast<int>(len + 4), type, &allocatedIndex);
+			const MT_AllocIndexStatus allocationStatus =
+				SL_TryAllocateStringMemoryNoReport(
+					static_cast<int>(len + 4),
+					type,
+					&allocatedIndex,
+					validationScope);
 			if (allocationStatus != MT_AllocIndexStatus::Success)
 			{
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -638,8 +807,10 @@ SL_InternStatus SL_TryInternStringOfSize(
 			if (!SL_CanDebugInitializeStringNoReport(stringValue))
 			{
 				const MT_FreeIndexStatus cleanupStatus =
-					MT_TryFreeIndex(
-						stringValue, static_cast<int>(len + 4));
+					SL_TryFreeStringMemoryNoReport(
+						stringValue,
+						static_cast<int>(len + 4),
+						validationScope);
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 				return cleanupStatus == MT_FreeIndexStatus::Success
 					? SL_InternStatus::UnsafeFailure
@@ -659,8 +830,12 @@ SL_InternStatus SL_TryInternStringOfSize(
 		else
 		{
 			uint16_t allocatedIndex = 0;
-			const MT_AllocIndexStatus allocationStatus = MT_TryAllocIndex(
-				static_cast<int>(len + 4), type, &allocatedIndex);
+			const MT_AllocIndexStatus allocationStatus =
+				SL_TryAllocateStringMemoryNoReport(
+					static_cast<int>(len + 4),
+					type,
+					&allocatedIndex,
+					validationScope);
 			if (allocationStatus != MT_AllocIndexStatus::Success)
 			{
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -673,8 +848,10 @@ SL_InternStatus SL_TryInternStringOfSize(
 			if (!SL_CanDebugInitializeStringNoReport(stringValue))
 			{
 				const MT_FreeIndexStatus cleanupStatus =
-					MT_TryFreeIndex(
-						stringValue, static_cast<int>(len + 4));
+					SL_TryFreeStringMemoryNoReport(
+						stringValue,
+						static_cast<int>(len + 4),
+						validationScope);
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 				return cleanupStatus == MT_FreeIndexStatus::Success
 					? SL_InternStatus::UnsafeFailure
@@ -704,6 +881,22 @@ SL_InternStatus SL_TryInternStringOfSize(
 	*outStringValue = stringValue;
 	return SL_InternStatus::Success;
 }
+
+SL_InternStatus SL_TryInternStringOfSize(
+	const char* str,
+	const uint32_t user,
+	const uint32_t len,
+	const int type,
+	uint32_t* const outStringValue) noexcept
+{
+	return SL_TryInternStringOfSizeWithValidation(
+		str,
+		user,
+		len,
+		type,
+		outStringValue,
+		SL_ValidationScope::Complete);
+}
 } // namespace
 
 uint32_t SL_GetStringOfSize(const char* str, uint32_t user, uint32_t len, int type)
@@ -718,7 +911,13 @@ uint32_t SL_GetStringOfSize(const char* str, uint32_t user, uint32_t len, int ty
 
 	uint32_t stringValue = 0;
 	const SL_InternStatus status =
-		SL_TryInternStringOfSize(str, user, len, type, &stringValue);
+		SL_TryInternStringOfSizeWithValidation(
+			str,
+			user,
+			len,
+			type,
+			&stringValue,
+			SL_ValidationScope::LegacyLocal);
 	switch (status)
 	{
 	case SL_InternStatus::Success:
@@ -792,7 +991,8 @@ static uint32_t FindStringOfSize(const char* str, uint32_t len)
 	uint32_t hash = GetHashCode(str, len);
 
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	if (!scrStringGlob.inited || !SL_IsInternHashStateValidNoReport(hash))
+	if (!scrStringGlob.inited
+		|| !SL_IsLegacyLookupHashStateValidNoReport(hash))
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return 0;
@@ -808,8 +1008,11 @@ static uint32_t FindStringOfSize(const char* str, uint32_t len)
 
 	RefString* refStr = nullptr;
 	uint32_t candidateByteCount = 0;
-	if (!SL_TryGetAllocatedStringByteCountNoReport(
-			entry->u.prev, &refStr, &candidateByteCount))
+	if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+			entry->u.prev,
+			&refStr,
+			&candidateByteCount,
+			SL_ValidationScope::LegacyLocal))
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return 0;
@@ -825,9 +1028,13 @@ static uint32_t FindStringOfSize(const char* str, uint32_t len)
 			newEntry != entry;
 			newEntry = &scrStringGlob.hashTable[newIndex])
 		{
-			iassert((newEntry->status_next & HASH_STAT_MASK) == HASH_STAT_MOVABLE);
-			if (!SL_TryGetAllocatedStringByteCountNoReport(
-					newEntry->u.prev, &refStr, &candidateByteCount))
+			if ((newEntry->status_next & HASH_STAT_MASK)
+					!= HASH_STAT_MOVABLE
+				|| !SL_TryGetAllocatedStringByteCountForScopeNoReport(
+					newEntry->u.prev,
+					&refStr,
+					&candidateByteCount,
+					SL_ValidationScope::LegacyLocal))
 			{
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 				return 0;
@@ -849,10 +1056,6 @@ static uint32_t FindStringOfSize(const char* str, uint32_t len)
 				newEntry->u.prev = entry->u.prev;
 				entry->u.prev = stringValue;
 
-				iassert((newEntry->status_next & HASH_STAT_MASK) != HASH_STAT_FREE);
-				iassert((entry->status_next & HASH_STAT_MASK) != HASH_STAT_FREE);
-				iassert(refStr->str == SL_ConvertToString(stringValue));
-		
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 				return stringValue;
 			}
@@ -863,10 +1066,7 @@ static uint32_t FindStringOfSize(const char* str, uint32_t len)
 		return 0;
 	} //memcmp
 
-	iassert((entry->status_next & HASH_STAT_MASK) != HASH_STAT_FREE);
-
 	stringValue = entry->u.prev;
-	iassert(refStr->str == SL_ConvertToString(stringValue));
 
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return stringValue;
@@ -995,84 +1195,6 @@ void SL_RemoveRefToString(uint32_t stringValue)
 	refStr = GetRefString(stringValue);
 	len = SL_GetRefStringLen(refStr) + 1;
 	SL_RemoveRefToStringOfSize(stringValue, len);
-}
-
-static bool SL_FreeString(uint32_t stringValue, RefString* refStr, uint32_t len)
-{
-	PROF_SCOPED("SL_FreeString");
-
-	uint32_t index = GetHashCode(refStr->str, len);
-
-	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-
-	const uint32_t packed = scr_string_atomic::Load(SL_RefStringWord(refStr));
-	if (scr_string_atomic::RefCount(packed) != 0)
-	{
-		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
-		return true;
-	}
-	else
-	{
-		HashEntry *entry = &scrStringGlob.hashTable[index];
-
-		const uint8_t user = scr_string_atomic::User(packed);
-		iassert(user == 0);
-		if (user != 0)
-		{
-			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
-			return false;
-		}
-
-		MT_FreeIndex(stringValue, len + 4);
-
-		iassert(((entry->status_next & HASH_STAT_MASK) == HASH_STAT_HEAD));
-
-		uint32_t newIndex = (uint16_t)entry->status_next;
-		HashEntry* newEntry = &scrStringGlob.hashTable[newIndex];
-
-		if (entry->u.prev == stringValue)
-		{
-			if (newEntry == entry)
-			{
-				newEntry = entry;
-				newIndex = index;
-			}
-			else
-			{
-				entry->status_next = (uint16_t)newEntry->status_next | HASH_STAT_HEAD;
-				entry->u.prev = newEntry->u.prev;
-				scrStringGlob.nextFreeEntry = entry;
-			}
-		}
-		else
-		{
-			uint32_t prev = index;
-			while (1)
-			{
-				iassert(newEntry != entry);
-				iassert((newEntry->status_next & HASH_STAT_MASK) == HASH_STAT_MOVABLE);
-
-				if (newEntry->u.prev == stringValue)
-					break;
-
-				prev = newIndex;
-				newIndex = (uint16_t)newEntry->status_next;
-				newEntry = &scrStringGlob.hashTable[newIndex];
-			}
-			scrStringGlob.hashTable[prev].status_next = (uint16_t)newEntry->status_next | (scrStringGlob.hashTable[prev].status_next & HASH_STAT_MASK);
-		}
-
-		iassert((newEntry->status_next & HASH_STAT_MASK) != HASH_STAT_FREE);
-		uint32_t newNext = scrStringGlob.hashTable[0].status_next;
-		iassert((newNext & HASH_STAT_MASK) == HASH_STAT_FREE);
-
-		newEntry->status_next = newNext;
-		newEntry->u.prev = 0;
-		scrStringGlob.hashTable[newNext].u.prev = newIndex;
-		scrStringGlob.hashTable[0].status_next = newIndex;
-		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
-		return true;
-	}
 }
 
 namespace
@@ -1213,7 +1335,12 @@ bool SL_TryRecoverRefStringByteCountNoReport(
 
 uint8_t sl_hashChainVisited[(STRINGLIST_SIZE + 7) / 8];
 uint8_t sl_stringIdVisited[SL_MAX_STRING_INDEX / 8];
+uint8_t sl_systemSweepHashEntries[(STRINGLIST_SIZE + 7) / 8];
+uint8_t sl_systemSweepStringIds[SL_MAX_STRING_INDEX / 8];
 uint8_t sl_freeListVisited[(STRINGLIST_SIZE + 7) / 8];
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+uint32_t sl_completeFreeListValidationCount = 0;
+#endif
 
 void SL_ResetHashChainValidationNoReport() noexcept
 {
@@ -1234,16 +1361,21 @@ bool SL_TryRecordStringIdNoReport(const uint32_t stringId) noexcept
 	return true;
 }
 
-bool SL_TryGetAllocatedStringByteCountNoReport(
+bool SL_TryGetAllocatedStringByteCountForScopeNoReport(
 	const uint32_t stringValue,
 	RefString** const outRefString,
-	uint32_t* const outByteCount) noexcept
+	uint32_t* const outByteCount,
+	const SL_ValidationScope scope) noexcept
 {
 	if (!outRefString || !outByteCount
 		|| !script_string::IsCurrentRuntimeStringId(stringValue))
 		return false;
 	MT_AllocationInfo allocationInfo{};
-	if (MT_TryGetAllocationInfo(stringValue, &allocationInfo)
+	const MT_AllocationInfoStatus allocationStatus =
+		scope == SL_ValidationScope::Complete
+		? MT_TryGetAllocationInfo(stringValue, &allocationInfo)
+		: MT_TryGetAllocationInfoLegacy(stringValue, &allocationInfo);
+	if (allocationStatus
 		!= MT_AllocationInfoStatus::Success
 		|| allocationInfo.reserved != 0)
 	{
@@ -1274,16 +1406,17 @@ bool SL_TryGetAllocatedStringByteCountNoReport(
 	return true;
 }
 
-bool SL_TryGetAllocatedStringHashNoReport(
+bool SL_TryGetAllocatedStringHashForScopeNoReport(
 	const uint32_t stringValue,
-	uint32_t* const outHash) noexcept
+	uint32_t* const outHash,
+	const SL_ValidationScope scope) noexcept
 {
 	if (!outHash)
 		return false;
 	RefString* refString = nullptr;
 	uint32_t byteCount = 0;
-	if (!SL_TryGetAllocatedStringByteCountNoReport(
-			stringValue, &refString, &byteCount))
+	if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+			stringValue, &refString, &byteCount, scope))
 	{
 		return false;
 	}
@@ -1291,29 +1424,102 @@ bool SL_TryGetAllocatedStringHashNoReport(
 	return true;
 }
 
-bool SL_IsAllocatedStringEntryValidNoReport(
+bool SL_IsAllocatedStringEntryValidForScopeNoReport(
 	const uint32_t stringValue,
 	const uint32_t expectedHash,
-	const bool requireExpectedHash) noexcept
+	const bool requireExpectedHash,
+	const SL_ValidationScope scope) noexcept
 {
 	uint32_t actualHash = 0;
-	return SL_TryGetAllocatedStringHashNoReport(stringValue, &actualHash)
+	return SL_TryGetAllocatedStringHashForScopeNoReport(
+			stringValue, &actualHash, scope)
 		&& (!requireExpectedHash || actualHash == expectedHash);
+}
+
+bool SL_IsFreeEntryLocallyLinkedNoReport(const uint32_t index) noexcept
+{
+	if (index == 0 || index >= STRINGLIST_SIZE)
+		return false;
+
+	const HashEntry &entry = scrStringGlob.hashTable[index];
+	if (!SL_IsHashEntryEncodingValidNoReport(entry)
+		|| (entry.status_next & HASH_STAT_MASK) != HASH_STAT_FREE)
+		return false;
+	const uint32_t previous = entry.u.prev;
+	const uint32_t next = static_cast<uint16_t>(entry.status_next);
+	if (previous >= STRINGLIST_SIZE || next >= STRINGLIST_SIZE
+		|| previous == index || next == index)
+	{
+		return false;
+	}
+
+	const HashEntry &previousEntry = scrStringGlob.hashTable[previous];
+	const HashEntry &nextEntry = scrStringGlob.hashTable[next];
+	return SL_IsHashEntryEncodingValidNoReport(previousEntry)
+		&& SL_IsHashEntryEncodingValidNoReport(nextEntry)
+		&& (previousEntry.status_next & HASH_STAT_MASK) == HASH_STAT_FREE
+		&& (nextEntry.status_next & HASH_STAT_MASK) == HASH_STAT_FREE
+		&& static_cast<uint16_t>(previousEntry.status_next) == index
+		&& nextEntry.u.prev == index;
+}
+
+bool SL_IsFreeListLocallyValidNoReport() noexcept
+{
+	const HashEntry &sentinel = scrStringGlob.hashTable[0];
+	if (!SL_IsHashEntryEncodingValidNoReport(sentinel)
+		|| (sentinel.status_next & HASH_STAT_MASK) != HASH_STAT_FREE)
+		return false;
+	const uint32_t head = static_cast<uint16_t>(sentinel.status_next);
+	const uint32_t tail = sentinel.u.prev;
+	if (head == 0 || tail == 0)
+		return head == 0 && tail == 0;
+	if (head >= STRINGLIST_SIZE || tail >= STRINGLIST_SIZE)
+		return false;
+
+	const HashEntry &headEntry = scrStringGlob.hashTable[head];
+	const HashEntry &tailEntry = scrStringGlob.hashTable[tail];
+	if (!SL_IsHashEntryEncodingValidNoReport(headEntry)
+		|| !SL_IsHashEntryEncodingValidNoReport(tailEntry)
+		|| (headEntry.status_next & HASH_STAT_MASK) != HASH_STAT_FREE
+		|| (tailEntry.status_next & HASH_STAT_MASK) != HASH_STAT_FREE
+		|| headEntry.u.prev != 0
+		|| static_cast<uint16_t>(tailEntry.status_next) != 0)
+	{
+		return false;
+	}
+
+	const uint32_t headNext = static_cast<uint16_t>(headEntry.status_next);
+	const uint32_t tailPrevious = tailEntry.u.prev;
+	if (headNext >= STRINGLIST_SIZE || tailPrevious >= STRINGLIST_SIZE)
+		return false;
+	const HashEntry &headNextEntry = scrStringGlob.hashTable[headNext];
+	const HashEntry &tailPreviousEntry =
+		scrStringGlob.hashTable[tailPrevious];
+	return SL_IsHashEntryEncodingValidNoReport(headNextEntry)
+		&& SL_IsHashEntryEncodingValidNoReport(tailPreviousEntry)
+		&& (headNextEntry.status_next & HASH_STAT_MASK) == HASH_STAT_FREE
+		&& (tailPreviousEntry.status_next & HASH_STAT_MASK) == HASH_STAT_FREE
+		&& headNextEntry.u.prev == head
+		&& static_cast<uint16_t>(tailPreviousEntry.status_next) == tail;
 }
 
 bool SL_IsFreeListHeadValidNoReport() noexcept
 {
-	if ((scrStringGlob.hashTable[0].status_next & HASH_STAT_MASK)
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+	++sl_completeFreeListValidationCount;
+#endif
+	if (!SL_IsHashEntryEncodingValidNoReport(scrStringGlob.hashTable[0])
+		|| (scrStringGlob.hashTable[0].status_next & HASH_STAT_MASK)
 		!= HASH_STAT_FREE)
 		return false;
 	const uint32_t freeHead =
 		static_cast<uint16_t>(scrStringGlob.hashTable[0].status_next);
+	memset(sl_freeListVisited, 0, sizeof(sl_freeListVisited));
 	if (freeHead == 0)
 		return scrStringGlob.hashTable[0].u.prev == 0;
 	if (freeHead >= STRINGLIST_SIZE)
 		return false;
 
-	memset(sl_freeListVisited, 0, sizeof(sl_freeListVisited));
 	uint32_t previousIndex = 0;
 	uint32_t currentIndex = freeHead;
 	for (uint32_t visited = 0; visited < STRINGLIST_SIZE; ++visited)
@@ -1331,7 +1537,8 @@ bool SL_IsFreeListHeadValidNoReport() noexcept
 		sl_freeListVisited[visitedByte] |= visitedBit;
 
 		const HashEntry &entry = scrStringGlob.hashTable[currentIndex];
-		if ((entry.status_next & HASH_STAT_MASK) != HASH_STAT_FREE
+		if (!SL_IsHashEntryEncodingValidNoReport(entry)
+			|| (entry.status_next & HASH_STAT_MASK) != HASH_STAT_FREE
 			|| entry.u.prev != previousIndex)
 		{
 			return false;
@@ -1360,11 +1567,14 @@ bool SL_IsFreeEntryReachableNoReport(
 		sl_freeListVisited[visitedByte] |= visitedBit;
 
 		const HashEntry &entry = scrStringGlob.hashTable[currentIndex];
-		if ((entry.status_next & HASH_STAT_MASK) != HASH_STAT_FREE)
+		if (!SL_IsHashEntryEncodingValidNoReport(entry)
+			|| (entry.status_next & HASH_STAT_MASK) != HASH_STAT_FREE)
 			return false;
 		const uint32_t nextIndex =
 			static_cast<uint16_t>(entry.status_next);
 		if (nextIndex >= STRINGLIST_SIZE || nextIndex == currentIndex
+			|| !SL_IsHashEntryEncodingValidNoReport(
+				scrStringGlob.hashTable[nextIndex])
 			|| (scrStringGlob.hashTable[nextIndex].status_next
 				& HASH_STAT_MASK) != HASH_STAT_FREE
 			|| scrStringGlob.hashTable[nextIndex].u.prev != currentIndex)
@@ -1375,10 +1585,16 @@ bool SL_IsFreeEntryReachableNoReport(
 		const uint32_t previousIndex = entry.u.prev;
 		if (previousIndex == 0)
 		{
-			return static_cast<uint16_t>(
-				scrStringGlob.hashTable[0].status_next) == currentIndex;
+			const HashEntry &sentinel = scrStringGlob.hashTable[0];
+			return SL_IsHashEntryEncodingValidNoReport(sentinel)
+				&& (sentinel.status_next & HASH_STAT_MASK)
+					== HASH_STAT_FREE
+				&& static_cast<uint16_t>(sentinel.status_next)
+					== currentIndex;
 		}
 		if (previousIndex >= STRINGLIST_SIZE
+			|| !SL_IsHashEntryEncodingValidNoReport(
+				scrStringGlob.hashTable[previousIndex])
 			|| (scrStringGlob.hashTable[previousIndex].status_next
 				& HASH_STAT_MASK) != HASH_STAT_FREE
 			|| static_cast<uint16_t>(
@@ -1392,13 +1608,24 @@ bool SL_IsFreeEntryReachableNoReport(
 	return false;
 }
 
-bool SL_IsInternHashStateValidNoReport(const uint32_t hash) noexcept
+bool SL_IsInternHashStateValidForScopeNoReport(
+	const uint32_t hash,
+	const SL_ValidationScope scope,
+	const bool validateFreeList) noexcept
 {
-	if (hash == 0 || hash >= STRINGLIST_SIZE
-		|| !SL_IsFreeListHeadValidNoReport())
+	if (hash == 0 || hash >= STRINGLIST_SIZE)
 		return false;
+	if (validateFreeList
+		&& !(scope == SL_ValidationScope::Complete
+			? SL_IsFreeListHeadValidNoReport()
+			: SL_IsFreeListLocallyValidNoReport()))
+	{
+		return false;
+	}
 
 	const HashEntry &home = scrStringGlob.hashTable[hash];
+	if (!SL_IsHashEntryEncodingValidNoReport(home))
+		return false;
 	const uint32_t homeStatus = home.status_next & HASH_STAT_MASK;
 	if (homeStatus == HASH_STAT_HEAD)
 	{
@@ -1416,9 +1643,10 @@ bool SL_IsInternHashStateValidNoReport(const uint32_t hash) noexcept
 			const HashEntry &entry = scrStringGlob.hashTable[entryIndex];
 			const uint32_t expectedStatus =
 				entryIndex == hash ? HASH_STAT_HEAD : HASH_STAT_MOVABLE;
-			if ((entry.status_next & HASH_STAT_MASK) != expectedStatus
-				|| !SL_IsAllocatedStringEntryValidNoReport(
-					entry.u.prev, hash, true)
+			if (!SL_IsHashEntryEncodingValidNoReport(entry)
+				|| (entry.status_next & HASH_STAT_MASK) != expectedStatus
+				|| !SL_IsAllocatedStringEntryValidForScopeNoReport(
+					entry.u.prev, hash, true, scope)
 				|| !SL_TryRecordStringIdNoReport(entry.u.prev))
 				return false;
 
@@ -1427,6 +1655,8 @@ bool SL_IsInternHashStateValidNoReport(const uint32_t hash) noexcept
 			if (nextIndex == hash)
 				return true;
 			if (nextIndex == 0 || nextIndex >= STRINGLIST_SIZE
+				|| !SL_IsHashEntryEncodingValidNoReport(
+					scrStringGlob.hashTable[nextIndex])
 				|| (scrStringGlob.hashTable[nextIndex].status_next
 					& HASH_STAT_MASK) != HASH_STAT_MOVABLE)
 				return false;
@@ -1438,10 +1668,12 @@ bool SL_IsInternHashStateValidNoReport(const uint32_t hash) noexcept
 	if (homeStatus == HASH_STAT_MOVABLE)
 	{
 		uint32_t owningHash = 0;
-		if (!SL_TryGetAllocatedStringHashNoReport(
-				home.u.prev, &owningHash)
+		if (!SL_TryGetAllocatedStringHashForScopeNoReport(
+				home.u.prev, &owningHash, scope)
 			|| owningHash == hash || owningHash == 0
 			|| owningHash >= STRINGLIST_SIZE
+			|| !SL_IsHashEntryEncodingValidNoReport(
+				scrStringGlob.hashTable[owningHash])
 			|| (scrStringGlob.hashTable[owningHash].status_next
 				& HASH_STAT_MASK) != HASH_STAT_HEAD)
 		{
@@ -1467,9 +1699,10 @@ bool SL_IsInternHashStateValidNoReport(const uint32_t hash) noexcept
 				entryIndex == owningHash
 				? HASH_STAT_HEAD
 				: HASH_STAT_MOVABLE;
-			if ((entry.status_next & HASH_STAT_MASK) != expectedStatus
-				|| !SL_IsAllocatedStringEntryValidNoReport(
-					entry.u.prev, owningHash, true)
+			if (!SL_IsHashEntryEncodingValidNoReport(entry)
+				|| (entry.status_next & HASH_STAT_MASK) != expectedStatus
+				|| !SL_IsAllocatedStringEntryValidForScopeNoReport(
+					entry.u.prev, owningHash, true, scope)
 				|| !SL_TryRecordStringIdNoReport(entry.u.prev))
 			{
 				return false;
@@ -1481,7 +1714,9 @@ bool SL_IsInternHashStateValidNoReport(const uint32_t hash) noexcept
 				static_cast<uint16_t>(entry.status_next);
 			if (nextIndex == owningHash)
 				return foundHome;
-			if (nextIndex == 0 || nextIndex >= STRINGLIST_SIZE)
+			if (nextIndex == 0 || nextIndex >= STRINGLIST_SIZE
+				|| !SL_IsHashEntryEncodingValidNoReport(
+					scrStringGlob.hashTable[nextIndex]))
 				return false;
 			entryIndex = nextIndex;
 		}
@@ -1490,11 +1725,24 @@ bool SL_IsInternHashStateValidNoReport(const uint32_t hash) noexcept
 
 	if (homeStatus != HASH_STAT_FREE)
 		return false;
-	if (!SL_IsFreeEntryReachableNoReport(hash))
+	if (!validateFreeList)
+		return true;
+	if (scope == SL_ValidationScope::Complete)
+	{
+		if (!SL_IsFreeEntryReachableNoReport(hash))
+			return false;
+	}
+	else if (!SL_IsFreeEntryLocallyLinkedNoReport(hash))
+	{
 		return false;
+	}
 	const uint32_t previousFree = home.u.prev;
 	const uint32_t nextFree = static_cast<uint16_t>(home.status_next);
 	return previousFree < STRINGLIST_SIZE && nextFree < STRINGLIST_SIZE
+		&& SL_IsHashEntryEncodingValidNoReport(
+			scrStringGlob.hashTable[previousFree])
+		&& SL_IsHashEntryEncodingValidNoReport(
+			scrStringGlob.hashTable[nextFree])
 		&& (scrStringGlob.hashTable[previousFree].status_next
 			& HASH_STAT_MASK) == HASH_STAT_FREE
 		&& (scrStringGlob.hashTable[nextFree].status_next
@@ -1504,15 +1752,187 @@ bool SL_IsInternHashStateValidNoReport(const uint32_t hash) noexcept
 		&& scrStringGlob.hashTable[nextFree].u.prev == hash;
 }
 
-bool SL_TryBuildUnlinkPlanNoReport(
+bool SL_IsInternHashStateValidNoReport(const uint32_t hash) noexcept
+{
+	return SL_IsInternHashStateValidForScopeNoReport(
+		hash, SL_ValidationScope::Complete, true);
+}
+
+bool SL_IsLegacyInternHashStateValidNoReport(const uint32_t hash) noexcept
+{
+	return SL_IsInternHashStateValidForScopeNoReport(
+		hash, SL_ValidationScope::LegacyLocal, true);
+}
+
+bool SL_IsLegacyLookupHashStateValidNoReport(const uint32_t hash) noexcept
+{
+	return SL_IsInternHashStateValidForScopeNoReport(
+		hash, SL_ValidationScope::LegacyLocal, false);
+}
+
+bool SL_IsCompleteSystemSweepStateValidNoReport() noexcept
+{
+	if (!scrStringGlob.inited || !MT_TryValidateState()
+		|| !SL_IsFreeListHeadValidNoReport())
+	{
+		return false;
+	}
+
+	if (!SL_IsHashEntryEncodingValidNoReport(scrStringGlob.hashTable[0]))
+		return false;
+	memset(sl_systemSweepHashEntries, 0,
+		sizeof(sl_systemSweepHashEntries));
+	memset(sl_systemSweepStringIds, 0, sizeof(sl_systemSweepStringIds));
+	uint64_t aggregateRefCount = 0;
+	for (uint32_t owningHash = 1;
+		owningHash < STRINGLIST_SIZE;
+		++owningHash)
+	{
+		if ((scrStringGlob.hashTable[owningHash].status_next & HASH_STAT_MASK)
+			!= HASH_STAT_HEAD)
+		{
+			continue;
+		}
+
+		uint32_t entryIndex = owningHash;
+		bool terminated = false;
+		for (uint32_t visited = 0; visited < STRINGLIST_SIZE; ++visited)
+		{
+			if (entryIndex == 0 || entryIndex >= STRINGLIST_SIZE)
+				return false;
+			const HashEntry &entry = scrStringGlob.hashTable[entryIndex];
+			const uint32_t expectedStatus = entryIndex == owningHash
+				? HASH_STAT_HEAD
+				: HASH_STAT_MOVABLE;
+			const uint32_t entryByte = entryIndex >> 3;
+			const uint8_t entryMask =
+				static_cast<uint8_t>(1u << (entryIndex & 7u));
+			if (!SL_IsHashEntryEncodingValidNoReport(entry)
+				|| (entry.status_next & HASH_STAT_MASK) != expectedStatus
+				|| (sl_freeListVisited[entryByte] & entryMask) != 0
+				|| (sl_systemSweepHashEntries[entryByte] & entryMask) != 0)
+			{
+				return false;
+			}
+			sl_systemSweepHashEntries[entryByte] |= entryMask;
+
+			const uint32_t stringValue = entry.u.prev;
+			if (!script_string::IsCurrentRuntimeStringId(stringValue))
+				return false;
+			const uint32_t stringByte = stringValue >> 3;
+			const uint8_t stringMask =
+				static_cast<uint8_t>(1u << (stringValue & 7u));
+			if ((sl_systemSweepStringIds[stringByte] & stringMask) != 0)
+				return false;
+			sl_systemSweepStringIds[stringByte] |= stringMask;
+
+			RefString* refString = nullptr;
+			uint32_t byteCount = 0;
+			if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+					stringValue,
+					&refString,
+					&byteCount,
+					SL_ValidationScope::LegacyLocal)
+				|| GetHashCode(refString->str, byteCount) != owningHash)
+			{
+				return false;
+			}
+			const uint32_t packed =
+				scr_string_atomic::Load(SL_RefStringWord(refString));
+			aggregateRefCount += scr_string_atomic::RefCount(packed);
+			if (aggregateRefCount > UINT32_MAX)
+				return false;
+
+			const uint32_t nextIndex =
+				static_cast<uint16_t>(entry.status_next);
+			if (nextIndex == owningHash)
+			{
+				terminated = true;
+				break;
+			}
+			if (nextIndex == 0 || nextIndex >= STRINGLIST_SIZE
+				|| (scrStringGlob.hashTable[nextIndex].status_next
+					& HASH_STAT_MASK) != HASH_STAT_MOVABLE)
+			{
+				return false;
+			}
+			entryIndex = nextIndex;
+		}
+		if (!terminated)
+			return false;
+	}
+
+	for (uint32_t hash = 1; hash < STRINGLIST_SIZE; ++hash)
+	{
+		const HashEntry &entry = scrStringGlob.hashTable[hash];
+		if (!SL_IsHashEntryEncodingValidNoReport(entry))
+			return false;
+		const uint32_t status = entry.status_next & HASH_STAT_MASK;
+		const uint8_t mask = static_cast<uint8_t>(1u << (hash & 7u));
+		const bool reachableFree =
+			(sl_freeListVisited[hash >> 3] & mask) != 0;
+		const bool reachableOccupied =
+			(sl_systemSweepHashEntries[hash >> 3] & mask) != 0;
+		if (status == HASH_STAT_FREE)
+		{
+			if (!reachableFree || reachableOccupied)
+				return false;
+		}
+		else if (status == HASH_STAT_HEAD || status == HASH_STAT_MOVABLE)
+		{
+			if (reachableFree || !reachableOccupied)
+				return false;
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	if (!scrStringDebugGlob)
+		return true;
+	if (Sys_AtomicLoad(&scrStringDebugGlob->totalRefCount)
+		!= static_cast<uint32_t>(aggregateRefCount))
+	{
+		return false;
+	}
+	for (uint32_t stringValue = 0;
+		stringValue < SL_MAX_STRING_INDEX;
+		++stringValue)
+	{
+		const uint8_t visitedMask =
+			static_cast<uint8_t>(1u << (stringValue & 7u));
+		if ((sl_systemSweepStringIds[stringValue >> 3] & visitedMask) == 0
+			&& SL_DebugRefCount(stringValue) != 0)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool SL_TryBuildUnlinkPlanForScopeNoReport(
 	const uint32_t stringValue,
 	RefString* const refString,
 	const uint32_t byteCount,
-	SL_UnlinkPlan* const outPlan) noexcept
+	SL_UnlinkPlan* const outPlan,
+	const SL_ValidationScope scope) noexcept
 {
 	if (!refString || !outPlan || byteCount == 0
 		|| byteCount > UINT32_C(65531))
 		return false;
+	MT_AllocationInfo targetAllocation{};
+	const MT_AllocationInfoStatus targetStatus =
+		scope == SL_ValidationScope::Complete
+		? MT_TryGetAllocationInfo(stringValue, &targetAllocation)
+		: MT_TryGetAllocationInfoLegacy(stringValue, &targetAllocation);
+	if (targetStatus != MT_AllocationInfoStatus::Success
+		|| refString != SL_GetRefStringNoReport(stringValue)
+		|| !SL_IsExactStringAllocationNoReport(
+			targetAllocation, byteCount))
+	{
+		return false;
+	}
 
 	const uint32_t hash = GetHashCode(refString->str, byteCount);
 	if (hash == 0 || hash >= STRINGLIST_SIZE)
@@ -1537,9 +1957,12 @@ bool SL_TryBuildUnlinkPlanNoReport(
 		const HashEntry* const entry = &scrStringGlob.hashTable[entryIndex];
 		const uint32_t expectedStatus =
 			entryIndex == hash ? HASH_STAT_HEAD : HASH_STAT_MOVABLE;
-		if ((entry->status_next & HASH_STAT_MASK) != expectedStatus
-			|| !SL_IsAllocatedStringEntryValidNoReport(
-				entry->u.prev, hash, true)
+		const bool isTarget = entry->u.prev == stringValue;
+		if (!SL_IsHashEntryEncodingValidNoReport(*entry)
+			|| (entry->status_next & HASH_STAT_MASK) != expectedStatus
+			|| (!isTarget
+				&& !SL_IsAllocatedStringEntryValidForScopeNoReport(
+					entry->u.prev, hash, true, scope))
 			|| !SL_TryRecordStringIdNoReport(entry->u.prev))
 			return false;
 
@@ -1547,13 +1970,15 @@ bool SL_TryBuildUnlinkPlanNoReport(
 			static_cast<uint16_t>(entry->status_next);
 		if (nextIndex != hash
 			&& (nextIndex == 0 || nextIndex >= STRINGLIST_SIZE
+				|| !SL_IsHashEntryEncodingValidNoReport(
+					scrStringGlob.hashTable[nextIndex])
 				|| (scrStringGlob.hashTable[nextIndex].status_next
 					& HASH_STAT_MASK) != HASH_STAT_MOVABLE))
 		{
 			return false;
 		}
 
-		if (entry->u.prev == stringValue)
+		if (isTarget)
 		{
 			if (foundTarget)
 				return false;
@@ -1574,13 +1999,29 @@ bool SL_TryBuildUnlinkPlanNoReport(
 	if (!foundTarget || !terminated)
 		return false;
 
-	if (!SL_IsFreeListHeadValidNoReport())
+	if (!(scope == SL_ValidationScope::Complete
+		? SL_IsFreeListHeadValidNoReport()
+		: SL_IsFreeListLocallyValidNoReport()))
 		return false;
 	plan.freeHead =
 		static_cast<uint16_t>(scrStringGlob.hashTable[0].status_next);
 
 	*outPlan = plan;
 	return true;
+}
+
+bool SL_TryBuildUnlinkPlanNoReport(
+	const uint32_t stringValue,
+	RefString* const refString,
+	const uint32_t byteCount,
+	SL_UnlinkPlan* const outPlan) noexcept
+{
+	return SL_TryBuildUnlinkPlanForScopeNoReport(
+		stringValue,
+		refString,
+		byteCount,
+		outPlan,
+		SL_ValidationScope::Complete);
 }
 
 SL_ResolveStatus SL_TryResolveLiveStringNoReport(
@@ -1641,24 +2082,8 @@ void SL_DebugRemoveRefNoReport(const uint32_t stringValue) noexcept
 
 }
 
-bool SL_TryFreeResolvedStringNoReport(
-	const uint32_t stringValue,
-	const SL_LiveStringInfo &info) noexcept
+void SL_CommitUnlinkPlanNoReport(const SL_UnlinkPlan &plan) noexcept
 {
-	const uint32_t packed =
-		scr_string_atomic::Load(SL_RefStringWord(info.refString));
-	if (scr_string_atomic::RefCount(packed) != 0
-		|| scr_string_atomic::User(packed) != 0
-		|| !SL_IsDebugOwnershipExactNoReport(stringValue, packed)
-		|| MT_TryFreeIndex(
-			stringValue,
-			static_cast<int>(info.byteCount + kRefStringHeaderSize))
-			!= MT_FreeIndexStatus::Success)
-	{
-		return false;
-	}
-
-	const SL_UnlinkPlan &plan = info.unlink;
 	uint32_t freedIndex = plan.targetIndex;
 	if (plan.targetIndex == plan.hash)
 	{
@@ -1689,9 +2114,157 @@ bool SL_TryFreeResolvedStringNoReport(
 	freedEntry.u.prev = 0;
 	scrStringGlob.hashTable[plan.freeHead].u.prev = freedIndex;
 	scrStringGlob.hashTable[0].status_next = freedIndex;
+}
+
+bool SL_TryFreeSystemSweepEntryNoReport(
+	const uint32_t owningHash,
+	const uint32_t targetIndex,
+	const uint32_t previousIndex,
+	const uint32_t stringValue,
+	RefString* const refString,
+	const uint32_t byteCount) noexcept
+{
+	if (owningHash == 0 || owningHash >= STRINGLIST_SIZE
+		|| targetIndex == 0 || targetIndex >= STRINGLIST_SIZE
+		|| previousIndex == 0 || previousIndex >= STRINGLIST_SIZE
+		|| !refString || byteCount == 0
+		|| !SL_IsFreeListLocallyValidNoReport())
+	{
+		return false;
+	}
+
+	MT_AllocationInfo allocationInfo{};
+	if (MT_TryGetAllocationInfoLegacy(stringValue, &allocationInfo)
+			!= MT_AllocationInfoStatus::Success
+		|| refString != SL_GetRefStringNoReport(stringValue)
+		|| !SL_IsExactStringAllocationNoReport(allocationInfo, byteCount)
+		|| GetHashCode(refString->str, byteCount) != owningHash)
+	{
+		return false;
+	}
+	const uint32_t packed =
+		scr_string_atomic::Load(SL_RefStringWord(refString));
+	if (scr_string_atomic::RefCount(packed) != 0
+		|| scr_string_atomic::User(packed) != 0
+		|| !SL_IsDebugOwnershipExactNoReport(stringValue, packed))
+	{
+		return false;
+	}
+
+	const HashEntry &target = scrStringGlob.hashTable[targetIndex];
+	const uint32_t expectedStatus = targetIndex == owningHash
+		? HASH_STAT_HEAD
+		: HASH_STAT_MOVABLE;
+	const uint32_t nextIndex = static_cast<uint16_t>(target.status_next);
+	if (!SL_IsHashEntryEncodingValidNoReport(target)
+		|| (target.status_next & HASH_STAT_MASK) != expectedStatus
+		|| target.u.prev != stringValue
+		|| (targetIndex == owningHash && previousIndex != owningHash)
+		|| (targetIndex != owningHash
+			&& (!SL_IsHashEntryEncodingValidNoReport(
+				scrStringGlob.hashTable[previousIndex])
+				|| static_cast<uint16_t>(
+					scrStringGlob.hashTable[previousIndex].status_next)
+				!= targetIndex
+				|| (scrStringGlob.hashTable[previousIndex].status_next
+					& HASH_STAT_MASK)
+					!= (previousIndex == owningHash
+						? HASH_STAT_HEAD
+						: HASH_STAT_MOVABLE)))
+		|| (nextIndex != owningHash
+			&& (nextIndex == 0 || nextIndex >= STRINGLIST_SIZE
+				|| !SL_IsHashEntryEncodingValidNoReport(
+					scrStringGlob.hashTable[nextIndex])
+				|| (scrStringGlob.hashTable[nextIndex].status_next
+					& HASH_STAT_MASK) != HASH_STAT_MOVABLE)))
+	{
+		return false;
+	}
+
+	SL_UnlinkPlan plan{};
+	plan.hash = owningHash;
+	plan.targetIndex = targetIndex;
+	plan.previousIndex = previousIndex;
+	plan.nextIndex = nextIndex;
+	plan.freeHead =
+		static_cast<uint16_t>(scrStringGlob.hashTable[0].status_next);
+	if (MT_TryFreeIndexLegacy(
+			stringValue,
+			static_cast<int>(byteCount + kRefStringHeaderSize))
+		!= MT_FreeIndexStatus::Success)
+	{
+		return false;
+	}
+
+	SL_CommitUnlinkPlanNoReport(plan);
+	scrStringGlob.nextFreeEntry = nullptr;
+	return true;
+}
+
+bool SL_TryFreeResolvedStringNoReport(
+	const uint32_t stringValue,
+	const SL_LiveStringInfo &info) noexcept
+{
+	const uint32_t packed =
+		scr_string_atomic::Load(SL_RefStringWord(info.refString));
+	if (scr_string_atomic::RefCount(packed) != 0
+		|| scr_string_atomic::User(packed) != 0
+		|| !SL_IsDebugOwnershipExactNoReport(stringValue, packed)
+		|| MT_TryFreeIndex(
+			stringValue,
+			static_cast<int>(info.byteCount + kRefStringHeaderSize))
+			!= MT_FreeIndexStatus::Success)
+	{
+		return false;
+	}
+
+	SL_CommitUnlinkPlanNoReport(info.unlink);
 	return true;
 }
 } // namespace
+
+static bool SL_FreeString(
+	const uint32_t stringValue,
+	RefString* const refString,
+	const uint32_t byteCount)
+{
+	PROF_SCOPED("SL_FreeString");
+
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	const uint32_t packed =
+		scr_string_atomic::Load(SL_RefStringWord(refString));
+	if (scr_string_atomic::RefCount(packed) != 0)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return true;
+	}
+	if (scr_string_atomic::User(packed) != 0
+		|| !SL_IsDebugOwnershipExactNoReport(stringValue, packed))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return false;
+	}
+
+	SL_UnlinkPlan unlink{};
+	if (!SL_TryBuildUnlinkPlanForScopeNoReport(
+			stringValue,
+			refString,
+			byteCount,
+			&unlink,
+			SL_ValidationScope::LegacyLocal)
+		|| MT_TryFreeIndexLegacy(
+			stringValue,
+			static_cast<int>(byteCount + kRefStringHeaderSize))
+			!= MT_FreeIndexStatus::Success)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return false;
+	}
+
+	SL_CommitUnlinkPlanNoReport(unlink);
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return true;
+}
 
 namespace script_string
 {
@@ -1954,6 +2527,14 @@ void SL_RemoveRefToStringOfSize(uint32_t stringValue, uint32_t len)
 			> SL_UserReferenceCount(scr_string_atomic::User(packed)));
 		return;
 	}
+	const bool debugOwnershipExact =
+		SL_IsDebugOwnershipExactNoReport(stringValue, packed);
+	if (!debugOwnershipExact)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		iassert(debugOwnershipExact);
+		return;
+	}
 
 	const scr_string_atomic::RemoveRefResult result =
 		scr_string_atomic::TryRemoveRef(SL_RefStringWord(refStr));
@@ -1966,9 +2547,17 @@ void SL_RemoveRefToStringOfSize(uint32_t stringValue, uint32_t len)
 
 	// Account the old owner before a zero transition can return the memory-tree
 	// slot to the allocator and let a new string reuse the same debug index.
-	SL_DebugRemoveRef(stringValue);
+	SL_DebugRemoveRefNoReport(stringValue);
 	const bool validFree =
 		!result.reachedZero || SL_FreeString(stringValue, refStr, len);
+	if (!validFree)
+	{
+		// SL_FreeString rejects before mutation unless both allocator free and
+		// hash unlink can commit. Roll back the preceding ownership transition
+		// while this outer script-string lock still makes the entry exclusive.
+		Sys_AtomicStore(SL_RefStringWord(refStr), packed);
+		SL_DebugAddRefNoReport(stringValue);
+	}
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	(void)validFree;
 	iassert(validFree);

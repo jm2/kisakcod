@@ -1,6 +1,7 @@
 #include <script/scr_stringlist.cpp>
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -17,6 +18,7 @@ thread_local std::uint32_t g_scriptStringLockDepth = 0;
 thread_local std::uint32_t g_memoryTreeLockDepth = 0;
 std::uint32_t g_comErrorCount = 0;
 std::uint32_t g_assertCount = 0;
+bool g_reporterSawOwnedLock = false;
 
 struct StateImage final
 {
@@ -84,7 +86,8 @@ struct StateImage final
 
 [[nodiscard]] bool ReportersUnused() noexcept
 {
-    return g_comErrorCount == 0 && g_assertCount == 0;
+    return g_comErrorCount == 0 && g_assertCount == 0
+        && !g_reporterSawOwnedLock;
 }
 
 [[nodiscard]] std::uint32_t Packed(const std::uint32_t stringId) noexcept
@@ -148,6 +151,7 @@ struct StateImage final
 {
     g_comErrorCount = 0;
     g_assertCount = 0;
+    g_reporterSawOwnedLock = false;
     if (!Check(!scrStringGlob.inited, "test began with string table initialized")
         || !Check(scrStringDebugGlob == nullptr,
             "test began with leak checking initialized"))
@@ -158,6 +162,8 @@ struct StateImage final
     return Check(scrStringGlob.inited, "SL_Init did not initialize string table")
         && Check(scrStringDebugGlob != nullptr,
             "SL_Init did not initialize debug accounting")
+        && Check(scrStringGlob.nextFreeEntry == nullptr,
+            "SL_Init retained stale hash-iteration state")
         && Check(LocksReleased(), "SL_Init leaked a critical section")
         && Check(ReportersUnused(), "SL_Init reported an unexpected error");
 }
@@ -581,6 +587,899 @@ struct StateImage final
     return EndTest();
 }
 
+[[nodiscard]] bool TestLegacyFreeListSpliceBoundaries() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char firstValue[] = "AAA";
+    constexpr char collidingValue[] = "UZE";
+    constexpr std::uint32_t firstByteCount =
+        static_cast<std::uint32_t>(sizeof(firstValue));
+    constexpr std::uint32_t collidingByteCount =
+        static_cast<std::uint32_t>(sizeof(collidingValue));
+    if (!Check(GetHashCode(firstValue, firstByteCount)
+                == GetHashCode(collidingValue, collidingByteCount),
+            "legacy splice fixture strings no longer collide"))
+    {
+        return false;
+    }
+
+    const std::uint32_t firstId = SL_GetStringOfSize(
+        firstValue, 0, firstByteCount, 15);
+    if (!Check(firstId != 0,
+            "legacy splice fixture first intern failed"))
+    {
+        return false;
+    }
+
+    const std::uint32_t freeHead = static_cast<std::uint16_t>(
+        scrStringGlob.hashTable[0].status_next);
+    const std::uint32_t freeHeadNext = static_cast<std::uint16_t>(
+        scrStringGlob.hashTable[freeHead].status_next);
+    if (!Check(freeHead != 0 && freeHead < STRINGLIST_SIZE
+            && freeHeadNext != 0 && freeHeadNext < STRINGLIST_SIZE,
+            "legacy splice fixture lacks adjacent free entries"))
+    {
+        return false;
+    }
+
+    const std::uint32_t savedHeadNextPrevious =
+        scrStringGlob.hashTable[freeHeadNext].u.prev;
+    scrStringGlob.hashTable[freeHeadNext].u.prev = 0;
+    const StateImage corruptConsumeHead = CaptureState();
+    const std::uint32_t corruptConsumeResult = SL_GetStringOfSize(
+        collidingValue, 0, collidingByteCount, 15);
+    if (!Check(corruptConsumeResult == 0,
+            "legacy collision intern trusted a corrupt head neighbor")
+        || !Check(StateMatches(corruptConsumeHead),
+            "legacy corrupt-head consumption changed state")
+        || !Check(g_comErrorCount == 1 && g_assertCount == 0,
+            "legacy corrupt-head consumption reported unexpectedly")
+        || !Check(!g_reporterSawOwnedLock && LocksReleased(),
+            "legacy corrupt-head reporter retained a lock"))
+    {
+        return false;
+    }
+    scrStringGlob.hashTable[freeHeadNext].u.prev = savedHeadNextPrevious;
+    g_comErrorCount = 0;
+    g_assertCount = 0;
+
+    const std::uint32_t collidingId = SL_GetStringOfSize(
+        collidingValue, 0, collidingByteCount, 15);
+    if (!Check(collidingId != 0 && collidingId != firstId,
+            "legacy collision intern did not allocate a distinct string")
+        || !Check(static_cast<std::uint16_t>(
+                scrStringGlob.hashTable[0].status_next) == freeHeadNext,
+            "legacy collision intern did not consume the free-list head")
+        || !Check(scrStringGlob.hashTable[freeHeadNext].u.prev == 0,
+            "legacy collision intern did not repair the new head backlink"))
+    {
+        return false;
+    }
+
+    const std::uint32_t releaseHead = static_cast<std::uint16_t>(
+        scrStringGlob.hashTable[0].status_next);
+    const HashEntry savedReleaseHead = scrStringGlob.hashTable[releaseHead];
+    scrStringGlob.hashTable[releaseHead].u.prev = releaseHead;
+    const StateImage corruptPrepend = CaptureState();
+    SL_RemoveRefToStringOfSize(collidingId, collidingByteCount);
+    if (!Check(g_comErrorCount == 0 && g_assertCount <= 1,
+            "legacy corrupt prepend reported unexpectedly")
+        || !Check(!g_reporterSawOwnedLock && LocksReleased(),
+            "legacy corrupt-prepend reporter retained a lock")
+        || !Check(StateMatches(corruptPrepend),
+            "legacy failed prepend did not restore exact ownership state")
+        || !Check(scr_string_atomic::RefCount(Packed(collidingId)) == 1,
+            "legacy failed prepend stranded a zero-reference string")
+        || !Check(static_cast<std::uint16_t>(
+                scrStringGlob.hashTable[0].status_next) == releaseHead,
+            "legacy failed prepend published a new free head")
+        || !Check(scrStringGlob.hashTable[releaseHead].u.prev == releaseHead,
+            "legacy failed prepend changed the corrupt neighbor"))
+    {
+        return false;
+    }
+    scrStringGlob.hashTable[releaseHead] = savedReleaseHead;
+    g_comErrorCount = 0;
+    g_assertCount = 0;
+
+    if (!CheckOwnership(collidingId, 1, 0,
+            static_cast<std::uint8_t>(collidingByteCount), 2,
+            "legacy failed-prepend recovery changed ownership"))
+    {
+        return false;
+    }
+
+    SL_RemoveRefToStringOfSize(collidingId, collidingByteCount);
+    if (!CheckFreed(collidingId)
+        || !Check(static_cast<std::uint16_t>(
+                scrStringGlob.hashTable[0].status_next) == freeHead,
+            "legacy final release did not prepend the consumed entry")
+        || !Check(static_cast<std::uint16_t>(
+                scrStringGlob.hashTable[freeHead].status_next) == releaseHead,
+            "legacy final release did not link the previous head")
+        || !Check(scrStringGlob.hashTable[releaseHead].u.prev == freeHead,
+            "legacy final release did not update the head neighbor"))
+    {
+        return false;
+    }
+
+    SL_RemoveRefToStringOfSize(firstId, firstByteCount);
+    return EndTest();
+}
+
+[[nodiscard]] bool TestLegacyEmptyAndOneNodeFreeList() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char firstValue[] = "AAA";
+    constexpr char collidingValue[] = "UZE";
+    constexpr std::uint32_t byteCount =
+        static_cast<std::uint32_t>(sizeof(firstValue));
+    static_assert(sizeof(firstValue) == sizeof(collidingValue));
+    if (!Check(GetHashCode(firstValue, byteCount)
+                == GetHashCode(collidingValue, byteCount),
+            "legacy endpoint fixture strings no longer collide"))
+    {
+        return false;
+    }
+
+    const std::uint32_t firstId = SL_GetStringOfSize(
+        firstValue, 0, byteCount, 15);
+    const std::uint32_t freeEntry = static_cast<std::uint16_t>(
+        scrStringGlob.hashTable[0].status_next);
+    if (!Check(firstId != 0 && freeEntry != 0,
+            "legacy endpoint fixture setup failed"))
+    {
+        return false;
+    }
+
+    // Isolate the endpoint nodes without populating all 19,999 hash slots.
+    // LegacyLocal deliberately validates only the list component it mutates;
+    // this fixture exercises the exact one-node consume and empty prepend.
+    scrStringGlob.hashTable[0].status_next =
+        static_cast<std::uint16_t>(freeEntry) | HASH_STAT_FREE;
+    scrStringGlob.hashTable[0].u.prev = freeEntry;
+    scrStringGlob.hashTable[freeEntry].status_next = HASH_STAT_FREE;
+    scrStringGlob.hashTable[freeEntry].u.prev = 0;
+    if (!Check(SL_IsFreeListLocallyValidNoReport(),
+            "legacy isolated one-node list failed local validation"))
+    {
+        return false;
+    }
+
+    const std::uint32_t collidingId = SL_GetStringOfSize(
+        collidingValue, 0, byteCount, 15);
+    std::memset(sl_freeListVisited, 0xA5, sizeof(sl_freeListVisited));
+    const bool completeEmptyListValid =
+        SL_IsFreeListHeadValidNoReport();
+    bool emptyListScratchCleared = true;
+    for (const std::uint8_t value : sl_freeListVisited)
+        emptyListScratchCleared = emptyListScratchCleared && value == 0;
+    if (!Check(collidingId != 0,
+            "legacy one-node consumption failed")
+        || !Check(static_cast<std::uint16_t>(
+                scrStringGlob.hashTable[0].status_next) == 0
+            && scrStringGlob.hashTable[0].u.prev == 0,
+            "legacy one-node consumption did not empty the list")
+        || !Check(completeEmptyListValid,
+            "complete empty free list failed validation")
+        || !Check(emptyListScratchCleared,
+            "complete empty free list retained stale reachability bits")
+        || !Check(SL_IsFreeListLocallyValidNoReport(),
+            "legacy empty list failed local validation"))
+    {
+        return false;
+    }
+
+    SL_RemoveRefToStringOfSize(collidingId, byteCount);
+    const std::uint32_t restoredEntry = static_cast<std::uint16_t>(
+        scrStringGlob.hashTable[0].status_next);
+    if (!Check(restoredEntry == freeEntry
+            && scrStringGlob.hashTable[0].u.prev == restoredEntry,
+            "legacy empty-list prepend did not restore both endpoints")
+        || !Check(scrStringGlob.hashTable[restoredEntry].u.prev == 0
+            && static_cast<std::uint16_t>(
+                scrStringGlob.hashTable[restoredEntry].status_next) == 0,
+            "legacy empty-list prepend did not form one node")
+        || !Check(SL_IsFreeListLocallyValidNoReport(),
+            "legacy restored one-node list failed local validation"))
+    {
+        return false;
+    }
+
+    SL_RemoveRefToStringOfSize(firstId, byteCount);
+    if (!Check(ReportersUnused(),
+            "legacy endpoint boundary invoked a reporter"))
+    {
+        return false;
+    }
+    return EndTest();
+}
+
+[[nodiscard]] bool TestShutdownStaleIterationRollback() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char value[] = "shutdown-stale-iteration";
+    constexpr std::uint32_t byteCount =
+        static_cast<std::uint32_t>(sizeof(value));
+    const std::uint32_t stringId = SL_GetStringOfSize(
+        value, 4, byteCount, 15);
+    if (!Check(stringId != 0,
+            "shutdown stale-iteration fixture intern failed"))
+    {
+        return false;
+    }
+
+    const std::uint32_t hash = GetHashCode(value, byteCount);
+    const std::uint32_t freeHead = static_cast<std::uint16_t>(
+        scrStringGlob.hashTable[0].status_next);
+    if (!Check(freeHead != 0 && freeHead < STRINGLIST_SIZE,
+            "shutdown stale-iteration fixture has no free head"))
+    {
+        return false;
+    }
+
+    const HashEntry savedFreeHead = scrStringGlob.hashTable[freeHead];
+    scrStringGlob.hashTable[freeHead].u.prev = freeHead;
+    // Model the non-null iteration marker left after moving a collision-chain
+    // entry into its home slot. A failed release must restore this marker but
+    // still terminate the do/while instead of retrying forever.
+    scrStringGlob.nextFreeEntry = &scrStringGlob.hashTable[hash];
+    const StateImage corruptState = CaptureState();
+    SL_ShutdownSystem(4);
+
+    if (!Check(g_comErrorCount == 1 && g_assertCount == 0,
+            "stale-iteration shutdown rollback reported unexpectedly")
+        || !Check(!g_reporterSawOwnedLock && LocksReleased(),
+            "stale-iteration shutdown reporter retained a lock")
+        || !Check(StateMatches(corruptState),
+            "stale-iteration shutdown did not restore exact state"))
+    {
+        return false;
+    }
+
+    scrStringGlob.hashTable[freeHead] = savedFreeHead;
+    g_comErrorCount = 0;
+    g_assertCount = 0;
+    SL_ShutdownSystem(4);
+    if (!CheckFreed(stringId)
+        || !Check(scrStringGlob.nextFreeEntry == nullptr,
+            "successful shutdown retained stale iteration state")
+        || !Check(ReportersUnused(),
+            "stale-iteration shutdown cleanup invoked a reporter"))
+    {
+        return false;
+    }
+    return EndTest();
+}
+
+[[nodiscard]] bool TestSystemIterationAuthenticatesPhysicalEntries() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char firstValue[] = "system-physical-entry-alpha";
+    constexpr char secondValue[] = "system-physical-entry-beta";
+    constexpr std::uint32_t firstByteCount =
+        static_cast<std::uint32_t>(sizeof(firstValue));
+    constexpr std::uint32_t secondByteCount =
+        static_cast<std::uint32_t>(sizeof(secondValue));
+    const std::uint32_t firstHash = GetHashCode(firstValue, firstByteCount);
+    const std::uint32_t secondHash = GetHashCode(secondValue, secondByteCount);
+    if (!Check(firstHash != secondHash,
+            "physical-entry fixture strings unexpectedly collided"))
+    {
+        return false;
+    }
+
+    const std::uint32_t firstId = SL_GetStringOfSize(
+        firstValue, 4, firstByteCount, 15);
+    const std::uint32_t secondId = SL_GetStringOfSize(
+        secondValue, 4, secondByteCount, 15);
+    if (!Check(firstId != 0 && secondId != 0,
+            "physical-entry fixture intern failed"))
+    {
+        return false;
+    }
+    SL_AddUser(firstId, 8);
+    if (!CheckOwnership(firstId, 2, 12,
+            static_cast<std::uint8_t>(firstByteCount), 3,
+            "physical-entry duplicate-user setup failed")
+        || !CheckOwnership(secondId, 1, 4,
+            static_cast<std::uint8_t>(secondByteCount), 3,
+            "physical-entry transfer-user setup failed"))
+    {
+        return false;
+    }
+
+    const std::uint32_t forgedHash =
+        firstHash > secondHash ? firstHash : secondHash;
+    const std::uint32_t victimId =
+        firstHash > secondHash ? secondId : firstId;
+    const HashEntry savedEntry = scrStringGlob.hashTable[forgedHash];
+    if (!Check((savedEntry.status_next & HASH_STAT_MASK) == HASH_STAT_HEAD,
+            "physical-entry fixture has no home entry"))
+    {
+        return false;
+    }
+
+    scrStringGlob.hashTable[forgedHash].u.prev = victimId;
+    const StateImage corruptShutdown = CaptureState();
+    SL_ShutdownSystem(4);
+    if (!Check(g_comErrorCount == 1 && g_assertCount == 0,
+            "forged shutdown entry did not report exactly once")
+        || !Check(!g_reporterSawOwnedLock && LocksReleased(),
+            "forged shutdown entry reported under an owned lock")
+        || !Check(StateMatches(corruptShutdown),
+            "forged shutdown entry changed ownership state"))
+    {
+        return false;
+    }
+
+    scrStringGlob.hashTable[forgedHash] = savedEntry;
+    g_comErrorCount = 0;
+    g_assertCount = 0;
+    g_reporterSawOwnedLock = false;
+
+    Sys_AtomicDecrement(&scrStringDebugGlob->refCount[firstId]);
+    Sys_AtomicIncrement(&scrStringDebugGlob->refCount[secondId]);
+    const StateImage corruptPerIdDebug = CaptureState();
+    SL_TransferSystem(4, 8);
+    if (!Check(g_comErrorCount == 1 && g_assertCount == 0,
+            "per-ID debug corruption did not report exactly once")
+        || !Check(!g_reporterSawOwnedLock && LocksReleased(),
+            "per-ID debug corruption reported under an owned lock")
+        || !Check(StateMatches(corruptPerIdDebug),
+            "per-ID debug corruption changed ownership state"))
+    {
+        return false;
+    }
+    Sys_AtomicIncrement(&scrStringDebugGlob->refCount[firstId]);
+    Sys_AtomicDecrement(&scrStringDebugGlob->refCount[secondId]);
+    g_comErrorCount = 0;
+    g_assertCount = 0;
+    g_reporterSawOwnedLock = false;
+
+    Sys_AtomicIncrement(&scrStringDebugGlob->totalRefCount);
+    const StateImage corruptAggregate = CaptureState();
+    SL_TransferSystem(4, 8);
+    if (!Check(g_comErrorCount == 1 && g_assertCount == 0,
+            "aggregate debug corruption did not report exactly once")
+        || !Check(!g_reporterSawOwnedLock && LocksReleased(),
+            "aggregate debug corruption reported under an owned lock")
+        || !Check(StateMatches(corruptAggregate),
+            "aggregate debug corruption changed ownership state"))
+    {
+        return false;
+    }
+    Sys_AtomicDecrement(&scrStringDebugGlob->totalRefCount);
+    g_comErrorCount = 0;
+    g_assertCount = 0;
+    g_reporterSawOwnedLock = false;
+
+    scrStringGlob.hashTable[forgedHash].u.prev = victimId;
+    const StateImage corruptTransfer = CaptureState();
+    SL_TransferSystem(4, 8);
+    if (!Check(g_comErrorCount == 1 && g_assertCount == 0,
+            "forged transfer entry did not report exactly once")
+        || !Check(!g_reporterSawOwnedLock && LocksReleased(),
+            "forged transfer entry reported under an owned lock")
+        || !Check(StateMatches(corruptTransfer),
+            "forged transfer entry changed ownership state"))
+    {
+        return false;
+    }
+
+    scrStringGlob.hashTable[forgedHash] = savedEntry;
+    g_comErrorCount = 0;
+    g_assertCount = 0;
+    g_reporterSawOwnedLock = false;
+
+    SL_TransferSystem(4, 8);
+    if (!CheckOwnership(firstId, 1, 8,
+            static_cast<std::uint8_t>(firstByteCount), 2,
+            "physical-entry first transfer cleanup failed")
+        || !CheckOwnership(secondId, 1, 8,
+            static_cast<std::uint8_t>(secondByteCount), 2,
+            "physical-entry second transfer cleanup failed")
+        || !Check(ReportersUnused(),
+            "valid physical-entry transfer invoked a reporter"))
+    {
+        return false;
+    }
+
+    SL_ShutdownSystem(8);
+    if (!CheckFreed(firstId) || !CheckFreed(secondId)
+        || !Check(ReportersUnused(),
+            "physical-entry cleanup invoked a reporter"))
+    {
+        return false;
+    }
+    return EndTest();
+}
+
+[[nodiscard]] bool TestShutdownMixedCollisionChain() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    // GetHashCode deliberately hashes records of at least 256 bytes by length.
+    // Insert in this order so the final value is the HEAD and the preceding
+    // values occupy MOVABLE slots in reverse order. Shutdown must then free the
+    // head, promote the mixed-user value, skip the absent-user value, and
+    // splice the final user-4-only movable value without skipping/revisiting a
+    // chain member.
+    constexpr std::size_t valueCount = 4;
+    constexpr std::uint32_t byteCount = 260;
+    std::array<std::array<char, byteCount>, valueCount> values{};
+    std::array<std::uint32_t, valueCount> ids{};
+    for (std::size_t index = 0; index < valueCount; ++index)
+    {
+        values[index].fill(static_cast<char>('a' + index));
+        values[index].back() = '\0';
+    }
+    const std::uint32_t owningHash =
+        GetHashCode(values[0].data(), byteCount);
+    for (std::size_t index = 0; index < valueCount; ++index)
+    {
+        if (!Check(GetHashCode(values[index].data(), byteCount) == owningHash,
+                "mixed collision fixture hash changed"))
+        {
+            return false;
+        }
+        const std::uint32_t user = index == 1 ? 8 : 4;
+        ids[index] = SL_GetStringOfSize(
+            values[index].data(), user, byteCount, 15);
+        if (!Check(ids[index] != 0,
+                "mixed collision fixture intern failed"))
+        {
+            return false;
+        }
+    }
+    SL_AddUser(ids[2], 8);
+
+    if (!Check(scrStringGlob.hashTable[owningHash].u.prev == ids[3],
+            "mixed collision fixture did not place final value at head")
+        || !CheckOwnership(ids[2], 2, 12,
+            static_cast<std::uint8_t>(byteCount), 5,
+            "mixed collision dual-user setup failed")
+        || !CheckOwnership(ids[1], 1, 8,
+            static_cast<std::uint8_t>(byteCount), 5,
+            "mixed collision absent-user setup failed"))
+    {
+        return false;
+    }
+
+    SL_ShutdownSystem(4);
+    if (!CheckFreed(ids[0]) || !CheckFreed(ids[3])
+        || !CheckOwnership(ids[2], 1, 8,
+            static_cast<std::uint8_t>(byteCount), 2,
+            "mixed collision survivor lost the wrong ownership")
+        || !CheckOwnership(ids[1], 1, 8,
+            static_cast<std::uint8_t>(byteCount), 2,
+            "mixed collision absent user changed")
+        || !Check(FindStringOfSize(values[2].data(), byteCount) == ids[2],
+            "mixed collision promoted survivor is not lookupable")
+        || !Check(FindStringOfSize(values[1].data(), byteCount) == ids[1],
+            "mixed collision movable survivor is not lookupable")
+        || !Check(FindStringOfSize(values[0].data(), byteCount) == 0,
+            "mixed collision freed movable remains lookupable")
+        || !Check(FindStringOfSize(values[3].data(), byteCount) == 0,
+            "mixed collision freed head remains lookupable")
+        || !Check(ReportersUnused(),
+            "mixed collision shutdown invoked a reporter"))
+    {
+        return false;
+    }
+
+    SL_ShutdownSystem(8);
+    if (!CheckFreed(ids[1]) || !CheckFreed(ids[2])
+        || !Check(ReportersUnused(),
+            "mixed collision cleanup invoked a reporter"))
+    {
+        return false;
+    }
+    return EndTest();
+}
+
+[[nodiscard]] bool TestLegacyCompatibilityAvoidsCompleteScans() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    struct LegacyReference final
+    {
+        std::uint32_t stringId;
+        std::uint32_t byteCount;
+    };
+
+    MT_ResetCompleteValidationCountForTesting();
+    sl_completeFreeListValidationCount = 0;
+
+    constexpr std::uint32_t uniqueCount = 2000;
+    std::vector<LegacyReference> uniqueReferences;
+    uniqueReferences.reserve(uniqueCount);
+    const auto uniqueStart = std::chrono::steady_clock::now();
+    for (std::uint32_t index = 0; index < uniqueCount; ++index)
+    {
+        std::array<char, 32> value{};
+        const int characterCount = std::snprintf(
+            value.data(), value.size(), "legacy-short-%04u", index);
+        if (!Check(characterCount > 0
+                && static_cast<std::size_t>(characterCount) < value.size(),
+                "legacy unique benchmark formatting failed"))
+        {
+            return false;
+        }
+        const std::uint32_t byteCount =
+            static_cast<std::uint32_t>(characterCount + 1);
+        const std::uint32_t stringId = SL_GetStringOfSize(
+            value.data(), 0, byteCount, 15);
+        if (!Check(stringId != 0,
+                "legacy unique benchmark intern failed"))
+        {
+            return false;
+        }
+        uniqueReferences.push_back({stringId, byteCount});
+    }
+    const auto uniqueEnd = std::chrono::steady_clock::now();
+
+    constexpr char repeatedValue[] = "legacy-repeat";
+    constexpr std::uint32_t repeatedByteCount =
+        static_cast<std::uint32_t>(sizeof(repeatedValue));
+    constexpr std::uint32_t repeatedCount = 10000;
+    std::uint32_t repeatedId = 0;
+    const auto repeatedStart = std::chrono::steady_clock::now();
+    for (std::uint32_t index = 0; index < repeatedCount; ++index)
+    {
+        const std::uint32_t stringId = SL_GetStringOfSize(
+            repeatedValue, 0, repeatedByteCount, 15);
+        if (!Check(stringId != 0
+                && (repeatedId == 0 || stringId == repeatedId),
+                "legacy repeated benchmark intern changed identity"))
+        {
+            return false;
+        }
+        repeatedId = stringId;
+    }
+    const auto repeatedEnd = std::chrono::steady_clock::now();
+
+    const auto makeLongValue = [](const std::uint32_t index) {
+        std::array<char, 300> value{};
+        value.fill(static_cast<char>('a' + index % 23));
+        value[0] = 'L';
+        value[1] = static_cast<char>('0' + index / 100);
+        value[2] = static_cast<char>('0' + (index / 10) % 10);
+        value[3] = static_cast<char>('0' + index % 10);
+        value.back() = '\0';
+        return value;
+    };
+    constexpr std::uint32_t longCount = 200;
+    std::vector<LegacyReference> longReferences;
+    longReferences.reserve(longCount);
+    const auto longStart = std::chrono::steady_clock::now();
+    for (std::uint32_t index = 0; index < longCount; ++index)
+    {
+        const auto value = makeLongValue(index);
+        const std::uint32_t stringId = SL_GetStringOfSize(
+            value.data(), 0,
+            static_cast<std::uint32_t>(value.size()), 15);
+        if (!Check(stringId != 0,
+                "legacy long benchmark intern failed"))
+        {
+            return false;
+        }
+        longReferences.push_back(
+            {stringId, static_cast<std::uint32_t>(value.size())});
+    }
+    const auto longEnd = std::chrono::steady_clock::now();
+
+    std::array<char, 32> lastUnique{};
+    const int lastUniqueLength = std::snprintf(
+        lastUnique.data(), lastUnique.size(),
+        "legacy-short-%04u", uniqueCount - 1);
+    const auto lastLong = makeLongValue(longCount - 1);
+    if (!Check(lastUniqueLength > 0,
+            "legacy lookup benchmark formatting failed")
+        || !Check(SL_FindString(lastUnique.data())
+                == uniqueReferences.back().stringId,
+            "legacy unique lookup failed")
+        || !Check(SL_FindString(repeatedValue) == repeatedId,
+            "legacy repeated lookup failed")
+        || !Check(SL_FindString(lastLong.data())
+                == longReferences.back().stringId,
+            "legacy long lookup failed")
+        || !Check(MT_CompleteValidationCountForTesting() == 0,
+            "legacy string path invoked exhaustive allocator validation")
+        || !Check(MT_CompleteForestValidationCountForTesting() == 0,
+            "legacy string path invoked exhaustive free-forest validation")
+        || !Check(sl_completeFreeListValidationCount == 0,
+            "legacy string path walked the complete free list"))
+    {
+        return false;
+    }
+
+    for (const LegacyReference &reference : longReferences)
+        SL_RemoveRefToStringOfSize(reference.stringId, reference.byteCount);
+    for (std::uint32_t index = 0; index < repeatedCount; ++index)
+        SL_RemoveRefToStringOfSize(repeatedId, repeatedByteCount);
+    for (const LegacyReference &reference : uniqueReferences)
+        SL_RemoveRefToStringOfSize(reference.stringId, reference.byteCount);
+
+    if (!Check(MT_CompleteValidationCountForTesting() == 0,
+            "legacy release path invoked exhaustive allocator validation")
+        || !Check(MT_CompleteForestValidationCountForTesting() == 0,
+            "legacy release path invoked exhaustive free-forest validation")
+        || !Check(sl_completeFreeListValidationCount == 0,
+            "legacy release path walked the complete free list")
+        || !Check(ReportersUnused(),
+            "legacy benchmark path invoked a reporter"))
+    {
+        return false;
+    }
+
+    const auto elapsedMilliseconds = [](const auto start, const auto end) {
+        return std::chrono::duration<double, std::milli>(end - start).count();
+    };
+    std::printf(
+        "legacy string benchmark: 2000 unique %.3f ms, "
+        "10000 repeated %.3f ms, 200 long %.3f ms\n",
+        elapsedMilliseconds(uniqueStart, uniqueEnd),
+        elapsedMilliseconds(repeatedStart, repeatedEnd),
+        elapsedMilliseconds(longStart, longEnd));
+    return EndTest();
+}
+
+[[nodiscard]] bool TestLegacyLocalCorruptionAndReporterUnwind() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    const auto checkExpectedError = [](const char *const context) {
+        return Check(g_comErrorCount == 1, context)
+            && Check(g_assertCount == 0, context)
+            && Check(!g_reporterSawOwnedLock, context)
+            && Check(LocksReleased(), context);
+    };
+    const auto resetExpectedError = []() {
+        g_comErrorCount = 0;
+        g_assertCount = 0;
+    };
+
+    constexpr char existingValue[] = "legacy-corruption-live";
+    constexpr std::uint32_t existingByteCount =
+        static_cast<std::uint32_t>(sizeof(existingValue));
+    const std::uint32_t existingId = SL_GetStringOfSize(
+        existingValue, 0, existingByteCount, 15);
+    if (!Check(existingId != 0,
+            "legacy corruption setup intern failed"))
+    {
+        return false;
+    }
+
+    const std::uint32_t freeHead = static_cast<std::uint16_t>(
+        scrStringGlob.hashTable[0].status_next);
+    if (!Check(freeHead != 0 && freeHead < STRINGLIST_SIZE,
+            "legacy free-list corruption setup has no head"))
+    {
+        return false;
+    }
+    const HashEntry savedFreeHead = scrStringGlob.hashTable[freeHead];
+    scrStringGlob.hashTable[freeHead].status_next =
+        (savedFreeHead.status_next & HASH_STAT_MASK) | UINT16_MAX;
+    const StateImage corruptFreeHead = CaptureState();
+    constexpr char freeHeadValue[] = "legacy-free-head-corrupt";
+    constexpr std::uint32_t freeHeadByteCount =
+        static_cast<std::uint32_t>(sizeof(freeHeadValue));
+    const std::uint32_t freeHeadResult = SL_GetStringOfSize(
+        freeHeadValue, 0, freeHeadByteCount, 15);
+    if (!Check(freeHeadResult == 0,
+            "legacy intern trusted malformed free-list head")
+        || !Check(StateMatches(corruptFreeHead),
+            "legacy free-list head rejection changed state")
+        || !checkExpectedError(
+            "legacy free-list head reporter ran under an owned lock"))
+    {
+        return false;
+    }
+    scrStringGlob.hashTable[freeHead] = savedFreeHead;
+    resetExpectedError();
+
+    const std::uint32_t savedFreeTail = scrStringGlob.hashTable[0].u.prev;
+    scrStringGlob.hashTable[0].u.prev = UINT32_MAX;
+    const StateImage corruptFreeTail = CaptureState();
+    constexpr char freeTailValue[] = "legacy-free-tail-corrupt";
+    constexpr std::uint32_t freeTailByteCount =
+        static_cast<std::uint32_t>(sizeof(freeTailValue));
+    const std::uint32_t freeTailResult = SL_GetStringOfSize(
+        freeTailValue, 0, freeTailByteCount, 15);
+    if (!Check(freeTailResult == 0,
+            "legacy intern trusted malformed free-list tail")
+        || !Check(StateMatches(corruptFreeTail),
+            "legacy free-list tail rejection changed state")
+        || !checkExpectedError(
+            "legacy free-list tail reporter ran under an owned lock"))
+    {
+        return false;
+    }
+    scrStringGlob.hashTable[0].u.prev = savedFreeTail;
+    resetExpectedError();
+
+    const std::uint32_t hash =
+        GetHashCode(existingValue, existingByteCount);
+    const HashEntry savedHashEntry = scrStringGlob.hashTable[hash];
+    if (!Check((savedHashEntry.status_next & HASH_STAT_MASK)
+                == HASH_STAT_HEAD,
+            "legacy hash corruption setup has no owning head"))
+    {
+        return false;
+    }
+    scrStringGlob.hashTable[hash].status_next =
+        HASH_STAT_HEAD | UINT16_MAX;
+    const StateImage corruptHash = CaptureState();
+    if (!Check(SL_FindString(existingValue) == 0,
+            "legacy lookup trusted malformed hash cycle")
+        || !Check(StateMatches(corruptHash),
+            "legacy malformed lookup changed state")
+        || !Check(ReportersUnused(),
+            "legacy malformed lookup invoked a reporter"))
+    {
+        return false;
+    }
+    const std::uint32_t corruptHashResult = SL_GetStringOfSize(
+        existingValue, 0, existingByteCount, 15);
+    if (!Check(corruptHashResult == 0,
+            "legacy intern trusted malformed hash cycle")
+        || !Check(StateMatches(corruptHash),
+            "legacy malformed hash rejection changed state")
+        || !checkExpectedError(
+            "legacy hash reporter ran under an owned lock"))
+    {
+        return false;
+    }
+    scrStringGlob.hashTable[hash] = savedHashEntry;
+    resetExpectedError();
+
+    scrStringGlob.hashTable[hash].status_next =
+        savedHashEntry.status_next | UINT32_C(0x40000);
+    const StateImage corruptHashEncoding = CaptureState();
+    if (!Check(SL_FindString(existingValue) == 0,
+            "legacy lookup trusted reserved hash-entry bits")
+        || !Check(StateMatches(corruptHashEncoding),
+            "reserved-bit lookup rejection changed state")
+        || !Check(ReportersUnused(),
+            "reserved-bit lookup rejection invoked a reporter"))
+    {
+        return false;
+    }
+    const std::uint32_t corruptEncodingResult = SL_GetStringOfSize(
+        existingValue, 0, existingByteCount, 15);
+    if (!Check(corruptEncodingResult == 0,
+            "legacy intern trusted reserved hash-entry bits")
+        || !Check(StateMatches(corruptHashEncoding),
+            "reserved-bit intern rejection changed state")
+        || !checkExpectedError(
+            "reserved-bit intern reporter ran under an owned lock"))
+    {
+        return false;
+    }
+    resetExpectedError();
+
+    if (!Check(
+            script_string::TryRemoveOrdinaryReference(existingId)
+                == script_string::ReleaseStatus::UnsafeFailure,
+            "typed release trusted reserved hash-entry bits")
+        || !Check(StateMatches(corruptHashEncoding),
+            "reserved-bit release rejection changed state")
+        || !Check(ReportersUnused(),
+            "reserved-bit release rejection invoked a reporter")
+        || !Check(LocksReleased(),
+            "reserved-bit release retained a lock"))
+    {
+        return false;
+    }
+    scrStringGlob.hashTable[hash] = savedHashEntry;
+    resetExpectedError();
+
+    Sys_AtomicIncrement(&scrStringDebugGlob->refCount[existingId]);
+    const StateImage corruptLegacyDebug = CaptureState();
+    SL_RemoveRefToStringOfSize(existingId, existingByteCount);
+    if (!Check(StateMatches(corruptLegacyDebug),
+            "legacy debug-accounting rejection changed state")
+        || !Check(g_comErrorCount == 0 && g_assertCount <= 1,
+            "legacy debug-accounting rejection reported unexpectedly")
+        || !Check(!g_reporterSawOwnedLock && LocksReleased(),
+            "legacy debug-accounting reporter retained a lock"))
+    {
+        return false;
+    }
+    Sys_AtomicDecrement(&scrStringDebugGlob->refCount[existingId]);
+    resetExpectedError();
+
+    constexpr char allocatorValue[] = "legacy-allocator-corrupt";
+    constexpr std::uint32_t allocatorByteCount =
+        static_cast<std::uint32_t>(sizeof(allocatorValue));
+    const int allocationSize = MT_GetSize(
+        static_cast<int>(allocatorByteCount + 4));
+    int treeSize = allocationSize;
+    while (treeSize <= MEMORY_NODE_BITS
+        && scrMemTreeGlob.head[treeSize] == 0)
+    {
+        ++treeSize;
+    }
+    if (!Check(treeSize <= MEMORY_NODE_BITS,
+            "legacy allocator corruption setup has no free root"))
+    {
+        return false;
+    }
+    const std::uint16_t root = scrMemTreeGlob.head[treeSize];
+    const MemoryNode savedRoot = scrMemTreeGlob.nodes[root];
+    scrMemTreeGlob.nodes[root].prev = root;
+    const StateImage corruptAllocator = CaptureState();
+    const std::uint32_t corruptAllocatorResult = SL_GetStringOfSize(
+        allocatorValue, 0, allocatorByteCount, 15);
+    if (!Check(corruptAllocatorResult == 0,
+            "legacy intern trusted a cyclic allocator path")
+        || !Check(StateMatches(corruptAllocator),
+            "legacy allocator rejection changed state")
+        || !checkExpectedError(
+            "legacy allocator reporter ran under an owned lock"))
+    {
+        return false;
+    }
+    scrMemTreeGlob.nodes[root] = savedRoot;
+    resetExpectedError();
+
+    constexpr char shutdownValue[] = "legacy-shutdown-corrupt";
+    constexpr std::uint32_t shutdownByteCount =
+        static_cast<std::uint32_t>(sizeof(shutdownValue));
+    const std::uint32_t shutdownId = SL_GetStringOfSize(
+        shutdownValue, 4, shutdownByteCount, 15);
+    if (!Check(shutdownId != 0,
+            "legacy shutdown rollback setup failed"))
+    {
+        return false;
+    }
+    const std::uint32_t shutdownFreeHead = static_cast<std::uint16_t>(
+        scrStringGlob.hashTable[0].status_next);
+    const HashEntry savedShutdownFreeHead =
+        scrStringGlob.hashTable[shutdownFreeHead];
+    scrStringGlob.hashTable[shutdownFreeHead].u.prev = shutdownFreeHead;
+    const StateImage corruptShutdown = CaptureState();
+    SL_ShutdownSystem(4);
+    if (!Check(StateMatches(corruptShutdown),
+            "legacy shutdown failure did not restore exact ownership")
+        || !checkExpectedError(
+            "legacy shutdown reporter ran under an owned lock"))
+    {
+        return false;
+    }
+    scrStringGlob.hashTable[shutdownFreeHead] = savedShutdownFreeHead;
+    resetExpectedError();
+
+    SL_ShutdownSystem(4);
+    if (!CheckFreed(shutdownId)
+        || !Check(ReportersUnused(),
+            "legacy shutdown rollback cleanup invoked a reporter"))
+    {
+        return false;
+    }
+
+    SL_RemoveRefToStringOfSize(existingId, existingByteCount);
+    if (!CheckFreed(existingId)
+        || !Check(ReportersUnused(),
+            "legacy corruption cleanup invoked a reporter"))
+    {
+        return false;
+    }
+    return EndTest();
+}
+
 [[nodiscard]] bool TestMalformedStateFailsClosed() noexcept
 {
     if (!BeginTest())
@@ -815,11 +1714,15 @@ void QDECL Com_Printf(int, const char *, ...)
 
 void QDECL Com_Error(errorParm_t, const char *, ...)
 {
+    if (g_scriptStringLockDepth != 0 || g_memoryTreeLockDepth != 0)
+        g_reporterSawOwnedLock = true;
     ++g_comErrorCount;
 }
 
 void MyAssertHandler(const char *, int, int, const char *, ...)
 {
+    if (g_scriptStringLockDepth != 0 || g_memoryTreeLockDepth != 0)
+        g_reporterSawOwnedLock = true;
     ++g_assertCount;
 }
 
@@ -837,6 +1740,13 @@ int main()
         || !TestEmbeddedNulByteCount()
         || !TestCollidingByteLengthBounds()
         || !TestLegacyBinaryInternCompatibility()
+        || !TestLegacyFreeListSpliceBoundaries()
+        || !TestLegacyEmptyAndOneNodeFreeList()
+        || !TestShutdownStaleIterationRollback()
+        || !TestSystemIterationAuthenticatesPhysicalEntries()
+        || !TestShutdownMixedCollisionChain()
+        || !TestLegacyCompatibilityAvoidsCompleteScans()
+        || !TestLegacyLocalCorruptionAndReporterUnwind()
         || !TestMalformedStateFailsClosed())
     {
         return 1;

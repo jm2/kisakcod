@@ -174,6 +174,28 @@ foreach(_marker IN ITEMS
     "TryRemoveDatabaseUserReference( std::uint32_t stringId) noexcept;")
     require_contains(_ownership_header "${_marker}" "typed no-report API")
 endforeach()
+extract_slice(
+    _memory_source
+    "MT_AllocationInfoStatus MT_GetAllocationInfoLockedNoReport("
+    "constexpr uint32_t kPartitionWordBits"
+    _allocation_info_local
+    "authenticated local allocation query")
+require_ordered(
+    _allocation_info_local
+    "mt_allocationMetadataShadow[nodeNum] != MT_PackAllocationMetadata(type, size)"
+    "if (type == 0)"
+    "shadow authentication before the unallocated classification")
+foreach(_marker IN ITEMS
+    "uint32_t low; uint32_t high;"
+    "nodeNum < frame.low || nodeNum > frame.high"
+    "frame.position - static_cast<int32_t>(nextLevel)"
+    "frame.position + static_cast<int32_t>(nextLevel)"
+    "parentScore <= MT_GetScoreNoReport(node.prev)"
+    "parentScore <= MT_GetScoreNoReport(node.next)")
+    require_contains(
+        _memory_source "${_marker}"
+        "free-tree branch geometry and priority authentication")
+endforeach()
 require_contains(
     _string_source
     "#include \"scr_string_transaction.h\""
@@ -213,10 +235,22 @@ extract_slice(
     "database-user rollback")
 extract_slice(
     _string_source
+    "SL_InternStatus SL_TryInternStringOfSizeWithValidation("
+    "SL_InternStatus SL_TryInternStringOfSize("
+    _intern_impl
+    "report-free intern implementation")
+extract_slice(
+    _string_source
     "SL_InternStatus SL_TryInternStringOfSize("
     "uint32_t SL_GetStringOfSize("
     _intern
     "report-free intern primitive")
+extract_slice(
+    _string_source
+    "uint32_t SL_GetStringOfSize("
+    "const char* SL_ConvertToString("
+    _legacy_get
+    "legacy intern wrapper")
 extract_slice(
     _string_source
     "static uint32_t FindStringOfSize("
@@ -237,10 +271,58 @@ extract_slice(
     "complete free-list validation")
 extract_slice(
     _string_source
+    "bool SL_TryBuildUnlinkPlanForScopeNoReport("
     "bool SL_TryBuildUnlinkPlanNoReport("
-    "SL_ResolveStatus SL_TryResolveLiveStringNoReport("
     _unlink_plan
     "report-free unlink planning")
+extract_slice(
+    _string_source
+    "bool SL_IsFreeEntryLocallyLinkedNoReport("
+    "bool SL_IsFreeListHeadValidNoReport("
+    _local_free_list_validation
+    "bounded legacy free-list validation")
+extract_slice(
+    _string_source
+    "void SL_ShutdownSystem("
+    "int SL_IsLowercaseString("
+    _shutdown_system
+    "legacy user shutdown")
+extract_slice(
+    _string_source
+    "void SL_TransferSystem("
+    "uint32_t SL_GetString_("
+    _transfer_system
+    "legacy user transfer")
+extract_slice(
+    _string_source
+    "bool SL_IsCompleteSystemSweepStateValidNoReport() noexcept"
+    "bool SL_TryBuildUnlinkPlanForScopeNoReport("
+    _system_sweep_preflight
+    "complete system sweep preflight")
+extract_slice(
+    _string_source
+    "bool SL_TryFreeSystemSweepEntryNoReport( const uint32_t owningHash,"
+    "bool SL_TryFreeResolvedStringNoReport("
+    _system_sweep_free
+    "constant-work system sweep free")
+extract_slice(
+    _string_source
+    "static bool SL_FreeString( const uint32_t stringValue,"
+    "namespace script_string"
+    _legacy_free
+    "legacy final free")
+extract_slice(
+    _string_source
+    "void SL_RemoveRefToStringOfSize("
+    "void __cdecl SL_AddUser("
+    _legacy_remove
+    "legacy ordinary release")
+extract_slice(
+    _legacy_remove
+    "if (!validFree)"
+    "(void)validFree;"
+    _legacy_remove_rollback
+    "legacy ordinary release rollback")
 
 require_contains(
     _free_list_validation
@@ -256,14 +338,28 @@ require_contains(
     "free-list sentinel tail validation")
 require_contains(
     _unlink_plan
-    "if (!SL_IsFreeListHeadValidNoReport()) return false;"
-    "complete free-list validation before unlink publication")
+    "scope == SL_ValidationScope::Complete ? SL_IsFreeListHeadValidNoReport() : SL_IsFreeListLocallyValidNoReport()"
+    "scope-selected free-list validation before unlink publication")
+
+foreach(_marker IN ITEMS
+    "previous >= STRINGLIST_SIZE || next >= STRINGLIST_SIZE"
+    "static_cast<uint16_t>(previousEntry.status_next) == index"
+    "nextEntry.u.prev == index"
+    "headEntry.u.prev != 0"
+    "static_cast<uint16_t>(tailEntry.status_next) != 0"
+    "headNextEntry.u.prev == head"
+    "static_cast<uint16_t>(tailPreviousEntry.status_next) == tail")
+    require_contains(
+        _local_free_list_validation "${_marker}"
+        "bounded legacy free-list endpoint authentication")
+endforeach()
 
 foreach(_var IN ITEMS
     _acquire
     _transfer
     _release_ordinary
     _release_database
+    _intern_impl
     _intern)
     foreach(_forbidden IN ITEMS
         "Com_Error("
@@ -306,25 +402,29 @@ require_contains(
     "targeted database-user ownership check")
 require_contains(
     _intern
-    "MT_TryAllocIndex("
-    "failure-atomic allocator use")
+    "SL_ValidationScope::Complete"
+    "typed intern selects complete validation")
 require_contains(
-    _intern
-    "MT_TryFreeIndex("
-    "failure-atomic allocation cleanup")
+    _intern_impl
+    "SL_TryAllocateStringMemoryNoReport("
+    "scope-selected failure-atomic allocator use")
+require_contains(
+    _intern_impl
+    "SL_TryFreeStringMemoryNoReport("
+    "scope-selected failure-atomic allocation cleanup")
 require_literal_count(
-    _intern
-    "SL_TryGetAllocatedStringByteCountNoReport("
+    _intern_impl
+    "SL_TryGetAllocatedStringByteCountForScopeNoReport("
     2
     "allocator-backed intern candidate lengths")
 require_literal_count(
-    _intern
+    _intern_impl
     "candidateByteCount == len"
     2
     "full intern byte-count comparisons")
 require_literal_count(
     _find
-    "SL_TryGetAllocatedStringByteCountNoReport("
+    "SL_TryGetAllocatedStringByteCountForScopeNoReport("
     2
     "allocator-backed legacy lookup lengths")
 require_contains(
@@ -335,6 +435,180 @@ require_contains(
     _find
     "candidateByteCount == len && !memcmp(refStr->str, str, len)"
     "full collision-chain byte-count guard before legacy comparison")
+require_contains(
+    _find
+    "SL_ValidationScope::LegacyLocal"
+    "bounded legacy lookup allocator validation")
+foreach(_forbidden IN ITEMS "Com_Error(" "MT_Error(")
+    require_not_contains(
+        _find "${_forbidden}" "report-free locked legacy lookup")
+endforeach()
+
+require_contains(
+    _legacy_get
+    "SL_TryInternStringOfSizeWithValidation( str, user, len, type, &stringValue, SL_ValidationScope::LegacyLocal)"
+    "legacy intern selects bounded validation")
+require_not_contains(
+    _legacy_get
+    "Sys_EnterCriticalSection("
+    "legacy reporting wrapper owns no lock")
+require_ordered(
+    _legacy_get
+    "SL_TryInternStringOfSizeWithValidation("
+    "switch (status)"
+    "legacy intern maps status only after helper unlock")
+
+foreach(_marker IN ITEMS
+    "SL_TryBuildUnlinkPlanForScopeNoReport( stringValue, refString, byteCount, &unlink, SL_ValidationScope::LegacyLocal)"
+    "MT_TryFreeIndexLegacy( stringValue, static_cast<int>(byteCount + kRefStringHeaderSize))"
+    "SL_CommitUnlinkPlanNoReport(unlink);")
+    require_contains(
+        _legacy_free "${_marker}" "bounded legacy final-free transaction")
+endforeach()
+foreach(_forbidden IN ITEMS "Com_Error(" "MT_Error(" "iassert(")
+    require_not_contains(
+        _legacy_free "${_forbidden}"
+        "report-free legacy final-free transaction")
+endforeach()
+
+foreach(_marker IN ITEMS
+    "SL_IsDebugOwnershipExactNoReport(stringValue, packed)"
+    "Sys_AtomicStore(SL_RefStringWord(refStr), packed);"
+    "SL_DebugAddRefNoReport(stringValue);"
+    "SL_DebugRemoveRefNoReport(stringValue);"
+    "!result.reachedZero || SL_FreeString(stringValue, refStr, len)")
+    require_contains(
+        _legacy_remove "${_marker}" "legacy final-release rollback")
+endforeach()
+require_ordered(
+    _legacy_remove_rollback
+    "Sys_AtomicStore(SL_RefStringWord(refStr), packed);"
+    "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "legacy ownership rollback before unlock")
+require_ordered(
+    _legacy_remove
+    "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "iassert(validFree);"
+    "legacy release reporter after unlock")
+
+foreach(_marker IN ITEMS
+    "for (uint32_t owningHash = 1; owningHash < STRINGLIST_SIZE && !invalidTransition; ++owningHash)"
+    "for (uint32_t visited = 0; visited < STRINGLIST_SIZE && !invalidTransition; ++visited)"
+    "SL_TryGetAllocatedStringByteCountForScopeNoReport( stringValue, &refStr, &len, SL_ValidationScope::LegacyLocal)"
+    "const uint32_t packedBefore = scr_string_atomic::Load(SL_RefStringWord(refStr));"
+    "SL_DebugRemoveRefNoReport(stringValue);"
+    "SL_TryFreeSystemSweepEntryNoReport( owningHash, targetIndex, previousIndex, stringValue, refStr, len)"
+    "Sys_AtomicStore(SL_RefStringWord(refStr), packedBefore);"
+    "SL_DebugAddRefNoReport(stringValue);"
+    "scrStringGlob.nextFreeEntry = nullptr;")
+    require_contains(
+        _shutdown_system "${_marker}"
+        "linear legacy shutdown rollback and termination")
+endforeach()
+require_ordered(
+    _shutdown_system
+    "SL_IsCompleteSystemSweepStateValidNoReport()"
+    "for (uint32_t owningHash = 1;"
+    "legacy shutdown preflights the complete table before mutation")
+foreach(_forbidden IN ITEMS
+    "SL_FreeString("
+    "SL_TryBuildUnlinkPlanForScopeNoReport("
+    "SL_TryBuildUnlinkPlanNoReport(")
+    require_not_contains(
+        _shutdown_system "${_forbidden}"
+        "system shutdown cannot rewalk a collision chain per free")
+endforeach()
+foreach(_marker IN ITEMS
+    "SL_IsFreeListLocallyValidNoReport()"
+    "MT_TryGetAllocationInfoLegacy(stringValue, &allocationInfo)"
+    "SL_IsExactStringAllocationNoReport(allocationInfo, byteCount)"
+    "SL_IsDebugOwnershipExactNoReport(stringValue, packed)"
+    "SL_IsHashEntryEncodingValidNoReport(target)"
+    "MT_TryFreeIndexLegacy( stringValue, static_cast<int>(byteCount + kRefStringHeaderSize))"
+    "SL_CommitUnlinkPlanNoReport(plan);")
+    require_contains(
+        _system_sweep_free "${_marker}"
+        "constant-work authenticated system sweep free")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "for ("
+    "while ("
+    "SL_TryBuildUnlinkPlanForScopeNoReport("
+    "SL_TryBuildUnlinkPlanNoReport(")
+    require_not_contains(
+        _system_sweep_free "${_forbidden}"
+        "system sweep free cannot walk a collision chain")
+endforeach()
+require_contains(
+    _shutdown_system
+    "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING); if (invalidTransition) Com_Error("
+    "legacy shutdown reporter after unlock")
+foreach(_marker IN ITEMS
+    "SL_TryGetAllocatedStringByteCountForScopeNoReport( stringValue, &refStr, &byteCount, SL_ValidationScope::LegacyLocal)"
+    "SL_DebugRemoveRefNoReport(stringValue);"
+    "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING); if (invalidTransition) Com_Error(")
+    require_contains(
+        _transfer_system "${_marker}"
+        "bounded report-free legacy system transfer")
+endforeach()
+require_ordered(
+    _transfer_system
+    "SL_IsCompleteSystemSweepStateValidNoReport()"
+    "for (uint32_t hash = 1;"
+    "legacy transfer preflights the complete table before mutation")
+foreach(_var IN ITEMS _shutdown_system _transfer_system)
+    require_not_contains(
+        ${_var}
+        "SL_IsLegacyLookupHashStateValidNoReport(hash)"
+        "quadratic per-physical-entry chain revalidation after global preflight")
+endforeach()
+foreach(_marker IN ITEMS
+    "SL_IsHashEntryEncodingValidNoReport(entry)"
+    "MT_TryValidateState()"
+    "SL_IsFreeListHeadValidNoReport()"
+    "memset(sl_systemSweepHashEntries, 0, sizeof(sl_systemSweepHashEntries));"
+    "for (uint32_t owningHash = 1; owningHash < STRINGLIST_SIZE; ++owningHash)"
+    "for (uint32_t visited = 0; visited < STRINGLIST_SIZE; ++visited)"
+    "(sl_systemSweepHashEntries[entryByte] & entryMask) != 0"
+    "(sl_systemSweepStringIds[stringByte] & stringMask) != 0"
+    "GetHashCode(refString->str, byteCount) != owningHash"
+    "aggregateRefCount > UINT32_MAX"
+    "Sys_AtomicLoad(&scrStringDebugGlob->totalRefCount) != static_cast<uint32_t>(aggregateRefCount)"
+    "SL_DebugRefCount(stringValue) != 0")
+    require_contains(
+        _system_sweep_preflight "${_marker}"
+        "linear complete hash/debug/allocator sweep preflight")
+endforeach()
+foreach(_marker IN ITEMS
+    "constexpr uint32_t kHashEntryBits = HASH_STAT_MASK | UINT32_C(0xFFFF);"
+    "return (entry.status_next & ~kHashEntryBits) == 0;")
+    require_contains(
+        _string_source "${_marker}"
+        "central hash-entry encoding authentication")
+endforeach()
+foreach(_marker IN ITEMS
+    "savedHashEntry.status_next | UINT32_C(0x40000)"
+    "TestShutdownMixedCollisionChain()"
+    "emptyListScratchCleared")
+    require_contains(
+        _ownership_fixture "${_marker}"
+        "hash/free-list/collision runtime regression")
+endforeach()
+require_ordered(
+    _free_list_validation
+    "memset(sl_freeListVisited, 0, sizeof(sl_freeListVisited));"
+    "if (freeHead == 0)"
+    "free-list scratch reset before valid empty-list return")
+require_contains(
+    _string_source
+    "scrStringGlob.nextFreeEntry = nullptr; scrStringGlob.hashTable[0].status_next = 0;"
+    "canonical hash iteration state on initialization")
+
+foreach(_var IN ITEMS
+    _acquire _transfer _release_ordinary _release_database _resolve _intern)
+    require_not_contains(
+        ${_var} "Legacy(" "typed ownership path cannot use bounded legacy APIs")
+endforeach()
 require_contains(
     _resolve
     "allocationStatus == MT_AllocationInfoStatus::NotAllocatedNoChange"
@@ -378,22 +652,30 @@ foreach(_marker IN ITEMS
     "[[nodiscard]] MT_AllocIndexStatus MT_TryAllocIndex( int numBytes, int type, uint16_t *outIndex) noexcept;")
     require_contains(_memory_header "${_marker}" "failure-atomic allocator API")
 endforeach()
+foreach(_marker IN ITEMS
+    "[[nodiscard]] MT_FreeIndexStatus MT_TryFreeIndexLegacy( uint32_t nodeNum, int numBytes) noexcept;"
+    "[[nodiscard]] MT_AllocationInfoStatus MT_TryGetAllocationInfoLegacy( uint32_t nodeNum, MT_AllocationInfo *outInfo) noexcept;"
+    "[[nodiscard]] MT_AllocIndexStatus MT_TryAllocIndexLegacy( int numBytes, int type, uint16_t *outIndex) noexcept;"
+    "Typed transaction code must use the complete MT_Try* surface.")
+    require_contains(
+        _memory_header "${_marker}" "bounded legacy allocator API")
+endforeach()
 extract_slice(
     _memory_source
-    "MT_AllocIndexStatus MT_TryAllocIndex("
-    "unsigned short MT_AllocIndex("
+    "MT_AllocIndexStatus MT_TryAllocIndexImpl("
+    "MT_AllocationInfoStatus MT_TryGetAllocationInfoImpl("
     _try_alloc
     "memory-tree allocation")
 extract_slice(
     _memory_source
-    "MT_AllocationInfoStatus MT_TryGetAllocationInfo("
-    "bool MT_Realloc("
+    "MT_AllocationInfoStatus MT_TryGetAllocationInfoImpl("
+    "} // namespace"
     _try_query
     "memory-tree allocation query")
 extract_slice(
     _memory_source
-    "MT_FreeIndexStatus MT_TryFreeIndex("
-    "void MT_FreeIndex("
+    "MT_FreeIndexStatus MT_TryFreeIndexImpl("
+    "} // namespace"
     _try_free
     "memory-tree free")
 foreach(_var IN ITEMS _try_alloc _try_query _try_free)
@@ -409,6 +691,131 @@ foreach(_var IN ITEMS _try_alloc _try_query _try_free)
     endforeach()
 endforeach()
 foreach(_marker IN ITEMS
+    "return MT_TryAllocIndexImpl(numBytes, type, outIndex, true);"
+    "return MT_TryAllocIndexImpl(numBytes, type, outIndex, false);"
+    "return MT_TryGetAllocationInfoImpl(nodeNum, outInfo, true);"
+    "return MT_TryGetAllocationInfoImpl(nodeNum, outInfo, false);"
+    "return MT_TryFreeIndexImpl(nodeNum, numBytes, true);"
+    "return MT_TryFreeIndexImpl(nodeNum, numBytes, false);")
+    require_contains(
+        _memory_source "${_marker}" "complete versus bounded allocator scope")
+endforeach()
+require_contains(
+    _try_alloc
+    "completeValidation ? MT_IsCoreStateValidNoReport() : MT_IsBasicCoreStateValidNoReport()"
+    "bounded allocation validates touched free-tree state")
+require_contains(
+    _try_query
+    "completeValidation ? MT_IsCoreStateValidNoReport() : MT_IsBasicAccountingStateValidNoReport()"
+    "bounded query validates only consulted accounting")
+require_contains(
+    _try_free
+    "completeValidation ? MT_IsCoreStateValidNoReport() : MT_IsBasicCoreStateValidNoReport()"
+    "bounded free validates touched free-tree state")
+foreach(_var IN ITEMS _try_alloc _try_free)
+    require_not_contains(
+        ${_var}
+        "MT_IsFreeTreeForestValidNoReport()"
+        "bounded legacy mutation cannot walk the complete free forest")
+endforeach()
+
+# Freeze the deliberately narrow compatibility surface. New Legacy callers
+# must be reviewed instead of silently weakening typed transaction validation.
+require_literal_count(
+    _memory_source "MT_TryAllocIndexLegacy(" 2
+    "legacy allocator definition and wrapper call")
+require_literal_count(
+    _memory_source "MT_TryGetAllocationInfoLegacy(" 1
+    "legacy allocator query definition")
+require_literal_count(
+    _memory_source "MT_TryFreeIndexLegacy(" 2
+    "legacy allocator free definition and wrapper call")
+require_literal_count(
+    _string_source "MT_TryAllocIndexLegacy(" 1
+    "legacy string allocation helper")
+require_literal_count(
+    _string_source "MT_TryGetAllocationInfoLegacy(" 3
+    "legacy string candidate, unlink, and sweep queries")
+require_literal_count(
+    _string_source "MT_TryFreeIndexLegacy(" 3
+    "legacy string cleanup, final, and sweep free")
+
+foreach(_marker IN ITEMS
+    "uint16_t mt_preflightVisitedNodes[MEMORY_NODE_COUNT];"
+    "uint16_t mt_preflightTransactionNodes[MEMORY_NODE_COUNT];"
+    "void MT_ClearRecordedNodes( uint8_t *const visited, const uint16_t *const nodes, const uint32_t count) noexcept"
+    "for (uint32_t index = 0; index < mt_preflightVisitedCount; ++index)"
+    "mt_preflightVisitedNodes[mt_preflightVisitedCount++] = nodeNum;")
+    require_contains(
+        _memory_source "${_marker}" "path-bounded preflight scratch reset")
+endforeach()
+require_not_contains(
+    _memory_source
+    "memset(mt_preflightVisited, 0, sizeof(mt_preflightVisited))"
+    "global preflight bitset reset on bounded legacy path")
+foreach(_marker IN ITEMS
+    "static uint16_t mt_allocationMetadataShadow[MEMORY_NODE_COUNT];"
+    "static uint8_t mt_freeNodeSizeShadow[MEMORY_NODE_COUNT];"
+    "static uint16_t mt_freeTreeHeadShadow[MEMORY_NODE_BITS + 1];"
+    "static MT_FreeNodeLinkShadow mt_freeNodeLinkShadow[MEMORY_NODE_COUNT];"
+    "static_assert(sizeof(MT_FreeNodeLinkShadow) == 4);"
+    "static uint32_t mt_freeNodeCountShadow;"
+    "static uint32_t mt_freeNodeCountMirror;"
+    "static int mt_totalAllocShadow;"
+    "static int mt_totalAllocBucketsShadow;"
+    "bool MT_IsAllocationIntervalClearNoReport("
+    "bool MT_IsAllocationIntervalExactNoReport("
+    "bool MT_AreFreeNodeLinksAuthenticatedNoReport("
+    "bool MT_IsFreeTreeForestValidNoReport("
+    "bool MT_IsFreeTreeIntervalValidNoReport("
+    "return reachableCount == mt_freeNodeCountShadow;"
+    "!recorded && (mt_freeNodeLinkShadow[nodeNum].prev != 0 || mt_freeNodeLinkShadow[nodeNum].next != 0)"
+    "MT_IsFreeTreeIntervalValidNoReport( nodeNum, newSize, nodeNum, newSize)"
+    "MT_IsFreeTreeIntervalValidNoReport( nodeNum, allocationInfo.size, 0, -1)"
+    "MT_IsFreeTreeIntervalValidNoReport( buddyNode, mergedSize, static_cast<uint16_t>(buddyNode), mergedSize)"
+    "mt_allocationMetadataShadow[nodeNum] = MT_PackAllocationMetadata("
+    "mt_allocationMetadataShadow[nodeNum] = 0;")
+    require_contains(
+        _memory_source "${_marker}"
+        "touched allocation interval and free-tree alias authentication")
+endforeach()
+require_contains(
+    _memory_source
+    "mt_freeNodeLinkShadow[0].next == 0 && MT_AreFreeTreeHeadsAuthenticatedNoReport()"
+    "basic validation authenticates all fixed-width free-tree heads")
+require_contains(
+    _memory_source
+    "mt_freeNodeCountShadow == mt_freeNodeCountMirror"
+    "bounded validation authenticates free-node count accounting")
+require_contains(
+    _memory_source
+    "if (node.prev != shadow.prev || node.next != shadow.next) return false;"
+    "each consumed primary free-node link matches its shadow")
+require_ordered(
+    _memory_source
+    "MT_IsFreeTreeForestValidNoReport() &&"
+    "MT_IsGlobalPartitionValidNoReport();"
+    "complete validation retains forest before partition validation")
+require_contains(
+    _memory_header
+    "void MT_CorruptAllocationMetadataForTesting( uint32_t nodeNum, uint8_t type, uint8_t size) noexcept;"
+    "test-only metadata corruption hook")
+require_contains(
+    _memory_header
+    "void MT_CorruptFreeNodeMembershipForTesting( uint32_t nodeNum, uint8_t membership) noexcept;"
+    "test-only free-membership corruption hook")
+foreach(_marker IN ITEMS
+    "scrMemTreeGlob.totalAlloc == mt_totalAllocShadow"
+    "scrMemTreeGlob.totalAllocBuckets == mt_totalAllocBucketsShadow"
+    "++mt_totalAllocShadow;"
+    "--mt_totalAllocShadow;"
+    "++mt_freeNodeCountShadow;"
+    "--mt_freeNodeCountShadow;")
+    require_contains(
+        _memory_source "${_marker}"
+        "authenticated allocator accounting mirrors")
+endforeach()
+foreach(_marker IN ITEMS
     "MT_RemoveHeadMemoryNodeCommitNoReport(newSize);"
     "MT_RemoveMemoryNodeCommitNoReport( static_cast<int>(lowBit ^ mergedNode), mergedSize)"
     "MT_AddMemoryNodeCommitNoReport(")
@@ -417,10 +824,28 @@ foreach(_marker IN ITEMS
 endforeach()
 extract_slice(
     _memory_source
-    "// Mutation helpers used only after the complete partition"
+    "// Mutation helpers used only after accounting, metadata"
     "} // namespace"
     _memory_commit_helpers
     "assert-free allocator commit helpers")
+require_literal_count(
+    _memory_commit_helpers
+    "*parentNode ="
+    12
+    "primary free-tree cursor bindings and publications")
+require_literal_count(
+    _memory_commit_helpers
+    "*parentShadow ="
+    12
+    "paired free-tree shadow cursor bindings and publications")
+foreach(_marker IN ITEMS
+    "scrMemTreeGlob.nodes[oldNode] = displacedValue; mt_freeNodeLinkShadow[oldNode] = { displacedValue.prev, displacedValue.next, };"
+    "scrMemTreeGlob.nodes[newNode] = scrMemTreeGlob.nodes[node]; mt_freeNodeLinkShadow[newNode] = { scrMemTreeGlob.nodes[newNode].prev, scrMemTreeGlob.nodes[newNode].next, };"
+    "scrMemTreeGlob.nodes[newNode].prev = 0; scrMemTreeGlob.nodes[newNode].next = 0; mt_freeNodeLinkShadow[newNode] = {};")
+    require_contains(
+        _memory_commit_helpers "${_marker}"
+        "free-node primary copy/reset mirrors its topology shadow")
+endforeach()
 foreach(_forbidden IN ITEMS
     "iassert("
     "MyAssertHandler("
@@ -430,6 +855,52 @@ foreach(_forbidden IN ITEMS
         _memory_commit_helpers
         "${_forbidden}"
         "assert-free allocator commit helpers")
+endforeach()
+extract_slice(
+    _memory_source
+    "void MT_RemoveHeadMemoryNode(int size)"
+    "namespace { MT_FreeIndexStatus MT_TryFreeIndexImpl("
+    _raw_remove_head
+    "synchronized raw head removal")
+extract_slice(
+    _memory_source
+    "bool __cdecl MT_RemoveMemoryNode(int oldNode, uint32_t size)"
+    "void MT_Free(byte* p, int numBytes)"
+    _raw_remove
+    "synchronized raw targeted removal")
+extract_slice(
+    _memory_source
+    "void MT_AddMemoryNode(int newNode, int size)"
+    "void MT_Error(const char* funcName, int numBytes)"
+    _raw_add
+    "synchronized raw insertion")
+require_contains(
+    _raw_remove_head
+    "MT_RemoveHeadMemoryNodeCommitNoReport(size);"
+    "raw head removal delegates to synchronized commit")
+require_contains(
+    _raw_remove
+    "return MT_RemoveMemoryNodeCommitNoReport( oldNode, static_cast<int>(size));"
+    "raw targeted removal delegates to synchronized commit")
+require_contains(
+    _raw_add
+    "MT_AddMemoryNodeCommitNoReport(newNode, size);"
+    "raw insertion delegates to synchronized commit")
+foreach(_marker IN ITEMS
+    "MT_CompleteForestValidationCountForTesting() == 0"
+    "TestRawFreeTreeMutatorsSynchronizeShadows()"
+    "TestTopologyShadowCorruptionFailsClosed()"
+    "sizeof(mt_freeNodeLinkShadow)")
+    require_contains(
+        _memory_fixture "${_marker}"
+        "topology shadow runtime and deterministic cost coverage")
+endforeach()
+foreach(_marker IN ITEMS
+    "++mt_freeNodeCountShadow"
+    "mt_freeNodeCountMirror == mt_freeNodeCountShadow")
+    require_contains(
+        _memory_fixture "${_marker}"
+        "one-sided free-node count corruption and synchronization")
 endforeach()
 require_ordered(
     _try_alloc
@@ -451,7 +922,7 @@ foreach(_marker IN ITEMS
     "!MT_TryMarkPartitionRangeNoReport(nodeNum, size)"
     "!MT_TryRecordPartitionFreeNodeNoReport(child)"
     "partitionWord != UINT64_MAX"
-    "return MT_IsBasicCoreStateValidNoReport() && MT_IsGlobalPartitionValidNoReport();")
+    "return MT_IsBasicCoreStateValidNoReport() && MT_IsFreeTreeForestValidNoReport() && MT_IsGlobalPartitionValidNoReport();")
     require_contains(
         _memory_source "${_marker}" "bounded complete allocator partition")
 endforeach()
@@ -640,6 +1111,16 @@ endforeach()
 foreach(_marker IN ITEMS
     "TestInvalidAndNoChange()"
     "TestQueryAndFreeContracts()"
+    "TestLegacyLocalValidationScope()"
+    "TestLegacyTouchedIntervalCorruption()"
+    "TestLegacyFragmentedForestCost()"
+    "legacy query trusted cleared primary metadata"
+    "legacy query trusted corrupted allocation count"
+    "legacy allocation trusted an orphaned free head"
+    "legacy allocation trusted swapped free-tree branches"
+    "legacy allocation trusted inverted free-tree priority"
+    "legacy free trusted a larger-ancestor free alias"
+    "fragmented legacy mutations used a complete partition scan"
     "TestFullExhaustionAndRecovery()"
     "TestRandomizedIntervals()"
     "TestCorruptionRejection()"
@@ -660,6 +1141,7 @@ extract_slice(
 foreach(_marker IN ITEMS
     "script_string_ownership_tests.cpp"
     "\${SRC_DIR}/script/scr_memorytree.cpp"
+    "KISAK_SCRIPT_STRING_PERF_TESTING=1"
     "NAME script-string-report-free-ownership-contracts")
     require_contains(
         _ownership_fixture_target "${_marker}"
@@ -688,6 +1170,19 @@ foreach(_marker IN ITEMS
     "TestEmbeddedNulByteCount()"
     "TestCollidingByteLengthBounds()"
     "TestLegacyBinaryInternCompatibility()"
+    "TestLegacyFreeListSpliceBoundaries()"
+    "TestLegacyEmptyAndOneNodeFreeList()"
+    "TestShutdownStaleIterationRollback()"
+    "TestSystemIterationAuthenticatesPhysicalEntries()"
+    "per-ID debug corruption changed ownership state"
+    "aggregate debug corruption changed ownership state"
+    "forged shutdown entry changed ownership state"
+    "TestLegacyCompatibilityAvoidsCompleteScans()"
+    "TestLegacyLocalCorruptionAndReporterUnwind()"
+    "MT_CompleteValidationCountForTesting() == 0"
+    "sl_completeFreeListValidationCount == 0"
+    "g_reporterSawOwnedLock"
+    "scrStringGlob.nextFreeEntry == nullptr"
     "legacy binary report-free transfer failed"
     "TestMalformedStateFailsClosed()"
     "std::vector<char> longBytes(4867);"

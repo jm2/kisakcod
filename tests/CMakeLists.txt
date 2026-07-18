@@ -1290,7 +1290,6 @@ set_tests_properties(script-string-packed-atomic-contracts PROPERTIES TIMEOUT 20
 
 add_executable(kisakcod-script-memorytree-try-tests
     script_memorytree_try_tests.cpp
-    ${SRC_DIR}/script/scr_memorytree.cpp
 )
 target_include_directories(
     kisakcod-script-memorytree-try-tests SYSTEM PRIVATE ${SRC_DIR})

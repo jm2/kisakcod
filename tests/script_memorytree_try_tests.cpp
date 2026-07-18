@@ -1,9 +1,10 @@
 #include <qcommon/qcommon.h>
 #include <qcommon/sys_sync.h>
-#include <script/scr_memorytree.h>
+#include <script/scr_memorytree.cpp>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -32,14 +33,43 @@ struct Allocation final
 
 [[nodiscard]] TreeImage CaptureTree()
 {
-    TreeImage image(sizeof(scrMemTreeGlob_t));
-    std::memcpy(image.data(), &scrMemTreeGlob, image.size());
+    TreeImage image;
+    image.reserve(
+        sizeof(scrMemTreePub)
+        + sizeof(scrMemTreeGlob)
+        + sizeof(scrMemTreeDebugGlob)
+        + sizeof(mt_allocationMetadataShadow)
+        + sizeof(mt_freeNodeSizeShadow)
+        + sizeof(mt_freeTreeHeadShadow)
+        + sizeof(mt_freeNodeLinkShadow)
+        + sizeof(mt_freeNodeCountShadow)
+        + sizeof(mt_freeNodeCountMirror)
+        + sizeof(mt_totalAllocShadow)
+        + sizeof(mt_totalAllocBucketsShadow));
+    const auto append = [&image](const void *const source,
+                            const std::size_t size) {
+        const std::size_t offset = image.size();
+        image.resize(offset + size);
+        std::memcpy(image.data() + offset, source, size);
+    };
+    append(&scrMemTreePub, sizeof(scrMemTreePub));
+    append(&scrMemTreeGlob, sizeof(scrMemTreeGlob));
+    append(&scrMemTreeDebugGlob, sizeof(scrMemTreeDebugGlob));
+    append(mt_allocationMetadataShadow,
+        sizeof(mt_allocationMetadataShadow));
+    append(mt_freeNodeSizeShadow, sizeof(mt_freeNodeSizeShadow));
+    append(mt_freeTreeHeadShadow, sizeof(mt_freeTreeHeadShadow));
+    append(mt_freeNodeLinkShadow, sizeof(mt_freeNodeLinkShadow));
+    append(&mt_freeNodeCountShadow, sizeof(mt_freeNodeCountShadow));
+    append(&mt_freeNodeCountMirror, sizeof(mt_freeNodeCountMirror));
+    append(&mt_totalAllocShadow, sizeof(mt_totalAllocShadow));
+    append(&mt_totalAllocBucketsShadow, sizeof(mt_totalAllocBucketsShadow));
     return image;
 }
 
 [[nodiscard]] bool TreeMatches(const TreeImage &image) noexcept
 {
-    return std::memcmp(image.data(), &scrMemTreeGlob, image.size()) == 0;
+    return CaptureTree() == image;
 }
 
 [[nodiscard]] bool Check(
@@ -487,7 +517,9 @@ struct Allocation final
                 == MT_FreeIndexStatus::Success,
             "legacy-local free failed")
         || !Check(MT_CompleteValidationCountForTesting() == 0,
-            "legacy-local operations performed a complete partition scan"))
+            "legacy-local operations performed a complete partition scan")
+        || !Check(MT_CompleteForestValidationCountForTesting() == 0,
+            "legacy-local operations performed a complete forest walk"))
     {
         return false;
     }
@@ -527,6 +559,599 @@ struct Allocation final
             "legacy-local corruption rejection used a complete scan")
         && Check(g_memoryTreeLockDepth == 0,
             "legacy-local corruption rejection leaked the lock");
+}
+
+[[nodiscard]] bool TestRawFreeTreeMutatorsSynchronizeShadows() noexcept
+{
+    MT_Init();
+    const TreeImage initial = CaptureTree();
+    const std::uint16_t root = scrMemTreeGlob.head[0];
+    const std::uint32_t initialFreeCount = mt_freeNodeCountShadow;
+    if (!Check(root != 0, "raw mutator fixture has no size-zero root"))
+        return false;
+
+    MT_RemoveHeadMemoryNode(0);
+    if (!Check(scrMemTreeGlob.head[0] == 0
+            && mt_freeTreeHeadShadow[0] == 0,
+            "raw head removal did not synchronize the head mirror")
+        || !Check(mt_freeNodeSizeShadow[root] == 0
+                && mt_freeNodeCountShadow + 1 == initialFreeCount
+                && mt_freeNodeCountMirror == mt_freeNodeCountShadow,
+            "raw head removal did not synchronize membership accounting"))
+    {
+        return false;
+    }
+    MT_AddMemoryNode(root, 0);
+    if (!Check(TreeMatches(initial),
+            "raw head remove/add did not restore all authenticated state"))
+    {
+        return false;
+    }
+
+    if (!Check(MT_RemoveMemoryNode(root, 0),
+            "raw targeted removal did not find the size-zero root")
+        || !Check(scrMemTreeGlob.head[0] == 0
+                && mt_freeTreeHeadShadow[0] == 0,
+            "raw targeted removal did not synchronize the head mirror")
+        || !Check(mt_freeNodeSizeShadow[root] == 0
+                && mt_freeNodeCountShadow + 1 == initialFreeCount
+                && mt_freeNodeCountMirror == mt_freeNodeCountShadow,
+            "raw targeted removal did not synchronize membership accounting"))
+    {
+        return false;
+    }
+    MT_AddMemoryNode(root, 0);
+    return Check(TreeMatches(initial),
+            "raw targeted remove/add did not restore authenticated state")
+        && Check(MT_TryValidateState(),
+            "raw synchronized mutators left an invalid complete tree")
+        && Check(g_memoryTreeLockDepth == 0,
+            "raw synchronized mutators leaked the lock");
+}
+
+[[nodiscard]] bool TestTopologyShadowCorruptionFailsClosed() noexcept
+{
+    MT_Init();
+    const std::uint16_t root = scrMemTreeGlob.head[0];
+    if (!Check(root != 0, "topology-shadow fixture has no size-zero root"))
+        return false;
+
+    mt_freeNodeLinkShadow[root].next = 3;
+    const TreeImage corruptLinkShadow = CaptureTree();
+    std::uint16_t outId = 0xBEEF;
+    if (!Check(
+            MT_TryAllocIndexLegacy(1, 15, &outId)
+                == MT_AllocIndexStatus::UnsafeFailure,
+            "legacy allocation trusted a forged free-link shadow")
+        || !Check(outId == 0xBEEF,
+            "forged free-link shadow rejection published an ID")
+        || !Check(TreeMatches(corruptLinkShadow),
+            "forged free-link shadow rejection changed state"))
+    {
+        return false;
+    }
+
+    MT_Init();
+    mt_freeTreeHeadShadow[0] = 0;
+    const TreeImage corruptHeadShadow = CaptureTree();
+    outId = 0xBEEF;
+    if (!Check(
+            MT_TryAllocIndexLegacy(13, 15, &outId)
+                == MT_AllocIndexStatus::UnsafeFailure,
+            "legacy allocation trusted a forged free-head shadow")
+        || !Check(outId == 0xBEEF,
+            "forged free-head shadow rejection published an ID")
+        || !Check(TreeMatches(corruptHeadShadow),
+            "forged free-head shadow rejection changed state"))
+    {
+        return false;
+    }
+
+    MT_Init();
+    mt_freeNodeLinkShadow[3].next = 1;
+    const TreeImage corruptOrphanShadow = CaptureTree();
+    if (!Check(!MT_TryValidateState(),
+            "complete validation trusted an orphan topology shadow")
+        || !Check(TreeMatches(corruptOrphanShadow),
+            "orphan topology-shadow rejection changed state"))
+    {
+        return false;
+    }
+
+    MT_Init();
+    ++mt_freeNodeCountShadow;
+    const TreeImage corruptFreeCount = CaptureTree();
+    outId = 0xBEEF;
+    return Check(
+            MT_TryAllocIndexLegacy(13, 15, &outId)
+                == MT_AllocIndexStatus::UnsafeFailure,
+            "legacy allocation trusted a one-sided free-node count")
+        && Check(outId == 0xBEEF,
+            "free-node count rejection published an ID")
+        && Check(TreeMatches(corruptFreeCount),
+            "free-node count rejection changed state")
+        && Check(g_memoryTreeLockDepth == 0,
+            "topology-shadow rejection leaked the lock");
+}
+
+[[nodiscard]] bool TestLegacyTouchedIntervalCorruption() noexcept
+{
+    MT_Init();
+    MT_ResetCompleteValidationCountForTesting();
+    const std::uint16_t sizeOneRoot = scrMemTreeGlob.head[1];
+    MT_CorruptAllocationMetadataForTesting(
+        static_cast<std::uint32_t>(sizeOneRoot) + 1u, 1, 0);
+    const TreeImage corruptCandidate = CaptureTree();
+    std::uint16_t outId = 0xBEEF;
+    if (!Check(
+            MT_TryAllocIndexLegacy(13, 15, &outId)
+                == MT_AllocIndexStatus::UnsafeFailure,
+            "legacy allocation trusted hidden interval metadata")
+        || !Check(outId == 0xBEEF,
+            "hidden interval metadata rejection published an ID")
+        || !Check(TreeMatches(corruptCandidate),
+            "hidden interval metadata rejection changed tree topology")
+        || !Check(MT_CompleteValidationCountForTesting() == 0,
+            "hidden interval metadata rejection used a complete scan"))
+    {
+        return false;
+    }
+    MT_CorruptAllocationMetadataForTesting(
+        static_cast<std::uint32_t>(sizeOneRoot) + 1u, 0, 0);
+
+    MT_Init();
+    std::uint16_t allocationId = 0;
+    if (!Check(
+            MT_TryAllocIndexLegacy(25, 15, &allocationId)
+                == MT_AllocIndexStatus::Success,
+            "legacy interval-corruption allocation setup failed"))
+    {
+        return false;
+    }
+    MT_AllocationInfo unchanged{0xA5, 0x5A, 0xA55A,
+        UINT32_C(0xA55AA55A)};
+    MT_CorruptAllocationMetadataForTesting(allocationId, 0, 0);
+    const TreeImage clearedPrimary = CaptureTree();
+    if (!Check(
+            MT_TryGetAllocationInfoLegacy(allocationId, &unchanged)
+                == MT_AllocationInfoStatus::UnsafeFailure,
+            "legacy query trusted cleared primary metadata")
+        || !Check(unchanged.type == 0xA5 && unchanged.size == 0x5A
+                && unchanged.reserved == 0xA55A
+                && unchanged.capacityBytes == UINT32_C(0xA55AA55A),
+            "cleared primary metadata rejection changed output")
+        || !Check(
+            MT_TryFreeIndexLegacy(allocationId, 25)
+                == MT_FreeIndexStatus::UnsafeFailure,
+            "legacy free trusted cleared primary metadata")
+        || !Check(TreeMatches(clearedPrimary),
+            "cleared primary metadata rejection changed allocator state"))
+    {
+        return false;
+    }
+    MT_CorruptAllocationMetadataForTesting(allocationId, 15, 2);
+
+    MT_CorruptAllocationMetadataForTesting(allocationId, 15, 0);
+    if (!Check(
+            MT_TryGetAllocationInfoLegacy(allocationId, &unchanged)
+                == MT_AllocationInfoStatus::UnsafeFailure,
+            "legacy query trusted forged root metadata")
+        || !Check(unchanged.type == 0xA5 && unchanged.size == 0x5A
+                && unchanged.reserved == 0xA55A
+                && unchanged.capacityBytes == UINT32_C(0xA55AA55A),
+            "forged root metadata rejection changed output"))
+    {
+        return false;
+    }
+    MT_CorruptAllocationMetadataForTesting(allocationId, 15, 2);
+
+    ++scrMemTreeGlob.totalAlloc;
+    const TreeImage corruptAllocationCount = CaptureTree();
+    if (!Check(
+            MT_TryGetAllocationInfoLegacy(allocationId, &unchanged)
+                == MT_AllocationInfoStatus::UnsafeFailure,
+            "legacy query trusted corrupted allocation count")
+        || !Check(
+            MT_TryFreeIndexLegacy(allocationId, 25)
+                == MT_FreeIndexStatus::UnsafeFailure,
+            "legacy free trusted corrupted allocation count")
+        || !Check(TreeMatches(corruptAllocationCount),
+            "allocation-count rejection changed allocator state"))
+    {
+        return false;
+    }
+    --scrMemTreeGlob.totalAlloc;
+
+    ++scrMemTreeGlob.totalAllocBuckets;
+    const TreeImage corruptBucketCount = CaptureTree();
+    if (!Check(
+            MT_TryGetAllocationInfoLegacy(allocationId, &unchanged)
+                == MT_AllocationInfoStatus::UnsafeFailure,
+            "legacy query trusted corrupted bucket count")
+        || !Check(
+            MT_TryFreeIndexLegacy(allocationId, 25)
+                == MT_FreeIndexStatus::UnsafeFailure,
+            "legacy free trusted corrupted bucket count")
+        || !Check(TreeMatches(corruptBucketCount),
+            "bucket-count rejection changed allocator state"))
+    {
+        return false;
+    }
+    --scrMemTreeGlob.totalAllocBuckets;
+
+    MT_CorruptAllocationMetadataForTesting(
+        static_cast<std::uint32_t>(allocationId) + 1u, 1, 0);
+    const TreeImage corruptAllocation = CaptureTree();
+    if (!Check(
+            MT_TryGetAllocationInfoLegacy(allocationId, &unchanged)
+                == MT_AllocationInfoStatus::UnsafeFailure,
+            "legacy query trusted hidden interior allocation metadata")
+        || !Check(
+            MT_TryFreeIndexLegacy(allocationId, 25)
+                == MT_FreeIndexStatus::UnsafeFailure,
+            "legacy free trusted hidden interior allocation metadata")
+        || !Check(TreeMatches(corruptAllocation),
+            "hidden allocation metadata rejection changed tree topology"))
+    {
+        return false;
+    }
+    MT_CorruptAllocationMetadataForTesting(
+        static_cast<std::uint32_t>(allocationId) + 1u, 0, 0);
+    if (!Check(
+            MT_TryFreeIndexLegacy(allocationId, 25)
+                == MT_FreeIndexStatus::Success,
+            "legacy hidden-metadata cleanup failed"))
+    {
+        return false;
+    }
+
+    MT_Init();
+    const std::uint16_t orphanedHead = scrMemTreeGlob.head[0];
+    scrMemTreeGlob.head[0] = 0;
+    const TreeImage clearedHead = CaptureTree();
+    outId = 0xBEEF;
+    if (!Check(
+            MT_TryAllocIndexLegacy(1, 15, &outId)
+                == MT_AllocIndexStatus::UnsafeFailure,
+            "legacy allocation trusted an orphaned free head")
+        || !Check(outId == 0xBEEF,
+            "orphaned free-head rejection published an ID")
+        || !Check(TreeMatches(clearedHead),
+            "orphaned free-head rejection changed allocator state"))
+    {
+        return false;
+    }
+    scrMemTreeGlob.head[0] = orphanedHead;
+
+    MT_Init();
+    const std::uint16_t wrongBranchRoot = scrMemTreeGlob.head[0];
+    const MemoryNode savedWrongBranchRoot =
+        scrMemTreeGlob.nodes[wrongBranchRoot];
+    const MemoryNode savedWrongBranchAlias = scrMemTreeGlob.nodes[3];
+    scrMemTreeGlob.nodes[wrongBranchRoot].prev = 3;
+    scrMemTreeGlob.nodes[3] = {};
+    const TreeImage wrongBranchAlias = CaptureTree();
+    if (!Check(!MT_TryValidateState(),
+            "complete validation trusted a wrong-branch free alias")
+        || !Check(TreeMatches(wrongBranchAlias),
+            "wrong-branch alias rejection changed allocator state"))
+    {
+        return false;
+    }
+    scrMemTreeGlob.nodes[wrongBranchRoot] = savedWrongBranchRoot;
+    scrMemTreeGlob.nodes[3] = savedWrongBranchAlias;
+    MT_ResetCompleteValidationCountForTesting();
+
+    MT_Init();
+    std::array<std::uint16_t, 5> branchAllocations{};
+    for (std::uint16_t &branchAllocation : branchAllocations)
+    {
+        if (!Check(
+                MT_TryAllocIndexLegacy(1, 13, &branchAllocation)
+                    == MT_AllocIndexStatus::Success,
+                "off-path alias allocation setup failed"))
+        {
+            return false;
+        }
+    }
+    if (!Check(
+            MT_TryFreeIndexLegacy(branchAllocations[1], 1)
+                == MT_FreeIndexStatus::Success,
+            "off-path alias first free setup failed")
+        || !Check(
+            MT_TryFreeIndexLegacy(branchAllocations[3], 1)
+                == MT_FreeIndexStatus::Success,
+            "off-path alias second free setup failed"))
+    {
+        return false;
+    }
+    const std::uint16_t branchRoot = scrMemTreeGlob.head[0];
+    const std::uint16_t offPathParent =
+        scrMemTreeGlob.nodes[branchRoot].prev != 0
+            ? scrMemTreeGlob.nodes[branchRoot].prev
+            : scrMemTreeGlob.nodes[branchRoot].next;
+    if (!Check(offPathParent != 0,
+            "off-path alias setup did not create a nontrivial tree"))
+    {
+        return false;
+    }
+    const MemoryNode savedBranchRoot = scrMemTreeGlob.nodes[branchRoot];
+    const MemoryNode savedPriorityChild =
+        scrMemTreeGlob.nodes[offPathParent];
+    scrMemTreeGlob.head[0] = offPathParent;
+    scrMemTreeGlob.nodes[offPathParent].prev = 0;
+    scrMemTreeGlob.nodes[offPathParent].next = branchRoot;
+    scrMemTreeGlob.nodes[branchRoot] = {};
+    const TreeImage invertedPriority = CaptureTree();
+    outId = 0xBEEF;
+    if (!Check(
+            MT_TryAllocIndexLegacy(1, 13, &outId)
+                == MT_AllocIndexStatus::UnsafeFailure,
+            "legacy allocation trusted inverted free-tree priority")
+        || !Check(outId == 0xBEEF,
+            "inverted-priority rejection published an ID")
+        || !Check(TreeMatches(invertedPriority),
+            "inverted-priority rejection changed allocator state"))
+    {
+        return false;
+    }
+    scrMemTreeGlob.head[0] = branchRoot;
+    scrMemTreeGlob.nodes[branchRoot] = savedBranchRoot;
+    scrMemTreeGlob.nodes[offPathParent] = savedPriorityChild;
+
+    if (scrMemTreeGlob.nodes[branchRoot].prev == offPathParent)
+        scrMemTreeGlob.nodes[branchRoot].prev = 0;
+    else
+        scrMemTreeGlob.nodes[branchRoot].next = 0;
+    const TreeImage clearedChild = CaptureTree();
+    if (!Check(!MT_TryValidateState(),
+            "complete validation trusted an orphaned off-path free child")
+        || !Check(TreeMatches(clearedChild),
+            "orphaned free-child rejection changed allocator state"))
+    {
+        return false;
+    }
+    scrMemTreeGlob.nodes[branchRoot] = savedBranchRoot;
+    MT_ResetCompleteValidationCountForTesting();
+
+    scrMemTreeGlob.nodes[branchRoot].prev = offPathParent;
+    scrMemTreeGlob.nodes[branchRoot].next = 0;
+    const TreeImage misplacedFreeNode = CaptureTree();
+    outId = 0xBEEF;
+    if (!Check(
+            MT_TryAllocIndexLegacy(1, 13, &outId)
+                == MT_AllocIndexStatus::UnsafeFailure,
+            "legacy allocation trusted swapped free-tree branches")
+        || !Check(outId == 0xBEEF,
+            "swapped-branch rejection published an ID")
+        || !Check(
+            MT_TryFreeIndexLegacy(offPathParent, 1)
+                == MT_FreeIndexStatus::UnsafeFailure,
+            "legacy double-free trusted a misplaced free member")
+        || !Check(TreeMatches(misplacedFreeNode),
+            "misplaced free-member rejection changed allocator state"))
+    {
+        return false;
+    }
+    scrMemTreeGlob.nodes[branchRoot] = savedBranchRoot;
+
+    if (scrMemTreeGlob.nodes[offPathParent].prev == 0)
+        scrMemTreeGlob.nodes[offPathParent].prev = 7;
+    else
+        scrMemTreeGlob.nodes[offPathParent].next = 7;
+    scrMemTreeGlob.nodes[7] = {};
+    const TreeImage offPathAlias = CaptureTree();
+    if (!Check(!MT_TryValidateState(),
+            "complete validation trusted an off-path free alias")
+        || !Check(TreeMatches(offPathAlias),
+            "off-path alias rejection changed allocator state"))
+    {
+        return false;
+    }
+    MT_ResetCompleteValidationCountForTesting();
+
+    MT_Init();
+    const std::uint16_t savedSizeZeroHead = scrMemTreeGlob.head[0];
+    const MemoryNode savedNestedNode = scrMemTreeGlob.nodes[3];
+    scrMemTreeGlob.head[0] = 3;
+    scrMemTreeGlob.nodes[3] = {};
+    const TreeImage corruptFreeAlias = CaptureTree();
+    outId = 0xBEEF;
+    if (!Check(
+            MT_TryAllocIndexLegacy(13, 15, &outId)
+                == MT_AllocIndexStatus::UnsafeFailure,
+            "legacy allocation trusted a nested free-tree alias")
+        || !Check(outId == 0xBEEF,
+            "nested free-tree alias rejection published an ID")
+        || !Check(TreeMatches(corruptFreeAlias),
+            "nested free-tree alias rejection changed allocator state"))
+    {
+        return false;
+    }
+    scrMemTreeGlob.head[0] = savedSizeZeroHead;
+    scrMemTreeGlob.nodes[3] = savedNestedNode;
+
+    MT_Init();
+    const std::uint16_t invalidMembershipRoot = scrMemTreeGlob.head[1];
+    MT_CorruptFreeNodeMembershipForTesting(
+        static_cast<std::uint32_t>(invalidMembershipRoot) + 1u, 0xFF);
+    const TreeImage invalidMembership = CaptureTree();
+    outId = 0xBEEF;
+    if (!Check(
+            MT_TryAllocIndexLegacy(13, 15, &outId)
+                == MT_AllocIndexStatus::UnsafeFailure,
+            "legacy allocation trusted invalid free membership")
+        || !Check(outId == 0xBEEF,
+            "invalid free-membership rejection published an ID")
+        || !Check(TreeMatches(invalidMembership),
+            "invalid free-membership rejection changed allocator state"))
+    {
+        return false;
+    }
+    MT_CorruptFreeNodeMembershipForTesting(
+        static_cast<std::uint32_t>(invalidMembershipRoot) + 1u, 0);
+
+    MT_Init();
+    std::array<std::uint16_t, 3> ancestorAllocations{};
+    for (std::uint16_t &ancestorAllocation : ancestorAllocations)
+    {
+        if (!Check(
+                MT_TryAllocIndexLegacy(25, 15, &ancestorAllocation)
+                    == MT_AllocIndexStatus::Success,
+                "larger-ancestor alias allocation setup failed"))
+        {
+            return false;
+        }
+    }
+    if (!Check(
+            MT_TryFreeIndexLegacy(ancestorAllocations[1], 25)
+                == MT_FreeIndexStatus::Success,
+            "larger-ancestor alias free setup failed"))
+    {
+        return false;
+    }
+    const std::uint16_t savedSizeThreeHead = scrMemTreeGlob.head[3];
+    scrMemTreeGlob.head[3] = ancestorAllocations[1];
+    const TreeImage largerAncestorAlias = CaptureTree();
+    if (!Check(
+            MT_TryFreeIndexLegacy(ancestorAllocations[2], 25)
+                == MT_FreeIndexStatus::UnsafeFailure,
+            "legacy free trusted a larger-ancestor free alias")
+        || !Check(TreeMatches(largerAncestorAlias),
+            "larger-ancestor alias rejection changed allocator state"))
+    {
+        return false;
+    }
+    scrMemTreeGlob.head[3] = savedSizeThreeHead;
+    if (!Check(
+            MT_TryFreeIndexLegacy(ancestorAllocations[2], 25)
+                == MT_FreeIndexStatus::Success,
+            "larger-ancestor alias cleanup failed")
+        || !Check(
+            MT_TryFreeIndexLegacy(ancestorAllocations[0], 25)
+                == MT_FreeIndexStatus::Success,
+            "larger-ancestor alias final cleanup failed"))
+    {
+        return false;
+    }
+
+    MT_Init();
+    std::uint16_t firstId = 0;
+    std::uint16_t mergeId = 0;
+    if (!Check(
+            MT_TryAllocIndexLegacy(13, 15, &firstId)
+                == MT_AllocIndexStatus::Success,
+            "legacy merge-alias first allocation failed")
+        || !Check(
+            MT_TryAllocIndexLegacy(13, 15, &mergeId)
+                == MT_AllocIndexStatus::Success,
+            "legacy merge-alias second allocation failed"))
+    {
+        return false;
+    }
+    const std::uint16_t mergeSizeZeroHead = scrMemTreeGlob.head[0];
+    const MemoryNode savedMergeAlias = scrMemTreeGlob.nodes[7];
+    scrMemTreeGlob.head[0] = 7;
+    scrMemTreeGlob.nodes[7] = {};
+    const TreeImage corruptMergeAlias = CaptureTree();
+    if (!Check(
+            MT_TryFreeIndexLegacy(mergeId, 13)
+                == MT_FreeIndexStatus::UnsafeFailure,
+            "legacy free trusted an alias inside a consumed buddy")
+        || !Check(TreeMatches(corruptMergeAlias),
+            "consumed-buddy alias rejection changed allocator state"))
+    {
+        return false;
+    }
+    scrMemTreeGlob.head[0] = mergeSizeZeroHead;
+    scrMemTreeGlob.nodes[7] = savedMergeAlias;
+
+    return Check(
+            MT_TryFreeIndexLegacy(mergeId, 13)
+                == MT_FreeIndexStatus::Success,
+            "legacy consumed-buddy alias cleanup failed")
+        && Check(
+            MT_TryFreeIndexLegacy(firstId, 13)
+                == MT_FreeIndexStatus::Success,
+            "legacy alias test final cleanup failed")
+        && Check(MT_CompleteValidationCountForTesting() == 0,
+            "legacy interval/alias checks used a complete scan")
+        && Check(g_memoryTreeLockDepth == 0,
+            "legacy interval/alias rejection leaked the lock");
+}
+
+[[nodiscard]] bool TestLegacyFragmentedForestCost() noexcept
+{
+    MT_Init();
+    MT_ResetCompleteValidationCountForTesting();
+    constexpr std::uint32_t fragmentCount = 4096;
+    std::vector<std::uint16_t> allocations(fragmentCount * 2u);
+    for (std::uint16_t &allocation : allocations)
+    {
+        if (!Check(
+                MT_TryAllocIndexLegacy(1, 13, &allocation)
+                    == MT_AllocIndexStatus::Success,
+                "fragmented-forest allocation setup failed"))
+        {
+            return false;
+        }
+    }
+    for (std::uint32_t index = 0; index < allocations.size(); index += 2)
+    {
+        if (!Check(
+                MT_TryFreeIndexLegacy(allocations[index], 1)
+                    == MT_FreeIndexStatus::Success,
+                "fragmented-forest free setup failed"))
+        {
+            return false;
+        }
+    }
+    if (!Check(MT_CompleteValidationCountForTesting() == 0,
+            "fragmented legacy setup used a complete partition scan")
+        || !Check(MT_CompleteForestValidationCountForTesting() == 0,
+            "fragmented legacy setup used a complete forest walk"))
+    {
+        return false;
+    }
+
+    std::uint16_t probe = 0;
+    const auto start = std::chrono::steady_clock::now();
+    const MT_AllocIndexStatus probeStatus =
+        MT_TryAllocIndexLegacy(1, 13, &probe);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    const double elapsedMs =
+        std::chrono::duration<double, std::milli>(elapsed).count();
+    std::printf(
+        "legacy fragmented-forest benchmark: %u size-0 extents, %.3f ms alloc\n",
+        fragmentCount,
+        elapsedMs);
+    if (!Check(probeStatus == MT_AllocIndexStatus::Success,
+            "fragmented-forest probe allocation failed")
+        || !Check(
+            MT_TryFreeIndexLegacy(probe, 1) == MT_FreeIndexStatus::Success,
+            "fragmented-forest probe cleanup failed"))
+    {
+        return false;
+    }
+
+    for (std::uint32_t index = 1; index < allocations.size(); index += 2)
+    {
+        if (!Check(
+                MT_TryFreeIndexLegacy(allocations[index], 1)
+                    == MT_FreeIndexStatus::Success,
+                "fragmented-forest final cleanup failed"))
+        {
+            return false;
+        }
+    }
+    return Check(MT_CompleteValidationCountForTesting() == 0,
+            "fragmented legacy mutations used a complete partition scan")
+        && Check(MT_CompleteForestValidationCountForTesting() == 0,
+            "fragmented legacy cleanup used a complete forest walk")
+        && Check(scrMemTreeGlob.totalAlloc == 0,
+            "fragmented-forest cleanup leaked allocations")
+        && Check(g_memoryTreeLockDepth == 0,
+            "fragmented-forest benchmark leaked the lock");
 }
 
 [[nodiscard]] bool TestCorruptionRejection() noexcept
@@ -666,6 +1291,10 @@ int main()
         || !TestFullExhaustionAndRecovery()
         || !TestRandomizedIntervals()
         || !TestLegacyLocalValidationScope()
+        || !TestRawFreeTreeMutatorsSynchronizeShadows()
+        || !TestTopologyShadowCorruptionFailsClosed()
+        || !TestLegacyTouchedIntervalCorruption()
+        || !TestLegacyFragmentedForestCost()
         || !TestCorruptionRejection())
     {
         return 1;
