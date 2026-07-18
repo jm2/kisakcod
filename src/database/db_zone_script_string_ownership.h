@@ -52,6 +52,10 @@ enum class ZoneScriptStringOwnershipPhase : std::uint8_t
     Live,
     Abandoned,
     UnsafeFailure,
+    // Appended so the established phase values above remain stable.
+    Unloading,
+    UnloadingCallback,
+    Unloaded,
 };
 
 enum class ZoneScriptStringOwnershipStatus : std::uint8_t
@@ -137,6 +141,12 @@ public:
     // A read-only whole-representation predicate used by durable containing
     // tables before they initialize or reuse an entry.
     [[nodiscard]] bool isEmptyCanonical() const noexcept;
+    // Read-only whole-representation authentication for a durable containing
+    // table.  The expected lifecycle address is part of the binding: matching
+    // only slot/generation is insufficient when stable entries are reused.
+    [[nodiscard]] bool canonicalForBinding(
+        const zone_load::ZoneLoadContextSlot *expectedLifecycle,
+        const zone_load::ZoneLoadContextKey &expectedKey) const noexcept;
 
 private:
     friend ZoneScriptStringOwnershipStatus
@@ -176,8 +186,17 @@ private:
     TryFinishZoneScriptStringAbandonment(
         ZoneScriptStringOwnershipController *) noexcept;
     friend ZoneScriptStringOwnershipStatus
-    TryResetAbandonedZoneScriptStringOwnership(
-        ZoneScriptStringOwnershipController *) noexcept;
+    TryUnloadLiveZoneScriptStringOwnership(
+        ZoneScriptStringOwnershipController *,
+        zone_load::ZoneLoadContextSlot *,
+        const zone_load::ZoneLoadContextKey &,
+        const zone_load::ZoneLoadCleanupCallbacks &) noexcept;
+    friend ZoneScriptStringOwnershipStatus
+    TryResetTerminalZoneScriptStringOwnership(
+        ZoneScriptStringOwnershipController *,
+        zone_load::ZoneLoadContextSlot *,
+        const zone_load::ZoneLoadContextKey &,
+        zone_load::ZoneLoadTerminalKind) noexcept;
 #ifdef KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING
     friend struct ZoneScriptStringOwnershipControllerTestAccess;
 #endif
@@ -185,8 +204,18 @@ private:
     [[nodiscard]] ZoneScriptStringOwnershipStatus validateOwned() const noexcept;
     [[nodiscard]] ZoneScriptStringOwnershipStatus
     validateAbandonedReceipt() const noexcept;
+    [[nodiscard]] ZoneScriptStringOwnershipStatus validateLiveBinding(
+        const zone_load::ZoneLoadContextSlot *expectedLifecycle,
+        const zone_load::ZoneLoadContextKey &expectedKey) const noexcept;
+    [[nodiscard]] ZoneScriptStringOwnershipStatus validateTerminalReceipt(
+        const zone_load::ZoneLoadContextSlot *expectedLifecycle,
+        const zone_load::ZoneLoadContextKey &expectedKey,
+        zone_load::ZoneLoadTerminalKind expectedTerminalKind) const noexcept;
     [[nodiscard]] bool bindingMatchesCurrentPhase() const noexcept;
     static zone_load::ZoneLoadCleanupCallbackStatus PerformBoundCleanup(
+        void *context,
+        zone_load::ZoneLoadCleanupOperation operation) noexcept;
+    static zone_load::ZoneLoadCleanupCallbackStatus PerformBoundLiveUnload(
         void *context,
         zone_load::ZoneLoadCleanupOperation operation) noexcept;
     void detachJournalBacking() noexcept;
@@ -248,6 +277,53 @@ struct ZoneScriptStringOwnershipControllerTestAccess final
     {
         if (controller)
             controller->phase_ = phase;
+    }
+
+    static void SetLifecycle(
+        ZoneScriptStringOwnershipController *const controller,
+        zone_load::ZoneLoadContextSlot *const lifecycle) noexcept
+    {
+        if (controller)
+            controller->lifecycle_ = lifecycle;
+    }
+
+    static void SetCleanupBinding(
+        ZoneScriptStringOwnershipController *const controller,
+        void *const context,
+        zone_load::ZoneLoadCleanupCallbackStatus (*const perform)(
+            void *, zone_load::ZoneLoadCleanupOperation) noexcept) noexcept
+    {
+        if (!controller)
+            return;
+        controller->rollbackContext_ = context;
+        controller->performCleanup_ = perform;
+    }
+
+    static void SetTransactionSerial(
+        ZoneScriptStringOwnershipController *const controller,
+        const std::uint32_t serial) noexcept
+    {
+        if (controller)
+            controller->transactionSerial_ = serial;
+    }
+
+    static void SetResumePhase(
+        ZoneScriptStringOwnershipController *const controller,
+        const ZoneScriptStringOwnershipPhase phase) noexcept
+    {
+        if (controller)
+            controller->resumePhase_ = phase;
+    }
+
+    static void SetReserved(
+        ZoneScriptStringOwnershipController *const controller,
+        const std::uint8_t first,
+        const std::uint8_t second) noexcept
+    {
+        if (!controller)
+            return;
+        controller->reserved_[0] = first;
+        controller->reserved_[1] = second;
     }
 };
 #endif
@@ -325,8 +401,30 @@ TryRollbackNextZoneScriptString(
 TryFinishZoneScriptStringAbandonment(
     ZoneScriptStringOwnershipController *controller) noexcept;
 
+// Drives a committed Live generation through the lifecycle's live-only
+// cleanup recipe.  The controller acquires the outer script-string
+// transaction, binds the exact callback identity, and retains both across
+// Retry.  The same externally serialized thread must resume it.  Success
+// retains an exact Unloaded receipt; no callback is replayed by an exact final
+// retry.
 [[nodiscard]] ZoneScriptStringOwnershipStatus
-TryResetAbandonedZoneScriptStringOwnership(
-    ZoneScriptStringOwnershipController *controller) noexcept;
+TryUnloadLiveZoneScriptStringOwnership(
+    ZoneScriptStringOwnershipController *controller,
+    zone_load::ZoneLoadContextSlot *expectedLifecycle,
+    const zone_load::ZoneLoadContextKey &expectedKey,
+    const zone_load::ZoneLoadCleanupCallbacks &callbacks) noexcept;
+
+// Canonicalizes only the ownership controller after authenticating the exact
+// lifecycle terminal receipt and its kind.  The lifecycle generation/receipt
+// remains durable until the next claim atomically advances the generation.
+// Repeating the exact reset while the controller is already canonical Empty is
+// a no-op success.  This primitive remains production-neutral; durable tables
+// must reauthenticate their own physical slot and key before calling it.
+[[nodiscard]] ZoneScriptStringOwnershipStatus
+TryResetTerminalZoneScriptStringOwnership(
+    ZoneScriptStringOwnershipController *controller,
+    zone_load::ZoneLoadContextSlot *expectedLifecycle,
+    const zone_load::ZoneLoadContextKey &expectedKey,
+    zone_load::ZoneLoadTerminalKind expectedTerminalKind) noexcept;
 
 } // namespace db::zone_script_string_ownership

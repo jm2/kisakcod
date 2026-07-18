@@ -155,8 +155,14 @@ foreach(_marker IN ITEMS
     "script_string_journal::ScriptStringJournal *journal_ = nullptr;"
     "script_string_journal::ScriptStringJournalEntry *storage_ = nullptr;"
     "validateAbandonedReceipt() const noexcept;"
+    "canonicalForBinding("
     "RUNTIME_SIZE(ZoneScriptStringOwnershipController, 0x40, 0x58);"
     "UnpublishingCallback,"
+    "Unloading,"
+    "UnloadingCallback,"
+    "Unloaded,"
+    "TryUnloadLiveZoneScriptStringOwnership("
+    "TryResetTerminalZoneScriptStringOwnership("
     "Busy,")
     require_contains(_header "${_marker}" "bound fail-closed controller")
 endforeach()
@@ -233,7 +239,7 @@ require_contains(
 extract_slice(
     _source
     "ZoneScriptStringOwnershipStatus TryFinishZoneScriptStringAbandonment("
-    "ZoneScriptStringOwnershipStatus TryResetAbandonedZoneScriptStringOwnership("
+    "ZoneScriptStringOwnershipStatus TryUnloadLiveZoneScriptStringOwnership("
     _rollback_finish
     "rollback cleanup")
 require_ordered(
@@ -248,12 +254,14 @@ require_contains(
 
 extract_slice(
     _source
-    "validateAbandonedReceipt() const noexcept"
+    "validateLiveBinding("
     "void ZoneScriptStringOwnershipController::detachJournalBacking() noexcept"
-    _abandoned_receipt
-    "abandoned receipt validation")
+    _terminal_receipts
+    "live and terminal receipt validation")
 foreach(_marker IN ITEMS
-    "phase_ != ZoneScriptStringOwnershipPhase::Abandoned"
+    "phase_ != ZoneScriptStringOwnershipPhase::Live"
+    "expectedPhase = ZoneScriptStringOwnershipPhase::Abandoned;"
+    "expectedPhase = ZoneScriptStringOwnershipPhase::Unloaded;"
     "journal_ != nullptr || storage_ != nullptr"
     "rollbackContext_ != nullptr || ensureUnreachable_ != nullptr"
     "performCleanup_ != nullptr || storageCapacity_ != 0"
@@ -261,19 +269,74 @@ foreach(_marker IN ITEMS
     "!transaction_.canonicalInactive()"
     "resumePhase_ != ZoneScriptStringOwnershipPhase::Empty"
     "reserved_[0] != 0 || reserved_[1] != 0"
-    "!lifecycle_ || !lifecycle_->initialized()"
-    "lifecycle_->generation() != key_.generation"
+    "lifecycle_ != expectedLifecycle"
+    "!expectedLifecycle->canonical()"
+    "expectedLifecycle->cleanupActive()"
+    "expectedLifecycle->cleanupPoisoned()"
+    "expectedLifecycle->generation() != expectedKey.generation"
     "ZoneScriptStringOwnershipStatus::StaleKey"
     "lifecycle::ZoneLoadContextPhase::Empty"
-    "lifecycle::ZoneLoadTerminalKind::Abandoned")
+    "expectedLifecycle->terminalKind() != expectedTerminalKind")
     require_contains(
-        _abandoned_receipt "${_marker}" "complete abandoned receipt")
+        _terminal_receipts "${_marker}" "complete terminal receipts")
 endforeach()
-require_literal_count(
+
+extract_slice(
     _source
-    "controller->validateAbandonedReceipt();"
-    2
-    "terminal retry and reset share receipt authentication")
+    "ZoneScriptStringOwnershipStatus TryUnloadLiveZoneScriptStringOwnership("
+    "ZoneScriptStringOwnershipStatus TryResetTerminalZoneScriptStringOwnership("
+    _live_unload
+    "controller-owned live unload")
+foreach(_marker IN ITEMS
+    "validateLiveBinding(expectedLifecycle, expectedKey)"
+    "TryBeginScriptStringTransaction("
+    "controller->rollbackContext_ = callbacks.context;"
+    "controller->performCleanup_ = callbacks.perform;"
+    "ZoneScriptStringOwnershipPhase::UnloadingCallback"
+    "TryUnloadZoneLoadContext("
+    "ZoneScriptStringOwnershipPhase::Unloading;"
+    "ZoneScriptStringOwnershipStatus::Retry"
+    "controller->rollbackContext_ != callbacks.context"
+    "controller->performCleanup_ != callbacks.perform"
+    "ZoneScriptStringOwnershipPhase::Unloaded"
+    "FinishScriptStringTransaction("
+    "ZoneLoadTerminalKind::Unloaded")
+    require_contains(
+        _live_unload "${_marker}" "serialized retry-safe live unload")
+endforeach()
+require_ordered(
+    _live_unload
+    "TryBeginScriptStringTransaction("
+    "TryUnloadZoneLoadContext("
+    "outer serializer before lifecycle unload")
+require_ordered(
+    _live_unload
+    "TryUnloadZoneLoadContext("
+    "ZoneScriptStringOwnershipPhase::Unloaded;"
+    "terminal lifecycle recipe before unloaded receipt")
+require_ordered(
+    _live_unload
+    "ZoneScriptStringOwnershipPhase::Unloaded;"
+    "FinishScriptStringTransaction("
+    "unloaded receipt before serializer release")
+
+extract_slice(
+    _source
+    "ZoneScriptStringOwnershipStatus TryResetTerminalZoneScriptStringOwnership("
+    "} // namespace db::zone_script_string_ownership"
+    _terminal_reset
+    "exact terminal reset")
+foreach(_marker IN ITEMS
+    "expectedLifecycle->slotIndex() != expectedKey.slot"
+    "expectedLifecycle->generation() != expectedKey.generation"
+    "expectedLifecycle->phase() == lifecycle::ZoneLoadContextPhase::Empty"
+    "expectedLifecycle->terminalKind() == expectedTerminalKind"
+    "controller->validateTerminalReceipt("
+    "controller->reset();"
+    "controller->isEmptyCanonical()")
+    require_contains(
+        _terminal_reset "${_marker}" "exact idempotent terminal reset")
+endforeach()
 
 # Staging may expose an acquired ID only after the journal has appended the
 # reference record successfully. All failed controller and adapter operations
@@ -326,6 +389,14 @@ foreach(_var IN ITEMS _stream _stringtable _registry _file_load _load)
         ${_var}
         "db_zone_script_string_ownership"
         "legacy production site cannot include the controller")
+    require_not_contains(
+        ${_var}
+        "TryUnloadLiveZoneScriptStringOwnership("
+        "legacy production site cannot invoke live unload")
+    require_not_contains(
+        ${_var}
+        "TryResetTerminalZoneScriptStringOwnership("
+        "legacy production site cannot reset terminal ownership")
 endforeach()
 
 # The production manifest, portable test graph, x86 test selection, and the
@@ -354,9 +425,12 @@ foreach(_marker IN ITEMS
     "TestBindingAndForeignThreadRejection();"
     "TestBeginFailureReleasesSerializer();"
     "TestAbandonedReceiptAuthentication();"
+    "TestLiveUnloadRetryBindingAndTerminalReset();"
     "driver.beginReentryStatus == ZoneScriptStringOwnershipStatus::Busy"
+    "driver.reentryStatus == ZoneScriptStringOwnershipStatus::Busy"
     "foreignOutput == 0x12345678u"
     "nextKey.generation != originalKey.generation"
+    "driver.observedContextAfterFree"
     "== ZoneScriptStringOwnershipStatus::StaleKey")
     require_contains(_fixture "${_marker}" "controller regression coverage")
 endforeach()
