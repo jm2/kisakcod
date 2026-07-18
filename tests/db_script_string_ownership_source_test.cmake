@@ -205,6 +205,54 @@ require_not_contains(
     "union MTnum_t"
     "inactive-union-member score decoding")
 
+# Debug ownership initialization is callable independently of SL_Init. Keep
+# its check/reset/publication transaction serialized, and make duplicate calls
+# fail closed even when assertions are compiled out. The diagnostic must run
+# only after releasing the script-string lock.
+extract_slice(
+    _string_source
+    "void SL_InitCheckLeaks()"
+    "static uint32_t SL_ConvertFromRefString("
+    _debug_init
+    "debug ownership initialization")
+extract_slice(
+    _debug_init
+    "const bool debugAlreadyInitialized = scrStringDebugGlob != nullptr;"
+    "Com_Memset(&scrStringDebugGlobBuf, 0, sizeof(scrStringDebugGlobBuf));"
+    _duplicate_debug_init
+    "duplicate debug ownership initialization")
+extract_slice(
+    _string_source
+    "Com_Memset(&scrStringDebugGlobBuf, 0, sizeof(scrStringDebugGlobBuf));"
+    "static uint32_t SL_ConvertFromRefString("
+    _debug_init_reset
+    "debug ownership reset tail")
+require_ordered(
+    _debug_init
+    "Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "const bool debugAlreadyInitialized = scrStringDebugGlob != nullptr;"
+    "debug initialization lock before state inspection")
+require_ordered(
+    _duplicate_debug_init
+    "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "iassert(!debugAlreadyInitialized);"
+    "duplicate debug initialization unlock before assertion")
+require_ordered(
+    _duplicate_debug_init
+    "iassert(!debugAlreadyInitialized);"
+    "return;"
+    "duplicate debug initialization fail-closed return")
+require_ordered(
+    _debug_init_reset
+    "Com_Memset(&scrStringDebugGlobBuf, 0, sizeof(scrStringDebugGlobBuf));"
+    "scrStringDebugGlob = &scrStringDebugGlobBuf;"
+    "debug reset before pointer publication")
+require_ordered(
+    _debug_init_reset
+    "scrStringDebugGlob = &scrStringDebugGlobBuf;"
+    "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "debug pointer publication before lock release")
+
 # Each ID-taking operation validates before entering the table, authenticates
 # a live hash-linked allocation, and never falls back to a reporting legacy
 # ownership API. Acquisition must also validate the caller's explicit byte
@@ -1185,6 +1233,13 @@ foreach(_forbidden IN ITEMS
         "copied production ownership algorithm")
 endforeach()
 foreach(_marker IN ITEMS
+    "TestInitCheckLeaksRetainsLock()"
+    "TestDuplicateInitCheckLeaksNoChange()"
+    "g_scriptStringMutex.try_lock()"
+    "expectedAssertions = 1"
+    "expectedAssertions = 0"
+    "duplicate-debug-init-live-reference"
+    "StateMatches(beforeDuplicate)"
     "TestInvalidAndNoChange()"
     "TestRepeatedInternAndDatabaseTransfer()"
     "TestOrdinaryRollbackFreeAndReuse()"

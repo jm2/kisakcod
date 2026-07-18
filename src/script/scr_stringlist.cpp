@@ -165,10 +165,18 @@ void SL_Init()
 
 void SL_InitCheckLeaks()
 {
-	iassert(!scrStringDebugGlob);
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	const bool debugAlreadyInitialized = scrStringDebugGlob != nullptr;
+	if (debugAlreadyInitialized)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		iassert(!debugAlreadyInitialized);
+		return;
+	}
 
 	Com_Memset(&scrStringDebugGlobBuf, 0, sizeof(scrStringDebugGlobBuf));
 	scrStringDebugGlob = &scrStringDebugGlobBuf;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 }
 
 static uint32_t SL_ConvertFromRefString(RefString *refString)

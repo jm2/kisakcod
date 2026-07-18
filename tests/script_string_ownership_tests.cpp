@@ -1,6 +1,7 @@
 #include <script/scr_stringlist.cpp>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -8,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 namespace
@@ -19,6 +21,9 @@ thread_local std::uint32_t g_memoryTreeLockDepth = 0;
 std::uint32_t g_comErrorCount = 0;
 std::uint32_t g_assertCount = 0;
 bool g_reporterSawOwnedLock = false;
+std::atomic<bool> g_pauseDebugMemset{false};
+std::atomic<bool> g_debugMemsetEntered{false};
+std::atomic<bool> g_releaseDebugMemset{false};
 
 struct StateImage final
 {
@@ -88,6 +93,58 @@ struct StateImage final
 {
     return g_comErrorCount == 0 && g_assertCount == 0
         && !g_reporterSawOwnedLock;
+}
+
+[[nodiscard]] bool TestInitCheckLeaksRetainsLock() noexcept
+{
+    g_comErrorCount = 0;
+    g_assertCount = 0;
+    g_reporterSawOwnedLock = false;
+    if (!Check(!scrStringGlob.inited && scrStringDebugGlob == nullptr,
+            "debug-init serialization test began initialized"))
+    {
+        return false;
+    }
+
+    g_debugMemsetEntered.store(false, std::memory_order_relaxed);
+    g_releaseDebugMemset.store(false, std::memory_order_relaxed);
+    g_pauseDebugMemset.store(true, std::memory_order_release);
+    std::atomic<bool> foreignLockReleased{false};
+    std::thread foreign([&]() {
+        SL_InitCheckLeaks();
+        foreignLockReleased.store(
+            g_scriptStringLockDepth == 0,
+            std::memory_order_release);
+    });
+    while (!g_debugMemsetEntered.load(std::memory_order_acquire))
+        std::this_thread::yield();
+
+    const bool lockWasAvailable = g_scriptStringMutex.try_lock();
+    if (lockWasAvailable)
+        g_scriptStringMutex.unlock();
+    g_releaseDebugMemset.store(true, std::memory_order_release);
+    foreign.join();
+    g_pauseDebugMemset.store(false, std::memory_order_release);
+
+    const bool valid = Check(!lockWasAvailable,
+            "debug reset released the script lock between check and publish")
+        && Check(scrStringDebugGlob == &scrStringDebugGlobBuf,
+            "serialized debug reset did not publish accounting")
+        && Check(foreignLockReleased.load(std::memory_order_acquire),
+            "serialized debug reset leaked the script lock")
+        && Check(ReportersUnused(),
+            "serialized debug reset invoked a reporter");
+
+    Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+    SL_CheckLeaks();
+    Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+    return valid
+        && Check(scrStringDebugGlob == nullptr,
+            "serialized debug reset cleanup left accounting published")
+        && Check(LocksReleased(),
+            "serialized debug reset cleanup leaked a lock")
+        && Check(ReportersUnused(),
+            "serialized debug reset cleanup invoked a reporter");
 }
 
 [[nodiscard]] std::uint32_t Packed(const std::uint32_t stringId) noexcept
@@ -182,6 +239,48 @@ struct StateImage final
             "SL_Shutdown left debug accounting published")
         && Check(LocksReleased(), "test leaked a critical section")
         && Check(ReportersUnused(), "report-free API invoked a reporter");
+}
+
+[[nodiscard]] bool TestDuplicateInitCheckLeaksNoChange() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char value[] = "duplicate-debug-init-live-reference";
+    const auto acquired = script_string::TryAcquireOrdinaryStringOfSize(
+        value, sizeof(value), 15);
+    if (!Check(
+            acquired.status == script_string::AcquireStatus::Acquired,
+            "duplicate debug initialization setup failed"))
+    {
+        return false;
+    }
+
+    const StateImage beforeDuplicate = CaptureState();
+    SL_InitCheckLeaks();
+#if defined(USE_ASSERTS)
+    constexpr std::uint32_t expectedAssertions = 1;
+#else
+    constexpr std::uint32_t expectedAssertions = 0;
+#endif
+    const bool valid = Check(StateMatches(beforeDuplicate),
+            "duplicate debug initialization changed ownership state")
+        && Check(LocksReleased(),
+            "duplicate debug initialization leaked a lock")
+        && Check(g_comErrorCount == 0,
+            "duplicate debug initialization invoked Com_Error")
+        && Check(!g_reporterSawOwnedLock,
+            "duplicate debug initialization asserted under an owned lock")
+        && Check(g_assertCount == expectedAssertions,
+            "duplicate debug initialization assertion behavior changed");
+
+    g_assertCount = 0;
+    const auto cleanup =
+        script_string::TryRemoveOrdinaryReference(acquired.stringId);
+    return valid
+        && Check(cleanup == script_string::ReleaseStatus::Success,
+            "duplicate debug initialization cleanup failed")
+        && EndTest();
 }
 
 [[nodiscard]] bool TestInvalidAndNoChange() noexcept
@@ -1766,6 +1865,12 @@ void KISAK_CDECL Sys_LeaveCriticalSection(const int critSect)
 
 void Com_Memset(void *const destination, const int value, const std::size_t count)
 {
+    if (g_pauseDebugMemset.load(std::memory_order_acquire))
+    {
+        g_debugMemsetEntered.store(true, std::memory_order_release);
+        while (!g_releaseDebugMemset.load(std::memory_order_acquire))
+            std::this_thread::yield();
+    }
     std::memset(destination, value, count);
 }
 
@@ -1795,7 +1900,9 @@ char *QDECL va(const char *, ...)
 
 int main()
 {
-    if (!TestInvalidAndNoChange()
+    if (!TestInitCheckLeaksRetainsLock()
+        || !TestDuplicateInitCheckLeaksNoChange()
+        || !TestInvalidAndNoChange()
         || !TestRepeatedInternAndDatabaseTransfer()
         || !TestOrdinaryRollbackFreeAndReuse()
         || !TestEmbeddedNulByteCount()
