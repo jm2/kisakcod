@@ -3,12 +3,14 @@
 #include <script/scr_string_transaction.h>
 
 #include <array>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 
 void MyAssertHandler(const char *, int, int, const char *, ...)
@@ -1412,9 +1414,18 @@ int main(const int argc, char **const argv)
     if (argc == 3
         && std::string_view(argv[1]) == "--unsafe-live-unload")
     {
-        const unsigned long parsed = std::strtoul(argv[2], nullptr, 10);
-        if (parsed > kLiveUnloadOperations.size())
+        const std::string_view boundaryText(argv[2]);
+        std::size_t parsed = 0;
+        const auto [end, error] = std::from_chars(
+            boundaryText.data(),
+            boundaryText.data() + boundaryText.size(),
+            parsed);
+        if (error != std::errc{}
+            || end != boundaryText.data() + boundaryText.size()
+            || parsed > kLiveUnloadOperations.size())
+        {
             return 2;
+        }
         const bool unknownStatus = parsed == kLiveUnloadOperations.size();
         const std::size_t boundary = unknownStatus ? 0 : parsed;
         TestUnsafeLiveUnloadBoundary(boundary, unknownStatus);

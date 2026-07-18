@@ -240,11 +240,12 @@ struct ZoneRuntimeTableTestAccess final
 
 // Claims one usable slot through its embedded generation lifecycle.  This
 // function is implemented for the future loader adapter, but the legacy loader
-// does not call it yet.  Production wiring must first add exact-key adapters
-// for every mutable ownership operation, validate the controller/lifecycle
-// phase matrix, and provide exact terminal-receipt reset/unload adapters; a
-// claimed slot cannot be rebound until its exact terminal ownership receipt is
-// reset.  The lifecycle terminal receipt and durable old key remain intact
+// does not call it yet.  The exact terminal-receipt reset/unload adapters below
+// are implemented but remain unenrolled.  Production wiring must still add
+// exact-key load/stage/commit adapters for every mutable ownership operation,
+// validate the controller/lifecycle phase matrix, and enroll the complete path;
+// a claimed slot cannot be rebound until its exact terminal ownership receipt
+// is reset.  The lifecycle terminal receipt and durable old key remain intact
 // until a subsequent claim atomically advances the generation; the new durable
 // entry key and caller output publish only after that lifecycle claim succeeds.
 [[nodiscard]] ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration(
