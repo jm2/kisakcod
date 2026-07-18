@@ -10,6 +10,8 @@ set(_source_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_table.cpp")
 set(_fixture_path
     "${SOURCE_ROOT}/tests/db_zone_runtime_table_tests.cpp")
+set(_production_seal_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_table_production_seal_tests.cpp")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
 set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
 set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
@@ -25,6 +27,7 @@ foreach(_path IN ITEMS
     "${_header_path}"
     "${_source_path}"
     "${_fixture_path}"
+    "${_production_seal_path}"
     "${_manifest_path}"
     "${_tests_path}"
     "${_ci_path}"
@@ -42,6 +45,7 @@ endforeach()
 file(READ "${_header_path}" _header)
 file(READ "${_source_path}" _source)
 file(READ "${_fixture_path}" _fixture)
+file(READ "${_production_seal_path}" _production_seal)
 file(READ "${_manifest_path}" _manifest)
 file(READ "${_tests_path}" _tests)
 file(READ "${_ci_path}" _ci)
@@ -56,6 +60,7 @@ foreach(_var IN ITEMS
     _header
     _source
     _fixture
+    _production_seal
     _manifest
     _tests
     _ci
@@ -111,6 +116,69 @@ function(extract_slice SOURCE_VAR START END OUT_VAR DESCRIPTION)
     set(${OUT_VAR} "${_slice}" PARENT_SCOPE)
 endfunction()
 
+# A macro-off translation unit recreates the helper's public name and probes
+# every private mutable capability that the test-only implementation exposes.
+# These are normal positive-build checks, so unrelated compiler failures cannot
+# satisfy the production authority seal.
+foreach(_marker IN ITEMS
+    "struct ZoneRuntimeTableTestAccess"
+    "CanReachEntries"
+    "CanMutateReserved"
+    "CanReachMutableLifecycle"
+    "CanReachMutableOwnership"
+    "CanMutateKey"
+    "&table->entries_;"
+    "table->reserved_ = 1u;"
+    "&entry->lifecycle_;"
+    "&entry->scriptStringOwnership_;"
+    "entry->key_ = zone_load::ZoneLoadContextKey{};"
+    "!ZoneRuntimeTableTestAccess::CanReachEntries<ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanMutateReserved<ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanReachMutableLifecycle<ZoneRuntimeEntry>"
+    "!ZoneRuntimeTableTestAccess::CanReachMutableOwnership<ZoneRuntimeEntry>"
+    "!ZoneRuntimeTableTestAccess::CanMutateKey<ZoneRuntimeEntry>")
+    require_contains(
+        _production_seal "${_marker}" "independent production authority seal")
+endforeach()
+require_not_contains(
+    _production_seal
+    "#define KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"
+    "production authority seal cannot opt into test access")
+
+extract_slice(
+    _tests
+    "# Compile production's runtime-table header without its test-access opt-in."
+    "add_executable(kisakcod-fx-archive-disk32-tests"
+    _production_seal_registration
+    "production authority-seal registration")
+foreach(_marker IN ITEMS
+    "add_executable( kisakcod-db-zone-runtime-table-production-seal-tests"
+    "db_zone_runtime_table_production_seal_tests.cpp"
+    "NAME database-zone-runtime-table-production-test-access-sealed")
+    require_contains(
+        _production_seal_registration
+        "${_marker}"
+        "normal positive-build production authority seal")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "WILL_FAIL"
+    "EXCLUDE_FROM_ALL"
+    "KISAK_DB_ZONE_RUNTIME_TABLE_TESTING")
+    require_not_contains(
+        _production_seal_registration
+        "${_forbidden}"
+        "production authority seal cannot accept a vacuous failure")
+endforeach()
+
+# Both owning classes independently gate their friendship, and the helper's
+# forward declaration and implementation remain absent from production TUs.
+foreach(_marker IN ITEMS
+    "#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING struct ZoneRuntimeTableTestAccess; #endif"
+    "#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING friend struct ZoneRuntimeTableTestAccess; #endif"
+    "#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING // Tests opt in before including this header.")
+    require_contains(_header "${_marker}" "macro-gated test authority")
+endforeach()
+
 # The fixed table owns only durable metadata.  It remains external to XZone and
 # cannot allocate, report, touch PMem, publish assets, or mutate script strings.
 foreach(_var IN ITEMS _header _source)
@@ -157,8 +225,27 @@ foreach(_marker IN ITEMS
     "ZoneRuntimeEntry(const ZoneRuntimeEntry &) = delete;"
     "ZoneRuntimeTable(const ZoneRuntimeTable &) = delete;"
     "KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"
+    "friend class ZoneRuntimeTable;"
+    "authenticateExactMutableEntry("
+    "completeMutableOperation("
+    "mutableScriptStringOwnership("
+    "TryBeginZoneRuntimeScriptStringOwnership("
+    "TryStageZoneRuntimeScriptString("
+    "TrySealZoneRuntimeScriptStrings("
+    "TryBeginZoneRuntimeScriptStringTransfer("
+    "TryTransferNextZoneRuntimeScriptString("
+    "TryPrepareZoneRuntimeScriptStringCommit("
+    "TryCommitZoneRuntimeScriptStringsAndAdmit("
+    "TryBeginZoneRuntimeScriptStringRollback("
+    "TryRollbackNextZoneRuntimeScriptString("
+    "TryFinishZoneRuntimeScriptStringAbandonment("
     "TryUnloadZoneRuntimeGeneration("
     "TryResetZoneRuntimeTerminalReceipt("
+    "Rejected,"
+    "CountMismatch,"
+    "CapacityExceeded,"
+    "authenticates table state, physical slot, durable key, lifecycle generation,"
+    "unchanged on every non-Success result"
     "retains exact callback/controller ownership"
     "The lifecycle terminal kind,"
     "generation, and durable table key remain as a receipt"
@@ -191,13 +278,76 @@ foreach(_marker IN ITEMS
     "case OwnershipPhase::UnloadingCallback:"
     "if (ownershipPhase == OwnershipPhase::Unloaded)"
     "ZoneRuntimeTableStatus::Retry"
+    "ZoneRuntimeTableStatus::Rejected"
+    "ZoneRuntimeTableStatus::CountMismatch"
+    "ZoneRuntimeTableStatus::CapacityExceeded"
     "MapOwnershipStatus("
+    "MapLiveUnloadOwnershipStatus("
+    "ZoneRuntimeTable::authenticateExactMutableEntry("
+    "ZoneRuntimeTable::completeMutableOperation("
+    "ZoneRuntimeTable::mutableScriptStringOwnership("
     "lifecycle.phase() == zone_load::ZoneLoadContextPhase::Loading"
     "lifecycle.phase() == zone_load::ZoneLoadContextPhase::Abandoning"
     "lifecycle.phase() == zone_load::ZoneLoadContextPhase::Live"
     "TableState::Poisoned")
     require_contains(_source "${_marker}" "checked table implementation")
 endforeach()
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus MapLiveUnloadOwnershipStatus("
+    "ZoneRuntimeTableStatus AuthenticateExactEntry("
+    _live_unload_status_map
+    "Live-unload status allowlist")
+foreach(_marker IN ITEMS
+    "case OwnershipStatus::Success:"
+    "case OwnershipStatus::Retry:"
+    "case OwnershipStatus::Busy:"
+    "case OwnershipStatus::InvalidArgument:"
+    "case OwnershipStatus::InvalidState:"
+    "case OwnershipStatus::InvalidKey:"
+    "case OwnershipStatus::StaleKey:"
+    "case OwnershipStatus::InvalidPhase:"
+    "case OwnershipStatus::Rejected:"
+    "case OwnershipStatus::CountMismatch:"
+    "case OwnershipStatus::CapacityExceeded:"
+    "case OwnershipStatus::UnsafeFailure:"
+    "return ZoneRuntimeTableStatus::UnsafeFailure;")
+    require_contains(
+        _live_unload_status_map
+        "${_marker}"
+        "terminal Live-unload must fail closed on journal-only statuses")
+endforeach()
+require_ordered(
+    _live_unload_status_map
+    "case OwnershipStatus::InvalidPhase:"
+    "return MapOwnershipStatus(status);"
+    "allowed terminal result must use the shared status mapper")
+require_ordered(
+    _live_unload_status_map
+    "return MapOwnershipStatus(status);"
+    "case OwnershipStatus::Rejected:"
+    "journal-only results must follow the terminal allowlist")
+require_ordered(
+    _live_unload_status_map
+    "case OwnershipStatus::Rejected:"
+    "case OwnershipStatus::CountMismatch:"
+    "Rejected must enter the journal-only fail-closed group")
+require_ordered(
+    _live_unload_status_map
+    "case OwnershipStatus::CountMismatch:"
+    "case OwnershipStatus::CapacityExceeded:"
+    "CountMismatch must enter the journal-only fail-closed group")
+require_ordered(
+    _live_unload_status_map
+    "case OwnershipStatus::CapacityExceeded:"
+    "case OwnershipStatus::UnsafeFailure:"
+    "CapacityExceeded must enter the terminal unsafe group")
+require_ordered(
+    _live_unload_status_map
+    "case OwnershipStatus::UnsafeFailure:"
+    "return ZoneRuntimeTableStatus::UnsafeFailure;"
+    "terminal unsafe group must poison through UnsafeFailure")
 
 # Initialization is idempotent only while every usable entry remains pristine.
 # A rebound table is rejected without resetting its generation; malformed or
@@ -254,6 +404,172 @@ require_ordered(
     "*outView = candidate;"
     "authentication before output publication")
 
+# Every public loading mutation routes through the same inaccessible raw-entry
+# shim, authenticates the exact durable binding on both sides of the controller
+# call, and preserves recoverable controller statuses.  The one scalar output
+# remains local until successful post-authentication.
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership("
+    "ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration("
+    _mutable_adapters
+    "exact-key mutable loading adapters")
+foreach(_marker IN ITEMS
+    "TryBeginZoneRuntimeScriptStringOwnership("
+    "TryStageZoneRuntimeScriptString("
+    "TrySealZoneRuntimeScriptStrings("
+    "TryBeginZoneRuntimeScriptStringTransfer("
+    "TryTransferNextZoneRuntimeScriptString("
+    "TryPrepareZoneRuntimeScriptStringCommit("
+    "TryCommitZoneRuntimeScriptStringsAndAdmit("
+    "TryBeginZoneRuntimeScriptStringRollback("
+    "TryRollbackNextZoneRuntimeScriptString("
+    "TryFinishZoneRuntimeScriptStringAbandonment("
+    "authenticateExactMutableEntry("
+    "completeMutableOperation("
+    "TryBeginZoneScriptStringOwnership("
+    "TryStageZoneScriptString("
+    "TrySealZoneScriptStrings("
+    "TryBeginZoneScriptStringTransfer("
+    "TryTransferNextZoneScriptString("
+    "TryPrepareZoneScriptStringCommit("
+    "TryCommitZoneScriptStringsAndAdmit("
+    "TryBeginZoneScriptStringRollback("
+    "TryRollbackNextZoneScriptString("
+    "TryFinishZoneScriptStringAbandonment(")
+    require_contains(
+        _mutable_adapters "${_marker}" "complete mutable adapter surface")
+endforeach()
+
+function(require_mutable_adapter START END MUTATION DESCRIPTION)
+    extract_slice(
+        _source "${START}" "${END}" _adapter
+        "${DESCRIPTION} adapter")
+    require_ordered(
+        _adapter
+        "authenticateExactMutableEntry("
+        "${MUTATION}"
+        "${DESCRIPTION} pre-authentication")
+    require_ordered(
+        _adapter
+        "${MUTATION}"
+        "completeMutableOperation("
+        "${DESCRIPTION} post-authentication")
+endfunction()
+
+require_mutable_adapter(
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership("
+    "ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString("
+    "TryBeginZoneScriptStringOwnership("
+    "ownership begin")
+require_mutable_adapter(
+    "ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString("
+    "ZoneRuntimeTableStatus TrySealZoneRuntimeScriptStrings("
+    "TryStageZoneScriptString("
+    "string stage")
+require_mutable_adapter(
+    "ZoneRuntimeTableStatus TrySealZoneRuntimeScriptStrings("
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringTransfer("
+    "TrySealZoneScriptStrings("
+    "journal seal")
+require_mutable_adapter(
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringTransfer("
+    "ZoneRuntimeTableStatus TryTransferNextZoneRuntimeScriptString("
+    "TryBeginZoneScriptStringTransfer("
+    "transfer begin")
+require_mutable_adapter(
+    "ZoneRuntimeTableStatus TryTransferNextZoneRuntimeScriptString("
+    "ZoneRuntimeTableStatus TryPrepareZoneRuntimeScriptStringCommit("
+    "TryTransferNextZoneScriptString("
+    "one-entry transfer")
+require_mutable_adapter(
+    "ZoneRuntimeTableStatus TryPrepareZoneRuntimeScriptStringCommit("
+    "ZoneRuntimeTableStatus TryCommitZoneRuntimeScriptStringsAndAdmit("
+    "TryPrepareZoneScriptStringCommit("
+    "commit prepare")
+require_mutable_adapter(
+    "ZoneRuntimeTableStatus TryCommitZoneRuntimeScriptStringsAndAdmit("
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringRollback("
+    "TryCommitZoneScriptStringsAndAdmit("
+    "live commit")
+require_mutable_adapter(
+    "ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringRollback("
+    "ZoneRuntimeTableStatus TryRollbackNextZoneRuntimeScriptString("
+    "TryBeginZoneScriptStringRollback("
+    "rollback begin")
+require_mutable_adapter(
+    "ZoneRuntimeTableStatus TryRollbackNextZoneRuntimeScriptString("
+    "ZoneRuntimeTableStatus TryFinishZoneRuntimeScriptStringAbandonment("
+    "TryRollbackNextZoneScriptString("
+    "one-entry rollback")
+require_mutable_adapter(
+    "ZoneRuntimeTableStatus TryFinishZoneRuntimeScriptStringAbandonment("
+    "ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration("
+    "TryFinishZoneScriptStringAbandonment("
+    "abandonment finish")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString("
+    "ZoneRuntimeTableStatus TrySealZoneRuntimeScriptStrings("
+    _stage_adapter
+    "failure-atomic keyed stage adapter")
+require_ordered(
+    _stage_adapter
+    "std::uint32_t candidate = 0;"
+    "TryStageZoneScriptString("
+    "stage candidate precedes controller mutation")
+require_ordered(
+    _stage_adapter
+    "TryStageZoneScriptString("
+    "completeMutableOperation("
+    "stage post-authentication follows mutation")
+require_ordered(
+    _stage_adapter
+    "completeMutableOperation("
+    "*outStringId = candidate;"
+    "stage output publishes only after post-authentication")
+require_not_contains(
+    _header
+    "ZoneRuntimeMutableAdapterAccess"
+    "public header cannot expose raw mutable ownership")
+require_not_contains(
+    _source
+    "ZoneRuntimeMutableAdapterAccess"
+    "implementation cannot restore a forgeable friend shim")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactMutableEntry("
+    "const zone_load::ZoneLoadContextKey &ZoneRuntimeEntry::key()"
+    _mutable_access
+    "private mutable table member boundary")
+foreach(_marker IN ITEMS
+    "validateInitializedHeader()"
+    "if (!static_cast<bool>(key))"
+    "ValidateUsableSlot(physicalSlot)"
+    "if (key.slot != physicalSlot)"
+    "AuthenticateExactEntry(entry, physicalSlot, key)"
+    "MapOwnershipStatus(ownershipStatus)"
+    "const ZoneRuntimeTableStatus postAuthentication ="
+    "authenticateExactMutableEntry(physicalSlot, key, &postEntry)"
+    "status == ZoneRuntimeTableStatus::UnsafeFailure"
+    "postAuthentication != ZoneRuntimeTableStatus::Success"
+    "poison();")
+    require_contains(
+        _mutable_access "${_marker}" "pre/post mutation authentication")
+endforeach()
+require_ordered(
+    _mutable_access
+    "MapOwnershipStatus(ownershipStatus)"
+    "const ZoneRuntimeTableStatus postAuthentication ="
+    "map result before mandatory post-authentication")
+require_ordered(
+    _mutable_access
+    "const ZoneRuntimeTableStatus postAuthentication ="
+    "return status;"
+    "post-authentication before recoverable status publication")
+
 # Live unload is owned by the script-string controller so the outer
 # transaction and exact callback identity survive Retry. Reset consumes only
 # the matching controller receipt; lifecycle/key evidence remains until Claim
@@ -267,7 +583,7 @@ extract_slice(
 foreach(_marker IN ITEMS
     "AuthenticateExactEntry(entry, physicalSlot, key)"
     "TryUnloadLiveZoneScriptStringOwnership("
-    "MapOwnershipStatus(ownershipStatus)"
+    "MapLiveUnloadOwnershipStatus(ownershipStatus)"
     "OwnershipPhase::Unloaded"
     "ZoneLoadTerminalKind::Unloaded"
     "table->poison();")
@@ -353,6 +669,20 @@ foreach(_var IN ITEMS _registry _file_load _load _stream _stringtable)
         ${_var}
         "TryResetZoneRuntimeTerminalReceipt("
         "legacy loader cannot reset runtime receipts")
+    foreach(_mutable_api IN ITEMS
+        "TryBeginZoneRuntimeScriptStringOwnership("
+        "TryStageZoneRuntimeScriptString("
+        "TrySealZoneRuntimeScriptStrings("
+        "TryBeginZoneRuntimeScriptStringTransfer("
+        "TryTransferNextZoneRuntimeScriptString("
+        "TryPrepareZoneRuntimeScriptStringCommit("
+        "TryCommitZoneRuntimeScriptStringsAndAdmit("
+        "TryBeginZoneRuntimeScriptStringRollback("
+        "TryRollbackNextZoneRuntimeScriptString("
+        "TryFinishZoneRuntimeScriptStringAbandonment(")
+        require_not_contains(
+            ${_var} "${_mutable_api}" "legacy loader remains unenrolled")
+    endforeach()
 endforeach()
 
 # Runtime coverage spans every slot, ABI/noexcept traits, stable addresses,
@@ -365,6 +695,9 @@ foreach(_marker IN ITEMS
     "void TestPartialInitializationAndCorruptionFailClosed()"
     "void TestHiddenCorruptionAndCleanupReentryFailClosed()"
     "void TestControllerPhaseAndSerializerMatrix()"
+    "void TestKeyedMutableCommitAndAuthentication()"
+    "void TestKeyedMutableRecoverableAbandonment()"
+    "void TestUnsafeMutableBoundary(const bool corruptPostcondition)"
     "void TestLiveUnloadRetryResetReuseAndAba()"
     "void TestAbandonedReceiptResetAndGenerationExhaustion()"
     "void TestTerminalAdapterPhaseSerializerAndCorruptionGates()"
@@ -378,6 +711,9 @@ foreach(_marker IN ITEMS
     "ZoneRuntimeTableStatus::UnsafeFailure"
     "ZoneRuntimeTableStatus::Busy"
     "ZoneRuntimeTableStatus::Retry"
+    "ZoneRuntimeTableStatus::Rejected"
+    "ZoneRuntimeTableStatus::CountMismatch"
+    "ZoneRuntimeTableStatus::CapacityExceeded"
     "ZoneScriptStringOwnershipControllerTestAccess::SetStorage("
     "kInitializedFlag | kCleanupActiveFlag"
     "kInitializedFlag | kCleanupPoisonedFlag"
@@ -400,6 +736,9 @@ foreach(_marker IN ITEMS
     "newKey.generation == oldKey.generation + 1"
     "if (argc != 1)"
     "if (argc != 3"
+    "std::string_view(argv[1]) == \"--unsafe-mutable\""
+    "kind == \"backend\""
+    "kind == \"postcondition\""
     "std::string_view(argv[1]) != \"--unsafe-live-unload\""
     "Zone runtime table tests passed")
     require_contains(_fixture "${_marker}" "focused runtime coverage")
@@ -414,17 +753,25 @@ foreach(_marker IN ITEMS
 endforeach()
 foreach(_marker IN ITEMS
     "add_executable(kisakcod-db-zone-runtime-table-tests"
+    "add_executable( kisakcod-db-zone-runtime-table-production-seal-tests"
     "db_zone_runtime_table_tests.cpp"
+    "db_zone_runtime_table_production_seal_tests.cpp"
     "\${SRC_DIR}/database/db_zone_runtime_table.cpp"
     "KISAK_DB_ZONE_RUNTIME_TABLE_TESTING=1"
     "KISAK_DB_ZONE_LOAD_CONTEXT_TESTING=1"
     "KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING=1"
     "NAME database-zone-runtime-table-ownership"
+    "NAME database-zone-runtime-table-production-test-access-sealed"
     "database-zone-runtime-table-unload-unsafe-${_zone_runtime_unsafe_boundary}"
     "--unsafe-live-unload ${_zone_runtime_unsafe_boundary}"
     "database-zone-runtime-table-unload-invalid-missing-value"
     "database-zone-runtime-table-unload-invalid-extra-value"
     "database-zone-runtime-table-unload-invalid-unknown-option"
+    "database-zone-runtime-table-mutation-unsafe-${_zone_runtime_mutation_unsafe_kind}"
+    "--unsafe-mutable ${_zone_runtime_mutation_unsafe_kind}"
+    "database-zone-runtime-table-mutation-invalid-missing-value"
+    "database-zone-runtime-table-mutation-invalid-extra-value"
+    "database-zone-runtime-table-mutation-invalid-kind"
     "PROPERTIES TIMEOUT 30 WILL_FAIL TRUE"
     "NAME database-zone-runtime-table-source-invariants"
     "db_zone_runtime_table_source_test.cmake")
@@ -432,7 +779,10 @@ foreach(_marker IN ITEMS
 endforeach()
 foreach(_marker IN ITEMS
     "kisakcod-db-zone-runtime-table-tests"
-    "database-zone-runtime-table-(ownership|source-invariants|unload-unsafe-[0-6]|unload-invalid-(missing-value|extra-value|unknown-option))")
+    "kisakcod-db-zone-runtime-table-production-seal-tests"
+    "production-test-access-sealed"
+    "mutation-unsafe-(backend|postcondition)"
+    "mutation-invalid-(missing-value|extra-value|kind)")
     require_contains(_ci "${_marker}" "measured Windows x86 CI integration")
 endforeach()
 

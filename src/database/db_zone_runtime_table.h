@@ -36,6 +36,11 @@ enum class ZoneRuntimeTableStatus : std::uint8_t
     // Retry retains exact callback/controller ownership; Busy is reentry or a
     // temporarily unavailable serializer.
     Retry,
+    // Appended so all established values above remain stable.  Mutable table
+    // adapters preserve these recoverable journal outcomes verbatim.
+    Rejected,
+    CountMismatch,
+    CapacityExceeded,
 };
 
 class ZoneRuntimeEntry;
@@ -43,10 +48,10 @@ class ZoneRuntimeTable;
 
 // An authenticated, read-only observation of one active generation.  The key
 // is copied by value so a retained old view cannot silently become an authority
-// for a later generation at the same stable table address.  Mutable lifecycle
-// and ownership operations stay private until table adapters can reauthenticate
-// this key immediately before every operation.  Callers must retain the same
-// external per-slot serializer across lookup and use.
+// for a later generation at the same stable table address.  Raw mutable
+// lifecycle and ownership state stays private; the adapters below
+// reauthenticate this key immediately around every mutation.  Callers must
+// retain the same external per-slot serializer across lookup and use.
 struct ZoneRuntimeGenerationView final
 {
     zone_load::ZoneLoadContextKey key{};
@@ -83,6 +88,7 @@ public:
         const noexcept;
 
 private:
+    friend class ZoneRuntimeTable;
     friend ZoneRuntimeTableStatus TryInitializeZoneRuntimeTable(
         ZoneRuntimeTable *table) noexcept;
     friend ZoneRuntimeTableStatus TryGetZoneRuntimeEntry(
@@ -161,12 +167,84 @@ private:
         ZoneRuntimeTable *table,
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key) noexcept;
+    friend ZoneRuntimeTableStatus
+    TryBeginZoneRuntimeScriptStringOwnership(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        script_string_journal::ScriptStringJournal *journal,
+        script_string_journal::ScriptStringJournalEntry *storage,
+        std::uint32_t storageCapacity,
+        std::uint32_t expectedCount) noexcept;
+    friend ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        const script_string_adapter::ScriptStringSourceView &source,
+        std::uint32_t *outStringId) noexcept;
+    friend ZoneRuntimeTableStatus TrySealZoneRuntimeScriptStrings(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
+    friend ZoneRuntimeTableStatus
+    TryBeginZoneRuntimeScriptStringTransfer(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
+    friend ZoneRuntimeTableStatus
+    TryTransferNextZoneRuntimeScriptString(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
+    friend ZoneRuntimeTableStatus
+    TryPrepareZoneRuntimeScriptStringCommit(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
+    friend ZoneRuntimeTableStatus
+    TryCommitZoneRuntimeScriptStringsAndAdmit(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        const zone_script_string_ownership::
+            ZoneScriptStringAdmissionCallback &admission) noexcept;
+    friend ZoneRuntimeTableStatus
+    TryBeginZoneRuntimeScriptStringRollback(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        const zone_script_string_ownership::
+            ZoneScriptStringRollbackCallbacks &callbacks) noexcept;
+    friend ZoneRuntimeTableStatus
+    TryRollbackNextZoneRuntimeScriptString(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
+    friend ZoneRuntimeTableStatus
+    TryFinishZoneRuntimeScriptStringAbandonment(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
 #ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
     friend struct ZoneRuntimeTableTestAccess;
 #endif
 
     [[nodiscard]] ZoneRuntimeTableStatus
     validateInitializedHeader() noexcept;
+    [[nodiscard]] ZoneRuntimeTableStatus authenticateExactMutableEntry(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        ZoneRuntimeEntry **outEntry) noexcept;
+    [[nodiscard]] ZoneRuntimeTableStatus completeMutableOperation(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        zone_script_string_ownership::
+            ZoneScriptStringOwnershipStatus ownershipStatus) noexcept;
+    [[nodiscard]] static zone_load::ZoneLoadContextSlot *mutableLifecycle(
+        ZoneRuntimeEntry *entry) noexcept;
+    [[nodiscard]] static zone_script_string_ownership::
+        ZoneScriptStringOwnershipController *mutableScriptStringOwnership(
+        ZoneRuntimeEntry *entry) noexcept;
     void poison() noexcept;
 
     std::array<ZoneRuntimeEntry, zone_slots::kPhysicalZoneSlotCount>
@@ -241,13 +319,13 @@ struct ZoneRuntimeTableTestAccess final
 // Claims one usable slot through its embedded generation lifecycle.  This
 // function is implemented for the future loader adapter, but the legacy loader
 // does not call it yet.  The exact terminal-receipt reset/unload adapters below
-// are implemented but remain unenrolled.  Production wiring must still add
-// exact-key load/stage/commit adapters for every mutable ownership operation,
-// validate the controller/lifecycle phase matrix, and enroll the complete path;
-// a claimed slot cannot be rebound until its exact terminal ownership receipt
-// is reset.  The lifecycle terminal receipt and durable old key remain intact
-// until a subsequent claim atomically advances the generation; the new durable
-// entry key and caller output publish only after that lifecycle claim succeeds.
+// and exact-key mutable ownership adapters are implemented but remain
+// unenrolled.  Production wiring must still bind durable resources and enroll
+// the complete path; a claimed slot cannot be rebound until its exact terminal
+// ownership receipt is reset.  The lifecycle terminal receipt and durable old
+// key remain intact until a subsequent claim atomically advances the generation;
+// the new durable entry key and caller output publish only after that lifecycle
+// claim succeeds.
 [[nodiscard]] ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration(
     ZoneRuntimeTable *table,
     std::uint32_t physicalSlot,
@@ -255,14 +333,95 @@ struct ZoneRuntimeTableTestAccess final
 
 // Authenticates both physical slot and generation and returns a read-only
 // observation only for an active Loading/Live/Abandoning slot.  Mutable
-// controller operations require future keyed table adapters; callers cannot
-// retain raw mutable authority across generation reuse.  The caller's output
-// is unchanged on every non-Success result.
+// controller operations use the exact-key adapters below; callers cannot retain
+// raw mutable authority across generation reuse.  The caller's output is
+// unchanged on every non-Success result.
 [[nodiscard]] ZoneRuntimeTableStatus TryGetZoneRuntimeGeneration(
     ZoneRuntimeTable *table,
     std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key,
     ZoneRuntimeGenerationView *outView) noexcept;
+
+// The following production-neutral adapters are the only public route from a
+// durable runtime-table key to mutable loading ownership.  Every call
+// authenticates table state, physical slot, durable key, lifecycle generation,
+// and controller binding both before and after the underlying mutation.  A
+// recoverable controller result is preserved only after post-authentication;
+// an unsafe result or impossible postcondition mismatch poisons the table.
+// External per-slot serialization remains mandatory.  These adapters do not
+// allocate resources or enroll any legacy loader caller.
+
+[[nodiscard]] ZoneRuntimeTableStatus
+TryBeginZoneRuntimeScriptStringOwnership(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    script_string_journal::ScriptStringJournal *journal,
+    script_string_journal::ScriptStringJournalEntry *storage,
+    std::uint32_t storageCapacity,
+    std::uint32_t expectedCount) noexcept;
+
+// outStringId is unchanged on every non-Success result, including an unsafe
+// postcondition mismatch after the controller staged a local candidate.
+[[nodiscard]] ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const script_string_adapter::ScriptStringSourceView &source,
+    std::uint32_t *outStringId) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus TrySealZoneRuntimeScriptStrings(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus
+TryBeginZoneRuntimeScriptStringTransfer(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+// Processes at most one journal entry.  Exact retries after Transferred are
+// harmless and still pass through both authentication boundaries.
+[[nodiscard]] ZoneRuntimeTableStatus
+TryTransferNextZoneRuntimeScriptString(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus
+TryPrepareZoneRuntimeScriptStringCommit(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus
+TryCommitZoneRuntimeScriptStringsAndAdmit(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const zone_script_string_ownership::
+        ZoneScriptStringAdmissionCallback &admission) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus
+TryBeginZoneRuntimeScriptStringRollback(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const zone_script_string_ownership::
+        ZoneScriptStringRollbackCallbacks &callbacks) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus
+TryRollbackNextZoneRuntimeScriptString(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus
+TryFinishZoneRuntimeScriptStringAbandonment(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
 
 // Drives only a committed Live generation through the controller-owned
 // live-unload recipe.  The controller binds the callback identity and retains

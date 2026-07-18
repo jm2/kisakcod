@@ -476,6 +476,16 @@ foreach(_zone_runtime_unsafe_boundary RANGE 0 6)
         database-zone-runtime-table-unload-unsafe-${_zone_runtime_unsafe_boundary}
         PROPERTIES TIMEOUT 30)
 endforeach()
+foreach(_zone_runtime_mutation_unsafe_kind IN ITEMS backend postcondition)
+    add_test(
+        NAME database-zone-runtime-table-mutation-unsafe-${_zone_runtime_mutation_unsafe_kind}
+        COMMAND kisakcod-db-zone-runtime-table-tests
+            --unsafe-mutable ${_zone_runtime_mutation_unsafe_kind}
+    )
+    set_tests_properties(
+        database-zone-runtime-table-mutation-unsafe-${_zone_runtime_mutation_unsafe_kind}
+        PROPERTIES TIMEOUT 30)
+endforeach()
 add_test(
     NAME database-zone-runtime-table-unload-invalid-missing-value
     COMMAND kisakcod-db-zone-runtime-table-tests --unsafe-live-unload)
@@ -486,11 +496,49 @@ add_test(
 add_test(
     NAME database-zone-runtime-table-unload-invalid-unknown-option
     COMMAND kisakcod-db-zone-runtime-table-tests --unknown-option 0)
+add_test(
+    NAME database-zone-runtime-table-mutation-invalid-missing-value
+    COMMAND kisakcod-db-zone-runtime-table-tests --unsafe-mutable)
+add_test(
+    NAME database-zone-runtime-table-mutation-invalid-extra-value
+    COMMAND kisakcod-db-zone-runtime-table-tests
+        --unsafe-mutable backend extra)
+add_test(
+    NAME database-zone-runtime-table-mutation-invalid-kind
+    COMMAND kisakcod-db-zone-runtime-table-tests
+        --unsafe-mutable unknown)
 set_tests_properties(
     database-zone-runtime-table-unload-invalid-missing-value
     database-zone-runtime-table-unload-invalid-extra-value
     database-zone-runtime-table-unload-invalid-unknown-option
+    database-zone-runtime-table-mutation-invalid-missing-value
+    database-zone-runtime-table-mutation-invalid-extra-value
+    database-zone-runtime-table-mutation-invalid-kind
     PROPERTIES TIMEOUT 30 WILL_FAIL TRUE)
+
+# Compile production's runtime-table header without its test-access opt-in.
+# Dependent access checks make this a normal positive contract: restoring
+# either same-name friendship fails the target's static assertions.
+add_executable(
+    kisakcod-db-zone-runtime-table-production-seal-tests
+    db_zone_runtime_table_production_seal_tests.cpp
+)
+target_include_directories(
+    kisakcod-db-zone-runtime-table-production-seal-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-runtime-table-production-seal-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-zone-runtime-table-production-seal-tests PRIVATE KISAK_MP)
+kisakcod_test_warnings(
+    kisakcod-db-zone-runtime-table-production-seal-tests)
+set_target_properties(
+    kisakcod-db-zone-runtime-table-production-seal-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-zone-runtime-table-production-test-access-sealed
+    COMMAND kisakcod-db-zone-runtime-table-production-seal-tests
+)
 
 add_executable(kisakcod-fx-archive-disk32-tests
     fx_archive_disk32_tests.cpp
