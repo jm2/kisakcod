@@ -256,15 +256,17 @@ work item changes. Do not create session-specific handoff files.
   GCC Release suite is **122/122** with focused `RELEASE_ASSERTS`, ASan+UBSan, TSan, i386/AArch64, and native i386
   evidence. It remains unpublished and must be replayed onto PR #55's merged baseline, update this file, and pass exact
   hosted review/CI in its own follow-on PR.
-- Local physics-sidecar authority-seal candidate `89b6c384` closes the separate high-severity API gap found by the
+- PR #56 physics-sidecar authority-seal implementation `7c202c0c` closes the separate high-severity API gap found by the
   production-friend audit. Both the `SidecarTestAccess` forward declaration and friendship are now gated by
-  `KISAK_FX_PHYSICS_SIDECAR_TESTING`; a macro-off external definition that recreates the public name and attempts to
-  mutate private ownership/lifecycle state is an expected-failure compile target. The target stays outside normal builds,
-  runs serially through CTest on every portable host, and is explicitly selected by measured Windows x86 CI. Native GCC
-  Release builds cleanly and passes **118/118** tests; strict i386 and AArch64 test-enabled fixtures compile, while the
-  macro-off probes fail on both targets specifically at the private accesses. Live-FX/security source contracts and
-  `git diff --check` pass. This commit is rebased locally but remains unpushed and unmerged; no other project-owned
-  production friend authority escape was found.
+  `KISAK_FX_PHYSICS_SIDECAR_TESTING`; a normal macro-off executable recreates the public name and uses independent
+  dependent access predicates plus negative static assertions for the private ownership and lifecycle fields. Restoring
+  the old friendship fails both assertions, while unrelated compiler failures can no longer make the seal pass. Every
+  portable build compiles and runs the test normally, and measured Windows x86 builds/selects it explicitly. Native GCC
+  and Clang Release build cleanly and pass **118/118** tests; strict i386/AArch64 fixtures and positive seals compile, and
+  the old friend-bearing baseline fails both assertions. The AppleClang `NDEBUG` warning exposed after friend removal is
+  fixed without changing layout by marking the test-only destructor-bypass field `[[maybe_unused]]`. Live-FX/security
+  source contracts and `git diff --check` pass. The branch is published as PR #56 but remains unmerged pending exact-head
+  hosted review/CI; no other project-owned production friend authority escape was found.
 - This is durable lifecycle metadata initialization, not production loader enrollment. The production stream, PMem,
   arena/adapter, alias/completed-object tables, loading generation, and Live-unload path do not claim the table or call
   the controller, and the new OwnershipBatch has no production caller. Exactly seven raw mutation/sweep sites remain
@@ -1541,8 +1543,8 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Finish and publish local physics-sidecar authority-seal candidate `89b6c384`: revalidate the rebased head, obtain
-   exact-head hosted review and all nine CI jobs, and merge only when both are clean.
+1. Finish PR #56's physics-sidecar authority seal at implementation head `7c202c0c`: push the corrected positive seal,
+   obtain exact-head hosted review and all nine CI jobs, and merge only when both are clean.
 2. Replay and publish the already complete exact-key mutable runtime-table adapter batch at local head `8af5881e` onto
    merged PR #55. Re-run its **122/122** suite and hosted review/CI; do not enroll a legacy
    caller in that batch.

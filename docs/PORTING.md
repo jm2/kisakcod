@@ -160,13 +160,15 @@ Completed foundation work:
   with ten pre/post-authenticated mutations, preserved recoverable status values, publish-after-authentication output,
   and no public mutable table authority. It remains unpublished until replayed onto PR #55's merged baseline, documented,
   and published as its own follow-on PR;
-- local physics-sidecar authority-seal candidate `89b6c384` closes the separate macro-off authority leak found by the
+- PR #56 physics-sidecar authority-seal implementation `7c202c0c` closes the separate macro-off authority leak found by the
   production-friend audit. Both `SidecarTestAccess` forward/friend declarations are now test-macro gated, and an
-  excluded-from-normal-build macro-off probe recreates the name and must fail when it attempts private ownership and
-  lifecycle mutation. CTest runs the probe serially on all portable hosts, while measured Windows x86 selects it
-  explicitly. Native GCC Release builds and passes **118/118** tests; strict i386/AArch64 test-enabled fixtures compile,
-  and both macro-off target probes fail specifically at the private accesses. Live-FX/security source contracts and
-  `git diff --check` pass. This candidate is rebased locally but remains unpushed and unmerged; no other project-owned
+  ordinary macro-off executable recreates the name and uses two dependent access predicates plus negative static
+  assertions to prove neither private ownership nor lifecycle mutation is available. Portable builds compile and run the
+  positive seal normally, while measured Windows x86 builds and selects it explicitly. Native GCC/Clang Release build and
+  pass **118/118** tests; strict i386/AArch64 fixtures and seals compile, and the same seal fails both assertions against
+  the old friend-bearing baseline. `[[maybe_unused]]` preserves the test-bypass field's layout while keeping AppleClang
+  Release warning-clean after the friend removal. Live-FX/security source contracts and `git diff --check` pass. The
+  branch is published as PR #56 but remains unmerged pending exact-head hosted review/CI; no other project-owned
   production friend leak was found;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
@@ -501,8 +503,8 @@ Remaining gates, in implementation order:
    authoritative post-merge run **29651211711** passed all nine jobs. PR #55 merged the string OwnershipBatch's same
    pointer-free lifetime boundary without production enrollment as `f39e0e4a`; exact-head run **29657884407** passed
    all nine jobs and exact-head Codex review was clean. Exact keyed mutable runtime adapters are complete locally at
-   `8af5881e` and await replay/publication on the merged PR #55 baseline. First finish the local sidecar authority-seal
-   candidate `89b6c384`, then add durable
+   `8af5881e` and await replay/publication on the merged PR #55 baseline. First finish PR #56's sidecar authority-seal
+   implementation at `7c202c0c`, then add durable
    PMem/stream/pending-copy resources and a borrowed/standalone registry ownership coordinator before atomically
    replacing all seven raw sites. Keep static controller slots and callback metadata outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
