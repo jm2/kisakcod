@@ -18,6 +18,12 @@ set(_fx_pool_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_pool.h")
 set(_fx_sidecar_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_physics_sidecar.h")
+set(_fx_sidecar_production_seal_test_path
+    "${SOURCE_ROOT}/tests/fx_physics_sidecar_production_seal_tests.cpp")
+set(_tests_cmake_path
+    "${SOURCE_ROOT}/tests/CMakeLists.txt")
+set(_ci_path
+    "${SOURCE_ROOT}/.github/workflows/ci.yml")
 set(_phys_ode_path
     "${SOURCE_ROOT}/src/physics/phys_ode.cpp")
 
@@ -29,6 +35,9 @@ foreach(_source_path
     "${_fx_update_path}"
     "${_fx_pool_path}"
     "${_fx_sidecar_path}"
+    "${_fx_sidecar_production_seal_test_path}"
+    "${_tests_cmake_path}"
+    "${_ci_path}"
     "${_phys_ode_path}")
     if(NOT EXISTS "${_source_path}")
         message(FATAL_ERROR "Missing live FX physics source: ${_source_path}")
@@ -42,6 +51,10 @@ file(READ "${_fx_archive_path}" _fx_archive_source)
 file(READ "${_fx_update_path}" _fx_update_source)
 file(READ "${_fx_pool_path}" _fx_pool_source)
 file(READ "${_fx_sidecar_path}" _fx_sidecar_source)
+file(READ "${_fx_sidecar_production_seal_test_path}"
+    _fx_sidecar_production_seal_test_source)
+file(READ "${_tests_cmake_path}" _tests_cmake_source)
+file(READ "${_ci_path}" _ci_source)
 file(READ "${_phys_ode_path}" _phys_ode_source)
 
 function(extract_source_slice
@@ -165,6 +178,110 @@ require_slice_contains(
     _fx_sidecar_source
     "ValidateVacantOwner("
     "live allocation/free preflight must retain its O(1) vacancy primitive")
+
+# The corruption helper is a test-build capability, not a public-name
+# authority token. Production must neither declare nor friend it, and the
+# macro-off positive compile contract proves that recreating the name externally
+# cannot mutate either guarded field.
+require_slice_contains(
+    _fx_sidecar_source
+    "#ifdef KISAK_FX_PHYSICS_SIDECAR_TESTING\nstruct SidecarTestAccess;\n#endif"
+    "the SidecarTestAccess forward declaration must be test-build-only")
+require_slice_contains(
+    _fx_sidecar_source
+    "#ifdef KISAK_FX_PHYSICS_SIDECAR_TESTING\n    friend struct SidecarTestAccess;\n#endif"
+    "BodySidecar must grant test mutation authority only in opted-in builds")
+require_literal_count(
+    _fx_sidecar_source
+    "#ifdef KISAK_FX_PHYSICS_SIDECAR_TESTING"
+    3
+    "the forward declaration, friendship, and helper definition must share the test gate")
+require_slice_not_contains(
+    _fx_sidecar_production_seal_test_source
+    "#define KISAK_FX_PHYSICS_SIDECAR_TESTING"
+    "the production authority-seal test must keep the test gate disabled")
+require_slice_contains(
+    _fx_sidecar_production_seal_test_source
+    "struct SidecarTestAccess"
+    "the production authority-seal test must recreate the public helper name")
+require_slice_contains(
+    _fx_sidecar_production_seal_test_source
+    "sidecar->activeCount_ = 1u;"
+    "the production authority-seal test must query private count mutation access")
+require_slice_contains(
+    _fx_sidecar_production_seal_test_source
+    "sidecar->initialized_ = true;"
+    "the production authority-seal test must query private lifecycle mutation access")
+require_slice_contains(
+    _fx_sidecar_production_seal_test_source
+    "!SidecarTestAccess::CanMutateActiveCount<BodySidecar>"
+    "the production authority seal must reject private count mutation access")
+require_slice_contains(
+    _fx_sidecar_production_seal_test_source
+    "!SidecarTestAccess::CanMutateInitialized<BodySidecar>"
+    "the production authority seal must reject private lifecycle mutation access")
+
+extract_source_slice(
+    _tests_cmake_source
+    "# Keep the test-only corruption helper out of production's namespace"
+    "add_executable(kisakcod-fx-archive-capacity-tests"
+    _fx_sidecar_production_seal_cmake
+    "SidecarTestAccess production seal registration")
+require_slice_contains(
+    _fx_sidecar_production_seal_cmake
+    "add_executable("
+    "the production seal must be a normal positive-build target")
+require_slice_contains(
+    _fx_sidecar_production_seal_cmake
+    "fx_physics_sidecar_production_seal_tests.cpp"
+    "the production seal target must compile the dependent access checks")
+require_slice_contains(
+    _fx_sidecar_production_seal_cmake
+    "effectscore-physics-sidecar-production-test-access-sealed"
+    "the positive production seal must remain a portable CTest contract")
+require_slice_not_contains(
+    _fx_sidecar_production_seal_cmake
+    "WILL_FAIL"
+    "the positive production seal must not accept arbitrary build failures")
+require_slice_not_contains(
+    _fx_sidecar_production_seal_cmake
+    "EXCLUDE_FROM_ALL"
+    "portable builds must compile the production authority seal normally")
+require_slice_not_contains(
+    _fx_sidecar_production_seal_cmake
+    "KISAK_FX_PHYSICS_SIDECAR_TESTING"
+    "the production seal target must not enable test mutation authority")
+
+extract_source_slice(
+    _ci_source
+    "portable-tests:"
+    "windows-x86:"
+    _portable_ci_source
+    "portable CI job")
+require_slice_contains(
+    _portable_ci_source
+    "-DBUILD_TESTING=ON"
+    "portable CI must configure the production seal test")
+require_slice_contains(
+    _portable_ci_source
+    "ctest --test-dir build-tests -C Release --output-on-failure"
+    "portable CI must execute every registered production seal test")
+extract_source_slice(
+    _ci_source
+    "windows-x86:"
+    "windows-x86-nosteam:"
+    _measured_x86_ci_source
+    "measured Windows x86 CI job")
+require_literal_count(
+    _measured_x86_ci_source
+    "kisakcod-fx-physics-sidecar-production-seal-tests"
+    1
+    "measured Windows x86 must build the production authority seal")
+require_literal_count(
+    _measured_x86_ci_source
+    "effectscore-physics-sidecar-production-test-access-sealed"
+    1
+    "measured Windows x86 CI must explicitly select the production authority seal")
 require_slice_contains(
     _fx_system_source
     "bool __cdecl FX_ThreadOwnsEffectLock("
