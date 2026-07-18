@@ -13,13 +13,13 @@ the *original* inventory, not a live count of open items.
 > work.** Check the remediation status below and the inline `**Status:**` markers.
 >
 > `docs/task.md` is the live checkpoint and tracks current status far more closely than this file —
-> but it is not infallible either, and it currently carries some stale claims of its own. **When the
+> but it may lag the implementation. **When the
 > docs disagree with the tree, the tree wins.** Confirm against the source and `git log` before acting
 > on any doc. Several line references in this file are stale by construction.
 
 ---
 
-## Remediation status (July 16, 2026)
+## Remediation status (July 18, 2026)
 
 Fixed in the initial porting implementation:
 
@@ -36,12 +36,15 @@ Fixed in the initial porting implementation:
   map-load/network smoke remains the release gate.
 - Native time, synchronization, event, thread-lifecycle, scheduling, and
   cooperative worker-gate services now run on all five portable utility targets.
-- The current referenced-file hardening candidate makes SYSTEMINFO/IWD producers
+- Merged referenced-file hardening makes SYSTEMINFO/IWD producers
   bounded and failure-atomic, validates remote metadata before mutation, and
   restricts in-band server downloads to exact published active-mod `.iwd`/`.ff`
   names with protocol-length, server-only, path-namespace, pre-open
   revalidation, and resource-cleanup guards. HTTP/www redirect transport remains
   nonfunctional and is still tracked under H4.
+- Script-string ownership paths now authenticate allocator, hash, debug, and provenance boundaries; opaque `RefString`
+  mutation authority is private, and character folding is defined for every byte value. Lifecycle and production-
+  enrollment status belongs in `docs/task.md`.
 - Fixed-width atomic migrations cover dvar/script/XAnim/DObj/database/IWD/network,
   skeleton/pose, worker queues, bounded renderer reservations, and DObj/model-surface streams. The live
   debt ledger and current validation evidence are maintained in `docs/task.md`.
