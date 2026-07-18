@@ -3786,6 +3786,43 @@ require_security_slice_ordered(
     "static_cast<unsigned char>(refString->str[index])"
     "lowercase conversion must authenticate before bounded ctype access")
 
+extract_security_slice(
+    _legacy_string_release_security_source
+    "static uint32_t GetLowercaseStringOfSize("
+    "uint32_t SL_GetLowercaseString_("
+    _legacy_lowercase_intern_security_slice
+    "legacy lowercase intern")
+require_security_slice_contains(
+    _legacy_lowercase_intern_security_slice
+    "static_cast<unsigned char>(str[i])"
+    "lowercase intern must use unsigned-char ctype input")
+
+extract_security_slice(
+    _legacy_string_release_security_source
+    "uint32_t SL_FindLowercaseString(const char* str)"
+    "bool SL_TryRemoveRefToStringLockedNoReport("
+    _legacy_lowercase_find_security_slice
+    "legacy lowercase lookup")
+require_security_slice_contains(
+    _legacy_lowercase_find_security_slice
+    "static_cast<unsigned char>(str[i])"
+    "lowercase lookup must use unsigned-char ctype input")
+
+extract_security_slice(
+    _legacy_string_release_security_source
+    "void __cdecl CreateCanonicalFilename("
+    "uint32_t __cdecl Scr_CreateCanonicalFilename("
+    _legacy_canonical_filename_security_slice
+    "canonical filename folding")
+require_security_slice_contains(
+    _legacy_canonical_filename_security_slice
+    "c = static_cast<unsigned char>(*filename++);"
+    "canonical filename must read unsigned input bytes")
+require_security_slice_contains(
+    _legacy_canonical_filename_security_slice
+    "static_cast<unsigned char>(c)"
+    "canonical filename must use unsigned-char ctype input")
+
 require_all_occurrences_wrapped(
     "script/scr_stringlist.cpp"
     "scrStringDebugGlob[ \t\r\n]*->[ \t\r\n]*refCount"

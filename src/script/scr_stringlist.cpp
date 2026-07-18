@@ -1923,7 +1923,10 @@ static uint32_t GetLowercaseStringOfSize(
 	if (len <= 0x2000)
 	{
 		for (i = 0; i < len; ++i)
-			stra[i] = tolower(str[i]);
+		{
+			stra[i] = static_cast<char>(tolower(
+				static_cast<unsigned char>(str[i])));
+		}
 		return SL_GetStringOfSize(stra, user, len, type);
 	}
 	else
@@ -4157,7 +4160,10 @@ uint32_t SL_FindLowercaseString(const char* str)
 	if ((int)len <= 0x2000)
 	{
 		for (i = 0; i < (int)len; ++i)
-			stra[i] = tolower(str[i]);
+		{
+			stra[i] = static_cast<char>(tolower(
+				static_cast<unsigned char>(str[i])));
+		}
 		return FindStringOfSize(stra, len);
 	}
 	else
@@ -4325,17 +4331,18 @@ void __cdecl CreateCanonicalFilename(char *newFilename, const char *filename, in
 		do
 		{
 			do
-				c = *filename++;
+				c = static_cast<unsigned char>(*filename++);
 			while (c == '\\');
 		} while (c == '/');
 		while (c >= ' ')
 		{
-			*newFilename++ = tolower(c);
+			*newFilename++ = static_cast<char>(tolower(
+				static_cast<unsigned char>(c)));
 			if (!--count)
 				Com_Error(ERR_DROP, "Filename %s exceeds maximum length of %d", filename, oldCount);
 			if (c == '/')
 				break;
-			c = *filename++;
+			c = static_cast<unsigned char>(*filename++);
 			if (c == '\\')
 				c = '/';
 		}

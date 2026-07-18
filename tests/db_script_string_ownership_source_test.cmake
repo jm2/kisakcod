@@ -1611,6 +1611,40 @@ require_contains(
     "lowercase reader uses unsigned-char ctype input")
 extract_slice(
     _string_source
+    "static uint32_t GetLowercaseStringOfSize("
+    "uint32_t SL_GetLowercaseString_("
+    _lowercase_intern
+    "lowercase string intern")
+require_contains(
+    _lowercase_intern
+    "static_cast<unsigned char>(str[i])"
+    "lowercase intern uses unsigned-char ctype input")
+extract_slice(
+    _string_source
+    "uint32_t SL_FindLowercaseString(const char* str)"
+    "bool SL_TryRemoveRefToStringLockedNoReport("
+    _lowercase_find
+    "lowercase string lookup")
+require_contains(
+    _lowercase_find
+    "static_cast<unsigned char>(str[i])"
+    "lowercase lookup uses unsigned-char ctype input")
+extract_slice(
+    _string_source
+    "void __cdecl CreateCanonicalFilename("
+    "uint32_t __cdecl Scr_CreateCanonicalFilename("
+    _canonical_filename
+    "canonical filename folding")
+require_contains(
+    _canonical_filename
+    "c = static_cast<unsigned char>(*filename++);"
+    "canonical filename reads unsigned input bytes")
+require_contains(
+    _canonical_filename
+    "static_cast<unsigned char>(c)"
+    "canonical filename uses unsigned-char ctype input")
+extract_slice(
+    _string_source
     "const char* SL_ConvertToString(uint32_t stringValue)"
     "RefString* GetRefString(uint32_t stringValue)"
     _convert_reader
@@ -2110,6 +2144,7 @@ foreach(_marker IN ITEMS
     "TestOwnershipBatchUnrelatedDestruction()"
     "TestLegacyReadersAuthenticateExactStrings()"
     "TestLegacyMutatorsAuthenticateExactStrings()"
+    "TestLegacyCharacterFoldingUsesUnsignedInput()"
     "batch operation rebuilt the complete string certificate"
     "inconsistent batch serial mirror authenticated an operation"
     "inconsistent batch address mirror authenticated an operation"
@@ -2134,7 +2169,10 @@ foreach(_marker IN ITEMS
     "opaque pointer user mutation accepted non-string storage"
     "ID ref mutation accepted a non-string allocation"
     "ID user mutation accepted a non-string allocation"
-    "exact opaque pointer mutation rejected a valid string")
+    "exact opaque pointer mutation rejected a valid string"
+    "lowercase intern mishandled a high-bit byte"
+    "lowercase lookup mishandled a high-bit byte"
+    "canonical filename mishandled a high-bit byte")
     require_contains(
         _ownership_fixture "${_marker}"
         "string ownership runtime coverage")

@@ -3537,6 +3537,47 @@ struct StateImage final
             "mutator-auth valid path invoked a reporter");
     return validPath && EndTest();
 }
+
+[[nodiscard]] bool TestLegacyCharacterFoldingUsesUnsignedInput() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char mixedCase[]{
+        static_cast<char>(0xE1), 'A', '\\', 'B', '\0'};
+    const char foldedHigh = static_cast<char>(tolower(
+        static_cast<unsigned char>(mixedCase[0])));
+    const char expectedLower[]{foldedHigh, 'a', '\\', 'b', '\0'};
+    const std::uint32_t stringId =
+        SL_GetLowercaseString_(mixedCase, 0, 15);
+    RefString *const refString = GetRefString(stringId);
+
+    char canonical[32]{};
+    CreateCanonicalFilename(
+        canonical, mixedCase, static_cast<int>(sizeof(canonical)));
+    const char expectedCanonical[]{foldedHigh, 'a', '/', 'b', '\0'};
+
+    const bool valid = Check(refString != nullptr,
+            "unsigned-fold string acquisition failed")
+        && Check(std::memcmp(
+                refString->str, expectedLower, sizeof(expectedLower)) == 0,
+            "lowercase intern mishandled a high-bit byte")
+        && Check(SL_FindLowercaseString(mixedCase) == stringId,
+            "lowercase lookup mishandled a high-bit byte")
+        && Check(std::memcmp(
+                canonical,
+                expectedCanonical,
+                sizeof(expectedCanonical)) == 0,
+            "canonical filename mishandled a high-bit byte")
+        && Check(
+            script_string::TryRemoveOrdinaryReference(stringId)
+                == script_string::ReleaseStatus::Success,
+            "unsigned-fold string cleanup failed")
+        && Check(LocksReleased(), "unsigned-fold test leaked a lock")
+        && Check(ReportersUnused(),
+            "unsigned-fold test invoked a reporter");
+    return valid && EndTest();
+}
 } // namespace
 
 void KISAK_CDECL Sys_EnterCriticalSection(const int critSect)
@@ -3649,7 +3690,8 @@ int main()
         || !TestOwnershipBatchNestedAuthorityTears()
         || !TestOwnershipBatchUnrelatedDestruction()
         || !TestLegacyReadersAuthenticateExactStrings()
-        || !TestLegacyMutatorsAuthenticateExactStrings())
+        || !TestLegacyMutatorsAuthenticateExactStrings()
+        || !TestLegacyCharacterFoldingUsesUnsignedInput())
     {
         return 1;
     }
