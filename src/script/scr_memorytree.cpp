@@ -1,8 +1,9 @@
 #include "scr_memorytree.h"
-#include "scr_stringlist.h"
+#include "scr_stringlist.h" // scrMemTreePub_t ownership remains declared here.
 
 #include <qcommon/qcommon.h>
 #include <qcommon/sys_sync.h>
+#include <atomic>
 #include <cstdint>
 #include <universal/profile.h>
 
@@ -143,12 +144,16 @@ bool MT_IsValidationLeaseBoundaryFrozenLocked() noexcept;
 bool MT_HasRetainedValidationLeaseAuthenticationLocked() noexcept;
 bool MT_HasValidationLeaseRegistryActivityLocked() noexcept;
 bool MT_IsValidationLeaseRegistryConsistentLocked() noexcept;
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+bool MT_RegistryNamesValidationLeaseStorageLocked(
+    const MT_ValidationLease *lease) noexcept;
+#endif
 bool MT_CanReadValidationLeaseSnapshotLocked(
     const MT_ValidationLease *lease) noexcept;
 bool MT_OwnsValidationLeaseLocked(
-    const MT_ValidationLease &lease) noexcept;
+    const MT_ValidationLease *lease) noexcept;
 bool MT_IsValidationLeasePoisonedLocked(
-    const MT_ValidationLease &lease) noexcept;
+    const MT_ValidationLease *lease) noexcept;
 void MT_ClearValidationLeaseRegistryLocked() noexcept;
 void MT_ClearRetainedValidationLeaseAuthenticationLocked() noexcept;
 void MT_FreezeValidationLeaseBoundaryLocked() noexcept;
@@ -156,7 +161,6 @@ void MT_PoisonValidationLeaseLocked(
     MT_ValidationLease *lease) noexcept;
 void MT_PoisonActiveValidationLeaseLocked() noexcept;
 bool MT_RejectUnleasedAccessForActiveLeaseLocked() noexcept;
-bool MT_RejectUnleasedAccessForActiveLeaseNoReport() noexcept;
 }
 
 // Bounded legacy operations cannot afford complete 64K-bucket partition or
@@ -275,6 +279,34 @@ namespace
 {
 constexpr int kMemoryTreeTypeCount =
     static_cast<int>(sizeof(mt_type_names) / sizeof(mt_type_names[0]));
+
+struct MT_DumpSnapshot final
+{
+    uint8_t types[MEMORY_NODE_COUNT];
+    uint8_t sizes[MEMORY_NODE_COUNT];
+    int typeUsage[kMemoryTreeTypeCount];
+    int subTreeSizes[MEMORY_NODE_BITS + 1];
+    int totalAlloc;
+    int totalAllocBuckets;
+    int totalBuckets;
+};
+
+enum class MT_DumpStatus : uint8_t
+{
+    Success,
+    BoundaryUnavailable,
+    ScratchUnavailable,
+    UnsafeState,
+};
+
+// Dump emission cannot retain CRITSECT_MEMORY_TREE across Com_Printf or an
+// assertion. Capture one authenticated image into fixed BSS instead. A
+// concurrent or nonlocally-abandoned reporter leaves this scratch unavailable
+// rather than exposing a partially overwritten image.
+MT_DumpSnapshot mt_dumpSnapshot{};
+std::atomic_flag mt_dumpSnapshotInUse = ATOMIC_FLAG_INIT;
+
+MT_DumpStatus MT_DumpTreeInternal() noexcept;
 
 int MT_GetScoreFromDeltaNoReport(const int value) noexcept
 {
@@ -826,6 +858,54 @@ bool MT_IsCoreStateValidNoReport() noexcept
         MT_IsGlobalPartitionValidNoReport();
 }
 
+bool MT_TryCaptureDumpSnapshotLocked() noexcept
+{
+    if (!MT_IsCoreStateValidNoReport())
+        return false;
+
+    memset(mt_dumpSnapshot.typeUsage, 0,
+        sizeof(mt_dumpSnapshot.typeUsage));
+    int capturedAlloc = 0;
+    int capturedAllocBuckets = 0;
+    for (uint32_t nodeNum = 0;
+         nodeNum < MEMORY_NODE_COUNT;
+         ++nodeNum)
+    {
+        const uint8_t type = scrMemTreeDebugGlob.mt_usage[nodeNum];
+        const uint8_t size = scrMemTreeDebugGlob.mt_usage_size[nodeNum];
+        mt_dumpSnapshot.types[nodeNum] = type;
+        mt_dumpSnapshot.sizes[nodeNum] = size;
+        if (type == 0)
+            continue;
+
+        const int buckets = 1 << size;
+        ++capturedAlloc;
+        capturedAllocBuckets += buckets;
+        mt_dumpSnapshot.typeUsage[type] += buckets;
+    }
+
+    int capturedTotalBuckets = capturedAllocBuckets;
+    for (int size = 0; size <= MEMORY_NODE_BITS; ++size)
+    {
+        const int subTreeSize =
+            MT_GetSubTreeSizeNoReport(scrMemTreeGlob.head[size]);
+        mt_dumpSnapshot.subTreeSizes[size] = subTreeSize;
+        capturedTotalBuckets += subTreeSize * (1 << size);
+    }
+
+    if (capturedAlloc != scrMemTreeGlob.totalAlloc
+        || capturedAllocBuckets != scrMemTreeGlob.totalAllocBuckets
+        || capturedTotalBuckets != MEMORY_NODE_COUNT - 1)
+    {
+        return false;
+    }
+
+    mt_dumpSnapshot.totalAlloc = capturedAlloc;
+    mt_dumpSnapshot.totalAllocBuckets = capturedAllocBuckets;
+    mt_dumpSnapshot.totalBuckets = capturedTotalBuckets;
+    return true;
+}
+
 bool MT_HasValidationLeaseRegistryActivityLocked() noexcept
 {
     return mt_activeValidationLeaseAddress != 0
@@ -903,6 +983,16 @@ bool MT_IsValidationLeaseRegistryConsistentLocked() noexcept
 bool MT_CanReadValidationLeaseSnapshotLocked(
     const MT_ValidationLease *const lease) noexcept
 {
+    // The address/registry checks inside MT_Owns... precede every token member
+    // read. A waiter that wakes after abandonment therefore rejects dead
+    // storage, while a live token with torn local authentication fails closed.
+    return MT_OwnsValidationLeaseLocked(lease);
+}
+
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+bool MT_RegistryNamesValidationLeaseStorageLocked(
+    const MT_ValidationLease *const lease) noexcept
+{
     if (!lease || MT_IsValidationLeaseBoundaryFrozenLocked())
         return false;
 
@@ -911,28 +1001,38 @@ bool MT_CanReadValidationLeaseSnapshotLocked(
         && mt_activeValidationLeaseAddressMirror == leaseAddress
         && MT_IsValidationLeaseRegistryConsistentLocked();
 }
+#endif
 
 bool MT_OwnsValidationLeaseLocked(
-    const MT_ValidationLease &lease) noexcept
+    const MT_ValidationLease *const lease) noexcept
 {
-    const uintptr_t leaseAddress = reinterpret_cast<uintptr_t>(&lease);
-    return mt_activeValidationLeaseAddress == leaseAddress
-        && mt_activeValidationLeaseAddressMirror == leaseAddress
-        && MT_IsValidationLeaseRegistryConsistentLocked()
-        && MT_ValidationLeaseAccess::Active(lease)
-        && MT_ValidationLeaseAccess::Serial(lease) != 0
-        && MT_ValidationLeaseAccess::Serial(lease)
+    if (!lease)
+        return false;
+
+    const uintptr_t leaseAddress = reinterpret_cast<uintptr_t>(lease);
+    if (mt_activeValidationLeaseAddress != leaseAddress
+        || mt_activeValidationLeaseAddressMirror != leaseAddress
+        || !MT_IsValidationLeaseRegistryConsistentLocked())
+    {
+        return false;
+    }
+
+    return MT_ValidationLeaseAccess::Active(*lease)
+        && MT_ValidationLeaseAccess::Serial(*lease) != 0
+        && MT_ValidationLeaseAccess::Serial(*lease)
             == mt_activeValidationLeaseSerial
-        && MT_ValidationLeaseAccess::ReservedClear(lease);
+        && MT_ValidationLeaseAccess::ReservedClear(*lease);
 }
 
 bool MT_IsValidationLeasePoisonedLocked(
-    const MT_ValidationLease &lease) noexcept
+    const MT_ValidationLease *const lease) noexcept
 {
-    return MT_ValidationLeaseAccess::Poisoned(lease)
-        || (MT_OwnsValidationLeaseLocked(lease)
-            && mt_validationLeaseLifecycle
-                == MT_ValidationLeaseLifecycle::Poisoned);
+    if (!MT_OwnsValidationLeaseLocked(lease))
+        return true;
+
+    return MT_ValidationLeaseAccess::Poisoned(*lease)
+        || mt_validationLeaseLifecycle
+            == MT_ValidationLeaseLifecycle::Poisoned;
 }
 
 void MT_ClearValidationLeaseRegistryLocked() noexcept
@@ -971,7 +1071,7 @@ void MT_FreezeValidationLeaseBoundaryLocked() noexcept
 void MT_PoisonValidationLeaseLocked(
     MT_ValidationLease *const lease) noexcept
 {
-    if (lease && MT_OwnsValidationLeaseLocked(*lease))
+    if (MT_OwnsValidationLeaseLocked(lease))
     {
         MT_ValidationLeaseAccess::Poison(*lease);
         mt_validationLeaseLifecycle =
@@ -1004,15 +1104,6 @@ bool MT_RejectUnleasedAccessForActiveLeaseLocked() noexcept
     return active;
 }
 
-bool MT_RejectUnleasedAccessForActiveLeaseNoReport() noexcept
-{
-    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
-    const bool rejected =
-        MT_RejectUnleasedAccessForActiveLeaseLocked();
-    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
-    return rejected;
-}
-
 MT_PolicyEntryStatus MT_ValidatePolicyEntryLocked(
     const MT_ValidationPolicy policy,
     MT_ValidationLease *const lease,
@@ -1020,9 +1111,9 @@ MT_PolicyEntryStatus MT_ValidatePolicyEntryLocked(
 {
     if (policy == MT_ValidationPolicy::Leased)
     {
-        if (!lease || !MT_OwnsValidationLeaseLocked(*lease))
+        if (!MT_OwnsValidationLeaseLocked(lease))
             return MT_PolicyEntryStatus::InvalidLease;
-        if (MT_IsValidationLeasePoisonedLocked(*lease))
+        if (MT_IsValidationLeasePoisonedLocked(lease))
             return MT_PolicyEntryStatus::UnsafeFailure;
 
         const bool locallyValid = query
@@ -1055,8 +1146,8 @@ bool MT_CanCommitPolicyMutationLocked(
 {
     if (policy != MT_ValidationPolicy::Leased)
         return true;
-    if (!lease || !MT_OwnsValidationLeaseLocked(*lease)
-        || MT_IsValidationLeasePoisonedLocked(*lease)
+    if (!MT_OwnsValidationLeaseLocked(lease)
+        || MT_IsValidationLeasePoisonedLocked(lease)
         || !MT_ValidationLeaseAccess::CanCountMutation(*lease))
     {
         MT_PoisonValidationLeaseLocked(lease);
@@ -1906,7 +1997,7 @@ MT_ValidationLease::~MT_ValidationLease() noexcept
     // reading its authentication fields. No generic stored address is ever
     // dereferenced here or elsewhere.
     const bool ownsRetainedAcquisition =
-        MT_OwnsValidationLeaseLocked(*this);
+        MT_OwnsValidationLeaseLocked(this);
 
     // Publish terminal process-lifetime poison before removing the only
     // address that may name this stack object. This remains frozen even when
@@ -1975,6 +2066,12 @@ void MT_ValidationLease::SetAuthenticationFieldsForTesting(
     const uint8_t reserved1) noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    if (MT_HasValidationLeaseRegistryActivityLocked()
+        && !MT_RegistryNamesValidationLeaseStorageLocked(this))
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+        return;
+    }
     serial_ = serial;
     reserved_[0] = reserved0;
     reserved_[1] = reserved1;
@@ -1985,6 +2082,12 @@ void MT_ValidationLease::SetMutationCountForTesting(
     const uint32_t mutationCount) noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    if (MT_HasValidationLeaseRegistryActivityLocked()
+        && !MT_RegistryNamesValidationLeaseStorageLocked(this))
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+        return;
+    }
     mutationCount_ = mutationCount;
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
 }
@@ -1998,12 +2101,6 @@ MT_ValidationLeaseStatus MT_TryBeginValidationLease(
         return MT_ValidationLeaseStatus::InvalidArgument;
 
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
-    if (!MT_ValidationLeaseAccess::IsCanonicalClear(*lease))
-    {
-        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
-        return MT_ValidationLeaseStatus::InvalidToken;
-    }
-
     if (MT_HasValidationLeaseRegistryActivityLocked())
     {
         // A foreign owner cannot reach this check until its retained lock is
@@ -2015,6 +2112,12 @@ MT_ValidationLeaseStatus MT_TryBeginValidationLease(
         return consistent
             ? MT_ValidationLeaseStatus::Busy
             : MT_ValidationLeaseStatus::UnsafeFailure;
+    }
+
+    if (!MT_ValidationLeaseAccess::IsCanonicalClear(*lease))
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+        return MT_ValidationLeaseStatus::InvalidToken;
     }
 
     if (!MT_IsCoreStateValidNoReport()
@@ -2053,7 +2156,7 @@ MT_ValidationLeaseStatus MT_FinishValidationLease(
         return MT_ValidationLeaseStatus::InvalidArgument;
 
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
-    if (!MT_OwnsValidationLeaseLocked(*lease))
+    if (!MT_OwnsValidationLeaseLocked(lease))
     {
         // Drop only this authentication acquisition. The retained acquisition
         // cannot be identified safely from an invalid token.
@@ -2061,7 +2164,7 @@ MT_ValidationLeaseStatus MT_FinishValidationLease(
         return MT_ValidationLeaseStatus::InvalidToken;
     }
 
-    const bool poisoned = MT_IsValidationLeasePoisonedLocked(*lease);
+    const bool poisoned = MT_IsValidationLeasePoisonedLocked(lease);
     const bool valid = MT_IsCoreStateValidNoReport();
     MT_ClearValidationLeaseRegistryLocked();
     MT_ClearRetainedValidationLeaseAuthenticationLocked();
@@ -2357,12 +2460,17 @@ MT_AllocIndexStatus MT_TryAllocIndexLeased(
 
 unsigned short MT_AllocIndex(int numBytes, int type)
 {
-    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    if (MT_RejectUnleasedAccessForActiveLeaseLocked())
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return 0;
+    }
 
     uint16_t nodeNum = 0;
     const MT_AllocIndexStatus status =
         MT_TryAllocIndexLegacy(numBytes, type, &nodeNum);
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
     if (status != MT_AllocIndexStatus::Success)
     {
         if (status == MT_AllocIndexStatus::UnsafeFailure)
@@ -2450,9 +2558,31 @@ void MT_CorruptFreeNodeMembershipForTesting(
 
 bool MT_Realloc(int oldNumBytes, int newNumbytes)
 {
-    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+    int oldSize = 0;
+    int newSize = 0;
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    if (MT_RejectUnleasedAccessForActiveLeaseLocked())
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return false;
-    return MT_GetSize(oldNumBytes) >= MT_GetSize(newNumbytes);
+    }
+    const bool oldValid = MT_TryGetSizeNoReport(oldNumBytes, &oldSize);
+    const bool newValid = MT_TryGetSizeNoReport(newNumbytes, &newSize);
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+
+    // Preserve legacy diagnostics, but reacquire through the guarded public
+    // entry instead of reporting while the allocator lock is held.
+    if (!oldValid)
+    {
+        (void)MT_GetSize(oldNumBytes);
+        return false;
+    }
+    if (!newValid)
+    {
+        (void)MT_GetSize(newNumbytes);
+        return false;
+    }
+    return oldSize >= newSize;
 }
 
 void MT_RemoveHeadMemoryNode(int size)
@@ -2673,30 +2803,66 @@ MT_FreeIndexStatus MT_TryFreeIndexLeased(
         nodeNum, numBytes, MT_ValidationPolicy::Leased, &lease);
 }
 
-void MT_FreeIndex(uint32_t nodeNum, int numBytes)
+namespace
 {
-    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+struct MT_LegacyFreeAttempt final
+{
+    MT_FreeIndexStatus status =
+        MT_FreeIndexStatus::InvalidArgumentNoChange;
+    bool validSize = false;
+    bool validNode = false;
+};
+
+MT_LegacyFreeAttempt MT_TryFreeIndexLegacyLockedNoReport(
+    const uint32_t nodeNum,
+    const int numBytes) noexcept
+{
+    MT_LegacyFreeAttempt attempt{};
+    int size = 0;
+    attempt.validSize = MT_TryGetSizeNoReport(numBytes, &size);
+    attempt.validNode = nodeNum > 0 && nodeNum < MEMORY_NODE_COUNT;
+    if (attempt.validSize && attempt.validNode)
+        attempt.status = MT_TryFreeIndexLegacy(nodeNum, numBytes);
+    return attempt;
+}
+
+void MT_ReportLegacyFreeAttempt(
+    const MT_LegacyFreeAttempt &attempt,
+    const int numBytes)
+{
+    if (!attempt.validSize || !attempt.validNode)
+    {
+        iassert(attempt.validSize);
+        iassert(attempt.validNode);
+        return;
+    }
+    if (attempt.status == MT_FreeIndexStatus::Success)
         return;
 
-    const int size = MT_GetSize(numBytes);
-    iassert(size >= 0 && size <= MEMORY_NODE_BITS);
-    iassert(nodeNum > 0 && nodeNum < MEMORY_NODE_COUNT);
-    (void)size;
-
-    const MT_FreeIndexStatus status =
-        MT_TryFreeIndexLegacy(nodeNum, numBytes);
-    if (status != MT_FreeIndexStatus::Success)
+    if (attempt.status == MT_FreeIndexStatus::UnsafeFailure)
     {
-        if (status == MT_FreeIndexStatus::UnsafeFailure)
-        {
-            MT_UnsafeErrorNoDump("MT_FreeIndex", numBytes);
-        }
-        else
-        {
-            iassert(status == MT_FreeIndexStatus::Success);
-            MT_Error("MT_FreeIndex", numBytes);
-        }
+        MT_UnsafeErrorNoDump("MT_FreeIndex", numBytes);
+        return;
     }
+
+    iassert(attempt.status == MT_FreeIndexStatus::Success);
+    MT_Error("MT_FreeIndex", numBytes);
+}
+} // namespace
+
+void MT_FreeIndex(uint32_t nodeNum, int numBytes)
+{
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    if (MT_RejectUnleasedAccessForActiveLeaseLocked())
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+        return;
+    }
+
+    const MT_LegacyFreeAttempt attempt =
+        MT_TryFreeIndexLegacyLockedNoReport(nodeNum, numBytes);
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+    MT_ReportLegacyFreeAttempt(attempt, numBytes);
 }
 
 bool __cdecl MT_RemoveMemoryNode(int oldNode, uint32_t size)
@@ -2734,56 +2900,99 @@ bool __cdecl MT_RemoveMemoryNode(int oldNode, uint32_t size)
 
 void MT_Free(byte* p, int numBytes)
 {
-	if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
-		return;
+    uint32_t nodeNum = 0;
+    MT_LegacyFreeAttempt attempt{};
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    if (MT_RejectUnleasedAccessForActiveLeaseLocked())
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+        return;
+    }
 
-	iassert(((MemoryNode*)p - scrMemTreeGlob.nodes >= 0 && (MemoryNode*)p - scrMemTreeGlob.nodes < MEMORY_NODE_COUNT));
+    const uintptr_t treeBegin =
+        reinterpret_cast<uintptr_t>(&scrMemTreeGlob.nodes[0]);
+    const uintptr_t candidate = reinterpret_cast<uintptr_t>(p);
+    const bool inRange = candidate >= treeBegin
+        && candidate - treeBegin < sizeof(scrMemTreeGlob.nodes);
+    const bool aligned = inRange
+        && (candidate - treeBegin) % sizeof(MemoryNode) == 0;
+    if (aligned)
+    {
+        nodeNum = static_cast<uint32_t>(
+            (candidate - treeBegin) / sizeof(MemoryNode));
+        attempt =
+            MT_TryFreeIndexLegacyLockedNoReport(nodeNum, numBytes);
+    }
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
 
-    MT_FreeIndex((MemoryNode *)p - scrMemTreeGlob.nodes, numBytes);
+    iassert(aligned);
+    if (!aligned)
+        return;
+    MT_ReportLegacyFreeAttempt(attempt, numBytes);
 }
 
 int MT_GetSize(int numBytes)
 {
-    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
-        return 0;
-
-    int numBuckets; // [esp+4h] [ebp-4h]
-
-    iassert(numBytes > 0);
-
-    if (numBytes >= MEMORY_NODE_COUNT)
+    int size = 0;
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    if (MT_RejectUnleasedAccessForActiveLeaseLocked())
     {
-        MT_Error("MT_GetSize: max allocation exceeded", numBytes);
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return 0;
     }
-    else
+    const bool valid = MT_TryGetSizeNoReport(numBytes, &size);
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+
+    if (!valid)
     {
-        numBuckets = (numBytes + 11) / 12 - 1;
-        if (numBuckets > 255)
-            return scrMemTreeGlob.logBits[numBuckets >> 8] + 8;
-        else
-            return scrMemTreeGlob.logBits[numBuckets];
+        iassert(numBytes > 0);
+        if (numBytes >= MEMORY_NODE_COUNT)
+            MT_Error("MT_GetSize: max allocation exceeded", numBytes);
+        return 0;
     }
+    return size;
 }
 
 int MT_GetScore(int num)
 {
-    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+    int score = 0;
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    if (MT_RejectUnleasedAccessForActiveLeaseLocked())
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return 0;
+    }
 
-    iassert(num != 0);
+    const bool validNode = num > 0 && num < MEMORY_NODE_COUNT;
+    const bool validState = validNode && MT_AreBitTablesValidNoReport();
+    if (validState)
+        score = MT_GetScoreNoReport(static_cast<uint16_t>(num));
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
 
-    const int value = MEMORY_NODE_COUNT - num;
-    iassert(value != 0);
-    return MT_GetScoreFromDeltaNoReport(value);
+    iassert(validNode);
+    return validState ? score : 0;
 }
 
 int MT_GetSubTreeSize(int nodeNum)
 {
-    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+    int subTreeSize = 0;
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    if (MT_RejectUnleasedAccessForActiveLeaseLocked())
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return 0;
+    }
 
-    return MT_GetSubTreeSizeNoReport(nodeNum);
+    const bool validNode = nodeNum >= 0 && nodeNum < MEMORY_NODE_COUNT;
+    const bool validRoot = validNode
+        && (nodeNum == 0 || mt_freeNodeSizeShadow[nodeNum] != 0);
+    const bool validTree = validRoot && MT_IsCoreStateValidNoReport();
+    if (validTree)
+        subTreeSize = MT_GetSubTreeSizeNoReport(nodeNum);
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+
+    iassert(validRoot);
+    return validTree ? subTreeSize : 0;
 }
 
 void MT_AddMemoryNode(int newNode, int size)
@@ -2816,55 +3025,62 @@ void MT_AddMemoryNode(int newNode, int size)
 
 void MT_Error(const char* funcName, int numBytes)
 {
-    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+    // Capture admission and every allocator-derived dump field in one locked
+    // interval. Once admitted, terminal reporting consumes only the snapshot.
+    if (MT_DumpTreeInternal() == MT_DumpStatus::BoundaryUnavailable)
         return;
 
-    MT_DumpTree();
     Com_Printf(23, "%s: failed memory allocation of %d bytes for script usage\n", funcName, numBytes);
     Com_Error(ERR_FATAL, "MT_Error (KISAK)\n");
     //Scr_TerminalError("failed memory allocation for script usage");
 }
 
-void MT_DumpTree()
+namespace
 {
-    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
-        return;
+MT_DumpStatus MT_DumpTreeInternal() noexcept
+{
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    if (MT_RejectUnleasedAccessForActiveLeaseLocked())
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+        return MT_DumpStatus::BoundaryUnavailable;
+    }
+    if (mt_dumpSnapshotInUse.test_and_set(std::memory_order_acquire))
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+        return MT_DumpStatus::ScratchUnavailable;
+    }
+    const bool captured = MT_TryCaptureDumpSnapshotLocked();
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
 
-    int mt_type_usage[22];
-
-    memset(mt_type_usage, 0, sizeof(mt_type_usage));
+    if (!captured)
+    {
+        Com_Printf(23, "memory-tree dump unavailable: unsafe state\n");
+        mt_dumpSnapshotInUse.clear(std::memory_order_release);
+        return MT_DumpStatus::UnsafeState;
+    }
 
     Com_Printf(23, "********************************\n");
-
-    int totalAlloc = 0;
-    int totalAllocBuckets = 0;
-    int totalBuckets = 0;
-
-    for (int nodeNum = 0; nodeNum < MEMORY_NODE_COUNT; nodeNum++)
+    for (uint32_t nodeNum = 0;
+         nodeNum < MEMORY_NODE_COUNT;
+         ++nodeNum)
     {
-        int type = scrMemTreeDebugGlob.mt_usage[nodeNum];
+        const uint8_t type = mt_dumpSnapshot.types[nodeNum];
         if (type)
         {
-            Com_Printf(23, "%s\n", MT_NodeInfoString(nodeNum));
-            ++totalAlloc;
-            totalAllocBuckets += 1 << scrMemTreeDebugGlob.mt_usage_size[nodeNum];
-            mt_type_usage[type] += 1 << scrMemTreeDebugGlob.mt_usage_size[nodeNum];
+            Com_Printf(
+                23,
+                "%s: '#%u' (%u)\n",
+                mt_type_names[type],
+                static_cast<unsigned>(nodeNum),
+                static_cast<unsigned>(mt_dumpSnapshot.sizes[nodeNum]));
         }
     }
 
-    iassert(scrMemTreeGlob.totalAlloc == totalAlloc);
-    iassert(scrMemTreeGlob.totalAllocBuckets == totalAllocBuckets);
-    (void)totalAlloc;
-    (void)totalAllocBuckets;
-
     Com_Printf(23, "********************************\n");
-
-    totalBuckets = scrMemTreeGlob.totalAllocBuckets;
-
     for (int size = 0; size <= MEMORY_NODE_BITS; ++size)
     {
-        int subTreeSize = MT_GetSubTreeSize(scrMemTreeGlob.head[size]);
-        totalBuckets += subTreeSize * (1 << size);
+        const int subTreeSize = mt_dumpSnapshot.subTreeSizes[size];
         Com_Printf(
             23,
             "%d subtree has %d * %d = %d free buckets\n",
@@ -2875,32 +3091,67 @@ void MT_DumpTree()
     }
 
     Com_Printf(23, "********************************\n");
-    for (int type = 1; type < 22; ++type)
-        Com_Printf(23, "'%s' allocated: %d\n", mt_type_names[type], mt_type_usage[type]);
+    for (int type = 1; type < kMemoryTreeTypeCount; ++type)
+    {
+        Com_Printf(
+            23,
+            "'%s' allocated: %d\n",
+            mt_type_names[type],
+            mt_dumpSnapshot.typeUsage[type]);
+    }
     Com_Printf(23, "********************************\n");
     Com_Printf(
         23,
         "total memory alloc buckets: %d (%d instances)\n",
-        scrMemTreeGlob.totalAllocBuckets,
-        scrMemTreeGlob.totalAlloc);
-    Com_Printf(23, "total memory free buckets: %d\n", 0xFFFF - scrMemTreeGlob.totalAllocBuckets);
+        mt_dumpSnapshot.totalAllocBuckets,
+        mt_dumpSnapshot.totalAlloc);
+    Com_Printf(
+        23,
+        "total memory free buckets: %d\n",
+        (MEMORY_NODE_COUNT - 1) - mt_dumpSnapshot.totalAllocBuckets);
     Com_Printf(23, "********************************\n");
 
-    iassert(totalBuckets == (1 << MEMORY_NODE_BITS) - 1);
-    (void)totalBuckets;
+    iassert(mt_dumpSnapshot.totalBuckets == MEMORY_NODE_COUNT - 1);
+    mt_dumpSnapshotInUse.clear(std::memory_order_release);
+    return MT_DumpStatus::Success;
+}
+} // namespace
+
+void MT_DumpTree()
+{
+    (void)MT_DumpTreeInternal();
 }
 
 char const* MT_NodeInfoString(uint32_t nodeNum)
 {
-    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
+    MT_AllocationInfo info{};
+    MT_AllocationInfoStatus status =
+        MT_AllocationInfoStatus::InvalidArgumentNoChange;
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    if (MT_RejectUnleasedAccessForActiveLeaseLocked())
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return "<UNAVAILABLE>";
+    }
+    if (nodeNum < MEMORY_NODE_COUNT && MT_IsCoreStateValidNoReport())
+    {
+        status = MT_GetAllocationInfoLockedNoReport(nodeNum, &info);
+        if (status == MT_AllocationInfoStatus::Success
+            && !MT_IsAllocationIntervalExactNoReport(
+                nodeNum, info.type, info.size))
+        {
+            status = MT_AllocationInfoStatus::UnsafeFailure;
+        }
+    }
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
 
-    int type = scrMemTreeDebugGlob.mt_usage[nodeNum];
-
-    if (!scrMemTreeDebugGlob.mt_usage[nodeNum])
+    if (status == MT_AllocationInfoStatus::NotAllocatedNoChange)
         return "<FREE>";
-
-    int v3 = scrMemTreeDebugGlob.mt_usage_size[nodeNum];
-    const char* v1 = SL_DebugConvertToString(nodeNum);
-    return va("%s: '%s' (%d)", mt_type_names[type], v1, v3);
+    if (status != MT_AllocationInfoStatus::Success)
+        return "<UNAVAILABLE>";
+    return va(
+        "%s: '#%u' (%u)",
+        mt_type_names[info.type],
+        static_cast<unsigned>(nodeNum),
+        static_cast<unsigned>(info.size));
 }

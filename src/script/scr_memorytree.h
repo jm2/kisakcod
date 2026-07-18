@@ -89,6 +89,15 @@ RUNTIME_SIZE(MT_ValidationLeaseAdmission, 0x1, 0x1);
 // freezes allocator access. An exactly authenticated destructor can release
 // the retained acquisition after publishing that terminal boundary; a torn
 // token leaves the unauthenticated acquisition held.
+//
+// Storage-lifetime contract: the lease object must remain alive until every
+// API call that received its address/reference has returned. In particular,
+// callers may not race normal Finish followed by destruction against Begin,
+// a leased operation, a snapshot, or a test-only setter. Production admission
+// is same-thread while the owning SCRIPT_STRING transaction remains held, so
+// it satisfies that contract. Terminal Frozen state makes generic and already-
+// blocked abandonment paths fail closed; it does not make arbitrary concurrent
+// destruction of the caller-owned token storage valid.
 class MT_ValidationLease final
 {
 public:
