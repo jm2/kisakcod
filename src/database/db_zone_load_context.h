@@ -151,6 +151,9 @@ public:
     nextCleanupOperation() const noexcept;
     [[nodiscard]] bool cleanupActive() const noexcept;
     [[nodiscard]] bool cleanupPoisoned() const noexcept;
+    // Read-only whole-representation validation for durable containing tables.
+    // It exposes no mutation path and does not replace external serialization.
+    [[nodiscard]] bool canonical() const noexcept;
 
 private:
     friend ZoneLoadContextStatus TryInitializeZoneLoadContextSlot(

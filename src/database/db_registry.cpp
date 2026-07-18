@@ -2,6 +2,7 @@
 #include "db_load_atomic.h"
 #include "db_referenced_fastfile.h"
 #include "db_validation.h"
+#include "db_zone_runtime_table.h"
 #include "db_zone_slots.h"
 
 #include <qcommon/files.h>
@@ -2534,6 +2535,19 @@ void __cdecl DB_LoadXAssets(XZoneInfo *zoneInfo, uint32_t zoneCount, int32_t syn
 
 void DB_Init()
 {
+    const auto zoneRuntimeStatus =
+        db::zone_runtime::TryInitializeZoneRuntimeTable(
+            &db::zone_runtime::ProductionZoneRuntimeTable());
+    if (zoneRuntimeStatus
+        != db::zone_runtime::ZoneRuntimeTableStatus::Success)
+    {
+        Com_Error(
+            ERR_FATAL,
+            "DB_Init: zone runtime table initialization failed (%u)",
+            static_cast<unsigned int>(zoneRuntimeStatus));
+        return;
+    }
+
     for (XAssetType type = (XAssetType)0; type < ASSET_TYPE_COUNT; ++type)
         DB_InitPoolHeader(type);
 

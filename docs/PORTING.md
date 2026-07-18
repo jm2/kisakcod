@@ -19,9 +19,9 @@ documented for completeness but are off the current critical path.
 
 Completed foundation work:
 
-- the audited upstream/gameplay reconciliation, PR #48's report-free script-string ownership foundation, and PR #49's
-  constructed lifecycle controller through `dcd91cf0`, with authoritative post-merge run **29626811250** green across all
-  nine Windows x86 and portable host jobs;
+- the audited upstream/gameplay reconciliation, PR #48's report-free script-string ownership foundation, PR #49's
+  constructed lifecycle controller, and PR #50's failure-atomic script-string initialization hardening through
+  `eeca68ba`, with authoritative post-merge run **29627591759** green across all nine Windows x86 and portable host jobs;
 - the merged report-free script-string ownership foundation: dedicated recursive outer DB serialization,
   private journal callbacks, exact ordinary/database-user ownership results, full allocator-backed byte-count/hash/debug
   validation, rejection of packed-length-ambiguous earlier NULs, and failure-atomic memory-tree allocate/query/free
@@ -47,16 +47,29 @@ Completed foundation work:
   completes lifecycle cleanup to `Empty`, and retains an authenticated `Abandoned` receipt until explicit reset. Retry,
   callback reentry, stale/swapped binding, foreign-thread exclusion, poisoning, and receipt authentication have dedicated
   runtime/source-contract coverage; the exact GCC Debug suite is **105/105** green. This is not production wiring: the
-  stream, registry, PMem, arena/adapter, aliases/completed objects, external zone table, real callbacks, and Live-unload
+  stream, registry generation claims, PMem, arena/adapter, aliases/completed objects, real callbacks, and Live-unload
   route do not use it. All seven frozen raw ownership/sweep sites remain outside it, and typed production integration
   still needs the prepared validation lease/batching work;
-- active debug-initialization hardening at rebased head `18d5af0c`. Independent `SL_InitCheckLeaks` calls now retain the
+- merged debug-initialization hardening from PR #50. Independent `SL_InitCheckLeaks` calls now retain the
   recursive script-string lock from state inspection through reset and pointer publication; duplicate calls unlock before
   diagnostics and leave live accounting untouched even without assertions. `SL_Init` rejects already-published full or
   debug-only state before allocator/hash mutation. Foreign-thread pause/resume and live-reference helper/full duplicate-
-  init regressions and source-order gates pass at the exact head, including the complete GCC Debug suite **105/105** and
-  focused GCC Release. The helper-only precursor also passed GCC assertion-disabled/`RELEASE_ASSERTS`, Clang ASan+UBSan,
-  and 50 repeated concurrency runs. Exact-head review and all-nine-job CI remain its publication gates;
+  init regressions and source-order gates pass at exact head `8080f44f`, including the complete GCC Debug suite **105/105**
+  and focused GCC Release. The helper-only precursor also passed GCC assertion-disabled/`RELEASE_ASSERTS`, Clang
+  ASan+UBSan, and 50 repeated concurrency runs. Gemini and the exact independent re-audit were clean; exact-head run
+  **29627237107** and authoritative post-merge run **29627591759** passed all nine jobs before and after squash merge
+  `eeca68ba`;
+- active generation-keyed runtime-table checkpoint at rebased head `636531fe`. A fixed production-owned table provides
+  stable storage for all 33 physical slots while reserving slot zero and exposing only slots 1..32. Every durable entry
+  owns the exact lifecycle slot, script-string ownership controller, and by-value generation key outside zone PMem.
+  `DB_Init` initializes pristine storage before asset-pool mutation and fails closed at the existing fatal boundary.
+  Checked lookup, generation claim, and read-only keyed views reject invalid/default slots, stale/cross-slot/ABA keys,
+  partial initialization, corrupted or poisoned state, impossible lifecycle/controller phases, and callback phases without
+  retained serialization. The view copies its key so stable entry addresses cannot silently upgrade stale authority.
+  The complete GCC suite is **107/107** green; Clang, ASan+UBSan, strict x86 layout, AArch64 cross-compile, source, and
+  diff gates pass. Independent review found and closed mutable-view authority and incomplete canonical/poison/phase/
+  serializer checks, then reported the exact transplant clean. Production claims/consumption, keyed terminal reset and
+  Live unload, cleanup callbacks, PMem/adapter binding, and all seven raw ownership/sweep sites remain deliberately absent;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -375,11 +388,14 @@ Remaining gates, in implementation order:
    PR #49 completes the constructed production-neutral token/journal/key binding through Live finalization or
    authenticated abandonment and squash-merged as `dcd91cf0`; authoritative post-merge run **29626811250** passed all
    nine jobs.
-   Next, publish the isolated debug-initialization hardening, construct the production-owned
-   external zone table, enroll all seven raw ownership/sweep paths, and keep static controller slots and callback metadata
-   outside PMem with per-generation native storage inside the named scope. Manually adapt the prepared retained
-   validation lease/batch onto PR #48's mirrors and bounded scratch implementation before binding the recipes and adapter
-   into production with
+   PR #50 then merged failure-atomic full/debug-only script-string initialization as `eeca68ba`; authoritative post-merge
+   run **29627591759** passed all nine jobs. Active head `636531fe` constructs the production-owned 33-entry table with
+   stable slot/controller storage, by-value generation authority, slot-zero reservation, fail-closed initialization, and
+   no production generation claims. Next, publish that table and the independently clean retained memory-tree validation
+   lease, add the string OwnershipBatch, and finish exact-key terminal reset/Live-unload adapters. Then bind real
+   report-free callbacks and enroll all seven raw ownership/sweep paths while keeping static controller slots and callback
+   metadata outside PMem with per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded
+   scratch implementation when binding the recipes and adapter into production with
    completed-object/alias registration and lifetime tests before replacing any legacy loader path.
    The journal merged in PR #37 as `7a9bce34`; post-merge run **29542960583** passed all nine jobs. PR #38 merged the
    referenced-fast-file/SYSTEMINFO range and bounded metadata hardening as `a7c485fd` before the ownership table depends
@@ -1355,8 +1371,8 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **73% by merged engineering effort**. The active debug-initialization
-hardening does not move the rounded total. Windows x86 is about **93%**, shared
+Overall porting progress is approximately **73% by merged engineering effort**. The active durable runtime-table
+prerequisite does not yet move the rounded total. Windows x86 is about **93%**, shared
 foundations/security about **85%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
 **39%**, and macOS arm64 about **30%**. Strict delivered-target status remains **0/5** because no requested
 64-bit/non-Windows engine target is enabled end to end yet.
@@ -1529,7 +1545,9 @@ authoritative post-merge master run **29551990840** passed all nine jobs.
 PR #48 merged the no-report script-string primitives, private journal adapter, dedicated serializer, checked allocator
 surface, bounded legacy topology/interval validation, and linear global-sweep preflight as `7d78222d`; final PR-branch
 run **29625522997** passed all nine jobs. PR #49 added the constructed production-neutral controller and squash-merged
-as `dcd91cf0`; authoritative post-merge run **29626811250** passed all nine jobs. The controller
+as `dcd91cf0`; authoritative post-merge run **29626811250** passed all nine jobs. PR #50 then merged failure-atomic
+full/debug-only script-string initialization as `eeca68ba`; exact-head run **29627237107** and authoritative post-merge
+run **29627591759** passed all nine jobs. The controller
 acquires the serializer before journal initialization, authenticates one exact lifecycle slot/key, journal, backing
 span/count, token serial, and owner through every operation, stages acquired IDs only after journal publication, and
 drives seal, transfer, reversible prepare, lifecycle `Live`, unconditional journal finalization, infallible admission,
@@ -1539,9 +1557,17 @@ serializer last, and preserves a fully authenticated `Abandoned` receipt until r
 partial rollback, callback reentry, foreign-thread exclusion, stale/swapped bindings, output atomicity, poisoning, and
 receipt authentication; the exact GCC Debug suite is **105/105** green.
 
-That controller is linked into the production manifest but has no production caller. The external production zone table,
-stream/registry/PMem/arena/adapter binding, alias/completed-object unpublication, real admission/cleanup callbacks, and
-Live-unload routing remain. Two `SL_GetStringOfSize`, one `SL_AddUser`, two `SL_GetString`, one `SL_TransferSystem`, and
+Active head `636531fe` adds a fixed production-owned table whose 33 stable entries each own the lifecycle slot,
+controller, and by-value generation key outside zone PMem. Slot zero is reserved; only 1..32 can be claimed. Pristine
+initialization precedes asset-pool mutation in `DB_Init`; checked physical lookup, generation claim, and read-only keyed
+views fail closed on invalid/default slots, stale/cross-slot/ABA authority, partial initialization, poison, and impossible
+lifecycle/controller/serializer combinations. Retaining an entry address cannot upgrade a copied stale key. The complete
+GCC suite is **107/107** green, focused Clang/sanitizer/source and x86/AArch64 gates pass, and exact-transplant review is
+clean. The production loader deliberately does not claim or consume the table in this batch.
+
+Generation enrollment, stream/PMem/arena/adapter binding, alias/completed-object unpublication, real admission/cleanup
+callbacks, and exact-key terminal reset/Live-unload routing remain. Two `SL_GetStringOfSize`, one `SL_AddUser`, two
+`SL_GetString`, one `SL_TransferSystem`, and
 one `SL_ShutdownSystem` site are source-frozen outside the controller; every raw database-user mutation/publication and
 the global 4 -> 8 sweep must be enrolled before replacing a legacy route. The prepared retained-transaction validation
 lease/batching work must be manually adapted onto PR #48's fixed-width mirrors, topology/accounting checks, and bounded

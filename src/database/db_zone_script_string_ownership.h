@@ -134,6 +134,9 @@ public:
     [[nodiscard]] const zone_load::ZoneLoadContextKey &key() const noexcept;
     [[nodiscard]] bool serializerRetained() const noexcept;
     [[nodiscard]] bool poisoned() const noexcept;
+    // A read-only whole-representation predicate used by durable containing
+    // tables before they initialize or reuse an entry.
+    [[nodiscard]] bool isEmptyCanonical() const noexcept;
 
 private:
     friend ZoneScriptStringOwnershipStatus
@@ -182,7 +185,6 @@ private:
     [[nodiscard]] ZoneScriptStringOwnershipStatus validateOwned() const noexcept;
     [[nodiscard]] ZoneScriptStringOwnershipStatus
     validateAbandonedReceipt() const noexcept;
-    [[nodiscard]] bool isEmptyCanonical() const noexcept;
     [[nodiscard]] bool bindingMatchesCurrentPhase() const noexcept;
     static zone_load::ZoneLoadCleanupCallbackStatus PerformBoundCleanup(
         void *context,

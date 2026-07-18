@@ -155,6 +155,8 @@ set(DATABASE
     "${SRC_DIR}/database/db_script_string_transaction.h"
     "${SRC_DIR}/database/db_zone_script_string_ownership.cpp"
     "${SRC_DIR}/database/db_zone_script_string_ownership.h"
+    "${SRC_DIR}/database/db_zone_runtime_table.cpp"
+    "${SRC_DIR}/database/db_zone_runtime_table.h"
     "${SRC_DIR}/database/db_xasset_disk32.cpp"
     "${SRC_DIR}/database/db_xasset_disk32.h"
     "${SRC_DIR}/database/db_zone_load_context.cpp"
