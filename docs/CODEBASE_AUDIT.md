@@ -54,11 +54,13 @@ Fixed in the initial porting implementation:
   skeleton/pose, worker queues, bounded renderer reservations, and DObj/model-surface streams. The live
   debt ledger and current validation evidence are maintained in `docs/task.md`.
 
-The macro-off `EffectsCore/fx_physics_sidecar.h` test-friend authority leak now has a validated PR #56 implementation at
-`7c202c0c`: both forward/friend declarations are test-macro gated, and a normal positive-build test independently proves
-an external same-name definition cannot access either private sidecar field. GCC/Clang Release pass **118/118** tests,
-strict i386/AArch64 compilation is clean, and the same test fails both assertions against the old friend-bearing baseline.
-Still open: exact-head PR #56 hosted review/CI and merge, the broader release-disabled assertion audit (H2), reflection/rate
+The macro-off `EffectsCore/fx_physics_sidecar.h` test-friend authority leak is fixed by merged PR #56. Both
+forward/friend declarations are test-macro gated, and a normal positive-build test independently proves an external
+same-name definition cannot access either private sidecar field. GCC/Clang Release pass **118/118** tests, strict
+i386/AArch64 compilation is clean, and the same test fails both assertions against the old friend-bearing baseline.
+Exact final head `c2613282` passed all nine hosted jobs in run **29658932268**, exact-head Codex review was clean, and
+PR #56 squash-merged as `6159275e`; authoritative post-merge master run **29659347033** also passed all nine jobs.
+Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.
 

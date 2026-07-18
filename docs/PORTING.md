@@ -156,20 +156,25 @@ Completed foundation work:
   audit are clean. Exact-head run **29657884407** passed all nine jobs, exact-head hosted Codex review was clean, and
   PR #55 squash-merged as `f39e0e4a`. The batch remains unenrolled and callback-free, restricted to its four typed
   operations;
-- the next exact-key mutable runtime-table adapter batch is complete and independently audited locally at `8af5881e`,
+- the next exact-key mutable runtime-table adapter batch is replayed cleanly onto merged PR #56 at local head `55c85958`,
   with ten pre/post-authenticated mutations, preserved recoverable status values, publish-after-authentication output,
-  and no public mutable table authority. It remains unpublished until replayed onto PR #55's merged baseline, documented,
-  and published as its own follow-on PR;
-- PR #56 physics-sidecar authority-seal implementation `7c202c0c` closes the separate macro-off authority leak found by the
+  and no public mutable table authority. A normal positive-build macro-off seal independently denies all five private
+  table/entry capabilities to a recreated same-name test helper. GCC Release passes **124/124**; the focused keyed and
+  PR #56 seal selection passes **19/19** under GCC and Clang warnings-as-errors, and strict i386/AArch64 production and
+  fixture compilation passes. A terminal-specific result allowlist also keeps the existing Live-unload path fail closed
+  on the three journal-only recoverable values. Independent exact-diff review found that issue, verified its correction,
+  and reports no remaining actionable finding. The batch is ready for publication as its own follow-on PR;
+- merged PR #56 physics-sidecar authority seal closes the separate macro-off authority leak found by the
   production-friend audit. Both `SidecarTestAccess` forward/friend declarations are now test-macro gated, and an
   ordinary macro-off executable recreates the name and uses two dependent access predicates plus negative static
   assertions to prove neither private ownership nor lifecycle mutation is available. Portable builds compile and run the
   positive seal normally, while measured Windows x86 builds and selects it explicitly. Native GCC/Clang Release build and
   pass **118/118** tests; strict i386/AArch64 fixtures and seals compile, and the same seal fails both assertions against
   the old friend-bearing baseline. `[[maybe_unused]]` preserves the test-bypass field's layout while keeping AppleClang
-  Release warning-clean after the friend removal. Live-FX/security source contracts and `git diff --check` pass. The
-  branch is published as PR #56 but remains unmerged pending exact-head hosted review/CI; no other project-owned
-  production friend leak was found;
+  Release warning-clean after the friend removal. Live-FX/security source contracts and `git diff --check` pass. Exact
+  final head `c2613282` passed all nine hosted jobs in run **29658932268**, exact-head Codex review was clean, and PR #56
+  squash-merged as `6159275e`. Authoritative post-merge master run **29659347033** also passed all nine jobs; no other
+  project-owned production friend leak was found;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -502,9 +507,9 @@ Remaining gates, in implementation order:
    `d2740fb2`/`7764af22`/`dc4aee23`/`74002a69`/`0eac1f2d`, with review cleanups `e8d7a3f6`/`5bee8bba`, as `8e7fd162`;
    authoritative post-merge run **29651211711** passed all nine jobs. PR #55 merged the string OwnershipBatch's same
    pointer-free lifetime boundary without production enrollment as `f39e0e4a`; exact-head run **29657884407** passed
-   all nine jobs and exact-head Codex review was clean. Exact keyed mutable runtime adapters are complete locally at
-   `8af5881e` and await replay/publication on the merged PR #55 baseline. First finish PR #56's sidecar authority-seal
-   implementation at `7c202c0c`, then add durable
+   all nine jobs and exact-head Codex review was clean. PR #56 merged the sidecar authority seal as `6159275e` after
+   exact-head run **29658932268** passed all nine jobs and exact-head Codex review was clean. Exact keyed mutable runtime
+   adapters are replayed and locally validated at `55c85958`; publish that isolated batch next, then add durable
    PMem/stream/pending-copy resources and a borrowed/standalone registry ownership coordinator before atomically
    replacing all seven raw sites. Keep static controller slots and callback metadata outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
@@ -1484,7 +1489,7 @@ remained unchanged. PR #30 then merged the non-publishing reader prerequisite, a
 production restore to it; only the save-side guard and writer remain.
 
 Overall porting progress is approximately **73% by merged engineering effort**. The merged allocator validation lease,
-terminal adapters, and production-neutral OwnershipBatch plus the sidecar-seal/keyed-adapter candidates do not move the rounded total. Windows x86
+terminal adapters, production-neutral OwnershipBatch, and sidecar authority seal plus the keyed-adapter candidate do not move the rounded total. Windows x86
 is about
 **93%**, shared
 foundations/security about **85%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
@@ -1777,7 +1782,8 @@ callbacks, and exact-key load/stage/commit routing remain; the terminal reset/Li
 unenrolled. Two `SL_GetStringOfSize`, one `SL_AddUser`, two
 `SL_GetString`, one `SL_TransferSystem`, and one `SL_ShutdownSystem` site are source-frozen outside the controller.
 These are exactly seven total sites; transfer/shutdown implement the global 4 -> 8 sweep and are not additional sites.
-The keyed mutable runtime adapters are complete locally at `8af5881e` but remain unpublished until replayed onto merged PR #55.
+The keyed mutable runtime adapters are replayed, locally validated, and independently audited at `55c85958` but remain
+unpublished pending the hosted PR gates.
 Next add durable production resources and a registry coordinator that borrows exact active
 transaction authority or owns a standalone transaction, then enroll all seven sites atomically. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
