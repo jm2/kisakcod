@@ -47,6 +47,122 @@ enum class MT_AllocationInfoStatus : uint8_t
     UnsafeFailure,
 };
 
+enum class MT_ValidationLeaseStatus : uint8_t
+{
+    Success,
+    Busy,
+    InvalidArgument,
+    InvalidToken,
+    UnsafeFailure,
+};
+
+namespace script_string
+{
+class OwnershipBatch;
+}
+
+// Capability proving that lease admission starts at the outer SCRIPT_STRING
+// ownership boundary. Production callers cannot construct it, which preserves
+// the SCRIPT_STRING -> MEMORY_TREE lock order when the retained allocator lock
+// is introduced. The ownership batch itself is added by a later layer.
+class MT_ValidationLeaseAdmission final
+{
+private:
+    MT_ValidationLeaseAdmission() noexcept = default;
+    friend class script_string::OwnershipBatch;
+
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+public:
+    [[nodiscard]] static MT_ValidationLeaseAdmission ForTesting() noexcept
+    {
+        return {};
+    }
+#endif
+};
+RUNTIME_SIZE(MT_ValidationLeaseAdmission, 0x1, 0x1);
+
+// Retains CRITSECT_MEMORY_TREE after complete Basic + Forest + Partition
+// validation. Leased operations authenticate the same-thread token and use the
+// bounded mirror-aware path validation shared with LegacyLocal operations.
+// Finish performs complete validation again before releasing the retained
+// acquisition. Destroying an admitted lease without Finish permanently
+// freezes allocator access. An exactly authenticated destructor can release
+// the retained acquisition after publishing that terminal boundary; a torn
+// token leaves the unauthenticated acquisition held.
+//
+// Storage-lifetime contract: the lease object must remain alive until every
+// API call that received its address/reference has returned. In particular,
+// callers may not race normal Finish followed by destruction against Begin,
+// a leased operation, a snapshot, or a test-only setter. Production admission
+// is same-thread while the owning SCRIPT_STRING transaction remains held, so
+// it satisfies that contract. Terminal Frozen state makes generic and already-
+// blocked abandonment paths fail closed; it does not make arbitrary concurrent
+// destruction of the caller-owned token storage valid.
+class MT_ValidationLease final
+{
+public:
+    MT_ValidationLease() noexcept = default;
+    ~MT_ValidationLease() noexcept;
+
+    MT_ValidationLease(const MT_ValidationLease &) = delete;
+    MT_ValidationLease &operator=(const MT_ValidationLease &) = delete;
+    MT_ValidationLease(MT_ValidationLease &&) = delete;
+    MT_ValidationLease &operator=(MT_ValidationLease &&) = delete;
+
+    // Snapshots authenticate under CRITSECT_MEMORY_TREE. A foreign caller
+    // blocks until the owner finishes and then observes the cleared token.
+    [[nodiscard]] bool active() const noexcept;
+    [[nodiscard]] bool poisoned() const noexcept;
+    [[nodiscard]] uint64_t serial() const noexcept;
+    [[nodiscard]] uint32_t mutationCount() const noexcept;
+
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+    void SetAuthenticationFieldsForTesting(
+        uint64_t serial,
+        uint8_t reserved0,
+        uint8_t reserved1) noexcept;
+    void SetMutationCountForTesting(uint32_t mutationCount) noexcept;
+#endif
+
+private:
+    friend struct MT_ValidationLeaseAccess;
+    friend MT_ValidationLeaseStatus MT_TryBeginValidationLease(
+        MT_ValidationLease *lease,
+        MT_ValidationLeaseAdmission admission) noexcept;
+    friend MT_ValidationLeaseStatus MT_FinishValidationLease(
+        MT_ValidationLease *lease) noexcept;
+    friend MT_AllocIndexStatus MT_TryAllocIndexLeased(
+        MT_ValidationLease &lease,
+        int numBytes,
+        int type,
+        uint16_t *outIndex) noexcept;
+    friend MT_AllocationInfoStatus MT_TryGetAllocationInfoLeased(
+        MT_ValidationLease &lease,
+        uint32_t nodeNum,
+        MT_AllocationInfo *outInfo) noexcept;
+    friend MT_FreeIndexStatus MT_TryFreeIndexLeased(
+        MT_ValidationLease &lease,
+        uint32_t nodeNum,
+        int numBytes) noexcept;
+
+    uint64_t serial_ = 0;
+    uint32_t mutationCount_ = 0;
+    bool active_ = false;
+    bool poisoned_ = false;
+    uint8_t reserved_[2]{};
+};
+RUNTIME_SIZE(MT_ValidationLease, 0x10, 0x10);
+
+[[nodiscard]] MT_ValidationLeaseStatus MT_TryBeginValidationLease(
+    MT_ValidationLease *lease,
+    MT_ValidationLeaseAdmission admission) noexcept;
+
+// A correctly authenticated owner releases both recursive acquisitions even
+// when close validation fails. InvalidToken cannot identify a retained
+// acquisition safely and therefore leaves it held.
+[[nodiscard]] MT_ValidationLeaseStatus MT_FinishValidationLease(
+    MT_ValidationLease *lease) noexcept;
+
 struct KISAK_ALIGNAS(128) scrMemTreeGlob_t // sizeof=0xC0380
 {                                       // XREF: .data:scrMemTreeGlob/r
     MemoryNode nodes[MEMORY_NODE_COUNT];            // XREF: MT_Init(void)+46/w
@@ -112,6 +228,10 @@ void MT_FreeIndex(uint32_t nodeNum, int numBytes);
 [[nodiscard]] MT_FreeIndexStatus MT_TryFreeIndexLegacy(
     uint32_t nodeNum,
     int numBytes) noexcept;
+[[nodiscard]] MT_FreeIndexStatus MT_TryFreeIndexLeased(
+    MT_ValidationLease &lease,
+    uint32_t nodeNum,
+    int numBytes) noexcept;
 
 // The query never reports and publishes the complete result only on Success.
 // Every other result leaves *outInfo unchanged.
@@ -119,6 +239,10 @@ void MT_FreeIndex(uint32_t nodeNum, int numBytes);
     uint32_t nodeNum,
     MT_AllocationInfo *outInfo) noexcept;
 [[nodiscard]] MT_AllocationInfoStatus MT_TryGetAllocationInfoLegacy(
+    uint32_t nodeNum,
+    MT_AllocationInfo *outInfo) noexcept;
+[[nodiscard]] MT_AllocationInfoStatus MT_TryGetAllocationInfoLeased(
+    MT_ValidationLease &lease,
     uint32_t nodeNum,
     MT_AllocationInfo *outInfo) noexcept;
 // Performs one report-free exhaustive allocator preflight without mutation.
@@ -136,6 +260,11 @@ void MT_Init(void);
     int type,
     uint16_t *outIndex) noexcept;
 [[nodiscard]] MT_AllocIndexStatus MT_TryAllocIndexLegacy(
+    int numBytes,
+    int type,
+    uint16_t *outIndex) noexcept;
+[[nodiscard]] MT_AllocIndexStatus MT_TryAllocIndexLeased(
+    MT_ValidationLease &lease,
     int numBytes,
     int type,
     uint16_t *outIndex) noexcept;
@@ -167,4 +296,29 @@ void MT_CorruptAllocationMetadataForTesting(
 void MT_CorruptFreeNodeMembershipForTesting(
     uint32_t nodeNum,
     uint8_t membership) noexcept;
+#endif
+
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+void MT_SetNextValidationLeaseSerialForTesting(uint64_t serial) noexcept;
+void MT_SetValidationLeaseRegistryForTesting(
+    MT_ValidationLease *lease,
+    uint64_t serial) noexcept;
+void MT_SetValidationLeaseRegistryMirrorsForTesting(
+    uintptr_t address,
+    uint64_t serial,
+    uintptr_t addressMirror,
+    uint64_t serialMirror) noexcept;
+void MT_SetValidationLeaseLifecycleForTesting(
+    uint8_t lifecycle,
+    uint8_t lifecycleMirror) noexcept;
+void MT_SetRetainedValidationLeaseAuthenticationForTesting(
+    uintptr_t address,
+    uint64_t serial,
+    uintptr_t addressMirror,
+    uint64_t serialMirror) noexcept;
+// Test-only recovery for terminal destructor fixtures. Production has no
+// corresponding escape hatch. The caller must state whether the fixture
+// deliberately retained one authenticated owner-thread acquisition.
+void MT_ResetAbandonedValidationLeaseForTesting(
+    bool releaseRetainedAcquisition) noexcept;
 #endif

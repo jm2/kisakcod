@@ -176,6 +176,80 @@ foreach(_marker IN ITEMS
 endforeach()
 extract_slice(
     _memory_source
+    "void MT_RemoveHeadMemoryNode(int size)"
+    "namespace { MT_FreeIndexStatus MT_TryFreeIndexImpl("
+    _remove_head_memory_node
+    "raw remove-head memory-tree wrapper")
+extract_slice(
+    _memory_source
+    "bool __cdecl MT_RemoveMemoryNode(int oldNode, uint32_t size)"
+    "void MT_Free(byte* p, int numBytes)"
+    _remove_memory_node
+    "raw remove memory-tree wrapper")
+extract_slice(
+    _memory_source
+    "void MT_AddMemoryNode(int newNode, int size)"
+    "void MT_Error(const char* funcName, int numBytes)"
+    _add_memory_node
+    "raw add memory-tree wrapper")
+foreach(_var IN ITEMS
+    _remove_head_memory_node
+    _remove_memory_node
+    _add_memory_node)
+    require_ordered(
+        ${_var}
+        "Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE)"
+        "MT_RejectUnleasedAccessForActiveLeaseLocked()"
+        "raw memory-tree admission is lock-linearized")
+    require_ordered(
+        ${_var}
+        "MT_RejectUnleasedAccessForActiveLeaseLocked()"
+        "iassert("
+        "frozen raw memory-tree rejection precedes diagnostics")
+endforeach()
+require_not_contains(
+    _memory_source
+    "MT_RejectUnleasedAccessForActiveLeaseNoReport"
+    "separate legacy boundary check/use window")
+
+# Legacy reads, mutations, and debug captures keep one memory-tree acquisition
+# from boundary admission through their final allocator-derived read/commit.
+# Assertions, engine reporters, and string formatting remain after release.
+foreach(_marker IN ITEMS
+    "MT_TryAllocIndexLegacy(numBytes, type, &nodeNum); Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);"
+    "const bool oldValid = MT_TryGetSizeNoReport(oldNumBytes, &oldSize); const bool newValid = MT_TryGetSizeNoReport(newNumbytes, &newSize); Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);"
+    "const MT_LegacyFreeAttempt attempt = MT_TryFreeIndexLegacyLockedNoReport(nodeNum, numBytes); Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE); MT_ReportLegacyFreeAttempt(attempt, numBytes);"
+    "const bool aligned = inRange && (candidate - treeBegin) % sizeof(MemoryNode) == 0;"
+    "attempt = MT_TryFreeIndexLegacyLockedNoReport(nodeNum, numBytes); } Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE); iassert(aligned);"
+    "const bool valid = MT_TryGetSizeNoReport(numBytes, &size); Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);"
+    "const bool validState = validNode && MT_AreBitTablesValidNoReport();"
+    "const bool validRoot = validNode && (nodeNum == 0 || mt_freeNodeSizeShadow[nodeNum] != 0);"
+    "const bool captured = MT_TryCaptureDumpSnapshotLocked(); Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);"
+    "MT_GetAllocationInfoLockedNoReport(nodeNum, &info);"
+    "return va( \"%s: '#%u' (%u)\"")
+    require_contains(
+        _memory_source "${_marker}"
+        "lock-linearized legacy memory-tree wrapper")
+endforeach()
+foreach(_marker IN ITEMS
+    "SL_DebugConvertToString("
+    "(MemoryNode *)p - scrMemTreeGlob.nodes")
+    require_not_contains(
+        _memory_source "${_marker}"
+        "unsafe legacy debug or pointer operation")
+endforeach()
+require_ordered(
+    _memory_source
+    "MT_TryCaptureDumpSnapshotLocked(); Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);"
+    "Com_Printf(23, \"memory-tree dump unavailable: unsafe state\\n\");"
+    "dump callback follows locked snapshot capture")
+require_ordered(
+    _memory_source
+    "Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE); if (status == MT_AllocationInfoStatus::NotAllocatedNoChange)"
+    "return va( \"%s: '#%u' (%u)\""
+    "node formatting follows locked bounded capture")
+extract_slice(
+    _memory_source
     "MT_AllocationInfoStatus MT_GetAllocationInfoLockedNoReport("
     "constexpr uint32_t kPartitionWordBits"
     _allocation_info_local
@@ -736,6 +810,21 @@ foreach(_marker IN ITEMS
     require_contains(
         _memory_header "${_marker}" "bounded legacy allocator API")
 endforeach()
+foreach(_marker IN ITEMS
+    "enum class MT_ValidationLeaseStatus : uint8_t"
+    "class MT_ValidationLeaseAdmission final"
+    "friend class script_string::OwnershipBatch;"
+    "class MT_ValidationLease final"
+    "~MT_ValidationLease() noexcept;"
+    "RUNTIME_SIZE(MT_ValidationLease, 0x10, 0x10);"
+    "MT_TryBeginValidationLease( MT_ValidationLease *lease, MT_ValidationLeaseAdmission admission) noexcept;"
+    "MT_FinishValidationLease( MT_ValidationLease *lease) noexcept;"
+    "MT_TryAllocIndexLeased( MT_ValidationLease &lease, int numBytes, int type, uint16_t *outIndex) noexcept;"
+    "MT_TryGetAllocationInfoLeased( MT_ValidationLease &lease, uint32_t nodeNum, MT_AllocationInfo *outInfo) noexcept;"
+    "MT_TryFreeIndexLeased( MT_ValidationLease &lease, uint32_t nodeNum, int numBytes) noexcept;")
+    require_contains(
+        _memory_header "${_marker}" "authenticated allocator lease API")
+endforeach()
 extract_slice(
     _memory_source
     "MT_AllocIndexStatus MT_TryAllocIndexImpl("
@@ -767,27 +856,82 @@ foreach(_var IN ITEMS _try_alloc _try_query _try_free)
     endforeach()
 endforeach()
 foreach(_marker IN ITEMS
-    "return MT_TryAllocIndexImpl(numBytes, type, outIndex, true);"
-    "return MT_TryAllocIndexImpl(numBytes, type, outIndex, false);"
-    "return MT_TryGetAllocationInfoImpl(nodeNum, outInfo, true);"
-    "return MT_TryGetAllocationInfoImpl(nodeNum, outInfo, false);"
-    "return MT_TryFreeIndexImpl(nodeNum, numBytes, true);"
-    "return MT_TryFreeIndexImpl(nodeNum, numBytes, false);")
+    "return MT_TryAllocIndexImpl( numBytes, type, outIndex, MT_ValidationPolicy::Complete, nullptr);"
+    "return MT_TryAllocIndexImpl( numBytes, type, outIndex, MT_ValidationPolicy::LegacyLocal, nullptr);"
+    "return MT_TryAllocIndexImpl( numBytes, type, outIndex, MT_ValidationPolicy::Leased, &lease);"
+    "return MT_TryGetAllocationInfoImpl( nodeNum, outInfo, MT_ValidationPolicy::Complete, nullptr);"
+    "return MT_TryGetAllocationInfoImpl( nodeNum, outInfo, MT_ValidationPolicy::LegacyLocal, nullptr);"
+    "return MT_TryGetAllocationInfoImpl( nodeNum, outInfo, MT_ValidationPolicy::Leased, &lease);"
+    "return MT_TryFreeIndexImpl( nodeNum, numBytes, MT_ValidationPolicy::Complete, nullptr);"
+    "return MT_TryFreeIndexImpl( nodeNum, numBytes, MT_ValidationPolicy::LegacyLocal, nullptr);"
+    "return MT_TryFreeIndexImpl( nodeNum, numBytes, MT_ValidationPolicy::Leased, &lease);")
     require_contains(
-        _memory_source "${_marker}" "complete versus bounded allocator scope")
+        _memory_source "${_marker}" "allocator validation policy routing")
 endforeach()
 require_contains(
     _try_alloc
-    "completeValidation ? MT_IsCoreStateValidNoReport() : MT_IsBasicCoreStateValidNoReport()"
-    "bounded allocation validates touched free-tree state")
+    "MT_ValidatePolicyEntryLocked(policy, lease, false)"
+    "allocation selects authenticated validation policy")
 require_contains(
     _try_query
-    "completeValidation ? MT_IsCoreStateValidNoReport() : MT_IsBasicAccountingStateValidNoReport()"
-    "bounded query validates only consulted accounting")
+    "MT_ValidatePolicyEntryLocked(policy, lease, true)"
+    "query selects authenticated validation policy")
 require_contains(
     _try_free
-    "completeValidation ? MT_IsCoreStateValidNoReport() : MT_IsBasicCoreStateValidNoReport()"
-    "bounded free validates touched free-tree state")
+    "MT_ValidatePolicyEntryLocked(policy, lease, false)"
+    "free selects authenticated validation policy")
+foreach(_marker IN ITEMS
+    "enum class MT_ValidationPolicy : uint8_t { Complete, LegacyLocal, Leased, };"
+    "return mt_activeValidationLeaseAddress != 0 || mt_activeValidationLeaseSerial != 0"
+    "MT_IsValidationLeaseBoundaryFrozenLocked()"
+    "enum class MT_ValidationLeaseLifecycle : uint8_t { Idle, Active, Poisoned, Frozen, };"
+    "Registry consistency is deliberately by value."
+    "MT_CanReadValidationLeaseSnapshotLocked("
+    "mt_activeValidationLeaseAddress == leaseAddress && mt_activeValidationLeaseAddressMirror == leaseAddress"
+    "thread_local uintptr_t mt_retainedValidationLeaseAddress = 0;"
+    "mt_validationLeaseLifecycle = MT_ValidationLeaseLifecycle::Poisoned; mt_validationLeaseLifecycleMirror = MT_ValidationLeaseLifecycle::Poisoned;"
+    "MT_FreezeValidationLeaseBoundaryLocked(); MT_ValidationLeaseAccess::Poison(*this);"
+    "releaseRetainedAcquisition && !retainedAuthenticated"
+    "MT_IsBasicAccountingStateValidNoReport() : MT_IsBasicCoreStateValidNoReport()"
+    "policy == MT_ValidationPolicy::Complete ? MT_IsCoreStateValidNoReport()"
+    "mt_nextValidationLeaseSerial == UINT64_MAX"
+    "MT_ValidationLeaseAccess::CanCountMutation(*lease)"
+    "MT_IsCoreStateValidNoReport(); MT_ClearValidationLeaseRegistryLocked();"
+    "MT_RejectUnleasedAccessForActiveLeaseLocked()")
+    require_contains(
+        _memory_source "${_marker}" "fail-closed allocator lease policy")
+endforeach()
+extract_slice(
+    _memory_source
+    "bool MT_CanReadValidationLeaseSnapshotLocked( const MT_ValidationLease *const lease) noexcept {"
+    "bool MT_RegistryNamesValidationLeaseStorageLocked( const MT_ValidationLease *const lease) noexcept {"
+    _lease_snapshot_authentication
+    "validation lease snapshot authentication")
+require_contains(
+    _lease_snapshot_authentication
+    "return MT_OwnsValidationLeaseLocked(lease);"
+    "snapshots authenticate the live token before member reads")
+extract_slice(
+    _memory_source
+    "bool MT_OwnsValidationLeaseLocked( const MT_ValidationLease *const lease) noexcept {"
+    "bool MT_IsValidationLeasePoisonedLocked( const MT_ValidationLease *const lease) noexcept {"
+    _lease_owner_authentication
+    "validation lease owner authentication")
+require_ordered(
+    _lease_owner_authentication
+    "if (!lease) return false;"
+    "mt_activeValidationLeaseAddress != leaseAddress"
+    "null rejection precedes validation token address checks")
+require_ordered(
+    _lease_owner_authentication
+    "mt_activeValidationLeaseAddressMirror != leaseAddress"
+    "MT_ValidationLeaseAccess::Active(*lease)"
+    "both validation token addresses precede token member reads")
+require_ordered(
+    _lease_owner_authentication
+    "!MT_IsValidationLeaseRegistryConsistentLocked()"
+    "MT_ValidationLeaseAccess::Active(*lease)"
+    "registry authentication precedes token member reads")
 foreach(_var IN ITEMS _try_alloc _try_free)
     require_not_contains(
         ${_var}
@@ -974,7 +1118,7 @@ require_contains(
     "raw head removal delegates to synchronized commit")
 require_contains(
     _raw_remove
-    "return MT_RemoveMemoryNodeCommitNoReport( oldNode, static_cast<int>(size));"
+    "MT_RemoveMemoryNodeCommitNoReport( oldNode, static_cast<int>(size));"
     "raw targeted removal delegates to synchronized commit")
 require_contains(
     _raw_add
@@ -1211,6 +1355,21 @@ foreach(_marker IN ITEMS
     "TestLegacyLocalValidationScope()"
     "TestLegacyTouchedIntervalCorruption()"
     "TestLegacyFragmentedForestCost()"
+    "TestValidationLeasePolicies()"
+    "TestValidationLeaseAuthenticationAndOverflow()"
+    "TestValidationLeaseCorruption()"
+    "TestValidationLeaseReentryAndForeignThread()"
+    "TestValidationLeaseAbandonedLifetime()"
+    "authenticated destructor retained the owner lock"
+    "torn destructor guessed the retained acquisition"
+    "MT_SetRetainedValidationLeaseAuthenticationForTesting("
+    "foreign thread entered through a torn retained boundary"
+    "unrelated canonical destructor revoked the active lease"
+    "arbitrary mirrored address was dereferenced or admitted"
+    "blocked snapshots read a destroyed lease"
+    "foreign allocator access bypassed retained lock"
+    "mutation counter wrapped"
+    "pointer-only registry admitted legacy allocation"
     "legacy query trusted cleared primary metadata"
     "legacy query trusted corrupted allocation count"
     "legacy allocation trusted an orphaned free head"
@@ -1244,6 +1403,10 @@ foreach(_marker IN ITEMS
         _ownership_fixture_target "${_marker}"
         "string ownership runtime fixture wiring")
 endforeach()
+require_contains(
+    _tests
+    "KISAK_MEMORY_TREE_VALIDATION_TESTING=1"
+    "memory-tree lease runtime fixture wiring")
 require_not_contains(
     _ownership_fixture_target
     "\${SRC_DIR}/script/scr_stringlist.cpp"
