@@ -283,6 +283,48 @@ struct StateImage final
         && EndTest();
 }
 
+[[nodiscard]] bool TestDuplicateInitNoChange() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char value[] = "duplicate-full-init-live-reference";
+    const auto acquired = script_string::TryAcquireOrdinaryStringOfSize(
+        value, sizeof(value), 15);
+    if (!Check(
+            acquired.status == script_string::AcquireStatus::Acquired,
+            "duplicate full initialization setup failed"))
+    {
+        return false;
+    }
+
+    const StateImage beforeDuplicate = CaptureState();
+    SL_Init();
+#if defined(USE_ASSERTS)
+    constexpr std::uint32_t expectedAssertions = 1;
+#else
+    constexpr std::uint32_t expectedAssertions = 0;
+#endif
+    const bool valid = Check(StateMatches(beforeDuplicate),
+            "duplicate full initialization changed ownership state")
+        && Check(LocksReleased(),
+            "duplicate full initialization leaked a lock")
+        && Check(g_comErrorCount == 0,
+            "duplicate full initialization invoked Com_Error")
+        && Check(!g_reporterSawOwnedLock,
+            "duplicate full initialization asserted under an owned lock")
+        && Check(g_assertCount == expectedAssertions,
+            "duplicate full initialization assertion behavior changed");
+
+    g_assertCount = 0;
+    const auto cleanup =
+        script_string::TryRemoveOrdinaryReference(acquired.stringId);
+    return valid
+        && Check(cleanup == script_string::ReleaseStatus::Success,
+            "duplicate full initialization cleanup failed")
+        && EndTest();
+}
+
 [[nodiscard]] bool TestInvalidAndNoChange() noexcept
 {
     if (!BeginTest())
@@ -1902,6 +1944,7 @@ int main()
 {
     if (!TestInitCheckLeaksRetainsLock()
         || !TestDuplicateInitCheckLeaksNoChange()
+        || !TestDuplicateInitNoChange()
         || !TestInvalidAndNoChange()
         || !TestRepeatedInternAndDatabaseTransfer()
         || !TestOrdinaryRollbackFreeAndReuse()

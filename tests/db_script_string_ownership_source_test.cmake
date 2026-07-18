@@ -207,8 +207,36 @@ require_not_contains(
 
 # Debug ownership initialization is callable independently of SL_Init. Keep
 # its check/reset/publication transaction serialized, and make duplicate calls
-# fail closed even when assertions are compiled out. The diagnostic must run
-# only after releasing the script-string lock.
+# fail closed even when assertions are compiled out. SL_Init must reject every
+# already-published full or debug-only state before resetting the allocator;
+# each entry drops its own script-string acquisition before its diagnostic.
+extract_slice(
+    _string_source
+    "void SL_Init()"
+    "void SL_InitCheckLeaks()"
+    _full_string_init
+    "full string initialization")
+extract_slice(
+    _full_string_init
+    "const bool stateAlreadyInitialized = scrStringGlob.inited != 0"
+    "MT_Init();"
+    _duplicate_full_init
+    "duplicate full string initialization")
+require_ordered(
+    _full_string_init
+    "Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "const bool stateAlreadyInitialized = scrStringGlob.inited != 0"
+    "full initialization lock before state inspection")
+require_ordered(
+    _duplicate_full_init
+    "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);"
+    "iassert(!stateAlreadyInitialized);"
+    "duplicate full initialization unlock before assertion")
+require_ordered(
+    _duplicate_full_init
+    "iassert(!stateAlreadyInitialized);"
+    "return;"
+    "duplicate full initialization fail-closed return")
 extract_slice(
     _string_source
     "void SL_InitCheckLeaks()"
@@ -1235,10 +1263,12 @@ endforeach()
 foreach(_marker IN ITEMS
     "TestInitCheckLeaksRetainsLock()"
     "TestDuplicateInitCheckLeaksNoChange()"
+    "TestDuplicateInitNoChange()"
     "g_scriptStringMutex.try_lock()"
     "expectedAssertions = 1"
     "expectedAssertions = 0"
     "duplicate-debug-init-live-reference"
+    "duplicate-full-init-live-reference"
     "StateMatches(beforeDuplicate)"
     "TestInvalidAndNoChange()"
     "TestRepeatedInternAndDatabaseTransfer()"
