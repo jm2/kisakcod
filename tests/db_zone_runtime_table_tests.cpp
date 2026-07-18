@@ -6,7 +6,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <type_traits>
+
+void MyAssertHandler(const char *, int, int, const char *, ...)
+{
+    std::abort();
+}
 
 namespace script_string
 {

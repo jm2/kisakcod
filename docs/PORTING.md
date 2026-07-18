@@ -20,8 +20,12 @@ documented for completeness but are off the current critical path.
 Completed foundation work:
 
 - the audited upstream/gameplay reconciliation, PR #48's report-free script-string ownership foundation, PR #49's
-  constructed lifecycle controller, and PR #50's failure-atomic script-string initialization hardening through
-  `eeca68ba`, with authoritative post-merge run **29627591759** green across all nine Windows x86 and portable host jobs;
+  constructed lifecycle controller, PR #50's failure-atomic script-string initialization hardening, and PR #51's
+  generation-keyed runtime table through `beb2925d`. PR #51 exact-head run **29628040709** and post-merge master run
+  **29628132007** each passed eight of nine jobs; Windows x86 Debug alone exposed a missing test-fixture
+  `MyAssertHandler` definition required by `qcommon/sys_sync.cpp`, while the production targets and other eight jobs
+  passed. Active test-only fix `a2e58c24` supplies the established aborting fixture boundary without weakening
+  assertions or changing production code;
 - the merged report-free script-string ownership foundation: dedicated recursive outer DB serialization,
   private journal callbacks, exact ordinary/database-user ownership results, full allocator-backed byte-count/hash/debug
   validation, rejection of packed-length-ambiguous earlier NULs, and failure-atomic memory-tree allocate/query/free
@@ -59,7 +63,7 @@ Completed foundation work:
   ASan+UBSan, and 50 repeated concurrency runs. Gemini and the exact independent re-audit were clean; exact-head run
   **29627237107** and authoritative post-merge run **29627591759** passed all nine jobs before and after squash merge
   `eeca68ba`;
-- active generation-keyed runtime-table checkpoint at rebased head `636531fe`. A fixed production-owned table provides
+- merged generation-keyed runtime-table checkpoint from PR #51. A fixed production-owned table provides
   stable storage for all 33 physical slots while reserving slot zero and exposing only slots 1..32. Every durable entry
   owns the exact lifecycle slot, script-string ownership controller, and by-value generation key outside zone PMem.
   `DB_Init` initializes pristine storage before asset-pool mutation and fails closed at the existing fatal boundary.
@@ -68,8 +72,12 @@ Completed foundation work:
   retained serialization. The view copies its key so stable entry addresses cannot silently upgrade stale authority.
   The complete GCC suite is **107/107** green; Clang, ASan+UBSan, strict x86 layout, AArch64 cross-compile, source, and
   diff gates pass. Independent review found and closed mutable-view authority and incomplete canonical/poison/phase/
-  serializer checks, then reported the exact transplant clean. Production claims/consumption, keyed terminal reset and
-  Live unload, cleanup callbacks, PMem/adapter binding, and all seven raw ownership/sweep sites remain deliberately absent;
+  serializer checks, then reported the exact transplant clean. PR #51 squash-merged as `beb2925d`; its exact-head run
+  **29628040709** and post-merge run **29628132007** each exposed only the same Windows x86 Debug fixture-link omission
+  after eight jobs passed. Active fix `a2e58c24` passes complete GCC Debug and Release suites at **107/107** and a 32-bit
+  MSVC-ABI `clang-cl`/`lld-link` probe resolves the exact symbol reported by CI. Production claims/consumption, keyed
+  terminal reset and Live unload, cleanup callbacks, PMem/adapter binding, and all seven raw ownership/sweep sites remain
+  deliberately absent;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -389,9 +397,11 @@ Remaining gates, in implementation order:
    authenticated abandonment and squash-merged as `dcd91cf0`; authoritative post-merge run **29626811250** passed all
    nine jobs.
    PR #50 then merged failure-atomic full/debug-only script-string initialization as `eeca68ba`; authoritative post-merge
-   run **29627591759** passed all nine jobs. Active head `636531fe` constructs the production-owned 33-entry table with
-   stable slot/controller storage, by-value generation authority, slot-zero reservation, fail-closed initialization, and
-   no production generation claims. Next, publish that table and the independently clean retained memory-tree validation
+   run **29627591759** passed all nine jobs. PR #51 merged the production-owned 33-entry table with stable
+   slot/controller storage, by-value generation authority, slot-zero reservation, fail-closed initialization, and no
+   production generation claims as `beb2925d`. Exact-head run **29628040709** and post-merge run **29628132007** each
+   passed eight jobs and failed only the Windows x86 Debug fixture link; publish the narrow test-only correction at
+   `a2e58c24` before treating master as green. Next, publish the independently clean retained memory-tree validation
    lease, add the string OwnershipBatch, and finish exact-key terminal reset/Live-unload adapters. Then bind real
    report-free callbacks and enroll all seven raw ownership/sweep paths while keeping static controller slots and callback
    metadata outside PMem with per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded
@@ -1371,8 +1381,8 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **73% by merged engineering effort**. The active durable runtime-table
-prerequisite does not yet move the rounded total. Windows x86 is about **93%**, shared
+Overall porting progress is approximately **73% by merged engineering effort**. Merging the durable runtime-table
+prerequisite does not move the rounded total. Windows x86 is about **93%**, shared
 foundations/security about **85%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
 **39%**, and macOS arm64 about **30%**. Strict delivered-target status remains **0/5** because no requested
 64-bit/non-Windows engine target is enabled end to end yet.
@@ -1557,13 +1567,17 @@ serializer last, and preserves a fully authenticated `Abandoned` receipt until r
 partial rollback, callback reentry, foreign-thread exclusion, stale/swapped bindings, output atomicity, poisoning, and
 receipt authentication; the exact GCC Debug suite is **105/105** green.
 
-Active head `636531fe` adds a fixed production-owned table whose 33 stable entries each own the lifecycle slot,
+PR #51 adds a fixed production-owned table whose 33 stable entries each own the lifecycle slot,
 controller, and by-value generation key outside zone PMem. Slot zero is reserved; only 1..32 can be claimed. Pristine
 initialization precedes asset-pool mutation in `DB_Init`; checked physical lookup, generation claim, and read-only keyed
 views fail closed on invalid/default slots, stale/cross-slot/ABA authority, partial initialization, poison, and impossible
 lifecycle/controller/serializer combinations. Retaining an entry address cannot upgrade a copied stale key. The complete
 GCC suite is **107/107** green, focused Clang/sanitizer/source and x86/AArch64 gates pass, and exact-transplant review is
-clean. The production loader deliberately does not claim or consume the table in this batch.
+clean. PR #51 squash-merged as `beb2925d`; exact-head run **29628040709** and post-merge master run **29628132007** each
+passed eight jobs but failed Windows x86 Debug on the test fixture's missing `MyAssertHandler` link boundary. Active
+test-only fix `a2e58c24` supplies that aborting stub, passes complete GCC Debug and Release suites at **107/107**, and
+resolves the exact 32-bit MSVC-decorated symbol in a local `clang-cl`/`lld-link` probe. The production loader deliberately
+does not claim or consume the table in this batch.
 
 Generation enrollment, stream/PMem/arena/adapter binding, alias/completed-object unpublication, real admission/cleanup
 callbacks, and exact-key terminal reset/Live-unload routing remain. Two `SL_GetStringOfSize`, one `SL_AddUser`, two
