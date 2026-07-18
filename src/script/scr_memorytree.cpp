@@ -2112,10 +2112,40 @@ void MT_SetValidationLeaseLifecycleForTesting(
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
 }
 
+void MT_SetRetainedValidationLeaseAuthenticationForTesting(
+    const uintptr_t address,
+    const uint64_t serial,
+    const uintptr_t addressMirror,
+    const uint64_t serialMirror) noexcept
+{
+    Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    mt_retainedValidationLeaseAddress = address;
+    mt_retainedValidationLeaseSerial = serial;
+    mt_retainedValidationLeaseAddressMirror = addressMirror;
+    mt_retainedValidationLeaseSerialMirror = serialMirror;
+    Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+}
+
 void MT_ResetAbandonedValidationLeaseForTesting(
     const bool releaseRetainedAcquisition) noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    const bool retainedActivity =
+        MT_HasRetainedValidationLeaseAuthenticationLocked();
+    const bool retainedAuthenticated =
+        mt_retainedValidationLeaseAddress != 0
+        && mt_retainedValidationLeaseAddress
+            == mt_retainedValidationLeaseAddressMirror
+        && mt_retainedValidationLeaseSerial != 0
+        && mt_retainedValidationLeaseSerial
+            == mt_retainedValidationLeaseSerialMirror;
+    if ((releaseRetainedAcquisition && !retainedAuthenticated)
+        || (!releaseRetainedAcquisition && retainedActivity))
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+        return;
+    }
+
     mt_abandonedValidationLeasePoison = 0;
     mt_abandonedValidationLeasePoisonMirror = 0;
     MT_ClearValidationLeaseRegistryLocked();

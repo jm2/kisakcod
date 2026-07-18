@@ -302,6 +302,11 @@ void MT_SetValidationLeaseRegistryMirrorsForTesting(
 void MT_SetValidationLeaseLifecycleForTesting(
     uint8_t lifecycle,
     uint8_t lifecycleMirror) noexcept;
+void MT_SetRetainedValidationLeaseAuthenticationForTesting(
+    uintptr_t address,
+    uint64_t serial,
+    uintptr_t addressMirror,
+    uint64_t serialMirror) noexcept;
 // Test-only recovery for terminal destructor fixtures. Production has no
 // corresponding escape hatch. The caller must state whether the fixture
 // deliberately retained one authenticated owner-thread acquisition.

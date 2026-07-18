@@ -1894,6 +1894,8 @@ struct Allocation final
         const unsigned variant) noexcept -> bool {
         MT_Init();
         TreeImage beforeTorn;
+        std::uint64_t retainedSerial = 0;
+        std::uintptr_t retainedAddress = 0;
         {
             MT_ValidationLease torn;
             if (!Check(
@@ -1909,6 +1911,8 @@ struct Allocation final
             const std::uint64_t serial = torn.serial();
             const std::uintptr_t address =
                 reinterpret_cast<std::uintptr_t>(&torn);
+            retainedSerial = serial;
+            retainedAddress = address;
             if (variant == 0)
             {
                 torn.SetAuthenticationFieldsForTesting(serial + 1, 0, 0);
@@ -1928,9 +1932,14 @@ struct Allocation final
                 MT_SetValidationLeaseRegistryMirrorsForTesting(
                     address, serial, address, serial + 1);
             }
-            else
+            else if (variant == 4)
             {
                 MT_SetValidationLeaseLifecycleForTesting(1, 3);
+            }
+            else
+            {
+                MT_SetRetainedValidationLeaseAuthenticationForTesting(
+                    address, serial, address + 1, serial);
             }
             beforeTorn = CaptureTree();
         }
@@ -1966,6 +1975,14 @@ struct Allocation final
             std::this_thread::yield();
         const bool blocked = !finished.load(std::memory_order_acquire);
 
+        if (variant == 5)
+        {
+            MT_SetRetainedValidationLeaseAuthenticationForTesting(
+                retainedAddress,
+                retainedSerial,
+                retainedAddress,
+                retainedSerial);
+        }
         MT_ResetAbandonedValidationLeaseForTesting(true);
         foreign.join();
         return Check(blocked,
@@ -1980,7 +1997,8 @@ struct Allocation final
         && testTornDestructor(1)
         && testTornDestructor(2)
         && testTornDestructor(3)
-        && testTornDestructor(4);
+        && testTornDestructor(4)
+        && testTornDestructor(5);
 }
 
 [[nodiscard]] bool TestCorruptionRejection() noexcept
