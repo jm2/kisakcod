@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
+#include <string_view>
 #include <type_traits>
 
 void MyAssertHandler(const char *, int, int, const char *, ...)
@@ -65,6 +67,8 @@ using zone_runtime::TryClaimZoneRuntimeGeneration;
 using zone_runtime::TryGetZoneRuntimeEntry;
 using zone_runtime::TryGetZoneRuntimeGeneration;
 using zone_runtime::TryInitializeZoneRuntimeTable;
+using zone_runtime::TryResetZoneRuntimeTerminalReceipt;
+using zone_runtime::TryUnloadZoneRuntimeGeneration;
 using zone_runtime::ZoneRuntimeEntry;
 using zone_runtime::ZoneRuntimeGenerationView;
 using zone_runtime::ZoneRuntimeTable;
@@ -102,6 +106,14 @@ ZoneLoadCleanupCallbacks MakeCleanupCallbacks(
     return {count, CompleteCleanup};
 }
 
+zone_ownership::ZoneScriptStringUnpublishStatus EnsureUnreachable(
+    void *const context) noexcept
+{
+    return context
+        ? zone_ownership::ZoneScriptStringUnpublishStatus::Success
+        : zone_ownership::ZoneScriptStringUnpublishStatus::UnsafeFailure;
+}
+
 struct AdmissionProbe final
 {
     ZoneRuntimeTable *table = nullptr;
@@ -122,6 +134,144 @@ void ObserveAdmittingController(void *const context) noexcept
         &probe->view);
 }
 
+void AdmitNoop(void *) noexcept
+{
+}
+
+constexpr std::array<ZoneLoadCleanupOperation, 6>
+    kLiveUnloadOperations{
+        ZoneLoadCleanupOperation::RemoveLiveAssetsAndReferences,
+        ZoneLoadCleanupOperation::
+            InvalidateAliasDirectStreamAndDelayState,
+        ZoneLoadCleanupOperation::ReleaseGeometry,
+        ZoneLoadCleanupOperation::
+            TearDownNativeArenaWorkspaceAndSidecars,
+        ZoneLoadCleanupOperation::FreePhysicalMemory,
+        ZoneLoadCleanupOperation::RemoveLiveRegistryAndHandles,
+    };
+
+struct LiveUnloadDriver final
+{
+    ZoneRuntimeTable *table = nullptr;
+    ZoneLoadContextKey key{};
+    ZoneLoadCleanupOperation retryOperation =
+        ZoneLoadCleanupOperation::ReleaseSlot;
+    ZoneLoadCleanupOperation unsafeOperation =
+        ZoneLoadCleanupOperation::ReleaseSlot;
+    bool returnUnknown = false;
+    bool retried = false;
+    bool failed = false;
+    bool attemptReentry = false;
+    bool attemptedReentry = false;
+    bool physicalMemoryFreed = false;
+    bool usedContextAfterFree = false;
+    ZoneRuntimeTableStatus lookupReentry =
+        ZoneRuntimeTableStatus::Success;
+    ZoneRuntimeTableStatus unloadReentry =
+        ZoneRuntimeTableStatus::Success;
+    ZoneRuntimeTableStatus resetReentry =
+        ZoneRuntimeTableStatus::Success;
+    ZoneRuntimeTableStatus claimReentry =
+        ZoneRuntimeTableStatus::Success;
+    std::array<ZoneLoadCleanupOperation, 12> operations{};
+    std::size_t operationCount = 0;
+};
+
+ZoneLoadCleanupCallbackStatus PerformLiveUnload(
+    void *const context,
+    const ZoneLoadCleanupOperation operation) noexcept
+{
+    auto &driver = *static_cast<LiveUnloadDriver *>(context);
+    CHECK(driver.table != nullptr);
+    CHECK(driver.operationCount < driver.operations.size());
+    if (driver.operationCount < driver.operations.size())
+        driver.operations[driver.operationCount++] = operation;
+    if (driver.physicalMemoryFreed)
+        driver.usedContextAfterFree = true;
+    if (operation == ZoneLoadCleanupOperation::FreePhysicalMemory)
+        driver.physicalMemoryFreed = true;
+
+    if (driver.attemptReentry && !driver.attemptedReentry && driver.table)
+    {
+        driver.attemptedReentry = true;
+        ZoneRuntimeGenerationView view{};
+        driver.lookupReentry = TryGetZoneRuntimeGeneration(
+            driver.table, driver.key.slot, driver.key, &view);
+        driver.unloadReentry = TryUnloadZoneRuntimeGeneration(
+            driver.table,
+            driver.key.slot,
+            driver.key,
+            {&driver, PerformLiveUnload});
+        driver.resetReentry = TryResetZoneRuntimeTerminalReceipt(
+            driver.table, driver.key.slot, driver.key);
+        ZoneLoadContextKey claim = driver.key;
+        driver.claimReentry = TryClaimZoneRuntimeGeneration(
+            driver.table, driver.key.slot, &claim);
+        CHECK(claim == driver.key);
+        CHECK(!view);
+    }
+
+    if (driver.returnUnknown && !driver.failed)
+    {
+        driver.failed = true;
+        return static_cast<ZoneLoadCleanupCallbackStatus>(UINT8_C(0xFF));
+    }
+    if (operation == driver.unsafeOperation && !driver.failed)
+    {
+        driver.failed = true;
+        return ZoneLoadCleanupCallbackStatus::UnsafeFailure;
+    }
+    if (operation == driver.retryOperation && !driver.retried)
+    {
+        driver.retried = true;
+        return ZoneLoadCleanupCallbackStatus::Retry;
+    }
+    return ZoneLoadCleanupCallbackStatus::Success;
+}
+
+bool MakeLiveGeneration(
+    ZoneRuntimeTable &table,
+    const std::uint32_t physicalSlot,
+    ZoneLoadContextKey *const outKey,
+    db::script_string_journal::ScriptStringJournal *const journal) noexcept
+{
+    if (!outKey || !journal)
+        return false;
+    if (TryInitializeZoneRuntimeTable(&table)
+            != ZoneRuntimeTableStatus::Success
+        || TryClaimZoneRuntimeGeneration(&table, physicalSlot, outKey)
+            != ZoneRuntimeTableStatus::Success)
+    {
+        return false;
+    }
+    auto *const lifecycle =
+        ZoneRuntimeTableTestAccess::Lifecycle(&table, physicalSlot);
+    auto *const ownership =
+        ZoneRuntimeTableTestAccess::Ownership(&table, physicalSlot);
+    if (!lifecycle || !ownership)
+        return false;
+    return zone_ownership::TryBeginZoneScriptStringOwnership(
+               ownership,
+               lifecycle,
+               *outKey,
+               journal,
+               nullptr,
+               0,
+               0)
+                == ZoneScriptStringOwnershipStatus::Success
+        && zone_ownership::TrySealZoneScriptStrings(ownership)
+                == ZoneScriptStringOwnershipStatus::Success
+        && zone_ownership::TryBeginZoneScriptStringTransfer(ownership)
+                == ZoneScriptStringOwnershipStatus::Success
+        && zone_ownership::TryTransferNextZoneScriptString(ownership)
+                == ZoneScriptStringOwnershipStatus::Success
+        && zone_ownership::TryPrepareZoneScriptStringCommit(ownership)
+                == ZoneScriptStringOwnershipStatus::Success
+        && zone_ownership::TryCommitZoneScriptStringsAndAdmit(
+               ownership, {nullptr, AdmitNoop})
+                == ZoneScriptStringOwnershipStatus::Success;
+}
+
 void TestLayoutNoexceptAndDefaultState()
 {
     static_assert(zone_slots::kDefaultZoneSlot == 0);
@@ -139,6 +289,18 @@ void TestLayoutNoexceptAndDefaultState()
     static_assert(!std::is_copy_constructible_v<ZoneRuntimeTable>);
     static_assert(!std::is_move_constructible_v<ZoneRuntimeTable>);
     static_assert(sizeof(ZoneRuntimeGenerationView) == 0x18);
+    static_assert(sizeof(ZoneLoadCleanupCallbacks) == 2 * sizeof(void *));
+    static_assert(sizeof(ZoneRuntimeTableStatus) == 1);
+    static_assert(sizeof(ZoneScriptStringOwnershipPhase) == 1);
+    static_assert(noexcept(TryUnloadZoneRuntimeGeneration(
+        static_cast<ZoneRuntimeTable *>(nullptr),
+        1,
+        ZoneLoadContextKey{},
+        ZoneLoadCleanupCallbacks{})));
+    static_assert(noexcept(TryResetZoneRuntimeTerminalReceipt(
+        static_cast<ZoneRuntimeTable *>(nullptr),
+        1,
+        ZoneLoadContextKey{})));
 
     ZoneRuntimeTable table{};
     CHECK(!table.initialized());
@@ -169,6 +331,12 @@ void TestLayoutNoexceptAndDefaultState()
         == ZoneRuntimeTableStatus::InvalidArgument);
     CHECK(
         TryGetZoneRuntimeGeneration(&table, 1, key, nullptr)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(
+        TryUnloadZoneRuntimeGeneration(nullptr, 1, key, {})
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(
+        TryResetZoneRuntimeTerminalReceipt(nullptr, 1, key)
         == ZoneRuntimeTableStatus::InvalidArgument);
 
     ZoneRuntimeTable &production = ProductionZoneRuntimeTable();
@@ -697,10 +865,541 @@ void TestControllerPhaseAndSerializerMatrix()
     CHECK(!crossPhase.initialized());
 }
 
+void TestLiveUnloadRetryResetReuseAndAba()
+{
+    for (const ZoneLoadCleanupOperation retryOperation :
+         kLiveUnloadOperations)
+    {
+        ZoneRuntimeTable table{};
+        db::script_string_journal::ScriptStringJournal journal{};
+        ZoneLoadContextKey oldKey{};
+        CHECK(MakeLiveGeneration(table, 6, &oldKey, &journal));
+        ZoneRuntimeGenerationView oldView{};
+        CHECK(
+            TryGetZoneRuntimeGeneration(&table, 6, oldKey, &oldView)
+            == ZoneRuntimeTableStatus::Success);
+        ZoneLoadContextKey malformed = oldKey;
+        malformed.reserved = 1;
+        CHECK(
+            TryUnloadZoneRuntimeGeneration(&table, 6, malformed, {})
+            == ZoneRuntimeTableStatus::InvalidKey);
+        CHECK(
+            TryResetZoneRuntimeTerminalReceipt(&table, 6, malformed)
+            == ZoneRuntimeTableStatus::InvalidKey);
+        ZoneLoadContextKey crossSlot = oldKey;
+        crossSlot.slot = 7;
+        CHECK(
+            TryUnloadZoneRuntimeGeneration(&table, 6, crossSlot, {})
+            == ZoneRuntimeTableStatus::StaleKey);
+        CHECK(
+            TryResetZoneRuntimeTerminalReceipt(&table, 6, crossSlot)
+            == ZoneRuntimeTableStatus::StaleKey);
+        CHECK(
+            TryUnloadZoneRuntimeGeneration(
+                &table, 0, ZoneLoadContextKey{1, 0, 0}, {})
+            == ZoneRuntimeTableStatus::InvalidSlot);
+        const ZoneRuntimeEntry *adjacent = nullptr;
+        CHECK(
+            TryGetZoneRuntimeEntry(&table, 7, &adjacent)
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(adjacent != nullptr);
+
+        LiveUnloadDriver driver{};
+        driver.table = &table;
+        driver.key = oldKey;
+        driver.retryOperation = retryOperation;
+        driver.attemptReentry = true;
+        const ZoneLoadCleanupCallbacks callbacks{
+            &driver,
+            PerformLiveUnload};
+        CHECK(
+            TryUnloadZoneRuntimeGeneration(
+                &table, 6, oldKey, callbacks)
+            == ZoneRuntimeTableStatus::Retry);
+        auto *const lifecycle =
+            ZoneRuntimeTableTestAccess::Lifecycle(&table, 6);
+        auto *const ownership =
+            ZoneRuntimeTableTestAccess::Ownership(&table, 6);
+        CHECK(lifecycle != nullptr);
+        CHECK(ownership != nullptr);
+        CHECK(lifecycle->phase() == ZoneLoadContextPhase::Abandoning);
+        CHECK(
+            lifecycle->terminalKind()
+            == zone_load::ZoneLoadTerminalKind::Unloaded);
+        CHECK(lifecycle->nextCleanupOperation() == retryOperation);
+        CHECK(
+            ownership->phase()
+            == ZoneScriptStringOwnershipPhase::Unloading);
+        CHECK(ownership->serializerRetained());
+        CHECK(driver.attemptedReentry);
+        CHECK(driver.lookupReentry == ZoneRuntimeTableStatus::Busy);
+        CHECK(driver.unloadReentry == ZoneRuntimeTableStatus::Busy);
+        CHECK(driver.resetReentry == ZoneRuntimeTableStatus::Busy);
+        CHECK(driver.claimReentry == ZoneRuntimeTableStatus::Busy);
+
+        LiveUnloadDriver swapped{};
+        swapped.table = &table;
+        swapped.key = oldKey;
+        const std::size_t beforeMismatch = driver.operationCount;
+        CHECK(
+            TryUnloadZoneRuntimeGeneration(
+                &table,
+                6,
+                oldKey,
+                {&swapped, PerformLiveUnload})
+            == ZoneRuntimeTableStatus::InvalidState);
+        CHECK(driver.operationCount == beforeMismatch);
+        CHECK(lifecycle->nextCleanupOperation() == retryOperation);
+        CHECK(ownership->serializerRetained());
+
+        CHECK(
+            TryUnloadZoneRuntimeGeneration(
+                &table, 6, oldKey, callbacks)
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(
+            ownership->phase()
+            == ZoneScriptStringOwnershipPhase::Unloaded);
+        CHECK(!ownership->serializerRetained());
+        CHECK(lifecycle->phase() == ZoneLoadContextPhase::Empty);
+        CHECK(
+            lifecycle->terminalKind()
+            == zone_load::ZoneLoadTerminalKind::Unloaded);
+        CHECK(driver.physicalMemoryFreed);
+        CHECK(driver.usedContextAfterFree);
+        CHECK(driver.operationCount == kLiveUnloadOperations.size() + 1);
+        std::size_t retryIndex = 0;
+        while (retryIndex < kLiveUnloadOperations.size()
+            && kLiveUnloadOperations[retryIndex] != retryOperation)
+        {
+            ++retryIndex;
+        }
+        CHECK(retryIndex < kLiveUnloadOperations.size());
+        std::size_t observed = 0;
+        for (std::size_t index = 0; index <= retryIndex; ++index)
+            CHECK(driver.operations[observed++] == kLiveUnloadOperations[index]);
+        for (std::size_t index = retryIndex;
+             index < kLiveUnloadOperations.size();
+             ++index)
+        {
+            CHECK(driver.operations[observed++] == kLiveUnloadOperations[index]);
+        }
+        CHECK(observed == driver.operationCount);
+        CHECK(
+            TryUnloadZoneRuntimeGeneration(&table, 6, oldKey, {})
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(driver.operationCount == kLiveUnloadOperations.size() + 1);
+
+        ZoneLoadContextKey blockedClaim{};
+        CHECK(
+            TryClaimZoneRuntimeGeneration(&table, 6, &blockedClaim)
+            == ZoneRuntimeTableStatus::InvalidState);
+        CHECK(!blockedClaim);
+        CHECK(
+            TryResetZoneRuntimeTerminalReceipt(&table, 6, oldKey)
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(ownership->isEmptyCanonical());
+        CHECK(table.initialized());
+        CHECK(lifecycle->generation() == oldKey.generation);
+        CHECK(
+            lifecycle->terminalKind()
+            == zone_load::ZoneLoadTerminalKind::Unloaded);
+        CHECK(
+            TryResetZoneRuntimeTerminalReceipt(&table, 6, oldKey)
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(
+            TryUnloadZoneRuntimeGeneration(&table, 6, oldKey, {})
+            == ZoneRuntimeTableStatus::Success);
+
+        ZoneLoadContextKey newKey{};
+        CHECK(
+            TryClaimZoneRuntimeGeneration(&table, 6, &newKey)
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(newKey.generation == oldKey.generation + 1);
+        CHECK(newKey.slot == oldKey.slot);
+        CHECK(oldView.key == oldKey);
+        ZoneRuntimeGenerationView newView{};
+        CHECK(
+            TryGetZoneRuntimeGeneration(&table, 6, newKey, &newView)
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(newView.entry == oldView.entry);
+        CHECK(newView.key != oldView.key);
+        CHECK(
+            TryUnloadZoneRuntimeGeneration(&table, 6, oldKey, {})
+            == ZoneRuntimeTableStatus::StaleKey);
+        CHECK(
+            TryResetZoneRuntimeTerminalReceipt(&table, 6, oldKey)
+            == ZoneRuntimeTableStatus::StaleKey);
+        CHECK(adjacent->lifecycle().generation() == 0);
+        CHECK(!adjacent->key());
+    }
+}
+
+void TestAbandonedReceiptResetAndGenerationExhaustion()
+{
+    ZoneRuntimeTable table{};
+    CHECK(
+        TryInitializeZoneRuntimeTable(&table)
+        == ZoneRuntimeTableStatus::Success);
+    ZoneLoadContextKey oldKey{};
+    CHECK(
+        TryClaimZoneRuntimeGeneration(&table, 8, &oldKey)
+        == ZoneRuntimeTableStatus::Success);
+    auto *const lifecycle =
+        ZoneRuntimeTableTestAccess::Lifecycle(&table, 8);
+    auto *const ownership =
+        ZoneRuntimeTableTestAccess::Ownership(&table, 8);
+    CHECK(lifecycle != nullptr);
+    CHECK(ownership != nullptr);
+    db::script_string_journal::ScriptStringJournal journal{};
+    CHECK(
+        zone_ownership::TryBeginZoneScriptStringOwnership(
+            ownership,
+            lifecycle,
+            oldKey,
+            &journal,
+            nullptr,
+            0,
+            0)
+        == ZoneScriptStringOwnershipStatus::Success);
+    std::uint32_t cleanupCount = 0;
+    CHECK(
+        zone_ownership::TryBeginZoneScriptStringRollback(
+            ownership,
+            {&cleanupCount, EnsureUnreachable, CompleteCleanup})
+        == ZoneScriptStringOwnershipStatus::Success);
+    CHECK(
+        zone_ownership::TryFinishZoneScriptStringAbandonment(ownership)
+        == ZoneScriptStringOwnershipStatus::Success);
+    CHECK(
+        ownership->phase()
+        == ZoneScriptStringOwnershipPhase::Abandoned);
+    CHECK(cleanupCount == 8);
+    ZoneLoadContextKey blocked{};
+    CHECK(
+        TryClaimZoneRuntimeGeneration(&table, 8, &blocked)
+        == ZoneRuntimeTableStatus::InvalidState);
+    CHECK(!blocked);
+    CHECK(
+        TryUnloadZoneRuntimeGeneration(&table, 8, oldKey, {})
+        == ZoneRuntimeTableStatus::InvalidPhase);
+    CHECK(
+        TryResetZoneRuntimeTerminalReceipt(&table, 8, oldKey)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(ownership->isEmptyCanonical());
+    CHECK(
+        TryResetZoneRuntimeTerminalReceipt(&table, 8, oldKey)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(lifecycle->generation() == oldKey.generation);
+    CHECK(
+        lifecycle->terminalKind()
+        == zone_load::ZoneLoadTerminalKind::Abandoned);
+
+    ZoneLoadContextKey nextKey{};
+    CHECK(
+        TryClaimZoneRuntimeGeneration(&table, 8, &nextKey)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(nextKey.generation == oldKey.generation + 1);
+    CHECK(
+        TryResetZoneRuntimeTerminalReceipt(&table, 8, oldKey)
+        == ZoneRuntimeTableStatus::StaleKey);
+
+    ZoneRuntimeTable preBegin{};
+    CHECK(
+        TryInitializeZoneRuntimeTable(&preBegin)
+        == ZoneRuntimeTableStatus::Success);
+    ZoneLoadContextKey preBeginKey{};
+    CHECK(
+        TryClaimZoneRuntimeGeneration(&preBegin, 9, &preBeginKey)
+        == ZoneRuntimeTableStatus::Success);
+    auto *const preBeginLifecycle =
+        ZoneRuntimeTableTestAccess::Lifecycle(&preBegin, 9);
+    auto *const preBeginOwnership =
+        ZoneRuntimeTableTestAccess::Ownership(&preBegin, 9);
+    CHECK(preBeginLifecycle != nullptr);
+    CHECK(preBeginOwnership != nullptr);
+    CHECK(
+        TryBeginZoneLoadContextAbandonment(
+            preBeginLifecycle, preBeginKey)
+        == ZoneLoadContextStatus::Success);
+    std::uint32_t preBeginCleanupCount = 0;
+    CHECK(
+        TryFinishZoneLoadContextAbandonment(
+            preBeginLifecycle,
+            preBeginKey,
+            MakeCleanupCallbacks(&preBeginCleanupCount))
+        == ZoneLoadContextStatus::Success);
+    CHECK(preBeginOwnership->isEmptyCanonical());
+    CHECK(
+        TryResetZoneRuntimeTerminalReceipt(
+            &preBegin, 9, preBeginKey)
+        == ZoneRuntimeTableStatus::Success);
+
+    const std::uint64_t maximumGeneration =
+        (std::numeric_limits<std::uint64_t>::max)();
+    const ZoneLoadContextKey exhaustedKey{
+        maximumGeneration,
+        preBeginKey.slot,
+        0};
+    ZoneLoadContextSlotTestAccess::SetGeneration(
+        preBeginLifecycle, maximumGeneration);
+    ZoneRuntimeTableTestAccess::SetKey(
+        &preBegin, 9, exhaustedKey);
+    ZoneLoadContextKey exhaustedClaim{};
+    CHECK(
+        TryClaimZoneRuntimeGeneration(
+            &preBegin, 9, &exhaustedClaim)
+        == ZoneRuntimeTableStatus::GenerationExhausted);
+    CHECK(!exhaustedClaim);
+    CHECK(preBeginLifecycle->generation() == maximumGeneration);
+    CHECK(
+        preBeginLifecycle->terminalKind()
+        == zone_load::ZoneLoadTerminalKind::Abandoned);
+    CHECK(
+        TryResetZoneRuntimeTerminalReceipt(
+            &preBegin, 9, exhaustedKey)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(preBegin.initialized());
+}
+
+void TestTerminalAdapterPhaseSerializerAndCorruptionGates()
+{
+    ZoneRuntimeTable staging{};
+    CHECK(
+        TryInitializeZoneRuntimeTable(&staging)
+        == ZoneRuntimeTableStatus::Success);
+    ZoneLoadContextKey stagingKey{};
+    CHECK(
+        TryClaimZoneRuntimeGeneration(&staging, 10, &stagingKey)
+        == ZoneRuntimeTableStatus::Success);
+    auto *const stagingLifecycle =
+        ZoneRuntimeTableTestAccess::Lifecycle(&staging, 10);
+    auto *const stagingOwnership =
+        ZoneRuntimeTableTestAccess::Ownership(&staging, 10);
+    CHECK(stagingLifecycle != nullptr);
+    CHECK(stagingOwnership != nullptr);
+    db::script_string_journal::ScriptStringJournal stagingJournal{};
+    CHECK(
+        zone_ownership::TryBeginZoneScriptStringOwnership(
+            stagingOwnership,
+            stagingLifecycle,
+            stagingKey,
+            &stagingJournal,
+            nullptr,
+            0,
+            0)
+        == ZoneScriptStringOwnershipStatus::Success);
+    CHECK(stagingOwnership->serializerRetained());
+    CHECK(
+        TryUnloadZoneRuntimeGeneration(&staging, 10, stagingKey, {})
+        == ZoneRuntimeTableStatus::InvalidPhase);
+    CHECK(stagingOwnership->serializerRetained());
+    std::uint32_t stagingCleanup = 0;
+    CHECK(
+        zone_ownership::TryBeginZoneScriptStringRollback(
+            stagingOwnership,
+            {&stagingCleanup, EnsureUnreachable, CompleteCleanup})
+        == ZoneScriptStringOwnershipStatus::Success);
+    CHECK(
+        zone_ownership::TryFinishZoneScriptStringAbandonment(
+            stagingOwnership)
+        == ZoneScriptStringOwnershipStatus::Success);
+
+    ZoneRuntimeTable wrongPointer{};
+    db::script_string_journal::ScriptStringJournal wrongPointerJournal{};
+    ZoneLoadContextKey wrongPointerKey{};
+    CHECK(MakeLiveGeneration(
+        wrongPointer, 11, &wrongPointerKey, &wrongPointerJournal));
+    auto *const wrongPointerOwnership =
+        ZoneRuntimeTableTestAccess::Ownership(&wrongPointer, 11);
+    CHECK(wrongPointerOwnership != nullptr);
+    zone_load::ZoneLoadContextSlot foreignLifecycle{};
+    zone_load::ZoneLoadContextKey foreignKey{};
+    CHECK(
+        TryInitializeZoneLoadContextSlot(&foreignLifecycle, 11)
+        == ZoneLoadContextStatus::Success);
+    CHECK(
+        zone_load::TryClaimZoneLoadContext(
+            &foreignLifecycle, &foreignKey)
+        == ZoneLoadContextStatus::Success);
+    CHECK(
+        zone_load::TryCommitZoneLoadContext(
+            &foreignLifecycle, foreignKey)
+        == ZoneLoadContextStatus::Success);
+    ZoneScriptStringOwnershipControllerTestAccess::SetLifecycle(
+        wrongPointerOwnership, &foreignLifecycle);
+    LiveUnloadDriver wrongPointerDriver{&wrongPointer, wrongPointerKey};
+    CHECK(
+        TryUnloadZoneRuntimeGeneration(
+            &wrongPointer,
+            11,
+            wrongPointerKey,
+            {&wrongPointerDriver, PerformLiveUnload})
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(wrongPointerDriver.operationCount == 0);
+    CHECK(!wrongPointer.initialized());
+
+    ZoneRuntimeTable hiddenStorage{};
+    db::script_string_journal::ScriptStringJournal hiddenStorageJournal{};
+    ZoneLoadContextKey hiddenStorageKey{};
+    CHECK(MakeLiveGeneration(
+        hiddenStorage, 12, &hiddenStorageKey, &hiddenStorageJournal));
+    auto *const hiddenStorageOwnership =
+        ZoneRuntimeTableTestAccess::Ownership(&hiddenStorage, 12);
+    db::script_string_journal::ScriptStringJournalEntry hiddenEntry{};
+    ZoneScriptStringOwnershipControllerTestAccess::SetStorage(
+        hiddenStorageOwnership, &hiddenEntry);
+    CHECK(
+        TryResetZoneRuntimeTerminalReceipt(
+            &hiddenStorage, 12, hiddenStorageKey)
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(!hiddenStorage.initialized());
+
+    ZoneRuntimeTable falseSerializer{};
+    db::script_string_journal::ScriptStringJournal falseSerializerJournal{};
+    ZoneLoadContextKey falseSerializerKey{};
+    CHECK(MakeLiveGeneration(
+        falseSerializer,
+        13,
+        &falseSerializerKey,
+        &falseSerializerJournal));
+    auto *const falseSerializerOwnership =
+        ZoneRuntimeTableTestAccess::Ownership(&falseSerializer, 13);
+    ZoneScriptStringOwnershipControllerTestAccess::SetTransactionSerial(
+        falseSerializerOwnership, 77);
+    CHECK(
+        TryUnloadZoneRuntimeGeneration(
+            &falseSerializer, 13, falseSerializerKey, {})
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(!falseSerializer.initialized());
+
+    ZoneRuntimeTable badResume{};
+    db::script_string_journal::ScriptStringJournal badResumeJournal{};
+    ZoneLoadContextKey badResumeKey{};
+    CHECK(MakeLiveGeneration(
+        badResume, 14, &badResumeKey, &badResumeJournal));
+    auto *const badResumeOwnership =
+        ZoneRuntimeTableTestAccess::Ownership(&badResume, 14);
+    ZoneScriptStringOwnershipControllerTestAccess::SetResumePhase(
+        badResumeOwnership,
+        ZoneScriptStringOwnershipPhase::Staging);
+    CHECK(
+        TryUnloadZoneRuntimeGeneration(&badResume, 14, badResumeKey, {})
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(!badResume.initialized());
+
+    ZoneRuntimeTable badReserved{};
+    db::script_string_journal::ScriptStringJournal badReservedJournal{};
+    ZoneLoadContextKey badReservedKey{};
+    CHECK(MakeLiveGeneration(
+        badReserved, 18, &badReservedKey, &badReservedJournal));
+    auto *const badReservedOwnership =
+        ZoneRuntimeTableTestAccess::Ownership(&badReserved, 18);
+    ZoneScriptStringOwnershipControllerTestAccess::SetReserved(
+        badReservedOwnership, 1, 0);
+    CHECK(
+        TryUnloadZoneRuntimeGeneration(
+            &badReserved, 18, badReservedKey, {})
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(!badReserved.initialized());
+
+    ZoneRuntimeTable syntheticCallback{};
+    db::script_string_journal::ScriptStringJournal callbackJournal{};
+    ZoneLoadContextKey callbackKey{};
+    CHECK(MakeLiveGeneration(
+        syntheticCallback, 15, &callbackKey, &callbackJournal));
+    auto *const callbackOwnership =
+        ZoneRuntimeTableTestAccess::Ownership(&syntheticCallback, 15);
+    LiveUnloadDriver callbackDriver{&syntheticCallback, callbackKey};
+    ZoneScriptStringOwnershipControllerTestAccess::SetCleanupBinding(
+        callbackOwnership, &callbackDriver, PerformLiveUnload);
+    ZoneScriptStringOwnershipControllerTestAccess::SetPhase(
+        callbackOwnership,
+        ZoneScriptStringOwnershipPhase::UnloadingCallback);
+    CHECK(
+        TryUnloadZoneRuntimeGeneration(
+            &syntheticCallback,
+            15,
+            callbackKey,
+            {&callbackDriver, PerformLiveUnload})
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(callbackDriver.operationCount == 0);
+    CHECK(!syntheticCallback.initialized());
+
+    ZoneRuntimeTable terminalMismatch{};
+    db::script_string_journal::ScriptStringJournal terminalJournal{};
+    ZoneLoadContextKey terminalKey{};
+    CHECK(MakeLiveGeneration(
+        terminalMismatch, 16, &terminalKey, &terminalJournal));
+    LiveUnloadDriver terminalDriver{&terminalMismatch, terminalKey};
+    CHECK(
+        TryUnloadZoneRuntimeGeneration(
+            &terminalMismatch,
+            16,
+            terminalKey,
+            {&terminalDriver, PerformLiveUnload})
+        == ZoneRuntimeTableStatus::Success);
+    auto *const terminalOwnership =
+        ZoneRuntimeTableTestAccess::Ownership(&terminalMismatch, 16);
+    ZoneScriptStringOwnershipControllerTestAccess::SetPhase(
+        terminalOwnership,
+        ZoneScriptStringOwnershipPhase::Abandoned);
+    CHECK(
+        TryResetZoneRuntimeTerminalReceipt(
+            &terminalMismatch, 16, terminalKey)
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(!terminalMismatch.initialized());
+}
+
+void TestUnsafeLiveUnloadBoundary(
+    const std::size_t boundary,
+    const bool unknownStatus)
+{
+    CHECK(boundary < kLiveUnloadOperations.size());
+    ZoneRuntimeTable table{};
+    db::script_string_journal::ScriptStringJournal journal{};
+    ZoneLoadContextKey key{};
+    CHECK(MakeLiveGeneration(table, 17, &key, &journal));
+    LiveUnloadDriver driver{};
+    driver.table = &table;
+    driver.key = key;
+    driver.unsafeOperation = kLiveUnloadOperations[boundary];
+    driver.returnUnknown = unknownStatus;
+    CHECK(
+        TryUnloadZoneRuntimeGeneration(
+            &table, 17, key, {&driver, PerformLiveUnload})
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(driver.failed);
+    CHECK(!table.initialized());
+    auto *const lifecycle =
+        ZoneRuntimeTableTestAccess::Lifecycle(&table, 17);
+    auto *const ownership =
+        ZoneRuntimeTableTestAccess::Ownership(&table, 17);
+    CHECK(lifecycle != nullptr);
+    CHECK(ownership != nullptr);
+    CHECK(lifecycle->cleanupPoisoned());
+    CHECK(ownership->poisoned());
+    CHECK(ownership->serializerRetained());
+    const std::size_t operationCount = driver.operationCount;
+    CHECK(
+        TryUnloadZoneRuntimeGeneration(
+            &table, 17, key, {&driver, PerformLiveUnload})
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(driver.operationCount == operationCount);
+}
+
 } // namespace
 
-int main()
+int main(const int argc, char **const argv)
 {
+    if (argc == 3
+        && std::string_view(argv[1]) == "--unsafe-live-unload")
+    {
+        const unsigned long parsed = std::strtoul(argv[2], nullptr, 10);
+        const bool unknownStatus = parsed == kLiveUnloadOperations.size();
+        const std::size_t boundary = unknownStatus ? 0 : parsed;
+        TestUnsafeLiveUnloadBoundary(boundary, unknownStatus);
+        return failures == 0 ? 0 : 1;
+    }
     TestLayoutNoexceptAndDefaultState();
     TestAllPhysicalSlotsAndStableAddresses();
     TestClaimAuthenticationAndAdjacentIsolation();
@@ -708,6 +1407,9 @@ int main()
     TestPartialInitializationAndCorruptionFailClosed();
     TestHiddenCorruptionAndCleanupReentryFailClosed();
     TestControllerPhaseAndSerializerMatrix();
+    TestLiveUnloadRetryResetReuseAndAba();
+    TestAbandonedReceiptResetAndGenerationExhaustion();
+    TestTerminalAdapterPhaseSerializerAndCorruptionGates();
 
     if (failures != 0)
     {

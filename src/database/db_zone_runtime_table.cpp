@@ -61,6 +61,23 @@ namespace
         && IsEmptyOwnership(entry.scriptStringOwnership());
 }
 
+[[nodiscard]] bool IsReusableLifecycle(
+    const zone_load::ZoneLoadContextSlot &lifecycle,
+    const std::uint32_t physicalSlot) noexcept
+{
+    return lifecycle.canonical()
+        && lifecycle.initialized()
+        && lifecycle.slotIndex() == physicalSlot
+        && lifecycle.phase() == zone_load::ZoneLoadContextPhase::Empty
+        && lifecycle.terminalKind()
+            == zone_load::ZoneLoadTerminalKind::None
+        && lifecycle.nextCleanupOperation()
+            == zone_load::ZoneLoadCleanupOperation::
+                CancelLoadInputAndInflate
+        && !lifecycle.cleanupActive()
+        && !lifecycle.cleanupPoisoned();
+}
+
 [[nodiscard]] constexpr bool IsKnownOwnershipPhase(
     const zone_script_string_ownership::
         ZoneScriptStringOwnershipPhase phase) noexcept
@@ -84,6 +101,9 @@ namespace
     case Phase::Live:
     case Phase::Abandoned:
     case Phase::UnsafeFailure:
+    case Phase::Unloading:
+    case Phase::UnloadingCallback:
+    case Phase::Unloaded:
         return true;
     default:
         return false;
@@ -98,7 +118,8 @@ namespace
         ZoneScriptStringOwnershipPhase;
     return phase == Phase::UnpublishingCallback
         || phase == Phase::Cleaning
-        || phase == Phase::Admitting;
+        || phase == Phase::Admitting
+        || phase == Phase::UnloadingCallback;
 }
 
 [[nodiscard]] ZoneRuntimeTableStatus ValidateEntryBinding(
@@ -121,8 +142,7 @@ namespace
 
     if (IsNullKey(key))
     {
-        return IsPristineLifecycle(
-                       lifecycle, true, physicalSlot)
+        return IsReusableLifecycle(lifecycle, physicalSlot)
                 && IsEmptyOwnership(ownership)
             ? ZoneRuntimeTableStatus::Success
             : ZoneRuntimeTableStatus::UnsafeFailure;
@@ -164,7 +184,8 @@ namespace
         }
         return ZoneRuntimeTableStatus::UnsafeFailure;
     }
-    if (ownership.key() != key)
+    if (ownership.key() != key
+        || !ownership.canonicalForBinding(&lifecycle, key))
         return ZoneRuntimeTableStatus::UnsafeFailure;
 
     using OwnershipPhase = zone_script_string_ownership::
@@ -186,6 +207,16 @@ namespace
                     == zone_load::ZoneLoadContextPhase::Empty
                 && lifecycle.terminalKind()
                     == zone_load::ZoneLoadTerminalKind::Abandoned
+            ? ZoneRuntimeTableStatus::Success
+            : ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    if (ownershipPhase == OwnershipPhase::Unloaded)
+    {
+        return !ownership.serializerRetained()
+                && lifecycle.phase()
+                    == zone_load::ZoneLoadContextPhase::Empty
+                && lifecycle.terminalKind()
+                    == zone_load::ZoneLoadTerminalKind::Unloaded
             ? ZoneRuntimeTableStatus::Success
             : ZoneRuntimeTableStatus::UnsafeFailure;
     }
@@ -222,10 +253,22 @@ namespace
             && lifecycle.terminalKind()
                 == zone_load::ZoneLoadTerminalKind::None;
         break;
+    case OwnershipPhase::Unloading:
+    case OwnershipPhase::UnloadingCallback:
+        lifecycleMatches =
+            (lifecycle.phase() == zone_load::ZoneLoadContextPhase::Live
+                && lifecycle.terminalKind()
+                    == zone_load::ZoneLoadTerminalKind::None)
+            || (lifecycle.phase()
+                    == zone_load::ZoneLoadContextPhase::Abandoning
+                && lifecycle.terminalKind()
+                    == zone_load::ZoneLoadTerminalKind::Unloaded);
+        break;
     case OwnershipPhase::Empty:
     case OwnershipPhase::Live:
     case OwnershipPhase::Abandoned:
     case OwnershipPhase::UnsafeFailure:
+    case OwnershipPhase::Unloaded:
     default:
         return ZoneRuntimeTableStatus::UnsafeFailure;
     }
@@ -266,7 +309,7 @@ namespace
     case LifecycleStatus::Success:
         return ZoneRuntimeTableStatus::Success;
     case LifecycleStatus::Retry:
-        return ZoneRuntimeTableStatus::Busy;
+        return ZoneRuntimeTableStatus::Retry;
     case LifecycleStatus::Busy:
         return ZoneRuntimeTableStatus::Busy;
     case LifecycleStatus::InvalidArgument:
@@ -286,6 +329,57 @@ namespace
     default:
         return ZoneRuntimeTableStatus::UnsafeFailure;
     }
+}
+
+[[nodiscard]] ZoneRuntimeTableStatus MapOwnershipStatus(
+    const zone_script_string_ownership::
+        ZoneScriptStringOwnershipStatus status) noexcept
+{
+    using OwnershipStatus = zone_script_string_ownership::
+        ZoneScriptStringOwnershipStatus;
+    switch (status)
+    {
+    case OwnershipStatus::Success:
+        return ZoneRuntimeTableStatus::Success;
+    case OwnershipStatus::Retry:
+        return ZoneRuntimeTableStatus::Retry;
+    case OwnershipStatus::Busy:
+        return ZoneRuntimeTableStatus::Busy;
+    case OwnershipStatus::InvalidArgument:
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    case OwnershipStatus::InvalidState:
+        return ZoneRuntimeTableStatus::InvalidState;
+    case OwnershipStatus::InvalidKey:
+        return ZoneRuntimeTableStatus::InvalidKey;
+    case OwnershipStatus::StaleKey:
+        return ZoneRuntimeTableStatus::StaleKey;
+    case OwnershipStatus::InvalidPhase:
+        return ZoneRuntimeTableStatus::InvalidPhase;
+    case OwnershipStatus::Rejected:
+    case OwnershipStatus::CountMismatch:
+    case OwnershipStatus::CapacityExceeded:
+    case OwnershipStatus::UnsafeFailure:
+    default:
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+}
+
+[[nodiscard]] ZoneRuntimeTableStatus AuthenticateExactEntry(
+    const ZoneRuntimeEntry &entry,
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept
+{
+    const ZoneRuntimeTableStatus bindingStatus =
+        ValidateEntryBinding(entry, physicalSlot);
+    if (bindingStatus != ZoneRuntimeTableStatus::Success)
+        return bindingStatus;
+    if (entry.key() != key
+        || entry.lifecycle().slotIndex() != physicalSlot
+        || entry.lifecycle().generation() != key.generation)
+    {
+        return ZoneRuntimeTableStatus::StaleKey;
+    }
+    return ZoneRuntimeTableStatus::Success;
 }
 
 ZoneRuntimeTable g_productionZoneRuntimeTable{};
@@ -489,6 +583,8 @@ ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration(
     }
 
     zone_load::ZoneLoadContextKey candidate = *inOutKey;
+    if (static_cast<bool>(candidate) && entry.key_ != candidate)
+        return ZoneRuntimeTableStatus::StaleKey;
     const auto lifecycleStatus = zone_load::TryClaimZoneLoadContext(
         &entry.lifecycle_, &candidate);
     const auto status = MapLifecycleStatus(lifecycleStatus);
@@ -553,6 +649,174 @@ ZoneRuntimeTableStatus TryGetZoneRuntimeGeneration(
         &entry,
     };
     *outView = candidate;
+    return ZoneRuntimeTableStatus::Success;
+}
+
+ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
+    ZoneRuntimeTable *const table,
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const zone_load::ZoneLoadCleanupCallbacks &callbacks) noexcept
+{
+    const auto tableStatus = table
+        ? table->validateInitializedHeader()
+        : ZoneRuntimeTableStatus::InvalidArgument;
+    if (tableStatus != ZoneRuntimeTableStatus::Success)
+        return tableStatus;
+    if (!static_cast<bool>(key))
+        return ZoneRuntimeTableStatus::InvalidKey;
+    const auto slotStatus = ValidateUsableSlot(physicalSlot);
+    if (slotStatus != ZoneRuntimeTableStatus::Success)
+        return slotStatus;
+    if (key.slot != physicalSlot)
+        return ZoneRuntimeTableStatus::StaleKey;
+
+    ZoneRuntimeEntry &entry = table->entries_[physicalSlot];
+    const ZoneRuntimeTableStatus authentication =
+        AuthenticateExactEntry(entry, physicalSlot, key);
+    if (authentication != ZoneRuntimeTableStatus::Success)
+    {
+        if (authentication == ZoneRuntimeTableStatus::UnsafeFailure)
+            table->poison();
+        return authentication;
+    }
+
+    using OwnershipPhase = zone_script_string_ownership::
+        ZoneScriptStringOwnershipPhase;
+    const OwnershipPhase phase = entry.scriptStringOwnership_.phase();
+    if (phase == OwnershipPhase::Empty)
+    {
+        return entry.lifecycle_.phase()
+                    == zone_load::ZoneLoadContextPhase::Empty
+                && entry.lifecycle_.terminalKind()
+                    == zone_load::ZoneLoadTerminalKind::Unloaded
+            ? ZoneRuntimeTableStatus::Success
+            : ZoneRuntimeTableStatus::InvalidPhase;
+    }
+    if (phase != OwnershipPhase::Live
+        && phase != OwnershipPhase::Unloading
+        && phase != OwnershipPhase::Unloaded)
+    {
+        return ZoneRuntimeTableStatus::InvalidPhase;
+    }
+
+    const auto ownershipStatus =
+        zone_script_string_ownership::
+            TryUnloadLiveZoneScriptStringOwnership(
+                &entry.scriptStringOwnership_,
+                &entry.lifecycle_,
+                key,
+                callbacks);
+    const ZoneRuntimeTableStatus status =
+        MapOwnershipStatus(ownershipStatus);
+    if (status == ZoneRuntimeTableStatus::UnsafeFailure)
+    {
+        table->poison();
+        return status;
+    }
+
+    const ZoneRuntimeTableStatus postAuthentication =
+        AuthenticateExactEntry(entry, physicalSlot, key);
+    if (postAuthentication == ZoneRuntimeTableStatus::UnsafeFailure)
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    if (postAuthentication != ZoneRuntimeTableStatus::Success)
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    if (status == ZoneRuntimeTableStatus::Success
+        && (entry.scriptStringOwnership_.phase()
+                != OwnershipPhase::Unloaded
+            || entry.lifecycle_.phase()
+                != zone_load::ZoneLoadContextPhase::Empty
+            || entry.lifecycle_.terminalKind()
+                != zone_load::ZoneLoadTerminalKind::Unloaded))
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    return status;
+}
+
+ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
+    ZoneRuntimeTable *const table,
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept
+{
+    const auto tableStatus = table
+        ? table->validateInitializedHeader()
+        : ZoneRuntimeTableStatus::InvalidArgument;
+    if (tableStatus != ZoneRuntimeTableStatus::Success)
+        return tableStatus;
+    if (!static_cast<bool>(key))
+        return ZoneRuntimeTableStatus::InvalidKey;
+    const auto slotStatus = ValidateUsableSlot(physicalSlot);
+    if (slotStatus != ZoneRuntimeTableStatus::Success)
+        return slotStatus;
+    if (key.slot != physicalSlot)
+        return ZoneRuntimeTableStatus::StaleKey;
+
+    ZoneRuntimeEntry &entry = table->entries_[physicalSlot];
+    const ZoneRuntimeTableStatus authentication =
+        AuthenticateExactEntry(entry, physicalSlot, key);
+    if (authentication != ZoneRuntimeTableStatus::Success)
+    {
+        if (authentication == ZoneRuntimeTableStatus::UnsafeFailure)
+            table->poison();
+        return authentication;
+    }
+    if (entry.lifecycle_.phase() != zone_load::ZoneLoadContextPhase::Empty)
+        return ZoneRuntimeTableStatus::InvalidPhase;
+    const zone_load::ZoneLoadTerminalKind terminalKind =
+        entry.lifecycle_.terminalKind();
+    if (terminalKind == zone_load::ZoneLoadTerminalKind::None)
+        return ZoneRuntimeTableStatus::InvalidPhase;
+
+    using OwnershipPhase = zone_script_string_ownership::
+        ZoneScriptStringOwnershipPhase;
+    const OwnershipPhase ownershipPhase =
+        entry.scriptStringOwnership_.phase();
+    const bool phaseMatches = ownershipPhase == OwnershipPhase::Empty
+        || (terminalKind == zone_load::ZoneLoadTerminalKind::Abandoned
+            && ownershipPhase == OwnershipPhase::Abandoned)
+        || (terminalKind == zone_load::ZoneLoadTerminalKind::Unloaded
+            && ownershipPhase == OwnershipPhase::Unloaded);
+    if (!phaseMatches)
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+
+    const auto ownershipStatus =
+        zone_script_string_ownership::
+            TryResetTerminalZoneScriptStringOwnership(
+                &entry.scriptStringOwnership_,
+                &entry.lifecycle_,
+                key,
+                terminalKind);
+    if (ownershipStatus
+        != zone_script_string_ownership::
+            ZoneScriptStringOwnershipStatus::Success)
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+
+    const ZoneRuntimeTableStatus postAuthentication =
+        AuthenticateExactEntry(entry, physicalSlot, key);
+    if (postAuthentication != ZoneRuntimeTableStatus::Success
+        || !entry.scriptStringOwnership_.isEmptyCanonical()
+        || entry.lifecycle_.phase()
+            != zone_load::ZoneLoadContextPhase::Empty
+        || entry.lifecycle_.terminalKind() != terminalKind
+        || entry.key_ != key)
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
     return ZoneRuntimeTableStatus::Success;
 }
 

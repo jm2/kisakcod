@@ -466,6 +466,16 @@ add_test(
 )
 set_tests_properties(
     database-zone-runtime-table-ownership PROPERTIES TIMEOUT 30)
+foreach(_zone_runtime_unsafe_boundary RANGE 0 6)
+    add_test(
+        NAME database-zone-runtime-table-unload-unsafe-${_zone_runtime_unsafe_boundary}
+        COMMAND kisakcod-db-zone-runtime-table-tests
+            --unsafe-live-unload ${_zone_runtime_unsafe_boundary}
+    )
+    set_tests_properties(
+        database-zone-runtime-table-unload-unsafe-${_zone_runtime_unsafe_boundary}
+        PROPERTIES TIMEOUT 30)
+endforeach()
 
 add_executable(kisakcod-fx-archive-disk32-tests
     fx_archive_disk32_tests.cpp

@@ -32,6 +32,10 @@ enum class ZoneRuntimeTableStatus : std::uint8_t
     InvalidPhase,
     GenerationExhausted,
     UnsafeFailure,
+    // Appended to preserve the established numeric values above.  A cleanup
+    // Retry retains exact callback/controller ownership; Busy is reentry or a
+    // temporarily unavailable serializer.
+    Retry,
 };
 
 class ZoneRuntimeEntry;
@@ -94,6 +98,15 @@ private:
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
         ZoneRuntimeGenerationView *outView) noexcept;
+    friend ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        const zone_load::ZoneLoadCleanupCallbacks &callbacks) noexcept;
+    friend ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
 #ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
     friend struct ZoneRuntimeTableTestAccess;
 #endif
@@ -139,6 +152,15 @@ private:
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
         ZoneRuntimeGenerationView *outView) noexcept;
+    friend ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        const zone_load::ZoneLoadCleanupCallbacks &callbacks) noexcept;
+    friend ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
+        ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
 #ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
     friend struct ZoneRuntimeTableTestAccess;
 #endif
@@ -221,9 +243,10 @@ struct ZoneRuntimeTableTestAccess final
 // does not call it yet.  Production wiring must first add exact-key adapters
 // for every mutable ownership operation, validate the controller/lifecycle
 // phase matrix, and provide exact terminal-receipt reset/unload adapters; a
-// claimed slot intentionally cannot otherwise be rebound after abandonment.
-// The durable entry key and caller output publish only after the lifecycle
-// claim succeeds.
+// claimed slot cannot be rebound until its exact terminal ownership receipt is
+// reset.  The lifecycle terminal receipt and durable old key remain intact
+// until a subsequent claim atomically advances the generation; the new durable
+// entry key and caller output publish only after that lifecycle claim succeeds.
 [[nodiscard]] ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration(
     ZoneRuntimeTable *table,
     std::uint32_t physicalSlot,
@@ -239,5 +262,25 @@ struct ZoneRuntimeTableTestAccess final
     std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key,
     ZoneRuntimeGenerationView *outView) noexcept;
+
+// Drives only a committed Live generation through the controller-owned
+// live-unload recipe.  The controller binds the callback identity and retains
+// the outer script-string transaction across Retry.  The same externally
+// serialized thread must resume it.  Success leaves an exact Unloaded receipt;
+// an exact final retry succeeds without replaying callbacks.
+[[nodiscard]] ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const zone_load::ZoneLoadCleanupCallbacks &callbacks) noexcept;
+
+// Authenticates an exact Abandoned or Unloaded terminal receipt and resets only
+// its ownership controller to canonical Empty.  The lifecycle terminal kind,
+// generation, and durable table key remain as a receipt until the next claim
+// advances the generation.  Repeating the exact reset is a no-op success.
+[[nodiscard]] ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
 
 } // namespace db::zone_runtime

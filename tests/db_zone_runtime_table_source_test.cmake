@@ -157,8 +157,11 @@ foreach(_marker IN ITEMS
     "ZoneRuntimeEntry(const ZoneRuntimeEntry &) = delete;"
     "ZoneRuntimeTable(const ZoneRuntimeTable &) = delete;"
     "KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"
-    "ownership operations stay private until table adapters"
-    "provide exact terminal-receipt reset/unload adapters"
+    "TryUnloadZoneRuntimeGeneration("
+    "TryResetZoneRuntimeTerminalReceipt("
+    "retains exact callback/controller ownership"
+    "The lifecycle terminal kind,"
+    "generation, and durable table key remain as a receipt"
     "external serialization.")
     require_contains(_header "${_marker}" "durable external table schema")
 endforeach()
@@ -177,11 +180,17 @@ foreach(_marker IN ITEMS
     "lifecycle.cleanupActive()"
     "lifecycle.cleanupPoisoned()"
     "ownership.poisoned()"
+    "ownership.canonicalForBinding(&lifecycle, key)"
     "if (!ownership.serializerRetained())"
     "IsOwnershipCallbackPhase(ownershipPhase)"
     "case OwnershipPhase::UnpublishingCallback:"
     "case OwnershipPhase::Cleaning:"
     "case OwnershipPhase::Admitting:"
+    "case OwnershipPhase::Unloading:"
+    "case OwnershipPhase::UnloadingCallback:"
+    "if (ownershipPhase == OwnershipPhase::Unloaded)"
+    "ZoneRuntimeTableStatus::Retry"
+    "MapOwnershipStatus("
     "lifecycle.phase() == zone_load::ZoneLoadContextPhase::Loading"
     "lifecycle.phase() == zone_load::ZoneLoadContextPhase::Abandoning"
     "lifecycle.phase() == zone_load::ZoneLoadContextPhase::Live"
@@ -230,7 +239,7 @@ require_ordered(
 extract_slice(
     _source
     "ZoneRuntimeTableStatus TryGetZoneRuntimeGeneration("
-    "} // namespace db::zone_runtime"
+    "ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration("
     _lookup
     "keyed generation lookup")
 require_ordered(
@@ -243,6 +252,65 @@ require_ordered(
     "ZoneLoadContextKeyMatches("
     "*outView = candidate;"
     "authentication before output publication")
+
+# Live unload is owned by the script-string controller so the outer
+# transaction and exact callback identity survive Retry. Reset consumes only
+# the matching controller receipt; lifecycle/key evidence remains until Claim
+# advances the generation and publishes a new key.
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration("
+    "ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt("
+    _unload
+    "keyed live unload")
+foreach(_marker IN ITEMS
+    "AuthenticateExactEntry(entry, physicalSlot, key)"
+    "TryUnloadLiveZoneScriptStringOwnership("
+    "MapOwnershipStatus(ownershipStatus)"
+    "OwnershipPhase::Unloaded"
+    "ZoneLoadTerminalKind::Unloaded"
+    "table->poison();")
+    require_contains(_unload "${_marker}" "controller-owned live unload")
+endforeach()
+require_ordered(
+    _unload
+    "AuthenticateExactEntry(entry, physicalSlot, key)"
+    "TryUnloadLiveZoneScriptStringOwnership("
+    "exact key authentication before unload mutation")
+require_ordered(
+    _unload
+    "TryUnloadLiveZoneScriptStringOwnership("
+    "const ZoneRuntimeTableStatus postAuthentication ="
+    "post-callback authentication")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt("
+    "} // namespace db::zone_runtime"
+    _terminal_reset
+    "keyed terminal reset")
+foreach(_marker IN ITEMS
+    "AuthenticateExactEntry(entry, physicalSlot, key)"
+    "entry.lifecycle_.phase() != zone_load::ZoneLoadContextPhase::Empty"
+    "entry.lifecycle_.terminalKind()"
+    "OwnershipPhase::Abandoned"
+    "OwnershipPhase::Unloaded"
+    "TryResetTerminalZoneScriptStringOwnership("
+    "entry.scriptStringOwnership_.isEmptyCanonical()"
+    "entry.lifecycle_.terminalKind() != terminalKind"
+    "entry.key_ != key")
+    require_contains(
+        _terminal_reset "${_marker}" "exact receipt-preserving reset")
+endforeach()
+require_ordered(
+    _terminal_reset
+    "AuthenticateExactEntry(entry, physicalSlot, key)"
+    "TryResetTerminalZoneScriptStringOwnership("
+    "exact key and receipt authentication before reset")
+require_not_contains(
+    _terminal_reset
+    "entry.key_ = {}"
+    "terminal reset cannot erase ABA evidence")
 
 # DB_Init initializes the table before mutating the legacy asset pools and uses
 # the established fatal initialization boundary.  The load, stream, and asset
@@ -276,6 +344,14 @@ foreach(_var IN ITEMS _registry _file_load _load _stream _stringtable)
         ${_var}
         "TryGetZoneRuntimeGeneration("
         "legacy loader cannot consume keyed capabilities in this batch")
+    require_not_contains(
+        ${_var}
+        "TryUnloadZoneRuntimeGeneration("
+        "legacy loader cannot unload through unwired callbacks")
+    require_not_contains(
+        ${_var}
+        "TryResetZoneRuntimeTerminalReceipt("
+        "legacy loader cannot reset runtime receipts")
 endforeach()
 
 # Runtime coverage spans every slot, ABI/noexcept traits, stable addresses,
@@ -288,6 +364,10 @@ foreach(_marker IN ITEMS
     "void TestPartialInitializationAndCorruptionFailClosed()"
     "void TestHiddenCorruptionAndCleanupReentryFailClosed()"
     "void TestControllerPhaseAndSerializerMatrix()"
+    "void TestLiveUnloadRetryResetReuseAndAba()"
+    "void TestAbandonedReceiptResetAndGenerationExhaustion()"
+    "void TestTerminalAdapterPhaseSerializerAndCorruptionGates()"
+    "void TestUnsafeLiveUnloadBoundary("
     "void ObserveAdmittingController(void *const context) noexcept"
     "current - previous == sizeof(ZoneRuntimeEntry)"
     "zone_slots::kUsableZoneSlotCount == 32"
@@ -296,12 +376,25 @@ foreach(_marker IN ITEMS
     "ZoneRuntimeTableStatus::StaleKey"
     "ZoneRuntimeTableStatus::UnsafeFailure"
     "ZoneRuntimeTableStatus::Busy"
+    "ZoneRuntimeTableStatus::Retry"
     "ZoneScriptStringOwnershipControllerTestAccess::SetStorage("
     "kInitializedFlag | kCleanupActiveFlag"
     "kInitializedFlag | kCleanupPoisonedFlag"
     "probe.status == ZoneRuntimeTableStatus::Busy"
     "ZoneScriptStringOwnershipPhase::UnpublishingCallback"
     "ZoneScriptStringOwnershipPhase::Live"
+    "ZoneScriptStringOwnershipPhase::Unloading"
+    "ZoneScriptStringOwnershipPhase::Unloaded"
+    "driver.lookupReentry == ZoneRuntimeTableStatus::Busy"
+    "driver.unloadReentry == ZoneRuntimeTableStatus::Busy"
+    "driver.resetReentry == ZoneRuntimeTableStatus::Busy"
+    "driver.claimReentry == ZoneRuntimeTableStatus::Busy"
+    "driver.usedContextAfterFree"
+    "maximumGeneration"
+    "ZoneRuntimeTableStatus::GenerationExhausted"
+    "ZoneScriptStringOwnershipControllerTestAccess::SetLifecycle("
+    "ZoneScriptStringOwnershipControllerTestAccess::SetTransactionSerial("
+    "ZoneScriptStringOwnershipControllerTestAccess::SetReserved("
     "newKey.generation == oldKey.generation + 1"
     "Zone runtime table tests passed")
     require_contains(_fixture "${_marker}" "focused runtime coverage")
@@ -322,13 +415,15 @@ foreach(_marker IN ITEMS
     "KISAK_DB_ZONE_LOAD_CONTEXT_TESTING=1"
     "KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING=1"
     "NAME database-zone-runtime-table-ownership"
+    "database-zone-runtime-table-unload-unsafe-${_zone_runtime_unsafe_boundary}"
+    "--unsafe-live-unload ${_zone_runtime_unsafe_boundary}"
     "NAME database-zone-runtime-table-source-invariants"
     "db_zone_runtime_table_source_test.cmake")
     require_contains(_tests "${_marker}" "portable CMake test integration")
 endforeach()
 foreach(_marker IN ITEMS
     "kisakcod-db-zone-runtime-table-tests"
-    "database-zone-runtime-table-(ownership|source-invariants)")
+    "database-zone-runtime-table-(ownership|source-invariants|unload-unsafe-[0-6])")
     require_contains(_ci "${_marker}" "measured Windows x86 CI integration")
 endforeach()
 
