@@ -354,6 +354,35 @@ namespace
     }
 }
 
+[[nodiscard]] ZoneRuntimeTableStatus MapLiveUnloadOwnershipStatus(
+    const zone_script_string_ownership::
+        ZoneScriptStringOwnershipStatus status) noexcept
+{
+    using OwnershipStatus = zone_script_string_ownership::
+        ZoneScriptStringOwnershipStatus;
+    switch (status)
+    {
+    case OwnershipStatus::Success:
+    case OwnershipStatus::Retry:
+    case OwnershipStatus::Busy:
+    case OwnershipStatus::InvalidArgument:
+    case OwnershipStatus::InvalidState:
+    case OwnershipStatus::InvalidKey:
+    case OwnershipStatus::StaleKey:
+    case OwnershipStatus::InvalidPhase:
+        return MapOwnershipStatus(status);
+    // These are journal/loading-only results.  Accepting one from the
+    // terminal Live-unload controller would silently broaden that operation's
+    // contract if a future implementation accidentally leaked such a value.
+    case OwnershipStatus::Rejected:
+    case OwnershipStatus::CountMismatch:
+    case OwnershipStatus::CapacityExceeded:
+    case OwnershipStatus::UnsafeFailure:
+    default:
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+}
+
 [[nodiscard]] ZoneRuntimeTableStatus AuthenticateExactEntry(
     const ZoneRuntimeEntry &entry,
     const std::uint32_t physicalSlot,
@@ -980,7 +1009,7 @@ ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
                 key,
                 callbacks);
     const ZoneRuntimeTableStatus status =
-        MapOwnershipStatus(ownershipStatus);
+        MapLiveUnloadOwnershipStatus(ownershipStatus);
     if (status == ZoneRuntimeTableStatus::UnsafeFailure)
     {
         table->poison();

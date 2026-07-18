@@ -282,6 +282,7 @@ foreach(_marker IN ITEMS
     "ZoneRuntimeTableStatus::CountMismatch"
     "ZoneRuntimeTableStatus::CapacityExceeded"
     "MapOwnershipStatus("
+    "MapLiveUnloadOwnershipStatus("
     "ZoneRuntimeTable::authenticateExactMutableEntry("
     "ZoneRuntimeTable::completeMutableOperation("
     "ZoneRuntimeTable::mutableScriptStringOwnership("
@@ -291,6 +292,62 @@ foreach(_marker IN ITEMS
     "TableState::Poisoned")
     require_contains(_source "${_marker}" "checked table implementation")
 endforeach()
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus MapLiveUnloadOwnershipStatus("
+    "ZoneRuntimeTableStatus AuthenticateExactEntry("
+    _live_unload_status_map
+    "Live-unload status allowlist")
+foreach(_marker IN ITEMS
+    "case OwnershipStatus::Success:"
+    "case OwnershipStatus::Retry:"
+    "case OwnershipStatus::Busy:"
+    "case OwnershipStatus::InvalidArgument:"
+    "case OwnershipStatus::InvalidState:"
+    "case OwnershipStatus::InvalidKey:"
+    "case OwnershipStatus::StaleKey:"
+    "case OwnershipStatus::InvalidPhase:"
+    "case OwnershipStatus::Rejected:"
+    "case OwnershipStatus::CountMismatch:"
+    "case OwnershipStatus::CapacityExceeded:"
+    "case OwnershipStatus::UnsafeFailure:"
+    "return ZoneRuntimeTableStatus::UnsafeFailure;")
+    require_contains(
+        _live_unload_status_map
+        "${_marker}"
+        "terminal Live-unload must fail closed on journal-only statuses")
+endforeach()
+require_ordered(
+    _live_unload_status_map
+    "case OwnershipStatus::InvalidPhase:"
+    "return MapOwnershipStatus(status);"
+    "allowed terminal result must use the shared status mapper")
+require_ordered(
+    _live_unload_status_map
+    "return MapOwnershipStatus(status);"
+    "case OwnershipStatus::Rejected:"
+    "journal-only results must follow the terminal allowlist")
+require_ordered(
+    _live_unload_status_map
+    "case OwnershipStatus::Rejected:"
+    "case OwnershipStatus::CountMismatch:"
+    "Rejected must enter the journal-only fail-closed group")
+require_ordered(
+    _live_unload_status_map
+    "case OwnershipStatus::CountMismatch:"
+    "case OwnershipStatus::CapacityExceeded:"
+    "CountMismatch must enter the journal-only fail-closed group")
+require_ordered(
+    _live_unload_status_map
+    "case OwnershipStatus::CapacityExceeded:"
+    "case OwnershipStatus::UnsafeFailure:"
+    "CapacityExceeded must enter the terminal unsafe group")
+require_ordered(
+    _live_unload_status_map
+    "case OwnershipStatus::UnsafeFailure:"
+    "return ZoneRuntimeTableStatus::UnsafeFailure;"
+    "terminal unsafe group must poison through UnsafeFailure")
 
 # Initialization is idempotent only while every usable entry remains pristine.
 # A rebound table is rejected without resetting its generation; malformed or
@@ -526,7 +583,7 @@ extract_slice(
 foreach(_marker IN ITEMS
     "AuthenticateExactEntry(entry, physicalSlot, key)"
     "TryUnloadLiveZoneScriptStringOwnership("
-    "MapOwnershipStatus(ownershipStatus)"
+    "MapLiveUnloadOwnershipStatus(ownershipStatus)"
     "OwnershipPhase::Unloaded"
     "ZoneLoadTerminalKind::Unloaded"
     "table->poison();")
