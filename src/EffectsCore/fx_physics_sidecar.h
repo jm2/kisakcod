@@ -393,7 +393,7 @@ class BodySidecar final
     std::uint64_t transactionRevision_ = 0;
     TransactionRole transactionRole_ = TransactionRole::None;
     bool initialized_ = false;
-    bool destructionCheckDisabledForTest_ = false;
+    [[maybe_unused]] bool destructionCheckDisabledForTest_ = false;
 };
 
 #ifdef KISAK_FX_PHYSICS_SIDECAR_TESTING

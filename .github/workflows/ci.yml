@@ -121,6 +121,7 @@ jobs:
           kisakcod-script-memorytree-try-tests
           kisakcod-script-string-ownership-tests
           kisakcod-platform-service-runtime-tests
+          kisakcod-fx-physics-sidecar-production-seal-tests
           --parallel
 
       - name: Enforce FX archive stack budgets

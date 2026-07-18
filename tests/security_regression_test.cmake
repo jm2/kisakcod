@@ -9425,30 +9425,38 @@ require_source_match_count(
     3
     "every SidecarTestAccess declaration, friendship, and definition must be test gated")
 
-set(_fx_sidecar_production_seal_probe_path
-    "${SOURCE_ROOT}/tests/fx_physics_sidecar_production_seal_compile_negative.cpp")
-if(NOT EXISTS "${_fx_sidecar_production_seal_probe_path}")
+set(_fx_sidecar_production_seal_test_path
+    "${SOURCE_ROOT}/tests/fx_physics_sidecar_production_seal_tests.cpp")
+if(NOT EXISTS "${_fx_sidecar_production_seal_test_path}")
     message(FATAL_ERROR
-        "Missing FX physics production authority-seal compile probe")
+        "Missing FX physics production authority-seal compile test")
 endif()
-file(READ "${_fx_sidecar_production_seal_probe_path}"
-    _fx_sidecar_production_seal_probe)
+file(READ "${_fx_sidecar_production_seal_test_path}"
+    _fx_sidecar_production_seal_test)
 forbid_security_slice_contains(
-    _fx_sidecar_production_seal_probe
+    _fx_sidecar_production_seal_test
     "#define KISAK_FX_PHYSICS_SIDECAR_TESTING"
-    "the production authority-seal probe must compile with test access disabled")
+    "the production authority-seal test must compile with test access disabled")
 require_security_slice_contains(
-    _fx_sidecar_production_seal_probe
+    _fx_sidecar_production_seal_test
     "struct SidecarTestAccess"
-    "the production authority-seal probe must recreate the public helper name")
+    "the production authority-seal test must recreate the public helper name")
 require_security_slice_contains(
-    _fx_sidecar_production_seal_probe
+    _fx_sidecar_production_seal_test
     "sidecar->activeCount_ = 1u;"
-    "the production authority-seal probe must attempt private ownership mutation")
+    "the production authority-seal test must query private ownership mutation access")
 require_security_slice_contains(
-    _fx_sidecar_production_seal_probe
+    _fx_sidecar_production_seal_test
     "sidecar->initialized_ = true;"
-    "the production authority-seal probe must attempt private lifecycle mutation")
+    "the production authority-seal test must query private lifecycle mutation access")
+require_security_slice_contains(
+    _fx_sidecar_production_seal_test
+    "!SidecarTestAccess::CanMutateActiveCount<BodySidecar>"
+    "the production authority seal must reject private ownership mutation access")
+require_security_slice_contains(
+    _fx_sidecar_production_seal_test
+    "!SidecarTestAccess::CanMutateInitialized<BodySidecar>"
+    "the production authority seal must reject private lifecycle mutation access")
 
 file(READ "${SOURCE_ROOT}/tests/CMakeLists.txt"
     _fx_sidecar_production_seal_tests_cmake)
@@ -9460,24 +9468,24 @@ extract_security_slice(
     "FX physics production authority-seal CMake registration")
 require_security_slice_contains(
     _fx_sidecar_production_seal_registration
-    "OBJECT EXCLUDE_FROM_ALL"
-    "the expected-failure target must stay outside normal portable builds")
+    "add_executable("
+    "the production seal must be a normal positive-build target")
 require_security_slice_contains(
     _fx_sidecar_production_seal_registration
-    "fx_physics_sidecar_production_seal_compile_negative.cpp"
-    "the CMake seal must compile the external-name mutation probe")
+    "fx_physics_sidecar_production_seal_tests.cpp"
+    "the CMake seal must compile the dependent access checks")
 require_security_slice_contains(
     _fx_sidecar_production_seal_registration
     "effectscore-physics-sidecar-production-test-access-sealed"
-    "the compile-negative production seal must be registered with CTest")
-require_security_slice_contains(
+    "the positive production seal must be registered with CTest")
+forbid_security_slice_contains(
     _fx_sidecar_production_seal_registration
-    "WILL_FAIL TRUE"
-    "the production seal must reject successful private mutation compilation")
-require_security_slice_contains(
+    "WILL_FAIL"
+    "the positive seal must not accept arbitrary compiler failures")
+forbid_security_slice_contains(
     _fx_sidecar_production_seal_registration
-    "RUN_SERIAL TRUE"
-    "the nested authority-seal build must remain race-free")
+    "EXCLUDE_FROM_ALL"
+    "portable builds must compile the production authority seal normally")
 forbid_security_slice_contains(
     _fx_sidecar_production_seal_registration
     "KISAK_FX_PHYSICS_SIDECAR_TESTING"
@@ -9505,6 +9513,10 @@ extract_security_slice(
     "windows-x86-nosteam:"
     _fx_sidecar_production_seal_measured_ci
     "measured Windows x86 production authority-seal CI")
+require_security_slice_contains(
+    _fx_sidecar_production_seal_measured_ci
+    "kisakcod-fx-physics-sidecar-production-seal-tests"
+    "measured Windows x86 CI must build the production authority seal")
 require_security_slice_contains(
     _fx_sidecar_production_seal_measured_ci
     "effectscore-physics-sidecar-production-test-access-sealed"
