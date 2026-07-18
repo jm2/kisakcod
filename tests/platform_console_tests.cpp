@@ -3,7 +3,6 @@
 #include <array>
 #include <cerrno>
 #include <cstdio>
-#include <cwchar>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -374,18 +373,20 @@ bool TestValidFlush()
 
 bool TestMessageModePipe()
 {
-    std::array<WCHAR, 160> pipeName{};
-    if (std::swprintf(
+    std::array<char, 160> pipeName{};
+    const int formatted = std::snprintf(
             pipeName.data(),
             pipeName.size(),
-            L"\\\\.\\pipe\\kisakcod-console-%lu-%llu",
+            "\\\\.\\pipe\\kisakcod-console-%lu-%llu",
             static_cast<unsigned long>(GetCurrentProcessId()),
-            static_cast<unsigned long long>(GetTickCount64())) < 0)
+            static_cast<unsigned long long>(GetTickCount64()));
+    if (formatted < 0
+        || static_cast<std::size_t>(formatted) >= pipeName.size())
     {
         return Check(false, "format message pipe name");
     }
 
-    const HANDLE server = CreateNamedPipeW(
+    const HANDLE server = CreateNamedPipeA(
         pipeName.data(),
         PIPE_ACCESS_INBOUND,
         PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
@@ -397,7 +398,7 @@ bool TestMessageModePipe()
     if (server == INVALID_HANDLE_VALUE)
         return Check(false, "create message pipe");
 
-    const HANDLE writer = CreateFileW(
+    const HANDLE writer = CreateFileA(
         pipeName.data(),
         GENERIC_WRITE,
         0,
