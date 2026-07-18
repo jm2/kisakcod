@@ -56,10 +56,10 @@ struct ZoneRuntimeMutableAdapterAccess;
 
 // An authenticated, read-only observation of one active generation.  The key
 // is copied by value so a retained old view cannot silently become an authority
-// for a later generation at the same stable table address.  Mutable lifecycle
-// and ownership operations stay private until table adapters can reauthenticate
-// this key immediately before every operation.  Callers must retain the same
-// external per-slot serializer across lookup and use.
+// for a later generation at the same stable table address.  Raw mutable
+// lifecycle and ownership state stays private; the adapters below
+// reauthenticate this key immediately around every mutation.  Callers must
+// retain the same external per-slot serializer across lookup and use.
 struct ZoneRuntimeGenerationView final
 {
     zone_load::ZoneLoadContextKey key{};

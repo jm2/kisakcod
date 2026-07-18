@@ -18,6 +18,40 @@ void MyAssertHandler(const char *, int, int, const char *, ...)
     std::abort();
 }
 
+namespace runtime_table_backend
+{
+constexpr std::size_t kMaxCalls = 16;
+
+struct FakeBackend final
+{
+    std::array<script_string::AcquireResult, kMaxCalls> acquire{};
+    std::size_t acquireCount = 0;
+    std::size_t acquireCalls = 0;
+
+    std::array<script_string::TransferStatus, kMaxCalls> transfer{};
+    std::size_t transferCount = 0;
+    std::size_t transferCalls = 0;
+    std::array<std::uint32_t, kMaxCalls> transferredIds{};
+
+    std::array<script_string::ReleaseStatus, kMaxCalls> ordinary{};
+    std::size_t ordinaryCount = 0;
+    std::size_t ordinaryCalls = 0;
+    std::array<std::uint32_t, kMaxCalls> ordinaryIds{};
+
+    std::array<script_string::ReleaseStatus, kMaxCalls> database{};
+    std::size_t databaseCount = 0;
+    std::size_t databaseCalls = 0;
+    std::array<std::uint32_t, kMaxCalls> databaseIds{};
+
+    db::zone_runtime::ZoneRuntimeTable *corruptTable = nullptr;
+    db::zone_load::ZoneLoadContextKey corruptKey{};
+    std::uint32_t corruptSlot = 0;
+    bool corruptDurableKeyOnAcquire = false;
+};
+
+FakeBackend backend{};
+} // namespace runtime_table_backend
+
 namespace script_string
 {
 AcquireResult TryAcquireOrdinaryStringOfSize(
@@ -25,22 +59,57 @@ AcquireResult TryAcquireOrdinaryStringOfSize(
     std::uint32_t,
     int) noexcept
 {
-    return {AcquireStatus::UnsafeFailure, 0};
+    using namespace runtime_table_backend;
+    const std::size_t call = backend.acquireCalls++;
+    if (backend.corruptDurableKeyOnAcquire && backend.corruptTable)
+    {
+        db::zone_runtime::ZoneRuntimeTableTestAccess::SetKey(
+            backend.corruptTable,
+            backend.corruptSlot,
+            backend.corruptKey);
+    }
+    return call < backend.acquireCount
+        ? backend.acquire[call]
+        : AcquireResult{AcquireStatus::UnsafeFailure, 0};
 }
 
-TransferStatus TryTransferOrdinaryToDatabaseUser(std::uint32_t) noexcept
+TransferStatus TryTransferOrdinaryToDatabaseUser(
+    const std::uint32_t stringId) noexcept
 {
-    return TransferStatus::UnsafeFailure;
+    using namespace runtime_table_backend;
+    const std::size_t call = backend.transferCalls++;
+    if (call >= backend.transferredIds.size())
+        return TransferStatus::UnsafeFailure;
+    backend.transferredIds[call] = stringId;
+    return call < backend.transferCount
+        ? backend.transfer[call]
+        : TransferStatus::UnsafeFailure;
 }
 
-ReleaseStatus TryRemoveOrdinaryReference(std::uint32_t) noexcept
+ReleaseStatus TryRemoveOrdinaryReference(
+    const std::uint32_t stringId) noexcept
 {
-    return ReleaseStatus::UnsafeFailure;
+    using namespace runtime_table_backend;
+    const std::size_t call = backend.ordinaryCalls++;
+    if (call >= backend.ordinaryIds.size())
+        return ReleaseStatus::UnsafeFailure;
+    backend.ordinaryIds[call] = stringId;
+    return call < backend.ordinaryCount
+        ? backend.ordinary[call]
+        : ReleaseStatus::UnsafeFailure;
 }
 
-ReleaseStatus TryRemoveDatabaseUserReference(std::uint32_t) noexcept
+ReleaseStatus TryRemoveDatabaseUserReference(
+    const std::uint32_t stringId) noexcept
 {
-    return ReleaseStatus::UnsafeFailure;
+    using namespace runtime_table_backend;
+    const std::size_t call = backend.databaseCalls++;
+    if (call >= backend.databaseIds.size())
+        return ReleaseStatus::UnsafeFailure;
+    backend.databaseIds[call] = stringId;
+    return call < backend.databaseCount
+        ? backend.database[call]
+        : ReleaseStatus::UnsafeFailure;
 }
 } // namespace script_string
 
@@ -66,10 +135,20 @@ using zone_ownership::ZoneScriptStringOwnershipPhase;
 using zone_ownership::ZoneScriptStringOwnershipStatus;
 using zone_runtime::ProductionZoneRuntimeTable;
 using zone_runtime::TryClaimZoneRuntimeGeneration;
+using zone_runtime::TryBeginZoneRuntimeScriptStringOwnership;
+using zone_runtime::TryBeginZoneRuntimeScriptStringRollback;
+using zone_runtime::TryBeginZoneRuntimeScriptStringTransfer;
+using zone_runtime::TryCommitZoneRuntimeScriptStringsAndAdmit;
+using zone_runtime::TryFinishZoneRuntimeScriptStringAbandonment;
 using zone_runtime::TryGetZoneRuntimeEntry;
 using zone_runtime::TryGetZoneRuntimeGeneration;
 using zone_runtime::TryInitializeZoneRuntimeTable;
+using zone_runtime::TryPrepareZoneRuntimeScriptStringCommit;
 using zone_runtime::TryResetZoneRuntimeTerminalReceipt;
+using zone_runtime::TryRollbackNextZoneRuntimeScriptString;
+using zone_runtime::TrySealZoneRuntimeScriptStrings;
+using zone_runtime::TryStageZoneRuntimeScriptString;
+using zone_runtime::TryTransferNextZoneRuntimeScriptString;
 using zone_runtime::TryUnloadZoneRuntimeGeneration;
 using zone_runtime::ZoneRuntimeEntry;
 using zone_runtime::ZoneRuntimeGenerationView;
@@ -91,6 +170,37 @@ void Check(
 }
 
 #define CHECK(expression) Check((expression), #expression, __LINE__)
+
+void ResetBackend() noexcept
+{
+    runtime_table_backend::backend = {};
+}
+
+void PushAcquire(
+    const script_string::AcquireStatus status,
+    const std::uint32_t stringId) noexcept
+{
+    auto &backend = runtime_table_backend::backend;
+    CHECK(backend.acquireCount < backend.acquire.size());
+    if (backend.acquireCount < backend.acquire.size())
+        backend.acquire[backend.acquireCount++] = {status, stringId};
+}
+
+void PushTransfer(const script_string::TransferStatus status) noexcept
+{
+    auto &backend = runtime_table_backend::backend;
+    CHECK(backend.transferCount < backend.transfer.size());
+    if (backend.transferCount < backend.transfer.size())
+        backend.transfer[backend.transferCount++] = status;
+}
+
+void PushOrdinary(const script_string::ReleaseStatus status) noexcept
+{
+    auto &backend = runtime_table_backend::backend;
+    CHECK(backend.ordinaryCount < backend.ordinary.size());
+    if (backend.ordinaryCount < backend.ordinary.size())
+        backend.ordinary[backend.ordinaryCount++] = status;
+}
 
 ZoneLoadCleanupCallbackStatus CompleteCleanup(
     void *const context,
@@ -138,6 +248,158 @@ void ObserveAdmittingController(void *const context) noexcept
 
 void AdmitNoop(void *) noexcept
 {
+}
+
+struct MutableRuntimeFixture final
+{
+    ZoneRuntimeTable table{};
+    ZoneLoadContextKey key{};
+    db::script_string_journal::ScriptStringJournal journal{};
+    std::array<db::script_string_journal::ScriptStringJournalEntry, 4>
+        storage{};
+    std::uint32_t physicalSlot = 0;
+
+    bool claim(const std::uint32_t slot) noexcept
+    {
+        physicalSlot = slot;
+        return TryInitializeZoneRuntimeTable(&table)
+                == ZoneRuntimeTableStatus::Success
+            && TryClaimZoneRuntimeGeneration(&table, physicalSlot, &key)
+                == ZoneRuntimeTableStatus::Success;
+    }
+
+    ZoneRuntimeTableStatus begin(
+        const std::uint32_t storageCapacity,
+        const std::uint32_t expectedCount) noexcept
+    {
+        return TryBeginZoneRuntimeScriptStringOwnership(
+            &table,
+            physicalSlot,
+            key,
+            &journal,
+            storage.data(),
+            storageCapacity,
+            expectedCount);
+    }
+};
+
+struct MutableAdmissionProbe final
+{
+    ZoneRuntimeTable *table = nullptr;
+    ZoneLoadContextKey key{};
+    bool called = false;
+    ZoneRuntimeTableStatus stageReentry = ZoneRuntimeTableStatus::Success;
+    ZoneRuntimeTableStatus prepareReentry = ZoneRuntimeTableStatus::Success;
+    std::uint32_t stageOutput = UINT32_C(0xA5A55A5A);
+};
+
+void ObserveMutableAdmission(void *const context) noexcept
+{
+    auto &probe = *static_cast<MutableAdmissionProbe *>(context);
+    probe.called = true;
+    CHECK(probe.table != nullptr);
+    if (!probe.table)
+        return;
+    probe.stageReentry = TryStageZoneRuntimeScriptString(
+        probe.table,
+        probe.key.slot,
+        probe.key,
+        {"reentry\0", 8, 1},
+        &probe.stageOutput);
+    probe.prepareReentry = TryPrepareZoneRuntimeScriptStringCommit(
+        probe.table, probe.key.slot, probe.key);
+}
+
+struct MutableRollbackDriver final
+{
+    ZoneRuntimeTable *table = nullptr;
+    ZoneLoadContextKey key{};
+    bool retryFirstEnsure = false;
+    bool retriedEnsure = false;
+    bool attemptEnsureReentry = false;
+    bool attemptedEnsureReentry = false;
+    ZoneRuntimeTableStatus ensureReentry = ZoneRuntimeTableStatus::Success;
+    ZoneRuntimeTableStatus stageReentry = ZoneRuntimeTableStatus::Success;
+    std::uint32_t stageOutput = UINT32_C(0xF00DBAAD);
+    std::size_t ensureCalls = 0;
+    ZoneLoadCleanupOperation retryOperation =
+        ZoneLoadCleanupOperation::ReleaseSlot;
+    bool retriedCleanup = false;
+    bool attemptCleanupReentry = false;
+    bool attemptedCleanupReentry = false;
+    ZoneRuntimeTableStatus cleanupReentry = ZoneRuntimeTableStatus::Success;
+    std::array<ZoneLoadCleanupOperation, 16> operations{};
+    std::size_t operationCount = 0;
+};
+
+ZoneLoadCleanupCallbackStatus PerformMutableRollbackCleanup(
+    void *context,
+    ZoneLoadCleanupOperation operation) noexcept;
+
+zone_ownership::ZoneScriptStringUnpublishStatus
+EnsureMutableRuntimeUnreachable(void *const context) noexcept
+{
+    auto &driver = *static_cast<MutableRollbackDriver *>(context);
+    ++driver.ensureCalls;
+    if (driver.attemptEnsureReentry && !driver.attemptedEnsureReentry)
+    {
+        driver.attemptedEnsureReentry = true;
+        driver.ensureReentry = TryBeginZoneRuntimeScriptStringRollback(
+            driver.table,
+            driver.key.slot,
+            driver.key,
+            {&driver,
+                EnsureMutableRuntimeUnreachable,
+                PerformMutableRollbackCleanup});
+        driver.stageReentry = TryStageZoneRuntimeScriptString(
+            driver.table,
+            driver.key.slot,
+            driver.key,
+            {"reentry\0", 8, 1},
+            &driver.stageOutput);
+    }
+    if (driver.retryFirstEnsure && !driver.retriedEnsure)
+    {
+        driver.retriedEnsure = true;
+        return zone_ownership::ZoneScriptStringUnpublishStatus::Retry;
+    }
+    return zone_ownership::ZoneScriptStringUnpublishStatus::Success;
+}
+
+ZoneLoadCleanupCallbackStatus PerformMutableRollbackCleanup(
+    void *const context,
+    const ZoneLoadCleanupOperation operation) noexcept
+{
+    auto &driver = *static_cast<MutableRollbackDriver *>(context);
+    CHECK(
+        operation
+        != ZoneLoadCleanupOperation::
+            MakePartialAssetsAndStagedReferencesUnreachable);
+    CHECK(driver.operationCount < driver.operations.size());
+    if (driver.operationCount < driver.operations.size())
+        driver.operations[driver.operationCount++] = operation;
+    if (driver.attemptCleanupReentry && !driver.attemptedCleanupReentry)
+    {
+        driver.attemptedCleanupReentry = true;
+        driver.cleanupReentry =
+            TryFinishZoneRuntimeScriptStringAbandonment(
+                driver.table, driver.key.slot, driver.key);
+    }
+    if (operation == driver.retryOperation && !driver.retriedCleanup)
+    {
+        driver.retriedCleanup = true;
+        return ZoneLoadCleanupCallbackStatus::Retry;
+    }
+    return ZoneLoadCleanupCallbackStatus::Success;
+}
+
+zone_ownership::ZoneScriptStringRollbackCallbacks MakeMutableRollbackCallbacks(
+    MutableRollbackDriver *const driver) noexcept
+{
+    return {
+        driver,
+        EnsureMutableRuntimeUnreachable,
+        PerformMutableRollbackCleanup};
 }
 
 constexpr std::array<ZoneLoadCleanupOperation, 6>
@@ -293,7 +555,38 @@ void TestLayoutNoexceptAndDefaultState()
     static_assert(sizeof(ZoneRuntimeGenerationView) == 0x18);
     static_assert(sizeof(ZoneLoadCleanupCallbacks) == 2 * sizeof(void *));
     static_assert(sizeof(ZoneRuntimeTableStatus) == 1);
+    static_assert(static_cast<unsigned>(ZoneRuntimeTableStatus::Retry) == 10);
+    static_assert(
+        static_cast<unsigned>(ZoneRuntimeTableStatus::Rejected) == 11);
+    static_assert(
+        static_cast<unsigned>(ZoneRuntimeTableStatus::CountMismatch) == 12);
+    static_assert(
+        static_cast<unsigned>(ZoneRuntimeTableStatus::CapacityExceeded) == 13);
     static_assert(sizeof(ZoneScriptStringOwnershipPhase) == 1);
+    static_assert(noexcept(TryBeginZoneRuntimeScriptStringOwnership(
+        static_cast<ZoneRuntimeTable *>(nullptr),
+        1,
+        ZoneLoadContextKey{},
+        static_cast<db::script_string_journal::ScriptStringJournal *>(nullptr),
+        static_cast<db::script_string_journal::ScriptStringJournalEntry *>(
+            nullptr),
+        0,
+        0)));
+    static_assert(noexcept(TryStageZoneRuntimeScriptString(
+        static_cast<ZoneRuntimeTable *>(nullptr),
+        1,
+        ZoneLoadContextKey{},
+        {},
+        static_cast<std::uint32_t *>(nullptr))));
+    static_assert(noexcept(TryCommitZoneRuntimeScriptStringsAndAdmit(
+        static_cast<ZoneRuntimeTable *>(nullptr),
+        1,
+        ZoneLoadContextKey{},
+        {})));
+    static_assert(noexcept(TryFinishZoneRuntimeScriptStringAbandonment(
+        static_cast<ZoneRuntimeTable *>(nullptr),
+        1,
+        ZoneLoadContextKey{})));
     static_assert(noexcept(TryUnloadZoneRuntimeGeneration(
         static_cast<ZoneRuntimeTable *>(nullptr),
         1,
@@ -885,6 +1178,370 @@ void TestControllerPhaseAndSerializerMatrix()
     CHECK(!crossPhase.initialized());
 }
 
+void TestKeyedMutableCommitAndAuthentication()
+{
+    ResetBackend();
+    MutableRuntimeFixture fixture{};
+    CHECK(fixture.claim(19));
+
+    ZoneLoadContextKey malformed = fixture.key;
+    malformed.reserved = 1;
+    ZoneLoadContextKey stale = fixture.key;
+    ++stale.generation;
+    db::script_string_journal::ScriptStringJournal rejectedJournal{};
+    db::script_string_journal::ScriptStringJournalEntry rejectedStorage{};
+    CHECK(
+        TryBeginZoneRuntimeScriptStringOwnership(
+            nullptr,
+            fixture.physicalSlot,
+            fixture.key,
+            &rejectedJournal,
+            &rejectedStorage,
+            1,
+            1)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(
+        TryBeginZoneRuntimeScriptStringOwnership(
+            &fixture.table,
+            fixture.physicalSlot,
+            malformed,
+            &rejectedJournal,
+            &rejectedStorage,
+            1,
+            1)
+        == ZoneRuntimeTableStatus::InvalidKey);
+    CHECK(
+        TryBeginZoneRuntimeScriptStringOwnership(
+            &fixture.table,
+            0,
+            fixture.key,
+            &rejectedJournal,
+            &rejectedStorage,
+            1,
+            1)
+        == ZoneRuntimeTableStatus::InvalidSlot);
+    CHECK(
+        TryBeginZoneRuntimeScriptStringOwnership(
+            &fixture.table,
+            fixture.physicalSlot + 1,
+            fixture.key,
+            &rejectedJournal,
+            &rejectedStorage,
+            1,
+            1)
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(
+        TryBeginZoneRuntimeScriptStringOwnership(
+            &fixture.table,
+            fixture.physicalSlot,
+            stale,
+            &rejectedJournal,
+            &rejectedStorage,
+            1,
+            1)
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(!rejectedJournal.initialized());
+
+    std::uint32_t unchanged = UINT32_C(0xDEADBEEF);
+    MutableRollbackDriver staleDriver{&fixture.table, stale};
+    CHECK(
+        TryStageZoneRuntimeScriptString(
+            &fixture.table,
+            fixture.physicalSlot,
+            stale,
+            {"stale\0", 6, 1},
+            &unchanged)
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(unchanged == UINT32_C(0xDEADBEEF));
+    CHECK(
+        TryStageZoneRuntimeScriptString(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {"ignored\0", 8, 1},
+            nullptr)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(
+        TrySealZoneRuntimeScriptStrings(
+            &fixture.table, fixture.physicalSlot, stale)
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(
+        TryBeginZoneRuntimeScriptStringTransfer(
+            &fixture.table, fixture.physicalSlot, stale)
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(
+        TryTransferNextZoneRuntimeScriptString(
+            &fixture.table, fixture.physicalSlot, stale)
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(
+        TryPrepareZoneRuntimeScriptStringCommit(
+            &fixture.table, fixture.physicalSlot, stale)
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(
+        TryCommitZoneRuntimeScriptStringsAndAdmit(
+            &fixture.table,
+            fixture.physicalSlot,
+            stale,
+            {nullptr, AdmitNoop})
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(
+        TryBeginZoneRuntimeScriptStringRollback(
+            &fixture.table,
+            fixture.physicalSlot,
+            stale,
+            MakeMutableRollbackCallbacks(&staleDriver))
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(
+        TryRollbackNextZoneRuntimeScriptString(
+            &fixture.table, fixture.physicalSlot, stale)
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(
+        TryFinishZoneRuntimeScriptStringAbandonment(
+            &fixture.table, fixture.physicalSlot, stale)
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(fixture.table.initialized());
+
+    CHECK(fixture.begin(2, 2) == ZoneRuntimeTableStatus::Success);
+    CHECK(
+        fixture.begin(2, 2) == ZoneRuntimeTableStatus::InvalidState);
+
+    PushAcquire(script_string::AcquireStatus::InvalidArgumentNoChange, 0);
+    unchanged = UINT32_C(0x13579BDF);
+    CHECK(
+        TryStageZoneRuntimeScriptString(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {"rejected\0", 9, 1},
+            &unchanged)
+        == ZoneRuntimeTableStatus::Rejected);
+    CHECK(unchanged == UINT32_C(0x13579BDF));
+    CHECK(fixture.table.initialized());
+
+    PushAcquire(script_string::AcquireStatus::Acquired, 71);
+    PushAcquire(script_string::AcquireStatus::Acquired, 72);
+    std::uint32_t firstId = 0;
+    std::uint32_t secondId = 0;
+    CHECK(
+        TryStageZoneRuntimeScriptString(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {"first\0", 6, 2},
+            &firstId)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(firstId == 71);
+    CHECK(
+        TryStageZoneRuntimeScriptString(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {"second\0", 7, 2},
+            &secondId)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(secondId == 72);
+    unchanged = UINT32_C(0x2468ACE0);
+    CHECK(
+        TryStageZoneRuntimeScriptString(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {"overflow\0", 9, 2},
+            &unchanged)
+        == ZoneRuntimeTableStatus::CapacityExceeded);
+    CHECK(unchanged == UINT32_C(0x2468ACE0));
+
+    CHECK(
+        TrySealZoneRuntimeScriptStrings(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(
+        TrySealZoneRuntimeScriptStrings(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(
+        TryBeginZoneRuntimeScriptStringTransfer(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    PushTransfer(script_string::TransferStatus::DatabaseUserClaimed);
+    PushTransfer(script_string::TransferStatus::DuplicateReleased);
+    CHECK(
+        TryTransferNextZoneRuntimeScriptString(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(
+        TryTransferNextZoneRuntimeScriptString(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    const std::size_t transferCalls =
+        runtime_table_backend::backend.transferCalls;
+    CHECK(
+        TryTransferNextZoneRuntimeScriptString(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(runtime_table_backend::backend.transferCalls == transferCalls);
+    CHECK(
+        TryPrepareZoneRuntimeScriptStringCommit(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(
+        TryPrepareZoneRuntimeScriptStringCommit(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+
+    MutableAdmissionProbe admission{&fixture.table, fixture.key};
+    CHECK(
+        TryCommitZoneRuntimeScriptStringsAndAdmit(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {&admission, ObserveMutableAdmission})
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(admission.called);
+    CHECK(admission.stageReentry == ZoneRuntimeTableStatus::Busy);
+    CHECK(admission.prepareReentry == ZoneRuntimeTableStatus::Busy);
+    CHECK(admission.stageOutput == UINT32_C(0xA5A55A5A));
+    CHECK(fixture.table.initialized());
+    CHECK(
+        TryStageZoneRuntimeScriptString(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {"live\0", 5, 1},
+            &unchanged)
+        == ZoneRuntimeTableStatus::InvalidPhase);
+}
+
+void TestKeyedMutableRecoverableAbandonment()
+{
+    ResetBackend();
+    MutableRuntimeFixture fixture{};
+    CHECK(fixture.claim(20));
+    CHECK(fixture.begin(1, 2) == ZoneRuntimeTableStatus::CapacityExceeded);
+    CHECK(fixture.table.initialized());
+    const ZoneRuntimeEntry *entry = nullptr;
+    CHECK(
+        TryGetZoneRuntimeEntry(
+            &fixture.table, fixture.physicalSlot, &entry)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(entry != nullptr);
+    CHECK(entry->scriptStringOwnership().isEmptyCanonical());
+
+    CHECK(fixture.begin(2, 2) == ZoneRuntimeTableStatus::Success);
+    PushAcquire(script_string::AcquireStatus::Acquired, 101);
+    std::uint32_t output = 0;
+    CHECK(
+        TryStageZoneRuntimeScriptString(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {"one\0", 4, 3},
+            &output)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(output == 101);
+    CHECK(
+        TrySealZoneRuntimeScriptStrings(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::CountMismatch);
+    CHECK(fixture.table.initialized());
+    PushAcquire(script_string::AcquireStatus::Acquired, 202);
+    CHECK(
+        TryStageZoneRuntimeScriptString(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {"two\0", 4, 3},
+            &output)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(output == 202);
+    CHECK(
+        TrySealZoneRuntimeScriptStrings(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+
+    MutableRollbackDriver driver{};
+    driver.table = &fixture.table;
+    driver.key = fixture.key;
+    driver.retryFirstEnsure = true;
+    driver.attemptEnsureReentry = true;
+    driver.retryOperation = ZoneLoadCleanupOperation::ReleaseGeometry;
+    driver.attemptCleanupReentry = true;
+    const auto callbacks = MakeMutableRollbackCallbacks(&driver);
+    CHECK(
+        TryBeginZoneRuntimeScriptStringRollback(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            callbacks)
+        == ZoneRuntimeTableStatus::Retry);
+    CHECK(driver.attemptedEnsureReentry);
+    CHECK(driver.ensureReentry == ZoneRuntimeTableStatus::Busy);
+    CHECK(driver.stageReentry == ZoneRuntimeTableStatus::Busy);
+    CHECK(driver.stageOutput == UINT32_C(0xF00DBAAD));
+    MutableRollbackDriver swapped{};
+    CHECK(
+        TryBeginZoneRuntimeScriptStringRollback(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            MakeMutableRollbackCallbacks(&swapped))
+        == ZoneRuntimeTableStatus::InvalidState);
+    CHECK(fixture.table.initialized());
+    CHECK(
+        TryBeginZoneRuntimeScriptStringRollback(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            callbacks)
+        == ZoneRuntimeTableStatus::Success);
+
+    PushOrdinary(script_string::ReleaseStatus::Success);
+    PushOrdinary(script_string::ReleaseStatus::Success);
+    CHECK(
+        TryRollbackNextZoneRuntimeScriptString(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(
+        TryRollbackNextZoneRuntimeScriptString(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    const std::size_t ordinaryCalls =
+        runtime_table_backend::backend.ordinaryCalls;
+    CHECK(
+        TryRollbackNextZoneRuntimeScriptString(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(runtime_table_backend::backend.ordinaryCalls == ordinaryCalls);
+    CHECK(runtime_table_backend::backend.ordinaryIds[0] == 202);
+    CHECK(runtime_table_backend::backend.ordinaryIds[1] == 101);
+
+    CHECK(
+        TryFinishZoneRuntimeScriptStringAbandonment(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Retry);
+    CHECK(driver.attemptedCleanupReentry);
+    CHECK(driver.cleanupReentry == ZoneRuntimeTableStatus::Busy);
+    CHECK(fixture.table.initialized());
+    CHECK(
+        TryFinishZoneRuntimeScriptStringAbandonment(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(
+        TryFinishZoneRuntimeScriptStringAbandonment(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(
+        TryResetZoneRuntimeTerminalReceipt(
+            &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    ZoneLoadContextKey nextKey{};
+    CHECK(
+        TryClaimZoneRuntimeGeneration(
+            &fixture.table, fixture.physicalSlot, &nextKey)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(nextKey.generation == fixture.key.generation + 1);
+}
+
 void TestLiveUnloadRetryResetReuseAndAba()
 {
     for (const ZoneLoadCleanupOperation retryOperation :
@@ -1407,12 +2064,71 @@ void TestUnsafeLiveUnloadBoundary(
     CHECK(driver.operationCount == operationCount);
 }
 
+void TestUnsafeMutableBoundary(const bool corruptPostcondition)
+{
+    ResetBackend();
+    MutableRuntimeFixture fixture{};
+    CHECK(fixture.claim(21));
+    CHECK(fixture.begin(1, 1) == ZoneRuntimeTableStatus::Success);
+    if (corruptPostcondition)
+    {
+        auto &backend = runtime_table_backend::backend;
+        backend.corruptTable = &fixture.table;
+        backend.corruptSlot = fixture.physicalSlot;
+        backend.corruptKey = fixture.key;
+        ++backend.corruptKey.generation;
+        backend.corruptDurableKeyOnAcquire = true;
+        PushAcquire(script_string::AcquireStatus::Acquired, 31337);
+    }
+    else
+    {
+        PushAcquire(script_string::AcquireStatus::UnsafeFailure, 0);
+    }
+
+    std::uint32_t output = UINT32_C(0x1234ABCD);
+    CHECK(
+        TryStageZoneRuntimeScriptString(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {"unsafe\0", 7, 4},
+            &output)
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(output == UINT32_C(0x1234ABCD));
+    CHECK(runtime_table_backend::backend.acquireCalls == 1);
+    CHECK(!fixture.table.initialized());
+    const std::size_t acquireCalls =
+        runtime_table_backend::backend.acquireCalls;
+    CHECK(
+        TryStageZoneRuntimeScriptString(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            {"blocked\0", 8, 4},
+            &output)
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(runtime_table_backend::backend.acquireCalls == acquireCalls);
+    CHECK(output == UINT32_C(0x1234ABCD));
+}
+
 } // namespace
 
 int main(const int argc, char **const argv)
 {
     if (argc != 1)
     {
+        if (argc == 3
+            && std::string_view(argv[1]) == "--unsafe-mutable")
+        {
+            const std::string_view kind(argv[2]);
+            if (kind == "backend")
+                TestUnsafeMutableBoundary(false);
+            else if (kind == "postcondition")
+                TestUnsafeMutableBoundary(true);
+            else
+                return 2;
+            return failures == 0 ? 0 : 1;
+        }
         if (argc != 3
             || std::string_view(argv[1]) != "--unsafe-live-unload")
         {
@@ -1442,6 +2158,8 @@ int main(const int argc, char **const argv)
     TestPartialInitializationAndCorruptionFailClosed();
     TestHiddenCorruptionAndCleanupReentryFailClosed();
     TestControllerPhaseAndSerializerMatrix();
+    TestKeyedMutableCommitAndAuthentication();
+    TestKeyedMutableRecoverableAbandonment();
     TestLiveUnloadRetryResetReuseAndAba();
     TestAbandonedReceiptResetAndGenerationExhaustion();
     TestTerminalAdapterPhaseSerializerAndCorruptionGates();
