@@ -157,7 +157,10 @@ foreach(_marker IN ITEMS
     "ZoneRuntimeEntry(const ZoneRuntimeEntry &) = delete;"
     "ZoneRuntimeTable(const ZoneRuntimeTable &) = delete;"
     "KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"
-    "struct ZoneRuntimeMutableAdapterAccess;"
+    "friend class ZoneRuntimeTable;"
+    "authenticateExactMutableEntry("
+    "completeMutableOperation("
+    "mutableScriptStringOwnership("
     "TryBeginZoneRuntimeScriptStringOwnership("
     "TryStageZoneRuntimeScriptString("
     "TrySealZoneRuntimeScriptStrings("
@@ -211,9 +214,9 @@ foreach(_marker IN ITEMS
     "ZoneRuntimeTableStatus::CountMismatch"
     "ZoneRuntimeTableStatus::CapacityExceeded"
     "MapOwnershipStatus("
-    "struct ZoneRuntimeMutableAdapterAccess final"
-    "ZoneRuntimeMutableAdapterAccess::Authenticate("
-    "ZoneRuntimeMutableAdapterAccess::CompleteMutation("
+    "ZoneRuntimeTable::authenticateExactMutableEntry("
+    "ZoneRuntimeTable::completeMutableOperation("
+    "ZoneRuntimeTable::mutableScriptStringOwnership("
     "lifecycle.phase() == zone_load::ZoneLoadContextPhase::Loading"
     "lifecycle.phase() == zone_load::ZoneLoadContextPhase::Abandoning"
     "lifecycle.phase() == zone_load::ZoneLoadContextPhase::Live"
@@ -297,8 +300,8 @@ foreach(_marker IN ITEMS
     "TryBeginZoneRuntimeScriptStringRollback("
     "TryRollbackNextZoneRuntimeScriptString("
     "TryFinishZoneRuntimeScriptStringAbandonment("
-    "ZoneRuntimeMutableAdapterAccess::Authenticate("
-    "ZoneRuntimeMutableAdapterAccess::CompleteMutation("
+    "authenticateExactMutableEntry("
+    "completeMutableOperation("
     "TryBeginZoneScriptStringOwnership("
     "TryStageZoneScriptString("
     "TrySealZoneScriptStrings("
@@ -319,13 +322,13 @@ function(require_mutable_adapter START END MUTATION DESCRIPTION)
         "${DESCRIPTION} adapter")
     require_ordered(
         _adapter
-        "ZoneRuntimeMutableAdapterAccess::Authenticate("
+        "authenticateExactMutableEntry("
         "${MUTATION}"
         "${DESCRIPTION} pre-authentication")
     require_ordered(
         _adapter
         "${MUTATION}"
-        "ZoneRuntimeMutableAdapterAccess::CompleteMutation("
+        "completeMutableOperation("
         "${DESCRIPTION} post-authentication")
 endfunction()
 
@@ -394,35 +397,40 @@ require_ordered(
 require_ordered(
     _stage_adapter
     "TryStageZoneScriptString("
-    "CompleteMutation("
+    "completeMutableOperation("
     "stage post-authentication follows mutation")
 require_ordered(
     _stage_adapter
-    "CompleteMutation("
+    "completeMutableOperation("
     "*outStringId = candidate;"
     "stage output publishes only after post-authentication")
 require_not_contains(
     _header
-    "ZoneScriptStringOwnershipController *mutable"
+    "ZoneRuntimeMutableAdapterAccess"
     "public header cannot expose raw mutable ownership")
+require_not_contains(
+    _source
+    "ZoneRuntimeMutableAdapterAccess"
+    "implementation cannot restore a forgeable friend shim")
 
 extract_slice(
     _source
-    "struct ZoneRuntimeMutableAdapterAccess final"
-    "} // namespace detail"
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactMutableEntry("
+    "const zone_load::ZoneLoadContextKey &ZoneRuntimeEntry::key()"
     _mutable_access
-    "private mutable table access shim")
+    "private mutable table member boundary")
 foreach(_marker IN ITEMS
-    "table->validateInitializedHeader()"
+    "validateInitializedHeader()"
     "if (!static_cast<bool>(key))"
     "ValidateUsableSlot(physicalSlot)"
     "if (key.slot != physicalSlot)"
     "AuthenticateExactEntry(entry, physicalSlot, key)"
     "MapOwnershipStatus(ownershipStatus)"
     "const ZoneRuntimeTableStatus postAuthentication ="
+    "authenticateExactMutableEntry(physicalSlot, key, &postEntry)"
     "status == ZoneRuntimeTableStatus::UnsafeFailure"
     "postAuthentication != ZoneRuntimeTableStatus::Success"
-    "table->poison();")
+    "poison();")
     require_contains(
         _mutable_access "${_marker}" "pre/post mutation authentication")
 endforeach()

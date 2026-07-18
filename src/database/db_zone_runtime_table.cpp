@@ -375,81 +375,70 @@ namespace
 ZoneRuntimeTable g_productionZoneRuntimeTable{};
 } // namespace
 
-namespace detail
+ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactMutableEntry(
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    ZoneRuntimeEntry **const outEntry) noexcept
 {
-struct ZoneRuntimeMutableAdapterAccess final
+    if (!outEntry)
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    const ZoneRuntimeTableStatus tableStatus = validateInitializedHeader();
+    if (tableStatus != ZoneRuntimeTableStatus::Success)
+        return tableStatus;
+    if (!static_cast<bool>(key))
+        return ZoneRuntimeTableStatus::InvalidKey;
+    const ZoneRuntimeTableStatus slotStatus =
+        ValidateUsableSlot(physicalSlot);
+    if (slotStatus != ZoneRuntimeTableStatus::Success)
+        return slotStatus;
+    if (key.slot != physicalSlot)
+        return ZoneRuntimeTableStatus::StaleKey;
+
+    ZoneRuntimeEntry &entry = entries_[physicalSlot];
+    const ZoneRuntimeTableStatus authentication =
+        AuthenticateExactEntry(entry, physicalSlot, key);
+    if (authentication == ZoneRuntimeTableStatus::UnsafeFailure)
+        poison();
+    if (authentication != ZoneRuntimeTableStatus::Success)
+        return authentication;
+
+    *outEntry = &entry;
+    return ZoneRuntimeTableStatus::Success;
+}
+
+zone_load::ZoneLoadContextSlot *ZoneRuntimeTable::mutableLifecycle(
+    ZoneRuntimeEntry *const entry) noexcept
 {
-    [[nodiscard]] static ZoneRuntimeTableStatus Authenticate(
-        ZoneRuntimeTable *const table,
-        const std::uint32_t physicalSlot,
-        const zone_load::ZoneLoadContextKey &key,
-        ZoneRuntimeEntry **const outEntry) noexcept
+    return entry ? &entry->lifecycle_ : nullptr;
+}
+
+zone_script_string_ownership::ZoneScriptStringOwnershipController *
+ZoneRuntimeTable::mutableScriptStringOwnership(
+    ZoneRuntimeEntry *const entry) noexcept
+{
+    return entry ? &entry->scriptStringOwnership_ : nullptr;
+}
+
+ZoneRuntimeTableStatus ZoneRuntimeTable::completeMutableOperation(
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const zone_script_string_ownership::
+        ZoneScriptStringOwnershipStatus ownershipStatus) noexcept
+{
+    const ZoneRuntimeTableStatus status =
+        MapOwnershipStatus(ownershipStatus);
+    ZoneRuntimeEntry *postEntry = nullptr;
+    const ZoneRuntimeTableStatus postAuthentication =
+        authenticateExactMutableEntry(physicalSlot, key, &postEntry);
+    if (status == ZoneRuntimeTableStatus::UnsafeFailure
+        || postAuthentication != ZoneRuntimeTableStatus::Success
+        || !postEntry)
     {
-        if (!outEntry)
-            return ZoneRuntimeTableStatus::InvalidArgument;
-        const ZoneRuntimeTableStatus tableStatus = table
-            ? table->validateInitializedHeader()
-            : ZoneRuntimeTableStatus::InvalidArgument;
-        if (tableStatus != ZoneRuntimeTableStatus::Success)
-            return tableStatus;
-        if (!static_cast<bool>(key))
-            return ZoneRuntimeTableStatus::InvalidKey;
-        const ZoneRuntimeTableStatus slotStatus =
-            ValidateUsableSlot(physicalSlot);
-        if (slotStatus != ZoneRuntimeTableStatus::Success)
-            return slotStatus;
-        if (key.slot != physicalSlot)
-            return ZoneRuntimeTableStatus::StaleKey;
-
-        ZoneRuntimeEntry &entry = table->entries_[physicalSlot];
-        const ZoneRuntimeTableStatus authentication =
-            AuthenticateExactEntry(entry, physicalSlot, key);
-        if (authentication == ZoneRuntimeTableStatus::UnsafeFailure)
-            table->poison();
-        if (authentication != ZoneRuntimeTableStatus::Success)
-            return authentication;
-
-        *outEntry = &entry;
-        return ZoneRuntimeTableStatus::Success;
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
     }
-
-    [[nodiscard]] static zone_load::ZoneLoadContextSlot *Lifecycle(
-        ZoneRuntimeEntry *const entry) noexcept
-    {
-        return entry ? &entry->lifecycle_ : nullptr;
-    }
-
-    [[nodiscard]] static zone_script_string_ownership::
-        ZoneScriptStringOwnershipController *Ownership(
-        ZoneRuntimeEntry *const entry) noexcept
-    {
-        return entry ? &entry->scriptStringOwnership_ : nullptr;
-    }
-
-    [[nodiscard]] static ZoneRuntimeTableStatus CompleteMutation(
-        ZoneRuntimeTable *const table,
-        const std::uint32_t physicalSlot,
-        const zone_load::ZoneLoadContextKey &key,
-        const zone_script_string_ownership::
-            ZoneScriptStringOwnershipStatus ownershipStatus) noexcept
-    {
-        const ZoneRuntimeTableStatus status =
-            MapOwnershipStatus(ownershipStatus);
-        ZoneRuntimeEntry *postEntry = nullptr;
-        const ZoneRuntimeTableStatus postAuthentication =
-            Authenticate(table, physicalSlot, key, &postEntry);
-        if (status == ZoneRuntimeTableStatus::UnsafeFailure
-            || postAuthentication != ZoneRuntimeTableStatus::Success
-            || !postEntry)
-        {
-            if (table)
-                table->poison();
-            return ZoneRuntimeTableStatus::UnsafeFailure;
-        }
-        return status;
-    }
-};
-} // namespace detail
+    return status;
+}
 
 const zone_load::ZoneLoadContextKey &ZoneRuntimeEntry::key() const noexcept
 {
@@ -727,24 +716,25 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership(
     const std::uint32_t storageCapacity,
     const std::uint32_t expectedCount) noexcept
 {
+    if (!table)
+        return ZoneRuntimeTableStatus::InvalidArgument;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        detail::ZoneRuntimeMutableAdapterAccess::Authenticate(
-            table, physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
 
     const auto ownershipStatus = zone_script_string_ownership::
         TryBeginZoneScriptStringOwnership(
-            detail::ZoneRuntimeMutableAdapterAccess::Ownership(entry),
-            detail::ZoneRuntimeMutableAdapterAccess::Lifecycle(entry),
+            ZoneRuntimeTable::mutableScriptStringOwnership(entry),
+            ZoneRuntimeTable::mutableLifecycle(entry),
             key,
             journal,
             storage,
             storageCapacity,
             expectedCount);
-    return detail::ZoneRuntimeMutableAdapterAccess::CompleteMutation(
-        table, physicalSlot, key, ownershipStatus);
+    return table->completeMutableOperation(
+        physicalSlot, key, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString(
@@ -754,24 +744,23 @@ ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString(
     const script_string_adapter::ScriptStringSourceView &source,
     std::uint32_t *const outStringId) noexcept
 {
-    if (!outStringId)
+    if (!table || !outStringId)
         return ZoneRuntimeTableStatus::InvalidArgument;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        detail::ZoneRuntimeMutableAdapterAccess::Authenticate(
-            table, physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
 
     std::uint32_t candidate = 0;
     const auto ownershipStatus = zone_script_string_ownership::
         TryStageZoneScriptString(
-            detail::ZoneRuntimeMutableAdapterAccess::Ownership(entry),
+            ZoneRuntimeTable::mutableScriptStringOwnership(entry),
             source,
             &candidate);
     const ZoneRuntimeTableStatus status =
-        detail::ZoneRuntimeMutableAdapterAccess::CompleteMutation(
-            table, physicalSlot, key, ownershipStatus);
+        table->completeMutableOperation(
+            physicalSlot, key, ownershipStatus);
     if (status == ZoneRuntimeTableStatus::Success)
         *outStringId = candidate;
     return status;
@@ -782,17 +771,18 @@ ZoneRuntimeTableStatus TrySealZoneRuntimeScriptStrings(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
+    if (!table)
+        return ZoneRuntimeTableStatus::InvalidArgument;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        detail::ZoneRuntimeMutableAdapterAccess::Authenticate(
-            table, physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
     const auto ownershipStatus = zone_script_string_ownership::
         TrySealZoneScriptStrings(
-            detail::ZoneRuntimeMutableAdapterAccess::Ownership(entry));
-    return detail::ZoneRuntimeMutableAdapterAccess::CompleteMutation(
-        table, physicalSlot, key, ownershipStatus);
+            ZoneRuntimeTable::mutableScriptStringOwnership(entry));
+    return table->completeMutableOperation(
+        physicalSlot, key, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringTransfer(
@@ -800,17 +790,18 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringTransfer(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
+    if (!table)
+        return ZoneRuntimeTableStatus::InvalidArgument;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        detail::ZoneRuntimeMutableAdapterAccess::Authenticate(
-            table, physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
     const auto ownershipStatus = zone_script_string_ownership::
         TryBeginZoneScriptStringTransfer(
-            detail::ZoneRuntimeMutableAdapterAccess::Ownership(entry));
-    return detail::ZoneRuntimeMutableAdapterAccess::CompleteMutation(
-        table, physicalSlot, key, ownershipStatus);
+            ZoneRuntimeTable::mutableScriptStringOwnership(entry));
+    return table->completeMutableOperation(
+        physicalSlot, key, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryTransferNextZoneRuntimeScriptString(
@@ -818,17 +809,18 @@ ZoneRuntimeTableStatus TryTransferNextZoneRuntimeScriptString(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
+    if (!table)
+        return ZoneRuntimeTableStatus::InvalidArgument;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        detail::ZoneRuntimeMutableAdapterAccess::Authenticate(
-            table, physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
     const auto ownershipStatus = zone_script_string_ownership::
         TryTransferNextZoneScriptString(
-            detail::ZoneRuntimeMutableAdapterAccess::Ownership(entry));
-    return detail::ZoneRuntimeMutableAdapterAccess::CompleteMutation(
-        table, physicalSlot, key, ownershipStatus);
+            ZoneRuntimeTable::mutableScriptStringOwnership(entry));
+    return table->completeMutableOperation(
+        physicalSlot, key, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryPrepareZoneRuntimeScriptStringCommit(
@@ -836,17 +828,18 @@ ZoneRuntimeTableStatus TryPrepareZoneRuntimeScriptStringCommit(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
+    if (!table)
+        return ZoneRuntimeTableStatus::InvalidArgument;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        detail::ZoneRuntimeMutableAdapterAccess::Authenticate(
-            table, physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
     const auto ownershipStatus = zone_script_string_ownership::
         TryPrepareZoneScriptStringCommit(
-            detail::ZoneRuntimeMutableAdapterAccess::Ownership(entry));
-    return detail::ZoneRuntimeMutableAdapterAccess::CompleteMutation(
-        table, physicalSlot, key, ownershipStatus);
+            ZoneRuntimeTable::mutableScriptStringOwnership(entry));
+    return table->completeMutableOperation(
+        physicalSlot, key, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryCommitZoneRuntimeScriptStringsAndAdmit(
@@ -856,18 +849,19 @@ ZoneRuntimeTableStatus TryCommitZoneRuntimeScriptStringsAndAdmit(
     const zone_script_string_ownership::
         ZoneScriptStringAdmissionCallback &admission) noexcept
 {
+    if (!table)
+        return ZoneRuntimeTableStatus::InvalidArgument;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        detail::ZoneRuntimeMutableAdapterAccess::Authenticate(
-            table, physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
     const auto ownershipStatus = zone_script_string_ownership::
         TryCommitZoneScriptStringsAndAdmit(
-            detail::ZoneRuntimeMutableAdapterAccess::Ownership(entry),
+            ZoneRuntimeTable::mutableScriptStringOwnership(entry),
             admission);
-    return detail::ZoneRuntimeMutableAdapterAccess::CompleteMutation(
-        table, physicalSlot, key, ownershipStatus);
+    return table->completeMutableOperation(
+        physicalSlot, key, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringRollback(
@@ -877,18 +871,19 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringRollback(
     const zone_script_string_ownership::
         ZoneScriptStringRollbackCallbacks &callbacks) noexcept
 {
+    if (!table)
+        return ZoneRuntimeTableStatus::InvalidArgument;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        detail::ZoneRuntimeMutableAdapterAccess::Authenticate(
-            table, physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
     const auto ownershipStatus = zone_script_string_ownership::
         TryBeginZoneScriptStringRollback(
-            detail::ZoneRuntimeMutableAdapterAccess::Ownership(entry),
+            ZoneRuntimeTable::mutableScriptStringOwnership(entry),
             callbacks);
-    return detail::ZoneRuntimeMutableAdapterAccess::CompleteMutation(
-        table, physicalSlot, key, ownershipStatus);
+    return table->completeMutableOperation(
+        physicalSlot, key, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryRollbackNextZoneRuntimeScriptString(
@@ -896,17 +891,18 @@ ZoneRuntimeTableStatus TryRollbackNextZoneRuntimeScriptString(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
+    if (!table)
+        return ZoneRuntimeTableStatus::InvalidArgument;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        detail::ZoneRuntimeMutableAdapterAccess::Authenticate(
-            table, physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
     const auto ownershipStatus = zone_script_string_ownership::
         TryRollbackNextZoneScriptString(
-            detail::ZoneRuntimeMutableAdapterAccess::Ownership(entry));
-    return detail::ZoneRuntimeMutableAdapterAccess::CompleteMutation(
-        table, physicalSlot, key, ownershipStatus);
+            ZoneRuntimeTable::mutableScriptStringOwnership(entry));
+    return table->completeMutableOperation(
+        physicalSlot, key, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryFinishZoneRuntimeScriptStringAbandonment(
@@ -914,17 +910,18 @@ ZoneRuntimeTableStatus TryFinishZoneRuntimeScriptStringAbandonment(
     const std::uint32_t physicalSlot,
     const zone_load::ZoneLoadContextKey &key) noexcept
 {
+    if (!table)
+        return ZoneRuntimeTableStatus::InvalidArgument;
     ZoneRuntimeEntry *entry = nullptr;
     const ZoneRuntimeTableStatus authentication =
-        detail::ZoneRuntimeMutableAdapterAccess::Authenticate(
-            table, physicalSlot, key, &entry);
+        table->authenticateExactMutableEntry(physicalSlot, key, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
     const auto ownershipStatus = zone_script_string_ownership::
         TryFinishZoneScriptStringAbandonment(
-            detail::ZoneRuntimeMutableAdapterAccess::Ownership(entry));
-    return detail::ZoneRuntimeMutableAdapterAccess::CompleteMutation(
-        table, physicalSlot, key, ownershipStatus);
+            ZoneRuntimeTable::mutableScriptStringOwnership(entry));
+    return table->completeMutableOperation(
+        physicalSlot, key, ownershipStatus);
 }
 
 ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
