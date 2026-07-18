@@ -42,18 +42,23 @@ Fixed in the initial porting implementation:
   names with protocol-length, server-only, path-namespace, pre-open
   revalidation, and resource-cleanup guards. HTTP/www redirect transport remains
   nonfunctional and is still tracked under H4.
-- The PR #55 candidate at `e9051955` extends the merged script-string ownership foundation: opaque `RefString` mutation
+- PR #55, merged as `f39e0e4a` from final implementation head `e9051955`, extends the script-string ownership foundation:
+  opaque `RefString` mutation
   authority is private, character folding is defined for every byte value, complete batch admission validates debug
   ownership per live ID, and all nested allocator-lease entries require an exact non-forgeable capability. Both
   namespace-visible friend authority shims are removed; capability storage is constant-initialized and trivially
-  destructible, with no guarded first use or shutdown registration. This remains unmerged and production-neutral;
-  lifecycle and enrollment status belongs in `docs/task.md`.
+  destructible, with no guarded first use or shutdown registration. Exact-head run **29657884407** passed all nine jobs
+  and exact-head hosted Codex review was clean. The merged batch remains production-neutral; lifecycle and enrollment
+  status belongs in `docs/task.md`.
 - Fixed-width atomic migrations cover dvar/script/XAnim/DObj/database/IWD/network,
   skeleton/pose, worker queues, bounded renderer reservations, and DObj/model-surface streams. The live
   debt ledger and current validation evidence are maintained in `docs/task.md`.
 
-Still open: the macro-off `EffectsCore/fx_physics_sidecar.h` test-friend authority leak newly recorded in
-`docs/task.md`, the broader release-disabled assertion audit (H2), reflection/rate
+The macro-off `EffectsCore/fx_physics_sidecar.h` test-friend authority leak now has a validated local, unpushed/unmerged
+candidate at `89b6c384`: both forward/friend declarations are test-macro gated, and a portable expected-failure compile
+probe proves an external same-name definition cannot mutate private sidecar state. Native Release passes **118/118**
+tests, and strict i386/AArch64 positive/negative compile evidence is clean. Still open: publishing and merging that
+candidate, the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.
 

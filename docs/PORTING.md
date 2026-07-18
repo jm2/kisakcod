@@ -22,7 +22,8 @@ Completed foundation work:
 - the audited upstream/gameplay reconciliation, PR #48's report-free script-string ownership foundation, PR #49's
   constructed lifecycle controller, PR #50's failure-atomic script-string initialization hardening, and PR #51's
   generation-keyed runtime table plus PR #52's test-fixture repair, PR #53's authenticated memory-tree validation
-  lease, and PR #54's exact terminal adapters through `8e7fd162`. PR #51 exact-head run
+  lease, PR #54's exact terminal adapters, and PR #55's pointer-free script-string OwnershipBatch through `f39e0e4a`.
+  PR #51 exact-head run
   **29628040709** and post-merge master run
   **29628132007** each passed eight of nine jobs; Windows x86 Debug alone exposed a missing test-fixture
   `MyAssertHandler` definition required by `qcommon/sys_sync.cpp`, while the production targets and other eight jobs
@@ -31,7 +32,8 @@ Completed foundation work:
   **29628940419** passed all nine jobs. PR #53 exact final run **29649484692** passed all nine jobs before squash merge
   `445d436f`; authoritative post-merge master run **29649890520** also passed all nine jobs. PR #54 exact final run
   **29650796617** and authoritative post-merge run **29651211711** passed all nine jobs before and after squash merge
-  `8e7fd162`;
+  `8e7fd162`. PR #55 exact-head run **29657884407** passed all nine jobs, exact-head hosted Codex review was clean,
+  and the production-neutral OwnershipBatch squash-merged as `f39e0e4a`;
 - the merged report-free script-string ownership foundation: dedicated recursive outer DB serialization,
   private journal callbacks, exact ordinary/database-user ownership results, full allocator-backed byte-count/hash/debug
   validation, rejection of packed-length-ambiguous earlier NULs, and failure-atomic memory-tree allocate/query/free
@@ -59,7 +61,7 @@ Completed foundation work:
   callback reentry, stale/swapped binding, foreign-thread exclusion, poisoning, and receipt authentication have dedicated
   runtime/source-contract coverage; the exact GCC Debug suite is **105/105** green. This is not production wiring: the
   stream, registry generation claims, PMem, arena/adapter, aliases/completed objects, real callbacks, and Live-unload
-  route do not use it. All seven frozen raw ownership/sweep sites remain outside it. Candidate `e9051955` now builds the
+  route do not use it. All seven frozen raw ownership/sweep sites remain outside it. Merged PR #55 builds the
   pointer-free string `OwnershipBatch` on the active allocator lease, but typed production integration still must borrow
   or own exact transaction authority and enroll the legacy sites atomically;
 - merged debug-initialization hardening from PR #50. Independent `SL_InitCheckLeaks` calls now retain the
@@ -92,7 +94,7 @@ Completed foundation work:
   leased allocate/query/free operations retain PR #48's bounded mirror-aware touched-path validation. Overflow-safe
   serial/mutation accounting, exclusive same-thread ownership, and fail-closed poisoning reject stale, foreign, nested,
   corrupted, exhausted, or unleased access. A private admission capability reserved production construction for the
-  script-string `OwnershipBatch`; candidate `e9051955` now supplies that batch, still without changing a production caller;
+  script-string `OwnershipBatch`; merged PR #55 now supplies that batch, still without changing a production caller;
 - PR #53 lifetime hardening `b193343b` closes Gemini's valid exact-head `fc496b01` stack UAF finding. The generic
   registry now stores only mirrored by-value address, serial, and Idle/Active/Poisoned/Frozen lifecycle state and never
   dereferences stored stack authority. Independent mirrored TLS identity proves the retained owner acquisition before an
@@ -131,7 +133,8 @@ Completed foundation work:
   repetitions apiece across the ownership/retry/reentry and unsafe-boundary matrix (**400/400** invocations);
   source/security contracts; strict i386 and AArch64 compilation; and `git diff --check`. Exact final run
   **29650796617** and authoritative post-merge run **29651211711** passed all nine jobs;
-- production-neutral script-string OwnershipBatch candidate `e9051955`. The fixed 0x20 standard-layout batch retains
+- merged PR #55 production-neutral script-string OwnershipBatch checkpoint. Implementation head `e9051955` adds a fixed
+  0x20 standard-layout batch that retains
   SCRIPT_STRING before its nested memory-tree lease, pays complete allocator/string validation at Begin and Finish, and
   authorizes only four report-free bounded ownership operations in between. Mirrored by-value outer/serial/nested/
   lifecycle state plus independent TLS proof replace stored stack pointers. Exact abandonment freezes and releases only
@@ -150,16 +153,21 @@ Completed foundation work:
   strict i386/AArch64 production-mode API-seal and fixture compile/link, production-TU cross-compiles, source/security
   contracts, and `git diff --check` pass. The managed runner blocks the new i386 binaries with its established `SIGSYS`;
   hosted Windows remains the executable production-width authority. Two authority/lifetime audits and a portability
-  audit are clean; PR #55 hosted CI and fresh hosted review remain before merge. The batch remains unenrolled and
-  callback-free, restricted to its four typed operations;
+  audit are clean. Exact-head run **29657884407** passed all nine jobs, exact-head hosted Codex review was clean, and
+  PR #55 squash-merged as `f39e0e4a`. The batch remains unenrolled and callback-free, restricted to its four typed
+  operations;
 - the next exact-key mutable runtime-table adapter batch is complete and independently audited locally at `8af5881e`,
   with ten pre/post-authenticated mutations, preserved recoverable status values, publish-after-authentication output,
-  and no public mutable table authority. It remains unpublished until rebased onto PR #55's final merge and documented
-  before PR #56;
-- a production-friend audit found one separate macro-off authority leak in `EffectsCore/fx_physics_sidecar.h`: the
-  test accessor definition is guarded, but its forward/friend declarations are not, allowing an external TU to define
-  the friend and mutate private sidecar state. The next small security PR must guard both declarations and add an
-  expected-failure production compile probe; no other project-owned production friend leak was found;
+  and no public mutable table authority. It remains unpublished until replayed onto PR #55's merged baseline, documented,
+  and published as its own follow-on PR;
+- local physics-sidecar authority-seal candidate `89b6c384` closes the separate macro-off authority leak found by the
+  production-friend audit. Both `SidecarTestAccess` forward/friend declarations are now test-macro gated, and an
+  excluded-from-normal-build macro-off probe recreates the name and must fail when it attempts private ownership and
+  lifecycle mutation. CTest runs the probe serially on all portable hosts, while measured Windows x86 selects it
+  explicitly. Native GCC Release builds and passes **118/118** tests; strict i386/AArch64 test-enabled fixtures compile,
+  and both macro-off target probes fail specifically at the private accesses. Live-FX/security source contracts and
+  `git diff --check` pass. This candidate is rebased locally but remains unpushed and unmerged; no other project-owned
+  production friend leak was found;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -490,9 +498,11 @@ Remaining gates, in implementation order:
    destructor abandonment. It preserves full transaction-boundary validation and PR #48's bounded leased operation paths
    without a production caller. PR #54 merged retry-safe exact-key terminal reset/Live-unload adapters through
    `d2740fb2`/`7764af22`/`dc4aee23`/`74002a69`/`0eac1f2d`, with review cleanups `e8d7a3f6`/`5bee8bba`, as `8e7fd162`;
-   authoritative post-merge run **29651211711** passed all nine jobs. Candidate `e9051955` now gives the string
-   OwnershipBatch the same pointer-free lifetime boundary without production enrollment. Exact keyed mutable runtime
-   adapters are complete locally at `8af5881e` and await rebase/publication after PR #55. Next add durable
+   authoritative post-merge run **29651211711** passed all nine jobs. PR #55 merged the string OwnershipBatch's same
+   pointer-free lifetime boundary without production enrollment as `f39e0e4a`; exact-head run **29657884407** passed
+   all nine jobs and exact-head Codex review was clean. Exact keyed mutable runtime adapters are complete locally at
+   `8af5881e` and await replay/publication on the merged PR #55 baseline. First finish the local sidecar authority-seal
+   candidate `89b6c384`, then add durable
    PMem/stream/pending-copy resources and a borrowed/standalone registry ownership coordinator before atomically
    replacing all seven raw sites. Keep static controller slots and callback metadata outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
@@ -1471,8 +1481,8 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **73% by merged engineering effort**. The merged allocator validation lease
-and terminal adapters plus the production-neutral OwnershipBatch/keyed-adapter candidates do not move the rounded total. Windows x86
+Overall porting progress is approximately **73% by merged engineering effort**. The merged allocator validation lease,
+terminal adapters, and production-neutral OwnershipBatch plus the sidecar-seal/keyed-adapter candidates do not move the rounded total. Windows x86
 is about
 **93%**, shared
 foundations/security about **85%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
@@ -1717,7 +1727,7 @@ the unavailable local Microsoft STL/SDK integration. Runtime coverage includes e
 Finish-wake-and-reject with live storage, torn token/address/serial/lifecycle/retained-auth mirrors, arbitrary matched
 integer addresses, same-thread raw/query/reset/report rejection, output atomicity, invalid pointer/index/type/subtree
 inputs, test-only cleanup, and unrelated canonical destruction. This remains an allocator-only, production-neutral
-prerequisite: candidate `e9051955` now consumes the private constructor for its script-string `OwnershipBatch`, but no
+prerequisite: merged PR #55 consumes the private constructor for its script-string `OwnershipBatch`, but no
 loader or raw ownership site consumes the batch yet. Exact final run **29649484692** passed all nine
 hosted jobs before PR #53 squash-merged as `445d436f`; authoritative post-merge master run **29649890520** also passed
 all nine jobs.
@@ -1741,7 +1751,7 @@ runtime/source selection passes **12/12** under GCC, Clang, `RELEASE_ASSERTS`, a
 apiece across the ownership/retry/reentry and unsafe-boundary matrix (**400/400** invocations), source/security contracts,
 strict i386 and AArch64 compilation, and `git diff --check` also pass.
 
-Candidate `e9051955` adds the script-string OwnershipBatch over the retained allocator lease. Begin retains
+Merged PR #55 implementation head `e9051955` adds the script-string OwnershipBatch over the retained allocator lease. Begin retains
 SCRIPT_STRING then MEMORY_TREE and authenticates the complete allocator/string boundary; Finish repeats that complete
 validation, while the four typed operations use the retained free-list certificate and bounded leased checks. The batch
 stores no pointer authority: mirrored outer/serial/nested/lifecycle globals, independent TLS mirrors, and durable Frozen
@@ -1756,7 +1766,8 @@ private lifetime helper. Legal waiter tests retain storage through owner Finish 
 destructor-abandonment coverage. GCC Release passes **117/117**; focused `RELEASE_ASSERTS`, Clang ASan+UBSan, and TSan
 pass **4/4**; strict i386/AArch64 production-mode API-seal and fixture compile/link, production-TU cross-compiles,
 source/security policy, and `git diff --check` pass. Two exact-head authority/lifetime audits and a portability audit are
-clean; PR #55 hosted CI and fresh hosted review remain. No production caller consumes the batch; same-thread storage
+clean. Exact-head hosted run **29657884407** passed all nine jobs, exact-head hosted Codex review was clean, and PR #55
+squash-merged as `f39e0e4a`. No production caller consumes the batch; same-thread storage
 lifetime and callback-free use of only its four typed operations remain explicit preconditions.
 
 Generation enrollment, stream/PMem/arena/adapter binding, alias/completed-object unpublication, real admission/cleanup
@@ -1764,7 +1775,7 @@ callbacks, and exact-key load/stage/commit routing remain; the terminal reset/Li
 unenrolled. Two `SL_GetStringOfSize`, one `SL_AddUser`, two
 `SL_GetString`, one `SL_TransferSystem`, and one `SL_ShutdownSystem` site are source-frozen outside the controller.
 These are exactly seven total sites; transfer/shutdown implement the global 4 -> 8 sweep and are not additional sites.
-The keyed mutable runtime adapters are complete locally at `8af5881e` but remain unpublished until rebased after PR #55.
+The keyed mutable runtime adapters are complete locally at `8af5881e` but remain unpublished until replayed onto merged PR #55.
 Next add durable production resources and a registry coordinator that borrows exact active
 transaction authority or owns a standalone transaction, then enroll all seven sites atomically. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
@@ -1786,10 +1797,12 @@ whole-segment compressed-finalization boundary remains a
 later integrity item
 because FX reads mid-segment and SND intentionally skips/copies segments. Remaining FX work is checked writer/save-guard
 retirement, broader completed-object/fast-file conversion,
-and that later segment-finalization boundary. A separate hard M4 blocker
-remains: MP `cpose_t::physObjId` and
-`BreakablePiece::physObjId` still truncate ODE pointers into `int32_t`; native-width storage or a token/sidecar is required
-before any native64 engine runtime can be enabled. The
+and that later segment-finalization boundary. Separate hard M4 blockers
+remain: MP `cpose_t::physObjId`, `BreakablePiece::physObjId`, and `DynEntityClient::physObjId` still truncate ODE
+pointers into `int32_t`; the 12-byte DynEntity client image is serialized directly, so it needs an explicit saved mirror
+or generation-checked token rather than naïve widening. SP `cpose_t` is native-width, but physics save/update/shutdown
+paths still narrow it through `int` locals. All three ownership families must be corrected before any native64 engine
+runtime can be enabled. The
 unbounded/alignment-unsafe `Buf_Read<T>` primitive instead has 114 consumers in XAnim/XModel and needs
 a separate transactional `current/end` cursor migration. Detailed live blockers and sequencing remain in
 `docs/task.md` and `docs/CODEBASE_AUDIT.md`.
