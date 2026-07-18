@@ -1395,6 +1395,8 @@ int main(const int argc, char **const argv)
         && std::string_view(argv[1]) == "--unsafe-live-unload")
     {
         const unsigned long parsed = std::strtoul(argv[2], nullptr, 10);
+        if (parsed > kLiveUnloadOperations.size())
+            return 2;
         const bool unknownStatus = parsed == kLiveUnloadOperations.size();
         const std::size_t boundary = unknownStatus ? 0 : parsed;
         TestUnsafeLiveUnloadBoundary(boundary, unknownStatus);
