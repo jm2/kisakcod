@@ -758,7 +758,7 @@ foreach(_marker IN ITEMS
     "static uint8_t mt_freeNodeSizeShadow[MEMORY_NODE_COUNT];"
     "static uint16_t mt_freeTreeHeadShadow[MEMORY_NODE_BITS + 1];"
     "static MT_FreeNodeLinkShadow mt_freeNodeLinkShadow[MEMORY_NODE_COUNT];"
-    "static_assert(sizeof(MT_FreeNodeLinkShadow) == 4);"
+    "RUNTIME_SIZE(MT_FreeNodeLinkShadow, 0x4, 0x4);"
     "static uint32_t mt_freeNodeCountShadow;"
     "static uint32_t mt_freeNodeCountMirror;"
     "static int mt_totalAllocShadow;"

@@ -33,7 +33,7 @@ struct MT_FreeNodeLinkShadow final
     uint16_t prev;
     uint16_t next;
 };
-static_assert(sizeof(MT_FreeNodeLinkShadow) == 4);
+RUNTIME_SIZE(MT_FreeNodeLinkShadow, 0x4, 0x4);
 
 // The free-node treap is the only allocator ownership structure whose links
 // live in storage later handed to callers. Keep a compact authenticated copy

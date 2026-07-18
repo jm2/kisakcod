@@ -58,8 +58,9 @@ work item changes. Do not create session-specific handoff files.
   follow-up commits `2e0643b9` and `74d298f6` close both findings with the bounded mirror/path design and linear sweep
   preflight described above. GCC Release/Debug, Clang Release, ASan+UBSan, strict source/security gates, and GCC i386
   compilation pass; the sandbox blocks only execution of the new i386 binaries with its established `SIGSYS`. Focused
-  final-head GCC Release tests pass independently. Exact hosted CI and review of the documentation head remain the
-  publication gates.
+  tests exposed and corrected one ABI-policy-only direct-literal `sizeof` assertion by using the repository's named
+  `RUNTIME_SIZE` contract; the complete corrected-head GCC Release suite is **103/103** green independently. Exact hosted
+  CI and review of that head remain the publication gates.
 - This candidate is deliberately not the whole-zone controller. The raw database user-4/user-8 paths and global
   4 -> 8 sweep still bypass the serializer; the adapter has no production caller; and a token is not yet bound to one
   journal/key from initialization through terminal finalization/rollback. The former release measurements were about
