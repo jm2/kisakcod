@@ -239,6 +239,77 @@ void AdmitLive(void *const context) noexcept
     OWNERSHIP_CHECK(output == 0xABCDu);
 }
 
+void AdmitNoop(void *) noexcept
+{
+}
+
+bool CommitEmptyFixture(Fixture &fixture, const std::uint32_t slot)
+{
+    if (!fixture.begin(0, slot))
+        return false;
+    return controller::TrySealZoneScriptStrings(&fixture.ownership)
+                == ZoneScriptStringOwnershipStatus::Success
+        && controller::TryBeginZoneScriptStringTransfer(&fixture.ownership)
+                == ZoneScriptStringOwnershipStatus::Success
+        && controller::TryTransferNextZoneScriptString(&fixture.ownership)
+                == ZoneScriptStringOwnershipStatus::Success
+        && controller::TryPrepareZoneScriptStringCommit(&fixture.ownership)
+                == ZoneScriptStringOwnershipStatus::Success
+        && controller::TryCommitZoneScriptStringsAndAdmit(
+               &fixture.ownership, {nullptr, AdmitNoop})
+                == ZoneScriptStringOwnershipStatus::Success;
+}
+
+struct LiveUnloadDriver final
+{
+    Fixture *fixture = nullptr;
+    bool attemptReentry = false;
+    bool attemptedReentry = false;
+    ZoneScriptStringOwnershipStatus reentryStatus =
+        ZoneScriptStringOwnershipStatus::Success;
+    lifecycle::ZoneLoadCleanupOperation retryOperation =
+        lifecycle::ZoneLoadCleanupOperation::ReleaseSlot;
+    bool retried = false;
+    bool freedPhysicalMemory = false;
+    bool observedContextAfterFree = false;
+    std::array<lifecycle::ZoneLoadCleanupOperation, 12> operations{};
+    std::size_t operationCount = 0;
+};
+
+lifecycle::ZoneLoadCleanupCallbackStatus PerformLiveUnload(
+    void *const context,
+    const lifecycle::ZoneLoadCleanupOperation operation) noexcept
+{
+    auto &driver = *static_cast<LiveUnloadDriver *>(context);
+    OWNERSHIP_CHECK(driver.fixture != nullptr);
+    OWNERSHIP_CHECK(driver.operationCount < driver.operations.size());
+    if (driver.operationCount < driver.operations.size())
+        driver.operations[driver.operationCount++] = operation;
+    if (driver.freedPhysicalMemory)
+        driver.observedContextAfterFree = true;
+    if (operation
+        == lifecycle::ZoneLoadCleanupOperation::FreePhysicalMemory)
+    {
+        driver.freedPhysicalMemory = true;
+    }
+    if (driver.attemptReentry && !driver.attemptedReentry && driver.fixture)
+    {
+        driver.attemptedReentry = true;
+        driver.reentryStatus =
+            controller::TryUnloadLiveZoneScriptStringOwnership(
+                &driver.fixture->ownership,
+                &driver.fixture->lifecycleSlot,
+                driver.fixture->key,
+                {&driver, PerformLiveUnload});
+    }
+    if (operation == driver.retryOperation && !driver.retried)
+    {
+        driver.retried = true;
+        return lifecycle::ZoneLoadCleanupCallbackStatus::Retry;
+    }
+    return lifecycle::ZoneLoadCleanupCallbackStatus::Success;
+}
+
 void StageExpected(
     Fixture &fixture,
     const std::uint32_t expectedId,
@@ -429,8 +500,11 @@ void TestPartialRollbackAndCleanupRetry()
         controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
         == ZoneScriptStringOwnershipStatus::Success);
     OWNERSHIP_CHECK(
-        controller::TryResetAbandonedZoneScriptStringOwnership(
-            &fixture.ownership)
+        controller::TryResetTerminalZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            lifecycle::ZoneLoadTerminalKind::Abandoned)
         == ZoneScriptStringOwnershipStatus::Success);
     OWNERSHIP_CHECK(
         fixture.ownership.phase() == ZoneScriptStringOwnershipPhase::Empty);
@@ -607,8 +681,11 @@ void TestAbandonedReceiptAuthentication()
         controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
         == ZoneScriptStringOwnershipStatus::InvalidState);
     OWNERSHIP_CHECK(
-        controller::TryResetAbandonedZoneScriptStringOwnership(
-            &fixture.ownership)
+        controller::TryResetTerminalZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            lifecycle::ZoneLoadTerminalKind::Abandoned)
         == ZoneScriptStringOwnershipStatus::InvalidState);
     OWNERSHIP_CHECK(
         fixture.ownership.phase()
@@ -623,8 +700,11 @@ void TestAbandonedReceiptAuthentication()
         controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
         == ZoneScriptStringOwnershipStatus::InvalidState);
     OWNERSHIP_CHECK(
-        controller::TryResetAbandonedZoneScriptStringOwnership(
-            &fixture.ownership)
+        controller::TryResetTerminalZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            lifecycle::ZoneLoadTerminalKind::Abandoned)
         == ZoneScriptStringOwnershipStatus::InvalidState);
     OWNERSHIP_CHECK(
         fixture.ownership.phase()
@@ -640,8 +720,11 @@ void TestAbandonedReceiptAuthentication()
         controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
         == ZoneScriptStringOwnershipStatus::StaleKey);
     OWNERSHIP_CHECK(
-        controller::TryResetAbandonedZoneScriptStringOwnership(
-            &fixture.ownership)
+        controller::TryResetTerminalZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            originalKey,
+            lifecycle::ZoneLoadTerminalKind::Abandoned)
         == ZoneScriptStringOwnershipStatus::StaleKey);
     OWNERSHIP_CHECK(
         fixture.ownership.phase()
@@ -659,13 +742,150 @@ void TestAbandonedReceiptAuthentication()
         controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
         == ZoneScriptStringOwnershipStatus::StaleKey);
     OWNERSHIP_CHECK(
-        controller::TryResetAbandonedZoneScriptStringOwnership(
-            &fixture.ownership)
+        controller::TryResetTerminalZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            originalKey,
+            lifecycle::ZoneLoadTerminalKind::Abandoned)
         == ZoneScriptStringOwnershipStatus::StaleKey);
     OWNERSHIP_CHECK(
         fixture.ownership.phase()
         == ZoneScriptStringOwnershipPhase::Abandoned);
     OWNERSHIP_CHECK(fixture.ownership.key() == originalKey);
+}
+
+void TestLiveUnloadRetryBindingAndTerminalReset()
+{
+    ResetBackend();
+    Fixture fixture;
+    OWNERSHIP_CHECK(CommitEmptyFixture(fixture, 10));
+    OWNERSHIP_CHECK(
+        fixture.ownership.canonicalForBinding(
+            &fixture.lifecycleSlot, fixture.key));
+
+    LiveUnloadDriver driver{};
+    driver.fixture = &fixture;
+    driver.attemptReentry = true;
+    driver.retryOperation =
+        lifecycle::ZoneLoadCleanupOperation::ReleaseGeometry;
+    const lifecycle::ZoneLoadCleanupCallbacks callbacks{
+        &driver,
+        PerformLiveUnload};
+    OWNERSHIP_CHECK(
+        controller::TryUnloadLiveZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            callbacks)
+        == ZoneScriptStringOwnershipStatus::Retry);
+    OWNERSHIP_CHECK(driver.attemptedReentry);
+    OWNERSHIP_CHECK(
+        driver.reentryStatus == ZoneScriptStringOwnershipStatus::Busy);
+    OWNERSHIP_CHECK(
+        fixture.ownership.phase()
+        == ZoneScriptStringOwnershipPhase::Unloading);
+    OWNERSHIP_CHECK(fixture.ownership.serializerRetained());
+    OWNERSHIP_CHECK(
+        fixture.lifecycleSlot.phase()
+        == lifecycle::ZoneLoadContextPhase::Abandoning);
+    OWNERSHIP_CHECK(
+        fixture.lifecycleSlot.terminalKind()
+        == lifecycle::ZoneLoadTerminalKind::Unloaded);
+    OWNERSHIP_CHECK(
+        fixture.ownership.canonicalForBinding(
+            &fixture.lifecycleSlot, fixture.key));
+
+    LiveUnloadDriver swapped{};
+    swapped.fixture = &fixture;
+    const std::size_t operationCount = driver.operationCount;
+    OWNERSHIP_CHECK(
+        controller::TryUnloadLiveZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            {&swapped, PerformLiveUnload})
+        == ZoneScriptStringOwnershipStatus::InvalidState);
+    OWNERSHIP_CHECK(driver.operationCount == operationCount);
+    OWNERSHIP_CHECK(fixture.ownership.serializerRetained());
+
+    OWNERSHIP_CHECK(
+        controller::TryUnloadLiveZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            callbacks)
+        == ZoneScriptStringOwnershipStatus::Success);
+    OWNERSHIP_CHECK(
+        fixture.ownership.phase()
+        == ZoneScriptStringOwnershipPhase::Unloaded);
+    OWNERSHIP_CHECK(!fixture.ownership.serializerRetained());
+    OWNERSHIP_CHECK(
+        fixture.lifecycleSlot.phase()
+        == lifecycle::ZoneLoadContextPhase::Empty);
+    OWNERSHIP_CHECK(
+        fixture.lifecycleSlot.terminalKind()
+        == lifecycle::ZoneLoadTerminalKind::Unloaded);
+    OWNERSHIP_CHECK(driver.freedPhysicalMemory);
+    OWNERSHIP_CHECK(driver.observedContextAfterFree);
+    OWNERSHIP_CHECK(
+        fixture.ownership.canonicalForBinding(
+            &fixture.lifecycleSlot, fixture.key));
+    OWNERSHIP_CHECK(
+        controller::TryUnloadLiveZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            {})
+        == ZoneScriptStringOwnershipStatus::Success);
+
+    const lifecycle::ZoneLoadContextKey stale{
+        fixture.key.generation + 1,
+        fixture.key.slot,
+        0};
+    OWNERSHIP_CHECK(
+        controller::TryResetTerminalZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            stale,
+            lifecycle::ZoneLoadTerminalKind::Unloaded)
+        == ZoneScriptStringOwnershipStatus::StaleKey);
+    OWNERSHIP_CHECK(
+        controller::TryResetTerminalZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            lifecycle::ZoneLoadTerminalKind::Abandoned)
+        == ZoneScriptStringOwnershipStatus::InvalidPhase);
+    OWNERSHIP_CHECK(
+        controller::TryResetTerminalZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            lifecycle::ZoneLoadTerminalKind::Unloaded)
+        == ZoneScriptStringOwnershipStatus::Success);
+    OWNERSHIP_CHECK(fixture.ownership.isEmptyCanonical());
+    OWNERSHIP_CHECK(
+        controller::TryResetTerminalZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            lifecycle::ZoneLoadTerminalKind::Unloaded)
+        == ZoneScriptStringOwnershipStatus::Success);
+
+    const lifecycle::ZoneLoadContextKey oldKey = fixture.key;
+    lifecycle::ZoneLoadContextKey nextKey{};
+    OWNERSHIP_CHECK(
+        lifecycle::TryClaimZoneLoadContext(
+            &fixture.lifecycleSlot, &nextKey)
+        == lifecycle::ZoneLoadContextStatus::Success);
+    OWNERSHIP_CHECK(nextKey.generation == oldKey.generation + 1);
+    OWNERSHIP_CHECK(
+        controller::TryResetTerminalZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            oldKey,
+            lifecycle::ZoneLoadTerminalKind::Unloaded)
+        == ZoneScriptStringOwnershipStatus::StaleKey);
 }
 } // namespace ownership_test
 
@@ -731,6 +951,7 @@ int main()
     TestBindingAndForeignThreadRejection();
     TestBeginFailureReleasesSerializer();
     TestAbandonedReceiptAuthentication();
+    TestLiveUnloadRetryBindingAndTerminalReset();
     if (failures != 0)
     {
         std::fprintf(

@@ -208,6 +208,14 @@ RUNTIME_SIZE(ZoneLoadContextSlot, 0x10, 0x10);
 // escape hatch around the checked lifecycle API.
 struct ZoneLoadContextSlotTestAccess final
 {
+    static void SetGeneration(
+        ZoneLoadContextSlot *const slot,
+        const std::uint64_t generation) noexcept
+    {
+        if (slot)
+            slot->generation_ = generation;
+    }
+
     static void SetPhase(
         ZoneLoadContextSlot *const slot,
         const ZoneLoadContextPhase phase) noexcept
