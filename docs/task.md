@@ -195,7 +195,8 @@ work item changes. Do not create session-specific handoff files.
   `0eac1f2d` makes fixture parsing exact and pins the public enrollment/receipt contracts. Exact
   Abandoned/Unloaded receipts reset only controller ownership, remain generation-authenticated in the lifecycle/table
   until the next claim, and cannot be replayed across slots or generations. The adapters remain unenrolled: production
-  does not yet claim a generation or route load, staging, commit, PMem, or cleanup through them.
+  does not yet claim a generation or route load, staging, commit, PMem, or cleanup through them. Review cleanup
+  `e8d7a3f6` removes a redundant post-authentication branch without changing the fail-closed result.
 - Terminal-adapter validation passes the complete GCC Release, GCC Debug, and Clang Release suites at **114/114**;
   focused Clang ASan+UBSan and `RELEASE_ASSERTS`; 50 repetitions apiece across the ownership/retry/reentry and unsafe-
   boundary matrix (**400/400** invocations);

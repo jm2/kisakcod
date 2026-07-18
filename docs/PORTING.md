@@ -118,7 +118,8 @@ Completed foundation work:
   Abandoned/Unloaded receipts reset only controller ownership, retain lifecycle/table generation evidence until the next
   claim, and reject cross-slot, stale, ABA, swapped-callback, reentrant, malformed-phase, and corrupt-state use. These
   adapters remain unenrolled: the production loader does not yet claim a generation or route load, staging, commit,
-  PMem, or cleanup through them;
+  PMem, or cleanup through them. Review cleanup `e8d7a3f6` removes a redundant post-authentication branch without
+  changing the fail-closed result;
 - terminal-adapter validation passes the complete GCC Release, GCC Debug, and Clang Release suites at **114/114**;
   focused Clang ASan+UBSan and `RELEASE_ASSERTS`; 50 repetitions apiece across the ownership/retry/reentry and unsafe-
   boundary matrix (**400/400** invocations);
@@ -452,8 +453,8 @@ Remaining gates, in implementation order:
    hardening `b193343b` adds by-value registry authority, TLS-authenticated retained-lock release, and terminal
    destructor abandonment. It preserves full transaction-boundary validation and PR #48's bounded leased operation paths
    without a production caller. The current branch implements retry-safe exact-key terminal reset/Live-unload adapters
-   through `d2740fb2`/`7764af22`/`dc4aee23`/`74002a69`/`0eac1f2d`, also without production enrollment. Give the string
-   OwnershipBatch the same lifetime boundary, then bind real
+   through `d2740fb2`/`7764af22`/`dc4aee23`/`74002a69`/`0eac1f2d`, with review cleanup `e8d7a3f6`, also without
+   production enrollment. Give the string OwnershipBatch the same lifetime boundary, then bind real
    report-free callbacks and enroll all seven raw ownership/sweep paths while keeping static controller slots and callback
    metadata outside PMem with per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded
    scratch implementation when binding the recipes and adapter into production with
@@ -1691,7 +1692,8 @@ lifecycle generation hidden behind an empty durable table key rather than silent
 fixture parsing exact and pins the public enrollment/receipt contracts. Reset makes only the ownership controller
 canonical Empty: lifecycle terminal kind, generation, and the durable table key remain exact receipt evidence until the
 next claim. Retry resumes the exact callback/cursor without replaying prior work; stale, cross-slot, ABA, swapped-
-callback, reentrant, malformed-phase, and corrupt-state paths fail closed.
+callback, reentrant, malformed-phase, and corrupt-state paths fail closed. Review cleanup `e8d7a3f6` removes a redundant
+post-authentication branch without changing that fail-closed behavior.
 
 The complete GCC Release, GCC Debug, and Clang Release suites pass **114/114** at this checkpoint. Focused Clang
 ASan+UBSan and `RELEASE_ASSERTS`, 50 repetitions apiece across the ownership/retry/reentry and unsafe-boundary matrix
