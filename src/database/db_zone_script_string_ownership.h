@@ -23,10 +23,10 @@ namespace db::zone_script_string_ownership
 // The controller supplies global transaction serialization, not independent
 // lifecycle synchronization. Begin's claim precondition, terminal accessors/
 // reset, and destruction still require the lifecycle slot's external
-// serializer. The controller, lifecycle slot, journal control object,
-// callback context, and cleanup metadata must live outside every per-zone
-// allocation that cleanup can free. The entry backing may be per-zone because
-// it is detached before full lifecycle cleanup begins.
+// serializer. The controller, lifecycle slot, callback context, and cleanup
+// metadata must live outside every per-zone allocation that cleanup can free.
+// The journal control object and entry backing may be per-zone because both
+// are detached before full lifecycle cleanup begins.
 //
 // Required lock order for future production wiring is:
 //   script-string transaction -> db_hashCritSect -> script string -> memory tree
