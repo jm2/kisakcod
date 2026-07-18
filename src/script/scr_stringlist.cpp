@@ -141,7 +141,14 @@ uint32_t __cdecl Scr_AllocString(char *s, int sys)
 void SL_Init()
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	iassert(!scrStringGlob.inited);
+	const bool stateAlreadyInitialized = scrStringGlob.inited != 0
+		|| scrStringDebugGlob != nullptr;
+	if (stateAlreadyInitialized)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		iassert(!stateAlreadyInitialized);
+		return;
+	}
 
 	MT_Init();
 
@@ -165,10 +172,18 @@ void SL_Init()
 
 void SL_InitCheckLeaks()
 {
-	iassert(!scrStringDebugGlob);
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	const bool debugAlreadyInitialized = scrStringDebugGlob != nullptr;
+	if (debugAlreadyInitialized)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		iassert(!debugAlreadyInitialized);
+		return;
+	}
 
 	Com_Memset(&scrStringDebugGlobBuf, 0, sizeof(scrStringDebugGlobBuf));
 	scrStringDebugGlob = &scrStringDebugGlobBuf;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 }
 
 static uint32_t SL_ConvertFromRefString(RefString *refString)

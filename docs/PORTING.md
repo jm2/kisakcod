@@ -19,9 +19,9 @@ documented for completeness but are off the current critical path.
 
 Completed foundation work:
 
-- the audited upstream/gameplay reconciliation plus PR #48's report-free script-string ownership foundation through
-  `7d78222d`, with final PR-branch run **29625522997** green across all nine Windows x86 and portable host
-  jobs;
+- the audited upstream/gameplay reconciliation, PR #48's report-free script-string ownership foundation, and PR #49's
+  constructed lifecycle controller through `dcd91cf0`, with authoritative post-merge run **29626811250** green across all
+  nine Windows x86 and portable host jobs;
 - the merged report-free script-string ownership foundation: dedicated recursive outer DB serialization,
   private journal callbacks, exact ordinary/database-user ownership results, full allocator-backed byte-count/hash/debug
   validation, rejection of packed-length-ambiguous earlier NULs, and failure-atomic memory-tree allocate/query/free
@@ -38,7 +38,7 @@ Completed foundation work:
   200 same-length 300-byte interns; a 4,096-singleton legacy allocator probe is about **0.003 ms**, with deterministic
   counters proving no complete partition, forest, free-list, or collision-scratch scan on those legacy paths. The
   adapter has no production caller, and raw user-4/user-8 operations plus the 4 -> 8 sweep remain outside the serializer;
-- an active constructed, production-neutral lifecycle binding at rebased head `cb61ee01`. One fixed controller acquires
+- a merged constructed, production-neutral lifecycle binding from PR #49. One fixed controller acquires
   the dedicated serializer and binds an exact Loading lifecycle slot/key, journal, fixed backing span/count, private
   token serial, and owning thread through terminal return. It stages ordinary references with failure-atomic ID output,
   seals and transfers one occurrence at a time, prepares reversible `CommitReady`, then either publishes lifecycle
@@ -50,6 +50,13 @@ Completed foundation work:
   stream, registry, PMem, arena/adapter, aliases/completed objects, external zone table, real callbacks, and Live-unload
   route do not use it. All seven frozen raw ownership/sweep sites remain outside it, and typed production integration
   still needs the prepared validation lease/batching work;
+- active debug-initialization hardening at rebased head `18d5af0c`. Independent `SL_InitCheckLeaks` calls now retain the
+  recursive script-string lock from state inspection through reset and pointer publication; duplicate calls unlock before
+  diagnostics and leave live accounting untouched even without assertions. `SL_Init` rejects already-published full or
+  debug-only state before allocator/hash mutation. Foreign-thread pause/resume and live-reference helper/full duplicate-
+  init regressions and source-order gates pass at the exact head, including the complete GCC Debug suite **105/105** and
+  focused GCC Release. The helper-only precursor also passed GCC assertion-disabled/`RELEASE_ASSERTS`, Clang ASan+UBSan,
+  and 50 repeated concurrency runs. Exact-head review and all-nine-job CI remain its publication gates;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -365,8 +372,10 @@ Remaining gates, in implementation order:
    `CommitReady` if publication fails, or invoke the unconditional journal finalizer immediately after successful `Live`
    publication. PR #48 now supplies the merged no-report ownership primitives, private journal adapter, dedicated
    serializer, and checked allocator foundation as `7d78222d`; final PR-branch run **29625522997** passed all nine jobs.
-   Active controller head `cb61ee01` completes the constructed production-neutral token/journal/key binding through
-   Live finalization or authenticated abandonment. Next, finish its hosted review/CI, construct the production-owned
+   PR #49 completes the constructed production-neutral token/journal/key binding through Live finalization or
+   authenticated abandonment and squash-merged as `dcd91cf0`; authoritative post-merge run **29626811250** passed all
+   nine jobs.
+   Next, publish the isolated debug-initialization hardening, construct the production-owned
    external zone table, enroll all seven raw ownership/sweep paths, and keep static controller slots and callback metadata
    outside PMem with per-generation native storage inside the named scope. Manually adapt the prepared retained
    validation lease/batch onto PR #48's mirrors and bounded scratch implementation before binding the recipes and adapter
@@ -1346,8 +1355,8 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **72% by merged engineering effort**, or **73% including the active
-constructed controller**. Windows x86 is about **93%**, shared
+Overall porting progress is approximately **73% by merged engineering effort**. The active debug-initialization
+hardening does not move the rounded total. Windows x86 is about **93%**, shared
 foundations/security about **85%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
 **39%**, and macOS arm64 about **30%**. Strict delivered-target status remains **0/5** because no requested
 64-bit/non-Windows engine target is enabled end to end yet.
@@ -1519,9 +1528,9 @@ hosted Codex found no major issue at that head and no review threads remain. PR 
 authoritative post-merge master run **29551990840** passed all nine jobs.
 PR #48 merged the no-report script-string primitives, private journal adapter, dedicated serializer, checked allocator
 surface, bounded legacy topology/interval validation, and linear global-sweep preflight as `7d78222d`; final PR-branch
-run **29625522997** passed all nine jobs. Rebased active head `cb61ee01` adds the constructed production-neutral
-controller:
-it acquires the serializer before journal initialization, authenticates one exact lifecycle slot/key, journal, backing
+run **29625522997** passed all nine jobs. PR #49 added the constructed production-neutral controller and squash-merged
+as `dcd91cf0`; authoritative post-merge run **29626811250** passed all nine jobs. The controller
+acquires the serializer before journal initialization, authenticates one exact lifecycle slot/key, journal, backing
 span/count, token serial, and owner through every operation, stages acquired IDs only after journal publication, and
 drives seal, transfer, reversible prepare, lifecycle `Live`, unconditional journal finalization, infallible admission,
 and serializer release in order. Its abandonment route convergently makes staged IDs unreachable before `Abandoning`,
