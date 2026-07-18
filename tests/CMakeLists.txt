@@ -1372,6 +1372,7 @@ target_compile_features(kisakcod-script-memorytree-try-tests PRIVATE cxx_std_20)
 target_compile_definitions(
     kisakcod-script-memorytree-try-tests PRIVATE
     KISAK_MP
+    KISAK_MEMORY_TREE_VALIDATION_TESTING=1
     KISAK_SCRIPT_STRING_PERF_TESTING=1)
 target_link_libraries(kisakcod-script-memorytree-try-tests PRIVATE Threads::Threads)
 kisakcod_test_warnings(kisakcod-script-memorytree-try-tests)

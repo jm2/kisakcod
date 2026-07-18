@@ -736,6 +736,20 @@ foreach(_marker IN ITEMS
     require_contains(
         _memory_header "${_marker}" "bounded legacy allocator API")
 endforeach()
+foreach(_marker IN ITEMS
+    "enum class MT_ValidationLeaseStatus : uint8_t"
+    "class MT_ValidationLeaseAdmission final"
+    "friend class script_string::OwnershipBatch;"
+    "class MT_ValidationLease final"
+    "RUNTIME_SIZE(MT_ValidationLease, 0x10, 0x10);"
+    "MT_TryBeginValidationLease( MT_ValidationLease *lease, MT_ValidationLeaseAdmission admission) noexcept;"
+    "MT_FinishValidationLease( MT_ValidationLease *lease) noexcept;"
+    "MT_TryAllocIndexLeased( MT_ValidationLease &lease, int numBytes, int type, uint16_t *outIndex) noexcept;"
+    "MT_TryGetAllocationInfoLeased( MT_ValidationLease &lease, uint32_t nodeNum, MT_AllocationInfo *outInfo) noexcept;"
+    "MT_TryFreeIndexLeased( MT_ValidationLease &lease, uint32_t nodeNum, int numBytes) noexcept;")
+    require_contains(
+        _memory_header "${_marker}" "authenticated allocator lease API")
+endforeach()
 extract_slice(
     _memory_source
     "MT_AllocIndexStatus MT_TryAllocIndexImpl("
@@ -767,27 +781,42 @@ foreach(_var IN ITEMS _try_alloc _try_query _try_free)
     endforeach()
 endforeach()
 foreach(_marker IN ITEMS
-    "return MT_TryAllocIndexImpl(numBytes, type, outIndex, true);"
-    "return MT_TryAllocIndexImpl(numBytes, type, outIndex, false);"
-    "return MT_TryGetAllocationInfoImpl(nodeNum, outInfo, true);"
-    "return MT_TryGetAllocationInfoImpl(nodeNum, outInfo, false);"
-    "return MT_TryFreeIndexImpl(nodeNum, numBytes, true);"
-    "return MT_TryFreeIndexImpl(nodeNum, numBytes, false);")
+    "return MT_TryAllocIndexImpl( numBytes, type, outIndex, MT_ValidationPolicy::Complete, nullptr);"
+    "return MT_TryAllocIndexImpl( numBytes, type, outIndex, MT_ValidationPolicy::LegacyLocal, nullptr);"
+    "return MT_TryAllocIndexImpl( numBytes, type, outIndex, MT_ValidationPolicy::Leased, &lease);"
+    "return MT_TryGetAllocationInfoImpl( nodeNum, outInfo, MT_ValidationPolicy::Complete, nullptr);"
+    "return MT_TryGetAllocationInfoImpl( nodeNum, outInfo, MT_ValidationPolicy::LegacyLocal, nullptr);"
+    "return MT_TryGetAllocationInfoImpl( nodeNum, outInfo, MT_ValidationPolicy::Leased, &lease);"
+    "return MT_TryFreeIndexImpl( nodeNum, numBytes, MT_ValidationPolicy::Complete, nullptr);"
+    "return MT_TryFreeIndexImpl( nodeNum, numBytes, MT_ValidationPolicy::LegacyLocal, nullptr);"
+    "return MT_TryFreeIndexImpl( nodeNum, numBytes, MT_ValidationPolicy::Leased, &lease);")
     require_contains(
-        _memory_source "${_marker}" "complete versus bounded allocator scope")
+        _memory_source "${_marker}" "allocator validation policy routing")
 endforeach()
 require_contains(
     _try_alloc
-    "completeValidation ? MT_IsCoreStateValidNoReport() : MT_IsBasicCoreStateValidNoReport()"
-    "bounded allocation validates touched free-tree state")
+    "MT_ValidatePolicyEntryLocked(policy, lease, false)"
+    "allocation selects authenticated validation policy")
 require_contains(
     _try_query
-    "completeValidation ? MT_IsCoreStateValidNoReport() : MT_IsBasicAccountingStateValidNoReport()"
-    "bounded query validates only consulted accounting")
+    "MT_ValidatePolicyEntryLocked(policy, lease, true)"
+    "query selects authenticated validation policy")
 require_contains(
     _try_free
-    "completeValidation ? MT_IsCoreStateValidNoReport() : MT_IsBasicCoreStateValidNoReport()"
-    "bounded free validates touched free-tree state")
+    "MT_ValidatePolicyEntryLocked(policy, lease, false)"
+    "free selects authenticated validation policy")
+foreach(_marker IN ITEMS
+    "enum class MT_ValidationPolicy : uint8_t { Complete, LegacyLocal, Leased, };"
+    "return mt_activeValidationLease != nullptr || mt_activeValidationLeaseSerial != 0"
+    "MT_IsBasicAccountingStateValidNoReport() : MT_IsBasicCoreStateValidNoReport()"
+    "policy == MT_ValidationPolicy::Complete ? MT_IsCoreStateValidNoReport()"
+    "mt_nextValidationLeaseSerial == UINT64_MAX"
+    "MT_ValidationLeaseAccess::CanCountMutation(*lease)"
+    "MT_IsCoreStateValidNoReport(); mt_activeValidationLease = nullptr;"
+    "MT_RejectUnleasedAccessForActiveLeaseLocked()")
+    require_contains(
+        _memory_source "${_marker}" "fail-closed allocator lease policy")
+endforeach()
 foreach(_var IN ITEMS _try_alloc _try_free)
     require_not_contains(
         ${_var}
@@ -974,7 +1003,7 @@ require_contains(
     "raw head removal delegates to synchronized commit")
 require_contains(
     _raw_remove
-    "return MT_RemoveMemoryNodeCommitNoReport( oldNode, static_cast<int>(size));"
+    "MT_RemoveMemoryNodeCommitNoReport( oldNode, static_cast<int>(size));"
     "raw targeted removal delegates to synchronized commit")
 require_contains(
     _raw_add
@@ -1211,6 +1240,13 @@ foreach(_marker IN ITEMS
     "TestLegacyLocalValidationScope()"
     "TestLegacyTouchedIntervalCorruption()"
     "TestLegacyFragmentedForestCost()"
+    "TestValidationLeasePolicies()"
+    "TestValidationLeaseAuthenticationAndOverflow()"
+    "TestValidationLeaseCorruption()"
+    "TestValidationLeaseReentryAndForeignThread()"
+    "foreign allocator access bypassed retained lock"
+    "mutation counter wrapped"
+    "pointer-only registry admitted legacy allocation"
     "legacy query trusted cleared primary metadata"
     "legacy query trusted corrupted allocation count"
     "legacy allocation trusted an orphaned free head"
@@ -1244,6 +1280,10 @@ foreach(_marker IN ITEMS
         _ownership_fixture_target "${_marker}"
         "string ownership runtime fixture wiring")
 endforeach()
+require_contains(
+    _tests
+    "KISAK_MEMORY_TREE_VALIDATION_TESTING=1"
+    "memory-tree lease runtime fixture wiring")
 require_not_contains(
     _ownership_fixture_target
     "\${SRC_DIR}/script/scr_stringlist.cpp"
