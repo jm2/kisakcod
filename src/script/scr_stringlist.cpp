@@ -35,129 +35,6 @@ scrStringDebugGlob_t* scrStringDebugGlob;
 static scrStringDebugGlob_t scrStringDebugGlobBuf;
 static scrStringGlob_t scrStringGlob; // 0x244E300
 
-namespace script_string
-{
-struct OwnershipBatchAccess final
-{
-    [[nodiscard]] static bool IsCanonicalClear(
-        const OwnershipBatch &batch) noexcept
-    {
-        return batch.serial_ == 0 && batch.operationCount_ == 0
-            && !batch.active_ && !batch.poisoned_
-            && batch.reserved_[0] == 0 && batch.reserved_[1] == 0;
-    }
-
-    [[nodiscard]] static bool Active(
-        const OwnershipBatch &batch) noexcept
-    {
-        return batch.active_;
-    }
-
-    [[nodiscard]] static bool Poisoned(
-        const OwnershipBatch &batch) noexcept
-    {
-        return batch.poisoned_;
-    }
-
-    [[nodiscard]] static std::uint64_t Serial(
-        const OwnershipBatch &batch) noexcept
-    {
-        return batch.serial_;
-    }
-
-    [[nodiscard]] static std::uint32_t OperationCount(
-        const OwnershipBatch &batch) noexcept
-    {
-        return batch.operationCount_;
-    }
-
-    [[nodiscard]] static bool ReservedClear(
-        const OwnershipBatch &batch) noexcept
-    {
-        return batch.reserved_[0] == 0 && batch.reserved_[1] == 0;
-    }
-
-    [[nodiscard]] static MT_ValidationLease &MemoryTreeLease(
-        OwnershipBatch &batch) noexcept
-    {
-        return batch.memoryTreeLease_;
-    }
-
-    [[nodiscard]] static const MT_ValidationLease &MemoryTreeLease(
-        const OwnershipBatch &batch) noexcept
-    {
-        return batch.memoryTreeLease_;
-    }
-
-    [[nodiscard]] static MT_ValidationLeaseStatus TryBeginMemoryTreeLease(
-        MT_ValidationLease &lease) noexcept
-    {
-        return OwnershipBatch::TryBeginMemoryTreeLease(lease);
-    }
-
-    [[nodiscard]] static MT_ValidationLeaseStatus FinishMemoryTreeLease(
-        MT_ValidationLease &lease) noexcept
-    {
-        return OwnershipBatch::FinishMemoryTreeLease(lease);
-    }
-
-    [[nodiscard]] static MT_AllocIndexStatus TryAllocateMemoryTreeIndex(
-        MT_ValidationLease &lease,
-        const int numBytes,
-        const int type,
-        std::uint16_t *const outIndex) noexcept
-    {
-        return OwnershipBatch::TryAllocateMemoryTreeIndex(
-            lease, numBytes, type, outIndex);
-    }
-
-    [[nodiscard]] static MT_AllocationInfoStatus TryGetMemoryTreeAllocation(
-        MT_ValidationLease &lease,
-        const std::uint32_t nodeNum,
-        MT_AllocationInfo *const outInfo) noexcept
-    {
-        return OwnershipBatch::TryGetMemoryTreeAllocation(
-            lease, nodeNum, outInfo);
-    }
-
-    [[nodiscard]] static MT_FreeIndexStatus TryFreeMemoryTreeIndex(
-        MT_ValidationLease &lease,
-        const std::uint32_t nodeNum,
-        const int numBytes) noexcept
-    {
-        return OwnershipBatch::TryFreeMemoryTreeIndex(
-            lease, nodeNum, numBytes);
-    }
-
-    static void Activate(
-        OwnershipBatch &batch,
-        const std::uint64_t serial) noexcept
-    {
-        batch.serial_ = serial;
-        batch.operationCount_ = 0;
-        batch.active_ = true;
-        batch.poisoned_ = false;
-        batch.reserved_[0] = 0;
-        batch.reserved_[1] = 0;
-    }
-
-    static void Poison(OwnershipBatch &batch) noexcept
-    {
-        batch.poisoned_ = true;
-    }
-
-    static void Clear(OwnershipBatch &batch) noexcept
-    {
-        batch.serial_ = 0;
-        batch.operationCount_ = 0;
-        batch.active_ = false;
-        batch.poisoned_ = false;
-        batch.reserved_[0] = 0;
-        batch.reserved_[1] = 0;
-    }
-};
-} // namespace script_string
-
 static bool SL_TryResolveLegacyTransferTargetNoReport(
 	uint32_t stringValue,
 	RefString** outRefString,
@@ -301,59 +178,6 @@ SL_HasRetainedOwnershipBatchAuthenticationLocked() noexcept
 	return true;
 }
 
-[[nodiscard]] bool SL_OwnsOwnershipBatchLocked(
-	const script_string::OwnershipBatch *const batch) noexcept
-{
-	if (!batch)
-        return false;
-
-    const std::uintptr_t address =
-        reinterpret_cast<std::uintptr_t>(batch);
-    if (sl_activeOwnershipBatchAddress != address
-        || sl_activeOwnershipBatchAddressMirror != address
-        || !SL_IsOwnershipBatchRegistryConsistentLocked())
-    {
-        return false;
-    }
-
-    // Only after the live outer address matches both by-value authorities may
-    // this path read members or derive the nested member's live address.
-    const std::uintptr_t nestedLeaseAddress =
-        reinterpret_cast<std::uintptr_t>(
-            &script_string::OwnershipBatchAccess::MemoryTreeLease(*batch));
-    return sl_activeOwnershipBatchNestedLeaseAddress == nestedLeaseAddress
-        && sl_activeOwnershipBatchNestedLeaseAddressMirror
-            == nestedLeaseAddress
-        && script_string::OwnershipBatchAccess::Active(*batch)
-        && script_string::OwnershipBatchAccess::Serial(*batch) != 0
-        && script_string::OwnershipBatchAccess::Serial(*batch)
-            == sl_activeOwnershipBatchSerial
-        && script_string::OwnershipBatchAccess::ReservedClear(*batch);
-}
-
-#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
-[[nodiscard]] bool SL_RegistryNamesOwnershipBatchStorageLocked(
-	const script_string::OwnershipBatch *const batch) noexcept
-{
-	if (!batch || SL_IsOwnershipBatchBoundaryFrozenLocked())
-		return false;
-	const std::uintptr_t address =
-		reinterpret_cast<std::uintptr_t>(batch);
-	if (sl_activeOwnershipBatchAddress != address
-		|| sl_activeOwnershipBatchAddressMirror != address
-		|| !SL_IsOwnershipBatchRegistryConsistentLocked())
-	{
-		return false;
-	}
-	const std::uintptr_t nestedLeaseAddress =
-		reinterpret_cast<std::uintptr_t>(
-			&script_string::OwnershipBatchAccess::MemoryTreeLease(*batch));
-	return sl_activeOwnershipBatchNestedLeaseAddress == nestedLeaseAddress
-		&& sl_activeOwnershipBatchNestedLeaseAddressMirror
-			== nestedLeaseAddress;
-}
-#endif
-
 [[nodiscard]] bool SL_IsAuthorizedOwnershipLeaseLocked(
 	MT_ValidationLease *const lease) noexcept
 {
@@ -400,24 +224,6 @@ void SL_FreezeOwnershipBatchBoundaryLocked() noexcept
     sl_activeOwnershipBatchNestedLeaseAddressMirror = 0;
     sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Frozen;
     sl_ownershipBatchLifecycleMirror = SL_OwnershipBatchLifecycle::Frozen;
-}
-
-void SL_PoisonOwnershipBatchLocked(
-    script_string::OwnershipBatch *const batch) noexcept
-{
-	if (!SL_HasOwnershipBatchRegistryActivityLocked()
-		|| SL_IsOwnershipBatchBoundaryFrozenLocked())
-	{
-		return;
-	}
-
-	// Torn authority can poison pointer-free lifecycle state, but only a fully
-	// authenticated explicit live token may be written through.
-	if (SL_OwnsOwnershipBatchLocked(batch))
-		script_string::OwnershipBatchAccess::Poison(*batch);
-	sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
-	sl_ownershipBatchLifecycleMirror =
-		SL_OwnershipBatchLifecycle::Poisoned;
 }
 
 [[nodiscard]] bool SL_IsOwnershipBatchActiveNoReport() noexcept
@@ -515,6 +321,16 @@ enum class SL_ValidationScope : uint8_t
 	Leased,
 };
 
+[[nodiscard]] bool SL_IsValidationAuthorityWellFormed(
+	const SL_ValidationScope scope,
+	const MT_ValidationLease *const validationLease,
+	const MT_ValidationLeaseAdmission *const admission) noexcept
+{
+	return scope == SL_ValidationScope::Leased
+		? validationLease != nullptr && admission != nullptr
+		: validationLease == nullptr && admission == nullptr;
+}
+
 constexpr uint32_t kHashEntryBits = HASH_STAT_MASK | UINT32_C(0xFFFF);
 
 bool SL_IsHashEntryEncodingValidNoReport(const HashEntry &entry) noexcept
@@ -527,7 +343,8 @@ bool SL_TryGetAllocatedStringByteCountForScopeNoReport(
 	RefString** outRefString,
 	uint32_t* outByteCount,
 	SL_ValidationScope scope,
-	MT_ValidationLease* validationLease = nullptr) noexcept;
+	MT_ValidationLease* validationLease = nullptr,
+	const MT_ValidationLeaseAdmission* admission = nullptr) noexcept;
 bool SL_IsLegacyLookupHashStateValidNoReport(uint32_t hash) noexcept;
 bool SL_IsCompleteSystemSweepStateValidNoReport() noexcept;
 bool SL_TryFreeSystemSweepEntryNoReport(
@@ -1075,7 +892,8 @@ bool SL_IsInternHashStateValidForScopeNoReport(
 	uint32_t hash,
 	SL_ValidationScope scope,
 	bool validateFreeList,
-	MT_ValidationLease* validationLease = nullptr) noexcept;
+	MT_ValidationLease* validationLease = nullptr,
+	const MT_ValidationLeaseAdmission* admission = nullptr) noexcept;
 void SL_SetFreeListCertificateMemberNoReport(
 	uint32_t entryIndex,
 	bool member) noexcept;
@@ -1121,8 +939,14 @@ MT_AllocIndexStatus SL_TryAllocateStringMemoryNoReport(
 	const int type,
 	uint16_t* const outIndex,
 	const SL_ValidationScope scope,
-	MT_ValidationLease* const validationLease) noexcept
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
 {
+	if (!SL_IsValidationAuthorityWellFormed(
+			scope, validationLease, admission))
+	{
+		return MT_AllocIndexStatus::UnsafeFailure;
+	}
 	switch (scope)
 	{
 	case SL_ValidationScope::Complete:
@@ -1134,10 +958,8 @@ MT_AllocIndexStatus SL_TryAllocateStringMemoryNoReport(
 			? MT_AllocIndexStatus::UnsafeFailure
 			: MT_TryAllocIndexLegacy(numBytes, type, outIndex);
 	case SL_ValidationScope::Leased:
-		return validationLease
-			? script_string::OwnershipBatchAccess::TryAllocateMemoryTreeIndex(
-				*validationLease, numBytes, type, outIndex)
-			: MT_AllocIndexStatus::UnsafeFailure;
+		return MT_TryAllocIndexLeased(
+			*validationLease, numBytes, type, outIndex, *admission);
 	}
 	return MT_AllocIndexStatus::UnsafeFailure;
 }
@@ -1146,8 +968,14 @@ MT_FreeIndexStatus SL_TryFreeStringMemoryNoReport(
 	const uint32_t stringValue,
 	const int numBytes,
 	const SL_ValidationScope scope,
-	MT_ValidationLease* const validationLease) noexcept
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
 {
+	if (!SL_IsValidationAuthorityWellFormed(
+			scope, validationLease, admission))
+	{
+		return MT_FreeIndexStatus::UnsafeFailure;
+	}
 	switch (scope)
 	{
 	case SL_ValidationScope::Complete:
@@ -1159,10 +987,8 @@ MT_FreeIndexStatus SL_TryFreeStringMemoryNoReport(
 			? MT_FreeIndexStatus::UnsafeFailure
 			: MT_TryFreeIndexLegacy(stringValue, numBytes);
 	case SL_ValidationScope::Leased:
-		return validationLease
-			? script_string::OwnershipBatchAccess::TryFreeMemoryTreeIndex(
-				*validationLease, stringValue, numBytes)
-			: MT_FreeIndexStatus::UnsafeFailure;
+		return MT_TryFreeIndexLeased(
+			*validationLease, stringValue, numBytes, *admission);
 	}
 	return MT_FreeIndexStatus::UnsafeFailure;
 }
@@ -1174,8 +1000,14 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 	int type,
 	uint32_t* outStringValue,
 	const SL_ValidationScope validationScope,
-	MT_ValidationLease* const validationLease = nullptr) noexcept
+	MT_ValidationLease* const validationLease = nullptr,
+	const MT_ValidationLeaseAdmission* const admission = nullptr) noexcept
 {
+	if (!SL_IsValidationAuthorityWellFormed(
+			validationScope, validationLease, admission))
+	{
+		return SL_InternStatus::UnsafeFailure;
+	}
 	PROF_SCOPED("SL_GetStringOfSize");
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 	const bool entryAuthorized =
@@ -1217,7 +1049,7 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 	}
 	const bool hashStateValid =
 		SL_IsInternHashStateValidForScopeNoReport(
-			hash, validationScope, true, validationLease);
+			hash, validationScope, true, validationLease, admission);
 	if (!hashStateValid)
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -1243,7 +1075,8 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 				&refStr,
 				&candidateByteCount,
 				validationScope,
-				validationLease))
+				validationLease,
+				admission))
 		{
 			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 			return SL_InternStatus::UnsafeFailure;
@@ -1277,7 +1110,8 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 					&refStr,
 					&candidateByteCount,
 					validationScope,
-					validationLease))
+					validationLease,
+					admission))
 			{
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 				return SL_InternStatus::UnsafeFailure;
@@ -1338,7 +1172,8 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 				type,
 				&allocatedIndex,
 				validationScope,
-				validationLease);
+				validationLease,
+				admission);
 		if (allocationStatus != MT_AllocIndexStatus::Success)
 		{
 			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -1355,7 +1190,8 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 					stringValue,
 					static_cast<int>(len + 4),
 					validationScope,
-					validationLease);
+					validationLease,
+					admission);
 			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 			return cleanupStatus == MT_FreeIndexStatus::Success
 				? SL_InternStatus::UnsafeFailure
@@ -1408,7 +1244,8 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 					type,
 					&allocatedIndex,
 					validationScope,
-					validationLease);
+					validationLease,
+					admission);
 			if (allocationStatus != MT_AllocIndexStatus::Success)
 			{
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -1425,7 +1262,8 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 						stringValue,
 						static_cast<int>(len + 4),
 						validationScope,
-						validationLease);
+						validationLease,
+						admission);
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 				return cleanupStatus == MT_FreeIndexStatus::Success
 					? SL_InternStatus::UnsafeFailure
@@ -1454,7 +1292,8 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 				type,
 				&allocatedIndex,
 				validationScope,
-				validationLease);
+				validationLease,
+				admission);
 			if (allocationStatus != MT_AllocIndexStatus::Success)
 			{
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -1471,7 +1310,8 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 					stringValue,
 					static_cast<int>(len + 4),
 					validationScope,
-					validationLease);
+					validationLease,
+					admission);
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 				return cleanupStatus == MT_FreeIndexStatus::Success
 					? SL_InternStatus::UnsafeFailure
@@ -2218,8 +2058,14 @@ MT_AllocationInfoStatus SL_TryGetAllocationInfoForScopeNoReport(
 	const uint32_t stringValue,
 	MT_AllocationInfo* const outInfo,
 	const SL_ValidationScope scope,
-	MT_ValidationLease* const validationLease) noexcept
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
 {
+	if (!SL_IsValidationAuthorityWellFormed(
+			scope, validationLease, admission))
+	{
+		return MT_AllocationInfoStatus::UnsafeFailure;
+	}
 	switch (scope)
 	{
 	case SL_ValidationScope::Complete:
@@ -2231,10 +2077,8 @@ MT_AllocationInfoStatus SL_TryGetAllocationInfoForScopeNoReport(
 			? MT_AllocationInfoStatus::UnsafeFailure
 			: MT_TryGetAllocationInfoLegacy(stringValue, outInfo);
 	case SL_ValidationScope::Leased:
-		return validationLease
-			? script_string::OwnershipBatchAccess::TryGetMemoryTreeAllocation(
-				*validationLease, stringValue, outInfo)
-			: MT_AllocationInfoStatus::UnsafeFailure;
+		return MT_TryGetAllocationInfoLeased(
+			*validationLease, stringValue, outInfo, *admission);
 	}
 	return MT_AllocationInfoStatus::UnsafeFailure;
 }
@@ -2244,7 +2088,8 @@ bool SL_TryGetAllocatedStringByteCountForScopeNoReport(
 	RefString** const outRefString,
 	uint32_t* const outByteCount,
 	const SL_ValidationScope scope,
-	MT_ValidationLease* const validationLease) noexcept
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
 {
 	if (!outRefString || !outByteCount
 		|| !script_string::IsCurrentRuntimeStringId(stringValue))
@@ -2252,7 +2097,7 @@ bool SL_TryGetAllocatedStringByteCountForScopeNoReport(
 	MT_AllocationInfo allocationInfo{};
 	const MT_AllocationInfoStatus allocationStatus =
 		SL_TryGetAllocationInfoForScopeNoReport(
-			stringValue, &allocationInfo, scope, validationLease);
+			stringValue, &allocationInfo, scope, validationLease, admission);
 	if (allocationStatus
 		!= MT_AllocationInfoStatus::Success
 		|| allocationInfo.reserved != 0)
@@ -2288,7 +2133,8 @@ bool SL_TryGetAllocatedStringHashForScopeNoReport(
 	const uint32_t stringValue,
 	uint32_t* const outHash,
 	const SL_ValidationScope scope,
-	MT_ValidationLease* const validationLease = nullptr) noexcept
+	MT_ValidationLease* const validationLease = nullptr,
+	const MT_ValidationLeaseAdmission* const admission = nullptr) noexcept
 {
 	if (!outHash)
 		return false;
@@ -2299,7 +2145,8 @@ bool SL_TryGetAllocatedStringHashForScopeNoReport(
 			&refString,
 			&byteCount,
 			scope,
-			validationLease))
+			validationLease,
+			admission))
 	{
 		return false;
 	}
@@ -2312,11 +2159,12 @@ bool SL_IsAllocatedStringEntryValidForScopeNoReport(
 	const uint32_t expectedHash,
 	const bool requireExpectedHash,
 	const SL_ValidationScope scope,
-	MT_ValidationLease* const validationLease = nullptr) noexcept
+	MT_ValidationLease* const validationLease = nullptr,
+	const MT_ValidationLeaseAdmission* const admission = nullptr) noexcept
 {
 	uint32_t actualHash = 0;
 	return SL_TryGetAllocatedStringHashForScopeNoReport(
-			stringValue, &actualHash, scope, validationLease)
+			stringValue, &actualHash, scope, validationLease, admission)
 		&& (!requireExpectedHash || actualHash == expectedHash);
 }
 
@@ -2549,11 +2397,13 @@ bool SL_IsInternHashStateValidForScopeNoReport(
 	const uint32_t hash,
 	const SL_ValidationScope scope,
 	const bool validateFreeList,
-	MT_ValidationLease* const validationLease) noexcept
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
 {
 	if (hash == 0 || hash >= STRINGLIST_SIZE)
 		return false;
-	if ((scope == SL_ValidationScope::Leased) != (validationLease != nullptr)
+	if (!SL_IsValidationAuthorityWellFormed(
+			scope, validationLease, admission)
 		|| (validateFreeList && !SL_IsFreeListValidForScopeNoReport(scope)))
 	{
 		return false;
@@ -2582,7 +2432,8 @@ bool SL_IsInternHashStateValidForScopeNoReport(
 					hash,
 					true,
 					scope,
-					validationLease)
+					validationLease,
+					admission)
 				|| !SL_TryRecordStringIdNoReport(entry.u.prev))
 				return false;
 
@@ -2608,7 +2459,8 @@ bool SL_IsInternHashStateValidForScopeNoReport(
 				home.u.prev,
 				&owningHash,
 				scope,
-				validationLease)
+				validationLease,
+				admission)
 			|| owningHash == hash || owningHash == 0
 			|| owningHash >= STRINGLIST_SIZE
 			|| !SL_IsHashEntryEncodingValidNoReport(
@@ -2641,7 +2493,8 @@ bool SL_IsInternHashStateValidForScopeNoReport(
 					owningHash,
 					true,
 					scope,
-					validationLease)
+					validationLease,
+					admission)
 				|| !SL_TryRecordStringIdNoReport(entry.u.prev))
 			{
 				return false;
@@ -2713,12 +2566,13 @@ bool SL_IsLegacyLookupHashStateValidNoReport(const uint32_t hash) noexcept
 
 bool SL_IsCompleteStringStateValidForScopeNoReport(
 	const SL_ValidationScope scope,
-	MT_ValidationLease* const validationLease) noexcept
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission = nullptr) noexcept
 {
 	if (scrStringDebugGlob != &scrStringDebugGlobBuf
 		|| !scrStringGlob.inited
-		|| (scope == SL_ValidationScope::Leased)
-			!= (validationLease != nullptr)
+		|| !SL_IsValidationAuthorityWellFormed(
+			scope, validationLease, admission)
 		|| !SL_IsFreeListHeadValidNoReport())
 	{
 		return false;
@@ -2786,7 +2640,8 @@ bool SL_IsCompleteStringStateValidForScopeNoReport(
 					&refString,
 					&byteCount,
 					scope,
-					validationLease)
+					validationLease,
+					admission)
 				|| GetHashCode(refString->str, byteCount) != owningHash)
 			{
 				return false;
@@ -2884,17 +2739,22 @@ bool SL_TryBuildUnlinkPlanForScopeNoReport(
 	const uint32_t byteCount,
 	SL_UnlinkPlan* const outPlan,
 	const SL_ValidationScope scope,
-	MT_ValidationLease* const validationLease = nullptr) noexcept
+	MT_ValidationLease* const validationLease = nullptr,
+	const MT_ValidationLeaseAdmission* const admission = nullptr) noexcept
 {
 	if (!refString || !outPlan || byteCount == 0
 		|| byteCount > UINT32_C(65531)
-		|| (scope == SL_ValidationScope::Leased)
-			!= (validationLease != nullptr))
+		|| !SL_IsValidationAuthorityWellFormed(
+			scope, validationLease, admission))
 		return false;
 	MT_AllocationInfo targetAllocation{};
 	const MT_AllocationInfoStatus targetStatus =
 		SL_TryGetAllocationInfoForScopeNoReport(
-			stringValue, &targetAllocation, scope, validationLease);
+			stringValue,
+			&targetAllocation,
+			scope,
+			validationLease,
+			admission);
 	if (targetStatus != MT_AllocationInfoStatus::Success
 		|| refString != SL_GetRefStringNoReport(stringValue)
 		|| !SL_IsExactStringAllocationNoReport(
@@ -2931,7 +2791,8 @@ bool SL_TryBuildUnlinkPlanForScopeNoReport(
 					hash,
 					true,
 					scope,
-					validationLease))
+					validationLease,
+					admission))
 			|| !SL_TryRecordStringIdNoReport(entry->u.prev))
 			return false;
 
@@ -3002,17 +2863,22 @@ SL_ResolveStatus SL_TryResolveLiveStringNoReport(
 	const uint32_t stringValue,
 	SL_LiveStringInfo* const outInfo,
 	const SL_ValidationScope scope = SL_ValidationScope::Complete,
-	MT_ValidationLease* const validationLease = nullptr) noexcept
+	MT_ValidationLease* const validationLease = nullptr,
+	const MT_ValidationLeaseAdmission* const admission = nullptr) noexcept
 {
 	if (!outInfo || !script_string::IsCurrentRuntimeStringId(stringValue)
-		|| (scope == SL_ValidationScope::Leased)
-			!= (validationLease != nullptr))
+		|| !SL_IsValidationAuthorityWellFormed(
+			scope, validationLease, admission))
 		return SL_ResolveStatus::NotAllocatedNoChange;
 
 	MT_AllocationInfo allocationInfo{};
 	const MT_AllocationInfoStatus allocationStatus =
 		SL_TryGetAllocationInfoForScopeNoReport(
-			stringValue, &allocationInfo, scope, validationLease);
+			stringValue,
+			&allocationInfo,
+			scope,
+			validationLease,
+			admission);
 	if (allocationStatus == MT_AllocationInfoStatus::NotAllocatedNoChange)
 		return SL_ResolveStatus::NotAllocatedNoChange;
 	if (allocationStatus != MT_AllocationInfoStatus::Success
@@ -3038,7 +2904,8 @@ SL_ResolveStatus SL_TryResolveLiveStringNoReport(
 			info.byteCount,
 			&info.unlink,
 			scope,
-			validationLease))
+			validationLease,
+			admission))
 	{
 		return SL_ResolveStatus::UnsafeFailure;
 	}
@@ -3192,7 +3059,8 @@ bool SL_TryFreeResolvedStringNoReport(
 	const uint32_t stringValue,
 	const SL_LiveStringInfo &info,
 	const SL_ValidationScope scope = SL_ValidationScope::Complete,
-	MT_ValidationLease* const validationLease = nullptr) noexcept
+	MT_ValidationLease* const validationLease = nullptr,
+	const MT_ValidationLeaseAdmission* const admission = nullptr) noexcept
 {
 	const uint32_t packed =
 		scr_string_atomic::Load(SL_RefStringWord(info.refString));
@@ -3203,7 +3071,8 @@ bool SL_TryFreeResolvedStringNoReport(
 			stringValue,
 			static_cast<int>(info.byteCount + kRefStringHeaderSize),
 			scope,
-			validationLease)
+			validationLease,
+			admission)
 			!= MT_FreeIndexStatus::Success)
 	{
 		return false;
@@ -3268,22 +3137,26 @@ namespace script_string
 namespace
 {
 [[nodiscard]] bool SL_IsTypedOwnershipAccessAuthorizedLocked(
-	MT_ValidationLease* const validationLease) noexcept
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
 {
 	return SL_HasOwnershipBatchRegistryActivityLocked()
-		? SL_IsAuthorizedOwnershipLeaseLocked(validationLease)
-		: validationLease == nullptr;
+		? admission != nullptr
+			&& SL_IsAuthorizedOwnershipLeaseLocked(validationLease)
+		: validationLease == nullptr && admission == nullptr;
 }
 
 [[nodiscard]] AcquireResult TryAcquireOrdinaryStringOfSizeInternal(
 	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission,
 	const char* const bytes,
 	const uint32_t byteCount,
 	const int type) noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 	const bool authorized =
-		SL_IsTypedOwnershipAccessAuthorizedLocked(validationLease);
+		SL_IsTypedOwnershipAccessAuthorizedLocked(
+			validationLease, admission);
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	if (!authorized)
 		return {AcquireStatus::UnsafeFailure, 0};
@@ -3306,7 +3179,8 @@ namespace
 			validationLease
 				? SL_ValidationScope::Leased
 				: SL_ValidationScope::Complete,
-			validationLease);
+			validationLease,
+			admission);
 	switch (status)
 	{
 	case SL_InternStatus::Success:
@@ -3330,10 +3204,12 @@ namespace
 
 [[nodiscard]] TransferStatus TryTransferOrdinaryToDatabaseUserInternal(
 	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission,
 	const uint32_t stringId) noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(validationLease))
+	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(
+			validationLease, admission))
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return TransferStatus::UnsafeFailure;
@@ -3357,7 +3233,8 @@ namespace
 			validationLease
 				? SL_ValidationScope::Leased
 				: SL_ValidationScope::Complete,
-			validationLease);
+			validationLease,
+			admission);
 	if (resolveStatus != SL_ResolveStatus::Success)
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -3395,10 +3272,12 @@ namespace
 
 [[nodiscard]] ReleaseStatus TryRemoveOrdinaryReferenceInternal(
 	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission,
 	const uint32_t stringId) noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(validationLease))
+	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(
+			validationLease, admission))
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return ReleaseStatus::UnsafeFailure;
@@ -3422,7 +3301,8 @@ namespace
 			validationLease
 				? SL_ValidationScope::Leased
 				: SL_ValidationScope::Complete,
-			validationLease);
+			validationLease,
+			admission);
 	if (resolveStatus != SL_ResolveStatus::Success)
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -3454,7 +3334,8 @@ namespace
 			validationLease
 				? SL_ValidationScope::Leased
 				: SL_ValidationScope::Complete,
-			validationLease);
+			validationLease,
+			admission);
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return validFree
 		? ReleaseStatus::Success
@@ -3463,10 +3344,12 @@ namespace
 
 [[nodiscard]] ReleaseStatus TryRemoveDatabaseUserReferenceInternal(
 	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission,
 	const uint32_t stringId) noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(validationLease))
+	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(
+			validationLease, admission))
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return ReleaseStatus::UnsafeFailure;
@@ -3490,7 +3373,8 @@ namespace
 			validationLease
 				? SL_ValidationScope::Leased
 				: SL_ValidationScope::Complete,
-			validationLease);
+			validationLease,
+			admission);
 	if (resolveStatus != SL_ResolveStatus::Success)
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -3532,7 +3416,8 @@ namespace
 			validationLease
 				? SL_ValidationScope::Leased
 				: SL_ValidationScope::Complete,
-			validationLease);
+			validationLease,
+			admission);
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return validFree
 		? ReleaseStatus::Success
@@ -3546,46 +3431,97 @@ OwnershipBatch::MakeMemoryTreeLeaseAdmission() noexcept
     return MT_ValidationLeaseAdmission::Canonical();
 }
 
-MT_ValidationLeaseStatus OwnershipBatch::TryBeginMemoryTreeLease(
-    MT_ValidationLease &lease) noexcept
+bool OwnershipBatch::isCanonicalClearNoLock() const noexcept
 {
-    return MT_TryBeginValidationLease(
-        &lease, MakeMemoryTreeLeaseAdmission());
+	return serial_ == 0 && operationCount_ == 0
+		&& !active_ && !poisoned_
+		&& reserved_[0] == 0 && reserved_[1] == 0;
 }
 
-MT_ValidationLeaseStatus OwnershipBatch::FinishMemoryTreeLease(
-    MT_ValidationLease &lease) noexcept
+bool OwnershipBatch::ownsRegistryNoLock() const noexcept
 {
-    return MT_FinishValidationLease(
-        &lease, MakeMemoryTreeLeaseAdmission());
+	const std::uintptr_t address =
+		reinterpret_cast<std::uintptr_t>(this);
+	if (sl_activeOwnershipBatchAddress != address
+		|| sl_activeOwnershipBatchAddressMirror != address
+		|| !SL_IsOwnershipBatchRegistryConsistentLocked())
+	{
+		return false;
+	}
+
+	// Only after both by-value outer authorities name this explicit live
+	// object may the token or its nested member be read.
+	const std::uintptr_t nestedLeaseAddress =
+		reinterpret_cast<std::uintptr_t>(&memoryTreeLease_);
+	return sl_activeOwnershipBatchNestedLeaseAddress == nestedLeaseAddress
+		&& sl_activeOwnershipBatchNestedLeaseAddressMirror
+			== nestedLeaseAddress
+		&& active_ && serial_ != 0
+		&& serial_ == sl_activeOwnershipBatchSerial
+		&& reserved_[0] == 0 && reserved_[1] == 0;
 }
 
-MT_AllocIndexStatus OwnershipBatch::TryAllocateMemoryTreeIndex(
-    MT_ValidationLease &lease,
-    const int numBytes,
-    const int type,
-    std::uint16_t *const outIndex) noexcept
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+bool OwnershipBatch::registryNamesStorageNoLock() const noexcept
 {
-    return MT_TryAllocIndexLeased(
-        lease, numBytes, type, outIndex, MakeMemoryTreeLeaseAdmission());
+	if (SL_IsOwnershipBatchBoundaryFrozenLocked())
+		return false;
+	const std::uintptr_t address =
+		reinterpret_cast<std::uintptr_t>(this);
+	if (sl_activeOwnershipBatchAddress != address
+		|| sl_activeOwnershipBatchAddressMirror != address
+		|| !SL_IsOwnershipBatchRegistryConsistentLocked())
+	{
+		return false;
+	}
+	const std::uintptr_t nestedLeaseAddress =
+		reinterpret_cast<std::uintptr_t>(&memoryTreeLease_);
+	return sl_activeOwnershipBatchNestedLeaseAddress == nestedLeaseAddress
+		&& sl_activeOwnershipBatchNestedLeaseAddressMirror
+			== nestedLeaseAddress;
+}
+#endif
+
+void OwnershipBatch::activateNoLock(const std::uint64_t serial) noexcept
+{
+	serial_ = serial;
+	operationCount_ = 0;
+	active_ = true;
+	poisoned_ = false;
+	reserved_[0] = 0;
+	reserved_[1] = 0;
 }
 
-MT_AllocationInfoStatus OwnershipBatch::TryGetMemoryTreeAllocation(
-    MT_ValidationLease &lease,
-    const std::uint32_t nodeNum,
-    MT_AllocationInfo *const outInfo) noexcept
+void OwnershipBatch::poisonNoLock() noexcept
 {
-    return MT_TryGetAllocationInfoLeased(
-        lease, nodeNum, outInfo, MakeMemoryTreeLeaseAdmission());
+	poisoned_ = true;
 }
 
-MT_FreeIndexStatus OwnershipBatch::TryFreeMemoryTreeIndex(
-    MT_ValidationLease &lease,
-    const std::uint32_t nodeNum,
-    const int numBytes) noexcept
+void OwnershipBatch::clearNoLock() noexcept
 {
-    return MT_TryFreeIndexLeased(
-        lease, nodeNum, numBytes, MakeMemoryTreeLeaseAdmission());
+	serial_ = 0;
+	operationCount_ = 0;
+	active_ = false;
+	poisoned_ = false;
+	reserved_[0] = 0;
+	reserved_[1] = 0;
+}
+
+void OwnershipBatch::poisonBoundaryLocked() noexcept
+{
+	if (!SL_HasOwnershipBatchRegistryActivityLocked()
+		|| SL_IsOwnershipBatchBoundaryFrozenLocked())
+	{
+		return;
+	}
+
+	// Torn authority can poison pointer-free lifecycle state, but only a fully
+	// authenticated explicit live token may be written through.
+	if (ownsRegistryNoLock())
+		poisonNoLock();
+	sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+	sl_ownershipBatchLifecycleMirror =
+		SL_OwnershipBatchLifecycle::Poisoned;
 }
 
 bool OwnershipBatch::canOperateNoLock() const noexcept
@@ -3602,12 +3538,10 @@ bool OwnershipBatch::canOperateNoLock() const noexcept
 
 bool OwnershipBatch::tryAuthenticateOperationLocked() noexcept
 {
-	const bool authenticated = SL_OwnsOwnershipBatchLocked(this)
+	const bool authenticated = ownsRegistryNoLock()
 		&& canOperateNoLock();
 	if (!authenticated)
-	{
-		SL_PoisonOwnershipBatchLocked(this);
-	}
+		poisonBoundaryLocked();
 	return authenticated;
 }
 
@@ -3632,7 +3566,7 @@ OwnershipBatch::~OwnershipBatch() noexcept
 	}
 
 	const bool ownsRetainedScriptAcquisition =
-		SL_OwnsOwnershipBatchLocked(this);
+		ownsRegistryNoLock();
 	bool releasedNestedAcquisition = false;
 	if (ownsRetainedScriptAcquisition)
 	{
@@ -3645,11 +3579,11 @@ OwnershipBatch::~OwnershipBatch() noexcept
 		if (releasedNestedAcquisition)
 		{
 			SL_ClearRetainedOwnershipBatchAuthenticationLocked();
-			OwnershipBatchAccess::Clear(*this);
+			clearNoLock();
 		}
 		else
 		{
-			OwnershipBatchAccess::Poison(*this);
+			poisonNoLock();
 		}
 	}
 	else
@@ -3668,8 +3602,7 @@ OwnershipBatch::~OwnershipBatch() noexcept
 bool OwnershipBatch::active() const noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	const bool value = SL_OwnsOwnershipBatchLocked(this)
-		&& OwnershipBatchAccess::Active(*this);
+	const bool value = ownsRegistryNoLock() && active_;
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return value;
 }
@@ -3677,9 +3610,9 @@ bool OwnershipBatch::active() const noexcept
 bool OwnershipBatch::poisoned() const noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	const bool readable = SL_OwnsOwnershipBatchLocked(this);
+	const bool readable = ownsRegistryNoLock();
 	const bool value = readable
-		? (OwnershipBatchAccess::Poisoned(*this)
+		? (poisoned_
 			|| sl_ownershipBatchLifecycle
 				== SL_OwnershipBatchLifecycle::Poisoned
 			|| memoryTreeLease_.poisoned())
@@ -3691,8 +3624,8 @@ bool OwnershipBatch::poisoned() const noexcept
 std::uint64_t OwnershipBatch::serial() const noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	const std::uint64_t value = SL_OwnsOwnershipBatchLocked(this)
-		? OwnershipBatchAccess::Serial(*this)
+	const std::uint64_t value = ownsRegistryNoLock()
+		? serial_
 		: 0;
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return value;
@@ -3701,8 +3634,8 @@ std::uint64_t OwnershipBatch::serial() const noexcept
 std::uint32_t OwnershipBatch::operationCount() const noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	const std::uint32_t value = SL_OwnsOwnershipBatchLocked(this)
-		? OwnershipBatchAccess::OperationCount(*this)
+	const std::uint32_t value = ownsRegistryNoLock()
+		? operationCount_
 		: 0;
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return value;
@@ -3712,7 +3645,7 @@ bool OwnershipBatch::canonicalInactive() const noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 	const bool value = !SL_HasOwnershipBatchRegistryActivityLocked()
-		&& OwnershipBatchAccess::IsCanonicalClear(*this);
+		&& isCanonicalClearNoLock();
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return value;
 }
@@ -3721,8 +3654,8 @@ bool OwnershipBatch::authenticates(const std::uint64_t serial) const noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 	const bool value = serial != 0
-		&& SL_OwnsOwnershipBatchLocked(this)
-		&& OwnershipBatchAccess::Serial(*this) == serial;
+		&& ownsRegistryNoLock()
+		&& serial_ == serial;
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return value;
 }
@@ -3732,7 +3665,7 @@ bool OwnershipBatch::ownsMemoryTreeLease(
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 	const bool value = lease
-		&& SL_OwnsOwnershipBatchLocked(this)
+		&& ownsRegistryNoLock()
 		&& reinterpret_cast<std::uintptr_t>(lease)
 			== sl_activeOwnershipBatchNestedLeaseAddress
 		&& reinterpret_cast<std::uintptr_t>(lease)
@@ -3742,6 +3675,20 @@ bool OwnershipBatch::ownsMemoryTreeLease(
 }
 
 #if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+MT_ValidationLease &OwnershipBatch::MemoryTreeLeaseForTesting() noexcept
+{
+	return memoryTreeLease_;
+}
+
+void OwnershipBatch::ActivateForTesting(
+	const std::uint64_t serial) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (!SL_HasOwnershipBatchRegistryActivityLocked())
+		activateNoLock(serial);
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+}
+
 void OwnershipBatch::SetAuthenticationFieldsForTesting(
 	const std::uint64_t serial,
 	const std::uint8_t reserved0,
@@ -3749,7 +3696,7 @@ void OwnershipBatch::SetAuthenticationFieldsForTesting(
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 	if (!SL_HasOwnershipBatchRegistryActivityLocked()
-		|| SL_RegistryNamesOwnershipBatchStorageLocked(this))
+		|| registryNamesStorageNoLock())
 	{
 		serial_ = serial;
 		reserved_[0] = reserved0;
@@ -3763,7 +3710,7 @@ void OwnershipBatch::SetOperationCountForTesting(
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 	if (!SL_HasOwnershipBatchRegistryActivityLocked()
-		|| SL_RegistryNamesOwnershipBatchStorageLocked(this))
+		|| registryNamesStorageNoLock())
 	{
 		operationCount_ = operationCount;
 	}
@@ -3775,7 +3722,7 @@ void OwnershipBatch::SetMemoryTreeMutationCountForTesting(
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 	if (!SL_HasOwnershipBatchRegistryActivityLocked()
-		|| SL_RegistryNamesOwnershipBatchStorageLocked(this))
+		|| registryNamesStorageNoLock())
 	{
 		memoryTreeLease_.SetMutationCountForTesting(mutationCount);
 	}
@@ -3919,8 +3866,10 @@ OwnershipBatchStatus TryBeginOwnershipBatch(
 			: OwnershipBatchStatus::UnsafeFailure;
 	}
 	// Registry/frozen state is checked before the first supplied-token member
-	// read, so a waiter released by abandonment never touches dead storage.
-	if (!OwnershipBatchAccess::IsCanonicalClear(*batch))
+	// read, so a terminal boundary rejects a stale pointer value without
+	// dereferencing it. Callers must still honor OwnershipBatch's storage-
+	// lifetime contract.
+	if (!batch->isCanonicalClearNoLock())
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return OwnershipBatchStatus::InvalidToken;
@@ -3936,10 +3885,11 @@ OwnershipBatchStatus TryBeginOwnershipBatch(
 		return OwnershipBatchStatus::UnsafeFailure;
 	}
 
-	MT_ValidationLease &memoryTreeLease =
-		OwnershipBatchAccess::MemoryTreeLease(*batch);
+	const MT_ValidationLeaseAdmission &admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
+	MT_ValidationLease &memoryTreeLease = batch->memoryTreeLease_;
 	const MT_ValidationLeaseStatus memoryStatus =
-		OwnershipBatchAccess::TryBeginMemoryTreeLease(memoryTreeLease);
+		MT_TryBeginValidationLease(&memoryTreeLease, admission);
 	if (memoryStatus != MT_ValidationLeaseStatus::Success)
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -3957,15 +3907,15 @@ OwnershipBatchStatus TryBeginOwnershipBatch(
 	}
 
 	if (!SL_IsCompleteStringStateValidForScopeNoReport(
-			SL_ValidationScope::Leased, &memoryTreeLease))
+			SL_ValidationScope::Leased, &memoryTreeLease, &admission))
 	{
-		(void)OwnershipBatchAccess::FinishMemoryTreeLease(memoryTreeLease);
+		(void)MT_FinishValidationLease(&memoryTreeLease, admission);
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return OwnershipBatchStatus::UnsafeFailure;
 	}
 
 	const std::uint64_t serial = ++sl_nextOwnershipBatchSerial;
-	OwnershipBatchAccess::Activate(*batch, serial);
+	batch->activateNoLock(serial);
 	const std::uintptr_t address =
 		reinterpret_cast<std::uintptr_t>(batch);
 	const std::uintptr_t nestedLeaseAddress =
@@ -3996,36 +3946,40 @@ OwnershipBatchStatus FinishOwnershipBatch(
 
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 	if (!SL_IsOwnershipBatchRegistryConsistentLocked()
-		|| !SL_OwnsOwnershipBatchLocked(batch))
+		|| !batch->ownsRegistryNoLock())
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return OwnershipBatchStatus::InvalidToken;
 	}
 
+	const MT_ValidationLeaseAdmission &admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
 	const bool stringStateValid =
 		SL_IsCompleteStringStateValidForScopeNoReport(
-			SL_ValidationScope::Leased, &batch->memoryTreeLease_);
-	const bool poisoned = OwnershipBatchAccess::Poisoned(*batch)
+			SL_ValidationScope::Leased,
+			&batch->memoryTreeLease_,
+			&admission);
+	const bool poisoned = batch->poisoned_
 		|| sl_ownershipBatchLifecycle
 			== SL_OwnershipBatchLifecycle::Poisoned
 		|| !stringStateValid;
 	const MT_ValidationLeaseStatus memoryStatus =
-		OwnershipBatchAccess::FinishMemoryTreeLease(
-			batch->memoryTreeLease_);
+		MT_FinishValidationLease(
+			&batch->memoryTreeLease_, admission);
 	if (memoryStatus == MT_ValidationLeaseStatus::InvalidArgument
 		|| memoryStatus == MT_ValidationLeaseStatus::InvalidToken
 		|| memoryStatus == MT_ValidationLeaseStatus::Busy)
 	{
 		// The nested retained acquisition was not released. Preserve the outer
 		// registry and base SCRIPT_STRING acquisition for explicit recovery.
-		SL_PoisonOwnershipBatchLocked(batch);
+		batch->poisonBoundaryLocked();
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return OwnershipBatchStatus::InvalidToken;
 	}
 
 	SL_ClearOwnershipBatchRegistryLocked();
 	SL_ClearRetainedOwnershipBatchAuthenticationLocked();
-	OwnershipBatchAccess::Clear(*batch);
+	batch->clearNoLock();
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return memoryStatus == MT_ValidationLeaseStatus::Success && !poisoned
@@ -4039,7 +3993,7 @@ AcquireResult TryAcquireOrdinaryStringOfSize(
 	const int type) noexcept
 {
 	return TryAcquireOrdinaryStringOfSizeInternal(
-		nullptr, bytes, byteCount, type);
+		nullptr, nullptr, bytes, byteCount, type);
 }
 
 AcquireResult TryAcquireOrdinaryStringOfSize(
@@ -4055,8 +4009,10 @@ AcquireResult TryAcquireOrdinaryStringOfSize(
 		return {AcquireStatus::UnsafeFailure, 0};
 	}
 
+	const MT_ValidationLeaseAdmission &admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
 	const AcquireResult result = TryAcquireOrdinaryStringOfSizeInternal(
-		&batch.memoryTreeLease_, bytes, byteCount, type);
+		&batch.memoryTreeLease_, &admission, bytes, byteCount, type);
 	if (result.status == AcquireStatus::Acquired)
 		++batch.operationCount_;
 	else if (result.status == AcquireStatus::UnsafeFailure)
@@ -4068,7 +4024,8 @@ AcquireResult TryAcquireOrdinaryStringOfSize(
 TransferStatus TryTransferOrdinaryToDatabaseUser(
 	const uint32_t stringId) noexcept
 {
-	return TryTransferOrdinaryToDatabaseUserInternal(nullptr, stringId);
+	return TryTransferOrdinaryToDatabaseUserInternal(
+		nullptr, nullptr, stringId);
 }
 
 TransferStatus TryTransferOrdinaryToDatabaseUser(
@@ -4082,9 +4039,11 @@ TransferStatus TryTransferOrdinaryToDatabaseUser(
 		return TransferStatus::UnsafeFailure;
 	}
 
+	const MT_ValidationLeaseAdmission &admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
 	const TransferStatus status =
 		TryTransferOrdinaryToDatabaseUserInternal(
-			&batch.memoryTreeLease_, stringId);
+			&batch.memoryTreeLease_, &admission, stringId);
 	if (status == TransferStatus::DatabaseUserClaimed
 		|| status == TransferStatus::DuplicateReleased)
 	{
@@ -4101,7 +4060,7 @@ TransferStatus TryTransferOrdinaryToDatabaseUser(
 ReleaseStatus TryRemoveOrdinaryReference(
 	const uint32_t stringId) noexcept
 {
-	return TryRemoveOrdinaryReferenceInternal(nullptr, stringId);
+	return TryRemoveOrdinaryReferenceInternal(nullptr, nullptr, stringId);
 }
 
 ReleaseStatus TryRemoveOrdinaryReference(
@@ -4115,8 +4074,10 @@ ReleaseStatus TryRemoveOrdinaryReference(
 		return ReleaseStatus::UnsafeFailure;
 	}
 
+	const MT_ValidationLeaseAdmission &admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
 	const ReleaseStatus status = TryRemoveOrdinaryReferenceInternal(
-		&batch.memoryTreeLease_, stringId);
+		&batch.memoryTreeLease_, &admission, stringId);
 	if (status == ReleaseStatus::Success)
 		++batch.operationCount_;
 	else if (status == ReleaseStatus::UnsafeFailure)
@@ -4128,7 +4089,8 @@ ReleaseStatus TryRemoveOrdinaryReference(
 ReleaseStatus TryRemoveDatabaseUserReference(
 	const uint32_t stringId) noexcept
 {
-	return TryRemoveDatabaseUserReferenceInternal(nullptr, stringId);
+	return TryRemoveDatabaseUserReferenceInternal(
+		nullptr, nullptr, stringId);
 }
 
 ReleaseStatus TryRemoveDatabaseUserReference(
@@ -4142,8 +4104,10 @@ ReleaseStatus TryRemoveDatabaseUserReference(
 		return ReleaseStatus::UnsafeFailure;
 	}
 
+	const MT_ValidationLeaseAdmission &admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
 	const ReleaseStatus status = TryRemoveDatabaseUserReferenceInternal(
-		&batch.memoryTreeLease_, stringId);
+		&batch.memoryTreeLease_, &admission, stringId);
 	if (status == ReleaseStatus::Success)
 		++batch.operationCount_;
 	else if (status == ReleaseStatus::UnsafeFailure)

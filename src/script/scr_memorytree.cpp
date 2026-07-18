@@ -19,82 +19,6 @@ struct scrMemTreeDebugGlob_t // sizeof=0x20000
 };
 scrMemTreeDebugGlob_t scrMemTreeDebugGlob{};
 
-struct MT_ValidationLeaseAccess final
-{
-    static bool IsCanonicalClear(
-        const MT_ValidationLease &lease) noexcept
-    {
-        return lease.serial_ == 0 && lease.mutationCount_ == 0
-            && !lease.active_ && !lease.poisoned_
-            && lease.reserved_[0] == 0 && lease.reserved_[1] == 0;
-    }
-
-    static bool Active(const MT_ValidationLease &lease) noexcept
-    {
-        return lease.active_;
-    }
-
-    static bool Poisoned(const MT_ValidationLease &lease) noexcept
-    {
-        return lease.poisoned_;
-    }
-
-    static uint64_t Serial(const MT_ValidationLease &lease) noexcept
-    {
-        return lease.serial_;
-    }
-
-    static uint32_t MutationCount(
-        const MT_ValidationLease &lease) noexcept
-    {
-        return lease.mutationCount_;
-    }
-
-    static bool ReservedClear(
-        const MT_ValidationLease &lease) noexcept
-    {
-        return lease.reserved_[0] == 0 && lease.reserved_[1] == 0;
-    }
-
-    static void Activate(
-        MT_ValidationLease &lease,
-        const uint64_t serial) noexcept
-    {
-        lease.serial_ = serial;
-        lease.mutationCount_ = 0;
-        lease.active_ = true;
-        lease.poisoned_ = false;
-        lease.reserved_[0] = 0;
-        lease.reserved_[1] = 0;
-    }
-
-    static void Poison(MT_ValidationLease &lease) noexcept
-    {
-        lease.poisoned_ = true;
-    }
-
-    static bool CanCountMutation(
-        const MT_ValidationLease &lease) noexcept
-    {
-        return lease.mutationCount_ != UINT32_MAX;
-    }
-
-    static void CountMutation(MT_ValidationLease &lease) noexcept
-    {
-        ++lease.mutationCount_;
-    }
-
-    static void Clear(MT_ValidationLease &lease) noexcept
-    {
-        lease.serial_ = 0;
-        lease.mutationCount_ = 0;
-        lease.active_ = false;
-        lease.poisoned_ = false;
-        lease.reserved_[0] = 0;
-        lease.reserved_[1] = 0;
-    }
-};
-
 namespace
 {
 enum class MT_ValidationPolicy : uint8_t
@@ -117,6 +41,41 @@ enum class MT_ValidationLeaseLifecycle : uint8_t
     Active,
     Poisoned,
     Frozen,
+};
+
+// Translation-unit-private, caller-authenticated view used by the generic
+// allocator helpers. Only MT_ValidationLease members and its explicitly
+// friended public lease entries can construct one from private token state;
+// allocator helpers receive no reusable class-level authority.
+struct MT_ValidationLeaseView final
+{
+    const uintptr_t address;
+    const uint64_t serial;
+    uint32_t mutationCount;
+    const bool active;
+    bool poisoned;
+    const bool reservedClear;
+    uint32_t *const liveMutationCount;
+    bool *const livePoisoned;
+
+    [[nodiscard]] bool canCountMutation() const noexcept
+    {
+        return mutationCount != UINT32_MAX;
+    }
+
+    void countMutation() noexcept
+    {
+        ++mutationCount;
+        if (liveMutationCount)
+            *liveMutationCount = mutationCount;
+    }
+
+    void poison() noexcept
+    {
+        poisoned = true;
+        if (livePoisoned)
+            *livePoisoned = true;
+    }
 };
 
 constexpr const char *mt_type_names[22] =
@@ -172,19 +131,19 @@ bool MT_HasValidationLeaseRegistryActivityLocked() noexcept;
 bool MT_IsValidationLeaseRegistryConsistentLocked() noexcept;
 #if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
 bool MT_RegistryNamesValidationLeaseStorageLocked(
-    const MT_ValidationLease *lease) noexcept;
+    uintptr_t leaseAddress) noexcept;
 #endif
 bool MT_CanReadValidationLeaseSnapshotLocked(
-    const MT_ValidationLease *lease) noexcept;
+    const MT_ValidationLeaseView *lease) noexcept;
 bool MT_OwnsValidationLeaseLocked(
-    const MT_ValidationLease *lease) noexcept;
+    const MT_ValidationLeaseView *lease) noexcept;
 bool MT_IsValidationLeasePoisonedLocked(
-    const MT_ValidationLease *lease) noexcept;
+    const MT_ValidationLeaseView *lease) noexcept;
 void MT_ClearValidationLeaseRegistryLocked() noexcept;
 void MT_ClearRetainedValidationLeaseAuthenticationLocked() noexcept;
 void MT_FreezeValidationLeaseBoundaryLocked() noexcept;
 void MT_PoisonValidationLeaseLocked(
-    MT_ValidationLease *lease) noexcept;
+    MT_ValidationLeaseView *lease) noexcept;
 void MT_PoisonActiveValidationLeaseLocked() noexcept;
 bool MT_RejectUnleasedAccessForActiveLeaseLocked() noexcept;
 }
@@ -1007,22 +966,22 @@ bool MT_IsValidationLeaseRegistryConsistentLocked() noexcept
 }
 
 bool MT_CanReadValidationLeaseSnapshotLocked(
-    const MT_ValidationLease *const lease) noexcept
+    const MT_ValidationLeaseView *const lease) noexcept
 {
-    // The address/registry checks inside MT_Owns... precede every token member
-    // read. A waiter that wakes after abandonment therefore rejects dead
-    // storage, while a live token with torn local authentication fails closed.
+    // The view was captured from live caller-owned storage. Authentication
+    // compares its address and copied fields with every registry mirror, so a
+    // torn local token still fails closed without dereferencing stored global
+    // addresses.
     return MT_OwnsValidationLeaseLocked(lease);
 }
 
 #if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
 bool MT_RegistryNamesValidationLeaseStorageLocked(
-    const MT_ValidationLease *const lease) noexcept
+    const uintptr_t leaseAddress) noexcept
 {
-    if (!lease || MT_IsValidationLeaseBoundaryFrozenLocked())
+    if (leaseAddress == 0 || MT_IsValidationLeaseBoundaryFrozenLocked())
         return false;
 
-    const uintptr_t leaseAddress = reinterpret_cast<uintptr_t>(lease);
     return mt_activeValidationLeaseAddress == leaseAddress
         && mt_activeValidationLeaseAddressMirror == leaseAddress
         && MT_IsValidationLeaseRegistryConsistentLocked();
@@ -1030,33 +989,31 @@ bool MT_RegistryNamesValidationLeaseStorageLocked(
 #endif
 
 bool MT_OwnsValidationLeaseLocked(
-    const MT_ValidationLease *const lease) noexcept
+    const MT_ValidationLeaseView *const lease) noexcept
 {
     if (!lease)
         return false;
 
-    const uintptr_t leaseAddress = reinterpret_cast<uintptr_t>(lease);
-    if (mt_activeValidationLeaseAddress != leaseAddress
-        || mt_activeValidationLeaseAddressMirror != leaseAddress
+    if (mt_activeValidationLeaseAddress != lease->address
+        || mt_activeValidationLeaseAddressMirror != lease->address
         || !MT_IsValidationLeaseRegistryConsistentLocked())
     {
         return false;
     }
 
-    return MT_ValidationLeaseAccess::Active(*lease)
-        && MT_ValidationLeaseAccess::Serial(*lease) != 0
-        && MT_ValidationLeaseAccess::Serial(*lease)
-            == mt_activeValidationLeaseSerial
-        && MT_ValidationLeaseAccess::ReservedClear(*lease);
+    return lease->active
+        && lease->serial != 0
+        && lease->serial == mt_activeValidationLeaseSerial
+        && lease->reservedClear;
 }
 
 bool MT_IsValidationLeasePoisonedLocked(
-    const MT_ValidationLease *const lease) noexcept
+    const MT_ValidationLeaseView *const lease) noexcept
 {
     if (!MT_OwnsValidationLeaseLocked(lease))
         return true;
 
-    return MT_ValidationLeaseAccess::Poisoned(*lease)
+    return lease->poisoned
         || mt_validationLeaseLifecycle
             == MT_ValidationLeaseLifecycle::Poisoned;
 }
@@ -1095,11 +1052,11 @@ void MT_FreezeValidationLeaseBoundaryLocked() noexcept
 }
 
 void MT_PoisonValidationLeaseLocked(
-    MT_ValidationLease *const lease) noexcept
+    MT_ValidationLeaseView *const lease) noexcept
 {
     if (MT_OwnsValidationLeaseLocked(lease))
     {
-        MT_ValidationLeaseAccess::Poison(*lease);
+        lease->poison();
         mt_validationLeaseLifecycle =
             MT_ValidationLeaseLifecycle::Poisoned;
         mt_validationLeaseLifecycleMirror =
@@ -1132,7 +1089,7 @@ bool MT_RejectUnleasedAccessForActiveLeaseLocked() noexcept
 
 MT_PolicyEntryStatus MT_ValidatePolicyEntryLocked(
     const MT_ValidationPolicy policy,
-    MT_ValidationLease *const lease,
+    MT_ValidationLeaseView *const lease,
     const bool query) noexcept
 {
     if (policy == MT_ValidationPolicy::Leased)
@@ -1147,7 +1104,7 @@ MT_PolicyEntryStatus MT_ValidatePolicyEntryLocked(
             : MT_IsBasicCoreStateValidNoReport();
         if (!locallyValid)
         {
-            MT_ValidationLeaseAccess::Poison(*lease);
+            lease->poison();
             return MT_PolicyEntryStatus::UnsafeFailure;
         }
         return MT_PolicyEntryStatus::Success;
@@ -1168,13 +1125,13 @@ MT_PolicyEntryStatus MT_ValidatePolicyEntryLocked(
 
 bool MT_CanCommitPolicyMutationLocked(
     const MT_ValidationPolicy policy,
-    MT_ValidationLease *const lease) noexcept
+    MT_ValidationLeaseView *const lease) noexcept
 {
     if (policy != MT_ValidationPolicy::Leased)
         return true;
     if (!MT_OwnsValidationLeaseLocked(lease)
         || MT_IsValidationLeasePoisonedLocked(lease)
-        || !MT_ValidationLeaseAccess::CanCountMutation(*lease))
+        || !lease->canCountMutation())
     {
         MT_PoisonValidationLeaseLocked(lease);
         return false;
@@ -1184,15 +1141,15 @@ bool MT_CanCommitPolicyMutationLocked(
 
 void MT_RecordPolicyMutationLocked(
     const MT_ValidationPolicy policy,
-    MT_ValidationLease *const lease) noexcept
+    MT_ValidationLeaseView *const lease) noexcept
 {
     if (policy == MT_ValidationPolicy::Leased && lease)
-        MT_ValidationLeaseAccess::CountMutation(*lease);
+        lease->countMutation();
 }
 
 void MT_PoisonPolicyLeaseLocked(
     const MT_ValidationPolicy policy,
-    MT_ValidationLease *const lease) noexcept
+    MT_ValidationLeaseView *const lease) noexcept
 {
     if (policy == MT_ValidationPolicy::Leased)
         MT_PoisonValidationLeaseLocked(lease);
@@ -1998,6 +1955,38 @@ void MT_AddMemoryNodeCommitNoReport(
 }
 } // namespace
 
+bool MT_ValidationLease::isCanonicalClearNoLock() const noexcept
+{
+    return serial_ == 0 && mutationCount_ == 0
+        && !active_ && !poisoned_
+        && reserved_[0] == 0 && reserved_[1] == 0;
+}
+
+void MT_ValidationLease::activateNoLock(const uint64_t serial) noexcept
+{
+    serial_ = serial;
+    mutationCount_ = 0;
+    active_ = true;
+    poisoned_ = false;
+    reserved_[0] = 0;
+    reserved_[1] = 0;
+}
+
+void MT_ValidationLease::poisonNoLock() noexcept
+{
+    poisoned_ = true;
+}
+
+void MT_ValidationLease::clearNoLock() noexcept
+{
+    serial_ = 0;
+    mutationCount_ = 0;
+    active_ = false;
+    poisoned_ = false;
+    reserved_[0] = 0;
+    reserved_[1] = 0;
+}
+
 MT_ValidationLease::~MT_ValidationLease() noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
@@ -2007,8 +1996,7 @@ MT_ValidationLease::~MT_ValidationLease() noexcept
         || mt_activeValidationLeaseAddressMirror == address
         || mt_retainedValidationLeaseAddress == address
         || mt_retainedValidationLeaseAddressMirror == address;
-    const bool canonical =
-        MT_ValidationLeaseAccess::IsCanonicalClear(*this);
+    const bool canonical = isCanonicalClearNoLock();
 
     // A never-admitted object, a successfully finished object, or an
     // unrelated canonical object nested inside another owner has no lifetime
@@ -2019,17 +2007,28 @@ MT_ValidationLease::~MT_ValidationLease() noexcept
         return;
     }
 
-    // MT_Owns... compares both stored addresses with this live object before
-    // reading its authentication fields. No generic stored address is ever
-    // dereferenced here or elsewhere.
+    // This member runs against live caller-owned storage. MT_Owns... compares
+    // its captured address and authentication fields against every by-value
+    // registry mirror. No generic stored address is ever dereferenced here or
+    // elsewhere.
+    MT_ValidationLeaseView view{
+        address,
+        serial_,
+        mutationCount_,
+        active_,
+        poisoned_,
+        reserved_[0] == 0 && reserved_[1] == 0,
+        nullptr,
+        nullptr,
+    };
     const bool ownsRetainedAcquisition =
-        MT_OwnsValidationLeaseLocked(this);
+        MT_OwnsValidationLeaseLocked(&view);
 
     // Publish terminal process-lifetime poison before removing the only
     // address that may name this stack object. This remains frozen even when
     // allocator state itself is currently valid.
     MT_FreezeValidationLeaseBoundaryLocked();
-    MT_ValidationLeaseAccess::Poison(*this);
+    poisonNoLock();
     if (ownsRetainedAcquisition)
         MT_ClearRetainedValidationLeaseAuthenticationLocked();
 
@@ -2046,11 +2045,21 @@ bool MT_ValidationLease::AbandonFromOwnershipBatch(
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
 
-    // The caller supplies live nested storage. MT_Owns... compares that
-    // address against every by-value registry/TLS mirror before reading any
-    // member. Only that exact identity proves Begin's retained acquisition.
+    // The caller supplies live nested storage. MT_Owns... compares its
+    // captured address and fields against every by-value registry/TLS mirror.
+    // Only that exact identity proves Begin's retained acquisition.
+    MT_ValidationLeaseView view{
+        reinterpret_cast<uintptr_t>(&lease),
+        lease.serial_,
+        lease.mutationCount_,
+        lease.active_,
+        lease.poisoned_,
+        lease.reserved_[0] == 0 && lease.reserved_[1] == 0,
+        &lease.mutationCount_,
+        &lease.poisoned_,
+    };
     const bool ownsRetainedAcquisition =
-        MT_OwnsValidationLeaseLocked(&lease);
+        MT_OwnsValidationLeaseLocked(&view);
 
     // Terminal state must be visible before the stack address disappears or
     // either acquisition can be released. A torn nested identity keeps the
@@ -2060,12 +2069,12 @@ bool MT_ValidationLease::AbandonFromOwnershipBatch(
     MT_FreezeValidationLeaseBoundaryLocked();
     if (ownsRetainedAcquisition)
     {
-        MT_ValidationLeaseAccess::Clear(lease);
+        lease.clearNoLock();
         MT_ClearRetainedValidationLeaseAuthenticationLocked();
     }
     else
     {
-        MT_ValidationLeaseAccess::Poison(lease);
+        lease.poisonNoLock();
     }
 
     // Drop this helper's recursive acquisition. Drop Begin's retained
@@ -2080,8 +2089,18 @@ bool MT_ValidationLease::AbandonFromOwnershipBatch(
 bool MT_ValidationLease::active() const noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    const MT_ValidationLeaseView view{
+        reinterpret_cast<uintptr_t>(this),
+        serial_,
+        mutationCount_,
+        active_,
+        poisoned_,
+        reserved_[0] == 0 && reserved_[1] == 0,
+        nullptr,
+        nullptr,
+    };
     const bool readable =
-        MT_CanReadValidationLeaseSnapshotLocked(this);
+        MT_CanReadValidationLeaseSnapshotLocked(&view);
     const bool value = readable && active_;
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
     return value;
@@ -2090,8 +2109,18 @@ bool MT_ValidationLease::active() const noexcept
 bool MT_ValidationLease::poisoned() const noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    const MT_ValidationLeaseView view{
+        reinterpret_cast<uintptr_t>(this),
+        serial_,
+        mutationCount_,
+        active_,
+        poisoned_,
+        reserved_[0] == 0 && reserved_[1] == 0,
+        nullptr,
+        nullptr,
+    };
     const bool readable =
-        MT_CanReadValidationLeaseSnapshotLocked(this);
+        MT_CanReadValidationLeaseSnapshotLocked(&view);
     const bool value = readable
         ? (poisoned_
             || mt_validationLeaseLifecycle
@@ -2104,8 +2133,18 @@ bool MT_ValidationLease::poisoned() const noexcept
 uint64_t MT_ValidationLease::serial() const noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    const MT_ValidationLeaseView view{
+        reinterpret_cast<uintptr_t>(this),
+        serial_,
+        mutationCount_,
+        active_,
+        poisoned_,
+        reserved_[0] == 0 && reserved_[1] == 0,
+        nullptr,
+        nullptr,
+    };
     const bool readable =
-        MT_CanReadValidationLeaseSnapshotLocked(this);
+        MT_CanReadValidationLeaseSnapshotLocked(&view);
     const uint64_t value = readable ? serial_ : 0;
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
     return value;
@@ -2114,8 +2153,18 @@ uint64_t MT_ValidationLease::serial() const noexcept
 uint32_t MT_ValidationLease::mutationCount() const noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
+    const MT_ValidationLeaseView view{
+        reinterpret_cast<uintptr_t>(this),
+        serial_,
+        mutationCount_,
+        active_,
+        poisoned_,
+        reserved_[0] == 0 && reserved_[1] == 0,
+        nullptr,
+        nullptr,
+    };
     const bool readable =
-        MT_CanReadValidationLeaseSnapshotLocked(this);
+        MT_CanReadValidationLeaseSnapshotLocked(&view);
     const uint32_t value = readable ? mutationCount_ : 0;
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
     return value;
@@ -2129,7 +2178,8 @@ void MT_ValidationLease::SetAuthenticationFieldsForTesting(
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
     if (MT_HasValidationLeaseRegistryActivityLocked()
-        && !MT_RegistryNamesValidationLeaseStorageLocked(this))
+        && !MT_RegistryNamesValidationLeaseStorageLocked(
+            reinterpret_cast<uintptr_t>(this)))
     {
         Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return;
@@ -2145,7 +2195,8 @@ void MT_ValidationLease::SetMutationCountForTesting(
 {
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
     if (MT_HasValidationLeaseRegistryActivityLocked()
-        && !MT_RegistryNamesValidationLeaseStorageLocked(this))
+        && !MT_RegistryNamesValidationLeaseStorageLocked(
+            reinterpret_cast<uintptr_t>(this)))
     {
         Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return;
@@ -2178,7 +2229,7 @@ MT_ValidationLeaseStatus MT_TryBeginValidationLease(
             : MT_ValidationLeaseStatus::UnsafeFailure;
     }
 
-    if (!MT_ValidationLeaseAccess::IsCanonicalClear(*lease))
+    if (!lease->isCanonicalClearNoLock())
     {
         Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return MT_ValidationLeaseStatus::InvalidToken;
@@ -2193,7 +2244,7 @@ MT_ValidationLeaseStatus MT_TryBeginValidationLease(
 
     const uint64_t serial = mt_nextValidationLeaseSerial + UINT64_C(1);
     mt_nextValidationLeaseSerial = serial;
-    MT_ValidationLeaseAccess::Activate(*lease, serial);
+    lease->activateNoLock(serial);
     mt_activeValidationLeaseAddress =
         reinterpret_cast<uintptr_t>(lease);
     mt_activeValidationLeaseSerial = serial;
@@ -2223,7 +2274,17 @@ MT_ValidationLeaseStatus MT_FinishValidationLease(
         return MT_ValidationLeaseStatus::InvalidArgument;
 
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
-    if (!MT_OwnsValidationLeaseLocked(lease))
+    const MT_ValidationLeaseView view{
+        reinterpret_cast<uintptr_t>(lease),
+        lease->serial_,
+        lease->mutationCount_,
+        lease->active_,
+        lease->poisoned_,
+        lease->reserved_[0] == 0 && lease->reserved_[1] == 0,
+        nullptr,
+        nullptr,
+    };
+    if (!MT_OwnsValidationLeaseLocked(&view))
     {
         // Drop only this authentication acquisition. The retained acquisition
         // cannot be identified safely from an invalid token.
@@ -2231,11 +2292,11 @@ MT_ValidationLeaseStatus MT_FinishValidationLease(
         return MT_ValidationLeaseStatus::InvalidToken;
     }
 
-    const bool poisoned = MT_IsValidationLeasePoisonedLocked(lease);
+    const bool poisoned = MT_IsValidationLeasePoisonedLocked(&view);
     const bool valid = MT_IsCoreStateValidNoReport();
     MT_ClearValidationLeaseRegistryLocked();
     MT_ClearRetainedValidationLeaseAuthenticationLocked();
-    MT_ValidationLeaseAccess::Clear(*lease);
+    lease->clearNoLock();
 
     // Drop this authentication acquisition and then Begin's retained one.
     Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
@@ -2359,7 +2420,7 @@ MT_AllocIndexStatus MT_TryAllocIndexImpl(
     int type,
     uint16_t *outIndex,
     const MT_ValidationPolicy policy,
-    MT_ValidationLease *const lease) noexcept
+    MT_ValidationLeaseView *const lease) noexcept
 {
     int size = 0;
     if (!outIndex || type <= 0 || type >= kMemoryTreeTypeCount ||
@@ -2457,7 +2518,7 @@ MT_AllocationInfoStatus MT_TryGetAllocationInfoImpl(
     uint32_t nodeNum,
     MT_AllocationInfo *outInfo,
     const MT_ValidationPolicy policy,
-    MT_ValidationLease *const lease) noexcept
+    MT_ValidationLeaseView *const lease) noexcept
 {
     if (!outInfo || nodeNum == 0 || nodeNum >= MEMORY_NODE_COUNT)
     {
@@ -2524,8 +2585,18 @@ MT_AllocIndexStatus MT_TryAllocIndexLeased(
 {
     if (!MT_ValidationLeaseAdmission::Authenticates(admission))
         return MT_AllocIndexStatus::InvalidArgumentNoChange;
+    MT_ValidationLeaseView view{
+        reinterpret_cast<uintptr_t>(&lease),
+        lease.serial_,
+        lease.mutationCount_,
+        lease.active_,
+        lease.poisoned_,
+        lease.reserved_[0] == 0 && lease.reserved_[1] == 0,
+        &lease.mutationCount_,
+        &lease.poisoned_,
+    };
     return MT_TryAllocIndexImpl(
-        numBytes, type, outIndex, MT_ValidationPolicy::Leased, &lease);
+        numBytes, type, outIndex, MT_ValidationPolicy::Leased, &view);
 }
 
 unsigned short MT_AllocIndex(int numBytes, int type)
@@ -2577,8 +2648,18 @@ MT_AllocationInfoStatus MT_TryGetAllocationInfoLeased(
 {
     if (!MT_ValidationLeaseAdmission::Authenticates(admission))
         return MT_AllocationInfoStatus::InvalidArgumentNoChange;
+    MT_ValidationLeaseView view{
+        reinterpret_cast<uintptr_t>(&lease),
+        lease.serial_,
+        lease.mutationCount_,
+        lease.active_,
+        lease.poisoned_,
+        lease.reserved_[0] == 0 && lease.reserved_[1] == 0,
+        &lease.mutationCount_,
+        &lease.poisoned_,
+    };
     return MT_TryGetAllocationInfoImpl(
-        nodeNum, outInfo, MT_ValidationPolicy::Leased, &lease);
+        nodeNum, outInfo, MT_ValidationPolicy::Leased, &view);
 }
 
 bool MT_TryValidateState() noexcept
@@ -2691,7 +2772,7 @@ MT_FreeIndexStatus MT_TryFreeIndexImpl(
     uint32_t nodeNum,
     int numBytes,
     const MT_ValidationPolicy policy,
-    MT_ValidationLease *const lease) noexcept
+    MT_ValidationLeaseView *const lease) noexcept
 {
     int size = 0;
     if (nodeNum == 0 || nodeNum >= MEMORY_NODE_COUNT ||
@@ -2875,8 +2956,18 @@ MT_FreeIndexStatus MT_TryFreeIndexLeased(
 {
     if (!MT_ValidationLeaseAdmission::Authenticates(admission))
         return MT_FreeIndexStatus::InvalidArgumentNoChange;
+    MT_ValidationLeaseView view{
+        reinterpret_cast<uintptr_t>(&lease),
+        lease.serial_,
+        lease.mutationCount_,
+        lease.active_,
+        lease.poisoned_,
+        lease.reserved_[0] == 0 && lease.reserved_[1] == 0,
+        &lease.mutationCount_,
+        &lease.poisoned_,
+    };
     return MT_TryFreeIndexImpl(
-        nodeNum, numBytes, MT_ValidationPolicy::Leased, &lease);
+        nodeNum, numBytes, MT_ValidationPolicy::Leased, &view);
 }
 
 namespace

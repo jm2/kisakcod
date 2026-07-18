@@ -3608,23 +3608,156 @@ require_source_contains(
     "script/scr_memorytree.h"
     "static_assert(!std::is_trivially_copyable_v<MT_ValidationLeaseAdmission>);"
     "allocator lease capability must not be forgeable by bitwise construction")
+require_source_contains(
+    "script/scr_memorytree.h"
+    "~MT_ValidationLeaseAdmission() noexcept = default;"
+    "allocator lease capability must not register a shutdown destructor")
+require_source_contains(
+    "script/scr_memorytree.h"
+    "MT_ValidationLeaseAdmission(
+        const MT_ValidationLeaseAdmission &) noexcept
+    {
+    }"
+    "allocator lease capability must remain non-trivially copyable without dynamic destruction")
+foreach(_marker IN ITEMS
+    "bool isCanonicalClearNoLock() const noexcept;"
+    "void activateNoLock(uint64_t serial) noexcept;"
+    "void poisonNoLock() noexcept;"
+    "void clearNoLock() noexcept;")
+    require_source_contains(
+        "script/scr_memorytree.h"
+        "${_marker}"
+        "lease token mutation must remain private member authority")
+endforeach()
+require_source_not_contains(
+    "script/scr_memorytree.h"
+    "MT_ValidationLeaseAccess"
+    "production headers must not expose a reproducible lease authority shim")
+require_source_not_contains(
+    "script/scr_memorytree.cpp"
+    "MT_ValidationLeaseAccess"
+    "allocator implementation must not define a reproducible lease authority shim")
+file(READ
+    "${SOURCE_ROOT}/src/script/scr_memorytree.cpp"
+    _memory_lease_view_security_source)
+extract_security_slice(
+    _memory_lease_view_security_source
+    "namespace
+{
+enum class MT_ValidationPolicy"
+    "constexpr const char *mt_type_names[22]"
+    _memory_lease_view_security_slice
+    "translation-private allocator lease view")
+require_security_slice_contains(
+    _memory_lease_view_security_slice
+    "struct MT_ValidationLeaseView final"
+    "generic allocator helpers must receive only anonymous-namespace lease state")
+require_source_contains(
+    "script/scr_memorytree.cpp"
+    "return MT_TryAllocIndexImpl(
+        numBytes, type, outIndex, MT_ValidationPolicy::Leased, &view);"
+    "leased allocation must delegate through the translation-private view")
+require_source_contains(
+    "script/scr_memorytree.cpp"
+    "return MT_TryGetAllocationInfoImpl(
+        nodeNum, outInfo, MT_ValidationPolicy::Leased, &view);"
+    "leased query must delegate through the translation-private view")
+require_source_contains(
+    "script/scr_memorytree.cpp"
+    "return MT_TryFreeIndexImpl(
+        nodeNum, numBytes, MT_ValidationPolicy::Leased, &view);"
+    "leased free must delegate through the translation-private view")
+file(READ
+    "${SOURCE_ROOT}/tests/script_memorytree_lease_api_seal_compile_tests.cpp"
+    _memory_lease_seal_security_source)
+foreach(_marker IN ITEMS
+    "static_assert(!HasUngatedBegin<MT_ValidationLease>);"
+    "static_assert(!HasUngatedFinish<MT_ValidationLease>);"
+    "static_assert(!HasUngatedAllocation<MT_ValidationLease>);"
+    "static_assert(!HasUngatedQuery<MT_ValidationLease>);"
+    "static_assert(!HasUngatedFree<MT_ValidationLease>);"
+    "static_assert(!HasCanonicalTestingAdmission<MT_ValidationLeaseAdmission>);"
+    "static_assert(!HasInvalidTestingAdmission<MT_ValidationLeaseAdmission>);"
+    "static_assert(!HasLeaseAuthenticationSetter<MT_ValidationLease>);"
+    "static_assert(!HasLeaseMutationSetter<MT_ValidationLease>);"
+    "static_assert(!HasLeaseCanonicalInspection<MT_ValidationLease>);"
+    "static_assert(!HasLeaseActivationAuthority<MT_ValidationLease>);"
+    "static_assert(!HasLeasePoisonAuthority<MT_ValidationLease>);"
+    "static_assert(!HasLeaseClearAuthority<MT_ValidationLease>);"
+    "static_assert(\n    !HasBatchAuthenticationSetter<script_string::OwnershipBatch>);"
+    "static_assert(!HasBatchLeaseAccessor<script_string::OwnershipBatch>);"
+    "static_assert(!HasBatchActivationSetter<script_string::OwnershipBatch>);"
+    "static_assert(!HasBatchOperationSetter<script_string::OwnershipBatch>);"
+    "static_assert(\n    !HasBatchMemoryMutationSetter<script_string::OwnershipBatch>);")
+    string(FIND
+        "${_memory_lease_seal_security_source}"
+        "${_marker}"
+        _memory_lease_seal_authority_position)
+    if(_memory_lease_seal_authority_position EQUAL -1)
+        message(FATAL_ERROR
+            "Missing security invariant (production code must not reach private no-lock lease authority)")
+    endif()
+endforeach()
+require_source_not_contains(
+    "script/scr_string_transaction.h"
+    "friend struct OwnershipBatchAccess;"
+    "namespace-visible code must not be able to define a batch authority friend")
+require_source_not_contains(
+    "script/scr_stringlist.cpp"
+    "OwnershipBatchAccess"
+    "namespace-visible batch authority shim must remain removed")
 require_source_match_count(
     "script/scr_memorytree.cpp"
     "MT_ValidationLeaseAdmission::Authenticates\\(admission\\)"
     5
     "every allocator lease entry must authenticate its operation capability")
-require_source_contains(
-    "script/scr_stringlist.cpp"
-    "OwnershipBatchAccess::TryAllocateMemoryTreeIndex("
-    "leased string allocation must route through the private batch authority")
-require_source_contains(
-    "script/scr_stringlist.cpp"
-    "OwnershipBatchAccess::TryGetMemoryTreeAllocation("
-    "leased string queries must route through the private batch authority")
-require_source_contains(
-    "script/scr_stringlist.cpp"
-    "OwnershipBatchAccess::TryFreeMemoryTreeIndex("
-    "leased string release must route through the private batch authority")
+file(READ
+    "${SOURCE_ROOT}/src/script/scr_stringlist.cpp"
+    _ownership_capability_security_source)
+extract_security_slice(
+    _ownership_capability_security_source
+    "MT_AllocIndexStatus SL_TryAllocateStringMemoryNoReport("
+    "MT_FreeIndexStatus SL_TryFreeStringMemoryNoReport("
+    _leased_allocation_security_slice
+    "leased string allocation capability flow")
+extract_security_slice(
+    _ownership_capability_security_source
+    "MT_FreeIndexStatus SL_TryFreeStringMemoryNoReport("
+    "SL_InternStatus SL_TryInternStringOfSizeWithValidation("
+    _leased_free_security_slice
+    "leased string release capability flow")
+extract_security_slice(
+    _ownership_capability_security_source
+    "MT_AllocationInfoStatus SL_TryGetAllocationInfoForScopeNoReport("
+    "bool SL_TryGetAllocatedStringByteCountForScopeNoReport("
+    _leased_query_security_slice
+    "leased string query capability flow")
+foreach(_slice IN ITEMS
+    _leased_allocation_security_slice
+    _leased_free_security_slice
+    _leased_query_security_slice)
+    require_security_slice_ordered(
+        ${_slice}
+        "SL_IsValidationAuthorityWellFormed("
+        "case SL_ValidationScope::Leased:"
+        "leased string operations must validate the capability tuple before dispatch")
+    require_security_slice_contains(
+        ${_slice}
+        "*admission);"
+        "leased string operations must pass the private exact-address capability")
+endforeach()
+require_security_slice_contains(
+    _leased_allocation_security_slice
+    "MT_TryAllocIndexLeased("
+    "leased string allocation must call the gated allocator entry")
+require_security_slice_contains(
+    _leased_free_security_slice
+    "MT_TryFreeIndexLeased("
+    "leased string release must call the gated allocator entry")
+require_security_slice_contains(
+    _leased_query_security_slice
+    "MT_TryGetAllocationInfoLeased("
+    "leased string query must call the gated allocator entry")
 require_source_contains(
     "script/scr_stringlist.cpp"
     "Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);

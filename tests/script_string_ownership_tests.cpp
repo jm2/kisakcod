@@ -2867,50 +2867,44 @@ struct StateImage final
         && EndTest();
 }
 
-[[nodiscard]] bool TestOwnershipBatchAbandonedWaiters() noexcept
+[[nodiscard]] bool TestOwnershipBatchLifetimeBoundaries() noexcept
 {
     if (!BeginTest())
         return false;
 
-    constexpr char value[] = "batch-abandoned-waiters";
+    constexpr char value[] = "batch-lifetime-waiters";
     const auto existing = script_string::TryAcquireOrdinaryStringOfSize(
         value, sizeof(value), 15);
     if (!Check(existing.status == script_string::AcquireStatus::Acquired,
-            "abandoned-waiter fixture acquisition failed"))
+            "lifetime-waiter fixture acquisition failed"))
     {
         return false;
     }
 
     bool waitedActive = true;
-    bool waitedPoisoned = false;
+    bool waitedPoisoned = true;
     std::uint64_t waitedSerial = UINT64_MAX;
     std::uint32_t waitedOperations = UINT32_MAX;
     int waitedLength = -1;
     script_string::AcquireResult waitedAcquire{
         script_string::AcquireStatus::Acquired, UINT32_C(0xBEEF)};
-    script_string::OwnershipBatchStatus waitedFinish =
-        script_string::OwnershipBatchStatus::Success;
-    script_string::OwnershipBatchStatus waitedBegin =
-        script_string::OwnershipBatchStatus::Success;
     std::thread activeWaiter;
     std::thread poisonedWaiter;
     std::thread serialWaiter;
     std::thread operationWaiter;
     std::thread acquireWaiter;
-    std::thread finishWaiter;
-    std::thread beginWaiter;
     std::thread readerWaiter;
-    StateImage beforeAbandonment;
+    StateImage beforeClose;
     {
         script_string::OwnershipBatch batch;
         if (!Check(
                 script_string::TryBeginOwnershipBatch(&batch)
                     == script_string::OwnershipBatchStatus::Success,
-                "abandoned-waiter batch admission failed"))
+                "lifetime-waiter batch admission failed"))
         {
             return false;
         }
-        beforeAbandonment = CaptureState();
+        beforeClose = CaptureState();
 
         g_scriptStringLockAttempts.store(0, std::memory_order_relaxed);
         g_countScriptStringLockAttempts.store(true, std::memory_order_release);
@@ -2924,50 +2918,75 @@ struct StateImage final
             waitedAcquire = script_string::TryAcquireOrdinaryStringOfSize(
                 batch, "x", 2, 15);
         });
-        finishWaiter = std::thread([&]() {
-            waitedFinish = script_string::FinishOwnershipBatch(&batch);
-        });
-        beginWaiter = std::thread([&]() {
-            waitedBegin = script_string::TryBeginOwnershipBatch(&batch);
-        });
         readerWaiter = std::thread([&]() {
             waitedLength = SL_GetStringLen(existing.stringId);
         });
-        while (g_scriptStringLockAttempts.load(std::memory_order_acquire) != 8)
+        while (g_scriptStringLockAttempts.load(std::memory_order_acquire) != 6)
             std::this_thread::yield();
         g_countScriptStringLockAttempts.store(false, std::memory_order_release);
+        // The batch must outlive every call that received it. Finish on the
+        // admitting thread, then join every waiter before destruction.
+        const auto finishStatus =
+            script_string::FinishOwnershipBatch(&batch);
+
+        activeWaiter.join();
+        poisonedWaiter.join();
+        serialWaiter.join();
+        operationWaiter.join();
+        acquireWaiter.join();
+        readerWaiter.join();
+
+        if (!Check(
+                finishStatus == script_string::OwnershipBatchStatus::Success,
+                "lifetime-waiter batch close failed")
+            || !Check(
+                !waitedActive && !waitedPoisoned && waitedSerial == 0
+                    && waitedOperations == 0,
+                "blocked snapshots read a finished ownership batch")
+            || !Check(
+                waitedAcquire.status
+                        == script_string::AcquireStatus::UnsafeFailure
+                    && waitedAcquire.stringId == 0,
+                "blocked ownership operation authenticated after batch close")
+            || !Check(waitedLength == static_cast<int>(sizeof(value) - 1),
+                "blocked legacy reader failed after batch close")
+            || !Check(StateMatches(beforeClose),
+                "finished waiter changed string/allocator state")
+            || !Check(LocksReleased(),
+                "lifetime-waiter close leaked an owner lock")
+            || !Check(ReportersUnused(),
+                "lifetime waiter entered a reporter"))
+        {
+            return false;
+        }
     }
 
-    activeWaiter.join();
-    poisonedWaiter.join();
-    serialWaiter.join();
-    operationWaiter.join();
-    acquireWaiter.join();
-    finishWaiter.join();
-    beginWaiter.join();
-    readerWaiter.join();
-
+    StateImage beforeAbandonment;
+    {
+        script_string::OwnershipBatch abandoned;
+        if (!Check(
+                script_string::TryBeginOwnershipBatch(&abandoned)
+                    == script_string::OwnershipBatchStatus::Success,
+                "exact abandonment batch admission failed"))
+        {
+            return false;
+        }
+        beforeAbandonment = CaptureState();
+    }
+    const auto frozenAcquire = script_string::TryAcquireOrdinaryStringOfSize(
+        "x", 2, 15);
     const bool rejected = Check(
-            !waitedActive && waitedPoisoned && waitedSerial == 0
-                && waitedOperations == 0,
-            "blocked snapshots read destroyed ownership-batch storage")
-        && Check(
-            waitedAcquire.status == script_string::AcquireStatus::UnsafeFailure
-                && waitedAcquire.stringId == 0,
-            "blocked ownership operation read a destroyed batch")
-        && Check(
-            waitedFinish == script_string::OwnershipBatchStatus::InvalidToken
-                && waitedBegin
-                    == script_string::OwnershipBatchStatus::UnsafeFailure,
-            "blocked ownership boundary read a destroyed batch")
-        && Check(waitedLength == 0,
-            "blocked legacy reader entered a frozen ownership boundary")
+            frozenAcquire.status == script_string::AcquireStatus::UnsafeFailure
+                && frozenAcquire.stringId == 0,
+            "exact abandonment admitted a frozen ownership operation")
+        && Check(SL_GetStringLen(existing.stringId) == 0,
+            "exact abandonment admitted a frozen legacy reader")
         && Check(StateMatches(beforeAbandonment),
-            "abandoned waiter changed string/allocator state")
+            "exact abandonment changed string/allocator state")
         && Check(LocksReleased(),
             "exact ownership abandonment leaked an owner lock")
         && Check(ReportersUnused(),
-            "abandoned waiter entered a reporter");
+            "exact abandonment entered a reporter");
 
     script_string::ResetAbandonedOwnershipBatchForTesting(false, false);
     const bool recovered = Check(LocksReleased(),
@@ -2977,7 +2996,7 @@ struct StateImage final
         && Check(
             script_string::TryRemoveOrdinaryReference(existing.stringId)
                 == script_string::ReleaseStatus::Success,
-            "abandoned-waiter fixture cleanup failed");
+            "lifetime-waiter fixture cleanup failed");
     return rejected && recovered && EndTest();
 }
 
@@ -3187,7 +3206,7 @@ struct StateImage final
                 return false;
             }
             MT_ValidationLease &lease =
-                script_string::OwnershipBatchAccess::MemoryTreeLease(batch);
+                batch.MemoryTreeLeaseForTesting();
             nestedAddress = reinterpret_cast<std::uintptr_t>(&lease);
             nestedSerial = lease.serial();
             switch (tear)
@@ -3329,8 +3348,7 @@ struct StateImage final
 
     {
         script_string::OwnershipBatch malformed;
-        script_string::OwnershipBatchAccess::Activate(
-            malformed, UINT64_C(0xA55A));
+        malformed.ActivateForTesting(UINT64_C(0xA55A));
     }
     if (!Check(LocksReleased(),
             "idle malformed unrelated destructor leaked a lock")
@@ -3353,8 +3371,7 @@ struct StateImage final
     }
     {
         script_string::OwnershipBatch malformed;
-        script_string::OwnershipBatchAccess::Activate(
-            malformed, UINT64_C(0x5AA5));
+        malformed.ActivateForTesting(UINT64_C(0x5AA5));
     }
     return Check(owner.active(),
             "unrelated destructor revoked the live owner")
@@ -3722,7 +3739,7 @@ int main()
         || !TestOwnershipBatchForeignSerialization()
         || !TestOwnershipBatchForeignReaderSerialization()
         || !TestOwnershipBatchCanonicalResetGate()
-        || !TestOwnershipBatchAbandonedWaiters()
+        || !TestOwnershipBatchLifetimeBoundaries()
         || !TestOwnershipBatchOuterAuthorityTears()
         || !TestOwnershipBatchNestedAuthorityTears()
         || !TestOwnershipBatchUnrelatedDestruction()

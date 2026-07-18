@@ -96,6 +96,8 @@ public:
         const MT_ValidationLease *lease) const noexcept;
 
 #if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+    [[nodiscard]] MT_ValidationLease &MemoryTreeLeaseForTesting() noexcept;
+    void ActivateForTesting(std::uint64_t serial) noexcept;
     void SetAuthenticationFieldsForTesting(
         std::uint64_t serial,
         std::uint8_t reserved0,
@@ -106,7 +108,6 @@ public:
 #endif
 
 private:
-    friend struct OwnershipBatchAccess;
     friend OwnershipBatchStatus TryBeginOwnershipBatch(
         OwnershipBatch *batch) noexcept;
     friend OwnershipBatchStatus FinishOwnershipBatch(
@@ -128,23 +129,15 @@ private:
 
     [[nodiscard]] static const MT_ValidationLeaseAdmission &
     MakeMemoryTreeLeaseAdmission() noexcept;
-    [[nodiscard]] static MT_ValidationLeaseStatus TryBeginMemoryTreeLease(
-        MT_ValidationLease &lease) noexcept;
-    [[nodiscard]] static MT_ValidationLeaseStatus FinishMemoryTreeLease(
-        MT_ValidationLease &lease) noexcept;
-    [[nodiscard]] static MT_AllocIndexStatus TryAllocateMemoryTreeIndex(
-        MT_ValidationLease &lease,
-        int numBytes,
-        int type,
-        std::uint16_t *outIndex) noexcept;
-    [[nodiscard]] static MT_AllocationInfoStatus TryGetMemoryTreeAllocation(
-        MT_ValidationLease &lease,
-        std::uint32_t nodeNum,
-        MT_AllocationInfo *outInfo) noexcept;
-    [[nodiscard]] static MT_FreeIndexStatus TryFreeMemoryTreeIndex(
-        MT_ValidationLease &lease,
-        std::uint32_t nodeNum,
-        int numBytes) noexcept;
+    [[nodiscard]] bool isCanonicalClearNoLock() const noexcept;
+    [[nodiscard]] bool ownsRegistryNoLock() const noexcept;
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+    [[nodiscard]] bool registryNamesStorageNoLock() const noexcept;
+#endif
+    void activateNoLock(std::uint64_t serial) noexcept;
+    void poisonNoLock() noexcept;
+    void clearNoLock() noexcept;
+    void poisonBoundaryLocked() noexcept;
     [[nodiscard]] bool canOperateNoLock() const noexcept;
     [[nodiscard]] bool tryAuthenticateOperationLocked() noexcept;
 

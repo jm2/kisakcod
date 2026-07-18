@@ -74,9 +74,14 @@ class MT_ValidationLeaseAdmission final
 {
 private:
     MT_ValidationLeaseAdmission() noexcept = default;
-    ~MT_ValidationLeaseAdmission() noexcept {}
+    ~MT_ValidationLeaseAdmission() noexcept = default;
+    // A private user-provided copy constructor keeps the exact-address
+    // capability non-trivially copyable without giving its canonical static a
+    // dynamic destructor or guarded first-use initialization.
     MT_ValidationLeaseAdmission(
-        const MT_ValidationLeaseAdmission &) = delete;
+        const MT_ValidationLeaseAdmission &) noexcept
+    {
+    }
     MT_ValidationLeaseAdmission &operator=(
         const MT_ValidationLeaseAdmission &) = delete;
     MT_ValidationLeaseAdmission(MT_ValidationLeaseAdmission &&) = delete;
@@ -155,8 +160,8 @@ static_assert(!std::is_trivially_copyable_v<MT_ValidationLeaseAdmission>);
 // callers may not race normal Finish followed by destruction against Begin,
 // a leased operation, a snapshot, or a test-only setter. Production admission
 // is same-thread while the owning SCRIPT_STRING transaction remains held, so
-// it satisfies that contract. Terminal Frozen state makes generic and already-
-// blocked abandonment paths fail closed; it does not make arbitrary concurrent
+// it satisfies that contract. Terminal Frozen state makes generic allocator
+// paths fail closed; it does not make pointer/reference calls concurrent with
 // destruction of the caller-owned token storage valid.
 class MT_ValidationLease final
 {
@@ -191,7 +196,6 @@ public:
 
 private:
     friend class script_string::OwnershipBatch;
-    friend struct MT_ValidationLeaseAccess;
     friend MT_ValidationLeaseStatus MT_TryBeginValidationLease(
         MT_ValidationLease *lease,
         const MT_ValidationLeaseAdmission &admission) noexcept;
@@ -221,6 +225,14 @@ private:
     // releases the retained allocator acquisition only when exact.
     [[nodiscard]] static bool AbandonFromOwnershipBatch(
         MT_ValidationLease &lease) noexcept;
+
+    // These helpers require the caller to hold CRITSECT_MEMORY_TREE. Keeping
+    // token mutation on the token itself avoids granting a reproducible
+    // namespace-scope access shim authority over private lease state.
+    [[nodiscard]] bool isCanonicalClearNoLock() const noexcept;
+    void activateNoLock(uint64_t serial) noexcept;
+    void poisonNoLock() noexcept;
+    void clearNoLock() noexcept;
 
     uint64_t serial_ = 0;
     uint32_t mutationCount_ = 0;
