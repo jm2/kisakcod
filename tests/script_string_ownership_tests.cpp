@@ -2695,18 +2695,18 @@ struct StateImage final
     }
 
     constexpr char value[] = "batch-foreign-serialization";
-    std::atomic<bool> entered{false};
     std::atomic<bool> completed{false};
     script_string::AcquireResult foreignResult{};
+    g_scriptStringLockAttempts.store(0, std::memory_order_relaxed);
+    g_countScriptStringLockAttempts.store(true, std::memory_order_release);
     std::thread foreign([&]() {
-        entered.store(true, std::memory_order_release);
         foreignResult = script_string::TryAcquireOrdinaryStringOfSize(
             value, sizeof(value), 15);
         completed.store(true, std::memory_order_release);
     });
-    while (!entered.load(std::memory_order_acquire))
+    while (g_scriptStringLockAttempts.load(std::memory_order_acquire) != 1)
         std::this_thread::yield();
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    g_countScriptStringLockAttempts.store(false, std::memory_order_release);
     const bool blocked = !completed.load(std::memory_order_acquire);
     const auto closeStatus = script_string::FinishOwnershipBatch(&batch);
     foreign.join();
@@ -2756,17 +2756,17 @@ struct StateImage final
         return false;
     }
 
-    std::atomic<bool> entered{false};
     std::atomic<bool> completed{false};
     int foreignLength = -1;
+    g_scriptStringLockAttempts.store(0, std::memory_order_relaxed);
+    g_countScriptStringLockAttempts.store(true, std::memory_order_release);
     std::thread foreign([&]() {
-        entered.store(true, std::memory_order_release);
         foreignLength = SL_GetStringLen(existing.stringId);
         completed.store(true, std::memory_order_release);
     });
-    while (!entered.load(std::memory_order_acquire))
+    while (g_scriptStringLockAttempts.load(std::memory_order_acquire) != 1)
         std::this_thread::yield();
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    g_countScriptStringLockAttempts.store(false, std::memory_order_release);
     const bool blocked = !completed.load(std::memory_order_acquire);
     const auto closeStatus = script_string::FinishOwnershipBatch(&batch);
     foreign.join();
@@ -3337,6 +3337,8 @@ struct StateImage final
     const char *const candidate) noexcept
 {
     const bool lowercaseRejected = SL_IsLowercaseString(stringId) == 0;
+    const bool lowercaseConversionRejected =
+        SL_ConvertToLowercase(stringId, 0, 0) == 0;
     const bool conversionRejected = SL_ConvertToString(stringId) == nullptr;
     const bool idLookupRejected = GetRefString(stringId) == nullptr;
     const bool pointerLookupRejected = GetRefString(candidate) == nullptr;
@@ -3356,6 +3358,8 @@ struct StateImage final
     // then clears expected diagnostics before the report-free test epilogue.
     g_assertCount = 0;
     return Check(lowercaseRejected, "lowercase reader exposed non-string")
+        && Check(lowercaseConversionRejected,
+            "lowercase conversion exposed non-string")
         && Check(conversionRejected, "string conversion exposed non-string")
         && Check(idLookupRejected, "ID lookup exposed non-string")
         && Check(pointerLookupRejected, "pointer lookup exposed non-string")
@@ -3435,6 +3439,103 @@ struct StateImage final
         && Check(LocksReleased(),
             "reader-auth test leaked a lock")
         && EndTest();
+}
+
+[[nodiscard]] bool TestLegacyMutatorsAuthenticateExactStrings() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    std::uint16_t vectorId = 0;
+    if (!Check(
+            MT_TryAllocIndex(
+                static_cast<int>(sizeof(RefVector)), 2, &vectorId)
+                == MT_AllocIndexStatus::Success,
+            "mutator-auth vector allocation failed"))
+    {
+        return false;
+    }
+    auto *const vector = reinterpret_cast<RefVector *>(
+        scrMemTreePub.mt_buffer + vectorId * MT_NODE_SIZE);
+    std::memset(vector, 0, sizeof(*vector));
+    RefString *const nonString = reinterpret_cast<RefString *>(vector);
+    RefString *const arbitrary = reinterpret_cast<RefString *>(
+        (std::numeric_limits<std::uintptr_t>::max)());
+    const StateImage beforeRejection = CaptureState();
+
+    const bool pointerInputsRejected = Check(
+            !SL_AddUserInternal(nullptr, 8)
+                && !SL_AddUserInternal(arbitrary, 8)
+                && !SL_AddUserInternal(nonString, 8),
+            "opaque pointer user mutation accepted non-string storage")
+        && Check(StateMatches(beforeRejection),
+            "opaque pointer user rejection changed ownership state")
+        && Check(LocksReleased(),
+            "opaque pointer user rejection leaked a lock")
+        && Check(ReportersUnused(),
+            "opaque pointer user rejection invoked a reporter");
+
+    SL_AddRefToString(vectorId);
+    const bool idRefRejected = Check(g_comErrorCount == 1,
+            "ID ref mutation accepted a non-string allocation")
+        && Check(!g_reporterSawOwnedLock,
+            "ID ref rejection reported under an owned lock")
+        && Check(StateMatches(beforeRejection),
+            "ID ref rejection changed ownership state")
+        && Check(LocksReleased(), "ID ref rejection leaked a lock");
+    g_comErrorCount = 0;
+
+    SL_AddUser(vectorId, 8);
+    const bool idUserRejected = Check(g_comErrorCount == 1,
+            "ID user mutation accepted a non-string allocation")
+        && Check(!g_reporterSawOwnedLock,
+            "ID user rejection reported under an owned lock")
+        && Check(StateMatches(beforeRejection),
+            "ID user rejection changed ownership state")
+        && Check(LocksReleased(), "ID user rejection leaked a lock");
+    g_comErrorCount = 0;
+
+    if (!pointerInputsRejected || !idRefRejected || !idUserRejected
+        || !Check(
+            MT_TryFreeIndex(
+                vectorId, static_cast<int>(sizeof(RefVector)))
+                == MT_FreeIndexStatus::Success,
+            "mutator-auth vector cleanup failed"))
+    {
+        return false;
+    }
+
+    constexpr char value[] = "mutator-exact-allocation";
+    const auto acquired = script_string::TryAcquireOrdinaryStringOfSize(
+        value, sizeof(value), 15);
+    if (!Check(acquired.status == script_string::AcquireStatus::Acquired,
+            "mutator-auth string acquisition failed"))
+    {
+        return false;
+    }
+    RefString *const refString = GetRefString(acquired.stringId);
+    const StateImage beforeInvalidUser = CaptureState();
+    const bool validPath = Check(refString != nullptr,
+            "mutator-auth could not resolve valid string")
+        && Check(!SL_AddUserInternal(refString, UINT32_MAX),
+            "opaque pointer mutation accepted invalid user mask")
+        && Check(StateMatches(beforeInvalidUser),
+            "invalid user mask changed ownership state")
+        && Check(SL_AddUserInternal(
+                refString, script_string::kDatabaseUserMask),
+            "exact opaque pointer mutation rejected a valid string")
+        && Check(
+            script_string::TryRemoveOrdinaryReference(acquired.stringId)
+                == script_string::ReleaseStatus::Success,
+            "mutator-auth ordinary cleanup failed")
+        && Check(
+            script_string::TryRemoveDatabaseUserReference(acquired.stringId)
+                == script_string::ReleaseStatus::Success,
+            "mutator-auth database cleanup failed")
+        && Check(LocksReleased(), "mutator-auth test leaked a lock")
+        && Check(ReportersUnused(),
+            "mutator-auth valid path invoked a reporter");
+    return validPath && EndTest();
 }
 } // namespace
 
@@ -3547,7 +3648,8 @@ int main()
         || !TestOwnershipBatchOuterAuthorityTears()
         || !TestOwnershipBatchNestedAuthorityTears()
         || !TestOwnershipBatchUnrelatedDestruction()
-        || !TestLegacyReadersAuthenticateExactStrings())
+        || !TestLegacyReadersAuthenticateExactStrings()
+        || !TestLegacyMutatorsAuthenticateExactStrings())
     {
         return 1;
     }

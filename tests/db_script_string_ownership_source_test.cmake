@@ -1481,6 +1481,7 @@ require_contains(
 foreach(_forbidden IN ITEMS
     "volatile uint32_t data;"
     "SL_RefStringWord("
+    "SL_AddUserInternal("
     "struct RefString {")
     require_not_contains(
         _string_header "${_forbidden}"
@@ -1499,6 +1500,56 @@ require_literal_count(
     "return &refString->data;"
     2
     "private const/nonconst packed-word accessors")
+
+extract_slice(
+    _string_source
+    "static bool SL_AddUserInternal("
+    "void SL_AddRefToString(uint32_t stringValue)"
+    _opaque_user_mutator
+    "private opaque RefString user mutator")
+require_ordered(
+    _opaque_user_mutator
+    "const bool addressValid = refStr != nullptr"
+    "SL_TryResolveLegacyTransferTargetNoReport( static_cast<uint32_t>( (refStringAddress - memoryBegin) / MT_NODE_SIZE), &resolvedRefString, &byteCount)"
+    "opaque RefString mutation validates range before allocation/hash")
+require_ordered(
+    _opaque_user_mutator
+    "&& resolvedRefString == refStr"
+    "&& SL_TryAddUserInternalNoReport(resolvedRefString, user);"
+    "opaque RefString mutation requires exact identity before atomic access")
+extract_slice(
+    _string_source
+    "void SL_AddRefToString(uint32_t stringValue)"
+    "void SL_CheckExists(uint32_t stringValue)"
+    _add_ref_mutator
+    "legacy ID ref mutator")
+require_ordered(
+    _add_ref_mutator
+    "SL_TryResolveLegacyTransferTargetNoReport( stringValue, &refStr, &byteCount)"
+    "SL_TryAddUserInternalNoReport(refStr, 0)"
+    "ID ref mutation authenticates exact string before atomic access")
+extract_slice(
+    _string_source
+    "void __cdecl SL_AddUser(uint32_t stringValue, uint32_t user)"
+    "void __cdecl Scr_SetString(uint16_t *to, uint32_t from)"
+    _add_user_mutator
+    "legacy ID user mutator")
+require_ordered(
+    _add_user_mutator
+    "SL_TryResolveLegacyTransferTargetNoReport( stringValue, &refString, &byteCount)"
+    "SL_TryAddUserInternalNoReport(refString, user)"
+    "ID user mutation authenticates exact string before atomic access")
+extract_slice(
+    _string_source
+    "uint32_t __cdecl SL_ConvertToLowercase("
+    "void __cdecl CreateCanonicalFilename("
+    _lowercase_conversion
+    "lowercase conversion")
+require_ordered(
+    _lowercase_conversion
+    "SL_TryResolveLegacyTransferTargetNoReport( stringValue, &refString, &byteCount)"
+    "static_cast<unsigned char>(refString->str[index])"
+    "lowercase conversion authenticates exact string before bounded access")
 
 foreach(_marker IN ITEMS
     "enum class SL_ValidationScope : uint8_t { Complete, LegacyLocal, Leased, };"
@@ -1706,7 +1757,7 @@ foreach(_marker IN ITEMS
     "void SL_InitCheckLeaks() { Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING); if (SL_HasOwnershipBatchRegistryActivityLocked())"
     "void SL_AddRefToString(uint32_t stringValue) { PROF_SCOPED(\"SL_AddRefToString\"); Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING); if (SL_HasOwnershipBatchRegistryActivityLocked())"
     "void SL_Shutdown() { Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING); if (SL_HasOwnershipBatchRegistryActivityLocked())"
-    "bool SL_AddUserInternal(RefString* refStr, uint32_t user) { Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING); if (SL_HasOwnershipBatchRegistryActivityLocked())"
+    "static bool SL_AddUserInternal(RefString* const refStr, const uint32_t user) { Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING); if (SL_HasOwnershipBatchRegistryActivityLocked())"
     "static bool SL_FreeString( const uint32_t stringValue, RefString* const refString, const uint32_t byteCount) { PROF_SCOPED(\"SL_FreeString\"); Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING); if (SL_HasOwnershipBatchRegistryActivityLocked())"
     "bool SL_TryFreeSystemSweepEntryNoReport( const uint32_t owningHash, const uint32_t targetIndex, const uint32_t previousIndex, const uint32_t stringValue, RefString* const refString, const uint32_t byteCount) noexcept { if (SL_HasOwnershipBatchRegistryActivityLocked())")
     require_contains(
@@ -1997,6 +2048,10 @@ foreach(_forbidden IN ITEMS
         _ownership_fixture "${_forbidden}"
         "copied production ownership algorithm")
 endforeach()
+require_not_contains(
+    _ownership_fixture
+    "std::this_thread::sleep_for("
+    "deterministic foreign serialization coverage")
 foreach(_marker IN ITEMS
     "TestInitCheckLeaksRetainsLock()"
     "TestFullInitRejectsDebugOnlyState()"
@@ -2054,6 +2109,7 @@ foreach(_marker IN ITEMS
     "TestOwnershipBatchNestedAuthorityTears()"
     "TestOwnershipBatchUnrelatedDestruction()"
     "TestLegacyReadersAuthenticateExactStrings()"
+    "TestLegacyMutatorsAuthenticateExactStrings()"
     "batch operation rebuilt the complete string certificate"
     "inconsistent batch serial mirror authenticated an operation"
     "inconsistent batch address mirror authenticated an operation"
@@ -2072,8 +2128,13 @@ foreach(_marker IN ITEMS
     "torn nested authority released retained allocator lock"
     "unrelated destructor revoked the live owner"
     "arbitrary integer string address was dereferenced"
+    "lowercase conversion exposed non-string"
     "string length exposed non-string"
-    "RefString length exposed non-string")
+    "RefString length exposed non-string"
+    "opaque pointer user mutation accepted non-string storage"
+    "ID ref mutation accepted a non-string allocation"
+    "ID user mutation accepted a non-string allocation"
+    "exact opaque pointer mutation rejected a valid string")
     require_contains(
         _ownership_fixture "${_marker}"
         "string ownership runtime coverage")

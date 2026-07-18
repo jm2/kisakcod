@@ -679,7 +679,7 @@ static bool SL_TryAddUserInternalNoReport(
 	return true;
 }
 
-bool SL_AddUserInternal(RefString* refStr, uint32_t user)
+static bool SL_AddUserInternal(RefString* const refStr, const uint32_t user)
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 	if (SL_HasOwnershipBatchRegistryActivityLocked())
@@ -687,25 +687,28 @@ bool SL_AddUserInternal(RefString* refStr, uint32_t user)
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return false;
 	}
-	const uint8_t userByte = static_cast<uint8_t>(user);
-	iassert(SL_IsValidUserMask(user, true));
-	if (!SL_IsValidUserMask(user, true))
-	{
-		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
-		return false;
-	}
-
-	const scr_string_atomic::AddUserRefResult result =
-		scr_string_atomic::AddUserRef(SL_RefStringWord(refStr), userByte);
-	if (result == scr_string_atomic::AddUserRefResult::Invalid)
-	{
-		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
-		return false;
-	}
-	if (result == scr_string_atomic::AddUserRefResult::Added)
-		SL_DebugAddRef(SL_ConvertFromRefString(refStr));
+	const uintptr_t memoryBegin =
+		reinterpret_cast<uintptr_t>(scrMemTreePub.mt_buffer);
+	const uintptr_t refStringAddress = reinterpret_cast<uintptr_t>(refStr);
+	const bool addressValid = refStr != nullptr && memoryBegin != 0
+		&& memoryBegin <= (std::numeric_limits<uintptr_t>::max)() - MT_SIZE
+		&& refStringAddress > memoryBegin
+		&& refStringAddress < memoryBegin + MT_SIZE
+		&& (refStringAddress - memoryBegin) % MT_NODE_SIZE == 0;
+	RefString* resolvedRefString = nullptr;
+	uint32_t byteCount = 0;
+	const bool valid = SL_IsValidUserMask(user, true)
+		&& addressValid
+		&& SL_TryResolveLegacyTransferTargetNoReport(
+			static_cast<uint32_t>(
+				(refStringAddress - memoryBegin) / MT_NODE_SIZE),
+			&resolvedRefString,
+			&byteCount)
+		&& resolvedRefString == refStr
+		&& SL_TryAddUserInternalNoReport(resolvedRefString, user);
+	(void)byteCount;
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
-	return true;
+	return valid;
 }
 
 void SL_AddRefToString(uint32_t stringValue)
@@ -718,16 +721,19 @@ void SL_AddRefToString(uint32_t stringValue)
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return;
 	}
-	RefString* refStr = GetRefString(stringValue);
-	if (!scr_string_atomic::TryAddRef(SL_RefStringWord(refStr)))
+	RefString* refStr = nullptr;
+	uint32_t byteCount = 0;
+	const bool added =
+		SL_TryResolveLegacyTransferTargetNoReport(
+			stringValue, &refStr, &byteCount)
+		&& SL_TryAddUserInternalNoReport(refStr, 0);
+	(void)byteCount;
+	if (!added)
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		Com_Error(ERR_DROP, "invalid script string reference increment");
 		return;
 	}
-	SL_DebugAddRef(stringValue);
-	iassert(scr_string_atomic::RefCount(
-		scr_string_atomic::Load(SL_RefStringWord(refStr))) != 0);
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 }
 
@@ -4234,7 +4240,6 @@ void __cdecl SL_AddUser(uint32_t stringValue, uint32_t user)
 {
 	if (SL_IsOwnershipBatchActiveNoReport())
 		return;
-	RefString *RefString; // eax
 
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 	if (SL_HasOwnershipBatchRegistryActivityLocked())
@@ -4242,8 +4247,14 @@ void __cdecl SL_AddUser(uint32_t stringValue, uint32_t user)
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return;
 	}
-	RefString = GetRefString(stringValue);
-	if (!SL_AddUserInternal(RefString, user))
+	RefString* refString = nullptr;
+	uint32_t byteCount = 0;
+	const bool added = SL_IsValidUserMask(user, true)
+		&& SL_TryResolveLegacyTransferTargetNoReport(
+			stringValue, &refString, &byteCount)
+		&& SL_TryAddUserInternalNoReport(refString, user);
+	(void)byteCount;
+	if (!added)
 	{
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		Com_Error(ERR_DROP, "invalid script string reference increment");
@@ -4267,28 +4278,40 @@ uint32_t __cdecl SL_ConvertToLowercase(uint32_t stringValue, uint32_t user, int 
 {
 	if (SL_IsOwnershipBatchActiveNoReport())
 		return 0;
-	const char *v4; // [esp+4Ch] [ebp-2014h]
 	char str[8192]; // [esp+50h] [ebp-2010h] BYREF
-	uint32_t stringOfSize; // [esp+2054h] [ebp-Ch]
-	uint32_t len; // [esp+2058h] [ebp-8h]
-	uint32_t i; // [esp+205Ch] [ebp-4h]
 
 	PROF_SCOPED("SL_ConvertToLowercase");
 
-	len = SL_GetStringLen(stringValue) + 1;
-	if (len <= 0x2000)
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (SL_HasOwnershipBatchRegistryActivityLocked())
 	{
-		v4 = SL_ConvertToString(stringValue);
-		for (i = 0; i < len; ++i)
-			str[i] = tolower(v4[i]);
-		stringOfSize = SL_GetStringOfSize(str, user, len, type);
-		SL_RemoveRefToString(stringValue);
-		return stringOfSize;
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return 0;
 	}
-	else
+	RefString* refString = nullptr;
+	uint32_t byteCount = 0;
+	if (!SL_TryResolveLegacyTransferTargetNoReport(
+			stringValue, &refString, &byteCount))
 	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return 0;
+	}
+	if (byteCount > sizeof(str))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return stringValue;
 	}
+	for (uint32_t index = 0; index < byteCount; ++index)
+	{
+		str[index] = static_cast<char>(tolower(
+			static_cast<unsigned char>(refString->str[index])));
+	}
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+
+	const uint32_t stringOfSize =
+		SL_GetStringOfSize(str, user, byteCount, type);
+	SL_RemoveRefToString(stringValue);
+	return stringOfSize;
 }
 
 void __cdecl CreateCanonicalFilename(char *newFilename, const char *filename, int count)

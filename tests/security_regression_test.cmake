@@ -3724,6 +3724,67 @@ require_source_match_count(
     "->[ \t\r\n]*data"
     2
     "only private accessors may lexically touch RefString packed data")
+require_source_not_contains(
+    "script/scr_stringlist.h"
+    "SL_AddUserInternal("
+    "opaque RefString pointers must not authorize public mutation")
+
+extract_security_slice(
+    _legacy_string_release_security_source
+    "static bool SL_AddUserInternal("
+    "void SL_AddRefToString(uint32_t stringValue)"
+    _legacy_opaque_user_mutator_security_slice
+    "opaque RefString user mutation")
+require_security_slice_ordered(
+    _legacy_opaque_user_mutator_security_slice
+    "const bool addressValid = refStr != nullptr"
+    "SL_TryResolveLegacyTransferTargetNoReport("
+    "opaque RefString mutation must range-check before exact resolution")
+require_security_slice_ordered(
+    _legacy_opaque_user_mutator_security_slice
+    "&& resolvedRefString == refStr"
+    "&& SL_TryAddUserInternalNoReport(resolvedRefString, user);"
+    "opaque RefString mutation must prove exact identity before atomic access")
+forbid_security_slice_contains(
+    _legacy_opaque_user_mutator_security_slice
+    "SL_RefStringWord(refStr)"
+    "opaque RefString mutation must not directly access caller storage")
+
+extract_security_slice(
+    _legacy_string_release_security_source
+    "void SL_AddRefToString(uint32_t stringValue)"
+    "void SL_CheckExists(uint32_t stringValue)"
+    _legacy_add_ref_security_slice
+    "legacy ID ref mutation")
+require_security_slice_ordered(
+    _legacy_add_ref_security_slice
+    "SL_TryResolveLegacyTransferTargetNoReport("
+    "SL_TryAddUserInternalNoReport(refStr, 0)"
+    "legacy ID ref mutation must authenticate before atomic access")
+
+extract_security_slice(
+    _legacy_string_release_security_source
+    "void __cdecl SL_AddUser(uint32_t stringValue, uint32_t user)"
+    "void __cdecl Scr_SetString(uint16_t *to, uint32_t from)"
+    _legacy_add_user_security_slice
+    "legacy ID user mutation")
+require_security_slice_ordered(
+    _legacy_add_user_security_slice
+    "SL_TryResolveLegacyTransferTargetNoReport("
+    "SL_TryAddUserInternalNoReport(refString, user)"
+    "legacy ID user mutation must authenticate before atomic access")
+
+extract_security_slice(
+    _legacy_string_release_security_source
+    "uint32_t __cdecl SL_ConvertToLowercase("
+    "void __cdecl CreateCanonicalFilename("
+    _legacy_lowercase_security_slice
+    "legacy lowercase conversion")
+require_security_slice_ordered(
+    _legacy_lowercase_security_slice
+    "SL_TryResolveLegacyTransferTargetNoReport("
+    "static_cast<unsigned char>(refString->str[index])"
+    "lowercase conversion must authenticate before bounded ctype access")
 
 require_all_occurrences_wrapped(
     "script/scr_stringlist.cpp"

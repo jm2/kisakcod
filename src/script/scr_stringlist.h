@@ -86,7 +86,6 @@ void SL_BeginLoadScripts();
     uint16_t *canonicalCount) noexcept;
 
 void __cdecl SL_AddUser(uint32_t stringValue, uint32_t user);
-bool SL_AddUserInternal(RefString* refStr, uint32_t user);
 
 void SL_AddRefToString(uint32_t stringValue);
 
