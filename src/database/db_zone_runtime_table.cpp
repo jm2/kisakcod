@@ -704,11 +704,6 @@ ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
 
     const ZoneRuntimeTableStatus postAuthentication =
         AuthenticateExactEntry(entry, physicalSlot, key);
-    if (postAuthentication == ZoneRuntimeTableStatus::UnsafeFailure)
-    {
-        table->poison();
-        return ZoneRuntimeTableStatus::UnsafeFailure;
-    }
     if (postAuthentication != ZoneRuntimeTableStatus::Success)
     {
         table->poison();
