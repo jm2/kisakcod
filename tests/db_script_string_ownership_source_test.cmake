@@ -198,7 +198,7 @@ foreach(_var IN ITEMS
     _add_memory_node)
     require_ordered(
         ${_var}
-        "MT_RejectUnleasedAccessForActiveLeaseNoReport()"
+        "MT_RejectUnleasedAccessForActiveLeaseLocked()"
         "iassert("
         "frozen raw memory-tree rejection precedes diagnostics")
 endforeach()

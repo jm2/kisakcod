@@ -2457,19 +2457,20 @@ bool MT_Realloc(int oldNumBytes, int newNumbytes)
 
 void MT_RemoveHeadMemoryNode(int size)
 {
-    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
-        return;
-
-    iassert(size >= 0 && size <= MEMORY_NODE_BITS);
-    if (size < 0 || size > MEMORY_NODE_BITS)
-        return;
-
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
     if (MT_RejectUnleasedAccessForActiveLeaseLocked())
     {
         Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return;
     }
+
+    if (size < 0 || size > MEMORY_NODE_BITS)
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+        iassert(size >= 0 && size <= MEMORY_NODE_BITS);
+        return;
+    }
+
     MT_ResetPreflightTransaction();
     const bool valid = MT_IsBasicCoreStateValidNoReport()
         && mt_freeNodeCountShadow != 0
@@ -2700,22 +2701,21 @@ void MT_FreeIndex(uint32_t nodeNum, int numBytes)
 
 bool __cdecl MT_RemoveMemoryNode(int oldNode, uint32_t size)
 {
-    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
-        return false;
-
-    iassert(size <= MEMORY_NODE_BITS);
-    if (size > MEMORY_NODE_BITS || oldNode <= 0
-        || oldNode >= MEMORY_NODE_COUNT)
-    {
-        return false;
-    }
-
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
     if (MT_RejectUnleasedAccessForActiveLeaseLocked())
     {
         Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return false;
     }
+
+    if (size > MEMORY_NODE_BITS || oldNode <= 0
+        || oldNode >= MEMORY_NODE_COUNT)
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+        iassert(size <= MEMORY_NODE_BITS);
+        return false;
+    }
+
     MT_ResetPreflightTransaction();
     bool found = false;
     const bool valid = MT_IsBasicCoreStateValidNoReport()
@@ -2788,22 +2788,21 @@ int MT_GetSubTreeSize(int nodeNum)
 
 void MT_AddMemoryNode(int newNode, int size)
 {
-    if (MT_RejectUnleasedAccessForActiveLeaseNoReport())
-        return;
-
-    iassert(size >= 0 && size <= MEMORY_NODE_BITS);
-    if (size < 0 || size > MEMORY_NODE_BITS || newNode <= 0
-        || newNode >= MEMORY_NODE_COUNT)
-    {
-        return;
-    }
-
     Sys_EnterCriticalSection(CRITSECT_MEMORY_TREE);
     if (MT_RejectUnleasedAccessForActiveLeaseLocked())
     {
         Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
         return;
     }
+
+    if (size < 0 || size > MEMORY_NODE_BITS || newNode <= 0
+        || newNode >= MEMORY_NODE_COUNT)
+    {
+        Sys_LeaveCriticalSection(CRITSECT_MEMORY_TREE);
+        iassert(size >= 0 && size <= MEMORY_NODE_BITS);
+        return;
+    }
+
     MT_ResetPreflightTransaction();
     const bool valid = MT_IsBasicCoreStateValidNoReport()
         && mt_freeNodeCountShadow < MEMORY_NODE_COUNT - 1
