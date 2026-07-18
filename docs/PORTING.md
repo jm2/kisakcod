@@ -24,17 +24,19 @@ Completed foundation work:
 - an active report-free script-string ownership foundation candidate: dedicated recursive outer DB serialization,
   private journal callbacks, exact ordinary/database-user ownership results, full allocator-backed byte-count/hash/debug
   validation, rejection of packed-length-ambiguous earlier NULs, and failure-atomic memory-tree allocate/query/free
-  operations with assertion-free typed commits and complete disjoint-partition/corruption fixtures. Exact allocator-class
-  recovery preserves the established compact non-NUL legacy binary records. Final-release planning validates the complete
-  bounded free list, including every forward/reverse link, cycle rejection, and the sentinel tail, before mutation;
-  memory-tree scoring uses fixed-width byte extraction without inactive-union-member reads. This is not yet a production
-  exclusion boundary: the adapter has no production caller, tokens are
-  not yet bound to one journal/key for a whole lifecycle, and legacy raw user-4/user-8 operations plus the 4 -> 8 sweep
-  remain outside the serializer. However, the shared legacy string intern/find and memory-tree allocate/free routes do
-  already use the correctness-first O(65,536)-per-operation validation. Release measurements show acceptable-looking
-  short unique cases can become a one-second path for only 200 same-length 300-byte collision-chain entries. A proven
-  retained transaction or separately bounded local legacy path is therefore a merge prerequisite, not merely future
-  production-enrollment work;
+  operations with assertion-free typed commits and complete disjoint-partition/corruption fixtures. Typed APIs preserve
+  exhaustive 65,536-bucket/free-forest validation. Production legacy queries authenticate only their allocation interval,
+  while mutations authenticate all free-tree heads and the fixed-width allocation, membership, topology, and dual-count
+  mirrors on every path they consume or change. Exact allocator-class recovery preserves compact non-NUL legacy binary
+  records. Typed final release validates the complete bounded free list; legacy release validates its complete collision
+  chain and local free-list splice, while global shutdown/transfer perform one complete linear preflight followed by a
+  physical-entry mutation pass. Fixed-width score decoding avoids inactive-union-member reads. Comparable GCC Release
+  measurements improved from roughly 135/766/1,056 ms to **2.692/1.977/4.148 ms** for 2,000 unique, 10,000 repeated, and
+  200 same-length 300-byte interns; a 4,096-singleton legacy allocator probe is about **0.003 ms**, with deterministic
+  counters proving no complete partition, forest, or free-list scan on those legacy paths. This is not yet a whole-zone
+  production boundary: the adapter has no production caller, tokens are not yet bound to one journal/key for a complete
+  lifecycle, and raw user-4/user-8 operations plus the 4 -> 8 sweep remain outside the serializer. The typed production
+  integration still needs the prepared validation lease/batching work;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -1500,12 +1502,14 @@ execution and AArch64 compilation/linking pass. Exact final head `9fb4fc18` pass
 hosted Codex found no major issue at that head and no review threads remain. PR #38 squash-merged as `a7c485fd`, and
 authoritative post-merge master run **29551990840** passed all nine jobs.
 The active ownership-foundation candidate now supplies the no-report script-string primitives, private journal adapter,
-dedicated serializer, and checked allocator surface around the two merged lifecycle primitives. The next batch builds the
+dedicated serializer, checked allocator surface, bounded legacy topology/interval validation, and linear global-sweep
+preflight around the two merged lifecycle primitives. The next batch builds the
 constructed whole-zone table/controller, binds exactly one token to one journal/key through terminal finalization or
 rollback, and enrolls every raw database-user mutation/publication and the global 4 -> 8 sweep before replacing a legacy
-route. It must also benchmark representative retail-zone loading and introduce a retained-transaction validation lease
-or equivalent proven fast path; the correctness-first complete allocator scan is not an acceptable unmeasured production
-hot path. Static context slots and callback metadata must live outside and outlast zone PMem. They must survive
+route. It must also benchmark representative retail-zone loading and integrate the prepared retained-transaction
+validation lease/batching work so the typed exhaustive boundary is not repeated per enrolled callback; the bounded
+legacy compatibility surface does not replace that typed guarantee. Static context slots and callback metadata must live
+outside and outlast zone PMem. They must survive
 `PMem_Free` and allow the controller to publish `Empty`; only per-generation arena/workspace/journal/backing belongs
 inside the existing named
 PMem zone scope. `XZone` remains ABI-unchanged because the registry zeroes it with `memset`. A checked fixed arena budget
