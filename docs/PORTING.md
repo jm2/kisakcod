@@ -21,11 +21,13 @@ Completed foundation work:
 
 - the audited upstream/gameplay reconciliation, PR #48's report-free script-string ownership foundation, PR #49's
   constructed lifecycle controller, PR #50's failure-atomic script-string initialization hardening, and PR #51's
-  generation-keyed runtime table through `beb2925d`. PR #51 exact-head run **29628040709** and post-merge master run
+  generation-keyed runtime table plus PR #52's test-fixture repair through `e792c160`. PR #51 exact-head run
+  **29628040709** and post-merge master run
   **29628132007** each passed eight of nine jobs; Windows x86 Debug alone exposed a missing test-fixture
   `MyAssertHandler` definition required by `qcommon/sys_sync.cpp`, while the production targets and other eight jobs
-  passed. Active test-only fix `a2e58c24` supplies the established aborting fixture boundary without weakening
-  assertions or changing production code;
+  passed. PR #52 supplied the established aborting fixture boundary without weakening assertions or changing production
+  code and squash-merged as `e792c160`; exact final run **29628599645** and authoritative post-merge run
+  **29628940419** passed all nine jobs;
 - the merged report-free script-string ownership foundation: dedicated recursive outer DB serialization,
   private journal callbacks, exact ordinary/database-user ownership results, full allocator-backed byte-count/hash/debug
   validation, rejection of packed-length-ambiguous earlier NULs, and failure-atomic memory-tree allocate/query/free
@@ -53,7 +55,7 @@ Completed foundation work:
   runtime/source-contract coverage; the exact GCC Debug suite is **105/105** green. This is not production wiring: the
   stream, registry generation claims, PMem, arena/adapter, aliases/completed objects, real callbacks, and Live-unload
   route do not use it. All seven frozen raw ownership/sweep sites remain outside it, and typed production integration
-  still needs the prepared validation lease/batching work;
+  still needs to publish the active allocator lease and build the string `OwnershipBatch` on it;
 - merged debug-initialization hardening from PR #50. Independent `SL_InitCheckLeaks` calls now retain the
   recursive script-string lock from state inspection through reset and pointer publication; duplicate calls unlock before
   diagnostics and leave live accounting untouched even without assertions. `SL_Init` rejects already-published full or
@@ -74,10 +76,20 @@ Completed foundation work:
   diff gates pass. Independent review found and closed mutable-view authority and incomplete canonical/poison/phase/
   serializer checks, then reported the exact transplant clean. PR #51 squash-merged as `beb2925d`; its exact-head run
   **29628040709** and post-merge run **29628132007** each exposed only the same Windows x86 Debug fixture-link omission
-  after eight jobs passed. Active fix `a2e58c24` passes complete GCC Debug and Release suites at **107/107** and a 32-bit
-  MSVC-ABI `clang-cl`/`lld-link` probe resolves the exact symbol reported by CI. Production claims/consumption, keyed
-  terminal reset and Live unload, cleanup callbacks, PMem/adapter binding, and all seven raw ownership/sweep sites remain
+  after eight jobs passed. PR #52 repaired the fixture and squash-merged as `e792c160`; exact final run **29628599645**
+  and authoritative post-merge run **29628940419** passed all nine jobs. Production claims/consumption, keyed terminal
+  reset and Live unload, cleanup callbacks, PMem/adapter binding, and all seven raw ownership/sweep sites remain
   deliberately absent;
+- active authenticated memory-tree validation-lease checkpoint. Implementation `34b91875` and contract coverage
+  `2154e423` retain the recursive memory-tree lock across one serialized transaction, with distinct Complete,
+  LegacyLocal, and Leased policies. Begin and finish each authenticate the full Basic+Forest+Partition state, while
+  leased allocate/query/free operations retain PR #48's bounded mirror-aware touched-path validation. Mirrored pointer
+  and serial authority, overflow-safe serial/mutation accounting, exclusive same-thread ownership, and fail-closed
+  poisoning reject torn, stale, foreign, nested, corrupted, or unleased access. A private admission capability reserves
+  production construction for the later script-string `OwnershipBatch`; no production caller changes in this batch.
+  The rebased commits retain the exact patch identities of originals `433e9c5e`/`45eb9b80`, the combined GCC Release
+  suite is **107/107** green, focused GCC `RELEASE_ASSERTS`, Clang ASan+UBSan, repeated locking, strict i386, and AArch64
+  gates pass on the identical patch, and the completed independent exact audit found no blocker;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -400,9 +412,12 @@ Remaining gates, in implementation order:
    run **29627591759** passed all nine jobs. PR #51 merged the production-owned 33-entry table with stable
    slot/controller storage, by-value generation authority, slot-zero reservation, fail-closed initialization, and no
    production generation claims as `beb2925d`. Exact-head run **29628040709** and post-merge run **29628132007** each
-   passed eight jobs and failed only the Windows x86 Debug fixture link; publish the narrow test-only correction at
-   `a2e58c24` before treating master as green. Next, publish the independently clean retained memory-tree validation
-   lease, add the string OwnershipBatch, and finish exact-key terminal reset/Live-unload adapters. Then bind real
+   passed eight jobs and failed only the Windows x86 Debug fixture link. PR #52 fixed that test-only boundary and
+   squash-merged as `e792c160`; exact final run **29628599645** and authoritative post-merge run **29628940419** passed
+   all nine jobs. The independently clean retained memory-tree validation lease is now active as
+   `34b91875`/`2154e423`, preserving full transaction-boundary validation and PR #48's bounded leased operation paths
+   without a production caller. Publish that stack next, then add the string OwnershipBatch and finish exact-key terminal
+   reset/Live-unload adapters. Then bind real
    report-free callbacks and enroll all seven raw ownership/sweep paths while keeping static controller slots and callback
    metadata outside PMem with per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded
    scratch implementation when binding the recipes and adapter into production with
@@ -1382,7 +1397,8 @@ remained unchanged. PR #30 then merged the non-publishing reader prerequisite, a
 production restore to it; only the save-side guard and writer remain.
 
 Overall porting progress is approximately **73% by merged engineering effort**. Merging the durable runtime-table
-prerequisite does not move the rounded total. Windows x86 is about **93%**, shared
+prerequisite and preparing the allocator-only validation lease do not move the rounded total. Windows x86 is about
+**93%**, shared
 foundations/security about **85%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
 **39%**, and macOS arm64 about **30%**. Strict delivered-target status remains **0/5** because no requested
 64-bit/non-Windows engine target is enabled end to end yet.
@@ -1574,18 +1590,32 @@ views fail closed on invalid/default slots, stale/cross-slot/ABA authority, part
 lifecycle/controller/serializer combinations. Retaining an entry address cannot upgrade a copied stale key. The complete
 GCC suite is **107/107** green, focused Clang/sanitizer/source and x86/AArch64 gates pass, and exact-transplant review is
 clean. PR #51 squash-merged as `beb2925d`; exact-head run **29628040709** and post-merge master run **29628132007** each
-passed eight jobs but failed Windows x86 Debug on the test fixture's missing `MyAssertHandler` link boundary. Active
-test-only fix `a2e58c24` supplies that aborting stub, passes complete GCC Debug and Release suites at **107/107**, and
-resolves the exact 32-bit MSVC-decorated symbol in a local `clang-cl`/`lld-link` probe. The production loader deliberately
-does not claim or consume the table in this batch.
+passed eight jobs but failed Windows x86 Debug on the test fixture's missing `MyAssertHandler` link boundary. PR #52's
+narrow test-only repair passed all nine jobs in exact final run **29628599645** and authoritative post-merge run
+**29628940419**, then squash-merged as `e792c160`. The production loader deliberately does not claim or consume the table
+in this batch.
+
+The active authenticated memory-tree validation lease is rebased as implementation `34b91875` and tests/source contracts
+`2154e423`, with exact patch identities preserved from originals `433e9c5e` and `45eb9b80`. A private admission token
+begins one retained same-thread lock interval only after a full Basic+Forest+Partition validation. Complete operations
+keep their exhaustive policy, LegacyLocal operations keep PR #48's bounded mirror/path checks, and Leased operations
+authenticate a mirrored pointer/serial registry before performing those same bounded checks. Successful mutation counts
+are overflow-safe; torn registry fields, serial exhaustion, mutation exhaustion, stale or foreign tokens, recursive
+unleased access, and allocator corruption fail closed or poison the lease. Finish repeats the full validation before
+clearing authority. The combined GCC Release suite is **107/107** green, and the completed exact audit found no
+correctness, locking, authentication, overflow, performance-policy, ABI, or portability blocker. The identical original
+patch also passed focused GCC Release plus `RELEASE_ASSERTS`, Clang ASan+UBSan, 50 repeated locking runs, strict i386
+compilation, and AArch64 cross-compilation. This remains an
+allocator-only, production-neutral prerequisite: the private constructor is reserved for the forthcoming script-string
+`OwnershipBatch`, and no loader or raw ownership site consumes it yet.
 
 Generation enrollment, stream/PMem/arena/adapter binding, alias/completed-object unpublication, real admission/cleanup
 callbacks, and exact-key terminal reset/Live-unload routing remain. Two `SL_GetStringOfSize`, one `SL_AddUser`, two
 `SL_GetString`, one `SL_TransferSystem`, and
 one `SL_ShutdownSystem` site are source-frozen outside the controller; every raw database-user mutation/publication and
-the global 4 -> 8 sweep must be enrolled before replacing a legacy route. The prepared retained-transaction validation
-lease/batching work must be manually adapted onto PR #48's fixed-width mirrors, topology/accounting checks, and bounded
-scratch resets so typed exhaustive validation is paid at transaction boundaries rather than once per callback. The
+the global 4 -> 8 sweep must be enrolled before replacing a legacy route. The string ownership batch must now consume
+the retained lease while preserving PR #48's fixed-width mirrors, topology/accounting checks, and bounded scratch resets,
+so typed exhaustive validation is paid at transaction boundaries rather than once per callback. The
 bounded legacy compatibility surface does not replace that typed guarantee. Static context slots and callback metadata
 must live
 outside and outlast zone PMem. They must survive
