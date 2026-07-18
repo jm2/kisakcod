@@ -10,6 +10,8 @@ set(_source_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_table.cpp")
 set(_fixture_path
     "${SOURCE_ROOT}/tests/db_zone_runtime_table_tests.cpp")
+set(_production_seal_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_table_production_seal_tests.cpp")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
 set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
 set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
@@ -25,6 +27,7 @@ foreach(_path IN ITEMS
     "${_header_path}"
     "${_source_path}"
     "${_fixture_path}"
+    "${_production_seal_path}"
     "${_manifest_path}"
     "${_tests_path}"
     "${_ci_path}"
@@ -42,6 +45,7 @@ endforeach()
 file(READ "${_header_path}" _header)
 file(READ "${_source_path}" _source)
 file(READ "${_fixture_path}" _fixture)
+file(READ "${_production_seal_path}" _production_seal)
 file(READ "${_manifest_path}" _manifest)
 file(READ "${_tests_path}" _tests)
 file(READ "${_ci_path}" _ci)
@@ -56,6 +60,7 @@ foreach(_var IN ITEMS
     _header
     _source
     _fixture
+    _production_seal
     _manifest
     _tests
     _ci
@@ -110,6 +115,69 @@ function(extract_slice SOURCE_VAR START END OUT_VAR DESCRIPTION)
     string(SUBSTRING "${_tail}" 0 ${_end} _slice)
     set(${OUT_VAR} "${_slice}" PARENT_SCOPE)
 endfunction()
+
+# A macro-off translation unit recreates the helper's public name and probes
+# every private mutable capability that the test-only implementation exposes.
+# These are normal positive-build checks, so unrelated compiler failures cannot
+# satisfy the production authority seal.
+foreach(_marker IN ITEMS
+    "struct ZoneRuntimeTableTestAccess"
+    "CanReachEntries"
+    "CanMutateReserved"
+    "CanReachMutableLifecycle"
+    "CanReachMutableOwnership"
+    "CanMutateKey"
+    "&table->entries_;"
+    "table->reserved_ = 1u;"
+    "&entry->lifecycle_;"
+    "&entry->scriptStringOwnership_;"
+    "entry->key_ = zone_load::ZoneLoadContextKey{};"
+    "!ZoneRuntimeTableTestAccess::CanReachEntries<ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanMutateReserved<ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanReachMutableLifecycle<ZoneRuntimeEntry>"
+    "!ZoneRuntimeTableTestAccess::CanReachMutableOwnership<ZoneRuntimeEntry>"
+    "!ZoneRuntimeTableTestAccess::CanMutateKey<ZoneRuntimeEntry>")
+    require_contains(
+        _production_seal "${_marker}" "independent production authority seal")
+endforeach()
+require_not_contains(
+    _production_seal
+    "#define KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"
+    "production authority seal cannot opt into test access")
+
+extract_slice(
+    _tests
+    "# Compile production's runtime-table header without its test-access opt-in."
+    "add_executable(kisakcod-fx-archive-disk32-tests"
+    _production_seal_registration
+    "production authority-seal registration")
+foreach(_marker IN ITEMS
+    "add_executable( kisakcod-db-zone-runtime-table-production-seal-tests"
+    "db_zone_runtime_table_production_seal_tests.cpp"
+    "NAME database-zone-runtime-table-production-test-access-sealed")
+    require_contains(
+        _production_seal_registration
+        "${_marker}"
+        "normal positive-build production authority seal")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "WILL_FAIL"
+    "EXCLUDE_FROM_ALL"
+    "KISAK_DB_ZONE_RUNTIME_TABLE_TESTING")
+    require_not_contains(
+        _production_seal_registration
+        "${_forbidden}"
+        "production authority seal cannot accept a vacuous failure")
+endforeach()
+
+# Both owning classes independently gate their friendship, and the helper's
+# forward declaration and implementation remain absent from production TUs.
+foreach(_marker IN ITEMS
+    "#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING struct ZoneRuntimeTableTestAccess; #endif"
+    "#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING friend struct ZoneRuntimeTableTestAccess; #endif"
+    "#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING // Tests opt in before including this header.")
+    require_contains(_header "${_marker}" "macro-gated test authority")
+endforeach()
 
 # The fixed table owns only durable metadata.  It remains external to XZone and
 # cannot allocate, report, touch PMem, publish assets, or mutate script strings.
@@ -628,12 +696,15 @@ foreach(_marker IN ITEMS
 endforeach()
 foreach(_marker IN ITEMS
     "add_executable(kisakcod-db-zone-runtime-table-tests"
+    "add_executable( kisakcod-db-zone-runtime-table-production-seal-tests"
     "db_zone_runtime_table_tests.cpp"
+    "db_zone_runtime_table_production_seal_tests.cpp"
     "\${SRC_DIR}/database/db_zone_runtime_table.cpp"
     "KISAK_DB_ZONE_RUNTIME_TABLE_TESTING=1"
     "KISAK_DB_ZONE_LOAD_CONTEXT_TESTING=1"
     "KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING=1"
     "NAME database-zone-runtime-table-ownership"
+    "NAME database-zone-runtime-table-production-test-access-sealed"
     "database-zone-runtime-table-unload-unsafe-${_zone_runtime_unsafe_boundary}"
     "--unsafe-live-unload ${_zone_runtime_unsafe_boundary}"
     "database-zone-runtime-table-unload-invalid-missing-value"
@@ -651,6 +722,8 @@ foreach(_marker IN ITEMS
 endforeach()
 foreach(_marker IN ITEMS
     "kisakcod-db-zone-runtime-table-tests"
+    "kisakcod-db-zone-runtime-table-production-seal-tests"
+    "production-test-access-sealed"
     "mutation-unsafe-(backend|postcondition)"
     "mutation-invalid-(missing-value|extra-value|kind)")
     require_contains(_ci "${_marker}" "measured Windows x86 CI integration")

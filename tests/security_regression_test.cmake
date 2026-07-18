@@ -9610,6 +9610,130 @@ require_source_match_count(
     3
     "all fallible FX free wrappers must return callback vetoes without a fatal error")
 
+# Production runtime-table translation units must not acquire the corruption
+# helper's raw mutable authority by recreating its stable public name.
+require_source_contains(
+    "database/db_zone_runtime_table.h"
+    "#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING\nstruct ZoneRuntimeTableTestAccess;\n#endif"
+    "production runtime-table headers must not declare the test helper")
+require_source_contains(
+    "database/db_zone_runtime_table.h"
+    "#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING\n    friend struct ZoneRuntimeTableTestAccess;\n#endif"
+    "both runtime-table ownership classes must gate test friendship")
+require_source_match_count(
+    "database/db_zone_runtime_table.h"
+    "#[ \t]*ifdef[ \t]+KISAK_DB_ZONE_RUNTIME_TABLE_TESTING[\r\n]+[ \t]*friend[ \t]+struct[ \t]+ZoneRuntimeTableTestAccess[ \t]*;[\r\n]+#[ \t]*endif"
+    2
+    "both private runtime-table owners must gate test friendship independently")
+require_source_match_count(
+    "database/db_zone_runtime_table.h"
+    "#[ \t]*ifdef[ \t]+KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"
+    4
+    "every runtime-table helper declaration, friendship, and definition must be test gated")
+
+set(_zone_runtime_production_seal_test_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_table_production_seal_tests.cpp")
+if(NOT EXISTS "${_zone_runtime_production_seal_test_path}")
+    message(FATAL_ERROR
+        "Missing zone runtime table production authority-seal test")
+endif()
+file(READ "${_zone_runtime_production_seal_test_path}"
+    _zone_runtime_production_seal_test)
+forbid_security_slice_contains(
+    _zone_runtime_production_seal_test
+    "#define KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"
+    "the production runtime-table seal must compile with test access disabled")
+require_security_slice_contains(
+    _zone_runtime_production_seal_test
+    "struct ZoneRuntimeTableTestAccess"
+    "the production runtime-table seal must recreate the helper's public name")
+foreach(_zone_runtime_probe_marker IN ITEMS
+    "&table->entries_;"
+    "table->reserved_ = 1u;"
+    "&entry->lifecycle_;"
+    "&entry->scriptStringOwnership_;"
+    "entry->key_ = zone_load::ZoneLoadContextKey{};")
+    require_security_slice_contains(
+        _zone_runtime_production_seal_test
+        "${_zone_runtime_probe_marker}"
+        "the runtime-table seal must probe each private mutable capability")
+endforeach()
+foreach(_zone_runtime_seal_marker IN ITEMS
+    "!ZoneRuntimeTableTestAccess::CanReachEntries<ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanMutateReserved<ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanReachMutableLifecycle<ZoneRuntimeEntry>"
+    "!ZoneRuntimeTableTestAccess::CanReachMutableOwnership<ZoneRuntimeEntry>"
+    "!ZoneRuntimeTableTestAccess::CanMutateKey<ZoneRuntimeEntry>")
+    require_security_slice_contains(
+        _zone_runtime_production_seal_test
+        "${_zone_runtime_seal_marker}"
+        "every raw runtime-table capability must be sealed independently")
+endforeach()
+
+file(READ "${SOURCE_ROOT}/tests/CMakeLists.txt"
+    _zone_runtime_production_seal_tests_cmake)
+extract_security_slice(
+    _zone_runtime_production_seal_tests_cmake
+    "# Compile production's runtime-table header without its test-access opt-in."
+    "add_executable(kisakcod-fx-archive-disk32-tests"
+    _zone_runtime_production_seal_registration
+    "runtime-table production authority-seal CMake registration")
+require_security_slice_contains(
+    _zone_runtime_production_seal_registration
+    "add_executable("
+    "the runtime-table production seal must be a normal positive target")
+require_security_slice_contains(
+    _zone_runtime_production_seal_registration
+    "db_zone_runtime_table_production_seal_tests.cpp"
+    "the runtime-table production seal must compile dependent access checks")
+require_security_slice_contains(
+    _zone_runtime_production_seal_registration
+    "database-zone-runtime-table-production-test-access-sealed"
+    "the runtime-table production seal must be registered with CTest")
+forbid_security_slice_contains(
+    _zone_runtime_production_seal_registration
+    "WILL_FAIL"
+    "the positive runtime-table seal cannot accept arbitrary compiler failures")
+forbid_security_slice_contains(
+    _zone_runtime_production_seal_registration
+    "EXCLUDE_FROM_ALL"
+    "portable builds must compile the runtime-table production seal normally")
+forbid_security_slice_contains(
+    _zone_runtime_production_seal_registration
+    "KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"
+    "the production seal target cannot opt into runtime-table test access")
+
+file(READ "${SOURCE_ROOT}/.github/workflows/ci.yml"
+    _zone_runtime_production_seal_ci)
+extract_security_slice(
+    _zone_runtime_production_seal_ci
+    "portable-tests:"
+    "windows-x86:"
+    _zone_runtime_production_seal_portable_ci
+    "portable runtime-table production authority-seal CI")
+require_security_slice_contains(
+    _zone_runtime_production_seal_portable_ci
+    "-DBUILD_TESTING=ON"
+    "portable CI must configure the runtime-table production seal")
+require_security_slice_contains(
+    _zone_runtime_production_seal_portable_ci
+    "ctest --test-dir build-tests -C Release --output-on-failure"
+    "portable CI must execute the runtime-table production seal")
+extract_security_slice(
+    _zone_runtime_production_seal_ci
+    "windows-x86:"
+    "windows-x86-nosteam:"
+    _zone_runtime_production_seal_measured_ci
+    "measured Windows x86 runtime-table production authority-seal CI")
+require_security_slice_contains(
+    _zone_runtime_production_seal_measured_ci
+    "kisakcod-db-zone-runtime-table-production-seal-tests"
+    "measured Windows x86 CI must build the runtime-table production seal")
+require_security_slice_contains(
+    _zone_runtime_production_seal_measured_ci
+    "production-test-access-sealed"
+    "measured Windows x86 CI must select the runtime-table production seal")
+
 set(_format_sensitive_sources
     "cgame/cg_hudelem.cpp"
     "cgame/cg_info.cpp"
