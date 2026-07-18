@@ -80,16 +80,24 @@ Completed foundation work:
   and authoritative post-merge run **29628940419** passed all nine jobs. Production claims/consumption, keyed terminal
   reset and Live unload, cleanup callbacks, PMem/adapter binding, and all seven raw ownership/sweep sites remain
   deliberately absent;
-- active authenticated memory-tree validation-lease checkpoint. Implementation `34b91875` and contract coverage
+- active PR #53 authenticated memory-tree validation-lease checkpoint. Implementation `34b91875` and contract coverage
   `2154e423` retain the recursive memory-tree lock across one serialized transaction, with distinct Complete,
   LegacyLocal, and Leased policies. Begin and finish each authenticate the full Basic+Forest+Partition state, while
-  leased allocate/query/free operations retain PR #48's bounded mirror-aware touched-path validation. Mirrored pointer
-  and serial authority, overflow-safe serial/mutation accounting, exclusive same-thread ownership, and fail-closed
-  poisoning reject torn, stale, foreign, nested, corrupted, or unleased access. A private admission capability reserves
-  production construction for the later script-string `OwnershipBatch`; no production caller changes in this batch.
-  The rebased commits retain the exact patch identities of originals `433e9c5e`/`45eb9b80`, the combined GCC Release
-  suite is **107/107** green, focused GCC `RELEASE_ASSERTS`, Clang ASan+UBSan, repeated locking, strict i386, and AArch64
-  gates pass on the identical patch, and the completed independent exact audit found no blocker;
+  leased allocate/query/free operations retain PR #48's bounded mirror-aware touched-path validation. Overflow-safe
+  serial/mutation accounting, exclusive same-thread ownership, and fail-closed poisoning reject stale, foreign, nested,
+  corrupted, exhausted, or unleased access. A private admission capability reserves production construction for the
+  later script-string `OwnershipBatch`; no production caller changes in this batch;
+- PR #53 lifetime hardening `b193343b` closes Gemini's valid exact-head `fc496b01` stack UAF finding. The generic
+  registry now stores only mirrored by-value address, serial, and Idle/Active/Poisoned/Frozen lifecycle state and never
+  dereferences stored stack authority. Independent mirrored TLS identity proves the retained owner acquisition before an
+  exact destructor releases it. Exact abandonment publishes process-lifetime `Frozen`, clears identity, and releases the
+  authenticated lock; torn or unauthenticated destruction freezes and clears identity but retains the unproven base
+  acquisition. A skipped destructor may therefore retain exclusion but cannot create a later global UAF. `Frozen`
+  survives `MT_Init`, has no production reset, and report-freely rejects every typed, legacy, leased, raw, reset, query,
+  validation, and reporting traversal path with output/state atomicity. Canonical unrelated/finished destruction is a
+  no-op, the lease remains 16-byte standard-layout but is intentionally non-trivially destructible, and test-only thaw is
+  macro-gated. The complete GCC Release suite is **107/107** green; focused GCC `RELEASE_ASSERTS`, Clang ASan+UBSan,
+  50 repeated locking runs, strict i386/AArch64 compiles, source/security, and diff gates pass;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -414,9 +422,11 @@ Remaining gates, in implementation order:
    production generation claims as `beb2925d`. Exact-head run **29628040709** and post-merge run **29628132007** each
    passed eight jobs and failed only the Windows x86 Debug fixture link. PR #52 fixed that test-only boundary and
    squash-merged as `e792c160`; exact final run **29628599645** and authoritative post-merge run **29628940419** passed
-   all nine jobs. The independently clean retained memory-tree validation lease is now active as
-   `34b91875`/`2154e423`, preserving full transaction-boundary validation and PR #48's bounded leased operation paths
-   without a production caller. Publish that stack next, then add the string OwnershipBatch and finish exact-key terminal
+   all nine jobs. PR #53's retained memory-tree validation lease is active as `34b91875`/`2154e423`, with lifetime
+   hardening `b193343b` adding by-value registry authority, TLS-authenticated retained-lock release, and terminal
+   destructor abandonment. It preserves full transaction-boundary validation and PR #48's bounded leased operation paths
+   without a production caller. Finish that review round next, then give the string OwnershipBatch the same lifetime
+   boundary and finish exact-key terminal
    reset/Live-unload adapters. Then bind real
    report-free callbacks and enroll all seven raw ownership/sweep paths while keeping static controller slots and callback
    metadata outside PMem with per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded
@@ -1595,17 +1605,36 @@ narrow test-only repair passed all nine jobs in exact final run **29628599645** 
 **29628940419**, then squash-merged as `e792c160`. The production loader deliberately does not claim or consume the table
 in this batch.
 
-The active authenticated memory-tree validation lease is rebased as implementation `34b91875` and tests/source contracts
-`2154e423`, with exact patch identities preserved from originals `433e9c5e` and `45eb9b80`. A private admission token
+The active PR #53 authenticated memory-tree validation lease is rebased as implementation `34b91875` and tests/source
+contracts `2154e423`, with historical exact patch identities preserved from originals `433e9c5e` and `45eb9b80`. A
+private admission token
 begins one retained same-thread lock interval only after a full Basic+Forest+Partition validation. Complete operations
 keep their exhaustive policy, LegacyLocal operations keep PR #48's bounded mirror/path checks, and Leased operations
-authenticate a mirrored pointer/serial registry before performing those same bounded checks. Successful mutation counts
+authenticate exact by-value address/serial authority before performing those same bounded checks. Successful mutation
+counts
 are overflow-safe; torn registry fields, serial exhaustion, mutation exhaustion, stale or foreign tokens, recursive
 unleased access, and allocator corruption fail closed or poison the lease. Finish repeats the full validation before
-clearing authority. The combined GCC Release suite is **107/107** green, and the completed exact audit found no
-correctness, locking, authentication, overflow, performance-policy, ABI, or portability blocker. The identical original
-patch also passed focused GCC Release plus `RELEASE_ASSERTS`, Clang ASan+UBSan, 50 repeated locking runs, strict i386
-compilation, and AArch64 cross-compilation. This remains an
+clearing authority.
+
+Gemini found a valid lifetime defect at exact PR head `fc496b01`: the default destructor could leave global registry
+pointers naming a dead stack lease. Review-hardening commit `b193343b` replaces stored pointers with mirrored by-value
+address, serial, and Idle/Active/Poisoned/Frozen lifecycle state. Generic paths inspect those values only; they dereference
+a lease solely when an explicit live argument exactly matches authority. Mirrored thread-local address/serial state is an
+independent proof that successful Begin retained the current thread's recursive acquisition, preventing fabricated
+registry state from causing a double unlock. An exactly authenticated destructor first publishes terminal process-
+lifetime `Frozen`, clears the stack identity, and then releases the proven acquisition. Any torn or unauthenticated
+destructor also freezes and clears identity but releases only its own recursive probe, leaving the unproven base
+acquisition held. A skipped destructor or nonlocal exit may strand that lock, but later generic paths cannot dereference
+dead storage. Production has no thaw API, `MT_Init` cannot clear `Frozen`, and all typed/legacy/leased mutation, query,
+validation, raw, reset, and reporting traversal entries reject it without state/output changes or diagnostics. Canonical
+unrelated and normally finished leases destruct harmlessly. The lease remains 16 bytes and standard-layout, but the
+custom destructor intentionally makes it non-trivially destructible.
+
+The combined GCC Release suite is **107/107** green. Focused GCC `RELEASE_ASSERTS`, Clang ASan+UBSan (leak detection
+disabled under the traced runner), 50 repeated locking/thread runs, strict i386 compilation, AArch64 cross-compilation,
+source/security invariants, and `git diff --check` pass. Runtime coverage includes exact abandonment, foreign wake-and-
+reject, torn token/address/serial/lifecycle mirrors, arbitrary matched integer addresses, same-thread raw/query/reset/
+report rejection, output atomicity, test-only cleanup, and unrelated canonical destruction. This remains an
 allocator-only, production-neutral prerequisite: the private constructor is reserved for the forthcoming script-string
 `OwnershipBatch`, and no loader or raw ownership site consumes it yet.
 
@@ -1614,7 +1643,9 @@ callbacks, and exact-key terminal reset/Live-unload routing remain. Two `SL_GetS
 `SL_GetString`, one `SL_TransferSystem`, and
 one `SL_ShutdownSystem` site are source-frozen outside the controller; every raw database-user mutation/publication and
 the global 4 -> 8 sweep must be enrolled before replacing a legacy route. The string ownership batch must now consume
-the retained lease while preserving PR #48's fixed-width mirrors, topology/accounting checks, and bounded scratch resets,
+the retained lease and implement the same by-value mirrored lifecycle, independent TLS retained-lock proof, terminal
+abandonment, and no-stored-pointer-dereference rules while preserving PR #48's fixed-width mirrors, topology/accounting
+checks, and bounded scratch resets,
 so typed exhaustive validation is paid at transaction boundaries rather than once per callback. The
 bounded legacy compatibility surface does not replace that typed guarantee. Static context slots and callback metadata
 must live
