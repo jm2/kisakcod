@@ -156,14 +156,15 @@ Completed foundation work:
   audit are clean. Exact-head run **29657884407** passed all nine jobs, exact-head hosted Codex review was clean, and
   PR #55 squash-merged as `f39e0e4a`. The batch remains unenrolled and callback-free, restricted to its four typed
   operations;
-- the next exact-key mutable runtime-table adapter batch is replayed cleanly onto merged PR #56 at local head `55c85958`,
-  with ten pre/post-authenticated mutations, preserved recoverable status values, publish-after-authentication output,
+- merged PR #57 exact-key mutable runtime-table adapters add ten pre/post-authenticated mutations, preserved recoverable
+  status values, publish-after-authentication output,
   and no public mutable table authority. A normal positive-build macro-off seal independently denies all five private
   table/entry capabilities to a recreated same-name test helper. GCC Release passes **124/124**; the focused keyed and
   PR #56 seal selection passes **19/19** under GCC and Clang warnings-as-errors, and strict i386/AArch64 production and
   fixture compilation passes. A terminal-specific result allowlist also keeps the existing Live-unload path fail closed
   on the three journal-only recoverable values. Independent exact-diff review found that issue, verified its correction,
-  and reports no remaining actionable finding. The batch is ready for publication as its own follow-on PR;
+  and reports no remaining actionable finding. Exact-head run **29659895814** and authoritative post-merge run
+  **29660281653** passed all nine jobs, exact-head Codex review was clean, and the batch squash-merged as `57e2b1a2`;
 - merged PR #56 physics-sidecar authority seal closes the separate macro-off authority leak found by the
   production-friend audit. Both `SidecarTestAccess` forward/friend declarations are now test-macro gated, and an
   ordinary macro-off executable recreates the name and uses two dependent access predicates plus negative static
@@ -175,6 +176,12 @@ Completed foundation work:
   final head `c2613282` passed all nine hosted jobs in run **29658932268**, exact-head Codex review was clean, and PR #56
   squash-merged as `6159275e`. Authoritative post-merge master run **29659347033** also passed all nine jobs; no other
   project-owned production friend leak was found;
+- the active portable-console batch adds platform-neutral length-based stdout/stderr writes, flush/redirection queries,
+  and bounded allocation-free line input with Win32/POSIX backends. POSIX broken-pipe writes contain `SIGPIPE` on the
+  calling thread while preserving masks/pending state; Win32 pipe flush is nonblocking and message-mode reads preserve
+  `ERROR_MORE_DATA` bytes. Runtime coverage spans the 4,096-byte drain budget, embedded NUL/overlong input, partial EOF,
+  default/ignored SIGPIPE, Win32 message pipes, native i386, AArch64 compile, sanitizers, and Wine. Redirected Win32
+  headless input works; attached native character-console input remains an explicit follow-up;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -508,9 +515,11 @@ Remaining gates, in implementation order:
    authoritative post-merge run **29651211711** passed all nine jobs. PR #55 merged the string OwnershipBatch's same
    pointer-free lifetime boundary without production enrollment as `f39e0e4a`; exact-head run **29657884407** passed
    all nine jobs and exact-head Codex review was clean. PR #56 merged the sidecar authority seal as `6159275e` after
-   exact-head run **29658932268** passed all nine jobs and exact-head Codex review was clean. Exact keyed mutable runtime
-   adapters are replayed and locally validated at `55c85958`; publish that isolated batch next, then add durable
-   PMem/stream/pending-copy resources and a borrowed/standalone registry ownership coordinator before atomically
+   exact-head run **29658932268** passed all nine jobs and exact-head Codex review was clean. PR #57 merged the exact keyed
+   mutable runtime adapters as `57e2b1a2`; exact-head and post-merge runs **29659895814** and **29660281653** passed all
+   nine jobs, and exact-head Codex review was clean. The portable-console batch is now the active publication item; then
+   add checked PMem/storage, exact stream invalidation, and pending-copy/admission resources as separate foundations plus
+   a borrowed/standalone registry ownership coordinator before atomically
    replacing all seven raw sites. Keep static controller slots and callback metadata outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
    when binding the recipes and adapter into production with completed-object/alias registration and lifetime tests.
@@ -523,8 +532,8 @@ Remaining gates, in implementation order:
    the journal, and only then perform a no-fail/no-drop gate/signal release before dropping that serializer; otherwise
    add an admission-pending state before integration.
 4. Widen the script VM value representation and remove pointer-to-32-bit casts.
-5. Implement the remaining platform services (sockets, filesystem,
-   virtual memory, console/process) for Windows/POSIX.
+5. Implement the remaining platform services (sockets, handle-relative deletion,
+   process/crash control, and native Win32 headless character-console input) for Windows/POSIX.
 6. Introduce the Vulkan RHI, retaining D3D9 temporarily on Windows during parity
    testing; add OpenAL Soft and FFmpeg backends.
 7. Add scalar/SSE2/NEON dispatch and remove x86 inline assembly/MMX.
@@ -1218,7 +1227,8 @@ orchestration now stores only opaque handles, passes pointer-safe start records 
 trampoline, uses handle identity, and applies the backend scheduling policy. `threads.cpp` no longer
 includes Windows headers or calls native threading/Interlocked APIs; SP pointer-to-int returns and
 four callback casts were removed. Next, finish broader fixed-width atomics, then add filesystem/
-virtual-memory, console/process, and BSD sockets.
+virtual-memory, standard-stream console, process/crash control, and BSD sockets. Standard-stream console is now the
+active publication batch; process/crash control and sockets remain.
 
 The first follow-on atomic cleanup also moved dvar sorting off `LONG`/Interlocked and the Win32
 network sleep wrapper. Two private seq-cst boolean atomics now provide sorter ownership and sorted-
@@ -1488,12 +1498,12 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **73% by merged engineering effort**. The merged allocator validation lease,
-terminal adapters, production-neutral OwnershipBatch, and sidecar authority seal plus the keyed-adapter candidate do not move the rounded total. Windows x86
+Overall porting progress is approximately **74% by merged engineering effort**. PR #57 closes the keyed runtime-adapter
+prerequisite; the active portable-console candidate advances M3 but does not move the rounded total before merge. Windows x86
 is about
 **93%**, shared
-foundations/security about **85%**, Windows amd64 about **58%**, Linux amd64 about **48%**, Windows/Linux ARM64 about
-**39%**, and macOS arm64 about **30%**. Strict delivered-target status remains **0/5** because no requested
+foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
+**40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
 64-bit/non-Windows engine target is enabled end to end yet.
 Bounded save-side definition capture and portable x86/native64 stack/runtime ceilings are implemented. Source-scoped
 Windows x86 Debug and Release production reports now enforce 2,756-byte `FX_Save`, 6,124-byte `FX_Restore`, and
@@ -1782,9 +1792,12 @@ callbacks, and exact-key load/stage/commit routing remain; the terminal reset/Li
 unenrolled. Two `SL_GetStringOfSize`, one `SL_AddUser`, two
 `SL_GetString`, one `SL_TransferSystem`, and one `SL_ShutdownSystem` site are source-frozen outside the controller.
 These are exactly seven total sites; transfer/shutdown implement the global 4 -> 8 sweep and are not additional sites.
-The keyed mutable runtime adapters are replayed, locally validated, and independently audited at `55c85958` but remain
-unpublished pending the hosted PR gates.
-Next add durable production resources and a registry coordinator that borrows exact active
+The keyed mutable runtime adapters merged in PR #57 as `57e2b1a2`; exact-head and post-merge runs
+**29659895814** and **29660281653** passed all nine jobs, exact-head Codex review was clean, and no raw legacy caller was
+enrolled.
+Next add the durable resources as separate reviewable foundations: checked typed PMem scope/storage receipts, exact-key
+stream/alias invalidation, then the generation-tagged pending-copy ledger and prepared admission receipt. After those,
+add a registry coordinator that borrows exact active
 transaction authority or owns a standalone transaction, then enroll all seven sites atomically. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
 short borrowed batches under transaction -> registry -> string -> memory-tree order. The bounded legacy compatibility
