@@ -1827,9 +1827,15 @@ extract_slice(
     "canonical reset wrapper")
 require_contains(
     _begin_load_scripts
-    "SL_TryResetCanonicalStringState( scrCompilePub.canonicalStrings, &scrVarPub.canonicalStrCount);"
-    "script-load reset delegates to the gated helper")
+    "if (!SL_TryResetCanonicalStringState( scrCompilePub.canonicalStrings, &scrVarPub.canonicalStrCount))"
+    "script-load reset checks the gated helper")
+require_ordered(
+    _begin_load_scripts
+    "if (!SL_TryResetCanonicalStringState("
+    "std::abort();"
+    "script-load reset fails fast without a reporter")
 foreach(_forbidden IN ITEMS
+    "(void)SL_TryResetCanonicalStringState("
     "memset("
     "canonicalStrCount =")
     require_not_contains(
