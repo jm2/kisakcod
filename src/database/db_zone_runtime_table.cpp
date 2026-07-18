@@ -61,23 +61,6 @@ namespace
         && IsEmptyOwnership(entry.scriptStringOwnership());
 }
 
-[[nodiscard]] bool IsReusableLifecycle(
-    const zone_load::ZoneLoadContextSlot &lifecycle,
-    const std::uint32_t physicalSlot) noexcept
-{
-    return lifecycle.canonical()
-        && lifecycle.initialized()
-        && lifecycle.slotIndex() == physicalSlot
-        && lifecycle.phase() == zone_load::ZoneLoadContextPhase::Empty
-        && lifecycle.terminalKind()
-            == zone_load::ZoneLoadTerminalKind::None
-        && lifecycle.nextCleanupOperation()
-            == zone_load::ZoneLoadCleanupOperation::
-                CancelLoadInputAndInflate
-        && !lifecycle.cleanupActive()
-        && !lifecycle.cleanupPoisoned();
-}
-
 [[nodiscard]] constexpr bool IsKnownOwnershipPhase(
     const zone_script_string_ownership::
         ZoneScriptStringOwnershipPhase phase) noexcept
@@ -142,7 +125,11 @@ namespace
 
     if (IsNullKey(key))
     {
-        return IsReusableLifecycle(lifecycle, physicalSlot)
+        // No public transition erases a durable key after a generation has
+        // been issued.  Accepting a null key with a hidden nonzero generation
+        // would discard the table's ABA evidence and silently advance from a
+        // corrupt representation on the next claim.
+        return IsPristineLifecycle(lifecycle, true, physicalSlot)
                 && IsEmptyOwnership(ownership)
             ? ZoneRuntimeTableStatus::Success
             : ZoneRuntimeTableStatus::UnsafeFailure;

@@ -655,6 +655,24 @@ void TestPartialInitializationAndCorruptionFailClosed()
         TryClaimZoneRuntimeGeneration(&badKey, 1, &candidate)
         == ZoneRuntimeTableStatus::UnsafeFailure);
     CHECK(!candidate);
+
+    ZoneRuntimeTable hiddenGeneration{};
+    CHECK(
+        TryInitializeZoneRuntimeTable(&hiddenGeneration)
+        == ZoneRuntimeTableStatus::Success);
+    auto *const hiddenGenerationLifecycle =
+        ZoneRuntimeTableTestAccess::Lifecycle(&hiddenGeneration, 2);
+    CHECK(hiddenGenerationLifecycle != nullptr);
+    ZoneLoadContextSlotTestAccess::SetGeneration(
+        hiddenGenerationLifecycle, 23);
+    ZoneLoadContextKey hiddenCandidate{};
+    CHECK(
+        TryClaimZoneRuntimeGeneration(
+            &hiddenGeneration, 2, &hiddenCandidate)
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(!hiddenCandidate);
+    CHECK(hiddenGenerationLifecycle->generation() == 23);
+    CHECK(!hiddenGeneration.initialized());
 }
 
 void TestHiddenCorruptionAndCleanupReentryFailClosed()

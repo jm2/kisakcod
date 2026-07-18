@@ -177,6 +177,7 @@ foreach(_marker IN ITEMS
     "lifecycle.canonical()"
     "ownership.isEmptyCanonical()"
     "ValidateEntryBinding("
+    "IsPristineLifecycle(lifecycle, true, physicalSlot)"
     "lifecycle.cleanupActive()"
     "lifecycle.cleanupPoisoned()"
     "ownership.poisoned()"
@@ -395,6 +396,7 @@ foreach(_marker IN ITEMS
     "ZoneScriptStringOwnershipControllerTestAccess::SetLifecycle("
     "ZoneScriptStringOwnershipControllerTestAccess::SetTransactionSerial("
     "ZoneScriptStringOwnershipControllerTestAccess::SetReserved("
+    "hiddenGenerationLifecycle->generation() == 23"
     "newKey.generation == oldKey.generation + 1"
     "Zone runtime table tests passed")
     require_contains(_fixture "${_marker}" "focused runtime coverage")
