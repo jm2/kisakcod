@@ -152,6 +152,62 @@ struct StateImage final
     return scr_string_atomic::Load(SL_RefStringWord(GetRefString(stringId)));
 }
 
+[[nodiscard]] bool TestFullInitRejectsDebugOnlyState() noexcept
+{
+    g_comErrorCount = 0;
+    g_assertCount = 0;
+    g_reporterSawOwnedLock = false;
+    if (!Check(!scrStringGlob.inited && scrStringDebugGlob == nullptr,
+            "debug-only rejection test began initialized"))
+    {
+        return false;
+    }
+
+    SL_InitCheckLeaks();
+    if (!Check(scrStringDebugGlob == &scrStringDebugGlobBuf,
+            "debug-only rejection setup did not publish accounting")
+        || !Check(LocksReleased(),
+            "debug-only rejection setup leaked a lock")
+        || !Check(ReportersUnused(),
+            "debug-only rejection setup invoked a reporter"))
+    {
+        return false;
+    }
+
+    scrStringDebugGlob->ignoreLeaks = 1;
+    const StateImage beforeDuplicate = CaptureState();
+    SL_Init();
+#if defined(USE_ASSERTS)
+    constexpr std::uint32_t expectedAssertions = 1;
+#else
+    constexpr std::uint32_t expectedAssertions = 0;
+#endif
+    const bool valid = Check(StateMatches(beforeDuplicate),
+            "debug-only initialization changed ownership state")
+        && Check(!scrStringGlob.inited,
+            "debug-only initialization published the string table")
+        && Check(LocksReleased(),
+            "debug-only initialization rejection leaked a lock")
+        && Check(g_comErrorCount == 0,
+            "debug-only initialization rejection invoked Com_Error")
+        && Check(!g_reporterSawOwnedLock,
+            "debug-only initialization rejection asserted under an owned lock")
+        && Check(g_assertCount == expectedAssertions,
+            "debug-only initialization assertion behavior changed");
+
+    g_assertCount = 0;
+    Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+    SL_CheckLeaks();
+    Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+    return valid
+        && Check(scrStringDebugGlob == nullptr,
+            "debug-only initialization cleanup left accounting published")
+        && Check(LocksReleased(),
+            "debug-only initialization cleanup leaked a lock")
+        && Check(ReportersUnused(),
+            "debug-only initialization cleanup invoked a reporter");
+}
+
 [[nodiscard]] bool CheckOwnership(
     const std::uint32_t stringId,
     const std::uint16_t refCount,
@@ -1943,6 +1999,7 @@ char *QDECL va(const char *, ...)
 int main()
 {
     if (!TestInitCheckLeaksRetainsLock()
+        || !TestFullInitRejectsDebugOnlyState()
         || !TestDuplicateInitCheckLeaksNoChange()
         || !TestDuplicateInitNoChange()
         || !TestInvalidAndNoChange()

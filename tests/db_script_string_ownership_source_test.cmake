@@ -1262,6 +1262,7 @@ foreach(_forbidden IN ITEMS
 endforeach()
 foreach(_marker IN ITEMS
     "TestInitCheckLeaksRetainsLock()"
+    "TestFullInitRejectsDebugOnlyState()"
     "TestDuplicateInitCheckLeaksNoChange()"
     "TestDuplicateInitNoChange()"
     "g_scriptStringMutex.try_lock()"
@@ -1269,6 +1270,7 @@ foreach(_marker IN ITEMS
     "expectedAssertions = 0"
     "duplicate-debug-init-live-reference"
     "duplicate-full-init-live-reference"
+    "debug-only initialization changed ownership state"
     "StateMatches(beforeDuplicate)"
     "TestInvalidAndNoChange()"
     "TestRepeatedInternAndDatabaseTransfer()"
