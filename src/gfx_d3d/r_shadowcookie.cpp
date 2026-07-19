@@ -14,6 +14,7 @@
 #include "r_sunshadow.h"
 #include "r_marks.h"
 #include <universal/profile.h>
+#include <universal/sort_utils.h>
 
 struct ShadowReceiverCallback // sizeof=0x4
 {                                       // ...
@@ -180,7 +181,7 @@ void __cdecl R_PopulateCandidates(const GfxViewParms *viewParmsDraw, ShadowCandi
 
 bool __cdecl R_ShadowCandidatePred(const ShadowCandidate &a, const ShadowCandidate &b)
 {
-    return b.weight > a.weight;
+    return kisak::sort::FloatLess(a.weight, b.weight);
 }
 
 const float shadowFrustumSidePlanes[5][4] =
@@ -208,12 +209,7 @@ void __cdecl R_GenerateShadowCookies(
 
         R_PopulateCandidates(viewParmsDraw, &candidates[0]);
 
-        //std::_Sort<ShadowCandidate *, int, bool(__cdecl *)(ShadowCandidate const &, ShadowCandidate const &)>(
-        //    candidates,
-        //    &cookieIndex,
-        //    24,
-        //    R_ShadowCandidatePred);
-        std::sort(&candidates[0], &candidates[23], R_ShadowCandidatePred);
+        std::sort(candidates, candidates + ARRAY_COUNT(candidates), R_ShadowCandidatePred);
 
         R_AddCasters(localClientNum, viewParmsDraw, candidates, shadowCookieList);
     }

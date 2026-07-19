@@ -661,6 +661,7 @@ set(UNIVERSAL
     "${SRC_DIR}/universal/q_parse.h"
     "${SRC_DIR}/universal/q_shared.cpp"
     "${SRC_DIR}/universal/q_shared.h"
+    "${SRC_DIR}/universal/sort_utils.h"
     "${SRC_DIR}/universal/surfaceflags.cpp"
     "${SRC_DIR}/universal/surfaceflags.h"
     "${SRC_DIR}/universal/timing.cpp"

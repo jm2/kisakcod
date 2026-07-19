@@ -230,7 +230,7 @@ Completed foundation work:
   resolved and exact-head Codex review was clean. PR #61 squash-merged as
   `32e6de4efc86823020d1a2eef2c473e013f893ba`, and authoritative post-merge run **29691725277** passed all nine jobs. No
   loader, runtime-table entry, PMem lifecycle, pending-copy ledger, coordinator, or raw ownership site consumes it;
-- the active production-neutral pending-copy ledger is implemented by core `08014141`, protocol `8d6b04f3`, runtime
+- merged PR #62 supplies the production-neutral pending-copy ledger through core `08014141`, protocol `8d6b04f3`, runtime
   hardening `8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and final source-seal review head
   `a3c21e9db369d02f29b18f4e1208169517353513`. It provides fixed storage for 2,048 ordered by-value asset indices across
   up to eight exact-key generations, noncopyable admission receipts, stable-compacting discard, exact prepared
@@ -247,9 +247,12 @@ Completed foundation work:
   assembler-label, dynamic-symbol, or linker-level enrollment remains outside the source seal's accidental-regression
   model and requires portable object/relocation auditing or a visibility redesign before production cutover. PR #62
   initial exact head `b4719e1a` ran **29694616671**: Linux amd64/arm64, macOS arm64, and headless Windows x86 passed;
-  portable Windows amd64/ARM64 failed only because MSVC folded two empty test callbacks to one address. The current
-  fixture uses a distinct context identity, its focused local replay passes, and replacement exact-head CI plus hosted
-  Codex review remain pending;
+  portable Windows amd64/ARM64 failed only because MSVC folded two empty test callbacks to one address. Final exact head
+  `6a79677f` uses a distinct context identity, preserving production callback identity without relying
+  on foldable function addresses. Exact-head run **29694906394** passed all nine jobs; exact-head Codex and Gemini
+  reviews were clean and zero review threads remained. PR #62 squash-merged as
+  `888d12e6beedd587602f18cf6763ae04cc067470`; authoritative post-merge run **29695353022** passed all nine jobs at that
+  exact master commit;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -513,6 +516,19 @@ Completed foundation work:
   contract are selected in measured Windows x86; complete GCC and Clang builds and **100/100** suites pass. This is a
   high-confidence dimensional gameplay correction rather than a claimed retail-binary restoration, and the SP production
   translation unit remains outside hosted compilation;
+- the rebased curated typed-sort candidate `590eecef` adapts the confirmed non-matrix portion of exact upstream
+  `6f0284ad8c1fa367304e5eefa44d39d744ddbefc`. Selected behavior is: typed lexical model/animation sorts over existing
+  native-width tables, a bool FX mark predicate, typed material inputs with an explicit three-way-to-less adapter, a
+  complete 24-entry shadow sort, deterministic NaN equivalence for material/shadow ordering, and the row-zero omni
+  technique in column three. It preserves the material self-identity guard and rejects upstream's raw-integer-to-bool
+  comparator conversion. The filesystem hunk is omitted because `d5a6e799` already supplies a stronger tested
+  native-pointer service. All `com_math.cpp` precision changes—`MatrixMultiply44`, `MatrixInverse44`, and
+  `InfinitePerspectiveMatrix`—are explicitly deferred for a separately evidenced numerical/determinism review. Portable
+  runtime and source contracts plus measured Windows x86 enrollment cover native pointer identity, strict weak ordering,
+  exact active ranges, manifest presence, and the selected/rejected boundaries. The complete rebased GCC Debug suite is
+  **142/142** green; the combined pending/upstream/security focus is **8/8**, and strict GCC/Clang, ASan+UBSan, i386
+  compilation, and AArch64 compilation also pass. This candidate is
+  not counted as merged progress until it is reviewed and merged;
 - remaining upstream content stays subsystem-specific: keep dynent save/load `ba3c79f3` deferred until bounded
   transactional Disk32/native-sidecar semantics exist, and keep unrelated weapon-fire changes excluded;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
@@ -595,9 +611,11 @@ Remaining gates, in implementation order:
    identical code head `f04c63e0`, both were clean, and zero threads remained. PR #61 then merged the exact stream-
    invalidation stack as `32e6de4efc86823020d1a2eef2c473e013f893ba`; final exact head
    `f9dfaaeb43eaaa32cd44c645e3a0e347c9bebdfc` and authoritative post-merge runs **29691282387** and **29691725277** each
-   passed all nine jobs, all four Gemini threads were resolved, and exact-head Codex review was clean. Publish the active
-   pending-copy ledger next without production enrollment. At that pause boundary, land the audited upstream 18-commit
-   integration PR before publishing the borrowed/standalone registry ownership coordinator, then atomically replace all
+   passed all nine jobs, all four Gemini threads were resolved, and exact-head Codex review was clean. PR #62 then merged
+   the production-neutral pending-copy ledger as `888d12e6beedd587602f18cf6763ae04cc067470`; final exact head `6a79677f`
+   passed all nine jobs in run **29694906394**, exact-head Codex and Gemini were clean with zero threads, and authoritative
+   post-merge run **29695353022** also passed all nine jobs. Land the audited upstream 18-commit integration PR before publishing the
+   borrowed/standalone registry ownership coordinator, then atomically replace all
    seven raw sites. Keep static controller slots and callback metadata outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
    when binding the recipes and adapter into production with completed-object/alias registration and lifetime tests.
@@ -1576,9 +1594,8 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **75% by merged engineering effort**. PR #61 merged the production-neutral
-zone-stream ownership foundation; the active pending-copy ledger is not counted until it merges, so the rounded total
-remains unchanged. Windows x86 is about
+Overall porting progress is approximately **76% by merged engineering effort**. PR #62 merged the production-neutral
+pending-copy ledger; the rebased curated upstream-sort candidate is not counted until it merges. Windows x86 is about
 **93%**, shared
 foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
@@ -1891,12 +1908,15 @@ access; the exact re-audit reports **PASS**, the focused runtime/source/security
 Clang, and Clang ASan+UBSan, and the full GCC Release replay passes **137/137**. Final exact head
 `f9dfaaeb43eaaa32cd44c645e3a0e347c9bebdfc` passed all nine jobs in run **29691282387** with all four Gemini threads
 resolved and exact-head Codex clean; squash merge `32e6de4efc86823020d1a2eef2c473e013f893ba` passed authoritative
-post-merge run **29691725277** with all nine jobs. The active pending-copy ledger at core `08014141`, protocol
-`8d6b04f3`, runtime hardening `8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and final source-seal review head
-`a3c21e9db369d02f29b18f4e1208169517353513` is production-neutral and locally passes **140/140** at that exact head plus
+post-merge run **29691725277** with all nine jobs. Merged PR #62 supplies the pending-copy ledger from core `08014141`,
+protocol `8d6b04f3`, runtime hardening `8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and final source-seal review head
+`a3c21e9db369d02f29b18f4e1208169517353513`. The merged ledger is production-neutral and locally passes **140/140** at
+that exact head plus
 strict GCC/Clang, ASan+UBSan, analyzer, i386 runtime, AArch64 strict link, native/AArch64 seals, and final-head
-source/security/diff gates. It has no production caller; independent exact-head audit passes, while hosted CI and hosted
-review remain pending. Publish it next, land the audited upstream 18-commit integration PR at that pause boundary, then
+source/security/diff gates. It has no production caller. Final exact head `6a79677f` passed all nine jobs in run
+**29694906394**; exact-head Codex and Gemini were clean with zero threads, and it squash-merged as
+`888d12e6beedd587602f18cf6763ae04cc067470`. Authoritative post-merge run **29695353022** passed all nine jobs at that
+exact master commit. Land the audited upstream 18-commit integration PR at this pause boundary, then
 add a registry coordinator that borrows exact active transaction authority or owns a standalone transaction. Afterward,
 enroll all seven sites atomically. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses

@@ -1856,6 +1856,22 @@ add_test(
     COMMAND kisakcod-vehicle-material-time-tests
 )
 
+add_executable(kisakcod-upstream-sort-tests
+    native_sort_contract_tests.cpp
+)
+target_include_directories(
+    kisakcod-upstream-sort-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-upstream-sort-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-upstream-sort-tests)
+set_target_properties(kisakcod-upstream-sort-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME upstream-sort-contracts
+    COMMAND kisakcod-upstream-sort-tests
+)
+
 add_test(
     NAME vehicle-material-time-source-invariants
     COMMAND ${CMAKE_COMMAND}
@@ -2118,6 +2134,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_correctness_source_test.cmake
+)
+
+add_test(
+    NAME upstream-sort-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_sort_source_test.cmake
 )
 
 add_executable(
