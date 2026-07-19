@@ -60,6 +60,16 @@ same-name definition cannot access either private sidecar field. GCC/Clang Relea
 i386/AArch64 compilation is clean, and the same test fails both assertions against the old friend-bearing baseline.
 Exact final head `c2613282` passed all nine hosted jobs in run **29658932268**, exact-head Codex review was clean, and
 PR #56 squash-merged as `6159275e`; authoritative post-merge master run **29659347033** also passed all nine jobs.
+PR #57 then sealed mutable runtime-table authority behind ten exact-key pre/post-authenticated adapters. The public table
+still exposes no mutable entry, terminal statuses use an explicit allowlist, and a macro-off positive seal denies all five
+private capabilities to a recreated test-helper name. Exact-head run **29659895814** and post-merge run **29660281653**
+passed all nine jobs; exact-head Codex review was clean, and it squash-merged as `57e2b1a2` without production enrollment.
+
+The active portable-console batch removes duplicated Win32 standard-handle writes and introduces allocation-free bounded
+line input plus Win32/POSIX backends. Its hardening specifically contains POSIX `SIGPIPE` per calling thread without a
+process-global disposition change, avoids blocking fatal output on Win32 pipe flush, preserves message-mode pipe bytes,
+and drains embedded-NUL/overlong commands across a fixed work budget. Native Win32 character-console input remains
+unsupported in the headless profile; redirected disk/pipe input works and the limitation is tracked in `docs/task.md`.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.

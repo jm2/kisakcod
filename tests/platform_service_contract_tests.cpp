@@ -3,6 +3,7 @@
 #include <type_traits>
 
 #include <qcommon/sys_event.h>
+#include <qcommon/sys_console.h>
 #include <qcommon/sys_sync.h>
 #include <qcommon/sys_thread.h>
 #include <qcommon/sys_time.h>
@@ -21,6 +22,34 @@ static_assert(sizeof(SysEventHandle) == sizeof(void *));
 static_assert(std::is_pointer_v<SysThreadHandle>);
 static_assert(std::is_same_v<SysThreadHandle, SysThread *>);
 static_assert(sizeof(SysThreadHandle) == sizeof(void *));
+static_assert(std::is_same_v<
+    std::underlying_type_t<SysConsoleOutputStream>,
+    std::uint8_t>);
+static_assert(static_cast<std::uint8_t>(
+    SysConsoleOutputStream::StandardOutput) == 0);
+static_assert(static_cast<std::uint8_t>(
+    SysConsoleOutputStream::StandardError) == 1);
+static_assert(std::is_same_v<
+    std::underlying_type_t<SysConsoleIoStatus>,
+    std::uint8_t>);
+static_assert(static_cast<std::uint8_t>(SysConsoleIoStatus::Complete) == 0);
+static_assert(static_cast<std::uint8_t>(
+    SysConsoleIoStatus::InvalidArgument) == 1);
+static_assert(static_cast<std::uint8_t>(SysConsoleIoStatus::Unavailable) == 2);
+static_assert(static_cast<std::uint8_t>(SysConsoleIoStatus::IoError) == 3);
+static_assert(std::is_same_v<
+    std::underlying_type_t<SysConsoleReadStatus>,
+    std::uint8_t>);
+static_assert(static_cast<std::uint8_t>(SysConsoleReadStatus::NoData) == 0);
+static_assert(static_cast<std::uint8_t>(SysConsoleReadStatus::LineReady) == 1);
+static_assert(static_cast<std::uint8_t>(SysConsoleReadStatus::Truncated) == 2);
+static_assert(static_cast<std::uint8_t>(SysConsoleReadStatus::InvalidData) == 3);
+static_assert(static_cast<std::uint8_t>(SysConsoleReadStatus::EndOfFile) == 4);
+static_assert(static_cast<std::uint8_t>(
+    SysConsoleReadStatus::InvalidArgument) == 5);
+static_assert(static_cast<std::uint8_t>(SysConsoleReadStatus::IoError) == 6);
+static_assert(std::is_standard_layout_v<SysConsoleReadResult>);
+static_assert(SYS_CONSOLE_MAX_LINE_LENGTH == 511);
 static_assert(std::is_same_v<
     std::underlying_type_t<SysThreadPriority>,
     std::uint8_t>);
@@ -62,6 +91,17 @@ static_assert(static_cast<std::int32_t>(THREAD_LOCK_MINIMAL) == 1);
 static_assert(static_cast<std::int32_t>(THREAD_LOCK_ALL) == 2);
 
 using MillisecondsFunction = std::uint32_t (KISAK_CDECL *)();
+using ConsoleWriteFunction = SysConsoleIoStatus (KISAK_CDECL *)(
+    SysConsoleOutputStream,
+    const char *,
+    std::size_t) noexcept;
+using ConsoleFlushFunction = SysConsoleIoStatus (KISAK_CDECL *)(
+    SysConsoleOutputStream) noexcept;
+using ConsoleRedirectedFunction = bool (KISAK_CDECL *)(
+    SysConsoleOutputStream) noexcept;
+using ConsoleReadFunction = SysConsoleReadResult (KISAK_CDECL *)(
+    char *,
+    std::size_t) noexcept;
 using SleepFunction = void (KISAK_CDECL *)(std::uint32_t);
 using InitializeCriticalSectionsFunction = void (KISAK_CDECL *)();
 using CriticalSectionFunction = void (KISAK_CDECL *)(int);
@@ -118,6 +158,14 @@ using ThreadLockActionFunction = void (KISAK_CDECL *)(WinThreadLock);
 using ThreadLockQueryFunction = WinThreadLock (KISAK_CDECL *)();
 
 static_assert(std::is_same_v<decltype(&Sys_Milliseconds), MillisecondsFunction>);
+static_assert(std::is_same_v<decltype(&Sys_ConsoleWrite), ConsoleWriteFunction>);
+static_assert(std::is_same_v<decltype(&Sys_ConsoleFlush), ConsoleFlushFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_ConsoleIsRedirected),
+    ConsoleRedirectedFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_ConsoleTryReadLine),
+    ConsoleReadFunction>);
 static_assert(std::is_same_v<decltype(&Sys_MillisecondsRaw), MillisecondsFunction>);
 static_assert(std::is_same_v<decltype(&Sys_Sleep), SleepFunction>);
 static_assert(std::is_same_v<

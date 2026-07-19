@@ -173,7 +173,9 @@ require_source_contains(
     "headless diagnostics must enter bounded history before console-window creation")
 require_source_contains(
     "win32/win_syscon.cpp"
-    "Conbuf_WriteProcessHandle(STD_OUTPUT_HANDLE, msg);"
+    "SysConsoleOutputStream::StandardOutput,
+			msg,
+			std::strlen(msg))"
     "headless diagnostics must reach inherited process output")
 require_source_contains(
     "win32/win_syscon.cpp"
@@ -204,13 +206,22 @@ require_source_contains(
 require_source_contains(
     "win32/win_main.cpp"
     "#ifndef KISAK_DEDI_HEADLESS
-	if (!Win_IsRedirectedHandle(STD_OUTPUT_HANDLE)"
+	if (!Sys_ConsoleIsRedirected(SysConsoleOutputStream::StandardOutput)
+		&& !Sys_ConsoleIsRedirected(SysConsoleOutputStream::StandardError))"
     "headless startup must preserve inherited standard handles instead of reopening CONOUT")
 require_source_contains(
     "win32/win_main.cpp"
-    "if (Win_IsRedirectedHandle(STD_ERROR_HANDLE))
+    "if (Sys_ConsoleIsRedirected(SysConsoleOutputStream::StandardError))
 		Win_TerminateOnFatalError(string);"
     "redirected Windows fatal errors must not enter the modal GUI path")
+require_source_not_contains(
+    "win32/win_main.cpp"
+    "Win_IsRedirectedHandle"
+    "Windows redirected-stream checks must not bypass the portable service")
+require_source_not_contains(
+    "win32/win_syscon.cpp"
+    "Conbuf_WriteProcessHandle"
+    "Windows console writes must not bypass the portable service")
 require_source_contains(
     "win32/win_main.cpp"
     "if (com_dedicated && com_dedicated->current.integer)
@@ -237,6 +248,10 @@ require_source_contains(
     "win32/win_main.cpp"
     "[[noreturn]] static void Win_TerminateOnFatalError("
     "Windows non-modal fatal termination must preserve the noreturn contract")
+require_source_contains(
+    "win32/win_main.cpp"
+    "message ? message : \"Unknown fatal error\""
+    "Windows last-resort fatal output must tolerate a missing message")
 require_source_contains(
     "qcommon/threads.h"
     "#include <qcommon/sys_event.h>"

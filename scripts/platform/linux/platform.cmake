@@ -13,6 +13,7 @@ endforeach()
 set(PLATFORM_LINUX "")
 set(PLATFORM_LINUX_DEDI_HEADLESS "")
 set(PLATFORM_LINUX_SERVICES
+    "${SRC_DIR}/_platform/posix/sys_console.cpp"
     "${SRC_DIR}/_platform/posix/sys_event.cpp"
     "${SRC_DIR}/_platform/posix/sys_filesystem.cpp"
     "${SRC_DIR}/_platform/posix/sys_memory.cpp"

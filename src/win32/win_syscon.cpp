@@ -15,6 +15,7 @@
 #include <io.h>
 #include <conio.h>
 #include <cstring>
+#include <qcommon/sys_console.h>
 #include <qcommon/threads.h>
 
 // Defined in client/cl_console.cpp; forward-declared here so the Win32 GUI console
@@ -51,45 +52,6 @@ struct WinConData // sizeof=0x620
 
 static WinConData s_wcd;
 uint32_t s_totalChars;
-
-#ifndef KISAK_DEDI_HEADLESS
-static bool Conbuf_IsRedirectedHandle(DWORD stream)
-{
-	HANDLE output = GetStdHandle(stream);
-	if (!output || output == INVALID_HANDLE_VALUE)
-		return false;
-
-	const DWORD type = GetFileType(output);
-	return type == FILE_TYPE_DISK || type == FILE_TYPE_PIPE;
-}
-#endif
-
-static void Conbuf_WriteProcessHandle(DWORD stream, const char *msg)
-{
-	if (!msg)
-		return;
-
-	HANDLE output = GetStdHandle(stream);
-	if (!output || output == INVALID_HANDLE_VALUE)
-	{
-		OutputDebugStringA(msg);
-		return;
-	}
-
-	const char *cursor = msg;
-	size_t remaining = std::strlen(msg);
-	while (remaining)
-	{
-		const DWORD request = remaining > MAXDWORD
-			? MAXDWORD
-			: static_cast<DWORD>(remaining);
-		DWORD written = 0;
-		if (!WriteFile(output, cursor, request, &written, nullptr) || !written)
-			break;
-		cursor += written;
-		remaining -= written;
-	}
-}
 
 #ifdef KISAK_DEDI_HEADLESS
 static char s_headlessConsoleHistory[0x4000];
@@ -392,6 +354,13 @@ void __cdecl Sys_ShowConsole()
 */
 char *Sys_ConsoleInput( void )
 {
+#ifdef KISAK_DEDI_HEADLESS
+	const SysConsoleReadResult read = Sys_ConsoleTryReadLine(
+		s_wcd.returnedText, sizeof(s_wcd.returnedText));
+	return read.status == SysConsoleReadStatus::LineReady
+		? s_wcd.returnedText
+		: nullptr;
+#else
 	if ( s_wcd.consoleText[0] == 0 )
 	{
 		return NULL;
@@ -401,6 +370,7 @@ char *Sys_ConsoleInput( void )
 	s_wcd.consoleText[0] = 0;
 	
 	return s_wcd.returnedText;
+#endif
 }
 
 /*
@@ -440,8 +410,19 @@ void __cdecl Conbuf_AppendText(const char *pMsg)
 void __cdecl Sys_SetErrorText(const char *buf)
 {
 #ifdef KISAK_DEDI_HEADLESS
-	Conbuf_WriteProcessHandle(STD_ERROR_HANDLE, buf);
-	Conbuf_WriteProcessHandle(STD_ERROR_HANDLE, "\n");
+	if (!buf)
+		return;
+	const char newline[] = "\n";
+	const SysConsoleIoStatus messageStatus = Sys_ConsoleWrite(
+		SysConsoleOutputStream::StandardError, buf, std::strlen(buf));
+	const SysConsoleIoStatus newlineStatus = Sys_ConsoleWrite(
+		SysConsoleOutputStream::StandardError,
+		newline,
+		sizeof(newline) - 1);
+	if (messageStatus != SysConsoleIoStatus::Complete)
+		OutputDebugStringA(buf);
+	if (newlineStatus != SysConsoleIoStatus::Complete)
+		OutputDebugStringA(newline);
 #else
 	HWND ActiveWindow; // eax
 
@@ -459,11 +440,22 @@ void __cdecl Conbuf_AppendTextInMainThread(const char* msg)
 		return;
 
 #ifdef KISAK_DEDI_HEADLESS
-	Conbuf_WriteProcessHandle(STD_OUTPUT_HANDLE, msg);
+	if (Sys_ConsoleWrite(
+			SysConsoleOutputStream::StandardOutput,
+			msg,
+			std::strlen(msg)) != SysConsoleIoStatus::Complete)
+	{
+		OutputDebugStringA(msg);
+	}
 	Conbuf_AppendHeadlessHistory(msg);
 #else
-	if (Conbuf_IsRedirectedHandle(STD_OUTPUT_HANDLE))
-		Conbuf_WriteProcessHandle(STD_OUTPUT_HANDLE, msg);
+	if (Sys_ConsoleIsRedirected(SysConsoleOutputStream::StandardOutput))
+	{
+		(void)Sys_ConsoleWrite(
+			SysConsoleOutputStream::StandardOutput,
+			msg,
+			std::strlen(msg));
+	}
 #endif
 	if (s_wcd.hwndBuffer)
 		Conbuf_AppendText(msg);
