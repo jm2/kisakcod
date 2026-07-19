@@ -450,7 +450,7 @@ extract_slice(
 extract_slice(
     _string_source
     "ReleaseStatus TryRemoveDatabaseUserReferenceInternal("
-    "const MT_ValidationLeaseAdmission & OwnershipBatch::MakeMemoryTreeLeaseAdmission()"
+    "DatabaseUserAddStatus TryAddDatabaseUser4ReferenceInternal("
     _release_database
     "database-user rollback")
 extract_slice(
@@ -1388,12 +1388,44 @@ require_not_contains(
 require_literal_count(
     _string_source
     "OwnershipBatch::MakeMemoryTreeLeaseAdmission()"
+    14
+    "one private capability definition, six general batch uses, and seven admitted registry uses")
+require_literal_count(
+    _string_source
+    "const MT_ValidationLeaseAdmission & OwnershipBatch::MakeMemoryTreeLeaseAdmission() noexcept {"
+    1
+    "one private memory-tree lease admission definition")
+extract_slice(
+    _string_source
+    "OwnershipBatchStatus TryBeginOwnershipBatch("
+    "DatabaseUserAddStatus TryAddDatabaseUser4Reference("
+    _general_batch_operations
+    "general ownership-batch operation implementations")
+require_literal_count(
+    _general_batch_operations
+    "OwnershipBatch::MakeMemoryTreeLeaseAdmission()"
+    6
+    "begin, finish, and four general batch operations use the private admission")
+extract_slice(
+    _string_source
+    "DatabaseUserAddStatus TryAddDatabaseUser4Reference("
+    "} // namespace script_string"
+    _admitted_registry_operations
+    "admitted registry operation implementations")
+require_literal_count(
+    _admitted_registry_operations
+    "OwnershipBatch::MakeMemoryTreeLeaseAdmission()"
     7
-    "one private capability definition plus six exact batch entry uses")
+    "all seven admitted registry operations use the private admission")
+require_literal_count(
+    _admitted_registry_operations
+    "registryAdmission.tryAuthenticateBatchLocked()"
+    7
+    "all seven registry-only entry points authenticate the private admission")
 foreach(_marker IN ITEMS
     "CRITSECT_SCRIPT_STRING first, then CRITSECT_MEMORY_TREE"
     "one bounded, callback-free ownership loop"
-    "using only the four batch overloads below. No legacy string API, reporter,"
+    "using only the fixed batch operations below. No legacy string API, reporter,"
     "callback, or unrelated memory-tree work may run while a batch is active."
     "Storage-lifetime and thread-affinity contract"
     "an exactly authenticated destructor releases only the acquisitions proven to")
