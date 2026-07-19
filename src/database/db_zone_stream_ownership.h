@@ -11,6 +11,21 @@ struct XZoneMemory;
 
 namespace db::zone_stream_ownership
 {
+class ActiveZoneStreamBinding;
+class ZoneStreamGenerationReceipt;
+} // namespace db::zone_stream_ownership
+
+namespace db::zone_runtime::detail
+{
+[[nodiscard]] bool IsPristineRuntimeReceipt(
+    const zone_stream_ownership::ZoneStreamGenerationReceipt &receipt)
+    noexcept;
+[[nodiscard]] bool IsPristineRuntimeReceipt(
+    const zone_stream_ownership::ActiveZoneStreamBinding &binding) noexcept;
+} // namespace db::zone_runtime::detail
+
+namespace db::zone_stream_ownership
+{
 // Durable, allocation-independent evidence for one zone-load generation's
 // use of the process-wide stream and relocation singletons.  The receipt must
 // live outside the zone allocation and outlive cleanup.  It is non-copyable
@@ -87,6 +102,10 @@ private:
         ZoneStreamGenerationReceipt *,
         const zone_load::ZoneLoadContextKey &) noexcept;
     friend class ActiveZoneStreamBinding;
+    friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt(
+        const ZoneStreamGenerationReceipt &receipt) noexcept;
+
+    [[nodiscard]] bool isPristine() const noexcept;
 
     zone_load::ZoneLoadContextKey key_{};
     zone_load::ZoneLoadContextSlot *lifecycle_ = nullptr;
@@ -134,6 +153,10 @@ private:
         ActiveZoneStreamBinding *,
         ZoneStreamGenerationReceipt *,
         const zone_load::ZoneLoadContextKey &) noexcept;
+    friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt(
+        const ActiveZoneStreamBinding &binding) noexcept;
+
+    [[nodiscard]] bool isPristine() const noexcept;
 
     zone_load::ZoneLoadContextKey key_{};
     ZoneStreamGenerationReceipt *receipt_ = nullptr;

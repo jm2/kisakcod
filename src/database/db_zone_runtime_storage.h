@@ -17,6 +17,17 @@ class FxFastFileZoneAdapterDisk32Workspace;
 
 namespace db::zone_runtime_storage
 {
+class ZoneRuntimeStorageBinding;
+} // namespace db::zone_runtime_storage
+
+namespace db::zone_runtime::detail
+{
+[[nodiscard]] bool IsPristineRuntimeReceipt(
+    const zone_runtime_storage::ZoneRuntimeStorageBinding &binding) noexcept;
+} // namespace db::zone_runtime::detail
+
+namespace db::zone_runtime_storage
+{
 // Every planned address is a 32-bit byte displacement from one caller-owned
 // slab. The planner accepts a wider arena request so truncation can never turn
 // an unrepresentable request into a smaller successful allocation.
@@ -113,6 +124,9 @@ private:
         ZoneRuntimeStorageBinding *) noexcept;
     friend ZoneRuntimeStorageStatus TryDestroyZoneRuntimeStorage(
         ZoneRuntimeStorageBinding *) noexcept;
+    // Exact const-only friendship for passive runtime-table authentication.
+    friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt(
+        const ZoneRuntimeStorageBinding &binding) noexcept;
 
     enum class State : std::uint8_t
     {

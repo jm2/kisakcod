@@ -9,6 +9,20 @@
 
 namespace db::zone_pending_copy
 {
+class PendingCopyAdmissionReceipt;
+class PendingCopyLedger;
+} // namespace db::zone_pending_copy
+
+namespace db::zone_runtime::detail
+{
+[[nodiscard]] bool IsPristineRuntimeReceipt(
+    const zone_pending_copy::PendingCopyAdmissionReceipt &receipt) noexcept;
+[[nodiscard]] bool IsPristineRuntimeReceipt(
+    const zone_pending_copy::PendingCopyLedger &ledger) noexcept;
+} // namespace db::zone_runtime::detail
+
+namespace db::zone_pending_copy
+{
 inline constexpr std::uint32_t kPendingCopyRecordCapacity = 2048;
 inline constexpr std::uint32_t kPendingCopyGenerationCapacity = 8;
 inline constexpr std::uint32_t kFirstAssetEntryIndex = 1;
@@ -154,6 +168,9 @@ private:
     friend PendingCopyStatus TryResetPendingCopyAdmissionReceipt(
         PendingCopyAdmissionReceipt *,
         const zone_load::ZoneLoadContextKey &) noexcept;
+    // Exact const-only friendship for passive runtime-table authentication.
+    friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt(
+        const PendingCopyAdmissionReceipt &receipt) noexcept;
 #ifdef KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING
     friend struct PendingCopyLedgerTestAccess;
 #endif
@@ -261,6 +278,9 @@ private:
     friend PendingCopyStatus TryResetPendingCopyAdmissionReceipt(
         PendingCopyAdmissionReceipt *,
         const zone_load::ZoneLoadContextKey &) noexcept;
+    // Exact const-only friendship for passive runtime-table authentication.
+    friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt(
+        const PendingCopyLedger &ledger) noexcept;
 #ifdef KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING
     friend struct PendingCopyLedgerTestAccess;
 #endif
