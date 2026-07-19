@@ -1744,6 +1744,92 @@ foreach(_marker IN ITEMS
         _string_source "${_marker}" "leased bounded string validation")
 endforeach()
 
+extract_slice(
+    _string_source
+    "[[nodiscard]] bool SL_IsTypedOwnershipAccessAuthorizedLocked("
+    "[[nodiscard]] AcquireResult TryAcquireOrdinaryStringOfSizeInternal("
+    _typed_ownership_authorization
+    "typed ownership authorization")
+require_ordered(
+    _typed_ownership_authorization
+    "SL_HasOwnershipBatchRegistryActivityLocked()"
+    "scrStringDebugGlob == &scrStringDebugGlobBuf"
+    "active typed operations require the canonical debug publication")
+require_ordered(
+    _typed_ownership_authorization
+    "scrStringDebugGlob == &scrStringDebugGlobBuf"
+    "SL_IsAuthorizedOwnershipLeaseLocked(validationLease)"
+    "debug publication is authenticated before leased access")
+
+extract_slice(
+    _string_source
+    "bool SL_TryValidateRegistryTopologyCertificateNoReport("
+    "bool SL_IsLeasedFreeListLocallyValidNoReport() noexcept"
+    _registry_topology_preflight
+    "registry topology preflight")
+foreach(_marker IN ITEMS
+    "scrStringDebugGlob != &scrStringDebugGlobBuf"
+    "SL_TryRecordHashEntryNoReport(entryIndex)"
+    "sl_systemSweepOwningHashByEntry[entryIndex] != owningHash"
+    "sl_systemSweepPreviousEntry[entryIndex] != previousIndex"
+    "for (uint32_t entryIndex = 1; entryIndex < STRINGLIST_SIZE && valid; ++entryIndex)"
+    "for (uint32_t stringId = 0; stringId < SL_MAX_STRING_INDEX && valid; ++stringId)"
+    "sl_systemSweepEntryByStringId[stringId]"
+    "Sys_AtomicLoad(&scrStringDebugGlob->totalRefCount) != static_cast<uint32_t>(aggregateRefCount)")
+    require_contains(
+        _registry_topology_preflight "${_marker}"
+        "exact registry topology/certificate preflight")
+endforeach()
+require_literal_count(
+    _registry_topology_preflight
+    "SL_ResetHashChainValidationNoReport();"
+    2
+    "registry topology scratch reset funnel")
+
+extract_slice(
+    _string_source
+    "TryAddDatabaseUser4ReferencesInternal("
+    "TryReAddRetainedDatabaseNamesInternal("
+    _registry_id_bulk
+    "registry ID bulk operation")
+extract_slice(
+    _string_source
+    "TryReAddRetainedDatabaseNamesInternal("
+    "TryInternDatabaseUser4NameInternal("
+    _registry_retained_bulk
+    "registry retained-name bulk operation")
+foreach(_var IN ITEMS _registry_id_bulk _registry_retained_bulk)
+    require_ordered(
+        ${_var}
+        "SL_TryValidateRegistryTopologyCertificateNoReport("
+        "for (uint32_t index = 0; index < count; ++index)"
+        "bulk topology preflight precedes caller input traversal")
+    require_literal_count(
+        ${_var}
+        "SL_TryResolveLeasedCertificateMemberNoReport("
+        2
+        "bulk targets are reauthenticated before mutation")
+    require_ordered(
+        ${_var}
+        "const bool aggregateRefCountOverflow ="
+        "for (uint32_t index = 0; index < uniqueCount; ++index)"
+        "aggregate and operation capacity are proven before mutation")
+endforeach()
+require_ordered(
+    _registry_retained_bulk
+    "const bool addressValid = nameAddress >= memoryBegin + payloadOffset"
+    "SL_TryResolveLeasedCertificateMemberNoReport("
+    "retained pointer range proof precedes exact leased resolution")
+require_literal_count(
+    _registry_retained_bulk
+    "(users & retainedUser) == 0"
+    2
+    "retained ownership is reauthenticated before mutation")
+require_not_contains(
+    _registry_retained_bulk
+    "SL_GetRefStringNoReport(stringId)"
+    "raw retained second-pass resolution")
+
 foreach(_var IN ITEMS _acquire _transfer _release_ordinary _release_database)
     require_contains(
         ${_var}
@@ -2368,6 +2454,15 @@ foreach(_marker IN ITEMS
     "TestOwnershipBatchUnrelatedDestruction()"
     "TestLegacyReadersAuthenticateExactStrings()"
     "TestLegacyMutatorsAuthenticateExactStrings()"
+    "TestRegistryTypedOperationsRejectCorruptDebugPointer()"
+    "registry typed operation trusted a corrupt debug pointer"
+    "TestRegistryRetainedBulkRejectsCorruptAggregate()"
+    "registry retained bulk treated corrupt aggregate as exhaustion"
+    "TestRegistryBulkCertificateCorruptionFailsClosed()"
+    "registry certificate corruption fixture has no deep target"
+    "registry corrupt bulk rejection retained validation scratch"
+    "TestRegistryCollisionBulkAndShutdownRemainLinear()"
+    "registry collision bulk preflight was not linear"
     "TestRegistryCoordinatorProductionStack()"
     "registry production-stack admitted a pre-held hash reader"
     "registry production-stack did not retain the real hash lock"
