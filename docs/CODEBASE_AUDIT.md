@@ -96,11 +96,13 @@ name identity, and no legacy bypass, entry replacement, or reinitialization whil
 `ff61504e` passes GCC Release **134/134**; focused GCC/Clang, Clang ASan+UBSan, Clang static analysis, strict native i386
 and AArch64, source, API-seal, security, and diff evidence all pass. It has no production caller and leaves retail
 bytes unchanged. Legacy native64-invalid `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and the `$init` lifecycle remain
-blockers before production enrollment. Exact-head run **29673379640** passed all nine jobs; exact-head Codex and Gemini
-reviews were clean, and zero review threads remained before squash merge `74916b5b`. Authoritative post-merge run
+blockers before production enrollment. Exact-head run **29673379640** passed all nine jobs; Codex reviewed exact final
+head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before
+squash merge `74916b5b`. Authoritative post-merge run
 **29673608169** passed all nine jobs at that exact merge commit.
 
-The active production-neutral zone-stream ownership stack at `da868c9e` consists of three commits. `b2737088` adds one
+The active production-neutral zone-stream ownership stack at `0c5049e7` consists of four code/test/security commits.
+`b2737088` adds one
 durable exact-key NeverBound/Bound/Invalidated receipt per generation and one reusable controller over the process-wide
 stream and relocation singletons. Binding validates the typed/aligned `XZoneMemory` identity and its exact nine block
 descriptors, layout parity, cursor, disjoint spans and controls, Loading lifecycle, and idle singleton before publication.
@@ -109,10 +111,12 @@ delay and stack arrays, and every cursor/count/scalar before terminal publicatio
 newer binding, and epoch exhaustion fails closed. `f99982c8` adds runtime/source/security/production-seal and hosted
 selection coverage. Hardening `da868c9e` closes an independently found seal bypass across header enrollment,
 using/unqualified references, manual namespace declarations, and private capabilities, and rejects misaligned zone
-identity before descriptor access. The exact combined replay passes GCC Release **137/137**, focused GCC/Clang and
-Clang ASan+UBSan, native i386 runtime, strict AArch64 compilation, source/security/API-seal, ABI, headless/debt, and diff
-gates. No production loader, runtime-table entry, PMem lifecycle, pending ledger, coordinator, or raw ownership site uses
-the API, and retail bytes remain unchanged.
+identity before descriptor access. Follow-up `0c5049e7` closes compile-valid preprocessing bypasses through phase-2 line
+splicing and phase-3 comment-separated tokens, with compiler-validated detector probes. The exact `0c5049e7` re-audit
+reports **PASS**. The focused runtime/source/security selection passes **4/4** under GCC and Clang warnings-as-errors and
+Clang ASan+UBSan; the full GCC Release replay passes **137/137**. Native i386 runtime, strict AArch64 compilation,
+source/security/API-seal, ABI, headless/debt, and diff gates also pass. No production loader, runtime-table entry, PMem
+lifecycle, pending ledger, coordinator, or raw ownership site uses the API, and retail bytes remain unchanged.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.

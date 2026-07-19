@@ -206,11 +206,13 @@ Completed foundation work:
   phase witness. External serialization, mutually disjoint control/receipt/managed-backing storage, stable name lifetime,
   and no-bypass/reinitialization constraints are explicit. The exact `ff61504e` replay passes GCC Release **134/134**;
   earlier focused GCC/Clang, Clang ASan+UBSan, Clang static analysis, strict i386/AArch64, source/API/security, and diff
-  evidence all pass. Exact-head run **29673379640** passed all nine jobs; exact-head Codex and Gemini reviews were clean,
-  and zero review threads remained before squash merge `74916b5b`. Authoritative post-merge run **29673608169** passed
+  evidence all pass. Exact-head run **29673379640** passed all nine jobs; Codex reviewed exact final head `0eec9b1e`,
+  Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before squash merge
+  `74916b5b`.
+  Authoritative post-merge run **29673608169** passed
   all nine jobs at that exact merge commit. It is build-enrolled but has no production caller. Legacy native64-invalid
   `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and the `$init` lifecycle remain production blockers;
-- the active three-commit zone-stream ownership stack at `da868c9e` adds an exact lifecycle-key receipt and one
+- the active four-code-commit zone-stream ownership stack at `0c5049e7` adds an exact lifecycle-key receipt and one
   reusable controller for process-wide stream and relocation singleton state. `b2737088` prevalidates the exact nine
   typed `XZoneMemory` spans, layout/cursor parity, disjointness, stable control storage, Loading lifecycle, and idle
   singleton before publishing Bound last. Exact invalidation drops alias/direct provenance, releases retained relocation
@@ -219,10 +221,12 @@ Completed foundation work:
   epoch exhaustion fails closed. `f99982c8` supplies runtime/source/security/seal and portable-host selection.
   `da868c9e` closes an independently caught production-neutrality-seal bypass across header enrollment, using or
   unqualified references, manual namespaces, and private capabilities, and rejects a misaligned typed zone identity
-  before descriptor access. The exact combined replay passes GCC Release **137/137**, focused GCC/Clang and Clang
-  ASan+UBSan, native i386 runtime, strict AArch64 compilation, source/security/API-seal, ABI, headless/debt, and diff
-  gates. No loader, runtime-table entry, PMem lifecycle, pending-copy ledger, coordinator, or raw ownership site consumes
-  it, and retail bytes are unchanged;
+  before descriptor access. Follow-up `0c5049e7` closes compile-valid phase-2 line-splice and phase-3 comment-separated
+  token bypasses with compiler-validated detector probes. The exact `0c5049e7` re-audit reports **PASS**; the focused
+  runtime/source/security selection passes **4/4** under GCC and Clang warnings-as-errors and Clang ASan+UBSan, while the
+  full GCC Release replay passes **137/137**. Native i386 runtime, strict AArch64 compilation, source/security/API-seal,
+  ABI, headless/debt, and diff gates also pass. No loader, runtime-table entry, PMem lifecycle, pending-copy ledger,
+  coordinator, or raw ownership site consumes it, and retail bytes are unchanged;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -564,8 +568,9 @@ Remaining gates, in implementation order:
    `ff61504e`; exact head `8cec770d` passed all nine jobs in run **29671392540** with clean Codex, Gemini, and independent
    audits. Authoritative post-merge run **29671849514** at exact `ff61504e` passed all nine jobs.
    PR #60 then merged the checked-PMem receipt as `74916b5b`; exact final head `0eec9b1e` and authoritative merge passed
-   all nine jobs in runs **29673379640** and **29673608169**, with clean exact-head Codex/Gemini reviews and zero threads.
-   Publish the active `da868c9e` exact stream-invalidation stack next, then add pending-copy/admission resources plus
+   all nine jobs in runs **29673379640** and **29673608169**; Codex reviewed exact final head `0eec9b1e`, Gemini reviewed
+   identical code head `f04c63e0`, both were clean, and zero threads remained. Publish the active `0c5049e7` exact
+   stream-invalidation stack next, then add pending-copy/admission resources plus
    a borrowed/standalone registry ownership coordinator before atomically
    replacing all seven raw sites. Keep static controller slots and callback metadata outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
@@ -1848,12 +1853,15 @@ independent audits before squash merge `ff61504e`; authoritative post-merge run 
 that exact merge commit.
 Merged PR #60 supplies the separate checked typed PMem scope receipt with exact typed both-prim validation, stable
 single-use phase-witness authority, and external-storage/no-bypass contracts. Exact final head `0eec9b1e` passed all nine
-jobs in run **29673379640**, exact-head Codex/Gemini reviews were clean with zero threads, and authoritative post-merge
+jobs in run **29673379640**; Codex reviewed exact final head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`,
+both were clean with zero threads, and authoritative post-merge
 run **29673608169** passed all nine jobs at squash merge `74916b5b`. Legacy native64
 `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and `$init` integration still must be corrected before production
-enrollment. The active `da868c9e` three-commit stack adds exact-key stream/alias bind and invalidation with a typed aligned
+enrollment. The active `0c5049e7` four-code-commit stack adds exact-key stream/alias bind and invalidation with a typed aligned
 zone identity, hardened production-neutrality seal, stale-terminal retry safety, complete relocation-capacity release,
-and full singleton scrub; the combined exact replay passes **137/137**. Publish it next without partial enrollment, then
+and full singleton scrub. Its compiler-validated source seal covers phase-2 line splicing and phase-3 comment-separated
+access; the exact re-audit reports **PASS**, the focused runtime/source/security selection passes **4/4** under GCC,
+Clang, and Clang ASan+UBSan, and the full GCC Release replay passes **137/137**. Publish it next without partial enrollment, then
 add the generation-tagged pending-copy ledger and prepared admission receipt. After those,
 add a registry coordinator that borrows exact active
 transaction authority or owns a standalone transaction, then enroll all seven sites atomically. Root-string staging
