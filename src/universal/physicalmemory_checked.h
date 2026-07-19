@@ -28,6 +28,16 @@ namespace physical_memory
 // A durable generation slot may destroy and reconstruct this single-use
 // receipt only after authenticating that exact generation's Freed terminal
 // state; it must never reset or recycle receipt bytes while ownership is live.
+//
+// PhysicalMemory control storage and AllocationReceipt storage must be
+// mutually disjoint. Both objects must remain wholly outside the entire
+// managed backing range originally supplied during physical-memory
+// initialization. PhysicalMemory does not retain that range's capacity, so
+// this API cannot infer or validate the separation; the caller that retains
+// the initialization extent must enforce it. The stableName identity must
+// also remain outside any reclaimable backing range unless the caller
+// independently guarantees that its storage cannot be overwritten or reused
+// through TryFree and every terminal retry.
 enum class AllocationScopeStatus : std::uint8_t
 {
     Success,

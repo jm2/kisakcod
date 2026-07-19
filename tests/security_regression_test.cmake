@@ -9758,7 +9758,12 @@ foreach(_checked_pmem_marker IN ITEMS
     "~AllocationReceipt() noexcept;"
     "std::uint8_t phaseWitness_;"
     "[[nodiscard]] bool isCanonical() const noexcept;"
-    "lifecycle/init helpers or directly replace")
+    "lifecycle/init helpers or directly replace"
+    "PhysicalMemory control storage and AllocationReceipt storage must be"
+    "mutually disjoint. Both objects must remain wholly outside the entire"
+    "this API cannot infer or validate the separation"
+    "also remain outside any reclaimable backing range unless the caller"
+    "cannot be overwritten or reused")
     require_source_contains(
         "universal/physicalmemory_checked.h"
         "${_checked_pmem_marker}"

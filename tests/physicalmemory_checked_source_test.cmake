@@ -76,6 +76,13 @@ foreach(_marker IN ITEMS
     "externally serialize every access to both prims"
     "lifecycle/init helpers or directly replace"
     "only after authenticating that exact generation's Freed terminal"
+    "PhysicalMemory control storage and AllocationReceipt storage must be"
+    "mutually disjoint. Both objects must remain wholly outside the entire"
+    "PhysicalMemory does not retain that range's capacity"
+    "this API cannot infer or validate the separation"
+    "the initialization extent must enforce it"
+    "also remain outside any reclaimable backing range unless the caller"
+    "cannot be overwritten or reused"
     "never dereferenced by this")
     require_physicalmemory_contains(
         _header "${_marker}" "sealed report-free public contract")
