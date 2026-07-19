@@ -1,6 +1,6 @@
 #include <universal/com_angle.h>
 
-#include <math.h>
+#include <cmath>
 
 float KISAK_CDECL AngleDelta(float a1, float a2)
 {
@@ -10,10 +10,10 @@ float KISAK_CDECL AngleDelta(float a1, float a2)
     float scaled;
 
     difference = a1 - a2;
-    scaled = difference * 0.002777777845039964;
-    offset = scaled + 0.5;
-    rounded = floor(offset);
-    return (scaled - rounded) * 360.0;
+    scaled = static_cast<float>(difference * 0.002777777845039964);
+    offset = static_cast<float>(scaled + 0.5);
+    rounded = std::floor(offset);
+    return static_cast<float>((scaled - rounded) * 360.0);
 }
 
 float KISAK_CDECL AngleSubtract(float a1, float a2)

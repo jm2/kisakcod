@@ -78,6 +78,13 @@ elseif(DEFINED CONTRACT_MUTATION AND CONTRACT_MUTATION STREQUAL "angle_duplicate
     string(APPEND _com_math
         "\nfloat AngleSubtract(float a1, float a2) "
         "{ return AngleDelta(a1, a2); }\n")
+elseif(DEFINED CONTRACT_MUTATION AND CONTRACT_MUTATION STREQUAL "angle_global_floor")
+    string(REPLACE "std::floor(offset)" "floor(offset)" _com_angle "${_com_angle}")
+elseif(DEFINED CONTRACT_MUTATION AND CONTRACT_MUTATION STREQUAL "angle_implicit_narrowing")
+    string(REPLACE
+        "static_cast<float>(difference * 0.002777777845039964)"
+        "difference * 0.002777777845039964"
+        _com_angle "${_com_angle}")
 elseif(DEFINED CONTRACT_MUTATION AND CONTRACT_MUTATION STREQUAL "aim_no_release_guard")
     string(REPLACE
         "if (!ordinaryEntity)\n            return 0;"
@@ -103,6 +110,13 @@ elseif(DEFINED CONTRACT_MUTATION AND CONTRACT_MUTATION STREQUAL "cmd_direct_walk
         "command_dispatch::FindLinkedCommand("
         "LegacyFindCommand("
         _cmd "${_cmd}")
+elseif(DEFINED CONTRACT_MUTATION AND CONTRACT_MUTATION STREQUAL "cmd_null_query")
+    string(REPLACE "if (!name)" "if (false)" _cmd_dispatch "${_cmd_dispatch}")
+elseif(DEFINED CONTRACT_MUTATION AND CONTRACT_MUTATION STREQUAL "cmd_null_node")
+    string(REPLACE
+        "if (current->name && namesEqual(name, current->name))"
+        "if (namesEqual(name, current->name))"
+        _cmd_dispatch "${_cmd_dispatch}")
 elseif(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
     message(FATAL_ERROR "Unknown reconciliation mutation: ${CONTRACT_MUTATION}")
 endif()
@@ -151,6 +165,14 @@ require_contains(
     _cmd_dispatch
     "for (Command *current = head; current != nullptr; current = current->next)"
     "the shared production walker admits empty lists and visits the tail")
+require_contains(
+    _cmd_dispatch
+    "if (!name)\n        return nullptr;"
+    "null lookup names are rejected before comparator dispatch")
+require_contains(
+    _cmd_dispatch
+    "if (current->name && namesEqual(name, current->name))"
+    "null registry names are skipped before comparator dispatch")
 require_count(
     _cmd "command_dispatch::FindLinkedCommand(" 2
     "server and ordinary dispatch share the tested linked-list walker")
@@ -164,6 +186,25 @@ require_contains(
 require_contains(
     _com_angle "return AngleDelta(a1, a2);"
     "AngleSubtract delegates to the canonical signed implementation")
+require_contains(
+    _com_angle "#include <cmath>"
+    "portable C++ math overloads are selected")
+require_contains(
+    _com_angle
+    "scaled = static_cast<float>(difference * 0.002777777845039964);"
+    "the original double scale has an explicit staged float conversion")
+require_contains(
+    _com_angle "offset = static_cast<float>(scaled + 0.5);"
+    "the original double offset has an explicit staged float conversion")
+require_contains(
+    _com_angle "rounded = std::floor(offset);"
+    "the float std::floor overload avoids narrowing")
+require_contains(
+    _com_angle "return static_cast<float>((scaled - rounded) * 360.0);"
+    "the original double reconstruction has an explicit return conversion")
+forbid_contains(
+    _com_angle "#include <math.h>"
+    "the C math header cannot reintroduce the double-only overload")
 forbid_contains(
     _com_math "AngleDelta(float a1, float a2)"
     "AngleDelta must have one definition")
@@ -203,11 +244,15 @@ if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
         rdpvs_stale_def
         angle_unsigned
         angle_duplicate
+        angle_global_floor
+        angle_implicit_narrowing
         aim_no_release_guard
         aim_packed_abi
         aim_unbounded_weapon
         cmd_tail_skip
-        cmd_direct_walk)
+        cmd_direct_walk
+        cmd_null_query
+        cmd_null_node)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
                 "-DSOURCE_ROOT=${SOURCE_ROOT}"

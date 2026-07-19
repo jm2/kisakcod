@@ -35,6 +35,10 @@ int main()
         command_dispatch::FindLinkedCommand<Command>(
             nullptr, "missing", NamesEqual) == nullptr,
         "an empty registry is safe");
+    Check(
+        command_dispatch::FindLinkedCommand<Command>(
+            nullptr, nullptr, NamesEqual) == nullptr,
+        "a null lookup name is rejected");
 
     Command tail{nullptr, "tail", nullptr};
     Check(
@@ -60,6 +64,17 @@ int main()
         command_dispatch::FindLinkedCommand(&head, "missing", NamesEqual)
             == nullptr,
         "a missing command returns null");
+    Check(
+        command_dispatch::FindLinkedCommand(&head, nullptr, NamesEqual)
+            == nullptr,
+        "a null lookup name never reaches the comparator");
+
+    Command afterNullName{nullptr, "after-null", nullptr};
+    Command nullName{&afterNullName, nullptr, nullptr};
+    Check(
+        command_dispatch::FindLinkedCommand(
+            &nullName, "after-null", NamesEqual) == &afterNullName,
+        "a null registry name is skipped safely");
 
     Command duplicateTail{nullptr, "duplicate", nullptr};
     Command duplicateHead{&duplicateTail, "duplicate", nullptr};
