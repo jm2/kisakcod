@@ -5,17 +5,6 @@ int __cdecl compare_impact_files(const char **pe0, const char **pe1)
     return I_stricmp(*pe0, *pe1);
 }
 
-int __cdecl compare_hudelems(const void *pe0, const void *pe1)
-{
-    float delta; // [esp+0h] [ebp-Ch]
-
-    delta = *(float *)(*(uint32_t *)pe0 + 128) - *(float *)(*(uint32_t *)pe1 + 128);
-    if (delta >= 0.0)
-        return delta > 0.0;
-    else
-        return -1;
-}
-
 void __cdecl compare_doesStringEqualString(Operand *leftSide, Operand *rightSide, Operand *result)
 {
     if (leftSide->dataType != VAL_STRING)
@@ -1374,4 +1363,3 @@ void __cdecl subtract_FloatFromFloat(Operand *leftSide, Operand *rightSide, Oper
     result->dataType = VAL_FLOAT;
     result->internals.floatVal = leftSide->internals.floatVal - rightSide->internals.floatVal;
 }
-

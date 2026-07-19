@@ -1,3 +1,4 @@
+#include "cg_hudelem_sort.h"
 #include "cg_local.h"
 #include "cg_public.h"
 
@@ -409,12 +410,14 @@ void __cdecl CG_Draw2dHudElems(int32_t localClientNum, int32_t foreground)
 
     bool v2; // [esp+7h] [ebp-100Dh]
     int32_t i; // [esp+8h] [ebp-100Ch]
-    hudelem_s *elems[1025]; // [esp+Ch] [ebp-1008h] BYREF
+    constexpr std::size_t hudElemCapacity =
+        kisak::cgame::ProfileHudElemCapacity<playerState_s_hud>();
+    hudelem_s *elems[hudElemCapacity];
     int32_t SortedHudElems; // [esp+1010h] [ebp-4h]
     cg_s *cgameGlob;
 
     cgameGlob = CG_GetLocalClientGlobals(localClientNum);
-    SortedHudElems = GetSortedHudElems(localClientNum, elems);
+    SortedHudElems = GetSortedHudElems(localClientNum, elems, hudElemCapacity);
 
     if (SortedHudElems)
     {
@@ -1731,10 +1734,13 @@ float __cdecl GetScaleForDistance(int32_t localClientNum, const float *worldPos)
     return range * waypointDistScaleSmallest->current.value + (1.0f - range) * 1.0f;
 }
 
-int32_t __cdecl GetSortedHudElems(int32_t localClientNum, hudelem_s **elems)
+int32_t __cdecl GetSortedHudElems(
+    int32_t localClientNum,
+    hudelem_s **elems,
+    std::size_t elemCapacity)
 {
     playerState_s *ps; // [esp+4h] [ebp-8h]
-    int32_t elemCount; // [esp+8h] [ebp-4h] BYREF
+    std::size_t elemCount;
     const cg_s *clientGlob;
 
     clientGlob = CG_GetLocalClientGlobals(localClientNum);
@@ -1743,39 +1749,25 @@ int32_t __cdecl GetSortedHudElems(int32_t localClientNum, hudelem_s **elems)
         return 0;
 
     ps = &clientGlob->nextSnap->ps;
-    elemCount = 0;
-
-#ifdef KISAK_MP
-    CopyInUseHudElems(elems, &elemCount, ps->hud.current, 31);
-    CopyInUseHudElems(elems, &elemCount, ps->hud.archival, 31);
-#elif KISAK_SP
-    CopyInUseHudElems(elems, &elemCount, ps->hud.elem, 256);
-#endif
-
-    qsort(elems, elemCount, 4, compare_hudelems);
-    return elemCount;
-}
-
-void __cdecl CopyInUseHudElems(hudelem_s **elems, int32_t *elemCount, hudelem_s *elemSrcArray, int32_t elemSrcArrayCount)
-{
-    int32_t i; // [esp+0h] [ebp-4h]
-
-    for (i = 0; i < elemSrcArrayCount && elemSrcArray[i].type; ++i)
-        elems[(*elemCount)++] = &elemSrcArray[i];
+    elemCount = kisak::cgame::CollectActiveHudElems(elems, elemCapacity, ps->hud);
+    kisak::cgame::SortHudElems(elems, elemCount);
+    return static_cast<int32_t>(elemCount);
 }
 
 void __cdecl CG_AddDrawSurfsFor3dHudElems(int32_t localClientNum)
 {
     int32_t i; // [esp+0h] [ebp-104h]
-    hudelem_s *elems[62]; // [esp+4h] [ebp-100h] BYREF
+    constexpr std::size_t hudElemCapacity =
+        kisak::cgame::ProfileHudElemCapacity<playerState_s_hud>();
+    hudelem_s *elems[hudElemCapacity];
     int32_t elemCount; // [esp+100h] [ebp-4h]
 
 #ifdef KISAK_MP
     if (CG_ShouldDrawHud(localClientNum))
 #endif
     {
-        elemCount = GetSortedHudElems(localClientNum, elems);
-        bcassert(elemCount, ARRAY_COUNT(elems));
+        elemCount = GetSortedHudElems(localClientNum, elems, hudElemCapacity);
+        bcassert2(elemCount, ARRAY_COUNT(elems));
         for (i = 0; i < elemCount; ++i)
         {
             if (elems[i]->type == HE_TYPE_WAYPOINT)

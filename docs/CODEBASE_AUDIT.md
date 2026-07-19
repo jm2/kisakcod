@@ -146,7 +146,8 @@ PR #63 then squash-merged the curated typed-sort and row-zero draw-method correc
 `f79b0bf422bb926dd302a888bdc258e7e8409aa2`. Exact reviewed head `36aebd29` and the authoritative master commit passed
 all nine jobs in runs **29695891172** and **29696199493**. Codex found no major issue; Gemini's two suggestions were
 already satisfied or semantically equivalent rather than corrections, and both threads were answered and resolved.
-The complete local registry-coordinator candidate through `774487d1` remains production-neutral. `9f327514` seals the
+PR #64 merged the complete registry-coordinator sequence through `774487d1` as
+`7f030c03269235b3ad703c13404e0975f798bd18`; it remains production-neutral. `9f327514` seals the
 production boundary; `74b56b65` adds portable nonblocking hash admission and fixes the real pre-held-reader/i386 defects;
 `90e8fba7` completes portable test wiring; `2a836a0e` maintains authenticated ID-to-entry and
 entry-to-owner/predecessor certificates for O(1) member resolution and linear shutdown/head promotion; and `56c97f09`
@@ -159,17 +160,25 @@ atomically and poison unsafe batches; forged totals are not misreported as exhau
 `774487d1` evidence is GCC Debug
 and full CTest **145/145**, focused source/security/macro-off **6/6** plus an independent **7/7** audit selection,
 warning-clean GCC/Clang runtime, Clang ASan+UBSan with `detect_leaks=0` under ptrace, and genuine i386 and AArch64
-compile/link. No legacy production site is enrolled. Rounded merged porting progress remains **76%** until this candidate
-merges, when it becomes approximately **77%**; strict requested-target delivery remains **0/5**.
+compile/link. No legacy production site is enrolled. Final exact head
+`a73916a8467eb5d4a6cad7d33b5d3ecf1f684c37` and exact merged master passed all nine jobs in runs **29701509815** and
+**29702009703**, and exact-head Codex/Gemini/thread review was clean. Rounded merged porting progress is approximately
+**77%**; strict requested-target delivery remains **0/5**.
 
-Fresh pinned upstream `2164cd1a` is still **18 commits ahead by ancestry**; PR #63 reconciled only its reviewed
-typed-sort/row-zero subset, not the complete content or graph. Before an ancestry checkpoint, ledger and port the safe U1
-`r_dpvs` stale/wrong brush-definition identity/access, aim-bound, native-width HUD sort/capacity, signed
-`AngleSubtract`, and server-command-tail dispatch fixes. Validate the isolated U2 Miles dry-reverb correction from
-`b19e686a` separately and either port or explicitly defer it. Unsafe raw SP/save/screenshot, dynent, matrix, and gameplay
-hunks remain explicitly deferred/rejected; icon changes are tracked separately as provenance/optional-packaging work.
-Only after every upstream commit has a disposition may the exact pinned head receive a tree-preserving `-s ours`
-ancestry checkpoint with merge-commit semantics—never a squash. The
+Pinned upstream `2164cd1a` is still **18 commits ahead by ancestry**, with every commit now classified in
+`docs/UPSTREAM_2164CD1A_LEDGER.md`. The U1 candidate selectively adapts the safe `r_dpvs` brush-definition, aim-assist,
+native-width HUD, signed-angle, and command-tail corrections as `faf3917d`, `a401775a`, `fc265d13`, and `35960465`.
+Exact U1 validation is full GCC **152/152** and focused **7/7**; individual batches pass strict GCC/Clang and genuine
+i386/AArch64 compilation, HUD passes ASan+UBSan, and an independent adversarial audit found no actionable defect.
+`b40fd7bb` combines the independently validated U2 Miles dry-level cleanup, after which full GCC Debug passes
+**153/153** and the combined focus passes **8/8**. U2 separately passes **146/146**, its ten-mutation contract, strict i386 GCC MP/SP and Clang MP compile-link,
+and a clean symbol/dependency audit. PR #65 review hardening `db3ced51` preserves staged angle arithmetic with explicit
+conversions, uses `std::floor(float)`, and rejects null command query/node names before comparison. Full GCC remains
+**153/153**; focused **3/3** and strict GCC/Clang plus genuine i386/AArch64 compile-link pass for the touched contracts.
+Replacement hosted CI/review remain pending. Unsafe raw SP/save/screenshot, dynent, matrix, and gameplay hunks remain explicitly
+deferred/rejected; icon changes remain provenance/optional-packaging work. Only after the U1/U2 content PR merges may
+the exact pinned head receive a separate, tree-preserving `-s ours` ancestry checkpoint with merge-commit semantics—never
+a squash or rebase. The
 subsequent production sequence is passive durable-receipt composition, checked PMem/global/narrow prerequisites,
 exact-key adapters, and finally one atomic seven-site cutover.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate

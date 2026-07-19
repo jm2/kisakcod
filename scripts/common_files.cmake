@@ -88,9 +88,11 @@ set(EFFECTSCORE
 set(AIM_ASSIST
     "${SRC_DIR}/aim_assist/aim_assist.cpp"
     "${SRC_DIR}/aim_assist/aim_assist.h"
+    "${SRC_DIR}/aim_assist/aim_assist_safety.h"
 )
 
 set(BGAME
+    "${SRC_DIR}/bgame/bg_hudelem.h"
     "${SRC_DIR}/bgame/bg_jump.cpp"
     "${SRC_DIR}/bgame/bg_local.h"
     "${SRC_DIR}/bgame/bg_mantle.cpp"
@@ -119,6 +121,7 @@ set(CGAME
     "${SRC_DIR}/cgame/cg_effects_load_obj.cpp"
     "${SRC_DIR}/cgame/cg_event.cpp"
     "${SRC_DIR}/cgame/cg_hudelem.cpp"
+    "${SRC_DIR}/cgame/cg_hudelem_sort.h"
     "${SRC_DIR}/cgame/cg_info.cpp"
     "${SRC_DIR}/cgame/cg_laser.cpp"
     "${SRC_DIR}/cgame/cg_local.h"
@@ -471,6 +474,7 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/bitarray.h"
     "${SRC_DIR}/qcommon/cmd.cpp"
     "${SRC_DIR}/qcommon/cmd.h"
+    "${SRC_DIR}/qcommon/cmd_dispatch.h"
     "${SRC_DIR}/qcommon/cm_load.cpp"
     "${SRC_DIR}/qcommon/cm_load_obj.cpp"
     "${SRC_DIR}/qcommon/cm_mesh.cpp"
@@ -634,6 +638,8 @@ set(UNIVERSAL
     "${SRC_DIR}/universal/com_files.cpp"
     "${SRC_DIR}/universal/com_files.h"
     "${SRC_DIR}/universal/com_loadutils.cpp"
+    "${SRC_DIR}/universal/com_angle.cpp"
+    "${SRC_DIR}/universal/com_angle.h"
     "${SRC_DIR}/universal/com_math.cpp"
     "${SRC_DIR}/universal/com_math.h"
     "${SRC_DIR}/universal/com_math_anglevectors.cpp"

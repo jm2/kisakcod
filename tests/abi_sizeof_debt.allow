@@ -80,11 +80,9 @@ bgame/bg_local.h|static_assert:sizeof(clientInfo_t)==0x4CC|1
 bgame/bg_local.h|static_assert:sizeof(controller_info_t)==0x60|1
 bgame/bg_local.h|static_assert:sizeof(gitem_s)==0x4|1
 bgame/bg_local.h|static_assert:sizeof(hudElemSoundInfo_t)==0x4|1
-bgame/bg_local.h|static_assert:sizeof(hudelem_s)==0xA0|1
 bgame/bg_local.h|static_assert:sizeof(lerpFrame_t)==0x30|1
 bgame/bg_local.h|static_assert:sizeof(objective_t)==0x1C|1
 bgame/bg_local.h|static_assert:sizeof(playerState_s)==0x2F64|1
-bgame/bg_local.h|static_assert:sizeof(playerState_s_hud)==0x26C0|1
 bgame/bg_local.h|static_assert:sizeof(pml_t)==0x80|1
 bgame/bg_local.h|static_assert:sizeof(scr_animtree_t)==0x4|1
 bgame/bg_local.h|static_assert:sizeof(scr_vehicle_s)==0x354|1
@@ -97,7 +95,6 @@ bgame/bg_local.h|static_assert:sizeof(shellshock_parms_t_view)==0xC|1
 bgame/bg_local.h|static_assert:sizeof(shellshock_t)==0x20|1
 bgame/bg_local.h|static_assert:sizeof(structscr_anim_s)==0x4|1
 bgame/bg_local.h|static_assert:sizeof(turretInfo_s)==0x48|1
-bgame/bg_local.h|static_assert:sizeof(unionhudelem_color_t)==0x4|1
 bgame/bg_local.h|static_assert:sizeof(vehicle_node_t)==0x44|1
 bgame/bg_local.h|static_assert:sizeof(vehicle_pathpos_t)==0xC0|1
 bgame/bg_local.h|static_assert:sizeof(vehicle_physic_t)==0xF8|1

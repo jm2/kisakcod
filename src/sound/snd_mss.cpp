@@ -211,6 +211,12 @@ void MSS_ShutdownCleanup()
   memset((uint8_t *)&milesGlob, 0, sizeof(milesGlob));
 }
 
+float __cdecl MSS_GetDryLevel()
+{
+  // Miles models reverb as a unity dry signal plus a separate wet send.
+  return 1.0f;
+}
+
 double __cdecl MSS_GetWetLevel(const snd_alias_t *pAlias)
 {
   if ( g_snd.effect->wetlevel < 0.0 || g_snd.effect->wetlevel > 1.0 )
@@ -335,4 +341,3 @@ uint32_t *__cdecl MSS_Alloc_FastFile(int bytes)
 {
   return (uint32_t *)Z_Malloc(bytes, "MSS_Alloc", 15);
 }
-

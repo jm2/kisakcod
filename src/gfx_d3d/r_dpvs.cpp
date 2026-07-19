@@ -1071,8 +1071,8 @@ void __cdecl R_DrawAllDynEnt(const GfxViewInfo *viewInfo)
         {
             dynEntPosea = DynEnt_GetClientPose(dynEntIndexa, DYNENT_DRAW_BRUSH);
             dynEntDefa = DynEnt_GetEntityDef(dynEntIndexa, DYNENT_DRAW_BRUSH);
-            iassert( !dynEntDef->xModel );
-            iassert( dynEntDef->brushModel );
+            iassert( !dynEntDefa->xModel );
+            iassert( dynEntDefa->brushModel );
             bmodel = R_GetBrushModel(dynEntDefa->brushModel);
             if (bmodel->surfaceCount)
             {

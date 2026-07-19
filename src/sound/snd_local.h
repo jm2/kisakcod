@@ -171,6 +171,7 @@ void MSS_InitChannels();
 void MSS_InitEq();
 bool __cdecl MSS_Startup();
 void MSS_ShutdownCleanup();
+float __cdecl MSS_GetDryLevel();
 double __cdecl MSS_GetWetLevel(const snd_alias_t *pAlias);
 void __cdecl MSS_ApplyEqFilter(_SAMPLE *s, int entchannel);
 void __cdecl MSS_ResumeSample(int i, int frametime);

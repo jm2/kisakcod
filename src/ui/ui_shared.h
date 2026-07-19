@@ -1311,7 +1311,6 @@ void __cdecl UI_FillRect(
 
 // ui_expressions_logicfunctions
 int __cdecl compare_impact_files(const char **pe0, const char **pe1);
-int __cdecl compare_hudelems(const void *pe0, const void *pe1);
 int __cdecl compare_use(float *pe1, float *pe2);
 void __cdecl compare_doesStringEqualString(Operand *leftSide, Operand *rightSide, Operand *result);
 void __cdecl compare_doesStringNotEqualString(Operand *leftSide, Operand *rightSide, Operand *result);
@@ -2042,4 +2041,3 @@ extern const dvar_t *ui_showMenuOnly;
 extern const dvar_t *ui_cinematicsTimestamp;
 extern const dvar_t *uiscript_debug;
 extern const dvar_t *ui_borderLowLightScale;
-

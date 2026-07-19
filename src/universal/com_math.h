@@ -1,6 +1,7 @@
 #pragma once
 
 #include <universal/assertive.h>
+#include <universal/com_angle.h>
 
 #include <math.h>
 #include <cstdint>
@@ -185,7 +186,6 @@ float __cdecl LinearTrackAngle(float tgt, float cur, float rate, float deltaTime
 
 float __cdecl GraphGetValueFromFraction(int knotCount, const float (*knots)[2], float fraction);
 
-float __cdecl AngleDelta(float a1, float a2);
 void __cdecl AnglesSubtract(float* v1, float* v2, float* v3);
 
 void vectosignedangles(const float *vec, float *angles);
@@ -193,8 +193,6 @@ void vectosignedangles(const float *vec, float *angles);
 float __cdecl RotationToYaw(const float* rot);
 float AngleNormalize360(float angle);
 float AngleNormalize180(float angle);
-float AngleSubtract(float a1, float a2);
-
 void FastSinCos(float radians, float *s, float *c);
 void MatrixRotationX(float mat[3][3], float degree);
 void MatrixRotationY(float mat[3][3], float degree);

@@ -1,4 +1,5 @@
 #include "cmd.h"
+#include "cmd_dispatch.h"
 
 #include <universal/assertive.h>
 #include <universal/q_parse.h>
@@ -635,17 +636,17 @@ void __cdecl Cmd_ExecuteServerString(char *text)
         if (SV_Cmd_Argc())
         {
             arg0 = SV_Cmd_Argv(0);
-            for (cmd_function_s *itr= sv_cmd_functions; itr->next; itr = itr->next)
-            {
-                if (!I_stricmp(arg0, itr->name))
+            cmd_function_s *itr = command_dispatch::FindLinkedCommand(
+                sv_cmd_functions,
+                arg0,
+                [](const char *lhs, const char *rhs)
                 {
-                    //*prev = cmd->next;
-                    //cmd->next = sv_cmd_functions;
-                    //sv_cmd_functions = cmd;
-                    if (itr->function)
-                        itr->function();
-                    break;
-                }
+                    return I_stricmp(lhs, rhs) == 0;
+                });
+            if (itr)
+            {
+                if (itr->function)
+                    itr->function();
             }
         }
         SV_Cmd_EndTokenizedString();
@@ -1219,28 +1220,31 @@ void __cdecl Cmd_ExecuteSingleCommand(int32_t  localClientNum, int32_t  controll
             Cmd_CheckNotify();
 #endif
             arg0 = Cmd_Argv(0);
-            for (itr = cmd_functions; itr->next; itr = itr->next)
+            itr = command_dispatch::FindLinkedCommand(
+                cmd_functions,
+                arg0,
+                [](const char *lhs, const char *rhs)
+                {
+                    return I_stricmp(lhs, rhs) == 0;
+                });
+            if (itr)
             {
-                if (!I_stricmp(arg0, itr->name))
+                if (itr->function)
                 {
                     //prev->next = cmd->next;
                     //cmd->next = cmd_functions;
                     //cmd_functions = cmd;
-                    if (itr->function)
+                    if (itr->function == Cbuf_AddServerText_f)
                     {
-                        if (itr->function == Cbuf_AddServerText_f)
-                        {
-                            SV_WaitServer();
-                            iassert( !com_inServerFrame );
-                            Cmd_ExecuteServerString(text);
-                        }
-                        else
-                        {
-                            itr->function();
-                        }
-                        goto LABEL_26;
+                        SV_WaitServer();
+                        iassert( !com_inServerFrame );
+                        Cmd_ExecuteServerString(text);
                     }
-                    break;
+                    else
+                    {
+                        itr->function();
+                    }
+                    goto LABEL_26;
                 }
             }
 

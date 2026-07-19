@@ -181,18 +181,7 @@ enum ShockViewTypes : __int32
     SHELLSHOCK_VIEWTYPE_NONE = 0x2,
 };
 
-union hudelem_color_t // sizeof=0x4
-{                                       // XREF: DrawSingleHudElem2d+114/r
-    struct
-    {
-        uint8_t r;
-        uint8_t g;
-        uint8_t b;
-        uint8_t a;
-    };
-    uint32_t rgba;
-};
-static_assert(sizeof(union hudelem_color_t) == 0x4);
+#include "bg_hudelem.h"
 
 enum ViewLockTypes : __int32
 {                                       // XREF: playerState_s/r
@@ -579,137 +568,6 @@ struct hudElemSoundInfo_t // sizeof=0x4
 };
 static_assert(sizeof(hudElemSoundInfo_t) == 0x4);
 
-#ifdef KISAK_MP
-enum he_type_t : __int32
-{                                       // XREF: hudelem_s/r
-    HE_TYPE_FREE = 0x0,
-    HE_TYPE_TEXT = 0x1,
-    HE_TYPE_VALUE = 0x2,
-    HE_TYPE_PLAYERNAME = 0x3,
-    HE_TYPE_MAPNAME = 0x4,
-    HE_TYPE_GAMETYPE = 0x5,
-    HE_TYPE_MATERIAL = 0x6,
-    HE_TYPE_TIMER_DOWN = 0x7,
-    HE_TYPE_TIMER_UP = 0x8,
-    HE_TYPE_TENTHS_TIMER_DOWN = 0x9,
-    HE_TYPE_TENTHS_TIMER_UP = 0xA,
-    HE_TYPE_CLOCK_DOWN = 0xB,
-    HE_TYPE_CLOCK_UP = 0xC,
-    HE_TYPE_WAYPOINT = 0xD,
-    HE_TYPE_COUNT = 0xE,
-};
-#elif KISAK_SP
-enum he_type_t : __int32
-{
-    HE_TYPE_FREE = 0x0,
-    HE_TYPE_TEXT = 0x1,
-    HE_TYPE_VALUE = 0x2,
-    HE_TYPE_MATERIAL = 0x3,
-    HE_TYPE_TIMER_DOWN = 0x4,
-    HE_TYPE_TIMER_UP = 0x5,
-    HE_TYPE_TENTHS_TIMER_DOWN = 0x6,
-    HE_TYPE_TENTHS_TIMER_UP = 0x7,
-    HE_TYPE_CLOCK_DOWN = 0x8,
-    HE_TYPE_CLOCK_UP = 0x9,
-    HE_TYPE_WAYPOINT = 0xA,
-    HE_TYPE_COUNT = 0xB,
-};
-#endif
-
-#ifdef KISAK_MP
-struct hudelem_s // sizeof=0xA0
-{                                       // XREF: .data:g_dummyHudCurrent/r
-    he_type_t type;
-    float x;
-    float y;
-    float z;                            // XREF: .rdata:off_866438/o
-    int32_t targetEntNum;
-    float fontScale;
-    int32_t font;
-    int32_t alignOrg;
-    int32_t alignScreen;
-    hudelem_color_t color;
-    hudelem_color_t fromColor;
-    int32_t fadeStartTime;                  // XREF: _memmove:UnwindDown3/o
-    int32_t fadeTime;                       // XREF: Sys_GetPhysicalCpuCount+131/o
-    int32_t label;
-    int32_t width;
-    int32_t height;
-    int32_t materialIndex;
-    int32_t offscreenMaterialIdx;           // XREF: Image_CopyBitmapData:off_810011/o
-    int32_t fromWidth;                      // XREF: .rdata:008CF9F1/o
-    int32_t fromHeight;
-    int32_t scaleStartTime;                 // XREF: .rdata:008CFA4D/o
-    int32_t scaleTime;
-    float fromX;
-    float fromY;
-    int32_t fromAlignOrg;
-    int32_t fromAlignScreen;                // XREF: SV_Shutdown(char const *):loc_5D1039/o
-    int32_t moveStartTime;                  // XREF: .rdata:val_dc_luminance/o
-    int32_t moveTime;                       // XREF: .rdata:008CFA2D/o
-    int32_t time;                           // XREF: .rdata:off_866450/o
-    int32_t duration;
-    float value;                        // XREF: unzlocal_CheckCurrentFileCoherencyHeader:loc_67D5A6/o
-    int32_t text;
-    float sort;
-    hudelem_color_t glowColor;
-    int32_t fxBirthTime;                    // XREF: R_Cinematic_BinkOpenPath:loc_792B62/o
-    int32_t fxLetterTime;                   // XREF: .rdata:008CFA1D/o
-    int32_t fxDecayStartTime;               // XREF: .rdata:008CFA31/o
-    int32_t fxDecayDuration;                // XREF: .rdata:008E8CBD/o
-    int32_t soundID;
-    int32_t flags;
-};
-static_assert(sizeof(hudelem_s) == 0xA0);
-#elif KISAK_SP
-struct hudelem_s
-{
-    he_type_t type;
-    float x;
-    float y;
-    float z;
-    int targetEntNum;
-    float fontScale;
-    float fromFontScale;
-    int fontScaleStartTime;
-    int fontScaleTime;
-    int font;
-    int alignOrg;
-    int alignScreen;
-    hudelem_color_t color;
-    hudelem_color_t fromColor;
-    int fadeStartTime;
-    int fadeTime;
-    int label;
-    int width;
-    int height;
-    int materialIndex;
-    int offscreenMaterialIdx;
-    int fromWidth;
-    int fromHeight;
-    int scaleStartTime;
-    int scaleTime;
-    float fromX;
-    float fromY;
-    int fromAlignOrg;
-    int fromAlignScreen;
-    int moveStartTime;
-    int moveTime;
-    int time;
-    int duration;
-    float value;
-    int text;
-    float sort;
-    hudelem_color_t glowColor;
-    int fxBirthTime;
-    int fxLetterTime;
-    int fxDecayStartTime;
-    int fxDecayDuration;
-    int soundID;
-    int flags;
-};
-#endif
-
 struct MantleState // sizeof=0x10
 {                                       // XREF: playerState_s/r
     float yaw;
@@ -718,20 +576,6 @@ struct MantleState // sizeof=0x10
     int32_t flags;
 };
 static_assert(sizeof(MantleState) == 0x10);
-
-#ifdef KISAK_MP
-struct playerState_s_hud // sizeof=0x26C0
-{                                       // XREF: playerState_s/r
-    hudelem_s current[31];              // XREF: Sys_GetPhysicalCpuCount+131/o
-    hudelem_s archival[31];             // XREF: SV_Shutdown(char const *):loc_5D1039/o
-};
-static_assert(sizeof(playerState_s_hud) == 0x26C0);
-#elif KISAK_SP
-struct playerState_s_hud
-{
-    hudelem_s elem[256];
-};
-#endif
 
 enum ActionSlotType : __int32
 {                                       // XREF: playerState_s/r
