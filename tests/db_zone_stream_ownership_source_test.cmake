@@ -20,6 +20,8 @@ set(_state_path "${SOURCE_ROOT}/src/database/db_stream_state.h")
 set(_memory_path "${SOURCE_ROOT}/src/database/db_zone_memory.h")
 set(_runtime_table_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h")
+set(_runtime_table_source_path
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_table.cpp")
 set(_file_load_path "${SOURCE_ROOT}/src/database/db_file_load.cpp")
 set(_com_error_path "${SOURCE_ROOT}/src/qcommon/com_error.h")
 set(_integer_suffix_token_paste_path
@@ -42,7 +44,8 @@ foreach(_path IN ITEMS
     "${_header_path}" "${_source_path}" "${_internal_path}"
     "${_relocation_header_path}" "${_relocation_source_path}"
     "${_stream_path}" "${_stream_header_path}" "${_state_path}"
-    "${_memory_path}" "${_runtime_table_path}" "${_file_load_path}"
+    "${_memory_path}" "${_runtime_table_path}"
+    "${_runtime_table_source_path}" "${_file_load_path}"
     "${_com_error_path}"
     "${_integer_suffix_token_paste_path}"
     "${_server_token_literal_path}"
@@ -164,6 +167,71 @@ function(find_zone_stream_protected_token SOURCE_VAR OUT_VAR)
         endif()
     endforeach()
     set(${OUT_VAR} "" PARENT_SCOPE)
+endfunction()
+
+function(remove_one_reviewed_stream_construct
+    SOURCE_VAR CONSTRUCT OUT_VAR DESCRIPTION)
+    set(_candidate "${${SOURCE_VAR}}")
+    set(_remaining "${_candidate}")
+    set(_count 0)
+    while(TRUE)
+        string(FIND "${_remaining}" "${CONSTRUCT}" _position)
+        if(_position EQUAL -1)
+            break()
+        endif()
+        math(EXPR _count "${_count} + 1")
+        string(LENGTH "${CONSTRUCT}" _length)
+        math(EXPR _next "${_position} + ${_length}")
+        string(SUBSTRING "${_remaining}" ${_next} -1 _remaining)
+    endwhile()
+    if(NOT _count EQUAL 1)
+        message(FATAL_ERROR
+            "Expected exactly one reviewed zone-stream construct "
+            "(${DESCRIPTION}); found ${_count}")
+    endif()
+    string(REPLACE "${CONSTRUCT}" "" _candidate "${_candidate}")
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
+function(remove_reviewed_runtime_table_stream_tokens
+    PATH SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _candidate "${_candidate}")
+    if(PATH MATCHES "database/db_zone_runtime_table\\.h$")
+        remove_one_reviewed_stream_construct(
+            _candidate
+            "#include <database/db_zone_stream_ownership.h>"
+            _candidate "runtime-table include")
+        remove_one_reviewed_stream_construct(
+            _candidate
+            "zone_stream_ownership::ZoneStreamGenerationReceipt streamGenerationReceipt_{};"
+            _candidate "per-entry stream receipt")
+        remove_one_reviewed_stream_construct(
+            _candidate
+            "zone_stream_ownership::ActiveZoneStreamBinding activeZoneStreamBinding_{};"
+            _candidate "table-wide active binding")
+        remove_one_reviewed_stream_construct(
+            _candidate
+            "static zone_stream_ownership::ZoneStreamGenerationReceipt * StreamGenerationReceipt("
+            _candidate "test-gated receipt accessor")
+        remove_one_reviewed_stream_construct(
+            _candidate
+            "static zone_stream_ownership::ActiveZoneStreamBinding * ActiveStreamBinding("
+            _candidate "test-gated binding accessor")
+    elseif(PATH MATCHES "database/db_zone_runtime_table\\.cpp$")
+        remove_one_reviewed_stream_construct(
+            _candidate
+            "bool IsPristineRuntimeReceipt( const zone_stream_ownership::ZoneStreamGenerationReceipt &receipt) noexcept"
+            _candidate "stream receipt pristine predicate")
+        remove_one_reviewed_stream_construct(
+            _candidate
+            "bool IsPristineRuntimeReceipt( const zone_stream_ownership::ActiveZoneStreamBinding &binding) noexcept"
+            _candidate "active binding pristine predicate")
+    else()
+        message(FATAL_ERROR
+            "Zone-stream passive allowlist used for unexpected path: ${PATH}")
+    endif()
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
 endfunction()
 
 function(require_zone_stream_protected_fixture SOURCE_VAR DESCRIPTION)
@@ -308,12 +376,15 @@ foreach(_var IN ITEMS _header _source)
             "Forbidden runtime assert in report-free zone-stream primitive")
     endif()
 endforeach()
-require_not_contains(
-    _runtime_table "ZoneStreamGenerationReceipt"
-    "runtime table embedding remains a later reviewed batch")
-require_not_contains(
-    _runtime_table "ActiveZoneStreamBinding"
-    "singleton controller is not partially enrolled")
+foreach(_marker IN ITEMS
+    "ZoneStreamGenerationReceipt streamGenerationReceipt_{};"
+    "ActiveZoneStreamBinding activeZoneStreamBinding_{};"
+    "RUNTIME_SIZE(ZoneRuntimeReceiptCapsule, 0xD0, 0x120);"
+    "RUNTIME_SIZE(ZoneRuntimeTable, 0xE900, 0xF700);")
+    require_contains(
+        _runtime_table "${_marker}"
+        "reviewed passive runtime-table composition")
+endforeach()
 
 # Exact usable lifecycle keys and self-addresses authenticate every durable
 # phase. Terminal retries precede all active inspection.
@@ -501,6 +572,97 @@ endforeach()
 # header names form. Phase-3 comments are accepted only as complete token gaps
 # in the qualified/manual-namespace detectors, avoiding a lossy comment pass
 # that could mistake comment-like bytes inside string and character literals.
+function(require_runtime_table_stream_detector_fixture SOURCE_VAR DESCRIPTION)
+    normalize_zone_stream_phase2(${SOURCE_VAR} _candidate)
+    source_has_zone_stream_preprocessor_token_paste(
+        _candidate _paste_found)
+    source_has_ownership_namespace_declaration(
+        _candidate _namespace_declaration)
+    remove_reviewed_runtime_table_stream_tokens(
+        "${_runtime_table_path}" _candidate _runtime_candidate)
+    find_zone_stream_protected_token(
+        _runtime_candidate _protected_token)
+    if(NOT _paste_found
+        AND NOT _namespace_declaration
+        AND _protected_token STREQUAL "")
+        message(FATAL_ERROR
+            "Zone-stream runtime-table seal missed ${DESCRIPTION}")
+    endif()
+endfunction()
+
+set(_runtime_table_passive_stream_fixture
+    "#include <database/db_zone_stream_ownership.h>\n"
+    "zone_stream_ownership::ZoneStreamGenerationReceipt streamGenerationReceipt_{};\n"
+    "zone_stream_ownership::ActiveZoneStreamBinding activeZoneStreamBinding_{};\n"
+    "static zone_stream_ownership::ZoneStreamGenerationReceipt * StreamGenerationReceipt(\n"
+    "static zone_stream_ownership::ActiveZoneStreamBinding * ActiveStreamBinding(")
+remove_reviewed_runtime_table_stream_tokens(
+    "${_runtime_table_path}"
+    _runtime_table_passive_stream_fixture
+    _runtime_table_passive_stream_reviewed)
+find_zone_stream_protected_token(
+    _runtime_table_passive_stream_reviewed
+    _runtime_table_passive_stream_protected)
+if(NOT _runtime_table_passive_stream_protected STREQUAL "")
+    message(FATAL_ERROR
+        "Zone-stream seal rejected reviewed passive table storage")
+endif()
+set(_runtime_table_stream_pointer_bypass
+    "${_runtime_table_passive_stream_fixture}\n"
+    "auto bind = &db::zone_stream_ownership::TryBindZoneStreams;")
+require_runtime_table_stream_detector_fixture(
+    _runtime_table_stream_pointer_bypass "a qualified function pointer")
+set(_runtime_table_stream_using_bypass
+    "${_runtime_table_passive_stream_fixture}\n"
+    "using db/**/::/**/zone_stream_ownership/**/::/**/TryInvalidateZoneStreams;")
+require_runtime_table_stream_detector_fixture(
+    _runtime_table_stream_using_bypass "a commented using declaration")
+string(CONCAT _runtime_table_stream_splice_bypass
+    "${_runtime_table_passive_stream_fixture}\n"
+    "auto begin = &TryBeginZoneStream"
+    "${_zone_stream_backslash}${_zone_stream_line_feed}Generation;")
+require_runtime_table_stream_detector_fixture(
+    _runtime_table_stream_splice_bypass "a phase-2-spliced API")
+set(_runtime_table_stream_alias_bypass
+    "${_runtime_table_passive_stream_fixture}\n"
+    "namespace stream = db::zone_stream_ownership; auto bind = &stream::TryBindZoneStreams;")
+require_runtime_table_stream_detector_fixture(
+    _runtime_table_stream_alias_bypass "a namespace-alias API")
+set(_runtime_table_stream_paste_bypass
+    "${_runtime_table_passive_stream_fixture}\n"
+    "#define KISAK_STREAM_RUNTIME_CAT(a,b) a ## b\n"
+    "auto bind = &KISAK_STREAM_RUNTIME_CAT(TryBindZone,Streams);")
+require_runtime_table_stream_detector_fixture(
+    _runtime_table_stream_paste_bypass "a token-pasted API")
+set(_runtime_table_stream_internal_header_bypass
+    "${_runtime_table_passive_stream_fixture}\n"
+    "#include <database/db_zone_stream_ownership_internal.h>")
+require_runtime_table_stream_detector_fixture(
+    _runtime_table_stream_internal_header_bypass "the private header")
+set(_runtime_table_stream_private_capability_bypass
+    "${_runtime_table_passive_stream_fixture}\n"
+    "auto &aliases = AliasRegistryForLegacyStream();")
+require_runtime_table_stream_detector_fixture(
+    _runtime_table_stream_private_capability_bypass
+    "a private relocation capability")
+set(_runtime_table_stream_alias_only_bypass
+    "${_runtime_table_passive_stream_fixture}\n"
+    "namespace stream = db::zone_stream_ownership;")
+require_runtime_table_stream_detector_fixture(
+    _runtime_table_stream_alias_only_bypass
+    "a namespace alias without an API")
+set(_runtime_table_stream_type_alias_bypass
+    "${_runtime_table_passive_stream_fixture}\n"
+    "using ReceiptAlias = zone_stream_ownership::ZoneStreamGenerationReceipt;")
+require_runtime_table_stream_detector_fixture(
+    _runtime_table_stream_type_alias_bypass
+    "an unreviewed passive type alias")
+set(_runtime_table_stream_namespace_macro_bypass
+    "${_runtime_table_passive_stream_fixture}\n"
+    "#define KISAK_STREAM_NAMESPACE zone_stream_ownership")
+require_runtime_table_stream_detector_fixture(
+    _runtime_table_stream_namespace_macro_bypass "a namespace macro")
+
 file(GLOB_RECURSE _production_sources
     LIST_DIRECTORIES FALSE "${SOURCE_ROOT}/src/*")
 foreach(_non_extension_sentinel IN ITEMS
@@ -526,10 +688,34 @@ foreach(_path IN LISTS _production_sources)
             "Unreviewed token-paste capability can bypass the zone-stream seal in ${_path}")
     endif()
 
+    set(_runtime_table_composition FALSE)
+    if(_path STREQUAL _runtime_table_path
+        OR _path STREQUAL _runtime_table_source_path)
+        set(_runtime_table_composition TRUE)
+        source_has_ownership_namespace_declaration(
+            _candidate _runtime_namespace_declaration)
+        if(_runtime_namespace_declaration)
+            message(FATAL_ERROR
+                "Passive runtime-table composition reopened the zone-stream "
+                "namespace in ${_path}")
+        endif()
+        remove_reviewed_runtime_table_stream_tokens(
+            "${_path}" _candidate _runtime_table_candidate)
+        find_zone_stream_protected_token(
+            _runtime_table_candidate _runtime_protected_token)
+        if(NOT _runtime_protected_token STREQUAL "")
+            message(FATAL_ERROR
+                "Passive runtime-table composition referenced unreviewed "
+                "zone-stream authority in ${_path}: "
+                "${_runtime_protected_token}")
+        endif()
+    endif()
+
     if(NOT _path STREQUAL _header_path
         AND NOT _path STREQUAL _source_path
         AND NOT _path STREQUAL _internal_path
-        AND NOT _path STREQUAL _stream_path)
+        AND NOT _path STREQUAL _stream_path
+        AND NOT _runtime_table_composition)
         find_zone_stream_protected_token(_candidate _protected_token)
         if(NOT _protected_token STREQUAL "")
             message(FATAL_ERROR
@@ -539,17 +725,19 @@ foreach(_path IN LISTS _production_sources)
     endif()
 
     if(NOT _path STREQUAL _header_path AND NOT _path STREQUAL _source_path)
-        string(FIND "${_candidate}" "db_zone_stream_ownership.h"
-            _public_header_reference)
-        if(NOT _public_header_reference EQUAL -1)
-            message(FATAL_ERROR
-                "Premature zone-stream public header enrollment in ${_path}")
-        endif()
-        source_has_identifier(
-            _candidate db_zone_stream_ownership _public_header_stem_found)
-        if(_public_header_stem_found)
-            message(FATAL_ERROR
-                "Premature zone-stream public header-stem enrollment in ${_path}")
+        if(NOT _runtime_table_composition)
+            string(FIND "${_candidate}" "db_zone_stream_ownership.h"
+                _public_header_reference)
+            if(NOT _public_header_reference EQUAL -1)
+                message(FATAL_ERROR
+                    "Premature zone-stream public header enrollment in ${_path}")
+            endif()
+            source_has_identifier(
+                _candidate db_zone_stream_ownership _public_header_stem_found)
+            if(_public_header_stem_found)
+                message(FATAL_ERROR
+                    "Premature zone-stream public header-stem enrollment in ${_path}")
+            endif()
         endif()
         foreach(_public_api IN ITEMS
             TryBeginZoneStreamGeneration
@@ -607,7 +795,8 @@ foreach(_path IN LISTS _production_sources)
     if(NOT _path STREQUAL _header_path
         AND NOT _path STREQUAL _source_path
         AND NOT _path STREQUAL _internal_path
-        AND NOT _path STREQUAL _stream_path)
+        AND NOT _path STREQUAL _stream_path
+        AND NOT _runtime_table_composition)
         source_has_qualified_ownership(_candidate _found)
         if(_found)
             message(FATAL_ERROR

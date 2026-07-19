@@ -5,6 +5,154 @@ function(normalize_physicalmemory_source INPUT OUTPUT)
     set(${OUTPUT} "${_normalized}" PARENT_SCOPE)
 endfunction()
 
+string(ASCII 92 _checked_pmem_backslash)
+string(ASCII 13 _checked_pmem_carriage_return)
+string(ASCII 10 _checked_pmem_line_feed)
+set(_checked_pmem_block_comment "/\\*([^*]|\\*+[^*/])*\\*+/")
+set(_checked_pmem_comment_atom
+    "([ \t\r\n]|${_checked_pmem_block_comment}|//[^\r\n]*)")
+set(_checked_pmem_comment_gap "${_checked_pmem_comment_atom}*")
+set(_checked_pmem_comment_separator "${_checked_pmem_comment_atom}+")
+
+set(_checked_pmem_protected_tokens
+    physicalmemory_checked
+    physical_memory
+    AllocationScopeStatus
+    AllocationReceipt
+    TryBegin
+    TryEnd
+    TryFree)
+
+function(normalize_checked_pmem_phase2 SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    string(REPLACE
+        "${_checked_pmem_backslash}${_checked_pmem_carriage_return}${_checked_pmem_line_feed}"
+        "" _candidate "${_candidate}")
+    string(REPLACE
+        "${_checked_pmem_backslash}${_checked_pmem_line_feed}"
+        "" _candidate "${_candidate}")
+    string(REPLACE
+        "${_checked_pmem_backslash}${_checked_pmem_carriage_return}"
+        "" _candidate "${_candidate}")
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
+function(checked_pmem_source_has_identifier SOURCE_VAR IDENTIFIER OUT_VAR)
+    string(REGEX MATCH
+        "(^|[^A-Za-z0-9_])${IDENTIFIER}([^A-Za-z0-9_]|$)"
+        _match "${${SOURCE_VAR}}")
+    if(_match STREQUAL "")
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
+    else()
+        set(${OUT_VAR} TRUE PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(checked_pmem_source_has_namespace_declaration SOURCE_VAR OUT_VAR)
+    string(REGEX MATCH
+        "(^|[^A-Za-z0-9_])namespace${_checked_pmem_comment_separator}physical_memory(${_checked_pmem_comment_gap}::|${_checked_pmem_comment_gap}\\{)"
+        _match "${${SOURCE_VAR}}")
+    if(_match STREQUAL "")
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
+    else()
+        set(${OUT_VAR} TRUE PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(checked_pmem_source_has_token_paste SOURCE_VAR OUT_VAR)
+    foreach(_operator IN ITEMS "##" "%:%:" "??/" "??=")
+        string(FIND "${${SOURCE_VAR}}" "${_operator}" _position)
+        if(NOT _position EQUAL -1)
+            set(${OUT_VAR} TRUE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    set(${OUT_VAR} FALSE PARENT_SCOPE)
+endfunction()
+
+function(remove_reviewed_checked_pmem_token_text PATH SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    if(PATH MATCHES "/universal/q_shared\\.h$")
+        string(REPLACE "num ## LL" "" _candidate "${_candidate}")
+        string(REPLACE "num ## i64" "" _candidate "${_candidate}")
+    elseif(PATH MATCHES "/server_mp/sv_client_mp\\.cpp$")
+        string(REPLACE
+            "\"###!#!#!#!#!#!#!#!#!#!#!#!#!#!#!#!###\\n\""
+            "" _candidate "${_candidate}")
+        string(REPLACE
+            "\"########################################\\n\""
+            "" _candidate "${_candidate}")
+    elseif(PATH MATCHES "/ui/ui_component\\.cpp$")
+        string(REPLACE "\"##\"" "" _candidate "${_candidate}")
+    elseif(PATH MATCHES "/ui/ui_shared_obj\\.cpp$")
+        string(REPLACE "\"##\"" "" _candidate "${_candidate}")
+        string(REPLACE
+            "\"define with misplaced ##\"" "" _candidate "${_candidate}")
+    endif()
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
+function(remove_reviewed_runtime_table_pmem_constructs
+    PATH SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _candidate "${_candidate}")
+
+    if(PATH MATCHES "database/db_zone_runtime_table\\.h$")
+        set(_reviewed_constructs
+            "#include <universal/physicalmemory_checked.h>"
+            "physical_memory::AllocationReceipt allocationReceipt_{}"
+            "static physical_memory::AllocationReceipt *AllocationReceipt(")
+    elseif(PATH MATCHES "database/db_zone_runtime_table\\.cpp$")
+        set(_reviewed_constructs
+            "bool IsPristineRuntimeReceipt( const physical_memory::AllocationReceipt &receipt) noexcept")
+    else()
+        message(FATAL_ERROR
+            "Checked-PMem passive review received an unexpected path: ${PATH}")
+    endif()
+
+    foreach(_reviewed_construct IN LISTS _reviewed_constructs)
+        set(_remaining "${_candidate}")
+        set(_construct_count 0)
+        while(TRUE)
+            string(FIND "${_remaining}" "${_reviewed_construct}" _position)
+            if(_position EQUAL -1)
+                break()
+            endif()
+            math(EXPR _construct_count "${_construct_count} + 1")
+            string(LENGTH "${_reviewed_construct}" _construct_length)
+            math(EXPR _next "${_position} + ${_construct_length}")
+            string(SUBSTRING "${_remaining}" ${_next} -1 _remaining)
+        endwhile()
+        if(NOT _construct_count EQUAL 1)
+            message(FATAL_ERROR
+                "Checked-PMem reviewed construct count drifted in ${PATH}: "
+                "expected one '${_reviewed_construct}', found ${_construct_count}")
+        endif()
+        string(REPLACE
+            "${_reviewed_construct}"
+            "KISAK_REVIEWED_PASSIVE_PMEM_CONSTRUCT"
+            _candidate "${_candidate}")
+    endforeach()
+
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
+function(detect_checked_pmem_enrollment SOURCE_VAR OUT_VAR)
+    set(_found FALSE)
+    foreach(_token IN LISTS _checked_pmem_protected_tokens)
+        checked_pmem_source_has_identifier(
+            ${SOURCE_VAR} "${_token}" _token_found)
+        if(_token_found)
+            set(_found TRUE)
+        endif()
+    endforeach()
+    checked_pmem_source_has_token_paste(${SOURCE_VAR} _paste_found)
+    if(_paste_found)
+        set(_found TRUE)
+    endif()
+    set(${OUT_VAR} ${_found} PARENT_SCOPE)
+endfunction()
+
 function(require_physicalmemory_contains SOURCE_VAR NEEDLE DESCRIPTION)
     string(FIND "${${SOURCE_VAR}}" "${NEEDLE}" _position)
     if(_position EQUAL -1)
@@ -187,29 +335,143 @@ foreach(_forbidden IN ITEMS
         _registry "${_forbidden}" "no premature registry enrollment")
 endforeach()
 
+function(require_runtime_table_checked_pmem_fixture SOURCE_VAR DESCRIPTION)
+    set(_fixture_with_reviewed_storage
+        "${_runtime_table_passive_pmem_header_fixture}\n${${SOURCE_VAR}}")
+    normalize_checked_pmem_phase2(
+        _fixture_with_reviewed_storage _candidate)
+    checked_pmem_source_has_namespace_declaration(
+        _candidate _namespace_declaration)
+    remove_reviewed_runtime_table_pmem_constructs(
+        "database/db_zone_runtime_table.h" _candidate _candidate)
+    detect_checked_pmem_enrollment(_candidate _detected)
+    if(NOT _namespace_declaration AND NOT _detected)
+        message(FATAL_ERROR
+            "Checked-PMem runtime-table seal missed ${DESCRIPTION}")
+    endif()
+endfunction()
+
+string(CONCAT _runtime_table_passive_pmem_header_fixture
+    "#include <universal/physicalmemory_checked.h>\n"
+    "physical_memory::AllocationReceipt allocationReceipt_{};\n"
+    "static physical_memory::AllocationReceipt *AllocationReceipt(")
+remove_reviewed_runtime_table_pmem_constructs(
+    "database/db_zone_runtime_table.h"
+    _runtime_table_passive_pmem_header_fixture
+    _runtime_table_passive_pmem_reviewed)
+detect_checked_pmem_enrollment(
+    _runtime_table_passive_pmem_reviewed _runtime_table_passive_pmem_enrolled)
+if(_runtime_table_passive_pmem_enrolled)
+    message(FATAL_ERROR
+        "Checked-PMem seal rejected reviewed passive table storage")
+endif()
+string(CONCAT _runtime_table_passive_pmem_source_fixture
+    "bool IsPristineRuntimeReceipt(\n"
+    "    const physical_memory::AllocationReceipt &receipt) noexcept")
+remove_reviewed_runtime_table_pmem_constructs(
+    "database/db_zone_runtime_table.cpp"
+    _runtime_table_passive_pmem_source_fixture
+    _runtime_table_passive_pmem_source_reviewed)
+detect_checked_pmem_enrollment(
+    _runtime_table_passive_pmem_source_reviewed
+    _runtime_table_passive_pmem_source_enrolled)
+if(_runtime_table_passive_pmem_source_enrolled)
+    message(FATAL_ERROR
+        "Checked-PMem seal rejected the exact const pristine predicate")
+endif()
+set(_runtime_table_pmem_pointer_bypass
+    "auto begin = &physical_memory::TryBegin;")
+require_runtime_table_checked_pmem_fixture(
+    _runtime_table_pmem_pointer_bypass "a qualified function pointer")
+set(_runtime_table_pmem_using_bypass
+    "using physical_memory/**/::/**/TryEnd; auto end = &TryEnd;")
+require_runtime_table_checked_pmem_fixture(
+    _runtime_table_pmem_using_bypass "a commented using declaration")
+string(CONCAT _runtime_table_pmem_splice_bypass
+    "auto free_scope = &Try"
+    "${_checked_pmem_backslash}${_checked_pmem_line_feed}Free;")
+require_runtime_table_checked_pmem_fixture(
+    _runtime_table_pmem_splice_bypass "a phase-2-spliced API")
+set(_runtime_table_pmem_alias_bypass
+    "namespace pmem = physical_memory; auto begin = &pmem::TryBegin;")
+require_runtime_table_checked_pmem_fixture(
+    _runtime_table_pmem_alias_bypass "a namespace-alias API")
+set(_runtime_table_pmem_adl_bypass
+    "physical_memory::AllocationReceipt receipt; TryBegin(nullptr, 0, nullptr, &receipt);")
+require_runtime_table_checked_pmem_fixture(
+    _runtime_table_pmem_adl_bypass "an unqualified ADL operation")
+set(_runtime_table_pmem_paste_bypass
+    "#define KISAK_PMEM_CAT(a,b) a ## b\n"
+    "auto begin = &KISAK_PMEM_CAT(Try,Begin);")
+require_runtime_table_checked_pmem_fixture(
+    _runtime_table_pmem_paste_bypass "a token-pasted API")
+set(_runtime_table_pmem_namespace_bypass
+    "namespace/**/physical_memory { class Forged; }")
+require_runtime_table_checked_pmem_fixture(
+    _runtime_table_pmem_namespace_bypass "a reopened checked-PMem namespace")
+set(_runtime_table_pmem_bare_alias_bypass
+    "namespace pmem = physical_memory;")
+require_runtime_table_checked_pmem_fixture(
+    _runtime_table_pmem_bare_alias_bypass
+    "a namespace alias without an immediate operation")
+set(_runtime_table_pmem_type_alias_bypass
+    "using ReceiptAlias = physical_memory::AllocationReceipt;")
+require_runtime_table_checked_pmem_fixture(
+    _runtime_table_pmem_type_alias_bypass
+    "an unreviewed receipt type alias")
+set(_runtime_table_pmem_using_namespace_bypass
+    "using namespace physical_memory;")
+require_runtime_table_checked_pmem_fixture(
+    _runtime_table_pmem_using_namespace_bypass
+    "an unreviewed using-namespace directive")
+set(_runtime_table_pmem_namespace_macro_bypass
+    "#define KISAK_RUNTIME_PMEM_NAMESPACE physical_memory")
+require_runtime_table_checked_pmem_fixture(
+    _runtime_table_pmem_namespace_macro_bypass
+    "a macro-exposed checked-PMem namespace")
+set(_runtime_table_pmem_header_macro_bypass
+    "#define KISAK_RUNTIME_PMEM_HEADER physicalmemory_checked")
+require_runtime_table_checked_pmem_fixture(
+    _runtime_table_pmem_header_macro_bypass
+    "a macro-exposed checked-PMem header stem")
+
 file(GLOB_RECURSE _production_sources
-    "${SOURCE_ROOT}/src/*.cpp" "${SOURCE_ROOT}/src/*.h")
+    LIST_DIRECTORIES FALSE "${SOURCE_ROOT}/src/*")
+foreach(_non_extension_sentinel IN ITEMS
+    "${SOURCE_ROOT}/src/groupvoice/speex/Makefile.am"
+    "${SOURCE_ROOT}/src/groupvoice/speex/Makefile.in")
+    list(FIND _production_sources
+        "${_non_extension_sentinel}" _sentinel_index)
+    if(_sentinel_index EQUAL -1)
+        message(FATAL_ERROR
+            "Checked-PMem production seal lost extension-independent "
+            "traversal: ${_non_extension_sentinel}")
+    endif()
+endforeach()
 foreach(_production_path IN LISTS _production_sources)
     if(_production_path MATCHES "physicalmemory_checked\\.(cpp|h)$")
         continue()
     endif()
-    file(READ "${_production_path}" _production_text)
-    string(FIND "${_production_text}" "physicalmemory_checked.h"
-        _checked_pmem_include)
-    if(NOT _checked_pmem_include EQUAL -1)
-        message(FATAL_ERROR
-            "Premature checked PMem header enrollment in ${_production_path}")
+    file(READ "${_production_path}" _production_raw)
+    normalize_checked_pmem_phase2(_production_raw _production_text)
+    remove_reviewed_checked_pmem_token_text(
+        "${_production_path}" _production_text _production_text)
+    if(_production_path MATCHES
+        "database/db_zone_runtime_table\.(h|cpp)$")
+        checked_pmem_source_has_namespace_declaration(
+            _production_text _runtime_namespace_declaration)
+        if(_runtime_namespace_declaration)
+            message(FATAL_ERROR
+                "Passive runtime-table composition reopened the checked-PMem "
+                "namespace in ${_production_path}")
+        endif()
+        remove_reviewed_runtime_table_pmem_constructs(
+            "${_production_path}" _production_text _production_text)
     endif()
-    if(_production_text MATCHES
-        "physical_memory[ \t\r\n]*::[ \t\r\n]*Try(Begin|End|Free)")
+    detect_checked_pmem_enrollment(_production_text _enrolled)
+    if(_enrolled)
         message(FATAL_ERROR
             "Premature checked PMem enrollment in ${_production_path}")
-    endif()
-    if(_production_text MATCHES
-        "namespace[ \t\r\n]+physical_memory([ \t\r\n]*\\{|[ \t\r\n]*::)")
-        message(FATAL_ERROR
-            "Premature checked PMem namespace declaration in "
-            "${_production_path}")
     endif()
 endforeach()
 

@@ -260,6 +260,89 @@ function(detect_production_enrollment SOURCE_VAR OUT_VAR)
     set(${OUT_VAR} ${_found} PARENT_SCOPE)
 endfunction()
 
+# The runtime table may own only the exact reviewed include, field, predicate,
+# and test-gated accessor constructs below. Removing complete constructs rather
+# than identifier tokens leaves aliases, imports, macros, duplicate uses, and
+# every operation visible to the full enrollment detector.
+function(remove_one_reviewed_pending_construct
+    SOURCE_VAR CONSTRUCT OUT_VAR DESCRIPTION)
+    set(_candidate "${${SOURCE_VAR}}")
+    set(_remaining "${_candidate}")
+    set(_count 0)
+    while(TRUE)
+        string(FIND "${_remaining}" "${CONSTRUCT}" _position)
+        if(_position EQUAL -1)
+            break()
+        endif()
+        math(EXPR _count "${_count} + 1")
+        string(LENGTH "${CONSTRUCT}" _length)
+        math(EXPR _next "${_position} + ${_length}")
+        string(SUBSTRING "${_remaining}" ${_next} -1 _remaining)
+    endwhile()
+    if(NOT _count EQUAL 1)
+        message(FATAL_ERROR
+            "Expected exactly one reviewed pending-copy construct "
+            "(${DESCRIPTION}); found ${_count}")
+    endif()
+    string(REPLACE "${CONSTRUCT}" "" _candidate "${_candidate}")
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
+function(remove_reviewed_runtime_table_pending_tokens
+    PATH SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _candidate "${_candidate}")
+    if(PATH MATCHES "database/db_zone_runtime_table\\.h$")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "#include <database/db_zone_pending_copy_ledger.h>"
+            _candidate "runtime-table include")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "zone_pending_copy::PendingCopyAdmissionReceipt pendingCopyAdmissionReceipt_{};"
+            _candidate "per-entry admission receipt")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "zone_pending_copy::PendingCopyLedger pendingCopyLedger_{};"
+            _candidate "table-wide ledger")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "static zone_pending_copy::PendingCopyAdmissionReceipt * PendingCopyAdmissionReceipt("
+            _candidate "test-gated receipt accessor")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "static zone_pending_copy::PendingCopyLedger *PendingCopyLedger("
+            _candidate "test-gated ledger accessor")
+    elseif(PATH MATCHES "database/db_zone_runtime_table\\.cpp$")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "bool IsPristineRuntimeReceipt( const zone_pending_copy::PendingCopyAdmissionReceipt &receipt) noexcept"
+            _candidate "admission pristine predicate")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "bool IsPristineRuntimeReceipt( const zone_pending_copy::PendingCopyLedger &ledger) noexcept"
+            _candidate "ledger pristine predicate")
+    else()
+        message(FATAL_ERROR
+            "Pending-copy passive allowlist used for unexpected path: ${PATH}")
+    endif()
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
+function(require_runtime_table_pending_detector_fixture SOURCE_VAR DESCRIPTION)
+    normalize_pending_copy_phase2(${SOURCE_VAR} _candidate)
+    source_has_pending_copy_namespace_declaration(
+        _candidate _namespace_declaration)
+    remove_reviewed_runtime_table_pending_tokens(
+        "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h"
+        _candidate _candidate)
+    detect_production_enrollment(_candidate _detected)
+    if(NOT _namespace_declaration AND NOT _detected)
+        message(FATAL_ERROR
+            "Pending-copy runtime-table seal missed ${DESCRIPTION}")
+    endif()
+endfunction()
+
 function(require_detector_fixture SOURCE_VAR DESCRIPTION)
     detect_production_enrollment(${SOURCE_VAR} _detected)
     if(NOT _detected)
@@ -371,6 +454,65 @@ if(_false_positive)
         "Pending-copy enrollment detector lost identifier boundaries")
 endif()
 
+set(_runtime_table_passive_fixture
+    "#include <database/db_zone_pending_copy_ledger.h>\n"
+    "zone_pending_copy::PendingCopyAdmissionReceipt pendingCopyAdmissionReceipt_{};\n"
+    "zone_pending_copy::PendingCopyLedger pendingCopyLedger_{};\n"
+    "static zone_pending_copy::PendingCopyAdmissionReceipt * PendingCopyAdmissionReceipt(\n"
+    "static zone_pending_copy::PendingCopyLedger *PendingCopyLedger(")
+remove_reviewed_runtime_table_pending_tokens(
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h"
+    _runtime_table_passive_fixture _runtime_table_passive_reviewed)
+detect_production_enrollment(
+    _runtime_table_passive_reviewed _runtime_table_passive_enrolled)
+if(_runtime_table_passive_enrolled)
+    message(FATAL_ERROR
+        "Pending-copy runtime-table seal rejected reviewed passive storage")
+endif()
+
+set(_runtime_table_spaced_api_bypass
+    "${_runtime_table_passive_fixture}\n"
+    "auto begin = &db::zone_pending_copy::TryBeginPendingCopyAdmission;")
+require_runtime_table_pending_detector_fixture(
+    _runtime_table_spaced_api_bypass "a qualified function pointer")
+set(_runtime_table_using_api_bypass
+    "${_runtime_table_passive_fixture}\n"
+    "using db/**/::/**/zone_pending_copy/**/::/**/TryDrainNextPendingCopy;")
+require_runtime_table_pending_detector_fixture(
+    _runtime_table_using_api_bypass "a commented using declaration")
+string(CONCAT _runtime_table_spliced_api_bypass
+    "${_runtime_table_passive_fixture}\n"
+    "auto reset = &TryResetPendingCopyAdmission"
+    "${_pending_copy_backslash}${_pending_copy_line_feed}Receipt;")
+require_runtime_table_pending_detector_fixture(
+    _runtime_table_spliced_api_bypass "a phase-2-spliced function pointer")
+set(_runtime_table_alias_api_bypass
+    "${_runtime_table_passive_fixture}\n"
+    "namespace pending = db::zone_pending_copy; auto append = &pending::TryAppendPendingCopyRecord;")
+require_runtime_table_pending_detector_fixture(
+    _runtime_table_alias_api_bypass "a namespace-alias API reference")
+set(_runtime_table_paste_api_bypass
+    "${_runtime_table_passive_fixture}\n"
+    "#define KISAK_RUNTIME_PENDING_CAT(a,b) a ## b\n"
+    "auto begin = &KISAK_RUNTIME_PENDING_CAT(TryBeginPendingCopy,Admission);")
+require_runtime_table_pending_detector_fixture(
+    _runtime_table_paste_api_bypass "a token-pasted API reference")
+set(_runtime_table_alias_only_bypass
+    "${_runtime_table_passive_fixture}\n"
+    "namespace pending = db::zone_pending_copy;")
+require_runtime_table_pending_detector_fixture(
+    _runtime_table_alias_only_bypass "a namespace alias without an API")
+set(_runtime_table_type_alias_bypass
+    "${_runtime_table_passive_fixture}\n"
+    "using LedgerAlias = zone_pending_copy::PendingCopyLedger;")
+require_runtime_table_pending_detector_fixture(
+    _runtime_table_type_alias_bypass "an unreviewed passive type alias")
+set(_runtime_table_namespace_macro_bypass
+    "${_runtime_table_passive_fixture}\n"
+    "#define KISAK_PENDING_NAMESPACE zone_pending_copy")
+require_runtime_table_pending_detector_fixture(
+    _runtime_table_namespace_macro_bypass "a namespace macro")
+
 file(GLOB_RECURSE _production_sources
     LIST_DIRECTORIES FALSE "${SOURCE_ROOT}/src/*")
 foreach(_non_extension_sentinel IN ITEMS
@@ -393,6 +535,18 @@ foreach(_production_path IN LISTS _production_sources)
     normalize_pending_copy_phase2(_production_raw _production_phase2)
     remove_reviewed_pending_copy_token_text(
         "${_production_path}" _production_phase2 _production_text)
+    if(_production_path MATCHES
+        "database/db_zone_runtime_table\.(h|cpp)$")
+        source_has_pending_copy_namespace_declaration(
+            _production_text _runtime_namespace_declaration)
+        if(_runtime_namespace_declaration)
+            message(FATAL_ERROR
+                "Passive runtime-table composition reopened the pending-copy "
+                "namespace in ${_production_path}")
+        endif()
+        remove_reviewed_runtime_table_pending_tokens(
+            "${_production_path}" _production_text _production_text)
+    endif()
     detect_production_enrollment(_production_text _enrolled)
     if(_enrolled)
         message(FATAL_ERROR

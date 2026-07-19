@@ -41,6 +41,55 @@ struct ZoneRuntimeTableTestAccess
     {
         entry->key_ = zone_load::ZoneLoadContextKey{};
     };
+
+    template <typename Entry>
+    static constexpr bool CanReachReceiptCapsule = requires(
+        Entry *const entry)
+    {
+        &entry->receiptCapsule_;
+    };
+
+    template <typename Table>
+    static constexpr bool CanReachActiveStreamBinding = requires(
+        Table *const table)
+    {
+        &table->activeZoneStreamBinding_;
+    };
+
+    template <typename Table>
+    static constexpr bool CanReachPendingCopyLedger = requires(
+        Table *const table)
+    {
+        &table->pendingCopyLedger_;
+    };
+
+    template <typename Capsule>
+    static constexpr bool CanReachAllocationReceipt = requires(
+        Capsule *const capsule)
+    {
+        &capsule->allocationReceipt_;
+    };
+
+    template <typename Capsule>
+    static constexpr bool CanReachStreamGenerationReceipt = requires(
+        Capsule *const capsule)
+    {
+        &capsule->streamGenerationReceipt_;
+    };
+
+    template <typename Capsule>
+    static constexpr bool CanReachPendingAdmissionReceipt = requires(
+        Capsule *const capsule)
+    {
+        &capsule->pendingCopyAdmissionReceipt_;
+    };
+
+    template <typename Capsule>
+    static constexpr bool CanReachStorageBinding = requires(
+        Capsule *const capsule)
+    {
+        &capsule->storageBinding_;
+    };
 };
 
 static_assert(
@@ -58,6 +107,27 @@ static_assert(
 static_assert(
     !ZoneRuntimeTableTestAccess::CanMutateKey<ZoneRuntimeEntry>,
     "production must not grant same-name access to durable generation keys");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanReachReceiptCapsule<ZoneRuntimeEntry>,
+    "production must not expose the per-entry receipt composition");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanReachActiveStreamBinding<ZoneRuntimeTable>,
+    "production must not expose the process-wide stream authority");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanReachPendingCopyLedger<ZoneRuntimeTable>,
+    "production must not expose the process-wide pending-copy authority");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanReachAllocationReceipt<
+        ZoneRuntimeReceiptCapsule>);
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanReachStreamGenerationReceipt<
+        ZoneRuntimeReceiptCapsule>);
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanReachPendingAdmissionReceipt<
+        ZoneRuntimeReceiptCapsule>);
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanReachStorageBinding<
+        ZoneRuntimeReceiptCapsule>);
 } // namespace db::zone_runtime
 
 int main()

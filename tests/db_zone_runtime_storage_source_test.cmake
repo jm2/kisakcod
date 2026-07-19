@@ -16,6 +16,14 @@ set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
 set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
 set(_registry_path "${SOURCE_ROOT}/src/database/db_registry.cpp")
 set(_load_path "${SOURCE_ROOT}/src/database/db_load.cpp")
+set(_integer_suffix_token_paste_path
+    "${SOURCE_ROOT}/src/universal/q_shared.h")
+set(_server_token_literal_path
+    "${SOURCE_ROOT}/src/server_mp/sv_client_mp.cpp")
+set(_ui_component_token_literal_path
+    "${SOURCE_ROOT}/src/ui/ui_component.cpp")
+set(_ui_parser_token_literal_path
+    "${SOURCE_ROOT}/src/ui/ui_shared_obj.cpp")
 
 foreach(_path IN ITEMS
     "${_header_path}"
@@ -72,6 +80,187 @@ function(require_ordered SOURCE_VAR FIRST SECOND DESCRIPTION)
     if(_first EQUAL -1 OR _second EQUAL -1 OR _first GREATER_EQUAL _second)
         message(FATAL_ERROR
             "Missing or unordered runtime-storage invariant (${DESCRIPTION})")
+    endif()
+endfunction()
+
+string(ASCII 92 _runtime_storage_backslash)
+string(ASCII 13 _runtime_storage_carriage_return)
+string(ASCII 10 _runtime_storage_line_feed)
+set(_runtime_storage_block_comment "/\\*([^*]|\\*+[^*/])*\\*+/")
+set(_runtime_storage_comment_atom
+    "([ \t\r\n]|${_runtime_storage_block_comment}|//[^\r\n]*)")
+set(_runtime_storage_comment_gap "${_runtime_storage_comment_atom}*")
+set(_runtime_storage_comment_separator "${_runtime_storage_comment_atom}+")
+
+set(_runtime_storage_protected_tokens
+    db_zone_runtime_storage
+    db_zone_runtime_storage_fx_bridge
+    zone_runtime_storage
+    ZoneRuntimeStorageExtent
+    ZoneRuntimeStoragePlan
+    ZoneRuntimeStorageStatus
+    ZoneRuntimeStorageBinding
+    FxRuntimeStorageLayout
+    FxRuntimeStorageDestroyStatus
+    TryPlanZoneRuntimeStorage
+    TryBindZoneRuntimeStorage
+    TryDestroyZoneRuntimeStorage
+    GetFxRuntimeStorageLayout
+    ConstructFxRuntimeArena
+    ConstructFxRuntimeWorkspace
+    TryPrepareFxRuntimeStorageDestroy
+    DestroyFxRuntimeWorkspace
+    DestroyFxRuntimeArena)
+
+function(normalize_runtime_storage_phase2 SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    string(REPLACE
+        "${_runtime_storage_backslash}${_runtime_storage_carriage_return}${_runtime_storage_line_feed}"
+        "" _candidate "${_candidate}")
+    string(REPLACE
+        "${_runtime_storage_backslash}${_runtime_storage_line_feed}"
+        "" _candidate "${_candidate}")
+    string(REPLACE
+        "${_runtime_storage_backslash}${_runtime_storage_carriage_return}"
+        "" _candidate "${_candidate}")
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
+function(runtime_storage_source_has_identifier SOURCE_VAR IDENTIFIER OUT_VAR)
+    string(REGEX MATCH
+        "(^|[^A-Za-z0-9_])${IDENTIFIER}([^A-Za-z0-9_]|$)"
+        _match "${${SOURCE_VAR}}")
+    if(_match STREQUAL "")
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
+    else()
+        set(${OUT_VAR} TRUE PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(runtime_storage_source_has_namespace_declaration SOURCE_VAR OUT_VAR)
+    string(REGEX MATCH
+        "(^|[^A-Za-z0-9_])namespace${_runtime_storage_comment_separator}((db${_runtime_storage_comment_gap}::${_runtime_storage_comment_gap})?zone_runtime_storage)(${_runtime_storage_comment_gap}::|${_runtime_storage_comment_gap}\\{)"
+        _match "${${SOURCE_VAR}}")
+    if(_match STREQUAL "")
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
+    else()
+        set(${OUT_VAR} TRUE PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(remove_reviewed_runtime_storage_token_text PATH SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    if(PATH STREQUAL _integer_suffix_token_paste_path)
+        string(REPLACE "num ## LL" "" _candidate "${_candidate}")
+        string(REPLACE "num ## i64" "" _candidate "${_candidate}")
+    elseif(PATH STREQUAL _server_token_literal_path)
+        string(REPLACE
+            "\"###!#!#!#!#!#!#!#!#!#!#!#!#!#!#!#!###\\n\""
+            "" _candidate "${_candidate}")
+        string(REPLACE
+            "\"########################################\\n\""
+            "" _candidate "${_candidate}")
+    elseif(PATH STREQUAL _ui_component_token_literal_path)
+        string(REPLACE "\"##\"" "" _candidate "${_candidate}")
+    elseif(PATH STREQUAL _ui_parser_token_literal_path)
+        string(REPLACE "\"##\"" "" _candidate "${_candidate}")
+        string(REPLACE
+            "\"define with misplaced ##\"" "" _candidate "${_candidate}")
+    endif()
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
+function(runtime_storage_source_has_token_paste SOURCE_VAR OUT_VAR)
+    foreach(_operator IN ITEMS "##" "%:%:" "??/" "??=")
+        string(FIND "${${SOURCE_VAR}}" "${_operator}" _position)
+        if(NOT _position EQUAL -1)
+            set(${OUT_VAR} TRUE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    set(${OUT_VAR} FALSE PARENT_SCOPE)
+endfunction()
+
+function(remove_one_reviewed_storage_construct
+    SOURCE_VAR CONSTRUCT OUT_VAR DESCRIPTION)
+    set(_candidate "${${SOURCE_VAR}}")
+    set(_remaining "${_candidate}")
+    set(_count 0)
+    while(TRUE)
+        string(FIND "${_remaining}" "${CONSTRUCT}" _position)
+        if(_position EQUAL -1)
+            break()
+        endif()
+        math(EXPR _count "${_count} + 1")
+        string(LENGTH "${CONSTRUCT}" _length)
+        math(EXPR _next "${_position} + ${_length}")
+        string(SUBSTRING "${_remaining}" ${_next} -1 _remaining)
+    endwhile()
+    if(NOT _count EQUAL 1)
+        message(FATAL_ERROR
+            "Expected exactly one reviewed runtime-storage construct "
+            "(${DESCRIPTION}); found ${_count}")
+    endif()
+    string(REPLACE "${CONSTRUCT}" "" _candidate "${_candidate}")
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
+function(remove_reviewed_runtime_table_storage_tokens
+    PATH SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _candidate "${_candidate}")
+    if(PATH MATCHES "database/db_zone_runtime_table\\.h$")
+        remove_one_reviewed_storage_construct(
+            _candidate
+            "#include <database/db_zone_runtime_storage.h>"
+            _candidate "runtime-table include")
+        remove_one_reviewed_storage_construct(
+            _candidate
+            "zone_runtime_storage::ZoneRuntimeStorageBinding storageBinding_{};"
+            _candidate "per-entry storage binding")
+        remove_one_reviewed_storage_construct(
+            _candidate
+            "static zone_runtime_storage::ZoneRuntimeStorageBinding *StorageBinding("
+            _candidate "test-gated storage accessor")
+    elseif(PATH MATCHES "database/db_zone_runtime_table\\.cpp$")
+        remove_one_reviewed_storage_construct(
+            _candidate
+            "bool IsPristineRuntimeReceipt( const zone_runtime_storage::ZoneRuntimeStorageBinding &binding) noexcept"
+            _candidate "storage pristine predicate")
+    else()
+        message(FATAL_ERROR
+            "Runtime-storage passive allowlist used for unexpected path: ${PATH}")
+    endif()
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
+function(detect_runtime_storage_enrollment SOURCE_VAR OUT_VAR)
+    set(_found FALSE)
+    foreach(_token IN LISTS _runtime_storage_protected_tokens)
+        runtime_storage_source_has_identifier(
+            ${SOURCE_VAR} "${_token}" _token_found)
+        if(_token_found)
+            set(_found TRUE)
+        endif()
+    endforeach()
+    runtime_storage_source_has_token_paste(${SOURCE_VAR} _paste_found)
+    if(_paste_found)
+        set(_found TRUE)
+    endif()
+    set(${OUT_VAR} ${_found} PARENT_SCOPE)
+endfunction()
+
+function(require_runtime_table_storage_detector_fixture SOURCE_VAR DESCRIPTION)
+    normalize_runtime_storage_phase2(${SOURCE_VAR} _candidate)
+    runtime_storage_source_has_namespace_declaration(
+        _candidate _namespace_declaration)
+    remove_reviewed_runtime_table_storage_tokens(
+        "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h"
+        _candidate _candidate)
+    detect_runtime_storage_enrollment(_candidate _detected)
+    if(NOT _namespace_declaration AND NOT _detected)
+        message(FATAL_ERROR
+            "Runtime-storage runtime-table seal missed ${DESCRIPTION}")
     endif()
 endfunction()
 
@@ -228,12 +417,84 @@ foreach(_legacy IN ITEMS _registry _load)
     endforeach()
 endforeach()
 
+set(_runtime_table_passive_storage_fixture
+    "#include <database/db_zone_runtime_storage.h>\n"
+    "zone_runtime_storage::ZoneRuntimeStorageBinding storageBinding_{};\n"
+    "static zone_runtime_storage::ZoneRuntimeStorageBinding *StorageBinding(")
+remove_reviewed_runtime_table_storage_tokens(
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h"
+    _runtime_table_passive_storage_fixture
+    _runtime_table_passive_storage_reviewed)
+detect_runtime_storage_enrollment(
+    _runtime_table_passive_storage_reviewed
+    _runtime_table_passive_storage_enrolled)
+if(_runtime_table_passive_storage_enrolled)
+    message(FATAL_ERROR
+        "Runtime-storage seal rejected reviewed passive table storage")
+endif()
+set(_runtime_table_storage_pointer_bypass
+    "${_runtime_table_passive_storage_fixture}\n"
+    "auto bind = &db::zone_runtime_storage::TryBindZoneRuntimeStorage;")
+require_runtime_table_storage_detector_fixture(
+    _runtime_table_storage_pointer_bypass "a qualified function pointer")
+set(_runtime_table_storage_using_bypass
+    "${_runtime_table_passive_storage_fixture}\n"
+    "using db/**/::/**/zone_runtime_storage/**/::/**/TryDestroyZoneRuntimeStorage;")
+require_runtime_table_storage_detector_fixture(
+    _runtime_table_storage_using_bypass "a commented using declaration")
+string(CONCAT _runtime_table_storage_splice_bypass
+    "${_runtime_table_passive_storage_fixture}\n"
+    "auto plan = &TryPlanZoneRuntime"
+    "${_runtime_storage_backslash}${_runtime_storage_line_feed}Storage;")
+require_runtime_table_storage_detector_fixture(
+    _runtime_table_storage_splice_bypass "a phase-2-spliced API")
+set(_runtime_table_storage_alias_bypass
+    "${_runtime_table_passive_storage_fixture}\n"
+    "namespace storage = db::zone_runtime_storage; auto destroy = &storage::TryDestroyZoneRuntimeStorage;")
+require_runtime_table_storage_detector_fixture(
+    _runtime_table_storage_alias_bypass "a namespace-alias API")
+set(_runtime_table_storage_paste_bypass
+    "${_runtime_table_passive_storage_fixture}\n"
+    "#define KISAK_STORAGE_CAT(a,b) a %:%: b\n"
+    "auto bind = &KISAK_STORAGE_CAT(TryBindZoneRuntime,Storage);")
+require_runtime_table_storage_detector_fixture(
+    _runtime_table_storage_paste_bypass "a token-pasted API")
+set(_runtime_table_storage_bridge_bypass
+    "${_runtime_table_passive_storage_fixture}\n"
+    "auto construct = &ConstructFxRuntimeArena;")
+require_runtime_table_storage_detector_fixture(
+    _runtime_table_storage_bridge_bypass "a private bridge reference")
+set(_runtime_table_storage_alias_only_bypass
+    "${_runtime_table_passive_storage_fixture}\n"
+    "namespace storage = db::zone_runtime_storage;")
+require_runtime_table_storage_detector_fixture(
+    _runtime_table_storage_alias_only_bypass
+    "a namespace alias without an API")
+set(_runtime_table_storage_type_alias_bypass
+    "${_runtime_table_passive_storage_fixture}\n"
+    "using BindingAlias = zone_runtime_storage::ZoneRuntimeStorageBinding;")
+require_runtime_table_storage_detector_fixture(
+    _runtime_table_storage_type_alias_bypass
+    "an unreviewed passive type alias")
+set(_runtime_table_storage_namespace_macro_bypass
+    "${_runtime_table_passive_storage_fixture}\n"
+    "#define KISAK_STORAGE_NAMESPACE zone_runtime_storage")
+require_runtime_table_storage_detector_fixture(
+    _runtime_table_storage_namespace_macro_bypass "a namespace macro")
+
 file(GLOB_RECURSE _all_production_sources
-    "${SOURCE_ROOT}/src/*.c"
-    "${SOURCE_ROOT}/src/*.cc"
-    "${SOURCE_ROOT}/src/*.cpp"
-    "${SOURCE_ROOT}/src/*.h"
-    "${SOURCE_ROOT}/src/*.hpp")
+    LIST_DIRECTORIES FALSE "${SOURCE_ROOT}/src/*")
+foreach(_non_extension_sentinel IN ITEMS
+    "${SOURCE_ROOT}/src/groupvoice/speex/Makefile.am"
+    "${SOURCE_ROOT}/src/groupvoice/speex/Makefile.in")
+    list(FIND _all_production_sources
+        "${_non_extension_sentinel}" _sentinel_index)
+    if(_sentinel_index EQUAL -1)
+        message(FATAL_ERROR
+            "Runtime-storage production seal lost extension-independent "
+            "traversal: ${_non_extension_sentinel}")
+    endif()
+endforeach()
 foreach(_path IN LISTS _all_production_sources)
     if("${_path}" STREQUAL "${_header_path}"
         OR "${_path}" STREQUAL "${_source_path}"
@@ -241,29 +502,28 @@ foreach(_path IN LISTS _all_production_sources)
         OR "${_path}" STREQUAL "${_bridge_source_path}")
         continue()
     endif()
-    file(READ "${_path}" _production_source)
-    string(REGEX REPLACE "[ \t\r\n]+" " " _production_source
-        "${_production_source}")
-    foreach(_forbidden IN ITEMS
-        "#include <database/db_zone_runtime_storage.h>"
-        "TryPlanZoneRuntimeStorage("
-        "TryBindZoneRuntimeStorage("
-        "TryDestroyZoneRuntimeStorage("
-        "#include <database/db_zone_runtime_storage_fx_bridge.h>"
-        "GetFxRuntimeStorageLayout("
-        "ConstructFxRuntimeArena("
-        "ConstructFxRuntimeWorkspace("
-        "TryPrepareFxRuntimeStorageDestroy("
-        "DestroyFxRuntimeWorkspace("
-        "DestroyFxRuntimeArena(")
-        string(FIND "${_production_source}" "${_forbidden}" _position)
-        if(NOT _position EQUAL -1)
-            file(RELATIVE_PATH _relative "${SOURCE_ROOT}/src" "${_path}")
+    file(READ "${_path}" _production_raw)
+    normalize_runtime_storage_phase2(_production_raw _production_source)
+    remove_reviewed_runtime_storage_token_text(
+        "${_path}" _production_source _production_source)
+    if("${_path}" MATCHES
+        "database/db_zone_runtime_table\.(h|cpp)$")
+        runtime_storage_source_has_namespace_declaration(
+            _production_source _runtime_namespace_declaration)
+        if(_runtime_namespace_declaration)
             message(FATAL_ERROR
-                "Premature runtime-storage production caller in ${_relative}: "
-                "'${_forbidden}'")
+                "Passive runtime-table composition reopened the runtime-"
+                "storage namespace in ${_path}")
         endif()
-    endforeach()
+        remove_reviewed_runtime_table_storage_tokens(
+            "${_path}" _production_source _production_source)
+    endif()
+    detect_runtime_storage_enrollment(_production_source _enrolled)
+    if(_enrolled)
+        file(RELATIVE_PATH _relative "${SOURCE_ROOT}/src" "${_path}")
+        message(FATAL_ERROR
+            "Premature runtime-storage production enrollment in ${_relative}")
+    endif()
 endforeach()
 
 foreach(_marker IN ITEMS

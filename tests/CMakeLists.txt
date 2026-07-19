@@ -573,12 +573,23 @@ set_tests_properties(
 add_executable(kisakcod-db-zone-runtime-table-tests
     db_zone_runtime_table_tests.cpp
     ${SRC_DIR}/database/db_zone_runtime_table.cpp
+    ${SRC_DIR}/database/db_zone_runtime_storage.cpp
+    ${SRC_DIR}/database/db_zone_stream_ownership.cpp
+    ${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp
     ${SRC_DIR}/database/db_zone_script_string_ownership.cpp
     ${SRC_DIR}/database/db_script_string_adapter.cpp
     ${SRC_DIR}/database/db_script_string_journal.cpp
     ${SRC_DIR}/database/db_script_string_transaction.cpp
     ${SRC_DIR}/database/db_zone_load_context.cpp
+    ${SRC_DIR}/database/db_relocation.cpp
+    ${SRC_DIR}/database/db_stream.cpp
+    ${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp
+    ${SRC_DIR}/universal/physicalmemory_checked.cpp
     ${SRC_DIR}/qcommon/sys_sync.cpp
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject>
     ${KISAK_PLATFORM_SERVICE_SOURCES}
 )
 target_include_directories(
@@ -596,6 +607,14 @@ target_link_libraries(
 if (KISAK_PLATFORM STREQUAL "win32")
     target_link_libraries(
         kisakcod-db-zone-runtime-table-tests PRIVATE winmm)
+endif()
+if (MSVC)
+    # Several adversarial lifecycle tests intentionally retain multiple
+    # durable tables in one frame. The passive receipt composition grows each
+    # table to almost 64 KiB on Win32, so keep the fixture away from the
+    # platform's small default test-process stack.
+    target_link_options(
+        kisakcod-db-zone-runtime-table-tests PRIVATE /STACK:8388608)
 endif()
 kisakcod_test_warnings(kisakcod-db-zone-runtime-table-tests)
 set_target_properties(
