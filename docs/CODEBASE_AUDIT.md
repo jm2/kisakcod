@@ -172,7 +172,10 @@ Exact U1 validation is full GCC **152/152** and focused **7/7**; individual batc
 i386/AArch64 compilation, HUD passes ASan+UBSan, and an independent adversarial audit found no actionable defect.
 `b40fd7bb` combines the independently validated U2 Miles dry-level cleanup, after which full GCC Debug passes
 **153/153** and the combined focus passes **8/8**. U2 separately passes **146/146**, its ten-mutation contract, strict i386 GCC MP/SP and Clang MP compile-link,
-and a clean symbol/dependency audit. Unsafe raw SP/save/screenshot, dynent, matrix, and gameplay hunks remain explicitly
+and a clean symbol/dependency audit. PR #65 review hardening `db3ced51` preserves staged angle arithmetic with explicit
+conversions, uses `std::floor(float)`, and rejects null command query/node names before comparison. Full GCC remains
+**153/153**; focused **3/3** and strict GCC/Clang plus genuine i386/AArch64 compile-link pass for the touched contracts.
+Replacement hosted CI/review remain pending. Unsafe raw SP/save/screenshot, dynent, matrix, and gameplay hunks remain explicitly
 deferred/rejected; icon changes remain provenance/optional-packaging work. Only after the U1/U2 content PR merges may
 the exact pinned head receive a separate, tree-preserving `-s ours` ancestry checkpoint with merge-commit semantics—never
 a squash or rebase. The

@@ -58,8 +58,13 @@ PASS with no actionable finding at that exact U1 head.
 passes **153/153**, and the combined focus passes **8/8**. U2 independently passes **146/146**, its ten-mutation source
 contract, strict i386 GCC MP/SP and Clang MP compile-link, and a linked-symbol
 audit showing `MSS_GetDryLevel`, the unchanged `MSS_GetWetLevel` ABI, and no
-scoreboard dependency. These commits remain candidates until their content PR
-is reviewed and merged.
+scoreboard dependency. PR #65 review hardening `db3ced51` preserves the original
+staged angle arithmetic with explicit float conversions, selects
+`std::floor(float)`, rejects null command lookup/node names before comparison,
+and adds runtime plus mutation-sensitive regression coverage. Full GCC remains
+**153/153**; the focused review selection passes **3/3**, and strict GCC/Clang
+plus genuine i386/AArch64 compile-link pass for both touched contracts. These
+commits remain candidates until their content PR is reviewed and merged.
 
 ## Ancestry-checkpoint protocol
 

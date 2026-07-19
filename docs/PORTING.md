@@ -540,7 +540,11 @@ Completed foundation work:
   strict GCC/Clang and genuine i386/AArch64 compilation, HUD passes ASan+UBSan, and an independent adversarial audit is
   clean. `b40fd7bb` combines the separately validated U2 Miles dry-level cleanup, after which full GCC Debug passes
   **153/153** and the combined focus passes **8/8**. U2 separately passes **146/146**, its ten-mutation contract, strict i386 GCC MP/SP and Clang MP
-  compile-link, and a symbol/dependency audit. Dynent save/load `ba3c79f3` and unsafe raw SP/save/screenshot, gameplay,
+  compile-link, and a symbol/dependency audit. PR #65 review hardening `db3ced51` preserves the staged angle arithmetic
+  through explicit conversions, uses `std::floor(float)`, and rejects null command query/node names before comparison.
+  Full GCC remains **153/153**; focused **3/3** and strict GCC/Clang plus genuine i386/AArch64 compile-link pass for the
+  touched contracts. Replacement hosted CI/review remain pending. Dynent save/load `ba3c79f3` and unsafe raw
+  SP/save/screenshot, gameplay,
   and matrix hunks remain explicitly
   deferred/rejected; icon changes remain provenance/optional-packaging work. After the U1/U2 content PR merges, merge
   exact pinned `2164cd1a` in a separate PR with a tree-preserving `-s ours` ancestry checkpoint using merge-commit
