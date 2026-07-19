@@ -101,7 +101,7 @@ head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`, both were clean
 squash merge `74916b5b`. Authoritative post-merge run
 **29673608169** passed all nine jobs at that exact merge commit.
 
-The active production-neutral zone-stream ownership stack at `0c5049e7` consists of four code/test/security commits.
+The active production-neutral zone-stream ownership stack is at code head `6707837b`.
 `b2737088` adds one
 durable exact-key NeverBound/Bound/Invalidated receipt per generation and one reusable controller over the process-wide
 stream and relocation singletons. Binding validates the typed/aligned `XZoneMemory` identity and its exact nine block
@@ -117,6 +117,13 @@ reports **PASS**. The focused runtime/source/security selection passes **4/4** u
 Clang ASan+UBSan; the full GCC Release replay passes **137/137**. Native i386 runtime, strict AArch64 compilation,
 source/security/API-seal, ABI, headless/debt, and diff gates also pass. No production loader, runtime-table entry, PMem
 lifecycle, pending ledger, coordinator, or raw ownership site uses the API, and retail bytes remain unchanged.
+PR #61 initial exact head `f1c4b4cf` passed five of nine jobs in run **29674630261**; Windows amd64/ARM64 and Windows
+x86 Debug/Release all failed solely on test-only MSVC C2607 diagnostics for two `is_trivially_copyable` assertions.
+Codex review was clean at that exact head. Review-fix `6707837b` replaces them with standard-layout and
+trivially-destructible contracts and implements all four Gemini findings: volatile observable alias-record scrub before
+capacity release, GNU/Clang `Com_Error` printf-format checking, exact `XZoneMemory`/legacy block-count assertions with
+canonical loops, and source/security pins. Local GCC Release passes **137/137** and the focused
+runtime/source/security selection passes **4/4**; hosted rerun and exact new-head review are pending.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.
