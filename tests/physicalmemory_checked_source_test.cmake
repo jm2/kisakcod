@@ -78,10 +78,11 @@ foreach(_marker IN ITEMS
     "only after authenticating that exact generation's Freed terminal"
     "PhysicalMemory control storage and AllocationReceipt storage must be"
     "mutually disjoint. Both objects must remain wholly outside the entire"
-    "PhysicalMemory does not retain that range's capacity"
-    "this API cannot infer or validate the separation"
-    "the initialization extent must enforce it"
-    "also remain outside any reclaimable backing range unless the caller"
+    "High-prim topology can suggest a historical upper bound"
+    "does not retain an independently authenticated"
+    "cannot authenticate or validate"
+    "owns the authoritative initialization"
+    "reclaimable backing range unless the caller independently guarantees"
     "cannot be overwritten or reused"
     "never dereferenced by this")
     require_physicalmemory_contains(
@@ -193,12 +194,40 @@ foreach(_production_path IN LISTS _production_sources)
         continue()
     endif()
     file(READ "${_production_path}" _production_text)
+    string(FIND "${_production_text}" "physicalmemory_checked.h"
+        _checked_pmem_include)
+    if(NOT _checked_pmem_include EQUAL -1)
+        message(FATAL_ERROR
+            "Premature checked PMem header enrollment in ${_production_path}")
+    endif()
     if(_production_text MATCHES
-        "physical_memory::Try(Begin|End|Free)[ \t\r\n]*\\(")
+        "physical_memory[ \t\r\n]*::[ \t\r\n]*Try(Begin|End|Free)")
         message(FATAL_ERROR
             "Premature checked PMem enrollment in ${_production_path}")
     endif()
+    if(_production_text MATCHES
+        "namespace[ \t\r\n]+physical_memory([ \t\r\n]*\\{|[ \t\r\n]*::)")
+        message(FATAL_ERROR
+            "Premature checked PMem namespace declaration in "
+            "${_production_path}")
+    endif()
 endforeach()
+
+# Keep the exact include/using bypass that motivated this seal recognizable to
+# its detectors. The production scan above rejects the include independently;
+# the qualified detector also rejects the using-declaration before its later
+# call becomes unqualified.
+set(_checked_pmem_using_bypass
+    "#include <universal/physicalmemory_checked.h>\n"
+    "using physical_memory::TryBegin;\n"
+    "void Bypass() { TryBegin(nullptr, 0, nullptr, nullptr); }")
+string(FIND "${_checked_pmem_using_bypass}" "physicalmemory_checked.h"
+    _checked_pmem_bypass_header)
+if(_checked_pmem_bypass_header EQUAL -1 OR NOT _checked_pmem_using_bypass
+    MATCHES "physical_memory[ \t\r\n]*::[ \t\r\n]*Try(Begin|End|Free)")
+    message(FATAL_ERROR
+        "Checked PMem production seal no longer recognizes include/using bypass")
+endif()
 
 foreach(_marker IN ITEMS
     "physicalmemory_checked.cpp"

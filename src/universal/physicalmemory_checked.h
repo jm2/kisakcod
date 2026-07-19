@@ -32,12 +32,14 @@ namespace physical_memory
 // PhysicalMemory control storage and AllocationReceipt storage must be
 // mutually disjoint. Both objects must remain wholly outside the entire
 // managed backing range originally supplied during physical-memory
-// initialization. PhysicalMemory does not retain that range's capacity, so
-// this API cannot infer or validate the separation; the caller that retains
-// the initialization extent must enforce it. The stableName identity must
-// also remain outside any reclaimable backing range unless the caller
-// independently guarantees that its storage cannot be overwritten or reused
-// through TryFree and every terminal retry.
+// initialization. High-prim topology can suggest a historical upper bound,
+// but PhysicalMemory does not retain an independently authenticated
+// initialization extent. This API therefore cannot authenticate or validate
+// the separation; the caller that owns the authoritative initialization
+// extent must enforce it. The stableName identity must also remain outside any
+// reclaimable backing range unless the caller independently guarantees that
+// its storage cannot be overwritten or reused through TryFree and every
+// terminal retry.
 enum class AllocationScopeStatus : std::uint8_t
 {
     Success,

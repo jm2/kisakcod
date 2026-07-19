@@ -9761,8 +9761,11 @@ foreach(_checked_pmem_marker IN ITEMS
     "lifecycle/init helpers or directly replace"
     "PhysicalMemory control storage and AllocationReceipt storage must be"
     "mutually disjoint. Both objects must remain wholly outside the entire"
-    "this API cannot infer or validate the separation"
-    "also remain outside any reclaimable backing range unless the caller"
+    "High-prim topology can suggest a historical upper bound"
+    "does not retain an independently authenticated"
+    "cannot authenticate or validate"
+    "owns the authoritative initialization"
+    "reclaimable backing range unless the caller independently guarantees"
     "cannot be overwritten or reused")
     require_source_contains(
         "universal/physicalmemory_checked.h"
@@ -9804,6 +9807,36 @@ foreach(_checked_pmem_registry_forbidden IN ITEMS
         "database/db_registry.cpp"
         "${_checked_pmem_registry_forbidden}"
         "checked PMem must remain unenrolled before coordinator ownership")
+endforeach()
+file(GLOB_RECURSE _checked_pmem_production_sources
+    "${SOURCE_ROOT}/src/*.cpp" "${SOURCE_ROOT}/src/*.h")
+foreach(_checked_pmem_production_path IN LISTS
+    _checked_pmem_production_sources)
+    if(_checked_pmem_production_path MATCHES
+        "physicalmemory_checked\\.(cpp|h)$")
+        continue()
+    endif()
+    file(READ "${_checked_pmem_production_path}"
+        _checked_pmem_production_text)
+    string(FIND "${_checked_pmem_production_text}"
+        "physicalmemory_checked.h" _checked_pmem_header_reference)
+    if(NOT _checked_pmem_header_reference EQUAL -1)
+        message(FATAL_ERROR
+            "Premature checked PMem header enrollment in "
+            "${_checked_pmem_production_path}")
+    endif()
+    if(_checked_pmem_production_text MATCHES
+        "physical_memory[ \t\r\n]*::[ \t\r\n]*Try(Begin|End|Free)")
+        message(FATAL_ERROR
+            "Premature checked PMem operation enrollment in "
+            "${_checked_pmem_production_path}")
+    endif()
+    if(_checked_pmem_production_text MATCHES
+        "namespace[ \t\r\n]+physical_memory([ \t\r\n]*\\{|[ \t\r\n]*::)")
+        message(FATAL_ERROR
+            "Premature checked PMem namespace declaration in "
+            "${_checked_pmem_production_path}")
+    endif()
 endforeach()
 
 set(_format_sensitive_sources
