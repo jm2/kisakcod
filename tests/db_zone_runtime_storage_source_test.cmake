@@ -13,6 +13,7 @@ set(_bridge_source_path
 set(_fixture_path "${SOURCE_ROOT}/tests/db_zone_runtime_storage_tests.cpp")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
 set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
+set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
 set(_registry_path "${SOURCE_ROOT}/src/database/db_registry.cpp")
 set(_load_path "${SOURCE_ROOT}/src/database/db_load.cpp")
 
@@ -24,6 +25,7 @@ foreach(_path IN ITEMS
     "${_fixture_path}"
     "${_manifest_path}"
     "${_tests_path}"
+    "${_ci_path}"
     "${_registry_path}"
     "${_load_path}")
     if(NOT EXISTS "${_path}")
@@ -38,10 +40,11 @@ file(READ "${_bridge_source_path}" _bridge_source)
 file(READ "${_fixture_path}" _fixture)
 file(READ "${_manifest_path}" _manifest)
 file(READ "${_tests_path}" _tests)
+file(READ "${_ci_path}" _ci)
 file(READ "${_registry_path}" _registry)
 file(READ "${_load_path}" _load)
 foreach(_var IN ITEMS
-    _header _source _bridge_header _bridge_source _fixture _manifest _tests
+    _header _source _bridge_header _bridge_source _fixture _manifest _tests _ci
     _registry _load)
     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${${_var}}")
     set(${_var} "${_normalized}")
@@ -88,6 +91,12 @@ foreach(_marker IN ITEMS
     "TryBindZoneRuntimeStorage("
     "TryDestroyZoneRuntimeStorage(")
     require_contains(_header "${_marker}" "public exact-layout contract")
+endforeach()
+
+foreach(_marker IN ITEMS
+    "kisakcod-db-zone-runtime-storage-tests"
+    "database-zone-runtime-storage-(layout|source-invariants)")
+    require_contains(_ci "${_marker}" "measured Windows x86 test selection")
 endforeach()
 foreach(_forbidden IN ITEMS
     "physicalmemory_checked"
