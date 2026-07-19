@@ -1,14 +1,30 @@
-#include "database.h"
+#include "db_stream.h"
 #include "db_validation.h"
+#include "db_zone_stream_ownership_internal.h"
+
+#include <qcommon/com_error.h>
+
+#include <cstring>
+#include <iterator>
 
 namespace
 {
-db::relocation::AliasRegistry g_aliasRegistry;
-db::relocation::DirectResolver g_directResolver;
+db::relocation::AliasRegistry &DB_AliasRegistry() noexcept
+{
+    return db::zone_stream_ownership::detail::
+        AliasRegistryForLegacyStream();
+}
+
+db::relocation::DirectResolver &DB_DirectResolver() noexcept
+{
+    return db::zone_stream_ownership::detail::
+        DirectResolverForLegacyStream();
+}
 
 bool DB_GetBlock(uint32_t index, const XBlock **block)
 {
-    if (!block || !g_streamZoneMem || index >= ARRAY_COUNT(g_streamZoneMem->blocks))
+    if (!block || !g_streamZoneMem
+        || index >= std::size(g_streamZoneMem->blocks))
         return false;
 
     *block = &g_streamZoneMem->blocks[index];
@@ -16,71 +32,88 @@ bool DB_GetBlock(uint32_t index, const XBlock **block)
 }
 }
 
-uint32_t g_streamDelayIndex;
-XBlock * g_streamBlocks;
-uint8_t *g_streamPosArray[9];
-StreamDelayInfo g_streamDelayArray[4096];
-uint32_t g_streamPosIndex;
-XZoneMemory *g_streamZoneMem;
-uint8_t *g_streamPos;
-
-StreamPosInfo g_streamPosStack[64];
-uint32_t g_streamPosStackIndex;
-
 void __cdecl DB_InitStreams(XZoneMemory *zoneMem)
 {
-    int32_t i; // [esp+0h] [ebp-4h]
-
     // Do not retain relocation state or stream cursors from a prior zone if
     // validation of the replacement zone fails.
-    g_aliasRegistry.Reset(nullptr, 0);
-    g_directResolver.Reset(nullptr, 0);
+    if (db::zone_stream_ownership::detail::OwnershipBindingActive())
+    {
+        Com_Error(
+            ERR_DROP,
+            "Cannot replace receipt-owned fast-file stream state");
+        return;
+    }
+    DB_AliasRegistry().Invalidate();
+    DB_DirectResolver().Invalidate();
     g_streamZoneMem = nullptr;
     g_streamPos = nullptr;
     g_streamPosIndex = 0;
     g_streamDelayIndex = 0;
     g_streamPosStackIndex = 0;
-    for (i = 0; i < ARRAY_COUNT(g_streamPosArray); ++i)
+    for (std::size_t i = 0; i < std::size(g_streamPosArray); ++i)
         g_streamPosArray[i] = nullptr;
+    for (StreamDelayInfo &delay : g_streamDelayArray)
+    {
+        delay.ptr = nullptr;
+        delay.size = 0;
+    }
+    for (StreamPosInfo &saved : g_streamPosStack)
+    {
+        saved.pos = nullptr;
+        saved.index = 0;
+    }
 
     if (!zoneMem)
     {
         Com_Error(ERR_DROP, "Cannot initialize fast-file streams without zone memory");
         return;
     }
-    for (i = 0; i < ARRAY_COUNT(zoneMem->blocks); ++i)
+    for (std::size_t i = 0; i < std::size(zoneMem->blocks); ++i)
     {
         if (zoneMem->blocks[i].size && !zoneMem->blocks[i].data)
         {
-            Com_Error(ERR_DROP, "Fast-file stream block %d has size but no storage", i);
+            Com_Error(
+                ERR_DROP,
+                "Fast-file stream block %u has size but no storage",
+                static_cast<unsigned>(i));
             return;
         }
     }
 
     db::relocation::BlockView relocationBlocks[db::relocation::kBlockCount];
-    for (i = 0; i < ARRAY_COUNT(zoneMem->blocks); ++i)
+    for (std::size_t i = 0; i < std::size(zoneMem->blocks); ++i)
     {
         relocationBlocks[i].base = reinterpret_cast<uintptr_t>(zoneMem->blocks[i].data);
         relocationBlocks[i].size = zoneMem->blocks[i].size;
     }
-    g_aliasRegistry.Reset(relocationBlocks, ARRAY_COUNT(relocationBlocks));
-    g_directResolver.Reset(relocationBlocks, ARRAY_COUNT(relocationBlocks));
+    const db::relocation::Status aliasStatus = DB_AliasRegistry().Reset(
+        relocationBlocks, std::size(relocationBlocks));
+    if (aliasStatus != db::relocation::Status::Ok)
+    {
+        Com_Error(
+            ERR_DROP,
+            "Cannot initialize fast-file alias generation: %s",
+            db::relocation::StatusName(aliasStatus));
+        return;
+    }
+    DB_DirectResolver().Reset(
+        relocationBlocks, std::size(relocationBlocks));
 
     g_streamZoneMem = zoneMem;
     g_streamPos = zoneMem->blocks[0].data;
     g_streamPosIndex = 0;
     g_streamDelayIndex = 0;
     g_streamPosStackIndex = 0;
-    for (i = 0; i < 9; ++i)
+    for (std::size_t i = 0; i < std::size(g_streamPosArray); ++i)
         g_streamPosArray[i] = zoneMem->blocks[i].data;
 }
 
 void __cdecl DB_PushStreamPos(uint32_t index)
 {
     const XBlock *targetBlock = nullptr;
-    if (index >= ARRAY_COUNT(g_streamPosArray)
-        || g_streamPosIndex >= ARRAY_COUNT(g_streamPosArray)
-        || g_streamPosStackIndex >= ARRAY_COUNT(g_streamPosStack)
+    if (index >= std::size(g_streamPosArray)
+        || g_streamPosIndex >= std::size(g_streamPosArray)
+        || g_streamPosStackIndex >= std::size(g_streamPosStack)
         || !DB_IsStreamRangeValid(g_streamPos, 0)
         || !DB_GetBlock(index, &targetBlock)
         || !db::validation::SpanWithinBlock(
@@ -133,8 +166,8 @@ void __cdecl DB_CloneStreamData(uint8_t *destStart)
 void __cdecl DB_SetStreamIndex(uint32_t index)
 {
     const XBlock *targetBlock = nullptr;
-    if (index >= ARRAY_COUNT(g_streamPosArray)
-        || g_streamPosIndex >= ARRAY_COUNT(g_streamPosArray)
+    if (index >= std::size(g_streamPosArray)
+        || g_streamPosIndex >= std::size(g_streamPosArray)
         || !DB_IsStreamRangeValid(g_streamPos, 0)
         || !DB_GetBlock(index, &targetBlock)
         || !db::validation::SpanWithinBlock(
@@ -176,7 +209,8 @@ void __cdecl DB_PopStreamPos()
         return;
     }
     --g_streamPosStackIndex;
-    if (g_streamPosStack[g_streamPosStackIndex].index >= ARRAY_COUNT(g_streamPosArray))
+    if (g_streamPosStack[g_streamPosStackIndex].index
+        >= std::size(g_streamPosArray))
     {
         Com_Error(ERR_DROP, "Invalid saved fast-file stream index %u", g_streamPosStack[g_streamPosStackIndex].index);
         return;
@@ -209,7 +243,9 @@ bool __cdecl DB_IsZoneRangeValid(const void *ptr, uint32_t size)
     if (!g_streamZoneMem)
         return false;
 
-    for (uint32_t index = 0; index < ARRAY_COUNT(g_streamZoneMem->blocks); ++index)
+    for (std::uint32_t index = 0;
+         index < std::size(g_streamZoneMem->blocks);
+         ++index)
     {
         const XBlock *block = nullptr;
         if (DB_GetBlock(index, &block)
@@ -260,7 +296,7 @@ DBAliasHandle __cdecl DB_RegisterPointerSlot(
     DBAliasKind kind)
 {
     DBAliasHandle handle;
-    const db::relocation::Status status = g_aliasRegistry.RegisterSlot(
+    const db::relocation::Status status = DB_AliasRegistry().RegisterSlot(
         reinterpret_cast<uintptr_t>(slot),
         kind,
         &handle);
@@ -348,7 +384,7 @@ void __cdecl DB_SetInsertedPointer(
             return;
         }
     }
-    const db::relocation::Status status = g_aliasRegistry.Publish(
+    const db::relocation::Status status = DB_AliasRegistry().Publish(
         handle,
         expectedKind,
         reinterpret_cast<uintptr_t>(pointer),
@@ -464,7 +500,7 @@ bool __cdecl DB_CompleteObject(
     const db::relocation::BlockMask aliasBlock =
         db::relocation::BlockBit(db::relocation::kAliasBlock);
     db::relocation::Status completionStatus =
-        g_directResolver.ValidateAddress(
+        DB_DirectResolver().ValidateAddress(
             reinterpret_cast<uintptr_t>(pointer),
             headerBytes,
             4,
@@ -494,7 +530,7 @@ bool __cdecl DB_CompleteObject(
         }
     }
 
-    completionStatus = g_directResolver.ValidateAddress(
+    completionStatus = DB_DirectResolver().ValidateAddress(
         reinterpret_cast<uintptr_t>(pointer),
         materializedBytes,
         4,
@@ -508,7 +544,7 @@ bool __cdecl DB_CompleteObject(
         return false;
     }
 
-    completionStatus = g_aliasRegistry.Publish(
+    completionStatus = DB_AliasRegistry().Publish(
         handle,
         expectedKind,
         reinterpret_cast<uintptr_t>(pointer),
@@ -530,7 +566,8 @@ db::relocation::Status __cdecl DB_ResolveInsertedPointer(
     uint32_t expectedMetadata,
     uintptr_t *pointer)
 {
-    return g_aliasRegistry.Resolve(token, expectedKind, expectedMetadata, pointer);
+    return DB_AliasRegistry().Resolve(
+        token, expectedKind, expectedMetadata, pointer);
 }
 
 db::relocation::Status __cdecl DB_MarkStreamRangeMaterialized(
@@ -540,7 +577,7 @@ db::relocation::Status __cdecl DB_MarkStreamRangeMaterialized(
     if (!pointer)
         return db::relocation::Status::InvalidArgument;
 
-    return g_directResolver.MarkMaterialized(
+    return DB_DirectResolver().MarkMaterialized(
         reinterpret_cast<uintptr_t>(pointer),
         size);
 }
@@ -551,7 +588,7 @@ db::relocation::Status __cdecl DB_ValidateStreamAddress(
     size_t alignment,
     db::relocation::BlockMask allowedBlocks)
 {
-    return g_directResolver.ValidateAddress(
+    return DB_DirectResolver().ValidateAddress(
         reinterpret_cast<uintptr_t>(pointer),
         requiredBytes,
         alignment,
@@ -565,7 +602,7 @@ db::relocation::Status __cdecl DB_RegisterStreamCString(
     if (!pointer)
         return db::relocation::Status::InvalidArgument;
 
-    return g_directResolver.RegisterCString(
+    return DB_DirectResolver().RegisterCString(
         reinterpret_cast<uintptr_t>(pointer),
         byteCount);
 }
@@ -574,7 +611,7 @@ db::relocation::Status __cdecl DB_ValidateStreamCString(
     const void *pointer,
     uint32_t *byteCount)
 {
-    return g_directResolver.ValidateCStringAddress(
+    return DB_DirectResolver().ValidateCStringAddress(
         reinterpret_cast<uintptr_t>(pointer),
         byteCount);
 }
@@ -586,7 +623,7 @@ db::relocation::Status __cdecl DB_ResolveOffsetBytes(
     db::relocation::BlockMask allowedBlocks,
     uintptr_t *pointer)
 {
-    return g_directResolver.ResolveBytes(
+    return DB_DirectResolver().ResolveBytes(
         token,
         requiredBytes,
         alignment,
@@ -600,7 +637,7 @@ db::relocation::Status __cdecl DB_ResolveOffsetCString(
     uintptr_t *pointer,
     uint32_t *byteCount)
 {
-    return g_directResolver.ResolveCString(
+    return DB_DirectResolver().ResolveCString(
         token,
         allowedBlocks,
         pointer,
