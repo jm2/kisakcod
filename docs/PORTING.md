@@ -251,8 +251,8 @@ Completed foundation work:
   `6a79677f` uses a distinct context identity, preserving production callback identity without relying
   on foldable function addresses. Exact-head run **29694906394** passed all nine jobs; exact-head Codex and Gemini
   reviews were clean and zero review threads remained. PR #62 squash-merged as
-  `888d12e6beedd587602f18cf6763ae04cc067470`; authoritative post-merge run **29695353022** is in progress and remains
-  explicitly pending;
+  `888d12e6beedd587602f18cf6763ae04cc067470`; authoritative post-merge run **29695353022** passed all nine jobs at that
+  exact master commit;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -613,8 +613,8 @@ Remaining gates, in implementation order:
    `f9dfaaeb43eaaa32cd44c645e3a0e347c9bebdfc` and authoritative post-merge runs **29691282387** and **29691725277** each
    passed all nine jobs, all four Gemini threads were resolved, and exact-head Codex review was clean. PR #62 then merged
    the production-neutral pending-copy ledger as `888d12e6beedd587602f18cf6763ae04cc067470`; final exact head `6a79677f`
-   passed all nine jobs in run **29694906394**, exact-head Codex and Gemini were clean with zero threads, and post-merge
-   run **29695353022** remains in progress. Land the audited upstream 18-commit integration PR before publishing the
+   passed all nine jobs in run **29694906394**, exact-head Codex and Gemini were clean with zero threads, and authoritative
+   post-merge run **29695353022** also passed all nine jobs. Land the audited upstream 18-commit integration PR before publishing the
    borrowed/standalone registry ownership coordinator, then atomically replace all
    seven raw sites. Keep static controller slots and callback metadata outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
@@ -1915,8 +1915,8 @@ that exact head plus
 strict GCC/Clang, ASan+UBSan, analyzer, i386 runtime, AArch64 strict link, native/AArch64 seals, and final-head
 source/security/diff gates. It has no production caller. Final exact head `6a79677f` passed all nine jobs in run
 **29694906394**; exact-head Codex and Gemini were clean with zero threads, and it squash-merged as
-`888d12e6beedd587602f18cf6763ae04cc067470`. Authoritative post-merge run **29695353022** is in progress and remains
-explicitly pending. Land the audited upstream 18-commit integration PR at this pause boundary, then
+`888d12e6beedd587602f18cf6763ae04cc067470`. Authoritative post-merge run **29695353022** passed all nine jobs at that
+exact master commit. Land the audited upstream 18-commit integration PR at this pause boundary, then
 add a registry coordinator that borrows exact active transaction authority or owns a standalone transaction. Afterward,
 enroll all seven sites atomically. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses

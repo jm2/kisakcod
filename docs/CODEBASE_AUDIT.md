@@ -141,7 +141,7 @@ because MSVC folded two empty test callbacks into one address. Final exact head 
 context identity, preserving production callback identity without relying on foldable function addresses. Exact-head
 run **29694906394** passed all nine jobs; exact-head Codex and Gemini reviews were clean and zero review threads
 remained. PR #62 squash-merged as `888d12e6beedd587602f18cf6763ae04cc067470`. Authoritative post-merge run
-**29695353022** is in progress and remains explicitly pending.
+**29695353022** passed all nine jobs at that exact master commit.
 Rounded merged porting progress is now **76%** after PR #62; the rebased curated upstream-sort candidate remains
 uncounted until it merges.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
