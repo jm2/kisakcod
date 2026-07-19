@@ -146,13 +146,32 @@ PR #63 then squash-merged the curated typed-sort and row-zero draw-method correc
 `f79b0bf422bb926dd302a888bdc258e7e8409aa2`. Exact reviewed head `36aebd29` and the authoritative master commit passed
 all nine jobs in runs **29695891172** and **29696199493**. Codex found no major issue; Gemini's two suggestions were
 already satisfied or semantically equivalent rather than corrections, and both threads were answered and resolved.
-The final local pre-PR registry-coordinator candidate remains production-neutral. Commit `9f327514` seals the production
-boundary; `74b56b65` adds portable nonblocking hash admission, fixing the real pre-held-reader deadlock and real i386
-size-test expectation; and `90e8fba7` completes portable test wiring. The final native GCC Debug build and full CTest
-pass **145/145**, and the focused source/security/macro-off seal selection passes **6/6**. No legacy production site is
-enrolled: the immediate implementation batch after publication remains one atomic durable runtime-table/loader cutover
-covering five coordinator operations and two exact-key journal stages. Rounded merged porting progress remains **76%**
-and strict requested-target delivery remains **0/5** because this candidate is not counted until it merges.
+The complete local registry-coordinator candidate through `774487d1` remains production-neutral. `9f327514` seals the
+production boundary; `74b56b65` adds portable nonblocking hash admission and fixes the real pre-held-reader/i386 defects;
+`90e8fba7` completes portable test wiring; `2a836a0e` maintains authenticated ID-to-entry and
+entry-to-owner/predecessor certificates for O(1) member resolution and linear shutdown/head promotion; and `56c97f09`
+links the real coordinator, retained transaction, `FastCriticalSection`, OwnershipBatch, and memory-tree lease into a
+production-stack composition test. Final `774487d1` applies the shared canonical debug-publication pointer gate to typed
+operations, performs one linear full reachable-topology/physical-slot/inverse-certificate/exact-debug-total preflight per
+bulk, and reauthenticates retained targets with the exact leased resolver in the second pass before mutation. Same-hash
+49-entry, detached-suffix/nonlocal-edge, corrupt inverse/debug-pointer, and forged aggregate-total regressions fail
+atomically and poison unsafe batches; forged totals are not misreported as exhaustion. Exact implementation-head
+`774487d1` evidence is GCC Debug
+and full CTest **145/145**, focused source/security/macro-off **6/6** plus an independent **7/7** audit selection,
+warning-clean GCC/Clang runtime, Clang ASan+UBSan with `detect_leaks=0` under ptrace, and genuine i386 and AArch64
+compile/link. No legacy production site is enrolled. Rounded merged porting progress remains **76%** until this candidate
+merges, when it becomes approximately **77%**; strict requested-target delivery remains **0/5**.
+
+Fresh pinned upstream `2164cd1a` is still **18 commits ahead by ancestry**; PR #63 reconciled only its reviewed
+typed-sort/row-zero subset, not the complete content or graph. Before an ancestry checkpoint, ledger and port the safe U1
+`r_dpvs` stale/wrong brush-definition identity/access, aim-bound, native-width HUD sort/capacity, signed
+`AngleSubtract`, and server-command-tail dispatch fixes. Validate the isolated U2 Miles dry-reverb correction from
+`b19e686a` separately and either port or explicitly defer it. Unsafe raw SP/save/screenshot, dynent, matrix, and gameplay
+hunks remain explicitly deferred/rejected; icon changes are tracked separately as provenance/optional-packaging work.
+Only after every upstream commit has a disposition may the exact pinned head receive a tree-preserving `-s ours`
+ancestry checkpoint with merge-commit semantics—never a squash. The
+subsequent production sequence is passive durable-receipt composition, checked PMem/global/narrow prerequisites,
+exact-key adapters, and finally one atomic seven-site cutover.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.
