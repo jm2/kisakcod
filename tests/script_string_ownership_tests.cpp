@@ -3592,6 +3592,371 @@ struct StateImage final
     return validPath && EndTest();
 }
 
+[[nodiscard]] bool RegistrySweepScratchCleared() noexcept
+{
+    for (std::uint32_t index = 0; index < STRINGLIST_SIZE; ++index)
+    {
+        if (sl_registryOwnershipSweepIds[index] != 0)
+            return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool TestRegistryOwnershipBatchOperations() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char ordinaryName[] = "registry-ordinary";
+    constexpr char databaseName[] = "registry-database";
+    constexpr char unterminated[]{'b', 'a', 'd'};
+    std::array<char, 260> ambiguousLength{};
+    ambiguousLength.fill('x');
+    ambiguousLength[3] = '\0';
+    ambiguousLength.back() = '\0';
+    const script_string::AcquireResult ordinary =
+        script_string::TryAcquireOrdinaryStringOfSize(
+            ordinaryName, sizeof(ordinaryName), 15);
+    RefString *const ordinaryRef = ordinary.stringId != 0
+        ? GetRefString(ordinary.stringId)
+        : nullptr;
+    const char *const ordinaryCanonical = ordinaryRef
+        ? ordinaryRef->str
+        : nullptr;
+    if (!Check(ordinary.status == script_string::AcquireStatus::Acquired,
+            "registry batch ordinary setup failed")
+        || !Check(ordinaryCanonical != nullptr,
+            "registry batch ordinary canonical pointer was unavailable"))
+    {
+        return false;
+    }
+
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry batch admission failed"))
+    {
+        return false;
+    }
+
+    const StateImage beforeRejectedAdd = CaptureState();
+    const bool rejectedAdd = Check(
+            script_string::TryAddDatabaseUser4Reference(batch, 0)
+                == script_string::DatabaseUserAddStatus::
+                    OwnershipMismatchNoChange,
+            "registry user4 add accepted an invalid ID")
+        && Check(StateMatches(beforeRejectedAdd),
+            "registry user4 rejection changed ownership state")
+        && Check(batch.operationCount() == 0,
+            "registry user4 rejection consumed an operation");
+    if (!rejectedAdd
+        || !Check(
+            script_string::TryAddDatabaseUser4Reference(
+                batch, ordinary.stringId)
+                == script_string::DatabaseUserAddStatus::Added,
+            "registry user4 add failed")
+        || !CheckOwnership(
+            ordinary.stringId,
+            2,
+            static_cast<std::uint8_t>(script_string::kDatabaseUserMask),
+            sizeof(ordinaryName),
+            2,
+            "registry user4 add ownership mismatch"))
+    {
+        return false;
+    }
+
+    const StateImage beforeDuplicateAdd = CaptureState();
+    if (!Check(
+            script_string::TryAddDatabaseUser4Reference(
+                batch, ordinary.stringId)
+                == script_string::DatabaseUserAddStatus::
+                    AlreadyOwnedNoChange,
+            "registry duplicate user4 add was not idempotent")
+        || !Check(StateMatches(beforeDuplicateAdd),
+            "registry duplicate user4 add changed ownership state")
+        || !Check(batch.operationCount() == 1,
+            "registry duplicate user4 add consumed an operation"))
+    {
+        return false;
+    }
+
+    const StateImage beforeRejectedNames = CaptureState();
+    const auto nullName = script_string::TryInternDatabaseUser4Name(
+        batch, nullptr, 1, 15);
+    const auto zeroName = script_string::TryInternDatabaseUser4Name(
+        batch, databaseName, 0, 15);
+    const auto unterminatedName =
+        script_string::TryInternDatabaseUser4Name(
+            batch, unterminated, sizeof(unterminated), 15);
+    const auto ambiguousName = script_string::TryInternDatabaseUser4Name(
+        batch,
+        ambiguousLength.data(),
+        static_cast<std::uint32_t>(ambiguousLength.size()),
+        15);
+    const auto invalidTypeName = script_string::TryInternDatabaseUser4Name(
+        batch, databaseName, sizeof(databaseName), 0);
+    if (!Check(
+            nullName.status
+                    == script_string::DatabaseNameStatus::
+                        InvalidArgumentNoChange
+                && zeroName.status
+                    == script_string::DatabaseNameStatus::
+                        InvalidArgumentNoChange
+                && unterminatedName.status
+                    == script_string::DatabaseNameStatus::
+                        InvalidArgumentNoChange
+                && ambiguousName.status
+                    == script_string::DatabaseNameStatus::
+                        InvalidArgumentNoChange
+                && invalidTypeName.status
+                    == script_string::DatabaseNameStatus::
+                        InvalidArgumentNoChange,
+            "registry bounded-name validation accepted invalid input")
+        || !Check(
+            nullName.stringId == 0 && nullName.canonicalName == nullptr
+                && zeroName.stringId == 0
+                && zeroName.canonicalName == nullptr
+                && unterminatedName.stringId == 0
+                && unterminatedName.canonicalName == nullptr
+                && ambiguousName.stringId == 0
+                && ambiguousName.canonicalName == nullptr
+                && invalidTypeName.stringId == 0
+                && invalidTypeName.canonicalName == nullptr,
+            "registry bounded-name rejection published output")
+        || !Check(StateMatches(beforeRejectedNames),
+            "registry bounded-name rejection changed ownership state")
+        || !Check(batch.operationCount() == 1,
+            "registry bounded-name rejection consumed an operation"))
+    {
+        return false;
+    }
+
+    const script_string::DatabaseNameResult database =
+        script_string::TryInternDatabaseUser4Name(
+            batch, databaseName, sizeof(databaseName), 15);
+    if (!Check(
+            database.status == script_string::DatabaseNameStatus::Success,
+            "registry bounded-name intern failed")
+        || !Check(database.stringId != 0 && database.canonicalName != nullptr,
+            "registry bounded-name intern omitted canonical output")
+        || !Check(std::memcmp(
+                database.canonicalName,
+                databaseName,
+                sizeof(databaseName)) == 0,
+            "registry bounded-name intern changed bytes")
+        || !CheckOwnership(
+            database.stringId,
+            1,
+            static_cast<std::uint8_t>(script_string::kDatabaseUserMask),
+            sizeof(databaseName),
+            3,
+            "registry bounded-name ownership mismatch")
+        || !Check(batch.operationCount() == 2,
+            "registry bounded-name success did not consume an operation"))
+    {
+        return false;
+    }
+
+    if (!Check(
+            script_string::TryTransferDatabaseUsers4To8(batch)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry 4-to-8 transfer failed")
+        || !CheckOwnership(
+            ordinary.stringId,
+            2,
+            static_cast<std::uint8_t>(
+                script_string::kRetainedDatabaseUserMask),
+            sizeof(ordinaryName),
+            3,
+            "registry ordinary 4-to-8 ownership mismatch")
+        || !CheckOwnership(
+            database.stringId,
+            1,
+            static_cast<std::uint8_t>(
+                script_string::kRetainedDatabaseUserMask),
+            sizeof(databaseName),
+            3,
+            "registry name 4-to-8 ownership mismatch"))
+    {
+        return false;
+    }
+
+    const StateImage beforeRejectedRetained = CaptureState();
+    if (!Check(
+            script_string::TryReAddRetainedDatabaseName(batch, nullptr)
+                == script_string::DatabaseNameStatus::
+                    InvalidArgumentNoChange,
+            "registry retained-name re-add accepted null")
+        || !Check(
+            script_string::TryReAddRetainedDatabaseName(
+                batch, database.canonicalName + 1)
+                == script_string::DatabaseNameStatus::
+                    OwnershipMismatchNoChange,
+            "registry retained-name re-add accepted a noncanonical pointer")
+        || !Check(StateMatches(beforeRejectedRetained),
+            "registry retained-name rejection changed ownership state")
+        || !Check(batch.operationCount() == 3,
+            "registry retained-name rejection consumed an operation"))
+    {
+        return false;
+    }
+
+    if (!Check(
+            script_string::TryReAddRetainedDatabaseName(
+                batch, ordinaryCanonical)
+                == script_string::DatabaseNameStatus::Success,
+            "registry ordinary retained-name re-add failed")
+        || !Check(
+            script_string::TryReAddRetainedDatabaseName(
+                batch, database.canonicalName)
+                == script_string::DatabaseNameStatus::Success,
+            "registry database retained-name re-add failed")
+        || !CheckOwnership(
+            ordinary.stringId,
+            3,
+            static_cast<std::uint8_t>(
+                script_string::kDatabaseUserMask
+                | script_string::kRetainedDatabaseUserMask),
+            sizeof(ordinaryName),
+            5,
+            "registry retained ordinary re-add ownership mismatch")
+        || !CheckOwnership(
+            database.stringId,
+            2,
+            static_cast<std::uint8_t>(
+                script_string::kDatabaseUserMask
+                | script_string::kRetainedDatabaseUserMask),
+            sizeof(databaseName),
+            5,
+            "registry retained database re-add ownership mismatch")
+        || !Check(batch.operationCount() == 5,
+            "registry retained-name success count mismatch"))
+    {
+        return false;
+    }
+
+    if (!Check(
+            script_string::TryTransferDatabaseUsers4To8(batch)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry duplicate 4-to-8 transfer failed")
+        || !CheckOwnership(
+            ordinary.stringId,
+            2,
+            static_cast<std::uint8_t>(
+                script_string::kRetainedDatabaseUserMask),
+            sizeof(ordinaryName),
+            3,
+            "registry duplicate ordinary transfer ownership mismatch")
+        || !CheckOwnership(
+            database.stringId,
+            1,
+            static_cast<std::uint8_t>(
+                script_string::kRetainedDatabaseUserMask),
+            sizeof(databaseName),
+            3,
+            "registry duplicate name transfer ownership mismatch")
+        || !Check(
+            script_string::TryShutdownDatabaseUser8(batch)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry user8 shutdown failed")
+        || !Check(RegistrySweepScratchCleared(),
+            "registry user8 shutdown retained scratch IDs")
+        || !CheckOwnership(
+            ordinary.stringId,
+            1,
+            0,
+            sizeof(ordinaryName),
+            1,
+            "registry user8 shutdown changed ordinary ownership")
+        || !Check(
+            script_string::TryRemoveOrdinaryReference(
+                batch, ordinary.stringId)
+                == script_string::ReleaseStatus::Success,
+            "registry ordinary cleanup failed")
+        || !Check(batch.operationCount() == 8,
+            "registry operation accounting mismatch")
+        || !Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry batch close failed"))
+    {
+        return false;
+    }
+    return CheckFreed(database.stringId)
+        && CheckFreed(ordinary.stringId)
+        && EndTest();
+}
+
+[[nodiscard]] bool TestRegistryShutdownCapacityAtomicity() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char firstName[] = "registry-capacity-first";
+    constexpr char secondName[] = "registry-capacity-second";
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry capacity batch admission failed"))
+    {
+        return false;
+    }
+    const auto first = script_string::TryInternDatabaseUser4Name(
+        batch, firstName, sizeof(firstName), 15);
+    const auto second = script_string::TryInternDatabaseUser4Name(
+        batch, secondName, sizeof(secondName), 15);
+    if (!Check(first.status == script_string::DatabaseNameStatus::Success
+                && second.status
+                    == script_string::DatabaseNameStatus::Success,
+            "registry capacity setup intern failed")
+        || !Check(
+            script_string::TryTransferDatabaseUsers4To8(batch)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry capacity setup transfer failed"))
+    {
+        return false;
+    }
+
+    batch.SetMemoryTreeMutationCountForTesting(UINT32_MAX - 1);
+    const StateImage beforeCapacity = CaptureState();
+    const std::uint32_t operationsBeforeCapacity = batch.operationCount();
+    if (!Check(
+            script_string::TryShutdownDatabaseUser8(batch)
+                == script_string::DatabaseSweepStatus::CapacityNoChange,
+            "registry shutdown ignored lease mutation capacity")
+        || !Check(StateMatches(beforeCapacity),
+            "registry shutdown capacity rejection changed ownership state")
+        || !Check(
+            batch.operationCount() == operationsBeforeCapacity,
+            "registry shutdown capacity rejection consumed an operation")
+        || !Check(RegistrySweepScratchCleared(),
+            "registry shutdown capacity rejection retained scratch IDs"))
+    {
+        return false;
+    }
+
+    batch.SetMemoryTreeMutationCountForTesting(2);
+    if (!Check(
+            script_string::TryShutdownDatabaseUser8(batch)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry shutdown did not recover after capacity rejection")
+        || !Check(RegistrySweepScratchCleared(),
+            "registry recovered shutdown retained scratch IDs")
+        || !Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry capacity batch close failed"))
+    {
+        return false;
+    }
+    return CheckFreed(first.stringId)
+        && CheckFreed(second.stringId)
+        && EndTest();
+}
+
 [[nodiscard]] bool TestLegacyCharacterFoldingUsesUnsignedInput() noexcept
 {
     if (!BeginTest())
@@ -3745,6 +4110,8 @@ int main()
         || !TestOwnershipBatchUnrelatedDestruction()
         || !TestLegacyReadersAuthenticateExactStrings()
         || !TestLegacyMutatorsAuthenticateExactStrings()
+        || !TestRegistryOwnershipBatchOperations()
+        || !TestRegistryShutdownCapacityAtomicity()
         || !TestLegacyCharacterFoldingUsesUnsignedInput())
     {
         return 1;

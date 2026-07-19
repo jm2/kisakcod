@@ -9,6 +9,7 @@
 namespace script_string
 {
 inline constexpr std::uint32_t kDatabaseUserMask = UINT32_C(4);
+inline constexpr std::uint32_t kRetainedDatabaseUserMask = UINT32_C(8);
 inline constexpr std::uint32_t kCurrentRuntimeStringLimit = UINT32_C(65536);
 
 [[nodiscard]] constexpr bool IsCurrentRuntimeStringId(
@@ -57,6 +58,42 @@ enum class OwnershipBatchStatus : std::uint8_t
     UnsafeFailure,
 };
 
+// Fixed registry-facing operations deliberately expose no arbitrary user
+// mask.  User 4 is the live database owner and user 8 is the temporary owner
+// retained across the global unused-resource sweep.
+enum class DatabaseUserAddStatus : std::uint8_t
+{
+    Added,
+    AlreadyOwnedNoChange,
+    OwnershipMismatchNoChange,
+    RefCountExhaustedNoChange,
+    UnsafeFailure,
+};
+
+enum class DatabaseNameStatus : std::uint8_t
+{
+    Success,
+    InvalidArgumentNoChange,
+    CapacityNoChange,
+    RefCountExhaustedNoChange,
+    OwnershipMismatchNoChange,
+    UnsafeFailure,
+};
+
+struct DatabaseNameResult final
+{
+    DatabaseNameStatus status = DatabaseNameStatus::InvalidArgumentNoChange;
+    std::uint32_t stringId = 0;
+    const char *canonicalName = nullptr;
+};
+
+enum class DatabaseSweepStatus : std::uint8_t
+{
+    Success,
+    CapacityNoChange,
+    UnsafeFailure,
+};
+
 // A same-thread ownership batch retains locks in the only permitted order:
 // CRITSECT_SCRIPT_STRING first, then CRITSECT_MEMORY_TREE. Admission and close
 // validate the complete string table and allocator. Operations between those
@@ -65,7 +102,7 @@ enum class OwnershipBatchStatus : std::uint8_t
 //
 // This is not a controller, zone, or transaction phase token. Begin and
 // Finish must be co-located around one bounded, callback-free ownership loop
-// using only the four batch overloads below. No legacy string API, reporter,
+// using only the fixed batch operations below. No legacy string API, reporter,
 // callback, or unrelated memory-tree work may run while a batch is active.
 //
 // Storage-lifetime and thread-affinity contract: the batch object must remain
@@ -126,6 +163,21 @@ private:
     friend ReleaseStatus TryRemoveDatabaseUserReference(
         OwnershipBatch &batch,
         std::uint32_t stringId) noexcept;
+    friend DatabaseUserAddStatus TryAddDatabaseUser4Reference(
+        OwnershipBatch &batch,
+        std::uint32_t stringId) noexcept;
+    friend DatabaseNameResult TryInternDatabaseUser4Name(
+        OwnershipBatch &batch,
+        const char *bytes,
+        std::uint32_t byteCount,
+        int type) noexcept;
+    friend DatabaseNameStatus TryReAddRetainedDatabaseName(
+        OwnershipBatch &batch,
+        const char *retainedName) noexcept;
+    friend DatabaseSweepStatus TryTransferDatabaseUsers4To8(
+        OwnershipBatch &batch) noexcept;
+    friend DatabaseSweepStatus TryShutdownDatabaseUser8(
+        OwnershipBatch &batch) noexcept;
 
     [[nodiscard]] static const MT_ValidationLeaseAdmission &
     MakeMemoryTreeLeaseAdmission() noexcept;
@@ -196,6 +248,38 @@ static_assert(!std::is_trivially_destructible_v<OwnershipBatch>);
 [[nodiscard]] ReleaseStatus TryRemoveDatabaseUserReference(
     OwnershipBatch &batch,
     std::uint32_t stringId) noexcept;
+
+// Registry operations use only the fixed legacy database masks. Each function
+// requires one admitted OwnershipBatch and is callback-free/report-free. All
+// ordinary rejection statuses leave string, hash, debug, allocator, batch
+// operation count, and caller outputs unchanged. UnsafeFailure is terminal
+// fail-closed evidence rather than a recoverable rejection.
+[[nodiscard]] DatabaseUserAddStatus TryAddDatabaseUser4Reference(
+    OwnershipBatch &batch,
+    std::uint32_t stringId) noexcept;
+
+[[nodiscard]] DatabaseNameResult TryInternDatabaseUser4Name(
+    OwnershipBatch &batch,
+    const char *bytes,
+    std::uint32_t byteCount,
+    int type) noexcept;
+
+// retainedName must be the exact canonical payload address of a live user-8
+// string. The operation recovers its bounded allocation extent without
+// strlen, then restores user 4 while user 8 keeps the address alive.
+[[nodiscard]] DatabaseNameStatus TryReAddRetainedDatabaseName(
+    OwnershipBatch &batch,
+    const char *retainedName) noexcept;
+
+// Exhaustive operations preflight the complete fixed-capacity table before
+// their first ownership mutation. The 4 -> 8 transfer never frees storage.
+// Shutdown snapshots at most STRINGLIST_SIZE-1 authenticated IDs in fixed BSS
+// and reserves all required lease mutation counts before removing user 8.
+[[nodiscard]] DatabaseSweepStatus TryTransferDatabaseUsers4To8(
+    OwnershipBatch &batch) noexcept;
+
+[[nodiscard]] DatabaseSweepStatus TryShutdownDatabaseUser8(
+    OwnershipBatch &batch) noexcept;
 
 #if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
 struct OwnershipValidationCounters final
