@@ -13,6 +13,9 @@
 // scrubs the real production state rather than a test-only model.
 std::uint32_t g_streamDelayIndex;
 std::uint8_t *g_streamPosArray[db::relocation::kBlockCount];
+static_assert(
+    db::relocation::kBlockCount == 9,
+    "legacy stream and ownership block counts must match");
 StreamDelayInfo g_streamDelayArray[4096];
 std::uint32_t g_streamPosIndex;
 StreamPosInfo g_streamPosStack[64];

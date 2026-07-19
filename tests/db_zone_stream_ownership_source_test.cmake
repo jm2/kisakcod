@@ -21,6 +21,7 @@ set(_memory_path "${SOURCE_ROOT}/src/database/db_zone_memory.h")
 set(_runtime_table_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h")
 set(_file_load_path "${SOURCE_ROOT}/src/database/db_file_load.cpp")
+set(_com_error_path "${SOURCE_ROOT}/src/qcommon/com_error.h")
 set(_fixture_path
     "${SOURCE_ROOT}/tests/db_zone_stream_ownership_tests.cpp")
 set(_seal_path
@@ -34,6 +35,7 @@ foreach(_path IN ITEMS
     "${_relocation_header_path}" "${_relocation_source_path}"
     "${_stream_path}" "${_stream_header_path}" "${_state_path}"
     "${_memory_path}" "${_runtime_table_path}" "${_file_load_path}"
+    "${_com_error_path}"
     "${_fixture_path}" "${_seal_path}" "${_manifest_path}"
     "${_tests_path}" "${_ci_path}")
     if(NOT EXISTS "${_path}")
@@ -52,6 +54,7 @@ file(READ "${_state_path}" _state)
 file(READ "${_memory_path}" _memory)
 file(READ "${_runtime_table_path}" _runtime_table)
 file(READ "${_file_load_path}" _file_load)
+file(READ "${_com_error_path}" _com_error)
 file(READ "${_fixture_path}" _fixture)
 file(READ "${_seal_path}" _seal)
 file(READ "${_manifest_path}" _manifest)
@@ -61,7 +64,7 @@ file(READ "${_ci_path}" _ci)
 foreach(_var IN ITEMS
     _header _source _internal _relocation_header _relocation_source
     _stream _stream_header _state _memory _runtime_table _file_load
-    _fixture _seal _manifest _tests _ci)
+    _fixture _seal _manifest _tests _ci _com_error)
     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${${_var}}")
     set(${_var} "${_normalized}")
 endforeach()
@@ -194,7 +197,6 @@ foreach(_var IN ITEMS _header _source)
         "TestAccess"
         "Com_Error("
         "iassert("
-        "assert("
         "memset("
         "malloc("
         "calloc("
@@ -209,6 +211,11 @@ foreach(_var IN ITEMS _header _source)
         require_not_contains(
             ${_var} "${_forbidden}" "report-free production-neutral primitive")
     endforeach()
+    source_has_identifier(${_var} "assert" _runtime_assert)
+    if(_runtime_assert)
+        message(FATAL_ERROR
+            "Forbidden runtime assert in report-free zone-stream primitive")
+    endif()
 endforeach()
 require_not_contains(
     _runtime_table "ZoneStreamGenerationReceipt"
@@ -356,13 +363,22 @@ foreach(_marker IN ITEMS
     "std::vector<Interval>{}.swap(block.materialized);"
     "std::vector<StringRecord>{}.swap(strings_);"
     "void AliasRegistry::Invalidate() noexcept"
-    "record.resolvedAddress = 0;"
+    "*resolvedAddress = 0;"
     "std::vector<Record>{}.swap(records_);"
     "!= (std::numeric_limits<std::uint64_t>::max)()"
     "return Status::GenerationExhausted;"
     "case Status::GenerationExhausted: return \"generation exhausted\";")
     require_contains(
         _relocation_source "${_marker}" "no-throw scrub and wrap fail-close")
+endforeach()
+foreach(_marker IN ITEMS
+    "volatile std::uintptr_t *const resolvedAddress"
+    "volatile std::uint32_t *const metadata"
+    "volatile bool *const published"
+    "volatile std::uint32_t *const offset"
+    "volatile AliasKind *const kind")
+    require_contains(
+        _relocation_source "${_marker}" "observable alias-record scrub")
 endforeach()
 extract_slice(
     _relocation_source
@@ -544,6 +560,18 @@ require_contains(
 require_contains(
     _stream "void __cdecl DB_InitStreams(XZoneMemory *zoneMem)"
     "sole legacy bind entrypoint remains explicit")
+foreach(_marker IN ITEMS
+    "std::extent_v<decltype(XZoneMemory::blocks)>"
+    "std::extent_v<decltype(g_streamPosArray)>"
+    "i < db::relocation::kBlockCount; ++i")
+    require_contains(_stream "${_marker}" "canonical legacy block count")
+endforeach()
+require_contains(
+    _source "db::relocation::kBlockCount == 9"
+    "ownership definition pins the canonical block count")
+require_contains(
+    _com_error "__attribute__((format(__printf__, 2, 3)))"
+    "portable Com_Error format checking")
 
 # Freeze the still-legacy loader admission order until the atomic coordinator
 # batch replaces it in one reviewed cutover.

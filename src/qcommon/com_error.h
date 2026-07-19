@@ -16,4 +16,7 @@ enum errorParm_t : std::int32_t
     ERR_MAPLOADERRORSUMMARY = 0x7,
 };
 
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((format(__printf__, 2, 3)))
+#endif
 void __cdecl Com_Error(errorParm_t code, const char *fmt, ...);

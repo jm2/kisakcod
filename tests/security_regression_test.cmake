@@ -2987,7 +2987,11 @@ require_source_not_contains(
     "stream teardown must explicitly enumerate pointer-bearing state")
 require_source_contains(
     "database/db_relocation.cpp"
-    "record.resolvedAddress = 0;"
+    "volatile std::uintptr_t *const resolvedAddress"
+    "alias invalidation scrubs must remain observable before release")
+require_source_contains(
+    "database/db_relocation.cpp"
+    "*resolvedAddress = 0;"
     "alias invalidation must overwrite published native addresses")
 require_source_contains(
     "database/db_relocation.cpp"
@@ -2997,6 +3001,18 @@ require_source_contains(
     "database/db_relocation.cpp"
     "return Status::GenerationExhausted;"
     "alias generation exhaustion must fail closed")
+require_source_contains(
+    "database/db_stream.cpp"
+    "std::extent_v<decltype(XZoneMemory::blocks)>"
+    "legacy stream loops must pin the canonical block count")
+require_source_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "db::relocation::kBlockCount == 9"
+    "stream ownership storage must pin the legacy block count")
+require_source_contains(
+    "qcommon/com_error.h"
+    "__attribute__((format(__printf__, 2, 3)))"
+    "portable Com_Error declarations must retain format checking")
 require_source_contains(
     "database/db_load.cpp"
     "DBAliasKind::MaterialVertexDeclaration"

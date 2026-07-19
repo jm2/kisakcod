@@ -6,6 +6,7 @@
 
 #include <cstring>
 #include <iterator>
+#include <type_traits>
 
 namespace
 {
@@ -34,6 +35,15 @@ bool DB_GetBlock(uint32_t index, const XBlock **block)
 
 void __cdecl DB_InitStreams(XZoneMemory *zoneMem)
 {
+    static_assert(
+        std::extent_v<decltype(XZoneMemory::blocks)>
+        == db::relocation::kBlockCount,
+        "XZoneMemory and relocation block counts must match");
+    static_assert(
+        std::extent_v<decltype(g_streamPosArray)>
+        == db::relocation::kBlockCount,
+        "legacy stream and relocation block counts must match");
+
     // Do not retain relocation state or stream cursors from a prior zone if
     // validation of the replacement zone fails.
     if (db::zone_stream_ownership::detail::OwnershipBindingActive())
@@ -68,7 +78,7 @@ void __cdecl DB_InitStreams(XZoneMemory *zoneMem)
         Com_Error(ERR_DROP, "Cannot initialize fast-file streams without zone memory");
         return;
     }
-    for (std::size_t i = 0; i < std::size(zoneMem->blocks); ++i)
+    for (std::size_t i = 0; i < db::relocation::kBlockCount; ++i)
     {
         if (zoneMem->blocks[i].size && !zoneMem->blocks[i].data)
         {
@@ -81,7 +91,7 @@ void __cdecl DB_InitStreams(XZoneMemory *zoneMem)
     }
 
     db::relocation::BlockView relocationBlocks[db::relocation::kBlockCount];
-    for (std::size_t i = 0; i < std::size(zoneMem->blocks); ++i)
+    for (std::size_t i = 0; i < db::relocation::kBlockCount; ++i)
     {
         relocationBlocks[i].base = reinterpret_cast<uintptr_t>(zoneMem->blocks[i].data);
         relocationBlocks[i].size = zoneMem->blocks[i].size;

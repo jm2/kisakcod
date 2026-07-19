@@ -221,9 +221,13 @@ void ExpectAllStreamsScrubbed()
 
 void TestConstructionAndKeyValidation()
 {
-    static_assert(std::is_trivially_copyable_v<
+    static_assert(std::is_standard_layout_v<
         ownership::ZoneStreamGenerationReceipt>);
-    static_assert(std::is_trivially_copyable_v<
+    static_assert(std::is_standard_layout_v<
+        ownership::ActiveZoneStreamBinding>);
+    static_assert(std::is_trivially_destructible_v<
+        ownership::ZoneStreamGenerationReceipt>);
+    static_assert(std::is_trivially_destructible_v<
         ownership::ActiveZoneStreamBinding>);
     static_assert(!std::is_copy_constructible_v<
         ownership::ZoneStreamGenerationReceipt>);

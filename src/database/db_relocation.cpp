@@ -526,11 +526,20 @@ void AliasRegistry::Invalidate() noexcept
 {
     for (Record &record : records_)
     {
-        record.resolvedAddress = 0;
-        record.metadata = 0;
-        record.published = false;
-        record.offset = 0;
-        record.kind = AliasKind::Invalid;
+        // These native addresses and publication records must be overwritten
+        // before their allocation is released. Volatile stores keep an
+        // optimizing compiler from deleting the scrub as dead memory writes.
+        volatile std::uintptr_t *const resolvedAddress =
+            &record.resolvedAddress;
+        volatile std::uint32_t *const metadata = &record.metadata;
+        volatile bool *const published = &record.published;
+        volatile std::uint32_t *const offset = &record.offset;
+        volatile AliasKind *const kind = &record.kind;
+        *resolvedAddress = 0;
+        *metadata = 0;
+        *published = false;
+        *offset = 0;
+        *kind = AliasKind::Invalid;
     }
     std::vector<Record>{}.swap(records_);
     for (BlockView &block : blocks_)
