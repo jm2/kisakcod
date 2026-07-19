@@ -257,6 +257,38 @@ bool ZoneScriptStringOwnershipController::canonicalForBinding(
     return bindingMatchesCurrentPhase();
 }
 
+bool ZoneScriptStringOwnershipController::trySnapshotRegistryTransaction(
+    const lifecycle::ZoneLoadContextKey &expectedKey,
+    std::uint32_t *const outSerial) const noexcept
+{
+    if (!outSerial || !static_cast<bool>(expectedKey)
+        || key_ != expectedKey
+        || validateOwned() != ZoneScriptStringOwnershipStatus::Success)
+    {
+        return false;
+    }
+
+    const std::uint32_t serial = transaction_.serial();
+    if (serial == 0 || serial != transactionSerial_
+        || !transaction::OwnsScriptStringTransaction(transaction_))
+    {
+        return false;
+    }
+    *outSerial = serial;
+    return true;
+}
+
+bool ZoneScriptStringOwnershipController::authenticatesRegistryTransaction(
+    const lifecycle::ZoneLoadContextKey &expectedKey,
+    const std::uint32_t expectedSerial) const noexcept
+{
+    if (expectedSerial == 0)
+        return false;
+    std::uint32_t serial = 0;
+    return trySnapshotRegistryTransaction(expectedKey, &serial)
+        && serial == expectedSerial;
+}
+
 lifecycle::ZoneLoadCleanupCallbackStatus
 ZoneScriptStringOwnershipController::PerformBoundCleanup(
     void *const context,

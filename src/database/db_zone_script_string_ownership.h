@@ -147,6 +147,17 @@ public:
     [[nodiscard]] bool canonicalForBinding(
         const zone_load::ZoneLoadContextSlot *expectedLifecycle,
         const zone_load::ZoneLoadContextKey &expectedKey) const noexcept;
+    // Registry coordination may borrow the controller's already-retained
+    // outer transaction, but never receives or aliases the private token.
+    // Both queries authenticate the exact active lifecycle key, controller
+    // representation, transaction serial, and owning thread. Snapshot leaves
+    // *outSerial unchanged on every rejection.
+    [[nodiscard]] bool trySnapshotRegistryTransaction(
+        const zone_load::ZoneLoadContextKey &expectedKey,
+        std::uint32_t *outSerial) const noexcept;
+    [[nodiscard]] bool authenticatesRegistryTransaction(
+        const zone_load::ZoneLoadContextKey &expectedKey,
+        std::uint32_t expectedSerial) const noexcept;
 
 private:
     friend ZoneScriptStringOwnershipStatus
