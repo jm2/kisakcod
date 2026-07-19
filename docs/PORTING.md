@@ -22,7 +22,8 @@ Completed foundation work:
 - the audited upstream/gameplay reconciliation, PR #48's report-free script-string ownership foundation, PR #49's
   constructed lifecycle controller, PR #50's failure-atomic script-string initialization hardening, and PR #51's
   generation-keyed runtime table plus PR #52's test-fixture repair, PR #53's authenticated memory-tree validation
-  lease, PR #54's exact terminal adapters, and PR #55's pointer-free script-string OwnershipBatch through `f39e0e4a`.
+  lease, PR #54's exact terminal adapters, PR #55's pointer-free script-string OwnershipBatch, PR #56's physics-sidecar
+  authority seal, PR #57's exact-key mutable runtime adapters, and PR #58's portable console through `9fb46bea`.
   PR #51 exact-head run
   **29628040709** and post-merge master run
   **29628132007** each passed eight of nine jobs; Windows x86 Debug alone exposed a missing test-fixture
@@ -176,12 +177,26 @@ Completed foundation work:
   final head `c2613282` passed all nine hosted jobs in run **29658932268**, exact-head Codex review was clean, and PR #56
   squash-merged as `6159275e`. Authoritative post-merge master run **29659347033** also passed all nine jobs; no other
   project-owned production friend leak was found;
-- the active portable-console batch adds platform-neutral length-based stdout/stderr writes, flush/redirection queries,
+- merged PR #58 adds platform-neutral length-based stdout/stderr writes, flush/redirection queries,
   and bounded allocation-free line input with Win32/POSIX backends. POSIX broken-pipe writes contain `SIGPIPE` on the
   calling thread while preserving masks/pending state; Win32 pipe flush is nonblocking and message-mode reads preserve
   `ERROR_MORE_DATA` bytes. Runtime coverage spans the 4,096-byte drain budget, embedded NUL/overlong input, partial EOF,
   default/ignored SIGPIPE, Win32 message pipes, native i386, AArch64 compile, sanitizers, and Wine. Redirected Win32
-  headless input works; attached native character-console input remains an explicit follow-up;
+  headless input works; attached native character-console input remains an explicit follow-up. Exact-head run
+  **29666269398** passed all nine jobs, exact-head Codex review was clean, the nullable fatal-message finding was fixed,
+  and the batch squash-merged as `9fb46bea`. Authoritative post-merge run **29670244884** is still in progress;
+- the active audited runtime-storage foundation at `3683634e`/`a3bf1e30` canonically plans one 32-bit-offset slab holding
+  the script-string journal/entries, native FX arena, Disk32 adapter workspace, and aligned arena backing. Its stable,
+  noncopyable handle stays outside the slab, authenticates itself and the complete plan/pointer layout, and prevalidates
+  alignment, address ranges, capacity, and overlap before placement construction. Exact teardown permits only a pristine
+  or terminal detached journal, idle/non-operating adapter, and transaction-free arena bound to the planned backing and
+  budget, then destroys in reverse order with idempotent terminal state. A private FX bridge and read-only lifecycle
+  predicates avoid exporting mutation or generation authority. The exact `9fb46bea` replay passes GCC Release
+  **131/131**, GCC i386 runtime, AArch64 GCC strict syntax for every batch translation unit and fixture, and Clang
+  ASan+UBSan runtime with leak detection disabled because LSan is unavailable under ptrace; the headless/debt gate, ABI
+  scanner, source invariants, and `git diff --check` pass. The source family is build-enrolled, but no production loader
+  or lifecycle caller consumes this API, no runtime generation or PMem scope is claimed, and retail bytes are unchanged.
+  The checked PMem receipt remains a separate parallel prerequisite;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -517,8 +532,11 @@ Remaining gates, in implementation order:
    all nine jobs and exact-head Codex review was clean. PR #56 merged the sidecar authority seal as `6159275e` after
    exact-head run **29658932268** passed all nine jobs and exact-head Codex review was clean. PR #57 merged the exact keyed
    mutable runtime adapters as `57e2b1a2`; exact-head and post-merge runs **29659895814** and **29660281653** passed all
-   nine jobs, and exact-head Codex review was clean. The portable-console batch is now the active publication item; then
-   add checked PMem/storage, exact stream invalidation, and pending-copy/admission resources as separate foundations plus
+   nine jobs, and exact-head Codex review was clean. PR #58 then merged the portable-console boundary as `9fb46bea` after
+   exact-head run **29666269398** passed all nine jobs and exact-head Codex review was clean; post-merge run
+   **29670244884** is still in progress. The audited one-slab runtime-storage planner/binder is now the active publication
+   item, while its checked PMem scope receipt remains a separate parallel prerequisite. Then add exact stream invalidation
+   and pending-copy/admission resources as separate foundations plus
    a borrowed/standalone registry ownership coordinator before atomically
    replacing all seven raw sites. Keep static controller slots and callback metadata outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
@@ -1227,8 +1245,8 @@ orchestration now stores only opaque handles, passes pointer-safe start records 
 trampoline, uses handle identity, and applies the backend scheduling policy. `threads.cpp` no longer
 includes Windows headers or calls native threading/Interlocked APIs; SP pointer-to-int returns and
 four callback casts were removed. Next, finish broader fixed-width atomics, then add filesystem/
-virtual-memory, standard-stream console, process/crash control, and BSD sockets. Standard-stream console is now the
-active publication batch; process/crash control and sockets remain.
+virtual-memory, standard-stream console, process/crash control, and BSD sockets. Standard-stream console merged in PR
+#58; process/crash control, native Win32 headless character-console input, and sockets remain.
 
 The first follow-on atomic cleanup also moved dvar sorting off `LONG`/Interlocked and the Win32
 network sleep wrapper. Two private seq-cst boolean atomics now provide sorter ownership and sorted-
@@ -1498,9 +1516,9 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **74% by merged engineering effort**. PR #57 closes the keyed runtime-adapter
-prerequisite; the active portable-console candidate advances M3 but does not move the rounded total before merge. Windows x86
-is about
+Overall porting progress is approximately **74% by merged engineering effort**. PR #58 closes the portable-console
+publication gate and advances M3; the active runtime-storage foundation remains unmerged, so neither change moves the
+rounded total yet. Windows x86 is about
 **93%**, shared
 foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
@@ -1795,8 +1813,11 @@ These are exactly seven total sites; transfer/shutdown implement the global 4 ->
 The keyed mutable runtime adapters merged in PR #57 as `57e2b1a2`; exact-head and post-merge runs
 **29659895814** and **29660281653** passed all nine jobs, exact-head Codex review was clean, and no raw legacy caller was
 enrolled.
-Next add the durable resources as separate reviewable foundations: checked typed PMem scope/storage receipts, exact-key
-stream/alias invalidation, then the generation-tagged pending-copy ledger and prepared admission receipt. After those,
+The active audited runtime-storage foundation now supplies the exact one-slab planner/binder and terminal teardown for the
+journal/entries, FX arena, Disk32 adapter workspace, and aligned backing. It deliberately does not mint a generation,
+allocate PMem, or enroll a production caller. Publish that batch independently, finish the parallel checked typed PMem
+scope receipt, and only then bind the planned slab to the named allocation scope. Next add exact-key stream/alias
+invalidation, then the generation-tagged pending-copy ledger and prepared admission receipt. After those,
 add a registry coordinator that borrows exact active
 transaction authority or owns a standalone transaction, then enroll all seven sites atomically. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
