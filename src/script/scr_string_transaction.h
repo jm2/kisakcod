@@ -6,6 +6,11 @@
 #include <cstdint>
 #include <type_traits>
 
+namespace db::registry_ownership
+{
+class RegistryOwnershipCoordinator;
+}
+
 namespace script_string
 {
 inline constexpr std::uint32_t kDatabaseUserMask = UINT32_C(4);
@@ -94,6 +99,99 @@ enum class DatabaseSweepStatus : std::uint8_t
     UnsafeFailure,
 };
 
+inline constexpr std::uint32_t kRegistryOwnershipBulkCapacity =
+    UINT32_C(19999);
+
+enum class DatabaseUserAddBulkStatus : std::uint8_t
+{
+    Success,
+    NoChange,
+    InvalidArgumentNoChange,
+    CapacityNoChange,
+    OwnershipMismatchNoChange,
+    RefCountExhaustedNoChange,
+    UnsafeFailure,
+};
+
+struct DatabaseUserAddBulkResult final
+{
+    DatabaseUserAddBulkStatus status =
+        DatabaseUserAddBulkStatus::InvalidArgumentNoChange;
+    std::uint32_t addedCount = 0;
+    std::uint32_t unchangedCount = 0;
+};
+
+class OwnershipBatch;
+
+// Source-level capability for the five registry-only user-4/user-8
+// operations. Production can construct one only through the exact active
+// RegistryOwnershipCoordinator. It carries numeric, mirrored identities so
+// the string boundary can authenticate the active OwnershipBatch before the
+// first pointer dereference. The type is deliberately neither default
+// constructible nor copyable, preventing ordinary callers with an arbitrary
+// OwnershipBatch from bypassing the registry/hash coordinator.
+class RegistryOwnershipAdmission final
+{
+public:
+    RegistryOwnershipAdmission() = delete;
+    ~RegistryOwnershipAdmission() noexcept = default;
+    RegistryOwnershipAdmission(const RegistryOwnershipAdmission &) = delete;
+    RegistryOwnershipAdmission &operator=(
+        const RegistryOwnershipAdmission &) = delete;
+    RegistryOwnershipAdmission(RegistryOwnershipAdmission &&) = delete;
+    RegistryOwnershipAdmission &operator=(
+        RegistryOwnershipAdmission &&) = delete;
+
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+    [[nodiscard]] static RegistryOwnershipAdmission ForTesting(
+        OwnershipBatch &batch) noexcept;
+#endif
+
+private:
+    friend class db::registry_ownership::RegistryOwnershipCoordinator;
+    friend DatabaseUserAddStatus TryAddDatabaseUser4Reference(
+        const RegistryOwnershipAdmission &, std::uint32_t) noexcept;
+    friend DatabaseUserAddBulkResult TryAddDatabaseUser4References(
+        const RegistryOwnershipAdmission &,
+        const std::uint32_t *,
+        std::uint32_t) noexcept;
+    friend DatabaseNameResult TryInternDatabaseUser4Name(
+        const RegistryOwnershipAdmission &,
+        const char *,
+        std::uint32_t,
+        int) noexcept;
+    friend DatabaseNameStatus TryReAddRetainedDatabaseName(
+        const RegistryOwnershipAdmission &, const char *) noexcept;
+    friend DatabaseUserAddBulkResult TryReAddRetainedDatabaseNames(
+        const RegistryOwnershipAdmission &,
+        const char *const *,
+        std::uint32_t) noexcept;
+    friend DatabaseSweepStatus TryTransferDatabaseUsers4To8(
+        const RegistryOwnershipAdmission &) noexcept;
+    friend DatabaseSweepStatus TryShutdownDatabaseUser8(
+        const RegistryOwnershipAdmission &) noexcept;
+
+    RegistryOwnershipAdmission(
+        std::uintptr_t coordinatorAddress,
+        std::uint64_t coordinatorSerial,
+        std::uintptr_t batchAddress,
+        std::uint64_t batchSerial) noexcept;
+    [[nodiscard]] OwnershipBatch *tryAuthenticateBatchLocked() const noexcept;
+
+    std::uintptr_t coordinatorAddress_ = 0;
+    std::uintptr_t coordinatorAddressMirror_ = 0;
+    std::uint64_t coordinatorSerial_ = 0;
+    std::uint64_t coordinatorSerialMirror_ = 0;
+    std::uintptr_t batchAddress_ = 0;
+    std::uintptr_t batchAddressMirror_ = 0;
+    std::uint64_t batchSerial_ = 0;
+    std::uint64_t batchSerialMirror_ = 0;
+};
+RUNTIME_SIZE(RegistryOwnershipAdmission, 0x30, 0x40);
+static_assert(std::is_standard_layout_v<RegistryOwnershipAdmission>);
+static_assert(!std::is_default_constructible_v<RegistryOwnershipAdmission>);
+static_assert(!std::is_copy_constructible_v<RegistryOwnershipAdmission>);
+
 // A same-thread ownership batch retains locks in the only permitted order:
 // CRITSECT_SCRIPT_STRING first, then CRITSECT_MEMORY_TREE. Admission and close
 // validate the complete string table and allocator. Operations between those
@@ -163,21 +261,30 @@ private:
     friend ReleaseStatus TryRemoveDatabaseUserReference(
         OwnershipBatch &batch,
         std::uint32_t stringId) noexcept;
+    friend class RegistryOwnershipAdmission;
     friend DatabaseUserAddStatus TryAddDatabaseUser4Reference(
-        OwnershipBatch &batch,
-        std::uint32_t stringId) noexcept;
+        const RegistryOwnershipAdmission &,
+        std::uint32_t) noexcept;
+    friend DatabaseUserAddBulkResult TryAddDatabaseUser4References(
+        const RegistryOwnershipAdmission &,
+        const std::uint32_t *,
+        std::uint32_t) noexcept;
     friend DatabaseNameResult TryInternDatabaseUser4Name(
-        OwnershipBatch &batch,
-        const char *bytes,
-        std::uint32_t byteCount,
-        int type) noexcept;
+        const RegistryOwnershipAdmission &,
+        const char *,
+        std::uint32_t,
+        int) noexcept;
     friend DatabaseNameStatus TryReAddRetainedDatabaseName(
-        OwnershipBatch &batch,
-        const char *retainedName) noexcept;
+        const RegistryOwnershipAdmission &,
+        const char *) noexcept;
+    friend DatabaseUserAddBulkResult TryReAddRetainedDatabaseNames(
+        const RegistryOwnershipAdmission &,
+        const char *const *,
+        std::uint32_t) noexcept;
     friend DatabaseSweepStatus TryTransferDatabaseUsers4To8(
-        OwnershipBatch &batch) noexcept;
+        const RegistryOwnershipAdmission &) noexcept;
     friend DatabaseSweepStatus TryShutdownDatabaseUser8(
-        OwnershipBatch &batch) noexcept;
+        const RegistryOwnershipAdmission &) noexcept;
 
     [[nodiscard]] static const MT_ValidationLeaseAdmission &
     MakeMemoryTreeLeaseAdmission() noexcept;
@@ -250,16 +357,25 @@ static_assert(!std::is_trivially_destructible_v<OwnershipBatch>);
     std::uint32_t stringId) noexcept;
 
 // Registry operations use only the fixed legacy database masks. Each function
-// requires one admitted OwnershipBatch and is callback-free/report-free. All
+// requires the private exact coordinator admission and is callback-free/
+// report-free. All
 // ordinary rejection statuses leave string, hash, debug, allocator, batch
 // operation count, and caller outputs unchanged. UnsafeFailure is terminal
 // fail-closed evidence rather than a recoverable rejection.
 [[nodiscard]] DatabaseUserAddStatus TryAddDatabaseUser4Reference(
-    OwnershipBatch &batch,
+    const RegistryOwnershipAdmission &admission,
     std::uint32_t stringId) noexcept;
 
+// Atomically preflights and adds user 4 to every unique ID in one bounded,
+// callback-free batch. Duplicate/already-owned IDs count as unchanged. Every
+// ordinary rejection leaves all IDs unchanged; UnsafeFailure is terminal.
+[[nodiscard]] DatabaseUserAddBulkResult TryAddDatabaseUser4References(
+    const RegistryOwnershipAdmission &admission,
+    const std::uint32_t *stringIds,
+    std::uint32_t count) noexcept;
+
 [[nodiscard]] DatabaseNameResult TryInternDatabaseUser4Name(
-    OwnershipBatch &batch,
+    const RegistryOwnershipAdmission &admission,
     const char *bytes,
     std::uint32_t byteCount,
     int type) noexcept;
@@ -268,18 +384,26 @@ static_assert(!std::is_trivially_destructible_v<OwnershipBatch>);
 // string. The operation recovers its bounded allocation extent without
 // strlen, then restores user 4 while user 8 keeps the address alive.
 [[nodiscard]] DatabaseNameStatus TryReAddRetainedDatabaseName(
-    OwnershipBatch &batch,
+    const RegistryOwnershipAdmission &admission,
     const char *retainedName) noexcept;
+
+// Bounded pointer-span counterpart used by the retained-default sweep. Every
+// pointer must be an exact canonical live user-8 payload. The whole unique set
+// is preflighted before user 4 is added to any member.
+[[nodiscard]] DatabaseUserAddBulkResult TryReAddRetainedDatabaseNames(
+    const RegistryOwnershipAdmission &admission,
+    const char *const *retainedNames,
+    std::uint32_t count) noexcept;
 
 // Exhaustive operations preflight the complete fixed-capacity table before
 // their first ownership mutation. The 4 -> 8 transfer never frees storage.
 // Shutdown snapshots at most STRINGLIST_SIZE-1 authenticated IDs in fixed BSS
 // and reserves all required lease mutation counts before removing user 8.
 [[nodiscard]] DatabaseSweepStatus TryTransferDatabaseUsers4To8(
-    OwnershipBatch &batch) noexcept;
+    const RegistryOwnershipAdmission &admission) noexcept;
 
 [[nodiscard]] DatabaseSweepStatus TryShutdownDatabaseUser8(
-    OwnershipBatch &batch) noexcept;
+    const RegistryOwnershipAdmission &admission) noexcept;
 
 #if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
 struct OwnershipValidationCounters final

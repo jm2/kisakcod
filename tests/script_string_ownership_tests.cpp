@@ -3602,6 +3602,18 @@ struct StateImage final
     return true;
 }
 
+[[nodiscard]] bool RegistryBulkScratchCleared() noexcept
+{
+    if (!RegistrySweepScratchCleared())
+        return false;
+    for (const std::uint8_t value : sl_registryOwnershipBulkVisited)
+    {
+        if (value != 0)
+            return false;
+    }
+    return true;
+}
+
 [[nodiscard]] bool TestRegistryOwnershipBatchOperations() noexcept
 {
     if (!BeginTest())
@@ -3639,10 +3651,12 @@ struct StateImage final
     {
         return false;
     }
+    const auto registryAdmission =
+        script_string::RegistryOwnershipAdmission::ForTesting(batch);
 
     const StateImage beforeRejectedAdd = CaptureState();
     const bool rejectedAdd = Check(
-            script_string::TryAddDatabaseUser4Reference(batch, 0)
+            script_string::TryAddDatabaseUser4Reference(registryAdmission, 0)
                 == script_string::DatabaseUserAddStatus::
                     OwnershipMismatchNoChange,
             "registry user4 add accepted an invalid ID")
@@ -3653,7 +3667,7 @@ struct StateImage final
     if (!rejectedAdd
         || !Check(
             script_string::TryAddDatabaseUser4Reference(
-                batch, ordinary.stringId)
+                registryAdmission, ordinary.stringId)
                 == script_string::DatabaseUserAddStatus::Added,
             "registry user4 add failed")
         || !CheckOwnership(
@@ -3670,7 +3684,7 @@ struct StateImage final
     const StateImage beforeDuplicateAdd = CaptureState();
     if (!Check(
             script_string::TryAddDatabaseUser4Reference(
-                batch, ordinary.stringId)
+                registryAdmission, ordinary.stringId)
                 == script_string::DatabaseUserAddStatus::
                     AlreadyOwnedNoChange,
             "registry duplicate user4 add was not idempotent")
@@ -3684,19 +3698,19 @@ struct StateImage final
 
     const StateImage beforeRejectedNames = CaptureState();
     const auto nullName = script_string::TryInternDatabaseUser4Name(
-        batch, nullptr, 1, 15);
+        registryAdmission, nullptr, 1, 15);
     const auto zeroName = script_string::TryInternDatabaseUser4Name(
-        batch, databaseName, 0, 15);
+        registryAdmission, databaseName, 0, 15);
     const auto unterminatedName =
         script_string::TryInternDatabaseUser4Name(
-            batch, unterminated, sizeof(unterminated), 15);
+            registryAdmission, unterminated, sizeof(unterminated), 15);
     const auto ambiguousName = script_string::TryInternDatabaseUser4Name(
-        batch,
+        registryAdmission,
         ambiguousLength.data(),
         static_cast<std::uint32_t>(ambiguousLength.size()),
         15);
     const auto invalidTypeName = script_string::TryInternDatabaseUser4Name(
-        batch, databaseName, sizeof(databaseName), 0);
+        registryAdmission, databaseName, sizeof(databaseName), 0);
     if (!Check(
             nullName.status
                     == script_string::DatabaseNameStatus::
@@ -3735,7 +3749,7 @@ struct StateImage final
 
     const script_string::DatabaseNameResult database =
         script_string::TryInternDatabaseUser4Name(
-            batch, databaseName, sizeof(databaseName), 15);
+            registryAdmission, databaseName, sizeof(databaseName), 15);
     if (!Check(
             database.status == script_string::DatabaseNameStatus::Success,
             "registry bounded-name intern failed")
@@ -3760,7 +3774,7 @@ struct StateImage final
     }
 
     if (!Check(
-            script_string::TryTransferDatabaseUsers4To8(batch)
+            script_string::TryTransferDatabaseUsers4To8(registryAdmission)
                 == script_string::DatabaseSweepStatus::Success,
             "registry 4-to-8 transfer failed")
         || !CheckOwnership(
@@ -3785,13 +3799,14 @@ struct StateImage final
 
     const StateImage beforeRejectedRetained = CaptureState();
     if (!Check(
-            script_string::TryReAddRetainedDatabaseName(batch, nullptr)
+            script_string::TryReAddRetainedDatabaseName(
+                registryAdmission, nullptr)
                 == script_string::DatabaseNameStatus::
                     InvalidArgumentNoChange,
             "registry retained-name re-add accepted null")
         || !Check(
             script_string::TryReAddRetainedDatabaseName(
-                batch, database.canonicalName + 1)
+                registryAdmission, database.canonicalName + 1)
                 == script_string::DatabaseNameStatus::
                     OwnershipMismatchNoChange,
             "registry retained-name re-add accepted a noncanonical pointer")
@@ -3803,16 +3818,40 @@ struct StateImage final
         return false;
     }
 
+    const std::array<const char *, 2> rejectedRetainedSpan{
+        ordinaryCanonical, database.canonicalName + 1};
+    const auto rejectedRetainedBulk =
+        script_string::TryReAddRetainedDatabaseNames(
+            registryAdmission,
+            rejectedRetainedSpan.data(),
+            static_cast<std::uint32_t>(rejectedRetainedSpan.size()));
     if (!Check(
-            script_string::TryReAddRetainedDatabaseName(
-                batch, ordinaryCanonical)
-                == script_string::DatabaseNameStatus::Success,
-            "registry ordinary retained-name re-add failed")
-        || !Check(
-            script_string::TryReAddRetainedDatabaseName(
-                batch, database.canonicalName)
-                == script_string::DatabaseNameStatus::Success,
-            "registry database retained-name re-add failed")
+            rejectedRetainedBulk.status
+                == script_string::DatabaseUserAddBulkStatus::
+                    OwnershipMismatchNoChange,
+            "registry retained bulk accepted a noncanonical member")
+        || !Check(StateMatches(beforeRejectedRetained),
+            "registry retained bulk changed an earlier valid member")
+        || !Check(RegistryBulkScratchCleared(),
+            "registry retained bulk rejection leaked scratch state"))
+    {
+        return false;
+    }
+
+    const std::array<const char *, 3> retainedSpan{
+        ordinaryCanonical, database.canonicalName, ordinaryCanonical};
+    const auto retainedBulk = script_string::TryReAddRetainedDatabaseNames(
+        registryAdmission,
+        retainedSpan.data(),
+        static_cast<std::uint32_t>(retainedSpan.size()));
+    if (!Check(
+            retainedBulk.status
+                == script_string::DatabaseUserAddBulkStatus::Success
+                && retainedBulk.addedCount == 2
+                && retainedBulk.unchangedCount == 1,
+            "registry retained bulk re-add failed")
+        || !Check(RegistryBulkScratchCleared(),
+            "registry retained bulk success leaked scratch state")
         || !CheckOwnership(
             ordinary.stringId,
             3,
@@ -3838,7 +3877,7 @@ struct StateImage final
     }
 
     if (!Check(
-            script_string::TryTransferDatabaseUsers4To8(batch)
+            script_string::TryTransferDatabaseUsers4To8(registryAdmission)
                 == script_string::DatabaseSweepStatus::Success,
             "registry duplicate 4-to-8 transfer failed")
         || !CheckOwnership(
@@ -3858,7 +3897,7 @@ struct StateImage final
             3,
             "registry duplicate name transfer ownership mismatch")
         || !Check(
-            script_string::TryShutdownDatabaseUser8(batch)
+            script_string::TryShutdownDatabaseUser8(registryAdmission)
                 == script_string::DatabaseSweepStatus::Success,
             "registry user8 shutdown failed")
         || !Check(RegistrySweepScratchCleared(),
@@ -3889,6 +3928,168 @@ struct StateImage final
         && EndTest();
 }
 
+[[nodiscard]] bool TestRegistryOwnershipBulkOperations() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr std::size_t kUniqueCount = 64;
+    constexpr std::size_t kSpanCount = kUniqueCount * 2;
+    std::array<std::array<char, 40>, kUniqueCount> names{};
+    std::array<std::uint32_t, kUniqueCount> ids{};
+    std::array<std::uint32_t, kSpanCount> span{};
+    for (std::size_t index = 0; index < kUniqueCount; ++index)
+    {
+        const int length = std::snprintf(
+            names[index].data(),
+            names[index].size(),
+            "registry-bulk-%03zu",
+            index);
+        if (!Check(length > 0
+                && static_cast<std::size_t>(length) + 1
+                    < names[index].size(),
+            "registry bulk name construction failed"))
+        {
+            return false;
+        }
+        const auto acquired = script_string::TryAcquireOrdinaryStringOfSize(
+            names[index].data(),
+            static_cast<std::uint32_t>(length + 1),
+            15);
+        if (!Check(acquired.status == script_string::AcquireStatus::Acquired,
+            "registry bulk setup acquisition failed"))
+        {
+            return false;
+        }
+        ids[index] = acquired.stringId;
+        span[index * 2] = acquired.stringId;
+        span[index * 2 + 1] = acquired.stringId;
+    }
+
+    MT_ResetCompleteValidationCountForTesting();
+    script_string::ResetOwnershipValidationCountersForTesting();
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry bulk batch admission failed"))
+    {
+        return false;
+    }
+    const auto admission =
+        script_string::RegistryOwnershipAdmission::ForTesting(batch);
+
+    const std::array<std::uint32_t, 3> rejectedSpan{
+        ids[0], 0, ids[1]};
+    const StateImage beforeRejected = CaptureState();
+    const auto rejected = script_string::TryAddDatabaseUser4References(
+        admission,
+        rejectedSpan.data(),
+        static_cast<std::uint32_t>(rejectedSpan.size()));
+    if (!Check(
+            rejected.status
+                == script_string::DatabaseUserAddBulkStatus::
+                    OwnershipMismatchNoChange,
+            "registry bulk accepted an invalid member")
+        || !Check(rejected.addedCount == 0 && rejected.unchangedCount == 0,
+            "registry bulk rejection published partial counts")
+        || !Check(StateMatches(beforeRejected),
+            "registry bulk rejection changed an earlier valid member")
+        || !Check(RegistryBulkScratchCleared(),
+            "registry bulk rejection retained scratch state"))
+    {
+        return false;
+    }
+
+    const auto added = script_string::TryAddDatabaseUser4References(
+        admission,
+        span.data(),
+        static_cast<std::uint32_t>(span.size()));
+    if (!Check(
+            added.status == script_string::DatabaseUserAddBulkStatus::Success,
+            "registry bulk add failed")
+        || !Check(added.addedCount == kUniqueCount
+                && added.unchangedCount == kUniqueCount,
+            "registry bulk duplicate accounting changed")
+        || !Check(batch.operationCount() == kUniqueCount,
+            "registry bulk operation accounting changed")
+        || !Check(RegistryBulkScratchCleared(),
+            "registry bulk success retained scratch state"))
+    {
+        return false;
+    }
+
+    const auto repeated = script_string::TryAddDatabaseUser4References(
+        admission,
+        span.data(),
+        static_cast<std::uint32_t>(span.size()));
+    const auto openCounters =
+        script_string::GetOwnershipValidationCountersForTesting();
+    if (!Check(
+            repeated.status
+                == script_string::DatabaseUserAddBulkStatus::NoChange,
+            "registry repeated bulk add was not idempotent")
+        || !Check(repeated.addedCount == 0
+                && repeated.unchangedCount == span.size(),
+            "registry repeated bulk accounting changed")
+        || !Check(batch.operationCount() == kUniqueCount,
+            "registry repeated bulk consumed mutation operations")
+        || !Check(openCounters.completeStringPasses == 1,
+            "registry N-ID bulk repeated complete string validation")
+        || !Check(MT_CompleteValidationCountForTesting() == 1,
+            "registry N-ID bulk repeated complete allocator validation")
+        || !Check(RegistryBulkScratchCleared(),
+            "registry repeated bulk retained scratch state"))
+    {
+        return false;
+    }
+
+    const auto oversized = script_string::TryAddDatabaseUser4References(
+        admission,
+        span.data(),
+        script_string::kRegistryOwnershipBulkCapacity + 1);
+    if (!Check(
+            oversized.status
+                == script_string::DatabaseUserAddBulkStatus::CapacityNoChange,
+            "registry bulk capacity bound was not enforced")
+        || !Check(RegistryBulkScratchCleared(),
+            "registry oversized bulk retained scratch state")
+        || !Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry bulk batch close failed"))
+    {
+        return false;
+    }
+
+    const auto closedCounters =
+        script_string::GetOwnershipValidationCountersForTesting();
+    if (!Check(closedCounters.completeStringPasses == 2,
+            "registry bulk boundaries did not perform exactly two passes")
+        || !Check(MT_CompleteValidationCountForTesting() == 2,
+            "registry bulk allocator boundaries did not perform two passes"))
+    {
+        return false;
+    }
+
+    for (const std::uint32_t stringId : ids)
+    {
+        if (!Check(
+                script_string::TryRemoveDatabaseUserReference(stringId)
+                    == script_string::ReleaseStatus::Success,
+                "registry bulk database cleanup failed")
+            || !Check(
+                script_string::TryRemoveOrdinaryReference(stringId)
+                    == script_string::ReleaseStatus::Success,
+                "registry bulk ordinary cleanup failed")
+            || !CheckFreed(stringId))
+        {
+            return false;
+        }
+    }
+    return EndTest();
+}
+
 [[nodiscard]] bool TestRegistryShutdownCapacityAtomicity() noexcept
 {
     if (!BeginTest())
@@ -3904,16 +4105,18 @@ struct StateImage final
     {
         return false;
     }
+    const auto registryAdmission =
+        script_string::RegistryOwnershipAdmission::ForTesting(batch);
     const auto first = script_string::TryInternDatabaseUser4Name(
-        batch, firstName, sizeof(firstName), 15);
+        registryAdmission, firstName, sizeof(firstName), 15);
     const auto second = script_string::TryInternDatabaseUser4Name(
-        batch, secondName, sizeof(secondName), 15);
+        registryAdmission, secondName, sizeof(secondName), 15);
     if (!Check(first.status == script_string::DatabaseNameStatus::Success
                 && second.status
                     == script_string::DatabaseNameStatus::Success,
             "registry capacity setup intern failed")
         || !Check(
-            script_string::TryTransferDatabaseUsers4To8(batch)
+            script_string::TryTransferDatabaseUsers4To8(registryAdmission)
                 == script_string::DatabaseSweepStatus::Success,
             "registry capacity setup transfer failed"))
     {
@@ -3924,7 +4127,7 @@ struct StateImage final
     const StateImage beforeCapacity = CaptureState();
     const std::uint32_t operationsBeforeCapacity = batch.operationCount();
     if (!Check(
-            script_string::TryShutdownDatabaseUser8(batch)
+            script_string::TryShutdownDatabaseUser8(registryAdmission)
                 == script_string::DatabaseSweepStatus::CapacityNoChange,
             "registry shutdown ignored lease mutation capacity")
         || !Check(StateMatches(beforeCapacity),
@@ -3940,7 +4143,7 @@ struct StateImage final
 
     batch.SetMemoryTreeMutationCountForTesting(2);
     if (!Check(
-            script_string::TryShutdownDatabaseUser8(batch)
+            script_string::TryShutdownDatabaseUser8(registryAdmission)
                 == script_string::DatabaseSweepStatus::Success,
             "registry shutdown did not recover after capacity rejection")
         || !Check(RegistrySweepScratchCleared(),
@@ -4111,6 +4314,7 @@ int main()
         || !TestLegacyReadersAuthenticateExactStrings()
         || !TestLegacyMutatorsAuthenticateExactStrings()
         || !TestRegistryOwnershipBatchOperations()
+        || !TestRegistryOwnershipBulkOperations()
         || !TestRegistryShutdownCapacityAtomicity()
         || !TestLegacyCharacterFoldingUsesUnsignedInput())
     {

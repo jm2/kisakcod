@@ -93,6 +93,11 @@ std::uint64_t sl_abandonedOwnershipBatchPoisonMirror = 0;
 // process-wide.  Keep shutdown's exhaustive ID snapshot in fixed BSS rather
 // than allocating or placing a 40 KiB array on an engine thread's stack.
 std::uint16_t sl_registryOwnershipSweepIds[STRINGLIST_SIZE]{};
+std::uint8_t sl_registryOwnershipBulkVisited[
+    script_string::kCurrentRuntimeStringLimit / 8]{};
+
+static_assert(
+	script_string::kRegistryOwnershipBulkCapacity == STRINGLIST_SIZE - 1);
 
 void SL_ScrubRegistryOwnershipSweepIdsNoReport(
 	const uint32_t count) noexcept
@@ -103,6 +108,40 @@ void SL_ScrubRegistryOwnershipSweepIdsNoReport(
 		: STRINGLIST_SIZE;
 	for (uint32_t index = 0; index < boundedCount; ++index)
 		ids[index] = 0;
+}
+
+[[nodiscard]] bool SL_TryMarkRegistryOwnershipBulkIdNoReport(
+	const uint32_t stringId) noexcept
+{
+	if (!script_string::IsCurrentRuntimeStringId(stringId))
+		return false;
+	const uint32_t byteIndex = stringId >> 3;
+	const uint8_t bit = static_cast<uint8_t>(1u << (stringId & 7u));
+	if ((sl_registryOwnershipBulkVisited[byteIndex] & bit) != 0)
+		return false;
+	sl_registryOwnershipBulkVisited[byteIndex] |= bit;
+	return true;
+}
+
+void SL_ScrubRegistryOwnershipBulkNoReport(const uint32_t count) noexcept
+{
+	const uint32_t boundedCount =
+		count <= script_string::kRegistryOwnershipBulkCapacity
+		? count
+		: script_string::kRegistryOwnershipBulkCapacity;
+	for (uint32_t index = 0; index < boundedCount; ++index)
+	{
+		const uint32_t stringId = sl_registryOwnershipSweepIds[index];
+		if (script_string::IsCurrentRuntimeStringId(stringId))
+		{
+			const uint32_t byteIndex = stringId >> 3;
+			const uint8_t bit =
+				static_cast<uint8_t>(1u << (stringId & 7u));
+			sl_registryOwnershipBulkVisited[byteIndex] &=
+				static_cast<uint8_t>(~bit);
+		}
+		sl_registryOwnershipSweepIds[index] = 0;
+	}
 }
 
 #if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
@@ -3501,6 +3540,308 @@ namespace
 		: DatabaseUserAddStatus::UnsafeFailure;
 }
 
+[[nodiscard]] DatabaseUserAddBulkResult
+TryAddDatabaseUser4ReferencesInternal(
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission,
+	const uint32_t* const stringIds,
+	const uint32_t count,
+	const uint32_t availableOperations) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(
+			validationLease, admission))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+	}
+	if (!stringIds || count == 0
+		|| count > kRegistryOwnershipBulkCapacity)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {
+			!stringIds || count == 0
+				? DatabaseUserAddBulkStatus::InvalidArgumentNoChange
+				: DatabaseUserAddBulkStatus::CapacityNoChange,
+			0,
+			0};
+	}
+	if (!scrStringGlob.inited)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {
+			DatabaseUserAddBulkStatus::OwnershipMismatchNoChange, 0, 0};
+	}
+
+	const uint8_t databaseUser = static_cast<uint8_t>(kDatabaseUserMask);
+	uint32_t uniqueCount = 0;
+	uint32_t addedCount = 0;
+	uint32_t unchangedCount = 0;
+	for (uint32_t index = 0; index < count; ++index)
+	{
+		const uint32_t stringId = stringIds[index];
+		if (!IsCurrentRuntimeStringId(stringId))
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				DatabaseUserAddBulkStatus::OwnershipMismatchNoChange, 0, 0};
+		}
+		if (!SL_TryMarkRegistryOwnershipBulkIdNoReport(stringId))
+		{
+			++unchangedCount;
+			continue;
+		}
+		sl_registryOwnershipSweepIds[uniqueCount++] =
+			static_cast<uint16_t>(stringId);
+
+		SL_LiveStringInfo info{};
+		const SL_ResolveStatus resolveStatus =
+			SL_TryResolveLiveStringNoReport(
+				stringId,
+				&info,
+				SL_ValidationScope::Leased,
+				validationLease,
+				admission);
+		if (resolveStatus != SL_ResolveStatus::Success)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				resolveStatus == SL_ResolveStatus::NotAllocatedNoChange
+					? DatabaseUserAddBulkStatus::OwnershipMismatchNoChange
+					: DatabaseUserAddBulkStatus::UnsafeFailure,
+				0,
+				0};
+		}
+		const uint8_t users = scr_string_atomic::User(info.packed);
+		if ((users & databaseUser) != 0)
+		{
+			++unchangedCount;
+			continue;
+		}
+		if (scr_string_atomic::RefCount(info.packed)
+				== scr_string_atomic::kMaxRefCount
+			|| !SL_CanDebugAddRefNoReport(stringId))
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				DatabaseUserAddBulkStatus::RefCountExhaustedNoChange, 0, 0};
+		}
+		++addedCount;
+	}
+
+	if (addedCount > availableOperations)
+	{
+		SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {DatabaseUserAddBulkStatus::CapacityNoChange, 0, 0};
+	}
+
+	for (uint32_t index = 0; index < uniqueCount; ++index)
+	{
+		const uint32_t stringId = sl_registryOwnershipSweepIds[index];
+		RefString* const refString = SL_GetRefStringNoReport(stringId);
+		if (!refString)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+		}
+		const uint32_t packed =
+			scr_string_atomic::Load(SL_RefStringWord(refString));
+		if ((scr_string_atomic::User(packed) & databaseUser) != 0)
+			continue;
+		const scr_string_atomic::AddUserRefResult result =
+			scr_string_atomic::AddUserRef(
+				SL_RefStringWord(refString), databaseUser);
+		if (result != scr_string_atomic::AddUserRefResult::Added)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+		}
+		SL_DebugAddRefNoReport(stringId);
+	}
+
+	SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return {
+		addedCount != 0
+			? DatabaseUserAddBulkStatus::Success
+			: DatabaseUserAddBulkStatus::NoChange,
+		addedCount,
+		unchangedCount};
+}
+
+[[nodiscard]] DatabaseUserAddBulkResult
+TryReAddRetainedDatabaseNamesInternal(
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission,
+	const char* const* const retainedNames,
+	const uint32_t count,
+	const uint32_t availableOperations) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(
+			validationLease, admission))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+	}
+	if (!retainedNames || count == 0
+		|| count > kRegistryOwnershipBulkCapacity)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {
+			!retainedNames || count == 0
+				? DatabaseUserAddBulkStatus::InvalidArgumentNoChange
+				: DatabaseUserAddBulkStatus::CapacityNoChange,
+			0,
+			0};
+	}
+	if (!scrStringGlob.inited)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {
+			DatabaseUserAddBulkStatus::OwnershipMismatchNoChange, 0, 0};
+	}
+
+	const uintptr_t memoryBegin =
+		reinterpret_cast<uintptr_t>(scrMemTreePub.mt_buffer);
+	constexpr uintptr_t payloadOffset = offsetof(RefString, str);
+	const uint8_t databaseUser = static_cast<uint8_t>(kDatabaseUserMask);
+	const uint8_t retainedUser =
+		static_cast<uint8_t>(kRetainedDatabaseUserMask);
+	uint32_t uniqueCount = 0;
+	uint32_t addedCount = 0;
+	uint32_t unchangedCount = 0;
+	for (uint32_t index = 0; index < count; ++index)
+	{
+		const char* const retainedName = retainedNames[index];
+		if (!retainedName || memoryBegin == 0
+			|| memoryBegin > (std::numeric_limits<uintptr_t>::max)() - MT_SIZE)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				!retainedName
+					? DatabaseUserAddBulkStatus::InvalidArgumentNoChange
+					: DatabaseUserAddBulkStatus::UnsafeFailure,
+				0,
+				0};
+		}
+		const uintptr_t nameAddress =
+			reinterpret_cast<uintptr_t>(retainedName);
+		const bool addressValid = nameAddress >= memoryBegin + payloadOffset
+			&& nameAddress < memoryBegin + MT_SIZE
+			&& (nameAddress - memoryBegin - payloadOffset) % MT_NODE_SIZE == 0;
+		const uint32_t stringId = addressValid
+			? static_cast<uint32_t>(
+				(nameAddress - memoryBegin - payloadOffset) / MT_NODE_SIZE)
+			: 0;
+		if (!addressValid || !IsCurrentRuntimeStringId(stringId))
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				DatabaseUserAddBulkStatus::OwnershipMismatchNoChange, 0, 0};
+		}
+		if (!SL_TryMarkRegistryOwnershipBulkIdNoReport(stringId))
+		{
+			++unchangedCount;
+			continue;
+		}
+		sl_registryOwnershipSweepIds[uniqueCount++] =
+			static_cast<uint16_t>(stringId);
+
+		RefString* retained = nullptr;
+		uint32_t byteCount = 0;
+		if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+				stringId,
+				&retained,
+				&byteCount,
+				SL_ValidationScope::Leased,
+				validationLease,
+				admission)
+			|| retained->str != retainedName)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				DatabaseUserAddBulkStatus::OwnershipMismatchNoChange, 0, 0};
+		}
+		(void)byteCount;
+		const uint32_t packed =
+			scr_string_atomic::Load(SL_RefStringWord(retained));
+		const uint8_t users = scr_string_atomic::User(packed);
+		if ((users & retainedUser) == 0)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				DatabaseUserAddBulkStatus::OwnershipMismatchNoChange, 0, 0};
+		}
+		if ((users & databaseUser) != 0)
+		{
+			++unchangedCount;
+			continue;
+		}
+		if (scr_string_atomic::RefCount(packed)
+				== scr_string_atomic::kMaxRefCount
+			|| !SL_CanDebugAddRefNoReport(stringId))
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				DatabaseUserAddBulkStatus::RefCountExhaustedNoChange, 0, 0};
+		}
+		++addedCount;
+	}
+
+	if (addedCount > availableOperations)
+	{
+		SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {DatabaseUserAddBulkStatus::CapacityNoChange, 0, 0};
+	}
+	for (uint32_t index = 0; index < uniqueCount; ++index)
+	{
+		const uint32_t stringId = sl_registryOwnershipSweepIds[index];
+		RefString* const refString = SL_GetRefStringNoReport(stringId);
+		if (!refString)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+		}
+		const uint32_t packed =
+			scr_string_atomic::Load(SL_RefStringWord(refString));
+		if ((scr_string_atomic::User(packed) & databaseUser) != 0)
+			continue;
+		const scr_string_atomic::AddUserRefResult result =
+			scr_string_atomic::AddUserRef(
+				SL_RefStringWord(refString), databaseUser);
+		if (result != scr_string_atomic::AddUserRefResult::Added)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+		}
+		SL_DebugAddRefNoReport(stringId);
+	}
+
+	SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return {
+		addedCount != 0
+			? DatabaseUserAddBulkStatus::Success
+			: DatabaseUserAddBulkStatus::NoChange,
+		addedCount,
+		unchangedCount};
+}
+
 [[nodiscard]] DatabaseNameResult TryInternDatabaseUser4NameInternal(
 	MT_ValidationLease* const validationLease,
 	const MT_ValidationLeaseAdmission* const admission,
@@ -3823,6 +4164,59 @@ namespace
 	return DatabaseSweepStatus::Success;
 }
 } // namespace
+
+RegistryOwnershipAdmission::RegistryOwnershipAdmission(
+	const std::uintptr_t coordinatorAddress,
+	const std::uint64_t coordinatorSerial,
+	const std::uintptr_t batchAddress,
+	const std::uint64_t batchSerial) noexcept
+	: coordinatorAddress_(coordinatorAddress),
+	  coordinatorAddressMirror_(coordinatorAddress),
+	  coordinatorSerial_(coordinatorSerial),
+	  coordinatorSerialMirror_(coordinatorSerial),
+	  batchAddress_(batchAddress),
+	  batchAddressMirror_(batchAddress),
+	  batchSerial_(batchSerial),
+	  batchSerialMirror_(batchSerial)
+{
+}
+
+OwnershipBatch*
+RegistryOwnershipAdmission::tryAuthenticateBatchLocked() const noexcept
+{
+	if (coordinatorAddress_ == 0
+		|| coordinatorAddress_ != coordinatorAddressMirror_
+		|| coordinatorSerial_ == 0
+		|| coordinatorSerial_ != coordinatorSerialMirror_
+		|| batchAddress_ == 0 || batchAddress_ != batchAddressMirror_
+		|| batchSerial_ == 0 || batchSerial_ != batchSerialMirror_
+		|| !SL_IsOwnershipBatchRegistryConsistentLocked()
+		|| sl_activeOwnershipBatchAddress != batchAddress_
+		|| sl_activeOwnershipBatchAddressMirror != batchAddress_
+		|| sl_activeOwnershipBatchSerial != batchSerial_
+		|| sl_activeOwnershipBatchSerialMirror != batchSerial_)
+	{
+		return nullptr;
+	}
+
+	// Convert the numeric identity only after both global copies and every
+	// capability mirror agree. This avoids dereferencing a stale/corrupt batch
+	// pointer merely to discover that it was not the active owner.
+	auto* const batch = reinterpret_cast<OwnershipBatch*>(batchAddress_);
+	return batch->tryAuthenticateOperationLocked() ? batch : nullptr;
+}
+
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+RegistryOwnershipAdmission RegistryOwnershipAdmission::ForTesting(
+	OwnershipBatch& batch) noexcept
+{
+	return RegistryOwnershipAdmission{
+		static_cast<std::uintptr_t>(1),
+		UINT64_C(1),
+		reinterpret_cast<std::uintptr_t>(&batch),
+		batch.serial()};
+}
+#endif
 
 const MT_ValidationLeaseAdmission &
 OwnershipBatch::MakeMemoryTreeLeaseAdmission() noexcept
@@ -4516,12 +4910,20 @@ ReleaseStatus TryRemoveDatabaseUserReference(
 }
 
 DatabaseUserAddStatus TryAddDatabaseUser4Reference(
-	OwnershipBatch &batch,
+	const RegistryOwnershipAdmission& registryAdmission,
 	const uint32_t stringId) noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	if (!batch.tryAuthenticateOperationLocked())
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
 	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return DatabaseUserAddStatus::UnsafeFailure;
 	}
@@ -4529,46 +4931,98 @@ DatabaseUserAddStatus TryAddDatabaseUser4Reference(
 		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
 	const DatabaseUserAddStatus status =
 		TryAddDatabaseUser4ReferenceInternal(
-			&batch.memoryTreeLease_, &admission, stringId);
+			&batch->memoryTreeLease_, &admission, stringId);
 	if (status == DatabaseUserAddStatus::Added)
-		++batch.operationCount_;
+		++batch->operationCount_;
 	else if (status == DatabaseUserAddStatus::UnsafeFailure)
-		batch.poisoned_ = true;
+		batch->poisoned_ = true;
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return status;
 }
 
+DatabaseUserAddBulkResult TryAddDatabaseUser4References(
+	const RegistryOwnershipAdmission& registryAdmission,
+	const uint32_t* const stringIds,
+	const uint32_t count) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
+	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+	}
+	const MT_ValidationLeaseAdmission& admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
+	const DatabaseUserAddBulkResult result =
+		TryAddDatabaseUser4ReferencesInternal(
+			&batch->memoryTreeLease_,
+			&admission,
+			stringIds,
+			count,
+			UINT32_MAX - batch->operationCount_);
+	if (result.status == DatabaseUserAddBulkStatus::Success)
+		batch->operationCount_ += result.addedCount;
+	else if (result.status == DatabaseUserAddBulkStatus::UnsafeFailure)
+		batch->poisoned_ = true;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return result;
+}
+
 DatabaseNameResult TryInternDatabaseUser4Name(
-	OwnershipBatch &batch,
+	const RegistryOwnershipAdmission& registryAdmission,
 	const char* const bytes,
 	const uint32_t byteCount,
 	const int type) noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	if (!batch.tryAuthenticateOperationLocked())
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
 	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return {DatabaseNameStatus::UnsafeFailure, 0, nullptr};
 	}
 	const MT_ValidationLeaseAdmission &admission =
 		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
 	const DatabaseNameResult result = TryInternDatabaseUser4NameInternal(
-		&batch.memoryTreeLease_, &admission, bytes, byteCount, type);
+		&batch->memoryTreeLease_, &admission, bytes, byteCount, type);
 	if (result.status == DatabaseNameStatus::Success)
-		++batch.operationCount_;
+		++batch->operationCount_;
 	else if (result.status == DatabaseNameStatus::UnsafeFailure)
-		batch.poisoned_ = true;
+		batch->poisoned_ = true;
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return result;
 }
 
 DatabaseNameStatus TryReAddRetainedDatabaseName(
-	OwnershipBatch &batch,
+	const RegistryOwnershipAdmission& registryAdmission,
 	const char* const retainedName) noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	if (!batch.tryAuthenticateOperationLocked())
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
 	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return DatabaseNameStatus::UnsafeFailure;
 	}
@@ -4576,21 +5030,65 @@ DatabaseNameStatus TryReAddRetainedDatabaseName(
 		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
 	const DatabaseNameStatus status =
 		TryReAddRetainedDatabaseNameInternal(
-			&batch.memoryTreeLease_, &admission, retainedName);
+			&batch->memoryTreeLease_, &admission, retainedName);
 	if (status == DatabaseNameStatus::Success)
-		++batch.operationCount_;
+		++batch->operationCount_;
 	else if (status == DatabaseNameStatus::UnsafeFailure)
-		batch.poisoned_ = true;
+		batch->poisoned_ = true;
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return status;
 }
 
-DatabaseSweepStatus TryTransferDatabaseUsers4To8(
-	OwnershipBatch &batch) noexcept
+DatabaseUserAddBulkResult TryReAddRetainedDatabaseNames(
+	const RegistryOwnershipAdmission& registryAdmission,
+	const char* const* const retainedNames,
+	const uint32_t count) noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	if (!batch.tryAuthenticateOperationLocked())
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
 	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+	}
+	const MT_ValidationLeaseAdmission& admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
+	const DatabaseUserAddBulkResult result =
+		TryReAddRetainedDatabaseNamesInternal(
+			&batch->memoryTreeLease_,
+			&admission,
+			retainedNames,
+			count,
+			UINT32_MAX - batch->operationCount_);
+	if (result.status == DatabaseUserAddBulkStatus::Success)
+		batch->operationCount_ += result.addedCount;
+	else if (result.status == DatabaseUserAddBulkStatus::UnsafeFailure)
+		batch->poisoned_ = true;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return result;
+}
+
+DatabaseSweepStatus TryTransferDatabaseUsers4To8(
+	const RegistryOwnershipAdmission& registryAdmission) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
+	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return DatabaseSweepStatus::UnsafeFailure;
 	}
@@ -4598,32 +5096,40 @@ DatabaseSweepStatus TryTransferDatabaseUsers4To8(
 		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
 	const DatabaseSweepStatus status =
 		TryTransferDatabaseUsers4To8Internal(
-			&batch.memoryTreeLease_, &admission);
+			&batch->memoryTreeLease_, &admission);
 	if (status == DatabaseSweepStatus::Success)
-		++batch.operationCount_;
+		++batch->operationCount_;
 	else if (status == DatabaseSweepStatus::UnsafeFailure)
-		batch.poisoned_ = true;
+		batch->poisoned_ = true;
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return status;
 }
 
 DatabaseSweepStatus TryShutdownDatabaseUser8(
-	OwnershipBatch &batch) noexcept
+	const RegistryOwnershipAdmission& registryAdmission) noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-	if (!batch.tryAuthenticateOperationLocked())
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
 	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return DatabaseSweepStatus::UnsafeFailure;
 	}
 	const MT_ValidationLeaseAdmission &admission =
 		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
 	const DatabaseSweepStatus status = TryShutdownDatabaseUser8Internal(
-		&batch.memoryTreeLease_, &admission);
+		&batch->memoryTreeLease_, &admission);
 	if (status == DatabaseSweepStatus::Success)
-		++batch.operationCount_;
+		++batch->operationCount_;
 	else if (status == DatabaseSweepStatus::UnsafeFailure)
-		batch.poisoned_ = true;
+		batch->poisoned_ = true;
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return status;
 }
