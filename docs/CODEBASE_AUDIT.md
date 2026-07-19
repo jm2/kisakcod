@@ -162,23 +162,25 @@ and full CTest **145/145**, focused source/security/macro-off **6/6** plus an in
 warning-clean GCC/Clang runtime, Clang ASan+UBSan with `detect_leaks=0` under ptrace, and genuine i386 and AArch64
 compile/link. No legacy production site is enrolled. Final exact head
 `a73916a8467eb5d4a6cad7d33b5d3ecf1f684c37` and exact merged master passed all nine jobs in runs **29701509815** and
-**29702009703**, and exact-head Codex/Gemini/thread review was clean. Rounded merged porting progress is approximately
-**77%**; strict requested-target delivery remains **0/5**.
+**29702009703**, and exact-head Codex/Gemini/thread review was clean.
 
-Pinned upstream `2164cd1a` is still **18 commits ahead by ancestry**, with every commit now classified in
-`docs/UPSTREAM_2164CD1A_LEDGER.md`. The U1 candidate selectively adapts the safe `r_dpvs` brush-definition, aim-assist,
-native-width HUD, signed-angle, and command-tail corrections as `faf3917d`, `a401775a`, `fc265d13`, and `35960465`.
-Exact U1 validation is full GCC **152/152** and focused **7/7**; individual batches pass strict GCC/Clang and genuine
-i386/AArch64 compilation, HUD passes ASan+UBSan, and an independent adversarial audit found no actionable defect.
-`b40fd7bb` combines the independently validated U2 Miles dry-level cleanup, after which full GCC Debug passes
-**153/153** and the combined focus passes **8/8**. U2 separately passes **146/146**, its ten-mutation contract, strict i386 GCC MP/SP and Clang MP compile-link,
-and a clean symbol/dependency audit. PR #65 review hardening `db3ced51` preserves staged angle arithmetic with explicit
-conversions, uses `std::floor(float)`, and rejects null command query/node names before comparison. Full GCC remains
-**153/153**; focused **3/3** and strict GCC/Clang plus genuine i386/AArch64 compile-link pass for the touched contracts.
-Replacement hosted CI/review remain pending. Unsafe raw SP/save/screenshot, dynent, matrix, and gameplay hunks remain explicitly
-deferred/rejected; icon changes remain provenance/optional-packaging work. Only after the U1/U2 content PR merges may
-the exact pinned head receive a separate, tree-preserving `-s ours` ancestry checkpoint with merge-commit semantics—never
-a squash or rebase. The
+PR #65 merged the curated U1/U2 brush-definition, aim-assist, native-width HUD, signed-angle, command-tail, and Miles
+dry-level reconciliation as `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`. Final reviewed head
+`3a9f0f01da82f0abbff59afb02093bddffd447d1` and authoritative master passed all nine jobs in runs **29703827041** and
+**29704069129**. Exact-head Codex review was clean; all six Gemini threads were resolved, including five fixed or
+duplicate findings and one non-corrective `nullptr` style suggestion. Local evidence remains full GCC Debug
+**153/153**, focused **8/8**, strict GCC/Clang, genuine i386/AArch64 compile-link, U1 focused **7/7** plus a clean
+independent audit, and U2 **146/146** plus its ten-mutation and dependency/symbol contracts. Rounded merged porting
+progress is approximately **78%**; strict requested-target delivery remains **0/5**.
+
+Every commit in pinned range `312a9d2e..2164cd1a` remains classified in
+`docs/UPSTREAM_2164CD1A_LEDGER.md`. At merged master, `2164cd1a` is still **18 commits ahead by ancestry**. Dedicated
+tree-neutral checkpoint `12309db16d6514ac0df23293cd6074d7bbd15142` has exact parents
+`d79069a41e0289f4ed53d174a89d8ee72f40b4a3` and `2164cd1accf6607a05203547e50858211dcef094`;
+its tree `f8a78964c7c89c3c3000f598cb4272782c40d70b` exactly matches its first parent's tree, and its content diff is empty.
+It must be merged in a separate PR with merge-commit semantics, never squash or rebase. Unsafe raw SP/save/screenshot,
+dynent, matrix, and gameplay hunks remain explicitly deferred/rejected; icon changes remain provenance and optional
+packaging work. The
 subsequent production sequence is passive durable-receipt composition, checked PMem/global/narrow prerequisites,
 exact-key adapters, and finally one atomic seven-site cutover.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
