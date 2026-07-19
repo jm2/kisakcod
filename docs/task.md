@@ -1750,7 +1750,8 @@ work item changes. Do not create session-specific handoff files.
    exact `d79069a41e0289f4ed53d174a89d8ee72f40b4a3` and
    `2164cd1accf6607a05203547e50858211dcef094`, and its tree must remain identical to the first-parent tree
    `f8a78964c7c89c3c3000f598cb4272782c40d70b`. Merge with GitHub merge-commit semantics only; never squash or rebase.
-   After merge, verify both the graph and that no deferred upstream content entered the resulting tree. Audit newer
+   After merge, verify both the correctness of the graph and the absence of deferred upstream content in the resulting
+   tree. Audit newer
    upstream commits separately if the remote advances.
 2. Compose the already reviewed durable allocation, stream-generation, pending-copy, and native-storage receipts
    passively into the existing 33-entry runtime table, with the process-wide stream binding and pending ledger owned once

@@ -76,7 +76,7 @@ Node 20 deprecation annotations.
 
 ## Ancestry-checkpoint protocol
 
-The content PR is merged and `upstream/master` was fetched again. The dedicated
+The content PR has been merged and `upstream/master` has been fetched again. The dedicated
 checkpoint candidate completed the tree-neutral construction steps:
 
 1. The pinned object and current GitHub `upstream/master` were confirmed as
