@@ -19,7 +19,8 @@ documented for completeness but are off the current critical path.
 
 Completed foundation work:
 
-- the audited upstream/gameplay reconciliation, PR #48's report-free script-string ownership foundation, PR #49's
+- the earlier audited upstream/gameplay reconciliation checkpoints, PR #48's report-free script-string ownership
+  foundation, PR #49's
   constructed lifecycle controller, PR #50's failure-atomic script-string initialization hardening, and PR #51's
   generation-keyed runtime table plus PR #52's test-fixture repair, PR #53's authenticated memory-tree validation
   lease, PR #54's exact terminal adapters, PR #55's pointer-free script-string OwnershipBatch, PR #56's physics-sidecar
@@ -532,16 +533,18 @@ Completed foundation work:
   both threads were answered without code churn and resolved. PR #63 squash-merged as
   `f79b0bf422bb926dd302a888bdc258e7e8409aa2`; authoritative run **29696199493** passed all nine jobs at that exact
   master commit;
-- fresh pinned `upstream/master` `2164cd1a` is still **18 commits ahead by ancestry**. PR #63 reconciled a reviewed
-  typed-sort/row-zero subset, not every remaining hunk or the ancestry itself. Before an ancestry checkpoint, ledger and
-  port the safe U1 `r_dpvs` stale/wrong brush-definition identity/access, aim-bound, native-width HUD sort/capacity,
-  signed-`AngleSubtract`, and server-command-tail dispatch fixlets. Validate the isolated U2 Miles dry-reverb correction
-  from `b19e686a` separately and port it or explicitly defer it. Keep dynent save/load `ba3c79f3` and unsafe raw
-  SP/save/screenshot, gameplay, and matrix hunks explicitly deferred/rejected until independently justified; classify
-  icon changes separately as provenance/optional-packaging work. Only after every upstream commit has a disposition,
-  merge exact pinned `2164cd1a` with a tree-preserving `-s ours`
-  ancestry checkpoint using merge-commit semantics only—never squash—so the graph is reconciled without importing the
-  deferred tree;
+- pinned `upstream/master` `2164cd1a` is still **18 commits ahead by ancestry**, and every commit now has an exact
+  disposition in `docs/UPSTREAM_2164CD1A_LEDGER.md`. The U1 candidate selectively adapts the safe `r_dpvs`
+  brush-definition, aim-assist, native-width HUD, signed-angle, and command-tail corrections as `faf3917d`, `a401775a`,
+  `fc265d13`, and `35960465`. Exact U1 evidence is full GCC **152/152** and focused **7/7**; individual batches pass
+  strict GCC/Clang and genuine i386/AArch64 compilation, HUD passes ASan+UBSan, and an independent adversarial audit is
+  clean. `b40fd7bb` combines the separately validated U2 Miles dry-level cleanup, after which full GCC Debug passes
+  **153/153** and the combined focus passes **8/8**. U2 separately passes **146/146**, its ten-mutation contract, strict i386 GCC MP/SP and Clang MP
+  compile-link, and a symbol/dependency audit. Dynent save/load `ba3c79f3` and unsafe raw SP/save/screenshot, gameplay,
+  and matrix hunks remain explicitly
+  deferred/rejected; icon changes remain provenance/optional-packaging work. After the U1/U2 content PR merges, merge
+  exact pinned `2164cd1a` in a separate PR with a tree-preserving `-s ours` ancestry checkpoint using merge-commit
+  semantics only—never squash or rebase—so the graph is reconciled without importing the deferred tree;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -627,8 +630,9 @@ Remaining gates, in implementation order:
    passed all nine jobs in run **29694906394**, exact-head Codex and Gemini were clean with zero threads, and authoritative
    post-merge run **29695353022** also passed all nine jobs. PR #63 then merged the selectively reconciled upstream
    typed-sort fixes as `f79b0bf422bb926dd302a888bdc258e7e8409aa2`; exact-head and authoritative runs **29695891172**
-   and **29696199493** passed all nine jobs. The complete local borrowed/standalone registry coordinator candidate through
-   `774487d1` remains production-neutral. `9f327514` seals its production boundary; `74b56b65` adds portable nonblocking
+   and **29696199493** passed all nine jobs. PR #64 then merged the complete borrowed/standalone registry coordinator
+   through `774487d1` as `7f030c03269235b3ad703c13404e0975f798bd18`; it remains production-neutral. `9f327514`
+   seals its production boundary; `74b56b65` adds portable nonblocking
    hash admission and fixes the real i386 size-test plus pre-held-reader deadlock; `90e8fba7` completes portable test
    wiring; `2a836a0e` maintains authenticated ID-to-entry and entry-to-owner/predecessor inverse certificates across
    intern/unlink, enabling O(1) target resolution and one linear shutdown/head-promotion walk; and `56c97f09` links the
@@ -641,8 +645,10 @@ Remaining gates, in implementation order:
    CTest **145/145**; focused
    source/security/macro-off passes **6/6** and the independent audit selection passes **7/7**. Warning-clean GCC/Clang
    runtime, Clang ASan+UBSan with `detect_leaks=0` under ptrace, and genuine i386 plus AArch64 compile/link evidence also
-   pass. None of the seven raw production sites is enrolled. After publication, first finish the U1/U2 disposition and
-   approved fixlet adaptations, then merge the pinned tree-preserving upstream ancestry checkpoint. Only afterward
+   pass. Final exact PR head `a73916a8467eb5d4a6cad7d33b5d3ecf1f684c37` and merged master passed all nine jobs in
+   runs **29701509815** and **29702009703**, with clean exact-head Codex/Gemini/thread review. None of the seven raw
+   production sites is enrolled. Finish the U1/U2 content PR, then merge the pinned tree-preserving upstream ancestry
+   checkpoint. Only afterward
    compose durable receipts passively in the table, finish checked PMem/global/narrow prerequisites, add exact-key
    adapters, and atomically bind the loader across all seven sites. Keep static controller slots and callback metadata
    outside PMem with
@@ -1623,10 +1629,10 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **76% by merged engineering effort**. PR #62 merged the production-neutral
-pending-copy ledger and PR #63 merged the curated upstream typed-sort checkpoint; the complete local registry
-coordinator candidate through `774487d1` is not counted until it merges, when the rounded estimate becomes approximately
-**77%**. Windows x86 is about
+Overall porting progress is approximately **77% by merged engineering effort**. PR #62 merged the production-neutral
+pending-copy ledger, PR #63 merged the curated upstream typed-sort checkpoint, and PR #64 merged the production-neutral
+registry coordinator. The combined U1/U2 upstream content candidate is not counted until merge; it and the exact
+tree-preserving ancestry checkpoint should move the rounded estimate to approximately **78%**. Windows x86 is about
 **93%**, shared
 foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
@@ -1949,8 +1955,9 @@ source/security/diff gates. It has no production caller. Final exact head `6a796
 `888d12e6beedd587602f18cf6763ae04cc067470`. Authoritative post-merge run **29695353022** passed all nine jobs at that
 exact master commit. PR #63 merged the audited upstream typed-sort selection as
 `f79b0bf422bb926dd302a888bdc258e7e8409aa2`; exact reviewed-head and authoritative runs **29695891172** and
-**29696199493** passed all nine jobs. The complete local coordinator candidate through `774487d1` borrows exact active
-transaction authority or owns a standalone transaction and remains production-neutral. `9f327514` seals the boundary;
+**29696199493** passed all nine jobs. PR #64 merged the complete coordinator through `774487d1` as
+`7f030c03269235b3ad703c13404e0975f798bd18`; it borrows exact active transaction authority or owns a standalone
+transaction and remains production-neutral. `9f327514` seals the boundary;
 `74b56b65` supplies nonblocking admission and fixes pre-held-reader/i386 defects; `90e8fba7` completes portable wiring;
 `2a836a0e` maintains ID/entry/owner/predecessor certificates for O(1) member resolution and linear shutdown;
 `56c97f09` links the real coordinator/transaction/`FastCriticalSection`/ownership/lease stack into its integration test;
@@ -1961,7 +1968,9 @@ failure-atomically. Exact implementation head `774487d1` passes GCC Debug **145/
 ASan+UBSan, and genuine i386/AArch64 compile-link gates. The design retains the database hash scope once, keeps
 low-level mutation behind a private exact admission capability, authenticates pointer-free boundary mirrors before
 dereference, poisons rather than clears on fallible close/abandonment, and applies pre-collected IDs without quadratic
-collision-chain work. No production site is enrolled. After the upstream U1/U2 ledger/adaptations and pinned
+collision-chain work. Final exact PR head `a73916a8467eb5d4a6cad7d33b5d3ecf1f684c37` and merged master passed all nine
+jobs in runs **29701509815** and **29702009703**, and exact-head Codex/Gemini/thread review was clean. No production site
+is enrolled. After the upstream U1/U2 ledger/adaptations and pinned
 tree-preserving ancestry checkpoint, compose durable receipts passively, finish PMem/global/narrow prerequisites, and
 add exact-key adapters; only then enroll all seven sites atomically: five coordinator operations plus two exact-key
 root-journal stages. Root-string staging
