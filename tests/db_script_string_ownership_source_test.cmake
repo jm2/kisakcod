@@ -450,7 +450,7 @@ extract_slice(
 extract_slice(
     _string_source
     "ReleaseStatus TryRemoveDatabaseUserReferenceInternal("
-    "const MT_ValidationLeaseAdmission & OwnershipBatch::MakeMemoryTreeLeaseAdmission()"
+    "DatabaseUserAddStatus TryAddDatabaseUser4ReferenceInternal("
     _release_database
     "database-user rollback")
 extract_slice(
@@ -641,8 +641,8 @@ require_contains(
 require_literal_count(
     _intern_impl
     "SL_TryGetAllocatedStringByteCountForScopeNoReport("
-    2
-    "allocator-backed intern candidate lengths")
+    3
+    "allocator-backed intern candidate and displaced-entry lengths")
 require_literal_count(
     _intern_impl
     "candidateByteCount == len"
@@ -1388,12 +1388,44 @@ require_not_contains(
 require_literal_count(
     _string_source
     "OwnershipBatch::MakeMemoryTreeLeaseAdmission()"
+    14
+    "one private capability definition, six general batch uses, and seven admitted registry uses")
+require_literal_count(
+    _string_source
+    "const MT_ValidationLeaseAdmission & OwnershipBatch::MakeMemoryTreeLeaseAdmission() noexcept {"
+    1
+    "one private memory-tree lease admission definition")
+extract_slice(
+    _string_source
+    "OwnershipBatchStatus TryBeginOwnershipBatch("
+    "DatabaseUserAddStatus TryAddDatabaseUser4Reference("
+    _general_batch_operations
+    "general ownership-batch operation implementations")
+require_literal_count(
+    _general_batch_operations
+    "OwnershipBatch::MakeMemoryTreeLeaseAdmission()"
+    6
+    "begin, finish, and four general batch operations use the private admission")
+extract_slice(
+    _string_source
+    "DatabaseUserAddStatus TryAddDatabaseUser4Reference("
+    "} // namespace script_string"
+    _admitted_registry_operations
+    "admitted registry operation implementations")
+require_literal_count(
+    _admitted_registry_operations
+    "OwnershipBatch::MakeMemoryTreeLeaseAdmission()"
     7
-    "one private capability definition plus six exact batch entry uses")
+    "all seven admitted registry operations use the private admission")
+require_literal_count(
+    _admitted_registry_operations
+    "registryAdmission.tryAuthenticateBatchLocked()"
+    7
+    "all seven registry-only entry points authenticate the private admission")
 foreach(_marker IN ITEMS
     "CRITSECT_SCRIPT_STRING first, then CRITSECT_MEMORY_TREE"
     "one bounded, callback-free ownership loop"
-    "using only the four batch overloads below. No legacy string API, reporter,"
+    "using only the fixed batch operations below. No legacy string API, reporter,"
     "callback, or unrelated memory-tree work may run while a batch is active."
     "Storage-lifetime and thread-affinity contract"
     "an exactly authenticated destructor releases only the acquisitions proven to")
@@ -1711,6 +1743,92 @@ foreach(_marker IN ITEMS
     require_contains(
         _string_source "${_marker}" "leased bounded string validation")
 endforeach()
+
+extract_slice(
+    _string_source
+    "[[nodiscard]] bool SL_IsTypedOwnershipAccessAuthorizedLocked("
+    "[[nodiscard]] AcquireResult TryAcquireOrdinaryStringOfSizeInternal("
+    _typed_ownership_authorization
+    "typed ownership authorization")
+require_ordered(
+    _typed_ownership_authorization
+    "SL_HasOwnershipBatchRegistryActivityLocked()"
+    "scrStringDebugGlob == &scrStringDebugGlobBuf"
+    "active typed operations require the canonical debug publication")
+require_ordered(
+    _typed_ownership_authorization
+    "scrStringDebugGlob == &scrStringDebugGlobBuf"
+    "SL_IsAuthorizedOwnershipLeaseLocked(validationLease)"
+    "debug publication is authenticated before leased access")
+
+extract_slice(
+    _string_source
+    "bool SL_TryValidateRegistryTopologyCertificateNoReport("
+    "bool SL_IsLeasedFreeListLocallyValidNoReport() noexcept"
+    _registry_topology_preflight
+    "registry topology preflight")
+foreach(_marker IN ITEMS
+    "scrStringDebugGlob != &scrStringDebugGlobBuf"
+    "SL_TryRecordHashEntryNoReport(entryIndex)"
+    "sl_systemSweepOwningHashByEntry[entryIndex] != owningHash"
+    "sl_systemSweepPreviousEntry[entryIndex] != previousIndex"
+    "for (uint32_t entryIndex = 1; entryIndex < STRINGLIST_SIZE && valid; ++entryIndex)"
+    "for (uint32_t stringId = 0; stringId < SL_MAX_STRING_INDEX && valid; ++stringId)"
+    "sl_systemSweepEntryByStringId[stringId]"
+    "Sys_AtomicLoad(&scrStringDebugGlob->totalRefCount) != static_cast<uint32_t>(aggregateRefCount)")
+    require_contains(
+        _registry_topology_preflight "${_marker}"
+        "exact registry topology/certificate preflight")
+endforeach()
+require_literal_count(
+    _registry_topology_preflight
+    "SL_ResetHashChainValidationNoReport();"
+    2
+    "registry topology scratch reset funnel")
+
+extract_slice(
+    _string_source
+    "TryAddDatabaseUser4ReferencesInternal("
+    "TryReAddRetainedDatabaseNamesInternal("
+    _registry_id_bulk
+    "registry ID bulk operation")
+extract_slice(
+    _string_source
+    "TryReAddRetainedDatabaseNamesInternal("
+    "TryInternDatabaseUser4NameInternal("
+    _registry_retained_bulk
+    "registry retained-name bulk operation")
+foreach(_var IN ITEMS _registry_id_bulk _registry_retained_bulk)
+    require_ordered(
+        ${_var}
+        "SL_TryValidateRegistryTopologyCertificateNoReport("
+        "for (uint32_t index = 0; index < count; ++index)"
+        "bulk topology preflight precedes caller input traversal")
+    require_literal_count(
+        ${_var}
+        "SL_TryResolveLeasedCertificateMemberNoReport("
+        2
+        "bulk targets are reauthenticated before mutation")
+    require_ordered(
+        ${_var}
+        "const bool aggregateRefCountOverflow ="
+        "for (uint32_t index = 0; index < uniqueCount; ++index)"
+        "aggregate and operation capacity are proven before mutation")
+endforeach()
+require_ordered(
+    _registry_retained_bulk
+    "const bool addressValid = nameAddress >= memoryBegin + payloadOffset"
+    "SL_TryResolveLeasedCertificateMemberNoReport("
+    "retained pointer range proof precedes exact leased resolution")
+require_literal_count(
+    _registry_retained_bulk
+    "(users & retainedUser) == 0"
+    2
+    "retained ownership is reauthenticated before mutation")
+require_not_contains(
+    _registry_retained_bulk
+    "SL_GetRefStringNoReport(stringId)"
+    "raw retained second-pass resolution")
 
 foreach(_var IN ITEMS _acquire _transfer _release_ordinary _release_database)
     require_contains(
@@ -2241,7 +2359,11 @@ extract_slice(
     "script-string ownership runtime target")
 foreach(_marker IN ITEMS
     "script_string_ownership_tests.cpp"
+    "\${SRC_DIR}/database/db_registry_ownership_coordinator.cpp"
+    "\${SRC_DIR}/database/db_script_string_transaction.cpp"
+    "\${SRC_DIR}/qcommon/sys_sync.cpp"
     "\${SRC_DIR}/script/scr_memorytree.cpp"
+    "KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1"
     "KISAK_MEMORY_TREE_VALIDATION_TESTING=1"
     "KISAK_SCRIPT_STRING_PERF_TESTING=1"
     "NAME script-string-report-free-ownership-contracts")
@@ -2332,6 +2454,19 @@ foreach(_marker IN ITEMS
     "TestOwnershipBatchUnrelatedDestruction()"
     "TestLegacyReadersAuthenticateExactStrings()"
     "TestLegacyMutatorsAuthenticateExactStrings()"
+    "TestRegistryTypedOperationsRejectCorruptDebugPointer()"
+    "registry typed operation trusted a corrupt debug pointer"
+    "TestRegistryRetainedBulkRejectsCorruptAggregate()"
+    "registry retained bulk treated corrupt aggregate as exhaustion"
+    "TestRegistryBulkCertificateCorruptionFailsClosed()"
+    "registry certificate corruption fixture has no deep target"
+    "registry corrupt bulk rejection retained validation scratch"
+    "TestRegistryCollisionBulkAndShutdownRemainLinear()"
+    "registry collision bulk preflight was not linear"
+    "TestRegistryCoordinatorProductionStack()"
+    "registry production-stack admitted a pre-held hash reader"
+    "registry production-stack did not retain the real hash lock"
+    "registry production-stack did not retain the transaction lock"
     "TestLegacyCharacterFoldingUsesUnsignedInput()"
     "batch operation rebuilt the complete string certificate"
     "inconsistent batch serial mirror authenticated an operation"

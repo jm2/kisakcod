@@ -516,6 +516,60 @@ add_test(
 set_tests_properties(
     database-zone-script-string-ownership-controller PROPERTIES TIMEOUT 30)
 
+add_executable(kisakcod-db-registry-ownership-coordinator-tests
+    db_registry_ownership_coordinator_tests.cpp
+    ${SRC_DIR}/database/db_registry_ownership_coordinator.cpp
+)
+target_include_directories(
+    kisakcod-db-registry-ownership-coordinator-tests SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-registry-ownership-coordinator-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-registry-ownership-coordinator-tests PRIVATE
+    KISAK_MP
+    KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1)
+target_link_libraries(
+    kisakcod-db-registry-ownership-coordinator-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-db-registry-ownership-coordinator-tests)
+set_target_properties(
+    kisakcod-db-registry-ownership-coordinator-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-registry-ownership-coordinator
+    COMMAND kisakcod-db-registry-ownership-coordinator-tests
+)
+set_tests_properties(
+    database-registry-ownership-coordinator PROPERTIES TIMEOUT 30)
+
+add_executable(
+    kisakcod-db-registry-ownership-coordinator-production-seal-tests
+    db_registry_ownership_coordinator_production_seal_tests.cpp
+)
+target_include_directories(
+    kisakcod-db-registry-ownership-coordinator-production-seal-tests
+    SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-registry-ownership-coordinator-production-seal-tests
+    PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-registry-ownership-coordinator-production-seal-tests
+    PRIVATE KISAK_MP)
+kisakcod_test_warnings(
+    kisakcod-db-registry-ownership-coordinator-production-seal-tests)
+set_target_properties(
+    kisakcod-db-registry-ownership-coordinator-production-seal-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-registry-ownership-production-test-access-sealed
+    COMMAND
+        kisakcod-db-registry-ownership-coordinator-production-seal-tests
+)
+set_tests_properties(
+    database-registry-ownership-production-test-access-sealed
+    PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-db-zone-runtime-table-tests
     db_zone_runtime_table_tests.cpp
     ${SRC_DIR}/database/db_zone_runtime_table.cpp
@@ -1650,10 +1704,14 @@ set_tests_properties(script-memorytree-try-contracts PROPERTIES TIMEOUT 30)
 
 # Include the production string-list translation unit directly so this
 # white-box fixture can inspect its file-local persistent state without
-# copying any ownership algorithm. The allocator remains a separately linked
-# production translation unit, matching the engine boundary.
+# copying any ownership algorithm. The allocator, coordinator, transaction,
+# and fast-lock implementations remain separately linked production
+# translation units, matching the engine boundaries.
 add_executable(kisakcod-script-string-ownership-tests
     script_string_ownership_tests.cpp
+    ${SRC_DIR}/database/db_registry_ownership_coordinator.cpp
+    ${SRC_DIR}/database/db_script_string_transaction.cpp
+    ${SRC_DIR}/qcommon/sys_sync.cpp
     ${SRC_DIR}/script/scr_memorytree.cpp
 )
 target_include_directories(
@@ -1663,6 +1721,7 @@ target_compile_features(
 target_compile_definitions(
     kisakcod-script-string-ownership-tests PRIVATE
     KISAK_MP
+    KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1
     KISAK_MEMORY_TREE_VALIDATION_TESTING=1
     KISAK_SCRIPT_STRING_PERF_TESTING=1)
 target_link_libraries(
@@ -2106,6 +2165,14 @@ add_test(
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P
         ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_script_string_ownership_source_test.cmake
+)
+
+add_test(
+    NAME database-registry-ownership-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P
+        ${CMAKE_CURRENT_SOURCE_DIR}/db_registry_ownership_coordinator_source_test.cmake
 )
 
 add_test(

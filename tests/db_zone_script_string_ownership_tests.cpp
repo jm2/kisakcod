@@ -231,6 +231,12 @@ void AdmitLive(void *const context) noexcept
         probe.fixture->stringJournal.phase()
         == journal::ScriptStringJournalPhase::Committed);
 
+    std::uint32_t transactionSerial = UINT32_C(0xA55AA55A);
+    OWNERSHIP_CHECK(
+        !probe.fixture->ownership.trySnapshotRegistryTransaction(
+            probe.fixture->key, &transactionSerial));
+    OWNERSHIP_CHECK(transactionSerial == UINT32_C(0xA55AA55A));
+
     std::uint32_t output = 0xABCDu;
     probe.reentryStatus = controller::TryStageZoneScriptString(
         &probe.fixture->ownership,
@@ -335,6 +341,27 @@ void TestCommittedAdmission()
         fixture.ownership.phase()
         == ZoneScriptStringOwnershipPhase::Staging);
 
+    std::uint32_t transactionSerial = UINT32_C(0xA55AA55A);
+    lifecycle::ZoneLoadContextKey wrongKey = fixture.key;
+    ++wrongKey.generation;
+    OWNERSHIP_CHECK(
+        !fixture.ownership.trySnapshotRegistryTransaction(
+            wrongKey, &transactionSerial));
+    OWNERSHIP_CHECK(transactionSerial == UINT32_C(0xA55AA55A));
+    OWNERSHIP_CHECK(
+        !fixture.ownership.trySnapshotRegistryTransaction(
+            fixture.key, nullptr));
+    OWNERSHIP_CHECK(
+        fixture.ownership.trySnapshotRegistryTransaction(
+            fixture.key, &transactionSerial));
+    OWNERSHIP_CHECK(transactionSerial != 0);
+    OWNERSHIP_CHECK(
+        fixture.ownership.authenticatesRegistryTransaction(
+            fixture.key, transactionSerial));
+    OWNERSHIP_CHECK(
+        !fixture.ownership.authenticatesRegistryTransaction(
+            fixture.key, transactionSerial + 1));
+
     PushAcquire(script_string::AcquireStatus::InvalidArgumentNoChange, 0);
     std::uint32_t rejectedOutput = 0xDEADBEEFu;
     OWNERSHIP_CHECK(
@@ -383,6 +410,15 @@ void TestCommittedAdmission()
     OWNERSHIP_CHECK(
         fixture.ownership.phase() == ZoneScriptStringOwnershipPhase::Live);
     OWNERSHIP_CHECK(!fixture.ownership.serializerRetained());
+    const std::uint32_t liveSentinel = UINT32_C(0x5AA55AA5);
+    transactionSerial = liveSentinel;
+    OWNERSHIP_CHECK(
+        !fixture.ownership.trySnapshotRegistryTransaction(
+            fixture.key, &transactionSerial));
+    OWNERSHIP_CHECK(transactionSerial == liveSentinel);
+    OWNERSHIP_CHECK(
+        !fixture.ownership.authenticatesRegistryTransaction(
+            fixture.key, 1));
     OWNERSHIP_CHECK(
         fixture.lifecycleSlot.phase() == lifecycle::ZoneLoadContextPhase::Live);
     OWNERSHIP_CHECK(

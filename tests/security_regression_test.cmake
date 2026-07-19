@@ -2953,6 +2953,7 @@ require_repository_contains(
 require_repository_contains(
     "tests/db_zone_stream_ownership_source_test.cmake"
     "set(_macro_namespace_bypass"
+    "string(CONCAT _forged_coordinator_friend_bypass"
     "zone-stream production-neutrality seal must retain macro namespace coverage")
 require_repository_contains(
     "tests/db_zone_stream_ownership_source_test.cmake"
@@ -10058,6 +10059,206 @@ require_source_contains(
     "database/db_registry.cpp"
     "XAssetEntry *g_copyInfo[0x800];"
     "legacy pending-copy storage remains before atomic cutover")
+
+# The registry string-ownership coordinator is shipped as a production-neutral
+# authority foundation. Its public API and test capability are sealed, while a
+# phase-aware all-file source gate proves that no legacy registry/load caller
+# can partially enroll it before the atomic cutover.
+foreach(_registry_coordinator_marker IN ITEMS
+    "class RegistryOwnershipCoordinatorFacade final"
+    "RegistryOwnershipCoordinatorFacade() = delete;"
+    "RegistryOwnershipCoordinatorFacade &&) = delete;"
+    "class RegistryOwnershipCoordinatorAdmission final"
+    "RegistryOwnershipCoordinatorAdmission() = delete;"
+    "friend class RegistryOwnershipCoordinatorFacade;"
+    "bool authenticates() const noexcept;"
+    "std::uint64_t sealMirror_ = 0;"
+    "class alignas(8) RegistryOwnershipCoordinator final"
+    "RegistryOwnershipCoordinator(const RegistryOwnershipCoordinator &) ="
+    "RegistryOwnershipCoordinator(RegistryOwnershipCoordinator &&) = delete;"
+    "FinishRegistryOwnershipCoordinator("
+    "TryRegistryAddDatabaseUser4("
+    "TryRegistryAddDatabaseUsers4("
+    "TryRegistryInternBoundedName("
+    "TryRegistryReAddRetainedDefaultName("
+    "TryRegistryReAddRetainedDefaultNames("
+    "TryRegistryTransferDatabaseUsers4To8("
+    "TryRegistryShutdownDatabaseUser8("
+    "SetRegistryOwnershipCoordinatorGlobalMirrorsForTesting("
+    "#ifdef KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING"
+    "friend struct RegistryOwnershipCoordinatorTestAccess;")
+    require_source_contains(
+        "database/db_registry_ownership_coordinator.h"
+        "${_registry_coordinator_marker}"
+        "sealed registry ownership coordinator authority")
+endforeach()
+foreach(_registry_coordinator_forbidden IN ITEMS
+    "database/database.h"
+    "database/db_registry.h"
+    "database/db_load.h"
+    "Com_Error("
+    "Com_Print"
+    "Sys_Error("
+    "MyAssertHandler("
+    "std::function"
+    "operator new"
+    "malloc("
+    "calloc("
+    "realloc(")
+    require_source_not_contains(
+        "database/db_registry_ownership_coordinator.cpp"
+        "${_registry_coordinator_forbidden}"
+        "registry coordinator must remain report/allocation neutral")
+endforeach()
+require_source_contains(
+    "database/db_registry_ownership_coordinator.cpp"
+    "Sys_TryLockWrite(&db_hashCritSect)"
+    "registry coordinator admission must remain nonblocking")
+require_source_not_contains(
+    "database/db_registry_ownership_coordinator.cpp"
+    "Sys_LockWrite(&db_hashCritSect)"
+    "registry coordinator cannot self-deadlock on a pre-held reader")
+foreach(_legacy_registry_coordinator_forbidden IN ITEMS
+    "db_registry_ownership_coordinator.h"
+    "registry_ownership"
+    "RegistryOwnershipCoordinatorAdmission"
+    "RegistryOwnershipCoordinatorFacade"
+    "TryBeginStandaloneRegistryOwnershipCoordinator"
+    "TryBorrowRegistryOwnershipCoordinator"
+    "FinishRegistryOwnershipCoordinator"
+    "TryRegistryAddDatabaseUser4"
+    "TryRegistryAddDatabaseUsers4"
+    "TryRegistryInternBoundedName"
+    "TryRegistryReAddRetainedDefaultName"
+    "TryRegistryReAddRetainedDefaultNames"
+    "TryRegistryTransferDatabaseUsers4To8"
+    "TryRegistryShutdownDatabaseUser8"
+    "SetRegistryOwnershipCoordinatorBoundaryForTesting"
+    "SetNextRegistryOwnershipCoordinatorSerialForTesting"
+    "SetRegistryOwnershipCoordinatorGlobalMirrorsForTesting"
+    "KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING")
+    require_source_not_contains(
+        "database/db_registry.cpp"
+        "${_legacy_registry_coordinator_forbidden}"
+        "legacy registry must remain unenrolled and cannot gain test authority")
+endforeach()
+
+foreach(_registry_coordinator_source_seal_marker IN ITEMS
+    "function(normalize_registry_coordinator_phase2"
+    "function(require_regex_count"
+    "function(require_normalized_equals"
+    "function(find_registry_coordinator_forbidden_production_token"
+    "function(require_closed_registry_admission_entry"
+    "set(_registry_coordinator_protected_tokens"
+    "string(CONCAT _phase2_header_bypass"
+    "string(CONCAT _phase2_api_bypass"
+    "string(CONCAT _macro_header_bypass"
+    "string(CONCAT _qualified_using_bypass"
+    "string(CONCAT _line_comment_qualified_bypass"
+    "set(_macro_namespace_bypass"
+    "_registry_coordinator_form_feed"
+    "_registry_coordinator_vertical_tab"
+    "string(CONCAT _hash_token_paste_bypass"
+    "string(CONCAT _digraph_token_paste_bypass"
+    "set(_trigraph_token_paste_bypass"
+    "string(CONCAT _trigraph_splice_token_paste_bypass"
+    "string(CONCAT _comment_quote_token_paste_bypass"
+    "string(CONCAT _phase2_report_bypass"
+    "set(_comment_operator_new_bypass"
+    "set(_transitive_vector_bypass"
+    "set(_registry_coordinator_approved_sources"
+    "set(_registry_admission_approved_sources"
+    "reviewed q_shared long-long suffix paste"
+    "RegistryOwnershipAdmission"
+    "complete non-minting coordinator facade"
+    "_expected_coordinator_facade_declaration"
+    "_expected_coordinator_admission_public_declaration"
+    "_expected_coordinator_public_declaration"
+    "SetRegistryOwnershipCoordinatorGlobalMirrorsForTesting"
+    "exact coordinator forward/friend/documentation bridge"
+    "Trusted-build/ODR boundary"
+    "all scalar and bulk registry operations require the exact admission"
+    "fixed registry operations cannot accept arbitrary OwnershipBatch authority"
+    "every fixed source entry point authenticates before batch access"
+    "authentication/poison step"
+    "global numeric authority must authenticate before pointer conversion"
+    "every rejected token poisons a still-active batch boundary"
+    "one nonblocking hash-write admission"
+    "pre-held hash reader was not rejected"
+    "_registry_coordinator_build_definition_paths"
+    "only the two reviewed runtime fixtures receive coordinator test authority"
+    "positive macro-off production-seal target"
+    "db_registry_ownership_coordinator_source_test.cmake")
+    require_repository_contains(
+        "tests/db_registry_ownership_coordinator_source_test.cmake"
+        "${_registry_coordinator_source_seal_marker}"
+        "registry coordinator phase-aware production-neutrality seal")
+endforeach()
+require_repository_contains(
+    "tests/db_registry_ownership_coordinator_source_test.cmake"
+    "LIST_DIRECTORIES FALSE \"\${SOURCE_ROOT}/src/*\""
+    "registry coordinator seal must traverse every file below src")
+require_repository_contains(
+    "tests/db_registry_ownership_coordinator_source_test.cmake"
+    "src/groupvoice/speex/Makefile.am"
+    "registry coordinator seal must pin extension-independent traversal")
+require_repository_contains(
+    "tests/db_registry_ownership_coordinator_source_test.cmake"
+    "src/groupvoice/speex/Makefile.in"
+    "registry coordinator seal must pin generated-input traversal")
+
+foreach(_registry_coordinator_production_seal_marker IN ITEMS
+    "SplicedFinishPointer"
+    "CommentQualifiedFinishPointer"
+    "CommentNamespaceProbe"
+    "RegistryOwnershipAdmissionTestAccess"
+    "CanAuthenticateBatch"
+    "RegistryAddBulkFunction"
+    "RegistryReAddBulkFunction"
+    "decltype(&TryAddDatabaseUser4References)"
+    "decltype(&TryReAddRetainedDatabaseNames)"
+    "RegistryOwnershipCoordinatorAdmissionTestAccess"
+    "DependentScalar"
+    "CanCallBoundarySetter"
+    "CanCallNextSerialSetter"
+    "CanCallGlobalMirrorsSetter"
+    "CanMutateSealMirror"
+    "using CoordinatorAdmission = RegistryOwnershipCoordinatorAdmission;"
+    "using CoordinatorFacade = RegistryOwnershipCoordinatorFacade;"
+    "std::is_empty_v<CoordinatorFacade>"
+    "std::is_final_v<CoordinatorFacade>"
+    "CanMutateBorrowedSerial"
+    "CanMutateBorrowedControllerAddressMirror"
+    "CanMutateKeyMirror"
+    "CanMutateSerialMirror"
+    "CanMutateBorrowedSerialMirror"
+    "CanMutateStandaloneSerialMirror"
+    "CanMutatePhaseMirror"
+    "CanMutateMode"
+    "CanMutateModeMirror"
+    "CanMutateHashReceiptMirror"
+    "CanMutateReserved"
+    "CanCallCanonicalAfterStandaloneBegin"
+    "CanCallRepresentationConsistent"
+    "CanCallOwnsRegistryBoundary"
+    "CanCallAuthenticatesOuterTransaction"
+    "CanCallBeginRegistered"
+    "CanCallBeginOperation"
+    "CanCallFinishOperation"
+    "CanCallMakeOperationAdmission"
+    "CanCallPublishPhase"
+    "CanCallPublishHashLockRetained"
+    "CanCallPoisonBoundary"
+    "CanCallResetAfterFinish"
+    "using FinishFunction ="
+    "decltype(&FinishRegistryOwnershipCoordinator)"
+    "std::is_nothrow_destructible_v<RegistryOwnershipCoordinator>"
+    "noexcept(FinishRegistryOwnershipCoordinator(nullptr))")
+    require_repository_contains(
+        "tests/db_registry_ownership_coordinator_production_seal_tests.cpp"
+        "${_registry_coordinator_production_seal_marker}"
+        "registry coordinator macro-off private/noexcept access seal")
+endforeach()
 
 set(_format_sensitive_sources
     "cgame/cg_hudelem.cpp"

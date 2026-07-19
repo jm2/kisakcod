@@ -516,7 +516,7 @@ Completed foundation work:
   contract are selected in measured Windows x86; complete GCC and Clang builds and **100/100** suites pass. This is a
   high-confidence dimensional gameplay correction rather than a claimed retail-binary restoration, and the SP production
   translation unit remains outside hosted compilation;
-- the rebased curated typed-sort candidate `590eecef` adapts the confirmed non-matrix portion of exact upstream
+- merged PR #63 adapts the confirmed non-matrix portion of exact upstream
   `6f0284ad8c1fa367304e5eefa44d39d744ddbefc`. Selected behavior is: typed lexical model/animation sorts over existing
   native-width tables, a bool FX mark predicate, typed material inputs with an explicit three-way-to-less adapter, a
   complete 24-entry shadow sort, deterministic NaN equivalence for material/shadow ordering, and the row-zero omni
@@ -527,10 +527,21 @@ Completed foundation work:
   runtime and source contracts plus measured Windows x86 enrollment cover native pointer identity, strict weak ordering,
   exact active ranges, manifest presence, and the selected/rejected boundaries. The complete rebased GCC Debug suite is
   **142/142** green; the combined pending/upstream/security focus is **8/8**, and strict GCC/Clang, ASan+UBSan, i386
-  compilation, and AArch64 compilation also pass. This candidate is
-  not counted as merged progress until it is reviewed and merged;
-- remaining upstream content stays subsystem-specific: keep dynent save/load `ba3c79f3` deferred until bounded
-  transactional Disk32/native-sidecar semantics exist, and keep unrelated weapon-fire changes excluded;
+  compilation, and AArch64 compilation also pass. Exact reviewed head `36aebd29` passed all nine jobs in run
+  **29695891172**; Codex was clean, and Gemini's two suggestions were already satisfied or semantically equivalent, so
+  both threads were answered without code churn and resolved. PR #63 squash-merged as
+  `f79b0bf422bb926dd302a888bdc258e7e8409aa2`; authoritative run **29696199493** passed all nine jobs at that exact
+  master commit;
+- fresh pinned `upstream/master` `2164cd1a` is still **18 commits ahead by ancestry**. PR #63 reconciled a reviewed
+  typed-sort/row-zero subset, not every remaining hunk or the ancestry itself. Before an ancestry checkpoint, ledger and
+  port the safe U1 `r_dpvs` stale/wrong brush-definition identity/access, aim-bound, native-width HUD sort/capacity,
+  signed-`AngleSubtract`, and server-command-tail dispatch fixlets. Validate the isolated U2 Miles dry-reverb correction
+  from `b19e686a` separately and port it or explicitly defer it. Keep dynent save/load `ba3c79f3` and unsafe raw
+  SP/save/screenshot, gameplay, and matrix hunks explicitly deferred/rejected until independently justified; classify
+  icon changes separately as provenance/optional-packaging work. Only after every upstream commit has a disposition,
+  merge exact pinned `2164cd1a` with a tree-preserving `-s ours`
+  ancestry checkpoint using merge-commit semantics only—never squash—so the graph is reconciled without importing the
+  deferred tree;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -614,9 +625,27 @@ Remaining gates, in implementation order:
    passed all nine jobs, all four Gemini threads were resolved, and exact-head Codex review was clean. PR #62 then merged
    the production-neutral pending-copy ledger as `888d12e6beedd587602f18cf6763ae04cc067470`; final exact head `6a79677f`
    passed all nine jobs in run **29694906394**, exact-head Codex and Gemini were clean with zero threads, and authoritative
-   post-merge run **29695353022** also passed all nine jobs. Land the audited upstream 18-commit integration PR before publishing the
-   borrowed/standalone registry ownership coordinator, then atomically replace all
-   seven raw sites. Keep static controller slots and callback metadata outside PMem with
+   post-merge run **29695353022** also passed all nine jobs. PR #63 then merged the selectively reconciled upstream
+   typed-sort fixes as `f79b0bf422bb926dd302a888bdc258e7e8409aa2`; exact-head and authoritative runs **29695891172**
+   and **29696199493** passed all nine jobs. The complete local borrowed/standalone registry coordinator candidate through
+   `774487d1` remains production-neutral. `9f327514` seals its production boundary; `74b56b65` adds portable nonblocking
+   hash admission and fixes the real i386 size-test plus pre-held-reader deadlock; `90e8fba7` completes portable test
+   wiring; `2a836a0e` maintains authenticated ID-to-entry and entry-to-owner/predecessor inverse certificates across
+   intern/unlink, enabling O(1) target resolution and one linear shutdown/head-promotion walk; and `56c97f09` links the
+   real coordinator, retained transaction, `FastCriticalSection`, ownership batch, and memory-tree lease into the
+   production-stack composition fixture. Final `774487d1` shares one canonical debug-publication pointer gate across
+   typed operations, runs one linear full reachable-topology/physical-slot/inverse/debug-total preflight per bulk, and
+   exactly reauthenticates retained targets in the second pass before mutation. Same-hash 49-entry, detached-suffix,
+   corrupt inverse/debug-pointer, and forged aggregate-total cases fail atomically and poison unsafe batches without
+   returning capacity exhaustion or restoring quadratic work. Exact implementation head `774487d1` passes GCC Debug/full
+   CTest **145/145**; focused
+   source/security/macro-off passes **6/6** and the independent audit selection passes **7/7**. Warning-clean GCC/Clang
+   runtime, Clang ASan+UBSan with `detect_leaks=0` under ptrace, and genuine i386 plus AArch64 compile/link evidence also
+   pass. None of the seven raw production sites is enrolled. After publication, first finish the U1/U2 disposition and
+   approved fixlet adaptations, then merge the pinned tree-preserving upstream ancestry checkpoint. Only afterward
+   compose durable receipts passively in the table, finish checked PMem/global/narrow prerequisites, add exact-key
+   adapters, and atomically bind the loader across all seven sites. Keep static controller slots and callback metadata
+   outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
    when binding the recipes and adapter into production with completed-object/alias registration and lifetime tests.
    The journal merged in PR #37 as `7a9bce34`; post-merge run **29542960583** passed all nine jobs. PR #38 merged the
@@ -1595,7 +1624,9 @@ remained unchanged. PR #30 then merged the non-publishing reader prerequisite, a
 production restore to it; only the save-side guard and writer remain.
 
 Overall porting progress is approximately **76% by merged engineering effort**. PR #62 merged the production-neutral
-pending-copy ledger; the rebased curated upstream-sort candidate is not counted until it merges. Windows x86 is about
+pending-copy ledger and PR #63 merged the curated upstream typed-sort checkpoint; the complete local registry
+coordinator candidate through `774487d1` is not counted until it merges, when the rounded estimate becomes approximately
+**77%**. Windows x86 is about
 **93%**, shared
 foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
@@ -1916,9 +1947,24 @@ strict GCC/Clang, ASan+UBSan, analyzer, i386 runtime, AArch64 strict link, nativ
 source/security/diff gates. It has no production caller. Final exact head `6a79677f` passed all nine jobs in run
 **29694906394**; exact-head Codex and Gemini were clean with zero threads, and it squash-merged as
 `888d12e6beedd587602f18cf6763ae04cc067470`. Authoritative post-merge run **29695353022** passed all nine jobs at that
-exact master commit. Land the audited upstream 18-commit integration PR at this pause boundary, then
-add a registry coordinator that borrows exact active transaction authority or owns a standalone transaction. Afterward,
-enroll all seven sites atomically. Root-string staging
+exact master commit. PR #63 merged the audited upstream typed-sort selection as
+`f79b0bf422bb926dd302a888bdc258e7e8409aa2`; exact reviewed-head and authoritative runs **29695891172** and
+**29696199493** passed all nine jobs. The complete local coordinator candidate through `774487d1` borrows exact active
+transaction authority or owns a standalone transaction and remains production-neutral. `9f327514` seals the boundary;
+`74b56b65` supplies nonblocking admission and fixes pre-held-reader/i386 defects; `90e8fba7` completes portable wiring;
+`2a836a0e` maintains ID/entry/owner/predecessor certificates for O(1) member resolution and linear shutdown;
+`56c97f09` links the real coordinator/transaction/`FastCriticalSection`/ownership/lease stack into its integration test;
+and `774487d1` adds the shared canonical debug-pointer gate, one linear full topology/inverse/exact-debug-total preflight
+per bulk, and exact retained second-pass reauthentication. Detached suffixes and forged aggregate totals now fail unsafe,
+failure-atomically. Exact implementation head `774487d1` passes GCC Debug **145/145**, focused **6/6** plus independent
+**7/7**, strict GCC/Clang,
+ASan+UBSan, and genuine i386/AArch64 compile-link gates. The design retains the database hash scope once, keeps
+low-level mutation behind a private exact admission capability, authenticates pointer-free boundary mirrors before
+dereference, poisons rather than clears on fallible close/abandonment, and applies pre-collected IDs without quadratic
+collision-chain work. No production site is enrolled. After the upstream U1/U2 ledger/adaptations and pinned
+tree-preserving ancestry checkpoint, compose durable receipts passively, finish PMem/global/narrow prerequisites, and
+add exact-key adapters; only then enroll all seven sites atomically: five coordinator operations plus two exact-key
+root-journal stages. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
 short borrowed batches under transaction -> registry -> string -> memory-tree order. The bounded legacy compatibility
 surface does not replace the typed guarantee. Static context slots and callback metadata

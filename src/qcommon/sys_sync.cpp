@@ -50,23 +50,29 @@ void KISAK_CDECL Sys_UnlockRead(FastCriticalSection *critSect)
     Sys_AtomicDecrement(&critSect->readCount);
 }
 
-void KISAK_CDECL Sys_LockWrite(FastCriticalSection *critSect)
+bool KISAK_CDECL Sys_TryLockWrite(FastCriticalSection *critSect)
 {
     Sys_ValidateFastCriticalSection(critSect);
 
-    while (true)
+    if (Sys_ReadFastCriticalSectionCount(&critSect->readCount) != 0)
+        return false;
+
+    if (Sys_AtomicIncrement(&critSect->writeCount) != 1)
     {
-        if (Sys_ReadFastCriticalSectionCount(&critSect->readCount) == 0)
-        {
-            if (Sys_AtomicIncrement(&critSect->writeCount) == 1
-                && Sys_ReadFastCriticalSectionCount(&critSect->readCount) == 0)
-            {
-                return;
-            }
-            Sys_AtomicDecrement(&critSect->writeCount);
-        }
-        Sys_Sleep(0);
+        Sys_AtomicDecrement(&critSect->writeCount);
+        return false;
     }
+    if (Sys_ReadFastCriticalSectionCount(&critSect->readCount) == 0)
+        return true;
+
+    Sys_AtomicDecrement(&critSect->writeCount);
+    return false;
+}
+
+void KISAK_CDECL Sys_LockWrite(FastCriticalSection *critSect)
+{
+    while (!Sys_TryLockWrite(critSect))
+        Sys_Sleep(0);
 }
 
 void KISAK_CDECL Sys_UnlockWrite(FastCriticalSection *critSect)

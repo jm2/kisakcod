@@ -89,6 +89,61 @@ constexpr std::uint64_t kAbandonedOwnershipBatchPoisonMirror =
 std::uint64_t sl_abandonedOwnershipBatchPoison = 0;
 std::uint64_t sl_abandonedOwnershipBatchPoisonMirror = 0;
 
+// The transaction serializer permits only one registry ownership operation
+// process-wide. Keep bulk-operation scratch in fixed BSS rather than placing
+// a 40 KiB array on an engine thread's stack.
+std::uint16_t sl_registryOwnershipSweepIds[STRINGLIST_SIZE]{};
+std::uint8_t sl_registryOwnershipBulkVisited[
+    script_string::kCurrentRuntimeStringLimit / 8]{};
+
+static_assert(
+	script_string::kRegistryOwnershipBulkCapacity == STRINGLIST_SIZE - 1);
+
+void SL_ScrubRegistryOwnershipSweepIdsNoReport(
+	const uint32_t count) noexcept
+{
+	volatile uint16_t* const ids = sl_registryOwnershipSweepIds;
+	const uint32_t boundedCount = count < STRINGLIST_SIZE
+		? count
+		: STRINGLIST_SIZE;
+	for (uint32_t index = 0; index < boundedCount; ++index)
+		ids[index] = 0;
+}
+
+[[nodiscard]] bool SL_TryMarkRegistryOwnershipBulkIdNoReport(
+	const uint32_t stringId) noexcept
+{
+	if (!script_string::IsCurrentRuntimeStringId(stringId))
+		return false;
+	const uint32_t byteIndex = stringId >> 3;
+	const uint8_t bit = static_cast<uint8_t>(1u << (stringId & 7u));
+	if ((sl_registryOwnershipBulkVisited[byteIndex] & bit) != 0)
+		return false;
+	sl_registryOwnershipBulkVisited[byteIndex] |= bit;
+	return true;
+}
+
+void SL_ScrubRegistryOwnershipBulkNoReport(const uint32_t count) noexcept
+{
+	const uint32_t boundedCount =
+		count <= script_string::kRegistryOwnershipBulkCapacity
+		? count
+		: script_string::kRegistryOwnershipBulkCapacity;
+	for (uint32_t index = 0; index < boundedCount; ++index)
+	{
+		const uint32_t stringId = sl_registryOwnershipSweepIds[index];
+		if (script_string::IsCurrentRuntimeStringId(stringId))
+		{
+			const uint32_t byteIndex = stringId >> 3;
+			const uint8_t bit =
+				static_cast<uint8_t>(1u << (stringId & 7u));
+			sl_registryOwnershipBulkVisited[byteIndex] &=
+				static_cast<uint8_t>(~bit);
+		}
+		sl_registryOwnershipSweepIds[index] = 0;
+	}
+}
+
 #if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
 script_string::OwnershipValidationCounters sl_ownershipValidationCounters{};
 #endif
@@ -897,6 +952,13 @@ bool SL_IsInternHashStateValidForScopeNoReport(
 void SL_SetFreeListCertificateMemberNoReport(
 	uint32_t entryIndex,
 	bool member) noexcept;
+void SL_SetRegistryStringCertificateMemberNoReport(
+	uint32_t stringId,
+	bool member) noexcept;
+bool SL_TryRefreshRegistryHashCertificateNoReport(
+	uint32_t owningHash,
+	MT_ValidationLease* validationLease,
+	const MT_ValidationLeaseAdmission* admission) noexcept;
 
 bool SL_IsRepresentableRefStringBytesNoReport(
 	const char* const bytes,
@@ -1066,6 +1128,26 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 
 	HashEntry *entry = &scrStringGlob.hashTable[hash];
 	HashEntry *newEntry;
+	uint32_t displacedOwningHash = 0;
+	if (validationScope == SL_ValidationScope::Leased
+		&& (entry->status_next & HASH_STAT_MASK) == HASH_STAT_MOVABLE)
+	{
+		RefString* displacedRefString = nullptr;
+		uint32_t displacedByteCount = 0;
+		if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+				entry->u.prev,
+				&displacedRefString,
+				&displacedByteCount,
+				validationScope,
+				validationLease,
+				admission))
+		{
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return SL_InternStatus::UnsafeFailure;
+		}
+		displacedOwningHash = GetHashCode(
+			displacedRefString->str, displacedByteCount);
+	}
 
 	if ((entry->status_next & HASH_STAT_MASK) == HASH_STAT_HEAD)
 	{
@@ -1141,6 +1223,13 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 				stringValue = newEntry->u.prev;
 				newEntry->u.prev = entry->u.prev;
 				entry->u.prev = stringValue;
+				if (validationScope == SL_ValidationScope::Leased
+					&& !SL_TryRefreshRegistryHashCertificateNoReport(
+						hash, validationLease, admission))
+				{
+					Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+					return SL_InternStatus::UnsafeFailure;
+				}
 
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 				*outStringValue = stringValue;
@@ -1337,6 +1426,19 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 		SL_RefStringWord(refStr),
 		scr_string_atomic::Pack(1, userByte, static_cast<uint8_t>(len)));
 	SL_DebugAddRefNoReport(stringValue);
+	if (validationScope == SL_ValidationScope::Leased
+		&& (!SL_TryRefreshRegistryHashCertificateNoReport(
+				hash, validationLease, admission)
+			|| (displacedOwningHash != 0
+				&& displacedOwningHash != hash
+				&& !SL_TryRefreshRegistryHashCertificateNoReport(
+					displacedOwningHash,
+					validationLease,
+					admission))))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return SL_InternStatus::UnsafeFailure;
+	}
 
 //END_CLEANUP:
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -1990,11 +2092,20 @@ uint32_t sl_hashChainVisitedCount = 0;
 uint32_t sl_stringIdVisitedCount = 0;
 uint8_t sl_systemSweepHashEntries[(STRINGLIST_SIZE + 7) / 8];
 uint8_t sl_systemSweepStringIds[SL_MAX_STRING_INDEX / 8];
+uint16_t sl_systemSweepEntryByStringId[SL_MAX_STRING_INDEX];
+uint16_t sl_systemSweepOwningHashByEntry[STRINGLIST_SIZE];
+uint16_t sl_systemSweepPreviousEntry[STRINGLIST_SIZE];
 uint8_t sl_freeListVisited[(STRINGLIST_SIZE + 7) / 8];
+static_assert(
+	script_string::kCurrentRuntimeStringLimit == SL_MAX_STRING_INDEX);
 #ifdef KISAK_SCRIPT_STRING_PERF_TESTING
 uint32_t sl_completeFreeListValidationCount = 0;
 uint32_t sl_hashValidationScratchResetCount = 0;
 uint64_t sl_hashValidationScratchResetEntryCount = 0;
+uint64_t sl_registryOwnershipHashChainEntryVisitCount = 0;
+uint64_t sl_registryOwnershipLinearSweepEntryVisitCount = 0;
+uint64_t sl_registryOwnershipTopologyPreflightCount = 0;
+uint64_t sl_registryOwnershipTopologyPreflightWorkCount = 0;
 #endif
 
 void SL_ResetHashChainValidationNoReport() noexcept
@@ -2307,6 +2418,394 @@ void SL_SetFreeListCertificateMemberNoReport(
 		sl_freeListVisited[byteIndex] &= static_cast<uint8_t>(~bitMask);
 }
 
+bool SL_IsRegistryStringCertificateMemberNoReport(
+	const uint32_t stringId) noexcept
+{
+	if (!script_string::IsCurrentRuntimeStringId(stringId))
+		return false;
+	const uint32_t byteIndex = stringId >> 3;
+	const uint8_t bitMask =
+		static_cast<uint8_t>(1u << (stringId & 7u));
+	return (sl_systemSweepStringIds[byteIndex] & bitMask) != 0;
+}
+
+void SL_SetRegistryStringCertificateMemberNoReport(
+	const uint32_t stringId,
+	const bool member) noexcept
+{
+	if (!script_string::IsCurrentRuntimeStringId(stringId))
+		return;
+	const uint32_t byteIndex = stringId >> 3;
+	const uint8_t bitMask =
+		static_cast<uint8_t>(1u << (stringId & 7u));
+	if (member)
+		sl_systemSweepStringIds[byteIndex] |= bitMask;
+	else
+		sl_systemSweepStringIds[byteIndex] &= static_cast<uint8_t>(~bitMask);
+}
+
+bool SL_TryRefreshRegistryHashCertificateNoReport(
+	const uint32_t owningHash,
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
+{
+	if (!admission
+		|| !SL_IsAuthorizedOwnershipLeaseLocked(validationLease)
+		|| owningHash == 0 || owningHash >= STRINGLIST_SIZE
+		|| !SL_IsHashEntryEncodingValidNoReport(
+			scrStringGlob.hashTable[owningHash])
+		|| (scrStringGlob.hashTable[owningHash].status_next & HASH_STAT_MASK)
+			!= HASH_STAT_HEAD)
+	{
+		return false;
+	}
+
+	uint32_t entryIndex = owningHash;
+	uint32_t previousIndex = owningHash;
+	for (uint32_t visited = 0; visited < STRINGLIST_SIZE; ++visited)
+	{
+		if (entryIndex == 0 || entryIndex >= STRINGLIST_SIZE)
+			return false;
+		const HashEntry &entry = scrStringGlob.hashTable[entryIndex];
+		const uint32_t expectedStatus = entryIndex == owningHash
+			? HASH_STAT_HEAD
+			: HASH_STAT_MOVABLE;
+		RefString* refString = nullptr;
+		uint32_t byteCount = 0;
+		if (!SL_IsHashEntryEncodingValidNoReport(entry)
+			|| (entry.status_next & HASH_STAT_MASK) != expectedStatus
+			|| !SL_TryGetAllocatedStringByteCountForScopeNoReport(
+				entry.u.prev,
+				&refString,
+				&byteCount,
+				SL_ValidationScope::Leased,
+				validationLease,
+				admission)
+			|| GetHashCode(refString->str, byteCount) != owningHash)
+		{
+			return false;
+		}
+
+		SL_SetRegistryStringCertificateMemberNoReport(entry.u.prev, true);
+		sl_systemSweepEntryByStringId[entry.u.prev] =
+			static_cast<uint16_t>(entryIndex);
+		sl_systemSweepOwningHashByEntry[entryIndex] =
+			static_cast<uint16_t>(owningHash);
+		sl_systemSweepPreviousEntry[entryIndex] =
+			static_cast<uint16_t>(previousIndex);
+
+		const uint32_t nextIndex =
+			static_cast<uint16_t>(entry.status_next);
+		if (nextIndex == owningHash)
+			return true;
+		if (nextIndex == 0 || nextIndex >= STRINGLIST_SIZE)
+			return false;
+		previousIndex = entryIndex;
+		entryIndex = nextIndex;
+	}
+	return false;
+}
+
+SL_ResolveStatus SL_TryResolveLeasedCertificateMemberNoReport(
+	const uint32_t stringId,
+	RefString** const outRefString,
+	uint32_t* const outByteCount,
+	uint32_t* const outPacked,
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
+{
+	if (!outRefString || !outByteCount || !outPacked
+		|| !script_string::IsCurrentRuntimeStringId(stringId))
+	{
+		return SL_ResolveStatus::NotAllocatedNoChange;
+	}
+	if (!admission
+		|| !SL_IsAuthorizedOwnershipLeaseLocked(validationLease))
+	{
+		return SL_ResolveStatus::UnsafeFailure;
+	}
+	if (!SL_IsRegistryStringCertificateMemberNoReport(stringId))
+		return SL_ResolveStatus::NotAllocatedNoChange;
+
+	RefString* refString = nullptr;
+	uint32_t byteCount = 0;
+	if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+			stringId,
+			&refString,
+			&byteCount,
+			SL_ValidationScope::Leased,
+			validationLease,
+			admission))
+	{
+		return SL_ResolveStatus::UnsafeFailure;
+	}
+	const uint32_t packed =
+		scr_string_atomic::Load(SL_RefStringWord(refString));
+	if (scr_string_atomic::RefCount(packed) == 0
+		|| !SL_IsDebugOwnershipExactNoReport(stringId, packed))
+	{
+		return SL_ResolveStatus::UnsafeFailure;
+	}
+
+	const uint32_t owningHash = GetHashCode(refString->str, byteCount);
+	const uint32_t entryIndex = sl_systemSweepEntryByStringId[stringId];
+	if (owningHash == 0 || owningHash >= STRINGLIST_SIZE
+		|| entryIndex == 0 || entryIndex >= STRINGLIST_SIZE
+		|| sl_systemSweepOwningHashByEntry[entryIndex] != owningHash)
+	{
+		return SL_ResolveStatus::UnsafeFailure;
+	}
+	const HashEntry &entry = scrStringGlob.hashTable[entryIndex];
+	const uint32_t expectedStatus = entryIndex == owningHash
+		? HASH_STAT_HEAD
+		: HASH_STAT_MOVABLE;
+	const uint32_t previousIndex =
+		sl_systemSweepPreviousEntry[entryIndex];
+	const uint32_t nextIndex = static_cast<uint16_t>(entry.status_next);
+	if (!SL_IsHashEntryEncodingValidNoReport(entry)
+		|| (entry.status_next & HASH_STAT_MASK) != expectedStatus
+		|| entry.u.prev != stringId
+		|| previousIndex == 0 || previousIndex >= STRINGLIST_SIZE
+		|| (entryIndex == owningHash && previousIndex != owningHash)
+		|| (entryIndex != owningHash
+			&& (sl_systemSweepOwningHashByEntry[previousIndex]
+					!= owningHash
+				|| !SL_IsHashEntryEncodingValidNoReport(
+					scrStringGlob.hashTable[previousIndex])
+				|| !SL_IsRegistryStringCertificateMemberNoReport(
+					scrStringGlob.hashTable[previousIndex].u.prev)
+				|| sl_systemSweepEntryByStringId[
+					scrStringGlob.hashTable[previousIndex].u.prev]
+					!= previousIndex
+				|| (scrStringGlob.hashTable[previousIndex].status_next
+					& HASH_STAT_MASK)
+					!= (previousIndex == owningHash
+						? HASH_STAT_HEAD
+						: HASH_STAT_MOVABLE)
+				|| static_cast<uint16_t>(
+					scrStringGlob.hashTable[previousIndex].status_next)
+					!= entryIndex))
+		|| (nextIndex != owningHash
+			&& (nextIndex == 0 || nextIndex >= STRINGLIST_SIZE
+				|| sl_systemSweepOwningHashByEntry[nextIndex]
+					!= owningHash
+				|| sl_systemSweepPreviousEntry[nextIndex]
+					!= entryIndex
+				|| !SL_IsHashEntryEncodingValidNoReport(
+					scrStringGlob.hashTable[nextIndex])
+				|| !SL_IsRegistryStringCertificateMemberNoReport(
+					scrStringGlob.hashTable[nextIndex].u.prev)
+				|| sl_systemSweepEntryByStringId[
+					scrStringGlob.hashTable[nextIndex].u.prev]
+					!= nextIndex
+				|| (scrStringGlob.hashTable[nextIndex].status_next
+					& HASH_STAT_MASK) != HASH_STAT_MOVABLE)))
+	{
+		return SL_ResolveStatus::UnsafeFailure;
+	}
+
+	*outRefString = refString;
+	*outByteCount = byteCount;
+	*outPacked = packed;
+	return SL_ResolveStatus::Success;
+}
+
+bool SL_TryValidateRegistryTopologyCertificateNoReport(
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission,
+	uint32_t* const outAggregateRefCount) noexcept
+{
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+	++sl_registryOwnershipTopologyPreflightCount;
+#endif
+	if (!outAggregateRefCount || !scrStringGlob.inited
+		|| scrStringDebugGlob != &scrStringDebugGlobBuf || !admission
+		|| !SL_IsAuthorizedOwnershipLeaseLocked(validationLease)
+		|| !SL_IsHashEntryEncodingValidNoReport(scrStringGlob.hashTable[0])
+		|| (scrStringGlob.hashTable[0].status_next & HASH_STAT_MASK)
+			!= HASH_STAT_FREE)
+	{
+		return false;
+	}
+
+	SL_ResetHashChainValidationNoReport();
+	bool valid = true;
+	uint64_t aggregateRefCount = 0;
+	for (uint32_t owningHash = 1;
+		owningHash < STRINGLIST_SIZE && valid;
+		++owningHash)
+	{
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+		++sl_registryOwnershipTopologyPreflightWorkCount;
+#endif
+		if ((scrStringGlob.hashTable[owningHash].status_next & HASH_STAT_MASK)
+			!= HASH_STAT_HEAD)
+		{
+			continue;
+		}
+
+		uint32_t entryIndex = owningHash;
+		uint32_t previousIndex = owningHash;
+		bool terminated = false;
+		for (uint32_t visited = 0;
+			visited < STRINGLIST_SIZE && valid;
+			++visited)
+		{
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+			++sl_registryOwnershipTopologyPreflightWorkCount;
+#endif
+			if (!SL_TryRecordHashEntryNoReport(entryIndex))
+			{
+				valid = false;
+				break;
+			}
+			const HashEntry &entry = scrStringGlob.hashTable[entryIndex];
+			const uint32_t expectedStatus = entryIndex == owningHash
+				? HASH_STAT_HEAD
+				: HASH_STAT_MOVABLE;
+			const uint32_t stringId = entry.u.prev;
+			RefString* refString = nullptr;
+			uint32_t byteCount = 0;
+			if (!SL_IsHashEntryEncodingValidNoReport(entry)
+				|| (entry.status_next & HASH_STAT_MASK) != expectedStatus
+				|| sl_systemSweepOwningHashByEntry[entryIndex]
+					!= owningHash
+				|| sl_systemSweepPreviousEntry[entryIndex]
+					!= previousIndex
+				|| !SL_IsRegistryStringCertificateMemberNoReport(stringId)
+				|| sl_systemSweepEntryByStringId[stringId] != entryIndex
+				|| !SL_TryRecordStringIdNoReport(stringId)
+				|| !SL_TryGetAllocatedStringByteCountForScopeNoReport(
+					stringId,
+					&refString,
+					&byteCount,
+					SL_ValidationScope::Leased,
+					validationLease,
+					admission)
+				|| GetHashCode(refString->str, byteCount) != owningHash)
+			{
+				valid = false;
+				break;
+			}
+			const uint32_t packed =
+				scr_string_atomic::Load(SL_RefStringWord(refString));
+			const uint32_t refCount =
+				scr_string_atomic::RefCount(packed);
+			if (refCount == 0
+				|| !SL_IsDebugOwnershipExactNoReport(stringId, packed)
+				|| aggregateRefCount > UINT32_MAX - refCount)
+			{
+				valid = false;
+				break;
+			}
+			aggregateRefCount += refCount;
+
+			const uint32_t nextIndex =
+				static_cast<uint16_t>(entry.status_next);
+			if (nextIndex == owningHash)
+			{
+				terminated = true;
+				break;
+			}
+			if (nextIndex == 0 || nextIndex >= STRINGLIST_SIZE)
+			{
+				valid = false;
+				break;
+			}
+			previousIndex = entryIndex;
+			entryIndex = nextIndex;
+		}
+		if (!terminated)
+			valid = false;
+	}
+
+	for (uint32_t entryIndex = 1;
+		entryIndex < STRINGLIST_SIZE && valid;
+		++entryIndex)
+	{
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+		++sl_registryOwnershipTopologyPreflightWorkCount;
+#endif
+		const HashEntry &entry = scrStringGlob.hashTable[entryIndex];
+		if (!SL_IsHashEntryEncodingValidNoReport(entry))
+		{
+			valid = false;
+			break;
+		}
+		const uint32_t byteIndex = entryIndex >> 3;
+		const uint8_t bitMask =
+			static_cast<uint8_t>(1u << (entryIndex & 7u));
+		const bool reachable =
+			(sl_hashChainVisited[byteIndex] & bitMask) != 0;
+		const uint32_t status = entry.status_next & HASH_STAT_MASK;
+		if (status == HASH_STAT_FREE)
+		{
+			if (reachable
+				|| sl_systemSweepOwningHashByEntry[entryIndex] != 0
+				|| sl_systemSweepPreviousEntry[entryIndex] != 0)
+			{
+				valid = false;
+			}
+		}
+		else if ((status == HASH_STAT_HEAD || status == HASH_STAT_MOVABLE)
+			&& !reachable)
+		{
+			valid = false;
+		}
+		else if (status != HASH_STAT_HEAD && status != HASH_STAT_MOVABLE)
+		{
+			valid = false;
+		}
+	}
+
+	for (uint32_t stringId = 0;
+		stringId < SL_MAX_STRING_INDEX && valid;
+		++stringId)
+	{
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+		++sl_registryOwnershipTopologyPreflightWorkCount;
+#endif
+		const uint32_t memberByteIndex = stringId >> 3;
+		const uint8_t memberBitMask =
+			static_cast<uint8_t>(1u << (stringId & 7u));
+		const bool member =
+			(sl_systemSweepStringIds[memberByteIndex] & memberBitMask) != 0;
+		const uint32_t entryIndex =
+			sl_systemSweepEntryByStringId[stringId];
+		if (stringId == 0 || !member)
+		{
+			if (member || entryIndex != 0)
+				valid = false;
+			continue;
+		}
+		if (entryIndex == 0 || entryIndex >= STRINGLIST_SIZE)
+		{
+			valid = false;
+			continue;
+		}
+		const uint32_t byteIndex = entryIndex >> 3;
+		const uint8_t bitMask =
+			static_cast<uint8_t>(1u << (entryIndex & 7u));
+		if ((sl_hashChainVisited[byteIndex] & bitMask) == 0
+			|| scrStringGlob.hashTable[entryIndex].u.prev != stringId)
+		{
+			valid = false;
+		}
+	}
+
+	if (valid
+		&& Sys_AtomicLoad(&scrStringDebugGlob->totalRefCount)
+			!= static_cast<uint32_t>(aggregateRefCount))
+	{
+		valid = false;
+	}
+	SL_ResetHashChainValidationNoReport();
+	if (!valid)
+		return false;
+	*outAggregateRefCount = static_cast<uint32_t>(aggregateRefCount);
+	return true;
+}
+
 bool SL_IsLeasedFreeListLocallyValidNoReport() noexcept
 {
 	if (!SL_IsFreeListLocallyValidNoReport())
@@ -2587,6 +3086,12 @@ bool SL_IsCompleteStringStateValidForScopeNoReport(
 	memset(sl_systemSweepHashEntries, 0,
 		sizeof(sl_systemSweepHashEntries));
 	memset(sl_systemSweepStringIds, 0, sizeof(sl_systemSweepStringIds));
+	memset(sl_systemSweepEntryByStringId, 0,
+		sizeof(sl_systemSweepEntryByStringId));
+	memset(sl_systemSweepOwningHashByEntry, 0,
+		sizeof(sl_systemSweepOwningHashByEntry));
+	memset(sl_systemSweepPreviousEntry, 0,
+		sizeof(sl_systemSweepPreviousEntry));
 	uint64_t aggregateRefCount = 0;
 	for (uint32_t owningHash = 1;
 		owningHash < STRINGLIST_SIZE;
@@ -2599,6 +3104,7 @@ bool SL_IsCompleteStringStateValidForScopeNoReport(
 		}
 
 		uint32_t entryIndex = owningHash;
+		uint32_t previousIndex = owningHash;
 		bool terminated = false;
 		for (uint32_t visited = 0; visited < STRINGLIST_SIZE; ++visited)
 		{
@@ -2632,6 +3138,12 @@ bool SL_IsCompleteStringStateValidForScopeNoReport(
 			if ((sl_systemSweepStringIds[stringByte] & stringMask) != 0)
 				return false;
 			sl_systemSweepStringIds[stringByte] |= stringMask;
+			sl_systemSweepEntryByStringId[stringValue] =
+				static_cast<uint16_t>(entryIndex);
+			sl_systemSweepOwningHashByEntry[entryIndex] =
+				static_cast<uint16_t>(owningHash);
+			sl_systemSweepPreviousEntry[entryIndex] =
+				static_cast<uint16_t>(previousIndex);
 
 			RefString* refString = nullptr;
 			uint32_t byteCount = 0;
@@ -2667,6 +3179,7 @@ bool SL_IsCompleteStringStateValidForScopeNoReport(
 			{
 				return false;
 			}
+			previousIndex = entryIndex;
 			entryIndex = nextIndex;
 		}
 		if (!terminated)
@@ -2776,6 +3289,9 @@ bool SL_TryBuildUnlinkPlanForScopeNoReport(
 	bool terminated = false;
 	for (uint32_t visited = 0; visited < STRINGLIST_SIZE; ++visited)
 	{
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+		++sl_registryOwnershipHashChainEntryVisitCount;
+#endif
 		if (!SL_TryRecordHashEntryNoReport(entryIndex))
 			return false;
 
@@ -2934,6 +3450,13 @@ void SL_CommitUnlinkPlanNoReport(
 	const SL_UnlinkPlan &plan,
 	const bool updateCertificate = false) noexcept
 {
+	const uint32_t removedStringId =
+		scrStringGlob.hashTable[plan.targetIndex].u.prev;
+	const bool promotesCollisionEntry =
+		plan.targetIndex == plan.hash && plan.nextIndex != plan.hash;
+	const uint32_t promotedStringId = promotesCollisionEntry
+		? scrStringGlob.hashTable[plan.nextIndex].u.prev
+		: 0;
 	uint32_t freedIndex = plan.targetIndex;
 	if (plan.targetIndex == plan.hash)
 	{
@@ -2965,7 +3488,36 @@ void SL_CommitUnlinkPlanNoReport(
 	scrStringGlob.hashTable[plan.freeHead].u.prev = freedIndex;
 	scrStringGlob.hashTable[0].status_next = freedIndex;
 	if (updateCertificate)
+	{
+		sl_systemSweepEntryByStringId[removedStringId] = 0;
+		if (promotesCollisionEntry)
+		{
+			sl_systemSweepEntryByStringId[promotedStringId] =
+				static_cast<uint16_t>(plan.hash);
+			sl_systemSweepOwningHashByEntry[plan.hash] =
+				static_cast<uint16_t>(plan.hash);
+			sl_systemSweepPreviousEntry[plan.hash] =
+				static_cast<uint16_t>(plan.hash);
+			const uint32_t promotedNext = static_cast<uint16_t>(
+				scrStringGlob.hashTable[plan.hash].status_next);
+			if (promotedNext != plan.hash)
+			{
+				sl_systemSweepPreviousEntry[promotedNext] =
+					static_cast<uint16_t>(plan.hash);
+			}
+		}
+		else if (plan.targetIndex != plan.hash
+			&& plan.nextIndex != plan.hash)
+		{
+			sl_systemSweepPreviousEntry[plan.nextIndex] =
+				static_cast<uint16_t>(plan.previousIndex);
+		}
+		sl_systemSweepOwningHashByEntry[freedIndex] = 0;
+		sl_systemSweepPreviousEntry[freedIndex] = 0;
 		SL_SetFreeListCertificateMemberNoReport(freedIndex, true);
+		SL_SetRegistryStringCertificateMemberNoReport(
+			removedStringId, false);
+	}
 }
 
 bool SL_TryFreeSystemSweepEntryNoReport(
@@ -3051,6 +3603,102 @@ bool SL_TryFreeSystemSweepEntryNoReport(
 	}
 
 	SL_CommitUnlinkPlanNoReport(plan);
+	scrStringGlob.nextFreeEntry = nullptr;
+	return true;
+}
+
+bool SL_TryFreeRegistrySweepEntryNoReport(
+	const uint32_t owningHash,
+	const uint32_t targetIndex,
+	const uint32_t previousIndex,
+	const uint32_t stringId,
+	RefString* const refString,
+	const uint32_t byteCount,
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
+{
+	if (!admission
+		|| !SL_IsAuthorizedOwnershipLeaseLocked(validationLease)
+		|| !SL_IsRegistryStringCertificateMemberNoReport(stringId)
+		|| owningHash == 0 || owningHash >= STRINGLIST_SIZE
+		|| targetIndex == 0 || targetIndex >= STRINGLIST_SIZE
+		|| previousIndex == 0 || previousIndex >= STRINGLIST_SIZE
+		|| !refString || byteCount == 0
+		|| !SL_IsLeasedFreeListLocallyValidNoReport())
+	{
+		return false;
+	}
+
+	MT_AllocationInfo allocationInfo{};
+	if (SL_TryGetAllocationInfoForScopeNoReport(
+			stringId,
+			&allocationInfo,
+			SL_ValidationScope::Leased,
+			validationLease,
+			admission) != MT_AllocationInfoStatus::Success
+		|| refString != SL_GetRefStringNoReport(stringId)
+		|| !SL_IsExactStringAllocationNoReport(allocationInfo, byteCount)
+		|| GetHashCode(refString->str, byteCount) != owningHash)
+	{
+		return false;
+	}
+	const uint32_t packed =
+		scr_string_atomic::Load(SL_RefStringWord(refString));
+	if (scr_string_atomic::RefCount(packed) != 0
+		|| scr_string_atomic::User(packed) != 0
+		|| !SL_IsDebugOwnershipExactNoReport(stringId, packed))
+	{
+		return false;
+	}
+
+	const HashEntry &target = scrStringGlob.hashTable[targetIndex];
+	const uint32_t expectedStatus = targetIndex == owningHash
+		? HASH_STAT_HEAD
+		: HASH_STAT_MOVABLE;
+	const uint32_t nextIndex = static_cast<uint16_t>(target.status_next);
+	if (!SL_IsHashEntryEncodingValidNoReport(target)
+		|| (target.status_next & HASH_STAT_MASK) != expectedStatus
+		|| target.u.prev != stringId
+		|| (targetIndex == owningHash && previousIndex != owningHash)
+		|| (targetIndex != owningHash
+			&& (!SL_IsHashEntryEncodingValidNoReport(
+				scrStringGlob.hashTable[previousIndex])
+				|| static_cast<uint16_t>(
+					scrStringGlob.hashTable[previousIndex].status_next)
+					!= targetIndex
+				|| (scrStringGlob.hashTable[previousIndex].status_next
+					& HASH_STAT_MASK)
+					!= (previousIndex == owningHash
+						? HASH_STAT_HEAD
+						: HASH_STAT_MOVABLE)))
+		|| (nextIndex != owningHash
+			&& (nextIndex == 0 || nextIndex >= STRINGLIST_SIZE
+				|| !SL_IsHashEntryEncodingValidNoReport(
+					scrStringGlob.hashTable[nextIndex])
+				|| (scrStringGlob.hashTable[nextIndex].status_next
+					& HASH_STAT_MASK) != HASH_STAT_MOVABLE)))
+	{
+		return false;
+	}
+
+	SL_UnlinkPlan plan{};
+	plan.hash = owningHash;
+	plan.targetIndex = targetIndex;
+	plan.previousIndex = previousIndex;
+	plan.nextIndex = nextIndex;
+	plan.freeHead =
+		static_cast<uint16_t>(scrStringGlob.hashTable[0].status_next);
+	if (SL_TryFreeStringMemoryNoReport(
+			stringId,
+			static_cast<int>(byteCount + kRefStringHeaderSize),
+			SL_ValidationScope::Leased,
+			validationLease,
+			admission) != MT_FreeIndexStatus::Success)
+	{
+		return false;
+	}
+
+	SL_CommitUnlinkPlanNoReport(plan, true);
 	scrStringGlob.nextFreeEntry = nullptr;
 	return true;
 }
@@ -3142,6 +3790,7 @@ namespace
 {
 	return SL_HasOwnershipBatchRegistryActivityLocked()
 		? admission != nullptr
+			&& scrStringDebugGlob == &scrStringDebugGlobBuf
 			&& SL_IsAuthorizedOwnershipLeaseLocked(validationLease)
 		: validationLease == nullptr && admission == nullptr;
 }
@@ -3423,7 +4072,895 @@ namespace
 		? ReleaseStatus::Success
 		: ReleaseStatus::UnsafeFailure;
 }
+
+[[nodiscard]] DatabaseUserAddStatus TryAddDatabaseUser4ReferenceInternal(
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission,
+	const uint32_t stringId) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(
+			validationLease, admission))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return DatabaseUserAddStatus::UnsafeFailure;
+	}
+	if (!IsCurrentRuntimeStringId(stringId) || !scrStringGlob.inited)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return DatabaseUserAddStatus::OwnershipMismatchNoChange;
+	}
+
+	SL_LiveStringInfo info{};
+	const SL_ResolveStatus resolveStatus = SL_TryResolveLiveStringNoReport(
+		stringId,
+		&info,
+		validationLease
+			? SL_ValidationScope::Leased
+			: SL_ValidationScope::Complete,
+		validationLease,
+		admission);
+	if (resolveStatus != SL_ResolveStatus::Success)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return resolveStatus == SL_ResolveStatus::NotAllocatedNoChange
+			? DatabaseUserAddStatus::OwnershipMismatchNoChange
+			: DatabaseUserAddStatus::UnsafeFailure;
+	}
+
+	const uint8_t databaseUser = static_cast<uint8_t>(kDatabaseUserMask);
+	const uint16_t refCount = scr_string_atomic::RefCount(info.packed);
+	const uint8_t users = scr_string_atomic::User(info.packed);
+	if ((users & databaseUser) != 0)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return DatabaseUserAddStatus::AlreadyOwnedNoChange;
+	}
+	if (refCount == scr_string_atomic::kMaxRefCount
+		|| !SL_CanDebugAddRefNoReport(stringId))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return DatabaseUserAddStatus::RefCountExhaustedNoChange;
+	}
+
+	const scr_string_atomic::AddUserRefResult result =
+		scr_string_atomic::AddUserRef(
+			SL_RefStringWord(info.refString), databaseUser);
+	if (result == scr_string_atomic::AddUserRefResult::Added)
+		SL_DebugAddRefNoReport(stringId);
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return result == scr_string_atomic::AddUserRefResult::Added
+		? DatabaseUserAddStatus::Added
+		: DatabaseUserAddStatus::UnsafeFailure;
+}
+
+[[nodiscard]] DatabaseUserAddBulkResult
+TryAddDatabaseUser4ReferencesInternal(
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission,
+	const uint32_t* const stringIds,
+	const uint32_t count,
+	const uint32_t availableOperations) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(
+			validationLease, admission))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+	}
+	if (!stringIds || count == 0
+		|| count > kRegistryOwnershipBulkCapacity)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {
+			!stringIds || count == 0
+				? DatabaseUserAddBulkStatus::InvalidArgumentNoChange
+				: DatabaseUserAddBulkStatus::CapacityNoChange,
+			0,
+			0};
+	}
+	if (!scrStringGlob.inited)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {
+			DatabaseUserAddBulkStatus::OwnershipMismatchNoChange, 0, 0};
+	}
+	uint32_t authenticatedAggregateRefCount = 0;
+	if (!SL_TryValidateRegistryTopologyCertificateNoReport(
+			validationLease,
+			admission,
+			&authenticatedAggregateRefCount))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+	}
+
+	const uint8_t databaseUser = static_cast<uint8_t>(kDatabaseUserMask);
+	uint32_t uniqueCount = 0;
+	uint32_t addedCount = 0;
+	uint32_t unchangedCount = 0;
+	for (uint32_t index = 0; index < count; ++index)
+	{
+		const uint32_t stringId = stringIds[index];
+		if (!IsCurrentRuntimeStringId(stringId))
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				DatabaseUserAddBulkStatus::OwnershipMismatchNoChange, 0, 0};
+		}
+		if (!SL_TryMarkRegistryOwnershipBulkIdNoReport(stringId))
+		{
+			++unchangedCount;
+			continue;
+		}
+		sl_registryOwnershipSweepIds[uniqueCount++] =
+			static_cast<uint16_t>(stringId);
+
+		RefString* refString = nullptr;
+		uint32_t byteCount = 0;
+		uint32_t packed = 0;
+		const SL_ResolveStatus resolveStatus =
+			SL_TryResolveLeasedCertificateMemberNoReport(
+				stringId,
+				&refString,
+				&byteCount,
+				&packed,
+				validationLease,
+				admission);
+		if (resolveStatus != SL_ResolveStatus::Success)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				resolveStatus == SL_ResolveStatus::NotAllocatedNoChange
+					? DatabaseUserAddBulkStatus::OwnershipMismatchNoChange
+					: DatabaseUserAddBulkStatus::UnsafeFailure,
+				0,
+				0};
+		}
+		(void)refString;
+		(void)byteCount;
+		const uint8_t users = scr_string_atomic::User(packed);
+		if ((users & databaseUser) != 0)
+		{
+			++unchangedCount;
+			continue;
+		}
+		if (scr_string_atomic::RefCount(packed)
+				== scr_string_atomic::kMaxRefCount
+			|| !SL_CanDebugAddRefNoReport(stringId))
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				DatabaseUserAddBulkStatus::RefCountExhaustedNoChange, 0, 0};
+		}
+		++addedCount;
+	}
+
+	const bool aggregateRefCountOverflow =
+		authenticatedAggregateRefCount > UINT32_MAX - addedCount;
+	if (aggregateRefCountOverflow
+		|| addedCount > availableOperations)
+	{
+		SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {
+			aggregateRefCountOverflow
+				? DatabaseUserAddBulkStatus::RefCountExhaustedNoChange
+				: DatabaseUserAddBulkStatus::CapacityNoChange,
+			0,
+			0};
+	}
+
+	for (uint32_t index = 0; index < uniqueCount; ++index)
+	{
+		const uint32_t stringId = sl_registryOwnershipSweepIds[index];
+		RefString* refString = nullptr;
+		uint32_t byteCount = 0;
+		uint32_t packed = 0;
+		if (SL_TryResolveLeasedCertificateMemberNoReport(
+				stringId,
+				&refString,
+				&byteCount,
+				&packed,
+				validationLease,
+				admission) != SL_ResolveStatus::Success)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+		}
+		(void)byteCount;
+		if ((scr_string_atomic::User(packed) & databaseUser) != 0)
+			continue;
+		const scr_string_atomic::AddUserRefResult result =
+			scr_string_atomic::AddUserRef(
+				SL_RefStringWord(refString), databaseUser);
+		if (result != scr_string_atomic::AddUserRefResult::Added)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+		}
+		SL_DebugAddRefNoReport(stringId);
+	}
+
+	SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return {
+		addedCount != 0
+			? DatabaseUserAddBulkStatus::Success
+			: DatabaseUserAddBulkStatus::NoChange,
+		addedCount,
+		unchangedCount};
+}
+
+[[nodiscard]] DatabaseUserAddBulkResult
+TryReAddRetainedDatabaseNamesInternal(
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission,
+	const char* const* const retainedNames,
+	const uint32_t count,
+	const uint32_t availableOperations) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(
+			validationLease, admission))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+	}
+	if (!retainedNames || count == 0
+		|| count > kRegistryOwnershipBulkCapacity)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {
+			!retainedNames || count == 0
+				? DatabaseUserAddBulkStatus::InvalidArgumentNoChange
+				: DatabaseUserAddBulkStatus::CapacityNoChange,
+			0,
+			0};
+	}
+	if (!scrStringGlob.inited)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {
+			DatabaseUserAddBulkStatus::OwnershipMismatchNoChange, 0, 0};
+	}
+	uint32_t authenticatedAggregateRefCount = 0;
+	if (!SL_TryValidateRegistryTopologyCertificateNoReport(
+			validationLease,
+			admission,
+			&authenticatedAggregateRefCount))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+	}
+
+	const uintptr_t memoryBegin =
+		reinterpret_cast<uintptr_t>(scrMemTreePub.mt_buffer);
+	constexpr uintptr_t payloadOffset = offsetof(RefString, str);
+	const uint8_t databaseUser = static_cast<uint8_t>(kDatabaseUserMask);
+	const uint8_t retainedUser =
+		static_cast<uint8_t>(kRetainedDatabaseUserMask);
+	uint32_t uniqueCount = 0;
+	uint32_t addedCount = 0;
+	uint32_t unchangedCount = 0;
+	for (uint32_t index = 0; index < count; ++index)
+	{
+		const char* const retainedName = retainedNames[index];
+		if (!retainedName || memoryBegin == 0
+			|| memoryBegin > (std::numeric_limits<uintptr_t>::max)() - MT_SIZE)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				!retainedName
+					? DatabaseUserAddBulkStatus::InvalidArgumentNoChange
+					: DatabaseUserAddBulkStatus::UnsafeFailure,
+				0,
+				0};
+		}
+		const uintptr_t nameAddress =
+			reinterpret_cast<uintptr_t>(retainedName);
+		const bool addressValid = nameAddress >= memoryBegin + payloadOffset
+			&& nameAddress < memoryBegin + MT_SIZE
+			&& (nameAddress - memoryBegin - payloadOffset) % MT_NODE_SIZE == 0;
+		const uint32_t stringId = addressValid
+			? static_cast<uint32_t>(
+				(nameAddress - memoryBegin - payloadOffset) / MT_NODE_SIZE)
+			: 0;
+		if (!addressValid || !IsCurrentRuntimeStringId(stringId))
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				DatabaseUserAddBulkStatus::OwnershipMismatchNoChange, 0, 0};
+		}
+		if (!SL_TryMarkRegistryOwnershipBulkIdNoReport(stringId))
+		{
+			++unchangedCount;
+			continue;
+		}
+		sl_registryOwnershipSweepIds[uniqueCount++] =
+			static_cast<uint16_t>(stringId);
+
+		RefString* retained = nullptr;
+		uint32_t byteCount = 0;
+		uint32_t packed = 0;
+		const SL_ResolveStatus resolveStatus =
+			SL_TryResolveLeasedCertificateMemberNoReport(
+				stringId,
+				&retained,
+				&byteCount,
+				&packed,
+				validationLease,
+				admission);
+		if (resolveStatus != SL_ResolveStatus::Success
+			|| retained->str != retainedName)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				resolveStatus == SL_ResolveStatus::NotAllocatedNoChange
+					|| (resolveStatus == SL_ResolveStatus::Success
+						&& retained->str != retainedName)
+					? DatabaseUserAddBulkStatus::OwnershipMismatchNoChange
+					: DatabaseUserAddBulkStatus::UnsafeFailure,
+				0,
+				0};
+		}
+		(void)byteCount;
+		const uint8_t users = scr_string_atomic::User(packed);
+		if ((users & retainedUser) == 0)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				DatabaseUserAddBulkStatus::OwnershipMismatchNoChange, 0, 0};
+		}
+		if ((users & databaseUser) != 0)
+		{
+			++unchangedCount;
+			continue;
+		}
+		if (scr_string_atomic::RefCount(packed)
+				== scr_string_atomic::kMaxRefCount
+			|| !SL_CanDebugAddRefNoReport(stringId))
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {
+				DatabaseUserAddBulkStatus::RefCountExhaustedNoChange, 0, 0};
+		}
+		++addedCount;
+	}
+
+	const bool aggregateRefCountOverflow =
+		authenticatedAggregateRefCount > UINT32_MAX - addedCount;
+	if (aggregateRefCountOverflow
+		|| addedCount > availableOperations)
+	{
+		SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {
+			aggregateRefCountOverflow
+				? DatabaseUserAddBulkStatus::RefCountExhaustedNoChange
+				: DatabaseUserAddBulkStatus::CapacityNoChange,
+			0,
+			0};
+	}
+	for (uint32_t index = 0; index < uniqueCount; ++index)
+	{
+		const uint32_t stringId = sl_registryOwnershipSweepIds[index];
+		RefString* refString = nullptr;
+		uint32_t byteCount = 0;
+		uint32_t packed = 0;
+		if (SL_TryResolveLeasedCertificateMemberNoReport(
+				stringId,
+				&refString,
+				&byteCount,
+				&packed,
+				validationLease,
+				admission) != SL_ResolveStatus::Success)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+		}
+		(void)byteCount;
+		const uint8_t users = scr_string_atomic::User(packed);
+		if ((users & retainedUser) == 0)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+		}
+		if ((users & databaseUser) != 0)
+			continue;
+		const scr_string_atomic::AddUserRefResult result =
+			scr_string_atomic::AddUserRef(
+				SL_RefStringWord(refString), databaseUser);
+		if (result != scr_string_atomic::AddUserRefResult::Added)
+		{
+			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+		}
+		SL_DebugAddRefNoReport(stringId);
+	}
+
+	SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return {
+		addedCount != 0
+			? DatabaseUserAddBulkStatus::Success
+			: DatabaseUserAddBulkStatus::NoChange,
+		addedCount,
+		unchangedCount};
+}
+
+[[nodiscard]] DatabaseNameResult TryInternDatabaseUser4NameInternal(
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission,
+	const char* const bytes,
+	const uint32_t byteCount,
+	const int type) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	const bool authorized = SL_IsTypedOwnershipAccessAuthorizedLocked(
+		validationLease, admission);
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (!authorized)
+		return {DatabaseNameStatus::UnsafeFailure, 0, nullptr};
+	if (!bytes || byteCount == 0 || byteCount > UINT32_C(65531)
+		|| bytes[byteCount - 1] != '\0'
+		|| !SL_IsRepresentableRefStringBytesNoReport(bytes, byteCount))
+	{
+		return {DatabaseNameStatus::InvalidArgumentNoChange, 0, nullptr};
+	}
+
+	uint32_t stringId = 0;
+	const SL_InternStatus internStatus =
+		SL_TryInternStringOfSizeWithValidation(
+			bytes,
+			kDatabaseUserMask,
+			byteCount,
+			type,
+			&stringId,
+			validationLease
+				? SL_ValidationScope::Leased
+				: SL_ValidationScope::Complete,
+			validationLease,
+			admission);
+	switch (internStatus)
+	{
+	case SL_InternStatus::PrimaryTableCapacityNoChange:
+	case SL_InternStatus::RelocatedTableCapacityNoChange:
+	case SL_InternStatus::MemoryCapacityNoChange:
+		return {DatabaseNameStatus::CapacityNoChange, 0, nullptr};
+	case SL_InternStatus::RefCountExhaustedNoChange:
+		return {
+			DatabaseNameStatus::RefCountExhaustedNoChange, 0, nullptr};
+	case SL_InternStatus::InvalidArgumentNoChange:
+		return {DatabaseNameStatus::InvalidArgumentNoChange, 0, nullptr};
+	case SL_InternStatus::UnsafeCleanupFailure:
+	case SL_InternStatus::UnsafeFailure:
+		return {DatabaseNameStatus::UnsafeFailure, 0, nullptr};
+	case SL_InternStatus::Success:
+		break;
+	default:
+		return {DatabaseNameStatus::UnsafeFailure, 0, nullptr};
+	}
+
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	RefString* canonical = nullptr;
+	uint32_t verifiedByteCount = 0;
+	const bool resolved =
+		IsCurrentRuntimeStringId(stringId)
+		&& SL_TryGetAllocatedStringByteCountForScopeNoReport(
+			stringId,
+			&canonical,
+			&verifiedByteCount,
+			validationLease
+				? SL_ValidationScope::Leased
+				: SL_ValidationScope::Complete,
+			validationLease,
+			admission)
+		&& verifiedByteCount == byteCount
+		&& (scr_string_atomic::User(
+				scr_string_atomic::Load(SL_RefStringWord(canonical)))
+			& static_cast<uint8_t>(kDatabaseUserMask)) != 0;
+	const char* const canonicalName = resolved ? canonical->str : nullptr;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return resolved
+		? DatabaseNameResult{
+			DatabaseNameStatus::Success, stringId, canonicalName}
+		: DatabaseNameResult{
+			DatabaseNameStatus::UnsafeFailure, 0, nullptr};
+}
+
+[[nodiscard]] DatabaseNameStatus TryReAddRetainedDatabaseNameInternal(
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission,
+	const char* const retainedName) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(
+			validationLease, admission)
+		|| !retainedName || !scrStringGlob.inited)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return retainedName
+			? DatabaseNameStatus::UnsafeFailure
+			: DatabaseNameStatus::InvalidArgumentNoChange;
+	}
+
+	const uintptr_t memoryBegin =
+		reinterpret_cast<uintptr_t>(scrMemTreePub.mt_buffer);
+	const uintptr_t nameAddress =
+		reinterpret_cast<uintptr_t>(retainedName);
+	constexpr uintptr_t payloadOffset = offsetof(RefString, str);
+	const bool addressValid = memoryBegin != 0
+		&& memoryBegin <= (std::numeric_limits<uintptr_t>::max)() - MT_SIZE
+		&& nameAddress >= memoryBegin + payloadOffset
+		&& nameAddress < memoryBegin + MT_SIZE
+		&& (nameAddress - memoryBegin - payloadOffset) % MT_NODE_SIZE == 0;
+	const uint32_t stringId = addressValid
+		? static_cast<uint32_t>(
+			(nameAddress - memoryBegin - payloadOffset) / MT_NODE_SIZE)
+		: 0;
+	RefString* retained = nullptr;
+	uint32_t byteCount = 0;
+	const bool retainedValid = addressValid
+		&& IsCurrentRuntimeStringId(stringId)
+		&& SL_TryGetAllocatedStringByteCountForScopeNoReport(
+			stringId,
+			&retained,
+			&byteCount,
+			validationLease
+				? SL_ValidationScope::Leased
+				: SL_ValidationScope::Complete,
+			validationLease,
+			admission)
+		&& retained->str == retainedName
+		&& (scr_string_atomic::User(
+				scr_string_atomic::Load(SL_RefStringWord(retained)))
+			& static_cast<uint8_t>(kRetainedDatabaseUserMask)) != 0;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (!retainedValid)
+		return DatabaseNameStatus::OwnershipMismatchNoChange;
+
+	const DatabaseNameResult result = TryInternDatabaseUser4NameInternal(
+		validationLease, admission, retainedName, byteCount, 6);
+	if (result.status != DatabaseNameStatus::Success)
+		return result.status;
+	return result.stringId == stringId
+		&& result.canonicalName == retainedName
+		? DatabaseNameStatus::Success
+		: DatabaseNameStatus::UnsafeFailure;
+}
+
+[[nodiscard]] DatabaseSweepStatus TryTransferDatabaseUsers4To8Internal(
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(
+			validationLease, admission)
+		|| !validationLease || !admission
+		|| !SL_IsCompleteStringStateValidForScopeNoReport(
+			SL_ValidationScope::Leased, validationLease, admission))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return DatabaseSweepStatus::UnsafeFailure;
+	}
+
+	const uint8_t from = static_cast<uint8_t>(kDatabaseUserMask);
+	const uint8_t to = static_cast<uint8_t>(kRetainedDatabaseUserMask);
+	for (uint32_t hash = 1; hash < STRINGLIST_SIZE; ++hash)
+	{
+		if ((scrStringGlob.hashTable[hash].status_next & HASH_STAT_MASK) == 0)
+			continue;
+		const uint32_t stringId = scrStringGlob.hashTable[hash].u.prev;
+		RefString* refString = nullptr;
+		uint32_t byteCount = 0;
+		if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+				stringId,
+				&refString,
+				&byteCount,
+				SL_ValidationScope::Leased,
+				validationLease,
+				admission))
+		{
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return DatabaseSweepStatus::UnsafeFailure;
+		}
+		(void)byteCount;
+		const uint32_t packed =
+			scr_string_atomic::Load(SL_RefStringWord(refString));
+		const uint8_t users = scr_string_atomic::User(packed);
+		if ((users & from) != 0 && (users & to) != 0
+			&& (scr_string_atomic::RefCount(packed) <= 1
+				|| !SL_CanDebugRemoveRefNoReport(stringId)))
+		{
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return DatabaseSweepStatus::UnsafeFailure;
+		}
+	}
+
+	for (uint32_t hash = 1; hash < STRINGLIST_SIZE; ++hash)
+	{
+		if ((scrStringGlob.hashTable[hash].status_next & HASH_STAT_MASK) == 0)
+			continue;
+		const uint32_t stringId = scrStringGlob.hashTable[hash].u.prev;
+		RefString* const refString = SL_GetRefStringNoReport(stringId);
+		const scr_string_atomic::TransferUserResult result =
+			scr_string_atomic::TransferUser(
+				SL_RefStringWord(refString), from, to);
+		if (result == scr_string_atomic::TransferUserResult::ReleasedDuplicate)
+			SL_DebugRemoveRefNoReport(stringId);
+		else if (result == scr_string_atomic::TransferUserResult::Invalid)
+		{
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return DatabaseSweepStatus::UnsafeFailure;
+		}
+	}
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return DatabaseSweepStatus::Success;
+}
+
+[[nodiscard]] DatabaseSweepStatus TryShutdownDatabaseUser8Internal(
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	if (!SL_IsTypedOwnershipAccessAuthorizedLocked(
+			validationLease, admission)
+		|| !validationLease || !admission
+		|| !SL_IsCompleteStringStateValidForScopeNoReport(
+			SL_ValidationScope::Leased, validationLease, admission))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return DatabaseSweepStatus::UnsafeFailure;
+	}
+
+	const uint8_t retainedUser =
+		static_cast<uint8_t>(kRetainedDatabaseUserMask);
+	uint32_t retainedCount = 0;
+	uint32_t requiredMemoryMutations = 0;
+	for (uint32_t hash = 1; hash < STRINGLIST_SIZE; ++hash)
+	{
+		if ((scrStringGlob.hashTable[hash].status_next & HASH_STAT_MASK) == 0)
+			continue;
+		const uint32_t stringId = scrStringGlob.hashTable[hash].u.prev;
+		RefString* refString = nullptr;
+		uint32_t byteCount = 0;
+		uint32_t packed = 0;
+		if (SL_TryResolveLeasedCertificateMemberNoReport(
+				stringId,
+				&refString,
+				&byteCount,
+				&packed,
+				validationLease,
+				admission) != SL_ResolveStatus::Success)
+		{
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return DatabaseSweepStatus::UnsafeFailure;
+		}
+		(void)refString;
+		(void)byteCount;
+		if ((scr_string_atomic::User(packed) & retainedUser) == 0)
+			continue;
+		if (retainedCount >= STRINGLIST_SIZE
+			|| !SL_CanDebugRemoveRefNoReport(stringId))
+		{
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return DatabaseSweepStatus::UnsafeFailure;
+		}
+		++retainedCount;
+		if (scr_string_atomic::RefCount(packed) == 1)
+			++requiredMemoryMutations;
+	}
+	if (validationLease->mutationCount()
+		> UINT32_MAX - requiredMemoryMutations)
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return DatabaseSweepStatus::CapacityNoChange;
+	}
+
+	scrStringGlob.nextFreeEntry = nullptr;
+	uint32_t removedCount = 0;
+	bool invalidTransition = false;
+	for (uint32_t owningHash = 1;
+		owningHash < STRINGLIST_SIZE && !invalidTransition;
+		++owningHash)
+	{
+		if ((scrStringGlob.hashTable[owningHash].status_next & HASH_STAT_MASK)
+			!= HASH_STAT_HEAD)
+		{
+			continue;
+		}
+
+		uint32_t targetIndex = owningHash;
+		uint32_t previousIndex = owningHash;
+		bool chainDone = false;
+		for (uint32_t visited = 0;
+			visited < STRINGLIST_SIZE && !invalidTransition;
+			++visited)
+		{
+			#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+			++sl_registryOwnershipLinearSweepEntryVisitCount;
+			#endif
+			if (targetIndex == 0 || targetIndex >= STRINGLIST_SIZE)
+			{
+				invalidTransition = true;
+				break;
+			}
+			HashEntry &entry = scrStringGlob.hashTable[targetIndex];
+			const uint32_t nextIndex =
+				static_cast<uint16_t>(entry.status_next);
+			const uint32_t stringId = entry.u.prev;
+			RefString* refString = nullptr;
+			uint32_t byteCount = 0;
+			uint32_t packedBefore = 0;
+			if (SL_TryResolveLeasedCertificateMemberNoReport(
+				stringId,
+				&refString,
+				&byteCount,
+				&packedBefore,
+				validationLease,
+				admission) != SL_ResolveStatus::Success
+				|| sl_systemSweepOwningHashByEntry[targetIndex]
+					!= owningHash)
+			{
+				invalidTransition = true;
+				break;
+			}
+
+			if ((scr_string_atomic::User(packedBefore) & retainedUser) == 0)
+			{
+				if (nextIndex == owningHash)
+				{
+					chainDone = true;
+					break;
+				}
+				previousIndex = targetIndex;
+				targetIndex = nextIndex;
+				continue;
+			}
+			if (!SL_CanDebugRemoveRefNoReport(stringId))
+			{
+				invalidTransition = true;
+				break;
+			}
+
+			const scr_string_atomic::RemoveUserRefResult result =
+				scr_string_atomic::RemoveUserRef(
+					SL_RefStringWord(refString), retainedUser);
+			if (result.status
+				!= scr_string_atomic::RemoveUserRefStatus::Removed)
+			{
+				invalidTransition = true;
+				break;
+			}
+			SL_DebugRemoveRefNoReport(stringId);
+			++removedCount;
+
+			if (result.reachedZero)
+			{
+				if (!SL_TryFreeRegistrySweepEntryNoReport(
+						owningHash,
+						targetIndex,
+						previousIndex,
+						stringId,
+						refString,
+						byteCount,
+						validationLease,
+						admission))
+				{
+					Sys_AtomicStore(
+						SL_RefStringWord(refString), packedBefore);
+					SL_DebugAddRefNoReport(stringId);
+					--removedCount;
+					invalidTransition = true;
+					break;
+				}
+				if (targetIndex == owningHash)
+				{
+					if (nextIndex == owningHash)
+					{
+						chainDone = true;
+						break;
+					}
+					targetIndex = owningHash;
+					previousIndex = owningHash;
+					continue;
+				}
+				if (nextIndex == owningHash)
+				{
+					chainDone = true;
+					break;
+				}
+				targetIndex = nextIndex;
+				continue;
+			}
+
+			if (nextIndex == owningHash)
+			{
+				chainDone = true;
+				break;
+			}
+			previousIndex = targetIndex;
+			targetIndex = nextIndex;
+		}
+		if (!invalidTransition && !chainDone)
+			invalidTransition = true;
+	}
+	if (!invalidTransition && removedCount != retainedCount)
+		invalidTransition = true;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return invalidTransition
+		? DatabaseSweepStatus::UnsafeFailure
+		: DatabaseSweepStatus::Success;
+}
 } // namespace
+
+RegistryOwnershipAdmission::RegistryOwnershipAdmission(
+	const std::uintptr_t coordinatorAddress,
+	const std::uint64_t coordinatorSerial,
+	const std::uintptr_t batchAddress,
+	const std::uint64_t batchSerial) noexcept
+	: coordinatorAddress_(coordinatorAddress),
+	  coordinatorAddressMirror_(coordinatorAddress),
+	  coordinatorSerial_(coordinatorSerial),
+	  coordinatorSerialMirror_(coordinatorSerial),
+	  batchAddress_(batchAddress),
+	  batchAddressMirror_(batchAddress),
+	  batchSerial_(batchSerial),
+	  batchSerialMirror_(batchSerial)
+{
+}
+
+OwnershipBatch*
+RegistryOwnershipAdmission::tryAuthenticateBatchLocked() const noexcept
+{
+	if (coordinatorAddress_ == 0
+		|| coordinatorAddress_ != coordinatorAddressMirror_
+		|| coordinatorSerial_ == 0
+		|| coordinatorSerial_ != coordinatorSerialMirror_
+		|| batchAddress_ == 0 || batchAddress_ != batchAddressMirror_
+		|| batchSerial_ == 0 || batchSerial_ != batchSerialMirror_
+		|| !SL_IsOwnershipBatchRegistryConsistentLocked()
+		|| sl_activeOwnershipBatchAddress != batchAddress_
+		|| sl_activeOwnershipBatchAddressMirror != batchAddress_
+		|| sl_activeOwnershipBatchSerial != batchSerial_
+		|| sl_activeOwnershipBatchSerialMirror != batchSerial_)
+	{
+		return nullptr;
+	}
+
+	// Convert the numeric identity only after both global copies and every
+	// capability mirror agree. This avoids dereferencing a stale/corrupt batch
+	// pointer merely to discover that it was not the active owner.
+	auto* const batch = reinterpret_cast<OwnershipBatch*>(batchAddress_);
+	return batch->tryAuthenticateOperationLocked() ? batch : nullptr;
+}
+
+#if defined(KISAK_MEMORY_TREE_VALIDATION_TESTING)
+RegistryOwnershipAdmission RegistryOwnershipAdmission::ForTesting(
+	OwnershipBatch& batch) noexcept
+{
+	return RegistryOwnershipAdmission{
+		static_cast<std::uintptr_t>(1),
+		UINT64_C(1),
+		reinterpret_cast<std::uintptr_t>(&batch),
+		batch.serial()};
+}
+#endif
 
 const MT_ValidationLeaseAdmission &
 OwnershipBatch::MakeMemoryTreeLeaseAdmission() noexcept
@@ -3733,6 +5270,12 @@ void ResetOwnershipValidationCountersForTesting() noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 	sl_ownershipValidationCounters = {};
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+	sl_registryOwnershipHashChainEntryVisitCount = 0;
+	sl_registryOwnershipLinearSweepEntryVisitCount = 0;
+	sl_registryOwnershipTopologyPreflightCount = 0;
+	sl_registryOwnershipTopologyPreflightWorkCount = 0;
+#endif
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 }
 
@@ -4112,6 +5655,231 @@ ReleaseStatus TryRemoveDatabaseUserReference(
 		++batch.operationCount_;
 	else if (status == ReleaseStatus::UnsafeFailure)
 		batch.poisoned_ = true;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return status;
+}
+
+DatabaseUserAddStatus TryAddDatabaseUser4Reference(
+	const RegistryOwnershipAdmission& registryAdmission,
+	const uint32_t stringId) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
+	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return DatabaseUserAddStatus::UnsafeFailure;
+	}
+	const MT_ValidationLeaseAdmission &admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
+	const DatabaseUserAddStatus status =
+		TryAddDatabaseUser4ReferenceInternal(
+			&batch->memoryTreeLease_, &admission, stringId);
+	if (status == DatabaseUserAddStatus::Added)
+		++batch->operationCount_;
+	else if (status == DatabaseUserAddStatus::UnsafeFailure)
+		batch->poisoned_ = true;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return status;
+}
+
+DatabaseUserAddBulkResult TryAddDatabaseUser4References(
+	const RegistryOwnershipAdmission& registryAdmission,
+	const uint32_t* const stringIds,
+	const uint32_t count) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
+	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+	}
+	const MT_ValidationLeaseAdmission& admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
+	const DatabaseUserAddBulkResult result =
+		TryAddDatabaseUser4ReferencesInternal(
+			&batch->memoryTreeLease_,
+			&admission,
+			stringIds,
+			count,
+			UINT32_MAX - batch->operationCount_);
+	if (result.status == DatabaseUserAddBulkStatus::Success)
+		batch->operationCount_ += result.addedCount;
+	else if (result.status == DatabaseUserAddBulkStatus::UnsafeFailure)
+		batch->poisoned_ = true;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return result;
+}
+
+DatabaseNameResult TryInternDatabaseUser4Name(
+	const RegistryOwnershipAdmission& registryAdmission,
+	const char* const bytes,
+	const uint32_t byteCount,
+	const int type) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
+	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {DatabaseNameStatus::UnsafeFailure, 0, nullptr};
+	}
+	const MT_ValidationLeaseAdmission &admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
+	const DatabaseNameResult result = TryInternDatabaseUser4NameInternal(
+		&batch->memoryTreeLease_, &admission, bytes, byteCount, type);
+	if (result.status == DatabaseNameStatus::Success)
+		++batch->operationCount_;
+	else if (result.status == DatabaseNameStatus::UnsafeFailure)
+		batch->poisoned_ = true;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return result;
+}
+
+DatabaseNameStatus TryReAddRetainedDatabaseName(
+	const RegistryOwnershipAdmission& registryAdmission,
+	const char* const retainedName) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
+	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return DatabaseNameStatus::UnsafeFailure;
+	}
+	const MT_ValidationLeaseAdmission &admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
+	const DatabaseNameStatus status =
+		TryReAddRetainedDatabaseNameInternal(
+			&batch->memoryTreeLease_, &admission, retainedName);
+	if (status == DatabaseNameStatus::Success)
+		++batch->operationCount_;
+	else if (status == DatabaseNameStatus::UnsafeFailure)
+		batch->poisoned_ = true;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return status;
+}
+
+DatabaseUserAddBulkResult TryReAddRetainedDatabaseNames(
+	const RegistryOwnershipAdmission& registryAdmission,
+	const char* const* const retainedNames,
+	const uint32_t count) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
+	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
+	}
+	const MT_ValidationLeaseAdmission& admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
+	const DatabaseUserAddBulkResult result =
+		TryReAddRetainedDatabaseNamesInternal(
+			&batch->memoryTreeLease_,
+			&admission,
+			retainedNames,
+			count,
+			UINT32_MAX - batch->operationCount_);
+	if (result.status == DatabaseUserAddBulkStatus::Success)
+		batch->operationCount_ += result.addedCount;
+	else if (result.status == DatabaseUserAddBulkStatus::UnsafeFailure)
+		batch->poisoned_ = true;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return result;
+}
+
+DatabaseSweepStatus TryTransferDatabaseUsers4To8(
+	const RegistryOwnershipAdmission& registryAdmission) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
+	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return DatabaseSweepStatus::UnsafeFailure;
+	}
+	const MT_ValidationLeaseAdmission &admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
+	const DatabaseSweepStatus status =
+		TryTransferDatabaseUsers4To8Internal(
+			&batch->memoryTreeLease_, &admission);
+	if (status == DatabaseSweepStatus::Success)
+		++batch->operationCount_;
+	else if (status == DatabaseSweepStatus::UnsafeFailure)
+		batch->poisoned_ = true;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return status;
+}
+
+DatabaseSweepStatus TryShutdownDatabaseUser8(
+	const RegistryOwnershipAdmission& registryAdmission) noexcept
+{
+	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
+	OwnershipBatch* const batch =
+		registryAdmission.tryAuthenticateBatchLocked();
+	if (!batch)
+	{
+		if (SL_HasOwnershipBatchRegistryActivityLocked())
+		{
+			sl_ownershipBatchLifecycle = SL_OwnershipBatchLifecycle::Poisoned;
+			sl_ownershipBatchLifecycleMirror =
+				SL_OwnershipBatchLifecycle::Poisoned;
+		}
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return DatabaseSweepStatus::UnsafeFailure;
+	}
+	const MT_ValidationLeaseAdmission &admission =
+		OwnershipBatch::MakeMemoryTreeLeaseAdmission();
+	const DatabaseSweepStatus status = TryShutdownDatabaseUser8Internal(
+		&batch->memoryTreeLease_, &admission);
+	if (status == DatabaseSweepStatus::Success)
+		++batch->operationCount_;
+	else if (status == DatabaseSweepStatus::UnsafeFailure)
+		batch->poisoned_ = true;
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 	return status;
 }

@@ -1,3 +1,4 @@
+#include <database/db_registry_ownership_coordinator.h>
 #include <script/scr_stringlist.cpp>
 
 #include <algorithm>
@@ -13,6 +14,8 @@
 #include <thread>
 #include <vector>
 
+FastCriticalSection db_hashCritSect{};
+
 namespace
 {
 static_assert(sizeof(script_string::OwnershipBatch) == 0x20);
@@ -22,8 +25,10 @@ static_assert(
 
 std::recursive_mutex g_scriptStringMutex;
 std::recursive_mutex g_memoryTreeMutex;
+std::recursive_mutex g_scriptStringTransactionMutex;
 thread_local std::uint32_t g_scriptStringLockDepth = 0;
 thread_local std::uint32_t g_memoryTreeLockDepth = 0;
+thread_local std::uint32_t g_scriptStringTransactionLockDepth = 0;
 std::uint32_t g_comErrorCount = 0;
 std::uint32_t g_assertCount = 0;
 bool g_reporterSawOwnedLock = false;
@@ -94,7 +99,8 @@ struct StateImage final
 
 [[nodiscard]] bool LocksReleased() noexcept
 {
-    return g_scriptStringLockDepth == 0 && g_memoryTreeLockDepth == 0;
+    return g_scriptStringLockDepth == 0 && g_memoryTreeLockDepth == 0
+        && g_scriptStringTransactionLockDepth == 0;
 }
 
 [[nodiscard]] bool ReportersUnused() noexcept
@@ -3592,6 +3598,1300 @@ struct StateImage final
     return validPath && EndTest();
 }
 
+[[nodiscard]] bool RegistrySweepScratchCleared() noexcept
+{
+    for (std::uint32_t index = 0; index < STRINGLIST_SIZE; ++index)
+    {
+        if (sl_registryOwnershipSweepIds[index] != 0)
+            return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool RegistryBulkScratchCleared() noexcept
+{
+    if (!RegistrySweepScratchCleared())
+        return false;
+    for (const std::uint8_t value : sl_registryOwnershipBulkVisited)
+    {
+        if (value != 0)
+            return false;
+    }
+    return true;
+}
+
+constexpr std::size_t kRegistryCollisionNameBytes = 256;
+
+void MakeRegistryCollisionName(
+    std::array<char, kRegistryCollisionNameBytes> &name,
+    const std::size_t index) noexcept
+{
+    name.fill('x');
+    name[0] = static_cast<char>('A' + (index / 26) % 26);
+    name[1] = static_cast<char>('a' + index % 26);
+    name.back() = '\0';
+}
+
+[[nodiscard]] bool TestRegistryTypedOperationsRejectCorruptDebugPointer()
+    noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char value[] = "registry-corrupt-debug-pointer";
+    const auto acquired = script_string::TryAcquireOrdinaryStringOfSize(
+        value, sizeof(value), 15);
+    if (!Check(acquired.status == script_string::AcquireStatus::Acquired,
+            "registry debug-pointer setup failed"))
+    {
+        return false;
+    }
+
+    const std::array<std::uint32_t, 1> ids{acquired.stringId};
+    for (std::uint32_t scenario = 0; scenario < 2; ++scenario)
+    {
+        script_string::OwnershipBatch batch;
+        if (!Check(
+                script_string::TryBeginOwnershipBatch(&batch)
+                    == script_string::OwnershipBatchStatus::Success,
+                "registry debug-pointer batch admission failed"))
+        {
+            return false;
+        }
+        const auto admission =
+            script_string::RegistryOwnershipAdmission::ForTesting(batch);
+        const StateImage beforeCorruption = CaptureState();
+        SL_ResetHashChainValidationNoReport();
+        script_string::ResetOwnershipValidationCountersForTesting();
+        scrStringDebugGlob_t *const canonicalDebug = scrStringDebugGlob;
+        scrStringDebugGlob = scenario == 0
+            ? nullptr
+            : reinterpret_cast<scrStringDebugGlob_t *>(
+                static_cast<std::uintptr_t>(1));
+        const auto rejected = script_string::TryAddDatabaseUser4References(
+            admission,
+            ids.data(),
+            static_cast<std::uint32_t>(ids.size()));
+        scrStringDebugGlob = canonicalDebug;
+
+        const bool rejectedCleanly = Check(
+                rejected.status
+                    == script_string::DatabaseUserAddBulkStatus::UnsafeFailure,
+                "registry typed operation trusted a corrupt debug pointer")
+            && Check(rejected.addedCount == 0
+                    && rejected.unchangedCount == 0,
+                "registry debug-pointer rejection published counts")
+            && Check(batch.poisoned(),
+                "registry debug-pointer rejection did not poison the batch")
+            && Check(batch.operationCount() == 0,
+                "registry debug-pointer rejection consumed an operation")
+            && Check(StateMatches(beforeCorruption),
+                "registry debug-pointer rejection changed state")
+            && Check(RegistryBulkScratchCleared(),
+                "registry debug-pointer rejection retained scratch state")
+            && Check(sl_registryOwnershipTopologyPreflightCount == 0
+                    && sl_registryOwnershipTopologyPreflightWorkCount == 0,
+                "registry debug-pointer rejection entered bulk preflight")
+            && Check(sl_hashChainVisitedCount == 0
+                    && sl_stringIdVisitedCount == 0,
+                "registry debug-pointer rejection retained validation scratch");
+        const bool closeRejected = Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "registry debug-pointer-poisoned batch closed successfully");
+        if (!rejectedCleanly || !closeRejected)
+            return false;
+    }
+
+    return Check(
+            script_string::TryRemoveOrdinaryReference(acquired.stringId)
+                == script_string::ReleaseStatus::Success,
+            "registry debug-pointer cleanup failed")
+        && EndTest();
+}
+
+[[nodiscard]] bool TestRegistryRetainedBulkRejectsCorruptAggregate() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char firstValue[] = "registry-aggregate-first";
+    constexpr char secondValue[] = "registry-aggregate-second";
+    const auto first = script_string::TryAcquireOrdinaryStringOfSize(
+        firstValue, sizeof(firstValue), 15);
+    const auto second = script_string::TryAcquireOrdinaryStringOfSize(
+        secondValue, sizeof(secondValue), 15);
+    if (!Check(first.status == script_string::AcquireStatus::Acquired
+                && second.status == script_string::AcquireStatus::Acquired,
+            "registry aggregate setup failed"))
+    {
+        return false;
+    }
+    const std::array<std::uint32_t, 2> ids{
+        first.stringId, second.stringId};
+    const std::array<const char *, 2> names{
+        GetRefString(first.stringId)->str,
+        GetRefString(second.stringId)->str};
+
+    script_string::OwnershipBatch setupBatch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&setupBatch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry aggregate setup batch admission failed"))
+    {
+        return false;
+    }
+    const auto setupAdmission =
+        script_string::RegistryOwnershipAdmission::ForTesting(setupBatch);
+    const auto setupAdd = script_string::TryAddDatabaseUser4References(
+        setupAdmission,
+        ids.data(),
+        static_cast<std::uint32_t>(ids.size()));
+    if (!Check(
+            setupAdd.status
+                == script_string::DatabaseUserAddBulkStatus::Success
+                && setupAdd.addedCount == ids.size(),
+            "registry aggregate setup add failed")
+        || !Check(
+            script_string::TryTransferDatabaseUsers4To8(setupAdmission)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry aggregate setup transfer failed")
+        || !Check(
+            script_string::FinishOwnershipBatch(&setupBatch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry aggregate setup batch close failed"))
+    {
+        return false;
+    }
+
+    script_string::OwnershipBatch corruptBatch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&corruptBatch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry aggregate corruption batch admission failed"))
+    {
+        return false;
+    }
+    const auto corruptAdmission =
+        script_string::RegistryOwnershipAdmission::ForTesting(corruptBatch);
+    const std::uint32_t canonicalTotal =
+        Sys_AtomicLoad(&scrStringDebugGlob->totalRefCount);
+    script_string::ResetOwnershipValidationCountersForTesting();
+    Sys_AtomicStore(&scrStringDebugGlob->totalRefCount, UINT32_MAX);
+    const StateImage corruptState = CaptureState();
+    const auto rejected = script_string::TryReAddRetainedDatabaseNames(
+        corruptAdmission,
+        names.data(),
+        static_cast<std::uint32_t>(names.size()));
+    const bool rejectedCleanly = Check(
+            rejected.status
+                == script_string::DatabaseUserAddBulkStatus::UnsafeFailure,
+            "registry retained bulk treated corrupt aggregate as exhaustion")
+        && Check(rejected.addedCount == 0 && rejected.unchangedCount == 0,
+            "registry aggregate rejection published partial counts")
+        && Check(corruptBatch.poisoned(),
+            "registry aggregate rejection did not poison the batch")
+        && Check(corruptBatch.operationCount() == 0,
+            "registry aggregate rejection consumed an operation")
+        && Check(StateMatches(corruptState),
+            "registry aggregate rejection changed corrupt state")
+        && Check(RegistryBulkScratchCleared(),
+            "registry aggregate rejection retained scratch state")
+        && Check(sl_registryOwnershipTopologyPreflightCount == 1,
+            "registry aggregate rejection skipped topology preflight")
+        && Check(
+            sl_registryOwnershipTopologyPreflightWorkCount
+                == 2 * (STRINGLIST_SIZE - 1)
+                    + SL_MAX_STRING_INDEX + ids.size(),
+            "registry aggregate preflight work changed")
+        && Check(sl_hashChainVisitedCount == 0
+                && sl_stringIdVisitedCount == 0,
+            "registry aggregate rejection retained validation scratch");
+    Sys_AtomicStore(&scrStringDebugGlob->totalRefCount, canonicalTotal);
+    const bool closeRejected = Check(
+        script_string::FinishOwnershipBatch(&corruptBatch)
+            == script_string::OwnershipBatchStatus::UnsafeFailure,
+        "registry aggregate-poisoned batch closed successfully");
+    if (!rejectedCleanly || !closeRejected)
+        return false;
+
+    script_string::OwnershipBatch cleanupBatch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&cleanupBatch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry aggregate cleanup batch admission failed"))
+    {
+        return false;
+    }
+    const auto cleanupAdmission =
+        script_string::RegistryOwnershipAdmission::ForTesting(cleanupBatch);
+    if (!Check(
+            script_string::TryShutdownDatabaseUser8(cleanupAdmission)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry aggregate retained cleanup failed")
+        || !Check(
+            script_string::FinishOwnershipBatch(&cleanupBatch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry aggregate cleanup batch close failed"))
+    {
+        return false;
+    }
+
+    return Check(
+            script_string::TryRemoveOrdinaryReference(first.stringId)
+                == script_string::ReleaseStatus::Success,
+            "registry aggregate first cleanup failed")
+        && Check(
+            script_string::TryRemoveOrdinaryReference(second.stringId)
+                == script_string::ReleaseStatus::Success,
+            "registry aggregate second cleanup failed")
+        && EndTest();
+}
+
+[[nodiscard]] bool TestRegistryBulkCertificateCorruptionFailsClosed() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr std::size_t kNameCount = 3;
+    std::array<
+        std::array<char, kRegistryCollisionNameBytes>, kNameCount> names{};
+    std::array<std::uint32_t, kNameCount> ids{};
+    for (std::size_t index = 0; index < kNameCount; ++index)
+    {
+        MakeRegistryCollisionName(names[index], index);
+        const auto acquired = script_string::TryAcquireOrdinaryStringOfSize(
+            names[index].data(),
+            static_cast<std::uint32_t>(names[index].size()),
+            15);
+        if (!Check(acquired.status == script_string::AcquireStatus::Acquired,
+                "registry certificate corruption setup failed"))
+        {
+            return false;
+        }
+        ids[index] = acquired.stringId;
+    }
+
+    const std::uint32_t owningHash = GetHashCode(
+        names[0].data(), static_cast<std::uint32_t>(names[0].size()));
+    script_string::OwnershipBatch setupBatch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&setupBatch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry certificate setup batch admission failed"))
+    {
+        return false;
+    }
+    const auto setupAdmission =
+        script_string::RegistryOwnershipAdmission::ForTesting(setupBatch);
+    const auto setupAdd = script_string::TryAddDatabaseUser4References(
+        setupAdmission,
+        ids.data(),
+        static_cast<std::uint32_t>(ids.size()));
+    if (!Check(
+            setupAdd.status
+                == script_string::DatabaseUserAddBulkStatus::Success
+                && setupAdd.addedCount == ids.size(),
+            "registry certificate retained setup add failed")
+        || !Check(
+            script_string::TryTransferDatabaseUsers4To8(setupAdmission)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry certificate retained setup transfer failed")
+        || !Check(
+            script_string::FinishOwnershipBatch(&setupBatch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry certificate setup batch close failed"))
+    {
+        return false;
+    }
+
+    for (std::uint32_t scenario = 0; scenario < 5; ++scenario)
+    {
+        script_string::OwnershipBatch batch;
+        if (!Check(
+                script_string::TryBeginOwnershipBatch(&batch)
+                    == script_string::OwnershipBatchStatus::Success,
+                "registry certificate corruption batch admission failed"))
+        {
+            return false;
+        }
+        const auto admission =
+            script_string::RegistryOwnershipAdmission::ForTesting(batch);
+
+        std::uint32_t targetId = 0;
+        std::uint32_t targetIndex = 0;
+        for (const std::uint32_t stringId : ids)
+        {
+            const std::uint32_t candidateIndex =
+                sl_systemSweepEntryByStringId[stringId];
+            if (candidateIndex != 0 && candidateIndex != owningHash
+                && sl_systemSweepPreviousEntry[candidateIndex] != owningHash)
+            {
+                targetId = stringId;
+                targetIndex = candidateIndex;
+                break;
+            }
+        }
+        const std::uint32_t previousIndex = targetIndex != 0
+            ? sl_systemSweepPreviousEntry[targetIndex]
+            : 0;
+        if (!Check(targetId != 0 && targetIndex != 0
+                && previousIndex != 0 && previousIndex != owningHash
+                && previousIndex != targetIndex,
+            "registry certificate corruption fixture has no deep target"))
+        {
+            return false;
+        }
+
+        const HashEntry savedTarget = scrStringGlob.hashTable[targetIndex];
+        const HashEntry savedPrevious =
+            scrStringGlob.hashTable[previousIndex];
+        const HashEntry savedHead = scrStringGlob.hashTable[owningHash];
+        const char *const targetName =
+            SL_GetRefStringNoReport(targetId)->str;
+        if (scenario == 0)
+        {
+            scrStringGlob.hashTable[targetIndex].u.prev = ids[0] == targetId
+                ? ids[1]
+                : ids[0];
+        }
+        else if (scenario == 1)
+        {
+            scrStringGlob.hashTable[previousIndex].status_next =
+                static_cast<std::uint16_t>(savedPrevious.status_next)
+                | HASH_STAT_FREE;
+        }
+        else if (scenario == 2)
+        {
+            scrStringGlob.hashTable[previousIndex].u.prev = targetId;
+        }
+        else
+        {
+            scrStringGlob.hashTable[owningHash].status_next =
+                static_cast<std::uint16_t>(owningHash) | HASH_STAT_HEAD;
+        }
+
+        script_string::ResetOwnershipValidationCountersForTesting();
+        const StateImage corruptState = CaptureState();
+        const std::array<std::uint32_t, 1> targetSpan{targetId};
+        const std::array<const char *, 1> retainedSpan{targetName};
+        const auto rejected = scenario == 4
+            ? script_string::TryReAddRetainedDatabaseNames(
+                admission,
+                retainedSpan.data(),
+                static_cast<std::uint32_t>(retainedSpan.size()))
+            : script_string::TryAddDatabaseUser4References(
+                admission,
+                targetSpan.data(),
+                static_cast<std::uint32_t>(targetSpan.size()));
+        const bool rejectedCleanly = Check(
+                rejected.status
+                    == script_string::DatabaseUserAddBulkStatus::UnsafeFailure,
+                "registry bulk trusted corrupt inverse certificate state")
+            && Check(rejected.addedCount == 0
+                    && rejected.unchangedCount == 0,
+                "registry corrupt bulk rejection published partial counts")
+            && Check(batch.poisoned(),
+                "registry corrupt bulk rejection did not poison the batch")
+            && Check(batch.operationCount() == 0,
+                "registry corrupt bulk rejection consumed an operation")
+            && Check(StateMatches(corruptState),
+                "registry corrupt bulk rejection changed table state")
+            && Check(RegistryBulkScratchCleared(),
+                "registry corrupt bulk rejection retained scratch state")
+            && Check(sl_registryOwnershipHashChainEntryVisitCount == 0,
+                "registry corrupt bulk rejection traversed a collision chain")
+            && Check(sl_registryOwnershipTopologyPreflightCount == 1,
+                "registry corrupt bulk rejection skipped topology preflight")
+            && Check(
+                sl_registryOwnershipTopologyPreflightWorkCount
+                    <= SL_MAX_STRING_INDEX + 3 * STRINGLIST_SIZE,
+                "registry corrupt bulk preflight exceeded linear work")
+            && Check(sl_hashChainVisitedCount == 0
+                    && sl_stringIdVisitedCount == 0,
+                "registry corrupt bulk rejection retained validation scratch");
+
+        scrStringGlob.hashTable[owningHash] = savedHead;
+        scrStringGlob.hashTable[targetIndex] = savedTarget;
+        scrStringGlob.hashTable[previousIndex] = savedPrevious;
+        const bool closeRejected = Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::UnsafeFailure,
+            "registry corruption-poisoned batch closed successfully");
+        if (!rejectedCleanly || !closeRejected)
+            return false;
+    }
+
+    script_string::OwnershipBatch cleanupBatch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&cleanupBatch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry certificate cleanup batch admission failed"))
+    {
+        return false;
+    }
+    const auto cleanupAdmission =
+        script_string::RegistryOwnershipAdmission::ForTesting(cleanupBatch);
+    if (!Check(
+            script_string::TryShutdownDatabaseUser8(cleanupAdmission)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry certificate retained cleanup failed")
+        || !Check(
+            script_string::FinishOwnershipBatch(&cleanupBatch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry certificate cleanup batch close failed"))
+    {
+        return false;
+    }
+
+    for (const std::uint32_t stringId : ids)
+    {
+        if (!Check(
+                script_string::TryRemoveOrdinaryReference(stringId)
+                    == script_string::ReleaseStatus::Success,
+                "registry certificate corruption cleanup failed"))
+        {
+            return false;
+        }
+    }
+    return EndTest();
+}
+
+[[nodiscard]] bool TestRegistryCollisionBulkAndShutdownRemainLinear() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr std::size_t kOrdinaryCount = 48;
+    std::array<
+        std::array<char, kRegistryCollisionNameBytes>, kOrdinaryCount> names{};
+    std::array<std::uint32_t, kOrdinaryCount> ids{};
+    for (std::size_t index = 0; index < kOrdinaryCount; ++index)
+    {
+        MakeRegistryCollisionName(names[index], index);
+        const auto acquired = script_string::TryAcquireOrdinaryStringOfSize(
+            names[index].data(),
+            static_cast<std::uint32_t>(names[index].size()),
+            15);
+        if (!Check(acquired.status == script_string::AcquireStatus::Acquired,
+                "registry linear collision setup failed"))
+        {
+            return false;
+        }
+        ids[index] = acquired.stringId;
+    }
+
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry linear collision batch admission failed"))
+    {
+        return false;
+    }
+    const auto admission =
+        script_string::RegistryOwnershipAdmission::ForTesting(batch);
+    std::array<char, kRegistryCollisionNameBytes> databaseName{};
+    MakeRegistryCollisionName(databaseName, kOrdinaryCount);
+    const auto database = script_string::TryInternDatabaseUser4Name(
+        admission,
+        databaseName.data(),
+        static_cast<std::uint32_t>(databaseName.size()),
+        15);
+    if (!Check(database.status == script_string::DatabaseNameStatus::Success,
+            "registry linear collision database intern failed"))
+    {
+        return false;
+    }
+
+    script_string::ResetOwnershipValidationCountersForTesting();
+    const auto added = script_string::TryAddDatabaseUser4References(
+        admission, ids.data(), static_cast<std::uint32_t>(ids.size()));
+    const std::array<std::uint32_t, 1> databaseSpan{database.stringId};
+    const auto databaseUnchanged =
+        script_string::TryAddDatabaseUser4References(
+            admission,
+            databaseSpan.data(),
+            static_cast<std::uint32_t>(databaseSpan.size()));
+    if (!Check(
+            added.status == script_string::DatabaseUserAddBulkStatus::Success,
+            "registry linear collision bulk add failed")
+        || !Check(added.addedCount == kOrdinaryCount
+                && added.unchangedCount == 0,
+            "registry linear collision bulk accounting changed")
+        || !Check(
+            databaseUnchanged.status
+                == script_string::DatabaseUserAddBulkStatus::NoChange,
+            "registry leased-intern certificate was not immediately usable")
+        || !Check(sl_registryOwnershipHashChainEntryVisitCount == 0,
+            "registry collision bulk add traversed collision chains")
+        || !Check(sl_registryOwnershipLinearSweepEntryVisitCount == 0,
+            "registry collision bulk add entered the shutdown walker")
+        || !Check(sl_registryOwnershipTopologyPreflightCount == 2,
+            "registry collision bulk preflight count changed")
+        || !Check(
+            sl_registryOwnershipTopologyPreflightWorkCount
+                == 2 * (2 * (STRINGLIST_SIZE - 1)
+                    + SL_MAX_STRING_INDEX + kOrdinaryCount + 1),
+            "registry collision bulk preflight was not linear"))
+    {
+        return false;
+    }
+
+    if (!Check(
+            script_string::TryTransferDatabaseUsers4To8(admission)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry linear collision transfer failed"))
+    {
+        return false;
+    }
+    script_string::ResetOwnershipValidationCountersForTesting();
+    if (!Check(
+            script_string::TryShutdownDatabaseUser8(admission)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry linear collision shutdown failed")
+        || !Check(sl_registryOwnershipHashChainEntryVisitCount == 0,
+            "registry collision shutdown rebuilt per-ID unlink plans")
+        || !Check(
+            sl_registryOwnershipLinearSweepEntryVisitCount
+                == kOrdinaryCount + 1,
+            "registry collision shutdown did not visit each entry once")
+        || !Check(sl_registryOwnershipTopologyPreflightCount == 0
+                && sl_registryOwnershipTopologyPreflightWorkCount == 0,
+            "registry collision shutdown entered bulk preflight")
+        || !Check(
+            !SL_IsRegistryStringCertificateMemberNoReport(database.stringId)
+                && sl_systemSweepEntryByStringId[database.stringId] == 0,
+            "registry shutdown retained a freed inverse certificate"))
+    {
+        return false;
+    }
+
+    const auto stale = script_string::TryAddDatabaseUser4References(
+        admission,
+        databaseSpan.data(),
+        static_cast<std::uint32_t>(databaseSpan.size()));
+    if (!Check(
+            stale.status
+                == script_string::DatabaseUserAddBulkStatus::
+                    OwnershipMismatchNoChange,
+            "registry bulk accepted an ID freed during the same batch")
+        || !Check(!batch.poisoned(),
+            "registry stale-ID rejection poisoned a valid batch")
+        || !Check(RegistryBulkScratchCleared(),
+            "registry stale-ID rejection retained scratch state")
+        || !Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry linear collision batch close failed")
+        || !CheckFreed(database.stringId))
+    {
+        return false;
+    }
+
+    for (const std::uint32_t stringId : ids)
+    {
+        if (!Check(
+                script_string::TryRemoveOrdinaryReference(stringId)
+                    == script_string::ReleaseStatus::Success,
+                "registry linear collision cleanup failed"))
+        {
+            return false;
+        }
+    }
+    return EndTest();
+}
+
+[[nodiscard]] bool TestRegistryCoordinatorProductionStack() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char firstName[] = "registry-stack-first";
+    constexpr char secondName[] = "registry-stack-second";
+    constexpr char databaseName[] = "registry-stack-database";
+    const auto first = script_string::TryAcquireOrdinaryStringOfSize(
+        firstName, sizeof(firstName), 15);
+    const auto second = script_string::TryAcquireOrdinaryStringOfSize(
+        secondName, sizeof(secondName), 15);
+    if (!Check(first.status == script_string::AcquireStatus::Acquired
+                && second.status == script_string::AcquireStatus::Acquired,
+            "registry production-stack setup failed"))
+    {
+        return false;
+    }
+
+    using namespace db::registry_ownership;
+    const auto admission = RegistryOwnershipCoordinatorAdmission::ForTesting();
+    RegistryOwnershipCoordinator coordinator;
+    Sys_LockRead(&db_hashCritSect);
+    const RegistryOwnershipStatus preheldReader =
+        TryBeginStandaloneRegistryOwnershipCoordinator(
+            admission, &coordinator);
+    const bool preheldReaderRejected = Check(
+            preheldReader == RegistryOwnershipStatus::Busy,
+            "registry production-stack admitted a pre-held hash reader")
+        && Check(coordinator.isEmptyCanonical(),
+            "registry production-stack reader rejection retained authority")
+        && Check(Sys_AtomicLoad(&db_hashCritSect.readCount) == 1
+                && Sys_AtomicLoad(&db_hashCritSect.writeCount) == 0,
+            "registry production-stack reader rejection changed hash state")
+        && Check(g_scriptStringTransactionLockDepth == 0,
+            "registry production-stack reader rejection retained transaction");
+    Sys_UnlockRead(&db_hashCritSect);
+    if (!preheldReaderRejected)
+        return false;
+
+    if (!Check(
+            TryBeginStandaloneRegistryOwnershipCoordinator(
+                admission, &coordinator)
+                == RegistryOwnershipStatus::Success,
+            "registry production-stack coordinator admission failed")
+        || !Check(
+            coordinator.phase() == RegistryOwnershipCoordinatorPhase::Ready
+                && coordinator.mode()
+                    == RegistryOwnershipCoordinatorMode::Standalone,
+            "registry production-stack coordinator was not ready")
+        || !Check(
+            Sys_IsWriteLocked(&db_hashCritSect)
+                && Sys_AtomicLoad(&db_hashCritSect.readCount) == 0
+                && Sys_AtomicLoad(&db_hashCritSect.writeCount) == 1,
+            "registry production-stack did not retain the real hash lock")
+        || !Check(g_scriptStringTransactionLockDepth == 1,
+            "registry production-stack did not retain the transaction lock"))
+    {
+        return false;
+    }
+
+    const std::array<std::uint32_t, 2> ids{
+        first.stringId, second.stringId};
+    RegistryOwnershipBulkResult bulk{99, 88};
+    if (!Check(
+            TryRegistryAddDatabaseUsers4(
+                &coordinator,
+                ids.data(),
+                static_cast<std::uint32_t>(ids.size()),
+                &bulk) == RegistryOwnershipStatus::Success,
+            "registry production-stack bulk add failed")
+        || !Check(bulk.addedCount == ids.size()
+                && bulk.unchangedCount == 0,
+            "registry production-stack bulk accounting changed"))
+    {
+        return false;
+    }
+
+    RegistryOwnershipName database{};
+    if (!Check(
+            TryRegistryInternBoundedName(
+                &coordinator,
+                databaseName,
+                sizeof(databaseName),
+                &database) == RegistryOwnershipStatus::Success,
+            "registry production-stack database intern failed")
+        || !Check(database.stringId != 0
+                && database.canonicalName
+                    == GetRefString(database.stringId)->str,
+            "registry production-stack intern did not publish canonical data")
+        || !Check(
+            TryRegistryTransferDatabaseUsers4To8(&coordinator)
+                == RegistryOwnershipStatus::Success,
+            "registry production-stack user transfer failed")
+        || !Check(
+            TryRegistryShutdownDatabaseUser8(&coordinator)
+                == RegistryOwnershipStatus::Success,
+            "registry production-stack user shutdown failed")
+        || !CheckOwnership(
+            first.stringId,
+            1,
+            0,
+            sizeof(firstName),
+            2,
+            "registry production-stack changed first ordinary owner")
+        || !CheckOwnership(
+            second.stringId,
+            1,
+            0,
+            sizeof(secondName),
+            2,
+            "registry production-stack changed second ordinary owner"))
+    {
+        return false;
+    }
+
+    if (!Check(
+            FinishRegistryOwnershipCoordinator(&coordinator)
+                == RegistryOwnershipStatus::Success,
+            "registry production-stack coordinator finish failed")
+        || !Check(coordinator.isEmptyCanonical(),
+            "registry production-stack coordinator did not reset")
+        || !Check(!Sys_IsWriteLocked(&db_hashCritSect)
+                && Sys_AtomicLoad(&db_hashCritSect.readCount) == 0
+                && Sys_AtomicLoad(&db_hashCritSect.writeCount) == 0,
+            "registry production-stack retained the hash lock")
+        || !Check(g_scriptStringTransactionLockDepth == 0,
+            "registry production-stack retained the transaction lock")
+        || !CheckFreed(database.stringId))
+    {
+        return false;
+    }
+
+    return Check(
+            script_string::TryRemoveOrdinaryReference(first.stringId)
+                == script_string::ReleaseStatus::Success,
+            "registry production-stack first cleanup failed")
+        && Check(
+            script_string::TryRemoveOrdinaryReference(second.stringId)
+                == script_string::ReleaseStatus::Success,
+            "registry production-stack second cleanup failed")
+        && EndTest();
+}
+
+[[nodiscard]] bool TestRegistryOwnershipBatchOperations() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char ordinaryName[] = "registry-ordinary";
+    constexpr char databaseName[] = "registry-database";
+    constexpr char unterminated[]{'b', 'a', 'd'};
+    std::array<char, 260> ambiguousLength{};
+    ambiguousLength.fill('x');
+    ambiguousLength[3] = '\0';
+    ambiguousLength.back() = '\0';
+    const script_string::AcquireResult ordinary =
+        script_string::TryAcquireOrdinaryStringOfSize(
+            ordinaryName, sizeof(ordinaryName), 15);
+    RefString *const ordinaryRef = ordinary.stringId != 0
+        ? GetRefString(ordinary.stringId)
+        : nullptr;
+    const char *const ordinaryCanonical = ordinaryRef
+        ? ordinaryRef->str
+        : nullptr;
+    if (!Check(ordinary.status == script_string::AcquireStatus::Acquired,
+            "registry batch ordinary setup failed")
+        || !Check(ordinaryCanonical != nullptr,
+            "registry batch ordinary canonical pointer was unavailable"))
+    {
+        return false;
+    }
+
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry batch admission failed"))
+    {
+        return false;
+    }
+    const auto registryAdmission =
+        script_string::RegistryOwnershipAdmission::ForTesting(batch);
+
+    const StateImage beforeRejectedAdd = CaptureState();
+    const bool rejectedAdd = Check(
+            script_string::TryAddDatabaseUser4Reference(registryAdmission, 0)
+                == script_string::DatabaseUserAddStatus::
+                    OwnershipMismatchNoChange,
+            "registry user4 add accepted an invalid ID")
+        && Check(StateMatches(beforeRejectedAdd),
+            "registry user4 rejection changed ownership state")
+        && Check(batch.operationCount() == 0,
+            "registry user4 rejection consumed an operation");
+    if (!rejectedAdd
+        || !Check(
+            script_string::TryAddDatabaseUser4Reference(
+                registryAdmission, ordinary.stringId)
+                == script_string::DatabaseUserAddStatus::Added,
+            "registry user4 add failed")
+        || !CheckOwnership(
+            ordinary.stringId,
+            2,
+            static_cast<std::uint8_t>(script_string::kDatabaseUserMask),
+            sizeof(ordinaryName),
+            2,
+            "registry user4 add ownership mismatch"))
+    {
+        return false;
+    }
+
+    const StateImage beforeDuplicateAdd = CaptureState();
+    if (!Check(
+            script_string::TryAddDatabaseUser4Reference(
+                registryAdmission, ordinary.stringId)
+                == script_string::DatabaseUserAddStatus::
+                    AlreadyOwnedNoChange,
+            "registry duplicate user4 add was not idempotent")
+        || !Check(StateMatches(beforeDuplicateAdd),
+            "registry duplicate user4 add changed ownership state")
+        || !Check(batch.operationCount() == 1,
+            "registry duplicate user4 add consumed an operation"))
+    {
+        return false;
+    }
+
+    const StateImage beforeRejectedNames = CaptureState();
+    const auto nullName = script_string::TryInternDatabaseUser4Name(
+        registryAdmission, nullptr, 1, 15);
+    const auto zeroName = script_string::TryInternDatabaseUser4Name(
+        registryAdmission, databaseName, 0, 15);
+    const auto unterminatedName =
+        script_string::TryInternDatabaseUser4Name(
+            registryAdmission, unterminated, sizeof(unterminated), 15);
+    const auto ambiguousName = script_string::TryInternDatabaseUser4Name(
+        registryAdmission,
+        ambiguousLength.data(),
+        static_cast<std::uint32_t>(ambiguousLength.size()),
+        15);
+    const auto invalidTypeName = script_string::TryInternDatabaseUser4Name(
+        registryAdmission, databaseName, sizeof(databaseName), 0);
+    if (!Check(
+            nullName.status
+                    == script_string::DatabaseNameStatus::
+                        InvalidArgumentNoChange
+                && zeroName.status
+                    == script_string::DatabaseNameStatus::
+                        InvalidArgumentNoChange
+                && unterminatedName.status
+                    == script_string::DatabaseNameStatus::
+                        InvalidArgumentNoChange
+                && ambiguousName.status
+                    == script_string::DatabaseNameStatus::
+                        InvalidArgumentNoChange
+                && invalidTypeName.status
+                    == script_string::DatabaseNameStatus::
+                        InvalidArgumentNoChange,
+            "registry bounded-name validation accepted invalid input")
+        || !Check(
+            nullName.stringId == 0 && nullName.canonicalName == nullptr
+                && zeroName.stringId == 0
+                && zeroName.canonicalName == nullptr
+                && unterminatedName.stringId == 0
+                && unterminatedName.canonicalName == nullptr
+                && ambiguousName.stringId == 0
+                && ambiguousName.canonicalName == nullptr
+                && invalidTypeName.stringId == 0
+                && invalidTypeName.canonicalName == nullptr,
+            "registry bounded-name rejection published output")
+        || !Check(StateMatches(beforeRejectedNames),
+            "registry bounded-name rejection changed ownership state")
+        || !Check(batch.operationCount() == 1,
+            "registry bounded-name rejection consumed an operation"))
+    {
+        return false;
+    }
+
+    const script_string::DatabaseNameResult database =
+        script_string::TryInternDatabaseUser4Name(
+            registryAdmission, databaseName, sizeof(databaseName), 15);
+    if (!Check(
+            database.status == script_string::DatabaseNameStatus::Success,
+            "registry bounded-name intern failed")
+        || !Check(database.stringId != 0 && database.canonicalName != nullptr,
+            "registry bounded-name intern omitted canonical output")
+        || !Check(std::memcmp(
+                database.canonicalName,
+                databaseName,
+                sizeof(databaseName)) == 0,
+            "registry bounded-name intern changed bytes")
+        || !CheckOwnership(
+            database.stringId,
+            1,
+            static_cast<std::uint8_t>(script_string::kDatabaseUserMask),
+            sizeof(databaseName),
+            3,
+            "registry bounded-name ownership mismatch")
+        || !Check(batch.operationCount() == 2,
+            "registry bounded-name success did not consume an operation"))
+    {
+        return false;
+    }
+
+    if (!Check(
+            script_string::TryTransferDatabaseUsers4To8(registryAdmission)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry 4-to-8 transfer failed")
+        || !CheckOwnership(
+            ordinary.stringId,
+            2,
+            static_cast<std::uint8_t>(
+                script_string::kRetainedDatabaseUserMask),
+            sizeof(ordinaryName),
+            3,
+            "registry ordinary 4-to-8 ownership mismatch")
+        || !CheckOwnership(
+            database.stringId,
+            1,
+            static_cast<std::uint8_t>(
+                script_string::kRetainedDatabaseUserMask),
+            sizeof(databaseName),
+            3,
+            "registry name 4-to-8 ownership mismatch"))
+    {
+        return false;
+    }
+
+    const StateImage beforeRejectedRetained = CaptureState();
+    if (!Check(
+            script_string::TryReAddRetainedDatabaseName(
+                registryAdmission, nullptr)
+                == script_string::DatabaseNameStatus::
+                    InvalidArgumentNoChange,
+            "registry retained-name re-add accepted null")
+        || !Check(
+            script_string::TryReAddRetainedDatabaseName(
+                registryAdmission, database.canonicalName + 1)
+                == script_string::DatabaseNameStatus::
+                    OwnershipMismatchNoChange,
+            "registry retained-name re-add accepted a noncanonical pointer")
+        || !Check(StateMatches(beforeRejectedRetained),
+            "registry retained-name rejection changed ownership state")
+        || !Check(batch.operationCount() == 3,
+            "registry retained-name rejection consumed an operation"))
+    {
+        return false;
+    }
+
+    const std::array<const char *, 2> rejectedRetainedSpan{
+        ordinaryCanonical, database.canonicalName + 1};
+    const auto rejectedRetainedBulk =
+        script_string::TryReAddRetainedDatabaseNames(
+            registryAdmission,
+            rejectedRetainedSpan.data(),
+            static_cast<std::uint32_t>(rejectedRetainedSpan.size()));
+    if (!Check(
+            rejectedRetainedBulk.status
+                == script_string::DatabaseUserAddBulkStatus::
+                    OwnershipMismatchNoChange,
+            "registry retained bulk accepted a noncanonical member")
+        || !Check(StateMatches(beforeRejectedRetained),
+            "registry retained bulk changed an earlier valid member")
+        || !Check(RegistryBulkScratchCleared(),
+            "registry retained bulk rejection leaked scratch state"))
+    {
+        return false;
+    }
+
+    const std::array<const char *, 3> retainedSpan{
+        ordinaryCanonical, database.canonicalName, ordinaryCanonical};
+    const auto retainedBulk = script_string::TryReAddRetainedDatabaseNames(
+        registryAdmission,
+        retainedSpan.data(),
+        static_cast<std::uint32_t>(retainedSpan.size()));
+    if (!Check(
+            retainedBulk.status
+                == script_string::DatabaseUserAddBulkStatus::Success
+                && retainedBulk.addedCount == 2
+                && retainedBulk.unchangedCount == 1,
+            "registry retained bulk re-add failed")
+        || !Check(RegistryBulkScratchCleared(),
+            "registry retained bulk success leaked scratch state")
+        || !CheckOwnership(
+            ordinary.stringId,
+            3,
+            static_cast<std::uint8_t>(
+                script_string::kDatabaseUserMask
+                | script_string::kRetainedDatabaseUserMask),
+            sizeof(ordinaryName),
+            5,
+            "registry retained ordinary re-add ownership mismatch")
+        || !CheckOwnership(
+            database.stringId,
+            2,
+            static_cast<std::uint8_t>(
+                script_string::kDatabaseUserMask
+                | script_string::kRetainedDatabaseUserMask),
+            sizeof(databaseName),
+            5,
+            "registry retained database re-add ownership mismatch")
+        || !Check(batch.operationCount() == 5,
+            "registry retained-name success count mismatch"))
+    {
+        return false;
+    }
+
+    if (!Check(
+            script_string::TryTransferDatabaseUsers4To8(registryAdmission)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry duplicate 4-to-8 transfer failed")
+        || !CheckOwnership(
+            ordinary.stringId,
+            2,
+            static_cast<std::uint8_t>(
+                script_string::kRetainedDatabaseUserMask),
+            sizeof(ordinaryName),
+            3,
+            "registry duplicate ordinary transfer ownership mismatch")
+        || !CheckOwnership(
+            database.stringId,
+            1,
+            static_cast<std::uint8_t>(
+                script_string::kRetainedDatabaseUserMask),
+            sizeof(databaseName),
+            3,
+            "registry duplicate name transfer ownership mismatch")
+        || !Check(
+            script_string::TryShutdownDatabaseUser8(registryAdmission)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry user8 shutdown failed")
+        || !Check(RegistrySweepScratchCleared(),
+            "registry user8 shutdown retained scratch IDs")
+        || !CheckOwnership(
+            ordinary.stringId,
+            1,
+            0,
+            sizeof(ordinaryName),
+            1,
+            "registry user8 shutdown changed ordinary ownership")
+        || !Check(
+            script_string::TryRemoveOrdinaryReference(
+                batch, ordinary.stringId)
+                == script_string::ReleaseStatus::Success,
+            "registry ordinary cleanup failed")
+        || !Check(batch.operationCount() == 8,
+            "registry operation accounting mismatch")
+        || !Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry batch close failed"))
+    {
+        return false;
+    }
+    return CheckFreed(database.stringId)
+        && CheckFreed(ordinary.stringId)
+        && EndTest();
+}
+
+[[nodiscard]] bool TestRegistryOwnershipBulkOperations() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr std::size_t kUniqueCount = 64;
+    constexpr std::size_t kSpanCount = kUniqueCount * 2;
+    std::array<std::array<char, 40>, kUniqueCount> names{};
+    std::array<std::uint32_t, kUniqueCount> ids{};
+    std::array<std::uint32_t, kSpanCount> span{};
+    for (std::size_t index = 0; index < kUniqueCount; ++index)
+    {
+        const int length = std::snprintf(
+            names[index].data(),
+            names[index].size(),
+            "registry-bulk-%03zu",
+            index);
+        if (!Check(length > 0
+                && static_cast<std::size_t>(length) + 1
+                    < names[index].size(),
+            "registry bulk name construction failed"))
+        {
+            return false;
+        }
+        const auto acquired = script_string::TryAcquireOrdinaryStringOfSize(
+            names[index].data(),
+            static_cast<std::uint32_t>(length + 1),
+            15);
+        if (!Check(acquired.status == script_string::AcquireStatus::Acquired,
+            "registry bulk setup acquisition failed"))
+        {
+            return false;
+        }
+        ids[index] = acquired.stringId;
+        span[index * 2] = acquired.stringId;
+        span[index * 2 + 1] = acquired.stringId;
+    }
+
+    MT_ResetCompleteValidationCountForTesting();
+    script_string::ResetOwnershipValidationCountersForTesting();
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry bulk batch admission failed"))
+    {
+        return false;
+    }
+    const auto admission =
+        script_string::RegistryOwnershipAdmission::ForTesting(batch);
+
+    const std::array<std::uint32_t, 3> rejectedSpan{
+        ids[0], 0, ids[1]};
+    const StateImage beforeRejected = CaptureState();
+    const auto rejected = script_string::TryAddDatabaseUser4References(
+        admission,
+        rejectedSpan.data(),
+        static_cast<std::uint32_t>(rejectedSpan.size()));
+    if (!Check(
+            rejected.status
+                == script_string::DatabaseUserAddBulkStatus::
+                    OwnershipMismatchNoChange,
+            "registry bulk accepted an invalid member")
+        || !Check(rejected.addedCount == 0 && rejected.unchangedCount == 0,
+            "registry bulk rejection published partial counts")
+        || !Check(StateMatches(beforeRejected),
+            "registry bulk rejection changed an earlier valid member")
+        || !Check(RegistryBulkScratchCleared(),
+            "registry bulk rejection retained scratch state"))
+    {
+        return false;
+    }
+
+    const auto added = script_string::TryAddDatabaseUser4References(
+        admission,
+        span.data(),
+        static_cast<std::uint32_t>(span.size()));
+    if (!Check(
+            added.status == script_string::DatabaseUserAddBulkStatus::Success,
+            "registry bulk add failed")
+        || !Check(added.addedCount == kUniqueCount
+                && added.unchangedCount == kUniqueCount,
+            "registry bulk duplicate accounting changed")
+        || !Check(batch.operationCount() == kUniqueCount,
+            "registry bulk operation accounting changed")
+        || !Check(RegistryBulkScratchCleared(),
+            "registry bulk success retained scratch state"))
+    {
+        return false;
+    }
+
+    const auto repeated = script_string::TryAddDatabaseUser4References(
+        admission,
+        span.data(),
+        static_cast<std::uint32_t>(span.size()));
+    const auto openCounters =
+        script_string::GetOwnershipValidationCountersForTesting();
+    if (!Check(
+            repeated.status
+                == script_string::DatabaseUserAddBulkStatus::NoChange,
+            "registry repeated bulk add was not idempotent")
+        || !Check(repeated.addedCount == 0
+                && repeated.unchangedCount == span.size(),
+            "registry repeated bulk accounting changed")
+        || !Check(batch.operationCount() == kUniqueCount,
+            "registry repeated bulk consumed mutation operations")
+        || !Check(openCounters.completeStringPasses == 1,
+            "registry N-ID bulk repeated complete string validation")
+        || !Check(MT_CompleteValidationCountForTesting() == 1,
+            "registry N-ID bulk repeated complete allocator validation")
+        || !Check(RegistryBulkScratchCleared(),
+            "registry repeated bulk retained scratch state"))
+    {
+        return false;
+    }
+
+    const auto oversized = script_string::TryAddDatabaseUser4References(
+        admission,
+        span.data(),
+        script_string::kRegistryOwnershipBulkCapacity + 1);
+    if (!Check(
+            oversized.status
+                == script_string::DatabaseUserAddBulkStatus::CapacityNoChange,
+            "registry bulk capacity bound was not enforced")
+        || !Check(RegistryBulkScratchCleared(),
+            "registry oversized bulk retained scratch state")
+        || !Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry bulk batch close failed"))
+    {
+        return false;
+    }
+
+    const auto closedCounters =
+        script_string::GetOwnershipValidationCountersForTesting();
+    if (!Check(closedCounters.completeStringPasses == 2,
+            "registry bulk boundaries did not perform exactly two passes")
+        || !Check(MT_CompleteValidationCountForTesting() == 2,
+            "registry bulk allocator boundaries did not perform two passes"))
+    {
+        return false;
+    }
+
+    for (const std::uint32_t stringId : ids)
+    {
+        if (!Check(
+                script_string::TryRemoveDatabaseUserReference(stringId)
+                    == script_string::ReleaseStatus::Success,
+                "registry bulk database cleanup failed")
+            || !Check(
+                script_string::TryRemoveOrdinaryReference(stringId)
+                    == script_string::ReleaseStatus::Success,
+                "registry bulk ordinary cleanup failed")
+            || !CheckFreed(stringId))
+        {
+            return false;
+        }
+    }
+    return EndTest();
+}
+
+[[nodiscard]] bool TestRegistryShutdownCapacityAtomicity() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char firstName[] = "registry-capacity-first";
+    constexpr char secondName[] = "registry-capacity-second";
+    script_string::OwnershipBatch batch;
+    if (!Check(
+            script_string::TryBeginOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry capacity batch admission failed"))
+    {
+        return false;
+    }
+    const auto registryAdmission =
+        script_string::RegistryOwnershipAdmission::ForTesting(batch);
+    const auto first = script_string::TryInternDatabaseUser4Name(
+        registryAdmission, firstName, sizeof(firstName), 15);
+    const auto second = script_string::TryInternDatabaseUser4Name(
+        registryAdmission, secondName, sizeof(secondName), 15);
+    if (!Check(first.status == script_string::DatabaseNameStatus::Success
+                && second.status
+                    == script_string::DatabaseNameStatus::Success,
+            "registry capacity setup intern failed")
+        || !Check(
+            script_string::TryTransferDatabaseUsers4To8(registryAdmission)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry capacity setup transfer failed"))
+    {
+        return false;
+    }
+
+    batch.SetMemoryTreeMutationCountForTesting(UINT32_MAX - 1);
+    const StateImage beforeCapacity = CaptureState();
+    const std::uint32_t operationsBeforeCapacity = batch.operationCount();
+    if (!Check(
+            script_string::TryShutdownDatabaseUser8(registryAdmission)
+                == script_string::DatabaseSweepStatus::CapacityNoChange,
+            "registry shutdown ignored lease mutation capacity")
+        || !Check(StateMatches(beforeCapacity),
+            "registry shutdown capacity rejection changed ownership state")
+        || !Check(
+            batch.operationCount() == operationsBeforeCapacity,
+            "registry shutdown capacity rejection consumed an operation")
+        || !Check(RegistrySweepScratchCleared(),
+            "registry shutdown capacity rejection retained scratch IDs"))
+    {
+        return false;
+    }
+
+    batch.SetMemoryTreeMutationCountForTesting(2);
+    if (!Check(
+            script_string::TryShutdownDatabaseUser8(registryAdmission)
+                == script_string::DatabaseSweepStatus::Success,
+            "registry shutdown did not recover after capacity rejection")
+        || !Check(RegistrySweepScratchCleared(),
+            "registry recovered shutdown retained scratch IDs")
+        || !Check(
+            script_string::FinishOwnershipBatch(&batch)
+                == script_string::OwnershipBatchStatus::Success,
+            "registry capacity batch close failed"))
+    {
+        return false;
+    }
+    return CheckFreed(first.stringId)
+        && CheckFreed(second.stringId)
+        && EndTest();
+}
+
 [[nodiscard]] bool TestLegacyCharacterFoldingUsesUnsignedInput() noexcept
 {
     if (!BeginTest())
@@ -3634,6 +4934,28 @@ struct StateImage final
 }
 } // namespace
 
+namespace db::zone_script_string_ownership
+{
+bool ZoneScriptStringOwnershipController::trySnapshotRegistryTransaction(
+    const zone_load::ZoneLoadContextKey &,
+    std::uint32_t *) const noexcept
+{
+    return false;
+}
+
+bool ZoneScriptStringOwnershipController::authenticatesRegistryTransaction(
+    const zone_load::ZoneLoadContextKey &,
+    const std::uint32_t) const noexcept
+{
+    return false;
+}
+} // namespace db::zone_script_string_ownership
+
+void KISAK_CDECL Sys_Sleep(const std::uint32_t)
+{
+    std::this_thread::yield();
+}
+
 void KISAK_CDECL Sys_EnterCriticalSection(const int critSect)
 {
     if (critSect == CRITSECT_SCRIPT_STRING)
@@ -3653,6 +4975,12 @@ void KISAK_CDECL Sys_EnterCriticalSection(const int critSect)
         ++g_memoryTreeLockDepth;
         return;
     }
+    if (critSect == CRITSECT_DB_SCRIPT_STRING_TRANSACTION)
+    {
+        g_scriptStringTransactionMutex.lock();
+        ++g_scriptStringTransactionLockDepth;
+        return;
+    }
     std::abort();
 }
 
@@ -3668,6 +4996,13 @@ void KISAK_CDECL Sys_LeaveCriticalSection(const int critSect)
     {
         --g_memoryTreeLockDepth;
         g_memoryTreeMutex.unlock();
+        return;
+    }
+    if (critSect == CRITSECT_DB_SCRIPT_STRING_TRANSACTION
+        && g_scriptStringTransactionLockDepth != 0)
+    {
+        --g_scriptStringTransactionLockDepth;
+        g_scriptStringTransactionMutex.unlock();
         return;
     }
     std::abort();
@@ -3690,14 +5025,16 @@ void QDECL Com_Printf(int, const char *, ...)
 
 void QDECL Com_Error(errorParm_t, const char *, ...)
 {
-    if (g_scriptStringLockDepth != 0 || g_memoryTreeLockDepth != 0)
+    if (g_scriptStringLockDepth != 0 || g_memoryTreeLockDepth != 0
+        || g_scriptStringTransactionLockDepth != 0)
         g_reporterSawOwnedLock = true;
     ++g_comErrorCount;
 }
 
 void MyAssertHandler(const char *, int, int, const char *, ...)
 {
-    if (g_scriptStringLockDepth != 0 || g_memoryTreeLockDepth != 0)
+    if (g_scriptStringLockDepth != 0 || g_memoryTreeLockDepth != 0
+        || g_scriptStringTransactionLockDepth != 0)
         g_reporterSawOwnedLock = true;
     ++g_assertCount;
 }
@@ -3745,6 +5082,14 @@ int main()
         || !TestOwnershipBatchUnrelatedDestruction()
         || !TestLegacyReadersAuthenticateExactStrings()
         || !TestLegacyMutatorsAuthenticateExactStrings()
+        || !TestRegistryTypedOperationsRejectCorruptDebugPointer()
+        || !TestRegistryRetainedBulkRejectsCorruptAggregate()
+        || !TestRegistryBulkCertificateCorruptionFailsClosed()
+        || !TestRegistryCollisionBulkAndShutdownRemainLinear()
+        || !TestRegistryCoordinatorProductionStack()
+        || !TestRegistryOwnershipBatchOperations()
+        || !TestRegistryOwnershipBulkOperations()
+        || !TestRegistryShutdownCapacityAtomicity()
         || !TestLegacyCharacterFoldingUsesUnsignedInput())
     {
         return 1;
