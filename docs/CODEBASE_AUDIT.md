@@ -135,7 +135,10 @@ strict GCC/Clang, Clang ASan+UBSan, Clang analysis, i386 runtime, AArch64 strict
 final-head source/security/diff gates. No production caller or loader/runtime-table/PMem/raw-site enrollment exists;
 independent audit reports PASS on exact `a3c21e9d`. The source seals prevent ordinary accidental source/preprocessor
 enrollment, but deliberate assembler-label, dynamic-symbol, or linker-level enrollment remains a documented limitation
-until a portable object/relocation audit or symbol-visibility redesign lands. Hosted CI and hosted review remain pending.
+until a portable object/relocation audit or symbol-visibility redesign lands. PR #62 initial exact head `b4719e1a` run
+**29694616671** passed Linux amd64/arm64, macOS arm64, and headless Windows x86; portable Windows amd64/ARM64 failed only
+because MSVC folded two empty test callbacks into one address. The current fixture uses a distinct context identity, its
+focused local replay passes, and replacement exact-head CI plus hosted Codex review remain pending.
 Rounded merged porting progress remains **75%**; the active pending-ledger branch is not counted until it merges.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless

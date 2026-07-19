@@ -59,7 +59,6 @@ struct GenerationFixture final
 };
 
 void CompleteNoop(void *) noexcept {}
-void CompleteOther(void *) noexcept {}
 
 void PrepareCommitAndFinalize(
     PendingCopyAdmissionReceipt *const receipt,
@@ -345,7 +344,7 @@ void TestAppendReadPrepareAndDiscard()
     CHECK(pending::TryPreparePendingCopyAdmission(
         &receipt,
         generation.key,
-        PendingCopyAdmissionCompletion{nullptr, CompleteOther})
+        PendingCopyAdmissionCompletion{&ledger, CompleteNoop})
         == PendingCopyStatus::InvalidState);
     CHECK(pending::TryAppendPendingCopyRecord(
         &receipt, generation.key, 45)

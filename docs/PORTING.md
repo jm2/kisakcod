@@ -245,8 +245,11 @@ Completed foundation work:
   source/security/diff gates. The pending API is build-enrolled but has no production caller or
   loader/runtime-table/PMem/raw-site enrollment. Independent audit reports PASS on exact `a3c21e9d`. Deliberate
   assembler-label, dynamic-symbol, or linker-level enrollment remains outside the source seal's accidental-regression
-  model and requires portable object/relocation auditing or a visibility redesign before production cutover. Hosted CI
-  and hosted review remain pending;
+  model and requires portable object/relocation auditing or a visibility redesign before production cutover. PR #62
+  initial exact head `b4719e1a` ran **29694616671**: Linux amd64/arm64, macOS arm64, and headless Windows x86 passed;
+  portable Windows amd64/ARM64 failed only because MSVC folded two empty test callbacks to one address. The current
+  fixture uses a distinct context identity, its focused local replay passes, and replacement exact-head CI plus hosted
+  Codex review remain pending;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used

@@ -364,7 +364,11 @@ work item changes. Do not create session-specific handoff files.
   and no loader/runtime-table/PMem/raw-site enrollment is claimed. Independent audit reports PASS on exact `a3c21e9d`.
   The source seal is an accidental-regression gate, not adversary-proof link control: deliberate assembler-label,
   dynamic-symbol, or linker-level enrollment still requires a portable object/relocation audit or symbol-visibility
-  redesign before production cutover. Hosted CI and hosted review remain pending.
+  redesign before production cutover. PR #62 initial exact head `b4719e1a` ran **29694616671**: Linux amd64/arm64,
+  macOS arm64, and headless Windows x86 passed, while portable Windows amd64/ARM64 exposed only a test-identity issue:
+  MSVC folded two empty fixture callbacks to the same address. The current fix tests a different callback context instead,
+  which preserves the production identity contract and cannot be COMDAT-folded; the focused local replay passes. The
+  replacement exact-head CI run and hosted Codex review remain pending.
 - Merged PR #56 physics-sidecar authority seal closes the separate high-severity API gap found by the
   production-friend audit. Both the `SidecarTestAccess` forward declaration and friendship are now gated by
   `KISAK_FX_PHYSICS_SIDECAR_TESTING`; a normal macro-off executable recreates the public name and uses independent
