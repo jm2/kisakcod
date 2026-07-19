@@ -540,14 +540,22 @@ Completed foundation work:
   findings and one non-corrective `nullptr` style suggestion. Local evidence remains full GCC Debug **153/153**,
   focused **8/8**, strict GCC/Clang, genuine i386/AArch64 compile-link, U1 focused **7/7** plus a clean independent audit,
   and U2 **146/146** plus its ten-mutation and dependency/symbol contracts. Every commit in pinned range
-  `312a9d2e..2164cd1a` has an exact disposition in `docs/UPSTREAM_2164CD1A_LEDGER.md`. At merged master, exact
-  `2164cd1a` is still **18 commits ahead by ancestry**. Dedicated tree-neutral checkpoint
+  `312a9d2e..2164cd1a` has an exact disposition in `docs/UPSTREAM_2164CD1A_LEDGER.md`. PR #66 merge-committed dedicated
+  tree-neutral checkpoint
   `12309db16d6514ac0df23293cd6074d7bbd15142` has parents
   `d79069a41e0289f4ed53d174a89d8ee72f40b4a3` and `2164cd1accf6607a05203547e50858211dcef094`;
   its tree `f8a78964c7c89c3c3000f598cb4272782c40d70b` exactly matches its first parent's tree, and its content diff is empty.
-  Merge that intact checkpoint in a separate PR using merge-commit semantics only—never squash or rebase. Dynent
+  Exact PR head `e209367c920df589162431a584d6fdf7bfc83c43` merged as
+  `225759e7d8fd1327210452f3debcd6360465ef2a`; authoritative run **29707497302** passed all nine jobs, and graph
+  verification confirms both the checkpoint and exact `2164cd1a` are ancestors of `origin/master`. Dynent
   save/load `ba3c79f3` and unsafe raw SP/save/screenshot, gameplay, and matrix hunks remain explicitly deferred/rejected;
   icon changes remain provenance/optional-packaging work;
+- the current passive-receipt branch composes one stable allocation, stream-generation, pending-copy, and native-storage
+  receipt capsule into each of the 33 runtime entries and owns the active-stream binding plus pending-copy ledger exactly
+  once at table scope. It remains deliberately production-neutral: no generation, PMem scope, pending copy, or legacy
+  loader site is claimed. Exact friend/body/class-digest/source-walk/production-access seals cover the complete authority
+  topology. On the PR #66 master base, full GCC Debug CTest passes **153/153**; all six standalone source/security scripts,
+  native and `-m32` layout compilation, `git diff --check`, and an independent adversarial re-audit pass;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -652,10 +660,14 @@ Remaining gates, in implementation order:
    runs **29701509815** and **29702009703**, with clean exact-head Codex/Gemini/thread review. PR #65 then merged the
    curated U1/U2 upstream content as `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`; exact reviewed-head and authoritative
    runs **29703827041** and **29704069129** passed all nine jobs, exact-head Codex was clean, and all six Gemini threads
-   were resolved. None of the seven raw production sites is enrolled. Merge the exact tree-neutral checkpoint
-   `12309db16d6514ac0df23293cd6074d7bbd15142` with merge-commit semantics only—never squash or rebase. Only afterward
-   compose durable receipts passively in the table, finish checked PMem/global/narrow prerequisites, add exact-key
-   adapters, and atomically bind the loader across all seven sites. Keep static controller slots and callback metadata
+   were resolved. PR #66 merge-committed exact tree-neutral checkpoint `12309db16d6514ac0df23293cd6074d7bbd15142`
+   as `225759e7d8fd1327210452f3debcd6360465ef2a`; authoritative run **29707497302** passed all nine jobs and the graph is
+   verified. None of the seven raw production sites is enrolled. The current branch has implemented and locally sealed
+   passive durable-receipt composition in the table. After it merges, land the legacy PMem indexing repair, then a
+   production-neutral serialized global PMem boundary with retained reservation extent and an unused process-lifetime
+   `$init` controller. Do not enroll `$init` separately: its later checked cutover must atomically replace the two `$init`
+   and three zone PMem lifecycle calls. Then finish narrow-resource authentication, add exact-key adapters, and atomically
+   bind the loader across all seven sites. Keep static controller slots and callback metadata
    outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
    when binding the recipes and adapter into production with completed-object/alias registration and lifetime tests.
@@ -1636,9 +1648,10 @@ production restore to it; only the save-side guard and writer remain.
 
 Overall porting progress is approximately **78% by merged engineering effort**. PR #62 merged the production-neutral
 pending-copy ledger, PR #63 merged the curated upstream typed-sort checkpoint, PR #64 merged the production-neutral
-registry coordinator, and PR #65 merged the curated U1/U2 upstream content reconciliation. The pending tree-neutral
-ancestry checkpoint records reviewed history without importing code and therefore does not inflate the engineering
-estimate. Windows x86 is about
+registry coordinator, PR #65 merged the curated U1/U2 upstream content reconciliation, and PR #66 merged the exact
+tree-neutral ancestry checkpoint. That checkpoint records reviewed history without importing code and therefore does
+not inflate the engineering estimate. Passive receipt composition is implemented and validated on the current branch
+but remains outside the merged estimate until its PR lands. Windows x86 is about
 **93%**, shared
 foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
@@ -1978,9 +1991,11 @@ collision-chain work. Final exact PR head `a73916a8467eb5d4a6cad7d33b5d3ecf1f684
 jobs in runs **29701509815** and **29702009703**, and exact-head Codex/Gemini/thread review was clean. PR #65 merged the
 curated upstream U1/U2 adaptations as `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`; exact reviewed-head and authoritative
 runs **29703827041** and **29704069129** passed all nine jobs, exact-head Codex was clean, and all six Gemini threads were
-resolved. No production site is enrolled. After the exact tree-neutral ancestry checkpoint
-`12309db16d6514ac0df23293cd6074d7bbd15142` is merged with merge-commit semantics, compose durable receipts passively,
-finish PMem/global/narrow prerequisites, and
+resolved. PR #66 merged the exact tree-neutral ancestry checkpoint
+`12309db16d6514ac0df23293cd6074d7bbd15142` as `225759e7d8fd1327210452f3debcd6360465ef2a`; run
+**29707497302** passed all nine jobs and the ancestry is verified. No production site is enrolled. The current branch
+implements passive durable-receipt composition; after it merges, finish the serialized PMem/global/narrow prerequisites
+and
 add exact-key adapters; only then enroll all seven sites atomically: five coordinator operations plus two exact-key
 root-journal stages. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
