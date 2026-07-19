@@ -513,6 +513,18 @@ Completed foundation work:
   contract are selected in measured Windows x86; complete GCC and Clang builds and **100/100** suites pass. This is a
   high-confidence dimensional gameplay correction rather than a claimed retail-binary restoration, and the SP production
   translation unit remains outside hosted compilation;
+- the curated typed-sort candidate `b07be39d` adapts the confirmed non-matrix portion of exact upstream
+  `6f0284ad8c1fa367304e5eefa44d39d744ddbefc`. Selected behavior is: typed lexical model/animation sorts over existing
+  native-width tables, a bool FX mark predicate, typed material inputs with an explicit three-way-to-less adapter, a
+  complete 24-entry shadow sort, deterministic NaN equivalence for material/shadow ordering, and the row-zero omni
+  technique in column three. It preserves the material self-identity guard and rejects upstream's raw-integer-to-bool
+  comparator conversion. The filesystem hunk is omitted because `d5a6e799` already supplies a stronger tested
+  native-pointer service. All `com_math.cpp` precision changes—`MatrixMultiply44`, `MatrixInverse44`, and
+  `InfinitePerspectiveMatrix`—are explicitly deferred for a separately evidenced numerical/determinism review. Portable
+  runtime and source contracts plus measured Windows x86 enrollment cover native pointer identity, strict weak ordering,
+  exact active ranges, manifest presence, and the selected/rejected boundaries. The complete local GCC Debug suite is
+  **139/139** green; strict GCC/Clang, ASan+UBSan, i386 compilation, and AArch64 compilation also pass. This candidate is
+  not counted as merged progress until its branch is rebased, reviewed, and merged;
 - remaining upstream content stays subsystem-specific: keep dynent save/load `ba3c79f3` deferred until bounded
   transactional Disk32/native-sidecar semantics exist, and keep unrelated weapon-fire changes excluded;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +

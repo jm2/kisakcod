@@ -755,6 +755,25 @@ work item changes. Do not create session-specific handoff files.
   unchanged, and pins both contracts in measured Windows x86. Complete GCC 16 and Clang 22 builds and **100/100** suites
   pass. This is a high-confidence gameplay/dimensional correction, not a claimed retail-binary restoration; the SP
   production translation unit remains outside hosted compilation.
+- Curated upstream typed-sort candidate: implementation commit `b07be39d` adapts only the confirmed non-numeric hunks
+  from exact upstream `6f0284ad8c1fa367304e5eefa44d39d744ddbefc`, the seventeenth commit in the audited 18-commit
+  range `312a9d2e..2164cd1a`. Model-preview model/animation tables retain the already-hardened native-width allocation,
+  owner slot, overflow check, and null terminator while gaining lexical typed sorts over only the active entries. FX
+  mark triangles now expose their actual bool predicate type. Material sorting takes typed pointers and uses
+  `std::sort`, but deliberately retains the hardened three-way comparison and exact-pointer self guard; the upstream
+  proposal to return raw three-way values from a bool comparator was rejected because it remains asymmetric. Material
+  literal constants and shadow weights now place all NaNs in one deterministic last equivalence class, and all 24
+  shadow candidates participate. The duplicated row-zero spot slot is corrected so omni occupies column three.
+  `FS_SortFileList` was not reapplied: merged `d5a6e799` already delegates to the tested native-pointer filesystem
+  service and supersedes upstream's fixed-four-byte temporary-copy hunk. The `MatrixMultiply44`, `MatrixInverse44`, and
+  `InfinitePerspectiveMatrix` precision rewrites remain deferred to a separate numerical-compatibility batch; this
+  candidate changes no matrix arithmetic. Runtime/source contracts pin pointer identity, unsigned lexical ordering,
+  strict-weak-order properties including NaNs, the complete candidate range, native allocation/alignment, exact call
+  sites, source-manifest enrollment, and both portable native64 plus measured Windows x86 CI selection. GCC and Clang
+  warning-as-error builds, Clang ASan+UBSan with leak detection disabled under the traced runner, strict i386 and
+  AArch64 compilation, focused **4/4**, and the complete GCC Debug suite **139/139** pass. The sandbox kills the new i386
+  executable with its established exit 159, so hosted Win32 remains the runtime authority. This branch candidate is not
+  counted as merged progress and must be rebased onto the pending-ledger baseline before a PR.
 - Remaining upstream content stays subsystem-scoped: leave dynent save/load `ba3c79f3` deferred until bounded
   transactional Disk32/native-sidecar semantics exist. Do not import d592's raw-pointer-bound `CG_GetTargetPos` loop or
   unrelated weapon-fire changes.
