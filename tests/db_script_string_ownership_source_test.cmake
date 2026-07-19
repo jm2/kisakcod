@@ -641,8 +641,8 @@ require_contains(
 require_literal_count(
     _intern_impl
     "SL_TryGetAllocatedStringByteCountForScopeNoReport("
-    2
-    "allocator-backed intern candidate lengths")
+    3
+    "allocator-backed intern candidate and displaced-entry lengths")
 require_literal_count(
     _intern_impl
     "candidateByteCount == len"

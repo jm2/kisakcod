@@ -90,8 +90,8 @@ std::uint64_t sl_abandonedOwnershipBatchPoison = 0;
 std::uint64_t sl_abandonedOwnershipBatchPoisonMirror = 0;
 
 // The transaction serializer permits only one registry ownership operation
-// process-wide.  Keep shutdown's exhaustive ID snapshot in fixed BSS rather
-// than allocating or placing a 40 KiB array on an engine thread's stack.
+// process-wide. Keep bulk-operation scratch in fixed BSS rather than placing
+// a 40 KiB array on an engine thread's stack.
 std::uint16_t sl_registryOwnershipSweepIds[STRINGLIST_SIZE]{};
 std::uint8_t sl_registryOwnershipBulkVisited[
     script_string::kCurrentRuntimeStringLimit / 8]{};
@@ -952,6 +952,13 @@ bool SL_IsInternHashStateValidForScopeNoReport(
 void SL_SetFreeListCertificateMemberNoReport(
 	uint32_t entryIndex,
 	bool member) noexcept;
+void SL_SetRegistryStringCertificateMemberNoReport(
+	uint32_t stringId,
+	bool member) noexcept;
+bool SL_TryRefreshRegistryHashCertificateNoReport(
+	uint32_t owningHash,
+	MT_ValidationLease* validationLease,
+	const MT_ValidationLeaseAdmission* admission) noexcept;
 
 bool SL_IsRepresentableRefStringBytesNoReport(
 	const char* const bytes,
@@ -1121,6 +1128,26 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 
 	HashEntry *entry = &scrStringGlob.hashTable[hash];
 	HashEntry *newEntry;
+	uint32_t displacedOwningHash = 0;
+	if (validationScope == SL_ValidationScope::Leased
+		&& (entry->status_next & HASH_STAT_MASK) == HASH_STAT_MOVABLE)
+	{
+		RefString* displacedRefString = nullptr;
+		uint32_t displacedByteCount = 0;
+		if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+				entry->u.prev,
+				&displacedRefString,
+				&displacedByteCount,
+				validationScope,
+				validationLease,
+				admission))
+		{
+			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+			return SL_InternStatus::UnsafeFailure;
+		}
+		displacedOwningHash = GetHashCode(
+			displacedRefString->str, displacedByteCount);
+	}
 
 	if ((entry->status_next & HASH_STAT_MASK) == HASH_STAT_HEAD)
 	{
@@ -1196,6 +1223,13 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 				stringValue = newEntry->u.prev;
 				newEntry->u.prev = entry->u.prev;
 				entry->u.prev = stringValue;
+				if (validationScope == SL_ValidationScope::Leased
+					&& !SL_TryRefreshRegistryHashCertificateNoReport(
+						hash, validationLease, admission))
+				{
+					Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+					return SL_InternStatus::UnsafeFailure;
+				}
 
 				Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 				*outStringValue = stringValue;
@@ -1392,6 +1426,19 @@ SL_InternStatus SL_TryInternStringOfSizeWithValidation(
 		SL_RefStringWord(refStr),
 		scr_string_atomic::Pack(1, userByte, static_cast<uint8_t>(len)));
 	SL_DebugAddRefNoReport(stringValue);
+	if (validationScope == SL_ValidationScope::Leased
+		&& (!SL_TryRefreshRegistryHashCertificateNoReport(
+				hash, validationLease, admission)
+			|| (displacedOwningHash != 0
+				&& displacedOwningHash != hash
+				&& !SL_TryRefreshRegistryHashCertificateNoReport(
+					displacedOwningHash,
+					validationLease,
+					admission))))
+	{
+		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+		return SL_InternStatus::UnsafeFailure;
+	}
 
 //END_CLEANUP:
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
@@ -2045,11 +2092,18 @@ uint32_t sl_hashChainVisitedCount = 0;
 uint32_t sl_stringIdVisitedCount = 0;
 uint8_t sl_systemSweepHashEntries[(STRINGLIST_SIZE + 7) / 8];
 uint8_t sl_systemSweepStringIds[SL_MAX_STRING_INDEX / 8];
+uint16_t sl_systemSweepEntryByStringId[SL_MAX_STRING_INDEX];
+uint16_t sl_systemSweepOwningHashByEntry[STRINGLIST_SIZE];
+uint16_t sl_systemSweepPreviousEntry[STRINGLIST_SIZE];
 uint8_t sl_freeListVisited[(STRINGLIST_SIZE + 7) / 8];
+static_assert(
+	script_string::kCurrentRuntimeStringLimit == SL_MAX_STRING_INDEX);
 #ifdef KISAK_SCRIPT_STRING_PERF_TESTING
 uint32_t sl_completeFreeListValidationCount = 0;
 uint32_t sl_hashValidationScratchResetCount = 0;
 uint64_t sl_hashValidationScratchResetEntryCount = 0;
+uint64_t sl_registryOwnershipHashChainEntryVisitCount = 0;
+uint64_t sl_registryOwnershipLinearSweepEntryVisitCount = 0;
 #endif
 
 void SL_ResetHashChainValidationNoReport() noexcept
@@ -2362,6 +2416,198 @@ void SL_SetFreeListCertificateMemberNoReport(
 		sl_freeListVisited[byteIndex] &= static_cast<uint8_t>(~bitMask);
 }
 
+bool SL_IsRegistryStringCertificateMemberNoReport(
+	const uint32_t stringId) noexcept
+{
+	if (!script_string::IsCurrentRuntimeStringId(stringId))
+		return false;
+	const uint32_t byteIndex = stringId >> 3;
+	const uint8_t bitMask =
+		static_cast<uint8_t>(1u << (stringId & 7u));
+	return (sl_systemSweepStringIds[byteIndex] & bitMask) != 0;
+}
+
+void SL_SetRegistryStringCertificateMemberNoReport(
+	const uint32_t stringId,
+	const bool member) noexcept
+{
+	if (!script_string::IsCurrentRuntimeStringId(stringId))
+		return;
+	const uint32_t byteIndex = stringId >> 3;
+	const uint8_t bitMask =
+		static_cast<uint8_t>(1u << (stringId & 7u));
+	if (member)
+		sl_systemSweepStringIds[byteIndex] |= bitMask;
+	else
+		sl_systemSweepStringIds[byteIndex] &= static_cast<uint8_t>(~bitMask);
+}
+
+bool SL_TryRefreshRegistryHashCertificateNoReport(
+	const uint32_t owningHash,
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
+{
+	if (!admission
+		|| !SL_IsAuthorizedOwnershipLeaseLocked(validationLease)
+		|| owningHash == 0 || owningHash >= STRINGLIST_SIZE
+		|| !SL_IsHashEntryEncodingValidNoReport(
+			scrStringGlob.hashTable[owningHash])
+		|| (scrStringGlob.hashTable[owningHash].status_next & HASH_STAT_MASK)
+			!= HASH_STAT_HEAD)
+	{
+		return false;
+	}
+
+	uint32_t entryIndex = owningHash;
+	uint32_t previousIndex = owningHash;
+	for (uint32_t visited = 0; visited < STRINGLIST_SIZE; ++visited)
+	{
+		if (entryIndex == 0 || entryIndex >= STRINGLIST_SIZE)
+			return false;
+		const HashEntry &entry = scrStringGlob.hashTable[entryIndex];
+		const uint32_t expectedStatus = entryIndex == owningHash
+			? HASH_STAT_HEAD
+			: HASH_STAT_MOVABLE;
+		RefString* refString = nullptr;
+		uint32_t byteCount = 0;
+		if (!SL_IsHashEntryEncodingValidNoReport(entry)
+			|| (entry.status_next & HASH_STAT_MASK) != expectedStatus
+			|| !SL_TryGetAllocatedStringByteCountForScopeNoReport(
+				entry.u.prev,
+				&refString,
+				&byteCount,
+				SL_ValidationScope::Leased,
+				validationLease,
+				admission)
+			|| GetHashCode(refString->str, byteCount) != owningHash)
+		{
+			return false;
+		}
+
+		SL_SetRegistryStringCertificateMemberNoReport(entry.u.prev, true);
+		sl_systemSweepEntryByStringId[entry.u.prev] =
+			static_cast<uint16_t>(entryIndex);
+		sl_systemSweepOwningHashByEntry[entryIndex] =
+			static_cast<uint16_t>(owningHash);
+		sl_systemSweepPreviousEntry[entryIndex] =
+			static_cast<uint16_t>(previousIndex);
+
+		const uint32_t nextIndex =
+			static_cast<uint16_t>(entry.status_next);
+		if (nextIndex == owningHash)
+			return true;
+		if (nextIndex == 0 || nextIndex >= STRINGLIST_SIZE)
+			return false;
+		previousIndex = entryIndex;
+		entryIndex = nextIndex;
+	}
+	return false;
+}
+
+SL_ResolveStatus SL_TryResolveLeasedCertificateMemberNoReport(
+	const uint32_t stringId,
+	RefString** const outRefString,
+	uint32_t* const outByteCount,
+	uint32_t* const outPacked,
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
+{
+	if (!outRefString || !outByteCount || !outPacked
+		|| !script_string::IsCurrentRuntimeStringId(stringId))
+	{
+		return SL_ResolveStatus::NotAllocatedNoChange;
+	}
+	if (!admission
+		|| !SL_IsAuthorizedOwnershipLeaseLocked(validationLease))
+	{
+		return SL_ResolveStatus::UnsafeFailure;
+	}
+	if (!SL_IsRegistryStringCertificateMemberNoReport(stringId))
+		return SL_ResolveStatus::NotAllocatedNoChange;
+
+	RefString* refString = nullptr;
+	uint32_t byteCount = 0;
+	if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+			stringId,
+			&refString,
+			&byteCount,
+			SL_ValidationScope::Leased,
+			validationLease,
+			admission))
+	{
+		return SL_ResolveStatus::UnsafeFailure;
+	}
+	const uint32_t packed =
+		scr_string_atomic::Load(SL_RefStringWord(refString));
+	if (scr_string_atomic::RefCount(packed) == 0
+		|| !SL_IsDebugOwnershipExactNoReport(stringId, packed))
+	{
+		return SL_ResolveStatus::UnsafeFailure;
+	}
+
+	const uint32_t owningHash = GetHashCode(refString->str, byteCount);
+	const uint32_t entryIndex = sl_systemSweepEntryByStringId[stringId];
+	if (owningHash == 0 || owningHash >= STRINGLIST_SIZE
+		|| entryIndex == 0 || entryIndex >= STRINGLIST_SIZE
+		|| sl_systemSweepOwningHashByEntry[entryIndex] != owningHash)
+	{
+		return SL_ResolveStatus::UnsafeFailure;
+	}
+	const HashEntry &entry = scrStringGlob.hashTable[entryIndex];
+	const uint32_t expectedStatus = entryIndex == owningHash
+		? HASH_STAT_HEAD
+		: HASH_STAT_MOVABLE;
+	const uint32_t previousIndex =
+		sl_systemSweepPreviousEntry[entryIndex];
+	const uint32_t nextIndex = static_cast<uint16_t>(entry.status_next);
+	if (!SL_IsHashEntryEncodingValidNoReport(entry)
+		|| (entry.status_next & HASH_STAT_MASK) != expectedStatus
+		|| entry.u.prev != stringId
+		|| previousIndex == 0 || previousIndex >= STRINGLIST_SIZE
+		|| (entryIndex == owningHash && previousIndex != owningHash)
+		|| (entryIndex != owningHash
+			&& (sl_systemSweepOwningHashByEntry[previousIndex]
+					!= owningHash
+				|| !SL_IsHashEntryEncodingValidNoReport(
+					scrStringGlob.hashTable[previousIndex])
+				|| !SL_IsRegistryStringCertificateMemberNoReport(
+					scrStringGlob.hashTable[previousIndex].u.prev)
+				|| sl_systemSweepEntryByStringId[
+					scrStringGlob.hashTable[previousIndex].u.prev]
+					!= previousIndex
+				|| (scrStringGlob.hashTable[previousIndex].status_next
+					& HASH_STAT_MASK)
+					!= (previousIndex == owningHash
+						? HASH_STAT_HEAD
+						: HASH_STAT_MOVABLE)
+				|| static_cast<uint16_t>(
+					scrStringGlob.hashTable[previousIndex].status_next)
+					!= entryIndex))
+		|| (nextIndex != owningHash
+			&& (nextIndex == 0 || nextIndex >= STRINGLIST_SIZE
+				|| sl_systemSweepOwningHashByEntry[nextIndex]
+					!= owningHash
+				|| sl_systemSweepPreviousEntry[nextIndex]
+					!= entryIndex
+				|| !SL_IsHashEntryEncodingValidNoReport(
+					scrStringGlob.hashTable[nextIndex])
+				|| !SL_IsRegistryStringCertificateMemberNoReport(
+					scrStringGlob.hashTable[nextIndex].u.prev)
+				|| sl_systemSweepEntryByStringId[
+					scrStringGlob.hashTable[nextIndex].u.prev]
+					!= nextIndex
+				|| (scrStringGlob.hashTable[nextIndex].status_next
+					& HASH_STAT_MASK) != HASH_STAT_MOVABLE)))
+	{
+		return SL_ResolveStatus::UnsafeFailure;
+	}
+
+	*outRefString = refString;
+	*outByteCount = byteCount;
+	*outPacked = packed;
+	return SL_ResolveStatus::Success;
+}
+
 bool SL_IsLeasedFreeListLocallyValidNoReport() noexcept
 {
 	if (!SL_IsFreeListLocallyValidNoReport())
@@ -2642,6 +2888,12 @@ bool SL_IsCompleteStringStateValidForScopeNoReport(
 	memset(sl_systemSweepHashEntries, 0,
 		sizeof(sl_systemSweepHashEntries));
 	memset(sl_systemSweepStringIds, 0, sizeof(sl_systemSweepStringIds));
+	memset(sl_systemSweepEntryByStringId, 0,
+		sizeof(sl_systemSweepEntryByStringId));
+	memset(sl_systemSweepOwningHashByEntry, 0,
+		sizeof(sl_systemSweepOwningHashByEntry));
+	memset(sl_systemSweepPreviousEntry, 0,
+		sizeof(sl_systemSweepPreviousEntry));
 	uint64_t aggregateRefCount = 0;
 	for (uint32_t owningHash = 1;
 		owningHash < STRINGLIST_SIZE;
@@ -2654,6 +2906,7 @@ bool SL_IsCompleteStringStateValidForScopeNoReport(
 		}
 
 		uint32_t entryIndex = owningHash;
+		uint32_t previousIndex = owningHash;
 		bool terminated = false;
 		for (uint32_t visited = 0; visited < STRINGLIST_SIZE; ++visited)
 		{
@@ -2687,6 +2940,12 @@ bool SL_IsCompleteStringStateValidForScopeNoReport(
 			if ((sl_systemSweepStringIds[stringByte] & stringMask) != 0)
 				return false;
 			sl_systemSweepStringIds[stringByte] |= stringMask;
+			sl_systemSweepEntryByStringId[stringValue] =
+				static_cast<uint16_t>(entryIndex);
+			sl_systemSweepOwningHashByEntry[entryIndex] =
+				static_cast<uint16_t>(owningHash);
+			sl_systemSweepPreviousEntry[entryIndex] =
+				static_cast<uint16_t>(previousIndex);
 
 			RefString* refString = nullptr;
 			uint32_t byteCount = 0;
@@ -2722,6 +2981,7 @@ bool SL_IsCompleteStringStateValidForScopeNoReport(
 			{
 				return false;
 			}
+			previousIndex = entryIndex;
 			entryIndex = nextIndex;
 		}
 		if (!terminated)
@@ -2831,6 +3091,9 @@ bool SL_TryBuildUnlinkPlanForScopeNoReport(
 	bool terminated = false;
 	for (uint32_t visited = 0; visited < STRINGLIST_SIZE; ++visited)
 	{
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+		++sl_registryOwnershipHashChainEntryVisitCount;
+#endif
 		if (!SL_TryRecordHashEntryNoReport(entryIndex))
 			return false;
 
@@ -2989,6 +3252,13 @@ void SL_CommitUnlinkPlanNoReport(
 	const SL_UnlinkPlan &plan,
 	const bool updateCertificate = false) noexcept
 {
+	const uint32_t removedStringId =
+		scrStringGlob.hashTable[plan.targetIndex].u.prev;
+	const bool promotesCollisionEntry =
+		plan.targetIndex == plan.hash && plan.nextIndex != plan.hash;
+	const uint32_t promotedStringId = promotesCollisionEntry
+		? scrStringGlob.hashTable[plan.nextIndex].u.prev
+		: 0;
 	uint32_t freedIndex = plan.targetIndex;
 	if (plan.targetIndex == plan.hash)
 	{
@@ -3020,7 +3290,36 @@ void SL_CommitUnlinkPlanNoReport(
 	scrStringGlob.hashTable[plan.freeHead].u.prev = freedIndex;
 	scrStringGlob.hashTable[0].status_next = freedIndex;
 	if (updateCertificate)
+	{
+		sl_systemSweepEntryByStringId[removedStringId] = 0;
+		if (promotesCollisionEntry)
+		{
+			sl_systemSweepEntryByStringId[promotedStringId] =
+				static_cast<uint16_t>(plan.hash);
+			sl_systemSweepOwningHashByEntry[plan.hash] =
+				static_cast<uint16_t>(plan.hash);
+			sl_systemSweepPreviousEntry[plan.hash] =
+				static_cast<uint16_t>(plan.hash);
+			const uint32_t promotedNext = static_cast<uint16_t>(
+				scrStringGlob.hashTable[plan.hash].status_next);
+			if (promotedNext != plan.hash)
+			{
+				sl_systemSweepPreviousEntry[promotedNext] =
+					static_cast<uint16_t>(plan.hash);
+			}
+		}
+		else if (plan.targetIndex != plan.hash
+			&& plan.nextIndex != plan.hash)
+		{
+			sl_systemSweepPreviousEntry[plan.nextIndex] =
+				static_cast<uint16_t>(plan.previousIndex);
+		}
+		sl_systemSweepOwningHashByEntry[freedIndex] = 0;
+		sl_systemSweepPreviousEntry[freedIndex] = 0;
 		SL_SetFreeListCertificateMemberNoReport(freedIndex, true);
+		SL_SetRegistryStringCertificateMemberNoReport(
+			removedStringId, false);
+	}
 }
 
 bool SL_TryFreeSystemSweepEntryNoReport(
@@ -3106,6 +3405,102 @@ bool SL_TryFreeSystemSweepEntryNoReport(
 	}
 
 	SL_CommitUnlinkPlanNoReport(plan);
+	scrStringGlob.nextFreeEntry = nullptr;
+	return true;
+}
+
+bool SL_TryFreeRegistrySweepEntryNoReport(
+	const uint32_t owningHash,
+	const uint32_t targetIndex,
+	const uint32_t previousIndex,
+	const uint32_t stringId,
+	RefString* const refString,
+	const uint32_t byteCount,
+	MT_ValidationLease* const validationLease,
+	const MT_ValidationLeaseAdmission* const admission) noexcept
+{
+	if (!admission
+		|| !SL_IsAuthorizedOwnershipLeaseLocked(validationLease)
+		|| !SL_IsRegistryStringCertificateMemberNoReport(stringId)
+		|| owningHash == 0 || owningHash >= STRINGLIST_SIZE
+		|| targetIndex == 0 || targetIndex >= STRINGLIST_SIZE
+		|| previousIndex == 0 || previousIndex >= STRINGLIST_SIZE
+		|| !refString || byteCount == 0
+		|| !SL_IsLeasedFreeListLocallyValidNoReport())
+	{
+		return false;
+	}
+
+	MT_AllocationInfo allocationInfo{};
+	if (SL_TryGetAllocationInfoForScopeNoReport(
+			stringId,
+			&allocationInfo,
+			SL_ValidationScope::Leased,
+			validationLease,
+			admission) != MT_AllocationInfoStatus::Success
+		|| refString != SL_GetRefStringNoReport(stringId)
+		|| !SL_IsExactStringAllocationNoReport(allocationInfo, byteCount)
+		|| GetHashCode(refString->str, byteCount) != owningHash)
+	{
+		return false;
+	}
+	const uint32_t packed =
+		scr_string_atomic::Load(SL_RefStringWord(refString));
+	if (scr_string_atomic::RefCount(packed) != 0
+		|| scr_string_atomic::User(packed) != 0
+		|| !SL_IsDebugOwnershipExactNoReport(stringId, packed))
+	{
+		return false;
+	}
+
+	const HashEntry &target = scrStringGlob.hashTable[targetIndex];
+	const uint32_t expectedStatus = targetIndex == owningHash
+		? HASH_STAT_HEAD
+		: HASH_STAT_MOVABLE;
+	const uint32_t nextIndex = static_cast<uint16_t>(target.status_next);
+	if (!SL_IsHashEntryEncodingValidNoReport(target)
+		|| (target.status_next & HASH_STAT_MASK) != expectedStatus
+		|| target.u.prev != stringId
+		|| (targetIndex == owningHash && previousIndex != owningHash)
+		|| (targetIndex != owningHash
+			&& (!SL_IsHashEntryEncodingValidNoReport(
+				scrStringGlob.hashTable[previousIndex])
+				|| static_cast<uint16_t>(
+					scrStringGlob.hashTable[previousIndex].status_next)
+					!= targetIndex
+				|| (scrStringGlob.hashTable[previousIndex].status_next
+					& HASH_STAT_MASK)
+					!= (previousIndex == owningHash
+						? HASH_STAT_HEAD
+						: HASH_STAT_MOVABLE)))
+		|| (nextIndex != owningHash
+			&& (nextIndex == 0 || nextIndex >= STRINGLIST_SIZE
+				|| !SL_IsHashEntryEncodingValidNoReport(
+					scrStringGlob.hashTable[nextIndex])
+				|| (scrStringGlob.hashTable[nextIndex].status_next
+					& HASH_STAT_MASK) != HASH_STAT_MOVABLE)))
+	{
+		return false;
+	}
+
+	SL_UnlinkPlan plan{};
+	plan.hash = owningHash;
+	plan.targetIndex = targetIndex;
+	plan.previousIndex = previousIndex;
+	plan.nextIndex = nextIndex;
+	plan.freeHead =
+		static_cast<uint16_t>(scrStringGlob.hashTable[0].status_next);
+	if (SL_TryFreeStringMemoryNoReport(
+			stringId,
+			static_cast<int>(byteCount + kRefStringHeaderSize),
+			SL_ValidationScope::Leased,
+			validationLease,
+			admission) != MT_FreeIndexStatus::Success)
+	{
+		return false;
+	}
+
+	SL_CommitUnlinkPlanNoReport(plan, true);
 	scrStringGlob.nextFreeEntry = nullptr;
 	return true;
 }
@@ -3595,12 +3990,15 @@ TryAddDatabaseUser4ReferencesInternal(
 		sl_registryOwnershipSweepIds[uniqueCount++] =
 			static_cast<uint16_t>(stringId);
 
-		SL_LiveStringInfo info{};
+		RefString* refString = nullptr;
+		uint32_t byteCount = 0;
+		uint32_t packed = 0;
 		const SL_ResolveStatus resolveStatus =
-			SL_TryResolveLiveStringNoReport(
+			SL_TryResolveLeasedCertificateMemberNoReport(
 				stringId,
-				&info,
-				SL_ValidationScope::Leased,
+				&refString,
+				&byteCount,
+				&packed,
 				validationLease,
 				admission);
 		if (resolveStatus != SL_ResolveStatus::Success)
@@ -3614,13 +4012,15 @@ TryAddDatabaseUser4ReferencesInternal(
 				0,
 				0};
 		}
-		const uint8_t users = scr_string_atomic::User(info.packed);
+		(void)refString;
+		(void)byteCount;
+		const uint8_t users = scr_string_atomic::User(packed);
 		if ((users & databaseUser) != 0)
 		{
 			++unchangedCount;
 			continue;
 		}
-		if (scr_string_atomic::RefCount(info.packed)
+		if (scr_string_atomic::RefCount(packed)
 				== scr_string_atomic::kMaxRefCount
 			|| !SL_CanDebugAddRefNoReport(stringId))
 		{
@@ -3632,25 +4032,40 @@ TryAddDatabaseUser4ReferencesInternal(
 		++addedCount;
 	}
 
-	if (addedCount > availableOperations)
+	if ((scrStringDebugGlob
+			&& Sys_AtomicLoad(&scrStringDebugGlob->totalRefCount)
+				> UINT32_MAX - addedCount)
+		|| addedCount > availableOperations)
 	{
 		SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
-		return {DatabaseUserAddBulkStatus::CapacityNoChange, 0, 0};
+		return {
+			addedCount > availableOperations
+				? DatabaseUserAddBulkStatus::CapacityNoChange
+				: DatabaseUserAddBulkStatus::RefCountExhaustedNoChange,
+			0,
+			0};
 	}
 
 	for (uint32_t index = 0; index < uniqueCount; ++index)
 	{
 		const uint32_t stringId = sl_registryOwnershipSweepIds[index];
-		RefString* const refString = SL_GetRefStringNoReport(stringId);
-		if (!refString)
+		RefString* refString = nullptr;
+		uint32_t byteCount = 0;
+		uint32_t packed = 0;
+		if (SL_TryResolveLeasedCertificateMemberNoReport(
+				stringId,
+				&refString,
+				&byteCount,
+				&packed,
+				validationLease,
+				admission) != SL_ResolveStatus::Success)
 		{
 			SL_ScrubRegistryOwnershipBulkNoReport(uniqueCount);
 			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 			return {DatabaseUserAddBulkStatus::UnsafeFailure, 0, 0};
 		}
-		const uint32_t packed =
-			scr_string_atomic::Load(SL_RefStringWord(refString));
+		(void)byteCount;
 		if ((scr_string_atomic::User(packed) & databaseUser) != 0)
 			continue;
 		const scr_string_atomic::AddUserRefResult result =
@@ -4069,7 +4484,7 @@ TryReAddRetainedDatabaseNamesInternal(
 
 	const uint8_t retainedUser =
 		static_cast<uint8_t>(kRetainedDatabaseUserMask);
-	uint32_t snapshotCount = 0;
+	uint32_t retainedCount = 0;
 	uint32_t requiredMemoryMutations = 0;
 	for (uint32_t hash = 1; hash < STRINGLIST_SIZE; ++hash)
 	{
@@ -4078,90 +4493,173 @@ TryReAddRetainedDatabaseNamesInternal(
 		const uint32_t stringId = scrStringGlob.hashTable[hash].u.prev;
 		RefString* refString = nullptr;
 		uint32_t byteCount = 0;
-		if (!SL_TryGetAllocatedStringByteCountForScopeNoReport(
+		uint32_t packed = 0;
+		if (SL_TryResolveLeasedCertificateMemberNoReport(
 				stringId,
 				&refString,
 				&byteCount,
-				SL_ValidationScope::Leased,
+				&packed,
 				validationLease,
-				admission))
+				admission) != SL_ResolveStatus::Success)
 		{
-			SL_ScrubRegistryOwnershipSweepIdsNoReport(snapshotCount);
 			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 			return DatabaseSweepStatus::UnsafeFailure;
 		}
+		(void)refString;
 		(void)byteCount;
-		const uint32_t packed =
-			scr_string_atomic::Load(SL_RefStringWord(refString));
 		if ((scr_string_atomic::User(packed) & retainedUser) == 0)
 			continue;
-		if (snapshotCount >= STRINGLIST_SIZE
+		if (retainedCount >= STRINGLIST_SIZE
 			|| !SL_CanDebugRemoveRefNoReport(stringId))
 		{
-			SL_ScrubRegistryOwnershipSweepIdsNoReport(snapshotCount);
 			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 			return DatabaseSweepStatus::UnsafeFailure;
 		}
-		sl_registryOwnershipSweepIds[snapshotCount++] =
-			static_cast<uint16_t>(stringId);
+		++retainedCount;
 		if (scr_string_atomic::RefCount(packed) == 1)
 			++requiredMemoryMutations;
 	}
 	if (validationLease->mutationCount()
 		> UINT32_MAX - requiredMemoryMutations)
 	{
-		SL_ScrubRegistryOwnershipSweepIdsNoReport(snapshotCount);
 		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 		return DatabaseSweepStatus::CapacityNoChange;
 	}
-	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 
-	for (uint32_t index = 0; index < snapshotCount; ++index)
+	scrStringGlob.nextFreeEntry = nullptr;
+	uint32_t removedCount = 0;
+	bool invalidTransition = false;
+	for (uint32_t owningHash = 1;
+		owningHash < STRINGLIST_SIZE && !invalidTransition;
+		++owningHash)
 	{
-		const uint32_t stringId = sl_registryOwnershipSweepIds[index];
-		Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
-		SL_LiveStringInfo info{};
-		const SL_ResolveStatus resolveStatus = SL_TryResolveLiveStringNoReport(
-			stringId,
-			&info,
-			SL_ValidationScope::Leased,
-			validationLease,
-			admission);
-		if (resolveStatus != SL_ResolveStatus::Success
-			|| (scr_string_atomic::User(info.packed) & retainedUser) == 0
-			|| !SL_CanDebugRemoveRefNoReport(stringId))
+		if ((scrStringGlob.hashTable[owningHash].status_next & HASH_STAT_MASK)
+			!= HASH_STAT_HEAD)
 		{
-			SL_ScrubRegistryOwnershipSweepIdsNoReport(snapshotCount);
-			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
-			return DatabaseSweepStatus::UnsafeFailure;
+			continue;
 		}
-		const scr_string_atomic::RemoveUserRefResult result =
-			scr_string_atomic::RemoveUserRef(
-				SL_RefStringWord(info.refString), retainedUser);
-		if (result.status
-			!= scr_string_atomic::RemoveUserRefStatus::Removed)
+
+		uint32_t targetIndex = owningHash;
+		uint32_t previousIndex = owningHash;
+		bool chainDone = false;
+		for (uint32_t visited = 0;
+			visited < STRINGLIST_SIZE && !invalidTransition;
+			++visited)
 		{
-			SL_ScrubRegistryOwnershipSweepIdsNoReport(snapshotCount);
-			Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
-			return DatabaseSweepStatus::UnsafeFailure;
-		}
-		SL_DebugRemoveRefNoReport(stringId);
-		const bool validFree = !result.reachedZero
-			|| SL_TryFreeResolvedStringNoReport(
+			#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+			++sl_registryOwnershipLinearSweepEntryVisitCount;
+			#endif
+			if (targetIndex == 0 || targetIndex >= STRINGLIST_SIZE)
+			{
+				invalidTransition = true;
+				break;
+			}
+			HashEntry &entry = scrStringGlob.hashTable[targetIndex];
+			const uint32_t nextIndex =
+				static_cast<uint16_t>(entry.status_next);
+			const uint32_t stringId = entry.u.prev;
+			RefString* refString = nullptr;
+			uint32_t byteCount = 0;
+			uint32_t packedBefore = 0;
+			if (SL_TryResolveLeasedCertificateMemberNoReport(
 				stringId,
-				info,
-				SL_ValidationScope::Leased,
+				&refString,
+				&byteCount,
+				&packedBefore,
 				validationLease,
-				admission);
-		Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
-		if (!validFree)
-		{
-			SL_ScrubRegistryOwnershipSweepIdsNoReport(snapshotCount);
-			return DatabaseSweepStatus::UnsafeFailure;
+				admission) != SL_ResolveStatus::Success
+				|| sl_systemSweepOwningHashByEntry[targetIndex]
+					!= owningHash)
+			{
+				invalidTransition = true;
+				break;
+			}
+
+			if ((scr_string_atomic::User(packedBefore) & retainedUser) == 0)
+			{
+				if (nextIndex == owningHash)
+				{
+					chainDone = true;
+					break;
+				}
+				previousIndex = targetIndex;
+				targetIndex = nextIndex;
+				continue;
+			}
+			if (!SL_CanDebugRemoveRefNoReport(stringId))
+			{
+				invalidTransition = true;
+				break;
+			}
+
+			const scr_string_atomic::RemoveUserRefResult result =
+				scr_string_atomic::RemoveUserRef(
+					SL_RefStringWord(refString), retainedUser);
+			if (result.status
+				!= scr_string_atomic::RemoveUserRefStatus::Removed)
+			{
+				invalidTransition = true;
+				break;
+			}
+			SL_DebugRemoveRefNoReport(stringId);
+			++removedCount;
+
+			if (result.reachedZero)
+			{
+				if (!SL_TryFreeRegistrySweepEntryNoReport(
+						owningHash,
+						targetIndex,
+						previousIndex,
+						stringId,
+						refString,
+						byteCount,
+						validationLease,
+						admission))
+				{
+					Sys_AtomicStore(
+						SL_RefStringWord(refString), packedBefore);
+					SL_DebugAddRefNoReport(stringId);
+					--removedCount;
+					invalidTransition = true;
+					break;
+				}
+				if (targetIndex == owningHash)
+				{
+					if (nextIndex == owningHash)
+					{
+						chainDone = true;
+						break;
+					}
+					targetIndex = owningHash;
+					previousIndex = owningHash;
+					continue;
+				}
+				if (nextIndex == owningHash)
+				{
+					chainDone = true;
+					break;
+				}
+				targetIndex = nextIndex;
+				continue;
+			}
+
+			if (nextIndex == owningHash)
+			{
+				chainDone = true;
+				break;
+			}
+			previousIndex = targetIndex;
+			targetIndex = nextIndex;
 		}
+		if (!invalidTransition && !chainDone)
+			invalidTransition = true;
 	}
-	SL_ScrubRegistryOwnershipSweepIdsNoReport(snapshotCount);
-	return DatabaseSweepStatus::Success;
+	if (!invalidTransition && removedCount != retainedCount)
+		invalidTransition = true;
+	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
+	return invalidTransition
+		? DatabaseSweepStatus::UnsafeFailure
+		: DatabaseSweepStatus::Success;
 }
 } // namespace
 
@@ -4526,6 +5024,10 @@ void ResetOwnershipValidationCountersForTesting() noexcept
 {
 	Sys_EnterCriticalSection(CRITSECT_SCRIPT_STRING);
 	sl_ownershipValidationCounters = {};
+#ifdef KISAK_SCRIPT_STRING_PERF_TESTING
+	sl_registryOwnershipHashChainEntryVisitCount = 0;
+	sl_registryOwnershipLinearSweepEntryVisitCount = 0;
+#endif
 	Sys_LeaveCriticalSection(CRITSECT_SCRIPT_STRING);
 }
 
