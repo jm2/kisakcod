@@ -2872,8 +2872,70 @@ require_source_contains(
     "completed material objects must publish their exact registered start")
 require_source_contains(
     "database/db_stream.cpp"
-    "g_directResolver.ValidateAddress("
+    "DB_DirectResolver().ValidateAddress("
     "completed material objects must cover a fully materialized stream span")
+require_source_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "if (receipt->phase() == ZoneStreamGenerationPhase::Invalidated)
+        return ZoneStreamOwnershipStatus::AlreadyComplete;
+    if (receipt->phase() == ZoneStreamGenerationPhase::UnsafeFailure)"
+    "terminal stream receipts must return before inspecting a newer singleton")
+require_source_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "if (hasPointer != hasSize)"
+    "stream bindings must reject pointer/size mismatches")
+require_source_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "block.size
+                > (std::numeric_limits<std::uintptr_t>::max)() - block.base"
+    "stream block ends must reject native-address overflow")
+require_source_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "&& SpansOverlap(
+                    block.base,
+                    blockEnds[i],
+                    blocks[prior].base,
+                    blockEnds[prior])"
+    "stream blocks must be pairwise disjoint")
+require_source_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "for (StreamDelayInfo &delay : g_streamDelayArray)"
+    "all delayed stream pointers must be scrubbed")
+require_source_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "for (StreamPosInfo &saved : g_streamPosStack)"
+    "all saved stream cursors must be scrubbed")
+require_source_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "for (std::uint8_t *&position : g_streamPosArray)"
+    "all block cursors must be scrubbed")
+require_source_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "g_aliasRegistry.Invalidate();
+    g_directResolver.Invalidate();
+    ScrubStreamScalars();
+    ScrubStreamArrays();"
+    "relocation state must invalidate before every stream global")
+require_source_not_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "Com_Error("
+    "stream receipt/controller must remain report-free")
+require_source_not_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "memset("
+    "stream teardown must explicitly enumerate pointer-bearing state")
+require_source_contains(
+    "database/db_relocation.cpp"
+    "record.resolvedAddress = 0;"
+    "alias invalidation must overwrite published native addresses")
+require_source_contains(
+    "database/db_relocation.cpp"
+    "std::vector<Record>{}.swap(records_);"
+    "alias invalidation must release retained record capacity")
+require_source_contains(
+    "database/db_relocation.cpp"
+    "return Status::GenerationExhausted;"
+    "alias generation exhaustion must fail closed")
 require_source_contains(
     "database/db_load.cpp"
     "DBAliasKind::MaterialVertexDeclaration"

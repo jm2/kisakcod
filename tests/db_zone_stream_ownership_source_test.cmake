@@ -1,0 +1,436 @@
+cmake_minimum_required(VERSION 3.16)
+
+if(NOT DEFINED SOURCE_ROOT OR SOURCE_ROOT STREQUAL "")
+    message(FATAL_ERROR "SOURCE_ROOT must identify the KisakCOD source tree")
+endif()
+
+set(_header_path
+    "${SOURCE_ROOT}/src/database/db_zone_stream_ownership.h")
+set(_source_path
+    "${SOURCE_ROOT}/src/database/db_zone_stream_ownership.cpp")
+set(_internal_path
+    "${SOURCE_ROOT}/src/database/db_zone_stream_ownership_internal.h")
+set(_relocation_header_path
+    "${SOURCE_ROOT}/src/database/db_relocation.h")
+set(_relocation_source_path
+    "${SOURCE_ROOT}/src/database/db_relocation.cpp")
+set(_stream_path "${SOURCE_ROOT}/src/database/db_stream.cpp")
+set(_stream_header_path "${SOURCE_ROOT}/src/database/db_stream.h")
+set(_state_path "${SOURCE_ROOT}/src/database/db_stream_state.h")
+set(_memory_path "${SOURCE_ROOT}/src/database/db_zone_memory.h")
+set(_runtime_table_path
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h")
+set(_file_load_path "${SOURCE_ROOT}/src/database/db_file_load.cpp")
+set(_fixture_path
+    "${SOURCE_ROOT}/tests/db_zone_stream_ownership_tests.cpp")
+set(_seal_path
+    "${SOURCE_ROOT}/tests/db_zone_stream_ownership_production_seal_tests.cpp")
+set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
+set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
+set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
+
+foreach(_path IN ITEMS
+    "${_header_path}" "${_source_path}" "${_internal_path}"
+    "${_relocation_header_path}" "${_relocation_source_path}"
+    "${_stream_path}" "${_stream_header_path}" "${_state_path}"
+    "${_memory_path}" "${_runtime_table_path}" "${_file_load_path}"
+    "${_fixture_path}" "${_seal_path}" "${_manifest_path}"
+    "${_tests_path}" "${_ci_path}")
+    if(NOT EXISTS "${_path}")
+        message(FATAL_ERROR "Missing zone-stream ownership source: ${_path}")
+    endif()
+endforeach()
+
+file(READ "${_header_path}" _header)
+file(READ "${_source_path}" _source)
+file(READ "${_internal_path}" _internal)
+file(READ "${_relocation_header_path}" _relocation_header)
+file(READ "${_relocation_source_path}" _relocation_source)
+file(READ "${_stream_path}" _stream)
+file(READ "${_stream_header_path}" _stream_header)
+file(READ "${_state_path}" _state)
+file(READ "${_memory_path}" _memory)
+file(READ "${_runtime_table_path}" _runtime_table)
+file(READ "${_file_load_path}" _file_load)
+file(READ "${_fixture_path}" _fixture)
+file(READ "${_seal_path}" _seal)
+file(READ "${_manifest_path}" _manifest)
+file(READ "${_tests_path}" _tests)
+file(READ "${_ci_path}" _ci)
+
+foreach(_var IN ITEMS
+    _header _source _internal _relocation_header _relocation_source
+    _stream _stream_header _state _memory _runtime_table _file_load
+    _fixture _seal _manifest _tests _ci)
+    string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${${_var}}")
+    set(${_var} "${_normalized}")
+endforeach()
+
+function(require_contains SOURCE_VAR NEEDLE DESCRIPTION)
+    string(FIND "${${SOURCE_VAR}}" "${NEEDLE}" _position)
+    if(_position EQUAL -1)
+        message(FATAL_ERROR
+            "Missing zone-stream ownership invariant (${DESCRIPTION}): "
+            "'${NEEDLE}'")
+    endif()
+endfunction()
+
+function(require_not_contains SOURCE_VAR NEEDLE DESCRIPTION)
+    string(FIND "${${SOURCE_VAR}}" "${NEEDLE}" _position)
+    if(NOT _position EQUAL -1)
+        message(FATAL_ERROR
+            "Forbidden zone-stream ownership regression (${DESCRIPTION}): "
+            "'${NEEDLE}'")
+    endif()
+endfunction()
+
+function(require_ordered SOURCE_VAR FIRST SECOND DESCRIPTION)
+    string(FIND "${${SOURCE_VAR}}" "${FIRST}" _first)
+    string(FIND "${${SOURCE_VAR}}" "${SECOND}" _second)
+    if(_first EQUAL -1 OR _second EQUAL -1 OR _first GREATER_EQUAL _second)
+        message(FATAL_ERROR
+            "Missing or unordered zone-stream ownership invariant "
+            "(${DESCRIPTION})")
+    endif()
+endfunction()
+
+function(extract_slice SOURCE_VAR START END OUT_VAR DESCRIPTION)
+    string(FIND "${${SOURCE_VAR}}" "${START}" _start)
+    if(_start EQUAL -1)
+        message(FATAL_ERROR "Missing start of ${DESCRIPTION}: '${START}'")
+    endif()
+    string(SUBSTRING "${${SOURCE_VAR}}" ${_start} -1 _tail)
+    string(FIND "${_tail}" "${END}" _end)
+    if(_end LESS_EQUAL 0)
+        message(FATAL_ERROR "Missing ordered end of ${DESCRIPTION}: '${END}'")
+    endif()
+    string(SUBSTRING "${_tail}" 0 ${_end} _slice)
+    set(${OUT_VAR} "${_slice}" PARENT_SCOPE)
+endfunction()
+
+# The public primitive is stable-address, report-free, exception-free, and has
+# no public mutation/test escape hatch.
+foreach(_marker IN ITEMS
+    "class alignas(8) ZoneStreamGenerationReceipt final"
+    "class alignas(8) ActiveZoneStreamBinding final"
+    "ZoneStreamGenerationReceipt(const ZoneStreamGenerationReceipt &) = delete;"
+    "ZoneStreamGenerationReceipt(ZoneStreamGenerationReceipt &&) = delete;"
+    "ActiveZoneStreamBinding(const ActiveZoneStreamBinding &) = delete;"
+    "ActiveZoneStreamBinding(ActiveZoneStreamBinding &&) = delete;"
+    "Invalidated,"
+    "RUNTIME_SIZE(ZoneStreamGenerationReceipt, 0x20, 0x28);"
+    "RUNTIME_SIZE(ActiveZoneStreamBinding, 0x68, 0xC0);"
+    "TryBeginZoneStreamGeneration("
+    "TryBindZoneStreams("
+    "TryInvalidateZoneStreams("
+    "const zone_load::ZoneLoadContextSlot *lifecycle()"
+    "bool canonical() const noexcept;")
+    require_contains(_header "${_marker}" "sealed stable receipt/controller API")
+endforeach()
+foreach(_var IN ITEMS _header _source)
+    foreach(_forbidden IN ITEMS
+        "KISAK_DB_ZONE_STREAM_OWNERSHIP_TESTING"
+        "TestAccess"
+        "Com_Error("
+        "iassert("
+        "assert("
+        "memset("
+        "malloc("
+        "calloc("
+        "realloc("
+        "operator new"
+        "throw "
+        "catch ("
+        "std::function"
+        "PMem_"
+        "DB_CompleteLoadingAsset("
+        "DB_InitStreams(")
+        require_not_contains(
+            ${_var} "${_forbidden}" "report-free production-neutral primitive")
+    endforeach()
+endforeach()
+require_not_contains(
+    _runtime_table "ZoneStreamGenerationReceipt"
+    "runtime table embedding remains a later reviewed batch")
+require_not_contains(
+    _runtime_table "ActiveZoneStreamBinding"
+    "singleton controller is not partially enrolled")
+
+# Exact usable lifecycle keys and self-addresses authenticate every durable
+# phase. Terminal retries precede all active inspection.
+foreach(_marker IN ITEMS
+    "zone_slots::IsUsableZoneSlot(key.slot)"
+    "self_ == this"
+    "receipt_->key() == key_"
+    "receipt->lifecycle_ != lifecycle"
+    "ValidateRequestedKey(receipt->key_, key)"
+    "ZoneStreamGenerationPhase::NeverBound"
+    "ZoneStreamGenerationPhase::Bound"
+    "ZoneStreamGenerationPhase::Invalidated"
+    "ActiveZoneStreamPhase::Idle"
+    "ActiveZoneStreamPhase::Bound")
+    require_contains(_source "${_marker}" "exact-key self-authentication")
+endforeach()
+extract_slice(
+    _source
+    "ZoneStreamOwnershipStatus TryInvalidateZoneStreams("
+    "namespace detail"
+    _invalidate
+    "exact invalidation")
+require_ordered(
+    _invalidate
+    "receipt->phase() == ZoneStreamGenerationPhase::Invalidated"
+    "if (!active)"
+    "terminal retry before active validation")
+require_ordered(
+    _invalidate
+    "receipt->phase() == ZoneStreamGenerationPhase::NeverBound"
+    "receipt->phase() != ZoneStreamGenerationPhase::Bound"
+    "NeverBound no-op before bound singleton inspection")
+require_ordered(
+    _invalidate
+    "g_aliasRegistry.Invalidate();"
+    "g_directResolver.Invalidate();"
+    "alias state invalidates before direct state")
+require_ordered(
+    _invalidate
+    "g_directResolver.Invalidate();"
+    "ScrubStreamScalars();"
+    "relocation provenance invalidates before stream globals")
+require_ordered(
+    _invalidate
+    "ScrubStreamScalars();"
+    "ScrubStreamArrays();"
+    "logical counts clear before pointer arrays")
+require_ordered(
+    _invalidate
+    "g_activeOwner = nullptr;"
+    "// Terminal publication is last"
+    "terminal receipt publishes last")
+require_contains(
+    _invalidate
+    "receipt->phaseWord_ = static_cast<std::uint32_t>( ZoneStreamGenerationPhase::Invalidated);"
+    "explicit Invalidated receipt publication")
+
+# Bind snapshots input and validates count, pointer/size parity, block zero,
+# alignment, native end, pairwise overlap, control disjointness, exact Loading
+# lifecycle/key, idle singleton, and epoch capacity before the first mutation.
+extract_slice(
+    _source
+    "ZoneStreamOwnershipStatus TryBindZoneStreams("
+    "ZoneStreamOwnershipStatus TryInvalidateZoneStreams("
+    _bind
+    "checked bind")
+foreach(_marker IN ITEMS
+    "hasPointer != hasSize"
+    "alignof(std::uint32_t)"
+    "std::numeric_limits<std::uintptr_t>::max"
+    "SpansOverlap("
+    "blocks[0].base != 0 && blocks[0].size != 0")
+    require_contains(_source "${_marker}" "complete block-layout preflight")
+endforeach()
+foreach(_marker IN ITEMS
+    "blockCount != relocation::kBlockCount"
+    "std::copy_n(blockArgument, relocation::kBlockCount, blocks);"
+    "ZoneMatchesLayout(zone, blocks)"
+    "LifecycleMatchesLoading(receipt->lifecycle_, key)"
+    "if (!SingletonIsIdle())"
+    "if (!g_aliasRegistry.CanReset())"
+    "g_aliasRegistry.Reset("
+    "g_directResolver.Reset("
+    "g_activeOwner = active;"
+    "ZoneStreamGenerationPhase::Bound")
+    require_contains(_bind "${_marker}" "complete bind preflight/publication")
+endforeach()
+require_ordered(
+    _bind
+    "if (!g_aliasRegistry.CanReset())"
+    "g_aliasRegistry.Reset("
+    "epoch exhaustion checked before mutation")
+require_ordered(
+    _bind
+    "g_activeOwner = active;"
+    "receipt->phaseWord_ = static_cast<std::uint32_t>( ZoneStreamGenerationPhase::Bound);"
+    "bound receipt publishes last")
+
+# Every pointer-bearing legacy singleton is defined in the ownership TU and
+# deterministically scrubbed. The dead g_streamBlocks alias stays removed.
+foreach(_marker IN ITEMS
+    "std::uint8_t *g_streamPosArray[db::relocation::kBlockCount];"
+    "StreamDelayInfo g_streamDelayArray[4096];"
+    "StreamPosInfo g_streamPosStack[64];"
+    "XZoneMemory *g_streamZoneMem;"
+    "std::uint8_t *g_streamPos;"
+    "for (StreamDelayInfo &delay : g_streamDelayArray)"
+    "delay.ptr = nullptr;"
+    "delay.size = 0;"
+    "for (StreamPosInfo &saved : g_streamPosStack)"
+    "saved.pos = nullptr;"
+    "saved.index = 0;"
+    "for (std::uint8_t *&position : g_streamPosArray)"
+    "g_streamZoneMem = nullptr;"
+    "g_streamPos = nullptr;"
+    "g_streamDelayIndex = 0;"
+    "g_streamPosIndex = 0;"
+    "g_streamPosStackIndex = 0;")
+    require_contains(_source "${_marker}" "complete singleton scrub inventory")
+endforeach()
+foreach(_var IN ITEMS _header _source _stream _stream_header _state)
+    require_not_contains(${_var} "g_streamBlocks" "dead stream-block alias removed")
+endforeach()
+foreach(_marker IN ITEMS
+    "for (StreamDelayInfo &delay : g_streamDelayArray)"
+    "delay.ptr = nullptr;"
+    "for (StreamPosInfo &saved : g_streamPosStack)"
+    "saved.pos = nullptr;")
+    require_contains(
+        _stream "${_marker}" "legacy replacement also scrubs native pointers")
+endforeach()
+
+# Relocation invalidation overwrites native addresses, releases all vector
+# capacities, and never advances the alias epoch. Reset fails closed at max.
+foreach(_marker IN ITEMS
+    "void DirectResolver::Invalidate() noexcept"
+    "std::vector<Interval>{}.swap(block.materialized);"
+    "std::vector<StringRecord>{}.swap(strings_);"
+    "void AliasRegistry::Invalidate() noexcept"
+    "record.resolvedAddress = 0;"
+    "std::vector<Record>{}.swap(records_);"
+    "!= (std::numeric_limits<std::uint64_t>::max)()"
+    "return Status::GenerationExhausted;"
+    "case Status::GenerationExhausted: return \"generation exhausted\";")
+    require_contains(
+        _relocation_source "${_marker}" "no-throw scrub and wrap fail-close")
+endforeach()
+extract_slice(
+    _relocation_source
+    "void AliasRegistry::Invalidate() noexcept"
+    "bool AliasRegistry::CanReset() const noexcept"
+    _alias_invalidate
+    "alias invalidation")
+require_not_contains(
+    _alias_invalidate "++generation_" "invalidation cannot advance epoch")
+require_ordered(
+    _relocation_source
+    "if (!CanReset()) return Status::GenerationExhausted;"
+    "++generation_;"
+    "generation check before one exact increment")
+foreach(_marker IN ITEMS
+    "void Invalidate() noexcept;"
+    "bool CanReset() const noexcept;"
+    "GenerationExhausted,")
+    require_contains(
+        _relocation_header "${_marker}" "explicit relocation invalidation API")
+endforeach()
+
+# Internal mutable relocation access is private to the legacy wrapper and the
+# ownership implementation. Public lifecycle APIs remain unused in production.
+file(GLOB_RECURSE _production_sources
+    "${SOURCE_ROOT}/src/*.cpp" "${SOURCE_ROOT}/src/*.h")
+foreach(_path IN LISTS _production_sources)
+    if(_path STREQUAL _header_path OR _path STREQUAL _source_path)
+        continue()
+    endif()
+    file(READ "${_path}" _candidate)
+    foreach(_public_api IN ITEMS
+        "TryBeginZoneStreamGeneration("
+        "TryBindZoneStreams("
+        "TryInvalidateZoneStreams(")
+        string(FIND "${_candidate}" "${_public_api}" _found)
+        if(NOT _found EQUAL -1)
+            message(FATAL_ERROR
+                "Production zone-stream API caller enrolled early: ${_path}")
+        endif()
+    endforeach()
+    if(NOT _path STREQUAL _stream_path
+        AND NOT _path STREQUAL _internal_path)
+        foreach(_internal_name IN ITEMS
+            "db_zone_stream_ownership_internal.h"
+            "AliasRegistryForLegacyStream("
+            "DirectResolverForLegacyStream("
+            "OwnershipBindingActive(")
+            string(FIND "${_candidate}" "${_internal_name}" _found)
+            if(NOT _found EQUAL -1)
+                message(FATAL_ERROR
+                    "Private stream capability escaped to ${_path}")
+            endif()
+        endforeach()
+    endif()
+endforeach()
+require_contains(
+    _stream "#include \"db_zone_stream_ownership_internal.h\""
+    "legacy wrapper owns the sole private bridge")
+require_contains(
+    _stream "void __cdecl DB_InitStreams(XZoneMemory *zoneMem)"
+    "sole legacy bind entrypoint remains explicit")
+
+# Freeze the still-legacy loader admission order until the atomic coordinator
+# batch replaces it in one reviewed cutover.
+require_ordered(
+    _file_load "DB_InitStreams(g_load.zoneMem);" "Load_XAssetListCustom();"
+    "legacy stream bind precedes asset loading")
+require_ordered(
+    _file_load "DB_FinishGeometryBlocks(g_load.zoneMem);"
+    "DB_CompleteLoadingAsset();"
+    "geometry closure precedes current admission")
+require_ordered(
+    _file_load "DB_CompleteLoadingAsset();" "Load_DelayStream();"
+    "current admission order remains unchanged in neutral batch")
+
+# Portable manifests, native-width layouts, runtime edge coverage, production
+# API seal, and the explicit Windows x86 target/filter remain wired.
+foreach(_marker IN ITEMS
+    "database/db_stream.h"
+    "database/db_stream_state.h"
+    "database/db_zone_memory.h"
+    "database/db_zone_stream_ownership.cpp"
+    "database/db_zone_stream_ownership.h"
+    "database/db_zone_stream_ownership_internal.h"
+    "qcommon/com_error.h")
+    require_contains(_manifest "${_marker}" "shared source manifest")
+endforeach()
+foreach(_marker IN ITEMS
+    "RUNTIME_SIZE(StreamDelayInfo, 0x8, 0x10);"
+    "RUNTIME_SIZE(StreamPosInfo, 0x8, 0x10);")
+    require_contains(_state "${_marker}" "dual-width stream state layout")
+endforeach()
+foreach(_marker IN ITEMS
+    "RUNTIME_SIZE(XBlock, 0x8, 0x10);"
+    "RUNTIME_SIZE(XZoneMemory, 0x58, 0xB0);")
+    require_contains(_memory "${_marker}" "dual-width zone memory layout")
+endforeach()
+foreach(_marker IN ITEMS
+    "kisakcod-db-zone-stream-ownership-tests"
+    "database-zone-stream-ownership"
+    "kisakcod-db-zone-stream-ownership-production-seal-tests"
+    "database-zone-stream-ownership-production-test-access-sealed"
+    "database-zone-stream-ownership-source-invariants")
+    require_contains(_tests "${_marker}" "portable test graph")
+endforeach()
+foreach(_marker IN ITEMS
+    "kisakcod-db-zone-stream-ownership-tests"
+    "kisakcod-db-zone-stream-ownership-production-seal-tests"
+    "database-zone-stream-ownership-(runtime-contracts|production-test-access-sealed|source-invariants)")
+    require_contains(_ci "${_marker}" "explicit Windows x86 CI wiring")
+endforeach()
+foreach(_marker IN ITEMS
+    "TestConstructionAndKeyValidation();"
+    "TestBindValidationAndFailureAtomicity();"
+    "TestFullInvalidationAndStaleRetry();"
+    "TestAliasEpochExhaustion();"
+    "TestNativeWidthBlockAddresses();"
+    "terminal retry returns before active inspection"
+    "all nine block cursors scrubbed"
+    "rejected bind preserves singleton stream state"
+    "stale alias handle cannot publish after invalidation"
+    "different active key cannot replace singleton owner")
+    require_contains(_fixture "${_marker}" "exhaustive runtime regression")
+endforeach()
+foreach(_marker IN ITEMS
+    "CanMutateReceiptKey"
+    "CanMutateReceiptSelf"
+    "CanReachBlocks"
+    "CanReplaceReceipt"
+    "CanMutatePhase")
+    require_contains(_seal "${_marker}" "production API mutation seal")
+endforeach()
