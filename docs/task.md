@@ -1771,14 +1771,14 @@ work item changes. Do not create session-specific handoff files.
    retail bytes and the writer; use full-width `DB_ResolveInsertedPointer`, publish `-2` roots through
    `DB_SetInsertedPointer` with the canonical `DB_AddXAsset` identity, and add nested-impact, alias, high-address,
    failure-after-publication, unload-order, slot-generation-reuse, and rollback tests before widening another XAsset family.
-8. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
+7. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
-9. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
+8. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
    and `KISAKCOD_GAME_DIR` secret are absent. Implement the designed handle-relative recursive deletion
    service without symlink/reparse traversal instead; surface the smoke infrastructure blocker if asked.
-10. Continue process services and Linux signal-park plus macOS Mach crash freezing behind the now-isolated terminal API;
+9. Continue process services and Linux signal-park plus macOS Mach crash freezing behind the now-isolated terminal API;
    add native Win32 headless character-console input without disturbing the windowed edit-control owner.
-11. Widen/tokenize the MP pose, breakable-piece, and DynEntity physics ownership families without changing saved bytes;
+10. Widen/tokenize the MP pose, breakable-piece, and DynEntity physics ownership families without changing saved bytes;
    remove the SP `int`-temporary truncations, continue M1/M5 ABI cleanup, and add production fast-file fixtures/fuzzing
    before enabling any native64 engine target.
 
