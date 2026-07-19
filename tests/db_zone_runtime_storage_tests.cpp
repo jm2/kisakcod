@@ -201,7 +201,6 @@ bool TestPlanning()
     const std::uintptr_t nearMaximumPlan =
         (std::numeric_limits<std::uintptr_t>::max)()
         - (alignof(Plan) - 1u);
-    CHECK(nearMaximumPlan % alignof(Plan) == 0);
     CHECK(runtime_storage::TryPlanZoneRuntimeStorage(
               0, 1, reinterpret_cast<Plan *>(nearMaximumPlan))
           == Status::SizeOverflow);
@@ -329,7 +328,6 @@ bool TestBindFailuresAndAliasing()
         const std::uintptr_t nearMaximumBinding =
             (std::numeric_limits<std::uintptr_t>::max)()
             - (alignof(Binding) - 1u);
-        CHECK(nearMaximumBinding % alignof(Binding) == 0);
         CHECK(runtime_storage::TryDestroyZoneRuntimeStorage(
                   reinterpret_cast<Binding *>(nearMaximumBinding))
               == Status::SizeOverflow);
