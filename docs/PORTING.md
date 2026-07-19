@@ -6,7 +6,7 @@
 
 ---
 
-## Implementation status (July 18, 2026)
+## Implementation status (July 19, 2026)
 
 Target policy is fixed: preserve retail assets and wire interoperability; use a
 shared **native Vulkan RHI** (MoltenVK on macOS) that replaces D3D9, OpenAL Soft,
@@ -199,15 +199,30 @@ Completed foundation work:
   but no production loader or lifecycle caller consumes this API, no runtime generation or PMem scope is claimed, and
   retail bytes are unchanged. It squash-merged as `ff61504e`; authoritative post-merge run **29671849514** passed all
   nine jobs;
-- the active audited checked-PMem candidate at rebased head `6c05a372` provides report-free, failure-atomic `TryBegin`,
+- merged PR #60 checked-PMem foundation at exact final head `0eec9b1e` provides report-free, failure-atomic `TryBegin`,
   `TryEnd`, and `TryFree` over exact typed allocation entries. It validates both complete 32-entry prim topologies before
   mutation, including the low-prim base, monotonic low/high positions, legitimate middle holes, and typed tail collapse.
   Its stable-address receipt is noncopyable, nonmovable, nontrivial, self-authenticating, single-use, and protected by a
   phase witness. External serialization, mutually disjoint control/receipt/managed-backing storage, stable name lifetime,
   and no-bypass/reinitialization constraints are explicit. The exact `ff61504e` replay passes GCC Release **134/134**;
   earlier focused GCC/Clang, Clang ASan+UBSan, Clang static analysis, strict i386/AArch64, source/API/security, and diff
-  evidence all pass. It is build-enrolled but has no production caller. Legacy native64-invalid
+  evidence all pass. Exact-head run **29673379640** passed all nine jobs; exact-head Codex and Gemini reviews were clean,
+  and zero review threads remained before squash merge `74916b5b`. Authoritative post-merge run **29673608169** passed
+  all nine jobs at that exact merge commit. It is build-enrolled but has no production caller. Legacy native64-invalid
   `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and the `$init` lifecycle remain production blockers;
+- the active three-commit zone-stream ownership stack at `da868c9e` adds an exact lifecycle-key receipt and one
+  reusable controller for process-wide stream and relocation singleton state. `b2737088` prevalidates the exact nine
+  typed `XZoneMemory` spans, layout/cursor parity, disjointness, stable control storage, Loading lifecycle, and idle
+  singleton before publishing Bound last. Exact invalidation drops alias/direct provenance, releases retained relocation
+  capacity, scrubs all nine block views and the complete delay/stack/scalar state, clears singleton ownership, and
+  publishes Invalidated last; terminal retry ordering prevents a stale generation from clearing a newer binding, while
+  epoch exhaustion fails closed. `f99982c8` supplies runtime/source/security/seal and portable-host selection.
+  `da868c9e` closes an independently caught production-neutrality-seal bypass across header enrollment, using or
+  unqualified references, manual namespaces, and private capabilities, and rejects a misaligned typed zone identity
+  before descriptor access. The exact combined replay passes GCC Release **137/137**, focused GCC/Clang and Clang
+  ASan+UBSan, native i386 runtime, strict AArch64 compilation, source/security/API-seal, ABI, headless/debt, and diff
+  gates. No loader, runtime-table entry, PMem lifecycle, pending-copy ledger, coordinator, or raw ownership site consumes
+  it, and retail bytes are unchanged;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -548,8 +563,9 @@ Remaining gates, in implementation order:
    **29670244884** also passed all nine jobs. PR #59 merged the audited one-slab runtime-storage planner/binder as
    `ff61504e`; exact head `8cec770d` passed all nine jobs in run **29671392540** with clean Codex, Gemini, and independent
    audits. Authoritative post-merge run **29671849514** at exact `ff61504e` passed all nine jobs.
-   Publish the separate checked-PMem receipt next, then add exact stream invalidation and
-   pending-copy/admission resources as separate foundations plus
+   PR #60 then merged the checked-PMem receipt as `74916b5b`; exact final head `0eec9b1e` and authoritative merge passed
+   all nine jobs in runs **29673379640** and **29673608169**, with clean exact-head Codex/Gemini reviews and zero threads.
+   Publish the active `da868c9e` exact stream-invalidation stack next, then add pending-copy/admission resources plus
    a borrowed/standalone registry ownership coordinator before atomically
    replacing all seven raw sites. Keep static controller slots and callback metadata outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
@@ -1529,9 +1545,8 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **74% by merged engineering effort**. PR #59 merged the production-neutral
-runtime-storage foundation; the active checked-PMem candidate remains unmerged, and the new foundation does not move the
-conservative rounded total yet. Windows x86 is about
+Overall porting progress is approximately **75% by merged engineering effort**. PR #60 merged the production-neutral
+checked-PMem foundation; the active zone-stream ownership stack is not counted until it merges. Windows x86 is about
 **93%**, shared
 foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
@@ -1831,11 +1846,15 @@ Disk32 adapter workspace, and aligned backing. It deliberately does not mint a g
 production caller. Exact head `8cec770d` passed all nine jobs in run **29671392540** with clean Codex, Gemini, and
 independent audits before squash merge `ff61504e`; authoritative post-merge run **29671849514** passed all nine jobs at
 that exact merge commit.
-Publish the separate checked typed PMem scope receipt next, retaining its exact typed both-prim validation, stable
-single-use phase-witness authority, and external-storage/no-bypass contract. Legacy native64
-`PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and `$init` integration must be corrected before production enrollment.
-Then add exact-key stream/alias invalidation, followed by the generation-tagged pending-copy ledger and prepared admission
-receipt. After those,
+Merged PR #60 supplies the separate checked typed PMem scope receipt with exact typed both-prim validation, stable
+single-use phase-witness authority, and external-storage/no-bypass contracts. Exact final head `0eec9b1e` passed all nine
+jobs in run **29673379640**, exact-head Codex/Gemini reviews were clean with zero threads, and authoritative post-merge
+run **29673608169** passed all nine jobs at squash merge `74916b5b`. Legacy native64
+`PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and `$init` integration still must be corrected before production
+enrollment. The active `da868c9e` three-commit stack adds exact-key stream/alias bind and invalidation with a typed aligned
+zone identity, hardened production-neutrality seal, stale-terminal retry safety, complete relocation-capacity release,
+and full singleton scrub; the combined exact replay passes **137/137**. Publish it next without partial enrollment, then
+add the generation-tagged pending-copy ledger and prepared admission receipt. After those,
 add a registry coordinator that borrows exact active
 transaction authority or owns a standalone transaction, then enroll all seven sites atomically. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
