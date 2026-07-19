@@ -642,6 +642,8 @@ set(UNIVERSAL
     "${SRC_DIR}/universal/memfile.h"
     "${SRC_DIR}/universal/physicalmemory.cpp"
     "${SRC_DIR}/universal/physicalmemory.h"
+    "${SRC_DIR}/universal/physicalmemory_checked.cpp"
+    "${SRC_DIR}/universal/physicalmemory_checked.h"
     "${SRC_DIR}/universal/pool_allocator.cpp"
     "${SRC_DIR}/universal/pool_allocator.h"
     "${SRC_DIR}/universal/profile.cpp"

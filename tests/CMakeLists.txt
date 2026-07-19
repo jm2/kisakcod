@@ -1311,6 +1311,46 @@ add_test(
 )
 set_tests_properties(pool-native-pointer-freelist PROPERTIES TIMEOUT 10)
 
+add_executable(kisakcod-physicalmemory-checked-tests
+    physicalmemory_checked_tests.cpp
+    ${SRC_DIR}/universal/physicalmemory_checked.cpp
+)
+target_include_directories(
+    kisakcod-physicalmemory-checked-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-physicalmemory-checked-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-physicalmemory-checked-tests)
+set_target_properties(kisakcod-physicalmemory-checked-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME universal-physicalmemory-checked-scopes
+    COMMAND kisakcod-physicalmemory-checked-tests
+)
+set_tests_properties(
+    universal-physicalmemory-checked-scopes PROPERTIES TIMEOUT 20)
+
+# This is a normal positive compile/run target. Dependent access checks prove
+# that production callers cannot copy, reset, or reach receipt authority.
+add_executable(kisakcod-physicalmemory-checked-api-seal-tests
+    physicalmemory_checked_api_seal_tests.cpp
+)
+target_include_directories(
+    kisakcod-physicalmemory-checked-api-seal-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-physicalmemory-checked-api-seal-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-physicalmemory-checked-api-seal-tests)
+set_target_properties(
+    kisakcod-physicalmemory-checked-api-seal-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME universal-physicalmemory-checked-api-sealed
+    COMMAND kisakcod-physicalmemory-checked-api-seal-tests
+)
+set_tests_properties(
+    universal-physicalmemory-checked-api-sealed PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-fx-visibility-atomic-tests
     fx_visibility_atomic_tests.cpp
 )
@@ -2021,6 +2061,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/pool_allocator_source_test.cmake
+)
+
+add_test(
+    NAME universal-physicalmemory-checked-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/physicalmemory_checked_source_test.cmake
 )
 
 add_test(

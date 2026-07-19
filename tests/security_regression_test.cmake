@@ -9749,6 +9749,96 @@ require_security_slice_contains(
     "production-test-access-sealed"
     "measured Windows x86 CI must select the runtime-table production seal")
 
+# Checked physical-memory scopes form a report-free authority boundary, but
+# remain deliberately unenrolled until the exact-key resource coordinator owns
+# receipt lifetime and prevents legacy lifecycle bypass/reinitialization.
+foreach(_checked_pmem_marker IN ITEMS
+    "class AllocationReceipt final"
+    "AllocationReceipt(const AllocationReceipt &) = delete;"
+    "~AllocationReceipt() noexcept;"
+    "std::uint8_t phaseWitness_;"
+    "[[nodiscard]] bool isCanonical() const noexcept;"
+    "lifecycle/init helpers or directly replace"
+    "PhysicalMemory control storage and AllocationReceipt storage must be"
+    "mutually disjoint. Both objects must remain wholly outside the entire"
+    "High-prim topology can suggest a historical upper bound"
+    "does not retain an independently authenticated"
+    "cannot authenticate or validate"
+    "owns the authoritative initialization"
+    "reclaimable backing range unless the caller independently guarantees"
+    "cannot be overwritten or reused")
+    require_source_contains(
+        "universal/physicalmemory_checked.h"
+        "${_checked_pmem_marker}"
+        "sealed checked physical-memory receipt authority")
+endforeach()
+foreach(_checked_pmem_marker IN ITEMS
+    "memory->prim[0].pos <= memory->prim[1].pos"
+    "ValidatePrimTopology(memory->prim[0], 0)"
+    "ValidatePrimTopology(memory->prim[1], 1)"
+    "allocType == 0 && prim.allocList[0].pos != 0"
+    "if (!receipt->isCanonical())"
+    "if (!receipt->matchesEntry(prim))"
+    "while (remaining != 0"
+    "prim.allocList[remaining - 1].name == nullptr")
+    require_source_contains(
+        "universal/physicalmemory_checked.cpp"
+        "${_checked_pmem_marker}"
+        "bounded typed checked physical-memory topology")
+endforeach()
+foreach(_checked_pmem_forbidden IN ITEMS
+    "PMem_BeginAlloc("
+    "PMem_EndAlloc("
+    "PMem_Free("
+    "MyAssertHandler("
+    "Com_Error("
+    "Sys_OutOfMem")
+    require_source_not_contains(
+        "universal/physicalmemory_checked.cpp"
+        "${_checked_pmem_forbidden}"
+        "checked physical-memory operations cannot report or call legacy")
+endforeach()
+foreach(_checked_pmem_registry_forbidden IN ITEMS
+    "physicalmemory_checked.h"
+    "physical_memory::TryBegin"
+    "physical_memory::TryEnd"
+    "physical_memory::TryFree")
+    require_source_not_contains(
+        "database/db_registry.cpp"
+        "${_checked_pmem_registry_forbidden}"
+        "checked PMem must remain unenrolled before coordinator ownership")
+endforeach()
+file(GLOB_RECURSE _checked_pmem_production_sources
+    "${SOURCE_ROOT}/src/*.cpp" "${SOURCE_ROOT}/src/*.h")
+foreach(_checked_pmem_production_path IN LISTS
+    _checked_pmem_production_sources)
+    if(_checked_pmem_production_path MATCHES
+        "physicalmemory_checked\\.(cpp|h)$")
+        continue()
+    endif()
+    file(READ "${_checked_pmem_production_path}"
+        _checked_pmem_production_text)
+    string(FIND "${_checked_pmem_production_text}"
+        "physicalmemory_checked.h" _checked_pmem_header_reference)
+    if(NOT _checked_pmem_header_reference EQUAL -1)
+        message(FATAL_ERROR
+            "Premature checked PMem header enrollment in "
+            "${_checked_pmem_production_path}")
+    endif()
+    if(_checked_pmem_production_text MATCHES
+        "physical_memory[ \t\r\n]*::[ \t\r\n]*Try(Begin|End|Free)")
+        message(FATAL_ERROR
+            "Premature checked PMem operation enrollment in "
+            "${_checked_pmem_production_path}")
+    endif()
+    if(_checked_pmem_production_text MATCHES
+        "namespace[ \t\r\n]+physical_memory([ \t\r\n]*\\{|[ \t\r\n]*::)")
+        message(FATAL_ERROR
+            "Premature checked PMem namespace declaration in "
+            "${_checked_pmem_production_path}")
+    endif()
+endforeach()
+
 set(_format_sensitive_sources
     "cgame/cg_hudelem.cpp"
     "cgame/cg_info.cpp"
