@@ -35,7 +35,7 @@ work item changes. Do not create session-specific handoff files.
   **29670244884** also passed all nine jobs at that exact merge commit. PR #59's exact head `8cec770d` passed all nine
   jobs in run **29671392540**, and exact-head Codex, Gemini, and independent audits were clean. It squash-merged the
   runtime-storage foundation as `ff61504e`; authoritative post-merge run **29671849514** at that exact merge commit is
-  still in progress with five jobs green, four running, and no failures, so it is not yet recorded as successful.
+  still in progress with no failures, so it is not yet recorded as successful.
 - Merged script-string ownership foundation: PR #48 adds a dedicated recursive outer DB transaction
   serializer, a private report-free journal adapter, bounded report-free ordinary/database-user ownership operations,
   and failure-atomic memory-tree allocate/query/free APIs. Runtime IDs remain explicitly limited to
@@ -301,8 +301,8 @@ work item changes. Do not create session-specific handoff files.
   `git diff --check` also pass. Exact-head run **29671392540** passed all nine jobs, and exact-head Codex, Gemini, and
   independent audits were clean. The source family is build-enrolled, but no production loader or lifecycle path calls
   the API, binds zone PMem, claims a runtime-table generation, or changes retail bytes. The batch squash-merged as
-  `ff61504e`; authoritative post-merge run **29671849514** at that exact merge commit is currently in progress with five
-  jobs green, four running, and no failures, and must not yet be treated as green.
+  `ff61504e`; authoritative post-merge run **29671849514** at that exact merge commit is currently in progress with no
+  failures and must not yet be treated as green.
 - Active audited checked-PMem foundation checkpoint: rebased head `6c05a372` adds report-free `TryBegin`, `TryEnd`, and
   `TryFree` operations over exact typed allocation entries. Every mutation validates both 32-entry prim topologies,
   including the low-prim base, monotonic low/high positions, legitimate middle holes, and typed tail collapse. Its

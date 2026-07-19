@@ -85,7 +85,7 @@ detection disabled because LSan is unavailable under ptrace; headless/debt, ABI,
 `8cec770d` passed all nine jobs in run **29671392540**, and exact-head Codex, Gemini, and independent audits were clean.
 This production-neutral resource foundation squash-merged as `ff61504e`: no loader/lifecycle caller consumes it, it does
 not claim a runtime-table generation or PMem scope, and retail bytes are unchanged. Authoritative post-merge run
-**29671849514** at exact `ff61504e` is still in progress with five jobs green, four running, and no failures; do not
+**29671849514** at exact `ff61504e` is still in progress with no failures; do not
 treat it as successful yet.
 
 The active audited checked-PMem foundation at rebased head `6c05a372` adds report-free `TryBegin`, `TryEnd`, and
