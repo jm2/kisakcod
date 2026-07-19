@@ -52,6 +52,13 @@ set(EFFECTSCORE
     "${SRC_DIR}/EffectsCore/fx_fastfile_native_arena.h"
     "${SRC_DIR}/EffectsCore/fx_fastfile_zone_adapter_disk32.cpp"
     "${SRC_DIR}/EffectsCore/fx_fastfile_zone_adapter_disk32.h"
+    # The exact typed zone-storage foundation depends on the native FX arena
+    # and adapter. Keep the complete batch with EFFECTSCORE until the reviewed
+    # portable loader subset is admitted to the headless profile.
+    "${SRC_DIR}/database/db_zone_runtime_storage.cpp"
+    "${SRC_DIR}/database/db_zone_runtime_storage.h"
+    "${SRC_DIR}/database/db_zone_runtime_storage_fx_bridge.h"
+    "${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp"
     "${SRC_DIR}/EffectsCore/fx_effect_def.h"
     "${SRC_DIR}/EffectsCore/fx_beam.cpp"
     "${SRC_DIR}/EffectsCore/fx_convert.cpp"

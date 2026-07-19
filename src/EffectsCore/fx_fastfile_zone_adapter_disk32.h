@@ -254,6 +254,14 @@ public:
         return frameDepth_;
     }
 
+    // Outer placement-storage teardown must reject both published frames and
+    // the pre-publication interval while an adapter entry point/callback is
+    // operating on this workspace.
+    [[nodiscard]] bool readyForDestruction() const noexcept
+    {
+        return !operating_ && frameDepth_ == 0;
+    }
+
     [[nodiscard]] FxFastFileNativeDisk32Status
     lastConverterStatus() const noexcept
     {

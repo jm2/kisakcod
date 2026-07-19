@@ -179,6 +179,10 @@ public:
     [[nodiscard]] std::uint32_t rollbackCursor() const noexcept;
     [[nodiscard]] bool callbackActive() const noexcept;
     [[nodiscard]] bool poisoned() const noexcept;
+    // Exact read-only placement-lifetime gate. True only for the canonical
+    // never-initialized representation or a canonical terminal Committed/
+    // RolledBack representation whose backing is detached.
+    [[nodiscard]] bool readyForDestruction() const noexcept;
 
 private:
     friend ScriptStringJournalStatus TryInitializeScriptStringJournal(

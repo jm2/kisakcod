@@ -975,6 +975,36 @@ add_test(
 set_tests_properties(
     effectscore-fastfile-zone-adapter-disk32 PROPERTIES TIMEOUT 60)
 
+add_executable(kisakcod-db-zone-runtime-storage-tests
+    db_zone_runtime_storage_tests.cpp
+    ${SRC_DIR}/database/db_zone_runtime_storage.cpp
+    ${SRC_DIR}/database/db_script_string_journal.cpp
+    ${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-arena-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-native-disk32-subject>
+    $<TARGET_OBJECTS:kisakcod-fx-fastfile-impact-native-disk32-subject>
+)
+target_include_directories(
+    kisakcod-db-zone-runtime-storage-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-runtime-storage-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-zone-runtime-storage-tests PRIVATE
+        KISAK_MP
+        KISAK_DB_SCRIPT_STRING_JOURNAL_TESTING=1)
+kisakcod_test_warnings(kisakcod-db-zone-runtime-storage-tests)
+set_target_properties(
+    kisakcod-db-zone-runtime-storage-tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-zone-runtime-storage-layout
+    COMMAND kisakcod-db-zone-runtime-storage-tests
+)
+set_tests_properties(
+    database-zone-runtime-storage-layout PROPERTIES TIMEOUT 30)
+
 add_executable(kisakcod-db-relocation-tests
     db_relocation_tests.cpp
     ${SRC_DIR}/database/db_relocation.cpp
@@ -1923,6 +1953,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_runtime_table_source_test.cmake
+)
+
+add_test(
+    NAME database-zone-runtime-storage-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_runtime_storage_source_test.cmake
 )
 
 add_test(

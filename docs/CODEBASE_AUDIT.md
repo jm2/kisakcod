@@ -65,11 +65,25 @@ still exposes no mutable entry, terminal statuses use an explicit allowlist, and
 private capabilities to a recreated test-helper name. Exact-head run **29659895814** and post-merge run **29660281653**
 passed all nine jobs; exact-head Codex review was clean, and it squash-merged as `57e2b1a2` without production enrollment.
 
-The active portable-console batch removes duplicated Win32 standard-handle writes and introduces allocation-free bounded
+Merged PR #58 removes duplicated Win32 standard-handle writes and introduces allocation-free bounded
 line input plus Win32/POSIX backends. Its hardening specifically contains POSIX `SIGPIPE` per calling thread without a
 process-global disposition change, avoids blocking fatal output on Win32 pipe flush, preserves message-mode pipe bytes,
 and drains embedded-NUL/overlong commands across a fixed work budget. Native Win32 character-console input remains
 unsupported in the headless profile; redirected disk/pipe input works and the limitation is tracked in `docs/task.md`.
+Exact-head run **29666269398** passed all nine jobs, exact-head Codex review was clean, the real nullable fatal-message
+finding was fixed, and the batch squash-merged as `9fb46bea`. Authoritative post-merge run **29670244884** also passed
+all nine jobs at that exact merge commit.
+
+The active audited runtime-storage foundation (`3683634e`/`a3bf1e30`) replaces an implicit future layout with one
+canonical, checked 32-bit-offset slab plan for the script-string journal/entries, native FX arena, Disk32 adapter
+workspace, and aligned arena backing. Its stable noncopyable handle authenticates the exact plan and pointers outside the
+slab, prevalidates alignment/capacity/address overlap before placement writes, and permits teardown only after the
+journal, adapter, and arena reach exact safe terminal states. A narrow FX bridge and read-only destruction predicates do
+not expose mutation or generation authority. The exact replay passes GCC Release **131/131**, GCC i386 runtime,
+AArch64 GCC strict syntax for all batch translation units and the fixture, and Clang ASan+UBSan runtime with leak
+detection disabled because LSan is unavailable under ptrace; headless/debt, ABI, source, and diff gates pass. This is a
+production-neutral resource foundation: no loader/lifecycle caller consumes it, it does not claim a runtime-table
+generation or PMem scope, and retail bytes are unchanged. A separate checked PMem scope receipt is still pending.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.
