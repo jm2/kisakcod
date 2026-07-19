@@ -142,8 +142,12 @@ context identity, preserving production callback identity without relying on fol
 run **29694906394** passed all nine jobs; exact-head Codex and Gemini reviews were clean and zero review threads
 remained. PR #62 squash-merged as `888d12e6beedd587602f18cf6763ae04cc067470`. Authoritative post-merge run
 **29695353022** passed all nine jobs at that exact master commit.
-Rounded merged porting progress is now **76%** after PR #62; the rebased curated upstream-sort candidate remains
-uncounted until it merges.
+PR #63 then squash-merged the curated typed-sort and row-zero draw-method corrections as
+`f79b0bf422bb926dd302a888bdc258e7e8409aa2`. Exact reviewed head `36aebd29` and the authoritative master commit passed
+all nine jobs in runs **29695891172** and **29696199493**. Codex found no major issue; Gemini's two suggestions were
+already satisfied or semantically equivalent rather than corrections, and both threads were answered and resolved.
+Rounded merged porting progress remains **76%**; the active registry-coordinator foundation is not counted until it
+merges.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.
