@@ -619,9 +619,12 @@ Remaining gates, in implementation order:
    passed all nine jobs in run **29694906394**, exact-head Codex and Gemini were clean with zero threads, and authoritative
    post-merge run **29695353022** also passed all nine jobs. PR #63 then merged the selectively reconciled upstream
    typed-sort fixes as `f79b0bf422bb926dd302a888bdc258e7e8409aa2`; exact-head and authoritative runs **29695891172**
-   and **29696199493** passed all nine jobs. Publish the hardened production-neutral borrowed/standalone registry
-   ownership coordinator next, then atomically replace all
-   seven raw sites. Keep static controller slots and callback metadata outside PMem with
+   and **29696199493** passed all nine jobs. The final pre-PR borrowed/standalone registry coordinator candidate remains
+   production-neutral: `9f327514` seals its production boundary, `74b56b65` adds portable nonblocking hash admission and
+   fixes the real i386 size-test plus pre-held-reader deadlock, and `90e8fba7` completes portable test wiring. Its native
+   GCC Debug build and full CTest pass **145/145**, and the focused source/security/macro-off seal selection passes
+   **6/6**. None of the seven raw production sites is enrolled. After publication, atomically bind the durable runtime
+   table and loader across all seven sites. Keep static controller slots and callback metadata outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
    when binding the recipes and adapter into production with completed-object/alias registration and lifetime tests.
    The journal merged in PR #37 as `7a9bce34`; post-merge run **29542960583** passed all nine jobs. PR #38 merged the
@@ -1600,8 +1603,8 @@ remained unchanged. PR #30 then merged the non-publishing reader prerequisite, a
 production restore to it; only the save-side guard and writer remain.
 
 Overall porting progress is approximately **76% by merged engineering effort**. PR #62 merged the production-neutral
-pending-copy ledger and PR #63 merged the curated upstream typed-sort checkpoint; the active production-neutral registry
-coordinator is not counted until it merges. Windows x86 is about
+pending-copy ledger and PR #63 merged the curated upstream typed-sort checkpoint; the locally complete pre-PR
+production-neutral registry coordinator is not counted until it merges. Windows x86 is about
 **93%**, shared
 foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested

@@ -146,8 +146,13 @@ PR #63 then squash-merged the curated typed-sort and row-zero draw-method correc
 `f79b0bf422bb926dd302a888bdc258e7e8409aa2`. Exact reviewed head `36aebd29` and the authoritative master commit passed
 all nine jobs in runs **29695891172** and **29696199493**. Codex found no major issue; Gemini's two suggestions were
 already satisfied or semantically equivalent rather than corrections, and both threads were answered and resolved.
-Rounded merged porting progress remains **76%**; the active registry-coordinator foundation is not counted until it
-merges.
+The final local pre-PR registry-coordinator candidate remains production-neutral. Commit `9f327514` seals the production
+boundary; `74b56b65` adds portable nonblocking hash admission, fixing the real pre-held-reader deadlock and real i386
+size-test expectation; and `90e8fba7` completes portable test wiring. The final native GCC Debug build and full CTest
+pass **145/145**, and the focused source/security/macro-off seal selection passes **6/6**. No legacy production site is
+enrolled: the immediate implementation batch after publication remains one atomic durable runtime-table/loader cutover
+covering five coordinator operations and two exact-key journal stages. Rounded merged porting progress remains **76%**
+and strict requested-target delivery remains **0/5** because this candidate is not counted until it merges.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.
