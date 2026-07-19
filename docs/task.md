@@ -813,7 +813,7 @@ work item changes. Do not create session-specific handoff files.
 - The durable disposition for every commit in `312a9d2e..2164cd1a` remains recorded in
   `docs/UPSTREAM_2164CD1A_LEDGER.md`. At merged master, exact pinned `2164cd1a` is still **18 commits ahead by ancestry**.
   The dedicated checkpoint candidate `12309db16d6514ac0df23293cd6074d7bbd15142` records it without importing content:
-  its first parent is exact PR #65 merge `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`, its second parent is exact upstream
+  its first parent is exact PR #65 merge commit `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`, its second parent is exact upstream
   `2164cd1accf6607a05203547e50858211dcef094`, and its tree
   `f8a78964c7c89c3c3000f598cb4272782c40d70b` exactly matches the first-parent tree. Both the complete diff and
   file-level diff are empty. Dynent save/load, raw SP/save/screenshot and gameplay changes, matrix rewrites, and other
