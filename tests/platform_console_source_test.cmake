@@ -179,6 +179,7 @@ foreach(_fatal_contract IN ITEMS
     "Sys_ConsoleWrite("
     "Sys_ConsoleFlush("
     "Sys_ConsoleIsRedirected("
+    "message ? message : \"Unknown fatal error\""
     "OutputDebugStringA("
     "ExitProcess(EXIT_FAILURE);")
     require_contains(

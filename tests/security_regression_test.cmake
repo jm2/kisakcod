@@ -249,6 +249,10 @@ require_source_contains(
     "[[noreturn]] static void Win_TerminateOnFatalError("
     "Windows non-modal fatal termination must preserve the noreturn contract")
 require_source_contains(
+    "win32/win_main.cpp"
+    "message ? message : \"Unknown fatal error\""
+    "Windows last-resort fatal output must tolerate a missing message")
+require_source_contains(
     "qcommon/threads.h"
     "#include <qcommon/sys_event.h>"
     "public thread services must use the opaque event contract")
