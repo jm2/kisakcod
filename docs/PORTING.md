@@ -197,8 +197,8 @@ Completed foundation work:
   scanner, source invariants, and `git diff --check` pass. Exact head `8cec770d` passed all nine jobs in run
   **29671392540**, and exact-head Codex, Gemini, and independent audits were clean. The source family is build-enrolled,
   but no production loader or lifecycle caller consumes this API, no runtime generation or PMem scope is claimed, and
-  retail bytes are unchanged. It squash-merged as `ff61504e`; authoritative post-merge run **29671849514** is in
-  progress with no failures, so it is not yet recorded as successful;
+  retail bytes are unchanged. It squash-merged as `ff61504e`; authoritative post-merge run **29671849514** passed all
+  nine jobs;
 - the active audited checked-PMem candidate at rebased head `6c05a372` provides report-free, failure-atomic `TryBegin`,
   `TryEnd`, and `TryFree` over exact typed allocation entries. It validates both complete 32-entry prim topologies before
   mutation, including the low-prim base, monotonic low/high positions, legitimate middle holes, and typed tail collapse.
@@ -547,7 +547,7 @@ Remaining gates, in implementation order:
    exact-head run **29666269398** passed all nine jobs and exact-head Codex review was clean; post-merge run
    **29670244884** also passed all nine jobs. PR #59 merged the audited one-slab runtime-storage planner/binder as
    `ff61504e`; exact head `8cec770d` passed all nine jobs in run **29671392540** with clean Codex, Gemini, and independent
-   audits. Authoritative post-merge run **29671849514** at exact `ff61504e` is still in progress with no failures.
+   audits. Authoritative post-merge run **29671849514** at exact `ff61504e` passed all nine jobs.
    Publish the separate checked-PMem receipt next, then add exact stream invalidation and
    pending-copy/admission resources as separate foundations plus
    a borrowed/standalone registry ownership coordinator before atomically
@@ -1829,8 +1829,8 @@ enrolled.
 Merged PR #59 now supplies the exact one-slab planner/binder and terminal teardown for the journal/entries, FX arena,
 Disk32 adapter workspace, and aligned backing. It deliberately does not mint a generation, allocate PMem, or enroll a
 production caller. Exact head `8cec770d` passed all nine jobs in run **29671392540** with clean Codex, Gemini, and
-independent audits before squash merge `ff61504e`; authoritative post-merge run **29671849514** at that exact merge
-commit is still in progress with no failures.
+independent audits before squash merge `ff61504e`; authoritative post-merge run **29671849514** passed all nine jobs at
+that exact merge commit.
 Publish the separate checked typed PMem scope receipt next, retaining its exact typed both-prim validation, stable
 single-use phase-witness authority, and external-storage/no-bypass contract. Legacy native64
 `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and `$init` integration must be corrected before production enrollment.
