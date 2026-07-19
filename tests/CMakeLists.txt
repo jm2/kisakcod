@@ -528,6 +528,8 @@ target_compile_definitions(
     kisakcod-db-registry-ownership-coordinator-tests PRIVATE
     KISAK_MP
     KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1)
+target_link_libraries(
+    kisakcod-db-registry-ownership-coordinator-tests PRIVATE Threads::Threads)
 kisakcod_test_warnings(kisakcod-db-registry-ownership-coordinator-tests)
 set_target_properties(
     kisakcod-db-registry-ownership-coordinator-tests PROPERTIES
@@ -537,6 +539,8 @@ add_test(
     NAME database-registry-ownership-coordinator
     COMMAND kisakcod-db-registry-ownership-coordinator-tests
 )
+set_tests_properties(
+    database-registry-ownership-coordinator PROPERTIES TIMEOUT 30)
 
 add_executable(
     kisakcod-db-registry-ownership-coordinator-production-seal-tests
@@ -562,6 +566,9 @@ add_test(
     COMMAND
         kisakcod-db-registry-ownership-coordinator-production-seal-tests
 )
+set_tests_properties(
+    database-registry-ownership-production-test-access-sealed
+    PROPERTIES TIMEOUT 20)
 
 add_executable(kisakcod-db-zone-runtime-table-tests
     db_zone_runtime_table_tests.cpp
