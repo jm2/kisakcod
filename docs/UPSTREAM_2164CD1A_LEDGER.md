@@ -2,7 +2,7 @@
 
 This ledger records the disposition of every commit in the pinned upstream
 range `312a9d2e..2164cd1a`. It is a content audit, not by itself evidence that
-the two histories are related. The approved adaptations are merged; the exact
+the two histories are related. The approved adaptations have been merged; the exact
 tree-neutral ancestry checkpoint described below remains pending separate PR
 review and merge.
 

@@ -652,7 +652,7 @@ Remaining gates, in implementation order:
    runs **29701509815** and **29702009703**, with clean exact-head Codex/Gemini/thread review. PR #65 then merged the
    curated U1/U2 upstream content as `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`; exact reviewed-head and authoritative
    runs **29703827041** and **29704069129** passed all nine jobs, exact-head Codex was clean, and all six Gemini threads
-   were resolved. None of the seven raw production sites is enrolled. Merge exact tree-neutral checkpoint
+   were resolved. None of the seven raw production sites is enrolled. Merge the exact tree-neutral checkpoint
    `12309db16d6514ac0df23293cd6074d7bbd15142` with merge-commit semantics only—never squash or rebase. Only afterward
    compose durable receipts passively in the table, finish checked PMem/global/narrow prerequisites, add exact-key
    adapters, and atomically bind the loader across all seven sites. Keep static controller slots and callback metadata
@@ -1978,7 +1978,7 @@ collision-chain work. Final exact PR head `a73916a8467eb5d4a6cad7d33b5d3ecf1f684
 jobs in runs **29701509815** and **29702009703**, and exact-head Codex/Gemini/thread review was clean. PR #65 merged the
 curated upstream U1/U2 adaptations as `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`; exact reviewed-head and authoritative
 runs **29703827041** and **29704069129** passed all nine jobs, exact-head Codex was clean, and all six Gemini threads were
-resolved. No production site is enrolled. After exact tree-neutral ancestry checkpoint
+resolved. No production site is enrolled. After the exact tree-neutral ancestry checkpoint
 `12309db16d6514ac0df23293cd6074d7bbd15142` is merged with merge-commit semantics, compose durable receipts passively,
 finish PMem/global/narrow prerequisites, and
 add exact-key adapters; only then enroll all seven sites atomically: five coordinator operations plus two exact-key
