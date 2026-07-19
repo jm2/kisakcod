@@ -440,6 +440,19 @@ bool ScriptStringJournal::poisoned() const noexcept
     return (flags_ & kPoisonedFlag) != 0;
 }
 
+bool ScriptStringJournal::readyForDestruction() const noexcept
+{
+    if (!isCanonical() || callbackActive() || poisoned()
+        || storage_ != nullptr || capacity_ != 0)
+    {
+        return false;
+    }
+    if ((flags_ & kInitializedFlag) == 0)
+        return true;
+    return phase_ == ScriptStringJournalPhase::Committed
+        || phase_ == ScriptStringJournalPhase::RolledBack;
+}
+
 ScriptStringJournalStatus TryInitializeScriptStringJournal(
     ScriptStringJournal *const journal,
     const zone_load::ZoneLoadContextKey &key,

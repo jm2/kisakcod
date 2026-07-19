@@ -1,8 +1,7 @@
 #include <database/db_zone_runtime_storage.h>
 
-#include <EffectsCore/fx_fastfile_native_arena.h>
-#include <EffectsCore/fx_fastfile_zone_adapter_disk32.h>
 #include <database/db_script_string_journal.h>
+#include <database/db_zone_runtime_storage_fx_bridge.h>
 
 #include <limits>
 #include <new>
@@ -13,10 +12,8 @@ namespace db::zone_runtime_storage
 namespace
 {
 using Arena = fx::fastfile::FxFastFileNativeArena;
-using ArenaStatus = fx::fastfile::FxFastFileNativeArenaStatus;
 using Journal = script_string_journal::ScriptStringJournal;
 using JournalEntry = script_string_journal::ScriptStringJournalEntry;
-using Phase = script_string_journal::ScriptStringJournalPhase;
 using Status = ZoneRuntimeStorageStatus;
 using Workspace = fx::fastfile::FxFastFileZoneAdapterDisk32Workspace;
 
@@ -24,10 +21,6 @@ static_assert(std::is_nothrow_default_constructible_v<Journal>);
 static_assert(std::is_nothrow_destructible_v<Journal>);
 static_assert(std::is_nothrow_default_constructible_v<JournalEntry>);
 static_assert(std::is_nothrow_destructible_v<JournalEntry>);
-static_assert(std::is_nothrow_default_constructible_v<Arena>);
-static_assert(std::is_nothrow_destructible_v<Arena>);
-static_assert(std::is_nothrow_default_constructible_v<Workspace>);
-static_assert(std::is_nothrow_destructible_v<Workspace>);
 
 [[nodiscard]] constexpr bool IsPowerOfTwo(
     const std::uint32_t value) noexcept
@@ -121,48 +114,29 @@ template <typename T>
         && canonical == plan;
 }
 
+[[nodiscard]] bool LayoutAddressesAreAligned(
+    void *const slab,
+    const ZoneRuntimeStoragePlan &plan,
+    const detail::FxRuntimeStorageLayout &fxLayout) noexcept
+{
+    return IsAligned(
+               AddressAt(slab, plan.scriptStringJournal), alignof(Journal))
+        && IsAligned(AddressAt(slab, plan.scriptStringEntries),
+                     alignof(JournalEntry))
+        && IsAligned(AddressAt(slab, plan.fxNativeArena),
+                     fxLayout.arenaAlignment)
+        && IsAligned(AddressAt(slab, plan.fxZoneAdapterWorkspace),
+                     fxLayout.workspaceAlignment)
+        && IsAligned(AddressAt(slab, plan.fxArenaBacking),
+                     fxLayout.backingAlignment);
+}
+
 [[nodiscard]] bool JournalCanBeDestroyed(
     const Journal &journal) noexcept
 {
-    if (journal.callbackActive() || journal.poisoned()
-        || journal.storage() != nullptr || journal.capacity() != 0)
-    {
-        return false;
-    }
-
-    if (journal.initialized())
-    {
-        return journal.phase() == Phase::Committed
-            || journal.phase() == Phase::RolledBack;
-    }
-
-    return journal.phase() == Phase::Staging
-        && journal.key() == zone_load::ZoneLoadContextKey{}
-        && journal.expectedCount() == 0 && journal.entryCount() == 0
-        && journal.transferCursor() == 0 && journal.rollbackCursor() == 0;
+    return journal.readyForDestruction();
 }
 
-[[nodiscard]] bool BindingPointersMatch(
-    const ZoneRuntimeStorageBinding &binding) noexcept
-{
-    const ZoneRuntimeStoragePlan *const plan = binding.plan();
-    void *const slab = binding.slab();
-    return plan && slab
-        && binding.scriptStringJournal()
-            == ObjectAt<Journal>(slab, plan->scriptStringJournal)
-        && binding.scriptStringEntries()
-            == (plan->expectedStringCount == 0
-                    ? nullptr
-                    : ObjectAt<JournalEntry>(
-                          slab, plan->scriptStringEntries))
-        && binding.fxNativeArena()
-            == ObjectAt<Arena>(slab, plan->fxNativeArena)
-        && binding.fxZoneAdapterWorkspace()
-            == ObjectAt<Workspace>(
-                slab, plan->fxZoneAdapterWorkspace)
-        && binding.fxArenaBacking()
-            == AddressAt(slab, plan->fxArenaBacking);
-}
 } // namespace
 
 bool ZoneRuntimeStorageBinding::isPristine() const noexcept
@@ -173,15 +147,49 @@ bool ZoneRuntimeStorageBinding::isPristine() const noexcept
         && arenaBacking_ == nullptr && state_ == State::Pristine;
 }
 
+ZoneRuntimeStorageBinding::~ZoneRuntimeStorageBinding() noexcept
+{
+}
+
 bool ZoneRuntimeStorageBinding::isSelfAuthenticating(
     const State state) const noexcept
 {
     return self_ == this && state_ == state;
 }
 
+bool ZoneRuntimeStorageBinding::hasCanonicalBoundMetadata() const noexcept
+{
+    if (!isSelfAuthenticating(State::Bound)
+        || !IsRangeRepresentable(this, sizeof(*this)))
+    {
+        return false;
+    }
+    const detail::FxRuntimeStorageLayout fxLayout =
+        detail::GetFxRuntimeStorageLayout();
+    if (!PlanIsCanonical(plan_)
+        || !IsAligned(slab_, fxLayout.backingAlignment)
+        || !IsRangeRepresentable(slab_, slabCapacity_)
+        || slabCapacity_ < plan_.totalBytes
+        || !LayoutAddressesAreAligned(slab_, plan_, fxLayout)
+        || RangesOverlap(slab_, slabCapacity_, this, sizeof(*this)))
+    {
+        return false;
+    }
+    return journal_ == ObjectAt<Journal>(slab_, plan_.scriptStringJournal)
+        && entries_
+            == (plan_.expectedStringCount == 0
+                    ? nullptr
+                    : ObjectAt<JournalEntry>(
+                          slab_, plan_.scriptStringEntries))
+        && arena_ == ObjectAt<Arena>(slab_, plan_.fxNativeArena)
+        && workspace_
+            == ObjectAt<Workspace>(slab_, plan_.fxZoneAdapterWorkspace)
+        && arenaBacking_ == AddressAt(slab_, plan_.fxArenaBacking);
+}
+
 bool ZoneRuntimeStorageBinding::bound() const noexcept
 {
-    return isSelfAuthenticating(State::Bound);
+    return hasCanonicalBoundMetadata();
 }
 
 bool ZoneRuntimeStorageBinding::destroyed() const noexcept
@@ -243,6 +251,8 @@ ZoneRuntimeStorageStatus TryPlanZoneRuntimeStorage(
 {
     if (!IsAligned(outPlan, alignof(ZoneRuntimeStoragePlan)))
         return Status::InvalidArgument;
+    if (!IsRangeRepresentable(outPlan, sizeof(*outPlan)))
+        return Status::SizeOverflow;
     if (expectedStringCount
         > script_string_journal::kMaxScriptStringJournalEntries)
     {
@@ -254,6 +264,8 @@ ZoneRuntimeStorageStatus TryPlanZoneRuntimeStorage(
         return Status::SizeOverflow;
 
     ZoneRuntimeStoragePlan plan{};
+    const detail::FxRuntimeStorageLayout fxLayout =
+        detail::GetFxRuntimeStorageLayout();
     plan.expectedStringCount = expectedStringCount;
     plan.arenaBudget = static_cast<std::uint32_t>(arenaBudget);
     std::uint32_t cursor = 0;
@@ -270,17 +282,17 @@ ZoneRuntimeStorageStatus TryPlanZoneRuntimeStorage(
                             alignof(JournalEntry),
                             &plan.scriptStringEntries)
         || !TryAppendExtent(&cursor,
-                            sizeof(Arena),
-                            alignof(Arena),
+                            fxLayout.arenaBytes,
+                            fxLayout.arenaAlignment,
                             &plan.fxNativeArena)
         || !TryAppendExtent(&cursor,
-                            sizeof(Workspace),
-                            alignof(Workspace),
+                            fxLayout.workspaceBytes,
+                            fxLayout.workspaceAlignment,
                             &plan.fxZoneAdapterWorkspace)
         || !TryAppendExtent(
             &cursor,
             arenaBudget,
-            fx::fastfile::kFxFastFileNativeArenaStorageAlignment,
+            fxLayout.backingAlignment,
             &plan.fxArenaBacking))
     {
         return Status::SizeOverflow;
@@ -310,10 +322,11 @@ ZoneRuntimeStorageStatus TryBindZoneRuntimeStorage(
 
     // Snapshot before any placement: a caller may keep its plan in the slab.
     const ZoneRuntimeStoragePlan planSnapshot = *plan;
+    const detail::FxRuntimeStorageLayout fxLayout =
+        detail::GetFxRuntimeStorageLayout();
     if (!PlanIsCanonical(planSnapshot))
         return Status::InvalidPlan;
-    if (!IsAligned(
-            slab, fx::fastfile::kFxFastFileNativeArenaStorageAlignment))
+    if (!IsAligned(slab, fxLayout.backingAlignment))
     {
         return slab ? Status::MisalignedStorage : Status::InvalidArgument;
     }
@@ -321,6 +334,8 @@ ZoneRuntimeStorageStatus TryBindZoneRuntimeStorage(
         return Status::SizeOverflow;
     if (slabCapacity < planSnapshot.totalBytes)
         return Status::InsufficientCapacity;
+    if (!LayoutAddressesAreAligned(slab, planSnapshot, fxLayout))
+        return Status::MisalignedStorage;
     if (RangesOverlap(
             slab, slabCapacity, outBinding, sizeof(*outBinding))
         || RangesOverlap(
@@ -343,10 +358,10 @@ ZoneRuntimeStorageStatus TryBindZoneRuntimeStorage(
     {
         ::new (entries + index) JournalEntry{};
     }
-    Arena *const arena = ::new (ObjectAt<Arena>(
-        slab, planSnapshot.fxNativeArena)) Arena{};
-    Workspace *const workspace = ::new (ObjectAt<Workspace>(
-        slab, planSnapshot.fxZoneAdapterWorkspace)) Workspace{};
+    Arena *const arena = detail::ConstructFxRuntimeArena(
+        AddressAt(slab, planSnapshot.fxNativeArena));
+    Workspace *const workspace = detail::ConstructFxRuntimeWorkspace(
+        AddressAt(slab, planSnapshot.fxZoneAdapterWorkspace));
     void *const arenaBacking =
         AddressAt(slab, planSnapshot.fxArenaBacking);
 
@@ -369,66 +384,47 @@ ZoneRuntimeStorageStatus TryDestroyZoneRuntimeStorage(
 {
     if (!IsAligned(binding, alignof(ZoneRuntimeStorageBinding)))
         return Status::InvalidArgument;
+    if (!IsRangeRepresentable(binding, sizeof(*binding)))
+        return Status::SizeOverflow;
     if (binding->destroyed())
         return Status::AlreadyComplete;
-    if (!binding->isSelfAuthenticating(
-            ZoneRuntimeStorageBinding::State::Bound))
-    {
-        return Status::InvalidBinding;
-    }
-    if (!PlanIsCanonical(binding->plan_)
-        || !IsAligned(binding->slab_,
-                      fx::fastfile::kFxFastFileNativeArenaStorageAlignment)
-        || !IsRangeRepresentable(binding->slab_, binding->slabCapacity_)
-        || binding->slabCapacity_ < binding->plan_.totalBytes
-        || !IsRangeRepresentable(binding, sizeof(*binding))
-        || RangesOverlap(binding->slab_,
-                         binding->slabCapacity_,
-                         binding,
-                         sizeof(*binding))
-        || !BindingPointersMatch(*binding))
+    if (!binding->bound())
     {
         return Status::InvalidBinding;
     }
     if (!JournalCanBeDestroyed(*binding->journal_))
-        return binding->journal_->callbackActive()
+    {
+        const bool canonicalCallbackActive =
+            binding->journal_->initialized()
+            && binding->journal_->callbackActive();
+        return canonicalCallbackActive
             ? Status::Busy
             : Status::InvalidPhase;
-    if (binding->workspace_->frameDepth() != 0
-        || binding->workspace_->phase()
-            != fx::fastfile::FxFastFileZoneAdapterDisk32Phase::Idle
-        || binding->arena_->openTransactionDepth() != 0)
-    {
-        return Status::InvalidPhase;
     }
-
-    if (binding->arena_->bound())
+    const detail::FxRuntimeStorageDestroyStatus fxStatus =
+        detail::TryPrepareFxRuntimeStorageDestroy(
+            binding->arena_,
+            binding->workspace_,
+            binding->arenaBacking_,
+            binding->plan_.arenaBudget);
+    switch (fxStatus)
     {
-        if (binding->arena_->zoneIdentity() == 0
-            || binding->arena_->capacity() != binding->plan_.arenaBudget
-            || binding->arena_->usedBytes() > binding->arena_->capacity()
-            || binding->arena_->committedBytes()
-                > binding->arena_->usedBytes())
-        {
-            return Status::InvalidBinding;
-        }
-        const ArenaStatus arenaStatus = binding->arena_->TryUnbind();
-        if (arenaStatus == ArenaStatus::Busy)
-            return Status::Busy;
-        if (arenaStatus != ArenaStatus::Success)
-            return Status::ArenaFailed;
-    }
-    else if (binding->arena_->zoneIdentity() != 0
-             || binding->arena_->capacity() != 0
-             || binding->arena_->usedBytes() != 0
-             || binding->arena_->committedBytes() != 0)
-    {
+    case detail::FxRuntimeStorageDestroyStatus::Success:
+        break;
+    case detail::FxRuntimeStorageDestroyStatus::Busy:
+        return Status::Busy;
+    case detail::FxRuntimeStorageDestroyStatus::InvalidBinding:
         return Status::InvalidBinding;
+    case detail::FxRuntimeStorageDestroyStatus::InvalidPhase:
+        return Status::InvalidPhase;
+    case detail::FxRuntimeStorageDestroyStatus::ArenaFailed:
+    default:
+        return Status::ArenaFailed;
     }
 
     // Reverse of construction: workspace, arena, entries, journal.
-    binding->workspace_->~FxFastFileZoneAdapterDisk32Workspace();
-    binding->arena_->~FxFastFileNativeArena();
+    detail::DestroyFxRuntimeWorkspace(binding->workspace_);
+    detail::DestroyFxRuntimeArena(binding->arena_);
     for (std::uint32_t index = binding->plan_.expectedStringCount;
          index > 0;
          --index)

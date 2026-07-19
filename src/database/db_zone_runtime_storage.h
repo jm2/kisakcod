@@ -69,13 +69,20 @@ enum class ZoneRuntimeStorageStatus : std::uint8_t
 //
 // Binding deliberately leaves FxFastFileNativeArena unbound. The controller
 // binds it to fxArenaBacking() with the already-authoritative zone identity.
+// Before journal use, that controller must call
+// TryInitializeScriptStringJournal with exactly scriptStringEntries(),
+// plan()->expectedStringCount for both capacity and expected count, and its
+// authoritative key. The zero-count case must use null storage and zero
+// capacity/count. This layer never mints or substitutes that key.
 // Destruction accepts either that arena or the pristine unbound arena, and
 // unbinds it only after the journal and adapter are safe to tear down.
 class ZoneRuntimeStorageBinding final
 {
 public:
     ZoneRuntimeStorageBinding() noexcept = default;
-    ~ZoneRuntimeStorageBinding() noexcept = default;
+    // User-provided so byte-copying/replaying an owning handle is not a
+    // supported trivially-copyable operation. Cleanup remains explicit.
+    ~ZoneRuntimeStorageBinding() noexcept;
 
     ZoneRuntimeStorageBinding(const ZoneRuntimeStorageBinding &) = delete;
     ZoneRuntimeStorageBinding &operator=(
@@ -116,6 +123,7 @@ private:
 
     [[nodiscard]] bool isPristine() const noexcept;
     [[nodiscard]] bool isSelfAuthenticating(State state) const noexcept;
+    [[nodiscard]] bool hasCanonicalBoundMetadata() const noexcept;
 
     const ZoneRuntimeStorageBinding *self_ = nullptr;
     void *slab_ = nullptr;
@@ -154,6 +162,13 @@ private:
 // TryUnbind is the sole fallible mutation. Successful destruction runs in
 // reverse construction order and terminalizes the handle; repeated calls
 // return AlreadyComplete without touching the slab.
+//
+// The caller must externally serialize planning, binding, every binding and
+// embedded-object accessor, every journal/arena/adapter operation, and
+// destruction. Before destruction, every published consumer must already be
+// unreachable, including every arena reservation and adapter result. These
+// lifetime facts belong to the future exact-key outer controller and cannot
+// be inferred from this production-neutral placement handle.
 [[nodiscard]] ZoneRuntimeStorageStatus TryDestroyZoneRuntimeStorage(
     ZoneRuntimeStorageBinding *binding) noexcept;
 } // namespace db::zone_runtime_storage

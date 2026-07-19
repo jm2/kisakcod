@@ -127,6 +127,13 @@ public:
         return storage_ != nullptr;
     }
 
+    // Read-only storage identity for outer lifetime/receipt validators. It
+    // exposes no reservation or mutation authority.
+    [[nodiscard]] const void *storage() const noexcept
+    {
+        return storage_;
+    }
+
     [[nodiscard]] std::uint64_t zoneIdentity() const noexcept
     {
         return zoneIdentity_;
