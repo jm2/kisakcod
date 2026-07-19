@@ -88,6 +88,7 @@ set(EFFECTSCORE
 set(AIM_ASSIST
     "${SRC_DIR}/aim_assist/aim_assist.cpp"
     "${SRC_DIR}/aim_assist/aim_assist.h"
+    "${SRC_DIR}/aim_assist/aim_assist_safety.h"
 )
 
 set(BGAME

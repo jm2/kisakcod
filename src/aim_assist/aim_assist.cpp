@@ -1,4 +1,5 @@
 #include "aim_assist.h"
+#include "aim_assist_safety.h"
 #include <qcommon/mem_track.h>
 #include <universal/com_math.h>
 #include <qcommon/cmd.h>
@@ -814,13 +815,21 @@ void __cdecl AimAssist_UpdateAdsLerp(const AimInput *input)
 
 uint32_t __cdecl AimAssist_GetWeaponIndex(int32_t localClientNum, const playerState_s *ps)
 {
-    uint32_t NumWeapons = 0; // eax
     uint32_t weapIndex = 0; // [esp+0h] [ebp-8h]
+
+    iassert(ps);
+    if (!ps)
+        return 0;
 
     if ((ps->eFlags & 0x300) != 0)
     {
-        iassert(ps->viewlocked_entNum != ENTITYNUM_NONE);
-        iassert(((ps->viewlocked_entNum >= 0) && (ps->viewlocked_entNum < (1 << 10))));
+        const bool ordinaryEntity =
+            aim_assist::safety::IsOrdinaryEntityNumber(
+                ps->viewlocked_entNum, ENTITYNUM_WORLD);
+        iassert(ordinaryEntity);
+        if (!ordinaryEntity)
+            return 0;
+
         weapIndex = CG_GetEntity(localClientNum, ps->viewlocked_entNum)->nextState.weapon;
     }
     else
@@ -828,9 +837,9 @@ uint32_t __cdecl AimAssist_GetWeaponIndex(int32_t localClientNum, const playerSt
         weapIndex = BG_GetViewmodelWeaponIndex(ps);
     }
 
-    bcassert(weapIndex, BG_GetNumWeapons());
-
-    return weapIndex;
+    const uint32_t weaponCount = BG_GetNumWeapons();
+    bcassert(weapIndex, weaponCount);
+    return aim_assist::safety::BoundedWeaponIndex(weapIndex, weaponCount);
 }
 
 const AimScreenTarget *__cdecl AimAssist_GetBestTarget(
@@ -1050,7 +1059,7 @@ void __cdecl AimAssist_UpdateMouseInput(const AimInput *input, AimOutput *output
     }
 }
 
-void __cdecl AimAssist_DrawDebugOverlay(uint32_t localClientNum)
+void __cdecl AimAssist_DrawDebugOverlay(int32_t localClientNum)
 {
     float green[4] = { 0.0, 1.0, 0.0, 0.25 }; // [esp+Ch] [ebp-2Ch] BYREF
     float red[4] = { 1.0, 0.0, 0.0, 0.25 }; // [esp+1Ch] [ebp-1Ch] BYREF
@@ -1063,22 +1072,22 @@ void __cdecl AimAssist_DrawDebugOverlay(uint32_t localClientNum)
 
         if (aim_slowdown_debug->current.enabled)
         {
-            AimAssist_DrawTargets(localClientNum, red);
+            AimAssist_DrawTargets(localClientNum, ps, red);
             AimAssist_DrawCenterBox(aaGlob, tweaks->slowdownRegionWidth, tweaks->slowdownRegionHeight, green);
         }
         if (aim_autoaim_debug->current.enabled)
         {
-            AimAssist_DrawTargets(localClientNum, red);
+            AimAssist_DrawTargets(localClientNum, ps, red);
             AimAssist_DrawCenterBox(aaGlob, tweaks->autoAimRegionWidth, tweaks->autoAimRegionHeight, green);
         }
         if (aim_automelee_debug->current.enabled)
         {
-            AimAssist_DrawTargets(localClientNum, red);
+            AimAssist_DrawTargets(localClientNum, ps, red);
             AimAssist_DrawCenterBox(aaGlob, tweaks->autoMeleeRegionWidth, tweaks->autoMeleeRegionHeight, green);
         }
         if (aim_lockon_debug->current.enabled)
         {
-            AimAssist_DrawTargets(localClientNum, red);
+            AimAssist_DrawTargets(localClientNum, ps, red);
             AimAssist_DrawCenterBox(aaGlob, tweaks->lockOnRegionWidth, tweaks->lockOnRegionHeight, green);
         }
     }
@@ -1105,7 +1114,10 @@ void __cdecl AimAssist_DrawCenterBox(
     CL_DrawStretchPicPhysical(x, y, width, height, 0.0, 0.0, 1.0, 1.0, color, cgMedia.whiteMaterial);
 }
 
-void __cdecl AimAssist_DrawTargets(int64_t localClientNum, const float *color)
+void __cdecl AimAssist_DrawTargets(
+    int32_t localClientNum,
+    const playerState_s *ps,
+    const float *color)
 {
     char *v2; // eax
     char *v3; // eax
@@ -1133,13 +1145,12 @@ void __cdecl AimAssist_DrawTargets(int64_t localClientNum, const float *color)
     float yd; // [esp+8Ch] [ebp-8h]
     float y_4; // [esp+90h] [ebp-4h]
 
-    //if (!HIDWORD(localClientNum))
-    //    MyAssertHandler(".\\aim_assist\\aim_assist.cpp", 1627, 0, "%s", "ps");
-    // TODO: Check that these are equivalent
-    iassert(HIDWORD(localClientNum));
+    iassert(ps);
     iassert(color);
+    if (!ps || !color)
+        return;
 
-    int32_t weapIndex = AimAssist_GetWeaponIndex(localClientNum, (const playerState_s *)HIDWORD(localClientNum)); // [esp+78h] [ebp-1Ch]
+    uint32_t weapIndex = AimAssist_GetWeaponIndex(localClientNum, ps); // [esp+78h] [ebp-1Ch]
     if (weapIndex)
     {
         weapDef = BG_GetWeaponDef(weapIndex);

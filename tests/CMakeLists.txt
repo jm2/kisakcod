@@ -1948,6 +1948,22 @@ add_test(
     COMMAND kisakcod-upstream-angle-math-tests
 )
 
+add_executable(kisakcod-upstream-aim-safety-tests
+    upstream_aim_safety_tests.cpp
+)
+target_include_directories(
+    kisakcod-upstream-aim-safety-tests SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-upstream-aim-safety-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-upstream-aim-safety-tests)
+set_target_properties(kisakcod-upstream-aim-safety-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME upstream-reconciliation-aim-safety-contracts
+    COMMAND kisakcod-upstream-aim-safety-tests
+)
+
 add_test(
     NAME vehicle-material-time-source-invariants
     COMMAND ${CMAKE_COMMAND}

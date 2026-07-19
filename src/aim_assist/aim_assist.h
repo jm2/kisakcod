@@ -169,13 +169,16 @@ char __cdecl AimAssist_UpdateAutoMeleeTarget(AimAssistGlobals *aaGlob);
 void __cdecl AimAssist_SetAutoMeleeTarget(AimAssistGlobals *aaGlob, const AimScreenTarget *screenTarget);
 void __cdecl AimAssist_ApplyMeleeCharge(const AimInput *input, AimOutput *output);
 void __cdecl AimAssist_UpdateMouseInput(const AimInput *input, AimOutput *output);
-void __cdecl AimAssist_DrawDebugOverlay(uint32_t localClientNum);
+void __cdecl AimAssist_DrawDebugOverlay(int32_t localClientNum);
 void __cdecl AimAssist_DrawCenterBox(
     const AimAssistGlobals *aaGlob,
     float clipHalfWidth,
     float clipHalfHeight,
     const float *color);
-void __cdecl AimAssist_DrawTargets(int64_t localClientNum, const float *color);
+void __cdecl AimAssist_DrawTargets(
+    int32_t localClientNum,
+    const playerState_s *ps,
+    const float *color);
 
 
 // aim_target_mp
