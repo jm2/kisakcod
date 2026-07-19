@@ -72,7 +72,8 @@ struct PendingCopyAdmissionCompletion final
     // Loading. The unchecked finalizer invokes it exactly once, after the
     // outer lifecycle has published Live and finalized its journal. It must
     // be a no-fail, report-free ensure-postcondition operation and must not
-    // reenter or mutate this ledger, receipt, or lifecycle slot.
+    // throw, longjmp, reenter, or mutate this ledger, receipt, or lifecycle
+    // slot. A nonlocal exit leaves callback-active authority fail-closed.
     void (*complete)(void *context) noexcept = nullptr;
 };
 
@@ -338,7 +339,7 @@ struct PendingCopyLedgerTestAccess final
 [[nodiscard]] PendingCopyStatus TryInitializePendingCopyLedger(
     PendingCopyLedger *ledger) noexcept;
 
-// Appends a new exact Loading generation after every earlier retained
+// Appends one exact Loading generation after every earlier retained
 // generation has reached Admitted. Repeating an exact active begin is
 // idempotent; exact terminal receipts return AlreadyComplete before the
 // ledger or lifecycle is inspected.
@@ -373,10 +374,11 @@ struct PendingCopyLedgerTestAccess final
     const PendingCopyAdmissionCompletion &completion) noexcept;
 
 // Valid only after a matching successful prepare and after the outer owner
-// has invalidated stream state, ended PMem, published Live, and finalized its
-// journal. It is deliberately status-free: it publishes Admitted, invokes the
-// prebound completion exactly once, then publishes the terminal receipt. An
-// exact reentrant/repeated call does not replay completion.
+// has invalidated delayed-load state, ended PMem, published Live, and
+// finalized its journal. It is deliberately status-free: it publishes
+// Admitted, invokes the prebound completion exactly once, then publishes the
+// terminal receipt. An exact reentrant/repeated call does not replay
+// completion.
 void FinalizePreparedPendingCopyAdmission(
     PendingCopyAdmissionReceipt &receipt) noexcept;
 

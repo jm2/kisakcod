@@ -9978,6 +9978,55 @@ foreach(_checked_pmem_production_path IN LISTS
     endif()
 endforeach()
 
+# The pending-copy ledger is deliberately shipped as a production-neutral
+# primitive. Its receipt self-authentication, callback reentry guard, bounded
+# serial/capacity checks, and unknown-result poison path must remain present,
+# while the legacy registry remains untouched until an atomic caller cutover.
+foreach(_pending_copy_marker IN ITEMS
+    "if (self_ != this"
+    "receipt->self_ = receipt;"
+    "if (ledger->nextGenerationSerial_ == UINT64_MAX)"
+    "if (ledger->callbackActive_ != 0)"
+    "receipt.setPhase(PendingCopyAdmissionPhase::Admitting);"
+    "completion(completionContext);"
+    "case PendingCopyDrainCallbackStatus::UnsafeFailure:"
+    "ledger->poison();")
+    require_source_contains(
+        "database/db_zone_pending_copy_ledger.cpp"
+        "${_pending_copy_marker}"
+        "bounded fail-closed pending-copy authority")
+endforeach()
+foreach(_pending_copy_forbidden IN ITEMS
+    "database/database.h"
+    "g_copyInfo"
+    "XAsset"
+    "PMem_"
+    "Com_Error("
+    "Sys_Error("
+    "malloc("
+    "operator new")
+    require_source_not_contains(
+        "database/db_zone_pending_copy_ledger.cpp"
+        "${_pending_copy_forbidden}"
+        "pending-copy primitive cannot enroll production or allocation")
+endforeach()
+require_source_not_contains(
+    "database/db_registry.cpp"
+    "db_zone_pending_copy_ledger"
+    "pending-copy caller cutover must remain atomic")
+require_source_not_contains(
+    "database/db_registry.cpp"
+    "zone_pending_copy"
+    "pending-copy namespace cannot be partially enrolled")
+require_source_contains(
+    "database/database.h"
+    "extern XAssetEntry *g_copyInfo[0x800];"
+    "legacy pending-copy declaration remains before atomic cutover")
+require_source_contains(
+    "database/db_registry.cpp"
+    "XAssetEntry *g_copyInfo[0x800];"
+    "legacy pending-copy storage remains before atomic cutover")
+
 set(_format_sensitive_sources
     "cgame/cg_hudelem.cpp"
     "cgame/cg_info.cpp"

@@ -174,6 +174,8 @@ set(DATABASE
     "${SRC_DIR}/database/db_zone_stream_ownership.cpp"
     "${SRC_DIR}/database/db_zone_stream_ownership.h"
     "${SRC_DIR}/database/db_zone_stream_ownership_internal.h"
+    "${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp"
+    "${SRC_DIR}/database/db_zone_pending_copy_ledger.h"
     "${SRC_DIR}/database/db_validation.h"
     "${SRC_DIR}/database/db_assetnames.cpp"
     "${SRC_DIR}/database/db_auth.cpp"

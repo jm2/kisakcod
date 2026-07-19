@@ -1,5 +1,6 @@
 #include <database/db_zone_pending_copy_ledger.h>
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <limits>
@@ -14,6 +15,8 @@ namespace lifecycle = db::zone_load;
 using pending::PendingCopyAdmissionCompletion;
 using pending::PendingCopyAdmissionPhase;
 using pending::PendingCopyAdmissionReceipt;
+using pending::PendingCopyDrainCallback;
+using pending::PendingCopyDrainCallbackStatus;
 using pending::PendingCopyLedger;
 using pending::PendingCopyLedgerTestAccess;
 using pending::PendingCopyRecord;
@@ -58,6 +61,95 @@ struct GenerationFixture final
 void CompleteNoop(void *) noexcept {}
 void CompleteOther(void *) noexcept {}
 
+void PrepareCommitAndFinalize(
+    PendingCopyAdmissionReceipt *const receipt,
+    GenerationFixture *const generation,
+    const PendingCopyAdmissionCompletion &completion =
+        {nullptr, CompleteNoop})
+{
+    CHECK(pending::TryPreparePendingCopyAdmission(
+        receipt, generation->key, completion)
+        == PendingCopyStatus::Success);
+    CHECK(lifecycle::TryCommitZoneLoadContext(
+        &generation->slot, generation->key)
+        == lifecycle::ZoneLoadContextStatus::Success);
+    pending::FinalizePreparedPendingCopyAdmission(*receipt);
+}
+
+struct AdmissionReentryState final
+{
+    PendingCopyLedger *ledger = nullptr;
+    PendingCopyAdmissionReceipt *receipt = nullptr;
+    PendingCopyAdmissionReceipt *otherReceipt = nullptr;
+    GenerationFixture *otherGeneration = nullptr;
+    std::uint32_t calls = 0;
+    PendingCopyStatus initializeStatus = PendingCopyStatus::UnsafeFailure;
+    PendingCopyStatus beginStatus = PendingCopyStatus::UnsafeFailure;
+    PendingCopyStatus discardStatus = PendingCopyStatus::UnsafeFailure;
+};
+
+void CompleteWithReentry(void *const opaque) noexcept
+{
+    auto &state = *static_cast<AdmissionReentryState *>(opaque);
+    ++state.calls;
+    CHECK(state.receipt->phase()
+        == PendingCopyAdmissionPhase::Admitting);
+    pending::FinalizePreparedPendingCopyAdmission(*state.receipt);
+    state.initializeStatus =
+        pending::TryInitializePendingCopyLedger(state.ledger);
+    state.beginStatus = pending::TryBeginPendingCopyAdmission(
+        state.ledger,
+        state.otherReceipt,
+        &state.otherGeneration->slot,
+        state.otherGeneration->key);
+    state.discardStatus = pending::TryDiscardPendingCopyAdmission(
+        state.receipt, state.receipt->key());
+}
+
+struct DrainState final
+{
+    PendingCopyLedger *ledger = nullptr;
+    std::array<PendingCopyRecord,
+        pending::kPendingCopyRecordCapacity> records{};
+    std::uint32_t recordCount = 0;
+    std::uint32_t calls = 0;
+    std::uint32_t retryOrdinal = UINT32_MAX;
+    bool retried = false;
+    bool mutateRetryCopy = false;
+    PendingCopyStatus reenterDrainStatus = PendingCopyStatus::UnsafeFailure;
+    PendingCopyStatus reenterFinishStatus = PendingCopyStatus::UnsafeFailure;
+};
+
+PendingCopyDrainCallbackStatus ConsumeOrdered(
+    void *const opaque,
+    PendingCopyRecord record) noexcept
+{
+    auto &state = *static_cast<DrainState *>(opaque);
+    ++state.calls;
+    state.reenterDrainStatus = pending::TryDrainNextPendingCopy(
+        state.ledger,
+        PendingCopyDrainCallback{&state, ConsumeOrdered});
+    state.reenterFinishStatus =
+        pending::TryFinishPendingCopyDrain(state.ledger);
+    if (state.recordCount == state.retryOrdinal && !state.retried)
+    {
+        state.retried = true;
+        if (state.mutateRetryCopy)
+            record.assetEntryIndex = 777;
+        return PendingCopyDrainCallbackStatus::Retry;
+    }
+    if (state.recordCount < state.records.size())
+        state.records[state.recordCount] = record;
+    ++state.recordCount;
+    return PendingCopyDrainCallbackStatus::Success;
+}
+
+PendingCopyDrainCallbackStatus ConsumeUnknown(
+    void *, PendingCopyRecord) noexcept
+{
+    return static_cast<PendingCopyDrainCallbackStatus>(UINT8_C(0xFF));
+}
+
 void TestTypeAndApiContracts()
 {
     static_assert(pending::kPendingCopyRecordCapacity == 2048);
@@ -88,6 +180,14 @@ void TestTypeAndApiContracts()
         std::declval<const lifecycle::ZoneLoadContextKey &>(),
         std::declval<const PendingCopyAdmissionCompletion &>())));
     static_assert(noexcept(pending::TryDiscardPendingCopyAdmission(
+        nullptr, std::declval<const lifecycle::ZoneLoadContextKey &>())));
+    static_assert(noexcept(pending::FinalizePreparedPendingCopyAdmission(
+        std::declval<PendingCopyAdmissionReceipt &>())));
+    static_assert(noexcept(pending::TryBeginPendingCopyDrain(nullptr)));
+    static_assert(noexcept(pending::TryDrainNextPendingCopy(
+        nullptr, std::declval<const PendingCopyDrainCallback &>())));
+    static_assert(noexcept(pending::TryFinishPendingCopyDrain(nullptr)));
+    static_assert(noexcept(pending::TryResetPendingCopyAdmissionReceipt(
         nullptr, std::declval<const lifecycle::ZoneLoadContextKey &>())));
 }
 
@@ -152,6 +252,8 @@ void TestAppendReadPrepareAndDiscard()
     CHECK(receipt.lifecycle() == &generation.slot);
     CHECK(receipt.recordCount() == 0);
     CHECK(ledger.generationCount() == 1);
+    CHECK(pending::TryBeginPendingCopyDrain(&ledger)
+        == PendingCopyStatus::Busy);
 
     CHECK(pending::TryAppendPendingCopyRecord(
         &receipt, generation.key, 0)
@@ -184,6 +286,28 @@ void TestAppendReadPrepareAndDiscard()
         == PendingCopyStatus::InvalidRecord);
     CHECK(output == sentinel);
 
+    CHECK(pending::TryReadPendingCopyRecord(
+        &receipt,
+        generation.key,
+        0,
+        reinterpret_cast<PendingCopyRecord *>(&ledger))
+        == PendingCopyStatus::InvalidArgument);
+    CHECK(ledger.canonical());
+    CHECK(pending::TryReadPendingCopyRecord(
+        &receipt,
+        generation.key,
+        0,
+        reinterpret_cast<PendingCopyRecord *>(&receipt))
+        == PendingCopyStatus::InvalidArgument);
+    CHECK(receipt.canonical());
+    CHECK(pending::TryReadPendingCopyRecord(
+        &receipt,
+        generation.key,
+        0,
+        reinterpret_cast<PendingCopyRecord *>(&generation.slot))
+        == PendingCopyStatus::InvalidArgument);
+    CHECK(generation.slot.canonical());
+
     GenerationFixture staleGeneration(3, generation.key.generation);
     CHECK(pending::TryReadPendingCopyRecord(
         &receipt, staleGeneration.key, 0, &output)
@@ -195,6 +319,8 @@ void TestAppendReadPrepareAndDiscard()
         &receipt, generation.key, completion)
         == PendingCopyStatus::Success);
     CHECK(receipt.phase() == PendingCopyAdmissionPhase::Prepared);
+    CHECK(pending::TryBeginPendingCopyDrain(&ledger)
+        == PendingCopyStatus::Busy);
     CHECK(pending::TryPreparePendingCopyAdmission(
         &receipt, generation.key, completion)
         == PendingCopyStatus::Success);
@@ -333,6 +459,302 @@ void TestCorruptionAndSerialExhaustion()
             == PendingCopyStatus::Success);
     }
 }
+
+void TestFinalizationExactlyOnceAndZeroRecordTerminal()
+{
+    {
+        PendingCopyLedger ledger;
+        PendingCopyAdmissionReceipt receipt;
+        PendingCopyAdmissionReceipt otherReceipt;
+        GenerationFixture generation(7);
+        GenerationFixture otherGeneration(8);
+        CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryBeginPendingCopyAdmission(
+            &ledger, &receipt, &generation.slot, generation.key)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryAppendPendingCopyRecord(
+            &receipt, generation.key, 81)
+            == PendingCopyStatus::Success);
+
+        AdmissionReentryState state{
+            &ledger, &receipt, &otherReceipt, &otherGeneration};
+        const PendingCopyAdmissionCompletion completion{
+            &state, CompleteWithReentry};
+        PrepareCommitAndFinalize(&receipt, &generation, completion);
+        CHECK(state.calls == 1);
+        CHECK(state.initializeStatus == PendingCopyStatus::Busy);
+        CHECK(state.beginStatus == PendingCopyStatus::Busy);
+        CHECK(state.discardStatus == PendingCopyStatus::Busy);
+        CHECK(receipt.phase() == PendingCopyAdmissionPhase::Admitted);
+        CHECK(receipt.recordCount() == 1);
+        CHECK(ledger.canonical());
+
+        pending::FinalizePreparedPendingCopyAdmission(receipt);
+        CHECK(state.calls == 1);
+        CHECK(pending::TryDiscardPendingCopyAdmission(
+            &receipt, generation.key)
+            == PendingCopyStatus::Success);
+    }
+
+    {
+        PendingCopyLedger ledger;
+        PendingCopyAdmissionReceipt receipt;
+        GenerationFixture generation(9);
+        std::uint32_t completions = 0;
+        const auto complete = [](void *const opaque) noexcept {
+            ++*static_cast<std::uint32_t *>(opaque);
+        };
+        CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryBeginPendingCopyAdmission(
+            &ledger, &receipt, &generation.slot, generation.key)
+            == PendingCopyStatus::Success);
+        PrepareCommitAndFinalize(
+            &receipt,
+            &generation,
+            PendingCopyAdmissionCompletion{&completions, complete});
+        CHECK(completions == 1);
+        CHECK(receipt.phase() == PendingCopyAdmissionPhase::Drained);
+        CHECK(ledger.recordCount() == 0);
+        CHECK(ledger.generationCount() == 0);
+        CHECK(ledger.canonical());
+        pending::FinalizePreparedPendingCopyAdmission(receipt);
+        CHECK(completions == 1);
+        CHECK(pending::TryBeginPendingCopyDrain(&ledger)
+            == PendingCopyStatus::AlreadyComplete);
+        CHECK(pending::TryResetPendingCopyAdmissionReceipt(
+            &receipt, generation.key)
+            == PendingCopyStatus::Success);
+        CHECK(receipt.phase() == PendingCopyAdmissionPhase::Pristine);
+        CHECK(receipt.canonical());
+    }
+}
+
+void TestGenerationCapacityOrderedDrainAndRetry()
+{
+    PendingCopyLedger ledger;
+    std::array<PendingCopyAdmissionReceipt,
+        pending::kPendingCopyGenerationCapacity> receipts;
+    std::array<GenerationFixture *,
+        pending::kPendingCopyGenerationCapacity> generations{};
+    GenerationFixture generation0(10);
+    GenerationFixture generation1(11);
+    GenerationFixture generation2(12);
+    GenerationFixture generation3(13);
+    GenerationFixture generation4(14);
+    GenerationFixture generation5(15);
+    GenerationFixture generation6(16);
+    GenerationFixture generation7(17);
+    GenerationFixture overflowGeneration(18);
+    generations = {
+        &generation0,
+        &generation1,
+        &generation2,
+        &generation3,
+        &generation4,
+        &generation5,
+        &generation6,
+        &generation7,
+    };
+
+    CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+        == PendingCopyStatus::Success);
+    for (std::uint32_t generationIndex = 0;
+        generationIndex < generations.size();
+        ++generationIndex)
+    {
+        GenerationFixture &generation = *generations[generationIndex];
+        CHECK(pending::TryBeginPendingCopyAdmission(
+            &ledger,
+            &receipts[generationIndex],
+            &generation.slot,
+            generation.key)
+            == PendingCopyStatus::Success);
+        constexpr std::uint32_t kRecordsPerGeneration =
+            pending::kPendingCopyRecordCapacity
+            / pending::kPendingCopyGenerationCapacity;
+        for (std::uint32_t ordinal = 0;
+            ordinal < kRecordsPerGeneration;
+            ++ordinal)
+        {
+            CHECK(pending::TryAppendPendingCopyRecord(
+                &receipts[generationIndex],
+                generation.key,
+                100 + generationIndex * kRecordsPerGeneration + ordinal)
+                == PendingCopyStatus::Success);
+        }
+        PrepareCommitAndFinalize(
+            &receipts[generationIndex], &generation);
+    }
+    CHECK(ledger.generationCount()
+        == pending::kPendingCopyGenerationCapacity);
+    CHECK(ledger.recordCount() == pending::kPendingCopyRecordCapacity);
+    PendingCopyAdmissionReceipt overflowReceipt;
+    CHECK(pending::TryBeginPendingCopyAdmission(
+        &ledger,
+        &overflowReceipt,
+        &overflowGeneration.slot,
+        overflowGeneration.key)
+        == PendingCopyStatus::GenerationCapacityExceeded);
+
+    CHECK(pending::TryBeginPendingCopyDrain(nullptr)
+        == PendingCopyStatus::InvalidArgument);
+    CHECK(pending::TryBeginPendingCopyDrain(&ledger)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryBeginPendingCopyDrain(&ledger)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryDrainNextPendingCopy(
+        &ledger, PendingCopyDrainCallback{})
+        == PendingCopyStatus::InvalidArgument);
+    CHECK(pending::TryFinishPendingCopyDrain(&ledger)
+        == PendingCopyStatus::InvalidState);
+
+    DrainState state;
+    state.ledger = &ledger;
+    state.retryOrdinal = 5;
+    state.mutateRetryCopy = true;
+    const PendingCopyDrainCallback callback{&state, ConsumeOrdered};
+    std::uint32_t retryCount = 0;
+    while (state.recordCount < pending::kPendingCopyRecordCapacity)
+    {
+        const PendingCopyStatus status =
+            pending::TryDrainNextPendingCopy(&ledger, callback);
+        if (status == PendingCopyStatus::Retry)
+            ++retryCount;
+        else
+            CHECK(status == PendingCopyStatus::Success);
+    }
+    CHECK(state.retried);
+    CHECK(retryCount == 1);
+    CHECK(state.calls == pending::kPendingCopyRecordCapacity + 1);
+    CHECK(state.reenterDrainStatus == PendingCopyStatus::Busy);
+    CHECK(state.reenterFinishStatus == PendingCopyStatus::Busy);
+    for (std::uint32_t index = 0; index < state.recordCount; ++index)
+    {
+        CHECK(state.records[index].assetEntryIndex == 100 + index);
+        CHECK(state.records[index].key
+            == generations[index
+                / (pending::kPendingCopyRecordCapacity
+                    / pending::kPendingCopyGenerationCapacity)]->key);
+    }
+    CHECK(pending::TryDrainNextPendingCopy(&ledger, callback)
+        == PendingCopyStatus::AlreadyComplete);
+    CHECK(pending::TryFinishPendingCopyDrain(&ledger)
+        == PendingCopyStatus::Success);
+    CHECK(ledger.canonical());
+    CHECK(ledger.recordCount() == 0);
+    CHECK(ledger.generationCount() == 0);
+    for (const PendingCopyAdmissionReceipt &receipt : receipts)
+    {
+        CHECK(receipt.phase() == PendingCopyAdmissionPhase::Drained);
+        CHECK(receipt.recordCount() == 0);
+    }
+    CHECK(pending::TryFinishPendingCopyDrain(&ledger)
+        == PendingCopyStatus::AlreadyComplete);
+}
+
+void TestStableCompactionAndStaleTerminalAuthority()
+{
+    PendingCopyLedger ledger;
+    std::array<PendingCopyAdmissionReceipt, 3> receipts;
+    GenerationFixture first(19);
+    GenerationFixture middle(20);
+    GenerationFixture last(21);
+    std::array<GenerationFixture *, 3> generations{
+        &first, &middle, &last};
+    CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+        == PendingCopyStatus::Success);
+
+    for (std::uint32_t index = 0; index < generations.size(); ++index)
+    {
+        GenerationFixture &generation = *generations[index];
+        CHECK(pending::TryBeginPendingCopyAdmission(
+            &ledger, &receipts[index], &generation.slot, generation.key)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryAppendPendingCopyRecord(
+            &receipts[index], generation.key, 200 + index * 2)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryAppendPendingCopyRecord(
+            &receipts[index], generation.key, 201 + index * 2)
+            == PendingCopyStatus::Success);
+        PrepareCommitAndFinalize(&receipts[index], &generation);
+    }
+
+    CHECK(pending::TryDiscardPendingCopyAdmission(
+        &receipts[1], middle.key)
+        == PendingCopyStatus::Success);
+    CHECK(receipts[1].phase() == PendingCopyAdmissionPhase::Discarded);
+    CHECK(ledger.generationCount() == 2);
+    CHECK(ledger.recordCount() == 4);
+    PendingCopyRecord output{};
+    CHECK(pending::TryReadPendingCopyRecord(
+        &receipts[2], last.key, 0, &output)
+        == PendingCopyStatus::Success);
+    CHECK(output.assetEntryIndex == 204);
+
+    CHECK(pending::TryDiscardPendingCopyAdmission(
+        &receipts[0], first.key)
+        == PendingCopyStatus::Success);
+    CHECK(ledger.generationCount() == 1);
+    CHECK(ledger.recordCount() == 2);
+    CHECK(pending::TryReadPendingCopyRecord(
+        &receipts[2], last.key, 1, &output)
+        == PendingCopyStatus::Success);
+    CHECK(output.assetEntryIndex == 205);
+    CHECK(pending::TryDiscardPendingCopyAdmission(
+        &receipts[2], last.key)
+        == PendingCopyStatus::Success);
+    CHECK(ledger.generationCount() == 0);
+    CHECK(ledger.recordCount() == 0);
+    CHECK(ledger.canonical());
+
+    // A terminal receipt remains authoritative while a newer generation with
+    // the same logical slot is active in the ledger.
+    GenerationFixture newer(middle.key.slot, middle.key.generation);
+    PendingCopyAdmissionReceipt newerReceipt;
+    CHECK(pending::TryBeginPendingCopyAdmission(
+        &ledger, &newerReceipt, &newer.slot, newer.key)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryDiscardPendingCopyAdmission(
+        &receipts[1], middle.key)
+        == PendingCopyStatus::AlreadyComplete);
+    CHECK(ledger.generationCount() == 1);
+    CHECK(newerReceipt.phase() == PendingCopyAdmissionPhase::Collecting);
+    CHECK(pending::TryResetPendingCopyAdmissionReceipt(
+        &receipts[1], newer.key)
+        == PendingCopyStatus::StaleKey);
+    CHECK(pending::TryResetPendingCopyAdmissionReceipt(
+        &receipts[1], middle.key)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryDiscardPendingCopyAdmission(
+        &newerReceipt, newer.key)
+        == PendingCopyStatus::Success);
+}
+
+void TestUnknownDrainResultPoisonsLedger()
+{
+    PendingCopyLedger ledger;
+    PendingCopyAdmissionReceipt receipt;
+    GenerationFixture generation(22);
+    CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryBeginPendingCopyAdmission(
+        &ledger, &receipt, &generation.slot, generation.key)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryAppendPendingCopyRecord(
+        &receipt, generation.key, 301)
+        == PendingCopyStatus::Success);
+    PrepareCommitAndFinalize(&receipt, &generation);
+    CHECK(pending::TryBeginPendingCopyDrain(&ledger)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryDrainNextPendingCopy(
+        &ledger, PendingCopyDrainCallback{nullptr, ConsumeUnknown})
+        == PendingCopyStatus::UnsafeFailure);
+    CHECK(!ledger.canonical());
+    CHECK(pending::TryFinishPendingCopyDrain(&ledger)
+        == PendingCopyStatus::UnsafeFailure);
+}
 } // namespace
 
 int main()
@@ -342,6 +764,10 @@ int main()
     TestAppendReadPrepareAndDiscard();
     TestCapacityAndFailureAtomicity();
     TestCorruptionAndSerialExhaustion();
+    TestFinalizationExactlyOnceAndZeroRecordTerminal();
+    TestGenerationCapacityOrderedDrainAndRetry();
+    TestStableCompactionAndStaleTerminalAuthority();
+    TestUnknownDrainResultPoisonsLedger();
     if (g_failures != 0)
     {
         std::fprintf(
@@ -350,6 +776,6 @@ int main()
             g_failures);
         return 1;
     }
-    std::puts("pending-copy ledger core tests passed");
+    std::puts("pending-copy ledger tests passed");
     return 0;
 }

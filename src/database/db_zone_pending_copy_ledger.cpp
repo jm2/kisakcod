@@ -358,7 +358,10 @@ bool PendingCopyLedger::descriptorMatchesReceipt(
     case GenerationPhase::Prepared:
         return receipt->phase_ == PendingCopyAdmissionPhase::Prepared;
     case GenerationPhase::Admitted:
-        return receipt->phase_ == PendingCopyAdmissionPhase::Admitted;
+        return receipt->phase_ == PendingCopyAdmissionPhase::Admitted
+            || (callbackActive_ != 0
+                && receipt->phase_
+                    == PendingCopyAdmissionPhase::Admitting);
     default:
         return false;
     }
@@ -368,17 +371,12 @@ bool PendingCopyLedger::isCanonical() const noexcept
 {
     if (!hasCanonicalHeader() || phase_ == Phase::UnsafeFailure)
         return false;
-    if ((phase_ == Phase::Draining) != (drainCursor_ != 0))
-    {
-        // A just-begun drain legitimately has cursor zero.
-        if (phase_ != Phase::Draining || drainCursor_ != 0)
-            return false;
-    }
     if (phase_ != Phase::Draining && drainCursor_ != 0)
         return false;
 
     std::uint32_t expectedFirst = 0;
     std::uint32_t preparedCount = 0;
+    std::uint32_t admittingCount = 0;
     for (std::uint32_t index = 0; index < generationCount_; ++index)
     {
         const GenerationDescriptor &descriptor = generations_[index];
@@ -399,6 +397,13 @@ bool PendingCopyLedger::isCanonical() const noexcept
         }
         if (descriptor.phase == GenerationPhase::Prepared)
             ++preparedCount;
+        if (descriptor.receipt->phase_
+            == PendingCopyAdmissionPhase::Admitting)
+        {
+            if (index + 1 != generationCount_)
+                return false;
+            ++admittingCount;
+        }
         if (index + 1 < generationCount_
             && descriptor.phase != GenerationPhase::Admitted)
         {
@@ -427,6 +432,19 @@ bool PendingCopyLedger::isCanonical() const noexcept
         return false;
     if ((phase_ == Phase::AdmissionPrepared && preparedCount != 1)
         || (phase_ != Phase::AdmissionPrepared && preparedCount != 0))
+    {
+        return false;
+    }
+    if (callbackActive_ != 0)
+    {
+        if ((phase_ == Phase::Ready && admittingCount != 1)
+            || (phase_ == Phase::Draining && admittingCount != 0)
+            || (phase_ != Phase::Ready && phase_ != Phase::Draining))
+        {
+            return false;
+        }
+    }
+    else if (admittingCount != 0)
     {
         return false;
     }
@@ -481,6 +499,8 @@ PendingCopyStatus TryInitializePendingCopyLedger(
     }
     if (!ledger->isCanonical())
         return PendingCopyStatus::UnsafeFailure;
+    if (ledger->callbackActive_ != 0)
+        return PendingCopyStatus::Busy;
     return ledger->phase_ == PendingCopyLedger::Phase::Ready
             && ledger->recordCount_ == 0
             && ledger->generationCount_ == 0
@@ -512,13 +532,19 @@ PendingCopyStatus TryBeginPendingCopyAdmission(
             return PendingCopyStatus::AlreadyComplete;
         if (receipt->ledger_ != ledger || receipt->lifecycle_ != lifecycle)
             return PendingCopyStatus::StaleKey;
-        return receipt->phase_ == PendingCopyAdmissionPhase::Collecting
-                || receipt->phase_ == PendingCopyAdmissionPhase::Prepared
-                || receipt->phase_ == PendingCopyAdmissionPhase::Admitted
-            ? PendingCopyStatus::Success
-            : receipt->phase_ == PendingCopyAdmissionPhase::Admitting
-                ? PendingCopyStatus::Busy
-                : PendingCopyStatus::UnsafeFailure;
+        if (receipt->phase_ == PendingCopyAdmissionPhase::Admitting)
+            return PendingCopyStatus::Busy;
+        if (receipt->phase_ != PendingCopyAdmissionPhase::Collecting
+            && receipt->phase_ != PendingCopyAdmissionPhase::Prepared
+            && receipt->phase_ != PendingCopyAdmissionPhase::Admitted)
+        {
+            return PendingCopyStatus::UnsafeFailure;
+        }
+        if (!ledger->isCanonical())
+            return PendingCopyStatus::UnsafeFailure;
+        return ledger->callbackActive_ != 0
+            ? PendingCopyStatus::Busy
+            : PendingCopyStatus::Success;
     }
 
     if (!ObjectsDisjoint(ledger, sizeof(*ledger), receipt, sizeof(*receipt))
@@ -531,8 +557,9 @@ PendingCopyStatus TryBeginPendingCopyAdmission(
     }
     if (!ledger->isCanonical())
         return PendingCopyStatus::UnsafeFailure;
-    if (ledger->callbackActive_ != 0
-        || ledger->phase_ == PendingCopyLedger::Phase::AdmissionPrepared
+    if (ledger->callbackActive_ != 0)
+        return PendingCopyStatus::Busy;
+    if (ledger->phase_ == PendingCopyLedger::Phase::AdmissionPrepared
         || ledger->phase_ == PendingCopyLedger::Phase::Draining)
     {
         return PendingCopyStatus::Busy;
@@ -608,11 +635,13 @@ PendingCopyStatus TryAppendPendingCopyRecord(
         return keyStatus;
     if (!IsAssetEntryIndex(assetEntryIndex))
         return PendingCopyStatus::InvalidRecord;
+    if (receipt->phase_ == PendingCopyAdmissionPhase::Admitting)
+        return PendingCopyStatus::Busy;
     if (receipt->phase_ != PendingCopyAdmissionPhase::Collecting)
         return PendingCopyStatus::InvalidPhase;
 
     PendingCopyLedger *const ledger = receipt->ledger_;
-    if (!ledger || !ledger->hasCanonicalHeader())
+    if (!ledger || !ledger->isCanonical())
         return PendingCopyStatus::UnsafeFailure;
     if (ledger->callbackActive_ != 0)
         return PendingCopyStatus::Busy;
@@ -675,13 +704,27 @@ PendingCopyStatus TryReadPendingCopyRecord(
     }
 
     const PendingCopyLedger *const ledger = receipt->ledger_;
-    if (!ledger || !ledger->hasCanonicalHeader()
-        || ledger->callbackActive_ != 0
-        || receipt->generationIndex_ >= ledger->generationCount_)
+    if (!ledger)
+        return PendingCopyStatus::UnsafeFailure;
+    if (!ObjectsDisjoint(
+            ledger, sizeof(*ledger), outRecord, sizeof(*outRecord))
+        || !ObjectsDisjoint(
+            receipt, sizeof(*receipt), outRecord, sizeof(*outRecord))
+        || !ObjectsDisjoint(
+            receipt->lifecycle_,
+            sizeof(*receipt->lifecycle_),
+            outRecord,
+            sizeof(*outRecord)))
     {
-        return ledger && ledger->callbackActive_ != 0
-            ? PendingCopyStatus::Busy
-            : PendingCopyStatus::UnsafeFailure;
+        return PendingCopyStatus::InvalidArgument;
+    }
+    if (!ledger->isCanonical())
+        return PendingCopyStatus::UnsafeFailure;
+    if (ledger->callbackActive_ != 0)
+        return PendingCopyStatus::Busy;
+    if (receipt->generationIndex_ >= ledger->generationCount_)
+    {
+        return PendingCopyStatus::UnsafeFailure;
     }
     const PendingCopyLedger::GenerationDescriptor &descriptor =
         ledger->generations_[receipt->generationIndex_];
@@ -719,6 +762,11 @@ PendingCopyStatus TryPreparePendingCopyAdmission(
         return keyStatus;
     if (receipt->phase_ == PendingCopyAdmissionPhase::Prepared)
     {
+        PendingCopyLedger *const ledger = receipt->ledger_;
+        if (!ledger || !ledger->isCanonical())
+            return PendingCopyStatus::UnsafeFailure;
+        if (ledger->callbackActive_ != 0)
+            return PendingCopyStatus::Busy;
         return receipt->completionContext_ == completion.context
                 && receipt->completion_ == completion.complete
             ? PendingCopyStatus::Success
@@ -763,6 +811,44 @@ PendingCopyStatus TryPreparePendingCopyAdmission(
     return PendingCopyStatus::Success;
 }
 
+void FinalizePreparedPendingCopyAdmission(
+    PendingCopyAdmissionReceipt &receipt) noexcept
+{
+    // Preparation has already completed the fallible whole-state preflight.
+    // The phase check is solely the replay/reentry guard required around the
+    // no-fail completion callback.
+    if (receipt.phase_ != PendingCopyAdmissionPhase::Prepared)
+        return;
+
+    PendingCopyLedger &ledger = *receipt.ledger_;
+    PendingCopyLedger::GenerationDescriptor &descriptor =
+        ledger.generations_[receipt.generationIndex_];
+    void *const completionContext = receipt.completionContext_;
+    void (*const completion)(void *) noexcept = receipt.completion_;
+
+    receipt.setPhase(PendingCopyAdmissionPhase::Admitting);
+    descriptor.phase = PendingCopyLedger::GenerationPhase::Admitted;
+    ledger.setPhase(PendingCopyLedger::Phase::Ready);
+    ledger.callbackActive_ = 1;
+    completion(completionContext);
+
+    receipt.completionContext_ = nullptr;
+    receipt.completion_ = nullptr;
+    receipt.setPhase(PendingCopyAdmissionPhase::Admitted);
+    ledger.callbackActive_ = 0;
+
+    // A generation without copy records needs no later drain. Preparation
+    // guarantees that the generation is the last descriptor, so removal is a
+    // constant-time terminal publication.
+    if (descriptor.recordCount == 0)
+    {
+        --ledger.generationCount_;
+        ledger.generations_[ledger.generationCount_] = {};
+        receipt.generationIndex_ = kInvalidGenerationIndex;
+        receipt.setPhase(PendingCopyAdmissionPhase::Drained);
+    }
+}
+
 PendingCopyStatus TryDiscardPendingCopyAdmission(
     PendingCopyAdmissionReceipt *const receipt,
     const zone_load::ZoneLoadContextKey &keyArgument) noexcept
@@ -793,11 +879,10 @@ PendingCopyStatus TryDiscardPendingCopyAdmission(
     PendingCopyLedger *const ledger = receipt->ledger_;
     if (!ledger || !ledger->isCanonical())
         return PendingCopyStatus::UnsafeFailure;
-    if (ledger->callbackActive_ != 0
-        || ledger->phase_ == PendingCopyLedger::Phase::Draining)
-    {
+    if (ledger->callbackActive_ != 0)
         return PendingCopyStatus::Busy;
-    }
+    if (ledger->phase_ == PendingCopyLedger::Phase::Draining)
+        return PendingCopyStatus::Busy;
     if (!zone_load::ZoneLoadContextKeyMatches(receipt->lifecycle_, key))
         return PendingCopyStatus::StaleKey;
     const zone_load::ZoneLoadContextPhase lifecyclePhase =
@@ -866,6 +951,143 @@ PendingCopyStatus TryDiscardPendingCopyAdmission(
     receipt->completion_ = nullptr;
     receipt->generationIndex_ = kInvalidGenerationIndex;
     receipt->setPhase(PendingCopyAdmissionPhase::Discarded);
+    return PendingCopyStatus::Success;
+}
+
+PendingCopyStatus TryBeginPendingCopyDrain(
+    PendingCopyLedger *const ledger) noexcept
+{
+    if (!ledger)
+        return PendingCopyStatus::InvalidArgument;
+    if (!ledger->isCanonical())
+        return PendingCopyStatus::UnsafeFailure;
+    if (ledger->callbackActive_ != 0)
+        return PendingCopyStatus::Busy;
+    if (ledger->phase_ == PendingCopyLedger::Phase::Draining)
+        return PendingCopyStatus::Success;
+    if (ledger->phase_ == PendingCopyLedger::Phase::AdmissionPrepared)
+        return PendingCopyStatus::Busy;
+    if (ledger->phase_ != PendingCopyLedger::Phase::Ready)
+        return PendingCopyStatus::UnsafeFailure;
+    if (ledger->generationCount_ != 0
+        && ledger->generations_[ledger->generationCount_ - 1].phase
+            != PendingCopyLedger::GenerationPhase::Admitted)
+    {
+        return PendingCopyStatus::Busy;
+    }
+    if (ledger->recordCount_ == 0)
+    {
+        return ledger->generationCount_ == 0
+            ? PendingCopyStatus::AlreadyComplete
+            : PendingCopyStatus::UnsafeFailure;
+    }
+
+    ledger->drainCursor_ = 0;
+    ledger->setPhase(PendingCopyLedger::Phase::Draining);
+    return PendingCopyStatus::Success;
+}
+
+PendingCopyStatus TryDrainNextPendingCopy(
+    PendingCopyLedger *const ledger,
+    const PendingCopyDrainCallback &callback) noexcept
+{
+    if (!ledger || !callback.consume)
+        return PendingCopyStatus::InvalidArgument;
+    if (!ledger->isCanonical())
+        return PendingCopyStatus::UnsafeFailure;
+    if (ledger->callbackActive_ != 0)
+        return PendingCopyStatus::Busy;
+    if (ledger->phase_ != PendingCopyLedger::Phase::Draining)
+    {
+        return ledger->phase_ == PendingCopyLedger::Phase::Ready
+                && ledger->recordCount_ == 0
+            ? PendingCopyStatus::AlreadyComplete
+            : PendingCopyStatus::InvalidPhase;
+    }
+    if (ledger->drainCursor_ >= ledger->recordCount_)
+        return PendingCopyStatus::AlreadyComplete;
+
+    const PendingCopyRecord record =
+        ledger->records_[ledger->drainCursor_];
+    ledger->callbackActive_ = 1;
+    const PendingCopyDrainCallbackStatus callbackStatus =
+        callback.consume(callback.context, record);
+    ledger->callbackActive_ = 0;
+
+    switch (callbackStatus)
+    {
+    case PendingCopyDrainCallbackStatus::Success:
+        ++ledger->drainCursor_;
+        return PendingCopyStatus::Success;
+    case PendingCopyDrainCallbackStatus::Retry:
+        return PendingCopyStatus::Retry;
+    case PendingCopyDrainCallbackStatus::UnsafeFailure:
+    default:
+        ledger->poison();
+        return PendingCopyStatus::UnsafeFailure;
+    }
+}
+
+PendingCopyStatus TryFinishPendingCopyDrain(
+    PendingCopyLedger *const ledger) noexcept
+{
+    if (!ledger)
+        return PendingCopyStatus::InvalidArgument;
+    if (!ledger->isCanonical())
+        return PendingCopyStatus::UnsafeFailure;
+    if (ledger->callbackActive_ != 0)
+        return PendingCopyStatus::Busy;
+    if (ledger->phase_ != PendingCopyLedger::Phase::Draining)
+    {
+        return ledger->phase_ == PendingCopyLedger::Phase::Ready
+                && ledger->recordCount_ == 0
+                && ledger->generationCount_ == 0
+            ? PendingCopyStatus::AlreadyComplete
+            : PendingCopyStatus::InvalidPhase;
+    }
+    if (ledger->drainCursor_ != ledger->recordCount_)
+        return PendingCopyStatus::InvalidState;
+
+    std::array<PendingCopyAdmissionReceipt *,
+        kPendingCopyGenerationCapacity> receipts{};
+    const std::uint32_t generationCount = ledger->generationCount_;
+    for (std::uint32_t index = 0; index < generationCount; ++index)
+        receipts[index] = ledger->generations_[index].receipt;
+
+    for (std::uint32_t index = 0; index < ledger->recordCount_; ++index)
+        ledger->records_[index] = {};
+    for (std::uint32_t index = 0; index < generationCount; ++index)
+        ledger->generations_[index] = {};
+    ledger->recordCount_ = 0;
+    ledger->generationCount_ = 0;
+    ledger->drainCursor_ = 0;
+    ledger->setPhase(PendingCopyLedger::Phase::Ready);
+
+    for (std::uint32_t index = 0; index < generationCount; ++index)
+    {
+        receipts[index]->generationIndex_ = kInvalidGenerationIndex;
+        receipts[index]->setPhase(PendingCopyAdmissionPhase::Drained);
+    }
+    return PendingCopyStatus::Success;
+}
+
+PendingCopyStatus TryResetPendingCopyAdmissionReceipt(
+    PendingCopyAdmissionReceipt *const receipt,
+    const zone_load::ZoneLoadContextKey &keyArgument) noexcept
+{
+    const zone_load::ZoneLoadContextKey key = keyArgument;
+    if (!receipt)
+        return PendingCopyStatus::InvalidArgument;
+    if (!receipt->isCanonical())
+        return PendingCopyStatus::UnsafeFailure;
+    const PendingCopyStatus keyStatus =
+        ValidateRequestedKey(receipt->key_, key);
+    if (keyStatus != PendingCopyStatus::Success)
+        return keyStatus;
+    if (!IsTerminalReceiptPhase(receipt->phase_))
+        return PendingCopyStatus::InvalidPhase;
+
+    receipt->reset();
     return PendingCopyStatus::Success;
 }
 
