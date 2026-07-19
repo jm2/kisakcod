@@ -1,3 +1,4 @@
+#include <database/db_registry_ownership_coordinator.h>
 #include <script/scr_stringlist.cpp>
 
 #include <algorithm>
@@ -13,6 +14,8 @@
 #include <thread>
 #include <vector>
 
+FastCriticalSection db_hashCritSect{};
+
 namespace
 {
 static_assert(sizeof(script_string::OwnershipBatch) == 0x20);
@@ -22,8 +25,10 @@ static_assert(
 
 std::recursive_mutex g_scriptStringMutex;
 std::recursive_mutex g_memoryTreeMutex;
+std::recursive_mutex g_scriptStringTransactionMutex;
 thread_local std::uint32_t g_scriptStringLockDepth = 0;
 thread_local std::uint32_t g_memoryTreeLockDepth = 0;
+thread_local std::uint32_t g_scriptStringTransactionLockDepth = 0;
 std::uint32_t g_comErrorCount = 0;
 std::uint32_t g_assertCount = 0;
 bool g_reporterSawOwnedLock = false;
@@ -94,7 +99,8 @@ struct StateImage final
 
 [[nodiscard]] bool LocksReleased() noexcept
 {
-    return g_scriptStringLockDepth == 0 && g_memoryTreeLockDepth == 0;
+    return g_scriptStringLockDepth == 0 && g_memoryTreeLockDepth == 0
+        && g_scriptStringTransactionLockDepth == 0;
 }
 
 [[nodiscard]] bool ReportersUnused() noexcept
@@ -3891,6 +3897,150 @@ void MakeRegistryCollisionName(
     return EndTest();
 }
 
+[[nodiscard]] bool TestRegistryCoordinatorProductionStack() noexcept
+{
+    if (!BeginTest())
+        return false;
+
+    constexpr char firstName[] = "registry-stack-first";
+    constexpr char secondName[] = "registry-stack-second";
+    constexpr char databaseName[] = "registry-stack-database";
+    const auto first = script_string::TryAcquireOrdinaryStringOfSize(
+        firstName, sizeof(firstName), 15);
+    const auto second = script_string::TryAcquireOrdinaryStringOfSize(
+        secondName, sizeof(secondName), 15);
+    if (!Check(first.status == script_string::AcquireStatus::Acquired
+                && second.status == script_string::AcquireStatus::Acquired,
+            "registry production-stack setup failed"))
+    {
+        return false;
+    }
+
+    using namespace db::registry_ownership;
+    const auto admission = RegistryOwnershipCoordinatorAdmission::ForTesting();
+    RegistryOwnershipCoordinator coordinator;
+    Sys_LockRead(&db_hashCritSect);
+    const RegistryOwnershipStatus preheldReader =
+        TryBeginStandaloneRegistryOwnershipCoordinator(
+            admission, &coordinator);
+    const bool preheldReaderRejected = Check(
+            preheldReader == RegistryOwnershipStatus::Busy,
+            "registry production-stack admitted a pre-held hash reader")
+        && Check(coordinator.isEmptyCanonical(),
+            "registry production-stack reader rejection retained authority")
+        && Check(Sys_AtomicLoad(&db_hashCritSect.readCount) == 1
+                && Sys_AtomicLoad(&db_hashCritSect.writeCount) == 0,
+            "registry production-stack reader rejection changed hash state")
+        && Check(g_scriptStringTransactionLockDepth == 0,
+            "registry production-stack reader rejection retained transaction");
+    Sys_UnlockRead(&db_hashCritSect);
+    if (!preheldReaderRejected)
+        return false;
+
+    if (!Check(
+            TryBeginStandaloneRegistryOwnershipCoordinator(
+                admission, &coordinator)
+                == RegistryOwnershipStatus::Success,
+            "registry production-stack coordinator admission failed")
+        || !Check(
+            coordinator.phase() == RegistryOwnershipCoordinatorPhase::Ready
+                && coordinator.mode()
+                    == RegistryOwnershipCoordinatorMode::Standalone,
+            "registry production-stack coordinator was not ready")
+        || !Check(
+            Sys_IsWriteLocked(&db_hashCritSect)
+                && Sys_AtomicLoad(&db_hashCritSect.readCount) == 0
+                && Sys_AtomicLoad(&db_hashCritSect.writeCount) == 1,
+            "registry production-stack did not retain the real hash lock")
+        || !Check(g_scriptStringTransactionLockDepth == 1,
+            "registry production-stack did not retain the transaction lock"))
+    {
+        return false;
+    }
+
+    const std::array<std::uint32_t, 2> ids{
+        first.stringId, second.stringId};
+    RegistryOwnershipBulkResult bulk{99, 88};
+    if (!Check(
+            TryRegistryAddDatabaseUsers4(
+                &coordinator,
+                ids.data(),
+                static_cast<std::uint32_t>(ids.size()),
+                &bulk) == RegistryOwnershipStatus::Success,
+            "registry production-stack bulk add failed")
+        || !Check(bulk.addedCount == ids.size()
+                && bulk.unchangedCount == 0,
+            "registry production-stack bulk accounting changed"))
+    {
+        return false;
+    }
+
+    RegistryOwnershipName database{};
+    if (!Check(
+            TryRegistryInternBoundedName(
+                &coordinator,
+                databaseName,
+                sizeof(databaseName),
+                &database) == RegistryOwnershipStatus::Success,
+            "registry production-stack database intern failed")
+        || !Check(database.stringId != 0
+                && database.canonicalName
+                    == GetRefString(database.stringId)->str,
+            "registry production-stack intern did not publish canonical data")
+        || !Check(
+            TryRegistryTransferDatabaseUsers4To8(&coordinator)
+                == RegistryOwnershipStatus::Success,
+            "registry production-stack user transfer failed")
+        || !Check(
+            TryRegistryShutdownDatabaseUser8(&coordinator)
+                == RegistryOwnershipStatus::Success,
+            "registry production-stack user shutdown failed")
+        || !CheckOwnership(
+            first.stringId,
+            1,
+            0,
+            sizeof(firstName),
+            2,
+            "registry production-stack changed first ordinary owner")
+        || !CheckOwnership(
+            second.stringId,
+            1,
+            0,
+            sizeof(secondName),
+            2,
+            "registry production-stack changed second ordinary owner"))
+    {
+        return false;
+    }
+
+    if (!Check(
+            FinishRegistryOwnershipCoordinator(&coordinator)
+                == RegistryOwnershipStatus::Success,
+            "registry production-stack coordinator finish failed")
+        || !Check(coordinator.isEmptyCanonical(),
+            "registry production-stack coordinator did not reset")
+        || !Check(!Sys_IsWriteLocked(&db_hashCritSect)
+                && Sys_AtomicLoad(&db_hashCritSect.readCount) == 0
+                && Sys_AtomicLoad(&db_hashCritSect.writeCount) == 0,
+            "registry production-stack retained the hash lock")
+        || !Check(g_scriptStringTransactionLockDepth == 0,
+            "registry production-stack retained the transaction lock")
+        || !CheckFreed(database.stringId))
+    {
+        return false;
+    }
+
+    return Check(
+            script_string::TryRemoveOrdinaryReference(first.stringId)
+                == script_string::ReleaseStatus::Success,
+            "registry production-stack first cleanup failed")
+        && Check(
+            script_string::TryRemoveOrdinaryReference(second.stringId)
+                == script_string::ReleaseStatus::Success,
+            "registry production-stack second cleanup failed")
+        && EndTest();
+}
+
 [[nodiscard]] bool TestRegistryOwnershipBatchOperations() noexcept
 {
     if (!BeginTest())
@@ -4479,6 +4629,28 @@ void MakeRegistryCollisionName(
 }
 } // namespace
 
+namespace db::zone_script_string_ownership
+{
+bool ZoneScriptStringOwnershipController::trySnapshotRegistryTransaction(
+    const zone_load::ZoneLoadContextKey &,
+    std::uint32_t *) const noexcept
+{
+    return false;
+}
+
+bool ZoneScriptStringOwnershipController::authenticatesRegistryTransaction(
+    const zone_load::ZoneLoadContextKey &,
+    const std::uint32_t) const noexcept
+{
+    return false;
+}
+} // namespace db::zone_script_string_ownership
+
+void KISAK_CDECL Sys_Sleep(const std::uint32_t)
+{
+    std::this_thread::yield();
+}
+
 void KISAK_CDECL Sys_EnterCriticalSection(const int critSect)
 {
     if (critSect == CRITSECT_SCRIPT_STRING)
@@ -4498,6 +4670,12 @@ void KISAK_CDECL Sys_EnterCriticalSection(const int critSect)
         ++g_memoryTreeLockDepth;
         return;
     }
+    if (critSect == CRITSECT_DB_SCRIPT_STRING_TRANSACTION)
+    {
+        g_scriptStringTransactionMutex.lock();
+        ++g_scriptStringTransactionLockDepth;
+        return;
+    }
     std::abort();
 }
 
@@ -4513,6 +4691,13 @@ void KISAK_CDECL Sys_LeaveCriticalSection(const int critSect)
     {
         --g_memoryTreeLockDepth;
         g_memoryTreeMutex.unlock();
+        return;
+    }
+    if (critSect == CRITSECT_DB_SCRIPT_STRING_TRANSACTION
+        && g_scriptStringTransactionLockDepth != 0)
+    {
+        --g_scriptStringTransactionLockDepth;
+        g_scriptStringTransactionMutex.unlock();
         return;
     }
     std::abort();
@@ -4535,14 +4720,16 @@ void QDECL Com_Printf(int, const char *, ...)
 
 void QDECL Com_Error(errorParm_t, const char *, ...)
 {
-    if (g_scriptStringLockDepth != 0 || g_memoryTreeLockDepth != 0)
+    if (g_scriptStringLockDepth != 0 || g_memoryTreeLockDepth != 0
+        || g_scriptStringTransactionLockDepth != 0)
         g_reporterSawOwnedLock = true;
     ++g_comErrorCount;
 }
 
 void MyAssertHandler(const char *, int, int, const char *, ...)
 {
-    if (g_scriptStringLockDepth != 0 || g_memoryTreeLockDepth != 0)
+    if (g_scriptStringLockDepth != 0 || g_memoryTreeLockDepth != 0
+        || g_scriptStringTransactionLockDepth != 0)
         g_reporterSawOwnedLock = true;
     ++g_assertCount;
 }
@@ -4592,6 +4779,7 @@ int main()
         || !TestLegacyMutatorsAuthenticateExactStrings()
         || !TestRegistryBulkCertificateCorruptionFailsClosed()
         || !TestRegistryCollisionBulkAndShutdownRemainLinear()
+        || !TestRegistryCoordinatorProductionStack()
         || !TestRegistryOwnershipBatchOperations()
         || !TestRegistryOwnershipBulkOperations()
         || !TestRegistryShutdownCapacityAtomicity()

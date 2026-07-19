@@ -1704,10 +1704,14 @@ set_tests_properties(script-memorytree-try-contracts PROPERTIES TIMEOUT 30)
 
 # Include the production string-list translation unit directly so this
 # white-box fixture can inspect its file-local persistent state without
-# copying any ownership algorithm. The allocator remains a separately linked
-# production translation unit, matching the engine boundary.
+# copying any ownership algorithm. The allocator, coordinator, transaction,
+# and fast-lock implementations remain separately linked production
+# translation units, matching the engine boundaries.
 add_executable(kisakcod-script-string-ownership-tests
     script_string_ownership_tests.cpp
+    ${SRC_DIR}/database/db_registry_ownership_coordinator.cpp
+    ${SRC_DIR}/database/db_script_string_transaction.cpp
+    ${SRC_DIR}/qcommon/sys_sync.cpp
     ${SRC_DIR}/script/scr_memorytree.cpp
 )
 target_include_directories(
@@ -1717,6 +1721,7 @@ target_compile_features(
 target_compile_definitions(
     kisakcod-script-string-ownership-tests PRIVATE
     KISAK_MP
+    KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1
     KISAK_MEMORY_TREE_VALIDATION_TESTING=1
     KISAK_SCRIPT_STRING_PERF_TESTING=1)
 target_link_libraries(

@@ -2273,7 +2273,11 @@ extract_slice(
     "script-string ownership runtime target")
 foreach(_marker IN ITEMS
     "script_string_ownership_tests.cpp"
+    "\${SRC_DIR}/database/db_registry_ownership_coordinator.cpp"
+    "\${SRC_DIR}/database/db_script_string_transaction.cpp"
+    "\${SRC_DIR}/qcommon/sys_sync.cpp"
     "\${SRC_DIR}/script/scr_memorytree.cpp"
+    "KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1"
     "KISAK_MEMORY_TREE_VALIDATION_TESTING=1"
     "KISAK_SCRIPT_STRING_PERF_TESTING=1"
     "NAME script-string-report-free-ownership-contracts")
@@ -2364,6 +2368,10 @@ foreach(_marker IN ITEMS
     "TestOwnershipBatchUnrelatedDestruction()"
     "TestLegacyReadersAuthenticateExactStrings()"
     "TestLegacyMutatorsAuthenticateExactStrings()"
+    "TestRegistryCoordinatorProductionStack()"
+    "registry production-stack admitted a pre-held hash reader"
+    "registry production-stack did not retain the real hash lock"
+    "registry production-stack did not retain the transaction lock"
     "TestLegacyCharacterFoldingUsesUnsignedInput()"
     "batch operation rebuilt the complete string certificate"
     "inconsistent batch serial mirror authenticated an operation"

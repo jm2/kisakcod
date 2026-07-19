@@ -10,6 +10,8 @@ set(_source_path
     "${SOURCE_ROOT}/src/database/db_registry_ownership_coordinator.cpp")
 set(_fixture_path
     "${SOURCE_ROOT}/tests/db_registry_ownership_coordinator_tests.cpp")
+set(_integration_fixture_path
+    "${SOURCE_ROOT}/tests/script_string_ownership_tests.cpp")
 set(_production_seal_path
     "${SOURCE_ROOT}/tests/db_registry_ownership_coordinator_production_seal_tests.cpp")
 set(_security_path "${SOURCE_ROOT}/tests/security_regression_test.cmake")
@@ -34,6 +36,7 @@ foreach(_path IN ITEMS
     "${_header_path}"
     "${_source_path}"
     "${_fixture_path}"
+    "${_integration_fixture_path}"
     "${_production_seal_path}"
     "${_security_path}"
     "${_manifest_path}"
@@ -55,6 +58,7 @@ endforeach()
 file(READ "${_header_path}" _header)
 file(READ "${_source_path}" _source)
 file(READ "${_fixture_path}" _fixture)
+file(READ "${_integration_fixture_path}" _integration_fixture)
 file(READ "${_production_seal_path}" _production_seal)
 file(READ "${_security_path}" _security)
 file(READ "${_manifest_path}" _manifest)
@@ -743,6 +747,21 @@ require_ordered(
 require_contains(
     _fixture "pre-held hash reader was not rejected"
     "runtime rejection of an existing read-held hash boundary")
+foreach(_marker IN ITEMS
+    "TestRegistryCoordinatorProductionStack()"
+    "registry production-stack admitted a pre-held hash reader"
+    "TryBeginStandaloneRegistryOwnershipCoordinator("
+    "TryRegistryAddDatabaseUsers4("
+    "TryRegistryInternBoundedName("
+    "TryRegistryTransferDatabaseUsers4To8("
+    "TryRegistryShutdownDatabaseUser8("
+    "FinishRegistryOwnershipCoordinator("
+    "Sys_IsWriteLocked(&db_hashCritSect)"
+    "g_scriptStringTransactionLockDepth == 1")
+    require_contains(
+        _integration_fixture "${_marker}"
+        "real production-stack coordinator composition coverage")
+endforeach()
 
 require_not_contains(
     _source "#define KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING"
@@ -1256,8 +1275,9 @@ require_not_contains(
     "production seal cannot enable test access")
 
 # No production target, toolchain, profile, or workflow may inject the testing
-# macro. Its only build-definition occurrence belongs to the dedicated runtime
-# fixture, while the adjacent macro-off production seal remains independent.
+# macro. Its only build-definition occurrences belong to the dedicated unit
+# fixture and the real production-stack composition fixture, while the adjacent
+# macro-off production seal remains independent.
 extract_slice(
     _tests
     "add_executable(kisakcod-db-registry-ownership-coordinator-tests"
@@ -1268,12 +1288,32 @@ require_literal_count(
     _coordinator_runtime_test_registration
     "KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1"
     1
-    "the runtime fixture alone receives coordinator test authority")
+    "the coordinator unit fixture receives test authority once")
+extract_slice(
+    _tests
+    "add_executable(kisakcod-script-string-ownership-tests"
+    "foreach(_profile mp sp)"
+    _coordinator_integration_test_registration
+    "coordinator production-stack integration CMake registration")
+require_literal_count(
+    _coordinator_integration_test_registration
+    "KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING=1"
+    1
+    "the production-stack fixture receives test authority once")
+foreach(_marker IN ITEMS
+    "\${SRC_DIR}/database/db_registry_ownership_coordinator.cpp"
+    "\${SRC_DIR}/database/db_script_string_transaction.cpp"
+    "\${SRC_DIR}/qcommon/sys_sync.cpp"
+    "\${SRC_DIR}/script/scr_memorytree.cpp")
+    require_contains(
+        _coordinator_integration_test_registration "${_marker}"
+        "real coordinator dependency composition")
+endforeach()
 require_literal_count(
     _tests
     "KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING"
-    1
-    "one exact coordinator testing macro in the test build graph")
+    2
+    "only the two reviewed runtime fixtures receive coordinator test authority")
 
 file(GLOB_RECURSE _registry_coordinator_build_definition_paths
     LIST_DIRECTORIES FALSE
