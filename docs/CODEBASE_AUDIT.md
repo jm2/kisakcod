@@ -74,16 +74,30 @@ Exact-head run **29666269398** passed all nine jobs, exact-head Codex review was
 finding was fixed, and the batch squash-merged as `9fb46bea`. Authoritative post-merge run **29670244884** also passed
 all nine jobs at that exact merge commit.
 
-The active audited runtime-storage foundation (`3683634e`/`a3bf1e30`) replaces an implicit future layout with one
+Merged PR #59 replaces an implicit future layout with one
 canonical, checked 32-bit-offset slab plan for the script-string journal/entries, native FX arena, Disk32 adapter
 workspace, and aligned arena backing. Its stable noncopyable handle authenticates the exact plan and pointers outside the
 slab, prevalidates alignment/capacity/address overlap before placement writes, and permits teardown only after the
 journal, adapter, and arena reach exact safe terminal states. A narrow FX bridge and read-only destruction predicates do
 not expose mutation or generation authority. The exact replay passes GCC Release **131/131**, GCC i386 runtime,
 AArch64 GCC strict syntax for all batch translation units and the fixture, and Clang ASan+UBSan runtime with leak
-detection disabled because LSan is unavailable under ptrace; headless/debt, ABI, source, and diff gates pass. This is a
-production-neutral resource foundation: no loader/lifecycle caller consumes it, it does not claim a runtime-table
-generation or PMem scope, and retail bytes are unchanged. A separate checked PMem scope receipt is still pending.
+detection disabled because LSan is unavailable under ptrace; headless/debt, ABI, source, and diff gates pass. Exact head
+`8cec770d` passed all nine jobs in run **29671392540**, and exact-head Codex, Gemini, and independent audits were clean.
+This production-neutral resource foundation squash-merged as `ff61504e`: no loader/lifecycle caller consumes it, it does
+not claim a runtime-table generation or PMem scope, and retail bytes are unchanged. Authoritative post-merge run
+**29671849514** at exact `ff61504e` is still in progress with five jobs green, four running, and no failures; do not
+treat it as successful yet.
+
+The active audited checked-PMem foundation at rebased head `6c05a372` adds report-free `TryBegin`, `TryEnd`, and
+`TryFree` over exact typed allocation entries. It authenticates both complete 32-entry prim topologies before mutation,
+including the low-prim base, monotonic low/high positions, legitimate middle holes, and typed tail collapse. Its
+stable-address authority is noncopyable, nonmovable, nontrivial, self-authenticating, single-use, and carries a phase
+witness. The contract requires external serialization, mutually disjoint control/receipt/managed-backing storage, stable
+name identity, and no legacy bypass, entry replacement, or reinitialization while the scope is owned. The exact replay on
+`ff61504e` passes GCC Release **134/134**; focused GCC/Clang, Clang ASan+UBSan, Clang static analysis, strict native i386
+and AArch64, source, API-seal, security, and diff evidence all pass. It has no production caller and leaves retail
+bytes unchanged. Legacy native64-invalid `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and the `$init` lifecycle remain
+blockers before production enrollment.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.

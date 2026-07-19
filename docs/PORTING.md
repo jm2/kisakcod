@@ -185,7 +185,7 @@ Completed foundation work:
   headless input works; attached native character-console input remains an explicit follow-up. Exact-head run
   **29666269398** passed all nine jobs, exact-head Codex review was clean, the nullable fatal-message finding was fixed,
   and the batch squash-merged as `9fb46bea`. Authoritative post-merge run **29670244884** also passed all nine jobs;
-- the active audited runtime-storage foundation at `3683634e`/`a3bf1e30` canonically plans one 32-bit-offset slab holding
+- merged PR #59 canonically plans one 32-bit-offset slab holding
   the script-string journal/entries, native FX arena, Disk32 adapter workspace, and aligned arena backing. Its stable,
   noncopyable handle stays outside the slab, authenticates itself and the complete plan/pointer layout, and prevalidates
   alignment, address ranges, capacity, and overlap before placement construction. Exact teardown permits only a pristine
@@ -194,9 +194,20 @@ Completed foundation work:
   predicates avoid exporting mutation or generation authority. The exact `9fb46bea` replay passes GCC Release
   **131/131**, GCC i386 runtime, AArch64 GCC strict syntax for every batch translation unit and fixture, and Clang
   ASan+UBSan runtime with leak detection disabled because LSan is unavailable under ptrace; the headless/debt gate, ABI
-  scanner, source invariants, and `git diff --check` pass. The source family is build-enrolled, but no production loader
-  or lifecycle caller consumes this API, no runtime generation or PMem scope is claimed, and retail bytes are unchanged.
-  The checked PMem receipt remains a separate parallel prerequisite;
+  scanner, source invariants, and `git diff --check` pass. Exact head `8cec770d` passed all nine jobs in run
+  **29671392540**, and exact-head Codex, Gemini, and independent audits were clean. The source family is build-enrolled,
+  but no production loader or lifecycle caller consumes this API, no runtime generation or PMem scope is claimed, and
+  retail bytes are unchanged. It squash-merged as `ff61504e`; authoritative post-merge run **29671849514** is in
+  progress with five jobs green, four running, and no failures, so it is not yet recorded as successful;
+- the active audited checked-PMem candidate at rebased head `6c05a372` provides report-free, failure-atomic `TryBegin`,
+  `TryEnd`, and `TryFree` over exact typed allocation entries. It validates both complete 32-entry prim topologies before
+  mutation, including the low-prim base, monotonic low/high positions, legitimate middle holes, and typed tail collapse.
+  Its stable-address receipt is noncopyable, nonmovable, nontrivial, self-authenticating, single-use, and protected by a
+  phase witness. External serialization, mutually disjoint control/receipt/managed-backing storage, stable name lifetime,
+  and no-bypass/reinitialization constraints are explicit. The exact `ff61504e` replay passes GCC Release **134/134**;
+  earlier focused GCC/Clang, Clang ASan+UBSan, Clang static analysis, strict i386/AArch64, source/API/security, and diff
+  evidence all pass. It is build-enrolled but has no production caller. Legacy native64-invalid
+  `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and the `$init` lifecycle remain production blockers;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -534,9 +545,11 @@ Remaining gates, in implementation order:
    mutable runtime adapters as `57e2b1a2`; exact-head and post-merge runs **29659895814** and **29660281653** passed all
    nine jobs, and exact-head Codex review was clean. PR #58 then merged the portable-console boundary as `9fb46bea` after
    exact-head run **29666269398** passed all nine jobs and exact-head Codex review was clean; post-merge run
-   **29670244884** also passed all nine jobs. The audited one-slab runtime-storage planner/binder is now the active
-   publication item, while its checked PMem scope receipt remains a separate parallel prerequisite. Then add exact stream
-   invalidation and pending-copy/admission resources as separate foundations plus
+   **29670244884** also passed all nine jobs. PR #59 merged the audited one-slab runtime-storage planner/binder as
+   `ff61504e`; exact head `8cec770d` passed all nine jobs in run **29671392540** with clean Codex, Gemini, and independent
+   audits. Authoritative post-merge run **29671849514** at exact `ff61504e` is still in progress with five jobs green,
+   four running, and no failures. Publish the separate checked-PMem receipt next, then add exact stream invalidation and
+   pending-copy/admission resources as separate foundations plus
    a borrowed/standalone registry ownership coordinator before atomically
    replacing all seven raw sites. Keep static controller slots and callback metadata outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
@@ -1516,9 +1529,9 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **74% by merged engineering effort**. PR #58 closes the portable-console
-publication gate and advances M3; the active runtime-storage foundation remains unmerged, so neither change moves the
-rounded total yet. Windows x86 is about
+Overall porting progress is approximately **74% by merged engineering effort**. PR #59 merged the production-neutral
+runtime-storage foundation; the active checked-PMem candidate remains unmerged, and the new foundation does not move the
+conservative rounded total yet. Windows x86 is about
 **93%**, shared
 foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
@@ -1813,11 +1826,16 @@ These are exactly seven total sites; transfer/shutdown implement the global 4 ->
 The keyed mutable runtime adapters merged in PR #57 as `57e2b1a2`; exact-head and post-merge runs
 **29659895814** and **29660281653** passed all nine jobs, exact-head Codex review was clean, and no raw legacy caller was
 enrolled.
-The active audited runtime-storage foundation now supplies the exact one-slab planner/binder and terminal teardown for the
-journal/entries, FX arena, Disk32 adapter workspace, and aligned backing. It deliberately does not mint a generation,
-allocate PMem, or enroll a production caller. Publish that batch independently, finish the parallel checked typed PMem
-scope receipt, and only then bind the planned slab to the named allocation scope. Next add exact-key stream/alias
-invalidation, then the generation-tagged pending-copy ledger and prepared admission receipt. After those,
+Merged PR #59 now supplies the exact one-slab planner/binder and terminal teardown for the journal/entries, FX arena,
+Disk32 adapter workspace, and aligned backing. It deliberately does not mint a generation, allocate PMem, or enroll a
+production caller. Exact head `8cec770d` passed all nine jobs in run **29671392540** with clean Codex, Gemini, and
+independent audits before squash merge `ff61504e`; authoritative post-merge run **29671849514** at that exact merge
+commit is still in progress with five jobs green, four running, and no failures.
+Publish the separate checked typed PMem scope receipt next, retaining its exact typed both-prim validation, stable
+single-use phase-witness authority, and external-storage/no-bypass contract. Legacy native64
+`PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and `$init` integration must be corrected before production enrollment.
+Then add exact-key stream/alias invalidation, followed by the generation-tagged pending-copy ledger and prepared admission
+receipt. After those,
 add a registry coordinator that borrows exact active
 transaction authority or owns a standalone transaction, then enroll all seven sites atomically. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
