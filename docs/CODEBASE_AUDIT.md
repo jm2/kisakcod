@@ -121,7 +121,7 @@ resolved and exact-head Codex review was clean. PR #61 squash-merged as
 production loader, runtime-table entry, PMem lifecycle, pending ledger, coordinator, or raw ownership site uses the
 stream API.
 
-The active pending-copy ledger remains production-neutral. Core `08014141`, complete protocol `8d6b04f3`, runtime
+Merged PR #62's pending-copy ledger remains production-neutral. Core `08014141`, complete protocol `8d6b04f3`, runtime
 hardening `8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and final source-seal review head
 `a3c21e9db369d02f29b18f4e1208169517353513` provide fixed storage for 2,048 ordered by-value asset indices across up to
 eight exact-key generations, noncopyable receipts, stable-compacting discard, exact prepared completion, retry-safe
@@ -137,9 +137,13 @@ independent audit reports PASS on exact `a3c21e9d`. The source seals prevent ord
 enrollment, but deliberate assembler-label, dynamic-symbol, or linker-level enrollment remains a documented limitation
 until a portable object/relocation audit or symbol-visibility redesign lands. PR #62 initial exact head `b4719e1a` run
 **29694616671** passed Linux amd64/arm64, macOS arm64, and headless Windows x86; portable Windows amd64/ARM64 failed only
-because MSVC folded two empty test callbacks into one address. The current fixture uses a distinct context identity, its
-focused local replay passes, and replacement exact-head CI plus hosted Codex review remain pending.
-Rounded merged porting progress remains **75%**; the active pending-ledger branch is not counted until it merges.
+because MSVC folded two empty test callbacks into one address. Final exact head `6a79677f` uses a distinct callback
+context identity, preserving production callback identity without relying on foldable function addresses. Exact-head
+run **29694906394** passed all nine jobs; exact-head Codex and Gemini reviews were clean and zero review threads
+remained. PR #62 squash-merged as `888d12e6beedd587602f18cf6763ae04cc067470`. Authoritative post-merge run
+**29695353022** is in progress and remains explicitly pending.
+Rounded merged porting progress is now **76%** after PR #62; the rebased curated upstream-sort candidate remains
+uncounted until it merges.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.
