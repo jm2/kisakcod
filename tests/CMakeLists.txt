@@ -409,6 +409,30 @@ add_test(
     COMMAND kisakcod-db-zone-stream-ownership-production-seal-tests
 )
 
+add_executable(kisakcod-db-zone-pending-copy-ledger-tests
+    db_zone_pending_copy_ledger_tests.cpp
+    ${SRC_DIR}/database/db_zone_pending_copy_ledger.cpp
+    ${SRC_DIR}/database/db_zone_load_context.cpp
+)
+target_include_directories(
+    kisakcod-db-zone-pending-copy-ledger-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-pending-copy-ledger-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-zone-pending-copy-ledger-tests PRIVATE
+    KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING=1)
+kisakcod_test_warnings(kisakcod-db-zone-pending-copy-ledger-tests)
+set_target_properties(
+    kisakcod-db-zone-pending-copy-ledger-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-zone-pending-copy-ledger
+    COMMAND kisakcod-db-zone-pending-copy-ledger-tests
+)
+set_tests_properties(
+    database-zone-pending-copy-ledger PROPERTIES TIMEOUT 30)
+
 add_executable(kisakcod-db-script-string-journal-tests
     db_script_string_journal_tests.cpp
     ${SRC_DIR}/database/db_script_string_journal.cpp
