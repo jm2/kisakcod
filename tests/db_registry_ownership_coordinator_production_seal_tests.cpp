@@ -436,21 +436,33 @@ struct RegistryOwnershipCoordinatorTestAccess final
     };
 
     template <typename Coordinator>
-    static constexpr bool CanCallBeginRegistered = requires
+    static constexpr bool CanCallBeginRegistered = requires(
+        Coordinator *coordinator,
+        const zone_script_string_ownership::
+            ZoneScriptStringOwnershipController *controller,
+        const zone_load::ZoneLoadContextKey &key)
     {
-        &Coordinator::beginRegistered;
+        Coordinator::beginRegistered(
+            coordinator,
+            RegistryOwnershipCoordinatorMode::Standalone,
+            controller,
+            key,
+            std::uint32_t{0});
     };
 
     template <typename Coordinator>
-    static constexpr bool CanCallBeginOperation = requires
+    static constexpr bool CanCallBeginOperation = requires(
+        Coordinator *coordinator)
     {
-        &Coordinator::beginOperation;
+        Coordinator::beginOperation(coordinator);
     };
 
     template <typename Coordinator>
-    static constexpr bool CanCallFinishOperation = requires
+    static constexpr bool CanCallFinishOperation = requires(
+        Coordinator *coordinator)
     {
-        &Coordinator::finishOperation;
+        Coordinator::finishOperation(
+            coordinator, RegistryOwnershipStatus::Success, false);
     };
 
     template <typename Coordinator>
