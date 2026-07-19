@@ -14,8 +14,20 @@ namespace physical_memory
 // The caller must externally serialize every access to both prims of the
 // PhysicalMemory object and to the receipt. The PhysicalMemory object, its
 // backing buffer, the stableName pointer identity, and the receipt's stable
-// address must remain valid from a successful TryBegin through TryFree. The
-// name is an identity token only and is never dereferenced by this API.
+// address must remain valid from a successful TryBegin through every terminal
+// retry. The name is an identity token only and is never dereferenced by this
+// API.
+//
+// A checked scope has exclusive lifecycle ownership of its exact allocation
+// entry until TryFree succeeds. During that interval callers may use the
+// normal allocator to advance the selected prim's position, and may create
+// other checked scopes after this one has ended, but must not call legacy
+// lifecycle/init helpers or directly replace, remove, or reinitialize checked
+// entries. Without adding an incarnation nonce to the legacy PhysicalMemory
+// ABI, bypass/reinitialization could recreate the same structural tuple.
+// A durable generation slot may destroy and reconstruct this single-use
+// receipt only after authenticating that exact generation's Freed terminal
+// state; it must never reset or recycle receipt bytes while ownership is live.
 enum class AllocationScopeStatus : std::uint8_t
 {
     Success,
@@ -37,7 +49,9 @@ class AllocationReceipt final
 {
 public:
     AllocationReceipt() noexcept;
-    ~AllocationReceipt() noexcept = default;
+    // User-provided so the authority token is not trivially byte-copyable.
+    // Destruction deliberately performs no implicit lifecycle work.
+    ~AllocationReceipt() noexcept;
 
     AllocationReceipt(const AllocationReceipt &) = delete;
     AllocationReceipt &operator=(const AllocationReceipt &) = delete;
@@ -65,8 +79,10 @@ private:
 
     [[nodiscard]] bool reservedIsZero() const noexcept;
     [[nodiscard]] bool hasValidPhase() const noexcept;
+    [[nodiscard]] bool hasValidPhaseWitness() const noexcept;
     [[nodiscard]] bool isPristine() const noexcept;
     [[nodiscard]] bool isBound() const noexcept;
+    [[nodiscard]] bool isCanonical() const noexcept;
     [[nodiscard]] bool matchesEntry(
         const PhysicalMemoryPrim &prim) const noexcept;
 
@@ -78,7 +94,8 @@ private:
     std::uint32_t index_;
     std::uint32_t startPos_;
     Phase phase_;
-    std::uint8_t reserved_[3];
+    std::uint8_t phaseWitness_;
+    std::uint8_t reserved_[2];
 };
 
 [[nodiscard]] AllocationScopeStatus TryBegin(

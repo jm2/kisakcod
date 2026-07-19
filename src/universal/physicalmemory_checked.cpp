@@ -10,6 +10,7 @@ namespace
 constexpr std::uint32_t kPhysicalAllocationTypeCount = 2;
 constexpr std::uint32_t kPhysicalAllocationCapacity = 32;
 constexpr std::uint32_t kInvalidReceiptIndex = UINT32_MAX;
+constexpr std::uint8_t kPhaseWitnessMask = 0xA5;
 
 [[nodiscard]] bool ValidatePrimTopology(
     const PhysicalMemoryPrim &prim,
@@ -29,9 +30,14 @@ constexpr std::uint32_t kInvalidReceiptIndex = UINT32_MAX;
     }
 
     if (prim.allocListCount == 0)
-        return prim.allocName == nullptr;
+    {
+        return prim.allocName == nullptr
+            && (allocType != 0 || prim.pos == 0);
+    }
 
     if (prim.allocList[prim.allocListCount - 1].name == nullptr)
+        return false;
+    if (allocType == 0 && prim.allocList[0].pos != 0)
         return false;
     if (prim.allocName != nullptr
         && prim.allocName != prim.allocList[prim.allocListCount - 1].name)
@@ -81,13 +87,25 @@ AllocationReceipt::AllocationReceipt() noexcept
       index_(kInvalidReceiptIndex),
       startPos_(0),
       phase_(Phase::Empty),
+      phaseWitness_(
+          static_cast<std::uint8_t>(Phase::Empty) ^ kPhaseWitnessMask),
       reserved_{}
+{
+}
+
+AllocationReceipt::~AllocationReceipt() noexcept
 {
 }
 
 bool AllocationReceipt::reservedIsZero() const noexcept
 {
-    return reserved_[0] == 0 && reserved_[1] == 0 && reserved_[2] == 0;
+    return reserved_[0] == 0 && reserved_[1] == 0;
+}
+
+bool AllocationReceipt::hasValidPhaseWitness() const noexcept
+{
+    return phaseWitness_
+        == (static_cast<std::uint8_t>(phase_) ^ kPhaseWitnessMask);
 }
 
 bool AllocationReceipt::hasValidPhase() const noexcept
@@ -109,19 +127,29 @@ bool AllocationReceipt::isPristine() const noexcept
         && prim_ == nullptr && name_ == nullptr
         && allocType_ == kPhysicalAllocationTypeCount
         && index_ == kInvalidReceiptIndex && startPos_ == 0
-        && reservedIsZero();
+        && hasValidPhaseWitness() && reservedIsZero();
 }
 
 bool AllocationReceipt::isBound() const noexcept
 {
     if (self_ != this || owner_ == nullptr || prim_ == nullptr
         || name_ == nullptr || allocType_ >= kPhysicalAllocationTypeCount
-        || index_ >= kPhysicalAllocationCapacity || !reservedIsZero())
+        || index_ >= kPhysicalAllocationCapacity
+        || !hasValidPhaseWitness() || !reservedIsZero())
     {
         return false;
     }
 
     return prim_ == &owner_->prim[allocType_];
+}
+
+bool AllocationReceipt::isCanonical() const noexcept
+{
+    if (self_ != this || !hasValidPhase() || !hasValidPhaseWitness())
+        return false;
+    if (phase_ == Phase::Empty)
+        return isPristine();
+    return isBound();
 }
 
 bool AllocationReceipt::matchesEntry(
@@ -143,7 +171,7 @@ AllocationScopeStatus TryBegin(
         return AllocationScopeStatus::InvalidArgument;
     if (allocType >= kPhysicalAllocationTypeCount)
         return AllocationScopeStatus::InvalidAllocationType;
-    if (receipt->self_ != receipt || !receipt->hasValidPhase())
+    if (!receipt->isCanonical())
         return AllocationScopeStatus::ReceiptMismatch;
     if (receipt->phase_ != AllocationReceipt::Phase::Empty)
         return AllocationScopeStatus::ReceiptInUse;
@@ -172,6 +200,8 @@ AllocationScopeStatus TryBegin(
     receipt->index_ = index;
     receipt->startPos_ = entry.pos;
     receipt->phase_ = AllocationReceipt::Phase::Begun;
+    receipt->phaseWitness_ =
+        static_cast<std::uint8_t>(receipt->phase_) ^ kPhaseWitnessMask;
     return AllocationScopeStatus::Success;
 }
 
@@ -179,7 +209,7 @@ AllocationScopeStatus TryEnd(AllocationReceipt *const receipt) noexcept
 {
     if (receipt == nullptr)
         return AllocationScopeStatus::InvalidArgument;
-    if (receipt->self_ != receipt || !receipt->hasValidPhase())
+    if (!receipt->isCanonical())
         return AllocationScopeStatus::ReceiptMismatch;
     if (receipt->phase_ == AllocationReceipt::Phase::Ended
         || receipt->phase_ == AllocationReceipt::Phase::Freed)
@@ -203,6 +233,8 @@ AllocationScopeStatus TryEnd(AllocationReceipt *const receipt) noexcept
 
     prim.allocName = nullptr;
     receipt->phase_ = AllocationReceipt::Phase::Ended;
+    receipt->phaseWitness_ =
+        static_cast<std::uint8_t>(receipt->phase_) ^ kPhaseWitnessMask;
     return AllocationScopeStatus::Success;
 }
 
@@ -210,7 +242,7 @@ AllocationScopeStatus TryFree(AllocationReceipt *const receipt) noexcept
 {
     if (receipt == nullptr)
         return AllocationScopeStatus::InvalidArgument;
-    if (receipt->self_ != receipt || !receipt->hasValidPhase())
+    if (!receipt->isCanonical())
         return AllocationScopeStatus::ReceiptMismatch;
     if (receipt->phase_ == AllocationReceipt::Phase::Freed)
         return AllocationScopeStatus::AlreadyComplete;
@@ -222,10 +254,10 @@ AllocationScopeStatus TryFree(AllocationReceipt *const receipt) noexcept
         return AllocationScopeStatus::MalformedState;
 
     PhysicalMemoryPrim &prim = *receipt->prim_;
-    if (prim.allocName != nullptr)
-        return AllocationScopeStatus::Busy;
     if (!receipt->matchesEntry(prim))
         return AllocationScopeStatus::ReceiptMismatch;
+    if (prim.allocName != nullptr)
+        return AllocationScopeStatus::Busy;
 
     PhysicalMemoryAllocation &entry = prim.allocList[receipt->index_];
     entry.name = nullptr;
@@ -244,6 +276,8 @@ AllocationScopeStatus TryFree(AllocationReceipt *const receipt) noexcept
     }
 
     receipt->phase_ = AllocationReceipt::Phase::Freed;
+    receipt->phaseWitness_ =
+        static_cast<std::uint8_t>(receipt->phase_) ^ kPhaseWitnessMask;
     return AllocationScopeStatus::Success;
 }
 } // namespace physical_memory
