@@ -459,12 +459,23 @@ endforeach()
 # header names form. Phase-3 comments are accepted only as complete token gaps
 # in the qualified/manual-namespace detectors, avoiding a lossy comment pass
 # that could mistake comment-like bytes inside string and character literals.
-file(GLOB_RECURSE _production_sources
-    "${SOURCE_ROOT}/src/*.c"
-    "${SOURCE_ROOT}/src/*.cc"
-    "${SOURCE_ROOT}/src/*.cpp"
-    "${SOURCE_ROOT}/src/*.h"
-    "${SOURCE_ROOT}/src/*.hpp")
+set(_production_source_extensions
+    c cc cpp cxx h hpp inc inl ipp tcc ixx m mm)
+foreach(_required_extension IN ITEMS
+    c cc cpp cxx h hpp inc inl ipp tcc ixx m mm)
+    list(FIND
+        _production_source_extensions "${_required_extension}" _extension_index)
+    if(_extension_index EQUAL -1)
+        message(FATAL_ERROR
+            "Zone-stream production seal dropped *.${_required_extension}")
+    endif()
+endforeach()
+set(_production_source_globs)
+foreach(_extension IN LISTS _production_source_extensions)
+    list(APPEND
+        _production_source_globs "${SOURCE_ROOT}/src/*.${_extension}")
+endforeach()
+file(GLOB_RECURSE _production_sources ${_production_source_globs})
 foreach(_path IN LISTS _production_sources)
     file(READ "${_path}" _candidate_raw)
     normalize_zone_stream_phase2(_candidate_raw _candidate)
@@ -483,6 +494,12 @@ foreach(_path IN LISTS _production_sources)
         if(NOT _public_header_reference EQUAL -1)
             message(FATAL_ERROR
                 "Premature zone-stream public header enrollment in ${_path}")
+        endif()
+        source_has_identifier(
+            _candidate db_zone_stream_ownership _public_header_stem_found)
+        if(_public_header_stem_found)
+            message(FATAL_ERROR
+                "Premature zone-stream public header-stem enrollment in ${_path}")
         endif()
         foreach(_public_api IN ITEMS
             TryBeginZoneStreamGeneration
@@ -505,6 +522,14 @@ foreach(_path IN LISTS _production_sources)
         if(NOT _internal_header_reference EQUAL -1)
             message(FATAL_ERROR
                 "Private stream header escaped to ${_path}")
+        endif()
+        source_has_identifier(
+            _candidate
+            db_zone_stream_ownership_internal
+            _internal_header_stem_found)
+        if(_internal_header_stem_found)
+            message(FATAL_ERROR
+                "Private stream header stem escaped to ${_path}")
         endif()
         foreach(_internal_api IN ITEMS
             AliasRegistryForLegacyStream
@@ -556,6 +581,18 @@ if(_public_header_detected EQUAL -1)
         "Zone-stream seal no longer recognizes public-header bypass")
 endif()
 
+string(CONCAT _public_macro_header_bypass
+    "#define KISAK_STREAM_INCLUDE(name) <database/name.h>\n"
+    "#include KISAK_STREAM_INCLUDE(db_zone_stream_ownership)")
+source_has_identifier(
+    _public_macro_header_bypass
+    db_zone_stream_ownership
+    _public_macro_header_detected)
+if(NOT _public_macro_header_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal misses macro-generated public header")
+endif()
+
 string(CONCAT _internal_header_bypass
     "#include <database/db_zone_stream_ownership_in${_zone_stream_backslash}"
     "${_zone_stream_carriage_return}${_zone_stream_line_feed}ternal.h>")
@@ -566,6 +603,18 @@ string(FIND "${_internal_header_bypass_normalized}"
 if(_internal_header_detected EQUAL -1)
     message(FATAL_ERROR
         "Zone-stream seal no longer recognizes internal-header bypass")
+endif()
+
+string(CONCAT _internal_macro_header_bypass
+    "#define KISAK_STREAM_INCLUDE(name) <database/name.h>\n"
+    "#include KISAK_STREAM_INCLUDE(db_zone_stream_ownership_internal)")
+source_has_identifier(
+    _internal_macro_header_bypass
+    db_zone_stream_ownership_internal
+    _internal_macro_header_detected)
+if(NOT _internal_macro_header_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal misses macro-generated private header")
 endif()
 
 string(CONCAT _qualified_using_bypass

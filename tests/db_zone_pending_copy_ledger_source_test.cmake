@@ -124,6 +124,7 @@ set(_pending_copy_comment_gap "${_pending_copy_comment_atom}*")
 set(_pending_copy_comment_separator "${_pending_copy_comment_atom}+")
 
 set(_enrollment_tokens
+    db_zone_pending_copy_ledger
     zone_pending_copy
     PendingCopyStatus
     PendingCopyAdmissionPhase
@@ -276,6 +277,12 @@ string(CONCAT _phase2_header_bypass
     "${_pending_copy_backslash}${_pending_copy_line_feed}ger.h>")
 require_detector_fixture(_phase2_header_bypass "a phase-2-spliced include")
 
+string(CONCAT _macro_header_bypass
+    "#define KISAK_PENDING_INCLUDE(name) <database/name.h>\n"
+    "#include KISAK_PENDING_INCLUDE(db_zone_pending_copy_ledger)")
+require_detector_fixture(
+    _macro_header_bypass "a macro-generated pending-copy include")
+
 string(CONCAT _qualified_using_bypass
     "using db/**/::/**/zone_pending_copy/**/::/**/"
     "TryBeginPendingCopyAdmission;\n"
@@ -364,12 +371,23 @@ if(_false_positive)
         "Pending-copy enrollment detector lost identifier boundaries")
 endif()
 
-file(GLOB_RECURSE _production_sources
-    "${SOURCE_ROOT}/src/*.c"
-    "${SOURCE_ROOT}/src/*.cc"
-    "${SOURCE_ROOT}/src/*.cpp"
-    "${SOURCE_ROOT}/src/*.h"
-    "${SOURCE_ROOT}/src/*.hpp")
+set(_production_source_extensions
+    c cc cpp cxx h hpp inc inl ipp tcc ixx m mm)
+foreach(_required_extension IN ITEMS
+    c cc cpp cxx h hpp inc inl ipp tcc ixx m mm)
+    list(FIND
+        _production_source_extensions "${_required_extension}" _extension_index)
+    if(_extension_index EQUAL -1)
+        message(FATAL_ERROR
+            "Pending-copy production seal dropped *.${_required_extension}")
+    endif()
+endforeach()
+set(_production_source_globs)
+foreach(_extension IN LISTS _production_source_extensions)
+    list(APPEND
+        _production_source_globs "${SOURCE_ROOT}/src/*.${_extension}")
+endforeach()
+file(GLOB_RECURSE _production_sources ${_production_source_globs})
 foreach(_production_path IN LISTS _production_sources)
     if(_production_path STREQUAL _header_path
         OR _production_path STREQUAL _source_path)
