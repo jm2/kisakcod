@@ -32,7 +32,7 @@ work item changes. Do not create session-specific handoff files.
   resolved as an invalid zero-count-storage suggestion. It squash-merged as `57e2b1a2`; authoritative post-merge run
   **29660281653** passed all nine jobs. PR #58 then merged the portable standard-stream console boundary as `9fb46bea`;
   exact-head run **29666269398** passed all nine jobs and exact-head Codex review was clean. Authoritative post-merge run
-  **29670244884** is still in progress and is not yet claimed as passing evidence.
+  **29670244884** also passed all nine jobs at that exact merge commit.
 - Merged script-string ownership foundation: PR #48 adds a dedicated recursive outer DB transaction
   serializer, a private report-free journal adapter, bounded report-free ordinary/database-user ownership operations,
   and failure-atomic memory-tree allocate/query/free APIs. Runtime IDs remain explicitly limited to
@@ -283,7 +283,7 @@ work item changes. Do not create session-specific handoff files.
   build, and Win32 strict compile plus Wine runtime checks. Native Win32 character-console input remains unsupported in
   the headless profile; redirected disk/pipe input is supported. The exact-head hosted run **29666269398** passed all
   nine jobs, exact-head Codex review was clean, the one real nullable fatal-message review finding was fixed, and the
-  batch squash-merged as `9fb46bea`. Post-merge run **29670244884** is still in progress.
+  batch squash-merged as `9fb46bea`. Authoritative post-merge run **29670244884** also passed all nine jobs.
 - Active audited runtime-storage foundation checkpoint: commits `3683634e` and `a3bf1e30` add one canonical, checked
   32-bit-offset plan for a script-string journal and entries, native FX arena, Disk32 adapter workspace, and aligned arena
   backing in one caller-owned slab. A stable-address, noncopyable, self-authenticating handle lives outside that slab;

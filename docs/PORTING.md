@@ -184,7 +184,7 @@ Completed foundation work:
   default/ignored SIGPIPE, Win32 message pipes, native i386, AArch64 compile, sanitizers, and Wine. Redirected Win32
   headless input works; attached native character-console input remains an explicit follow-up. Exact-head run
   **29666269398** passed all nine jobs, exact-head Codex review was clean, the nullable fatal-message finding was fixed,
-  and the batch squash-merged as `9fb46bea`. Authoritative post-merge run **29670244884** is still in progress;
+  and the batch squash-merged as `9fb46bea`. Authoritative post-merge run **29670244884** also passed all nine jobs;
 - the active audited runtime-storage foundation at `3683634e`/`a3bf1e30` canonically plans one 32-bit-offset slab holding
   the script-string journal/entries, native FX arena, Disk32 adapter workspace, and aligned arena backing. Its stable,
   noncopyable handle stays outside the slab, authenticates itself and the complete plan/pointer layout, and prevalidates
@@ -534,9 +534,9 @@ Remaining gates, in implementation order:
    mutable runtime adapters as `57e2b1a2`; exact-head and post-merge runs **29659895814** and **29660281653** passed all
    nine jobs, and exact-head Codex review was clean. PR #58 then merged the portable-console boundary as `9fb46bea` after
    exact-head run **29666269398** passed all nine jobs and exact-head Codex review was clean; post-merge run
-   **29670244884** is still in progress. The audited one-slab runtime-storage planner/binder is now the active publication
-   item, while its checked PMem scope receipt remains a separate parallel prerequisite. Then add exact stream invalidation
-   and pending-copy/admission resources as separate foundations plus
+   **29670244884** also passed all nine jobs. The audited one-slab runtime-storage planner/binder is now the active
+   publication item, while its checked PMem scope receipt remains a separate parallel prerequisite. Then add exact stream
+   invalidation and pending-copy/admission resources as separate foundations plus
    a borrowed/standalone registry ownership coordinator before atomically
    replacing all seven raw sites. Keep static controller slots and callback metadata outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation

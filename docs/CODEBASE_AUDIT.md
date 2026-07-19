@@ -71,8 +71,8 @@ process-global disposition change, avoids blocking fatal output on Win32 pipe fl
 and drains embedded-NUL/overlong commands across a fixed work budget. Native Win32 character-console input remains
 unsupported in the headless profile; redirected disk/pipe input works and the limitation is tracked in `docs/task.md`.
 Exact-head run **29666269398** passed all nine jobs, exact-head Codex review was clean, the real nullable fatal-message
-finding was fixed, and the batch squash-merged as `9fb46bea`. Authoritative post-merge run **29670244884** is still in
-progress and is not yet recorded as passing evidence.
+finding was fixed, and the batch squash-merged as `9fb46bea`. Authoritative post-merge run **29670244884** also passed
+all nine jobs at that exact merge commit.
 
 The active audited runtime-storage foundation (`3683634e`/`a3bf1e30`) replaces an implicit future layout with one
 canonical, checked 32-bit-offset slab plan for the script-string journal/entries, native FX arena, Disk32 adapter
