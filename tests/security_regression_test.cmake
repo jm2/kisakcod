@@ -2947,6 +2947,38 @@ require_repository_contains(
     "set(_compact_namespace_bypass"
     "zone-stream production-neutrality seal must retain namespace-bypass coverage")
 require_repository_contains(
+    "tests/db_zone_stream_ownership_source_test.cmake"
+    "set(_zone_stream_protected_tokens"
+    "zone-stream production-neutrality seal must reject exact protected tokens")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_source_test.cmake"
+    "set(_macro_namespace_bypass"
+    "zone-stream production-neutrality seal must retain macro namespace coverage")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_source_test.cmake"
+    "_form_feed_namespace_bypass"
+    "zone-stream production-neutrality seal must retain form-feed coverage")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_source_test.cmake"
+    "_vertical_tab_namespace_bypass"
+    "zone-stream production-neutrality seal must retain vertical-tab coverage")
+foreach(_ledger_seal IN ITEMS
+    "tests/db_zone_stream_ownership_source_test.cmake"
+    "tests/db_zone_pending_copy_ledger_source_test.cmake")
+    require_repository_contains(
+        "${_ledger_seal}"
+        "LIST_DIRECTORIES FALSE \"\${SOURCE_ROOT}/src/*\""
+        "ownership production seals must traverse every file below src")
+    require_repository_contains(
+        "${_ledger_seal}"
+        "src/groupvoice/speex/Makefile.am"
+        "ownership production seals must pin extension-independent traversal")
+    require_repository_contains(
+        "${_ledger_seal}"
+        "src/groupvoice/speex/Makefile.in"
+        "ownership production seals must pin generated-input traversal")
+endforeach()
+require_repository_contains(
     "tests/db_zone_stream_ownership_production_seal_tests.cpp"
     "SplicedBindPointer"
     "zone-stream bypass probes must remain compiler-validated")
