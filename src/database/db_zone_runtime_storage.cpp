@@ -319,6 +319,11 @@ ZoneRuntimeStorageStatus TryBindZoneRuntimeStorage(
     {
         return Status::SizeOverflow;
     }
+    if (RangesOverlap(
+            plan, sizeof(*plan), outBinding, sizeof(*outBinding)))
+    {
+        return Status::OverlappingStorage;
+    }
 
     // Snapshot before any placement: a caller may keep its plan in the slab.
     const ZoneRuntimeStoragePlan planSnapshot = *plan;
@@ -337,9 +342,7 @@ ZoneRuntimeStorageStatus TryBindZoneRuntimeStorage(
     if (!LayoutAddressesAreAligned(slab, planSnapshot, fxLayout))
         return Status::MisalignedStorage;
     if (RangesOverlap(
-            slab, slabCapacity, outBinding, sizeof(*outBinding))
-        || RangesOverlap(
-            plan, sizeof(*plan), outBinding, sizeof(*outBinding)))
+            slab, slabCapacity, outBinding, sizeof(*outBinding)))
     {
         return Status::OverlappingStorage;
     }

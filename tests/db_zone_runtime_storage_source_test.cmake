@@ -141,6 +141,11 @@ foreach(_marker IN ITEMS
     require_contains(_source "${_marker}" "failure-atomic placement binding")
 endforeach()
 require_ordered(
+    _source
+    "RangesOverlap( plan, sizeof(*plan), outBinding, sizeof(*outBinding))"
+    "const ZoneRuntimeStoragePlan planSnapshot = *plan;"
+    "plan/output overlap rejects before plan snapshot")
+require_ordered(
     _source "const ZoneRuntimeStoragePlan planSnapshot = *plan;"
     "Journal *const journal = ::new"
     "plan snapshot precedes slab writes")
@@ -264,6 +269,8 @@ foreach(_marker IN ITEMS
     "0xC34C8u"
     "maxBudget + 1u"
     "Status::OverlappingStorage"
+    "reinterpret_cast<const Plan *>(&output)"
+    "+ alignof(Plan)"
     "Plan *const aliased"
     "Status::AlreadyComplete"
     "TryBeginTransaction"

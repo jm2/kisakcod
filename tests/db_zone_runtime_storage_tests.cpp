@@ -271,6 +271,26 @@ bool TestBindFailuresAndAliasing()
     {
         AlignedSlab slab(plan.totalBytes);
         CHECK(slab);
+        Binding output;
+        CHECK(runtime_storage::TryBindZoneRuntimeStorage(
+                  slab.data(),
+                  slab.size(),
+                  reinterpret_cast<const Plan *>(&output),
+                  &output)
+              == Status::OverlappingStorage);
+        CHECK(!output.bound() && !output.destroyed());
+
+        const auto *const partial = reinterpret_cast<const Plan *>(
+            reinterpret_cast<const std::uint8_t *>(&output)
+            + alignof(Plan));
+        CHECK(runtime_storage::TryBindZoneRuntimeStorage(
+                  slab.data(), slab.size(), partial, &output)
+              == Status::OverlappingStorage);
+        CHECK(!output.bound() && !output.destroyed());
+    }
+    {
+        AlignedSlab slab(plan.totalBytes);
+        CHECK(slab);
         slab.Fill(0x31);
         const auto before = slab.Snapshot();
         Binding output;
