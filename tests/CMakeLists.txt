@@ -1931,6 +1931,23 @@ add_test(
     COMMAND kisakcod-upstream-sort-tests
 )
 
+add_executable(kisakcod-upstream-angle-math-tests
+    upstream_angle_math_tests.cpp
+    ${SRC_DIR}/universal/com_angle.cpp
+)
+target_include_directories(
+    kisakcod-upstream-angle-math-tests SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-upstream-angle-math-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-upstream-angle-math-tests)
+set_target_properties(kisakcod-upstream-angle-math-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME upstream-reconciliation-angle-math-contracts
+    COMMAND kisakcod-upstream-angle-math-tests
+)
+
 add_test(
     NAME vehicle-material-time-source-invariants
     COMMAND ${CMAKE_COMMAND}
@@ -2248,6 +2265,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_safe_fixlets_source_test.cmake
+)
+
+add_test(
+    NAME upstream-reconciliation-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_reconciliation_source_test.cmake
 )
 
 add_test(

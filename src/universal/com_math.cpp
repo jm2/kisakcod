@@ -181,20 +181,6 @@ float bytedirs[162][3] =
 };
 
 
-float __cdecl AngleDelta(float a1, float a2)
-{
-    float v4; // [esp+Ch] [ebp-10h]
-    float v5; // [esp+10h] [ebp-Ch]
-    float v6; // [esp+14h] [ebp-8h]
-    float v7; // [esp+18h] [ebp-4h]
-
-    v6 = a1 - a2;
-    v7 = v6 * 0.002777777845039964;
-    v5 = v7 + 0.5;
-    v4 = floor(v5);
-    return ((v7 - v4) * 360.0);
-}
-
 void __cdecl TRACK_com_math()
 {
     track_static_alloc_internal(bytedirs, 1944, "bytedirs", 10);
@@ -1778,14 +1764,6 @@ float AngleNormalize180(float angle)
     if (angle < 0.0f)
         angle += 360.0f;
     return angle - 180.0f;
-}
-
-float AngleSubtract(float a1, float a2)
-{
-    float delta = fmodf(a1 - a2, 360.0f);
-    if (delta < 0.0f)
-        delta += 360.0f;
-    return delta;
 }
 
 float __cdecl RadiusFromBounds(const float *mins, const float *maxs)
