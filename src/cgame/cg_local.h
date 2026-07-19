@@ -7,6 +7,7 @@
 #include <gfx_d3d/r_material.h>
 
 #include <cstdint>
+#include <cstddef>
 
 struct cg_s;
 
@@ -255,9 +256,10 @@ bool __cdecl ClampScreenPosToEdges(
     float *resultNormal,
     float *resultDist);
 float __cdecl GetScaleForDistance(int32_t localClientNum, const float *worldPos);
-int32_t __cdecl GetSortedHudElems(int32_t localClientNum, hudelem_s **elems);
-void __cdecl CopyInUseHudElems(hudelem_s **elems, int32_t *elemCount, hudelem_s *elemSrcArray, int32_t elemSrcArrayCount);
-int32_t __cdecl compare_hudelems(const void *pe0, const void *pe1);
+int32_t __cdecl GetSortedHudElems(
+    int32_t localClientNum,
+    hudelem_s **elems,
+    std::size_t elemCapacity);
 void __cdecl CG_AddDrawSurfsFor3dHudElems(int32_t localClientNum);
 void  AddDrawSurfForHudElemWaypoint(int32_t localClientNum, const hudelem_s *elem);
 float __cdecl HudElemWaypointHeight(int32_t localClientNum, const hudelem_s *elem);

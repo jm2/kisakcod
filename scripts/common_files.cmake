@@ -92,6 +92,7 @@ set(AIM_ASSIST
 )
 
 set(BGAME
+    "${SRC_DIR}/bgame/bg_hudelem.h"
     "${SRC_DIR}/bgame/bg_jump.cpp"
     "${SRC_DIR}/bgame/bg_local.h"
     "${SRC_DIR}/bgame/bg_mantle.cpp"
@@ -120,6 +121,7 @@ set(CGAME
     "${SRC_DIR}/cgame/cg_effects_load_obj.cpp"
     "${SRC_DIR}/cgame/cg_event.cpp"
     "${SRC_DIR}/cgame/cg_hudelem.cpp"
+    "${SRC_DIR}/cgame/cg_hudelem_sort.h"
     "${SRC_DIR}/cgame/cg_info.cpp"
     "${SRC_DIR}/cgame/cg_laser.cpp"
     "${SRC_DIR}/cgame/cg_local.h"

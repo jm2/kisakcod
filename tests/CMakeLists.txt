@@ -1979,6 +1979,27 @@ add_test(
     NAME upstream-reconciliation-command-dispatch-contracts
     COMMAND kisakcod-upstream-command-dispatch-tests
 )
+foreach(_hudelem_variant IN ITEMS MP SP)
+    string(TOLOWER "${_hudelem_variant}" _hudelem_variant_lower)
+    set(_hudelem_sort_target
+        "kisakcod-hudelem-sort-${_hudelem_variant_lower}-tests")
+    add_executable(${_hudelem_sort_target}
+        hudelem_sort_tests.cpp
+    )
+    target_include_directories(
+        ${_hudelem_sort_target} SYSTEM PRIVATE ${SRC_DIR})
+    target_compile_features(${_hudelem_sort_target} PRIVATE cxx_std_20)
+    target_compile_definitions(
+        ${_hudelem_sort_target} PRIVATE "KISAK_${_hudelem_variant}")
+    kisakcod_test_warnings(${_hudelem_sort_target})
+    set_target_properties(${_hudelem_sort_target} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(
+        NAME "hudelem-sort-${_hudelem_variant_lower}-contracts"
+        COMMAND ${_hudelem_sort_target}
+    )
+endforeach()
 
 add_test(
     NAME vehicle-material-time-source-invariants
@@ -2257,6 +2278,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/upstream_sort_source_test.cmake
+)
+
+add_test(
+    NAME hudelem-sort-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/hudelem_sort_source_test.cmake
 )
 
 add_executable(
