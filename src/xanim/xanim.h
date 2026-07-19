@@ -2,6 +2,8 @@
 
 #include <type_traits>
 
+#include <database/db_zone_memory.h>
+
 // LWSS: This file has way too many structs. KISAKTODO: move out later.
 #include "xanim_public.h"
 #include <universal/kisak_abi.h>
@@ -1096,21 +1098,6 @@ struct XZoneInfo // sizeof=0xC
     const char *name;                   // ...
     int allocFlags;                     // ...
     int freeFlags;                      // ...
-};
-
-struct XBlock // sizeof=0x8
-{                                       // ...
-    unsigned __int8 *data;
-    uint32_t size;
-};
-
-struct XZoneMemory // sizeof=0x58
-{                                       // ...
-    XBlock blocks[9];
-    unsigned __int8 *lockedVertexData;
-    unsigned __int8 *lockedIndexData;
-    void *vertexBuffer;
-    void *indexBuffer;
 };
 
 struct XZone // sizeof=0xA8

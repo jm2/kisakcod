@@ -4,6 +4,7 @@
 #include <format>
 
 #include "sys_time.h"
+#include "com_error.h"
 #include "../universal/q_shared.h"
 
 typedef enum
@@ -156,18 +157,6 @@ extern const dvar_t *com_authPort;
 #endif
 
 
-enum errorParm_t : __int32
-{                                       // ...
-    ERR_FATAL = 0x0,
-    ERR_DROP = 0x1,
-    ERR_SERVERDISCONNECT = 0x2,
-    ERR_DISCONNECT = 0x3,
-    ERR_SCRIPT = 0x4,
-    ERR_SCRIPT_DROP = 0x5,
-    ERR_LOCALIZATION = 0x6,
-    ERR_MAPLOADERRORSUMMARY = 0x7,
-};
-
 enum $6ABDC6367E3229B6421BFD1B2626A094 : __int32 // (SP/MP same)
 {
     CON_CHANNEL_DONT_FILTER = 0x0,
@@ -204,7 +193,6 @@ inline bool Con_IsNotifyChannel(int channel)
 }
 
 void QDECL Com_Printf(int channel, const char* fmt, ...);
-void QDECL Com_Error(errorParm_t code, const char* fmt, ...);
 // Platform fatal-error boundary. Unlike Com_Error, this terminates without
 // running longjmp cleanup hooks that can release engine ownership gates.
 [[noreturn]] void Sys_Error(const char* error, ...);

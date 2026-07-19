@@ -4,6 +4,7 @@
 
 #include "db_asset_mode.h"
 #include "db_relocation.h"
+#include "db_stream.h"
 
 #include <zlib/zlib.h>
 
@@ -46,26 +47,11 @@ inline constexpr bool DB_IsXAssetTypeSupportedForBuild(const XAssetType type) no
 #endif
 }
 
-using DBAliasHandle = db::relocation::AliasHandle;
-using DBAliasKind = db::relocation::AliasKind;
-
 enum $D93A52C218787A3ED865FD745137F4B3 : int32_t
 {
     DM_MEMORY_TEMP = 0x0,
     DM_MEMORY_VIRTUAL = 0x1,
     DM_MEMORY_PHYSICAL = 0x2,
-};
-
-struct StreamDelayInfo // sizeof=0x8
-{
-    const void *ptr;
-    int32_t size;
-};
-
-struct StreamPosInfo // sizeof=0x8
-{                                       // ...
-    uint8_t *pos;               // ...
-    uint32_t index;                 // ...
 };
 
 struct AssetList // sizeof=0xC
@@ -288,84 +274,6 @@ void __cdecl DB_AllocXZoneMemory(
     uint32_t allocType);
 uint8_t *__cdecl DB_MemAlloc(uint32_t size, uint32_t type, uint32_t allocType);
 
-
-// db_stream
-void __cdecl DB_InitStreams(XZoneMemory *zoneMem);
-void __cdecl DB_PushStreamPos(uint32_t index);
-void __cdecl DB_SetStreamIndex(uint32_t index);
-void __cdecl DB_PopStreamPos();
-uint8_t *__cdecl DB_GetStreamPos();
-bool __cdecl DB_IsStreamRangeValid(const void *ptr, uint32_t size);
-bool __cdecl DB_IsZoneRangeValid(const void *ptr, uint32_t size);
-uint8_t *__cdecl DB_AllocStreamPos(int32_t alignment);
-void __cdecl DB_IncStreamPos(int32_t size);
-DBAliasHandle __cdecl DB_RegisterPointerSlot(
-    const void *slot,
-    DBAliasKind kind);
-DBAliasHandle __cdecl DB_InsertPointer(DBAliasKind kind);
-void __cdecl DB_SetInsertedPointer(
-    DBAliasHandle handle,
-    DBAliasKind expectedKind,
-    const void *pointer,
-    uint32_t metadata = 0);
-bool __cdecl DB_CompleteObject(
-    DBAliasHandle handle,
-    DBAliasKind expectedKind,
-    const void *pointer,
-    uint32_t metadata,
-    uint32_t materializedBytes);
-db::relocation::Status __cdecl DB_ResolveInsertedPointer(
-    disk32::PointerToken token,
-    DBAliasKind expectedKind,
-    uint32_t expectedMetadata,
-    uintptr_t *pointer);
-db::relocation::Status __cdecl DB_MarkStreamRangeMaterialized(
-    const void *pointer,
-    uint32_t size);
-db::relocation::Status __cdecl DB_ValidateStreamAddress(
-    const void *pointer,
-    uint64_t requiredBytes,
-    size_t alignment,
-    db::relocation::BlockMask allowedBlocks);
-db::relocation::Status __cdecl DB_RegisterStreamCString(
-    const void *pointer,
-    uint32_t byteCount);
-db::relocation::Status __cdecl DB_ValidateStreamCString(
-    const void *pointer,
-    uint32_t *byteCount);
-db::relocation::Status __cdecl DB_ResolveOffsetBytes(
-    disk32::PointerToken token,
-    uint64_t requiredBytes,
-    size_t alignment,
-    db::relocation::BlockMask allowedBlocks,
-    uintptr_t *pointer);
-db::relocation::Status __cdecl DB_ResolveOffsetCString(
-    disk32::PointerToken token,
-    db::relocation::BlockMask allowedBlocks,
-    uintptr_t *pointer,
-    uint32_t *byteCount);
-
-// db_stream_load
-void __cdecl Load_Stream(bool atStreamStart, uint8_t *ptr, int32_t size);
-void __cdecl Load_StreamArray(bool atStreamStart, uint8_t *ptr, int32_t count, uint32_t stride);
-void __cdecl Load_DelayStream();
-void __cdecl DB_ConvertOffsetToAlias(
-    uint32_t *data,
-    DBAliasKind expectedKind,
-    uint32_t expectedMetadata = 0);
-void __cdecl DB_ConvertOffsetToPointer(
-    uint32_t *data,
-    uint64_t requiredBytes,
-    size_t alignment,
-    db::relocation::BlockMask allowedBlocks);
-void __cdecl DB_ConvertOffsetToCString(
-    uint32_t *data,
-    db::relocation::BlockMask allowedBlocks);
-void __cdecl DB_ConvertOffsetToTempString(
-    uint32_t *data,
-    db::relocation::BlockMask allowedBlocks);
-uint32_t __cdecl Load_XStringCustom(char **str);
-void __cdecl Load_TempStringCustom(char **str);
 
 // db_stringtable_load
 void __cdecl Load_ScriptStringCustom(uint16_t *var);
@@ -785,16 +693,6 @@ extern XAssetList *varXAssetList;
 extern struct fileData_s *com_fileDataHashTable[1024];
 
 extern uint32_t volatile g_mainThreadBlocked;
-
-extern uint32_t g_streamDelayIndex;
-extern XBlock *g_streamBlocks;
-extern uint8_t *g_streamPosArray[9];
-extern StreamDelayInfo g_streamDelayArray[4096];
-extern uint32_t g_streamPosIndex;
-extern StreamPosInfo g_streamPosStack[64];
-extern XZoneMemory *g_streamZoneMem;
-extern uint8_t *g_streamPos;
-extern uint32_t g_streamPosStackIndex;
 
 extern XAsset *varXAsset;
 

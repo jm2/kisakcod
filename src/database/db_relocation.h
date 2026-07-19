@@ -216,6 +216,7 @@ enum class Status : std::uint8_t
     UnterminatedString,
     InvalidStringExtent,
     UnregisteredString,
+    GenerationExhausted,
 };
 
 class DirectResolver
@@ -225,7 +226,18 @@ public:
         std::size_t maxIntervals = 1u << 20,
         std::size_t maxStrings = 1u << 20);
 
-    void Reset(const BlockView *blocks, std::size_t blockCount);
+    void Reset(const BlockView *blocks, std::size_t blockCount) noexcept;
+    // Drops every native address and releases all dynamically retained
+    // provenance without advancing any generation authority.  A later Reset
+    // establishes a fresh context independently.
+    void Invalidate() noexcept;
+    [[nodiscard]] bool ContextMatches(
+        const BlockView *blocks,
+        std::size_t blockCount) const noexcept;
+    [[nodiscard]] bool contextValid() const noexcept
+    {
+        return contextValid_;
+    }
 
     Status MarkMaterialized(std::uintptr_t address, std::uint32_t size);
     Status RegisterCString(std::uintptr_t address, std::uint32_t byteCount);
@@ -319,9 +331,27 @@ class AliasRegistry
 {
 public:
     explicit AliasRegistry(
-        std::size_t maxRecords = static_cast<std::size_t>(AliasHandle::kInvalidRecord));
+        std::size_t maxRecords = static_cast<std::size_t>(AliasHandle::kInvalidRecord),
+        std::uint64_t initialGeneration = 0) noexcept;
 
-    void Reset(const BlockView *blocks, std::size_t blockCount);
+    // A successful Reset advances the alias epoch exactly once.  Exhaustion
+    // is permanent: generation zero is never reused, so an old native handle
+    // can never become current again after UINT64_MAX.
+    Status Reset(
+        const BlockView *blocks,
+        std::size_t blockCount) noexcept;
+    // Scrubs every published native address and releases record storage.  It
+    // deliberately does not advance the epoch; the next Reset owns that one
+    // transition.
+    void Invalidate() noexcept;
+    [[nodiscard]] bool CanReset() const noexcept;
+    [[nodiscard]] bool ContextMatches(
+        const BlockView *blocks,
+        std::size_t blockCount) const noexcept;
+    [[nodiscard]] bool contextValid() const noexcept
+    {
+        return contextValid_;
+    }
 
     Status RegisterSlot(
         std::uintptr_t slotAddress,
@@ -338,8 +368,8 @@ public:
         std::uint32_t expectedMetadata,
         std::uintptr_t *resolvedAddress) const;
 
-    std::size_t recordCount() const { return records_.size(); }
-    std::uint64_t generation() const { return generation_; }
+    std::size_t recordCount() const noexcept { return records_.size(); }
+    std::uint64_t generation() const noexcept { return generation_; }
 
 private:
     struct Record

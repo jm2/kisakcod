@@ -19,7 +19,7 @@ the *original* inventory, not a live count of open items.
 
 ---
 
-## Remediation status (July 18, 2026)
+## Remediation status (July 19, 2026)
 
 Fixed in the initial porting implementation:
 
@@ -87,7 +87,7 @@ This production-neutral resource foundation squash-merged as `ff61504e`: no load
 not claim a runtime-table generation or PMem scope, and retail bytes are unchanged. Authoritative post-merge run
 **29671849514** at exact `ff61504e` passed all nine jobs.
 
-The active audited checked-PMem foundation at rebased head `6c05a372` adds report-free `TryBegin`, `TryEnd`, and
+Merged PR #60's checked-PMem foundation at exact final head `0eec9b1e` adds report-free `TryBegin`, `TryEnd`, and
 `TryFree` over exact typed allocation entries. It authenticates both complete 32-entry prim topologies before mutation,
 including the low-prim base, monotonic low/high positions, legitimate middle holes, and typed tail collapse. Its
 stable-address authority is noncopyable, nonmovable, nontrivial, self-authenticating, single-use, and carries a phase
@@ -96,7 +96,34 @@ name identity, and no legacy bypass, entry replacement, or reinitialization whil
 `ff61504e` passes GCC Release **134/134**; focused GCC/Clang, Clang ASan+UBSan, Clang static analysis, strict native i386
 and AArch64, source, API-seal, security, and diff evidence all pass. It has no production caller and leaves retail
 bytes unchanged. Legacy native64-invalid `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and the `$init` lifecycle remain
-blockers before production enrollment.
+blockers before production enrollment. Exact-head run **29673379640** passed all nine jobs; Codex reviewed exact final
+head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before
+squash merge `74916b5b`. Authoritative post-merge run
+**29673608169** passed all nine jobs at that exact merge commit.
+
+The active production-neutral zone-stream ownership stack is at code head `6707837b`.
+`b2737088` adds one
+durable exact-key NeverBound/Bound/Invalidated receipt per generation and one reusable controller over the process-wide
+stream and relocation singletons. Binding validates the typed/aligned `XZoneMemory` identity and its exact nine block
+descriptors, layout parity, cursor, disjoint spans and controls, Loading lifecycle, and idle singleton before publication.
+Invalidation first drops alias/direct provenance and releases retained capacity, then scrubs all nine block views, full
+delay and stack arrays, and every cursor/count/scalar before terminal publication; stale terminal retry cannot clear a
+newer binding, and epoch exhaustion fails closed. `f99982c8` adds runtime/source/security/production-seal and hosted
+selection coverage. Hardening `da868c9e` closes an independently found seal bypass across header enrollment,
+using/unqualified references, manual namespace declarations, and private capabilities, and rejects misaligned zone
+identity before descriptor access. Follow-up `0c5049e7` closes compile-valid preprocessing bypasses through phase-2 line
+splicing and phase-3 comment-separated tokens, with compiler-validated detector probes. The exact `0c5049e7` re-audit
+reports **PASS**. The focused runtime/source/security selection passes **4/4** under GCC and Clang warnings-as-errors and
+Clang ASan+UBSan; the full GCC Release replay passes **137/137**. Native i386 runtime, strict AArch64 compilation,
+source/security/API-seal, ABI, headless/debt, and diff gates also pass. No production loader, runtime-table entry, PMem
+lifecycle, pending ledger, coordinator, or raw ownership site uses the API, and retail bytes remain unchanged.
+PR #61 initial exact head `f1c4b4cf` passed five of nine jobs in run **29674630261**; Windows amd64/ARM64 and Windows
+x86 Debug/Release all failed solely on test-only MSVC C2607 diagnostics for two `is_trivially_copyable` assertions.
+Codex review was clean at that exact head. Review-fix `6707837b` replaces them with standard-layout and
+trivially-destructible contracts and implements all four Gemini findings: volatile observable alias-record scrub before
+capacity release, GNU/Clang `Com_Error` printf-format checking, exact `XZoneMemory`/legacy block-count assertions with
+canonical loops, and source/security pins. Local GCC Release passes **137/137** and the focused
+runtime/source/security selection passes **4/4**; hosted rerun and exact new-head review are pending.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.

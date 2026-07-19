@@ -29,7 +29,9 @@ DirectResolver::DirectResolver(
 {
 }
 
-void DirectResolver::Reset(const BlockView *blocks, std::size_t blockCount)
+void DirectResolver::Reset(
+    const BlockView *blocks,
+    const std::size_t blockCount) noexcept
 {
     contextValid_ = blocks && blockCount == kBlockCount;
     for (std::size_t i = 0; i < kBlockCount; ++i)
@@ -39,6 +41,35 @@ void DirectResolver::Reset(const BlockView *blocks, std::size_t blockCount)
     }
     strings_.clear();
     intervalCount_ = 0;
+}
+
+void DirectResolver::Invalidate() noexcept
+{
+    for (BlockState &block : blocks_)
+    {
+        block.view = {};
+        std::vector<Interval>{}.swap(block.materialized);
+    }
+    std::vector<StringRecord>{}.swap(strings_);
+    intervalCount_ = 0;
+    contextValid_ = false;
+}
+
+bool DirectResolver::ContextMatches(
+    const BlockView *const blocks,
+    const std::size_t blockCount) const noexcept
+{
+    if (!contextValid_ || !blocks || blockCount != kBlockCount)
+        return false;
+    for (std::size_t i = 0; i < kBlockCount; ++i)
+    {
+        if (blocks_[i].view.base != blocks[i].base
+            || blocks_[i].view.size != blocks[i].size)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 Status DirectResolver::MarkMaterialized(std::uintptr_t address, std::uint32_t size)
@@ -462,26 +493,81 @@ Status DirectResolver::ContiguousMaterializedBytes(
     return Status::Ok;
 }
 
-AliasRegistry::AliasRegistry(std::size_t maxRecords)
+AliasRegistry::AliasRegistry(
+    const std::size_t maxRecords,
+    const std::uint64_t initialGeneration) noexcept
     : maxRecords_(std::min(
           maxRecords,
-          static_cast<std::size_t>(AliasHandle::kInvalidRecord)))
+          static_cast<std::size_t>(AliasHandle::kInvalidRecord))),
+      generation_(initialGeneration)
 {
 }
 
-void AliasRegistry::Reset(const BlockView *blocks, std::size_t blockCount)
+Status AliasRegistry::Reset(
+    const BlockView *const blocks,
+    const std::size_t blockCount) noexcept
 {
-    for (BlockView &block : blocks_)
-        block = {};
-
-    contextValid_ = blocks && blockCount == kBlockCount;
-    if (contextValid_)
-        std::copy_n(blocks, kBlockCount, blocks_);
+    if (!blocks || blockCount != kBlockCount)
+    {
+        Invalidate();
+        return Status::InvalidArgument;
+    }
+    if (!CanReset())
+        return Status::GenerationExhausted;
 
     records_.clear();
     ++generation_;
-    if (!generation_)
-        ++generation_;
+    std::copy_n(blocks, kBlockCount, blocks_);
+    contextValid_ = true;
+    return Status::Ok;
+}
+
+void AliasRegistry::Invalidate() noexcept
+{
+    for (Record &record : records_)
+    {
+        // These native addresses and publication records must be overwritten
+        // before their allocation is released. Volatile stores keep an
+        // optimizing compiler from deleting the scrub as dead memory writes.
+        volatile std::uintptr_t *const resolvedAddress =
+            &record.resolvedAddress;
+        volatile std::uint32_t *const metadata = &record.metadata;
+        volatile bool *const published = &record.published;
+        volatile std::uint32_t *const offset = &record.offset;
+        volatile AliasKind *const kind = &record.kind;
+        *resolvedAddress = 0;
+        *metadata = 0;
+        *published = false;
+        *offset = 0;
+        *kind = AliasKind::Invalid;
+    }
+    std::vector<Record>{}.swap(records_);
+    for (BlockView &block : blocks_)
+        block = {};
+    contextValid_ = false;
+}
+
+bool AliasRegistry::CanReset() const noexcept
+{
+    return generation_
+        != (std::numeric_limits<std::uint64_t>::max)();
+}
+
+bool AliasRegistry::ContextMatches(
+    const BlockView *const blocks,
+    const std::size_t blockCount) const noexcept
+{
+    if (!contextValid_ || !blocks || blockCount != kBlockCount)
+        return false;
+    for (std::size_t i = 0; i < kBlockCount; ++i)
+    {
+        if (blocks_[i].base != blocks[i].base
+            || blocks_[i].size != blocks[i].size)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 Status AliasRegistry::FindSlot(std::uintptr_t slotAddress, std::uint32_t *offset) const
@@ -692,6 +778,7 @@ const char *StatusName(Status status)
     case Status::UnterminatedString: return "unterminated string";
     case Status::InvalidStringExtent: return "invalid string extent";
     case Status::UnregisteredString: return "unregistered string";
+    case Status::GenerationExhausted: return "generation exhausted";
     }
     return "unknown";
 }

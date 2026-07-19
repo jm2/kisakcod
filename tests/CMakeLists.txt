@@ -368,6 +368,47 @@ add_test(
 set_tests_properties(
     database-zone-load-context-lifecycle PROPERTIES TIMEOUT 20)
 
+add_executable(kisakcod-db-zone-stream-ownership-tests
+    db_zone_stream_ownership_tests.cpp
+    ${SRC_DIR}/database/db_zone_stream_ownership.cpp
+    ${SRC_DIR}/database/db_zone_load_context.cpp
+    ${SRC_DIR}/database/db_relocation.cpp
+    ${SRC_DIR}/database/db_stream.cpp
+)
+target_include_directories(
+    kisakcod-db-zone-stream-ownership-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-stream-ownership-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-db-zone-stream-ownership-tests)
+set_target_properties(
+    kisakcod-db-zone-stream-ownership-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-zone-stream-ownership-runtime-contracts
+    COMMAND kisakcod-db-zone-stream-ownership-tests
+)
+set_tests_properties(
+    database-zone-stream-ownership-runtime-contracts PROPERTIES TIMEOUT 30)
+
+add_executable(kisakcod-db-zone-stream-ownership-production-seal-tests
+    db_zone_stream_ownership_production_seal_tests.cpp
+)
+target_include_directories(
+    kisakcod-db-zone-stream-ownership-production-seal-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-stream-ownership-production-seal-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(
+    kisakcod-db-zone-stream-ownership-production-seal-tests)
+set_target_properties(
+    kisakcod-db-zone-stream-ownership-production-seal-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME database-zone-stream-ownership-production-test-access-sealed
+    COMMAND kisakcod-db-zone-stream-ownership-production-seal-tests
+)
+
 add_executable(kisakcod-db-script-string-journal-tests
     db_script_string_journal_tests.cpp
     ${SRC_DIR}/database/db_script_string_journal.cpp
@@ -1962,6 +2003,14 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_load_context_source_test.cmake
+)
+
+add_test(
+    NAME database-zone-stream-ownership-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P
+        ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_stream_ownership_source_test.cmake
 )
 
 add_test(
