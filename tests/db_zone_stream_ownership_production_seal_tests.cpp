@@ -1,6 +1,20 @@
-#include <database/db_zone_stream_ownership.h>
+#include <database/db_zone_stream_owner\
+ship.h>
 
 #include <type_traits>
+
+using db/**/::/**/zone_stream_ownership/**/::/**/TryBindZoneStreams;
+using SplicedBindPointer = decltype(&TryBindZoneStr\
+eams);
+using CommentQualifiedBindPointer = decltype(
+    &db// phase-3 line-comment separator
+    ::/**/zone_stream_ownership/**/::/**/TryBindZoneStreams);
+static_assert(std::is_same_v<SplicedBindPointer, CommentQualifiedBindPointer>);
+
+namespace/**/db { namespace/**/zone_stream_ownership
+{
+struct CommentNamespaceProbe;
+}} // namespace db::zone_stream_ownership
 
 namespace db::zone_stream_ownership
 {

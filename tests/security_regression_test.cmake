@@ -2920,16 +2920,44 @@ require_source_contains(
     "zone identity alignment must be checked before descriptor access")
 require_repository_contains(
     "tests/db_zone_stream_ownership_source_test.cmake"
-    "set(_qualified_using_bypass"
+    "string(CONCAT _qualified_using_bypass"
     "zone-stream production-neutrality seal must retain using-bypass coverage")
 require_repository_contains(
     "tests/db_zone_stream_ownership_source_test.cmake"
-    "set(_unqualified_pointer_bypass"
+    "function(normalize_zone_stream_phase2"
+    "zone-stream production-neutrality seal must normalize line splices")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_source_test.cmake"
+    "set(_zone_stream_comment_gap"
+    "zone-stream production-neutrality seal must recognize comment token gaps")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_source_test.cmake"
+    "string(CONCAT _public_header_bypass"
+    "zone-stream production-neutrality seal must retain header-splice coverage")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_source_test.cmake"
+    "string(CONCAT _unqualified_pointer_bypass"
     "zone-stream production-neutrality seal must retain pointer-bypass coverage")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_source_test.cmake"
+    "string(CONCAT _private_pointer_bypass"
+    "zone-stream production-neutrality seal must retain private-pointer coverage")
 require_repository_contains(
     "tests/db_zone_stream_ownership_source_test.cmake"
     "set(_compact_namespace_bypass"
     "zone-stream production-neutrality seal must retain namespace-bypass coverage")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_production_seal_tests.cpp"
+    "SplicedBindPointer"
+    "zone-stream bypass probes must remain compiler-validated")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_production_seal_tests.cpp"
+    "CommentQualifiedBindPointer"
+    "comment-separated qualified access must remain compiler-validated")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_production_seal_tests.cpp"
+    "CommentNamespaceProbe"
+    "comment-separated namespace declarations must remain compiler-validated")
 require_source_contains(
     "database/db_zone_stream_ownership.cpp"
     "for (StreamDelayInfo &delay : g_streamDelayArray)"

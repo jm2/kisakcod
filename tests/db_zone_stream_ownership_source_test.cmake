@@ -84,6 +84,29 @@ function(require_not_contains SOURCE_VAR NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+string(ASCII 92 _zone_stream_backslash)
+string(ASCII 13 _zone_stream_carriage_return)
+string(ASCII 10 _zone_stream_line_feed)
+set(_zone_stream_block_comment "/\\*([^*]|\\*+[^*/])*\\*+/")
+set(_zone_stream_comment_atom
+    "([ \t\r\n]|${_zone_stream_block_comment}|//[^\r\n]*)")
+set(_zone_stream_comment_gap "${_zone_stream_comment_atom}*")
+set(_zone_stream_comment_separator "${_zone_stream_comment_atom}+")
+
+function(normalize_zone_stream_phase2 SOURCE_VAR OUT_VAR)
+    set(_spliced "${${SOURCE_VAR}}")
+    string(REPLACE
+        "${_zone_stream_backslash}${_zone_stream_carriage_return}${_zone_stream_line_feed}"
+        "" _spliced "${_spliced}")
+    string(REPLACE
+        "${_zone_stream_backslash}${_zone_stream_line_feed}"
+        "" _spliced "${_spliced}")
+    string(REPLACE
+        "${_zone_stream_backslash}${_zone_stream_carriage_return}"
+        "" _spliced "${_spliced}")
+    set(${OUT_VAR} "${_spliced}" PARENT_SCOPE)
+endfunction()
+
 function(source_has_identifier SOURCE_VAR IDENTIFIER OUT_VAR)
     string(REGEX MATCH
         "(^|[^A-Za-z0-9_])${IDENTIFIER}([^A-Za-z0-9_]|$)"
@@ -97,7 +120,7 @@ endfunction()
 
 function(source_has_qualified_ownership SOURCE_VAR OUT_VAR)
     string(REGEX MATCH
-        "(^|[^A-Za-z0-9_])((db[ \t\r\n]*::[ \t\r\n]*)?zone_stream_ownership)[ \t\r\n]*::"
+        "(^|[^A-Za-z0-9_])((db${_zone_stream_comment_gap}::${_zone_stream_comment_gap})?zone_stream_ownership)${_zone_stream_comment_gap}::"
         _match "${${SOURCE_VAR}}")
     if(_match STREQUAL "")
         set(${OUT_VAR} FALSE PARENT_SCOPE)
@@ -108,7 +131,7 @@ endfunction()
 
 function(source_has_ownership_namespace_declaration SOURCE_VAR OUT_VAR)
     string(REGEX MATCH
-        "namespace[ \t\r\n]+((db[ \t\r\n]*::[ \t\r\n]*)?zone_stream_ownership)([ \t\r\n]*::|[ \t\r\n]*\\{)"
+        "(^|[^A-Za-z0-9_])namespace${_zone_stream_comment_separator}((db${_zone_stream_comment_gap}::${_zone_stream_comment_gap})?zone_stream_ownership)(${_zone_stream_comment_gap}::|${_zone_stream_comment_gap}\\{)"
         _match "${${SOURCE_VAR}}")
     if(_match STREQUAL "")
         set(${OUT_VAR} FALSE PARENT_SCOPE)
@@ -366,10 +389,15 @@ endforeach()
 # ownership implementation. Public lifecycle APIs remain unused in production.
 # Scan identifiers rather than call spellings so whitespace, using declarations,
 # namespace aliases, and function-pointer references cannot bypass the seal.
+# Translation phase 2 joins escaped physical lines before identifiers and
+# header names form. Phase-3 comments are accepted only as complete token gaps
+# in the qualified/manual-namespace detectors, avoiding a lossy comment pass
+# that could mistake comment-like bytes inside string and character literals.
 file(GLOB_RECURSE _production_sources
     "${SOURCE_ROOT}/src/*.cpp" "${SOURCE_ROOT}/src/*.h")
 foreach(_path IN LISTS _production_sources)
-    file(READ "${_path}" _candidate)
+    file(READ "${_path}" _candidate_raw)
+    normalize_zone_stream_phase2(_candidate_raw _candidate)
 
     if(NOT _path STREQUAL _header_path AND NOT _path STREQUAL _source_path)
         string(FIND "${_candidate}" "db_zone_stream_ownership.h"
@@ -435,31 +463,36 @@ foreach(_path IN LISTS _production_sources)
     endif()
 endforeach()
 
-# Keep representative bypasses recognizable to the detectors. These cover the
-# public and private headers, whitespace-obscured qualified using declarations,
-# unqualified function-pointer capture, and both namespace declaration forms.
-set(_public_header_bypass
-    "#define STREAM_OWNER_HEADER <database/db_zone_stream_ownership.h>\n"
-    "#include STREAM_OWNER_HEADER")
-string(FIND "${_public_header_bypass}"
+# Keep compile-valid representative bypasses recognizable to the detectors.
+# These cover phase-2-spliced headers/identifiers and phase-3 block/line comments
+# around using declarations, qualified function pointers, and namespaces.
+string(CONCAT _public_header_bypass
+    "#include <database/db_zone_stream_owner${_zone_stream_backslash}"
+    "${_zone_stream_line_feed}ship.h>")
+normalize_zone_stream_phase2(
+    _public_header_bypass _public_header_bypass_normalized)
+string(FIND "${_public_header_bypass_normalized}"
     "db_zone_stream_ownership.h" _public_header_detected)
 if(_public_header_detected EQUAL -1)
     message(FATAL_ERROR
         "Zone-stream seal no longer recognizes public-header bypass")
 endif()
 
-set(_internal_header_bypass
-    "#include <database/db_zone_stream_ownership_internal.h>")
-string(FIND "${_internal_header_bypass}"
+string(CONCAT _internal_header_bypass
+    "#include <database/db_zone_stream_ownership_in${_zone_stream_backslash}"
+    "${_zone_stream_carriage_return}${_zone_stream_line_feed}ternal.h>")
+normalize_zone_stream_phase2(
+    _internal_header_bypass _internal_header_bypass_normalized)
+string(FIND "${_internal_header_bypass_normalized}"
     "db_zone_stream_ownership_internal.h" _internal_header_detected)
 if(_internal_header_detected EQUAL -1)
     message(FATAL_ERROR
         "Zone-stream seal no longer recognizes internal-header bypass")
 endif()
 
-set(_qualified_using_bypass
-    "using db \n :: zone_stream_ownership \t :: TryBindZoneStreams;\n"
-    "auto bind = & TryBindZoneStreams;")
+string(CONCAT _qualified_using_bypass
+    "using db/**/::/**/zone_stream_ownership/**/::/**/TryBindZoneStreams;\n"
+    "auto bind = &TryBindZoneStreams;")
 source_has_qualified_ownership(_qualified_using_bypass _qualified_detected)
 source_has_identifier(
     _qualified_using_bypass TryBindZoneStreams _qualified_symbol_detected)
@@ -468,17 +501,22 @@ if(NOT _qualified_detected OR NOT _qualified_symbol_detected)
         "Zone-stream seal no longer recognizes qualified using bypass")
 endif()
 
-set(_unqualified_pointer_bypass
-    "auto invalidate = &TryInvalidateZoneStreams;")
+string(CONCAT _unqualified_pointer_bypass
+    "auto invalidate = &TryInvalidateZoneStr${_zone_stream_backslash}"
+    "${_zone_stream_line_feed}eams;")
+normalize_zone_stream_phase2(
+    _unqualified_pointer_bypass _unqualified_pointer_bypass_normalized)
 source_has_identifier(
-    _unqualified_pointer_bypass TryInvalidateZoneStreams _pointer_detected)
+    _unqualified_pointer_bypass_normalized
+    TryInvalidateZoneStreams _pointer_detected)
 if(NOT _pointer_detected)
     message(FATAL_ERROR
         "Zone-stream seal no longer recognizes unqualified pointer bypass")
 endif()
 
-set(_private_pointer_bypass
-    "auto registry = &db \n :: zone_stream_ownership :: detail :: "
+string(CONCAT _private_pointer_bypass
+    "auto registry = &db// phase-3 separator\n"
+    "::/**/zone_stream_ownership/**/::/**/detail/**/::/**/"
     "AliasRegistryForLegacyStream;")
 source_has_qualified_ownership(_private_pointer_bypass _private_qualified)
 source_has_identifier(
@@ -489,11 +527,11 @@ if(NOT _private_qualified OR NOT _private_symbol)
 endif()
 
 set(_compact_namespace_bypass
-    "namespace db \n :: zone_stream_ownership { class Forged; }")
+    "namespace/**/db/**/::/**/zone_stream_ownership { class Forged; }")
 source_has_ownership_namespace_declaration(
     _compact_namespace_bypass _compact_namespace_detected)
 set(_nested_namespace_bypass
-    "namespace db { namespace zone_stream_ownership { class Forged; } }")
+    "namespace/**/db { namespace/**/zone_stream_ownership { class Forged; } }")
 source_has_ownership_namespace_declaration(
     _nested_namespace_bypass _nested_namespace_detected)
 if(NOT _compact_namespace_detected OR NOT _nested_namespace_detected)
@@ -581,6 +619,9 @@ foreach(_marker IN ITEMS
     "CanReplaceReceipt"
     "CanMutatePhase"
     "using ZoneIdentityAccessor ="
-    "decltype(&TryBindZoneStreams), BindFunction")
+    "decltype(&TryBindZoneStreams), BindFunction"
+    "SplicedBindPointer"
+    "CommentQualifiedBindPointer"
+    "CommentNamespaceProbe")
     require_contains(_seal "${_marker}" "production API mutation seal")
 endforeach()
