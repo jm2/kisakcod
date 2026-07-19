@@ -230,21 +230,23 @@ Completed foundation work:
   resolved and exact-head Codex review was clean. PR #61 squash-merged as
   `32e6de4efc86823020d1a2eef2c473e013f893ba`, and authoritative post-merge run **29691725277** passed all nine jobs. No
   loader, runtime-table entry, PMem lifecycle, pending-copy ledger, coordinator, or raw ownership site consumes it;
-- the active production-neutral pending-copy ledger is implemented by core `08014141`, protocol `8d6b04f3`, hardening
-  `8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and current review-fix exact head
-  `8e5aee6e5936d66fef25cea2a00f3700363fd3da`. It provides fixed storage for 2,048 ordered by-value asset indices across
+- the active production-neutral pending-copy ledger is implemented by core `08014141`, protocol `8d6b04f3`, runtime
+  hardening `8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and final source-seal review head
+  `a3c21e9db369d02f29b18f4e1208169517353513`. It provides fixed storage for 2,048 ordered by-value asset indices across
   up to eight exact-key generations, noncopyable admission receipts, stable-compacting discard, exact prepared
   completion, retry-safe by-value drain, terminal reset, and fail-closed callback/poison paths. Hardening requires
   strictly increasing descriptor serials below the next serial, rejects overlapping pristine control spans before
   authentication, keeps terminal reset independent of a newer ledger callback, and returns Busy for authenticated
   retained authority during completion/drain callbacks. Pending and stream source seals cover phase-2 splices,
-  commented/manual declarations, using/function-pointer references, raw hash/digraph/trigraph paste capability,
-  macro-generated header stems, and every admitted C/C++/Objective-C source/include extension; legacy ODE contact macros
-  no longer paste tokens. Local evidence is full native **140/140** at the hardening head plus strict GCC/Clang, Clang
+  commented/manual declarations, using/function-pointer references, uncommon whitespace, raw hash/digraph/trigraph paste
+  capability, macro-generated header stems, and exact protected tokens across every file below `src`; legacy ODE contact
+  macros no longer paste tokens. Local evidence is full native **140/140** at exact `a3c21e9d` plus strict GCC/Clang, Clang
   ASan+UBSan, Clang analysis, i386 runtime, AArch64 strict link, native/AArch64 production seals, and final-head
   source/security/diff gates. The pending API is build-enrolled but has no production caller or
-  loader/runtime-table/PMem/raw-site enrollment. Independent exact-head audit, hosted CI, and hosted review remain
-  pending;
+  loader/runtime-table/PMem/raw-site enrollment. Independent audit reports PASS on exact `a3c21e9d`. Deliberate
+  assembler-label, dynamic-symbol, or linker-level enrollment remains outside the source seal's accidental-regression
+  model and requires portable object/relocation auditing or a visibility redesign before production cutover. Hosted CI
+  and hosted review remain pending;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -1887,13 +1889,13 @@ Clang, and Clang ASan+UBSan, and the full GCC Release replay passes **137/137**.
 `f9dfaaeb43eaaa32cd44c645e3a0e347c9bebdfc` passed all nine jobs in run **29691282387** with all four Gemini threads
 resolved and exact-head Codex clean; squash merge `32e6de4efc86823020d1a2eef2c473e013f893ba` passed authoritative
 post-merge run **29691725277** with all nine jobs. The active pending-copy ledger at core `08014141`, protocol
-`8d6b04f3`, hardening `8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and current review fix
-`8e5aee6e5936d66fef25cea2a00f3700363fd3da` is production-neutral and locally passes **140/140** at the hardening head
-plus strict GCC/Clang, ASan+UBSan, analyzer, i386 runtime, AArch64 strict link, native/AArch64 seals, and final-head
-source/security/diff gates. It has no production caller; independent exact-head audit, hosted CI, and hosted review remain
-pending. Publish it next, then add a registry coordinator that borrows exact active transaction authority or owns a
-standalone transaction. Land the audited upstream 18-commit integration PR at that pause boundary before coordinator
-publication, then enroll all seven sites atomically. Root-string staging
+`8d6b04f3`, runtime hardening `8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and final source-seal review head
+`a3c21e9db369d02f29b18f4e1208169517353513` is production-neutral and locally passes **140/140** at that exact head plus
+strict GCC/Clang, ASan+UBSan, analyzer, i386 runtime, AArch64 strict link, native/AArch64 seals, and final-head
+source/security/diff gates. It has no production caller; independent exact-head audit passes, while hosted CI and hosted
+review remain pending. Publish it next, land the audited upstream 18-commit integration PR at that pause boundary, then
+add a registry coordinator that borrows exact active transaction authority or owns a standalone transaction. Afterward,
+enroll all seven sites atomically. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
 short borrowed batches under transaction -> registry -> string -> memory-tree order. The bounded legacy compatibility
 surface does not replace the typed guarantee. Static context slots and callback metadata

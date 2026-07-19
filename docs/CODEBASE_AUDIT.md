@@ -121,19 +121,21 @@ resolved and exact-head Codex review was clean. PR #61 squash-merged as
 production loader, runtime-table entry, PMem lifecycle, pending ledger, coordinator, or raw ownership site uses the
 stream API.
 
-The active pending-copy ledger remains production-neutral. Core `08014141`, complete protocol `8d6b04f3`, hardening
-`8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and current review-fix exact head
-`8e5aee6e5936d66fef25cea2a00f3700363fd3da` provide fixed storage for 2,048 ordered by-value asset indices across up to
+The active pending-copy ledger remains production-neutral. Core `08014141`, complete protocol `8d6b04f3`, runtime
+hardening `8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and final source-seal review head
+`a3c21e9db369d02f29b18f4e1208169517353513` provide fixed storage for 2,048 ordered by-value asset indices across up to
 eight exact-key generations, noncopyable receipts, stable-compacting discard, exact prepared completion, retry-safe
 drain, terminal reset, and fail-closed poison/callback handling. Descriptor serials must increase below the next serial;
 pristine begin rejects overlapping control spans before authentication; terminal reset does not inspect a newer ledger;
 and authenticated retained authority returns Busy during completion/drain callbacks. The pending and stream source seals
-now recognize phase-2 splices, commented/manual declarations, using/function-pointer references, raw
-hash/digraph/trigraph paste capability, macro-generated header stems, and every admitted C/C++/Objective-C source/include
-extension. The ODE contact macros no longer paste tokens. Local evidence is full native **140/140** at the hardening head,
+now recognize phase-2 splices, commented/manual declarations, using/function-pointer references, uncommon whitespace,
+raw hash/digraph/trigraph paste capability, macro-generated header stems, and exact protected tokens across every file
+below `src`. The ODE contact macros no longer paste tokens. Local evidence is full native **140/140** at exact `a3c21e9d`,
 strict GCC/Clang, Clang ASan+UBSan, Clang analysis, i386 runtime, AArch64 strict link, native/AArch64 production seals, and
 final-head source/security/diff gates. No production caller or loader/runtime-table/PMem/raw-site enrollment exists;
-independent exact-head audit, hosted CI, and hosted review remain pending.
+independent audit reports PASS on exact `a3c21e9d`. The source seals prevent ordinary accidental source/preprocessor
+enrollment, but deliberate assembler-label, dynamic-symbol, or linker-level enrollment remains a documented limitation
+until a portable object/relocation audit or symbol-visibility redesign lands. Hosted CI and hosted review remain pending.
 Rounded merged porting progress remains **75%**; the active pending-ledger branch is not counted until it merges.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
