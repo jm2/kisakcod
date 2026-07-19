@@ -22,6 +22,14 @@ set(_runtime_table_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h")
 set(_file_load_path "${SOURCE_ROOT}/src/database/db_file_load.cpp")
 set(_com_error_path "${SOURCE_ROOT}/src/qcommon/com_error.h")
+set(_integer_suffix_token_paste_path
+    "${SOURCE_ROOT}/src/universal/q_shared.h")
+set(_server_token_literal_path
+    "${SOURCE_ROOT}/src/server_mp/sv_client_mp.cpp")
+set(_ui_component_token_literal_path
+    "${SOURCE_ROOT}/src/ui/ui_component.cpp")
+set(_ui_parser_token_literal_path
+    "${SOURCE_ROOT}/src/ui/ui_shared_obj.cpp")
 set(_fixture_path
     "${SOURCE_ROOT}/tests/db_zone_stream_ownership_tests.cpp")
 set(_seal_path
@@ -36,6 +44,10 @@ foreach(_path IN ITEMS
     "${_stream_path}" "${_stream_header_path}" "${_state_path}"
     "${_memory_path}" "${_runtime_table_path}" "${_file_load_path}"
     "${_com_error_path}"
+    "${_integer_suffix_token_paste_path}"
+    "${_server_token_literal_path}"
+    "${_ui_component_token_literal_path}"
+    "${_ui_parser_token_literal_path}"
     "${_fixture_path}" "${_seal_path}" "${_manifest_path}"
     "${_tests_path}" "${_ci_path}")
     if(NOT EXISTS "${_path}")
@@ -141,6 +153,44 @@ function(source_has_ownership_namespace_declaration SOURCE_VAR OUT_VAR)
     else()
         set(${OUT_VAR} TRUE PARENT_SCOPE)
     endif()
+endfunction()
+
+function(source_has_zone_stream_preprocessor_token_paste SOURCE_VAR OUT_VAR)
+    # After exact path-specific removal of reviewed fixed suffixes and
+    # literals, reject every spelling that can become a paste operator. This
+    # raw policy cannot be confused by comments, raw strings, or phase order.
+    foreach(_operator IN ITEMS "##" "%:%:" "??/" "??=")
+        string(FIND "${${SOURCE_VAR}}" "${_operator}" _operator_position)
+        if(NOT _operator_position EQUAL -1)
+            set(${OUT_VAR} TRUE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    set(${OUT_VAR} FALSE PARENT_SCOPE)
+endfunction()
+
+function(remove_reviewed_zone_stream_token_text PATH SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    if(PATH STREQUAL _integer_suffix_token_paste_path)
+        # q_shared's suffixes are fixed and no protected identifier ends in
+        # LL or i64. Any altered or additional paste remains visible.
+        string(REPLACE "num ## LL" "" _candidate "${_candidate}")
+        string(REPLACE "num ## i64" "" _candidate "${_candidate}")
+    elseif(PATH STREQUAL _server_token_literal_path)
+        string(REPLACE
+            "\"###!#!#!#!#!#!#!#!#!#!#!#!#!#!#!#!###\\n\""
+            "" _candidate "${_candidate}")
+        string(REPLACE
+            "\"########################################\\n\""
+            "" _candidate "${_candidate}")
+    elseif(PATH STREQUAL _ui_component_token_literal_path)
+        string(REPLACE "\"##\"" "" _candidate "${_candidate}")
+    elseif(PATH STREQUAL _ui_parser_token_literal_path)
+        string(REPLACE "\"##\"" "" _candidate "${_candidate}")
+        string(REPLACE
+            "\"define with misplaced ##\"" "" _candidate "${_candidate}")
+    endif()
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
 endfunction()
 
 function(require_ordered SOURCE_VAR FIRST SECOND DESCRIPTION)
@@ -410,10 +460,22 @@ endforeach()
 # in the qualified/manual-namespace detectors, avoiding a lossy comment pass
 # that could mistake comment-like bytes inside string and character literals.
 file(GLOB_RECURSE _production_sources
-    "${SOURCE_ROOT}/src/*.cpp" "${SOURCE_ROOT}/src/*.h")
+    "${SOURCE_ROOT}/src/*.c"
+    "${SOURCE_ROOT}/src/*.cc"
+    "${SOURCE_ROOT}/src/*.cpp"
+    "${SOURCE_ROOT}/src/*.h"
+    "${SOURCE_ROOT}/src/*.hpp")
 foreach(_path IN LISTS _production_sources)
     file(READ "${_path}" _candidate_raw)
     normalize_zone_stream_phase2(_candidate_raw _candidate)
+    remove_reviewed_zone_stream_token_text(
+        "${_path}" _candidate _candidate)
+    source_has_zone_stream_preprocessor_token_paste(
+        _candidate _token_paste_found)
+    if(_token_paste_found)
+        message(FATAL_ERROR
+            "Unreviewed token-paste capability can bypass the zone-stream seal in ${_path}")
+    endif()
 
     if(NOT _path STREQUAL _header_path AND NOT _path STREQUAL _source_path)
         string(FIND "${_candidate}" "db_zone_stream_ownership.h"
@@ -515,6 +577,71 @@ source_has_identifier(
 if(NOT _qualified_detected OR NOT _qualified_symbol_detected)
     message(FATAL_ERROR
         "Zone-stream seal no longer recognizes qualified using bypass")
+endif()
+
+string(CONCAT _token_paste_bypass
+    "#define KISAK_STREAM_CAT_I(left, right) left/**/##/**/right\n"
+    "#define KISAK_STREAM_CAT(left, right) "
+    "KISAK_STREAM_CAT_I(left, right)\n"
+    "auto bind = &KISAK_STREAM_CAT(TryBindZone, Streams);")
+normalize_zone_stream_phase2(_token_paste_bypass _token_paste_normalized)
+source_has_zone_stream_preprocessor_token_paste(
+    _token_paste_normalized _token_paste_detected)
+if(NOT _token_paste_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal no longer recognizes hash token-paste bypass")
+endif()
+
+set(_digraph_token_paste_bypass
+    "%: define KISAK_STREAM_DIGRAPH(left, right) left %:%: right")
+source_has_zone_stream_preprocessor_token_paste(
+    _digraph_token_paste_bypass _digraph_token_paste_detected)
+if(NOT _digraph_token_paste_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal no longer recognizes digraph token-paste bypass")
+endif()
+
+set(_trigraph_token_paste_bypass
+    "??=define KISAK_STREAM_TRIGRAPH(left, right) left ??=??= right")
+source_has_zone_stream_preprocessor_token_paste(
+    _trigraph_token_paste_bypass _trigraph_token_paste_detected)
+if(NOT _trigraph_token_paste_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal no longer recognizes trigraph token-paste bypass")
+endif()
+
+string(CONCAT _trigraph_splice_token_paste_bypass
+    "#define KISAK_STREAM_TRIGRAPH_SPLICE(left, right) left #??/"
+    "${_zone_stream_line_feed}# right")
+source_has_zone_stream_preprocessor_token_paste(
+    _trigraph_splice_token_paste_bypass
+    _trigraph_splice_token_paste_detected)
+if(NOT _trigraph_splice_token_paste_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal misses trigraph-splice token-paste bypass")
+endif()
+
+string(CONCAT _comment_quote_token_paste_bypass
+    "/* \"\n*/ %: define KISAK_STREAM_COMMENT_CAT(left, right) "
+    "left %:%: right /* \" */")
+source_has_zone_stream_preprocessor_token_paste(
+    _comment_quote_token_paste_bypass _comment_quote_paste_detected)
+if(NOT _comment_quote_paste_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal misses comment-quote token-paste bypass")
+endif()
+
+set(_server_payload_macro_bypass
+    "#define KISAK_STREAM_HASH_RUN ########################################")
+remove_reviewed_zone_stream_token_text(
+    "${_server_token_literal_path}"
+    _server_payload_macro_bypass
+    _server_payload_macro_reviewed)
+source_has_zone_stream_preprocessor_token_paste(
+    _server_payload_macro_reviewed _server_payload_macro_detected)
+if(NOT _server_payload_macro_detected)
+    message(FATAL_ERROR
+        "Zone-stream server-literal review masks a macro hash run")
 endif()
 
 string(CONCAT _unqualified_pointer_bypass

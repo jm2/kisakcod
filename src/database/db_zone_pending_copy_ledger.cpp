@@ -377,10 +377,13 @@ bool PendingCopyLedger::isCanonical() const noexcept
     std::uint32_t expectedFirst = 0;
     std::uint32_t preparedCount = 0;
     std::uint32_t admittingCount = 0;
+    std::uint64_t previousSerial = 0;
     for (std::uint32_t index = 0; index < generationCount_; ++index)
     {
         const GenerationDescriptor &descriptor = generations_[index];
         if (!IsUsableKey(descriptor.key) || descriptor.serial == 0
+            || descriptor.serial <= previousSerial
+            || descriptor.serial >= nextGenerationSerial_
             || descriptor.firstRecord != expectedFirst
             || descriptor.recordCount > recordCount_ - expectedFirst
             || descriptor.reserved[0] != 0
@@ -390,6 +393,7 @@ bool PendingCopyLedger::isCanonical() const noexcept
         {
             return false;
         }
+        previousSerial = descriptor.serial;
         for (std::uint32_t prior = 0; prior < index; ++prior)
         {
             if (generations_[prior].key == descriptor.key)
@@ -520,6 +524,17 @@ PendingCopyStatus TryBeginPendingCopyAdmission(
     if (!IsUsableKey(key))
         return PendingCopyStatus::InvalidKey;
 
+    // This address-only shape check must precede object authentication. In
+    // particular, a forged pristine receipt inside ledger/lifecycle storage
+    // must be rejected without reading through that forged object pointer.
+    if (!ObjectsDisjoint(ledger, sizeof(*ledger), receipt, sizeof(*receipt))
+        || !ObjectsDisjoint(
+            ledger, sizeof(*ledger), lifecycle, sizeof(*lifecycle))
+        || !ObjectsDisjoint(
+            receipt, sizeof(*receipt), lifecycle, sizeof(*lifecycle)))
+    {
+        return PendingCopyStatus::InvalidArgument;
+    }
     if (!receipt->isCanonical())
         return PendingCopyStatus::UnsafeFailure;
     if (receipt->phase_ != PendingCopyAdmissionPhase::Pristine)
@@ -547,14 +562,6 @@ PendingCopyStatus TryBeginPendingCopyAdmission(
             : PendingCopyStatus::Success;
     }
 
-    if (!ObjectsDisjoint(ledger, sizeof(*ledger), receipt, sizeof(*receipt))
-        || !ObjectsDisjoint(
-            ledger, sizeof(*ledger), lifecycle, sizeof(*lifecycle))
-        || !ObjectsDisjoint(
-            receipt, sizeof(*receipt), lifecycle, sizeof(*lifecycle)))
-    {
-        return PendingCopyStatus::InvalidArgument;
-    }
     if (!ledger->isCanonical())
         return PendingCopyStatus::UnsafeFailure;
     if (ledger->callbackActive_ != 0)
@@ -1084,11 +1091,23 @@ PendingCopyStatus TryResetPendingCopyAdmissionReceipt(
         ValidateRequestedKey(receipt->key_, key);
     if (keyStatus != PendingCopyStatus::Success)
         return keyStatus;
-    if (!IsTerminalReceiptPhase(receipt->phase_))
-        return PendingCopyStatus::InvalidPhase;
+    if (IsTerminalReceiptPhase(receipt->phase_))
+    {
+        // Terminal receipt authority is ledger-independent. In particular,
+        // a newer generation may currently own callback-active authority in
+        // the same ledger without blocking this exact stale receipt reset.
+        receipt->reset();
+        return PendingCopyStatus::Success;
+    }
+    if (receipt->phase_ == PendingCopyAdmissionPhase::Admitting)
+        return PendingCopyStatus::Busy;
 
-    receipt->reset();
-    return PendingCopyStatus::Success;
+    PendingCopyLedger *const ledger = receipt->ledger_;
+    if (!ledger || !ledger->isCanonical())
+        return PendingCopyStatus::UnsafeFailure;
+    if (ledger->callbackActive_ != 0)
+        return PendingCopyStatus::Busy;
+    return PendingCopyStatus::InvalidPhase;
 }
 
 #ifdef KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING
@@ -1167,6 +1186,15 @@ void PendingCopyLedgerTestAccess::SetDescriptorRecordCount(
         ledger->generations_[index].recordCount = recordCount;
 }
 
+void PendingCopyLedgerTestAccess::SetDescriptorSerial(
+    PendingCopyLedger *const ledger,
+    const std::uint32_t index,
+    const std::uint64_t serial) noexcept
+{
+    if (ledger && index < ledger->generations_.size())
+        ledger->generations_[index].serial = serial;
+}
+
 void PendingCopyLedgerTestAccess::SetDescriptorReserved(
     PendingCopyLedger *const ledger,
     const std::uint32_t index,
@@ -1182,6 +1210,14 @@ void PendingCopyLedgerTestAccess::SetReceiptGenerationIndex(
 {
     if (receipt)
         receipt->generationIndex_ = index;
+}
+
+void PendingCopyLedgerTestAccess::SetReceiptGenerationSerial(
+    PendingCopyAdmissionReceipt *const receipt,
+    const std::uint64_t serial) noexcept
+{
+    if (receipt)
+        receipt->generationSerial_ = serial;
 }
 
 void PendingCopyLedgerTestAccess::SetReceiptPhaseWitness(

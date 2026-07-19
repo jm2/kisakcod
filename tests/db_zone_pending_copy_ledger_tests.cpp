@@ -82,10 +82,14 @@ struct AdmissionReentryState final
     PendingCopyAdmissionReceipt *receipt = nullptr;
     PendingCopyAdmissionReceipt *otherReceipt = nullptr;
     GenerationFixture *otherGeneration = nullptr;
+    PendingCopyAdmissionReceipt *terminalReceipt = nullptr;
+    lifecycle::ZoneLoadContextKey terminalKey{};
     std::uint32_t calls = 0;
     PendingCopyStatus initializeStatus = PendingCopyStatus::UnsafeFailure;
     PendingCopyStatus beginStatus = PendingCopyStatus::UnsafeFailure;
     PendingCopyStatus discardStatus = PendingCopyStatus::UnsafeFailure;
+    PendingCopyStatus resetStatus = PendingCopyStatus::UnsafeFailure;
+    PendingCopyStatus terminalResetStatus = PendingCopyStatus::UnsafeFailure;
 };
 
 void CompleteWithReentry(void *const opaque) noexcept
@@ -104,11 +108,17 @@ void CompleteWithReentry(void *const opaque) noexcept
         state.otherGeneration->key);
     state.discardStatus = pending::TryDiscardPendingCopyAdmission(
         state.receipt, state.receipt->key());
+    state.resetStatus = pending::TryResetPendingCopyAdmissionReceipt(
+        state.receipt, state.receipt->key());
+    state.terminalResetStatus =
+        pending::TryResetPendingCopyAdmissionReceipt(
+            state.terminalReceipt, state.terminalKey);
 }
 
 struct DrainState final
 {
     PendingCopyLedger *ledger = nullptr;
+    PendingCopyAdmissionReceipt *receipt = nullptr;
     std::array<PendingCopyRecord,
         pending::kPendingCopyRecordCapacity> records{};
     std::uint32_t recordCount = 0;
@@ -118,6 +128,7 @@ struct DrainState final
     bool mutateRetryCopy = false;
     PendingCopyStatus reenterDrainStatus = PendingCopyStatus::UnsafeFailure;
     PendingCopyStatus reenterFinishStatus = PendingCopyStatus::UnsafeFailure;
+    PendingCopyStatus resetStatus = PendingCopyStatus::UnsafeFailure;
 };
 
 PendingCopyDrainCallbackStatus ConsumeOrdered(
@@ -131,6 +142,8 @@ PendingCopyDrainCallbackStatus ConsumeOrdered(
         PendingCopyDrainCallback{&state, ConsumeOrdered});
     state.reenterFinishStatus =
         pending::TryFinishPendingCopyDrain(state.ledger);
+    state.resetStatus = pending::TryResetPendingCopyAdmissionReceipt(
+        state.receipt, state.receipt->key());
     if (state.recordCount == state.retryOrdinal && !state.retried)
     {
         state.retried = true;
@@ -220,6 +233,11 @@ void TestInitializationAndArgumentRejection()
         == PendingCopyStatus::InvalidArgument);
     CHECK(pending::TryBeginPendingCopyAdmission(
         &ledger, &receipt, nullptr, generation.key)
+        == PendingCopyStatus::InvalidArgument);
+    auto *const overlappingReceipt =
+        reinterpret_cast<PendingCopyAdmissionReceipt *>(&ledger);
+    CHECK(pending::TryBeginPendingCopyAdmission(
+        &ledger, overlappingReceipt, &generation.slot, generation.key)
         == PendingCopyStatus::InvalidArgument);
     CHECK(pending::TryBeginPendingCopyAdmission(
         &ledger, &receipt, &generation.slot, invalid)
@@ -400,18 +418,73 @@ void TestCorruptionAndSerialExhaustion()
 {
     {
         PendingCopyLedger ledger;
-        PendingCopyAdmissionReceipt receipt;
         GenerationFixture generation(5);
         CHECK(pending::TryInitializePendingCopyLedger(&ledger)
             == PendingCopyStatus::Success);
+
+        PendingCopyLedgerTestAccess::SetRecordCount(
+            &ledger, pending::kPendingCopyRecordCapacity + 1);
+        CHECK(!ledger.canonical());
+        PendingCopyLedgerTestAccess::SetRecordCount(&ledger, 0);
+        CHECK(ledger.canonical());
+
+        PendingCopyLedgerTestAccess::SetGenerationCount(
+            &ledger, pending::kPendingCopyGenerationCapacity + 1);
+        CHECK(!ledger.canonical());
+        PendingCopyLedgerTestAccess::SetGenerationCount(&ledger, 0);
+        CHECK(ledger.canonical());
+
+        PendingCopyLedgerTestAccess::SetDrainCursor(&ledger, 1);
+        CHECK(!ledger.canonical());
+        PendingCopyLedgerTestAccess::SetDrainCursor(&ledger, 0);
+        CHECK(ledger.canonical());
+
+        PendingCopyLedgerTestAccess::SetRecord(
+            &ledger,
+            pending::kPendingCopyRecordCapacity - 1,
+            PendingCopyRecord{generation.key, 1, 0});
+        CHECK(!ledger.canonical());
+        PendingCopyLedgerTestAccess::SetRecord(
+            &ledger,
+            pending::kPendingCopyRecordCapacity - 1,
+            PendingCopyRecord{});
+        CHECK(ledger.canonical());
+
+        PendingCopyLedgerTestAccess::SetLedgerPhaseWitness(&ledger, 0);
+        CHECK(!ledger.canonical());
+    }
+
+    {
+        PendingCopyLedger ledger;
+        PendingCopyAdmissionReceipt receipt;
+        PendingCopyAdmissionReceipt exhaustedReceipt;
+        GenerationFixture generation(5);
+        GenerationFixture exhaustedGeneration(6);
+        CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+            == PendingCopyStatus::Success);
         PendingCopyLedgerTestAccess::SetNextGenerationSerial(
-            &ledger, UINT64_MAX);
+            &ledger, UINT64_MAX - 1);
         CHECK(pending::TryBeginPendingCopyAdmission(
             &ledger, &receipt, &generation.slot, generation.key)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryAppendPendingCopyRecord(
+            &receipt, generation.key, 18)
+            == PendingCopyStatus::Success);
+        PrepareCommitAndFinalize(&receipt, &generation);
+        CHECK(ledger.canonical());
+        CHECK(pending::TryBeginPendingCopyAdmission(
+            &ledger,
+            &exhaustedReceipt,
+            &exhaustedGeneration.slot,
+            exhaustedGeneration.key)
             == PendingCopyStatus::GenerationExhausted);
-        CHECK(receipt.phase() == PendingCopyAdmissionPhase::Pristine);
-        CHECK(ledger.generationCount() == 0);
-        CHECK(ledger.recordCount() == 0);
+        CHECK(exhaustedReceipt.phase()
+            == PendingCopyAdmissionPhase::Pristine);
+        CHECK(ledger.generationCount() == 1);
+        CHECK(ledger.recordCount() == 1);
+        CHECK(pending::TryDiscardPendingCopyAdmission(
+            &receipt, generation.key)
+            == PendingCopyStatus::Success);
     }
 
     {
@@ -427,6 +500,12 @@ void TestCorruptionAndSerialExhaustion()
             &receipt, generation.key, 19)
             == PendingCopyStatus::Success);
 
+        PendingCopyLedgerTestAccess::SetNextGenerationSerial(&ledger, 1);
+        CHECK(pending::TryAppendPendingCopyRecord(
+            &receipt, generation.key, 20)
+            == PendingCopyStatus::UnsafeFailure);
+        PendingCopyLedgerTestAccess::SetNextGenerationSerial(&ledger, 2);
+
         PendingCopyLedgerTestAccess::SetDescriptorFirstRecord(&ledger, 0, 1);
         CHECK(pending::TryPreparePendingCopyAdmission(
             &receipt,
@@ -436,6 +515,30 @@ void TestCorruptionAndSerialExhaustion()
         CHECK(receipt.phase() == PendingCopyAdmissionPhase::Collecting);
         CHECK(receipt.recordCount() == 0);
         PendingCopyLedgerTestAccess::SetDescriptorFirstRecord(&ledger, 0, 0);
+
+        PendingCopyLedgerTestAccess::SetRecord(
+            &ledger, 0, PendingCopyRecord{generation.key, 19, 1});
+        CHECK(pending::TryPreparePendingCopyAdmission(
+            &receipt,
+            generation.key,
+            PendingCopyAdmissionCompletion{nullptr, CompleteNoop})
+            == PendingCopyStatus::UnsafeFailure);
+        PendingCopyLedgerTestAccess::SetRecord(
+            &ledger, 0, PendingCopyRecord{generation.key, 19, 0});
+
+        PendingCopyLedgerTestAccess::SetDescriptorRecordCount(&ledger, 0, 2);
+        CHECK(pending::TryPreparePendingCopyAdmission(
+            &receipt,
+            generation.key,
+            PendingCopyAdmissionCompletion{nullptr, CompleteNoop})
+            == PendingCopyStatus::UnsafeFailure);
+        PendingCopyLedgerTestAccess::SetDescriptorRecordCount(&ledger, 0, 1);
+
+        PendingCopyLedgerTestAccess::SetReceiptGenerationIndex(&receipt, 1);
+        CHECK(pending::TryAppendPendingCopyRecord(
+            &receipt, generation.key, 20)
+            == PendingCopyStatus::UnsafeFailure);
+        PendingCopyLedgerTestAccess::SetReceiptGenerationIndex(&receipt, 0);
 
         PendingCopyLedgerTestAccess::SetReceiptReserved(&receipt, 1);
         CHECK(pending::TryAppendPendingCopyRecord(
@@ -458,6 +561,57 @@ void TestCorruptionAndSerialExhaustion()
             &receipt, generation.key)
             == PendingCopyStatus::Success);
     }
+
+    {
+        PendingCopyLedger ledger;
+        PendingCopyAdmissionReceipt receipt;
+        GenerationFixture generation(6);
+        CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryBeginPendingCopyAdmission(
+            &ledger, &receipt, &generation.slot, generation.key)
+            == PendingCopyStatus::Success);
+        PendingCopyLedgerTestAccess::SetReceiptPhaseWitness(&receipt, 0);
+        CHECK(pending::TryAppendPendingCopyRecord(
+            &receipt, generation.key, 19)
+            == PendingCopyStatus::UnsafeFailure);
+    }
+
+    {
+        PendingCopyLedger ledger;
+        PendingCopyAdmissionReceipt firstReceipt;
+        PendingCopyAdmissionReceipt secondReceipt;
+        GenerationFixture first(5);
+        GenerationFixture second(6);
+        CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryBeginPendingCopyAdmission(
+            &ledger, &firstReceipt, &first.slot, first.key)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryAppendPendingCopyRecord(
+            &firstReceipt, first.key, 21)
+            == PendingCopyStatus::Success);
+        PrepareCommitAndFinalize(&firstReceipt, &first);
+        CHECK(pending::TryBeginPendingCopyAdmission(
+            &ledger, &secondReceipt, &second.slot, second.key)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryAppendPendingCopyRecord(
+            &secondReceipt, second.key, 22)
+            == PendingCopyStatus::Success);
+        PrepareCommitAndFinalize(&secondReceipt, &second);
+        CHECK(ledger.canonical());
+
+        PendingCopyLedgerTestAccess::SetDescriptorSerial(&ledger, 1, 1);
+        PendingCopyLedgerTestAccess::SetReceiptGenerationSerial(
+            &secondReceipt, 1);
+        CHECK(!ledger.canonical());
+        CHECK(pending::TryBeginPendingCopyDrain(&ledger)
+            == PendingCopyStatus::UnsafeFailure);
+        PendingCopyLedgerTestAccess::SetDescriptorSerial(&ledger, 1, 2);
+        PendingCopyLedgerTestAccess::SetReceiptGenerationSerial(
+            &secondReceipt, 2);
+        CHECK(ledger.canonical());
+    }
 }
 
 void TestFinalizationExactlyOnceAndZeroRecordTerminal()
@@ -466,9 +620,20 @@ void TestFinalizationExactlyOnceAndZeroRecordTerminal()
         PendingCopyLedger ledger;
         PendingCopyAdmissionReceipt receipt;
         PendingCopyAdmissionReceipt otherReceipt;
+        PendingCopyAdmissionReceipt terminalReceipt;
+        GenerationFixture terminalGeneration(6);
         GenerationFixture generation(7);
         GenerationFixture otherGeneration(8);
         CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryBeginPendingCopyAdmission(
+            &ledger,
+            &terminalReceipt,
+            &terminalGeneration.slot,
+            terminalGeneration.key)
+            == PendingCopyStatus::Success);
+        CHECK(pending::TryDiscardPendingCopyAdmission(
+            &terminalReceipt, terminalGeneration.key)
             == PendingCopyStatus::Success);
         CHECK(pending::TryBeginPendingCopyAdmission(
             &ledger, &receipt, &generation.slot, generation.key)
@@ -477,8 +642,13 @@ void TestFinalizationExactlyOnceAndZeroRecordTerminal()
             &receipt, generation.key, 81)
             == PendingCopyStatus::Success);
 
-        AdmissionReentryState state{
-            &ledger, &receipt, &otherReceipt, &otherGeneration};
+        AdmissionReentryState state;
+        state.ledger = &ledger;
+        state.receipt = &receipt;
+        state.otherReceipt = &otherReceipt;
+        state.otherGeneration = &otherGeneration;
+        state.terminalReceipt = &terminalReceipt;
+        state.terminalKey = terminalGeneration.key;
         const PendingCopyAdmissionCompletion completion{
             &state, CompleteWithReentry};
         PrepareCommitAndFinalize(&receipt, &generation, completion);
@@ -486,6 +656,10 @@ void TestFinalizationExactlyOnceAndZeroRecordTerminal()
         CHECK(state.initializeStatus == PendingCopyStatus::Busy);
         CHECK(state.beginStatus == PendingCopyStatus::Busy);
         CHECK(state.discardStatus == PendingCopyStatus::Busy);
+        CHECK(state.resetStatus == PendingCopyStatus::Busy);
+        CHECK(state.terminalResetStatus == PendingCopyStatus::Success);
+        CHECK(terminalReceipt.phase()
+            == PendingCopyAdmissionPhase::Pristine);
         CHECK(receipt.phase() == PendingCopyAdmissionPhase::Admitted);
         CHECK(receipt.recordCount() == 1);
         CHECK(ledger.canonical());
@@ -612,6 +786,7 @@ void TestGenerationCapacityOrderedDrainAndRetry()
 
     DrainState state;
     state.ledger = &ledger;
+    state.receipt = &receipts[0];
     state.retryOrdinal = 5;
     state.mutateRetryCopy = true;
     const PendingCopyDrainCallback callback{&state, ConsumeOrdered};
@@ -630,6 +805,7 @@ void TestGenerationCapacityOrderedDrainAndRetry()
     CHECK(state.calls == pending::kPendingCopyRecordCapacity + 1);
     CHECK(state.reenterDrainStatus == PendingCopyStatus::Busy);
     CHECK(state.reenterFinishStatus == PendingCopyStatus::Busy);
+    CHECK(state.resetStatus == PendingCopyStatus::Busy);
     for (std::uint32_t index = 0; index < state.recordCount; ++index)
     {
         CHECK(state.records[index].assetEntryIndex == 100 + index);

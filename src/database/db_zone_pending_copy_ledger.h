@@ -320,6 +320,10 @@ struct PendingCopyLedgerTestAccess final
         PendingCopyLedger *ledger,
         std::uint32_t index,
         std::uint32_t recordCount) noexcept;
+    static void SetDescriptorSerial(
+        PendingCopyLedger *ledger,
+        std::uint32_t index,
+        std::uint64_t serial) noexcept;
     static void SetDescriptorReserved(
         PendingCopyLedger *ledger,
         std::uint32_t index,
@@ -327,6 +331,9 @@ struct PendingCopyLedgerTestAccess final
     static void SetReceiptGenerationIndex(
         PendingCopyAdmissionReceipt *receipt,
         std::uint32_t index) noexcept;
+    static void SetReceiptGenerationSerial(
+        PendingCopyAdmissionReceipt *receipt,
+        std::uint64_t serial) noexcept;
     static void SetReceiptPhaseWitness(
         PendingCopyAdmissionReceipt *receipt,
         std::uint8_t witness) noexcept;
