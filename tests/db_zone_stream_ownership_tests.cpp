@@ -331,7 +331,7 @@ void TestConstructionAndKeyValidation()
     {
         lifecycle::ZoneLoadContextKey key;
         ownership::ZoneStreamGenerationReceipt *receipt;
-        const void *zoneIdentity;
+        const XZoneMemory *zoneIdentity;
         relocation::BlockView blocks[relocation::kBlockCount];
         const ownership::ActiveZoneStreamBinding *self;
         std::uint32_t phaseWord;
@@ -410,6 +410,22 @@ void TestBindValidationAndFailureAtomicity()
             relocation::kBlockCount - 1),
         ownership::ZoneStreamOwnershipStatus::InvalidLayout,
         "pointer/count mismatch rejected");
+    expectUnchanged();
+
+    alignas(XZoneMemory)
+        std::array<std::byte, sizeof(XZoneMemory) + 1> zoneStorage{};
+    const auto *const misalignedZone =
+        reinterpret_cast<const XZoneMemory *>(zoneStorage.data() + 1);
+    ExpectStatus(
+        ownership::TryBindZoneStreams(
+            &active,
+            &receipt,
+            key,
+            misalignedZone,
+            fixture.blocks,
+            relocation::kBlockCount),
+        ownership::ZoneStreamOwnershipStatus::InvalidArgument,
+        "misaligned typed zone identity rejected before dereference");
     expectUnchanged();
 
     relocation::BlockView malformed[relocation::kBlockCount];
@@ -499,7 +515,12 @@ void TestBindValidationAndFailureAtomicity()
 
     ExpectStatus(
         ownership::TryBindZoneStreams(
-            &active, &receipt, key, &active, fixture.blocks,
+            &active,
+            &receipt,
+            key,
+            reinterpret_cast<const XZoneMemory *>(
+                static_cast<const void *>(&active)),
+            fixture.blocks,
             relocation::kBlockCount),
         ownership::ZoneStreamOwnershipStatus::InvalidLayout,
         "zone identity overlapping controller rejected");
@@ -523,6 +544,11 @@ void TestBindValidationAndFailureAtomicity()
         "validated layout binds");
     Expect(active.canonical(), "bound active controller authenticates layout");
     Expect(receipt.canonical(), "bound receipt remains canonical");
+    static_assert(std::is_same_v<
+        decltype(active.zoneIdentity()), const XZoneMemory *>);
+    Expect(
+        active.zoneIdentity() == &fixture.zone,
+        "active controller retains typed zone identity");
     Expect(g_streamZoneMem == &fixture.zone, "zone identity published");
     Expect(g_streamPos == fixture.zone.blocks[0].data, "block zero cursor published");
 

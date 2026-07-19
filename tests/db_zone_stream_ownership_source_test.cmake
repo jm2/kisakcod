@@ -84,6 +84,39 @@ function(require_not_contains SOURCE_VAR NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+function(source_has_identifier SOURCE_VAR IDENTIFIER OUT_VAR)
+    string(REGEX MATCH
+        "(^|[^A-Za-z0-9_])${IDENTIFIER}([^A-Za-z0-9_]|$)"
+        _match "${${SOURCE_VAR}}")
+    if(_match STREQUAL "")
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
+    else()
+        set(${OUT_VAR} TRUE PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(source_has_qualified_ownership SOURCE_VAR OUT_VAR)
+    string(REGEX MATCH
+        "(^|[^A-Za-z0-9_])((db[ \t\r\n]*::[ \t\r\n]*)?zone_stream_ownership)[ \t\r\n]*::"
+        _match "${${SOURCE_VAR}}")
+    if(_match STREQUAL "")
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
+    else()
+        set(${OUT_VAR} TRUE PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(source_has_ownership_namespace_declaration SOURCE_VAR OUT_VAR)
+    string(REGEX MATCH
+        "namespace[ \t\r\n]+((db[ \t\r\n]*::[ \t\r\n]*)?zone_stream_ownership)([ \t\r\n]*::|[ \t\r\n]*\\{)"
+        _match "${${SOURCE_VAR}}")
+    if(_match STREQUAL "")
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
+    else()
+        set(${OUT_VAR} TRUE PARENT_SCOPE)
+    endif()
+endfunction()
+
 function(require_ordered SOURCE_VAR FIRST SECOND DESCRIPTION)
     string(FIND "${${SOURCE_VAR}}" "${FIRST}" _first)
     string(FIND "${${SOURCE_VAR}}" "${SECOND}" _second)
@@ -124,9 +157,14 @@ foreach(_marker IN ITEMS
     "TryBindZoneStreams("
     "TryInvalidateZoneStreams("
     "const zone_load::ZoneLoadContextSlot *lifecycle()"
+    "const XZoneMemory *zoneIdentity() const noexcept;"
+    "const XZoneMemory *zoneIdentity,"
     "bool canonical() const noexcept;")
     require_contains(_header "${_marker}" "sealed stable receipt/controller API")
 endforeach()
+require_not_contains(
+    _header "const void *zoneIdentity"
+    "zone identity must remain a typed XZoneMemory boundary")
 foreach(_var IN ITEMS _header _source)
     foreach(_forbidden IN ITEMS
         "KISAK_DB_ZONE_STREAM_OWNERSHIP_TESTING"
@@ -233,6 +271,7 @@ foreach(_marker IN ITEMS
     "blockCount != relocation::kBlockCount"
     "std::copy_n(blockArgument, relocation::kBlockCount, blocks);"
     "ZoneMatchesLayout(zone, blocks)"
+    "ObjectIsAligned(zoneIdentity, alignof(XZoneMemory))"
     "LifecycleMatchesLoading(receipt->lifecycle_, key)"
     "if (!SingletonIsIdle())"
     "if (!g_aliasRegistry.CanReset())"
@@ -325,38 +364,142 @@ endforeach()
 
 # Internal mutable relocation access is private to the legacy wrapper and the
 # ownership implementation. Public lifecycle APIs remain unused in production.
+# Scan identifiers rather than call spellings so whitespace, using declarations,
+# namespace aliases, and function-pointer references cannot bypass the seal.
 file(GLOB_RECURSE _production_sources
     "${SOURCE_ROOT}/src/*.cpp" "${SOURCE_ROOT}/src/*.h")
 foreach(_path IN LISTS _production_sources)
-    if(_path STREQUAL _header_path OR _path STREQUAL _source_path)
-        continue()
-    endif()
     file(READ "${_path}" _candidate)
-    foreach(_public_api IN ITEMS
-        "TryBeginZoneStreamGeneration("
-        "TryBindZoneStreams("
-        "TryInvalidateZoneStreams(")
-        string(FIND "${_candidate}" "${_public_api}" _found)
-        if(NOT _found EQUAL -1)
+
+    if(NOT _path STREQUAL _header_path AND NOT _path STREQUAL _source_path)
+        string(FIND "${_candidate}" "db_zone_stream_ownership.h"
+            _public_header_reference)
+        if(NOT _public_header_reference EQUAL -1)
             message(FATAL_ERROR
-                "Production zone-stream API caller enrolled early: ${_path}")
+                "Premature zone-stream public header enrollment in ${_path}")
         endif()
-    endforeach()
-    if(NOT _path STREQUAL _stream_path
-        AND NOT _path STREQUAL _internal_path)
-        foreach(_internal_name IN ITEMS
-            "db_zone_stream_ownership_internal.h"
-            "AliasRegistryForLegacyStream("
-            "DirectResolverForLegacyStream("
-            "OwnershipBindingActive(")
-            string(FIND "${_candidate}" "${_internal_name}" _found)
-            if(NOT _found EQUAL -1)
+        foreach(_public_api IN ITEMS
+            TryBeginZoneStreamGeneration
+            TryBindZoneStreams
+            TryInvalidateZoneStreams)
+            source_has_identifier(_candidate "${_public_api}" _found)
+            if(_found)
                 message(FATAL_ERROR
-                    "Private stream capability escaped to ${_path}")
+                    "Premature zone-stream public API reference in ${_path}: "
+                    "${_public_api}")
             endif()
         endforeach()
     endif()
+
+    if(NOT _path STREQUAL _internal_path
+        AND NOT _path STREQUAL _source_path
+        AND NOT _path STREQUAL _stream_path)
+        string(FIND "${_candidate}"
+            "db_zone_stream_ownership_internal.h" _internal_header_reference)
+        if(NOT _internal_header_reference EQUAL -1)
+            message(FATAL_ERROR
+                "Private stream header escaped to ${_path}")
+        endif()
+        foreach(_internal_api IN ITEMS
+            AliasRegistryForLegacyStream
+            DirectResolverForLegacyStream
+            OwnershipBindingActive)
+            source_has_identifier(_candidate "${_internal_api}" _found)
+            if(_found)
+                message(FATAL_ERROR
+                    "Private stream capability escaped to ${_path}: "
+                    "${_internal_api}")
+            endif()
+        endforeach()
+    endif()
+
+    if(NOT _path STREQUAL _header_path
+        AND NOT _path STREQUAL _source_path
+        AND NOT _path STREQUAL _internal_path)
+        source_has_ownership_namespace_declaration(_candidate _found)
+        if(_found)
+            message(FATAL_ERROR
+                "Premature zone-stream namespace declaration in ${_path}")
+        endif()
+    endif()
+
+    if(NOT _path STREQUAL _header_path
+        AND NOT _path STREQUAL _source_path
+        AND NOT _path STREQUAL _internal_path
+        AND NOT _path STREQUAL _stream_path)
+        source_has_qualified_ownership(_candidate _found)
+        if(_found)
+            message(FATAL_ERROR
+                "Premature qualified zone-stream reference in ${_path}")
+        endif()
+    endif()
 endforeach()
+
+# Keep representative bypasses recognizable to the detectors. These cover the
+# public and private headers, whitespace-obscured qualified using declarations,
+# unqualified function-pointer capture, and both namespace declaration forms.
+set(_public_header_bypass
+    "#define STREAM_OWNER_HEADER <database/db_zone_stream_ownership.h>\n"
+    "#include STREAM_OWNER_HEADER")
+string(FIND "${_public_header_bypass}"
+    "db_zone_stream_ownership.h" _public_header_detected)
+if(_public_header_detected EQUAL -1)
+    message(FATAL_ERROR
+        "Zone-stream seal no longer recognizes public-header bypass")
+endif()
+
+set(_internal_header_bypass
+    "#include <database/db_zone_stream_ownership_internal.h>")
+string(FIND "${_internal_header_bypass}"
+    "db_zone_stream_ownership_internal.h" _internal_header_detected)
+if(_internal_header_detected EQUAL -1)
+    message(FATAL_ERROR
+        "Zone-stream seal no longer recognizes internal-header bypass")
+endif()
+
+set(_qualified_using_bypass
+    "using db \n :: zone_stream_ownership \t :: TryBindZoneStreams;\n"
+    "auto bind = & TryBindZoneStreams;")
+source_has_qualified_ownership(_qualified_using_bypass _qualified_detected)
+source_has_identifier(
+    _qualified_using_bypass TryBindZoneStreams _qualified_symbol_detected)
+if(NOT _qualified_detected OR NOT _qualified_symbol_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal no longer recognizes qualified using bypass")
+endif()
+
+set(_unqualified_pointer_bypass
+    "auto invalidate = &TryInvalidateZoneStreams;")
+source_has_identifier(
+    _unqualified_pointer_bypass TryInvalidateZoneStreams _pointer_detected)
+if(NOT _pointer_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal no longer recognizes unqualified pointer bypass")
+endif()
+
+set(_private_pointer_bypass
+    "auto registry = &db \n :: zone_stream_ownership :: detail :: "
+    "AliasRegistryForLegacyStream;")
+source_has_qualified_ownership(_private_pointer_bypass _private_qualified)
+source_has_identifier(
+    _private_pointer_bypass AliasRegistryForLegacyStream _private_symbol)
+if(NOT _private_qualified OR NOT _private_symbol)
+    message(FATAL_ERROR
+        "Zone-stream seal no longer recognizes private pointer bypass")
+endif()
+
+set(_compact_namespace_bypass
+    "namespace db \n :: zone_stream_ownership { class Forged; }")
+source_has_ownership_namespace_declaration(
+    _compact_namespace_bypass _compact_namespace_detected)
+set(_nested_namespace_bypass
+    "namespace db { namespace zone_stream_ownership { class Forged; } }")
+source_has_ownership_namespace_declaration(
+    _nested_namespace_bypass _nested_namespace_detected)
+if(NOT _compact_namespace_detected OR NOT _nested_namespace_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal no longer recognizes manual namespace bypass")
+endif()
 require_contains(
     _stream "#include \"db_zone_stream_ownership_internal.h\""
     "legacy wrapper owns the sole private bridge")
@@ -427,10 +570,17 @@ foreach(_marker IN ITEMS
     require_contains(_fixture "${_marker}" "exhaustive runtime regression")
 endforeach()
 foreach(_marker IN ITEMS
+    "misaligned typed zone identity rejected before dereference"
+    "active controller retains typed zone identity")
+    require_contains(_fixture "${_marker}" "typed zone identity boundary")
+endforeach()
+foreach(_marker IN ITEMS
     "CanMutateReceiptKey"
     "CanMutateReceiptSelf"
     "CanReachBlocks"
     "CanReplaceReceipt"
-    "CanMutatePhase")
+    "CanMutatePhase"
+    "using ZoneIdentityAccessor ="
+    "decltype(&TryBindZoneStreams), BindFunction")
     require_contains(_seal "${_marker}" "production API mutation seal")
 endforeach()

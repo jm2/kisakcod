@@ -16,6 +16,15 @@ function(require_source_not_contains RELATIVE_PATH NEEDLE DESCRIPTION)
     endif()
 endfunction()
 
+function(require_repository_contains RELATIVE_PATH NEEDLE DESCRIPTION)
+    file(READ "${SOURCE_ROOT}/${RELATIVE_PATH}" _source)
+    string(FIND "${_source}" "${NEEDLE}" _position)
+    if(_position EQUAL -1)
+        message(FATAL_ERROR
+            "Missing security invariant (${DESCRIPTION}) in ${RELATIVE_PATH}")
+    endif()
+endfunction()
+
 function(require_source_not_matches RELATIVE_PATH PATTERN DESCRIPTION)
     file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
     string(REGEX MATCH "${PATTERN}" _match "${_source}")
@@ -2897,6 +2906,30 @@ require_source_contains(
                     blocks[prior].base,
                     blockEnds[prior])"
     "stream blocks must be pairwise disjoint")
+require_source_contains(
+    "database/db_zone_stream_ownership.h"
+    "const XZoneMemory *zoneIdentity"
+    "zone identity must use a typed public boundary")
+require_source_not_contains(
+    "database/db_zone_stream_ownership.h"
+    "const void *zoneIdentity"
+    "zone identity must not regress to an opaque dereference boundary")
+require_source_contains(
+    "database/db_zone_stream_ownership.cpp"
+    "ObjectIsAligned(zoneIdentity, alignof(XZoneMemory))"
+    "zone identity alignment must be checked before descriptor access")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_source_test.cmake"
+    "set(_qualified_using_bypass"
+    "zone-stream production-neutrality seal must retain using-bypass coverage")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_source_test.cmake"
+    "set(_unqualified_pointer_bypass"
+    "zone-stream production-neutrality seal must retain pointer-bypass coverage")
+require_repository_contains(
+    "tests/db_zone_stream_ownership_source_test.cmake"
+    "set(_compact_namespace_bypass"
+    "zone-stream production-neutrality seal must retain namespace-bypass coverage")
 require_source_contains(
     "database/db_zone_stream_ownership.cpp"
     "for (StreamDelayInfo &delay : g_streamDelayArray)"

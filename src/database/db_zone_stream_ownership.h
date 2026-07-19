@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 
+struct XZoneMemory;
+
 namespace db::zone_stream_ownership
 {
 // Durable, allocation-independent evidence for one zone-load generation's
@@ -77,7 +79,7 @@ private:
         ActiveZoneStreamBinding *,
         ZoneStreamGenerationReceipt *,
         const zone_load::ZoneLoadContextKey &,
-        const void *,
+        const XZoneMemory *,
         const relocation::BlockView *,
         std::size_t) noexcept;
     friend ZoneStreamOwnershipStatus TryInvalidateZoneStreams(
@@ -114,7 +116,7 @@ public:
     [[nodiscard]] ActiveZoneStreamPhase phase() const noexcept;
     [[nodiscard]] const zone_load::ZoneLoadContextKey &key() const noexcept;
     [[nodiscard]] const ZoneStreamGenerationReceipt *receipt() const noexcept;
-    [[nodiscard]] const void *zoneIdentity() const noexcept;
+    [[nodiscard]] const XZoneMemory *zoneIdentity() const noexcept;
     [[nodiscard]] bool block(
         std::size_t index,
         relocation::BlockView *outBlock) const noexcept;
@@ -125,7 +127,7 @@ private:
         ActiveZoneStreamBinding *,
         ZoneStreamGenerationReceipt *,
         const zone_load::ZoneLoadContextKey &,
-        const void *,
+        const XZoneMemory *,
         const relocation::BlockView *,
         std::size_t) noexcept;
     friend ZoneStreamOwnershipStatus TryInvalidateZoneStreams(
@@ -135,7 +137,7 @@ private:
 
     zone_load::ZoneLoadContextKey key_{};
     ZoneStreamGenerationReceipt *receipt_ = nullptr;
-    const void *zoneIdentity_ = nullptr;
+    const XZoneMemory *zoneIdentity_ = nullptr;
     relocation::BlockView blocks_[relocation::kBlockCount]{};
     const ActiveZoneStreamBinding *self_ = nullptr;
     std::uint32_t phaseWord_ = 0;
@@ -153,13 +155,13 @@ RUNTIME_SIZE(ActiveZoneStreamBinding, 0x68, 0xC0);
 // Acquires the singleton for exactly nine authenticated XZoneMemory blocks.
 // Every check completes before any singleton mutation, and the receipt's
 // NeverBound -> Bound publication is the final write.  zoneIdentity is an
-// opaque stable XZoneMemory identity; blocks must be its exact descriptor
-// snapshot, retained by value so later retries cannot substitute a layout.
+// aligned, stable typed identity; blocks must be its exact descriptor snapshot,
+// retained by value so later retries cannot substitute a layout.
 [[nodiscard]] ZoneStreamOwnershipStatus TryBindZoneStreams(
     ActiveZoneStreamBinding *active,
     ZoneStreamGenerationReceipt *receipt,
     const zone_load::ZoneLoadContextKey &key,
-    const void *zoneIdentity,
+    const XZoneMemory *zoneIdentity,
     const relocation::BlockView *blocks,
     std::size_t blockCount) noexcept;
 

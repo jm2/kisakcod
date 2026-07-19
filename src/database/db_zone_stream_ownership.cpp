@@ -114,6 +114,14 @@ ActiveZoneStreamBinding *g_activeOwner = nullptr;
         && !SpansOverlap(leftBegin, leftEnd, rightBegin, rightEnd);
 }
 
+[[nodiscard]] bool ObjectIsAligned(
+    const void *const object,
+    const std::size_t alignment) noexcept
+{
+    return object && alignment != 0
+        && reinterpret_cast<std::uintptr_t>(object) % alignment == 0;
+}
+
 [[nodiscard]] bool BlockLayoutsEqual(
     const relocation::BlockView *const left,
     const relocation::BlockView *const right) noexcept
@@ -138,7 +146,8 @@ ActiveZoneStreamBinding *g_activeOwner = nullptr;
     const zone_load::ZoneLoadContextSlot *const lifecycle,
     const XZoneMemory *const zone) noexcept
 {
-    if (!blocks || !active || !receipt || !lifecycle || !zone)
+    if (!blocks || !active || !receipt || !lifecycle
+        || !ObjectIsAligned(zone, alignof(XZoneMemory)))
         return false;
 
     std::uintptr_t controlBegins[4]{};
@@ -369,7 +378,7 @@ const ZoneStreamGenerationReceipt *ActiveZoneStreamBinding::receipt()
     return receipt_;
 }
 
-const void *ActiveZoneStreamBinding::zoneIdentity() const noexcept
+const XZoneMemory *ActiveZoneStreamBinding::zoneIdentity() const noexcept
 {
     return zoneIdentity_;
 }
@@ -411,13 +420,8 @@ bool ActiveZoneStreamBinding::canonical() const noexcept
         && receipt_->phase() == ZoneStreamGenerationPhase::Bound
         && receipt_->key() == key_
         && ValidateBlockLayout(
-            blocks_,
-            this,
-            receipt_,
-            receipt_->lifecycle_,
-            static_cast<const XZoneMemory *>(zoneIdentity_))
-        && ZoneMatchesLayout(
-            static_cast<const XZoneMemory *>(zoneIdentity_), blocks_);
+            blocks_, this, receipt_, receipt_->lifecycle_, zoneIdentity_)
+        && ZoneMatchesLayout(zoneIdentity_, blocks_);
 }
 
 ZoneStreamOwnershipStatus TryBeginZoneStreamGeneration(
@@ -472,12 +476,13 @@ ZoneStreamOwnershipStatus TryBindZoneStreams(
     ActiveZoneStreamBinding *const active,
     ZoneStreamGenerationReceipt *const receipt,
     const zone_load::ZoneLoadContextKey &keyArgument,
-    const void *const zoneIdentity,
+    const XZoneMemory *const zoneIdentity,
     const relocation::BlockView *const blockArgument,
     const std::size_t blockCount) noexcept
 {
     const zone_load::ZoneLoadContextKey key = keyArgument;
-    if (!active || !receipt || !zoneIdentity || !blockArgument)
+    if (!active || !receipt || !zoneIdentity || !blockArgument
+        || !ObjectIsAligned(zoneIdentity, alignof(XZoneMemory)))
         return ZoneStreamOwnershipStatus::InvalidArgument;
     if (blockCount != relocation::kBlockCount)
         return ZoneStreamOwnershipStatus::InvalidLayout;
@@ -486,7 +491,7 @@ ZoneStreamOwnershipStatus TryBindZoneStreams(
 
     relocation::BlockView blocks[relocation::kBlockCount]{};
     std::copy_n(blockArgument, relocation::kBlockCount, blocks);
-    const auto *const zone = static_cast<const XZoneMemory *>(zoneIdentity);
+    const XZoneMemory *const zone = zoneIdentity;
     if (!IsUsableKey(key))
         return ZoneStreamOwnershipStatus::InvalidKey;
     if (!receipt->canonical())

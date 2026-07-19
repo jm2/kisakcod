@@ -54,6 +54,19 @@ static_assert(!std::is_copy_constructible_v<ZoneStreamGenerationReceipt>);
 static_assert(!std::is_move_constructible_v<ZoneStreamGenerationReceipt>);
 static_assert(!std::is_copy_constructible_v<ActiveZoneStreamBinding>);
 static_assert(!std::is_move_constructible_v<ActiveZoneStreamBinding>);
+
+using ZoneIdentityAccessor =
+    const XZoneMemory *(ActiveZoneStreamBinding::*)() const noexcept;
+using BindFunction = ZoneStreamOwnershipStatus (*)(
+    ActiveZoneStreamBinding *,
+    ZoneStreamGenerationReceipt *,
+    const zone_load::ZoneLoadContextKey &,
+    const XZoneMemory *,
+    const relocation::BlockView *,
+    std::size_t) noexcept;
+static_assert(std::is_same_v<
+    decltype(&ActiveZoneStreamBinding::zoneIdentity), ZoneIdentityAccessor>);
+static_assert(std::is_same_v<decltype(&TryBindZoneStreams), BindFunction>);
 } // namespace db::zone_stream_ownership
 
 int main()
