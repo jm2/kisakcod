@@ -56,6 +56,8 @@ load_text("src/gfx_d3d/r_dpvs.cpp" _r_dpvs)
 load_text("src/aim_assist/aim_assist.cpp" _aim_assist)
 load_text("src/aim_assist/aim_assist.h" _aim_assist_header)
 load_text("src/aim_assist/aim_assist_safety.h" _aim_safety)
+load_text("src/qcommon/cmd.cpp" _cmd)
+load_text("src/qcommon/cmd_dispatch.h" _cmd_dispatch)
 load_text("src/universal/com_angle.cpp" _com_angle)
 load_text("src/universal/com_math.cpp" _com_math)
 load_text("scripts/common_files.cmake" _common_files)
@@ -91,6 +93,16 @@ elseif(DEFINED CONTRACT_MUTATION AND CONTRACT_MUTATION STREQUAL "aim_unbounded_w
         "return aim_assist::safety::BoundedWeaponIndex(weapIndex, weaponCount);"
         "return weapIndex;"
         _aim_assist "${_aim_assist}")
+elseif(DEFINED CONTRACT_MUTATION AND CONTRACT_MUTATION STREQUAL "cmd_tail_skip")
+    string(REPLACE
+        "current != nullptr"
+        "current->next != nullptr"
+        _cmd_dispatch "${_cmd_dispatch}")
+elseif(DEFINED CONTRACT_MUTATION AND CONTRACT_MUTATION STREQUAL "cmd_direct_walk")
+    string(REPLACE
+        "command_dispatch::FindLinkedCommand("
+        "LegacyFindCommand("
+        _cmd "${_cmd}")
 elseif(DEFINED CONTRACT_MUTATION AND NOT CONTRACT_MUTATION STREQUAL "")
     message(FATAL_ERROR "Unknown reconciliation mutation: ${CONTRACT_MUTATION}")
 endif()
@@ -136,6 +148,17 @@ require_contains(
     "invalid weapons collapse to the no-weapon sentinel")
 
 require_contains(
+    _cmd_dispatch
+    "for (Command *current = head; current != nullptr; current = current->next)"
+    "the shared production walker admits empty lists and visits the tail")
+require_count(
+    _cmd "command_dispatch::FindLinkedCommand(" 2
+    "server and ordinary dispatch share the tested linked-list walker")
+forbid_contains(
+    _cmd "itr->next; itr = itr->next"
+    "production dispatch must not dereference empty heads or skip tails")
+
+require_contains(
     _com_angle "float KISAK_CDECL AngleDelta(float a1, float a2)"
     "the signed retail delta implementation is isolated for portable tests")
 require_contains(
@@ -157,6 +180,9 @@ require_count(
     _tests_cmake "NAME upstream-reconciliation-aim-safety-contracts" 1
     "CTest registers the runtime aim safety contract")
 require_count(
+    _tests_cmake "NAME upstream-reconciliation-command-dispatch-contracts" 1
+    "CTest registers the runtime command dispatch contract")
+require_count(
     _tests_cmake "NAME upstream-reconciliation-source-invariants" 1
     "CTest registers this source contract")
 require_count(
@@ -166,7 +192,10 @@ require_count(
     _ci "kisakcod-upstream-aim-safety-tests" 1
     "measured Windows x86 builds the runtime aim safety contract")
 require_count(
-    _ci "upstream-reconciliation-(aim-safety-contracts|angle-math-contracts|source-invariants)" 1
+    _ci "kisakcod-upstream-command-dispatch-tests" 1
+    "measured Windows x86 builds the command dispatch contract")
+require_count(
+    _ci "upstream-reconciliation-(aim-safety-contracts|angle-math-contracts|command-dispatch-contracts|source-invariants)" 1
     "measured Windows x86 runs all reconciliation contracts")
 
 if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
@@ -176,7 +205,9 @@ if(NOT DEFINED CONTRACT_MUTATION OR CONTRACT_MUTATION STREQUAL "")
         angle_duplicate
         aim_no_release_guard
         aim_packed_abi
-        aim_unbounded_weapon)
+        aim_unbounded_weapon
+        cmd_tail_skip
+        cmd_direct_walk)
         execute_process(
             COMMAND "${CMAKE_COMMAND}"
                 "-DSOURCE_ROOT=${SOURCE_ROOT}"

@@ -472,6 +472,7 @@ set(QCOMMON
     "${SRC_DIR}/qcommon/bitarray.h"
     "${SRC_DIR}/qcommon/cmd.cpp"
     "${SRC_DIR}/qcommon/cmd.h"
+    "${SRC_DIR}/qcommon/cmd_dispatch.h"
     "${SRC_DIR}/qcommon/cm_load.cpp"
     "${SRC_DIR}/qcommon/cm_load_obj.cpp"
     "${SRC_DIR}/qcommon/cm_mesh.cpp"

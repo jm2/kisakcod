@@ -1964,6 +1964,22 @@ add_test(
     COMMAND kisakcod-upstream-aim-safety-tests
 )
 
+add_executable(kisakcod-upstream-command-dispatch-tests
+    upstream_command_dispatch_tests.cpp
+)
+target_include_directories(
+    kisakcod-upstream-command-dispatch-tests SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-upstream-command-dispatch-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-upstream-command-dispatch-tests)
+set_target_properties(kisakcod-upstream-command-dispatch-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME upstream-reconciliation-command-dispatch-contracts
+    COMMAND kisakcod-upstream-command-dispatch-tests
+)
+
 add_test(
     NAME vehicle-material-time-source-invariants
     COMMAND ${CMAKE_COMMAND}
