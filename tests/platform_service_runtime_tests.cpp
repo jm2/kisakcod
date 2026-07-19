@@ -1245,6 +1245,34 @@ bool TestFastCriticalSection()
         return false;
     }
 
+    Sys_LockRead(&criticalSection);
+    if (Sys_TryLockWrite(&criticalSection)
+        || criticalSection.writeCount != 0)
+    {
+        std::fputs(
+            "FastCriticalSection try-write entered while a reader was held\n",
+            stderr);
+        return false;
+    }
+    Sys_UnlockRead(&criticalSection);
+
+    if (!Sys_TryLockWrite(&criticalSection)
+        || !Sys_IsWriteLocked(&criticalSection))
+    {
+        std::fputs(
+            "FastCriticalSection uncontended try-write failed\n", stderr);
+        return false;
+    }
+    if (Sys_TryLockWrite(&criticalSection)
+        || criticalSection.writeCount != 1)
+    {
+        std::fputs(
+            "FastCriticalSection nested try-write changed writer state\n",
+            stderr);
+        return false;
+    }
+    Sys_UnlockWrite(&criticalSection);
+
     Sys_LockWrite(&criticalSection);
     if (!Sys_IsWriteLocked(&criticalSection))
     {

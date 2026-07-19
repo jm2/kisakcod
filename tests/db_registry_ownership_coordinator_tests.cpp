@@ -42,6 +42,7 @@ enum class Event : std::uint8_t
 std::array<Event, 256> g_events{};
 std::uint32_t g_eventCount = 0;
 bool g_hashLocked = false;
+std::uint32_t g_hashReadCount = 0;
 RegistryOwnershipCoordinator *g_reentryOnHashLock = nullptr;
 RegistryOwnershipCoordinator *g_reentryOnHashUnlock = nullptr;
 RegistryOwnershipStatus g_reentryStatus = RegistryOwnershipStatus::Success;
@@ -145,6 +146,7 @@ void ResetHarness() noexcept
     g_activeBatchSerial = 0;
     g_batchCanonical = true;
     g_hashLocked = false;
+    g_hashReadCount = 0;
     g_activeTransaction = nullptr;
     g_activeTransactionSerial = 0;
     ForceReleaseTransactionLock();
@@ -349,6 +351,28 @@ void RecoverPoisonedCoordinator(
     }
     g_hashLocked = false;
 
+    g_hashReadCount = 1;
+    ClearEvents();
+    const std::uint64_t transactionEnterCount = g_transactionEnterCount;
+    if (!Check(
+            db::registry_ownership::
+                TryBeginStandaloneRegistryOwnershipCoordinator(
+                    admission, &coordinator)
+                == RegistryOwnershipStatus::Busy,
+            "pre-held hash reader was not rejected")
+        || !CheckEvents(
+            std::array{Event::TransactionBegin, Event::TransactionFinish},
+            "pre-held reader did not unwind the outer transaction")
+        || !Check(
+            g_transactionEnterCount > transactionEnterCount
+                && coordinator.isEmptyCanonical(),
+            "pre-held reader left retained coordinator authority"))
+    {
+        return false;
+    }
+    g_hashReadCount = 0;
+
+    ClearEvents();
     g_reentryOnHashLock = &coordinator;
     if (!Check(
             db::registry_ownership::
@@ -861,8 +885,14 @@ void KISAK_CDECL Sys_LeaveCriticalSection(const int critSect)
 
 void KISAK_CDECL Sys_LockWrite(FastCriticalSection *const critSect)
 {
-    if (critSect != &db_hashCritSect || g_hashLocked)
+    if (!Sys_TryLockWrite(critSect))
         std::abort();
+}
+
+bool KISAK_CDECL Sys_TryLockWrite(FastCriticalSection *const critSect)
+{
+    if (critSect != &db_hashCritSect || g_hashLocked || g_hashReadCount != 0)
+        return false;
     Record(Event::HashLock);
     if (g_reentryOnHashLock)
     {
@@ -874,6 +904,7 @@ void KISAK_CDECL Sys_LockWrite(FastCriticalSection *const critSect)
                 coordinator, 999);
     }
     g_hashLocked = true;
+    return true;
 }
 
 void KISAK_CDECL Sys_UnlockWrite(FastCriticalSection *const critSect)
@@ -1157,7 +1188,9 @@ bool ZoneScriptStringOwnershipController::authenticatesRegistryTransaction(
 
 int main()
 {
-    static_assert(sizeof(RegistryOwnershipCoordinator) == 0x80);
+    static_assert(
+        sizeof(RegistryOwnershipCoordinator)
+        == (sizeof(void *) == 4 ? 0x78 : 0x80));
     static_assert(std::is_standard_layout_v<RegistryOwnershipCoordinator>);
     static_assert(!std::is_copy_constructible_v<RegistryOwnershipCoordinator>);
     static_assert(!std::is_move_constructible_v<RegistryOwnershipCoordinator>);

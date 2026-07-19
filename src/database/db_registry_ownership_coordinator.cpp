@@ -316,8 +316,6 @@ RegistryOwnershipStatus RegistryOwnershipCoordinator::beginRegistered(
     const RegistryOwnershipStatus admission = BoundaryAdmissionStatus();
     if (admission != RegistryOwnershipStatus::Success)
         return admission;
-    if (Sys_IsWriteLocked(&db_hashCritSect))
-        return RegistryOwnershipStatus::Busy;
     if (s_nextCoordinatorSerial != s_nextCoordinatorSerialMirror
         || s_nextCoordinatorSerial == UINT64_MAX)
     {
@@ -338,7 +336,6 @@ RegistryOwnershipStatus RegistryOwnershipCoordinator::beginRegistered(
         PoisonRegistryBoundary();
         return RegistryOwnershipStatus::UnsafeFailure;
     }
-
     const std::uint64_t serial = s_nextCoordinatorSerial + 1;
     s_nextCoordinatorSerial = serial;
     s_nextCoordinatorSerialMirror = serial;
@@ -384,7 +381,19 @@ RegistryOwnershipStatus RegistryOwnershipCoordinator::beginRegistered(
     s_registryBoundaryState = RegistryBoundaryState::Active;
     s_registryBoundaryStateMirror = RegistryBoundaryState::Active;
 
-    Sys_LockWrite(&db_hashCritSect);
+    if (!Sys_TryLockWrite(&db_hashCritSect))
+    {
+        if (!coordinator->representationConsistent()
+            || !coordinator->ownsRegistryBoundary()
+            || !coordinator->authenticatesOuterTransaction())
+        {
+            coordinator->poisonBoundary();
+            return RegistryOwnershipStatus::UnsafeFailure;
+        }
+        ClearRegistryBoundary();
+        coordinator->resetAfterFinish();
+        return RegistryOwnershipStatus::Busy;
+    }
     coordinator->publishHashLockRetained(true);
     if (!coordinator->representationConsistent()
         || !coordinator->ownsRegistryBoundary()

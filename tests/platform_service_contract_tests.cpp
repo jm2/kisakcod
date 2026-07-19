@@ -106,6 +106,8 @@ using SleepFunction = void (KISAK_CDECL *)(std::uint32_t);
 using InitializeCriticalSectionsFunction = void (KISAK_CDECL *)();
 using CriticalSectionFunction = void (KISAK_CDECL *)(int);
 using FastCriticalSectionFunction = void (KISAK_CDECL *)(FastCriticalSection *);
+using FastCriticalSectionTryFunction =
+    bool (KISAK_CDECL *)(FastCriticalSection *);
 using FastCriticalSectionQueryFunction =
     bool (KISAK_CDECL *)(const FastCriticalSection *);
 using CreateEventFunction =
@@ -175,6 +177,9 @@ static_assert(std::is_same_v<decltype(&Sys_EnterCriticalSection), CriticalSectio
 static_assert(std::is_same_v<decltype(&Sys_LeaveCriticalSection), CriticalSectionFunction>);
 static_assert(std::is_same_v<decltype(&Sys_LockRead), FastCriticalSectionFunction>);
 static_assert(std::is_same_v<decltype(&Sys_UnlockRead), FastCriticalSectionFunction>);
+static_assert(std::is_same_v<
+    decltype(&Sys_TryLockWrite),
+    FastCriticalSectionTryFunction>);
 static_assert(std::is_same_v<decltype(&Sys_LockWrite), FastCriticalSectionFunction>);
 static_assert(std::is_same_v<decltype(&Sys_UnlockWrite), FastCriticalSectionFunction>);
 static_assert(std::is_same_v<
