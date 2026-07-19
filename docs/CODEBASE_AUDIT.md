@@ -101,8 +101,7 @@ head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`, both were clean
 squash merge `74916b5b`. Authoritative post-merge run
 **29673608169** passed all nine jobs at that exact merge commit.
 
-The active production-neutral zone-stream ownership stack is at code head `6707837b`.
-`b2737088` adds one
+Merged PR #61's production-neutral zone-stream ownership stack adds one
 durable exact-key NeverBound/Bound/Invalidated receipt per generation and one reusable controller over the process-wide
 stream and relocation singletons. Binding validates the typed/aligned `XZoneMemory` identity and its exact nine block
 descriptors, layout parity, cursor, disjoint spans and controls, Loading lifecycle, and idle singleton before publication.
@@ -115,15 +114,32 @@ identity before descriptor access. Follow-up `0c5049e7` closes compile-valid pre
 splicing and phase-3 comment-separated tokens, with compiler-validated detector probes. The exact `0c5049e7` re-audit
 reports **PASS**. The focused runtime/source/security selection passes **4/4** under GCC and Clang warnings-as-errors and
 Clang ASan+UBSan; the full GCC Release replay passes **137/137**. Native i386 runtime, strict AArch64 compilation,
-source/security/API-seal, ABI, headless/debt, and diff gates also pass. No production loader, runtime-table entry, PMem
-lifecycle, pending ledger, coordinator, or raw ownership site uses the API, and retail bytes remain unchanged.
-PR #61 initial exact head `f1c4b4cf` passed five of nine jobs in run **29674630261**; Windows amd64/ARM64 and Windows
-x86 Debug/Release all failed solely on test-only MSVC C2607 diagnostics for two `is_trivially_copyable` assertions.
-Codex review was clean at that exact head. Review-fix `6707837b` replaces them with standard-layout and
-trivially-destructible contracts and implements all four Gemini findings: volatile observable alias-record scrub before
-capacity release, GNU/Clang `Com_Error` printf-format checking, exact `XZoneMemory`/legacy block-count assertions with
-canonical loops, and source/security pins. Local GCC Release passes **137/137** and the focused
-runtime/source/security selection passes **4/4**; hosted rerun and exact new-head review are pending.
+source/security/API-seal, ABI, headless/debt, and diff gates also pass. Final exact head
+`f9dfaaeb43eaaa32cd44c645e3a0e347c9bebdfc` passed all nine jobs in run **29691282387**; all four Gemini threads were
+resolved and exact-head Codex review was clean. PR #61 squash-merged as
+`32e6de4efc86823020d1a2eef2c473e013f893ba`; authoritative post-merge run **29691725277** passed all nine jobs. No
+production loader, runtime-table entry, PMem lifecycle, pending ledger, coordinator, or raw ownership site uses the
+stream API.
+
+The active pending-copy ledger remains production-neutral. Core `08014141`, complete protocol `8d6b04f3`, runtime
+hardening `8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and final source-seal review head
+`a3c21e9db369d02f29b18f4e1208169517353513` provide fixed storage for 2,048 ordered by-value asset indices across up to
+eight exact-key generations, noncopyable receipts, stable-compacting discard, exact prepared completion, retry-safe
+drain, terminal reset, and fail-closed poison/callback handling. Descriptor serials must increase below the next serial;
+pristine begin rejects overlapping control spans before authentication; terminal reset does not inspect a newer ledger;
+and authenticated retained authority returns Busy during completion/drain callbacks. The pending and stream source seals
+now recognize phase-2 splices, commented/manual declarations, using/function-pointer references, uncommon whitespace,
+raw hash/digraph/trigraph paste capability, macro-generated header stems, and exact protected tokens across every file
+below `src`. The ODE contact macros no longer paste tokens. Local evidence is full native **140/140** at exact `a3c21e9d`,
+strict GCC/Clang, Clang ASan+UBSan, Clang analysis, i386 runtime, AArch64 strict link, native/AArch64 production seals, and
+final-head source/security/diff gates. No production caller or loader/runtime-table/PMem/raw-site enrollment exists;
+independent audit reports PASS on exact `a3c21e9d`. The source seals prevent ordinary accidental source/preprocessor
+enrollment, but deliberate assembler-label, dynamic-symbol, or linker-level enrollment remains a documented limitation
+until a portable object/relocation audit or symbol-visibility redesign lands. PR #62 initial exact head `b4719e1a` run
+**29694616671** passed Linux amd64/arm64, macOS arm64, and headless Windows x86; portable Windows amd64/ARM64 failed only
+because MSVC folded two empty test callbacks into one address. The current fixture uses a distinct context identity, its
+focused local replay passes, and replacement exact-head CI plus hosted Codex review remain pending.
+Rounded merged porting progress remains **75%**; the active pending-ledger branch is not counted until it merges.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.

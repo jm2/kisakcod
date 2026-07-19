@@ -1267,10 +1267,10 @@ int dCollideBoxPlane (dxGeom *o1, dxGeom *o2,
   p[0] op REAL(0.5)*box->side[i] * R[0+i]; \
   p[1] op REAL(0.5)*box->side[i] * R[4+i]; \
   p[2] op REAL(0.5)*box->side[i] * R[8+i];
-#define BAR(i,iinc) if (A ## iinc > 0) { FOO(i,-=) } else { FOO(i,+=) }
-  BAR(0,1);
-  BAR(1,2);
-  BAR(2,3);
+#define BAR(i,a) if ((a) > 0) { FOO(i,-=) } else { FOO(i,+=) }
+  BAR(0,A1);
+  BAR(1,A2);
+  BAR(2,A3);
 #undef FOO
 #undef BAR
 
@@ -1292,10 +1292,10 @@ int dCollideBoxPlane (dxGeom *o1, dxGeom *o2,
   CONTACT(contact,i*skip)->pos[0] = p[0] op box->side[j] * R[0+j]; \
   CONTACT(contact,i*skip)->pos[1] = p[1] op box->side[j] * R[4+j]; \
   CONTACT(contact,i*skip)->pos[2] = p[2] op box->side[j] * R[8+j];
-#define BAR(ctact,side,sideinc) \
-  depth -= B ## sideinc; \
+#define BAR(ctact,side,a,b) \
+  depth -= (b); \
   if (depth < 0) goto done; \
-  if (A ## sideinc > 0) { FOO(ctact,side,+) } else { FOO(ctact,side,-) } \
+  if ((a) > 0) { FOO(ctact,side,+) } else { FOO(ctact,side,-) } \
   CONTACT(contact,ctact*skip)->depth = depth; \
   ret++;
 
@@ -1310,7 +1310,7 @@ int dCollideBoxPlane (dxGeom *o1, dxGeom *o2,
 
   if (B1 < B2) {
     if (B3 < B1) goto use_side_3; else {
-      BAR(1,0,1);	// use side 1
+      BAR(1,0,A1,B1);	// use side 1
       if (maxc == 2) goto done;
       if (B2 < B3) goto contact2_2; else goto contact2_3;
     }
@@ -1318,20 +1318,20 @@ int dCollideBoxPlane (dxGeom *o1, dxGeom *o2,
   else {
     if (B3 < B2) {
       use_side_3:	// use side 3
-      BAR(1,2,3);
+      BAR(1,2,A3,B3);
       if (maxc == 2) goto done;
       if (B1 < B2) goto contact2_1; else goto contact2_2;
     }
     else {
-      BAR(1,1,2);	// use side 2
+      BAR(1,1,A2,B2);	// use side 2
       if (maxc == 2) goto done;
       if (B1 < B3) goto contact2_1; else goto contact2_3;
     }
   }
 
-  contact2_1: BAR(2,0,1); goto done;
-  contact2_2: BAR(2,1,2); goto done;
-  contact2_3: BAR(2,2,3); goto done;
+  contact2_1: BAR(2,0,A1,B1); goto done;
+  contact2_2: BAR(2,1,A2,B2); goto done;
+  contact2_3: BAR(2,2,A3,B3); goto done;
 #undef FOO
 #undef BAR
 

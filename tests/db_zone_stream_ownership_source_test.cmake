@@ -22,6 +22,14 @@ set(_runtime_table_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h")
 set(_file_load_path "${SOURCE_ROOT}/src/database/db_file_load.cpp")
 set(_com_error_path "${SOURCE_ROOT}/src/qcommon/com_error.h")
+set(_integer_suffix_token_paste_path
+    "${SOURCE_ROOT}/src/universal/q_shared.h")
+set(_server_token_literal_path
+    "${SOURCE_ROOT}/src/server_mp/sv_client_mp.cpp")
+set(_ui_component_token_literal_path
+    "${SOURCE_ROOT}/src/ui/ui_component.cpp")
+set(_ui_parser_token_literal_path
+    "${SOURCE_ROOT}/src/ui/ui_shared_obj.cpp")
 set(_fixture_path
     "${SOURCE_ROOT}/tests/db_zone_stream_ownership_tests.cpp")
 set(_seal_path
@@ -36,6 +44,10 @@ foreach(_path IN ITEMS
     "${_stream_path}" "${_stream_header_path}" "${_state_path}"
     "${_memory_path}" "${_runtime_table_path}" "${_file_load_path}"
     "${_com_error_path}"
+    "${_integer_suffix_token_paste_path}"
+    "${_server_token_literal_path}"
+    "${_ui_component_token_literal_path}"
+    "${_ui_parser_token_literal_path}"
     "${_fixture_path}" "${_seal_path}" "${_manifest_path}"
     "${_tests_path}" "${_ci_path}")
     if(NOT EXISTS "${_path}")
@@ -90,6 +102,8 @@ endfunction()
 string(ASCII 92 _zone_stream_backslash)
 string(ASCII 13 _zone_stream_carriage_return)
 string(ASCII 10 _zone_stream_line_feed)
+string(ASCII 12 _zone_stream_form_feed)
+string(ASCII 11 _zone_stream_vertical_tab)
 set(_zone_stream_block_comment "/\\*([^*]|\\*+[^*/])*\\*+/")
 set(_zone_stream_comment_atom
     "([ \t\r\n]|${_zone_stream_block_comment}|//[^\r\n]*)")
@@ -121,6 +135,45 @@ function(source_has_identifier SOURCE_VAR IDENTIFIER OUT_VAR)
     endif()
 endfunction()
 
+# Any distinctive public or private ownership token is an enrollment oracle,
+# including when it appears only as a macro replacement token. Keep the
+# allowlist path-based and exact: these names may occur only in the public
+# header, implementation, private bridge, and the one legacy stream wrapper.
+set(_zone_stream_protected_tokens
+    db_zone_stream_ownership
+    db_zone_stream_ownership_internal
+    zone_stream_ownership
+    ZoneStreamGenerationPhase
+    ActiveZoneStreamPhase
+    ZoneStreamOwnershipStatus
+    ZoneStreamGenerationReceipt
+    ActiveZoneStreamBinding
+    TryBeginZoneStreamGeneration
+    TryBindZoneStreams
+    TryInvalidateZoneStreams
+    AliasRegistryForLegacyStream
+    DirectResolverForLegacyStream
+    OwnershipBindingActive)
+
+function(find_zone_stream_protected_token SOURCE_VAR OUT_VAR)
+    foreach(_token IN LISTS _zone_stream_protected_tokens)
+        source_has_identifier(${SOURCE_VAR} "${_token}" _token_found)
+        if(_token_found)
+            set(${OUT_VAR} "${_token}" PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    set(${OUT_VAR} "" PARENT_SCOPE)
+endfunction()
+
+function(require_zone_stream_protected_fixture SOURCE_VAR DESCRIPTION)
+    find_zone_stream_protected_token(${SOURCE_VAR} _protected_token)
+    if(_protected_token STREQUAL "")
+        message(FATAL_ERROR
+            "Zone-stream exact-token detector missed ${DESCRIPTION}")
+    endif()
+endfunction()
+
 function(source_has_qualified_ownership SOURCE_VAR OUT_VAR)
     string(REGEX MATCH
         "(^|[^A-Za-z0-9_])((db${_zone_stream_comment_gap}::${_zone_stream_comment_gap})?zone_stream_ownership)${_zone_stream_comment_gap}::"
@@ -141,6 +194,44 @@ function(source_has_ownership_namespace_declaration SOURCE_VAR OUT_VAR)
     else()
         set(${OUT_VAR} TRUE PARENT_SCOPE)
     endif()
+endfunction()
+
+function(source_has_zone_stream_preprocessor_token_paste SOURCE_VAR OUT_VAR)
+    # After exact path-specific removal of reviewed fixed suffixes and
+    # literals, reject every spelling that can become a paste operator. This
+    # raw policy cannot be confused by comments, raw strings, or phase order.
+    foreach(_operator IN ITEMS "##" "%:%:" "??/" "??=")
+        string(FIND "${${SOURCE_VAR}}" "${_operator}" _operator_position)
+        if(NOT _operator_position EQUAL -1)
+            set(${OUT_VAR} TRUE PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    set(${OUT_VAR} FALSE PARENT_SCOPE)
+endfunction()
+
+function(remove_reviewed_zone_stream_token_text PATH SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    if(PATH STREQUAL _integer_suffix_token_paste_path)
+        # q_shared's suffixes are fixed and no protected identifier ends in
+        # LL or i64. Any altered or additional paste remains visible.
+        string(REPLACE "num ## LL" "" _candidate "${_candidate}")
+        string(REPLACE "num ## i64" "" _candidate "${_candidate}")
+    elseif(PATH STREQUAL _server_token_literal_path)
+        string(REPLACE
+            "\"###!#!#!#!#!#!#!#!#!#!#!#!#!#!#!#!###\\n\""
+            "" _candidate "${_candidate}")
+        string(REPLACE
+            "\"########################################\\n\""
+            "" _candidate "${_candidate}")
+    elseif(PATH STREQUAL _ui_component_token_literal_path)
+        string(REPLACE "\"##\"" "" _candidate "${_candidate}")
+    elseif(PATH STREQUAL _ui_parser_token_literal_path)
+        string(REPLACE "\"##\"" "" _candidate "${_candidate}")
+        string(REPLACE
+            "\"define with misplaced ##\"" "" _candidate "${_candidate}")
+    endif()
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
 endfunction()
 
 function(require_ordered SOURCE_VAR FIRST SECOND DESCRIPTION)
@@ -403,17 +494,49 @@ endforeach()
 
 # Internal mutable relocation access is private to the legacy wrapper and the
 # ownership implementation. Public lifecycle APIs remain unused in production.
-# Scan identifiers rather than call spellings so whitespace, using declarations,
-# namespace aliases, and function-pointer references cannot bypass the seal.
+# Scan identifiers rather than call spellings so macro replacement tokens,
+# whitespace, using declarations, namespace aliases, and function-pointer
+# references cannot bypass the seal.
 # Translation phase 2 joins escaped physical lines before identifiers and
 # header names form. Phase-3 comments are accepted only as complete token gaps
 # in the qualified/manual-namespace detectors, avoiding a lossy comment pass
 # that could mistake comment-like bytes inside string and character literals.
 file(GLOB_RECURSE _production_sources
-    "${SOURCE_ROOT}/src/*.cpp" "${SOURCE_ROOT}/src/*.h")
+    LIST_DIRECTORIES FALSE "${SOURCE_ROOT}/src/*")
+foreach(_non_extension_sentinel IN ITEMS
+    "${SOURCE_ROOT}/src/groupvoice/speex/Makefile.am"
+    "${SOURCE_ROOT}/src/groupvoice/speex/Makefile.in")
+    list(FIND _production_sources
+        "${_non_extension_sentinel}" _sentinel_index)
+    if(_sentinel_index EQUAL -1)
+        message(FATAL_ERROR
+            "Zone-stream production seal lost extension-independent traversal: "
+            "${_non_extension_sentinel}")
+    endif()
+endforeach()
 foreach(_path IN LISTS _production_sources)
     file(READ "${_path}" _candidate_raw)
     normalize_zone_stream_phase2(_candidate_raw _candidate)
+    remove_reviewed_zone_stream_token_text(
+        "${_path}" _candidate _candidate)
+    source_has_zone_stream_preprocessor_token_paste(
+        _candidate _token_paste_found)
+    if(_token_paste_found)
+        message(FATAL_ERROR
+            "Unreviewed token-paste capability can bypass the zone-stream seal in ${_path}")
+    endif()
+
+    if(NOT _path STREQUAL _header_path
+        AND NOT _path STREQUAL _source_path
+        AND NOT _path STREQUAL _internal_path
+        AND NOT _path STREQUAL _stream_path)
+        find_zone_stream_protected_token(_candidate _protected_token)
+        if(NOT _protected_token STREQUAL "")
+            message(FATAL_ERROR
+                "Premature zone-stream protected token in ${_path}: "
+                "${_protected_token}")
+        endif()
+    endif()
 
     if(NOT _path STREQUAL _header_path AND NOT _path STREQUAL _source_path)
         string(FIND "${_candidate}" "db_zone_stream_ownership.h"
@@ -421,6 +544,12 @@ foreach(_path IN LISTS _production_sources)
         if(NOT _public_header_reference EQUAL -1)
             message(FATAL_ERROR
                 "Premature zone-stream public header enrollment in ${_path}")
+        endif()
+        source_has_identifier(
+            _candidate db_zone_stream_ownership _public_header_stem_found)
+        if(_public_header_stem_found)
+            message(FATAL_ERROR
+                "Premature zone-stream public header-stem enrollment in ${_path}")
         endif()
         foreach(_public_api IN ITEMS
             TryBeginZoneStreamGeneration
@@ -443,6 +572,14 @@ foreach(_path IN LISTS _production_sources)
         if(NOT _internal_header_reference EQUAL -1)
             message(FATAL_ERROR
                 "Private stream header escaped to ${_path}")
+        endif()
+        source_has_identifier(
+            _candidate
+            db_zone_stream_ownership_internal
+            _internal_header_stem_found)
+        if(_internal_header_stem_found)
+            message(FATAL_ERROR
+                "Private stream header stem escaped to ${_path}")
         endif()
         foreach(_internal_api IN ITEMS
             AliasRegistryForLegacyStream
@@ -480,8 +617,35 @@ foreach(_path IN LISTS _production_sources)
 endforeach()
 
 # Keep compile-valid representative bypasses recognizable to the detectors.
-# These cover phase-2-spliced headers/identifiers and phase-3 block/line comments
-# around using declarations, qualified function pointers, and namespaces.
+# These cover macro replacement tokens, uncommon preprocessing whitespace,
+# phase-2-spliced headers/identifiers, and phase-3 block/line comments around
+# using declarations, qualified function pointers, and namespaces.
+set(_macro_namespace_bypass
+    "#define KISAK_STREAM_NS zone_stream_ownership\nnamespace db { namespace KISAK_STREAM_NS { class Forged; } }")
+require_zone_stream_protected_fixture(
+    _macro_namespace_bypass "a macro-substituted namespace")
+
+string(CONCAT _form_feed_namespace_bypass
+    "namespace" "${_zone_stream_form_feed}"
+    "zone_stream_ownership { class Forged; }")
+require_zone_stream_protected_fixture(
+    _form_feed_namespace_bypass "a form-feed-separated namespace")
+
+string(CONCAT _vertical_tab_namespace_bypass
+    "namespace" "${_zone_stream_vertical_tab}"
+    "zone_stream_ownership { class Forged; }")
+require_zone_stream_protected_fixture(
+    _vertical_tab_namespace_bypass "a vertical-tab-separated namespace")
+
+set(_protected_token_boundary_negative
+    "struct ZoneStreamGenerationPhaseHelper; namespace zone_stream_ownership_extra {}")
+find_zone_stream_protected_token(
+    _protected_token_boundary_negative _boundary_false_positive)
+if(NOT _boundary_false_positive STREQUAL "")
+    message(FATAL_ERROR
+        "Zone-stream protected-token detector lost identifier boundaries")
+endif()
+
 string(CONCAT _public_header_bypass
     "#include <database/db_zone_stream_owner${_zone_stream_backslash}"
     "${_zone_stream_line_feed}ship.h>")
@@ -492,6 +656,18 @@ string(FIND "${_public_header_bypass_normalized}"
 if(_public_header_detected EQUAL -1)
     message(FATAL_ERROR
         "Zone-stream seal no longer recognizes public-header bypass")
+endif()
+
+string(CONCAT _public_macro_header_bypass
+    "#define KISAK_STREAM_INCLUDE(name) <database/name.h>\n"
+    "#include KISAK_STREAM_INCLUDE(db_zone_stream_ownership)")
+source_has_identifier(
+    _public_macro_header_bypass
+    db_zone_stream_ownership
+    _public_macro_header_detected)
+if(NOT _public_macro_header_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal misses macro-generated public header")
 endif()
 
 string(CONCAT _internal_header_bypass
@@ -506,6 +682,18 @@ if(_internal_header_detected EQUAL -1)
         "Zone-stream seal no longer recognizes internal-header bypass")
 endif()
 
+string(CONCAT _internal_macro_header_bypass
+    "#define KISAK_STREAM_INCLUDE(name) <database/name.h>\n"
+    "#include KISAK_STREAM_INCLUDE(db_zone_stream_ownership_internal)")
+source_has_identifier(
+    _internal_macro_header_bypass
+    db_zone_stream_ownership_internal
+    _internal_macro_header_detected)
+if(NOT _internal_macro_header_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal misses macro-generated private header")
+endif()
+
 string(CONCAT _qualified_using_bypass
     "using db/**/::/**/zone_stream_ownership/**/::/**/TryBindZoneStreams;\n"
     "auto bind = &TryBindZoneStreams;")
@@ -515,6 +703,71 @@ source_has_identifier(
 if(NOT _qualified_detected OR NOT _qualified_symbol_detected)
     message(FATAL_ERROR
         "Zone-stream seal no longer recognizes qualified using bypass")
+endif()
+
+string(CONCAT _token_paste_bypass
+    "#define KISAK_STREAM_CAT_I(left, right) left/**/##/**/right\n"
+    "#define KISAK_STREAM_CAT(left, right) "
+    "KISAK_STREAM_CAT_I(left, right)\n"
+    "auto bind = &KISAK_STREAM_CAT(TryBindZone, Streams);")
+normalize_zone_stream_phase2(_token_paste_bypass _token_paste_normalized)
+source_has_zone_stream_preprocessor_token_paste(
+    _token_paste_normalized _token_paste_detected)
+if(NOT _token_paste_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal no longer recognizes hash token-paste bypass")
+endif()
+
+set(_digraph_token_paste_bypass
+    "%: define KISAK_STREAM_DIGRAPH(left, right) left %:%: right")
+source_has_zone_stream_preprocessor_token_paste(
+    _digraph_token_paste_bypass _digraph_token_paste_detected)
+if(NOT _digraph_token_paste_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal no longer recognizes digraph token-paste bypass")
+endif()
+
+set(_trigraph_token_paste_bypass
+    "??=define KISAK_STREAM_TRIGRAPH(left, right) left ??=??= right")
+source_has_zone_stream_preprocessor_token_paste(
+    _trigraph_token_paste_bypass _trigraph_token_paste_detected)
+if(NOT _trigraph_token_paste_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal no longer recognizes trigraph token-paste bypass")
+endif()
+
+string(CONCAT _trigraph_splice_token_paste_bypass
+    "#define KISAK_STREAM_TRIGRAPH_SPLICE(left, right) left #??/"
+    "${_zone_stream_line_feed}# right")
+source_has_zone_stream_preprocessor_token_paste(
+    _trigraph_splice_token_paste_bypass
+    _trigraph_splice_token_paste_detected)
+if(NOT _trigraph_splice_token_paste_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal misses trigraph-splice token-paste bypass")
+endif()
+
+string(CONCAT _comment_quote_token_paste_bypass
+    "/* \"\n*/ %: define KISAK_STREAM_COMMENT_CAT(left, right) "
+    "left %:%: right /* \" */")
+source_has_zone_stream_preprocessor_token_paste(
+    _comment_quote_token_paste_bypass _comment_quote_paste_detected)
+if(NOT _comment_quote_paste_detected)
+    message(FATAL_ERROR
+        "Zone-stream seal misses comment-quote token-paste bypass")
+endif()
+
+set(_server_payload_macro_bypass
+    "#define KISAK_STREAM_HASH_RUN ########################################")
+remove_reviewed_zone_stream_token_text(
+    "${_server_token_literal_path}"
+    _server_payload_macro_bypass
+    _server_payload_macro_reviewed)
+source_has_zone_stream_preprocessor_token_paste(
+    _server_payload_macro_reviewed _server_payload_macro_detected)
+if(NOT _server_payload_macro_detected)
+    message(FATAL_ERROR
+        "Zone-stream server-literal review masks a macro hash run")
 endif()
 
 string(CONCAT _unqualified_pointer_bypass

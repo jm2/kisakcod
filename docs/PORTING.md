@@ -212,8 +212,8 @@ Completed foundation work:
   Authoritative post-merge run **29673608169** passed
   all nine jobs at that exact merge commit. It is build-enrolled but has no production caller. Legacy native64-invalid
   `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and the `$init` lifecycle remain production blockers;
-- the active production-neutral zone-stream ownership stack at code head `6707837b` adds an exact lifecycle-key receipt and one
-  reusable controller for process-wide stream and relocation singleton state. `b2737088` prevalidates the exact nine
+- merged PR #61 adds an exact lifecycle-key receipt and one reusable controller for process-wide stream and relocation
+  singleton state. `b2737088` prevalidates the exact nine
   typed `XZoneMemory` spans, layout/cursor parity, disjointness, stable control storage, Loading lifecycle, and idle
   singleton before publishing Bound last. Exact invalidation drops alias/direct provenance, releases retained relocation
   capacity, scrubs all nine block views and the complete delay/stack/scalar state, clears singleton ownership, and
@@ -225,16 +225,31 @@ Completed foundation work:
   token bypasses with compiler-validated detector probes. The exact `0c5049e7` re-audit reports **PASS**; the focused
   runtime/source/security selection passes **4/4** under GCC and Clang warnings-as-errors and Clang ASan+UBSan, while the
   full GCC Release replay passes **137/137**. Native i386 runtime, strict AArch64 compilation, source/security/API-seal,
-  ABI, headless/debt, and diff gates also pass. No loader, runtime-table entry, PMem lifecycle, pending-copy ledger,
-  coordinator, or raw ownership site consumes it, and retail bytes are unchanged;
-- PR #61 initial exact head `f1c4b4cf` passed five of nine jobs in run **29674630261**. Windows amd64/ARM64 and Windows
-  x86 Debug/Release all failed solely on the same test-only MSVC C2607 rejection of two
-  `is_trivially_copyable` assertions; Codex review was clean at that exact head. Review-fix `6707837b` replaces them with
-  portable standard-layout/trivially-destructible checks and implements all four Gemini findings: observable volatile
-  alias-record scrub before capacity release, GNU/Clang `Com_Error` printf-format checking, exact
-  `XZoneMemory`/legacy block-count assertions with canonical loops, and source/security pins. Local GCC Release is
-  **137/137** and the focused runtime/source/security selection is **4/4**; the hosted rerun and exact new-head review are
-  pending;
+  ABI, headless/debt, and diff gates also pass. Final exact head
+  `f9dfaaeb43eaaa32cd44c645e3a0e347c9bebdfc` passed all nine jobs in run **29691282387**; all four Gemini threads were
+  resolved and exact-head Codex review was clean. PR #61 squash-merged as
+  `32e6de4efc86823020d1a2eef2c473e013f893ba`, and authoritative post-merge run **29691725277** passed all nine jobs. No
+  loader, runtime-table entry, PMem lifecycle, pending-copy ledger, coordinator, or raw ownership site consumes it;
+- the active production-neutral pending-copy ledger is implemented by core `08014141`, protocol `8d6b04f3`, runtime
+  hardening `8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and final source-seal review head
+  `a3c21e9db369d02f29b18f4e1208169517353513`. It provides fixed storage for 2,048 ordered by-value asset indices across
+  up to eight exact-key generations, noncopyable admission receipts, stable-compacting discard, exact prepared
+  completion, retry-safe by-value drain, terminal reset, and fail-closed callback/poison paths. Hardening requires
+  strictly increasing descriptor serials below the next serial, rejects overlapping pristine control spans before
+  authentication, keeps terminal reset independent of a newer ledger callback, and returns Busy for authenticated
+  retained authority during completion/drain callbacks. Pending and stream source seals cover phase-2 splices,
+  commented/manual declarations, using/function-pointer references, uncommon whitespace, raw hash/digraph/trigraph paste
+  capability, macro-generated header stems, and exact protected tokens across every file below `src`; legacy ODE contact
+  macros no longer paste tokens. Local evidence is full native **140/140** at exact `a3c21e9d` plus strict GCC/Clang, Clang
+  ASan+UBSan, Clang analysis, i386 runtime, AArch64 strict link, native/AArch64 production seals, and final-head
+  source/security/diff gates. The pending API is build-enrolled but has no production caller or
+  loader/runtime-table/PMem/raw-site enrollment. Independent audit reports PASS on exact `a3c21e9d`. Deliberate
+  assembler-label, dynamic-symbol, or linker-level enrollment remains outside the source seal's accidental-regression
+  model and requires portable object/relocation auditing or a visibility redesign before production cutover. PR #62
+  initial exact head `b4719e1a` ran **29694616671**: Linux amd64/arm64, macOS arm64, and headless Windows x86 passed;
+  portable Windows amd64/ARM64 failed only because MSVC folded two empty test callbacks to one address. The current
+  fixture uses a distinct context identity, its focused local replay passes, and replacement exact-head CI plus hosted
+  Codex review remain pending;
 - bounded Huffman input/output decoding and rejection at both network call sites;
 - pointer-width-safe Huffman tree construction with a native Linux regression test;
 - a fixed-width `disk32::PointerToken` decoder with block/span validation, used
@@ -577,10 +592,13 @@ Remaining gates, in implementation order:
    audits. Authoritative post-merge run **29671849514** at exact `ff61504e` passed all nine jobs.
    PR #60 then merged the checked-PMem receipt as `74916b5b`; exact final head `0eec9b1e` and authoritative merge passed
    all nine jobs in runs **29673379640** and **29673608169**; Codex reviewed exact final head `0eec9b1e`, Gemini reviewed
-   identical code head `f04c63e0`, both were clean, and zero threads remained. Publish the active `6707837b` exact
-   stream-invalidation stack next, then add pending-copy/admission resources plus
-   a borrowed/standalone registry ownership coordinator before atomically
-   replacing all seven raw sites. Keep static controller slots and callback metadata outside PMem with
+   identical code head `f04c63e0`, both were clean, and zero threads remained. PR #61 then merged the exact stream-
+   invalidation stack as `32e6de4efc86823020d1a2eef2c473e013f893ba`; final exact head
+   `f9dfaaeb43eaaa32cd44c645e3a0e347c9bebdfc` and authoritative post-merge runs **29691282387** and **29691725277** each
+   passed all nine jobs, all four Gemini threads were resolved, and exact-head Codex review was clean. Publish the active
+   pending-copy ledger next without production enrollment. At that pause boundary, land the audited upstream 18-commit
+   integration PR before publishing the borrowed/standalone registry ownership coordinator, then atomically replace all
+   seven raw sites. Keep static controller slots and callback metadata outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
    when binding the recipes and adapter into production with completed-object/alias registration and lifetime tests.
    The journal merged in PR #37 as `7a9bce34`; post-merge run **29542960583** passed all nine jobs. PR #38 merged the
@@ -1558,8 +1576,9 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **75% by merged engineering effort**. PR #60 merged the production-neutral
-checked-PMem foundation; the active zone-stream ownership stack is not counted until it merges. Windows x86 is about
+Overall porting progress is approximately **75% by merged engineering effort**. PR #61 merged the production-neutral
+zone-stream ownership foundation; the active pending-copy ledger is not counted until it merges, so the rounded total
+remains unchanged. Windows x86 is about
 **93%**, shared
 foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
@@ -1865,19 +1884,21 @@ jobs in run **29673379640**; Codex reviewed exact final head `0eec9b1e`, Gemini 
 both were clean with zero threads, and authoritative post-merge
 run **29673608169** passed all nine jobs at squash merge `74916b5b`. Legacy native64
 `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and `$init` integration still must be corrected before production
-enrollment. The active code head `6707837b` adds exact-key stream/alias bind and invalidation with a typed aligned
+enrollment. Merged PR #61 adds exact-key stream/alias bind and invalidation with a typed aligned
 zone identity, hardened production-neutrality seal, stale-terminal retry safety, complete relocation-capacity release,
 and full singleton scrub. Its compiler-validated source seal covers phase-2 line splicing and phase-3 comment-separated
 access; the exact re-audit reports **PASS**, the focused runtime/source/security selection passes **4/4** under GCC,
-Clang, and Clang ASan+UBSan, and the full GCC Release replay passes **137/137**. PR #61 initial exact head `f1c4b4cf`
-passed five of nine jobs in run **29674630261**; only Windows amd64/ARM64 and x86 Debug/Release failed on test-only MSVC
-C2607 assertions. Codex was clean at that head. `6707837b` replaces those checks portably and closes all four Gemini
-findings: observable alias scrub, portable printf-format checking, canonical block-count assertions/loops, and matching
-source/security pins. The local **137/137** and focused **4/4** suites pass; hosted rerun and exact new-head review are
-pending. Publish it next without partial enrollment, then
-add the generation-tagged pending-copy ledger and prepared admission receipt. After those,
-add a registry coordinator that borrows exact active
-transaction authority or owns a standalone transaction, then enroll all seven sites atomically. Root-string staging
+Clang, and Clang ASan+UBSan, and the full GCC Release replay passes **137/137**. Final exact head
+`f9dfaaeb43eaaa32cd44c645e3a0e347c9bebdfc` passed all nine jobs in run **29691282387** with all four Gemini threads
+resolved and exact-head Codex clean; squash merge `32e6de4efc86823020d1a2eef2c473e013f893ba` passed authoritative
+post-merge run **29691725277** with all nine jobs. The active pending-copy ledger at core `08014141`, protocol
+`8d6b04f3`, runtime hardening `8935b5a73836bcf31a09b9e7d2d0bb920377bd08`, and final source-seal review head
+`a3c21e9db369d02f29b18f4e1208169517353513` is production-neutral and locally passes **140/140** at that exact head plus
+strict GCC/Clang, ASan+UBSan, analyzer, i386 runtime, AArch64 strict link, native/AArch64 seals, and final-head
+source/security/diff gates. It has no production caller; independent exact-head audit passes, while hosted CI and hosted
+review remain pending. Publish it next, land the audited upstream 18-commit integration PR at that pause boundary, then
+add a registry coordinator that borrows exact active transaction authority or owns a standalone transaction. Afterward,
+enroll all seven sites atomically. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
 short borrowed batches under transaction -> registry -> string -> memory-tree order. The bounded legacy compatibility
 surface does not replace the typed guarantee. Static context slots and callback metadata
