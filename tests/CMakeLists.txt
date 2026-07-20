@@ -1481,6 +1481,9 @@ target_include_directories(
     kisakcod-physicalmemory-legacy-tests SYSTEM PRIVATE ${SRC_DIR})
 target_compile_features(
     kisakcod-physicalmemory-legacy-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-physicalmemory-legacy-tests PRIVATE
+    KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING)
 kisakcod_test_warnings(kisakcod-physicalmemory-legacy-tests)
 if(NOT MSVC)
     # physicalmemory.cpp still includes broad legacy engine headers whose
@@ -1509,6 +1512,68 @@ add_test(
 )
 set_tests_properties(
     universal-physicalmemory-legacy-layout-and-indexing PROPERTIES TIMEOUT 20)
+
+# Compile the real implementation without the testing macro and retain its
+# object for the runtime seal's symbol-surface inspection. This is deliberately
+# an object library: the implementation's engine service references need not be
+# replaced by permissive fixture stubs merely to inspect its linkage.
+add_library(kisakcod-physicalmemory-runtime-production-object OBJECT
+    ${SRC_DIR}/universal/physicalmemory.cpp
+)
+target_include_directories(
+    kisakcod-physicalmemory-runtime-production-object SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-physicalmemory-runtime-production-object PRIVATE cxx_std_20)
+kisakcod_test_warnings(
+    kisakcod-physicalmemory-runtime-production-object)
+if(NOT MSVC)
+    target_compile_options(
+        kisakcod-physicalmemory-runtime-production-object PRIVATE
+        -Wno-unused-parameter)
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(
+        kisakcod-physicalmemory-runtime-production-object PRIVATE
+        -Wno-strict-aliasing)
+endif()
+if(CMAKE_CXX_COMPILER_ID MATCHES "^(Clang|AppleClang)$")
+    target_compile_options(
+        kisakcod-physicalmemory-runtime-production-object PRIVATE
+        -Wno-dollar-in-identifier-extension)
+endif()
+
+# This normal macro-off target proves production callers cannot name the
+# hidden global PMem testing seam. Its CTest wrapper also inspects the actual
+# macro-off production object for local state and absent test-access symbols.
+add_executable(kisakcod-physicalmemory-runtime-production-seal-tests
+    physicalmemory_runtime_production_seal_tests.cpp
+)
+target_include_directories(
+    kisakcod-physicalmemory-runtime-production-seal-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-physicalmemory-runtime-production-seal-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(
+    kisakcod-physicalmemory-runtime-production-seal-tests)
+set_target_properties(
+    kisakcod-physicalmemory-runtime-production-seal-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_dependencies(
+    kisakcod-physicalmemory-runtime-production-seal-tests
+    kisakcod-physicalmemory-runtime-production-object)
+add_test(
+    NAME universal-physicalmemory-runtime-production-test-access-sealed
+    COMMAND ${CMAKE_COMMAND}
+        "-DSEAL_EXECUTABLE=$<TARGET_FILE:kisakcod-physicalmemory-runtime-production-seal-tests>"
+        "-DPRODUCTION_OBJECTS=$<JOIN:$<TARGET_OBJECTS:kisakcod-physicalmemory-runtime-production-object>,|>"
+        "-DCXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}"
+        "-DNM_TOOL=${CMAKE_NM}"
+        "-DLINKER_TOOL=${CMAKE_LINKER}"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/physicalmemory_runtime_production_seal_test.cmake
+)
+set_tests_properties(
+    universal-physicalmemory-runtime-production-test-access-sealed
+    PROPERTIES TIMEOUT 20)
 
 add_executable(kisakcod-physicalmemory-checked-tests
     physicalmemory_checked_tests.cpp

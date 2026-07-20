@@ -7,8 +7,26 @@
 #include <qcommon/sys_error.h>
 #include <qcommon/sys_memory.h>
 
-PhysicalMemory g_mem;
-int g_overAllocatedSize;
+namespace
+{
+PhysicalMemory g_mem{};
+int g_overAllocatedSize{};
+} // namespace
+
+#if defined(KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING)
+PhysicalMemoryGlobalStateTestAccess::Snapshot
+PhysicalMemoryGlobalStateTestAccess::Capture() noexcept
+{
+    return {g_mem, g_overAllocatedSize};
+}
+
+void PhysicalMemoryGlobalStateTestAccess::Install(
+    const Snapshot &snapshot) noexcept
+{
+    g_mem = snapshot.memory;
+    g_overAllocatedSize = snapshot.overAllocatedSize;
+}
+#endif
 
 void KISAK_CDECL PMem_Init()
 {
