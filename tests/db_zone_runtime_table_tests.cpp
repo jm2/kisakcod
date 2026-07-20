@@ -423,6 +423,13 @@ struct CompositeRuntimeFixture final
     ZoneLoadContextKey key{};
     zone_runtime_storage::ZoneRuntimeStoragePlan storagePlan{};
     pmem_runtime::AllocationResult slabAllocation{};
+    // Keep the repeatedly published result at a stable, naturally aligned
+    // heap address without adding MSVC C4324 padding to this fixture.
+    std::unique_ptr<pmem_runtime::AllocationResult> streamAllocation =
+        std::make_unique<pmem_runtime::AllocationResult>();
+    ZoneRuntimeTableStatus streamAllocationTableStatus =
+        ZoneRuntimeTableStatus::InvalidArgument;
+    std::size_t streamAllocationIndex = 0;
     alignas(ZoneRuntimeGenerationView) XZoneMemory zone{};
     std::array<db::relocation::BlockView,
         db::relocation::kBlockCount> blocks{};
@@ -512,26 +519,28 @@ struct CompositeRuntimeFixture final
     {
         for (std::size_t index = 0; index < blocks.size(); ++index)
         {
-            pmem_runtime::AllocationResult allocation{};
-            if (TryAllocateZoneRuntimeMemory(
+            *streamAllocation = {};
+            streamAllocationIndex = index;
+            streamAllocationTableStatus = TryAllocateZoneRuntimeMemory(
                     table.get(),
                     physicalSlot,
                     key,
                     64,
                     16,
                     0,
-                    &allocation)
+                    streamAllocation.get());
+            if (streamAllocationTableStatus
                     != ZoneRuntimeTableStatus::Success
-                || allocation.status
+                || streamAllocation->status
                     != pmem_runtime::AllocationStatus::Success
-                || !allocation.address)
+                || !streamAllocation->address)
             {
                 return false;
             }
-            zone.blocks[index].data = allocation.address;
+            zone.blocks[index].data = streamAllocation->address;
             zone.blocks[index].size = 64;
             blocks[index] = {
-                reinterpret_cast<std::uintptr_t>(allocation.address),
+                reinterpret_cast<std::uintptr_t>(streamAllocation->address),
                 64,
             };
         }
@@ -3683,7 +3692,18 @@ void TestCompositePartialStageAbandonmentAndReuse()
         CHECK(fixture.enroll(25));
         CHECK(fixture.beginAllocation());
         CHECK(fixture.setupStorage());
-        CHECK(fixture.setupStreams());
+        CHECK(reinterpret_cast<std::uintptr_t>(
+                  fixture.streamAllocation.get())
+                % alignof(pmem_runtime::AllocationResult)
+            == 0);
+        CHECK(fixture.beginStreamGeneration());
+        CHECK(fixture.allocateStreamBlocks());
+        CHECK(fixture.streamAllocationTableStatus
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(fixture.streamAllocation->status
+            == pmem_runtime::AllocationStatus::Success);
+        CHECK(fixture.streamAllocationIndex + 1 == fixture.blocks.size());
+        CHECK(fixture.bindStreams());
         CHECK(fixture.beginPendingCopies(true));
         CHECK(DriveCompositeAbandonmentToTerminal(fixture));
         auto *const stream =
