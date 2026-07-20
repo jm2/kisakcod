@@ -610,13 +610,23 @@ Completed foundation work:
   ownership, pending copies, and script-string ownership each provide exact composition predicates, while the table
   drives strict callback binding, allocation, storage/stream placement, pending/script staging, admission, abandonment,
   retry-safe Live unload, drain, terminal reset, reuse, and stale-key rejection. Inputs use a single captured descriptor
-  or callback image; storage/stream overlap and aligned table/managed-PMem output aliases are rejected, including the
+  or callback image; storage/stream overlap and aligned table output aliases are rejected, as are managed-PMem aliases
+  while shared PMem is Ready or Draining, including the
   legacy passive claim/get boundaries. Focused table CTest is **16/16** under GCC; GCC/Clang runtime-table builds and
   Clang ASan+UBSan with `detect_leaks=0` are green. Genuine i386 and AArch64 compile/link gates produce the correct ELF
   classes; direct i386 execution remains blocked by the established sandbox `SIGSYS`. End-to-end/adversarial coverage
-  and an independent exact-diff audit are green. The affected runtime/source/security selection is **36/36**, all five
-  macro-off production seals pass, the headless dependency gate is clean, and full native CTest is **157/157**.
-  Exact-head PR review/CI remain. No production caller is enrolled, and the atomic seven-site loader cutover is next;
+  and an independent exact-diff audit are green. At the pre-review checkpoint, the runtime/source/security selection was
+  **36/36**; all five macro-off production seals passed, the headless dependency gate was clean, and full native CTest
+  was **157/157**.
+  PR #71 initial run **29754589268** then found hosted-only headless link closure and MSVC identical-COMDAT fixture
+  failures. The pending repair adds the database-neutral storage implementation and an explicit fail-closed headless
+  bridge to the headless source set, seals that source-profile pair, and makes the alternate callback observably
+  distinct. Review hardening also
+  closes full retained-output aliases in the composite table and lower stream/pending readers, authenticates exact live
+  keys before Bound descriptor disclosure and the complete reset-authoritative FX-workspace topology, prevents mixed legacy and
+  composite enrollment, strengthens direct-call authority seals, and fixes warning roots instead of suppressing them.
+  Full native CTest is **157/157**, and the affected Clang and ASan+UBSan selections are **38/38** each. Repair-head CI
+  rerun and bot re-review remain. No production caller is enrolled, and the atomic seven-site loader cutover is next;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -725,7 +735,7 @@ Remaining gates, in implementation order:
    as `225759e7d8fd1327210452f3debcd6360465ef2a`; authoritative run **29707497302** passed all nine jobs and the graph is
    verified. None of the seven raw production sites is enrolled. PR #67 merged the locally and hosted-sealed passive
    durable-receipt composition. PR #68 merged the bounded legacy PMem indexing/failure-atomic repair, and PR #69 merged
-   the hidden-state/macro-off-object seal as `534a9b1e`. Current `293a020c` reserves the exact MP/SP PMem lock slots and
+   the hidden-state/macro-off-object seal as `534a9b1e`. Merged PR #70 sequence: `293a020c` reserves the exact MP/SP PMem lock slots and
    `716eacc1` supplies the serialized retained-extent/init/allocation/lifecycle core, `0a9128aa` finishes stable owned
    names plus the bounded diagnostic snapshot/read-report split, `852e7db9` adds the unused permanent-Ended process-life
    `$init` controller, and `792ff1c7` completes passive table-wide singleton authentication. The pending branch completes
@@ -2028,7 +2038,7 @@ jobs in run **29673379640**; Codex reviewed exact final head `0eec9b1e`, Gemini 
 both were clean with zero threads, and authoritative post-merge
 run **29673608169** passed all nine jobs at squash merge `74916b5b`. PR #68 subsequently merged the legacy native64
 `PMem_FreeIndex`/`PMem_EndAllocInPrim` repair as `2ee1e82c`; PR #69 then merged hidden mutable globals, whole-type
-test-helper containment, and actual macro-off ELF/COFF/AppleClang object seals as `534a9b1e`. Current `293a020c` reserves
+test-helper containment, and actual macro-off ELF/COFF/AppleClang object seals as `534a9b1e`. Merged PR #70 sequence: `293a020c` reserves
 the MP/SP PMem lock slots and `716eacc1` adds serialized global lifecycle/allocation/getter access, retained reservation
 authentication, and coherent initialization state; `0a9128aa` completes stable owned names and bounded dump snapshots;
 `852e7db9` adds the unused permanent-Ended process-life `$init` controller; and `792ff1c7` completes passive shared-

@@ -95,7 +95,10 @@ witness. The contract requires external serialization, mutually disjoint control
 name identity, and no legacy bypass, entry replacement, or reinitialization while the scope is owned. The exact replay on
 `ff61504e` passes GCC Release **134/134**; focused GCC/Clang, Clang ASan+UBSan, Clang static analysis, strict native i386
 and AArch64, source, API-seal, security, and diff evidence all pass. It has no production caller and leaves retail
-bytes unchanged. PR #68 subsequently corrected legacy native64-invalid `PMem_FreeIndex`/`PMem_EndAllocInPrim`
+bytes unchanged. Exact-head run **29673379640** passed all nine jobs; Codex reviewed exact final head `0eec9b1e`,
+Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before squash merge
+`74916b5b`. Authoritative post-merge run **29673608169** passed all nine jobs at that exact merge commit. PR #68
+subsequently corrected legacy native64-invalid `PMem_FreeIndex`/`PMem_EndAllocInPrim`
 handling and merged as `2ee1e82c`; exact-head and post-merge runs **29712699908** and **29712915522** passed all nine
 jobs. Merged PR #69 core `3b826224` plus review hardening gives both mutable globals internal linkage,
 removes the fixture's mutable `extern`, and macro-gates the entire by-value test helper. Its containment seal scans every
@@ -106,8 +109,8 @@ GCC Debug passes **156/156**; focused GCC/Clang/ASan+UBSan pass **6/6**, and gen
 inspection pass. Review fixed padding-sensitive snapshots and CRLF matching; hosted macOS then exposed AppleClang's
 local `__MergedGlobals` coalescing, which final seal head `eeefdf40` handles without weakening ELF/COFF or global-symbol
 rejection. Final run **29715782804** passed all nine jobs with clean exact-head Codex and independent audits and zero
-threads before squash merge `534a9b1e`; authoritative post-merge run **29716339199** passed all nine jobs. Current
-Merged PR #70 work through `792ff1c7` reserves exact MP/SP PMem serializer slots, serializes global lifecycle/allocation/getter
+threads before squash merge `534a9b1e`; authoritative post-merge run **29716339199** passed all nine jobs. Merged PR #70
+work through `792ff1c7` reserves exact MP/SP PMem serializer slots, serializes global lifecycle/allocation/getter
 access, authenticates retained initialization state, owns stable diagnostic names, captures bounded pointer-free dump
 snapshots, adds the unused permanent-Ended process-life `$init` controller, and authenticates both passive table-wide
 resource topologies. Exact combined native CTest passes **157/157**, focused integration passes **32/32**, and affected
@@ -117,18 +120,22 @@ is the head of run **29726370638**, whose all nine hosted jobs ultimately passed
 adapter/controller layer without checked loader enrollment. It adds a report-free PMem range/receipt bridge with exact
 ABA-safe `Freed` evidence, exact storage/stream/pending/script composition authenticators, and strict durable table
 operations from setup through admission or abandonment and from retry-safe Live unload through drain/reset. Descriptor
-and callback inputs are captured once; storage/stream overlap and aligned table/managed-PMem output aliases are rejected,
+and callback inputs are captured once; storage/stream overlap and aligned table output aliases are rejected, as are
+managed-PMem aliases while shared PMem is Ready or Draining,
 including the legacy passive claim/get boundaries. End-to-end/adversarial tests and an independent exact-diff audit are
 green. Focused table CTest is **16/16** under GCC; Clang and Clang ASan+UBSan (`detect_leaks=0`) runtime-table gates pass,
 and genuine i386/AArch64 compile-link outputs have the correct ELF classes. Direct i386 execution remains blocked by the
-established sandbox `SIGSYS`. The affected runtime/source/security selection is **36/36**, all five macro-off production
-seals pass, the headless dependency gate is clean, and full native CTest is **157/157**. Exact-head PR review/CI remain;
-the next production step is one atomic seven-site loader cutover.
-Exact-head run **29673379640** passed all nine jobs;
-Codex reviewed exact final
-head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before
-squash merge `74916b5b`. Authoritative post-merge run
-**29673608169** passed all nine jobs at that exact merge commit.
+established sandbox `SIGSYS`. At the pre-review checkpoint, the runtime/source/security selection was **36/36**; all
+five macro-off production seals passed, the headless dependency gate was clean, and full native CTest was **157/157**.
+PR #71 initial run **29754589268** exposed a missing headless storage/bridge link closure and an MSVC identical-COMDAT
+fixture false negative. The pending repair adds a sealed, fail-closed headless bridge plus an observably distinct
+alternate callback. Review hardening also closes retained-output aliases across every table/stream/pending authority,
+requires exact active lifecycle keys before Bound descriptor disclosure, authenticates the complete
+reset-authoritative FX-workspace topology, rejects mixed legacy/composite enrollment before mutation, strengthens
+direct-call authority seals, and
+removes the warning suppressions after fixing their causes. Full native CTest is **157/157** and the Clang plus
+ASan+UBSan affected selections are **38/38** each; repair-head CI rerun and bot re-review remain. The next production step is one
+atomic seven-site loader cutover.
 
 Merged PR #61's production-neutral zone-stream ownership stack adds one
 durable exact-key NeverBound/Bound/Invalidated receipt per generation and one reusable controller over the process-wide
@@ -228,13 +235,15 @@ squash-merged as `6a67a66e`. The pending branch now adds the production-neutral 
 controller, replacing the passive-only pristine boundary with exact phase/key authentication while retaining zero
 production enrollment. After exact-head PR review/CI, the next step is one atomic seven-site cutover.
 
-Non-blocking hardening backlog from the exact-key audit:
+Exact-key audit follow-up status:
 
-- PMem needs a readiness-aware overlap query before legacy retained callback contexts can enforce an outside-PMem
+- Open: PMem needs a readiness-aware overlap query before legacy retained callback contexts can enforce an outside-PMem
   lifetime without treating the pre-initialization state as an overlap-query failure.
-- Lower-level `ActiveZoneStreamBinding::block` and `TryReadPendingCopyRecord` outputs could receive the same alignment and
-  table-storage alias checks now enforced at the composite table. The table exposes neither lower-level authority, so
-  this is defense in depth rather than a cutover blocker.
+
+Resolved on the PR #71 repair head: `ActiveZoneStreamBinding::block` and
+`TryReadPendingCopyRecord` now reject misaligned, non-representable, stale-key, singleton/control, and complete
+retained-owner aliases without changing the destination. The stream accessor authenticates the exact live generation
+when Bound while preserving canonical Idle reads.
 
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless

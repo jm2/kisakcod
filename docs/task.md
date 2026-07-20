@@ -97,17 +97,31 @@ work item changes. Do not create session-specific handoff files.
   storage placement, stream binding, pending-copy and script-journal staging, admission/commit, abandonment, retry-safe
   Live unload, pending drain, authenticated terminal reset, and stale-key rejection without enrolling a loader caller.
   Descriptor and callback inputs are captured once before use; component/table outputs and the legacy passive claim/get
-  boundaries reject misalignment plus table or managed-PMem aliasing. Storage and stream ranges must be disjoint, so a
+  boundaries reject misalignment plus table aliasing and, while shared PMem is Ready or Draining, managed-PMem
+  aliasing. Storage and stream ranges must be disjoint, so a
   valid per-component receipt cannot authorize stream writes into the runtime-storage slab. End-to-end and adversarial
   tests cover callback reentry, retry preservation, malformed/foreign storage, mixed PMem ranges, output aliasing,
   terminal receipt authentication, reset/reuse, and stale generations. The focused runtime-table CTest selection is
   **16/16** under GCC; the runtime-table target is also green under Clang and Clang ASan+UBSan with
   `detect_leaks=0`. Genuine i386 and AArch64 builds compile and link with the correct ELF classes; direct i386 execution
-  remains blocked by the established sandbox `SIGSYS`. The independent exact-diff audit is clean. The affected
-  runtime/source/security selection is **36/36**, all five macro-off production seals pass, the headless dependency gate
-  is clean, and full native CTest is **157/157**. Exact-head PR review/CI remain. This completes the production-neutral exact-key
-  adapter queue item on the pending branch; one atomic seven-site loader cutover is next, and strict requested-target
-  delivery remains **0/5**.
+  remains blocked by the established sandbox `SIGSYS`. The independent exact-diff audit is clean. At the pre-review
+  checkpoint, the affected runtime/source/security selection was **36/36**; all five macro-off production seals passed,
+  the headless dependency gate was clean, and full native CTest was **157/157**. PR #71 initial exact-head run
+  **29754589268** exposed two hosted-only
+  integration defects: the headless profile omitted the storage/FX-bridge definitions now referenced by the table, and
+  MSVC Release folded two intentionally distinct empty fixture callbacks. The current repair links the database-neutral
+  storage implementation to an explicitly headless-only fail-closed bridge, seals that source-profile pair, and gives
+  the alternate fixture callback an observable side effect. The review cleanup additionally authenticates the complete
+  reset-authoritative FX-workspace topology, rejects all five table outputs against the complete stream
+  singleton/retained authority and, while shared PMem is Ready or Draining, managed PMem, makes lower stream/pending
+  descriptor reads aligned, exact-key fresh when Bound, and
+  failure-atomic across every retained generation, rejects mixed legacy/composite enrollment before shared-state
+  mutation, and freezes both qualified authority identifiers and direct calls. Root causes replace the former broad
+  warning suppressions, including alias-safe packed dvar decoding and portable legacy identifiers. Full native CTest is
+  **157/157**; the repair-head Clang and ASan+UBSan affected selection is **38/38** in each tree, with repair-head hosted
+  CI rerun and bot re-review still required.
+  This completes the production-neutral exact-key adapter queue item on the pending branch; one atomic seven-site loader
+  cutover is next, and strict requested-target delivery remains **0/5**.
 - Merged script-string ownership foundation: PR #48 adds a dedicated recursive outer DB transaction
   serializer, a private report-free journal adapter, bounded report-free ordinary/database-user ownership operations,
   and failure-atomic memory-tree allocate/query/free APIs. Runtime IDs remain explicitly limited to
@@ -385,8 +399,8 @@ work item changes. Do not create session-specific handoff files.
   API-seal, security, and diff evidence all pass. The API is build-enrolled but has no production caller and does not
   change retail bytes. PR #68 later removed the legacy native64-invalid `PMem_FreeIndex`/`PMem_EndAllocInPrim`
   handling; the serialized global PMem boundary and unused permanent-Ended `$init` controller now exist locally through
-  `852e7db9`. The pending branch now completes exact-key composite adapters; final publication and the atomic production
-  enrollment remain.
+  `852e7db9`. The pending branch now completes exact-key composite adapters; repair-head CI/review/merge and the atomic
+  production enrollment remain.
   Exact-head run **29673379640** passed all nine jobs; Codex reviewed exact
   final head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before
   squash merge `74916b5b`. Authoritative
@@ -1886,9 +1900,10 @@ Exact combined native CTest is **157/157**, the focused integration is **32/32**
 compile-link gates pass. Exact final head `ca2d1149` ultimately passed all nine hosted jobs in run **29726370638**;
 no checked authority or loader caller is enrolled at the merged baseline. The pending branch completes the exact-key
 composite adapters and strict table controller with focused runtime-table CTest **16/16**, green GCC/Clang and Clang
-ASan+UBSan (`detect_leaks=0`), correct-class i386/AArch64 compile-link evidence, and a clean independent audit. Final
-the affected runtime/source/security selection is **36/36**, all five macro-off production seals pass, the headless
-dependency gate is clean, and full native CTest is **157/157**; production enrollment is still zero.
+ASan+UBSan (`detect_leaks=0`), correct-class i386/AArch64 compile-link evidence, and a clean independent audit. Repair-head
+review hardening expands the affected Clang and ASan+UBSan runtime/source/security selection to **38/38** in each tree;
+all five macro-off production seals pass, the headless dependency gate is clean, and full native CTest is **157/157**.
+Production enrollment is still zero.
 
 1. After the pending exact-key branch passes exact-head PR review/CI, perform one atomic seven-site loader cutover: claim
    exact generations, stage/transfer
@@ -1911,13 +1926,15 @@ dependency gate is clean, and full native CTest is **157/157**; production enrol
    remove the SP `int`-temporary truncations, continue M1/M5 ABI cleanup, and add production fast-file fixtures/fuzzing
    before enabling any native64 engine target.
 
-Non-blocking exact-key follow-up debt:
+Exact-key audit follow-up status:
 
-- Add a readiness-aware PMem overlap query before legacy retained callback contexts can enforce their required
+- Open: add a readiness-aware PMem overlap query before legacy retained callback contexts can enforce their required
   outside-PMem lifetime without misclassifying the pre-initialization state.
-- Apply analogous aligned/table-safe output checks directly to lower-level `ActiveZoneStreamBinding::block` and
-  `TryReadPendingCopyRecord`; the composite table currently exposes neither lower-level authority, so these are defense
-  in depth rather than blockers for the atomic loader cutover.
+
+Resolved on the PR #71 repair head: lower-level `ActiveZoneStreamBinding::block` and
+`TryReadPendingCopyRecord` now enforce aligned, representable, failure-atomic outputs; the stream accessor authenticates
+the exact live generation when Bound plus complete singleton authority, while intentionally preserving canonical Idle
+reads; pending reads reject every retained receipt/lifecycle alias and stale or reclaimed lifecycle key.
 
 ## Known release blockers
 
