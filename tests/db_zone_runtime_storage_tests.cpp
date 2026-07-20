@@ -102,7 +102,7 @@ private:
 [[nodiscard]] Plan SentinelPlan() noexcept
 {
     Plan value{};
-    value.expectedStringCount = UINT32_C(0x11111111);
+    value.scriptStringCapacity = UINT32_C(0x11111111);
     value.arenaBudget = UINT32_C(0x22222222);
     value.scriptStringJournal = {3, 4};
     value.scriptStringEntries = {5, 6};
@@ -169,6 +169,7 @@ bool TestPlanning()
 
     Plan zero{};
     CHECK(PlanStorage(0, 1, &zero));
+    CHECK(zero.scriptStringCapacity == 0);
     CHECK(zero.scriptStringJournal.offset == 0);
     CHECK(zero.scriptStringJournal.byteCount
           == sizeof(journal::ScriptStringJournal));
@@ -182,6 +183,8 @@ bool TestPlanning()
 
     Plan maximum{};
     CHECK(PlanStorage(journal::kMaxScriptStringJournalEntries, 257, &maximum));
+    CHECK(maximum.scriptStringCapacity
+          == journal::kMaxScriptStringJournalEntries);
     CHECK(maximum.scriptStringEntries.byteCount
           == journal::kMaxScriptStringJournalEntries
               * sizeof(journal::ScriptStringJournalEntry));
@@ -287,7 +290,7 @@ bool TestBinding()
     CHECK(!binding.scriptStringJournal()->initialized());
     CHECK(binding.scriptStringJournal()->storage() == nullptr);
     CHECK(binding.scriptStringEntries() != nullptr);
-    for (std::uint32_t i = 0; i < plan.expectedStringCount; ++i)
+    for (std::uint32_t i = 0; i < plan.scriptStringCapacity; ++i)
     {
         CHECK(binding.scriptStringEntries()[i].stringId == 0);
         CHECK(binding.scriptStringEntries()[i].state
@@ -635,7 +638,7 @@ bool TestLifetimeGates()
 bool TestCompositionAuthentication()
 {
     Plan plan{};
-    CHECK(PlanStorage(1, 256, &plan));
+    CHECK(PlanStorage(3, 256, &plan));
     AlignedSlab slab(plan.totalBytes);
     CHECK(slab);
     Binding binding;
@@ -666,8 +669,8 @@ bool TestCompositionAuthentication()
         arenaIdentity,
         journalValue,
         entries,
-        plan.expectedStringCount,
-        plan.expectedStringCount};
+        plan.scriptStringCapacity,
+        0};
     CHECK(runtime_storage::AuthenticateZoneRuntimeStorageComposition(
         binding, placed, CompositionMode::Placed));
 
@@ -765,44 +768,64 @@ bool TestCompositionAuthentication()
     CHECK(runtime_storage::AuthenticateZoneRuntimeStorageComposition(
         binding, placed, CompositionMode::Placed));
 
+    CompositionExpectation active = placed;
+    active.expectedCount = 1;
     CHECK(journal::TryInitializeScriptStringJournal(
               journalValue,
               key,
               entries,
-              plan.expectedStringCount,
-              plan.expectedStringCount)
+              plan.scriptStringCapacity,
+              active.expectedCount)
           == journal::ScriptStringJournalStatus::Success);
     CHECK(runtime_storage::AuthenticateZoneRuntimeStorageComposition(
-        binding, placed, CompositionMode::Active));
+        binding, active, CompositionMode::Active));
     CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
         binding, placed, CompositionMode::Placed));
+    wrong = active;
+    --wrong.expectedCount;
+    CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, wrong, CompositionMode::Active));
+    wrong = active;
+    ++wrong.expectedCount;
+    CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, wrong, CompositionMode::Active));
 
     journal::ScriptStringJournalTestAccess::SetFlags(journalValue, 0x03);
     CHECK(journalValue->initialized() && journalValue->callbackActive());
     CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
-        binding, placed, CompositionMode::Active));
+        binding, active, CompositionMode::Active));
     journal::ScriptStringJournalTestAccess::SetFlags(journalValue, 0x05);
     CHECK(journalValue->initialized() && journalValue->poisoned());
     CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
-        binding, placed, CompositionMode::Active));
+        binding, active, CompositionMode::Active));
     journal::ScriptStringJournalTestAccess::SetFlags(journalValue, 0x01);
     journal::ScriptStringJournalTestAccess::SetCapacity(journalValue, 2);
     CHECK(journalValue->initialized());
     CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
-        binding, placed, CompositionMode::Active));
+        binding, active, CompositionMode::Active));
     journal::ScriptStringJournalTestAccess::SetCapacity(
-        journalValue, plan.expectedStringCount);
+        journalValue, plan.scriptStringCapacity);
+    journal::ScriptStringJournalTestAccess::SetExpectedCount(
+        journalValue, 0);
+    CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, active, CompositionMode::Active));
+    journal::ScriptStringJournalTestAccess::SetExpectedCount(
+        journalValue, active.expectedCount);
     CHECK(runtime_storage::AuthenticateZoneRuntimeStorageComposition(
-        binding, placed, CompositionMode::Active));
+        binding, active, CompositionMode::Active));
 
     CHECK(journal::TryBeginScriptStringRollback(journalValue, key)
           == journal::ScriptStringJournalStatus::Success);
     CHECK(journalValue->phase()
           == journal::ScriptStringJournalPhase::RolledBack);
     CHECK(runtime_storage::AuthenticateZoneRuntimeStorageComposition(
-        binding, placed, CompositionMode::Detached));
+        binding, active, CompositionMode::Detached));
     CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
-        binding, placed, CompositionMode::Active));
+        binding, active, CompositionMode::Active));
+    wrong = active;
+    ++wrong.expectedCount;
+    CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, wrong, CompositionMode::Detached));
 
     CHECK(runtime_storage::TryDestroyZoneRuntimeStorage(&binding)
           == Status::Success);
@@ -811,8 +834,8 @@ bool TestCompositionAuthentication()
         0,
         journalValue,
         entries,
-        plan.expectedStringCount,
-        plan.expectedStringCount};
+        plan.scriptStringCapacity,
+        active.expectedCount};
     CHECK(runtime_storage::AuthenticateZoneRuntimeStorageComposition(
         binding, destroyed, CompositionMode::Destroyed));
     CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
@@ -831,6 +854,17 @@ bool TestCompositionAuthentication()
     ++wrong.capacity;
     CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
         binding, wrong, CompositionMode::Destroyed));
+    wrong = destroyed;
+    wrong.expectedCount = 0;
+    CHECK(runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, wrong, CompositionMode::Destroyed));
+    wrong = destroyed;
+    wrong.expectedCount = plan.scriptStringCapacity;
+    CHECK(runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, wrong, CompositionMode::Destroyed));
+    ++wrong.expectedCount;
+    CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, wrong, CompositionMode::Destroyed));
     CHECK(binding.destroyed() && binding.slab() == nullptr
           && binding.plan() == nullptr
           && binding.scriptStringJournal() == nullptr
@@ -838,6 +872,85 @@ bool TestCompositionAuthentication()
           && binding.fxNativeArena() == nullptr
           && binding.fxZoneAdapterWorkspace() == nullptr
           && binding.fxArenaBacking() == nullptr);
+    return true;
+}
+
+bool TestZeroDemandCompositionAuthentication()
+{
+    Plan plan{};
+    CHECK(PlanStorage(3, 256, &plan));
+    CHECK(plan.scriptStringCapacity == 3);
+    AlignedSlab slab(plan.totalBytes);
+    CHECK(slab);
+    Binding binding;
+    CHECK(runtime_storage::TryBindZoneRuntimeStorage(
+              slab.data(), slab.size(), &plan, &binding)
+          == Status::Success);
+
+    auto *const journalValue = binding.scriptStringJournal();
+    auto *const entries = binding.scriptStringEntries();
+    const db::zone_load::ZoneLoadContextKey key{92, 4, 0};
+    const std::uint64_t arenaIdentity = key.generation;
+    CHECK(entries != nullptr);
+    CHECK(binding.fxNativeArena()->TryBind(
+              binding.fxArenaBacking(), plan.arenaBudget, arenaIdentity)
+          == fastfile::FxFastFileNativeArenaStatus::Success);
+
+    const CompositionExpectation expectation{
+        key,
+        arenaIdentity,
+        journalValue,
+        entries,
+        plan.scriptStringCapacity,
+        0};
+    CHECK(runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, expectation, CompositionMode::Placed));
+    CHECK(journal::TryInitializeScriptStringJournal(
+              journalValue,
+              key,
+              entries,
+              plan.scriptStringCapacity,
+              0)
+          == journal::ScriptStringJournalStatus::Success);
+    CHECK(journalValue->storage() == entries);
+    CHECK(journalValue->capacity() == plan.scriptStringCapacity);
+    CHECK(journalValue->expectedCount() == 0);
+    CHECK(runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, expectation, CompositionMode::Active));
+
+    CompositionExpectation wrong = expectation;
+    wrong.entries = nullptr;
+    CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, wrong, CompositionMode::Active));
+    wrong = expectation;
+    ++wrong.expectedCount;
+    CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, wrong, CompositionMode::Active));
+
+    CHECK(journal::TryBeginScriptStringRollback(journalValue, key)
+          == journal::ScriptStringJournalStatus::Success);
+    CHECK(runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, expectation, CompositionMode::Detached));
+    wrong = expectation;
+    ++wrong.expectedCount;
+    CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, wrong, CompositionMode::Detached));
+
+    CHECK(runtime_storage::TryDestroyZoneRuntimeStorage(&binding)
+          == Status::Success);
+    const CompositionExpectation destroyed{
+        {},
+        0,
+        journalValue,
+        entries,
+        plan.scriptStringCapacity,
+        0};
+    CHECK(runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, destroyed, CompositionMode::Destroyed));
+    wrong = destroyed;
+    wrong.expectedCount = plan.scriptStringCapacity + 1u;
+    CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+        binding, wrong, CompositionMode::Destroyed));
     return true;
 }
 
@@ -866,6 +979,7 @@ int main()
 {
     return TestPlanning() && TestBinding() && TestBindFailuresAndAliasing()
             && TestLifetimeGates() && TestCompositionAuthentication()
+            && TestZeroDemandCompositionAuthentication()
             && TestMaximumEntries()
         ? 0
         : 1;

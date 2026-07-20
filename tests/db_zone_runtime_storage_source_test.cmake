@@ -77,6 +77,19 @@ foreach(_var IN ITEMS
     set(${_var} "${_normalized}")
 endforeach()
 
+# Planned journal entry capacity and the later non-null acquisition demand
+# are deliberately different values.  Keep the obsolete conflated spelling
+# out of the public contract, implementation, and its runtime fixture so a
+# future edit cannot silently make construction extent depend on demand again.
+foreach(_var IN ITEMS _header _source _fixture)
+    string(FIND "${${_var}}" "expectedStringCount" _conflated_count_position)
+    if(NOT _conflated_count_position EQUAL -1)
+        message(FATAL_ERROR
+            "Forbidden runtime-storage regression (capacity/demand "
+            "conflation): 'expectedStringCount'")
+    endif()
+endforeach()
+
 function(require_contains SOURCE_VAR NEEDLE DESCRIPTION)
     string(FIND "${${SOURCE_VAR}}" "${NEEDLE}" _position)
     if(_position EQUAL -1)
@@ -403,6 +416,7 @@ foreach(_marker IN ITEMS
     "ZoneRuntimeStorageBinding(ZoneRuntimeStorageBinding &&) = delete;"
     "~ZoneRuntimeStorageBinding() noexcept {}"
     "const ZoneRuntimeStorageBinding *self_ = nullptr;"
+    "std::uint32_t scriptStringCapacity = 0;"
     "enum class ZoneRuntimeStorageBindingPhase : std::uint8_t"
     "struct alignas(8) ZoneRuntimeStorageCompositionExpectation final"
     "RUNTIME_SIZE(ZoneRuntimeStorageCompositionExpectation, 0x28, 0x30);"
@@ -459,17 +473,22 @@ foreach(_marker IN ITEMS
     "expectation.arenaZoneIdentity != expectation.key.generation"
     "expectation.journal != binding.journal_"
     "expectation.entries != binding.entries_"
-    "expectation.capacity != binding.plan_.expectedStringCount"
-    "expectation.expectedCount != binding.plan_.expectedStringCount"
+    "expectation.capacity != binding.plan_.scriptStringCapacity"
+    "expectation.expectedCount > expectation.capacity"
     "detail::AuthenticateStableFxRuntimeStorage("
     "case ZoneRuntimeStorageCompositionMode::Placed:"
-    "return JournalIsPristine(*binding.journal_);"
+    "return expectation.expectedCount == 0"
+    "&& JournalIsPristine(*binding.journal_);"
     "case ZoneRuntimeStorageCompositionMode::Active:"
     "return JournalIsStableActive("
+    "binding.plan_.scriptStringCapacity"
+    "expectation.expectedCount"
     "case ZoneRuntimeStorageCompositionMode::Detached:"
     "return JournalIsDetached("
     "mode == ZoneRuntimeStorageCompositionMode::Destroyed"
     "expectation.journal == binding.journal_"
+    "expectation.capacity == binding.plan_.scriptStringCapacity"
+    "expectation.expectedCount <= expectation.capacity"
     "default: return false;")
     require_contains(
         _source "${_marker}" "exact read-only storage composition")
@@ -493,6 +512,8 @@ endforeach()
 # local complete plan only on success.
 foreach(_marker IN ITEMS
     "kMaxScriptStringJournalEntries"
+    "plan.scriptStringCapacity = scriptStringCapacity;"
+    "static_cast<std::uint64_t>(scriptStringCapacity)"
     "arenaBudget == 0"
     "arenaBudget > UINT32_MAX"
     "IsRangeRepresentable(outPlan, sizeof(*outPlan))"
@@ -521,6 +542,8 @@ foreach(_marker IN ITEMS
     "RangesOverlap( slab, slabCapacity, outBinding, sizeof(*outBinding))"
     "!outBinding->isPristine()"
     "Journal *const journal = ::new"
+    "planSnapshot.scriptStringCapacity == 0"
+    "index < planSnapshot.scriptStringCapacity"
     "::new (entries + index) JournalEntry{};"
     "Arena *const arena = detail::ConstructFxRuntimeArena("
     "Workspace *const workspace = detail::ConstructFxRuntimeWorkspace("
@@ -529,6 +552,16 @@ foreach(_marker IN ITEMS
     "State::Bound")
     require_contains(_source "${_marker}" "failure-atomic placement binding")
 endforeach()
+require_ordered(
+    _source
+    "planSnapshot.scriptStringCapacity == 0"
+    "index < planSnapshot.scriptStringCapacity"
+    "entry pointer parity precedes capacity-driven construction")
+require_ordered(
+    _source
+    "index < planSnapshot.scriptStringCapacity"
+    "Workspace *const workspace = detail::ConstructFxRuntimeWorkspace("
+    "all planned journal entries construct before dependent runtime objects")
 require_ordered(
     _source
     "RangesOverlap( plan, sizeof(*plan), outBinding, sizeof(*outBinding))"
@@ -563,12 +596,18 @@ foreach(_marker IN ITEMS
     "detail::TryPrepareFxRuntimeStorageDestroy("
     "detail::DestroyFxRuntimeWorkspace(binding->workspace_);"
     "detail::DestroyFxRuntimeArena(binding->arena_);"
+    "binding->plan_.scriptStringCapacity"
     "binding->entries_[index - 1].~ScriptStringJournalEntry();"
     "binding->journal_->~ScriptStringJournal();"
     "terminal composition authentication compares addresses and plan fields"
     "State::Destroyed")
     require_contains(_source "${_marker}" "ordered checked destruction")
 endforeach()
+require_ordered(
+    _source
+    "for (std::uint32_t index = binding->plan_.scriptStringCapacity;"
+    "binding->journal_->~ScriptStringJournal();"
+    "capacity-driven reverse entry destruction precedes journal destruction")
 foreach(_forbidden IN ITEMS
     "binding->slab_ = nullptr;"
     "binding->slabCapacity_ = 0;"
@@ -785,6 +824,10 @@ foreach(_marker IN ITEMS
     "CompositionMode::Detached"
     "CompositionMode::Destroyed"
     "TestCompositionAuthentication()"
+    "TestZeroDemandCompositionAuthentication()"
+    "plan.scriptStringCapacity == 3"
+    "ScriptStringJournalTestAccess::SetExpectedCount"
+    "wrong.expectedCount = plan.scriptStringCapacity + 1u"
     "arenaZoneIdentity"
     "ScriptStringJournalTestAccess::SetCapacity"
     "kMaxScriptStringJournalEntries"

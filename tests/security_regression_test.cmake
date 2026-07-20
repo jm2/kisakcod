@@ -10405,7 +10405,7 @@ require_security_exact_class_digest(
     "AllocationReceipt")
 require_security_exact_class_digest(
     _security_runtime_storage_binding_class
-    184ee7af0a6025fca4c614f7e40deb77f230afeb03f6df49bac9aca3b01c2651
+    ea0ec938bd46b81eb0a02df459633751970c4911c67317a5ddfde915860cb907
     "ZoneRuntimeStorageBinding")
 require_security_exact_class_digest(
     _security_stream_generation_receipt_class
@@ -10639,7 +10639,22 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
     "single headless-neutral private storage bridge include"
     "complete private FX bind status and rollback mapping"
     "runtime table cannot call the complete EffectsCore arena directly"
+    "capacity retention with zero pre-begin demand"
+    "storage.scriptStringEntries(), retainedPlan->scriptStringCapacity, 0);"
+    "capacity-aware generation binding authentication"
+    "bounded capacity/demand generation witness"
+    "pre-begin zero-demand capacity match"
     "bounded separated passive ownership storage"
+    "if (expectedCount > storageCapacity) return ZoneRuntimeTableStatus::CapacityExceeded;"
+    "storage separation must span planned capacity rather than demand"
+    "success-only expected-demand publication"
+    "single success-only expected-demand publication"
+    "lower ownership begin succeeds before expected demand publication"
+    "expected demand publishes before script-string stage publication"
+    "oversized-demand failure-atomic retry fixture"
+    "oversized demand leaves exact placed state retryable"
+    "valid exact demand can retry after oversized demand"
+    "capacity-span and zero-demand runtime coverage"
     "snapshotted separated legacy admission callback"
     "snapshotted separated legacy rollback callback"
     "snapshotted separated legacy unload callback")
@@ -10673,6 +10688,11 @@ foreach(_zone_runtime_detector_marker IN ITEMS
     "TryBindFxRuntimeStorage"
     "exact native-arena bind translation"
     "database bridge header cannot expose complete EffectsCore types"
+    "capacity/demand"
+    "entry pointer parity precedes capacity-driven construction"
+    "capacity-driven reverse entry destruction precedes journal destruction"
+    "expectation.expectedCount <= expectation.capacity"
+    "TestZeroDemandCompositionAuthentication()"
     "_non_extension_sentinel")
     require_repository_contains(
         "tests/db_zone_runtime_storage_source_test.cmake"

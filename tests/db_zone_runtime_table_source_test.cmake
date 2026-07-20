@@ -764,7 +764,7 @@ require_exact_class_digest(_physical_allocation_receipt_class
     75f83533a5d4b9988e78803421caa663b9e3e8050012560251fe5e870190bc0b
     "AllocationReceipt")
 require_exact_class_digest(_runtime_storage_binding_class
-    184ee7af0a6025fca4c614f7e40deb77f230afeb03f6df49bac9aca3b01c2651
+    ea0ec938bd46b81eb0a02df459633751970c4911c67317a5ddfde915860cb907
     "ZoneRuntimeStorageBinding")
 require_exact_class_digest(_stream_generation_receipt_class
     0e94ce08089afadd3198fa52a914d8de83380717869753d91fb64cd39247638b
@@ -1116,6 +1116,15 @@ foreach(_marker IN ITEMS
         _storage_bind_adapter "${_marker}"
         "complete private FX bind status and rollback mapping")
 endforeach()
+foreach(_marker IN ITEMS
+    "ZoneRuntimeTable::retainGenerationPlacement("
+    "retainedPlan->scriptStringCapacity"
+    "storage.scriptStringEntries(), retainedPlan->scriptStringCapacity, 0);"
+    "ZoneRuntimeSetupStage::StorageBound")
+    require_contains(
+        _storage_bind_adapter "${_marker}"
+        "capacity retention with zero pre-begin demand")
+endforeach()
 require_ordered(
     _storage_bind_adapter
     "zone_runtime_storage::TryBindZoneRuntimeStorage("
@@ -1124,11 +1133,53 @@ require_ordered(
 require_ordered(
     _storage_bind_adapter
     "zone_runtime_storage::detail::TryBindFxRuntimeStorage("
+    "ZoneRuntimeTable::retainGenerationPlacement("
+    "native-arena bind precedes placement retention")
+require_ordered(
+    _storage_bind_adapter
+    "retainedPlan->scriptStringCapacity"
     "ZoneRuntimeSetupStage::StorageBound"
-    "native-arena bind precedes storage-stage publication")
+    "capacity and zero demand retain before storage-stage publication")
 require_not_contains(
     _storage_bind_adapter "->TryBind("
     "runtime table cannot call the complete EffectsCore arena directly")
+
+# Capacity is retained at storage bind, while expected acquisition demand must
+# remain zero until the lower ownership controller successfully begins.  The
+# generation witness rejects every other pre-begin shape, including a non-null
+# zero-capacity entry pointer and expected demand greater than capacity.
+extract_slice(
+    _source
+    "bool ZoneRuntimeGenerationBinding::canonicalFor("
+    "bool ZoneRuntimeGenerationBinding::callbacksMatch("
+    _generation_binding_canonical
+    "capacity-aware generation binding authentication")
+foreach(_marker IN ITEMS
+    "placementExpectedCount_ > placementCapacity_"
+    "(placementCapacity_ == 0) != (placementEntries_ == nullptr)"
+    "setupStage_ < ZoneRuntimeSetupStage::ScriptStringsBegun"
+    "placementExpectedCount_ != 0")
+    require_contains(
+        _generation_binding_canonical "${_marker}"
+        "bounded capacity/demand generation witness")
+endforeach()
+
+extract_slice(
+    _source
+    "bool ZoneRuntimeTable::generationPlacementMatches("
+    "void ZoneRuntimeTable::bindGeneration("
+    _pre_begin_placement_match
+    "pre-begin placement authentication")
+foreach(_marker IN ITEMS
+    "binding.placementJournal_ == journal"
+    "binding.placementEntries_ == storage"
+    "binding.placementCapacity_ == capacity"
+    "binding.placementExpectedCount_ == 0"
+    "expectedCount <= capacity")
+    require_contains(
+        _pre_begin_placement_match "${_marker}"
+        "pre-begin zero-demand capacity match")
+endforeach()
 
 # Writable outputs, retained callback descriptors, and stream descriptors are
 # attacker-controlled aliases at this API boundary. Freeze the shared overflow-
@@ -1381,17 +1432,48 @@ extract_slice(
 foreach(_marker IN ITEMS
     "reinterpret_cast<std::uintptr_t>(journal) % alignof(script_string_journal::ScriptStringJournal)"
     "AddressRangesAreDisjoint( table, sizeof(*table), journal, sizeof(*journal))"
-    "expectedCount) > (std::numeric_limits<std::size_t>::max)() / sizeof(*storage)"
+    "if (expectedCount > storageCapacity) return ZoneRuntimeTableStatus::CapacityExceeded;"
+    "static_cast<std::size_t>(storageCapacity) > (std::numeric_limits<std::size_t>::max)() / sizeof(*storage)"
+    "static_cast<std::size_t>(storageCapacity) * sizeof(*storage)"
     "AddressRangesAreDisjoint( table, sizeof(*table), storage, storageBytes)")
     require_contains(
         _ownership_begin "${_marker}"
         "bounded separated passive ownership storage")
 endforeach()
+require_not_contains(
+    _ownership_begin
+    "static_cast<std::size_t>(expectedCount)"
+    "storage separation must span planned capacity rather than demand")
 require_ordered(
     _ownership_begin
     "AddressRangesAreDisjoint( table, sizeof(*table), storage, storageBytes)"
     "authenticateExactMutableEntry("
     "ownership storage preflight before keyed authentication")
+foreach(_marker IN ITEMS
+    "if (composite && ownershipStatus"
+    "ZoneScriptStringOwnershipStatus::Success)"
+    "ZoneRuntimeTable::retainGenerationPlacement("
+    "storageCapacity, expectedCount);"
+    "ZoneRuntimeSetupStage::ScriptStringsBegun")
+    require_contains(
+        _ownership_begin "${_marker}"
+        "success-only expected-demand publication")
+endforeach()
+require_substring_count(
+    _ownership_begin
+    "ZoneRuntimeTable::retainGenerationPlacement("
+    1
+    "single success-only expected-demand publication")
+require_ordered(
+    _ownership_begin
+    "TryBeginZoneScriptStringOwnership("
+    "ZoneRuntimeTable::retainGenerationPlacement("
+    "lower ownership begin succeeds before expected demand publication")
+require_ordered(
+    _ownership_begin
+    "ZoneRuntimeTable::retainGenerationPlacement("
+    "ZoneRuntimeSetupStage::ScriptStringsBegun"
+    "expected demand publishes before script-string stage publication")
 
 extract_slice(
     _source
@@ -1908,6 +1990,7 @@ foreach(_marker IN ITEMS
     "void TestTerminalAdapterPhaseSerializerAndCorruptionGates()"
     "void TestCompositeRuntimeLiveUnloadResetAndReuse()"
     "void TestCompositePartialStageAbandonmentAndReuse()"
+    "void TestCompositeScriptStringCapacityAndDemand()"
     "void TestCompositeRecoverablePlacementAndRangeRejection()"
     "void TestCompositeStageOutputAliasPreflight()"
     "void TestCompositeCallbackContextAliasPreflightAndDrain()"
@@ -1965,6 +2048,56 @@ foreach(_marker IN ITEMS
     "std::string_view(argv[1]) != \"--unsafe-live-unload\""
     "Zone runtime table tests passed")
     require_contains(_fixture "${_marker}" "focused runtime coverage")
+endforeach()
+
+extract_slice(
+    _fixture
+    "void TestCompositeScriptStringCapacityAndDemand()"
+    "void TestCompositeRecoverablePlacementAndRangeRejection()"
+    _capacity_demand_fixture
+    "capacity/demand runtime fixture")
+extract_slice(
+    _capacity_demand_fixture
+    "// Binding retains the allocation capacity with zero expected demand."
+    "// A nonempty retained placement with zero actual strings is canonical"
+    _oversized_demand_retry_fixture
+    "oversized-demand failure-atomic retry fixture")
+foreach(_marker IN ITEMS
+    "fixture.setupStorage(3)"
+    "fixture.storagePlan.scriptStringCapacity"
+    "4) == ZoneRuntimeTableStatus::CapacityExceeded"
+    "ZoneRuntimeSetupStage::PendingCopyBegun"
+    "entry->scriptStringOwnership().isEmptyCanonical()"
+    "journal && !journal->initialized()"
+    "fixture.beginExactScriptStrings(1)"
+    "journal->capacity() == 3"
+    "journal->expectedCount() == 1")
+    require_contains(
+        _oversized_demand_retry_fixture "${_marker}"
+        "oversized demand leaves exact placed state retryable")
+endforeach()
+require_ordered(
+    _oversized_demand_retry_fixture
+    "4) == ZoneRuntimeTableStatus::CapacityExceeded"
+    "ZoneRuntimeSetupStage::PendingCopyBegun"
+    "oversized demand preserves the pre-begin setup stage")
+require_ordered(
+    _oversized_demand_retry_fixture
+    "4) == ZoneRuntimeTableStatus::CapacityExceeded"
+    "fixture.beginExactScriptStrings(1)"
+    "valid exact demand can retry after oversized demand")
+
+foreach(_marker IN ITEMS
+    "std::array<std::uint8_t, sizeof(JournalEntry)> prefix{};"
+    "overlappingEntries"
+    "3, 1) == ZoneRuntimeTableStatus::InvalidArgument"
+    "aliasEntry->scriptStringOwnership().isEmptyCanonical()"
+    "fixture.beginExactScriptStrings(0)"
+    "journal->capacity() == 3"
+    "journal->expectedCount() == 0")
+    require_contains(
+        _capacity_demand_fixture "${_marker}"
+        "capacity-span and zero-demand runtime coverage")
 endforeach()
 
 extract_slice(

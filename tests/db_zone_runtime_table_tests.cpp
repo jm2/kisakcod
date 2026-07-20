@@ -473,10 +473,10 @@ struct CompositeRuntimeFixture final
     }
 
     bool allocateStorage(
-        const std::uint32_t expectedStringCount = 0) noexcept
+        const std::uint32_t scriptStringCapacity = 0) noexcept
     {
         return zone_runtime_storage::TryPlanZoneRuntimeStorage(
-                   expectedStringCount, 4096, &storagePlan)
+                   scriptStringCapacity, 4096, &storagePlan)
                 == zone_runtime_storage::
                     ZoneRuntimeStorageStatus::Success
             && TryAllocateZoneRuntimeMemory(
@@ -506,9 +506,9 @@ struct CompositeRuntimeFixture final
     }
 
     bool setupStorage(
-        const std::uint32_t expectedStringCount = 0) noexcept
+        const std::uint32_t scriptStringCapacity = 0) noexcept
     {
-        return allocateStorage(expectedStringCount) && bindStorage();
+        return allocateStorage(scriptStringCapacity) && bindStorage();
     }
 
     bool beginStreamGeneration() noexcept
@@ -585,7 +585,8 @@ struct CompositeRuntimeFixture final
                 == ZoneRuntimeTableStatus::Success;
     }
 
-    bool beginExactScriptStrings() noexcept
+    bool beginExactScriptStrings(
+        const std::uint32_t expectedCount) noexcept
     {
         auto *const storage = ZoneRuntimeTableTestAccess::StorageBinding(
             table.get(), physicalSlot);
@@ -596,9 +597,14 @@ struct CompositeRuntimeFixture final
                    key,
                    storage->scriptStringJournal(),
                    storage->scriptStringEntries(),
-                   storagePlan.expectedStringCount,
-                   storagePlan.expectedStringCount)
+                   storagePlan.scriptStringCapacity,
+                   expectedCount)
                 == ZoneRuntimeTableStatus::Success;
+    }
+
+    bool beginExactScriptStrings() noexcept
+    {
+        return beginExactScriptStrings(storagePlan.scriptStringCapacity);
     }
 
     const ZoneRuntimeEntry *entry() noexcept
@@ -3733,6 +3739,152 @@ void TestCompositePartialStageAbandonmentAndReuse()
     }
 }
 
+void TestCompositeScriptStringCapacityAndDemand()
+{
+    const pmem_runtime::InitializationStatus initialization =
+        pmem_runtime::TryInitialize();
+    CHECK(initialization
+            == pmem_runtime::InitializationStatus::AlreadyInitialized
+        || initialization
+            == pmem_runtime::InitializationStatus::Success);
+    if (initialization
+            != pmem_runtime::InitializationStatus::AlreadyInitialized
+        && initialization
+            != pmem_runtime::InitializationStatus::Success)
+    {
+        return;
+    }
+
+    using JournalEntry =
+        db::script_string_journal::ScriptStringJournalEntry;
+    struct CapacitySpanAliasProbe final
+    {
+        alignas(JournalEntry)
+            std::array<std::uint8_t, sizeof(JournalEntry)> prefix{};
+        ZoneRuntimeTable table{};
+    };
+
+    // The first entry ends exactly where the table begins, but the complete
+    // three-entry capacity span overlaps it. The preflight must cover the
+    // capacity, not merely the one entry expected by this generation.
+    auto aliasProbe = std::make_unique<CapacitySpanAliasProbe>();
+    ZoneLoadContextKey aliasKey{};
+    constexpr std::uint32_t aliasSlot = 31;
+    CHECK(TryInitializeZoneRuntimeTable(&aliasProbe->table)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryClaimZoneRuntimeGeneration(
+        &aliasProbe->table, aliasSlot, &aliasKey)
+        == ZoneRuntimeTableStatus::Success);
+    db::script_string_journal::ScriptStringJournal aliasJournal{};
+    auto *const overlappingEntries = reinterpret_cast<JournalEntry *>(
+        reinterpret_cast<std::uintptr_t>(&aliasProbe->table)
+        - sizeof(JournalEntry));
+    CHECK(reinterpret_cast<std::uintptr_t>(overlappingEntries)
+            % alignof(JournalEntry)
+        == 0);
+    CHECK(TryBeginZoneRuntimeScriptStringOwnership(
+        &aliasProbe->table,
+        aliasSlot,
+        aliasKey,
+        &aliasJournal,
+        overlappingEntries,
+        3,
+        1) == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(!aliasJournal.initialized());
+    const ZoneRuntimeEntry *aliasEntry = nullptr;
+    CHECK(TryGetZoneRuntimeEntry(
+        &aliasProbe->table, aliasSlot, &aliasEntry)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(aliasEntry != nullptr);
+    CHECK(aliasEntry
+        && aliasEntry->scriptStringOwnership().isEmptyCanonical());
+    CHECK(aliasProbe->table.initialized());
+
+    // Binding retains the allocation capacity with zero expected demand.
+    // An oversized demand must leave that placed state retryable; only the
+    // successful lower ownership begin publishes the actual expected count.
+    {
+        CompositeRuntimeFixture fixture{};
+        CHECK(fixture.enroll(31));
+        CHECK(fixture.beginAllocation());
+        CHECK(fixture.setupStorage(3));
+        auto *const storage = ZoneRuntimeTableTestAccess::StorageBinding(
+            fixture.table.get(), fixture.physicalSlot);
+        CHECK(storage != nullptr);
+        auto *const journal = storage
+            ? storage->scriptStringJournal()
+            : nullptr;
+        CHECK(journal != nullptr);
+        CHECK(storage && storage->scriptStringEntries() != nullptr);
+        CHECK(journal && !journal->initialized());
+        CHECK(fixture.setupStreams());
+        CHECK(fixture.beginPendingCopies());
+
+        CHECK(TryBeginZoneRuntimeScriptStringOwnership(
+            fixture.table.get(),
+            fixture.physicalSlot,
+            fixture.key,
+            journal,
+            storage ? storage->scriptStringEntries() : nullptr,
+            fixture.storagePlan.scriptStringCapacity,
+            4) == ZoneRuntimeTableStatus::CapacityExceeded);
+        const ZoneRuntimeEntry *entry = fixture.entry();
+        CHECK(entry
+            && entry->setupStage()
+                == ZoneRuntimeSetupStage::PendingCopyBegun);
+        CHECK(entry
+            && entry->scriptStringOwnership().isEmptyCanonical());
+        CHECK(journal && !journal->initialized());
+        CHECK(fixture.table->initialized());
+
+        CHECK(fixture.beginExactScriptStrings(1));
+        entry = fixture.entry();
+        CHECK(entry
+            && entry->setupStage()
+                == ZoneRuntimeSetupStage::ScriptStringsBegun);
+        CHECK(journal && journal->initialized());
+        CHECK(journal && journal->capacity() == 3);
+        CHECK(journal && journal->expectedCount() == 1);
+        CHECK(journal && journal->entryCount() == 0);
+
+        CHECK(DriveCompositeAbandonmentToTerminal(fixture));
+        CHECK(storage && storage->destroyed());
+        CHECK(ResetCompositeTerminalReceipt(fixture));
+    }
+
+    // A nonempty retained placement with zero actual strings is canonical
+    // through ownership begin and complete storage teardown.
+    {
+        CompositeRuntimeFixture fixture{};
+        CHECK(fixture.enroll(32));
+        CHECK(fixture.beginAllocation());
+        CHECK(fixture.setupStorage(3));
+        CHECK(fixture.setupStreams());
+        CHECK(fixture.beginPendingCopies());
+        auto *const storage = ZoneRuntimeTableTestAccess::StorageBinding(
+            fixture.table.get(), fixture.physicalSlot);
+        CHECK(storage != nullptr);
+        auto *const journal = storage
+            ? storage->scriptStringJournal()
+            : nullptr;
+        CHECK(journal != nullptr);
+
+        CHECK(fixture.beginExactScriptStrings(0));
+        const ZoneRuntimeEntry *const entry = fixture.entry();
+        CHECK(entry
+            && entry->setupStage()
+                == ZoneRuntimeSetupStage::ScriptStringsBegun);
+        CHECK(journal && journal->initialized());
+        CHECK(journal && journal->capacity() == 3);
+        CHECK(journal && journal->expectedCount() == 0);
+        CHECK(journal && journal->entryCount() == 0);
+
+        CHECK(DriveCompositeAbandonmentToTerminal(fixture));
+        CHECK(storage && storage->destroyed());
+        CHECK(ResetCompositeTerminalReceipt(fixture));
+    }
+}
+
 void TestCompositeRecoverablePlacementAndRangeRejection()
 {
     CompositeRuntimeFixture fixture{};
@@ -4928,6 +5080,7 @@ int main(const int argc, char **const argv)
     TestPassiveReceiptPristineAuthentication();
     TestCompositeRuntimeLiveUnloadResetAndReuse();
     TestCompositePartialStageAbandonmentAndReuse();
+    TestCompositeScriptStringCapacityAndDemand();
     TestCompositeRecoverablePlacementAndRangeRejection();
     TestCompositeStageOutputAliasPreflight();
     TestCompositeCallbackContextAliasPreflightAndDrain();

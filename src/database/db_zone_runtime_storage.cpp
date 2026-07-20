@@ -109,7 +109,7 @@ template <typename T>
 {
     ZoneRuntimeStoragePlan canonical{};
     return TryPlanZoneRuntimeStorage(
-               plan.expectedStringCount, plan.arenaBudget, &canonical)
+               plan.scriptStringCapacity, plan.arenaBudget, &canonical)
             == Status::Success
         && canonical == plan;
 }
@@ -158,13 +158,14 @@ template <typename T>
 [[nodiscard]] bool JournalIsStableActive(
     const Journal &journal,
     const JournalEntry *const expectedEntries,
+    const std::uint32_t expectedCapacity,
     const std::uint32_t expectedCount,
     const zone_load::ZoneLoadContextKey &expectedKey) noexcept
 {
     if (!journal.initialized() || journal.callbackActive()
         || journal.poisoned() || journal.key() != expectedKey
         || journal.storage() != expectedEntries
-        || journal.capacity() != expectedCount
+        || journal.capacity() != expectedCapacity
         || journal.expectedCount() != expectedCount)
     {
         return false;
@@ -233,7 +234,7 @@ bool ZoneRuntimeStorageBinding::hasCanonicalPlacementMetadata(
     }
     return journal_ == ObjectAt<Journal>(slab_, plan_.scriptStringJournal)
         && entries_
-            == (plan_.expectedStringCount == 0
+            == (plan_.scriptStringCapacity == 0
                     ? nullptr
                     : ObjectAt<JournalEntry>(
                           slab_, plan_.scriptStringEntries))
@@ -293,9 +294,8 @@ bool AuthenticateZoneRuntimeStorageComposition(
             && expectation.arenaZoneIdentity == 0 && binding.destroyed()
             && expectation.journal == binding.journal_
             && expectation.entries == binding.entries_
-            && expectation.capacity == binding.plan_.expectedStringCount
-            && expectation.expectedCount
-                == binding.plan_.expectedStringCount;
+            && expectation.capacity == binding.plan_.scriptStringCapacity
+            && expectation.expectedCount <= expectation.capacity;
     }
 
     if (!binding.hasCanonicalBoundMetadata()
@@ -304,8 +304,8 @@ bool AuthenticateZoneRuntimeStorageComposition(
         || expectation.arenaZoneIdentity != expectation.key.generation
         || expectation.journal != binding.journal_
         || expectation.entries != binding.entries_
-        || expectation.capacity != binding.plan_.expectedStringCount
-        || expectation.expectedCount != binding.plan_.expectedStringCount
+        || expectation.capacity != binding.plan_.scriptStringCapacity
+        || expectation.expectedCount > expectation.capacity
         || !detail::AuthenticateStableFxRuntimeStorage(
             binding.arena_,
             binding.workspace_,
@@ -319,17 +319,19 @@ bool AuthenticateZoneRuntimeStorageComposition(
     switch (mode)
     {
     case ZoneRuntimeStorageCompositionMode::Placed:
-        return JournalIsPristine(*binding.journal_);
+        return expectation.expectedCount == 0
+            && JournalIsPristine(*binding.journal_);
     case ZoneRuntimeStorageCompositionMode::Active:
         return JournalIsStableActive(
             *binding.journal_,
             binding.entries_,
-            binding.plan_.expectedStringCount,
+            binding.plan_.scriptStringCapacity,
+            expectation.expectedCount,
             expectation.key);
     case ZoneRuntimeStorageCompositionMode::Detached:
         return JournalIsDetached(
             *binding.journal_,
-            binding.plan_.expectedStringCount,
+            expectation.expectedCount,
             expectation.key);
     case ZoneRuntimeStorageCompositionMode::Pristine:
     case ZoneRuntimeStorageCompositionMode::Destroyed:
@@ -383,7 +385,7 @@ void *ZoneRuntimeStorageBinding::fxArenaBacking() const noexcept
 }
 
 ZoneRuntimeStorageStatus TryPlanZoneRuntimeStorage(
-    const std::uint32_t expectedStringCount,
+    const std::uint32_t scriptStringCapacity,
     const std::uint64_t arenaBudget,
     ZoneRuntimeStoragePlan *const outPlan) noexcept
 {
@@ -391,7 +393,7 @@ ZoneRuntimeStorageStatus TryPlanZoneRuntimeStorage(
         return Status::InvalidArgument;
     if (!IsRangeRepresentable(outPlan, sizeof(*outPlan)))
         return Status::SizeOverflow;
-    if (expectedStringCount
+    if (scriptStringCapacity
         > script_string_journal::kMaxScriptStringJournalEntries)
     {
         return Status::InvalidCount;
@@ -404,11 +406,11 @@ ZoneRuntimeStorageStatus TryPlanZoneRuntimeStorage(
     ZoneRuntimeStoragePlan plan{};
     const detail::FxRuntimeStorageLayout fxLayout =
         detail::GetFxRuntimeStorageLayout();
-    plan.expectedStringCount = expectedStringCount;
+    plan.scriptStringCapacity = scriptStringCapacity;
     plan.arenaBudget = static_cast<std::uint32_t>(arenaBudget);
     std::uint32_t cursor = 0;
     const std::uint64_t entryBytes =
-        static_cast<std::uint64_t>(expectedStringCount)
+        static_cast<std::uint64_t>(scriptStringCapacity)
         * sizeof(JournalEntry);
 
     if (!TryAppendExtent(&cursor,
@@ -489,12 +491,12 @@ ZoneRuntimeStorageStatus TryBindZoneRuntimeStorage(
 
     Journal *const journal = ::new (ObjectAt<Journal>(
         slab, planSnapshot.scriptStringJournal)) Journal{};
-    JournalEntry *const entries = planSnapshot.expectedStringCount == 0
+    JournalEntry *const entries = planSnapshot.scriptStringCapacity == 0
         ? nullptr
         : ObjectAt<JournalEntry>(
               slab, planSnapshot.scriptStringEntries);
     for (std::uint32_t index = 0;
-         index < planSnapshot.expectedStringCount;
+         index < planSnapshot.scriptStringCapacity;
          ++index)
     {
         ::new (entries + index) JournalEntry{};
@@ -566,7 +568,7 @@ ZoneRuntimeStorageStatus TryDestroyZoneRuntimeStorage(
     // Reverse of construction: workspace, arena, entries, journal.
     detail::DestroyFxRuntimeWorkspace(binding->workspace_);
     detail::DestroyFxRuntimeArena(binding->arena_);
-    for (std::uint32_t index = binding->plan_.expectedStringCount;
+    for (std::uint32_t index = binding->plan_.scriptStringCapacity;
          index > 0;
          --index)
     {
