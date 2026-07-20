@@ -1473,6 +1473,43 @@ add_test(
 )
 set_tests_properties(pool-native-pointer-freelist PROPERTIES TIMEOUT 10)
 
+add_executable(kisakcod-physicalmemory-legacy-tests
+    physicalmemory_legacy_tests.cpp
+    ${SRC_DIR}/universal/physicalmemory.cpp
+)
+target_include_directories(
+    kisakcod-physicalmemory-legacy-tests SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-physicalmemory-legacy-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(kisakcod-physicalmemory-legacy-tests)
+if(NOT MSVC)
+    # physicalmemory.cpp still includes broad legacy engine headers whose
+    # pre-existing inline stubs intentionally omit parameter names.
+    target_compile_options(
+        kisakcod-physicalmemory-legacy-tests PRIVATE -Wno-unused-parameter)
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # q_shared.h retains legacy LODWORD type punning that GCC diagnoses when
+    # the production translation unit includes it directly.
+    target_compile_options(
+        kisakcod-physicalmemory-legacy-tests PRIVATE -Wno-strict-aliasing)
+endif()
+if(CMAKE_CXX_COMPILER_ID MATCHES "^(Clang|AppleClang)$")
+    # qcommon.h retains one IDA-generated enum tag with a '$' spelling.
+    target_compile_options(
+        kisakcod-physicalmemory-legacy-tests PRIVATE
+        -Wno-dollar-in-identifier-extension)
+endif()
+set_target_properties(kisakcod-physicalmemory-legacy-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME universal-physicalmemory-legacy-layout-and-indexing
+    COMMAND kisakcod-physicalmemory-legacy-tests
+)
+set_tests_properties(
+    universal-physicalmemory-legacy-layout-and-indexing PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-physicalmemory-checked-tests
     physicalmemory_checked_tests.cpp
     ${SRC_DIR}/universal/physicalmemory_checked.cpp
@@ -2373,6 +2410,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/physicalmemory_checked_source_test.cmake
+)
+
+add_test(
+    NAME universal-physicalmemory-legacy-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/physicalmemory_legacy_source_test.cmake
 )
 
 add_test(
