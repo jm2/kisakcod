@@ -38,9 +38,24 @@ of checked boxes.
     by PR #73's first Windows amd64 build with portable typed call probes.
   - [x] Add facade-level separation for all nine retained stream payload ranges
     after PR review, in addition to the table's allocation-receipt containment.
-  - [ ] Publish the PR, resolve review, merge, and verify post-merge CI.
+  - [x] Publish PR #73, address the retained-payload review finding, resolve all
+    nine initial review threads, and complete two independent correctness audits.
+  - [ ] Pass final exact-head hosted CI and review, merge, and verify post-merge
+    CI.
 - [ ] Atomically cut all seven loader sites over to the serialized facade; partial
   enrollment is forbidden.
+  - [ ] Add a private exact-key registry-borrow path authenticated for active
+    lifecycle callbacks; do not expose the hash lock or coordinator.
+  - [ ] Add an exact-key, by-value pending-copy read/visitor so delayed-image
+    completion and abandonment never retain `g_copyInfo` pointers.
+  - [ ] Add stable process-lifetime contexts for all 33 physical zone slots,
+    outside `XZone` and PMem, retaining exact generation identity through terminal
+    reset.
+  - [ ] Convert the required registry/hash-lock helpers to checked, no-report
+    operations that cannot unlock coordinator-owned state or cross retained
+    authority through `Com_Error`/`longjmp`.
+  - [ ] Enroll a single narrow production bridge and replace all seven frozen raw
+    loader/registry operations in one reviewed change.
 - [ ] Enroll the guarded native FX/impact path and complete its rollback,
   high-address, alias, unload, and slot-reuse coverage.
 - [ ] Replace the remaining XAnim/XModel raw fast-file reads with bounded,
@@ -2076,16 +2091,18 @@ coverage does not satisfy an engine-delivery box.
 PR #72 exact final head `0c1354c05c92f2f9e66ce285d85d71c90a4119eb` passed all nine jobs in run **29768665063**
 with clean Codex/Gemini review and zero unresolved threads, squash-merged the capacity/demand prerequisite as
 `64dfc8c9e3b930a7ef7760b794e37320471280c3`, and passed authoritative post-merge run **29770265354**. Production
-enrollment remains zero. The current branch implements the serialized runtime-facade prerequisite. Rebased source-tree
-checkpoint `65f4bbab` passes full GCC and Clang CTest **160/160** each, ASan+UBSan facade/source/security **4/4**,
-macro-off GCC/Clang, source/security, and genuine i386/AArch64 compile-link gates. PR #73's first hosted run
+enrollment remains zero. The current branch implements the serialized runtime-facade prerequisite. Exact code checkpoint
+`32f14c8be771104a4e1622c9e46810b3444e8e0c` passes full GCC and Clang CTest **160/160** each, ASan+UBSan
+facade/source/security **4/4**, macro-off GCC/Clang, source/security, and genuine i386/AArch64 compile-link gates. PR
+#73's first hosted run
 **29777873502** exposed one MSVC 19.51-only production-seal fixture issue: dependent address-of expressions reported
 private static methods as present and inverted seven access assertions. The branch now uses the already portable typed
-call-probe pattern; focused GCC/Clang compile/runtime plus facade and repository source seals pass locally. Amended hosted
+call-probe pattern. Hosted Windows amd64 passes that correction at code checkpoint `32f14c8b`. Amended hosted
 review also identified one useful defense-in-depth addition: the facade now independently separates every non-empty
 retained stream payload from its complete authority set before the table's existing exact PMem-receipt authentication.
-Focused GCC/Clang facade **3/3** and source/security seals pass after that change. Amended hosted CI, final thread
-resolution, merge, and authoritative post-merge CI remain for this prerequisite.
+All nine initial Gemini threads are resolved, exact-head independent audits find no remaining PR-level blocker, and the
+suggested poison-path unlocks were rejected because they would weaken the deliberate nonblocking fail-stop boundary.
+Final exact-head hosted CI/review, merge, and authoritative post-merge CI remain for this prerequisite.
 
 - [ ] **Priority 1 — Facade publication:** land the locally implemented
    production-neutral process-lifetime facade with
@@ -2100,6 +2117,16 @@ resolution, merge, and authoritative post-merge CI remain for this prerequisite.
    adapters, and replace exactly five registry-coordinator operations plus two exact-key root-journal stages. Partial
    enrollment remains forbidden. Current database-thread longjmp remains process-fatal and must not be described as
    recoverable until the loader is converted to status returns.
+   - [ ] Authenticate a private exact-key registry borrow during active cleanup,
+     admission, and drain callbacks; ordinary facade reentry correctly remains
+     `Busy`.
+   - [ ] Add exact-key pending-copy inspection and stable 33-slot lifecycle
+     contexts outside PMem, eliminating retained legacy queue pointers and slot
+     reuse/ABA ambiguity.
+   - [ ] Introduce checked no-report registry helpers and move hash-lock ownership
+     wholly under the coordinator before replacing any raw site.
+   - [ ] Add the sole production legacy bridge, its sequencing/fault-injection
+     fixture, source allowlist/seals, and then replace all seven sites atomically.
 - [ ] **Priority 3 — Native FX/impact enrollment:** wire the guarded adapter into the production route behind the
    explicit legacy-x86 boundary. Preserve
    retail bytes and the writer; use full-width `DB_ResolveInsertedPointer`, publish `-2` roots through
