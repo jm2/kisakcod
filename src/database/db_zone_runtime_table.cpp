@@ -2173,6 +2173,55 @@ ZoneRuntimeTable::validateInitializedHeader() noexcept
     }
 }
 
+ZoneRuntimeTableStatus ZoneRuntimeTable::validateReleaseSafety() noexcept
+{
+    if (!HasKnownState(state_) || !HasKnownSharedState(sharedState_))
+    {
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+
+    const TableState state = static_cast<TableState>(state_);
+    if (state == TableState::Poisoned)
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    if (state == TableState::Uninitialized)
+    {
+        if (sharedState_
+                != static_cast<std::uint32_t>(SharedState::Pristine)
+            || !detail::IsPristineRuntimeReceipt(
+                activeZoneStreamBinding_)
+            || !detail::IsPristineRuntimeReceipt(pendingCopyLedger_)
+            || !PendingDrainCallbackIsEmpty(pendingDrainCallback_))
+        {
+            poison();
+            return ZoneRuntimeTableStatus::UnsafeFailure;
+        }
+        for (std::uint32_t physicalSlot = static_cast<std::uint32_t>(
+                 zone_slots::kDefaultZoneSlot);
+             physicalSlot < zone_slots::kPhysicalZoneSlotCount;
+             ++physicalSlot)
+        {
+            if (!IsPristineEntry(
+                    entries_[physicalSlot], false, physicalSlot))
+            {
+                poison();
+                return ZoneRuntimeTableStatus::UnsafeFailure;
+            }
+        }
+        return ZoneRuntimeTableStatus::Success;
+    }
+
+    const ZoneRuntimeTableStatus tableStatus = validateInitializedHeader();
+    if (tableStatus != ZoneRuntimeTableStatus::Success)
+        return tableStatus;
+    for (const ZoneRuntimeEntry &entry : entries_)
+    {
+        if (entry.scriptStringOwnership_.serializerRetained())
+            return ZoneRuntimeTableStatus::Busy;
+    }
+    return ZoneRuntimeTableStatus::Success;
+}
+
 void ZoneRuntimeTable::poison() noexcept
 {
     state_ = static_cast<std::uint32_t>(TableState::Poisoned);

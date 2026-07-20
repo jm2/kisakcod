@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 
 extern FastCriticalSection db_hashCritSect;
@@ -92,6 +93,35 @@ enum class FacadeCoordinatorStorageClassification : std::uint8_t
 };
 
 void PoisonRegistryBoundary() noexcept;
+
+[[nodiscard]] bool AddressRangesAreDisjoint(
+    const void *const leftStorage,
+    const std::size_t leftSize,
+    const void *const rightStorage,
+    const std::size_t rightSize) noexcept
+{
+    if (!leftStorage || leftSize == 0 || !rightStorage || rightSize == 0)
+        return false;
+    const std::uintptr_t left =
+        reinterpret_cast<std::uintptr_t>(leftStorage);
+    const std::uintptr_t right =
+        reinterpret_cast<std::uintptr_t>(rightStorage);
+    const std::uintptr_t maximum =
+        (std::numeric_limits<std::uintptr_t>::max)();
+    if (leftSize > maximum - left || rightSize > maximum - right)
+        return false;
+    return left + leftSize <= right || right + rightSize <= left;
+}
+
+template <typename Hidden>
+[[nodiscard]] bool OutputIsSeparateFrom(
+    const void *const output,
+    const std::size_t outputSize,
+    const Hidden &hidden) noexcept
+{
+    return AddressRangesAreDisjoint(
+        output, outputSize, &hidden, sizeof(hidden));
+}
 
 [[nodiscard]] bool IsFacadeCoordinatorStorageZero() noexcept
 {
@@ -510,7 +540,20 @@ RegistryOwnershipCoordinatorFacade::ValidateInactive() noexcept
     switch (ClassifyFacadeCoordinatorStorage())
     {
     case FacadeCoordinatorStorageClassification::Pristine:
-        return RegistryOwnershipStatus::Success;
+    {
+        const TransactionBoundaryGuard boundaryGuard;
+        switch (ClassifyRegistryBoundary())
+        {
+        case RegistryBoundaryClassification::Idle:
+            return RegistryOwnershipStatus::Success;
+        case RegistryBoundaryClassification::Active:
+            return RegistryOwnershipStatus::InvalidState;
+        case RegistryBoundaryClassification::Poisoned:
+        case RegistryBoundaryClassification::Torn:
+        default:
+            return RegistryOwnershipStatus::UnsafeFailure;
+        }
+    }
     case FacadeCoordinatorStorageClassification::Constructed:
         break;
     case FacadeCoordinatorStorageClassification::Torn:
@@ -526,6 +569,88 @@ RegistryOwnershipCoordinatorFacade::ValidateInactive() noexcept
     return coordinator->isEmptyCanonical()
         ? RegistryOwnershipStatus::Success
         : RegistryOwnershipStatus::InvalidState;
+}
+
+RegistryOwnershipStatus
+RegistryOwnershipCoordinatorFacade::ValidateActive() noexcept
+{
+    switch (ClassifyFacadeCoordinatorStorage())
+    {
+    case FacadeCoordinatorStorageClassification::Pristine:
+    {
+        const TransactionBoundaryGuard boundaryGuard;
+        return ClassifyRegistryBoundary()
+                == RegistryBoundaryClassification::Idle
+            ? RegistryOwnershipStatus::InvalidState
+            : RegistryOwnershipStatus::UnsafeFailure;
+    }
+    case FacadeCoordinatorStorageClassification::Constructed:
+        break;
+    case FacadeCoordinatorStorageClassification::Torn:
+    default:
+        return RegistryOwnershipStatus::UnsafeFailure;
+    }
+
+    RegistryOwnershipCoordinator *const coordinator = FacadeCoordinator();
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+    return coordinator->isEmptyCanonical()
+        ? RegistryOwnershipStatus::InvalidState
+        : RegistryOwnershipStatus::Success;
+}
+
+bool RegistryOwnershipCoordinatorFacade::WritableOutputIsSeparated(
+    const void *const output,
+    const std::size_t outputSize,
+    const std::size_t outputAlignment) noexcept
+{
+    return output && outputSize != 0 && outputAlignment != 0
+        && reinterpret_cast<std::uintptr_t>(output) % outputAlignment == 0
+        && OutputIsSeparateFrom(output, outputSize, db_hashCritSect)
+        && OutputIsSeparateFrom(output, outputSize, s_nextCoordinatorSerial)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_nextCoordinatorSerialMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_activeCoordinatorAddress)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_activeCoordinatorAddressMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_activeCoordinatorSerial)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_activeCoordinatorSerialMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_borrowedControllerAddress)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_borrowedControllerAddressMirror)
+        && OutputIsSeparateFrom(output, outputSize, s_borrowedKey)
+        && OutputIsSeparateFrom(output, outputSize, s_borrowedKeyMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_outerTransactionSerial)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_outerTransactionSerialMirror)
+        && OutputIsSeparateFrom(output, outputSize, s_activePhase)
+        && OutputIsSeparateFrom(output, outputSize, s_activePhaseMirror)
+        && OutputIsSeparateFrom(output, outputSize, s_activeMode)
+        && OutputIsSeparateFrom(output, outputSize, s_activeModeMirror)
+        && OutputIsSeparateFrom(output, outputSize, s_hashLockRetained)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_hashLockRetainedMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_registryBoundaryState)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_registryBoundaryStateMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_facadeCoordinatorStorage)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_facadeCoordinatorAddress)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_facadeCoordinatorAddressMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_facadeCoordinatorConstructed)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_facadeCoordinatorConstructedMirror);
 }
 
 RegistryOwnershipStatus

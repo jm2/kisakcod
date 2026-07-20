@@ -53,6 +53,7 @@ enum class ZoneRuntimeTableStatus : std::uint8_t
 
 class ZoneRuntimeEntry;
 class ZoneRuntimeTable;
+class ZoneRuntimeFacade;
 class ZoneRuntimeReceiptCapsule;
 class ZoneRuntimeGenerationBinding;
 
@@ -399,6 +400,7 @@ public:
     [[nodiscard]] bool initialized() const noexcept;
 
 private:
+    friend class ZoneRuntimeFacade;
     friend ZoneRuntimeTableStatus TryInitializeZoneRuntimeTable(
         ZoneRuntimeTable *table) noexcept;
     friend ZoneRuntimeTableStatus TryGetZoneRuntimeEntry(
@@ -570,6 +572,7 @@ private:
 
     [[nodiscard]] ZoneRuntimeTableStatus
     validateInitializedHeader() noexcept;
+    [[nodiscard]] ZoneRuntimeTableStatus validateReleaseSafety() noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus validateEntryBinding(
         std::uint32_t physicalSlot) noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus
@@ -762,6 +765,14 @@ struct ZoneRuntimeTableTestAccess final
 
     [[nodiscard]] static bool SharedResourcesPristine(
         const ZoneRuntimeTable *table) noexcept;
+
+    [[nodiscard]] static ZoneRuntimeTableStatus ReleaseSafety(
+        ZoneRuntimeTable *const table) noexcept
+    {
+        return table
+            ? table->validateReleaseSafety()
+            : ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     static void SetKey(
         ZoneRuntimeTable *const table,

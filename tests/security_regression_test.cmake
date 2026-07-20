@@ -10359,6 +10359,7 @@ extract_security_slice(
     _security_zone_runtime_table_class
     "zone runtime table friend surface")
 set(_security_zone_runtime_table_friends
+    "friend class ZoneRuntimeFacade"
     "friend ZoneRuntimeTableStatus TryInitializeZoneRuntimeTable( ZoneRuntimeTable *table) noexcept"
     "friend ZoneRuntimeTableStatus TryGetZoneRuntimeEntry( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const ZoneRuntimeEntry **outEntry) noexcept"
     "friend ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, zone_load::ZoneLoadContextKey *inOutKey) noexcept"
@@ -10437,7 +10438,7 @@ require_security_exact_class_digest(
     "ZoneRuntimeEntry")
 require_security_exact_class_digest(
     _security_zone_runtime_table_class
-    57b5b9f4ce57efb16af1e4f57383ea1052535227a37dc4ce04d4b3b93d8e7bd6
+    e6cbaeedf4c3ff2622f5acc5c0d68ef54be8ab0f87bfbed7172bd68247835e4f
     "ZoneRuntimeTable")
 
 set(_security_external_macro_friend_invocation_fixture
@@ -11435,7 +11436,7 @@ foreach(_registry_coordinator_source_seal_marker IN ITEMS
     "set(_registry_admission_approved_sources"
     "reviewed q_shared long-long suffix paste"
     "RegistryOwnershipAdmission"
-    "complete non-minting coordinator facade"
+    "complete private coordinator facade bridge"
     "_expected_coordinator_facade_declaration"
     "_expected_coordinator_admission_public_declaration"
     "_expected_coordinator_public_declaration"
@@ -11467,6 +11468,37 @@ require_repository_contains(
     "tests/db_registry_ownership_coordinator_source_test.cmake"
     "src/groupvoice/speex/Makefile.am"
     "registry coordinator seal must pin extension-independent traversal")
+
+foreach(_runtime_facade_seal_marker IN ITEMS
+    "FastCriticalSection s_runtimeSerializer{};"
+    "Sys_TryLockWrite(&s_runtimeSerializer)"
+    "Sys_UnlockWrite(&s_runtimeSerializer)"
+    "scalar destructor-free TLS mirrors"
+    "RegistryOwnershipCoordinatorFacade::ValidateInactive()"
+    "table.validateReleaseSafety()"
+    "WritableOutputIsSeparateFromBoundary"
+    "IsKnownTableStatus"
+    "IsKnownRegistryStatus"
+    "complete private declaration"
+    "test-access macro is a build-system capability"
+    "all six dual-mode script adapters require composite authority"
+    "active registry authority precedes output-alias validation"
+    "view.entry != &table.entries_[physicalSlot]"
+    "this boundary is not a sandbox for arbitrary engine globals"
+    "Runtime facade gained a production caller before atomic cutover")
+    require_repository_contains(
+        "tests/db_zone_runtime_facade_source_test.cmake"
+        "${_runtime_facade_seal_marker}"
+        "runtime facade fail-closed source seal")
+endforeach()
+require_repository_contains(
+    "tests/CMakeLists.txt"
+    "database-zone-runtime-facade-source-invariants"
+    "runtime facade source seal enrollment")
+require_repository_contains(
+    "scripts/common_files.cmake"
+    "db_zone_runtime_facade.cpp"
+    "runtime facade production/headless source enrollment")
 require_repository_contains(
     "tests/db_registry_ownership_coordinator_source_test.cmake"
     "src/groupvoice/speex/Makefile.in"

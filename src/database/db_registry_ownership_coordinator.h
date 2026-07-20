@@ -6,6 +6,7 @@
 #include <script/scr_string_transaction.h>
 #include <universal/kisak_abi.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
@@ -46,6 +47,11 @@ private:
         const zone_load::ZoneLoadContextKey &expectedKey) noexcept;
     [[nodiscard]] static RegistryOwnershipStatus Finish() noexcept;
     [[nodiscard]] static RegistryOwnershipStatus ValidateInactive() noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus ValidateActive() noexcept;
+    [[nodiscard]] static bool WritableOutputIsSeparated(
+        const void *output,
+        std::size_t outputSize,
+        std::size_t outputAlignment) noexcept;
     [[nodiscard]] static RegistryOwnershipStatus
     authenticateConstructedStorage(
         RegistryOwnershipCoordinator *coordinator) noexcept;

@@ -17,6 +17,8 @@ set(_arena_header_path
 set(_fixture_path "${SOURCE_ROOT}/tests/db_zone_runtime_storage_tests.cpp")
 set(_runtime_table_seal_path
     "${SOURCE_ROOT}/tests/db_zone_runtime_table_source_test.cmake")
+set(_runtime_facade_seal_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_facade_source_test.cmake")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
 set(_dedi_sources_path "${SOURCE_ROOT}/scripts/dedi/dedi_sources.cmake")
 set(_headless_profile_path "${SOURCE_ROOT}/tests/headless_profile_test.cmake")
@@ -42,6 +44,7 @@ foreach(_path IN ITEMS
     "${_arena_header_path}"
     "${_fixture_path}"
     "${_runtime_table_seal_path}"
+    "${_runtime_facade_seal_path}"
     "${_manifest_path}"
     "${_dedi_sources_path}"
     "${_headless_profile_path}"
@@ -62,6 +65,7 @@ file(READ "${_headless_bridge_source_path}" _headless_bridge_source)
 file(READ "${_arena_header_path}" _arena_header)
 file(READ "${_fixture_path}" _fixture)
 file(READ "${_runtime_table_seal_path}" _runtime_table_seal)
+file(READ "${_runtime_facade_seal_path}" _runtime_facade_seal)
 file(READ "${_manifest_path}" _manifest)
 file(READ "${_dedi_sources_path}" _dedi_sources)
 file(READ "${_headless_profile_path}" _headless_profile)
@@ -71,7 +75,8 @@ file(READ "${_registry_path}" _registry)
 file(READ "${_load_path}" _load)
 foreach(_var IN ITEMS
     _header _source _bridge_header _bridge_source _headless_bridge_source
-    _arena_header _fixture _runtime_table_seal _manifest _dedi_sources
+    _arena_header _fixture _runtime_table_seal _runtime_facade_seal
+    _manifest _dedi_sources
     _headless_profile _tests _ci _registry _load)
     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${${_var}}")
     set(${_var} "${_normalized}")
@@ -97,6 +102,16 @@ function(require_contains SOURCE_VAR NEEDLE DESCRIPTION)
             "Missing runtime-storage invariant (${DESCRIPTION}): '${NEEDLE}'")
     endif()
 endfunction()
+
+# The private runtime facade is the sole additional composition layer. Its
+# exact public declaration and raw-adapter count seal own this reviewed pass-
+# through without granting access to the storage binding itself.
+require_contains(
+    _runtime_facade_seal "TryBindStorage|TryBindZoneRuntimeStorage"
+    "dedicated runtime-facade storage enrollment seal")
+require_contains(
+    _tests "database-zone-runtime-facade-source-invariants"
+    "dedicated runtime-facade seal registration")
 
 foreach(_marker IN ITEMS
     "bool readyForCompositionAuthentication() const noexcept"
@@ -344,6 +359,39 @@ function(remove_reviewed_runtime_table_storage_tokens
     set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
 endfunction()
 
+# The facade may expose only the exact public plan parameter, its matching
+# plan-span preflight, and one complete table-level storage forward. Removing
+# complete constructs keeps every additional low-level storage/FX operation,
+# type, namespace, alias, or macro visible to the component detector.
+function(remove_reviewed_runtime_facade_storage_tokens
+    PATH SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _candidate "${_candidate}")
+    if(PATH MATCHES "database/db_zone_runtime_facade\\.h$")
+        remove_one_reviewed_storage_construct(
+            _candidate
+            "[[nodiscard]] static ZoneRuntimeTableStatus TryBindStorage( std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, void *slab, std::size_t slabCapacity, const zone_runtime_storage::ZoneRuntimeStoragePlan *plan) noexcept;"
+            _candidate "facade storage declaration")
+    elseif(PATH MATCHES "database/db_zone_runtime_facade\\.cpp$")
+        remove_one_reviewed_storage_construct(
+            _candidate
+            "ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBindStorage( const std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, void *const slab, const std::size_t slabCapacity, const zone_runtime_storage::ZoneRuntimeStoragePlan *const plan) noexcept {"
+            _candidate "facade storage definition")
+        remove_one_reviewed_storage_construct(
+            _candidate
+            "!authoritySpanIsSeparated( plan, sizeof(*plan), alignof(zone_runtime_storage::ZoneRuntimeStoragePlan))"
+            _candidate "facade plan authority preflight")
+        remove_one_reviewed_storage_construct(
+            _candidate
+            "return completeTableOperation(TryBindZoneRuntimeStorage( &ProductionZoneRuntimeTable(), physicalSlot, key, slab, slabCapacity, plan));"
+            _candidate "facade table-level storage forward")
+    else()
+        message(FATAL_ERROR
+            "Runtime-storage facade allowlist used for unexpected path: ${PATH}")
+    endif()
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
 function(detect_runtime_storage_enrollment SOURCE_VAR OUT_VAR)
     set(_found FALSE)
     foreach(_token IN LISTS _runtime_storage_protected_tokens)
@@ -371,6 +419,20 @@ function(require_runtime_table_storage_detector_fixture SOURCE_VAR DESCRIPTION)
     if(NOT _namespace_declaration AND NOT _detected)
         message(FATAL_ERROR
             "Runtime-storage runtime-table seal missed ${DESCRIPTION}")
+    endif()
+endfunction()
+
+function(require_runtime_facade_storage_detector_fixture SOURCE_VAR DESCRIPTION)
+    normalize_runtime_storage_phase2(${SOURCE_VAR} _candidate)
+    runtime_storage_source_has_namespace_declaration(
+        _candidate _namespace_declaration)
+    remove_reviewed_runtime_facade_storage_tokens(
+        "${SOURCE_ROOT}/src/database/db_zone_runtime_facade.cpp"
+        _candidate _candidate)
+    detect_runtime_storage_enrollment(_candidate _detected)
+    if(NOT _namespace_declaration AND NOT _detected)
+        message(FATAL_ERROR
+            "Runtime-storage facade seal missed ${DESCRIPTION}")
     endif()
 endfunction()
 
@@ -759,6 +821,34 @@ set(_runtime_table_storage_namespace_macro_bypass
 require_runtime_table_storage_detector_fixture(
     _runtime_table_storage_namespace_macro_bypass "a namespace macro")
 
+string(CONCAT _runtime_facade_storage_fixture
+    "ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBindStorage( "
+    "const std::uint32_t physicalSlot, "
+    "const zone_load::ZoneLoadContextKey &key, void *const slab, "
+    "const std::size_t slabCapacity, "
+    "const zone_runtime_storage::ZoneRuntimeStoragePlan *const plan) noexcept {\n"
+    "!authoritySpanIsSeparated( plan, sizeof(*plan), "
+    "alignof(zone_runtime_storage::ZoneRuntimeStoragePlan))\n"
+    "return completeTableOperation(TryBindZoneRuntimeStorage( "
+    "&ProductionZoneRuntimeTable(), physicalSlot, key, slab, slabCapacity, "
+    "plan));")
+remove_reviewed_runtime_facade_storage_tokens(
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_facade.cpp"
+    _runtime_facade_storage_fixture _runtime_facade_storage_reviewed)
+detect_runtime_storage_enrollment(
+    _runtime_facade_storage_reviewed _runtime_facade_storage_enrolled)
+if(_runtime_facade_storage_enrolled)
+    message(FATAL_ERROR
+        "Runtime-storage seal rejected reviewed facade constructs")
+endif()
+string(CONCAT _runtime_facade_storage_mutation_bypass
+    "${_runtime_facade_storage_fixture}\n"
+    "return zone_runtime_storage::TryDestroyZoneRuntimeStorage(binding, "
+    "callbacks);")
+require_runtime_facade_storage_detector_fixture(
+    _runtime_facade_storage_mutation_bypass
+    "an extra low-level storage mutation")
+
 file(GLOB_RECURSE _all_production_sources
     LIST_DIRECTORIES FALSE "${SOURCE_ROOT}/src/*")
 foreach(_non_extension_sentinel IN ITEMS
@@ -790,6 +880,20 @@ foreach(_path IN LISTS _all_production_sources)
     normalize_runtime_storage_phase2(_production_raw _production_source)
     remove_reviewed_runtime_storage_token_text(
         "${_path}" _production_source _production_source)
+    if("${_path}" MATCHES
+        "database/db_zone_runtime_facade\.(h|cpp)$")
+        runtime_storage_source_has_namespace_declaration(
+            _production_source _facade_namespace_declaration)
+        if(_facade_namespace_declaration)
+            message(FATAL_ERROR
+                "Runtime facade reopened the runtime-storage namespace in "
+                "${_path}")
+        endif()
+        # Delegate only the exact plan declaration/preflight and complete raw
+        # table forward to the facade seal. Extra component use remains here.
+        remove_reviewed_runtime_facade_storage_tokens(
+            "${_path}" _production_source _production_source)
+    endif()
     detect_runtime_storage_enrollment(_production_source _enrolled)
     if(_enrolled)
         file(RELATIVE_PATH _relative "${SOURCE_ROOT}/src" "${_path}")

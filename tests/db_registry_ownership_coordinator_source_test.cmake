@@ -814,6 +814,11 @@ private:
         const zone_load::ZoneLoadContextKey &expectedKey) noexcept;
     [[nodiscard]] static RegistryOwnershipStatus Finish() noexcept;
     [[nodiscard]] static RegistryOwnershipStatus ValidateInactive() noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus ValidateActive() noexcept;
+    [[nodiscard]] static bool WritableOutputIsSeparated(
+        const void *output,
+        std::size_t outputSize,
+        std::size_t outputAlignment) noexcept;
     [[nodiscard]] static RegistryOwnershipStatus
     authenticateConstructedStorage(
         RegistryOwnershipCoordinator *coordinator) noexcept;
@@ -852,7 +857,7 @@ require_literal_count(
 require_regex_count(
     _coordinator_facade_declaration
     "(^|[^A-Za-z0-9_])static([^A-Za-z0-9_]|$)"
-    12
+    14
     "exact private static coordinator facade authority")
 require_not_contains(
     _coordinator_facade_declaration "RegistryOwnershipCoordinatorAdmission"
@@ -1312,6 +1317,8 @@ foreach(_marker IN ITEMS
     "CanTryBorrow"
     "CanFinish"
     "CanValidateInactive"
+    "CanValidateActive"
+    "CanWritableOutputIsSeparated"
     "CanAuthenticateConstructedStorage"
     "CanTryAddDatabaseUser4"
     "CanTryAddDatabaseUsers4"

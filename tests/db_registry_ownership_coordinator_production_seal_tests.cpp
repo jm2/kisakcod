@@ -1,6 +1,7 @@
 #include <database/db_registry_ownership_coordi\
 nator.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 #include <utility>
@@ -243,6 +244,19 @@ struct RegistryOwnershipCoordinatorFacadeProductionProbe final
     };
 
     template <typename Facade>
+    static constexpr bool CanValidateActive = requires
+    {
+        Facade::ValidateActive();
+    };
+
+    template <typename Facade>
+    static constexpr bool CanWritableOutputIsSeparated = requires
+    {
+        Facade::WritableOutputIsSeparated(
+            nullptr, std::size_t{0}, std::size_t{0});
+    };
+
+    template <typename Facade>
     static constexpr bool CanAuthenticateConstructedStorage = requires
     {
         Facade::authenticateConstructedStorage(nullptr);
@@ -312,6 +326,12 @@ static_assert(
 static_assert(
     !RegistryOwnershipCoordinatorFacadeProductionProbe::
         CanValidateInactive<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanValidateActive<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanWritableOutputIsSeparated<CoordinatorFacade>);
 static_assert(
     !RegistryOwnershipCoordinatorFacadeProductionProbe::
         CanAuthenticateConstructedStorage<CoordinatorFacade>);
