@@ -172,6 +172,12 @@ namespace
     const ZoneRuntimeEntry &entry,
     const std::uint32_t physicalSlot) noexcept
 {
+    // This is the passive-mode tripwire: this batch exposes no production
+    // enrollment path, so any non-pristine authority is necessarily a
+    // forbidden partial cutover or corruption. The later exact-key adapter
+    // batch must atomically replace this check with composite phase/key
+    // authentication before it exposes receipt mutation; it must not merely
+    // remove the check.
     if (!detail::EntryReceiptsArePristine(entry))
         return ZoneRuntimeTableStatus::UnsafeFailure;
 
@@ -566,6 +572,9 @@ ZoneRuntimeTable::validateInitializedHeader() noexcept
         poison();
         return ZoneRuntimeTableStatus::UnsafeFailure;
     }
+    // As above, these singletons are passive in this batch. Their enrollment
+    // adapter must replace this tripwire atomically with authenticated shared
+    // phase/key validation before any production operation can acquire them.
     if (!detail::IsPristineRuntimeReceipt(activeZoneStreamBinding_)
         || !detail::IsPristineRuntimeReceipt(pendingCopyLedger_))
     {

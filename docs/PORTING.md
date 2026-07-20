@@ -674,8 +674,11 @@ Remaining gates, in implementation order:
    passive durable-receipt composition in the table. After it merges, land the legacy PMem indexing repair, then a
    production-neutral serialized global PMem boundary with retained reservation extent and an unused process-lifetime
    `$init` controller. Do not enroll `$init` separately: its later checked cutover must atomically replace the two `$init`
-   and three zone PMem lifecycle calls. Then finish narrow-resource authentication, add exact-key adapters, and atomically
-   bind the loader across all seven sites. Keep static controller slots and callback metadata
+   and three zone PMem lifecycle calls. Then finish narrow-resource authentication and add exact-key adapters. That
+   adapter batch must atomically replace the passive-only pristine tripwires with composite phase/key authentication for
+   all per-entry receipts and both table-wide singletons before exposing enrollment; merely removing or prematurely
+   gating those checks is forbidden. Only then atomically bind the loader across all seven sites. Keep static controller
+   slots and callback metadata
    outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
    when binding the recipes and adapter into production with completed-object/alias registration and lifetime tests.

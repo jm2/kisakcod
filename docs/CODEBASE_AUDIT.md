@@ -188,7 +188,9 @@ allocation/stream-generation/pending-copy/native-storage capsule, and the table 
 pending ledger once. It has no production enrollment. Full rebased GCC Debug CTest passes **153/153**; all six standalone
 source/security scripts, native and `-m32` layouts, `git diff --check`, and independent adversarial re-audit pass. The
 subsequent production sequence is checked legacy PMem repair, a serialized global PMem boundary and unused process-life
-`$init` controller, narrow-resource authentication, exact-key adapters, and finally one atomic seven-site cutover.
+`$init` controller, narrow-resource authentication, exact-key adapters, and finally one atomic seven-site cutover. Until
+those adapters exist, the table's pristine checks are intentional passive-mode corruption tripwires; the adapter batch
+must replace them atomically with composite phase/key authentication before any authority is enrolled.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.

@@ -1786,8 +1786,10 @@ work item changes. Do not create session-specific handoff files.
    and non-duplicating. Validate concurrent low-prim allocation versus high-prim end, persistent high-prim index zero,
    retained-extent disjointness, and exact end-before-initializing-flag-clear ordering before enrollment.
 4. Add exact-key, production-neutral adapters that reconstruct and authenticate the passive receipt composition and bind
-   the real admission/cleanup callbacks. Keep root-string staging closed before later `DB_AddXAsset` registry acquisition
-   and add exact abandonment/unload/reset coverage without changing callers.
+   the real admission/cleanup callbacks. In that same atomic adapter change, replace the current passive-only pristine
+   tripwires with explicit composite phase/key authentication for every per-entry receipt and both shared singletons;
+   never relax those tripwires before authenticated enrollment exists. Keep root-string staging closed before later
+   `DB_AddXAsset` registry acquisition and add exact abandonment/unload/reset coverage without changing callers.
 5. Only after those gates, perform one atomic seven-site loader cutover: claim exact generations, stage/transfer
    non-null root strings, publish `Live` only after fallible closure and `PMem_EndAlloc`, route unload through terminal
    adapters, and replace exactly five registry-coordinator operations plus two exact-key root-journal stages. Partial
