@@ -95,9 +95,17 @@ witness. The contract requires external serialization, mutually disjoint control
 name identity, and no legacy bypass, entry replacement, or reinitialization while the scope is owned. The exact replay on
 `ff61504e` passes GCC Release **134/134**; focused GCC/Clang, Clang ASan+UBSan, Clang static analysis, strict native i386
 and AArch64, source, API-seal, security, and diff evidence all pass. It has no production caller and leaves retail
-bytes unchanged. The current prerequisite branch corrects legacy native64-invalid
-`PMem_FreeIndex`/`PMem_EndAllocInPrim` handling; serialized global PMem state, retained reservation authentication, and
-the `$init` lifecycle remain blockers before production enrollment. Exact-head run **29673379640** passed all nine jobs;
+bytes unchanged. PR #68 subsequently corrected legacy native64-invalid `PMem_FreeIndex`/`PMem_EndAllocInPrim`
+handling and merged as `2ee1e82c`; exact-head and post-merge runs **29712699908** and **29712915522** passed all nine
+jobs. Current unmerged `3b826224` plus review-hardening commit `34869793` gives both mutable globals internal linkage,
+removes the fixture's mutable `extern`, and macro-gates the entire by-value test helper. Its containment seal scans every
+official production manifest and workflow plus every regular file below `src`, while a separately compiled real
+macro-off object is inspected
+with MSVC `link /dump /symbols` or `CMAKE_NM` to require local state and reject exported state or helper methods. Native
+GCC Debug passes **156/156**; focused GCC/Clang/ASan+UBSan pass **6/6**, and genuine i386/AArch64 compile-link and object
+inspection pass. The branch has no hosted CI or hosted review result yet. Serialized access, retained reservation
+authentication, coherent initialization state, and the `$init` lifecycle remain blockers before production enrollment.
+Exact-head run **29673379640** passed all nine jobs;
 Codex reviewed exact final
 head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before
 squash merge `74916b5b`. Authoritative post-merge run
@@ -173,7 +181,7 @@ dry-level reconciliation as `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`. Final re
 duplicate findings and one non-corrective `nullptr` style suggestion. Local evidence remains full GCC Debug
 **153/153**, focused **8/8**, strict GCC/Clang, genuine i386/AArch64 compile-link, U1 focused **7/7** plus a clean
 independent audit, and U2 **146/146** plus its ten-mutation and dependency/symbol contracts. Rounded merged porting
-progress is approximately **79%** after PR #67; strict requested-target delivery remains **0/5**.
+progress is approximately **80%** after merged PR #68; strict requested-target delivery remains **0/5**.
 
 Every commit in pinned range `312a9d2e..2164cd1a` remains classified in
 `docs/UPSTREAM_2164CD1A_LEDGER.md`. PR #66 merged dedicated tree-neutral checkpoint
@@ -188,11 +196,13 @@ remain explicitly deferred/rejected; icon changes remain provenance and optional
 PR #67 merged passive durable-receipt composition as `76d0e065888aab298d430b4bf4e115c07369bc88`: each stable
 runtime entry owns exactly one allocation/stream-generation/pending-copy/native-storage capsule, and the table owns the
 active-stream binding and pending ledger once. Exact-head and authoritative runs **29709263403** and **29709598049**
-passed all nine jobs; it has no production enrollment. The current legacy-PMem branch replaces raw x86-only indexing,
-makes invalid lifecycle operations failure-atomic, removes allocation-name format-string reinterpretation, freezes exact
-x86/native64 layouts through the common runtime ABI contract, and passes full GCC Debug **155/155**, genuine i386
-runtime, AArch64 compile/link, Clang ASan+UBSan, and independent audits. The subsequent sequence is a serialized global
-PMem boundary and unused process-life `$init` controller, narrow-resource authentication, exact-key adapters, and finally
+passed all nine jobs; it has no production enrollment. PR #68 merged the raw x86-only indexing replacement,
+failure-atomic invalid-lifecycle handling, allocation-name format-string repair, and exact x86/native64 ABI contracts;
+exact-head and authoritative runs passed all nine jobs. The current unmerged hidden-state batch then internalizes the
+mutable globals and seals its whole macro-gated by-value helper through official manifest/source/workflow containment and
+actual macro-off object-symbol inspection. It adds no serializer, extent, initialization phase, controller, or caller.
+The subsequent sequence is a serialized global PMem boundary with retained extent/coherent init/results/snapshots, an
+unused process-life `$init` controller, narrow-resource authentication, exact-key adapters, and finally
 one atomic seven-site cutover. Until those adapters exist, the table's pristine checks are intentional passive-mode
 corruption tripwires; the adapter batch must replace them atomically with composite phase/key authentication before any
 authority is enrolled.
