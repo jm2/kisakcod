@@ -26,6 +26,7 @@ using controller::ZoneScriptStringOwnershipController;
 using controller::ZoneScriptStringOwnershipControllerTestAccess;
 using controller::ZoneScriptStringOwnershipPhase;
 using controller::ZoneScriptStringOwnershipStatus;
+using controller::ZoneScriptStringStorageBindingPhase;
 using journal::ScriptStringJournal;
 using journal::ScriptStringJournalEntry;
 using journal::ScriptStringJournalEntryState;
@@ -247,6 +248,22 @@ void AdmitLive(void *const context) noexcept
 
 void AdmitNoop(void *) noexcept
 {
+}
+
+bool AuthenticatesFixtureStorage(
+    const Fixture &fixture,
+    const std::uint32_t expectedCount,
+    const ZoneScriptStringStorageBindingPhase phase) noexcept
+{
+    return controller::AuthenticateZoneScriptStringOwnershipStorage(
+        fixture.ownership,
+        &fixture.lifecycleSlot,
+        fixture.key,
+        &fixture.stringJournal,
+        fixture.storage.data(),
+        static_cast<std::uint32_t>(fixture.storage.size()),
+        expectedCount,
+        phase);
 }
 
 bool CommitEmptyFixture(Fixture &fixture, const std::uint32_t slot)
@@ -692,6 +709,194 @@ void TestBeginFailureReleasesSerializer()
         == ZoneScriptStringOwnershipStatus::Success);
 }
 
+void TestDurableStorageIdentityAuthentication()
+{
+    ResetBackend();
+    Fixture fixture;
+    OWNERSHIP_CHECK(fixture.begin(0, 11));
+    OWNERSHIP_CHECK(
+        AuthenticatesFixtureStorage(
+            fixture, 0, ZoneScriptStringStorageBindingPhase::Attached));
+    OWNERSHIP_CHECK(
+        !AuthenticatesFixtureStorage(
+            fixture, 0, ZoneScriptStringStorageBindingPhase::Detached));
+
+    ScriptStringJournal foreignJournal{};
+    std::array<ScriptStringJournalEntry, 4> foreignStorage{};
+    OWNERSHIP_CHECK(
+        journal::TryInitializeScriptStringJournal(
+            &foreignJournal,
+            fixture.key,
+            foreignStorage.data(),
+            static_cast<std::uint32_t>(foreignStorage.size()),
+            0)
+        == journal::ScriptStringJournalStatus::Success);
+    OWNERSHIP_CHECK(
+        !controller::AuthenticateZoneScriptStringOwnershipStorage(
+            fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            &foreignJournal,
+            foreignStorage.data(),
+            static_cast<std::uint32_t>(foreignStorage.size()),
+            0,
+            ZoneScriptStringStorageBindingPhase::Attached));
+    OWNERSHIP_CHECK(
+        !controller::AuthenticateZoneScriptStringOwnershipStorage(
+            fixture.ownership,
+            &fixture.lifecycleSlot,
+            {fixture.key.generation + 1, fixture.key.slot, 0},
+            &fixture.stringJournal,
+            fixture.storage.data(),
+            static_cast<std::uint32_t>(fixture.storage.size()),
+            0,
+            ZoneScriptStringStorageBindingPhase::Attached));
+    lifecycle::ZoneLoadContextSlot foreignLifecycle{};
+    OWNERSHIP_CHECK(
+        !controller::AuthenticateZoneScriptStringOwnershipStorage(
+            fixture.ownership,
+            &foreignLifecycle,
+            fixture.key,
+            &fixture.stringJournal,
+            fixture.storage.data(),
+            static_cast<std::uint32_t>(fixture.storage.size()),
+            0,
+            ZoneScriptStringStorageBindingPhase::Attached));
+    OWNERSHIP_CHECK(
+        !controller::AuthenticateZoneScriptStringOwnershipStorage(
+            fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            &fixture.stringJournal,
+            fixture.storage.data() + 1,
+            static_cast<std::uint32_t>(fixture.storage.size()),
+            0,
+            ZoneScriptStringStorageBindingPhase::Attached));
+    OWNERSHIP_CHECK(
+        !controller::AuthenticateZoneScriptStringOwnershipStorage(
+            fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            &fixture.stringJournal,
+            fixture.storage.data(),
+            static_cast<std::uint32_t>(fixture.storage.size()) - 1,
+            0,
+            ZoneScriptStringStorageBindingPhase::Attached));
+    OWNERSHIP_CHECK(
+        !controller::AuthenticateZoneScriptStringOwnershipStorage(
+            fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            &fixture.stringJournal,
+            fixture.storage.data(),
+            static_cast<std::uint32_t>(fixture.storage.size()),
+            1,
+            ZoneScriptStringStorageBindingPhase::Attached));
+    OWNERSHIP_CHECK(
+        !controller::AuthenticateZoneScriptStringOwnershipStorage(
+            fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            &fixture.stringJournal,
+            fixture.storage.data(),
+            static_cast<std::uint32_t>(fixture.storage.size()),
+            0,
+            static_cast<ZoneScriptStringStorageBindingPhase>(0xFF)));
+
+    ZoneScriptStringOwnershipControllerTestAccess::SetPlacementStorage(
+        &fixture.ownership,
+        &foreignJournal,
+        foreignStorage.data(),
+        static_cast<std::uint32_t>(foreignStorage.size()),
+        0);
+    OWNERSHIP_CHECK(
+        !fixture.ownership.canonicalForBinding(
+            &fixture.lifecycleSlot, fixture.key));
+    OWNERSHIP_CHECK(
+        !AuthenticatesFixtureStorage(
+            fixture, 0, ZoneScriptStringStorageBindingPhase::Attached));
+    ZoneScriptStringOwnershipControllerTestAccess::SetPlacementStorage(
+        &fixture.ownership,
+        &fixture.stringJournal,
+        fixture.storage.data(),
+        static_cast<std::uint32_t>(fixture.storage.size()),
+        0);
+    OWNERSHIP_CHECK(
+        fixture.ownership.canonicalForBinding(
+            &fixture.lifecycleSlot, fixture.key));
+
+    OWNERSHIP_CHECK(
+        controller::TrySealZoneScriptStrings(&fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::Success);
+    OWNERSHIP_CHECK(
+        controller::TryBeginZoneScriptStringTransfer(&fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::Success);
+    OWNERSHIP_CHECK(
+        controller::TryTransferNextZoneScriptString(&fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::Success);
+    OWNERSHIP_CHECK(
+        controller::TryPrepareZoneScriptStringCommit(&fixture.ownership)
+        == ZoneScriptStringOwnershipStatus::Success);
+    OWNERSHIP_CHECK(
+        controller::TryCommitZoneScriptStringsAndAdmit(
+            &fixture.ownership, {nullptr, AdmitNoop})
+        == ZoneScriptStringOwnershipStatus::Success);
+    OWNERSHIP_CHECK(
+        AuthenticatesFixtureStorage(
+            fixture, 0, ZoneScriptStringStorageBindingPhase::Detached));
+    OWNERSHIP_CHECK(
+        !AuthenticatesFixtureStorage(
+            fixture, 0, ZoneScriptStringStorageBindingPhase::Attached));
+
+    // Detached canonical state alone cannot distinguish a same-key placement
+    // substitution. The exact outer expectation remains authoritative.
+    ZoneScriptStringOwnershipControllerTestAccess::SetPlacementStorage(
+        &fixture.ownership,
+        &foreignJournal,
+        foreignStorage.data(),
+        static_cast<std::uint32_t>(foreignStorage.size()),
+        0);
+    OWNERSHIP_CHECK(
+        fixture.ownership.canonicalForBinding(
+            &fixture.lifecycleSlot, fixture.key));
+    OWNERSHIP_CHECK(
+        !AuthenticatesFixtureStorage(
+            fixture, 0, ZoneScriptStringStorageBindingPhase::Detached));
+    ZoneScriptStringOwnershipControllerTestAccess::SetPlacementStorage(
+        &fixture.ownership,
+        &fixture.stringJournal,
+        fixture.storage.data(),
+        static_cast<std::uint32_t>(fixture.storage.size()),
+        0);
+
+    LiveUnloadDriver unload{};
+    unload.fixture = &fixture;
+    OWNERSHIP_CHECK(
+        controller::TryUnloadLiveZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            {&unload, PerformLiveUnload})
+        == ZoneScriptStringOwnershipStatus::Success);
+    OWNERSHIP_CHECK(
+        fixture.ownership.phase()
+        == ZoneScriptStringOwnershipPhase::Unloaded);
+    OWNERSHIP_CHECK(
+        AuthenticatesFixtureStorage(
+            fixture, 0, ZoneScriptStringStorageBindingPhase::Detached));
+    OWNERSHIP_CHECK(
+        controller::TryResetTerminalZoneScriptStringOwnership(
+            &fixture.ownership,
+            &fixture.lifecycleSlot,
+            fixture.key,
+            lifecycle::ZoneLoadTerminalKind::Unloaded)
+        == ZoneScriptStringOwnershipStatus::Success);
+    OWNERSHIP_CHECK(fixture.ownership.isEmptyCanonical());
+    OWNERSHIP_CHECK(
+        !AuthenticatesFixtureStorage(
+            fixture, 0, ZoneScriptStringStorageBindingPhase::Detached));
+}
+
 void TestAbandonedReceiptAuthentication()
 {
     ResetBackend();
@@ -704,8 +909,14 @@ void TestAbandonedReceiptAuthentication()
             MakeRollbackCallbacks(&driver))
         == ZoneScriptStringOwnershipStatus::Success);
     OWNERSHIP_CHECK(
+        AuthenticatesFixtureStorage(
+            fixture, 0, ZoneScriptStringStorageBindingPhase::Detached));
+    OWNERSHIP_CHECK(
         controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
         == ZoneScriptStringOwnershipStatus::Success);
+    OWNERSHIP_CHECK(
+        AuthenticatesFixtureStorage(
+            fixture, 0, ZoneScriptStringStorageBindingPhase::Detached));
     OWNERSHIP_CHECK(
         controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
         == ZoneScriptStringOwnershipStatus::Success);
@@ -986,6 +1197,7 @@ int main()
     TestPartialRollbackAndCleanupRetry();
     TestBindingAndForeignThreadRejection();
     TestBeginFailureReleasesSerializer();
+    TestDurableStorageIdentityAuthentication();
     TestAbandonedReceiptAuthentication();
     TestLiveUnloadRetryBindingAndTerminalReset();
     if (failures != 0)

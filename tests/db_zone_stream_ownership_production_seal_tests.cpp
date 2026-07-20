@@ -80,12 +80,29 @@ using BindFunction = ZoneStreamOwnershipStatus (*)(
     std::size_t) noexcept;
 using PassiveSingletonAuthenticator = bool (*)(
     const ActiveZoneStreamBinding &) noexcept;
+using CompositionAuthenticator = bool (*)(
+    const ActiveZoneStreamBinding &,
+    const ZoneStreamGenerationReceipt &,
+    const zone_load::ZoneLoadContextSlot *,
+    const zone_load::ZoneLoadContextKey &,
+    ZoneStreamCompositionMode) noexcept;
 static_assert(std::is_same_v<
     decltype(&ActiveZoneStreamBinding::zoneIdentity), ZoneIdentityAccessor>);
 static_assert(std::is_same_v<decltype(&TryBindZoneStreams), BindFunction>);
 static_assert(std::is_same_v<
     decltype(&AuthenticatePassiveZoneStreamSingleton),
     PassiveSingletonAuthenticator>);
+static_assert(std::is_same_v<
+    decltype(&AuthenticateZoneStreamComposition),
+    CompositionAuthenticator>);
+static_assert(
+    static_cast<std::uint8_t>(ZoneStreamCompositionMode::Pristine) == 0);
+static_assert(
+    static_cast<std::uint8_t>(ZoneStreamCompositionMode::NeverBound) == 1);
+static_assert(
+    static_cast<std::uint8_t>(ZoneStreamCompositionMode::Bound) == 2);
+static_assert(
+    static_cast<std::uint8_t>(ZoneStreamCompositionMode::Invalidated) == 3);
 } // namespace db::zone_stream_ownership
 
 int main()

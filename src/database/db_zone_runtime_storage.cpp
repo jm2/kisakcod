@@ -92,8 +92,8 @@ static_assert(std::is_nothrow_destructible_v<JournalEntry>);
     void *const slab,
     const ZoneRuntimeStorageExtent &extent) noexcept
 {
-    return static_cast<void *>(
-        static_cast<std::uint8_t *>(slab) + extent.offset);
+    return reinterpret_cast<void *>(
+        reinterpret_cast<std::uintptr_t>(slab) + extent.offset);
 }
 
 template <typename T>
@@ -137,6 +137,73 @@ template <typename T>
     return journal.readyForDestruction();
 }
 
+[[nodiscard]] bool IsNullKey(
+    const zone_load::ZoneLoadContextKey &key) noexcept
+{
+    return key == zone_load::ZoneLoadContextKey{};
+}
+
+[[nodiscard]] bool JournalIsPristine(const Journal &journal) noexcept
+{
+    return journal.readyForDestruction() && !journal.initialized()
+        && IsNullKey(journal.key())
+        && journal.phase()
+            == script_string_journal::ScriptStringJournalPhase::Staging
+        && journal.storage() == nullptr && journal.capacity() == 0
+        && journal.expectedCount() == 0 && journal.entryCount() == 0
+        && journal.transferCursor() == 0 && journal.rollbackCursor() == 0
+        && !journal.callbackActive() && !journal.poisoned();
+}
+
+[[nodiscard]] bool JournalIsStableActive(
+    const Journal &journal,
+    const JournalEntry *const expectedEntries,
+    const std::uint32_t expectedCount,
+    const zone_load::ZoneLoadContextKey &expectedKey) noexcept
+{
+    if (!journal.initialized() || journal.callbackActive()
+        || journal.poisoned() || journal.key() != expectedKey
+        || journal.storage() != expectedEntries
+        || journal.capacity() != expectedCount
+        || journal.expectedCount() != expectedCount)
+    {
+        return false;
+    }
+
+    using Phase = script_string_journal::ScriptStringJournalPhase;
+    switch (journal.phase())
+    {
+    case Phase::Staging:
+    case Phase::Sealed:
+    case Phase::Transferring:
+    case Phase::Transferred:
+    case Phase::CommitReady:
+    case Phase::RollingBack:
+        return true;
+    case Phase::Committed:
+    case Phase::RolledBack:
+    default:
+        return false;
+    }
+}
+
+[[nodiscard]] bool JournalIsDetached(
+    const Journal &journal,
+    const std::uint32_t expectedCount,
+    const zone_load::ZoneLoadContextKey &expectedKey) noexcept
+{
+    if (!journal.readyForDestruction() || !journal.initialized()
+        || journal.key() != expectedKey || journal.storage() != nullptr
+        || journal.capacity() != 0
+        || journal.expectedCount() != expectedCount)
+    {
+        return false;
+    }
+    using Phase = script_string_journal::ScriptStringJournalPhase;
+    return journal.phase() == Phase::Committed
+        || journal.phase() == Phase::RolledBack;
+}
+
 } // namespace
 
 bool ZoneRuntimeStorageBinding::isSelfAuthenticating(
@@ -145,9 +212,10 @@ bool ZoneRuntimeStorageBinding::isSelfAuthenticating(
     return self_ == this && state_ == state;
 }
 
-bool ZoneRuntimeStorageBinding::hasCanonicalBoundMetadata() const noexcept
+bool ZoneRuntimeStorageBinding::hasCanonicalPlacementMetadata(
+    const State state) const noexcept
 {
-    if (!isSelfAuthenticating(State::Bound)
+    if (!isSelfAuthenticating(state)
         || !IsRangeRepresentable(this, sizeof(*this)))
     {
         return false;
@@ -175,6 +243,11 @@ bool ZoneRuntimeStorageBinding::hasCanonicalBoundMetadata() const noexcept
         && arenaBacking_ == AddressAt(slab_, plan_.fxArenaBacking);
 }
 
+bool ZoneRuntimeStorageBinding::hasCanonicalBoundMetadata() const noexcept
+{
+    return hasCanonicalPlacementMetadata(State::Bound);
+}
+
 bool ZoneRuntimeStorageBinding::bound() const noexcept
 {
     return hasCanonicalBoundMetadata();
@@ -182,10 +255,87 @@ bool ZoneRuntimeStorageBinding::bound() const noexcept
 
 bool ZoneRuntimeStorageBinding::destroyed() const noexcept
 {
-    return isSelfAuthenticating(State::Destroyed) && slab_ == nullptr
-        && slabCapacity_ == 0 && plan_ == ZoneRuntimeStoragePlan{}
-        && journal_ == nullptr && entries_ == nullptr && arena_ == nullptr
-        && workspace_ == nullptr && arenaBacking_ == nullptr;
+    return hasCanonicalPlacementMetadata(State::Destroyed);
+}
+
+bool AuthenticateZoneRuntimeStorageBinding(
+    const ZoneRuntimeStorageBinding &binding,
+    const ZoneRuntimeStorageBindingPhase expectedPhase) noexcept
+{
+    switch (expectedPhase)
+    {
+    case ZoneRuntimeStorageBindingPhase::Pristine:
+        return binding.isPristine();
+    case ZoneRuntimeStorageBindingPhase::Bound:
+        return binding.hasCanonicalBoundMetadata();
+    case ZoneRuntimeStorageBindingPhase::Destroyed:
+        return binding.destroyed();
+    default:
+        return false;
+    }
+}
+
+bool AuthenticateZoneRuntimeStorageComposition(
+    const ZoneRuntimeStorageBinding &binding,
+    const ZoneRuntimeStorageCompositionExpectation &expectation,
+    const ZoneRuntimeStorageCompositionMode mode) noexcept
+{
+    const bool expectationIsEmpty = IsNullKey(expectation.key)
+        && expectation.arenaZoneIdentity == 0
+        && expectation.journal == nullptr && expectation.entries == nullptr
+        && expectation.capacity == 0 && expectation.expectedCount == 0;
+    if (mode == ZoneRuntimeStorageCompositionMode::Pristine)
+        return expectationIsEmpty && binding.isPristine();
+
+    if (mode == ZoneRuntimeStorageCompositionMode::Destroyed)
+    {
+        return IsNullKey(expectation.key)
+            && expectation.arenaZoneIdentity == 0 && binding.destroyed()
+            && expectation.journal == binding.journal_
+            && expectation.entries == binding.entries_
+            && expectation.capacity == binding.plan_.expectedStringCount
+            && expectation.expectedCount
+                == binding.plan_.expectedStringCount;
+    }
+
+    if (!binding.hasCanonicalBoundMetadata()
+        || !static_cast<bool>(expectation.key)
+        || expectation.arenaZoneIdentity == 0
+        || expectation.arenaZoneIdentity != expectation.key.generation
+        || expectation.journal != binding.journal_
+        || expectation.entries != binding.entries_
+        || expectation.capacity != binding.plan_.expectedStringCount
+        || expectation.expectedCount != binding.plan_.expectedStringCount
+        || !detail::AuthenticateStableFxRuntimeStorage(
+            binding.arena_,
+            binding.workspace_,
+            binding.arenaBacking_,
+            binding.plan_.arenaBudget,
+            expectation.arenaZoneIdentity))
+    {
+        return false;
+    }
+
+    switch (mode)
+    {
+    case ZoneRuntimeStorageCompositionMode::Placed:
+        return JournalIsPristine(*binding.journal_);
+    case ZoneRuntimeStorageCompositionMode::Active:
+        return JournalIsStableActive(
+            *binding.journal_,
+            binding.entries_,
+            binding.plan_.expectedStringCount,
+            expectation.key);
+    case ZoneRuntimeStorageCompositionMode::Detached:
+        return JournalIsDetached(
+            *binding.journal_,
+            binding.plan_.expectedStringCount,
+            expectation.key);
+    case ZoneRuntimeStorageCompositionMode::Pristine:
+    case ZoneRuntimeStorageCompositionMode::Destroyed:
+    default:
+        return false;
+    }
 }
 
 void *ZoneRuntimeStorageBinding::slab() const noexcept
@@ -424,14 +574,10 @@ ZoneRuntimeStorageStatus TryDestroyZoneRuntimeStorage(
     }
     binding->journal_->~ScriptStringJournal();
 
-    binding->slab_ = nullptr;
-    binding->slabCapacity_ = 0;
-    binding->plan_ = {};
-    binding->journal_ = nullptr;
-    binding->entries_ = nullptr;
-    binding->arena_ = nullptr;
-    binding->workspace_ = nullptr;
-    binding->arenaBacking_ = nullptr;
+    // Retain the complete immutable placement identity. The component object
+    // lifetimes have ended, so ordinary public accessors remain Bound-only;
+    // terminal composition authentication compares addresses and plan fields
+    // without dereferencing the destroyed objects.
     binding->state_ = ZoneRuntimeStorageBinding::State::Destroyed;
     return Status::Success;
 }

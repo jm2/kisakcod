@@ -154,9 +154,13 @@ foreach(_marker IN ITEMS
     "zone_load::ZoneLoadContextKey key_{};"
     "script_string_journal::ScriptStringJournal *journal_ = nullptr;"
     "script_string_journal::ScriptStringJournalEntry *storage_ = nullptr;"
+    "const script_string_journal::ScriptStringJournal *placementJournal_ = nullptr;"
+    "const script_string_journal::ScriptStringJournalEntry *placementStorage_ = nullptr;"
+    "ZoneScriptStringStorageBindingPhase"
+    "AuthenticateZoneScriptStringOwnershipStorage("
     "validateAbandonedReceipt() const noexcept;"
     "canonicalForBinding("
-    "RUNTIME_SIZE(ZoneScriptStringOwnershipController, 0x40, 0x58);"
+    "RUNTIME_SIZE(ZoneScriptStringOwnershipController, 0x50, 0x70);"
     "UnpublishingCallback,"
     "Unloading,"
     "UnloadingCallback,"
@@ -165,6 +169,54 @@ foreach(_marker IN ITEMS
     "TryResetTerminalZoneScriptStringOwnership("
     "Busy,")
     require_contains(_header "${_marker}" "bound fail-closed controller")
+endforeach()
+
+extract_slice(
+    _source
+    "bool AuthenticateZoneScriptStringOwnershipStorage("
+    "bool ZoneScriptStringOwnershipController::canonicalForBinding("
+    _storage_auth
+    "durable placement identity authentication")
+foreach(_marker IN ITEMS
+    "controller.canonicalForBinding(expectedLifecycle, expectedKey)"
+    "controller.placementJournal_ != expectedJournal"
+    "controller.placementStorage_ != expectedStorage"
+    "controller.placementCapacity_ != expectedCapacity"
+    "controller.placementExpectedCount_ != expectedCount"
+    "ZoneScriptStringStorageBindingPhase::Attached"
+    "ZoneScriptStringStorageBindingPhase::Detached")
+    require_contains(
+        _storage_auth "${_marker}" "exact placement identity tuple")
+endforeach()
+
+extract_slice(
+    _source
+    "void ZoneScriptStringOwnershipController::detachJournalBacking() noexcept"
+    "void ZoneScriptStringOwnershipController::poison() noexcept"
+    _detach
+    "active journal detachment")
+foreach(_forbidden IN ITEMS
+    "placementJournal_"
+    "placementStorage_"
+    "placementCapacity_"
+    "placementExpectedCount_")
+    require_not_contains(
+        _detach "${_forbidden}" "detachment retains immutable placement identity")
+endforeach()
+
+extract_slice(
+    _source
+    "void ZoneScriptStringOwnershipController::reset() noexcept"
+    "ZoneScriptStringOwnershipStatus TryBeginZoneScriptStringOwnership("
+    _reset
+    "placement identity reset")
+foreach(_marker IN ITEMS
+    "placementJournal_ = nullptr;"
+    "placementStorage_ = nullptr;"
+    "placementCapacity_ = 0;"
+    "placementExpectedCount_ = 0;")
+    require_contains(
+        _reset "${_marker}" "terminal reset clears placement identity")
 endforeach()
 foreach(_forbidden IN ITEMS
     "Com_Error("
@@ -424,6 +476,7 @@ foreach(_marker IN ITEMS
     "TestPartialRollbackAndCleanupRetry();"
     "TestBindingAndForeignThreadRejection();"
     "TestBeginFailureReleasesSerializer();"
+    "TestDurableStorageIdentityAuthentication();"
     "TestAbandonedReceiptAuthentication();"
     "TestLiveUnloadRetryBindingAndTerminalReset();"
     "driver.beginReentryStatus == ZoneScriptStringOwnershipStatus::Busy"

@@ -47,6 +47,18 @@ enum class ActiveZoneStreamPhase : std::uint8_t
     UnsafeFailure,
 };
 
+// The receipt representation expected at one exact composition boundary.
+// Pristine is the never-enrolled all-zero receipt; NeverBound and Invalidated
+// retain an exact generation identity; Bound additionally requires that this
+// receipt own the shared stream binding and every hidden singleton field.
+enum class ZoneStreamCompositionMode : std::uint8_t
+{
+    Pristine,
+    NeverBound,
+    Bound,
+    Invalidated,
+};
+
 enum class ZoneStreamOwnershipStatus : std::uint8_t
 {
     Success,
@@ -71,6 +83,24 @@ class ActiveZoneStreamBinding;
 // grants no mutable stream or relocation capability.
 [[nodiscard]] bool AuthenticatePassiveZoneStreamSingleton(
     const ActiveZoneStreamBinding &binding) noexcept;
+
+// Authenticates one exact, externally serialized composition without
+// reporting, allocating, mutating, or exposing any retained authority.
+// Pristine requires a null lifecycle and null key. Every other mode binds the
+// receipt to the supplied lifecycle address and exact usable generation key.
+// Invalidated accepts the lifecycle's retained terminal Empty receipt; Bound
+// and NeverBound require that the lifecycle still owns the active key. A
+// non-Bound receipt may coexist with another exact Bound owner: the shared
+// binding is still authenticated completely, but is associated with the
+// supplied receipt only in Bound mode. Callers scanning a receipt table must
+// additionally require that a Bound shared binding has exactly one matching
+// Bound receipt in that table.
+[[nodiscard]] bool AuthenticateZoneStreamComposition(
+    const ActiveZoneStreamBinding &binding,
+    const ZoneStreamGenerationReceipt &receipt,
+    const zone_load::ZoneLoadContextSlot *expectedLifecycle,
+    const zone_load::ZoneLoadContextKey &expectedKey,
+    ZoneStreamCompositionMode mode) noexcept;
 
 class alignas(8) ZoneStreamGenerationReceipt final
 {

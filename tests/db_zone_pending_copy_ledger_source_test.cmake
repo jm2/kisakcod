@@ -12,6 +12,8 @@ set(_fixture_path
     "${SOURCE_ROOT}/tests/db_zone_pending_copy_ledger_tests.cpp")
 set(_production_seal_path
     "${SOURCE_ROOT}/tests/db_zone_pending_copy_ledger_production_seal_tests.cpp")
+set(_runtime_table_seal_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_table_source_test.cmake")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
 set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
 set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
@@ -31,6 +33,7 @@ foreach(_path IN ITEMS
     "${_source_path}"
     "${_fixture_path}"
     "${_production_seal_path}"
+    "${_runtime_table_seal_path}"
     "${_manifest_path}"
     "${_tests_path}"
     "${_ci_path}"
@@ -49,6 +52,7 @@ file(READ "${_header_path}" _header)
 file(READ "${_source_path}" _source)
 file(READ "${_fixture_path}" _fixture)
 file(READ "${_production_seal_path}" _production_seal)
+file(READ "${_runtime_table_seal_path}" _runtime_table_seal)
 file(READ "${_manifest_path}" _manifest)
 file(READ "${_tests_path}" _tests)
 file(READ "${_ci_path}" _ci)
@@ -70,6 +74,29 @@ function(require_not_contains SOURCE_VAR NEEDLE DESCRIPTION)
             "Forbidden pending-copy regression (${DESCRIPTION}): '${NEEDLE}'")
     endif()
 endfunction()
+
+# The runtime table is the sole active composite enrollment. Its dedicated
+# exact-controller seal must remain registered and must freeze every pending-
+# copy mutation/authenticator before this component-wide scan delegates it.
+foreach(_marker IN ITEMS
+    "zone_pending_copy::TryInitializePendingCopyLedger(|1"
+    "zone_pending_copy::TryBeginPendingCopyAdmission(|1"
+    "zone_pending_copy::TryAppendPendingCopyRecord(|1"
+    "zone_pending_copy::TryPreparePendingCopyAdmission(|1"
+    "zone_pending_copy::TryDiscardPendingCopyAdmission(|2"
+    "zone_pending_copy::TryBeginPendingCopyDrain(|1"
+    "zone_pending_copy::TryDrainNextPendingCopy(|1"
+    "zone_pending_copy::TryFinishPendingCopyDrain(|1"
+    "zone_pending_copy::TryResetPendingCopyAdmissionReceipt(|1"
+    "zone_pending_copy::AuthenticatePendingCopyAdmissionReceipt(|1"
+    "zone_pending_copy::AuthenticatePendingCopyLedgerDescriptors(|2")
+    require_contains(
+        _runtime_table_seal "${_marker}"
+        "dedicated runtime-table pending-copy enrollment seal")
+endforeach()
+require_contains(
+    _tests "NAME database-zone-runtime-table-source-invariants"
+    "dedicated runtime-table seal registration")
 
 function(require_matches SOURCE_VAR PATTERN DESCRIPTION)
     string(REGEX MATCH "${PATTERN}" _match "${${SOURCE_VAR}}")
@@ -128,9 +155,12 @@ set(_enrollment_tokens
     zone_pending_copy
     PendingCopyStatus
     PendingCopyAdmissionPhase
+    PendingCopyLedgerAuthenticationPhase
+    PendingCopyAuthenticationResult
     PendingCopyDrainCallbackStatus
     PendingCopyRecord
     PendingCopyAdmissionCompletion
+    PendingCopyDescriptorBinding
     PendingCopyDrainCallback
     PendingCopyAdmissionReceipt
     PendingCopyLedger
@@ -147,6 +177,8 @@ set(_enrollment_tokens
     TryFinishPendingCopyDrain
     TryResetPendingCopyAdmissionReceipt
     AuthenticatePassivePendingCopyLedger
+    AuthenticatePendingCopyAdmissionReceipt
+    AuthenticatePendingCopyLedgerDescriptors
     kPendingCopyRecordCapacity
     kPendingCopyGenerationCapacity
     KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING)
@@ -552,11 +584,13 @@ foreach(_production_path IN LISTS _production_sources)
             _production_text _runtime_namespace_declaration)
         if(_runtime_namespace_declaration)
             message(FATAL_ERROR
-                "Passive runtime-table composition reopened the pending-copy "
+                "Runtime-table composition reopened the pending-copy "
                 "namespace in ${_production_path}")
         endif()
-        remove_reviewed_runtime_table_pending_tokens(
-            "${_production_path}" _production_text _production_text)
+        # Composite enrollment is owned by the runtime table's stricter
+        # exact-controller source seal. That seal freezes the complete friend
+        # surface, ABI, and each reviewed pending-copy operation.
+        continue()
     endif()
     detect_production_enrollment(_production_text _enrolled)
     if(_enrolled)
@@ -565,9 +599,9 @@ foreach(_production_path IN LISTS _production_sources)
     endif()
 endforeach()
 
-# The foundation is fixed-capacity, allocation independent, externally
-# serialized, report-free, and unaware of every production subsystem it will
-# eventually coordinate. The later caller cutover must be one atomic batch.
+# The foundation remains fixed-capacity, allocation independent, externally
+# serialized, report-free, and unaware of the production subsystems coordinated
+# by the exact-key runtime table.
 foreach(_var IN ITEMS _header _source)
     foreach(_forbidden IN ITEMS
         "database/database.h"
@@ -621,6 +655,8 @@ foreach(_marker IN ITEMS
     "std::array<GenerationDescriptor, kPendingCopyGenerationCapacity>"
     "const PendingCopyLedger *self_ = nullptr;"
     "const PendingCopyAdmissionReceipt *self_ = nullptr;"
+    "const PendingCopyAdmissionReceipt *receipt = nullptr;"
+    "const zone_load::ZoneLoadContextSlot *lifecycle = nullptr;"
     "std::uint64_t generationSerial_ = 0;"
     "std::uint64_t nextGenerationSerial_ = 0;"
     "caller must externally serialize"
@@ -628,6 +664,8 @@ foreach(_marker IN ITEMS
     "PendingCopyLedger(const PendingCopyLedger &) = delete;"
     "const PendingCopyAdmissionReceipt &) = delete;"
     "AuthenticatePassivePendingCopyLedger("
+    "AuthenticatePendingCopyAdmissionReceipt("
+    "AuthenticatePendingCopyLedgerDescriptors("
     "#ifdef KISAK_DB_ZONE_PENDING_COPY_LEDGER_TESTING"
     "friend struct PendingCopyLedgerTestAccess;")
     require_contains(_header "${_marker}" "stable bounded authority")
@@ -639,6 +677,14 @@ require_contains(
     _header
     "friend bool AuthenticatePassivePendingCopyLedger("
     "exact const-only table-wide ledger authenticator friendship")
+require_contains(
+    _header
+    "friend bool AuthenticatePendingCopyAdmissionReceipt("
+    "exact const-only receipt authenticator friendship")
+require_contains(
+    _header
+    "friend PendingCopyAuthenticationResult\n    AuthenticatePendingCopyLedgerDescriptors("
+    "exact const-only descriptor-set authenticator friendship")
 require_not_contains(
     _header
     "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt(\n        const PendingCopyLedger &ledger) noexcept;"
@@ -650,7 +696,7 @@ require_not_contains(
 extract_slice(
     _source
     "bool AuthenticatePassivePendingCopyLedger("
-    "bool PendingCopyLedger::hasCanonicalHeader() const noexcept"
+    "bool AuthenticatePendingCopyAdmissionReceipt("
     _passive_authenticator
     "passive pending-copy ledger authenticator")
 string(REGEX REPLACE "[ \t\r\n]+" " "
@@ -662,6 +708,79 @@ if(NOT _passive_authenticator STREQUAL _expected_passive_authenticator)
     message(FATAL_ERROR
         "Passive pending-copy ledger authenticator gained authority or lost topology checks")
 endif()
+
+# The composition adapters accept only const owner views. Receipt terminal
+# authentication compares stale pointer identities without dereferencing them;
+# table authentication proves a complete bounded set before exposing callback
+# activity as a distinct, non-quiescent result.
+extract_slice(
+    _source
+    "bool AuthenticatePendingCopyAdmissionReceipt("
+    "PendingCopyAuthenticationResult AuthenticatePendingCopyLedgerDescriptors("
+    _receipt_authenticator
+    "exact pending-copy receipt authenticator")
+foreach(_marker IN ITEMS
+    "if (!receipt.isCanonical()"
+    "receipt.ledger_ != expectedLedger"
+    "receipt.lifecycle_ != expectedLifecycle"
+    "receipt.key_ != expectedKey"
+    "receipt.phase_ != expectedPhase"
+    "case PendingCopyAdmissionPhase::Prepared:"
+    "case PendingCopyAdmissionPhase::Admitting:"
+    "receipt.completionContext_ == expectedCompletion.context"
+    "receipt.completion_ == expectedCompletion.complete"
+    "case PendingCopyAdmissionPhase::Drained:"
+    "case PendingCopyAdmissionPhase::Discarded:"
+    "case PendingCopyAdmissionPhase::UnsafeFailure:"
+    "return false;")
+    require_contains(
+        _receipt_authenticator "${_marker}"
+        "exact const receipt composition")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "expectedLedger->"
+    "expectedLifecycle->"
+    "*expectedLedger"
+    "*expectedLifecycle")
+    require_not_contains(
+        _receipt_authenticator "${_forbidden}"
+        "terminal authentication cannot dereference expected owners")
+endforeach()
+
+extract_slice(
+    _source
+    "PendingCopyAuthenticationResult AuthenticatePendingCopyLedgerDescriptors("
+    "bool PendingCopyLedger::hasCanonicalHeader() const noexcept"
+    _descriptor_authenticator
+    "bounded pending-copy descriptor-set authenticator")
+foreach(_marker IN ITEMS
+    "expectedBindingCount > kPendingCopyGenerationCapacity"
+    "expectedBindingCount != 0 && expectedBindings == nullptr"
+    "expectedBindingCount == 0 && ledger.isPristine()"
+    "!ledger.isCanonical()"
+    "expectedBindingCount != ledger.generationCount_"
+    "binding.receipt == earlier.receipt"
+    "binding.lifecycle == earlier.lifecycle"
+    "binding.key == earlier.key"
+    "expectedBindings[expectedIndex].receipt"
+    "binding->key != descriptor.key"
+    "AuthenticatePendingCopyAdmissionReceipt("
+    "AuthenticationResult::CallbackActive"
+    "AuthenticationResult::Match")
+    require_contains(
+        _descriptor_authenticator "${_marker}"
+        "bounded exact descriptor composition")
+endforeach()
+require_ordered(
+    _descriptor_authenticator
+    "if (!ledger.isCanonical()"
+    "for (std::size_t index = 0; index < expectedBindingCount; ++index)"
+    "ledger canonicality precedes expected descriptor traversal")
+require_ordered(
+    _descriptor_authenticator
+    "AuthenticatePendingCopyAdmissionReceipt("
+    "return ledger.callbackActive_ != 0"
+    "complete set authenticates before callback-active publication")
 
 # Receipt authentication, canonical unused spans, exact serial exhaustion,
 # full preflight-before-publication, and terminal-first retry logic prevent ABA
@@ -849,6 +968,15 @@ require_contains(
 # poison boundaries, while the macro-off compile test proves the friend cannot
 # be recreated by name in production.
 foreach(_marker IN ITEMS
+    "TestReceiptCompositionAuthentication"
+    "TestLedgerDescriptorSetAuthentication"
+    "CompleteWithAuthentication"
+    "Result::CallbackActive"
+    "kPendingCopyGenerationCapacity + 1u"
+    "duplicate[1].receipt = duplicate[0].receipt;"
+    "duplicate[1].lifecycle = duplicate[0].lifecycle;"
+    "duplicate[1].key = duplicate[0].key;"
+    "SetNextGenerationSerial(&ledger, 0)"
     "TestPassiveLedgerAuthentication"
     "AuthenticatePassivePendingCopyLedger(ledger)"
     "SetNextGenerationSerial(&ledger, 1)"
@@ -889,6 +1017,12 @@ foreach(_marker IN ITEMS
     "CanReset"
     "using PassiveLedgerAuthenticator ="
     "decltype(&AuthenticatePassivePendingCopyLedger)"
+    "using ReceiptAuthenticator ="
+    "decltype(&AuthenticatePendingCopyAdmissionReceipt)"
+    "using DescriptorSetAuthenticator ="
+    "decltype(&AuthenticatePendingCopyLedgerDescriptors)"
+    "const PendingCopyAdmissionReceipt *>"
+    "const zone_load::ZoneLoadContextSlot *>"
     "!PendingCopyLedgerTestAccess::")
     require_contains(
         _production_seal "${_marker}" "macro-off private access seal")

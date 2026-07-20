@@ -266,6 +266,91 @@ ActiveZoneStreamBinding *g_activeOwner = nullptr;
         && zone_load::ZoneLoadContextKeyMatches(lifecycle, key);
 }
 
+[[nodiscard]] bool LifecycleRetainsExactKey(
+    const zone_load::ZoneLoadContextSlot *const lifecycle,
+    const zone_load::ZoneLoadContextKey &key) noexcept
+{
+    return lifecycle && IsUsableKey(key) && lifecycle->canonical()
+        && lifecycle->slotIndex() == key.slot
+        && lifecycle->generation() == key.generation;
+}
+
+[[nodiscard]] bool SpanWithinBlock(
+    const void *const pointer,
+    const std::uint32_t byteCount,
+    const relocation::BlockView &block) noexcept
+{
+    const std::uintptr_t address =
+        reinterpret_cast<std::uintptr_t>(pointer);
+    if (address < block.base)
+        return false;
+    const std::uintptr_t offset = address - block.base;
+    return offset <= block.size && byteCount <= block.size - offset;
+}
+
+[[nodiscard]] bool SpanWithinAnyBlock(
+    const void *const pointer,
+    const std::uint32_t byteCount,
+    const relocation::BlockView *const blocks) noexcept
+{
+    if (!pointer || !blocks)
+        return false;
+    for (std::size_t i = 0; i < relocation::kBlockCount; ++i)
+    {
+        if (SpanWithinBlock(pointer, byteCount, blocks[i]))
+            return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool SingletonMatchesBoundLayout(
+    const relocation::BlockView *const blocks) noexcept
+{
+    if (!blocks || g_streamPosIndex >= relocation::kBlockCount
+        || g_streamPosStackIndex > 64 || g_streamDelayIndex > 4096)
+    {
+        return false;
+    }
+    if (!SpanWithinBlock(
+            g_streamPos, 0, blocks[g_streamPosIndex]))
+    {
+        return false;
+    }
+    for (std::size_t i = 0; i < relocation::kBlockCount; ++i)
+    {
+        if (!SpanWithinBlock(g_streamPosArray[i], 0, blocks[i]))
+            return false;
+    }
+    for (std::size_t i = 0; i < g_streamPosStackIndex; ++i)
+    {
+        const StreamPosInfo &saved = g_streamPosStack[i];
+        if (saved.index >= relocation::kBlockCount
+            || !SpanWithinAnyBlock(saved.pos, 0, blocks))
+        {
+            return false;
+        }
+    }
+    for (std::size_t i = 0; i < 4096; ++i)
+    {
+        const StreamDelayInfo &delay = g_streamDelayArray[i];
+        if (!delay.ptr)
+        {
+            if (delay.size != 0 || i < g_streamDelayIndex)
+                return false;
+            continue;
+        }
+        if (delay.size <= 0
+            || !SpanWithinAnyBlock(
+                delay.ptr,
+                static_cast<std::uint32_t>(delay.size),
+                blocks))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 void ScrubStreamArrays() noexcept
 {
     for (StreamDelayInfo &delay : g_streamDelayArray)
@@ -319,6 +404,50 @@ void ScrubStreamScalars() noexcept
             return false;
     }
     return true;
+}
+
+[[nodiscard]] bool SingletonMatchesIdleBinding(
+    const ActiveZoneStreamBinding &binding) noexcept
+{
+    return binding.phase() == ActiveZoneStreamPhase::Idle
+        && binding.canonical()
+        && g_activeOwner == nullptr && SingletonIsIdle();
+}
+
+[[nodiscard]] bool SingletonMatchesBoundBinding(
+    const ActiveZoneStreamBinding &binding) noexcept
+{
+    if (binding.phase() != ActiveZoneStreamPhase::Bound
+        || !binding.receipt() || !binding.canonical()
+        || g_activeOwner != &binding
+        || g_streamZoneMem != binding.zoneIdentity()
+        || !LifecycleOwnsActiveKey(
+            binding.receipt()->lifecycle(), binding.key()))
+    {
+        return false;
+    }
+
+    relocation::BlockView blocks[relocation::kBlockCount]{};
+    for (std::size_t i = 0; i < relocation::kBlockCount; ++i)
+    {
+        if (!binding.block(i, &blocks[i]))
+            return false;
+    }
+    return g_aliasRegistry.ContextMatches(
+            blocks, relocation::kBlockCount)
+        && g_directResolver.ContextMatches(
+            blocks, relocation::kBlockCount)
+        && SingletonMatchesBoundLayout(blocks);
+}
+
+[[nodiscard]] bool SingletonMatchesComposition(
+    const ActiveZoneStreamBinding &binding) noexcept
+{
+    if (binding.phase() == ActiveZoneStreamPhase::Idle)
+        return SingletonMatchesIdleBinding(binding);
+    if (binding.phase() == ActiveZoneStreamPhase::Bound)
+        return SingletonMatchesBoundBinding(binding);
+    return false;
 }
 
 [[nodiscard]] ZoneStreamOwnershipStatus ValidateRequestedKey(
@@ -449,6 +578,53 @@ bool ActiveZoneStreamBinding::canonical() const noexcept
         && ValidateBlockLayout(
             blocks_, this, receipt_, receipt_->lifecycle_, zoneIdentity_)
         && ZoneMatchesLayout(zoneIdentity_, blocks_);
+}
+
+bool AuthenticateZoneStreamComposition(
+    const ActiveZoneStreamBinding &binding,
+    const ZoneStreamGenerationReceipt &receipt,
+    const zone_load::ZoneLoadContextSlot *const expectedLifecycle,
+    const zone_load::ZoneLoadContextKey &expectedKey,
+    const ZoneStreamCompositionMode mode) noexcept
+{
+    if (mode == ZoneStreamCompositionMode::Pristine)
+    {
+        return expectedLifecycle == nullptr
+            && IsNullKey(expectedKey) && receipt.canonical()
+            && receipt.phase() == ZoneStreamGenerationPhase::NeverBound
+            && receipt.lifecycle() == nullptr
+            && IsNullKey(receipt.key())
+            && SingletonMatchesComposition(binding);
+    }
+
+    if (!IsUsableKey(expectedKey) || !expectedLifecycle
+        || !receipt.canonical()
+        || receipt.lifecycle() != expectedLifecycle
+        || receipt.key() != expectedKey)
+    {
+        return false;
+    }
+    if (mode == ZoneStreamCompositionMode::NeverBound)
+    {
+        return receipt.phase() == ZoneStreamGenerationPhase::NeverBound
+            && LifecycleOwnsActiveKey(expectedLifecycle, expectedKey)
+            && SingletonMatchesComposition(binding);
+    }
+    if (mode == ZoneStreamCompositionMode::Invalidated)
+    {
+        return receipt.phase() == ZoneStreamGenerationPhase::Invalidated
+            && LifecycleRetainsExactKey(expectedLifecycle, expectedKey)
+            && SingletonMatchesComposition(binding);
+    }
+    if (mode != ZoneStreamCompositionMode::Bound
+        || receipt.phase() != ZoneStreamGenerationPhase::Bound
+        || binding.receipt() != &receipt
+        || binding.key() != expectedKey
+        || !LifecycleOwnsActiveKey(expectedLifecycle, expectedKey))
+    {
+        return false;
+    }
+    return SingletonMatchesBoundBinding(binding);
 }
 
 bool AuthenticatePassiveZoneStreamSingleton(

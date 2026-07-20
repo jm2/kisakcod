@@ -80,6 +80,30 @@ using PassiveLedgerAuthenticator = bool (*)(
 static_assert(std::is_same_v<
     decltype(&AuthenticatePassivePendingCopyLedger),
     PassiveLedgerAuthenticator>);
+using ReceiptAuthenticator = bool (*)(
+    const PendingCopyAdmissionReceipt &,
+    const PendingCopyLedger *,
+    const zone_load::ZoneLoadContextSlot *,
+    const zone_load::ZoneLoadContextKey &,
+    PendingCopyAdmissionPhase,
+    const PendingCopyAdmissionCompletion &) noexcept;
+static_assert(std::is_same_v<
+    decltype(&AuthenticatePendingCopyAdmissionReceipt),
+    ReceiptAuthenticator>);
+using DescriptorSetAuthenticator = PendingCopyAuthenticationResult (*)(
+    const PendingCopyLedger &,
+    PendingCopyLedgerAuthenticationPhase,
+    const PendingCopyDescriptorBinding *,
+    std::size_t) noexcept;
+static_assert(std::is_same_v<
+    decltype(&AuthenticatePendingCopyLedgerDescriptors),
+    DescriptorSetAuthenticator>);
+static_assert(std::is_same_v<
+    decltype(PendingCopyDescriptorBinding::receipt),
+    const PendingCopyAdmissionReceipt *>);
+static_assert(std::is_same_v<
+    decltype(PendingCopyDescriptorBinding::lifecycle),
+    const zone_load::ZoneLoadContextSlot *>);
 } // namespace db::zone_pending_copy
 
 int main()

@@ -162,6 +162,27 @@ public:
         return transactionDepth_;
     }
 
+    // Exact read-only gate for an externally serialized composition check.
+    // At a stable depth-zero boundary no live token metadata may remain, the
+    // reentry gate must be clear, and the next transaction serial must remain
+    // usable. This exposes no transaction or reservation capability.
+    [[nodiscard]] bool readyForCompositionAuthentication() const noexcept
+    {
+        if (operating_ || nextSerial_ == 0 || transactionDepth_ != 0)
+            return false;
+        for (std::uint32_t depth = 0;
+             depth < kFxFastFileNativeArenaMaxTransactionDepth;
+             ++depth)
+        {
+            if (transactionSerials_[depth] != 0
+                || transactionBases_[depth] != 0)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
 private:
     void *storage_ = nullptr;
 #if !KISAK_ARCH_64BIT

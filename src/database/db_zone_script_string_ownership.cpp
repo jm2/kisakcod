@@ -63,6 +63,44 @@ namespace lifecycle = zone_load;
     }
 }
 
+[[nodiscard]] constexpr bool IsAttachedStoragePhase(
+    const ZoneScriptStringOwnershipPhase phase) noexcept
+{
+    switch (phase)
+    {
+    case ZoneScriptStringOwnershipPhase::Staging:
+    case ZoneScriptStringOwnershipPhase::Sealed:
+    case ZoneScriptStringOwnershipPhase::Transferring:
+    case ZoneScriptStringOwnershipPhase::Transferred:
+    case ZoneScriptStringOwnershipPhase::CommitReady:
+    case ZoneScriptStringOwnershipPhase::Unpublishing:
+    case ZoneScriptStringOwnershipPhase::UnpublishingCallback:
+    case ZoneScriptStringOwnershipPhase::RollingBack:
+        return true;
+    default:
+        return false;
+    }
+}
+
+[[nodiscard]] constexpr bool IsDetachedStoragePhase(
+    const ZoneScriptStringOwnershipPhase phase) noexcept
+{
+    switch (phase)
+    {
+    case ZoneScriptStringOwnershipPhase::OwnershipRolledBack:
+    case ZoneScriptStringOwnershipPhase::Cleaning:
+    case ZoneScriptStringOwnershipPhase::Admitting:
+    case ZoneScriptStringOwnershipPhase::Live:
+    case ZoneScriptStringOwnershipPhase::Abandoned:
+    case ZoneScriptStringOwnershipPhase::Unloading:
+    case ZoneScriptStringOwnershipPhase::UnloadingCallback:
+    case ZoneScriptStringOwnershipPhase::Unloaded:
+        return true;
+    default:
+        return false;
+    }
+}
+
 [[nodiscard]] constexpr journal::ScriptStringJournalPhase JournalPhaseFor(
     const ZoneScriptStringOwnershipPhase phase) noexcept
 {
@@ -207,12 +245,51 @@ bool ZoneScriptStringOwnershipController::isEmptyCanonical() const noexcept
     return phase_ == ZoneScriptStringOwnershipPhase::Empty
         && key_ == lifecycle::ZoneLoadContextKey{}
         && lifecycle_ == nullptr && journal_ == nullptr && storage_ == nullptr
+        && placementIdentityIsEmpty()
         && rollbackContext_ == nullptr && ensureUnreachable_ == nullptr
         && performCleanup_ == nullptr && storageCapacity_ == 0
         && expectedCount_ == 0 && transactionSerial_ == 0
         && transaction_.canonicalInactive()
         && resumePhase_ == ZoneScriptStringOwnershipPhase::Empty
         && reserved_[0] == 0 && reserved_[1] == 0;
+}
+
+bool AuthenticateZoneScriptStringOwnershipStorage(
+    const ZoneScriptStringOwnershipController &controller,
+    const lifecycle::ZoneLoadContextSlot *const expectedLifecycle,
+    const lifecycle::ZoneLoadContextKey &expectedKey,
+    const journal::ScriptStringJournal *const expectedJournal,
+    const journal::ScriptStringJournalEntry *const expectedStorage,
+    const std::uint32_t expectedCapacity,
+    const std::uint32_t expectedCount,
+    const ZoneScriptStringStorageBindingPhase expectedPhase) noexcept
+{
+    if (expectedPhase != ZoneScriptStringStorageBindingPhase::Attached
+        && expectedPhase != ZoneScriptStringStorageBindingPhase::Detached)
+    {
+        return false;
+    }
+    if (!controller.canonicalForBinding(expectedLifecycle, expectedKey)
+        || !controller.placementIdentityIsCanonical()
+        || controller.placementJournal_ != expectedJournal
+        || controller.placementStorage_ != expectedStorage
+        || controller.placementCapacity_ != expectedCapacity
+        || controller.placementExpectedCount_ != expectedCount)
+    {
+        return false;
+    }
+
+    switch (expectedPhase)
+    {
+    case ZoneScriptStringStorageBindingPhase::Attached:
+        return IsAttachedStoragePhase(controller.phase_)
+            && controller.placementAttachmentMatchesPhase();
+    case ZoneScriptStringStorageBindingPhase::Detached:
+        return IsDetachedStoragePhase(controller.phase_)
+            && controller.placementAttachmentMatchesPhase();
+    default:
+        return false;
+    }
 }
 
 bool ZoneScriptStringOwnershipController::canonicalForBinding(
@@ -341,10 +418,47 @@ ZoneScriptStringOwnershipController::PerformBoundLiveUnload(
         controller->rollbackContext_, operation);
 }
 
+bool ZoneScriptStringOwnershipController::placementIdentityIsEmpty()
+    const noexcept
+{
+    return placementJournal_ == nullptr && placementStorage_ == nullptr
+        && placementCapacity_ == 0 && placementExpectedCount_ == 0;
+}
+
+bool ZoneScriptStringOwnershipController::placementIdentityIsCanonical()
+    const noexcept
+{
+    return placementJournal_ != nullptr
+        && placementCapacity_
+            <= journal::kMaxScriptStringJournalEntries
+        && placementExpectedCount_ <= placementCapacity_
+        && (placementExpectedCount_ == 0 || placementStorage_ != nullptr);
+}
+
+bool ZoneScriptStringOwnershipController::placementAttachmentMatchesPhase()
+    const noexcept
+{
+    if (IsAttachedStoragePhase(phase_))
+    {
+        return journal_ == placementJournal_
+            && storage_ == placementStorage_
+            && storageCapacity_ == placementCapacity_
+            && expectedCount_ == placementExpectedCount_;
+    }
+    if (IsDetachedStoragePhase(phase_))
+    {
+        return journal_ == nullptr && storage_ == nullptr
+            && storageCapacity_ == 0 && expectedCount_ == 0;
+    }
+    return false;
+}
+
 bool ZoneScriptStringOwnershipController::bindingMatchesCurrentPhase() const noexcept
 {
     if (!IsKnownPhase(phase_) || reserved_[0] != 0 || reserved_[1] != 0
-        || !static_cast<bool>(key_) || !lifecycle_)
+        || !static_cast<bool>(key_) || !lifecycle_
+        || !placementIdentityIsCanonical()
+        || !placementAttachmentMatchesPhase())
     {
         return false;
     }
@@ -519,6 +633,8 @@ ZoneScriptStringOwnershipController::validateLiveBinding(
     if (lifecycle_ != expectedLifecycle)
         return ZoneScriptStringOwnershipStatus::InvalidState;
     if (journal_ != nullptr || storage_ != nullptr
+        || !placementIdentityIsCanonical()
+        || !placementAttachmentMatchesPhase()
         || rollbackContext_ != nullptr || ensureUnreachable_ != nullptr
         || performCleanup_ != nullptr || storageCapacity_ != 0
         || expectedCount_ != 0 || transactionSerial_ != 0
@@ -585,6 +701,8 @@ ZoneScriptStringOwnershipController::validateTerminalReceipt(
     if (lifecycle_ != expectedLifecycle)
         return ZoneScriptStringOwnershipStatus::InvalidState;
     if (journal_ != nullptr || storage_ != nullptr
+        || !placementIdentityIsCanonical()
+        || !placementAttachmentMatchesPhase()
         || rollbackContext_ != nullptr || ensureUnreachable_ != nullptr
         || performCleanup_ != nullptr || storageCapacity_ != 0
         || expectedCount_ != 0 || transactionSerial_ != 0
@@ -633,11 +751,15 @@ void ZoneScriptStringOwnershipController::reset() noexcept
     lifecycle_ = nullptr;
     journal_ = nullptr;
     storage_ = nullptr;
+    placementJournal_ = nullptr;
+    placementStorage_ = nullptr;
     rollbackContext_ = nullptr;
     ensureUnreachable_ = nullptr;
     performCleanup_ = nullptr;
     storageCapacity_ = 0;
     expectedCount_ = 0;
+    placementCapacity_ = 0;
+    placementExpectedCount_ = 0;
     transactionSerial_ = 0;
     phase_ = ZoneScriptStringOwnershipPhase::Empty;
     resumePhase_ = ZoneScriptStringOwnershipPhase::Empty;
@@ -708,8 +830,12 @@ ZoneScriptStringOwnershipStatus TryBeginZoneScriptStringOwnership(
     controller->lifecycle_ = lifecycleSlot;
     controller->journal_ = stringJournal;
     controller->storage_ = storage;
+    controller->placementJournal_ = stringJournal;
+    controller->placementStorage_ = storage;
     controller->storageCapacity_ = storageCapacity;
     controller->expectedCount_ = expectedCount;
+    controller->placementCapacity_ = storageCapacity;
+    controller->placementExpectedCount_ = expectedCount;
     controller->transactionSerial_ = controller->transaction_.serial();
     controller->phase_ = ZoneScriptStringOwnershipPhase::Staging;
     if (controller->transactionSerial_ == 0)

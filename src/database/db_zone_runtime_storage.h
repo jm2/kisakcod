@@ -1,5 +1,8 @@
 #pragma once
 
+#include <database/db_zone_load_context.h>
+#include <universal/kisak_abi.h>
+
 #include <cstddef>
 #include <cstdint>
 
@@ -72,6 +75,43 @@ enum class ZoneRuntimeStorageStatus : std::uint8_t
     ArenaFailed,
 };
 
+// Public const-authentication vocabulary. The private representation remains
+// hidden so callers can prove an expected binding phase without gaining a
+// mutation path into the placement owner.
+enum class ZoneRuntimeStorageBindingPhase : std::uint8_t
+{
+    Pristine,
+    Bound,
+    Destroyed,
+};
+
+// Stable, externally owned expectations for one exact-key storage
+// composition.  The journal/entry addresses and count survive terminal
+// teardown in the outer script-string controller; this value grants no
+// mutation authority over either object.  Pristine and Destroyed require a
+// null key and arena identity because their component objects cannot be
+// associated with a live generation.
+struct alignas(8) ZoneRuntimeStorageCompositionExpectation final
+{
+    zone_load::ZoneLoadContextKey key{};
+    std::uint64_t arenaZoneIdentity = 0;
+    const script_string_journal::ScriptStringJournal *journal = nullptr;
+    const script_string_journal::ScriptStringJournalEntry *entries = nullptr;
+    std::uint32_t capacity = 0;
+    std::uint32_t expectedCount = 0;
+};
+
+RUNTIME_SIZE(ZoneRuntimeStorageCompositionExpectation, 0x28, 0x30);
+
+enum class ZoneRuntimeStorageCompositionMode : std::uint8_t
+{
+    Pristine,
+    Placed,
+    Active,
+    Detached,
+    Destroyed,
+};
+
 // Stable-address handle for the placement-constructed objects in one slab.
 // It must live outside that slab and outlive every typed pointer it exposes.
 // The handle is neither a zone-generation authority nor a physical-memory
@@ -117,6 +157,13 @@ public:
     [[nodiscard]] void *fxArenaBacking() const noexcept;
 
 private:
+    friend bool AuthenticateZoneRuntimeStorageBinding(
+        const ZoneRuntimeStorageBinding &,
+        ZoneRuntimeStorageBindingPhase) noexcept;
+    friend bool AuthenticateZoneRuntimeStorageComposition(
+        const ZoneRuntimeStorageBinding &,
+        const ZoneRuntimeStorageCompositionExpectation &,
+        ZoneRuntimeStorageCompositionMode) noexcept;
     friend ZoneRuntimeStorageStatus TryBindZoneRuntimeStorage(
         void *,
         std::size_t,
@@ -144,6 +191,8 @@ private:
             && state_ == State::Pristine;
     }
     [[nodiscard]] bool isSelfAuthenticating(State state) const noexcept;
+    [[nodiscard]] bool hasCanonicalPlacementMetadata(State state) const
+        noexcept;
     [[nodiscard]] bool hasCanonicalBoundMetadata() const noexcept;
 
     const ZoneRuntimeStorageBinding *self_ = nullptr;
@@ -157,6 +206,26 @@ private:
     void *arenaBacking_ = nullptr;
     State state_ = State::Pristine;
 };
+
+RUNTIME_SIZE(ZoneRuntimeStorageBinding, 0x58, 0x80);
+
+[[nodiscard]] bool AuthenticateZoneRuntimeStorageBinding(
+    const ZoneRuntimeStorageBinding &binding,
+    ZoneRuntimeStorageBindingPhase expectedPhase) noexcept;
+
+// Authenticates one externally serialized, stable operation boundary without
+// allocating, mutating, reporting, or returning a component pointer. Placed
+// requires an exact pristine journal; Active requires an exact, nonterminal,
+// non-callback journal; Detached requires its exact terminal detached state.
+// All three require the planned native arena to be bound to the exact key's
+// generation as its supplied nonzero identity, with an Idle adapter and no
+// open arena transaction.
+// Destroyed compares the retained placement and journal/entry identities but
+// never dereferences an object whose lifetime has ended.
+[[nodiscard]] bool AuthenticateZoneRuntimeStorageComposition(
+    const ZoneRuntimeStorageBinding &binding,
+    const ZoneRuntimeStorageCompositionExpectation &expectation,
+    ZoneRuntimeStorageCompositionMode mode) noexcept;
 
 // Produces the exact canonical layout. expectedStringCount may be 0 through
 // kMaxScriptStringJournalEntries. arenaBudget must be nonzero and has no cap
@@ -182,7 +251,12 @@ private:
 // open arena transaction. If the arena was bound by the outer controller,
 // TryUnbind is the sole fallible mutation. Successful destruction runs in
 // reverse construction order and terminalizes the handle; repeated calls
-// return AlreadyComplete without touching the slab.
+// return AlreadyComplete without touching the slab. The handle retains its
+// immutable slab, plan, and component addresses after object destruction so
+// an outer exact-key controller can authenticate terminal historical identity.
+// Its ordinary typed accessors remain Bound-only and never expose a destroyed
+// object. Retained identity is cleared only by ending this handle's lifetime
+// and reconstructing a pristine handle at the same address.
 //
 // The caller must externally serialize planning, binding, every binding and
 // embedded-object accessor, every journal/arena/adapter operation, and

@@ -22,6 +22,8 @@ set(_runtime_table_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h")
 set(_runtime_table_source_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_table.cpp")
+set(_runtime_table_seal_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_table_source_test.cmake")
 set(_file_load_path "${SOURCE_ROOT}/src/database/db_file_load.cpp")
 set(_com_error_path "${SOURCE_ROOT}/src/qcommon/com_error.h")
 set(_integer_suffix_token_paste_path
@@ -45,7 +47,8 @@ foreach(_path IN ITEMS
     "${_relocation_header_path}" "${_relocation_source_path}"
     "${_stream_path}" "${_stream_header_path}" "${_state_path}"
     "${_memory_path}" "${_runtime_table_path}"
-    "${_runtime_table_source_path}" "${_file_load_path}"
+    "${_runtime_table_source_path}" "${_runtime_table_seal_path}"
+    "${_file_load_path}"
     "${_com_error_path}"
     "${_integer_suffix_token_paste_path}"
     "${_server_token_literal_path}"
@@ -68,6 +71,7 @@ file(READ "${_stream_header_path}" _stream_header)
 file(READ "${_state_path}" _state)
 file(READ "${_memory_path}" _memory)
 file(READ "${_runtime_table_path}" _runtime_table)
+file(READ "${_runtime_table_seal_path}" _runtime_table_seal)
 file(READ "${_file_load_path}" _file_load)
 file(READ "${_com_error_path}" _com_error)
 file(READ "${_fixture_path}" _fixture)
@@ -78,7 +82,8 @@ file(READ "${_ci_path}" _ci)
 
 foreach(_var IN ITEMS
     _header _source _internal _relocation_header _relocation_source
-    _stream _stream_header _state _memory _runtime_table _file_load
+    _stream _stream_header _state _memory _runtime_table _runtime_table_seal
+    _file_load
     _fixture _seal _manifest _tests _ci _com_error)
     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${${_var}}")
     set(${_var} "${_normalized}")
@@ -101,6 +106,22 @@ function(require_not_contains SOURCE_VAR NEEDLE DESCRIPTION)
             "'${NEEDLE}'")
     endif()
 endfunction()
+
+# The runtime table is the sole active composite enrollment. Its dedicated
+# exact-controller seal must remain registered and must freeze every stream
+# mutation/authenticator before this component-wide scan delegates it.
+foreach(_marker IN ITEMS
+    "zone_stream_ownership::TryBeginZoneStreamGeneration(|1"
+    "zone_stream_ownership::TryBindZoneStreams(|1"
+    "zone_stream_ownership::TryInvalidateZoneStreams(|2"
+    "zone_stream_ownership::AuthenticateZoneStreamComposition(|1")
+    require_contains(
+        _runtime_table_seal "${_marker}"
+        "dedicated runtime-table stream enrollment seal")
+endforeach()
+require_contains(
+    _tests "NAME database-zone-runtime-table-source-invariants"
+    "dedicated runtime-table seal registration")
 
 string(ASCII 92 _zone_stream_backslash)
 string(ASCII 13 _zone_stream_carriage_return)
@@ -148,6 +169,7 @@ set(_zone_stream_protected_tokens
     zone_stream_ownership
     ZoneStreamGenerationPhase
     ActiveZoneStreamPhase
+    ZoneStreamCompositionMode
     ZoneStreamOwnershipStatus
     ZoneStreamGenerationReceipt
     ActiveZoneStreamBinding
@@ -155,6 +177,7 @@ set(_zone_stream_protected_tokens
     TryBindZoneStreams
     TryInvalidateZoneStreams
     AuthenticatePassiveZoneStreamSingleton
+    AuthenticateZoneStreamComposition
     AliasRegistryForLegacyStream
     DirectResolverForLegacyStream
     OwnershipBindingActive)
@@ -340,6 +363,10 @@ foreach(_marker IN ITEMS
     "ZoneStreamGenerationReceipt(ZoneStreamGenerationReceipt &&) = delete;"
     "ActiveZoneStreamBinding(const ActiveZoneStreamBinding &) = delete;"
     "ActiveZoneStreamBinding(ActiveZoneStreamBinding &&) = delete;"
+    "enum class ZoneStreamCompositionMode : std::uint8_t"
+    "Pristine,"
+    "NeverBound,"
+    "Bound,"
     "Invalidated,"
     "RUNTIME_SIZE(ZoneStreamGenerationReceipt, 0x20, 0x28);"
     "RUNTIME_SIZE(ActiveZoneStreamBinding, 0x68, 0xC0);"
@@ -347,6 +374,7 @@ foreach(_marker IN ITEMS
     "TryBindZoneStreams("
     "TryInvalidateZoneStreams("
     "AuthenticatePassiveZoneStreamSingleton("
+    "AuthenticateZoneStreamComposition("
     "const zone_load::ZoneLoadContextSlot *lifecycle()"
     "const XZoneMemory *zoneIdentity() const noexcept;"
     "const XZoneMemory *zoneIdentity,"
@@ -361,6 +389,10 @@ require_not_contains(
     _header
     "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const ActiveZoneStreamBinding &binding) noexcept;"
     "table-wide stream state cannot remain directly friended to the table")
+require_not_contains(
+    _header
+    "friend bool AuthenticateZoneStreamComposition("
+    "composition authentication must not gain private mutation authority")
 require_not_contains(
     _header "const void *zoneIdentity"
     "zone identity must remain a typed XZoneMemory boundary")
@@ -407,6 +439,124 @@ if(NOT _passive_authenticator STREQUAL _expected_passive_authenticator)
     message(FATAL_ERROR
         "Passive stream singleton authenticator gained authority or lost topology checks")
 endif()
+
+# The exact composition predicate is const/report-free and authenticates both
+# idle terminal topology and every pointer-bearing field of the active legacy
+# singleton. It may observe retained descriptors but cannot reset, invalidate,
+# scrub, or otherwise acquire authority.
+extract_slice(
+    _source
+    "bool AuthenticateZoneStreamComposition("
+    "bool AuthenticatePassiveZoneStreamSingleton("
+    _composition_authenticator
+    "exact stream composition authenticator")
+foreach(_marker IN ITEMS
+    "ZoneStreamCompositionMode::Pristine"
+    "ZoneStreamCompositionMode::NeverBound"
+    "ZoneStreamCompositionMode::Bound"
+    "ZoneStreamCompositionMode::Invalidated"
+    "receipt.lifecycle() != expectedLifecycle"
+    "receipt.key() != expectedKey"
+    "binding.receipt() != &receipt"
+    "LifecycleOwnsActiveKey(expectedLifecycle, expectedKey)"
+    "LifecycleRetainsExactKey(expectedLifecycle, expectedKey)"
+    "SingletonMatchesComposition(binding)"
+    "SingletonMatchesBoundBinding(binding)")
+    require_contains(
+        _composition_authenticator "${_marker}"
+        "complete exact stream composition authentication")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "const_cast"
+    "TryBeginZoneStreamGeneration("
+    "TryBindZoneStreams("
+    "TryInvalidateZoneStreams("
+    "ScrubStream"
+    ".Reset("
+    ".Invalidate("
+    "g_activeOwner ="
+    "g_streamDelayIndex ="
+    "g_streamPosIndex ="
+    "g_streamPosStackIndex ="
+    "g_streamZoneMem ="
+    "g_streamPos =")
+    require_not_contains(
+        _composition_authenticator "${_forbidden}"
+        "const-only exact stream composition authentication")
+endforeach()
+extract_slice(
+    _source
+    "[[nodiscard]] bool LifecycleRetainsExactKey("
+    "void ScrubStreamArrays() noexcept"
+    _composition_helpers
+    "exact stream composition validation helpers")
+foreach(_forbidden IN ITEMS
+    "const_cast"
+    ".Reset("
+    ".Invalidate("
+    "g_activeOwner = active;"
+    "g_activeOwner = nullptr;"
+    "g_streamDelayIndex ="
+    "g_streamPosIndex ="
+    "g_streamPosStackIndex ="
+    "g_streamZoneMem ="
+    "g_streamPos =")
+    require_not_contains(
+        _composition_helpers "${_forbidden}"
+        "const-only exact stream composition validation helpers")
+endforeach()
+extract_slice(
+    _source
+    "[[nodiscard]] bool SingletonMatchesIdleBinding("
+    "[[nodiscard]] ZoneStreamOwnershipStatus ValidateRequestedKey("
+    _composition_topology
+    "exact shared stream singleton topology")
+foreach(_marker IN ITEMS
+    "g_activeOwner == nullptr"
+    "SingletonIsIdle()"
+    "g_activeOwner != &binding"
+    "g_streamZoneMem != binding.zoneIdentity()"
+    "binding.receipt()->lifecycle()"
+    "g_aliasRegistry.ContextMatches("
+    "g_directResolver.ContextMatches("
+    "SingletonMatchesBoundLayout(blocks)"
+    "SingletonMatchesIdleBinding(binding)"
+    "SingletonMatchesBoundBinding(binding)")
+    require_contains(
+        _composition_topology "${_marker}"
+        "complete shared stream singleton topology authentication")
+endforeach()
+foreach(_forbidden IN ITEMS
+    "const_cast"
+    ".Reset("
+    ".Invalidate("
+    "g_activeOwner = active;"
+    "g_activeOwner = nullptr;"
+    "g_streamDelayIndex ="
+    "g_streamPosIndex ="
+    "g_streamPosStackIndex ="
+    "g_streamZoneMem ="
+    "g_streamPos =")
+    require_not_contains(
+        _composition_topology "${_forbidden}"
+        "const-only shared stream singleton topology authentication")
+endforeach()
+foreach(_marker IN ITEMS
+    "g_streamPosIndex >= relocation::kBlockCount"
+    "g_streamPosStackIndex > 64"
+    "g_streamDelayIndex > 4096"
+    "SpanWithinBlock( g_streamPos, 0, blocks[g_streamPosIndex])"
+    "for (std::size_t i = 0; i < g_streamPosStackIndex; ++i)"
+    "saved.index >= relocation::kBlockCount"
+    "SpanWithinAnyBlock(saved.pos, 0, blocks)"
+    "for (std::size_t i = 0; i < 4096; ++i)"
+    "delay.size != 0 || i < g_streamDelayIndex"
+    "delay.size <= 0"
+    "static_cast<std::uint32_t>(delay.size)")
+    require_contains(
+        _source "${_marker}"
+        "bounded legacy stream count and provenance validation")
+endforeach()
 extract_slice(
     _source
     "[[nodiscard]] bool SingletonIsIdle() noexcept"
@@ -432,10 +582,10 @@ foreach(_marker IN ITEMS
     "ZoneStreamGenerationReceipt streamGenerationReceipt_{};"
     "ActiveZoneStreamBinding activeZoneStreamBinding_{};"
     "RUNTIME_SIZE(ZoneRuntimeReceiptCapsule, 0xD0, 0x120);"
-    "RUNTIME_SIZE(ZoneRuntimeTable, 0xE900, 0xF700);")
+    "RUNTIME_SIZE(ZoneRuntimeTable, 0xF568, 0x109A0);")
     require_contains(
         _runtime_table "${_marker}"
-        "reviewed passive runtime-table composition")
+        "reviewed exact-controller runtime-table composition")
 endforeach()
 
 # Exact usable lifecycle keys and self-addresses authenticate every durable
@@ -754,19 +904,12 @@ foreach(_path IN LISTS _production_sources)
             _candidate _runtime_namespace_declaration)
         if(_runtime_namespace_declaration)
             message(FATAL_ERROR
-                "Passive runtime-table composition reopened the zone-stream "
+                "Runtime-table composition reopened the zone-stream "
                 "namespace in ${_path}")
         endif()
-        remove_reviewed_runtime_table_stream_tokens(
-            "${_path}" _candidate _runtime_table_candidate)
-        find_zone_stream_protected_token(
-            _runtime_table_candidate _runtime_protected_token)
-        if(NOT _runtime_protected_token STREQUAL "")
-            message(FATAL_ERROR
-                "Passive runtime-table composition referenced unreviewed "
-                "zone-stream authority in ${_path}: "
-                "${_runtime_protected_token}")
-        endif()
+        # Composite enrollment is owned by the runtime table's stricter
+        # exact-controller source seal. That seal freezes the complete friend
+        # surface, ABI, and each reviewed stream-ownership operation.
     endif()
 
     if(NOT _path STREQUAL _header_path
@@ -782,20 +925,20 @@ foreach(_path IN LISTS _production_sources)
         endif()
     endif()
 
-    if(NOT _path STREQUAL _header_path AND NOT _path STREQUAL _source_path)
-        if(NOT _runtime_table_composition)
-            string(FIND "${_candidate}" "db_zone_stream_ownership.h"
-                _public_header_reference)
-            if(NOT _public_header_reference EQUAL -1)
-                message(FATAL_ERROR
-                    "Premature zone-stream public header enrollment in ${_path}")
-            endif()
-            source_has_identifier(
-                _candidate db_zone_stream_ownership _public_header_stem_found)
-            if(_public_header_stem_found)
-                message(FATAL_ERROR
-                    "Premature zone-stream public header-stem enrollment in ${_path}")
-            endif()
+    if(NOT _path STREQUAL _header_path
+        AND NOT _path STREQUAL _source_path
+        AND NOT _runtime_table_composition)
+        string(FIND "${_candidate}" "db_zone_stream_ownership.h"
+            _public_header_reference)
+        if(NOT _public_header_reference EQUAL -1)
+            message(FATAL_ERROR
+                "Premature zone-stream public header enrollment in ${_path}")
+        endif()
+        source_has_identifier(
+            _candidate db_zone_stream_ownership _public_header_stem_found)
+        if(_public_header_stem_found)
+            message(FATAL_ERROR
+                "Premature zone-stream public header-stem enrollment in ${_path}")
         endif()
         foreach(_public_api IN ITEMS
             TryBeginZoneStreamGeneration
@@ -1129,6 +1272,8 @@ foreach(_marker IN ITEMS
     "TestAliasEpochExhaustion();"
     "TestNativeWidthBlockAddresses();"
     "TestPassiveSingletonAuthentication();"
+    "TestCompositionAuthentication();"
+    "TestLiveTerminalCompositionCoexistence();"
     "terminal retry returns before active inspection"
     "all nine block cursors scrubbed"
     "rejected bind preserves singleton stream state"
@@ -1137,7 +1282,12 @@ foreach(_marker IN ITEMS
     "pristine binding rejects a hidden singleton owned by another object"
     "legacy relocation contexts reject passive authentication without an owner"
     "retained delay pointer rejects passive authentication"
-    "retained stack index rejects passive authentication")
+    "retained stack index rejects passive authentication"
+    "pristine receipt coexists with another exact Bound owner"
+    "NeverBound receipt coexists with another exact Bound owner"
+    "prior terminal Invalidated receipt coexists with a Bound owner"
+    "non-Bound receipt scan still authenticates the shared Bound topology"
+    "prior Live terminal receipt coexists with a different Bound owner")
     require_contains(_fixture "${_marker}" "exhaustive runtime regression")
 endforeach()
 foreach(_marker IN ITEMS
@@ -1153,7 +1303,9 @@ foreach(_marker IN ITEMS
     "CanMutatePhase"
     "using ZoneIdentityAccessor ="
     "using PassiveSingletonAuthenticator ="
+    "using CompositionAuthenticator ="
     "decltype(&AuthenticatePassiveZoneStreamSingleton)"
+    "decltype(&AuthenticateZoneStreamComposition)"
     "decltype(&TryBindZoneStreams), BindFunction"
     "SplicedBindPointer"
     "CommentQualifiedBindPointer"

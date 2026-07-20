@@ -31,11 +31,43 @@ enum class FxRuntimeStorageDestroyStatus : std::uint8_t
     ArenaFailed,
 };
 
+enum class FxRuntimeStorageBindStatus : std::uint8_t
+{
+    Success,
+    Busy,
+    InvalidArgument,
+    InvalidPhase,
+    MisalignedStorage,
+    SizeOverflow,
+    InsufficientCapacity,
+    TransactionLimit,
+    InvalidTransaction,
+};
+
 [[nodiscard]] FxRuntimeStorageLayout GetFxRuntimeStorageLayout() noexcept;
 [[nodiscard]] fx::fastfile::FxFastFileNativeArena *
 ConstructFxRuntimeArena(void *storage) noexcept;
 [[nodiscard]] fx::fastfile::FxFastFileZoneAdapterDisk32Workspace *
 ConstructFxRuntimeWorkspace(void *storage) noexcept;
+
+// Binds the placed arena without exposing its EffectsCore definition to the
+// database controller or headless source dependency surface.
+[[nodiscard]] FxRuntimeStorageBindStatus TryBindFxRuntimeStorage(
+    fx::fastfile::FxFastFileNativeArena *arena,
+    void *backing,
+    std::uint32_t budget,
+    std::uint64_t zoneIdentity) noexcept;
+
+// Read-only stable-boundary authentication for the storage composition. The
+// workspace must be Idle and non-operating; the arena must name the exact
+// planned backing, budget, and nonzero outer-controller identity with no open
+// transaction. No FX pointer or mutation authority is returned.
+[[nodiscard]] bool AuthenticateStableFxRuntimeStorage(
+    const fx::fastfile::FxFastFileNativeArena *arena,
+    const fx::fastfile::FxFastFileZoneAdapterDisk32Workspace *workspace,
+    const void *expectedBacking,
+    std::uint32_t expectedBudget,
+    std::uint64_t expectedZoneIdentity) noexcept;
 
 // Validates an Idle workspace and transaction-free arena. A bound arena must
 // name the exact planned backing and budget. TryUnbind is the sole mutation.

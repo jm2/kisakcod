@@ -74,6 +74,17 @@ enum class ZoneScriptStringOwnershipStatus : std::uint8_t
     UnsafeFailure,
 };
 
+// Const-only vocabulary for authenticating the durable relationship between
+// a controller and its caller-owned placement storage. Attached means the
+// journal and entry span are still live controller backing. Detached means
+// the active backing has been released, while the immutable placement tuple
+// remains retained as terminal generation evidence until exact reset.
+enum class ZoneScriptStringStorageBindingPhase : std::uint8_t
+{
+    Attached,
+    Detached,
+};
+
 enum class ZoneScriptStringUnpublishStatus : std::uint8_t
 {
     Success,
@@ -119,6 +130,23 @@ struct ZoneScriptStringAdmissionCallback final
 struct ZoneScriptStringOwnershipControllerTestAccess;
 #endif
 
+class ZoneScriptStringOwnershipController;
+
+// Authenticates the exact lifecycle/key and immutable journal/entry/count
+// tuple retained by one nonempty controller. It exposes no mutable authority
+// and never dereferences detached placement storage, which may already have
+// completed its explicit destruction after the tuple was authenticated by
+// the containing owner.
+[[nodiscard]] bool AuthenticateZoneScriptStringOwnershipStorage(
+    const ZoneScriptStringOwnershipController &controller,
+    const zone_load::ZoneLoadContextSlot *expectedLifecycle,
+    const zone_load::ZoneLoadContextKey &expectedKey,
+    const script_string_journal::ScriptStringJournal *expectedJournal,
+    const script_string_journal::ScriptStringJournalEntry *expectedStorage,
+    std::uint32_t expectedCapacity,
+    std::uint32_t expectedCount,
+    ZoneScriptStringStorageBindingPhase expectedPhase) noexcept;
+
 class alignas(8) ZoneScriptStringOwnershipController final
 {
 public:
@@ -160,6 +188,15 @@ public:
         std::uint32_t expectedSerial) const noexcept;
 
 private:
+    friend bool AuthenticateZoneScriptStringOwnershipStorage(
+        const ZoneScriptStringOwnershipController &,
+        const zone_load::ZoneLoadContextSlot *,
+        const zone_load::ZoneLoadContextKey &,
+        const script_string_journal::ScriptStringJournal *,
+        const script_string_journal::ScriptStringJournalEntry *,
+        std::uint32_t,
+        std::uint32_t,
+        ZoneScriptStringStorageBindingPhase) noexcept;
     friend ZoneScriptStringOwnershipStatus
     TryBeginZoneScriptStringOwnership(
         ZoneScriptStringOwnershipController *,
@@ -222,6 +259,9 @@ private:
         const zone_load::ZoneLoadContextSlot *expectedLifecycle,
         const zone_load::ZoneLoadContextKey &expectedKey,
         zone_load::ZoneLoadTerminalKind expectedTerminalKind) const noexcept;
+    [[nodiscard]] bool placementIdentityIsEmpty() const noexcept;
+    [[nodiscard]] bool placementIdentityIsCanonical() const noexcept;
+    [[nodiscard]] bool placementAttachmentMatchesPhase() const noexcept;
     [[nodiscard]] bool bindingMatchesCurrentPhase() const noexcept;
     static zone_load::ZoneLoadCleanupCallbackStatus PerformBoundCleanup(
         void *context,
@@ -237,6 +277,10 @@ private:
     zone_load::ZoneLoadContextSlot *lifecycle_ = nullptr;
     script_string_journal::ScriptStringJournal *journal_ = nullptr;
     script_string_journal::ScriptStringJournalEntry *storage_ = nullptr;
+    const script_string_journal::ScriptStringJournal *placementJournal_ =
+        nullptr;
+    const script_string_journal::ScriptStringJournalEntry *placementStorage_ =
+        nullptr;
     void *rollbackContext_ = nullptr;
     ZoneScriptStringUnpublishStatus (*ensureUnreachable_)(
         void *) noexcept = nullptr;
@@ -245,6 +289,8 @@ private:
     script_string_transaction::ScriptStringTransactionToken transaction_{};
     std::uint32_t storageCapacity_ = 0;
     std::uint32_t expectedCount_ = 0;
+    std::uint32_t placementCapacity_ = 0;
+    std::uint32_t placementExpectedCount_ = 0;
     std::uint32_t transactionSerial_ = 0;
     ZoneScriptStringOwnershipPhase phase_ =
         ZoneScriptStringOwnershipPhase::Empty;
@@ -253,7 +299,7 @@ private:
     std::uint8_t reserved_[2]{};
 };
 
-RUNTIME_SIZE(ZoneScriptStringOwnershipController, 0x40, 0x58);
+RUNTIME_SIZE(ZoneScriptStringOwnershipController, 0x50, 0x70);
 
 #ifdef KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING
 struct ZoneScriptStringOwnershipControllerTestAccess final
@@ -272,6 +318,21 @@ struct ZoneScriptStringOwnershipControllerTestAccess final
     {
         if (controller)
             controller->storage_ = storage;
+    }
+
+    static void SetPlacementStorage(
+        ZoneScriptStringOwnershipController *const controller,
+        const script_string_journal::ScriptStringJournal *const journal,
+        const script_string_journal::ScriptStringJournalEntry *const storage,
+        const std::uint32_t capacity,
+        const std::uint32_t expectedCount) noexcept
+    {
+        if (!controller)
+            return;
+        controller->placementJournal_ = journal;
+        controller->placementStorage_ = storage;
+        controller->placementCapacity_ = capacity;
+        controller->placementExpectedCount_ = expectedCount;
     }
 
     static void SetKey(
