@@ -430,6 +430,9 @@ struct CompositeRuntimeFixture final
     ZoneRuntimeTableStatus streamAllocationTableStatus =
         ZoneRuntimeTableStatus::InvalidArgument;
     std::size_t streamAllocationIndex = 0;
+    // This full-width witness identifies a partial loop and keeps the
+    // alignment-specified zone from adding implicit Win32 tail padding.
+    std::size_t streamAllocationAttemptCount = 0;
     alignas(ZoneRuntimeGenerationView) XZoneMemory zone{};
     std::array<db::relocation::BlockView,
         db::relocation::kBlockCount> blocks{};
@@ -517,10 +520,12 @@ struct CompositeRuntimeFixture final
 
     bool allocateStreamBlocks() noexcept
     {
+        streamAllocationAttemptCount = 0;
         for (std::size_t index = 0; index < blocks.size(); ++index)
         {
             *streamAllocation = {};
             streamAllocationIndex = index;
+            ++streamAllocationAttemptCount;
             streamAllocationTableStatus = TryAllocateZoneRuntimeMemory(
                     table.get(),
                     physicalSlot,
@@ -3703,6 +3708,7 @@ void TestCompositePartialStageAbandonmentAndReuse()
         CHECK(fixture.streamAllocation->status
             == pmem_runtime::AllocationStatus::Success);
         CHECK(fixture.streamAllocationIndex + 1 == fixture.blocks.size());
+        CHECK(fixture.streamAllocationAttemptCount == fixture.blocks.size());
         CHECK(fixture.bindStreams());
         CHECK(fixture.beginPendingCopies(true));
         CHECK(DriveCompositeAbandonmentToTerminal(fixture));
