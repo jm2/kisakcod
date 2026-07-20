@@ -604,6 +604,8 @@ foreach(marker IN ITEMS
     "COMMAND \"\${LINKER_TOOL}\" /dump /symbols"
     "COMMAND \"\${NM_TOOL}\" -a -C"
     "COMMAND \"\${NM_TOOL}\" -g -C"
+    "CXX_COMPILER_ID STREQUAL \"AppleClang\""
+    "__MergedGlobals"
     "g_mem"
     "g_overAllocatedSize"
     "PhysicalMemoryGlobalStateTestAccess")

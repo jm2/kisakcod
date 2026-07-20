@@ -68,9 +68,10 @@ else()
             "${all_symbols}${symbol_error}")
     endif()
     # Apple nm retains Mach-O's extra leading underscore when -C cannot
-    # demangle a local Itanium symbol. Accept only the exact anonymous-
-    # namespace spelling emitted in either form; the -g scan below still
-    # independently proves that neither symbol has external linkage.
+    # demangle a local Itanium symbol. AppleClang Release may instead coalesce
+    # both zero-initialized locals into one local __MergedGlobals allocation.
+    # All other objects must retain both exact anonymous-namespace names.
+    set(missing_local_names)
     foreach(local_symbol IN ITEMS "g_mem|5" "g_overAllocatedSize|19")
         string(REPLACE "|" ";" local_fields "${local_symbol}")
         list(GET local_fields 0 local_name)
@@ -81,11 +82,23 @@ else()
                "\\(anonymous namespace\\)::${local_name}([^A-Za-z0-9_]|$)"
            AND NOT matching_lines MATCHES
                "_+ZN12_GLOBAL__N_1L?${local_name_length}${local_name}E([^A-Za-z0-9_]|$)")
-            message(FATAL_ERROR
-                "Macro-off PMem object omitted anonymous local ${local_name}:\n"
-                "${all_symbols}")
+            list(APPEND missing_local_names "${local_name}")
         endif()
     endforeach()
+    set(apple_merged_state FALSE)
+    list(LENGTH missing_local_names missing_local_count)
+    if(missing_local_count GREATER 0)
+        if(CXX_COMPILER_ID STREQUAL "AppleClang"
+           AND missing_local_count EQUAL 2
+           AND all_symbols MATCHES
+               "(^|[\n\r])[0-9A-Fa-f]+[ \t]+b[ \t]+__MergedGlobals([\n\r]|$)")
+            set(apple_merged_state TRUE)
+        else()
+            message(FATAL_ERROR
+                "Macro-off PMem object omitted anonymous locals "
+                "${missing_local_names}:\n${all_symbols}")
+        endif()
+    endif()
 
     execute_process(
         COMMAND "${NM_TOOL}" -g -C ${production_objects}
@@ -97,11 +110,19 @@ else()
             "Physical-memory global-symbol inspection failed (${global_result}):\n"
             "${global_symbols}${global_error}")
     endif()
-    if(global_symbols MATCHES "(^|[^A-Za-z0-9_])g_mem([^A-Za-z0-9_]|$)"
-       OR global_symbols MATCHES
-          "(^|[^A-Za-z0-9_])g_overAllocatedSize([^A-Za-z0-9_]|$)")
+    foreach(local_name IN ITEMS g_mem g_overAllocatedSize)
+        string(REGEX MATCHALL "[^\n\r]*${local_name}[^\n\r]*"
+            escaped_global_lines "${global_symbols}")
+        if(NOT "${escaped_global_lines}" STREQUAL "")
+            message(FATAL_ERROR
+                "Macro-off PMem mutable state retains external linkage:\n"
+                "${escaped_global_lines}")
+        endif()
+    endforeach()
+    if(apple_merged_state AND global_symbols MATCHES "__MergedGlobals")
         message(FATAL_ERROR
-            "Macro-off PMem mutable state retains external linkage:\n${global_symbols}")
+            "AppleClang PMem merged state escaped external linkage:\n"
+            "${global_symbols}")
     endif()
 endif()
 
