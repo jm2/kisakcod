@@ -1,13 +1,26 @@
 #include <database/db_zone_runtime_table.h>
 
+#include <cstddef>
+
 // Production includes intentionally do not opt in to
 // KISAK_DB_ZONE_RUNTIME_TABLE_TESTING. Recreating the test helper's public
-// name must therefore confer no access to either runtime-table owner's private
+// name must therefore confer no access to any runtime-table owner's private
 // mutable state. Dependent requires-expressions turn each independent access
-// denial into a positive compile contract: restoring either friendship makes
-// the corresponding static assertions fail.
+// denial into a positive compile contract: restoring any friendship makes the
+// corresponding static assertions fail.
 namespace db::zone_runtime
 {
+static_assert(sizeof(ZoneRuntimeGenerationCallbacks)
+    == (sizeof(void *) == 4 ? 0x14u : 0x28u));
+static_assert(sizeof(ZoneRuntimeGenerationBinding)
+    == (sizeof(void *) == 4 ? 0x50u : 0x78u));
+static_assert(sizeof(ZoneRuntimeReceiptCapsule)
+    == (sizeof(void *) == 4 ? 0xD0u : 0x120u));
+static_assert(sizeof(ZoneRuntimeEntry)
+    == (sizeof(void *) == 4 ? 0x190u : 0x228u));
+static_assert(sizeof(ZoneRuntimeTable)
+    == (sizeof(void *) == 4 ? 0xF568u : 0x109A0u));
+
 struct ZoneRuntimeTableTestAccess
 {
     template <typename Table>
@@ -17,9 +30,15 @@ struct ZoneRuntimeTableTestAccess
     };
 
     template <typename Table>
-    static constexpr bool CanMutateReserved = requires(Table *const table)
+    static constexpr bool CanMutateState = requires(Table *const table)
     {
-        table->reserved_ = 1u;
+        table->state_ = 1u;
+    };
+
+    template <typename Table>
+    static constexpr bool CanMutateSharedState = requires(Table *const table)
+    {
+        table->sharedState_ = 1u;
     };
 
     template <typename Entry>
@@ -49,6 +68,13 @@ struct ZoneRuntimeTableTestAccess
         &entry->receiptCapsule_;
     };
 
+    template <typename Entry>
+    static constexpr bool CanReachGenerationBinding = requires(
+        Entry *const entry)
+    {
+        &entry->generationBinding_;
+    };
+
     template <typename Table>
     static constexpr bool CanReachActiveStreamBinding = requires(
         Table *const table)
@@ -61,6 +87,27 @@ struct ZoneRuntimeTableTestAccess
         Table *const table)
     {
         &table->pendingCopyLedger_;
+    };
+
+    template <typename Table>
+    static constexpr bool CanReachPendingDrainCallback = requires(
+        Table *const table)
+    {
+        &table->pendingDrainCallback_;
+    };
+
+    template <typename Binding>
+    static constexpr bool CanReachGenerationCallbacks = requires(
+        Binding *const binding)
+    {
+        &binding->callbacks_;
+    };
+
+    template <typename Binding>
+    static constexpr bool CanMutateGenerationStage = requires(
+        Binding *const binding)
+    {
+        binding->setupStage_ = ZoneRuntimeSetupStage::CallbacksBound;
     };
 
     template <typename Capsule>
@@ -96,8 +143,11 @@ static_assert(
     !ZoneRuntimeTableTestAccess::CanReachEntries<ZoneRuntimeTable>,
     "production must not grant same-name access to the private entry table");
 static_assert(
-    !ZoneRuntimeTableTestAccess::CanMutateReserved<ZoneRuntimeTable>,
-    "production must not grant same-name access to the reserved header");
+    !ZoneRuntimeTableTestAccess::CanMutateState<ZoneRuntimeTable>,
+    "production must not grant same-name access to the table state");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanMutateSharedState<ZoneRuntimeTable>,
+    "production must not grant same-name access to shared authority state");
 static_assert(
     !ZoneRuntimeTableTestAccess::CanReachMutableLifecycle<ZoneRuntimeEntry>,
     "production must not expose raw mutable generation lifecycle state");
@@ -111,11 +161,25 @@ static_assert(
     !ZoneRuntimeTableTestAccess::CanReachReceiptCapsule<ZoneRuntimeEntry>,
     "production must not expose the per-entry receipt composition");
 static_assert(
+    !ZoneRuntimeTableTestAccess::CanReachGenerationBinding<ZoneRuntimeEntry>,
+    "production must not expose the exact-key generation binding");
+static_assert(
     !ZoneRuntimeTableTestAccess::CanReachActiveStreamBinding<ZoneRuntimeTable>,
     "production must not expose the process-wide stream authority");
 static_assert(
     !ZoneRuntimeTableTestAccess::CanReachPendingCopyLedger<ZoneRuntimeTable>,
     "production must not expose the process-wide pending-copy authority");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanReachPendingDrainCallback<ZoneRuntimeTable>,
+    "production must not expose retained pending-drain callbacks");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanReachGenerationCallbacks<
+        ZoneRuntimeGenerationBinding>,
+    "production must not expose retained generation callbacks");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanMutateGenerationStage<
+        ZoneRuntimeGenerationBinding>,
+    "production must not mutate the composite setup stage");
 static_assert(
     !ZoneRuntimeTableTestAccess::CanReachAllocationReceipt<
         ZoneRuntimeReceiptCapsule>);

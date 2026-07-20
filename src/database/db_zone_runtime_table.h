@@ -8,8 +8,10 @@
 #include <database/db_zone_stream_ownership.h>
 #include <universal/kisak_abi.h>
 #include <universal/physicalmemory_checked.h>
+#include <universal/physicalmemory_runtime.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace db::zone_runtime
@@ -20,8 +22,8 @@ namespace db::zone_runtime
 // before lifecycle cleanup can publish an empty slot.  Per-generation backing
 // slabs, journal entries, FX workspaces, native arenas, and zone memory do not
 // belong in this table.  Only their durable, allocation-independent receipts
-// and placement handle live here; later wiring binds those objects by exact
-// generation key.
+// and placement handle live here. The composite controller below binds those
+// objects by exact generation key; the legacy-loader cutover remains separate.
 //
 // Physical slot zero remains the engine's reserved/default slot.  The table
 // has stable storage for all 33 physical slots.  Only slots 1..32 are usable.
@@ -52,6 +54,7 @@ enum class ZoneRuntimeTableStatus : std::uint8_t
 class ZoneRuntimeEntry;
 class ZoneRuntimeTable;
 class ZoneRuntimeReceiptCapsule;
+class ZoneRuntimeGenerationBinding;
 
 namespace detail
 {
@@ -65,8 +68,10 @@ namespace detail
 // is copied by value so a retained old view cannot silently become an authority
 // for a later generation at the same stable table address.  Raw mutable
 // lifecycle and ownership state stays private; the adapters below
-// reauthenticate this key immediately around every mutation.  Callers must
-// retain the same external per-slot serializer across lookup and use.
+// reauthenticate this key immediately around every mutation. Callers must
+// retain one table-wide external serializer across lookup, mutation,
+// callbacks, post-authentication, and use: validation scans all entries and
+// the stream/pending authorities are process-wide and intentionally lockless.
 struct ZoneRuntimeGenerationView final
 {
     zone_load::ZoneLoadContextKey key{};
@@ -79,6 +84,120 @@ struct ZoneRuntimeGenerationView final
 };
 
 RUNTIME_SIZE(ZoneRuntimeGenerationView, 0x18, 0x18);
+
+// The composite adapter follows one strict, monotonic construction order.
+// The stage is a private ownership witness, not permission to skip the exact
+// component authenticators.  Cleanup retains the highest completed stage so
+// an early abandonment can distinguish resources that never existed from
+// resources that must have reached their terminal receipt.
+enum class ZoneRuntimeSetupStage : std::uint8_t
+{
+    Passive,
+    CallbacksBound,
+    AllocationBegun,
+    StorageBound,
+    StreamGenerationBegun,
+    StreamsBound,
+    PendingCopyBegun,
+    ScriptStringsBegun,
+    AdmissionPrepared,
+    StreamsInvalidated,
+    AllocationEnded,
+};
+
+enum class ZoneRuntimeExecutionMode : std::uint8_t
+{
+    Passive,
+    Loading,
+    Admitting,
+    Live,
+    Abandoning,
+    Unloading,
+    Terminal,
+};
+
+// Durable callback metadata is copied into the stable runtime entry before
+// any reclaimable resource is acquired.  The callback context and every
+// function identity must remain valid until exact terminal reset.  Owned
+// cleanup operations are intercepted by the table; performExternalCleanup is
+// invoked only for the remaining engine-specific recipe steps.
+struct ZoneRuntimeGenerationCallbacks final
+{
+    void *context = nullptr;
+    zone_script_string_ownership::ZoneScriptStringUnpublishStatus
+        (*ensureUnreachable)(void *context) noexcept = nullptr;
+    zone_load::ZoneLoadCleanupCallbackStatus (*performExternalCleanup)(
+        void *context,
+        zone_load::ZoneLoadCleanupOperation operation) noexcept = nullptr;
+    void (*completePendingAdmission)(void *context) noexcept = nullptr;
+    void (*admitLive)(void *context) noexcept = nullptr;
+};
+
+RUNTIME_SIZE(ZoneRuntimeGenerationCallbacks, 0x14, 0x28);
+
+// Exact-key binding for the composite adapter.  It lives beside, not inside,
+// the reclaimable PMem allocation and placement slab.  No production accessor
+// exposes its callback pointers or mutable state.
+class alignas(8) ZoneRuntimeGenerationBinding final
+{
+public:
+    ZoneRuntimeGenerationBinding() noexcept = default;
+    ~ZoneRuntimeGenerationBinding() noexcept = default;
+
+    ZoneRuntimeGenerationBinding(
+        const ZoneRuntimeGenerationBinding &) = delete;
+    ZoneRuntimeGenerationBinding &operator=(
+        const ZoneRuntimeGenerationBinding &) = delete;
+    ZoneRuntimeGenerationBinding(ZoneRuntimeGenerationBinding &&) = delete;
+    ZoneRuntimeGenerationBinding &operator=(
+        ZoneRuntimeGenerationBinding &&) = delete;
+
+    [[nodiscard]] ZoneRuntimeSetupStage setupStage() const noexcept;
+    [[nodiscard]] ZoneRuntimeExecutionMode executionMode() const noexcept;
+    [[nodiscard]] bool isPristine() const noexcept;
+
+private:
+    friend class ZoneRuntimeTable;
+#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
+    friend struct ZoneRuntimeTableTestAccess;
+#endif
+
+    [[nodiscard]] bool canonicalFor(
+        const ZoneRuntimeTable *table,
+        const zone_load::ZoneLoadContextSlot *lifecycle,
+        const zone_load::ZoneLoadContextKey &key) const noexcept;
+    [[nodiscard]] bool callbacksMatch(
+        const ZoneRuntimeGenerationCallbacks &callbacks) const noexcept;
+    void bind(
+        ZoneRuntimeTable *table,
+        zone_load::ZoneLoadContextSlot *lifecycle,
+        const zone_load::ZoneLoadContextKey &key,
+        const ZoneRuntimeGenerationCallbacks &callbacks) noexcept;
+    void setSetupStage(ZoneRuntimeSetupStage stage) noexcept;
+    void setExecutionMode(ZoneRuntimeExecutionMode mode) noexcept;
+    void reset() noexcept;
+
+    zone_load::ZoneLoadContextKey key_{};
+    ZoneRuntimeTable *table_ = nullptr;
+    zone_load::ZoneLoadContextSlot *lifecycle_ = nullptr;
+    const ZoneRuntimeGenerationBinding *self_ = nullptr;
+    ZoneRuntimeGenerationCallbacks callbacks_{};
+    const script_string_journal::ScriptStringJournal *placementJournal_ =
+        nullptr;
+    const script_string_journal::ScriptStringJournalEntry *placementEntries_ =
+        nullptr;
+    std::uint32_t placementCapacity_ = 0;
+    std::uint32_t placementExpectedCount_ = 0;
+    std::uint32_t allocationType_ = 0;
+    ZoneRuntimeSetupStage setupStage_ = ZoneRuntimeSetupStage::Passive;
+    ZoneRuntimeExecutionMode executionMode_ =
+        ZoneRuntimeExecutionMode::Passive;
+    std::uint8_t callbackActive_ = 0;
+    std::uint8_t witness_ = 0;
+    std::uint32_t reserved_ = 0;
+};
+
+RUNTIME_SIZE(ZoneRuntimeGenerationBinding, 0x50, 0x78);
 
 #ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
 struct ZoneRuntimeTableTestAccess;
@@ -93,6 +212,7 @@ class alignas(8) ZoneRuntimeReceiptCapsule final
 {
 private:
     friend class ZoneRuntimeEntry;
+    friend class ZoneRuntimeTable;
     friend bool detail::IsPristineRuntimeReceipt(
         const ZoneRuntimeReceiptCapsule &capsule) noexcept;
 #ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
@@ -138,6 +258,9 @@ public:
     [[nodiscard]] const zone_script_string_ownership::
         ZoneScriptStringOwnershipController &scriptStringOwnership()
         const noexcept;
+    [[nodiscard]] ZoneRuntimeSetupStage setupStage() const noexcept;
+    [[nodiscard]] ZoneRuntimeExecutionMode executionMode() const noexcept;
+    [[nodiscard]] bool generationBindingPristine() const noexcept;
 
 private:
     friend class ZoneRuntimeTable;
@@ -158,6 +281,82 @@ private:
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
         ZoneRuntimeGenerationView *outView) noexcept;
+    friend ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        const ZoneRuntimeGenerationCallbacks &) noexcept;
+    friend ZoneRuntimeTableStatus TryBeginZoneRuntimePhysicalAllocation(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        const char *,
+        std::uint32_t) noexcept;
+    friend ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        std::uint32_t,
+        std::uint32_t,
+        std::uint32_t,
+        pmem_runtime::AllocationResult *) noexcept;
+    friend ZoneRuntimeTableStatus TryBindZoneRuntimeStorage(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        void *,
+        std::size_t,
+        const zone_runtime_storage::ZoneRuntimeStoragePlan *) noexcept;
+    friend ZoneRuntimeTableStatus TryBeginZoneRuntimeStreamGeneration(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus TryBindZoneRuntimeStreams(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        const XZoneMemory *,
+        const relocation::BlockView *,
+        std::size_t) noexcept;
+    friend ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopies(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        std::uint32_t) noexcept;
+    friend ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus TryInvalidateZoneRuntimeStreams(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus TryEndZoneRuntimePhysicalAllocation(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus TryCommitZoneRuntimeGeneration(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus
+    TryBeginZoneRuntimeGenerationAbandonment(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus
+    TryContinueZoneRuntimeGenerationAbandonment(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
     friend ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
         ZoneRuntimeTable *table,
         std::uint32_t physicalSlot,
@@ -176,9 +375,10 @@ private:
         scriptStringOwnership_{};
     zone_load::ZoneLoadContextKey key_{};
     ZoneRuntimeReceiptCapsule receiptCapsule_{};
+    ZoneRuntimeGenerationBinding generationBinding_{};
 };
 
-RUNTIME_SIZE(ZoneRuntimeEntry, 0x130, 0x198);
+RUNTIME_SIZE(ZoneRuntimeEntry, 0x190, 0x228);
 
 class alignas(8) ZoneRuntimeTable final
 {
@@ -193,7 +393,8 @@ public:
 
     // This is a diagnostic hint, not a synchronization primitive.  Every
     // initialization, lookup, claim, accessor, and capability use requires
-    // external serialization.  DB_Init initializes the production object
+    // the same table-wide external serialization. DB_Init initializes the
+    // production object
     // before the database thread can observe it.
     [[nodiscard]] bool initialized() const noexcept;
 
@@ -213,6 +414,89 @@ private:
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
         ZoneRuntimeGenerationView *outView) noexcept;
+    friend ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        const ZoneRuntimeGenerationCallbacks &) noexcept;
+    friend ZoneRuntimeTableStatus TryBeginZoneRuntimePhysicalAllocation(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        const char *,
+        std::uint32_t) noexcept;
+    friend ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        std::uint32_t,
+        std::uint32_t,
+        std::uint32_t,
+        pmem_runtime::AllocationResult *) noexcept;
+    friend ZoneRuntimeTableStatus TryBindZoneRuntimeStorage(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        void *,
+        std::size_t,
+        const zone_runtime_storage::ZoneRuntimeStoragePlan *) noexcept;
+    friend ZoneRuntimeTableStatus TryBeginZoneRuntimeStreamGeneration(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus TryBindZoneRuntimeStreams(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        const XZoneMemory *,
+        const relocation::BlockView *,
+        std::size_t) noexcept;
+    friend ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopies(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &,
+        std::uint32_t) noexcept;
+    friend ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus TryInvalidateZoneRuntimeStreams(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus TryEndZoneRuntimePhysicalAllocation(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus TryCommitZoneRuntimeGeneration(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus
+    TryBeginZoneRuntimeGenerationAbandonment(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus
+    TryContinueZoneRuntimeGenerationAbandonment(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
+        ZoneRuntimeTable *,
+        std::uint32_t,
+        const zone_load::ZoneLoadContextKey &) noexcept;
+    friend ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopyDrain(
+        ZoneRuntimeTable *,
+        const zone_pending_copy::PendingCopyDrainCallback &) noexcept;
+    friend ZoneRuntimeTableStatus TryDrainNextZoneRuntimePendingCopy(
+        ZoneRuntimeTable *) noexcept;
+    friend ZoneRuntimeTableStatus TryFinishZoneRuntimePendingCopyDrain(
+        ZoneRuntimeTable *) noexcept;
     friend ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
         ZoneRuntimeTable *table,
         std::uint32_t physicalSlot,
@@ -286,6 +570,13 @@ private:
 
     [[nodiscard]] ZoneRuntimeTableStatus
     validateInitializedHeader() noexcept;
+    [[nodiscard]] ZoneRuntimeTableStatus validateEntryBinding(
+        std::uint32_t physicalSlot) noexcept;
+    [[nodiscard]] ZoneRuntimeTableStatus
+    validateSharedComposition() noexcept;
+    [[nodiscard]] ZoneRuntimeTableStatus authenticateExactEntry(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus authenticateExactMutableEntry(
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
@@ -295,25 +586,88 @@ private:
         const zone_load::ZoneLoadContextKey &key,
         zone_script_string_ownership::
             ZoneScriptStringOwnershipStatus ownershipStatus) noexcept;
+    [[nodiscard]] ZoneRuntimeTableStatus completeCompositeOperation(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key,
+        ZoneRuntimeTableStatus operationStatus) noexcept;
     [[nodiscard]] static zone_load::ZoneLoadContextSlot *mutableLifecycle(
         ZoneRuntimeEntry *entry) noexcept;
     [[nodiscard]] static zone_script_string_ownership::
         ZoneScriptStringOwnershipController *mutableScriptStringOwnership(
         ZoneRuntimeEntry *entry) noexcept;
+    [[nodiscard]] static ZoneRuntimeReceiptCapsule *mutableReceiptCapsule(
+        ZoneRuntimeEntry *entry) noexcept;
+    [[nodiscard]] static ZoneRuntimeGenerationBinding *
+    mutableGenerationBinding(ZoneRuntimeEntry *entry) noexcept;
+    [[nodiscard]] static physical_memory::AllocationReceipt *
+    mutableAllocationReceipt(ZoneRuntimeEntry *entry) noexcept;
+    [[nodiscard]] static zone_stream_ownership::
+        ZoneStreamGenerationReceipt *mutableStreamGenerationReceipt(
+            ZoneRuntimeEntry *entry) noexcept;
+    [[nodiscard]] static zone_pending_copy::
+        PendingCopyAdmissionReceipt *mutablePendingCopyAdmissionReceipt(
+            ZoneRuntimeEntry *entry) noexcept;
+    [[nodiscard]] static zone_runtime_storage::ZoneRuntimeStorageBinding *
+    mutableStorageBinding(ZoneRuntimeEntry *entry) noexcept;
+    [[nodiscard]] static std::uint32_t generationAllocationType(
+        const ZoneRuntimeEntry *entry) noexcept;
+    [[nodiscard]] static bool generationCallbacksMatch(
+        const ZoneRuntimeEntry *entry,
+        const ZoneRuntimeGenerationCallbacks &callbacks) noexcept;
+    [[nodiscard]] static bool generationPlacementMatches(
+        const ZoneRuntimeEntry *entry,
+        const script_string_journal::ScriptStringJournal *journal,
+        const script_string_journal::ScriptStringJournalEntry *storage,
+        std::uint32_t capacity,
+        std::uint32_t expectedCount) noexcept;
+    static void bindGeneration(
+        ZoneRuntimeTable *table,
+        ZoneRuntimeEntry *entry,
+        const zone_load::ZoneLoadContextKey &key,
+        const ZoneRuntimeGenerationCallbacks &callbacks) noexcept;
+    static void setGenerationAllocation(
+        ZoneRuntimeEntry *entry,
+        std::uint32_t allocationType) noexcept;
+    static void setGenerationSetupStage(
+        ZoneRuntimeEntry *entry,
+        ZoneRuntimeSetupStage stage) noexcept;
+    static void setGenerationExecutionMode(
+        ZoneRuntimeEntry *entry,
+        ZoneRuntimeExecutionMode mode) noexcept;
+    static void retainGenerationPlacement(
+        ZoneRuntimeEntry *entry,
+        const script_string_journal::ScriptStringJournal *journal,
+        const script_string_journal::ScriptStringJournalEntry *storage,
+        std::uint32_t capacity,
+        std::uint32_t expectedCount) noexcept;
+    static void resetCompositeReceiptsAndBinding(
+        ZoneRuntimeEntry *entry) noexcept;
+    static zone_script_string_ownership::ZoneScriptStringUnpublishStatus
+    EnsureBoundGenerationUnreachable(void *context) noexcept;
+    static zone_load::ZoneLoadCleanupCallbackStatus
+    PerformBoundGenerationCleanup(
+        void *context,
+        zone_load::ZoneLoadCleanupOperation operation) noexcept;
+    static void CompleteBoundPendingAdmission(void *context) noexcept;
+    static void AdmitBoundGeneration(void *context) noexcept;
     void poison() noexcept;
 
     std::array<ZoneRuntimeEntry, zone_slots::kPhysicalZoneSlotCount>
         entries_{};
-    // These process-wide authorities are unique by construction. They remain
-    // pristine until later exact-key adapters enroll them atomically.
+    // These process-wide authorities are unique by construction. The current
+    // exact-key adapters enroll and authenticate them as table-owned shared
+    // state across generation setup, admission, cleanup, and pending drain.
     zone_stream_ownership::ActiveZoneStreamBinding
         activeZoneStreamBinding_{};
     zone_pending_copy::PendingCopyLedger pendingCopyLedger_{};
+    // Retains one exact callback identity for the complete drain, including
+    // Retry. Callers cannot replace consumption authority between records.
+    zone_pending_copy::PendingCopyDrainCallback pendingDrainCallback_{};
     std::uint32_t state_ = 0;
-    std::uint32_t reserved_ = 0;
+    std::uint32_t sharedState_ = 0;
 };
 
-RUNTIME_SIZE(ZoneRuntimeTable, 0xE900, 0xF700);
+RUNTIME_SIZE(ZoneRuntimeTable, 0xF568, 0x109A0);
 
 #ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
 // Tests opt in before including this header.  Production callers cannot reach
@@ -381,6 +735,15 @@ struct ZoneRuntimeTableTestAccess final
                     .receiptCapsule_.storageBinding_;
     }
 
+    static ZoneRuntimeGenerationBinding *GenerationBinding(
+        ZoneRuntimeTable *const table,
+        const std::uint32_t physicalSlot) noexcept
+    {
+        if (!table || physicalSlot >= table->entries_.size())
+            return nullptr;
+        return &table->entries_[physicalSlot].generationBinding_;
+    }
+
     static zone_stream_ownership::ActiveZoneStreamBinding *
     ActiveStreamBinding(ZoneRuntimeTable *const table) noexcept
     {
@@ -414,7 +777,7 @@ struct ZoneRuntimeTableTestAccess final
         const std::uint32_t reserved) noexcept
     {
         if (table)
-            table->reserved_ = reserved;
+            table->sharedState_ = reserved;
     }
 };
 #endif
@@ -430,23 +793,23 @@ struct ZoneRuntimeTableTestAccess final
 [[nodiscard]] ZoneRuntimeTableStatus TryInitializeZoneRuntimeTable(
     ZoneRuntimeTable *table) noexcept;
 
-// Checked, read-only physical lookup.  Slot zero and out-of-range slots are
-// rejected.  The caller's output is unchanged on every non-Success result.
+// Checked, read-only physical lookup. Slot zero, out-of-range slots, and an
+// output that is misaligned or overlaps the table are rejected. The caller's
+// output is unchanged on every non-Success result.
 [[nodiscard]] ZoneRuntimeTableStatus TryGetZoneRuntimeEntry(
     ZoneRuntimeTable *table,
     std::uint32_t physicalSlot,
     const ZoneRuntimeEntry **outEntry) noexcept;
 
-// Claims one usable slot through its embedded generation lifecycle.  This
-// function is implemented for the future loader adapter, but the legacy loader
-// does not call it yet.  The exact terminal-receipt reset/unload adapters below
-// and exact-key mutable ownership adapters are implemented but remain
-// unenrolled.  Production wiring must still bind durable resources and enroll
-// the complete path; a claimed slot cannot be rebound until its exact terminal
-// ownership receipt is reset.  The lifecycle terminal receipt and durable old
-// key remain intact until a subsequent claim atomically advances the generation;
-// the new durable entry key and caller output publish only after that lifecycle
-// claim succeeds.
+// Claims one usable slot through its embedded generation lifecycle. The
+// composite adapters below can enroll the resulting exact key, but the legacy
+// loader does not call this controller yet. A claimed slot cannot be rebound
+// until its exact terminal ownership receipt is reset. The lifecycle terminal
+// receipt and durable old key remain intact until a subsequent claim atomically
+// advances the generation; the new durable entry key and caller output publish
+// only after that lifecycle claim and whole-table postcondition both succeed.
+// A misaligned key/output or one overlapping the table is rejected before the
+// generation can advance.
 [[nodiscard]] ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration(
     ZoneRuntimeTable *table,
     std::uint32_t physicalSlot,
@@ -455,7 +818,8 @@ struct ZoneRuntimeTableTestAccess final
 // Authenticates both physical slot and generation and returns a read-only
 // observation only for an active Loading/Live/Abandoning slot.  Mutable
 // controller operations use the exact-key adapters below; callers cannot retain
-// raw mutable authority across generation reuse.  The caller's output is
+// raw mutable authority across generation reuse. A misaligned output or one
+// overlapping the table or input key is rejected, and the caller's output is
 // unchanged on every non-Success result.
 [[nodiscard]] ZoneRuntimeTableStatus TryGetZoneRuntimeGeneration(
     ZoneRuntimeTable *table,
@@ -463,13 +827,137 @@ struct ZoneRuntimeTableTestAccess final
     const zone_load::ZoneLoadContextKey &key,
     ZoneRuntimeGenerationView *outView) noexcept;
 
+// Enrolls an exact claimed Loading generation in the production-neutral
+// composite path.  The pending ledger is initialized once per table and the
+// callback identity is copied before any reclaimable resource exists.  An
+// exact retry accepts only the identical callback tuple.
+[[nodiscard]] ZoneRuntimeTableStatus
+TryBindZoneRuntimeGenerationCallbacks(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const ZoneRuntimeGenerationCallbacks &callbacks) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus
+TryBeginZoneRuntimePhysicalAllocation(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const char *name,
+    std::uint32_t allocationType) noexcept;
+
+// On Success and CapacityExceeded, outResult receives the exact report-free
+// PMem result. It must be aligned and outside the managed PMem, table, and key
+// ranges; it is unchanged on authentication or composition failure.
+[[nodiscard]] ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    std::uint32_t size,
+    std::uint32_t alignment,
+    std::uint32_t type,
+    pmem_runtime::AllocationResult *outResult) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus TryBindZoneRuntimeStorage(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    void *slab,
+    std::size_t slabCapacity,
+    const zone_runtime_storage::ZoneRuntimeStoragePlan *plan) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus
+TryBeginZoneRuntimeStreamGeneration(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus TryBindZoneRuntimeStreams(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const XZoneMemory *zoneIdentity,
+    const relocation::BlockView *blocks,
+    std::size_t blockCount) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopies(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus TryAppendZoneRuntimePendingCopy(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    std::uint32_t assetEntryIndex) noexcept;
+
+// Requires script strings to be CommitReady. It freezes the pending-copy
+// completion identity, then the next two calls invalidate stream authority
+// and End the exact PMem receipt before the no-fail Live publication.
+[[nodiscard]] ZoneRuntimeTableStatus TryPrepareZoneRuntimeAdmission(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus TryInvalidateZoneRuntimeStreams(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus
+TryEndZoneRuntimePhysicalAllocation(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus TryCommitZoneRuntimeGeneration(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus
+TryBeginZoneRuntimeGenerationAbandonment(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+// Advances at most one script-string rollback record, or drives the remaining
+// ordered lifecycle cleanup until it reaches Retry or the terminal receipt.
+[[nodiscard]] ZoneRuntimeTableStatus
+TryContinueZoneRuntimeGenerationAbandonment(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+// Composite Live unload uses only the callback identity already retained in
+// the stable entry. The four-argument compatibility overload below is rejected
+// for enrolled generations so it cannot bypass the composite controller.
+[[nodiscard]] ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration(
+    ZoneRuntimeTable *table,
+    std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept;
+
+// Drains all retained Live pending-copy records through one callback identity.
+// Begin copies the callback into stable table storage; Retry preserves both
+// the current record and that exact identity until Finish returns the shared
+// ledger to Ready.
+[[nodiscard]] ZoneRuntimeTableStatus TryBeginZoneRuntimePendingCopyDrain(
+    ZoneRuntimeTable *table,
+    const zone_pending_copy::PendingCopyDrainCallback &callback) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus TryDrainNextZoneRuntimePendingCopy(
+    ZoneRuntimeTable *table) noexcept;
+
+[[nodiscard]] ZoneRuntimeTableStatus TryFinishZoneRuntimePendingCopyDrain(
+    ZoneRuntimeTable *table) noexcept;
+
 // The following production-neutral adapters are the only public route from a
 // durable runtime-table key to mutable loading ownership.  Every call
 // authenticates table state, physical slot, durable key, lifecycle generation,
 // and controller binding both before and after the underlying mutation.  A
 // recoverable controller result is preserved only after post-authentication;
 // an unsafe result or impossible postcondition mismatch poisons the table.
-// External per-slot serialization remains mandatory.  These adapters do not
+// One external table-wide serializer remains mandatory. These adapters do not
 // allocate resources or enroll any legacy loader caller.
 
 [[nodiscard]] ZoneRuntimeTableStatus
@@ -482,8 +970,10 @@ TryBeginZoneRuntimeScriptStringOwnership(
     std::uint32_t storageCapacity,
     std::uint32_t expectedCount) noexcept;
 
-// outStringId is unchanged on every non-Success result, including an unsafe
-// postcondition mismatch after the controller staged a local candidate.
+// outStringId must be aligned and disjoint from the table, key, and source
+// descriptor (and, for composite generations, managed PMem). It is unchanged
+// on every non-Success result, including an unsafe postcondition mismatch after
+// the controller staged a local candidate.
 [[nodiscard]] ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString(
     ZoneRuntimeTable *table,
     std::uint32_t physicalSlot,
