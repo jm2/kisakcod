@@ -110,6 +110,22 @@ struct ZoneRuntimeTableTestAccess
         binding->setupStage_ = ZoneRuntimeSetupStage::CallbacksBound;
     };
 
+    template <typename Binding>
+    static constexpr bool CanReachCallbackMarker = requires(
+        Binding *const binding)
+    {
+        &binding->callbackMarker_;
+    };
+
+    template <typename Table>
+    static constexpr bool CanAuthenticateRegistryLifecycleCallback =
+        requires(
+            Table *const table,
+            const zone_load::ZoneLoadContextKey &key)
+    {
+        table->authenticateExactRegistryLifecycleCallback(1u, key);
+    };
+
     template <typename Capsule>
     static constexpr bool CanReachAllocationReceipt = requires(
         Capsule *const capsule)
@@ -180,6 +196,14 @@ static_assert(
     !ZoneRuntimeTableTestAccess::CanMutateGenerationStage<
         ZoneRuntimeGenerationBinding>,
     "production must not mutate the composite setup stage");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanReachCallbackMarker<
+        ZoneRuntimeGenerationBinding>,
+    "production must not inspect or forge callback registry authority");
+static_assert(
+    !ZoneRuntimeTableTestAccess::CanAuthenticateRegistryLifecycleCallback<
+        ZoneRuntimeTable>,
+    "production must not bypass the private runtime facade callback gate");
 static_assert(
     !ZoneRuntimeTableTestAccess::CanReachAllocationReceipt<
         ZoneRuntimeReceiptCapsule>);

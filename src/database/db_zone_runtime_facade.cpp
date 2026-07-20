@@ -995,6 +995,30 @@ RegistryOwnershipStatus ZoneRuntimeFacade::TryBorrowRegistryOwnership(
     const ZoneRuntimeTableStatus tableStatus = completeTableOperation(
         TryGetZoneRuntimeGeneration(
             &table, physicalSlot, key, &view));
+    if (tableStatus == ZoneRuntimeTableStatus::Busy)
+    {
+        const ZoneRuntimeTableStatus callbackStatus =
+            completeTableOperation(
+                table.authenticateExactRegistryLifecycleCallback(
+                    physicalSlot, key));
+        if (callbackStatus != ZoneRuntimeTableStatus::Success)
+            return MapTableStatusToRegistryStatus(callbackStatus);
+        if (!zone_slots::IsUsableZoneSlot(physicalSlot)
+            || !static_cast<bool>(key) || key.slot != physicalSlot)
+        {
+            poisonAccess();
+            return RegistryOwnershipStatus::UnsafeFailure;
+        }
+        return RunRegistryOperation(
+            [&table, physicalSlot, &key]() noexcept {
+                return registry_ownership::
+                    RegistryOwnershipCoordinatorFacade::
+                        TryBorrowActiveRuntimeCallback(
+                            table.entries_[physicalSlot]
+                                .scriptStringOwnership(),
+                            key);
+            });
+    }
     if (tableStatus != ZoneRuntimeTableStatus::Success)
     {
         if (tableStatus == ZoneRuntimeTableStatus::UnsafeFailure)

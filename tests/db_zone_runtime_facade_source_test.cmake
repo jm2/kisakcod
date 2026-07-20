@@ -379,7 +379,7 @@ require_substring_count(
     _source "thread_local" 7
     "scalar destructor-free TLS mirrors")
 require_substring_count(
-    _source "completeTableOperation(" 29
+    _source "completeTableOperation(" 30
     "all table forwards use the shared post-authentication boundary")
 require_substring_count(
     _source "authenticateTableOperationAccess()" 25
@@ -388,7 +388,7 @@ require_substring_count(
     _source "authenticateCompositeTableOperationAccess(" 7
     "all six dual-mode script adapters require composite authority")
 require_substring_count(
-    _source "RunRegistryOperation(" 11
+    _source "RunRegistryOperation(" 12
     "all registry forwards use the shared status/authentication boundary")
 
 # Canonicalize only whitespace that can be introduced by formatting a qualified
@@ -461,8 +461,9 @@ function(runtime_facade_adapter_set_is_exact
 endfunction()
 
 # Public method -> raw table adapter is a closed one-to-one map. Borrowing
-# registry authority is intentionally in both maps: its table lookup and its
-# coordinator borrow must each remain in that one public method.
+# registry authority is intentionally special: its ordinary table lookup stays
+# in this map, while a bespoke seal below pins both mutually exclusive
+# coordinator borrows and the callback-only table authenticator.
 set(_table_method_adapter_pairs
     "TryInitializeRuntimeTable|TryInitializeZoneRuntimeTable"
     "TryClaimGeneration|TryClaimZoneRuntimeGeneration"
@@ -494,7 +495,6 @@ set(_table_method_adapter_pairs
     "TryBorrowRegistryOwnership|TryGetZoneRuntimeGeneration")
 set(_registry_method_adapter_pairs
     "TryBeginStandaloneRegistryOwnership|TryBeginStandalone"
-    "TryBorrowRegistryOwnership|TryBorrow"
     "FinishRegistryOwnership|Finish"
     "TryAddDatabaseUser4|TryAddDatabaseUser4"
     "TryAddDatabaseUsers4|TryAddDatabaseUsers4"
@@ -506,10 +506,10 @@ set(_registry_method_adapter_pairs
 
 list(LENGTH _table_method_adapter_pairs _table_pair_count)
 list(LENGTH _registry_method_adapter_pairs _registry_pair_count)
-if(NOT _table_pair_count EQUAL 28 OR NOT _registry_pair_count EQUAL 10)
+if(NOT _table_pair_count EQUAL 28 OR NOT _registry_pair_count EQUAL 9)
     message(FATAL_ERROR
         "Runtime facade method/adapter maps must remain closed at 28 table "
-        "and 10 registry wrappers")
+        "and 9 ordinary registry wrappers")
 endif()
 
 set(_table_adapter_tokens)
@@ -525,11 +525,14 @@ foreach(_pair IN LISTS _registry_method_adapter_pairs)
     list(APPEND _registry_adapter_tokens
         "RegistryOwnershipCoordinatorFacade::${_raw_method}(")
 endforeach()
+list(APPEND _registry_adapter_tokens
+    "RegistryOwnershipCoordinatorFacade::TryBorrow("
+    "RegistryOwnershipCoordinatorFacade::TryBorrowActiveRuntimeCallback(")
 list(REMOVE_DUPLICATES _table_adapter_tokens)
 list(REMOVE_DUPLICATES _registry_adapter_tokens)
 list(LENGTH _table_adapter_tokens _table_adapter_count)
 list(LENGTH _registry_adapter_tokens _registry_adapter_count)
-if(NOT _table_adapter_count EQUAL 28 OR NOT _registry_adapter_count EQUAL 10)
+if(NOT _table_adapter_count EQUAL 28 OR NOT _registry_adapter_count EQUAL 11)
     message(FATAL_ERROR "Runtime facade raw adapter map contains duplicates")
 endif()
 
@@ -539,6 +542,76 @@ foreach(_adapter IN LISTS _table_adapter_tokens _registry_adapter_tokens)
         _source_forwarding_canonical "${_adapter}" 1
         "one global use of each reviewed raw adapter")
 endforeach()
+
+# A table callback reports Busy to every ordinary lookup. Only that result may
+# enter the exact-key callback authenticator, and only its success may index the
+# stable table entry and call the narrower callback coordinator borrow. The
+# normal successful lookup must retain the ordinary coordinator path.
+extract_runtime_facade_method_slice(
+    _source "TryBorrowRegistryOwnership" _borrow_slice)
+canonicalize_runtime_facade_forwarding(
+    _borrow_slice _borrow_slice_canonical)
+foreach(_adapter IN LISTS _registry_adapter_tokens)
+    if(_adapter STREQUAL
+        "RegistryOwnershipCoordinatorFacade::TryBorrow("
+        OR _adapter STREQUAL
+        "RegistryOwnershipCoordinatorFacade::TryBorrowActiveRuntimeCallback(")
+        set(_expected_count 1)
+    else()
+        set(_expected_count 0)
+    endif()
+    require_substring_count(
+        _borrow_slice_canonical "${_adapter}" ${_expected_count}
+        "callback borrow's closed coordinator adapter set")
+endforeach()
+foreach(_marker IN ITEMS
+    "tableStatus == ZoneRuntimeTableStatus::Busy"
+    "table.authenticateExactRegistryLifecycleCallback( physicalSlot, key)"
+    "static_cast<bool>(key)"
+    "key.slot != physicalSlot"
+    "table.entries_[physicalSlot] .scriptStringOwnership()")
+    require_substring_count(
+        _borrow_slice_canonical "${_marker}" 1
+        "callback borrow exact-key and bounds gate")
+endforeach()
+require_substring_count(
+    _borrow_slice_canonical
+    "zone_slots::IsUsableZoneSlot(physicalSlot)" 2
+    "callback and ordinary borrow slot gates")
+string(FIND
+    "${_borrow_slice_canonical}"
+    "TryGetZoneRuntimeGeneration(" _borrow_lookup)
+string(FIND
+    "${_borrow_slice_canonical}"
+    "tableStatus == ZoneRuntimeTableStatus::Busy" _borrow_busy)
+string(FIND
+    "${_borrow_slice_canonical}"
+    "table.authenticateExactRegistryLifecycleCallback( physicalSlot, key)"
+    _borrow_callback_auth)
+string(FIND
+    "${_borrow_slice_canonical}"
+    "zone_slots::IsUsableZoneSlot(physicalSlot)" _borrow_slot_gate)
+string(FIND
+    "${_borrow_slice_canonical}"
+    "RegistryOwnershipCoordinatorFacade::TryBorrowActiveRuntimeCallback("
+    _borrow_callback_forward)
+string(FIND
+    "${_borrow_slice_canonical}"
+    "RegistryOwnershipCoordinatorFacade::TryBorrow(" _borrow_ordinary_forward)
+if(_borrow_lookup EQUAL -1
+    OR _borrow_busy EQUAL -1
+    OR _borrow_callback_auth EQUAL -1
+    OR _borrow_slot_gate EQUAL -1
+    OR _borrow_callback_forward EQUAL -1
+    OR _borrow_ordinary_forward EQUAL -1
+    OR NOT _borrow_lookup LESS _borrow_busy
+    OR NOT _borrow_busy LESS _borrow_callback_auth
+    OR NOT _borrow_callback_auth LESS _borrow_slot_gate
+    OR NOT _borrow_slot_gate LESS _borrow_callback_forward
+    OR NOT _borrow_callback_forward LESS _borrow_ordinary_forward)
+    message(FATAL_ERROR
+        "Runtime facade callback borrow ordering or exclusivity drifted")
+endif()
 
 foreach(_pair IN LISTS _table_method_adapter_pairs)
     string(REPLACE "|" ";" _fields "${_pair}")
@@ -633,6 +706,7 @@ foreach(_marker IN ITEMS
     "IsKnownTableStatus"
     "IsKnownRegistryStatus"
     "table.authenticateExactEntry(physicalSlot, key)"
+    "table.authenticateExactRegistryLifecycleCallback( physicalSlot, key)"
     "table.entries_[physicalSlot].generationBindingPristine()"
     "completeTableOperation"
     "RegistryOwnershipCoordinatorFacade::ValidateInactive()"

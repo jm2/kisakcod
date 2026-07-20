@@ -178,6 +178,22 @@ private:
     void setExecutionMode(ZoneRuntimeExecutionMode mode) noexcept;
     void reset() noexcept;
 
+    // One ABI-neutral byte distinguishes the exact external lifecycle
+    // callback windows that may borrow registry ownership from all internal
+    // callback work.  Any non-Idle marker keeps ordinary table operations
+    // callback-busy; only ZoneRuntimeTable's exact-key authenticator may
+    // interpret ActiveRegistryBorrow as authority, and successful admission
+    // consumes it to ActiveNoRegistry before returning. This one-shot rule
+    // prevents replay after authentication; it does not contain arbitrary
+    // nonlocal exits. Enrolled callbacks must not longjmp, and production
+    // enrollment still requires checked no-report adapters.
+    enum class CallbackMarker : std::uint8_t
+    {
+        Idle,
+        ActiveNoRegistry,
+        ActiveRegistryBorrow,
+    };
+
     zone_load::ZoneLoadContextKey key_{};
     ZoneRuntimeTable *table_ = nullptr;
     zone_load::ZoneLoadContextSlot *lifecycle_ = nullptr;
@@ -193,7 +209,7 @@ private:
     ZoneRuntimeSetupStage setupStage_ = ZoneRuntimeSetupStage::Passive;
     ZoneRuntimeExecutionMode executionMode_ =
         ZoneRuntimeExecutionMode::Passive;
-    std::uint8_t callbackActive_ = 0;
+    CallbackMarker callbackMarker_ = CallbackMarker::Idle;
     std::uint8_t witness_ = 0;
     std::uint32_t reserved_ = 0;
 };
@@ -584,6 +600,10 @@ private:
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
         ZoneRuntimeEntry **outEntry) noexcept;
+    [[nodiscard]] ZoneRuntimeTableStatus
+    authenticateExactRegistryLifecycleCallback(
+        std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept;
     [[nodiscard]] ZoneRuntimeTableStatus completeMutableOperation(
         std::uint32_t physicalSlot,
         const zone_load::ZoneLoadContextKey &key,
@@ -623,6 +643,9 @@ private:
         const script_string_journal::ScriptStringJournalEntry *storage,
         std::uint32_t capacity,
         std::uint32_t expectedCount) noexcept;
+    [[nodiscard]] static bool
+    exactRegistryLifecycleCallbackPhaseMatches(
+        const ZoneRuntimeEntry &entry) noexcept;
     static void bindGeneration(
         ZoneRuntimeTable *table,
         ZoneRuntimeEntry *entry,
@@ -772,6 +795,31 @@ struct ZoneRuntimeTableTestAccess final
         return table
             ? table->validateReleaseSafety()
             : ZoneRuntimeTableStatus::InvalidArgument;
+    }
+
+    [[nodiscard]] static ZoneRuntimeTableStatus
+    AuthenticateExactRegistryLifecycleCallback(
+        ZoneRuntimeTable *const table,
+        const std::uint32_t physicalSlot,
+        const zone_load::ZoneLoadContextKey &key) noexcept
+    {
+        return table
+            ? table->authenticateExactRegistryLifecycleCallback(
+                physicalSlot, key)
+            : ZoneRuntimeTableStatus::InvalidArgument;
+    }
+
+    static void SetCallbackMarker(
+        ZoneRuntimeTable *const table,
+        const std::uint32_t physicalSlot,
+        const std::uint8_t marker) noexcept
+    {
+        if (!table || physicalSlot >= table->entries_.size())
+            return;
+        table->entries_[physicalSlot]
+            .generationBinding_.callbackMarker_ =
+            static_cast<ZoneRuntimeGenerationBinding::CallbackMarker>(
+                marker);
     }
 
     static void SetKey(

@@ -330,6 +330,8 @@ foreach(_marker IN ITEMS
     "CanReachPendingDrainCallback"
     "CanReachGenerationCallbacks"
     "CanMutateGenerationStage"
+    "CanReachCallbackMarker"
+    "CanAuthenticateRegistryLifecycleCallback"
     "CanReachAllocationReceipt"
     "CanReachStreamGenerationReceipt"
     "CanReachPendingAdmissionReceipt"
@@ -351,6 +353,8 @@ foreach(_marker IN ITEMS
     "&table->pendingDrainCallback_;"
     "&binding->callbacks_;"
     "binding->setupStage_ = ZoneRuntimeSetupStage::CallbacksBound;"
+    "&binding->callbackMarker_;"
+    "table->authenticateExactRegistryLifecycleCallback(1u, key);"
     "!ZoneRuntimeTableTestAccess::CanReachEntries<ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanMutateState<ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanMutateSharedState<ZoneRuntimeTable>"
@@ -364,6 +368,8 @@ foreach(_marker IN ITEMS
     "!ZoneRuntimeTableTestAccess::CanReachPendingDrainCallback<ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanReachGenerationCallbacks< ZoneRuntimeGenerationBinding>"
     "!ZoneRuntimeTableTestAccess::CanMutateGenerationStage< ZoneRuntimeGenerationBinding>"
+    "!ZoneRuntimeTableTestAccess::CanReachCallbackMarker< ZoneRuntimeGenerationBinding>"
+    "!ZoneRuntimeTableTestAccess::CanAuthenticateRegistryLifecycleCallback< ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanReachAllocationReceipt< ZoneRuntimeReceiptCapsule>"
     "!ZoneRuntimeTableTestAccess::CanReachStreamGenerationReceipt< ZoneRuntimeReceiptCapsule>"
     "!ZoneRuntimeTableTestAccess::CanReachPendingAdmissionReceipt< ZoneRuntimeReceiptCapsule>"
@@ -465,6 +471,8 @@ foreach(_marker IN ITEMS
     "zone_load::ZoneLoadContextKey key_{};"
     "ZoneRuntimeReceiptCapsule receiptCapsule_{};"
     "ZoneRuntimeGenerationBinding generationBinding_{};"
+    "enum class CallbackMarker : std::uint8_t { Idle, ActiveNoRegistry, ActiveRegistryBorrow, };"
+    "CallbackMarker callbackMarker_ = CallbackMarker::Idle;"
     "const ZoneRuntimeEntry *entry = nullptr;"
     "RUNTIME_SIZE(ZoneRuntimeEntry, 0x190, 0x228);"
     "std::array<ZoneRuntimeEntry, zone_slots::kPhysicalZoneSlotCount> entries_{};"
@@ -478,6 +486,8 @@ foreach(_marker IN ITEMS
     "KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"
     "friend class ZoneRuntimeTable;"
     "authenticateExactMutableEntry("
+    "authenticateExactRegistryLifecycleCallback("
+    "exactRegistryLifecycleCallbackPhaseMatches("
     "completeMutableOperation("
     "mutableScriptStringOwnership("
     "TryBeginZoneRuntimeScriptStringOwnership("
@@ -502,6 +512,11 @@ foreach(_marker IN ITEMS
     "generation, and durable table key remain as a receipt"
     "external serialization.")
     require_contains(_header "${_marker}" "durable external table schema")
+endforeach()
+foreach(_var IN ITEMS _header _source)
+    require_not_contains(
+        ${_var} "callbackActive_"
+        "generation callback byte must retain three-state semantics")
 endforeach()
 
 # Private component state is authenticated through exact const-reference
@@ -780,7 +795,7 @@ require_exact_class_digest(_pending_copy_ledger_class
     501f278a5fede51712aa454d786f5f225247fe4f79427df9c09c050ca2739065
     "PendingCopyLedger")
 require_exact_class_digest(_generation_binding_class
-    798a41a619b37929a34f2ca6fa3074637be2dc29f0e11a536f3ed42ecd552755
+    7053d2aa0b5a1904620e7044a0b9c35ac56fbca2ca88c22d61f9dab3428a5ec7
     "ZoneRuntimeGenerationBinding")
 require_exact_class_digest(_receipt_capsule_class
     bf472ac7720169338debff211f4986e00e50233386054eccd0d2a96cd0b287f1
@@ -789,7 +804,7 @@ require_exact_class_digest(_zone_runtime_entry_class
     4f2c0c8a116a52a6a291a8715254951e2ad25093196fcb34f706044641f87bd9
     "ZoneRuntimeEntry")
 require_exact_class_digest(_zone_runtime_table_class
-    e6cbaeedf4c3ff2622f5acc5c0d68ef54be8ab0f87bfbed7172bd68247835e4f
+    102515199b6c8031906d7bd715623bf44877d8105af2cf7adde166b665a02428
     "ZoneRuntimeTable")
 
 set(_external_macro_friend_invocation_fixture "${_receipt_capsule_class}")
@@ -1181,6 +1196,296 @@ foreach(_marker IN ITEMS
         _pre_begin_placement_match "${_marker}"
         "pre-begin zero-demand capacity match")
 endforeach()
+
+extract_slice(
+    _source
+    "bool ZoneRuntimeTable::exactRegistryLifecycleCallbackPhaseMatches("
+    "void ZoneRuntimeTable::bindGeneration("
+    _registry_callback_phase_matrix
+    "exact registry lifecycle callback phase matrix")
+foreach(_marker IN ITEMS
+    "binding.canonicalFor( binding.table_, &lifecycle, entry.key_)"
+    "controller.canonicalForBinding(&lifecycle, entry.key_)"
+    "controller.serializerRetained()"
+    "controller.poisoned()"
+    "case OwnershipPhase::UnpublishingCallback:"
+    "case OwnershipPhase::Cleaning:"
+    "case OwnershipPhase::Admitting:"
+    "case OwnershipPhase::UnloadingCallback:"
+    "ZoneRuntimeExecutionMode::Abandoning"
+    "ZoneRuntimeExecutionMode::Admitting"
+    "ZoneRuntimeExecutionMode::Unloading"
+    "ZoneRuntimeSetupStage::ScriptStringsBegun"
+    "ZoneRuntimeSetupStage::AllocationEnded"
+    "ZoneLoadTerminalKind::Abandoned"
+    "ZoneLoadTerminalKind::Unloaded"
+    "lifecycle.cleanupActive()"
+    "!lifecycle.cleanupActive()")
+    require_contains(
+        _registry_callback_phase_matrix "${_marker}"
+        "closed registry lifecycle callback phase matrix")
+endforeach()
+require_regex_count(
+    _registry_callback_phase_matrix
+    "case[ ]+OwnershipPhase::[A-Za-z]+Callback:|case[ ]+OwnershipPhase::(Cleaning|Admitting):"
+    4
+    "exact four registry-authorized ownership callback phases")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactRegistryLifecycleCallback("
+    "zone_load::ZoneLoadContextSlot *ZoneRuntimeTable::mutableLifecycle("
+    _registry_callback_authentication
+    "exact registry lifecycle callback authentication")
+foreach(_marker IN ITEMS
+    "HasKnownState(state_)"
+    "HasKnownSharedState(sharedState_)"
+    "ValidateUsableSlot(physicalSlot)"
+    "if (key.slot != physicalSlot)"
+    "entry.lifecycle_.generation() != key.generation"
+    "validateSharedComposition()"
+    "binding.canonicalFor(this, &entry.lifecycle_, key)"
+    "std::size_t activeMarkerCount = 0;"
+    "const ZoneRuntimeEntry *activeMarkerEntry = nullptr;"
+    "marker > Marker::ActiveRegistryBorrow"
+    "if (activeMarkerCount != 1)"
+    "activeMarkerEntry = &candidate;"
+    "if (activeMarkerEntry && activeMarkerEntry != &entry)"
+    "binding.callbackMarker_ == Marker::Idle"
+    "binding.callbackMarker_ == Marker::ActiveNoRegistry"
+    "return ZoneRuntimeTableStatus::Busy;"
+    "binding.callbackMarker_ != Marker::ActiveRegistryBorrow"
+    "activeMarkerCount != 1"
+    "tableStatus != ZoneRuntimeTableStatus::Busy"
+    "entry.scriptStringOwnership_.canonicalForBinding( &entry.lifecycle_, key)"
+    "exactRegistryLifecycleCallbackPhaseMatches(entry)"
+    "This one-shot gate // is defense in depth, not arbitrary longjmp containment: production // enrollment still requires the checked no-report callback adapters."
+    "binding.callbackMarker_ = Marker::ActiveNoRegistry;"
+    "return ZoneRuntimeTableStatus::Success;")
+    require_contains(
+        _registry_callback_authentication "${_marker}"
+        "whole-table sole-binding callback authentication")
+endforeach()
+require_ordered(
+    _registry_callback_authentication
+    "validateSharedComposition()"
+    "std::size_t activeMarkerCount = 0;"
+    "whole-table validation precedes sole callback-marker census")
+require_ordered(
+    _registry_callback_authentication
+    "binding.callbackMarker_ == Marker::ActiveNoRegistry"
+    "exactRegistryLifecycleCallbackPhaseMatches(entry)"
+    "non-authorized callbacks classify Busy before authority phase checks")
+require_ordered(
+    _registry_callback_authentication
+    "exactRegistryLifecycleCallbackPhaseMatches(entry)"
+    "binding.callbackMarker_ = Marker::ActiveNoRegistry;"
+    "exact phase authentication precedes one-shot authority consumption")
+require_ordered(
+    _registry_callback_authentication
+    "binding.callbackMarker_ = Marker::ActiveNoRegistry;"
+    "return ZoneRuntimeTableStatus::Success;"
+    "one-shot callback admission is consumed before Success publication")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTable::EnsureBoundGenerationUnreachable("
+    "ZoneRuntimeTable::PerformBoundGenerationCleanup("
+    _registry_unpublish_callback_window
+    "registry-authorized unpublish callback window")
+foreach(_marker IN ITEMS
+    "CallbackMarker::Idle"
+    "exactRegistryLifecycleCallbackPhaseMatches( *entry)"
+    "CallbackMarker::ActiveRegistryBorrow"
+    "CallbackMarker::ActiveNoRegistry"
+    "binding.callbacks_.ensureUnreachable( binding.callbacks_.context)"
+    "TryDiscardPendingCopyAdmission(")
+    require_contains(
+        _registry_unpublish_callback_window "${_marker}"
+        "unpublish callback registry boundary")
+endforeach()
+require_ordered(
+    _registry_unpublish_callback_window
+    "CallbackMarker::ActiveRegistryBorrow"
+    "binding.callbacks_.ensureUnreachable( binding.callbacks_.context)"
+    "unpublish callback publishes authority only before invocation")
+require_ordered(
+    _registry_unpublish_callback_window
+    "binding.callbacks_.ensureUnreachable( binding.callbacks_.context)"
+    "The external callback authority ends before any table-owned pending"
+    "unpublish callback revokes authority before internal pending work")
+require_ordered(
+    _registry_unpublish_callback_window
+    "The external callback authority ends before any table-owned pending"
+    "TryDiscardPendingCopyAdmission("
+    "unpublish callback remains no-registry through internal pending work")
+
+extract_slice(
+    _source
+    "ZoneRuntimeTable::PerformBoundGenerationCleanup("
+    "void ZoneRuntimeTable::CompleteBoundPendingAdmission("
+    _registry_cleanup_callback_window
+    "registry-authorized external cleanup callback window")
+foreach(_marker IN ITEMS
+    "CallbackMarker::ActiveNoRegistry"
+    "exactRegistryLifecycleCallbackPhaseMatches( *entry)"
+    "CallbackMarker::ActiveRegistryBorrow"
+    "binding.callbacks_.performExternalCleanup( binding.callbacks_.context, operation)"
+    "TryDiscardPendingCopyAdmission("
+    "TryInvalidateZoneStreams("
+    "TryDestroyZoneRuntimeStorage("
+    "TryEndAllocationReceipt("
+    "TryFreeAllocationReceipt(")
+    require_contains(
+        _registry_cleanup_callback_window "${_marker}"
+        "external cleanup callback registry boundary")
+endforeach()
+require_ordered(
+    _registry_cleanup_callback_window
+    "CallbackMarker::ActiveRegistryBorrow"
+    "binding.callbacks_.performExternalCleanup( binding.callbacks_.context, operation)"
+    "external cleanup publishes registry authority only for invocation")
+require_ordered(
+    _registry_cleanup_callback_window
+    "binding.callbacks_.performExternalCleanup( binding.callbacks_.context, operation)"
+    "if (status == CleanupResult::Success) { binding.callbackMarker_ = ZoneRuntimeGenerationBinding:: CallbackMarker::ActiveNoRegistry;"
+    "external cleanup revokes registry authority before internal work")
+
+extract_slice(
+    _source
+    "void ZoneRuntimeTable::CompleteBoundPendingAdmission("
+    "void ZoneRuntimeTable::AdmitBoundGeneration("
+    _registry_pending_completion_callback_window
+    "registry-authorized pending completion callback window")
+foreach(_marker IN ITEMS
+    "ZoneRuntimeTable *const table = binding.table_"
+    "const zone_load::ZoneLoadContextKey callbackKey = entry->key_"
+    "const ZoneRuntimeGenerationBinding::CallbackMarker resumeMarker"
+    "const ZoneRuntimeGenerationCallbacks callbackSnapshot = binding.callbacks_"
+    "!table->initialized()"
+    "CallbackMarker::ActiveNoRegistry"
+    "exactRegistryLifecycleCallbackPhaseMatches(*entry)"
+    "entry->scriptStringOwnership_.tryBeginRegistryCallbackWindow( zone_script_string_ownership:: ZoneScriptStringOwnershipPhase::Admitting)"
+    "table->poison();"
+    "CallbackMarker::ActiveRegistryBorrow"
+    "callbackSnapshot.completePendingAdmission(callbackSnapshot.context)"
+    "entry->key_ != callbackKey"
+    "!binding.callbacksMatch(callbackSnapshot)"
+    "binding.callbackMarker_ = resumeMarker;")
+    require_contains(
+        _registry_pending_completion_callback_window "${_marker}"
+        "nested pending completion registry boundary")
+endforeach()
+require_ordered(
+    _registry_pending_completion_callback_window
+    "exactRegistryLifecycleCallbackPhaseMatches(*entry)"
+    "entry->scriptStringOwnership_.tryBeginRegistryCallbackWindow( zone_script_string_ownership:: ZoneScriptStringOwnershipPhase::Admitting)"
+    "pending completion authenticates the exact phase before advancing its window")
+require_ordered(
+    _registry_pending_completion_callback_window
+    "entry->scriptStringOwnership_.tryBeginRegistryCallbackWindow( zone_script_string_ownership:: ZoneScriptStringOwnershipPhase::Admitting)"
+    "CallbackMarker::ActiveRegistryBorrow"
+    "pending completion advances the exact controller window before publishing table authority")
+require_ordered(
+    _registry_pending_completion_callback_window
+    "CallbackMarker::ActiveRegistryBorrow"
+    "callbackSnapshot.completePendingAdmission(callbackSnapshot.context)"
+    "pending completion publishes authority only for invocation")
+require_ordered(
+    _registry_pending_completion_callback_window
+    "callbackSnapshot.completePendingAdmission(callbackSnapshot.context)"
+    "binding.callbackMarker_ = resumeMarker;"
+    "pending completion post-authenticates before restoring the caller marker")
+require_substring_count(
+    _registry_pending_completion_callback_window
+    "exactRegistryLifecycleCallbackPhaseMatches(*entry)" 2
+    "pending completion has exact pre- and post-callback authentication")
+require_not_contains(
+    _registry_pending_completion_callback_window
+    "const bool registryWindow"
+    "pending completion cannot silently downgrade to a no-registry callback")
+
+extract_slice(
+    _source
+    "void ZoneRuntimeTable::AdmitBoundGeneration("
+    "ZoneRuntimeTableStatus ZoneRuntimeTable::completeMutableOperation("
+    _registry_admission_callback_window
+    "registry-authorized live admission callback window")
+foreach(_marker IN ITEMS
+    "ZoneRuntimeTable *const table = binding.table_"
+    "const zone_load::ZoneLoadContextKey callbackKey = entry->key_"
+    "const ZoneRuntimeGenerationCallbacks callbackSnapshot = binding.callbacks_"
+    "CallbackMarker::ActiveNoRegistry"
+    "FinalizePreparedPendingCopyAdmission("
+    "const auto pendingPhase"
+    "exactRegistryLifecycleCallbackPhaseMatches(*entry)"
+    "entry->scriptStringOwnership_.tryBeginRegistryCallbackWindow( zone_script_string_ownership:: ZoneScriptStringOwnershipPhase::Admitting)"
+    "table->poison();"
+    "CallbackMarker::ActiveRegistryBorrow"
+    "callbackSnapshot.admitLive(callbackSnapshot.context)"
+    "entry->key_ != callbackKey"
+    "!binding.callbacksMatch(callbackSnapshot)"
+    "CallbackMarker::Idle")
+    require_contains(
+        _registry_admission_callback_window "${_marker}"
+        "live admission callback registry boundary")
+endforeach()
+require_ordered(
+    _registry_admission_callback_window
+    "CallbackMarker::ActiveNoRegistry"
+    "FinalizePreparedPendingCopyAdmission("
+    "pending finalization remains internal no-registry work")
+require_ordered(
+    _registry_admission_callback_window
+    "FinalizePreparedPendingCopyAdmission("
+    "const auto pendingPhase"
+    "pending callback completes before its fail-closed post-authentication")
+require_ordered(
+    _registry_admission_callback_window
+    "exactRegistryLifecycleCallbackPhaseMatches(*entry)"
+    "entry->scriptStringOwnership_.tryBeginRegistryCallbackWindow( zone_script_string_ownership:: ZoneScriptStringOwnershipPhase::Admitting)"
+    "live admission authenticates the exact phase before advancing its window")
+require_ordered(
+    _registry_admission_callback_window
+    "entry->scriptStringOwnership_.tryBeginRegistryCallbackWindow( zone_script_string_ownership:: ZoneScriptStringOwnershipPhase::Admitting)"
+    "CallbackMarker::ActiveRegistryBorrow"
+    "live admission advances the exact controller window before publishing table authority")
+require_ordered(
+    _registry_admission_callback_window
+    "CallbackMarker::ActiveRegistryBorrow"
+    "callbackSnapshot.admitLive(callbackSnapshot.context)"
+    "live admission publishes authority only for invocation")
+require_ordered(
+    _registry_admission_callback_window
+    "callbackSnapshot.admitLive(callbackSnapshot.context)"
+    "binding.callbackMarker_ = ZoneRuntimeGenerationBinding::CallbackMarker::Idle;"
+    "live admission post-authenticates before revoking authority on return")
+require_substring_count(
+    _registry_admission_callback_window
+    "exactRegistryLifecycleCallbackPhaseMatches(*entry)" 2
+    "live admission has exact post-pending and post-live authentication")
+require_not_contains(
+    _registry_admission_callback_window
+    "const bool registryWindow"
+    "live admission cannot silently downgrade to a no-registry callback")
+foreach(_marker IN ITEMS
+    "void TestCompositeAdmissionStopsAfterPendingCallbackFailure()"
+    "ownership, UINT8_C(254), UINT8_C(254)"
+    "fixture.driver.pendingCompletionCalls == 0"
+    "fixture.driver.admitCalls == 0"
+    "!fixture.table->initialized()"
+    "ZoneScriptStringOwnershipPhase::UnsafeFailure"
+    "ownership->serializerRetained()")
+    require_contains(
+        _fixture "${_marker}"
+        "pending admission callback failure blocks the live side effect")
+endforeach()
+require_substring_count(
+    _source "Marker::ActiveRegistryBorrow" 9
+    "closed callback registry marker reference surface")
+require_substring_count(
+    _source "tryBeginRegistryCallbackWindow(" 2
+    "only the two nested admission callbacks advance controller windows from the table")
 
 # Writable outputs, retained callback descriptors, and stream descriptors are
 # attacker-controlled aliases at this API boundary. Freeze the shared overflow-
@@ -1996,6 +2301,7 @@ foreach(_marker IN ITEMS
     "void TestCompositeRecoverablePlacementAndRangeRejection()"
     "void TestCompositeStageOutputAliasPreflight()"
     "void TestCompositeCallbackContextAliasPreflightAndDrain()"
+    "void TestExactRegistryLifecycleCallbackMarkerClassification()"
     "void TestCompositeAbandonmentRetryAndReentryPreservation()"
     "void TestUnsafeLiveUnloadBoundary("
     "void ObserveAdmittingController(void *const context) noexcept"
@@ -2030,6 +2336,8 @@ foreach(_marker IN ITEMS
     "sizeof(ZoneRuntimeTable)"
     "ZoneRuntimeTableTestAccess::ReceiptCapsulePristine("
     "ZoneRuntimeTableTestAccess::SharedResourcesPristine("
+    "ZoneRuntimeTableTestAccess:: AuthenticateExactRegistryLifecycleCallback("
+    "ZoneRuntimeTableTestAccess::SetCallbackMarker("
     "TestPassiveReceiptPristineAuthentication()"
     "physical_memory::TryBegin("
     "zone_stream_ownership::TryBeginZoneStreamGeneration("
@@ -2050,6 +2358,71 @@ foreach(_marker IN ITEMS
     "std::string_view(argv[1]) != \"--unsafe-live-unload\""
     "Zone runtime table tests passed")
     require_contains(_fixture "${_marker}" "focused runtime coverage")
+endforeach()
+
+extract_slice(
+    _fixture
+    "void TestCompositeRuntimeLiveUnloadResetAndReuse()"
+    "void TestCompositePartialStageAbandonmentAndReuse()"
+    _registry_admission_unload_fixture
+    "admission and unload callback registry authorization fixture")
+foreach(_marker IN ITEMS
+    "pendingRegistryAuthentication == ZoneRuntimeTableStatus::Success"
+    "pendingRegistryReauthentication == ZoneRuntimeTableStatus::Busy"
+    "pendingOwnershipPhase == ZoneScriptStringOwnershipPhase::Admitting"
+    "admitRegistryAuthentication == ZoneRuntimeTableStatus::Success"
+    "admitRegistryReauthentication == ZoneRuntimeTableStatus::Busy"
+    "admitOwnershipPhase == ZoneScriptStringOwnershipPhase::Admitting"
+    "externalRegistryAuthentication[index] == ZoneRuntimeTableStatus::Success"
+    "externalRegistryReauthentication[index] == ZoneRuntimeTableStatus::Busy"
+    "externalOwnershipPhases[index] == ZoneScriptStringOwnershipPhase::UnloadingCallback")
+    require_contains(
+        _registry_admission_unload_fixture "${_marker}"
+        "real admission and unload callback phase authorization")
+endforeach()
+
+extract_slice(
+    _fixture
+    "void TestExactRegistryLifecycleCallbackMarkerClassification()"
+    "void TestCompositeAbandonmentRetryAndReentryPreservation()"
+    _registry_callback_marker_fixture
+    "callback registry marker classification fixture")
+foreach(_marker IN ITEMS
+    "AuthenticateExactRegistryLifecycleCallback( nullptr, ordinary.physicalSlot, ordinary.key)"
+    "ZoneRuntimeTableStatus::InvalidArgument"
+    "ZoneRuntimeTableStatus::InvalidKey"
+    "ZoneRuntimeTableStatus::InvalidSlot"
+    "ZoneRuntimeTableStatus::StaleKey"
+    "ZoneRuntimeTableStatus::Busy"
+    "SetCallbackMarker( ordinary.table.get(), ordinary.physicalSlot, 1)"
+    "SetCallbackMarker( forgedAuthority.table.get(), forgedAuthority.physicalSlot, 2)"
+    "SetCallbackMarker( unknownMarker.table.get(), unknownMarker.physicalSlot, 3)"
+    "ZoneRuntimeTableStatus::UnsafeFailure"
+    "!forgedAuthority.table->initialized()"
+    "!unknownMarker.table->initialized()")
+    require_contains(
+        _registry_callback_marker_fixture "${_marker}"
+        "Busy ordinary callback and poisoned authority contradictions")
+endforeach()
+
+extract_slice(
+    _fixture
+    "void TestCompositeAbandonmentRetryAndReentryPreservation()"
+    "void TestUnsafeLiveUnloadBoundary("
+    _registry_unpublish_cleanup_fixture
+    "unpublish and cleanup callback registry authorization fixture")
+foreach(_marker IN ITEMS
+    "ensureRegistryAuthentications[0] == ZoneRuntimeTableStatus::Success"
+    "ensureRejectedRegistryAuthentication == ZoneRuntimeTableStatus::StaleKey"
+    "ensureRegistryReauthentications[0] == ZoneRuntimeTableStatus::Busy"
+    "ensureOwnershipPhases[0] == ZoneScriptStringOwnershipPhase::UnpublishingCallback"
+    "observedCleaningEnsure"
+    "externalRegistryAuthentication[index] == ZoneRuntimeTableStatus::Success"
+    "externalRegistryReauthentication[index] == ZoneRuntimeTableStatus::Busy"
+    "externalOwnershipPhases[index] == ZoneScriptStringOwnershipPhase::Cleaning")
+    require_contains(
+        _registry_unpublish_cleanup_fixture "${_marker}"
+        "real unpublish and cleanup callback phase authorization")
 endforeach()
 
 extract_slice(
