@@ -67,11 +67,23 @@ else()
             "Physical-memory symbol inspection failed (${symbol_result}):\n"
             "${all_symbols}${symbol_error}")
     endif()
-    foreach(local_name IN ITEMS g_mem g_overAllocatedSize)
-        if(NOT all_symbols MATCHES
-           "\\(anonymous namespace\\)::${local_name}([\n\r]|$)")
+    # Apple nm retains Mach-O's extra leading underscore when -C cannot
+    # demangle a local Itanium symbol. Accept only the exact anonymous-
+    # namespace spelling emitted in either form; the -g scan below still
+    # independently proves that neither symbol has external linkage.
+    foreach(local_symbol IN ITEMS "g_mem|5" "g_overAllocatedSize|19")
+        string(REPLACE "|" ";" local_fields "${local_symbol}")
+        list(GET local_fields 0 local_name)
+        list(GET local_fields 1 local_name_length)
+        string(REGEX MATCHALL "[^\n\r]*${local_name}[^\n\r]*"
+            matching_lines "${all_symbols}")
+        if(NOT matching_lines MATCHES
+               "\\(anonymous namespace\\)::${local_name}([^A-Za-z0-9_]|$)"
+           AND NOT matching_lines MATCHES
+               "_+ZN12_GLOBAL__N_1L${local_name_length}${local_name}E([^A-Za-z0-9_]|$)")
             message(FATAL_ERROR
-                "Macro-off PMem object omitted anonymous local ${local_name}")
+                "Macro-off PMem object omitted anonymous local ${local_name}:\n"
+                "${all_symbols}")
         endif()
     endforeach()
 
