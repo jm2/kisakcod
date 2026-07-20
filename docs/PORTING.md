@@ -641,9 +641,11 @@ Completed foundation work:
   constructed entry capacity, pointer parity, and teardown, while the exact non-null acquisition demand remains zero
   through storage/stream enrollment and publishes only after a successful ownership begin. Capacity greater than demand,
   zero demand with nonzero capacity, full-capacity alias preflight, oversized-demand rejection/retry, and terminal
-  teardown/reset are covered. Full native CTest passes **157/157**; focused GCC source/runtime/security is **5/5**,
-  Clang and ASan+UBSan runtime selections are **2/2** each, genuine i386/AArch64 builds emit the expected ELF classes,
-  and two independent audits are clean. This prerequisite remains unenrolled pending hosted/review publication. A
+  teardown/reset are covered. Gemini review found the missing symmetric pointer/capacity preflight; follow-up head
+  `d8f70aef68a8bb3c986a3ae75be58cd785661a19` rejects both mismatched storage pairs before authentication and adds
+  runtime/source seals. Full native CTest passes **157/157**; the follow-up's focused GCC, Clang, and ASan+UBSan
+  runtime/source/security selections pass **3/3** each, genuine i386/AArch64 builds emit the expected ELF classes, and
+  two independent audits are clean. This prerequisite remains unenrolled pending hosted/re-review publication. A
   production-neutral externally serialized runtime/registry facade and then the atomic seven-site loader cutover follow;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the

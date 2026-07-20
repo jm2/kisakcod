@@ -133,9 +133,11 @@ work item changes. Do not create session-specific handoff files.
   exact master commit. This completes the production-neutral exact-key adapter queue item. Capacity/demand implementation
   head `a927c2e712d5c7b56ff2a696d11f6c304bc5cc57` preserves the 52-byte plan and planner signature while making the planned
   entry extent capacity-driven and publishing actual acquisition demand only after successful ownership begin. It
-  remains production-neutral. Full native CTest passes **157/157**; focused GCC source/runtime/security is **5/5**,
-  Clang and ASan+UBSan runtime selections are **2/2** each, genuine i386/AArch64 targets compile and link with the correct
-  ELF classes, and two independent audits are clean. The hosted/review publication gate is active; an externally
+  remains production-neutral. Gemini review found one missing symmetric storage-pointer/capacity preflight; follow-up
+  head `d8f70aef68a8bb3c986a3ae75be58cd785661a19` rejects both mismatched forms before keyed authentication and seals both
+  directions with runtime and source regressions. Full native CTest passes **157/157**; the follow-up's focused
+  GCC/Clang/ASan+UBSan runtime/source/security selections pass **3/3** each, genuine i386/AArch64 targets compile and link
+  with the correct ELF classes, and two independent audits are clean. The hosted/re-review publication gate is active; an externally
   serialized facade and then one atomic seven-site loader cutover follow. Strict requested-target delivery remains
   **0/5**.
 - Merged script-string ownership foundation: PR #48 adds a dedicated recursive outer DB transaction
@@ -1914,7 +1916,7 @@ PR #71 merged the production-neutral exact-key component adapters and strict tab
 `49184106a106d1b115097b96f541ac03551e90e5`. Exact final head `3f39881cb4f8d5145e01904d95f34c09512b070d`
 passed all nine jobs in run **29764928195** with clean exact-head Codex and Gemini reviews and zero unresolved threads;
 authoritative post-merge run **29765949587** also passed all nine jobs. Production enrollment remains zero. Implementation
-head `a927c2e7` completes the ABI-neutral capacity/demand prerequisite: the plan's 52-byte layout and planner signature stay
+head `d8f70aef` completes the ABI-neutral capacity/demand prerequisite and its canonical storage-pair review fix: the plan's 52-byte layout and planner signature stay
 fixed, its first field is constructed script-string capacity, and exact non-null acquisition demand is published only
 after a successful ownership begin. Full native CTest is **157/157**; focused GCC/Clang/sanitizer, source/security,
 genuine i386/AArch64 compile-link, and independent-audit gates are green.

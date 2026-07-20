@@ -146,8 +146,10 @@ Implementation head `a927c2e712d5c7b56ff2a696d11f6c304bc5cc57` then separates th
 capacity from exact acquisition demand without changing its 52-byte layout or planner signature. Capacity now drives
 entry extent, pointer parity, construction, alias preflight, and destruction; demand stays zero until successful
 ownership begin. Capacity 3/demand 1, capacity 3/demand 0, oversized rejection/retry, and terminal teardown/reset are
-covered. Full native **157/157**, focused GCC **5/5**, Clang/sanitizer **2/2**, genuine i386/AArch64 compile-link, and two
-independent audits pass. The next sequence is an externally serialized production-neutral facade and one atomic
+covered. Gemini review found one missing symmetric storage-pointer/capacity preflight; follow-up head
+`d8f70aef68a8bb3c986a3ae75be58cd785661a19` rejects both mismatched forms before keyed authentication and seals them in
+runtime/source tests. Full native **157/157**, focused follow-up GCC/Clang/sanitizer **3/3**, genuine i386/AArch64
+compile-link, and two independent audits pass. The next sequence is an externally serialized production-neutral facade and one atomic
 seven-site loader cutover.
 
 Merged PR #61's production-neutral zone-stream ownership stack adds one
