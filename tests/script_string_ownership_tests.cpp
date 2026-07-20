@@ -16,6 +16,34 @@
 
 FastCriticalSection db_hashCritSect{};
 
+// This standalone production-stack fixture intentionally links the registry
+// coordinator without the zone ownership controller. Callback-borrow mode is
+// outside its scope, so satisfy that private linkage boundary with fail-closed
+// definitions; the dedicated coordinator/controller tests link the real
+// implementation and exercise the callback path.
+namespace db::zone_script_string_ownership
+{
+bool ZoneScriptStringOwnershipController::
+trySnapshotRegistryCallbackTransaction(
+    const zone_load::ZoneLoadContextKey &,
+    std::uint32_t *,
+    RegistryCallbackPurpose *,
+    std::uint8_t *) const noexcept
+{
+    return false;
+}
+
+bool ZoneScriptStringOwnershipController::
+authenticatesRegistryCallbackTransaction(
+    const zone_load::ZoneLoadContextKey &,
+    const std::uint32_t,
+    const RegistryCallbackPurpose,
+    const std::uint8_t) const noexcept
+{
+    return false;
+}
+} // namespace db::zone_script_string_ownership
+
 namespace
 {
 static_assert(sizeof(script_string::OwnershipBatch) == 0x20);

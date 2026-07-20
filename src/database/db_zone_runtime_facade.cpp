@@ -995,6 +995,56 @@ RegistryOwnershipStatus ZoneRuntimeFacade::TryBorrowRegistryOwnership(
     const ZoneRuntimeTableStatus tableStatus = completeTableOperation(
         TryGetZoneRuntimeGeneration(
             &table, physicalSlot, key, &view));
+    if (tableStatus == ZoneRuntimeTableStatus::Busy)
+    {
+        const ZoneRuntimeTableStatus callbackStatus =
+            completeTableOperation(
+                table.authenticateExactRegistryLifecycleCallback(
+                    physicalSlot, key));
+        if (callbackStatus != ZoneRuntimeTableStatus::Success)
+            return MapTableStatusToRegistryStatus(callbackStatus);
+        if (!zone_slots::IsUsableZoneSlot(physicalSlot)
+            || !static_cast<bool>(key) || key.slot != physicalSlot)
+        {
+            poisonAccess();
+            return RegistryOwnershipStatus::UnsafeFailure;
+        }
+        const RegistryOwnershipStatus callbackBorrow =
+            RunRegistryOperation(
+                [&table, physicalSlot, &key]() noexcept {
+                    return registry_ownership::
+                        RegistryOwnershipCoordinatorFacade::
+                            TryBorrowActiveRuntimeCallback(
+                                table.entries_[physicalSlot]
+                                    .scriptStringOwnership(),
+                                key);
+                });
+        if (callbackBorrow != RegistryOwnershipStatus::Busy)
+            return callbackBorrow;
+
+        // Recoverable coordinator admission contention establishes no
+        // retained coordinator authority. After reauthenticating that the
+        // coordinator is inactive, restore the exact one-shot marker while
+        // this same synchronous callback and facade serializer remain active
+        // so its caller may retry. Every other coordinator result keeps the
+        // admission consumed.
+        if (authenticateTableOperationAccess()
+            != ZoneRuntimeTableStatus::Success)
+        {
+            poisonAccess();
+            return RegistryOwnershipStatus::UnsafeFailure;
+        }
+        const ZoneRuntimeTableStatus restoreStatus =
+            completeTableOperation(
+                table.restoreExactRegistryLifecycleCallback(
+                    physicalSlot, key));
+        if (restoreStatus != ZoneRuntimeTableStatus::Success)
+        {
+            poisonAccess();
+            return RegistryOwnershipStatus::UnsafeFailure;
+        }
+        return callbackBorrow;
+    }
     if (tableStatus != ZoneRuntimeTableStatus::Success)
     {
         if (tableStatus == ZoneRuntimeTableStatus::UnsafeFailure)

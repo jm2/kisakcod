@@ -45,6 +45,11 @@ private:
         const zone_script_string_ownership::
             ZoneScriptStringOwnershipController &controller,
         const zone_load::ZoneLoadContextKey &expectedKey) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus
+    TryBorrowActiveRuntimeCallback(
+        const zone_script_string_ownership::
+            ZoneScriptStringOwnershipController &controller,
+        const zone_load::ZoneLoadContextKey &expectedKey) noexcept;
     [[nodiscard]] static RegistryOwnershipStatus Finish() noexcept;
     [[nodiscard]] static RegistryOwnershipStatus ValidateInactive() noexcept;
     [[nodiscard]] static RegistryOwnershipStatus ValidateActive() noexcept;
@@ -109,9 +114,11 @@ enum class RegistryOwnershipCoordinatorPhase : std::uint8_t
 
 enum class RegistryOwnershipCoordinatorMode : std::uint8_t
 {
-    None,
-    Standalone,
-    BorrowedZoneController,
+    None = 0,
+    Standalone = 1,
+    BorrowedZoneController = 2,
+    // Appended so the established mode values above remain stable.
+    BorrowedActiveRuntimeCallback = 3,
 };
 
 enum class RegistryOwnershipStatus : std::uint8_t
@@ -267,7 +274,15 @@ private:
         const zone_script_string_ownership::
             ZoneScriptStringOwnershipController *,
         const zone_load::ZoneLoadContextKey &,
-        std::uint32_t) noexcept;
+        std::uint32_t,
+        std::uint8_t,
+        std::uint8_t) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus tryBorrowController(
+        RegistryOwnershipCoordinator *,
+        const zone_script_string_ownership::
+            ZoneScriptStringOwnershipController *,
+        const zone_load::ZoneLoadContextKey &,
+        RegistryOwnershipCoordinatorMode) noexcept;
     [[nodiscard]] static RegistryOwnershipStatus beginOperation(
         RegistryOwnershipCoordinator *) noexcept;
     [[nodiscard]] static RegistryOwnershipStatus finishOperation(
@@ -298,13 +313,13 @@ private:
         RegistryOwnershipCoordinatorPhase::Empty;
     RegistryOwnershipCoordinatorPhase phaseMirror_ =
         RegistryOwnershipCoordinatorPhase::Empty;
-    RegistryOwnershipCoordinatorMode mode_ =
-        RegistryOwnershipCoordinatorMode::None;
-    RegistryOwnershipCoordinatorMode modeMirror_ =
-        RegistryOwnershipCoordinatorMode::None;
     bool hashLockRetained_ = false;
     bool hashLockRetainedMirror_ = false;
-    std::uint8_t reserved_[2]{};
+    // These two packed receipts preserve the established ABI while retaining
+    // the mode, callback purpose, and exact nonzero callback-window witness.
+    // All access goes through the coordinator's validated packing helpers.
+    std::uint16_t modeCallbackReceipt_ = 0;
+    std::uint16_t modeCallbackReceiptMirror_ = 0;
 };
 
 RUNTIME_SIZE(RegistryOwnershipCoordinator, 0x78, 0x80);
@@ -368,11 +383,20 @@ TryRegistryTransferDatabaseUsers4To8(
 #if defined(KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING)
 struct RegistryOwnershipCoordinatorTestAccess final
 {
+    [[nodiscard]] static RegistryOwnershipStatus
+    TryBorrowActiveRuntimeCallback(
+        RegistryOwnershipCoordinator *coordinator,
+        const zone_script_string_ownership::
+            ZoneScriptStringOwnershipController *controller,
+        const zone_load::ZoneLoadContextKey &expectedKey) noexcept;
     static script_string::OwnershipBatch &OperationBatch(
         RegistryOwnershipCoordinator *coordinator) noexcept;
-    static void SetReserved(
+    static void SetCallbackReceipt(
         RegistryOwnershipCoordinator *coordinator,
-        std::uint8_t reserved) noexcept;
+        std::uint8_t callbackPurpose,
+        std::uint8_t callbackPurposeMirror,
+        std::uint8_t callbackWindowWitness,
+        std::uint8_t callbackWindowWitnessMirror) noexcept;
     static void SetRepresentationMirrors(
         RegistryOwnershipCoordinator *coordinator,
         std::uint64_t serialMirror,
@@ -407,7 +431,9 @@ void SetRegistryOwnershipCoordinatorGlobalMirrorsForTesting(
     std::uint8_t mode,
     std::uint8_t modeMirror,
     bool hashRetained,
-    bool hashRetainedMirror) noexcept;
+    bool hashRetainedMirror,
+    std::uint8_t callbackWindowWitness,
+    std::uint8_t callbackWindowWitnessMirror) noexcept;
 #endif
 
 } // namespace db::registry_ownership

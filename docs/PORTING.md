@@ -639,16 +639,24 @@ Completed foundation work:
 - PR #72 exact final head `0c1354c05c92f2f9e66ce285d85d71c90a4119eb` passed all nine jobs in run **29768665063**
   with clean exact-head Codex/Gemini review and zero unresolved threads. It squash-merged the ABI-neutral journal
   capacity/demand split and symmetric storage-pair preflight as `64dfc8c9e3b930a7ef7760b794e37320471280c3`;
-  authoritative post-merge run **29770265354** passed all nine jobs. The current branch completes the production-neutral
+  authoritative post-merge run **29770265354** passed all nine jobs. PR #73 completed the production-neutral
   serialized runtime/registry facade prerequisite: one process-lifetime nonblocking outer serializer, mirrored
   global/TLS authority, private coordinator storage/admission, exact composite table/registry forwarding, release refusal
   while child authority remains, fail-closed status validation, and reviewed output, retained-descriptor, and
   mutation-crossing aggregate-input alias separation. Exact method-to-adapter/source seals, realistic forwarding
   fixtures, and a portable macro-off object close the final review gaps. It exposes no raw table/coordinator/admission
-  authority, preserves all seven frozen sites, and enrolls no loader caller. Rebased source-tree checkpoint `65f4bbab`
-  passes full GCC and Clang CTest **160/160** each, ASan+UBSan facade/source/security **4/4**, macro-off GCC/Clang,
-  source/security, plus genuine i386/AArch64 compile-link gates. Facade publication and then the atomic seven-site
-  loader cutover follow;
+  authority, preserves all seven frozen sites, and enrolls no loader caller. Final head `7afb2ca5` passed all nine jobs
+  in run **29781843001**, squash-merged as `909f9309`, and passed authoritative post-merge run **29782835695**. The
+  PR #74 adds a private exact-key callback borrow for Unpublishing, Cleaning, Admitting, and Unloading, bound to
+  the owning thread, transaction, purpose, and a mirrored non-wrapping callback-window witness. It preserves zero
+  production enrollment and locally passes full GCC CTest **160/160**, focused Clang/ASan+UBSan, source/security, and
+  genuine i386/AArch64 gates at `65ced175`. Initial exact head `c0691426` passed all nine hosted jobs in run
+  **29785681754**. Review repair `3ed88879` independently masks receipt fields and permits same-callback retry only after
+  recoverable coordinator admission contention, inactive reauthentication, and exact marker restoration; all other
+  outcomes remain one-shot. Full GCC CTest **160/160**, focused Clang/ASan+UBSan, source/security, genuine
+  i386/AArch64, and two independent audits pass on that repair tree. Final exact-head review/CI, merge, authoritative
+  post-merge CI, and a literal full-chain fixture remain. The remaining loader prerequisites precede the atomic
+  seven-site cutover;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -762,9 +770,11 @@ Remaining gates, in implementation order:
    names plus the bounded diagnostic snapshot/read-report split, `852e7db9` adds the unused permanent-Ended process-life
    `$init` controller, and `792ff1c7` completes passive table-wide singleton authentication. PR #71 merged exact-key
    component composition plus the strict allocation/staging/admission/abandonment/unload/drain/reset table controller
-   without enrolling a caller. PR #72 merged the capacity/demand prerequisite, and the current branch completes the
-   serialized facade locally. After facade publication, atomically bind the loader across all seven sites; partial
-   enrollment remains forbidden. Keep static controller
+   without enrolling a caller. PR #72 merged the capacity/demand prerequisite and PR #73 merged the serialized facade.
+   PR #74 publishes the private callback-borrow prerequisite without enrolling a caller. Its initial nine-job hosted
+   run passed; both initial review findings are repaired locally at `3ed88879`, with final exact-head review/CI and merge
+   pending. After that merge and the remaining pending-copy/context/no-report prerequisites, atomically bind the loader
+   across all seven sites; partial enrollment remains forbidden. Keep static controller
    slots and callback metadata
    outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
@@ -1760,9 +1770,10 @@ indexing/failure-atomic prerequisite, PR #69 merged global-state encapsulation p
 PR #70 merged serialized runtime/process-controller/passive shared-resource authentication, and PR #71 merged the
 production-neutral exact-key adapter layer, strict table orchestration, exact PMem terminal evidence, alias/overlap
 hardening, adversarial composition coverage, and the optimized-Win32 fixture repair. PR #72 merged the capacity/demand
-prerequisite, and the current branch completes the production-neutral serialized facade locally without enrolling a
-loader caller. The ancestry checkpoint records reviewed history without importing code and therefore does not inflate
-the engineering estimate.
+prerequisite and PR #73 merged the production-neutral serialized facade. PR #74 publishes the private callback-borrow
+prerequisite without enrolling a loader caller; its initial hosted CI passed all nine jobs, both initial review findings
+are repaired at `3ed88879`, and final exact-head review/CI plus merge remain. The ancestry checkpoint records reviewed
+history without importing code and therefore does not inflate the engineering estimate.
 Windows x86 is about
 **93%**, shared
 foundations/security about **89%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
@@ -2075,8 +2086,9 @@ the MP/SP PMem lock slots and `716eacc1` adds serialized global lifecycle/alloca
 authentication, and coherent initialization state; `0a9128aa` completes stable owned names and bounded dump snapshots;
 `852e7db9` adds the unused permanent-Ended process-life `$init` controller; and `792ff1c7` completes passive shared-
 resource authentication. PR #71 completes the exact-key adapter/controller layer, PR #72 merges the capacity/demand
-prerequisite, and the current branch completes the serialized facade locally; facade publication and atomic
-checked/loader enrollment remain. Merged PR #61 adds
+prerequisite, and PR #73 merges the serialized facade. PR #74 publishes callback-scoped registry borrowing with initial
+nine-job hosted CI green and both initial review findings repaired locally at `3ed88879`; final exact-head review/CI,
+merge, the other loader prerequisites, and atomic checked/loader enrollment remain. Merged PR #61 adds
 exact-key stream/alias
 bind and invalidation with a typed aligned
 zone identity, hardened production-neutrality seal, stale-terminal retry safety, complete relocation-capacity release,
@@ -2119,9 +2131,11 @@ resolved. PR #66 merged the exact tree-neutral ancestry checkpoint
 passed all nine jobs. PR #68 merged the legacy PMem indexing repair, PR #69 merged the hidden-state/object seal, and no
 production site is enrolled. PR #70 merged the serialized PMem boundary, process-life controller, and passive
 shared-resource authentication as `6a67a66e`; exact final head `ca2d1149` ultimately passed all nine jobs in run
-**29726370638**. PR #71 completes the exact-key composite adapters and PR #72 merges the capacity/demand prerequisite;
-the current branch completes the serialized facade locally but enrolls no caller. After its publication, enroll all seven
-sites atomically:
+**29726370638**. PR #71 completes the exact-key composite adapters, PR #72 merges the capacity/demand prerequisite, and
+PR #73 merges the serialized facade. PR #74 publishes private exact-key callback borrowing but enrolls no caller; its
+initial hosted CI passed all nine jobs, both initial review findings are repaired at `3ed88879`, and final exact-head
+review/CI plus merge remain. After merging it and completing the remaining loader prerequisites, enroll all seven sites
+atomically:
 five coordinator operations plus two exact-key
 root-journal stages. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses

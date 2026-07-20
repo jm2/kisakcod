@@ -64,6 +64,10 @@ zone_load::ZoneLoadContextKey s_borrowedKey{};
 zone_load::ZoneLoadContextKey s_borrowedKeyMirror{};
 std::uint32_t s_outerTransactionSerial = 0;
 std::uint32_t s_outerTransactionSerialMirror = 0;
+std::uint8_t s_borrowedCallbackPurpose = 0;
+std::uint8_t s_borrowedCallbackPurposeMirror = 0;
+std::uint8_t s_borrowedCallbackWindowWitness = 0;
+std::uint8_t s_borrowedCallbackWindowWitnessMirror = 0;
 RegistryOwnershipCoordinatorPhase s_activePhase =
     RegistryOwnershipCoordinatorPhase::Empty;
 RegistryOwnershipCoordinatorPhase s_activePhaseMirror =
@@ -94,6 +98,81 @@ enum class FacadeCoordinatorStorageClassification : std::uint8_t
 };
 
 void PoisonRegistryBoundary() noexcept;
+
+[[nodiscard]] constexpr bool IsRegistryCallbackPurpose(
+    const std::uint8_t purpose) noexcept
+{
+    return purpose >= 1 && purpose <= 4;
+}
+
+constexpr std::uint16_t kCoordinatorReceiptModeMask = UINT16_C(0x0003);
+constexpr std::uint16_t kCoordinatorReceiptPurposeMask = UINT16_C(0x001C);
+constexpr std::uint16_t kCoordinatorReceiptPurposeShift = 2;
+constexpr std::uint16_t kCoordinatorReceiptWitnessMask = UINT16_C(0x1FE0);
+constexpr std::uint16_t kCoordinatorReceiptWitnessShift = 5;
+constexpr std::uint16_t kCoordinatorReceiptKnownMask = UINT16_C(0x1FFF);
+
+[[nodiscard]] constexpr std::uint16_t MakeModeCallbackReceipt(
+    const RegistryOwnershipCoordinatorMode mode,
+    const std::uint8_t purpose,
+    const std::uint8_t windowWitness) noexcept
+{
+    return (static_cast<std::uint16_t>(mode)
+               & kCoordinatorReceiptModeMask)
+        | ((static_cast<std::uint16_t>(purpose)
+               << kCoordinatorReceiptPurposeShift)
+            & kCoordinatorReceiptPurposeMask)
+        | ((static_cast<std::uint16_t>(windowWitness)
+               << kCoordinatorReceiptWitnessShift)
+            & kCoordinatorReceiptWitnessMask);
+}
+
+[[nodiscard]] constexpr RegistryOwnershipCoordinatorMode ReceiptMode(
+    const std::uint16_t receipt) noexcept
+{
+    return static_cast<RegistryOwnershipCoordinatorMode>(
+        receipt & kCoordinatorReceiptModeMask);
+}
+
+[[nodiscard]] constexpr std::uint8_t ReceiptCallbackPurpose(
+    const std::uint16_t receipt) noexcept
+{
+    return static_cast<std::uint8_t>(
+        (receipt & kCoordinatorReceiptPurposeMask)
+        >> kCoordinatorReceiptPurposeShift);
+}
+
+[[nodiscard]] constexpr std::uint8_t ReceiptCallbackWindowWitness(
+    const std::uint16_t receipt) noexcept
+{
+    return static_cast<std::uint8_t>(
+        (receipt & kCoordinatorReceiptWitnessMask)
+        >> kCoordinatorReceiptWitnessShift);
+}
+
+[[nodiscard]] constexpr bool IsModeCallbackReceiptCanonical(
+    const std::uint16_t receipt) noexcept
+{
+    if ((receipt & static_cast<std::uint16_t>(~kCoordinatorReceiptKnownMask))
+        != 0)
+    {
+        return false;
+    }
+    const RegistryOwnershipCoordinatorMode mode = ReceiptMode(receipt);
+    const std::uint8_t purpose = ReceiptCallbackPurpose(receipt);
+    const std::uint8_t witness = ReceiptCallbackWindowWitness(receipt);
+    switch (mode)
+    {
+    case RegistryOwnershipCoordinatorMode::None:
+    case RegistryOwnershipCoordinatorMode::Standalone:
+    case RegistryOwnershipCoordinatorMode::BorrowedZoneController:
+        return purpose == 0 && witness == 0;
+    case RegistryOwnershipCoordinatorMode::BorrowedActiveRuntimeCallback:
+        return IsRegistryCallbackPurpose(purpose) && witness != 0;
+    default:
+        return false;
+    }
+}
 
 [[nodiscard]] bool AddressRangesAreDisjoint(
     const void *const leftStorage,
@@ -256,6 +335,10 @@ ClassifyRegistryBoundary() noexcept
         && s_borrowedKeyMirror == zone_load::ZoneLoadContextKey{}
         && s_outerTransactionSerial == 0
         && s_outerTransactionSerialMirror == 0
+        && s_borrowedCallbackPurpose == 0
+        && s_borrowedCallbackPurposeMirror == 0
+        && s_borrowedCallbackWindowWitness == 0
+        && s_borrowedCallbackWindowWitnessMirror == 0
         && s_activePhase == RegistryOwnershipCoordinatorPhase::Empty
         && s_activePhaseMirror == RegistryOwnershipCoordinatorPhase::Empty
         && s_activeMode == RegistryOwnershipCoordinatorMode::None
@@ -278,6 +361,10 @@ ClassifyRegistryBoundary() noexcept
         && s_activeMode == s_activeModeMirror
         && s_outerTransactionSerial != 0
         && s_outerTransactionSerial == s_outerTransactionSerialMirror
+        && s_borrowedCallbackPurpose
+            == s_borrowedCallbackPurposeMirror
+        && s_borrowedCallbackWindowWitness
+            == s_borrowedCallbackWindowWitnessMirror
         && IsActivePhaseHashCombinationValid();
     if (!activeBase)
         return RegistryBoundaryClassification::Torn;
@@ -289,6 +376,8 @@ ClassifyRegistryBoundary() noexcept
                 && s_borrowedControllerAddressMirror == 0
                 && s_borrowedKey == zone_load::ZoneLoadContextKey{}
                 && s_borrowedKeyMirror == zone_load::ZoneLoadContextKey{}
+                && s_borrowedCallbackPurpose == 0
+                && s_borrowedCallbackWindowWitness == 0
             ? RegistryBoundaryClassification::Active
             : RegistryBoundaryClassification::Torn;
     case RegistryOwnershipCoordinatorMode::BorrowedZoneController:
@@ -297,6 +386,18 @@ ClassifyRegistryBoundary() noexcept
                     == s_borrowedControllerAddressMirror
                 && static_cast<bool>(s_borrowedKey)
                 && s_borrowedKey == s_borrowedKeyMirror
+                && s_borrowedCallbackPurpose == 0
+                && s_borrowedCallbackWindowWitness == 0
+            ? RegistryBoundaryClassification::Active
+            : RegistryBoundaryClassification::Torn;
+    case RegistryOwnershipCoordinatorMode::BorrowedActiveRuntimeCallback:
+        return s_borrowedControllerAddress != 0
+                && s_borrowedControllerAddress
+                    == s_borrowedControllerAddressMirror
+                && static_cast<bool>(s_borrowedKey)
+                && s_borrowedKey == s_borrowedKeyMirror
+                && IsRegistryCallbackPurpose(s_borrowedCallbackPurpose)
+                && s_borrowedCallbackWindowWitness != 0
             ? RegistryBoundaryClassification::Active
             : RegistryBoundaryClassification::Torn;
     case RegistryOwnershipCoordinatorMode::None:
@@ -325,6 +426,10 @@ void ClearRegistryBoundary() noexcept
     s_borrowedKeyMirror = {};
     s_outerTransactionSerial = 0;
     s_outerTransactionSerialMirror = 0;
+    s_borrowedCallbackPurpose = 0;
+    s_borrowedCallbackPurposeMirror = 0;
+    s_borrowedCallbackWindowWitness = 0;
+    s_borrowedCallbackWindowWitnessMirror = 0;
     s_activePhase = RegistryOwnershipCoordinatorPhase::Empty;
     s_activePhaseMirror = RegistryOwnershipCoordinatorPhase::Empty;
     s_activeMode = RegistryOwnershipCoordinatorMode::None;
@@ -484,6 +589,29 @@ RegistryOwnershipStatus RegistryOwnershipCoordinatorFacade::TryBorrow(
 }
 
 RegistryOwnershipStatus RegistryOwnershipCoordinatorFacade::
+    TryBorrowActiveRuntimeCallback(
+        const zone_script_string_ownership::
+            ZoneScriptStringOwnershipController &controller,
+        const zone_load::ZoneLoadContextKey &expectedKey) noexcept
+{
+    RegistryOwnershipCoordinator *coordinator = nullptr;
+    const RegistryOwnershipStatus storageStatus =
+        GetOrConstructFacadeCoordinator(&coordinator);
+    if (storageStatus != RegistryOwnershipStatus::Success)
+        return storageStatus;
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+
+    return RegistryOwnershipCoordinator::tryBorrowController(
+        coordinator,
+        &controller,
+        expectedKey,
+        RegistryOwnershipCoordinatorMode::BorrowedActiveRuntimeCallback);
+}
+
+RegistryOwnershipStatus RegistryOwnershipCoordinatorFacade::
     authenticateConstructedStorage(
         RegistryOwnershipCoordinator *const coordinator) noexcept
 {
@@ -631,6 +759,14 @@ bool RegistryOwnershipCoordinatorFacade::WritableOutputIsSeparated(
             output, outputSize, s_outerTransactionSerial)
         && OutputIsSeparateFrom(
             output, outputSize, s_outerTransactionSerialMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_borrowedCallbackPurpose)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_borrowedCallbackPurposeMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_borrowedCallbackWindowWitness)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_borrowedCallbackWindowWitnessMirror)
         && OutputIsSeparateFrom(output, outputSize, s_activePhase)
         && OutputIsSeparateFrom(output, outputSize, s_activePhaseMirror)
         && OutputIsSeparateFrom(output, outputSize, s_activeMode)
@@ -780,11 +916,28 @@ RegistryOwnershipStatus RegistryOwnershipCoordinator::beginRegistered(
     const zone_script_string_ownership::
         ZoneScriptStringOwnershipController *const borrowedController,
     const zone_load::ZoneLoadContextKey &borrowedKey,
-    const std::uint32_t borrowedTransactionSerial) noexcept
+    const std::uint32_t borrowedTransactionSerial,
+    const std::uint8_t borrowedCallbackPurpose,
+    const std::uint8_t borrowedCallbackWindowWitness) noexcept
 {
     const RegistryOwnershipStatus admission = BoundaryAdmissionStatus();
     if (admission != RegistryOwnershipStatus::Success)
         return admission;
+    const bool callbackBorrow = mode
+        == RegistryOwnershipCoordinatorMode::BorrowedActiveRuntimeCallback;
+    if ((mode != RegistryOwnershipCoordinatorMode::Standalone
+            && mode
+                != RegistryOwnershipCoordinatorMode::BorrowedZoneController
+            && !callbackBorrow)
+        || (callbackBorrow
+            ? !IsRegistryCallbackPurpose(borrowedCallbackPurpose)
+                || borrowedCallbackWindowWitness == 0
+            : borrowedCallbackPurpose != 0
+                || borrowedCallbackWindowWitness != 0))
+    {
+        PoisonRegistryBoundary();
+        return RegistryOwnershipStatus::UnsafeFailure;
+    }
     if (s_nextCoordinatorSerial != s_nextCoordinatorSerialMirror
         || s_nextCoordinatorSerial == UINT64_MAX)
     {
@@ -826,10 +979,19 @@ RegistryOwnershipStatus RegistryOwnershipCoordinator::beginRegistered(
     coordinator->standaloneTransactionSerialMirror_ = standaloneSerial;
     coordinator->phase_ = RegistryOwnershipCoordinatorPhase::Acquiring;
     coordinator->phaseMirror_ = RegistryOwnershipCoordinatorPhase::Acquiring;
-    coordinator->mode_ = mode;
-    coordinator->modeMirror_ = mode;
     coordinator->hashLockRetained_ = false;
     coordinator->hashLockRetainedMirror_ = false;
+    const std::uint16_t modeCallbackReceipt = MakeModeCallbackReceipt(
+        mode,
+        borrowedCallbackPurpose,
+        borrowedCallbackWindowWitness);
+    if (!IsModeCallbackReceiptCanonical(modeCallbackReceipt))
+    {
+        PoisonRegistryBoundary();
+        return RegistryOwnershipStatus::UnsafeFailure;
+    }
+    coordinator->modeCallbackReceipt_ = modeCallbackReceipt;
+    coordinator->modeCallbackReceiptMirror_ = modeCallbackReceipt;
 
     s_activeCoordinatorAddress = coordinatorAddress;
     s_activeCoordinatorAddressMirror = coordinatorAddress;
@@ -841,6 +1003,11 @@ RegistryOwnershipStatus RegistryOwnershipCoordinator::beginRegistered(
     s_borrowedKeyMirror = borrowedKey;
     s_outerTransactionSerial = outerSerial;
     s_outerTransactionSerialMirror = outerSerial;
+    s_borrowedCallbackPurpose = borrowedCallbackPurpose;
+    s_borrowedCallbackPurposeMirror = borrowedCallbackPurpose;
+    s_borrowedCallbackWindowWitness = borrowedCallbackWindowWitness;
+    s_borrowedCallbackWindowWitnessMirror =
+        borrowedCallbackWindowWitness;
     s_activePhase = RegistryOwnershipCoordinatorPhase::Acquiring;
     s_activePhaseMirror = RegistryOwnershipCoordinatorPhase::Acquiring;
     s_activeMode = mode;
@@ -1037,8 +1204,9 @@ RegistryOwnershipCoordinatorMode
 RegistryOwnershipCoordinator::mode() const noexcept
 {
     const TransactionBoundaryGuard boundaryGuard;
-    return mode_ == modeMirror_
-        ? mode_
+    return modeCallbackReceipt_ == modeCallbackReceiptMirror_
+            && IsModeCallbackReceiptCanonical(modeCallbackReceipt_)
+        ? ReceiptMode(modeCallbackReceipt_)
         : RegistryOwnershipCoordinatorMode::None;
 }
 
@@ -1060,7 +1228,9 @@ bool RegistryOwnershipCoordinator::poisoned() const noexcept
     const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(this);
     return phase_ == RegistryOwnershipCoordinatorPhase::UnsafeFailure
         || phaseMirror_ == RegistryOwnershipCoordinatorPhase::UnsafeFailure
-        || phase_ != phaseMirror_ || mode_ != modeMirror_
+        || phase_ != phaseMirror_
+        || modeCallbackReceipt_ != modeCallbackReceiptMirror_
+        || !IsModeCallbackReceiptCanonical(modeCallbackReceipt_)
         || serial_ != serialMirror_
         || hashLockRetained_ != hashLockRetainedMirror_
         || (BoundaryMentionsAddress(address)
@@ -1073,11 +1243,11 @@ bool RegistryOwnershipCoordinator::isEmptyCanonical() const noexcept
     const TransactionBoundaryGuard boundaryGuard;
     return phase_ == RegistryOwnershipCoordinatorPhase::Empty
         && phaseMirror_ == RegistryOwnershipCoordinatorPhase::Empty
-        && mode_ == RegistryOwnershipCoordinatorMode::None
-        && modeMirror_ == RegistryOwnershipCoordinatorMode::None
+        && modeCallbackReceipt_ == 0
+        && modeCallbackReceiptMirror_ == 0
         && !hashLockRetained_ && !hashLockRetainedMirror_
-        && reserved_[0] == 0 && reserved_[1] == 0 && serial_ == 0
-        && serialMirror_ == 0 && borrowedControllerAddress_ == 0
+        && serial_ == 0 && serialMirror_ == 0
+        && borrowedControllerAddress_ == 0
         && borrowedControllerAddressMirror_ == 0
         && borrowedKey_ == zone_load::ZoneLoadContextKey{}
         && borrowedKeyMirror_ == zone_load::ZoneLoadContextKey{}
@@ -1093,11 +1263,11 @@ bool RegistryOwnershipCoordinator::canonicalAfterStandaloneBegin() const noexcep
 {
     return phase_ == RegistryOwnershipCoordinatorPhase::Empty
         && phaseMirror_ == RegistryOwnershipCoordinatorPhase::Empty
-        && mode_ == RegistryOwnershipCoordinatorMode::None
-        && modeMirror_ == RegistryOwnershipCoordinatorMode::None
+        && modeCallbackReceipt_ == 0
+        && modeCallbackReceiptMirror_ == 0
         && !hashLockRetained_ && !hashLockRetainedMirror_
-        && reserved_[0] == 0 && reserved_[1] == 0 && serial_ == 0
-        && serialMirror_ == 0 && borrowedControllerAddress_ == 0
+        && serial_ == 0 && serialMirror_ == 0
+        && borrowedControllerAddress_ == 0
         && borrowedControllerAddressMirror_ == 0
         && borrowedKey_ == zone_load::ZoneLoadContextKey{}
         && borrowedKeyMirror_ == zone_load::ZoneLoadContextKey{}
@@ -1121,25 +1291,42 @@ bool RegistryOwnershipCoordinator::representationConsistent() const noexcept
             != borrowedTransactionSerialMirror_
         || standaloneTransactionSerial_
             != standaloneTransactionSerialMirror_
-        || phase_ != phaseMirror_ || mode_ != modeMirror_
+        || phase_ != phaseMirror_
         || hashLockRetained_ != hashLockRetainedMirror_
-        || reserved_[0] != 0 || reserved_[1] != 0)
+        || modeCallbackReceipt_ != modeCallbackReceiptMirror_
+        || !IsModeCallbackReceiptCanonical(modeCallbackReceipt_))
     {
         return false;
     }
 
-    switch (mode_)
+    const RegistryOwnershipCoordinatorMode mode =
+        ReceiptMode(modeCallbackReceipt_);
+    const std::uint8_t callbackPurpose =
+        ReceiptCallbackPurpose(modeCallbackReceipt_);
+    const std::uint8_t callbackWindowWitness =
+        ReceiptCallbackWindowWitness(modeCallbackReceipt_);
+    switch (mode)
     {
     case RegistryOwnershipCoordinatorMode::Standalone:
         return borrowedControllerAddress_ == 0
             && borrowedKey_ == zone_load::ZoneLoadContextKey{}
             && borrowedTransactionSerial_ == 0
-            && standaloneTransactionSerial_ != 0;
+            && standaloneTransactionSerial_ != 0
+            && callbackPurpose == 0 && callbackWindowWitness == 0;
     case RegistryOwnershipCoordinatorMode::BorrowedZoneController:
         return borrowedControllerAddress_ != 0
             && static_cast<bool>(borrowedKey_)
             && borrowedTransactionSerial_ != 0
             && standaloneTransactionSerial_ == 0
+            && callbackPurpose == 0 && callbackWindowWitness == 0
+            && standaloneTransaction_.canonicalInactive();
+    case RegistryOwnershipCoordinatorMode::BorrowedActiveRuntimeCallback:
+        return borrowedControllerAddress_ != 0
+            && static_cast<bool>(borrowedKey_)
+            && borrowedTransactionSerial_ != 0
+            && standaloneTransactionSerial_ == 0
+            && IsRegistryCallbackPurpose(callbackPurpose)
+            && callbackWindowWitness != 0
             && standaloneTransaction_.canonicalInactive();
     case RegistryOwnershipCoordinatorMode::None:
     default:
@@ -1155,8 +1342,14 @@ bool RegistryOwnershipCoordinator::ownsRegistryBoundary() const noexcept
         return false;
     }
     const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(this);
+    const RegistryOwnershipCoordinatorMode mode =
+        ReceiptMode(modeCallbackReceipt_);
+    const std::uint8_t callbackPurpose =
+        ReceiptCallbackPurpose(modeCallbackReceipt_);
+    const std::uint8_t callbackWindowWitness =
+        ReceiptCallbackWindowWitness(modeCallbackReceipt_);
     const std::uint32_t outerSerial =
-        mode_ == RegistryOwnershipCoordinatorMode::Standalone
+        mode == RegistryOwnershipCoordinatorMode::Standalone
         ? standaloneTransactionSerial_
         : borrowedTransactionSerial_;
     return s_activeCoordinatorAddress == address
@@ -1170,8 +1363,12 @@ bool RegistryOwnershipCoordinator::ownsRegistryBoundary() const noexcept
         && s_borrowedKeyMirror == borrowedKeyMirror_
         && s_outerTransactionSerial == outerSerial
         && s_outerTransactionSerialMirror == outerSerial
+        && s_borrowedCallbackPurpose == callbackPurpose
+        && s_borrowedCallbackPurposeMirror == callbackPurpose
+        && s_borrowedCallbackWindowWitness == callbackWindowWitness
+        && s_borrowedCallbackWindowWitnessMirror == callbackWindowWitness
         && s_activePhase == phase_ && s_activePhaseMirror == phaseMirror_
-        && s_activeMode == mode_ && s_activeModeMirror == modeMirror_
+        && s_activeMode == mode && s_activeModeMirror == mode
         && s_hashLockRetained == hashLockRetained_
         && s_hashLockRetainedMirror == hashLockRetainedMirror_;
 }
@@ -1180,7 +1377,9 @@ bool RegistryOwnershipCoordinator::authenticatesOuterTransaction() const noexcep
 {
     if (!representationConsistent() || !ownsRegistryBoundary())
         return false;
-    switch (mode_)
+    const RegistryOwnershipCoordinatorMode mode =
+        ReceiptMode(modeCallbackReceipt_);
+    switch (mode)
     {
     case RegistryOwnershipCoordinatorMode::Standalone:
         return standaloneTransaction_.serial()
@@ -1197,6 +1396,21 @@ bool RegistryOwnershipCoordinator::authenticatesOuterTransaction() const noexcep
             borrowedControllerAddress_);
         return controller->authenticatesRegistryTransaction(
             borrowedKey_, borrowedTransactionSerial_);
+    }
+    case RegistryOwnershipCoordinatorMode::BorrowedActiveRuntimeCallback:
+    {
+        const auto *const controller = reinterpret_cast<
+            const zone_script_string_ownership::
+                ZoneScriptStringOwnershipController *>(
+            borrowedControllerAddress_);
+        using CallbackPurpose = zone_script_string_ownership::
+            ZoneScriptStringOwnershipController::RegistryCallbackPurpose;
+        return controller->authenticatesRegistryCallbackTransaction(
+            borrowedKey_,
+            borrowedTransactionSerial_,
+            static_cast<CallbackPurpose>(
+                ReceiptCallbackPurpose(modeCallbackReceipt_)),
+            ReceiptCallbackWindowWitness(modeCallbackReceipt_));
     }
     case RegistryOwnershipCoordinatorMode::None:
     default:
@@ -1259,12 +1473,10 @@ void RegistryOwnershipCoordinator::resetAfterFinish() noexcept
     standaloneTransactionSerialMirror_ = 0;
     phase_ = RegistryOwnershipCoordinatorPhase::Empty;
     phaseMirror_ = RegistryOwnershipCoordinatorPhase::Empty;
-    mode_ = RegistryOwnershipCoordinatorMode::None;
-    modeMirror_ = RegistryOwnershipCoordinatorMode::None;
     hashLockRetained_ = false;
     hashLockRetainedMirror_ = false;
-    reserved_[0] = 0;
-    reserved_[1] = 0;
+    modeCallbackReceipt_ = 0;
+    modeCallbackReceiptMirror_ = 0;
 }
 
 RegistryOwnershipCoordinator::~RegistryOwnershipCoordinator() noexcept
@@ -1344,6 +1556,8 @@ RegistryOwnershipStatus TryBeginStandaloneRegistryOwnershipCoordinator(
             RegistryOwnershipCoordinatorMode::Standalone,
             nullptr,
             {},
+            0,
+            0,
             0);
     if (status == RegistryOwnershipStatus::Success
         || coordinator->serial_ != 0 || coordinator->serialMirror_ != 0)
@@ -1365,15 +1579,21 @@ RegistryOwnershipStatus TryBeginStandaloneRegistryOwnershipCoordinator(
     return status;
 }
 
-RegistryOwnershipStatus TryBorrowRegistryOwnershipCoordinator(
-    const RegistryOwnershipCoordinatorAdmission &admissionCapability,
+RegistryOwnershipStatus RegistryOwnershipCoordinator::tryBorrowController(
     RegistryOwnershipCoordinator *const coordinator,
     const zone_script_string_ownership::
         ZoneScriptStringOwnershipController *const controller,
-    const zone_load::ZoneLoadContextKey &expectedKey) noexcept
+    const zone_load::ZoneLoadContextKey &expectedKey,
+    const RegistryOwnershipCoordinatorMode mode) noexcept
 {
-    if (!admissionCapability.authenticates() || !coordinator || !controller)
+    if (!coordinator || !controller)
         return RegistryOwnershipStatus::InvalidArgument;
+    if (mode != RegistryOwnershipCoordinatorMode::BorrowedZoneController
+        && mode
+            != RegistryOwnershipCoordinatorMode::BorrowedActiveRuntimeCallback)
+    {
+        return RegistryOwnershipStatus::InvalidArgument;
+    }
     if (Sys_IsWriteLocked(&db_hashCritSect))
         return RegistryOwnershipStatus::Busy;
     const TransactionBoundaryGuard boundaryGuard;
@@ -1388,17 +1608,70 @@ RegistryOwnershipStatus TryBorrowRegistryOwnershipCoordinator(
         return RegistryOwnershipStatus::InvalidKey;
 
     std::uint32_t transactionSerial = 0;
-    if (!controller->trySnapshotRegistryTransaction(
-            expectedKey, &transactionSerial))
+    std::uint8_t callbackPurposeValue = 0;
+    std::uint8_t callbackWindowWitness = 0;
+    if (mode == RegistryOwnershipCoordinatorMode::BorrowedZoneController)
     {
-        return RegistryOwnershipStatus::InvalidState;
+        if (!controller->trySnapshotRegistryTransaction(
+                expectedKey, &transactionSerial))
+        {
+            return RegistryOwnershipStatus::InvalidState;
+        }
     }
-    return RegistryOwnershipCoordinator::beginRegistered(
+    else
+    {
+        using CallbackPurpose = zone_script_string_ownership::
+            ZoneScriptStringOwnershipController::RegistryCallbackPurpose;
+        static_assert(static_cast<std::uint8_t>(CallbackPurpose::None) == 0);
+        static_assert(
+            static_cast<std::uint8_t>(CallbackPurpose::Unpublishing) == 1);
+        static_assert(
+            static_cast<std::uint8_t>(CallbackPurpose::Cleaning) == 2);
+        static_assert(
+            static_cast<std::uint8_t>(CallbackPurpose::Admitting) == 3);
+        static_assert(
+            static_cast<std::uint8_t>(CallbackPurpose::Unloading) == 4);
+        CallbackPurpose callbackPurpose = CallbackPurpose::None;
+        if (!controller->trySnapshotRegistryCallbackTransaction(
+                expectedKey,
+                &transactionSerial,
+                &callbackPurpose,
+                &callbackWindowWitness))
+        {
+            return RegistryOwnershipStatus::InvalidState;
+        }
+        callbackPurposeValue =
+            static_cast<std::uint8_t>(callbackPurpose);
+        if (!IsRegistryCallbackPurpose(callbackPurposeValue))
+            return RegistryOwnershipStatus::UnsafeFailure;
+        if (callbackWindowWitness == 0)
+            return RegistryOwnershipStatus::UnsafeFailure;
+    }
+
+    return beginRegistered(
         coordinator,
-        RegistryOwnershipCoordinatorMode::BorrowedZoneController,
+        mode,
         controller,
         expectedKey,
-        transactionSerial);
+        transactionSerial,
+        callbackPurposeValue,
+        callbackWindowWitness);
+}
+
+RegistryOwnershipStatus TryBorrowRegistryOwnershipCoordinator(
+    const RegistryOwnershipCoordinatorAdmission &admissionCapability,
+    RegistryOwnershipCoordinator *const coordinator,
+    const zone_script_string_ownership::
+        ZoneScriptStringOwnershipController *const controller,
+    const zone_load::ZoneLoadContextKey &expectedKey) noexcept
+{
+    if (!admissionCapability.authenticates() || !coordinator || !controller)
+        return RegistryOwnershipStatus::InvalidArgument;
+    return RegistryOwnershipCoordinator::tryBorrowController(
+        coordinator,
+        controller,
+        expectedKey,
+        RegistryOwnershipCoordinatorMode::BorrowedZoneController);
 }
 
 RegistryOwnershipStatus FinishRegistryOwnershipCoordinator(
@@ -1447,7 +1720,8 @@ RegistryOwnershipStatus FinishRegistryOwnershipCoordinator(
         return RegistryOwnershipStatus::UnsafeFailure;
     }
 
-    const RegistryOwnershipCoordinatorMode mode = coordinator->mode_;
+    const RegistryOwnershipCoordinatorMode mode =
+        ReceiptMode(coordinator->modeCallbackReceipt_);
     coordinator->publishPhase(RegistryOwnershipCoordinatorPhase::Finishing);
     if (!coordinator->ownsRegistryBoundary()
         || !coordinator->authenticatesOuterTransaction())
@@ -1709,6 +1983,20 @@ RegistryOwnershipStatus TryRegistryShutdownDatabaseUser8(
 }
 
 #if defined(KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING)
+RegistryOwnershipStatus RegistryOwnershipCoordinatorTestAccess::
+    TryBorrowActiveRuntimeCallback(
+        RegistryOwnershipCoordinator *const coordinator,
+        const zone_script_string_ownership::
+            ZoneScriptStringOwnershipController *const controller,
+        const zone_load::ZoneLoadContextKey &expectedKey) noexcept
+{
+    return RegistryOwnershipCoordinator::tryBorrowController(
+        coordinator,
+        controller,
+        expectedKey,
+        RegistryOwnershipCoordinatorMode::BorrowedActiveRuntimeCallback);
+}
+
 script_string::OwnershipBatch &
 RegistryOwnershipCoordinatorTestAccess::OperationBatch(
     RegistryOwnershipCoordinator *const coordinator) noexcept
@@ -1716,13 +2004,25 @@ RegistryOwnershipCoordinatorTestAccess::OperationBatch(
     return coordinator->operationBatch_;
 }
 
-void RegistryOwnershipCoordinatorTestAccess::SetReserved(
+void RegistryOwnershipCoordinatorTestAccess::SetCallbackReceipt(
     RegistryOwnershipCoordinator *const coordinator,
-    const std::uint8_t reserved) noexcept
+    const std::uint8_t callbackPurpose,
+    const std::uint8_t callbackPurposeMirror,
+    const std::uint8_t callbackWindowWitness,
+    const std::uint8_t callbackWindowWitnessMirror) noexcept
 {
     const TransactionBoundaryGuard boundaryGuard;
     if (coordinator)
-        coordinator->reserved_[0] = reserved;
+    {
+        coordinator->modeCallbackReceipt_ = MakeModeCallbackReceipt(
+            ReceiptMode(coordinator->modeCallbackReceipt_),
+            callbackPurpose,
+            callbackWindowWitness);
+        coordinator->modeCallbackReceiptMirror_ = MakeModeCallbackReceipt(
+            ReceiptMode(coordinator->modeCallbackReceiptMirror_),
+            callbackPurposeMirror,
+            callbackWindowWitnessMirror);
+    }
 }
 
 void RegistryOwnershipCoordinatorTestAccess::SetRepresentationMirrors(
@@ -1748,8 +2048,11 @@ void RegistryOwnershipCoordinatorTestAccess::SetRepresentationMirrors(
     coordinator->borrowedKeyMirror_ = borrowedKeyMirror;
     coordinator->phaseMirror_ =
         static_cast<RegistryOwnershipCoordinatorPhase>(phaseMirror);
-    coordinator->modeMirror_ =
-        static_cast<RegistryOwnershipCoordinatorMode>(modeMirror);
+    coordinator->modeCallbackReceiptMirror_ = MakeModeCallbackReceipt(
+        static_cast<RegistryOwnershipCoordinatorMode>(modeMirror),
+        ReceiptCallbackPurpose(coordinator->modeCallbackReceiptMirror_),
+        ReceiptCallbackWindowWitness(
+            coordinator->modeCallbackReceiptMirror_));
     coordinator->hashLockRetainedMirror_ = hashMirror;
 }
 
@@ -1808,7 +2111,9 @@ void SetRegistryOwnershipCoordinatorGlobalMirrorsForTesting(
     const std::uint8_t mode,
     const std::uint8_t modeMirror,
     const bool hashRetained,
-    const bool hashRetainedMirror) noexcept
+    const bool hashRetainedMirror,
+    const std::uint8_t callbackWindowWitness,
+    const std::uint8_t callbackWindowWitnessMirror) noexcept
 {
     const TransactionBoundaryGuard boundaryGuard;
     s_nextCoordinatorSerialMirror = nextSerialMirror;
@@ -1825,6 +2130,9 @@ void SetRegistryOwnershipCoordinatorGlobalMirrorsForTesting(
         static_cast<RegistryOwnershipCoordinatorMode>(modeMirror);
     s_hashLockRetained = hashRetained;
     s_hashLockRetainedMirror = hashRetainedMirror;
+    s_borrowedCallbackWindowWitness = callbackWindowWitness;
+    s_borrowedCallbackWindowWitnessMirror =
+        callbackWindowWitnessMirror;
 }
 #endif
 

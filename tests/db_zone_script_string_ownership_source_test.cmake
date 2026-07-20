@@ -165,11 +165,147 @@ foreach(_marker IN ITEMS
     "Unloading,"
     "UnloadingCallback,"
     "Unloaded,"
+    "enum class RegistryCallbackPurpose : std::uint8_t"
+    "friend class db::registry_ownership::RegistryOwnershipCoordinator;"
+    "friend class db::zone_runtime::ZoneRuntimeTable;"
+    "tryBeginRegistryCallbackWindow("
+    "trySnapshotRegistryCallbackTransaction("
+    "authenticatesRegistryCallbackTransaction("
+    "std::uint8_t callbackWindowWitness_ = 0;"
+    "std::uint8_t callbackWindowWitnessMirror_ = 0;"
     "TryUnloadLiveZoneScriptStringOwnership("
     "TryResetTerminalZoneScriptStringOwnership("
     "Busy,")
     require_contains(_header "${_marker}" "bound fail-closed controller")
 endforeach()
+
+# Ordinary registry borrows deliberately remain unavailable during callbacks.
+# The private coordinator-only path snapshots the exact callback purpose,
+# retained transaction serial, and mirrored nonzero callback-window witness
+# only after authenticating the current key, complete binding, and owning
+# thread. Reauthentication repeats those checks, so an admitted coordinator
+# cannot cross either purpose transitions or later same-purpose invocations.
+extract_slice(
+    _source
+    "bool ZoneScriptStringOwnershipController::trySnapshotRegistryTransaction("
+    "bool ZoneScriptStringOwnershipController::trySnapshotRegistryCallbackTransaction("
+    _ordinary_registry_borrow
+    "ordinary retained registry transaction borrow")
+require_contains(
+    _ordinary_registry_borrow
+    "validateOwned() != ZoneScriptStringOwnershipStatus::Success"
+    "ordinary callback rejection remains routed through validateOwned")
+
+extract_slice(
+    _source
+    "bool ZoneScriptStringOwnershipController::tryBeginRegistryCallbackWindow("
+    "bool ZoneScriptStringOwnershipController::trySnapshotRegistryCallbackTransaction("
+    _callback_window_begin
+    "mirrored callback-window advance")
+foreach(_marker IN ITEMS
+    "!transaction::OwnsScriptStringTransaction(transaction_)"
+    "!IsCallbackPhase(expectedCallbackPhase)"
+    "phase_ != expectedCallbackPhase"
+    "callbackWindowWitness_ != callbackWindowWitnessMirror_"
+    "callbackWindowWitness_ == UINT8_MAX"
+    "!bindingMatchesCurrentPhase()"
+    "poison();"
+    "callbackWindowWitness_ + 1"
+    "if (nextWitness == 0)"
+    "callbackWindowWitness_ = nextWitness;"
+    "callbackWindowWitnessMirror_ = nextWitness;")
+    require_contains(
+        _callback_window_begin
+        "${_marker}"
+        "non-wrapping mirrored callback-window witness")
+endforeach()
+require_ordered(
+    _callback_window_begin
+    "!transaction::OwnsScriptStringTransaction(transaction_)"
+    "phase_ != expectedCallbackPhase"
+    "current-thread ownership before callback-state reads")
+require_ordered(
+    _callback_window_begin
+    "callbackWindowWitness_ == UINT8_MAX"
+    "callbackWindowWitness_ + 1"
+    "exhaustion rejection before increment")
+require_ordered(
+    _callback_window_begin
+    "callbackWindowWitness_ = nextWitness;"
+    "callbackWindowWitnessMirror_ = nextWitness;"
+    "mirrored callback-window publication")
+
+extract_slice(
+    _source
+    "bool ZoneScriptStringOwnershipController::trySnapshotRegistryCallbackTransaction("
+    "lifecycle::ZoneLoadCleanupCallbackStatus ZoneScriptStringOwnershipController::PerformBoundCleanup("
+    _callback_registry_borrow
+    "private callback registry transaction borrow")
+foreach(_marker IN ITEMS
+    "RegistryCallbackPurpose::None"
+    "ZoneScriptStringOwnershipPhase::UnpublishingCallback"
+    "RegistryCallbackPurpose::Unpublishing"
+    "ZoneScriptStringOwnershipPhase::Cleaning"
+    "RegistryCallbackPurpose::Cleaning"
+    "ZoneScriptStringOwnershipPhase::Admitting"
+    "RegistryCallbackPurpose::Admitting"
+    "ZoneScriptStringOwnershipPhase::UnloadingCallback"
+    "RegistryCallbackPurpose::Unloading"
+    "default: return false;"
+    "!bindingMatchesCurrentPhase()"
+    "transactionSerial_ == 0"
+    "transaction_.serial() != transactionSerial_"
+    "!transaction::OwnsScriptStringTransaction(transaction_)"
+    "!outWindowWitness"
+    "callbackWindowWitness_ == 0"
+    "callbackWindowWitness_ != callbackWindowWitnessMirror_"
+    "*outSerial = serial;"
+    "*outPurpose = purpose;"
+    "*outWindowWitness = windowWitness;"
+    "expectedPurpose == RegistryCallbackPurpose::None"
+    "expectedWindowWitness == 0"
+    "trySnapshotRegistryCallbackTransaction( expectedKey, &serial, &purpose, &windowWitness)"
+    "serial == expectedSerial && purpose == expectedPurpose"
+    "windowWitness == expectedWindowWitness")
+    require_contains(
+        _callback_registry_borrow
+        "${_marker}"
+        "exact callback purpose and transaction authentication")
+endforeach()
+require_ordered(
+    _callback_registry_borrow
+    "!transaction::OwnsScriptStringTransaction(transaction_)"
+    "if (key_ != expectedKey)"
+    "current-thread ownership before mutable binding reads")
+require_ordered(
+    _callback_registry_borrow
+    "if (key_ != expectedKey)"
+    "switch (phase_)"
+    "exact key before callback-purpose inference")
+require_ordered(
+    _callback_registry_borrow
+    "switch (phase_)"
+    "!bindingMatchesCurrentPhase()"
+    "purpose selection before canonical binding authentication")
+require_ordered(
+    _callback_registry_borrow
+    "!transaction::OwnsScriptStringTransaction(transaction_)"
+    "*outSerial = serial;"
+    "current-thread ownership before serial publication")
+require_ordered(
+    _callback_registry_borrow
+    "*outSerial = serial;"
+    "*outPurpose = purpose;"
+    "staged callback snapshot publication")
+require_ordered(
+    _callback_registry_borrow
+    "*outPurpose = purpose;"
+    "*outWindowWitness = windowWitness;"
+    "window witness published last")
+require_not_contains(
+    _callback_registry_borrow
+    "validateOwned()"
+    "callback borrow cannot accidentally route through ordinary rejection")
 
 extract_slice(
     _source
@@ -214,7 +350,9 @@ foreach(_marker IN ITEMS
     "placementJournal_ = nullptr;"
     "placementStorage_ = nullptr;"
     "placementCapacity_ = 0;"
-    "placementExpectedCount_ = 0;")
+    "placementExpectedCount_ = 0;"
+    "callbackWindowWitness_ = 0;"
+    "callbackWindowWitnessMirror_ = 0;")
     require_contains(
         _reset "${_marker}" "terminal reset clears placement identity")
 endforeach()
@@ -255,8 +393,41 @@ require_ordered(
 require_ordered(
     _commit
     "FinalizeScriptStringJournalCommit("
+    "tryBeginRegistryCallbackWindow("
+    "callback window begins after irreversible journal finalization")
+require_ordered(
+    _commit
+    "tryBeginRegistryCallbackWindow("
+    "const lifecycle::ZoneLoadContextKey callbackKey ="
+    "fresh window before immutable callback identity snapshot")
+require_ordered(
+    _commit
+    "const std::uint32_t callbackTransactionSerial ="
     "admission.admitLive("
-    "journal finalization before no-fail admission")
+    "immutable callback identity before admission")
+require_ordered(
+    _commit
+    "admission.admitLive("
+    "trySnapshotRegistryCallbackTransaction("
+    "admission return before exact post-authentication")
+require_ordered(
+    _commit
+    "trySnapshotRegistryCallbackTransaction("
+    "callbackWindowWitness_ = 0;"
+    "post-authentication before terminal witness reset")
+foreach(_marker IN ITEMS
+    "controller->trySnapshotRegistryCallbackTransaction( callbackKey,"
+    "observedTransactionSerial != callbackTransactionSerial")
+    require_contains(
+        _commit
+        "${_marker}"
+        "admission compares immutable pre-callback identity")
+endforeach()
+require_ordered(
+    _commit
+    "callbackWindowWitnessMirror_ = 0;"
+    "ZoneScriptStringOwnershipPhase::Live;"
+    "mirrored witness reset before Live publication")
 require_ordered(
     _commit
     "admission.admitLive("
@@ -283,10 +454,88 @@ require_contains(
     _rollback_begin
     "ZoneScriptStringOwnershipPhase::UnpublishingCallback"
     "callback reentry phase")
+require_ordered(
+    _rollback_begin
+    "tryBeginRegistryCallbackWindow("
+    "const lifecycle::ZoneLoadContextKey callbackKey ="
+    "fresh unpublication window before identity snapshot")
+require_ordered(
+    _rollback_begin
+    "const std::uint32_t callbackTransactionSerial ="
+    "controller->ensureUnreachable_("
+    "immutable identity before initial unpublication callback")
+require_contains(
+    _rollback_begin
+    "authenticatesRegistryCallbackTransaction( callbackKey, callbackTransactionSerial,"
+    "initial unpublication authenticates pre-callback identity")
+require_ordered(
+    _rollback_begin
+    "controller->ensureUnreachable_("
+    "authenticatesRegistryCallbackTransaction("
+    "unpublication return before exact post-authentication")
+extract_slice(
+    _rollback_begin
+    "const ZoneScriptStringUnpublishStatus callbackStatus ="
+    "const lifecycle::ZoneLoadContextStatus lifecycleStatus ="
+    _unpublish_callback_return
+    "initial unpublication callback return")
+require_ordered(
+    _unpublish_callback_return
+    "authenticatesRegistryCallbackTransaction("
+    "ZoneScriptStringOwnershipPhase::Unpublishing;"
+    "post-authentication before callback-phase exit")
 require_contains(
     _rollback_begin
     "ZoneScriptStringOwnershipPhase::Unpublishing; return ZoneScriptStringOwnershipStatus::Retry;"
     "retry restores an externally callable phase")
+
+extract_slice(
+    _source
+    "ZoneScriptStringOwnershipController::PerformBoundCleanup("
+    "bool ZoneScriptStringOwnershipController::placementIdentityIsEmpty()"
+    _bound_cleanup_callbacks
+    "bound cleanup and unload callbacks")
+require_literal_count(
+    _bound_cleanup_callbacks
+    "tryBeginRegistryCallbackWindow("
+    3
+    "one fresh window for each bound callback dispatch path")
+require_literal_count(
+    _bound_cleanup_callbacks
+    "authenticatesRegistryCallbackTransaction("
+    3
+    "one exact post-authentication for each bound callback dispatch path")
+require_literal_count(
+    _bound_cleanup_callbacks
+    "const lifecycle::ZoneLoadContextKey callbackKey ="
+    3
+    "one immutable key snapshot for each bound callback dispatch path")
+require_literal_count(
+    _bound_cleanup_callbacks
+    "const std::uint32_t callbackTransactionSerial ="
+    3
+    "one immutable serial snapshot for each bound callback dispatch path")
+require_literal_count(
+    _bound_cleanup_callbacks
+    "authenticatesRegistryCallbackTransaction( callbackKey, callbackTransactionSerial,"
+    3
+    "bound callbacks authenticate immutable pre-callback identity")
+foreach(_marker IN ITEMS
+    "RegistryCallbackPurpose::Cleaning"
+    "RegistryCallbackPurpose::Unloading"
+    "controller->poison();"
+    "ZoneLoadCleanupCallbackStatus::UnsafeFailure")
+    require_contains(
+        _bound_cleanup_callbacks
+        "${_marker}"
+        "fail-closed bound callback postcondition")
+endforeach()
+
+require_literal_count(
+    _source
+    "tryBeginRegistryCallbackWindow("
+    6
+    "definition plus five controller-owned callback dispatch paths")
 
 extract_slice(
     _source
@@ -297,6 +546,16 @@ extract_slice(
 require_ordered(
     _rollback_finish
     "TryFinishZoneLoadContextAbandonment("
+    "controller->callbackWindowWitness_ = 0;"
+    "cleanup completion before callback-witness reset")
+require_ordered(
+    _rollback_finish
+    "controller->callbackWindowWitnessMirror_ = 0;"
+    "ZoneScriptStringOwnershipPhase::Abandoned;"
+    "mirrored witness reset before abandoned receipt")
+require_ordered(
+    _rollback_finish
+    "ZoneScriptStringOwnershipPhase::Abandoned;"
     "FinishScriptStringTransaction("
     "full cleanup before serializer release")
 require_contains(
@@ -320,7 +579,8 @@ foreach(_marker IN ITEMS
     "expectedCount_ != 0 || transactionSerial_ != 0"
     "!transaction_.canonicalInactive()"
     "resumePhase_ != ZoneScriptStringOwnershipPhase::Empty"
-    "reserved_[0] != 0 || reserved_[1] != 0"
+    "callbackWindowWitness_ != 0"
+    "callbackWindowWitnessMirror_ != 0"
     "lifecycle_ != expectedLifecycle"
     "!expectedLifecycle->canonical()"
     "expectedLifecycle->cleanupActive()"
@@ -350,6 +610,8 @@ foreach(_marker IN ITEMS
     "ZoneScriptStringOwnershipStatus::Retry"
     "controller->rollbackContext_ != callbacks.context"
     "controller->performCleanup_ != callbacks.perform"
+    "controller->callbackWindowWitness_ = 0;"
+    "controller->callbackWindowWitnessMirror_ = 0;"
     "ZoneScriptStringOwnershipPhase::Unloaded"
     "FinishScriptStringTransaction("
     "ZoneLoadTerminalKind::Unloaded")
@@ -364,8 +626,13 @@ require_ordered(
 require_ordered(
     _live_unload
     "TryUnloadZoneLoadContext("
+    "controller->callbackWindowWitness_ = 0;"
+    "unload recipe before callback-witness reset")
+require_ordered(
+    _live_unload
+    "controller->callbackWindowWitnessMirror_ = 0;"
     "ZoneScriptStringOwnershipPhase::Unloaded;"
-    "terminal lifecycle recipe before unloaded receipt")
+    "mirrored witness reset before unloaded receipt")
 require_ordered(
     _live_unload
     "ZoneScriptStringOwnershipPhase::Unloaded;"
@@ -479,11 +746,32 @@ foreach(_marker IN ITEMS
     "TestDurableStorageIdentityAuthentication();"
     "TestAbandonedReceiptAuthentication();"
     "TestLiveUnloadRetryBindingAndTerminalReset();"
+    "TestAdmissionPostconditionFailsClosed();"
     "driver.beginReentryStatus == ZoneScriptStringOwnershipStatus::Busy"
     "driver.reentryStatus == ZoneScriptStringOwnershipStatus::Busy"
     "foreignOutput == 0x12345678u"
     "nextKey.generation != originalKey.generation"
     "driver.observedContextAfterFree"
+    "ObserveRegistryCallbackAuthorization("
+    "RegistryCallbackPurpose::Unpublishing)] == 2"
+    "RegistryCallbackPurpose::Cleaning)] > 0"
+    "RegistryCallbackPurpose::Admitting)] == 1"
+    "RegistryCallbackPurpose::Unloading)] > 0"
+    "rejectedSerial == UINT32_C(0x11223344)"
+    "registryCallbackForeignSerial == UINT32_C(0x13572468)"
+    "registryCallbackForeignWitness == UINT8_C(0xA5)"
+    "registryCallbackLastWitness"
+    "previousWindowWitness != windowWitness"
+    "previousWindowWitness))"
+    "rejectedWindowWitness == UINT8_C(0x5A)"
+    "TryBeginRegistryCallbackWindow("
+    "fixture->ownership.poisoned()"
+    "UINT8_MAX, UINT8_MAX"
+    "CorruptAdmissionWindow"
+    "fixture.ownership.phase() == ZoneScriptStringOwnershipPhase::UnsafeFailure"
+    "fixture.ownership.serializerRetained()"
+    "SetTransactionSerial("
+    "SetReserved("
     "== ZoneScriptStringOwnershipStatus::StaleKey")
     require_contains(_fixture "${_marker}" "controller regression coverage")
 endforeach()

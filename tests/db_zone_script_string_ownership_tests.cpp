@@ -27,6 +27,8 @@ using controller::ZoneScriptStringOwnershipControllerTestAccess;
 using controller::ZoneScriptStringOwnershipPhase;
 using controller::ZoneScriptStringOwnershipStatus;
 using controller::ZoneScriptStringStorageBindingPhase;
+using RegistryCallbackPurpose =
+    ZoneScriptStringOwnershipControllerTestAccess::RegistryCallbackPurpose;
 using journal::ScriptStringJournal;
 using journal::ScriptStringJournalEntry;
 using journal::ScriptStringJournalEntryState;
@@ -115,6 +117,16 @@ struct Fixture final
     ScriptStringJournal stringJournal{};
     std::array<ScriptStringJournalEntry, 4> storage{};
     ZoneScriptStringOwnershipController ownership{};
+    std::array<std::size_t, 5> registryCallbackPurposeCalls{};
+    std::array<std::uint8_t, 5> registryCallbackLastWitness{};
+    std::thread registryCallbackForeignThread{};
+    std::atomic<bool> registryCallbackForeignReady{false};
+    std::atomic<bool> registryCallbackForeignDone{false};
+    bool registryCallbackForeignAccepted = true;
+    std::uint32_t registryCallbackForeignSerial = UINT32_C(0x13572468);
+    RegistryCallbackPurpose registryCallbackForeignPurpose =
+        RegistryCallbackPurpose::Unloading;
+    std::uint8_t registryCallbackForeignWitness = UINT8_C(0xA5);
 
     bool begin(const std::uint32_t expectedCount, const std::uint32_t slot)
     {
@@ -138,8 +150,271 @@ struct Fixture final
     }
 };
 
+void ObserveRegistryCallbackAuthorization(
+    Fixture *const fixture,
+    const RegistryCallbackPurpose expectedPurpose) noexcept
+{
+    OWNERSHIP_CHECK(fixture != nullptr);
+    if (!fixture)
+        return;
+
+    const std::size_t purposeIndex =
+        static_cast<std::size_t>(expectedPurpose);
+    OWNERSHIP_CHECK(expectedPurpose != RegistryCallbackPurpose::None);
+    OWNERSHIP_CHECK(
+        purposeIndex < fixture->registryCallbackPurposeCalls.size());
+    if (expectedPurpose == RegistryCallbackPurpose::None
+        || purposeIndex >= fixture->registryCallbackPurposeCalls.size())
+    {
+        return;
+    }
+    const bool firstObservation =
+        fixture->registryCallbackPurposeCalls[purposeIndex]++ == 0;
+
+    std::uint32_t ordinarySerial = UINT32_C(0xA55A5AA5);
+    OWNERSHIP_CHECK(
+        !fixture->ownership.trySnapshotRegistryTransaction(
+            fixture->key, &ordinarySerial));
+    OWNERSHIP_CHECK(ordinarySerial == UINT32_C(0xA55A5AA5));
+
+    std::uint32_t serial = 0;
+    RegistryCallbackPurpose purpose = RegistryCallbackPurpose::None;
+    std::uint8_t windowWitness = 0;
+    OWNERSHIP_CHECK(
+        ZoneScriptStringOwnershipControllerTestAccess::
+            TrySnapshotRegistryCallbackTransaction(
+                &fixture->ownership,
+                fixture->key,
+                &serial,
+                &purpose,
+                &windowWitness));
+    OWNERSHIP_CHECK(serial != 0);
+    OWNERSHIP_CHECK(purpose == expectedPurpose);
+    OWNERSHIP_CHECK(windowWitness != 0);
+    const ZoneScriptStringOwnershipPhase callbackPhase =
+        fixture->ownership.phase();
+    const std::uint8_t previousWindowWitness =
+        fixture->registryCallbackLastWitness[purposeIndex];
+    if (previousWindowWitness != 0)
+    {
+        OWNERSHIP_CHECK(previousWindowWitness != windowWitness);
+        OWNERSHIP_CHECK(
+            !ZoneScriptStringOwnershipControllerTestAccess::
+                AuthenticatesRegistryCallbackTransaction(
+                    &fixture->ownership,
+                    fixture->key,
+                    serial,
+                    expectedPurpose,
+                    previousWindowWitness));
+    }
+    fixture->registryCallbackLastWitness[purposeIndex] = windowWitness;
+    OWNERSHIP_CHECK(
+        ZoneScriptStringOwnershipControllerTestAccess::
+            AuthenticatesRegistryCallbackTransaction(
+                &fixture->ownership,
+                fixture->key,
+                serial,
+                expectedPurpose,
+                windowWitness));
+    OWNERSHIP_CHECK(
+        !fixture->ownership.authenticatesRegistryTransaction(
+            fixture->key, serial));
+    OWNERSHIP_CHECK(
+        !ZoneScriptStringOwnershipControllerTestAccess::
+            AuthenticatesRegistryCallbackTransaction(
+                &fixture->ownership,
+                fixture->key,
+                serial,
+                RegistryCallbackPurpose::None,
+                windowWitness));
+    OWNERSHIP_CHECK(
+        !ZoneScriptStringOwnershipControllerTestAccess::
+            AuthenticatesRegistryCallbackTransaction(
+                &fixture->ownership,
+                fixture->key,
+                serial,
+                expectedPurpose,
+                0));
+
+    if (!firstObservation)
+        return;
+
+    lifecycle::ZoneLoadContextKey wrongKey = fixture->key;
+    ++wrongKey.generation;
+    std::uint32_t rejectedSerial = UINT32_C(0x11223344);
+    RegistryCallbackPurpose rejectedPurpose =
+        RegistryCallbackPurpose::Unloading;
+    std::uint8_t rejectedWindowWitness = UINT8_C(0x5A);
+    OWNERSHIP_CHECK(
+        !ZoneScriptStringOwnershipControllerTestAccess::
+            TrySnapshotRegistryCallbackTransaction(
+                &fixture->ownership,
+                wrongKey,
+                &rejectedSerial,
+                &rejectedPurpose,
+                &rejectedWindowWitness));
+    OWNERSHIP_CHECK(rejectedSerial == UINT32_C(0x11223344));
+    OWNERSHIP_CHECK(
+        rejectedPurpose == RegistryCallbackPurpose::Unloading);
+    OWNERSHIP_CHECK(rejectedWindowWitness == UINT8_C(0x5A));
+
+    rejectedPurpose = RegistryCallbackPurpose::Unloading;
+    OWNERSHIP_CHECK(
+        !ZoneScriptStringOwnershipControllerTestAccess::
+            TrySnapshotRegistryCallbackTransaction(
+                &fixture->ownership,
+                fixture->key,
+                nullptr,
+                &rejectedPurpose,
+                &rejectedWindowWitness));
+    OWNERSHIP_CHECK(
+        rejectedPurpose == RegistryCallbackPurpose::Unloading);
+    rejectedSerial = UINT32_C(0x55667788);
+    OWNERSHIP_CHECK(
+        !ZoneScriptStringOwnershipControllerTestAccess::
+            TrySnapshotRegistryCallbackTransaction(
+                &fixture->ownership,
+                fixture->key,
+                &rejectedSerial,
+                nullptr,
+                &rejectedWindowWitness));
+    OWNERSHIP_CHECK(rejectedSerial == UINT32_C(0x55667788));
+    rejectedSerial = UINT32_C(0x66778899);
+    rejectedPurpose = RegistryCallbackPurpose::Unloading;
+    OWNERSHIP_CHECK(
+        !ZoneScriptStringOwnershipControllerTestAccess::
+            TrySnapshotRegistryCallbackTransaction(
+                &fixture->ownership,
+                fixture->key,
+                &rejectedSerial,
+                &rejectedPurpose,
+                nullptr));
+    OWNERSHIP_CHECK(rejectedSerial == UINT32_C(0x66778899));
+    OWNERSHIP_CHECK(
+        rejectedPurpose == RegistryCallbackPurpose::Unloading);
+
+    const std::uint32_t wrongSerial = serial == UINT32_MAX
+        ? serial - 1
+        : serial + 1;
+    OWNERSHIP_CHECK(
+        !ZoneScriptStringOwnershipControllerTestAccess::
+            AuthenticatesRegistryCallbackTransaction(
+                &fixture->ownership,
+                fixture->key,
+                wrongSerial,
+                expectedPurpose,
+                windowWitness));
+
+    ZoneScriptStringOwnershipControllerTestAccess::SetReserved(
+        &fixture->ownership,
+        windowWitness,
+        static_cast<std::uint8_t>(windowWitness - 1));
+    rejectedSerial = UINT32_C(0x99AABBCC);
+    rejectedPurpose = RegistryCallbackPurpose::Unloading;
+    rejectedWindowWitness = UINT8_C(0x5A);
+    OWNERSHIP_CHECK(
+        !ZoneScriptStringOwnershipControllerTestAccess::
+            TrySnapshotRegistryCallbackTransaction(
+                &fixture->ownership,
+                fixture->key,
+                &rejectedSerial,
+                &rejectedPurpose,
+                &rejectedWindowWitness));
+    OWNERSHIP_CHECK(rejectedSerial == UINT32_C(0x99AABBCC));
+    OWNERSHIP_CHECK(
+        rejectedPurpose == RegistryCallbackPurpose::Unloading);
+    OWNERSHIP_CHECK(rejectedWindowWitness == UINT8_C(0x5A));
+
+    // The begin primitive must poison rather than advance a torn or exhausted
+    // witness. Test access repairs the deliberately poisoned phase afterward
+    // so the same process can cover every real callback purpose without
+    // releasing the fail-closed production serializer.
+    OWNERSHIP_CHECK(
+        !ZoneScriptStringOwnershipControllerTestAccess::
+            TryBeginRegistryCallbackWindow(
+                &fixture->ownership, callbackPhase));
+    OWNERSHIP_CHECK(fixture->ownership.poisoned());
+    ZoneScriptStringOwnershipControllerTestAccess::SetPhase(
+        &fixture->ownership, callbackPhase);
+    ZoneScriptStringOwnershipControllerTestAccess::SetReserved(
+        &fixture->ownership, windowWitness, windowWitness);
+
+    ZoneScriptStringOwnershipControllerTestAccess::SetReserved(
+        &fixture->ownership, UINT8_MAX, UINT8_MAX);
+    OWNERSHIP_CHECK(
+        !ZoneScriptStringOwnershipControllerTestAccess::
+            TryBeginRegistryCallbackWindow(
+                &fixture->ownership, callbackPhase));
+    OWNERSHIP_CHECK(fixture->ownership.poisoned());
+    ZoneScriptStringOwnershipControllerTestAccess::SetPhase(
+        &fixture->ownership, callbackPhase);
+    ZoneScriptStringOwnershipControllerTestAccess::SetReserved(
+        &fixture->ownership, windowWitness, windowWitness);
+
+    ZoneScriptStringOwnershipControllerTestAccess::SetTransactionSerial(
+        &fixture->ownership, wrongSerial);
+    rejectedSerial = UINT32_C(0xDDBBCCAA);
+    rejectedPurpose = RegistryCallbackPurpose::Unloading;
+    rejectedWindowWitness = UINT8_C(0x5A);
+    OWNERSHIP_CHECK(
+        !ZoneScriptStringOwnershipControllerTestAccess::
+            TrySnapshotRegistryCallbackTransaction(
+                &fixture->ownership,
+                fixture->key,
+                &rejectedSerial,
+                &rejectedPurpose,
+                &rejectedWindowWitness));
+    OWNERSHIP_CHECK(rejectedSerial == UINT32_C(0xDDBBCCAA));
+    OWNERSHIP_CHECK(
+        rejectedPurpose == RegistryCallbackPurpose::Unloading);
+    OWNERSHIP_CHECK(rejectedWindowWitness == UINT8_C(0x5A));
+    ZoneScriptStringOwnershipControllerTestAccess::SetTransactionSerial(
+        &fixture->ownership, serial);
+
+    // The transaction serializer intentionally blocks a foreign thread until
+    // the callback owner releases it. Launch one attempt from admission, but
+    // join only after the outer commit has finished; joining here would wait
+    // on the very transaction retained by this callback.
+    if (expectedPurpose == RegistryCallbackPurpose::Admitting)
+    {
+        fixture->registryCallbackForeignThread = std::thread([fixture]() {
+            fixture->registryCallbackForeignReady.store(
+                true, std::memory_order_release);
+            fixture->registryCallbackForeignAccepted =
+            ZoneScriptStringOwnershipControllerTestAccess::
+                TrySnapshotRegistryCallbackTransaction(
+                    &fixture->ownership,
+                    fixture->key,
+                    &fixture->registryCallbackForeignSerial,
+                    &fixture->registryCallbackForeignPurpose,
+                    &fixture->registryCallbackForeignWitness);
+            fixture->registryCallbackForeignDone.store(
+                true, std::memory_order_release);
+        });
+        while (!fixture->registryCallbackForeignReady.load(
+            std::memory_order_acquire))
+        {
+            std::this_thread::yield();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        OWNERSHIP_CHECK(
+            !fixture->registryCallbackForeignDone.load(
+                std::memory_order_acquire));
+    }
+
+    OWNERSHIP_CHECK(
+        ZoneScriptStringOwnershipControllerTestAccess::
+            AuthenticatesRegistryCallbackTransaction(
+                &fixture->ownership,
+                fixture->key,
+                serial,
+                expectedPurpose,
+                windowWitness));
+}
+
 struct RollbackDriver final
 {
+    Fixture *fixture = nullptr;
     ZoneScriptStringOwnershipController *reentryController = nullptr;
     bool attemptBeginReentry = false;
     bool attemptedBeginReentry = false;
@@ -164,6 +439,14 @@ controller::ZoneScriptStringUnpublishStatus EnsureUnreachable(
 {
     auto &driver = *static_cast<RollbackDriver *>(context);
     ++driver.ensureCalls;
+    if (driver.fixture)
+    {
+        const auto purpose = driver.fixture->ownership.phase()
+                == ZoneScriptStringOwnershipPhase::UnpublishingCallback
+            ? RegistryCallbackPurpose::Unpublishing
+            : RegistryCallbackPurpose::Cleaning;
+        ObserveRegistryCallbackAuthorization(driver.fixture, purpose);
+    }
     if (driver.attemptBeginReentry && !driver.attemptedBeginReentry)
     {
         driver.attemptedBeginReentry = true;
@@ -185,6 +468,11 @@ lifecycle::ZoneLoadCleanupCallbackStatus PerformCleanup(
     const lifecycle::ZoneLoadCleanupOperation operation) noexcept
 {
     auto &driver = *static_cast<RollbackDriver *>(context);
+    if (driver.fixture)
+    {
+        ObserveRegistryCallbackAuthorization(
+            driver.fixture, RegistryCallbackPurpose::Cleaning);
+    }
     OWNERSHIP_CHECK(
         operation
         != lifecycle::ZoneLoadCleanupOperation::
@@ -232,6 +520,9 @@ void AdmitLive(void *const context) noexcept
         probe.fixture->stringJournal.phase()
         == journal::ScriptStringJournalPhase::Committed);
 
+    ObserveRegistryCallbackAuthorization(
+        probe.fixture, RegistryCallbackPurpose::Admitting);
+
     std::uint32_t transactionSerial = UINT32_C(0xA55AA55A);
     OWNERSHIP_CHECK(
         !probe.fixture->ownership.trySnapshotRegistryTransaction(
@@ -250,6 +541,21 @@ void AdmitNoop(void *) noexcept
 {
 }
 
+struct AdmissionCorruptionProbe final
+{
+    ZoneScriptStringOwnershipController *controller = nullptr;
+    bool called = false;
+};
+
+void CorruptAdmissionWindow(void *const context) noexcept
+{
+    auto &probe = *static_cast<AdmissionCorruptionProbe *>(context);
+    probe.called = true;
+    OWNERSHIP_CHECK(probe.controller != nullptr);
+    ZoneScriptStringOwnershipControllerTestAccess::SetReserved(
+        probe.controller, 1, 2);
+}
+
 bool AuthenticatesFixtureStorage(
     const Fixture &fixture,
     const std::uint32_t expectedCount,
@@ -266,7 +572,7 @@ bool AuthenticatesFixtureStorage(
         phase);
 }
 
-bool CommitEmptyFixture(Fixture &fixture, const std::uint32_t slot)
+bool PrepareEmptyFixture(Fixture &fixture, const std::uint32_t slot)
 {
     if (!fixture.begin(0, slot))
         return false;
@@ -277,10 +583,15 @@ bool CommitEmptyFixture(Fixture &fixture, const std::uint32_t slot)
         && controller::TryTransferNextZoneScriptString(&fixture.ownership)
                 == ZoneScriptStringOwnershipStatus::Success
         && controller::TryPrepareZoneScriptStringCommit(&fixture.ownership)
-                == ZoneScriptStringOwnershipStatus::Success
+                == ZoneScriptStringOwnershipStatus::Success;
+}
+
+bool CommitEmptyFixture(Fixture &fixture, const std::uint32_t slot)
+{
+    return PrepareEmptyFixture(fixture, slot)
         && controller::TryCommitZoneScriptStringsAndAdmit(
                &fixture.ownership, {nullptr, AdmitNoop})
-                == ZoneScriptStringOwnershipStatus::Success;
+            == ZoneScriptStringOwnershipStatus::Success;
 }
 
 struct LiveUnloadDriver final
@@ -304,6 +615,11 @@ lifecycle::ZoneLoadCleanupCallbackStatus PerformLiveUnload(
     const lifecycle::ZoneLoadCleanupOperation operation) noexcept
 {
     auto &driver = *static_cast<LiveUnloadDriver *>(context);
+    if (driver.fixture)
+    {
+        ObserveRegistryCallbackAuthorization(
+            driver.fixture, RegistryCallbackPurpose::Unloading);
+    }
     OWNERSHIP_CHECK(driver.fixture != nullptr);
     OWNERSHIP_CHECK(driver.operationCount < driver.operations.size());
     if (driver.operationCount < driver.operations.size())
@@ -421,7 +737,23 @@ void TestCommittedAdmission()
             &fixture.ownership,
             {&admission, AdmitLive})
         == ZoneScriptStringOwnershipStatus::Success);
+    OWNERSHIP_CHECK(fixture.registryCallbackForeignThread.joinable());
+    if (fixture.registryCallbackForeignThread.joinable())
+        fixture.registryCallbackForeignThread.join();
+    OWNERSHIP_CHECK(
+        fixture.registryCallbackForeignDone.load(std::memory_order_acquire));
+    OWNERSHIP_CHECK(!fixture.registryCallbackForeignAccepted);
+    OWNERSHIP_CHECK(
+        fixture.registryCallbackForeignSerial == UINT32_C(0x13572468));
+    OWNERSHIP_CHECK(
+        fixture.registryCallbackForeignPurpose
+        == RegistryCallbackPurpose::Unloading);
+    OWNERSHIP_CHECK(
+        fixture.registryCallbackForeignWitness == UINT8_C(0xA5));
     OWNERSHIP_CHECK(admission.called);
+    OWNERSHIP_CHECK(
+        fixture.registryCallbackPurposeCalls[static_cast<std::size_t>(
+            RegistryCallbackPurpose::Admitting)] == 1);
     OWNERSHIP_CHECK(
         admission.reentryStatus == ZoneScriptStringOwnershipStatus::Busy);
     OWNERSHIP_CHECK(
@@ -477,6 +809,7 @@ void TestPartialRollbackAndCleanupRetry()
         == ZoneScriptStringOwnershipStatus::Success);
 
     RollbackDriver driver{};
+    driver.fixture = &fixture;
     driver.reentryController = &fixture.ownership;
     driver.attemptBeginReentry = true;
     driver.retryFirstEnsure = true;
@@ -540,6 +873,12 @@ void TestPartialRollbackAndCleanupRetry()
         controller::TryFinishZoneScriptStringAbandonment(&fixture.ownership)
         == ZoneScriptStringOwnershipStatus::Success);
     OWNERSHIP_CHECK(driver.operationCount > callsBeforeRetry);
+    OWNERSHIP_CHECK(
+        fixture.registryCallbackPurposeCalls[static_cast<std::size_t>(
+            RegistryCallbackPurpose::Unpublishing)] == 2);
+    OWNERSHIP_CHECK(
+        fixture.registryCallbackPurposeCalls[static_cast<std::size_t>(
+            RegistryCallbackPurpose::Cleaning)] > 0);
     OWNERSHIP_CHECK(
         fixture.ownership.phase()
         == ZoneScriptStringOwnershipPhase::Abandoned);
@@ -1075,6 +1414,9 @@ void TestLiveUnloadRetryBindingAndTerminalReset()
     OWNERSHIP_CHECK(driver.freedPhysicalMemory);
     OWNERSHIP_CHECK(driver.observedContextAfterFree);
     OWNERSHIP_CHECK(
+        fixture.registryCallbackPurposeCalls[static_cast<std::size_t>(
+            RegistryCallbackPurpose::Unloading)] > 0);
+    OWNERSHIP_CHECK(
         fixture.ownership.canonicalForBinding(
             &fixture.lifecycleSlot, fixture.key));
     OWNERSHIP_CHECK(
@@ -1133,6 +1475,32 @@ void TestLiveUnloadRetryBindingAndTerminalReset()
             oldKey,
             lifecycle::ZoneLoadTerminalKind::Unloaded)
         == ZoneScriptStringOwnershipStatus::StaleKey);
+}
+
+void TestAdmissionPostconditionFailsClosed()
+{
+    ResetBackend();
+    Fixture fixture;
+    OWNERSHIP_CHECK(PrepareEmptyFixture(fixture, 11));
+
+    AdmissionCorruptionProbe corruption{&fixture.ownership};
+    OWNERSHIP_CHECK(
+        controller::TryCommitZoneScriptStringsAndAdmit(
+            &fixture.ownership,
+            {&corruption, CorruptAdmissionWindow})
+        == ZoneScriptStringOwnershipStatus::UnsafeFailure);
+    OWNERSHIP_CHECK(corruption.called);
+    OWNERSHIP_CHECK(fixture.ownership.poisoned());
+    OWNERSHIP_CHECK(fixture.ownership.serializerRetained());
+    OWNERSHIP_CHECK(
+        fixture.ownership.phase()
+        == ZoneScriptStringOwnershipPhase::UnsafeFailure);
+    OWNERSHIP_CHECK(
+        fixture.lifecycleSlot.phase()
+        == lifecycle::ZoneLoadContextPhase::Live);
+    OWNERSHIP_CHECK(
+        fixture.stringJournal.phase()
+        == journal::ScriptStringJournalPhase::Committed);
 }
 } // namespace ownership_test
 
@@ -1200,6 +1568,9 @@ int main()
     TestDurableStorageIdentityAuthentication();
     TestAbandonedReceiptAuthentication();
     TestLiveUnloadRetryBindingAndTerminalReset();
+    // This fail-closed case intentionally retains the process serializer and
+    // must remain last.
+    TestAdmissionPostconditionFailsClosed();
     if (failures != 0)
     {
         std::fprintf(

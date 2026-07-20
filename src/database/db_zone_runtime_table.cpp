@@ -159,7 +159,8 @@ bool ZoneRuntimeGenerationBinding::isPristine() const noexcept
         && allocationType_ == 0
         && setupStage_ == ZoneRuntimeSetupStage::Passive
         && executionMode_ == ZoneRuntimeExecutionMode::Passive
-        && callbackActive_ == 0 && witness_ == 0 && reserved_ == 0;
+        && callbackMarker_ == CallbackMarker::Idle
+        && witness_ == 0 && reserved_ == 0;
 }
 
 bool ZoneRuntimeGenerationBinding::canonicalFor(
@@ -177,7 +178,7 @@ bool ZoneRuntimeGenerationBinding::canonicalFor(
         || !IsKnownExecutionMode(executionMode_)
         || setupStage_ < ZoneRuntimeSetupStage::CallbacksBound
         || executionMode_ == ZoneRuntimeExecutionMode::Passive
-        || callbackActive_ > 1
+        || callbackMarker_ > CallbackMarker::ActiveRegistryBorrow
         || witness_ != BindingWitness(setupStage_, executionMode_)
         || reserved_ != 0)
     {
@@ -249,7 +250,7 @@ void ZoneRuntimeGenerationBinding::bind(
     allocationType_ = 0;
     setupStage_ = ZoneRuntimeSetupStage::CallbacksBound;
     executionMode_ = ZoneRuntimeExecutionMode::Loading;
-    callbackActive_ = 0;
+    callbackMarker_ = CallbackMarker::Idle;
     reserved_ = 0;
     witness_ = BindingWitness(setupStage_, executionMode_);
 }
@@ -282,7 +283,7 @@ void ZoneRuntimeGenerationBinding::reset() noexcept
     allocationType_ = 0;
     setupStage_ = ZoneRuntimeSetupStage::Passive;
     executionMode_ = ZoneRuntimeExecutionMode::Passive;
-    callbackActive_ = 0;
+    callbackMarker_ = CallbackMarker::Idle;
     witness_ = 0;
     reserved_ = 0;
 }
@@ -967,6 +968,158 @@ ZoneRuntimeTableStatus ZoneRuntimeTable::authenticateExactMutableEntry(
     return ZoneRuntimeTableStatus::Success;
 }
 
+ZoneRuntimeTableStatus
+ZoneRuntimeTable::authenticateExactRegistryLifecycleCallback(
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept
+{
+    using Marker = ZoneRuntimeGenerationBinding::CallbackMarker;
+    return transitionExactRegistryLifecycleCallback(
+        physicalSlot,
+        key,
+        Marker::ActiveRegistryBorrow,
+        Marker::ActiveNoRegistry);
+}
+
+ZoneRuntimeTableStatus
+ZoneRuntimeTable::restoreExactRegistryLifecycleCallback(
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key) noexcept
+{
+    using Marker = ZoneRuntimeGenerationBinding::CallbackMarker;
+    return transitionExactRegistryLifecycleCallback(
+        physicalSlot,
+        key,
+        Marker::ActiveNoRegistry,
+        Marker::ActiveRegistryBorrow);
+}
+
+ZoneRuntimeTableStatus
+ZoneRuntimeTable::transitionExactRegistryLifecycleCallback(
+    const std::uint32_t physicalSlot,
+    const zone_load::ZoneLoadContextKey &key,
+    const ZoneRuntimeGenerationBinding::CallbackMarker expectedMarker,
+    const ZoneRuntimeGenerationBinding::CallbackMarker replacementMarker)
+    noexcept
+{
+    using Marker = ZoneRuntimeGenerationBinding::CallbackMarker;
+    if (expectedMarker == Marker::Idle
+        || expectedMarker > Marker::ActiveRegistryBorrow
+        || replacementMarker == Marker::Idle
+        || replacementMarker > Marker::ActiveRegistryBorrow
+        || expectedMarker == replacementMarker)
+    {
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    if (!HasKnownState(state_) || !HasKnownSharedState(sharedState_))
+    {
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    const TableState state = static_cast<TableState>(state_);
+    if (state == TableState::Poisoned)
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    if (state != TableState::Initialized)
+        return ZoneRuntimeTableStatus::InvalidState;
+    if (!static_cast<bool>(key))
+        return ZoneRuntimeTableStatus::InvalidKey;
+    const ZoneRuntimeTableStatus slotStatus =
+        ValidateUsableSlot(physicalSlot);
+    if (slotStatus != ZoneRuntimeTableStatus::Success)
+        return slotStatus;
+    if (key.slot != physicalSlot)
+        return ZoneRuntimeTableStatus::StaleKey;
+
+    ZoneRuntimeEntry &entry = entries_[physicalSlot];
+    if (entry.key_ != key
+        || entry.lifecycle_.slotIndex() != physicalSlot
+        || entry.lifecycle_.generation() != key.generation)
+    {
+        return ZoneRuntimeTableStatus::StaleKey;
+    }
+
+    // Whole-table authentication is expected to classify the synchronous
+    // callback as Busy.  It still validates every stable binding and both
+    // process-wide authorities before the callback-specific exception below.
+    const ZoneRuntimeTableStatus tableStatus = validateSharedComposition();
+    if (tableStatus == ZoneRuntimeTableStatus::UnsafeFailure)
+    {
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    if (tableStatus != ZoneRuntimeTableStatus::Success
+        && tableStatus != ZoneRuntimeTableStatus::Busy)
+    {
+        return tableStatus;
+    }
+
+    ZoneRuntimeGenerationBinding &binding = entry.generationBinding_;
+    if (!binding.canonicalFor(this, &entry.lifecycle_, key))
+    {
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+
+    // A process-wide serialized table can have only the one callback that is
+    // currently on this call stack.  A second marker is a torn or forged
+    // authority, even when that marker would independently decode as known.
+    std::size_t activeMarkerCount = 0;
+    const ZoneRuntimeEntry *activeMarkerEntry = nullptr;
+    for (const ZoneRuntimeEntry &candidate : entries_)
+    {
+        const Marker marker = candidate.generationBinding_.callbackMarker_;
+        if (marker > Marker::ActiveRegistryBorrow)
+        {
+            poison();
+            return ZoneRuntimeTableStatus::UnsafeFailure;
+        }
+        if (marker == Marker::Idle)
+            continue;
+        ++activeMarkerCount;
+        if (activeMarkerCount != 1)
+        {
+            poison();
+            return ZoneRuntimeTableStatus::UnsafeFailure;
+        }
+        activeMarkerEntry = &candidate;
+    }
+
+    // A valid callback for another generation is ordinary contention, not a
+    // structural contradiction.  Refuse the wrong target without consuming
+    // or poisoning the sole callback's authority.
+    if (activeMarkerEntry && activeMarkerEntry != &entry)
+        return ZoneRuntimeTableStatus::Busy;
+
+    if (binding.callbackMarker_ == Marker::Idle
+        || binding.callbackMarker_ != expectedMarker)
+    {
+        // Idle includes an ordinary exact generation. A different known
+        // marker is either non-borrowable callback work or the opposite side
+        // of the private consume/restore transition. Neither publishes the
+        // requested authority.
+        return ZoneRuntimeTableStatus::Busy;
+    }
+    if (activeMarkerCount != 1
+        || tableStatus != ZoneRuntimeTableStatus::Busy
+        || !entry.scriptStringOwnership_.canonicalForBinding(
+            &entry.lifecycle_, key)
+        || !exactRegistryLifecycleCallbackPhaseMatches(entry))
+    {
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    // The forward transition consumes the table admission before publishing
+    // Success. Its sole reverse use follows a coordinator hash-lock Busy while
+    // the same facade serializer and synchronous callback remain active. The
+    // admitted coordinator otherwise owns and reauthenticates the resulting
+    // scope until Finish. This one-shot gate is defense in depth, not arbitrary
+    // longjmp containment: production enrollment still requires checked
+    // no-report callback adapters.
+    binding.callbackMarker_ = replacementMarker;
+    return ZoneRuntimeTableStatus::Success;
+}
+
 zone_load::ZoneLoadContextSlot *ZoneRuntimeTable::mutableLifecycle(
     ZoneRuntimeEntry *const entry) noexcept
 {
@@ -1053,6 +1206,69 @@ bool ZoneRuntimeTable::generationPlacementMatches(
         && binding.placementCapacity_ == capacity
         && binding.placementExpectedCount_ == 0
         && expectedCount <= capacity;
+}
+
+bool ZoneRuntimeTable::exactRegistryLifecycleCallbackPhaseMatches(
+    const ZoneRuntimeEntry &entry) noexcept
+{
+    using LifecyclePhase = zone_load::ZoneLoadContextPhase;
+    using OwnershipPhase = zone_script_string_ownership::
+        ZoneScriptStringOwnershipPhase;
+    const ZoneRuntimeGenerationBinding &binding =
+        entry.generationBinding_;
+    const zone_load::ZoneLoadContextSlot &lifecycle = entry.lifecycle_;
+    const zone_script_string_ownership::
+        ZoneScriptStringOwnershipController &controller =
+            entry.scriptStringOwnership_;
+    if (!binding.canonicalFor(
+            binding.table_, &lifecycle, entry.key_)
+        || !controller.canonicalForBinding(&lifecycle, entry.key_)
+        || !controller.serializerRetained() || controller.poisoned())
+    {
+        return false;
+    }
+
+    switch (controller.phase())
+    {
+    case OwnershipPhase::UnpublishingCallback:
+        return binding.executionMode_
+                == ZoneRuntimeExecutionMode::Abandoning
+            && binding.setupStage_
+                >= ZoneRuntimeSetupStage::ScriptStringsBegun
+            && lifecycle.phase() == LifecyclePhase::Loading
+            && lifecycle.terminalKind()
+                == zone_load::ZoneLoadTerminalKind::None
+            && !lifecycle.cleanupActive();
+    case OwnershipPhase::Cleaning:
+        return binding.executionMode_
+                == ZoneRuntimeExecutionMode::Abandoning
+            && binding.setupStage_
+                >= ZoneRuntimeSetupStage::ScriptStringsBegun
+            && lifecycle.phase() == LifecyclePhase::Abandoning
+            && lifecycle.terminalKind()
+                == zone_load::ZoneLoadTerminalKind::Abandoned
+            && lifecycle.cleanupActive();
+    case OwnershipPhase::Admitting:
+        return binding.executionMode_
+                == ZoneRuntimeExecutionMode::Admitting
+            && binding.setupStage_
+                == ZoneRuntimeSetupStage::AllocationEnded
+            && lifecycle.phase() == LifecyclePhase::Live
+            && lifecycle.terminalKind()
+                == zone_load::ZoneLoadTerminalKind::None
+            && !lifecycle.cleanupActive();
+    case OwnershipPhase::UnloadingCallback:
+        return binding.executionMode_
+                == ZoneRuntimeExecutionMode::Unloading
+            && binding.setupStage_
+                == ZoneRuntimeSetupStage::AllocationEnded
+            && lifecycle.phase() == LifecyclePhase::Abandoning
+            && lifecycle.terminalKind()
+                == zone_load::ZoneLoadTerminalKind::Unloaded
+            && lifecycle.cleanupActive();
+    default:
+        return false;
+    }
 }
 
 void ZoneRuntimeTable::bindGeneration(
@@ -1153,24 +1369,41 @@ ZoneRuntimeTable::EnsureBoundGenerationUnreachable(
             == zone_load::ZoneLoadCleanupOperation::
                 MakePartialAssetsAndStagedReferencesUnreachable;
     if (!exactOwner || (!initialUnpublish && !cleanupUnpublish)
-        || binding.callbackActive_ != 0)
+        || binding.callbackMarker_
+            != ZoneRuntimeGenerationBinding::CallbackMarker::Idle)
     {
-        binding.callbackActive_ = 1;
+        binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveNoRegistry;
         return Result::UnsafeFailure;
     }
 
     const bool discardPending = cleanupUnpublish;
 
-    binding.callbackActive_ = 1;
+    binding.callbackMarker_ = exactRegistryLifecycleCallbackPhaseMatches(
+            *entry)
+        ? ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveRegistryBorrow
+        : ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveNoRegistry;
     const Result external = binding.callbacks_.ensureUnreachable(
         binding.callbacks_.context);
     if (external == Result::Retry)
     {
-        binding.callbackActive_ = 0;
+        binding.callbackMarker_ =
+            ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
         return Result::Retry;
     }
     if (external != Result::Success)
+    {
+        binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveNoRegistry;
         return Result::UnsafeFailure;
+    }
+
+    // The external callback authority ends before any table-owned pending
+    // admission work resumes.
+    binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+        CallbackMarker::ActiveNoRegistry;
 
     if (discardPending
         && binding.setupStage_ >= ZoneRuntimeSetupStage::PendingCopyBegun)
@@ -1186,14 +1419,16 @@ ZoneRuntimeTable::EnsureBoundGenerationUnreachable(
             break;
         case zone_pending_copy::PendingCopyStatus::Busy:
         case zone_pending_copy::PendingCopyStatus::Retry:
-            binding.callbackActive_ = 0;
+            binding.callbackMarker_ =
+                ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
             return Result::Retry;
         default:
             return Result::UnsafeFailure;
         }
     }
 
-    binding.callbackActive_ = 0;
+    binding.callbackMarker_ =
+        ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
     return Result::Success;
 }
 
@@ -1219,14 +1454,17 @@ ZoneRuntimeTable::PerformBoundGenerationCleanup(
             == ZoneRuntimeExecutionMode::Abandoning
         ? zone_load::ZoneLoadTerminalKind::Abandoned
         : zone_load::ZoneLoadTerminalKind::Unloaded;
-    if (!exactOwner || binding.callbackActive_ != 0
+    if (!exactOwner
+        || binding.callbackMarker_
+            != ZoneRuntimeGenerationBinding::CallbackMarker::Idle
         || entry->lifecycle_.phase()
             != zone_load::ZoneLoadContextPhase::Abandoning
         || entry->lifecycle_.terminalKind() != expectedTerminal
         || !entry->lifecycle_.cleanupActive()
         || entry->lifecycle_.nextCleanupOperation() != operation)
     {
-        binding.callbackActive_ = 1;
+        binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveNoRegistry;
         return CleanupResult::UnsafeFailure;
     }
 
@@ -1250,40 +1488,58 @@ ZoneRuntimeTable::PerformBoundGenerationCleanup(
     }
 
     const auto failClosed = [&binding]() noexcept {
-        binding.callbackActive_ = 1;
+        binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveNoRegistry;
         return CleanupResult::UnsafeFailure;
     };
     const auto mapInternal = [&binding, &failClosed](
         const ZoneRuntimeTableStatus status) noexcept {
         if (status == ZoneRuntimeTableStatus::Success)
+        {
+            binding.callbackMarker_ =
+                ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
             return CleanupResult::Success;
+        }
         if (status == ZoneRuntimeTableStatus::Retry
             || status == ZoneRuntimeTableStatus::Busy)
         {
-            binding.callbackActive_ = 0;
+            binding.callbackMarker_ =
+                ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
             return CleanupResult::Retry;
         }
         return failClosed();
     };
     const auto performExternal =
-        [&binding, &failClosed, operation]() noexcept {
-        binding.callbackActive_ = 1;
+        [&binding, &failClosed, operation, entry]() noexcept {
+        binding.callbackMarker_ = exactRegistryLifecycleCallbackPhaseMatches(
+                *entry)
+            ? ZoneRuntimeGenerationBinding::
+                CallbackMarker::ActiveRegistryBorrow
+            : ZoneRuntimeGenerationBinding::
+                CallbackMarker::ActiveNoRegistry;
         const CleanupResult status =
             binding.callbacks_.performExternalCleanup(
                 binding.callbacks_.context,
                 operation);
         if (status == CleanupResult::Success)
         {
-            binding.callbackActive_ = 0;
+            binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+                CallbackMarker::ActiveNoRegistry;
             return CleanupResult::Success;
         }
         if (status == CleanupResult::Retry)
         {
-            binding.callbackActive_ = 0;
+            binding.callbackMarker_ =
+                ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
             return CleanupResult::Retry;
         }
         return failClosed();
     };
+
+    // The lifecycle/ownership controller has entered a callback, but no
+    // registry authority exists until performExternal publishes it.
+    binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+        CallbackMarker::ActiveNoRegistry;
 
     switch (operation)
     {
@@ -1294,7 +1550,11 @@ ZoneRuntimeTable::PerformBoundGenerationCleanup(
         if (external != CleanupResult::Success)
             return external;
         if (binding.setupStage_ < ZoneRuntimeSetupStage::PendingCopyBegun)
+        {
+            binding.callbackMarker_ =
+                ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
             return CleanupResult::Success;
+        }
         const auto pendingStatus =
             zone_pending_copy::TryDiscardPendingCopyAdmission(
                 &entry->receiptCapsule_.pendingCopyAdmissionReceipt_,
@@ -1303,9 +1563,13 @@ ZoneRuntimeTable::PerformBoundGenerationCleanup(
         {
         case zone_pending_copy::PendingCopyStatus::Success:
         case zone_pending_copy::PendingCopyStatus::AlreadyComplete:
+            binding.callbackMarker_ =
+                ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
             return CleanupResult::Success;
         case zone_pending_copy::PendingCopyStatus::Busy:
         case zone_pending_copy::PendingCopyStatus::Retry:
+            binding.callbackMarker_ =
+                ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
             return CleanupResult::Retry;
         default:
             return failClosed();
@@ -1316,6 +1580,8 @@ ZoneRuntimeTable::PerformBoundGenerationCleanup(
         if (binding.setupStage_
             < ZoneRuntimeSetupStage::StreamGenerationBegun)
         {
+            binding.callbackMarker_ =
+                ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
             return CleanupResult::Success;
         }
         return mapInternal(MapStreamStatus(
@@ -1333,7 +1599,11 @@ ZoneRuntimeTable::PerformBoundGenerationCleanup(
         if (external != CleanupResult::Success)
             return external;
         if (binding.setupStage_ < ZoneRuntimeSetupStage::StorageBound)
+        {
+            binding.callbackMarker_ =
+                ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
             return CleanupResult::Success;
+        }
         return mapInternal(MapStorageStatus(
             zone_runtime_storage::TryDestroyZoneRuntimeStorage(
                 &entry->receiptCapsule_.storageBinding_)));
@@ -1341,13 +1611,21 @@ ZoneRuntimeTable::PerformBoundGenerationCleanup(
     case zone_load::ZoneLoadCleanupOperation::
         EndPhysicalMemoryAllocation:
         if (binding.setupStage_ < ZoneRuntimeSetupStage::AllocationBegun)
+        {
+            binding.callbackMarker_ =
+                ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
             return CleanupResult::Success;
+        }
         return mapInternal(MapAllocationReceiptStatus(
             pmem_runtime::TryEndAllocationReceipt(
                 &entry->receiptCapsule_.allocationReceipt_)));
     case zone_load::ZoneLoadCleanupOperation::FreePhysicalMemory:
         if (binding.setupStage_ < ZoneRuntimeSetupStage::AllocationBegun)
+        {
+            binding.callbackMarker_ =
+                ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
             return CleanupResult::Success;
+        }
         return mapInternal(MapAllocationReceiptStatus(
             pmem_runtime::TryFreeAllocationReceipt(
                 &entry->receiptCapsule_.allocationReceipt_)));
@@ -1359,7 +1637,15 @@ ZoneRuntimeTable::PerformBoundGenerationCleanup(
         ClearRegistryLoadingQueueGateAndSignal:
     case zone_load::ZoneLoadCleanupOperation::
         RemoveLiveRegistryAndHandles:
-        return performExternal();
+    {
+        const CleanupResult external = performExternal();
+        if (external == CleanupResult::Success)
+        {
+            binding.callbackMarker_ =
+                ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
+        }
+        return external;
+    }
     case zone_load::ZoneLoadCleanupOperation::ReleaseSlot:
     default:
         return failClosed();
@@ -1373,17 +1659,65 @@ void ZoneRuntimeTable::CompleteBoundPendingAdmission(
     if (!entry)
         return;
     ZoneRuntimeGenerationBinding &binding = entry->generationBinding_;
-    if (!binding.canonicalFor(
-            binding.table_, &entry->lifecycle_, entry->key_)
-        || binding.callbackActive_ != 0)
+    ZoneRuntimeTable *const table = binding.table_;
+    const zone_load::ZoneLoadContextKey callbackKey = entry->key_;
+    const ZoneRuntimeGenerationBinding::CallbackMarker resumeMarker =
+        binding.callbackMarker_;
+    if (!table
+        || !static_cast<bool>(callbackKey)
+        || callbackKey.slot >= table->entries_.size()
+        || &table->entries_[callbackKey.slot] != entry
+        || !binding.canonicalFor(
+            table, &entry->lifecycle_, callbackKey)
+        || !table->initialized()
+        || (resumeMarker
+                != ZoneRuntimeGenerationBinding::CallbackMarker::Idle
+            && resumeMarker
+                != ZoneRuntimeGenerationBinding::
+                    CallbackMarker::ActiveNoRegistry)
+        || !exactRegistryLifecycleCallbackPhaseMatches(*entry))
     {
-        binding.callbackActive_ = 1;
+        binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveNoRegistry;
+        if (table)
+            table->poison();
         return;
     }
-    binding.callbackActive_ = 1;
-    binding.callbacks_.completePendingAdmission(
-        binding.callbacks_.context);
-    binding.callbackActive_ = 0;
+    const ZoneRuntimeGenerationCallbacks callbackSnapshot =
+        binding.callbacks_;
+    if (!entry->scriptStringOwnership_.tryBeginRegistryCallbackWindow(
+            zone_script_string_ownership::
+                ZoneScriptStringOwnershipPhase::Admitting))
+    {
+        binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveNoRegistry;
+        table->poison();
+        return;
+    }
+    binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+        CallbackMarker::ActiveRegistryBorrow;
+    callbackSnapshot.completePendingAdmission(callbackSnapshot.context);
+    if (!table->initialized()
+        || entry->key_ != callbackKey
+        || callbackKey.slot >= table->entries_.size()
+        || &table->entries_[callbackKey.slot] != entry
+        || !binding.canonicalFor(
+            table, &entry->lifecycle_, callbackKey)
+        || !binding.callbacksMatch(callbackSnapshot)
+        || (binding.callbackMarker_
+                != ZoneRuntimeGenerationBinding::
+                    CallbackMarker::ActiveRegistryBorrow
+            && binding.callbackMarker_
+                != ZoneRuntimeGenerationBinding::
+                    CallbackMarker::ActiveNoRegistry)
+        || !exactRegistryLifecycleCallbackPhaseMatches(*entry))
+    {
+        binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveNoRegistry;
+        table->poison();
+        return;
+    }
+    binding.callbackMarker_ = resumeMarker;
 }
 
 void ZoneRuntimeTable::AdmitBoundGeneration(void *const context) noexcept
@@ -1392,14 +1726,29 @@ void ZoneRuntimeTable::AdmitBoundGeneration(void *const context) noexcept
     if (!entry)
         return;
     ZoneRuntimeGenerationBinding &binding = entry->generationBinding_;
-    if (!binding.canonicalFor(
-            binding.table_, &entry->lifecycle_, entry->key_)
-        || binding.callbackActive_ != 0)
+    ZoneRuntimeTable *const table = binding.table_;
+    const zone_load::ZoneLoadContextKey callbackKey = entry->key_;
+    if (!table
+        || !static_cast<bool>(callbackKey)
+        || callbackKey.slot >= table->entries_.size()
+        || &table->entries_[callbackKey.slot] != entry
+        || !binding.canonicalFor(
+            table, &entry->lifecycle_, callbackKey)
+        || !table->initialized()
+        || binding.callbackMarker_
+            != ZoneRuntimeGenerationBinding::CallbackMarker::Idle)
     {
-        binding.callbackActive_ = 1;
+        binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveNoRegistry;
+        if (table)
+            table->poison();
         return;
     }
+    const ZoneRuntimeGenerationCallbacks callbackSnapshot =
+        binding.callbacks_;
 
+    binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+        CallbackMarker::ActiveNoRegistry;
     zone_pending_copy::FinalizePreparedPendingCopyAdmission(
         entry->receiptCapsule_.pendingCopyAdmissionReceipt_);
     const auto pendingPhase =
@@ -1409,13 +1758,66 @@ void ZoneRuntimeTable::AdmitBoundGeneration(void *const context) noexcept
         && pendingPhase
             != zone_pending_copy::PendingCopyAdmissionPhase::Drained)
     {
-        binding.callbackActive_ = 1;
+        binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveNoRegistry;
+        table->poison();
         return;
     }
 
-    binding.callbackActive_ = 1;
-    binding.callbacks_.admitLive(binding.callbacks_.context);
-    binding.callbackActive_ = 0;
+    // Finalization contains a nested external callback.  Its void result must
+    // not hide a poisoned table/controller or altered binding and allow the
+    // later live-admission side effect to run.
+    if (!table->initialized()
+        || entry->key_ != callbackKey
+        || callbackKey.slot >= table->entries_.size()
+        || &table->entries_[callbackKey.slot] != entry
+        || !binding.canonicalFor(
+            table, &entry->lifecycle_, callbackKey)
+        || !binding.callbacksMatch(callbackSnapshot)
+        || binding.callbackMarker_
+            != ZoneRuntimeGenerationBinding::
+                CallbackMarker::ActiveNoRegistry
+        || !exactRegistryLifecycleCallbackPhaseMatches(*entry))
+    {
+        binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveNoRegistry;
+        table->poison();
+        return;
+    }
+    if (!entry->scriptStringOwnership_.tryBeginRegistryCallbackWindow(
+            zone_script_string_ownership::
+                ZoneScriptStringOwnershipPhase::Admitting))
+    {
+        binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveNoRegistry;
+        table->poison();
+        return;
+    }
+    binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+        CallbackMarker::ActiveRegistryBorrow;
+    callbackSnapshot.admitLive(callbackSnapshot.context);
+    if (!table->initialized()
+        || entry->key_ != callbackKey
+        || callbackKey.slot >= table->entries_.size()
+        || &table->entries_[callbackKey.slot] != entry
+        || !binding.canonicalFor(
+            table, &entry->lifecycle_, callbackKey)
+        || !binding.callbacksMatch(callbackSnapshot)
+        || (binding.callbackMarker_
+                != ZoneRuntimeGenerationBinding::
+                    CallbackMarker::ActiveRegistryBorrow
+            && binding.callbackMarker_
+                != ZoneRuntimeGenerationBinding::
+                    CallbackMarker::ActiveNoRegistry)
+        || !exactRegistryLifecycleCallbackPhaseMatches(*entry))
+    {
+        binding.callbackMarker_ = ZoneRuntimeGenerationBinding::
+            CallbackMarker::ActiveNoRegistry;
+        table->poison();
+        return;
+    }
+    binding.callbackMarker_ =
+        ZoneRuntimeGenerationBinding::CallbackMarker::Idle;
 }
 
 ZoneRuntimeTableStatus ZoneRuntimeTable::completeMutableOperation(
@@ -1563,7 +1965,9 @@ ZoneRuntimeTableStatus ZoneRuntimeTable::validateEntryBinding(
     // phase before the lifecycle cursor advances. The exact stable binding
     // and lifecycle callback marker are authenticated above; component state
     // is reauthenticated after the callback returns.
-    if (callbackBusy || binding.callbackActive_ != 0)
+    if (callbackBusy
+        || binding.callbackMarker_
+            != ZoneRuntimeGenerationBinding::CallbackMarker::Idle)
         return ZoneRuntimeTableStatus::Busy;
 
     const ZoneRuntimeSetupStage stage = binding.setupStage_;

@@ -214,6 +214,37 @@ struct RegistryOwnershipCoordinatorAdmissionTestAccess final
 using CoordinatorAdmission = RegistryOwnershipCoordinatorAdmission;
 using CoordinatorFacade = RegistryOwnershipCoordinatorFacade;
 
+struct ZoneControllerCallbackProductionProbe final
+{
+    template <typename Controller>
+    static constexpr bool CanTrySnapshotRegistryCallback = requires(
+        const Controller *controller,
+        const zone_load::ZoneLoadContextKey &key,
+        std::uint32_t *serial)
+    {
+        controller->trySnapshotRegistryCallbackTransaction(
+            key, serial, nullptr, nullptr);
+    };
+
+    template <typename Controller>
+    static constexpr bool CanAuthenticateRegistryCallback = requires(
+        const Controller *controller,
+        const zone_load::ZoneLoadContextKey &key)
+    {
+        controller->authenticatesRegistryCallbackTransaction(
+            key, 0, {}, std::uint8_t{0});
+    };
+};
+
+using ZoneController = zone_script_string_ownership::
+    ZoneScriptStringOwnershipController;
+static_assert(
+    !ZoneControllerCallbackProductionProbe::
+        CanTrySnapshotRegistryCallback<ZoneController>);
+static_assert(
+    !ZoneControllerCallbackProductionProbe::
+        CanAuthenticateRegistryCallback<ZoneController>);
+
 struct RegistryOwnershipCoordinatorFacadeProductionProbe final
 {
     template <typename Facade>
@@ -226,6 +257,15 @@ struct RegistryOwnershipCoordinatorFacadeProductionProbe final
     static constexpr bool CanTryBorrow = requires
     {
         Facade::TryBorrow(
+            std::declval<const zone_script_string_ownership::
+                ZoneScriptStringOwnershipController &>(),
+            std::declval<const zone_load::ZoneLoadContextKey &>());
+    };
+
+    template <typename Facade>
+    static constexpr bool CanTryBorrowActiveRuntimeCallback = requires
+    {
+        Facade::TryBorrowActiveRuntimeCallback(
             std::declval<const zone_script_string_ownership::
                 ZoneScriptStringOwnershipController &>(),
             std::declval<const zone_load::ZoneLoadContextKey &>());
@@ -320,6 +360,9 @@ static_assert(
 static_assert(
     !RegistryOwnershipCoordinatorFacadeProductionProbe::
         CanTryBorrow<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanTryBorrowActiveRuntimeCallback<CoordinatorFacade>);
 static_assert(
     !RegistryOwnershipCoordinatorFacadeProductionProbe::
         CanFinish<CoordinatorFacade>);
@@ -424,7 +467,9 @@ struct RegistryOwnershipCoordinatorTestAccess final
             std::uint8_t{0},
             std::uint8_t{0},
             false,
-            false);
+            false,
+            std::uint8_t{0},
+            std::uint8_t{0});
     };
 
     template <typename Coordinator>
@@ -518,15 +563,15 @@ struct RegistryOwnershipCoordinatorTestAccess final
     };
 
     template <typename Coordinator>
-    static constexpr bool CanMutateMode = requires
+    static constexpr bool CanMutateModeCallbackReceipt = requires
     {
-        &Coordinator::mode_;
+        &Coordinator::modeCallbackReceipt_;
     };
 
     template <typename Coordinator>
-    static constexpr bool CanMutateModeMirror = requires
+    static constexpr bool CanMutateModeCallbackReceiptMirror = requires
     {
-        &Coordinator::modeMirror_;
+        &Coordinator::modeCallbackReceiptMirror_;
     };
 
     template <typename Coordinator>
@@ -539,12 +584,6 @@ struct RegistryOwnershipCoordinatorTestAccess final
     static constexpr bool CanMutateHashReceiptMirror = requires
     {
         &Coordinator::hashLockRetainedMirror_;
-    };
-
-    template <typename Coordinator>
-    static constexpr bool CanMutateReserved = requires
-    {
-        &Coordinator::reserved_;
     };
 
     template <typename Coordinator>
@@ -583,7 +622,23 @@ struct RegistryOwnershipCoordinatorTestAccess final
             RegistryOwnershipCoordinatorMode::Standalone,
             controller,
             key,
-            std::uint32_t{0});
+            std::uint32_t{0},
+            std::uint8_t{0},
+            std::uint8_t{0});
+    };
+
+    template <typename Coordinator>
+    static constexpr bool CanCallTryBorrowController = requires(
+        Coordinator *coordinator,
+        const zone_script_string_ownership::
+            ZoneScriptStringOwnershipController *controller,
+        const zone_load::ZoneLoadContextKey &key)
+    {
+        Coordinator::tryBorrowController(
+            coordinator,
+            controller,
+            key,
+            RegistryOwnershipCoordinatorMode::BorrowedZoneController);
     };
 
     template <typename Coordinator>
@@ -628,6 +683,18 @@ struct RegistryOwnershipCoordinatorTestAccess final
 
 using Coordinator = RegistryOwnershipCoordinator;
 static_assert(
+    static_cast<std::uint8_t>(RegistryOwnershipCoordinatorMode::None) == 0);
+static_assert(
+    static_cast<std::uint8_t>(RegistryOwnershipCoordinatorMode::Standalone)
+    == 1);
+static_assert(static_cast<std::uint8_t>(
+                  RegistryOwnershipCoordinatorMode::BorrowedZoneController)
+    == 2);
+static_assert(static_cast<std::uint8_t>(
+                  RegistryOwnershipCoordinatorMode::
+                      BorrowedActiveRuntimeCallback)
+    == 3);
+static_assert(
     !RegistryOwnershipCoordinatorTestAccess::CanCallBoundarySetter<
         Coordinator>);
 static_assert(
@@ -671,17 +738,17 @@ static_assert(!RegistryOwnershipCoordinatorTestAccess::CanMutatePhase<
     Coordinator>);
 static_assert(!RegistryOwnershipCoordinatorTestAccess::CanMutatePhaseMirror<
     Coordinator>);
-static_assert(!RegistryOwnershipCoordinatorTestAccess::CanMutateMode<
-    Coordinator>);
-static_assert(!RegistryOwnershipCoordinatorTestAccess::CanMutateModeMirror<
-    Coordinator>);
+static_assert(
+    !RegistryOwnershipCoordinatorTestAccess::
+        CanMutateModeCallbackReceipt<Coordinator>);
+static_assert(
+    !RegistryOwnershipCoordinatorTestAccess::
+        CanMutateModeCallbackReceiptMirror<Coordinator>);
 static_assert(!RegistryOwnershipCoordinatorTestAccess::CanMutateHashReceipt<
     Coordinator>);
 static_assert(
     !RegistryOwnershipCoordinatorTestAccess::CanMutateHashReceiptMirror<
         Coordinator>);
-static_assert(!RegistryOwnershipCoordinatorTestAccess::CanMutateReserved<
-    Coordinator>);
 static_assert(
     !RegistryOwnershipCoordinatorTestAccess::
         CanCallCanonicalAfterStandaloneBegin<Coordinator>);
@@ -696,6 +763,9 @@ static_assert(
         CanCallAuthenticatesOuterTransaction<Coordinator>);
 static_assert(!RegistryOwnershipCoordinatorTestAccess::CanCallBeginRegistered<
     Coordinator>);
+static_assert(
+    !RegistryOwnershipCoordinatorTestAccess::CanCallTryBorrowController<
+        Coordinator>);
 static_assert(!RegistryOwnershipCoordinatorTestAccess::CanCallBeginOperation<
     Coordinator>);
 static_assert(!RegistryOwnershipCoordinatorTestAccess::CanCallFinishOperation<

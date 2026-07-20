@@ -25,6 +25,8 @@ set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
 set(_legacy_registry_path "${SOURCE_ROOT}/src/database/db_registry.cpp")
 set(_script_transaction_header_path
     "${SOURCE_ROOT}/src/script/scr_string_transaction.h")
+set(_zone_script_ownership_header_path
+    "${SOURCE_ROOT}/src/database/db_zone_script_string_ownership.h")
 set(_script_string_source_path
     "${SOURCE_ROOT}/src/script/scr_stringlist.cpp")
 set(_integer_suffix_token_paste_path
@@ -50,6 +52,7 @@ foreach(_path IN ITEMS
     "${_ci_path}"
     "${_legacy_registry_path}"
     "${_script_transaction_header_path}"
+    "${_zone_script_ownership_header_path}"
     "${_script_string_source_path}"
     "${_integer_suffix_token_paste_path}"
     "${_server_token_literal_path}"
@@ -72,6 +75,8 @@ file(READ "${_tests_path}" _tests)
 file(READ "${_ci_path}" _ci)
 file(READ "${_legacy_registry_path}" _legacy_registry)
 file(READ "${_script_transaction_header_path}" _script_transaction_header)
+file(READ "${_zone_script_ownership_header_path}"
+    _zone_script_ownership_header)
 file(READ "${_script_string_source_path}" _script_string_source)
 file(READ "${_integer_suffix_token_paste_path}" _integer_suffix_source)
 file(READ "${_server_token_literal_path}" _server_token_literal_source)
@@ -270,6 +275,7 @@ set(_registry_coordinator_protected_tokens
     RegistryOwnershipCoordinatorTestAccess
     TryBeginStandaloneRegistryOwnershipCoordinator
     TryBorrowRegistryOwnershipCoordinator
+    TryBorrowActiveRuntimeCallback
     FinishRegistryOwnershipCoordinator
     TryRegistryAddDatabaseUser4
     TryRegistryAddDatabaseUsers4
@@ -366,6 +372,17 @@ function(remove_reviewed_registry_coordinator_token_text
             "" _candidate "${_candidate}")
         string(REPLACE
             "// RegistryOwnershipCoordinator. It carries numeric, mirrored identities so"
+            "" _candidate "${_candidate}")
+    elseif(PATH STREQUAL "${_zone_script_ownership_header_path}")
+        # The ownership controller grants only its callback-specific snapshot
+        # and reauthentication methods to the real coordinator. Remove the
+        # exact reviewed forward/friend bridge; any additional enrollment in
+        # this large header remains visible to the production-source scan.
+        string(REGEX REPLACE
+            "namespace[ \t\r\n]+db[ \t\r\n]*::[ \t\r\n]*registry_ownership[ \t\r\n]*\\{[ \t\r\n]*class[ \t\r\n]+RegistryOwnershipCoordinator[ \t\r\n]*;[ \t\r\n]*\\}"
+            "" _candidate "${_candidate}")
+        string(REGEX REPLACE
+            "friend[ \t\r\n]+class[ \t\r\n]+db[ \t\r\n]*::[ \t\r\n]*registry_ownership[ \t\r\n]*::[ \t\r\n]*RegistryOwnershipCoordinator[ \t\r\n]*;"
             "" _candidate "${_candidate}")
     endif()
     set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
@@ -757,6 +774,63 @@ require_contains(
     _fixture "pre-held hash reader was not rejected"
     "runtime rejection of an existing read-held hash boundary")
 foreach(_marker IN ITEMS
+    "TestActiveRuntimeCallbackBorrow()"
+    "ordinary borrow accepted callback-only authority"
+    "callback borrow did not report hash contention"
+    "foreign thread borrowed callback transaction"
+    "active callback finish failed"
+    "torn callback-purpose mirror authenticated"
+    "borrow survived a different callback purpose"
+    "TestCallbackWindowWitnessAuthentication()"
+    "zero callback-window witness was recoverable"
+    "torn global callback-window witness authenticated"
+    "zero retained callback-window witness authenticated"
+    "foreign callback-window witness authenticated"
+    "operation survived a same-purpose callback-window rollover"
+    "finish survived a same-purpose callback-window rollover"
+    "TestCallbackReceiptFieldIsolation()"
+    "high mode bits bled into callback receipt fields"
+    "high callback-purpose bits bled into the witness field")
+    require_contains(
+        _fixture "${_marker}"
+        "callback-origin coordinator runtime coverage")
+endforeach()
+foreach(_marker IN ITEMS
+    "static_cast<std::uint16_t>(mode)\n               & kCoordinatorReceiptModeMask"
+    "static_cast<std::uint16_t>(purpose)\n               << kCoordinatorReceiptPurposeShift)\n            & kCoordinatorReceiptPurposeMask"
+    "static_cast<std::uint16_t>(windowWitness)\n               << kCoordinatorReceiptWitnessShift)\n            & kCoordinatorReceiptWitnessMask")
+    require_contains(
+        _source "${_marker}"
+        "packed callback receipt field isolation")
+endforeach()
+
+extract_slice(
+    _source
+    "RegistryOwnershipStatus TryBorrowRegistryOwnershipCoordinator("
+    "RegistryOwnershipStatus FinishRegistryOwnershipCoordinator("
+    _ordinary_borrow_source
+    "ordinary low-level borrowed-controller entry point")
+require_contains(
+    _ordinary_borrow_source
+    "RegistryOwnershipCoordinatorMode::BorrowedZoneController"
+    "ordinary low-level borrow selects only its quiescent mode")
+require_not_contains(
+    _ordinary_borrow_source "BorrowedActiveRuntimeCallback"
+    "ordinary low-level borrow cannot select callback authority")
+foreach(_marker IN ITEMS
+    "RegistryOwnershipCoordinatorFacade::\n    TryBorrowActiveRuntimeCallback("
+    "RegistryOwnershipCoordinator::tryBorrowController("
+    "controller->trySnapshotRegistryCallbackTransaction("
+    "controller->authenticatesRegistryCallbackTransaction("
+    "RegistryOwnershipCoordinatorMode::BorrowedActiveRuntimeCallback"
+    "s_borrowedCallbackPurposeMirror"
+    "s_borrowedCallbackWindowWitnessMirror"
+    "modeCallbackReceiptMirror_")
+    require_contains(
+        _source "${_marker}"
+        "private mirrored callback-borrow authority")
+endforeach()
+foreach(_marker IN ITEMS
     "TestRegistryCoordinatorProductionStack()"
     "registry production-stack admitted a pre-held hash reader"
     "TryBeginStandaloneRegistryOwnershipCoordinator("
@@ -812,6 +886,11 @@ private:
         const zone_script_string_ownership::
             ZoneScriptStringOwnershipController &controller,
         const zone_load::ZoneLoadContextKey &expectedKey) noexcept;
+    [[nodiscard]] static RegistryOwnershipStatus
+    TryBorrowActiveRuntimeCallback(
+        const zone_script_string_ownership::
+            ZoneScriptStringOwnershipController &controller,
+        const zone_load::ZoneLoadContextKey &expectedKey) noexcept;
     [[nodiscard]] static RegistryOwnershipStatus Finish() noexcept;
     [[nodiscard]] static RegistryOwnershipStatus ValidateInactive() noexcept;
     [[nodiscard]] static RegistryOwnershipStatus ValidateActive() noexcept;
@@ -857,7 +936,7 @@ require_literal_count(
 require_regex_count(
     _coordinator_facade_declaration
     "(^|[^A-Za-z0-9_])static([^A-Za-z0-9_]|$)"
-    14
+    15
     "exact private static coordinator facade authority")
 require_not_contains(
     _coordinator_facade_declaration "RegistryOwnershipCoordinatorAdmission"
@@ -1015,6 +1094,48 @@ endforeach()
 require_literal_count(
     _script_transaction_header "RegistryOwnershipAdmission" 39
     "closed registry admission declaration/friend surface")
+
+# Callback-origin borrowing is a separate, private controller capability. The
+# large ownership header may contain exactly one forward declaration and one
+# private friendship naming the coordinator; neither callback method is public.
+require_literal_count(
+    _zone_script_ownership_header "RegistryOwnershipCoordinator" 2
+    "exact callback-authentication coordinator forward/friend bridge")
+require_literal_count(
+    _zone_script_ownership_header "registry_ownership" 2
+    "exact callback-authentication namespace forward/friend bridge")
+foreach(_marker IN ITEMS
+    "namespace db::registry_ownership"
+    "class RegistryOwnershipCoordinator;"
+    "friend class db::registry_ownership::RegistryOwnershipCoordinator;"
+    "enum class RegistryCallbackPurpose : std::uint8_t"
+    "bool trySnapshotRegistryCallbackTransaction("
+    "bool authenticatesRegistryCallbackTransaction("
+    "std::uint8_t *outWindowWitness"
+    "std::uint8_t expectedWindowWitness"
+    "std::uint8_t callbackWindowWitness_ = 0;"
+    "std::uint8_t callbackWindowWitnessMirror_ = 0;")
+    require_contains(
+        _zone_script_ownership_header "${_marker}"
+        "private callback-specific controller authority")
+endforeach()
+extract_slice(
+    _zone_script_ownership_header
+    "class alignas(8) ZoneScriptStringOwnershipController final"
+    "private:"
+    _zone_controller_public_declaration
+    "zone controller public declaration before callback authority")
+require_not_contains(
+    _zone_controller_public_declaration "RegistryCallbackPurpose"
+    "callback purpose cannot become public controller vocabulary")
+require_not_contains(
+    _zone_controller_public_declaration
+    "trySnapshotRegistryCallbackTransaction"
+    "callback snapshot cannot become public controller authority")
+require_not_contains(
+    _zone_controller_public_declaration
+    "authenticatesRegistryCallbackTransaction"
+    "callback reauthentication cannot become public controller authority")
 
 extract_slice(
     _script_transaction_header
@@ -1235,6 +1356,7 @@ require_literal_count(
     "RegistryOwnershipCoordinatorTestAccess" 1
     "the complete test helper remains inside the exact bottom guard")
 foreach(_test_only_name IN ITEMS
+    SetCallbackReceipt
     SetRegistryOwnershipCoordinatorBoundaryForTesting
     SetNextRegistryOwnershipCoordinatorSerialForTesting
     SetRegistryOwnershipCoordinatorGlobalMirrorsForTesting)
@@ -1245,9 +1367,17 @@ foreach(_test_only_name IN ITEMS
         _guarded_coordinator_test_authority "${_test_only_name}" 1
         "${_test_only_name} remains inside the exact test guard")
 endforeach()
+require_literal_count(
+    _header "TryBorrowActiveRuntimeCallback" 2
+    "one private facade callback borrow plus one guarded test bridge")
+require_literal_count(
+    _guarded_coordinator_test_authority
+    "TryBorrowActiveRuntimeCallback" 1
+    "callback-borrow test bridge remains inside the exact test guard")
 
 foreach(_forbidden IN ITEMS
     "KISAK_DB_REGISTRY_OWNERSHIP_COORDINATOR_TESTING"
+    "SetCallbackReceipt"
     "SetRegistryOwnershipCoordinatorBoundaryForTesting"
     "SetNextRegistryOwnershipCoordinatorSerialForTesting"
     "SetRegistryOwnershipCoordinatorGlobalMirrorsForTesting")
@@ -1282,16 +1412,16 @@ foreach(_marker IN ITEMS
     "CanMutateStandaloneSerialMirror"
     "CanMutatePhase"
     "CanMutatePhaseMirror"
-    "CanMutateMode"
-    "CanMutateModeMirror"
+    "CanMutateModeCallbackReceipt"
+    "CanMutateModeCallbackReceiptMirror"
     "CanMutateHashReceipt"
     "CanMutateHashReceiptMirror"
-    "CanMutateReserved"
     "CanCallCanonicalAfterStandaloneBegin"
     "CanCallRepresentationConsistent"
     "CanCallOwnsRegistryBoundary"
     "CanCallAuthenticatesOuterTransaction"
     "CanCallBeginRegistered"
+    "CanCallTryBorrowController"
     "CanCallBeginOperation"
     "CanCallFinishOperation"
     "CanCallPublishPhase"
@@ -1312,9 +1442,13 @@ foreach(_marker IN ITEMS
     "CanMutateSealMirror"
     "using CoordinatorAdmission = RegistryOwnershipCoordinatorAdmission;"
     "using CoordinatorFacade = RegistryOwnershipCoordinatorFacade;"
+    "ZoneControllerCallbackProductionProbe"
+    "CanTrySnapshotRegistryCallback"
+    "CanAuthenticateRegistryCallback"
     "RegistryOwnershipCoordinatorFacadeProductionProbe"
     "CanTryBeginStandalone"
     "CanTryBorrow"
+    "CanTryBorrowActiveRuntimeCallback"
     "CanFinish"
     "CanValidateInactive"
     "CanValidateActive"

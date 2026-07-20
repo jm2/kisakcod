@@ -8,6 +8,16 @@
 
 #include <cstdint>
 
+namespace db::registry_ownership
+{
+class RegistryOwnershipCoordinator;
+}
+
+namespace db::zone_runtime
+{
+class ZoneRuntimeTable;
+}
+
 namespace db::zone_script_string_ownership
 {
 // Constructed, production-neutral ownership boundary for exactly one zone-load
@@ -188,6 +198,24 @@ public:
         std::uint32_t expectedSerial) const noexcept;
 
 private:
+    // A callback borrow is a narrower authority than the ordinary retained
+    // transaction borrow above.  Only the registry coordinator may name this
+    // purpose or call the corresponding snapshot/authentication methods. A
+    // distinct purpose and a mirrored, non-wrapping window witness prevent a
+    // coordinator admitted by one callback window from surviving either a
+    // purpose transition or a later invocation of the same purpose on the
+    // same lifecycle generation.
+    enum class RegistryCallbackPurpose : std::uint8_t
+    {
+        None = 0,
+        Unpublishing = 1,
+        Cleaning = 2,
+        Admitting = 3,
+        Unloading = 4,
+    };
+
+    friend class db::registry_ownership::RegistryOwnershipCoordinator;
+    friend class db::zone_runtime::ZoneRuntimeTable;
     friend bool AuthenticateZoneScriptStringOwnershipStorage(
         const ZoneScriptStringOwnershipController &,
         const zone_load::ZoneLoadContextSlot *,
@@ -250,6 +278,18 @@ private:
 #endif
 
     [[nodiscard]] ZoneScriptStringOwnershipStatus validateOwned() const noexcept;
+    [[nodiscard]] bool trySnapshotRegistryCallbackTransaction(
+        const zone_load::ZoneLoadContextKey &expectedKey,
+        std::uint32_t *outSerial,
+        RegistryCallbackPurpose *outPurpose,
+        std::uint8_t *outWindowWitness) const noexcept;
+    [[nodiscard]] bool authenticatesRegistryCallbackTransaction(
+        const zone_load::ZoneLoadContextKey &expectedKey,
+        std::uint32_t expectedSerial,
+        RegistryCallbackPurpose expectedPurpose,
+        std::uint8_t expectedWindowWitness) const noexcept;
+    [[nodiscard]] bool tryBeginRegistryCallbackWindow(
+        ZoneScriptStringOwnershipPhase expectedCallbackPhase) noexcept;
     [[nodiscard]] ZoneScriptStringOwnershipStatus
     validateAbandonedReceipt() const noexcept;
     [[nodiscard]] ZoneScriptStringOwnershipStatus validateLiveBinding(
@@ -296,7 +336,8 @@ private:
         ZoneScriptStringOwnershipPhase::Empty;
     ZoneScriptStringOwnershipPhase resumePhase_ =
         ZoneScriptStringOwnershipPhase::Empty;
-    std::uint8_t reserved_[2]{};
+    std::uint8_t callbackWindowWitness_ = 0;
+    std::uint8_t callbackWindowWitnessMirror_ = 0;
 };
 
 RUNTIME_SIZE(ZoneScriptStringOwnershipController, 0x50, 0x70);
@@ -304,6 +345,48 @@ RUNTIME_SIZE(ZoneScriptStringOwnershipController, 0x50, 0x70);
 #ifdef KISAK_DB_ZONE_SCRIPT_STRING_OWNERSHIP_TESTING
 struct ZoneScriptStringOwnershipControllerTestAccess final
 {
+    using RegistryCallbackPurpose =
+        ZoneScriptStringOwnershipController::RegistryCallbackPurpose;
+
+    static bool TrySnapshotRegistryCallbackTransaction(
+        const ZoneScriptStringOwnershipController *const controller,
+        const zone_load::ZoneLoadContextKey &expectedKey,
+        std::uint32_t *const outSerial,
+        RegistryCallbackPurpose *const outPurpose,
+        std::uint8_t *const outWindowWitness) noexcept
+    {
+        return controller
+            && controller->trySnapshotRegistryCallbackTransaction(
+                expectedKey,
+                outSerial,
+                outPurpose,
+                outWindowWitness);
+    }
+
+    static bool AuthenticatesRegistryCallbackTransaction(
+        const ZoneScriptStringOwnershipController *const controller,
+        const zone_load::ZoneLoadContextKey &expectedKey,
+        const std::uint32_t expectedSerial,
+        const RegistryCallbackPurpose expectedPurpose,
+        const std::uint8_t expectedWindowWitness) noexcept
+    {
+        return controller
+            && controller->authenticatesRegistryCallbackTransaction(
+                expectedKey,
+                expectedSerial,
+                expectedPurpose,
+                expectedWindowWitness);
+    }
+
+    static bool TryBeginRegistryCallbackWindow(
+        ZoneScriptStringOwnershipController *const controller,
+        const ZoneScriptStringOwnershipPhase expectedCallbackPhase) noexcept
+    {
+        return controller
+            && controller->tryBeginRegistryCallbackWindow(
+                expectedCallbackPhase);
+    }
+
     static void SetJournal(
         ZoneScriptStringOwnershipController *const controller,
         script_string_journal::ScriptStringJournal *const journal) noexcept
@@ -394,8 +477,8 @@ struct ZoneScriptStringOwnershipControllerTestAccess final
     {
         if (!controller)
             return;
-        controller->reserved_[0] = first;
-        controller->reserved_[1] = second;
+        controller->callbackWindowWitness_ = first;
+        controller->callbackWindowWitnessMirror_ = second;
     }
 };
 #endif

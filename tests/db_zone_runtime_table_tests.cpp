@@ -286,6 +286,64 @@ struct CompositeRuntimeDriver final
     std::uint32_t ensureCalls = 0;
     std::uint32_t pendingCompletionCalls = 0;
     std::uint32_t admitCalls = 0;
+    ZoneRuntimeTableStatus ensureRegistryAuthentication =
+        ZoneRuntimeTableStatus::InvalidState;
+    ZoneRuntimeTableStatus ensureRejectedRegistryAuthentication =
+        ZoneRuntimeTableStatus::InvalidState;
+    ZoneRuntimeTableStatus ensureRegistryReauthentication =
+        ZoneRuntimeTableStatus::InvalidState;
+    ZoneRuntimeTableStatus ensureRegistryRestore =
+        ZoneRuntimeTableStatus::InvalidState;
+    ZoneRuntimeTableStatus ensureRegistryRetryAuthentication =
+        ZoneRuntimeTableStatus::InvalidState;
+    ZoneRuntimeTableStatus ensureRegistryRetryReauthentication =
+        ZoneRuntimeTableStatus::InvalidState;
+    std::array<ZoneRuntimeTableStatus, 4>
+        ensureRegistryAuthentications = []() noexcept {
+            std::array<ZoneRuntimeTableStatus, 4> result{};
+            result.fill(ZoneRuntimeTableStatus::InvalidState);
+            return result;
+        }();
+    std::array<ZoneRuntimeTableStatus, 4>
+        ensureRegistryReauthentications = []() noexcept {
+            std::array<ZoneRuntimeTableStatus, 4> result{};
+            result.fill(ZoneRuntimeTableStatus::InvalidState);
+            return result;
+        }();
+    std::array<ZoneRuntimeTableStatus, 16>
+        externalRegistryAuthentication = []() noexcept {
+            std::array<ZoneRuntimeTableStatus, 16> result{};
+            result.fill(ZoneRuntimeTableStatus::InvalidState);
+            return result;
+        }();
+    std::array<ZoneRuntimeTableStatus, 16>
+        externalRegistryReauthentication = []() noexcept {
+            std::array<ZoneRuntimeTableStatus, 16> result{};
+            result.fill(ZoneRuntimeTableStatus::InvalidState);
+            return result;
+        }();
+    ZoneRuntimeTableStatus pendingRegistryAuthentication =
+        ZoneRuntimeTableStatus::InvalidState;
+    ZoneRuntimeTableStatus pendingRegistryReauthentication =
+        ZoneRuntimeTableStatus::InvalidState;
+    ZoneRuntimeTableStatus admitRegistryAuthentication =
+        ZoneRuntimeTableStatus::InvalidState;
+    ZoneRuntimeTableStatus admitRegistryReauthentication =
+        ZoneRuntimeTableStatus::InvalidState;
+    ZoneScriptStringOwnershipPhase ensureOwnershipPhase =
+        ZoneScriptStringOwnershipPhase::Empty;
+    std::array<ZoneScriptStringOwnershipPhase, 4>
+        ensureOwnershipPhases{};
+    std::array<ZoneScriptStringOwnershipPhase, 16>
+        externalOwnershipPhases{};
+    std::array<std::uint8_t, 4> ensureWindowWitnesses{};
+    std::array<std::uint8_t, 16> externalWindowWitnesses{};
+    std::uint8_t pendingWindowWitness = 0;
+    std::uint8_t admitWindowWitness = 0;
+    ZoneScriptStringOwnershipPhase pendingOwnershipPhase =
+        ZoneScriptStringOwnershipPhase::Empty;
+    ZoneScriptStringOwnershipPhase admitOwnershipPhase =
+        ZoneScriptStringOwnershipPhase::Empty;
     bool retryEnsure = false;
     bool retriedEnsure = false;
     bool attemptEnsureReentry = false;
@@ -302,6 +360,29 @@ struct CompositeRuntimeDriver final
         ZoneRuntimeTableStatus::Success;
 };
 
+std::uint8_t SnapshotRegistryCallbackWindow(
+    ZoneRuntimeTable *const table,
+    const ZoneLoadContextKey &key) noexcept
+{
+    const auto *const ownership =
+        ZoneRuntimeTableTestAccess::Ownership(table, key.slot);
+    if (!ownership)
+        return 0;
+    std::uint32_t serial = 0;
+    auto purpose = ZoneScriptStringOwnershipControllerTestAccess::
+        RegistryCallbackPurpose::None;
+    std::uint8_t windowWitness = 0;
+    return ZoneScriptStringOwnershipControllerTestAccess::
+            TrySnapshotRegistryCallbackTransaction(
+                ownership,
+                key,
+                &serial,
+                &purpose,
+                &windowWitness)
+        ? windowWitness
+        : 0;
+}
+
 zone_ownership::ZoneScriptStringUnpublishStatus
 EnsureCompositeRuntimeUnreachable(void *const context) noexcept
 {
@@ -311,7 +392,34 @@ EnsureCompositeRuntimeUnreachable(void *const context) noexcept
         return zone_ownership::
             ZoneScriptStringUnpublishStatus::UnsafeFailure;
     }
-    ++driver->ensureCalls;
+    const std::size_t call = driver->ensureCalls++;
+    ZoneLoadContextKey staleKey = driver->key;
+    ++staleKey.generation;
+    driver->ensureRejectedRegistryAuthentication =
+        ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                driver->table, driver->key.slot, staleKey);
+    driver->ensureRegistryAuthentication = ZoneRuntimeTableTestAccess::
+        AuthenticateExactRegistryLifecycleCallback(
+            driver->table, driver->key.slot, driver->key);
+    driver->ensureRegistryReauthentication = ZoneRuntimeTableTestAccess::
+        AuthenticateExactRegistryLifecycleCallback(
+            driver->table, driver->key.slot, driver->key);
+    const auto *const ownership = ZoneRuntimeTableTestAccess::Ownership(
+        driver->table, driver->key.slot);
+    if (ownership)
+        driver->ensureOwnershipPhase = ownership->phase();
+    if (call < driver->ensureRegistryAuthentications.size())
+    {
+        driver->ensureRegistryAuthentications[call] =
+            driver->ensureRegistryAuthentication;
+        driver->ensureRegistryReauthentications[call] =
+            driver->ensureRegistryReauthentication;
+        driver->ensureOwnershipPhases[call] =
+            driver->ensureOwnershipPhase;
+        driver->ensureWindowWitnesses[call] =
+            SnapshotRegistryCallbackWindow(driver->table, driver->key);
+    }
     if (driver->attemptEnsureReentry
         && !driver->attemptedEnsureReentry)
     {
@@ -324,6 +432,17 @@ EnsureCompositeRuntimeUnreachable(void *const context) noexcept
     }
     if (driver->retryEnsure && !driver->retriedEnsure)
     {
+        driver->ensureRegistryRestore = ZoneRuntimeTableTestAccess::
+            RestoreExactRegistryLifecycleCallback(
+                driver->table, driver->key.slot, driver->key);
+        driver->ensureRegistryRetryAuthentication =
+            ZoneRuntimeTableTestAccess::
+                AuthenticateExactRegistryLifecycleCallback(
+                    driver->table, driver->key.slot, driver->key);
+        driver->ensureRegistryRetryReauthentication =
+            ZoneRuntimeTableTestAccess::
+                AuthenticateExactRegistryLifecycleCallback(
+                    driver->table, driver->key.slot, driver->key);
         driver->retriedEnsure = true;
         return zone_ownership::
             ZoneScriptStringUnpublishStatus::Retry;
@@ -342,8 +461,22 @@ ZoneLoadCleanupCallbackStatus PerformCompositeRuntimeCleanup(
     {
         return ZoneLoadCleanupCallbackStatus::UnsafeFailure;
     }
-    driver->externalOperations[driver->externalOperationCount++] =
-        operation;
+    const std::size_t call = driver->externalOperationCount++;
+    driver->externalOperations[call] = operation;
+    driver->externalRegistryAuthentication[call] =
+        ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                driver->table, driver->key.slot, driver->key);
+    driver->externalRegistryReauthentication[call] =
+        ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                driver->table, driver->key.slot, driver->key);
+    const auto *const ownership = ZoneRuntimeTableTestAccess::Ownership(
+        driver->table, driver->key.slot);
+    if (ownership)
+        driver->externalOwnershipPhases[call] = ownership->phase();
+    driver->externalWindowWitnesses[call] =
+        SnapshotRegistryCallbackWindow(driver->table, driver->key);
     if (driver->attemptCleanupReentry
         && !driver->attemptedCleanupReentry
         && operation
@@ -370,6 +503,19 @@ void CompleteCompositePendingAdmission(void *const context) noexcept
     if (driver)
     {
         ++driver->pendingCompletionCalls;
+        driver->pendingRegistryAuthentication = ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                driver->table, driver->key.slot, driver->key);
+        driver->pendingRegistryReauthentication =
+            ZoneRuntimeTableTestAccess::
+                AuthenticateExactRegistryLifecycleCallback(
+                    driver->table, driver->key.slot, driver->key);
+        const auto *const ownership = ZoneRuntimeTableTestAccess::Ownership(
+            driver->table, driver->key.slot);
+        if (ownership)
+            driver->pendingOwnershipPhase = ownership->phase();
+        driver->pendingWindowWitness = SnapshotRegistryCallbackWindow(
+            driver->table, driver->key);
         driver->pendingCompletionReentry = TryCommitZoneRuntimeGeneration(
             driver->table, driver->key.slot, driver->key);
     }
@@ -379,7 +525,21 @@ void AdmitCompositeRuntimeLive(void *const context) noexcept
 {
     auto *const driver = static_cast<CompositeRuntimeDriver *>(context);
     if (driver)
+    {
         ++driver->admitCalls;
+        driver->admitRegistryAuthentication = ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                driver->table, driver->key.slot, driver->key);
+        driver->admitRegistryReauthentication = ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                driver->table, driver->key.slot, driver->key);
+        const auto *const ownership = ZoneRuntimeTableTestAccess::Ownership(
+            driver->table, driver->key.slot);
+        if (ownership)
+            driver->admitOwnershipPhase = ownership->phase();
+        driver->admitWindowWitness = SnapshotRegistryCallbackWindow(
+            driver->table, driver->key);
+    }
 }
 
 ZoneRuntimeGenerationCallbacks MakeCompositeRuntimeCallbacks(
@@ -3441,6 +3601,10 @@ void TestCompositeRuntimeLiveUnloadResetAndReuse()
     CHECK(TryBindZoneRuntimeGenerationCallbacks(
         table.get(), physicalSlot, key, callbacks)
         == ZoneRuntimeTableStatus::Success);
+    CHECK(ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                table.get(), physicalSlot, key)
+        == ZoneRuntimeTableStatus::Busy);
     CHECK(TryBeginZoneRuntimePhysicalAllocation(
         table.get(), physicalSlot, key, "runtime_table_e2e", 0)
         == ZoneRuntimeTableStatus::Success);
@@ -3558,6 +3722,25 @@ void TestCompositeRuntimeLiveUnloadResetAndReuse()
     CHECK(driver.admitCalls == 1);
     CHECK(driver.ensureCalls == 0);
     CHECK(driver.pendingCompletionReentry == ZoneRuntimeTableStatus::Busy);
+    CHECK(driver.pendingRegistryAuthentication
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(driver.pendingRegistryReauthentication
+        == ZoneRuntimeTableStatus::Busy);
+    CHECK(driver.pendingOwnershipPhase
+        == ZoneScriptStringOwnershipPhase::Admitting);
+    CHECK(driver.pendingWindowWitness != 0);
+    CHECK(driver.admitRegistryAuthentication
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(driver.admitRegistryReauthentication
+        == ZoneRuntimeTableStatus::Busy);
+    CHECK(driver.admitOwnershipPhase
+        == ZoneScriptStringOwnershipPhase::Admitting);
+    CHECK(driver.admitWindowWitness != 0);
+    CHECK(driver.admitWindowWitness != driver.pendingWindowWitness);
+    CHECK(ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                table.get(), physicalSlot, key)
+        == ZoneRuntimeTableStatus::Busy);
 
     // Exact terminal retries cannot replay either admission callback.
     CHECK(TryCommitZoneRuntimeGeneration(
@@ -3588,6 +3771,18 @@ void TestCompositeRuntimeLiveUnloadResetAndReuse()
         ++index)
     {
         CHECK(driver.externalOperations[index] == expectedOperations[index]);
+        CHECK(driver.externalRegistryAuthentication[index]
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(driver.externalRegistryReauthentication[index]
+            == ZoneRuntimeTableStatus::Busy);
+        CHECK(driver.externalOwnershipPhases[index]
+            == ZoneScriptStringOwnershipPhase::UnloadingCallback);
+        CHECK(driver.externalWindowWitnesses[index] != 0);
+        if (index != 0)
+        {
+            CHECK(driver.externalWindowWitnesses[index]
+                != driver.externalWindowWitnesses[index - 1]);
+        }
     }
     CHECK(driver.attemptedCleanupReentry);
     CHECK(driver.cleanupReentry == ZoneRuntimeTableStatus::Busy);
@@ -3615,6 +3810,73 @@ void TestCompositeRuntimeLiveUnloadResetAndReuse()
     CHECK(TryCommitZoneRuntimeGeneration(
         table.get(), physicalSlot, oldKey)
         == ZoneRuntimeTableStatus::StaleKey);
+}
+
+void TestCompositeAdmissionStopsAfterPendingCallbackFailure()
+{
+    const pmem_runtime::InitializationStatus initialization =
+        pmem_runtime::TryInitialize();
+    CHECK(initialization
+            == pmem_runtime::InitializationStatus::AlreadyInitialized
+        || initialization
+            == pmem_runtime::InitializationStatus::Success);
+    if (initialization
+            != pmem_runtime::InitializationStatus::AlreadyInitialized
+        && initialization
+            != pmem_runtime::InitializationStatus::Success)
+    {
+        return;
+    }
+
+    CompositeRuntimeFixture fixture{};
+    CHECK(fixture.enroll(25));
+    CHECK(fixture.beginAllocation());
+    CHECK(fixture.setupStorage());
+    CHECK(fixture.setupStreams());
+    CHECK(fixture.beginPendingCopies(true));
+    CHECK(fixture.beginExactScriptStrings());
+    CHECK(TrySealZoneRuntimeScriptStrings(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryBeginZoneRuntimeScriptStringTransfer(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryTransferNextZoneRuntimeScriptString(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryPrepareZoneRuntimeScriptStringCommit(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryPrepareZoneRuntimeAdmission(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryInvalidateZoneRuntimeStreams(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryEndZoneRuntimePhysicalAllocation(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+
+    auto *const ownership = ZoneRuntimeTableTestAccess::Ownership(
+        fixture.table.get(), fixture.physicalSlot);
+    CHECK(ownership != nullptr);
+    if (!ownership)
+        return;
+
+    // The outer admission callback consumes witness 255.  The pending-copy
+    // callback then exhausts the no-wrap window budget before dispatch.  Its
+    // void API must not let finalization fall through to admitLive.
+    ZoneScriptStringOwnershipControllerTestAccess::SetReserved(
+        ownership, UINT8_C(254), UINT8_C(254));
+    CHECK(TryCommitZoneRuntimeGeneration(
+        fixture.table.get(), fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(fixture.driver.pendingCompletionCalls == 0);
+    CHECK(fixture.driver.admitCalls == 0);
+    CHECK(!fixture.table->initialized());
+    CHECK(ownership->phase()
+        == ZoneScriptStringOwnershipPhase::UnsafeFailure);
+    CHECK(ownership->serializerRetained());
 }
 
 void TestCompositePartialStageAbandonmentAndReuse()
@@ -3652,6 +3914,10 @@ void TestCompositePartialStageAbandonmentAndReuse()
             && entry->setupStage()
                 == ZoneRuntimeSetupStage::CallbacksBound);
         CHECK(fixture.driver.ensureCalls == 1);
+        CHECK(fixture.driver.ensureRegistryAuthentication
+            == ZoneRuntimeTableStatus::Busy);
+        CHECK(fixture.driver.ensureOwnershipPhase
+            == ZoneScriptStringOwnershipPhase::Empty);
         auto *const stream =
             ZoneRuntimeTableTestAccess::StreamGenerationReceipt(
                 fixture.table.get(), fixture.physicalSlot);
@@ -4849,6 +5115,100 @@ void TestCompositeCallbacksRejectLegacyOwnershipBeforeMutation()
     CHECK(cleanupCount == 8);
 }
 
+void TestExactRegistryLifecycleCallbackMarkerClassification()
+{
+    CompositeRuntimeFixture ordinary{};
+    CHECK(ordinary.enroll(31));
+    CHECK(ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                nullptr, ordinary.physicalSlot, ordinary.key)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                ordinary.table.get(), ordinary.physicalSlot, {})
+        == ZoneRuntimeTableStatus::InvalidKey);
+    CHECK(ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                ordinary.table.get(), 0, ordinary.key)
+        == ZoneRuntimeTableStatus::InvalidSlot);
+    ZoneLoadContextKey stale = ordinary.key;
+    ++stale.generation;
+    CHECK(ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                ordinary.table.get(), ordinary.physicalSlot, stale)
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                ordinary.table.get(), ordinary.physicalSlot, ordinary.key)
+        == ZoneRuntimeTableStatus::Busy);
+
+    // Establish the unrelated generation before publishing a callback marker;
+    // every table mutation is correctly Busy once any callback is active.
+    ZoneLoadContextKey otherKey{};
+    CHECK(TryClaimZoneRuntimeGeneration(
+        ordinary.table.get(), 30, &otherKey)
+        == ZoneRuntimeTableStatus::Success);
+    CompositeRuntimeDriver otherDriver{};
+    otherDriver.table = ordinary.table.get();
+    otherDriver.key = otherKey;
+    CHECK(TryBindZoneRuntimeGenerationCallbacks(
+        ordinary.table.get(),
+        30,
+        otherKey,
+        MakeCompositeRuntimeCallbacks(&otherDriver))
+        == ZoneRuntimeTableStatus::Success);
+
+    // ActiveNoRegistry is a valid callback-busy state, but never a registry
+    // authority. Restoring Idle leaves the exact generation usable.
+    ZoneRuntimeTableTestAccess::SetCallbackMarker(
+        ordinary.table.get(), ordinary.physicalSlot, 1);
+    CHECK(ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                ordinary.table.get(), ordinary.physicalSlot, ordinary.key)
+        == ZoneRuntimeTableStatus::Busy);
+    CHECK(ordinary.table->initialized());
+
+    CHECK(ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                ordinary.table.get(), 30, otherKey)
+        == ZoneRuntimeTableStatus::Busy);
+    CHECK(ordinary.table->initialized());
+
+    ZoneRuntimeTableTestAccess::SetCallbackMarker(
+        ordinary.table.get(), ordinary.physicalSlot, 0);
+    CHECK(ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                ordinary.table.get(), ordinary.physicalSlot, ordinary.key)
+        == ZoneRuntimeTableStatus::Busy);
+    CHECK(ordinary.table->initialized());
+
+    // Publishing registry authority outside the exact phase matrix is a
+    // structural contradiction, not an ordinary Busy classification.
+    CompositeRuntimeFixture forgedAuthority{};
+    CHECK(forgedAuthority.enroll(30));
+    ZoneRuntimeTableTestAccess::SetCallbackMarker(
+        forgedAuthority.table.get(), forgedAuthority.physicalSlot, 2);
+    CHECK(ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                forgedAuthority.table.get(),
+                forgedAuthority.physicalSlot,
+                forgedAuthority.key)
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(!forgedAuthority.table->initialized());
+
+    CompositeRuntimeFixture unknownMarker{};
+    CHECK(unknownMarker.enroll(29));
+    ZoneRuntimeTableTestAccess::SetCallbackMarker(
+        unknownMarker.table.get(), unknownMarker.physicalSlot, 3);
+    CHECK(ZoneRuntimeTableTestAccess::
+            AuthenticateExactRegistryLifecycleCallback(
+                unknownMarker.table.get(),
+                unknownMarker.physicalSlot,
+                unknownMarker.key)
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(!unknownMarker.table->initialized());
+}
+
 void TestCompositeAbandonmentRetryAndReentryPreservation()
 {
     CompositeRuntimeFixture fixture{};
@@ -4870,6 +5230,21 @@ void TestCompositeAbandonmentRetryAndReentryPreservation()
     CHECK(fixture.driver.retriedEnsure);
     CHECK(fixture.driver.attemptedEnsureReentry);
     CHECK(fixture.driver.ensureReentry == ZoneRuntimeTableStatus::Busy);
+    CHECK(fixture.driver.ensureRegistryAuthentications[0]
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(fixture.driver.ensureRejectedRegistryAuthentication
+        == ZoneRuntimeTableStatus::StaleKey);
+    CHECK(fixture.driver.ensureRegistryReauthentications[0]
+        == ZoneRuntimeTableStatus::Busy);
+    CHECK(fixture.driver.ensureRegistryRestore
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(fixture.driver.ensureRegistryRetryAuthentication
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(fixture.driver.ensureRegistryRetryReauthentication
+        == ZoneRuntimeTableStatus::Busy);
+    CHECK(fixture.driver.ensureOwnershipPhases[0]
+        == ZoneScriptStringOwnershipPhase::UnpublishingCallback);
+    CHECK(fixture.driver.ensureWindowWitnesses[0] != 0);
     const ZoneRuntimeEntry *entry = fixture.entry();
     CHECK(entry
         && entry->executionMode()
@@ -4947,6 +5322,45 @@ void TestCompositeAbandonmentRetryAndReentryPreservation()
     CHECK(fixture.driver.retriedReleaseGeometry);
     CHECK(fixture.driver.attemptedCleanupReentry);
     CHECK(fixture.driver.cleanupReentry == ZoneRuntimeTableStatus::Busy);
+    bool observedCleaningEnsure = false;
+    for (std::size_t index = 0;
+        index < fixture.driver.ensureCalls
+            && index
+                < fixture.driver.ensureRegistryAuthentications.size();
+        ++index)
+    {
+        CHECK(fixture.driver.ensureRegistryAuthentications[index]
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(fixture.driver.ensureRegistryReauthentications[index]
+            == ZoneRuntimeTableStatus::Busy);
+        observedCleaningEnsure = observedCleaningEnsure
+            || fixture.driver.ensureOwnershipPhases[index]
+                == ZoneScriptStringOwnershipPhase::Cleaning;
+        CHECK(fixture.driver.ensureWindowWitnesses[index] != 0);
+        if (index != 0)
+        {
+            CHECK(fixture.driver.ensureWindowWitnesses[index]
+                != fixture.driver.ensureWindowWitnesses[index - 1]);
+        }
+    }
+    CHECK(observedCleaningEnsure);
+    for (std::size_t index = 0;
+        index < fixture.driver.externalOperationCount;
+        ++index)
+    {
+        CHECK(fixture.driver.externalRegistryAuthentication[index]
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(fixture.driver.externalRegistryReauthentication[index]
+            == ZoneRuntimeTableStatus::Busy);
+        CHECK(fixture.driver.externalOwnershipPhases[index]
+            == ZoneScriptStringOwnershipPhase::Cleaning);
+        CHECK(fixture.driver.externalWindowWitnesses[index] != 0);
+        if (index != 0)
+        {
+            CHECK(fixture.driver.externalWindowWitnesses[index]
+                != fixture.driver.externalWindowWitnesses[index - 1]);
+        }
+    }
     CHECK(storage && storage->destroyed());
     CHECK(allocation
         && pmem_runtime::TryAuthenticateAllocationReceipt(
@@ -5151,8 +5565,12 @@ int main(const int argc, char **const argv)
     TestCompositeStageOutputAliasPreflight();
     TestCompositeCallbackContextAliasPreflightAndDrain();
     TestCompositeCallbacksRejectLegacyOwnershipBeforeMutation();
+    TestExactRegistryLifecycleCallbackMarkerClassification();
     TestCompositeAbandonmentRetryAndReentryPreservation();
     TestFacadeReleaseSafetyClassification();
+    // This intentional fail-stop case retains the process-wide serializer,
+    // so it must remain the final in-process scenario.
+    TestCompositeAdmissionStopsAfterPendingCallbackFailure();
 
     if (failures != 0)
     {

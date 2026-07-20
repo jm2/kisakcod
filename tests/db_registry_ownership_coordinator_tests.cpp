@@ -26,6 +26,8 @@ enum class Event : std::uint8_t
     TransactionFinish,
     ControllerSnapshot,
     ControllerAuthenticate,
+    ControllerCallbackSnapshot,
+    ControllerCallbackAuthenticate,
     HashLock,
     HashUnlock,
     BatchBegin,
@@ -94,6 +96,13 @@ db::zone_load::ZoneLoadContextKey g_controllerKey{
 std::uint32_t g_controllerTransactionSerial = 91;
 bool g_controllerSnapshotAllowed = true;
 bool g_controllerAuthenticationAllowed = true;
+db::zone_script_string_ownership::ZoneScriptStringOwnershipPhase
+    g_controllerPhase = db::zone_script_string_ownership::
+        ZoneScriptStringOwnershipPhase::Staging;
+std::thread::id g_controllerOwnerThread{};
+bool g_controllerCallbackSnapshotAllowed = true;
+bool g_controllerCallbackAuthenticationAllowed = true;
+std::uint8_t g_controllerCallbackWindowWitness = 1;
 
 void Record(const Event event) noexcept
 {
@@ -188,6 +197,12 @@ void ResetHarness() noexcept
     g_controllerTransactionSerial = 91;
     g_controllerSnapshotAllowed = true;
     g_controllerAuthenticationAllowed = true;
+    g_controllerPhase = db::zone_script_string_ownership::
+        ZoneScriptStringOwnershipPhase::Staging;
+    g_controllerOwnerThread = std::this_thread::get_id();
+    g_controllerCallbackSnapshotAllowed = true;
+    g_controllerCallbackAuthenticationAllowed = true;
+    g_controllerCallbackWindowWitness = 1;
     g_transactionEnterCount = 0;
 }
 
@@ -537,6 +552,473 @@ void RecoverPoisonedCoordinator(
     return true;
 }
 
+[[nodiscard]] bool TestActiveRuntimeCallbackBorrow() noexcept
+{
+    using CallbackAccess =
+        db::registry_ownership::RegistryOwnershipCoordinatorTestAccess;
+    using OwnershipPhase = db::zone_script_string_ownership::
+        ZoneScriptStringOwnershipPhase;
+
+    ResetHarness();
+    const auto admission = RegistryOwnershipCoordinatorAdmission::ForTesting();
+    db::zone_script_string_ownership::
+        ZoneScriptStringOwnershipController controller;
+    RegistryOwnershipCoordinator coordinator;
+    g_borrowController = &controller;
+    g_controllerPhase = OwnershipPhase::Cleaning;
+
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryBorrowRegistryOwnershipCoordinator(
+                admission, &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::InvalidState,
+            "ordinary borrow accepted callback-only authority")
+        || !CheckEvents(
+            std::array{Event::ControllerSnapshot},
+            "ordinary callback rejection reached another backend")
+        || !Check(coordinator.isEmptyCanonical() && !g_hashLocked,
+            "ordinary callback rejection changed coordinator state"))
+    {
+        return false;
+    }
+
+    g_controllerCallbackSnapshotAllowed = false;
+    ClearEvents();
+    if (!Check(
+            CallbackAccess::TryBorrowActiveRuntimeCallback(
+                &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::InvalidState,
+            "callback borrow accepted unauthenticated controller")
+        || !CheckEvents(
+            std::array{Event::ControllerCallbackSnapshot},
+            "rejected callback snapshot reached the hash")
+        || !Check(coordinator.isEmptyCanonical() && !g_hashLocked,
+            "rejected callback snapshot changed coordinator state"))
+    {
+        return false;
+    }
+    g_controllerCallbackSnapshotAllowed = true;
+
+    g_hashReadCount = 1;
+    ClearEvents();
+    if (!Check(
+            CallbackAccess::TryBorrowActiveRuntimeCallback(
+                &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::Busy,
+            "callback borrow did not report hash contention")
+        || !CheckEvents(
+            std::array{
+                Event::ControllerCallbackSnapshot,
+                Event::ControllerCallbackAuthenticate},
+            "callback contention order/authentication mismatch")
+        || !Check(coordinator.isEmptyCanonical() && !g_hashLocked,
+            "callback contention retained partial authority"))
+    {
+        return false;
+    }
+    g_hashReadCount = 0;
+
+    std::atomic<std::uint8_t> foreignStatus{0xFF};
+    ClearEvents();
+    std::thread foreign([&]() noexcept {
+        foreignStatus.store(
+            static_cast<std::uint8_t>(
+                CallbackAccess::TryBorrowActiveRuntimeCallback(
+                    &coordinator, &controller, g_controllerKey)),
+            std::memory_order_release);
+    });
+    foreign.join();
+    if (!Check(
+            foreignStatus.load(std::memory_order_acquire)
+                == static_cast<std::uint8_t>(
+                    RegistryOwnershipStatus::InvalidState),
+            "foreign thread borrowed callback transaction")
+        || !CheckEvents(
+            std::array{Event::ControllerCallbackSnapshot},
+            "foreign callback rejection reached the hash")
+        || !Check(coordinator.isEmptyCanonical() && !g_hashLocked,
+            "foreign callback rejection changed coordinator state"))
+    {
+        return false;
+    }
+
+    ClearEvents();
+    if (!Check(
+            CallbackAccess::TryBorrowActiveRuntimeCallback(
+                &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::Success,
+            "active callback borrow failed")
+        || !CheckEvents(
+            std::array{
+                Event::ControllerCallbackSnapshot,
+                Event::HashLock,
+                Event::ControllerCallbackAuthenticate},
+            "active callback admission order mismatch")
+        || !Check(
+            coordinator.mode()
+                    == RegistryOwnershipCoordinatorMode::
+                        BorrowedActiveRuntimeCallback
+                && coordinator.phase()
+                    == RegistryOwnershipCoordinatorPhase::Ready
+                && coordinator.hashLockRetained() && g_hashLocked,
+            "active callback borrow did not retain its boundary"))
+    {
+        return false;
+    }
+
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::FinishRegistryOwnershipCoordinator(
+                &coordinator)
+                == RegistryOwnershipStatus::Success,
+            "active callback finish failed")
+        || !CheckEvents(
+            std::array{
+                Event::ControllerCallbackAuthenticate,
+                Event::ControllerCallbackAuthenticate,
+                Event::HashUnlock,
+                Event::ControllerCallbackAuthenticate},
+            "active callback finish order mismatch")
+        || !Check(coordinator.isEmptyCanonical() && !g_hashLocked,
+            "active callback finish left retained state"))
+    {
+        return false;
+    }
+
+    ClearEvents();
+    if (!Check(
+            CallbackAccess::TryBorrowActiveRuntimeCallback(
+                &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::Success,
+            "callback mirror-corruption setup failed"))
+    {
+        return false;
+    }
+    CallbackAccess::SetCallbackReceipt(&coordinator, 2, 4, 1, 1);
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUser4(
+                &coordinator, 32)
+                == RegistryOwnershipStatus::UnsafeFailure,
+            "torn callback-purpose mirror authenticated")
+        || !Check(g_eventCount == 0,
+            "torn callback-purpose mirror reached a backend")
+        || !Check(coordinator.poisoned() && coordinator.hashLockRetained()
+                && g_hashLocked,
+            "torn callback-purpose mirror did not retain hash fail closed"))
+    {
+        return false;
+    }
+    RecoverPoisonedCoordinator(&coordinator);
+
+    g_borrowController = &controller;
+    g_controllerPhase = OwnershipPhase::Cleaning;
+    if (!Check(
+            CallbackAccess::TryBorrowActiveRuntimeCallback(
+                &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::Success,
+            "callback phase-transition setup failed"))
+    {
+        return false;
+    }
+    g_controllerPhase = OwnershipPhase::Admitting;
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUser4(
+                &coordinator, 33)
+                == RegistryOwnershipStatus::UnsafeFailure,
+            "borrow survived a different callback purpose")
+        || !CheckEvents(
+            std::array{Event::ControllerCallbackAuthenticate},
+            "changed callback purpose entered an inner batch")
+        || !Check(coordinator.poisoned() && coordinator.hashLockRetained()
+                && g_hashLocked,
+            "changed callback purpose did not retain hash fail closed"))
+    {
+        return false;
+    }
+    RecoverPoisonedCoordinator(&coordinator);
+    return true;
+}
+
+[[nodiscard]] bool TestCallbackWindowWitnessAuthentication() noexcept
+{
+    using CallbackAccess =
+        db::registry_ownership::RegistryOwnershipCoordinatorTestAccess;
+    using OwnershipPhase = db::zone_script_string_ownership::
+        ZoneScriptStringOwnershipPhase;
+
+    ResetHarness();
+    db::zone_script_string_ownership::
+        ZoneScriptStringOwnershipController controller;
+    RegistryOwnershipCoordinator coordinator;
+    g_borrowController = &controller;
+    g_controllerPhase = OwnershipPhase::Cleaning;
+    g_controllerCallbackWindowWitness = 0;
+    ClearEvents();
+    if (!Check(
+            CallbackAccess::TryBorrowActiveRuntimeCallback(
+                &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::UnsafeFailure,
+            "zero callback-window witness was recoverable")
+        || !CheckEvents(
+            std::array{Event::ControllerCallbackSnapshot},
+            "zero callback-window witness reached the hash")
+        || !Check(coordinator.isEmptyCanonical() && !g_hashLocked,
+            "zero callback-window witness changed coordinator state"))
+    {
+        return false;
+    }
+
+    g_controllerCallbackWindowWitness = 5;
+    if (!Check(
+            CallbackAccess::TryBorrowActiveRuntimeCallback(
+                &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::Success,
+            "global witness-mirror setup failed"))
+    {
+        return false;
+    }
+    db::registry_ownership::
+        SetRegistryOwnershipCoordinatorGlobalMirrorsForTesting(
+            coordinator.serial(),
+            reinterpret_cast<std::uintptr_t>(&controller),
+            reinterpret_cast<std::uintptr_t>(&controller),
+            g_controllerTransactionSerial,
+            g_controllerTransactionSerial,
+            static_cast<std::uint8_t>(
+                RegistryOwnershipCoordinatorPhase::Ready),
+            static_cast<std::uint8_t>(
+                RegistryOwnershipCoordinatorPhase::Ready),
+            static_cast<std::uint8_t>(
+                RegistryOwnershipCoordinatorMode::
+                    BorrowedActiveRuntimeCallback),
+            static_cast<std::uint8_t>(
+                RegistryOwnershipCoordinatorMode::
+                    BorrowedActiveRuntimeCallback),
+            true,
+            true,
+            5,
+            6);
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUser4(
+                &coordinator, 34)
+                == RegistryOwnershipStatus::UnsafeFailure,
+            "torn global callback-window witness authenticated")
+        || !Check(g_eventCount == 0,
+            "torn global callback-window witness reached a backend")
+        || !Check(coordinator.poisoned() && coordinator.hashLockRetained()
+                && g_hashLocked,
+            "torn global callback-window witness released the hash"))
+    {
+        return false;
+    }
+    RecoverPoisonedCoordinator(&coordinator);
+
+    g_borrowController = &controller;
+    g_controllerPhase = OwnershipPhase::Cleaning;
+    g_controllerCallbackWindowWitness = 7;
+    if (!Check(
+            CallbackAccess::TryBorrowActiveRuntimeCallback(
+                &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::Success,
+            "zero retained-witness setup failed"))
+    {
+        return false;
+    }
+    CallbackAccess::SetCallbackReceipt(&coordinator, 2, 2, 0, 0);
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUser4(
+                &coordinator, 35)
+                == RegistryOwnershipStatus::UnsafeFailure,
+            "zero retained callback-window witness authenticated")
+        || !Check(g_eventCount == 0,
+            "zero retained callback-window witness reached a backend")
+        || !Check(coordinator.poisoned() && coordinator.hashLockRetained()
+                && g_hashLocked,
+            "zero retained callback-window witness released the hash"))
+    {
+        return false;
+    }
+    RecoverPoisonedCoordinator(&coordinator);
+
+    g_borrowController = &controller;
+    g_controllerPhase = OwnershipPhase::Cleaning;
+    g_controllerCallbackWindowWitness = 8;
+    if (!Check(
+            CallbackAccess::TryBorrowActiveRuntimeCallback(
+                &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::Success,
+            "unknown retained-witness setup failed"))
+    {
+        return false;
+    }
+    CallbackAccess::SetCallbackReceipt(&coordinator, 2, 2, 200, 200);
+    db::registry_ownership::
+        SetRegistryOwnershipCoordinatorGlobalMirrorsForTesting(
+            coordinator.serial(),
+            reinterpret_cast<std::uintptr_t>(&controller),
+            reinterpret_cast<std::uintptr_t>(&controller),
+            g_controllerTransactionSerial,
+            g_controllerTransactionSerial,
+            static_cast<std::uint8_t>(
+                RegistryOwnershipCoordinatorPhase::Ready),
+            static_cast<std::uint8_t>(
+                RegistryOwnershipCoordinatorPhase::Ready),
+            static_cast<std::uint8_t>(
+                RegistryOwnershipCoordinatorMode::
+                    BorrowedActiveRuntimeCallback),
+            static_cast<std::uint8_t>(
+                RegistryOwnershipCoordinatorMode::
+                    BorrowedActiveRuntimeCallback),
+            true,
+            true,
+            200,
+            200);
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUser4(
+                &coordinator, 36)
+                == RegistryOwnershipStatus::UnsafeFailure,
+            "foreign callback-window witness authenticated")
+        || !CheckEvents(
+            std::array{Event::ControllerCallbackAuthenticate},
+            "foreign callback-window witness entered an inner batch")
+        || !Check(coordinator.poisoned() && coordinator.hashLockRetained()
+                && g_hashLocked,
+            "foreign callback-window witness released the hash"))
+    {
+        return false;
+    }
+    RecoverPoisonedCoordinator(&coordinator);
+
+    g_borrowController = &controller;
+    g_controllerPhase = OwnershipPhase::Cleaning;
+    g_controllerCallbackWindowWitness = 20;
+    if (!Check(
+            CallbackAccess::TryBorrowActiveRuntimeCallback(
+                &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::Success,
+            "same-purpose operation-rollover setup failed"))
+    {
+        return false;
+    }
+    g_controllerCallbackWindowWitness = 21;
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUser4(
+                &coordinator, 37)
+                == RegistryOwnershipStatus::UnsafeFailure,
+            "operation survived a same-purpose callback-window rollover")
+        || !CheckEvents(
+            std::array{Event::ControllerCallbackAuthenticate},
+            "rolled callback window entered an inner batch")
+        || !Check(coordinator.poisoned() && coordinator.hashLockRetained()
+                && g_hashLocked,
+            "operation rollover released the retained hash"))
+    {
+        return false;
+    }
+    RecoverPoisonedCoordinator(&coordinator);
+
+    g_borrowController = &controller;
+    g_controllerPhase = OwnershipPhase::Cleaning;
+    g_controllerCallbackWindowWitness = 30;
+    if (!Check(
+            CallbackAccess::TryBorrowActiveRuntimeCallback(
+                &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::Success,
+            "same-purpose finish-rollover setup failed"))
+    {
+        return false;
+    }
+    g_controllerCallbackWindowWitness = 31;
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::FinishRegistryOwnershipCoordinator(
+                &coordinator)
+                == RegistryOwnershipStatus::UnsafeFailure,
+            "finish survived a same-purpose callback-window rollover")
+        || !CheckEvents(
+            std::array{Event::ControllerCallbackAuthenticate},
+            "rolled callback window reached hash release")
+        || !Check(coordinator.poisoned() && coordinator.hashLockRetained()
+                && g_hashLocked,
+            "finish rollover released the retained hash"))
+    {
+        return false;
+    }
+    RecoverPoisonedCoordinator(&coordinator);
+    return true;
+}
+
+[[nodiscard]] bool TestCallbackReceiptFieldIsolation() noexcept
+{
+    using CallbackAccess =
+        db::registry_ownership::RegistryOwnershipCoordinatorTestAccess;
+    using OwnershipPhase = db::zone_script_string_ownership::
+        ZoneScriptStringOwnershipPhase;
+
+    ResetHarness();
+    db::zone_script_string_ownership::
+        ZoneScriptStringOwnershipController controller;
+    RegistryOwnershipCoordinator coordinator;
+    g_borrowController = &controller;
+    g_controllerPhase = OwnershipPhase::Cleaning;
+    g_controllerCallbackWindowWitness = 42;
+    if (!Check(
+            CallbackAccess::TryBorrowActiveRuntimeCallback(
+                &coordinator, &controller, g_controllerKey)
+                == RegistryOwnershipStatus::Success,
+            "callback receipt field-isolation setup failed"))
+    {
+        return false;
+    }
+
+    CallbackAccess::SetRepresentationMirrors(
+        &coordinator,
+        coordinator.serial(),
+        reinterpret_cast<std::uintptr_t>(&controller),
+        g_controllerTransactionSerial,
+        0,
+        g_controllerKey,
+        static_cast<std::uint8_t>(
+            RegistryOwnershipCoordinatorPhase::Ready),
+        UINT8_C(0xFF),
+        true);
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUser4(
+                &coordinator, 38)
+                == RegistryOwnershipStatus::Success,
+            "high mode bits bled into callback receipt fields"))
+    {
+        return false;
+    }
+
+    CallbackAccess::SetCallbackReceipt(
+        &coordinator, UINT8_C(0xFA), UINT8_C(0xFA), 42, 42);
+    ClearEvents();
+    if (!Check(
+            db::registry_ownership::TryRegistryAddDatabaseUser4(
+                &coordinator, 39)
+                == RegistryOwnershipStatus::Success,
+            "high callback-purpose bits bled into the witness field")
+        || !Check(
+            db::registry_ownership::FinishRegistryOwnershipCoordinator(
+                &coordinator)
+                == RegistryOwnershipStatus::Success,
+            "field-isolation callback borrow did not close")
+        || !Check(coordinator.isEmptyCanonical() && !g_hashLocked,
+            "field-isolation callback borrow retained state"))
+    {
+        return false;
+    }
+    return true;
+}
+
 [[nodiscard]] bool TestUnsafeCloseAndUnknownContainment() noexcept
 {
     ResetHarness();
@@ -721,7 +1203,7 @@ void RecoverPoisonedCoordinator(
     ResetHarness();
     db::registry_ownership::
         SetRegistryOwnershipCoordinatorGlobalMirrorsForTesting(
-            1, 0, 0, 0, 0, 0, 0, 0, 0, false, false);
+            1, 0, 0, 0, 0, 0, 0, 0, 0, false, false, 0, 0);
     RegistryOwnershipCoordinator tornCounter;
     if (!Check(
             db::registry_ownership::
@@ -1155,6 +1637,12 @@ bool OwnsScriptStringTransaction(
 
 namespace db::zone_script_string_ownership
 {
+ZoneScriptStringOwnershipPhase
+ZoneScriptStringOwnershipController::phase() const noexcept
+{
+    return g_controllerPhase;
+}
+
 const zone_load::ZoneLoadContextKey &
 ZoneScriptStringOwnershipController::key() const noexcept
 {
@@ -1167,7 +1655,13 @@ bool ZoneScriptStringOwnershipController::trySnapshotRegistryTransaction(
 {
     Record(Event::ControllerSnapshot);
     if (this != g_borrowController || !outSerial
-        || expectedKey != g_controllerKey || !g_controllerSnapshotAllowed)
+        || expectedKey != g_controllerKey || !g_controllerSnapshotAllowed
+        || g_controllerPhase
+            == ZoneScriptStringOwnershipPhase::UnpublishingCallback
+        || g_controllerPhase == ZoneScriptStringOwnershipPhase::Cleaning
+        || g_controllerPhase == ZoneScriptStringOwnershipPhase::Admitting
+        || g_controllerPhase
+            == ZoneScriptStringOwnershipPhase::UnloadingCallback)
     {
         return false;
     }
@@ -1183,6 +1677,80 @@ bool ZoneScriptStringOwnershipController::authenticatesRegistryTransaction(
     return this == g_borrowController && expectedKey == g_controllerKey
         && expectedSerial == g_controllerTransactionSerial
         && g_controllerAuthenticationAllowed;
+}
+
+bool ZoneScriptStringOwnershipController::
+    trySnapshotRegistryCallbackTransaction(
+        const zone_load::ZoneLoadContextKey &expectedKey,
+        std::uint32_t *const outSerial,
+        RegistryCallbackPurpose *const outPurpose,
+        std::uint8_t *const outWindowWitness) const noexcept
+{
+    Record(Event::ControllerCallbackSnapshot);
+    if (this != g_borrowController || !outSerial || !outPurpose
+        || !outWindowWitness
+        || expectedKey != g_controllerKey
+        || !g_controllerCallbackSnapshotAllowed
+        || std::this_thread::get_id() != g_controllerOwnerThread)
+    {
+        return false;
+    }
+
+    RegistryCallbackPurpose purpose = RegistryCallbackPurpose::None;
+    switch (g_controllerPhase)
+    {
+    case ZoneScriptStringOwnershipPhase::UnpublishingCallback:
+        purpose = RegistryCallbackPurpose::Unpublishing;
+        break;
+    case ZoneScriptStringOwnershipPhase::Cleaning:
+        purpose = RegistryCallbackPurpose::Cleaning;
+        break;
+    case ZoneScriptStringOwnershipPhase::Admitting:
+        purpose = RegistryCallbackPurpose::Admitting;
+        break;
+    case ZoneScriptStringOwnershipPhase::UnloadingCallback:
+        purpose = RegistryCallbackPurpose::Unloading;
+        break;
+    default:
+        return false;
+    }
+    *outSerial = g_controllerTransactionSerial;
+    *outPurpose = purpose;
+    *outWindowWitness = g_controllerCallbackWindowWitness;
+    return true;
+}
+
+bool ZoneScriptStringOwnershipController::
+    authenticatesRegistryCallbackTransaction(
+        const zone_load::ZoneLoadContextKey &expectedKey,
+        const std::uint32_t expectedSerial,
+        const RegistryCallbackPurpose expectedPurpose,
+        const std::uint8_t expectedWindowWitness) const noexcept
+{
+    Record(Event::ControllerCallbackAuthenticate);
+    if (this != g_borrowController || expectedKey != g_controllerKey
+        || expectedSerial != g_controllerTransactionSerial
+        || expectedWindowWitness == 0
+        || expectedWindowWitness != g_controllerCallbackWindowWitness
+        || !g_controllerCallbackAuthenticationAllowed
+        || std::this_thread::get_id() != g_controllerOwnerThread)
+    {
+        return false;
+    }
+
+    switch (g_controllerPhase)
+    {
+    case ZoneScriptStringOwnershipPhase::UnpublishingCallback:
+        return expectedPurpose == RegistryCallbackPurpose::Unpublishing;
+    case ZoneScriptStringOwnershipPhase::Cleaning:
+        return expectedPurpose == RegistryCallbackPurpose::Cleaning;
+    case ZoneScriptStringOwnershipPhase::Admitting:
+        return expectedPurpose == RegistryCallbackPurpose::Admitting;
+    case ZoneScriptStringOwnershipPhase::UnloadingCallback:
+        return expectedPurpose == RegistryCallbackPurpose::Unloading;
+    default:
+        return false;
+    }
 }
 } // namespace db::zone_script_string_ownership
 
@@ -1207,6 +1775,9 @@ int main()
     if (!TestRetainedHashOrderAndBulk()
         || !TestPreheldAndReentryRejection()
         || !TestBorrowedAndMirrorAuthentication()
+        || !TestActiveRuntimeCallbackBorrow()
+        || !TestCallbackWindowWitnessAuthentication()
+        || !TestCallbackReceiptFieldIsolation()
         || !TestUnsafeCloseAndUnknownContainment()
         || !TestAuthPrecedenceAndSerialMirrors()
         || !TestDestructorAbandonment()
