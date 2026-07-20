@@ -107,8 +107,11 @@ inspection pass. Review fixed padding-sensitive snapshots and CRLF matching; hos
 local `__MergedGlobals` coalescing, which final seal head `eeefdf40` handles without weakening ELF/COFF or global-symbol
 rejection. Final run **29715782804** passed all nine jobs with clean exact-head Codex and independent audits and zero
 threads before squash merge `534a9b1e`; authoritative post-merge run **29716339199** passed all nine jobs. Current unmerged
-`293a020c` reserves exact MP/SP PMem serializer slots. Serialized access, retained reservation authentication, coherent
-initialization state, and the `$init` lifecycle remain blockers before production enrollment.
+`293a020c` reserves exact MP/SP PMem serializer slots, and `716eacc1` adds serialized global lifecycle/allocation/getter
+access, retained reservation authentication, witnessed initialization state, exact report-free results, and TLS legacy
+shortfall publication. Focused GCC/Clang and sanitizer checks plus i386/AArch64 compile-link, source/security, symbol, and
+diff gates pass. Stable owned names, bounded dump snapshots, and the `$init` lifecycle remain blockers before
+checked/loader enrollment.
 Exact-head run **29673379640** passed all nine jobs;
 Codex reviewed exact final
 head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before
@@ -205,8 +208,8 @@ failure-atomic invalid-lifecycle handling, allocation-name format-string repair,
 exact-head and authoritative runs passed all nine jobs. PR #69 then merged internal mutable globals and whole
 macro-gated by-value-helper containment plus actual macro-off object-symbol inspection as `534a9b1e`; exact final head
 `eeefdf40` passed all nine jobs in run **29715782804**. It adds no serializer, extent, initialization phase, controller,
-or caller. Current `293a020c` reserves the exact MP/SP serializer slots. The subsequent sequence completes a serialized
-global PMem boundary with retained extent/coherent init/results/snapshots, an
+or caller. Current `293a020c` reserves the exact MP/SP serializer slots and `716eacc1` supplies the serialized retained
+extent/init/result/lifecycle core. The subsequent sequence completes stable name ownership and bounded dump snapshots, an
 unused process-life `$init` controller, narrow-resource authentication, exact-key adapters, and finally
 one atomic seven-site cutover. Until those adapters exist, the table's pristine checks are intentional passive-mode
 corruption tripwires; the adapter batch must replace them atomically with composite phase/key authentication before any

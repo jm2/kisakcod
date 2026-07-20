@@ -6,7 +6,7 @@ work item changes. Do not create session-specific handoff files.
 
 ## Current state
 
-- Current merged baseline: PRs #39--#68 completed earlier audited upstream/gameplay reconciliation checkpoints, the
+- Current merged baseline: PRs #39--#69 completed earlier audited upstream/gameplay reconciliation checkpoints, the
   report-free script-string ownership foundation, the constructed zone ownership controller, script-string
   initialization hardening, the generation-keyed runtime table plus its Windows Debug fixture repair, and the
   authenticated memory-tree validation lease, exact terminal adapters, pointer-free script-string OwnershipBatch, and
@@ -898,11 +898,17 @@ work item changes. Do not create session-specific handoff files.
   exact-final retry hit the bot's daily quota. PR #69 squash-merged as
   `534a9b1e397c9b13ee5be43c293822141033d515`; authoritative post-merge run **29716339199** passed all nine jobs. It adds no
   serializer, retained extent, coherent init phase, controller, checked authority, or production caller.
-- Current serialized-runtime prerequisite: unmerged `293a020c` appends `CRITSECT_PHYSICAL_MEMORY` at MP `0x17` and SP
-  `0x24` without renumbering any existing slot, updates exact count/source contracts, and exercises recursion plus real
-  contention on the new slot. Focused GCC/Clang, strict i386/AArch64 MP/SP compilation, ABI/security, and diff gates pass.
-  Runtime state, lifecycle serialization, allocation results, snapshots, controller, and production enrollment remain
-  deliberately absent while the next implementation commit is in progress.
+- Current serialized-runtime sequence: unmerged `293a020c` appends `CRITSECT_PHYSICAL_MEMORY` at MP `0x17` and SP
+  `0x24` without renumbering any existing slot; `716eacc1` then adds one hidden retained extent and witnessed
+  Uninitialized/Initializing/Ready/Poisoned phase, failure-atomic reserve/commit/release publication, serialized global
+  Begin/End/Free/allocation/getter operations, exact report-free allocation results, and a thread-local legacy shortfall.
+  VM and reporter callbacks run outside the serializer, malformed topology fails closed, and the macro-off object seal
+  now covers `g_runtime` plus local TLS storage on ELF/COFF/AppleClang. Focused GCC and Clang pass **4/4** each;
+  Clang ASan+UBSan runtime/legacy pass **2/2**, source/security/diff gates pass, i386 targets compile/link (execution is
+  blocked by the established sandbox `SIGSYS`), and strict AArch64 MP/SP runtime compile/link passes. No hosted result is
+  claimed yet. Owned stable-name sidecars and a bounded diagnostic snapshot/read-report split for `PMem_DumpMemStats`
+  remain before this global boundary is complete; the `$init` controller, checked authority, and loader enrollment are
+  still absent.
 - Merged registry-coordinator foundation: PR #64 is production-neutral and leaves all seven legacy sites frozen.
   Preflight found that the initial per-operation `db_hashCritSect` acquisition would self-deadlock
   at the hash-held production sites, public low-level batch functions could bypass coordinator authority, fallible finish
@@ -1352,8 +1358,8 @@ work item changes. Do not create session-specific handoff files.
   tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composition, PR #68 merged the legacy PMem
   indexing/failure-atomic prerequisite, and PR #69 merged global-state encapsulation plus the cross-toolchain macro-off
   production seal. The ancestry checkpoint records reviewed history without importing code and therefore does not
-  inflate the engineering estimate. The current serialized-runtime branch remains outside the merged estimate until its
-  PR lands.
+  inflate the engineering estimate. The current `293a020c`/`716eacc1` serialized-runtime branch remains outside the
+  merged estimate until its PR lands.
   Windows x86 is about
   **93%**, shared
   foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
@@ -1833,13 +1839,12 @@ work item changes. Do not create session-specific handoff files.
 
 ## Immediate queue
 
-1. Complete the production-neutral global runtime boundary begun by `293a020c`: exactly one reacquirable serializer, an
-   authoritative external reservation extent, coherent initialization state, report-free allocation results, and bounded
-   by-value diagnostic snapshots. Serialize initialization, Begin/End/Free, allocation, getters, and snapshot capture;
-   reserve/commit and
-   every assertion, print, OOM report, and `Com_Error` must occur after releasing the serializer. Preserve the exact
-   legacy ABI and PR #69's whole-type macro containment plus ELF/COFF/AppleClang production-object seals; add no checked
-   authority or production enrollment.
+1. Finish the production-neutral global runtime boundary now implemented through `716eacc1`: add owned stable-name
+   sidecars and a bounded by-value diagnostic snapshot, then convert `PMem_DumpMemStats` to capture while serialized and
+   print only after release. Preserve the single serializer, retained extent/phase validation, exact report-free
+   allocation result and TLS legacy diagnostic, exact legacy ABI, and PR #69's whole-type macro containment plus
+   ELF/COFF/AppleClang production-object seals. No assertion, print, OOM report, or `Com_Error` may execute while the
+   serializer is held; add no checked authority or loader enrollment in this batch.
 2. Add the separate unused process-lifetime `$init` controller and authenticate the table-wide singleton resources while
    keeping each per-entry receipt capsule's mutable authority narrow and non-duplicating. Do not cut over `$init` alone:
    it must remain Ended for process life, and later enrollment must atomically replace both `$init` calls plus all three
