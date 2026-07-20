@@ -587,10 +587,14 @@ Completed foundation work:
 - current unmerged `293a020c` appends the PMem serializer slot at MP `0x17` and SP `0x24` without renumbering any existing
   slot. Follow-up `716eacc1` uses it for a hidden retained extent plus witnessed initialization phase, failure-atomic
   reserve/commit/release publication, global Begin/End/Free/allocation/getter serialization, exact report-free allocation
-  results, and a thread-local legacy shortfall. Focused GCC/Clang, Clang ASan+UBSan, strict i386/AArch64 MP/SP compile-link,
-  ABI/security/source, recursion/contention, production-object, and diff gates pass; i386 execution remains blocked only
-  by the established sandbox `SIGSYS`. Hosted CI is not yet claimed. Stable owned names and a bounded
-  `PMem_DumpMemStats` capture/read-report split remain, with no checked authority or loader enrollment yet;
+  results, and a thread-local legacy shortfall. Commit `0a9128aa` completes that production-neutral boundary with hidden
+  fixed-capacity owned-name sidecars that retain caller pointer identity separately, witnessed indexed bindings, a frozen
+  pointer-free `0x610` diagnostic snapshot, and `PMem_DumpMemStats` capture-under-lock/report-after-unlock. It preserves
+  unbounded synchronous names for the caller-owned legacy helpers while owning global hole reports across unlock and
+  sidecar reuse. Focused GCC/Clang and Clang ASan+UBSan runtime/legacy/object/source gates, strict i386/AArch64 MP/SP
+  compile-link, ABI/security/source, recursion/contention, production-object, and independent audits pass; i386 execution
+  remains blocked only by the established sandbox `SIGSYS`, and LSan is disabled under ptrace. Hosted CI is not yet
+  claimed. No checked authority or loader caller is enrolled; the unused process-lifetime `$init` controller is next;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -700,9 +704,9 @@ Remaining gates, in implementation order:
    verified. None of the seven raw production sites is enrolled. PR #67 merged the locally and hosted-sealed passive
    durable-receipt composition. PR #68 merged the bounded legacy PMem indexing/failure-atomic repair, and PR #69 merged
    the hidden-state/macro-off-object seal as `534a9b1e`. Current `293a020c` reserves the exact MP/SP PMem lock slots and
-   `716eacc1` supplies the serialized retained-extent/init/allocation/lifecycle core. Now finish stable owned names and the
-   bounded diagnostic snapshot/read-report split, then add an
-   unused process-lifetime `$init` controller. Do not enroll `$init` separately: its later checked cutover must atomically
+   `716eacc1` supplies the serialized retained-extent/init/allocation/lifecycle core, and `0a9128aa` finishes stable owned
+   names plus the bounded diagnostic snapshot/read-report split. Next add an unused process-lifetime `$init` controller.
+   Do not enroll `$init` separately: its later checked cutover must atomically
    replace the two `$init` and three zone PMem lifecycle calls. Then finish narrow-resource authentication and add
    exact-key adapters. That
    adapter batch must atomically replace the passive-only pristine tripwires with composite phase/key authentication for
@@ -1693,8 +1697,8 @@ registry coordinator, PR #65 merged the curated U1/U2 upstream content reconcili
 tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composition, PR #68 merged the legacy-PMem
 indexing/failure-atomic prerequisite, and PR #69 merged global-state encapsulation plus the cross-toolchain macro-off
 seal. The ancestry checkpoint records reviewed history without importing code and therefore does not inflate the
-engineering estimate. The current `293a020c`/`716eacc1` serialized-runtime branch remains outside the merged estimate
-until its PR lands.
+engineering estimate. The current `293a020c`/`716eacc1`/`0a9128aa` serialized-runtime branch remains outside the
+merged estimate until its PR lands.
 Windows x86 is about
 **93%**, shared
 foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
@@ -2003,8 +2007,9 @@ run **29673608169** passed all nine jobs at squash merge `74916b5b`. PR #68 subs
 `PMem_FreeIndex`/`PMem_EndAllocInPrim` repair as `2ee1e82c`; PR #69 then merged hidden mutable globals, whole-type
 test-helper containment, and actual macro-off ELF/COFF/AppleClang object seals as `534a9b1e`. Current `293a020c` reserves
 the MP/SP PMem lock slots and `716eacc1` adds serialized global lifecycle/allocation/getter access, retained reservation
-authentication, and coherent initialization state. Stable owned names, bounded dump snapshots, and `$init` integration
-still must be completed before checked/loader enrollment. Merged PR #61 adds exact-key stream/alias
+authentication, and coherent initialization state; `0a9128aa` completes stable owned names and bounded dump snapshots.
+The unused process-life `$init` controller and later atomic checked/loader enrollment still remain. Merged PR #61 adds
+exact-key stream/alias
 bind and invalidation with a typed aligned
 zone identity, hardened production-neutrality seal, stale-terminal retry safety, complete relocation-capacity release,
 and full singleton scrub. Its compiler-validated source seal covers phase-2 line splicing and phase-3 comment-separated
@@ -2044,8 +2049,8 @@ resolved. PR #66 merged the exact tree-neutral ancestry checkpoint
 **29707497302** passed all nine jobs and the ancestry is verified. PR #67 merged passive durable-receipt composition as
 `76d0e065888aab298d430b4bf4e115c07369bc88`; exact-head and authoritative runs **29709263403** and **29709598049**
 passed all nine jobs. PR #68 merged the legacy PMem indexing repair, PR #69 merged the hidden-state/object seal, and no
-production site is enrolled. Finish the current stable-name/dump-snapshot tail of the serialized PMem boundary, then the
-process-life controller and narrow prerequisites and exact-key adapters; only then enroll all
+production site is enrolled. The current serialized PMem boundary now includes the stable-name/dump-snapshot tail at
+`0a9128aa`. Add the process-life controller, narrow prerequisites, and exact-key adapters next; only then enroll all
 seven sites atomically: five coordinator operations plus two exact-key
 root-journal stages. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
