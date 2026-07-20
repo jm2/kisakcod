@@ -1433,6 +1433,7 @@ foreach(_marker IN ITEMS
     "reinterpret_cast<std::uintptr_t>(journal) % alignof(script_string_journal::ScriptStringJournal)"
     "AddressRangesAreDisjoint( table, sizeof(*table), journal, sizeof(*journal))"
     "if (expectedCount > storageCapacity) return ZoneRuntimeTableStatus::CapacityExceeded;"
+    "if ((storageCapacity == 0) != (storage == nullptr)) return ZoneRuntimeTableStatus::InvalidArgument;"
     "static_cast<std::size_t>(storageCapacity) > (std::numeric_limits<std::size_t>::max)() / sizeof(*storage)"
     "static_cast<std::size_t>(storageCapacity) * sizeof(*storage)"
     "AddressRangesAreDisjoint( table, sizeof(*table), storage, storageBytes)")

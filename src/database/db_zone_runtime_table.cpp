@@ -3565,13 +3565,14 @@ ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership(
     }
     if (expectedCount > storageCapacity)
         return ZoneRuntimeTableStatus::CapacityExceeded;
+    if ((storageCapacity == 0) != (storage == nullptr))
+        return ZoneRuntimeTableStatus::InvalidArgument;
     if (storageCapacity != 0)
     {
-        if (!storage
-            || reinterpret_cast<std::uintptr_t>(storage)
-                    % alignof(
-                        script_string_journal::ScriptStringJournalEntry)
-                != 0
+        if (reinterpret_cast<std::uintptr_t>(storage)
+                % alignof(
+                    script_string_journal::ScriptStringJournalEntry)
+            != 0
             || static_cast<std::size_t>(storageCapacity)
                 > (std::numeric_limits<std::size_t>::max)()
                     / sizeof(*storage))

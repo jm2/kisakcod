@@ -10646,6 +10646,7 @@ foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
     "pre-begin zero-demand capacity match"
     "bounded separated passive ownership storage"
     "if (expectedCount > storageCapacity) return ZoneRuntimeTableStatus::CapacityExceeded;"
+    "if ((storageCapacity == 0) != (storage == nullptr)) return ZoneRuntimeTableStatus::InvalidArgument;"
     "storage separation must span planned capacity rather than demand"
     "success-only expected-demand publication"
     "single success-only expected-demand publication"

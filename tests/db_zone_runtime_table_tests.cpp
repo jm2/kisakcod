@@ -2224,6 +2224,26 @@ void TestKeyedMutableCommitAndAuthentication()
         TryBeginZoneRuntimeScriptStringOwnership(
             &fixture.table,
             fixture.physicalSlot,
+            fixture.key,
+            &rejectedJournal,
+            &rejectedStorage,
+            0,
+            0)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(
+        TryBeginZoneRuntimeScriptStringOwnership(
+            &fixture.table,
+            fixture.physicalSlot,
+            fixture.key,
+            &rejectedJournal,
+            nullptr,
+            1,
+            0)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(
+        TryBeginZoneRuntimeScriptStringOwnership(
+            &fixture.table,
+            fixture.physicalSlot,
             malformed,
             &rejectedJournal,
             &rejectedStorage,
