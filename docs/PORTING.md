@@ -645,9 +645,10 @@ Completed foundation work:
   while child authority remains, fail-closed status validation, and reviewed output, retained-descriptor, and
   mutation-crossing aggregate-input alias separation. Exact method-to-adapter/source seals, realistic forwarding
   fixtures, and a portable macro-off object close the final review gaps. It exposes no raw table/coordinator/admission
-  authority, preserves all seven frozen sites, and enrolls no loader caller. Full native CTest passes **160/160**; the
-  affected Clang selection passes **29/29**, and ASan+UBSan, macro-off GCC/Clang, source/security, plus genuine
-  i386/AArch64 compile-link gates pass. Facade publication and then the atomic seven-site loader cutover follow;
+  authority, preserves all seven frozen sites, and enrolls no loader caller. Rebased source-tree checkpoint `65f4bbab`
+  passes full GCC and Clang CTest **160/160** each, ASan+UBSan facade/source/security **4/4**, macro-off GCC/Clang,
+  source/security, plus genuine i386/AArch64 compile-link gates. Facade publication and then the atomic seven-site
+  loader cutover follow;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with

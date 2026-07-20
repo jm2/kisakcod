@@ -32,8 +32,9 @@ of checked boxes.
     forwarding-fixture seals.
   - [x] Pass full native CTest plus affected Clang, sanitizer, macro-off,
     source/security, i386, and AArch64 gates on the final local tree.
-  - [ ] Commit/rebase and repeat the required gates on the resulting exact head.
-  - [ ] Rebase, publish the PR, resolve review, merge, and verify post-merge CI.
+  - [x] Commit/rebase and repeat the required gates on rebased source-tree
+    checkpoint `65f4bbab`.
+  - [ ] Publish the PR, resolve review, merge, and verify post-merge CI.
 - [ ] Atomically cut all seven loader sites over to the serialized facade; partial
   enrollment is forbidden.
 - [ ] Enroll the guarded native FX/impact path and complete its rollback,
@@ -284,10 +285,10 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   registry-coordinator bridge, exact composite table/registry forwarding, release refusal while child authority remains,
   fail-closed status validation, and output/retained-input separation from facade, table, coordinator, and hash-lock
   authority. It exposes no table, coordinator, admission capability, or loader caller and preserves the seven frozen raw
-  sites. The final local tree passes full native CTest **160/160**, the affected Clang selection **29/29**, ASan+UBSan,
-  macro-off GCC/Clang, source/security, and genuine i386/AArch64 compile-link gates. Commit/rebase exact-head
-  revalidation remains open in the checklist above. Its publication gate and then one atomic seven-site loader cutover
-  follow. Strict requested-target delivery remains **0/5**.
+  sites. Rebased source-tree checkpoint `65f4bbab` passes full GCC and Clang CTest **160/160** each, ASan+UBSan
+  facade/source/security **4/4**, macro-off GCC/Clang, source/security, and genuine i386/AArch64 compile-link gates. Its
+  publication gate and then one atomic seven-site loader cutover follow. Strict requested-target delivery remains
+  **0/5**.
 - Merged script-string ownership foundation: PR #48 adds a dedicated recursive outer DB transaction
   serializer, a private report-free journal adapter, bounded report-free ordinary/database-user ownership operations,
   and failure-atomic memory-tree allocate/query/free APIs. Runtime IDs remain explicitly limited to
@@ -2071,9 +2072,10 @@ coverage does not satisfy an engine-delivery box.
 PR #72 exact final head `0c1354c05c92f2f9e66ce285d85d71c90a4119eb` passed all nine jobs in run **29768665063**
 with clean Codex/Gemini review and zero unresolved threads, squash-merged the capacity/demand prerequisite as
 `64dfc8c9e3b930a7ef7760b794e37320471280c3`, and passed authoritative post-merge run **29770265354**. Production
-enrollment remains zero. The current branch implements the serialized runtime-facade prerequisite. The final local tree
-passes full native CTest **160/160**, the affected Clang selection **29/29**, ASan+UBSan, macro-off GCC/Clang,
-source/security, and genuine i386/AArch64 compile-link gates; commit/rebase exact-head revalidation is still pending.
+enrollment remains zero. The current branch implements the serialized runtime-facade prerequisite. Rebased source-tree
+checkpoint `65f4bbab` passes full GCC and Clang CTest **160/160** each, ASan+UBSan facade/source/security **4/4**,
+macro-off GCC/Clang, source/security, and genuine i386/AArch64 compile-link gates. Only PR publication, hosted review,
+merge, and authoritative post-merge CI remain for this prerequisite.
 
 - [ ] **Priority 1 — Facade publication:** land the locally implemented
    production-neutral process-lifetime facade with

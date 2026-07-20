@@ -152,8 +152,9 @@ boundary, and writable outputs, retained descriptors, plus aggregate inputs read
 from facade state, the whole production table, the hash lock, and coordinator storage. Exact method-to-adapter seals,
 realistic callback/stream/drain fixtures, and a portable macro-off object close the final review gaps. The public surface
 exposes no table, coordinator, or admission authority; all seven raw sites remain frozen and no loader caller is
-enrolled. Full native **160/160**, affected Clang **29/29**, ASan+UBSan, macro-off GCC/Clang, source/security, and genuine
-i386/AArch64 compile-link gates pass. Facade publication and the atomic seven-site cutover follow.
+enrolled. Rebased source-tree checkpoint `65f4bbab` passes full GCC and Clang CTest **160/160** each, ASan+UBSan
+facade/source/security **4/4**, macro-off GCC/Clang, source/security, and genuine i386/AArch64 compile-link gates. Facade
+publication and the atomic seven-site cutover follow.
 
 Merged PR #61's production-neutral zone-stream ownership stack adds one
 durable exact-key NeverBound/Bound/Invalidated receipt per generation and one reusable controller over the process-wide
