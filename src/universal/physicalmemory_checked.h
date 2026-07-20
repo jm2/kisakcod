@@ -7,6 +7,17 @@
 
 namespace physical_memory
 {
+class AllocationReceipt;
+} // namespace physical_memory
+
+namespace db::zone_runtime::detail
+{
+[[nodiscard]] bool IsPristineRuntimeReceipt(
+    const physical_memory::AllocationReceipt &receipt) noexcept;
+} // namespace db::zone_runtime::detail
+
+namespace physical_memory
+{
 // These operations are a report-free lifecycle boundary for one named
 // PhysicalMemory allocation scope. They do not allocate, invoke callbacks,
 // assert, report, or call the legacy PMem Begin/End/Free entry points.
@@ -88,6 +99,9 @@ private:
         AllocationReceipt *receipt) noexcept;
     friend AllocationScopeStatus TryFree(
         AllocationReceipt *receipt) noexcept;
+    // Exact const-only friendship for passive runtime-table authentication.
+    friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt(
+        const AllocationReceipt &receipt) noexcept;
 
     [[nodiscard]] bool reservedIsZero() const noexcept;
     [[nodiscard]] bool hasValidPhase() const noexcept;

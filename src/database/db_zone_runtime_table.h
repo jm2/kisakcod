@@ -1,9 +1,13 @@
 #pragma once
 
+#include <database/db_zone_pending_copy_ledger.h>
 #include <database/db_zone_load_context.h>
+#include <database/db_zone_runtime_storage.h>
 #include <database/db_zone_script_string_ownership.h>
 #include <database/db_zone_slots.h>
+#include <database/db_zone_stream_ownership.h>
 #include <universal/kisak_abi.h>
+#include <universal/physicalmemory_checked.h>
 
 #include <array>
 #include <cstdint>
@@ -13,9 +17,11 @@ namespace db::zone_runtime
 // This table is the durable, allocation-independent owner for the metadata of
 // every native zone-registry slot.  It is deliberately separate from XZone:
 // the legacy loader clears XZone with memset and frees its PMem allocation
-// before lifecycle cleanup can publish an empty slot.  Journal entries, FX
-// workspaces, native arenas, and other per-generation storage do not belong in
-// this table; later wiring binds those resources by exact generation key.
+// before lifecycle cleanup can publish an empty slot.  Per-generation backing
+// slabs, journal entries, FX workspaces, native arenas, and zone memory do not
+// belong in this table.  Only their durable, allocation-independent receipts
+// and placement handle live here; later wiring binds those objects by exact
+// generation key.
 //
 // Physical slot zero remains the engine's reserved/default slot.  The table
 // has stable storage for all 33 physical slots.  Only slots 1..32 are usable.
@@ -45,6 +51,15 @@ enum class ZoneRuntimeTableStatus : std::uint8_t
 
 class ZoneRuntimeEntry;
 class ZoneRuntimeTable;
+class ZoneRuntimeReceiptCapsule;
+
+namespace detail
+{
+[[nodiscard]] bool IsPristineRuntimeReceipt(
+    const ZoneRuntimeReceiptCapsule &capsule) noexcept;
+[[nodiscard]] bool EntryReceiptsArePristine(
+    const ZoneRuntimeEntry &entry) noexcept;
+} // namespace detail
 
 // An authenticated, read-only observation of one active generation.  The key
 // is copied by value so a retained old view cannot silently become an authority
@@ -69,6 +84,43 @@ RUNTIME_SIZE(ZoneRuntimeGenerationView, 0x18, 0x18);
 struct ZoneRuntimeTableTestAccess;
 #endif
 
+// Stable-address, allocation-independent storage for the four authorities
+// owned by one physical slot. The type is visible only so ZoneRuntimeEntry's
+// by-value layout is complete; construction, destruction, state inspection,
+// and every contained object remain private. No production operation can
+// reach a mutable receipt through this composition layer.
+class alignas(8) ZoneRuntimeReceiptCapsule final
+{
+private:
+    friend class ZoneRuntimeEntry;
+    friend bool detail::IsPristineRuntimeReceipt(
+        const ZoneRuntimeReceiptCapsule &capsule) noexcept;
+#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
+    friend struct ZoneRuntimeTableTestAccess;
+#endif
+
+    ZoneRuntimeReceiptCapsule() noexcept = default;
+    ~ZoneRuntimeReceiptCapsule() noexcept = default;
+
+    ZoneRuntimeReceiptCapsule(const ZoneRuntimeReceiptCapsule &) = delete;
+    ZoneRuntimeReceiptCapsule &operator=(
+        const ZoneRuntimeReceiptCapsule &) = delete;
+    ZoneRuntimeReceiptCapsule(ZoneRuntimeReceiptCapsule &&) = delete;
+    ZoneRuntimeReceiptCapsule &operator=(
+        ZoneRuntimeReceiptCapsule &&) = delete;
+
+    [[nodiscard]] bool isPristine() const noexcept;
+
+    physical_memory::AllocationReceipt allocationReceipt_{};
+    zone_stream_ownership::ZoneStreamGenerationReceipt
+        streamGenerationReceipt_{};
+    zone_pending_copy::PendingCopyAdmissionReceipt
+        pendingCopyAdmissionReceipt_{};
+    zone_runtime_storage::ZoneRuntimeStorageBinding storageBinding_{};
+};
+
+RUNTIME_SIZE(ZoneRuntimeReceiptCapsule, 0xD0, 0x120);
+
 class alignas(8) ZoneRuntimeEntry final
 {
 public:
@@ -89,6 +141,8 @@ public:
 
 private:
     friend class ZoneRuntimeTable;
+    friend bool detail::EntryReceiptsArePristine(
+        const ZoneRuntimeEntry &entry) noexcept;
     friend ZoneRuntimeTableStatus TryInitializeZoneRuntimeTable(
         ZoneRuntimeTable *table) noexcept;
     friend ZoneRuntimeTableStatus TryGetZoneRuntimeEntry(
@@ -121,9 +175,10 @@ private:
     zone_script_string_ownership::ZoneScriptStringOwnershipController
         scriptStringOwnership_{};
     zone_load::ZoneLoadContextKey key_{};
+    ZoneRuntimeReceiptCapsule receiptCapsule_{};
 };
 
-RUNTIME_SIZE(ZoneRuntimeEntry, 0x60, 0x78);
+RUNTIME_SIZE(ZoneRuntimeEntry, 0x130, 0x198);
 
 class alignas(8) ZoneRuntimeTable final
 {
@@ -249,11 +304,16 @@ private:
 
     std::array<ZoneRuntimeEntry, zone_slots::kPhysicalZoneSlotCount>
         entries_{};
+    // These process-wide authorities are unique by construction. They remain
+    // pristine until later exact-key adapters enroll them atomically.
+    zone_stream_ownership::ActiveZoneStreamBinding
+        activeZoneStreamBinding_{};
+    zone_pending_copy::PendingCopyLedger pendingCopyLedger_{};
     std::uint32_t state_ = 0;
     std::uint32_t reserved_ = 0;
 };
 
-RUNTIME_SIZE(ZoneRuntimeTable, 0xC68, 0xF80);
+RUNTIME_SIZE(ZoneRuntimeTable, 0xE900, 0xF700);
 
 #ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
 // Tests opt in before including this header.  Production callers cannot reach
@@ -278,6 +338,67 @@ struct ZoneRuntimeTableTestAccess final
             return nullptr;
         return &table->entries_[physicalSlot].scriptStringOwnership_;
     }
+
+    static physical_memory::AllocationReceipt *AllocationReceipt(
+        ZoneRuntimeTable *const table,
+        const std::uint32_t physicalSlot) noexcept
+    {
+        if (!table || physicalSlot >= table->entries_.size())
+            return nullptr;
+        return &table->entries_[physicalSlot]
+                    .receiptCapsule_.allocationReceipt_;
+    }
+
+    static zone_stream_ownership::ZoneStreamGenerationReceipt *
+    StreamGenerationReceipt(
+        ZoneRuntimeTable *const table,
+        const std::uint32_t physicalSlot) noexcept
+    {
+        if (!table || physicalSlot >= table->entries_.size())
+            return nullptr;
+        return &table->entries_[physicalSlot]
+                    .receiptCapsule_.streamGenerationReceipt_;
+    }
+
+    static zone_pending_copy::PendingCopyAdmissionReceipt *
+    PendingCopyAdmissionReceipt(
+        ZoneRuntimeTable *const table,
+        const std::uint32_t physicalSlot) noexcept
+    {
+        if (!table || physicalSlot >= table->entries_.size())
+            return nullptr;
+        return &table->entries_[physicalSlot]
+                    .receiptCapsule_.pendingCopyAdmissionReceipt_;
+    }
+
+    static zone_runtime_storage::ZoneRuntimeStorageBinding *StorageBinding(
+        ZoneRuntimeTable *const table,
+        const std::uint32_t physicalSlot) noexcept
+    {
+        if (!table || physicalSlot >= table->entries_.size())
+            return nullptr;
+        return &table->entries_[physicalSlot]
+                    .receiptCapsule_.storageBinding_;
+    }
+
+    static zone_stream_ownership::ActiveZoneStreamBinding *
+    ActiveStreamBinding(ZoneRuntimeTable *const table) noexcept
+    {
+        return table ? &table->activeZoneStreamBinding_ : nullptr;
+    }
+
+    static zone_pending_copy::PendingCopyLedger *PendingCopyLedger(
+        ZoneRuntimeTable *const table) noexcept
+    {
+        return table ? &table->pendingCopyLedger_ : nullptr;
+    }
+
+    [[nodiscard]] static bool ReceiptCapsulePristine(
+        const ZoneRuntimeTable *table,
+        std::uint32_t physicalSlot) noexcept;
+
+    [[nodiscard]] static bool SharedResourcesPristine(
+        const ZoneRuntimeTable *table) noexcept;
 
     static void SetKey(
         ZoneRuntimeTable *const table,

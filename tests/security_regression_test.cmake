@@ -75,6 +75,132 @@ function(require_source_match_count RELATIVE_PATH PATTERN EXPECTED_COUNT DESCRIP
     endif()
 endfunction()
 
+function(require_security_slice_match_count
+    SLICE_VAR PATTERN EXPECTED_COUNT DESCRIPTION)
+    set(_remaining "${${SLICE_VAR}}")
+    set(_match_count 0)
+    while(TRUE)
+        string(REGEX MATCH "${PATTERN}" _match "${_remaining}")
+        if("${_match}" STREQUAL "")
+            break()
+        endif()
+        math(EXPR _match_count "${_match_count} + 1")
+        string(FIND "${_remaining}" "${_match}" _match_position)
+        string(LENGTH "${_match}" _match_length)
+        math(EXPR _next_position "${_match_position} + ${_match_length}")
+        string(SUBSTRING "${_remaining}" ${_next_position} -1 _remaining)
+    endwhile()
+    if(NOT _match_count EQUAL EXPECTED_COUNT)
+        message(FATAL_ERROR
+            "Unexpected security slice count (${DESCRIPTION}): expected "
+            "${EXPECTED_COUNT}, found ${_match_count}")
+    endif()
+endfunction()
+
+function(security_friend_surface_matches_exact
+    SLICE_VAR EXPECTED_FRIENDS_VAR OUT_VAR)
+    string(REGEX MATCHALL
+        "friend[ ]+[^;]*"
+        _actual_friends
+        "${${SLICE_VAR}}")
+    if("${_actual_friends}" STREQUAL
+        "${${EXPECTED_FRIENDS_VAR}}")
+        set(${OUT_VAR} TRUE PARENT_SCOPE)
+    else()
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(require_security_exact_friend_surface
+    SLICE_VAR EXPECTED_FRIENDS_VAR DESCRIPTION)
+    security_friend_surface_matches_exact(
+        ${SLICE_VAR} ${EXPECTED_FRIENDS_VAR} _surface_matches)
+    if(NOT _surface_matches)
+        string(REGEX MATCHALL
+            "friend[ ]+[^;]*"
+            _actual_friends
+            "${${SLICE_VAR}}")
+        list(LENGTH _actual_friends _actual_count)
+        list(LENGTH ${EXPECTED_FRIENDS_VAR} _expected_count)
+        message(FATAL_ERROR
+            "Exact security friend surface drifted (${DESCRIPTION}): "
+            "expected ${_expected_count} '${${EXPECTED_FRIENDS_VAR}}', "
+            "found ${_actual_count} '${_actual_friends}'")
+    endif()
+endfunction()
+
+function(security_class_digest_matches_exact
+    SLICE_VAR EXPECTED OUT_VAR)
+    string(SHA256 _actual_digest "${${SLICE_VAR}}")
+    if(_actual_digest STREQUAL EXPECTED)
+        set(${OUT_VAR} TRUE PARENT_SCOPE)
+    else()
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(require_security_exact_class_digest
+    SLICE_VAR EXPECTED DESCRIPTION)
+    security_class_digest_matches_exact(
+        ${SLICE_VAR} ${EXPECTED} _digest_matches)
+    if(NOT _digest_matches)
+        string(SHA256 _actual_digest "${${SLICE_VAR}}")
+        message(FATAL_ERROR
+            "Authority class body drifted in security mirror "
+            "(${DESCRIPTION}): expected ${EXPECTED}, found ${_actual_digest}")
+    endif()
+endfunction()
+
+string(ASCII 92 _security_friend_backslash)
+string(ASCII 13 _security_friend_carriage_return)
+string(ASCII 10 _security_friend_line_feed)
+string(ASCII 11 _security_friend_vertical_tab)
+string(ASCII 12 _security_friend_form_feed)
+
+function(security_source_has_define_directive SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    string(REPLACE "??/" "${_security_friend_backslash}"
+        _candidate "${_candidate}")
+    string(REPLACE "??=" "#" _candidate "${_candidate}")
+    string(REPLACE
+        "${_security_friend_backslash}${_security_friend_carriage_return}${_security_friend_line_feed}"
+        "" _candidate "${_candidate}")
+    string(REPLACE
+        "${_security_friend_backslash}${_security_friend_line_feed}"
+        "" _candidate "${_candidate}")
+    string(REPLACE
+        "${_security_friend_backslash}${_security_friend_carriage_return}"
+        "" _candidate "${_candidate}")
+    string(REPLACE "%:" "#" _candidate "${_candidate}")
+    string(REGEX REPLACE
+        "/[*]([^*]|[*]+[^*/])*[*]+/" " " _candidate "${_candidate}")
+    string(REGEX REPLACE
+        "//[^\r\n]*" "" _candidate "${_candidate}")
+    string(REPLACE "${_security_friend_vertical_tab}" " "
+        _candidate "${_candidate}")
+    string(REPLACE "${_security_friend_form_feed}" " "
+        _candidate "${_candidate}")
+    string(REGEX MATCH
+        "(^|[\r\n])[ \t]*#[ \t]*define([ \t]|$)"
+        _define_directive
+        "${_candidate}")
+    if(_define_directive STREQUAL "")
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
+    else()
+        set(${OUT_VAR} TRUE PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(require_source_no_define_directive RELATIVE_PATH DESCRIPTION)
+    file(READ "${SOURCE_ROOT}/src/${RELATIVE_PATH}" _source)
+    security_source_has_define_directive(_source _has_define_directive)
+    if(_has_define_directive)
+        message(FATAL_ERROR
+            "Forbidden security regression (${DESCRIPTION}) in "
+            "src/${RELATIVE_PATH}: authority headers cannot define macros")
+    endif()
+endfunction()
+
 function(extract_security_slice
     SOURCE_VAR START_MARKER END_MARKER OUT_VAR DESCRIPTION)
     set(_source "${${SOURCE_VAR}}")
@@ -9810,12 +9936,12 @@ require_source_contains(
 require_source_match_count(
     "database/db_zone_runtime_table.h"
     "#[ \t]*ifdef[ \t]+KISAK_DB_ZONE_RUNTIME_TABLE_TESTING[\r\n]+[ \t]*friend[ \t]+struct[ \t]+ZoneRuntimeTableTestAccess[ \t]*;[\r\n]+#[ \t]*endif"
-    2
-    "both private runtime-table owners must gate test friendship independently")
+    3
+    "all private runtime-table owners must gate test friendship independently")
 require_source_match_count(
     "database/db_zone_runtime_table.h"
     "#[ \t]*ifdef[ \t]+KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"
-    4
+    5
     "every runtime-table helper declaration, friendship, and definition must be test gated")
 
 set(_zone_runtime_production_seal_test_path
@@ -9836,10 +9962,17 @@ require_security_slice_contains(
     "the production runtime-table seal must recreate the helper's public name")
 foreach(_zone_runtime_probe_marker IN ITEMS
     "&table->entries_;"
+    "&table->activeZoneStreamBinding_;"
+    "&table->pendingCopyLedger_;"
     "table->reserved_ = 1u;"
     "&entry->lifecycle_;"
     "&entry->scriptStringOwnership_;"
-    "entry->key_ = zone_load::ZoneLoadContextKey{};")
+    "&entry->receiptCapsule_;"
+    "entry->key_ = zone_load::ZoneLoadContextKey{};"
+    "&capsule->allocationReceipt_;"
+    "&capsule->streamGenerationReceipt_;"
+    "&capsule->pendingCopyAdmissionReceipt_;"
+    "&capsule->storageBinding_;")
     require_security_slice_contains(
         _zone_runtime_production_seal_test
         "${_zone_runtime_probe_marker}"
@@ -9850,7 +9983,14 @@ foreach(_zone_runtime_seal_marker IN ITEMS
     "!ZoneRuntimeTableTestAccess::CanMutateReserved<ZoneRuntimeTable>"
     "!ZoneRuntimeTableTestAccess::CanReachMutableLifecycle<ZoneRuntimeEntry>"
     "!ZoneRuntimeTableTestAccess::CanReachMutableOwnership<ZoneRuntimeEntry>"
-    "!ZoneRuntimeTableTestAccess::CanMutateKey<ZoneRuntimeEntry>")
+    "!ZoneRuntimeTableTestAccess::CanMutateKey<ZoneRuntimeEntry>"
+    "!ZoneRuntimeTableTestAccess::CanReachReceiptCapsule<ZoneRuntimeEntry>"
+    "!ZoneRuntimeTableTestAccess::CanReachActiveStreamBinding<ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanReachPendingCopyLedger<ZoneRuntimeTable>"
+    "!ZoneRuntimeTableTestAccess::CanReachAllocationReceipt<"
+    "!ZoneRuntimeTableTestAccess::CanReachStreamGenerationReceipt<"
+    "!ZoneRuntimeTableTestAccess::CanReachPendingAdmissionReceipt<"
+    "!ZoneRuntimeTableTestAccess::CanReachStorageBinding<")
     require_security_slice_contains(
         _zone_runtime_production_seal_test
         "${_zone_runtime_seal_marker}"
@@ -9889,6 +10029,523 @@ forbid_security_slice_contains(
     _zone_runtime_production_seal_registration
     "KISAK_DB_ZONE_RUNTIME_TABLE_TESTING"
     "the production seal target cannot opt into runtime-table test access")
+
+# Passive receipt composition owns authority storage but grants no mutable
+# production accessor. Each component exposes only one exact const-reference
+# friendship used by the table's pristine authenticator.
+foreach(_zone_runtime_receipt_header IN ITEMS
+    "universal/physicalmemory_checked.h"
+    "database/db_zone_stream_ownership.h"
+    "database/db_zone_pending_copy_ledger.h"
+    "database/db_zone_runtime_storage.h")
+    require_source_contains(
+        "${_zone_runtime_receipt_header}"
+        "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt("
+        "passive receipts must grant only narrow pristine authentication")
+    require_source_not_contains(
+        "${_zone_runtime_receipt_header}"
+        "friend class db::zone_runtime::"
+        "receipt owners must not broadly friend a recreatable helper class")
+endforeach()
+foreach(_zone_runtime_authority_header IN ITEMS
+    "universal/physicalmemory_checked.h"
+    "database/db_zone_stream_ownership.h"
+    "database/db_zone_pending_copy_ledger.h"
+    "database/db_zone_runtime_storage.h"
+    "database/db_zone_runtime_table.h")
+    require_source_no_define_directive(
+        "${_zone_runtime_authority_header}"
+        "macro-generated receipt friendship")
+endforeach()
+
+file(READ
+    "${SOURCE_ROOT}/src/universal/physicalmemory_checked.h"
+    _security_physical_receipt_header)
+file(READ
+    "${SOURCE_ROOT}/src/database/db_zone_stream_ownership.h"
+    _security_stream_receipt_header)
+file(READ
+    "${SOURCE_ROOT}/src/database/db_zone_pending_copy_ledger.h"
+    _security_pending_receipt_header)
+file(READ
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_storage.h"
+    _security_storage_receipt_header)
+file(READ
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_table.h"
+    _zone_runtime_receipt_header_source)
+foreach(_security_receipt_header IN ITEMS
+    _security_physical_receipt_header
+    _security_stream_receipt_header
+    _security_pending_receipt_header
+    _security_storage_receipt_header
+    _zone_runtime_receipt_header_source)
+    string(REGEX REPLACE
+        "[ \t\r\n]+" " "
+        _normalized_security_receipt_header
+        "${${_security_receipt_header}}")
+    set(${_security_receipt_header}
+        "${_normalized_security_receipt_header}")
+endforeach()
+
+extract_security_slice(
+    _security_physical_receipt_header
+    "class AllocationReceipt final"
+    "[[nodiscard]] AllocationScopeStatus TryBegin("
+    _security_physical_allocation_receipt_class
+    "checked-PMem receipt friend surface")
+set(_security_physical_allocation_receipt_friends
+    "friend AllocationScopeStatus TryBegin( PhysicalMemory *memory, std::uint32_t allocType, const char *stableName, AllocationReceipt *receipt) noexcept"
+    "friend AllocationScopeStatus TryEnd( AllocationReceipt *receipt) noexcept"
+    "friend AllocationScopeStatus TryFree( AllocationReceipt *receipt) noexcept"
+    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const AllocationReceipt &receipt) noexcept")
+require_security_exact_friend_surface(
+    _security_physical_allocation_receipt_class
+    _security_physical_allocation_receipt_friends
+    "checked-PMem AllocationReceipt")
+
+extract_security_slice(
+    _security_storage_receipt_header
+    "class ZoneRuntimeStorageBinding final"
+    "[[nodiscard]] ZoneRuntimeStorageStatus TryPlanZoneRuntimeStorage("
+    _security_runtime_storage_binding_class
+    "runtime-storage binding friend surface")
+set(_security_runtime_storage_binding_friends
+    "friend ZoneRuntimeStorageStatus TryBindZoneRuntimeStorage( void *, std::size_t, const ZoneRuntimeStoragePlan *, ZoneRuntimeStorageBinding *) noexcept"
+    "friend ZoneRuntimeStorageStatus TryDestroyZoneRuntimeStorage( ZoneRuntimeStorageBinding *) noexcept"
+    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const ZoneRuntimeStorageBinding &binding) noexcept")
+require_security_exact_friend_surface(
+    _security_runtime_storage_binding_class
+    _security_runtime_storage_binding_friends
+    "ZoneRuntimeStorageBinding")
+
+extract_security_slice(
+    _security_stream_receipt_header
+    "class alignas(8) ZoneStreamGenerationReceipt final"
+    "RUNTIME_SIZE(ZoneStreamGenerationReceipt, 0x20, 0x28);"
+    _security_stream_generation_receipt_class
+    "stream-generation receipt friend surface")
+set(_security_stream_generation_receipt_friends
+    "friend ZoneStreamOwnershipStatus TryBeginZoneStreamGeneration( ZoneStreamGenerationReceipt *, zone_load::ZoneLoadContextSlot *, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend ZoneStreamOwnershipStatus TryBindZoneStreams( ActiveZoneStreamBinding *, ZoneStreamGenerationReceipt *, const zone_load::ZoneLoadContextKey &, const XZoneMemory *, const relocation::BlockView *, std::size_t) noexcept"
+    "friend ZoneStreamOwnershipStatus TryInvalidateZoneStreams( ActiveZoneStreamBinding *, ZoneStreamGenerationReceipt *, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend class ActiveZoneStreamBinding"
+    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const ZoneStreamGenerationReceipt &receipt) noexcept")
+require_security_exact_friend_surface(
+    _security_stream_generation_receipt_class
+    _security_stream_generation_receipt_friends
+    "ZoneStreamGenerationReceipt")
+
+extract_security_slice(
+    _security_stream_receipt_header
+    "class alignas(8) ActiveZoneStreamBinding final"
+    "RUNTIME_SIZE(ActiveZoneStreamBinding, 0x68, 0xC0);"
+    _security_active_stream_binding_class
+    "active-stream binding friend surface")
+set(_security_active_stream_binding_friends
+    "friend ZoneStreamOwnershipStatus TryBindZoneStreams( ActiveZoneStreamBinding *, ZoneStreamGenerationReceipt *, const zone_load::ZoneLoadContextKey &, const XZoneMemory *, const relocation::BlockView *, std::size_t) noexcept"
+    "friend ZoneStreamOwnershipStatus TryInvalidateZoneStreams( ActiveZoneStreamBinding *, ZoneStreamGenerationReceipt *, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const ActiveZoneStreamBinding &binding) noexcept")
+require_security_exact_friend_surface(
+    _security_active_stream_binding_class
+    _security_active_stream_binding_friends
+    "ActiveZoneStreamBinding")
+
+extract_security_slice(
+    _security_pending_receipt_header
+    "class alignas(8) PendingCopyAdmissionReceipt final"
+    "// Process-lifetime ordered storage"
+    _security_pending_admission_receipt_class
+    "pending-admission receipt friend surface")
+set(_security_pending_admission_receipt_friends
+    "friend class PendingCopyLedger"
+    "friend PendingCopyStatus TryInitializePendingCopyLedger( PendingCopyLedger *) noexcept"
+    "friend PendingCopyStatus TryBeginPendingCopyAdmission( PendingCopyLedger *, PendingCopyAdmissionReceipt *, zone_load::ZoneLoadContextSlot *, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend PendingCopyStatus TryAppendPendingCopyRecord( PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &, std::uint32_t) noexcept"
+    "friend PendingCopyStatus TryReadPendingCopyRecord( const PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &, std::uint32_t, PendingCopyRecord *) noexcept"
+    "friend PendingCopyStatus TryPreparePendingCopyAdmission( PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &, const PendingCopyAdmissionCompletion &) noexcept"
+    "friend void FinalizePreparedPendingCopyAdmission( PendingCopyAdmissionReceipt &) noexcept"
+    "friend PendingCopyStatus TryDiscardPendingCopyAdmission( PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend PendingCopyStatus TryFinishPendingCopyDrain( PendingCopyLedger *) noexcept"
+    "friend PendingCopyStatus TryResetPendingCopyAdmissionReceipt( PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const PendingCopyAdmissionReceipt &receipt) noexcept"
+    "friend struct PendingCopyLedgerTestAccess")
+require_security_exact_friend_surface(
+    _security_pending_admission_receipt_class
+    _security_pending_admission_receipt_friends
+    "PendingCopyAdmissionReceipt")
+
+extract_security_slice(
+    _security_pending_receipt_header
+    "class alignas(8) PendingCopyLedger final"
+    "struct PendingCopyLedgerTestAccess final"
+    _security_pending_copy_ledger_class
+    "pending-copy ledger friend surface")
+set(_security_pending_copy_ledger_friends
+    "friend class PendingCopyAdmissionReceipt"
+    "friend PendingCopyStatus TryInitializePendingCopyLedger( PendingCopyLedger *) noexcept"
+    "friend PendingCopyStatus TryBeginPendingCopyAdmission( PendingCopyLedger *, PendingCopyAdmissionReceipt *, zone_load::ZoneLoadContextSlot *, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend PendingCopyStatus TryAppendPendingCopyRecord( PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &, std::uint32_t) noexcept"
+    "friend PendingCopyStatus TryReadPendingCopyRecord( const PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &, std::uint32_t, PendingCopyRecord *) noexcept"
+    "friend PendingCopyStatus TryPreparePendingCopyAdmission( PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &, const PendingCopyAdmissionCompletion &) noexcept"
+    "friend void FinalizePreparedPendingCopyAdmission( PendingCopyAdmissionReceipt &) noexcept"
+    "friend PendingCopyStatus TryDiscardPendingCopyAdmission( PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend PendingCopyStatus TryBeginPendingCopyDrain( PendingCopyLedger *) noexcept"
+    "friend PendingCopyStatus TryDrainNextPendingCopy( PendingCopyLedger *, const PendingCopyDrainCallback &) noexcept"
+    "friend PendingCopyStatus TryFinishPendingCopyDrain( PendingCopyLedger *) noexcept"
+    "friend PendingCopyStatus TryResetPendingCopyAdmissionReceipt( PendingCopyAdmissionReceipt *, const zone_load::ZoneLoadContextKey &) noexcept"
+    "friend bool db::zone_runtime::detail::IsPristineRuntimeReceipt( const PendingCopyLedger &ledger) noexcept"
+    "friend struct PendingCopyLedgerTestAccess")
+require_security_exact_friend_surface(
+    _security_pending_copy_ledger_class
+    _security_pending_copy_ledger_friends
+    "PendingCopyLedger")
+
+extract_security_slice(
+    _zone_runtime_receipt_header_source
+    "class alignas(8) ZoneRuntimeReceiptCapsule final"
+    "RUNTIME_SIZE(ZoneRuntimeReceiptCapsule, 0xD0, 0x120);"
+    _zone_runtime_receipt_capsule_slice
+    "passive receipt capsule friend surface")
+set(_security_zone_runtime_receipt_capsule_friends
+    "friend class ZoneRuntimeEntry"
+    "friend bool detail::IsPristineRuntimeReceipt( const ZoneRuntimeReceiptCapsule &capsule) noexcept"
+    "friend struct ZoneRuntimeTableTestAccess")
+require_security_exact_friend_surface(
+    _zone_runtime_receipt_capsule_slice
+    _security_zone_runtime_receipt_capsule_friends
+    "ZoneRuntimeReceiptCapsule")
+
+extract_security_slice(
+    _zone_runtime_receipt_header_source
+    "class alignas(8) ZoneRuntimeEntry final"
+    "RUNTIME_SIZE(ZoneRuntimeEntry, 0x130, 0x198);"
+    _security_zone_runtime_entry_class
+    "zone runtime entry friend surface")
+set(_security_zone_runtime_entry_friends
+    "friend class ZoneRuntimeTable"
+    "friend bool detail::EntryReceiptsArePristine( const ZoneRuntimeEntry &entry) noexcept"
+    "friend ZoneRuntimeTableStatus TryInitializeZoneRuntimeTable( ZoneRuntimeTable *table) noexcept"
+    "friend ZoneRuntimeTableStatus TryGetZoneRuntimeEntry( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const ZoneRuntimeEntry **outEntry) noexcept"
+    "friend ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, zone_load::ZoneLoadContextKey *inOutKey) noexcept"
+    "friend ZoneRuntimeTableStatus TryGetZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, ZoneRuntimeGenerationView *outView) noexcept"
+    "friend ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, const zone_load::ZoneLoadCleanupCallbacks &callbacks) noexcept"
+    "friend ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key) noexcept"
+    "friend struct ZoneRuntimeTableTestAccess")
+require_security_exact_friend_surface(
+    _security_zone_runtime_entry_class
+    _security_zone_runtime_entry_friends
+    "ZoneRuntimeEntry")
+
+extract_security_slice(
+    _zone_runtime_receipt_header_source
+    "class alignas(8) ZoneRuntimeTable final"
+    "RUNTIME_SIZE(ZoneRuntimeTable, 0xE900, 0xF700);"
+    _security_zone_runtime_table_class
+    "zone runtime table friend surface")
+set(_security_zone_runtime_table_friends
+    "friend ZoneRuntimeTableStatus TryInitializeZoneRuntimeTable( ZoneRuntimeTable *table) noexcept"
+    "friend ZoneRuntimeTableStatus TryGetZoneRuntimeEntry( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const ZoneRuntimeEntry **outEntry) noexcept"
+    "friend ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, zone_load::ZoneLoadContextKey *inOutKey) noexcept"
+    "friend ZoneRuntimeTableStatus TryGetZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, ZoneRuntimeGenerationView *outView) noexcept"
+    "friend ZoneRuntimeTableStatus TryUnloadZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, const zone_load::ZoneLoadCleanupCallbacks &callbacks) noexcept"
+    "friend ZoneRuntimeTableStatus TryResetZoneRuntimeTerminalReceipt( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key) noexcept"
+    "friend ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringOwnership( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, script_string_journal::ScriptStringJournal *journal, script_string_journal::ScriptStringJournalEntry *storage, std::uint32_t storageCapacity, std::uint32_t expectedCount) noexcept"
+    "friend ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, const script_string_adapter::ScriptStringSourceView &source, std::uint32_t *outStringId) noexcept"
+    "friend ZoneRuntimeTableStatus TrySealZoneRuntimeScriptStrings( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key) noexcept"
+    "friend ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringTransfer( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key) noexcept"
+    "friend ZoneRuntimeTableStatus TryTransferNextZoneRuntimeScriptString( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key) noexcept"
+    "friend ZoneRuntimeTableStatus TryPrepareZoneRuntimeScriptStringCommit( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key) noexcept"
+    "friend ZoneRuntimeTableStatus TryCommitZoneRuntimeScriptStringsAndAdmit( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, const zone_script_string_ownership:: ZoneScriptStringAdmissionCallback &admission) noexcept"
+    "friend ZoneRuntimeTableStatus TryBeginZoneRuntimeScriptStringRollback( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key, const zone_script_string_ownership:: ZoneScriptStringRollbackCallbacks &callbacks) noexcept"
+    "friend ZoneRuntimeTableStatus TryRollbackNextZoneRuntimeScriptString( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key) noexcept"
+    "friend ZoneRuntimeTableStatus TryFinishZoneRuntimeScriptStringAbandonment( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const zone_load::ZoneLoadContextKey &key) noexcept"
+    "friend struct ZoneRuntimeTableTestAccess")
+require_security_exact_friend_surface(
+    _security_zone_runtime_table_class
+    _security_zone_runtime_table_friends
+    "ZoneRuntimeTable")
+
+require_security_exact_class_digest(
+    _security_physical_allocation_receipt_class
+    1d3baf285dc70596ca05b6714228e89d7d4d16c9d811f0fb709f3b1e076b15bc
+    "AllocationReceipt")
+require_security_exact_class_digest(
+    _security_runtime_storage_binding_class
+    1ccfbc989d584306202886e188c756de577f8b65188047e4c0f117254a3b7b05
+    "ZoneRuntimeStorageBinding")
+require_security_exact_class_digest(
+    _security_stream_generation_receipt_class
+    0e94ce08089afadd3198fa52a914d8de83380717869753d91fb64cd39247638b
+    "ZoneStreamGenerationReceipt")
+require_security_exact_class_digest(
+    _security_active_stream_binding_class
+    4103d1c5614616cceb11ee072a5dfd78ed95bd116b857a3766096ecabbebca4a
+    "ActiveZoneStreamBinding")
+require_security_exact_class_digest(
+    _security_pending_admission_receipt_class
+    1a01a9876cb706c14d6bb8411daa2f05f33c115059cc3166d451f0d8b1621b64
+    "PendingCopyAdmissionReceipt")
+require_security_exact_class_digest(
+    _security_pending_copy_ledger_class
+    109b7d1aded99dbead4c48e91e1c12bee6ab6b693d8490fbdce958cf78404254
+    "PendingCopyLedger")
+require_security_exact_class_digest(
+    _zone_runtime_receipt_capsule_slice
+    2eb407cda4acfe1b933c81b8fea804bb94eb1cc0b231cc1afeb3b94ebed5e9fd
+    "ZoneRuntimeReceiptCapsule")
+require_security_exact_class_digest(
+    _security_zone_runtime_entry_class
+    7f76648f407e253fbb9e87b2e9d45935e53224f0a34d865cf576f44b34899a5a
+    "ZoneRuntimeEntry")
+require_security_exact_class_digest(
+    _security_zone_runtime_table_class
+    1d8e49c331db3a0b02e7852cb025307bb1ce331b522143d477167443b8751f8a
+    "ZoneRuntimeTable")
+
+set(_security_external_macro_friend_invocation_fixture
+    "${_zone_runtime_receipt_capsule_slice}")
+string(REGEX REPLACE
+    "};[ ]*$" "runtime_access_hook };"
+    _security_external_macro_friend_invocation_fixture
+    "${_security_external_macro_friend_invocation_fixture}")
+security_class_digest_matches_exact(
+    _security_external_macro_friend_invocation_fixture
+    2eb407cda4acfe1b933c81b8fea804bb94eb1cc0b231cc1afeb3b94ebed5e9fd
+    _security_external_macro_friend_invocation_accepted)
+if(_security_external_macro_friend_invocation_accepted)
+    message(FATAL_ERROR
+        "Security mirror missed an externally defined macro invocation")
+endif()
+
+set(_security_runtime_friend_namespace_alias_bypass
+    "${_zone_runtime_receipt_capsule_slice} namespace runtime_alias = db::zone_runtime::detail; friend bool runtime_alias::MutateReceipt(ZoneRuntimeReceiptCapsule &) noexcept;")
+security_friend_surface_matches_exact(
+    _security_runtime_friend_namespace_alias_bypass
+    _security_zone_runtime_receipt_capsule_friends
+    _security_namespace_alias_surface_matches)
+if(_security_namespace_alias_surface_matches)
+    message(FATAL_ERROR
+        "Security mirror missed a namespace-alias-qualified extra friend")
+endif()
+set(_security_runtime_friend_type_alias_bypass
+    "${_zone_runtime_receipt_capsule_slice} using RuntimeReceiptBackdoor = ZoneRuntimeEntry; friend RuntimeReceiptBackdoor;")
+security_friend_surface_matches_exact(
+    _security_runtime_friend_type_alias_bypass
+    _security_zone_runtime_receipt_capsule_friends
+    _security_type_alias_surface_matches)
+if(_security_type_alias_surface_matches)
+    message(FATAL_ERROR
+        "Security mirror missed a type-alias-qualified extra friend")
+endif()
+set(_security_macro_generated_capsule_friend_fixture
+    "#define KISAK_RUNTIME_CAPSULE_EXTRA_FRIEND friend struct HiddenRuntimeMutator;\nclass Capsule { KISAK_RUNTIME_CAPSULE_EXTRA_FRIEND };")
+security_source_has_define_directive(
+    _security_macro_generated_capsule_friend_fixture
+    _security_macro_generated_friend_detected)
+if(NOT _security_macro_generated_friend_detected)
+    message(FATAL_ERROR
+        "Security mirror missed macro-generated capsule friendship")
+endif()
+string(CONCAT _security_spliced_friend_macro_fixture
+    "#def"
+    "${_security_friend_backslash}${_security_friend_line_feed}"
+    "ine KISAK_RUNTIME_CAPSULE_EXTRA_FRIEND friend struct HiddenRuntimeMutator;")
+security_source_has_define_directive(
+    _security_spliced_friend_macro_fixture
+    _security_spliced_friend_macro_detected)
+if(NOT _security_spliced_friend_macro_detected)
+    message(FATAL_ERROR
+        "Security mirror missed a phase-2-spliced macro definition")
+endif()
+set(_security_digraph_friend_macro_fixture
+    "%:define KISAK_RUNTIME_CAPSULE_EXTRA_FRIEND friend struct HiddenRuntimeMutator;")
+security_source_has_define_directive(
+    _security_digraph_friend_macro_fixture
+    _security_digraph_friend_macro_detected)
+if(NOT _security_digraph_friend_macro_detected)
+    message(FATAL_ERROR
+        "Security mirror missed a digraph macro definition")
+endif()
+set(_security_trigraph_friend_macro_fixture
+    "??=define KISAK_RUNTIME_CAPSULE_EXTRA_FRIEND friend struct HiddenRuntimeMutator;")
+security_source_has_define_directive(
+    _security_trigraph_friend_macro_fixture
+    _security_trigraph_friend_macro_detected)
+if(NOT _security_trigraph_friend_macro_detected)
+    message(FATAL_ERROR
+        "Security mirror missed a trigraph macro definition")
+endif()
+string(CONCAT _security_trigraph_spliced_friend_macro_fixture
+    "??=def??/"
+    "${_security_friend_line_feed}"
+    "ine KISAK_RUNTIME_CAPSULE_EXTRA_FRIEND friend struct HiddenRuntimeMutator;")
+security_source_has_define_directive(
+    _security_trigraph_spliced_friend_macro_fixture
+    _security_trigraph_spliced_friend_macro_detected)
+if(NOT _security_trigraph_spliced_friend_macro_detected)
+    message(FATAL_ERROR
+        "Security mirror missed a trigraph-spliced macro definition")
+endif()
+set(_security_comment_separated_friend_macro_fixture
+    "#/**/define KISAK_RUNTIME_CAPSULE_EXTRA_FRIEND friend struct HiddenRuntimeMutator;")
+security_source_has_define_directive(
+    _security_comment_separated_friend_macro_fixture
+    _security_comment_separated_friend_macro_detected)
+if(NOT _security_comment_separated_friend_macro_detected)
+    message(FATAL_ERROR
+        "Security mirror missed a comment-separated macro definition")
+endif()
+foreach(_zone_runtime_composition_marker IN ITEMS
+    "class alignas(8) ZoneRuntimeReceiptCapsule final"
+    "RUNTIME_SIZE(ZoneRuntimeReceiptCapsule, 0xD0, 0x120);"
+    "RUNTIME_SIZE(ZoneRuntimeEntry, 0x130, 0x198);"
+    "RUNTIME_SIZE(ZoneRuntimeTable, 0xE900, 0xF700);"
+    "physical_memory::AllocationReceipt allocationReceipt_{};"
+    "ZoneRuntimeReceiptCapsule receiptCapsule_{};"
+    "activeZoneStreamBinding_{};"
+    "zone_pending_copy::PendingCopyLedger pendingCopyLedger_{};")
+    require_source_contains(
+        "database/db_zone_runtime_table.h"
+        "${_zone_runtime_composition_marker}"
+        "fixed passive runtime receipt composition")
+endforeach()
+foreach(_zone_runtime_operation_forbidden IN ITEMS
+    TryBegin
+    TryEnd
+    TryFree
+    AllocationScopeStatus
+    TryBeginZoneStreamGeneration
+    TryBindZoneStreams
+    TryInvalidateZoneStreams
+    ZoneStreamGenerationPhase
+    ActiveZoneStreamPhase
+    ZoneStreamOwnershipStatus
+    db_zone_stream_ownership_internal
+    AliasRegistryForLegacyStream
+    DirectResolverForLegacyStream
+    OwnershipBindingActive
+    TryInitializePendingCopyLedger
+    TryBeginPendingCopyAdmission
+    TryAppendPendingCopyRecord
+    TryReadPendingCopyRecord
+    TryPreparePendingCopyAdmission
+    FinalizePreparedPendingCopyAdmission
+    TryDiscardPendingCopyAdmission
+    TryBeginPendingCopyDrain
+    TryDrainNextPendingCopy
+    TryFinishPendingCopyDrain
+    TryResetPendingCopyAdmissionReceipt
+    PendingCopyStatus
+    PendingCopyAdmissionPhase
+    PendingCopyDrainCallbackStatus
+    db_zone_runtime_storage_fx_bridge
+    ZoneRuntimeStorageExtent
+    ZoneRuntimeStoragePlan
+    ZoneRuntimeStorageStatus
+    TryPlanZoneRuntimeStorage
+    TryBindZoneRuntimeStorage
+    TryDestroyZoneRuntimeStorage
+    FxRuntimeStorageLayout
+    FxRuntimeStorageDestroyStatus
+    GetFxRuntimeStorageLayout
+    ConstructFxRuntimeArena
+    ConstructFxRuntimeWorkspace
+    TryPrepareFxRuntimeStorageDestroy
+    DestroyFxRuntimeWorkspace
+    DestroyFxRuntimeArena)
+    foreach(_zone_runtime_composition_path IN ITEMS
+        "database/db_zone_runtime_table.h"
+        "database/db_zone_runtime_table.cpp")
+        require_source_not_matches(
+            "${_zone_runtime_composition_path}"
+            "(^|[^A-Za-z0-9_])${_zone_runtime_operation_forbidden}([^A-Za-z0-9_]|$)"
+            "passive composition must not reference authority identifiers")
+    endforeach()
+endforeach()
+
+foreach(_zone_runtime_detector_marker IN ITEMS
+    "remove_reviewed_runtime_table_pending_tokens"
+    "require_runtime_table_pending_detector_fixture"
+    "_runtime_table_alias_api_bypass"
+    "_runtime_table_paste_api_bypass")
+    require_repository_contains(
+        "tests/db_zone_pending_copy_ledger_source_test.cmake"
+        "${_zone_runtime_detector_marker}"
+        "pending-copy runtime-table detector hardening")
+endforeach()
+foreach(_zone_runtime_detector_marker IN ITEMS
+    "remove_reviewed_runtime_table_storage_tokens"
+    "require_runtime_table_storage_detector_fixture"
+    "_runtime_table_storage_alias_bypass"
+    "_runtime_table_storage_paste_bypass"
+    "_runtime_table_storage_bridge_bypass"
+    "_non_extension_sentinel")
+    require_repository_contains(
+        "tests/db_zone_runtime_storage_source_test.cmake"
+        "${_zone_runtime_detector_marker}"
+        "runtime-storage runtime-table detector hardening")
+endforeach()
+foreach(_zone_runtime_detector_marker IN ITEMS
+    "remove_reviewed_runtime_table_stream_tokens"
+    "require_runtime_table_stream_detector_fixture"
+    "_runtime_table_stream_internal_header_bypass"
+    "_runtime_table_stream_private_capability_bypass")
+    require_repository_contains(
+        "tests/db_zone_stream_ownership_source_test.cmake"
+        "${_zone_runtime_detector_marker}"
+        "zone-stream runtime-table detector hardening")
+endforeach()
+foreach(_zone_runtime_detector_marker IN ITEMS
+    "require_exact_pristine_overload"
+    "Pristine friend body is not exact"
+    "Receipt capsule predicate must contain exactly four pristine checks"
+    "friend_surface_matches_exact"
+    "require_no_define_directive"
+    "_runtime_friend_namespace_alias_bypass"
+    "_runtime_friend_type_alias_bypass"
+    "_macro_generated_capsule_friend_fixture"
+    "_spliced_friend_macro_fixture"
+    "_digraph_friend_macro_fixture"
+    "_trigraph_friend_macro_fixture"
+    "_trigraph_spliced_friend_macro_fixture"
+    "_comment_separated_friend_macro_fixture")
+    require_repository_contains(
+        "tests/db_zone_runtime_table_source_test.cmake"
+        "${_zone_runtime_detector_marker}"
+        "exact const-friend body freeze")
+endforeach()
+foreach(_zone_runtime_composition_path IN ITEMS
+    "database/db_zone_runtime_table.h"
+    "database/db_zone_runtime_table.cpp")
+    require_source_not_contains(
+        "${_zone_runtime_composition_path}"
+        "const_cast"
+        "passive composition cannot cast away const receipt authority")
+    foreach(_token_paste IN ITEMS "##" "%:%:" "??/" "??=")
+        require_source_not_contains(
+            "${_zone_runtime_composition_path}"
+            "${_token_paste}"
+            "runtime-table composition cannot construct hidden identifiers")
+    endforeach()
+endforeach()
+require_source_match_count(
+    "database/db_zone_runtime_table.cpp"
+    "activeZoneStreamBinding_"
+    3
+    "all active-stream singleton references are reviewed")
+require_source_not_matches(
+    "database/db_zone_runtime_table.cpp"
+    "activeZoneStreamBinding_[ \t\r\n]*(\\.|->)"
+    "passive table cannot call the active-stream singleton directly")
+require_source_match_count(
+    "database/db_zone_runtime_table.cpp"
+    "pendingCopyLedger_"
+    3
+    "all pending-copy singleton references are reviewed")
+require_source_not_matches(
+    "database/db_zone_runtime_table.cpp"
+    "pendingCopyLedger_[ \t\r\n]*(\\.|->)"
+    "passive table cannot call the pending-copy singleton directly")
 
 file(READ "${SOURCE_ROOT}/.github/workflows/ci.yml"
     _zone_runtime_production_seal_ci)
@@ -9980,8 +10637,67 @@ foreach(_checked_pmem_registry_forbidden IN ITEMS
         "${_checked_pmem_registry_forbidden}"
         "checked PMem must remain unenrolled before coordinator ownership")
 endforeach()
+
+foreach(_checked_pmem_detector_marker IN ITEMS
+    "remove_reviewed_runtime_table_pmem_constructs"
+    "require_runtime_table_checked_pmem_fixture"
+    "_runtime_table_pmem_adl_bypass"
+    "_runtime_table_pmem_alias_bypass"
+    "_runtime_table_pmem_splice_bypass"
+    "_runtime_table_pmem_paste_bypass"
+    "_runtime_table_pmem_bare_alias_bypass"
+    "_runtime_table_pmem_type_alias_bypass"
+    "_runtime_table_pmem_using_namespace_bypass"
+    "_runtime_table_pmem_namespace_macro_bypass"
+    "_runtime_table_pmem_header_macro_bypass"
+    "_non_extension_sentinel")
+    require_repository_contains(
+        "tests/physicalmemory_checked_source_test.cmake"
+        "${_checked_pmem_detector_marker}"
+        "checked-PMem transitive-enrollment detector hardening")
+endforeach()
+
+string(ASCII 92 _security_checked_pmem_backslash)
+string(ASCII 13 _security_checked_pmem_carriage_return)
+string(ASCII 10 _security_checked_pmem_line_feed)
+function(security_normalize_checked_pmem_phase2 SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    string(REPLACE
+        "${_security_checked_pmem_backslash}${_security_checked_pmem_carriage_return}${_security_checked_pmem_line_feed}"
+        "" _candidate "${_candidate}")
+    string(REPLACE
+        "${_security_checked_pmem_backslash}${_security_checked_pmem_line_feed}"
+        "" _candidate "${_candidate}")
+    string(REPLACE
+        "${_security_checked_pmem_backslash}${_security_checked_pmem_carriage_return}"
+        "" _candidate "${_candidate}")
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
+function(security_checked_pmem_has_identifier SOURCE_VAR IDENTIFIER OUT_VAR)
+    string(REGEX MATCH
+        "(^|[^A-Za-z0-9_])${IDENTIFIER}([^A-Za-z0-9_]|$)"
+        _match "${${SOURCE_VAR}}")
+    if(_match STREQUAL "")
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
+    else()
+        set(${OUT_VAR} TRUE PARENT_SCOPE)
+    endif()
+endfunction()
+
 file(GLOB_RECURSE _checked_pmem_production_sources
-    "${SOURCE_ROOT}/src/*.cpp" "${SOURCE_ROOT}/src/*.h")
+    LIST_DIRECTORIES FALSE "${SOURCE_ROOT}/src/*")
+foreach(_checked_pmem_non_extension_sentinel IN ITEMS
+    "${SOURCE_ROOT}/src/groupvoice/speex/Makefile.am"
+    "${SOURCE_ROOT}/src/groupvoice/speex/Makefile.in")
+    list(FIND _checked_pmem_production_sources
+        "${_checked_pmem_non_extension_sentinel}" _sentinel_index)
+    if(_sentinel_index EQUAL -1)
+        message(FATAL_ERROR
+            "Security PMem mirror lost extension-independent traversal: "
+            "${_checked_pmem_non_extension_sentinel}")
+    endif()
+endforeach()
 foreach(_checked_pmem_production_path IN LISTS
     _checked_pmem_production_sources)
     if(_checked_pmem_production_path MATCHES
@@ -9989,26 +10705,34 @@ foreach(_checked_pmem_production_path IN LISTS
         continue()
     endif()
     file(READ "${_checked_pmem_production_path}"
-        _checked_pmem_production_text)
-    string(FIND "${_checked_pmem_production_text}"
-        "physicalmemory_checked.h" _checked_pmem_header_reference)
-    if(NOT _checked_pmem_header_reference EQUAL -1)
-        message(FATAL_ERROR
-            "Premature checked PMem header enrollment in "
-            "${_checked_pmem_production_path}")
+        _checked_pmem_production_raw)
+    security_normalize_checked_pmem_phase2(
+        _checked_pmem_production_raw _checked_pmem_production_text)
+    if(_checked_pmem_production_path MATCHES
+        "database/db_zone_runtime_table\.(h|cpp)$")
+        set(_checked_pmem_scan_tokens
+            AllocationScopeStatus TryBegin TryEnd TryFree)
+    else()
+        set(_checked_pmem_scan_tokens
+            physicalmemory_checked
+            physical_memory
+            AllocationScopeStatus
+            AllocationReceipt
+            TryBegin
+            TryEnd
+            TryFree)
     endif()
-    if(_checked_pmem_production_text MATCHES
-        "physical_memory[ \t\r\n]*::[ \t\r\n]*Try(Begin|End|Free)")
-        message(FATAL_ERROR
-            "Premature checked PMem operation enrollment in "
-            "${_checked_pmem_production_path}")
-    endif()
-    if(_checked_pmem_production_text MATCHES
-        "namespace[ \t\r\n]+physical_memory([ \t\r\n]*\\{|[ \t\r\n]*::)")
-        message(FATAL_ERROR
-            "Premature checked PMem namespace declaration in "
-            "${_checked_pmem_production_path}")
-    endif()
+    foreach(_checked_pmem_token IN LISTS _checked_pmem_scan_tokens)
+        security_checked_pmem_has_identifier(
+            _checked_pmem_production_text
+            "${_checked_pmem_token}"
+            _checked_pmem_token_found)
+        if(_checked_pmem_token_found)
+            message(FATAL_ERROR
+                "Premature checked PMem identifier '${_checked_pmem_token}' "
+                "in ${_checked_pmem_production_path}")
+        endif()
+    endforeach()
 endforeach()
 
 # The pending-copy ledger is deliberately shipped as a production-neutral

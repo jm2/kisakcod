@@ -1,5 +1,7 @@
 #include <database/db_zone_runtime_table.h>
+#include <database/db_zone_memory.h>
 
+#include <qcommon/com_error.h>
 #include <script/scr_string_transaction.h>
 
 #include <array>
@@ -8,12 +10,20 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <iterator>
 #include <limits>
+#include <memory>
 #include <string_view>
 #include <system_error>
 #include <type_traits>
+#include <vector>
 
 void MyAssertHandler(const char *, int, int, const char *, ...)
+{
+    std::abort();
+}
+
+void __cdecl Com_Error(errorParm_t, const char *, ...)
 {
     std::abort();
 }
@@ -117,6 +127,9 @@ namespace
 {
 namespace zone_load = db::zone_load;
 namespace zone_runtime = db::zone_runtime;
+namespace zone_pending_copy = db::zone_pending_copy;
+namespace zone_runtime_storage = db::zone_runtime_storage;
+namespace zone_stream_ownership = db::zone_stream_ownership;
 namespace zone_slots = db::zone_slots;
 namespace zone_ownership = db::zone_script_string_ownership;
 
@@ -152,6 +165,7 @@ using zone_runtime::TryTransferNextZoneRuntimeScriptString;
 using zone_runtime::TryUnloadZoneRuntimeGeneration;
 using zone_runtime::ZoneRuntimeEntry;
 using zone_runtime::ZoneRuntimeGenerationView;
+using zone_runtime::ZoneRuntimeReceiptCapsule;
 using zone_runtime::ZoneRuntimeTable;
 using zone_runtime::ZoneRuntimeTableStatus;
 using zone_runtime::ZoneRuntimeTableTestAccess;
@@ -543,7 +557,36 @@ void TestLayoutNoexceptAndDefaultState()
     static_assert(zone_slots::kUsableZoneSlotCount == 32);
     static_assert(zone_slots::kPhysicalZoneSlotCount == 33);
     static_assert(alignof(ZoneRuntimeEntry) == 8);
+    static_assert(alignof(ZoneRuntimeReceiptCapsule) == 8);
     static_assert(alignof(ZoneRuntimeTable) == 8);
+    static_assert(sizeof(ZoneRuntimeReceiptCapsule)
+        == (sizeof(void *) == 4 ? 0xD0u : 0x120u));
+    static_assert(sizeof(ZoneRuntimeEntry)
+        == (sizeof(void *) == 4 ? 0x130u : 0x198u));
+    static_assert(sizeof(ZoneRuntimeTable)
+        == (sizeof(void *) == 4 ? 0xE900u : 0xF700u));
+    static_assert(sizeof(physical_memory::AllocationReceipt)
+        == (sizeof(void *) == 4 ? 0x20u : 0x30u));
+    static_assert(sizeof(
+        zone_stream_ownership::ZoneStreamGenerationReceipt)
+        == (sizeof(void *) == 4 ? 0x20u : 0x28u));
+    static_assert(sizeof(
+        zone_pending_copy::PendingCopyAdmissionReceipt)
+        == (sizeof(void *) == 4 ? 0x38u : 0x48u));
+    static_assert(sizeof(
+        zone_runtime_storage::ZoneRuntimeStorageBinding)
+        == (sizeof(void *) == 4 ? 0x58u : 0x80u));
+    static_assert(sizeof(zone_stream_ownership::ActiveZoneStreamBinding)
+        == (sizeof(void *) == 4 ? 0x68u : 0xC0u));
+    static_assert(sizeof(zone_pending_copy::PendingCopyLedger)
+        == (sizeof(void *) == 4 ? 0xC160u : 0xC1A0u));
+    static_assert(!std::is_default_constructible_v<
+        ZoneRuntimeReceiptCapsule>);
+    static_assert(!std::is_destructible_v<ZoneRuntimeReceiptCapsule>);
+    static_assert(!std::is_copy_constructible_v<
+        ZoneRuntimeReceiptCapsule>);
+    static_assert(!std::is_move_constructible_v<
+        ZoneRuntimeReceiptCapsule>);
     static_assert(std::is_nothrow_default_constructible_v<ZoneRuntimeEntry>);
     static_assert(std::is_nothrow_destructible_v<ZoneRuntimeEntry>);
     static_assert(!std::is_copy_constructible_v<ZoneRuntimeEntry>);
@@ -642,10 +685,118 @@ void TestLayoutNoexceptAndDefaultState()
 void TestAllPhysicalSlotsAndStableAddresses()
 {
     ZoneRuntimeTable table{};
+    CHECK(ZoneRuntimeTableTestAccess::SharedResourcesPristine(&table));
+    auto *const active =
+        ZoneRuntimeTableTestAccess::ActiveStreamBinding(&table);
+    auto *const pendingLedger =
+        ZoneRuntimeTableTestAccess::PendingCopyLedger(&table);
+    CHECK(active != nullptr);
+    CHECK(pendingLedger != nullptr);
+    CHECK(reinterpret_cast<std::uintptr_t>(active)
+        == reinterpret_cast<std::uintptr_t>(&table)
+            + zone_slots::kPhysicalZoneSlotCount
+                * sizeof(ZoneRuntimeEntry));
+    CHECK(reinterpret_cast<std::uintptr_t>(pendingLedger)
+        == reinterpret_cast<std::uintptr_t>(active) + sizeof(*active));
+    CHECK(active->canonical());
+    CHECK(
+        active->phase()
+        == zone_stream_ownership::ActiveZoneStreamPhase::Idle);
+    CHECK(!pendingLedger->initialized());
+
+    std::array<physical_memory::AllocationReceipt *,
+        zone_slots::kPhysicalZoneSlotCount> allocationReceipts{};
+    std::array<zone_stream_ownership::ZoneStreamGenerationReceipt *,
+        zone_slots::kPhysicalZoneSlotCount> streamReceipts{};
+    std::array<zone_pending_copy::PendingCopyAdmissionReceipt *,
+        zone_slots::kPhysicalZoneSlotCount> pendingReceipts{};
+    std::array<zone_runtime_storage::ZoneRuntimeStorageBinding *,
+        zone_slots::kPhysicalZoneSlotCount> storageBindings{};
+    const std::uintptr_t tableBegin =
+        reinterpret_cast<std::uintptr_t>(&table);
+    const std::uintptr_t tableEnd = tableBegin + sizeof(table);
+    for (std::uint32_t physicalSlot = 0;
+         physicalSlot < zone_slots::kPhysicalZoneSlotCount;
+         ++physicalSlot)
+    {
+        allocationReceipts[physicalSlot] =
+            ZoneRuntimeTableTestAccess::AllocationReceipt(
+                &table, physicalSlot);
+        streamReceipts[physicalSlot] =
+            ZoneRuntimeTableTestAccess::StreamGenerationReceipt(
+                &table, physicalSlot);
+        pendingReceipts[physicalSlot] =
+            ZoneRuntimeTableTestAccess::PendingCopyAdmissionReceipt(
+                &table, physicalSlot);
+        storageBindings[physicalSlot] =
+            ZoneRuntimeTableTestAccess::StorageBinding(
+                &table, physicalSlot);
+        CHECK(allocationReceipts[physicalSlot] != nullptr);
+        CHECK(streamReceipts[physicalSlot] != nullptr);
+        CHECK(pendingReceipts[physicalSlot] != nullptr);
+        CHECK(storageBindings[physicalSlot] != nullptr);
+        CHECK(ZoneRuntimeTableTestAccess::ReceiptCapsulePristine(
+            &table, physicalSlot));
+        CHECK(streamReceipts[physicalSlot]->canonical());
+        CHECK(
+            streamReceipts[physicalSlot]->phase()
+            == zone_stream_ownership::ZoneStreamGenerationPhase::NeverBound);
+        CHECK(pendingReceipts[physicalSlot]->canonical());
+        CHECK(
+            pendingReceipts[physicalSlot]->phase()
+            == zone_pending_copy::PendingCopyAdmissionPhase::Pristine);
+        CHECK(!storageBindings[physicalSlot]->bound());
+        CHECK(!storageBindings[physicalSlot]->destroyed());
+
+        const void *const objects[] = {
+            allocationReceipts[physicalSlot],
+            streamReceipts[physicalSlot],
+            pendingReceipts[physicalSlot],
+            storageBindings[physicalSlot],
+        };
+        for (std::size_t index = 0; index < std::size(objects); ++index)
+        {
+            const std::uintptr_t address =
+                reinterpret_cast<std::uintptr_t>(objects[index]);
+            CHECK(address >= tableBegin && address < tableEnd);
+            for (std::size_t prior = 0; prior < index; ++prior)
+                CHECK(objects[index] != objects[prior]);
+        }
+        if (physicalSlot != 0)
+        {
+            CHECK(
+                reinterpret_cast<std::uintptr_t>(
+                    allocationReceipts[physicalSlot])
+                    - reinterpret_cast<std::uintptr_t>(
+                        allocationReceipts[physicalSlot - 1])
+                == sizeof(ZoneRuntimeEntry));
+        }
+    }
+
     CHECK(
         TryInitializeZoneRuntimeTable(&table)
         == ZoneRuntimeTableStatus::Success);
     CHECK(table.initialized());
+    CHECK(ZoneRuntimeTableTestAccess::SharedResourcesPristine(&table));
+    for (std::uint32_t physicalSlot = 0;
+         physicalSlot < zone_slots::kPhysicalZoneSlotCount;
+         ++physicalSlot)
+    {
+        CHECK(ZoneRuntimeTableTestAccess::ReceiptCapsulePristine(
+            &table, physicalSlot));
+        CHECK(ZoneRuntimeTableTestAccess::AllocationReceipt(
+            &table, physicalSlot) == allocationReceipts[physicalSlot]);
+        CHECK(ZoneRuntimeTableTestAccess::StreamGenerationReceipt(
+            &table, physicalSlot) == streamReceipts[physicalSlot]);
+        CHECK(ZoneRuntimeTableTestAccess::PendingCopyAdmissionReceipt(
+            &table, physicalSlot) == pendingReceipts[physicalSlot]);
+        CHECK(ZoneRuntimeTableTestAccess::StorageBinding(
+            &table, physicalSlot) == storageBindings[physicalSlot]);
+    }
+    CHECK(ZoneRuntimeTableTestAccess::ActiveStreamBinding(&table) == active);
+    CHECK(
+        ZoneRuntimeTableTestAccess::PendingCopyLedger(&table)
+        == pendingLedger);
     CHECK(
         TryInitializeZoneRuntimeTable(&table)
         == ZoneRuntimeTableStatus::Success);
@@ -2027,6 +2178,192 @@ void TestTerminalAdapterPhaseSerializerAndCorruptionGates()
     CHECK(!terminalMismatch.initialized());
 }
 
+void ExpectReceiptCorruptionFailsClosed(
+    ZoneRuntimeTable *const table,
+    const std::uint32_t physicalSlot)
+{
+    const ZoneRuntimeEntry *unchanged = nullptr;
+    CHECK(
+        TryGetZoneRuntimeEntry(table, physicalSlot, &unchanged)
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(unchanged == nullptr);
+    CHECK(!table->initialized());
+}
+
+void TestPassiveReceiptPristineAuthentication()
+{
+    // Allocation authority is present but remains unclaimed by table init and
+    // ordinary generation claims. A real external claim is detected before
+    // any runtime-table output is published.
+    {
+        auto table = std::make_unique<ZoneRuntimeTable>();
+        CHECK(TryInitializeZoneRuntimeTable(table.get())
+            == ZoneRuntimeTableStatus::Success);
+        ZoneLoadContextKey key{};
+        CHECK(TryClaimZoneRuntimeGeneration(table.get(), 1, &key)
+            == ZoneRuntimeTableStatus::Success);
+        CHECK(ZoneRuntimeTableTestAccess::ReceiptCapsulePristine(
+            table.get(), 1));
+
+        std::array<std::uint8_t, 1024> backing{};
+        PhysicalMemory memory{};
+        memory.buf = backing.data();
+        memory.prim[0].pos = 0;
+        memory.prim[1].pos = static_cast<std::uint32_t>(backing.size());
+        static const char allocationName[] = "test_allocation";
+        auto *const receipt =
+            ZoneRuntimeTableTestAccess::AllocationReceipt(table.get(), 1);
+        CHECK(receipt != nullptr);
+        CHECK(physical_memory::TryBegin(
+            &memory, 0, allocationName, receipt)
+            == physical_memory::AllocationScopeStatus::Success);
+        ExpectReceiptCorruptionFailsClosed(table.get(), 1);
+        CHECK(physical_memory::TryEnd(receipt)
+            == physical_memory::AllocationScopeStatus::Success);
+        CHECK(physical_memory::TryFree(receipt)
+            == physical_memory::AllocationScopeStatus::Success);
+    }
+
+    // Beginning a stream-generation receipt does not enroll or acquire the
+    // singleton, but it is still non-pristine authority and must fail closed.
+    {
+        auto table = std::make_unique<ZoneRuntimeTable>();
+        CHECK(TryInitializeZoneRuntimeTable(table.get())
+            == ZoneRuntimeTableStatus::Success);
+        ZoneLoadContextKey key{};
+        CHECK(TryClaimZoneRuntimeGeneration(table.get(), 2, &key)
+            == ZoneRuntimeTableStatus::Success);
+        auto *const lifecycle =
+            ZoneRuntimeTableTestAccess::Lifecycle(table.get(), 2);
+        auto *const receipt =
+            ZoneRuntimeTableTestAccess::StreamGenerationReceipt(
+                table.get(), 2);
+        auto *const active =
+            ZoneRuntimeTableTestAccess::ActiveStreamBinding(table.get());
+        CHECK(lifecycle != nullptr);
+        CHECK(receipt != nullptr);
+        CHECK(active != nullptr);
+        CHECK(zone_stream_ownership::TryBeginZoneStreamGeneration(
+            receipt, lifecycle, key)
+            == zone_stream_ownership::ZoneStreamOwnershipStatus::Success);
+        ExpectReceiptCorruptionFailsClosed(table.get(), 2);
+        CHECK(zone_stream_ownership::TryInvalidateZoneStreams(
+            active, receipt, key)
+            == zone_stream_ownership::ZoneStreamOwnershipStatus::Success);
+    }
+
+    // The one shared ledger and one per-entry admission receipt are composed
+    // at stable addresses but not initialized or admitted by the table.
+    {
+        auto table = std::make_unique<ZoneRuntimeTable>();
+        CHECK(TryInitializeZoneRuntimeTable(table.get())
+            == ZoneRuntimeTableStatus::Success);
+        ZoneLoadContextKey key{};
+        CHECK(TryClaimZoneRuntimeGeneration(table.get(), 3, &key)
+            == ZoneRuntimeTableStatus::Success);
+        auto *const lifecycle =
+            ZoneRuntimeTableTestAccess::Lifecycle(table.get(), 3);
+        auto *const receipt =
+            ZoneRuntimeTableTestAccess::PendingCopyAdmissionReceipt(
+                table.get(), 3);
+        auto *const ledger =
+            ZoneRuntimeTableTestAccess::PendingCopyLedger(table.get());
+        CHECK(lifecycle != nullptr);
+        CHECK(receipt != nullptr);
+        CHECK(ledger != nullptr);
+        CHECK(zone_pending_copy::TryInitializePendingCopyLedger(ledger)
+            == zone_pending_copy::PendingCopyStatus::Success);
+        CHECK(zone_pending_copy::TryBeginPendingCopyAdmission(
+            ledger, receipt, lifecycle, key)
+            == zone_pending_copy::PendingCopyStatus::Success);
+        ExpectReceiptCorruptionFailsClosed(table.get(), 3);
+        CHECK(zone_pending_copy::TryDiscardPendingCopyAdmission(
+            receipt, key)
+            == zone_pending_copy::PendingCopyStatus::Success);
+        CHECK(zone_pending_copy::TryResetPendingCopyAdmissionReceipt(
+            receipt, key)
+            == zone_pending_copy::PendingCopyStatus::Success);
+    }
+
+    // A placement binding is likewise only storage. Binding it through its
+    // own API is observable as non-pristine, and the slab is cleaned up
+    // explicitly because the durable handle never performs destructor work.
+    {
+        auto table = std::make_unique<ZoneRuntimeTable>();
+        CHECK(TryInitializeZoneRuntimeTable(table.get())
+            == ZoneRuntimeTableStatus::Success);
+        zone_runtime_storage::ZoneRuntimeStoragePlan plan{};
+        CHECK(zone_runtime_storage::TryPlanZoneRuntimeStorage(
+            0, 64, &plan)
+            == zone_runtime_storage::ZoneRuntimeStorageStatus::Success);
+        std::vector<std::byte> allocation(
+            static_cast<std::size_t>(plan.totalBytes) + 15u);
+        void *slab = allocation.data();
+        std::size_t slabCapacity = allocation.size();
+        CHECK(std::align(16, plan.totalBytes, slab, slabCapacity) != nullptr);
+        auto *const binding =
+            ZoneRuntimeTableTestAccess::StorageBinding(table.get(), 4);
+        CHECK(binding != nullptr);
+        CHECK(zone_runtime_storage::TryBindZoneRuntimeStorage(
+            slab, slabCapacity, &plan, binding)
+            == zone_runtime_storage::ZoneRuntimeStorageStatus::Success);
+        ExpectReceiptCorruptionFailsClosed(table.get(), 4);
+        CHECK(zone_runtime_storage::TryDestroyZoneRuntimeStorage(binding)
+            == zone_runtime_storage::ZoneRuntimeStorageStatus::Success);
+    }
+
+    // A real singleton acquisition proves that the active controller exists
+    // exactly once at table scope and is included in header authentication.
+    {
+        auto table = std::make_unique<ZoneRuntimeTable>();
+        CHECK(TryInitializeZoneRuntimeTable(table.get())
+            == ZoneRuntimeTableStatus::Success);
+        ZoneLoadContextKey key{};
+        CHECK(TryClaimZoneRuntimeGeneration(table.get(), 5, &key)
+            == ZoneRuntimeTableStatus::Success);
+        auto *const lifecycle =
+            ZoneRuntimeTableTestAccess::Lifecycle(table.get(), 5);
+        auto *const receipt =
+            ZoneRuntimeTableTestAccess::StreamGenerationReceipt(
+                table.get(), 5);
+        auto *const active =
+            ZoneRuntimeTableTestAccess::ActiveStreamBinding(table.get());
+        CHECK(lifecycle != nullptr);
+        CHECK(receipt != nullptr);
+        CHECK(active != nullptr);
+        CHECK(zone_stream_ownership::TryBeginZoneStreamGeneration(
+            receipt, lifecycle, key)
+            == zone_stream_ownership::ZoneStreamOwnershipStatus::Success);
+
+        alignas(16) std::array<std::array<std::uint8_t, 64>,
+            db::relocation::kBlockCount> blockStorage{};
+        XZoneMemory zone{};
+        std::array<db::relocation::BlockView,
+            db::relocation::kBlockCount> blocks{};
+        for (std::size_t index = 0; index < blocks.size(); ++index)
+        {
+            zone.blocks[index].data = blockStorage[index].data();
+            zone.blocks[index].size = static_cast<std::uint32_t>(
+                blockStorage[index].size());
+            blocks[index].base = reinterpret_cast<std::uintptr_t>(
+                blockStorage[index].data());
+            blocks[index].size = zone.blocks[index].size;
+        }
+        CHECK(zone_stream_ownership::TryBindZoneStreams(
+            active,
+            receipt,
+            key,
+            &zone,
+            blocks.data(),
+            blocks.size())
+            == zone_stream_ownership::ZoneStreamOwnershipStatus::Success);
+        ExpectReceiptCorruptionFailsClosed(table.get(), 5);
+        CHECK(zone_stream_ownership::TryInvalidateZoneStreams(
+            active, receipt, key)
+            == zone_stream_ownership::ZoneStreamOwnershipStatus::Success);
+    }
+}
+
 void TestUnsafeLiveUnloadBoundary(
     const std::size_t boundary,
     const bool unknownStatus)
@@ -2163,6 +2500,7 @@ int main(const int argc, char **const argv)
     TestLiveUnloadRetryResetReuseAndAba();
     TestAbandonedReceiptResetAndGenerationExhaustion();
     TestTerminalAdapterPhaseSerializerAndCorruptionGates();
+    TestPassiveReceiptPristineAuthentication();
 
     if (failures != 0)
     {

@@ -9,6 +9,68 @@ enum class TableState : std::uint32_t
     Poisoned,
 };
 
+// Each component grants friendship to exactly one const-reference predicate.
+// This narrow surface can authenticate pristine storage but cannot begin,
+// bind, reset, or otherwise operate any authority.
+namespace detail
+{
+bool IsPristineRuntimeReceipt(
+    const physical_memory::AllocationReceipt &receipt) noexcept
+{
+    return receipt.isPristine();
+}
+
+bool IsPristineRuntimeReceipt(
+    const zone_stream_ownership::ZoneStreamGenerationReceipt &receipt)
+    noexcept
+{
+    return receipt.isPristine();
+}
+
+bool IsPristineRuntimeReceipt(
+    const zone_pending_copy::PendingCopyAdmissionReceipt &receipt) noexcept
+{
+    return receipt.isPristine();
+}
+
+bool IsPristineRuntimeReceipt(
+    const zone_runtime_storage::ZoneRuntimeStorageBinding &binding) noexcept
+{
+    return binding.isPristine();
+}
+
+bool IsPristineRuntimeReceipt(
+    const zone_stream_ownership::ActiveZoneStreamBinding &binding) noexcept
+{
+    return binding.isPristine();
+}
+
+bool IsPristineRuntimeReceipt(
+    const zone_pending_copy::PendingCopyLedger &ledger) noexcept
+{
+    return ledger.isPristine();
+}
+
+bool IsPristineRuntimeReceipt(
+    const ZoneRuntimeReceiptCapsule &capsule) noexcept
+{
+    return capsule.isPristine();
+}
+
+bool EntryReceiptsArePristine(const ZoneRuntimeEntry &entry) noexcept
+{
+    return IsPristineRuntimeReceipt(entry.receiptCapsule_);
+}
+} // namespace detail
+
+bool ZoneRuntimeReceiptCapsule::isPristine() const noexcept
+{
+    return detail::IsPristineRuntimeReceipt(allocationReceipt_)
+        && detail::IsPristineRuntimeReceipt(streamGenerationReceipt_)
+        && detail::IsPristineRuntimeReceipt(pendingCopyAdmissionReceipt_)
+        && detail::IsPristineRuntimeReceipt(storageBinding_);
+}
+
 namespace
 {
 [[nodiscard]] constexpr bool IsNullKey(
@@ -58,7 +120,8 @@ namespace
             entry.lifecycle(),
             initialized,
             physicalSlot)
-        && IsEmptyOwnership(entry.scriptStringOwnership());
+        && IsEmptyOwnership(entry.scriptStringOwnership())
+        && detail::EntryReceiptsArePristine(entry);
 }
 
 [[nodiscard]] constexpr bool IsKnownOwnershipPhase(
@@ -109,6 +172,15 @@ namespace
     const ZoneRuntimeEntry &entry,
     const std::uint32_t physicalSlot) noexcept
 {
+    // This is the passive-mode tripwire: this batch exposes no production
+    // enrollment path, so any non-pristine authority is necessarily a
+    // forbidden partial cutover or corruption. The later exact-key adapter
+    // batch must atomically replace this check with composite phase/key
+    // authentication before it exposes receipt mutation; it must not merely
+    // remove the check.
+    if (!detail::EntryReceiptsArePristine(entry))
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+
     const auto &lifecycle = entry.lifecycle();
     const auto &key = entry.key();
     const auto &ownership = entry.scriptStringOwnership();
@@ -500,6 +572,15 @@ ZoneRuntimeTable::validateInitializedHeader() noexcept
         poison();
         return ZoneRuntimeTableStatus::UnsafeFailure;
     }
+    // As above, these singletons are passive in this batch. Their enrollment
+    // adapter must replace this tripwire atomically with authenticated shared
+    // phase/key validation before any production operation can acquire them.
+    if (!detail::IsPristineRuntimeReceipt(activeZoneStreamBinding_)
+        || !detail::IsPristineRuntimeReceipt(pendingCopyLedger_))
+    {
+        poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
     switch (static_cast<TableState>(state_))
     {
     case TableState::Initialized:
@@ -528,6 +609,13 @@ ZoneRuntimeTableStatus TryInitializeZoneRuntimeTable(
     if (!table)
         return ZoneRuntimeTableStatus::InvalidArgument;
     if (!HasKnownState(table->state_) || table->reserved_ != 0)
+    {
+        table->poison();
+        return ZoneRuntimeTableStatus::UnsafeFailure;
+    }
+    if (!detail::IsPristineRuntimeReceipt(
+            table->activeZoneStreamBinding_)
+        || !detail::IsPristineRuntimeReceipt(table->pendingCopyLedger_))
     {
         table->poison();
         return ZoneRuntimeTableStatus::UnsafeFailure;
@@ -603,6 +691,25 @@ ZoneRuntimeTableStatus TryInitializeZoneRuntimeTable(
     table->state_ = static_cast<std::uint32_t>(TableState::Initialized);
     return ZoneRuntimeTableStatus::Success;
 }
+
+#ifdef KISAK_DB_ZONE_RUNTIME_TABLE_TESTING
+bool ZoneRuntimeTableTestAccess::ReceiptCapsulePristine(
+    const ZoneRuntimeTable *const table,
+    const std::uint32_t physicalSlot) noexcept
+{
+    return table && physicalSlot < table->entries_.size()
+        && table->entries_[physicalSlot].receiptCapsule_.isPristine();
+}
+
+bool ZoneRuntimeTableTestAccess::SharedResourcesPristine(
+    const ZoneRuntimeTable *const table) noexcept
+{
+    return table
+        && detail::IsPristineRuntimeReceipt(
+            table->activeZoneStreamBinding_)
+        && detail::IsPristineRuntimeReceipt(table->pendingCopyLedger_);
+}
+#endif
 
 ZoneRuntimeTableStatus TryGetZoneRuntimeEntry(
     ZoneRuntimeTable *const table,

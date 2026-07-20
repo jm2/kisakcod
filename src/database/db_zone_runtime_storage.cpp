@@ -139,18 +139,6 @@ template <typename T>
 
 } // namespace
 
-bool ZoneRuntimeStorageBinding::isPristine() const noexcept
-{
-    return self_ == nullptr && slab_ == nullptr && slabCapacity_ == 0
-        && plan_ == ZoneRuntimeStoragePlan{} && journal_ == nullptr
-        && entries_ == nullptr && arena_ == nullptr && workspace_ == nullptr
-        && arenaBacking_ == nullptr && state_ == State::Pristine;
-}
-
-ZoneRuntimeStorageBinding::~ZoneRuntimeStorageBinding() noexcept
-{
-}
-
 bool ZoneRuntimeStorageBinding::isSelfAuthenticating(
     const State state) const noexcept
 {

@@ -1,10 +1,9 @@
 # Upstream reconciliation ledger through `2164cd1a`
 
 This ledger records the disposition of every commit in the pinned upstream
-range `312a9d2e..2164cd1a`. It is a content audit, not by itself evidence that
-the two histories are related. The approved adaptations have been merged; the exact
-tree-neutral ancestry checkpoint described below remains pending separate PR
-review and merge.
+range `312a9d2e..2164cd1a`. It is a content audit; PR #66 supplies the separate
+graph evidence by merge-committing the exact tree-neutral ancestry checkpoint.
+The approved adaptations and checkpoint have now been merged.
 
 Disposition terms:
 
@@ -74,15 +73,14 @@ style suggestion. PR #65 squash-merged as
 **29704069129** passed all nine jobs at that exact SHA, with only non-failing
 Node 20 deprecation annotations.
 
-## Ancestry-checkpoint protocol
+## Merged ancestry-checkpoint evidence
 
-The content PR has been merged and `upstream/master` has been fetched again. The dedicated
-checkpoint candidate completed the tree-neutral construction steps:
+The content PR was merged and `upstream/master` was fetched again. The dedicated
+checkpoint completed the tree-neutral construction and merge steps:
 
-1. The pinned object and current GitHub `upstream/master` were confirmed as
-   exactly `2164cd1accf6607a05203547e50858211dcef094`. If the remote advances
-   before merge, retain only this exact checkpoint; audit newer commits in a
-   separate ledger and never include them silently.
+1. The pinned object and then-current GitHub `upstream/master` were confirmed as
+   exactly `2164cd1accf6607a05203547e50858211dcef094`. Newer upstream commits remain
+   subject to a separate ledger and must never be included silently.
 2. Dedicated checkpoint `12309db16d6514ac0df23293cd6074d7bbd15142`
    was created from the exact PR #65 master baseline with
    `git merge --no-ff -s ours 2164cd1a`.
@@ -92,12 +90,15 @@ checkpoint candidate completed the tree-neutral construction steps:
    parent have tree `f8a78964c7c89c3c3000f598cb4272782c40d70b`.
    The complete diff and file-level diff are empty, so no upstream content was
    imported.
-4. Open a separate PR for that intact merge commit and merge it with
-   merge-commit semantics. Do **not**
-   squash or rebase that PR: either operation would discard the ancestry
-   checkpoint.
-5. Verify the resulting `master` graph and tree before considering the
-   18-commit range reconciled by ancestry.
+4. PR #66 retained that intact inner merge. Its exact final head was
+   `e209367c920df589162431a584d6fdf7bfc83c43`, and GitHub merge-committed it as
+   `225759e7d8fd1327210452f3debcd6360465ef2a` with exact parents
+   `d79069a41e0289f4ed53d174a89d8ee72f40b4a3` and
+   `e209367c920df589162431a584d6fdf7bfc83c43`.
+5. Authoritative master run **29707497302** passed all nine jobs. Post-merge graph
+   verification confirmed that both `12309db16d6514ac0df23293cd6074d7bbd15142`
+   and `2164cd1accf6607a05203547e50858211dcef094` are ancestors of `origin/master`,
+   while the checkpoint remained tree-neutral and imported no deferred content.
 
 The checkpoint records that every commit above was inspected. It does not turn
 deferred or rejected upstream source into accepted behavior.

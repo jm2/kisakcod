@@ -350,6 +350,13 @@ ZoneStreamGenerationReceipt::lifecycle() const noexcept
     return lifecycle_;
 }
 
+bool ZoneStreamGenerationReceipt::isPristine() const noexcept
+{
+    return phaseWord_ == static_cast<std::uint32_t>(
+            ZoneStreamGenerationPhase::NeverBound)
+        && self_ == nullptr && lifecycle_ == nullptr && IsNullKey(key_);
+}
+
 bool ZoneStreamGenerationReceipt::canonical() const noexcept
 {
     if ((phaseWord_ & ~kPhaseMask) != 0 || !IsReceiptPhase(phase()))
@@ -395,6 +402,23 @@ bool ActiveZoneStreamBinding::block(
     if (!outBlock || index >= relocation::kBlockCount)
         return false;
     *outBlock = blocks_[index];
+    return true;
+}
+
+bool ActiveZoneStreamBinding::isPristine() const noexcept
+{
+    if (phaseWord_ != static_cast<std::uint32_t>(
+            ActiveZoneStreamPhase::Idle)
+        || self_ != nullptr || receipt_ != nullptr
+        || zoneIdentity_ != nullptr || !IsNullKey(key_))
+    {
+        return false;
+    }
+    for (const relocation::BlockView &blockView : blocks_)
+    {
+        if (blockView.base != 0 || blockView.size != 0)
+            return false;
+    }
     return true;
 }
 

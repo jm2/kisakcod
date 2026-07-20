@@ -174,15 +174,23 @@ independent audit, and U2 **146/146** plus its ten-mutation and dependency/symbo
 progress is approximately **78%**; strict requested-target delivery remains **0/5**.
 
 Every commit in pinned range `312a9d2e..2164cd1a` remains classified in
-`docs/UPSTREAM_2164CD1A_LEDGER.md`. At merged master, `2164cd1a` is still **18 commits ahead by ancestry**. Dedicated
-tree-neutral checkpoint `12309db16d6514ac0df23293cd6074d7bbd15142` has exact parents
+`docs/UPSTREAM_2164CD1A_LEDGER.md`. PR #66 merged dedicated tree-neutral checkpoint
+`12309db16d6514ac0df23293cd6074d7bbd15142`, which has exact parents
 `d79069a41e0289f4ed53d174a89d8ee72f40b4a3` and `2164cd1accf6607a05203547e50858211dcef094`;
 its tree `f8a78964c7c89c3c3000f598cb4272782c40d70b` exactly matches its first parent's tree, and its content diff is empty.
-It must be merged in a separate PR with merge-commit semantics, never squash or rebase. Unsafe raw SP/save/screenshot,
-dynent, matrix, and gameplay hunks remain explicitly deferred/rejected; icon changes remain provenance and optional
-packaging work. The
-subsequent production sequence is passive durable-receipt composition, checked PMem/global/narrow prerequisites,
-exact-key adapters, and finally one atomic seven-site cutover.
+Exact PR head `e209367c920df589162431a584d6fdf7bfc83c43` merge-committed as
+`225759e7d8fd1327210452f3debcd6360465ef2a`; authoritative run **29707497302** passed all nine jobs, and exact
+`2164cd1a` is now an ancestor of `origin/master`. Unsafe raw SP/save/screenshot, dynent, matrix, and gameplay hunks
+remain explicitly deferred/rejected; icon changes remain provenance and optional packaging work.
+
+The current branch implements passive durable-receipt composition: each stable runtime entry owns exactly one
+allocation/stream-generation/pending-copy/native-storage capsule, and the table owns the active-stream binding and
+pending ledger once. It has no production enrollment. Full rebased GCC Debug CTest passes **153/153**; all six standalone
+source/security scripts, native and `-m32` layouts, `git diff --check`, and independent adversarial re-audit pass. The
+subsequent production sequence is checked legacy PMem repair, a serialized global PMem boundary and unused process-life
+`$init` controller, narrow-resource authentication, exact-key adapters, and finally one atomic seven-site cutover. Until
+those adapters exist, the table's pristine checks are intentional passive-mode corruption tripwires; the adapter batch
+must replace them atomically with composite phase/key authentication before any authority is enrolled.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.
