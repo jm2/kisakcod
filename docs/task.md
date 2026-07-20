@@ -34,6 +34,8 @@ of checked boxes.
     source/security, i386, and AArch64 gates on the final local tree.
   - [x] Commit/rebase and repeat the required gates on rebased source-tree
     checkpoint `65f4bbab`.
+  - [x] Replace the MSVC 19.51-incompatible private-member address probes found
+    by PR #73's first Windows amd64 build with portable typed call probes.
   - [ ] Publish the PR, resolve review, merge, and verify post-merge CI.
 - [ ] Atomically cut all seven loader sites over to the serialized facade; partial
   enrollment is forbidden.
@@ -2074,8 +2076,11 @@ with clean Codex/Gemini review and zero unresolved threads, squash-merged the ca
 `64dfc8c9e3b930a7ef7760b794e37320471280c3`, and passed authoritative post-merge run **29770265354**. Production
 enrollment remains zero. The current branch implements the serialized runtime-facade prerequisite. Rebased source-tree
 checkpoint `65f4bbab` passes full GCC and Clang CTest **160/160** each, ASan+UBSan facade/source/security **4/4**,
-macro-off GCC/Clang, source/security, and genuine i386/AArch64 compile-link gates. Only PR publication, hosted review,
-merge, and authoritative post-merge CI remain for this prerequisite.
+macro-off GCC/Clang, source/security, and genuine i386/AArch64 compile-link gates. PR #73's first hosted run
+**29777873502** exposed one MSVC 19.51-only production-seal fixture issue: dependent address-of expressions reported
+private static methods as present and inverted seven access assertions. The branch now uses the already portable typed
+call-probe pattern; focused GCC/Clang compile/runtime plus facade and repository source seals pass locally. Amended hosted
+CI, review, merge, and authoritative post-merge CI remain for this prerequisite.
 
 - [ ] **Priority 1 — Facade publication:** land the locally implemented
    production-neutral process-lifetime facade with

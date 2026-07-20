@@ -1,5 +1,7 @@
 #include <database/db_zone_runtime_facade.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <type_traits>
 
 namespace db::zone_runtime
@@ -9,43 +11,45 @@ struct ZoneRuntimeFacadeTestAccess final
     template <typename Facade>
     static constexpr bool CanAuthenticate = requires
     {
-        &Facade::authenticateAccess;
+        Facade::authenticateAccess();
     };
 
     template <typename Facade>
     static constexpr bool CanAuthenticateTableOperation = requires
     {
-        &Facade::authenticateTableOperationAccess;
+        Facade::authenticateTableOperationAccess();
     };
 
     template <typename Facade>
     static constexpr bool CanAuthenticateCompositeTableOperation = requires
     {
-        &Facade::authenticateCompositeTableOperationAccess;
+        Facade::authenticateCompositeTableOperationAccess(
+            std::uint32_t{0}, zone_load::ZoneLoadContextKey{});
     };
 
     template <typename Facade>
     static constexpr bool CanAuthenticateRegistryOutput = requires
     {
-        &Facade::authenticateRegistryOutputAccess;
+        Facade::authenticateRegistryOutputAccess();
     };
 
     template <typename Facade>
     static constexpr bool CanCompleteTableOperation = requires
     {
-        &Facade::completeTableOperation;
+        Facade::completeTableOperation(ZoneRuntimeTableStatus::Success);
     };
 
     template <typename Facade>
     static constexpr bool CanInspectAuthoritySpan = requires
     {
-        &Facade::authoritySpanIsSeparated;
+        Facade::authoritySpanIsSeparated(
+            nullptr, std::size_t{0}, std::size_t{0});
     };
 
     template <typename Facade>
     static constexpr bool CanPoison = requires
     {
-        &Facade::poisonAccess;
+        Facade::poisonAccess();
     };
 };
 
