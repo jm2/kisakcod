@@ -95,8 +95,10 @@ witness. The contract requires external serialization, mutually disjoint control
 name identity, and no legacy bypass, entry replacement, or reinitialization while the scope is owned. The exact replay on
 `ff61504e` passes GCC Release **134/134**; focused GCC/Clang, Clang ASan+UBSan, Clang static analysis, strict native i386
 and AArch64, source, API-seal, security, and diff evidence all pass. It has no production caller and leaves retail
-bytes unchanged. Legacy native64-invalid `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and the `$init` lifecycle remain
-blockers before production enrollment. Exact-head run **29673379640** passed all nine jobs; Codex reviewed exact final
+bytes unchanged. The current prerequisite branch corrects legacy native64-invalid
+`PMem_FreeIndex`/`PMem_EndAllocInPrim` handling; serialized global PMem state, retained reservation authentication, and
+the `$init` lifecycle remain blockers before production enrollment. Exact-head run **29673379640** passed all nine jobs;
+Codex reviewed exact final
 head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before
 squash merge `74916b5b`. Authoritative post-merge run
 **29673608169** passed all nine jobs at that exact merge commit.
@@ -171,7 +173,7 @@ dry-level reconciliation as `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`. Final re
 duplicate findings and one non-corrective `nullptr` style suggestion. Local evidence remains full GCC Debug
 **153/153**, focused **8/8**, strict GCC/Clang, genuine i386/AArch64 compile-link, U1 focused **7/7** plus a clean
 independent audit, and U2 **146/146** plus its ten-mutation and dependency/symbol contracts. Rounded merged porting
-progress is approximately **78%**; strict requested-target delivery remains **0/5**.
+progress is approximately **79%** after PR #67; strict requested-target delivery remains **0/5**.
 
 Every commit in pinned range `312a9d2e..2164cd1a` remains classified in
 `docs/UPSTREAM_2164CD1A_LEDGER.md`. PR #66 merged dedicated tree-neutral checkpoint
@@ -183,14 +185,17 @@ Exact PR head `e209367c920df589162431a584d6fdf7bfc83c43` merge-committed as
 `2164cd1a` is now an ancestor of `origin/master`. Unsafe raw SP/save/screenshot, dynent, matrix, and gameplay hunks
 remain explicitly deferred/rejected; icon changes remain provenance and optional packaging work.
 
-The current branch implements passive durable-receipt composition: each stable runtime entry owns exactly one
-allocation/stream-generation/pending-copy/native-storage capsule, and the table owns the active-stream binding and
-pending ledger once. It has no production enrollment. Full rebased GCC Debug CTest passes **153/153**; all six standalone
-source/security scripts, native and `-m32` layouts, `git diff --check`, and independent adversarial re-audit pass. The
-subsequent production sequence is checked legacy PMem repair, a serialized global PMem boundary and unused process-life
-`$init` controller, narrow-resource authentication, exact-key adapters, and finally one atomic seven-site cutover. Until
-those adapters exist, the table's pristine checks are intentional passive-mode corruption tripwires; the adapter batch
-must replace them atomically with composite phase/key authentication before any authority is enrolled.
+PR #67 merged passive durable-receipt composition as `76d0e065888aab298d430b4bf4e115c07369bc88`: each stable
+runtime entry owns exactly one allocation/stream-generation/pending-copy/native-storage capsule, and the table owns the
+active-stream binding and pending ledger once. Exact-head and authoritative runs **29709263403** and **29709598049**
+passed all nine jobs; it has no production enrollment. The current legacy-PMem branch replaces raw x86-only indexing,
+makes invalid lifecycle operations failure-atomic, removes allocation-name format-string reinterpretation, freezes exact
+x86/native64 layouts through the common runtime ABI contract, and passes full GCC Debug **155/155**, genuine i386
+runtime, AArch64 compile/link, Clang ASan+UBSan, and independent audits. The subsequent sequence is a serialized global
+PMem boundary and unused process-life `$init` controller, narrow-resource authentication, exact-key adapters, and finally
+one atomic seven-site cutover. Until those adapters exist, the table's pristine checks are intentional passive-mode
+corruption tripwires; the adapter batch must replace them atomically with composite phase/key authentication before any
+authority is enrolled.
 Still open: the broader release-disabled assertion audit (H2), reflection/rate
 limiting, HTTP downloads, dependency replacement/upgrades, protected headless
 runtime smoke, the porting-era findings below, and the remaining medium/low findings.
