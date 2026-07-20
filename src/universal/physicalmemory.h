@@ -1,44 +1,64 @@
 #pragma once
+
+#include <universal/kisak_abi.h>
+
+#include <cstddef>
 #include <cstdint>
 
-struct PhysicalMemoryAllocation // sizeof=0x8
+struct PhysicalMemoryAllocation // x86 sizeof=0x8, native64 sizeof=0x10
 {                                       // ...
     const char *name;                   // ...
     uint32_t pos;                   // ...
 };
-struct PhysicalMemoryPrim // sizeof=0x10C
+
+inline constexpr std::uint32_t MAX_PHYSICAL_ALLOCATIONS = 32u;
+
+struct PhysicalMemoryPrim // x86 sizeof=0x10C, native64 sizeof=0x210
 {                                       // ...
     const char *allocName;
     uint32_t allocListCount;        // ...
     uint32_t pos;                   // ...
-    PhysicalMemoryAllocation allocList[32]; // ...
+    PhysicalMemoryAllocation allocList[MAX_PHYSICAL_ALLOCATIONS]; // ...
 };
-struct PhysicalMemory // sizeof=0x21C
+struct PhysicalMemory // x86 sizeof=0x21C, native64 sizeof=0x428
 {                                       // ...
     uint8_t *buf;
     PhysicalMemoryPrim prim[2];         // ...
 };
 
-void __cdecl PMem_Init();
-void __cdecl PMem_DumpMemStats();
-void __cdecl PMem_InitPhysicalMemory(PhysicalMemory *pmem, uint8_t *memory, uint32_t memorySize);
-void __cdecl PMem_BeginAlloc(const char *name, uint32_t allocType);
-void __cdecl PMem_BeginAllocInPrim(PhysicalMemoryPrim *prim, const char *name);
-void __cdecl PMem_EndAlloc(const char *name, uint32_t allocType);
-void __cdecl PMem_EndAllocInPrim(PhysicalMemoryPrim *prim, const char *name);
-void __cdecl PMem_Free(const char *name, uint32_t allocType);
-void __cdecl PMem_FreeInPrim(PhysicalMemoryPrim *prim, const char *name);
-void __cdecl PMem_FreeIndex(PhysicalMemoryPrim *prim, uint32_t allocIndex);
-int __cdecl PMem_GetOverAllocatedSize();
-uint8_t *__cdecl PMem_Alloc(
+RUNTIME_SIZE(PhysicalMemoryAllocation, 0x8, 0x10);
+RUNTIME_OFFSET(PhysicalMemoryAllocation, name, 0x0, 0x0);
+RUNTIME_OFFSET(PhysicalMemoryAllocation, pos, 0x4, 0x8);
+
+RUNTIME_SIZE(PhysicalMemoryPrim, 0x10C, 0x210);
+RUNTIME_OFFSET(PhysicalMemoryPrim, allocName, 0x0, 0x0);
+RUNTIME_OFFSET(PhysicalMemoryPrim, allocListCount, 0x4, 0x8);
+RUNTIME_OFFSET(PhysicalMemoryPrim, pos, 0x8, 0xC);
+RUNTIME_OFFSET(PhysicalMemoryPrim, allocList, 0xC, 0x10);
+
+RUNTIME_SIZE(PhysicalMemory, 0x21C, 0x428);
+RUNTIME_OFFSET(PhysicalMemory, buf, 0x0, 0x0);
+RUNTIME_OFFSET(PhysicalMemory, prim, 0x4, 0x8);
+
+void KISAK_CDECL PMem_Init();
+void KISAK_CDECL PMem_DumpMemStats();
+void KISAK_CDECL PMem_InitPhysicalMemory(PhysicalMemory *pmem, uint8_t *memory, uint32_t memorySize);
+void KISAK_CDECL PMem_BeginAlloc(const char *name, uint32_t allocType);
+void KISAK_CDECL PMem_BeginAllocInPrim(PhysicalMemoryPrim *prim, const char *name);
+void KISAK_CDECL PMem_EndAlloc(const char *name, uint32_t allocType);
+void KISAK_CDECL PMem_EndAllocInPrim(PhysicalMemoryPrim *prim, const char *name);
+void KISAK_CDECL PMem_Free(const char *name, uint32_t allocType);
+void KISAK_CDECL PMem_FreeInPrim(PhysicalMemoryPrim *prim, const char *name);
+void KISAK_CDECL PMem_FreeIndex(PhysicalMemoryPrim *prim, uint32_t allocIndex);
+int KISAK_CDECL PMem_GetOverAllocatedSize();
+uint8_t *KISAK_CDECL PMem_Alloc(
     uint32_t size,
     uint32_t alignment,
     uint32_t type,
     uint32_t allocType);
-uint8_t *__cdecl PMem_TryAlloc(
+uint8_t *KISAK_CDECL PMem_TryAlloc(
     uint32_t size,
     uint32_t alignment,
     uint32_t type,
     uint32_t allocType);
-uint32_t __cdecl PMem_GetFreeAmount();
-void __cdecl PMem_DumpMemStats();
+uint32_t KISAK_CDECL PMem_GetFreeAmount();

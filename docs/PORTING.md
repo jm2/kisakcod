@@ -550,20 +550,23 @@ Completed foundation work:
   verification confirms both the checkpoint and exact `2164cd1a` are ancestors of `origin/master`. Dynent
   save/load `ba3c79f3` and unsafe raw SP/save/screenshot, gameplay, and matrix hunks remain explicitly deferred/rejected;
   icon changes remain provenance/optional-packaging work;
-- the current passive-receipt branch composes one stable allocation, stream-generation, pending-copy, and native-storage
-  receipt capsule into each of the 33 runtime entries and owns the active-stream binding plus pending-copy ledger exactly
-  once at table scope. It remains deliberately production-neutral: no generation, PMem scope, pending copy, or legacy
-  loader site is claimed. Exact friend/body/class-digest/source-walk/production-access seals cover the complete authority
-  topology. On the PR #66 master base, full GCC Debug CTest passes **153/153**; all six standalone source/security scripts,
-  native and `-m32` layout compilation, `git diff --check`, and an independent adversarial re-audit pass. Initial PR #67
-  run **29708555173** found MSVC x86 padding the private pending-copy generation descriptor to 0x30 rather than the
-  intended 0x28; ordering its eight-byte serial before its pointer restores one portable 0x28/0x30 descriptor contract
-  and the 0xE900 ILP32 table without changing serialized data or native64 size. The post-fix full **153/153**, six-script,
-  and strict `-m32` gates pass locally; the review fix also uses CMake's `LINKER:` abstraction for the enlarged Windows
-  fixture stack and adds the direct standard header required by `std::size`. Follow-up run **29708858372** reached
-  headless link and exposed that the FX-owned runtime-storage implementation is intentionally absent there. The binding's
-  empty user-provided destructor and pristine predicate are now neutral inline definitions, preserving the excluded
-  media/effects closure while satisfying passive-table linkage;
+- PR #67 merged passive durable-receipt composition as `76d0e065888aab298d430b4bf4e115c07369bc88`:
+  one stable allocation, stream-generation, pending-copy, and native-storage receipt capsule belongs to each of the 33
+  runtime entries, while the active-stream binding and pending-copy ledger exist once at table scope. It remains
+  production-neutral: no generation, PMem scope, pending copy, or legacy loader site is claimed. Review fixed the MSVC
+  x86 pending-copy descriptor padding, preserved the headless effects exclusion through neutral inline binding
+  operations, used CMake's portable `LINKER:` abstraction, and sealed stable fixture names and direct standard includes.
+  Final exact head `422d904a7b0d1aa1372e14308cb6a8a3f4480157` and authoritative merge passed all nine jobs in runs
+  **29709263403** and **29709598049**. Exact-head Gemini and independent audits were clean and all five threads resolved;
+- the current legacy-PMem prerequisite replaces native64-invalid decompiler indexing with bounded typed entry access,
+  returns before every rejected mutation, and removes a second-pass format-string interpretation of allocation names.
+  Commits `23de894f`, `815d9961`, and `b721f495` preserve exact x86 and explicit native64 layouts through
+  `RUNTIME_SIZE`/`RUNTIME_OFFSET`, add adversarial failure-atomic/runtime/source/CI coverage, and leave checked authority
+  unenrolled. Full rebased GCC Debug CTest passes **155/155**; focused PMem/ABI passes **6/6**, strict genuine i386
+  compile/link/runtime, AArch64 compile/link, Clang ASan+UBSan runtime, `git diff --check`, and independent audits pass.
+  PR #68 review follow-up `45b0ec9c` applies `KISAK_CDECL` consistently, names the fixed 32-entry capacity, and corrects
+  the variadic assertion fixture to match its production declaration. Initial run **29712199115** exposed the fixture's
+  top-level pointer qualification as MSVC-only `LNK2019` on portable Windows amd64/ARM64; replacement CI remains pending;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -670,11 +673,12 @@ Remaining gates, in implementation order:
    runs **29703827041** and **29704069129** passed all nine jobs, exact-head Codex was clean, and all six Gemini threads
    were resolved. PR #66 merge-committed exact tree-neutral checkpoint `12309db16d6514ac0df23293cd6074d7bbd15142`
    as `225759e7d8fd1327210452f3debcd6360465ef2a`; authoritative run **29707497302** passed all nine jobs and the graph is
-   verified. None of the seven raw production sites is enrolled. The current branch has implemented and locally sealed
-   passive durable-receipt composition in the table. After it merges, land the legacy PMem indexing repair, then a
-   production-neutral serialized global PMem boundary with retained reservation extent and an unused process-lifetime
-   `$init` controller. Do not enroll `$init` separately: its later checked cutover must atomically replace the two `$init`
-   and three zone PMem lifecycle calls. Then finish narrow-resource authentication and add exact-key adapters. That
+   verified. None of the seven raw production sites is enrolled. PR #67 merged the locally and hosted-sealed passive
+   durable-receipt composition. The current branch implements the bounded legacy PMem indexing/failure-atomic repair;
+   after it merges, land a production-neutral serialized global PMem boundary with retained reservation extent and an
+   unused process-lifetime `$init` controller. Do not enroll `$init` separately: its later checked cutover must atomically
+   replace the two `$init` and three zone PMem lifecycle calls. Then finish narrow-resource authentication and add
+   exact-key adapters. That
    adapter batch must atomically replace the passive-only pristine tripwires with composite phase/key authentication for
    all per-entry receipts and both table-wide singletons before exposing enrollment; merely removing or prematurely
    gating those checks is forbidden. Only then atomically bind the loader across all seven sites. Keep static controller
@@ -1657,12 +1661,12 @@ in run **29446277872** before merge. At that historical merge, production wire I
 remained unchanged. PR #30 then merged the non-publishing reader prerequisite, and the current branch has now switched
 production restore to it; only the save-side guard and writer remain.
 
-Overall porting progress is approximately **78% by merged engineering effort**. PR #62 merged the production-neutral
+Overall porting progress is approximately **79% by merged engineering effort**. PR #62 merged the production-neutral
 pending-copy ledger, PR #63 merged the curated upstream typed-sort checkpoint, PR #64 merged the production-neutral
 registry coordinator, PR #65 merged the curated U1/U2 upstream content reconciliation, and PR #66 merged the exact
-tree-neutral ancestry checkpoint. That checkpoint records reviewed history without importing code and therefore does
-not inflate the engineering estimate. Passive receipt composition is implemented and validated on the current branch
-but remains outside the merged estimate until its PR lands. Windows x86 is about
+tree-neutral ancestry checkpoint, and PR #67 merged passive durable-receipt composition. The ancestry checkpoint records
+reviewed history without importing code and therefore does not inflate the engineering estimate. The current legacy-PMem
+indexing repair remains outside the merged estimate until its PR lands. Windows x86 is about
 **93%**, shared
 foundations/security about **86%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
 **40%**, and macOS arm64 about **31%**. Strict delivered-target status remains **0/5** because no requested
@@ -1966,9 +1970,10 @@ Merged PR #60 supplies the separate checked typed PMem scope receipt with exact 
 single-use phase-witness authority, and external-storage/no-bypass contracts. Exact final head `0eec9b1e` passed all nine
 jobs in run **29673379640**; Codex reviewed exact final head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`,
 both were clean with zero threads, and authoritative post-merge
-run **29673608169** passed all nine jobs at squash merge `74916b5b`. Legacy native64
-`PMem_FreeIndex`/`PMem_EndAllocInPrim` handling and `$init` integration still must be corrected before production
-enrollment. Merged PR #61 adds exact-key stream/alias bind and invalidation with a typed aligned
+run **29673608169** passed all nine jobs at squash merge `74916b5b`. The current prerequisite branch corrects legacy
+native64 `PMem_FreeIndex`/`PMem_EndAllocInPrim` handling; serialized global state, retained reservation authentication,
+and `$init` integration still must be completed before production enrollment. Merged PR #61 adds exact-key stream/alias
+bind and invalidation with a typed aligned
 zone identity, hardened production-neutrality seal, stale-terminal retry safety, complete relocation-capacity release,
 and full singleton scrub. Its compiler-validated source seal covers phase-2 line splicing and phase-3 comment-separated
 access; the exact re-audit reports **PASS**, the focused runtime/source/security selection passes **4/4** under GCC,
@@ -2004,10 +2009,11 @@ curated upstream U1/U2 adaptations as `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`
 runs **29703827041** and **29704069129** passed all nine jobs, exact-head Codex was clean, and all six Gemini threads were
 resolved. PR #66 merged the exact tree-neutral ancestry checkpoint
 `12309db16d6514ac0df23293cd6074d7bbd15142` as `225759e7d8fd1327210452f3debcd6360465ef2a`; run
-**29707497302** passed all nine jobs and the ancestry is verified. No production site is enrolled. The current branch
-implements passive durable-receipt composition; after it merges, finish the serialized PMem/global/narrow prerequisites
-and
-add exact-key adapters; only then enroll all seven sites atomically: five coordinator operations plus two exact-key
+**29707497302** passed all nine jobs and the ancestry is verified. PR #67 merged passive durable-receipt composition as
+`76d0e065888aab298d430b4bf4e115c07369bc88`; exact-head and authoritative runs **29709263403** and **29709598049**
+passed all nine jobs. No production site is enrolled. The current branch implements the legacy PMem indexing repair;
+after it merges, finish the serialized PMem/global/narrow prerequisites and add exact-key adapters; only then enroll all
+seven sites atomically: five coordinator operations plus two exact-key
 root-journal stages. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses
 short borrowed batches under transaction -> registry -> string -> memory-tree order. The bounded legacy compatibility
