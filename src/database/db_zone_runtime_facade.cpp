@@ -87,9 +87,9 @@ thread_local std::uint64_t s_retainedSerialMirror{};
     return s_runtimeState == RuntimeBoundaryState::Active
         && s_runtimeStateMirror == RuntimeBoundaryState::Active
         && s_activeThreadIdentity == s_retainedThreadIdentity
-        && s_activeThreadIdentityMirror == s_retainedThreadIdentity
+        && s_activeThreadIdentityMirror == s_retainedThreadIdentityMirror
         && s_activeSerial == s_retainedSerial
-        && s_activeSerialMirror == s_retainedSerial
+        && s_activeSerialMirror == s_retainedSerialMirror
         && s_nextSerial == s_nextSerialMirror
         && s_nextSerial == s_retainedSerial;
 }

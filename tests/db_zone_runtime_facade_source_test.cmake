@@ -642,6 +642,21 @@ foreach(_marker IN ITEMS
         _source_normalized "${_marker}" "mirrored fail-closed boundary")
 endforeach()
 
+foreach(_mirror_pair IN ITEMS
+    "s_activeThreadIdentityMirror == s_retainedThreadIdentityMirror"
+    "s_activeSerialMirror == s_retainedSerialMirror")
+    require_substring_count(
+        _source_normalized "${_mirror_pair}" 1
+        "exact global-to-thread mirror pairing")
+endforeach()
+foreach(_cross_pair IN ITEMS
+    "s_activeThreadIdentityMirror == s_retainedThreadIdentity &&"
+    "s_activeSerialMirror == s_retainedSerial &&")
+    require_not_contains(
+        _source_normalized "${_cross_pair}"
+        "no global-mirror to primary-thread comparison")
+endforeach()
+
 foreach(_composite_forward IN ITEMS
     "TryBeginScriptStringOwnership|TryBeginZoneRuntimeScriptStringOwnership"
     "TryStageScriptString|TryStageZoneRuntimeScriptString"
