@@ -82,6 +82,9 @@ public:
         std::uint8_t initializationPhase = 0;
         std::uint8_t runtimeReserved[3]{};
         std::uint32_t initializationWitness = 0;
+        std::uint8_t processInitPhase = 0;
+        std::uint8_t processInitReserved[3]{};
+        std::uint32_t processInitWitness = 0;
     };
 
     [[nodiscard]] static Snapshot Capture() noexcept;
@@ -89,6 +92,8 @@ public:
         const PhysicalMemory &memory,
         std::uint32_t retainedSize,
         int overAllocatedSize = 0) noexcept;
+    [[nodiscard]] static std::uintptr_t
+    ProcessInitAllocationNameAddress() noexcept;
     static void Install(const Snapshot &snapshot) noexcept;
 };
 #endif

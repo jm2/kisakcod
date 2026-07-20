@@ -23,6 +23,7 @@ static_assert(std::is_trivially_copyable_v<pmem_runtime::DiagnosticSnapshot>);
 static_assert(sizeof(pmem_runtime::AllocationStatus) == 1);
 static_assert(sizeof(pmem_runtime::InitializationPhase) == 1);
 static_assert(sizeof(pmem_runtime::InitializationStatus) == 1);
+static_assert(sizeof(pmem_runtime::ProcessInitAllocationStatus) == 1);
 static_assert(sizeof(pmem_runtime::DiagnosticEntryKind) == 1);
 static_assert(sizeof(pmem_runtime::DiagnosticSnapshotStatus) == 1);
 static_assert(sizeof(pmem_runtime::DiagnosticEntry) == 0x18);
@@ -40,6 +41,8 @@ static_assert(offsetof(pmem_runtime::DiagnosticSnapshot, reserved) == 0x60D);
 static_assert(noexcept(pmem_runtime::TryInitialize()));
 static_assert(noexcept(pmem_runtime::TryAllocate(1, 1, 0, 0)));
 static_assert(noexcept(pmem_runtime::TryCaptureDiagnosticSnapshot()));
+static_assert(noexcept(pmem_runtime::TryBeginProcessInitAllocation()));
+static_assert(noexcept(pmem_runtime::TryEndProcessInitAllocation()));
 
 int main()
 {

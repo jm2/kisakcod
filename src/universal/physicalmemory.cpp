@@ -24,6 +24,9 @@ constexpr std::uint32_t kReadyWitness = UINT32_C(0x52454144);
 constexpr std::uint32_t kPoisonedWitness = UINT32_C(0x504F4953);
 constexpr std::size_t kOwnedNameCapacity = MAX_QPATH;
 static_assert(kOwnedNameCapacity == 64u);
+constexpr char kProcessInitAllocationName[] = "$init";
+constexpr std::uint32_t kProcessInitBegunWitness = UINT32_C(0x4245474E);
+constexpr std::uint32_t kProcessInitEndedWitness = UINT32_C(0x454E4444);
 
 struct RetainedExtent final
 {
@@ -43,10 +46,25 @@ struct OwnedNameState final
     OwnedAllocationName names[2][MAX_PHYSICAL_ALLOCATIONS]{};
 };
 
+enum class ProcessInitPhase : std::uint8_t
+{
+    Dormant,
+    Begun,
+    Ended,
+};
+
+struct ProcessInitControl final
+{
+    ProcessInitPhase phase = ProcessInitPhase::Dormant;
+    std::uint8_t reserved[3]{};
+    std::uint32_t witness = 0;
+};
+
 struct RuntimeControl final
 {
     RetainedExtent extent{};
     OwnedNameState ownedNames{};
+    ProcessInitControl processInit{};
     pmem_runtime::InitializationPhase phase =
         pmem_runtime::InitializationPhase::Uninitialized;
     std::uint8_t reserved[3]{};
@@ -92,6 +110,7 @@ enum class LegacyDiagnostic : std::uint8_t
     FreeInPrimNullName,
     FreeInPrimOverCapacity,
     FreeHole,
+    ProcessInitProtected,
 };
 
 struct LegacyOperationResult final
@@ -119,6 +138,39 @@ std::uint32_t RuntimeWitnessFor(
     return UINT32_MAX;
 }
 
+std::uint32_t ProcessInitWitnessFor(
+    const ProcessInitPhase phase) noexcept
+{
+    switch (phase)
+    {
+    case ProcessInitPhase::Dormant:
+        return 0;
+    case ProcessInitPhase::Begun:
+        return kProcessInitBegunWitness;
+    case ProcessInitPhase::Ended:
+        return kProcessInitEndedWitness;
+    }
+    return UINT32_MAX;
+}
+
+bool ProcessInitControlIsCanonical(
+    const ProcessInitControl &control) noexcept
+{
+    const std::uint32_t expectedWitness =
+        ProcessInitWitnessFor(control.phase);
+    return control.reserved[0] == 0 && control.reserved[1] == 0
+        && control.reserved[2] == 0
+        && expectedWitness != UINT32_MAX
+        && control.witness == expectedWitness;
+}
+
+bool ProcessInitControlIsDormant(
+    const ProcessInitControl &control) noexcept
+{
+    return ProcessInitControlIsCanonical(control)
+        && control.phase == ProcessInitPhase::Dormant;
+}
+
 bool RuntimeReservedIsZero(const RuntimeControl &control) noexcept
 {
     return control.reserved[0] == 0 && control.reserved[1] == 0
@@ -127,7 +179,8 @@ bool RuntimeReservedIsZero(const RuntimeControl &control) noexcept
 
 bool RuntimeControlIsCanonical(const RuntimeControl &control) noexcept
 {
-    if (!RuntimeReservedIsZero(control)
+    if (!ProcessInitControlIsCanonical(control.processInit)
+        || !RuntimeReservedIsZero(control)
         || control.witness != RuntimeWitnessFor(control.phase))
     {
         return false;
@@ -181,7 +234,11 @@ bool RetainedExtentIsDisjointFromControl(
     return !AddressRangesOverlap(
                extent.base, extent.size, &g_mem, sizeof(g_mem))
         && !AddressRangesOverlap(
-               extent.base, extent.size, &g_runtime, sizeof(g_runtime));
+               extent.base, extent.size, &g_runtime, sizeof(g_runtime))
+        && !AddressRangesOverlap(
+               extent.base, extent.size,
+               kProcessInitAllocationName,
+               sizeof(kProcessInitAllocationName));
 }
 
 template <std::size_t Capacity>
@@ -304,6 +361,49 @@ bool OwnedNamesMatchMemory() noexcept
     return true;
 }
 
+bool ProcessInitBindingIsCoherent() noexcept
+{
+    const ProcessInitControl &control = g_runtime.processInit;
+    if (!ProcessInitControlIsCanonical(control))
+        return false;
+    if (control.phase == ProcessInitPhase::Dormant)
+    {
+        // Dormant means that the checked process controller is not enrolled.
+        // It deliberately imposes no constraint on the still-legacy startup
+        // allocation before the later all-sites-at-once cutover.
+        return true;
+    }
+
+    const PhysicalMemoryPrim &high = g_mem.prim[1];
+    if (!high.allocListCount
+        || high.allocListCount > MAX_PHYSICAL_ALLOCATIONS)
+    {
+        return false;
+    }
+    const PhysicalMemoryAllocation &allocation = high.allocList[0];
+    const OwnedAllocationName &owned = g_runtime.ownedNames.names[1][0];
+    const std::uintptr_t identity =
+        reinterpret_cast<std::uintptr_t>(kProcessInitAllocationName);
+    if (allocation.name != owned.text
+        || allocation.pos != g_runtime.extent.size
+        || owned.identity != identity
+        || owned.identityWitness != OwnedNameIdentityWitness(identity, 1, 0)
+        || !OwnedNameTextIsCanonical(owned.text)
+        || std::strcmp(owned.text, kProcessInitAllocationName) != 0)
+    {
+        return false;
+    }
+
+    if (control.phase == ProcessInitPhase::Begun)
+    {
+        return high.allocListCount == 1
+            && high.allocName == owned.text;
+    }
+    if (control.phase == ProcessInitPhase::Ended)
+        return high.allocName != owned.text;
+    return false;
+}
+
 bool PhysicalMemoryIsPristine(const PhysicalMemory &memory) noexcept
 {
     if (memory.buf)
@@ -368,7 +468,8 @@ bool ReadyStateIsCoherent() noexcept
         || g_mem.buf != g_runtime.extent.base
         || g_mem.prim[0].pos > g_mem.prim[1].pos
         || g_mem.prim[1].pos > g_runtime.extent.size
-        || !OwnedNamesMatchMemory())
+        || !OwnedNamesMatchMemory()
+        || !ProcessInitBindingIsCoherent())
     {
         return false;
     }
@@ -382,6 +483,7 @@ bool UninitializedStateIsCoherent() noexcept
 {
     return RuntimeControlIsCanonical(g_runtime)
         && g_runtime.phase == pmem_runtime::InitializationPhase::Uninitialized
+        && ProcessInitControlIsDormant(g_runtime.processInit)
         && PhysicalMemoryIsPristine(g_mem)
         && OwnedNamesArePristine(g_runtime.ownedNames);
 }
@@ -390,6 +492,7 @@ bool InitializingStateIsCoherent() noexcept
 {
     if (!RuntimeControlIsCanonical(g_runtime)
         || g_runtime.phase != pmem_runtime::InitializationPhase::Initializing
+        || !ProcessInitControlIsDormant(g_runtime.processInit)
         || !PhysicalMemoryIsPristine(g_mem)
         || !OwnedNamesArePristine(g_runtime.ownedNames))
     {
@@ -402,6 +505,7 @@ bool PoisonedStateIsCoherent() noexcept
 {
     return RuntimeControlIsCanonical(g_runtime)
         && g_runtime.phase == pmem_runtime::InitializationPhase::Poisoned
+        && ProcessInitControlIsDormant(g_runtime.processInit)
         && g_runtime.extent.size == kPhysicalMemorySize
         && RetainedExtentIsDisjointFromControl(g_runtime.extent)
         && PhysicalMemoryIsPristine(g_mem)
@@ -443,6 +547,17 @@ void SetRuntimePhase(
     control->reserved[1] = 0;
     control->reserved[2] = 0;
     control->witness = RuntimeWitnessFor(phase);
+}
+
+void SetProcessInitPhase(
+    ProcessInitControl *const control,
+    const ProcessInitPhase phase) noexcept
+{
+    control->phase = phase;
+    control->reserved[0] = 0;
+    control->reserved[1] = 0;
+    control->reserved[2] = 0;
+    control->witness = ProcessInitWitnessFor(phase);
 }
 
 void InitializePhysicalMemoryNoReport(
@@ -498,6 +613,12 @@ LegacyOperationResult TryBeginGlobalAllocNoReport(
     const std::uint32_t allocType,
     const char *const name) noexcept
 {
+    if (allocType == 1
+        && g_runtime.processInit.phase != ProcessInitPhase::Dormant
+        && name == kProcessInitAllocationName)
+    {
+        return {LegacyDiagnostic::ProcessInitProtected};
+    }
     PhysicalMemoryPrim &prim = g_mem.prim[allocType];
     const LegacyOperationResult validation =
         ValidateBeginAllocInPrimNoReport(&prim, name);
@@ -540,6 +661,12 @@ LegacyOperationResult TryEndGlobalAllocNoReport(
 {
     if (!name)
         return {LegacyDiagnostic::EndNullName};
+    if (allocType == 1
+        && g_runtime.processInit.phase == ProcessInitPhase::Begun
+        && name == kProcessInitAllocationName)
+    {
+        return {LegacyDiagnostic::ProcessInitProtected};
+    }
     PhysicalMemoryPrim &prim = g_mem.prim[allocType];
     if (!prim.allocName || !prim.allocListCount
         || prim.allocListCount > MAX_PHYSICAL_ALLOCATIONS)
@@ -619,6 +746,11 @@ LegacyOperationResult TryFreeGlobalIndexNoReport(
     const std::uint32_t allocType,
     const std::uint32_t allocIndex) noexcept
 {
+    if (allocType == 1 && allocIndex == 0
+        && g_runtime.processInit.phase != ProcessInitPhase::Dormant)
+    {
+        return {LegacyDiagnostic::ProcessInitProtected};
+    }
     PhysicalMemoryPrim &prim = g_mem.prim[allocType];
     const std::uint32_t previousCount = prim.allocListCount;
     LegacyOperationResult result =
@@ -848,6 +980,11 @@ void ReportLegacyDiagnostic(
                 ".\\universal\\physicalmemory.cpp", 411, 0,
                 "freeing '%s' caused a memory hole\n", reportedName);
         }
+        return;
+    case LegacyDiagnostic::ProcessInitProtected:
+        MyAssertHandler(
+            ".\\universal\\physicalmemory.cpp", 465, 0, "%s",
+            "process initialization allocation remains owned for process life");
         return;
     }
 }
@@ -1086,6 +1223,12 @@ PhysicalMemoryGlobalStateTestAccess::Capture() noexcept
     snapshot.runtimeReserved[1] = g_runtime.reserved[1];
     snapshot.runtimeReserved[2] = g_runtime.reserved[2];
     snapshot.initializationWitness = g_runtime.witness;
+    snapshot.processInitPhase =
+        static_cast<std::uint8_t>(g_runtime.processInit.phase);
+    snapshot.processInitReserved[0] = g_runtime.processInit.reserved[0];
+    snapshot.processInitReserved[1] = g_runtime.processInit.reserved[1];
+    snapshot.processInitReserved[2] = g_runtime.processInit.reserved[2];
+    snapshot.processInitWitness = g_runtime.processInit.witness;
     Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
     return snapshot;
 }
@@ -1138,6 +1281,13 @@ PhysicalMemoryGlobalStateTestAccess::MakeCanonicalReady(
         pmem_runtime::InitializationPhase::Ready);
     snapshot.initializationWitness = kReadyWitness;
     return snapshot;
+}
+
+std::uintptr_t
+PhysicalMemoryGlobalStateTestAccess::ProcessInitAllocationNameAddress()
+    noexcept
+{
+    return reinterpret_cast<std::uintptr_t>(kProcessInitAllocationName);
 }
 
 void PhysicalMemoryGlobalStateTestAccess::Install(
@@ -1214,6 +1364,12 @@ void PhysicalMemoryGlobalStateTestAccess::Install(
     g_runtime.reserved[1] = snapshot.runtimeReserved[1];
     g_runtime.reserved[2] = snapshot.runtimeReserved[2];
     g_runtime.witness = snapshot.initializationWitness;
+    g_runtime.processInit.phase =
+        static_cast<ProcessInitPhase>(snapshot.processInitPhase);
+    g_runtime.processInit.reserved[0] = snapshot.processInitReserved[0];
+    g_runtime.processInit.reserved[1] = snapshot.processInitReserved[1];
+    g_runtime.processInit.reserved[2] = snapshot.processInitReserved[2];
+    g_runtime.processInit.witness = snapshot.processInitWitness;
     Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
 }
 #endif
@@ -1372,6 +1528,97 @@ pmem_runtime::TryCaptureDiagnosticSnapshot() noexcept
         TryCaptureDiagnosticSnapshotNoLock();
     Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
     return snapshot;
+}
+
+pmem_runtime::ProcessInitAllocationStatus KISAK_CDECL
+pmem_runtime::TryBeginProcessInitAllocation() noexcept
+{
+    ProcessInitAllocationStatus status =
+        ProcessInitAllocationStatus::CorruptState;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    switch (GetRuntimeReadiness())
+    {
+    case RuntimeReadiness::NotReady:
+        status = ProcessInitAllocationStatus::NotReady;
+        break;
+    case RuntimeReadiness::Corrupt:
+        break;
+    case RuntimeReadiness::Ready:
+        switch (g_runtime.processInit.phase)
+        {
+        case ProcessInitPhase::Begun:
+            status = ProcessInitAllocationStatus::Busy;
+            break;
+        case ProcessInitPhase::Ended:
+            status = ProcessInitAllocationStatus::AlreadyComplete;
+            break;
+        case ProcessInitPhase::Dormant:
+        {
+            const PhysicalMemoryPrim &high = g_mem.prim[1];
+            if (high.allocListCount || high.allocName
+                || high.pos != g_runtime.extent.size)
+            {
+                status = ProcessInitAllocationStatus::Busy;
+                break;
+            }
+            const LegacyOperationResult result =
+                TryBeginGlobalAllocNoReport(
+                    1, kProcessInitAllocationName);
+            if (result.diagnostic != LegacyDiagnostic::None)
+                break;
+            SetProcessInitPhase(
+                &g_runtime.processInit, ProcessInitPhase::Begun);
+            if (ReadyStateIsCoherent())
+                status = ProcessInitAllocationStatus::Success;
+            break;
+        }
+        }
+        break;
+    }
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    return status;
+}
+
+pmem_runtime::ProcessInitAllocationStatus KISAK_CDECL
+pmem_runtime::TryEndProcessInitAllocation() noexcept
+{
+    ProcessInitAllocationStatus status =
+        ProcessInitAllocationStatus::CorruptState;
+    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    switch (GetRuntimeReadiness())
+    {
+    case RuntimeReadiness::NotReady:
+        status = ProcessInitAllocationStatus::NotReady;
+        break;
+    case RuntimeReadiness::Corrupt:
+        break;
+    case RuntimeReadiness::Ready:
+        switch (g_runtime.processInit.phase)
+        {
+        case ProcessInitPhase::Dormant:
+            status = ProcessInitAllocationStatus::WrongPhase;
+            break;
+        case ProcessInitPhase::Ended:
+            status = ProcessInitAllocationStatus::AlreadyComplete;
+            break;
+        case ProcessInitPhase::Begun:
+        {
+            PhysicalMemoryPrim &high = g_mem.prim[1];
+            const LegacyOperationResult result =
+                TryEndAllocInPrimNoReport(&high, high.allocName);
+            if (result.diagnostic != LegacyDiagnostic::None)
+                break;
+            SetProcessInitPhase(
+                &g_runtime.processInit, ProcessInitPhase::Ended);
+            if (ReadyStateIsCoherent())
+                status = ProcessInitAllocationStatus::Success;
+            break;
+        }
+        }
+        break;
+    }
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    return status;
 }
 
 void KISAK_CDECL PMem_Init()

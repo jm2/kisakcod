@@ -134,7 +134,12 @@ bool MatchesGlobalState(const GlobalStateImage &expected)
         && current.runtimeReserved[0] == expected.runtimeReserved[0]
         && current.runtimeReserved[1] == expected.runtimeReserved[1]
         && current.runtimeReserved[2] == expected.runtimeReserved[2]
-        && current.initializationWitness == expected.initializationWitness;
+        && current.initializationWitness == expected.initializationWitness
+        && current.processInitPhase == expected.processInitPhase
+        && current.processInitReserved[0] == expected.processInitReserved[0]
+        && current.processInitReserved[1] == expected.processInitReserved[1]
+        && current.processInitReserved[2] == expected.processInitReserved[2]
+        && current.processInitWitness == expected.processInitWitness;
 }
 
 void ResetReports()

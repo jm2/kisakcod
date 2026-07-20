@@ -10586,6 +10586,7 @@ foreach(_pmem_runtime_header_marker IN ITEMS
     "enum class InitializationPhase : std::uint8_t"
     "enum class InitializationStatus : std::uint8_t"
     "enum class AllocationStatus : std::uint8_t"
+    "enum class ProcessInitAllocationStatus : std::uint8_t"
     "std::uint64_t additionalBytes = 0;"
     "RUNTIME_SIZE(AllocationResult, 0x10, 0x18);"
     "enum class DiagnosticEntryKind : std::uint8_t"
@@ -10602,10 +10603,36 @@ foreach(_pmem_runtime_header_marker IN ITEMS
         "${_pmem_runtime_header_marker}"
         "narrow report-free PMem runtime boundary")
 endforeach()
+foreach(_pmem_process_init_api IN ITEMS
+    "TryBeginProcessInitAllocation() noexcept;"
+    "TryEndProcessInitAllocation() noexcept;")
+    require_source_contains(
+        "universal/physicalmemory_runtime.h"
+        "${_pmem_process_init_api}"
+        "hidden-controller process-init PMem API")
+endforeach()
+foreach(_pmem_process_init_public_authority IN ITEMS
+    "class ProcessInitController"
+    "struct ProcessInitControl"
+    "ProcessInitializationController"
+    "AllocationReceipt")
+    require_source_not_contains(
+        "universal/physicalmemory_runtime.h"
+        "${_pmem_process_init_public_authority}"
+        "process-init controller state and receipt authority must stay hidden")
+endforeach()
 foreach(_pmem_runtime_source_marker IN ITEMS
     "thread_local int g_overAllocatedSize{};"
     "RuntimeControl g_runtime{};"
     "OwnedNameState ownedNames{};"
+    "enum class ProcessInitPhase : std::uint8_t"
+    "struct ProcessInitControl final"
+    "ProcessInitControl processInit{};"
+    "constexpr char kProcessInitAllocationName[] = \"$init\";"
+    "ProcessInitControlIsCanonical("
+    "ProcessInitControlIsDormant("
+    "ProcessInitBindingIsCoherent("
+    "SetProcessInitPhase("
     "OwnedNameIdentityWitness("
     "OwnedNamesArePristine("
     "OwnedNamesMatchMemory("
@@ -10659,6 +10686,12 @@ extract_security_slice(
     "report-free PMem diagnostic capture core")
 extract_security_slice(
     _pmem_runtime_security_source
+    "pmem_runtime::ProcessInitAllocationStatus KISAK_CDECL"
+    "void KISAK_CDECL PMem_Init()"
+    _pmem_process_init_security_slice
+    "serialized report-free process-init controller operations")
+extract_security_slice(
+    _pmem_runtime_security_source
     "void KISAK_CDECL PMem_DumpMemStats()"
     "void KISAK_CDECL PMem_InitPhysicalMemory("
     _pmem_dump_security_slice
@@ -10680,6 +10713,37 @@ foreach(_pmem_runtime_forbidden_reporter IN ITEMS
         _pmem_diagnostic_security_slice
         "${_pmem_runtime_forbidden_reporter}"
         "PMem diagnostic core cannot report under lock")
+    forbid_security_slice_contains(
+        _pmem_process_init_security_slice
+        "${_pmem_runtime_forbidden_reporter}"
+        "PMem process-init controller cannot report under lock")
+endforeach()
+foreach(_pmem_process_init_forbidden IN ITEMS
+    "PMem_BeginAlloc("
+    "PMem_EndAlloc("
+    "PMem_Free("
+    "physical_memory::"
+    "AllocationReceipt")
+    forbid_security_slice_contains(
+        _pmem_process_init_security_slice
+        "${_pmem_process_init_forbidden}"
+        "PMem process-init controller cannot delegate or duplicate authority")
+endforeach()
+foreach(_pmem_process_init_marker IN ITEMS
+    "TryBeginProcessInitAllocation() noexcept"
+    "TryEndProcessInitAllocation() noexcept"
+    "ProcessInitAllocationStatus::NotReady"
+    "ProcessInitAllocationStatus::Busy"
+    "ProcessInitAllocationStatus::WrongPhase"
+    "ProcessInitAllocationStatus::AlreadyComplete"
+    "TryBeginGlobalAllocNoReport("
+    "TryEndAllocInPrimNoReport(&high, high.allocName)"
+    "SetProcessInitPhase("
+    "ReadyStateIsCoherent()")
+    require_security_slice_contains(
+        _pmem_process_init_security_slice
+        "${_pmem_process_init_marker}"
+        "authenticated process-init transition")
 endforeach()
 foreach(_pmem_diagnostic_forbidden IN ITEMS
     "Sys_EnterCriticalSection"
@@ -10728,10 +10792,76 @@ foreach(_pmem_diagnostic_test IN ITEMS
         "${_pmem_diagnostic_test}"
         "PMem owned-name/diagnostic boundary requires focused coverage")
 endforeach()
+foreach(_pmem_process_init_test IN ITEMS
+    "TestProcessInitControllerLifecycleAndLegacyCoexistence();"
+    "TestProcessInitControllerCorruptionAndAtomicity();"
+    "TestProcessInitControllerConcurrencyAndDisjointness();")
+    require_repository_contains(
+        "tests/physicalmemory_runtime_tests.cpp"
+        "${_pmem_process_init_test}"
+        "process-init controller requires focused adversarial coverage")
+endforeach()
+foreach(_pmem_process_init_protection IN ITEMS
+    "g_runtime.processInit.phase != ProcessInitPhase::Dormant"
+    "g_runtime.processInit.phase == ProcessInitPhase::Begun"
+    "allocType == 1 && allocIndex == 0"
+    "LegacyDiagnostic::ProcessInitProtected"
+    "kProcessInitAllocationName,"
+    "sizeof(kProcessInitAllocationName)")
+    require_source_contains(
+        "universal/physicalmemory.cpp"
+        "${_pmem_process_init_protection}"
+        "persistent process-init high-index-zero authority")
+endforeach()
+require_source_match_count(
+    "universal/physicalmemory.cpp"
+    "TryBeginProcessInitAllocation\\(\\)"
+    1
+    "process-init Begin definition without production caller")
+require_source_match_count(
+    "universal/physicalmemory.cpp"
+    "TryEndProcessInitAllocation\\(\\)"
+    1
+    "process-init End definition without production caller")
+foreach(_pmem_process_init_caller_path IN ITEMS
+    "qcommon/common.cpp"
+    "database/db_registry.cpp")
+    foreach(_pmem_process_init_operation IN ITEMS
+        TryBeginProcessInitAllocation
+        TryEndProcessInitAllocation)
+        require_source_not_contains(
+            "${_pmem_process_init_caller_path}"
+            "${_pmem_process_init_operation}"
+            "partial process-init enrollment before atomic loader cutover")
+    endforeach()
+endforeach()
+require_source_ordered(
+    "qcommon/common.cpp"
+    "PMem_EndAlloc(comInitAllocName, 1u);"
+    "DB_SetInitializing(0);"
+    "process-init End must precede flag clear")
+foreach(_pmem_process_init_source_seal_marker IN ITEMS
+    "production process-init Begin definition without caller"
+    "production process-init End definition without caller"
+    "legacy process-init Begin site before atomic cutover"
+    "legacy process-init End site before atomic cutover"
+    "legacy zone Begin site before atomic cutover"
+    "legacy zone End site before atomic cutover"
+    "legacy zone Free site before atomic cutover"
+    "process-init operation enrollment outside atomic cutover")
+    require_repository_contains(
+        "tests/physicalmemory_legacy_source_test.cmake"
+        "${_pmem_process_init_source_seal_marker}"
+        "duplicated process-init enrollment source seal")
+endforeach()
 require_repository_contains(
     "tests/physicalmemory_runtime_production_seal_test.cmake"
     "TLS[ \\t]+LOCAL[ \\t]+DEFAULT"
     "PMem TLS shortfall requires real macro-off ELF proof")
+require_repository_contains(
+    "tests/physicalmemory_runtime_production_seal_test.cmake"
+    "kProcessInitAllocationName"
+    "PMem stable process-init name must retain local object proof")
 
 # Checked physical-memory scopes form a report-free authority boundary, but
 # remain deliberately unenrolled until the exact-key resource coordinator owns

@@ -72,6 +72,16 @@ RUNTIME_OFFSET(AllocationResult, address, 0x8, 0x8);
 RUNTIME_OFFSET(AllocationResult, status, 0xC, 0x10);
 RUNTIME_OFFSET(AllocationResult, reserved, 0xD, 0x11);
 
+enum class ProcessInitAllocationStatus : std::uint8_t
+{
+    Success,
+    AlreadyComplete,
+    NotReady,
+    Busy,
+    WrongPhase,
+    CorruptState,
+};
+
 struct DiagnosticEntry final
 {
     std::uint32_t bytes = 0;
@@ -114,4 +124,15 @@ RUNTIME_OFFSET(DiagnosticSnapshot, reserved, 0x60D, 0x60D);
 
 [[nodiscard]] DiagnosticSnapshot KISAK_CDECL
 TryCaptureDiagnosticSnapshot() noexcept;
+
+// These report-free operations own the one process-lifetime high-prim `$init`
+// allocation. The controller is hidden with the serialized PMem state so no
+// caller can copy, free, reset, or mint a second authority for index zero.
+// Production enrollment is intentionally deferred to the atomic loader
+// cutover that replaces every legacy PMem lifecycle site together.
+[[nodiscard]] ProcessInitAllocationStatus KISAK_CDECL
+TryBeginProcessInitAllocation() noexcept;
+
+[[nodiscard]] ProcessInitAllocationStatus KISAK_CDECL
+TryEndProcessInitAllocation() noexcept;
 } // namespace pmem_runtime

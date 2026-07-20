@@ -80,6 +80,8 @@ endif()
 read_normalized("src/universal/physicalmemory.h" legacy_header)
 read_normalized("src/universal/physicalmemory_runtime.h" runtime_header)
 read_normalized("src/universal/physicalmemory.cpp" source)
+read_normalized("src/qcommon/common.cpp" common_source)
+read_normalized("src/database/db_registry.cpp" registry_source)
 read_normalized("tests/physicalmemory_legacy_tests.cpp" legacy_fixture)
 read_normalized("tests/physicalmemory_runtime_tests.cpp" runtime_fixture)
 read_normalized(
@@ -147,6 +149,9 @@ foreach(marker IN ITEMS
     "std::uint8_t reserved[3]{};"
     "RUNTIME_SIZE(AllocationResult, 0x10, 0x18);"
     "RUNTIME_OFFSET(AllocationResult, status, 0xC, 0x10);"
+    "enum class ProcessInitAllocationStatus : std::uint8_t"
+    "AlreadyComplete,"
+    "WrongPhase,"
     "DIAGNOSTIC_ENTRIES_PER_PRIM = 32u;"
     "DIAGNOSTIC_NAME_CAPACITY = 19u;"
     "enum class DiagnosticEntryKind : std::uint8_t"
@@ -163,6 +168,20 @@ foreach(marker IN ITEMS
     "std::uint32_t allocType) noexcept;"
     "TryCaptureDiagnosticSnapshot() noexcept;")
     require_text("${runtime_header}" "${marker}" "narrow runtime API marker")
+endforeach()
+foreach(marker IN ITEMS
+    "TryBeginProcessInitAllocation() noexcept;"
+    "TryEndProcessInitAllocation() noexcept;")
+    require_text("${runtime_header}" "${marker}"
+        "hidden-controller process-init operation")
+endforeach()
+foreach(forbidden IN ITEMS
+    "class ProcessInitController"
+    "struct ProcessInitControl"
+    "ProcessInitializationController"
+    "AllocationReceipt")
+    reject_text("${runtime_header}" "${forbidden}"
+        "public mutable process-init controller authority")
 endforeach()
 extract_slice("${runtime_header}"
     "struct DiagnosticEntry final"
@@ -209,14 +228,23 @@ foreach(marker IN ITEMS
     "struct RetainedExtent final"
     "struct OwnedAllocationName final"
     "struct OwnedNameState final"
+    "enum class ProcessInitPhase : std::uint8_t"
+    "struct ProcessInitControl final"
     "struct RuntimeControl final"
     "PhysicalMemory g_mem{};"
     "thread_local int g_overAllocatedSize{};"
     "RuntimeControl g_runtime{};"
+    "constexpr char kProcessInitAllocationName[] = \"$init\";"
+    "ProcessInitControl processInit{};"
     "constexpr std::uint32_t kPhysicalMemorySize = UINT32_C(0x08000000);"
     "RuntimeWitnessFor("
     "RuntimeReservedIsZero("
     "RuntimeControlIsCanonical("
+    "ProcessInitWitnessFor("
+    "ProcessInitControlIsCanonical("
+    "ProcessInitControlIsDormant("
+    "ProcessInitBindingIsCoherent("
+    "SetProcessInitPhase("
     "AddressRangeIsValid("
     "AddressRangesOverlap("
     "RetainedExtentIsDisjointFromControl("
@@ -233,6 +261,15 @@ foreach(marker IN ITEMS
     "&g_runtime, sizeof(g_runtime)")
     require_text("${source}" "${marker}" "hidden coherent runtime marker")
 endforeach()
+require_text("${source}"
+    "kProcessInitAllocationName,\n               sizeof(kProcessInitAllocationName)"
+    "retained extent disjoint from stable process-init name")
+require_text("${source}"
+    "|| !ProcessInitBindingIsCoherent())"
+    "Ready state authenticates process-init controller relation")
+require_count("${source}"
+    "ProcessInitControlIsDormant(g_runtime.processInit)" 3
+    "non-ready state predicates requiring dormant process-init controller")
 foreach(forbidden IN ITEMS
     "strlen(" "strcpy(" "strncpy(" "snprintf(" "sprintf(")
     reject_text("${source}" "${forbidden}"
@@ -660,6 +697,110 @@ require_order("${public_diagnostic_capture}"
     "Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);"
     "diagnostic capture core before unlock")
 
+# The process-lifetime `$init` controller is hidden inside the same serialized
+# runtime. Its report-free, no-argument API can neither expose nor duplicate
+# the owned-name/index-zero authority. Dormant remains compatible with the
+# still-enrolled legacy startup until all five lifecycle sites move together.
+extract_slice("${source}"
+    "pmem_runtime::ProcessInitAllocationStatus KISAK_CDECL"
+    "void KISAK_CDECL PMem_Init()"
+    process_init_operations)
+foreach(marker IN ITEMS
+    "TryBeginProcessInitAllocation() noexcept"
+    "TryEndProcessInitAllocation() noexcept"
+    "GetRuntimeReadiness()"
+    "ProcessInitAllocationStatus::NotReady"
+    "ProcessInitAllocationStatus::CorruptState"
+    "ProcessInitAllocationStatus::Busy"
+    "ProcessInitAllocationStatus::WrongPhase"
+    "ProcessInitAllocationStatus::AlreadyComplete"
+    "TryBeginGlobalAllocNoReport("
+    "1, kProcessInitAllocationName"
+    "TryEndAllocInPrimNoReport(&high, high.allocName)"
+    "SetProcessInitPhase("
+    "ProcessInitPhase::Begun"
+    "ProcessInitPhase::Ended"
+    "ReadyStateIsCoherent()")
+    require_text("${process_init_operations}" "${marker}"
+        "serialized process-init operation marker")
+endforeach()
+require_count("${process_init_operations}"
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);" 2
+    "process-init serializer acquisitions")
+require_count("${process_init_operations}"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);" 2
+    "process-init serializer releases")
+foreach(forbidden IN ITEMS
+    "MyAssertHandler("
+    "Com_Printf("
+    "Com_Error("
+    "Sys_OutOfMemErrorInternal("
+    "PMem_BeginAlloc("
+    "PMem_EndAlloc("
+    "PMem_Free("
+    "physical_memory::"
+    "AllocationReceipt")
+    reject_text("${process_init_operations}" "${forbidden}"
+        "report, legacy call, or duplicate receipt authority in process-init API")
+endforeach()
+require_count("${source}" "TryBeginProcessInitAllocation()" 1
+    "production process-init Begin definition without caller")
+require_count("${source}" "TryEndProcessInitAllocation()" 1
+    "production process-init End definition without caller")
+foreach(marker IN ITEMS
+    "g_runtime.processInit.phase != ProcessInitPhase::Dormant"
+    "g_runtime.processInit.phase == ProcessInitPhase::Begun"
+    "allocType == 1 && allocIndex == 0"
+    "LegacyDiagnostic::ProcessInitProtected")
+    require_text("${source}" "${marker}"
+        "legacy protection for process-owned high index zero")
+endforeach()
+
+require_count("${common_source}"
+    "PMem_BeginAlloc(comInitAllocName, 1u);" 1
+    "legacy process-init Begin site before atomic cutover")
+require_count("${common_source}"
+    "PMem_EndAlloc(comInitAllocName, 1u);" 1
+    "legacy process-init End site before atomic cutover")
+require_order("${common_source}"
+    "PMem_EndAlloc(comInitAllocName, 1u);"
+    "DB_SetInitializing(0);"
+    "legacy process-init End before initializing-flag clear")
+require_count("${registry_source}"
+    "PMem_BeginAlloc(zone->name, g_zoneAllocType);" 1
+    "legacy zone Begin site before atomic cutover")
+require_count("${registry_source}"
+    "PMem_EndAlloc(zone->name, g_zoneAllocType);" 1
+    "legacy zone End site before atomic cutover")
+require_count("${registry_source}"
+    "PMem_Free(zone->name, zone->allocType);" 1
+    "legacy zone Free site before atomic cutover")
+foreach(production_text IN ITEMS common_source registry_source)
+    reject_text("${${production_text}}"
+        "TryBeginProcessInitAllocation"
+        "partial production process-init Begin enrollment")
+    reject_text("${${production_text}}"
+        "TryEndProcessInitAllocation"
+        "partial production process-init End enrollment")
+endforeach()
+file(GLOB_RECURSE process_init_production_sources LIST_DIRECTORIES false
+    "${SOURCE_ROOT}/src/*")
+foreach(path IN LISTS process_init_production_sources)
+    if(path STREQUAL
+           "${SOURCE_ROOT}/src/universal/physicalmemory_runtime.h"
+       OR path STREQUAL
+           "${SOURCE_ROOT}/src/universal/physicalmemory.cpp")
+        continue()
+    endif()
+    file(READ "${path}" process_init_production_content)
+    foreach(operation IN ITEMS
+        TryBeginProcessInitAllocation
+        TryEndProcessInitAllocation)
+        reject_text("${process_init_production_content}" "${operation}"
+            "process-init operation enrollment outside atomic cutover in ${path}")
+    endforeach()
+endforeach()
+
 extract_slice("${source}"
     "void KISAK_CDECL PMem_DumpMemStats()"
     "void KISAK_CDECL PMem_InitPhysicalMemory("
@@ -722,6 +863,10 @@ foreach(marker IN ITEMS
     "std::uint8_t initializationPhase = 0;"
     "std::uint8_t runtimeReserved[3]{};"
     "std::uint32_t initializationWitness = 0;"
+    "std::uint8_t processInitPhase = 0;"
+    "std::uint8_t processInitReserved[3]{};"
+    "std::uint32_t processInitWitness = 0;"
+    "ProcessInitAllocationNameAddress() noexcept;"
     "MakeCanonicalReady("
     "Snapshot Capture() noexcept;"
     "static void Install(const Snapshot &snapshot) noexcept;")
@@ -738,6 +883,13 @@ foreach(marker IN ITEMS
     "snapshot.allocationNameBindings[type][index]"
     "snapshot.allocNameBindings[type]"
     "snapshot.ownedNames[binding.type][binding.index]"
+    "snapshot.processInitPhase ="
+    "snapshot.processInitReserved[0]"
+    "snapshot.processInitWitness"
+    "g_runtime.processInit.phase ="
+    "g_runtime.processInit.reserved[0]"
+    "g_runtime.processInit.witness"
+    "reinterpret_cast<std::uintptr_t>(kProcessInitAllocationName)"
     "g_mem.prim[type].allocList[index].name == logicalPointer"
     "g_mem.prim[type].allocName == logicalPointer")
     require_text("${source}" "${marker}"
@@ -843,6 +995,9 @@ foreach(marker IN ITEMS
     "TestDiagnosticAccountingAndDumpOrder();"
     "TestDiagnosticCapacityAndSidecarCorruption();"
     "TestDumpReentryAndSnapshotContention();"
+    "TestProcessInitControllerLifecycleAndLegacyCoexistence();"
+    "TestProcessInitControllerCorruptionAndAtomicity();"
+    "TestProcessInitControllerConcurrencyAndDisjointness();"
     "TestExtentPhaseAndTopologyCorruption();"
     "HookAction::CorruptReserved"
     "CheckCanonicalPoisoned();"
@@ -859,6 +1014,9 @@ foreach(marker IN ITEMS
     "std::is_standard_layout_v<pmem_runtime::DiagnosticSnapshot>"
     "sizeof(pmem_runtime::DiagnosticSnapshot) == 0x610"
     "noexcept(pmem_runtime::TryCaptureDiagnosticSnapshot())"
+    "sizeof(pmem_runtime::ProcessInitAllocationStatus) == 1"
+    "noexcept(pmem_runtime::TryBeginProcessInitAllocation())"
+    "noexcept(pmem_runtime::TryEndProcessInitAllocation())"
     "class PhysicalMemoryGlobalStateTestAccess final")
     require_text("${production_seal_fixture}" "${marker}"
         "macro-off compile seal marker")
@@ -867,6 +1025,8 @@ foreach(marker IN ITEMS
     "g_mem"
     "g_runtime"
     "g_overAllocatedSize"
+    "kProcessInitAllocationName"
+    "local process-init name"
     "__MergedGlobals"
     "named local TLS shortfall"
     "READELF_TOOL"

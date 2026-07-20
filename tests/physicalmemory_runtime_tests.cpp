@@ -31,8 +31,14 @@ using pmem_runtime::DiagnosticSnapshot;
 using pmem_runtime::DiagnosticSnapshotStatus;
 using pmem_runtime::InitializationPhase;
 using pmem_runtime::InitializationStatus;
+using pmem_runtime::ProcessInitAllocationStatus;
 
 constexpr std::uint32_t kRuntimeSize = UINT32_C(0x08000000);
+constexpr std::uint8_t kProcessInitDormant = 0;
+constexpr std::uint8_t kProcessInitBegun = 1;
+constexpr std::uint8_t kProcessInitEnded = 2;
+constexpr std::uint32_t kProcessInitBegunWitness = UINT32_C(0x4245474E);
+constexpr std::uint32_t kProcessInitEndedWitness = UINT32_C(0x454E4444);
 alignas(64) std::array<std::uint8_t, kRuntimeSize + 64u> g_backing{};
 
 std::atomic<int> g_failures{};
@@ -177,7 +183,12 @@ bool SameSnapshot(
         || left.runtimeReserved[0] != right.runtimeReserved[0]
         || left.runtimeReserved[1] != right.runtimeReserved[1]
         || left.runtimeReserved[2] != right.runtimeReserved[2]
-        || left.initializationWitness != right.initializationWitness)
+        || left.initializationWitness != right.initializationWitness
+        || left.processInitPhase != right.processInitPhase
+        || left.processInitReserved[0] != right.processInitReserved[0]
+        || left.processInitReserved[1] != right.processInitReserved[1]
+        || left.processInitReserved[2] != right.processInitReserved[2]
+        || left.processInitWitness != right.processInitWitness)
     {
         return false;
     }
@@ -221,6 +232,18 @@ bool IsPristineMemory(const PhysicalMemory &memory)
 {
     PhysicalMemory pristine{};
     return SameMemory(memory, pristine);
+}
+
+void CheckProcessInitState(
+    const StateAccess::Snapshot &snapshot,
+    const std::uint8_t phase,
+    const std::uint32_t witness)
+{
+    CHECK(snapshot.processInitPhase == phase);
+    CHECK(snapshot.processInitReserved[0] == 0);
+    CHECK(snapshot.processInitReserved[1] == 0);
+    CHECK(snapshot.processInitReserved[2] == 0);
+    CHECK(snapshot.processInitWitness == witness);
 }
 
 void CheckResult(
@@ -421,6 +444,9 @@ void TestResultLayoutAndDefaults()
     static_assert(sizeof(AllocationStatus) == 1);
     static_assert(sizeof(InitializationPhase) == 1);
     static_assert(sizeof(InitializationStatus) == 1);
+    static_assert(sizeof(ProcessInitAllocationStatus) == 1);
+    static_assert(noexcept(pmem_runtime::TryBeginProcessInitAllocation()));
+    static_assert(noexcept(pmem_runtime::TryEndProcessInitAllocation()));
 #if UINTPTR_MAX == UINT32_MAX
     CHECK(sizeof(AllocationResult) == 0x10);
     CHECK(offsetof(AllocationResult, status) == 0xC);
@@ -456,6 +482,8 @@ void TestResultLayoutAndDefaults()
     const StateAccess::OwnedNameBindingSnapshot noOwnedBinding{};
     CHECK(noOwnedBinding.type == UINT8_MAX);
     CHECK(noOwnedBinding.index == UINT8_MAX);
+    CheckProcessInitState(
+        StateAccess::Capture(), kProcessInitDormant, 0);
 }
 
 void TestInitFailuresRetryAndDoubleInit()
@@ -1441,6 +1469,293 @@ void TestDumpReentryAndSnapshotContention()
     CHECK(g_enterCalls.load() == g_leaveCalls.load());
 }
 
+void TestProcessInitControllerLifecycleAndLegacyCoexistence()
+{
+    ResetRuntime();
+    CHECK(pmem_runtime::TryBeginProcessInitAllocation()
+        == ProcessInitAllocationStatus::NotReady);
+    CHECK(pmem_runtime::TryEndProcessInitAllocation()
+        == ProcessInitAllocationStatus::NotReady);
+    CheckProcessInitState(
+        StateAccess::Capture(), kProcessInitDormant, 0);
+
+    InitializeReady();
+    const StateAccess::Snapshot dormant = StateAccess::Capture();
+    CHECK(pmem_runtime::TryEndProcessInitAllocation()
+        == ProcessInitAllocationStatus::WrongPhase);
+    CHECK(SameSnapshot(StateAccess::Capture(), dormant));
+
+    static char legacyInitName[] = "$init";
+    PMem_BeginAlloc(legacyInitName, 1);
+    CHECK(PMem_TryAlloc(8, 8, 0, 1) != nullptr);
+    PMem_EndAlloc(legacyInitName, 1);
+    CHECK(g_assertReports.load() == 0);
+    const StateAccess::Snapshot legacyEnded = StateAccess::Capture();
+    CHECK(pmem_runtime::TryBeginProcessInitAllocation()
+        == ProcessInitAllocationStatus::Busy);
+    CHECK(pmem_runtime::TryEndProcessInitAllocation()
+        == ProcessInitAllocationStatus::WrongPhase);
+    CHECK(SameSnapshot(StateAccess::Capture(), legacyEnded));
+    PMem_Free(legacyInitName, 1);
+    CHECK(g_assertReports.load() == 0);
+
+    CHECK(pmem_runtime::TryBeginProcessInitAllocation()
+        == ProcessInitAllocationStatus::Success);
+    StateAccess::Snapshot begun = StateAccess::Capture();
+    CheckProcessInitState(
+        begun, kProcessInitBegun, kProcessInitBegunWitness);
+    const std::uintptr_t processName =
+        StateAccess::ProcessInitAllocationNameAddress();
+    CHECK(processName != 0);
+    CHECK(begun.memory.prim[1].allocListCount == 1);
+    CHECK(begun.memory.prim[1].allocName
+        == reinterpret_cast<const char *>(processName));
+    CHECK(begun.memory.prim[1].allocList[0].name
+        == reinterpret_cast<const char *>(processName));
+    CHECK(begun.memory.prim[1].allocList[0].pos == kRuntimeSize);
+    CHECK(begun.ownedNames[1][0].identity == processName);
+    CHECK(std::strcmp(begun.ownedNames[1][0].text, "$init") == 0);
+    CHECK(pmem_runtime::TryBeginProcessInitAllocation()
+        == ProcessInitAllocationStatus::Busy);
+    CHECK(SameSnapshot(StateAccess::Capture(), begun));
+
+    const char *const protectedName =
+        reinterpret_cast<const char *>(processName);
+    PMem_EndAlloc(protectedName, 1);
+    CHECK(g_assertReports.load() == 1);
+    CHECK(SameSnapshot(StateAccess::Capture(), begun));
+    g_assertReports.store(0, std::memory_order_relaxed);
+    PMem_Free(protectedName, 1);
+    CHECK(g_assertReports.load() == 1);
+    CHECK(SameSnapshot(StateAccess::Capture(), begun));
+    g_assertReports.store(0, std::memory_order_relaxed);
+
+    const AllocationResult processAllocation =
+        pmem_runtime::TryAllocate(64, 16, 0, 1);
+    CHECK(processAllocation.status == AllocationStatus::Success);
+    CHECK(pmem_runtime::TryEndProcessInitAllocation()
+        == ProcessInitAllocationStatus::Success);
+    const StateAccess::Snapshot ended = StateAccess::Capture();
+    CheckProcessInitState(
+        ended, kProcessInitEnded, kProcessInitEndedWitness);
+    CHECK(ended.memory.prim[1].allocListCount == 1);
+    CHECK(ended.memory.prim[1].allocName == nullptr);
+    CHECK(ended.memory.prim[1].allocList[0].pos == kRuntimeSize);
+    CHECK(ended.ownedNames[1][0].identity == processName);
+    CHECK(pmem_runtime::TryEndProcessInitAllocation()
+        == ProcessInitAllocationStatus::AlreadyComplete);
+    CHECK(pmem_runtime::TryBeginProcessInitAllocation()
+        == ProcessInitAllocationStatus::AlreadyComplete);
+    CHECK(SameSnapshot(StateAccess::Capture(), ended));
+
+    static char zoneOne[] = "post-init-zone-one";
+    static char zoneTwo[] = "post-init-zone-two";
+    BeginAllocateEnd(zoneOne, 1, 16);
+    BeginAllocateEnd(zoneTwo, 1, 16);
+    PMem_Free(zoneOne, 1);
+    CHECK(g_assertReports.load() == 1);
+    g_assertReports.store(0, std::memory_order_relaxed);
+    PMem_Free(zoneTwo, 1);
+    CHECK(g_assertReports.load() == 0);
+    const StateAccess::Snapshot collapsed = StateAccess::Capture();
+    CheckProcessInitState(
+        collapsed, kProcessInitEnded, kProcessInitEndedWitness);
+    CHECK(collapsed.memory.prim[1].allocListCount == 1);
+    CHECK(collapsed.memory.prim[1].allocList[0].pos == kRuntimeSize);
+    CHECK(collapsed.ownedNames[1][0].identity == processName);
+
+    PMem_Free(protectedName, 1);
+    CHECK(g_assertReports.load() == 1);
+    CHECK(SameSnapshot(StateAccess::Capture(), collapsed));
+    CHECK(g_reportLockViolations.load() == 0);
+}
+
+void TestProcessInitControllerCorruptionAndAtomicity()
+{
+    InitializeReady();
+    const StateAccess::Snapshot dormant = StateAccess::Capture();
+
+    auto checkCorrupt = [](const StateAccess::Snapshot &corrupt) {
+        StateAccess::Install(corrupt);
+        const StateAccess::Snapshot before = StateAccess::Capture();
+        CHECK(pmem_runtime::TryBeginProcessInitAllocation()
+            == ProcessInitAllocationStatus::CorruptState);
+        CHECK(SameSnapshot(StateAccess::Capture(), before));
+        CHECK(pmem_runtime::TryEndProcessInitAllocation()
+            == ProcessInitAllocationStatus::CorruptState);
+        CHECK(SameSnapshot(StateAccess::Capture(), before));
+    };
+
+    StateAccess::Snapshot corrupt = dormant;
+    corrupt.processInitPhase = UINT8_MAX;
+    corrupt.processInitWitness = UINT32_MAX;
+    checkCorrupt(corrupt);
+
+    corrupt = dormant;
+    corrupt.processInitReserved[1] = UINT8_C(0x7A);
+    checkCorrupt(corrupt);
+
+    corrupt = dormant;
+    corrupt.processInitPhase = kProcessInitBegun;
+    corrupt.processInitWitness = kProcessInitBegunWitness;
+    checkCorrupt(corrupt);
+
+    StateAccess::Install(dormant);
+    CHECK(pmem_runtime::TryBeginProcessInitAllocation()
+        == ProcessInitAllocationStatus::Success);
+    const StateAccess::Snapshot begun = StateAccess::Capture();
+
+    corrupt = begun;
+    corrupt.processInitWitness ^= UINT32_C(0x100);
+    checkCorrupt(corrupt);
+
+    corrupt = begun;
+    corrupt.ownedNames[1][0].identity ^=
+        static_cast<std::uintptr_t>(0x20);
+    checkCorrupt(corrupt);
+
+    corrupt = begun;
+    corrupt.ownedNames[1][0].identityWitness ^=
+        static_cast<std::uintptr_t>(0x40);
+    checkCorrupt(corrupt);
+
+    corrupt = begun;
+    corrupt.ownedNames[1][0].text[0] = '!';
+    checkCorrupt(corrupt);
+
+    corrupt = begun;
+    corrupt.ownedNames[1][0]
+        .text[StateAccess::OWNED_NAME_CAPACITY - 1] = 'x';
+    checkCorrupt(corrupt);
+
+    corrupt = begun;
+    corrupt.allocationNameBindings[1][0] = {};
+    checkCorrupt(corrupt);
+
+    corrupt = begun;
+    corrupt.allocNameBindings[1] = {};
+    checkCorrupt(corrupt);
+
+    corrupt = begun;
+    --corrupt.memory.prim[1].allocList[0].pos;
+    checkCorrupt(corrupt);
+
+    corrupt = begun;
+    corrupt.memory.prim[1].allocListCount = 2;
+    checkCorrupt(corrupt);
+
+    StateAccess::Install(begun);
+    CHECK(pmem_runtime::TryEndProcessInitAllocation()
+        == ProcessInitAllocationStatus::Success);
+    const StateAccess::Snapshot ended = StateAccess::Capture();
+
+    corrupt = ended;
+    corrupt.processInitPhase = kProcessInitBegun;
+    corrupt.processInitWitness = kProcessInitBegunWitness;
+    checkCorrupt(corrupt);
+
+    corrupt = ended;
+    corrupt.memory.prim[1].allocList[0].name = nullptr;
+    corrupt.allocationNameBindings[1][0] = {};
+    checkCorrupt(corrupt);
+
+    ResetRuntime();
+    g_commitSucceeds.store(false, std::memory_order_relaxed);
+    g_releaseSucceeds.store(false, std::memory_order_relaxed);
+    CHECK(pmem_runtime::TryInitialize()
+        == InitializationStatus::ReleaseFailed);
+    const StateAccess::Snapshot poisoned = StateAccess::Capture();
+    CheckProcessInitState(poisoned, kProcessInitDormant, 0);
+    CHECK(pmem_runtime::TryBeginProcessInitAllocation()
+        == ProcessInitAllocationStatus::NotReady);
+    CHECK(pmem_runtime::TryEndProcessInitAllocation()
+        == ProcessInitAllocationStatus::NotReady);
+    CHECK(SameSnapshot(StateAccess::Capture(), poisoned));
+    CHECK(g_assertReports.load() == 0);
+    CHECK(g_errorReports.load() == 0);
+    CHECK(g_oomReports.load() == 0);
+    CHECK(g_printReports.load() == 0);
+}
+
+void TestProcessInitControllerConcurrencyAndDisjointness()
+{
+    InitializeReady();
+    std::atomic<bool> beginGo{false};
+    std::array<ProcessInitAllocationStatus, 2> beginStatuses{
+        ProcessInitAllocationStatus::CorruptState,
+        ProcessInitAllocationStatus::CorruptState,
+    };
+    std::array<std::thread, 2> beginThreads;
+    for (std::size_t index = 0; index < beginThreads.size(); ++index)
+    {
+        beginThreads[index] = std::thread([&beginGo, &beginStatuses, index]() {
+            while (!beginGo.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            beginStatuses[index] =
+                pmem_runtime::TryBeginProcessInitAllocation();
+        });
+    }
+    beginGo.store(true, std::memory_order_release);
+    for (std::thread &thread : beginThreads)
+        thread.join();
+    std::sort(beginStatuses.begin(), beginStatuses.end());
+    CHECK(beginStatuses[0] == ProcessInitAllocationStatus::Success);
+    CHECK(beginStatuses[1] == ProcessInitAllocationStatus::Busy);
+
+    static char lowName[] = "concurrent-low-during-init-end";
+    PMem_BeginAlloc(lowName, 0);
+    std::atomic<bool> operationGo{false};
+    std::atomic<int> allocationSuccesses{};
+    ProcessInitAllocationStatus endStatus =
+        ProcessInitAllocationStatus::CorruptState;
+    std::thread allocator([&operationGo, &allocationSuccesses]() {
+        while (!operationGo.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        for (int iteration = 0; iteration < 500; ++iteration)
+        {
+            if (pmem_runtime::TryAllocate(1, 1, 0, 0).status
+                == AllocationStatus::Success)
+            {
+                allocationSuccesses.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    });
+    std::thread ender([&operationGo, &endStatus]() {
+        while (!operationGo.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        endStatus = pmem_runtime::TryEndProcessInitAllocation();
+    });
+    operationGo.store(true, std::memory_order_release);
+    allocator.join();
+    ender.join();
+    CHECK(endStatus == ProcessInitAllocationStatus::Success);
+    CHECK(allocationSuccesses.load() == 500);
+    PMem_EndAlloc(lowName, 0);
+    CHECK(g_assertReports.load() == 0);
+    const StateAccess::Snapshot concurrentEnded = StateAccess::Capture();
+    CheckProcessInitState(
+        concurrentEnded, kProcessInitEnded, kProcessInitEndedWitness);
+    CHECK(concurrentEnded.memory.prim[1].allocListCount == 1);
+    CHECK(concurrentEnded.memory.prim[1].allocList[0].pos == kRuntimeSize);
+
+    ResetRuntime();
+    const std::uintptr_t nameAddress =
+        StateAccess::ProcessInitAllocationNameAddress();
+    g_reservationOverride.store(nameAddress, std::memory_order_relaxed);
+    CHECK(pmem_runtime::TryInitialize()
+        == InitializationStatus::CorruptState);
+    CHECK(g_commitCalls.load() == 0);
+    CHECK(g_releaseCalls.load() == 1);
+    const StateAccess::Snapshot rejected = StateAccess::Capture();
+    CHECK(IsPristineMemory(rejected.memory));
+    CHECK(rejected.retainedBase == nullptr);
+    CHECK(rejected.retainedSize == 0);
+    CheckProcessInitState(rejected, kProcessInitDormant, 0);
+    CHECK(g_reportLockViolations.load() == 0);
+    CHECK(g_reentryViolations.load() == 0);
+    CHECK(g_enterCalls.load() == g_leaveCalls.load());
+}
+
 void TestExtentPhaseAndTopologyCorruption()
 {
     static char scope[] = "corruption";
@@ -1783,6 +2098,9 @@ int main()
     TestDiagnosticAccountingAndDumpOrder();
     TestDiagnosticCapacityAndSidecarCorruption();
     TestDumpReentryAndSnapshotContention();
+    TestProcessInitControllerLifecycleAndLegacyCoexistence();
+    TestProcessInitControllerCorruptionAndAtomicity();
+    TestProcessInitControllerConcurrencyAndDisjointness();
     TestExtentPhaseAndTopologyCorruption();
     CHECK(g_lockDepth == 0);
     CHECK(g_wrongCriticalSections.load() == 0);

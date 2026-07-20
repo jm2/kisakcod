@@ -39,7 +39,11 @@ if(CXX_COMPILER_ID STREQUAL "MSVC")
             "${all_symbols}${symbol_error}")
     endif()
 
-    foreach(local_name IN ITEMS g_mem g_runtime g_overAllocatedSize)
+    foreach(local_name IN ITEMS
+        g_mem
+        g_runtime
+        g_overAllocatedSize
+        kProcessInitAllocationName)
         string(REGEX MATCHALL "[^\n]*${local_name}[^\n]*" matching_lines
             "${all_symbols}")
         if("${matching_lines}" STREQUAL "")
@@ -57,6 +61,7 @@ else()
     if(NOT DEFINED NM_TOOL OR "${NM_TOOL}" STREQUAL "")
         message(FATAL_ERROR "Production seal requires CMAKE_NM")
     endif()
+
     execute_process(
         COMMAND "${NM_TOOL}" -a -C ${production_objects}
         RESULT_VARIABLE symbol_result
@@ -66,6 +71,16 @@ else()
         message(FATAL_ERROR
             "Physical-memory symbol inspection failed (${symbol_result}):\n"
             "${all_symbols}${symbol_error}")
+    endif()
+    string(REGEX MATCHALL
+        "[^\n\r]*kProcessInitAllocationName[^\n\r]*"
+        process_init_name_lines "${all_symbols}")
+    if(NOT process_init_name_lines MATCHES
+           "\\(anonymous namespace\\)::kProcessInitAllocationName([^A-Za-z0-9_]|$)"
+       AND NOT process_init_name_lines MATCHES
+           "_+ZN12_GLOBAL__N_1L?26kProcessInitAllocationNameE([^A-Za-z0-9_]|$)")
+        message(FATAL_ERROR
+            "Macro-off PMem object omitted local process-init name:\n${all_symbols}")
     endif()
     # Apple nm retains Mach-O's extra leading underscore when -C cannot
     # demangle a local Itanium symbol. AppleClang Release may coalesce the two
@@ -121,7 +136,11 @@ else()
             "Physical-memory global-symbol inspection failed (${global_result}):\n"
             "${global_symbols}${global_error}")
     endif()
-    foreach(local_name IN ITEMS g_mem g_runtime g_overAllocatedSize)
+    foreach(local_name IN ITEMS
+        g_mem
+        g_runtime
+        g_overAllocatedSize
+        kProcessInitAllocationName)
         string(REGEX MATCHALL "[^\n\r]*${local_name}[^\n\r]*"
             escaped_global_lines "${global_symbols}")
         if(NOT "${escaped_global_lines}" STREQUAL "")
@@ -155,7 +174,8 @@ else()
         endif()
         foreach(ordinary_symbol IN ITEMS
             "_ZN12_GLOBAL__N_1L?5g_memE"
-            "_ZN12_GLOBAL__N_1L?9g_runtimeE")
+            "_ZN12_GLOBAL__N_1L?9g_runtimeE"
+            "_ZN12_GLOBAL__N_1L?26kProcessInitAllocationNameE")
             string(REGEX MATCHALL "[^\n\r]*${ordinary_symbol}[^\n\r]*"
                 ordinary_lines "${elf_symbols}")
             if(NOT ordinary_lines MATCHES
