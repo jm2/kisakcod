@@ -1,7 +1,9 @@
 #include "physicalmemory_checked.h"
+#include "physicalmemory_runtime.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace physical_memory
 {
@@ -11,6 +13,8 @@ constexpr std::uint32_t kPhysicalAllocationTypeCount = 2;
 constexpr std::uint32_t kPhysicalAllocationCapacity = 32;
 constexpr std::uint32_t kInvalidReceiptIndex = UINT32_MAX;
 constexpr std::uint8_t kPhaseWitnessMask = 0xA5;
+constexpr std::uint8_t kTerminalTagFirst = 0x6D;
+constexpr std::uint8_t kTerminalTagSecond = 0xB2;
 
 [[nodiscard]] bool ValidatePrimTopology(
     const PhysicalMemoryPrim &prim,
@@ -121,6 +125,20 @@ bool AllocationReceipt::hasValidPhase() const noexcept
     return false;
 }
 
+bool AllocationReceipt::hasCanonicalTerminalState() const noexcept
+{
+    return startPos_ == 0
+        && reserved_[0] == kTerminalTagFirst
+        && reserved_[1] == kTerminalTagSecond;
+}
+
+void AllocationReceipt::setCanonicalTerminalState() noexcept
+{
+    startPos_ = 0;
+    reserved_[0] = kTerminalTagFirst;
+    reserved_[1] = kTerminalTagSecond;
+}
+
 bool AllocationReceipt::isPristine() const noexcept
 {
     return self_ == this && phase_ == Phase::Empty && owner_ == nullptr
@@ -135,7 +153,17 @@ bool AllocationReceipt::isBound() const noexcept
     if (self_ != this || owner_ == nullptr || prim_ == nullptr
         || name_ == nullptr || allocType_ >= kPhysicalAllocationTypeCount
         || index_ >= kPhysicalAllocationCapacity
-        || !hasValidPhaseWitness() || !reservedIsZero())
+        || !hasValidPhase() || !hasValidPhaseWitness())
+    {
+        return false;
+    }
+
+    if (phase_ == Phase::Freed)
+    {
+        if (!hasCanonicalTerminalState())
+            return false;
+    }
+    else if (!reservedIsZero())
     {
         return false;
     }
@@ -278,6 +306,114 @@ AllocationScopeStatus TryFree(AllocationReceipt *const receipt) noexcept
     receipt->phase_ = AllocationReceipt::Phase::Freed;
     receipt->phaseWitness_ =
         static_cast<std::uint8_t>(receipt->phase_) ^ kPhaseWitnessMask;
+    receipt->setCanonicalTerminalState();
     return AllocationScopeStatus::Success;
 }
 } // namespace physical_memory
+
+bool pmem_runtime::detail::AuthenticateAllocationReceiptNoLock(
+    const physical_memory::AllocationReceipt &receipt,
+    const PhysicalMemory &owner,
+    const std::uint32_t allocType,
+    const std::uint32_t index,
+    const char *const stableName,
+    const AllocationReceiptPhase expectedPhase) noexcept
+{
+    using Receipt = physical_memory::AllocationReceipt;
+    if (expectedPhase == AllocationReceiptPhase::Pristine)
+        return receipt.isPristine();
+
+    Receipt::Phase privatePhase{};
+    switch (expectedPhase)
+    {
+    case AllocationReceiptPhase::Pristine:
+        return false;
+    case AllocationReceiptPhase::Begun:
+        privatePhase = Receipt::Phase::Begun;
+        break;
+    case AllocationReceiptPhase::Ended:
+        privatePhase = Receipt::Phase::Ended;
+        break;
+    case AllocationReceiptPhase::Freed:
+        privatePhase = Receipt::Phase::Freed;
+        break;
+    default:
+        return false;
+    }
+
+    if (allocType >= 2u
+        || index >= MAX_PHYSICAL_ALLOCATIONS || stableName == nullptr
+        || receipt.self_ != &receipt || receipt.owner_ != &owner
+        || receipt.prim_ != &owner.prim[allocType]
+        || receipt.allocType_ != allocType || receipt.index_ != index
+        || receipt.name_ != stableName || !receipt.isCanonical()
+        || receipt.phase_ != privatePhase)
+    {
+        return false;
+    }
+
+    if (privatePhase == Receipt::Phase::Freed)
+        return true;
+
+    const PhysicalMemoryPrim &prim = owner.prim[allocType];
+    if (receipt.startPos_ != prim.allocList[index].pos)
+        return false;
+    if (!receipt.matchesEntry(prim))
+        return false;
+    if (privatePhase == Receipt::Phase::Begun)
+    {
+        return index + 1 == prim.allocListCount
+            && prim.allocName == stableName;
+    }
+    return prim.allocName != stableName;
+}
+
+bool pmem_runtime::detail::AuthenticateAllocationRangeNoLock(
+    const physical_memory::AllocationReceipt &receipt,
+    const PhysicalMemory &owner,
+    const std::uint32_t allocType,
+    const std::uint32_t index,
+    const char *const stableName,
+    const void *const storage,
+    const std::size_t size,
+    const AllocationReceiptPhase expectedPhase) noexcept
+{
+    if ((expectedPhase != AllocationReceiptPhase::Begun
+            && expectedPhase != AllocationReceiptPhase::Ended)
+        || !AuthenticateAllocationReceiptNoLock(
+            receipt, owner, allocType, index, stableName, expectedPhase)
+        || storage == nullptr || size == 0)
+    {
+        return false;
+    }
+
+    const std::uintptr_t storageBegin =
+        reinterpret_cast<std::uintptr_t>(storage);
+    const std::uintptr_t maximum =
+        std::numeric_limits<std::uintptr_t>::max();
+    if (storageBegin > maximum - size)
+        return false;
+    const std::uintptr_t storageEnd = storageBegin + size;
+
+    const PhysicalMemoryPrim &prim = owner.prim[allocType];
+    const std::uint32_t nextPosition = index + 1 < prim.allocListCount
+        ? prim.allocList[index + 1].pos
+        : prim.pos;
+    const std::uint32_t entryPosition = prim.allocList[index].pos;
+    const std::uint32_t lowerOffset = allocType == 0
+        ? entryPosition
+        : nextPosition;
+    const std::uint32_t upperOffset = allocType == 0
+        ? nextPosition
+        : entryPosition;
+    if (lowerOffset > upperOffset)
+        return false;
+
+    const std::uintptr_t base =
+        reinterpret_cast<std::uintptr_t>(owner.buf);
+    if (base == 0 || base > maximum - upperOffset)
+        return false;
+    const std::uintptr_t allocationBegin = base + lowerOffset;
+    const std::uintptr_t allocationEnd = base + upperOffset;
+    return storageBegin >= allocationBegin && storageEnd <= allocationEnd;
+}

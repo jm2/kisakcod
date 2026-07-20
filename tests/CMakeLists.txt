@@ -584,6 +584,7 @@ add_executable(kisakcod-db-zone-runtime-table-tests
     ${SRC_DIR}/database/db_relocation.cpp
     ${SRC_DIR}/database/db_stream.cpp
     ${SRC_DIR}/EffectsCore/fx_zone_runtime_storage_bridge.cpp
+    ${SRC_DIR}/universal/physicalmemory.cpp
     ${SRC_DIR}/universal/physicalmemory_checked.cpp
     ${SRC_DIR}/qcommon/sys_sync.cpp
     $<TARGET_OBJECTS:kisakcod-fx-fastfile-zone-adapter-disk32-subject>
@@ -618,6 +619,22 @@ if (MSVC)
         "LINKER:/STACK:8388608")
 endif()
 kisakcod_test_warnings(kisakcod-db-zone-runtime-table-tests)
+if(NOT MSVC)
+    target_compile_options(
+        kisakcod-db-zone-runtime-table-tests PRIVATE
+        -Wno-unused-parameter
+        -Wno-unused-variable)
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(
+        kisakcod-db-zone-runtime-table-tests PRIVATE
+        -Wno-strict-aliasing)
+endif()
+if(CMAKE_CXX_COMPILER_ID MATCHES "^(Clang|AppleClang)$")
+    target_compile_options(
+        kisakcod-db-zone-runtime-table-tests PRIVATE
+        -Wno-dollar-in-identifier-extension)
+endif()
 set_target_properties(
     kisakcod-db-zone-runtime-table-tests PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
@@ -1476,6 +1493,7 @@ set_tests_properties(pool-native-pointer-freelist PROPERTIES TIMEOUT 10)
 add_executable(kisakcod-physicalmemory-legacy-tests
     physicalmemory_legacy_tests.cpp
     ${SRC_DIR}/universal/physicalmemory.cpp
+    ${SRC_DIR}/universal/physicalmemory_checked.cpp
 )
 target_include_directories(
     kisakcod-physicalmemory-legacy-tests SYSTEM PRIVATE ${SRC_DIR})
@@ -1517,6 +1535,7 @@ set_tests_properties(
 add_executable(kisakcod-physicalmemory-runtime-tests
     physicalmemory_runtime_tests.cpp
     ${SRC_DIR}/universal/physicalmemory.cpp
+    ${SRC_DIR}/universal/physicalmemory_checked.cpp
 )
 target_include_directories(
     kisakcod-physicalmemory-runtime-tests SYSTEM PRIVATE ${SRC_DIR})
