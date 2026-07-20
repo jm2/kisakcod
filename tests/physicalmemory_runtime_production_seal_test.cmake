@@ -39,7 +39,7 @@ if(CXX_COMPILER_ID STREQUAL "MSVC")
             "${all_symbols}${symbol_error}")
     endif()
 
-    foreach(local_name IN ITEMS g_mem g_overAllocatedSize)
+    foreach(local_name IN ITEMS g_mem g_runtime g_overAllocatedSize)
         string(REGEX MATCHALL "[^\n]*${local_name}[^\n]*" matching_lines
             "${all_symbols}")
         if("${matching_lines}" STREQUAL "")
@@ -68,11 +68,11 @@ else()
             "${all_symbols}${symbol_error}")
     endif()
     # Apple nm retains Mach-O's extra leading underscore when -C cannot
-    # demangle a local Itanium symbol. AppleClang Release may instead coalesce
-    # both zero-initialized locals into one local __MergedGlobals allocation.
-    # All other objects must retain both exact anonymous-namespace names.
-    set(missing_local_names)
-    foreach(local_symbol IN ITEMS "g_mem|5" "g_overAllocatedSize|19")
+    # demangle a local Itanium symbol. AppleClang Release may coalesce the two
+    # ordinary zero-initialized controls into one local __MergedGlobals object,
+    # but its TLS shortfall remains a separately named local symbol.
+    set(missing_ordinary_local_names)
+    foreach(local_symbol IN ITEMS "g_mem|5" "g_runtime|9")
         string(REPLACE "|" ";" local_fields "${local_symbol}")
         list(GET local_fields 0 local_name)
         list(GET local_fields 1 local_name_length)
@@ -82,11 +82,11 @@ else()
                "\\(anonymous namespace\\)::${local_name}([^A-Za-z0-9_]|$)"
            AND NOT matching_lines MATCHES
                "_+ZN12_GLOBAL__N_1L?${local_name_length}${local_name}E([^A-Za-z0-9_]|$)")
-            list(APPEND missing_local_names "${local_name}")
+            list(APPEND missing_ordinary_local_names "${local_name}")
         endif()
     endforeach()
     set(apple_merged_state FALSE)
-    list(LENGTH missing_local_names missing_local_count)
+    list(LENGTH missing_ordinary_local_names missing_local_count)
     if(missing_local_count GREATER 0)
         if(CXX_COMPILER_ID STREQUAL "AppleClang"
            AND missing_local_count EQUAL 2
@@ -96,8 +96,19 @@ else()
         else()
             message(FATAL_ERROR
                 "Macro-off PMem object omitted anonymous locals "
-                "${missing_local_names}:\n${all_symbols}")
+                "${missing_ordinary_local_names}:\n${all_symbols}")
         endif()
+    endif()
+
+    string(REGEX MATCHALL "[^\n\r]*g_overAllocatedSize[^\n\r]*"
+        tls_shortfall_lines "${all_symbols}")
+    if(NOT tls_shortfall_lines MATCHES
+           "\\(anonymous namespace\\)::g_overAllocatedSize([^A-Za-z0-9_]|$)"
+       AND NOT tls_shortfall_lines MATCHES
+           "_+ZN12_GLOBAL__N_1L?19g_overAllocatedSizeE([^A-Za-z0-9_]|$)")
+        message(FATAL_ERROR
+            "Macro-off PMem object omitted named local TLS shortfall:\n"
+            "${all_symbols}")
     endif()
 
     execute_process(
@@ -110,7 +121,7 @@ else()
             "Physical-memory global-symbol inspection failed (${global_result}):\n"
             "${global_symbols}${global_error}")
     endif()
-    foreach(local_name IN ITEMS g_mem g_overAllocatedSize)
+    foreach(local_name IN ITEMS g_mem g_runtime g_overAllocatedSize)
         string(REGEX MATCHALL "[^\n\r]*${local_name}[^\n\r]*"
             escaped_global_lines "${global_symbols}")
         if(NOT "${escaped_global_lines}" STREQUAL "")
@@ -119,10 +130,48 @@ else()
                 "${escaped_global_lines}")
         endif()
     endforeach()
-    if(apple_merged_state AND global_symbols MATCHES "__MergedGlobals")
+    if(CXX_COMPILER_ID STREQUAL "AppleClang"
+       AND global_symbols MATCHES "__MergedGlobals")
         message(FATAL_ERROR
             "AppleClang PMem merged state escaped external linkage:\n"
             "${global_symbols}")
+    endif()
+
+    # On ELF, nm's b/B spelling does not distinguish ordinary BSS from TLS.
+    # Require the real symbol table to prove both storage class and binding.
+    if(NOT CXX_COMPILER_ID STREQUAL "AppleClang")
+        if(NOT DEFINED READELF_TOOL OR "${READELF_TOOL}" STREQUAL "")
+            message(FATAL_ERROR "ELF PMem production seal requires readelf")
+        endif()
+        execute_process(
+            COMMAND "${READELF_TOOL}" -sW ${production_objects}
+            RESULT_VARIABLE readelf_result
+            OUTPUT_VARIABLE elf_symbols
+            ERROR_VARIABLE readelf_error)
+        if(NOT readelf_result EQUAL 0)
+            message(FATAL_ERROR
+                "Physical-memory ELF symbol inspection failed "
+                "(${readelf_result}):\n${elf_symbols}${readelf_error}")
+        endif()
+        foreach(ordinary_symbol IN ITEMS
+            "_ZN12_GLOBAL__N_1L?5g_memE"
+            "_ZN12_GLOBAL__N_1L?9g_runtimeE")
+            string(REGEX MATCHALL "[^\n\r]*${ordinary_symbol}[^\n\r]*"
+                ordinary_lines "${elf_symbols}")
+            if(NOT ordinary_lines MATCHES
+                   "OBJECT[ \t]+LOCAL[ \t]+DEFAULT")
+                message(FATAL_ERROR
+                    "ELF PMem control is not a local object: "
+                    "${ordinary_symbol}\n${elf_symbols}")
+            endif()
+        endforeach()
+        string(REGEX MATCHALL
+            "[^\n\r]*_ZN12_GLOBAL__N_1L?19g_overAllocatedSizeE[^\n\r]*"
+            elf_tls_lines "${elf_symbols}")
+        if(NOT elf_tls_lines MATCHES "TLS[ \t]+LOCAL[ \t]+DEFAULT")
+            message(FATAL_ERROR
+                "ELF PMem shortfall is not local TLS:\n${elf_symbols}")
+        endif()
     endif()
 endif()
 

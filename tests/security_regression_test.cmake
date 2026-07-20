@@ -10578,6 +10578,88 @@ require_security_slice_contains(
     "production-test-access-sealed"
     "measured Windows x86 CI must select the runtime-table production seal")
 
+# The global physical-memory runtime retains its exact reservation behind one
+# witnessed phase machine and one dedicated serializer. Initialization and
+# allocation cores are report-free; legacy reporters run only after explicit
+# release so Com_Error/longjmp cannot strand CRITSECT_PHYSICAL_MEMORY.
+foreach(_pmem_runtime_header_marker IN ITEMS
+    "enum class InitializationPhase : std::uint8_t"
+    "enum class InitializationStatus : std::uint8_t"
+    "enum class AllocationStatus : std::uint8_t"
+    "std::uint64_t additionalBytes = 0;"
+    "RUNTIME_SIZE(AllocationResult, 0x10, 0x18);"
+    "TryInitialize() noexcept;"
+    "std::uint32_t allocType) noexcept;")
+    require_source_contains(
+        "universal/physicalmemory_runtime.h"
+        "${_pmem_runtime_header_marker}"
+        "narrow report-free PMem runtime boundary")
+endforeach()
+foreach(_pmem_runtime_source_marker IN ITEMS
+    "thread_local int g_overAllocatedSize{};"
+    "RuntimeControl g_runtime{};"
+    "RetainedExtentIsDisjointFromControl("
+    "InitializingStateIsCoherent("
+    "PoisonedStateIsCoherent("
+    "g_runtime.extent.size == kPhysicalMemorySize"
+    "SetRuntimePhase(&g_runtime, InitializationPhase::Initializing);"
+    "PublishPoisonedExtent(base, kPhysicalMemorySize);"
+    "g_mem = initialized;"
+    "g_runtime.extent = candidateExtent;"
+    "SetRuntimePhase(&g_runtime, InitializationPhase::Ready);"
+    "TryAllocateAndPublishLegacyShortfall("
+    "const std::uint64_t firstAligned = lowPosition + lowPadding;"
+    "result.additionalBytes = requiredEnd - highPosition;")
+    require_source_contains(
+        "universal/physicalmemory.cpp"
+        "${_pmem_runtime_source_marker}"
+        "serialized coherent PMem runtime")
+endforeach()
+file(READ "${SOURCE_ROOT}/src/universal/physicalmemory.cpp"
+    _pmem_runtime_security_source)
+extract_security_slice(
+    _pmem_runtime_security_source
+    "pmem_runtime::InitializationStatus KISAK_CDECL"
+    "pmem_runtime::AllocationResult KISAK_CDECL pmem_runtime::TryAllocate("
+    _pmem_initialize_security_slice
+    "report-free PMem initialization")
+extract_security_slice(
+    _pmem_runtime_security_source
+    "pmem_runtime::AllocationResult TryAllocateNoLock("
+    "pmem_runtime::AllocationResult TryAllocateAndPublishLegacyShortfall("
+    _pmem_allocate_security_slice
+    "report-free PMem allocation core")
+foreach(_pmem_runtime_forbidden_reporter IN ITEMS
+    "MyAssertHandler("
+    "Com_Printf("
+    "Com_Error("
+    "Sys_OutOfMemErrorInternal(")
+    forbid_security_slice_contains(
+        _pmem_initialize_security_slice
+        "${_pmem_runtime_forbidden_reporter}"
+        "PMem initialization cannot report under its phase protocol")
+    forbid_security_slice_contains(
+        _pmem_allocate_security_slice
+        "${_pmem_runtime_forbidden_reporter}"
+        "PMem allocation core cannot report under lock")
+endforeach()
+foreach(_pmem_runtime_forbidden_raii IN ITEMS
+    "std::lock_guard"
+    "std::unique_lock")
+    require_source_not_contains(
+        "universal/physicalmemory.cpp"
+        "${_pmem_runtime_forbidden_raii}"
+        "PMem must explicitly leave before nonlocal reporters")
+endforeach()
+require_repository_contains(
+    "tests/physicalmemory_runtime_tests.cpp"
+    "TestInitCorruptionOwnershipExits();"
+    "PMem reservation ownership exits require adversarial runtime coverage")
+require_repository_contains(
+    "tests/physicalmemory_runtime_production_seal_test.cmake"
+    "TLS[ \\t]+LOCAL[ \\t]+DEFAULT"
+    "PMem TLS shortfall requires real macro-off ELF proof")
+
 # Checked physical-memory scopes form a report-free authority boundary, but
 # remain deliberately unenrolled until the exact-key resource coordinator owns
 # receipt lifetime and prevents legacy lifecycle bypass/reinitialization.

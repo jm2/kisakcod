@@ -55,9 +55,18 @@ public:
     {
         PhysicalMemory memory{};
         int overAllocatedSize = 0;
+        std::uint8_t *retainedBase = nullptr;
+        std::uint32_t retainedSize = 0;
+        std::uint8_t initializationPhase = 0;
+        std::uint8_t runtimeReserved[3]{};
+        std::uint32_t initializationWitness = 0;
     };
 
     [[nodiscard]] static Snapshot Capture() noexcept;
+    [[nodiscard]] static Snapshot MakeCanonicalReady(
+        const PhysicalMemory &memory,
+        std::uint32_t retainedSize,
+        int overAllocatedSize = 0) noexcept;
     static void Install(const Snapshot &snapshot) noexcept;
 };
 #endif
