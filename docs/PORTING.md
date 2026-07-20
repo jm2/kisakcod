@@ -627,14 +627,15 @@ Completed foundation work:
   composite enrollment, strengthens direct-call authority seals, and fixes warning roots instead of suppressing them.
   Full native CTest is **157/157**, and the affected Clang and ASan+UBSan selections are **38/38** each. Exact repair
   head `a65ff336` passed eight jobs in run **29760022151**, whose initial attempt and rerun both found one optimized
-  Win32 fixture output that violated the new natural-alignment preflight. Head `059aebd0` moved that repeated output to
-  stable heap storage and separated begin/allocation/bind diagnostics; run **29763190487** passed all five portable jobs,
-  headless, and no-Steam before the measured builds rejected the resulting implicit C4324 fixture tail padding. Exact
-  implementation head `a1f99336` retains a full-width attempt witness, removing that padding without suppressing the
-  warning. Focused GCC/Clang/ASan+UBSan runtime tests, genuine i386/AArch64 compile-link, and an i386 tail-padding probe
-  pass; the final documentation head must preserve the same code through the all-nine hosted and exact-head review
-  gates. No production caller is enrolled. The immediate sequence is the ABI-neutral journal capacity/demand split, a
-  production-neutral externally serialized runtime/registry facade, and then the atomic seven-site loader cutover;
+  Win32 fixture automatic-output path sensitive to the new natural-alignment preflight. Head `059aebd0` moved that
+  output to stable heap storage and separated begin/allocation/bind diagnostics. Run **29763190487** passed all five
+  portable jobs, headless, and no-Steam before the measured builds rejected the resulting implicit C4324 fixture tail
+  padding. Exact implementation head `a1f99336` retains a full-width attempt witness, removing that padding without
+  suppressing the warning. Focused GCC/Clang/ASan+UBSan runtime tests, genuine i386/AArch64 compile-link, and an i386
+  tail-padding probe pass; the final documentation head must preserve the same code through the all-nine hosted and
+  exact-head review gates. No production caller is enrolled. The immediate sequence is the ABI-neutral journal
+  capacity/demand split, a production-neutral externally serialized runtime/registry facade, and then the atomic
+  seven-site loader cutover;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with

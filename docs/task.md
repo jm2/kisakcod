@@ -120,7 +120,7 @@ work item changes. Do not create session-specific handoff files.
   warning suppressions, including alias-safe packed dvar decoding and portable legacy identifiers. Full native CTest is
   **157/157**; the repair-head Clang and ASan+UBSan affected selection is **38/38** in each tree. Exact head `a65ff336`
   passed eight hosted jobs in run **29760022151**, but both its initial attempt and failed-job rerun exposed one optimized
-  Win32 fixture output whose automatic `AllocationResult` did not satisfy the new alignment preflight. Head `059aebd0`
+  Win32 fixture automatic-output path consistent with rejection by the new alignment preflight. Head `059aebd0`
   moved that repeatedly published result to stable naturally aligned heap storage and split the begin/allocation/bind
   assertions; run **29763190487** then passed the five portable jobs, headless, and no-Steam builds before both measured
   Win32 jobs rejected implicit C4324 tail padding introduced around the fixture's existing aligned zone member. Exact
@@ -1920,13 +1920,15 @@ alignment seams. Production enrollment is still zero.
    changing its 52-byte layout or planner signature. Capacity remains the token/header-driven constructed-entry extent;
    publish the exact expected count only after token preflight and successful ownership begin. Cover capacity greater
    than expected, zero expected with nonzero capacity, over-capacity failure atomicity, retry, teardown, and source seals.
+   Keep this prerequisite unenrolled: the cutover must obtain `XAssetList::stringList.count` before storage binding and
+   stream enrollment even though the legacy path currently reads it only after allocation and stream initialization.
 2. Add a production-neutral process-lifetime runtime facade with one nonblocking external serializer and a private
    registry-coordinator facade. It must enforce runtime -> transaction -> hash -> script-string -> memory-tree ordering,
    reject release while a borrowed/standalone registry scope is active, expose no admission capability, add no new fixed
    critical-section enum slot, preserve exactly seven raw sites, and enroll no loader caller.
-3. Then perform one atomic seven-site loader cutover: claim
-   exact generations, stage/transfer
-   non-null root strings, publish `Live` only after fallible closure and `PMem_EndAlloc`, route unload through terminal
+3. Then perform one atomic seven-site loader cutover: claim exact generations, stage both root-string outputs through an
+   aligned local `std::uint32_t` before copying into stream-backed fields, transfer non-null root strings, and publish
+   `Live` only after fallible closure and `PMem_EndAlloc`; route unload through terminal
    adapters, and replace exactly five registry-coordinator operations plus two exact-key root-journal stages. Partial
    enrollment remains forbidden. Current database-thread longjmp remains process-fatal and must not be described as
    recoverable until the loader is converted to status returns.

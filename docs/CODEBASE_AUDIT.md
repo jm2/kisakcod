@@ -135,13 +135,13 @@ reset-authoritative FX-workspace topology, rejects mixed legacy/composite enroll
 direct-call authority seals, and
 removes the warning suppressions after fixing their causes. Full native CTest is **157/157** and the Clang plus
 ASan+UBSan affected selections are **38/38** each. Exact head `a65ff336` passed eight jobs in run **29760022151** but
-reproduced one optimized-Win32 automatic-output alignment failure twice; heap-backed result head `059aebd0` then passed
-the five portable, headless, and no-Steam jobs in run **29763190487** before both measured builds rejected newly implicit
-C4324 fixture tail padding. Exact implementation head `a1f99336` retains a full-width attempt witness to remove that
-padding without suppression and passes focused GCC/Clang/sanitizer, genuine i386/AArch64 compile-link, and i386 padding
-checks. The final documentation head must preserve identical code through hosted/review gates. The next sequence is the
-ABI-neutral journal capacity/demand split, an externally serialized production-neutral facade, and one atomic seven-site
-loader cutover.
+reproduced one optimized-Win32 failure at the alignment-sensitive automatic-output boundary twice; heap-backed result
+head `059aebd0` then passed the five portable, headless, and no-Steam jobs in run **29763190487** before both measured
+builds rejected newly implicit C4324 fixture tail padding. Exact implementation head `a1f99336` retains a full-width
+attempt witness to remove that padding without suppression and passes focused GCC/Clang/sanitizer, genuine i386/AArch64
+compile-link, and i386 padding checks. The final documentation head must preserve identical code through hosted/review
+gates. The next sequence is the ABI-neutral journal capacity/demand split, an externally serialized production-neutral
+facade, and one atomic seven-site loader cutover.
 
 Merged PR #61's production-neutral zone-stream ownership stack adds one
 durable exact-key NeverBound/Bound/Invalidated receipt per generation and one reusable controller over the process-wide
