@@ -10287,7 +10287,7 @@ require_security_exact_class_digest(
     "PendingCopyAdmissionReceipt")
 require_security_exact_class_digest(
     _security_pending_copy_ledger_class
-    439945331a093f42c8c28f306d791adc709015b07e90e51690661677a7ce21ea
+    109b7d1aded99dbead4c48e91e1c12bee6ab6b693d8490fbdce958cf78404254
     "PendingCopyLedger")
 require_security_exact_class_digest(
     _zone_runtime_receipt_capsule_slice

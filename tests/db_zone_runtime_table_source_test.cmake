@@ -679,7 +679,7 @@ require_exact_class_digest(_pending_admission_receipt_class
     1a01a9876cb706c14d6bb8411daa2f05f33c115059cc3166d451f0d8b1621b64
     "PendingCopyAdmissionReceipt")
 require_exact_class_digest(_pending_copy_ledger_class
-    439945331a093f42c8c28f306d791adc709015b07e90e51690661677a7ce21ea
+    109b7d1aded99dbead4c48e91e1c12bee6ab6b693d8490fbdce958cf78404254
     "PendingCopyLedger")
 require_exact_class_digest(_receipt_capsule_class
     2eb407cda4acfe1b933c81b8fea804bb94eb1cc0b231cc1afeb3b94ebed5e9fd

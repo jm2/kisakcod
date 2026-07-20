@@ -555,7 +555,11 @@ Completed foundation work:
   once at table scope. It remains deliberately production-neutral: no generation, PMem scope, pending copy, or legacy
   loader site is claimed. Exact friend/body/class-digest/source-walk/production-access seals cover the complete authority
   topology. On the PR #66 master base, full GCC Debug CTest passes **153/153**; all six standalone source/security scripts,
-  native and `-m32` layout compilation, `git diff --check`, and an independent adversarial re-audit pass;
+  native and `-m32` layout compilation, `git diff --check`, and an independent adversarial re-audit pass. Initial PR #67
+  run **29708555173** found MSVC x86 padding the private pending-copy generation descriptor to 0x30 rather than the
+  intended 0x28; ordering its eight-byte serial before its pointer restores one portable 0x28/0x30 descriptor contract
+  and the 0xE900 ILP32 table without changing serialized data or native64 size. The post-fix full **153/153**, six-script,
+  and strict `-m32` gates pass locally;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with

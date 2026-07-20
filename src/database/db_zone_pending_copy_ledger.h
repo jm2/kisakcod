@@ -234,13 +234,18 @@ private:
     struct GenerationDescriptor final
     {
         zone_load::ZoneLoadContextKey key{};
-        PendingCopyAdmissionReceipt *receipt = nullptr;
         std::uint64_t serial = 0;
+        PendingCopyAdmissionReceipt *receipt = nullptr;
         std::uint32_t firstRecord = 0;
         std::uint32_t recordCount = 0;
         GenerationPhase phase = GenerationPhase::Empty;
         std::uint8_t reserved[3]{};
     };
+
+    // Keep the 64-bit serial ahead of the pointer so MSVC x86 does not insert
+    // an otherwise ABI-specific four-byte hole before it. The descriptor is
+    // private runtime state and is never serialized.
+    RUNTIME_SIZE(GenerationDescriptor, 0x28, 0x30);
 
     friend class PendingCopyAdmissionReceipt;
     friend PendingCopyStatus TryInitializePendingCopyLedger(

@@ -835,7 +835,13 @@ work item changes. Do not create session-specific handoff files.
   seven legacy loader sites. Exact body, friend-inventory, normalized class-digest, extension-independent source-walk,
   alternate-spelling/ADL/alias/macro, layout, and production-access seals close the passive authority surface. After
   rebase onto PR #66 master, full GCC Debug CTest passes **153/153**; all six standalone source/security scripts,
-  native and `-m32` layout compilation, `git diff --check`, and an independent adversarial re-audit also pass.
+  native and `-m32` layout compilation, `git diff --check`, and an independent adversarial re-audit also pass. Initial
+  PR #67 run **29708555173** exposed an MSVC x86-only 0x40 table inflation: the private pending-copy generation
+  descriptor placed a pointer before an eight-byte serial, so MSVC padded each of eight descriptors to 0x30 while GCC
+  i386 used the intended 0x28. The review fix orders the serial first and seals the descriptor at 0x28/0x30 without
+  changing serialized data or native64 size; it also adds Gemini's correct direct `<iterator>` include. Post-fix local
+  full CTest remains **153/153**, all six source/security scripts pass, and strict `-m32` production-seal compilation
+  confirms the intended 0xE900 table layout.
 - Merged registry-coordinator foundation: PR #64 is production-neutral and leaves all seven legacy sites frozen.
   Preflight found that the initial per-operation `db_hashCritSect` acquisition would self-deadlock
   at the hash-held production sites, public low-level batch functions could bypass coordinator authority, fallible finish

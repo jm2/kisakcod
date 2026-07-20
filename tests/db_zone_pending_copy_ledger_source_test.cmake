@@ -605,6 +605,7 @@ foreach(_marker IN ITEMS
     "kFirstAssetEntryIndex = 1"
     "kLastAssetEntryIndex = 0x7FFF"
     "RUNTIME_SIZE(PendingCopyRecord, 0x18, 0x18);"
+    "RUNTIME_SIZE(GenerationDescriptor, 0x28, 0x30);"
     "std::array<PendingCopyRecord, kPendingCopyRecordCapacity> records_{};"
     "std::array<GenerationDescriptor, kPendingCopyGenerationCapacity>"
     "const PendingCopyLedger *self_ = nullptr;"
