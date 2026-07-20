@@ -58,8 +58,19 @@ of checked boxes.
     - [x] Pass full GCC CTest **160/160**, focused Clang and ASan+UBSan,
       macro/source/security, genuine i386, and AArch64 local gates at code
       checkpoint `65ced175`.
-    - [ ] Publish the callback-borrow PR, obtain exact-head hosted CI/review,
-      merge, and verify authoritative post-merge CI.
+    - [x] Publish PR #74 and pass all nine hosted jobs at initial exact head
+      `c0691426` in run **29785681754**.
+    - [x] Repair both initial Codex/Gemini findings at `3ed88879`: isolate all
+      packed receipt fields and restore an exact callback admission only after
+      recoverable coordinator contention plus inactive reauthentication.
+    - [x] Repeat full GCC CTest **160/160**, focused Clang and ASan+UBSan,
+      source/security, genuine i386, and AArch64 gates on the review-repair
+      tree; two independent audits found no remaining defect.
+    - [ ] Pass final exact-head hosted CI and Codex/Gemini review, resolve every
+      thread, squash-merge PR #74, and verify authoritative post-merge CI.
+    - [ ] Before production enrollment, add a literal facade -> table ->
+      controller -> coordinator -> registry callback-retry fixture; current
+      coverage proves that chain compositionally.
   - [ ] Add an exact-key, by-value pending-copy read/visitor so delayed-image
     completion and abandonment never retain `g_copyInfo` pointers.
   - [ ] Add stable process-lifetime contexts for all 33 physical zone slots,
@@ -321,12 +332,17 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   sites. Final exact head `7afb2ca5f4f90144184e698d909cd99c0e3477b5` passed all nine jobs in run
   **29781843001**, exact-head Codex and Gemini reviews were clean with zero unresolved threads, and it squash-merged as
   `909f93090e463e28f0e38afcd33ac65c3b084602`; authoritative post-merge run **29782835695** passed all nine jobs.
-  The current branch adds the next private callback-borrow prerequisite. Callback authority is exact-keyed,
+  PR #74 adds the next private callback-borrow prerequisite. Callback authority is exact-keyed,
   phase/purpose/thread scoped, one-shot at the table, and bound to a mirrored non-wrapping per-window witness in both the
   controller and coordinator. Admission wrappers snapshot key, table-entry identity, and callback tuples across external
   calls and suppress the later live-admission side effect on any void-callback failure. Wrong-slot contention is `Busy`,
   while torn or multiple markers poison. The established coordinator mode values and 32/64-bit ABI sizes remain frozen,
-  and production enrollment remains zero. Strict requested-target delivery remains **0/5**.
+  and production enrollment remains zero. Initial head `c0691426` passed all nine hosted jobs in run **29785681754**.
+  Review repair `3ed88879` masks each receipt field independently and restores a consumed callback marker after only
+  recoverable coordinator admission contention, inactive reauthentication, and exact table/key/phase validation; all
+  other results remain one-shot. Full GCC CTest **160/160**, focused Clang and ASan+UBSan, source/security, genuine
+  i386/AArch64, and two independent audits pass on that repair tree. Final exact-head hosted review/CI, thread closure,
+  merge, and post-merge CI remain. Strict requested-target delivery remains **0/5**.
 - Merged script-string ownership foundation: PR #48 adds a dedicated recursive outer DB transaction
   serializer, a private report-free journal adapter, bounded report-free ordinary/database-user ownership operations,
   and failure-atomic memory-tree allocate/query/free APIs. Runtime IDs remain explicitly limited to
@@ -605,8 +621,10 @@ and reference target; it is not one of the five requested strict-delivery boxes.
   change retail bytes. PR #68 later removed the legacy native64-invalid `PMem_FreeIndex`/`PMem_EndAllocInPrim`
   handling; the serialized global PMem boundary and unused permanent-Ended `$init` controller now exist locally through
   `852e7db9`. PR #71 supplies the merged exact-key composite adapters, PR #72 supplies the merged capacity/demand
-  prerequisite, and PR #73 supplies the merged serialized facade. The current branch adds callback-scoped registry
-  borrowing without production enrollment; the remaining loader prerequisites and atomic production cutover follow.
+  prerequisite, and PR #73 supplies the merged serialized facade. PR #74 publishes callback-scoped registry borrowing
+  without production enrollment; its initial nine-job run is green and both initial review findings are repaired at
+  `3ed88879`, with final exact-head review/CI and merge pending. The remaining loader prerequisites and atomic production
+  cutover follow.
   Exact-head run **29673379640** passed all nine jobs; Codex reviewed exact
   final head `0eec9b1e`, Gemini reviewed identical code head `f04c63e0`, both were clean, and zero review threads remained before
   squash merge `74916b5b`. Authoritative
@@ -2114,8 +2132,8 @@ passed all nine jobs in run **29781843001** with clean exact-head Codex/Gemini
 review and zero unresolved threads, squash-merged the production-neutral
 serialized runtime facade as `909f93090e463e28f0e38afcd33ac65c3b084602`,
 and passed all nine authoritative post-merge jobs in run **29782835695**.
-Production enrollment remains zero. The current branch commits `7cdb31e8` and
-`65ced175` implement the private callback-borrow prerequisite: an exact-key,
+Production enrollment remains zero. PR #74 commits `7cdb31e8` and `65ced175`
+implement the private callback-borrow prerequisite: an exact-key,
 phase/purpose/thread-scoped, one-shot table authorization bound to a mirrored,
 non-wrapping callback-window witness in the controller and coordinator. The
 implementation preserves established coordinator mode values and 32/64-bit ABI
@@ -2124,7 +2142,13 @@ markers, and suppresses later admission effects after any callback failure.
 Local evidence includes full GCC CTest **160/160**, focused Clang and
 ASan+UBSan, macro/source/security, genuine i386, and AArch64 gates at code
 checkpoint `65ced175`; an independent final audit found no actionable defect.
-Exact-head hosted review, CI, merge, and authoritative post-merge CI remain.
+Initial exact head `c0691426` passed all nine hosted jobs in run **29785681754**.
+Review repair `3ed88879` masks all packed receipt fields and restores the exact
+callback marker after only recoverable coordinator admission contention plus
+inactive reauthentication. Full GCC **160/160**, focused Clang/sanitizer,
+source/security, genuine i386/AArch64, and two independent audits pass on that
+repair tree. Final exact-head hosted review/CI, thread closure, merge,
+authoritative post-merge CI, and the literal full-chain fixture remain.
 
 - [x] **Priority 1 — Facade publication:** PR #73 landed the
    production-neutral process-lifetime facade with one nonblocking outer
@@ -2141,7 +2165,7 @@ Exact-head hosted review, CI, merge, and authoritative post-merge CI remain.
    adapters, and replace exactly five registry-coordinator operations plus two exact-key root-journal stages. Partial
    enrollment remains forbidden. Current database-thread longjmp remains process-fatal and must not be described as
    recoverable until the loader is converted to status returns.
-   - [ ] Publish and merge the locally complete private exact-key registry borrow
+   - [ ] Publish and merge the private exact-key registry borrow
      for the exact Unpublishing, Cleaning, Admitting, and Unloading callback
      purposes; ordinary facade reentry correctly remains `Busy`.
      - [x] Bind every borrow to the exact generation, transaction, callback
@@ -2150,8 +2174,14 @@ Exact-head hosted review, CI, merge, and authoritative post-merge CI remain.
        windows, wrong-slot contention, torn markers, and two-stage admission.
      - [x] Pass the required local compiler, sanitizer, architecture, source,
        security, and independent-review gates at `65ced175`.
-     - [ ] Complete exact-head hosted review/CI, merge, and authoritative
-       post-merge CI.
+     - [x] Publish PR #74; initial exact head `c0691426` passed all nine hosted
+       jobs in run **29785681754**.
+     - [x] Repair the receipt-field isolation and recoverable callback-retry
+       findings at `3ed88879`, repeat full GCC **160/160** plus focused
+       Clang/sanitizer/i386/AArch64 gates, and complete two clean independent
+       audits.
+     - [ ] Complete final exact-head hosted review/CI, resolve every thread,
+       merge, and pass authoritative post-merge CI.
      - [ ] Before production enrollment, factor reusable full-chain test subjects
        and add a real facade -> table -> controller -> coordinator -> registry
        operation fixture; current coverage proves the chain compositionally.
