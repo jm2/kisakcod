@@ -10,7 +10,7 @@
 PhysicalMemory g_mem;
 int g_overAllocatedSize;
 
-void __cdecl PMem_Init()
+void KISAK_CDECL PMem_Init()
 {
     constexpr std::size_t memorySize = 0x8000000u;
     void *const reservation = Sys_VirtualMemoryReserve(memorySize);
@@ -28,7 +28,7 @@ void __cdecl PMem_Init()
         static_cast<uint32_t>(memorySize));
 }
 
-void __cdecl PMem_DumpMemStats()
+void KISAK_CDECL PMem_DumpMemStats()
 {
     double v0; // st7
     int FreeAmount; // eax
@@ -61,7 +61,7 @@ void __cdecl PMem_DumpMemStats()
     Com_Printf(16, "------------------------\n");
 }
 
-void __cdecl PMem_InitPhysicalMemory(PhysicalMemory *pmem, uint8_t *memory, uint32_t memorySize)
+void KISAK_CDECL PMem_InitPhysicalMemory(PhysicalMemory *pmem, uint8_t *memory, uint32_t memorySize)
 {
     if (!pmem)
         MyAssertHandler(".\\universal\\physicalmemory.cpp", 277, 0, "%s", "pmem");
@@ -72,7 +72,7 @@ void __cdecl PMem_InitPhysicalMemory(PhysicalMemory *pmem, uint8_t *memory, uint
     pmem->prim[1].pos = memorySize;
 }
 
-void __cdecl PMem_BeginAlloc(const char *name, uint32_t allocType)
+void KISAK_CDECL PMem_BeginAlloc(const char *name, uint32_t allocType)
 {
     if (allocType >= 2)
     {
@@ -88,7 +88,7 @@ void __cdecl PMem_BeginAlloc(const char *name, uint32_t allocType)
     PMem_BeginAllocInPrim(&g_mem.prim[allocType], name);
 }
 
-void __cdecl PMem_BeginAllocInPrim(PhysicalMemoryPrim *prim, const char *name)
+void KISAK_CDECL PMem_BeginAllocInPrim(PhysicalMemoryPrim *prim, const char *name)
 {
     PhysicalMemoryAllocation *allocEntry; // [esp+0h] [ebp-4h]
 
@@ -107,7 +107,7 @@ void __cdecl PMem_BeginAllocInPrim(PhysicalMemoryPrim *prim, const char *name)
         MyAssertHandler(".\\universal\\physicalmemory.cpp", 332, 0, "%s", "!prim->allocName");
         return;
     }
-    if (prim->allocListCount >= 0x20)
+    if (prim->allocListCount >= MAX_PHYSICAL_ALLOCATIONS)
     {
         MyAssertHandler(".\\universal\\physicalmemory.cpp", 333, 0, "%s", "prim->allocListCount < MAX_PHYSICAL_ALLOCATIONS");
         return;
@@ -118,7 +118,7 @@ void __cdecl PMem_BeginAllocInPrim(PhysicalMemoryPrim *prim, const char *name)
     allocEntry->pos = prim->pos;
 }
 
-void __cdecl PMem_EndAlloc(const char *name, uint32_t allocType)
+void KISAK_CDECL PMem_EndAlloc(const char *name, uint32_t allocType)
 {
     if (allocType >= 2)
     {
@@ -134,7 +134,7 @@ void __cdecl PMem_EndAlloc(const char *name, uint32_t allocType)
     PMem_EndAllocInPrim(&g_mem.prim[allocType], name);
 }
 
-void __cdecl PMem_EndAllocInPrim(PhysicalMemoryPrim *prim, const char *name)
+void KISAK_CDECL PMem_EndAllocInPrim(PhysicalMemoryPrim *prim, const char *name)
 {
     if (!prim)
     {
@@ -156,7 +156,7 @@ void __cdecl PMem_EndAllocInPrim(PhysicalMemoryPrim *prim, const char *name)
         MyAssertHandler(".\\universal\\physicalmemory.cpp", 368, 0, "%s", "prim->allocListCount > 0");
         return;
     }
-    if (prim->allocListCount > 0x20)
+    if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)
     {
         MyAssertHandler(".\\universal\\physicalmemory.cpp", 369, 0, "%s", "prim->allocListCount <= MAX_PHYSICAL_ALLOCATIONS");
         return;
@@ -170,7 +170,7 @@ void __cdecl PMem_EndAllocInPrim(PhysicalMemoryPrim *prim, const char *name)
     prim->allocName = nullptr;
 }
 
-void __cdecl PMem_Free(const char *name, uint32_t allocType)
+void KISAK_CDECL PMem_Free(const char *name, uint32_t allocType)
 {
     if (allocType >= 2)
     {
@@ -186,7 +186,7 @@ void __cdecl PMem_Free(const char *name, uint32_t allocType)
     PMem_FreeInPrim(&g_mem.prim[allocType], name);
 }
 
-void __cdecl PMem_FreeInPrim(PhysicalMemoryPrim *prim, const char *name)
+void KISAK_CDECL PMem_FreeInPrim(PhysicalMemoryPrim *prim, const char *name)
 {
     uint32_t allocIndex; // [esp+0h] [ebp-8h]
 
@@ -200,7 +200,7 @@ void __cdecl PMem_FreeInPrim(PhysicalMemoryPrim *prim, const char *name)
         MyAssertHandler(".\\universal\\physicalmemory.cpp", 438, 0, "%s", "name");
         return;
     }
-    if (prim->allocListCount > 0x20)
+    if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)
     {
         MyAssertHandler(".\\universal\\physicalmemory.cpp", 439, 0, "%s", "prim->allocListCount <= MAX_PHYSICAL_ALLOCATIONS");
         return;
@@ -215,7 +215,7 @@ void __cdecl PMem_FreeInPrim(PhysicalMemoryPrim *prim, const char *name)
     }
 }
 
-void __cdecl PMem_FreeIndex(PhysicalMemoryPrim *prim, uint32_t allocIndex)
+void KISAK_CDECL PMem_FreeIndex(PhysicalMemoryPrim *prim, uint32_t allocIndex)
 {
     PhysicalMemoryAllocation *allocEntry; // [esp+0h] [ebp-Ch]
     const char *name; // [esp+4h] [ebp-8h]
@@ -235,7 +235,7 @@ void __cdecl PMem_FreeIndex(PhysicalMemoryPrim *prim, uint32_t allocIndex)
         MyAssertHandler(".\\universal\\physicalmemory.cpp", 424, 0, "%s", "prim->allocListCount");
         return;
     }
-    if (prim->allocListCount > 0x20)
+    if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)
     {
         MyAssertHandler(".\\universal\\physicalmemory.cpp", 395, 0, "%s", "prim->allocListCount <= MAX_PHYSICAL_ALLOCATIONS");
         return;
@@ -277,12 +277,12 @@ void __cdecl PMem_FreeIndex(PhysicalMemoryPrim *prim, uint32_t allocIndex)
     }
 }
 
-int __cdecl PMem_GetOverAllocatedSize()
+int KISAK_CDECL PMem_GetOverAllocatedSize()
 {
     return g_overAllocatedSize;
 }
 
-uint8_t *__cdecl PMem_Alloc(
+uint8_t *KISAK_CDECL PMem_Alloc(
     uint32_t size,
     uint32_t alignment,
     uint32_t type,
@@ -311,7 +311,7 @@ uint8_t *__cdecl PMem_Alloc(
     return result;
 }
 
-uint8_t *__cdecl PMem_TryAlloc(
+uint8_t *KISAK_CDECL PMem_TryAlloc(
     uint32_t size,
     uint32_t alignment,
     uint32_t type,
@@ -375,7 +375,7 @@ uint8_t *__cdecl PMem_TryAlloc(
     return &g_mem.buf[lowPos];
 }
 
-uint32_t __cdecl PMem_GetFreeAmount()
+uint32_t KISAK_CDECL PMem_GetFreeAmount()
 {
     if (g_mem.prim[0].pos > g_mem.prim[1].pos)
         return 0;

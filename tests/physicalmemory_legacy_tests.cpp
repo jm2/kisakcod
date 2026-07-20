@@ -508,10 +508,10 @@ void TestHighPrimRetainsInitialAllocation()
 } // namespace
 
 void MyAssertHandler(
-    const char *const filename,
+    const char *filename,
     const int line,
     const int type,
-    const char *const format,
+    const char *format,
     ...)
 {
     ++g_assertReports;

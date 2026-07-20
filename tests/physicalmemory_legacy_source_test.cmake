@@ -84,38 +84,38 @@ endfunction()
 
 extract_function(
     "${physicalmemory_source}"
-    "void __cdecl PMem_BeginAlloc("
-    "void __cdecl PMem_BeginAllocInPrim("
+    "void KISAK_CDECL PMem_BeginAlloc("
+    "void KISAK_CDECL PMem_BeginAllocInPrim("
     begin_wrapper)
 extract_function(
     "${physicalmemory_source}"
-    "void __cdecl PMem_BeginAllocInPrim("
-    "void __cdecl PMem_EndAlloc("
+    "void KISAK_CDECL PMem_BeginAllocInPrim("
+    "void KISAK_CDECL PMem_EndAlloc("
     begin_in_prim)
 extract_function(
     "${physicalmemory_source}"
-    "void __cdecl PMem_EndAlloc("
-    "void __cdecl PMem_EndAllocInPrim("
+    "void KISAK_CDECL PMem_EndAlloc("
+    "void KISAK_CDECL PMem_EndAllocInPrim("
     end_wrapper)
 extract_function(
     "${physicalmemory_source}"
-    "void __cdecl PMem_EndAllocInPrim("
-    "void __cdecl PMem_Free("
+    "void KISAK_CDECL PMem_EndAllocInPrim("
+    "void KISAK_CDECL PMem_Free("
     end_in_prim)
 extract_function(
     "${physicalmemory_source}"
-    "void __cdecl PMem_Free("
-    "void __cdecl PMem_FreeInPrim("
+    "void KISAK_CDECL PMem_Free("
+    "void KISAK_CDECL PMem_FreeInPrim("
     free_wrapper)
 extract_function(
     "${physicalmemory_source}"
-    "void __cdecl PMem_FreeInPrim("
-    "void __cdecl PMem_FreeIndex("
+    "void KISAK_CDECL PMem_FreeInPrim("
+    "void KISAK_CDECL PMem_FreeIndex("
     free_in_prim)
 extract_function(
     "${physicalmemory_source}"
-    "void __cdecl PMem_FreeIndex("
-    "int __cdecl PMem_GetOverAllocatedSize("
+    "void KISAK_CDECL PMem_FreeIndex("
+    "int KISAK_CDECL PMem_GetOverAllocatedSize("
     free_index)
 
 require_text(
@@ -130,6 +130,26 @@ require_text(
     "${physicalmemory_header}"
     "void KISAK_CDECL PMem_Init();"
     "portable public calling convention")
+require_text(
+    "${physicalmemory_header}"
+    "inline constexpr std::uint32_t MAX_PHYSICAL_ALLOCATIONS = 32u;"
+    "named physical-allocation capacity")
+require_text(
+    "${physicalmemory_header}"
+    "PhysicalMemoryAllocation allocList[MAX_PHYSICAL_ALLOCATIONS];"
+    "named allocation-list extent")
+require_text(
+    "${physicalmemory_fixture}"
+    "void MyAssertHandler(\n    const char *filename,\n    const int line,\n    const int type,\n    const char *format,"
+    "MSVC-compatible variadic assert fixture signature")
+reject_text(
+    "${physicalmemory_fixture}"
+    "const char *const filename"
+    "MSVC-incompatible top-level pointer const in assert fixture")
+reject_text(
+    "${physicalmemory_source}"
+    "__cdecl PMem_"
+    "hardcoded production PMem calling convention")
 require_text(
     "${physicalmemory_header}"
     "RUNTIME_SIZE(PhysicalMemoryAllocation, 0x8, 0x10);"
@@ -179,7 +199,7 @@ require_literal_count("${begin_in_prim}" "if (!name)" 1
     "null-name guard in BeginInPrim")
 require_literal_count("${begin_in_prim}" "if (prim->allocName)" 1
     "busy guard in BeginInPrim")
-require_literal_count("${begin_in_prim}" "if (prim->allocListCount >= 0x20)" 1
+require_literal_count("${begin_in_prim}" "if (prim->allocListCount >= MAX_PHYSICAL_ALLOCATIONS)" 1
     "capacity guard in BeginInPrim")
 require_literal_count("${begin_in_prim}" "return;" 4
     "fail-closed returns in BeginInPrim")
@@ -187,9 +207,9 @@ require_order("${begin_in_prim}" "if (!prim)" "if (!name)"
     "BeginInPrim null guards")
 require_order("${begin_in_prim}" "if (!name)" "if (prim->allocName)"
     "BeginInPrim name before busy guard")
-require_order("${begin_in_prim}" "if (prim->allocName)" "if (prim->allocListCount >= 0x20)"
+require_order("${begin_in_prim}" "if (prim->allocName)" "if (prim->allocListCount >= MAX_PHYSICAL_ALLOCATIONS)"
     "BeginInPrim busy before capacity guard")
-require_order("${begin_in_prim}" "if (prim->allocListCount >= 0x20)" "prim->allocName = name;"
+require_order("${begin_in_prim}" "if (prim->allocListCount >= MAX_PHYSICAL_ALLOCATIONS)" "prim->allocName = name;"
     "BeginInPrim validation before active-name mutation")
 require_order("${begin_in_prim}" "prim->allocName = name;" "allocEntry = &prim->allocList[prim->allocListCount++];"
     "BeginInPrim active name before bounded entry append")
@@ -203,7 +223,7 @@ require_literal_count("${end_in_prim}" "if (prim->allocName != name)" 1
     "active-name guard in EndInPrim")
 require_literal_count("${end_in_prim}" "if (!prim->allocListCount)" 1
     "zero-count guard in EndInPrim")
-require_literal_count("${end_in_prim}" "if (prim->allocListCount > 0x20)" 1
+require_literal_count("${end_in_prim}" "if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)" 1
     "overcount guard in EndInPrim")
 require_literal_count("${end_in_prim}" "if (allocEntry.name != name)" 1
     "tail-identity guard in EndInPrim")
@@ -215,9 +235,9 @@ require_order("${end_in_prim}" "if (!name)" "if (prim->allocName != name)"
     "EndInPrim name before active identity")
 require_order("${end_in_prim}" "if (prim->allocName != name)" "if (!prim->allocListCount)"
     "EndInPrim identity before count")
-require_order("${end_in_prim}" "if (!prim->allocListCount)" "if (prim->allocListCount > 0x20)"
+require_order("${end_in_prim}" "if (!prim->allocListCount)" "if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)"
     "EndInPrim zero before overcount")
-require_order("${end_in_prim}" "if (prim->allocListCount > 0x20)" "const PhysicalMemoryAllocation &allocEntry"
+require_order("${end_in_prim}" "if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)" "const PhysicalMemoryAllocation &allocEntry"
     "EndInPrim bounded typed tail access")
 require_order("${end_in_prim}" "if (allocEntry.name != name)" "prim->allocName = nullptr;"
     "EndInPrim topology validation before clear")
@@ -227,15 +247,15 @@ require_literal_count("${free_in_prim}" "if (!prim)" 1
     "null-prim guard in FreeInPrim")
 require_literal_count("${free_in_prim}" "if (!name)" 1
     "null-name guard in FreeInPrim")
-require_literal_count("${free_in_prim}" "if (prim->allocListCount > 0x20)" 1
+require_literal_count("${free_in_prim}" "if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)" 1
     "overcount guard in FreeInPrim")
 require_literal_count("${free_in_prim}" "return;" 4
     "three rejected inputs plus successful-match return in FreeInPrim")
 require_order("${free_in_prim}" "if (!prim)" "if (!name)"
     "FreeInPrim null guards")
-require_order("${free_in_prim}" "if (!name)" "if (prim->allocListCount > 0x20)"
+require_order("${free_in_prim}" "if (!name)" "if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)"
     "FreeInPrim name before overcount")
-require_order("${free_in_prim}" "if (prim->allocListCount > 0x20)" "for (allocIndex = 0;"
+require_order("${free_in_prim}" "if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)" "for (allocIndex = 0;"
     "FreeInPrim validation before scan")
 
 # FreeIndex validates every dereference prerequisite before clearing an entry.
@@ -245,7 +265,7 @@ require_literal_count("${free_index}" "if (prim->allocName)" 1
     "busy guard in FreeIndex")
 require_literal_count("${free_index}" "if (!prim->allocListCount)" 1
     "zero-count guard in FreeIndex")
-require_literal_count("${free_index}" "if (prim->allocListCount > 0x20)" 1
+require_literal_count("${free_index}" "if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)" 1
     "overcount guard in FreeIndex")
 require_literal_count("${free_index}" "if (allocIndex >= prim->allocListCount)" 1
     "index guard in FreeIndex")
@@ -257,9 +277,9 @@ require_order("${free_index}" "if (!prim)" "if (prim->allocName)"
     "FreeIndex null before busy")
 require_order("${free_index}" "if (prim->allocName)" "if (!prim->allocListCount)"
     "FreeIndex busy before count")
-require_order("${free_index}" "if (!prim->allocListCount)" "if (prim->allocListCount > 0x20)"
+require_order("${free_index}" "if (!prim->allocListCount)" "if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)"
     "FreeIndex zero before overcount")
-require_order("${free_index}" "if (prim->allocListCount > 0x20)" "if (allocIndex >= prim->allocListCount)"
+require_order("${free_index}" "if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)" "if (allocIndex >= prim->allocListCount)"
     "FreeIndex count before index")
 require_order("${free_index}" "if (allocIndex >= prim->allocListCount)" "allocEntry = &prim->allocList[allocIndex];"
     "FreeIndex validation before entry dereference")
