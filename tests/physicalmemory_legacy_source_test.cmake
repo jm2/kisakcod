@@ -147,10 +147,30 @@ foreach(marker IN ITEMS
     "std::uint8_t reserved[3]{};"
     "RUNTIME_SIZE(AllocationResult, 0x10, 0x18);"
     "RUNTIME_OFFSET(AllocationResult, status, 0xC, 0x10);"
+    "DIAGNOSTIC_ENTRIES_PER_PRIM = 32u;"
+    "DIAGNOSTIC_NAME_CAPACITY = 19u;"
+    "enum class DiagnosticEntryKind : std::uint8_t"
+    "enum class DiagnosticSnapshotStatus : std::uint8_t"
+    "struct DiagnosticEntry final"
+    "char name[DIAGNOSTIC_NAME_CAPACITY]{};"
+    "RUNTIME_SIZE(DiagnosticEntry, 0x18, 0x18);"
+    "RUNTIME_OFFSET(DiagnosticEntry, kind, 0x17, 0x17);"
+    "struct DiagnosticSnapshot final"
+    "RUNTIME_SIZE(DiagnosticSnapshot, 0x610, 0x610);"
+    "RUNTIME_OFFSET(DiagnosticSnapshot, status, 0x60C, 0x60C);"
     "TryInitialize() noexcept;"
     "TryAllocate("
-    "std::uint32_t allocType) noexcept;")
+    "std::uint32_t allocType) noexcept;"
+    "TryCaptureDiagnosticSnapshot() noexcept;")
     require_text("${runtime_header}" "${marker}" "narrow runtime API marker")
+endforeach()
+extract_slice("${runtime_header}"
+    "struct DiagnosticEntry final"
+    "[[nodiscard]] InitializationStatus"
+    diagnostic_api_types)
+foreach(pointer_marker IN ITEMS "*" "&" "uintptr")
+    reject_text("${diagnostic_api_types}" "${pointer_marker}"
+        "pointer-like field in diagnostic snapshot API")
 endforeach()
 foreach(forbidden IN ITEMS
     "physicalmemory.h"
@@ -187,6 +207,8 @@ require_text("${production_manifest}"
 # control/extent, and a per-thread compatibility shortfall.
 foreach(marker IN ITEMS
     "struct RetainedExtent final"
+    "struct OwnedAllocationName final"
+    "struct OwnedNameState final"
     "struct RuntimeControl final"
     "PhysicalMemory g_mem{};"
     "thread_local int g_overAllocatedSize{};"
@@ -198,7 +220,10 @@ foreach(marker IN ITEMS
     "AddressRangeIsValid("
     "AddressRangesOverlap("
     "RetainedExtentIsDisjointFromControl("
+    "OwnedNamesArePristine("
+    "OwnedNamesMatchMemory("
     "PhysicalMemoryIsPristine("
+    "UninitializedStateIsCoherent("
     "ReadyStateIsCoherent("
     "InitializingStateIsCoherent("
     "PoisonedStateIsCoherent("
@@ -207,6 +232,11 @@ foreach(marker IN ITEMS
     "&g_mem, sizeof(g_mem)"
     "&g_runtime, sizeof(g_runtime)")
     require_text("${source}" "${marker}" "hidden coherent runtime marker")
+endforeach()
+foreach(forbidden IN ITEMS
+    "strlen(" "strcpy(" "strncpy(" "snprintf(" "sprintf(")
+    reject_text("${source}" "${forbidden}"
+        "unbounded/formatted owned-name copy")
 endforeach()
 reject_text("${source}"
     "&g_overAllocatedSize, sizeof(g_overAllocatedSize)"
@@ -363,15 +393,15 @@ foreach(wrapper IN ITEMS PMem_BeginAlloc PMem_EndAlloc PMem_Free)
     if(wrapper STREQUAL "PMem_BeginAlloc")
         set(next "PMem_BeginAllocInPrim")
         set(core
-            "TryBeginAllocInPrimNoReport(&g_mem.prim[allocType], name);")
+            "TryBeginGlobalAllocNoReport(allocType, name);")
     elseif(wrapper STREQUAL "PMem_EndAlloc")
         set(next "PMem_EndAllocInPrim")
         set(core
-            "TryEndAllocInPrimNoReport(&g_mem.prim[allocType], name);")
+            "TryEndGlobalAllocNoReport(allocType, name);")
     else()
         set(next "PMem_FreeInPrim")
         set(core
-            "TryFreeInPrimNoReport(&g_mem.prim[allocType], name);")
+            "TryFreeGlobalAllocNoReport(allocType, name);")
     endif()
     extract_slice("${source}"
         "void KISAK_CDECL ${wrapper}("
@@ -465,14 +495,27 @@ foreach(marker IN ITEMS
     "if (allocIndex >= prim->allocListCount)"
     "entry = &prim->allocList[allocIndex];"
     "entry = &prim->allocList[prim->allocListCount - 1];"
-    "return {LegacyDiagnostic::FreeHole, name};"
-    "\"freeing '%s' caused a memory hole\\n\", result.name")
+    "hole.diagnostic = LegacyDiagnostic::FreeHole;"
+    "hole.borrowedName = name;"
+    "CopyBoundedName(result.ownedName, result.borrowedName);"
+    "result.ownsName = true;"
+    "? result.ownedName"
+    ": result.borrowedName;"
+    "\"freeing '%s' caused a memory hole\\n\", reportedName")
     require_text("${source}" "${marker}" "bounded legacy lifecycle marker")
 endforeach()
 
 extract_slice("${source}"
+    "LegacyOperationResult ValidateBeginAllocInPrimNoReport("
+    "void BeginAllocInPrimNoReport("
+    begin_validation)
+extract_slice("${source}"
+    "void BeginAllocInPrimNoReport("
     "LegacyOperationResult TryBeginAllocInPrimNoReport("
-    "LegacyOperationResult TryEndAllocInPrimNoReport("
+    begin_mutation)
+extract_slice("${source}"
+    "LegacyOperationResult TryBeginAllocInPrimNoReport("
+    "LegacyOperationResult TryBeginGlobalAllocNoReport("
     begin_core)
 extract_slice("${source}"
     "LegacyOperationResult TryEndAllocInPrimNoReport("
@@ -486,17 +529,21 @@ extract_slice("${source}"
     "LegacyOperationResult TryFreeInPrimNoReport("
     "LegacyOperationResult ReadinessDiagnostic("
     free_in_prim_core)
-require_order("${begin_core}" "if (!prim)" "if (!name)"
+require_order("${begin_validation}" "if (!prim)" "if (!name)"
     "BeginInPrim null guards")
-require_order("${begin_core}" "if (!name)" "if (prim->allocName)"
+require_order("${begin_validation}" "if (!name)" "if (prim->allocName)"
     "BeginInPrim name before active state")
-require_order("${begin_core}" "if (prim->allocName)"
+require_order("${begin_validation}" "if (prim->allocName)"
     "if (prim->allocListCount >= MAX_PHYSICAL_ALLOCATIONS)"
     "BeginInPrim active state before capacity")
-require_order("${begin_core}"
-    "if (prim->allocListCount >= MAX_PHYSICAL_ALLOCATIONS)"
+require_order("${source}"
+    "LegacyOperationResult ValidateBeginAllocInPrimNoReport("
     "prim->allocName = name;"
     "BeginInPrim validation before mutation")
+require_order("${begin_core}"
+    "ValidateBeginAllocInPrimNoReport(prim, name);"
+    "BeginAllocInPrimNoReport(prim, name);"
+    "BeginInPrim validation before mutation delegate")
 require_order("${end_core}" "if (!prim)" "if (!name)"
     "EndInPrim null guards")
 require_order("${end_core}" "if (!name)" "if (prim->allocName != name)"
@@ -535,7 +582,9 @@ require_order("${free_in_prim_core}"
     "if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)"
     "for (std::uint32_t index = 0; index < prim->allocListCount; ++index)"
     "FreeInPrim bound before scan")
-foreach(core_name IN ITEMS begin_core end_core free_index_core free_in_prim_core)
+foreach(core_name IN ITEMS
+    begin_validation begin_mutation begin_core
+    end_core free_index_core free_in_prim_core)
     foreach(forbidden IN ITEMS
         "Sys_EnterCriticalSection" "MyAssertHandler(" "Com_Error("
         "Com_Printf(" "Sys_OutOfMemErrorInternal(")
@@ -550,6 +599,94 @@ foreach(forbidden IN ITEMS
     "const char *v3")
     reject_text("${source}" "${forbidden}" "legacy x86/raw diagnostic pattern")
 endforeach()
+
+# Owned global names retain caller identity separately from bounded text. All
+# sidecar changes occur inside the wrapper's single serializer, while the
+# report result owns any middle-hole name consumed after unlock.
+foreach(marker IN ITEMS
+    "constexpr std::size_t kOwnedNameCapacity = MAX_QPATH;"
+    "static_assert(kOwnedNameCapacity == 64u);"
+    "std::uintptr_t identity = 0;"
+    "std::uintptr_t identityWitness = 0;"
+    "char text[kOwnedNameCapacity]{};"
+    "OwnedNameIdentityWitness("
+    "owned = CaptureOwnedName(name, allocType, prim.allocListCount);"
+    "BeginAllocInPrimNoReport(&prim, owned.text);"
+    "owned.identity != reinterpret_cast<std::uintptr_t>(name)"
+    "g_runtime.ownedNames.names[allocType][allocIndex] = {};"
+    "g_runtime.ownedNames.names[allocType][index] = {};"
+    "g_runtime.ownedNames.names[allocType][index].identity == identity")
+    require_text("${source}" "${marker}" "owned global name marker")
+endforeach()
+
+# The pointer-free capture core reads one coherent instant without callbacks;
+# its public wrapper owns the one lock. Dump consumes only that returned value.
+extract_slice("${source}"
+    "TryCaptureDiagnosticSnapshotNoLock() noexcept"
+    "void ReportLegacyDiagnostic("
+    diagnostic_core)
+foreach(marker IN ITEMS
+    "GetRuntimeReadiness()"
+    "DiagnosticSnapshotStatus::CorruptState"
+    "snapshot.highCount = high.allocListCount;"
+    "snapshot.lowCount = low.allocListCount;"
+    "snapshot.freeBytes = high.pos - low.pos;"
+    "DiagnosticEntryKind::Allocation"
+    "DiagnosticEntryKind::Hole"
+    "CopyBoundedName(entry.name, \"<hole>\");"
+    "DiagnosticSnapshotStatus::Success")
+    require_text("${diagnostic_core}" "${marker}"
+        "bounded diagnostic capture marker")
+endforeach()
+foreach(forbidden IN ITEMS
+    "Sys_EnterCriticalSection" "Sys_LeaveCriticalSection"
+    "MyAssertHandler(" "Com_Printf(" "Com_Error("
+    "ConvertToMB(" "Sys_OutOfMemErrorInternal("
+    "Sys_VirtualMemory" "new " "malloc(")
+    reject_text("${diagnostic_core}" "${forbidden}"
+        "callback/allocation in diagnostic capture core")
+endforeach()
+
+extract_slice("${source}"
+    "pmem_runtime::TryCaptureDiagnosticSnapshot() noexcept"
+    "void KISAK_CDECL PMem_Init()"
+    public_diagnostic_capture)
+require_order("${public_diagnostic_capture}"
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);"
+    "TryCaptureDiagnosticSnapshotNoLock();"
+    "diagnostic capture lock before core")
+require_order("${public_diagnostic_capture}"
+    "TryCaptureDiagnosticSnapshotNoLock();"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);"
+    "diagnostic capture core before unlock")
+
+extract_slice("${source}"
+    "void KISAK_CDECL PMem_DumpMemStats()"
+    "void KISAK_CDECL PMem_InitPhysicalMemory("
+    dump_slice)
+foreach(marker IN ITEMS
+    "pmem_runtime::TryCaptureDiagnosticSnapshot();"
+    "DiagnosticSnapshotStatus::NotReady"
+    "DiagnosticSnapshotStatus::Success"
+    "%-18.18s %5.1f\\n"
+    "free physical      %5.1f\\n"
+    "physical memory unavailable (not initialized)\\n"
+    "physical memory unavailable (corrupt state)\\n"
+    "remaining != 0")
+    require_text("${dump_slice}" "${marker}" "snapshot-only dump marker")
+endforeach()
+foreach(forbidden IN ITEMS
+    "g_mem" "g_runtime" "ownedNames" "allocList"
+    "Sys_EnterCriticalSection" "Sys_LeaveCriticalSection"
+    "PMem_GetFreeAmount(" "MyAssertHandler("
+    "static DiagnosticSnapshot")
+    reject_text("${dump_slice}" "${forbidden}"
+        "live/global read in snapshot-only dump")
+endforeach()
+require_order("${dump_slice}"
+    "pmem_runtime::TryCaptureDiagnosticSnapshot();"
+    "ConvertToMB("
+    "dump capture before conversion/reporting")
 
 # Generic initialization rejects every null/zero input before mutation.
 extract_slice("${source}"
@@ -570,6 +707,16 @@ require_order("${init_memory}" "if (!memorySize)"
 # production helper symbol. Tests compare members, never native padding.
 foreach(marker IN ITEMS
     "class PhysicalMemoryGlobalStateTestAccess final"
+    "static constexpr std::size_t OWNED_NAME_CAPACITY = 64u;"
+    "struct OwnedNameSnapshot final"
+    "struct OwnedNameBindingSnapshot final"
+    "std::uint8_t type = UINT8_MAX;"
+    "std::uint8_t index = UINT8_MAX;"
+    "std::uintptr_t identity = 0;"
+    "std::uintptr_t identityWitness = 0;"
+    "OwnedNameSnapshot ownedNames[2][MAX_PHYSICAL_ALLOCATIONS]{};"
+    "OwnedNameBindingSnapshot allocNameBindings[2]{};"
+    "allocationNameBindings[2][MAX_PHYSICAL_ALLOCATIONS]{};"
     "std::uint8_t *retainedBase = nullptr;"
     "std::uint32_t retainedSize = 0;"
     "std::uint8_t initializationPhase = 0;"
@@ -579,6 +726,33 @@ foreach(marker IN ITEMS
     "Snapshot Capture() noexcept;"
     "static void Install(const Snapshot &snapshot) noexcept;")
     require_text("${legacy_header}" "${marker}" "macro-gated state seam")
+endforeach()
+foreach(marker IN ITEMS
+    "LogicalizeTestNamePointer("
+    "TestOwnedNameBinding *const binding"
+    "binding->type = static_cast<std::uint8_t>(type);"
+    "binding->index = static_cast<std::uint8_t>(index);"
+    "reinterpret_cast<std::uintptr_t>(&g_runtime)"
+    "reinterpret_cast<std::uintptr_t>(&g_mem)"
+    "reinterpret_cast<std::uintptr_t>(&g_overAllocatedSize)"
+    "snapshot.allocationNameBindings[type][index]"
+    "snapshot.allocNameBindings[type]"
+    "snapshot.ownedNames[binding.type][binding.index]"
+    "g_mem.prim[type].allocList[index].name == logicalPointer"
+    "g_mem.prim[type].allocName == logicalPointer")
+    require_text("${source}" "${marker}"
+        "alias-free complete PMem test snapshot marker")
+endforeach()
+foreach(marker IN ITEMS
+    "expired-caller-storage"
+    "g_reuseSidecarOnAssert"
+    "aliased.allocationNameBindings[0][0]"
+    "rebound.allocationNameBindings[0][0].index == 1"
+    "noOwnedBinding.type == UINT8_MAX"
+    "noOwnedBinding.index == UINT8_MAX"
+    "expectedLongReport")
+    require_text("${runtime_fixture}${legacy_fixture}" "${marker}"
+        "owned-name lifetime and binding regression fixture")
 endforeach()
 foreach(fixture IN ITEMS legacy_fixture runtime_fixture)
     reject_text("${${fixture}}" "std::memcmp"
@@ -665,6 +839,10 @@ foreach(marker IN ITEMS
     "TestContention();"
     "TestLegacyShortfallTlsAndReports();"
     "TestLifecycleSerializationAndReportOrdering();"
+    "TestDiagnosticStatusAndStableNames();"
+    "TestDiagnosticAccountingAndDumpOrder();"
+    "TestDiagnosticCapacityAndSidecarCorruption();"
+    "TestDumpReentryAndSnapshotContention();"
     "TestExtentPhaseAndTopologyCorruption();"
     "HookAction::CorruptReserved"
     "CheckCanonicalPoisoned();"
@@ -678,6 +856,9 @@ endforeach()
 foreach(marker IN ITEMS
     "#include <universal/physicalmemory_runtime.h>"
     "std::is_standard_layout_v<pmem_runtime::AllocationResult>"
+    "std::is_standard_layout_v<pmem_runtime::DiagnosticSnapshot>"
+    "sizeof(pmem_runtime::DiagnosticSnapshot) == 0x610"
+    "noexcept(pmem_runtime::TryCaptureDiagnosticSnapshot())"
     "class PhysicalMemoryGlobalStateTestAccess final")
     require_text("${production_seal_fixture}" "${marker}"
         "macro-off compile seal marker")

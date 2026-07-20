@@ -18,9 +18,12 @@
 namespace
 {
 constexpr std::uint32_t kPhysicalMemorySize = UINT32_C(0x08000000);
+static_assert(kPhysicalMemorySize <= static_cast<std::uint32_t>(INT_MAX));
 constexpr std::uint32_t kInitializingWitness = UINT32_C(0x494E4954);
 constexpr std::uint32_t kReadyWitness = UINT32_C(0x52454144);
 constexpr std::uint32_t kPoisonedWitness = UINT32_C(0x504F4953);
+constexpr std::size_t kOwnedNameCapacity = MAX_QPATH;
+static_assert(kOwnedNameCapacity == 64u);
 
 struct RetainedExtent final
 {
@@ -28,9 +31,22 @@ struct RetainedExtent final
     std::uint32_t size = 0;
 };
 
+struct OwnedAllocationName final
+{
+    std::uintptr_t identity = 0;
+    std::uintptr_t identityWitness = 0;
+    char text[kOwnedNameCapacity]{};
+};
+
+struct OwnedNameState final
+{
+    OwnedAllocationName names[2][MAX_PHYSICAL_ALLOCATIONS]{};
+};
+
 struct RuntimeControl final
 {
     RetainedExtent extent{};
+    OwnedNameState ownedNames{};
     pmem_runtime::InitializationPhase phase =
         pmem_runtime::InitializationPhase::Uninitialized;
     std::uint8_t reserved[3]{};
@@ -81,7 +97,9 @@ enum class LegacyDiagnostic : std::uint8_t
 struct LegacyOperationResult final
 {
     LegacyDiagnostic diagnostic = LegacyDiagnostic::None;
-    const char *name = nullptr;
+    const char *borrowedName = nullptr;
+    bool ownsName = false;
+    char ownedName[kOwnedNameCapacity]{};
 };
 
 std::uint32_t RuntimeWitnessFor(
@@ -166,6 +184,126 @@ bool RetainedExtentIsDisjointFromControl(
                extent.base, extent.size, &g_runtime, sizeof(g_runtime));
 }
 
+template <std::size_t Capacity>
+void CopyBoundedName(
+    char (&destination)[Capacity],
+    const char *const source) noexcept
+{
+    std::memset(destination, 0, sizeof(destination));
+    if (!source)
+        return;
+    for (std::size_t index = 0; index + 1 < sizeof(destination); ++index)
+    {
+        const char value = source[index];
+        destination[index] = value;
+        if (!value)
+            return;
+    }
+}
+
+std::uintptr_t OwnedNameIdentityWitness(
+    const std::uintptr_t identity,
+    const std::uint32_t type,
+    const std::uint32_t index) noexcept
+{
+    if (!identity)
+        return 0;
+    const std::uintptr_t salt = static_cast<std::uintptr_t>(
+        UINT64_C(0x9E3779B97F4A7C15)
+        ^ static_cast<std::uint64_t>(type) * UINT64_C(0xD1B54A32D192ED03)
+        ^ static_cast<std::uint64_t>(index) * UINT64_C(0x94D049BB133111EB));
+    return ~(identity ^ salt);
+}
+
+OwnedAllocationName CaptureOwnedName(
+    const char *const source,
+    const std::uint32_t type,
+    const std::uint32_t index) noexcept
+{
+    OwnedAllocationName owned{};
+    if (!source)
+        return owned;
+    CopyBoundedName(owned.text, source);
+    owned.identity = reinterpret_cast<std::uintptr_t>(source);
+    owned.identityWitness =
+        OwnedNameIdentityWitness(owned.identity, type, index);
+    return owned;
+}
+
+bool OwnedNameTextIsCanonical(
+    const char (&text)[kOwnedNameCapacity]) noexcept
+{
+    bool terminated = false;
+    for (const char value : text)
+    {
+        if (terminated && value)
+            return false;
+        if (!value)
+            terminated = true;
+    }
+    return terminated;
+}
+
+bool OwnedNameIsPristine(const OwnedAllocationName &name) noexcept
+{
+    if (name.identity || name.identityWitness)
+        return false;
+    for (const char value : name.text)
+    {
+        if (value)
+            return false;
+    }
+    return true;
+}
+
+bool OwnedNamesArePristine(const OwnedNameState &names) noexcept
+{
+    for (const auto &primNames : names.names)
+    {
+        for (const OwnedAllocationName &name : primNames)
+        {
+            if (!OwnedNameIsPristine(name))
+                return false;
+        }
+    }
+    return true;
+}
+
+bool OwnedNamesMatchMemory() noexcept
+{
+    for (std::uint32_t type = 0; type < ARRAY_COUNT(g_mem.prim); ++type)
+    {
+        const PhysicalMemoryPrim &prim = g_mem.prim[type];
+        if (prim.allocListCount > MAX_PHYSICAL_ALLOCATIONS)
+            return false;
+        for (std::uint32_t index = 0;
+             index < MAX_PHYSICAL_ALLOCATIONS;
+             ++index)
+        {
+            const PhysicalMemoryAllocation &allocation =
+                prim.allocList[index];
+            const OwnedAllocationName &owned =
+                g_runtime.ownedNames.names[type][index];
+            const bool live = index < prim.allocListCount && allocation.name;
+            if (!live)
+            {
+                if (allocation.name || !OwnedNameIsPristine(owned))
+                    return false;
+                continue;
+            }
+            if (!owned.identity
+                || owned.identityWitness
+                    != OwnedNameIdentityWitness(owned.identity, type, index)
+                || !OwnedNameTextIsCanonical(owned.text)
+                || allocation.name != owned.text)
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool PhysicalMemoryIsPristine(const PhysicalMemory &memory) noexcept
 {
     if (memory.buf)
@@ -229,7 +367,8 @@ bool ReadyStateIsCoherent() noexcept
         || !RetainedExtentIsDisjointFromControl(g_runtime.extent)
         || g_mem.buf != g_runtime.extent.base
         || g_mem.prim[0].pos > g_mem.prim[1].pos
-        || g_mem.prim[1].pos > g_runtime.extent.size)
+        || g_mem.prim[1].pos > g_runtime.extent.size
+        || !OwnedNamesMatchMemory())
     {
         return false;
     }
@@ -239,11 +378,20 @@ bool ReadyStateIsCoherent() noexcept
                g_mem.prim[1], true, g_runtime.extent.size);
 }
 
+bool UninitializedStateIsCoherent() noexcept
+{
+    return RuntimeControlIsCanonical(g_runtime)
+        && g_runtime.phase == pmem_runtime::InitializationPhase::Uninitialized
+        && PhysicalMemoryIsPristine(g_mem)
+        && OwnedNamesArePristine(g_runtime.ownedNames);
+}
+
 bool InitializingStateIsCoherent() noexcept
 {
     if (!RuntimeControlIsCanonical(g_runtime)
         || g_runtime.phase != pmem_runtime::InitializationPhase::Initializing
-        || !PhysicalMemoryIsPristine(g_mem))
+        || !PhysicalMemoryIsPristine(g_mem)
+        || !OwnedNamesArePristine(g_runtime.ownedNames))
     {
         return false;
     }
@@ -256,7 +404,8 @@ bool PoisonedStateIsCoherent() noexcept
         && g_runtime.phase == pmem_runtime::InitializationPhase::Poisoned
         && g_runtime.extent.size == kPhysicalMemorySize
         && RetainedExtentIsDisjointFromControl(g_runtime.extent)
-        && PhysicalMemoryIsPristine(g_mem);
+        && PhysicalMemoryIsPristine(g_mem)
+        && OwnedNamesArePristine(g_runtime.ownedNames);
 }
 
 RuntimeReadiness GetRuntimeReadiness() noexcept
@@ -266,7 +415,7 @@ RuntimeReadiness GetRuntimeReadiness() noexcept
     switch (g_runtime.phase)
     {
     case pmem_runtime::InitializationPhase::Uninitialized:
-        return PhysicalMemoryIsPristine(g_mem)
+        return UninitializedStateIsCoherent()
             ? RuntimeReadiness::NotReady
             : RuntimeReadiness::Corrupt;
     case pmem_runtime::InitializationPhase::Initializing:
@@ -306,24 +455,59 @@ void InitializePhysicalMemoryNoReport(
     memory->prim[1].pos = size;
 }
 
-LegacyOperationResult TryBeginAllocInPrimNoReport(
+LegacyOperationResult ValidateBeginAllocInPrimNoReport(
     PhysicalMemoryPrim *const prim,
     const char *const name) noexcept
 {
     if (!prim)
-        return {LegacyDiagnostic::BeginNullPrim, nullptr};
+        return {LegacyDiagnostic::BeginNullPrim};
     if (!name)
-        return {LegacyDiagnostic::BeginNullName, nullptr};
+        return {LegacyDiagnostic::BeginNullName};
     if (prim->allocName)
-        return {LegacyDiagnostic::BeginBusy, nullptr};
+        return {LegacyDiagnostic::BeginBusy};
     if (prim->allocListCount >= MAX_PHYSICAL_ALLOCATIONS)
-        return {LegacyDiagnostic::BeginFull, nullptr};
+        return {LegacyDiagnostic::BeginFull};
+    return {};
+}
 
+void BeginAllocInPrimNoReport(
+    PhysicalMemoryPrim *const prim,
+    const char *const name) noexcept
+{
     prim->allocName = name;
     PhysicalMemoryAllocation &entry =
         prim->allocList[prim->allocListCount++];
     entry.name = name;
     entry.pos = prim->pos;
+}
+
+LegacyOperationResult TryBeginAllocInPrimNoReport(
+    PhysicalMemoryPrim *const prim,
+    const char *const name) noexcept
+{
+    const LegacyOperationResult validation =
+        ValidateBeginAllocInPrimNoReport(prim, name);
+    if (validation.diagnostic != LegacyDiagnostic::None)
+        return validation;
+
+    BeginAllocInPrimNoReport(prim, name);
+    return {};
+}
+
+LegacyOperationResult TryBeginGlobalAllocNoReport(
+    const std::uint32_t allocType,
+    const char *const name) noexcept
+{
+    PhysicalMemoryPrim &prim = g_mem.prim[allocType];
+    const LegacyOperationResult validation =
+        ValidateBeginAllocInPrimNoReport(&prim, name);
+    if (validation.diagnostic != LegacyDiagnostic::None)
+        return validation;
+
+    OwnedAllocationName &owned =
+        g_runtime.ownedNames.names[allocType][prim.allocListCount];
+    owned = CaptureOwnedName(name, allocType, prim.allocListCount);
+    BeginAllocInPrimNoReport(&prim, owned.text);
     return {};
 }
 
@@ -332,22 +516,41 @@ LegacyOperationResult TryEndAllocInPrimNoReport(
     const char *const name) noexcept
 {
     if (!prim)
-        return {LegacyDiagnostic::EndNullPrim, nullptr};
+        return {LegacyDiagnostic::EndNullPrim};
     if (!name)
-        return {LegacyDiagnostic::EndNullName, nullptr};
+        return {LegacyDiagnostic::EndNullName};
     if (prim->allocName != name)
-        return {LegacyDiagnostic::EndWrongActive, nullptr};
+        return {LegacyDiagnostic::EndWrongActive};
     if (!prim->allocListCount)
-        return {LegacyDiagnostic::EndEmpty, nullptr};
+        return {LegacyDiagnostic::EndEmpty};
     if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)
-        return {LegacyDiagnostic::EndOverCapacity, nullptr};
+        return {LegacyDiagnostic::EndOverCapacity};
     const PhysicalMemoryAllocation &entry =
         prim->allocList[prim->allocListCount - 1];
     if (entry.name != name)
-        return {LegacyDiagnostic::EndWrongTail, nullptr};
+        return {LegacyDiagnostic::EndWrongTail};
 
     prim->allocName = nullptr;
     return {};
+}
+
+LegacyOperationResult TryEndGlobalAllocNoReport(
+    const std::uint32_t allocType,
+    const char *const name) noexcept
+{
+    if (!name)
+        return {LegacyDiagnostic::EndNullName};
+    PhysicalMemoryPrim &prim = g_mem.prim[allocType];
+    if (!prim.allocName || !prim.allocListCount
+        || prim.allocListCount > MAX_PHYSICAL_ALLOCATIONS)
+    {
+        return {LegacyDiagnostic::EndWrongActive};
+    }
+    const OwnedAllocationName &owned =
+        g_runtime.ownedNames.names[allocType][prim.allocListCount - 1];
+    if (owned.identity != reinterpret_cast<std::uintptr_t>(name))
+        return {LegacyDiagnostic::EndWrongActive};
+    return TryEndAllocInPrimNoReport(&prim, prim.allocName);
 }
 
 LegacyOperationResult TryFreeIndexNoReport(
@@ -355,23 +558,31 @@ LegacyOperationResult TryFreeIndexNoReport(
     const std::uint32_t allocIndex) noexcept
 {
     if (!prim)
-        return {LegacyDiagnostic::FreeIndexNullPrim, nullptr};
+        return {LegacyDiagnostic::FreeIndexNullPrim};
     if (prim->allocName)
-        return {LegacyDiagnostic::FreeIndexBusy, nullptr};
+        return {LegacyDiagnostic::FreeIndexBusy};
     if (!prim->allocListCount)
-        return {LegacyDiagnostic::FreeIndexEmpty, nullptr};
+        return {LegacyDiagnostic::FreeIndexEmpty};
     if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)
-        return {LegacyDiagnostic::FreeIndexOverCapacity, nullptr};
+        return {LegacyDiagnostic::FreeIndexOverCapacity};
     if (allocIndex >= prim->allocListCount)
-        return {LegacyDiagnostic::FreeIndexInvalidIndex, nullptr};
+        return {LegacyDiagnostic::FreeIndexInvalidIndex};
 
     PhysicalMemoryAllocation *entry = &prim->allocList[allocIndex];
     const char *const name = entry->name;
     if (!name)
-        return {LegacyDiagnostic::FreeIndexNullName, nullptr};
+        return {LegacyDiagnostic::FreeIndexNullName};
+
+    const bool freesTail = allocIndex == prim->allocListCount - 1;
+    LegacyOperationResult hole{};
+    if (!freesTail)
+    {
+        hole.diagnostic = LegacyDiagnostic::FreeHole;
+        hole.borrowedName = name;
+    }
 
     entry->name = nullptr;
-    if (allocIndex == prim->allocListCount - 1)
+    if (freesTail)
     {
         do
         {
@@ -382,7 +593,7 @@ LegacyOperationResult TryFreeIndexNoReport(
         } while (!entry->name);
         return {};
     }
-    return {LegacyDiagnostic::FreeHole, name};
+    return hole;
 }
 
 LegacyOperationResult TryFreeInPrimNoReport(
@@ -390,16 +601,63 @@ LegacyOperationResult TryFreeInPrimNoReport(
     const char *const name) noexcept
 {
     if (!prim)
-        return {LegacyDiagnostic::FreeInPrimNullPrim, nullptr};
+        return {LegacyDiagnostic::FreeInPrimNullPrim};
     if (!name)
-        return {LegacyDiagnostic::FreeInPrimNullName, nullptr};
+        return {LegacyDiagnostic::FreeInPrimNullName};
     if (prim->allocListCount > MAX_PHYSICAL_ALLOCATIONS)
-        return {LegacyDiagnostic::FreeInPrimOverCapacity, nullptr};
+        return {LegacyDiagnostic::FreeInPrimOverCapacity};
 
     for (std::uint32_t index = 0; index < prim->allocListCount; ++index)
     {
         if (prim->allocList[index].name == name)
             return TryFreeIndexNoReport(prim, index);
+    }
+    return {};
+}
+
+LegacyOperationResult TryFreeGlobalIndexNoReport(
+    const std::uint32_t allocType,
+    const std::uint32_t allocIndex) noexcept
+{
+    PhysicalMemoryPrim &prim = g_mem.prim[allocType];
+    const std::uint32_t previousCount = prim.allocListCount;
+    LegacyOperationResult result =
+        TryFreeIndexNoReport(&prim, allocIndex);
+    if (result.diagnostic != LegacyDiagnostic::None
+        && result.diagnostic != LegacyDiagnostic::FreeHole)
+    {
+        return result;
+    }
+
+    if (result.diagnostic == LegacyDiagnostic::FreeHole)
+    {
+        CopyBoundedName(result.ownedName, result.borrowedName);
+        result.borrowedName = nullptr;
+        result.ownsName = true;
+    }
+
+    g_runtime.ownedNames.names[allocType][allocIndex] = {};
+    for (std::uint32_t index = prim.allocListCount;
+         index < previousCount;
+         ++index)
+    {
+        g_runtime.ownedNames.names[allocType][index] = {};
+    }
+    return result;
+}
+
+LegacyOperationResult TryFreeGlobalAllocNoReport(
+    const std::uint32_t allocType,
+    const char *const name) noexcept
+{
+    if (!name)
+        return {LegacyDiagnostic::FreeInPrimNullName};
+    const PhysicalMemoryPrim &prim = g_mem.prim[allocType];
+    const std::uintptr_t identity = reinterpret_cast<std::uintptr_t>(name);
+    for (std::uint32_t index = 0; index < prim.allocListCount; ++index)
+    {
+        if (g_runtime.ownedNames.names[allocType][index].identity == identity)
+            return TryFreeGlobalIndexNoReport(allocType, index);
     }
     return {};
 }
@@ -411,11 +669,80 @@ LegacyOperationResult ReadinessDiagnostic() noexcept
     case RuntimeReadiness::Ready:
         return {};
     case RuntimeReadiness::NotReady:
-        return {LegacyDiagnostic::RuntimeNotReady, nullptr};
+        return {LegacyDiagnostic::RuntimeNotReady};
     case RuntimeReadiness::Corrupt:
-        return {LegacyDiagnostic::RuntimeCorrupt, nullptr};
+        return {LegacyDiagnostic::RuntimeCorrupt};
     }
-    return {LegacyDiagnostic::RuntimeCorrupt, nullptr};
+    return {LegacyDiagnostic::RuntimeCorrupt};
+}
+
+pmem_runtime::DiagnosticSnapshot
+TryCaptureDiagnosticSnapshotNoLock() noexcept
+{
+    pmem_runtime::DiagnosticSnapshot snapshot{};
+    switch (GetRuntimeReadiness())
+    {
+    case RuntimeReadiness::NotReady:
+        return snapshot;
+    case RuntimeReadiness::Corrupt:
+        snapshot.status =
+            pmem_runtime::DiagnosticSnapshotStatus::CorruptState;
+        return snapshot;
+    case RuntimeReadiness::Ready:
+        break;
+    }
+
+    const PhysicalMemoryPrim &high = g_mem.prim[1];
+    snapshot.highCount = high.allocListCount;
+    for (std::uint32_t index = 0; index < high.allocListCount; ++index)
+    {
+        const PhysicalMemoryAllocation &allocation = high.allocList[index];
+        const std::uint32_t bottom = index + 1 < high.allocListCount
+            ? high.allocList[index + 1].pos
+            : high.pos;
+        pmem_runtime::DiagnosticEntry &entry = snapshot.high[index];
+        entry.bytes = allocation.pos - bottom;
+        if (allocation.name)
+        {
+            CopyBoundedName(
+                entry.name,
+                g_runtime.ownedNames.names[1][index].text);
+            entry.kind = pmem_runtime::DiagnosticEntryKind::Allocation;
+        }
+        else
+        {
+            CopyBoundedName(entry.name, "<hole>");
+            entry.kind = pmem_runtime::DiagnosticEntryKind::Hole;
+        }
+    }
+
+    const PhysicalMemoryPrim &low = g_mem.prim[0];
+    snapshot.lowCount = low.allocListCount;
+    for (std::uint32_t index = 0; index < low.allocListCount; ++index)
+    {
+        const PhysicalMemoryAllocation &allocation = low.allocList[index];
+        const std::uint32_t top = index + 1 < low.allocListCount
+            ? low.allocList[index + 1].pos
+            : low.pos;
+        pmem_runtime::DiagnosticEntry &entry = snapshot.low[index];
+        entry.bytes = top - allocation.pos;
+        if (allocation.name)
+        {
+            CopyBoundedName(
+                entry.name,
+                g_runtime.ownedNames.names[0][index].text);
+            entry.kind = pmem_runtime::DiagnosticEntryKind::Allocation;
+        }
+        else
+        {
+            CopyBoundedName(entry.name, "<hole>");
+            entry.kind = pmem_runtime::DiagnosticEntryKind::Hole;
+        }
+    }
+
+    snapshot.freeBytes = high.pos - low.pos;
+    snapshot.status = pmem_runtime::DiagnosticSnapshotStatus::Success;
+    return snapshot;
 }
 
 void ReportLegacyDiagnostic(
@@ -514,9 +841,12 @@ void ReportLegacyDiagnostic(
     case LegacyDiagnostic::FreeHole:
         if (!alwaysfails)
         {
+            const char *const reportedName = result.ownsName
+                ? result.ownedName
+                : result.borrowedName;
             MyAssertHandler(
                 ".\\universal\\physicalmemory.cpp", 411, 0,
-                "freeing '%s' caused a memory hole\n", result.name);
+                "freeing '%s' caused a memory hole\n", reportedName);
         }
         return;
     }
@@ -539,6 +869,7 @@ void PublishPoisonedExtent(
 {
     Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
     g_mem = {};
+    g_runtime = {};
     g_runtime.extent = {base, size};
     SetRuntimePhase(
         &g_runtime, pmem_runtime::InitializationPhase::Poisoned);
@@ -652,12 +983,100 @@ pmem_runtime::AllocationResult TryAllocateAndPublishLegacyShortfall(
 } // namespace
 
 #if defined(KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING)
+using TestOwnedNameBinding =
+    PhysicalMemoryGlobalStateTestAccess::OwnedNameBindingSnapshot;
+
+const char *LogicalizeTestNamePointer(
+    const char *const pointer,
+    TestOwnedNameBinding *const binding) noexcept
+{
+    *binding = {};
+    if (!pointer)
+        return nullptr;
+    for (std::uint32_t type = 0; type < ARRAY_COUNT(g_mem.prim); ++type)
+    {
+        for (std::uint32_t index = 0;
+             index < MAX_PHYSICAL_ALLOCATIONS;
+             ++index)
+        {
+            const OwnedAllocationName &owned =
+                g_runtime.ownedNames.names[type][index];
+            if (pointer == owned.text)
+            {
+                binding->type = static_cast<std::uint8_t>(type);
+                binding->index = static_cast<std::uint8_t>(index);
+                return owned.identity
+                    ? reinterpret_cast<const char *>(owned.identity)
+                    : reinterpret_cast<const char *>(
+                        static_cast<std::uintptr_t>(1));
+            }
+        }
+    }
+    const std::uintptr_t address =
+        reinterpret_cast<std::uintptr_t>(pointer);
+    const std::uintptr_t controlBegin =
+        reinterpret_cast<std::uintptr_t>(&g_runtime);
+    if (address >= controlBegin
+        && address - controlBegin < sizeof(g_runtime))
+    {
+        return reinterpret_cast<const char *>(
+            static_cast<std::uintptr_t>(1));
+    }
+    const std::uintptr_t memoryBegin =
+        reinterpret_cast<std::uintptr_t>(&g_mem);
+    if (address >= memoryBegin && address - memoryBegin < sizeof(g_mem))
+    {
+        return reinterpret_cast<const char *>(
+            static_cast<std::uintptr_t>(1));
+    }
+    const std::uintptr_t shortfallBegin =
+        reinterpret_cast<std::uintptr_t>(&g_overAllocatedSize);
+    if (address >= shortfallBegin
+        && address - shortfallBegin < sizeof(g_overAllocatedSize))
+    {
+        return reinterpret_cast<const char *>(
+            static_cast<std::uintptr_t>(1));
+    }
+    return pointer;
+}
+
 PhysicalMemoryGlobalStateTestAccess::Snapshot
 PhysicalMemoryGlobalStateTestAccess::Capture() noexcept
 {
+    static_assert(OWNED_NAME_CAPACITY == kOwnedNameCapacity);
     Snapshot snapshot{};
     Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
     snapshot.memory = g_mem;
+    for (std::uint32_t type = 0; type < ARRAY_COUNT(g_mem.prim); ++type)
+    {
+        PhysicalMemoryPrim &prim = snapshot.memory.prim[type];
+        prim.allocName = LogicalizeTestNamePointer(
+            prim.allocName, &snapshot.allocNameBindings[type]);
+        for (std::uint32_t index = 0;
+             index < MAX_PHYSICAL_ALLOCATIONS;
+             ++index)
+        {
+            PhysicalMemoryAllocation &allocation = prim.allocList[index];
+            allocation.name = LogicalizeTestNamePointer(
+                allocation.name,
+                &snapshot.allocationNameBindings[type][index]);
+        }
+    }
+    for (std::uint32_t type = 0; type < ARRAY_COUNT(g_mem.prim); ++type)
+    {
+        for (std::uint32_t index = 0;
+             index < MAX_PHYSICAL_ALLOCATIONS;
+             ++index)
+        {
+            const OwnedAllocationName &source =
+                g_runtime.ownedNames.names[type][index];
+            OwnedNameSnapshot &destination = snapshot.ownedNames[type][index];
+            destination.identity = source.identity;
+            destination.identityWitness = source.identityWitness;
+            for (std::size_t byte = 0; byte < kOwnedNameCapacity; ++byte)
+                destination.text[byte] = source.text[byte];
+        }
+    }
     snapshot.overAllocatedSize = g_overAllocatedSize;
     snapshot.retainedBase = g_runtime.extent.base;
     snapshot.retainedSize = g_runtime.extent.size;
@@ -679,6 +1098,39 @@ PhysicalMemoryGlobalStateTestAccess::MakeCanonicalReady(
 {
     Snapshot snapshot{};
     snapshot.memory = memory;
+    for (std::uint32_t type = 0; type < ARRAY_COUNT(memory.prim); ++type)
+    {
+        const PhysicalMemoryPrim &sourcePrim = memory.prim[type];
+        const std::uint32_t boundedCount =
+            sourcePrim.allocListCount <= MAX_PHYSICAL_ALLOCATIONS
+            ? sourcePrim.allocListCount
+            : MAX_PHYSICAL_ALLOCATIONS;
+        for (std::uint32_t index = 0; index < boundedCount; ++index)
+        {
+            const char *const sourceName = sourcePrim.allocList[index].name;
+            if (!sourceName)
+                continue;
+            OwnedNameSnapshot &owned = snapshot.ownedNames[type][index];
+            owned.identity = reinterpret_cast<std::uintptr_t>(sourceName);
+            owned.identityWitness =
+                OwnedNameIdentityWitness(owned.identity, type, index);
+            CopyBoundedName(owned.text, sourceName);
+            snapshot.allocationNameBindings[type][index].type =
+                static_cast<std::uint8_t>(type);
+            snapshot.allocationNameBindings[type][index].index =
+                static_cast<std::uint8_t>(index);
+        }
+        if (boundedCount
+            && sourcePrim.allocName
+            && sourcePrim.allocName
+                == sourcePrim.allocList[boundedCount - 1].name)
+        {
+            snapshot.allocNameBindings[type].type =
+                static_cast<std::uint8_t>(type);
+            snapshot.allocNameBindings[type].index =
+                static_cast<std::uint8_t>(boundedCount - 1);
+        }
+    }
     snapshot.overAllocatedSize = overAllocatedSize;
     snapshot.retainedBase = memory.buf;
     snapshot.retainedSize = retainedSize;
@@ -692,7 +1144,67 @@ void PhysicalMemoryGlobalStateTestAccess::Install(
     const Snapshot &snapshot) noexcept
 {
     Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    g_runtime = {};
+    for (std::uint32_t type = 0; type < ARRAY_COUNT(g_mem.prim); ++type)
+    {
+        for (std::uint32_t index = 0;
+             index < MAX_PHYSICAL_ALLOCATIONS;
+             ++index)
+        {
+            const OwnedNameSnapshot &source = snapshot.ownedNames[type][index];
+            OwnedAllocationName &destination =
+                g_runtime.ownedNames.names[type][index];
+            destination.identity = source.identity;
+            destination.identityWitness = source.identityWitness;
+            for (std::size_t byte = 0; byte < kOwnedNameCapacity; ++byte)
+                destination.text[byte] = source.text[byte];
+        }
+    }
     g_mem = snapshot.memory;
+    for (std::uint32_t type = 0; type < ARRAY_COUNT(g_mem.prim); ++type)
+    {
+        for (std::uint32_t index = 0;
+             index < MAX_PHYSICAL_ALLOCATIONS;
+             ++index)
+        {
+            const OwnedNameBindingSnapshot &binding =
+                snapshot.allocationNameBindings[type][index];
+            if (binding.type < ARRAY_COUNT(g_mem.prim)
+                && binding.index < MAX_PHYSICAL_ALLOCATIONS)
+            {
+                const OwnedNameSnapshot &boundName =
+                    snapshot.ownedNames[binding.type][binding.index];
+                const char *const logicalPointer = boundName.identity
+                    ? reinterpret_cast<const char *>(boundName.identity)
+                    : reinterpret_cast<const char *>(
+                        static_cast<std::uintptr_t>(1));
+                if (g_mem.prim[type].allocList[index].name == logicalPointer)
+                {
+                    g_mem.prim[type].allocList[index].name =
+                        g_runtime.ownedNames.names[
+                            binding.type][binding.index].text;
+                }
+            }
+        }
+        const OwnedNameBindingSnapshot &binding =
+            snapshot.allocNameBindings[type];
+        if (binding.type < ARRAY_COUNT(g_mem.prim)
+            && binding.index < MAX_PHYSICAL_ALLOCATIONS)
+        {
+            const OwnedNameSnapshot &boundName =
+                snapshot.ownedNames[binding.type][binding.index];
+            const char *const logicalPointer = boundName.identity
+                ? reinterpret_cast<const char *>(boundName.identity)
+                : reinterpret_cast<const char *>(
+                    static_cast<std::uintptr_t>(1));
+            if (g_mem.prim[type].allocName == logicalPointer)
+            {
+                g_mem.prim[type].allocName =
+                    g_runtime.ownedNames.names[
+                        binding.type][binding.index].text;
+            }
+        }
+    }
     g_overAllocatedSize = snapshot.overAllocatedSize;
     g_runtime.extent.base = snapshot.retainedBase;
     g_runtime.extent.size = snapshot.retainedSize;
@@ -742,7 +1254,7 @@ pmem_runtime::TryInitialize() noexcept
         Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
         return InitializationStatus::Poisoned;
     case InitializationPhase::Uninitialized:
-        if (!PhysicalMemoryIsPristine(g_mem))
+        if (!UninitializedStateIsCoherent())
         {
             Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
             return InitializationStatus::CorruptState;
@@ -852,6 +1364,16 @@ pmem_runtime::AllocationResult KISAK_CDECL pmem_runtime::TryAllocate(
     return result;
 }
 
+pmem_runtime::DiagnosticSnapshot KISAK_CDECL
+pmem_runtime::TryCaptureDiagnosticSnapshot() noexcept
+{
+    Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    const DiagnosticSnapshot snapshot =
+        TryCaptureDiagnosticSnapshotNoLock();
+    Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
+    return snapshot;
+}
+
 void KISAK_CDECL PMem_Init()
 {
     const pmem_runtime::InitializationStatus status =
@@ -866,33 +1388,38 @@ void KISAK_CDECL PMem_Init()
 
 void KISAK_CDECL PMem_DumpMemStats()
 {
-    double v0; // st7
-    int FreeAmount; // eax
-    double v2; // st7
-    double v3; // st7
-    signed int j; // [esp+8h] [ebp-14h]
-    uint32_t i; // [esp+Ch] [ebp-10h]
-    uint32_t top; // [esp+14h] [ebp-8h]
-    uint32_t bottom; // [esp+18h] [ebp-4h]
-
-    for (i = 0; i < g_mem.prim[1].allocListCount; ++i)
+    const pmem_runtime::DiagnosticSnapshot snapshot =
+        pmem_runtime::TryCaptureDiagnosticSnapshot();
+    if (snapshot.status
+        == pmem_runtime::DiagnosticSnapshotStatus::NotReady)
     {
-        if (i == g_mem.prim[1].allocListCount - 1)
-            bottom = g_mem.prim[1].pos;
-        else
-            bottom = g_mem.prim[1].allocList[i + 1].pos;
-        v0 = ConvertToMB(g_mem.prim[1].allocList[i].pos - bottom);
-        Com_Printf(16, "%-18.18s %5.1f\n", g_mem.prim[1].allocList[i].name, v0);
+        Com_Printf(16, "physical memory unavailable (not initialized)\n");
+        return;
     }
-    FreeAmount = PMem_GetFreeAmount();
-    v2 = ConvertToMB(FreeAmount);
-    Com_Printf(16, "free physical      %5.1f\n", v2);
-    top = g_mem.prim[0].pos;
-    for (j = g_mem.prim[0].allocListCount - 1; j >= 0; --j)
+    if (snapshot.status
+        != pmem_runtime::DiagnosticSnapshotStatus::Success)
     {
-        v3 = ConvertToMB(top - g_mem.prim[0].allocList[j].pos);
-        Com_Printf(16, "%-18.18s %5.1f\n", g_mem.prim[0].allocList[j].name, v3);
-        top = g_mem.prim[0].allocList[j].pos;
+        Com_Printf(16, "physical memory unavailable (corrupt state)\n");
+        return;
+    }
+
+    for (std::uint32_t index = 0; index < snapshot.highCount; ++index)
+    {
+        const pmem_runtime::DiagnosticEntry &entry = snapshot.high[index];
+        const double megabytes = ConvertToMB(static_cast<int>(entry.bytes));
+        Com_Printf(16, "%-18.18s %5.1f\n", entry.name, megabytes);
+    }
+    const double freeMegabytes =
+        ConvertToMB(static_cast<int>(snapshot.freeBytes));
+    Com_Printf(16, "free physical      %5.1f\n", freeMegabytes);
+    for (std::uint32_t remaining = snapshot.lowCount;
+         remaining != 0;
+         --remaining)
+    {
+        const pmem_runtime::DiagnosticEntry &entry =
+            snapshot.low[remaining - 1];
+        const double megabytes = ConvertToMB(static_cast<int>(entry.bytes));
+        Com_Printf(16, "%-18.18s %5.1f\n", entry.name, megabytes);
     }
     Com_Printf(16, "------------------------\n");
 }
@@ -932,7 +1459,7 @@ void KISAK_CDECL PMem_BeginAlloc(
     {
         result = ReadinessDiagnostic();
         if (result.diagnostic == LegacyDiagnostic::None)
-            result = TryBeginAllocInPrimNoReport(&g_mem.prim[allocType], name);
+            result = TryBeginGlobalAllocNoReport(allocType, name);
     }
     Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
     ReportLegacyDiagnostic(result, allocType);
@@ -957,7 +1484,7 @@ void KISAK_CDECL PMem_EndAlloc(
     {
         result = ReadinessDiagnostic();
         if (result.diagnostic == LegacyDiagnostic::None)
-            result = TryEndAllocInPrimNoReport(&g_mem.prim[allocType], name);
+            result = TryEndGlobalAllocNoReport(allocType, name);
     }
     Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
     ReportLegacyDiagnostic(result, allocType);
@@ -982,7 +1509,7 @@ void KISAK_CDECL PMem_Free(
     {
         result = ReadinessDiagnostic();
         if (result.diagnostic == LegacyDiagnostic::None)
-            result = TryFreeInPrimNoReport(&g_mem.prim[allocType], name);
+            result = TryFreeGlobalAllocNoReport(allocType, name);
     }
     Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);
     ReportLegacyDiagnostic(result, allocType);

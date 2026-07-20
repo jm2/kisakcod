@@ -75,39 +75,58 @@ PhysicalMemoryPrim CapturePrimState(const PhysicalMemoryPrim &prim)
     return prim;
 }
 
-struct GlobalStateImage final
+using GlobalStateImage = PhysicalMemoryStateAccess::Snapshot;
+
+bool SameOwnedNames(
+    const GlobalStateImage &left,
+    const GlobalStateImage &right)
 {
-    PhysicalMemory memory{};
-    int overAllocatedSize = 0;
-    std::uint8_t *retainedBase = nullptr;
-    std::uint32_t retainedSize = 0;
-    std::uint8_t initializationPhase = 0;
-    std::uint8_t runtimeReserved[3]{};
-    std::uint32_t initializationWitness = 0;
-};
+    for (std::uint32_t type = 0; type < 2; ++type)
+    {
+        if (left.allocNameBindings[type].type
+                != right.allocNameBindings[type].type
+            || left.allocNameBindings[type].index
+                != right.allocNameBindings[type].index)
+        {
+            return false;
+        }
+        for (std::uint32_t index = 0;
+             index < MAX_PHYSICAL_ALLOCATIONS;
+             ++index)
+        {
+            const auto &leftName = left.ownedNames[type][index];
+            const auto &rightName = right.ownedNames[type][index];
+            const auto &leftBinding =
+                left.allocationNameBindings[type][index];
+            const auto &rightBinding =
+                right.allocationNameBindings[type][index];
+            if (leftName.identity != rightName.identity
+                || leftName.identityWitness != rightName.identityWitness
+                || leftBinding.type != rightBinding.type
+                || leftBinding.index != rightBinding.index)
+                return false;
+            for (std::size_t byte = 0;
+                 byte < PhysicalMemoryStateAccess::OWNED_NAME_CAPACITY;
+                 ++byte)
+            {
+                if (leftName.text[byte] != rightName.text[byte])
+                    return false;
+            }
+        }
+    }
+    return true;
+}
 
 GlobalStateImage CaptureGlobalState()
 {
-    const auto state = PhysicalMemoryStateAccess::Capture();
-    return {
-        state.memory,
-        state.overAllocatedSize,
-        state.retainedBase,
-        state.retainedSize,
-        state.initializationPhase,
-        {
-            state.runtimeReserved[0],
-            state.runtimeReserved[1],
-            state.runtimeReserved[2],
-        },
-        state.initializationWitness,
-    };
+    return PhysicalMemoryStateAccess::Capture();
 }
 
 bool MatchesGlobalState(const GlobalStateImage &expected)
 {
     const auto current = CaptureGlobalState();
     return SamePhysicalMemoryState(current.memory, expected.memory)
+        && SameOwnedNames(current, expected)
         && current.overAllocatedSize == expected.overAllocatedSize
         && current.retainedBase == expected.retainedBase
         && current.retainedSize == expected.retainedSize
@@ -306,6 +325,9 @@ void TestWrapperAllocationTypeFailureAtomicity()
         CHECK(begun.memory.prim[allocType].allocName == validName);
         CHECK(begun.memory.prim[allocType].allocListCount == 1);
         CHECK(begun.memory.prim[allocType].allocList[0].name == validName);
+        CHECK(begun.ownedNames[allocType][0].identity
+            == reinterpret_cast<std::uintptr_t>(validName));
+        CHECK(std::strcmp(begun.ownedNames[allocType][0].text, validName) == 0);
         CHECK(begun.memory.prim[allocType].allocList[0].pos == initialPosition);
         CHECK(begun.overAllocatedSize == 37);
 
@@ -497,6 +519,19 @@ void TestFreeIndexFailureAtomicity()
     ResetReports();
     PMem_FreeIndex(&nullEntry, 0);
     CheckRejectedUnchanged(nullEntry, nullEntryBefore, 400);
+
+    PhysicalMemoryPrim identityOnlyTail{};
+    identityOnlyTail.allocListCount = 1;
+    identityOnlyTail.pos = 23;
+    identityOnlyTail.allocList[0] = {
+        reinterpret_cast<const char *>(static_cast<std::uintptr_t>(1)),
+        11,
+    };
+    ResetReports();
+    PMem_FreeIndex(&identityOnlyTail, 0);
+    CHECK(g_assertReports == 0);
+    CHECK(identityOnlyTail.allocListCount == 0);
+    CHECK(identityOnlyTail.pos == 11);
 }
 
 void TestFreeInPrimFailureAtomicity()
@@ -598,6 +633,23 @@ void TestLowPrimTailHoleCollapse()
     CHECK(g_vaCalls == 0);
     CHECK(prim.allocListCount == 0);
     CHECK(prim.pos == 0);
+
+    std::array<char, 96> longName{};
+    longName.fill('q');
+    longName.back() = '\0';
+    char longTail[] = "long-tail";
+    PhysicalMemoryPrim longPrim{};
+    BeginAndEnd(longPrim, longName.data(), 1);
+    BeginAndEnd(longPrim, longTail, 2);
+    char expectedLongReport[160]{};
+    std::snprintf(
+        expectedLongReport,
+        sizeof(expectedLongReport),
+        "freeing '%s' caused a memory hole\n",
+        longName.data());
+    ResetReports();
+    PMem_FreeIndex(&longPrim, 0);
+    CheckHoleReport(expectedLongReport);
 }
 
 void TestHighPrimRetainsInitialAllocation()

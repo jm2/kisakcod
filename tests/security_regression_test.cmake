@@ -10588,8 +10588,15 @@ foreach(_pmem_runtime_header_marker IN ITEMS
     "enum class AllocationStatus : std::uint8_t"
     "std::uint64_t additionalBytes = 0;"
     "RUNTIME_SIZE(AllocationResult, 0x10, 0x18);"
+    "enum class DiagnosticEntryKind : std::uint8_t"
+    "enum class DiagnosticSnapshotStatus : std::uint8_t"
+    "char name[DIAGNOSTIC_NAME_CAPACITY]{};"
+    "RUNTIME_SIZE(DiagnosticEntry, 0x18, 0x18);"
+    "RUNTIME_SIZE(DiagnosticSnapshot, 0x610, 0x610);"
+    "RUNTIME_OFFSET(DiagnosticSnapshot, status, 0x60C, 0x60C);"
     "TryInitialize() noexcept;"
-    "std::uint32_t allocType) noexcept;")
+    "std::uint32_t allocType) noexcept;"
+    "TryCaptureDiagnosticSnapshot() noexcept;")
     require_source_contains(
         "universal/physicalmemory_runtime.h"
         "${_pmem_runtime_header_marker}"
@@ -10598,6 +10605,16 @@ endforeach()
 foreach(_pmem_runtime_source_marker IN ITEMS
     "thread_local int g_overAllocatedSize{};"
     "RuntimeControl g_runtime{};"
+    "OwnedNameState ownedNames{};"
+    "OwnedNameIdentityWitness("
+    "OwnedNamesArePristine("
+    "OwnedNamesMatchMemory("
+    "hole.borrowedName = name;"
+    "CopyBoundedName(result.ownedName, result.borrowedName);"
+    "result.ownsName = true;"
+    "LogicalizeTestNamePointer("
+    "snapshot.allocationNameBindings[type][index]"
+    "snapshot.ownedNames[binding.type][binding.index]"
     "RetainedExtentIsDisjointFromControl("
     "InitializingStateIsCoherent("
     "PoisonedStateIsCoherent("
@@ -10608,6 +10625,11 @@ foreach(_pmem_runtime_source_marker IN ITEMS
     "g_runtime.extent = candidateExtent;"
     "SetRuntimePhase(&g_runtime, InitializationPhase::Ready);"
     "TryAllocateAndPublishLegacyShortfall("
+    "TryCaptureDiagnosticSnapshotNoLock() noexcept"
+    "snapshot.freeBytes = high.pos - low.pos;"
+    "TryBeginGlobalAllocNoReport(allocType, name);"
+    "TryEndGlobalAllocNoReport(allocType, name);"
+    "TryFreeGlobalAllocNoReport(allocType, name);"
     "const std::uint64_t firstAligned = lowPosition + lowPadding;"
     "result.additionalBytes = requiredEnd - highPosition;")
     require_source_contains(
@@ -10629,6 +10651,18 @@ extract_security_slice(
     "pmem_runtime::AllocationResult TryAllocateAndPublishLegacyShortfall("
     _pmem_allocate_security_slice
     "report-free PMem allocation core")
+extract_security_slice(
+    _pmem_runtime_security_source
+    "TryCaptureDiagnosticSnapshotNoLock() noexcept"
+    "void ReportLegacyDiagnostic("
+    _pmem_diagnostic_security_slice
+    "report-free PMem diagnostic capture core")
+extract_security_slice(
+    _pmem_runtime_security_source
+    "void KISAK_CDECL PMem_DumpMemStats()"
+    "void KISAK_CDECL PMem_InitPhysicalMemory("
+    _pmem_dump_security_slice
+    "snapshot-only PMem dump")
 foreach(_pmem_runtime_forbidden_reporter IN ITEMS
     "MyAssertHandler("
     "Com_Printf("
@@ -10642,6 +10676,35 @@ foreach(_pmem_runtime_forbidden_reporter IN ITEMS
         _pmem_allocate_security_slice
         "${_pmem_runtime_forbidden_reporter}"
         "PMem allocation core cannot report under lock")
+    forbid_security_slice_contains(
+        _pmem_diagnostic_security_slice
+        "${_pmem_runtime_forbidden_reporter}"
+        "PMem diagnostic core cannot report under lock")
+endforeach()
+foreach(_pmem_diagnostic_forbidden IN ITEMS
+    "Sys_EnterCriticalSection"
+    "Sys_LeaveCriticalSection"
+    "ConvertToMB("
+    "Sys_VirtualMemory"
+    "new "
+    "malloc(")
+    forbid_security_slice_contains(
+        _pmem_diagnostic_security_slice
+        "${_pmem_diagnostic_forbidden}"
+        "PMem diagnostic core must remain callback/allocation free")
+endforeach()
+foreach(_pmem_dump_forbidden IN ITEMS
+    "g_mem"
+    "g_runtime"
+    "ownedNames"
+    "allocList"
+    "PMem_GetFreeAmount("
+    "Sys_EnterCriticalSection"
+    "Sys_LeaveCriticalSection")
+    forbid_security_slice_contains(
+        _pmem_dump_security_slice
+        "${_pmem_dump_forbidden}"
+        "PMem dump must consume only its bounded snapshot")
 endforeach()
 foreach(_pmem_runtime_forbidden_raii IN ITEMS
     "std::lock_guard"
@@ -10655,6 +10718,16 @@ require_repository_contains(
     "tests/physicalmemory_runtime_tests.cpp"
     "TestInitCorruptionOwnershipExits();"
     "PMem reservation ownership exits require adversarial runtime coverage")
+foreach(_pmem_diagnostic_test IN ITEMS
+    "TestDiagnosticStatusAndStableNames();"
+    "TestDiagnosticAccountingAndDumpOrder();"
+    "TestDiagnosticCapacityAndSidecarCorruption();"
+    "TestDumpReentryAndSnapshotContention();")
+    require_repository_contains(
+        "tests/physicalmemory_runtime_tests.cpp"
+        "${_pmem_diagnostic_test}"
+        "PMem owned-name/diagnostic boundary requires focused coverage")
+endforeach()
 require_repository_contains(
     "tests/physicalmemory_runtime_production_seal_test.cmake"
     "TLS[ \\t]+LOCAL[ \\t]+DEFAULT"

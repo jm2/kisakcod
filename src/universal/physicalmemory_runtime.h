@@ -2,6 +2,7 @@
 
 #include <universal/kisak_abi.h>
 
+#include <cstddef>
 #include <cstdint>
 
 namespace pmem_runtime
@@ -36,6 +37,23 @@ enum class AllocationStatus : std::uint8_t
     Exhausted,
 };
 
+inline constexpr std::uint32_t DIAGNOSTIC_ENTRIES_PER_PRIM = 32u;
+inline constexpr std::size_t DIAGNOSTIC_NAME_CAPACITY = 19u;
+
+enum class DiagnosticEntryKind : std::uint8_t
+{
+    Unused,
+    Allocation,
+    Hole,
+};
+
+enum class DiagnosticSnapshotStatus : std::uint8_t
+{
+    NotReady,
+    Success,
+    CorruptState,
+};
+
 // Report-free result for one serialized allocation attempt. additionalBytes
 // is exact on Exhausted and zero for every other status. The explicit reserved
 // bytes are always zero; persist or compare this native-layout value field by
@@ -54,6 +72,38 @@ RUNTIME_OFFSET(AllocationResult, address, 0x8, 0x8);
 RUNTIME_OFFSET(AllocationResult, status, 0xC, 0x10);
 RUNTIME_OFFSET(AllocationResult, reserved, 0xD, 0x11);
 
+struct DiagnosticEntry final
+{
+    std::uint32_t bytes = 0;
+    char name[DIAGNOSTIC_NAME_CAPACITY]{};
+    DiagnosticEntryKind kind = DiagnosticEntryKind::Unused;
+};
+
+RUNTIME_SIZE(DiagnosticEntry, 0x18, 0x18);
+RUNTIME_OFFSET(DiagnosticEntry, bytes, 0x0, 0x0);
+RUNTIME_OFFSET(DiagnosticEntry, name, 0x4, 0x4);
+RUNTIME_OFFSET(DiagnosticEntry, kind, 0x17, 0x17);
+
+struct DiagnosticSnapshot final
+{
+    DiagnosticEntry high[DIAGNOSTIC_ENTRIES_PER_PRIM]{};
+    DiagnosticEntry low[DIAGNOSTIC_ENTRIES_PER_PRIM]{};
+    std::uint32_t highCount = 0;
+    std::uint32_t lowCount = 0;
+    std::uint32_t freeBytes = 0;
+    DiagnosticSnapshotStatus status = DiagnosticSnapshotStatus::NotReady;
+    std::uint8_t reserved[3]{};
+};
+
+RUNTIME_SIZE(DiagnosticSnapshot, 0x610, 0x610);
+RUNTIME_OFFSET(DiagnosticSnapshot, high, 0x0, 0x0);
+RUNTIME_OFFSET(DiagnosticSnapshot, low, 0x300, 0x300);
+RUNTIME_OFFSET(DiagnosticSnapshot, highCount, 0x600, 0x600);
+RUNTIME_OFFSET(DiagnosticSnapshot, lowCount, 0x604, 0x604);
+RUNTIME_OFFSET(DiagnosticSnapshot, freeBytes, 0x608, 0x608);
+RUNTIME_OFFSET(DiagnosticSnapshot, status, 0x60C, 0x60C);
+RUNTIME_OFFSET(DiagnosticSnapshot, reserved, 0x60D, 0x60D);
+
 [[nodiscard]] InitializationStatus KISAK_CDECL TryInitialize() noexcept;
 
 [[nodiscard]] AllocationResult KISAK_CDECL TryAllocate(
@@ -61,4 +111,7 @@ RUNTIME_OFFSET(AllocationResult, reserved, 0xD, 0x11);
     std::uint32_t alignment,
     std::uint32_t type,
     std::uint32_t allocType) noexcept;
+
+[[nodiscard]] DiagnosticSnapshot KISAK_CDECL
+TryCaptureDiagnosticSnapshot() noexcept;
 } // namespace pmem_runtime
