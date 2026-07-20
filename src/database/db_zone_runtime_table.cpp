@@ -111,6 +111,26 @@ inline constexpr std::uint8_t kGenerationBindingWitnessMask = 0xA7u;
         || AddressRangesAreDisjoint(
             inputKey, sizeof(*inputKey), output, outputSize);
 }
+
+[[nodiscard]] bool WritableOutputIsSeparatedFromRetainedRuntime(
+    const zone_stream_ownership::ActiveZoneStreamBinding &binding,
+    const SharedState sharedState,
+    const void *const output,
+    const std::size_t outputSize,
+    const std::size_t outputAlignment) noexcept
+{
+    if (!zone_stream_ownership::AuthenticateZoneStreamOutputSpan(
+            binding, output, outputSize, outputAlignment))
+        return false;
+
+    if (sharedState == SharedState::Pristine)
+        return true;
+    if (sharedState != SharedState::Ready
+        && sharedState != SharedState::Draining)
+        return false;
+    return pmem_runtime::StorageIsOutsideManagedMemory(
+        output, outputSize);
+}
 } // namespace
 
 ZoneRuntimeSetupStage ZoneRuntimeGenerationBinding::setupStage()
@@ -2314,6 +2334,15 @@ ZoneRuntimeTableStatus TryGetZoneRuntimeEntry(
             table->poison();
         return bindingStatus;
     }
+    if (!WritableOutputIsSeparatedFromRetainedRuntime(
+            table->activeZoneStreamBinding_,
+            static_cast<SharedState>(table->sharedState_),
+            outEntry,
+            sizeof(*outEntry),
+            alignof(const ZoneRuntimeEntry *)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
 
     *outEntry = &entry;
     return ZoneRuntimeTableStatus::Success;
@@ -2345,6 +2374,15 @@ ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration(
         if (bindingStatus == ZoneRuntimeTableStatus::UnsafeFailure)
             table->poison();
         return bindingStatus;
+    }
+    if (!WritableOutputIsSeparatedFromRetainedRuntime(
+            table->activeZoneStreamBinding_,
+            static_cast<SharedState>(table->sharedState_),
+            inOutKey,
+            sizeof(*inOutKey),
+            alignof(zone_load::ZoneLoadContextKey)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
     }
 
     if (entry.lifecycle_.phase() == zone_load::ZoneLoadContextPhase::Empty
@@ -2422,6 +2460,15 @@ ZoneRuntimeTableStatus TryGetZoneRuntimeGeneration(
             table->poison();
         return bindingStatus;
     }
+    if (!WritableOutputIsSeparatedFromRetainedRuntime(
+            table->activeZoneStreamBinding_,
+            static_cast<SharedState>(table->sharedState_),
+            outView,
+            sizeof(*outView),
+            alignof(ZoneRuntimeGenerationView)))
+    {
+        return ZoneRuntimeTableStatus::InvalidArgument;
+    }
     if (entry.key_ != key
         || !zone_load::ZoneLoadContextKeyMatches(
             &entry.lifecycle_, key))
@@ -2487,7 +2534,8 @@ ZoneRuntimeTableStatus TryBindZoneRuntimeGenerationCallbacks(
     if (entry->lifecycle_.phase()
             != zone_load::ZoneLoadContextPhase::Loading
         || entry->lifecycle_.terminalKind()
-            != zone_load::ZoneLoadTerminalKind::None)
+            != zone_load::ZoneLoadTerminalKind::None
+        || !entry->scriptStringOwnership_.isEmptyCanonical())
     {
         return ZoneRuntimeTableStatus::InvalidPhase;
     }
@@ -2588,8 +2636,12 @@ ZoneRuntimeTableStatus TryAllocateZoneRuntimeMemory(
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
 
-    if (!pmem_runtime::StorageIsOutsideManagedMemory(
-            outResult, sizeof(*outResult)))
+    if (!WritableOutputIsSeparatedFromRetainedRuntime(
+            table->activeZoneStreamBinding_,
+            static_cast<SharedState>(table->sharedState_),
+            outResult,
+            sizeof(*outResult),
+            alignof(pmem_runtime::AllocationResult)))
     {
         return ZoneRuntimeTableStatus::InvalidArgument;
     }
@@ -3597,13 +3649,16 @@ ZoneRuntimeTableStatus TryStageZoneRuntimeScriptString(
         table->authenticateExactMutableEntry(physicalSlot, key, &entry);
     if (authentication != ZoneRuntimeTableStatus::Success)
         return authentication;
-    const bool composite = !entry->generationBindingPristine();
-    if (composite
-        && !pmem_runtime::StorageIsOutsideManagedMemory(
-            outStringId, sizeof(*outStringId)))
+    if (!WritableOutputIsSeparatedFromRetainedRuntime(
+            table->activeZoneStreamBinding_,
+            static_cast<SharedState>(table->sharedState_),
+            outStringId,
+            sizeof(*outStringId),
+            alignof(std::uint32_t)))
     {
         return ZoneRuntimeTableStatus::InvalidArgument;
     }
+    const bool composite = !entry->generationBindingPristine();
     if (composite
         && (entry->executionMode() != ZoneRuntimeExecutionMode::Loading
             || entry->setupStage()

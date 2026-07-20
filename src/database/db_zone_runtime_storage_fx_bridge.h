@@ -59,9 +59,10 @@ ConstructFxRuntimeWorkspace(void *storage) noexcept;
     std::uint64_t zoneIdentity) noexcept;
 
 // Read-only stable-boundary authentication for the storage composition. The
-// workspace must be Idle and non-operating; the arena must name the exact
-// planned backing, budget, and nonzero outer-controller identity with no open
-// transaction. No FX pointer or mutation authority is returned.
+// workspace must match its complete reusable depth-zero reset topology; the
+// arena must name the exact planned backing, budget, and nonzero outer-
+// controller identity with no open transaction. No FX pointer or mutation
+// authority is returned.
 [[nodiscard]] bool AuthenticateStableFxRuntimeStorage(
     const fx::fastfile::FxFastFileNativeArena *arena,
     const fx::fastfile::FxFastFileZoneAdapterDisk32Workspace *workspace,

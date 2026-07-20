@@ -160,10 +160,13 @@ bool AllocationReceipt::isBound() const noexcept
 
     if (phase_ == Phase::Freed)
     {
-        if (!hasCanonicalTerminalState())
-            return false;
+        // The allocation-list entry may already have been compacted or
+        // reused. Terminal authentication retains only the stable owner/prim
+        // tuple and private Freed tags; it never consults matchesEntry().
+        return hasCanonicalTerminalState()
+            && prim_ == &owner_->prim[allocType_];
     }
-    else if (!reservedIsZero())
+    if (!reservedIsZero())
     {
         return false;
     }

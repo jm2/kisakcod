@@ -111,10 +111,10 @@ endfunction()
 # exact-controller seal must remain registered and must freeze every stream
 # mutation/authenticator before this component-wide scan delegates it.
 foreach(_marker IN ITEMS
-    "zone_stream_ownership::TryBeginZoneStreamGeneration(|1"
-    "zone_stream_ownership::TryBindZoneStreams(|1"
-    "zone_stream_ownership::TryInvalidateZoneStreams(|2"
-    "zone_stream_ownership::AuthenticateZoneStreamComposition(|1")
+    "zone_stream_ownership::TryBeginZoneStreamGeneration|1"
+    "zone_stream_ownership::TryBindZoneStreams|1"
+    "zone_stream_ownership::TryInvalidateZoneStreams|2"
+    "zone_stream_ownership::AuthenticateZoneStreamComposition|1")
     require_contains(
         _runtime_table_seal "${_marker}"
         "dedicated runtime-table stream enrollment seal")
@@ -178,6 +178,7 @@ set(_zone_stream_protected_tokens
     TryInvalidateZoneStreams
     AuthenticatePassiveZoneStreamSingleton
     AuthenticateZoneStreamComposition
+    AuthenticateZoneStreamOutputSpan
     AliasRegistryForLegacyStream
     DirectResolverForLegacyStream
     OwnershipBindingActive)
@@ -375,6 +376,10 @@ foreach(_marker IN ITEMS
     "TryInvalidateZoneStreams("
     "AuthenticatePassiveZoneStreamSingleton("
     "AuthenticateZoneStreamComposition("
+    "AuthenticateZoneStreamOutputSpan("
+    "const void *output,"
+    "std::size_t outputSize,"
+    "std::size_t outputAlignment) noexcept;"
     "const zone_load::ZoneLoadContextSlot *lifecycle()"
     "const XZoneMemory *zoneIdentity() const noexcept;"
     "const XZoneMemory *zoneIdentity,"
@@ -546,9 +551,14 @@ foreach(_marker IN ITEMS
     "g_streamPosStackIndex > 64"
     "g_streamDelayIndex > 4096"
     "SpanWithinBlock( g_streamPos, 0, blocks[g_streamPosIndex])"
-    "for (std::size_t i = 0; i < g_streamPosStackIndex; ++i)"
+    "std::uint32_t effectiveIndex = g_streamPosIndex;"
+    "for (std::size_t depth = g_streamPosStackIndex; depth != 0; --depth)"
+    "g_streamPosStack[depth - 1]"
     "saved.index >= relocation::kBlockCount"
     "SpanWithinAnyBlock(saved.pos, 0, blocks)"
+    "effectiveIndex == 0"
+    "SpanWithinBlock(saved.pos, 0, blocks[0])"
+    "effectiveIndex = saved.index;"
     "for (std::size_t i = 0; i < 4096; ++i)"
     "delay.size != 0 || i < g_streamDelayIndex"
     "delay.size <= 0"
@@ -557,6 +567,11 @@ foreach(_marker IN ITEMS
         _source "${_marker}"
         "bounded legacy stream count and provenance validation")
 endforeach()
+require_ordered(
+    _source
+    "std::uint32_t effectiveIndex = g_streamPosIndex;"
+    "effectiveIndex = saved.index;"
+    "effective pop index derives through the saved stack")
 extract_slice(
     _source
     "[[nodiscard]] bool SingletonIsIdle() noexcept"
@@ -603,6 +618,96 @@ foreach(_marker IN ITEMS
     "ActiveZoneStreamPhase::Bound")
     require_contains(_source "${_marker}" "exact-key self-authentication")
 endforeach()
+
+# One report-free predicate authenticates aligned, native-representable output
+# separation from every singleton/control range unconditionally, then from a
+# canonical active owner's retained objects. It exposes no mutable authority.
+extract_slice(
+    _source
+    "bool AuthenticateZoneStreamOutputSpan("
+    "bool AuthenticateZoneStreamComposition("
+    _output_authenticator
+    "complete stream output-span authenticator")
+foreach(_marker IN ITEMS
+    "ObjectIsAligned(output, outputAlignment)"
+    "output, outputSize, &outputBegin, &outputEnd"
+    "&g_aliasRegistry, sizeof(g_aliasRegistry)"
+    "&g_directResolver, sizeof(g_directResolver)"
+    "&g_activeOwner, sizeof(g_activeOwner)"
+    "&g_streamDelayIndex, sizeof(g_streamDelayIndex)"
+    "&g_streamPosArray, sizeof(g_streamPosArray)"
+    "&g_streamDelayArray, sizeof(g_streamDelayArray)"
+    "&g_streamPosIndex, sizeof(g_streamPosIndex)"
+    "&g_streamPosStack, sizeof(g_streamPosStack)"
+    "&g_streamZoneMem, sizeof(g_streamZoneMem)"
+    "&g_streamPos, sizeof(g_streamPos)"
+    "&g_streamPosStackIndex, sizeof(g_streamPosStackIndex)"
+    "output, outputSize, &binding, sizeof(binding)"
+    "!binding.canonical()"
+    "activeOwner != &binding"
+    "binding.phase() != ActiveZoneStreamPhase::Bound"
+    "activeOwner != nullptr"
+    "retainedOwner->receipt()"
+    "retainedOwner->zoneIdentity()"
+    "retainedReceipt->lifecycle()"
+    "LifecycleOwnsActiveKey( retainedLifecycle, retainedOwner->key())"
+    "retainedReceipt, sizeof(*retainedReceipt)"
+    "retainedLifecycle, sizeof(*retainedLifecycle)"
+    "retainedZone, sizeof(*retainedZone)")
+    require_contains(
+        _output_authenticator "${_marker}"
+        "complete unconditional stream output authority")
+endforeach()
+require_ordered(
+    _output_authenticator
+    "!binding.canonical()"
+    "retainedOwner->receipt()"
+    "binding authentication precedes retained pointer traversal")
+require_ordered(
+    _output_authenticator
+    "retainedReceipt->lifecycle()"
+    "LifecycleOwnsActiveKey( retainedLifecycle, retainedOwner->key())"
+    "retained lifecycle is observed before exact-key authentication")
+require_ordered(
+    _output_authenticator
+    "LifecycleOwnsActiveKey( retainedLifecycle, retainedOwner->key())"
+    "retainedLifecycle, sizeof(*retainedLifecycle)"
+    "exact lifecycle key authenticates before separation proof")
+foreach(_forbidden IN ITEMS
+    "const_cast"
+    "g_activeOwner ="
+    "g_streamPos ="
+    ".Reset("
+    ".Invalidate("
+    "Com_Error("
+    "iassert("
+    "throw ")
+    require_not_contains(
+        _output_authenticator "${_forbidden}"
+        "read-only report-free stream output authentication")
+endforeach()
+
+# The retained block accessor delegates all output preflight to that predicate.
+# Its sole write remains last, so every false result preserves destination.
+extract_slice(
+    _source
+    "bool ActiveZoneStreamBinding::block("
+    "bool ActiveZoneStreamBinding::isPristine()"
+    _block_output
+    "checked retained block output")
+foreach(_marker IN ITEMS
+    "AuthenticateZoneStreamOutputSpan( *this, outBlock, sizeof(*outBlock), alignof(relocation::BlockView))"
+    "*outBlock = blocks_[index];")
+    require_contains(
+        _block_output "${_marker}" "aligned disjoint block output")
+endforeach()
+require_ordered(
+    _block_output
+    "AuthenticateZoneStreamOutputSpan("
+    "*outBlock = blocks_[index];"
+    "complete span authentication precedes output publication")
+require_not_contains(
+    _block_output "*outBlock = {};" "failure-path output mutation")
 extract_slice(
     _source
     "ZoneStreamOwnershipStatus TryInvalidateZoneStreams("
@@ -1271,6 +1376,7 @@ foreach(_marker IN ITEMS
     "TestFullInvalidationAndStaleRetry();"
     "TestAliasEpochExhaustion();"
     "TestNativeWidthBlockAddresses();"
+    "TestBlockOutputHardening();"
     "TestPassiveSingletonAuthentication();"
     "TestCompositionAuthentication();"
     "TestLiveTerminalCompositionCoexistence();"
@@ -1287,8 +1393,34 @@ foreach(_marker IN ITEMS
     "NeverBound receipt coexists with another exact Bound owner"
     "prior terminal Invalidated receipt coexists with a Bound owner"
     "non-Bound receipt scan still authenticates the shared Bound topology"
-    "prior Live terminal receipt coexists with a different Bound owner")
+    "prior Live terminal receipt coexists with a different Bound owner"
+    "cross-block saved cursor is valid when pop does not consume it"
+    "effective block-zero pop rejects a foreign saved cursor"
+    "effective block-zero pop accepts a block-zero saved cursor")
     require_contains(_fixture "${_marker}" "exhaustive runtime regression")
+endforeach()
+foreach(_marker IN ITEMS
+    "using OutputSpanAuthenticator ="
+    "decltype(&ownership::AuthenticateZoneStreamOutputSpan)"
+    "invalid block index preserves output bytes"
+    "misaligned block output storage remains unchanged"
+    "non-representable block output span is rejected"
+    "block output overlapping active binding is rejected"
+    "block output overlapping retained receipt is rejected"
+    "block output overlapping retained lifecycle is rejected"
+    "block output overlapping retained zone identity is rejected"
+    "idle binding still protects legacy singleton output ranges"
+    "idle binding rejects a different hidden owner"
+    "foreign-owner rejection preserves output bytes"
+    "stream index output overlap is rejected"
+    "alias registry output overlap is rejected"
+    "direct resolver output overlap is rejected"
+    "block output overlapping active cursor global is rejected"
+    "rejected output preserves every legacy stream global"
+    "terminal lifecycle blocks retained descriptor output"
+    "reused lifecycle generation blocks retained descriptor output"
+    "restored exact lifecycle permits retained descriptor output")
+    require_contains(_fixture "${_marker}" "adversarial block output boundary")
 endforeach()
 foreach(_marker IN ITEMS
     "misaligned typed zone identity rejected before dereference"

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <type_traits>
 #include <utility>
@@ -26,6 +27,16 @@ using pending::PendingCopyRecord;
 using pending::PendingCopyStatus;
 
 int g_failures = 0;
+volatile std::uint32_t g_alternateCompletionCalls = 0;
+
+template <typename T>
+std::array<std::uint8_t, sizeof(T)> ObjectBytes(
+    const T &object) noexcept
+{
+    std::array<std::uint8_t, sizeof(T)> bytes{};
+    std::memcpy(bytes.data(), &object, sizeof(object));
+    return bytes;
+}
 
 #define CHECK(expression)                                                       \
     do                                                                          \
@@ -62,7 +73,19 @@ struct GenerationFixture final
 };
 
 void CompleteNoop(void *) noexcept {}
-void CompleteAlternate(void *) noexcept {}
+void CompleteAlternate(void *) noexcept
+{
+    // Keep this callback observably distinct under MSVC Release identical-
+    // COMDAT folding: the test intentionally authenticates function identity.
+    g_alternateCompletionCalls = 1;
+}
+
+lifecycle::ZoneLoadCleanupCallbackStatus CompleteLifecycleCleanup(
+    void *,
+    lifecycle::ZoneLoadCleanupOperation) noexcept
+{
+    return lifecycle::ZoneLoadCleanupCallbackStatus::Success;
+}
 
 void PrepareCommitAndFinalize(
     PendingCopyAdmissionReceipt *const receipt,
@@ -752,6 +775,32 @@ void TestAppendReadPrepareAndDiscard()
         == PendingCopyStatus::InvalidRecord);
     CHECK(output == sentinel);
 
+    static_assert(alignof(PendingCopyRecord) > 1);
+    alignas(PendingCopyRecord)
+        std::array<std::uint8_t, sizeof(PendingCopyRecord) + 1>
+            misalignedStorage{};
+    misalignedStorage.fill(UINT8_C(0xA5));
+    const auto misalignedBefore = misalignedStorage;
+    CHECK(pending::TryReadPendingCopyRecord(
+        &receipt,
+        generation.key,
+        0,
+        reinterpret_cast<PendingCopyRecord *>(
+            misalignedStorage.data() + 1))
+        == PendingCopyStatus::InvalidArgument);
+    CHECK(misalignedStorage == misalignedBefore);
+
+    const std::uintptr_t nonRepresentableAddress =
+        (std::numeric_limits<std::uintptr_t>::max)()
+        & ~(static_cast<std::uintptr_t>(alignof(PendingCopyRecord)) - 1);
+    CHECK(pending::TryReadPendingCopyRecord(
+        &receipt,
+        generation.key,
+        0,
+        reinterpret_cast<PendingCopyRecord *>(nonRepresentableAddress))
+        == PendingCopyStatus::InvalidArgument);
+    CHECK(output == sentinel);
+
     CHECK(pending::TryReadPendingCopyRecord(
         &receipt,
         generation.key,
@@ -1060,6 +1109,103 @@ void TestCorruptionAndSerialExhaustion()
             &secondReceipt, 2);
         CHECK(ledger.canonical());
     }
+}
+
+void TestCrossGenerationReadOutputSeparation()
+{
+    static_assert(
+        alignof(PendingCopyAdmissionReceipt)
+        >= alignof(PendingCopyRecord));
+    static_assert(
+        alignof(lifecycle::ZoneLoadContextSlot)
+        >= alignof(PendingCopyRecord));
+
+    PendingCopyLedger ledger;
+    PendingCopyAdmissionReceipt firstReceipt;
+    PendingCopyAdmissionReceipt secondReceipt;
+    GenerationFixture firstGeneration(29);
+    GenerationFixture secondGeneration(30);
+    CHECK(pending::TryInitializePendingCopyLedger(&ledger)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryBeginPendingCopyAdmission(
+        &ledger,
+        &firstReceipt,
+        &firstGeneration.slot,
+        firstGeneration.key)
+        == PendingCopyStatus::Success);
+    CHECK(pending::TryAppendPendingCopyRecord(
+        &firstReceipt, firstGeneration.key, 211)
+        == PendingCopyStatus::Success);
+    PrepareCommitAndFinalize(&firstReceipt, &firstGeneration);
+    CHECK(pending::TryBeginPendingCopyAdmission(
+        &ledger,
+        &secondReceipt,
+        &secondGeneration.slot,
+        secondGeneration.key)
+        == PendingCopyStatus::Success);
+    CHECK(ledger.canonical());
+
+    const auto firstReceiptBefore = ObjectBytes(firstReceipt);
+    const auto firstLifecycleBefore = ObjectBytes(firstGeneration.slot);
+    const auto secondReceiptBefore = ObjectBytes(secondReceipt);
+    const auto secondLifecycleBefore = ObjectBytes(secondGeneration.slot);
+    const auto expectRetainedOwnersUnchanged = [&]()
+    {
+        CHECK(ObjectBytes(firstReceipt) == firstReceiptBefore);
+        CHECK(ObjectBytes(firstGeneration.slot) == firstLifecycleBefore);
+        CHECK(ObjectBytes(secondReceipt) == secondReceiptBefore);
+        CHECK(ObjectBytes(secondGeneration.slot) == secondLifecycleBefore);
+        CHECK(ledger.canonical());
+    };
+
+    CHECK(pending::TryReadPendingCopyRecord(
+        &firstReceipt,
+        firstGeneration.key,
+        0,
+        reinterpret_cast<PendingCopyRecord *>(&secondReceipt))
+        == PendingCopyStatus::InvalidArgument);
+    expectRetainedOwnersUnchanged();
+    CHECK(pending::TryReadPendingCopyRecord(
+        &firstReceipt,
+        firstGeneration.key,
+        0,
+        reinterpret_cast<PendingCopyRecord *>(&secondGeneration.slot))
+        == PendingCopyStatus::InvalidArgument);
+    expectRetainedOwnersUnchanged();
+
+    PendingCopyRecord output{};
+    CHECK(pending::TryReadPendingCopyRecord(
+        &firstReceipt, firstGeneration.key, 0, &output)
+        == PendingCopyStatus::Success);
+    CHECK((output == PendingCopyRecord{firstGeneration.key, 211, 0}));
+
+    lifecycle::ZoneLoadCleanupCallbacks cleanup{};
+    cleanup.context = &firstGeneration;
+    cleanup.perform = CompleteLifecycleCleanup;
+    CHECK(lifecycle::TryUnloadZoneLoadContext(
+        &firstGeneration.slot, firstGeneration.key, cleanup)
+        == lifecycle::ZoneLoadContextStatus::Success);
+    CHECK(firstReceipt.canonical());
+    CHECK(ledger.canonical());
+    const PendingCopyRecord staleSentinel{
+        firstGeneration.key, 777, 0};
+    output = staleSentinel;
+    CHECK(pending::TryReadPendingCopyRecord(
+        &firstReceipt, firstGeneration.key, 0, &output)
+        == PendingCopyStatus::StaleKey);
+    CHECK(output == staleSentinel);
+
+    lifecycle::ZoneLoadContextKey newerKey{};
+    CHECK(lifecycle::TryClaimZoneLoadContext(
+        &firstGeneration.slot, &newerKey)
+        == lifecycle::ZoneLoadContextStatus::Success);
+    CHECK(newerKey != firstGeneration.key);
+    CHECK(firstReceipt.canonical());
+    CHECK(ledger.canonical());
+    CHECK(pending::TryReadPendingCopyRecord(
+        &firstReceipt, firstGeneration.key, 0, &output)
+        == PendingCopyStatus::StaleKey);
+    CHECK(output == staleSentinel);
 }
 
 void TestFinalizationExactlyOnceAndZeroRecordTerminal()
@@ -1389,6 +1535,7 @@ int main()
     TestPassiveLedgerAuthentication();
     TestInitializationAndArgumentRejection();
     TestAppendReadPrepareAndDiscard();
+    TestCrossGenerationReadOutputSeparation();
     TestCapacityAndFailureAtomicity();
     TestCorruptionAndSerialExhaustion();
     TestFinalizationExactlyOnceAndZeroRecordTerminal();

@@ -10,12 +10,16 @@ set(_bridge_header_path
     "${SOURCE_ROOT}/src/database/db_zone_runtime_storage_fx_bridge.h")
 set(_bridge_source_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_zone_runtime_storage_bridge.cpp")
+set(_headless_bridge_source_path
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_storage_fx_bridge_headless.cpp")
 set(_arena_header_path
     "${SOURCE_ROOT}/src/EffectsCore/fx_fastfile_native_arena.h")
 set(_fixture_path "${SOURCE_ROOT}/tests/db_zone_runtime_storage_tests.cpp")
 set(_runtime_table_seal_path
     "${SOURCE_ROOT}/tests/db_zone_runtime_table_source_test.cmake")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
+set(_dedi_sources_path "${SOURCE_ROOT}/scripts/dedi/dedi_sources.cmake")
+set(_headless_profile_path "${SOURCE_ROOT}/tests/headless_profile_test.cmake")
 set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
 set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
 set(_registry_path "${SOURCE_ROOT}/src/database/db_registry.cpp")
@@ -34,10 +38,13 @@ foreach(_path IN ITEMS
     "${_source_path}"
     "${_bridge_header_path}"
     "${_bridge_source_path}"
+    "${_headless_bridge_source_path}"
     "${_arena_header_path}"
     "${_fixture_path}"
     "${_runtime_table_seal_path}"
     "${_manifest_path}"
+    "${_dedi_sources_path}"
+    "${_headless_profile_path}"
     "${_tests_path}"
     "${_ci_path}"
     "${_registry_path}"
@@ -51,17 +58,21 @@ file(READ "${_header_path}" _header)
 file(READ "${_source_path}" _source)
 file(READ "${_bridge_header_path}" _bridge_header)
 file(READ "${_bridge_source_path}" _bridge_source)
+file(READ "${_headless_bridge_source_path}" _headless_bridge_source)
 file(READ "${_arena_header_path}" _arena_header)
 file(READ "${_fixture_path}" _fixture)
 file(READ "${_runtime_table_seal_path}" _runtime_table_seal)
 file(READ "${_manifest_path}" _manifest)
+file(READ "${_dedi_sources_path}" _dedi_sources)
+file(READ "${_headless_profile_path}" _headless_profile)
 file(READ "${_tests_path}" _tests)
 file(READ "${_ci_path}" _ci)
 file(READ "${_registry_path}" _registry)
 file(READ "${_load_path}" _load)
 foreach(_var IN ITEMS
-    _header _source _bridge_header _bridge_source _arena_header _fixture
-    _runtime_table_seal _manifest _tests _ci _registry _load)
+    _header _source _bridge_header _bridge_source _headless_bridge_source
+    _arena_header _fixture _runtime_table_seal _manifest _dedi_sources
+    _headless_profile _tests _ci _registry _load)
     string(REGEX REPLACE "[ \t\r\n]+" " " _normalized "${${_var}}")
     set(${_var} "${_normalized}")
 endforeach()
@@ -82,6 +93,28 @@ foreach(_marker IN ITEMS
     "transactionBases_[depth] != 0")
     require_contains(
         _arena_header "${_marker}" "stable native-arena authentication gate")
+endforeach()
+
+# Headless links the database-neutral storage implementation but deliberately
+# cannot construct EffectsCore objects yet. Its private bridge must make
+# planning and every direct lifecycle operation fail closed, and both the
+# source profile and its profile test pin the complete pair.
+foreach(_marker IN ITEMS
+    "#if !defined(KISAK_DEDI_HEADLESS)"
+    "return {};"
+    "return FxRuntimeStorageBindStatus::InvalidPhase;"
+    "return false;"
+    "return FxRuntimeStorageDestroyStatus::InvalidBinding;")
+    require_contains(
+        _headless_bridge_source "${_marker}" "fail-closed headless bridge")
+endforeach()
+foreach(_marker IN ITEMS
+    "\${SRC_DIR}/database/db_zone_runtime_storage.cpp"
+    "\${SRC_DIR}/database/db_zone_runtime_storage_fx_bridge_headless.cpp")
+    require_contains(
+        _dedi_sources "${_marker}" "headless storage link closure")
+    require_contains(
+        _headless_profile "${_marker}" "headless storage profile seal")
 endforeach()
 
 # Runtime-table production enrollment is intentionally owned by its more
@@ -570,6 +603,7 @@ foreach(_forbidden IN ITEMS
 endforeach()
 foreach(_marker IN ITEMS
     "AuthenticateStableFxRuntimeStorage("
+    "workspace->readyForCompositionAuthentication()"
     "workspace->frameDepth() != 0"
     "workspace->readyForDestruction()"
     "workspace->phase() != Phase::Idle"
@@ -585,6 +619,9 @@ foreach(_marker IN ITEMS
     require_contains(
         _bridge_source "${_marker}" "exact FX bridge teardown")
 endforeach()
+require_substring_count(
+    _bridge_source "workspace->readyForCompositionAuthentication()" 1
+    "single complete workspace composition gate")
 foreach(_marker IN ITEMS
     "FxRuntimeStorageBindStatus TryBindFxRuntimeStorage("
     "if (!arena) return FxRuntimeStorageBindStatus::InvalidArgument;"
@@ -700,7 +737,8 @@ foreach(_path IN LISTS _all_production_sources)
     if("${_path}" STREQUAL "${_header_path}"
         OR "${_path}" STREQUAL "${_source_path}"
         OR "${_path}" STREQUAL "${_bridge_header_path}"
-        OR "${_path}" STREQUAL "${_bridge_source_path}")
+        OR "${_path}" STREQUAL "${_bridge_source_path}"
+        OR "${_path}" STREQUAL "${_headless_bridge_source_path}")
         continue()
     endif()
     if("${_path}" MATCHES
@@ -765,6 +803,17 @@ foreach(_marker IN ITEMS
     "foreign.data()"
     "ScriptStringJournalTestAccess::SetFlags"
     "SetFlags(value, 0x82)"
+    "KISAK_FX_FASTFILE_ZONE_ADAPTER_TESTING"
+    "using WorkspaceAuthenticator = bool ("
+    "workspace->readyForCompositionAuthentication()"
+    "WorkspaceAccess::SetArena"
+    "WorkspaceAccess::SetCursor"
+    "WorkspaceAccess::SetRecordingCounts"
+    "WorkspaceAccess::SetHints"
+    "WorkspaceAccess::CorruptDormantFrame"
+    "WorkspaceAccess::SetOperating"
+    "workspaceCompositionRejected()"
+    "restoreWorkspace()"
     "ScriptStringJournalPhase::Committed"
     "ScriptStringJournalPhase::RolledBack")
     require_contains(_fixture "${_marker}" "boundary and lifetime coverage")

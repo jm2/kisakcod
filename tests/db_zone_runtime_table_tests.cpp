@@ -9,6 +9,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <iterator>
@@ -422,7 +423,7 @@ struct CompositeRuntimeFixture final
     ZoneLoadContextKey key{};
     zone_runtime_storage::ZoneRuntimeStoragePlan storagePlan{};
     pmem_runtime::AllocationResult slabAllocation{};
-    XZoneMemory zone{};
+    alignas(ZoneRuntimeGenerationView) XZoneMemory zone{};
     std::array<db::relocation::BlockView,
         db::relocation::kBlockCount> blocks{};
     std::uint32_t physicalSlot = 0;
@@ -3833,7 +3834,10 @@ void TestCompositeRecoverablePlacementAndRangeRejection()
     CHECK(misalignedOutput == misalignedBefore);
     checkAllocationCursorUnchanged();
 
-    struct alignas(pmem_runtime::AllocationResult)
+    struct alignas(
+        alignof(ZoneLoadContextKey) > alignof(pmem_runtime::AllocationResult)
+            ? alignof(ZoneLoadContextKey)
+            : alignof(pmem_runtime::AllocationResult))
         KeyAliasedOutputStorage final
     {
         ZoneLoadContextKey key{};
@@ -4096,8 +4100,8 @@ void TestCompositeStageOutputAliasPreflight()
         fixture.table.get(),
         fixture.physicalSlot,
         fixture.key,
+        64,
         16,
-        alignof(std::uint32_t),
         0,
         &managedOutputAllocation)
         == ZoneRuntimeTableStatus::Success);
@@ -4106,6 +4110,128 @@ void TestCompositeStageOutputAliasPreflight()
     CHECK(managedOutputAllocation.address != nullptr);
     if (!managedOutputAllocation.address)
         return;
+
+    constexpr std::size_t kManagedOutputBytes = 64;
+    std::array<std::byte, kManagedOutputBytes> managedOutputBefore{};
+    for (std::size_t index = 0; index < kManagedOutputBytes; ++index)
+        managedOutputAllocation.address[index] = UINT8_C(0x3C);
+    std::memcpy(
+        managedOutputBefore.data(),
+        managedOutputAllocation.address,
+        managedOutputBefore.size());
+    const auto managedOutputUnchanged = [&]() noexcept {
+        CHECK(std::memcmp(
+            managedOutputBefore.data(),
+            managedOutputAllocation.address,
+            managedOutputBefore.size()) == 0);
+    };
+
+    CHECK(TryGetZoneRuntimeEntry(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        reinterpret_cast<const ZoneRuntimeEntry **>(
+            managedOutputAllocation.address))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    managedOutputUnchanged();
+    CHECK(TryGetZoneRuntimeGeneration(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        reinterpret_cast<ZoneRuntimeGenerationView *>(
+            managedOutputAllocation.address))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    managedOutputUnchanged();
+    constexpr std::uint32_t managedClaimSlot = 32;
+    CHECK(TryClaimZoneRuntimeGeneration(
+        fixture.table.get(),
+        managedClaimSlot,
+        reinterpret_cast<ZoneLoadContextKey *>(
+            managedOutputAllocation.address))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    managedOutputUnchanged();
+    const auto *const managedClaimLifecycle =
+        ZoneRuntimeTableTestAccess::Lifecycle(
+            fixture.table.get(), managedClaimSlot);
+    CHECK(managedClaimLifecycle != nullptr);
+    CHECK(managedClaimLifecycle
+        && managedClaimLifecycle->phase()
+            == ZoneLoadContextPhase::Empty);
+
+    // The singleton controls remain protected while the embedded binding is
+    // still Idle. Each public output shape targets the same aligned stream
+    // stack prefix and must fail before phase checks, allocation, or claim.
+    constexpr std::size_t kIdleStreamOutputBytes = 64;
+    constexpr std::size_t kIdleStreamOutputAlignment =
+        alignof(ZoneRuntimeGenerationView)
+            > alignof(pmem_runtime::AllocationResult)
+        ? alignof(ZoneRuntimeGenerationView)
+        : alignof(pmem_runtime::AllocationResult);
+    static_assert(
+        sizeof(g_streamPosStack)
+        >= kIdleStreamOutputBytes + kIdleStreamOutputAlignment - 1);
+    static_assert(
+        kIdleStreamOutputAlignment >= alignof(ZoneLoadContextKey));
+    static_assert(
+        kIdleStreamOutputAlignment >= alignof(const ZoneRuntimeEntry *));
+    void *idleStreamStorage = static_cast<void *>(g_streamPosStack);
+    std::size_t idleStreamStorageBytes = sizeof(g_streamPosStack);
+    void *const idleStreamOutput = std::align(
+        kIdleStreamOutputAlignment,
+        kIdleStreamOutputBytes,
+        idleStreamStorage,
+        idleStreamStorageBytes);
+    CHECK(idleStreamOutput != nullptr);
+    if (!idleStreamOutput)
+        return;
+    std::array<std::byte, kIdleStreamOutputBytes>
+        idleStreamOutputBefore{};
+    std::memcpy(
+        idleStreamOutputBefore.data(),
+        idleStreamOutput,
+        idleStreamOutputBefore.size());
+    const auto idleStreamOutputUnchanged = [&]() noexcept {
+        CHECK(std::memcmp(
+            idleStreamOutputBefore.data(),
+            idleStreamOutput,
+            idleStreamOutputBefore.size()) == 0);
+    };
+    CHECK(TryGetZoneRuntimeEntry(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        reinterpret_cast<const ZoneRuntimeEntry **>(idleStreamOutput))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    idleStreamOutputUnchanged();
+    CHECK(TryClaimZoneRuntimeGeneration(
+        fixture.table.get(),
+        managedClaimSlot,
+        reinterpret_cast<ZoneLoadContextKey *>(idleStreamOutput))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    idleStreamOutputUnchanged();
+    CHECK(TryGetZoneRuntimeGeneration(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        reinterpret_cast<ZoneRuntimeGenerationView *>(idleStreamOutput))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    idleStreamOutputUnchanged();
+    CHECK(TryAllocateZoneRuntimeMemory(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        32,
+        16,
+        0,
+        reinterpret_cast<pmem_runtime::AllocationResult *>(idleStreamOutput))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    idleStreamOutputUnchanged();
+    CHECK(TryStageZoneRuntimeScriptString(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        {"idle-stream-output\0", 19, 1},
+        reinterpret_cast<std::uint32_t *>(idleStreamOutput))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    idleStreamOutputUnchanged();
 
     CHECK(fixture.setupStorage(1));
     CHECK(fixture.setupStreams());
@@ -4117,6 +4243,142 @@ void TestCompositeStageOutputAliasPreflight()
     auto *const journal = storage ? storage->scriptStringJournal() : nullptr;
     CHECK(journal != nullptr);
     CHECK(journal && journal->entryCount() == 0);
+
+    std::array<std::byte, sizeof(XZoneMemory)> zoneBefore{};
+    std::memcpy(zoneBefore.data(), &fixture.zone, zoneBefore.size());
+    const auto zoneUnchanged = [&]() noexcept {
+        CHECK(std::memcmp(
+            zoneBefore.data(), &fixture.zone, zoneBefore.size()) == 0);
+    };
+    CHECK(TryGetZoneRuntimeEntry(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        reinterpret_cast<const ZoneRuntimeEntry **>(&fixture.zone))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    zoneUnchanged();
+    CHECK(TryGetZoneRuntimeGeneration(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        reinterpret_cast<ZoneRuntimeGenerationView *>(&fixture.zone))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    zoneUnchanged();
+    CHECK(TryClaimZoneRuntimeGeneration(
+        fixture.table.get(),
+        managedClaimSlot,
+        reinterpret_cast<ZoneLoadContextKey *>(&fixture.zone))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    zoneUnchanged();
+
+    const pmem_runtime::DiagnosticSnapshot allocationBefore =
+        pmem_runtime::TryCaptureDiagnosticSnapshot();
+    CHECK(allocationBefore.status
+        == pmem_runtime::DiagnosticSnapshotStatus::Success);
+    CHECK(TryAllocateZoneRuntimeMemory(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        32,
+        16,
+        0,
+        reinterpret_cast<pmem_runtime::AllocationResult *>(
+            &fixture.zone))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    zoneUnchanged();
+    const pmem_runtime::DiagnosticSnapshot allocationAfter =
+        pmem_runtime::TryCaptureDiagnosticSnapshot();
+    CHECK(allocationAfter.status
+        == pmem_runtime::DiagnosticSnapshotStatus::Success);
+    CHECK(allocationAfter.freeBytes == allocationBefore.freeBytes);
+    CHECK(allocationAfter.lowCount == allocationBefore.lowCount);
+    CHECK(allocationAfter.highCount == allocationBefore.highCount);
+    CHECK(TryStageZoneRuntimeScriptString(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        {"zone-output\0", 12, 1},
+        reinterpret_cast<std::uint32_t *>(&fixture.zone))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    zoneUnchanged();
+
+    const std::uint8_t *const streamPosBefore = g_streamPos;
+    CHECK(TryGetZoneRuntimeEntry(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        reinterpret_cast<const ZoneRuntimeEntry **>(
+            static_cast<void *>(&g_streamPos)))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(g_streamPos == streamPosBefore);
+
+    std::array<std::byte, sizeof(ZoneLoadContextKey)>
+        streamPosArrayBefore{};
+    std::memcpy(
+        streamPosArrayBefore.data(),
+        g_streamPosArray,
+        streamPosArrayBefore.size());
+    CHECK(TryClaimZoneRuntimeGeneration(
+        fixture.table.get(),
+        managedClaimSlot,
+        reinterpret_cast<ZoneLoadContextKey *>(
+            static_cast<void *>(g_streamPosArray)))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(std::memcmp(
+        streamPosArrayBefore.data(),
+        g_streamPosArray,
+        streamPosArrayBefore.size()) == 0);
+
+    std::array<std::byte, sizeof(ZoneRuntimeGenerationView)>
+        streamDelayBefore{};
+    std::memcpy(
+        streamDelayBefore.data(),
+        g_streamDelayArray,
+        streamDelayBefore.size());
+    CHECK(TryGetZoneRuntimeGeneration(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        reinterpret_cast<ZoneRuntimeGenerationView *>(
+            static_cast<void *>(g_streamDelayArray)))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(std::memcmp(
+        streamDelayBefore.data(),
+        g_streamDelayArray,
+        streamDelayBefore.size()) == 0);
+
+    std::array<std::byte, sizeof(pmem_runtime::AllocationResult)>
+        streamStackBefore{};
+    std::memcpy(
+        streamStackBefore.data(),
+        g_streamPosStack,
+        streamStackBefore.size());
+    CHECK(TryAllocateZoneRuntimeMemory(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        32,
+        16,
+        0,
+        reinterpret_cast<pmem_runtime::AllocationResult *>(
+            static_cast<void *>(g_streamPosStack)))
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(std::memcmp(
+        streamStackBefore.data(),
+        g_streamPosStack,
+        streamStackBefore.size()) == 0);
+
+    const std::uint32_t streamIndexBefore = g_streamPosIndex;
+    CHECK(TryStageZoneRuntimeScriptString(
+        fixture.table.get(),
+        fixture.physicalSlot,
+        fixture.key,
+        {"stream-output\0", 14, 1},
+        &g_streamPosIndex)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(g_streamPosIndex == streamIndexBefore);
+    CHECK(runtime_table_backend::backend.acquireCalls == 0);
+    CHECK(managedClaimLifecycle
+        && managedClaimLifecycle->phase()
+            == ZoneLoadContextPhase::Empty);
 
     auto *const allocationReceipt =
         ZoneRuntimeTableTestAccess::AllocationReceipt(
@@ -4140,8 +4402,6 @@ void TestCompositeStageOutputAliasPreflight()
 
     auto *const managedOutput = reinterpret_cast<std::uint32_t *>(
         managedOutputAllocation.address);
-    for (std::size_t index = 0; index < sizeof(*managedOutput); ++index)
-        managedOutputAllocation.address[index] = UINT8_C(0x3C);
     CHECK(TryStageZoneRuntimeScriptString(
         fixture.table.get(),
         fixture.physicalSlot,
@@ -4320,6 +4580,75 @@ void TestCompositeCallbackContextAliasPreflightAndDrain()
         == ZoneRuntimeTableStatus::Success);
     CHECK(ZoneRuntimeTableTestAccess::ReceiptCapsulePristine(
         fixture.table.get(), fixture.physicalSlot));
+}
+
+void TestCompositeCallbacksRejectLegacyOwnershipBeforeMutation()
+{
+    ResetBackend();
+    auto table = std::make_unique<ZoneRuntimeTable>();
+    constexpr std::uint32_t physicalSlot = 30;
+    ZoneLoadContextKey key{};
+    CHECK(TryInitializeZoneRuntimeTable(table.get())
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryClaimZoneRuntimeGeneration(
+        table.get(), physicalSlot, &key)
+        == ZoneRuntimeTableStatus::Success);
+
+    db::script_string_journal::ScriptStringJournal legacyJournal{};
+    CHECK(TryBeginZoneRuntimeScriptStringOwnership(
+        table.get(),
+        physicalSlot,
+        key,
+        &legacyJournal,
+        nullptr,
+        0,
+        0) == ZoneRuntimeTableStatus::Success);
+
+    auto *const ownership = ZoneRuntimeTableTestAccess::Ownership(
+        table.get(), physicalSlot);
+    auto *const pending = ZoneRuntimeTableTestAccess::PendingCopyLedger(
+        table.get());
+    CHECK(ownership != nullptr);
+    CHECK(pending != nullptr);
+    CHECK(ownership
+        && ownership->phase()
+            == ZoneScriptStringOwnershipPhase::Staging);
+    CHECK(pending && !pending->initialized());
+    CHECK(ZoneRuntimeTableTestAccess::SharedResourcesPristine(table.get()));
+
+    CompositeRuntimeDriver driver{};
+    driver.table = table.get();
+    driver.key = key;
+    CHECK(TryBindZoneRuntimeGenerationCallbacks(
+        table.get(),
+        physicalSlot,
+        key,
+        MakeCompositeRuntimeCallbacks(&driver))
+        == ZoneRuntimeTableStatus::InvalidPhase);
+
+    const ZoneRuntimeEntry *entry = nullptr;
+    CHECK(TryGetZoneRuntimeEntry(
+        table.get(), physicalSlot, &entry)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(entry != nullptr);
+    CHECK(entry && entry->generationBindingPristine());
+    CHECK(entry
+        && entry->setupStage() == ZoneRuntimeSetupStage::Passive);
+    CHECK(ownership
+        && ownership->phase()
+            == ZoneScriptStringOwnershipPhase::Staging);
+    CHECK(pending && !pending->initialized());
+    CHECK(ZoneRuntimeTableTestAccess::SharedResourcesPristine(table.get()));
+    CHECK(table->initialized());
+
+    std::uint32_t cleanupCount = 0;
+    CHECK(zone_ownership::TryBeginZoneScriptStringRollback(
+        ownership,
+        {&cleanupCount, EnsureUnreachable, CompleteCleanup})
+        == ZoneScriptStringOwnershipStatus::Success);
+    CHECK(zone_ownership::TryFinishZoneScriptStringAbandonment(ownership)
+        == ZoneScriptStringOwnershipStatus::Success);
+    CHECK(cleanupCount == 8);
 }
 
 void TestCompositeAbandonmentRetryAndReentryPreservation()
@@ -4576,6 +4905,7 @@ int main(const int argc, char **const argv)
     TestCompositeRecoverablePlacementAndRangeRejection();
     TestCompositeStageOutputAliasPreflight();
     TestCompositeCallbackContextAliasPreflightAndDrain();
+    TestCompositeCallbacksRejectLegacyOwnershipBeforeMutation();
     TestCompositeAbandonmentRetryAndReentryPreservation();
 
     if (failures != 0)

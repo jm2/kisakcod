@@ -102,6 +102,21 @@ class ActiveZoneStreamBinding;
     const zone_load::ZoneLoadContextKey &expectedKey,
     ZoneStreamCompositionMode mode) noexcept;
 
+// Authenticates an aligned, representable output span as disjoint from the
+// supplied canonical binding and the complete process-wide stream authority:
+// both relocation registries, the owner slot, every legacy stream global, and
+// a Bound binding's retained receipt, lifecycle, and XZoneMemory identity.
+// The supplied Bound binding must be the exact hidden owner and still own its
+// active lifecycle key; an Idle binding requires no hidden owner. Singleton
+// ranges are protected in either phase.
+// This report-free predicate is read-only, returns no retained authority, and
+// requires the caller to hold the external database/lifecycle serializer.
+[[nodiscard]] bool AuthenticateZoneStreamOutputSpan(
+    const ActiveZoneStreamBinding &binding,
+    const void *output,
+    std::size_t outputSize,
+    std::size_t outputAlignment) noexcept;
+
 class alignas(8) ZoneStreamGenerationReceipt final
 {
 public:
@@ -172,6 +187,8 @@ public:
     [[nodiscard]] const zone_load::ZoneLoadContextKey &key() const noexcept;
     [[nodiscard]] const ZoneStreamGenerationReceipt *receipt() const noexcept;
     [[nodiscard]] const XZoneMemory *zoneIdentity() const noexcept;
+    // Copies one retained descriptor only to an authenticated output span.
+    // The destination remains byte-for-byte unchanged on every false result.
     [[nodiscard]] bool block(
         std::size_t index,
         relocation::BlockView *outBlock) const noexcept;

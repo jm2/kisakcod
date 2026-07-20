@@ -111,6 +111,14 @@ constexpr std::uint8_t kLedgerPhaseWitnessMask = UINT8_C(0x5D);
             firstBegin, firstEnd, secondBegin, secondEnd);
 }
 
+[[nodiscard]] bool ObjectIsAligned(
+    const void *const object,
+    const std::size_t alignment) noexcept
+{
+    return object && alignment != 0
+        && reinterpret_cast<std::uintptr_t>(object) % alignment == 0;
+}
+
 [[nodiscard]] constexpr bool IsDefaultRecord(
     const PendingCopyRecord &record) noexcept
 {
@@ -876,7 +884,8 @@ PendingCopyStatus TryReadPendingCopyRecord(
     PendingCopyRecord *const outRecord) noexcept
 {
     const zone_load::ZoneLoadContextKey key = keyArgument;
-    if (!receipt || !outRecord)
+    if (!receipt
+        || !ObjectIsAligned(outRecord, alignof(PendingCopyRecord)))
         return PendingCopyStatus::InvalidArgument;
     if (!receipt->isCanonical())
         return PendingCopyStatus::UnsafeFailure;
@@ -912,6 +921,37 @@ PendingCopyStatus TryReadPendingCopyRecord(
         return PendingCopyStatus::UnsafeFailure;
     if (ledger->callbackActive_ != 0)
         return PendingCopyStatus::Busy;
+    if (!zone_load::ZoneLoadContextKeyMatches(receipt->lifecycle_, key))
+        return PendingCopyStatus::StaleKey;
+    for (std::uint32_t retainedIndex = 0;
+         retainedIndex < ledger->generationCount_;
+         ++retainedIndex)
+    {
+        const PendingCopyLedger::GenerationDescriptor &retainedDescriptor =
+            ledger->generations_[retainedIndex];
+        const PendingCopyAdmissionReceipt *const retainedReceipt =
+            retainedDescriptor.receipt;
+        if (!retainedReceipt
+            || !ObjectsDisjoint(
+                retainedReceipt,
+                sizeof(*retainedReceipt),
+                outRecord,
+                sizeof(*outRecord)))
+        {
+            return PendingCopyStatus::InvalidArgument;
+        }
+        const zone_load::ZoneLoadContextSlot *const retainedLifecycle =
+            retainedReceipt->lifecycle_;
+        if (!retainedLifecycle
+            || !ObjectsDisjoint(
+                retainedLifecycle,
+                sizeof(*retainedLifecycle),
+                outRecord,
+                sizeof(*outRecord)))
+        {
+            return PendingCopyStatus::InvalidArgument;
+        }
+    }
     if (receipt->generationIndex_ >= ledger->generationCount_)
     {
         return PendingCopyStatus::UnsafeFailure;

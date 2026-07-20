@@ -129,6 +129,40 @@ function(require_security_exact_friend_surface
     endif()
 endfunction()
 
+# Portable runtime fixtures compile the real PMem implementation under strict
+# warnings. Preserve the underlying header fixes instead of reintroducing
+# target-wide warning suppressions that can hide new controller defects.
+foreach(_dvar_word_marker IN ITEMS
+    "const uint32 low = static_cast<uint32>(val);"
+    "const uint32 high = static_cast<uint32>(val >> 32);"
+    "int32 signedLow = 0;"
+    "int32 signedHigh = 0;"
+    "memcpy(&signedLow, &low, sizeof(low));"
+    "memcpy(&signedHigh, &high, sizeof(high));"
+    "integer.min = signedLow;"
+    "integer.max = signedHigh;")
+    require_source_contains(
+        "universal/q_shared.h"
+        "${_dvar_word_marker}"
+        "alias-safe packed Dvar integer limits")
+endforeach()
+foreach(_forbidden_dvar_pun IN ITEMS
+    "integer.max = HIDWORD(val);"
+    "integer.min = LODWORD(val);")
+    require_source_not_contains(
+        "universal/q_shared.h"
+        "${_forbidden_dvar_pun}"
+        "strict-aliasing Dvar integer limit pun")
+endforeach()
+require_source_contains(
+    "qcommon/qcommon.h"
+    "enum conChannel_t : __int32"
+    "portable console-channel enum tag")
+require_source_not_contains(
+    "qcommon/qcommon.h"
+    "enum $6ABDC6367E3229B6421BFD1B2626A094"
+    "non-portable dollar identifier")
+
 function(security_class_digest_matches_exact
     SLICE_VAR EXPECTED OUT_VAR)
     string(SHA256 _actual_digest "${${SLICE_VAR}}")
@@ -10379,7 +10413,7 @@ require_security_exact_class_digest(
     "ZoneStreamGenerationReceipt")
 require_security_exact_class_digest(
     _security_active_stream_binding_class
-    50db7b75d5c2aab13723e9246264eced1e5db8992e3314ae0b47b6ba888e3b69
+    43068d2cdd450876889c053f7df29cf0011558ff85a9dd7a54a5282560f4719f
     "ActiveZoneStreamBinding")
 require_security_exact_class_digest(
     _security_pending_admission_receipt_class
@@ -10573,25 +10607,31 @@ require_source_contains(
 # freezes qualified operations by count and rejects aliases/raw checked calls.
 foreach(_zone_runtime_exact_enrollment_marker IN ITEMS
     "set(_reviewed_composite_calls"
-    "zone_stream_ownership::TryBeginZoneStreamGeneration(|1"
-    "zone_stream_ownership::TryBindZoneStreams(|1"
-    "zone_stream_ownership::TryInvalidateZoneStreams(|2"
-    "zone_pending_copy::TryInitializePendingCopyLedger(|1"
-    "zone_pending_copy::TryBeginPendingCopyAdmission(|1"
-    "zone_pending_copy::TryBeginPendingCopyDrain(|1"
-    "zone_runtime_storage::TryBindZoneRuntimeStorage(|1"
-    "zone_runtime_storage::detail::TryBindFxRuntimeStorage(|1"
-    "zone_runtime_storage::TryDestroyZoneRuntimeStorage(|2"
-    "pmem_runtime::TryBeginAllocationReceipt(|1"
-    "pmem_runtime::TryAuthenticateAllocationRange(|2"
-    "pmem_runtime::TryEndAllocationReceipt(|2"
-    "pmem_runtime::TryFreeAllocationReceipt(|1"
-    "pmem_runtime::StorageIsOutsideManagedMemory(|7"
+    "zone_stream_ownership::TryBeginZoneStreamGeneration|1"
+    "zone_stream_ownership::TryBindZoneStreams|1"
+    "zone_stream_ownership::TryInvalidateZoneStreams|2"
+    "zone_pending_copy::TryInitializePendingCopyLedger|1"
+    "zone_pending_copy::TryBeginPendingCopyAdmission|1"
+    "zone_pending_copy::TryBeginPendingCopyDrain|1"
+    "zone_runtime_storage::TryBindZoneRuntimeStorage|1"
+    "zone_runtime_storage::detail::TryBindFxRuntimeStorage|1"
+    "zone_runtime_storage::TryDestroyZoneRuntimeStorage|2"
+    "pmem_runtime::TryBeginAllocationReceipt|1"
+    "pmem_runtime::TryAuthenticateAllocationRange|2"
+    "pmem_runtime::TryEndAllocationReceipt|2"
+    "pmem_runtime::TryFreeAllocationReceipt|1"
+    "pmem_runtime::StorageIsOutsideManagedMemory|6"
     "require_substring_count("
+    "exact composite authority identifier enrollment"
+    "exact direct composite authority call enrollment"
+    "qualified direct-call counting distinguishes imported calls"
+    "direct-call counting rejects authority extraction substitution"
     "no raw operation or alias bypass in exact controller"
     "runtime-table exact-controller implementation"
     "overflow-safe exact control-state separation"
     "one helper plus five reviewed writable-output preflights"
+    "one retained-runtime helper plus five reviewed output gates"
+    "single exact stream-authority output authenticator"
     "generation callbacks snapshot before table authentication"
     "stream descriptors snapshot before table authentication"
     "cross-component overlap rejection before singleton publication"

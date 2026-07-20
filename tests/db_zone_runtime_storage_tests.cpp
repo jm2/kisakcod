@@ -1,3 +1,5 @@
+#define KISAK_FX_FASTFILE_ZONE_ADAPTER_TESTING 1
+
 #include <database/db_zone_runtime_storage.h>
 
 #include <EffectsCore/fx_fastfile_native_arena.h>
@@ -158,6 +160,12 @@ bool TestPlanning()
     static_assert(
         sizeof(fastfile::FxFastFileZoneAdapterDisk32Workspace)
         == (sizeof(void *) == 4 ? 0xBD048u : 0xC34C8u));
+    using WorkspaceAuthenticator = bool (
+        fastfile::FxFastFileZoneAdapterDisk32Workspace::*)() const noexcept;
+    static_assert(std::is_same_v<
+        decltype(&fastfile::FxFastFileZoneAdapterDisk32Workspace::
+                     readyForCompositionAuthentication),
+        WorkspaceAuthenticator>);
 
     Plan zero{};
     CHECK(PlanStorage(0, 1, &zero));
@@ -662,6 +670,58 @@ bool TestCompositionAuthentication()
         plan.expectedStringCount};
     CHECK(runtime_storage::AuthenticateZoneRuntimeStorageComposition(
         binding, placed, CompositionMode::Placed));
+
+    auto *const workspace = binding.fxZoneAdapterWorkspace();
+    using WorkspaceAccess =
+        fastfile::FxFastFileZoneAdapterDisk32WorkspaceTestAccess;
+    CHECK(workspace->readyForCompositionAuthentication());
+    const auto workspaceCompositionRejected = [&]() noexcept
+    {
+        return !workspace->readyForCompositionAuthentication()
+            && !runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+                binding, placed, CompositionMode::Placed);
+    };
+    const auto restoreWorkspace = [&]() noexcept
+    {
+        WorkspaceAccess::RestoreStableState(workspace);
+        return workspace->readyForCompositionAuthentication()
+            && runtime_storage::AuthenticateZoneRuntimeStorageComposition(
+                binding, placed, CompositionMode::Placed);
+    };
+
+    WorkspaceAccess::SetArena(workspace, binding.fxNativeArena());
+    CHECK(workspaceCompositionRejected());
+    CHECK(restoreWorkspace());
+
+    WorkspaceAccess::SetCursor(workspace, {journalValue, nullptr});
+    CHECK(workspaceCompositionRejected());
+    CHECK(restoreWorkspace());
+    WorkspaceAccess::SetCursor(
+        workspace, {nullptr, ReenterDestroyFromSpanOracle});
+    CHECK(workspaceCompositionRejected());
+    CHECK(restoreWorkspace());
+
+    WorkspaceAccess::SetRecordingCounts(workspace, 1, 0);
+    CHECK(workspaceCompositionRejected());
+    CHECK(restoreWorkspace());
+    WorkspaceAccess::SetRecordingCounts(workspace, 0, 1);
+    CHECK(workspaceCompositionRejected());
+    CHECK(restoreWorkspace());
+
+    WorkspaceAccess::SetHints(workspace, 1, 0);
+    CHECK(workspaceCompositionRejected());
+    CHECK(restoreWorkspace());
+    WorkspaceAccess::SetHints(workspace, 0, 1);
+    CHECK(workspaceCompositionRejected());
+    CHECK(restoreWorkspace());
+
+    WorkspaceAccess::CorruptDormantFrame(workspace);
+    CHECK(workspaceCompositionRejected());
+    CHECK(restoreWorkspace());
+    WorkspaceAccess::SetOperating(workspace, true);
+    CHECK(workspaceCompositionRejected());
+    CHECK(restoreWorkspace());
+
     CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(
         binding, placed, CompositionMode::Pristine));
     CHECK(!runtime_storage::AuthenticateZoneRuntimeStorageComposition(

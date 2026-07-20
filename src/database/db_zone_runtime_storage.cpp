@@ -92,8 +92,8 @@ static_assert(std::is_nothrow_destructible_v<JournalEntry>);
     void *const slab,
     const ZoneRuntimeStorageExtent &extent) noexcept
 {
-    return reinterpret_cast<void *>(
-        reinterpret_cast<std::uintptr_t>(slab) + extent.offset);
+    return static_cast<void *>(
+        static_cast<std::uint8_t *>(slab) + extent.offset);
 }
 
 template <typename T>

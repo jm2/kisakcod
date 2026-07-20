@@ -290,13 +290,13 @@ normalize_physicalmemory_source("${_registry_raw}" _registry)
 # dedicated exact-controller seal must remain registered and must freeze every
 # serialized PMem operation before this component-wide scan delegates it.
 foreach(_marker IN ITEMS
-    "pmem_runtime::TryBeginAllocationReceipt(|1"
-    "pmem_runtime::TryAllocate(|1"
-    "pmem_runtime::TryAuthenticateAllocationReceipt(|1"
-    "pmem_runtime::TryAuthenticateAllocationRange(|2"
-    "pmem_runtime::TryEndAllocationReceipt(|2"
-    "pmem_runtime::TryFreeAllocationReceipt(|1"
-    "pmem_runtime::StorageIsOutsideManagedMemory(|7")
+    "pmem_runtime::TryBeginAllocationReceipt|1"
+    "pmem_runtime::TryAllocate|1"
+    "pmem_runtime::TryAuthenticateAllocationReceipt|1"
+    "pmem_runtime::TryAuthenticateAllocationRange|2"
+    "pmem_runtime::TryEndAllocationReceipt|2"
+    "pmem_runtime::TryFreeAllocationReceipt|1"
+    "pmem_runtime::StorageIsOutsideManagedMemory|6")
     require_physicalmemory_contains(
         _runtime_table_seal "${_marker}"
         "dedicated runtime-table checked-PMem enrollment seal")

@@ -93,15 +93,10 @@ bool AuthenticateStableFxRuntimeStorage(
         return false;
     }
 
-    // phase() indexes the active frame when depth is nonzero. Prove the exact
-    // stable depth before asking for the phase so corrupt depth can never be
-    // used as an array index by this read-only authenticator.
-    if (workspace->frameDepth() != 0
-        || !workspace->readyForDestruction()
-        || workspace->phase() != Phase::Idle)
-    {
+    // This predicate authenticates the complete depth-zero reset topology
+    // without indexing a frame through an untrusted depth witness.
+    if (!workspace->readyForCompositionAuthentication())
         return false;
-    }
 
     return arena->readyForCompositionAuthentication()
         && arena->bound() && arena->storage() == expectedBacking

@@ -321,14 +321,20 @@ ActiveZoneStreamBinding *g_activeOwner = nullptr;
         if (!SpanWithinBlock(g_streamPosArray[i], 0, blocks[i]))
             return false;
     }
-    for (std::size_t i = 0; i < g_streamPosStackIndex; ++i)
+    std::uint32_t effectiveIndex = g_streamPosIndex;
+    for (std::size_t depth = g_streamPosStackIndex;
+         depth != 0;
+         --depth)
     {
-        const StreamPosInfo &saved = g_streamPosStack[i];
+        const StreamPosInfo &saved = g_streamPosStack[depth - 1];
         if (saved.index >= relocation::kBlockCount
-            || !SpanWithinAnyBlock(saved.pos, 0, blocks))
+            || !SpanWithinAnyBlock(saved.pos, 0, blocks)
+            || (effectiveIndex == 0
+                && !SpanWithinBlock(saved.pos, 0, blocks[0])))
         {
             return false;
         }
+        effectiveIndex = saved.index;
     }
     for (std::size_t i = 0; i < 4096; ++i)
     {
@@ -526,10 +532,15 @@ bool ActiveZoneStreamBinding::block(
     const std::size_t index,
     relocation::BlockView *const outBlock) const noexcept
 {
-    if (outBlock)
-        *outBlock = {};
-    if (!outBlock || index >= relocation::kBlockCount)
+    if (index >= relocation::kBlockCount
+        || !AuthenticateZoneStreamOutputSpan(
+            *this,
+            outBlock,
+            sizeof(*outBlock),
+            alignof(relocation::BlockView)))
+    {
         return false;
+    }
     *outBlock = blocks_[index];
     return true;
 }
@@ -578,6 +589,105 @@ bool ActiveZoneStreamBinding::canonical() const noexcept
         && ValidateBlockLayout(
             blocks_, this, receipt_, receipt_->lifecycle_, zoneIdentity_)
         && ZoneMatchesLayout(zoneIdentity_, blocks_);
+}
+
+bool AuthenticateZoneStreamOutputSpan(
+    const ActiveZoneStreamBinding &binding,
+    const void *const output,
+    const std::size_t outputSize,
+    const std::size_t outputAlignment) noexcept
+{
+    std::uintptr_t outputBegin = 0;
+    std::uintptr_t outputEnd = 0;
+    if (!ObjectIsAligned(output, outputAlignment)
+        || !ObjectSpan(
+            output,
+            outputSize,
+            &outputBegin,
+            &outputEnd))
+    {
+        return false;
+    }
+
+    struct ControlSpan final
+    {
+        const void *object;
+        std::size_t size;
+    };
+    const ControlSpan singletonControls[] = {
+        {&g_aliasRegistry, sizeof(g_aliasRegistry)},
+        {&g_directResolver, sizeof(g_directResolver)},
+        {&g_activeOwner, sizeof(g_activeOwner)},
+        {&g_streamDelayIndex, sizeof(g_streamDelayIndex)},
+        {&g_streamPosArray, sizeof(g_streamPosArray)},
+        {&g_streamDelayArray, sizeof(g_streamDelayArray)},
+        {&g_streamPosIndex, sizeof(g_streamPosIndex)},
+        {&g_streamPosStack, sizeof(g_streamPosStack)},
+        {&g_streamZoneMem, sizeof(g_streamZoneMem)},
+        {&g_streamPos, sizeof(g_streamPos)},
+        {&g_streamPosStackIndex, sizeof(g_streamPosStackIndex)},
+    };
+    for (const ControlSpan &control : singletonControls)
+    {
+        if (!ObjectsDisjoint(
+                output, outputSize, control.object, control.size))
+        {
+            return false;
+        }
+    }
+    if (!ObjectsDisjoint(
+            output, outputSize, &binding, sizeof(binding))
+        || !binding.canonical())
+    {
+        return false;
+    }
+
+    const ActiveZoneStreamBinding *const activeOwner = g_activeOwner;
+    if ((binding.phase() == ActiveZoneStreamPhase::Bound
+            && activeOwner != &binding)
+        || (binding.phase() != ActiveZoneStreamPhase::Bound
+            && activeOwner != nullptr))
+    {
+        return false;
+    }
+
+    const ActiveZoneStreamBinding *const retainedOwner =
+        binding.phase() == ActiveZoneStreamPhase::Bound
+        ? &binding : nullptr;
+    if (!retainedOwner)
+        return true;
+
+    // The exact supplied Bound owner authenticated above before these retained
+    // pointer identities are observed or traversed.
+    const ZoneStreamGenerationReceipt *const retainedReceipt =
+        retainedOwner->receipt();
+    const XZoneMemory *const retainedZone =
+        retainedOwner->zoneIdentity();
+    if (!retainedReceipt || !retainedZone)
+        return false;
+    const zone_load::ZoneLoadContextSlot *const retainedLifecycle =
+        retainedReceipt->lifecycle();
+    if (!retainedLifecycle
+        || !LifecycleOwnsActiveKey(
+            retainedLifecycle, retainedOwner->key()))
+    {
+        return false;
+    }
+    return ObjectsDisjoint(
+            output,
+            outputSize,
+            retainedReceipt,
+            sizeof(*retainedReceipt))
+        && ObjectsDisjoint(
+            output,
+            outputSize,
+            retainedLifecycle,
+            sizeof(*retainedLifecycle))
+        && ObjectsDisjoint(
+            output,
+            outputSize,
+            retainedZone,
+            sizeof(*retainedZone));
 }
 
 bool AuthenticateZoneStreamComposition(

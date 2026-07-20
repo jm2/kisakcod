@@ -79,17 +79,17 @@ endfunction()
 # exact-controller seal must remain registered and must freeze every pending-
 # copy mutation/authenticator before this component-wide scan delegates it.
 foreach(_marker IN ITEMS
-    "zone_pending_copy::TryInitializePendingCopyLedger(|1"
-    "zone_pending_copy::TryBeginPendingCopyAdmission(|1"
-    "zone_pending_copy::TryAppendPendingCopyRecord(|1"
-    "zone_pending_copy::TryPreparePendingCopyAdmission(|1"
-    "zone_pending_copy::TryDiscardPendingCopyAdmission(|2"
-    "zone_pending_copy::TryBeginPendingCopyDrain(|1"
-    "zone_pending_copy::TryDrainNextPendingCopy(|1"
-    "zone_pending_copy::TryFinishPendingCopyDrain(|1"
-    "zone_pending_copy::TryResetPendingCopyAdmissionReceipt(|1"
-    "zone_pending_copy::AuthenticatePendingCopyAdmissionReceipt(|1"
-    "zone_pending_copy::AuthenticatePendingCopyLedgerDescriptors(|2")
+    "zone_pending_copy::TryInitializePendingCopyLedger|1"
+    "zone_pending_copy::TryBeginPendingCopyAdmission|1"
+    "zone_pending_copy::TryAppendPendingCopyRecord|1"
+    "zone_pending_copy::TryPreparePendingCopyAdmission|1"
+    "zone_pending_copy::TryDiscardPendingCopyAdmission|2"
+    "zone_pending_copy::TryBeginPendingCopyDrain|1"
+    "zone_pending_copy::TryDrainNextPendingCopy|1"
+    "zone_pending_copy::TryFinishPendingCopyDrain|1"
+    "zone_pending_copy::TryResetPendingCopyAdmissionReceipt|1"
+    "zone_pending_copy::AuthenticatePendingCopyAdmissionReceipt|1"
+    "zone_pending_copy::AuthenticatePendingCopyLedgerDescriptors|2")
     require_contains(
         _runtime_table_seal "${_marker}"
         "dedicated runtime-table pending-copy enrollment seal")
@@ -782,6 +782,63 @@ require_ordered(
     "return ledger.callbackActive_ != 0"
     "complete set authenticates before callback-active publication")
 
+# Record reads preflight the typed output before any owner traversal, retain
+# the complete ledger/receipt/lifecycle alias and native-end checks, and make
+# the sole output write only after a local canonical record is authenticated.
+extract_slice(
+    _source
+    "PendingCopyStatus TryReadPendingCopyRecord("
+    "PendingCopyStatus TryPreparePendingCopyAdmission("
+    _read_record
+    "checked pending-copy record read")
+string(REGEX REPLACE "[ \t\r\n]+" " " _read_record "${_read_record}")
+foreach(_marker IN ITEMS
+    "ObjectIsAligned(outRecord, alignof(PendingCopyRecord))"
+    "ledger, sizeof(*ledger), outRecord, sizeof(*outRecord)"
+    "receipt, sizeof(*receipt), outRecord, sizeof(*outRecord)"
+    "receipt->lifecycle_, sizeof(*receipt->lifecycle_), outRecord, sizeof(*outRecord)"
+    "zone_load::ZoneLoadContextKeyMatches(receipt->lifecycle_, key)"
+    "retainedIndex < ledger->generationCount_"
+    "retainedDescriptor.receipt"
+    "retainedReceipt->lifecycle_"
+    "retainedReceipt, sizeof(*retainedReceipt), outRecord, sizeof(*outRecord)"
+    "retainedLifecycle, sizeof(*retainedLifecycle), outRecord, sizeof(*outRecord)"
+    "const PendingCopyRecord candidate ="
+    "*outRecord = candidate;")
+    require_contains(
+        _read_record "${_marker}" "aligned failure-atomic record output")
+endforeach()
+require_ordered(
+    _read_record
+    "ObjectIsAligned(outRecord, alignof(PendingCopyRecord))"
+    "if (!receipt->isCanonical())"
+    "output alignment precedes owner authentication")
+require_ordered(
+    _read_record
+    "if (!ledger->isCanonical())"
+    "if (ledger->callbackActive_ != 0)"
+    "canonical ledger authentication precedes callback reentry rejection")
+require_ordered(
+    _read_record
+    "if (ledger->callbackActive_ != 0)"
+    "zone_load::ZoneLoadContextKeyMatches(receipt->lifecycle_, key)"
+    "callback reentry rejection precedes retained lifecycle traversal")
+require_ordered(
+    _read_record
+    "zone_load::ZoneLoadContextKeyMatches(receipt->lifecycle_, key)"
+    "retainedIndex < ledger->generationCount_"
+    "exact lifecycle freshness precedes retained descriptor traversal")
+require_ordered(
+    _read_record
+    "retainedLifecycle, sizeof(*retainedLifecycle), outRecord, sizeof(*outRecord)"
+    "const PendingCopyRecord candidate ="
+    "all retained output spans validate before record selection")
+require_ordered(
+    _read_record
+    "const PendingCopyRecord candidate ="
+    "*outRecord = candidate;"
+    "local record authentication precedes sole output write")
+
 # Receipt authentication, canonical unused spans, exact serial exhaustion,
 # full preflight-before-publication, and terminal-first retry logic prevent ABA
 # authority reuse and partial mutation on every status-bearing failure.
@@ -978,6 +1035,13 @@ foreach(_marker IN ITEMS
     "duplicate[1].key = duplicate[0].key;"
     "SetNextGenerationSerial(&ledger, 0)"
     "TestPassiveLedgerAuthentication"
+    "TestCrossGenerationReadOutputSeparation"
+    "reinterpret_cast<PendingCopyRecord *>(&secondReceipt)"
+    "reinterpret_cast<PendingCopyRecord *>(&secondGeneration.slot)"
+    "expectRetainedOwnersUnchanged();"
+    "TryUnloadZoneLoadContext("
+    "lifecycle::TryClaimZoneLoadContext("
+    "CHECK(output == staleSentinel);"
     "AuthenticatePassivePendingCopyLedger(ledger)"
     "SetNextGenerationSerial(&ledger, 1)"
     "SetRecord(&ledger, 0, retained)"
@@ -992,6 +1056,9 @@ foreach(_marker IN ITEMS
     "state.terminalResetStatus == PendingCopyStatus::Success"
     "state.receipt = &receipts[0];"
     "reinterpret_cast<PendingCopyAdmissionReceipt *>(&ledger)"
+    "misalignedStorage.data() + 1"
+    "CHECK(misalignedStorage == misalignedBefore);"
+    "reinterpret_cast<PendingCopyRecord *>(nonRepresentableAddress)"
     "SetRecordCount("
     "SetGenerationCount("
     "SetDrainCursor("
