@@ -716,6 +716,7 @@ extract_slice(
     _zone_runtime_table_class
     "zone runtime table class")
 set(_zone_runtime_table_friends
+    "friend class ZoneRuntimeFacade"
     "friend ZoneRuntimeTableStatus TryInitializeZoneRuntimeTable( ZoneRuntimeTable *table) noexcept"
     "friend ZoneRuntimeTableStatus TryGetZoneRuntimeEntry( ZoneRuntimeTable *table, std::uint32_t physicalSlot, const ZoneRuntimeEntry **outEntry) noexcept"
     "friend ZoneRuntimeTableStatus TryClaimZoneRuntimeGeneration( ZoneRuntimeTable *table, std::uint32_t physicalSlot, zone_load::ZoneLoadContextKey *inOutKey) noexcept"
@@ -788,7 +789,7 @@ require_exact_class_digest(_zone_runtime_entry_class
     4f2c0c8a116a52a6a291a8715254951e2ad25093196fcb34f706044641f87bd9
     "ZoneRuntimeEntry")
 require_exact_class_digest(_zone_runtime_table_class
-    57b5b9f4ce57efb16af1e4f57383ea1052535227a37dc4ce04d4b3b93d8e7bd6
+    e6cbaeedf4c3ff2622f5acc5c0d68ef54be8ab0f87bfbed7172bd68247835e4f
     "ZoneRuntimeTable")
 
 set(_external_macro_friend_invocation_fixture "${_receipt_capsule_class}")

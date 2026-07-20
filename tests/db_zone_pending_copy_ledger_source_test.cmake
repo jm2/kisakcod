@@ -14,6 +14,8 @@ set(_production_seal_path
     "${SOURCE_ROOT}/tests/db_zone_pending_copy_ledger_production_seal_tests.cpp")
 set(_runtime_table_seal_path
     "${SOURCE_ROOT}/tests/db_zone_runtime_table_source_test.cmake")
+set(_runtime_facade_seal_path
+    "${SOURCE_ROOT}/tests/db_zone_runtime_facade_source_test.cmake")
 set(_manifest_path "${SOURCE_ROOT}/scripts/common_files.cmake")
 set(_tests_path "${SOURCE_ROOT}/tests/CMakeLists.txt")
 set(_ci_path "${SOURCE_ROOT}/.github/workflows/ci.yml")
@@ -34,6 +36,7 @@ foreach(_path IN ITEMS
     "${_fixture_path}"
     "${_production_seal_path}"
     "${_runtime_table_seal_path}"
+    "${_runtime_facade_seal_path}"
     "${_manifest_path}"
     "${_tests_path}"
     "${_ci_path}"
@@ -53,6 +56,7 @@ file(READ "${_source_path}" _source)
 file(READ "${_fixture_path}" _fixture)
 file(READ "${_production_seal_path}" _production_seal)
 file(READ "${_runtime_table_seal_path}" _runtime_table_seal)
+file(READ "${_runtime_facade_seal_path}" _runtime_facade_seal)
 file(READ "${_manifest_path}" _manifest)
 file(READ "${_tests_path}" _tests)
 file(READ "${_ci_path}" _ci)
@@ -97,6 +101,22 @@ endforeach()
 require_contains(
     _tests "NAME database-zone-runtime-table-source-invariants"
     "dedicated runtime-table seal registration")
+
+# The not-yet-enrolled runtime facade is the sole additional composition
+# layer. Its own exact surface/forwarding seal owns these reviewed adapters.
+foreach(_marker IN ITEMS
+    "TryBeginPendingCopies|TryBeginZoneRuntimePendingCopies"
+    "TryAppendPendingCopy|TryAppendZoneRuntimePendingCopy"
+    "TryBeginPendingCopyDrain|TryBeginZoneRuntimePendingCopyDrain"
+    "TryDrainNextPendingCopy|TryDrainNextZoneRuntimePendingCopy"
+    "TryFinishPendingCopyDrain|TryFinishZoneRuntimePendingCopyDrain")
+    require_contains(
+        _runtime_facade_seal "${_marker}"
+        "dedicated runtime-facade pending-copy enrollment seal")
+endforeach()
+require_contains(
+    _tests "NAME database-zone-runtime-facade-source-invariants"
+    "dedicated runtime-facade seal registration")
 
 function(require_matches SOURCE_VAR PATTERN DESCRIPTION)
     string(REGEX MATCH "${PATTERN}" _match "${${SOURCE_VAR}}")
@@ -366,6 +386,52 @@ function(remove_reviewed_runtime_table_pending_tokens
     set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
 endfunction()
 
+# The facade may mention the pending-copy component only in the exact public
+# callback declaration and the matching callback-span preflight. Its table-
+# level forwards deliberately use the separately sealed composite API. Remove
+# complete reviewed constructs so any additional component type, namespace,
+# authenticator, or mutation remains visible to the enrollment detector.
+function(remove_reviewed_runtime_facade_pending_tokens
+    PATH SOURCE_VAR OUT_VAR)
+    set(_candidate "${${SOURCE_VAR}}")
+    string(REGEX REPLACE "[ \t\r\n]+" " " _candidate "${_candidate}")
+    if(PATH MATCHES "database/db_zone_runtime_facade\\.h$")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "[[nodiscard]] static ZoneRuntimeTableStatus TryBeginPendingCopyDrain( const zone_pending_copy::PendingCopyDrainCallback &callback) noexcept;"
+            _candidate "facade callback declaration")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "[[nodiscard]] static ZoneRuntimeTableStatus TryDrainNextPendingCopy() noexcept;"
+            _candidate "facade drain-next declaration")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "[[nodiscard]] static ZoneRuntimeTableStatus TryFinishPendingCopyDrain() noexcept;"
+            _candidate "facade drain-finish declaration")
+    elseif(PATH MATCHES "database/db_zone_runtime_facade\\.cpp$")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBeginPendingCopyDrain( const zone_pending_copy::PendingCopyDrainCallback &callback) noexcept {"
+            _candidate "facade callback definition")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "!authoritySpanIsSeparated( &callback, sizeof(callback), alignof(zone_pending_copy::PendingCopyDrainCallback))"
+            _candidate "facade callback authority preflight")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "ZoneRuntimeTableStatus ZoneRuntimeFacade::TryDrainNextPendingCopy() noexcept {"
+            _candidate "facade drain-next definition")
+        remove_one_reviewed_pending_construct(
+            _candidate
+            "ZoneRuntimeTableStatus ZoneRuntimeFacade::TryFinishPendingCopyDrain() noexcept {"
+            _candidate "facade drain-finish definition")
+    else()
+        message(FATAL_ERROR
+            "Pending-copy facade allowlist used for unexpected path: ${PATH}")
+    endif()
+    set(${OUT_VAR} "${_candidate}" PARENT_SCOPE)
+endfunction()
+
 function(require_runtime_table_pending_detector_fixture SOURCE_VAR DESCRIPTION)
     normalize_pending_copy_phase2(${SOURCE_VAR} _candidate)
     source_has_pending_copy_namespace_declaration(
@@ -377,6 +443,20 @@ function(require_runtime_table_pending_detector_fixture SOURCE_VAR DESCRIPTION)
     if(NOT _namespace_declaration AND NOT _detected)
         message(FATAL_ERROR
             "Pending-copy runtime-table seal missed ${DESCRIPTION}")
+    endif()
+endfunction()
+
+function(require_runtime_facade_pending_detector_fixture SOURCE_VAR DESCRIPTION)
+    normalize_pending_copy_phase2(${SOURCE_VAR} _candidate)
+    source_has_pending_copy_namespace_declaration(
+        _candidate _namespace_declaration)
+    remove_reviewed_runtime_facade_pending_tokens(
+        "${SOURCE_ROOT}/src/database/db_zone_runtime_facade.cpp"
+        _candidate _candidate)
+    detect_production_enrollment(_candidate _detected)
+    if(NOT _namespace_declaration AND NOT _detected)
+        message(FATAL_ERROR
+            "Pending-copy runtime-facade seal missed ${DESCRIPTION}")
     endif()
 endfunction()
 
@@ -556,6 +636,31 @@ set(_runtime_table_namespace_macro_bypass
 require_runtime_table_pending_detector_fixture(
     _runtime_table_namespace_macro_bypass "a namespace macro")
 
+string(CONCAT _runtime_facade_pending_fixture
+    "ZoneRuntimeTableStatus ZoneRuntimeFacade::TryBeginPendingCopyDrain( "
+    "const zone_pending_copy::PendingCopyDrainCallback &callback) noexcept {\n"
+    "!authoritySpanIsSeparated( &callback, sizeof(callback), "
+    "alignof(zone_pending_copy::PendingCopyDrainCallback))\n"
+    "ZoneRuntimeTableStatus ZoneRuntimeFacade::TryDrainNextPendingCopy() "
+    "noexcept {\n"
+    "ZoneRuntimeTableStatus ZoneRuntimeFacade::TryFinishPendingCopyDrain() "
+    "noexcept {")
+remove_reviewed_runtime_facade_pending_tokens(
+    "${SOURCE_ROOT}/src/database/db_zone_runtime_facade.cpp"
+    _runtime_facade_pending_fixture _runtime_facade_pending_reviewed)
+detect_production_enrollment(
+    _runtime_facade_pending_reviewed _runtime_facade_pending_enrolled)
+if(_runtime_facade_pending_enrolled)
+    message(FATAL_ERROR
+        "Pending-copy seal rejected reviewed facade callback constructs")
+endif()
+string(CONCAT _runtime_facade_pending_mutation_bypass
+    "${_runtime_facade_pending_fixture}\n"
+    "return zone_pending_copy::TryBeginPendingCopyAdmission(ledger, receipt);")
+require_runtime_facade_pending_detector_fixture(
+    _runtime_facade_pending_mutation_bypass
+    "an extra low-level pending-copy mutation")
+
 file(GLOB_RECURSE _production_sources
     LIST_DIRECTORIES FALSE "${SOURCE_ROOT}/src/*")
 foreach(_non_extension_sentinel IN ITEMS
@@ -591,6 +696,21 @@ foreach(_production_path IN LISTS _production_sources)
         # exact-controller source seal. That seal freezes the complete friend
         # surface, ABI, and each reviewed pending-copy operation.
         continue()
+    endif()
+    if(_production_path MATCHES
+        "database/db_zone_runtime_facade\.(h|cpp)$")
+        source_has_pending_copy_namespace_declaration(
+            _production_text _facade_namespace_declaration)
+        if(_facade_namespace_declaration)
+            message(FATAL_ERROR
+                "Runtime facade reopened the pending-copy namespace in "
+                "${_production_path}")
+        endif()
+        # Delegate only the exact callback declaration and authority preflight
+        # to the facade seal. Any extra low-level component use remains in the
+        # candidate for this component-wide enrollment scan.
+        remove_reviewed_runtime_facade_pending_tokens(
+            "${_production_path}" _production_text _production_text)
     endif()
     detect_production_enrollment(_production_text _enrolled)
     if(_enrolled)

@@ -1,6 +1,7 @@
 #include <database/db_registry_ownership_coordi\
 nator.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 #include <utility>
@@ -212,6 +213,99 @@ struct RegistryOwnershipCoordinatorAdmissionTestAccess final
 
 using CoordinatorAdmission = RegistryOwnershipCoordinatorAdmission;
 using CoordinatorFacade = RegistryOwnershipCoordinatorFacade;
+
+struct RegistryOwnershipCoordinatorFacadeProductionProbe final
+{
+    template <typename Facade>
+    static constexpr bool CanTryBeginStandalone = requires
+    {
+        Facade::TryBeginStandalone();
+    };
+
+    template <typename Facade>
+    static constexpr bool CanTryBorrow = requires
+    {
+        Facade::TryBorrow(
+            std::declval<const zone_script_string_ownership::
+                ZoneScriptStringOwnershipController &>(),
+            std::declval<const zone_load::ZoneLoadContextKey &>());
+    };
+
+    template <typename Facade>
+    static constexpr bool CanFinish = requires
+    {
+        Facade::Finish();
+    };
+
+    template <typename Facade>
+    static constexpr bool CanValidateInactive = requires
+    {
+        Facade::ValidateInactive();
+    };
+
+    template <typename Facade>
+    static constexpr bool CanValidateActive = requires
+    {
+        Facade::ValidateActive();
+    };
+
+    template <typename Facade>
+    static constexpr bool CanWritableOutputIsSeparated = requires
+    {
+        Facade::WritableOutputIsSeparated(
+            nullptr, std::size_t{0}, std::size_t{0});
+    };
+
+    template <typename Facade>
+    static constexpr bool CanAuthenticateConstructedStorage = requires
+    {
+        Facade::authenticateConstructedStorage(nullptr);
+    };
+
+    template <typename Facade>
+    static constexpr bool CanTryAddDatabaseUser4 = requires
+    {
+        Facade::TryAddDatabaseUser4(std::uint32_t{0});
+    };
+
+    template <typename Facade>
+    static constexpr bool CanTryAddDatabaseUsers4 = requires
+    {
+        Facade::TryAddDatabaseUsers4(nullptr, std::uint32_t{0}, nullptr);
+    };
+
+    template <typename Facade>
+    static constexpr bool CanTryInternBoundedName = requires
+    {
+        Facade::TryInternBoundedName(nullptr, std::uint32_t{0}, nullptr);
+    };
+
+    template <typename Facade>
+    static constexpr bool CanTryReAddRetainedDefaultName = requires
+    {
+        Facade::TryReAddRetainedDefaultName(nullptr);
+    };
+
+    template <typename Facade>
+    static constexpr bool CanTryReAddRetainedDefaultNames = requires
+    {
+        Facade::TryReAddRetainedDefaultNames(
+            nullptr, std::uint32_t{0}, nullptr);
+    };
+
+    template <typename Facade>
+    static constexpr bool CanTryTransferDatabaseUsers4To8 = requires
+    {
+        Facade::TryTransferDatabaseUsers4To8();
+    };
+
+    template <typename Facade>
+    static constexpr bool CanTryShutdownDatabaseUser8 = requires
+    {
+        Facade::TryShutdownDatabaseUser8();
+    };
+};
+
 static_assert(!std::is_default_constructible_v<CoordinatorFacade>);
 static_assert(!std::is_copy_constructible_v<CoordinatorFacade>);
 static_assert(!std::is_copy_assignable_v<CoordinatorFacade>);
@@ -220,6 +314,48 @@ static_assert(!std::is_move_assignable_v<CoordinatorFacade>);
 static_assert(std::is_nothrow_destructible_v<CoordinatorFacade>);
 static_assert(std::is_empty_v<CoordinatorFacade>);
 static_assert(std::is_final_v<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanTryBeginStandalone<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanTryBorrow<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanFinish<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanValidateInactive<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanValidateActive<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanWritableOutputIsSeparated<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanAuthenticateConstructedStorage<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanTryAddDatabaseUser4<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanTryAddDatabaseUsers4<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanTryInternBoundedName<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanTryReAddRetainedDefaultName<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanTryReAddRetainedDefaultNames<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanTryTransferDatabaseUsers4To8<CoordinatorFacade>);
+static_assert(
+    !RegistryOwnershipCoordinatorFacadeProductionProbe::
+        CanTryShutdownDatabaseUser8<CoordinatorFacade>);
 static_assert(
     !RegistryOwnershipCoordinatorAdmissionTestAccess::CanCallForTesting<
         CoordinatorAdmission>);

@@ -570,6 +570,63 @@ set_tests_properties(
     database-registry-ownership-production-test-access-sealed
     PROPERTIES TIMEOUT 20)
 
+# Compile the facade's production surface on every portable host without the
+# test-access macro.  OBJECT keeps this as a compile-only gate while ensuring
+# it remains part of the default build.
+add_library(kisakcod-db-zone-runtime-facade-macro-off OBJECT
+    ${SRC_DIR}/database/db_zone_runtime_facade.cpp)
+target_include_directories(
+    kisakcod-db-zone-runtime-facade-macro-off SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-runtime-facade-macro-off PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-zone-runtime-facade-macro-off PRIVATE KISAK_MP)
+kisakcod_test_warnings(kisakcod-db-zone-runtime-facade-macro-off)
+
+add_executable(kisakcod-db-zone-runtime-facade-tests
+    db_zone_runtime_facade_tests.cpp
+    ${SRC_DIR}/database/db_zone_runtime_facade.cpp
+)
+target_include_directories(
+    kisakcod-db-zone-runtime-facade-tests SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-runtime-facade-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-zone-runtime-facade-tests PRIVATE
+    KISAK_MP
+    KISAK_DB_ZONE_RUNTIME_FACADE_TESTING=1)
+target_link_libraries(
+    kisakcod-db-zone-runtime-facade-tests PRIVATE Threads::Threads)
+kisakcod_test_warnings(kisakcod-db-zone-runtime-facade-tests)
+set_target_properties(
+    kisakcod-db-zone-runtime-facade-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME database-zone-runtime-facade
+    COMMAND kisakcod-db-zone-runtime-facade-tests)
+set_tests_properties(database-zone-runtime-facade PROPERTIES TIMEOUT 30)
+
+add_executable(kisakcod-db-zone-runtime-facade-production-seal-tests
+    db_zone_runtime_facade_production_seal_tests.cpp)
+target_include_directories(
+    kisakcod-db-zone-runtime-facade-production-seal-tests
+    SYSTEM PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-db-zone-runtime-facade-production-seal-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-db-zone-runtime-facade-production-seal-tests PRIVATE KISAK_MP)
+kisakcod_test_warnings(
+    kisakcod-db-zone-runtime-facade-production-seal-tests)
+set_target_properties(
+    kisakcod-db-zone-runtime-facade-production-seal-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+add_test(
+    NAME database-zone-runtime-facade-production-test-access-sealed
+    COMMAND kisakcod-db-zone-runtime-facade-production-seal-tests)
+set_tests_properties(
+    database-zone-runtime-facade-production-test-access-sealed
+    PROPERTIES TIMEOUT 20)
+
 add_executable(kisakcod-db-zone-runtime-table-tests
     db_zone_runtime_table_tests.cpp
     ${SRC_DIR}/database/db_zone_runtime_table.cpp
@@ -2371,6 +2428,13 @@ add_test(
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_runtime_table_source_test.cmake
+)
+
+add_test(
+    NAME database-zone-runtime-facade-source-invariants
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/db_zone_runtime_facade_source_test.cmake
 )
 
 add_test(

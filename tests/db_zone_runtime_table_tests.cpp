@@ -5041,6 +5041,52 @@ void TestUnsafeMutableBoundary(const bool corruptPostcondition)
     CHECK(output == UINT32_C(0x1234ABCD));
 }
 
+void TestFacadeReleaseSafetyClassification()
+{
+    ZoneRuntimeTable pristine{};
+    CHECK(ZoneRuntimeTableTestAccess::ReleaseSafety(nullptr)
+        == ZoneRuntimeTableStatus::InvalidArgument);
+    CHECK(ZoneRuntimeTableTestAccess::ReleaseSafety(&pristine)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryInitializeZoneRuntimeTable(&pristine)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(ZoneRuntimeTableTestAccess::ReleaseSafety(&pristine)
+        == ZoneRuntimeTableStatus::Success);
+
+    ResetBackend();
+    MutableRuntimeFixture fixture{};
+    CHECK(fixture.claim(22));
+    CHECK(fixture.begin(1, 1) == ZoneRuntimeTableStatus::Success);
+    CHECK(ZoneRuntimeTableTestAccess::ReleaseSafety(&fixture.table)
+        == ZoneRuntimeTableStatus::Busy);
+
+    MutableRollbackDriver driver{};
+    driver.table = &fixture.table;
+    driver.key = fixture.key;
+    CHECK(TryBeginZoneRuntimeScriptStringRollback(
+        &fixture.table,
+        fixture.physicalSlot,
+        fixture.key,
+        MakeMutableRollbackCallbacks(&driver))
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryRollbackNextZoneRuntimeScriptString(
+        &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(TryFinishZoneRuntimeScriptStringAbandonment(
+        &fixture.table, fixture.physicalSlot, fixture.key)
+        == ZoneRuntimeTableStatus::Success);
+    CHECK(ZoneRuntimeTableTestAccess::ReleaseSafety(&fixture.table)
+        == ZoneRuntimeTableStatus::Success);
+
+    ZoneRuntimeTable corrupt{};
+    CHECK(TryInitializeZoneRuntimeTable(&corrupt)
+        == ZoneRuntimeTableStatus::Success);
+    ZoneRuntimeTableTestAccess::SetReserved(&corrupt, UINT32_C(0xFFFFFFFF));
+    CHECK(ZoneRuntimeTableTestAccess::ReleaseSafety(&corrupt)
+        == ZoneRuntimeTableStatus::UnsafeFailure);
+    CHECK(!corrupt.initialized());
+}
+
 } // namespace
 
 int main(const int argc, char **const argv)
@@ -5106,6 +5152,7 @@ int main(const int argc, char **const argv)
     TestCompositeCallbackContextAliasPreflightAndDrain();
     TestCompositeCallbacksRejectLegacyOwnershipBeforeMutation();
     TestCompositeAbandonmentRetryAndReentryPreservation();
+    TestFacadeReleaseSafetyClassification();
 
     if (failures != 0)
     {

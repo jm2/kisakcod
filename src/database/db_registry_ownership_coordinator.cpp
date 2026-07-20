@@ -2,7 +2,11 @@
 
 #include <qcommon/sys_sync.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <memory>
+#include <new>
 
 extern FastCriticalSection db_hashCritSect;
 
@@ -73,6 +77,140 @@ bool s_hashLockRetainedMirror = false;
 RegistryBoundaryState s_registryBoundaryState = RegistryBoundaryState::Idle;
 RegistryBoundaryState s_registryBoundaryStateMirror =
     RegistryBoundaryState::Idle;
+
+alignas(RegistryOwnershipCoordinator)
+std::byte s_facadeCoordinatorStorage[
+    sizeof(RegistryOwnershipCoordinator)]{};
+std::uintptr_t s_facadeCoordinatorAddress = 0;
+std::uintptr_t s_facadeCoordinatorAddressMirror = 0;
+std::uint8_t s_facadeCoordinatorConstructed = 0;
+std::uint8_t s_facadeCoordinatorConstructedMirror = 0;
+
+enum class FacadeCoordinatorStorageClassification : std::uint8_t
+{
+    Pristine,
+    Constructed,
+    Torn,
+};
+
+void PoisonRegistryBoundary() noexcept;
+
+[[nodiscard]] bool AddressRangesAreDisjoint(
+    const void *const leftStorage,
+    const std::size_t leftSize,
+    const void *const rightStorage,
+    const std::size_t rightSize) noexcept
+{
+    if (!leftStorage || leftSize == 0 || !rightStorage || rightSize == 0)
+        return false;
+    const std::uintptr_t left =
+        reinterpret_cast<std::uintptr_t>(leftStorage);
+    const std::uintptr_t right =
+        reinterpret_cast<std::uintptr_t>(rightStorage);
+    const std::uintptr_t maximum =
+        (std::numeric_limits<std::uintptr_t>::max)();
+    if (leftSize > maximum - left || rightSize > maximum - right)
+        return false;
+    return left + leftSize <= right || right + rightSize <= left;
+}
+
+template <typename Hidden>
+[[nodiscard]] bool OutputIsSeparateFrom(
+    const void *const output,
+    const std::size_t outputSize,
+    const Hidden &hidden) noexcept
+{
+    return AddressRangesAreDisjoint(
+        output, outputSize, &hidden, sizeof(hidden));
+}
+
+[[nodiscard]] bool IsFacadeCoordinatorStorageZero() noexcept
+{
+    for (const std::byte byte : s_facadeCoordinatorStorage)
+    {
+        if (byte != std::byte{0})
+            return false;
+    }
+    return true;
+}
+
+[[nodiscard]] FacadeCoordinatorStorageClassification
+ClassifyFacadeCoordinatorStorage() noexcept
+{
+    if (s_facadeCoordinatorConstructed == 0
+        && s_facadeCoordinatorConstructedMirror == 0
+        && s_facadeCoordinatorAddress == 0
+        && s_facadeCoordinatorAddressMirror == 0)
+    {
+        return IsFacadeCoordinatorStorageZero()
+            ? FacadeCoordinatorStorageClassification::Pristine
+            : FacadeCoordinatorStorageClassification::Torn;
+    }
+
+    const std::uintptr_t expectedAddress = reinterpret_cast<std::uintptr_t>(
+        static_cast<void *>(s_facadeCoordinatorStorage));
+    return s_facadeCoordinatorConstructed == 1
+            && s_facadeCoordinatorConstructedMirror == 1
+            && s_facadeCoordinatorAddress == expectedAddress
+            && s_facadeCoordinatorAddressMirror == expectedAddress
+        ? FacadeCoordinatorStorageClassification::Constructed
+        : FacadeCoordinatorStorageClassification::Torn;
+}
+
+[[nodiscard]] RegistryOwnershipCoordinator *FacadeCoordinator() noexcept
+{
+    return std::launder(reinterpret_cast<RegistryOwnershipCoordinator *>(
+        s_facadeCoordinatorStorage));
+}
+
+[[nodiscard]] RegistryOwnershipStatus ExistingFacadeCoordinator(
+    RegistryOwnershipCoordinator **const outCoordinator) noexcept
+{
+    switch (ClassifyFacadeCoordinatorStorage())
+    {
+    case FacadeCoordinatorStorageClassification::Pristine:
+        return RegistryOwnershipStatus::InvalidState;
+    case FacadeCoordinatorStorageClassification::Constructed:
+        *outCoordinator = FacadeCoordinator();
+        return RegistryOwnershipStatus::Success;
+    case FacadeCoordinatorStorageClassification::Torn:
+    default:
+        return RegistryOwnershipStatus::UnsafeFailure;
+    }
+}
+
+[[nodiscard]] RegistryOwnershipStatus GetOrConstructFacadeCoordinator(
+    RegistryOwnershipCoordinator **const outCoordinator) noexcept
+{
+    switch (ClassifyFacadeCoordinatorStorage())
+    {
+    case FacadeCoordinatorStorageClassification::Constructed:
+        *outCoordinator = FacadeCoordinator();
+        return RegistryOwnershipStatus::Success;
+    case FacadeCoordinatorStorageClassification::Pristine:
+        break;
+    case FacadeCoordinatorStorageClassification::Torn:
+    default:
+        return RegistryOwnershipStatus::UnsafeFailure;
+    }
+
+    RegistryOwnershipCoordinator *const coordinator = std::construct_at(
+        reinterpret_cast<RegistryOwnershipCoordinator *>(
+            s_facadeCoordinatorStorage));
+    const std::uintptr_t address =
+        reinterpret_cast<std::uintptr_t>(coordinator);
+    s_facadeCoordinatorAddress = address;
+    s_facadeCoordinatorAddressMirror = address;
+    s_facadeCoordinatorConstructed = 1;
+    s_facadeCoordinatorConstructedMirror = 1;
+    if (!coordinator->isEmptyCanonical())
+    {
+        PoisonRegistryBoundary();
+        return RegistryOwnershipStatus::UnsafeFailure;
+    }
+    *outCoordinator = coordinator;
+    return RegistryOwnershipStatus::Success;
+}
 
 [[nodiscard]] bool IsActivePhaseHashCombinationValid() noexcept
 {
@@ -304,6 +442,337 @@ RegistryOwnershipCoordinatorAdmission::ForTesting() noexcept
         kCoordinatorAdmissionSeal, kCoordinatorAdmissionSealMirror};
 }
 #endif
+
+RegistryOwnershipStatus
+RegistryOwnershipCoordinatorFacade::TryBeginStandalone() noexcept
+{
+    RegistryOwnershipCoordinator *coordinator = nullptr;
+    const RegistryOwnershipStatus storageStatus =
+        GetOrConstructFacadeCoordinator(&coordinator);
+    if (storageStatus != RegistryOwnershipStatus::Success)
+        return storageStatus;
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+
+    const RegistryOwnershipCoordinatorAdmission admission{
+        kCoordinatorAdmissionSeal, kCoordinatorAdmissionSealMirror};
+    return TryBeginStandaloneRegistryOwnershipCoordinator(
+        admission, coordinator);
+}
+
+RegistryOwnershipStatus RegistryOwnershipCoordinatorFacade::TryBorrow(
+    const zone_script_string_ownership::
+        ZoneScriptStringOwnershipController &controller,
+    const zone_load::ZoneLoadContextKey &expectedKey) noexcept
+{
+    RegistryOwnershipCoordinator *coordinator = nullptr;
+    const RegistryOwnershipStatus storageStatus =
+        GetOrConstructFacadeCoordinator(&coordinator);
+    if (storageStatus != RegistryOwnershipStatus::Success)
+        return storageStatus;
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+
+    const RegistryOwnershipCoordinatorAdmission admission{
+        kCoordinatorAdmissionSeal, kCoordinatorAdmissionSealMirror};
+    return TryBorrowRegistryOwnershipCoordinator(
+        admission, coordinator, &controller, expectedKey);
+}
+
+RegistryOwnershipStatus RegistryOwnershipCoordinatorFacade::
+    authenticateConstructedStorage(
+        RegistryOwnershipCoordinator *const coordinator) noexcept
+{
+    if (!coordinator || coordinator != FacadeCoordinator())
+        return RegistryOwnershipStatus::UnsafeFailure;
+
+    const bool emptyCanonical = coordinator->isEmptyCanonical();
+    const TransactionBoundaryGuard boundaryGuard;
+    switch (ClassifyRegistryBoundary())
+    {
+    case RegistryBoundaryClassification::Idle:
+        return emptyCanonical
+            ? RegistryOwnershipStatus::Success
+            : RegistryOwnershipStatus::UnsafeFailure;
+    case RegistryBoundaryClassification::Active:
+        if (emptyCanonical
+            || !BoundaryMentionsAddress(
+                reinterpret_cast<std::uintptr_t>(coordinator))
+            || !coordinator->representationConsistent()
+            || !coordinator->ownsRegistryBoundary()
+            || !coordinator->authenticatesOuterTransaction()
+            || coordinator->phase_
+                != RegistryOwnershipCoordinatorPhase::Ready
+            || !coordinator->hashLockRetained_
+            || !Sys_IsWriteLocked(&db_hashCritSect)
+            || !coordinator->operationBatch_.canonicalInactive())
+        {
+            return RegistryOwnershipStatus::UnsafeFailure;
+        }
+        return RegistryOwnershipStatus::Success;
+    case RegistryBoundaryClassification::Poisoned:
+    case RegistryBoundaryClassification::Torn:
+    default:
+        return RegistryOwnershipStatus::UnsafeFailure;
+    }
+}
+
+RegistryOwnershipStatus RegistryOwnershipCoordinatorFacade::Finish() noexcept
+{
+    RegistryOwnershipCoordinator *coordinator = nullptr;
+    const RegistryOwnershipStatus storageStatus =
+        ExistingFacadeCoordinator(&coordinator);
+    if (storageStatus != RegistryOwnershipStatus::Success)
+        return storageStatus;
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+    return FinishRegistryOwnershipCoordinator(coordinator);
+}
+
+RegistryOwnershipStatus
+RegistryOwnershipCoordinatorFacade::ValidateInactive() noexcept
+{
+    switch (ClassifyFacadeCoordinatorStorage())
+    {
+    case FacadeCoordinatorStorageClassification::Pristine:
+    {
+        const TransactionBoundaryGuard boundaryGuard;
+        switch (ClassifyRegistryBoundary())
+        {
+        case RegistryBoundaryClassification::Idle:
+            return RegistryOwnershipStatus::Success;
+        case RegistryBoundaryClassification::Active:
+            return RegistryOwnershipStatus::InvalidState;
+        case RegistryBoundaryClassification::Poisoned:
+        case RegistryBoundaryClassification::Torn:
+        default:
+            return RegistryOwnershipStatus::UnsafeFailure;
+        }
+    }
+    case FacadeCoordinatorStorageClassification::Constructed:
+        break;
+    case FacadeCoordinatorStorageClassification::Torn:
+    default:
+        return RegistryOwnershipStatus::UnsafeFailure;
+    }
+
+    RegistryOwnershipCoordinator *const coordinator = FacadeCoordinator();
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+    return coordinator->isEmptyCanonical()
+        ? RegistryOwnershipStatus::Success
+        : RegistryOwnershipStatus::InvalidState;
+}
+
+RegistryOwnershipStatus
+RegistryOwnershipCoordinatorFacade::ValidateActive() noexcept
+{
+    switch (ClassifyFacadeCoordinatorStorage())
+    {
+    case FacadeCoordinatorStorageClassification::Pristine:
+    {
+        const TransactionBoundaryGuard boundaryGuard;
+        return ClassifyRegistryBoundary()
+                == RegistryBoundaryClassification::Idle
+            ? RegistryOwnershipStatus::InvalidState
+            : RegistryOwnershipStatus::UnsafeFailure;
+    }
+    case FacadeCoordinatorStorageClassification::Constructed:
+        break;
+    case FacadeCoordinatorStorageClassification::Torn:
+    default:
+        return RegistryOwnershipStatus::UnsafeFailure;
+    }
+
+    RegistryOwnershipCoordinator *const coordinator = FacadeCoordinator();
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+    return coordinator->isEmptyCanonical()
+        ? RegistryOwnershipStatus::InvalidState
+        : RegistryOwnershipStatus::Success;
+}
+
+bool RegistryOwnershipCoordinatorFacade::WritableOutputIsSeparated(
+    const void *const output,
+    const std::size_t outputSize,
+    const std::size_t outputAlignment) noexcept
+{
+    return output && outputSize != 0 && outputAlignment != 0
+        && reinterpret_cast<std::uintptr_t>(output) % outputAlignment == 0
+        && OutputIsSeparateFrom(output, outputSize, db_hashCritSect)
+        && OutputIsSeparateFrom(output, outputSize, s_nextCoordinatorSerial)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_nextCoordinatorSerialMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_activeCoordinatorAddress)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_activeCoordinatorAddressMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_activeCoordinatorSerial)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_activeCoordinatorSerialMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_borrowedControllerAddress)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_borrowedControllerAddressMirror)
+        && OutputIsSeparateFrom(output, outputSize, s_borrowedKey)
+        && OutputIsSeparateFrom(output, outputSize, s_borrowedKeyMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_outerTransactionSerial)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_outerTransactionSerialMirror)
+        && OutputIsSeparateFrom(output, outputSize, s_activePhase)
+        && OutputIsSeparateFrom(output, outputSize, s_activePhaseMirror)
+        && OutputIsSeparateFrom(output, outputSize, s_activeMode)
+        && OutputIsSeparateFrom(output, outputSize, s_activeModeMirror)
+        && OutputIsSeparateFrom(output, outputSize, s_hashLockRetained)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_hashLockRetainedMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_registryBoundaryState)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_registryBoundaryStateMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_facadeCoordinatorStorage)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_facadeCoordinatorAddress)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_facadeCoordinatorAddressMirror)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_facadeCoordinatorConstructed)
+        && OutputIsSeparateFrom(
+            output, outputSize, s_facadeCoordinatorConstructedMirror);
+}
+
+RegistryOwnershipStatus
+RegistryOwnershipCoordinatorFacade::TryAddDatabaseUser4(
+    const std::uint32_t stringId) noexcept
+{
+    RegistryOwnershipCoordinator *coordinator = nullptr;
+    const RegistryOwnershipStatus storageStatus =
+        ExistingFacadeCoordinator(&coordinator);
+    if (storageStatus != RegistryOwnershipStatus::Success)
+        return storageStatus;
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+    return TryRegistryAddDatabaseUser4(coordinator, stringId);
+}
+
+RegistryOwnershipStatus
+RegistryOwnershipCoordinatorFacade::TryAddDatabaseUsers4(
+    const std::uint32_t *const stringIds,
+    const std::uint32_t count,
+    RegistryOwnershipBulkResult *const outResult) noexcept
+{
+    RegistryOwnershipCoordinator *coordinator = nullptr;
+    const RegistryOwnershipStatus storageStatus =
+        ExistingFacadeCoordinator(&coordinator);
+    if (storageStatus != RegistryOwnershipStatus::Success)
+        return storageStatus;
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+    return TryRegistryAddDatabaseUsers4(
+        coordinator, stringIds, count, outResult);
+}
+
+RegistryOwnershipStatus
+RegistryOwnershipCoordinatorFacade::TryInternBoundedName(
+    const char *const bytes,
+    const std::uint32_t byteCount,
+    RegistryOwnershipName *const outName) noexcept
+{
+    RegistryOwnershipCoordinator *coordinator = nullptr;
+    const RegistryOwnershipStatus storageStatus =
+        ExistingFacadeCoordinator(&coordinator);
+    if (storageStatus != RegistryOwnershipStatus::Success)
+        return storageStatus;
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+    return TryRegistryInternBoundedName(
+        coordinator, bytes, byteCount, outName);
+}
+
+RegistryOwnershipStatus
+RegistryOwnershipCoordinatorFacade::TryReAddRetainedDefaultName(
+    const char *const retainedCanonicalName) noexcept
+{
+    RegistryOwnershipCoordinator *coordinator = nullptr;
+    const RegistryOwnershipStatus storageStatus =
+        ExistingFacadeCoordinator(&coordinator);
+    if (storageStatus != RegistryOwnershipStatus::Success)
+        return storageStatus;
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+    return TryRegistryReAddRetainedDefaultName(
+        coordinator, retainedCanonicalName);
+}
+
+RegistryOwnershipStatus
+RegistryOwnershipCoordinatorFacade::TryReAddRetainedDefaultNames(
+    const char *const *const retainedCanonicalNames,
+    const std::uint32_t count,
+    RegistryOwnershipBulkResult *const outResult) noexcept
+{
+    RegistryOwnershipCoordinator *coordinator = nullptr;
+    const RegistryOwnershipStatus storageStatus =
+        ExistingFacadeCoordinator(&coordinator);
+    if (storageStatus != RegistryOwnershipStatus::Success)
+        return storageStatus;
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+    return TryRegistryReAddRetainedDefaultNames(
+        coordinator, retainedCanonicalNames, count, outResult);
+}
+
+RegistryOwnershipStatus
+RegistryOwnershipCoordinatorFacade::TryTransferDatabaseUsers4To8() noexcept
+{
+    RegistryOwnershipCoordinator *coordinator = nullptr;
+    const RegistryOwnershipStatus storageStatus =
+        ExistingFacadeCoordinator(&coordinator);
+    if (storageStatus != RegistryOwnershipStatus::Success)
+        return storageStatus;
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+    return TryRegistryTransferDatabaseUsers4To8(coordinator);
+}
+
+RegistryOwnershipStatus
+RegistryOwnershipCoordinatorFacade::TryShutdownDatabaseUser8() noexcept
+{
+    RegistryOwnershipCoordinator *coordinator = nullptr;
+    const RegistryOwnershipStatus storageStatus =
+        ExistingFacadeCoordinator(&coordinator);
+    if (storageStatus != RegistryOwnershipStatus::Success)
+        return storageStatus;
+    const RegistryOwnershipStatus authentication =
+        authenticateConstructedStorage(coordinator);
+    if (authentication != RegistryOwnershipStatus::Success)
+        return authentication;
+    return TryRegistryShutdownDatabaseUser8(coordinator);
+}
 
 RegistryOwnershipStatus RegistryOwnershipCoordinator::beginRegistered(
     RegistryOwnershipCoordinator *const coordinator,
