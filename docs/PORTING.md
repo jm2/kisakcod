@@ -625,8 +625,16 @@ Completed foundation work:
   closes full retained-output aliases in the composite table and lower stream/pending readers, authenticates exact live
   keys before Bound descriptor disclosure and the complete reset-authoritative FX-workspace topology, prevents mixed legacy and
   composite enrollment, strengthens direct-call authority seals, and fixes warning roots instead of suppressing them.
-  Full native CTest is **157/157**, and the affected Clang and ASan+UBSan selections are **38/38** each. Repair-head CI
-  rerun and bot re-review remain. No production caller is enrolled, and the atomic seven-site loader cutover is next;
+  Full native CTest is **157/157**, and the affected Clang and ASan+UBSan selections are **38/38** each. Exact repair
+  head `a65ff336` passed eight jobs in run **29760022151**, whose initial attempt and rerun both found one optimized
+  Win32 fixture output that violated the new natural-alignment preflight. Head `059aebd0` moved that repeated output to
+  stable heap storage and separated begin/allocation/bind diagnostics; run **29763190487** passed all five portable jobs,
+  headless, and no-Steam before the measured builds rejected the resulting implicit C4324 fixture tail padding. Exact
+  implementation head `a1f99336` retains a full-width attempt witness, removing that padding without suppressing the
+  warning. Focused GCC/Clang/ASan+UBSan runtime tests, genuine i386/AArch64 compile-link, and an i386 tail-padding probe
+  pass; the final documentation head must preserve the same code through the all-nine hosted and exact-head review
+  gates. No production caller is enrolled. The immediate sequence is the ABI-neutral journal capacity/demand split, a
+  production-neutral externally serialized runtime/registry facade, and then the atomic seven-site loader cutover;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -1728,9 +1736,9 @@ tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composit
 indexing/failure-atomic prerequisite, PR #69 merged global-state encapsulation plus the cross-toolchain macro-off seal,
 and PR #70 merged serialized runtime/process-controller/passive shared-resource authentication. The pending exact-key
 composite-controller milestone completes the production-neutral adapter layer, strict table orchestration, exact PMem
-terminal evidence, alias/overlap hardening, and adversarial composition coverage; it is not yet a merge or production
-enrollment. The ancestry checkpoint records reviewed history without importing code and therefore does not inflate the
-engineering estimate.
+terminal evidence, alias/overlap hardening, adversarial composition coverage, and the optimized-Win32 fixture repair; it
+is not yet a merge or production enrollment. The ancestry checkpoint records reviewed history without importing code
+and therefore does not inflate the engineering estimate.
 Windows x86 is about
 **93%**, shared
 foundations/security about **89%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about

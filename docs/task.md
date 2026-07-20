@@ -118,10 +118,19 @@ work item changes. Do not create session-specific handoff files.
   failure-atomic across every retained generation, rejects mixed legacy/composite enrollment before shared-state
   mutation, and freezes both qualified authority identifiers and direct calls. Root causes replace the former broad
   warning suppressions, including alias-safe packed dvar decoding and portable legacy identifiers. Full native CTest is
-  **157/157**; the repair-head Clang and ASan+UBSan affected selection is **38/38** in each tree, with repair-head hosted
-  CI rerun and bot re-review still required.
-  This completes the production-neutral exact-key adapter queue item on the pending branch; one atomic seven-site loader
-  cutover is next, and strict requested-target delivery remains **0/5**.
+  **157/157**; the repair-head Clang and ASan+UBSan affected selection is **38/38** in each tree. Exact head `a65ff336`
+  passed eight hosted jobs in run **29760022151**, but both its initial attempt and failed-job rerun exposed one optimized
+  Win32 fixture output whose automatic `AllocationResult` did not satisfy the new alignment preflight. Head `059aebd0`
+  moved that repeatedly published result to stable naturally aligned heap storage and split the begin/allocation/bind
+  assertions; run **29763190487** then passed the five portable jobs, headless, and no-Steam builds before both measured
+  Win32 jobs rejected implicit C4324 tail padding introduced around the fixture's existing aligned zone member. Exact
+  implementation head `a1f99336` retains a full-width allocation-attempt witness, eliminating that implicit padding
+  without a warning suppression while improving partial-loop diagnostics. Focused GCC, Clang, and ASan+UBSan runtime
+  tests pass, genuine i386/AArch64 compile-link passes, and an i386 padding probe reports no fixture tail padding. The
+  final documentation head must carry this identical code through the all-nine hosted and exact-head review gates.
+  This completes the production-neutral exact-key adapter queue item on the pending branch. Journal-capacity separation,
+  a production-neutral externally serialized facade, and then one atomic seven-site loader cutover are next; strict
+  requested-target delivery remains **0/5**.
 - Merged script-string ownership foundation: PR #48 adds a dedicated recursive outer DB transaction
   serializer, a private report-free journal adapter, bounded report-free ordinary/database-user ownership operations,
   and failure-atomic memory-tree allocate/query/free APIs. Runtime IDs remain explicitly limited to
@@ -1903,26 +1912,36 @@ composite adapters and strict table controller with focused runtime-table CTest 
 ASan+UBSan (`detect_leaks=0`), correct-class i386/AArch64 compile-link evidence, and a clean independent audit. Repair-head
 review hardening expands the affected Clang and ASan+UBSan runtime/source/security selection to **38/38** in each tree;
 all five macro-off production seals pass, the headless dependency gate is clean, and full native CTest is **157/157**.
-Production enrollment is still zero.
+Exact implementation head `a1f99336` additionally stabilizes the Win32 fixture allocation output and preserves the
+fixture's explicit aligned extent after runs **29760022151** and **29763190487** exposed the two optimized-x86 test-only
+alignment seams. Production enrollment is still zero.
 
-1. After the pending exact-key branch passes exact-head PR review/CI, perform one atomic seven-site loader cutover: claim
+1. Separate `ZoneRuntimeStoragePlan` script-string capacity from the actual expected non-null acquisition count without
+   changing its 52-byte layout or planner signature. Capacity remains the token/header-driven constructed-entry extent;
+   publish the exact expected count only after token preflight and successful ownership begin. Cover capacity greater
+   than expected, zero expected with nonzero capacity, over-capacity failure atomicity, retry, teardown, and source seals.
+2. Add a production-neutral process-lifetime runtime facade with one nonblocking external serializer and a private
+   registry-coordinator facade. It must enforce runtime -> transaction -> hash -> script-string -> memory-tree ordering,
+   reject release while a borrowed/standalone registry scope is active, expose no admission capability, add no new fixed
+   critical-section enum slot, preserve exactly seven raw sites, and enroll no loader caller.
+3. Then perform one atomic seven-site loader cutover: claim
    exact generations, stage/transfer
    non-null root strings, publish `Live` only after fallible closure and `PMem_EndAlloc`, route unload through terminal
    adapters, and replace exactly five registry-coordinator operations plus two exact-key root-journal stages. Partial
    enrollment remains forbidden. Current database-thread longjmp remains process-fatal and must not be described as
    recoverable until the loader is converted to status returns.
-2. Wire the guarded adapter into the native production FX/impact route behind the explicit legacy-x86 boundary. Preserve
+4. Wire the guarded adapter into the native production FX/impact route behind the explicit legacy-x86 boundary. Preserve
    retail bytes and the writer; use full-width `DB_ResolveInsertedPointer`, publish `-2` roots through
    `DB_SetInsertedPointer` with the canonical `DB_AddXAsset` identity, and add nested-impact, alias, high-address,
    failure-after-publication, unload-order, slot-generation-reuse, and rollback tests before widening another XAsset family.
-3. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
+5. Replace the 114 XAnim/XModel `Buf_Read<T>` and adjacent raw/string reads with a transactional
    `current/end` cursor plus count, bone, weight, triangle, and string bounds.
-4. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
+6. Keep the licensed-content smoke deferred and do not dispatch it while its required self-hosted runner
    and `KISAKCOD_GAME_DIR` secret are absent. Implement the designed handle-relative recursive deletion
    service without symlink/reparse traversal instead; surface the smoke infrastructure blocker if asked.
-5. Continue process services and Linux signal-park plus macOS Mach crash freezing behind the now-isolated terminal API;
+7. Continue process services and Linux signal-park plus macOS Mach crash freezing behind the now-isolated terminal API;
    add native Win32 headless character-console input without disturbing the windowed edit-control owner.
-6. Widen/tokenize the MP pose, breakable-piece, and DynEntity physics ownership families without changing saved bytes;
+8. Widen/tokenize the MP pose, breakable-piece, and DynEntity physics ownership families without changing saved bytes;
    remove the SP `int`-temporary truncations, continue M1/M5 ABI cleanup, and add production fast-file fixtures/fuzzing
    before enabling any native64 engine target.
 
