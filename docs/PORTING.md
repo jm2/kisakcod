@@ -563,7 +563,10 @@ Completed foundation work:
   Commits `23de894f`, `815d9961`, and `b721f495` preserve exact x86 and explicit native64 layouts through
   `RUNTIME_SIZE`/`RUNTIME_OFFSET`, add adversarial failure-atomic/runtime/source/CI coverage, and leave checked authority
   unenrolled. Full rebased GCC Debug CTest passes **155/155**; focused PMem/ABI passes **6/6**, strict genuine i386
-  compile/link/runtime, AArch64 compile/link, Clang ASan+UBSan runtime, `git diff --check`, and independent audits pass;
+  compile/link/runtime, AArch64 compile/link, Clang ASan+UBSan runtime, `git diff --check`, and independent audits pass.
+  PR #68 review follow-up `45b0ec9c` applies `KISAK_CDECL` consistently, names the fixed 32-entry capacity, and corrects
+  the variadic assertion fixture to match its production declaration. Initial run **29712199115** exposed the fixture's
+  top-level pointer qualification as MSVC-only `LNK2019` on portable Windows amd64/ARM64; replacement CI remains pending;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with

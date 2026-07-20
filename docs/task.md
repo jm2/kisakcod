@@ -850,15 +850,21 @@ work item changes. Do not create session-specific handoff files.
   return before merge, while its latest completed review was clean at prior code-equivalent head `faa05b12`.
 - Current legacy-PMem indexing prerequisite: `23de894f` replaces the two decompiler-era x86-only raw indexing expressions
   with bounded typed entry access and makes invalid type, null, busy, count, capacity, index, and identity rejection
-  return before mutation. It preserves `__cdecl`, the exact x86 `0x8`/`0x10C`/`0x21C` layouts, and explicit native64
+  return before mutation. It preserves the effective `__cdecl` contract, the exact x86 `0x8`/`0x10C`/`0x21C` layouts,
+  and explicit native64
   `0x10`/`0x210`/`0x428` layouts. Middle-hole reporting now passes a fixed format plus the allocation name directly, so a
   zone name containing `%n` or `%s` cannot become a second format string. `815d9961` adds adversarial failure-atomic,
   valid-wrapper, direct-free, low/high tail-collapse, exact layout, source-contract, and CI-registration coverage.
-  `b721f495` expresses the layouts through the repository-wide `RUNTIME_SIZE`/`RUNTIME_OFFSET` ABI contract. The exact
+  `b721f495` expresses the layouts through the repository-wide `RUNTIME_SIZE`/`RUNTIME_OFFSET` ABI contract. PR #68
+  review follow-up `45b0ec9c` uses `KISAK_CDECL` consistently on declarations and definitions, names the fixed 32-entry
+  capacity, and makes the variadic assertion fixture match the production declaration exactly. Initial run
+  **29712199115** exposed the fixture mismatch as MSVC-only `LNK2019` on Windows amd64/ARM64; GCC and MSVC x86 accepted
+  the top-level pointer qualification, so hosted cross-target coverage supplied the necessary evidence. The exact
   rebased branch passes full GCC Debug **155/155**, the focused PMem/ABI gate **6/6**, Clang ASan+UBSan runtime with leak
   detection disabled under ptrace, genuine i386 compile/link/direct execution, AArch64 compile/link, and
   `git diff --check`; independent audits report no remaining batch defect. It does not enroll checked PMem authority.
-  Hosted CI and exact-head review remain the publication gates before the serialized global PMem runtime boundary begins.
+  replacement CI and exact-head review remain the publication gates before the serialized global PMem runtime boundary
+  begins.
 - Merged registry-coordinator foundation: PR #64 is production-neutral and leaves all seven legacy sites frozen.
   Preflight found that the initial per-operation `db_hashCritSect` acquisition would self-deadlock
   at the hash-held production sites, public low-level batch functions could bypass coordinator authority, fallible finish
