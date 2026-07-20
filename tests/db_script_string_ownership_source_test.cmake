@@ -2230,20 +2230,24 @@ foreach(_pair IN ITEMS
         "transaction gate before journal callback")
 endforeach()
 
-# Freeze both engine profiles' appended serializer slot and require compile-time
-# plus runtime coverage and production manifest wiring.
+# Freeze both engine profiles' appended serializer slots and require
+# compile-time plus runtime coverage and production manifest wiring.
 foreach(_marker IN ITEMS
     "CRITSECT_DB_SCRIPT_STRING_TRANSACTION = 0x16,"
-    "CRITSECT_COUNT = 0x17,"
+    "CRITSECT_PHYSICAL_MEMORY = 0x17,"
+    "CRITSECT_COUNT = 0x18,"
     "CRITSECT_DB_SCRIPT_STRING_TRANSACTION,"
-    "CRITSECT_COUNT,")
+    "CRITSECT_PHYSICAL_MEMORY = 0x24,"
+    "CRITSECT_COUNT = 0x25,")
     require_contains(_sync_header "${_marker}" "critical-section ABI")
 endforeach()
 foreach(_marker IN ITEMS
     "static_assert(CRITSECT_DB_SCRIPT_STRING_TRANSACTION == 0x16);"
-    "static_assert(CRITSECT_COUNT == 0x17);"
+    "static_assert(CRITSECT_PHYSICAL_MEMORY == 0x17);"
+    "static_assert(CRITSECT_COUNT == 0x18);"
     "static_assert(CRITSECT_DB_SCRIPT_STRING_TRANSACTION == 0x23);"
-    "static_assert(CRITSECT_COUNT == 0x24);")
+    "static_assert(CRITSECT_PHYSICAL_MEMORY == 0x24);"
+    "static_assert(CRITSECT_COUNT == 0x25);")
     require_contains(_platform_contract "${_marker}" "MP/SP slot contract")
 endforeach()
 foreach(_marker IN ITEMS
@@ -2254,6 +2258,8 @@ foreach(_marker IN ITEMS
     "nested.canonicalInactive()"
     "ScriptStringTransactionStatus::Busy"
     "transaction::FinishScriptStringTransaction(&owner)"
+    "Sys_EnterCriticalSection(CRITSECT_PHYSICAL_MEMORY);"
+    "Sys_LeaveCriticalSection(CRITSECT_PHYSICAL_MEMORY);"
     "if (!TestScriptStringTransactionSerializer())")
     require_contains(_platform_runtime "${_marker}" "serializer runtime coverage")
 endforeach()
