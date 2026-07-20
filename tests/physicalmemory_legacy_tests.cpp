@@ -10,10 +10,11 @@
 #include <cstring>
 #include <type_traits>
 
-extern PhysicalMemory g_mem;
-
 namespace
 {
+using PhysicalMemoryStateAccess =
+    PhysicalMemoryGlobalStateTestAccess;
+
 int g_failures;
 int g_assertReports;
 int g_vaCalls;
@@ -39,6 +40,25 @@ std::array<std::byte, sizeof(T)> Snapshot(const T &value)
     std::array<std::byte, sizeof(T)> bytes{};
     std::memcpy(bytes.data(), &value, sizeof(value));
     return bytes;
+}
+
+struct GlobalStateImage final
+{
+    std::array<std::byte, sizeof(PhysicalMemory)> memory{};
+    int overAllocatedSize = 0;
+};
+
+GlobalStateImage CaptureGlobalState()
+{
+    const auto state = PhysicalMemoryStateAccess::Capture();
+    return {Snapshot(state.memory), state.overAllocatedSize};
+}
+
+bool MatchesGlobalState(const GlobalStateImage &expected)
+{
+    const auto current = CaptureGlobalState();
+    return current.memory == expected.memory
+        && current.overAllocatedSize == expected.overAllocatedSize;
 }
 
 void ResetReports()
@@ -84,11 +104,11 @@ void CheckRejectedUnchanged(
 }
 
 void CheckGlobalRejectedUnchanged(
-    const std::array<std::byte, sizeof(PhysicalMemory)> &before,
+    const GlobalStateImage &before,
     const int expectedLine)
 {
     CheckRejected(expectedLine);
-    CHECK(Snapshot(g_mem) == before);
+    CHECK(MatchesGlobalState(before));
 }
 
 void BeginAndEnd(
@@ -134,18 +154,51 @@ void TestNativeLayout()
 #endif
 }
 
+void TestGlobalStateAccessCopiesByValue()
+{
+    static_assert(!std::is_constructible_v<PhysicalMemoryStateAccess>);
+    static_assert(!std::is_reference_v<
+        decltype(PhysicalMemoryStateAccess::Capture())>);
+
+    std::array<std::uint8_t, 64> backing{};
+    const auto original = PhysicalMemoryStateAccess::Capture();
+    PhysicalMemoryStateAccess::Snapshot installed{};
+    installed.memory.buf = backing.data();
+    installed.memory.prim[0].pos = 7;
+    installed.memory.prim[1].pos = 61;
+    installed.overAllocatedSize = 23;
+    PhysicalMemoryStateAccess::Install(installed);
+
+    auto detached = PhysicalMemoryStateAccess::Capture();
+    CHECK(detached.memory.buf == backing.data());
+    CHECK(detached.memory.prim[0].pos == 7);
+    CHECK(detached.memory.prim[1].pos == 61);
+    CHECK(detached.overAllocatedSize == 23);
+    detached.memory = {};
+    detached.overAllocatedSize = -1;
+
+    const auto retained = PhysicalMemoryStateAccess::Capture();
+    CHECK(retained.memory.buf == backing.data());
+    CHECK(retained.memory.prim[0].pos == 7);
+    CHECK(retained.memory.prim[1].pos == 61);
+    CHECK(retained.overAllocatedSize == 23);
+    PhysicalMemoryStateAccess::Install(original);
+}
+
 void TestWrapperAllocationTypeFailureAtomicity()
 {
     char name[] = "wrapper";
     char lowName[] = "wrapper-low";
     char highName[] = "wrapper-high";
     std::array<std::uint8_t, 128> backing{};
-    const PhysicalMemory original = g_mem;
-    g_mem = {};
-    g_mem.buf = backing.data();
-    g_mem.prim[0].pos = 17;
-    g_mem.prim[1].pos = 111;
-    const auto before = Snapshot(g_mem);
+    const auto original = PhysicalMemoryStateAccess::Capture();
+    PhysicalMemoryStateAccess::Snapshot installed{};
+    installed.memory.buf = backing.data();
+    installed.memory.prim[0].pos = 17;
+    installed.memory.prim[1].pos = 111;
+    installed.overAllocatedSize = 37;
+    PhysicalMemoryStateAccess::Install(installed);
+    const auto before = CaptureGlobalState();
 
     constexpr std::array<std::uint32_t, 2> invalidTypes{
         2,
@@ -173,28 +226,36 @@ void TestWrapperAllocationTypeFailureAtomicity()
     for (std::uint32_t allocType = 0; allocType < validNames.size(); ++allocType)
     {
         const char *const validName = validNames[allocType];
-        const std::uint32_t initialPosition = g_mem.prim[allocType].pos;
+        const auto beforeBegin = PhysicalMemoryStateAccess::Capture();
+        const std::uint32_t initialPosition =
+            beforeBegin.memory.prim[allocType].pos;
         ResetReports();
         PMem_BeginAlloc(validName, allocType);
+        const auto begun = PhysicalMemoryStateAccess::Capture();
         CHECK(g_assertReports == 0);
-        CHECK(g_mem.prim[allocType].allocName == validName);
-        CHECK(g_mem.prim[allocType].allocListCount == 1);
-        CHECK(g_mem.prim[allocType].allocList[0].name == validName);
-        CHECK(g_mem.prim[allocType].allocList[0].pos == initialPosition);
+        CHECK(begun.memory.prim[allocType].allocName == validName);
+        CHECK(begun.memory.prim[allocType].allocListCount == 1);
+        CHECK(begun.memory.prim[allocType].allocList[0].name == validName);
+        CHECK(begun.memory.prim[allocType].allocList[0].pos == initialPosition);
+        CHECK(begun.overAllocatedSize == 37);
 
         PMem_EndAlloc(validName, allocType);
+        const auto ended = PhysicalMemoryStateAccess::Capture();
         CHECK(g_assertReports == 0);
-        CHECK(g_mem.prim[allocType].allocName == nullptr);
-        CHECK(g_mem.prim[allocType].allocListCount == 1);
+        CHECK(ended.memory.prim[allocType].allocName == nullptr);
+        CHECK(ended.memory.prim[allocType].allocListCount == 1);
+        CHECK(ended.overAllocatedSize == 37);
 
         PMem_Free(validName, allocType);
+        const auto freed = PhysicalMemoryStateAccess::Capture();
         CHECK(g_assertReports == 0);
-        CHECK(g_mem.prim[allocType].allocName == nullptr);
-        CHECK(g_mem.prim[allocType].allocListCount == 0);
-        CHECK(g_mem.prim[allocType].pos == initialPosition);
+        CHECK(freed.memory.prim[allocType].allocName == nullptr);
+        CHECK(freed.memory.prim[allocType].allocListCount == 0);
+        CHECK(freed.memory.prim[allocType].pos == initialPosition);
+        CHECK(freed.overAllocatedSize == 37);
     }
 
-    g_mem = original;
+    PhysicalMemoryStateAccess::Install(original);
 }
 
 void TestBeginFailureAtomicity()
@@ -594,6 +655,7 @@ void KISAK_CDECL Sys_OutOfMemErrorInternal(const char *, const int)
 int main()
 {
     TestNativeLayout();
+    TestGlobalStateAccessCopiesByValue();
     TestWrapperAllocationTypeFailureAtomicity();
     TestBeginFailureAtomicity();
     TestEndFailureAtomicity();

@@ -40,6 +40,34 @@ RUNTIME_SIZE(PhysicalMemory, 0x21C, 0x428);
 RUNTIME_OFFSET(PhysicalMemory, buf, 0x0, 0x0);
 RUNTIME_OFFSET(PhysicalMemory, prim, 0x4, 0x8);
 
+// The production global PhysicalMemory object is deliberately hidden in its
+// implementation translation unit. Tests that compile that translation unit
+// with the dedicated target-only definition may install and capture complete
+// state by value, but can never retain a mutable pointer or reference to it.
+// A normal production include leaves both operations private and undefined.
+class PhysicalMemoryGlobalStateTestAccess final
+{
+public:
+    PhysicalMemoryGlobalStateTestAccess() = delete;
+
+#if defined(KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING)
+    struct Snapshot final
+    {
+        PhysicalMemory memory{};
+        int overAllocatedSize = 0;
+    };
+
+    [[nodiscard]] static Snapshot Capture() noexcept;
+    static void Install(const Snapshot &snapshot) noexcept;
+#else
+private:
+    struct Snapshot;
+
+    [[nodiscard]] static Snapshot Capture() noexcept;
+    static void Install(const Snapshot &snapshot) noexcept;
+#endif
+};
+
 void KISAK_CDECL PMem_Init();
 void KISAK_CDECL PMem_DumpMemStats();
 void KISAK_CDECL PMem_InitPhysicalMemory(PhysicalMemory *pmem, uint8_t *memory, uint32_t memorySize);

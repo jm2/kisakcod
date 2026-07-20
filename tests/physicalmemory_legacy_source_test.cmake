@@ -14,8 +14,17 @@ file(READ
     "${SOURCE_ROOT}/tests/physicalmemory_legacy_tests.cpp"
     physicalmemory_fixture)
 file(READ
+    "${SOURCE_ROOT}/tests/physicalmemory_runtime_production_seal_tests.cpp"
+    physicalmemory_production_seal)
+file(READ
     "${SOURCE_ROOT}/tests/CMakeLists.txt"
     test_manifest)
+file(READ
+    "${SOURCE_ROOT}/CMakeLists.txt"
+    production_manifest)
+file(READ
+    "${SOURCE_ROOT}/scripts/common_files.cmake"
+    common_manifest)
 file(READ
     "${SOURCE_ROOT}/.github/workflows/ci.yml"
     ci_workflow)
@@ -162,6 +171,62 @@ require_text(
     "${physicalmemory_header}"
     "RUNTIME_SIZE(PhysicalMemory, 0x21C, 0x428);"
     "global layout freeze")
+require_text(
+    "${physicalmemory_header}"
+    "class PhysicalMemoryGlobalStateTestAccess final"
+    "macro-gated global-state test access type")
+require_text(
+    "${physicalmemory_header}"
+    "#if defined(KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING)"
+    "target-only global-state access gate")
+require_text(
+    "${physicalmemory_header}"
+    "[[nodiscard]] static Snapshot Capture() noexcept;"
+    "copy-out global-state test seam")
+require_text(
+    "${physicalmemory_header}"
+    "static void Install(const Snapshot &snapshot) noexcept;"
+    "copy-in global-state test seam")
+require_text(
+    "${physicalmemory_source}"
+    "namespace\n{\nPhysicalMemory g_mem{};\nint g_overAllocatedSize{};\n} // namespace"
+    "internal-linkage global PMem state")
+require_text(
+    "${physicalmemory_source}"
+    "return {g_mem, g_overAllocatedSize};"
+    "by-value global-state capture")
+require_text(
+    "${physicalmemory_source}"
+    "g_mem = snapshot.memory;\n    g_overAllocatedSize = snapshot.overAllocatedSize;"
+    "complete copy-in global-state installation")
+reject_text(
+    "${physicalmemory_source}"
+    "PhysicalMemory g_mem;"
+    "external-style global PMem definition")
+reject_text(
+    "${physicalmemory_source}"
+    "int g_overAllocatedSize;"
+    "external-style global shortfall definition")
+reject_text(
+    "${physicalmemory_fixture}"
+    "extern PhysicalMemory g_mem"
+    "test-only mutable global PMem escape")
+reject_text(
+    "${physicalmemory_fixture}"
+    "&PhysicalMemoryStateAccess::Capture()"
+    "address-taking from by-value global-state capture")
+reject_text(
+    "${production_manifest}"
+    "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING"
+    "global PMem test access in the root production manifest")
+reject_text(
+    "${common_manifest}"
+    "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING"
+    "global PMem test access in the engine source manifest")
+reject_text(
+    "${ci_workflow}"
+    "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING"
+    "global PMem test access in hosted workflow definitions")
 
 # Each public alloc-type wrapper must report exactly once and return before it
 # can use the rejected type as a g_mem.prim index.
@@ -339,6 +404,7 @@ reject_text(
 # registration so later build-list edits cannot silently drop this boundary.
 foreach(marker IN ITEMS
     "TestNativeLayout();"
+    "TestGlobalStateAccessCopiesByValue();"
     "TestWrapperAllocationTypeFailureAtomicity();"
     "TestBeginFailureAtomicity();"
     "TestEndFailureAtomicity();"
@@ -355,6 +421,10 @@ endforeach()
 foreach(marker IN ITEMS
     "add_executable(kisakcod-physicalmemory-legacy-tests"
     "physicalmemory_legacy_tests.cpp"
+    "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING"
+    "add_executable(kisakcod-physicalmemory-runtime-production-seal-tests"
+    "physicalmemory_runtime_production_seal_tests.cpp"
+    "NAME universal-physicalmemory-runtime-production-test-access-sealed"
     "NAME universal-physicalmemory-legacy-layout-and-indexing"
     "NAME universal-physicalmemory-legacy-source-invariants"
     "physicalmemory_legacy_source_test.cmake")
@@ -363,9 +433,27 @@ foreach(marker IN ITEMS
         "legacy PMem CMake registration")
 endforeach()
 
+require_literal_count(
+    "${test_manifest}"
+    "KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING"
+    1
+    "target-local global PMem testing definition")
+
+foreach(marker IN ITEMS
+    "!std::is_constructible_v<TestAccess>"
+    "!CanNameSnapshot<TestAccess>"
+    "!CanCaptureGlobalState<TestAccess>"
+    "!CanInstallCapturedGlobalState<TestAccess>")
+    require_text(
+        "${physicalmemory_production_seal}" "${marker}"
+        "positive macro-off global-state access seal")
+endforeach()
+
 foreach(marker IN ITEMS
     "kisakcod-physicalmemory-legacy-tests"
+    "kisakcod-physicalmemory-runtime-production-seal-tests"
     "universal-physicalmemory-legacy-(layout-and-indexing|source-invariants)"
+    "universal-physicalmemory-runtime-production-test-access-sealed"
     "universal-physicalmemory-checked-(scopes|api-sealed|source-invariants)")
     require_text(
         "${ci_workflow}" "${marker}"

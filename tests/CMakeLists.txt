@@ -1481,6 +1481,9 @@ target_include_directories(
     kisakcod-physicalmemory-legacy-tests SYSTEM PRIVATE ${SRC_DIR})
 target_compile_features(
     kisakcod-physicalmemory-legacy-tests PRIVATE cxx_std_20)
+target_compile_definitions(
+    kisakcod-physicalmemory-legacy-tests PRIVATE
+    KISAK_PHYSICAL_MEMORY_RUNTIME_TESTING)
 kisakcod_test_warnings(kisakcod-physicalmemory-legacy-tests)
 if(NOT MSVC)
     # physicalmemory.cpp still includes broad legacy engine headers whose
@@ -1509,6 +1512,29 @@ add_test(
 )
 set_tests_properties(
     universal-physicalmemory-legacy-layout-and-indexing PROPERTIES TIMEOUT 20)
+
+# This normal macro-off target proves production callers cannot name, capture,
+# install, or otherwise reach the hidden global PMem testing seam.
+add_executable(kisakcod-physicalmemory-runtime-production-seal-tests
+    physicalmemory_runtime_production_seal_tests.cpp
+)
+target_include_directories(
+    kisakcod-physicalmemory-runtime-production-seal-tests PRIVATE ${SRC_DIR})
+target_compile_features(
+    kisakcod-physicalmemory-runtime-production-seal-tests PRIVATE cxx_std_20)
+kisakcod_test_warnings(
+    kisakcod-physicalmemory-runtime-production-seal-tests)
+set_target_properties(
+    kisakcod-physicalmemory-runtime-production-seal-tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+)
+add_test(
+    NAME universal-physicalmemory-runtime-production-test-access-sealed
+    COMMAND kisakcod-physicalmemory-runtime-production-seal-tests
+)
+set_tests_properties(
+    universal-physicalmemory-runtime-production-test-access-sealed
+    PROPERTIES TIMEOUT 20)
 
 add_executable(kisakcod-physicalmemory-checked-tests
     physicalmemory_checked_tests.cpp
