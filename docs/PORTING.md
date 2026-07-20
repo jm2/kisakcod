@@ -636,17 +636,18 @@ Completed foundation work:
   **29764928195** with clean exact-head Codex/Gemini reviews and zero unresolved threads. PR #71 squash-merged as
   `49184106a106d1b115097b96f541ac03551e90e5`; authoritative post-merge run **29765949587** passed all nine jobs at that
   exact master commit. No production caller is enrolled;
-- implementation head `a927c2e712d5c7b56ff2a696d11f6c304bc5cc57` completes the ABI-neutral journal capacity/demand split without
-  changing the 52-byte `ZoneRuntimeStoragePlan` layout or planner signature. The planned header/token count now controls
-  constructed entry capacity, pointer parity, and teardown, while the exact non-null acquisition demand remains zero
-  through storage/stream enrollment and publishes only after a successful ownership begin. Capacity greater than demand,
-  zero demand with nonzero capacity, full-capacity alias preflight, oversized-demand rejection/retry, and terminal
-  teardown/reset are covered. Gemini review found the missing symmetric pointer/capacity preflight; follow-up head
-  `d8f70aef68a8bb3c986a3ae75be58cd785661a19` rejects both mismatched storage pairs before authentication and adds
-  runtime/source seals. Full native CTest passes **157/157**; the follow-up's focused GCC, Clang, and ASan+UBSan
-  runtime/source/security selections pass **3/3** each, genuine i386/AArch64 builds emit the expected ELF classes, and
-  two independent audits are clean. This prerequisite remains unenrolled pending hosted/re-review publication. A
-  production-neutral externally serialized runtime/registry facade and then the atomic seven-site loader cutover follow;
+- PR #72 exact final head `0c1354c05c92f2f9e66ce285d85d71c90a4119eb` passed all nine jobs in run **29768665063**
+  with clean exact-head Codex/Gemini review and zero unresolved threads. It squash-merged the ABI-neutral journal
+  capacity/demand split and symmetric storage-pair preflight as `64dfc8c9e3b930a7ef7760b794e37320471280c3`;
+  authoritative post-merge run **29770265354** passed all nine jobs. The current branch completes the production-neutral
+  serialized runtime/registry facade prerequisite: one process-lifetime nonblocking outer serializer, mirrored
+  global/TLS authority, private coordinator storage/admission, exact composite table/registry forwarding, release refusal
+  while child authority remains, fail-closed status validation, and reviewed output, retained-descriptor, and
+  mutation-crossing aggregate-input alias separation. Exact method-to-adapter/source seals, realistic forwarding
+  fixtures, and a portable macro-off object close the final review gaps. It exposes no raw table/coordinator/admission
+  authority, preserves all seven frozen sites, and enrolls no loader caller. Full native CTest passes **160/160**; the
+  affected Clang selection passes **29/29**, and ASan+UBSan, macro-off GCC/Clang, source/security, plus genuine
+  i386/AArch64 compile-link gates pass. Facade publication and then the atomic seven-site loader cutover follow;
 - the M1 ABI-contract headers `kisak_abi.h` (OS/arch/pointer-width detection +
   the `ONDISK_SIZE`/`RUNTIME_SIZE` layout-freeze macros) and `sys_atomic.h` (the
   fixed-width, MSVC-byte-identical atomics shim), reconciled with
@@ -760,8 +761,9 @@ Remaining gates, in implementation order:
    names plus the bounded diagnostic snapshot/read-report split, `852e7db9` adds the unused permanent-Ended process-life
    `$init` controller, and `792ff1c7` completes passive table-wide singleton authentication. PR #71 merged exact-key
    component composition plus the strict allocation/staging/admission/abandonment/unload/drain/reset table controller
-   without enrolling a caller. The capacity/demand prerequisite is implemented locally. After its publication and the
-   serialized facade, atomically bind the loader across all seven sites; partial enrollment remains forbidden. Keep static controller
+   without enrolling a caller. PR #72 merged the capacity/demand prerequisite, and the current branch completes the
+   serialized facade locally. After facade publication, atomically bind the loader across all seven sites; partial
+   enrollment remains forbidden. Keep static controller
    slots and callback metadata
    outside PMem with
    per-generation native storage inside the named scope. Preserve PR #48's mirrors and bounded scratch implementation
@@ -1198,7 +1200,15 @@ before any struct widens.
 | **M11** | win_arm64 — first ARM target (native D3D9on12 + Win32) | M | M10, M6, M4, M5 | win_arm64 client boots on Windows-11-ARM, renders via **D3D9on12**, cross-arch demo-parity vs win64 |
 | **M12** | linux_arm64 — cross-compiled Linux ARM | M | M9, M10 | runs on **real ARM hardware** (not emulated), cross-arch parity vs linux_amd64 & win64 |
 | **M13** | macos_arm64 — MoltenVK + bundle/codesign/notarize (final) | L | M9, M10 | **signed & notarized `.app`** renders via MoltenVK (feature-gap fallbacks verified), cross-arch parity vs win64/linux |
-| **M14** | Full 5-target CI matrix, packaging & required gates | L | M6, M9, M11, M12, M13 | all 5 targets green as required gates; ASan/UBSan required on linux_amd64; cross-arch parity harness runs in CI; artifacts published |
+| **M14** | Full 5-target CI matrix, packaging & required gates | L | M6, M9, M11, M12, M13 | all 5 production engines green as required gates; ASan/UBSan required on linux_amd64; cross-arch parity runs in CI; immutable-tag, least-privilege release artifacts and aggregate checksums published |
+
+M14 workflow parity must be checked against the maintained `jm2/CroMagRally` and `jm2/tributary` patterns. Utility-only
+matrix legs do not satisfy target delivery: required production jobs and target-labeled artifacts must cover Windows
+amd64/ARM64, Linux amd64/arm64, and macOS arm64 while the legacy Windows x86 engine/no-Steam/headless gates remain
+separate. `release.yml` must resolve and validate an exact version tag, fan out one immutable source SHA with persisted
+checkout credentials disabled, keep build jobs read-only, give `contents: write` only to a final code-free publisher,
+publish a reproducible source archive plus aggregate `SHA256SUMS`, and use bounded jobs, concurrency control, and pinned
+actions. Native package/signing formats become required only when their corresponding client milestones are real.
 
 **Critical path:** `M0 → M1 → M2 → M4 → M5 → M6 → M8 → M9 → M10 → M13 → M14`. The long pole is the
 contiguous **M4→M5→M6** block (ABI conversion → fast-file rewrite → first win64 bring-up); it cannot
@@ -1748,9 +1758,10 @@ tree-neutral ancestry checkpoint, PR #67 merged passive durable-receipt composit
 indexing/failure-atomic prerequisite, PR #69 merged global-state encapsulation plus the cross-toolchain macro-off seal,
 PR #70 merged serialized runtime/process-controller/passive shared-resource authentication, and PR #71 merged the
 production-neutral exact-key adapter layer, strict table orchestration, exact PMem terminal evidence, alias/overlap
-hardening, adversarial composition coverage, and the optimized-Win32 fixture repair. The capacity/demand prerequisite is
-implemented locally and remains production-neutral while its publication gates run. The ancestry checkpoint records
-reviewed history without importing code and therefore does not inflate the engineering estimate.
+hardening, adversarial composition coverage, and the optimized-Win32 fixture repair. PR #72 merged the capacity/demand
+prerequisite, and the current branch completes the production-neutral serialized facade locally without enrolling a
+loader caller. The ancestry checkpoint records reviewed history without importing code and therefore does not inflate
+the engineering estimate.
 Windows x86 is about
 **93%**, shared
 foundations/security about **89%**, Windows amd64 about **58%**, Linux amd64 about **49%**, Windows/Linux ARM64 about
@@ -2062,8 +2073,9 @@ test-helper containment, and actual macro-off ELF/COFF/AppleClang object seals a
 the MP/SP PMem lock slots and `716eacc1` adds serialized global lifecycle/allocation/getter access, retained reservation
 authentication, and coherent initialization state; `0a9128aa` completes stable owned names and bounded dump snapshots;
 `852e7db9` adds the unused permanent-Ended process-life `$init` controller; and `792ff1c7` completes passive shared-
-resource authentication. PR #71 completes the exact-key adapter/controller layer; the capacity/demand prerequisite is
-implemented locally, while its publication, the serialized facade, and atomic checked/loader enrollment remain. Merged PR #61 adds
+resource authentication. PR #71 completes the exact-key adapter/controller layer, PR #72 merges the capacity/demand
+prerequisite, and the current branch completes the serialized facade locally; facade publication and atomic
+checked/loader enrollment remain. Merged PR #61 adds
 exact-key stream/alias
 bind and invalidation with a typed aligned
 zone identity, hardened production-neutrality seal, stale-terminal retry safety, complete relocation-capacity release,
@@ -2106,8 +2118,9 @@ resolved. PR #66 merged the exact tree-neutral ancestry checkpoint
 passed all nine jobs. PR #68 merged the legacy PMem indexing repair, PR #69 merged the hidden-state/object seal, and no
 production site is enrolled. PR #70 merged the serialized PMem boundary, process-life controller, and passive
 shared-resource authentication as `6a67a66e`; exact final head `ca2d1149` ultimately passed all nine jobs in run
-**29726370638**. PR #71 completes the exact-key composite adapters but enrolls no caller; the capacity/demand
-prerequisite is implemented locally. After its final gates and the serialized facade, enroll all seven sites atomically:
+**29726370638**. PR #71 completes the exact-key composite adapters and PR #72 merges the capacity/demand prerequisite;
+the current branch completes the serialized facade locally but enrolls no caller. After its publication, enroll all seven
+sites atomically:
 five coordinator operations plus two exact-key
 root-journal stages. Root-string staging
 must close its OwnershipBatch before later `DB_AddXAsset` registry acquisition; hash-held mark/default/sweep work uses

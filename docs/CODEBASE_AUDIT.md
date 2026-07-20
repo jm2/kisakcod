@@ -142,15 +142,18 @@ attempt witness to remove that padding without suppression and passes focused GC
 compile-link, and i386 padding checks. Exact final head `3f39881cb4f8d5145e01904d95f34c09512b070d` passed all nine
 jobs in run **29764928195** with clean exact-head Codex/Gemini reviews and zero unresolved threads. It squash-merged as
 `49184106a106d1b115097b96f541ac03551e90e5`; authoritative post-merge run **29765949587** passed all nine jobs.
-Implementation head `a927c2e712d5c7b56ff2a696d11f6c304bc5cc57` then separates the plan's constructed script-string
-capacity from exact acquisition demand without changing its 52-byte layout or planner signature. Capacity now drives
-entry extent, pointer parity, construction, alias preflight, and destruction; demand stays zero until successful
-ownership begin. Capacity 3/demand 1, capacity 3/demand 0, oversized rejection/retry, and terminal teardown/reset are
-covered. Gemini review found one missing symmetric storage-pointer/capacity preflight; follow-up head
-`d8f70aef68a8bb3c986a3ae75be58cd785661a19` rejects both mismatched forms before keyed authentication and seals them in
-runtime/source tests. Full native **157/157**, focused follow-up GCC/Clang/sanitizer **3/3**, genuine i386/AArch64
-compile-link, and two independent audits pass. The next sequence is an externally serialized production-neutral facade and one atomic
-seven-site loader cutover.
+PR #72 exact final head `0c1354c05c92f2f9e66ce285d85d71c90a4119eb` passed all nine jobs in run **29768665063** with clean
+Codex/Gemini review and zero unresolved threads. It squash-merged the capacity/demand split and symmetric storage-pair
+preflight as `64dfc8c9e3b930a7ef7760b794e37320471280c3`; authoritative post-merge run **29770265354** passed all nine jobs.
+The current branch completes the production-neutral facade security boundary with one nonblocking process-lifetime outer
+serializer, mirrored owner/thread/serial state, private coordinator storage/admission, and exact table/registry
+forwarding. Finish refuses release while coordinator or table child authority remains, unsafe/unknown results poison the
+boundary, and writable outputs, retained descriptors, plus aggregate inputs read across child mutation are separated
+from facade state, the whole production table, the hash lock, and coordinator storage. Exact method-to-adapter seals,
+realistic callback/stream/drain fixtures, and a portable macro-off object close the final review gaps. The public surface
+exposes no table, coordinator, or admission authority; all seven raw sites remain frozen and no loader caller is
+enrolled. Full native **160/160**, affected Clang **29/29**, ASan+UBSan, macro-off GCC/Clang, source/security, and genuine
+i386/AArch64 compile-link gates pass. Facade publication and the atomic seven-site cutover follow.
 
 Merged PR #61's production-neutral zone-stream ownership stack adds one
 durable exact-key NeverBound/Bound/Invalidated receipt per generation and one reusable controller over the process-wide
@@ -222,8 +225,8 @@ dry-level reconciliation as `d79069a41e0289f4ed53d174a89d8ee72f40b4a3`. Final re
 duplicate findings and one non-corrective `nullptr` style suggestion. Local evidence remains full GCC Debug
 **153/153**, focused **8/8**, strict GCC/Clang, genuine i386/AArch64 compile-link, U1 focused **7/7** plus a clean
 independent audit, and U2 **146/146** plus its ten-mutation and dependency/symbol contracts. Rounded current porting
-progress is approximately **82%**, including the pending production-neutral exact-key composite milestone; shared
-foundations/security are approximately **89%** and strict requested-target delivery remains **0/5**.
+progress remains approximately **82%** after merged PR #72 and the locally complete production-neutral serialized
+facade; shared foundations/security are approximately **89%** and strict requested-target delivery remains **0/5**.
 
 Every commit in pinned range `312a9d2e..2164cd1a` remains classified in
 `docs/UPSTREAM_2164CD1A_LEDGER.md`. PR #66 merged dedicated tree-neutral checkpoint
@@ -248,8 +251,8 @@ name ownership, bounded dump snapshots, the unused permanent-Ended process-life 
 table-wide resource authentication; exact final head `ca2d1149` passed all nine jobs in run **29726370638** and
 squash-merged as `6a67a66e`. PR #71 now supplies the production-neutral exact-key adapters and strict composite
 controller, replacing the passive-only pristine boundary with exact phase/key authentication while retaining zero
-production enrollment. The capacity/demand prerequisite is implemented locally; after its exact-head publication gate,
-the externally serialized facade and atomic seven-site cutover follow.
+production enrollment. PR #72 merged the capacity/demand prerequisite, and the current branch completes the serialized
+facade locally. Facade publication and the atomic seven-site cutover follow.
 
 Exact-key audit follow-up status:
 
